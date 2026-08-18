@@ -1,0 +1,404 @@
+module RDF.CottasStore.OffsetsWriter
+
+(* Pure-F* serialiser for the COTTAS .p.offsets companion file's
+   header. Issue Lamed3 / #200 PR2 part 4 (2026-05-09). Migrates the
+   byte-layout half of `build_offsets_file` from
+   formal/fstar/experimental_ocaml_glue/
+   cottas_ondisk_zzzzzz_lamed3_offset_idx.sh out of OCaml.
+
+   Rule-#11 scope: same split as PresenceWriter and
+   CompoundPresenceWriter. The 16-byte header (magic, version,
+   num_rgs, num_preds) belongs in F*. The rg_offsets u64 array
+   (length num_rgs * num_preds + 1) and the subject-id payload
+   (parliament-scale: tens of millions of entries) stay in OCaml as
+   imperative array fills.
+
+   On-disk format:
+
+     [ magic       : u32   'COTO' = 0x4f544f43 (LE) ]
+     [ version     : u32   currently 1 ]
+     [ num_rgs     : u32 ]
+     [ num_preds   : u32 ]
+                                                        (16 bytes header)
+     [ rg_offsets  : u64 * (num_rgs * num_preds + 1) ]
+     [ subject_ids : u32[] sorted per (rg, pred) bucket ]
+
+   Caller responsibility:
+     1. Walk parquet rows, bucket subject ids by (rg, pred).
+     2. Compute prefix-sum rg_offsets array.
+     3. Call serialize_offsets_header with num_rgs, num_preds.
+     4. Write header + rg_offsets bytes + subject_ids bytes via
+        atomic_write. *)
+
+open FStar.List.Tot
+
+module Lh = RDF.List.Helpers
+
+(* --- Header constants ------------------------------------------------- *)
+
+let coto_magic     : nat = 0x4f544f43      (* 'COTO' little-endian *)
+let coto_version   : nat = 1
+let header_size    : nat = 16
+
+(* --- Header builder --------------------------------------------------- *)
+
+let build_header
+  (num_rgs   : nat{num_rgs   < 4294967296})
+  (num_preds : nat{num_preds < 4294967296})
+  : Tot RDF.Bytes.bytes
+  =
+  Lh.append_tr (RDF.Bytes.write_u32_le coto_magic)
+    (Lh.append_tr (RDF.Bytes.write_u32_le coto_version)
+      (Lh.append_tr (RDF.Bytes.write_u32_le num_rgs)
+        (RDF.Bytes.write_u32_le num_preds)))
+
+(* serialize_offsets_header num_rgs num_preds
+     Produces the 16-byte .p.offsets header.
+
+     Returns [] on u32 overflow; the on-disk reader checks the same
+     bounds. *)
+let serialize_offsets_header
+  (num_rgs   : nat)
+  (num_preds : nat)
+  : Tot RDF.Bytes.bytes
+  =
+  if num_rgs   >= 4294967296 then []
+  else if num_preds >= 4294967296 then []
+  else build_header num_rgs num_preds
+
+(* --- u32-array (de)serialisation helpers ------------------------------ *)
+
+(* Each u32_le entry is 4 bytes. *)
+let rec serialize_u32_list (xs : list nat)
+  : Tot RDF.Bytes.bytes (decreases xs)
+  =
+  match xs with
+  | [] -> []
+  | x :: rest ->
+    if x >= 4294967296 then []
+    else Lh.append_tr (RDF.Bytes.write_u32_le x) (serialize_u32_list rest)
+
+(* Read exactly k u32_le values from bs. *)
+let rec parse_n_u32s (k : nat) (bs : RDF.Bytes.bytes)
+  : Tot (option (list nat & RDF.Bytes.bytes)) (decreases k)
+  =
+  if k = 0 then Some ([], bs)
+  else
+    match RDF.Bytes.parse_u32_le bs with
+    | None -> None
+    | Some (v, rest) ->
+      match parse_n_u32s (k - 1) rest with
+      | None -> None
+      | Some (xs, after) -> Some (v :: xs, after)
+
+(* --- u64-array (de)serialisation helpers ------------------------------ *)
+
+let rec serialize_u64_list (xs : list nat)
+  : Tot RDF.Bytes.bytes (decreases xs)
+  =
+  match xs with
+  | [] -> []
+  | x :: rest ->
+    if x >= 18446744073709551616 then []
+    else Lh.append_tr (RDF.Bytes.write_u64_le x) (serialize_u64_list rest)
+
+let rec parse_n_u64s (k : nat) (bs : RDF.Bytes.bytes)
+  : Tot (option (list nat & RDF.Bytes.bytes)) (decreases k)
+  =
+  if k = 0 then Some ([], bs)
+  else
+    match RDF.Bytes.parse_u64_le bs with
+    | None -> None
+    | Some (v, rest) ->
+      match parse_n_u64s (k - 1) rest with
+      | None -> None
+      | Some (xs, after) -> Some (v :: xs, after)
+
+let rec last_of_or (xs : list nat) (default_ : nat)
+  : Tot nat (decreases xs)
+  =
+  match xs with
+  | [] -> default_
+  | [x] -> x
+  | _ :: t -> last_of_or t default_
+
+(* --- Top-level serialiser -------------------------------------------- *)
+
+(* serialize_offsets num_rgs num_preds rg_offsets subject_ids
+     Produces the full .p.offsets file byte sequence.
+
+     Returns [] on u32 overflow of num_rgs / num_preds. Caller-provided
+     invariants:
+       - length rg_offsets = num_rgs * num_preds + 1
+       - rg_offsets is monotonic non-decreasing
+       - rg_offsets[num_rgs * num_preds] = length subject_ids
+       - every entry in rg_offsets fits in u64
+       - every subject_id fits in u32. *)
+let serialize_offsets
+  (num_rgs     : nat)
+  (num_preds   : nat)
+  (rg_offsets  : list nat)
+  (subject_ids : list nat)
+  : Tot RDF.Bytes.bytes
+  =
+  if num_rgs   >= 4294967296 then []
+  else if num_preds >= 4294967296 then []
+  else
+    let header   = build_header num_rgs num_preds in
+    let off_b    = serialize_u64_list rg_offsets in
+    let subj_b   = serialize_u32_list subject_ids in
+    Lh.append_tr header (Lh.append_tr off_b subj_b)
+
+(* --- Round-trip parser ------------------------------------------------ *)
+
+(* parse_offsets bs
+     Inverse of [serialize_offsets]. Reads the COTO header, validates
+     magic + version, peels rg_offsets (num_rgs * num_preds + 1 u64s),
+     then subject_ids (rg_offsets[last] u32s — read from the trailing
+     offset entry).
+
+     Returns [None] on:
+       - magic mismatch ('COTO' = 0x4f544f43)
+       - version mismatch (currently 1)
+       - input shorter than declared
+
+     Round-trip witness:
+       parse_offsets (serialize_offsets r p offs subjs)
+         == Some (r, p, offs, subjs)
+     for any (r, p) under 2^32, [length offs = r*p + 1],
+     [last offs = length subjs], every offset < 2^64, every subj < 2^32. *)
+let parse_offsets (bs : RDF.Bytes.bytes)
+  : Tot (option (nat & nat & list nat & list nat))
+  =
+  match RDF.Bytes.parse_u32_le bs with
+  | None -> None
+  | Some (m, after_magic) ->
+    if not (m = coto_magic) then None
+    else
+      match RDF.Bytes.parse_u32_le after_magic with
+      | None -> None
+      | Some (v, after_version) ->
+        if not (v = coto_version) then None
+        else
+          match RDF.Bytes.parse_u32_le after_version with
+          | None -> None
+          | Some (num_rgs, after_rgs) ->
+            match RDF.Bytes.parse_u32_le after_rgs with
+            | None -> None
+            | Some (num_preds, after_header) ->
+              let n_offsets : nat = num_rgs `op_Multiply` num_preds + 1 in
+              match parse_n_u64s n_offsets after_header with
+              | None -> None
+              | Some (rg_offsets, after_offsets) ->
+                let total_subjs : nat = last_of_or rg_offsets 0 in
+                match parse_n_u32s total_subjs after_offsets with
+                | None -> None
+                | Some (subject_ids, _trailing) ->
+                  Some (num_rgs, num_preds, rg_offsets, subject_ids)
+
+(* --- Empty base case sublemmas --------------------------------------- *)
+
+let lemma_parse_n_u64s_one (v : nat{v < 18446744073709551616}) (rest : RDF.Bytes.bytes)
+  : Lemma (ensures parse_n_u64s 1
+                     (FStar.List.Tot.append (RDF.Bytes.write_u64_le v) rest)
+                   == Some ([v], rest))
+  = RDF.Bytes.lemma_parse_write_u64_le_inverse v rest
+
+let lemma_parse_n_u32s_zero (bs : RDF.Bytes.bytes)
+  : Lemma (ensures parse_n_u32s 0 bs == Some ([], bs))
+  = ()
+
+let lemma_last_of_or_singleton_zero ()
+  : Lemma (ensures last_of_or [0] 0 == 0)
+  = ()
+
+(* Bridge: serialize_offsets 0 0 [0] [] reduces to a single right-
+   associated FStar.List.Tot.append chain. The proof chains six
+   lemma_append_tr_eq bridges + append_l_nil for the empty subj_b +
+   three append_assoc rewrites to land in the right-associated form. *)
+let lemma_serialize_offsets_empty_shape ()
+  : Lemma (ensures (
+      let m = RDF.Bytes.write_u32_le coto_magic in
+      let v = RDF.Bytes.write_u32_le coto_version in
+      let r = RDF.Bytes.write_u32_le 0 in
+      let p = RDF.Bytes.write_u32_le 0 in
+      let s = RDF.Bytes.write_u64_le 0 in
+      serialize_offsets 0 0 [0] []
+        == FStar.List.Tot.append m
+            (FStar.List.Tot.append v
+              (FStar.List.Tot.append r
+                (FStar.List.Tot.append p s)))))
+  = let m = RDF.Bytes.write_u32_le coto_magic in
+    let v = RDF.Bytes.write_u32_le coto_version in
+    let r = RDF.Bytes.write_u32_le 0 in
+    let p = RDF.Bytes.write_u32_le 0 in
+    let s = RDF.Bytes.write_u64_le 0 in
+    (* Build_header: append_tr m (append_tr v (append_tr r p)). *)
+    Lh.lemma_append_tr_eq r p;
+    Lh.lemma_append_tr_eq v (Lh.append_tr r p);
+    Lh.lemma_append_tr_eq m (Lh.append_tr v (Lh.append_tr r p));
+    (* serialize_u64_list [0] = append_tr s [] = s. *)
+    Lh.lemma_append_tr_eq s [];
+    FStar.List.Tot.Properties.append_l_nil s;
+    (* serialize_u32_list [] = []. *)
+    let off_b = serialize_u64_list [0] in
+    let subj_b = serialize_u32_list [] in
+    Lh.lemma_append_tr_eq off_b subj_b;
+    FStar.List.Tot.Properties.append_l_nil off_b;
+    (* Outer: append_tr header s. *)
+    let header = build_header 0 0 in
+    Lh.lemma_append_tr_eq header s;
+    (* Now serialize_offsets ≡ append (append m (append v (append r p))) s.
+       Right-associate via three append_assoc applications. *)
+    FStar.List.Tot.Properties.append_assoc m
+      (FStar.List.Tot.append v (FStar.List.Tot.append r p)) s;
+    FStar.List.Tot.Properties.append_assoc v
+      (FStar.List.Tot.append r p) s;
+    FStar.List.Tot.Properties.append_assoc r p s
+
+(* Empty base case: serialize_offsets 0 0 [0] [] then parse_offsets
+   round-trips to Some (0, 0, [0], []). 24 bytes total. *)
+let lemma_parse_serialize_offsets_empty_case ()
+  : Lemma (ensures parse_offsets (serialize_offsets 0 0 [0] []) == Some (0, 0, [0], []))
+  = let m = RDF.Bytes.write_u32_le coto_magic in
+    let v = RDF.Bytes.write_u32_le coto_version in
+    let r = RDF.Bytes.write_u32_le 0 in
+    let p = RDF.Bytes.write_u32_le 0 in
+    let s = RDF.Bytes.write_u64_le 0 in
+    lemma_serialize_offsets_empty_shape ();
+    (* Peel header u32s. *)
+    RDF.Bytes.lemma_parse_write_u32_le_inverse coto_magic
+      (FStar.List.Tot.append v
+        (FStar.List.Tot.append r
+          (FStar.List.Tot.append p s)));
+    RDF.Bytes.lemma_parse_write_u32_le_inverse coto_version
+      (FStar.List.Tot.append r
+        (FStar.List.Tot.append p s));
+    RDF.Bytes.lemma_parse_write_u32_le_inverse 0
+      (FStar.List.Tot.append p s);
+    RDF.Bytes.lemma_parse_write_u32_le_inverse 0 s;
+    (* Peel sentinel u64 + parse_n_u32s 0 []. *)
+    FStar.List.Tot.Properties.append_l_nil s;
+    lemma_parse_n_u64s_one 0 [];
+    lemma_last_of_or_singleton_zero ();
+    lemma_parse_n_u32s_zero []
+
+(* --- General-case round-trip lemma ----------------------------------- *)
+
+(* "All values in xs satisfy < bound". Pure structural. *)
+let rec all_lt (xs : list nat) (bound : nat) : Tot bool (decreases xs) =
+  match xs with
+  | [] -> true
+  | x :: rest -> x < bound && all_lt rest bound
+
+(* parse_n_u64s round-trip: when xs are all < 2^64, parsing
+   `length xs` u64s from `serialize_u64_list xs @ rest` yields
+   `(xs, rest)`. Inductive on xs. *)
+let rec lemma_parse_n_u64s_serialize_u64_list
+  (xs : list nat) (rest : RDF.Bytes.bytes)
+  : Lemma
+      (requires all_lt xs 18446744073709551616)
+      (ensures parse_n_u64s (FStar.List.Tot.length xs)
+                 (FStar.List.Tot.append (serialize_u64_list xs) rest)
+               == Some (xs, rest))
+      (decreases xs)
+  = match xs with
+    | [] -> ()
+    | x :: rest_xs ->
+      lemma_parse_n_u64s_serialize_u64_list rest_xs rest;
+      let head = RDF.Bytes.write_u64_le x in
+      let tail = serialize_u64_list rest_xs in
+      Lh.lemma_append_tr_eq head tail;
+      FStar.List.Tot.Properties.append_assoc head tail rest;
+      RDF.Bytes.lemma_parse_write_u64_le_inverse x
+        (FStar.List.Tot.append tail rest)
+
+(* parse_n_u32s round-trip: analogous for u32 lists. *)
+let rec lemma_parse_n_u32s_serialize_u32_list
+  (xs : list nat) (rest : RDF.Bytes.bytes)
+  : Lemma
+      (requires all_lt xs 4294967296)
+      (ensures parse_n_u32s (FStar.List.Tot.length xs)
+                 (FStar.List.Tot.append (serialize_u32_list xs) rest)
+               == Some (xs, rest))
+      (decreases xs)
+  = match xs with
+    | [] -> ()
+    | x :: rest_xs ->
+      lemma_parse_n_u32s_serialize_u32_list rest_xs rest;
+      let head = RDF.Bytes.write_u32_le x in
+      let tail = serialize_u32_list rest_xs in
+      Lh.lemma_append_tr_eq head tail;
+      FStar.List.Tot.Properties.append_assoc head tail rest;
+      RDF.Bytes.lemma_parse_write_u32_le_inverse x
+        (FStar.List.Tot.append tail rest)
+
+(* General case: serialize_offsets num_rgs num_preds rg_offsets subject_ids
+   round-trips back to (num_rgs, num_preds, rg_offsets, subject_ids).
+
+   Preconditions:
+   - num_rgs, num_preds < 2^32 (else serialize returns []).
+   - length rg_offsets == num_rgs * num_preds + 1 (parser reads this many
+     u64s; mismatch breaks the round-trip).
+   - all rg_offsets[i] < 2^64.
+   - last_of_or rg_offsets 0 == length subject_ids (parser computes
+     total_subjs from the trailing offset; mismatch breaks the round-trip).
+   - all subject_ids[i] < 2^32. *)
+#push-options "--z3rlimit 30"
+let lemma_parse_serialize_offsets
+  (num_rgs : nat) (num_preds : nat)
+  (rg_offsets : list nat) (subject_ids : list nat)
+  : Lemma
+      (requires num_rgs < 4294967296
+                /\ num_preds < 4294967296
+                /\ FStar.List.Tot.length rg_offsets
+                   == num_rgs `op_Multiply` num_preds + 1
+                /\ all_lt rg_offsets 18446744073709551616
+                /\ last_of_or rg_offsets 0
+                   == FStar.List.Tot.length subject_ids
+                /\ all_lt subject_ids 4294967296)
+      (ensures parse_offsets
+                 (serialize_offsets num_rgs num_preds rg_offsets subject_ids)
+               == Some (num_rgs, num_preds, rg_offsets, subject_ids))
+  = let m = RDF.Bytes.write_u32_le coto_magic in
+    let v = RDF.Bytes.write_u32_le coto_version in
+    let r = RDF.Bytes.write_u32_le num_rgs in
+    let p = RDF.Bytes.write_u32_le num_preds in
+    let off_b = serialize_u64_list rg_offsets in
+    let subj_b = serialize_u32_list subject_ids in
+    (* Bridge build_header's append_tr chain to FStar.List.Tot.append. *)
+    Lh.lemma_append_tr_eq r p;
+    Lh.lemma_append_tr_eq v (Lh.append_tr r p);
+    Lh.lemma_append_tr_eq m (Lh.append_tr v (Lh.append_tr r p));
+    let header = build_header num_rgs num_preds in
+    let off_subj = FStar.List.Tot.append off_b subj_b in
+    Lh.lemma_append_tr_eq off_b subj_b;
+    Lh.lemma_append_tr_eq header off_subj;
+    (* Re-associate: header @ (off_b @ subj_b)
+                  == m @ (v @ (r @ (p @ (off_b @ subj_b)))). *)
+    FStar.List.Tot.Properties.append_assoc m
+      (FStar.List.Tot.append v (FStar.List.Tot.append r p)) off_subj;
+    FStar.List.Tot.Properties.append_assoc v
+      (FStar.List.Tot.append r p) off_subj;
+    FStar.List.Tot.Properties.append_assoc r p off_subj;
+    (* Peel four header u32s. *)
+    RDF.Bytes.lemma_parse_write_u32_le_inverse coto_magic
+      (FStar.List.Tot.append v
+        (FStar.List.Tot.append r
+          (FStar.List.Tot.append p off_subj)));
+    RDF.Bytes.lemma_parse_write_u32_le_inverse coto_version
+      (FStar.List.Tot.append r
+        (FStar.List.Tot.append p off_subj));
+    RDF.Bytes.lemma_parse_write_u32_le_inverse num_rgs
+      (FStar.List.Tot.append p off_subj);
+    RDF.Bytes.lemma_parse_write_u32_le_inverse num_preds off_subj;
+    (* Peel rg_offsets list (n_offsets u64s). After this:
+       parse_n_u64s n_offsets (off_b @ subj_b) == Some (rg_offsets, subj_b). *)
+    lemma_parse_n_u64s_serialize_u64_list rg_offsets subj_b;
+    (* parse_offsets computes total_subjs = last_of_or rg_offsets 0;
+       precondition equates this with length subject_ids. *)
+    assert (last_of_or rg_offsets 0
+            == FStar.List.Tot.length subject_ids);
+    FStar.List.Tot.Properties.append_l_nil subj_b;
+    lemma_parse_n_u32s_serialize_u32_list subject_ids []
+#pop-options

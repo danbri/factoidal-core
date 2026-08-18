@@ -1,0 +1,2825 @@
+module RDF.CottasStore
+
+open RDF.Graph.Executable
+open Parser.BallyhooCOTTAS
+open Parquet.Footer
+open RDF.CottasStore.PageCache
+open RDF.CottasStore.ColumnSeq
+open Parser.Combinators
+open Parser.FastString
+open Parser.NTriples
+open RDF.NQuads.Serialize
+open FStar.All
+module CPO = RDF.CottasStore.CompoundPresenceBitmap
+module ODI = RDF.CottasStore.OnDiskIndex
+module OI  = RDF.Store.Columnar.OffsetIndex
+module AP  = SPARQL.Plan.AccessPath
+module SOI = RDF.Store.Columnar.SubjectOffsetIndex
+
+// On-disk COTTAS store, query-time interface (issue #100).
+//
+// History: this module's contents used to live at the bottom of
+// Parser.BallyhooCOTTAS.fst, with 13 `assume val`s whose bodies lived in
+// experimental_ocaml_glue/cottas_ondisk_runtime.sh (688 LoC OCaml). Per
+// CLAUDE.md rules #1 / #7 / #15 + memory feedback_fstar_first_always.md,
+// 11 of those 13 lookup functions were lifted to F* in Phase A
+// (commit 967ed4f). Phase B (this commit) lifts the remaining
+// `cottas_ondisk_search` / `cottas_ondisk_estimate` to F*, walking the
+// parquet row groups on demand via `Parquet.Footer.probe_parquet_*`
+// helpers. Only `cottas_ondisk_open` and `cottas_ondisk_close` remain
+// I/O-glue.
+//
+// All semantic logic (encode/decode/predicate-presence/named-graph walk
+// + search + estimate) lives here. The OCaml glue at
+// cottas_ondisk_runtime.sh now does only ONE thing: at open() time, read
+// 4 columns from the Parquet file (across all row groups), parse each
+// distinct token to its RDF shape, build the reverse maps + the parallel
+// raw-token lists, and hand the F* runtime a populated handle record.
+// F* does the rest, lazily iterating row groups via
+// `probe_parquet_column_decode_in_row_group`.
+
+noeq type cottas_ondisk_handle = {
+  // Path the handle came from. Used by Phase B search/estimate to
+  // re-open and walk row groups via Parquet.Footer probes.
+  coh_path : string;
+  // Aggregate summary (passes through to cods_summary).
+  coh_summary : option cottas_artifact_summary;
+  // Per-column distinct-term inventories. Index in the list IS the
+  // term-id stored in the per-row int columns. Built at open() time
+  // by the I/O glue parsing each column's distinct tokens.
+  coh_subjects   : list subject;
+  coh_predicates : list wf_iri;
+  coh_objects    : list rdf_term;
+  coh_graphs     : list iri;
+  // Reverse maps: canonical key string -> term-id. Used by encode_*
+  // to turn a parsed RDF term back into its int term-id, or None if
+  // the term is absent from this corpus (caller short-circuits to []).
+  coh_subj_revmap  : list (string * nat);
+  coh_pred_revmap  : list (string * nat);
+  coh_obj_revmap   : list (string * nat);
+  coh_graph_revmap : list (string * nat);
+  // Phase B (issue #100) — parallel raw-column-token lists, indexed by
+  // term-id. Used by search/estimate to convert a bound term-id into
+  // the column-token string it would appear as in the parquet row,
+  // without needing to re-encode/escape from the typed term.
+  // `coh_graphs_raw` does NOT include the "DEFAULT" sentinel — only
+  // named-graph IRIs in raw "<iri>" form. Default-graph rows are
+  // detected at search time by matching the literal string "DEFAULT".
+  coh_subjects_raw   : list string;
+  coh_predicates_raw : list string;
+  coh_objects_raw    : list string;
+  coh_graphs_raw     : list string;
+  // Phase B — raw-token-keyed reverse maps, used by search to look up
+  // a matched row's IDs without re-parsing. Same shape as the
+  // canonical-key revmaps above; the OCaml glue builds both at open()
+  // time. (We keep the canonical-key revmaps because the public encode_*
+  // functions take typed RDF terms, which produce canonical keys via
+  // *_to_revmap_key.)
+  coh_subj_raw_revmap  : list (string * nat);
+  coh_pred_raw_revmap  : list (string * nat);
+  coh_obj_raw_revmap   : list (string * nat);
+  coh_graph_raw_revmap : list (string * nat);
+}
+
+noeq type cottas_ondisk_store = {
+  cods_artifact_path : string;
+  cods_summary : option cottas_artifact_summary;
+  cods_handle : cottas_ondisk_handle;
+}
+
+// ----------------------------------------------------------------------
+// Pure F* helpers
+// ----------------------------------------------------------------------
+
+// Look up a key in an assoc-list of (string * nat) pairs.
+// Mirrors RDF.Graph.Executable.bucket_lookup but for nat-valued maps.
+let rec revmap_lookup (m : list (string * nat)) (k : string)
+  : Tot (option nat) (decreases m) =
+  match m with
+  | [] -> None
+  | (k', v) :: rest -> if k = k' then Some v else revmap_lookup rest k
+
+// Index into a list. Returns None for out-of-range. The OCaml runtime
+// already guarantees term-ids stored in the per-row arrays are in
+// [0, length) so well-formed COTTAS data never trips the None branch;
+// we still handle it to keep this function total.
+let rec list_nth (#a:Type) (xs : list a) (i : nat)
+  : Tot (option a) (decreases xs) =
+  match xs with
+  | [] -> None
+  | hd :: tl -> if i = 0 then Some hd else list_nth tl (i - 1)
+
+// Canonical key strings used by encode_*. The OCaml glue at open() time
+// builds the reverse map using these same key strings (computed via the
+// F*-extracted versions of these functions, so the keys are guaranteed
+// to match by construction). Format: tag-prefixed, unit-separator-
+// delimited, no escaping needed (none of the components contain U+001F).
+//
+// The unit separator (U+001F) is forbidden in IRIs by RFC 3987 and not
+// produced by our blank-node/lexical-form pipeline, so the segments are
+// unambiguous.
+let revmap_unit_sep : string = "\x1f"
+
+let subject_to_revmap_key (s : subject) : string =
+  match s with
+  | S_IRI i   -> String.concat "" ["I_"; i]
+  | S_BNode b -> String.concat "" ["B_"; b]
+
+let iri_to_revmap_key (i : iri) : string =
+  String.concat "" ["I_"; i]
+
+// Object key: tag-prefixed, with literals encoded as
+// "L_" + datatype + US + langtag + US + lexical-form. Lang-tag empty
+// when absent. Lexical form is included verbatim — no escape needed
+// because literals can't contain U+001F (it's a control character;
+// not allowed in well-formed RDF lexical forms either).
+let rec object_to_revmap_key (o : rdf_term) : Tot string (decreases o) =
+  match o with
+  | T_IRI i -> String.concat "" ["I_"; i]
+  | T_BNode b -> String.concat "" ["B_"; b]
+  | T_Literal l ->
+    let tag = match l.lang_tag with
+      | Some t -> t
+      | None -> "" in
+    let base = String.concat ""
+      ["L_"; l.datatype; revmap_unit_sep; tag; revmap_unit_sep; l.lexical_form] in
+    // RDF 1.2 base direction, appended ONLY when present. Every RDF 1.1
+    // literal has direction = None and so keeps its exact pre-1.2 key —
+    // the on-disk dictionary encoding is byte-identical for 1.1 data.
+    // (A dirLangString literal already carries a distinct datatype IRI in
+    // the key, so keys never collide regardless.)
+    (match l.direction with
+     | None         -> base
+     | Some Dir_LTR -> String.concat "" [base; revmap_unit_sep; "ltr"]
+     | Some Dir_RTL -> String.concat "" [base; revmap_unit_sep; "rtl"])
+  // RDF 1.2 triple term: a structural dictionary key distinct from the
+  // I_/B_/L_ families. Full COTTAS triple-term storage is a later phase
+  // (#305 P8); this keeps the key total and collision-free for now.
+  | T_TripleTerm s p obj ->
+    let subj = (match s with
+                | S_IRI i   -> String.concat "" ["I_"; i]
+                | S_BNode b -> String.concat "" ["B_"; b]) in
+    String.concat ""
+      ["T_"; subj; revmap_unit_sep; p; revmap_unit_sep; object_to_revmap_key obj]
+
+// ----------------------------------------------------------------------
+// 11 lookup functions — F* implementations
+// ----------------------------------------------------------------------
+
+// Summary passthrough: handle holds it, store holds the handle.
+let cottas_ondisk_summary (ds : cottas_ondisk_store)
+  : Tot (option cottas_artifact_summary) =
+  ds.cods_handle.coh_summary
+
+// cottas_ondisk_encode_{subject,predicate,object,graph_name} and
+// cottas_ondisk_decode_{subject,predicate,object,graph_name} (id-based
+// revmap-lookup / list-indexing primitives) were REMOVED 2026-07-19
+// (boundary-audit "Step A" continuation, #254/#118). An exhaustive
+// audit (every .fst, extracted .ml, bin/, tests/unit/*.ml, and
+// experimental_ocaml_glue/*.sh) found zero live callers: the only
+// callers were each other's `_ml` fallback siblings (also removed,
+// see below), `cottas_ondisk_build_bound_qp_opt` (removed in the same
+// commit — see its own site-note further down), and the dead
+// in-memory `GB_COTTAS` path's `cottas_build_bound_qp`
+// (Parser.BallyhooCOTTAS.fst — no live `GB_COTTAS` constructor exists,
+// confirmed by grepping for a construction site across the whole
+// tree; only pattern-matches and the type declaration remain). The
+// live token-based path (`token_to_subject`/`_predicate`/`_object`/
+// `_graph_name`, wired through `cottas_ondisk_row_tok_to_quad`) does
+// not use these.
+
+// Predicate-presence: look up the predicate in the reverse map. If the
+// predicate isn't a dictionary entry it can't appear in any row.
+// (The OCaml glue's previous `predicates_seen` cache was an overengineered
+// optimisation; the predicate dictionary is small (231 entries on the
+// parliament corpus) and the reverse map already encodes membership.)
+let cottas_ondisk_predicate_present
+  (ds : cottas_ondisk_store) (pred : wf_iri)
+  : Tot bool =
+  match revmap_lookup ds.cods_handle.coh_pred_revmap (iri_to_revmap_key pred) with
+  | None -> false
+  | Some _ -> true
+
+// Named-graph inventory: walk the graph distinct-iri list, attaching
+// each entry's index as its graph-ref. The list is built at open()
+// time, so this is just a list_mapi-like traversal.
+let rec named_graphs_aux
+  (graphs : list iri) (idx : nat)
+  : Tot (list (iri & cottas_graph_ref)) (decreases graphs) =
+  match graphs with
+  | [] -> []
+  | g :: rest -> (g, idx) :: named_graphs_aux rest (idx + 1)
+
+let cottas_ondisk_named_graphs (ds : cottas_ondisk_store)
+  : Tot (list (iri & cottas_graph_ref)) =
+  named_graphs_aux ds.cods_handle.coh_graphs 0
+
+// The `_ml` encode/decode variants (opt-in LazyDictRegistry-backed
+// fast path, opposite the revmap_lookup-based Tot primitives just
+// removed above) were REMOVED in the same 2026-07-19 commit — same
+// zero-live-caller audit; their only callers were each other's Tot
+// fallback (also gone) and the by-then-dead
+// `cottas_ondisk_build_bound_qp_opt`.
+
+// ----------------------------------------------------------------------
+// Phase B: search + estimate, lazy walk over parquet row groups.
+// Implemented in F* via Parquet.Footer.probe_parquet_column_decode_in_row_group.
+// Only `cottas_ondisk_open` / `cottas_ondisk_close` remain I/O-glue.
+// ----------------------------------------------------------------------
+
+// ---- Format-compatibility gate (issue #445, 2026-08-15) --------------
+//
+// Owner decision, verbatim: "Version-bump the COTTAS header - nobody is
+// using our software yet except me. There is probably one installation
+// outside our repo and i can nuke and rebuild it." -- no migration path,
+// no back-compat reader. A store whose FileMetaData.version does not
+// match RDF.CottasStore.BaseWriter's current stamp was written by a
+// writer we no longer trust (in particular: the pre-#445 writer, which
+// corrupted every non-ASCII literal) and must be rejected outright, not
+// silently misread. Pure Tot logic over probe_parquet_file_metadata_version
+// -- the actual file read is the pre-existing `parquet_read_tail_hex`
+// assume val underneath it, not a new I/O realisation.
+let cottas_ondisk_version_ok (artifact_path : string) : Tot bool =
+  match probe_parquet_file_metadata_version artifact_path with
+  | Some v -> v = cottas_format_version
+  | None -> false
+
+// Open: I/O. Parses the Parquet file, walks every row group, builds the
+// 4 distinct-term dictionaries (typed lists + revmaps + raw-token
+// parallel lists). Phase C will refactor with mmap.
+//
+// The version gate above is enforced in the OCaml realisation
+// (experimental_ocaml_glue/cottas_ondisk_runtime.sh's open_impl calls
+// cottas_ondisk_version_ok, defined in THIS module, before load_handle)
+// rather than here, because this val stays a signature-only `assume val`
+// per the existing house style for this function (see its own comment);
+// the check itself is the F*-defined logic rule #11 requires, the OCaml
+// side is just the `if ... then None else ...` call-out.
+assume val cottas_ondisk_open :
+  artifact_path:string -> Tot (option cottas_ondisk_store)
+
+// Close: I/O. Releases caches; F* runtime hashtables drop via GC.
+// Currently not extracted (no use site in F*).
+assume val cottas_ondisk_close :
+  cottas_ondisk_store -> Tot unit
+
+// ---- Bound term-id -> raw column-token string ----------------------
+
+// Convert a bound term-id (option nat) to the column-token string it
+// would appear as in the parquet column, for matching. None means
+// "no bound on this column, accept any value".
+let id_to_raw_token (raws : list string) (id : option cottas_term_ref)
+  : Tot (option string) =
+  match id with
+  | None -> None
+  | Some i ->
+    (match list_nth raws i with
+     | Some s -> Some s
+     // Out-of-range fallback: an impossible sentinel that won't match
+     // any well-formed row token. Keeps the function total.
+     | None -> Some "\x00cottas_decode_oor")
+
+// Compare a row-cell to the bound's expected token. None bound =
+// accept anything; Some s requires equality.
+let cell_match (expected : option string) (actual : string) : Tot bool =
+  match expected with
+  | None -> true
+  | Some s -> s = actual
+
+// Graph-cell match. The bound graph is `option cottas_graph_ref`:
+//   - None : caller doesn't constrain the graph column. Match anything.
+//   - Some i : caller wants that specific named graph. The row's
+//     graph token is "DEFAULT" for default-graph rows, "<iri>" otherwise.
+//     A "DEFAULT" row never matches a Some-graph bound; an "<iri>" row
+//     matches iff string-equal to the bound's "<iri>" form.
+let graph_cell_match (expected : option string) (actual : string)
+  : Tot bool = cell_match expected actual
+
+// ---- Row-group walk -------------------------------------------------
+
+// Phase 2.7-mini Phase 2 (issue #118): id→raw-token lookup, mirror of
+// the token→id assume-vals declared further below.
+//
+// Why: `id_to_raw_token` walks `h.coh_*_raw` assoc-lists which are
+// EMPTY on Bet7-lazy-opened handles (Bet7 defers their construction).
+// On Bet7 handles, `id_to_raw_token` falls through to a sentinel
+// `"\x00cottas_decode_oor"` which never matches a real column-token,
+// so the bound-query F* path silently degenerates: ALL row-groups
+// become "candidates" (compute_candidate_rgs_loop's safe-fallback)
+// and the executor walks them looking for matches that never come.
+// Net symptom: every bound query on a Bet7 handle hits the 30s
+// timeout (post-2.5e regression, masked through 7cf9ebc by stale
+// binaries).
+//
+// The OCaml runtime carries this data in
+// `Cottas_ondisk_runtime.fast_tables.ft_id_to_*_tok : (int, string)
+// Hashtbl.t`, populated by `Cottas_ondisk_lazy.ensure_*_loaded`. These
+// four assume-vals expose that lookup to the F* spec, just like
+// Phase 1's `ondisk_lookup_*_id_global` did for the inverse direction.
+assume val ondisk_id_to_subj_token_global :
+  (path : string) -> (id : nat) -> Tot (option string)
+assume val ondisk_id_to_pred_token_global :
+  (path : string) -> (id : nat) -> Tot (option string)
+assume val ondisk_id_to_obj_token_global :
+  (path : string) -> (id : nat) -> Tot (option string)
+assume val ondisk_id_to_graph_token_global :
+  (path : string) -> (id : nat) -> Tot (option string)
+
+// Query-time scope for GB_CottasOnDisk (issue #267). Replaces the
+// former `option iri` second field of that constructor, which let
+// `None` be read by `cottas_ondisk_build_bound_qp_opt` as "no graph
+// constraint" even when it was meant as "this IS the default-graph
+// backend" — the bound layer then matched every row, default and
+// named alike (a plain BGP over the default graph unioned in every
+// named graph's rows).
+//   - COS_DefaultOnly : this backend represents ONLY the DEFAULT-
+//     sentinel rows (docs/cottas-format-v1.md section 6).
+//   - COS_NamedGraph iri : this backend represents ONLY rows whose
+//     graph column resolves to that IRI.
+// There is no "unrestricted" constructor: every GB_CottasOnDisk value
+// built by `cottas_ondisk_dataset_backend` (SPARQL11.Store.fst) is one
+// or the other, never "match anything."
+type cottas_ondisk_graph_scope =
+  | COS_DefaultOnly : cottas_ondisk_graph_scope
+  | COS_NamedGraph  : iri -> cottas_ondisk_graph_scope
+
+// Translate a `cottas_graph_bound` into the raw graph-column token the
+// row-walkers' `graph_cell_match` compares against (issue #267). This
+// is where the DEFAULT-scope fix actually lands: `CGB_Default` yields
+// `Some "DEFAULT"`, so a default-graph query bound now filters OUT
+// named-graph rows the same way a `CGB_Named r` bound filters out
+// every OTHER named graph (and the default rows). `CGB_Unbound` (only
+// reachable from the dead in-memory GB_COTTAS path — see
+// Parser.BallyhooCOTTAS.cottas_build_bound_qp) still yields `None`,
+// matching its pre-existing "no constraint" contract; no live
+// GB_CottasOnDisk caller produces it.
+let graph_bound_to_raw_token (path : string) (gb : cottas_graph_bound)
+  : Tot (option string) =
+  match gb with
+  | CGB_Unbound -> None
+  | CGB_Default -> Some "DEFAULT"
+  | CGB_Named r -> ondisk_id_to_graph_token_global path r
+
+// Bet7-aware mirror of `id_to_raw_token`. Used by cottas_ondisk_search
+// / _estimate / _search_limited to translate the user-supplied
+// `cottas_term_ref` (= nat id from cottas_ondisk_encode_*) to the raw
+// column-token string the executor's `cell_match` will compare
+// against. If the OCaml table doesn't have this id (definitively-empty
+// query: the bound term isn't in the corpus) we return None and the
+// caller short-circuits to an empty result.
+let id_to_raw_token_via_global
+  (lookup : string -> nat -> Tot (option string))
+  (path : string)
+  (id : option cottas_term_ref)
+  : Tot (option string) =
+  match id with
+  | None -> None
+  | Some i -> lookup path i
+
+// Phase 2.7-mini (issue #118): token→id lookup for the search hot path.
+//
+// The F* spec layer says: "given the raw column-token string `tok`,
+// return the term-id `i` such that `list_nth raws i = Some tok`, if
+// it exists; else None". Operationally we MIGHT walk the
+// `coh_*_raw_revmap` assoc-list (which is what `revmap_lookup` does),
+// but on Bet7-lazy-opened handles those F*-side assoc-lists are EMPTY
+// — Bet7 defers their construction to keep handle-open under 5 s for
+// the parliament corpus. The OCaml runtime carries the data in
+// `Cottas_ondisk_runtime.fast_tables.ft_*_tok_to_id` (Hashtbl<string,
+// int>), populated lazily by `Cottas_ondisk_lazy.ensure_*_loaded` on
+// first-touch.
+//
+// These four assume-vals are the F* boundary for that lazy lookup.
+// Their realisation (cottas_token_lookup_runtime.sh) is a thin
+// rule-#11(c) dispatch shim: ensure_loaded + Hashtbl.find_opt. The
+// F* spec treats them as oracles. Without this 2.7-mini bridge,
+// Phase 2.5e (retiring the OCaml `search_fast` dispatch shim in
+// favour of the F*-extracted `cottas_ondisk_search` body) returns
+// zero rows on Bet7-opened handles because `build_qp_row` can't
+// resolve any token to an id.
+//
+// Soundness: the assume-val outcome must be observably equivalent to
+// `revmap_lookup h.coh_*_raw_revmap tok` on a fully-populated handle.
+// The OCaml realisation upholds this by populating the same data the
+// F* revmap would have held, just in a different (Hashtbl) shape.
+assume val ondisk_lookup_subj_id_global :
+  (path : string) -> (token : string) -> Tot (option nat)
+assume val ondisk_lookup_pred_id_global :
+  (path : string) -> (token : string) -> Tot (option nat)
+assume val ondisk_lookup_obj_id_global :
+  (path : string) -> (token : string) -> Tot (option nat)
+assume val ondisk_lookup_graph_id_global :
+  (path : string) -> (token : string) -> Tot (option nat)
+
+// Build the cottas_qp_row for a matched row. Look up each token's id
+// via the OCaml-realised `ondisk_lookup_*_id_global` shim, which
+// honours Bet7's lazy populate. Graph "DEFAULT" → cqpr_g = None.
+let build_qp_row
+  (h : cottas_ondisk_handle)
+  (s_tok p_tok o_tok g_tok : string)
+  : Tot cottas_qp_row =
+  let s_id = ondisk_lookup_subj_id_global h.coh_path s_tok in
+  let p_id = ondisk_lookup_pred_id_global h.coh_path p_tok in
+  let o_id = ondisk_lookup_obj_id_global  h.coh_path o_tok in
+  let g_id =
+    if g_tok = "DEFAULT" then None
+    else ondisk_lookup_graph_id_global h.coh_path g_tok in
+  { cqpr_s = s_id; cqpr_p = p_id; cqpr_o = o_id; cqpr_g = g_id; }
+
+// ----------------------------------------------------------------------
+// Direct token -> term parsing (SEARCH selectivity, 2026-07-06 follow-up
+// to the count-exact fix, docs/designissues/2026-07-05-disk-backed-db-
+// perf-review.md). `build_qp_row` above round-trips every matched row's
+// ALREADY-DECODED column token through `ondisk_lookup_*_id_global`
+// (token -> corpus-wide id) so `cottas_ondisk_row_to_quad` can later
+// recover a typed term via `list_nth ds.cods_handle.coh_subjects id` --
+// but `coh_subjects`/`coh_predicates`/`coh_objects` are populated by the
+// OCaml Bet7 lazy loader's `collect_distinct`
+// (experimental_ocaml_glue/cottas_ondisk_runtime.sh:213-238), which on
+// FIRST TOUCH of a column unconditionally decodes and dedupes THAT
+// COLUMN ACROSS EVERY ROW GROUP OF THE WHOLE CORPUS -- ignoring
+// `plan_candidate_rgs`'s row-group pruning entirely -- just to hand back
+// a value this function already has the bytes for.
+//
+// Measured (gene.ttl, 888,949 rows, CS-clustered + eager sidecars, this
+// sandbox, native CLI): `collect_distinct` on the subject column costs
+// ~9s (91,871 distinct values) and on the object column ~43s (75,142
+// distinct values) -- paid ONCE per column per process (cached
+// thereafter), but paid in FULL regardless of how few row groups the
+// search actually needed to touch. This is why COTTAS's on-disk SELECT
+// path gets SLOWER as result cardinality/selectivity changes in the
+// "wrong" direction relative to corpus size: a 3-row point lookup and a
+// 25,083-row scan both pay the SAME O(corpus) tax the moment either
+// query's output touches the subject or object column, because BOTH
+// need `build_qp_row` to run at least once.
+//
+// Fix: parse the raw token DIRECTLY into its typed RDF term, using the
+// SAME verified N-Triples term grammar `Parser.NTriples` already applies
+// to on-disk RDF files -- docs/cottas-format-v1.md section 4 defines the
+// COTTAS cell grammar as literally a subset of that grammar. No id, no
+// `coh_subjects`/`coh_predicates`/`coh_objects` corpus-wide list, and no
+// `experimental_ocaml_glue` involvement at all: this is pure F*, reusing
+// an existing verified parser, per iron rule #4 ("parsers belong in
+// F*"). `pos = fs_byte_length tok` requires the parser to consume the
+// ENTIRE cell (a COTTAS cell carries nothing but the term -- no
+// trailing whitespace or dot, unlike a full N-Triples line); a partial
+// parse or a parse failure falls back to the SAME out-of-range sentinel
+// `cottas_ondisk_decode_subject` / `_predicate` / `_object` /
+// `_graph_name` already use for corrupt/mismatched data, keeping the
+// function total and the fallback naming consistent with the existing
+// id-based decode path.
+let cottas_decode_oor_predicate : wf_iri =
+  let fallback : iri = "urn:factoidal:cottas-decode-predicate-unknown-id" in
+  assert_norm (is_iri fallback);
+  fallback
+
+let token_to_subject (tok : string) : Tot subject =
+  match parse_subject tok 0 with
+  | ParseOk s pos -> if pos = fs_byte_length tok then s else S_BNode "cottas_decode_oor"
+  | ParseFail _ _ -> S_BNode "cottas_decode_oor"
+
+let token_to_predicate (tok : string) : Tot wf_iri =
+  match parse_iri tok 0 with
+  | ParseOk p pos -> if pos = fs_byte_length tok then p else cottas_decode_oor_predicate
+  | ParseFail _ _ -> cottas_decode_oor_predicate
+
+let token_to_object (tok : string) : Tot rdf_term =
+  match parse_object tok 0 with
+  | ParseOk o pos -> if pos = fs_byte_length tok then o else T_BNode "cottas_decode_oor"
+  | ParseFail _ _ -> T_BNode "cottas_decode_oor"
+
+// Graph tokens are IRI-only (docs/cottas-format-v1.md section 6 sentinel
+// "DEFAULT" is handled by the caller BEFORE this is reached — see
+// `cottas_ondisk_row_tok_to_quad` below).
+let token_to_graph_name (tok : string) : Tot iri =
+  match parse_iri tok 0 with
+  | ParseOk g pos -> if pos = fs_byte_length tok then g else ""
+  | ParseFail _ _ -> ""
+
+// ----------------------------------------------------------------------
+// Direct term -> token serialization (BOUND-side selectivity, 2026-07-06
+// follow-up to the SEARCH-selectivity fix above, docs/designissues/
+// 2026-07-06-competitive-benchmark-results.md §8's "not fixed this
+// round"). `token_to_subject` et al. above parse an already-decoded ROW
+// cell into a typed term (reverse direction); these four are the
+// forward direction: serialize the QUERY'S OWN typed bound term into
+// the token string it would appear as in a COTTAS cell, so `cell_match`
+// can compare it directly against decoded row tokens without ever
+// resolving a corpus-wide term-id.
+//
+// Why this was an id round-trip before: `cottas_ondisk_build_bound_qp_
+// opt` called `cottas_ondisk_encode_subject`/`_predicate`/`_object`
+// (term -> id, via the corpus-wide revmap / the OCaml Bet7 runtime's
+// `ft_*_tok_to_id`), and `cottas_ondisk_search`/`_estimate`/
+// `_count_exact` immediately called `id_to_raw_token_via_global`
+// (id -> token, via Bet7's `ft_id_to_*_tok`, populated by the SAME
+// per-column `ensure_*_loaded` populate as the encode step) just to get
+// back the token string `cell_match` needed all along. Both directions
+// share one `collect_distinct` populate per column
+// (`experimental_ocaml_glue/cottas_ondisk_z_lazy_open.sh`), which on
+// FIRST TOUCH decodes and dedupes that column across every row group of
+// the whole corpus — the identical O(corpus) tax the SEARCH-selectivity
+// fix above already eliminated on the OUTPUT side. Measured (gene.ttl,
+// 888,949 rows): subject `collect_distinct` costs ~9-10s, paid once per
+// process the first time ANY bound query touches the subject column,
+// independent of how selective that query is.
+//
+// Fix: serialize the term directly using the SAME verified N-Quads term
+// serializer the wire/dump output path already uses
+// (`RDF.NQuads.Serialize`, migrated from factoidal_http.ml per iron
+// rule #1) — no id, no revmap, no `experimental_ocaml_glue`
+// involvement at all. `docs/cottas-format-v1.md` section 4 defines the
+// cell grammar as an N-Quads term token; `nq_subject_to_string` /
+// `nq_term_to_string` already produce exactly that grammar (`<iri>`,
+// `_:label`, `"lex"`, `"lex"@lang`, `"lex"^^<dt>`) for the call sites
+// that predate this fix. Predicate/graph tokens are IRI-only per
+// cottas-format-v1.md's per-column table, so they get a small direct
+// wrapper instead of routing through `nq_term_to_string`'s full
+// rdf_term match.
+//
+// Caveat (disclosed, not hidden — same gap as every other
+// `nq_term_to_string` call site, not introduced here): `nq_escape_
+// literal` escapes `\\`, `\"`, `\n`, `\r`, `\t` but not `\b`/`\f`
+// (0x08/0x0C), which cottas-format-v1.md's lex grammar also allows as
+// escapes. A bound literal whose lexical form contains a literal
+// backspace or form-feed byte serializes here as the raw byte instead
+// of the escaped form pycottas would have written, so it would fail to
+// token-match a row that legitimately contains it — an existing gap in
+// `RDF.NQuads.Serialize` shared by every other caller, not something to
+// paper over with new escaping logic bolted onto this file.
+let bound_subject_to_token (s : subject) : Tot string =
+  nq_subject_to_string s
+
+let bound_predicate_to_token (p : wf_iri) : Tot string =
+  "<" ^ p ^ ">"
+
+let bound_object_to_token (o : rdf_term) : Tot string =
+  nq_term_to_string o
+
+let bound_graph_iri_to_token (g : iri) : Tot string =
+  "<" ^ g ^ ">"
+
+// Row shape for the on-disk SEARCH path: the four already-decoded raw
+// column tokens, held as-is. No id, no corpus-wide dictionary lookup —
+// `cottas_ondisk_row_tok_to_quad` (near the bottom of this file) parses
+// these directly via the functions above, exactly once per MATCHED row,
+// never per corpus. This is deliberately a NEW type rather than a
+// change to `cottas_qp_row` (Parser.BallyhooCOTTAS.fst): that type is
+// shared with the dead in-memory GB_COTTAS path and changing its shape
+// would ripple beyond the on-disk SEARCH surface this fix targets.
+noeq type cottas_qp_row_tok = {
+  cqprt_s : string;
+  cqprt_p : string;
+  cqprt_o : string;
+  cqprt_g : string;
+}
+
+let build_qp_row_tok (s_tok p_tok o_tok g_tok : string) : Tot cottas_qp_row_tok =
+  { cqprt_s = s_tok; cqprt_p = p_tok; cqprt_o = o_tok; cqprt_g = g_tok; }
+
+// Phase 2.5b/c (issue #118): the seq-shape filter consumes
+// `cottas_column` (extracts to OCaml `string option array`) and
+// walks via O(1) indexed access. Page cache returns this shape
+// post-2.5c. Same acc-rev convention; same bound_match semantics.
+//
+// Decreases on `n - i` over an indexed walk over the column array.
+// F* totality accepts. Tail-recursive throughout.
+
+// Choose the smaller of two nats. Defensive minimum across the four
+// columns of a row group; well-formed parquet has them equal.
+let nat_min (a b : nat) : Tot nat = if a <= b then a else b
+
+let row_group_row_count (s_col p_col o_col g_col : cottas_column) : Tot nat =
+  let n_s = cottas_column_length s_col in
+  let n_p = cottas_column_length p_col in
+  let n_o = cottas_column_length o_col in
+  let n_g = cottas_column_length g_col in
+  nat_min (nat_min n_s n_p) (nat_min n_o n_g)
+
+let rec filter_zipped_rows_seq
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc_rev : list cottas_qp_row)
+  : Tot (list cottas_qp_row) (decreases (n - i)) =
+  if i = n then acc_rev
+  else
+    let acc_rev' =
+      // Defensive bound checks: discharge cottas_column_get's
+      // refinement without an extra invariant; well-formed parquet
+      // has every column length >= row count.
+      if i < cottas_column_length s_col &&
+         i < cottas_column_length p_col &&
+         i < cottas_column_length o_col &&
+         i < cottas_column_length g_col
+      then
+        match cottas_column_get s_col i, cottas_column_get p_col i,
+              cottas_column_get o_col i, cottas_column_get g_col i with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then build_qp_row h s_tok p_tok o_tok g_tok :: acc_rev
+          else acc_rev
+        | _ -> acc_rev
+      else acc_rev in
+    filter_zipped_rows_seq h bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc_rev'
+
+// Tok-shaped sibling of `filter_zipped_rows_seq`: identical match logic,
+// but builds `cottas_qp_row_tok` (raw strings, via `build_qp_row_tok`)
+// instead of round-tripping through `build_qp_row`'s corpus-wide id
+// lookups. No `cottas_ondisk_handle` argument needed — nothing here
+// touches `h.coh_path` or any OCaml-realised lookup.
+let rec filter_zipped_rows_tok_seq
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc_rev : list cottas_qp_row_tok)
+  : Tot (list cottas_qp_row_tok) (decreases (n - i)) =
+  if i = n then acc_rev
+  else
+    let acc_rev' =
+      if i < cottas_column_length s_col &&
+         i < cottas_column_length p_col &&
+         i < cottas_column_length o_col &&
+         i < cottas_column_length g_col
+      then
+        match cottas_column_get s_col i, cottas_column_get p_col i,
+              cottas_column_get o_col i, cottas_column_get g_col i with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then build_qp_row_tok s_tok p_tok o_tok g_tok :: acc_rev
+          else acc_rev
+        | _ -> acc_rev
+      else acc_rev in
+    filter_zipped_rows_tok_seq bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc_rev'
+
+let rec count_zipped_rows_seq
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc : nat)
+  : Tot nat (decreases (n - i)) =
+  if i = n then acc
+  else
+    let acc' =
+      if i < cottas_column_length s_col &&
+         i < cottas_column_length p_col &&
+         i < cottas_column_length o_col &&
+         i < cottas_column_length g_col
+      then
+        match cottas_column_get s_col i, cottas_column_get p_col i,
+              cottas_column_get o_col i, cottas_column_get g_col i with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then acc + 1
+          else acc
+        | _ -> acc
+      else acc in
+    count_zipped_rows_seq bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc'
+
+// Legacy list-shape filter retained for callers we haven't migrated
+// yet (filter_zipped_rows_limited at the LIMIT-pushdown path). No
+// in-tree callers as of 2.5c; will be deleted with that consolidation.
+//
+// Zip 4 column lists row-by-row. The OCaml runtime guarantees they
+// have equal lengths; we still handle the misaligned case safely
+// (truncates at the shortest list).
+//
+// `bound_*` are the raw-token bounds from `id_to_raw_token` etc.;
+// None means "match any". Matching rows are appended to `acc_rev`
+// (in reverse row order). Caller flips at the end.
+//
+// Recursion is over the subject column (which decreases by one cell
+// per step); F*'s totality checker accepts that.
+let rec filter_zipped_rows
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : list (option string))
+  (acc_rev : list cottas_qp_row)
+  : Tot (list cottas_qp_row) (decreases s_col) =
+  match s_col, p_col, o_col, g_col with
+  | s_hd :: s_tl, p_hd :: p_tl, o_hd :: o_tl, g_hd :: g_tl ->
+    let acc_rev' =
+      match s_hd, p_hd, o_hd, g_hd with
+      | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+        if cell_match bound_s s_tok &&
+           cell_match bound_p p_tok &&
+           cell_match bound_o o_tok &&
+           graph_cell_match bound_g g_tok
+        then build_qp_row h s_tok p_tok o_tok g_tok :: acc_rev
+        else acc_rev
+      | _ -> acc_rev in
+    filter_zipped_rows h bound_s bound_p bound_o bound_g
+      s_tl p_tl o_tl g_tl acc_rev'
+  | _ -> acc_rev
+
+// Same as filter_zipped_rows but counts only — no per-row revmap lookup.
+// Used by cottas_ondisk_estimate.
+let rec count_zipped_rows
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : list (option string))
+  (acc : nat)
+  : Tot nat (decreases s_col) =
+  match s_col, p_col, o_col, g_col with
+  | s_hd :: s_tl, p_hd :: p_tl, o_hd :: o_tl, g_hd :: g_tl ->
+    let acc' =
+      match s_hd, p_hd, o_hd, g_hd with
+      | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+        if cell_match bound_s s_tok &&
+           cell_match bound_p p_tok &&
+           cell_match bound_o o_tok &&
+           graph_cell_match bound_g g_tok
+        then acc + 1
+        else acc
+      | _ -> acc in
+    count_zipped_rows bound_s bound_p bound_o bound_g
+      s_tl p_tl o_tl g_tl acc'
+  | _ -> acc
+
+// Default page-cache capacity. Parliament's 26-row-group × 4-column
+// surface = 104 entries; 128 gives headroom for slightly larger
+// corpora without LRU thrash. For massive corpora the OCaml byte
+// cache is the dominant accelerant; this F* cache is correctness-
+// preserving across multi-pass walks (Phase D will need it).
+let pcache_default_capacity : nat = 128
+
+// Walk row groups [rg_index .. rg_count) in order, decoding each row
+// group's 4 columns and accumulating matched rows into `acc_rev`
+// (reverse row order). `fuel = rg_count - rg_index` makes termination
+// trivial. Decoder errors on a row group are skipped (silently empty).
+//
+// The page cache is threaded through the recursion. Each row-group
+// step decodes 4 columns; on cache miss the underlying decoder is
+// invoked and the result inserted. On hit the decoded list comes
+// straight from the cache.
+// Phase 2.5c (issue #118): the page cache now stores `cottas_column`
+// (extracts to `string option array`). The walk consumes the array
+// shape directly via filter_zipped_rows_seq, eliminating the per-cell
+// list cons cost.
+let rec walk_row_groups_search
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row)
+  (cache : page_cache)
+  : Tot (list cottas_qp_row & page_cache) (decreases fuel) =
+  if fuel = 0 then (acc_rev, cache)
+  else if rg_index >= rg_count then (acc_rev, cache)
+  else
+    let cap = cache.pc_capacity in
+    let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+    let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+    let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+    let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_row_groups_search h bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc_rev' c4
+
+// Phase 2.5c (issue #118): cache returns cottas_column; estimator
+// uses count_zipped_rows_seq.
+let rec walk_row_groups_estimate
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat) (acc : nat)
+  (cache : page_cache)
+  : Tot (nat & page_cache) (decreases fuel) =
+  if fuel = 0 then (acc, cache)
+  else if rg_index >= rg_count then (acc, cache)
+  else
+    let cap = cache.pc_capacity in
+    let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+    let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+    let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+    let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+    let acc' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        count_zipped_rows_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc
+      | _ -> acc in
+    walk_row_groups_estimate h bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc' c4
+
+// ----------------------------------------------------------------------
+// Phase 2.5e (issue #118): global-cache walks. Same logic as
+// `walk_row_groups_search` / `walk_row_groups_estimate` above but call
+// the OCaml-realised `pcache_decode_in_row_group_global` — no cache
+// threading. The cross-call cache state lives in OCaml (Cottas-side
+// `pcache_global_ref`), so consecutive cottas_ondisk_search calls
+// inherit warm-cache hits without burying a `page_cache` argument in
+// every public-API caller.
+//
+// Used by `cottas_ondisk_search` and `cottas_ondisk_estimate` after
+// 2.5e retires the OCaml runtime perf-shim.
+// ----------------------------------------------------------------------
+
+// Issue #98/Mim3 follow-up (2026-07-05): the global walks below now
+// take the per-query row-group-offset table (built ONCE per public
+// entry-point call via `Parquet.Footer.probe_parquet_row_group_offset_table`)
+// and decode through the table-indexed page-cache decoder, removing
+// the O(rg_index) footer re-walk that every per-row-group decode used
+// to pay inside `probe_parquet_column_chunk_in_row_group_locator`
+// (O(row_groups^2) summed over an unpruned scan). `None` (footer
+// table build failed) falls back to the original per-call decoder --
+// behaviour unchanged, just not accelerated.
+let pcache_decode_global_auto
+  (table : option parquet_row_group_offset_table)
+  (path : string) (rg_index : nat) (col_index : nat)
+  : Tot (option cottas_column) =
+  match table with
+  | Some t -> pcache_decode_in_row_group_global_from_table t path rg_index col_index
+  | None -> pcache_decode_in_row_group_global path rg_index col_index
+
+let rec walk_row_groups_search_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row)
+  : Tot (list cottas_qp_row) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else
+    let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+    let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+    let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+    let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_row_groups_search_global h table bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc_rev'
+
+// Tok-shaped sibling of `walk_row_groups_search_global` — decodes the
+// same 4 columns per row group (row-group selection is unchanged; this
+// fix targets the id-round-trip on OUTPUT construction, not column
+// decode), but folds through `filter_zipped_rows_tok_seq` instead of
+// `filter_zipped_rows_seq`, so no matched row ever touches
+// `ondisk_lookup_*_id_global` / Bet7. No `h` needed except for the
+// path used to drive the page-cache decode.
+let rec walk_row_groups_search_tok_global
+  (path : string)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row_tok)
+  : Tot (list cottas_qp_row_tok) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else
+    let s_col = pcache_decode_global_auto table path rg_index 0 in
+    let p_col = pcache_decode_global_auto table path rg_index 1 in
+    let o_col = pcache_decode_global_auto table path rg_index 2 in
+    let g_col = pcache_decode_global_auto table path rg_index 3 in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_tok_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_row_groups_search_tok_global path table bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc_rev'
+
+let rec walk_row_groups_estimate_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat) (acc : nat)
+  : Tot nat (decreases fuel) =
+  if fuel = 0 then acc
+  else if rg_index >= rg_count then acc
+  else
+    let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+    let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+    let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+    let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+    let acc' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        count_zipped_rows_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc
+      | _ -> acc in
+    walk_row_groups_estimate_global h table bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc'
+
+// ----------------------------------------------------------------------
+// Exact counting for RESULT-producing paths (found via the E1
+// clustering experiment, 2026-07-03): cottas_ondisk_estimate's
+// bounds-present branch is a deliberate approximation
+// (candidate-row-groups x avg_rows_per_rg) for the join-order
+// optimiser, but the streaming COUNT fast paths in SPARQL11.Store
+// were consuming it as the query RESULT — GROUP BY ?g returned
+// near-total row counts for every graph. The walks below are exact.
+
+// Count rows in one graph column whose token matches bound_g.
+// Column-3-only: the COUNT(*) GROUP BY ?g shape never needs s/p/o
+// decoded, and the global page cache makes the per-named-graph
+// re-walks hit already-decoded pages.
+let rec count_graph_col_matches_seq
+  (bound_g : option string) (g_col : cottas_column)
+  (n : nat) (i : nat{i <= n}) (acc : nat)
+  : Tot nat (decreases (n - i)) =
+  if i = n then acc
+  else
+    let acc' =
+      if i < cottas_column_length g_col then
+        match cottas_column_get g_col i with
+        | Some g_tok -> if graph_cell_match bound_g g_tok then acc + 1 else acc
+        | None -> acc
+      else acc in
+    count_graph_col_matches_seq bound_g g_col n (i + 1) acc'
+
+let rec walk_row_groups_count_graph_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat) (acc : nat)
+  : Tot nat (decreases fuel) =
+  if fuel = 0 then acc
+  else if rg_index >= rg_count then acc
+  else
+    let acc' =
+      match pcache_decode_global_auto table h.coh_path rg_index 3 with
+      | Some gc ->
+        count_graph_col_matches_seq bound_g gc (cottas_column_length gc) 0 acc
+      | None -> acc in
+    walk_row_groups_count_graph_global h table bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc'
+
+// ----------------------------------------------------------------------
+// Selective-column exact count (roadmap item 4, 2026-07-06 follow-up).
+//
+// Problem: `walk_row_groups_estimate_global` (used by
+// `cottas_ondisk_count_exact` whenever ANY of s/p/o is bound) decodes
+// ALL FOUR columns of every row group even when only a subset of
+// bounds is present -- e.g. `SELECT (COUNT(*)) WHERE { ?s a ?o }` has
+// bound_p = Some(rdf:type) but bound_s = bound_o = None. Neither the
+// match test (`cell_match None _` is always `true`, independent of the
+// actual cell) nor the query's output (a bare count, no bindings) ever
+// needs the decoded VALUE of an unbound column, yet the old walk paid
+// a full string-materialising decode of the subject and object columns
+// on every row group anyway. On the gene corpus (888,949 rows, 8 row
+// groups, `rdf:type` present in every row group so the dict-cache
+// candidate prune from `plan_candidate_rgs` cannot help either) s/o are
+// the two high-cardinality columns (adaptively DLBA/RLE_DICTIONARY,
+// tens of thousands of distinct tokens) -- decoding them is the
+// dominant cost of the measured ~55-58s cold COUNT. p and g are cheap
+// (tiny dictionaries: 6 predicates, 0-1 graphs on this corpus).
+//
+// Fix: decode ONLY the columns whose bound is `Some` (plus the graph
+// column, which is needed unconditionally both to establish the row
+// count `n` -- cheap, no whole-column materialisation avoided there
+// since it's already the cheapest column -- and because a live
+// GB_CottasOnDisk query always carries a graph bound per issue #267).
+// `bound_col_match` mirrors `cell_match`'s contract exactly: `None`
+// bound matches unconditionally without inspecting the (possibly
+// undecoded) column at all.
+let bound_col_match
+  (bound : option string) (col_opt : option cottas_column) (i : nat)
+  : Tot bool =
+  match bound with
+  | None -> true
+  | Some expected ->
+    (match col_opt with
+     | None -> false
+     | Some col ->
+       if i < cottas_column_length col then
+         (match cottas_column_get col i with
+          | Some tok -> tok = expected
+          | None -> false)
+       else false)
+
+let rec count_selective_matches_seq
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col : option cottas_column)
+  (g_col : cottas_column)
+  (n : nat) (i : nat{i <= n}) (acc : nat)
+  : Tot nat (decreases (n - i)) =
+  if i = n then acc
+  else
+    let acc' =
+      if i < cottas_column_length g_col then
+        (match cottas_column_get g_col i with
+         | Some g_tok ->
+           if bound_col_match bound_s s_col i &&
+              bound_col_match bound_p p_col i &&
+              bound_col_match bound_o o_col i &&
+              graph_cell_match bound_g g_tok
+           then acc + 1
+           else acc
+         | None -> acc)
+      else acc in
+    count_selective_matches_seq bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc'
+
+// Only decodes a column when its bound is `Some` (col 3 / graph is
+// always decoded: cheap, and needed to source the row count `n`).
+// Preserves the pre-existing all-or-nothing-per-row-group semantics
+// for columns that ARE bound: if a bound column fails to decode for a
+// row group, that row group contributes 0 (same fallback
+// `walk_row_groups_estimate_global` used, just scoped to the columns
+// this query actually needs -- an unrelated unbound column failing to
+// decode no longer zeroes out a row group it was never going to touch).
+let rec walk_row_groups_count_exact_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat) (acc : nat)
+  : Tot nat (decreases fuel) =
+  if fuel = 0 then acc
+  else if rg_index >= rg_count then acc
+  else
+    let acc' =
+      match pcache_decode_global_auto table h.coh_path rg_index 3 with
+      | None -> acc
+      | Some g_col ->
+        let s_col = if Some? bound_s then pcache_decode_global_auto table h.coh_path rg_index 0 else None in
+        let p_col = if Some? bound_p then pcache_decode_global_auto table h.coh_path rg_index 1 else None in
+        let o_col = if Some? bound_o then pcache_decode_global_auto table h.coh_path rg_index 2 else None in
+        let needed_ok =
+          (None? bound_s || Some? s_col) &&
+          (None? bound_p || Some? p_col) &&
+          (None? bound_o || Some? o_col) in
+        if needed_ok then
+          count_selective_matches_seq bound_s bound_p bound_o bound_g
+            s_col p_col o_col g_col (cottas_column_length g_col) 0 acc
+        else acc in
+    walk_row_groups_count_exact_global h table bound_s bound_p bound_o bound_g
+      (rg_index + 1) rg_count (fuel - 1) acc'
+
+// ----------------------------------------------------------------------
+// Phase 2.5b (issue #118): seq-shape variants of the hot-path walks.
+//
+// These mirror filter_zipped_rows / count_zipped_rows / walk_row_groups_*
+// but consume `cottas_column` (an array under the OCaml realisation)
+// instead of `list (option string)`. The change eliminates the O(N)
+// per-row list-cell allocation that dominated cold-path time on
+// parliament's 122,880-row row-groups; cell access is now O(1) via
+// `cottas_column_get` (extracted to `Array.unsafe_get`).
+//
+// Tail-recursion: the seq variants thread an explicit row-index `i`
+// alongside the count `n`. F* totality accepts `decreases (n - i)`.
+// Same acc-rev convention as the list variants — caller flips at the
+// end with `list_rev`.
+//
+// The list variants above are preserved for the candidate-rgs path
+// (still using the page cache) and for the limited / aleph6 LIMIT
+// pushdown path. Phase 2.5c will migrate those, which lets the page
+// cache value type itself shift to `cottas_column`. Phase 2.5e
+// retires the OCaml runtime perf-shim once the F* path is the
+// runtime ground truth.
+// ----------------------------------------------------------------------
+
+// Phase 2.5c (issue #118): the standalone walk_row_groups_*_seq variants
+// added in 2.5b have been folded into walk_row_groups_search /
+// walk_row_groups_estimate (which now consume cottas_column from the
+// page cache directly). The non-cached seq walks are no longer needed.
+
+// ----------------------------------------------------------------------
+// Tsade2 (issue #100 Phase D): per-row-group dictionary cache + column-
+// prune query planner.
+//
+// For predicate-bound queries like `?s wdt:P31 :Human`, we want to walk
+// only row groups whose predicate dictionary contains `wdt:P31` —
+// skipping the (decoder-expensive) data pages of row groups that
+// definitely don't contain the predicate.
+//
+// We use a per-query F* dict cache: `list ((rg_index, col_index) & list
+// string)`. On first need for column C, we populate cache entries for all
+// row groups of column C (one dict-page decompress per rg, cheap —
+// ~26 entries × ~50KB total for parliament). Subsequent membership
+// queries within the same column hit the cache.
+//
+// Per-query cache (re-built per call) — sufficient because each
+// `cottas_ondisk_search` call invokes the planner once. A handle-attached
+// cross-query cache would be a Phase E refinement.
+// ----------------------------------------------------------------------
+
+type dict_cache = list ((nat & nat) & list string)
+
+let rec dict_cache_lookup (c : dict_cache) (rg : nat) (col : nat)
+  : Tot (option (list string)) (decreases c) =
+  match c with
+  | [] -> None
+  | ((r, k), v) :: rest ->
+    if r = rg && k = col then Some v
+    else dict_cache_lookup rest rg col
+
+// Membership check on a dict list (linear scan). Dict lists are small
+// (parliament: 231 distinct predicates total; per-rg subset typically
+// smaller), so O(N) is fine.
+let rec list_string_mem (xs : list string) (s : string)
+  : Tot bool (decreases xs) =
+  match xs with
+  | [] -> false
+  | hd :: rest -> if hd = s then true else list_string_mem rest s
+
+// ----------------------------------------------------------------------
+// GROUP BY ?p streaming fast path (2026-07-12 investigation): enumerate
+// the predicate column's DISTINCT values by reading only the Parquet
+// DICTIONARY PAGES, never the data pages — the same "dict page only, no
+// data-page decode" trick `probe_parquet_column_dictionary_in_row_group[
+// _from_table]` already provides for the column-prune planner's dict
+// cache just above (`populate_dict_cache_for_column`). This is
+// deliberately NOT the Bet7/#254 `collect_distinct` full-column decode
+// (`coh_predicates`/`coh_pred_revmap`'s lazy-populate path in the OCaml
+// glue, see `cottas_ondisk_decode_predicate`'s own banner) — that walks
+// every row's DATA page; this walks only the (typically tiny, <1KB
+// compressed) dictionary page per row group.
+//
+// Returns `None` if ANY touched row group's predicate column has no
+// dictionary page at all (e.g. DELTA_LENGTH_BYTE_ARRAY-encoded from the
+// native writer, or a genuinely huge-cardinality column Parquet chose
+// not to dictionary-encode) — never silently treat "couldn't read the
+// dictionary" as "this row group has zero predicates." The caller
+// (SPARQL11.Store's GROUP BY ?p detector, via `RDF.Store.Capabilities
+// .Cottas`'s `sc_distinct_predicates`) falls back to the materialise
+// path on `None`.
+// ----------------------------------------------------------------------
+
+// Union `new_entries` into `acc`, skipping any string already present.
+// Dictionaries are small (distinct-predicate cardinality, not row
+// cardinality), so the O(n) `list_string_mem` membership check per
+// entry is cheap in practice — same trade `list_string_mem` itself
+// already makes for the column-prune dict cache.
+let rec union_dedupe_strings_acc (acc : list string) (new_entries : list string)
+  : Tot (list string) (decreases new_entries) =
+  match new_entries with
+  | [] -> acc
+  | hd :: tl ->
+    if list_string_mem acc hd
+    then union_dedupe_strings_acc acc tl
+    else union_dedupe_strings_acc (hd :: acc) tl
+
+// Walk row groups [rg_index .. rg_count), reading column `col_index`'s
+// dictionary page only (per `probe_parquet_column_dictionary_in_row_
+// group[_from_table]`) and union-dedupe the entries into `acc`. Any row
+// group whose dictionary page is missing aborts the WHOLE walk with
+// `None` (see the banner above — never assume the dictionary exists).
+let rec collect_distinct_column_tokens_rgs
+  (path : string) (table : option parquet_row_group_offset_table)
+  (col_index : nat)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc : list string)
+  : Tot (option (list string)) (decreases fuel) =
+  if fuel = 0 then Some acc
+  else if rg_index >= rg_count then Some acc
+  else
+    let dict_opt =
+      match table with
+      | Some t ->
+        probe_parquet_column_dictionary_in_row_group_from_table t path rg_index col_index
+      | None ->
+        probe_parquet_column_dictionary_in_row_group path rg_index col_index in
+    match dict_opt with
+    | None -> None
+    | Some entries ->
+      let acc' = union_dedupe_strings_acc acc entries in
+      collect_distinct_column_tokens_rgs path table col_index
+        (rg_index + 1) rg_count (fuel - 1) acc'
+
+// Public entry point: the predicate column is Parquet column index 1
+// (0=subject, 1=predicate, 2=object, 3=graph — SPARQL11.Store.fst's
+// `candidates_for_one_bound` banner documents the same convention).
+// Tokens are typed via `token_to_predicate` (cheap at distinct-
+// cardinality, not row cardinality).
+let cottas_ondisk_distinct_predicates (ds : cottas_ondisk_store)
+  : Tot (option (list wf_iri)) =
+  let h = ds.cods_handle in
+  match probe_parquet_row_group_count h.coh_path with
+  | None -> None
+  | Some rg_count ->
+    let table = probe_parquet_row_group_offset_table h.coh_path in
+    match collect_distinct_column_tokens_rgs h.coh_path table 1 0 rg_count rg_count [] with
+    | None -> None
+    | Some toks -> Some (List.Tot.map token_to_predicate toks)
+
+// Populate `dict_cache` for column `col_index` across row groups
+// [rg_index .. rg_count). Each rg's dict is decoded via the new
+// `probe_parquet_column_dictionary_in_row_group` helper. Failures
+// (e.g. a column without a dict page) are stored as the empty list,
+// which causes the candidate-rgs computation to TREAT THAT RG AS
+// "may contain the term" — i.e. fall back to including it.
+//
+// To distinguish "dict absent" from "dict present and empty", we
+// store dict-absent rgs with an absent-marker `["__no_dict__"]` —
+// but actually a cleaner approach: skip insertion entirely on None
+// (lookup returns None, planner falls back to "include this rg").
+//
+// `table` (issue #98/Mim3 follow-up, 2026-07-05): this loop runs once
+// per rg_index in [0 .. rg_count) for the SAME `path` — exactly the
+// "computed once per query/open" scope for
+// `Parquet.Footer.probe_parquet_row_group_offset_table`. The caller
+// (`plan_candidate_rgs`) builds the table once and passes it down here;
+// `Some t` takes the O(1)-ish table-indexed dictionary probe, `None`
+// (table build failed — e.g. a malformed footer) falls back to the
+// original per-call path-based probe so behaviour is unchanged on that
+// path, just not accelerated.
+//
+// Tsade2 Phase E (issue #100 followup, 2026-07-06): the `Some t` branch
+// now goes through `PageCache.dpcache_probe_dict_in_row_group_global_from_table`
+// instead of calling `probe_parquet_column_dictionary_in_row_group_from_table`
+// directly. `c` (this function's own `dict_cache` argument) still exists
+// and is still checked first — it is the PER-QUERY memo that lets
+// multiple bound columns in the SAME query planning pass share a
+// populate — but on a miss there it now asks the PROCESS-LIFETIME cache
+// instead of redecoding, so the dictionary decompress + plain-dictionary
+// decode work happens at most once per (row-group, column) per store
+// handle, not once per (row-group, column) per query. The `None` (no
+// table) branch is intentionally left calling the raw, unaccelerated
+// probe — same "fall back to unaccelerated, never wrong" precedent
+// `table` itself established.
+let rec populate_dict_cache_loop
+  (c : dict_cache) (table : option parquet_row_group_offset_table)
+  (path : string) (col_index : nat)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  : Tot dict_cache (decreases fuel) =
+  if fuel = 0 then c
+  else if rg_index >= rg_count then c
+  else
+    let c' =
+      match dict_cache_lookup c rg_index col_index with
+      | Some _ -> c  // already populated
+      | None ->
+        let dict_opt =
+          match table with
+          | Some t ->
+            dpcache_probe_dict_in_row_group_global_from_table
+              t path rg_index col_index
+          | None ->
+            probe_parquet_column_dictionary_in_row_group path rg_index col_index in
+        match dict_opt with
+        | None -> c  // no dict page — leave absent (planner falls back)
+        | Some dict -> ((rg_index, col_index), dict) :: c in
+    populate_dict_cache_loop c' table path col_index (rg_index + 1) rg_count (fuel - 1)
+
+let populate_dict_cache_for_column
+  (c : dict_cache) (table : option parquet_row_group_offset_table)
+  (path : string) (col_index : nat) (rg_count : nat)
+  : Tot dict_cache =
+  populate_dict_cache_loop c table path col_index 0 rg_count rg_count
+
+// Compute the candidate row-groups for a column-bound. `bound_token` is
+// the raw column-token string (e.g. "<https://id.parliament.uk/...>")
+// the search is looking for. Returns (candidate_rgs_in_REVERSE_order,
+// dict_cache).
+//
+// If a row group is absent from the dict cache (e.g. dict page missing,
+// or column has no dict at all), we INCLUDE it in candidates — safe
+// fallback that may cost a wasted data-page decode, never wrong answers.
+let rec compute_candidate_rgs_loop
+  (c : dict_cache) (col_index : nat) (bound_token : string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list nat)
+  : Tot (list nat) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else
+    let acc_rev' =
+      match dict_cache_lookup c rg_index col_index with
+      | None -> rg_index :: acc_rev  // safe fallback: include
+      | Some dict ->
+        if list_string_mem dict bound_token then rg_index :: acc_rev
+        else acc_rev in
+    compute_candidate_rgs_loop c col_index bound_token
+      (rg_index + 1) rg_count (fuel - 1) acc_rev'
+
+// Returns candidates in row-group order (low to high).
+let compute_candidate_rgs
+  (c : dict_cache) (col_index : nat) (bound_token : string) (rg_count : nat)
+  : Tot (list nat) =
+  let rev_list = compute_candidate_rgs_loop c col_index bound_token
+    0 rg_count rg_count [] in
+  // list_rev is defined in Parquet.Footer (open above brings it in).
+  list_rev rev_list
+
+// Intersect two sorted-ascending nat lists. Used to combine
+// per-column candidate sets when multiple bounds are present
+// (e.g. both subject AND predicate bound).
+let rec list_nat_intersect_sorted
+  (xs ys : list nat) (acc_rev : list nat) (fuel : nat)
+  : Tot (list nat) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else
+    match xs, ys with
+    | [], _ -> acc_rev
+    | _, [] -> acc_rev
+    | x :: xrest, y :: yrest ->
+      if x = y then
+        list_nat_intersect_sorted xrest yrest (x :: acc_rev) (fuel - 1)
+      else if x < y then
+        list_nat_intersect_sorted xrest ys acc_rev (fuel - 1)
+      else
+        list_nat_intersect_sorted xs yrest acc_rev (fuel - 1)
+
+// Public intersect: takes two ascending-sorted lists and returns the
+// ascending-sorted intersection.
+let intersect_sorted_rg_lists (xs ys : list nat) : Tot (list nat) =
+  let len_xs : nat = List.Tot.length xs in
+  let len_ys : nat = List.Tot.length ys in
+  let fuel : nat = len_xs + len_ys + 1 in
+  let rev = list_nat_intersect_sorted xs ys [] fuel in
+  list_rev rev
+
+// ---- Pruned row-group walk -----------------------------------------
+
+// Walk a SPECIFIC list of row-group indices (the candidate set),
+// decoding all 4 columns per rg and filtering. Same semantics as
+// `walk_row_groups_search` but driven by a candidate list rather
+// than a contiguous [rg_index .. rg_count) range.
+let rec walk_candidate_rgs_search
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row)
+  (cache : page_cache)
+  : Tot (list cottas_qp_row & page_cache) (decreases candidates) =
+  match candidates with
+  | [] -> (acc_rev, cache)
+  | rg_index :: rest ->
+    let cap = cache.pc_capacity in
+    let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+    let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+    let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+    let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_candidate_rgs_search h bound_s bound_p bound_o bound_g
+      rest acc_rev' c4
+
+let rec walk_candidate_rgs_estimate
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat) (acc : nat)
+  (cache : page_cache)
+  : Tot (nat & page_cache) (decreases candidates) =
+  match candidates with
+  | [] -> (acc, cache)
+  | rg_index :: rest ->
+    let cap = cache.pc_capacity in
+    let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+    let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+    let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+    let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+    let acc' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        count_zipped_rows_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc
+      | _ -> acc in
+    walk_candidate_rgs_estimate h bound_s bound_p bound_o bound_g
+      rest acc' c4
+
+// Phase 2.5e: candidate-rg walks using the global-cache decoder.
+// Issue #98/Mim3 follow-up: table-threaded, see the note at
+// `pcache_decode_global_auto` above.
+let rec walk_candidate_rgs_search_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row)
+  : Tot (list cottas_qp_row) (decreases candidates) =
+  match candidates with
+  | [] -> acc_rev
+  | rg_index :: rest ->
+    let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+    let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+    let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+    let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_candidate_rgs_search_global h table bound_s bound_p bound_o bound_g
+      rest acc_rev'
+
+// Tok-shaped sibling — see `walk_row_groups_search_tok_global`'s banner.
+let rec walk_candidate_rgs_search_tok_global
+  (path : string)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row_tok)
+  : Tot (list cottas_qp_row_tok) (decreases candidates) =
+  match candidates with
+  | [] -> acc_rev
+  | rg_index :: rest ->
+    let s_col = pcache_decode_global_auto table path rg_index 0 in
+    let p_col = pcache_decode_global_auto table path rg_index 1 in
+    let o_col = pcache_decode_global_auto table path rg_index 2 in
+    let g_col = pcache_decode_global_auto table path rg_index 3 in
+    let acc_rev' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_tok_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev
+      | _ -> acc_rev in
+    walk_candidate_rgs_search_tok_global path table bound_s bound_p bound_o bound_g
+      rest acc_rev'
+
+let rec walk_candidate_rgs_estimate_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat) (acc : nat)
+  : Tot nat (decreases candidates) =
+  match candidates with
+  | [] -> acc
+  | rg_index :: rest ->
+    let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+    let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+    let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+    let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+    let acc' =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        count_zipped_rows_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc
+      | _ -> acc in
+    walk_candidate_rgs_estimate_global h table bound_s bound_p bound_o bound_g
+      rest acc'
+
+// ---- Candidate-set computation -------------------------------------
+
+// Build the per-rg candidate set for one column-bound. col_index is the
+// parquet column index (0=subject, 1=predicate, 2=object, 3=graph).
+// Returns the (candidate_rgs_in_ascending_order, updated_dict_cache).
+let candidates_for_one_bound
+  (c : dict_cache) (table : option parquet_row_group_offset_table)
+  (path : string) (col_index : nat)
+  (bound_token : string) (rg_count : nat)
+  : Tot (list nat & dict_cache) =
+  let c' = populate_dict_cache_for_column c table path col_index rg_count in
+  let cands = compute_candidate_rgs c' col_index bound_token rg_count in
+  (cands, c')
+
+// Generate the full ascending list [0 .. rg_count). Used as the
+// candidate set when no column-bound is present (degenerates to a
+// full walk, semantically equivalent to walk_row_groups_search).
+let rec all_rgs_loop (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list nat)
+  : Tot (list nat) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else all_rgs_loop (rg_index + 1) rg_count (fuel - 1) (rg_index :: acc_rev)
+
+let all_rgs (rg_count : nat) : Tot (list nat) =
+  list_rev (all_rgs_loop 0 rg_count rg_count [])
+
+// Compose candidate sets for whichever bounds are present. Returns the
+// final candidate-rg list (ascending) + updated dict cache.
+//
+// Semantics:
+//   - No s/p/o bound → all_rgs (full walk).
+//   - One bound → that column's candidates.
+//   - Multiple bounds → intersection of their candidate sets.
+//   - Graph bound (col 3) is ALSO usable for pruning; we include it.
+let plan_candidate_rgs
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_count : nat)
+  : Tot (list nat & dict_cache) =
+  let path = h.coh_path in
+  // Issue #98/Mim3 follow-up (2026-07-05): the row-group-offset table
+  // is built ONCE per public entry-point call (`cottas_ondisk_search`
+  // / `_limited` / `_estimate` / `_count_exact` -- the "per query"
+  // scope) via `Parquet.Footer.probe_parquet_row_group_offset_table`
+  // and threaded here, so each per-column dict-cache populate below
+  // indexes into it instead of independently re-walking the footer's
+  // row-group list from scratch per row group (see that function's
+  // module-banner comment for the full story). `None` (malformed
+  // footer) falls back to the pre-existing per-call path-based probe.
+  // Start with "all rgs" as the universal set; intersect each present
+  // bound's candidate set into it. We track whether any bound has been
+  // applied to avoid a wasted intersect when none were.
+  let init : list nat & dict_cache & bool = (all_rgs rg_count, [], false) in
+  let step (acc : list nat & dict_cache & bool) (col_index : nat)
+           (bound : option string)
+    : Tot (list nat & dict_cache & bool) =
+    match bound with
+    | None -> acc
+    | Some tok ->
+      let (cur, c, _started) = acc in
+      let (cands, c') = candidates_for_one_bound c table path col_index tok rg_count in
+      let combined = intersect_sorted_rg_lists cur cands in
+      (combined, c', true) in
+  let st1 = step init  0 bound_s in
+  let st2 = step st1   1 bound_p in
+  let st3 = step st2   2 bound_o in
+  let st4 = step st3   3 bound_g in
+  let (final, c, _) = st4 in
+  (final, c)
+
+// Phase 2.6 (issue #118): compound (p, o) joint-presence prune.
+//
+// `plan_candidate_rgs` above intersects per-column dict-page candidate
+// sets — strictly more selective than the per-RG presence bitmaps but
+// still per-column. When BOTH bound_p and bound_o are present, the
+// compound (p, o) bitmap (`<path>.po.presence`, written at corpus
+// build time and read by `RDF.CottasStore.CompoundPresenceBitmap`)
+// can rule out RGs that have BOTH tokens present individually but
+// never as the same row. On the parliament corpus's Q03
+// (`?o a wktLiteral`) this drops candidates from 2 RGs to 0.
+//
+// Implementation notes:
+//
+//   * Token→id is resolved via the on-disk `.p.dict` / `.o.dict`
+//     companion files (`compound_po_dict_encode` below), i.e. the
+//     SAME sorted-lexicographic-rank id-space the `.po.presence`
+//     writer used (`Cottas_compound_po_writer.build_tok_to_id`, which
+//     enumerates `dict_decode_token dict_path dh id` for id =
+//     0..num_tokens-1 against that same `.<col>.dict` file — see
+//     `RDF.CottasStore.DictWriter.fst`'s `ids[i] = i` invariant: dict
+//     ids ARE the sorted rank).
+//
+//     This is DELIBERATELY NOT `ondisk_lookup_pred_id_global` /
+//     `_obj_id_global` (issue #297, found 2026-07-06 building the
+//     roadmap-item-4 regression pin, see
+//     docs/designissues/2026-07-05-disk-backed-db-perf-review.md):
+//     those resolve through the Bet7 lazy-runtime revmap
+//     (`cottas_ondisk_runtime.sh`'s `collect_distinct`), whose id
+//     assignment is FIRST-OCCURRENCE order over the physical row
+//     scan — a different, row-order-dependent id-space that happens
+//     to coincide with the dict's sorted-rank space on small
+//     producer-order (SPOG-sorted) builds by coincidence, but
+//     diverges once physical row order changes (e.g. CS clustering
+//     via `--row-order cs`), silently mis-encoding (p, o) into the
+//     WRONG pair-code and causing `compound_rg_passes_pair` to prune
+//     the one row group that actually contains the pair — a wrong
+//     `0` answer, not a slow one. `build_qp_row` below still uses the
+//     Bet7 revmap ids for ITS OWN internal round-trip (encode via
+//     `ondisk_lookup_*_id_global`, decode via
+//     `id_to_raw_token_via_global`, both ends of the SAME revmap) —
+//     that use is self-consistent and untouched by this fix.
+//
+//   * Companion files `<path>.{p,o}.dict` and `<path>.po.presence`
+//     are opened per call. They are small (kB-scale on parliament's
+//     956k objects × 232 predicates × 26 RGs) so the open cost is
+//     negligible vs the saved DLBA decode of pruned RGs. Future:
+//     open at handle-open time and cache via assume val.
+//
+//   * Either bound missing, or either lookup returning None, or the
+//     companion file missing → return candidates unchanged
+//     (sound over-include; the executor's filter-loop will catch the
+//     rest).
+let compound_po_dict_encode (path : string) (col_suffix : string) (tok : string)
+  : Tot (option nat) =
+  let dict_path = path ^ "." ^ col_suffix ^ ".dict" in
+  match ODI.read_dict_header dict_path with
+  | None -> None
+  | Some dh ->
+    if not (ODI.dict_header_ok dh) then None
+    else ODI.dict_encode_token dict_path dh tok
+
+let filter_candidates_by_compound_po
+  (path : string)
+  (candidates : list nat)
+  (bound_p_str bound_o_str : option string)
+  : Tot (list nat) =
+  match bound_p_str, bound_o_str with
+  | Some bp, Some bo ->
+    let p_id = compound_po_dict_encode path "p" bp in
+    let o_id = compound_po_dict_encode path "o" bo in
+    (match p_id, o_id with
+     | Some _, Some _ ->
+       let oh = CPO.open_compound (path ^ ".po.presence") in
+       (match oh with
+        | None -> candidates  // companion file missing → no opinion
+        | Some _ ->
+          List.Tot.filter
+            (fun rg -> CPO.compound_rg_passes_pair oh rg p_id o_id)
+            candidates)
+     | _ -> candidates)
+  | _ -> candidates
+
+// ----------------------------------------------------------------------
+// Subject-offset-index candidate-rg pruning (2026-07-13, closes the q3
+// subject-point-lookup gap -- docs/test-results/competitive-bench.json).
+// `.s.offsets` (RDF.CottasStore.SubjectOffsetsWriter.fst / RDF.Store.
+// Columnar.SubjectOffsetIndex.fst) records, per subject, the
+// CONTIGUOUS global row range that subject's rows occupy -- sound
+// because `RDF.CottasStore.BaseWriter` sorts rows (s,p,o,g)
+// subject-primary (see that writer module's own banner comment).
+//
+// `cottas_ondisk_subject_candidate_rgs` translates that global row
+// range into the row groups it actually intersects, via
+// `probe_parquet_row_group_num_rows_from_table` (footer-metadata only,
+// no page decode), for `cottas_ondisk_search_tok` to INTERSECT into
+// its existing `plan_candidate_rgs` candidate set. This is
+// unconditionally sound regardless of graph scope (the row range is
+// graph-independent by construction; the existing per-row filter
+// still applies bound_g after decode) and regardless of a live delta
+// overlay (the base-store search only narrows which BASE row groups
+// it decodes; any delta merge is a separate overlay layer per
+// `RDF.Store.Capabilities.Cottas.fst`'s banner comment -- "the
+// read-write COTTAS+delta view is a later overlay composition, not
+// this builder") -- unlike the COUNT sibling below, no
+// `count_exact_offset_index_eligible` graph-scope guard is needed
+// here.
+// ----------------------------------------------------------------------
+
+// Cumulative row-group row-count walk: does the GLOBAL row range
+// `[target_start, target_end)` intersect row group `rg_index`'s own
+// `[cum_start, cum_start + rg_rows)` span? Returns `None` the instant
+// ANY row group's row count can't be read (footer doubt) -- the safe
+// over-include direction is "fall through to the unpruned candidate
+// set", never a silently wrong empty list.
+let rec subject_range_candidate_rgs_loop
+  (table : parquet_row_group_offset_table)
+  (target_start target_end : nat)
+  (rg_index rg_count : nat) (fuel : nat)
+  (cum_start : nat) (acc_rev : list nat)
+  : Tot (option (list nat)) (decreases fuel) =
+  if fuel = 0 then Some (list_rev acc_rev)
+  else if rg_index >= rg_count then Some (list_rev acc_rev)
+  else
+    match probe_parquet_row_group_num_rows_from_table table rg_index with
+    | None -> None
+    | Some rg_rows ->
+      let cum_end : nat = cum_start + rg_rows in
+      let acc_rev' =
+        if target_start < cum_end && cum_start < target_end
+        then rg_index :: acc_rev
+        else acc_rev in
+      subject_range_candidate_rgs_loop table target_start target_end
+        (rg_index + 1) rg_count (fuel - 1) cum_end acc_rev'
+
+// Top-level entry point consulted from `cottas_ondisk_search_tok`.
+// Returns:
+//   - `None`     -- not eligible / sidecar absent / footer doubt:
+//                    caller keeps its existing `plan_candidate_rgs`
+//                    candidate set unchanged.
+//   - `Some []`  -- subject genuinely absent from the corpus
+//                    dictionary: zero rows, zero row groups to decode.
+//   - `Some rgs` -- exact row groups the subject's global row range
+//                    intersects; caller INTERSECTS this into its
+//                    existing candidate set (never replaces it wholesale,
+//                    so composition with predicate/object/graph pruning
+//                    stays correct).
+let cottas_ondisk_subject_candidate_rgs
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s : option string)
+  (rg_count : nat)
+  : Tot (option (list nat)) =
+  match bound_s with
+  | None -> None
+  | Some s ->
+    // Bug fix (npm bytes-store #306, cottas-bytes-store.test.js 44/50):
+    // `compound_po_dict_encode` collapses "`.s.dict` sidecar absent" and
+    // "dict present but token not found" into the SAME `None` — fine for
+    // `filter_candidates_by_compound_po` above (either case falls through
+    // to `candidates` unchanged, the safe no-opinion default), but WRONG
+    // here, where this function's own contract (banner above) requires
+    // telling "not eligible / sidecar absent" (`None`) apart from
+    // "subject genuinely absent" (`Some []`). The former used to be
+    // read as the latter, so ANY store without eager sidecars (every
+    // npm/embedded in-memory `.cottas` buffer opened via `openCottas`/
+    // `toCottas` — those never had a sidecar directory to begin with —
+    // plus any on-disk import run without `--build-sidecars`) silently
+    // pruned every bound-subject query's candidate row groups to `[]`:
+    // a wrong `false`/empty answer with a clean exit, not a slow one.
+    // Fix: check `.s.dict` presence/validity directly (mirroring the
+    // `.s.offsets` disambiguation three lines below — `open_subject_
+    // offsets` returning `None` already correctly falls through to
+    // `None` here, not `Some []`) so only a PRESENT, well-formed
+    // dictionary's genuine miss reaches `Some []`.
+    let s_dict_path = h.coh_path ^ ".s.dict" in
+    (match ODI.read_dict_header s_dict_path with
+     | None -> None  // `.s.dict` sidecar absent: not eligible, no opinion
+     | Some dh ->
+       if not (ODI.dict_header_ok dh) then None  // malformed sidecar: no opinion
+       else
+         (match ODI.dict_encode_token s_dict_path dh s with
+          | None -> Some []  // dict present + valid, subject genuinely absent
+          | Some subj_id ->
+            (match SOI.open_subject_offsets (SOI.subject_offsets_path_of h.coh_path) with
+             | None -> None
+             | Some oh ->
+               if not (SOI.subject_offset_handle_ok oh) then None
+               else
+                 (match SOI.range_for_subject oh subj_id with
+                  | None -> None
+                  | Some r ->
+                    if SOI.subject_range_count r = 0 then Some []
+                    else
+                      (match table with
+                       | None -> None
+                       | Some t ->
+                         subject_range_candidate_rgs_loop t r.SOI.sr_start r.SOI.sr_end
+                           0 rg_count rg_count 0 [])))))
+
+// ---- Decode-failure detection (issue #269) --------------------------
+//
+// The row-group walkers below (`walk_row_groups_search` and friends)
+// treat a column-decode failure on a row group as "this row group
+// contributes zero rows" — documented at `walk_row_groups_search`'s
+// definition, and a correctness-preserving choice for callers that
+// only care about rows they COULD decode (a row group they can't
+// decode also can't contribute a false positive). But
+// `eval_ask_query_backend_dataset` reads "zero rows matched" as the
+// query answer `false`, and a column that fails to decode is not
+// evidence of `false` — it is evidence the artifact could not be
+// read. `cottas_ondisk_has_decode_failure` reuses the same eager
+// whole-column decoder the open()-time OCaml loader already treats as
+// fatal (`probe_parquet_column_decode_all_row_groups`, columns
+// 0..3 = subject/predicate/object/graph) so ASK can tell "genuinely no
+// match" apart from "couldn't tell." Only called on the branch where
+// the pattern would otherwise be answered `false`, so the extra full
+// walk is paid only when it changes the answer.
+let cottas_ondisk_has_decode_failure (h : cottas_ondisk_handle) : bool =
+  None? (probe_parquet_column_decode_all_row_groups h.coh_path 0) ||
+  None? (probe_parquet_column_decode_all_row_groups h.coh_path 1) ||
+  None? (probe_parquet_column_decode_all_row_groups h.coh_path 2) ||
+  None? (probe_parquet_column_decode_all_row_groups h.coh_path 3)
+
+// ---- Public search / estimate --------------------------------------
+
+// `cottas_ondisk_search` (id-based: took a `cottas_bound_qp` built via
+// `cottas_ondisk_build_bound_qp_opt`, resolved ids to tokens itself via
+// `id_to_raw_token_via_global`/Bet7) was REMOVED 2026-07-19 (same
+// boundary-audit Step A continuation as the encode/decode primitives
+// above). Zero live callers: production search goes entirely through
+// `cottas_ondisk_search_tok` right below, which takes an
+// already-token-shaped `cottas_bound_qp_tok` and skips the id round
+// trip this function existed to perform.
+
+// ----------------------------------------------------------------------
+// BOUND-side selectivity (2026-07-06 follow-up to the SEARCH-selectivity
+// fix above — the "not fixed this round" item from
+// docs/designissues/2026-07-06-competitive-benchmark-results.md §8).
+//
+// `cottas_bound_qp_tok` is the BOUND-side sibling of `cottas_qp_row_tok`
+// above: it carries the query's own subject/predicate/object/graph
+// bounds as raw column-token STRINGS (produced by direct serialization
+// via `bound_subject_to_token` et al.), not corpus-wide term-ids. This
+// is what lets `cottas_ondisk_search_tok` and its LIMIT/estimate/
+// count-exact siblings skip `id_to_raw_token_via_global`/Bet7 entirely
+// on the bound side — the symmetric fix to this file's `cottas_qp_row_
+// tok` output-side one.
+noeq type cottas_bound_qp_tok = {
+  cbqpt_s : option string;
+  cbqpt_p : option string;
+  cbqpt_o : option string;
+  // Graph bound as a raw token: `Some "DEFAULT"` (default-graph scope),
+  // `Some "<iri>"` (named-graph scope), or `None` (dead in-memory
+  // GB_COTTAS / CGB_Unbound path only — no live GB_CottasOnDisk
+  // constructor produces `None` here, matching `graph_bound_to_raw_
+  // token`'s existing contract for CGB_Unbound).
+  cbqpt_g : option string;
+}
+
+// Build a tok-shaped bound directly from the query's typed terms plus a
+// graph scope — no dictionary lookup, no "term absent from corpus"
+// `None` branch, because there is nothing to look up: serialization
+// always succeeds. (The id-based `cottas_ondisk_build_bound_qp_opt`
+// returns `None` when a bound term isn't in the corpus dictionary,
+// letting the caller skip the search call entirely — that early-exit
+// is not available here, but it is not needed for correctness either: a
+// term genuinely absent from the corpus still yields zero matches,
+// cheaply, via the per-row-group DICT-PAGE candidate prune in
+// `plan_candidate_rgs` (reads only small on-disk dictionary pages, the
+// same mechanism `compound_po_dict_encode` already uses for the
+// compound (p,o) prefilter — see that function's own banner comment)
+// and the compound-po bitmap prefilter, neither of which needs the
+// corpus-wide revmap this function no longer calls.
+let cottas_ondisk_build_bound_qp_tok
+  (s : option subject) (p : option wf_iri) (o : option rdf_term)
+  (scope : cottas_ondisk_graph_scope)
+  : Tot cottas_bound_qp_tok =
+  {
+    cbqpt_s = (match s with | None -> None | Some sv -> Some (bound_subject_to_token sv));
+    cbqpt_p = (match p with | None -> None | Some pv -> Some (bound_predicate_to_token pv));
+    cbqpt_o = (match o with | None -> None | Some ov -> Some (bound_object_to_token ov));
+    cbqpt_g = (match scope with
+      | COS_DefaultOnly -> Some "DEFAULT"
+      | COS_NamedGraph gv -> Some (bound_graph_iri_to_token gv));
+  }
+
+// Tok-shaped sibling of `cottas_ondisk_search` — identical row-group
+// planning / pruning / walking, but the bound is already token strings,
+// so no `id_to_raw_token_via_global` call and no Bet7 touch at all.
+let cottas_ondisk_search_tok
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp_tok)
+  : Tot (list cottas_qp_row_tok) =
+  let h = ds.cods_handle in
+  let bound_s = bound.cbqpt_s in
+  let bound_p = bound.cbqpt_p in
+  let bound_o = bound.cbqpt_o in
+  let bound_g = bound.cbqpt_g in
+  match probe_parquet_row_group_count h.coh_path with
+  | None -> []
+  | Some rg_count ->
+    let table = probe_parquet_row_group_offset_table h.coh_path in
+    let any_bound_present =
+      Some? bound_s || Some? bound_p || Some? bound_o || Some? bound_g in
+    if any_bound_present then
+      let (candidates0, _dc) = plan_candidate_rgs h table
+        bound_s bound_p bound_o bound_g rg_count in
+      // 2026-07-13: subject-offset-index candidate-rg tightening (see
+      // `cottas_ondisk_subject_candidate_rgs`'s banner comment). `None`
+      // means "not eligible / sidecar absent / footer doubt" -- leave
+      // `candidates0` unchanged; `Some subj_rgs` INTERSECTS the exact
+      // row groups the bound subject's global row range intersects
+      // into the existing dict-page-probe candidate set (never
+      // replaces it, so predicate/object/graph pruning still applies).
+      let candidates1 =
+        match cottas_ondisk_subject_candidate_rgs h table bound_s rg_count with
+        | None -> candidates0
+        | Some subj_rgs -> intersect_sorted_rg_lists candidates0 subj_rgs in
+      let candidates = filter_candidates_by_compound_po
+        h.coh_path candidates1 bound_p bound_o in
+      let acc_rev = walk_candidate_rgs_search_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        candidates [] in
+      list_rev acc_rev
+    else
+      let acc_rev = walk_row_groups_search_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        0 rg_count rg_count [] in
+      list_rev acc_rev
+
+// ----------------------------------------------------------------------
+// Row-index-selective SEARCH (OPTIONAL/FILTER row-index-selective decode
+// design, docs/designissues/2026-07-13-optional-filter-selective-decode.md,
+// stage 2). Sibling of `cottas_ondisk_search_tok` immediately above --
+// same row-group planning/pruning -- but decodes an UNBOUND column's
+// VALUE only at the row indices that already matched on the CHEAP
+// discriminating columns (bound positions + the graph column, which is
+// always decoded per issue #267), instead of decoding every column of
+// every candidate row group up front. Nothing calls this yet (stage 4,
+// a narrow single-BGP detector, is a follow-up landing); this is the
+// mechanism the design's differential gate exercises directly.
+//
+// Result shape carries `option string` per position instead of `string`
+// (contrast `cottas_qp_row_tok`): a position with `need.cn_x = false`
+// (and not itself a bound/constant position) is `None` -- its column was
+// never decoded, so there is nothing to report there. The graph position
+// is always `Some` (never gated). Callers that DID mark a position
+// needed always get `Some` back for a matched row (bound positions are
+// filled from the bound's own known token, no column read required at
+// all; needed-unbound positions are filled from the indexed decode).
+noeq type cottas_qp_row_tok_selective = {
+  rst_s : option string;
+  rst_p : option string;
+  rst_o : option string;
+  rst_g : string;
+}
+
+// Collect the (per-row-group-LOCAL) indices whose cheap columns (bound
+// positions, already fully decoded into `s_col`/`p_col`/`o_col` — `None`
+// when that position is unbound — plus the always-decoded `g_col`)
+// satisfy the bound. Mirrors `count_selective_matches_seq`'s gating
+// exactly (same `bound_col_match`/`graph_cell_match` calls), just
+// collecting indices instead of a count. Accumulates in REVERSE row
+// order; callers `List.Tot.rev` once, same convention as every other
+// walker in this file.
+let rec matched_indices_seq
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col : option cottas_column)
+  (g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc_rev : list nat)
+  : Tot (list nat) (decreases (n - i)) =
+  if i = n then acc_rev
+  else
+    let acc_rev' =
+      if i < cottas_column_length g_col then
+        (match cottas_column_get g_col i with
+         | Some g_tok ->
+           if bound_col_match bound_s s_col i &&
+              bound_col_match bound_p p_col i &&
+              bound_col_match bound_o o_col i &&
+              graph_cell_match bound_g g_tok
+           then i :: acc_rev
+           else acc_rev
+         | None -> acc_rev)
+      else acc_rev in
+    matched_indices_seq bound_s bound_p bound_o bound_g s_col p_col o_col g_col n (i + 1) acc_rev'
+
+// Full-column fallback for the indexed-decode primitive: used when
+// either the row-group-offset table is unavailable (rare -- malformed
+// footer) or the caller just wants a plain filter-by-index over an
+// already-decoded column. Correct, unaccelerated -- same "DLBA/PLAIN
+// pages fall back to full decode" contract the primitive's own OCaml
+// realisation carries for those encodings.
+let rec filter_column_by_indices_acc
+  (col : cottas_column) (indices : list nat) (acc_rev : list (nat & string))
+  : Tot (list (nat & string)) (decreases indices) =
+  match indices with
+  | [] -> acc_rev
+  | i :: rest ->
+    let acc_rev' =
+      if i < cottas_column_length col then
+        (match cottas_column_get col i with
+         | Some tok -> (i, tok) :: acc_rev
+         | None -> acc_rev)
+      else acc_rev in
+    filter_column_by_indices_acc col rest acc_rev'
+
+let filter_column_by_indices (col : cottas_column) (indices : list nat)
+  : Tot (list (nat & string)) =
+  List.Tot.rev (filter_column_by_indices_acc col indices [])
+
+// Decode one column at exactly the requested (matched) row indices,
+// preferring the indexed primitive when a row-group-offset table is
+// available and falling back to a full decode + filter otherwise. Both
+// branches are correct; only the primitive's RLE_DICTIONARY path is
+// actually accelerated (see that assume val's own banner).
+let decode_indexed_or_fallback
+  (table : option parquet_row_group_offset_table)
+  (path : string) (rg_index col_index : nat) (indices : list nat)
+  : Tot (list (nat & string)) =
+  match table with
+  | Some t ->
+    (match pcache_decode_column_at_indices_global_from_table t path rg_index col_index indices with
+     | Some pairs -> pairs
+     | None -> [])
+  | None ->
+    (match pcache_decode_in_row_group_global path rg_index col_index with
+     | None -> []
+     | Some col -> filter_column_by_indices col indices)
+
+// Build the output rows for one row group's matched indices. Bound
+// positions are filled from the bound's OWN known token (no column read
+// at all -- `cell_match`'s equality check already guarantees the row's
+// actual cell equals it); unbound positions are filled from the
+// indexed-decode pairs only when `need` marks them, else `None`. The
+// graph position is always filled from `g_col` (never gated).
+// O(total) lockstep advance instead of a per-row linear rescan: both
+// `indices` and each `*_vals` pairs list are ASCENDING in row index
+// (the vals are produced FROM the matched-indices request, in request
+// order), so each vals list is consumed head-forward exactly once
+// across the whole walk. The earlier per-row `indexed_decode_lookup`
+// rescan made the full-corpus differential gate quadratic (~889k
+// rows squared) and it timed out — 2026-07-13.
+let rec vals_advance (vals : list (nat & string)) (i : nat)
+  : Tot (option string & list (nat & string)) (decreases vals) =
+  match vals with
+  | [] -> (None, [])
+  | (k, v) :: rest ->
+    if k = i then (Some v, rest)
+    else if k < i then vals_advance rest i  // stale lower key: skip forward
+    else (None, vals)                        // k > i: no value for this row
+
+let rec build_selective_rows
+  (bound_s bound_p bound_o : option string)
+  (need : col_need)
+  (s_vals p_vals o_vals : list (nat & string))
+  (g_col : cottas_column)
+  (indices : list nat)
+  (acc_rev : list cottas_qp_row_tok_selective)
+  : Tot (list cottas_qp_row_tok_selective) (decreases indices) =
+  match indices with
+  | [] -> acc_rev
+  | i :: rest ->
+    let (sv, s_vals2) =
+      if Some? bound_s then (bound_s, s_vals)
+      else if need.cn_s then vals_advance s_vals i else (None, s_vals) in
+    let (pv, p_vals2) =
+      if Some? bound_p then (bound_p, p_vals)
+      else if need.cn_p then vals_advance p_vals i else (None, p_vals) in
+    let (ov, o_vals2) =
+      if Some? bound_o then (bound_o, o_vals)
+      else if need.cn_o then vals_advance o_vals i else (None, o_vals) in
+    let rst_g =
+      if i < cottas_column_length g_col then
+        (match cottas_column_get g_col i with Some g -> g | None -> "")
+      else "" in
+    let row = { rst_s = sv; rst_p = pv; rst_o = ov; rst_g = rst_g } in
+    build_selective_rows bound_s bound_p bound_o need s_vals2 p_vals2 o_vals2 g_col rest (row :: acc_rev)
+
+// Per-row-group step: decode the graph column (always) + any BOUND
+// column (fully, same boundness gate as `walk_row_groups_count_exact_
+// global`), compute matched indices from those, then decode only the
+// UNBOUND-but-NEEDED columns at exactly those indices.
+let process_row_group_selective
+  (path : string) (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (need : col_need)
+  (rg_index : nat)
+  (acc_rev : list cottas_qp_row_tok_selective)
+  : Tot (list cottas_qp_row_tok_selective) =
+  match pcache_decode_global_auto table path rg_index 3 with
+  | None -> acc_rev
+  | Some g_col ->
+    let s_col = if Some? bound_s then pcache_decode_global_auto table path rg_index 0 else None in
+    let p_col = if Some? bound_p then pcache_decode_global_auto table path rg_index 1 else None in
+    let o_col = if Some? bound_o then pcache_decode_global_auto table path rg_index 2 else None in
+    let bound_decode_ok =
+      (None? bound_s || Some? s_col) &&
+      (None? bound_p || Some? p_col) &&
+      (None? bound_o || Some? o_col) in
+    if not bound_decode_ok then acc_rev
+    else
+      let n = cottas_column_length g_col in
+      let matched = List.Tot.rev (matched_indices_seq bound_s bound_p bound_o bound_g s_col p_col o_col g_col n 0 []) in
+      let s_vals = if None? bound_s && need.cn_s then decode_indexed_or_fallback table path rg_index 0 matched else [] in
+      let p_vals = if None? bound_p && need.cn_p then decode_indexed_or_fallback table path rg_index 1 matched else [] in
+      let o_vals = if None? bound_o && need.cn_o then decode_indexed_or_fallback table path rg_index 2 matched else [] in
+      build_selective_rows bound_s bound_p bound_o need s_vals p_vals o_vals g_col matched acc_rev
+
+// Full-range walk, sibling of `walk_row_groups_search_tok_global`
+// (line ~969).
+let rec walk_row_groups_search_tok_selective_global
+  (path : string) (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (need : col_need)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row_tok_selective)
+  : Tot (list cottas_qp_row_tok_selective) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else
+    let acc_rev' = process_row_group_selective path table bound_s bound_p bound_o bound_g need rg_index acc_rev in
+    walk_row_groups_search_tok_selective_global path table bound_s bound_p bound_o bound_g need
+      (rg_index + 1) rg_count (fuel - 1) acc_rev'
+
+// Candidate-driven walk, sibling of `walk_candidate_rgs_search_tok_global`
+// (line ~1518).
+let rec walk_candidate_rgs_search_tok_selective_global
+  (path : string) (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (need : col_need)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row_tok_selective)
+  : Tot (list cottas_qp_row_tok_selective) (decreases candidates) =
+  match candidates with
+  | [] -> acc_rev
+  | rg_index :: rest ->
+    let acc_rev' = process_row_group_selective path table bound_s bound_p bound_o bound_g need rg_index acc_rev in
+    walk_candidate_rgs_search_tok_selective_global path table bound_s bound_p bound_o bound_g need
+      rest acc_rev'
+
+// Public entry point, sibling of `cottas_ondisk_search_tok`: identical
+// row-group planning (`plan_candidate_rgs` + the compound (p,o) prefilter)
+// and identical row/row-group ORDER to `cottas_ondisk_search_tok` -- the
+// differential gate compares the two directly. `need` only changes which
+// UNBOUND columns get decoded, never which rows match or their order.
+let cottas_ondisk_search_tok_selective
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp_tok) (need : col_need)
+  : Tot (list cottas_qp_row_tok_selective) =
+  let h = ds.cods_handle in
+  let bound_s = bound.cbqpt_s in
+  let bound_p = bound.cbqpt_p in
+  let bound_o = bound.cbqpt_o in
+  let bound_g = bound.cbqpt_g in
+  match probe_parquet_row_group_count h.coh_path with
+  | None -> []
+  | Some rg_count ->
+    let table = probe_parquet_row_group_offset_table h.coh_path in
+    let any_bound_present =
+      Some? bound_s || Some? bound_p || Some? bound_o || Some? bound_g in
+    if any_bound_present then
+      let (candidates0, _dc) = plan_candidate_rgs h table
+        bound_s bound_p bound_o bound_g rg_count in
+      let candidates = filter_candidates_by_compound_po
+        h.coh_path candidates0 bound_p bound_o in
+      let acc_rev = walk_candidate_rgs_search_tok_selective_global h.coh_path table
+        bound_s bound_p bound_o bound_g need
+        candidates [] in
+      list_rev acc_rev
+    else
+      let acc_rev = walk_row_groups_search_tok_selective_global h.coh_path table
+        bound_s bound_p bound_o bound_g need
+        0 rg_count rg_count [] in
+      list_rev acc_rev
+
+// Convert a selective row into a `triple`, for `store_caps.sc_solve_
+// selective`'s interface (RDF.Store.Capabilities.fst), which -- like
+// `sc_solve` -- returns `list triple` regardless of `col_need`: the
+// TYPE doesn't vary with acceleration, only which positions carry a
+// genuinely decoded value. A position the caller marked NOT needed
+// (`None` here) is filled with the SAME out-of-range sentinel
+// `cottas_ondisk_row_tok_to_quad`'s callers already use for a
+// corrupt/mismatched cell (`S_BNode "cottas_decode_oor"` /
+// `cottas_decode_oor_predicate` / `T_BNode "cottas_decode_oor"`) --
+// this is a documented, load-bearing part of the contract: a caller
+// must never read a position it did not mark needed in `col_need`.
+let cottas_ondisk_row_tok_selective_to_triple (row : cottas_qp_row_tok_selective)
+  : Tot triple =
+  {
+    s = (match row.rst_s with Some tok -> token_to_subject tok | None -> S_BNode "cottas_decode_oor");
+    p = (match row.rst_p with Some tok -> token_to_predicate tok | None -> cottas_decode_oor_predicate);
+    o = (match row.rst_o with Some tok -> token_to_object tok | None -> T_BNode "cottas_decode_oor");
+  }
+
+let rec cottas_ondisk_rows_tok_selective_to_triples_acc
+    (rows : list cottas_qp_row_tok_selective)
+    (acc : list triple)
+  : Tot (list triple) (decreases rows) =
+  match rows with
+  | [] -> acc
+  | row :: rest ->
+    cottas_ondisk_rows_tok_selective_to_triples_acc rest (cottas_ondisk_row_tok_selective_to_triple row :: acc)
+
+let cottas_ondisk_rows_tok_selective_to_triples (rows : list cottas_qp_row_tok_selective)
+  : Tot (list triple) =
+  List.Tot.rev (cottas_ondisk_rows_tok_selective_to_triples_acc rows [])
+
+// ----------------------------------------------------------------------
+// Aleph6 (issue #100, demo prep): LIMIT pushdown variants of the row-group
+// walkers. They short-circuit once `acc_rev` accumulates `limit` matched
+// rows, avoiding the rest-of-corpus walk for queries like
+// `SELECT ?s ?o WHERE { ?s :pred ?o } LIMIT 5`.
+//
+// Semantically equivalent to taking the first `limit` rows of
+// `cottas_ondisk_search`. The unlimited variants above stay for full-table
+// callers (e.g. CONSTRUCT, materialised SELECT without LIMIT).
+// ----------------------------------------------------------------------
+
+// Phase 2.5c (issue #118): seq-shape LIMIT-pushdown filter. Same
+// semantics as the list-shape filter_zipped_rows_limited but indexed
+// over a cottas_column. Decreases on `n - i`.
+let rec filter_zipped_rows_limited_seq
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row & nat & bool) (decreases (n - i)) =
+  if acc_count >= limit then (acc_rev, acc_count, true)
+  else if i = n then (acc_rev, acc_count, acc_count >= limit)
+  else
+    let (acc_rev', acc_count') =
+      if i < cottas_column_length s_col &&
+         i < cottas_column_length p_col &&
+         i < cottas_column_length o_col &&
+         i < cottas_column_length g_col
+      then
+        match cottas_column_get s_col i, cottas_column_get p_col i,
+              cottas_column_get o_col i, cottas_column_get g_col i with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then (build_qp_row h s_tok p_tok o_tok g_tok :: acc_rev,
+                acc_count + 1)
+          else (acc_rev, acc_count)
+        | _ -> (acc_rev, acc_count)
+      else (acc_rev, acc_count) in
+    filter_zipped_rows_limited_seq h bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc_rev' acc_count' limit
+
+// Tok-shaped sibling of `filter_zipped_rows_limited_seq` — see
+// `filter_zipped_rows_tok_seq`'s banner comment. Used by the LIMIT-
+// pushdown entry point so a `LIMIT`-bearing SELECT gets the same
+// Bet7-free construction as the unlimited path.
+let rec filter_zipped_rows_limited_tok_seq
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : cottas_column)
+  (n : nat) (i : nat{i <= n})
+  (acc_rev : list cottas_qp_row_tok) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row_tok & nat & bool) (decreases (n - i)) =
+  if acc_count >= limit then (acc_rev, acc_count, true)
+  else if i = n then (acc_rev, acc_count, acc_count >= limit)
+  else
+    let (acc_rev', acc_count') =
+      if i < cottas_column_length s_col &&
+         i < cottas_column_length p_col &&
+         i < cottas_column_length o_col &&
+         i < cottas_column_length g_col
+      then
+        match cottas_column_get s_col i, cottas_column_get p_col i,
+              cottas_column_get o_col i, cottas_column_get g_col i with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then (build_qp_row_tok s_tok p_tok o_tok g_tok :: acc_rev,
+                acc_count + 1)
+          else (acc_rev, acc_count)
+        | _ -> (acc_rev, acc_count)
+      else (acc_rev, acc_count) in
+    filter_zipped_rows_limited_tok_seq bound_s bound_p bound_o bound_g
+      s_col p_col o_col g_col n (i + 1) acc_rev' acc_count' limit
+
+// Legacy list-shape (no in-tree callers post-2.5c; kept for compat).
+// Filter a single row-group's zipped columns, stopping when `acc_rev`
+// reaches `limit`. Returns (acc_rev, hit_limit).
+let rec filter_zipped_rows_limited
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (s_col p_col o_col g_col : list (option string))
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row & nat & bool) (decreases s_col) =
+  if acc_count >= limit then (acc_rev, acc_count, true)
+  else
+    match s_col, p_col, o_col, g_col with
+    | s_hd :: s_tl, p_hd :: p_tl, o_hd :: o_tl, g_hd :: g_tl ->
+      let (acc_rev', acc_count') =
+        match s_hd, p_hd, o_hd, g_hd with
+        | Some s_tok, Some p_tok, Some o_tok, Some g_tok ->
+          if cell_match bound_s s_tok &&
+             cell_match bound_p p_tok &&
+             cell_match bound_o o_tok &&
+             graph_cell_match bound_g g_tok
+          then (build_qp_row h s_tok p_tok o_tok g_tok :: acc_rev,
+                acc_count + 1)
+          else (acc_rev, acc_count)
+        | _ -> (acc_rev, acc_count) in
+      filter_zipped_rows_limited h bound_s bound_p bound_o bound_g
+        s_tl p_tl o_tl g_tl acc_rev' acc_count' limit
+    | _ -> (acc_rev, acc_count, acc_count >= limit)
+
+let rec walk_row_groups_search_limited
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  (cache : page_cache)
+  : Tot (list cottas_qp_row & page_cache) (decreases fuel) =
+  if fuel = 0 then (acc_rev, cache)
+  else if rg_index >= rg_count then (acc_rev, cache)
+  else if acc_count >= limit then (acc_rev, cache)
+  else
+    let cap = cache.pc_capacity in
+    let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+    let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+    let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+    let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+    let (acc_rev', acc_count', hit) =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_limited_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev acc_count limit
+      | _ -> (acc_rev, acc_count, false) in
+    if hit then (acc_rev', c4)
+    else
+      walk_row_groups_search_limited h bound_s bound_p bound_o bound_g
+        (rg_index + 1) rg_count (fuel - 1) acc_rev' acc_count' limit c4
+
+let rec walk_candidate_rgs_search_limited
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  (cache : page_cache)
+  : Tot (list cottas_qp_row & page_cache) (decreases candidates) =
+  if acc_count >= limit then (acc_rev, cache)
+  else
+    match candidates with
+    | [] -> (acc_rev, cache)
+    | rg_index :: rest ->
+      let cap = cache.pc_capacity in
+      let (s_col, c1) = pcache_decode_in_row_group cache  h.coh_path rg_index 0 cap in
+      let (p_col, c2) = pcache_decode_in_row_group c1     h.coh_path rg_index 1 cap in
+      let (o_col, c3) = pcache_decode_in_row_group c2     h.coh_path rg_index 2 cap in
+      let (g_col, c4) = pcache_decode_in_row_group c3     h.coh_path rg_index 3 cap in
+      let (acc_rev', acc_count', hit) =
+        match s_col, p_col, o_col, g_col with
+        | Some sc, Some pc, Some oc, Some gc ->
+          let n = row_group_row_count sc pc oc gc in
+          filter_zipped_rows_limited_seq h bound_s bound_p bound_o bound_g
+            sc pc oc gc n 0 acc_rev acc_count limit
+        | _ -> (acc_rev, acc_count, false) in
+      if hit then (acc_rev', c4)
+      else
+        walk_candidate_rgs_search_limited h bound_s bound_p bound_o bound_g
+          rest acc_rev' acc_count' limit c4
+
+// Phase 2.5e: global-cache LIMIT walks. Same shape as
+// walk_*_search_limited but no threaded cache; uses
+// `pcache_decode_in_row_group_global`.
+
+let rec walk_row_groups_search_limited_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else if acc_count >= limit then acc_rev
+  else
+    let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+    let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+    let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+    let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+    let (acc_rev', acc_count', hit) =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_limited_seq h bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev acc_count limit
+      | _ -> (acc_rev, acc_count, false) in
+    if hit then acc_rev'
+    else
+      walk_row_groups_search_limited_global h table bound_s bound_p bound_o bound_g
+        (rg_index + 1) rg_count (fuel - 1) acc_rev' acc_count' limit
+
+let rec walk_candidate_rgs_search_limited_global
+  (h : cottas_ondisk_handle)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row) (decreases candidates) =
+  if acc_count >= limit then acc_rev
+  else
+    match candidates with
+    | [] -> acc_rev
+    | rg_index :: rest ->
+      let s_col = pcache_decode_global_auto table h.coh_path rg_index 0 in
+      let p_col = pcache_decode_global_auto table h.coh_path rg_index 1 in
+      let o_col = pcache_decode_global_auto table h.coh_path rg_index 2 in
+      let g_col = pcache_decode_global_auto table h.coh_path rg_index 3 in
+      let (acc_rev', acc_count', hit) =
+        match s_col, p_col, o_col, g_col with
+        | Some sc, Some pc, Some oc, Some gc ->
+          let n = row_group_row_count sc pc oc gc in
+          filter_zipped_rows_limited_seq h bound_s bound_p bound_o bound_g
+            sc pc oc gc n 0 acc_rev acc_count limit
+        | _ -> (acc_rev, acc_count, false) in
+      if hit then acc_rev'
+      else
+        walk_candidate_rgs_search_limited_global h table bound_s bound_p bound_o bound_g
+          rest acc_rev' acc_count' limit
+
+// Tok-shaped siblings of the two LIMIT walks above — see
+// `walk_row_groups_search_tok_global`'s banner comment.
+let rec walk_row_groups_search_limited_tok_global
+  (path : string)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_index : nat) (rg_count : nat) (fuel : nat)
+  (acc_rev : list cottas_qp_row_tok) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row_tok) (decreases fuel) =
+  if fuel = 0 then acc_rev
+  else if rg_index >= rg_count then acc_rev
+  else if acc_count >= limit then acc_rev
+  else
+    let s_col = pcache_decode_global_auto table path rg_index 0 in
+    let p_col = pcache_decode_global_auto table path rg_index 1 in
+    let o_col = pcache_decode_global_auto table path rg_index 2 in
+    let g_col = pcache_decode_global_auto table path rg_index 3 in
+    let (acc_rev', acc_count', hit) =
+      match s_col, p_col, o_col, g_col with
+      | Some sc, Some pc, Some oc, Some gc ->
+        let n = row_group_row_count sc pc oc gc in
+        filter_zipped_rows_limited_tok_seq bound_s bound_p bound_o bound_g
+          sc pc oc gc n 0 acc_rev acc_count limit
+      | _ -> (acc_rev, acc_count, false) in
+    if hit then acc_rev'
+    else
+      walk_row_groups_search_limited_tok_global path table bound_s bound_p bound_o bound_g
+        (rg_index + 1) rg_count (fuel - 1) acc_rev' acc_count' limit
+
+let rec walk_candidate_rgs_search_limited_tok_global
+  (path : string)
+  (table : option parquet_row_group_offset_table)
+  (bound_s bound_p bound_o bound_g : option string)
+  (candidates : list nat)
+  (acc_rev : list cottas_qp_row_tok) (acc_count : nat) (limit : nat)
+  : Tot (list cottas_qp_row_tok) (decreases candidates) =
+  if acc_count >= limit then acc_rev
+  else
+    match candidates with
+    | [] -> acc_rev
+    | rg_index :: rest ->
+      let s_col = pcache_decode_global_auto table path rg_index 0 in
+      let p_col = pcache_decode_global_auto table path rg_index 1 in
+      let o_col = pcache_decode_global_auto table path rg_index 2 in
+      let g_col = pcache_decode_global_auto table path rg_index 3 in
+      let (acc_rev', acc_count', hit) =
+        match s_col, p_col, o_col, g_col with
+        | Some sc, Some pc, Some oc, Some gc ->
+          let n = row_group_row_count sc pc oc gc in
+          filter_zipped_rows_limited_tok_seq bound_s bound_p bound_o bound_g
+            sc pc oc gc n 0 acc_rev acc_count limit
+        | _ -> (acc_rev, acc_count, false) in
+      if hit then acc_rev'
+      else
+        walk_candidate_rgs_search_limited_tok_global path table bound_s bound_p bound_o bound_g
+          rest acc_rev' acc_count' limit
+
+// LIMIT-pushdown public entry: same as `cottas_ondisk_search` but stops
+// once `limit` matching rows have been accumulated. Returns at most
+// `limit` rows.
+//
+// Phase 2.5e: global-cache walks. F* owns the algorithm. 2026-07-06
+// follow-up: tok-shaped output construction, see `cottas_ondisk_search`'s
+// banner comment above — bound-side resolution kept for compat, no live
+// caller after `cottas_ondisk_search_limited_tok` right below.
+let cottas_ondisk_search_limited
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp) (limit : nat)
+  : Tot (list cottas_qp_row_tok) =
+  let h = ds.cods_handle in
+  let bound_s = id_to_raw_token_via_global ondisk_id_to_subj_token_global  h.coh_path bound.cbqp_s in
+  let bound_p = id_to_raw_token_via_global ondisk_id_to_pred_token_global  h.coh_path bound.cbqp_p in
+  let bound_o = id_to_raw_token_via_global ondisk_id_to_obj_token_global   h.coh_path bound.cbqp_o in
+  // issue #267: cbqp_g is now a 3-way cottas_graph_bound (Unbound /
+  // Default / Named), not a plain option; graph_bound_to_raw_token
+  // resolves CGB_Default to the literal "DEFAULT" sentinel token
+  // instead of leaving the graph column unconstrained.
+  let bound_g = graph_bound_to_raw_token h.coh_path bound.cbqp_g in
+  match probe_parquet_row_group_count h.coh_path with
+  | None -> []
+  | Some rg_count ->
+    // Issue #98/Mim3 follow-up: per-query row-group-offset table.
+    let table = probe_parquet_row_group_offset_table h.coh_path in
+    let any_bound_present =
+      Some? bound_s || Some? bound_p || Some? bound_o || Some? bound_g in
+    if any_bound_present then
+      let (candidates0, _dc) = plan_candidate_rgs h table
+        bound_s bound_p bound_o bound_g rg_count in
+      // Phase 2.6: compound (p,o) prune.
+      let candidates = filter_candidates_by_compound_po
+        h.coh_path candidates0 bound_p bound_o in
+      let acc_rev = walk_candidate_rgs_search_limited_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        candidates [] 0 limit in
+      list_rev acc_rev
+    else
+      let acc_rev = walk_row_groups_search_limited_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        0 rg_count rg_count [] 0 limit in
+      list_rev acc_rev
+
+// Tok-shaped sibling of `cottas_ondisk_search_limited` — see
+// `cottas_ondisk_search_tok`'s banner comment; same Bet7-bypass.
+let cottas_ondisk_search_limited_tok
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp_tok) (limit : nat)
+  : Tot (list cottas_qp_row_tok) =
+  let h = ds.cods_handle in
+  let bound_s = bound.cbqpt_s in
+  let bound_p = bound.cbqpt_p in
+  let bound_o = bound.cbqpt_o in
+  let bound_g = bound.cbqpt_g in
+  match probe_parquet_row_group_count h.coh_path with
+  | None -> []
+  | Some rg_count ->
+    let table = probe_parquet_row_group_offset_table h.coh_path in
+    let any_bound_present =
+      Some? bound_s || Some? bound_p || Some? bound_o || Some? bound_g in
+    if any_bound_present then
+      let (candidates0, _dc) = plan_candidate_rgs h table
+        bound_s bound_p bound_o bound_g rg_count in
+      let candidates = filter_candidates_by_compound_po
+        h.coh_path candidates0 bound_p bound_o in
+      let acc_rev = walk_candidate_rgs_search_limited_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        candidates [] 0 limit in
+      list_rev acc_rev
+    else
+      let acc_rev = walk_row_groups_search_limited_tok_global h.coh_path table
+        bound_s bound_p bound_o bound_g
+        0 rg_count rg_count [] 0 limit in
+      list_rev acc_rev
+
+// `cottas_ondisk_estimate` (id-based sibling of `cottas_ondisk_search`,
+// same `cottas_bound_qp` id-resolution shape) was REMOVED 2026-07-19,
+// same audit/rationale as `cottas_ondisk_search` above — zero live
+// callers, superseded by `cottas_ondisk_estimate_tok` below.
+
+// Tok-shaped sibling of the (removed) id-based `cottas_ondisk_estimate` — see
+// `cottas_ondisk_search_tok`'s banner comment; same Bet7-bypass. Body
+// logic (Aleph6 unbound fast path, Mem5 presence-bitmap approximation)
+// is otherwise identical, just consuming the already-token bound.
+let cottas_ondisk_estimate_tok
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp_tok)
+  : Tot nat =
+  let h = ds.cods_handle in
+  let bound_s = bound.cbqpt_s in
+  let bound_p = bound.cbqpt_p in
+  let bound_o = bound.cbqpt_o in
+  let bound_g = bound.cbqpt_g in
+  let any_bound_present =
+    Some? bound_s || Some? bound_p || Some? bound_o || Some? bound_g in
+  if not any_bound_present then
+    (match probe_parquet_num_rows h.coh_path with
+     | Some n -> n
+     | None ->
+       (match probe_parquet_row_group_count h.coh_path with
+        | None -> 0
+        | Some rg_count ->
+          let table = probe_parquet_row_group_offset_table h.coh_path in
+          walk_row_groups_estimate_global h table
+            bound_s bound_p bound_o bound_g
+            0 rg_count rg_count 0))
+  else
+    match probe_parquet_row_group_count h.coh_path with
+    | None -> 0
+    | Some rg_count ->
+      let table = probe_parquet_row_group_offset_table h.coh_path in
+      let (candidates0, _dc) = plan_candidate_rgs h table
+        bound_s bound_p bound_o bound_g rg_count in
+      let candidates = filter_candidates_by_compound_po
+        h.coh_path candidates0 bound_p bound_o in
+      let n_candidates : nat = List.Tot.length candidates in
+      if n_candidates = 0 then 0
+      else if rg_count = 0 then 0
+      else
+        (match probe_parquet_num_rows h.coh_path with
+         | None -> n_candidates
+         | Some total_rows ->
+           let avg : nat = total_rows / rg_count in
+           let prod : int = n_candidates `op_Multiply` avg in
+           if prod < 0 then 0 else prod)
+
+// ----------------------------------------------------------------------
+// Predicate-offset-index exact count (2026-07-13 follow-up to the
+// 2026-07-12 GROUP BY investigation). `RDF.Store.Columnar.OffsetIndex.
+// fst`'s own header documents the `.p.offsets` companion -- an mmap'd
+// per-(row-group, predicate) row-offset table already built at import
+// on every store -- as named-but-unwired: no live count path consulted
+// it. `(end_offset - start_offset) / 4` per (row-group, predicate) is
+// the exact row count for that predicate with ZERO column decode; this
+// wires that read into `cottas_ondisk_count_exact_tok`'s selective-walk
+// branch for the predicate-only bound shape, reusing
+// `SPARQL.Plan.AccessPath.choose_access_path` (the same per-rg decision
+// the row-JUMP search path already exposes) rather than re-deriving the
+// index-consult logic here.
+//
+// Graph-scope guard: the offsets writer walks the raw predicate column
+// only (`experimental_ocaml_glue/cottas_ondisk_zzzzzz_lamed3_offset_
+// idx.sh`'s `build_offsets_file`) -- it never looks at the graph
+// column, so a cell's count is a total across every graph in that row
+// group, not just the query's graph scope. Consulting it is sound only
+// when that whole-predicate total already EQUALS the graph-scoped
+// count the caller wants. That holds when the store carries ZERO named
+// graphs (`coh_graphs = []`, per `cottas_ondisk_named_graphs`'s own
+// contract that this list excludes the DEFAULT sentinel and holds only
+// declared named-graph IRIs -- empty means every row in the store is a
+// default-graph row) AND the query's own graph bound is DEFAULT-scoped
+// or unscoped (`Some "DEFAULT"` or `None` -- never a specific
+// named-graph IRI, which the index cannot distinguish from any other
+// graph). Any store WITH named graphs, or any named-graph-scoped
+// query, falls through to the existing selective-column walk
+// unconditionally -- conservative by construction, not by a runtime
+// probe.
+let count_exact_offset_index_eligible
+  (h : cottas_ondisk_handle) (bound_g : option string)
+  : Tot bool =
+  (match h.coh_graphs with
+   | [] -> true
+   | _ -> false) &&
+  (match bound_g with
+   | None -> true
+   | Some g -> g = "DEFAULT")
+
+// Sum `(end - start) / 4` row-position counts for `pred_id` across row
+// groups `[0, rg_count)`, one `AP.choose_access_path` call per rg (the
+// same decision `SPARQL.Plan.AccessPath`'s row-jump search consumers
+// use). Returns `None` -- fall through to the full column-decode walk
+// -- the instant ANY row group reports `AP_FullScan` (offsets file
+// absent, corrupt, or this rg out of the index's built range, e.g. a
+// stale index from before a later compaction added row groups): a
+// partial sum would silently UNDERCOUNT, never acceptable for an EXACT
+// count. `AP_Skip` (a definitively-empty cell, soundness backed by
+// `OI.row_positions_for_count_sound`) contributes 0; `AP_OffsetJump cv`
+// contributes `cv.cv_count` with no subject/object decode at all.
+let rec sum_predicate_offset_counts
+  (oh : option OI.offset_handle) (pred_id : nat)
+  (rg_index : nat) (rg_count : nat) (fuel : nat) (acc : nat)
+  : Tot (option nat) (decreases fuel) =
+  if fuel = 0 then Some acc
+  else if rg_index >= rg_count then Some acc
+  else
+    match AP.choose_access_path oh rg_index (Some pred_id) with
+    | AP.AP_FullScan -> None
+    | AP.AP_Skip ->
+      sum_predicate_offset_counts oh pred_id (rg_index + 1) rg_count (fuel - 1) acc
+    | AP.AP_OffsetJump cv ->
+      sum_predicate_offset_counts oh pred_id (rg_index + 1) rg_count (fuel - 1) (acc + cv.OI.cv_count)
+
+// Top-level entry point consulted from `cottas_ondisk_count_exact_tok`'s
+// general-bounds branch. Only fires for the EXACT predicate-only bound
+// shape (`bound_s = None`, `bound_p = Some p`, `bound_o = None`) --
+// a bound subject or object needs the row POSITIONS the index hands
+// back to cross-check against (this call site only wants the count),
+// and a bound object needs a column the predicate-keyed index was
+// never built over. Absent predicate (not in the `.p.dict` at all,
+// `compound_po_dict_encode` returns `None`) is a genuine, index-free
+// zero: any predicate that actually appears in the corpus MUST be a
+// dict entry (the dict is built from the distinct predicate tokens
+// seen at corpus-build time), so a failed dict lookup is definitive,
+// not a doubt -- distinct from an in-range offset-index read failure,
+// which IS a doubt and falls through via `sum_predicate_offset_counts`
+// returning `None`. Any other doubt (graph-scope guard fails, offsets
+// file missing/corrupt/stale) also returns `None` here, and the caller
+// falls through to `walk_row_groups_count_exact_global` exactly as
+// before this change.
+let cottas_ondisk_count_exact_via_offset_index
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  (rg_count : nat)
+  : Tot (option nat) =
+  match bound_s, bound_p, bound_o with
+  | None, Some p, None ->
+    if not (count_exact_offset_index_eligible h bound_g) then None
+    else
+      (match compound_po_dict_encode h.coh_path "p" p with
+       | None -> Some 0  // predicate absent from the corpus dictionary: genuine 0
+       | Some pred_id ->
+         let oh = OI.open_offsets (OI.offsets_path_of h.coh_path) in
+         sum_predicate_offset_counts oh pred_id 0 rg_count rg_count 0)
+  | _, _, _ -> None
+
+// ----------------------------------------------------------------------
+// Subject-offset-index EXACT COUNT (2026-07-13, sibling of
+// `cottas_ondisk_count_exact_via_offset_index` above). See
+// `cottas_ondisk_subject_candidate_rgs`'s banner comment (defined
+// earlier in this file, right after `filter_candidates_by_compound_po`)
+// for the shared `.s.offsets` background. Same graph-scope
+// eligibility guard as the predicate sibling (the writer doesn't look
+// at the graph column, so a range's count is a total across every
+// graph).
+// ----------------------------------------------------------------------
+
+let cottas_ondisk_count_exact_via_subject_offset_index
+  (h : cottas_ondisk_handle)
+  (bound_s bound_p bound_o bound_g : option string)
+  : Tot (option nat) =
+  match bound_s, bound_p, bound_o with
+  | Some s, None, None ->
+    if not (count_exact_offset_index_eligible h bound_g) then None
+    else
+      (match compound_po_dict_encode h.coh_path "s" s with
+       | None -> Some 0  // subject absent from the corpus dictionary: genuine 0
+       | Some subj_id ->
+         (match SOI.open_subject_offsets (SOI.subject_offsets_path_of h.coh_path) with
+          | None -> None  // sidecar missing/unhealthy: fall through
+          | Some oh ->
+            if SOI.subject_offset_handle_ok oh then
+              (match SOI.range_for_subject oh subj_id with
+               | None -> None
+               | Some r -> Some (SOI.subject_range_count r))
+            else None))
+  | _, _, _ -> None
+
+// `cottas_ondisk_count_exact` (id-based sibling, same `cottas_bound_qp`
+// id-resolution shape as `cottas_ondisk_search`/`_estimate`) was
+// REMOVED 2026-07-19, same audit/rationale — zero live callers,
+// superseded by `cottas_ondisk_count_exact_tok` below.
+
+// Tok-shaped sibling of the (removed) id-based `cottas_ondisk_count_exact` — see
+// `cottas_ondisk_search_tok`'s banner comment; same Bet7-bypass, same
+// unbound/graph-only/selective-column branch structure.
+let cottas_ondisk_count_exact_tok
+  (ds : cottas_ondisk_store) (bound : cottas_bound_qp_tok)
+  : Tot nat =
+  let h = ds.cods_handle in
+  let bound_s = bound.cbqpt_s in
+  let bound_p = bound.cbqpt_p in
+  let bound_o = bound.cbqpt_o in
+  let bound_g = bound.cbqpt_g in
+  if None? bound_s && None? bound_p && None? bound_o && None? bound_g then
+    (match probe_parquet_num_rows h.coh_path with
+     | Some n -> n
+     | None ->
+       (match probe_parquet_row_group_count h.coh_path with
+        | None -> 0
+        | Some rg_count ->
+          let table = probe_parquet_row_group_offset_table h.coh_path in
+          walk_row_groups_estimate_global h table
+            bound_s bound_p bound_o bound_g 0 rg_count rg_count 0))
+  else
+    (match probe_parquet_row_group_count h.coh_path with
+     | None -> 0
+     | Some rg_count ->
+       let table = probe_parquet_row_group_offset_table h.coh_path in
+       if None? bound_s && None? bound_p && None? bound_o then
+         walk_row_groups_count_graph_global h table bound_g 0 rg_count rg_count 0
+       else
+         // 2026-07-13: predicate-offset-index fast path (see
+         // `cottas_ondisk_count_exact_via_offset_index`'s banner
+         // comment) -- fires only for the exact predicate-only bound
+         // shape with a default-graph-eligible scope; `None` means
+         // "not eligible or in doubt", so the selective-column walk
+         // below is unchanged for every other bound shape.
+         match cottas_ondisk_count_exact_via_offset_index h
+           bound_s bound_p bound_o bound_g rg_count with
+         | Some n -> n
+         | None ->
+           // 2026-07-13 follow-up: subject-offset-index fast path (see
+           // `cottas_ondisk_count_exact_via_subject_offset_index`'s
+           // banner comment) -- fires only for the exact
+           // subject-only bound shape with the same default-graph-
+           // eligible scope; mutually exclusive with the predicate
+           // branch just above (`Some p, None` vs `Some s, None,
+           // None` never both match the same bound tuple), so trying
+           // both costs nothing extra on the shapes neither serves.
+           match cottas_ondisk_count_exact_via_subject_offset_index h
+             bound_s bound_p bound_o bound_g with
+           | Some n -> n
+           | None ->
+             walk_row_groups_count_exact_global h table
+               bound_s bound_p bound_o bound_g 0 rg_count rg_count 0)
+
+// Bound-pattern + row-to-quad helpers (moved from Parser.BallyhooCOTTAS)
+// — id-based row->quad / rows->quads / rows->triples decode chain
+// (cottas_ondisk_row_to_quad + the two tail-rec accumulator pairs) was
+// REMOVED 2026-07-19. `cottas_ondisk_build_bound_qp_opt` (the id-based
+// bound-pattern builder that composed the encode/decode primitives
+// removed above it in this same file) was REMOVED in the 2026-07-19
+// Step A continuation: an exhaustive audit (every .fst, extracted
+// .ml, bin/, tests/unit/*.ml, experimental_ocaml_glue/*.sh) found zero
+// live callers. Its own header comment claimed
+// `Parser.BallyhooCOTTAS.fst:165` called it as "the fixed, live
+// path" — that line is a COMMENT reference only (inside the dead
+// in-memory `cottas_build_bound_qp`'s own banner), not an actual
+// function call; grepping `Parser.BallyhooCOTTAS.fst` for the
+// identifier confirms no call site. `cottas_ondisk_build_bound_qp_tok`
+// (defined earlier in this file, next to `cottas_bound_qp_tok`) is the
+// live replacement and was already the sole active builder before this
+// deletion.
+//
+// The production COTTAS search path is entirely token-based
+// (cottas_ondisk_row_tok_to_quad + the *_tok search/estimate/count
+// entry points wired through RDF.Store.Capabilities.Cottas). This
+// retires the id-based half of the #254 Bet7 / #118 COTTAS dead code
+// (boundary-audit "Step A" — pure subtraction, no effect change, no
+// perf path touched). The token-based sibling follows.
+
+// ----------------------------------------------------------------------
+// Tok-shaped siblings (2026-07-06, selective-column SEARCH follow-up):
+// convert a `cottas_qp_row_tok` (raw column strings, straight from
+// `cottas_ondisk_search[_limited]`) into a typed quad by parsing each
+// token DIRECTLY via `token_to_subject` / `_predicate` / `_object` /
+// `_graph_name` — no `cottas_ondisk_store` handle needed at all, since
+// there is no id to decode through `coh_subjects`/`coh_predicates`/
+// `coh_objects`/`coh_graphs`. This is the whole point of the fix: a
+// MATCHED row's cost is now exactly "parse 3-4 short strings," not
+// "consult a corpus-wide dictionary this query may be the first to
+// touch." Graph handling mirrors `cottas_ondisk_row_to_quad`: the
+// "DEFAULT" sentinel token (docs/cottas-format-v1.md section 6) maps to
+// `None` (default graph); any other token is parsed as a named-graph IRI.
+let cottas_ondisk_row_tok_to_quad (row : cottas_qp_row_tok)
+  : Tot (triple & option iri) =
+  ({
+    s = token_to_subject row.cqprt_s;
+    p = token_to_predicate row.cqprt_p;
+    o = token_to_object row.cqprt_o;
+  },
+   (if row.cqprt_g = "DEFAULT" then None
+    else Some (token_to_graph_name row.cqprt_g)))
+
+let rec cottas_ondisk_rows_tok_to_quads_acc
+    (rows : list cottas_qp_row_tok)
+    (acc : list (triple & option iri))
+  : Tot (list (triple & option iri)) (decreases rows) =
+  match rows with
+  | [] -> acc
+  | row :: rest ->
+    cottas_ondisk_rows_tok_to_quads_acc rest (cottas_ondisk_row_tok_to_quad row :: acc)
+
+let cottas_ondisk_rows_tok_to_quads (rows : list cottas_qp_row_tok)
+  : Tot (list (triple & option iri)) =
+  List.Tot.rev (cottas_ondisk_rows_tok_to_quads_acc rows [])
+
+let rec cottas_ondisk_rows_tok_to_triples_acc
+    (rows : list cottas_qp_row_tok)
+    (acc : list triple)
+  : Tot (list triple) (decreases rows) =
+  match rows with
+  | [] -> acc
+  | row :: rest ->
+    let (t, _gname) = cottas_ondisk_row_tok_to_quad row in
+    cottas_ondisk_rows_tok_to_triples_acc rest (t :: acc)
+
+let cottas_ondisk_rows_tok_to_triples (rows : list cottas_qp_row_tok)
+  : Tot (list triple) =
+  List.Tot.rev (cottas_ondisk_rows_tok_to_triples_acc rows [])

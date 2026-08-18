@@ -1,0 +1,584 @@
+# 2026-07-05 — A skimmable foundational core: RDF.Graph.Executable and SPARQL11.Algebra stratification
+
+> **Owner addition (2026-07-05, axiomatic triples):** the RDF/RDFS
+> axiomatic triple sets that W3C publishes at the namespace documents
+> and in RDF Semantics §9 (e.g. `rdfs:range rdfs:range rdfs:Class .`)
+> currently have no declarative representation in the tree — their
+> consequences are hard-coded as closure rules
+> (`rdfs_rule_range` et al.), reflexivity axioms are harvested
+> programmatically, and OWL 2 RL's Table 5 is a generating code block
+> with omissions documented only in comments. The `RDF.Vocabulary`
+> module proposed below gains a companion `RDF.Vocabulary.Axioms`:
+> the finite axiomatic tables as literal F\* triple lists, auditable
+> line-by-line against the spec text, consumed by the closures as a
+> seed graph. Only the genuinely infinite families (`rdf:_n`
+> container membership) stay rule-generated, with a comment citing
+> the spec's own note on infinitude. Gate: rdf-mt + OWL catalog
+> scores byte-exact after the switch.
+
+## Status
+
+**Step 2 (`RDF.Vocabulary` consolidation, §2.6) landed 2026-07-05,
+slice 1, step 3 (`RDF.Indexed` extraction, §2.3) landed 2026-07-05
+with reduced scope, step 1 (`RDF.IRI` consolidation, §2.7) landed
+2026-07-05 once the JSON-LD agents that owned `SPARQL11.IRI.Resolve.
+fst` finished, step 5 (`RDF.Term`/`RDF.Triple`/`RDF.Graph` split,
+§2.1-2.2 — the owner's skimmable-core deliverable) landed
+2026-07-05, and step 6 (`RDFS.Closure`/`OWL.Closure` extraction,
+§2.4, plus the step-3 `indexed_graph` glue fold and the Axioms
+seed-graph attempt — seeding measured, found unsound against the
+#236 cardinality scaffolding, and disabled pending review) landed
+2026-07-05** — see the step-3.3-table update below for each step's
+scope and measured evidence. Step 3's row also records the
+cyclic-module-dependency finding that step 5 unblocked and step 6
+resolved. Steps 4 and 7 below are still design proposal, no code
+changes. Extends the roadmap in
+[`skills/fstar-module-style/SKILL.md`](../../skills/fstar-module-style/SKILL.md)
+("Planned stratification") and the audit in
+[`2026-05-08-foundational-fstar-tier.md`](2026-05-08-foundational-fstar-tier.md)
+with a concrete module design, a dependency-ordered migration sequence,
+and blast-radius numbers measured against the tree as of this writing
+(106 `.fst` files, 61,952 lines). Two agents are mid-flight on ShEx
+files; nothing here touches those.
+
+## 0. The owner's ask
+
+> "We need to be able to glance at the foundational area and skim a
+> refreshingly simple set of definitions that cover the core concepts
+> constituting rdf, rdfs, URIs/IRIs, and the building blocks of
+> SPARQL. Terms, Properties, Graphs, Datasets, Bnodes etc etc or
+> however we have carved things in fstar. Currently the fstar mixes
+> implementation, algorithm, interface etc too freely."
+
+This is not a new initiative — it converges with an already-declared
+standing priority. `docs/claude-rules/current-state.md` §Standing
+priorities item 4 (owner directive, 2026-07-04) already names four
+reusable foundation modules to extract (`RDF.IRI`, `XSD.Datatypes`,
+`RDF.Unicode`, `RDF.LanguageTag`), and slice 1 of one of them
+(`XSD.Datatypes.fst`, moved out of `SHACL.Validation.fst`) landed today
+— see
+[`2026-07-05-xsd-datatypes-module.md`](2026-07-05-xsd-datatypes-module.md).
+A second precedent landed today too: `RDF.Dataset.Graphs.fst`, a
+27-line accessor module over `RDF.Graph.Executable`'s existing
+`rdf_dataset` type (see
+[`2026-07-05-graphs-api-design.md`](2026-07-05-graphs-api-design.md)).
+
+This doc folds both threads — the type-level split
+(`RDF.Graph.Executable` → `RDF.Term`/`RDF.Triple`/`RDF.Graph`) and the
+reusable-foundation-module thread (`RDF.IRI`/`XSD.Datatypes`/
+`RDF.Unicode`/`RDF.LanguageTag`) — into one ordered plan, and adds the
+piece neither covers yet: splitting the SPARQL algebra AST from its
+evaluator, and a `RDF.Vocabulary` module for the scattered
+`rdf:`/`rdfs:`/`owl:`/`xsd:` constants.
+
+## 1. Survey — where things are defined today
+
+Zero `.fsti` files exist in the tree (`find formal/fstar -name
+'*.fsti'` returns nothing). All ~106 modules are flat `.fst` files;
+"interface" today means "the top of the file, if you keep reading."
+
+### 1.1 Where the core RDF types live
+
+Everything is in one module:
+[`RDF.Graph.Executable.fst`](../../formal/fstar/RDF.Graph.Executable.fst)
+(5,236 lines) defines `bnode_id`, `iri`, `wf_iri`, `literal`,
+`wf_literal`, `rdf_term`, `subject`, `triple`, `rdf_graph`,
+`named_graph`, `rdf_dataset`, plus their equality functions
+(lines 1-159). Everything downstream references these constructors —
+**53 of 106 `.fst` modules** `open RDF.Graph.Executable` directly, and
+it appears third in `build-ocaml.sh`'s `COMMON_MODULES`/`FSTAR_MODULES`
+lists (right after `RDF.Format`), i.e. before almost everything else in
+the extraction order.
+
+### 1.2 Where IRI logic lives — duplicated, not shared
+
+Two independent implementations of RFC 3986 reference resolution exist
+today:
+
+- [`Parser.IRI.fst`](../../formal/fstar/Parser.IRI.fst) (447 lines) —
+  `parse_iri`, `remove_dot_segments`, `merge_paths`,
+  `transform_references`, `recompose`, `resolve_iri_v2`.
+- [`SPARQL11.IRI.Resolve.fst`](../../formal/fstar/SPARQL11.IRI.Resolve.fst)
+  (276 lines) — its own `jir_remove_dot_segments`, `jir_merge`,
+  `resolve_iri`, deliberately **not** sharing code with `Parser.IRI`.
+  The module's banner explains why: it was factored out of
+  `SPARQL11.Algebra.fst` and kept dependency-free of Algebra by
+  duplicating "tiny and stable" helpers — a decision the file itself
+  flags as provisional ("consolidation into a shared helper module is
+  a separate cleanup").
+
+This is the concrete instance behind current-state.md's "`RDF.IRI`
+(RFC 3986/3987; today: `SPARQL11.IRI.Resolve` + `Parser.IRI` +
+per-parser fragments)" line — two full RFC 3986 implementations, not
+one with two call sites.
+
+### 1.3 Where vocabulary constants live — three separate blocks, one file
+
+`RDF.Graph.Executable.fst` itself contains three separate vocabulary
+blocks, sequentially, none of them a distinct module:
+
+- Lines 806-875: RDFS constants (`rdfs_subClassOf`, `rdfs_domain`,
+  `rdf_type`, `rdfs_Class`, container-membership properties).
+- Lines 1212-1420 (interleaved with OWL-RL rule code):
+  `owl_Class`, `owl_ObjectProperty`, `owl_sameAs`,
+  `owl_TransitiveProperty`, and ~20 more OWL constants.
+- Lines 2216-2283 and 4007-4098: OWL restriction-vocabulary constants
+  (`owl_Restriction_iri`, `owl_someValuesFrom_iri`, …) and XSD
+  datatype-hierarchy constants (`xsd_long`, `xsd_nonNegativeInteger`,
+  `xsd_hierarchy_edges`).
+
+Separately, [`OWL.Vocabulary.fst`](../../formal/fstar/OWL.Vocabulary.fst)
+(119 lines) is a **fourth** OWL/RDF vocabulary block, already split out
+as its own module — but as a workaround for a two-copy duplication bug
+(#209: the same OWL IRIs were defined once in `Tableau.fst` and once in
+`OWL.QueryRewrite.fst` with `_iri`-suffixed names), not as part of a
+deliberate vocabulary-consolidation plan. `OWL.QueryRewrite.fst` still
+keeps its own `_iri`-suffixed forwarders per current-state.md item 4's
+still-open follow-up ("Migrate `OWL.QueryRewrite._iri` constants to
+`OWL.Vocabulary`" per the 2026-05-08 audit) — four vocabulary homes for
+what should be one readable table per RDF/RDFS/OWL/XSD.
+
+### 1.4 Where SPARQL's algebra AST and evaluator live
+
+[`SPARQL11.Algebra.fst`](../../formal/fstar/SPARQL11.Algebra.fst)
+(5,797 lines, the single largest module) is not purely an AST module —
+type definitions (`triple_pattern`, `expr`, `property_path`,
+`group_graph_pattern`, `query_form`, `update_op`, `sparql_update`) occupy
+roughly lines 132-748 (~620 lines, 11% of the file). The remaining
+~5,150 lines (89%) are evaluation: `eval_result` + the effective-boolean-value
+machinery, the built-in function library (`fn_isLiteral`, date
+functions, `string_encode_uri`), numeric promotion/casting, property-path
+evaluation, solution-sequence sorting/aggregation, and
+`apply_update_op`/`apply_delete_where` (SPARQL Update application). 12
+modules `open SPARQL11.Algebra` directly.
+
+Even the triple-pattern/BGP types are duplicated, not shared: `var_name`,
+`pattern_term`, `pattern_subject`, `triple_pattern`, `bgp`, and
+`solution_mapping` are defined **twice** — once in
+`RDF.Graph.Executable.fst` (lines 556-586) and again in
+`SPARQL11.Algebra.fst` (lines 284-363, the canonical copy `open`ed by
+everything else). This is the clearest instance of "implementation
+mixes into the wrong module" the owner is pointing at: a fragment of
+SPARQL algebra sits inside the RDF foundational module for no
+architectural reason — `RDF.Graph.Executable.fst`'s own `sparql_value`/
+`comp_op`/`filter_expr_eval`/`bind_eval`/`sparql_concat` block
+(lines 586-800, ~215 lines) is FILTER/BIND evaluation logic, not an RDF
+core concept, and no code outside that file appears to consume it (its
+`var_name`/`triple_pattern` types are shadowed by `SPARQL11.Algebra`'s
+once a caller opens both).
+
+### 1.5 Category breakdown, four biggest modules
+
+Rough classification by line count (core types / spec algorithm /
+engine pragmatics / vocabulary constants / helper soup), read from each
+file's own structure via `grep -n '^let \|^type '`:
+
+| Module | Lines | Core types | Spec algorithm | Pragmatics | Vocabulary | Helper soup |
+|---|---:|---:|---:|---:|---:|---:|
+| `RDF.Graph.Executable` | 5,236 | ~160 (3%) | ~2,285 (44%) RDFS/OWL-RL closure + XSD lexical/entailment | ~400 (8%) `indexed_graph`/bucket-map | ~350 (7%) RDFS+OWL+XSD constants | ~245 (5%) misplaced SPARQL FILTER/BIND fragment (§1.4); remainder is OWL-RL rule bodies |
+| `SPARQL11.Algebra` | 5,797 | ~620 (11%) | ~4,600 (79%) eval/functions/casts/property-path/update | — (perf lives in `SPARQL.Plan.*`/`SPARQL.Eval.*`) | 0 (lives in `RDF.Graph.Executable`) | ~580 (10%) string/date parsing utilities |
+| `SHACL.Validation` | 2,848 | ~50 (2%) | ~2,200 (77%) constraint eval + SPARQL-based validators | — | ~400 (14%) `sh:*` constants | ~200 (7%) path-eval helpers; already imports `XSD.Datatypes` |
+| `RDF.Canonical` | 2,069 | ~50 (2%) | ~1,900 (92%) RDFC-1.0 HFDQ/HNDQ | ~120 (6%) sort/dedup | 0 | — |
+
+`RDF.Canonical.fst` is the model to emulate: one spec algorithm, its
+supporting helpers, no vocabulary block, no unrelated fragment from
+another domain. `RDF.Graph.Executable.fst` is the opposite extreme:
+core types are 3% of the file the "foundational tier" audit
+(§1.1) treats as a single all-or-nothing unit.
+
+### 1.6 KaRaMeL-compatibility signal
+
+Per [`2026-05-07-c-build-and-roaring-plan.md`](2026-05-07-c-build-and-roaring-plan.md)
+§2.2, the smallest/purest `noeq`-free modules are the first C-build
+candidates: `RDF.Format.fst` (92 lines), `Parser.IRI.fst` (447 lines).
+Today's `RDF.Graph.Executable.fst` cannot join that list — `noeq type
+literal`/`rdf_term`/`triple` at the top force KaRaMeL rejection of the
+*entire* module, so the OWL-RL closure code that is 44% of the file
+blocks C-extraction of the 3% that's actually portable. Splitting
+types out is a second, independent argument beyond readability: it
+unblocks the C-build track for the part of the foundational tier
+that's cleanly extractable.
+
+## 2. Design — the foundational layer
+
+Six new/reorganized modules. Naming follows the existing dotted-prefix
+convention (`RDF.*`, `SPARQL.*`) — no new `Impl`/`Core` suffix
+convention is introduced without justification (see Open decision 1).
+
+### 2.1 `RDF.Term.fst` — the term algebra
+
+Contents: `bnode_id`, `iri`, `is_iri`/`wf_iri`, `literal`/`literal_wf`/
+`wf_literal`, `rdf_term`, `subject`, plus `subject_eq`/`lang_tag_eq`/
+`literal_eq`/`rdf_term_eq`/`literal_value_eq` and their reflexivity
+lemmas. This is `RDF.Graph.Executable.fst` lines 1-159 essentially
+verbatim, no new proof obligations — a copy-move, not a rewrite. Does
+NOT include `datatype_value_eq` (XSD value-space equality; that's
+`XSD.Datatypes`'s job per the already-declared follow-up in
+[`2026-07-05-xsd-datatypes-module.md`](2026-07-05-xsd-datatypes-module.md)
+§Migration order item 1) or `lang_tag_option_eq` (moves to
+`RDF.LanguageTag` once that module exists, per the same doc's
+"How RDF.LanguageTag / RDF.Unicode relate" section — this doc does not
+re-litigate that call, just confirms it).
+
+One screen-page (~160 lines): every concrete RDF term kind, decidable
+equality, nothing else. No indexing, no closure rules, no SPARQL.
+
+### 2.2 `RDF.Triple.fst` and `RDF.Graph.fst`
+
+`RDF.Triple.fst`: the `triple` record + `triple_eq` +
+`add_triple_if_new`/`add_triple_unchecked` (currently lines 128-138 and
+931-942). `RDF.Graph.fst`: `rdf_graph`, `named_graph`, `rdf_dataset`,
+`lookup_named_graph`, `empty_graph`/`empty_dataset`, `graph_add`/
+`graph_remove`/`graph_union`, `find_objects`/`find_subjects`,
+`graph_bnodes`, `rename_*_bnodes` family, `graph_dedup_sort`. This
+matches the 2026-05-08 audit's proposed split exactly (§"1. Split
+RDF.Graph.Executable", table); this doc adds the concrete line ranges
+that audit didn't have yet.
+
+Each is one screen-page-ish (~150-250 lines) — a human reads "what is a
+triple, what is a graph, what is a dataset" without wading through
+OWL-RL.
+
+### 2.3 `RDF.Indexed.fst` (pragmatics companion)
+
+The `indexed_graph`/`bucket_map` machinery (lines 286-514, ~230 lines)
+is an acceleration structure for `find_objects`/`find_subjects` — a
+textbook pragmatics module per the fstar-module-style skill's tier
+split. It depends on `RDF.Term`/`RDF.Triple`/`RDF.Graph`, not the
+reverse (the naive `find_objects`/`find_subjects` already exist as the
+reference implementation at lines 898-920). This is the first
+"beautify" instance of the §4 pattern: a correctness lemma of the
+shape `find_objects_indexed g s p == find_objects g s p` (exact
+statement is migration work) documents that the fast path matches the
+naive one, following the recovery-plan pattern already adopted
+elsewhere.
+
+### 2.4 `RDFS.Closure.fst` and `OWL.Closure.fst`
+
+Exactly the 2026-05-08 audit's proposal: `RDFS.Closure.fst` gets
+`rdfs_closure_step` and the five `rdfs_rule_*` functions (currently
+lines 990-1199, wired via `RDF.Indexed`'s `indexed_graph`).
+`OWL.Closure.fst` gets the ~40 `owl_rule_*` functions,
+`owl_rl_closure_step`/`owl_rl_closure`/`owl_rl_closure_with_reflexivity`,
+and the entailment-regime dispatch (`entailment_closure`,
+`regime_rdf`/`regime_rdfs`/`regime_owl_rl`/`regime_owl_direct` —
+currently lines 1199-4760 and 5211-5236). This is the single biggest
+line-count move: ~3,850 of `RDF.Graph.Executable.fst`'s 5,236 lines
+(73%) leave the foundational module. After this move, "foundational"
+means `RDF.Term` + `RDF.Triple` + `RDF.Graph` + `RDF.Indexed` at
+roughly 800-900 lines — the 2026-05-08 audit projected "~800 LoC
+instead of ~3500," which turns out to be an undercount of the
+denominator: the module has grown to 5,236 lines since that audit (more
+`owl_rule_*` functions landed in the interim), so the post-split core
+is proportionally smaller than estimated (~17%, was ~23%).
+
+### 2.5 `XSD.Axioms.fst` (already-scoped follow-up, restated)
+
+The XSD lexical-normalization + datatype-hierarchy + consistency-check
+code at lines 4760-5211 (`normalize_integer_lexical`,
+`normalize_decimal_lexical`, `datatype_value_eq`, `xsd_is_subtype`,
+`is_inconsistent`, `xsd_hierarchy_edges`) is the remaining piece of
+`RDF.Graph.Executable.fst` this doc has not assigned. Per
+[`2026-07-05-xsd-datatypes-module.md`](2026-07-05-xsd-datatypes-module.md)
+§"What did NOT move", `datatype_value_eq` + its two normalize helpers
+already move to `XSD.Datatypes.fst` as follow-up slice work — no fifth
+XSD home proposed here. `is_inconsistent`/`xsd_is_subtype`/
+`xsd_hierarchy_edges` are OWL-RL-adjacent value-space checks, not
+vocabulary, so a sibling `XSD.Axioms` (Open decision 4).
+
+### 2.6 `RDF.Vocabulary.fst` — one table, not four
+
+Consolidates §1.3's four scattered vocabulary blocks
+(`RDF.Graph.Executable`'s three inline blocks + `OWL.Vocabulary.fst`)
+into one module with labeled sections: RDF core (`rdf:type`,
+`rdf:first`/`rdf:rest`/`rdf:nil`), RDFS (`rdfs:subClassOf`,
+`rdfs:domain`, …), OWL (`owl:sameAs`, `owl:Restriction`,
+`owl:someValuesFrom`, …), XSD datatype IRIs. `OWL.Vocabulary.fst`'s
+own banner already states the goal ("this module is the single source
+of truth") — `RDF.Vocabulary` widens that from "OWL, without
+duplication" to "RDF/RDFS/OWL/XSD, in one place." `OWL.Vocabulary.fst`
+becomes a thin re-export or is retired (Open decision 2).
+`OWL.QueryRewrite.fst`'s still-open `_iri`-suffixed duplicate
+forwarders (§1.3) retire in the same slice.
+
+### 2.7 `RDF.IRI.fst` — one RFC 3986 implementation, not two
+
+Per current-state.md item 4: consolidate `Parser.IRI.fst` and
+`SPARQL11.IRI.Resolve.fst`'s independent `jir_*`/non-`jir_*`
+implementations into one. `Parser.IRI.fst` is the more complete
+surface (447 lines: full parse + resolve + recompose) and already
+foundational-tier per the 2026-05-08 audit; `SPARQL11.IRI.Resolve.fst`
+becomes a thin forwarder or its 12 callers switch to `RDF.IRI` directly
+(same choice as §2.6, Open decision 2). JSON-LD phases 3-4 need this
+module ("extraction of those two leads," current-state.md item 4) —
+not a cosmetic win, it removes a real fork risk (a bug fixed in one RFC
+3986 implementation and not the other, silently).
+
+### 2.8 `SPARQL.Terms.fst` (algebra AST, separated from evaluation)
+
+The type-only ~620 lines from `SPARQL11.Algebra.fst` (§1.4): `var_name`,
+`pattern_term`, `pattern_subject`, `triple_pattern`, `bgp`, `comp_op`,
+`arith_op`, `aggregate_fn`, `expr`, `property_path`,
+`group_graph_pattern`, `order_condition`, `select_item`/`select_clause`,
+`group_condition`, `query_form`, `dataset_clause`, `graph_ref`,
+`update_op`, `sparql_update`. `SPARQL11.Algebra.fst` keeps `eval_result`,
+the function library, and everything after — it becomes purely the
+evaluator over `SPARQL.Terms`'s AST, the "AST vs evaluation semantics"
+split the 2026-05-08 audit names as "less urgent" but doesn't rule out.
+`RDF.Graph.Executable`'s duplicate `var_name`/`triple_pattern`/`bgp`/
+`solution_mapping` block (§1.4, lines 556-586) is deleted outright, not
+moved — grep confirms no caller outside that file uses its copy. The
+FILTER/BIND fragment (lines 586-800) needs a caller audit before
+deciding its fate (Open decision 5) — may be dead code, in which case
+deletion is simpler than migration.
+
+### 2.9 `.fsti` policy for this layer
+
+None of the six modules above get a `.fsti` in this pass. The
+fstar-module-style skill's policy stands: `.fsti` earns its keep when
+hiding a representation forces clients through an abstract signature
+(the storage-backend case). The foundational types are *meant* to be
+transparent — `RDF.Term.fst`'s `rdf_term` variant tags are
+pattern-matched directly by 53+ modules; wrapping them behind a
+signature would force every call site through accessor functions for
+no correctness gain, and (per §1.6) plain transparent records extract
+cleanest to C. Revisit `.fsti` only if a genuine abstraction-boundary
+need appears — not preemptively. Explicit call, not a default: see
+Open decision 3.
+
+## 3. Migration mechanics
+
+### 3.1 What actually breaks on a split
+
+Renaming/splitting `RDF.Graph.Executable` ripples through four
+independent surfaces, each measured against the tree as it exists
+today:
+
+1. **`build-ocaml.sh`'s three lists.** `RDF_Graph_Executable.ml` sits
+   in the extract loop, `COMMON_MODULES`, and `FSTAR_MODULES`. Six new
+   names replace one entry in each — mechanical, but every list-add
+   historically causes merge conflicts with concurrent PRs (per the
+   2026-05-07 debt-reduction plan's note on alphabetizing the list).
+2. **51 extracted/hand-written `.ml` files** reference
+   `RDF_Graph_Executable.*` by qualified name. Regenerated by
+   re-extraction, not hand-edited — low-risk if extract runs for every
+   affected module, but it forces "recompile everything"
+   (`needs_rebuild_from_sources` fires a full recompile the moment any
+   `.ml` is newer than a binary).
+3. **11 hand-written OCaml patch files** in
+   `minimal_regrettable_glue_code_each_with_an_open_issue/*.sh`
+   hardcode `RDF_Graph_Executable.wf_iri`/`.rdf_graph`/
+   `.solution_mapping` as qualified references (confirmed:
+   `57_service_client_bind.sh`, `62_forward_ref_wiring.sh`, + 9
+   others). These need updating to the new module names — the
+   migration's real hand-editing surface, and the step most likely to
+   be a silent breakage if missed (a stale reference fails loudly at
+   `ocamlopt` with "Unbound module," but only once someone compiles).
+4. **11 `bin/<consumer>/*.ml` files** (`factoidal_cli.ml`,
+   `w3c_runner.ml`, `owl_runner.ml`, `rdfc10_runner.ml`,
+   `shacl_runner.ml`, `shex_runner.ml`, `rif_runner.ml`,
+   `factoidal_http.ml`, `factoidal_dump_nq.ml`,
+   `factoidal_explain.ml`, `entry_jsoo.ml`) reference
+   `RDF_Graph_Executable`/`SPARQL11_Algebra` directly and need their
+   `open` lines updated — mechanical, real time cost.
+
+### 3.2 Verification cost estimate
+
+Measured data point (fast-verify-extract skill): `SPARQL11.Algebra.fst`
+(5,777 lines) takes ~40s for a full cold re-verify.
+`RDF.Graph.Executable.fst` is comparable in size (5,236 lines); budget
+the same order of magnitude.
+
+Splitting redistributes this cost rather than removing it — six new
+modules each pay their own first-time verify, but cumulative SMT cost
+is roughly conserved (same lemmas, partitioned across files). The real
+new cost is **dependent cascade**: a dependency's content change
+invalidates every dependent's `.checked` digest (F* embeds dependency
+digests in `.checked`), even when the dependent's own re-verification
+is fast. With 53 modules opening `RDF.Graph.Executable` today, changing
+its `open` line to `open RDF.Term open RDF.Triple open RDF.Graph`
+edits the SOURCE of all 53 (the `open` line itself), so all 53 pay a
+real `fstar.exe` invocation — most fast, since only the `open` changed.
+The `--dep full` + Kahn-layered parallel scheduler already implemented
+in `build-ocaml.sh` (fast-verify-extract skill's "P1") is the tool for
+this: it computes the DAG once and runs each layer through `xargs -P`,
+so 53 mostly-independent modules parallelize rather than serialize.
+
+Budget one full `./build-ocaml.sh extract` per migration step (this
+migration is not the warm no-op case) plus the full W3C battery. On
+the measured 7-layer/23-25-15-15-9-7-2-module DAG shape, the widest
+layer (25 modules) dominates wall-clock — low-single-digit minutes per
+step on a 4-core box, not the ~25-minute cold-CI figure (that's
+toolchain-cold; this is `.checked`-cold for one hub's dependents, on an
+otherwise warm cache).
+
+### 3.3 Move order — minimize blast radius per step
+
+Ordered so each step's battery gate is the smallest that actually
+proves the step correct, and so no step depends on a later one:
+
+| Step | What moves | New/changed modules | Blast radius | Gate |
+|---|---|---|---|---|
+| 1 | **[LANDED 2026-07-05]** `RDF.IRI` consolidation (§2.7) | `RDF.IRI.fst` + `RDF.IRI.fsti` (new — the tree's THIRD `.fsti`, signature-only rather than the transparent-`let` style steps 2/3 used, since nothing outside this module inspects `iri_parts`/`parse_iri`/etc., only the 3 resolution entry points); `Parser.IRI.fst` and `SPARQL11.IRI.Resolve.fst` → thin re-export shims (Open decision 2 resolved: shim, not retire — same call as `XSD.Datatypes` slice 1 and step 2's `RDF.Vocabulary`/`OWL.Vocabulary`) | Low, as predicted. `Parser.IRI.fst` forwards only `resolve_iri_v2` (its one externally-consumed symbol, confirmed by grep — `iri_parts`/`parse_iri`/`remove_dot_segments`/`merge_paths`/`transform_references`/`recompose` had zero external callers, so they moved into `RDF.IRI.fst` without needing a forwarding name). `SPARQL11.IRI.Resolve.fst` forwards `resolve_iri`/`resolve_query_iri`; its `list_is_prefix`/`list_contains_sublist`/`string_contains` helpers turned out to be dead code even before this change (defined, never called by that file's own functions, and no external qualified reference existed) so were dropped rather than forwarded. Wired into the four required places: `build-ocaml.sh`'s `ALL_MODULES` (order-insensitive, Kahn-layered), `COMMON_MODULES` and `FSTAR_MODULES` (both order-sensitive — `RDF_IRI.ml` inserted after `Parser_FastString.ml`/`RDF_Graph_Executable.ml`, before `SPARQL11_IRI_Resolve.ml`/`Parser_IRI.ml`), and `tests/unit/run-all.sh`'s module array | **Investigation (required before any merge — CLAUDE.md task brief, "do NOT silently pick one"):** built a 75-case OCaml differential harness (`Parser_IRI.resolve_iri_v2` vs `SPARQL11_IRI_Resolve.resolve_iri`, linked directly against the tree's existing extracted `.cmx` — no F* changes needed to run it) covering the full RFC 3986 §5.4 battery (42 cases), the toRdf/0122-0125 dotted-base pins from `tests/unit/iri_resolve_unit.ml` (6 cases), and 27 extra probes (userinfo/port/IPv6 authorities, `urn:`/`mailto:`/`file:` schemes, unicode path segments, empty/malformed/relative bases, network-path + scheme-carrying references with dot segments). Result: **0 divergence on 72 of 75 cases** — the two independently-written RFC 3986 implementations agree byte-for-byte, including every case a stale comment in the old `Parser.IRI.fst` claimed was buggy (terminal `.`/`..` dot segments — investigated and found NOT reproducible against the code that actually runs; the comment described a bug in `Parser.Turtle.fst`'s own *dead-code* copy of the algorithm, never invoked, not this module — corrected in the new file). The **3 divergent cases** (a malformed non-absolute base string, e.g. `"not-a-uri"`, `""`, or `"relative/path"`, each resolved against a relative reference) all trace to one cause: `SPARQL11.IRI.Resolve.resolve_iri`'s `wf_iri`-typed contract applies a defensive `is_iri` fallback-to-base guard that `Parser.IRI.resolve_iri_v2`'s plain-string contract never had (by design — RDF parsers call it before any `wf_iri` check exists for `@base`). Synthesizing `resolve_iri(base, rel) = let r = resolve_iri_v2 base rel in if is_iri r then r else base` on top of the shared core and re-running the differential harness gave **0 mismatches against the original jir_*-based `resolve_iri` on all 75 cases, including the 3 divergent ones** — i.e. the guard is a thin wrapper, not a second algorithm, and the honest step-1 outcome the task brief anticipated ("one canonical implementation + a documented compat wrapper") is exactly what shipped: `RDF.IRI.fst` carries one RFC 3986 core (`Parser.IRI`'s, unchanged) plus that one-line guard for the `wf_iri`-typed entry points. **Gates — measured 2026-07-05, byte-exact against the task's specified baseline on every suite except one pre-existing, already-documented, unrelated drift:** SPARQL 629 pass, 2 fail (of 631 — see caveat below, NOT introduced by this step) RDF 1031 pass 0 fail, SHACL core 98 pass 0 fail + sparql 22 pass 0 fail, RDFC-1.0 86 pass 0 fail, OWL 2 RL (profile-RL.rdf, single run covers all four categories) PE 28 pass 2 fail (of 30, documented-impossible pair) NE 6 pass 0 fail Cons 76 pass 0 fail Incons 14 pass 0 fail, ShEx 1181 pass 1 mismatch 0 deferred 0 skipped (of 1182), JSON-LD 460 pass 1 fail 6 skip (of 467), RML rml-core 76 pass 0 fail (of 76), RIF 34 pass 4 labelled fails 12 precise skips (of 50), unit 25 pass 0 fail (of 25) **including `iri_resolve_unit` 46 pass 0 fail (of 46) — the full RFC 3986 pin suite, unchanged.** SPARQL caveat: the 2 `entailment`-suite failures are `RIF Logical Entailment (referencing RIF XML)` and `RIF Core WG tests: Frames` — the identical pair the step-3 row already found and flagged as pre-existing shared-tree drift orthogonal to this refactor (confirmed again here: `RDF.IRI`/`Parser.IRI`/`SPARQL11.IRI.Resolve` touch no RIF or SPARQL-entailment code, so this step cannot have introduced or changed that drift). All four wiring places double-checked by running the affected binaries from repo root (some runners resolve test-data paths relative to cwd; running from `bin/linux-x86_64/` instead of repo root silently reads 0 tests for `rif_runner`/`shacl_runner`'s sparql section and 11 "file not found" for `tests/unit/run-all.sh` — a footgun worth flagging for whoever next runs gates from an unfamiliar cwd, not a code defect) | Full RDF parser suite (NT/Turtle/NQuads/TriG/RDFXML) + SPARQL base-IRI resolution tests unchanged |
+| 2 | **[LANDED 2026-07-05, slice 1]** `RDF.Vocabulary` consolidation (§2.6) | `RDF.Vocabulary.fst` (new, tree's first `.fsti`) + `RDF.Vocabulary.Axioms.fst` (new, owner-addition companion — see header); `OWL.Vocabulary.fst` → forwarder; `RDF.Graph.Executable.fst`'s section-16 block → forwarder. **What did NOT move this slice** (documented follow-up, same pattern as `XSD.Datatypes` slice 1): the `_iri`-suffixed OWL restriction-vocabulary duplicate block (`RDF.Graph.Executable.fst` lines ~2216-2283), the XSD datatype-hierarchy constants (lines ~4007-4098), the OWL-RL-closure-interleaved `rdf_first`/`rdf_rest`/`rdf_nil_iri` (lines ~3340-3350), and `OWL.QueryRewrite.fst`'s own `_iri` forwarders — all four are interleaved with OWL-RL closure code that hasn't moved out of `RDF.Graph.Executable.fst` yet (step 6) or belong to a different agent's territory in this shared-tree session | Low, as predicted — pure constant re-homing, no logic change; every moved string is byte-identical (diffed by hand against the pre-move literals). One real subtlety the "Low" blast-radius call didn't anticipate: `RDF.Vocabulary`'s constants had to be typed as plain `string`, not `wf_iri`, specifically so `RDF.Graph.Executable.fst` (which defines `wf_iri`/`is_iri` itself) could depend on it without a cycle — see the module's own banner | **Measured 2026-07-05: SPARQL 631 pass 0 fail, RDF 1031 pass 0 fail, SHACL core 98 pass 0 fail + sparql 22 pass 0 fail, RDFC-1.0 86 pass 0 fail, OWL 2 RL PE 28 pass 2 fail (of 30, documented-impossible pair) NE 6 pass 0 fail Cons 76 pass 0 fail Incons 14 pass 0 fail, unit 25 pass 0 fail (of 25) — byte-exact vs. the pre-slice baseline on every suite.** `RDF.Vocabulary.Axioms.fst` verifies (46 finite RDF+RDFS axiomatic triples per RDF 1.1 MT §"RDF/RDFS axiomatic triples") but is NOT yet wired into `rdfs_closure`/`entailment_closure` as a seed — that wiring is closure-code territory (step 6), a separate gate |
+| 3 | **[LANDED 2026-07-05]** `RDF.Indexed` extraction (§2.3) | `RDF.Indexed.fst` (new, second `.fsti` in the tree) + `RDF.Graph.Executable.fst` shim. **Scope differs from the original plan** — see finding below | See finding | **Measured 2026-07-05: SPARQL 629 pass 2 fail (of 631), RDF 1031 pass 0 fail, SHACL core 98 pass 0 fail + sparql 22 pass 0 fail, RDFC-1.0 86 pass 0 fail, OWL 2 RL PE 28 pass 2 fail (of 30, documented-impossible pair) NE 6 pass 0 fail Cons 76 pass 0 fail Incons 14 pass 0 fail, unit 25 pass 0 fail (of 25).** Every number is byte-identical to the CURRENT (pre-this-step) tree state, confirmed by running the tree's own already-built `w3c_runner` binary unmodified before applying this step's diff — **zero delta from this step**. The SPARQL 629/2 (not the step-2 row's 631/0) is a **pre-existing drift already present in the shared tree**, not caused by this step: the 2 failures are `RIF Logical Entailment` and `RIF Core WG tests: Frames` inside the `entailment` suite, and `git diff`/`git log` on every RIF `.fst` module shows zero uncommitted changes and no relevant recent commit — the drift's cause is unidentified and orthogonal to this refactor. Flagged for whoever owns RIF/SPARQL entailment scoring next |
+| 3-finding | Cyclic-dependency blocker discovered executing step 3 | — | — | The plan's step-3 scope ("move `RDF.Graph.Executable.fst` lines 286-514 verbatim") is **not achievable** before step 5 lands, and this is a fact about F*'s module system, not a judgment call: the block's RDF-specific glue (`indexed_graph`'s record, `subject_to_key`, `term_to_key_opt`, the `*_key` builders, `find_objects_indexed`, `find_subjects_indexed`, `add_triple_to_indexes`, `build_indexed`/`empty_indexed`) all pattern-match `triple`/`subject`/`rdf_term` — types `RDF.Graph.Executable.fst` still defines (step 5 hasn't split them out yet). Meanwhile `RDF.Graph.Executable.fst`'s own RDFS/OWL-RL closure rules (~140 call sites, step 6 territory, not moving in this step) also consume `indexed_graph`. A module extracted with the RDF-specific glue would need `open RDF.Graph.Executable` (for the types) while `RDF.Graph.Executable.fst` would need `open RDF.Indexed` back (for the closure rules' `indexed_graph` parameter type) — F*'s acyclic-module-DAG requirement rejects that pair outright; there is no flag to relax it. **What actually shipped instead:** only the truly RDF-independent subset — the generic association-list "bucket map" plumbing (`bucket_map`, `bucket_lookup`, `bucket_replace`, `bucket_push`, `build_bucket`, plus the private `bucket_replace_acc`/`cmp_by_key`/`group_sorted_aux` helpers) — genericised over an element-type parameter `#a:Type`, giving `RDF.Indexed.fst` a real dependency of **zero** on `RDF.Graph.Executable.fst`. That module is ~130 lines (`.fsti`, transparent `let`s, same "empty companion `.fst`" shape as `RDF.Vocabulary`'s step-2 precedent) instead of the ~230-line block the plan named. `RDF.Graph.Executable.fst` keeps the RDF-specific glue (unchanged logic) and gets four one-line re-export shims (`bucket_map`/`bucket_lookup`/`bucket_replace`/`bucket_push`/`build_bucket`, qualified to `RDF.Indexed.*` — same discipline as the step-2 `RDF.Vocabulary` shim) so its one real external dependent (`SPARQL11.Algebra.fst`'s five `bucket_lookup` call sites, confirmed by grep — `RDF.CottasStore.fst`/`RDF.Canonical.fst`/`SPARQL11.Store.fst` only mention these names in comments) compiles unchanged. Net line change: `RDF.Graph.Executable.fst` 5255 → 5236 lines (−19, not the −230 the plan projected) once the new banner/shim/pragma text is counted back in. **Unrelated proof regression found and fixed along the way:** extracting the generic block shifted the SMT context enough to tip `rdfs_closure`'s borderline fuel-termination proof (already fragile in the untouched baseline — it only verified there via F*'s automatic split-on-failure retry, "Warning 349") into a hard failure; fixed with `#push-options "--z3rlimit 30" ... #pop-options` around `rdfs_closure` only, the same idiom already used elsewhere in this tree (`RDF.List.Helpers.fst`, `Parser.Turtle.fst`) — a resource-budget bump, not a logic change, no `--admit_smt_queries`/`--lax`. **What step 5 unblocks:** once `RDF.Term`/`RDF.Triple`/`RDF.Graph` exist as their own modules (so `triple`/`subject`/`rdf_term` no longer live in the same file as the RDFS/OWL-RL closure rules), the RDF-specific glue this step could not move becomes safe to fold into `RDF.Indexed.fst` too — the cycle disappears because the closure-rule-holding module and `RDF.Indexed` would both depend on the (now-separate) term/graph types instead of on each other. **Also found, not this step's territory:** `build-ocaml.sh`'s `FSTAR_MODULES` list (used for the JS/wasm build, ~line 1237) is missing `RDF_Vocabulary.ml`/`RDF_Vocabulary_Axioms.ml` even though `RDF_Graph_Executable.ml` now `open`s `RDF_Vocabulary` at the OCaml level (step 2's landing didn't update this second list) — the JS/wasm link would fail today; flagged for whoever owns that list next. `RDF_Indexed.ml` was added to the same list by this step so it doesn't compound the gap |
+| 4 | `SPARQL.Terms` split (§2.8) | `SPARQL.Terms.fst` (new, AST types); `SPARQL11.Algebra.fst` keeps evaluator only; `RDF.Graph.Executable`'s duplicate BGP-type block deleted | Medium — 12 direct `SPARQL11.Algebra` dependents need an added `open SPARQL.Terms` (or it re-exports transitively — see Open decision 6) | Full SPARQL 1.1 query + update suites (631 tests) — this is the step most likely to touch a real evaluator call site by accident |
+| 5 | **[LANDED 2026-07-05]** `RDF.Term`/`RDF.Triple`/`RDF.Graph` split (§2.1-2.2) | `RDF.Term.fst(i)`, `RDF.Triple.fst(i)`, `RDF.Graph.fst(i)` (new — the tree's 4th/5th/6th `.fsti`s, transparent-`let` style per the RDF.Vocabulary/RDF.Indexed precedent, and the first written human-reader-first: one concept per block, a one-line prose definition citing the RDF 1.1 Concepts section, then the type — the owner's "glance at the foundational area" deliverable, §0). `RDF.Term` additionally absorbed the five xsd-slash-langString term-algebra constants (old lines 36-50) that RDF.Vocabulary.fsti's banner had explicitly assigned to "the future RDF.Term module", plus the four per-type equality-reflexivity lemmas (old section 7), which moved with their types. `RDF.Graph.Executable.fst` re-exports everything via F* `include RDF.Term`/`RDF.Triple`/`RDF.Graph` — the §3.3 shim paragraph's "needs a one-file experiment" question resolved in `include`'s favor: a throwaway 3-module experiment (A defines variant + refinement type, B `include`s A, C `open`s B and pattern-matches unqualified) confirmed constructors/types/lemmas flow through, so all 53 dependents compile with ZERO source changes, and even this file's own remaining ~5,000 lines needed no edits beyond deleting the moved block. **One surprise §3.1's four-surface analysis didn't anticipate:** F* `include` extracts to NOTHING in OCaml (an include-only module extracts as just `open Prims` — confirmed empirically), so the ~200 qualified `RDF_Graph_Executable.T_IRI`/`.wf_iri`/`.rdf_graph`/… references in `experimental_ocaml_glue/*.sh` + the 13 `bin/<consumer>/*.ml` files would all have gone unbound. Fixed in `build-ocaml.sh`'s post-extract step: an idempotent block prepends real OCaml `include RDF_Term`/`RDF_Triple`/`RDF_Graph` lines to the extracted `RDF_Graph_Executable.ml` (OCaml's `include`, unlike F*'s extraction of it, DOES re-export constructors and record-field labels under the includer's namespace — also confirmed by direct `ocamlfind ocamlopt` experiment) — so §3.1's surfaces 2/3/4 needed zero edits this step; both shims retire together at step 7. Registered in all FIVE lists (`build-ocaml.sh` ALL_MODULES/COMMON_MODULES/FSTAR_MODULES, `tests/unit/run-all.sh`, `build-ocaml-serializer.sh` — the step-3 row's four-place rule plus the serializer script that rule missed), each before `RDF_Graph_Executable`. No z3rlimit adjustment needed anywhere (the step-3 `rdfs_closure` fragility did not recur; every verification tail clean, no Warning 349) | **Measured 2026-07-05, from repo root: SPARQL 631 pass 0 fail (of 631 — including the entailment suite: the step-1/step-3 rows' 2-failure RIF-entailment drift is NOT present in this tree's runs), RDF 1031 pass 0 fail, SHACL core 98 pass 0 fail + sparql 22 pass 0 fail, RDFC-1.0 86 pass 0 fail (of 86), OWL 2 RL PE 28 pass 2 fail (of 30, documented-impossible pair) NE 6 pass 0 fail Cons 76 pass 0 fail Incons 14 pass 0 fail, ShEx 1181 pass 1 mismatch 0 deferred 0 skipped (of 1182), JSON-LD 460 pass 1 fail 6 skip (of 467), RML rml-core 76 pass 0 fail (of 76), RIF 34 pass 4 labelled fails 12 precise skips (of 50), unit 25 pass 0 fail (of 25) — byte-exact vs. the pre-step baseline on every suite.** Scope note: only the type tier moved (types + equality + reflexivity lemmas); §2.2's graph-operation functions (`graph_add`/`graph_union`/`find_objects`/`rename_*_bnodes`/…) stay in `RDF.Graph.Executable.fst` — moving them is mechanical now the types are out, but touches nothing step 6 needs, so it is deferred to its own slice rather than padding this one. Follow-up now UNBLOCKED but deliberately not taken here (this row's scope never included it): the RDF-specific `indexed_graph` glue the step-3 finding left behind can now fold into `RDF.Indexed.fst` (it would `open RDF.Term`/`RDF.Triple`, and the old cycle disappears) — slotted for step 6, which touches the closure rules that consume `indexed_graph` anyway |
+| 6 | **[LANDED 2026-07-05]** `RDFS.Closure`/`OWL.Closure` extraction (§2.4) + `RDF.Indexed` glue fold (step-3/step-5 follow-up) + Axioms seed-graph attempt (owner-addition header) | `RDFS.Closure.fst(i)` and `OWL.Closure.fst(i)` (new — 7th/8th `.fsti`s, transparent-`let` style, near-empty `.fst` companions per the RDF.Vocabulary/RDF.Indexed shape). `RDFS.Closure` holds the 7 `rdfs_rule_*` functions (banner cross-references RDF 1.1 Semantics rule IDs: rdfs2/rdfs3/rdfs5/rdfs7/rdfs9/rdfs11 + container-membership), `rdfs_closure_step`/`rdfs_closure` (its step-3 `--z3rlimit 30` push moved with it), the reflexivity-axiom harvesting (`collect_classes`/`collect_properties`/`rdfs_closure_with_reflexivity`), its own RDFS-vocabulary re-derivation from `RDF.Vocabulary` (superseding RDF.Graph.Executable's section-16 shim, which is deleted), and the owl:Class/owl:Thing/owl:Nothing constants the reflexivity approximation already peeked at. `OWL.Closure` holds the ~40 `owl_rule_*` functions with the interleaved OWL-restriction/XSD vocab blocks, the closure drivers (`owl_rl_closure_step_mode`/`owl_rl_closure_mode`/`owl_rl_closure`/`owl_rl_closure_with_reflexivity[_mode]`), `owl_thing_axioms`, datatype value equivalence (`normalize_integer_lexical`/`normalize_decimal_lexical`/`datatype_value_eq`), `xsd_is_subtype`/`is_inconsistent`, and `entailment_closure` — banner carries the full OWL 2 RL/RDF rule-table index. **Scope deltas from the plan row:** (1) `XSD.Axioms.fst` (§2.5) NOT created — `datatype_value_eq`/`is_inconsistent`/`xsd_is_subtype` went into `OWL.Closure` with inline reasoning (is_inconsistent needs datatype_value_eq; XSD.Datatypes opens the RDF core so a move there would cycle; Open decision 4 stays open). (2) The step-5 row's deferred RDF-specific `indexed_graph` glue folded into `RDF.Indexed.fst(i)` as planned — `build_indexed` takes `list triple` so RDF.Indexed needs only RDF.Term/RDF.Triple, and RDF.Graph.Executable's `open RDF.Indexed` became `include`. (3) A minimal graph-op subset (`mem_triple`/`graph_add`/`graph_len`/`subject_to_term`/`term_to_subject`/`add_triple_if_new`/`add_triple_unchecked`/`term_to_key_total`/`triple_to_key`/`triple_cmp`/`dedup_sorted_aux`/`graph_dedup_sort`/`add_triples_if_new`) moved to `RDF.Graph.fsti` — the closure rules call these and cannot open RDF.Graph.Executable back (cycle); step 5's "touches nothing step 6 needs" prediction for the graph-op slice did not hold for exactly this subset. `RDF.Graph.Executable.fst`: 5,104 → 565 lines; it now `include`s RDF.Indexed/RDFS.Closure/OWL.Closure (same mechanism as step 5's RDF.Term/Triple/Graph), so all dependents — incl. Tableau.fst, SHACL.Validation.fst, OWL.QueryRewrite.fst, Parser.OWLFunctional.fst's direct closure/rule callers — compile with zero source changes. build-ocaml.sh's post-extract OCaml include-shim extended to six modules (`include RDF_Term/RDF_Triple/RDF_Graph/RDF_Indexed/RDFS_Closure/OWL_Closure` prepended to RDF_Graph_Executable.ml) so the runners' qualified `RDF_Graph_Executable.entailment_closure`/`.indexed_graph`/etc. references compile unchanged — verified: all 14 native binaries link. FIVE-place registration done (ALL_MODULES, COMMON_MODULES, FSTAR_MODULES, tests/unit/run-all.sh, build-ocaml-serializer.sh), each ordered RDF_Term → RDF_Triple → RDF_Indexed → RDF_Graph → RDF_Vocabulary_Axioms → RDFS_Closure → OWL_Closure → RDF_Graph_Executable (first compile attempt failed on the old RDF_Indexed-before-RDF_Term order once RDF_Indexed grew the `triple` dependency — link order is semantic, fixed in all five). **Axioms seed-graph gate (owner-addition header): attempted, measured, DISABLED pending review.** Wiring `finite_axiomatic_triples` into `rdfs_closure_with_reflexivity` kept every suite byte-exact EXCEPT OWL profile-RL ConsistencyTests: 76 pass 0 fail → 75 pass 1 fail, `New-Feature-ObjectQCR-002` flipping to FAIL/unexpected-inconsistency — the seeded `rdf:type` domain/range axioms inflate the rdf:type set via rdfs2/rdfs3 enough to trip the #236 sound-but-narrow qualified-cardinality complementOf scaffolding into a spurious cls-com clash. A consistent ontology reported inconsistent is an unsoundness, not an improvement, so the seed is off (full account in RDFS.Closure.fsti's function comment + RDF.Vocabulary.Axioms.fst's banner); the module stays verified and build-wired for the retry after #236's anchor→UNION generalisation. `RDF.Vocabulary.Axioms.fst` also re-targeted `open RDF.Graph.Executable` → `open RDF.Term`/`RDF.Triple` (needed so RDFS.Closure can open it without a cycle) and moved before RDFS_Closure in all five lists. **Two SMT-context shifts, both step-3-precedent-style rlimit pushes, no logic changes:** `SHACL.Validation.fst`'s `custom_violations_for_occurrence` hard-failed under the new dependency digests — its existing `#push-options "--split_queries always"` gained `--z3rlimit 60`, documented inline. (`rdfs_closure`'s step-3 `--z3rlimit 30` simply moved with the function.) **Extraction footgun found:** build-ocaml.sh's incremental-extract manifest hashes only the `.fst` — a `.fsti`-only edit is skipped as "source unchanged" (bit this step twice: the seed-disable edit produced a stale still-seeding RDFS_Closure.ml until the manifest row was dropped by hand). Flagged for whoever owns build-ocaml.sh next: the worker's hash should cover `.fsti` when present | High but narrower than step 5, as predicted — verification tails all clean (RDF.Indexed, RDF.Graph, RDF.Vocabulary.Axioms, RDFS.Closure, OWL.Closure, RDF.Graph.Executable, Tableau, SHACL.Validation, OWL.QueryRewrite, Parser.OWLFunctional, SPARQL11.Algebra each re-verified standalone; no --lax, no --admit_smt_queries, z3 4.13.3) | **Measured 2026-07-05, from repo root, seed disabled: SPARQL 631 pass 0 fail (of 631, entailment suite 70 pass 0 fail included), RDF 1031 pass 0 fail (of 1031, rdf-mt 39 pass 0 fail included), RDFC-1.0 86 pass 0 fail, SHACL core 98 pass 0 fail + sparql 22 pass 0 fail, OWL 2 profile-RL PE 28 pass 2 fail (of 30, documented-impossible pair) NE 6 pass 0 fail Cons 76 pass 0 fail Incons 14 pass 0 fail, ShEx 1181 pass 1 mismatch (of 1182, known upstream fixture defect), JSON-LD 460 pass 1 fail 6 skip (of 467), RML rml-core 76 pass 0 fail (of 76), RIF 34 pass 4 labelled fails 12 precise skips (of 50), unit 25 pass 0 fail (of 25) — byte-exact vs. the step-5 baseline on every suite. Closure perf (hot path, lifesci 43,103-triple 3-graph RDFS entailment, query 01, native): baseline HEAD binary 17.58s/17.73s vs step-6 binary 17.50s/17.24s over two runs each — no regression, and the query results are byte-identical JSON. (An earlier full battery WITH the seed enabled measured the one-suite delta quoted above — that run is what triggered the disable.)** |
+| 7 | Retire the `RDF.Graph.Executable` re-export shim | Delete the shim; every remaining `open RDF.Graph.Executable` becomes explicit `open RDF.Term`/`RDF.Triple`/`RDF.Graph` (+ `RDF.Indexed`/`RDFS.Closure`/`OWL.Closure` where actually used) | High in file-count (touches all 53 original dependents' `open` lines) but each edit is one line, grep-and-replace mechanical, no logic change | Full battery, once, as a final confirmation — this step is pure `open`-line hygiene |
+
+Step 5's shim is the key risk-reduction move: instead of splitting
+`RDF.Graph.Executable.fst` and simultaneously updating 53 dependents'
+`open` lines in one commit, land the three new modules FIRST with
+`RDF.Graph.Executable.fst` rewritten to `open RDF.Term open RDF.Triple
+open RDF.Graph` and re-export every name those 53 dependents currently
+use (thin `let` aliases, or F*'s `include` if it fits — needs a
+one-file experiment before relying on it). This makes step 5 a pure
+type-relocation with **zero** dependent-facing change — all 53 files'
+`open RDF.Graph.Executable` still resolves to what they used before,
+verified by the same full battery, and only step 7 (mechanical, no
+logic touched) later removes the indirection. Same shim pattern
+`XSD.Datatypes.fst`'s slice 1 already used (`SHACL.Validation.fst`
+keeps thin re-export `let`s) — precedent already validated in this
+tree.
+
+### 3.4 Effort estimate
+
+Per CLAUDE.md's Agent Work Strategy (commit-sized subagent scope):
+steps 1-2 are S (under 2h, mechanical re-homing); step 3 is S-M; step
+4 is M (needs the caller audit, Open decision 5); step 5 is M given
+the shim (L without it); step 6 is M-L (largest line count, mechanical
+once the step-5 shim exists); step 7 is S (grep-and-replace, one
+battery run). Total: roughly 2-3 weeks of focused single-agent work
+across ~9-10 commit-sized PRs — comparable in scale to the
+query-planning recovery plan's own estimate for a similarly-sized
+restructuring.
+
+## 4. The beautify pass
+
+**Status (2026-07-05): §4.1's banner convention and a new "§4.1a
+`.fsti` reading-order convention" both landed**, applied to the six
+foundational `.fsti`/`.fst` pairs (`RDF.Vocabulary`, `RDF.Indexed`,
+`RDF.IRI`, `RDF.Term`, `RDF.Triple`, `RDF.Graph`), in response to the
+owner critique that `RDF.Term.fsti` still mixed concepts with
+mechanics (a fuel-recursion helper three lines into the IRI concept).
+Full convention text lives in
+[`skills/fstar-module-style/SKILL.md`](../../skills/fstar-module-style/SKILL.md)'s
+".fsti reading-order convention" section (banner ≤10 lines, concepts
+uninterrupted, mechanical Appendix, the phone-screen acceptance test,
+the F*-ordering-forces-exceptions techniques). Verified: all six
+re-verify under z3 4.13.3 (no `--lax`); OCaml extraction diffs
+byte-identical for `RDF.Term`/`RDF.Triple`/`RDF.Vocabulary`; the
+`RDF.Graph`/`RDF.Indexed`/`RDF.IRI` extraction gap found during this
+pass is pre-existing staleness from concurrent step-6 work on
+`RDF.Graph.Executable.fst`, not from this reordering (all edits to
+those three files were comment-only, verified by inspection of the
+diff). Floor set (SPARQL 631/0, RDF 1031/0, SHACL 98/0 + 22/0, RDFC-1.0
+86/86) reconfirmed against the committed `bin/linux-x86_64/` binaries.
+
+### 4.1 Banner convention
+
+Every module in the foundational layer opens with (in order):
+`module X.Y` (line 1); a `//`-comment banner (per the hard 2026-07-04
+comment-syntax rule — no `(* *)` in new code) stating what the module
+defines and what it deliberately excludes plus where that lives
+instead (`RDF.Dataset.Graphs.fst`'s banner already does this — "This
+is a pragmatics/accessor module ... every definition below is a Tot
+composition of existing RDF.Graph.Executable accessors" — use as house
+style); a linked reference to the design doc realized, if any
+(`OWL.Vocabulary.fst`'s "Per #209 (Tableau audit)..." pattern); `open`
+statements, narrowest-dependency-first.
+
+### 4.2 Section ordering within a module
+
+Types → decidable equality + reflexivity lemmas → spec functions (the
+module's actual algorithm) → pragmatics (if any stayed local) →
+nothing after pragmatics. `RDF.Canonical.fst` (§1.5) already reads
+close to this shape; `RDF.Graph.Executable.fst` inverts it today
+(types first, then 4,000+ lines of mixed closure-rules/vocabulary/
+pragmatics with no section boundary beyond `(** ===... *)` banners
+that mark topic changes — "RDFS CLOSURE" then "OWL VOCABULARY" — not
+tier changes).
+
+### 4.3 What moves to pragmatics companions
+
+Per the fstar-module-style skill's rule ("never let a pragmatic
+concern leak into a core module when it can be a separate module the
+core knows nothing about"), the clearest candidate this survey
+surfaces is `RDF.Indexed.fst` (§2.3): an acceleration structure with
+zero semantic content and a correctness-lemma opportunity.
+`RDF.Graph.fst`'s `find_objects`/`find_subjects` stay the reference
+implementation; `RDF.Indexed.fst` depends on `RDF.Graph`, never the
+reverse.
+
+### 4.4 What this pass does NOT attempt
+
+No renaming of already-reasonably-scoped modules (`RDF.Canonical`,
+`RDF.NQuads.Serialize`, `RDF.List.Helpers`) — they already match the
+target shape (§1.5's table). No split of `SHACL.Validation.fst`; its
+dependence on `SPARQL11.Algebra.expr` (`sh:sparql`/custom constraints,
+`Alg.expr` at line 2161) means it should follow, not lead, the
+`SPARQL.Terms` split (step 4) — doing both at once multiplies blast
+radius for no gain.
+
+## 5. Open decisions
+
+1. **Naming: two-segment (`RDF.Term`/`RDF.Graph`) vs. deeper dotted
+   names?** This doc uses two-segment names throughout, matching the
+   2026-05-08 audit's proposal and the landed `RDF.Dataset.Graphs`/
+   `RDF.Dataset.Merge` precedent. Confirm before step 5 — renaming
+   after the fact repeats the whole blast-radius exercise.
+
+2. **Shim-then-retire vs. rename-once for `OWL.Vocabulary` and
+   `SPARQL11.IRI.Resolve`.** §2.6/§2.7 leave open whether these become
+   permanent thin forwarders or get retired with callers updated.
+   Precedent (`XSD.Datatypes` slice 1) kept the forwarder; a forwarder
+   is one more file a reader has to learn is "not the real
+   definition," so this is a real choice, not foregone.
+
+3. **`.fsti` for `RDF.Term`/`RDF.Graph`, revisited later?** §2.9
+   argues against `.fsti` now. If a future need appears (a second term
+   representation for a specialized store), does the boundary get
+   added retroactively, or does a parallel concrete type appear
+   instead (as `RDF.CottasStore.*` do today)? Tree precedent favors
+   the latter; flagged so a future agent doesn't re-derive this.
+
+4. **`is_inconsistent`/`xsd_is_subtype`/`xsd_hierarchy_edges` home:
+   `XSD.Datatypes.fst` itself, or a sibling `XSD.Axioms.fst`?** (§2.5)
+   `XSD.Datatypes.fst`'s declared scope is "value spaces, canonical
+   forms, numeric promotion" — `is_inconsistent` uses XSD value-space
+   equality but is OWL/RDFS-adjacent, not a datatype concept itself.
+   Leaning toward a sibling module; not decided here.
+
+5. **Is `RDF.Graph.Executable`'s FILTER/BIND fragment (lines 586-800)
+   live code or dead?** (§1.4, §2.8) A caller audit (grep every use of
+   `filter_expr_eval`/`apply_bind`/`sparql_concat` outside its own
+   definition site) should run before step 4 — if unused, deletion in
+   its own tiny PR is simpler than migrating dead code.
+
+6. **Does `SPARQL.Terms` need explicit `open`ing by `SPARQL11.Algebra`'s
+   12 dependents, or should `SPARQL11.Algebra` re-export the AST types
+   so existing call sites are unaffected?** (§3.3 step 4) The step-5
+   shim pattern generalizes here — recommend the same re-export
+   approach, deferring the explicit migration to a step-7-equivalent
+   hygiene pass once the risk of simultaneous multi-file change is gone.
+
+7. **Does `SPARQL11.Parser.fst`'s `--admit_smt_queries` debt (~65% of
+   that file, standing priority 3) block any step here?** No step
+   touches `SPARQL11.Parser.fst` directly — it consumes
+   `SPARQL.Terms`'s AST as a producer, so step 4 changes its `open`
+   line, not its proof obligations. Confirm by grepping whether any
+   admitted query depends on names that migrate — otherwise the
+   admitted status could mask a real breakage silently.
+
+8. **"Properties" in the owner's phrasing — a distinct
+   `rdf_property` type, or does `wf_iri` already cover it?** Today a
+   predicate is simply a `wf_iri` in predicate position — no separate
+   `property` type exists, and this doc doesn't propose inventing one
+   (RDF 1.1 doesn't distinguish "property" as a term kind — it's a
+   role an IRI plays). Flagging because the directive names
+   "Properties" alongside "Terms, Graphs, Datasets, Bnodes" as a peer
+   concept; confirm in review that "no new type" is the intended
+   reading, not a request for one (which would be a larger,
+   non-behavior-preserving change out of scope here).
