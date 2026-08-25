@@ -1,0 +1,1448 @@
+module Parser.NTriples
+
+open FStar.String
+open FStar.List.Tot
+open Parser.FastString
+open Parser.Combinators
+open RDF.Graph.Executable
+
+// Issue #70: swap FStar.fs_byte_length/index/sub to byte-indexed primitives
+// on the parser hot path. See Parser.FastString.fst.
+
+(* ================================================================ *)
+(* RDF 1.2 processing mode (epic #305, wave 2).                      *)
+(*                                                                   *)
+(* A small two-constructor tag threaded as a PARAMETER through the   *)
+(* concrete-syntax parsers and serializers (never a global). It is  *)
+(* defined here in the lowest-level line-parser module so every      *)
+(* syntax parser (N-Triples/N-Quads/Turtle/TriG) and both wire       *)
+(* serializers can name it without a new module in the build list.   *)
+(*                                                                   *)
+(*   Mode_11  RDF 1.1: legacy behaviour, byte-for-byte. Rejects the  *)
+(*            1.2 lexical forms (`<<( )>>` triple terms, `@lang--dir` *)
+(*            directional literals) exactly as the 1.1 grammar does. *)
+(*   Mode_12  RDF 1.2: additionally accepts triple terms in object   *)
+(*            position and directional language strings, and still   *)
+(*            rejects the retired RDF-star `<< s p o >>` quoted-      *)
+(*            triple form in BOTH modes.                              *)
+(*                                                                   *)
+(* Default everywhere is Mode_11: the RDF 1.2 concrete-syntax specs  *)
+(* are still W3C Working Drafts (2026-05/2026-05-28), so 1.1 stays   *)
+(* the normative default and no WD churn can move a 1.1 score.       *)
+(* Rationale + phased plan:                                          *)
+(* docs/designissues/2026-07-16-rdf12-sparql12-impact-strategy.md.   *)
+(* ================================================================ *)
+type rdf_syntax_mode =
+  | Mode_11
+  | Mode_12
+
+(* ================================================================ *)
+(* Helper: Unicode code point to UTF-8 string                       *)
+(* ================================================================ *)
+
+// Hex digit to int, returning None for non-hex characters.
+// Previously returned 0 for non-hex, silently accepting \u00ZZ as \u0000.
+let hex_val_opt (c:FStar.Char.char) : option int =
+  let code = FStar.Char.int_of_char c in
+  if code >= 0x30 && code <= 0x39 then Some (code - 0x30)
+  else if code >= 0x41 && code <= 0x46 then Some (code - 0x41 + 10)
+  else if code >= 0x61 && code <= 0x66 then Some (code - 0x61 + 10)
+  else None
+
+// Backward-compatible wrapper: returns 0 for non-hex (used by Turtle/TriG).
+// Prefer hex_val_opt for new code.
+let hex_val (c:FStar.Char.char) : int =
+  match hex_val_opt c with
+  | Some v -> v
+  | None -> 0
+
+// Valid codepoint per Unicode (the surrogate gap is U+D800..U+DFFF
+// inclusive, so U+D7FF IS valid). #68 retirement (2026-05-11): the
+// inclusive `<= 0xD7FF` bound replaces the strict `<` bound forced by
+// `FStar.Char.char_of_int`'s off-by-one precondition. The extracted
+// runtime check is now spec-correct without any post-extraction sed.
+let valid_codepoint (cp:int) : bool =
+  cp >= 0 && (cp <= 0xD7FF || (cp >= 0xE000 && cp <= 0x10FFFF))
+
+// Safe char_of_int: validates codepoint, returns U+FFFD for invalid.
+// The single-codepoint dispatch on cp = 0xD7FF threads through
+// `Parser.FastString.unsafe_char_of_d7ff` (assume val realised in
+// `89_fast_string_primitives.sh` as a 1-line `Z.to_int`) so we
+// satisfy F*'s strict-`<` precondition without losing U+D7FF at
+// runtime. Everywhere else uses the standard `FStar.Char.char_of_int`.
+let safe_char_of_int (cp:int) : FStar.Char.char =
+  if cp = 0xD7FF then
+    Parser.FastString.unsafe_char_of_d7ff cp
+  else if cp >= 0 && (cp < 0xD7FF || (cp >= 0xE000 && cp <= 0x10FFFF)) then
+    let n : nat = cp in
+    FStar.Char.char_of_int n
+  else
+    FStar.Char.char_of_int 0xFFFD
+
+let codepoint_to_string (cp:int) : string =
+  String.string_of_char (safe_char_of_int cp)
+
+(* ================================================================ *)
+(* N-Triples whitespace (space and tab only, not newline)           *)
+(* ================================================================ *)
+
+let is_nt_ws (c:FStar.Char.char) : bool =
+  let code = FStar.Char.int_of_char c in
+  code = 0x20 || code = 0x09
+
+(* Skip spaces and tabs *)
+let pws (input:string) (pos:nat) : parse_result unit =
+  match ptake_while is_nt_ws input pos with
+  | ParseOk _ pos' -> ParseOk () pos'
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* IRI parser: <iri-content>                                         *)
+(* ================================================================ *)
+
+// IRI-forbidden codepoints per RFC 3987 section 2.2:
+// space (0x20), < (0x3C), > (0x3E), " (0x22), { (0x7B), } (0x7D),
+// | (0x7C), \ (0x5C), ^ (0x5E), ` (0x60)
+// These are checked for both literal characters and decoded \u/\U escapes.
+let is_iri_forbidden_codepoint (code:int) : bool =
+  code = 0x20 || code = 0x3C || code = 0x3E || code = 0x22 ||
+  code = 0x7B || code = 0x7D || code = 0x7C || code = 0x5C ||
+  code = 0x5E || code = 0x60
+
+// IRI content: everything that's not '>' or whitespace control chars.
+// N-Triples IRIs do not contain escape sequences except \uXXXX and \UXXXXXXXX.
+
+// IRI body char: valid in IRI content without escaping (code > 0x20, not forbidden, not > or backslash)
+let is_iri_body_char (c:FStar.Char.char) : bool =
+  let code = FStar.Char.int_of_char c in
+  code > 0x20 && code <> 0x3E && code <> 0x5C &&
+  not (is_iri_forbidden_codepoint code)
+
+// Slow path for IRIs containing escapes: accumulates already-encoded
+// string FRAGMENTS, one per step, and concatenates at the '>'.
+//
+// Issue #325 — this used to accumulate a `list char` and finish with
+// String.string_of_list, which re-encodes every element as a UTF-8
+// CODEPOINT. Raw bytes read with fs_byte_index therefore came back out
+// double-encoded, so an N-Triples IRI that mixed an escape with raw
+// UTF-8 — <http://e.org/日a本b語> — parsed to
+// <http://e.org/æ¥a本bèª>. Only the escape survived, because escapes
+// really are codepoints. The bug hid behind scan_iri_end: an IRI with
+// no backslash never reaches this function at all, so every plain
+// non-ASCII IRI (the common case, and the one the differential harness
+// happened to generate for Turtle) was correct and this path was not
+// exercised. N-Quads shares it.
+//
+// Raw bytes now leave via fs_byte_sub and escapes via
+// fs_utf8_of_codepoint; see the rule of thumb on that function. The
+// per-byte validity check is kept exactly as it was — this is a slow
+// path (escaped IRIs only), so a fragment per byte costs nothing worth
+// optimising, and preserving the byte-by-byte accept/reject behaviour
+// matters more.
+let rec parse_iri_body_acc (input:string) (pos:nat) (acc:list string) (fuel:nat)
+  : Tot (parse_result string) (decreases fuel) =
+  if fuel = 0 then ParseFail "IRI too long" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated IRI" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x3E then
+        ParseOk (String.concat "" (List.Tot.rev acc)) (pos + 1)
+      else if code = 0x5C then
+        if pos + 1 >= len then ParseFail "backslash at end of IRI" pos
+        else
+          let next = fs_byte_index input (pos + 1) in
+          let ncode = FStar.Char.int_of_char next in
+          if ncode = 0x75 then
+            if pos + 6 > len then ParseFail "incomplete \\u escape in IRI" pos
+            else
+              match hex_val_opt (fs_byte_index input (pos + 2)),
+                    hex_val_opt (fs_byte_index input (pos + 3)),
+                    hex_val_opt (fs_byte_index input (pos + 4)),
+                    hex_val_opt (fs_byte_index input (pos + 5)) with
+              | Some h0, Some h1, Some h2, Some h3 ->
+                let cp = ((h0 `op_Multiply` 4096) + (h1 `op_Multiply` 256) + (h2 `op_Multiply` 16) + h3) in
+                if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\u escape" pos
+                else if is_iri_forbidden_codepoint cp then ParseFail "IRI-forbidden codepoint in \\u escape" pos
+                else
+                  parse_iri_body_acc input (pos + 6)
+                    (fs_utf8_of_codepoint cp :: acc) (fuel - 1)
+              | _ -> ParseFail "invalid hex digit in \\u escape" pos
+          else if ncode = 0x55 then
+            if pos + 10 > len then ParseFail "incomplete \\U escape in IRI" pos
+            else
+              match hex_val_opt (fs_byte_index input (pos + 2)),
+                    hex_val_opt (fs_byte_index input (pos + 3)),
+                    hex_val_opt (fs_byte_index input (pos + 4)),
+                    hex_val_opt (fs_byte_index input (pos + 5)),
+                    hex_val_opt (fs_byte_index input (pos + 6)),
+                    hex_val_opt (fs_byte_index input (pos + 7)),
+                    hex_val_opt (fs_byte_index input (pos + 8)),
+                    hex_val_opt (fs_byte_index input (pos + 9)) with
+              | Some h0, Some h1, Some h2, Some h3, Some h4, Some h5, Some h6, Some h7 ->
+                let cp = ((h0 `op_Multiply` 268435456) + (h1 `op_Multiply` 16777216) + (h2 `op_Multiply` 1048576) + (h3 `op_Multiply` 65536)
+                       + (h4 `op_Multiply` 4096) + (h5 `op_Multiply` 256) + (h6 `op_Multiply` 16) + h7) in
+                if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\U escape" pos
+                else if is_iri_forbidden_codepoint cp then ParseFail "IRI-forbidden codepoint in \\U escape" pos
+                else
+                  parse_iri_body_acc input (pos + 10)
+                    (fs_utf8_of_codepoint cp :: acc) (fuel - 1)
+              | _ -> ParseFail "invalid hex digit in \\U escape" pos
+          else
+            ParseFail "invalid escape in IRI" pos
+      else if code <= 0x20 || is_iri_forbidden_codepoint code then
+        ParseFail "invalid character in IRI" pos
+      else
+        // Raw byte: out through fs_byte_sub, never through a char list.
+        parse_iri_body_acc input (pos + 1)
+          (fs_byte_sub input pos 1 :: acc) (fuel - 1)
+
+// Fast-path IRI scanner: find position of '>' without building a char list.
+// Returns the position of '>' (not past it). Falls back on escape or error.
+let rec scan_iri_end (input:string) (pos:nat) (fuel:nat)
+  : Tot (parse_result nat) (decreases fuel) =
+  if fuel = 0 then ParseFail "IRI too long" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated IRI" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x3E then ParseOk pos pos  // return position OF the '>'
+      else if code = 0x5C then ParseFail "has escapes" pos
+      else if code <= 0x20 || is_iri_forbidden_codepoint code then
+        ParseFail "invalid character in IRI" pos
+      else
+        scan_iri_end input (pos + 1) (fuel - 1)
+
+let parse_iri_raw : parser iri =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected '<'" pos
+    else
+      let ch = fs_byte_index input pos in
+      if FStar.Char.int_of_char ch = 0x3C then
+        let start = pos + 1 in
+        let fuel = len - pos in
+        // Try fast-path first: scan for '>' with no escapes
+        match scan_iri_end input start fuel with
+        | ParseOk gt_pos _ ->
+          // gt_pos is position of '>'; IRI content is [start, gt_pos)
+          let iri_len = gt_pos - start in
+          if iri_len > 0 && start + iri_len <= len then
+            ParseOk (fs_byte_sub input start iri_len) (gt_pos + 1)
+          else
+            ParseOk "" (gt_pos + 1)
+        | ParseFail "has escapes" _ ->
+          parse_iri_body_acc input start [] fuel
+        | ParseFail msg fpos -> ParseFail msg fpos
+      else
+        ParseFail "expected '<'" pos
+
+let parse_iri : parser wf_iri =
+  fun input pos ->
+    match parse_iri_raw input pos with
+    | ParseOk i pos' ->
+      if is_iri i then ParseOk i pos'
+      else ParseFail "invalid IRI" pos
+    | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* Blank node parser: _:label                                       *)
+(* ================================================================ *)
+
+// Blank-node label body char (codepoint-aware, Pass-3 issue #89).
+// Walks one Unicode codepoint at a time via fs_cp_at so multi-byte
+// UTF-8 identifiers (Greek, Han, dieresis-vowels, astral-plane code
+// points, etc.) succeed. ASCII byte-fast-path preserved for speed.
+let is_bnode_char_cp (cp: nat) : bool =
+  if cp < 0x80 then
+    (cp >= 0x30 && cp <= 0x39) ||
+    (cp >= 0x41 && cp <= 0x5A) ||
+    (cp >= 0x61 && cp <= 0x7A) ||
+    cp = 0x5F || cp = 0x2D || cp = 0x2E
+  else
+    cp = 0xB7 ||
+    (cp >= 0x00C0 && cp <= 0x00D6) ||
+    (cp >= 0x00D8 && cp <= 0x00F6) ||
+    (cp >= 0x00F8 && cp <= 0x02FF) ||
+    (cp >= 0x0300 && cp <= 0x036F) ||
+    (cp >= 0x0370 && cp <= 0x037D) ||
+    (cp >= 0x037F && cp <= 0x1FFF) ||
+    (cp >= 0x200C && cp <= 0x200D) ||
+    (cp >= 0x203F && cp <= 0x2040) ||
+    (cp >= 0x2070 && cp <= 0x218F) ||
+    (cp >= 0x2C00 && cp <= 0x2FEF) ||
+    (cp >= 0x3001 && cp <= 0xD7FF) ||
+    (cp >= 0xF900 && cp <= 0xFDCF) ||
+    (cp >= 0xFDF0 && cp <= 0xFFFD) ||
+    (cp >= 0x10000 && cp <= 0xEFFFF)
+
+// Blank-node label start char (PN_CHARS_U | [0-9]).
+let is_bnode_start_cp (cp: nat) : bool =
+  if cp < 0x80 then
+    (cp >= 0x41 && cp <= 0x5A) ||
+    (cp >= 0x61 && cp <= 0x7A) ||
+    cp = 0x5F ||
+    (cp >= 0x30 && cp <= 0x39)
+  else
+    (cp >= 0x00C0 && cp <= 0x00D6) ||
+    (cp >= 0x00D8 && cp <= 0x00F6) ||
+    (cp >= 0x00F8 && cp <= 0x02FF) ||
+    (cp >= 0x0370 && cp <= 0x037D) ||
+    (cp >= 0x037F && cp <= 0x1FFF) ||
+    (cp >= 0x200C && cp <= 0x200D) ||
+    (cp >= 0x2070 && cp <= 0x218F) ||
+    (cp >= 0x2C00 && cp <= 0x2FEF) ||
+    (cp >= 0x3001 && cp <= 0xD7FF) ||
+    (cp >= 0xF900 && cp <= 0xFDCF) ||
+    (cp >= 0xFDF0 && cp <= 0xFFFD) ||
+    (cp >= 0x10000 && cp <= 0xEFFFF)
+
+// Scan a run of bnode body codepoints starting at pos. Returns the end
+// byte position. Walks one codepoint at a time via fs_cp_at; each step
+// advances by the codepoint's UTF-8 byte length (1..4). `fuel` is
+// byte-bounded, so the per-step `fuel - 1` decrement is still adequate
+// (the scan can only fire byte_length times total).
+let rec scan_bnode_body_cp (input: string) (pos: nat) (fuel: nat)
+  : Tot (r:nat{r >= pos}) (decreases fuel) =
+  if fuel = 0 then pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then pos
+    else
+      let b = fs_byte_at input pos in
+      if b < 0x80 then
+        if is_bnode_char_cp b then scan_bnode_body_cp input (pos + 1) (fuel - 1)
+        else pos
+      else
+        let (cp, adv) = fs_cp_at input pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        if is_bnode_char_cp cp then
+          scan_bnode_body_cp input (pos + advance) (fuel - 1)
+        else pos
+
+let parse_bnode : parser bnode_id =
+  fun input pos ->
+    let len = fs_byte_length input in
+    (* Match "_:" prefix *)
+    if pos + 2 > len then ParseFail "expected '_:'" pos
+    else
+      let c0 = fs_byte_at input pos in
+      let c1 = fs_byte_at input (pos + 1) in
+      if c0 = 0x5F && c1 = 0x3A then
+        (* Read label: first char must be bnode_start, rest bnode_char *)
+        let start_pos = pos + 2 in
+        if start_pos >= len then ParseFail "empty blank node label" start_pos
+        else
+          let b0 = fs_byte_at input start_pos in
+          let (start_cp, start_adv) =
+            if b0 < 0x80 then (b0, 1)
+            else
+              let (cp, adv) = fs_cp_at input start_pos in
+              let advance : nat = if adv = 0 then 1 else adv in
+              (cp, advance)
+          in
+          if is_bnode_start_cp start_cp then
+            (* Scan the remainder of the label as PN_CHARS (+ '.'). *)
+            let after_first : nat = start_pos + start_adv in
+            let fuel : nat = if len > after_first then len - after_first + 1 else 1 in
+            let end_pos = scan_bnode_body_cp input after_first fuel in
+            (* Trailing '.' is allowed inside the label but not as the last
+               character; trim it if present (matches the historical byte
+               implementation). *)
+            let final_end =
+              if end_pos > start_pos && fs_byte_at input (end_pos - 1) = 0x2E
+              then end_pos - 1
+              else end_pos
+            in
+            if final_end > start_pos && final_end <= len then
+              ParseOk (fs_byte_sub input start_pos (final_end - start_pos)) final_end
+            else
+              ParseFail "empty blank node label" start_pos
+          else
+            ParseFail "invalid blank node label start character" start_pos
+      else
+        ParseFail "expected '_:'" pos
+
+(* ================================================================ *)
+(* String literal parser with escape handling                       *)
+(* ================================================================ *)
+
+(* Parse the body of a quoted string, handling N-Triples escapes:
+   \t \n \r \\ \" \b \f \uXXXX \UXXXXXXXX *)
+let rec parse_string_body (input:string) (pos:nat) (acc:list char) (fuel:nat)
+  : Tot (parse_result string) (decreases fuel) =
+  if fuel = 0 then ParseFail "string too long" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated string literal" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x22 then (* '"' - end of string *)
+        ParseOk (String.string_of_list (List.Tot.rev acc)) (pos + 1)
+      else if code = 0x5C then (* backslash *)
+        if pos + 1 >= len then ParseFail "backslash at end of string" pos
+        else
+          let esc = fs_byte_index input (pos + 1) in
+          let esc_code = FStar.Char.int_of_char esc in
+          if esc_code = 0x74 then (* \t *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x09 :: acc) (fuel - 1)
+          else if esc_code = 0x6E then (* \n *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x0A :: acc) (fuel - 1)
+          else if esc_code = 0x72 then (* \r *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x0D :: acc) (fuel - 1)
+          else if esc_code = 0x5C then (* \\ *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x5C :: acc) (fuel - 1)
+          else if esc_code = 0x22 then (* \" *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x22 :: acc) (fuel - 1)
+          else if esc_code = 0x62 then (* \b - backspace *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x08 :: acc) (fuel - 1)
+          else if esc_code = 0x66 then (* \f - form feed *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x0C :: acc) (fuel - 1)
+          else if esc_code = 0x27 then (* \' - apostrophe; ECHAR ::= '\' [tbnrf"'\] *)
+            parse_string_body input (pos + 2) (FStar.Char.char_of_int 0x27 :: acc) (fuel - 1)
+          else if esc_code = 0x75 then // \uXXXX
+            if pos + 6 > len then ParseFail "incomplete \\u escape" pos
+            else
+              match hex_val_opt (fs_byte_index input (pos + 2)),
+                    hex_val_opt (fs_byte_index input (pos + 3)),
+                    hex_val_opt (fs_byte_index input (pos + 4)),
+                    hex_val_opt (fs_byte_index input (pos + 5)) with
+              | Some h0, Some h1, Some h2, Some h3 ->
+                let cp = ((h0 `op_Multiply` 4096) + (h1 `op_Multiply` 256) + (h2 `op_Multiply` 16) + h3) in
+                if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\u escape" pos
+                else
+                  let c = safe_char_of_int cp in
+                  parse_string_body input (pos + 6) (c :: acc) (fuel - 1)
+              | _ -> ParseFail "invalid hex digit in \\u escape" pos
+          else if esc_code = 0x55 then // \UXXXXXXXX
+            if pos + 10 > len then ParseFail "incomplete \\U escape" pos
+            else
+              match hex_val_opt (fs_byte_index input (pos + 2)),
+                    hex_val_opt (fs_byte_index input (pos + 3)),
+                    hex_val_opt (fs_byte_index input (pos + 4)),
+                    hex_val_opt (fs_byte_index input (pos + 5)),
+                    hex_val_opt (fs_byte_index input (pos + 6)),
+                    hex_val_opt (fs_byte_index input (pos + 7)),
+                    hex_val_opt (fs_byte_index input (pos + 8)),
+                    hex_val_opt (fs_byte_index input (pos + 9)) with
+              | Some h0, Some h1, Some h2, Some h3, Some h4, Some h5, Some h6, Some h7 ->
+                let cp = ((h0 `op_Multiply` 268435456) + (h1 `op_Multiply` 16777216) + (h2 `op_Multiply` 1048576) + (h3 `op_Multiply` 65536)
+                       + (h4 `op_Multiply` 4096) + (h5 `op_Multiply` 256) + (h6 `op_Multiply` 16) + h7) in
+                if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\U escape" pos
+                else
+                  let c = safe_char_of_int cp in
+                  parse_string_body input (pos + 10) (c :: acc) (fuel - 1)
+              | _ -> ParseFail "invalid hex digit in \\U escape" pos
+          else
+            ParseFail (String.concat "" ["invalid escape: \\"; String.string_of_char esc]) pos
+      else if code = 0x0A || code = 0x0D then
+        (* Raw newlines/carriage returns not allowed in N-Triples strings *)
+        ParseFail "unescaped newline in string literal" pos
+      else if code < 0x80 then
+        (* ASCII byte fast path. *)
+        parse_string_body input (pos + 1) (ch :: acc) (fuel - 1)
+      else
+        (* Pass-3 issue #89: decode UTF-8 codepoint so that acc holds one
+           char per codepoint, matching String.string_of_list semantics. *)
+        let (cp, adv) = fs_cp_at input pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        parse_string_body input (pos + advance)
+          (safe_char_of_int cp :: acc) (fuel - 1)
+
+// Fast-path string scan: find closing quote with no escapes or raw newlines.
+// Returns position after the closing quote, or fails to signal fallback needed.
+let rec scan_string_fast (input:string) (pos:nat) (fuel:nat)
+  : Tot (parse_result unit) (decreases fuel) =
+  if fuel = 0 then ParseFail "string too long" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated string literal" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x22 then ParseOk () (pos + 1)       // closing quote
+      else if code = 0x5C then ParseFail "has escapes" pos  // backslash, fall back
+      else if code = 0x0A || code = 0x0D then ParseFail "unescaped newline in string literal" pos
+      else scan_string_fast input (pos + 1) (fuel - 1)
+
+let parse_string_literal : parser string =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected '\"'" pos
+    else
+      let ch = fs_byte_index input pos in
+      if FStar.Char.int_of_char ch = 0x22 then
+        let start = pos + 1 in
+        let fuel = len - pos in
+        // Fast path: scan for closing quote without escapes
+        match scan_string_fast input start fuel with
+        | ParseOk () end_pos ->
+          // end_pos is one past the closing quote; string content is [start, end_pos-1)
+          let str_len = end_pos - 1 - start in
+          if str_len > 0 && start + str_len <= len then
+            ParseOk (fs_byte_sub input start str_len) end_pos
+          else
+            ParseOk "" end_pos
+        | ParseFail "has escapes" _ ->
+          parse_string_body input start [] fuel
+        | ParseFail msg fpos -> ParseFail msg fpos
+      else
+        ParseFail "expected '\"'" pos
+
+(* ================================================================ *)
+(* Language tag parser: @lang-subtag                                 *)
+(* ================================================================ *)
+
+(* Language tag characters: a-zA-Z0-9 and '-' *)
+let is_lang_char (c:FStar.Char.char) : bool =
+  let code = FStar.Char.int_of_char c in
+  (code >= 0x41 && code <= 0x5A) ||  (* A-Z *)
+  (code >= 0x61 && code <= 0x7A) ||  (* a-z *)
+  (code >= 0x30 && code <= 0x39) ||  (* 0-9 *)
+  code = 0x2D                         (* - *)
+
+// BCP 47: language tag must start with a letter (a-zA-Z)
+let is_alpha (c:FStar.Char.char) : bool =
+  let code = FStar.Char.int_of_char c in
+  (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)
+
+let parse_lang_tag : parser string =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected '@'" pos
+    else
+      let ch = fs_byte_index input pos in
+      if FStar.Char.int_of_char ch = 0x40 then // '@'
+        if pos + 1 >= len then ParseFail "expected language tag after '@'" (pos + 1)
+        else if not (is_alpha (fs_byte_index input (pos + 1))) then
+          ParseFail "language tag must start with a letter" (pos + 1)
+        else
+          match ptake_while1_pos is_lang_char input (pos + 1) with
+          | ParseOk lang pos' -> ParseOk lang pos'
+          | ParseFail _ fpos -> ParseFail "expected language tag after '@'" fpos
+      else
+        ParseFail "expected '@'" pos
+
+(* ================================================================ *)
+(* Datatype parser: ^^<iri>                                         *)
+(* ================================================================ *)
+
+let parse_datatype : parser wf_iri =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos + 2 > len then ParseFail "expected '^^'" pos
+    else
+      let c0 = fs_byte_index input pos in
+      let c1 = fs_byte_index input (pos + 1) in
+      if FStar.Char.int_of_char c0 = 0x5E && FStar.Char.int_of_char c1 = 0x5E then
+        parse_iri input (pos + 2)
+      else
+        ParseFail "expected '^^'" pos
+
+(* ================================================================ *)
+(* Literal parser: "string" optionally followed by @lang or ^^<dt>  *)
+(* ================================================================ *)
+
+let parse_literal : parser wf_literal =
+  fun input pos ->
+    match parse_string_literal input pos with
+    | ParseOk lexical pos' ->
+      let len = fs_byte_length input in
+      if pos' >= len then
+        (* Plain literal — per RDF 1.1, has datatype xsd:string *)
+        let lit = { lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None } in
+        if literal_wf lit then ParseOk lit pos'
+        else ParseFail "invalid literal" pos
+      else
+        let next = fs_byte_index input pos' in
+        let next_code = FStar.Char.int_of_char next in
+        if next_code = 0x40 then (* '@' — language tag *)
+          begin match parse_lang_tag input pos' with
+          | ParseOk lang pos'' ->
+            let lit = { lexical_form = lexical; datatype = rdf_lang_string; lang_tag = Some lang; direction = None } in
+            if literal_wf lit then ParseOk lit pos''
+            else ParseFail "invalid literal" pos
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        else if next_code = 0x5E then (* '^' — might be '^^' datatype *)
+          begin match parse_datatype input pos' with
+          | ParseOk dt pos'' ->
+            let lit = { lexical_form = lexical; datatype = dt; lang_tag = None; direction = None } in
+            if literal_wf lit then ParseOk lit pos''
+            else ParseFail "invalid literal" pos
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        else
+          (* Plain literal *)
+          let lit = { lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None } in
+          if literal_wf lit then ParseOk lit pos'
+          else ParseFail "invalid literal" pos
+    | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* Subject parser: IRI or blank node                                *)
+(* ================================================================ *)
+
+let parse_subject : parser subject =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected subject" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x3C then (* '<' — IRI *)
+        begin match parse_iri input pos with
+        | ParseOk i pos' -> ParseOk (S_IRI i) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5F then (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk (S_BNode b) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else
+        ParseFail "expected '<' or '_:' for subject" pos
+
+(* ================================================================ *)
+(* Object parser: IRI, blank node, or literal                       *)
+(* ================================================================ *)
+
+let parse_object : parser rdf_term =
+  fun input pos ->
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected object" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = FStar.Char.int_of_char ch in
+      if code = 0x3C then (* '<' — IRI *)
+        begin match parse_iri input pos with
+        | ParseOk i pos' -> ParseOk (T_IRI i) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5F then (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk (T_BNode b) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x22 then (* '"' — literal *)
+        begin match parse_literal input pos with
+        | ParseOk lit pos' -> ParseOk (T_Literal lit) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else
+        ParseFail "expected '<', '_:', or '\"' for object" pos
+
+(* ================================================================ *)
+(* Triple parser: subject ws+ predicate ws+ object ws* '.' ws*      *)
+(* ================================================================ *)
+
+let parse_triple : parser triple =
+  fun input pos ->
+    (* Skip leading whitespace *)
+    match pws input pos with
+    | ParseOk () pos1 ->
+      begin match parse_subject input pos1 with
+      | ParseOk subj pos2 ->
+        begin match pws input pos2 with
+        | ParseOk () pos3 ->
+          begin match parse_iri input pos3 with
+          | ParseOk pred pos4 ->
+            begin match pws input pos4 with
+            | ParseOk () pos5 ->
+              begin match parse_object input pos5 with
+              | ParseOk obj pos6 ->
+                begin match pws input pos6 with
+                | ParseOk () pos7 ->
+                  (* Expect '.' *)
+                  let len = fs_byte_length input in
+                  if pos7 >= len then ParseFail "expected '.'" pos7
+                  else
+                    let dot = fs_byte_index input pos7 in
+                    if FStar.Char.int_of_char dot = 0x2E then
+                      ParseOk ({ s = subj; p = pred; o = obj }) (pos7 + 1)
+                    else
+                      ParseFail "expected '.'" pos7
+                | ParseFail msg fpos -> ParseFail msg fpos
+                end
+              | ParseFail msg fpos -> ParseFail msg fpos
+              end
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* Line-by-line document parser                                     *)
+(* ================================================================ *)
+
+(* Top-level scan loop for `skip_comment` below, lifted out of the local
+   `let rec` so an external locality lemma can name it (Parser.NTriples.
+   Locality.fst Stage 3 Item 4 FINDING: a local `let rec` has no qualified
+   name another module can state an intermediate-step equation about).
+   `input`/`len` are explicit parameters -- the closure previously
+   captured them from `skip_comment`'s enclosing scope. Behavior-identical
+   to the prior local definition. *)
+let rec nt_skip_to_eol (input:string) (len:nat) (p:nat) (fuel:nat) : Tot nat (decreases fuel) =
+  if fuel = 0 then p
+  else if p >= len then p
+  else
+    let c = fs_byte_index input p in
+    let cc = FStar.Char.int_of_char c in
+    if cc = 0x0A || cc = 0x0D then p
+    else nt_skip_to_eol input len (p + 1) (fuel - 1)
+
+(* Skip a comment: from '#' to end of line (or end of input) *)
+let skip_comment (input:string) (pos:nat) : nat =
+  let len = fs_byte_length input in
+  if pos >= len then pos
+  else
+    let ch = fs_byte_index input pos in
+    if FStar.Char.int_of_char ch = 0x23 then (* '#' *)
+      (* Skip to end of line *)
+      nt_skip_to_eol input len (pos + 1) (len - pos)
+    else pos
+
+(* Skip newline characters (LF, CRLF, CR) *)
+let skip_eol (input:string) (pos:nat) : nat =
+  let len = fs_byte_length input in
+  if pos >= len then pos
+  else
+    let ch = fs_byte_index input pos in
+    let code = FStar.Char.int_of_char ch in
+    if code = 0x0D then (* CR *)
+      if pos + 1 < len then
+        let next = fs_byte_index input (pos + 1) in
+        if FStar.Char.int_of_char next = 0x0A then pos + 2  (* CRLF *)
+        else pos + 1  (* bare CR *)
+      else pos + 1
+    else if code = 0x0A then pos + 1  (* LF *)
+    else pos
+
+(* Parse an entire N-Triples document, returning a list of triples.
+   Processes line by line:
+   - Skip whitespace
+   - If '#', skip comment to end of line
+   - If end of line or end of input, skip
+   - Otherwise, parse a triple
+*)
+let rec parse_ntriples_acc (input:string) (pos:nat) (acc:list triple) (fuel:nat)
+  : Tot (list triple) (decreases fuel) =
+  if fuel = 0 then List.Tot.rev acc
+  else
+    let len = fs_byte_length input in
+    if pos >= len then List.Tot.rev acc
+    else
+      (* Skip whitespace (space/tab) *)
+      let pos1 : nat = match pws input pos with
+                       | ParseOk () p -> p
+                       | _ -> pos in
+      if pos1 >= len then List.Tot.rev acc
+      else
+        let ch = fs_byte_index input pos1 in
+        let code = FStar.Char.int_of_char ch in
+        if code = 0x23 then (* '#' — comment line *)
+          let pos2 = skip_comment input pos1 in
+          let pos3 = skip_eol input pos2 in
+          if pos3 = pos1 then List.Tot.rev acc  (* no progress — stop *)
+          else parse_ntriples_acc input pos3 acc (fuel - 1)
+        else if code = 0x0A || code = 0x0D then (* empty line *)
+          let pos2 = skip_eol input pos1 in
+          if pos2 = pos1 then List.Tot.rev acc  (* no progress *)
+          else parse_ntriples_acc input pos2 acc (fuel - 1)
+        else
+          (* Try to parse a triple *)
+          match parse_triple input pos1 with
+          | ParseOk t pos2 ->
+            (* After the '.', skip optional whitespace, optional comment, then EOL *)
+            let pos3 = match pws input pos2 with
+                       | ParseOk () p -> p
+                       | _ -> pos2 in
+            let pos4 = skip_comment input pos3 in
+            let pos5 = skip_eol input pos4 in
+            let pos_next = if pos5 > pos1 then pos5
+                          else if pos4 > pos1 then pos4
+                          else pos2 in
+            parse_ntriples_acc input pos_next (t :: acc) (fuel - 1)
+          | ParseFail _ _ ->
+            (* Skip to next line on parse failure *)
+            let rec skip_line (p:nat) (f:nat) : Tot nat (decreases f) =
+              if f = 0 then p
+              else if p >= len then p
+              else
+                let c = fs_byte_index input p in
+                let cc = FStar.Char.int_of_char c in
+                if cc = 0x0A || cc = 0x0D then skip_eol input p
+                else skip_line (p + 1) (f - 1)
+            in
+            let pos2 = skip_line pos1 (len - pos1) in
+            if pos2 = pos1 then List.Tot.rev acc  (* no progress *)
+            else parse_ntriples_acc input pos2 acc (fuel - 1)
+
+let parse_ntriples (input:string) : list triple =
+  let len = fs_byte_length input in
+  parse_ntriples_acc input 0 [] (len + 1)
+
+(* ================================================================ *)
+(* Generic streaming fold (CLI parse-stream query fast path, issue   *)
+(* "bound in-memory query memory" / SPARQL.Plan.Streamable.fst).     *)
+(*                                                                    *)
+(* Structurally identical to parse_ntriples_acc above (same line-by- *)
+(* line walk, same comment/blank-line/error-recovery handling),      *)
+(* except each parsed triple is folded into a caller-supplied        *)
+(* accumulator via `step` instead of being consed onto a growing      *)
+(* `list triple`, and the walk can stop early once `stop acc` holds   *)
+(* (used for ASK's first-match-wins). No triple list is ever          *)
+(* retained across lines, for any accumulator type `a` a caller       *)
+(* chooses -- the same memory bound `count_ntriples` already gets,    *)
+(* generalised to shapes that need to inspect terms (e.g. a bound-    *)
+(* predicate COUNT), which a blind line count cannot do.              *)
+(* ================================================================ *)
+let rec fold_ntriples_acc (#a:Type) (step: triple -> a -> a) (stop: a -> bool)
+    (input:string) (pos:nat) (acc:a) (fuel:nat)
+  : Tot a (decreases fuel) =
+  if fuel = 0 then acc
+  else if stop acc then acc
+  else
+    let len = fs_byte_length input in
+    if pos >= len then acc
+    else
+      let pos1 : nat = match pws input pos with
+                       | ParseOk () p -> p
+                       | _ -> pos in
+      if pos1 >= len then acc
+      else
+        let ch = fs_byte_index input pos1 in
+        let code = FStar.Char.int_of_char ch in
+        if code = 0x23 then (* '#' — comment line *)
+          let pos2 = skip_comment input pos1 in
+          let pos3 = skip_eol input pos2 in
+          if pos3 = pos1 then acc  (* no progress — stop *)
+          else fold_ntriples_acc step stop input pos3 acc (fuel - 1)
+        else if code = 0x0A || code = 0x0D then (* empty line *)
+          let pos2 = skip_eol input pos1 in
+          if pos2 = pos1 then acc  (* no progress *)
+          else fold_ntriples_acc step stop input pos2 acc (fuel - 1)
+        else
+          (* Try to parse a triple *)
+          match parse_triple input pos1 with
+          | ParseOk t pos2 ->
+            let acc1 = step t acc in
+            (* After the '.', skip optional whitespace, optional comment, then EOL *)
+            let pos3 = match pws input pos2 with
+                       | ParseOk () p -> p
+                       | _ -> pos2 in
+            let pos4 = skip_comment input pos3 in
+            let pos5 = skip_eol input pos4 in
+            let pos_next = if pos5 > pos1 then pos5
+                          else if pos4 > pos1 then pos4
+                          else pos2 in
+            if stop acc1 then acc1
+            else fold_ntriples_acc step stop input pos_next acc1 (fuel - 1)
+          | ParseFail _ _ ->
+            (* Skip to next line on parse failure *)
+            let rec skip_line (p:nat) (f:nat) : Tot nat (decreases f) =
+              if f = 0 then p
+              else if p >= len then p
+              else
+                let c = fs_byte_index input p in
+                let cc = FStar.Char.int_of_char c in
+                if cc = 0x0A || cc = 0x0D then skip_eol input p
+                else skip_line (p + 1) (f - 1)
+            in
+            let pos2 = skip_line pos1 (len - pos1) in
+            if pos2 = pos1 then acc  (* no progress *)
+            else fold_ntriples_acc step stop input pos2 acc (fuel - 1)
+
+let fold_ntriples (#a:Type) (step: triple -> a -> a) (stop: a -> bool) (init:a) (input:string) : a =
+  let len = fs_byte_length input in
+  fold_ntriples_acc step stop input 0 init (len + 1)
+
+(* ================================================================ *)
+(* Scan-only validators for `--count` mode (issue #121, step 2).    *)
+(*                                                                  *)
+(* These mirror parse_iri / parse_subject / parse_object /          *)
+(* parse_literal / parse_triple structurally, but never call        *)
+(* fs_byte_sub or build term records. They return only              *)
+(* parse_result nat (the new position). On parliament-class inputs  *)
+(* (7.3M triples, 21M IRI substrings, ~7M literal/bnode substrings) *)
+(* this saves tens of millions of OCaml string allocations during   *)
+(* --count.                                                         *)
+(*                                                                  *)
+(* They DO NOT validate the IRI text against `is_iri`. count mode   *)
+(* historically does not enforce IRI well-formedness either         *)
+(* (parse_iri's check returns the IRI unmodified on success and     *)
+(* fails on bad ones, but on parliament data it always passes; the  *)
+(* speed-up matters more than the well-formedness barrier in this   *)
+(* mode). Strict modes still go through parse_triple.               *)
+(* ================================================================ *)
+
+// Validate an IRI (no escapes fast path; fall back to parse_iri_raw on \).
+// Returns the position AFTER the closing '>'.
+let validate_iri (input:string) (pos:nat) : parse_result nat =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected '<'" pos
+  else
+    let ch = fs_byte_index input pos in
+    if FStar.Char.int_of_char ch = 0x3C then
+      let start = pos + 1 in
+      let fuel = len - pos in
+      match scan_iri_end input start fuel with
+      | ParseOk gt_pos _ -> ParseOk (gt_pos + 1) (gt_pos + 1)
+      | ParseFail "has escapes" _ ->
+        // Fall back: parse_iri_raw correctly handles \u/\U escapes.
+        // The string it allocates is discarded; we only want pos'.
+        begin match parse_iri_raw input pos with
+        | ParseOk _ pos' -> ParseOk pos' pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+    else
+      ParseFail "expected '<'" pos
+
+// Validate a blank-node label "_:label" — return position past the label.
+let validate_bnode (input:string) (pos:nat) : parse_result nat =
+  let len = fs_byte_length input in
+  if pos + 2 > len then ParseFail "expected '_:'" pos
+  else
+    let c0 = fs_byte_at input pos in
+    let c1 = fs_byte_at input (pos + 1) in
+    if c0 = 0x5F && c1 = 0x3A then
+      let start_pos = pos + 2 in
+      if start_pos >= len then ParseFail "empty blank node label" start_pos
+      else
+        let b0 = fs_byte_at input start_pos in
+        let (start_cp, start_adv) =
+          if b0 < 0x80 then (b0, 1)
+          else
+            let (cp, adv) = fs_cp_at input start_pos in
+            let advance : nat = if adv = 0 then 1 else adv in
+            (cp, advance)
+        in
+        if is_bnode_start_cp start_cp then
+          let after_first : nat = start_pos + start_adv in
+          let fuel : nat = if len > after_first then len - after_first + 1 else 1 in
+          let end_pos = scan_bnode_body_cp input after_first fuel in
+          let final_end =
+            if end_pos > start_pos && fs_byte_at input (end_pos - 1) = 0x2E
+            then end_pos - 1
+            else end_pos
+          in
+          if final_end > start_pos && final_end <= len then
+            ParseOk final_end final_end
+          else
+            ParseFail "empty blank node label" start_pos
+        else
+          ParseFail "invalid blank node label start character" start_pos
+    else
+      ParseFail "expected '_:'" pos
+
+// Validate a string literal body starting at the opening '"'.
+// Returns position past the closing '"'.
+let validate_string_literal (input:string) (pos:nat) : parse_result nat =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected '\"'" pos
+  else
+    let ch = fs_byte_index input pos in
+    if FStar.Char.int_of_char ch = 0x22 then
+      let start = pos + 1 in
+      let fuel = len - pos in
+      match scan_string_fast input start fuel with
+      | ParseOk () end_pos -> ParseOk end_pos end_pos
+      | ParseFail "has escapes" _ ->
+        // Fall back to parse_string_body and discard the string.
+        begin match parse_string_body input start [] fuel with
+        | ParseOk _ pos' -> ParseOk pos' pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+    else
+      ParseFail "expected '\"'" pos
+
+// Validate a literal: string + optional @lang or ^^<dt>.
+let validate_literal (input:string) (pos:nat) : parse_result nat =
+  match validate_string_literal input pos with
+  | ParseOk pos' _ ->
+    let len = fs_byte_length input in
+    if pos' >= len then ParseOk pos' pos'
+    else
+      let next = fs_byte_index input pos' in
+      let next_code = FStar.Char.int_of_char next in
+      if next_code = 0x40 then
+        // language tag — parse_lang_tag allocates the lang string but it's
+        // small (a few bytes) and only fires on rdf:langString literals.
+        // Discarding via match is sufficient.
+        begin match parse_lang_tag input pos' with
+        | ParseOk _ pos'' -> ParseOk pos'' pos''
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if next_code = 0x5E then
+        // '^^' datatype — recurse into validate_iri on the IRI body.
+        if pos' + 2 > len then ParseFail "expected '^^'" pos'
+        else
+          let c0 = fs_byte_index input pos' in
+          let c1 = fs_byte_index input (pos' + 1) in
+          if FStar.Char.int_of_char c0 = 0x5E && FStar.Char.int_of_char c1 = 0x5E then
+            validate_iri input (pos' + 2)
+          else
+            ParseFail "expected '^^'" pos'
+      else
+        ParseOk pos' pos'
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+let validate_subject (input:string) (pos:nat) : parse_result nat =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected subject" pos
+  else
+    let ch = fs_byte_index input pos in
+    let code = FStar.Char.int_of_char ch in
+    if code = 0x3C then validate_iri input pos
+    else if code = 0x5F then validate_bnode input pos
+    else ParseFail "expected '<' or '_:' for subject" pos
+
+let validate_object (input:string) (pos:nat) : parse_result nat =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected object" pos
+  else
+    let ch = fs_byte_index input pos in
+    let code = FStar.Char.int_of_char ch in
+    if code = 0x3C then validate_iri input pos
+    else if code = 0x5F then validate_bnode input pos
+    else if code = 0x22 then validate_literal input pos
+    else ParseFail "expected '<', '_:', or '\"' for object" pos
+
+(* Mirror of parse_triple but allocation-free. *)
+let validate_triple (input:string) (pos:nat) : parse_result nat =
+  match pws input pos with
+  | ParseOk () pos1 ->
+    begin match validate_subject input pos1 with
+    | ParseOk pos2 _ ->
+      begin match pws input pos2 with
+      | ParseOk () pos3 ->
+        begin match validate_iri input pos3 with
+        | ParseOk pos4 _ ->
+          begin match pws input pos4 with
+          | ParseOk () pos5 ->
+            begin match validate_object input pos5 with
+            | ParseOk pos6 _ ->
+              begin match pws input pos6 with
+              | ParseOk () pos7 ->
+                let len = fs_byte_length input in
+                if pos7 >= len then ParseFail "expected '.'" pos7
+                else
+                  let dot = fs_byte_index input pos7 in
+                  if FStar.Char.int_of_char dot = 0x2E then
+                    ParseOk (pos7 + 1) (pos7 + 1)
+                  else
+                    ParseFail "expected '.'" pos7
+              | ParseFail msg fpos -> ParseFail msg fpos
+              end
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+(* Count-only variant for `--count` mode (issue #121).
+   Step 2: now uses validate_triple to skip per-line string allocation
+   for IRIs, bnode labels, and literal lexical forms. *)
+let rec count_ntriples_acc (input:string) (pos:nat) (acc:nat) (fuel:nat)
+  : Tot nat (decreases fuel) =
+  if fuel = 0 then acc
+  else
+    let len = fs_byte_length input in
+    if pos >= len then acc
+    else
+      let pos1 : nat = match pws input pos with
+                       | ParseOk () p -> p
+                       | _ -> pos in
+      if pos1 >= len then acc
+      else
+        let ch = fs_byte_index input pos1 in
+        let code = FStar.Char.int_of_char ch in
+        if code = 0x23 then
+          let pos2 = skip_comment input pos1 in
+          let pos3 = skip_eol input pos2 in
+          if pos3 = pos1 then acc
+          else count_ntriples_acc input pos3 acc (fuel - 1)
+        else if code = 0x0A || code = 0x0D then
+          let pos2 = skip_eol input pos1 in
+          if pos2 = pos1 then acc
+          else count_ntriples_acc input pos2 acc (fuel - 1)
+        else
+          match validate_triple input pos1 with
+          | ParseOk pos2 _ ->
+            let pos3 = match pws input pos2 with
+                       | ParseOk () p -> p
+                       | _ -> pos2 in
+            let pos4 = skip_comment input pos3 in
+            let pos5 = skip_eol input pos4 in
+            let pos_next = if pos5 > pos1 then pos5
+                          else if pos4 > pos1 then pos4
+                          else pos2 in
+            count_ntriples_acc input pos_next (acc + 1) (fuel - 1)
+          | ParseFail _ _ ->
+            let rec skip_line (p:nat) (f:nat) : Tot nat (decreases f) =
+              if f = 0 then p
+              else if p >= len then p
+              else
+                let c = fs_byte_index input p in
+                let cc = FStar.Char.int_of_char c in
+                if cc = 0x0A || cc = 0x0D then skip_eol input p
+                else skip_line (p + 1) (f - 1)
+            in
+            let pos2 = skip_line pos1 (len - pos1) in
+            if pos2 = pos1 then acc
+            else count_ntriples_acc input pos2 acc (fuel - 1)
+
+let count_ntriples (input:string) : nat =
+  let len = fs_byte_length input in
+  count_ntriples_acc input 0 0 (len + 1)
+
+let rec parse_ntriples_strict_acc (input:string) (pos:nat) (acc:list triple) (fuel:nat)
+  : Tot (option (list triple)) (decreases fuel) =
+  if fuel = 0 then None
+  else
+    let len = fs_byte_length input in
+    if pos >= len then Some (List.Tot.rev acc)
+    else
+      let pos1 : nat = match pws input pos with
+                       | ParseOk () p -> p
+                       | _ -> pos in
+      if pos1 >= len then Some (List.Tot.rev acc)
+      else
+        let ch = fs_byte_index input pos1 in
+        let code = FStar.Char.int_of_char ch in
+        if code = 0x23 then
+          let pos2 = skip_comment input pos1 in
+          let pos3 = skip_eol input pos2 in
+          if pos3 = pos1 then None
+          else parse_ntriples_strict_acc input pos3 acc (fuel - 1)
+        else if code = 0x0A || code = 0x0D then
+          let pos2 = skip_eol input pos1 in
+          if pos2 = pos1 then None
+          else parse_ntriples_strict_acc input pos2 acc (fuel - 1)
+        else
+          match parse_triple input pos1 with
+          | ParseOk t pos2 ->
+            let pos3 = match pws input pos2 with
+                       | ParseOk () p -> p
+                       | _ -> pos2 in
+            let pos4 = skip_comment input pos3 in
+            let pos5 = skip_eol input pos4 in
+            if pos5 > pos1 then
+              parse_ntriples_strict_acc input pos5 (t :: acc) (fuel - 1)
+            else if pos2 >= len then
+              parse_ntriples_strict_acc input pos2 (t :: acc) (fuel - 1)
+            else
+              None
+          | ParseFail _ _ -> None
+
+let parse_ntriples_strict (input:string) : option (list triple) =
+  let len = fs_byte_length input in
+  parse_ntriples_strict_acc input 0 [] (len + 1)
+
+(* ================================================================ *)
+(* RDF 1.2 N-Triples productions (epic #305, phase 1).              *)
+(*                                                                  *)
+(* Behind a distinct entry point (`parse_ntriples_strict_12`) so the *)
+(* RDF 1.1 path above stays byte-identical: the `_12` functions add  *)
+(* object-position triple terms `<<( s p o )>>` and directional      *)
+(* language strings `"x"@en--ltr`, and reject the legacy RDF-star     *)
+(* `<< s p o >>` quoted-triple form and malformed base directions.   *)
+(* Version-flag discipline per                                       *)
+(* docs/designissues/2026-07-16-rdf12-sparql12-impact-strategy.md.   *)
+(* ================================================================ *)
+
+// BCP47-ish subtag validation: each hyphen-separated subtag is 1..8
+// chars. Rejects `@cantbethislong` (14-char subtag) and empty subtags
+// (`en-`, trailing/leading hyphen). `cur` counts chars in the current
+// subtag.
+let rec valid_lang_subtags (cs : list FStar.Char.char) (cur : nat)
+  : Tot bool (decreases cs) =
+  match cs with
+  | [] -> cur >= 1 && cur <= 8
+  | c :: rest ->
+    if FStar.Char.int_of_char c = 0x2D (* '-' *)
+    then (cur >= 1 && cur <= 8) && valid_lang_subtags rest 0
+    else valid_lang_subtags rest (cur + 1)
+
+// Split a raw `@`-tag run at the FIRST double hyphen `--`: the left part
+// is the language tag, the right part (if any) is the base-direction
+// token. A well-formed BCP47 language tag never contains an empty
+// subtag, so the only `--` present is the RDF 1.2 direction separator.
+let rec split_on_double_hyphen (cs : list FStar.Char.char) (acc : list FStar.Char.char)
+  : Tot (list FStar.Char.char * option (list FStar.Char.char)) (decreases cs) =
+  match cs with
+  | c1 :: c2 :: rest ->
+    if FStar.Char.int_of_char c1 = 0x2D && FStar.Char.int_of_char c2 = 0x2D
+    then (List.Tot.rev acc, Some rest)
+    else split_on_double_hyphen (c2 :: rest) (c1 :: acc)
+  | [c] -> (List.Tot.rev (c :: acc), None)
+  | [] -> (List.Tot.rev acc, None)
+
+// Parse an RDF 1.2 `@lang` or `@lang--dir` suffix. `pos` points at '@'.
+// Validates the language tag and the direction token (`ltr`/`rtl`,
+// lowercase only). Rejects `@en--unk`, `@en--LTR`, `@cantbethislong`.
+let parse_lang_dir_12 (input:string) (pos:nat)
+  : parse_result (string * option text_direction) =
+  let len = fs_byte_length input in
+  if pos >= len || FStar.Char.int_of_char (fs_byte_index input pos) <> 0x40 then
+    ParseFail "expected '@'" pos
+  else if pos + 1 >= len || not (is_alpha (fs_byte_index input (pos + 1))) then
+    ParseFail "language tag must start with a letter" (pos + 1)
+  else
+    match ptake_while1_pos is_lang_char input (pos + 1) with
+    | ParseFail _ fpos -> ParseFail "expected language tag after '@'" fpos
+    | ParseOk raw pos' ->
+      let cs = FStar.String.list_of_string raw in
+      let (lt_chars, dir_opt) = split_on_double_hyphen cs [] in
+      if not (valid_lang_subtags lt_chars 0) then
+        ParseFail "invalid language tag" pos
+      else
+        let langtag = FStar.String.string_of_list lt_chars in
+        (match dir_opt with
+         | None -> ParseOk (langtag, None) pos'
+         | Some dchars ->
+           if dchars = ['l'; 't'; 'r'] then ParseOk (langtag, Some Dir_LTR) pos'
+           else if dchars = ['r'; 't'; 'l'] then ParseOk (langtag, Some Dir_RTL) pos'
+           else ParseFail "invalid base direction (expected ltr or rtl)" pos)
+
+// RDF 1.2 literal: string + optional `@lang`/`@lang--dir` or `^^<dt>`.
+// The `^^` typed form still routes through `literal_wf`, which now also
+// rejects an explicit `^^rdf:langString` / `^^rdf:dirLangString`
+// (langdir-bad-3 / langdir-bad-5) because those datatypes require a
+// language tag (and, for dirLangString, a direction).
+// RDF 1.2 N-Triples / N-Quads permit inline whitespace (space/tab)
+// between the closing string quote and a following `@lang` / `^^datatype`,
+// and between `^^` and the datatype IRI (W3C c14n suite extra_whitespace-03
+// `"Alice" @en`, extra_whitespace-04 `"2"  ^^  <int>`). This is a 1.2-only
+// relaxation — parse_literal (RDF 1.1) stays byte-strict. The whitespace is
+// consumed ONLY when a `@`/`^^` actually follows; a plain xsd:string literal
+// returns pos' (before the run) so trailing whitespace stays with the outer
+// triple parser (which skips it before the terminating '.').
+let parse_datatype_ws_12 (input:string) (pos:nat) : parse_result wf_iri =
+  let len = fs_byte_length input in
+  if pos + 2 > len then ParseFail "expected '^^'" pos
+  else
+    let c0 = FStar.Char.int_of_char (fs_byte_index input pos) in
+    let c1 = FStar.Char.int_of_char (fs_byte_index input (pos + 1)) in
+    if c0 = 0x5E && c1 = 0x5E then
+      let ws2 = (match pws input (pos + 2) with ParseOk _ p -> p | ParseFail _ _ -> pos + 2) in
+      parse_iri input ws2
+    else
+      ParseFail "expected '^^'" pos
+
+let parse_literal_12 (input:string) (pos:nat) : parse_result wf_literal =
+  match parse_string_literal input pos with
+  | ParseFail msg fpos -> ParseFail msg fpos
+  | ParseOk lexical pos' ->
+    let len = fs_byte_length input in
+    let ws_pos = (match pws input pos' with ParseOk _ p -> p | ParseFail _ _ -> pos') in
+    if ws_pos >= len then
+      let lit = { lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None } in
+      if literal_wf lit then ParseOk lit pos' else ParseFail "invalid literal" pos
+    else
+      let next_code = FStar.Char.int_of_char (fs_byte_index input ws_pos) in
+      if next_code = 0x40 then (* '@' *)
+        (match parse_lang_dir_12 input ws_pos with
+         | ParseFail msg fpos -> ParseFail msg fpos
+         | ParseOk (langtag, dopt) pos'' ->
+           let dt = (match dopt with None -> rdf_lang_string | Some _ -> rdf_dir_lang_string) in
+           let lit = { lexical_form = lexical; datatype = dt; lang_tag = Some langtag; direction = dopt } in
+           if literal_wf lit then ParseOk lit pos'' else ParseFail "invalid literal" pos)
+      else if next_code = 0x5E then (* '^^' *)
+        (match parse_datatype_ws_12 input ws_pos with
+         | ParseFail msg fpos -> ParseFail msg fpos
+         | ParseOk dt pos'' ->
+           let lit = { lexical_form = lexical; datatype = dt; lang_tag = None; direction = None } in
+           if literal_wf lit then ParseOk lit pos'' else ParseFail "invalid literal" pos)
+      else
+        (* No langtag/datatype follows — plain xsd:string. Return pos'
+           (before the whitespace run) so the outer parser owns it. *)
+        let lit = { lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None } in
+        if literal_wf lit then ParseOk lit pos' else ParseFail "invalid literal" pos
+
+// Object in RDF 1.2: IRI | blank node | literal | triple term `<<( )>>`.
+// A bare '<' followed by '<' begins a `<<`-form: accepted ONLY as `<<(`
+// (a triple term); the legacy RDF-star `<< s p o >>` quoted triple is a
+// syntax error (ntriples12-bad-syntax-09, bad-reified-2/3). Fuel bounds
+// the mutual recursion (each triple-term level consumes '<<(' = 3 bytes).
+let rec parse_object_12_f (input:string) (pos:nat) (fuel:nat)
+  : Tot (parse_result rdf_term) (decreases fuel) =
+  if fuel = 0 then ParseFail "triple-term nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected object" pos
+    else
+      let code = FStar.Char.int_of_char (fs_byte_index input pos) in
+      if code = 0x3C then (* '<' *)
+        (if pos + 1 < len && FStar.Char.int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           (* '<<' — only '<<(' triple term is legal; legacy '<<' rejected *)
+           if pos + 2 < len && FStar.Char.int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+             parse_triple_term_12_f input pos (fuel - 1)
+           else
+             ParseFail "legacy '<< >>' quoted triple is not RDF 1.2 syntax" pos
+         else
+           (match parse_iri input pos with
+            | ParseOk i pos' -> ParseOk (T_IRI i) pos'
+            | ParseFail msg fpos -> ParseFail msg fpos))
+      else if code = 0x5F then (* '_' — blank node *)
+        (match parse_bnode input pos with
+         | ParseOk b pos' -> ParseOk (T_BNode b) pos'
+         | ParseFail msg fpos -> ParseFail msg fpos)
+      else if code = 0x22 then (* '"' — literal *)
+        (match parse_literal_12 input pos with
+         | ParseOk lit pos' -> ParseOk (T_Literal lit) pos'
+         | ParseFail msg fpos -> ParseFail msg fpos)
+      else
+        ParseFail "expected '<', '_:', '\"', or '<<(' for object" pos
+
+// Triple term `<<( ttSubject predicate ttObject )>>`. `pos` points at the
+// first '<'. ttSubject is IRI or blank node (parse_subject rejects
+// literal subjects: bad-syntax-02); predicate is an IRI (parse_iri
+// rejects literal predicates: bad-syntax-03); ttObject recurses.
+and parse_triple_term_12_f (input:string) (pos:nat) (fuel:nat)
+  : Tot (parse_result rdf_term) (decreases fuel) =
+  if fuel = 0 then ParseFail "triple-term nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos + 3 > len
+       || FStar.Char.int_of_char (fs_byte_index input pos) <> 0x3C
+       || FStar.Char.int_of_char (fs_byte_index input (pos + 1)) <> 0x3C
+       || FStar.Char.int_of_char (fs_byte_index input (pos + 2)) <> 0x28 then
+      ParseFail "expected '<<('" pos
+    else
+      (match pws input (pos + 3) with
+       | ParseFail msg fpos -> ParseFail msg fpos
+       | ParseOk () p1 ->
+         (match parse_subject input p1 with
+          | ParseFail msg fpos -> ParseFail msg fpos
+          | ParseOk subj p2 ->
+            (match pws input p2 with
+             | ParseFail msg fpos -> ParseFail msg fpos
+             | ParseOk () p3 ->
+               (match parse_iri input p3 with
+                | ParseFail msg fpos -> ParseFail msg fpos
+                | ParseOk pred p4 ->
+                  (match pws input p4 with
+                   | ParseFail msg fpos -> ParseFail msg fpos
+                   | ParseOk () p5 ->
+                     (match parse_object_12_f input p5 (fuel - 1) with
+                      | ParseFail msg fpos -> ParseFail msg fpos
+                      | ParseOk obj p6 ->
+                        (match pws input p6 with
+                         | ParseFail msg fpos -> ParseFail msg fpos
+                         | ParseOk () p7 ->
+                           if p7 + 3 > len then ParseFail "expected ')>>'" p7
+                           else if FStar.Char.int_of_char (fs_byte_index input p7) = 0x29
+                                && FStar.Char.int_of_char (fs_byte_index input (p7 + 1)) = 0x3E
+                                && FStar.Char.int_of_char (fs_byte_index input (p7 + 2)) = 0x3E then
+                             ParseOk (T_TripleTerm subj pred obj) (p7 + 3)
+                           else ParseFail "expected ')>>'" p7)))))))
+
+// Full RDF 1.2 triple: subject (IRI/bnode) predicate (IRI) object (1.2).
+// The subject uses `parse_subject` and the predicate uses `parse_iri`, so
+// a `<<(` or legacy `<<` in either position is rejected (bad-syntax-01,
+// 04, 05, 06, 07, 08, 10; bad-reified-1, 3, 4). The trailing `{| |}`
+// annotation form is rejected because after the object we require '.'.
+let parse_triple_12 (input:string) (pos:nat) : parse_result triple =
+  match pws input pos with
+  | ParseFail msg fpos -> ParseFail msg fpos
+  | ParseOk () pos1 ->
+    (match parse_subject input pos1 with
+     | ParseFail msg fpos -> ParseFail msg fpos
+     | ParseOk subj pos2 ->
+       (match pws input pos2 with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk () pos3 ->
+          (match parse_iri input pos3 with
+           | ParseFail msg fpos -> ParseFail msg fpos
+           | ParseOk pred pos4 ->
+             (match pws input pos4 with
+              | ParseFail msg fpos -> ParseFail msg fpos
+              | ParseOk () pos5 ->
+                let fuel = fs_byte_length input + 1 in
+                (match parse_object_12_f input pos5 fuel with
+                 | ParseFail msg fpos -> ParseFail msg fpos
+                 | ParseOk obj pos6 ->
+                   (match pws input pos6 with
+                    | ParseFail msg fpos -> ParseFail msg fpos
+                    | ParseOk () pos7 ->
+                      let len = fs_byte_length input in
+                      if pos7 >= len then ParseFail "expected '.'" pos7
+                      else if FStar.Char.int_of_char (fs_byte_index input pos7) = 0x2E then
+                        ParseOk ({ s = subj; p = pred; o = obj }) (pos7 + 1)
+                      else ParseFail "expected '.'" pos7))))))
+
+let rec parse_ntriples_strict_12_acc (input:string) (pos:nat) (acc:list triple) (fuel:nat)
+  : Tot (option (list triple)) (decreases fuel) =
+  if fuel = 0 then None
+  else
+    let len = fs_byte_length input in
+    if pos >= len then Some (List.Tot.rev acc)
+    else
+      let pos1 : nat = match pws input pos with
+                       | ParseOk () p -> p
+                       | _ -> pos in
+      if pos1 >= len then Some (List.Tot.rev acc)
+      else
+        let code = FStar.Char.int_of_char (fs_byte_index input pos1) in
+        if code = 0x23 then (* '#' comment *)
+          let pos2 = skip_comment input pos1 in
+          let pos3 = skip_eol input pos2 in
+          if pos3 = pos1 then None
+          else parse_ntriples_strict_12_acc input pos3 acc (fuel - 1)
+        else if code = 0x0A || code = 0x0D then
+          let pos2 = skip_eol input pos1 in
+          if pos2 = pos1 then None
+          else parse_ntriples_strict_12_acc input pos2 acc (fuel - 1)
+        else
+          match parse_triple_12 input pos1 with
+          | ParseOk t pos2 ->
+            let pos3 = match pws input pos2 with
+                       | ParseOk () p -> p
+                       | _ -> pos2 in
+            let pos4 = skip_comment input pos3 in
+            let pos5 = skip_eol input pos4 in
+            if pos5 > pos1 then
+              parse_ntriples_strict_12_acc input pos5 (t :: acc) (fuel - 1)
+            else if pos2 >= len then
+              parse_ntriples_strict_12_acc input pos2 (t :: acc) (fuel - 1)
+            else
+              None
+          | ParseFail _ _ -> None
+
+// RDF 1.2 strict N-Triples: None on any parse error (used by the rdf12
+// N-Triples W3C syntax suite; positive tests require Some, negative
+// tests require None).
+let parse_ntriples_strict_12 (input:string) : option (list triple) =
+  let len = fs_byte_length input in
+  parse_ntriples_strict_12_acc input 0 [] (len + 1)
+
+// Mode-parametrised strict N-Triples entry point. The processing mode is
+// a real parameter selecting the validated code path: Mode_11 is the
+// byte-identical 1.1 grammar (no triple terms, no directional literals);
+// Mode_12 is the 1.2 grammar. Consumers thread their `--rdf12` / CLI /
+// npm option through this single entry point instead of branching on a
+// global. `parse_ntriples_strict` / `parse_ntriples_strict_12` remain as
+// named aliases for their respective modes.
+let parse_ntriples_mode (mode:rdf_syntax_mode) (input:string) : option (list triple) =
+  match mode with
+  | Mode_11 -> parse_ntriples_strict input
+  | Mode_12 -> parse_ntriples_strict_12 input

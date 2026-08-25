@@ -1,0 +1,645 @@
+module Parser.TriG
+
+open FStar.String
+open FStar.List.Tot
+open FStar.Char
+open Parser.FastString
+open Parser.Combinators
+open Parser.NTriples
+open Parser.Turtle
+open RDF.Graph.Executable
+
+// Issue #70: byte-indexed string primitives on the hot path.
+// See Parser.FastString.fst.
+
+(* ================================================================ *)
+(* TriG Parser                                                       *)
+(*                                                                   *)
+(* TriG extends Turtle with named graphs. A TriG document contains:  *)
+(*   - Prefix/base directives (same as Turtle)                       *)
+(*   - Triples in the default graph (same as Turtle)                 *)
+(*   - Named graph blocks:  IRI { triples }                          *)
+(*   - Named graph blocks:  GRAPH IRI { triples }                    *)
+(*   - Default graph block: { triples }                              *)
+(*   - Default graph block: GRAPH { triples }  (invalid per spec)    *)
+(*   - Blank node graph names: _:bnode { triples }                   *)
+(*                                                                   *)
+(* W3C spec: https://www.w3.org/TR/trig/                             *)
+(* ================================================================ *)
+
+(* ================================================================ *)
+(* Dataset construction helpers                                      *)
+(* (Same pattern as Parser.NQuads)                                   *)
+(* ================================================================ *)
+
+(** Find a named graph in the list, returning split context *)
+let rec trig_find_named_graph (name : iri) (ngs : list named_graph)
+  : option (list named_graph & rdf_graph & list named_graph) =
+  match ngs with
+  | [] -> None
+  | ng :: rest ->
+    if ng.ng_name = name then
+      Some ([], ng.ng_graph, rest)
+    else
+      match trig_find_named_graph name rest with
+      | Some (before, g, after) -> Some (ng :: before, g, after)
+      | None -> None
+
+(** Add a triple to the appropriate graph in the dataset.
+
+    PERF: uses [graph_add_unchecked] (O(1) prepend). The caller-facing
+    [parse_trig*] entry points wrap their result in [dataset_finalise]
+    to restore insertion order in O(N) at the end. See
+    docs/designissues/2026-04-25-fstar-rdf-graph-perf-prepend-finalise.md. *)
+let trig_dataset_add (ds : rdf_dataset) (t : triple) (graph_name : option iri) : rdf_dataset =
+  match graph_name with
+  | None ->
+    { ds with ds_default = graph_add_unchecked t ds.ds_default }
+  | Some name ->
+    match trig_find_named_graph name ds.ds_named with
+    | Some (before, existing_g, after) ->
+      let updated_g = graph_add_unchecked t existing_g in
+      let updated_ng : named_graph = { ng_name = name; ng_graph = updated_g } in
+      { ds with ds_named = List.Tot.append before (List.Tot.append [updated_ng] after) }
+    | None ->
+      let new_ng : named_graph = { ng_name = name; ng_graph = [t] } in
+      { ds with ds_named = List.Tot.append ds.ds_named [new_ng] }
+
+(** Add a list of triples to the appropriate graph *)
+let rec trig_dataset_add_triples (ds : rdf_dataset) (triples : list triple) (graph_name : option iri)
+  : Tot rdf_dataset (decreases triples) =
+  match triples with
+  | [] -> ds
+  | t :: rest -> trig_dataset_add_triples (trig_dataset_add ds t graph_name) rest graph_name
+
+(* ================================================================ *)
+(* TriG graph name parser                                            *)
+(* ================================================================ *)
+
+(** Parse a graph name: IRI, prefixed name, blank node label, or [].
+    Returns (graph_iri, updated_state).
+
+    Blank-node graph names (`_:label` or `[]`) are stored using the
+    same sentinel encoding as `Parser.NQuads`: the literal string
+    `"_:<label>"` is placed into the `iri`-typed `ng_name` slot.
+    `RDF.Canonical.canon_graph_name` detects this prefix to emit a
+    bnode rather than `<_:label>` in canonical N-Quads. See
+    `docs/designissues/2026-04-25-nquads-bnode-graph-fix.md`. *)
+let parse_trig_graph_name (st: turtle_state) (input: string) (pos: nat)
+  : parse_result (iri & turtle_state) =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected graph name" pos
+  else
+    let c = fs_byte_index input pos in
+    let code = int_of_char c in
+    if code = 0x5F then (* '_' -- blank node graph name _:label *)
+      begin match parse_bnode input pos with
+      | ParseOk b pos' ->
+        let bnode_iri = String.concat "" ["_:"; b] in
+        ParseOk (bnode_iri, st) pos'
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    else if code = 0x5B then (* '[' -- anonymous blank node [] as graph name *)
+      begin match turtle_ws input (pos + 1) with
+      | ParseOk () pos2 ->
+        if pos2 < len && int_of_char (fs_byte_index input pos2) = 0x5D then
+          // [] -- generate fresh blank node ID for graph name
+          let (bname, st') = fresh_bnode st in
+          let bnode_iri = String.concat "" ["_:"; bname] in
+          ParseOk (bnode_iri, st') (pos2 + 1)
+        else
+          ParseFail "expected ']' for anonymous blank node graph name" pos2
+      end
+    else
+      (* Try IRI (full or prefixed) *)
+      begin match parse_turtle_iri st input pos with
+      | ParseOk i pos' -> ParseOk (i, st) pos'
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+
+(* ================================================================ *)
+(* Case-insensitive keyword matching for GRAPH                       *)
+(* ================================================================ *)
+
+let char_to_lower (c: char) : char =
+  let code = int_of_char c in
+  if code >= 0x41 && code <= 0x5A then char_of_int (code + 32)
+  else c
+
+// Check if input at pos starts with "@prefix" or "@base" (Turtle-style directives)
+let is_at_directive (input: string) (pos: nat) : bool =
+  let len = fs_byte_length input in
+  if pos >= len then false
+  else if int_of_char (fs_byte_index input pos) <> 0x40 then false  // '@'
+  else
+    // Check for @prefix (7 chars) or @base (5 chars)
+    if pos + 7 <= len then
+      let s = fs_byte_sub input pos 7 in
+      if s = "@prefix" then true
+      else if pos + 5 <= len then
+        let s2 = fs_byte_sub input pos 5 in
+        s2 = "@base"
+      else false
+    else if pos + 5 <= len then
+      let s2 = fs_byte_sub input pos 5 in
+      s2 = "@base"
+    else false
+
+// Check if input at pos starts with "PREFIX" or "BASE" (SPARQL-style directives)
+// Case-insensitive check
+let is_sparql_directive (input: string) (pos: nat) : bool =
+  let len = fs_byte_length input in
+  // Check for PREFIX (6 chars)
+  if pos + 6 <= len then
+    let c0 = char_to_lower (fs_byte_index input pos) in
+    let c1 = char_to_lower (fs_byte_index input (pos + 1)) in
+    let c2 = char_to_lower (fs_byte_index input (pos + 2)) in
+    let c3 = char_to_lower (fs_byte_index input (pos + 3)) in
+    let c4 = char_to_lower (fs_byte_index input (pos + 4)) in
+    let c5 = char_to_lower (fs_byte_index input (pos + 5)) in
+    if int_of_char c0 = 0x70 &&  // p
+       int_of_char c1 = 0x72 &&  // r
+       int_of_char c2 = 0x65 &&  // e
+       int_of_char c3 = 0x66 &&  // f
+       int_of_char c4 = 0x69 &&  // i
+       int_of_char c5 = 0x78     // x
+    then
+      // Must be followed by non-pn_chars character
+      if pos + 6 >= len then true
+      else not (is_pn_chars (fs_byte_index input (pos + 6)))
+    else if pos + 4 <= len then
+      // Check for BASE (4 chars)
+      if int_of_char c0 = 0x62 &&  // b
+         int_of_char c1 = 0x61 &&  // a
+         int_of_char c2 = 0x73 &&  // s
+         int_of_char c3 = 0x65     // e
+      then
+        if pos + 4 >= len then true
+        else not (is_pn_chars (fs_byte_index input (pos + 4)))
+      else false
+    else false
+  else if pos + 4 <= len then
+    let c0 = char_to_lower (fs_byte_index input pos) in
+    let c1 = char_to_lower (fs_byte_index input (pos + 1)) in
+    let c2 = char_to_lower (fs_byte_index input (pos + 2)) in
+    let c3 = char_to_lower (fs_byte_index input (pos + 3)) in
+    if int_of_char c0 = 0x62 &&  // b
+       int_of_char c1 = 0x61 &&  // a
+       int_of_char c2 = 0x73 &&  // s
+       int_of_char c3 = 0x65     // e
+    then
+      if pos + 4 >= len then true
+      else not (is_pn_chars (fs_byte_index input (pos + 4)))
+    else false
+  else false
+
+// Check if position starts with any directive (Turtle or SPARQL style)
+let is_directive_at (input: string) (pos: nat) : bool =
+  is_at_directive input pos || is_sparql_directive input pos
+
+(** Check if input starting at pos matches "graph" case-insensitively,
+    followed by a non-PN_CHARS character (whitespace, '{', etc.) *)
+let is_graph_keyword (input: string) (pos: nat) : bool =
+  let len = fs_byte_length input in
+  if pos + 5 > len then false
+  else
+    let c0 = char_to_lower (fs_byte_index input pos) in
+    let c1 = char_to_lower (fs_byte_index input (pos + 1)) in
+    let c2 = char_to_lower (fs_byte_index input (pos + 2)) in
+    let c3 = char_to_lower (fs_byte_index input (pos + 3)) in
+    let c4 = char_to_lower (fs_byte_index input (pos + 4)) in
+    if int_of_char c0 = 0x67 &&    (* g *)
+       int_of_char c1 = 0x72 &&    (* r *)
+       int_of_char c2 = 0x61 &&    (* a *)
+       int_of_char c3 = 0x70 &&    (* p *)
+       int_of_char c4 = 0x68       (* h *)
+    then
+      (* Must be followed by non-pn_chars character or end of input *)
+      if pos + 5 >= len then true
+      else
+        let next = fs_byte_index input (pos + 5) in
+        not (is_pn_chars next)
+    else false
+
+(* ================================================================ *)
+(* Turtle content inside graph blocks                                *)
+(*                                                                   *)
+(* Inside { ... }, the content is standard Turtle (triples,          *)
+(* directives, etc.) terminated by '}'.                              *)
+(* ================================================================ *)
+
+(** Skip to end of line or '}' for error recovery *)
+let rec graph_body_skip_line (input: string) (p: nat) (f: nat) : Tot nat (decreases f) =
+  if f = 0 then p
+  else if p >= fs_byte_length input then p
+  else
+    let ch = fs_byte_index input p in
+    let cd = int_of_char ch in
+    if cd = 0x0A || cd = 0x0D then p + 1
+    else if cd = 0x7D then p
+    else graph_body_skip_line input (p + 1) (f - 1)
+
+// Parse result type that tracks whether errors were encountered.
+// has_error = true means at least one parse error was skipped.
+//
+// terr carries the FIRST error's (message, byte position) -- issue
+// #334's TriG follow-up to #424 (which added the equivalent tdr_error
+// field to Parser.Turtle's turtle_doc_result). Before this, TriG
+// error recovery recorded only a bare has_error: bool and threw away
+// the message + position that parse_graph_body / parse_trig_doc's own
+// ParseFail arms already computed, so an undeclared prefix (or any
+// other statement-level error) in a TriG document was reported with
+// zero information about WHERE or WHY -- and the CLI's lenient TriG
+// load path (parse_trig_with_base_lenient / _12) never even looked at
+// has_error, so the offending statement was silently dropped with
+// exit 0. has_error stays as a field (still set alongside terr) so
+// existing `if tps'.has_error then None else ...` callers (parse_trig,
+// parse_trig_with_base, parse_trig_with_base_12) are unaffected.
+noeq type trig_parse_state = {
+  ts: turtle_state;
+  has_error: bool;
+  terr: option (string & nat);
+}
+
+(** Parse the body of a graph block: Turtle statements until '}'.
+    Returns (triples, updated_state, error_flag). *)
+let rec parse_graph_body (tps: trig_parse_state) (input: string) (pos: nat)
+    (acc: list triple) (fuel: nat)
+  : Tot (parse_result (list triple & trig_parse_state)) (decreases fuel) =
+  if fuel = 0 then ParseOk (List.Tot.rev acc, tps) pos
+  else
+    let fuel' : nat = fuel - 1 in
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then ParseFail "unterminated graph block, expected '}'" pos1
+      else
+        let c = fs_byte_index input pos1 in
+        let code = int_of_char c in
+        if code = 0x7D then
+          ParseOk (List.Tot.rev acc, tps) (pos1 + 1)
+        // Reject directives inside graph blocks per TriG spec
+        else if is_directive_at input pos1 then
+          ParseFail "directives not allowed inside graph block" pos1
+        // Reject nested GRAPH keyword inside graph blocks
+        else if is_graph_keyword input pos1 then
+          ParseFail "nested GRAPH not allowed inside graph block" pos1
+        else
+          begin match parse_turtle_statement tps.ts input pos1 fuel with
+          | ParseOk (triples, st') pos2 ->
+            let tps' = { tps with ts = st' } in
+            if pos2 = pos1 then
+              ParseOk (List.Tot.rev (List.Tot.append (List.Tot.rev triples) acc), tps') pos2
+            else
+              parse_graph_body tps' input pos2
+                (List.Tot.append (List.Tot.rev triples) acc) fuel'
+          | ParseFail msg fpos ->
+            // Error recovery: skip line, but mark that we saw an error
+            // -- and, first-error-wins, record its message + position
+            // (issue #334).
+            let terr' = (match tps.terr with Some _ -> tps.terr | None -> Some (msg, fpos)) in
+            let tps' = { tps with has_error = true; terr = terr' } in
+            let pos2 = graph_body_skip_line input pos1 (len - pos1) in
+            if pos2 = pos1 then
+              ParseOk (List.Tot.rev acc, tps') pos1
+            else
+              parse_graph_body tps' input pos2 acc fuel'
+          end
+
+(* ================================================================ *)
+(* Top-level TriG statement parser                                   *)
+(* ================================================================ *)
+
+(** Parse a single top-level TriG statement.
+    A TriG statement is one of:
+    1. A prefix/base directive (same as Turtle)
+    2. A triples statement in the default graph (same as Turtle)
+    3. A named graph block: graphName { ... }
+    4. A GRAPH keyword block: GRAPH graphName { ... }
+    5. A bare graph block: { ... }  (default graph)
+
+    Returns (dataset_delta, updated_state) where dataset_delta is a list of
+    (graph_name_option, triples) pairs. *)
+let parse_trig_statement (tps: trig_parse_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list (option iri & list triple) & trig_parse_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit" pos
+  else
+    let fuel' : nat = fuel - 1 in
+    let len = fs_byte_length input in
+    let st = tps.ts in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then ParseOk ([], tps) pos1
+      else
+        let c = fs_byte_index input pos1 in
+        let code = int_of_char c in
+        // Case 1: Prefix directive
+        begin match parse_prefix_directive st input pos1 with
+        | ParseOk (prefix, iri_val) pos2 ->
+          let new_prefixes = (prefix, iri_val) :: st.prefixes in
+          ParseOk ([], { tps with ts = { st with prefixes = new_prefixes } }) pos2
+        | ParseFail _ _ ->
+          // Case 2: Base directive
+          begin match parse_base_directive st input pos1 with
+          | ParseOk base_val pos2 ->
+            ParseOk ([], { tps with ts = { st with base_iri = base_val } }) pos2
+          | ParseFail _ _ ->
+            // Case 3: Bare graph block { ... }
+            if code = 0x7B then
+              begin match parse_graph_body tps input (pos1 + 1) [] fuel with
+              | ParseOk (triples, tps') pos2 ->
+                ParseOk ([(None, triples)], tps') pos2
+              | ParseFail msg fpos -> ParseFail msg fpos
+              end
+            // Case 4: GRAPH keyword
+            else if is_graph_keyword input pos1 then
+              begin match turtle_ws input (pos1 + 5) with
+              | ParseOk () pos2 ->
+                if pos2 >= len then ParseFail "expected graph name after GRAPH" pos2
+                else
+                  // RC2: GRAPH must be followed by a graph name, not bare '{'
+                  // GRAPH { ... } without a name is invalid per TriG spec
+                  begin match parse_trig_graph_name st input pos2 with
+                  | ParseOk (gname, st2) pos3 ->
+                    begin match turtle_ws input pos3 with
+                    | ParseOk () pos4 ->
+                      if pos4 >= len then ParseFail "expected '{'" pos4
+                      else if int_of_char (fs_byte_index input pos4) = 0x7B then
+                        let tps2 = { tps with ts = st2 } in
+                        begin match parse_graph_body tps2 input (pos4 + 1) [] fuel with
+                        | ParseOk (triples, tps3) pos5 ->
+                          ParseOk ([(Some gname, triples)], tps3) pos5
+                        | ParseFail msg fpos -> ParseFail msg fpos
+                        end
+                      else
+                        ParseFail "expected '{' after graph name" pos4
+                    end
+                  | ParseFail msg fpos -> ParseFail msg fpos
+                  end
+              end
+            // RC3 used to reject '(' (collection) unconditionally here,
+            // on the theory that a collection can never be a graph
+            // name. True, but wrong altitude: this branch runs for
+            // EVERY top-level statement, so it also blocked the legal
+            // "collection as ordinary triple subject" case (issue
+            // #433 -- trig-turtle-06.trig: `( 1 2 3 ) :p ( 4 5 6 ) .`).
+            //
+            // The TriG grammar already makes a collection-as-graph-name
+            // unreachable without a special case: `triples2` is
+            // `collection predicateObjectList '.'` -- a collection can
+            // ONLY be followed by a predicateObjectList, never by a
+            // wrappedGraph ('{'). So falling through here to Case 5
+            // (parse_trig_graph_name, which fails on '(' since it only
+            // accepts IRI/prefixed-name/blank-node) and then to Case 6
+            // (parse_turtle_statement) is enough: `( 1 2 3 ) :p ( 4 5 6
+            // ) .` parses as ordinary triples, and `( 1 2 3 ) { ... }`
+            // still fails -- parse_turtle_statement parses the
+            // collection as subject, then expects a predicate and
+            // finds '{' instead, so parse_turtle_predicate rejects it.
+            // See docs/designissues/2026-08-14-syntax-grading-audit.md.
+            else
+              // Case 5: Could be graphName { ... } or regular Turtle triples.
+              begin match parse_trig_graph_name st input pos1 with
+              | ParseOk (candidate_name, st2) pos2 ->
+                begin match turtle_ws input pos2 with
+                | ParseOk () pos3 ->
+                  if pos3 < len && int_of_char (fs_byte_index input pos3) = 0x7B then
+                    // It's a named graph block: name { ... }
+                    let tps2 = { tps with ts = st2 } in
+                    begin match parse_graph_body tps2 input (pos3 + 1) [] fuel with
+                    | ParseOk (triples, tps3) pos4 ->
+                      ParseOk ([(Some candidate_name, triples)], tps3) pos4
+                    | ParseFail msg fpos -> ParseFail msg fpos
+                    end
+                  else
+                    // Not followed by '{' -- regular Turtle triples statement
+                    let is_bnode =
+                      fs_byte_length candidate_name >= 2 &&
+                      (let c0 = fs_byte_index candidate_name 0 in
+                       let c1 = fs_byte_index candidate_name 1 in
+                       int_of_char c0 = 0x5F && int_of_char c1 = 0x3A)
+                    in
+                    if is_bnode then
+                      let bname = if fs_byte_length candidate_name > 2
+                                  then fs_byte_sub candidate_name 2 (fs_byte_length candidate_name - 2)
+                                  else "" in
+                      let subj = S_BNode bname in
+                      begin match parse_predicate_object_list st2 subj input pos3 fuel' with
+                      | ParseOk (po_triples, st3) pos4 ->
+                        begin match turtle_ws input pos4 with
+                        | ParseOk () pos5 ->
+                          // RC4: Require trailing dot for bare triples in TriG
+                          if pos5 < len && int_of_char (fs_byte_index input pos5) = 0x2E
+                          then ParseOk ([(None, po_triples)], { tps with ts = st3 }) (pos5 + 1)
+                          else
+                            // No dot -- check if next is '}' or EOF (allowed at end of graph body)
+                            if pos5 >= len || int_of_char (fs_byte_index input pos5) = 0x7D
+                            then ParseOk ([(None, po_triples)], { tps with ts = st3 }) pos5
+                            else ParseFail "expected '.' after triple" pos5
+                        end
+                      | ParseFail msg fpos -> ParseFail msg fpos
+                      end
+                    else if is_iri candidate_name then
+                      let subj = S_IRI candidate_name in
+                      begin match parse_predicate_object_list st2 subj input pos3 fuel' with
+                      | ParseOk (po_triples, st3) pos4 ->
+                        begin match turtle_ws input pos4 with
+                        | ParseOk () pos5 ->
+                          // RC4: Require trailing dot for bare triples in TriG
+                          if pos5 < len && int_of_char (fs_byte_index input pos5) = 0x2E
+                          then ParseOk ([(None, po_triples)], { tps with ts = st3 }) (pos5 + 1)
+                          else
+                            if pos5 >= len || int_of_char (fs_byte_index input pos5) = 0x7D
+                            then ParseOk ([(None, po_triples)], { tps with ts = st3 }) pos5
+                            else ParseFail "expected '.' after triple" pos5
+                        end
+                      | ParseFail msg fpos -> ParseFail msg fpos
+                      end
+                    else
+                      ParseFail "invalid IRI for subject" pos3
+                end
+              | ParseFail _ _ ->
+                // Case 6: Other Turtle constructs (blank node subjects like [], etc.)
+                // But NOT collections -- those were rejected above
+                begin match parse_turtle_statement st input pos1 fuel with
+                | ParseOk (triples, st') pos2 ->
+                  ParseOk ([(None, triples)], { tps with ts = st' }) pos2
+                | ParseFail msg fpos -> ParseFail msg fpos
+                end
+              end
+          end
+        end
+
+(* ================================================================ *)
+(* Full TriG document parser                                         *)
+(* ================================================================ *)
+
+(** Parse the full TriG document, accumulating into an rdf_dataset.
+    Tracks errors via trig_parse_state.has_error. *)
+let rec parse_trig_doc (tps: trig_parse_state) (input: string) (pos: nat)
+    (ds: rdf_dataset) (fuel: nat)
+  : Tot (rdf_dataset & trig_parse_state) (decreases fuel) =
+  if fuel = 0 then (ds, tps)
+  else
+    let fuel' : nat = fuel - 1 in
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then (ds, tps)
+      else
+        begin match parse_trig_statement tps input pos1 fuel with
+        | ParseOk (deltas, tps') pos2 ->
+          if pos2 = pos1 then
+            let ds' = List.Tot.fold_left
+              (fun (acc : rdf_dataset) (delta : option iri & list triple) ->
+                let (gname, triples) = delta in
+                trig_dataset_add_triples acc triples gname)
+              ds deltas
+            in
+            (ds', tps')
+          else
+            let ds' = List.Tot.fold_left
+              (fun (acc : rdf_dataset) (delta : option iri & list triple) ->
+                let (gname, triples) = delta in
+                trig_dataset_add_triples acc triples gname)
+              ds deltas
+            in
+            parse_trig_doc tps' input pos2 ds' fuel'
+        | ParseFail msg fpos ->
+          // Skip to next line on failure, keep walking (a lenient
+          // consumer like parse_trig_lenient still wants the
+          // remaining well-formed triples) but record the FIRST
+          // failure's message + position -- first-error-wins, same
+          // convention as Parser.Turtle's tdr_error (issue #334).
+          let terr' = (match tps.terr with Some _ -> tps.terr | None -> Some (msg, fpos)) in
+          let tps' = { tps with has_error = true; terr = terr' } in
+          let pos2 = graph_body_skip_line input pos1 (len - pos1) in
+          if pos2 = pos1 then (ds, tps')
+          else parse_trig_doc tps' input pos2 ds fuel'
+        end
+
+(* ================================================================ *)
+(* Entry points                                                      *)
+(* ================================================================ *)
+
+let make_trig_parse_state (st: turtle_state) : trig_parse_state =
+  { ts = st; has_error = false; terr = None }
+
+(** Parse a TriG document string into an rdf_dataset.
+    Returns None if any parse errors were encountered.
+
+    PERF: wraps the result in [dataset_finalise] so the O(1)-prepend
+    accumulator (see [trig_dataset_add]) is reversed once at the end,
+    restoring insertion order. *)
+let parse_trig (input: string) : option rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let tps = make_trig_parse_state empty_turtle_state in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  if tps'.has_error then None else Some (dataset_finalise ds)
+
+(** Parse a TriG document with a base IRI.
+    Returns None if any parse errors were encountered. *)
+let parse_trig_with_base (input: string) (base: string) : option rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  if tps'.has_error then None else Some (dataset_finalise ds)
+
+// Lenient versions that always return a dataset (for positive tests / compatibility)
+let parse_trig_lenient (input: string) : rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let tps = make_trig_parse_state empty_turtle_state in
+  let (ds, _) = parse_trig_doc tps input 0 empty_dataset fuel in
+  dataset_finalise ds
+
+let parse_trig_with_base_lenient (input: string) (base: string) : rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, _) = parse_trig_doc tps input 0 empty_dataset fuel in
+  dataset_finalise ds
+
+// Diagnostic entry points: like parse_trig_with_base / parse_trig,
+// but surface WHERE and WHY the document was rejected via the
+// module's own parse_result convention (ParseOk / ParseFail) instead
+// of collapsing to a bare `option`. Fixes issue #334's TriG
+// follow-up: an undeclared prefix (or any other statement-level
+// error) must produce a parse ERROR carrying position information --
+// and a caller that needs to report the error (CLI) should not have
+// to re-derive the byte offset that trig_parse_state.terr already
+// carries. Mirrors Parser.Turtle.parse_turtle_diagnostic /
+// parse_turtle_with_base_diagnostic (#424).
+let parse_trig_diagnostic (input: string) : parse_result rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let tps = make_trig_parse_state empty_turtle_state in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  match tps'.terr with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk (dataset_finalise ds) len
+
+let parse_trig_with_base_diagnostic (input: string) (base: string) : parse_result rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  match tps'.terr with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk (dataset_finalise ds) len
+
+(* ================================================================ *)
+(* RDF 1.2 TriG entry points (epic #305, wave 2).                   *)
+(*                                                                   *)
+(* TriG is Turtle-with-datasets; it threads a turtle_state through   *)
+(* trig_parse_state.ts, so seeding that state with Mode_12 unlocks   *)
+(* the object parser's `<<( )>>` triple terms and the literal        *)
+(* parser's `@lang--dir` directional strings inside every graph      *)
+(* block, with no TriG-specific grammar change. Same reifier /       *)
+(* annotation caveat as Turtle: `<< >>`, `~`, `{| |}` materialise    *)
+(* in a later wave.                                                  *)
+(* ================================================================ *)
+
+let parse_trig_with_base_12 (input: string) (base: string) : option rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  if tps'.has_error then None else Some (dataset_finalise ds)
+
+let parse_trig_with_base_lenient_12 (input: string) (base: string) : rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, _) = parse_trig_doc tps input 0 empty_dataset fuel in
+  dataset_finalise ds
+
+let parse_trig_with_base_diagnostic_12 (input: string) (base: string) : parse_result rdf_dataset =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 3 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let tps = make_trig_parse_state st in
+  let (ds, tps') = parse_trig_doc tps input 0 empty_dataset fuel in
+  match tps'.terr with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk (dataset_finalise ds) len
+
+// Mode-parametrised dispatchers.
+let parse_trig_with_base_mode (mode: rdf_syntax_mode) (input: string) (base: string)
+  : option rdf_dataset =
+  match mode with
+  | Mode_11 -> parse_trig_with_base input base
+  | Mode_12 -> parse_trig_with_base_12 input base
+
+let parse_trig_with_base_lenient_mode (mode: rdf_syntax_mode) (input: string) (base: string)
+  : rdf_dataset =
+  match mode with
+  | Mode_11 -> parse_trig_with_base_lenient input base
+  | Mode_12 -> parse_trig_with_base_lenient_12 input base

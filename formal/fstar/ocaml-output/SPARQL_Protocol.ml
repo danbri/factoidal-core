@@ -1,0 +1,1226 @@
+open Prims
+type binding_row = (Prims.string * RDF_Term.rdf_term) Prims.list
+type response_format =
+  | RF_Json 
+  | RF_Xml 
+  | RF_Csv 
+  | RF_Tsv 
+  | RF_Turtle 
+  | RF_NTriples 
+  | RF_Text 
+let uu___is_RF_Json (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Json -> true | uu___ -> false
+let uu___is_RF_Xml (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Xml -> true | uu___ -> false
+let uu___is_RF_Csv (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Csv -> true | uu___ -> false
+let uu___is_RF_Tsv (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Tsv -> true | uu___ -> false
+let uu___is_RF_Turtle (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Turtle -> true | uu___ -> false
+let uu___is_RF_NTriples (projectee : response_format) : Prims.bool=
+  match projectee with | RF_NTriples -> true | uu___ -> false
+let uu___is_RF_Text (projectee : response_format) : Prims.bool=
+  match projectee with | RF_Text -> true | uu___ -> false
+type q_priority = Prims.nat
+type accept_entry = (response_format * q_priority)
+type sparql_request =
+  | PR_Query of Prims.string * Prims.string Prims.list * Prims.string
+  Prims.list 
+  | PR_Update of Prims.string * Prims.string Prims.list * Prims.string
+  Prims.list 
+  | PR_Bad of Prims.string 
+let uu___is_PR_Query (projectee : sparql_request) : Prims.bool=
+  match projectee with
+  | PR_Query (query_text, default_graph_uris, named_graph_uris) -> true
+  | uu___ -> false
+let __proj__PR_Query__item__query_text (projectee : sparql_request) :
+  Prims.string=
+  match projectee with
+  | PR_Query (query_text, default_graph_uris, named_graph_uris) -> query_text
+let __proj__PR_Query__item__default_graph_uris (projectee : sparql_request) :
+  Prims.string Prims.list=
+  match projectee with
+  | PR_Query (query_text, default_graph_uris, named_graph_uris) ->
+      default_graph_uris
+let __proj__PR_Query__item__named_graph_uris (projectee : sparql_request) :
+  Prims.string Prims.list=
+  match projectee with
+  | PR_Query (query_text, default_graph_uris, named_graph_uris) ->
+      named_graph_uris
+let uu___is_PR_Update (projectee : sparql_request) : Prims.bool=
+  match projectee with
+  | PR_Update (update_text, default_graph_uris, named_graph_uris) -> true
+  | uu___ -> false
+let __proj__PR_Update__item__update_text (projectee : sparql_request) :
+  Prims.string=
+  match projectee with
+  | PR_Update (update_text, default_graph_uris, named_graph_uris) ->
+      update_text
+let __proj__PR_Update__item__default_graph_uris (projectee : sparql_request)
+  : Prims.string Prims.list=
+  match projectee with
+  | PR_Update (update_text, default_graph_uris, named_graph_uris) ->
+      default_graph_uris
+let __proj__PR_Update__item__named_graph_uris (projectee : sparql_request) :
+  Prims.string Prims.list=
+  match projectee with
+  | PR_Update (update_text, default_graph_uris, named_graph_uris) ->
+      named_graph_uris
+let uu___is_PR_Bad (projectee : sparql_request) : Prims.bool=
+  match projectee with | PR_Bad reason -> true | uu___ -> false
+let __proj__PR_Bad__item__reason (projectee : sparql_request) : Prims.string=
+  match projectee with | PR_Bad reason -> reason
+let char_code (c : FStar_Char.char) : Prims.nat= FStar_Char.int_of_char c
+let is_hex_digit (c : FStar_Char.char) : Prims.bool=
+  let code = char_code c in
+  (((code >= (Prims.of_int (0x30))) && (code <= (Prims.of_int (0x39)))) ||
+     ((code >= (Prims.of_int (0x41))) && (code <= (Prims.of_int (0x46)))))
+    || ((code >= (Prims.of_int (0x61))) && (code <= (Prims.of_int (0x66))))
+let hex_value (c : FStar_Char.char) : Prims.nat=
+  let code = char_code c in
+  if (code >= (Prims.of_int (0x30))) && (code <= (Prims.of_int (0x39)))
+  then code - (Prims.of_int (0x30))
+  else
+    if (code >= (Prims.of_int (0x41))) && (code <= (Prims.of_int (0x46)))
+    then (code - (Prims.of_int (0x41))) + (Prims.of_int (10))
+    else
+      if (code >= (Prims.of_int (0x61))) && (code <= (Prims.of_int (0x66)))
+      then (code - (Prims.of_int (0x61))) + (Prims.of_int (10))
+      else Prims.int_zero
+let char_to_string (c : FStar_Char.char) : Prims.string=
+  FStar_String.string_of_list [c]
+let ascii_lower_char (c : FStar_Char.char) : FStar_Char.char=
+  let cd = char_code c in
+  if (cd >= (Prims.of_int (0x41))) && (cd <= (Prims.of_int (0x5A)))
+  then FStar_Char.char_of_int (cd + (Prims.of_int (32)))
+  else c
+let ascii_lower_string (s : Prims.string) : Prims.string=
+  FStar_String.string_of_list
+    (FStar_List_Tot_Base.map ascii_lower_char (FStar_String.list_of_string s))
+let rec drop_ws_left (cs : FStar_Char.char Prims.list) :
+  FStar_Char.char Prims.list=
+  match cs with
+  | [] -> []
+  | c::rest ->
+      let code = char_code c in
+      if
+        (((code = (Prims.of_int (0x20))) || (code = (Prims.of_int (0x09))))
+           || (code = (Prims.of_int (0x0A))))
+          || (code = (Prims.of_int (0x0D)))
+      then drop_ws_left rest
+      else cs
+let trim_ws_chars (cs : FStar_Char.char Prims.list) :
+  FStar_Char.char Prims.list=
+  FStar_List_Tot_Base.rev
+    (drop_ws_left (FStar_List_Tot_Base.rev (drop_ws_left cs)))
+let trim_ws (s : Prims.string) : Prims.string=
+  FStar_String.string_of_list (trim_ws_chars (FStar_String.list_of_string s))
+let rec url_decode_chars (plus_is_space : Prims.bool)
+  (cs : FStar_Char.char Prims.list) : FStar_Char.char Prims.list=
+  match cs with
+  | [] -> []
+  | c::rest ->
+      let code = char_code c in
+      if code = (Prims.of_int (0x25))
+      then
+        (match rest with
+         | h1::h2::rest' ->
+             if (is_hex_digit h1) && (is_hex_digit h2)
+             then
+               let v =
+                 ((hex_value h1) * (Prims.of_int (16))) + (hex_value h2) in
+               (FStar_Char.char_of_int v) ::
+                 (url_decode_chars plus_is_space rest')
+             else c :: (url_decode_chars plus_is_space rest)
+         | uu___ -> c :: (url_decode_chars plus_is_space rest))
+      else
+        if plus_is_space && (code = (Prims.of_int (0x2B)))
+        then (FStar_Char.char_of_int (Prims.of_int (0x20))) ::
+          (url_decode_chars plus_is_space rest)
+        else c :: (url_decode_chars plus_is_space rest)
+let url_decode (s : Prims.string) : Prims.string=
+  FStar_String.string_of_list
+    (url_decode_chars false (FStar_String.list_of_string s))
+let form_decode (s : Prims.string) : Prims.string=
+  FStar_String.string_of_list
+    (url_decode_chars true (FStar_String.list_of_string s))
+let rec split_once_chars (sep : Prims.nat) (cs : FStar_Char.char Prims.list)
+  :
+  (FStar_Char.char Prims.list * FStar_Char.char Prims.list
+    FStar_Pervasives_Native.option)=
+  match cs with
+  | [] -> ([], FStar_Pervasives_Native.None)
+  | c::rest ->
+      if (char_code c) = sep
+      then ([], (FStar_Pervasives_Native.Some rest))
+      else
+        (let uu___1 = split_once_chars sep rest in
+         match uu___1 with | (before, after) -> ((c :: before), after))
+let split_once_on (s : Prims.string) (sep : FStar_Char.char) :
+  (Prims.string * Prims.string FStar_Pervasives_Native.option)=
+  let uu___ =
+    split_once_chars (char_code sep) (FStar_String.list_of_string s) in
+  match uu___ with
+  | (before, after) ->
+      let before_s = FStar_String.string_of_list before in
+      let after_s =
+        match after with
+        | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None
+        | FStar_Pervasives_Native.Some cs ->
+            FStar_Pervasives_Native.Some (FStar_String.string_of_list cs) in
+      (before_s, after_s)
+let rec split_chars_all (sep : Prims.nat) (cs : FStar_Char.char Prims.list)
+  (cur : FStar_Char.char Prims.list) : FStar_Char.char Prims.list Prims.list=
+  match cs with
+  | [] -> [FStar_List_Tot_Base.rev cur]
+  | c::rest ->
+      if (char_code c) = sep
+      then (FStar_List_Tot_Base.rev cur) :: (split_chars_all sep rest [])
+      else split_chars_all sep rest (c :: cur)
+let split_all_on (s : Prims.string) (sep : FStar_Char.char) :
+  Prims.string Prims.list=
+  let segs =
+    split_chars_all (char_code sep) (FStar_String.list_of_string s) [] in
+  FStar_List_Tot_Base.map FStar_String.string_of_list segs
+let parse_kv_pair (pair : Prims.string) :
+  (Prims.string * Prims.string) FStar_Pervasives_Native.option=
+  match split_once_on pair (FStar_Char.char_of_int (Prims.of_int (0x3D)))
+  with
+  | (k, FStar_Pervasives_Native.Some v) ->
+      FStar_Pervasives_Native.Some ((form_decode k), (form_decode v))
+  | (k, FStar_Pervasives_Native.None) ->
+      if (FStar_String.strlen k) = Prims.int_zero
+      then FStar_Pervasives_Native.None
+      else FStar_Pervasives_Native.Some ((form_decode k), "")
+let parse_query_string (qs : Prims.string) :
+  (Prims.string * Prims.string) Prims.list=
+  let parts = split_all_on qs (FStar_Char.char_of_int (Prims.of_int (0x26))) in
+  FStar_List_Tot_Base.concatMap
+    (fun p ->
+       match parse_kv_pair p with
+       | FStar_Pervasives_Native.Some kv -> [kv]
+       | FStar_Pervasives_Native.None -> []) parts
+let collect_values (key : Prims.string)
+  (kvs : (Prims.string * Prims.string) Prims.list) : Prims.string Prims.list=
+  FStar_List_Tot_Base.concatMap
+    (fun kv ->
+       let uu___ = kv in
+       match uu___ with | (k, v) -> if k = key then [v] else []) kvs
+let first_value (key : Prims.string)
+  (kvs : (Prims.string * Prims.string) Prims.list) :
+  Prims.string FStar_Pervasives_Native.option=
+  match collect_values key kvs with
+  | [] -> FStar_Pervasives_Native.None
+  | v::uu___ -> FStar_Pervasives_Native.Some v
+let media_type_to_format (mt : Prims.string) :
+  response_format FStar_Pervasives_Native.option=
+  let lo = ascii_lower_string (trim_ws mt) in
+  if lo = "application/sparql-results+json"
+  then FStar_Pervasives_Native.Some RF_Json
+  else
+    if lo = "application/json"
+    then FStar_Pervasives_Native.Some RF_Json
+    else
+      if lo = "application/sparql-results+xml"
+      then FStar_Pervasives_Native.Some RF_Xml
+      else
+        if lo = "application/xml"
+        then FStar_Pervasives_Native.Some RF_Xml
+        else
+          if lo = "text/xml"
+          then FStar_Pervasives_Native.Some RF_Xml
+          else
+            if lo = "text/csv"
+            then FStar_Pervasives_Native.Some RF_Csv
+            else
+              if lo = "text/tab-separated-values"
+              then FStar_Pervasives_Native.Some RF_Tsv
+              else
+                if lo = "text/turtle"
+                then FStar_Pervasives_Native.Some RF_Turtle
+                else
+                  if lo = "application/x-turtle"
+                  then FStar_Pervasives_Native.Some RF_Turtle
+                  else
+                    if lo = "application/n-triples"
+                    then FStar_Pervasives_Native.Some RF_NTriples
+                    else
+                      if lo = "text/plain"
+                      then FStar_Pervasives_Native.Some RF_Text
+                      else FStar_Pervasives_Native.None
+let rec read_digits_acc (cs : FStar_Char.char Prims.list) (acc : Prims.nat) :
+  (Prims.nat * FStar_Char.char Prims.list)=
+  match cs with
+  | [] -> (acc, [])
+  | c::rest ->
+      let code = char_code c in
+      if (code >= (Prims.of_int (0x30))) && (code <= (Prims.of_int (0x39)))
+      then
+        read_digits_acc rest
+          ((acc * (Prims.of_int (10))) + (code - (Prims.of_int (0x30))))
+      else (acc, cs)
+let parse_q_value (s : Prims.string) : q_priority=
+  let trimmed = trim_ws s in
+  let cs = FStar_String.list_of_string trimmed in
+  let uu___ = read_digits_acc cs Prims.int_zero in
+  match uu___ with
+  | (ip, rest) ->
+      let uu___1 =
+        match rest with
+        | [] -> (Prims.int_zero, [])
+        | c::rest' ->
+            if (char_code c) = (Prims.of_int (0x2E))
+            then
+              (match rest' with
+               | [] -> (Prims.int_zero, [])
+               | uu___2 ->
+                   let uu___3 = read_digits_acc rest' Prims.int_zero in
+                   (match uu___3 with | (d, uu___4) -> (d, [])))
+            else (Prims.int_zero, rest) in
+      (match uu___1 with
+       | (frac3, uu___2) ->
+           let raw = (ip * (Prims.of_int (1000))) + frac3 in
+           if raw > (Prims.of_int (1000)) then (Prims.of_int (1000)) else raw)
+let parse_accept_entry (item : Prims.string) :
+  accept_entry FStar_Pervasives_Native.option=
+  match split_once_on item (FStar_Char.char_of_int (Prims.of_int (0x3B)))
+  with
+  | (media, FStar_Pervasives_Native.None) ->
+      (match media_type_to_format media with
+       | FStar_Pervasives_Native.Some f ->
+           FStar_Pervasives_Native.Some (f, (Prims.of_int (1000)))
+       | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None)
+  | (media, FStar_Pervasives_Native.Some params) ->
+      let fmt = media_type_to_format media in
+      let param_list =
+        split_all_on params (FStar_Char.char_of_int (Prims.of_int (0x3B))) in
+      let q =
+        match FStar_List_Tot_Base.tryFind
+                (fun p ->
+                   let lo = ascii_lower_string (trim_ws p) in
+                   ((FStar_String.strlen lo) >= (Prims.of_int (2))) &&
+                     ((FStar_String.sub lo Prims.int_zero (Prims.of_int (2)))
+                        = "q=")) param_list
+        with
+        | FStar_Pervasives_Native.None -> (Prims.of_int (1000))
+        | FStar_Pervasives_Native.Some p ->
+            let lo = ascii_lower_string (trim_ws p) in
+            if (FStar_String.strlen lo) >= (Prims.of_int (2))
+            then
+              parse_q_value
+                (FStar_String.sub lo (Prims.of_int (2))
+                   ((FStar_String.strlen lo) - (Prims.of_int (2))))
+            else (Prims.of_int (1000)) in
+      (match fmt with
+       | FStar_Pervasives_Native.Some f ->
+           FStar_Pervasives_Native.Some (f, q)
+       | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None)
+let parse_accept_header (hdr : Prims.string) : accept_entry Prims.list=
+  let items = split_all_on hdr (FStar_Char.char_of_int (Prims.of_int (0x2C))) in
+  FStar_List_Tot_Base.concatMap
+    (fun it ->
+       match parse_accept_entry it with
+       | FStar_Pervasives_Native.Some e -> [e]
+       | FStar_Pervasives_Native.None -> []) items
+let rec pick_best (entries : accept_entry Prims.list)
+  (best_so_far : accept_entry FStar_Pervasives_Native.option) :
+  accept_entry FStar_Pervasives_Native.option=
+  match entries with
+  | [] -> best_so_far
+  | e::rest ->
+      let uu___ = e in
+      (match uu___ with
+       | (uu___1, q) ->
+           let better =
+             match best_so_far with
+             | FStar_Pervasives_Native.None -> true
+             | FStar_Pervasives_Native.Some (uu___2, q_best) -> q > q_best in
+           if better
+           then pick_best rest (FStar_Pervasives_Native.Some e)
+           else pick_best rest best_so_far)
+let pick_response_format (entries : accept_entry Prims.list)
+  (default_format : response_format) : response_format=
+  match pick_best entries FStar_Pervasives_Native.None with
+  | FStar_Pervasives_Native.None -> default_format
+  | FStar_Pervasives_Native.Some (f, q) ->
+      if q = Prims.int_zero then default_format else f
+let path_is_update (url_path : Prims.string) : Prims.bool=
+  let segments =
+    split_all_on url_path (FStar_Char.char_of_int (Prims.of_int (0x2F))) in
+  match FStar_List_Tot_Base.rev segments with
+  | [] -> false
+  | last::uu___ -> (ascii_lower_string last) = "update"
+let split_path_qs (url_path : Prims.string) : (Prims.string * Prims.string)=
+  match split_once_on url_path (FStar_Char.char_of_int (Prims.of_int (0x3F)))
+  with
+  | (p, FStar_Pervasives_Native.None) -> (p, "")
+  | (p, FStar_Pervasives_Native.Some qs) -> (p, qs)
+let content_type_base (ct : Prims.string) : Prims.string=
+  match split_once_on ct (FStar_Char.char_of_int (Prims.of_int (0x3B))) with
+  | (base, uu___) -> ascii_lower_string (trim_ws base)
+let extract_charset_param (ct : Prims.string) :
+  Prims.string FStar_Pervasives_Native.option=
+  match split_once_on ct (FStar_Char.char_of_int (Prims.of_int (0x3B))) with
+  | (uu___, FStar_Pervasives_Native.None) -> FStar_Pervasives_Native.None
+  | (uu___, FStar_Pervasives_Native.Some params) ->
+      let param_list =
+        split_all_on params (FStar_Char.char_of_int (Prims.of_int (0x3B))) in
+      (match FStar_List_Tot_Base.tryFind
+               (fun p ->
+                  let lo = ascii_lower_string (trim_ws p) in
+                  ((FStar_String.strlen lo) >= (Prims.of_int (8))) &&
+                    ((FStar_String.sub lo Prims.int_zero (Prims.of_int (8)))
+                       = "charset=")) param_list
+       with
+       | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None
+       | FStar_Pervasives_Native.Some p ->
+           let lo = ascii_lower_string (trim_ws p) in
+           if (FStar_String.strlen lo) >= (Prims.of_int (8))
+           then
+             FStar_Pervasives_Native.Some
+               (trim_ws
+                  (FStar_String.sub lo (Prims.of_int (8))
+                     ((FStar_String.strlen lo) - (Prims.of_int (8)))))
+           else FStar_Pervasives_Native.None)
+let charset_is_utf8_or_absent (ct : Prims.string) : Prims.bool=
+  match extract_charset_param ct with
+  | FStar_Pervasives_Native.None -> true
+  | FStar_Pervasives_Native.Some v -> (v = "utf-8") || (v = "utf8")
+let is_ws_code (cd : Prims.nat) : Prims.bool=
+  (((cd = (Prims.of_int (0x20))) || (cd = (Prims.of_int (0x09)))) ||
+     (cd = (Prims.of_int (0x0A))))
+    || (cd = (Prims.of_int (0x0D)))
+let rec list_chars_starts_with (prefix : FStar_Char.char Prims.list)
+  (cs : FStar_Char.char Prims.list) : Prims.bool=
+  match (prefix, cs) with
+  | ([], uu___) -> true
+  | (uu___, []) -> false
+  | (p::ps, c::rest) ->
+      if (char_code p) = (char_code c)
+      then list_chars_starts_with ps rest
+      else false
+let rec chars_contains_word (kw : FStar_Char.char Prims.list)
+  (prev_was_ws : Prims.bool) (cs : FStar_Char.char Prims.list) : Prims.bool=
+  match cs with
+  | [] -> false
+  | c::rest ->
+      if prev_was_ws && (list_chars_starts_with kw cs)
+      then
+        let kw_len = FStar_List_Tot_Base.length kw in
+        (if (FStar_List_Tot_Base.length cs) <= kw_len
+         then true
+         else
+           (let rec drop_n n xs =
+              if n = Prims.int_zero
+              then xs
+              else
+                (match xs with
+                 | [] -> []
+                 | uu___2::t -> drop_n (n - Prims.int_one) t) in
+            match drop_n kw_len cs with
+            | [] -> true
+            | nxt::uu___1 -> is_ws_code (char_code nxt)))
+      else chars_contains_word kw (is_ws_code (char_code c)) rest
+let str_contains_word_ci (haystack : Prims.string) (kw_lo : Prims.string) :
+  Prims.bool=
+  let cs = FStar_String.list_of_string (ascii_lower_string haystack) in
+  let kw = FStar_String.list_of_string kw_lo in
+  chars_contains_word kw true cs
+let update_has_dataset_clause (u : Prims.string) : Prims.bool=
+  (str_contains_word_ci u "using") || (str_contains_word_ci u "with")
+let kvs_have_using_param (kvs : (Prims.string * Prims.string) Prims.list) :
+  Prims.bool=
+  match first_value "using-graph-uri" kvs with
+  | FStar_Pervasives_Native.Some uu___ -> true
+  | FStar_Pervasives_Native.None ->
+      (match first_value "using-named-graph-uri" kvs with
+       | FStar_Pervasives_Native.Some uu___ -> true
+       | FStar_Pervasives_Native.None -> false)
+let build_from_kvs (is_get_method : Prims.bool) (is_update_path : Prims.bool)
+  (kvs : (Prims.string * Prims.string) Prims.list) : sparql_request=
+  let qs_all = collect_values "query" kvs in
+  let us_all = collect_values "update" kvs in
+  if (FStar_List_Tot_Base.length qs_all) > Prims.int_one
+  then PR_Bad "more than one query= parameter (Protocol 2.1.4)"
+  else
+    if (FStar_List_Tot_Base.length us_all) > Prims.int_one
+    then PR_Bad "more than one update= parameter (Protocol 2.2.4)"
+    else
+      (let q_opt = first_value "query" kvs in
+       let u_opt = first_value "update" kvs in
+       let dflt = collect_values "default-graph-uri" kvs in
+       let named = collect_values "named-graph-uri" kvs in
+       match (q_opt, u_opt) with
+       | (FStar_Pervasives_Native.Some uu___2, FStar_Pervasives_Native.Some
+          uu___3) ->
+           PR_Bad "both query= and update= present (Protocol 2.2.4)"
+       | (FStar_Pervasives_Native.None, FStar_Pervasives_Native.None) ->
+           if is_update_path
+           then PR_Bad "missing update parameter"
+           else PR_Bad "missing query parameter"
+       | (FStar_Pervasives_Native.Some q, FStar_Pervasives_Native.None) ->
+           if is_update_path
+           then PR_Bad "expected update= on /update endpoint, got query="
+           else PR_Query (q, dflt, named)
+       | (FStar_Pervasives_Native.None, FStar_Pervasives_Native.Some u) ->
+           if is_get_method
+           then PR_Bad "UPDATE invoked via GET (Protocol 2.2.2)"
+           else
+             if (kvs_have_using_param kvs) && (update_has_dataset_clause u)
+             then
+               PR_Bad
+                 "using-graph-uri/using-named-graph-uri form params conflict with USING/WITH in update text (Protocol 2.2.4)"
+             else PR_Update (u, dflt, named))
+let decode_request (http_method : Prims.string) (url_path : Prims.string)
+  (url_query : Prims.string) (content_type : Prims.string)
+  (body : Prims.string) : sparql_request=
+  let uu___ = split_path_qs url_path in
+  match uu___ with
+  | (clean_path, embedded_qs) ->
+      let effective_qs =
+        if (FStar_String.strlen url_query) > Prims.int_zero
+        then url_query
+        else embedded_qs in
+      let is_update = path_is_update clean_path in
+      let method_upper = ascii_lower_string http_method in
+      if method_upper = "get"
+      then
+        let kvs = parse_query_string effective_qs in
+        build_from_kvs true is_update kvs
+      else
+        if method_upper = "post"
+        then
+          (let ct = content_type_base content_type in
+           if Prims.op_Negation (charset_is_utf8_or_absent content_type)
+           then PR_Bad "non-UTF-8 charset rejected per Protocol 2.1.6"
+           else
+             if ct = "application/sparql-query"
+             then PR_Query (body, [], [])
+             else
+               if ct = "application/sparql-update"
+               then PR_Update (body, [], [])
+               else
+                 if ct = "application/x-www-form-urlencoded"
+                 then
+                   (let kvs = parse_query_string body in
+                    build_from_kvs false is_update kvs)
+                 else
+                   if (FStar_String.strlen ct) = Prims.int_zero
+                   then PR_Bad "POST request missing Content-Type"
+                   else PR_Bad (Prims.strcat "unsupported Content-Type: " ct))
+        else
+          if (method_upper = "head") || (method_upper = "options")
+          then
+            PR_Bad
+              (Prims.strcat "method "
+                 (Prims.strcat http_method " not supported by decoder"))
+          else PR_Bad (Prims.strcat "unsupported HTTP method: " http_method)
+let hex_nibble (n : Prims.nat) : Prims.string=
+  if n < (Prims.of_int (10))
+  then char_to_string (FStar_Char.char_of_int ((Prims.of_int (0x30)) + n))
+  else
+    char_to_string
+      (FStar_Char.char_of_int
+         ((Prims.of_int (0x61)) + (n - (Prims.of_int (10)))))
+let json_escape_char (c : FStar_Char.char) : Prims.string=
+  let code = char_code c in
+  if code = (Prims.of_int (0x22))
+  then "\\\""
+  else
+    if code = (Prims.of_int (0x5C))
+    then "\\\\"
+    else
+      if code = (Prims.of_int (0x08))
+      then "\\b"
+      else
+        if code = (Prims.of_int (0x09))
+        then "\\t"
+        else
+          if code = (Prims.of_int (0x0A))
+          then "\\n"
+          else
+            if code = (Prims.of_int (0x0C))
+            then "\\f"
+            else
+              if code = (Prims.of_int (0x0D))
+              then "\\r"
+              else
+                if code < (Prims.of_int (0x20))
+                then
+                  (let hi = code / (Prims.of_int (16)) in
+                   let lo = (mod) code (Prims.of_int (16)) in
+                   Prims.strcat "\\u00"
+                     (Prims.strcat (hex_nibble hi) (hex_nibble lo)))
+                else char_to_string c
+let rec json_escape_chars (cs : FStar_Char.char Prims.list) : Prims.string=
+  match cs with
+  | [] -> ""
+  | c::rest -> Prims.strcat (json_escape_char c) (json_escape_chars rest)
+let json_escape (s : Prims.string) : Prims.string=
+  json_escape_chars (Parser_FastString.fs_codepoints_of_string s)
+let xml_escape_char (c : FStar_Char.char) : Prims.string=
+  let code = char_code c in
+  if code = (Prims.of_int (0x26))
+  then "&amp;"
+  else
+    if code = (Prims.of_int (0x3C))
+    then "&lt;"
+    else
+      if code = (Prims.of_int (0x3E))
+      then "&gt;"
+      else
+        if code = (Prims.of_int (0x22))
+        then "&quot;"
+        else
+          if code = (Prims.of_int (0x27))
+          then "&apos;"
+          else
+            if code = (Prims.of_int (0x0D))
+            then "&#13;"
+            else char_to_string c
+let rec xml_escape_chars (cs : FStar_Char.char Prims.list) : Prims.string=
+  match cs with
+  | [] -> ""
+  | c::rest -> Prims.strcat (xml_escape_char c) (xml_escape_chars rest)
+let xml_escape (s : Prims.string) : Prims.string=
+  xml_escape_chars (FStar_String.list_of_string s)
+let rec csv_needs_quoting_chars (cs : FStar_Char.char Prims.list) :
+  Prims.bool=
+  match cs with
+  | [] -> false
+  | c::rest ->
+      let code = char_code c in
+      if
+        (((code = (Prims.of_int (0x2C))) || (code = (Prims.of_int (0x0A))))
+           || (code = (Prims.of_int (0x0D))))
+          || (code = (Prims.of_int (0x22)))
+      then true
+      else csv_needs_quoting_chars rest
+let rec csv_double_quotes_chars (cs : FStar_Char.char Prims.list) :
+  Prims.string=
+  match cs with
+  | [] -> ""
+  | c::rest ->
+      let code = char_code c in
+      if code = (Prims.of_int (0x22))
+      then Prims.strcat "\"\"" (csv_double_quotes_chars rest)
+      else Prims.strcat (char_to_string c) (csv_double_quotes_chars rest)
+let csv_escape (s : Prims.string) : Prims.string=
+  let cs = FStar_String.list_of_string s in
+  if csv_needs_quoting_chars cs
+  then Prims.strcat "\"" (Prims.strcat (csv_double_quotes_chars cs) "\"")
+  else s
+let rec nt_escape_chars (cs : FStar_Char.char Prims.list) : Prims.string=
+  match cs with
+  | [] -> ""
+  | c::rest ->
+      let code = char_code c in
+      if code = (Prims.of_int (0x22))
+      then Prims.strcat "\\\"" (nt_escape_chars rest)
+      else
+        if code = (Prims.of_int (0x5C))
+        then Prims.strcat "\\\\" (nt_escape_chars rest)
+        else
+          if code = (Prims.of_int (0x09))
+          then Prims.strcat "\\t" (nt_escape_chars rest)
+          else
+            if code = (Prims.of_int (0x0A))
+            then Prims.strcat "\\n" (nt_escape_chars rest)
+            else
+              if code = (Prims.of_int (0x0D))
+              then Prims.strcat "\\r" (nt_escape_chars rest)
+              else Prims.strcat (char_to_string c) (nt_escape_chars rest)
+let nt_escape (s : Prims.string) : Prims.string=
+  nt_escape_chars (FStar_String.list_of_string s)
+let rec json_term (t : RDF_Term.rdf_term) : Prims.string=
+  match t with
+  | RDF_Term.T_IRI i ->
+      Prims.strcat "{\"type\":\"uri\",\"value\":\""
+        (Prims.strcat (json_escape i) "\"}")
+  | RDF_Term.T_BNode b ->
+      Prims.strcat "{\"type\":\"bnode\",\"value\":\""
+        (Prims.strcat (json_escape b) "\"}")
+  | RDF_Term.T_Literal l ->
+      (match l.RDF_Term.lang_tag with
+       | FStar_Pervasives_Native.Some tag ->
+           let dir_member =
+             match l.RDF_Term.direction with
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_LTR) ->
+                 ",\"its:dir\":\"ltr\""
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_RTL) ->
+                 ",\"its:dir\":\"rtl\""
+             | FStar_Pervasives_Native.None -> "" in
+           Prims.strcat "{\"type\":\"literal\",\"value\":\""
+             (Prims.strcat (json_escape l.RDF_Term.lexical_form)
+                (Prims.strcat "\",\"xml:lang\":\""
+                   (Prims.strcat (json_escape tag)
+                      (Prims.strcat "\"" (Prims.strcat dir_member "}")))))
+       | FStar_Pervasives_Native.None ->
+           if l.RDF_Term.datatype = RDF_Term.xsd_string
+           then
+             Prims.strcat "{\"type\":\"literal\",\"value\":\""
+               (Prims.strcat (json_escape l.RDF_Term.lexical_form) "\"}")
+           else
+             Prims.strcat "{\"type\":\"literal\",\"value\":\""
+               (Prims.strcat (json_escape l.RDF_Term.lexical_form)
+                  (Prims.strcat "\",\"datatype\":\""
+                     (Prims.strcat (json_escape l.RDF_Term.datatype) "\"}"))))
+  | RDF_Term.T_TripleTerm (s, p, o) ->
+      let subj =
+        match s with
+        | RDF_Term.S_IRI i ->
+            Prims.strcat "{\"type\":\"uri\",\"value\":\""
+              (Prims.strcat (json_escape i) "\"}")
+        | RDF_Term.S_BNode b ->
+            Prims.strcat "{\"type\":\"bnode\",\"value\":\""
+              (Prims.strcat (json_escape b) "\"}") in
+      let pred =
+        Prims.strcat "{\"type\":\"uri\",\"value\":\""
+          (Prims.strcat (json_escape p) "\"}") in
+      Prims.strcat "{\"type\":\"triple\",\"value\":{\"subject\":"
+        (Prims.strcat subj
+           (Prims.strcat ",\"predicate\":"
+              (Prims.strcat pred
+                 (Prims.strcat ",\"object\":"
+                    (Prims.strcat (json_term o) "}}")))))
+let rec json_var_list_body (vars : Prims.string Prims.list)
+  (first : Prims.bool) : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      let piece = Prims.strcat "\"" (Prims.strcat (json_escape v) "\"") in
+      if first
+      then Prims.strcat piece (json_var_list_body rest false)
+      else
+        Prims.strcat "," (Prims.strcat piece (json_var_list_body rest false))
+let json_var_list (vars : Prims.string Prims.list) : Prims.string=
+  json_var_list_body vars true
+let rec json_row_body (row : binding_row) (first : Prims.bool) :
+  Prims.string=
+  match row with
+  | [] -> ""
+  | (v, t)::rest ->
+      let piece =
+        Prims.strcat "\""
+          (Prims.strcat (json_escape v) (Prims.strcat "\":" (json_term t))) in
+      if first
+      then Prims.strcat piece (json_row_body rest false)
+      else Prims.strcat "," (Prims.strcat piece (json_row_body rest false))
+let json_row (row : binding_row) : Prims.string=
+  Prims.strcat "{" (Prims.strcat (json_row_body row true) "}")
+let rec json_rows_body (rows : binding_row Prims.list) (first : Prims.bool) :
+  Prims.string=
+  match rows with
+  | [] -> ""
+  | r::rest ->
+      let piece = json_row r in
+      if first
+      then Prims.strcat piece (json_rows_body rest false)
+      else Prims.strcat "," (Prims.strcat piece (json_rows_body rest false))
+let rec json_rows_body_acc (rows : binding_row Prims.list)
+  (first : Prims.bool) (acc : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match rows with
+  | [] -> acc
+  | r::rest ->
+      let piece = json_row r in
+      let chunk = if first then piece else Prims.strcat "," piece in
+      json_rows_body_acc rest false (chunk :: acc)
+let serialise_response_json (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  let body_pieces = FStar_List_Tot_Base.rev (json_rows_body_acc rows true []) in
+  Prims.strcat "{\"head\":{\"vars\":["
+    (Prims.strcat (json_var_list vars)
+       (Prims.strcat "]},"
+          (Prims.strcat "\"results\":{\"bindings\":["
+             (Prims.strcat
+                (Parser_FastString_ConcatSpec.concat_spec "" body_pieces)
+                "]}}"))))
+let serialise_response_boolean_json (b : Prims.bool) : Prims.string=
+  if b
+  then "{\"head\":{},\"boolean\":true}"
+  else "{\"head\":{},\"boolean\":false}"
+let rec xml_head_vars_body (vars : Prims.string Prims.list) : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      Prims.strcat "<variable name=\""
+        (Prims.strcat (xml_escape v)
+           (Prims.strcat "\"/>" (xml_head_vars_body rest)))
+let rec xml_term (t : RDF_Term.rdf_term) : Prims.string=
+  match t with
+  | RDF_Term.T_IRI i ->
+      Prims.strcat "<uri>" (Prims.strcat (xml_escape i) "</uri>")
+  | RDF_Term.T_BNode b ->
+      Prims.strcat "<bnode>" (Prims.strcat (xml_escape b) "</bnode>")
+  | RDF_Term.T_Literal l ->
+      (match l.RDF_Term.lang_tag with
+       | FStar_Pervasives_Native.Some tag ->
+           let dir_attr =
+             match l.RDF_Term.direction with
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_LTR) ->
+                 " its:dir=\"ltr\""
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_RTL) ->
+                 " its:dir=\"rtl\""
+             | FStar_Pervasives_Native.None -> "" in
+           Prims.strcat "<literal xml:lang=\""
+             (Prims.strcat (xml_escape tag)
+                (Prims.strcat "\""
+                   (Prims.strcat dir_attr
+                      (Prims.strcat ">"
+                         (Prims.strcat (xml_escape l.RDF_Term.lexical_form)
+                            "</literal>")))))
+       | FStar_Pervasives_Native.None ->
+           if l.RDF_Term.datatype = RDF_Term.xsd_string
+           then
+             Prims.strcat "<literal>"
+               (Prims.strcat (xml_escape l.RDF_Term.lexical_form)
+                  "</literal>")
+           else
+             Prims.strcat "<literal datatype=\""
+               (Prims.strcat (xml_escape l.RDF_Term.datatype)
+                  (Prims.strcat "\">"
+                     (Prims.strcat (xml_escape l.RDF_Term.lexical_form)
+                        "</literal>"))))
+  | RDF_Term.T_TripleTerm (s, p, o) ->
+      let subj =
+        match s with
+        | RDF_Term.S_IRI i ->
+            Prims.strcat "<uri>" (Prims.strcat (xml_escape i) "</uri>")
+        | RDF_Term.S_BNode b ->
+            Prims.strcat "<bnode>" (Prims.strcat (xml_escape b) "</bnode>") in
+      Prims.strcat "<triple><subject>"
+        (Prims.strcat subj
+           (Prims.strcat "</subject>"
+              (Prims.strcat "<predicate><uri>"
+                 (Prims.strcat (xml_escape p)
+                    (Prims.strcat "</uri></predicate>"
+                       (Prims.strcat "<object>"
+                          (Prims.strcat (xml_term o) "</object></triple>")))))))
+let xml_binding (name : Prims.string) (t : RDF_Term.rdf_term) : Prims.string=
+  let open_tag =
+    Prims.strcat "<binding name=\"" (Prims.strcat (xml_escape name) "\">") in
+  Prims.strcat open_tag (Prims.strcat (xml_term t) "</binding>")
+let rec xml_row_body (row : binding_row) : Prims.string=
+  match row with
+  | [] -> ""
+  | (v, t)::rest -> Prims.strcat (xml_binding v t) (xml_row_body rest)
+let xml_row (row : binding_row) : Prims.string=
+  Prims.strcat "<result>" (Prims.strcat (xml_row_body row) "</result>")
+let rec xml_rows_body (rows : binding_row Prims.list) : Prims.string=
+  match rows with
+  | [] -> ""
+  | r::rest -> Prims.strcat (xml_row r) (xml_rows_body rest)
+let rec xml_rows_body_acc (rows : binding_row Prims.list)
+  (acc : Prims.string Prims.list) : Prims.string Prims.list=
+  match rows with
+  | [] -> acc
+  | r::rest -> xml_rows_body_acc rest ((xml_row r) :: acc)
+let serialise_response_xml (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  let body_pieces = FStar_List_Tot_Base.rev (xml_rows_body_acc rows []) in
+  Prims.strcat "<?xml version=\"1.0\"?>\n"
+    (Prims.strcat "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\">"
+       (Prims.strcat "<head>"
+          (Prims.strcat (xml_head_vars_body vars)
+             (Prims.strcat "</head>"
+                (Prims.strcat "<results>"
+                   (Prims.strcat
+                      (Parser_FastString_ConcatSpec.concat_spec ""
+                         body_pieces) "</results></sparql>"))))))
+let serialise_response_boolean_xml (b : Prims.bool) : Prims.string=
+  let value = if b then "true" else "false" in
+  Prims.strcat "<?xml version=\"1.0\"?>\n"
+    (Prims.strcat "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\">"
+       (Prims.strcat "<head></head>"
+          (Prims.strcat "<boolean>"
+             (Prims.strcat value "</boolean></sparql>"))))
+let rec csv_plain_term (t : RDF_Term.rdf_term) : Prims.string=
+  match t with
+  | RDF_Term.T_IRI i -> i
+  | RDF_Term.T_BNode b -> Prims.strcat "_:" b
+  | RDF_Term.T_Literal l -> l.RDF_Term.lexical_form
+  | RDF_Term.T_TripleTerm (s, p, o) ->
+      let subj =
+        match s with
+        | RDF_Term.S_IRI i -> i
+        | RDF_Term.S_BNode b -> Prims.strcat "_:" b in
+      Prims.strcat "<<( "
+        (Prims.strcat subj
+           (Prims.strcat " "
+              (Prims.strcat p
+                 (Prims.strcat " " (Prims.strcat (csv_plain_term o) " )>>")))))
+let csv_cell (t_opt : RDF_Term.rdf_term FStar_Pervasives_Native.option) :
+  Prims.string=
+  match t_opt with
+  | FStar_Pervasives_Native.None -> ""
+  | FStar_Pervasives_Native.Some t -> csv_escape (csv_plain_term t)
+let rec csv_header_body (vars : Prims.string Prims.list) (first : Prims.bool)
+  : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      if first
+      then Prims.strcat (csv_escape v) (csv_header_body rest false)
+      else
+        Prims.strcat ","
+          (Prims.strcat (csv_escape v) (csv_header_body rest false))
+let rec csv_row_body (vars : Prims.string Prims.list) (row : binding_row)
+  (first : Prims.bool) : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      let cell = csv_cell (FStar_List_Tot_Base.assoc v row) in
+      if first
+      then Prims.strcat cell (csv_row_body rest row false)
+      else Prims.strcat "," (Prims.strcat cell (csv_row_body rest row false))
+let rec csv_rows_body (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  match rows with
+  | [] -> ""
+  | r::rest ->
+      Prims.strcat (csv_row_body vars r true)
+        (Prims.strcat "\r\n" (csv_rows_body vars rest))
+let rec csv_rows_body_acc (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) (acc : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match rows with
+  | [] -> acc
+  | r::rest ->
+      let line = Prims.strcat (csv_row_body vars r true) "\r\n" in
+      csv_rows_body_acc vars rest (line :: acc)
+let serialise_response_csv (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  let body_pieces = FStar_List_Tot_Base.rev (csv_rows_body_acc vars rows []) in
+  Prims.strcat (csv_header_body vars true)
+    (Prims.strcat "\r\n"
+       (Parser_FastString_ConcatSpec.concat_spec "" body_pieces))
+let rec tsv_term (t : RDF_Term.rdf_term) : Prims.string=
+  match t with
+  | RDF_Term.T_IRI i -> Prims.strcat "<" (Prims.strcat i ">")
+  | RDF_Term.T_BNode b -> Prims.strcat "_:" b
+  | RDF_Term.T_Literal l ->
+      let escaped = nt_escape l.RDF_Term.lexical_form in
+      (match l.RDF_Term.lang_tag with
+       | FStar_Pervasives_Native.Some tag ->
+           let ds =
+             match l.RDF_Term.direction with
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_LTR) -> "--ltr"
+             | FStar_Pervasives_Native.Some (RDF_Term.Dir_RTL) -> "--rtl"
+             | FStar_Pervasives_Native.None -> "" in
+           Prims.strcat "\""
+             (Prims.strcat escaped (Prims.strcat "\"@" (Prims.strcat tag ds)))
+       | FStar_Pervasives_Native.None ->
+           if l.RDF_Term.datatype = RDF_Term.xsd_string
+           then Prims.strcat "\"" (Prims.strcat escaped "\"")
+           else
+             Prims.strcat "\""
+               (Prims.strcat escaped
+                  (Prims.strcat "\"^^<"
+                     (Prims.strcat l.RDF_Term.datatype ">"))))
+  | RDF_Term.T_TripleTerm (s, p, o) ->
+      let subj =
+        match s with
+        | RDF_Term.S_IRI i -> Prims.strcat "<" (Prims.strcat i ">")
+        | RDF_Term.S_BNode b -> Prims.strcat "_:" b in
+      Prims.strcat "<<( "
+        (Prims.strcat subj
+           (Prims.strcat " <"
+              (Prims.strcat p
+                 (Prims.strcat "> " (Prims.strcat (tsv_term o) " )>>")))))
+let tsv_cell (t_opt : RDF_Term.rdf_term FStar_Pervasives_Native.option) :
+  Prims.string=
+  match t_opt with
+  | FStar_Pervasives_Native.None -> ""
+  | FStar_Pervasives_Native.Some t -> tsv_term t
+let rec tsv_header_body (vars : Prims.string Prims.list) (first : Prims.bool)
+  : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      let piece = Prims.strcat "?" v in
+      if first
+      then Prims.strcat piece (tsv_header_body rest false)
+      else
+        Prims.strcat "\t" (Prims.strcat piece (tsv_header_body rest false))
+let rec tsv_row_body (vars : Prims.string Prims.list) (row : binding_row)
+  (first : Prims.bool) : Prims.string=
+  match vars with
+  | [] -> ""
+  | v::rest ->
+      let cell = tsv_cell (FStar_List_Tot_Base.assoc v row) in
+      if first
+      then Prims.strcat cell (tsv_row_body rest row false)
+      else
+        Prims.strcat "\t" (Prims.strcat cell (tsv_row_body rest row false))
+let rec tsv_rows_body (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  match rows with
+  | [] -> ""
+  | r::rest ->
+      Prims.strcat (tsv_row_body vars r true)
+        (Prims.strcat "\n" (tsv_rows_body vars rest))
+let rec tsv_rows_body_acc (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) (acc : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match rows with
+  | [] -> acc
+  | r::rest ->
+      let line = Prims.strcat (tsv_row_body vars r true) "\n" in
+      tsv_rows_body_acc vars rest (line :: acc)
+let serialise_response_tsv (vars : Prims.string Prims.list)
+  (rows : binding_row Prims.list) : Prims.string=
+  let body_pieces = FStar_List_Tot_Base.rev (tsv_rows_body_acc vars rows []) in
+  Prims.strcat (tsv_header_body vars true)
+    (Prims.strcat "\n"
+       (Parser_FastString_ConcatSpec.concat_spec "" body_pieces))
+let content_type_for (f : response_format) : Prims.string=
+  match f with
+  | RF_Json -> "application/sparql-results+json"
+  | RF_Xml -> "application/sparql-results+xml"
+  | RF_Csv -> "text/csv"
+  | RF_Tsv -> "text/tab-separated-values"
+  | RF_Turtle -> "text/turtle"
+  | RF_NTriples -> "application/n-triples"
+  | RF_Text -> "text/plain"
+let lit_str (s : Prims.string) :
+  RDF_Term.rdf_term FStar_Pervasives_Native.option=
+  let l =
+    {
+      RDF_Term.lexical_form = s;
+      RDF_Term.datatype = RDF_Term.xsd_string;
+      RDF_Term.lang_tag = FStar_Pervasives_Native.None;
+      RDF_Term.direction = FStar_Pervasives_Native.None
+    } in
+  if RDF_Term.literal_wf l
+  then FStar_Pervasives_Native.Some (RDF_Term.T_Literal l)
+  else FStar_Pervasives_Native.None
+type proto_request =
+  {
+  pr_method: Prims.string ;
+  pr_path: Prims.string ;
+  pr_qs: Prims.string ;
+  pr_headers: (Prims.string * Prims.string) Prims.list ;
+  pr_body: Prims.string }
+let __proj__Mkproto_request__item__pr_method (projectee : proto_request) :
+  Prims.string=
+  match projectee with
+  | { pr_method; pr_path; pr_qs; pr_headers; pr_body;_} -> pr_method
+let __proj__Mkproto_request__item__pr_path (projectee : proto_request) :
+  Prims.string=
+  match projectee with
+  | { pr_method; pr_path; pr_qs; pr_headers; pr_body;_} -> pr_path
+let __proj__Mkproto_request__item__pr_qs (projectee : proto_request) :
+  Prims.string=
+  match projectee with
+  | { pr_method; pr_path; pr_qs; pr_headers; pr_body;_} -> pr_qs
+let __proj__Mkproto_request__item__pr_headers (projectee : proto_request) :
+  (Prims.string * Prims.string) Prims.list=
+  match projectee with
+  | { pr_method; pr_path; pr_qs; pr_headers; pr_body;_} -> pr_headers
+let __proj__Mkproto_request__item__pr_body (projectee : proto_request) :
+  Prims.string=
+  match projectee with
+  | { pr_method; pr_path; pr_qs; pr_headers; pr_body;_} -> pr_body
+type proto_status_class =
+  | S_2or3 
+  | S_4xx 
+  | S_5xx 
+  | S_Unknown 
+let uu___is_S_2or3 (projectee : proto_status_class) : Prims.bool=
+  match projectee with | S_2or3 -> true | uu___ -> false
+let uu___is_S_4xx (projectee : proto_status_class) : Prims.bool=
+  match projectee with | S_4xx -> true | uu___ -> false
+let uu___is_S_5xx (projectee : proto_status_class) : Prims.bool=
+  match projectee with | S_5xx -> true | uu___ -> false
+let uu___is_S_Unknown (projectee : proto_status_class) : Prims.bool=
+  match projectee with | S_Unknown -> true | uu___ -> false
+let rec proto_indent_budget (cs : FStar_Char.char Prims.list)
+  (budget : Prims.nat) : Prims.nat=
+  if budget = Prims.int_zero
+  then Prims.int_zero
+  else
+    (match cs with
+     | [] -> Prims.int_zero
+     | c::rest ->
+         let code = char_code c in
+         if code = (Prims.of_int (0x20))
+         then
+           Prims.int_one +
+             (proto_indent_budget rest (budget - Prims.int_one))
+         else
+           if code = (Prims.of_int (0x09))
+           then Prims.int_one
+           else Prims.int_zero)
+let rec proto_drop_n_chars (n : Prims.nat) (cs : FStar_Char.char Prims.list)
+  : FStar_Char.char Prims.list=
+  if n = Prims.int_zero
+  then cs
+  else
+    (match cs with
+     | [] -> []
+     | uu___1::rest -> proto_drop_n_chars (n - Prims.int_one) rest)
+let proto_strip_indent (s : Prims.string) : Prims.string=
+  let cs = FStar_String.list_of_string s in
+  let drop = proto_indent_budget cs (Prims.of_int (4)) in
+  FStar_String.string_of_list (proto_drop_n_chars drop cs)
+let proto_is_blank_line (s : Prims.string) : Prims.bool=
+  (FStar_String.strlen (trim_ws s)) = Prims.int_zero
+let proto_is_indented_line (s : Prims.string) : Prims.bool=
+  match FStar_String.list_of_string s with
+  | [] -> false
+  | c::uu___ ->
+      let code = char_code c in
+      (code = (Prims.of_int (0x20))) || (code = (Prims.of_int (0x09)))
+let rec proto_find_req_header (lines : Prims.string Prims.list) :
+  Prims.string Prims.list FStar_Pervasives_Native.option=
+  match lines with
+  | [] -> FStar_Pervasives_Native.None
+  | line::rest ->
+      if (trim_ws line) = "#### Request"
+      then FStar_Pervasives_Native.Some rest
+      else proto_find_req_header rest
+let rec proto_skip_blank_lines (lines : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match lines with
+  | [] -> []
+  | line::rest ->
+      if proto_is_blank_line line then proto_skip_blank_lines rest else lines
+let rec proto_take_indented (lines : Prims.string Prims.list) :
+  (Prims.string Prims.list * Prims.string Prims.list)=
+  match lines with
+  | [] -> ([], [])
+  | line::rest ->
+      if (proto_is_indented_line line) || (proto_is_blank_line line)
+      then
+        let uu___ = proto_take_indented rest in
+        (match uu___ with
+         | (taken, remaining) -> ((line :: taken), remaining))
+      else ([], lines)
+let rec proto_rtrim_blanks (lines : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match lines with
+  | [] -> []
+  | x::rest ->
+      (match proto_rtrim_blanks rest with
+       | [] -> if proto_is_blank_line x then [] else [x]
+       | rest' -> x :: rest')
+let rec proto_ltrim_blanks (lines : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match lines with | ""::rest -> proto_ltrim_blanks rest | xs -> xs
+let rec proto_read_headers (lines : Prims.string Prims.list) :
+  ((Prims.string * Prims.string) Prims.list * Prims.string Prims.list)=
+  match lines with
+  | [] -> ([], [])
+  | ""::rest -> ([], rest)
+  | line::rest ->
+      (match split_once_on line
+               (FStar_Char.char_of_int (Prims.of_int (0x3A)))
+       with
+       | (uu___, FStar_Pervasives_Native.None) -> ([], (line :: rest))
+       | (before, FStar_Pervasives_Native.Some after) ->
+           let k = ascii_lower_string (trim_ws before) in
+           let v = trim_ws after in
+           let uu___ = proto_read_headers rest in
+           (match uu___ with
+            | (hdrs, body_lines) -> (((k, v) :: hdrs), body_lines)))
+let extract_request (comment : Prims.string) :
+  proto_request FStar_Pervasives_Native.option=
+  let lines =
+    split_all_on comment (FStar_Char.char_of_int (Prims.of_int (0x0A))) in
+  match proto_find_req_header lines with
+  | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None
+  | FStar_Pervasives_Native.Some after_hdr ->
+      let after_skip = proto_skip_blank_lines after_hdr in
+      let uu___ = proto_take_indented after_skip in
+      (match uu___ with
+       | (block_lines, uu___1) ->
+           let block_lines1 = proto_rtrim_blanks block_lines in
+           let stripped =
+             FStar_List_Tot_Base.map
+               (fun l ->
+                  if proto_is_blank_line l then "" else proto_strip_indent l)
+               block_lines1 in
+           (match proto_ltrim_blanks stripped with
+            | [] -> FStar_Pervasives_Native.None
+            | req_line::rest ->
+                let tokens =
+                  split_all_on (trim_ws req_line)
+                    (FStar_Char.char_of_int (Prims.of_int (0x20))) in
+                (match tokens with
+                 | mthd::target::uu___2 ->
+                     let uu___3 =
+                       match split_once_on target
+                               (FStar_Char.char_of_int (Prims.of_int (0x3F)))
+                       with
+                       | (p, FStar_Pervasives_Native.None) -> (p, "")
+                       | (p, FStar_Pervasives_Native.Some q) -> (p, q) in
+                     (match uu___3 with
+                      | (path, qs) ->
+                          let uu___4 = proto_read_headers rest in
+                          (match uu___4 with
+                           | (headers, body_lines) ->
+                               let body =
+                                 trim_ws
+                                   (Parser_FastString_ConcatSpec.concat_spec
+                                      "\n" body_lines) in
+                               FStar_Pervasives_Native.Some
+                                 {
+                                   pr_method = mthd;
+                                   pr_path = path;
+                                   pr_qs = qs;
+                                   pr_headers = headers;
+                                   pr_body = body
+                                 }))
+                 | uu___2 -> FStar_Pervasives_Native.None)))
+let rec proto_find_resp_lines (lines : Prims.string Prims.list) :
+  Prims.string Prims.list=
+  match lines with
+  | [] -> []
+  | line::rest ->
+      if (trim_ws line) = "#### Response"
+      then rest
+      else proto_find_resp_lines rest
+let rec proto_contains_from (needle : FStar_Char.char Prims.list)
+  (haystack : FStar_Char.char Prims.list) : Prims.bool=
+  if list_chars_starts_with needle haystack
+  then true
+  else
+    (match haystack with
+     | [] -> false
+     | uu___1::rest -> proto_contains_from needle rest)
+let proto_str_contains (haystack : Prims.string) (needle : Prims.string) :
+  Prims.bool=
+  proto_contains_from (FStar_String.list_of_string needle)
+    (FStar_String.list_of_string haystack)
+let extract_status_class (comment : Prims.string) : proto_status_class=
+  let lines =
+    split_all_on comment (FStar_Char.char_of_int (Prims.of_int (0x0A))) in
+  let body = proto_find_resp_lines lines in
+  let body_text = Parser_FastString_ConcatSpec.concat_spec "\n" body in
+  if
+    (proto_str_contains body_text "4xx") ||
+      (proto_str_contains body_text "4XX")
+  then S_4xx
+  else
+    if
+      (proto_str_contains body_text "5xx") ||
+        (proto_str_contains body_text "5XX")
+    then S_5xx
+    else
+      if
+        (((proto_str_contains body_text "2xx") ||
+            (proto_str_contains body_text "3xx"))
+           || (proto_str_contains body_text "2XX"))
+          || (proto_str_contains body_text "3XX")
+      then S_2or3
+      else S_Unknown
+let rec proto_assoc_ci (key_lo : Prims.string)
+  (hdrs : (Prims.string * Prims.string) Prims.list) : Prims.string=
+  match hdrs with
+  | [] -> ""
+  | (k, v)::rest -> if k = key_lo then v else proto_assoc_ci key_lo rest
+let proto_header (hdrs : (Prims.string * Prims.string) Prims.list)
+  (key : Prims.string) : Prims.string=
+  proto_assoc_ci (ascii_lower_string key) hdrs
