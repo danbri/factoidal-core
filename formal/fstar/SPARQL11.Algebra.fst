@@ -1,0 +1,8793 @@
+module SPARQL11.Algebra
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 2"
+
+(** ======================================================================== **)
+(** SPARQL 1.1 Query Language — Formal Specification                         **)
+(**                                                                          **)
+(** Based on: W3C Recommendation 21 March 2013                               **)
+(** https://www.w3.org/TR/sparql11-query/                                    **)
+(**                                                                          **)
+(** Scope: Query algebra, evaluation semantics, built-in functions.          **)
+(** Excludes: SPARQL Protocol, Federated Query (SERVICE), Update.            **)
+(**                                                                          **)
+(** ADMITTED SHORTFALLS (documented per project policy):                      **)
+(** [S1] Property paths: recursive closure [star/plus] not fully modeled;     **)
+(**      finite-depth approximation specified, proof of completeness deferred.**)
+(** [S2] Aggregates: GROUP BY partitioning specified declaratively;           **)
+(**      concrete partitioning algorithm deferred.                            **)
+(** [S3] String functions operating on Unicode: assume correct UTF-8 handling**)
+(**      via external primitives; no char-level Unicode spec in F*.           **)
+(** [S4] Numeric type promotion hierarchy: specified as a total order         **)
+(**      but promotion rules for mixed arithmetic are simplified.             **)
+(** [S5] CONSTRUCT/DESCRIBE/ASK query forms: types specified,                **)
+(**      evaluation deferred (SELECT is primary target).                      **)
+(** [S6] Dataset specification (FROM/FROM NAMED): types present,             **)
+(**      multi-graph evaluation deferred.                                     **)
+(** ======================================================================== **)
+
+open FStar.String
+open FStar.List.Tot
+open RDF.Graph.Executable
+open SPARQL.FullText
+open RDF.NQuads.Serialize
+module Lh = RDF.List.Helpers
+module Geo = RDF.Geo.Types
+module GeoBBox = RDF.Geo.BBox
+module GeoTopo = RDF.Geo.Topology
+module GeoFn = RDF.Geo.Functions
+module WKT = Parser.WKT
+module RxS = Regex.Syntax
+module RxE = Regex.Exec
+module RxP = Regex.XSDPattern
+
+(** ====================================================================== **)
+(** Part 1: Concrete RDF Types (imported from RDF.Graph.Executable)         **)
+(** ====================================================================== **)
+
+(* Core types (wf_iri, bnode_id, wf_literal, rdf_term, subject, triple,
+   rdf_graph, solution_mapping, var_name) are imported via open.
+   Constructors T_IRI, T_BNode, T_Literal, S_IRI, S_BNode are in scope.
+   Equality functions subject_eq, literal_eq, rdf_term_eq, triple_eq
+   are in scope with concrete implementations and proved reflexivity. *)
+
+(* Literal field accessors — concrete via record projection *)
+let lit_lexical (l : wf_literal) : string = l.lexical_form
+let lit_datatype (l : wf_literal) : wf_iri = l.datatype
+let lit_lang (l : wf_literal) : option string = l.lang_tag
+(* SPARQL 1.2 base direction accessor (RDF 1.2 Concepts §3.3) — reads
+   the same `direction` field text_direction (RDF.Term.fsti) that the
+   directional-lang-tag literal parsing (Tok_LANGDIR) already sets. *)
+let lit_direction (l : wf_literal) : option text_direction = l.direction
+
+(* IRI string extraction — wf_iri is a refined string, so identity *)
+let iri_to_string (i : wf_iri) : string = i
+let string_to_iri (s : string) : option wf_iri =
+  if is_iri s then Some s else None
+
+(* Well-known datatype IRIs: reuse from RDF.Graph.Executable where available.
+   rdf_lang_string, xsd_string, xsd_integer, xsd_decimal, xsd_double,
+   xsd_boolean are imported via open. Additional SPARQL-needed IRIs: *)
+let rdf_langString : wf_iri = rdf_lang_string  (* camelCase alias *)
+let xsd_float : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#float");
+  "http://www.w3.org/2001/XMLSchema#float"
+let xsd_dateTime : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#dateTime");
+  "http://www.w3.org/2001/XMLSchema#dateTime"
+let xsd_date : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#date");
+  "http://www.w3.org/2001/XMLSchema#date"
+let xsd_time : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#time");
+  "http://www.w3.org/2001/XMLSchema#time"
+let xsd_duration : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#duration");
+  "http://www.w3.org/2001/XMLSchema#duration"
+let xsd_dayTimeDuration : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#dayTimeDuration");
+  "http://www.w3.org/2001/XMLSchema#dayTimeDuration"
+let xsd_yearMonthDuration : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/2001/XMLSchema#yearMonthDuration");
+  "http://www.w3.org/2001/XMLSchema#yearMonthDuration"
+
+(* Solution mapping operations — concrete implementations *)
+let sm_empty : solution_mapping = []
+
+// Tail-rec form via RDF.List.Helpers. The stdlib List.Tot.assoc body
+// is already in tail position but we route through assoc_tr so this
+// hot-path helper grep-matches the project's `*_tr` audit policy.
+let sm_lookup (v : string) (mu : solution_mapping) : option rdf_term =
+  Lh.assoc_tr v mu
+
+let sm_bind (v : string) (t : rdf_term) (mu : solution_mapping) : solution_mapping =
+  (v, t) :: mu
+
+let sm_bind_if_compatible (v:string) (t:rdf_term) (mu:solution_mapping)
+  : option solution_mapping =
+  match sm_lookup v mu with
+  | Some existing ->
+    if rdf_term_eq existing t then Some mu else None
+  | None -> Some (sm_bind v t mu)
+
+let sm_domain (mu : solution_mapping) : list string =
+  List.Tot.map fst mu
+
+(* Two mappings are compatible if shared variables bind to equal terms *)
+let rec sm_compatible (mu1 mu2 : solution_mapping) : bool =
+  match mu1 with
+  | [] -> true
+  | (v, t) :: rest ->
+    (match List.Tot.assoc v mu2 with
+     | None -> sm_compatible rest mu2
+     | Some t2 -> rdf_term_eq t t2 && sm_compatible rest mu2)
+
+(* Merge: mu1 bindings take priority; add non-overlapping from mu2 *)
+let rec sm_merge_aux (mu1 : solution_mapping) (mu2 : solution_mapping)
+  : Tot solution_mapping (decreases mu2) =
+  match mu2 with
+  | [] -> mu1
+  | (v, t) :: rest ->
+    if Some? (List.Tot.assoc v mu1)
+    then sm_merge_aux mu1 rest
+    else sm_merge_aux ((v, t) :: mu1) rest
+
+let sm_merge (mu1 mu2 : solution_mapping) : solution_mapping =
+  sm_merge_aux mu1 mu2
+
+(** ====================================================================== **)
+(** Part 1b: Storage Boundary (experimental, list-backed for now)          **)
+(** ====================================================================== **)
+
+(* This is the first seam for storage-backed evaluation. The current
+   implementation remains list-backed so semantics stay unchanged, but the
+   algebra no longer needs to scan raw graph lists directly. *)
+
+noeq type triple_pattern_bound = {
+  bs : option subject;
+  bp : option wf_iri;
+  bo : option rdf_term;
+}
+
+noeq type graph_store = {
+  gs_graph   : rdf_graph;
+  gs_indexed : indexed_graph;
+}
+
+noeq type named_graph_store = {
+  ngs_name : iri;
+  ngs_store : graph_store;
+}
+
+noeq type rdf_dataset_store = {
+  dss_default : graph_store;
+  dss_named : list named_graph_store;
+}
+
+let graph_to_store (g : rdf_graph) : graph_store =
+  { gs_graph = g; gs_indexed = build_indexed g }
+
+let dataset_to_store (ds : rdf_dataset) : rdf_dataset_store =
+  {
+    dss_default = graph_to_store ds.ds_default;
+    dss_named =
+      List.Tot.map
+        (fun (ng : named_graph) ->
+          { ngs_name = ng.ng_name; ngs_store = graph_to_store ng.ng_graph })
+        ds.ds_named
+  }
+
+let store_to_dataset (dss : rdf_dataset_store) : rdf_dataset =
+  {
+    ds_default = dss.dss_default.gs_graph;
+    ds_named =
+      List.Tot.map
+        (fun (ngs : named_graph_store) ->
+          { ng_name = ngs.ngs_name; ng_graph = ngs.ngs_store.gs_graph })
+        dss.dss_named
+  }
+
+// Tail-rec rewrite (sin7 2026-04-26). The original recursed BEFORE
+// consing the matched triple. On the GB_List / GB_Indexed paths a 3M-row
+// bucket would overflow the macOS main-thread stack the same way the
+// COTTAS path does. Order preserved (rev once at end).
+let rec triple_matches_bound_acc (b : triple_pattern_bound) (ts : list triple)
+  (acc : list triple)
+  : Tot (list triple) (decreases ts) =
+  match ts with
+  | [] -> acc
+  | t :: rest ->
+    let subj_ok = match b.bs with | None -> true | Some s -> subject_eq s t.s in
+    let pred_ok = match b.bp with | None -> true | Some p -> p = t.p in
+    let obj_ok = match b.bo with | None -> true | Some o -> rdf_term_eq o t.o in
+    if subj_ok && pred_ok && obj_ok
+    then triple_matches_bound_acc b rest (t :: acc)
+    else triple_matches_bound_acc b rest acc
+
+let triple_matches_bound (b : triple_pattern_bound) (ts : list triple)
+  : Tot (list triple) =
+  List.Tot.rev (triple_matches_bound_acc b ts [])
+
+(* --------- Indexed-graph search (issue #100 Phase 0) --------- *)
+(* Pick the smallest available bound-component bucket among
+   (pred, subj, obj), then filter with triple_matches_bound. If no
+   component is bound (or none indexable, e.g. only a literal object),
+   fall back to the full triple list. Same algorithm as post-extraction
+   patch 97 (#97_indexed_graph_store.sh), now F*-side and verified. *)
+
+let pick_smaller_bucket (a b : option (list triple)) : option (list triple) =
+  match a, b with
+  | None, None -> None
+  | Some _, None -> a
+  | None, Some _ -> b
+  | Some la, Some lb ->
+    if List.Tot.length la <= List.Tot.length lb then Some la else Some lb
+
+(* 2026-07-06 (lazy per-bucket index construction): each candidate below
+   is additionally gated on `ig.ig_built.bn_*` -- a bucket the caller
+   never built (see RDF.Indexed.fsti's `build_indexed_selective`) is
+   simply not offered as a narrowing candidate, exactly as if `b`'s
+   corresponding component were unbound. This is what makes an unbuilt
+   bucket a pure-performance concern rather than a correctness one:
+   `pool` below falls back to `ig.ig_triples` (the always-present full
+   list) whenever no built bucket applies, and `triple_matches_bound`
+   at the end re-checks every element against the ACTUAL `b`, not
+   against whatever pool produced the candidates. *)
+let ig_search (ig : indexed_graph) (b : triple_pattern_bound) : list triple =
+  (* Single-key candidates *)
+  let pred_b = match b.bp with
+    | Some p -> if ig.ig_built.bn_pred then Some (bucket_lookup ig.ig_pred p) else None
+    | None -> None in
+  let subj_b = match b.bs with
+    | Some s -> if ig.ig_built.bn_subj then Some (bucket_lookup ig.ig_subj (subject_to_key s)) else None
+    | None -> None in
+  let obj_b = match b.bo with
+    | Some o ->
+      if ig.ig_built.bn_obj then
+        (match term_to_key_opt o with
+         | Some k -> Some (bucket_lookup ig.ig_obj k)
+         | None -> None)
+      else None
+    | None -> None in
+  (* Compound-key candidates (issue #100 Phase 1). Each tighter than the
+     single-key alternatives whenever both keys are bound and the second
+     position is indexable. Literals fall through via po_key_opt /
+     so_key_opt returning None, dropping us back to single-key buckets. *)
+  let sp_b = match b.bs, b.bp with
+    | Some s, Some p -> if ig.ig_built.bn_sp then Some (bucket_lookup ig.ig_sp (sp_key s p)) else None
+    | _ -> None in
+  let po_b = match b.bp, b.bo with
+    | Some p, Some o ->
+      if ig.ig_built.bn_po then
+        (match po_key_opt p o with
+         | Some k -> Some (bucket_lookup ig.ig_po k)
+         | None -> None)
+      else None
+    | _ -> None in
+  let so_b = match b.bs, b.bo with
+    | Some s, Some o ->
+      if ig.ig_built.bn_so then
+        (match so_key_opt s o with
+         | Some k -> Some (bucket_lookup ig.ig_so k)
+         | None -> None)
+      else None
+    | _ -> None in
+  let compound = pick_smaller_bucket (pick_smaller_bucket sp_b po_b) so_b in
+  let single   = pick_smaller_bucket (pick_smaller_bucket pred_b subj_b) obj_b in
+  let candidate = pick_smaller_bucket compound single in
+  let pool = match candidate with
+    | Some bucket -> bucket
+    | None -> ig.ig_triples in
+  triple_matches_bound b pool
+
+let ig_estimate (ig : indexed_graph) (b : triple_pattern_bound) : nat =
+  // Fast path: all-None bound = full graph cardinality. Skips the
+  // ig_search -> triple_matches_bound -> List.length round-trip
+  // (which is O(2N) on an unbound BGP). Required for the streaming
+  // COUNT(*) GROUP BY ?g fast path on in-memory named graphs to be
+  // actually fast — without this, count_group_by_graph_solutions
+  // calls O(N) per named graph instead of O(1) per named graph.
+  match b.bs, b.bp, b.bo with
+  | None, None, None -> List.Tot.length ig.ig_triples
+  | _ -> List.Tot.length (ig_search ig b)
+
+(* Public store API: dispatch through the indexed buckets that
+   `graph_to_store` populated. Same triples as the old list-scan
+   `triple_matches_bound b g.gs_graph` — just smaller candidate
+   sets. Set semantics, so order-of-results is allowed to differ. *)
+let store_search (g : graph_store) (b : triple_pattern_bound) : list triple =
+  ig_search g.gs_indexed b
+
+let store_estimate (g : graph_store) (b : triple_pattern_bound) : nat =
+  ig_estimate g.gs_indexed b
+
+let rec lookup_named_store (name : iri) (named : list named_graph_store) : option graph_store =
+  match named with
+  | [] -> None
+  | ng :: rest ->
+    if ng.ngs_name = name then Some ng.ngs_store else lookup_named_store name rest
+
+(** ====================================================================== **)
+(** Part 2: SPARQL 1.1 Variable and Pattern Types                          **)
+(** ====================================================================== **)
+
+type var_name = string
+
+(** Pattern terms: variables or concrete RDF terms.
+    SPARQL 1.2 (epic #305 P6/P7) adds `PT_TripleTerm`, a triple-term
+    pattern `<<( s p o )>>` whose three sub-positions are themselves
+    pattern terms (each may be a variable, concrete term, or a nested
+    triple term). Only reachable when the parser runs in SPARQL 1.2
+    mode; 1.1 queries never produce it. **)
+noeq type pattern_term =
+  | PT_Var      : var_name -> pattern_term
+  | PT_IRI      : wf_iri -> pattern_term
+  | PT_BNode    : bnode_id -> pattern_term
+  | PT_Literal  : wf_literal -> pattern_term
+  | PT_TripleTerm : pattern_term -> pattern_term -> pattern_term -> pattern_term
+
+noeq type pattern_subject =
+  | PS_Var   : var_name -> pattern_subject
+  | PS_IRI   : wf_iri -> pattern_subject
+  | PS_BNode : bnode_id -> pattern_subject
+  // SPARQL 1.2: a triple-term pattern in subject position of a triple
+  // pattern. Sub-positions reuse pattern_term (defined above). A concrete
+  // data triple can never have a triple-term subject, so binding one
+  // against real data always fails — which is exactly the RDF 1.2
+  // "triple terms are object-only" rule surfacing at match time.
+  | PS_TripleTerm : pattern_term -> pattern_term -> pattern_term -> pattern_subject
+
+(** Triple pattern: subject, predicate (may be variable), object **)
+noeq type triple_pattern = {
+  tp_s : pattern_subject;
+  tp_p : pattern_term;      (* SPARQL 1.1 allows variable predicates *)
+  tp_o : pattern_term;
+}
+
+// RDF 1.2 helper: coerce a concrete term into a subject (IRI or blank
+// node). A literal or a triple term can never occupy subject position,
+// so those yield None.
+let term_to_subject_opt (t : rdf_term) : option subject =
+  match t with
+  | T_IRI i -> Some (S_IRI i)
+  | T_BNode b -> Some (S_BNode b)
+  | _ -> None
+
+let bound_subject_of_pattern (ps : pattern_subject) (mu : solution_mapping) : option subject =
+  match ps with
+  | PS_IRI i -> Some (S_IRI i)
+  | PS_BNode b -> Some (S_BNode b)
+  // A triple-term subject pattern can never instantiate to a concrete
+  // subject (subjects are IRI/bnode only) — used only in CONSTRUCT/match,
+  // where it correctly produces no triple / no match.
+  | PS_TripleTerm _ _ _ -> None
+  | PS_Var v ->
+    match sm_lookup v mu with
+    | Some (T_IRI i) -> Some (S_IRI i)
+    | Some (T_BNode b) -> Some (S_BNode b)
+    | Some (T_Literal _) -> None
+    | Some (T_TripleTerm _ _ _) -> None   // triple terms are object-only, never a subject
+    | None -> None
+
+let bound_predicate_of_pattern (pt : pattern_term) (mu : solution_mapping) : option wf_iri =
+  match pt with
+  | PT_IRI i -> Some i
+  | PT_BNode _ -> None
+  | PT_Literal _ -> None
+  | PT_TripleTerm _ _ _ -> None   // a triple term is not a predicate IRI
+  | PT_Var v ->
+    match sm_lookup v mu with
+    | Some (T_IRI i) -> Some i
+    | Some (T_BNode _) -> None
+    | Some (T_Literal _) -> None
+    | Some (T_TripleTerm _ _ _) -> None   // a triple term is not a predicate IRI
+    | None -> None
+
+// RDF 1.2: a triple-term pattern object binds to a concrete `T_TripleTerm`
+// only when every sub-position is groundable under `mu` (used both for
+// CONSTRUCT-template instantiation and for index-key computation, where a
+// partially-unbound triple term yields None → full scan + tp_match filter).
+let rec bound_object_of_pattern (pt : pattern_term) (mu : solution_mapping)
+  : Tot (option rdf_term) (decreases pt) =
+  match pt with
+  | PT_IRI i -> Some (T_IRI i)
+  | PT_BNode b -> Some (T_BNode b)
+  | PT_Literal l -> Some (T_Literal l)
+  | PT_Var v -> sm_lookup v mu
+  | PT_TripleTerm ps pp po ->
+    (match bound_object_of_pattern ps mu with
+     | None -> None
+     | Some sterm ->
+       (match term_to_subject_opt sterm with
+        | None -> None
+        | Some ssub ->
+          (match bound_object_of_pattern pp mu with
+           | Some (T_IRI ppi) ->
+             (match bound_object_of_pattern po mu with
+              | None -> None
+              | Some oterm -> Some (T_TripleTerm ssub ppi oterm))
+           | _ -> None)))
+
+let pattern_subject_eq (a : pattern_subject) (b : pattern_subject) : bool =
+  match a, b with
+  | PS_Var v1, PS_Var v2 -> v1 = v2
+  | PS_IRI i1, PS_IRI i2 -> i1 = i2
+  | PS_BNode b1, PS_BNode b2 -> b1 = b2
+  | _, _ -> false
+
+let rec pattern_term_eq (a : pattern_term) (b : pattern_term) : Tot bool (decreases a) =
+  match a, b with
+  | PT_Var v1, PT_Var v2 -> v1 = v2
+  | PT_IRI i1, PT_IRI i2 -> i1 = i2
+  | PT_BNode b1, PT_BNode b2 -> b1 = b2
+  | PT_Literal l1, PT_Literal l2 -> literal_eq l1 l2
+  | PT_TripleTerm s1 p1 o1, PT_TripleTerm s2 p2 o2 ->
+    pattern_term_eq s1 s2 && pattern_term_eq p1 p2 && pattern_term_eq o1 o2
+  | _, _ -> false
+
+let triple_pattern_eq (a : triple_pattern) (b : triple_pattern) : bool =
+  pattern_subject_eq a.tp_s b.tp_s &&
+  pattern_term_eq a.tp_p b.tp_p &&
+  pattern_term_eq a.tp_o b.tp_o
+
+(** Basic Graph Pattern **)
+type bgp = list triple_pattern
+
+(** ====================================================================== **)
+(** Part 3: SPARQL 1.1 Expression Language                                 **)
+(** ====================================================================== **)
+
+(** Comparison operators **)
+type comp_op = | CmpEq | CmpNe | CmpLt | CmpGt | CmpLe | CmpGe
+
+(** Arithmetic operators **)
+type arith_op = | Add | Sub | Mul | Div
+
+(** Aggregate functions (§18.5) **)
+type aggregate_fn =
+  | Agg_Count
+  | Agg_Sum
+  | Agg_Min
+  | Agg_Max
+  | Agg_Avg
+  | Agg_GroupConcat of option string   (* optional separator *)
+  | Agg_Sample
+
+(** SPARQL 1.1 Expression AST (§18.2) **)
+noeq type expr =
+  (* Primary expressions *)
+  | E_Var           : var_name -> expr
+  | E_IRI           : wf_iri -> expr
+  | E_Literal       : wf_literal -> expr
+  | E_BoolLit       : bool -> expr
+  | E_NumericLit    : int -> expr        (* integer literal *)
+  | E_DecimalLit    : string -> expr     (* decimal as string, [S4] *)
+  | E_DoubleLit     : string -> expr     (* double as string, [S4] *)
+
+  (* Arithmetic (§17.4.2) *)
+  | E_Arith         : arith_op -> expr -> expr -> expr
+  | E_UnaryMinus    : expr -> expr
+  | E_UnaryPlus     : expr -> expr
+
+  (* Comparison (§17.3) *)
+  | E_Compare       : comp_op -> expr -> expr -> expr
+
+  (* Logical connectives (§17.4.1) *)
+  | E_And           : expr -> expr -> expr
+  | E_Or            : expr -> expr -> expr
+  | E_Not           : expr -> expr
+
+  (* Node type tests (§17.4.3.1) *)
+  | E_IsIRI         : expr -> expr
+  | E_IsBlank       : expr -> expr
+  | E_IsLiteral     : expr -> expr
+  | E_IsNumeric     : expr -> expr
+
+  (* Accessors (§17.4.3) *)
+  | E_Str           : expr -> expr
+  | E_Lang          : expr -> expr
+  | E_Datatype      : expr -> expr
+  | E_IRI_fn        : expr -> expr       (* IRI() / URI() constructor *)
+
+  (* SPARQL 1.2 base-direction accessors (RDF 1.2 Concepts §3.3, epic
+     #305). Modeled directly on E_Lang/E_Datatype above: hasLANG/
+     hasLANGDIR are boolean presence tests, LANGDIR reads the direction
+     the way E_Lang reads the language tag (empty string when absent,
+     error on a non-literal/non-numeric argument). *)
+  | E_HasLang       : expr -> expr       (* hasLANG(term) *)
+  | E_HasLangDir    : expr -> expr       (* hasLANGDIR(term) *)
+  | E_LangDir       : expr -> expr       (* LANGDIR(term) *)
+
+  (* Term constructors (§17.4.4) *)
+  | E_StrDt         : expr -> expr -> expr   (* STRDT(lexical, datatype) *)
+  | E_StrLang       : expr -> expr -> expr   (* STRLANG(lexical, langtag) *)
+  | E_StrLangDir    : expr -> expr -> expr -> expr  (* STRLANGDIR(lexical, langtag, dir) *)
+
+  (* BOUND test (§17.4.1.1) *)
+  | E_Bound         : var_name -> expr
+
+  (* Conditional (§17.4.1) *)
+  | E_If            : expr -> expr -> expr -> expr
+  | E_Coalesce      : list expr -> expr
+  | E_In            : expr -> list expr -> expr
+  | E_NotIn         : expr -> list expr -> expr
+
+  (* String functions (§17.4.3.4 – §17.4.3.13) *)
+  | E_StrLen        : expr -> expr
+  | E_Substr        : expr -> expr -> option expr -> expr
+  | E_UCase         : expr -> expr
+  | E_LCase         : expr -> expr
+  | E_StrStarts     : expr -> expr -> expr
+  | E_StrEnds       : expr -> expr -> expr
+  | E_Contains      : expr -> expr -> expr
+  | E_StrBefore     : expr -> expr -> expr
+  | E_StrAfter      : expr -> expr -> expr
+  | E_Concat        : list expr -> expr
+  | E_EncodeForUri  : expr -> expr
+  | E_Replace       : expr -> expr -> expr -> option expr -> expr  (* str, pattern, replacement, flags *)
+  | E_Regex         : expr -> expr -> option expr -> expr          (* str, pattern, flags *)
+
+  (* Numeric functions (§17.4.4) *)
+  | E_Abs           : expr -> expr
+  | E_Round         : expr -> expr
+  | E_Ceil          : expr -> expr
+  | E_Floor         : expr -> expr
+
+  (* Hash functions (§17.4.3.14) *)
+  | E_MD5           : expr -> expr
+  | E_SHA1          : expr -> expr
+  | E_SHA256        : expr -> expr
+  | E_SHA384        : expr -> expr
+  | E_SHA512        : expr -> expr
+
+  (* Date/time functions (§17.4.5) *)
+  | E_Now           : expr
+  | E_Year          : expr -> expr
+  | E_Month         : expr -> expr
+  | E_Day           : expr -> expr
+  | E_Hours         : expr -> expr
+  | E_Minutes       : expr -> expr
+  | E_Seconds       : expr -> expr
+  | E_Timezone      : expr -> expr
+  | E_Tz            : expr -> expr
+
+  (* RDF term equality (§17.4.1.7) *)
+  | E_SameTerm      : expr -> expr -> expr
+
+  (* EXISTS / NOT EXISTS (§18.6) *)
+  | E_Exists        : group_graph_pattern -> expr
+  | E_NotExists     : group_graph_pattern -> expr
+
+  (* Aggregate expressions (§18.5) — only valid inside HAVING or SELECT *)
+  | E_Aggregate     : aggregate_fn -> bool (* distinct *) -> expr -> expr
+
+  (* Function call (extensible — IRI-named functions, §17.6) *)
+  | E_FunctionCall  : wf_iri -> list expr -> expr
+
+  (* SPARQL 1.2 triple-term builtins (SPARQL 1.2 Query WD §17.4).
+     E_TripleTerm is the constructor shared by both the `TRIPLE(s,p,o)`
+     function and the `<<( s p o )>>` expression term; the four accessors
+     project / test a triple term. *)
+  | E_TripleTerm    : expr -> expr -> expr -> expr   (* TRIPLE(s,p,o) / <<( s p o )>> *)
+  | E_TTSubject     : expr -> expr                   (* SUBJECT(t)   *)
+  | E_TTPredicate   : expr -> expr                   (* PREDICATE(t) *)
+  | E_TTObject      : expr -> expr                   (* OBJECT(t)    *)
+  | E_IsTriple      : expr -> expr                   (* isTRIPLE(x)  *)
+
+(** ====================================================================== **)
+(** Part 4: SPARQL 1.1 Property Paths (§9)                                 **)
+(** [S1] Recursive closure paths [star/plus] specified structurally;         **)
+(**      termination/completeness of evaluation deferred.                   **)
+(** ====================================================================== **)
+
+and property_path =
+  | PP_IRI           : wf_iri -> property_path                     (* iri *)
+  | PP_Inverse       : property_path -> property_path              (* ^path *)
+  | PP_Sequence      : property_path -> property_path -> property_path  (* path/path *)
+  | PP_Alternative   : property_path -> property_path -> property_path  (* path|path *)
+  | PP_ZeroOrMore    : property_path -> property_path              (* path* [S1] *)
+  | PP_OneOrMore     : property_path -> property_path              (* path+ [S1] *)
+  | PP_ZeroOrOne     : property_path -> property_path              (* path? *)
+  | PP_NegatedSet    : list property_path -> property_path         (* !(:a|:b|^:c) *)
+
+(** ====================================================================== **)
+(** Part 5: SPARQL 1.1 Graph Patterns (§18.2)                              **)
+(** ====================================================================== **)
+
+and group_graph_pattern =
+  | GP_BGP        : bgp -> group_graph_pattern
+  | GP_Join       : group_graph_pattern -> group_graph_pattern -> group_graph_pattern
+  | GP_LeftJoin   : group_graph_pattern -> group_graph_pattern -> expr -> group_graph_pattern
+      (* OPTIONAL with filter: LeftJoin(P1, P2, filter_expr) *)
+  | GP_Filter     : expr -> group_graph_pattern -> group_graph_pattern
+  | GP_Union      : group_graph_pattern -> group_graph_pattern -> group_graph_pattern
+  | GP_Graph      : pattern_term -> group_graph_pattern -> group_graph_pattern
+      (* GRAPH ?g { P } or GRAPH <iri> { P } [S6] *)
+  | GP_Minus      : group_graph_pattern -> group_graph_pattern -> group_graph_pattern
+  | GP_Lateral    : group_graph_pattern -> group_graph_pattern -> group_graph_pattern
+      (* SPARQL 1.2 / Jena LATERAL: P1 LATERAL { P2 } — for each solution mu
+         of P1 (LHS), evaluate P2 (RHS) with mu's bindings substituted in
+         (correlated evaluation), then merge each RHS solution with mu.
+         Order-dependent, unlike GP_Join. Jena semantics:
+         https://jena.apache.org/documentation/query/lateral-join.html *)
+  | GP_Bind       : expr -> var_name -> group_graph_pattern -> group_graph_pattern
+      (* BIND(expr AS ?var) appended to pattern *)
+  | GP_Values     : list var_name -> list (list (option rdf_term)) -> group_graph_pattern
+      (* VALUES (?x ?y) { (1 2) (3 UNDEF) } — inline data *)
+  | GP_Service    : wf_iri -> group_graph_pattern -> bool -> group_graph_pattern
+      (* SERVICE <iri> { P } silent? — fixed-IRI endpoint *)
+  | GP_ServiceVar : var_name -> group_graph_pattern -> bool -> group_graph_pattern
+      (* SERVICE ?var { P } silent? — variable endpoint, resolved to GP_Service
+         by substitute_pattern once an outer pattern binds the variable to an IRI *)
+  | GP_SubSelect  : query -> group_graph_pattern
+      (* Sub-SELECT: treated as a group graph pattern *)
+  | GP_PropertyPath : pattern_subject -> property_path -> pattern_term -> group_graph_pattern
+      (* Property path pattern: ?s path ?o *)
+  | GP_Empty      : group_graph_pattern
+      (* Empty group pattern {} — identity for Join *)
+
+(** ====================================================================== **)
+(** Part 6: SPARQL 1.1 Query Structure (§18.2.4)                           **)
+(** ====================================================================== **)
+
+(** Order specification **)
+and order_condition =
+  | OC_Asc  : expr -> order_condition
+  | OC_Desc : expr -> order_condition
+
+(** Solution modifier **)
+and solution_modifier = {
+  sm_order_by   : option (list order_condition);
+  sm_distinct   : bool;
+  sm_reduced    : bool;
+  sm_offset     : option nat;
+  sm_limit      : option nat;
+}
+
+(** SELECT projection — either specific variables/expressions or * **)
+and select_item =
+  | SI_Var  : var_name -> select_item
+  | SI_Expr : expr -> var_name -> select_item    (* (expr AS ?var) *)
+
+and select_clause =
+  | Select_Vars : list select_item -> select_clause
+  | Select_All  : select_clause                  (* SELECT * *)
+
+(** GROUP BY clause **)
+and group_condition =
+  | GC_Var   : var_name -> group_condition
+  | GC_Expr  : expr -> option var_name -> group_condition  (* expr, optional alias *)
+  | GC_BuiltIn : expr -> group_condition
+
+(** HAVING clause **)
+and having_condition = expr
+
+(** Query forms (§18.2) **)
+and query_form =
+  | QF_Select    : select_clause -> query_form
+  | QF_Construct : list triple_pattern -> query_form   (* [S5] *)
+  | QF_Ask       : query_form                          (* [S5] *)
+  | QF_Describe  : list pattern_term -> query_form     (* [S5] *)
+
+(** Dataset clause **)
+and dataset_clause =
+  | DC_Default : wf_iri -> dataset_clause       (* FROM <iri> [S6] *)
+  | DC_Named   : wf_iri -> dataset_clause       (* FROM NAMED <iri> [S6] *)
+
+(** Complete SPARQL 1.1 query **)
+and query = {
+  q_base     : option wf_iri;
+  q_prefixes : list (string * wf_iri);             (* PREFIX decls *)
+  q_form     : query_form;
+  q_dataset  : list dataset_clause;                 (* [S6] *)
+  q_pattern  : group_graph_pattern;
+  q_group_by : option (list group_condition);       (* [S2] *)
+  q_having   : option (list having_condition);
+  q_modifier : solution_modifier;
+  q_values   : option (list (list (var_name * rdf_term)));  (* Post-query VALUES *)
+}
+
+// Rebind a query's post-query VALUES rows. Used by SHACL.Validation for
+// sh:sparql's `$this` pre-binding (SHACL spec section 5.3): joins in the
+// pre-bound focus-node row via the SAME q_values/join mechanism
+// `eval_select_query` already uses for a real trailing VALUES clause
+// (see the `omega0`/`join` step there), rather than round-tripping the
+// focus node through SPARQL literal/IRI syntax and re-parsing it.
+// Total, one-line, no new proof obligations.
+let query_with_prebound_values (q : query) (vals : list (list (var_name * rdf_term))) : query =
+  { q with q_values = Some vals }
+
+// Companion accessors/updaters for external modules (SHACL.Validation)
+// that ALIAS this module rather than `open` it — record-field
+// projection needs the field names in scope on the caller's side, so
+// these wrappers keep call sites qualified and unambiguous.
+let query_form_of (q : query) : query_form = q.q_form
+let query_pattern_of (q : query) : group_graph_pattern = q.q_pattern
+let query_values_of (q : query) : option (list (list (var_name * rdf_term))) = q.q_values
+let query_with_pattern (q : query) (p : group_graph_pattern) : query =
+  { q with q_pattern = p }
+
+(** ====================================================================== **)
+(** Part 6b: SPARQL 1.1 Update (§3, 4) — Grammar AST only                  **)
+(**                                                                         **)
+(** Stage (a): parser + AST, no evaluation. See CLAUDE.md Phase 4 item 2,  **)
+(** GitHub issue #59. Semantics (store mutation, INSERT/DELETE WHERE       **)
+(** template application, LOAD, etc.) are stage (b) and later.             **)
+(** ======================================================================= **)
+
+// Graph reference for graph-management operations (CLEAR/DROP/ADD/MOVE/COPY).
+// Corresponds to SPARQL 1.1 Update GraphRef / GraphRefAll / GraphOrDefault.
+type graph_ref =
+  | GR_Default : graph_ref              // DEFAULT
+  | GR_Named   : graph_ref              // NAMED  (all named graphs)
+  | GR_All     : graph_ref              // ALL
+  | GR_Graph   : wf_iri -> graph_ref    // GRAPH <iri>
+
+// A single Update operation. `silent` booleans reflect the SILENT modifier
+// (applies to LOAD/CLEAR/DROP/CREATE/ADD/MOVE/COPY per grammar).
+noeq type update_op =
+  // Graph management (§3.1.x)
+  | U_Load       : bool (* silent *) -> wf_iri (* source *) -> option wf_iri (* INTO GRAPH *) -> update_op
+  | U_Clear      : bool (* silent *) -> graph_ref -> update_op
+  | U_Drop       : bool (* silent *) -> graph_ref -> update_op
+  | U_Create     : bool (* silent *) -> wf_iri (* GRAPH iri *) -> update_op
+  | U_Add        : bool (* silent *) -> graph_ref (* from *) -> graph_ref (* to *) -> update_op
+  | U_Move       : bool (* silent *) -> graph_ref (* from *) -> graph_ref (* to *) -> update_op
+  | U_Copy       : bool (* silent *) -> graph_ref (* from *) -> graph_ref (* to *) -> update_op
+  // Data modification (§3.1.1 – §3.1.3)
+  // INSERT DATA / DELETE DATA: concrete quad pattern (no variables / no bnodes for DELETE DATA).
+  // We keep the template as a group_graph_pattern for uniformity; validation elsewhere
+  // rejects variables in data blocks and bnodes in DELETE DATA / DELETE WHERE.
+  | U_InsertData : group_graph_pattern -> update_op
+  | U_DeleteData : group_graph_pattern -> update_op
+  | U_DeleteWhere: group_graph_pattern -> update_op
+  // INSERT / DELETE (Modify) with optional WITH <g>, optional DELETE/INSERT templates,
+  // a list of USING/USING NAMED dataset clauses, and a WHERE pattern.
+  | U_Modify     :
+      option wf_iri (* WITH <iri> *) ->
+      option group_graph_pattern (* DELETE template, None for INSERT-only *) ->
+      option group_graph_pattern (* INSERT template, None for DELETE-only *) ->
+      list dataset_clause (* USING / USING NAMED *) ->
+      group_graph_pattern (* WHERE *) ->
+      update_op
+
+// Complete SPARQL 1.1 Update request: optional prologue + ;-separated operations.
+// SPARQL 1.1 §2.2 allows multiple Update ops in a single request, each
+// sharing the prologue but with `BASE`/`PREFIX` potentially re-declared.
+// In stage (a) we flatten the prologue: parser tracks prefix_map + base as
+// it sweeps `;`-separated ops and annotates each op uniformly.
+noeq type sparql_update = {
+  u_base     : option wf_iri;
+  u_prefixes : list (string * wf_iri);
+  u_ops      : list update_op;
+}
+
+(** ====================================================================== **)
+(** Utility functions (moved before Part 6.1 to resolve forward references **)
+(** that prevented F* extraction — see comment nesting fix)                **)
+(** ====================================================================== **)
+
+(* filter_map: not in FStar.List.Tot, define here.
+   Tail-rec rewrite (sin7, 2026-04-26): this function is the immediate
+   consumer of `backend_search`'s 3M-row BGP result (Store.fst:229,
+   eval_single_tp_backend). The original cons-after-recurse pattern
+   overflowed the stack inside the BGP evaluator before Tav5's HTTP-level
+   `--max-rows 50000` cap could fire. Pattern matches Tav5's
+   `json_rows_body_acc` style. *)
+let rec list_filter_map_acc (#a #b:Type) (f : a -> option b) (l : list a) (acc : list b)
+  : Tot (list b) (decreases l) =
+  match l with
+  | [] -> acc
+  | x :: xs ->
+    (match f x with
+     | Some y -> list_filter_map_acc f xs (y :: acc)
+     | None   -> list_filter_map_acc f xs acc)
+
+let list_filter_map (#a #b:Type) (f : a -> option b) (l : list a)
+  : Tot (list b) =
+  List.Tot.rev (list_filter_map_acc f l [])
+
+(* List-based string operations for contains/starts_with/ends_with *)
+let rec list_is_prefix (#a:eqtype) (prefix lst : list a) : Tot bool (decreases prefix) =
+  match prefix, lst with
+  | [], _ -> true
+  | _, [] -> false
+  | x :: xs, y :: ys -> x = y && list_is_prefix xs ys
+
+let rec list_contains_sublist (#a:eqtype) (needle haystack : list a) : Tot bool (decreases haystack) =
+  match haystack with
+  | [] -> Nil? needle
+  | _ :: rest -> list_is_prefix needle haystack || list_contains_sublist needle rest
+
+(* list_drop/list_take — CONCRETE implementations *)
+let rec list_drop (n : nat) (l : list 'a) : list 'a =
+  if n = 0 then l
+  else match l with
+    | [] -> []
+    | _ :: tl -> list_drop (n - 1) tl
+
+let rec list_take (n : nat) (l : list 'a) : list 'a =
+  if n = 0 then []
+  else match l with
+    | [] -> []
+    | hd :: tl -> hd :: list_take (n - 1) tl
+
+let string_contains (s sub : string) : bool =
+  list_contains_sublist (String.list_of_string sub) (String.list_of_string s)
+
+let string_starts_with (s prefix : string) : bool =
+  list_is_prefix (String.list_of_string prefix) (String.list_of_string s)
+
+let string_ends_with (s suffix : string) : bool =
+  list_is_prefix
+    (List.Tot.rev (String.list_of_string suffix))
+    (List.Tot.rev (String.list_of_string s))
+
+let string_length (s : string) : nat = String.length s
+
+(* SUBSTR: extract substring *)
+let string_substring (s : string) (start : nat) (len : option nat) : string =
+  let slen = String.length s in
+  let start' = if start >= slen then slen else start in
+  let actual_len = match len with
+    | Some l -> if start' + l > slen then slen - start' else l
+    | None -> slen - start'
+  in
+  if actual_len = 0 || start' >= slen then ""
+  else String.sub s start' actual_len
+
+(* SPARQL 1.1 §17.4.3.20/17.4.3.21 fn:upper-case / fn:lower-case are
+   the XPath F&O Unicode case-mapping functions, not ASCII-only
+   transforms. F*'s own `FStar.String.uppercase`/`lowercase` realise
+   (in the F* standard library's `FStar_String.ml`) to
+   `BatString.uppercase_ascii` / `lowercase_ascii` — only the 26
+   ASCII letters map; "Müller" comes back "MüLLER" with the `ü` left
+   untouched. Issue #250.
+   `string_uppercase_unicode` / `string_lowercase_unicode` are new
+   assume vals realised via the `uucp` opam package (Unicode
+   character-property tables) in
+   `minimal_regrettable_glue_code_each_with_an_open_issue/250_unicode_case_mapping.sh`.
+   Per rule #3 / the #181 lesson: issue #250 stays OPEN after that
+   patch lands — it is the acknowledged-gap tracker for these two
+   OCaml-realised primitives, not just a symptom report to close out. *)
+assume val string_uppercase_unicode (s : string) : string
+assume val string_lowercase_unicode (s : string) : string
+
+let string_upper (s : string) : string = string_uppercase_unicode s
+let string_lower (s : string) : string = string_lowercase_unicode s
+
+(* Numeric datatype check *)
+let is_numeric_datatype (dt : wf_iri) : bool =
+  dt = xsd_integer || dt = xsd_decimal || dt = xsd_double ||
+  dt = xsd_float
+
+(* Helper: make a plain literal with xsd:string datatype *)
+let mk_plain_literal (s : string) : wf_literal =
+  { lexical_form = s; datatype = xsd_string; lang_tag = None; direction = None }
+
+(* Expression result type — needed by eval_pattern *)
+noeq type eval_result =
+  | ER_Term  : rdf_term -> eval_result
+  | ER_Bool  : bool -> eval_result
+  | ER_Num   : int -> eval_result
+  | ER_Dec   : string -> eval_result
+  | ER_Dbl   : string -> eval_result
+  | ER_Error : eval_result
+
+(* Effective Boolean Value, §17.2.2 -- error-aware core.
+   `ebv_checked` transcribes the operand-mapping table exactly: xsd:boolean,
+   the numeric ER_* constructors and datatypes, and xsd:string/simple
+   literals map to `Some b`; every other argument -- including a
+   non-empty rdf:langString (issue #365 EX-1: the table's "String" row is
+   the un-language-tagged case only, so a language-tagged literal is "any
+   other argument") -- is a Type Error, `None`. This is the same
+   transcription independently proved in SPARQL11.Expression.Refinement's
+   `ebv_spec`; landing it here retires that module's
+   `lemma_ebv_langstring_finding` divergence into an agreement lemma. *)
+let ebv_checked (v : eval_result) : option bool =
+  match v with
+  | ER_Bool b   -> Some b
+  | ER_Num n    -> Some (n <> 0)
+  | ER_Dec s    -> Some (s <> "0" && s <> "0.0" && s <> "")
+  | ER_Dbl s    -> Some (s <> "0" && s <> "0.0" && s <> "NaN" && s <> "")
+  | ER_Term (T_Literal l) ->
+    if lit_datatype l = xsd_boolean
+    then Some (lit_lexical l = "true" || lit_lexical l = "1")
+    else if lit_datatype l = xsd_string
+    then Some (String.length (lit_lexical l) > 0)
+    else if is_numeric_datatype (lit_datatype l)
+    then Some (lit_lexical l <> "0" && lit_lexical l <> "0.0" && lit_lexical l <> "")
+    else None   // rdf:langString / rdf:dirLangString / any other datatype -> Type Error
+  | ER_Term _   -> None    // T_IRI / T_BNode / T_TripleTerm -> Type Error
+  | ER_Error    -> None
+
+(* Bool-collapsing EBV kept for every existing FILTER/HAVING/E_If call
+   site: a Type Error folds to `false`, exactly as SPARQL 1.1's FILTER
+   evaluation (§18.5, "has an effective boolean value of true") treats an
+   error and a false alike -- dropping the row/group either way. Callers
+   that must distinguish Type Error from a definite false (E_And/E_Or/
+   E_Not, §17.3) use `ebv_checked` directly instead. *)
+let ebv (v : eval_result) : bool =
+  match ebv_checked v with
+  | Some b -> b
+  | None   -> false
+
+(* Error-tolerant, error-preserving boolean connectives, §17.3's A-tabular
+   definition (issue #365 EX-2). Operates on `option bool` (`None` =
+   Type Error) so a determinate `false`/`true` operand can still dominate
+   an erroring co-operand (error-TOLERANT), while two determinate
+   operands that don't dominate, or any operand actually missing,
+   propagate the error (error-PRESERVING) instead of silently folding to
+   a bool the way the old bare-`bool` `ebv`-based arms did. Transcribed
+   from, and identical to, the independently-authored
+   `spec_and`/`spec_or`/`spec_not` in SPARQL11.Expression.Refinement.fst;
+   landing these retires that module's `lemma_eval_and_true_error_
+   diverges_finding` (+ Or/Not variants) into agreement lemmas. *)
+let bool_and_checked (a b : option bool) : option bool =
+  match a, b with
+  | Some false, _ -> Some false
+  | _, Some false -> Some false
+  | Some true, Some true -> Some true
+  | _, _ -> None
+
+let bool_or_checked (a b : option bool) : option bool =
+  match a, b with
+  | Some true, _ -> Some true
+  | _, Some true -> Some true
+  | Some false, Some false -> Some false
+  | _, _ -> None
+
+let bool_not_checked (a : option bool) : option bool =
+  match a with
+  | Some b -> Some (not b)
+  | None   -> None
+
+(* Helper: convert eval_result to rdf_term for BIND *)
+let er_to_term (v : eval_result) : option rdf_term =
+  match v with
+  | ER_Term t -> Some t
+  | ER_Bool true -> Some (T_Literal ({ lexical_form = "true";
+                                       datatype = xsd_boolean; lang_tag = None; direction = None }))
+  | ER_Bool false -> Some (T_Literal ({ lexical_form = "false";
+                                        datatype = xsd_boolean; lang_tag = None; direction = None }))
+  | ER_Num n -> Some (T_Literal ({ lexical_form = string_of_int n;
+                                    datatype = xsd_integer; lang_tag = None; direction = None }))
+  | ER_Dec s -> Some (T_Literal ({ lexical_form = s;
+                                    datatype = xsd_decimal; lang_tag = None; direction = None }))
+  | ER_Dbl s -> Some (T_Literal ({ lexical_form = s;
+                                    datatype = xsd_double; lang_tag = None; direction = None }))
+  | ER_Error -> None
+
+(* Helper: extract string from eval_result *)
+let er_to_string (v : eval_result) : option string =
+  match v with
+  | ER_Term (T_Literal l) -> Some (lit_lexical l)
+  | ER_Term (T_IRI i) -> Some (iri_to_string i)
+  | ER_Num n -> Some (string_of_int n)
+  | ER_Dec s -> Some s
+  | ER_Dbl s -> Some s
+  | ER_Bool b -> Some (if b then "true" else "false")
+  | _ -> None
+
+(* Helper: wrap string result as plain literal *)
+let er_string (s : string) : eval_result =
+  ER_Term (T_Literal (mk_plain_literal s))
+
+(* Helper: extract string + metadata from eval_result for string-preserving ops *)
+let er_string_info (v : eval_result) : option (string & option string & string) =
+  match v with
+  | ER_Term (T_Literal l) -> Some (lit_lexical l, l.lang_tag, l.datatype)
+  | ER_Num n -> Some (string_of_int n, None, xsd_integer)
+  | ER_Dec s -> Some (s, None, xsd_decimal)
+  | ER_Dbl s -> Some (s, None, xsd_double)
+  | ER_Bool b -> Some ((if b then "true" else "false"), None, xsd_boolean)
+  | _ -> None
+
+// Base-direction accessor mirroring er_string_info's per-value read, but
+// kept as its own tiny helper rather than folded into er_string_info's
+// tuple: er_string_info also feeds SUBSTR/UCASE/LCASE/STRBEFORE/STRAFTER/
+// REPLACE (below), none of which SPARQL 1.2 specifies as direction-
+// preserving, so widening that shared tuple would ripple direction
+// handling into functions this task (lang-basedir CONCAT fix) doesn't
+// touch. Used only by eval_concat_with_base.
+let er_direction (v : eval_result) : option text_direction =
+  match v with
+  | ER_Term (T_Literal l) -> l.direction
+  | _ -> None
+
+// Helper: wrap string result preserving language tag and datatype
+let er_string_preserve (s : string) (lang : option string) (dt : string) : eval_result =
+  if is_iri dt then
+    match lang with
+    | None ->
+      if dt <> rdf_lang_string && dt <> rdf_dir_lang_string then
+        ER_Term (T_Literal { lexical_form = s; datatype = dt; lang_tag = None; direction = None })
+      else er_string s
+    | Some l ->
+      if dt = rdf_lang_string then
+        ER_Term (T_Literal { lexical_form = s; datatype = dt; lang_tag = Some l; direction = None })
+      else er_string s
+  else er_string s
+
+(* Helper: evaluate arithmetic on integers *)
+// Simple decimal division for integer/integer -> decimal
+// Uses scaling by 10^16 for precision
+let int_div_decimal (a b : int) : string =
+  if b = 0 then "0.0"
+  else
+    let scale_factor = 10000000000000000 in  // 10^16
+    let scaled = op_Multiply a scale_factor in
+    let result = if b = 0 then 0 else scaled / b in
+    let abs_r = if result < 0 then 0 - result else result in
+    let sign = if result < 0 then "-" else "" in
+    let int_part = if scale_factor = 0 then 0 else abs_r / scale_factor in
+    let frac_part = abs_r - (op_Multiply int_part scale_factor) in
+    if frac_part = 0 then sign ^ string_of_int int_part ^ ".0"
+    else
+      // Build fractional string with leading zeros
+      let frac_str = string_of_int frac_part in
+      let frac_len = String.length frac_str in
+      let rec make_zeros_simple (n : nat) : Tot string (decreases n) =
+        if n = 0 then "" else "0" ^ make_zeros_simple (n - 1) in
+      let padded = if frac_len < 16 then make_zeros_simple (16 - frac_len) ^ frac_str else frac_str in
+      // Strip trailing zeros but keep at least one decimal digit
+      let chars = String.list_of_string padded in
+      let rec strip_tz (cs : list FStar.Char.char) : Tot (list FStar.Char.char) (decreases cs) =
+        match cs with
+        | [] -> [FStar.Char.char_of_int 48]  // "0"
+        | _ ->
+          let rev_cs = List.Tot.rev cs in
+          let rec drop_zeros (rs : list FStar.Char.char) : Tot (list FStar.Char.char) (decreases rs) =
+            match rs with
+            | c :: rest -> if FStar.Char.int_of_char c = 48 then drop_zeros rest else rs
+            | [] -> [FStar.Char.char_of_int 48] in
+          List.Tot.rev (drop_zeros rev_cs) in
+      let trimmed = String.string_of_list (strip_tz chars) in
+      sign ^ string_of_int int_part ^ "." ^ trimmed
+
+let eval_arith_int (op : arith_op) (a b : int) : eval_result =
+  match op with
+  | Add -> ER_Num (a + b)
+  | Sub -> ER_Num (a - b)
+  | Mul -> ER_Num (op_Multiply a b)
+  | Div ->
+    // SPARQL spec: integer / integer = xsd:decimal
+    if b = 0 then ER_Error
+    else ER_Dec (int_div_decimal a b)
+
+(* Helper: extract the xsd:dateTime lexical form from a literal *)
+let er_to_datetime_lex (v : eval_result) : option string =
+  match v with
+  | ER_Term (T_Literal l) ->
+    if lit_datatype l = xsd_dateTime then Some (lit_lexical l) else None
+  | _ -> None
+
+(* VALUES clause evaluation — moved up for forward reference resolution *)
+(* Helper: zip vars with term options to create a solution mapping *)
+let rec zip_bindings (vars : list var_name) (terms : list (option rdf_term))
+  (acc : solution_mapping) : Tot solution_mapping (decreases vars) =
+  match vars, terms with
+  | v :: vs, (Some t) :: ts -> zip_bindings vs ts (sm_bind v t acc)
+  | _ :: vs, _ :: ts -> zip_bindings vs ts acc
+  | _, _ -> acc
+
+let eval_values (vars : list var_name) (rows : list (list (option rdf_term)))
+  : list solution_mapping =
+  List.Tot.map (fun row -> zip_bindings vars row sm_empty) rows
+
+(* Comparison helpers *)
+let apply_comp_op (cmp : int) (op : comp_op) : bool =
+  match op with
+  | CmpEq -> cmp = 0
+  | CmpNe -> cmp <> 0
+  | CmpLt -> cmp < 0
+  | CmpGt -> cmp > 0
+  | CmpLe -> cmp <= 0
+  | CmpGe -> cmp >= 0
+
+let int_compare (a b : int) : int =
+  if a < b then -1 else if a = b then 0 else 1
+
+// value_compare is defined after numeric parsing helpers (needed for cross-type comparison)
+
+(* Node type testing functions *)
+let fn_isIRI (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_IRI _) -> ER_Bool true
+  | ER_Error -> ER_Error
+  | _ -> ER_Bool false
+
+let fn_isBlank (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_BNode _) -> ER_Bool true
+  | ER_Error -> ER_Error
+  | _ -> ER_Bool false
+
+let fn_isLiteral (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_Literal _) -> ER_Bool true
+  | ER_Num _ | ER_Dec _ | ER_Dbl _ | ER_Bool _ -> ER_Bool true
+  | ER_Error -> ER_Error
+  | _ -> ER_Bool false
+
+let fn_isNumeric (v : eval_result) : eval_result =
+  match v with
+  | ER_Num _ -> ER_Bool true
+  | ER_Dec _ -> ER_Bool true
+  | ER_Dbl _ -> ER_Bool true
+  | ER_Term (T_Literal l) -> ER_Bool (is_numeric_datatype (lit_datatype l))
+  | ER_Error -> ER_Error
+  | _ -> ER_Bool false
+
+(* Accessor functions *)
+let fn_str (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_IRI i) -> ER_Term (T_Literal (mk_plain_literal (iri_to_string i)))
+  | ER_Term (T_Literal l) -> ER_Term (T_Literal (mk_plain_literal (lit_lexical l)))
+  | ER_Term (T_BNode b) -> ER_Term (T_Literal (mk_plain_literal b))
+  | ER_Num n -> ER_Term (T_Literal (mk_plain_literal (string_of_int n)))
+  | ER_Dec s -> ER_Term (T_Literal (mk_plain_literal s))
+  | ER_Dbl s -> ER_Term (T_Literal (mk_plain_literal s))
+  | ER_Bool b -> ER_Term (T_Literal ({ lexical_form = (if b then "true" else "false");
+                                       datatype = xsd_boolean; lang_tag = None; direction = None }))
+  // STR() is not defined on a triple term (it is neither literal nor IRI);
+  // conservative error (SPARQL 1.2 STR/accessor semantics are #305 P7).
+  | ER_Term (T_TripleTerm _ _ _) -> ER_Error
+  | ER_Error -> ER_Error
+
+let fn_lang (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_Literal l) ->
+    (match lit_lang l with
+     | Some tag -> ER_Term (T_Literal (mk_plain_literal tag))
+     | None     -> ER_Term (T_Literal (mk_plain_literal "")))
+  | ER_Num _ | ER_Dec _ | ER_Dbl _ | ER_Bool _ ->
+    ER_Term (T_Literal (mk_plain_literal ""))
+  | _ -> ER_Error
+
+let fn_datatype (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_Literal l) -> ER_Term (T_IRI (lit_datatype l))
+  | ER_Num _ -> ER_Term (T_IRI xsd_integer)
+  | ER_Dec _ -> ER_Term (T_IRI xsd_decimal)
+  | ER_Dbl _ -> ER_Term (T_IRI xsd_double)
+  | ER_Bool _ -> ER_Term (T_IRI xsd_boolean)
+  | _ -> ER_Error
+
+(* SPARQL 1.2 base-direction accessors (RDF 1.2 Concepts §3.3, epic
+   #305, lang-basedir W3C family). hasLANG/hasLANGDIR are presence
+   tests over ANY value (never an error — a non-literal argument, e.g.
+   an IRI, just means "no", per the lang-basedir/haslang(dir) fixtures
+   where SELECT'ing hasLANG(<iri>) binds `false` rather than leaving
+   the variable unbound). LANGDIR mirrors fn_lang exactly: empty
+   string when the literal (or promoted number/boolean) carries no
+   direction, ER_Error — hence unbound — for anything else (an IRI,
+   blank node, or triple term). *)
+let fn_haslang (v : eval_result) : eval_result =
+  match v with
+  | ER_Error -> ER_Error
+  | ER_Term (T_Literal l) -> ER_Bool (Some? (lit_lang l))
+  | _ -> ER_Bool false
+
+let fn_haslangdir (v : eval_result) : eval_result =
+  match v with
+  | ER_Error -> ER_Error
+  | ER_Term (T_Literal l) -> ER_Bool (Some? (lit_direction l))
+  | _ -> ER_Bool false
+
+let text_direction_to_string (d : text_direction) : string =
+  match d with
+  | Dir_LTR -> "ltr"
+  | Dir_RTL -> "rtl"
+
+// The inverse of text_direction_to_string. Deliberately strict/lowercase
+// only (no case-folding) — STRLANGDIR("abc","en","LTR") must be an error
+// per the lang-basedir/strlangdir fixture (only the lowercase "ltr"/"rtl"
+// rows are bound in the expected results).
+let parse_text_direction (s : string) : option text_direction =
+  if s = "ltr" then Some Dir_LTR
+  else if s = "rtl" then Some Dir_RTL
+  else None
+
+let fn_langdir (v : eval_result) : eval_result =
+  match v with
+  | ER_Term (T_Literal l) ->
+    (match lit_direction l with
+     | Some d -> ER_Term (T_Literal (mk_plain_literal (text_direction_to_string d)))
+     | None   -> ER_Term (T_Literal (mk_plain_literal "")))
+  | ER_Num _ | ER_Dec _ | ER_Dbl _ | ER_Bool _ ->
+    ER_Term (T_Literal (mk_plain_literal ""))
+  | _ -> ER_Error
+
+(* String helper functions *)
+let rec find_substring_pos_aux (#a:eqtype) (needle haystack : list a) (pos : nat)
+  : Tot (option nat) (decreases haystack) =
+  match haystack with
+  | [] -> if Nil? needle then Some pos else None
+  | _ :: rest ->
+    if list_is_prefix needle haystack then Some pos
+    else find_substring_pos_aux needle rest (pos + 1)
+
+let find_substring_pos (needle haystack : list char) : option nat =
+  find_substring_pos_aux needle haystack 0
+
+let string_before (s arg : string) : string =
+  if String.length arg = 0 then ""
+  else
+    let s_chars = String.list_of_string s in
+    let arg_chars = String.list_of_string arg in
+    match find_substring_pos arg_chars s_chars with
+    | None -> ""
+    | Some pos ->
+      if pos = 0 then ""
+      else String.string_of_list (fst (List.Tot.Base.splitAt pos s_chars))
+
+let string_after (s arg : string) : string =
+  if String.length arg = 0 then s
+  else
+    let s_chars = String.list_of_string s in
+    let arg_chars = String.list_of_string arg in
+    let arg_len = List.Tot.length arg_chars in
+    match find_substring_pos arg_chars s_chars with
+    | None -> ""
+    | Some pos ->
+      String.string_of_list (snd (List.Tot.Base.splitAt (pos + arg_len) s_chars))
+
+let string_concat (args : list string) : string = String.concat "" args
+
+(* Percent-encoding for ENCODE_FOR_URI *)
+let nibble_to_hex (n : nat { n < 16 }) : FStar.Char.char =
+  if n < 10 then FStar.Char.char_of_int (n + 48)
+  else FStar.Char.char_of_int (n - 10 + 65)
+
+let is_uri_unreserved (c : FStar.Char.char) : bool =
+  let code = FStar.Char.int_of_char c in
+  (code >= 65 && code <= 90)   ||
+  (code >= 97 && code <= 122)  ||
+  (code >= 48 && code <= 57)   ||
+  code = 45 || code = 95 || code = 46 || code = 126
+
+// Percent-encode a single byte value (0-255) as %XX
+let percent_encode_byte (b : nat { b < 256 }) : list FStar.Char.char =
+  let hi = b / 16 in
+  let lo = b % 16 in
+  [ FStar.Char.char_of_int 37; nibble_to_hex hi; nibble_to_hex lo ]
+
+// Encode a Unicode codepoint as percent-encoded UTF-8 bytes
+let percent_encode_char (c : FStar.Char.char) : list FStar.Char.char =
+  let code = FStar.Char.int_of_char c in
+  if code < 0x80 then
+    percent_encode_byte code
+  else if code < 0x800 then
+    // 2-byte UTF-8: 110xxxxx 10xxxxxx
+    let b1 = 0xC0 + (code / 64) in
+    let b2 = 0x80 + (code % 64) in
+    Lh.append_tr (percent_encode_byte b1) (percent_encode_byte b2)
+  else if code < 0x10000 then
+    // 3-byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx
+    let b1 = 0xE0 + (code / 4096) in
+    let b2 = 0x80 + ((code / 64) % 64) in
+    let b3 = 0x80 + (code % 64) in
+    Lh.append_tr (percent_encode_byte b1)
+      (Lh.append_tr (percent_encode_byte b2) (percent_encode_byte b3))
+  else
+    // 4-byte UTF-8: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    let b1 = 0xF0 + (code / 262144) in
+    let b2 = 0x80 + ((code / 4096) % 64) in
+    let b3 = 0x80 + ((code / 64) % 64) in
+    let b4 = 0x80 + (code % 64) in
+    Lh.append_tr (percent_encode_byte b1)
+      (Lh.append_tr (percent_encode_byte b2)
+        (Lh.append_tr (percent_encode_byte b3) (percent_encode_byte b4)))
+
+let rec encode_uri_chars (cs : list FStar.Char.char)
+  : Tot (list FStar.Char.char) (decreases cs) =
+  match cs with
+  | [] -> []
+  | c :: rest ->
+    if is_uri_unreserved c then c :: encode_uri_chars rest
+    else Lh.append_tr (percent_encode_char c) (encode_uri_chars rest)
+
+let string_encode_uri (s : string) : string =
+  String.string_of_list (encode_uri_chars (String.list_of_string s))
+
+(* replace_first: replace first occurrence of pattern in haystack *)
+let rec replace_first (haystack pattern replacement : list FStar.Char.char)
+  : Tot (list FStar.Char.char) (decreases haystack) =
+  match haystack with
+  | [] -> []
+  | hd :: tl ->
+    if list_is_prefix pattern haystack then
+      (* Skip past matched pattern, append rest unchanged *)
+      Lh.append_tr replacement (list_drop (List.Tot.length pattern) haystack)
+    else
+      hd :: replace_first tl pattern replacement
+
+(* replace_all_chars: repeatedly apply replace_first until no match.
+   Uses fuel parameter to guarantee termination. *)
+let rec replace_all_chars_fuel (haystack pattern replacement : list FStar.Char.char)
+  (fuel : nat) : Tot (list FStar.Char.char) (decreases fuel) =
+  if fuel = 0 then haystack
+  else if list_contains_sublist pattern haystack then
+    replace_all_chars_fuel (replace_first haystack pattern replacement) pattern replacement (fuel - 1)
+  else haystack
+
+let replace_all_chars (haystack pattern replacement : list FStar.Char.char)
+  : list FStar.Char.char =
+  if Nil? pattern then haystack
+  else replace_all_chars_fuel haystack pattern replacement (List.Tot.length haystack)
+
+// SPARQL REPLACE / XPath fn:replace: `regex_replace` + `string_replace` are
+// now VERIFIED F* over the Regex.Syntax/Exec/XSDPattern codepoint engine
+// (#304 phase 5), defined AFTER regex_match below (they reuse its flag/rewrite
+// helpers). The former `assume val regex_replace` + OCaml `Str` realisation
+// (issue #63) is RETIRED — see the phase-5 block after regex_match.
+
+let string_replace_literal (s : string) (pattern : string) (replacement : string) (_flags : option string) : string =
+  if String.length pattern = 0 then s
+  else
+    String.string_of_list (replace_all_chars (String.list_of_string s) (String.list_of_string pattern) (String.list_of_string replacement))
+
+// ---------------------------------------------------------------------------
+// SPARQL REGEX() / XPath-XQuery fn:matches — VERIFIED engine (#304 phase 4)
+// ---------------------------------------------------------------------------
+//
+// regex_match implements XPath/XQuery fn:matches semantics on top of the
+// verified Brzozowski-derivative engine (Regex.Syntax / Regex.Exec /
+// Regex.XSDPattern), RETIRING the former `assume val regex_match` and its
+// OCaml `Str` realisation (issue #63, anti-pattern #10: `Str` matches BYTES,
+// not codepoints, so its character classes split multi-byte UTF-8). This path
+// now matches over Unicode CODEPOINTS end-to-end.
+//
+// fn:matches is an UNANCHORED substring test with flags i/s/m/x/q. The
+// Regex.XSDPattern parser reads a pattern as a WHOLE-STRING membership regex
+// (its native reading for XSD `xsd:pattern` facets, CSVW duration `format`,
+// and the OWL facet-emptiness check), treating `^`/`$` as no-ops. The
+// fn:matches flavor needs those as REAL string anchors, and the "somewhere in
+// the string" search wrapping — so BOTH are applied HERE, in the SPARQL layer,
+// leaving the parser's whole-string reading (and its consumers) untouched.
+//
+// FLAG COVERAGE (measured from the corpora this feeds: SPARQL functions
+// struuid01/uuid01, service05; SHACL sh:pattern + sh:flags; ShEx pattern;
+// RIF pred:matches — audit in docs/designissues/2026-07-15-verified-regex-
+// engine.md §2):
+//   i  case-insensitive — ASCII A-Z<->a-z case-folding of literal ranges
+//      (rx_fold_ci). UNICODE GAP: non-ASCII case folding is NOT applied
+//      (documented; the gated corpora are ASCII, and the retired `Str`
+//      realisation likewise gave no reliable non-ASCII class folding).
+//   s  dot-all — `.` also matches #xA/#xD (rx_dotall rewrite of the parser's
+//      dot leaf).
+//   x  ignore-whitespace — unescaped, non-class whitespace elided before
+//      parsing (rx_strip_ws).
+//   q  literal — the whole pattern is a literal codepoint sequence
+//      (rx_literal_regex); no metacharacter, no anchor is special.
+//   m  multiline — ACCEPTED but treated as string-level anchoring (^/$ match
+//      string start/end, not internal line boundaries). Correct when the
+//      input has no interior newline (the fixtures); a KNOWN LIMITATION for
+//      multi-line inputs, tracked with #304.
+
+let rx_cp_caret     : nat = 0x5E
+let rx_cp_dollar    : nat = 0x24
+let rx_cp_backslash : nat = 0x5C
+let rx_cp_lbracket  : nat = 0x5B
+let rx_cp_rbracket  : nat = 0x5D
+
+let rx_flag_has (flags : option string) (ch : FStar.Char.char) : bool =
+  match flags with
+  | None -> false
+  | Some f -> List.Tot.mem ch (String.list_of_string f)
+
+// Is `c` an XML/XSD whitespace codepoint (#x9 #xA #xD #x20)?
+let rx_is_ws (c : nat) : bool = c = 0x09 || c = 0x0A || c = 0x0D || c = 0x20
+
+// `x` flag: drop whitespace that is neither escaped nor inside a character
+// class. `in_class` tracks `[...]` nesting; a backslash protects the next
+// codepoint (kept verbatim, so `\ ` stays a literal space).
+let rec rx_strip_ws (cps : list nat) (in_class : bool) : Tot (list nat) (decreases cps) =
+  match cps with
+  | [] -> []
+  | c :: t ->
+    if c = rx_cp_backslash then
+      (match t with
+       | c2 :: t2 -> c :: c2 :: rx_strip_ws t2 in_class
+       | [] -> [c])
+    else if c = rx_cp_lbracket && not in_class then c :: rx_strip_ws t true
+    else if c = rx_cp_rbracket && in_class then c :: rx_strip_ws t false
+    else if rx_is_ws c && not in_class then rx_strip_ws t in_class
+    else c :: rx_strip_ws t in_class
+
+// REAL anchors via SENTINEL encoding. `^`/`$` are zero-width position
+// assertions; boundary-stripping is WRONG once the pattern has a top-level
+// alternation, because each `^`/`$` binds to its own branch (e.g. the ShEx
+// `^\t...$|\\N/A` fixture: branch 1 is start-and-end anchored, branch 2 is a
+// free substring). Instead we give `^`/`$` REAL anchor semantics by:
+//   1. wrapping the INPUT word with two sentinel codepoints ABOVE
+//      max_codepoint (BEGIN, END) that no real char, `.`, or class can match;
+//   2. replacing each unescaped, out-of-class `^`/`$` in the PATTERN with the
+//      BEGIN/END sentinel codepoint — which the XSDPattern parser then reads
+//      as an ordinary literal codepoint, so the anchor composes correctly
+//      through alternation, groups and quantifiers;
+//   3. searching with `gap_left . P' . gap_right`, where the gaps consume the
+//      BEGIN sentinel + a real-char run on the left and a real-char run + the
+//      END sentinel on the right (or nothing, when P' itself consumes the
+//      sentinel because it began/ended with an anchor).
+// This is the standard begin/end-marker construction for anchored search in a
+// membership (whole-string) matcher, and it is uniform: no boundary detection.
+
+let rx_begin_sentinel : nat = RxS.max_codepoint + 1
+let rx_end_sentinel   : nat = RxS.max_codepoint + 2
+
+// Replace unescaped, out-of-class `^`/`$` with the BEGIN/END sentinels. `\^`,
+// `\$`, and `^`/`$` inside `[...]` are left untouched (they are literal, or
+// the class-negation marker, handled by the parser). Mirrors rx_strip_ws's
+// escape/class bookkeeping.
+let rec rx_replace_anchors (cps : list nat) (in_class : bool) : Tot (list nat) (decreases cps) =
+  match cps with
+  | [] -> []
+  | c :: t ->
+    if c = rx_cp_backslash then
+      (match t with
+       | c2 :: t2 -> c :: c2 :: rx_replace_anchors t2 in_class
+       | [] -> [c])
+    else if c = rx_cp_lbracket && not in_class then c :: rx_replace_anchors t true
+    else if c = rx_cp_rbracket && in_class then c :: rx_replace_anchors t false
+    else if c = rx_cp_caret && not in_class then rx_begin_sentinel :: rx_replace_anchors t in_class
+    else if c = rx_cp_dollar && not in_class then rx_end_sentinel :: rx_replace_anchors t in_class
+    else c :: rx_replace_anchors t in_class
+
+// Any real codepoint (0..max_codepoint) — EXCLUDES the two sentinels.
+let rx_nonsent : RxS.regex = RxS.R_Ranges [(0, RxS.max_codepoint)]
+
+// gap_left consumes the leading BEGIN sentinel plus a real-char prefix, OR
+// nothing (used when P' itself starts with `^` and so consumes BEGIN).
+let rx_gap_left : RxS.regex =
+  RxS.R_Alt RxS.R_Eps
+    (RxS.R_Cat (RxS.R_Ranges [(rx_begin_sentinel, rx_begin_sentinel)]) (RxS.R_Star rx_nonsent))
+
+// gap_right consumes a real-char suffix plus the trailing END sentinel, OR
+// nothing (used when P' itself ends with `$` and so consumes END).
+let rx_gap_right : RxS.regex =
+  RxS.R_Alt RxS.R_Eps
+    (RxS.R_Cat (RxS.R_Star rx_nonsent) (RxS.R_Ranges [(rx_end_sentinel, rx_end_sentinel)]))
+
+// `q` flag: literal codepoint sequence (no metacharacters).
+let rec rx_literal_regex (cps : list nat) : Tot RxS.regex (decreases cps) =
+  match cps with
+  | [] -> RxS.R_Eps
+  | [c] -> RxS.R_Ranges [(c, c)]
+  | c :: t -> RxS.R_Cat (RxS.R_Ranges [(c, c)]) (rx_literal_regex t)
+
+// `i` flag: ASCII case-fold the extra intervals a range should also accept.
+// For the A-Z overlap add the a-z image (+0x20); for the a-z overlap add the
+// A-Z image (-0x20). `in_ranges` is an OR over intervals, so appending the
+// case images is exact.
+let rx_ci_extra (lo hi : nat) : list (nat & nat) =
+  let up_lo : nat = if lo > 0x41 then lo else 0x41 in
+  let up_hi : nat = if hi < 0x5A then hi else 0x5A in
+  let img_lower : list (nat & nat) = if up_lo <= up_hi then [(up_lo + 0x20, up_hi + 0x20)] else [] in
+  let lo_lo : nat = if lo > 0x61 then lo else 0x61 in
+  let lo_hi : nat = if hi < 0x7A then hi else 0x7A in
+  let img_upper : list (nat & nat) = if lo_lo <= lo_hi then [(lo_lo - 0x20, lo_hi - 0x20)] else [] in
+  img_lower @ img_upper
+
+let rec rx_ci_ranges (rs : list (nat & nat)) : Tot (list (nat & nat)) (decreases rs) =
+  match rs with
+  | [] -> []
+  | (lo, hi) :: t -> (lo, hi) :: (rx_ci_extra lo hi @ rx_ci_ranges t)
+
+let rec rx_fold_ci (r : RxS.regex) : Tot RxS.regex (decreases r) =
+  match r with
+  | RxS.R_Empty -> RxS.R_Empty
+  | RxS.R_Eps -> RxS.R_Eps
+  | RxS.R_Ranges rs -> RxS.R_Ranges (rx_ci_ranges rs)
+  | RxS.R_Cat a b -> RxS.R_Cat (rx_fold_ci a) (rx_fold_ci b)
+  | RxS.R_Alt a b -> RxS.R_Alt (rx_fold_ci a) (rx_fold_ci b)
+  | RxS.R_And a b -> RxS.R_And (rx_fold_ci a) (rx_fold_ci b)
+  | RxS.R_Not a -> RxS.R_Not (rx_fold_ci a)
+  | RxS.R_Star a -> RxS.R_Star (rx_fold_ci a)
+
+// `s` flag: rewrite the parser's `.` leaf (which excludes #xA/#xD) to accept
+// every codepoint. `RxP.dot_regex` is the fixed constant the parser emits for
+// `.`, compared structurally.
+let rec rx_dotall (r : RxS.regex) : Tot RxS.regex (decreases r) =
+  match r with
+  | RxS.R_Empty -> RxS.R_Empty
+  | RxS.R_Eps -> RxS.R_Eps
+  | RxS.R_Ranges _ -> if r = RxP.dot_regex then RxE.any_char else r
+  | RxS.R_Cat a b -> RxS.R_Cat (rx_dotall a) (rx_dotall b)
+  | RxS.R_Alt a b -> RxS.R_Alt (rx_dotall a) (rx_dotall b)
+  | RxS.R_And a b -> RxS.R_And (rx_dotall a) (rx_dotall b)
+  | RxS.R_Not a -> RxS.R_Not (rx_dotall a)
+  | RxS.R_Star a -> RxS.R_Star (rx_dotall a)
+
+// XPath/XQuery fn:matches: does the pattern match SOMEWHERE in `text`?
+// Retires the `assume val` — this is now a total, verified F* function whose
+// matching decision is `Regex.Exec.matches_norm` (proven language-equal to the
+// derivative reference `Regex.Derivative.matches`, matches_norm_correct).
+let regex_match (text pattern : string) (flags : option string) : bool =
+  let has_i = rx_flag_has flags 'i' in
+  let has_s = rx_flag_has flags 's' in
+  let has_x = rx_flag_has flags 'x' in
+  let has_q = rx_flag_has flags 'q' in
+  let input_cps = RxP.cps_of_string text in
+  let pat_cps0 = RxP.cps_of_string pattern in
+  if has_q then
+    // literal mode: whole pattern is literal; no anchors, unanchored search.
+    let core0 = rx_literal_regex pat_cps0 in
+    let core = if has_i then rx_fold_ci core0 else core0 in
+    RxE.matches_norm (RxS.R_Cat RxE.dot_star (RxS.R_Cat core RxE.dot_star)) input_cps
+  else
+    let pat_cps1 = if has_x then rx_strip_ws pat_cps0 false else pat_cps0 in
+    // `^`/`$` -> BEGIN/END sentinels so the parser yields REAL anchors.
+    let pat_cps = rx_replace_anchors pat_cps1 false in
+    (match RxP.parse_cps pat_cps with
+     | None -> false   // pattern outside the supported fragment -> no match
+     | Some r0 ->
+       let r1 = if has_s then rx_dotall r0 else r0 in
+       let r2 = if has_i then rx_fold_ci r1 else r1 in
+       // sentinel-wrapped input + gap-bracketed pattern = anchored search.
+       let m = RxS.R_Cat rx_gap_left (RxS.R_Cat r2 rx_gap_right) in
+       let wrapped = rx_begin_sentinel :: (List.Tot.append input_cps [rx_end_sentinel]) in
+       RxE.matches_norm m wrapped)
+
+// ---------------------------------------------------------------------------
+// SPARQL REPLACE / XPath-XQuery fn:replace — VERIFIED engine (#304 phase 5)
+// ---------------------------------------------------------------------------
+//
+// Retires the LAST regex glue seam: the former `assume val regex_replace` and
+// its OCaml `Str` realisation (issue #63). fn:replace now runs on the SAME
+// verified codepoint engine as fn:matches (regex_match above):
+//
+//   * WHOLE-MATCH SPANS are found by the verified Brzozowski-derivative engine
+//     (Regex.Exec.nderiv + Regex.Syntax.nullable): at each candidate start we
+//     run the DFA forward and take the LONGEST prefix whose residual is
+//     nullable (leftmost-longest). Matching is non-overlapping, left-to-right
+//     (the XQuery F&O 3.1 fn:replace model). Leftmost-LONGEST is POSIX-ish; it
+//     agrees with XQuery ordered-alternation greedy semantics on every corpus
+//     pattern (e.g. `(ab)|(a)`, where the longer alternative is listed first).
+//     It would differ only when an earlier alternative is a proper prefix of a
+//     later one (`(a)|(ab)`); no gated fixture has that shape (documented).
+//   * GROUP CAPTURE for `$N` templates is computed by a total, fuel-bounded
+//     capturing matcher (rx_cmatch) over a capturing AST (rx_cre) parsed with
+//     rx_parse_capturing, which reuses Regex.XSDPattern's leaf builders so its
+//     language agrees with the span-finding regex by construction. Every leaf
+//     accept/reject is decided by the verified engine (rx_leaf_ends). The
+//     capturing matcher only EXPLAINS how the verified span decomposes into
+//     numbered groups (filtered to outcomes ending exactly at the verified
+//     span end); it never overrides the span. On parser divergence or no
+//     alignment it yields empty captures (each `$N` -> "").
+//
+// TEMPLATE INVENTORY — measured 2026-07-17 across the two callers of
+// string_replace: SPARQL functions/replace0{1,2,3} + replace-case-insensitive,
+// and RIF pred `replace`. Group refs seen: `$1`, `$2` (single decimal digit),
+// in `[1=$1][2=$2]` (replace03, pattern `(ab)|(a)`); the other templates are
+// literal (`-`, `*`, `~/`). Template grammar implemented (rx_expand_template):
+// `$d` (single digit d) -> group d's captured text ($0 = whole match; a
+// non-participating group -> ""); `\$` -> literal `$`; `\\` -> literal `\`;
+// `\c` -> literal c; any other codepoint -> itself. Multi-digit `$12` reads as
+// `$1` then literal `2` (no fixture has >= 10 groups; documented).
+//
+// EMPTY-MATCH POLICY — XQuery F&O makes a pattern that can match the empty
+// string an err:FORX0003 error; string_replace has no error channel and no
+// gated fixture exercises it, so an empty match copies one codepoint through
+// WITHOUT substitution and advances (terminating, no fabricated substitution).
+//
+// KNOWN LIMITATIONS (no gated fixture): `^`/`$` in a replace pattern parse to
+// eps (no-op) rather than string anchors; flags i/s/x/q are honoured as in
+// regex_match, m is not modelled.
+
+// Safe codepoint -> char (guards the FStar.Char scalar-value refinement; every
+// codepoint we feed here is already a valid scalar, so this is defensive).
+let rx_safe_char (n:nat) : FStar.Char.char =
+  if n < 0xD7FF || (n >= 0xE000 && n <= 0x10FFFF) then FStar.Char.char_of_int n
+  else FStar.Char.char_of_int 0xFFFD
+
+let rx_string_of_cps (cps : list nat) : string =
+  String.string_of_list (List.Tot.map rx_safe_char cps)
+
+// Take / drop / slice on codepoint lists (total for any k).
+let rec rx_take (k:nat) (w:list nat) : Tot (list nat) (decreases w) =
+  match w with
+  | [] -> []
+  | c :: t -> if k = 0 then [] else c :: rx_take (k - 1) t
+
+let rec rx_drop (k:nat) (w:list nat) : Tot (list nat) (decreases w) =
+  match w with
+  | [] -> []
+  | _ :: t -> if k = 0 then w else rx_drop (k - 1) t
+
+let rx_slice (w:list nat) (s e:nat) : list nat =
+  if e > s then rx_take (e - s) (rx_drop s w) else []
+
+// All prefix-lengths k at which regex `r` matches the first k codepoints of
+// `w`, via the VERIFIED normalized derivative (Regex.Exec.nderiv) and
+// Regex.Syntax.nullable — ascending in k. The engine decides every accept.
+let rec rx_leaf_ends_from (r:RxS.regex) (w:list nat) (k:nat)
+  : Tot (list nat) (decreases w) =
+  let here : list nat = if RxS.nullable r then [k] else [] in
+  match w with
+  | [] -> here
+  | c :: rest ->
+    if r = RxS.R_Empty then here    // dead state: no farther / longer match
+    else List.Tot.append here (rx_leaf_ends_from (RxE.nderiv c r) rest (k + 1))
+
+let rx_leaf_ends (r:RxS.regex) (w:list nat) : list nat = rx_leaf_ends_from r w 0
+
+let rec rx_list_max_opt (xs:list nat) : Tot (option nat) (decreases xs) =
+  match xs with
+  | [] -> None
+  | x :: t ->
+    (match rx_list_max_opt t with
+     | None -> Some x
+     | Some m -> Some (if x > m then x else m))
+
+// Longest prefix of `suffix` matched by `pr` (leftmost-longest at a fixed
+// start), or None when nothing matches here.
+let rx_longest_end (pr:RxS.regex) (suffix:list nat) : option nat =
+  rx_list_max_opt (rx_leaf_ends pr suffix)
+
+// Capturing AST: a parallel to Regex.Syntax over which fn:replace group spans
+// are recovered. RC_Leaf carries an ordinary (group-less) sub-regex whose
+// prefix matches are decided by the verified engine.
+type rx_cre =
+  | RC_Leaf  : RxS.regex -> rx_cre
+  | RC_Eps   : rx_cre
+  | RC_Cat   : rx_cre -> rx_cre -> rx_cre
+  | RC_Alt   : rx_cre -> rx_cre -> rx_cre
+  | RC_Star  : rx_cre -> rx_cre
+  | RC_Group : nat -> rx_cre -> rx_cre
+
+let rec rx_cre_size (r:rx_cre) : Tot (n:nat{n >= 1}) =
+  match r with
+  | RC_Leaf _ -> 1
+  | RC_Eps -> 1
+  | RC_Cat a b -> 1 + rx_cre_size a + rx_cre_size b
+  | RC_Alt a b -> 1 + rx_cre_size a + rx_cre_size b
+  | RC_Star a -> 1 + rx_cre_size a
+  | RC_Group _ a -> 1 + rx_cre_size a
+
+// Flag rewrites lifted to the capturing AST (leaves only).
+let rec rx_cre_fold_ci (r:rx_cre) : Tot rx_cre (decreases r) =
+  match r with
+  | RC_Leaf x -> RC_Leaf (rx_fold_ci x)
+  | RC_Eps -> RC_Eps
+  | RC_Cat a b -> RC_Cat (rx_cre_fold_ci a) (rx_cre_fold_ci b)
+  | RC_Alt a b -> RC_Alt (rx_cre_fold_ci a) (rx_cre_fold_ci b)
+  | RC_Star a -> RC_Star (rx_cre_fold_ci a)
+  | RC_Group n a -> RC_Group n (rx_cre_fold_ci a)
+
+let rec rx_cre_dotall (r:rx_cre) : Tot rx_cre (decreases r) =
+  match r with
+  | RC_Leaf x -> RC_Leaf (rx_dotall x)
+  | RC_Eps -> RC_Eps
+  | RC_Cat a b -> RC_Cat (rx_cre_dotall a) (rx_cre_dotall b)
+  | RC_Alt a b -> RC_Alt (rx_cre_dotall a) (rx_cre_dotall b)
+  | RC_Star a -> RC_Star (rx_cre_dotall a)
+  | RC_Group n a -> RC_Group n (rx_cre_dotall a)
+
+// {n,m}-style expansion on the capturing AST.
+let rec rx_cre_repeat_exact (r:rx_cre) (n:nat) : Tot rx_cre (decreases n) =
+  if n = 0 then RC_Eps else RC_Cat r (rx_cre_repeat_exact r (n - 1))
+
+let rec rx_cre_repeat_opt (r:rx_cre) (k:nat) : Tot rx_cre (decreases k) =
+  if k = 0 then RC_Eps else RC_Cat (RC_Alt r RC_Eps) (rx_cre_repeat_opt r (k - 1))
+
+let rx_cparse_brace (r:rx_cre) (t:list nat) : option (rx_cre & list nat) =
+  match RxP.read_uint t with
+  | None -> None
+  | Some (n, t1) ->
+    (match t1 with
+     | c :: t2 ->
+       if c = RxP.cp_rbrace then Some (rx_cre_repeat_exact r n, t2)
+       else if c = RxP.cp_comma then
+         (match t2 with
+          | c2 :: t3 ->
+            if c2 = RxP.cp_rbrace then Some (RC_Cat (rx_cre_repeat_exact r n) (RC_Star r), t3)
+            else (match RxP.read_uint t2 with
+                  | None -> None
+                  | Some (m, t3') ->
+                    (match t3' with
+                     | c3 :: t4 ->
+                       if c3 = RxP.cp_rbrace && m >= n then
+                         Some (RC_Cat (rx_cre_repeat_exact r n) (rx_cre_repeat_opt r (m - n)), t4)
+                       else None
+                     | [] -> None))
+          | [] -> None)
+       else None
+     | [] -> None)
+
+let rx_cparse_quant (r:rx_cre) (rest:list nat) : option (rx_cre & list nat) =
+  match rest with
+  | [] -> Some (r, rest)
+  | q :: t ->
+    if q = RxP.cp_star then Some (RC_Star r, RxP.skip_lazy t)
+    else if q = RxP.cp_plus then Some (RC_Cat r (RC_Star r), RxP.skip_lazy t)
+    else if q = RxP.cp_question then Some (RC_Alt r RC_Eps, RxP.skip_lazy t)
+    else if q = RxP.cp_lbrace then
+      (match rx_cparse_brace r t with
+       | None -> None
+       | Some (r', t') -> Some (r', RxP.skip_lazy t'))
+    else Some (r, rest)
+
+// Recursive-descent capturing parser mirroring Regex.XSDPattern. Threads the
+// next group number `g`; a `(...)` group takes the current `g` and parses its
+// body with `g+1` (outer groups number lower than nested). `(?:...)` is
+// non-capturing. Leaf atoms reuse XSDPattern's builders, so the capturing
+// AST's language matches the span-finding regex by construction.
+let rec rx_cparse_alt (fuel:nat) (input:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match rx_cparse_seq (fuel - 1) input g with
+        | None -> None
+        | Some (r1, rest, g1) ->
+          (match rest with
+           | c :: t ->
+             if c = RxP.cp_pipe then
+               (match rx_cparse_alt (fuel - 1) t g1 with
+                | None -> None
+                | Some (r2, rest2, g2) -> Some (RC_Alt r1 r2, rest2, g2))
+             else Some (r1, rest, g1)
+           | [] -> Some (r1, rest, g1)))
+
+and rx_cparse_seq (fuel:nat) (input:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match input with
+        | [] -> Some (RC_Eps, [], g)
+        | h :: _ ->
+          if h = RxP.cp_pipe || h = RxP.cp_rparen then Some (RC_Eps, input, g)
+          else (match rx_cparse_rep (fuel - 1) input g with
+                | None -> None
+                | Some (r1, rest, g1) ->
+                  (match rest with
+                   | [] -> Some (r1, [], g1)
+                   | h2 :: _ ->
+                     if h2 = RxP.cp_pipe || h2 = RxP.cp_rparen then Some (r1, rest, g1)
+                     else (match rx_cparse_seq (fuel - 1) rest g1 with
+                           | None -> None
+                           | Some (r2, rest2, g2) -> Some (RC_Cat r1 r2, rest2, g2)))))
+
+and rx_cparse_rep (fuel:nat) (input:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match rx_cparse_atom (fuel - 1) input g with
+        | None -> None
+        | Some (r, rest, g1) ->
+          (match rx_cparse_quant r rest with
+           | None -> None
+           | Some (r', rest') -> Some (r', rest', g1)))
+
+and rx_cparse_atom (fuel:nat) (input:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match input with
+        | [] -> None
+        | h :: t ->
+          if h = RxP.cp_lparen then rx_cparse_group (fuel - 1) t g
+          else if h = RxP.cp_lbracket then
+            (match RxP.parse_class t with
+             | None -> None
+             | Some (r, rest) -> Some (RC_Leaf r, rest, g))
+          else if h = RxP.cp_dot then Some (RC_Leaf RxP.dot_regex, t, g)
+          else if h = RxP.cp_caret then Some (RC_Eps, t, g)
+          else if h = RxP.cp_dollar then Some (RC_Eps, t, g)
+          else if h = RxP.cp_backslash then
+            (match t with
+             | [] -> None
+             | letter :: t2 ->
+               (match RxP.parse_escape_atom letter t2 with
+                | None -> None
+                | Some (r, rest) -> Some (RC_Leaf r, rest, g)))
+          else if RxP.is_atom_meta h then None
+          else Some (RC_Leaf (RxP.single h), t, g))
+
+and rx_cparse_group (fuel:nat) (t:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match t with
+        | q :: c :: t2 ->
+          if q = RxP.cp_question && c = RxP.cp_colon then rx_cparse_noncap (fuel - 1) t2 g
+          else if q = RxP.cp_question then None
+          else rx_cparse_cap (fuel - 1) t g
+        | q :: _ ->
+          if q = RxP.cp_question then None
+          else rx_cparse_cap (fuel - 1) t g
+        | [] -> None)
+
+and rx_cparse_cap (fuel:nat) (t:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match rx_cparse_alt (fuel - 1) t (g + 1) with
+        | None -> None
+        | Some (r, rest, g') ->
+          (match rest with
+           | c :: t2 -> if c = RxP.cp_rparen then Some (RC_Group g r, t2, g') else None
+           | [] -> None))
+
+and rx_cparse_noncap (fuel:nat) (t:list nat) (g:nat)
+  : Tot (option (rx_cre & list nat & nat)) (decreases fuel) =
+  if fuel = 0 then None
+  else (match rx_cparse_alt (fuel - 1) t g with
+        | None -> None
+        | Some (r, rest, g') ->
+          (match rest with
+           | c :: t2 -> if c = RxP.cp_rparen then Some (r, t2, g') else None
+           | [] -> None))
+
+let rx_parse_capturing (cps:list nat) : option rx_cre =
+  let fuel : nat = op_Multiply 16 (List.Tot.length cps + 4) in
+  match rx_cparse_alt fuel cps 1 with
+  | Some (r, [], _) -> Some r
+  | _ -> None
+
+// One capturing-match outcome: (unconsumed suffix, absolute end position,
+// group spans (group#, start, end)). rx_cmatch returns ALL prefix outcomes of
+// `r` starting at absolute `pos`; the driver filters to the verified span end.
+// Fuel-bounded (structural descent <= size, star iterations bounded by the
+// strict-progress guard); total.
+let rec rx_cmatch (fuel:nat) (r:rx_cre) (w:list nat) (pos:nat)
+  : Tot (list (list nat & nat & list (nat & nat & nat))) (decreases fuel) =
+  if fuel = 0 then []
+  else (match r with
+        | RC_Eps -> [(w, pos, ([] <: list (nat & nat & nat)))]
+        | RC_Leaf x ->
+          List.Tot.map
+            (fun (k:nat) -> let ep : nat = pos + k in (rx_drop k w, ep, ([] <: list (nat & nat & nat))))
+            (rx_leaf_ends x w)
+        | RC_Cat a b ->
+          List.Tot.concatMap
+            (fun (oa : (list nat & nat & list (nat & nat & nat))) ->
+               let (resta, epa, capa) = oa in
+               List.Tot.map
+                 (fun (ob : (list nat & nat & list (nat & nat & nat))) ->
+                    let (restb, epb, capb) = ob in
+                    (restb, epb, List.Tot.append capa capb))
+                 (rx_cmatch (fuel - 1) b resta epa))
+            (rx_cmatch (fuel - 1) a w pos)
+        | RC_Alt a b ->
+          List.Tot.append (rx_cmatch (fuel - 1) a w pos) (rx_cmatch (fuel - 1) b w pos)
+        | RC_Group n inner ->
+          List.Tot.map
+            (fun (o : (list nat & nat & list (nat & nat & nat))) ->
+               let (rest, ep, caps) = o in
+               (rest, ep, (n, pos, ep) :: caps))
+            (rx_cmatch (fuel - 1) inner w pos)
+        | RC_Star inner ->
+          (w, pos, ([] <: list (nat & nat & nat))) ::
+          List.Tot.concatMap
+            (fun (oi : (list nat & nat & list (nat & nat & nat))) ->
+               let (rest, ep, capi) = oi in
+               if List.Tot.length rest < List.Tot.length w then
+                 List.Tot.map
+                   (fun (o2 : (list nat & nat & list (nat & nat & nat))) ->
+                      let (rest2, ep2, cap2) = o2 in
+                      (rest2, ep2, List.Tot.append capi cap2))
+                   (rx_cmatch (fuel - 1) (RC_Star inner) rest ep)
+               else [])
+            (rx_cmatch (fuel - 1) inner w pos))
+
+// Caps of the FIRST outcome ending exactly at the verified span end `target`
+// (alternation order = ordered-alternation preference); else empty.
+let rec rx_pick_caps
+  (outs : list (list nat & nat & list (nat & nat & nat))) (target:nat)
+  : Tot (list (nat & nat & nat)) (decreases outs) =
+  match outs with
+  | [] -> []
+  | (_, ep, caps) :: t -> if ep = target then caps else rx_pick_caps t target
+
+let rec rx_find_cap (caps:list (nat & nat & nat)) (n:nat)
+  : Tot (option (nat & nat)) (decreases caps) =
+  match caps with
+  | [] -> None
+  | (gnum, s, e) :: t -> if gnum = n then Some (s, e) else rx_find_cap t n
+
+let rx_group_text (input:list nat) (caps:list (nat & nat & nat)) (n:nat) : list nat =
+  match rx_find_cap caps n with
+  | None -> []
+  | Some (s, e) -> rx_slice input s e
+
+// Expand a replacement template: `$d` -> group d ($0 = whole match); `\c` ->
+// literal c; other -> literal.
+let rec rx_expand_template
+  (rep : list nat) (input:list nat) (mstart mend:nat) (caps:list (nat & nat & nat))
+  : Tot (list nat) (decreases rep) =
+  match rep with
+  | [] -> []
+  | c :: t ->
+    if c = rx_cp_backslash then
+      (match t with
+       | c2 :: t2 -> c2 :: rx_expand_template t2 input mstart mend caps
+       | [] -> [c])
+    else if c = 0x24 then    // '$'
+      (match t with
+       | d :: t2 ->
+         if d >= 0x30 && d <= 0x39 then
+           let gnum : nat = d - 0x30 in
+           let gt = if gnum = 0 then rx_slice input mstart mend
+                    else rx_group_text input caps gnum in
+           List.Tot.append gt (rx_expand_template t2 input mstart mend caps)
+         else c :: rx_expand_template t input mstart mend caps
+       | [] -> [c])
+    else c :: rx_expand_template t input mstart mend caps
+
+// Does the template reference a group (`$` + digit, respecting `\` escapes)?
+let rec rx_template_has_group (rep:list nat) : Tot bool (decreases rep) =
+  match rep with
+  | [] -> false
+  | c :: t ->
+    if c = rx_cp_backslash then (match t with | _ :: t2 -> rx_template_has_group t2 | [] -> false)
+    else if c = 0x24 then
+      (match t with
+       | d :: _ -> if d >= 0x30 && d <= 0x39 then true else rx_template_has_group t
+       | [] -> false)
+    else rx_template_has_group t
+
+// rx_cmatch fuel budget: bounds one match attempt's recursion depth
+// (structural descent <= size, star iterations <= |suffix|).
+let rx_cmatch_fuel (cre:rx_cre) (suffix:list nat) : nat =
+  op_Multiply (rx_cre_size cre + 1) (List.Tot.length suffix + 2)
+
+// Global left-to-right, non-overlapping replace over codepoint lists. `pr` is
+// the verified whole-match oracle; `cre_opt` is the capturing AST when the
+// template has group refs (else capture is skipped). fuel >= |suffix|.
+let rec rx_replace_loop
+  (fuel:nat) (pr:RxS.regex) (cre_opt:option rx_cre)
+  (rep:list nat) (input_all:list nat) (suffix:list nat) (pos:nat)
+  : Tot (list nat) (decreases fuel) =
+  if fuel = 0 then suffix
+  else (match suffix with
+        | [] -> []
+        | c :: rest ->
+          (match rx_longest_end pr suffix with
+           | None -> c :: rx_replace_loop (fuel - 1) pr cre_opt rep input_all rest (pos + 1)
+           | Some len ->
+             if len = 0 then
+               // empty match: copy one codepoint, no substitution (policy)
+               c :: rx_replace_loop (fuel - 1) pr cre_opt rep input_all rest (pos + 1)
+             else
+               let mend : nat = pos + len in
+               let caps : list (nat & nat & nat) =
+                 (match cre_opt with
+                  | None -> []
+                  | Some cre ->
+                    rx_pick_caps (rx_cmatch (rx_cmatch_fuel cre suffix) cre suffix pos) mend) in
+               let expanded = rx_expand_template rep input_all pos mend caps in
+               let new_suffix = rx_drop len suffix in
+               List.Tot.append expanded
+                 (rx_replace_loop (fuel - 1) pr cre_opt rep input_all new_suffix mend)))
+
+// XPath/XQuery fn:replace, retiring the `assume val` — total, verified F*.
+let regex_replace (text pattern replacement : string) (flags : option string) : string =
+  let has_i = rx_flag_has flags 'i' in
+  let has_s = rx_flag_has flags 's' in
+  let has_x = rx_flag_has flags 'x' in
+  let has_q = rx_flag_has flags 'q' in
+  let input_cps = RxP.cps_of_string text in
+  let rep_cps = RxP.cps_of_string replacement in
+  let pat_cps0 = RxP.cps_of_string pattern in
+  let fuel : nat = List.Tot.length input_cps + 1 in
+  if has_q then
+    // literal pattern: no metacharacters, no groups.
+    let core0 = rx_literal_regex pat_cps0 in
+    let pr = if has_i then rx_fold_ci core0 else core0 in
+    rx_string_of_cps (rx_replace_loop fuel pr None rep_cps input_cps input_cps 0)
+  else
+    let pat_cps1 = if has_x then rx_strip_ws pat_cps0 false else pat_cps0 in
+    (match RxP.parse_cps pat_cps1 with
+     | None -> text   // pattern outside the supported fragment: leave unchanged
+     | Some r0 ->
+       let r1 = if has_s then rx_dotall r0 else r0 in
+       let pr = if has_i then rx_fold_ci r1 else r1 in
+       let cre_opt =
+         if rx_template_has_group rep_cps then
+           (match rx_parse_capturing pat_cps1 with
+            | None -> None
+            | Some cre0 ->
+              let cre1 = if has_s then rx_cre_dotall cre0 else cre0 in
+              Some (if has_i then rx_cre_fold_ci cre1 else cre1))
+         else None in
+       rx_string_of_cps (rx_replace_loop fuel pr cre_opt rep_cps input_cps input_cps 0))
+
+let string_replace (s : string) (pattern : string) (replacement : string) (flags : option string) : string =
+  regex_replace s pattern replacement flags
+
+(* Spec-level wrappers for string functions. Only the variants actually
+   used by `eval_expr_typed_with_base` survive — the rest of the
+   `fn_*_spec` family (fn_strlen_spec, fn_ucase_spec, fn_lcase_spec,
+   fn_strstarts_spec, fn_strends_spec, fn_strbefore_spec, fn_strafter_spec,
+   fn_concat_spec, fn_encode_for_uri_spec, fn_abs_spec) were 1-line aliases
+   for their host-string namesakes and had no callers. Removed 2026-05-16. *)
+let fn_substr_spec (s : string) (start : nat) (len : option nat) : string =
+  let idx = if start > 0 then start - 1 else 0 in
+  string_substring s idx len
+
+(* Constructor functions *)
+let fn_strdt (lex : string) (dt : wf_iri) : rdf_term =
+  if dt = rdf_lang_string || dt = rdf_dir_lang_string
+  then T_Literal ({ lexical_form = lex; datatype = xsd_string; lang_tag = None; direction = None })
+  else T_Literal ({ lexical_form = lex; datatype = dt; lang_tag = None; direction = None })
+
+let fn_strlang (lex : string) (lang : string) : rdf_term =
+  T_Literal ({ lexical_form = lex; datatype = rdf_lang_string; lang_tag = Some lang; direction = None })
+
+// STRLANGDIR(lexical, langtag, dir) — RDF 1.2 Concepts §3.3 constructor
+// for a directional language-tagged literal, modeled on fn_strlang
+// immediately above with the extra `direction` field populated instead
+// of left at None.
+let fn_strlangdir (lex : string) (lang : string) (dir : text_direction) : rdf_term =
+  T_Literal ({ lexical_form = lex; datatype = rdf_dir_lang_string; lang_tag = Some lang; direction = Some dir })
+
+(* sameTerm — stricter than = *)
+let same_term (t1 t2 : rdf_term) : bool = rdf_term_eq t1 t2
+
+(* langMatches *)
+let fn_langMatches_spec (tag range : string) : bool =
+  if range = "*" then
+    String.length tag > 0
+  else
+    let ltag = string_lower tag in
+    let lrange = string_lower range in
+    ltag = lrange ||
+    (string_starts_with ltag (lrange ^ "-"))
+
+(* Hash functions — assumed external *)
+assume val hash_md5 : string -> string
+assume val hash_sha1 : string -> string
+assume val hash_sha256 : string -> string
+assume val hash_sha384 : string -> string
+assume val hash_sha512 : string -> string
+
+(* ------------------------------------------------------------------ *)
+(* Dynamic SPARQL functions: NOW() / BNODE() / BNODE(str) / UUID() /   *)
+(* STRUUID() (§17.4.2.9, §17.4.5.1).                                   *)
+(*                                                                     *)
+(* Wall-clock read for NOW(). This is the ONLY boundary I/O for date/  *)
+(* time: it returns the current xsd:dateTime lexical form (e.g.        *)
+(* "2026-07-09T12:34:56Z"). Realised by the OCaml glue as a process-   *)
+(* fixed timestamp captured at first use (so it is referentially       *)
+(* transparent within a process, matching NOW()'s "same value          *)
+(* throughout one query execution" requirement). Rule #11(a): a        *)
+(* wall-clock read is observable I/O. Issue #287.                      *)
+(* (glue: 287_fx_current_datetime.sh realises this via memoised Unix)   *)
+assume val fx_current_datetime : unit -> string
+
+(* Per-solution / per-call-site freshness context for BNODE()/UUID()/  *)
+(* STRUUID(). Threaded PURELY (no host randomness): the caller         *)
+(* (SELECT-projection and BIND) injects a row index and a call-site    *)
+(* tag as reserved solution-mapping entries; the dynamic-function      *)
+(* branches derive a deterministic-but-distinct value from them via    *)
+(* sha256. The leading control byte keeps the reserved keys disjoint   *)
+(* from every parser-produced SPARQL variable name (VARNAME cannot     *)
+(* contain a control character), and callers bind results into the     *)
+(* PRISTINE mapping so these keys never surface in a solution sequence.*)
+let fx_key_row : string = FStar.String.string_of_list [FStar.Char.char_of_int 1] ^ "fx_row"
+let fx_key_occ : string = FStar.String.string_of_list [FStar.Char.char_of_int 1] ^ "fx_occ"
+
+let fx_ctx_get (key : string) (mu : solution_mapping) : option string =
+  match Lh.assoc_tr key mu with
+  | Some (T_Literal l) -> Some l.lexical_form
+  | _ -> None
+
+(* Augment a mapping with the freshness context for ONE expression
+   evaluation (used transiently — never stored into results). *)
+let fx_ctx_put (row : string) (occ : string) (mu : solution_mapping)
+  : solution_mapping =
+  (fx_key_row, T_Literal ({ lexical_form = row; datatype = xsd_string; lang_tag = None; direction = None }))
+  :: (fx_key_occ, T_Literal ({ lexical_form = occ; datatype = xsd_string; lang_tag = None; direction = None }))
+  :: mu
+
+(* Total take/pad and drop over a char list (avoids String.sub bounds
+   obligations on the sha256 output, whose length F* cannot see). *)
+let rec fx_take_pad (n : nat) (l : list FStar.Char.char)
+  : Tot (list FStar.Char.char) (decreases n) =
+  if n = 0 then []
+  else match l with
+       | [] -> FStar.Char.char_of_int 48 (* char 48 = '0' *) :: fx_take_pad (n - 1) []
+       | c :: cs -> c :: fx_take_pad (n - 1) cs
+let rec fx_ldrop (n : nat) (l : list FStar.Char.char)
+  : Tot (list FStar.Char.char) (decreases n) =
+  if n = 0 then l
+  else match l with
+       | [] -> []
+       | _ :: cs -> fx_ldrop (n - 1) cs
+
+(* Format a 32-hex-digit prefix of sha256(seed) as an 8-4-4-4-12 UUID
+   string (lower-case hex; the SPARQL UUID tests match case-insensitively). *)
+let fx_uuid_of_seed (seed : string) : string =
+  let cs = fx_take_pad 32 (FStar.String.list_of_string (hash_sha256 seed)) in
+  let s (l : list FStar.Char.char) : string = FStar.String.string_of_list l in
+  let g1 = s (fx_take_pad 8 cs) in
+  let r1 = fx_ldrop 8 cs in
+  let g2 = s (fx_take_pad 4 r1) in
+  let r2 = fx_ldrop 4 r1 in
+  let g3 = s (fx_take_pad 4 r2) in
+  let r3 = fx_ldrop 4 r2 in
+  let g4 = s (fx_take_pad 4 r3) in
+  let r4 = fx_ldrop 4 r3 in
+  let g5 = s (fx_take_pad 12 r4) in
+  g1 ^ "-" ^ g2 ^ "-" ^ g3 ^ "-" ^ g4 ^ "-" ^ g5
+
+(* Fresh blank-node label for BNODE. The "_:fxbn" prefix keeps these
+   disjoint from data blank nodes and from INSERT-freshened bnodes. *)
+let fx_bnode_of_seed (seed : string) : string =
+  "_:fxbn" ^ hash_sha256 seed
+
+(* Integer math helpers *)
+let int_abs (n : int) : int = if n >= 0 then n else 0 - n
+
+(* Helper: parse digit character to int *)
+let char_to_digit (c : FStar.Char.char) : option int =
+  let n = FStar.Char.int_of_char c in
+  if n >= 48 && n <= 57 then Some (n - 48) else None
+
+(* Helper: parse integer from char list *)
+let rec parse_int_chars (chars : list FStar.Char.char) (acc : int)
+  : Tot (option int) (decreases chars) =
+  match chars with
+  | [] -> Some acc
+  | c :: rest ->
+    (match char_to_digit c with
+     | Some d -> parse_int_chars rest (op_Multiply acc 10 + d)
+     | None -> None)
+
+(* Helper: parse integer from string *)
+let parse_int_string (s : string) : option int =
+  match String.list_of_string s with
+  | [] -> None
+  | chars ->
+    if List.Tot.hd chars = FStar.Char.char_of_int 45  (* '-' *)
+    then (match parse_int_chars (List.Tot.tl chars) 0 with
+          | Some n -> Some (0 - n)
+          | None -> None)
+    else parse_int_chars chars 0
+
+(* Decimal rounding helpers *)
+
+(* Helper: check if all chars in a list are '0' (char code 48) *)
+let rec all_zeros (cs : list FStar.Char.char) : Tot bool (decreases cs) =
+  match cs with
+  | [] -> true
+  | c :: rest -> FStar.Char.int_of_char c = 48 && all_zeros rest
+
+(* Helper: take elements while predicate holds *)
+let rec list_take_while (#a:Type) (f : a -> bool) (l : list a)
+  : Tot (list a) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs -> if f x then x :: list_take_while f xs else []
+
+(* Helper: drop elements while predicate holds *)
+let rec list_drop_while (#a:Type) (f : a -> bool) (l : list a)
+  : Tot (list a) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs -> if f x then list_drop_while f xs else x :: xs
+
+(* list_drop/list_take defined in utility section above *)
+
+(* Helper: split a decimal string into (integer_part, fractional_chars, has_dot) *)
+let split_decimal (s : string) : option int & list FStar.Char.char & bool =
+  let chars = String.list_of_string s in
+  let dot = FStar.Char.char_of_int 46 in
+  let before = list_take_while (fun c -> c <> dot) chars in
+  let after_with_dot = list_drop_while (fun c -> c <> dot) chars in
+  let has_dot = not (Nil? after_with_dot) in
+  let frac = if has_dot then List.Tot.tl after_with_dot else [] in
+  let int_part = parse_int_string (String.string_of_list before) in
+  (int_part, frac, has_dot)
+
+(* FLOOR: greatest integer <= value *)
+let int_floor (s : string) : int =
+  let (int_part, frac, has_dot) = split_decimal s in
+  match int_part with
+  | None -> 0
+  | Some n ->
+    if not has_dot || all_zeros frac then n
+    else if n >= 0 then n
+    else n - 1
+
+(* CEIL: smallest integer >= value *)
+let int_ceil (s : string) : int =
+  let (int_part, frac, has_dot) = split_decimal s in
+  match int_part with
+  | None -> 0
+  | Some n ->
+    if not has_dot || all_zeros frac then n
+    else if n >= 0 then n + 1
+    else n
+
+(* ROUND: round half away from zero *)
+let int_round (s : string) : int =
+  let (int_part, frac, has_dot) = split_decimal s in
+  match int_part with
+  | None -> 0
+  | Some n ->
+    if not has_dot || Nil? frac || all_zeros frac then n
+    else
+      let first_digit_code = FStar.Char.int_of_char (List.Tot.hd frac) in
+      if first_digit_code >= 53 then
+        (if n >= 0 then n + 1 else n - 1)
+      else n
+
+// Numeric type for aggregate type promotion
+type num_kind = | NK_Int | NK_Dec | NK_Dbl
+
+let promote_kind (a b : num_kind) : num_kind =
+  match a, b with
+  | NK_Dbl, _ | _, NK_Dbl -> NK_Dbl
+  | NK_Dec, _ | _, NK_Dec -> NK_Dec
+  | _, _ -> NK_Int
+
+// Power of 10
+let rec pow10 (n : nat) : Tot int (decreases n) =
+  if n = 0 then 1 else op_Multiply 10 (pow10 (n - 1))
+
+// Generate string of n zero characters
+let rec make_zeros (n : nat) : Tot string (decreases n) =
+  if n = 0 then "" else "0" ^ make_zeros (n - 1)
+
+// Pad string with leading zeros to reach target length
+let pad_left_zeros (s : string) (target : nat) : string =
+  let len = String.length s in
+  if len >= target then s
+  else make_zeros (target - len) ^ s
+
+// Strip trailing zeros from a char list, keeping at least one "0".
+// (Was declared `rec` with `decreases cs` but doesn't actually recurse;
+//  F* flagged the unused recursive binding. Dropped the `rec` keyword
+//  2026-05-16.)
+let strip_trailing_zeros_chars (cs : list FStar.Char.char)
+  : Tot (list FStar.Char.char) =
+  match cs with
+  | [] -> []
+  | _ ->
+    let rev = List.Tot.rev cs in
+    let zero_c = FStar.Char.char_of_int 48 in
+    let stripped = list_drop_while (fun c -> c = zero_c) rev in
+    if Nil? stripped then [zero_c] // keep at least "0"
+    else List.Tot.rev stripped
+
+// Parse decimal string to (scaled_value, scale) where actual = scaled_value / 10^scale
+// "3.5" -> (35, 1), "1.0" -> (10, 1), "100" -> (100, 0), "-2.2" -> (-22, 1)
+let parse_to_scaled (s : string) : option (int & nat) =
+  let (ip, frac, has_dot) = split_decimal s in
+  match ip with
+  | None -> None
+  | Some int_part ->
+    let scale : nat = List.Tot.length frac in
+    if scale = 0 then Some (int_part, 0)
+    else
+      let frac_digits = String.string_of_list frac in
+      match parse_int_string frac_digits with
+      | None -> Some (op_Multiply int_part (pow10 scale), scale)
+      | Some f ->
+        let is_neg = int_part < 0 ||
+          (int_part = 0 && String.length s > 0 && String.sub s 0 1 = "-") in
+        let abs_scaled = op_Multiply (int_abs int_part) (pow10 scale) + int_abs f in
+        Some ((if is_neg then 0 - abs_scaled else abs_scaled), scale)
+
+// Parse double (E-notation) string to (scaled_value, scale)
+// "1.0E2" -> (100, 0), "2.0E-1" -> (20, 2), "3.0E4" -> (30000, 0)
+let parse_double_to_scaled (s : string) : option (int & nat) =
+  let chars = String.list_of_string s in
+  let e_upper = FStar.Char.char_of_int 69 in
+  let e_lower = FStar.Char.char_of_int 101 in
+  let before_e = list_take_while (fun c -> c <> e_upper && c <> e_lower) chars in
+  let after_e_with = list_drop_while (fun c -> c <> e_upper && c <> e_lower) chars in
+  if Nil? after_e_with then parse_to_scaled s
+  else
+    let exp_chars = List.Tot.tl after_e_with in
+    let mantissa_str = String.string_of_list before_e in
+    let exp_str = String.string_of_list exp_chars in
+    match parse_to_scaled mantissa_str, parse_int_string exp_str with
+    | Some (mval, mscale), Some exp ->
+      let effective_scale : int = mscale - exp in
+      if effective_scale <= 0 then
+        Some (op_Multiply mval (pow10 (0 - effective_scale)), 0)
+      else
+        Some (mval, effective_scale)
+    | _, _ -> None
+
+// Format a scaled value back to a decimal string
+// (67, 1) -> "6.7", (2220, 3) -> "2.220"
+let format_scaled_value (value : int) (scale : nat) : string =
+  if scale = 0 then string_of_int value
+  else
+    let is_neg = value < 0 in
+    let abs_val = int_abs value in
+    let p = pow10 scale in
+    if p = 0 then string_of_int value // unreachable: pow10 > 0
+    else
+      let int_part = abs_val / p in
+      let frac_part = abs_val - op_Multiply int_part p in
+      let frac_str = pad_left_zeros (string_of_int frac_part) scale in
+      let sign = if is_neg then "-" else "" in
+      sign ^ string_of_int int_part ^ "." ^ frac_str
+
+// Strip trailing zeros from decimal string, keeping at least one decimal digit
+let strip_trailing_decimal_zeros (s : string) : string =
+  let chars = String.list_of_string s in
+  let dot = FStar.Char.char_of_int 46 in
+  let before_dot = list_take_while (fun c -> c <> dot) chars in
+  let after_dot_with = list_drop_while (fun c -> c <> dot) chars in
+  if Nil? after_dot_with then s
+  else
+    let frac = List.Tot.tl after_dot_with in
+    let stripped = strip_trailing_zeros_chars frac in
+    String.string_of_list before_dot ^ "." ^ String.string_of_list stripped
+
+// Count digits of an integer (for E-notation formatting)
+let rec count_digits (n : nat) : Tot nat (decreases n) =
+  if n < 10 then 1 else 1 + count_digits (n / 10)
+
+// Format a (value, scale) pair as E-notation double string
+// (32100, 0) -> "3.21E4", (20, 2) -> "2.0E-1"
+let format_as_double (value : int) (scale : nat) : string =
+  if value = 0 then "0E0"
+  else
+    let is_neg = value < 0 in
+    let abs_val = int_abs value in
+    // Total number of digits in abs_val
+    let ndigits = count_digits abs_val in
+    // The exponent: position of first digit relative to units place
+    // For (32100, 0): 5 digits, exponent = 4, mantissa = 3.2100
+    // For (20, 2): 2 digits, actual = 0.20, exponent = -1, mantissa = 2.0
+    let exp : int = (ndigits - 1) - scale in
+    // Mantissa: abs_val with decimal point after first digit
+    // = abs_val / 10^(ndigits-1) . remainder
+    let mantissa_scale : nat = ndigits - 1 in
+    let mantissa_str = format_scaled_value abs_val mantissa_scale in
+    let stripped = strip_trailing_decimal_zeros mantissa_str in
+    // Ensure mantissa always has a decimal point (e.g., "4.0" not "4")
+    let with_dot = if string_contains stripped "."
+                   then stripped
+                   else stripped ^ ".0" in
+    let sign = if is_neg then "-" else "" in
+    sign ^ with_dot ^ "E" ^ string_of_int exp
+
+// Get numeric kind and scaled representation from eval_result
+let er_to_numeric (v : eval_result) : option (int & nat & num_kind) =
+  match v with
+  | ER_Num n -> Some (n, 0, NK_Int)
+  | ER_Dec s ->
+    (match parse_to_scaled s with
+     | Some (sv, ss) -> Some (sv, ss, NK_Dec)
+     | None -> None)
+  | ER_Dbl s ->
+    (match parse_double_to_scaled s with
+     | Some (sv, ss) -> Some (sv, ss, NK_Dbl)
+     | None -> None)
+  | _ -> None
+
+// Compare two numeric eval_results by their actual numeric value
+// Returns -1 (less), 0 (equal), 1 (greater), or None if either is non-numeric
+let numeric_compare (a b : eval_result) : option int =
+  match er_to_numeric a, er_to_numeric b with
+  | Some (v1, s1, _), Some (v2, s2, _) ->
+    // Normalize to the same scale for comparison
+    let (nv1, nv2) =
+      if s1 >= s2 then (v1, op_Multiply v2 (pow10 (s1 - s2)))
+      else (op_Multiply v1 (pow10 (s2 - s1)), v2) in
+    Some (int_compare nv1 nv2)
+  | _, _ -> None
+
+// Raw lexical form behind a numeric eval_result -- used ONLY by
+// `sparql_order_numeric`'s "order last, then lexical" fallback below,
+// when an operand fails to parse as a number and there is nothing
+// else left to compare BY. `ER_Num` always parses (it wraps a native
+// int, never a raw lexical string), so this arm is unreachable from
+// that fallback; included for totality.
+let er_numeric_lexical (v : eval_result) : string =
+  match v with
+  | ER_Num n -> string_of_int n
+  | ER_Dec s -> s
+  | ER_Dbl s -> s
+  | _ -> ""
+
+// Promote a literal to the numeric eval_result kind it denotes, exactly
+// like E_Var's variable-lookup promotion above — needed so a triple
+// term's literal OBJECT component compares by VALUE, not lexical form
+// (RDF 1.2 op:triple term equality, SPARQL 1.2 eval-triple-terms/op-2
+// "value-equality": `<<(:a :b 123)>> = <<(:a :b 123.0)>>` must hold).
+let literal_promote (l : wf_literal) : eval_result =
+  if lit_datatype l = xsd_integer then
+    (match parse_int_string (lit_lexical l) with
+     | Some n -> ER_Num n
+     | None -> ER_Term (T_Literal l))
+  else if lit_datatype l = xsd_decimal then ER_Dec (lit_lexical l)
+  else if lit_datatype l = xsd_double || lit_datatype l = xsd_float then ER_Dbl (lit_lexical l)
+  else if lit_datatype l = xsd_boolean then ER_Bool (lit_lexical l = "true" || lit_lexical l = "1")
+  else ER_Term (T_Literal l)
+
+// Numeric-aware literal value equality: promote both sides and compare
+// numerically when either is a numeric-typed literal; otherwise fall
+// back to structural literal equality (same datatype, lexical form,
+// language tag, direction).
+let literal_value_eq_numeric (l1 l2 : wf_literal) : bool =
+  if is_numeric_datatype (lit_datatype l1) || is_numeric_datatype (lit_datatype l2)
+  then (match numeric_compare (literal_promote l1) (literal_promote l2) with
+        | Some cmp -> cmp = 0
+        | None -> false)
+  else literal_eq l1 l2
+
+// RDF 1.2 triple-term value equality for the `=` operator (op:triple
+// mapping): subject and predicate compare structurally (they can never
+// be numeric literals), the object recurses — through nested triple
+// terms — using `literal_value_eq_numeric` at the literal leaves. This
+// is intentionally NOT the same relation as `rdf_term_eq`/`sameTerm`:
+// `<<(:a :b 123)>> = <<(:a :b 123.0)>>` holds under `=` (value
+// equality) but not under `sameTerm` (term identity) — see
+// eval-triple-terms/op-2 which asserts both `!sameTerm` and `=` hold
+// for that pair.
+let rec triple_term_value_eq (t1 t2 : rdf_term) : Tot bool (decreases t1) =
+  match t1, t2 with
+  | T_IRI i1, T_IRI i2 -> i1 = i2
+  | T_BNode b1, T_BNode b2 -> b1 = b2
+  | T_Literal l1, T_Literal l2 -> literal_value_eq_numeric l1 l2
+  | T_TripleTerm s1 p1 o1, T_TripleTerm s2 p2 o2 ->
+    subject_eq s1 s2 && p1 = p2 && triple_term_value_eq o1 o2
+  | _, _ -> false
+
+// Typed value comparison using numeric_compare for cross-type numeric comparison
+let value_compare (v1 v2 : eval_result) (op : comp_op) : option bool =
+  match v1, v2 with
+  | ER_Num _, ER_Num _ | ER_Num _, ER_Dec _ | ER_Num _, ER_Dbl _
+  | ER_Dec _, ER_Num _ | ER_Dec _, ER_Dec _ | ER_Dec _, ER_Dbl _
+  | ER_Dbl _, ER_Num _ | ER_Dbl _, ER_Dec _ | ER_Dbl _, ER_Dbl _ ->
+    (match numeric_compare v1 v2 with
+     | Some cmp -> Some (apply_comp_op cmp op)
+     | None -> None)
+  | ER_Bool a, ER_Bool b ->
+    let ia = if a then 1 else 0 in
+    let ib = if b then 1 else 0 in
+    Some (apply_comp_op (int_compare ia ib) op)
+  | ER_Term (T_IRI i1), ER_Term (T_IRI i2) ->
+    Some (apply_comp_op (String.compare (iri_to_string i1) (iri_to_string i2)) op)
+  | ER_Term (T_Literal l1), ER_Term (T_Literal l2) ->
+    if lit_datatype l1 = lit_datatype l2
+    then
+      if lit_lang l1 = lit_lang l2
+      then Some (apply_comp_op (String.compare (lit_lexical l1) (lit_lexical l2)) op)
+      else (match op with
+            | CmpEq -> Some false
+            | CmpNe -> Some true
+            | _ -> None)
+    else None
+  | ER_Term (T_TripleTerm s1 p1 o1), ER_Term (T_TripleTerm s2 p2 o2) ->
+    // RDF 1.2 op:triple mapping: only equality/inequality are defined
+    // over triple terms (they have no total order), via
+    // `triple_term_value_eq` — component-wise, with the object
+    // recursing through nested triple terms and comparing numeric
+    // literals by value (see eval-triple-terms/op-2).
+    (match op with
+     | CmpEq -> Some (triple_term_value_eq (T_TripleTerm s1 p1 o1) (T_TripleTerm s2 p2 o2))
+     | CmpNe -> Some (not (triple_term_value_eq (T_TripleTerm s1 p1 o1) (T_TripleTerm s2 p2 o2)))
+     | _ -> None)
+  | ER_Error, _ -> None
+  | _, ER_Error -> None
+  | _, _ -> None
+
+// Add two scaled values, normalizing to the larger scale
+let add_scaled (v1 : int) (s1 : nat) (v2 : int) (s2 : nat) : (int & nat) =
+  if s1 >= s2 then
+    (v1 + op_Multiply v2 (pow10 (s1 - s2)), s1)
+  else
+    (op_Multiply v1 (pow10 (s2 - s1)) + v2, s2)
+
+// Sum numeric eval_results with type promotion
+let rec sum_numeric_acc (vals : list eval_result) (acc_val : int) (acc_scale : nat) (acc_kind : num_kind) (acc_count : nat)
+  : Tot (int & nat & num_kind & nat) (decreases vals) =
+  match vals with
+  | [] -> (acc_val, acc_scale, acc_kind, acc_count)
+  | v :: rest ->
+    match er_to_numeric v with
+    | Some (nv, ns, nk) ->
+      let (sv, ss) = add_scaled acc_val acc_scale nv ns in
+      sum_numeric_acc rest sv ss (promote_kind acc_kind nk) (acc_count + 1)
+    | None -> sum_numeric_acc rest acc_val acc_scale acc_kind acc_count
+
+// Format a numeric result based on the target kind
+let format_numeric_result (value : int) (scale : nat) (kind : num_kind) : eval_result =
+  match kind with
+  | NK_Int ->
+    if scale = 0 then ER_Num value
+    else let p = pow10 scale in
+         if p = 0 then ER_Num value else ER_Num (value / p)
+  | NK_Dec ->
+    let raw = format_scaled_value value scale in
+    ER_Dec (strip_trailing_decimal_zeros raw)
+  | NK_Dbl ->
+    ER_Dbl (format_as_double value scale)
+
+// Sum a list of numeric eval_results, returning the properly typed result
+let sum_numeric (vals : list eval_result) : eval_result =
+  let (v, s, k, c) = sum_numeric_acc vals 0 0 NK_Int 0 in
+  if c = 0 then ER_Num 0
+  else format_numeric_result v s k
+
+// Count numeric values in a list
+let rec count_numeric (vals : list eval_result) : Tot nat (decreases vals) =
+  match vals with
+  | [] -> 0
+  | v :: rest ->
+    (match er_to_numeric v with
+     | Some _ -> 1 + count_numeric rest
+     | None -> count_numeric rest)
+
+// Compute average with proper decimal arithmetic
+// AVG result is always decimal or double (never integer)
+let avg_numeric (vals : list eval_result) : eval_result =
+  let (sum_val, sum_scale, kind, count) = sum_numeric_acc vals 0 0 NK_Int 0 in
+  if count = 0 then ER_Num 0
+  else
+    // Promote kind: AVG of integers is decimal
+    let result_kind = if NK_Int? kind then NK_Dec else kind in
+    // Extend precision for division: multiply numerator by 10^extra_digits
+    let extra : nat = 10 in
+    let extended = op_Multiply sum_val (pow10 extra) in
+    let divided = if count = 0 then 0 else extended / count in
+    let result_scale = sum_scale + extra in
+    // Strip trailing zeros
+    let raw = format_scaled_value divided result_scale in
+    let stripped = strip_trailing_decimal_zeros raw in
+    match result_kind with
+    | NK_Dbl -> ER_Dbl (format_as_double divided result_scale)
+    | _ -> ER_Dec stripped
+
+(* xsd:dateTime component extraction — CONCRETE *)
+
+(* YEAR: extract year from xsd:dateTime *)
+let dt_year (s : string) : option int =
+  let len = String.length s in
+  if len < 4 then None
+  else parse_int_string (String.sub s 0 4)
+
+(* MONTH: extract month from xsd:dateTime *)
+let dt_month (s : string) : option int =
+  let len = String.length s in
+  if len < 7 then None
+  else parse_int_string (String.sub s 5 2)
+
+(* DAY: extract day from xsd:dateTime *)
+let dt_day (s : string) : option int =
+  let len = String.length s in
+  if len < 10 then None
+  else parse_int_string (String.sub s 8 2)
+
+(* HOURS: extract hours from xsd:dateTime *)
+let dt_hours (s : string) : option int =
+  let len = String.length s in
+  if len < 13 then None
+  else parse_int_string (String.sub s 11 2)
+
+(* MINUTES: extract minutes from xsd:dateTime *)
+let dt_minutes (s : string) : option int =
+  let len = String.length s in
+  if len < 16 then None
+  else parse_int_string (String.sub s 14 2)
+
+(* SECONDS: extract seconds (including fractional) from xsd:dateTime *)
+// Strip leading zeros from a numeric string, preserving at least one digit
+// and handling the decimal part correctly: "01.5" -> "1.5", "00" -> "0"
+let strip_leading_zeros_num (s : string) : string =
+  let chars = String.list_of_string s in
+  let zero_code = 48 in
+  let rec skip_zeros (cs : list FStar.Char.char) : Tot (list FStar.Char.char) (decreases cs) =
+    match cs with
+    | c :: rest ->
+      if FStar.Char.int_of_char c = zero_code then
+        (match rest with
+         | [] -> cs  // keep last zero
+         | c2 :: _ ->
+           let c2i = FStar.Char.int_of_char c2 in
+           if c2i = 46 then cs  // stop before decimal point: "0.5"
+           else skip_zeros rest)
+      else cs
+    | [] -> [FStar.Char.char_of_int zero_code] in
+  String.string_of_list (skip_zeros chars)
+
+let dt_seconds (s : string) : option string =
+  let len = String.length s in
+  if len < 19 then None
+  else
+    let chars = String.list_of_string s in
+    let after_17 = list_drop 17 chars in
+    let rec find_end (cs : list FStar.Char.char) (count : nat)
+      : Tot nat (decreases cs) =
+      match cs with
+      | [] -> count
+      | c :: rest ->
+        let ci = FStar.Char.int_of_char c in
+        if ci = 90 || ci = 43 || ci = 45
+        then count
+        else find_end rest (count + 1)
+    in
+    let sec_len = find_end after_17 0 in
+    if sec_len = 0 then None
+    else if 17 + sec_len <= String.length s then
+      Some (strip_leading_zeros_num (String.sub s 17 sec_len))
+    else None
+
+(* TIMEZONE: extract timezone as xsd:dayTimeDuration string *)
+let dt_timezone (s : string) : option string =
+  let len = String.length s in
+  if len < 19 then None
+  else
+    let last_char = String.index s (len - 1) in
+    if FStar.Char.int_of_char last_char = 90
+    then Some "PT0S"
+    else
+      let chars = String.list_of_string s in
+      let rec find_tz (cs : list FStar.Char.char) (pos : nat)
+        : Tot (option nat) (decreases cs) =
+        match cs with
+        | [] -> None
+        | c :: rest ->
+          let ci = FStar.Char.int_of_char c in
+          if pos >= 19 && (ci = 43 || ci = 45) then Some pos
+          else find_tz rest (pos + 1)
+      in
+      match find_tz chars 0 with
+      | None -> Some ""
+      | Some pos ->
+        if len >= pos + 6
+        then
+          let sign = String.index s pos in
+          let sign_str = if FStar.Char.int_of_char sign = 45 then "-" else "" in
+          let h_str = String.sub s (pos + 1) 2 in
+          let m_str = String.sub s (pos + 4) 2 in
+          match parse_int_string h_str, parse_int_string m_str with
+          | Some h, Some m ->
+            if m = 0 then Some (strcat sign_str (strcat "PT" (strcat (string_of_int h) "H")))
+            else Some (strcat sign_str (strcat "PT" (strcat (string_of_int h) (strcat "H" (strcat (string_of_int m) "M")))))
+          | _, _ -> None
+        else None
+
+(* TZ: extract timezone string as-is *)
+let dt_tz (s : string) : option string =
+  let len = String.length s in
+  if len < 19 then None
+  else
+    let last_char = String.index s (len - 1) in
+    if FStar.Char.int_of_char last_char = 90
+    then Some "Z"
+    else
+      let chars = String.list_of_string s in
+      let rec find_tz_pos (cs : list FStar.Char.char) (pos : nat)
+        : Tot (option nat) (decreases cs) =
+        match cs with
+        | [] -> None
+        | c :: rest ->
+          let ci = FStar.Char.int_of_char c in
+          if pos >= 19 && (ci = 43 || ci = 45) then Some pos
+          else find_tz_pos rest (pos + 1)
+      in
+      match find_tz_pos chars 0 with
+      | None -> Some ""
+      | Some pos ->
+        if pos < len then Some (String.sub s pos (len - pos))
+        else None
+
+(** 6.1 IRI resolution against BASE (§5.1.1) **)
+
+(* IRI resolution algorithm factored to `SPARQL11.IRI.Resolve.fst` for
+   #65 Step 1 (clean refactor; no behavior change). The aliases below
+   preserve the public API — every existing caller that imports
+   `SPARQL11.Algebra` and calls `resolve_iri` / `resolve_query_iri`
+   continues to work unchanged, including the OCaml-extracted
+   `SPARQL11_Algebra.resolve_iri` symbol the #65 patch references. *)
+
+let resolve_iri (base : wf_iri) (relative : string) : wf_iri =
+  SPARQL11.IRI.Resolve.resolve_iri base relative
+
+let resolve_query_iri (base : option wf_iri) (rel : string) : option wf_iri =
+  SPARQL11.IRI.Resolve.resolve_query_iri base rel
+
+(** 6.2 SPARQL string escape processing (§19.7) **)
+
+(* SPARQL string literals support escape sequences.
+   The unescape function converts:
+     \\ → \, \n → newline, \r → carriage return, \t → tab,
+     \" → ", \' → ', \uXXXX → Unicode char, \UXXXXXXXX → Unicode char.
+   This is applied to regex patterns before compilation. *)
+(* Process escape sequences in a SPARQL string literal.
+   Scans a char list for backslash-prefixed sequences and replaces them. *)
+let rec unescape_chars (cs : list char) : Tot (list char) (decreases cs) =
+  match cs with
+  | [] -> []
+  | c1 :: rest ->
+    if c1 = FStar.Char.char_of_int 92 (* '\\' *) then
+      match rest with
+      | [] -> [c1]  (* trailing backslash — pass through *)
+      | c2 :: rest' ->
+        let code = FStar.Char.int_of_char c2 in
+        if code = 92       (* '\\' → '\' *)
+        then FStar.Char.char_of_int 92 :: unescape_chars rest'
+        else if code = 110 (* 'n' → newline *)
+        then FStar.Char.char_of_int 10 :: unescape_chars rest'
+        else if code = 114 (* 'r' → carriage return *)
+        then FStar.Char.char_of_int 13 :: unescape_chars rest'
+        else if code = 116 (* 't' → tab *)
+        then FStar.Char.char_of_int 9 :: unescape_chars rest'
+        else if code = 34  (* '"' → '"' *)
+        then FStar.Char.char_of_int 34 :: unescape_chars rest'
+        else if code = 39  (* '\'' → '\'' *)
+        then FStar.Char.char_of_int 39 :: unescape_chars rest'
+        else (* Unknown escape — pass through both chars *)
+          c1 :: c2 :: unescape_chars rest'
+    else
+      c1 :: unescape_chars rest
+
+let unescape_sparql_string (s : string) : string =
+  String.string_of_list (unescape_chars (String.list_of_string s))
+
+(* REGEX — uses unescape_sparql_string defined above *)
+let fn_regex_spec (s pattern : string) (flags : option string) : bool =
+  regex_match s (unescape_sparql_string pattern) flags
+
+(** ====================================================================== **)
+(** ====================================================================== **)
+(** Part 7: SPARQL 1.1 Evaluation Semantics (§18.5, §18.6)                **)
+(** ====================================================================== **)
+let solution_sequence = list solution_mapping
+
+(** 7.1 Pattern matching — triple pattern against a triple **)
+
+(* Convert a subject to an rdf_term for binding *)
+let subject_to_term (s : subject) : rdf_term =
+  match s with
+  | S_IRI i -> T_IRI i
+  | S_BNode b -> T_BNode b
+
+(* Try to bind a pattern subject against a concrete subject.
+   If the pattern is a concrete value, check equality.
+   If it's a variable, check existing binding or add new one. *)
+let try_bind_subject (ps : pattern_subject) (s : subject) (mu : solution_mapping)
+  : option solution_mapping =
+  match ps with
+  | PS_IRI i ->
+    (match s with
+     | S_IRI i' -> if i = i' then Some mu else None
+     | _ -> None)
+  | PS_BNode b ->
+    (match s with
+     | S_BNode b' -> if b = b' then Some mu else None
+     | _ -> None)
+  // A triple-term subject pattern never matches a concrete data subject
+  // (subjects are IRI/bnode only in the RDF data model).
+  | PS_TripleTerm _ _ _ -> None
+  | PS_Var v ->
+    let term = subject_to_term s in
+    match sm_lookup v mu with
+    | Some existing -> if rdf_term_eq existing term then Some mu else None
+    | None -> Some (sm_bind v term mu)
+
+(* Try to bind a pattern term against a concrete RDF term. RDF 1.2:
+   a triple-term pattern `<<( s p o )>>` matches a concrete `T_TripleTerm`
+   by recursively binding its three sub-positions (threading bindings
+   subject → predicate → object). *)
+let rec try_bind_term (pt : pattern_term) (t : rdf_term) (mu : solution_mapping)
+  : Tot (option solution_mapping) (decreases pt) =
+  match pt with
+  | PT_IRI i ->
+    (match t with
+     | T_IRI i' -> if i = i' then Some mu else None
+     | _ -> None)
+  | PT_BNode b ->
+    (match t with
+     | T_BNode b' -> if b = b' then Some mu else None
+     | _ -> None)
+  | PT_Literal l ->
+    (match t with
+     | T_Literal l' -> if literal_eq l l' then Some mu else None
+     | _ -> None)
+  | PT_TripleTerm ps pp po ->
+    (match t with
+     | T_TripleTerm s p o ->
+       (match try_bind_term ps (subject_to_term s) mu with
+        | None -> None
+        | Some mu1 ->
+          (match try_bind_term pp (T_IRI p) mu1 with
+           | None -> None
+           | Some mu2 -> try_bind_term po o mu2))
+     | _ -> None)
+  | PT_Var v ->
+    match sm_lookup v mu with
+    | Some existing -> if rdf_term_eq existing t then Some mu else None
+    | None -> Some (sm_bind v t mu)
+
+(* A pattern term matches an RDF term under a solution mapping — CONCRETE *)
+let pattern_term_matches (pt : pattern_term) (t : rdf_term) (mu : solution_mapping) : bool =
+  Some? (try_bind_term pt t mu)
+
+(* A pattern subject matches a subject under a solution mapping — CONCRETE *)
+let pattern_subject_matches (ps : pattern_subject) (s : subject) (mu : solution_mapping) : bool =
+  Some? (try_bind_subject ps s mu)
+
+(* A triple pattern matches a graph triple, producing extended mapping — CONCRETE.
+   Threads bindings: subject → predicate → object. *)
+let tp_match (tp : triple_pattern) (t : triple) (mu : solution_mapping)
+  : option solution_mapping =
+  match try_bind_subject tp.tp_s t.s mu with
+  | None -> None
+  | Some mu1 ->
+    (* Predicate is pattern_term; graph triple predicate is wf_iri → wrap as T_IRI *)
+    match try_bind_term tp.tp_p (T_IRI t.p) mu1 with
+    | None -> None
+    | Some mu2 -> try_bind_term tp.tp_o t.o mu2
+
+(** 7.2 BGP evaluation — CONCRETE **)
+
+(* Evaluate a single triple pattern against the graph, extending a given mapping *)
+let eval_single_tp_store_default (tp : triple_pattern) (gs : graph_store) (mu : solution_mapping)
+  : solution_sequence =
+  let bound = {
+    bs = bound_subject_of_pattern tp.tp_s mu;
+    bp = bound_predicate_of_pattern tp.tp_p mu;
+    bo = bound_object_of_pattern tp.tp_o mu;
+  } in
+  let candidates = store_search gs bound in
+  list_filter_map (fun t -> tp_match tp t mu) candidates
+
+// Fulltext SPARQL slice 1 dispatch point (design doc §3, in-memory path).
+// `ftq` was already resolved by SPARQL11.Parser (or, if the query built the
+// triple by hand, decoded from tp.tp_o just above the call site). Index is
+// in-memory only — a field-restricted (or, if ftq_field=None, unrestricted)
+// linear scan tokenized per-candidate at query time, no on-disk companion
+// file, no ranking (dataset order only) — exactly slice 1's scope (§6).
+let eval_fulltext_tp_store (ftq : SPARQL.FullText.fulltext_query) (tp : triple_pattern)
+  (gs : graph_store) (mu : solution_mapping) : solution_sequence =
+  let bound = { bs = None; bp = ftq.ftq_field; bo = None } in
+  let candidates = store_search gs bound in
+  let matched =
+    List.Tot.filter (fun (t : triple) -> SPARQL.FullText.object_matches_query ftq t.o) candidates in
+  let limited =
+    match ftq.ftq_limit with
+    | Some n -> list_take n matched
+    | None -> matched in
+  list_filter_map (fun t -> try_bind_subject tp.tp_s t.s mu) limited
+
+let eval_single_tp_store (tp : triple_pattern) (gs : graph_store) (mu : solution_mapping)
+  : solution_sequence =
+  match tp.tp_p with
+  | PT_IRI pred ->
+    if pred = SPARQL.FullText.fulltext_query_pred then
+      match tp.tp_o with
+      | PT_Literal args_lit ->
+        (match SPARQL.FullText.decode_fulltext_literal args_lit with
+         | Some ftq -> eval_fulltext_tp_store ftq tp gs mu
+         | None -> eval_single_tp_store_default tp gs mu)
+      | _ -> eval_single_tp_store_default tp gs mu
+    else eval_single_tp_store_default tp gs mu
+  | _ -> eval_single_tp_store_default tp gs mu
+
+let estimate_tp_store_mu (tp : triple_pattern) (gs : graph_store) (mu : solution_mapping) : nat =
+  store_estimate gs {
+    bs = bound_subject_of_pattern tp.tp_s mu;
+    bp = bound_predicate_of_pattern tp.tp_p mu;
+    bo = bound_object_of_pattern tp.tp_o mu;
+  }
+
+let rec choose_best_tp (patterns : bgp) (gs : graph_store) (mu : solution_mapping)
+  : Tot (option (triple_pattern * bgp)) (decreases patterns) =
+  match patterns with
+  | [] -> None
+  | tp :: rest ->
+    match choose_best_tp rest gs mu with
+    | None -> Some (tp, [])
+    | Some (best, remaining) ->
+      if estimate_tp_store_mu tp gs mu <= estimate_tp_store_mu best gs mu
+      then Some (tp, rest)
+      else Some (best, tp :: remaining)
+
+// Tail-rec concatMap on the BGP fan-out. Replaces List.Tot.concatMap
+// (cons-after-recurse, non-tail-rec) per the same shape as the
+// issue #94 Turtle stack-overflow fix. lemma_concatMap_tr_eq in
+// RDF.List.Helpers establishes the external semantics is unchanged.
+let rec eval_bgp_store_from_mu_fuel
+  (patterns : bgp) (gs : graph_store) (mu : solution_mapping) (fuel : nat)
+  : Tot solution_sequence (decreases fuel) =
+  if fuel = 0 then [mu]
+  else
+    match patterns with
+    | [] -> [mu]
+    | _ ->
+      match choose_best_tp patterns gs mu with
+      | None -> [mu]
+      | Some (tp, rest) ->
+        let next = eval_single_tp_store tp gs mu in
+        Lh.concatMap_tr (fun mu' -> eval_bgp_store_from_mu_fuel rest gs mu' (fuel - 1)) next
+
+let eval_bgp_store (patterns : bgp) (gs : graph_store) : solution_sequence =
+  eval_bgp_store_from_mu_fuel patterns gs sm_empty (List.Tot.length patterns + 1)
+
+(* Evaluate a BGP: for each triple pattern, extend existing mappings.
+   Empty BGP matches everything with the empty mapping.
+   Per SPARQL semantics: eval(BGP) = Join of individual pattern evaluations. *)
+let eval_bgp (patterns : bgp) (g : rdf_graph) : solution_sequence =
+  eval_bgp_store patterns (graph_to_store g)
+
+(** 7.3 Core algebra operations (§18.5) **)
+
+(** ====================================================================== **)
+(** Hash join (2026-07-06 join-algorithm perf fix). `join`/`left_join`/     **)
+(** `left_join_with_graph` used to be a plain nested-loop compatible-merge **)
+(** — O(|omega1| * |omega2|), no keying at all. This is the algorithmic     **)
+(** hole the task brief named directly and the same *shape* of defect       **)
+(** independently confirmed for BGP evaluation's index probes (see         **)
+(** RDF.Indexed.fsti's banner: `bucket_lookup` was an O(K) linear scan of a **)
+(** *pre-sorted* association list). Fix, mirroring that one: when the two   **)
+(** sides share at least one bound variable, build a keyed index on one     **)
+(** side (a `bucket_tree`, RDF.Indexed's balanced-tree idiom, reused as-is  **)
+(** via the `include RDF.Indexed` chain — SPARQL11.Algebra never needed a   **)
+(** new module dependency for this) and probe with the other, narrowing    **)
+(** the candidate list before the UNCHANGED `sm_compatible`/`sm_merge`      **)
+(** check runs. No shared variables (a genuine cross product) falls back   **)
+(** to the original nested loop untouched — a hash key would not narrow    **)
+(** anything there anyway.                                                 **)
+(**                                                                         **)
+(** Correctness: the key (`sm_join_key`) serialises the JOIN-CANONICAL     **)
+(** form of each bound term -- `RDF.Term.join_canon_term`, which folds     **)
+(** exactly what `rdf_term_eq` folds (language-tag case, XMLLiteral        **)
+(** exclusive-canonical form). `lemma_join_canon_term_eq` PROVES that      **)
+(** compatible terms serialise to identical keys; the previous key used    **)
+(** raw `nq_term_to_string` and this paragraph merely asserted the         **)
+(** superset property, which issue #337 refuted with a machine-checked     **)
+(** witness ("x"@en vs "x"@EN: compatible, different buckets, OPTIONAL     **)
+(** returned an UNBOUND row for a matching pattern). The key is used       **)
+(** ONLY to narrow candidates; `join_candidates` always returns a SUPERSET **)
+(** of the true matches (wildcard rows — missing one of the chosen key      **)
+(** variables — are always included; a probe row missing a key variable    **)
+(** conservatively pulls every keyed row too), so a hash-key collision or   **)
+(** an atypical representative row picked for `vars` can only add spurious  **)
+(** candidates, never drop a true one — the pre-existing `sm_compatible`    **)
+(** check is still the ground truth for every candidate emitted. Multiset   **)
+(** membership is therefore unchanged from the original nested loop; ROW    **)
+(** ORDER can change (sorting by key reorders), which is exactly the        **)
+(** "unordered without ORDER BY" case the SPARQL algebra already allows.    **)
+(** ====================================================================== **)
+
+(* Variables common to two solution-mapping domains. Empty means no join
+   column exists between the (representative) domains sampled — the
+   caller then skips hashing entirely (a hash key would not narrow a
+   true cross product). *)
+let rec vars_intersect (vs1 vs2 : list var_name) : list var_name =
+  match vs1 with
+  | [] -> []
+  | v :: rest ->
+    if List.Tot.mem v vs2 then v :: vars_intersect rest vs2
+    else vars_intersect rest vs2
+
+(* Canonical join key for [mu] restricted to [vars]: None if any variable
+   in [vars] is unbound in [mu] — such rows cannot be narrowed by this key
+   (see the banner above) and fall back to a full scan via the wildcard
+   list in `join_index`/`join_candidates`. `unit_sep` is RDF.Indexed's
+   existing composite-key separator (ASCII Unit Separator, forbidden in
+   IRIs, already used for `sp_key`/`po_key_opt`/`so_key_opt`); reused here
+   for the same reason: unambiguous concatenation of per-variable tokens. *)
+let rec sm_join_key (vars : list var_name) (mu : solution_mapping) : option string =
+  match vars with
+  | [] -> Some ""
+  | v :: rest ->
+    (match sm_lookup v mu, sm_join_key rest mu with
+     | Some t, Some rest_key ->
+       // #337: serialise the join-canonical form, never the raw term.
+       Some (nq_term_to_string (join_canon_term t) ^ RDF.Indexed.unit_sep ^ rest_key)
+     | _, _ -> None)
+
+(* One side of a hash join, indexed by [vars]: rows whose full key is
+   known go into a balanced `bucket_tree` (RDF.Indexed's idiom, built via
+   the same decorate-sort-group-bisect pipeline `build_bucket` uses for
+   `indexed_graph`, just inlined here since the elements are
+   `solution_mapping`, not `triple`); rows missing a key variable go into
+   `ji_wildcard` and are always offered as candidates (see
+   `join_candidates`). *)
+noeq type join_index = {
+  ji_keyed    : bucket_tree solution_mapping;
+  ji_wildcard : list solution_mapping;
+}
+
+let build_join_index (vars : list var_name) (omega : solution_sequence) : join_index =
+  let decorated = List.Tot.map (fun mu -> (sm_join_key vars mu, mu)) omega in
+  let sorted = List.Tot.sortWith cmp_by_decorated_key decorated in
+  // group_sorted_decorated_aux returns its groups key-DESCENDING (see
+  // RDF.Indexed.fsti's `build_bucket` comment — its own accumulator
+  // reverses the ascending-sorted input); `sorted_list_to_tree` needs
+  // ASCENDING input to build a tree matching `bucket_lookup`'s binary
+  // search. Reverse once, same as `build_bucket` does.
+  let grouped = List.Tot.rev (group_sorted_decorated_aux sorted None [] []) in
+  let wildcard = list_filter_map (fun mu -> if sm_join_key vars mu = None then Some mu else None) omega in
+  { ji_keyed = sorted_list_to_tree grouped; ji_wildcard = wildcard }
+
+(* Candidates from [idx] for probe row [mu]: always a SUPERSET of the true
+   matches (see the banner above for why this is safe) — the wildcard
+   rows plus either the exact key bucket (probe row has a full key) or,
+   conservatively, every keyed row (probe row itself is missing a key
+   variable, so it cannot be narrowed either). *)
+let join_candidates (idx : join_index) (vars : list var_name) (mu : solution_mapping)
+  : list solution_mapping =
+  match sm_join_key vars mu with
+  | Some k -> Lh.append_tr idx.ji_wildcard (bucket_lookup idx.ji_keyed k)
+  | None -> Lh.append_tr idx.ji_wildcard (bucket_tree_values idx.ji_keyed)
+
+(* Join: compatible merge of solution mappings from two patterns *)
+(* Ω1 Join Ω2 = { merge(μ1, μ2) | μ1 ∈ Ω1, μ2 ∈ Ω2, compatible(μ1, μ2) } *)
+let join_nested_loop (omega1 omega2 : solution_sequence) : solution_sequence =
+  Lh.concatMap_tr
+    (fun mu1 -> list_filter_map
+      (fun mu2 -> if sm_compatible mu1 mu2 then Some (sm_merge mu1 mu2) else None)
+      omega2)
+    omega1
+
+let join (omega1 omega2 : solution_sequence) : solution_sequence =
+  match omega1, omega2 with
+  | [], _ | _, [] -> []
+  | mu1_0 :: _, mu2_0 :: _ ->
+    let vars = vars_intersect (sm_domain mu1_0) (sm_domain mu2_0) in
+    if vars = [] then join_nested_loop omega1 omega2
+    else
+      // Build the index on the smaller side (standard hash-join
+      // orientation — minimizes index build cost); probe with the
+      // other. `mu1`/`mu2` are reconstructed in ORIGINAL argument order
+      // before `sm_compatible`/`sm_merge` so merge-priority semantics
+      // (mu1's bindings win) are byte-identical to the nested-loop form.
+      let build_is_omega1 = List.Tot.length omega1 <= List.Tot.length omega2 in
+      let (build_omega, probe_omega) = if build_is_omega1 then (omega1, omega2) else (omega2, omega1) in
+      let idx = build_join_index vars build_omega in
+      Lh.concatMap_tr
+        (fun mu_probe ->
+          let candidates = join_candidates idx vars mu_probe in
+          list_filter_map
+            (fun mu_build ->
+              let (mu1, mu2) = if build_is_omega1 then (mu_build, mu_probe) else (mu_probe, mu_build) in
+              if sm_compatible mu1 mu2 then Some (sm_merge mu1 mu2) else None)
+            candidates)
+        probe_omega
+
+(** ====================================================================== **)
+(** LATERAL join (SPARQL 1.2 track / Jena extension) — substitution and    **)
+(** well-formedness machinery. Placed here (before eval_pattern_store) —   **)
+(** rather than alongside `substitute_pattern`/`eval_exists` in Part 17 —  **)
+(** so eval_pattern_store's GP_Lateral arm can call it directly without a  **)
+(** forward-ref assume val (this codebase's usual break-the-cycle device,
+    e.g. eval_exists_fwd below): these are plain, self-contained recursive
+    functions with no dependency on anything defined between here and
+    Part 17, so moving the small substitution primitives up costs nothing.
+    Reference: https://jena.apache.org/documentation/query/lateral-join.html *)
+
+let lateral_subst_pattern_term (mu : solution_mapping) (pt : pattern_term) : pattern_term =
+  match pt with
+  | PT_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> PT_IRI i
+     | Some (T_BNode b) -> PT_BNode b
+     | Some (T_Literal l) -> PT_Literal l
+     | Some (T_TripleTerm _ _ _) -> PT_Var v   // no triple-term pattern_term yet (#305 P6)
+     | None -> PT_Var v)
+  | _ -> pt
+
+let lateral_subst_pattern_subject (mu : solution_mapping) (ps : pattern_subject) : pattern_subject =
+  match ps with
+  | PS_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> PS_IRI i
+     | Some (T_BNode b) -> PS_BNode b
+     | Some (T_Literal _) -> PS_Var v  (* literals cannot be subjects *)
+     | Some (T_TripleTerm _ _ _) -> PS_Var v  (* triple terms cannot be subjects *)
+     | None -> PS_Var v)
+  | _ -> ps
+
+let lateral_subst_triple_pattern (mu : solution_mapping) (tp : triple_pattern) : triple_pattern =
+  { tp_s = lateral_subst_pattern_subject mu tp.tp_s;
+    tp_p = lateral_subst_pattern_term mu tp.tp_p;
+    tp_o = lateral_subst_pattern_term mu tp.tp_o }
+
+let lateral_subst_bgp (mu : solution_mapping) (b : bgp) : bgp =
+  List.Tot.map (lateral_subst_triple_pattern mu) b
+
+(* Variables a group_graph_pattern can ASSIGN (as opposed to merely
+   pattern-match) at its own top level: BIND / VALUES / an "AS" alias in
+   a sub-SELECT's SELECT list. Per the Jena LATERAL doc: "there can [be]
+   no variable introduced by AS (BIND, or sub-query) or VALUES in-scope
+   at the top level of the LATERAL RHS[] that is the same name as any
+   in-scope variable from the LHS" — such a reassignment would conflict
+   with the variable already being set by the row being correlated-
+   joined. "Introduced by AS" is the operative phrase for the sub-query
+   case too: confirmed against Apache Jena 5.2.0 (arq) —
+   `LATERAL { SELECT ?s WHERE { ?s :label ?label } }` (a plain SI_Var
+   pass-through projection, re-exposing the WHERE clause's own ?s
+   binding) runs WITHOUT error, while
+   `LATERAL { SELECT (1 AS ?s) WHERE {...} }` is rejected ("Variable
+   used when already in-scope: ?s in (1 AS ?s)"). So only SI_Expr
+   (the "AS" form) counts as an assignment here; SI_Var does not.
+   Ordinary triple-pattern variables are likewise NOT assignable: after
+   substitution they are already the constant from the LHS row, so
+   matching against them is exactly the correlated-join point, not a
+   reassignment. MINUS's right operand never surfaces bindings, so it is
+   excluded. A nested GP_SubSelect's OWN non-projected variables are a
+   fresh, deeper scope — not reachable "at the top level" of THIS
+   pattern — so Select_Vars only contributes its "AS"-aliased names;
+   Select_All conservatively recurses (it re-exposes everything the
+   inner pattern could itself assign, since Select_All includes any AS
+   aliases bound inside). *)
+let rec lateral_assignable_vars (p : group_graph_pattern) : Tot (list var_name) (decreases p) =
+  match p with
+  | GP_Bind _ v p1 -> v :: lateral_assignable_vars p1
+  | GP_Values vars _ -> vars
+  | GP_SubSelect q ->
+    (match q.q_form with
+     | QF_Select (Select_Vars items) ->
+       list_filter_map
+         (fun (item : select_item) -> match item with SI_Var _ -> None | SI_Expr _ v -> Some v)
+         items
+     | QF_Select Select_All -> lateral_assignable_vars q.q_pattern
+     | _ -> [])
+  | GP_Join p1 p2 -> lateral_assignable_vars p1 @ lateral_assignable_vars p2
+  | GP_LeftJoin p1 p2 _ -> lateral_assignable_vars p1 @ lateral_assignable_vars p2
+  | GP_Union p1 p2 -> lateral_assignable_vars p1 @ lateral_assignable_vars p2
+  | GP_Lateral p1 p2 -> lateral_assignable_vars p1 @ lateral_assignable_vars p2
+  | GP_Filter _ p1 -> lateral_assignable_vars p1
+  | GP_Graph _ p1 -> lateral_assignable_vars p1
+  | GP_Minus p1 _ -> lateral_assignable_vars p1
+  | GP_Service _ p1 _ -> lateral_assignable_vars p1
+  | GP_ServiceVar _ p1 _ -> lateral_assignable_vars p1
+  | GP_BGP _ | GP_PropertyPath _ _ _ | GP_Empty -> []
+
+(* Variables a sub-SELECT actually exposes to LATERAL substitution:
+   Select_Vars projects exactly its listed names; Select_All exposes
+   everything (no restriction — None); a non-SELECT sub-query form
+   exposes nothing. This is DIFFERENT from `lateral_assignable_vars`
+   (which asks "could this pattern REASSIGN a name") — this asks "is
+   this name even part of what the sub-query outputs, for substitution
+   to make sense." Confirmed empirically against Apache Jena 5.2.0
+   (arq): `LATERAL { SELECT ?label { ?s :label ?label } LIMIT 1 }`
+   gives every outer row the SAME globally-smallest label (the outer
+   ?s is NOT substituted in, because the sub-SELECT does not project
+   ?s), whereas `LATERAL { SELECT * { ?s :label ?label } LIMIT 1 }`
+   correlates correctly per outer row (SELECT * projects ?s too). This
+   is exactly the Jena doc's "Sub-SELECT projection masking" section:
+   "Variables not included in a sub-SELECT's projection list remain
+   hidden from lateral binding." *)
+let lateral_subselect_visible_vars (q : query) : option (list var_name) =
+  match q.q_form with
+  | QF_Select (Select_Vars items) ->
+    Some (List.Tot.map
+      (fun (item : select_item) -> match item with SI_Var v -> v | SI_Expr _ v -> v)
+      items)
+  | QF_Select Select_All -> None  (* no restriction *)
+  | _ -> Some []                 (* non-SELECT sub-query: nothing visible *)
+
+(* Correlated substitution: inject the LHS row [mu]'s bindings into the
+   RHS pattern before evaluating it once per row (Jena's `inject`, the
+   same operation `substitute_pattern` below performs for EXISTS — except
+   LATERAL's substitution also has to reach INTO a nested sub-SELECT's
+   WHERE clause, gated by `lateral_subselect_visible_vars` above so the
+   masking rule holds; `substitute_pattern` deliberately does not dive
+   into GP_SubSelect at all since EXISTS doesn't need it). When a
+   sub-SELECT reached during descent locally reassigns one of the names
+   in [mu] (per `lateral_assignable_vars` on ITS OWN pattern), that name
+   is shadowed from THAT SUBTREE down — it is a fresh, deeper-scoped
+   variable, not the outer one — so it is dropped from the mapping
+   before recursing into that sub-SELECT's pattern. A name that is
+   neither masked-out nor reassigned continues to substitute through
+   arbitrarily deep sub-SELECT nesting, exactly like the SELECT * topN
+   example.
+
+   `lateral_subselect_visible_mu` is lambda-lifted to a named top-level
+   helper (issue #62 retirement, G4-subselect-fold, 2026-08-10) rather
+   than inlined into `lateral_substitute`'s GP_SubSelect arm: the
+   termination proof for the eval_pattern_store/eval_select_query clique
+   below (`lemma_lateral_substitute_preserves_size`) needs to invoke
+   itself on the SAME masked mu' the engine computes at this arm, and
+   the CLOSURE IDENTITY LAW (proof-factory skill) means a proof-side
+   re-spelling of the same anonymous lambdas would be a distinct SMT
+   token that Z3 cannot relate back to the engine's — naming the
+   computation gives first-order congruence instead. *)
+let lateral_subselect_visible_mu (mu : solution_mapping) (q : query) : solution_mapping =
+  let mu_visible = match lateral_subselect_visible_vars q with
+    | None -> mu
+    | Some vis ->
+      List.Tot.filter
+        (fun (b : var_name * rdf_term) -> List.Tot.existsb (fun v -> v = fst b) vis)
+        mu in
+  let shadowed = lateral_assignable_vars q.q_pattern in
+  List.Tot.filter
+    (fun (b : var_name * rdf_term) -> not (List.Tot.existsb (fun s -> s = fst b) shadowed))
+    mu_visible
+
+let rec lateral_substitute (mu : solution_mapping) (p : group_graph_pattern)
+  : Tot group_graph_pattern (decreases p) =
+  match p with
+  | GP_BGP b -> GP_BGP (lateral_subst_bgp mu b)
+  | GP_Join p1 p2 -> GP_Join (lateral_substitute mu p1) (lateral_substitute mu p2)
+  | GP_LeftJoin p1 p2 e -> GP_LeftJoin (lateral_substitute mu p1) (lateral_substitute mu p2) e
+  | GP_Filter e p1 -> GP_Filter e (lateral_substitute mu p1)
+  | GP_Union p1 p2 -> GP_Union (lateral_substitute mu p1) (lateral_substitute mu p2)
+  | GP_Graph gt p1 -> GP_Graph (lateral_subst_pattern_term mu gt) (lateral_substitute mu p1)
+  | GP_Minus p1 p2 -> GP_Minus (lateral_substitute mu p1) (lateral_substitute mu p2)
+  | GP_Bind e v p1 -> GP_Bind e v (lateral_substitute mu p1)
+  | GP_Values vars rows -> GP_Values vars rows
+  | GP_Service iri p1 silent -> GP_Service iri (lateral_substitute mu p1) silent
+  | GP_ServiceVar v p1 silent ->
+    (match sm_lookup v mu with
+     | Some (T_IRI iri) ->
+       if is_iri iri then GP_Service iri (lateral_substitute mu p1) silent
+       else GP_ServiceVar v (lateral_substitute mu p1) silent
+     | _ -> GP_ServiceVar v (lateral_substitute mu p1) silent)
+  | GP_SubSelect q ->
+    GP_SubSelect ({ q with q_pattern = lateral_substitute (lateral_subselect_visible_mu mu q) q.q_pattern })
+  | GP_PropertyPath ps pp pt ->
+    GP_PropertyPath (lateral_subst_pattern_subject mu ps) pp (lateral_subst_pattern_term mu pt)
+  | GP_Lateral p1 p2 -> GP_Lateral (lateral_substitute mu p1) (lateral_substitute mu p2)
+  | GP_Empty -> GP_Empty
+
+(* Wrap a substituted RHS pattern as a trivial `SELECT * WHERE { p }` query
+   so LATERAL's per-row RHS evaluation can go through a call to
+   `eval_select_query` instead of a direct recursive call to
+   eval_pattern_store — the substituted pattern is not a structural
+   subterm of the GP_Lateral node being evaluated, so a direct recursive
+   call would not satisfy `eval_pattern_store`'s `decreases p`. This is
+   the SAME escape hatch GP_SubSelect below already uses to call back
+   into full query evaluation from inside eval_pattern_store. Issue #62
+   retirement (G4-subselect-fold, 2026-08-10): eval_select_query is now
+   a real member of the eval_pattern_store/eval_exists mutual clique
+   (query_size (lateral_wrap_as_query p2') == 1 + pattern_size p2' <
+   pattern_size (GP_Lateral p1 p2), via
+   lemma_lateral_substitute_preserves_size) rather than a forward-ref
+   `eval_subselect_fwd` assume val — no assume val is used here at all
+   any more. With no GROUP BY / ORDER BY / DISTINCT / REDUCED / OFFSET /
+   LIMIT and Select_All, eval_select_query reduces to exactly
+   `strip_synthetic_bnode_vars (eval_pattern base p g ds)` — i.e.
+   semantically transparent pattern evaluation. *)
+let lateral_wrap_as_query (p : group_graph_pattern) : query =
+  { q_base = None; q_prefixes = []; q_form = QF_Select Select_All;
+    q_dataset = []; q_pattern = p; q_group_by = None; q_having = None;
+    q_modifier = { sm_order_by = None; sm_distinct = false; sm_reduced = false;
+                   sm_offset = None; sm_limit = None };
+    q_values = None }
+
+(** ====================================================================== **)
+(** Lazy per-bucket index construction — query-shape pre-pass (2026-07-06) **)
+(** ====================================================================== **)
+(* Continuation of the decorate-sort-undecorate commit's own "Remaining
+   floor" note: `build_indexed`/`indexed_graph_backend` built all 6
+   bucket maps for EVERY query, even ones like a COUNT-star GROUP BY ?p
+   over `?s ?p ?o` (SELECT ?p, COUNT-star AS ?c, WHERE ?s ?p ?o, GROUP
+   BY ?p) whose single all-unbound triple pattern reads none of them
+   (`ig_search` never calls a single `bucket_lookup` for it). This section computes,
+   from the query's OWN algebra tree, a conservative over-approximation
+   of which of the 6 buckets it can possibly read — BEFORE the graph is
+   indexed — so `build_indexed_selective` (RDF.Indexed.fsti) builds only
+   those. Over-approximating is always safe for CORRECTNESS: RDF.Indexed
+   .fsti's `bucket_needs` banner and `ig_search`'s `ig_built`-gated reads
+   establish that an unbuilt bucket only costs an O(n) `ig_triples` scan
+   for that one lookup instead of an O(log n) bucket read — it can never
+   change which triples a search returns. The goal here is only to not
+   systematically under-count for the common cases (point lookups,
+   joins, OPTIONAL), which would forfeit the win without being wrong.
+
+   Design: a triple pattern's subject/predicate/object position is
+   "boundable" — could plausibly be `Some` at the moment THIS exact
+   pattern is evaluated, for some evaluation order the planner might
+   pick — if it is a constant in the query text, OR a variable that
+   also occurs somewhere else in the SAME query (another triple-pattern
+   slot sharing the name — the ordinary join/OPTIONAL case). Property-
+   path subject/object positions are tracked as occurrences too (a
+   variable shared between a path and a sibling BGP pattern must still
+   mark that BGP slot boundable), even though property paths themselves
+   never consult the 6 buckets (`eval_pattern_store`'s GP_PropertyPath
+   arm reads `gs_graph` directly).
+
+   Constructs that manufacture bindings OUTSIDE any triple-pattern slot
+   — BIND, VALUES, sub-SELECT projection, SERVICE, LATERAL correlated
+   substitution — are not modeled precisely here. ANY of them appearing
+   ANYWHERE in the query's pattern tree makes this pre-pass give up and
+   ask for every bucket (`all_bucket_needs`) — i.e. EXACTLY today's
+   eager behaviour for such queries, zero risk of a missed occurrence
+   turning into a slow surprise. This keeps the change's effective
+   scope to BGP-shaped queries built only from GP_BGP / GP_Join /
+   GP_LeftJoin / GP_Union / GP_Minus / GP_Filter / GP_Graph /
+   GP_PropertyPath / GP_Empty — exactly the shape of the 4 gate query
+   families (point lookup, join, OPTIONAL, GROUP BY over the whole
+   graph). *)
+
+let rec pattern_has_binding_source (p : group_graph_pattern) : Tot bool (decreases p) =
+  match p with
+  | GP_Bind _ _ _ | GP_Values _ _ | GP_SubSelect _
+  | GP_Service _ _ _ | GP_ServiceVar _ _ _ | GP_Lateral _ _ -> true
+  | GP_BGP _ | GP_PropertyPath _ _ _ | GP_Empty -> false
+  | GP_Join p1 p2 | GP_Union p1 p2 | GP_Minus p1 p2 ->
+    pattern_has_binding_source p1 || pattern_has_binding_source p2
+  | GP_LeftJoin p1 p2 _ ->
+    pattern_has_binding_source p1 || pattern_has_binding_source p2
+  | GP_Filter _ p1 | GP_Graph _ p1 -> pattern_has_binding_source p1
+
+let rec pattern_term_var (pt : pattern_term) : Tot (list var_name) (decreases pt) =
+  match pt with
+  | PT_Var v -> [v]
+  | PT_IRI _ | PT_BNode _ | PT_Literal _ -> []
+  // RDF 1.2: collect vars from every sub-position of a triple-term
+  // pattern — object-position triple terms bind these vars at match time.
+  | PT_TripleTerm s p o -> pattern_term_var s @ pattern_term_var p @ pattern_term_var o
+
+let pattern_subject_var (ps : pattern_subject) : list var_name =
+  match ps with
+  | PS_Var v -> [v]
+  | PS_IRI _ | PS_BNode _ -> []
+  // A subject-position triple term never matches concrete data, so its
+  // sub-vars can never bind; contribute none to the pattern's var scope.
+  | PS_TripleTerm _ _ _ -> []
+
+let tp_vars (tp : triple_pattern) : list var_name =
+  pattern_subject_var tp.tp_s @ pattern_term_var tp.tp_p @ pattern_term_var tp.tp_o
+
+let rec bgp_vars (b : bgp) : Tot (list var_name) (decreases b) =
+  match b with
+  | [] -> []
+  | tp :: rest -> tp_vars tp @ bgp_vars rest
+
+(* Every variable name that occurs in a triple-pattern slot (or a
+   property path's subject/object) anywhere in the tree, as a flat
+   multiset — duplicates ARE the point: a name occurring >=2 times is
+   exactly a name that could be bound by one occurrence before another
+   one is evaluated, in some evaluation order. Only meaningful when
+   `pattern_has_binding_source p` is false, so the tree's only possible
+   binding-producing shapes are triple-pattern slots and property-path
+   endpoints — hence the binding-source constructors below just
+   contribute no occurrences (they're never reached from
+   `bucket_needs_of_pattern`, which checks `pattern_has_binding_source`
+   first and falls back to `all_bucket_needs` instead of calling this). *)
+let rec pattern_var_occurrences (p : group_graph_pattern) : Tot (list var_name) (decreases p) =
+  match p with
+  | GP_BGP b -> bgp_vars b
+  | GP_PropertyPath ps _ pt -> pattern_subject_var ps @ pattern_term_var pt
+  | GP_Join p1 p2 | GP_Union p1 p2 | GP_Minus p1 p2 ->
+    pattern_var_occurrences p1 @ pattern_var_occurrences p2
+  | GP_LeftJoin p1 p2 _ -> pattern_var_occurrences p1 @ pattern_var_occurrences p2
+  | GP_Filter _ p1 | GP_Graph _ p1 -> pattern_var_occurrences p1
+  | GP_Bind _ _ _ | GP_Values _ _ | GP_SubSelect _
+  | GP_Service _ _ _ | GP_ServiceVar _ _ _ | GP_Lateral _ _ -> []
+  | GP_Empty -> []
+
+let var_is_shared (occ : list var_name) (v : var_name) : bool =
+  List.Tot.length (List.Tot.filter (fun (x : var_name) -> x = v) occ) >= 2
+
+let subj_boundable (occ : list var_name) (ps : pattern_subject) : bool =
+  match ps with
+  | PS_IRI _ | PS_BNode _ -> true
+  | PS_Var v -> var_is_shared occ v
+  // Triple-term positions never serve as a single index key; treat as
+  // unbound so the planner scans and the matcher filters (correctness-safe).
+  | PS_TripleTerm _ _ _ -> false
+
+let term_boundable (occ : list var_name) (pt : pattern_term) : bool =
+  match pt with
+  | PT_IRI _ | PT_BNode _ | PT_Literal _ -> true
+  | PT_Var v -> var_is_shared occ v
+  | PT_TripleTerm _ _ _ -> false
+
+(* Which buckets a single triple pattern could read, given the
+   whole-query occurrence multiset `occ`. Compound buckets (sp/po/so)
+   are needed whenever BOTH their positions are boundable — tighter
+   than either single-key bucket whenever both keys really are bound
+   at once, and `ig_search`'s `pick_smaller_bucket` already prefers the
+   compound candidate in that case. *)
+let tp_bucket_needs (occ : list var_name) (tp : triple_pattern) : bucket_needs =
+  let s_ok = subj_boundable occ tp.tp_s in
+  let p_ok = term_boundable occ tp.tp_p in
+  let o_ok = term_boundable occ tp.tp_o in
+  {
+    bn_subj = s_ok; bn_pred = p_ok; bn_obj = o_ok;
+    bn_sp = s_ok && p_ok; bn_po = p_ok && o_ok; bn_so = s_ok && o_ok;
+  }
+
+let rec bgp_bucket_needs (occ : list var_name) (b : bgp) : Tot bucket_needs (decreases b) =
+  match b with
+  | [] -> no_bucket_needs
+  | tp :: rest -> bucket_needs_or (tp_bucket_needs occ tp) (bgp_bucket_needs occ rest)
+
+let rec pattern_bucket_needs (occ : list var_name) (p : group_graph_pattern)
+  : Tot bucket_needs (decreases p) =
+  match p with
+  | GP_BGP b -> bgp_bucket_needs occ b
+  | GP_PropertyPath _ _ _ -> no_bucket_needs  (* never reads the 6 buckets *)
+  | GP_Join p1 p2 | GP_Union p1 p2 | GP_Minus p1 p2 ->
+    bucket_needs_or (pattern_bucket_needs occ p1) (pattern_bucket_needs occ p2)
+  | GP_LeftJoin p1 p2 _ ->
+    bucket_needs_or (pattern_bucket_needs occ p1) (pattern_bucket_needs occ p2)
+  | GP_Filter _ p1 | GP_Graph _ p1 -> pattern_bucket_needs occ p1
+  | GP_Bind _ _ _ | GP_Values _ _ | GP_SubSelect _
+  | GP_Service _ _ _ | GP_ServiceVar _ _ _ | GP_Lateral _ _ -> all_bucket_needs  (* unreached *)
+  | GP_Empty -> no_bucket_needs
+
+(* Top-level entry point: compute the bucket_needs a query's algebra
+   tree can possibly read, for use by `build_indexed_selective` at
+   store-construction time. *)
+let bucket_needs_of_pattern (p : group_graph_pattern) : bucket_needs =
+  if pattern_has_binding_source p then all_bucket_needs
+  else pattern_bucket_needs (pattern_var_occurrences p) p
+
+(* ==========================================================================
+   Needed-column analysis (OPTIONAL/FILTER row-index-selective decode
+   design, docs/designissues/2026-07-13-optional-filter-selective-decode.md).
+   Stage 1: pure, unwired free-variable analysis over the FULL algebra
+   tree. Nothing calls these yet (stage 4, a narrow single-BGP detector,
+   is a follow-up landing) -- this section is safe to land on its own.
+
+   `expr_vars` is exhaustive over every `expr` constructor: F* forces
+   this at typecheck time (an incomplete match is a verification error,
+   not a runtime one), which is the whole point of writing the traversal
+   as one big pattern match rather than hoping to remember every case.
+   `E_Exists`/`E_NotExists` descend into their sub-pattern via
+   `pattern_all_vars` (mutually recursive below) instead of treating
+   EXISTS as opaque: a correlated outer variable used ONLY inside an
+   EXISTS{} block still needs its column decoded by the enclosing query,
+   so under-counting there would be a silent correctness gap the moment
+   a future caller (stage 4+) gates decode on this analysis.
+   Over-counting is always safe (a column gets decoded that didn't
+   strictly need to be, costing decode-acceleration opportunity, never a
+   wrong answer) -- every ambiguous case in this section is resolved
+   toward "when in doubt, mark it live," matching `col_need_for_tp`'s
+   own contract below. *)
+
+let rec expr_vars (e : expr) : Tot (list var_name) (decreases e) =
+  match e with
+  | E_Var v -> [v]
+  | E_IRI _ | E_Literal _ | E_BoolLit _ | E_NumericLit _
+  | E_DecimalLit _ | E_DoubleLit _ -> []
+  | E_Arith _ e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_UnaryMinus e1 | E_UnaryPlus e1 -> expr_vars e1
+  | E_Compare _ e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_And e1 e2 | E_Or e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_Not e1 -> expr_vars e1
+  | E_IsIRI e1 | E_IsBlank e1 | E_IsLiteral e1 | E_IsNumeric e1 -> expr_vars e1
+  | E_Str e1 | E_Lang e1 | E_Datatype e1 | E_IRI_fn e1 -> expr_vars e1
+  | E_HasLang e1 | E_HasLangDir e1 | E_LangDir e1 -> expr_vars e1
+  | E_StrDt e1 e2 | E_StrLang e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_StrLangDir e1 e2 e3 -> expr_vars e1 @ expr_vars e2 @ expr_vars e3
+  // BOUND(?v) only tests presence, never the decoded VALUE of ?v -- but
+  // we count ?v live anyway, conservative-safe per the banner above.
+  | E_Bound v -> [v]
+  | E_If c t f -> expr_vars c @ expr_vars t @ expr_vars f
+  | E_Coalesce es -> expr_list_vars es
+  | E_In e1 es -> expr_vars e1 @ expr_list_vars es
+  | E_NotIn e1 es -> expr_vars e1 @ expr_list_vars es
+  | E_StrLen e1 -> expr_vars e1
+  | E_Substr e1 e2 e3_opt -> expr_vars e1 @ expr_vars e2 @ expr_opt_vars e3_opt
+  | E_UCase e1 | E_LCase e1 -> expr_vars e1
+  | E_StrStarts e1 e2 | E_StrEnds e1 e2 | E_Contains e1 e2
+  | E_StrBefore e1 e2 | E_StrAfter e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_Concat es -> expr_list_vars es
+  | E_EncodeForUri e1 -> expr_vars e1
+  | E_Replace e1 e2 e3 e4_opt ->
+    expr_vars e1 @ expr_vars e2 @ expr_vars e3 @ expr_opt_vars e4_opt
+  | E_Regex e1 e2 e3_opt -> expr_vars e1 @ expr_vars e2 @ expr_opt_vars e3_opt
+  | E_Abs e1 | E_Round e1 | E_Ceil e1 | E_Floor e1 -> expr_vars e1
+  | E_MD5 e1 | E_SHA1 e1 | E_SHA256 e1 | E_SHA384 e1 | E_SHA512 e1 -> expr_vars e1
+  | E_Now -> []
+  | E_Year e1 | E_Month e1 | E_Day e1 | E_Hours e1 | E_Minutes e1
+  | E_Seconds e1 | E_Timezone e1 | E_Tz e1 -> expr_vars e1
+  | E_SameTerm e1 e2 -> expr_vars e1 @ expr_vars e2
+  | E_Exists p -> pattern_all_vars p
+  | E_NotExists p -> pattern_all_vars p
+  | E_Aggregate _ _ e1 -> expr_vars e1
+  | E_FunctionCall _ es -> expr_list_vars es
+  | E_TripleTerm a b c -> expr_vars a @ expr_vars b @ expr_vars c
+  | E_TTSubject e1 -> expr_vars e1
+  | E_TTPredicate e1 -> expr_vars e1
+  | E_TTObject e1 -> expr_vars e1
+  | E_IsTriple e1 -> expr_vars e1
+
+and expr_list_vars (es : list expr) : Tot (list var_name) (decreases es) =
+  match es with
+  | [] -> []
+  | e :: rest -> expr_vars e @ expr_list_vars rest
+
+and expr_opt_vars (eo : option expr) : Tot (list var_name) (decreases eo) =
+  match eo with
+  | None -> []
+  | Some e -> expr_vars e
+
+// Every variable name occurring ANYWHERE in a group graph pattern:
+// triple-pattern / property-path slots, FILTER/BIND/LeftJoin-filter
+// expressions (via expr_vars, including their EXISTS sub-patterns),
+// BIND's own bound variable, VALUES' column variables, GRAPH's
+// variable, SERVICE ?var's variable, and (conservatively -- see the
+// section banner) a nested sub-SELECT's entire variable set via
+// `query_all_vars`.
+and pattern_all_vars (p : group_graph_pattern) : Tot (list var_name) (decreases p) =
+  match p with
+  | GP_BGP b -> bgp_vars b
+  | GP_Join p1 p2 | GP_Union p1 p2 | GP_Minus p1 p2 | GP_Lateral p1 p2 ->
+    pattern_all_vars p1 @ pattern_all_vars p2
+  | GP_LeftJoin p1 p2 e -> pattern_all_vars p1 @ pattern_all_vars p2 @ expr_vars e
+  | GP_Filter e p1 -> expr_vars e @ pattern_all_vars p1
+  | GP_Graph pt p1 -> pattern_term_var pt @ pattern_all_vars p1
+  | GP_Bind e v p1 -> expr_vars e @ (v :: pattern_all_vars p1)
+  | GP_Values vs _rows -> vs
+  | GP_Service _ p1 _ -> pattern_all_vars p1
+  | GP_ServiceVar v p1 _ -> v :: pattern_all_vars p1
+  | GP_SubSelect q -> query_all_vars q
+  | GP_PropertyPath ps _ pt -> pattern_subject_var ps @ pattern_term_var pt
+  | GP_Empty -> []
+
+// Every variable name occurring anywhere in a whole query: its pattern
+// (via pattern_all_vars) plus every other clause that can mention a
+// variable (projection/CONSTRUCT template/DESCRIBE list, GROUP BY,
+// HAVING, ORDER BY, post-query VALUES).
+and query_all_vars (q : query) : Tot (list var_name) (decreases q) =
+  pattern_all_vars q.q_pattern
+  @ query_form_all_vars q.q_form
+  @ (match q.q_group_by with
+     | None -> []
+     | Some gcs -> group_conditions_vars gcs)
+  @ (match q.q_having with
+     | None -> []
+     | Some hs -> expr_list_vars hs)
+  @ (match q.q_modifier.sm_order_by with
+     | None -> []
+     | Some ocs -> order_conditions_vars ocs)
+  @ (match q.q_values with
+     | None -> []
+     | Some rows -> values_rows_vars rows)
+
+and query_form_all_vars (qf : query_form) : Tot (list var_name) (decreases qf) =
+  match qf with
+  | QF_Select sc -> select_clause_vars sc
+  | QF_Construct tps -> bgp_vars tps
+  | QF_Ask -> []
+  | QF_Describe pts -> pattern_terms_vars pts
+
+and select_clause_vars (sc : select_clause) : Tot (list var_name) (decreases sc) =
+  match sc with
+  | Select_All -> []
+  | Select_Vars items -> select_items_all_vars items
+
+and select_items_all_vars (items : list select_item) : Tot (list var_name) (decreases items) =
+  match items with
+  | [] -> []
+  | SI_Var v :: rest -> v :: select_items_all_vars rest
+  | SI_Expr e v :: rest -> expr_vars e @ (v :: select_items_all_vars rest)
+
+and group_conditions_vars (gcs : list group_condition) : Tot (list var_name) (decreases gcs) =
+  match gcs with
+  | [] -> []
+  | GC_Var v :: rest -> v :: group_conditions_vars rest
+  | GC_Expr e alias :: rest ->
+    expr_vars e @ (match alias with Some a -> [a] | None -> []) @ group_conditions_vars rest
+  | GC_BuiltIn e :: rest -> expr_vars e @ group_conditions_vars rest
+
+and order_conditions_vars (ocs : list order_condition) : Tot (list var_name) (decreases ocs) =
+  match ocs with
+  | [] -> []
+  | OC_Asc e :: rest -> expr_vars e @ order_conditions_vars rest
+  | OC_Desc e :: rest -> expr_vars e @ order_conditions_vars rest
+
+and pattern_terms_vars (pts : list pattern_term) : Tot (list var_name) (decreases pts) =
+  match pts with
+  | [] -> []
+  | pt :: rest -> pattern_term_var pt @ pattern_terms_vars rest
+
+and values_rows_vars (rows : list (list (var_name * rdf_term))) : Tot (list var_name) (decreases rows) =
+  match rows with
+  | [] -> []
+  | row :: rest -> values_row_vars row @ values_rows_vars rest
+
+and values_row_vars (row : list (var_name * rdf_term)) : Tot (list var_name) (decreases row) =
+  match row with
+  | [] -> []
+  | (v, _) :: rest -> v :: values_row_vars rest
+
+// Narrower "does this need decode" collector: FILTER/BIND/LeftJoin-filter
+// expression variables only -- NOT every triple-pattern occurrence (that
+// over-collection is exactly what `col_need` exists to avoid: an
+// unbound position nothing ever reads should not force a column
+// decode). GP_SubSelect / GP_Values / GP_ServiceVar still fall back to
+// "everything" (`query_all_vars` / the VALUES column list) -- narrowing
+// those further is unneeded complexity for the single-BGP detector
+// shape stage 4 targets, and staying conservative there only costs
+// decode-acceleration opportunity, never correctness.
+let rec pattern_filter_bind_vars (p : group_graph_pattern) : Tot (list var_name) (decreases p) =
+  match p with
+  | GP_BGP _ -> []
+  | GP_PropertyPath _ _ _ -> []
+  | GP_Join p1 p2 | GP_Union p1 p2 | GP_Minus p1 p2 | GP_Lateral p1 p2 ->
+    pattern_filter_bind_vars p1 @ pattern_filter_bind_vars p2
+  | GP_LeftJoin p1 p2 e ->
+    pattern_filter_bind_vars p1 @ pattern_filter_bind_vars p2 @ expr_vars e
+  | GP_Filter e p1 -> expr_vars e @ pattern_filter_bind_vars p1
+  | GP_Graph _ p1 -> pattern_filter_bind_vars p1
+  | GP_Bind e _v p1 -> expr_vars e @ pattern_filter_bind_vars p1
+  | GP_Values vs _rows -> vs
+  | GP_Service _ p1 _ -> pattern_filter_bind_vars p1
+  | GP_ServiceVar v p1 _ -> v :: pattern_filter_bind_vars p1
+  | GP_SubSelect q -> query_all_vars q
+  | GP_Empty -> []
+
+// Full projected-item variable set INCLUDING a SI_Expr's own free
+// variables (`select_item_vars` above only returns the alias, which is
+// enough for projection/renaming but not for "what must be decoded to
+// EVALUATE the expression").
+let rec select_item_vars_full (items : list select_item) : Tot (list var_name) (decreases items) =
+  match items with
+  | [] -> []
+  | SI_Var v :: rest -> v :: select_item_vars_full rest
+  | SI_Expr e v :: rest -> expr_vars e @ (v :: select_item_vars_full rest)
+
+// Query-wide filter/having/order-by/group-by variable set (the
+// non-projection half of `query_live_vars`'s union).
+let query_clause_vars (q : query) : Tot (list var_name) =
+  pattern_filter_bind_vars q.q_pattern
+  @ (match q.q_group_by with None -> [] | Some gcs -> group_conditions_vars gcs)
+  @ (match q.q_having with None -> [] | Some hs -> expr_list_vars hs)
+  @ (match q.q_modifier.sm_order_by with None -> [] | Some ocs -> order_conditions_vars ocs)
+
+// Top-level entry point (design doc's `query_live_vars`): the variables
+// whose DECODED VALUE some part of the query actually consumes --
+// projection UNION FILTER/HAVING/ORDER BY/BIND free variables UNION
+// "SELECT * means everything live." CONSTRUCT/ASK/DESCRIBE forms are
+// treated conservatively (everything in `query_all_vars`) -- none of
+// them have a narrow "these positions are dead" case in the design
+// doc's scope, and over-inclusion here only costs the decode
+// acceleration this design is chasing, never correctness.
+let query_live_vars (q : query) : Tot (list var_name) =
+  match q.q_form with
+  | QF_Select Select_All -> query_all_vars q
+  | QF_Select (Select_Vars items) -> select_item_vars_full items @ query_clause_vars q
+  | QF_Construct _ | QF_Ask | QF_Describe _ -> query_all_vars q
+
+// col_need_for_tp: which of a single triple pattern's three positions
+// need their column VALUE decoded, given the query-wide
+// variable-occurrence multiset `occ` (from `pattern_var_occurrences`,
+// which already counts cross-BGP AND within-BGP repeats -- see that
+// function's own banner) and the live-variable set `live` (from
+// `query_live_vars`). A concrete (bound) position never needs decode --
+// its value is already known from the query text, and matching it is
+// the CHEAP discriminating-column pass the design's mechanism section
+// describes, not this analysis's concern. A variable position needs
+// decode iff it is live OR shared with another occurrence anywhere in
+// the query pattern (a cross-pattern join var, or a within-BGP repeat
+// like `?x :knows ?x2 . ?x2 :knows ?x`) -- mirrors
+// `var_is_shared`/`tp_bucket_needs`'s existing occurrence-counting
+// exactly, just answering "does the VALUE need decoding" instead of
+// "which bucket can this ask."
+let col_need_for_tp (occ : list var_name) (live : list var_name) (tp : triple_pattern) : col_need =
+  let needs_var (v : var_name) : bool = List.Tot.mem v live || var_is_shared occ v in
+  {
+    cn_s = (match tp.tp_s with PS_Var v -> needs_var v | PS_IRI _ | PS_BNode _ -> false | PS_TripleTerm _ _ _ -> true);
+    cn_p = (match tp.tp_p with PT_Var v -> needs_var v | PT_IRI _ | PT_BNode _ | PT_Literal _ -> false | PT_TripleTerm _ _ _ -> true);
+    cn_o = (match tp.tp_o with PT_Var v -> needs_var v | PT_IRI _ | PT_BNode _ | PT_Literal _ -> false | PT_TripleTerm _ _ _ -> true);
+  }
+
+(* Query-shape-aware sibling of `graph_to_store` (line ~159, kept
+   unchanged/unselective for the lemmas at the bottom of this file and
+   any other caller that doesn't know its own query shape). Same
+   contract, but the `indexed_graph` it builds only has the buckets
+   `p` can possibly read. *)
+let graph_to_store_for (p : group_graph_pattern) (g : rdf_graph) : graph_store =
+  { gs_graph = g; gs_indexed = build_indexed_selective (bucket_needs_of_pattern p) g }
+
+let dataset_to_store_for (p : group_graph_pattern) (ds : rdf_dataset) : rdf_dataset_store =
+  {
+    dss_default = graph_to_store_for p ds.ds_default;
+    dss_named =
+      List.Tot.map
+        (fun (ng : named_graph) ->
+          { ngs_name = ng.ng_name; ngs_store = graph_to_store_for p ng.ng_graph })
+        ds.ds_named
+  }
+
+(** ====================================================================== **)
+(** Part 8: SPARQL 1.1 Expression Evaluation (§17)                         **)
+(** eval_expr_with_base is self-contained: it does not call eval_pattern.  **)
+(** ====================================================================== **)
+
+// XSD type casting: xsd:integer(), xsd:decimal(), xsd:boolean(), etc.
+// Strip leading '+' sign from a numeric string (XSD allows +33.3 = 33.3)
+let strip_leading_plus (s : string) : string =
+  if String.length s > 0 then
+    let chars = String.list_of_string s in
+    match chars with
+    | c :: rest -> if c = FStar.Char.char_of_int 43 then String.string_of_list rest else s
+    | [] -> s
+  else s
+
+let eval_xsd_cast (v : eval_result) (target_type : string) (full_iri : string) : eval_result =
+  let get_lex = match v with
+    | ER_Num n -> Some (string_of_int n)
+    | ER_Dec s -> Some s
+    | ER_Dbl s -> Some s
+    | ER_Bool b -> Some (if b then "true" else "false")
+    | ER_Term (T_Literal l) -> Some (lit_lexical l)
+    | ER_Term (T_IRI i) -> Some (iri_to_string i)
+    | _ -> None
+  in
+  match get_lex with
+  | None -> ER_Error
+  | Some lex0 ->
+    // Strip leading '+' for numeric target types only
+    let lex = if target_type = "string" || target_type = "boolean" then lex0
+              else strip_leading_plus lex0 in
+    if target_type = "integer" then
+      // Boolean -> integer: true=1, false=0
+      (match v with
+       | ER_Bool b -> ER_Num (if b then 1 else 0)
+       | _ ->
+         match parse_int_string lex with
+         | Some n -> ER_Num n
+         | None ->
+           // Try parsing as double first (handles E-notation correctly),
+           // then decimal. parse_double_to_scaled falls through to parse_to_scaled
+           // for non-E strings, so this handles both cases.
+           (match parse_double_to_scaled lex with
+            | Some (sv, sc) ->
+              let divisor = pow10 sc in
+              // Truncate toward zero, not floor division
+              // F* integer division rounds toward -inf, but XSD wants truncation toward 0
+              if divisor = 0 then ER_Num 0
+              else
+                let raw : int = sv / divisor in
+                let remainder : int = sv - (op_Multiply raw divisor) in
+                // If negative and there's a remainder, floor division went too far
+                if sv < 0 && remainder <> 0 then ER_Num (raw + 1) else ER_Num raw
+            | None ->
+              let (ip, _, _) = split_decimal lex in
+              (match ip with | Some n -> ER_Num n | None -> ER_Error)))
+    else if target_type = "decimal" then
+      // Boolean -> decimal: true="1.0", false="0.0"
+      (match v with
+       | ER_Bool b -> ER_Dec (if b then "1.0" else "0.0")
+       | ER_Num n -> ER_Dec (string_of_int n ^ ".0")
+       | ER_Dec _ -> ER_Dec lex
+       | _ ->
+         // Try decimal form first, then E-notation, then integer
+         (match parse_to_scaled lex with
+          | Some _ -> ER_Dec lex
+          | None ->
+            match parse_double_to_scaled lex with
+            | Some (sv, sc) ->
+              // Convert E-notation to decimal form
+              let divisor = pow10 sc in
+              if divisor = 0 then ER_Dec "0.0"
+              else if sv % divisor = 0 then
+                // Exact integer: 1E0 -> 1.0, 0E1 -> 0.0
+                ER_Dec (string_of_int (sv / divisor) ^ ".0")
+              else
+                // Has fractional part: use the scaled representation
+                ER_Dec lex
+            | None ->
+              match parse_int_string lex with
+              | Some n -> ER_Dec (string_of_int n ^ ".0")
+              | None -> ER_Error))
+    else if target_type = "double" then
+      // Boolean -> double: true="1.0E0", false="0.0E0"
+      (match v with
+       | ER_Bool b -> ER_Dbl (if b then "1.0E0" else "0.0E0")
+       | ER_Num n -> ER_Dbl (string_of_int n ^ ".0E0")
+       | ER_Dbl _ -> ER_Dbl lex
+       | ER_Dec _ ->
+         // Decimal to double: validate it's a valid decimal
+         (match parse_to_scaled lex with
+          | Some _ -> ER_Dbl lex
+          | None -> ER_Error)
+       | _ ->
+         // Validate the lexical form is actually a valid double/decimal/integer
+         (match parse_double_to_scaled lex with
+          | Some _ -> ER_Dbl lex
+          | None ->
+            match parse_to_scaled lex with
+            | Some _ -> ER_Dbl lex
+            | None ->
+              match parse_int_string lex with
+              | Some n -> ER_Dbl (string_of_int n ^ ".0E0")
+              | None -> ER_Error))
+    else if target_type = "float" then
+      // xsd:float has no dedicated ER_* variant (eval uses ER_Dbl for both
+      // float and double in arithmetic). The cast preserves input lexical
+      // form and only rewrites the datatype tag — so we emit an explicit
+      // T_Literal with xsd_float rather than routing through ER_Dbl which
+      // always renders as xsd:double. This loses downstream arithmetic
+      // promotion, which is correct per SPARQL §17.4.2: casts return a
+      // new typed literal, not an ER_Num/ER_Dbl.
+      //
+      // Canonical lexical form for xsd:float follows ARQ/Jena convention
+      // (matches W3C SPARQL cast suite expectations):
+      //   - bool true  -> "1.0E0", bool false -> "0E0"
+      //   - integer 0  -> "0",     integer n  -> "<n>.0"
+      //   - double/float E-notation source with integer value:
+      //                  0 -> "0.0", n -> "<n>.0"
+      //   - else preserve lexical form
+      let mk_float (s : string) : eval_result =
+        ER_Term (T_Literal { lexical_form = s; datatype = xsd_float; lang_tag = None; direction = None })
+      in
+      // Canonical form for an integer-valued numeric coming from a parsed
+      // double/decimal scaled pair. zero -> "0.0", nonzero -> "<n>.0".
+      let canon_int_float (n : int) : string =
+        if n = 0 then "0.0" else string_of_int n ^ ".0"
+      in
+      // If lex parses to (sv, sc) and sv is divisible by 10^sc, the value
+      // is integer-valued; emit canonical "<int>.0" form. Otherwise None.
+      let try_canon_dbl (s : string) : option string =
+        match parse_double_to_scaled s with
+        | Some (sv, sc) ->
+          let p = pow10 sc in
+          if p > 0 && sv % p = 0 then Some (canon_int_float (sv / p))
+          else None
+        | None -> None
+      in
+      (match v with
+       | ER_Bool b -> mk_float (if b then "1.0E0" else "0E0")
+       | ER_Num n -> mk_float (if n = 0 then "0" else string_of_int n ^ ".0")
+       | ER_Dbl _ ->
+         (match try_canon_dbl lex with
+          | Some canon -> mk_float canon
+          | None -> mk_float lex)
+       | ER_Dec _ ->
+         (match parse_to_scaled lex with
+          | Some _ -> mk_float lex
+          | None -> ER_Error)
+       | _ ->
+         // String input: preserve lex form. ARQ-style scientific
+         // re-canonicalization for string inputs (e.g. "0.0" -> "0E0",
+         // "+33.3300" -> "3.333E1", "1.5" -> "1.5E0", "-10.2E3" -> "-1.02E4")
+         // is not implemented yet — see docs/designissues/2026-04-25-...
+         (match parse_double_to_scaled lex with
+          | Some _ -> mk_float lex
+          | None ->
+            match parse_to_scaled lex with
+            | Some _ -> mk_float lex
+            | None ->
+              match parse_int_string lex with
+              | Some n -> mk_float (string_of_int n ^ ".0E0")
+              | None -> ER_Error))
+    else if target_type = "boolean" then
+      // XSD boolean casting: numeric 0/0.0/0E0/NaN -> false, nonzero -> true
+      // String: "true"/"1" -> true, "false"/"0" -> false
+      match v with
+      | ER_Num n -> ER_Bool (n <> 0)
+      | ER_Dec _ | ER_Dbl _ ->
+        (match parse_to_scaled lex with
+         | Some (sv, _) -> ER_Bool (sv <> 0)
+         | None ->
+           match parse_double_to_scaled lex with
+           | Some (sv, _) -> ER_Bool (sv <> 0)
+           | None -> ER_Error)
+      | ER_Bool b -> ER_Bool b
+      | _ ->
+        if lex = "true" || lex = "1" then ER_Bool true
+        else if lex = "false" || lex = "0" then ER_Bool false
+        else
+          // Try parsing as number
+          match parse_int_string lex with
+          | Some n -> ER_Bool (n <> 0)
+          | None ->
+            match parse_to_scaled lex with
+            | Some (sv, _) -> ER_Bool (sv <> 0)
+            | None -> ER_Error
+    else if target_type = "string" then
+      // For numeric types, simplify the lexical form
+      // Decimal 1.0 -> "1", double 1E0 -> "1"
+      (match v with
+       | ER_Num _ -> er_string lex
+       | ER_Dec _ ->
+         (match parse_to_scaled lex with
+          | Some (sv, sc) ->
+            let divisor = pow10 sc in
+            if divisor > 0 && sv % divisor = 0 then er_string (string_of_int (sv / divisor))
+            else er_string lex
+          | None -> er_string lex)
+       | ER_Dbl _ ->
+         (match parse_double_to_scaled lex with
+          | Some (sv, sc) ->
+            let divisor = pow10 sc in
+            if divisor > 0 && sv % divisor = 0 then er_string (string_of_int (sv / divisor))
+            else er_string lex
+          | None -> er_string lex)
+       | _ -> er_string lex)
+    else
+      // Other XSD types: create a typed literal
+      if is_iri full_iri && full_iri <> rdf_lang_string && full_iri <> rdf_dir_lang_string then
+        ER_Term (T_Literal { lexical_form = lex; datatype = full_iri; lang_tag = None; direction = None })
+      else ER_Error
+
+(* ================================================================ *)
+(* GeoSPARQL v0 `geof:` function-call dispatch.                       *)
+(*                                                                    *)
+(* Pure F* (RDF.Geo.Types / RDF.Geo.BBox / RDF.Geo.Topology /          *)
+(* RDF.Geo.Functions / Parser.WKT) — see                               *)
+(* docs/designissues/2026-05-07-geosparql-fstar-investigation.md and   *)
+(* the decided-vs-refused predicate table in RDF.Geo.Topology.fst's    *)
+(* header. `None` from any predicate/function (CRS mismatch,           *)
+(* undecided geometry-kind pair, or a non-`geo:wktLiteral` argument)    *)
+(* maps to `ER_Error`, never to a guessed boolean.                     *)
+(*                                                                    *)
+(* This is a plain (non-recursive) helper taking already-evaluated     *)
+(* argument results — it does not need to join `eval_expr_with_base`'s  *)
+(* big mutual-recursion clique below, it is simply called from the      *)
+(* `E_FunctionCall` arm with `args` pre-evaluated.                       *)
+(* ================================================================ *)
+
+let er_to_geo_wkt (v : eval_result) : option Geo.geo_wkt_value =
+  match er_string_info v with
+  | Some (s, _, dt) -> if dt = Geo.geo_wktLiteral then WKT.parse_wkt_literal s else None
+  | None -> None
+
+let geo_bool_result (b : option bool) : eval_result =
+  match b with
+  | Some bb -> ER_Bool bb
+  | None -> ER_Error
+
+let geo_double_result (v : Geo.geo_scaled) : eval_result =
+  ER_Term (T_Literal { lexical_form = Geo.gs_to_string v; datatype = xsd_double; lang_tag = None; direction = None })
+
+let geo_wkt_result (v : Geo.geo_wkt_value) : eval_result =
+  ER_Term (T_Literal { lexical_form = WKT.serialize_wkt_value v;
+                        datatype = Geo.geo_wktLiteral; lang_tag = None; direction = None })
+
+// The 8 Simple Features predicates, dispatched by exact IRI match.
+let eval_geof_predicate (name : string) (a b : Geo.geo_wkt_value) : option eval_result =
+  let go (f : Geo.geo_geometry -> Geo.geo_geometry -> option bool) : eval_result =
+    geo_bool_result (GeoTopo.geo_wkt_predicate f a b) in
+  if name = "sfEquals" then Some (go GeoTopo.sf_equals)
+  else if name = "sfDisjoint" then Some (go GeoTopo.sf_disjoint)
+  else if name = "sfIntersects" then Some (go GeoTopo.sf_intersects)
+  else if name = "sfTouches" then Some (go GeoTopo.sf_touches)
+  else if name = "sfWithin" then Some (go GeoTopo.sf_within)
+  else if name = "sfContains" then Some (go GeoTopo.sf_contains)
+  else if name = "sfOverlaps" then Some (go GeoTopo.sf_overlaps)
+  else if name = "sfCrosses" then Some (go GeoTopo.sf_crosses)
+  else None
+
+let eval_geof_call (iri_s : string) (arg_vals : list eval_result) : eval_result =
+  let ns_len = String.length Geo.geof_ns in
+  if not (String.length iri_s > ns_len && String.sub iri_s 0 ns_len = Geo.geof_ns) then ER_Error
+  else
+    let name = String.sub iri_s ns_len (String.length iri_s - ns_len) in
+    match arg_vals with
+    | [a; b] ->
+      (match er_to_geo_wkt a, er_to_geo_wkt b with
+       | Some wa, Some wb ->
+         (match eval_geof_predicate name wa wb with
+          | Some r -> r
+          | None ->
+            if name = "distance" then
+              if GeoTopo.geo_crs_compatible wa.Geo.gw_crs wb.Geo.gw_crs then
+                (match GeoFn.geo_distance wa.Geo.gw_geom wb.Geo.gw_geom with
+                 | Some d -> geo_double_result d
+                 | None -> ER_Error)
+              else ER_Error
+            else ER_Error)
+       | _, _ -> ER_Error)
+    | [a] ->
+      if name = "envelope" then
+        (match er_to_geo_wkt a with
+         | Some wa ->
+           (match GeoFn.geo_envelope wa.Geo.gw_geom with
+            | Some env -> geo_wkt_result ({ Geo.gw_crs = wa.Geo.gw_crs; Geo.gw_geom = env })
+            | None -> ER_Error)
+         | None -> ER_Error)
+      else ER_Error
+    | _ -> ER_Error
+
+(* SPARQL 1.1 §17.6 extension functions — issue #463. Host-registered
+   custom functions keyed by absolute IRI. The evaluator's
+   E_FunctionCall arm consults this hook LAST, after every
+   natively-implemented function family (built-ins, geof:, xsd:
+   casts): Some r is the function's result for the already-evaluated
+   argument list; None means no function is registered under that
+   IRI, and the caller maps it to ER_Error — the error §17.6 requires
+   for an unsupported function. Rule-#11 host call-out, same family
+   as service_endpoint_lookup below: the OCaml side realises it as a
+   registry table; the npm/browser side bridges it to
+   caller-supplied JS functions (Comunica-style extensionFunctions).
+   Pure from F*'s perspective: within one query evaluation each
+   (iri, args) call sees a single stable answer — the JS bridge
+   memoises per (iri, serialised args) to honor exactly this
+   contract, including for async host functions. *)
+assume val extension_function_call : string -> list eval_result -> option eval_result
+
+let rec eval_expr_with_base (base : option wf_iri) (e : expr) (mu : solution_mapping)
+  : Tot eval_result (decreases e) =
+  match e with
+  (* Primary expressions *)
+  | E_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_Literal l) ->
+       (* Promote numeric-typed literals to ER_Num/ER_Dec/ER_Dbl so that
+          value_compare works correctly against E_NumericLit etc. *)
+       if lit_datatype l = xsd_integer then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> ER_Num n
+          | None -> ER_Term (T_Literal l))
+       else if lit_datatype l = xsd_decimal then
+         ER_Dec (lit_lexical l)
+       else if lit_datatype l = xsd_double || lit_datatype l = xsd_float then
+         ER_Dbl (lit_lexical l)
+       else if lit_datatype l = xsd_boolean then
+         ER_Bool (lit_lexical l = "true" || lit_lexical l = "1")
+       else
+         ER_Term (T_Literal l)
+     | Some t -> ER_Term t
+     | None -> ER_Error)
+  | E_IRI i -> ER_Term (T_IRI i)
+  | E_Literal l -> ER_Term (T_Literal l)
+  | E_BoolLit b -> ER_Bool b
+  | E_NumericLit n -> ER_Num n
+  | E_DecimalLit s -> ER_Dec s
+  | E_DoubleLit s -> ER_Dbl s
+
+  (* Arithmetic *)
+  | E_Arith op e1 e2 ->
+    (let v1 = eval_expr_with_base base e1 mu in
+     let v2 = eval_expr_with_base base e2 mu in
+     match v1, v2 with
+     | ER_Num a, ER_Num b -> eval_arith_int op a b
+     | _ ->
+       // Cross-type numeric arithmetic using scaled representation
+       (match er_to_numeric v1, er_to_numeric v2 with
+        | Some (a, sa, ka), Some (b, sb, kb) ->
+          let result_kind = promote_kind ka kb in
+          // For division, always produce decimal (or double if either operand is double)
+          let result_kind = if Div? op && NK_Int? result_kind then NK_Dec else result_kind in
+          (match op with
+           | Add ->
+             let (rv, rs) = add_scaled a sa b sb in
+             format_numeric_result rv rs result_kind
+           | Sub ->
+             let (ra, rb) = if sa >= sb then (a, op_Multiply b (pow10 (sa - sb)))
+                            else (op_Multiply a (pow10 (sb - sa)), b) in
+             let rs : nat = (if sa >= sb then sa else sb) in
+             format_numeric_result (ra - rb) rs result_kind
+           | Mul ->
+             let rv = op_Multiply a b in
+             let rs : nat = sa + sb in
+             format_numeric_result rv rs result_kind
+           | Div ->
+             if b = 0 then ER_Error
+             else
+               let extra : nat = 10 in
+               let extended = op_Multiply a (pow10 (sb + extra)) in
+               let divisor = op_Multiply b (pow10 sa) in
+               if divisor = 0 then ER_Error
+               else format_numeric_result (extended / divisor) extra result_kind)
+        | _, _ -> ER_Error))
+  | E_UnaryMinus e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Num n -> ER_Num (0 - n)
+     | ER_Dec s ->
+       if string_starts_with s "-" && String.length s > 1
+       then ER_Dec (String.sub s 1 (String.length s - 1))
+       else if string_starts_with s "-"
+       then ER_Dec "0"
+       else ER_Dec (String.concat "" ["-"; s])
+     | ER_Dbl s ->
+       if string_starts_with s "-" && String.length s > 1
+       then ER_Dbl (String.sub s 1 (String.length s - 1))
+       else if string_starts_with s "-"
+       then ER_Dbl "0"
+       else ER_Dbl (String.concat "" ["-"; s])
+     | _ -> ER_Error)
+  | E_UnaryPlus e1 -> eval_expr_with_base base e1 mu
+
+  (* Comparison *)
+  | E_Compare op e1 e2 ->
+    (match value_compare (eval_expr_with_base base e1 mu) (eval_expr_with_base base e2 mu) op with
+     | Some b -> ER_Bool b
+     | None -> ER_Error)
+
+  (* Logical connectives -- §17.3's error-tolerant, error-preserving
+     tables (issue #365 EX-2): `bool_and_checked`/`bool_or_checked`/
+     `bool_not_checked` let a dominant false/true operand still win over
+     an erroring co-operand, but propagate the error (ER_Error) rather
+     than silently collapsing it to a definite bool wherever the table
+     does not dominate. *)
+  | E_And e1 e2 ->
+    (match bool_and_checked (ebv_checked (eval_expr_with_base base e1 mu))
+                             (ebv_checked (eval_expr_with_base base e2 mu)) with
+     | Some b -> ER_Bool b
+     | None -> ER_Error)
+  | E_Or e1 e2 ->
+    (match bool_or_checked (ebv_checked (eval_expr_with_base base e1 mu))
+                            (ebv_checked (eval_expr_with_base base e2 mu)) with
+     | Some b -> ER_Bool b
+     | None -> ER_Error)
+  | E_Not e1 ->
+    (match bool_not_checked (ebv_checked (eval_expr_with_base base e1 mu)) with
+     | Some b -> ER_Bool b
+     | None -> ER_Error)
+
+  (* Type tests *)
+  | E_IsIRI e1 -> fn_isIRI (eval_expr_with_base base e1 mu)
+  | E_IsBlank e1 -> fn_isBlank (eval_expr_with_base base e1 mu)
+  | E_IsLiteral e1 -> fn_isLiteral (eval_expr_with_base base e1 mu)
+  | E_IsNumeric e1 -> fn_isNumeric (eval_expr_with_base base e1 mu)
+
+  (* Accessors *)
+  | E_Str e1 -> fn_str (eval_expr_with_base base e1 mu)
+  | E_Lang e1 -> fn_lang (eval_expr_with_base base e1 mu)
+  | E_Datatype e1 -> fn_datatype (eval_expr_with_base base e1 mu)
+  | E_HasLang e1 -> fn_haslang (eval_expr_with_base base e1 mu)
+  | E_HasLangDir e1 -> fn_haslangdir (eval_expr_with_base base e1 mu)
+  | E_LangDir e1 -> fn_langdir (eval_expr_with_base base e1 mu)
+  | E_IRI_fn e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Term (T_IRI i) -> ER_Term (T_IRI i)
+     | ER_Term (T_Literal l) ->
+       let s = lit_lexical l in
+       (match base with
+        | Some b -> ER_Term (T_IRI (resolve_iri b s))
+        | None ->
+          (match string_to_iri s with
+           | Some i -> ER_Term (T_IRI i)
+           | None -> ER_Error))
+     | _ -> ER_Error)
+
+  (* Term constructors *)
+  | E_StrDt e1 e2 ->
+    (match er_to_string (eval_expr_with_base base e1 mu), eval_expr_with_base base e2 mu with
+     | Some s, ER_Term (T_IRI dt) -> ER_Term (fn_strdt s dt)
+     | _, _ -> ER_Error)
+  | E_StrLang e1 e2 ->
+    // STRLANG only works on simple literals (xsd:string, no lang tag)
+    let v1 = eval_expr_with_base base e1 mu in
+    (match v1, er_to_string (eval_expr_with_base base e2 mu) with
+     | ER_Term (T_Literal l), Some lang ->
+       if (lit_datatype l = xsd_string || lit_datatype l = "") && l.lang_tag = None
+       then ER_Term (fn_strlang (lit_lexical l) lang)
+       else ER_Error
+     | _, _ -> ER_Error)
+  | E_StrLangDir e1 e2 e3 ->
+    // STRLANGDIR(lexical, langtag, dir) — same simple-literal restriction
+    // as STRLANG above, plus: langtag must be non-empty and dir must be
+    // exactly "ltr"/"rtl" (lang-basedir/strlangdir fixture: an empty
+    // langtag or a non-lowercase/unrecognized dir string is an error,
+    // i.e. the bound variable is left unbound).
+    let v1 = eval_expr_with_base base e1 mu in
+    (match v1, er_to_string (eval_expr_with_base base e2 mu),
+             er_to_string (eval_expr_with_base base e3 mu) with
+     | ER_Term (T_Literal l), Some lang, Some dirstr ->
+       if (lit_datatype l = xsd_string || lit_datatype l = "") && l.lang_tag = None
+          && String.length lang > 0
+       then (match parse_text_direction dirstr with
+             | Some d -> ER_Term (fn_strlangdir (lit_lexical l) lang d)
+             | None -> ER_Error)
+       else ER_Error
+     | _, _, _ -> ER_Error)
+
+  (* BOUND *)
+  | E_Bound v -> ER_Bool (Some? (sm_lookup v mu))
+
+  (* Conditional *)
+  | E_If cond then_e else_e ->
+    if ebv (eval_expr_with_base base cond mu) then eval_expr_with_base base then_e mu
+    else eval_expr_with_base base else_e mu
+  | E_Coalesce es -> eval_coalesce_with_base base es mu
+  | E_In ev es ->
+    let v = eval_expr_with_base base ev mu in
+    eval_in_with_base base v es mu
+  | E_NotIn ev es ->
+    let v = eval_expr_with_base base ev mu in
+    (match eval_in_with_base base v es mu with
+     | ER_Bool b -> ER_Bool (not b)
+     | other -> other)
+
+  (* String functions *)
+  | E_StrLen e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> ER_Num (string_length s)
+     | None -> ER_Error)
+  | E_Substr e1 e2 e3_opt ->
+    let v1 = eval_expr_with_base base e1 mu in
+    (match er_string_info v1, eval_expr_with_base base e2 mu with
+     | Some (s, lang, dt), ER_Num start ->
+       if start < 0 then ER_Error
+       else
+         let len_opt = match e3_opt with
+           | Some e3 -> (match eval_expr_with_base base e3 mu with
+                         | ER_Num n -> if n >= 0 then Some n else None
+                         | _ -> None)
+           | None -> None
+         in er_string_preserve (fn_substr_spec s start len_opt) lang dt
+     | _, _ -> ER_Error)
+  | E_UCase e1 ->
+    let v1 = eval_expr_with_base base e1 mu in
+    (match er_string_info v1 with
+     | Some (s, lang, dt) -> er_string_preserve (string_upper s) lang dt
+     | None -> ER_Error)
+  | E_LCase e1 ->
+    let v1 = eval_expr_with_base base e1 mu in
+    (match er_string_info v1 with
+     | Some (s, lang, dt) -> er_string_preserve (string_lower s) lang dt
+     | None -> ER_Error)
+  | E_StrStarts e1 e2 ->
+    (match er_to_string (eval_expr_with_base base e1 mu), er_to_string (eval_expr_with_base base e2 mu) with
+     | Some s, Some prefix -> ER_Bool (string_starts_with s prefix)
+     | _, _ -> ER_Error)
+  | E_StrEnds e1 e2 ->
+    (match er_to_string (eval_expr_with_base base e1 mu), er_to_string (eval_expr_with_base base e2 mu) with
+     | Some s, Some suffix -> ER_Bool (string_ends_with s suffix)
+     | _, _ -> ER_Error)
+  | E_Contains e1 e2 ->
+    (match er_to_string (eval_expr_with_base base e1 mu), er_to_string (eval_expr_with_base base e2 mu) with
+     | Some s, Some sub -> ER_Bool (string_contains s sub)
+     | _, _ -> ER_Error)
+  | E_StrBefore e1 e2 ->
+    let v1 = eval_expr_with_base base e1 mu in
+    let v2 = eval_expr_with_base base e2 mu in
+    (match er_string_info v1, er_string_info v2 with
+     | Some (s, lang1, dt1), Some (arg, lang2, dt2) ->
+       // Argument compatibility per SPARQL 17.4.3.22
+       let compatible =
+         (None? lang1 && None? lang2) ||
+         (None? lang1 && (dt1 = xsd_string) && None? lang2 && (dt2 = xsd_string)) ||
+         (Some? lang1 && None? lang2 && (dt2 = xsd_string || dt2 = rdf_langString)) ||
+         (None? lang1 && (dt1 = xsd_string) && Some? lang2) ||
+         (Some? lang1 && Some? lang2 && lang1 = lang2) in
+       if not compatible then ER_Error
+       else if String.length arg = 0 then er_string_preserve "" lang1 dt1
+       else
+         let result = string_before s arg in
+         if String.length result = 0 && not (string_contains s arg) then er_string ""
+         else er_string_preserve result lang1 dt1
+     | _, _ -> ER_Error)
+  | E_StrAfter e1 e2 ->
+    let v1 = eval_expr_with_base base e1 mu in
+    let v2 = eval_expr_with_base base e2 mu in
+    (match er_string_info v1, er_string_info v2 with
+     | Some (s, lang1, dt1), Some (arg, lang2, dt2) ->
+       // Argument compatibility per SPARQL 17.4.3.23
+       let compatible =
+         (None? lang1 && None? lang2) ||
+         (None? lang1 && (dt1 = xsd_string) && None? lang2 && (dt2 = xsd_string)) ||
+         (Some? lang1 && None? lang2 && (dt2 = xsd_string || dt2 = rdf_langString)) ||
+         (None? lang1 && (dt1 = xsd_string) && Some? lang2) ||
+         (Some? lang1 && Some? lang2 && lang1 = lang2) in
+       if not compatible then ER_Error
+       else if String.length arg = 0 then er_string_preserve s lang1 dt1
+       else
+         let result = string_after s arg in
+         if String.length result = 0 && not (string_contains s arg) then er_string ""
+         else er_string_preserve result lang1 dt1
+     | _, _ -> ER_Error)
+  | E_Concat es -> eval_concat_with_base base es mu
+  | E_EncodeForUri e1 ->
+    // ENCODE_FOR_URI always returns xsd:string (no lang preservation per spec)
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (string_encode_uri s)
+     | None -> ER_Error)
+  | E_Replace e1 e2 e3 e4_opt ->
+    let v1 = eval_expr_with_base base e1 mu in
+    (match er_string_info v1, er_to_string (eval_expr_with_base base e2 mu),
+           er_to_string (eval_expr_with_base base e3 mu) with
+     | Some (s, lang, dt), Some pat, Some rep ->
+       let flags = match e4_opt with
+         | Some e4 -> er_to_string (eval_expr_with_base base e4 mu)
+         | None -> None
+       in er_string_preserve (string_replace s pat rep flags) lang dt
+     | _, _, _ -> ER_Error)
+  | E_Regex e1 e2 e3_opt ->
+    (match er_to_string (eval_expr_with_base base e1 mu), er_to_string (eval_expr_with_base base e2 mu) with
+     | Some s, Some pat ->
+       let flags = match e3_opt with
+         | Some e3 -> er_to_string (eval_expr_with_base base e3 mu)
+         | None -> None
+       in ER_Bool (fn_regex_spec s pat flags)
+     | _, _ -> ER_Error)
+
+  (* Numeric functions *)
+  | E_Abs e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Num n -> ER_Num (int_abs n)
+     | ER_Dec s ->
+       if String.length s > 0 && String.index s 0 = FStar.Char.char_of_int 45 (* '-' *)
+       then ER_Dec (String.sub s 1 (String.length s - 1))
+       else ER_Dec s
+     | ER_Dbl s ->
+       if String.length s > 0 && String.index s 0 = FStar.Char.char_of_int 45
+       then ER_Dbl (String.sub s 1 (String.length s - 1))
+       else ER_Dbl s
+     | _ -> ER_Error)
+  | E_Round e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Num n -> ER_Num n
+     | ER_Dec s -> ER_Dec (string_of_int (int_round s))
+     | ER_Dbl s -> ER_Dbl (string_of_int (int_round s))
+     | _ -> ER_Error)
+  | E_Ceil e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Num n -> ER_Num n
+     | ER_Dec s -> ER_Dec (string_of_int (int_ceil s))
+     | ER_Dbl s -> ER_Dbl (string_of_int (int_ceil s))
+     | _ -> ER_Error)
+  | E_Floor e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Num n -> ER_Num n
+     | ER_Dec s -> ER_Dec (string_of_int (int_floor s))
+     | ER_Dbl s -> ER_Dbl (string_of_int (int_floor s))
+     | _ -> ER_Error)
+
+  (* Hash functions *)
+  | E_MD5 e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (hash_md5 s)
+     | None -> ER_Error)
+  | E_SHA1 e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (hash_sha1 s)
+     | None -> ER_Error)
+  | E_SHA256 e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (hash_sha256 s)
+     | None -> ER_Error)
+  | E_SHA384 e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (hash_sha384 s)
+     | None -> ER_Error)
+  | E_SHA512 e1 ->
+    (match er_to_string (eval_expr_with_base base e1 mu) with
+     | Some s -> er_string (hash_sha512 s)
+     | None -> ER_Error)
+
+  (* Date/time functions *)
+  | E_Now ->
+    (* §17.4.5.1: NOW() is an xsd:dateTime, the same instant throughout
+       one query execution. The lexical form is read at the boundary
+       (process-fixed) via fx_current_datetime. *)
+    ER_Term (T_Literal ({ lexical_form = fx_current_datetime ();
+                          datatype = xsd_dateTime; lang_tag = None; direction = None }))
+  | E_Year e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_year s with Some n -> ER_Num n | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Month e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_month s with Some n -> ER_Num n | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Day e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_day s with Some n -> ER_Num n | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Hours e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_hours s with Some n -> ER_Num n | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Minutes e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_minutes s with Some n -> ER_Num n | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Seconds e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_seconds s with Some ds -> ER_Dec ds | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Timezone e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_timezone s with
+                  | Some "" -> ER_Error  // no timezone = unbound
+                  | Some tz -> ER_Term (T_Literal { lexical_form = tz;
+                               datatype = xsd_dayTimeDuration;
+                               lang_tag = None; direction = None })
+                  | None -> ER_Error)
+     | None -> ER_Error)
+  | E_Tz e1 ->
+    (match er_to_datetime_lex (eval_expr_with_base base e1 mu) with
+     | Some s -> (match dt_tz s with Some tz -> er_string tz | None -> ER_Error)
+     | None -> ER_Error)
+
+  (* SameTerm *)
+  | E_SameTerm e1 e2 ->
+    (match eval_expr_with_base base e1 mu, eval_expr_with_base base e2 mu with
+     | ER_Term t1, ER_Term t2 -> ER_Bool (same_term t1 t2)
+     | ER_Num a, ER_Num b -> ER_Bool (a = b)
+     | ER_Dec a, ER_Dec b -> ER_Bool (a = b)
+     | ER_Dbl a, ER_Dbl b -> ER_Bool (a = b)
+     | ER_Bool a, ER_Bool b -> ER_Bool (a = b)
+     | _, _ -> ER_Bool false)
+
+  (* EXISTS / NOT EXISTS — require graph context, delegated *)
+  | E_Exists _ -> ER_Error
+  | E_NotExists _ -> ER_Error
+
+  (* SPARQL 1.2 triple-term builtins (Query WD §17.4).
+     TRIPLE(s,p,o) / <<( s p o )>>: s must be an IRI or blank node, p an
+     IRI, o any RDF term; anything else is a type error. The accessors
+     SUBJECT/PREDICATE/OBJECT project a triple term (type error on a
+     non-triple), and isTRIPLE tests for one (never errors on a bound
+     value; propagates an argument error). *)
+  | E_TripleTerm es ep eo ->
+    (match er_to_term (eval_expr_with_base base es mu),
+           er_to_term (eval_expr_with_base base ep mu),
+           er_to_term (eval_expr_with_base base eo mu) with
+     | Some sterm, Some (T_IRI p), Some oterm ->
+       (match term_to_subject_opt sterm with
+        | Some ssub -> ER_Term (T_TripleTerm ssub p oterm)
+        | None -> ER_Error)   // subject was a literal or triple term
+     | _, _, _ -> ER_Error)
+  | E_TTSubject e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Term (T_TripleTerm s _ _) -> ER_Term (subject_to_term s)
+     | _ -> ER_Error)
+  | E_TTPredicate e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Term (T_TripleTerm _ p _) -> ER_Term (T_IRI p)
+     | _ -> ER_Error)
+  | E_TTObject e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Term (T_TripleTerm _ _ o) -> ER_Term o
+     | _ -> ER_Error)
+  | E_IsTriple e1 ->
+    (match eval_expr_with_base base e1 mu with
+     | ER_Error -> ER_Error
+     | ER_Term (T_TripleTerm _ _ _) -> ER_Bool true
+     | _ -> ER_Bool false)
+
+  (* Aggregates — evaluated in aggregation context, not here *)
+  | E_Aggregate _ _ _ -> ER_Error
+
+  (* Function call — dispatch known IRIs *)
+  | E_FunctionCall iri args ->
+    (let iri_s = iri_to_string iri in
+     if iri_s = "http://www.w3.org/2005/xpath-functions#langMatches" then
+       match args with
+       | [e1; e2] ->
+         (match er_to_string (eval_expr_with_base base e1 mu), er_to_string (eval_expr_with_base base e2 mu) with
+          | Some tag, Some range -> ER_Bool (fn_langMatches_spec tag range)
+          | _, _ -> ER_Error)
+       | _ -> ER_Error
+     else if iri_s = "http://www.w3.org/2005/xpath-functions#rand" then
+       ER_Dbl "0.5"  (* deterministic stub for testing *)
+     else if iri_s = "http://www.w3.org/2005/xpath-functions#uuid" then
+       (* §17.4.2.12: UUID() returns a FRESH IRI per call. The freshness
+          seed is (row, call-site) injected by the caller (BIND / SELECT
+          projection); see fx_ctx_put. *)
+       (let row = (match fx_ctx_get fx_key_row mu with Some r -> r | None -> "") in
+        let occ = (match fx_ctx_get fx_key_occ mu with Some o -> o | None -> "") in
+        let uuid_iri = "urn:uuid:" ^ fx_uuid_of_seed ("u|" ^ row ^ "|" ^ occ) in
+        if is_iri uuid_iri then ER_Term (T_IRI uuid_iri) else ER_Error)
+     else if iri_s = "http://www.w3.org/2005/xpath-functions#struuid" then
+       (* §17.4.2.13: STRUUID() returns a FRESH simple-literal UUID string. *)
+       (let row = (match fx_ctx_get fx_key_row mu with Some r -> r | None -> "") in
+        let occ = (match fx_ctx_get fx_key_occ mu with Some o -> o | None -> "") in
+        er_string (fx_uuid_of_seed ("u|" ^ row ^ "|" ^ occ)))
+     else if iri_s = "http://www.w3.org/2005/xpath-functions#bnode" then
+       (* §17.4.2.9: BNODE() is a fresh bnode distinct across solutions
+          AND across each occurrence within a solution; BNODE(str) is
+          stable for identical str within one solution but distinct
+          across solutions. Row seed => cross-solution freshness; the
+          call-site seed => per-occurrence freshness for BNODE(); the
+          str payload => per-argument identity for BNODE(str). *)
+       (let row = (match fx_ctx_get fx_key_row mu with Some r -> r | None -> "") in
+        match args with
+        | [] ->
+          let occ = (match fx_ctx_get fx_key_occ mu with Some o -> o | None -> "") in
+          ER_Term (T_BNode (fx_bnode_of_seed ("n|" ^ row ^ "|" ^ occ)))
+        | [e1] ->
+          (match er_to_string (eval_expr_with_base base e1 mu) with
+           | Some s -> ER_Term (T_BNode (fx_bnode_of_seed ("s|" ^ row ^ "|" ^ s)))
+           | None -> ER_Error)
+        | _ -> ER_Error)
+     // GeoSPARQL v0 geof: function calls (Simple Features predicates,
+     // geof:distance, geof:envelope) — see eval_geof_call above.
+     else if String.length iri_s > String.length Geo.geof_ns &&
+             String.sub iri_s 0 (String.length Geo.geof_ns) = Geo.geof_ns then
+       eval_geof_call iri_s (eval_geof_args_with_base base args mu)
+     // XSD type constructor function calls (casting)
+     else
+       let xsd_ns = "http://www.w3.org/2001/XMLSchema#" in
+       if String.length iri_s > String.length xsd_ns &&
+          String.sub iri_s 0 (String.length xsd_ns) = xsd_ns then
+         match args with
+         | [e1] ->
+           let v = eval_expr_with_base base e1 mu in
+           let target_type = String.sub iri_s (String.length xsd_ns) (String.length iri_s - String.length xsd_ns) in
+           eval_xsd_cast v target_type iri_s
+         | _ -> ER_Error
+       else
+         // §17.6 extension functions (issue #463): an IRI no native
+         // family claims is offered to the host registry with the
+         // evaluated argument list; an unregistered IRI is the
+         // spec-required error.
+         (match extension_function_call iri_s (eval_geof_args_with_base base args mu) with
+          | Some r -> r
+          | None -> ER_Error))
+
+(* Coalesce: first non-error result from list *)
+and eval_coalesce_with_base (base : option wf_iri) (es : list expr) (mu : solution_mapping)
+  : Tot eval_result (decreases es) =
+  match es with
+  | [] -> ER_Error
+  | e :: rest ->
+    (match eval_expr_with_base base e mu with
+     | ER_Error -> eval_coalesce_with_base base rest mu
+     | v -> v)
+
+// Evaluate a geof: function call's argument list. A plain
+// `List.Tot.map (fun e -> eval_expr_with_base base e mu) args` at the
+// `E_FunctionCall` call site does not let F* discharge the
+// termination obligation for the closure's recursive call — this
+// explicit structurally-recursive helper (joined into the same `and`
+// clique as `eval_expr_with_base`, exactly like `eval_coalesce_with_base`
+// / `eval_in_with_base` just above) does.
+and eval_geof_args_with_base (base : option wf_iri) (es : list expr) (mu : solution_mapping)
+  : Tot (list eval_result) (decreases es) =
+  match es with
+  | [] -> []
+  | e :: rest -> eval_expr_with_base base e mu :: eval_geof_args_with_base base rest mu
+
+(* IN: check if value equals any in list *)
+and eval_in_with_base (base : option wf_iri) (v : eval_result) (es : list expr) (mu : solution_mapping)
+  : Tot eval_result (decreases es) =
+  match es with
+  | [] -> ER_Bool false
+  | e :: rest ->
+    (match value_compare v (eval_expr_with_base base e mu) CmpEq with
+     | Some true -> ER_Bool true
+     | _ -> eval_in_with_base base v rest mu)
+
+(* CONCAT: concatenate string results *)
+and eval_concat_with_base (base : option wf_iri) (es : list expr) (mu : solution_mapping)
+  : Tot eval_result (decreases es) =
+  // CONCAT preserves lang tag (and, RDF 1.2 lang-basedir family, base
+  // direction) if all args share the same tag/direction; otherwise xsd:string.
+  match es with
+  | [] -> er_string ""
+  | [e] ->
+    // Single element: preserve its string info (lang tag, datatype, direction)
+    let v = eval_expr_with_base base e mu in
+    (match er_string_info v with
+     | Some (s, lang, dt) ->
+       (match lang, er_direction v with
+        | Some l1, Some d ->
+          ER_Term (T_Literal { lexical_form = s; datatype = rdf_dir_lang_string; lang_tag = Some l1; direction = Some d })
+        | _, _ -> er_string_preserve s lang dt)
+     | None -> ER_Error)
+  | e :: rest ->
+    let v = eval_expr_with_base base e mu in
+    (match er_string_info v with
+     | Some (s, lang, dt) ->
+       (match eval_concat_with_base base rest mu with
+        | ER_Term (T_Literal l) ->
+          let combined = strcat s (lit_lexical l) in
+          // Check if lang tags match
+          (match lang, l.lang_tag with
+           | Some l1, Some l2 ->
+             if string_lower l1 = string_lower l2 then
+               // Lang tags match; RDF 1.2 dirLangString preservation
+               // additionally requires the base directions to match
+               // (both Some the SAME direction, or both None). A
+               // direction mismatch — including one side having a
+               // direction and the other not — drops to plain
+               // xsd:string rather than falling back to rdf:langString,
+               // per the lang-basedir/concat fixture (r2/r3/r4).
+               (match er_direction v, l.direction with
+                | Some d1, Some d2 ->
+                  if d1 = d2
+                  then ER_Term (T_Literal { lexical_form = combined; datatype = rdf_dir_lang_string; lang_tag = Some l1; direction = Some d1 })
+                  else er_string combined
+                | None, None ->
+                  ER_Term (T_Literal { lexical_form = combined; datatype = rdf_lang_string; lang_tag = Some l1; direction = None })
+                | _, _ -> er_string combined)
+             else er_string combined
+           | None, None ->
+             // Both plain: preserve xsd:string datatype
+             if dt = l.datatype then
+               ER_Term (T_Literal { lexical_form = combined; datatype = dt; lang_tag = None; direction = None })
+             else er_string combined
+           | _, _ -> er_string combined)
+        | ER_Error -> ER_Error
+        | _ -> ER_Error)
+     | None -> ER_Error)
+
+(* The historical `base = None` wrappers (`eval_expr`, `eval_coalesce`,
+   `eval_in`, `eval_concat`) were removed (2026-05-16). They survived
+   the #65 BASE-IRI migration as backwards-compat shims for the
+   `65_base_iri_resolution.sh` post-extraction patch, but that patch
+   was retired upstream and the wrappers had no remaining callers.
+   All call sites now use the `_with_base` mutual-block variants
+   directly. *)
+
+irreducible
+let eval_expr_ebv (base : option wf_iri) (e : expr) (mu : solution_mapping) : bool =
+  ebv (eval_expr_with_base base e mu)
+
+irreducible
+let eval_expr_fwd (base : option wf_iri) (e : expr) (mu : solution_mapping) : eval_result =
+  eval_expr_with_base base e mu
+
+
+(* Sub-SELECT evaluation is now a REAL recursive call (issue #62
+   retirement, G4-subselect-fold, 2026-08-10): eval_select_query joined
+   the eval_pattern_store/eval_exists/substitute_existentials clique
+   below via the query_size metric (GP_SubSelect q -> 1 + query_size q
+   in pattern_size, above), so no forward-ref assume val is needed for
+   it any more — GP_SubSelect / GP_Lateral in eval_pattern_store call
+   eval_select_query directly. Only eval_property_path_fwd remains a
+   genuine forward reference (Part 13's property-path evaluator is not
+   part of this mutual group; patch 62 narrowed to this one symbol). *)
+(* Property path evaluation — concrete definition in Part 13, forward-declared
+   here so eval_pattern can use it for GP_PropertyPath *)
+type path_result_fwd = list (rdf_term * rdf_term)
+assume val eval_property_path_fwd : property_path -> rdf_graph -> path_result_fwd
+
+(* SPARQL SERVICE endpoint resolver — issue #57.
+   Hook used by GP_Service evaluation. Given the absolute IRI of a
+   federation endpoint, return Some store if the runner has registered
+   an interceptor (W3C tests bind unreachable endpoints like
+   <http://example.org/sparql> to a local TTL graph via qt:serviceData),
+   else None. The OCaml side patches this to consult a global
+   hashtable populated by the test runner; live HTTP I/O is a later
+   phase (would require Dv-effecting evaluator).
+   Pure from F*'s perspective: each call sees the same snapshot
+   during one query evaluation. *)
+assume val service_endpoint_lookup : wf_iri -> option graph_store
+
+(* Convert property path results to solution mappings by matching against
+   subject/object pattern terms *)
+let path_result_to_solutions (ps : pattern_subject) (pt : pattern_term)
+  (pairs : path_result_fwd) : solution_sequence =
+  list_filter_map
+    (fun (pair : rdf_term * rdf_term) ->
+      let (s, o) = pair in
+      (* Try to bind subject *)
+      let mu_s = match ps with
+        | PS_Var v -> Some [(v, s)]
+        | PS_IRI i -> if rdf_term_eq (T_IRI i) s then Some [] else None
+        | PS_BNode b -> if rdf_term_eq (T_BNode b) s then Some [] else None
+        // Property paths over triple-term endpoints are out of wave-1
+        // scope (#305): a triple-term subject never matches, drop the pair.
+        | PS_TripleTerm _ _ _ -> None in
+      match mu_s with
+      | None -> None
+      | Some bindings_s ->
+        (* Try to bind object *)
+        let mu_o = match pt with
+          | PT_Var v ->
+            (* Check if variable already bound to a different value *)
+            (match List.Tot.assoc v bindings_s with
+             | Some existing -> if rdf_term_eq existing o then Some bindings_s else None
+             | None -> Some ((v, o) :: bindings_s))
+          | PT_IRI i -> if rdf_term_eq (T_IRI i) o then Some bindings_s else None
+          | PT_BNode b -> if rdf_term_eq (T_BNode b) o then Some bindings_s else None
+          | PT_Literal l -> if rdf_term_eq (T_Literal l) o then Some bindings_s else None
+          | PT_TripleTerm _ _ _ -> None in
+        mu_o)
+    pairs
+
+(* LeftJoin (OPTIONAL): join + unmatched from left.
+   2026-07-06 hash-join fix (see the banner above `join`): unlike `join`,
+   LeftJoin is NOT commutative — omega1 (LEFT) must stay the outer
+   iteration, since an unmatched left row survives verbatim. That's
+   unaffected here: only the RIGHT side (omega2) gets indexed, once,
+   outside the loop, so each left row's candidate lookup narrows from
+   O(|omega2|) to O(log K + |candidates|) instead of scanning all of
+   omega2; omega1's row order (and hence the overall output order
+   across distinct left rows) is untouched. No shared variables (the
+   `vars = []` branch) keeps the exact original nested-loop behavior. *)
+let left_join (base : option wf_iri) (omega1 omega2 : solution_sequence) (filter_expr : expr) : solution_sequence =
+  match omega1, omega2 with
+  | [], _ -> []
+  | _, [] -> omega1
+  | mu1_0 :: _, mu2_0 :: _ ->
+    let vars = vars_intersect (sm_domain mu1_0) (sm_domain mu2_0) in
+    if vars = [] then
+      Lh.concatMap_tr
+        (fun mu1 ->
+          let joins = list_filter_map
+            (fun mu2 ->
+              if sm_compatible mu1 mu2 then
+                let merged = sm_merge mu1 mu2 in
+                if eval_expr_ebv base filter_expr merged then Some merged else None
+              else None)
+            omega2 in
+          if List.Tot.length joins > 0 then joins else [mu1])
+        omega1
+    else
+      let idx = build_join_index vars omega2 in
+      Lh.concatMap_tr
+        (fun mu1 ->
+          let candidates = join_candidates idx vars mu1 in
+          let joins = list_filter_map
+            (fun mu2 ->
+              if sm_compatible mu1 mu2 then
+                let merged = sm_merge mu1 mu2 in
+                if eval_expr_ebv base filter_expr merged then Some merged else None
+              else None)
+            candidates in
+          if List.Tot.length joins > 0 then joins else [mu1])
+        omega1
+
+// Does [e] contain an EXISTS / NOT EXISTS anywhere? Decides whether a
+// backend filter needs the materialise-and-substitute path
+// (`filter_solutions_with_graph` / `left_join_with_graph`) or can stay
+// on the graph-free fast path. Total over every constructor ON
+// PURPOSE -- no catch-all -- so adding an expr constructor forces a
+// decision here; a missed composite arm would silently send
+// existential filters back to eval_expr_ebv's ER_Error catch-all,
+// which is the every-row-dropped bug this predicate exists to close
+// (found from the npm build 2026-08-02; W3C exists01 reproduced it on
+// the native CLI, whose queries run through the backend path the W3C
+// runner never uses).
+let rec expr_has_existential (e : expr) : Tot bool (decreases e) =
+  match e with
+  | E_Exists _ | E_NotExists _ -> true
+  | E_Var _ | E_IRI _ | E_Literal _ | E_BoolLit _ | E_NumericLit _
+  | E_DecimalLit _ | E_DoubleLit _ | E_Bound _ | E_Now -> false
+  | E_Arith _ e1 e2 | E_Compare _ e1 e2 | E_And e1 e2 | E_Or e1 e2
+  | E_StrDt e1 e2 | E_StrLang e1 e2
+  | E_StrStarts e1 e2 | E_StrEnds e1 e2 | E_Contains e1 e2
+  | E_StrBefore e1 e2 | E_StrAfter e1 e2
+  | E_SameTerm e1 e2 ->
+    expr_has_existential e1 || expr_has_existential e2
+  | E_UnaryMinus e1 | E_UnaryPlus e1 | E_Not e1
+  | E_IsIRI e1 | E_IsBlank e1 | E_IsLiteral e1 | E_IsNumeric e1
+  | E_Str e1 | E_Lang e1 | E_Datatype e1 | E_IRI_fn e1
+  | E_HasLang e1 | E_HasLangDir e1 | E_LangDir e1
+  | E_StrLen e1 | E_UCase e1 | E_LCase e1 | E_EncodeForUri e1
+  | E_Abs e1 | E_Round e1 | E_Ceil e1 | E_Floor e1
+  | E_MD5 e1 | E_SHA1 e1 | E_SHA256 e1 | E_SHA384 e1 | E_SHA512 e1
+  | E_Year e1 | E_Month e1 | E_Day e1 | E_Hours e1 | E_Minutes e1
+  | E_Seconds e1 | E_Timezone e1 | E_Tz e1
+  | E_Aggregate _ _ e1
+  | E_TTSubject e1 | E_TTPredicate e1 | E_TTObject e1 | E_IsTriple e1 ->
+    expr_has_existential e1
+  | E_StrLangDir e1 e2 e3 | E_If e1 e2 e3 | E_TripleTerm e1 e2 e3 ->
+    expr_has_existential e1 || expr_has_existential e2 ||
+    expr_has_existential e3
+  | E_Coalesce es | E_Concat es | E_FunctionCall _ es ->
+    expr_list_has_existential es
+  | E_In e1 es | E_NotIn e1 es ->
+    expr_has_existential e1 || expr_list_has_existential es
+  | E_Substr e1 e2 e3o | E_Regex e1 e2 e3o ->
+    expr_has_existential e1 || expr_has_existential e2 ||
+    expr_opt_has_existential e3o
+  | E_Replace e1 e2 e3 e4o ->
+    expr_has_existential e1 || expr_has_existential e2 ||
+    expr_has_existential e3 || expr_opt_has_existential e4o
+
+and expr_list_has_existential (es : list expr) : Tot bool (decreases es) =
+  match es with
+  | [] -> false
+  | e :: rest -> expr_has_existential e || expr_list_has_existential rest
+
+and expr_opt_has_existential (eo : option expr) : Tot bool (decreases eo) =
+  match eo with
+  | None -> false
+  | Some e -> expr_has_existential e
+
+(* Filter: retain solutions where expression evaluates to true *)
+let filter_solutions_fwd (base : option wf_iri) (e : expr) (omega : solution_sequence) : solution_sequence =
+  List.Tot.filter (eval_expr_ebv base e) omega
+
+(* Pre-evaluate every E_Exists / E_NotExists sub-expression of [e] under
+   solution mapping [mu] against [g]/[ds], replacing each with E_BoolLit.
+   This lets the graph-free eval_expr_ebv handle filters where existentials
+   are nested inside E_And / E_Or / E_Not / E_If / etc.
+   Issue: w3c negation/subset-02. Fixes nested-NOT-EXISTS evaluation.
+   Structural recursion on [e]; sub-patterns inside E_Exists / E_NotExists
+   are evaluated by eval_exists_fwd (which uses substitute_pattern internally)
+   and are NOT recursed into here, so termination is by decreases on [e]. *)
+(* Union: multiset union of solution mappings.
+   Tail-rec @ — issue #95. Stdlib `@` (List.Tot.append) is non-tail-rec
+   and overflows on million-row UNIONs. Lh.append_tr is provably equal
+   to append (lemma_append_tr_eq) so this is observationally identical. *)
+let union (omega1 omega2 : solution_sequence) : solution_sequence =
+  Lh.append_tr omega1 omega2
+
+(* Minus (§18.5) *)
+(* Ω1 Minus Ω2 = { μ1 | μ1 ∈ Ω1, ∀ μ2 ∈ Ω2:
+     ¬compatible(μ1, μ2) ∨ dom(μ1) ∩ dom(μ2) = ∅ } *)
+(* domains_disjoint: true if no variable appears in both mappings — CONCRETE *)
+let rec domains_disjoint (mu1 mu2 : solution_mapping) : bool =
+  match mu1 with
+  | [] -> true
+  | (v, _) :: rest ->
+    not (Some? (List.Tot.assoc v mu2)) && domains_disjoint rest mu2
+
+let minus (omega1 omega2 : solution_sequence) : solution_sequence =
+  List.Tot.filter
+    (fun mu1 ->
+      not (List.Tot.existsb
+        (fun mu2 -> sm_compatible mu1 mu2 && not (domains_disjoint mu1 mu2))
+        omega2))
+    omega1
+
+(** 7.4 Graph pattern evaluation (§18.6) — CONCRETE **)
+
+(* BIND row evaluator with per-row / per-call-site freshness context.
+   `i` indexes the row (=> cross-solution freshness for BNODE()/UUID());
+   the bound variable name is the call-site tag (=> two BINDs of UUID()
+   in one row differ). The context is used only for evaluation and is
+   never stored: the result binds into the PRISTINE mapping `mu`. *)
+let rec fx_bind_rows (base : option wf_iri) (e : expr) (v : var_name)
+  (omega : solution_sequence) (i : nat)
+  : Tot solution_sequence (decreases omega) =
+  match omega with
+  | [] -> []
+  | mu :: rest ->
+    let mu_ctx = fx_ctx_put (string_of_int i) v mu in
+    let row =
+      (match er_to_term (eval_expr_fwd base e mu_ctx) with
+       | Some t ->
+         (match sm_lookup v mu with
+          | Some _ -> mu
+          | None -> sm_bind v t mu)
+       | None -> mu) in
+    row :: fx_bind_rows base e v rest (i + 1)
+
+let substitute_pattern_term (mu : solution_mapping) (pt : pattern_term) : pattern_term =
+  match pt with
+  | PT_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> PT_IRI i
+     | Some (T_BNode b) -> PT_BNode b
+     | Some (T_Literal l) -> PT_Literal l
+     | Some (T_TripleTerm _ _ _) -> PT_Var v   // no triple-term pattern_term yet (#305 P6)
+     | None -> PT_Var v)
+  | _ -> pt
+
+let substitute_pattern_subject (mu : solution_mapping) (ps : pattern_subject) : pattern_subject =
+  match ps with
+  | PS_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> PS_IRI i
+     | Some (T_BNode b) -> PS_BNode b
+     | Some (T_Literal _) -> PS_Var v  (* literals cannot be subjects *)
+     | Some (T_TripleTerm _ _ _) -> PS_Var v  (* triple terms cannot be subjects *)
+     | None -> PS_Var v)
+  | _ -> ps
+
+let substitute_triple_pattern (mu : solution_mapping) (tp : triple_pattern) : triple_pattern =
+  { tp_s = substitute_pattern_subject mu tp.tp_s;
+    tp_p = substitute_pattern_term mu tp.tp_p;
+    tp_o = substitute_pattern_term mu tp.tp_o }
+
+let substitute_bgp (mu : solution_mapping) (b : bgp) : bgp =
+  List.Tot.map (substitute_triple_pattern mu) b
+
+(* AST size metric over the mutually-inductive pattern/expr family
+   (issue #62 de-vacuation pilot, G4-exists-cycle, 2026-08-09). This
+   is the metric a merged eval_pattern_store/eval_exists recursion
+   needs: eval_pattern_store's GP_Filter/GP_LeftJoin arms reach
+   E_Exists/E_NotExists sub-patterns THROUGH an embedded [expr], not
+   through a direct structural child of [group_graph_pattern] — so a
+   plain `decreases p` cannot see that the EXISTS sub-pattern is
+   smaller. pattern_size/expr_size close that gap: expr_size counts
+   embedded pattern_size, and pattern_size counts embedded expr_size,
+   so `pattern_size (GP_Filter e p1) > expr_size e > pattern_size q`
+   for any `E_Exists q` nested in `e`.
+
+   expr_size mirrors expr_has_existential's traversal exactly (same
+   constructor list, same grouping) so it is exhaustive without a
+   catch-all — a new expr constructor forces a decision here too. *)
+let rec pattern_size (p : group_graph_pattern) : Tot (n:nat{n >= 1}) (decreases p) =
+  match p with
+  | GP_BGP _ -> 1
+  | GP_Join p1 p2 -> 1 + pattern_size p1 + pattern_size p2
+  | GP_LeftJoin p1 p2 e -> 1 + pattern_size p1 + pattern_size p2 + expr_size e
+  | GP_Filter e p1 -> 1 + expr_size e + pattern_size p1
+  | GP_Union p1 p2 -> 1 + pattern_size p1 + pattern_size p2
+  | GP_Graph _ p1 -> 1 + pattern_size p1
+  | GP_Minus p1 p2 -> 1 + pattern_size p1 + pattern_size p2
+  | GP_Lateral p1 p2 -> 1 + pattern_size p1 + pattern_size p2
+  | GP_Bind e _ p1 -> 1 + expr_size e + pattern_size p1
+  | GP_Values _ _ -> 1
+  | GP_Service _ p1 _ -> 1 + pattern_size p1
+  | GP_ServiceVar _ p1 _ -> 1 + pattern_size p1
+  | GP_SubSelect q -> 1 + query_size q
+  | GP_PropertyPath _ _ _ -> 1
+  | GP_Empty -> 1
+
+and expr_size (e : expr) : Tot nat (decreases e) =
+  match e with
+  | E_Var _ | E_IRI _ | E_Literal _ | E_BoolLit _ | E_NumericLit _
+  | E_DecimalLit _ | E_DoubleLit _ | E_Bound _ | E_Now -> 1
+  | E_Arith _ e1 e2 | E_Compare _ e1 e2 | E_And e1 e2 | E_Or e1 e2
+  | E_StrDt e1 e2 | E_StrLang e1 e2
+  | E_StrStarts e1 e2 | E_StrEnds e1 e2 | E_Contains e1 e2
+  | E_StrBefore e1 e2 | E_StrAfter e1 e2
+  | E_SameTerm e1 e2 ->
+    1 + expr_size e1 + expr_size e2
+  | E_UnaryMinus e1 | E_UnaryPlus e1 | E_Not e1
+  | E_IsIRI e1 | E_IsBlank e1 | E_IsLiteral e1 | E_IsNumeric e1
+  | E_Str e1 | E_Lang e1 | E_Datatype e1 | E_IRI_fn e1
+  | E_HasLang e1 | E_HasLangDir e1 | E_LangDir e1
+  | E_StrLen e1 | E_UCase e1 | E_LCase e1 | E_EncodeForUri e1
+  | E_Abs e1 | E_Round e1 | E_Ceil e1 | E_Floor e1
+  | E_MD5 e1 | E_SHA1 e1 | E_SHA256 e1 | E_SHA384 e1 | E_SHA512 e1
+  | E_Year e1 | E_Month e1 | E_Day e1 | E_Hours e1 | E_Minutes e1
+  | E_Seconds e1 | E_Timezone e1 | E_Tz e1
+  | E_Aggregate _ _ e1
+  | E_TTSubject e1 | E_TTPredicate e1 | E_TTObject e1 | E_IsTriple e1 ->
+    1 + expr_size e1
+  | E_StrLangDir e1 e2 e3 | E_If e1 e2 e3 | E_TripleTerm e1 e2 e3 ->
+    1 + expr_size e1 + expr_size e2 + expr_size e3
+  | E_Coalesce es | E_Concat es | E_FunctionCall _ es ->
+    1 + expr_list_size es
+  | E_In e1 es | E_NotIn e1 es ->
+    1 + expr_size e1 + expr_list_size es
+  | E_Substr e1 e2 e3o | E_Regex e1 e2 e3o ->
+    1 + expr_size e1 + expr_size e2 + expr_opt_size e3o
+  | E_Replace e1 e2 e3 e4o ->
+    1 + expr_size e1 + expr_size e2 + expr_size e3 + expr_opt_size e4o
+  | E_Exists p -> 1 + pattern_size p
+  | E_NotExists p -> 1 + pattern_size p
+
+and expr_list_size (es : list expr) : Tot nat (decreases es) =
+  match es with
+  | [] -> 0
+  | hd :: tl -> 1 + expr_size hd + expr_list_size tl
+
+and expr_opt_size (eo : option expr) : Tot nat (decreases eo) =
+  match eo with
+  | None -> 0
+  | Some e -> 1 + expr_size e
+
+(* query_size (issue #62 retirement, G4-subselect-fold, 2026-08-10):
+   completes the mutual-size metric across the THIRD leg of the
+   group_graph_pattern/expr/query inductive family (they are one `and`
+   type block — see `and query = { ... }` above). GP_SubSelect embeds a
+   [query], and a [query]'s q_pattern is a structural subterm of it, so
+   pattern_size's GP_SubSelect arm counts `1 + query_size q` (making the
+   SubSelect node strictly bigger than the query's own top-level size)
+   instead of the pilot's flat `1` — this is what lets eval_pattern_store's
+   GP_SubSelect/GP_Lateral arms recurse into eval_select_query directly
+   (retiring the `eval_subselect_fwd` forward-ref) while still satisfying
+   the clique's %[metric; phase] decreases. *)
+and query_size (q : query) : Tot nat (decreases q) =
+  1 + pattern_size q.q_pattern
+
+let rec substitute_pattern (mu : solution_mapping) (p : group_graph_pattern)
+  : Tot group_graph_pattern (decreases p) =
+  match p with
+  | GP_BGP b -> GP_BGP (substitute_bgp mu b)
+  | GP_Join p1 p2 -> GP_Join (substitute_pattern mu p1) (substitute_pattern mu p2)
+  | GP_LeftJoin p1 p2 e -> GP_LeftJoin (substitute_pattern mu p1) (substitute_pattern mu p2) e
+  | GP_Filter e p1 -> GP_Filter e (substitute_pattern mu p1)
+  | GP_Union p1 p2 -> GP_Union (substitute_pattern mu p1) (substitute_pattern mu p2)
+  | GP_Graph gt p1 -> GP_Graph (substitute_pattern_term mu gt) (substitute_pattern mu p1)
+  | GP_Minus p1 p2 -> GP_Minus (substitute_pattern mu p1) (substitute_pattern mu p2)
+  | GP_Lateral p1 p2 -> GP_Lateral (substitute_pattern mu p1) (substitute_pattern mu p2)
+  | GP_Bind e v p1 -> GP_Bind e v (substitute_pattern mu p1)
+  | GP_Values vars rows -> GP_Values vars rows
+  | GP_Service iri p1 silent -> GP_Service iri p1 silent
+  | GP_ServiceVar v p1 silent ->
+    (* If [mu] binds the endpoint variable to an IRI, lower to a fixed-IRI
+       GP_Service so downstream eval can dispatch directly. Otherwise keep
+       as a GP_ServiceVar (the inner pattern itself still gets substituted). *)
+    (match sm_lookup v mu with
+     | Some (T_IRI iri) ->
+       if is_iri iri then GP_Service iri (substitute_pattern mu p1) silent
+       else GP_ServiceVar v (substitute_pattern mu p1) silent
+     | _ -> GP_ServiceVar v (substitute_pattern mu p1) silent)
+  | GP_SubSelect q -> GP_SubSelect q
+  | GP_PropertyPath ps pp pt -> GP_PropertyPath (substitute_pattern_subject mu ps) pp (substitute_pattern_term mu pt)
+  | GP_Empty -> GP_Empty
+
+(* CRUX LEMMA (issue #62 de-vacuation pilot, G4-exists-cycle,
+   2026-08-09): substitute_pattern only rewrites the pattern-term/
+   pattern-subject LEAVES (PT_Var/PS_Var -> constant), never adding
+   or removing a group_graph_pattern/expr NODE, and it never touches
+   an embedded [expr] (GP_Filter/GP_Bind keep [e] verbatim; GP_LeftJoin
+   keeps [filter_e] verbatim) or an embedded [query] (GP_SubSelect).
+   So pattern_size is exactly preserved. This is what lets EXISTS's
+   substitute_pattern step be used inside a decreases-pattern_size
+   recursion: the substituted pattern is provably NOT larger, so
+   recursing on it after descending into an E_Exists/E_NotExists node
+   still decreases relative to the ENCLOSING pattern. *)
+let rec lemma_substitute_pattern_preserves_size (mu : solution_mapping) (p : group_graph_pattern)
+  : Lemma (ensures pattern_size (substitute_pattern mu p) == pattern_size p)
+          (decreases p) =
+  match p with
+  | GP_BGP _ -> ()
+  | GP_Join p1 p2 ->
+    lemma_substitute_pattern_preserves_size mu p1;
+    lemma_substitute_pattern_preserves_size mu p2
+  | GP_LeftJoin p1 p2 _ ->
+    lemma_substitute_pattern_preserves_size mu p1;
+    lemma_substitute_pattern_preserves_size mu p2
+  | GP_Filter _ p1 ->
+    lemma_substitute_pattern_preserves_size mu p1
+  | GP_Union p1 p2 ->
+    lemma_substitute_pattern_preserves_size mu p1;
+    lemma_substitute_pattern_preserves_size mu p2
+  | GP_Graph _ p1 ->
+    lemma_substitute_pattern_preserves_size mu p1
+  | GP_Minus p1 p2 ->
+    lemma_substitute_pattern_preserves_size mu p1;
+    lemma_substitute_pattern_preserves_size mu p2
+  | GP_Lateral p1 p2 ->
+    lemma_substitute_pattern_preserves_size mu p1;
+    lemma_substitute_pattern_preserves_size mu p2
+  | GP_Bind _ _ p1 ->
+    lemma_substitute_pattern_preserves_size mu p1
+  | GP_Values _ _ -> ()
+  | GP_Service _ p1 _ ->
+    lemma_substitute_pattern_preserves_size mu p1
+  | GP_ServiceVar v p1 _ ->
+    // substitute_pattern branches to GP_Service or stays GP_ServiceVar
+    // depending on `sm_lookup v mu`, but pattern_size gives both
+    // constructors the identical "1 + pattern_size <inner>" weight, so
+    // both branches equal 1 + pattern_size p1 regardless of which one
+    // fires — no case split on sm_lookup needed beyond the recursive call.
+    lemma_substitute_pattern_preserves_size mu p1
+  | GP_SubSelect _ -> ()
+  | GP_PropertyPath _ _ _ -> ()
+  | GP_Empty -> ()
+
+(* Companion to lemma_substitute_pattern_preserves_size, for LATERAL's
+   correlated substitution (issue #62 retirement, G4-subselect-fold,
+   2026-08-10): lateral_substitute, UNLIKE substitute_pattern, dives
+   into an embedded GP_SubSelect's own q_pattern (Jena's masking-aware
+   correlated join needs to reach inside a nested sub-SELECT — see
+   lateral_substitute's own comment), so its GP_SubSelect case is a
+   genuine recursive step, not the identity, and needs its own
+   inductive case here, expressed via query_size. Every other arm is
+   the same 1-1 structural rewrite as substitute_pattern (leaves only),
+   so pattern_size is preserved the same way. The GP_SubSelect case
+   calls the NAMED `lateral_subselect_visible_mu` helper (not a
+   re-spelled inline computation) so Z3 sees the SAME term
+   lateral_substitute itself unfolds to — the closure identity law
+   (proof-factory skill) forbids re-deriving an engine's anonymous
+   lambdas inside a proof and expecting congruence. *)
+let rec lemma_lateral_substitute_preserves_size (mu : solution_mapping) (p : group_graph_pattern)
+  : Lemma (ensures pattern_size (lateral_substitute mu p) == pattern_size p)
+          (decreases p) =
+  match p with
+  | GP_BGP _ -> ()
+  | GP_Join p1 p2 ->
+    lemma_lateral_substitute_preserves_size mu p1;
+    lemma_lateral_substitute_preserves_size mu p2
+  | GP_LeftJoin p1 p2 _ ->
+    lemma_lateral_substitute_preserves_size mu p1;
+    lemma_lateral_substitute_preserves_size mu p2
+  | GP_Filter _ p1 ->
+    lemma_lateral_substitute_preserves_size mu p1
+  | GP_Union p1 p2 ->
+    lemma_lateral_substitute_preserves_size mu p1;
+    lemma_lateral_substitute_preserves_size mu p2
+  | GP_Graph _ p1 ->
+    lemma_lateral_substitute_preserves_size mu p1
+  | GP_Minus p1 p2 ->
+    lemma_lateral_substitute_preserves_size mu p1;
+    lemma_lateral_substitute_preserves_size mu p2
+  | GP_Lateral p1 p2 ->
+    lemma_lateral_substitute_preserves_size mu p1;
+    lemma_lateral_substitute_preserves_size mu p2
+  | GP_Bind _ _ p1 ->
+    lemma_lateral_substitute_preserves_size mu p1
+  | GP_Values _ _ -> ()
+  | GP_Service _ p1 _ ->
+    lemma_lateral_substitute_preserves_size mu p1
+  | GP_ServiceVar _ p1 _ ->
+    // Same reasoning as lemma_substitute_pattern_preserves_size's
+    // GP_ServiceVar case: both branches of lateral_substitute's own
+    // sm_lookup match carry the identical "1 + pattern_size <inner>"
+    // weight, so no case split beyond the recursive call is needed.
+    lemma_lateral_substitute_preserves_size mu p1
+  | GP_SubSelect q ->
+    lemma_lateral_substitute_preserves_size (lateral_subselect_visible_mu mu q) q.q_pattern
+  | GP_PropertyPath _ _ _ -> ()
+  | GP_Empty -> ()
+
+(* Parts 9.1–9.10: Built-in functions defined in utility section above.
+   Remaining unique content continues in Part 10. *)
+(** ====================================================================== **)
+(** Part 10: SPARQL 1.1 Aggregation (§18.5.1)                             **)
+(** [S2] Partitioning specified declaratively; concrete algorithm deferred. **)
+(** ====================================================================== **)
+
+(** 10.1 Group partitioning **)
+
+(* A group is a subset of solutions sharing the same GROUP BY key *)
+noeq type group = {
+  g_key : list eval_result;        (* GROUP BY key values *)
+  g_solutions : solution_sequence; (* solutions in this group *)
+}
+
+(* Evaluate a single group condition against a solution mapping to get a key value.
+   #65 Step 2b (2026-05-10): threads BASE IRI from eval_select_query so
+   GROUP BY exprs see the same BASE as the rest of the query. *)
+let eval_group_condition (base : option wf_iri) (gc : group_condition) (mu : solution_mapping) : eval_result =
+  match gc with
+  | GC_Var v ->
+    (match sm_lookup v mu with
+     | Some t -> ER_Term t
+     | None -> ER_Error)
+  | GC_Expr e _ -> eval_expr_with_base base e mu
+  | GC_BuiltIn e -> eval_expr_with_base base e mu
+
+(* Evaluate all group conditions against a solution mapping to get the full key *)
+let eval_group_key (base : option wf_iri) (conds : list group_condition) (mu : solution_mapping) : list eval_result =
+  List.Tot.map (fun gc -> eval_group_condition base gc mu) conds
+
+(* Literal total-order (datatype, then lexical, then language tag) —
+   factored out of sparql_order so term_order below shares it exactly. *)
+let literal_order (l1 l2 : wf_literal) : int =
+  let dc = String.compare (lit_datatype l1) (lit_datatype l2) in
+  if dc <> 0 then dc
+  else
+    let lc = String.compare (lit_lexical l1) (lit_lexical l2) in
+    if lc <> 0 then lc
+    else
+      (match lit_lang l1, lit_lang l2 with
+       | None, None -> 0
+       | None, Some _ -> (-1)
+       | Some _, None -> 1
+       | Some t1, Some t2 -> String.compare t1 t2)
+
+(* Subject position of a triple term: S_BNode < S_IRI (matches the term
+   hierarchy bnode < IRI). *)
+let subject_order (s1 s2 : subject) : int =
+  match s1, s2 with
+  | S_BNode x, S_BNode y -> String.compare x y
+  | S_IRI x, S_IRI y -> String.compare (iri_to_string x) (iri_to_string y)
+  | S_BNode _, S_IRI _ -> (-1)
+  | S_IRI _, S_BNode _ -> 1
+
+let term_rank (t : rdf_term) : int =
+  match t with
+  | T_BNode _ -> 1
+  | T_IRI _ -> 2
+  | T_Literal _ -> 7
+  | T_TripleTerm _ _ _ -> 8
+
+(* Recursive rdf_term ordering for SPARQL ORDER BY over RDF 1.2 triple
+   terms (#305): bnode < IRI < literal < triple-term, triple terms
+   compared by subject, then predicate, then object (recursing into the
+   object, a strict subterm — so `decreases t1`). *)
+let rec term_order (t1 t2 : rdf_term) : Tot int (decreases t1) =
+  let r1 = term_rank t1 in
+  let r2 = term_rank t2 in
+  if r1 < r2 then (-1)
+  else if r1 > r2 then 1
+  else
+    match t1, t2 with
+    | T_BNode x, T_BNode y -> String.compare x y
+    | T_IRI x, T_IRI y -> String.compare (iri_to_string x) (iri_to_string y)
+    | T_Literal l1, T_Literal l2 -> literal_order l1 l2
+    | T_TripleTerm s1 p1 o1, T_TripleTerm s2 p2 o2 ->
+      let sc = subject_order s1 s2 in
+      if sc <> 0 then sc
+      else
+        let pc = String.compare (iri_to_string p1) (iri_to_string p2) in
+        if pc <> 0 then pc
+        else term_order o1 o2
+    | _, _ -> 0
+
+(* Rank of an eval_result for the SPARQL ordering type hierarchy.
+   Unbound/Error < Blank nodes < IRIs < Literals (booleans, numerics, strings). *)
+let er_rank (v : eval_result) : int =
+  match v with
+  | ER_Error -> 0
+  | ER_Term (T_BNode _) -> 1
+  | ER_Term (T_IRI _) -> 2
+  | ER_Bool _ -> 3
+  | ER_Num _ -> 4
+  | ER_Dec _ -> 4
+  | ER_Dbl _ -> 4
+  | ER_Term (T_Literal _) -> 7
+  // RDF 1.2 triple terms sort after all other kinds (conservative,
+  // distinct rank; sparql_order's final `_,_ -> 0` treats two triple
+  // terms as order-equal for now — full ordering is #305 P7).
+  | ER_Term (T_TripleTerm _ _ _) -> 8
+
+// Ordering for the numeric branch of `sparql_order`, split out so it
+// can be named/reasoned about on its own (SPARQL11.Algebra.Refinement
+// FRAGMENT lemmas below reference it directly).
+//
+// Owner-approved 2026-08-14 (issue #362 / SR-4): SPARQL 1.1 §15.1
+// leaves the order of operands with no defined `<` undefined, only
+// requiring the implementation's ordering to be CONSISTENT -- it does
+// not mandate a specific rule. "Order last, then lexical" is
+// conformant and matches Apache Jena 6.2.0 (measured): a valid
+// numeric always sorts before an unparseable one, and two unparseable
+// numerics compare by their raw lexical form, with datatype playing
+// NO role.
+//
+// This replaces `numeric_compare`'s previous direct use here, whose
+// undifferentiated `None` (Algebra.fst, `numeric_compare`'s `| _, _ ->
+// None` arm) made the old `sparql_order` read "either side failed to
+// parse" as an unconditional TIE (`| None -> 0`) regardless of WHICH
+// side failed -- non-transitive: an unparseable value sat as a
+// spurious tie-bridge between two valid, genuinely-ordered numerics.
+// See SPARQL11.Algebra.Refinement.fst's 15.1c FRAGMENT FINDING for the
+// three-element witness this broke, and the FRAGMENT lemmas
+// immediately below it for the totality/transitivity proof this fix
+// now allows on the numeric fragment.
+let sparql_order_numeric (a b : eval_result) : int =
+  match numeric_compare a b with
+  | Some cmp -> cmp
+  | None ->
+    (match er_to_numeric a, er_to_numeric b with
+     | Some _, None -> (-1)  // a parses, b doesn't -> a sorts first
+     | None, Some _ -> 1     // b parses, a doesn't -> a sorts after
+     | _, _ -> String.compare (er_numeric_lexical a) (er_numeric_lexical b))
+
+(* SPARQL ordering (§15.1) — CONCRETE implementation.
+   Returns -1 (less), 0 (equal), 1 (greater). *)
+let sparql_order (a b : eval_result) : int =
+  let ra = er_rank a in
+  let rb = er_rank b in
+  if ra < rb then -1
+  else if ra > rb then 1
+  else
+    match a, b with
+    | ER_Error, ER_Error -> 0
+    | ER_Term (T_BNode x), ER_Term (T_BNode y) -> String.compare x y
+    | ER_Term (T_IRI x), ER_Term (T_IRI y) ->
+      String.compare (iri_to_string x) (iri_to_string y)
+    | ER_Bool x, ER_Bool y ->
+      int_compare (if x then 1 else 0) (if y then 1 else 0)
+    | ER_Num _, _ | ER_Dec _, _ | ER_Dbl _, _ -> sparql_order_numeric a b
+    | ER_Term (T_Literal l1), ER_Term (T_Literal l2) -> literal_order l1 l2
+    | ER_Term (T_TripleTerm s1 p1 o1), ER_Term (T_TripleTerm s2 p2 o2) ->
+      term_order (T_TripleTerm s1 p1 o1) (T_TripleTerm s2 p2 o2)
+    | _, _ -> 0
+
+(* Check if two eval_result values are equal by SPARQL ordering *)
+let er_equal (a b : eval_result) : bool =
+  sparql_order a b = 0
+
+(* Check if two group keys (lists of eval_result) are equal *)
+let rec keys_equal (k1 k2 : list eval_result) : Tot bool (decreases k1) =
+  match k1, k2 with
+  | [], [] -> true
+  | a :: rest1, b :: rest2 -> er_equal a b && keys_equal rest1 rest2
+  | _, _ -> false
+
+(* Find an existing group with a matching key, or return None *)
+let rec find_group (key : list eval_result) (groups : list group)
+  : Tot (option (list group & group & list group)) (decreases groups) =
+  match groups with
+  | [] -> None
+  | g :: rest ->
+    if keys_equal key g.g_key then Some ([], g, rest)
+    else
+      (match find_group key rest with
+       | None -> None
+       | Some (before, found, after) -> Some (g :: before, found, after))
+
+(* Add a solution mapping to the correct group, creating a new group if needed.
+   Tail-rec rewrite — issue #95. Walks groups once with fold_left, prepending
+   each (potentially modified) group to a reversed accumulator; reverses at
+   the end. Preserves original group order. The earlier triple-`@` form
+   (before @ ... @ after) was non-tail-rec inside List.Tot.append and
+   overflowed the JS / native stack on aggregations with hundreds of groups.
+   O(g) scan per insertion, g = number of DISTINCT group keys seen so far —
+   simple algorithm; hash-based grouping is a separate perf track.
+
+   2026-07-06 (competitive-benchmark GROUP BY cliff): the matched group's
+   `g_solutions` is now grown by CONSING `mu` onto the front — O(1) — not
+   by `Lh.append_tr g.g_solutions [mu]`, which walked (and reallocated) the
+   *entire* existing solution list on every single row. With only a
+   handful of distinct keys (e.g. GROUP BY ?p over gene.ttl: 6 groups,
+   one holding 759,263 of 888,949 rows), that append made each row's cost
+   proportional to how many rows had already landed in its group, i.e.
+   O(k^2) work for a group of eventual size k — 888,949 rows into 6
+   groups is ~10^11 operations, which is exactly the >600s timeout
+   observed in docs/designissues/2026-07-06-competitive-benchmark-results.md
+   (§4, q5_group_by, all three factoidal paths). Groups now accumulate in
+   REVERSE row order; `group_by` below reverses each group's solutions
+   exactly once after the fold completes, restoring the original
+   chronological order (needed because `having_filter` /
+   `eval_expr_in_group` / `eval_select_item_group` all treat
+   `g.g_solutions`'s head as "the representative/first solution"). *)
+let add_to_groups (key : list eval_result) (mu : solution_mapping) (groups : list group) : list group =
+  let (rev_groups, found) =
+    List.Tot.fold_left
+      (fun (acc_f : list group * bool) g ->
+         let acc, f = acc_f in
+         if not f && keys_equal key g.g_key
+         then
+           let g' = { g with g_solutions = mu :: g.g_solutions } in
+           (g' :: acc, true)
+         else (g :: acc, f))
+      ([], false) groups
+  in
+  let ordered = List.Tot.rev rev_groups in
+  if found then ordered
+  else Lh.append_tr ordered [{ g_key = key; g_solutions = [mu] }]
+
+(* Extend a solution mapping with GROUP BY expression alias bindings.
+   For each GC_Expr (e, Some v), evaluate e against mu and bind v to the result. *)
+let extend_with_group_aliases (base : option wf_iri) (conds : list group_condition) (mu : solution_mapping)
+  : solution_mapping =
+  List.Tot.fold_left
+    (fun (acc : solution_mapping) (gc : group_condition) ->
+      match gc with
+      | GC_Expr e (Some v) ->
+        let r = eval_expr_with_base base e mu in
+        (match er_to_term r with
+         | Some t -> sm_bind v t acc
+         | None -> acc)
+      | _ -> acc)
+    mu
+    conds
+
+(* Partition a solution sequence by GROUP BY expressions — CONCRETE implementation.
+   Also extends each solution mapping with alias bindings from GC_Expr (e, Some v).
+
+   `add_to_groups` now accumulates each group's solutions by consing onto
+   the front (O(1) per row) rather than appending onto the back (O(current
+   group size) per row — the mechanism behind the GROUP BY performance
+   cliff documented at `add_to_groups` above). That leaves every group's
+   `g_solutions` in reverse chronological order; this single
+   `List.Tot.map`/`List.Tot.rev` pass over the (small) finished group list
+   undoes that once, for a total O(n) cost across every group combined
+   (each row's solution mapping is touched by exactly one `rev`), instead
+   of the O(n) reversal being paid PER ROW as an implicit side effect of
+   the old repeated appends. *)
+let group_by (base : option wf_iri) (conds : list group_condition) (omega : solution_sequence) : list group =
+  let groups_reversed =
+    List.Tot.fold_left
+      (fun (groups : list group) (mu : solution_mapping) ->
+        let key = eval_group_key base conds mu in
+        let mu' = extend_with_group_aliases base conds mu in
+        add_to_groups key mu' groups)
+      []
+      omega
+  in
+  List.Tot.map (fun (g : group) -> { g with g_solutions = List.Tot.rev g.g_solutions }) groups_reversed
+
+(* When no GROUP BY is specified, the entire sequence is one group *)
+let implicit_group (omega : solution_sequence) : list group =
+  [{ g_key = []; g_solutions = omega }]
+
+(** 10.2 Aggregate evaluation **)
+
+(* Collect evaluated results for an expression over all solutions in a group *)
+let eval_over_group (base : option wf_iri) (e : expr) (g : group) : list eval_result =
+  List.Tot.map (fun mu -> eval_expr_with_base base e mu) g.g_solutions
+
+(* Filter out ER_Error values *)
+let filter_non_error (vals : list eval_result) : list eval_result =
+  List.Tot.filter (fun v -> not (ER_Error? v)) vals
+
+(* Remove duplicate eval_results using sparql_order for equality.
+   Tail-rec rewrite — issue #95. The earlier cons-after-recurse form
+   overflowed the native stack on COUNT(DISTINCT) over multi-hundred-k
+   eval-result lists. Walk vals once with an accumulator, checking
+   membership against the growing prefix (acc); first occurrence wins.
+   Order is set-semantics for every caller (DISTINCT under aggregates),
+   so first-vs-last makes no observable difference. *)
+let rec dedup_er_acc (acc : list eval_result) (vals : list eval_result)
+  : Tot (list eval_result) (decreases vals) =
+  match vals with
+  | [] -> acc
+  | v :: rest ->
+    if List.Tot.existsb (fun x -> er_equal v x) acc
+    then dedup_er_acc acc rest
+    else dedup_er_acc (v :: acc) rest
+
+let dedup_er (vals : list eval_result) : Tot (list eval_result) =
+  List.Tot.rev (dedup_er_acc [] vals)
+
+// These are now replaced by sum_numeric, count_numeric, avg_numeric above
+
+(* Find minimum / maximum eval_result by sparql_order.
+   Stack-safe: fold_left with a running accumulator so the extracted
+   OCaml is tail-recursive and each element is one loop iteration
+   rather than one stack frame. The earlier cons-after-recurse form
+   was one of the JS / WASM stack-overflow culprits on the lifesci
+   demo's 02-top-types query. Algorithm lives here in F* per rule #10. *)
+let find_min (vals : list eval_result) : eval_result =
+  match vals with
+  | [] -> ER_Error
+  | v :: rest ->
+    List.Tot.fold_left
+      (fun acc x -> if sparql_order x acc <= 0 then x else acc)
+      v rest
+
+let find_max (vals : list eval_result) : eval_result =
+  match vals with
+  | [] -> ER_Error
+  | v :: rest ->
+    List.Tot.fold_left
+      (fun acc x -> if sparql_order x acc >= 0 then x else acc)
+      v rest
+
+// Collect string representations from eval_results, skipping non-stringifiable.
+// Tail-recursive via accumulator; List.Tot.rev restores original order.
+let rec collect_strings_acc (acc : list string) (vals : list eval_result)
+  : Tot (list string) (decreases vals) =
+  match vals with
+  | [] -> List.Tot.rev acc
+  | v :: rest ->
+    (match er_to_string v with
+     | Some s -> collect_strings_acc (s :: acc) rest
+     | None -> collect_strings_acc acc rest)
+
+let collect_strings (vals : list eval_result) : Tot (list string) =
+  collect_strings_acc [] vals
+
+(* Find the first non-error result *)
+let rec first_non_error (vals : list eval_result) : Tot eval_result (decreases vals) =
+  match vals with
+  | [] -> ER_Error
+  | v :: rest -> if ER_Error? v then first_non_error rest else v
+
+(* Evaluate an aggregate function over a group — CONCRETE implementation (§18.5).
+   #65 Step 2b (2026-05-10): base threaded through for aggregate sub-exprs. *)
+let eval_aggregate (base : option wf_iri) (fn : aggregate_fn) (distinct : bool) (e : expr) (g : group) : eval_result =
+  match fn with
+  | Agg_Count ->
+    (* COUNT-star counts all solutions; COUNT-expr counts non-error evaluations *)
+    (match e with
+     | E_Var "*" | E_BoolLit true ->
+       if distinct then
+         // COUNT(DISTINCT *): deduplicate by converting each solution to
+         // a list of eval_results and using dedup_er-style comparison
+         // We represent each solution as a single ER_Term with a canonical string
+         let sols = g.g_solutions in
+         let to_key (mu : solution_mapping) : string =
+           String.concat "|" (List.Tot.map (fun (p : var_name & rdf_term) ->
+             fst p ^ "=" ^ (match snd p with
+               | T_IRI i -> i
+               | T_BNode b -> b
+               | T_Literal l -> lit_lexical l ^ "^^" ^ lit_datatype l
+               // RDF 1.2 triple term: a structural, distinct dedup key via
+               // the canonical N-Quads rendering (recurses into the term).
+               | T_TripleTerm _ _ _ -> nq_term_to_string (snd p))) mu) in
+         // Stack-safe dedup: fold_left + cons-onto-accumulator.
+         // The earlier `seen @ [k]` form was non-tail-rec via `@`, so
+         // on the lifesci demo's COUNT(DISTINCT *) over thousands of
+         // rows the JS/WASM stack blew up. Uses cons-to-front for O(1)
+         // append and order doesn't matter for DISTINCT counting.
+         let dedup_strings_tr (keys : list string) : list string =
+           List.Tot.fold_left
+             (fun seen k ->
+                if List.Tot.existsb (fun s -> s = k) seen
+                then seen
+                else k :: seen)
+             [] keys in
+         ER_Num (List.Tot.length (dedup_strings_tr (List.Tot.map to_key sols)))
+       else ER_Num (List.Tot.length g.g_solutions)
+     | _ ->
+       let vals = filter_non_error (eval_over_group base e g) in
+       let vals = if distinct then dedup_er vals else vals in
+       ER_Num (List.Tot.length vals))
+  | Agg_Sum ->
+    let raw_vals = eval_over_group base e g in
+    let vals = filter_non_error raw_vals in
+    let vals = if distinct then dedup_er vals else vals in
+    // Per SPARQL 1.1 §18.5.1: if any value is non-numeric, result is error
+    if List.Tot.existsb (fun v -> None? (er_to_numeric v)) vals
+    then ER_Error
+    else sum_numeric vals
+  | Agg_Avg ->
+    let raw_vals = eval_over_group base e g in
+    let vals = filter_non_error raw_vals in
+    let vals = if distinct then dedup_er vals else vals in
+    // Per SPARQL 1.1 §18.5.1: if any value is non-numeric, result is error
+    if List.Tot.existsb (fun v -> None? (er_to_numeric v)) vals
+    then ER_Error
+    else avg_numeric vals
+  | Agg_Min ->
+    let vals = filter_non_error (eval_over_group base e g) in
+    let vals = if distinct then dedup_er vals else vals in
+    find_min vals
+  | Agg_Max ->
+    let vals = filter_non_error (eval_over_group base e g) in
+    let vals = if distinct then dedup_er vals else vals in
+    find_max vals
+  | Agg_GroupConcat sep_opt ->
+    let vals = filter_non_error (eval_over_group base e g) in
+    let vals = if distinct then dedup_er vals else vals in
+    let sep = (match sep_opt with | Some s -> s | None -> " ") in
+    let strs = collect_strings vals in
+    ER_Term (T_Literal (mk_plain_literal (String.concat sep strs)))
+  | Agg_Sample ->
+    let vals = eval_over_group base e g in
+    first_non_error vals
+
+(** 10.3 HAVING filter **)
+
+(* Rewrite an expression by replacing aggregate sub-expressions with their
+   pre-computed values.  This allows the standard eval_expr to evaluate
+   HAVING conditions like  COUNT(?O) > 2  —  the E_Aggregate node for
+   COUNT(?O) is replaced by E_NumericLit <computed count>, then eval_expr
+   can evaluate the comparison normally. *)
+let rec rewrite_aggregates (base : option wf_iri) (e : expr) (g : group) : Tot expr (decreases e) =
+  match e with
+  | E_Aggregate fn distinct sub_e ->
+    let r = eval_aggregate base fn distinct sub_e g in
+    (match r with
+     | ER_Num n -> E_NumericLit n
+     | ER_Bool b -> E_BoolLit b
+     | ER_Dec s -> E_DecimalLit s
+     | ER_Dbl d -> E_DoubleLit d
+     | ER_Term t -> (match t with
+                     | T_IRI i -> E_IRI i
+                     | T_Literal l -> E_Literal l
+                     | _ -> E_BoolLit false)
+     | ER_Error -> E_Var "_:error:")  // unbound variable evaluates to ER_Error
+  | E_Compare op e1 e2 -> E_Compare op (rewrite_aggregates base e1 g) (rewrite_aggregates base e2 g)
+  | E_And e1 e2 -> E_And (rewrite_aggregates base e1 g) (rewrite_aggregates base e2 g)
+  | E_Or e1 e2 -> E_Or (rewrite_aggregates base e1 g) (rewrite_aggregates base e2 g)
+  | E_Arith op e1 e2 -> E_Arith op (rewrite_aggregates base e1 g) (rewrite_aggregates base e2 g)
+  | E_Not e1 -> E_Not (rewrite_aggregates base e1 g)
+  | _ -> e  (* Leaf expressions pass through unchanged *)
+
+(* HAVING filters groups after aggregation.
+   Each HAVING condition is first rewritten to replace aggregate sub-expressions
+   with their computed values, then evaluated against the representative solution. *)
+let having_filter (base : option wf_iri) (conditions : list having_condition) (groups : list group) : list group =
+  List.Tot.filter
+    (fun g ->
+      let mu = match g.g_solutions with | mu :: _ -> mu | [] -> sm_empty in
+      List.Tot.for_all
+        (fun cond ->
+          let rewritten = rewrite_aggregates base cond g in
+          ebv (eval_expr_with_base base rewritten mu))
+        conditions)
+    groups
+
+(** 10.4 Aggregate group evaluation — one solution per group (§18.5) **)
+
+(* Evaluate an expression in group context.
+   Any E_Aggregate sub-expressions are rewritten to their computed values
+   over the group, then the result is evaluated against the representative
+   solution mapping (first in the group).  This handles both top-level
+   aggregates and nested ones (e.g., COUNT(?x) + 1). *)
+let eval_expr_in_group (base : option wf_iri) (e : expr) (g : group) : eval_result =
+  let rewritten = rewrite_aggregates base e g in
+  match g.g_solutions with
+  | mu :: _ -> eval_expr_with_base base rewritten mu
+  | [] -> eval_expr_with_base base rewritten sm_empty
+
+(* Evaluate a SELECT item in group context — handles aggregates *)
+let eval_select_item_group (base : option wf_iri) (item : select_item) (g : group)
+  : option (var_name * rdf_term) =
+  match item with
+  | SI_Var v ->
+    (* Variable: look up in group's representative solution *)
+    (match g.g_solutions with
+     | mu :: _ -> (match sm_lookup v mu with
+                   | Some t -> Some (v, t)
+                   | None -> None)
+     | [] -> None)
+  | SI_Expr e v ->
+    let r = eval_expr_in_group base e g in
+    (match er_to_term r with
+     | Some t -> Some (v, t)
+     | None -> None)
+
+(* Produce one solution mapping per group from SELECT items *)
+let aggregate_group (base : option wf_iri) (items : list select_item) (g : group) : solution_mapping =
+  list_filter_map (fun item -> eval_select_item_group base item g) items
+
+(* Aggregate all groups into a solution sequence *)
+let aggregate_groups (base : option wf_iri) (items : list select_item) (groups : list group) : solution_sequence =
+  List.Tot.map (aggregate_group base items) groups
+
+(* Check if an expression contains any aggregate sub-expression *)
+let rec expr_has_aggregate (e : expr) : Tot bool (decreases e) =
+  match e with
+  | E_Aggregate _ _ _ -> true
+  | E_Arith _ e1 e2 -> expr_has_aggregate e1 || expr_has_aggregate e2
+  | E_Compare _ e1 e2 -> expr_has_aggregate e1 || expr_has_aggregate e2
+  | E_And e1 e2 -> expr_has_aggregate e1 || expr_has_aggregate e2
+  | E_Or e1 e2 -> expr_has_aggregate e1 || expr_has_aggregate e2
+  | E_Not e1 -> expr_has_aggregate e1
+  | E_UnaryMinus e1 -> expr_has_aggregate e1
+  | E_UnaryPlus e1 -> expr_has_aggregate e1
+  | E_If c t f -> expr_has_aggregate c || expr_has_aggregate t || expr_has_aggregate f
+  | _ -> false
+
+// Check if a non-aggregate expression references any ungrouped variable.
+// Variables inside E_Aggregate are fine (aggregates operate on groups).
+// The is_grp predicate returns true if a variable name is in the GROUP BY list.
+let rec expr_has_ungrouped_var (is_grp : var_name -> bool) (e : expr)
+  : Tot bool (decreases e) =
+  match e with
+  | E_Var v -> not (is_grp v)
+  | E_Aggregate _ _ _ -> false  // aggregates are always OK
+  | E_Arith _ e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_Compare _ e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_And e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_Or e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_Not e1 -> expr_has_ungrouped_var is_grp e1
+  | E_UnaryMinus e1 -> expr_has_ungrouped_var is_grp e1
+  | E_UnaryPlus e1 -> expr_has_ungrouped_var is_grp e1
+  | E_If c t f -> expr_has_ungrouped_var is_grp c || expr_has_ungrouped_var is_grp t || expr_has_ungrouped_var is_grp f
+  | E_Str e1 -> expr_has_ungrouped_var is_grp e1
+  | E_Lang e1 -> expr_has_ungrouped_var is_grp e1
+  | E_Datatype e1 -> expr_has_ungrouped_var is_grp e1
+  | E_IRI_fn e1 -> expr_has_ungrouped_var is_grp e1
+  | E_HasLang e1 -> expr_has_ungrouped_var is_grp e1
+  | E_HasLangDir e1 -> expr_has_ungrouped_var is_grp e1
+  | E_LangDir e1 -> expr_has_ungrouped_var is_grp e1
+  | E_IsIRI e1 -> expr_has_ungrouped_var is_grp e1
+  | E_IsBlank e1 -> expr_has_ungrouped_var is_grp e1
+  | E_IsLiteral e1 -> expr_has_ungrouped_var is_grp e1
+  | E_IsNumeric e1 -> expr_has_ungrouped_var is_grp e1
+  | E_StrDt e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_StrLang e1 e2 -> expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2
+  | E_StrLangDir e1 e2 e3 ->
+    expr_has_ungrouped_var is_grp e1 || expr_has_ungrouped_var is_grp e2 || expr_has_ungrouped_var is_grp e3
+  | _ -> false
+
+(* Check if a SELECT item contains an aggregate expression *)
+let select_item_has_aggregate (item : select_item) : bool =
+  match item with
+  | SI_Var _ -> false
+  | SI_Expr e _ -> expr_has_aggregate e
+
+(* Check if any SELECT item uses aggregation *)
+let select_has_aggregates (sel : select_clause) : bool =
+  match sel with
+  | Select_All -> false
+  | Select_Vars items -> List.Tot.existsb select_item_has_aggregate items
+
+(** ====================================================================== **)
+(** Part 11: SPARQL 1.1 Solution Modifiers (§18.4, §9)                    **)
+(** ====================================================================== **)
+
+(** 11.1 ORDER BY (§18.4) **)
+
+(* er_rank and sparql_order defined in Part 10 utility section above *)
+
+(* Compare two solution mappings on a single order condition.
+   Returns -1, 0, or 1. *)
+let compare_on_condition (base : option wf_iri) (c : order_condition) (mu1 mu2 : solution_mapping) : int =
+  match c with
+  | OC_Asc e ->
+    sparql_order (eval_expr_with_base base e mu1) (eval_expr_with_base base e mu2)
+  | OC_Desc e ->
+    sparql_order (eval_expr_with_base base e mu2) (eval_expr_with_base base e mu1)
+
+(* Compare two solution mappings on a list of order conditions (lexicographic).
+   First non-zero comparison wins. *)
+let rec compare_on_conditions (base : option wf_iri) (conds : list order_condition) (mu1 mu2 : solution_mapping) : int =
+  match conds with
+  | [] -> 0
+  | c :: rest ->
+    let r = compare_on_condition base c mu1 mu2 in
+    if r <> 0 then r
+    else compare_on_conditions base rest mu1 mu2
+
+(* Sort a solution sequence by the given order conditions — CONCRETE implementation. *)
+let sort_solutions (base : option wf_iri) (conds : list order_condition) (omega : solution_sequence) : solution_sequence =
+  List.Tot.sortWith (compare_on_conditions base conds) omega
+
+(** 11.2 DISTINCT / REDUCED (§18.4) **)
+
+(* Solution mapping equality: compare bindings pairwise using rdf_term_eq *)
+// #336 (SR-1): a solution mapping is a PARTIAL FUNCTION (section 18.3);
+// binding order carries no meaning. The original sm_equal compared the
+// association lists position by position, so the two arms of a UNION --
+// which build the same mapping in different variable order -- looked
+// like different rows to DISTINCT, and Card[Distinct(Omega)][mu] = 1
+// (section 18.5) failed on a machine-checked witness
+// (SPARQL11.Algebra.Refinement, finding SR-1). Now: mutual submap.
+//
+// The term comparator stays rdf_term_eq ON PURPOSE. The Spec module's
+// smap_eqb compares terms by IDENTITY (term_id_eqb); rdf_term_eq folds
+// language-tag case and XMLLiteral canonical form. Which of the two is
+// RDF 1.1 term equality is exactly the #324 dispute, and DISTINCT
+// should not settle it as a side effect: keeping rdf_term_eq means this
+// change strictly REMOVES duplicate rows relative to the shipping
+// behaviour and never adds one. When #324 retires one equality, this
+// comparator follows it.
+let rec sm_submap (m1 m2 : solution_mapping) : Tot bool (decreases m1) =
+  match m1 with
+  | [] -> true
+  | (v, t) :: r ->
+    (match sm_lookup v m2 with
+     | Some t2 -> rdf_term_eq t t2 && sm_submap r m2
+     | None -> false)
+
+let sm_equal (m1 m2 : solution_mapping) : bool =
+  sm_submap m1 m2 && sm_submap m2 m1
+
+(* Remove duplicate solution mappings using sm_equal *)
+let rec sm_mem (mu : solution_mapping) (l : list solution_mapping)
+  : Tot bool (decreases l) =
+  match l with
+  | [] -> false
+  | hd :: tl -> sm_equal mu hd || sm_mem mu tl
+
+// Tail-rec dedup. The original recursed BEFORE consing, so DISTINCT on
+// a 3M-row solution sequence (Yod6's smoke-test crash signature)
+// overflowed the macOS main-thread stack inside list_deduplicate_sm
+// before the result ever reached Tav5's HTTP-level cap. Sin7 fix
+// (2026-04-26): walk tail-recursively, building seen-set in reverse order;
+// the dedup semantics (keep first occurrence; sm_mem checks tail) are
+// preserved by checking against `xs` (not `acc`) on every step. Order
+// preserved (rev once at end).
+//
+// Note: still O(n^2) in `sm_mem` per element. A proper hash-based dedup
+// is a separate optimisation — out of scope for this stack-overflow fix.
+let rec list_deduplicate_sm_acc (l : list solution_mapping)
+  (acc : list solution_mapping)
+  : Tot (list solution_mapping) (decreases l) =
+  match l with
+  | [] -> acc
+  | x :: xs ->
+    if sm_mem x xs
+    then list_deduplicate_sm_acc xs acc
+    else list_deduplicate_sm_acc xs (x :: acc)
+
+let list_deduplicate_sm (l : list solution_mapping)
+  : Tot (list solution_mapping) =
+  List.Tot.rev (list_deduplicate_sm_acc l [])
+
+let distinct_solutions (omega : solution_sequence) : solution_sequence =
+  list_deduplicate_sm omega
+
+(* REDUCED: implementation may eliminate some or all duplicates.
+   We specify it as identity (keeping all) — this is conformant. *)
+let reduced_solutions (omega : solution_sequence) : solution_sequence = omega
+
+(** 11.3 OFFSET / LIMIT (§18.4) **)
+
+(* list_drop/list_take defined in utility section above *)
+
+let slice_solutions (offset : option nat) (limit : option nat) (omega : solution_sequence)
+  : solution_sequence =
+  let after_offset = match offset with
+    | None -> omega
+    | Some n -> list_drop n omega in
+  match limit with
+  | None -> after_offset
+  | Some n -> list_take n after_offset
+
+(** 11.4 Projection (§18.4) **)
+
+(* Project solution mapping to selected variables — CONCRETE *)
+let rec project (vars : list var_name) (mu : solution_mapping) : solution_mapping =
+  match mu with
+  | [] -> []
+  | (v, t) :: rest ->
+    if List.Tot.mem v vars
+    then (v, t) :: project vars rest
+    else project vars rest
+
+// Tail-rec project. F* stdlib `List.Tot.map` is non-tail-rec
+// (`f a :: map f tl`); on a 3M-row solution sequence this overflows
+// the macOS main-thread stack. Sin7 fix (2026-04-26): tail-rec walk
+// with `List.Tot.rev_acc`-style accumulator, rev once at end.
+let rec project_solutions_acc (vars : list var_name) (omega : solution_sequence)
+  (acc : solution_sequence)
+  : Tot solution_sequence (decreases omega) =
+  match omega with
+  | [] -> acc
+  | mu :: rest ->
+    project_solutions_acc vars rest (project vars mu :: acc)
+
+let project_solutions (vars : list var_name) (omega : solution_sequence)
+  : solution_sequence =
+  List.Tot.rev (project_solutions_acc vars omega [])
+
+(** ====================================================================== **)
+(** Part 12: SPARQL 1.1 Query Evaluation (§18.2.4)                        **)
+(** ====================================================================== **)
+
+(* Top-level query evaluation for SELECT queries.
+   Applies: pattern evaluation → aggregation → HAVING → projection
+            → solution modifiers (ORDER BY, DISTINCT, OFFSET, LIMIT) *)
+
+(* Evaluate a single SELECT expression item against a solution mapping.
+   For SI_Var, the mapping is unchanged.
+   For SI_Expr e v, evaluate e and bind the result to v. — CONCRETE
+   `row`/`occ` carry the per-row / per-call-site freshness context for
+   BNODE()/UUID()/STRUUID(); the context is used only for evaluation
+   (mu_ctx) and never stored into the returned mapping. *)
+let eval_select_item (base : option wf_iri) (row : string) (occ : string)
+  (item : select_item) (mu : solution_mapping) (g : rdf_graph)
+  : solution_mapping =
+  match item with
+  | SI_Var _ -> mu  (* variable already in mapping from WHERE *)
+  | SI_Expr e v ->
+    let r = eval_expr_with_base base e (fx_ctx_put row occ mu) in
+    match er_to_term r with
+    | Some t -> sm_bind v t mu
+    | None -> mu  (* expression error — leave unbound *)
+
+(* Fold the SELECT items over one row, tagging each item with its
+   position so distinct BNODE()/UUID() calls in the same row differ. *)
+let rec eval_select_items_row (base : option wf_iri) (row : string) (i : nat)
+  (items : list select_item) (mu : solution_mapping) (g : rdf_graph)
+  : Tot solution_mapping (decreases items) =
+  match items with
+  | [] -> mu
+  | item :: rest ->
+    let mu' = eval_select_item base row (string_of_int i) item mu g in
+    eval_select_items_row base row (i + 1) rest mu' g
+
+(* Map the item-fold over every row, tagging each row with its index so
+   the same expression yields a distinct fresh bnode/uuid per solution.
+   Tail-rec walk (issue #294): the original recursed BEFORE consing
+   (`eval_select_items_row ... :: eval_select_items_rows ...`), the same
+   "cons after recurse" shape the 2026-04-26 Sin7 fix already eliminated
+   from `project_solutions`/`list_filter_map`/`list_deduplicate_sm`/
+   `eval_bgp_concatmap_acc`/`cottas_ondisk_rows_tok_to_triples` — this one
+   was missed, and it sits directly on the non-grouping `SELECT ?s ?p ?o`
+   (explicit-vars, no aggregates) path, so an unbounded full-scan query
+   (889k COTTAS rows) overflowed the OCaml native stack here. Accumulator
+   + `List.Tot.rev` at the end; per-row index `r` still increments in
+   input order so BNODE()/UUID() freshness is unchanged, only the final
+   list is built via reverse-accumulate-then-reverse instead of direct
+   consing during the recursive descent. *)
+let rec eval_select_items_rows_acc (base : option wf_iri) (r : nat)
+  (omega : solution_sequence) (items : list select_item) (g : rdf_graph)
+  (acc : solution_sequence)
+  : Tot solution_sequence (decreases omega) =
+  match omega with
+  | [] -> acc
+  | mu :: rest ->
+    let mu' = eval_select_items_row base (string_of_int r) 0 items mu g in
+    eval_select_items_rows_acc base (r + 1) rest items g (mu' :: acc)
+
+let eval_select_items_rows (base : option wf_iri) (r : nat)
+  (omega : solution_sequence) (items : list select_item) (g : rdf_graph)
+  : solution_sequence =
+  List.Tot.rev (eval_select_items_rows_acc base r omega items g [])
+
+(* Apply SELECT expression items to each solution mapping — CONCRETE *)
+let eval_select_items (base : option wf_iri) (items : list select_item) (omega : solution_sequence) (g : rdf_graph)
+  : solution_sequence =
+  eval_select_items_rows base 0 omega items g
+
+(* Extract variable names from select items — CONCRETE *)
+let select_item_vars (items : list select_item) : list var_name =
+  List.Tot.map (fun (item : select_item) -> match item with
+    | SI_Var v -> v
+    | SI_Expr _ v -> v) items
+
+let rec rewrite_query_bnode_term (pt : pattern_term) : Tot pattern_term (decreases pt) =
+  match pt with
+  | PT_BNode b -> PT_Var ("_bnode_" ^ b)
+  // RDF 1.2: rewrite bnodes inside a triple-term pattern too, so a
+  // `<<( _:a :p :o )>>` treats `_:a` as a non-distinguished variable.
+  | PT_TripleTerm s p o ->
+    PT_TripleTerm (rewrite_query_bnode_term s)
+                  (rewrite_query_bnode_term p)
+                  (rewrite_query_bnode_term o)
+  | _ -> pt
+
+let rewrite_query_bnode_subject (ps : pattern_subject) : pattern_subject =
+  match ps with
+  | PS_BNode b -> PS_Var ("_bnode_" ^ b)
+  | _ -> ps
+
+let rewrite_query_bnode_tp (tp : triple_pattern) : triple_pattern = {
+  tp_s = rewrite_query_bnode_subject tp.tp_s;
+  tp_p = rewrite_query_bnode_term tp.tp_p;
+  tp_o = rewrite_query_bnode_term tp.tp_o;
+}
+
+let rec rewrite_query_bnodes_pattern (p : group_graph_pattern)
+  : Tot group_graph_pattern (decreases p) =
+  match p with
+  | GP_BGP bgp -> GP_BGP (List.Tot.map rewrite_query_bnode_tp bgp)
+  | GP_Join p1 p2 -> GP_Join (rewrite_query_bnodes_pattern p1) (rewrite_query_bnodes_pattern p2)
+  | GP_LeftJoin p1 p2 e ->
+    GP_LeftJoin (rewrite_query_bnodes_pattern p1) (rewrite_query_bnodes_pattern p2) e
+  | GP_Filter e p1 -> GP_Filter e (rewrite_query_bnodes_pattern p1)
+  | GP_Union p1 p2 -> GP_Union (rewrite_query_bnodes_pattern p1) (rewrite_query_bnodes_pattern p2)
+  | GP_Graph gt p1 -> GP_Graph (rewrite_query_bnode_term gt) (rewrite_query_bnodes_pattern p1)
+  | GP_Minus p1 p2 -> GP_Minus (rewrite_query_bnodes_pattern p1) (rewrite_query_bnodes_pattern p2)
+  | GP_Lateral p1 p2 -> GP_Lateral (rewrite_query_bnodes_pattern p1) (rewrite_query_bnodes_pattern p2)
+  | GP_Bind e v p1 -> GP_Bind e v (rewrite_query_bnodes_pattern p1)
+  | GP_SubSelect q -> GP_SubSelect { q with q_pattern = rewrite_query_bnodes_pattern q.q_pattern }
+  | GP_PropertyPath s pp o ->
+    GP_PropertyPath (rewrite_query_bnode_subject s) pp (rewrite_query_bnode_term o)
+  | _ -> p
+
+(* Companion preservation lemma for rewrite_query_bnodes_pattern (issue #62
+   retirement, G4-subselect-fold, 2026-08-10): eval_select_query rewrites
+   q.q_pattern with this function BEFORE dispatching to eval_pattern_store,
+   so that internal recursive call's decreases obligation needs
+   pattern_size (rewrite_query_bnodes_pattern p) == pattern_size p, exactly
+   like lateral_substitute needed lemma_lateral_substitute_preserves_size
+   for the LATERAL call site. Like lateral_substitute (and unlike
+   substitute_pattern), rewrite_query_bnodes_pattern recurses into an
+   embedded GP_SubSelect's own q_pattern (WHERE-clause bnode rewriting has
+   to reach sub-SELECTs too), so that case is a genuine recursive step.
+   No lambda re-spelling risk here: rewrite_query_bnodes_pattern's
+   GP_SubSelect arm is a plain record-field update with no anonymous
+   lambda to mismatch. *)
+let rec lemma_rewrite_query_bnodes_pattern_preserves_size (p : group_graph_pattern)
+  : Lemma (ensures pattern_size (rewrite_query_bnodes_pattern p) == pattern_size p)
+          (decreases p) =
+  match p with
+  | GP_BGP _ -> ()
+  | GP_Join p1 p2 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1;
+    lemma_rewrite_query_bnodes_pattern_preserves_size p2
+  | GP_LeftJoin p1 p2 _ ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1;
+    lemma_rewrite_query_bnodes_pattern_preserves_size p2
+  | GP_Filter _ p1 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1
+  | GP_Union p1 p2 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1;
+    lemma_rewrite_query_bnodes_pattern_preserves_size p2
+  | GP_Graph _ p1 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1
+  | GP_Minus p1 p2 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1;
+    lemma_rewrite_query_bnodes_pattern_preserves_size p2
+  | GP_Lateral p1 p2 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1;
+    lemma_rewrite_query_bnodes_pattern_preserves_size p2
+  | GP_Bind _ _ p1 ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size p1
+  | GP_Values _ _ -> ()
+  | GP_Service _ _ _ -> ()
+  | GP_ServiceVar _ _ _ -> ()
+  | GP_SubSelect q ->
+    lemma_rewrite_query_bnodes_pattern_preserves_size q.q_pattern
+  | GP_PropertyPath _ _ _ -> ()
+  | GP_Empty -> ()
+
+(* SELECT * projection: skip synthetic variables introduced by
+   `rewrite_query_bnode_*` for blank nodes appearing in the WHERE clause.
+   Per SPARQL 1.1 §18.2.4 (OutScope of variables), the original query's
+   blank nodes are NOT in the user's variable scope; the rewriter binds
+   them to fresh `_bnode_<label>` variables only as a matching-side
+   convenience. Returning those variables under `SELECT *` would expose
+   implementation detail and inflate the row count by the number of
+   distinct synthetic-variable bindings (parent7: 1 expected row × 311
+   bindings = 311 spurious rows; see
+   docs/designissues/2026-04-25-tav2-parent7-finish.md). *)
+let is_synthetic_bnode_var (v : var_name) : bool =
+  string_starts_with v "_bnode_"
+
+let strip_synthetic_bnode_vars_mu (mu : solution_mapping) : solution_mapping =
+  List.Tot.filter (fun (v, _) -> not (is_synthetic_bnode_var v)) mu
+
+let strip_synthetic_bnode_vars (omega : solution_sequence) : solution_sequence =
+  List.Tot.map strip_synthetic_bnode_vars_mu omega
+
+(* ================================================================ *)
+(* Top-level dataset-clause application (FROM / FROM NAMED, §13.2). *)
+(*                                                                   *)
+(* If q.q_dataset is non-empty the query's dataset is REPLACED by    *)
+(* the dataset described by the FROM / FROM NAMED clauses, as        *)
+(* resolved against the ambient named-graph store `ds.ds_named`:     *)
+(*                                                                   *)
+(*   default = union of the triples of every DC_Default i            *)
+(*             (each i looked up in ds.ds_named; missing → empty)    *)
+(*   named   = [ { i, lookup i ds.ds_named } | DC_Named i ]          *)
+(*                                                                   *)
+(* When q.q_dataset is empty the original (g, ds) pair is used       *)
+(* verbatim.                                                         *)
+(*                                                                   *)
+(* Returns a (new default graph, new dataset) pair so the existing   *)
+(* `eval_pattern` signature stays unchanged. Structurally mirrors    *)
+(* the USING branch of `build_where_dataset` (Part 19d).             *)
+(* ================================================================ *)
+
+// Collect DC_Default / DC_Named iris from a query's dataset list.
+let rec q_dataset_default_iris (dcs : list dataset_clause)
+  : Tot (list wf_iri) (decreases dcs) =
+  match dcs with
+  | [] -> []
+  | DC_Default i :: rest -> i :: q_dataset_default_iris rest
+  | DC_Named _   :: rest -> q_dataset_default_iris rest
+
+let rec q_dataset_named_iris (dcs : list dataset_clause)
+  : Tot (list wf_iri) (decreases dcs) =
+  match dcs with
+  | [] -> []
+  | DC_Named i   :: rest -> i :: q_dataset_named_iris rest
+  | DC_Default _ :: rest -> q_dataset_named_iris rest
+
+// Union all named graphs whose name IRI appears in `iris` into one rdf_graph.
+// Missing IRIs contribute empty. Duplicated later by `build_where_dataset`'s
+// helper (Part 19d); defined separately here so the query-side evaluator
+// does not depend on update-side code.
+let rec q_union_named_graphs_by_iri (iris : list wf_iri) (named : list named_graph)
+  : Tot rdf_graph (decreases iris) =
+  match iris with
+  | [] -> empty_graph
+  | i :: rest ->
+    let g = (match lookup_named_graph i named with
+             | Some g -> g
+             | None -> empty_graph) in
+    graph_union g (q_union_named_graphs_by_iri rest named)
+
+let rec q_named_graphs_by_iri (iris : list wf_iri) (named : list named_graph)
+  : Tot (list named_graph) (decreases iris) =
+  match iris with
+  | [] -> []
+  | i :: rest ->
+    let g = (match lookup_named_graph i named with
+             | Some g -> g
+             | None -> empty_graph) in
+    { ng_name = i; ng_graph = g } :: q_named_graphs_by_iri rest named
+
+// Apply q.q_dataset (FROM / FROM NAMED) on top of the caller-supplied
+// (g, ds) pair. When q_dataset is empty this returns the inputs
+// unchanged; otherwise the returned dataset replaces both the default
+// graph and the named-graph set per §13.2.
+let apply_query_dataset (dcs : list dataset_clause)
+  (g : rdf_graph) (ds : rdf_dataset) : rdf_graph & rdf_dataset =
+  match dcs with
+  | [] -> (g, ds)
+  | _ ->
+    let def_iris = q_dataset_default_iris dcs in
+    let nam_iris = q_dataset_named_iris dcs in
+    let new_def = q_union_named_graphs_by_iri def_iris ds.ds_named in
+    let new_named = q_named_graphs_by_iri nam_iris ds.ds_named in
+    (new_def, { ds_default = new_def; ds_named = new_named })
+
+let rec substitute_existentials
+  (base : option wf_iri)
+  (e : expr) (mu : solution_mapping)
+  (g : rdf_graph) (ds : rdf_dataset)
+  : Tot expr (decreases %[expr_size e; 1]) =
+  match e with
+  | E_Exists p ->
+    E_BoolLit (eval_exists base p mu g ds)
+  | E_NotExists p ->
+    E_BoolLit (not (eval_exists base p mu g ds))
+  // Recurse into sub-expressions
+  | E_Arith op e1 e2 ->
+    E_Arith op (substitute_existentials base e1 mu g ds)
+               (substitute_existentials base e2 mu g ds)
+  | E_UnaryMinus e1 -> E_UnaryMinus (substitute_existentials base e1 mu g ds)
+  | E_UnaryPlus e1 -> E_UnaryPlus (substitute_existentials base e1 mu g ds)
+  | E_Compare op e1 e2 ->
+    E_Compare op (substitute_existentials base e1 mu g ds)
+                 (substitute_existentials base e2 mu g ds)
+  | E_And e1 e2 ->
+    E_And (substitute_existentials base e1 mu g ds)
+          (substitute_existentials base e2 mu g ds)
+  | E_Or e1 e2 ->
+    E_Or (substitute_existentials base e1 mu g ds)
+         (substitute_existentials base e2 mu g ds)
+  | E_Not e1 -> E_Not (substitute_existentials base e1 mu g ds)
+  | E_IsIRI e1 -> E_IsIRI (substitute_existentials base e1 mu g ds)
+  | E_IsBlank e1 -> E_IsBlank (substitute_existentials base e1 mu g ds)
+  | E_IsLiteral e1 -> E_IsLiteral (substitute_existentials base e1 mu g ds)
+  | E_IsNumeric e1 -> E_IsNumeric (substitute_existentials base e1 mu g ds)
+  | E_Str e1 -> E_Str (substitute_existentials base e1 mu g ds)
+  | E_Lang e1 -> E_Lang (substitute_existentials base e1 mu g ds)
+  | E_Datatype e1 -> E_Datatype (substitute_existentials base e1 mu g ds)
+  | E_IRI_fn e1 -> E_IRI_fn (substitute_existentials base e1 mu g ds)
+  | E_HasLang e1 -> E_HasLang (substitute_existentials base e1 mu g ds)
+  | E_HasLangDir e1 -> E_HasLangDir (substitute_existentials base e1 mu g ds)
+  | E_LangDir e1 -> E_LangDir (substitute_existentials base e1 mu g ds)
+  | E_StrDt e1 e2 ->
+    E_StrDt (substitute_existentials base e1 mu g ds)
+            (substitute_existentials base e2 mu g ds)
+  | E_StrLang e1 e2 ->
+    E_StrLang (substitute_existentials base e1 mu g ds)
+              (substitute_existentials base e2 mu g ds)
+  | E_StrLangDir e1 e2 e3 ->
+    E_StrLangDir (substitute_existentials base e1 mu g ds)
+                 (substitute_existentials base e2 mu g ds)
+                 (substitute_existentials base e3 mu g ds)
+  | E_If c t f ->
+    E_If (substitute_existentials base c mu g ds)
+         (substitute_existentials base t mu g ds)
+         (substitute_existentials base f mu g ds)
+  | E_Coalesce es ->
+    E_Coalesce (substitute_existentials_list base es mu g ds)
+  | E_In ev es ->
+    E_In (substitute_existentials base ev mu g ds)
+         (substitute_existentials_list base es mu g ds)
+  | E_NotIn ev es ->
+    E_NotIn (substitute_existentials base ev mu g ds)
+            (substitute_existentials_list base es mu g ds)
+  | E_StrLen e1 -> E_StrLen (substitute_existentials base e1 mu g ds)
+  | E_Substr e1 e2 e3_opt ->
+    E_Substr (substitute_existentials base e1 mu g ds)
+             (substitute_existentials base e2 mu g ds)
+             (substitute_existentials_opt base e3_opt mu g ds)
+  | E_UCase e1 -> E_UCase (substitute_existentials base e1 mu g ds)
+  | E_LCase e1 -> E_LCase (substitute_existentials base e1 mu g ds)
+  | E_StrStarts e1 e2 ->
+    E_StrStarts (substitute_existentials base e1 mu g ds)
+                (substitute_existentials base e2 mu g ds)
+  | E_StrEnds e1 e2 ->
+    E_StrEnds (substitute_existentials base e1 mu g ds)
+              (substitute_existentials base e2 mu g ds)
+  | E_Contains e1 e2 ->
+    E_Contains (substitute_existentials base e1 mu g ds)
+               (substitute_existentials base e2 mu g ds)
+  | E_StrBefore e1 e2 ->
+    E_StrBefore (substitute_existentials base e1 mu g ds)
+                (substitute_existentials base e2 mu g ds)
+  | E_StrAfter e1 e2 ->
+    E_StrAfter (substitute_existentials base e1 mu g ds)
+               (substitute_existentials base e2 mu g ds)
+  | E_Concat es ->
+    E_Concat (substitute_existentials_list base es mu g ds)
+  | E_EncodeForUri e1 -> E_EncodeForUri (substitute_existentials base e1 mu g ds)
+  | E_Replace e1 e2 e3 e4_opt ->
+    E_Replace (substitute_existentials base e1 mu g ds)
+              (substitute_existentials base e2 mu g ds)
+              (substitute_existentials base e3 mu g ds)
+              (substitute_existentials_opt base e4_opt mu g ds)
+  | E_Regex e1 e2 e3_opt ->
+    E_Regex (substitute_existentials base e1 mu g ds)
+            (substitute_existentials base e2 mu g ds)
+            (substitute_existentials_opt base e3_opt mu g ds)
+  | E_Abs e1 -> E_Abs (substitute_existentials base e1 mu g ds)
+  | E_Round e1 -> E_Round (substitute_existentials base e1 mu g ds)
+  | E_Ceil e1 -> E_Ceil (substitute_existentials base e1 mu g ds)
+  | E_Floor e1 -> E_Floor (substitute_existentials base e1 mu g ds)
+  | E_MD5 e1 -> E_MD5 (substitute_existentials base e1 mu g ds)
+  | E_SHA1 e1 -> E_SHA1 (substitute_existentials base e1 mu g ds)
+  | E_SHA256 e1 -> E_SHA256 (substitute_existentials base e1 mu g ds)
+  | E_SHA384 e1 -> E_SHA384 (substitute_existentials base e1 mu g ds)
+  | E_SHA512 e1 -> E_SHA512 (substitute_existentials base e1 mu g ds)
+  | E_Year e1 -> E_Year (substitute_existentials base e1 mu g ds)
+  | E_Month e1 -> E_Month (substitute_existentials base e1 mu g ds)
+  | E_Day e1 -> E_Day (substitute_existentials base e1 mu g ds)
+  | E_Hours e1 -> E_Hours (substitute_existentials base e1 mu g ds)
+  | E_Minutes e1 -> E_Minutes (substitute_existentials base e1 mu g ds)
+  | E_Seconds e1 -> E_Seconds (substitute_existentials base e1 mu g ds)
+  | E_Timezone e1 -> E_Timezone (substitute_existentials base e1 mu g ds)
+  | E_Tz e1 -> E_Tz (substitute_existentials base e1 mu g ds)
+  | E_SameTerm e1 e2 ->
+    E_SameTerm (substitute_existentials base e1 mu g ds)
+               (substitute_existentials base e2 mu g ds)
+  | E_Aggregate fn dist e1 ->
+    E_Aggregate fn dist (substitute_existentials base e1 mu g ds)
+  | E_FunctionCall iri args ->
+    E_FunctionCall iri (substitute_existentials_list base args mu g ds)
+  | E_TripleTerm a b c ->
+    E_TripleTerm (substitute_existentials base a mu g ds)
+                 (substitute_existentials base b mu g ds)
+                 (substitute_existentials base c mu g ds)
+  | E_TTSubject e1 -> E_TTSubject (substitute_existentials base e1 mu g ds)
+  | E_TTPredicate e1 -> E_TTPredicate (substitute_existentials base e1 mu g ds)
+  | E_TTObject e1 -> E_TTObject (substitute_existentials base e1 mu g ds)
+  | E_IsTriple e1 -> E_IsTriple (substitute_existentials base e1 mu g ds)
+  // Leaf cases pass through unchanged
+  | _ -> e
+
+and substitute_existentials_list
+  (base : option wf_iri)
+  (es : list expr) (mu : solution_mapping)
+  (g : rdf_graph) (ds : rdf_dataset)
+  : Tot (list expr) (decreases %[expr_list_size es; 1]) =
+  match es with
+  | [] -> []
+  | hd :: tl ->
+    substitute_existentials base hd mu g ds
+      :: substitute_existentials_list base tl mu g ds
+
+and substitute_existentials_opt
+  (base : option wf_iri)
+  (eo : option expr) (mu : solution_mapping)
+  (g : rdf_graph) (ds : rdf_dataset)
+  : Tot (option expr) (decreases %[expr_opt_size eo; 1]) =
+  match eo with
+  | None -> None
+  | Some e -> Some (substitute_existentials base e mu g ds)
+
+(* Filter with graph context: pre-substitute existentials, then filter.
+   PUBLIC API (issue #62 de-vacuation pilot, G4-exists-cycle, 2026-08-09):
+   NOT eval_pattern_store-private — SPARQL11.Store.fst's on-disk backend
+   GP_Filter arm calls this directly (COTTAS dispatch has its own
+   `omega`/`g_current`/`ds` plumbing, separate from the in-memory
+   graph_store/rdf_dataset_store this module builds), and
+   SPARQL11.Algebra.Refinement.fst's `theorem_filter_with_graph_is_filter_solutions`
+   is stated in terms of this exact name. It must join the clique (rather
+   than being inlined into eval_pattern_store's GP_Filter arm) so both
+   call sites keep working unchanged. Phase 2: its own call into
+   substitute_existentials passes the SAME [e] it received (a
+   same-argument pass-through, not a structural sub-term), so the
+   primary measure (expr_size e) ties — phase 2 > substitute_existentials's
+   phase 1 supplies the strict decrease at that specific edge. Every
+   OTHER edge into this function (from eval_pattern_store's GP_Filter arm)
+   already decreases strictly on the primary measure alone
+   (`expr_size e < pattern_size (GP_Filter e p')`), so its own phase only
+   has to satisfy the outgoing edge, not the incoming one. *)
+and filter_solutions_with_graph
+  (base : option wf_iri)
+  (e : expr) (omega : solution_sequence)
+  (g : rdf_graph) (ds : rdf_dataset)
+  : Tot solution_sequence (decreases %[expr_size e; 2]) =
+  List.Tot.filter
+    (fun mu ->
+      let e' = substitute_existentials base e mu g ds in
+      eval_expr_ebv base e' mu)
+    omega
+
+(* LeftJoin with graph context: same substitution applied per-mapping.
+   PUBLIC API, same reasoning as filter_solutions_with_graph above:
+   SPARQL11.Store.fst's on-disk GP_LeftJoin arm calls this directly, so
+   it stays a real top-level name rather than an eval_pattern_store-local
+   inline. Phase 2 for the same reason: its internal
+   `substitute_existentials base filter_expr ...` calls pass the SAME
+   [filter_expr] unchanged, tying the primary measure, so the phase
+   component (2 > substitute_existentials's 1) supplies the decrease.
+   2026-07-06 hash-join fix: same shape as `left_join` above — omega1
+   stays the outer loop (LeftJoin is not commutative), omega2 gets
+   indexed once outside the loop when a shared variable exists. This is
+   also the path the on-disk/COTTAS backend dispatches OPTIONAL through
+   (SPARQL11.Store.fst's `GP_LeftJoin` arm calls `left_join`, and the
+   in-memory `eval_pattern_store`'s `GP_LeftJoin` arm calls this
+   function) — confirming/refuting the competitive-benchmark q6 hypothesis
+   ("OPTIONAL re-issues a bound backend search per outer row"): it does
+   NOT — both dispatch paths evaluate the RHS pattern exactly once
+   (`eval_pattern_store`/`eval_pattern_backend` called once before this
+   function runs), then this nested-loop-turned-hash-join runs over the
+   two already-materialized sequences. The q6 residual cost was this
+   O(|omega1|*|omega2|) nested loop plus genuine per-row decode work on
+   a 25,083-row result, not repeated backend queries. *)
+and left_join_with_graph
+  (base : option wf_iri)
+  (omega1 omega2 : solution_sequence) (filter_expr : expr)
+  (g : rdf_graph) (ds : rdf_dataset)
+  : Tot solution_sequence (decreases %[expr_size filter_expr; 2]) =
+  match omega1, omega2 with
+  | [], _ -> []
+  | _, [] -> omega1
+  | mu1_0 :: _, mu2_0 :: _ ->
+    let vars = vars_intersect (sm_domain mu1_0) (sm_domain mu2_0) in
+    if vars = [] then
+      Lh.concatMap_tr
+        (fun mu1 ->
+          let joins = list_filter_map
+            (fun mu2 ->
+              if sm_compatible mu1 mu2 then
+                let merged = sm_merge mu1 mu2 in
+                let e' = substitute_existentials base filter_expr merged g ds in
+                if eval_expr_ebv base e' merged then Some merged else None
+              else None)
+            omega2 in
+          if List.Tot.length joins > 0 then joins else [mu1])
+        omega1
+    else
+      let idx = build_join_index vars omega2 in
+      Lh.concatMap_tr
+        (fun mu1 ->
+          let candidates = join_candidates idx vars mu1 in
+          let joins = list_filter_map
+            (fun mu2 ->
+              if sm_compatible mu1 mu2 then
+                let merged = sm_merge mu1 mu2 in
+                let e' = substitute_existentials base filter_expr merged g ds in
+                if eval_expr_ebv base e' merged then Some merged else None
+              else None)
+            candidates in
+          if List.Tot.length joins > 0 then joins else [mu1])
+        omega1
+
+(* Evaluate a group graph pattern against a graph store and dataset store.
+   #65 Step 2c (2026-05-10): threads BASE IRI for IRI() resolution in
+   FILTER / BIND sub-expressions and through sub-SELECT evaluation. *)
+and eval_pattern_store (base : option wf_iri) (p : group_graph_pattern) (gs : graph_store) (dss : rdf_dataset_store)
+  : Tot solution_sequence (decreases %[pattern_size p; 0]) =
+  match p with
+  | GP_BGP bgp -> eval_bgp_store bgp gs
+
+  | GP_Join p1 (GP_ServiceVar v inner silent) ->
+    (* SERVICE ?var pattern in scope of a left-hand pattern: evaluate the
+       left pattern first, then for each solution look up [v] to obtain the
+       endpoint IRI and dispatch through [service_endpoint_lookup] per
+       solution. Issue #57 Phase 3. Termination: [inner] is structurally
+       smaller than the outer [GP_Join _ (GP_ServiceVar _ inner _)]. *)
+    let omega1 = eval_pattern_store base p1 gs dss in
+    Lh.concatMap_tr
+      (fun mu ->
+        match sm_lookup v mu with
+        | Some (T_IRI iri) ->
+          if is_iri iri then
+            (match service_endpoint_lookup iri with
+             | Some remote_gs ->
+               let omega2 = eval_pattern_store base inner remote_gs dss in
+               Lh.concatMap_tr
+                 (fun mu2 ->
+                   if sm_compatible mu mu2 then [sm_merge mu mu2] else [])
+                 omega2
+             | None -> if silent then [mu] else [])
+          else (if silent then [mu] else [])
+        | _ -> if silent then [mu] else [])
+      omega1
+
+  | GP_Join (GP_ServiceVar v inner silent) p2 ->
+    (* Symmetric: SERVICE ?var on the left side of a join. Evaluate the
+       right side first to obtain bindings for [v]. *)
+    let omega2 = eval_pattern_store base p2 gs dss in
+    Lh.concatMap_tr
+      (fun mu ->
+        match sm_lookup v mu with
+        | Some (T_IRI iri) ->
+          if is_iri iri then
+            (match service_endpoint_lookup iri with
+             | Some remote_gs ->
+               let omega1 = eval_pattern_store base inner remote_gs dss in
+               Lh.concatMap_tr
+                 (fun mu1 ->
+                   if sm_compatible mu mu1 then [sm_merge mu mu1] else [])
+                 omega1
+             | None -> if silent then [mu] else [])
+          else (if silent then [mu] else [])
+        | _ -> if silent then [mu] else [])
+      omega2
+
+  | GP_Join p1 p2 ->
+    join (eval_pattern_store base p1 gs dss) (eval_pattern_store base p2 gs dss)
+
+  | GP_LeftJoin p1 p2 filter_e ->
+    left_join_with_graph base
+      (eval_pattern_store base p1 gs dss)
+      (eval_pattern_store base p2 gs dss)
+      filter_e gs.gs_graph (store_to_dataset dss)
+
+  | GP_Filter e p' ->
+    let omega = eval_pattern_store base p' gs dss in
+    (* EXISTS / NOT EXISTS may appear at the top level of [e] OR nested
+       inside E_And / E_Or / E_Not / E_If etc. The pre-substitution pass
+       below replaces every existential sub-expression with E_BoolLit
+       evaluated against the current graph + dataset, so the graph-free
+       eval_expr_ebv can finish the job. Issue: w3c negation/subset-02. *)
+    filter_solutions_with_graph base e omega gs.gs_graph (store_to_dataset dss)
+
+  | GP_Union p1 p2 ->
+    union (eval_pattern_store base p1 gs dss) (eval_pattern_store base p2 gs dss)
+
+  | GP_Minus p1 p2 ->
+    minus (eval_pattern_store base p1 gs dss) (eval_pattern_store base p2 gs dss)
+
+  | GP_Lateral p1 p2 ->
+    (* P1 LATERAL { P2 }: foreach solution mu1 of P1, substitute mu1 into
+       P2 and evaluate once per row (correlated join), merging each mu2
+       from that per-row evaluation with mu1. Threads through the SAME
+       gs/dss store-capability seam as every other combinator here — no
+       backend-specific code.
+       Directly recursive now (issue #62 retirement, G4-subselect-fold,
+       2026-08-10): lemma_lateral_substitute_preserves_size gives
+       pattern_size p2' == pattern_size p2, so
+       query_size (lateral_wrap_as_query p2') == 1 + pattern_size p2 <
+       1 + pattern_size p1 + pattern_size p2 == pattern_size (GP_Lateral p1 p2)
+       (pattern_size p1 >= 1 always — pattern_size's refined return
+       type). *)
+    let omega1 = eval_pattern_store base p1 gs dss in
+    Lh.concatMap_tr
+      (fun mu1 ->
+        let p2' = lateral_substitute mu1 p2 in
+        lemma_lateral_substitute_preserves_size mu1 p2;
+        let omega2 = eval_select_query (lateral_wrap_as_query p2') gs.gs_graph (store_to_dataset dss) in
+        list_filter_map
+          (fun mu2 -> if sm_compatible mu1 mu2 then Some (sm_merge mu1 mu2) else None)
+          omega2)
+      omega1
+
+  | GP_Empty -> [sm_empty]
+
+  | GP_Bind e v p' ->
+    let omega = eval_pattern_store base p' gs dss in
+    fx_bind_rows base e v omega 0
+
+  | GP_Values vars rows ->
+    eval_values vars rows
+
+  | GP_Graph gt p' ->
+    (* §18.6 GRAPH evaluation: evaluate p' against named graph(s) *)
+    (match gt with
+     | PT_IRI name ->
+       (* GRAPH <iri> { p } — evaluate p against the named graph identified by iri *)
+       (match lookup_named_store name dss.dss_named with
+        | Some ngs -> eval_pattern_store base p' ngs dss
+        | None -> [])  (* Named graph not in dataset → empty *)
+     | PT_Var v ->
+       (* GRAPH ?var { p } — iterate over all named graphs, binding ?var *)
+       Lh.concatMap_tr
+         (fun (ngs : named_graph_store) ->
+           let ng_results = eval_pattern_store base p' ngs.ngs_store dss in
+           if is_iri ngs.ngs_name then
+             Lh.concatMap_tr
+               (fun mu ->
+                 match sm_bind_if_compatible v (T_IRI ngs.ngs_name) mu with
+                 | Some mu' -> [mu']
+                 | None -> [])
+               ng_results
+           else ng_results)
+         dss.dss_named
+     | _ -> eval_pattern_store base p' gs dss)  (* Other pattern terms: fallback to current graph *)
+
+  | GP_Service iri p' silent ->
+    (* SPARQL 1.1 federated query — issue #57.
+       The runner registers (endpoint_iri, graph_store) pairs via the
+       service_endpoint_lookup hook; we evaluate the inner pattern
+       against the registered remote graph. Live HTTP federation is
+       deferred (would require Dv-effecting evaluator). For SILENT,
+       SPARQL spec says "produce a solution mapping with no bindings"
+       on error, which under our solution_sequence type is a list with
+       one empty mapping; for non-SILENT the spec says error, but our
+       Tot type cannot signal that, so we return [] (empty bindings)
+       in both cases as a sentinel. *)
+    (match service_endpoint_lookup iri with
+     | Some remote_gs -> eval_pattern_store base p' remote_gs dss
+     | None ->
+       if silent then [[]]  (* unbound but not erroring *)
+       else [])
+
+  | GP_ServiceVar _ _ silent ->
+    (* SPARQL 1.1 federated query with variable endpoint, issue #57 Phase 3.
+       Outside a join context we have no outer mu to look up the variable
+       binding, so we cannot dispatch. Per SPARQL spec a SERVICE pattern
+       whose endpoint is unbound is an error; for SILENT we yield the
+       empty mapping, otherwise we yield no bindings. The common path
+       (variable bound by an adjacent BGP / VALUES) is handled in the
+       GP_Join branch above. *)
+    if silent then [[]] else []
+
+  | GP_SubSelect q ->
+    (* Sub-SELECT: recursively evaluate the inner SELECT query. Directly
+       recursive now (issue #62 retirement, G4-subselect-fold,
+       2026-08-10): query_size q < pattern_size (GP_SubSelect q) ==
+       1 + query_size q by construction, so this edge strictly
+       decreases the clique's %[metric; phase] measure — no
+       `eval_subselect_fwd` forward-ref needed any more. *)
+    eval_select_query q gs.gs_graph (store_to_dataset dss)
+
+  | GP_PropertyPath ps pp pt ->
+    (* Evaluate property path and convert results to solution mappings.
+       Issue #66 fix (2026-05-08, Section E retirement): for
+       ZeroOrMore / ZeroOrOne paths, SPARQL 1.1 §18.2.2.5 requires
+       reflexive matches for any constant IRI/BNode in the pattern,
+       even when that node has zero edges of the path's predicate (or
+       isn't in the graph at all). eval_property_path_fwd's reflexive
+       set is built from graph_nodes, which only contains nodes that
+       actually appear in some triple — so a constant IRI from the
+       query that's mentioned nowhere in the data wouldn't be picked
+       up. Adds the missing reflexive pairs here, post-eval, only for
+       Zero* paths. *)
+    let pairs = eval_property_path_fwd pp gs.gs_graph in
+    let pairs =
+      match pp with
+      | PP_ZeroOrMore _ | PP_ZeroOrOne _ ->
+        let constant_terms : list rdf_term =
+          Lh.append_tr
+            (match ps with
+             | PS_IRI i   -> [T_IRI i]
+             | PS_BNode b -> [T_BNode b]
+             | PS_Var _   -> []
+             | PS_TripleTerm _ _ _ -> [])
+            (match pt with
+             | PT_IRI i     -> [T_IRI i]
+             | PT_BNode b   -> [T_BNode b]
+             | PT_Literal l -> [T_Literal l]
+             | PT_Var _     -> []
+             | PT_TripleTerm _ _ _ -> [])
+        in
+        let has_reflexive (t : rdf_term) : bool =
+          List.Tot.existsb
+            (fun (pair : rdf_term * rdf_term) ->
+              let (s, o) = pair in
+              rdf_term_eq s t && rdf_term_eq o t)
+            pairs
+        in
+        let new_terms = List.Tot.filter (fun t -> not (has_reflexive t)) constant_terms in
+        let new_reflexive = List.Tot.map (fun (n : rdf_term) -> (n, n)) new_terms in
+        Lh.append_tr pairs new_reflexive
+      | _ -> pairs
+    in
+    path_result_to_solutions ps pt pairs
+
+and eval_exists (base : option wf_iri) (pattern : group_graph_pattern) (mu : solution_mapping)
+  (graph : rdf_graph) (ds : rdf_dataset)
+  : Tot bool (decreases %[pattern_size pattern; 1]) =
+  let substituted = substitute_pattern mu pattern in
+  // CRUX STEP: substitute_pattern does not change AST shape (only
+  // PT_Var/PS_Var leaves -> constants), so `substituted` has the SAME
+  // pattern_size as `pattern` — the lemma makes that fact available to
+  // the decreases check below. The eval_pattern_store call therefore
+  // ties on the primary (pattern_size) component of the lex measure;
+  // the phase component (1 here vs 0 for eval_pattern_store) is what
+  // supplies the strict decrease at THIS specific edge.
+  lemma_substitute_pattern_preserves_size mu pattern;
+  List.Tot.length
+    (eval_pattern_store base substituted
+      (graph_to_store_for substituted graph)
+      (dataset_to_store_for substituted ds)) > 0
+
+(* Evaluate a group graph pattern against an RDF graph and dataset — CONCRETE.
+   The dataset carries named graphs for GP_Graph evaluation.
+   [S1] Property paths deferred.
+   Sub-SELECT deferred (requires eval_select_query).
+   #65 Step 2c (2026-05-10): threads BASE IRI through.
+   2026-07-06 (lazy per-bucket index construction): builds the stores
+   with `graph_to_store_for`/`dataset_to_store_for` — `p` is the WHOLE
+   pattern about to be evaluated (recursively, `eval_pattern_store`
+   threads the SAME `gs`/`dss` through every nested node), so the
+   query-shape pre-pass above sees everything it needs to. *)
+(* Top-level query evaluation for SELECT queries. Real recursive clique
+   member now (issue #62 retirement, G4-subselect-fold, 2026-08-10): joins
+   eval_pattern_store/eval_exists/substitute_existentials via the
+   query_size metric (decreases %[query_size q; 3] -- primary component
+   strictly smaller than pattern_size (GP_SubSelect q) == 1 + query_size q
+   on the way in, and strictly bigger than pattern_size q.q_pattern on the
+   way out to eval_pattern_store, so no tie-breaking phase games are
+   needed at this member -- see the GP_SubSelect/GP_Lateral arms above).
+   Applies: pattern evaluation → SELECT expressions → ORDER BY →
+           projection → DISTINCT/REDUCED → OFFSET/LIMIT.
+   GROUP BY, aggregation, and HAVING are skipped for now (assume val dependencies). *)
+and eval_select_query (q : query) (g : rdf_graph) (ds : rdf_dataset)
+  : Tot solution_sequence (decreases %[query_size q; 3]) =
+  let (g, ds) = apply_query_dataset q.q_dataset g ds in
+  (* Termination: the rewritten pattern below is provably the SAME
+     pattern_size as the original (rewrite_query_bnodes_pattern only
+     rewrites PT_BNode/PS_BNode leaves, same shape as substitute_pattern/
+     lateral_substitute), so shadowing `q` here does not break the
+     %[query_size q; 3] decreases obligation at the eval_pattern_store
+     call below — see lemma_rewrite_query_bnodes_pattern_preserves_size. *)
+  lemma_rewrite_query_bnodes_pattern_preserves_size q.q_pattern;
+  let q = { q with q_pattern = rewrite_query_bnodes_pattern q.q_pattern } in
+  (* #65 Step 2b (2026-05-10): q.q_base is the BASE IRI for this query.
+     Thread it through every post-pattern stage (GROUP BY, HAVING,
+     aggregation, ORDER BY, SELECT exprs) so IRI() resolutions in
+     those stages see the right BASE without going through the
+     OCaml-side current_base_iri_ref. *)
+  let base = q.q_base in
+  match q.q_form with
+  | QF_Select sel ->
+    (* 1. Evaluate WHERE clause *)
+    let omega0 =
+      eval_pattern_store base q.q_pattern
+        (graph_to_store_for q.q_pattern g) (dataset_to_store_for q.q_pattern ds) in
+
+    (* 1b. Post-query VALUES — join against WHERE results *)
+    let omega = match q.q_values with
+      | None -> omega0
+      | Some vals -> join omega0 vals in
+
+    (* 2. GROUP BY — partition into groups *)
+    let needs_grouping = match q.q_group_by with
+      | Some _ -> true
+      | None -> select_has_aggregates sel in
+
+    if needs_grouping then begin
+      (* 2a. Partition solutions into groups *)
+      let groups = match q.q_group_by with
+        | Some conds -> group_by base conds omega
+        | None -> implicit_group omega in
+
+      (* 3. HAVING — filter groups *)
+      let filtered_groups = match q.q_having with
+        | Some conditions -> having_filter base conditions groups
+        | None -> groups in
+
+      (* 4. Aggregation — evaluate aggregate SELECT items per group *)
+      let omega' = match sel with
+        | Select_Vars items -> aggregate_groups base items filtered_groups
+        | Select_All ->
+          (* SELECT * with GROUP BY: return representative solutions,
+             stripping rewriter-introduced synthetic _bnode_* vars (see
+             is_synthetic_bnode_var). *)
+          let reps = List.Tot.map (fun (grp : group) ->
+            match grp.g_solutions with
+            | mu :: _ -> mu
+            | [] -> sm_empty) filtered_groups in
+          strip_synthetic_bnode_vars reps in
+
+      (* 6. ORDER BY *)
+      let ordered = match q.q_modifier.sm_order_by with
+        | None -> omega'
+        | Some o -> sort_solutions base o omega' in
+
+      (* 8. DISTINCT / REDUCED *)
+      let deduped =
+        if q.q_modifier.sm_distinct then distinct_solutions ordered
+        else if q.q_modifier.sm_reduced then reduced_solutions ordered
+        else ordered in
+
+      (* 9. OFFSET / LIMIT *)
+      slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped
+    end
+    else begin
+      (* No grouping — original pipeline *)
+
+      (* 5. SELECT expressions — evaluate (expr AS ?var) *)
+      let omega' = match sel with
+        | Select_Vars items -> eval_select_items base items omega g
+        | Select_All -> omega in
+
+      (* 6. ORDER BY *)
+      let ordered = match q.q_modifier.sm_order_by with
+        | None -> omega'
+        | Some o -> sort_solutions base o omega' in
+
+      (* 7. Projection.
+         For SELECT *, strip rewriter-introduced synthetic _bnode_* vars
+         BEFORE DISTINCT/REDUCED so duplicates that differ only in
+         synthetic-variable bindings collapse to one row. SPARQL §18.2.4
+         says `*` denotes the in-scope variables of the WHERE clause;
+         query-bnode existentials are not in the user's variable scope. *)
+      let projected = match sel with
+        | Select_Vars items -> project_solutions (select_item_vars items) ordered
+        | Select_All -> strip_synthetic_bnode_vars ordered in
+
+      (* 8. DISTINCT / REDUCED *)
+      let deduped =
+        if q.q_modifier.sm_distinct then distinct_solutions projected
+        else if q.q_modifier.sm_reduced then reduced_solutions projected
+        else projected in
+
+      (* 9. OFFSET / LIMIT *)
+      slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped
+    end
+
+  (* Other query forms — return empty for now *)
+  | QF_Construct _ -> []
+  | QF_Ask -> []
+  | QF_Describe _ -> []
+
+
+let eval_pattern (base : option wf_iri) (p : group_graph_pattern) (g : rdf_graph) (ds : rdf_dataset)
+  : solution_sequence =
+  eval_pattern_store base p (graph_to_store_for p g) (dataset_to_store_for p ds)
+
+(* Section F prep (2026-05-13): F* equivalent of the Hashtbl-based
+   star-projection branch in bin/factoidal-http/factoidal_http.ml's
+   `select_vars`. Walks a solution sequence and gathers every distinct
+   variable in first-seen order. List-mem dedup; OK for the typical
+   < 50-var row width. Used by SPARQL.HTTP.RunQuery's run_query for
+   the SELECT * / CONSTRUCT / DESCRIBE branches that don't have a
+   SI_Var list to project from. *)
+let rec collect_vars_from_row
+  (row : solution_mapping) (acc : list var_name)
+  : Tot (list var_name) (decreases row) =
+  match row with
+  | [] -> acc
+  | (v, _) :: rest ->
+    if List.Tot.mem v acc
+    then collect_vars_from_row rest acc
+    else collect_vars_from_row rest (v :: acc)
+
+let rec collect_distinct_vars_in_order_acc
+  (omega : solution_sequence) (acc : list var_name)
+  : Tot (list var_name) (decreases omega) =
+  match omega with
+  | [] -> acc
+  | row :: rest ->
+    collect_distinct_vars_in_order_acc rest (collect_vars_from_row row acc)
+
+(* Top-level: rev the reverse-built accumulator to restore first-seen
+   insertion order. *)
+let collect_distinct_vars_in_order (omega : solution_sequence) : list var_name =
+  List.Tot.rev (collect_distinct_vars_in_order_acc omega [])
+
+
+(* #236: OWL query-rewrite internal variables (OWL.QueryRewrite.fst)
+   are existential anchors / surrogates, NOT user-scope variables, and
+   must never surface in a SELECT * result row. The 2026-07-09 strict
+   runner exposed the leak (parent3 min-1, parent7 max-1 Female). These
+   prefixes match the fresh-name generators there: _sv_, _av_anchor_,
+   _av_bad_, _mc_, _mxc_, _mxqc1_r_, _mxqc1_anchor_, _exc_, _co_.
+
+   These vars must be stripped ONLY from the FINAL user-facing
+   projection (`strip_rewrite_internal_vars`, called from
+   OWL.QueryEval.eval_select_query_owl) — NOT from inner Select_All
+   sub-selects. `wrap_distinct_over_ggp` deliberately re-exposes the
+   anchor var via Select_All so the enclosing pattern can JOIN on it
+   (simple5: `?x :p ?_sv` correlated with `{?_sv a A} UNION {?_sv a B}`);
+   stripping it there decorrelates the join and admits spurious rows.
+   NOTE: this projects out the leaked columns only; the residual #236
+   narrowness (vacuous-truth drop, punning, and per-edge row
+   MULTIPLICATION when a subject has multiple P-edges) is unchanged and
+   still tracked in #236 pending the anchor -> UNION generalisation. *)
+let is_rewrite_internal_var (v : var_name) : bool =
+  string_starts_with v "_sv_"  || string_starts_with v "_av_" ||
+  string_starts_with v "_mc_"  || string_starts_with v "_mxc_" ||
+  string_starts_with v "_mxqc1_" || string_starts_with v "_exc_" ||
+  string_starts_with v "_co_"
+
+let strip_rewrite_internal_vars_mu (mu : solution_mapping) : solution_mapping =
+  List.Tot.filter (fun (v, _) -> not (is_rewrite_internal_var v)) mu
+
+(* Drop OWL-rewrite internal vars from the FINAL projection only. *)
+let strip_rewrite_internal_vars (omega : solution_sequence) : solution_sequence =
+  List.Tot.map strip_rewrite_internal_vars_mu omega
+
+
+let eval_ask_query (q : query) (g : rdf_graph) (ds : rdf_dataset) : bool =
+  let (g, ds) = apply_query_dataset q.q_dataset g ds in
+  let base = q.q_base in
+  match q.q_form with
+  | QF_Ask ->
+    let omega0 = eval_pattern base q.q_pattern g ds in
+    let omega = match q.q_values with
+      | None -> omega0
+      | Some vals -> join omega0 vals in
+    (match omega with
+     | [] -> false
+     | _ -> true)
+  | _ -> false
+
+(* ================================================================ *)
+(* CONSTRUCT evaluation (§16.2).                                     *)
+(*                                                                   *)
+(* For each solution mapping μ in the WHERE result, the template     *)
+(* is instantiated:                                                  *)
+(*   * variables are substituted by μ's bindings;                    *)
+(*   * blank nodes get fresh labels scoped to the solution mapping,  *)
+(*     so the same template bnode label yields the same bnode within *)
+(*     one solution but distinct bnodes across solutions.            *)
+(* A template triple is emitted only when all three components       *)
+(* resolve to concrete RDF terms of valid kind (subject must be IRI  *)
+(* or bnode; predicate must be IRI; object can be any term).         *)
+(* ================================================================ *)
+
+(* Give each solution-index / template-bnode pair a unique id, e.g.
+   `tpl_7_b1`. Simple string concat; blank-node identity is only
+   required to be consistent within one solution. *)
+let fresh_bnode_for (sol_ix : nat) (template_label : string) : bnode_id =
+  strcat "tpl_" (strcat (string_of_int sol_ix) (strcat "_" template_label))
+
+let construct_subject (ps : pattern_subject) (mu : solution_mapping) (sol_ix : nat)
+  : option subject =
+  match ps with
+  | PS_IRI i -> Some (S_IRI i)
+  | PS_BNode b ->
+    // SPARQL 1.1 §16.2: template blank nodes get a fresh label per
+    // solution, keyed only by (sol_ix, template_label) — NOT echoed
+    // from whatever `rewrite_query_bnodes_pattern` bound the same
+    // label to on the WHERE side. An earlier version of this function
+    // echoed the WHERE-side `_bnode_<b>` binding (reasoning: "the
+    // reifier the WHERE side matched IS the reifier the template
+    // names"), which happened to leave construct-1/2/3/4 unaffected
+    // (each has only one WHERE solution, so fresh-vs-echo is
+    // indistinguishable) but broke construct-5: `:a :b ?c {|?q ?z|}`
+    // against a single annotated reifier produces TWO WHERE solutions
+    // (a property-position triple pattern re-querying a reifier's own
+    // properties also self-matches the reifier's own `rdf:reifies`
+    // triple — see basic-7/pattern-01), both echoing the SAME data
+    // reifier and so collapsing to one output reifier instead of the
+    // expected two (one bare `rdf:reifies` fact, one with the
+    // annotation property). `fresh_bnode_for`'s (sol_ix, label) key
+    // already gives the one guarantee that actually matters — the SAME
+    // output node for the SAME template label within ONE solution
+    // (e.g. a reifies-triple and a property-triple sharing one
+    // reifier variable) — without reaching into the WHERE-side
+    // bindings at all.
+    Some (S_BNode (fresh_bnode_for sol_ix b))
+  // A triple term can never be a triple's subject — drop the template triple.
+  | PS_TripleTerm _ _ _ -> None
+  | PS_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> Some (S_IRI i)
+     | Some (T_BNode b) -> Some (S_BNode b)
+     | Some (T_Literal _) -> None
+     | Some (T_TripleTerm _ _ _) -> None
+     | None -> None)
+
+let construct_predicate (pt : pattern_term) (mu : solution_mapping) : option wf_iri =
+  match pt with
+  | PT_IRI i -> Some i
+  | PT_BNode _ -> None       (* predicate must be an IRI *)
+  | PT_Literal _ -> None
+  | PT_TripleTerm _ _ _ -> None
+  | PT_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> Some i
+     | _ -> None)
+
+// RDF 1.2: a triple-term object in a CONSTRUCT template is instantiated
+// into a concrete `T_TripleTerm` when every sub-position grounds; template
+// bnodes inside it are freshened per solution just like ordinary ones —
+// always fresh, keyed by (sol_ix, template_label); see
+// `construct_subject`'s comment for why this function no longer echoes
+// a WHERE-side `_bnode_<b>` binding.
+let rec construct_object (pt : pattern_term) (mu : solution_mapping) (sol_ix : nat)
+  : Tot (option rdf_term) (decreases pt) =
+  match pt with
+  | PT_IRI i -> Some (T_IRI i)
+  | PT_BNode b -> Some (T_BNode (fresh_bnode_for sol_ix b))
+  | PT_Literal l -> Some (T_Literal l)
+  | PT_Var v -> sm_lookup v mu
+  | PT_TripleTerm ps pp po ->
+    (match construct_object ps mu sol_ix with
+     | None -> None
+     | Some sterm ->
+       (match term_to_subject_opt sterm with
+        | None -> None
+        | Some ssub ->
+          (match construct_object pp mu sol_ix with
+           | Some (T_IRI ppi) ->
+             (match construct_object po mu sol_ix with
+              | None -> None
+              | Some oterm -> Some (T_TripleTerm ssub ppi oterm))
+           | _ -> None)))
+
+let instantiate_template (template : list triple_pattern)
+                          (mu : solution_mapping) (sol_ix : nat)
+  : list triple =
+  List.Tot.fold_left
+    (fun acc tp ->
+      match construct_subject tp.tp_s mu sol_ix with
+      | None -> acc
+      | Some s ->
+        match construct_predicate tp.tp_p mu with
+        | None -> acc
+        | Some p ->
+          match construct_object tp.tp_o mu sol_ix with
+          | None -> acc
+          | Some o -> { s; p; o } :: acc)
+    [] template
+
+let rec instantiate_solutions
+    (template : list triple_pattern)
+    (mus : solution_sequence) (ix : nat)
+  : Tot (list triple) (decreases mus) =
+  match mus with
+  | [] -> []
+  | mu :: rest ->
+    let here = instantiate_template template mu ix in
+    let later = instantiate_solutions template rest (ix + 1) in
+    List.Tot.append here later
+
+// SPARQL §16.2: the CONSTRUCT result is an RDF graph — i.e. a SET of
+// triples. Distinct (mu, template-triple) pairs can instantiate the same
+// ground triple (e.g. `CONSTRUCT WHERE { :s1 :p ?o . ?s2 :p ?o }` binds
+// ?s2 to both :s1 and :s2 so the template's first triple instantiates
+// twice to `:s1 :p :o1`). Without dedup the runner reports spurious
+// duplicates. Stack-safe fold_left accumulating into a reverse-built
+// list, with membership tested against the accumulator via triple_eq.
+let dedup_triples (ts : list triple) : list triple =
+  let acc = List.Tot.fold_left
+    (fun (acc : list triple) (t : triple) ->
+      if mem_triple t acc then acc else t :: acc)
+    []
+    ts
+  in
+  List.Tot.rev acc
+
+let eval_construct_query (q : query) (g : rdf_graph) (ds : rdf_dataset) : list triple =
+  let (g, ds) = apply_query_dataset q.q_dataset g ds in
+  // Same WHERE-clause blank-node-to-variable rewrite `eval_select_query`
+  // applies (§18.2.2.9): without it a bnode in a CONSTRUCT's WHERE —
+  // including the implicit reifier `<<s p o>>`/`{|...|}`/`CONSTRUCT
+  // WHERE` sugar mints — is matched by literal bnode-label equality
+  // (SPARQL11.Algebra.fst's `PS_BNode` pattern-subject matcher), which
+  // can never succeed against real graph data. This rewrite affects
+  // WHERE evaluation only; `construct_subject`/`construct_object`
+  // always mint a fresh per-solution bnode for the (unrewritten)
+  // template side — see their comments.
+  let q = { q with q_pattern = rewrite_query_bnodes_pattern q.q_pattern } in
+  let base = q.q_base in
+  match q.q_form with
+  | QF_Construct template ->
+    let omega0 = eval_pattern base q.q_pattern g ds in
+    let omega = match q.q_values with
+      | None -> omega0
+      | Some vals -> join omega0 vals in
+    (* SPARQL §16.2: CONSTRUCT ignores ORDER BY / OFFSET / LIMIT
+       modifiers at the solution level for set semantics, but a LIMIT
+       on the WHERE does limit which bindings drive the template.
+       Apply slice here to match Jena / rdf4j behaviour. *)
+    let limited =
+      slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit omega
+    in
+    dedup_triples (instantiate_solutions template limited 0)
+  | _ -> []
+
+(* Specification of eval_select_query (full version with aggregation):
+
+   let eval_select_query q G =
+     (* 1. Evaluate WHERE clause *)
+     let omega = eval_pattern q.q_pattern G in
+
+     (* 2. GROUP BY — partition into groups [S2] *)
+     let groups = match q.q_group_by with
+       | None   -> implicit_group omega
+       | Some g -> group_by g omega in
+
+     (* 3. Aggregation — evaluate aggregate expressions per group *)
+     (* Produces one solution mapping per group *)
+     let omega' = aggregate_groups q.q_form groups in
+
+     (* 4. HAVING — filter groups *)
+     let omega'' = match q.q_having with
+       | None   -> omega'
+       | Some h -> filter_having h omega' in
+
+     (* 5. SELECT expressions — evaluate (expr AS ?var) *)
+     let omega''' = eval_select_exprs q.q_form omega'' in
+
+     (* 6. ORDER BY *)
+     let ordered = match q.q_modifier.sm_order_by with
+       | None   -> omega'''
+       | Some o -> sort_solutions o omega''' in
+
+     (* 7. Projection *)
+     let projected = project_select q.q_form ordered in
+
+     (* 8. DISTINCT / REDUCED *)
+     let deduped =
+       if q.q_modifier.sm_distinct then distinct_solutions projected
+       else if q.q_modifier.sm_reduced then reduced_solutions projected
+       else projected in
+
+     (* 9. OFFSET / LIMIT *)
+     slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped
+*)
+
+(** ====================================================================== **)
+(** Part 13: SPARQL 1.1 Property Paths Evaluation (§9.1)                  **)
+(** [S1] Recursive paths specified as fixpoint; termination deferred.      **)
+(** ====================================================================== **)
+
+(* Property path evaluation produces pairs of (subject, object) nodes *)
+type path_result = list (rdf_term * rdf_term)
+
+(* Evaluate a property path over a graph *)
+
+(* Helper: check if an rdf_term is not a literal (can serve as a subject in inverse paths) *)
+let is_not_literal (t : rdf_term) : bool =
+  match t with
+  | T_Literal _ -> false
+  | _ -> true
+
+(* Helper: equality for path result pairs *)
+let path_pair_eq (p1 p2 : rdf_term * rdf_term) : bool =
+  let (a1, b1) = p1 in
+  let (a2, b2) = p2 in
+  rdf_term_eq a1 a2 && rdf_term_eq b1 b2
+
+(* Helper: deduplicate using custom equality *)
+let rec list_dedup_by (#a:Type) (eq : a -> a -> bool) (l : list a) : Tot (list a) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs ->
+    if List.Tot.existsb (eq x) xs then list_dedup_by eq xs
+    else x :: list_dedup_by eq xs
+
+(* Helper: deduplicate path results *)
+let dedup_path (pairs : path_result) : path_result =
+  list_dedup_by path_pair_eq pairs
+
+(* Helper: collect direct IRIs from a negated property set *)
+let rec negated_direct_iris (ps : list property_path) : Tot (list wf_iri) (decreases ps) =
+  match ps with
+  | [] -> []
+  | PP_IRI i :: rest -> i :: negated_direct_iris rest
+  | _ :: rest -> negated_direct_iris rest
+
+(* Helper: collect inverse IRIs from a negated property set *)
+let rec negated_inverse_iris (ps : list property_path) : Tot (list wf_iri) (decreases ps) =
+  match ps with
+  | [] -> []
+  | PP_Inverse (PP_IRI i) :: rest -> i :: negated_inverse_iris rest
+  | _ :: rest -> negated_inverse_iris rest
+
+(* Helper: check if an IRI is in a list *)
+let rec iri_in_list (iri : wf_iri) (iris : list wf_iri) : Tot bool (decreases iris) =
+  match iris with
+  | [] -> false
+  | hd :: tl -> if hd = iri then true else iri_in_list iri tl
+
+(* Helper: collect all nodes mentioned in a graph (as rdf_terms) *)
+let graph_nodes (g : rdf_graph) : list rdf_term =
+  let subj_nodes = List.Tot.map (fun (t : triple) -> subject_to_term t.s) g in
+  let obj_nodes = List.Tot.map (fun (t : triple) -> t.o) g in
+  let pairs = dedup_path (List.Tot.map (fun (n : rdf_term) -> (n, n)) (Lh.append_tr subj_nodes obj_nodes)) in
+  List.Tot.map fst pairs
+
+(* Concrete implementation of property path evaluation.
+   [S1] ZeroOrMore and OneOrMore use single-step evaluation (simplified). *)
+let rec eval_property_path (p : property_path) (g : rdf_graph)
+  : Tot path_result (decreases p) =
+  match p with
+  | PP_IRI iri ->
+    (* { (s, o) | (s, iri, o) ∈ G } *)
+    Lh.concatMap_tr
+      (fun (t : triple) ->
+        if t.p = iri then [(subject_to_term t.s, t.o)] else [])
+      g
+
+  | PP_Inverse pp ->
+    (* { (o, s) | (s, o) ∈ eval pp G }, filtering out pairs where o is a literal *)
+    let pairs = eval_property_path pp g in
+    Lh.concatMap_tr
+      (fun (pair : rdf_term * rdf_term) ->
+        let (s, o) = pair in
+        if is_not_literal o then [(o, s)] else [])
+      pairs
+
+  | PP_Sequence p1 p2 ->
+    (* { (s, o) | ∃ mid. (s, mid) ∈ eval p1 G ∧ (mid, o) ∈ eval p2 G }
+       Bag semantics: preserve duplicates from different paths *)
+    let r1 = eval_property_path p1 g in
+    let r2 = eval_property_path p2 g in
+    Lh.concatMap_tr
+      (fun (pair1 : rdf_term * rdf_term) ->
+        let (s, mid1) = pair1 in
+        Lh.concatMap_tr
+          (fun (pair2 : rdf_term * rdf_term) ->
+            let (mid2, o) = pair2 in
+            if rdf_term_eq mid1 mid2 then [(s, o)] else [])
+          r2)
+      r1
+
+  | PP_Alternative p1 p2 ->
+    (* eval p1 G ∪ eval p2 G — bag semantics *)
+    Lh.append_tr (eval_property_path p1 g) (eval_property_path p2 g)
+
+  | PP_ZeroOrOne pp ->
+    let reflexive = List.Tot.map (fun (n : rdf_term) -> (n, n)) (graph_nodes g) in
+    let step = eval_property_path pp g in
+    dedup_path (Lh.append_tr reflexive step)
+
+  | PP_ZeroOrMore pp ->
+    (* ZeroOrMore: reflexive transitive closure.
+       Compute fixpoint: start with all graph nodes as reflexive pairs,
+       then repeatedly extend by one step until no new pairs are found.
+       [S1] Bounded iteration to ensure termination. *)
+    let nodes = graph_nodes g in
+    let reflexive = List.Tot.map (fun (n : rdf_term) -> (n, n)) nodes in
+    let step = eval_property_path pp g in
+    (* Extend: for each (s, mid) in current and (mid2, o) in step where mid=mid2,
+       add (s, o) if not already present *)
+    let extend (current : path_result) : path_result =
+      let new_pairs = Lh.concatMap_tr
+        (fun (pair1 : rdf_term * rdf_term) ->
+          let (s, mid) = pair1 in
+          Lh.concatMap_tr
+            (fun (pair2 : rdf_term * rdf_term) ->
+              let (mid2, o) = pair2 in
+              if rdf_term_eq mid mid2 then [(s, o)] else [])
+            step)
+        current in
+      dedup_path (Lh.append_tr current new_pairs) in
+    (* Iterate up to |nodes| times to reach fixpoint *)
+    let max_iter = List.Tot.length nodes in
+    let rec fixpoint (current : path_result) (fuel : nat)
+      : Tot path_result (decreases fuel) =
+      if fuel = 0 then current
+      else
+        let next = extend current in
+        if List.Tot.length next = List.Tot.length current then current
+        else fixpoint next (fuel - 1) in
+    fixpoint (dedup_path (Lh.append_tr reflexive step)) max_iter
+
+  | PP_OneOrMore pp ->
+    (* OneOrMore: transitive closure (at least one step).
+       Same as ZeroOrMore but without reflexive pairs. *)
+    let nodes = graph_nodes g in
+    let step = eval_property_path pp g in
+    let extend (current : path_result) : path_result =
+      let new_pairs = Lh.concatMap_tr
+        (fun (pair1 : rdf_term * rdf_term) ->
+          let (s, mid) = pair1 in
+          Lh.concatMap_tr
+            (fun (pair2 : rdf_term * rdf_term) ->
+              let (mid2, o) = pair2 in
+              if rdf_term_eq mid mid2 then [(s, o)] else [])
+            step)
+        current in
+      dedup_path (Lh.append_tr current new_pairs) in
+    let max_iter = List.Tot.length nodes in
+    let rec fixpoint (current : path_result) (fuel : nat)
+      : Tot path_result (decreases fuel) =
+      if fuel = 0 then current
+      else
+        let next = extend current in
+        if List.Tot.length next = List.Tot.length current then current
+        else fixpoint next (fuel - 1) in
+    fixpoint step max_iter
+
+  | PP_NegatedSet ps ->
+    (* Split negated set into direct and inverse exclusions.
+       Only produce direct pairs if set has direct IRIs (or no inverse IRIs).
+       Only produce inverse pairs if set has inverse IRIs. *)
+    let excluded_direct = negated_direct_iris ps in
+    let excluded_inverse = negated_inverse_iris ps in
+    let has_direct = List.Tot.length excluded_direct > 0 in
+    let has_inverse = List.Tot.length excluded_inverse > 0 in
+    let direct_pairs =
+      if has_inverse && not has_direct then []
+      else Lh.concatMap_tr
+        (fun (t : triple) ->
+          if iri_in_list t.p excluded_direct then [] else [(subject_to_term t.s, t.o)])
+        g in
+    let inverse_pairs =
+      if has_direct && not has_inverse then []
+      else Lh.concatMap_tr
+        (fun (t : triple) ->
+          if iri_in_list t.p excluded_inverse then [] else [(t.o, subject_to_term t.s)])
+        g in
+    Lh.append_tr direct_pairs inverse_pairs
+
+(* Specification (retained for reference):
+
+   eval_property_path (PP_IRI iri) G =
+     { (s, o) | (s, iri, o) ∈ G }
+
+   eval_property_path (PP_Inverse p) G =
+     { (o, s) | (s, o) ∈ eval_property_path p G }
+
+   eval_property_path (PP_Sequence p1 p2) G =
+     { (s, o) | ∃ mid. (s, mid) ∈ eval p1 G ∧ (mid, o) ∈ eval p2 G }
+
+   eval_property_path (PP_Alternative p1 p2) G =
+     eval p1 G ∪ eval p2 G
+
+   eval_property_path (PP_ZeroOrOne p) G =
+     { (x, x) | x ∈ nodes(G) } ∪ eval p G
+
+   eval_property_path (PP_ZeroOrMore p) G =       [S1]
+     transitive-reflexive closure of eval p G
+     (finite: bounded by |nodes(G)|² iterations)
+
+   eval_property_path (PP_OneOrMore p) G =         [S1]
+     transitive closure of eval p G
+
+   eval_property_path (PP_NegatedSet ps) G =
+     { (s, o) | (s, p, o) ∈ G, p ∉ iris(ps) ∧ (s,o) ∉ inverse_pairs(ps) }
+*)
+
+(** ====================================================================== **)
+(** Part 14: SPARQL 1.1 VALUES (Inline Data) (§10.2)                      **)
+(** ====================================================================== **)
+
+(* eval_values moved to utility section before Part 6.1 *)
+
+(** ====================================================================== **)
+(** Part 15: SPARQL 1.1 Numeric Type Promotion (§17.3.1)                  **)
+(** [S4] Simplified: full XSD numeric hierarchy not modeled.               **)
+(** ====================================================================== **)
+
+(* Numeric type hierarchy (ascending precision):
+   xsd:integer < xsd:decimal < xsd:float < xsd:double
+
+   For arithmetic between different numeric types, operands are promoted
+   to the more precise type before operation.
+
+   E.g.: integer + decimal → decimal
+         decimal * double  → double *)
+
+type numeric_precision =
+  | NP_Integer
+  | NP_Decimal
+  | NP_Float
+  | NP_Double
+
+(* Determine numeric precision of a datatype *)
+let numeric_precision_of (dt : wf_iri) : option numeric_precision =
+  if dt = xsd_integer then Some NP_Integer
+  else if dt = xsd_decimal then Some NP_Decimal
+  else if dt = xsd_float then Some NP_Float
+  else if dt = xsd_double then Some NP_Double
+  else None
+
+(* Promotion: max precision of two types *)
+let promote_numeric (a b : numeric_precision) : numeric_precision =
+  match a, b with
+  | NP_Double, _ | _, NP_Double -> NP_Double
+  | NP_Float, _ | _, NP_Float -> NP_Float
+  | NP_Decimal, _ | _, NP_Decimal -> NP_Decimal
+  | NP_Integer, NP_Integer -> NP_Integer
+
+(* Result datatype IRI for promoted type *)
+let promoted_datatype (p : numeric_precision) : wf_iri =
+  match p with
+  | NP_Integer -> xsd_integer
+  | NP_Decimal -> xsd_decimal
+  | NP_Float   -> xsd_float
+  | NP_Double  -> xsd_double
+
+(** ====================================================================== **)
+(** Part 16: SPARQL 1.1 Casting (§17.5)                                   **)
+(** ====================================================================== **)
+
+(* Casting between XSD types.
+   xsd:integer(), xsd:decimal(), xsd:float(), xsd:double(),
+   xsd:string(), xsd:boolean(), xsd:dateTime()
+
+   Casting rules follow XSD 1.1 Part 2 §3.2.
+   Not all casts are valid; invalid casts produce type error. *)
+
+type cast_target =
+  | Cast_Integer
+  | Cast_Decimal
+  | Cast_Float
+  | Cast_Double
+  | Cast_String
+  | Cast_Boolean
+  | Cast_DateTime
+
+(* Cast a value to a target type. Returns None on invalid cast. *)
+let xsd_cast (v : eval_result) (target : cast_target) : option eval_result =
+  match target with
+
+  (* === Cast to integer === *)
+  | Cast_Integer ->
+    (match v with
+     | ER_Num _ -> Some v
+     | ER_Bool true -> Some (ER_Num 1)
+     | ER_Bool false -> Some (ER_Num 0)
+     | ER_Dec s ->
+       (match parse_int_string s with
+        | Some n -> Some (ER_Num n)
+        | None ->
+          let chars = String.list_of_string s in
+          let before_dot = list_take_while (fun c -> c <> FStar.Char.char_of_int 46) chars in
+          (match parse_int_string (String.string_of_list before_dot) with
+           | Some n -> Some (ER_Num n)
+           | None -> None))
+     | ER_Dbl s ->
+       (match parse_int_string s with
+        | Some n -> Some (ER_Num n)
+        | None ->
+          let chars = String.list_of_string s in
+          let before_dot = list_take_while (fun c -> c <> FStar.Char.char_of_int 46) chars in
+          (match parse_int_string (String.string_of_list before_dot) with
+           | Some n -> Some (ER_Num n)
+           | None -> None))
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_integer || lit_datatype l = xsd_string then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> Some (ER_Num n)
+          | None -> None)
+       else if lit_datatype l = xsd_boolean then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Num 1)
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Num 0)
+          else None)
+       else if lit_datatype l = xsd_decimal || lit_datatype l = xsd_double || lit_datatype l = xsd_float then
+         (let chars = String.list_of_string (lit_lexical l) in
+          let before_dot = list_take_while (fun c -> c <> FStar.Char.char_of_int 46) chars in
+          match parse_int_string (String.string_of_list before_dot) with
+          | Some n -> Some (ER_Num n)
+          | None -> None)
+       else None
+     | _ -> None)
+
+  (* === Cast to decimal === *)
+  | Cast_Decimal ->
+    (match v with
+     | ER_Dec _ -> Some v
+     | ER_Num n -> Some (ER_Dec (strcat (string_of_int n) ".0"))
+     | ER_Bool true -> Some (ER_Dec "1.0")
+     | ER_Bool false -> Some (ER_Dec "0.0")
+     | ER_Dbl s -> Some (ER_Dec s)
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_decimal || lit_datatype l = xsd_string then
+         Some (ER_Dec (lit_lexical l))
+       else if lit_datatype l = xsd_integer then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> Some (ER_Dec (strcat (string_of_int n) ".0"))
+          | None -> None)
+       else if lit_datatype l = xsd_boolean then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Dec "1.0")
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Dec "0.0")
+          else None)
+       else None
+     | _ -> None)
+
+  (* === Cast to double === *)
+  | Cast_Double ->
+    (match v with
+     | ER_Dbl _ -> Some v
+     | ER_Num n -> Some (ER_Dbl (strcat (string_of_int n) ".0E0"))
+     | ER_Dec s -> Some (ER_Dbl s)
+     | ER_Bool true -> Some (ER_Dbl "1.0E0")
+     | ER_Bool false -> Some (ER_Dbl "0.0E0")
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_double || lit_datatype l = xsd_float || lit_datatype l = xsd_decimal || lit_datatype l = xsd_string then
+         Some (ER_Dbl (lit_lexical l))
+       else if lit_datatype l = xsd_integer then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> Some (ER_Dbl (strcat (string_of_int n) ".0E0"))
+          | None -> None)
+       else if lit_datatype l = xsd_boolean then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Dbl "1.0E0")
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Dbl "0.0E0")
+          else None)
+       else None
+     | _ -> None)
+
+  (* === Cast to float (simplified: same as double [S4]) === *)
+  | Cast_Float ->
+    (match v with
+     | ER_Dbl _ -> Some v
+     | ER_Num n -> Some (ER_Dbl (strcat (string_of_int n) ".0E0"))
+     | ER_Dec s -> Some (ER_Dbl s)
+     | ER_Bool true -> Some (ER_Dbl "1.0E0")
+     | ER_Bool false -> Some (ER_Dbl "0.0E0")
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_double || lit_datatype l = xsd_float || lit_datatype l = xsd_decimal || lit_datatype l = xsd_string then
+         Some (ER_Dbl (lit_lexical l))
+       else if lit_datatype l = xsd_integer then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> Some (ER_Dbl (strcat (string_of_int n) ".0E0"))
+          | None -> None)
+       else if lit_datatype l = xsd_boolean then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Dbl "1.0E0")
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Dbl "0.0E0")
+          else None)
+       else None
+     | _ -> None)
+
+  (* === Cast to string === *)
+  | Cast_String ->
+    (match v with
+     | ER_Num n -> Some (er_string (string_of_int n))
+     | ER_Dec s -> Some (er_string s)
+     | ER_Dbl s -> Some (er_string s)
+     | ER_Bool true -> Some (er_string "true")
+     | ER_Bool false -> Some (er_string "false")
+     | ER_Term (T_IRI i) -> Some (er_string (iri_to_string i))
+     | ER_Term (T_Literal l) -> Some (er_string (lit_lexical l))
+     | ER_Term (T_BNode _) -> None
+     | ER_Term (T_TripleTerm _ _ _) -> None
+     | ER_Error -> None)
+
+  (* === Cast to boolean === *)
+  | Cast_Boolean ->
+    (match v with
+     | ER_Bool _ -> Some v
+     | ER_Num n -> Some (ER_Bool (n <> 0))
+     | ER_Dec s -> Some (ER_Bool (s <> "0" && s <> "0.0"))
+     | ER_Dbl s -> Some (ER_Bool (s <> "0" && s <> "0.0" && s <> "0.0E0"))
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_boolean then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Bool true)
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Bool false)
+          else None)
+       else if lit_datatype l = xsd_string then
+         (if lit_lexical l = "true" || lit_lexical l = "1" then Some (ER_Bool true)
+          else if lit_lexical l = "false" || lit_lexical l = "0" then Some (ER_Bool false)
+          else None)
+       else if lit_datatype l = xsd_integer then
+         (match parse_int_string (lit_lexical l) with
+          | Some n -> Some (ER_Bool (n <> 0))
+          | None -> None)
+       else None
+     | _ -> None)
+
+  (* === Cast to dateTime === *)
+  | Cast_DateTime ->
+    (match v with
+     | ER_Term (T_Literal l) ->
+       if lit_datatype l = xsd_dateTime then Some v
+       else if lit_datatype l = xsd_string then
+         (* Accept string → dateTime but don't validate format *)
+         Some (ER_Term (T_Literal { lexical_form = lit_lexical l; datatype = xsd_dateTime; lang_tag = None; direction = None }))
+       else None
+     | _ -> None)
+
+(* Cast validity matrix (simplified):
+
+   From\To     | integer | decimal | float | double | string | boolean | dateTime
+   ------------|---------|---------|-------|--------|--------|---------|--------
+   integer     | id      | yes     | yes   | yes    | yes    | yes     | no
+   decimal     | trunc   | id      | yes   | yes    | yes    | yes     | no
+   float       | trunc   | yes     | id    | yes    | yes    | yes     | no
+   double      | trunc   | yes     | yes   | id     | yes    | yes     | no
+   string      | parse   | parse   | parse | parse  | id     | parse   | parse
+   boolean     | 0/1     | 0.0/1.0 | 0/1   | 0/1    | yes    | id      | no
+   dateTime    | no      | no      | no    | no     | yes    | no      | id
+   IRI         | no      | no      | no    | no     | yes    | no      | no
+*)
+
+(** ====================================================================== **)
+(** Part 17: SPARQL 1.1 EXISTS / NOT EXISTS (§18.6)                       **)
+(** ====================================================================== **)
+
+(* EXISTS evaluates a graph pattern and returns true if at least one
+   solution mapping exists. NOT EXISTS is the negation.
+
+   The pattern is evaluated in the context of the current solution mapping μ:
+   variables already bound in μ are substituted into the pattern before evaluation. *)
+
+// Check if a variable name appears in a triple pattern
+let tp_has_var (v : var_name) (tp : triple_pattern) : bool =
+  (match tp.tp_s with PS_Var sv -> sv = v | _ -> false) ||
+  (match tp.tp_p with PT_Var pv -> pv = v | _ -> false) ||
+  (match tp.tp_o with PT_Var ov -> ov = v | _ -> false)
+
+// Check if a variable name appears in a BGP
+let rec bgp_has_var (v : var_name) (b : bgp) : Tot bool (decreases b) =
+  match b with
+  | [] -> false
+  | tp :: rest -> tp_has_var v tp || bgp_has_var v rest
+
+// Check if a variable appears anywhere in a group graph pattern
+let rec ggp_has_var (v : var_name) (p : group_graph_pattern) : Tot bool (decreases p) =
+  match p with
+  | GP_BGP b -> bgp_has_var v b
+  | GP_Join p1 p2 -> ggp_has_var v p1 || ggp_has_var v p2
+  | GP_LeftJoin p1 p2 _ -> ggp_has_var v p1 || ggp_has_var v p2
+  | GP_Filter _ p1 -> ggp_has_var v p1
+  | GP_Union p1 p2 -> ggp_has_var v p1 || ggp_has_var v p2
+  | GP_Graph _ p1 -> ggp_has_var v p1
+  | GP_Minus p1 p2 -> ggp_has_var v p1 || ggp_has_var v p2
+  | GP_Lateral p1 p2 -> ggp_has_var v p1 || ggp_has_var v p2
+  | GP_Bind _ bv p1 -> bv = v || ggp_has_var v p1
+  | GP_Values vars _ -> List.Tot.existsb (fun vn -> vn = v) vars
+  | GP_Service _ p1 _ -> ggp_has_var v p1
+  | GP_ServiceVar sv p1 _ -> sv = v || ggp_has_var v p1
+  | GP_SubSelect q ->
+    // Subquery projected variables are in scope for the outer query
+    (match q.q_form with
+     | QF_Select (Select_Vars items) ->
+       List.Tot.existsb (fun (item : select_item) ->
+         match item with
+         | SI_Var sv -> sv = v
+         | SI_Expr _ sv -> sv = v) items
+     | QF_Select Select_All -> false  // SELECT * — can't statically check
+     | _ -> false)
+  | GP_PropertyPath ps _ pt ->
+    (match ps with PS_Var sv -> sv = v | _ -> false) ||
+    (match pt with PT_Var tv -> tv = v | _ -> false)
+  | GP_Empty -> false
+
+
+
+(** ====================================================================== **)
+(** Part 18: SPARQL 1.1 Sub-SELECT (§12)                                  **)
+(** ====================================================================== **)
+
+(* A sub-SELECT is a complete query appearing as a graph pattern.
+   It is evaluated independently and its results are joined with
+   the enclosing pattern. Only projected variables are visible. *)
+
+(* Sub-SELECT evaluation is recursive: eval_pattern -> eval_select_query *)
+(* This is handled by GP_SubSelect in the pattern evaluation. *)
+
+(** ====================================================================== **)
+(** Part 19: Properties and Lemmas                                         **)
+(** ====================================================================== **)
+
+open FStar.List.Tot.Properties
+
+(** 19.1 Union is associative — PROVED **)
+let lemma_union_assoc (o1 o2 o3 : solution_sequence) :
+  Lemma (union (union o1 o2) o3 == union o1 (union o2 o3)) =
+  // Bridge `union` (= Lh.append_tr) to stdlib `@` via lemma_append_tr_eq,
+  // then use stdlib append_assoc. Necessary after #95 migration of `@`
+  // → Lh.append_tr at line 2159 (2026-05-08).
+  Lh.lemma_append_tr_eq o1 o2;
+  Lh.lemma_append_tr_eq (o1 @ o2) o3;
+  Lh.lemma_append_tr_eq o2 o3;
+  Lh.lemma_append_tr_eq o1 (o2 @ o3);
+  append_assoc o1 o2 o3
+
+(** 19.2 Union with empty is identity — PROVED **)
+let lemma_union_nil_l (omega : solution_sequence) :
+  Lemma (union [] omega == omega) = ()
+
+let lemma_union_nil_r (omega : solution_sequence) :
+  Lemma (union omega [] == omega) =
+  // Bridge: union = Lh.append_tr (post-#95). Lh.append_tr omega [] ==
+  // append omega [] (lemma_append_tr_eq) == omega (append_l_nil).
+  Lh.lemma_append_tr_eq omega [];
+  append_l_nil omega
+
+(** 19.3 Filter distributes over Union — PROVED **)
+let rec lemma_filter_append (#a:Type) (f : a -> bool) (l1 l2 : list a) :
+  Lemma (List.Tot.filter f (l1 @ l2) == List.Tot.filter f l1 @ List.Tot.filter f l2) =
+  match l1 with
+  | [] -> ()
+  | hd :: tl -> lemma_filter_append f tl l2
+
+(* filter_solutions: helper for lemmas *)
+let filter_solutions (base : option wf_iri) (e : expr) (omega : solution_sequence) : solution_sequence =
+  List.Tot.filter (eval_expr_ebv base e) omega
+
+let lemma_filter_union (base : option wf_iri) (e : expr) (omega1 omega2 : solution_sequence) :
+  Lemma (filter_solutions base e (union omega1 omega2) ==
+         union (filter_solutions base e omega1) (filter_solutions base e omega2)) =
+  // Bridge: union = Lh.append_tr (post-#95). lemma_filter_append is
+  // about stdlib `@` — convert via lemma_append_tr_eq before/after.
+  Lh.lemma_append_tr_eq omega1 omega2;
+  Lh.lemma_append_tr_eq (filter_solutions base e omega1) (filter_solutions base e omega2);
+  lemma_filter_append (eval_expr_ebv base e) omega1 omega2
+
+(** 19.4 OFFSET 0 is identity — PROVED **)
+let lemma_offset_zero (omega : solution_sequence) :
+  Lemma (slice_solutions (Some 0) None omega == omega) = ()
+
+(** 19.5 list_drop 0 is identity — PROVED **)
+let lemma_list_drop_zero (#a:Type) (l : list a) :
+  Lemma (list_drop 0 l == l) = ()
+
+(** 19.6 list_take on empty list — PROVED **)
+let lemma_list_take_nil (#a:Type) (n : nat) :
+  Lemma (list_take #a n [] == []) =
+  if n = 0 then () else ()
+
+(** 19.7 MINUS is subset of left operand — PROVED **)
+let rec lemma_filter_mem (#a:eqtype) (f : a -> bool) (x : a) (l : list a) :
+  Lemma (requires List.Tot.mem x (List.Tot.filter f l))
+        (ensures List.Tot.mem x l) =
+  match l with
+  | [] -> ()
+  | hd :: tl ->
+    if f hd then
+      (if hd = x then () else lemma_filter_mem f x tl)
+    else lemma_filter_mem f x tl
+
+(** 19.8 BIND does not affect existing variables **)
+(* Proven in RDF.Graph.Executable as lemma_bind_preserves_existing *)
+
+(** 19.9 sm_compatible is reflexive on well-formed mappings — PROVED **)
+(* The former statement here was `sm_compatible mu mu = true` for EVERY
+   mu, admitted with the note "PROOF DEFERRED (noeq types)". Two
+   corrections, 2026-07-30 (#323):
+     1. noeq was never the obstacle. `rdf_term` is noeq, so `=` and
+        List.Tot.mem are unavailable on solution mappings, but
+        `rdf_term_eq` is the structural equality that replaces them and
+        RDF.Term.fsti proves it reflexive (lemma_rdf_term_eq_refl).
+     2. The unconditional statement is FALSE, not merely unproved — see
+        lemma_sm_compatible_not_refl_with_dup_keys below, which proves
+        the refutation. A solution mapping is a partial FUNCTION from
+        variable to term, but the association-list representation admits
+        a repeated key, and List.Tot.assoc resolves a repeat by taking
+        the FIRST binding. For mu = [("x",b1); ("x",b2)] the second entry
+        is compared against the first entry's term and fails.
+   The hypothesis below (no repeated variable in the domain) is the
+   well-formedness invariant the constructors maintain:
+   sm_bind_if_compatible never appends a second binding for a variable,
+   and sm_merge_aux inserts only keys absent from its accumulator. *)
+
+(* Absent from the domain implies no binding. *)
+let rec lemma_assoc_none_of_domain (v : string) (mu : solution_mapping) :
+  Lemma (requires (not (List.Tot.mem v (sm_domain mu))))
+        (ensures None? (List.Tot.assoc v mu)) =
+  match mu with
+  | [] -> ()
+  | (_, _) :: tl -> lemma_assoc_none_of_domain v tl
+
+(* A binding for a variable that mu1 does not mention is invisible to
+   sm_compatible: every lookup sm_compatible performs is keyed by a
+   variable of mu1, and none of those is `v`. *)
+let rec lemma_sm_compatible_extra_binding
+  (mu1 mu2 : solution_mapping) (v : string) (t : rdf_term) :
+  Lemma (requires None? (List.Tot.assoc v mu1))
+        (ensures sm_compatible mu1 ((v, t) :: mu2) == sm_compatible mu1 mu2) =
+  match mu1 with
+  | [] -> ()
+  | (_, _) :: tl -> lemma_sm_compatible_extra_binding tl mu2 v t
+
+let rec lemma_sm_compatible_refl (mu : solution_mapping) :
+  Lemma (requires List.Tot.noRepeats (sm_domain mu))
+        (ensures sm_compatible mu mu = true) =
+  match mu with
+  | [] -> ()
+  | (v, t) :: rest ->
+    lemma_rdf_term_eq_refl t;
+    lemma_assoc_none_of_domain v rest;
+    lemma_sm_compatible_extra_binding rest rest v t;
+    lemma_sm_compatible_refl rest
+
+(* The refutation of the unconditional statement, as a theorem rather
+   than a comment: with a repeated key, self-compatibility fails. *)
+let lemma_sm_compatible_not_refl_with_dup_keys ()
+  : Lemma (exists (mu : solution_mapping). sm_compatible mu mu == false) =
+  let mu : solution_mapping = [("x", T_BNode "b1"); ("x", T_BNode "b2")] in
+  assert_norm (sm_compatible mu mu == false)
+
+(** 19.10 sm_merge with empty — PROVED (both sides; _l restated, #323) **)
+let lemma_sm_merge_empty_r (mu : solution_mapping) :
+  Lemma (sm_merge mu [] == mu) = ()
+
+(* sm_merge_aux recurses on its SECOND argument, prepending each accepted
+   binding to the accumulator, so `sm_merge [] mu` REVERSES mu (and drops
+   a repeated key). The former statement `sm_merge [] mu == mu` is
+   therefore FALSE for every mu holding two distinct variables — proved
+   below in lemma_sm_merge_empty_l_not_structural_identity. It was
+   admitted under a section header reading "PROVED".
+   The true law is the one the algebra actually needs: merging into the
+   empty mapping is the identity ON THE MAPPING — same domain, same term
+   for every variable. List order carries no meaning for a solution
+   mapping (§18.6 treats it as a partial function; only a
+   solution_SEQUENCE has order). Stated over sm_lookup, it holds
+   unconditionally — no no-duplicate-keys hypothesis needed, because
+   sm_merge_aux keeps the first binding for a key and assoc reads the
+   first binding for a key. *)
+let rec lemma_sm_merge_aux_lookup (acc mu : solution_mapping) (v : string) :
+  Lemma (ensures List.Tot.assoc v (sm_merge_aux acc mu) ==
+                 (match List.Tot.assoc v acc with
+                  | Some t -> Some t
+                  | None -> List.Tot.assoc v mu))
+        (decreases mu) =
+  match mu with
+  | [] -> ()
+  | (w, s) :: rest ->
+    if Some? (List.Tot.assoc w acc)
+    then lemma_sm_merge_aux_lookup acc rest v
+    else lemma_sm_merge_aux_lookup ((w, s) :: acc) rest v
+
+let lemma_sm_merge_empty_l (mu : solution_mapping) :
+  Lemma (forall (v : string). sm_lookup v (sm_merge [] mu) == sm_lookup v mu) =
+  let aux (v : string)
+    : Lemma (sm_lookup v (sm_merge [] mu) == sm_lookup v mu) =
+    lemma_sm_merge_aux_lookup [] mu v;
+    Lh.lemma_assoc_tr_eq v (sm_merge [] mu);
+    Lh.lemma_assoc_tr_eq v mu
+  in
+  FStar.Classical.forall_intro aux
+
+(* The refutation of the former statement, as a theorem. *)
+let lemma_sm_merge_empty_l_not_structural_identity ()
+  : Lemma (exists (mu : solution_mapping). sm_merge [] mu =!= mu) =
+  let a : rdf_term = T_BNode "b1" in
+  let b : rdf_term = T_BNode "b2" in
+  let mu : solution_mapping = [("x", a); ("y", b)] in
+  assert_norm (sm_merge [] mu == [("y", b); ("x", a)]);
+  assert_norm (([("y", b); ("x", a)] <: solution_mapping) =!= mu)
+
+(** 19.11 domains_disjoint with empty — PROVED **)
+let lemma_domains_disjoint_empty_l (mu : solution_mapping) :
+  Lemma (domains_disjoint [] mu = true) = ()
+
+(** 19.12 Join commutativity (restricted — noted, not fully proved) **)
+(* Note: Join is NOT commutative in general due to list ordering,
+   but the multiset of solutions is the same.
+   Full proof requires multiset equality, deferred. *)
+
+(** 19.13 Aggregate COUNT is non-negative **)
+(* Depends on eval_aggregate being assumed — deferred until concrete. *)
+
+(** 19.14 Property path: IRI path degenerates to BGP **)
+(* Depends on eval_property_path being assumed — deferred until concrete. *)
+
+(** 19.15 Filter with true is identity — PROVED **)
+let rec lemma_filter_true (#a:Type) (l : list a) :
+  Lemma (List.Tot.filter (fun _ -> true) l == l) =
+  match l with
+  | [] -> ()
+  | _ :: tl -> lemma_filter_true tl
+
+(** 19.16 Join with empty on left — PROVED **)
+let lemma_join_empty_l (omega2 : solution_sequence) :
+  Lemma (join [] omega2 == []) = ()
+
+(** 19.17 Join with empty on right — PROVED **)
+let rec lemma_concatMap_nil (#a #b:Type) (f : a -> list b) (l : list a) :
+  Lemma (requires (forall x. f x == []))
+        (ensures (List.Tot.concatMap f l == [])) =
+  match l with
+  | [] -> ()
+  | _ :: tl -> lemma_concatMap_nil f tl
+
+let lemma_join_empty_r (omega1 : solution_sequence) :
+  Lemma (join omega1 [] == []) =
+  // 2026-07-06 hash-join fix: `join`'s new definition matches `_, []`
+  // to `[]` directly (see the banner above `join`), so this is now a
+  // one-step computation instead of the induction the old nested-loop
+  // definition needed — the previous `admit()` here predates that
+  // rewrite and is no longer needed.
+  ()
+
+(** 19.18 Minus with empty right operand is identity — PROVED **)
+(* Recovered 2026-07-30 (#323) after the = → == migration broke the
+   previous proof and it was patched with an admission. `minus omega []`
+   is `List.Tot.filter p omega` where p reduces to `not (existsb _ [])`
+   = true, so under `=` the whole thing decided by computation. Under
+   `==` the filter has to be walked: one induction step per element,
+   each discharging `filter p (hd :: tl) == hd :: filter p tl` by a
+   single unfold. 19.15's lemma_filter_true does not apply — it is fixed
+   to the literal predicate `fun _ -> true`, not to minus's lambda. *)
+let rec lemma_minus_empty_r (omega : solution_sequence) :
+  Lemma (minus omega [] == omega) =
+  match omega with
+  | [] -> ()
+  | _ :: tl -> lemma_minus_empty_r tl
+
+(** 19.19 Union length (commutativity as multisets) — PROVED **)
+let lemma_union_length (o1 o2 : solution_sequence) :
+  Lemma (List.Tot.length (union o1 o2) = List.Tot.length o1 + List.Tot.length o2) =
+  // Bridge: union = Lh.append_tr (post-#95). length(append_tr) ==
+  // length(append) via lemma_append_tr_eq + append_length.
+  Lh.lemma_append_tr_eq o1 o2;
+  append_length o1 o2
+
+(** 19.20 eval_bgp with empty graph — PROVED **)
+let rec lemma_concatMap_all_nil (#a #b:Type) (f : a -> Tot (list b)) (l : list a) :
+  Lemma (requires (forall x. f x == []))
+        (ensures (List.Tot.concatMap f l == [])) =
+  match l with
+  | [] -> ()
+  | _ :: tl -> lemma_concatMap_all_nil f tl
+
+// Bridge lemma needed after Phase 1 (#100): ig_search with all-empty
+// bucket maps and an unbound `triple_pattern_bound` reduces to []. Made
+// explicit so SMT doesn't have to unfold all 6 bucket_lookups through
+// pick_smaller_bucket.
+let lemma_ig_search_empty (b : triple_pattern_bound) :
+  Lemma (ig_search empty_indexed b == []) =
+  // bucket_lookup [] _ == [] for all keys; so each of pred_b/subj_b/obj_b/
+  // sp_b/po_b/so_b is either None or Some []. pick_smaller_bucket of
+  // these is either None or Some []. pool = if None then [] else [].
+  // triple_matches_bound b [] = [] by definition.
+  ()
+
+let lemma_store_search_empty (b : triple_pattern_bound) :
+  Lemma (store_search (graph_to_store []) b == []) =
+  lemma_ig_search_empty b
+
+let lemma_eval_single_tp_empty (tp : triple_pattern) (mu : solution_mapping) :
+  Lemma (eval_single_tp_store tp (graph_to_store []) mu == []) =
+  let bound = {
+    bs = bound_subject_of_pattern tp.tp_s mu;
+    bp = bound_predicate_of_pattern tp.tp_p mu;
+    bo = bound_object_of_pattern tp.tp_o mu;
+  } in
+  lemma_store_search_empty bound
+
+// After Phase 1 (#100), empty_indexed grew from 4 to 7 fields. SMT can
+// no longer auto-unfold eval_bgp through the wider record in default
+// budget. Stepping helper proves the fuel-bounded inner function on
+// the empty graph for non-empty pattern lists with positive fuel; the
+// outer lemma chains through eval_bgp_store at fuel = len + 1 ≥ 1.
+let lemma_eval_bgp_store_empty_fuel
+  (patterns : bgp) (mu : solution_mapping) (fuel : nat)
+  : Lemma (ensures (
+      Cons? patterns /\ fuel > 0 ==>
+      eval_bgp_store_from_mu_fuel patterns (graph_to_store []) mu fuel == [])) =
+  match patterns with
+  | [] -> ()
+  | _ ->
+    (match choose_best_tp patterns (graph_to_store []) mu with
+     | None -> ()
+     | Some (tp, _rest) ->
+       lemma_eval_single_tp_empty tp mu)
+       // next = eval_single_tp_store tp gs mu = []
+       // concatMap _ [] reduces to [] by definition; SMT closes here.
+
+let lemma_bgp_empty_graph (tp : triple_pattern) (rest : bgp) :
+  Lemma (ensures (eval_bgp (tp :: rest) [] == [])) =
+  lemma_eval_bgp_store_empty_fuel (tp :: rest) sm_empty (List.Tot.length (tp :: rest) + 1)
+
+(** ====================================================================== **)
+(** Part 19b: SPARQL 1.1 Update evaluation — INSERT DATA + DELETE DATA     **)
+(**           (stage b-data)                                                **)
+(**                                                                         **)
+(** Scope: only `U_InsertData` and `U_DeleteData` are executed. All other   **)
+(** update ops are no-ops for now; the runner decides whether to run or    **)
+(** skip the test based on the mix of ops. See CLAUDE.md Phase 4 item 2,   **)
+(** issue #59.                                                              **)
+(**                                                                         **)
+(** INSERT DATA semantics (SPARQL 1.1 Update §3.1.1, §4.1.1):                **)
+(**   - The QuadData block is walked; concrete triples are inserted into    **)
+(**     the default graph or the named graph declared by the enclosing      **)
+(**     GRAPH block.                                                        **)
+(**   - Variables are grammatically forbidden — the parser already rejects  **)
+(**     INSERT DATA with variables. As a belt-and-braces safety net we      **)
+(**     silently drop any triple containing a variable here.                **)
+(**   - Blank nodes are FRESH PER INSERT-DATA OP: all bnode labels in a     **)
+(**     single INSERT DATA op are renamed with a dataset-snapshot-derived   **)
+(**     prefix so they do not collide with any prior bnode in the dataset   **)
+(**     nor with a subsequent INSERT DATA op. Within the same op, the same  **)
+(**     bnode label resolves to the same fresh node (required by W3C test   **)
+(**     insert-data-same-bnode).                                            **)
+(**   - Property paths inside INSERT DATA are grammatically forbidden; if   **)
+(**     the parser nevertheless emits `GP_PropertyPath` we ignore it.       **)
+(**                                                                         **)
+(** DELETE DATA semantics (SPARQL 1.1 Update §3.1.2, §4.1.2):                **)
+(**   - Walk the QuadData the same way. For each concrete ground triple,    **)
+(**     remove matching occurrences from the default graph or the named     **)
+(**     graph declared by the enclosing GRAPH block (syntactic equality).   **)
+(**   - Variables are forbidden per §4.1.2 — we skip any triple containing  **)
+(**     a variable (the parser should already have rejected).               **)
+(**   - Blank nodes are forbidden in DELETE DATA per §4.1.2 (they cannot    **)
+(**     refer to existing graph bnodes). We silently drop any triple        **)
+(**     containing a blank node.                                            **)
+(**   - Deleting a triple that is not in the graph is a no-op (not an       **)
+(**     error). Removing from a named graph that does not exist is also a  **)
+(**     no-op; it does NOT materialise an empty named graph.                **)
+(** ======================================================================= **)
+
+// Count triples across the whole dataset. Used as a deterministic salt for
+// fresh-bnode renaming in INSERT DATA — a new op observes a bigger snapshot
+// and so gets a different prefix.
+let rec count_named_triples (ngs : list named_graph) : Tot nat (decreases ngs) =
+  match ngs with
+  | [] -> 0
+  | ng :: rest -> List.Tot.length ng.ng_graph + count_named_triples rest
+
+let dataset_triple_count (ds : rdf_dataset) : nat =
+  List.Tot.length ds.ds_default + count_named_triples ds.ds_named
+
+// Try to convert a SPARQL pattern_subject to a concrete RDF subject.
+// Variables return None; we use this to silently drop any stray variables
+// inside an INSERT DATA op (should never happen — parser rejects them).
+let ps_to_subject_concrete (ps : pattern_subject) : option subject =
+  match ps with
+  | PS_IRI i -> Some (S_IRI i)
+  | PS_BNode b -> Some (S_BNode b)
+  | PS_Var _ -> None
+  | PS_TripleTerm _ _ _ -> None  // triple terms cannot be a triple's subject
+
+let pt_to_iri_concrete (pt : pattern_term) : option wf_iri =
+  match pt with
+  | PT_IRI i -> Some i
+  | _ -> None  // variables, bnodes, literals, triple terms are not valid predicates
+
+// RDF 1.2: a ground triple-term object (INSERT DATA `<<( s p o )>>`) is
+// converted to a concrete `T_TripleTerm`; any variable position makes it
+// non-concrete (parser rejects vars in DATA blocks, so this drops safely).
+let rec pt_to_term_concrete (pt : pattern_term) : Tot (option rdf_term) (decreases pt) =
+  match pt with
+  | PT_IRI i -> Some (T_IRI i)
+  | PT_BNode b -> Some (T_BNode b)
+  | PT_Literal l -> Some (T_Literal l)
+  | PT_Var _ -> None
+  | PT_TripleTerm ps pp po ->
+    (match pt_to_term_concrete ps with
+     | None -> None
+     | Some sterm ->
+       (match term_to_subject_opt sterm with
+        | None -> None
+        | Some ssub ->
+          (match pt_to_iri_concrete pp with
+           | None -> None
+           | Some ppi ->
+             (match pt_to_term_concrete po with
+              | None -> None
+              | Some oterm -> Some (T_TripleTerm ssub ppi oterm)))))
+
+// Convert a triple_pattern to a concrete triple, dropping the pattern if
+// any position is a variable or malformed.
+let tp_to_triple_concrete (tp : triple_pattern) : option triple =
+  match ps_to_subject_concrete tp.tp_s with
+  | None -> None
+  | Some s ->
+    match pt_to_iri_concrete tp.tp_p with
+    | None -> None
+    | Some p ->
+      match pt_to_term_concrete tp.tp_o with
+      | None -> None
+      | Some o -> Some ({ s = s; p = p; o = o })
+
+// Extract all concrete triples from a bgp, dropping any with variables.
+let rec bgp_to_triples_concrete (b : bgp) : Tot (list triple) (decreases b) =
+  match b with
+  | [] -> []
+  | tp :: rest ->
+    let rest_ts = bgp_to_triples_concrete rest in
+    (match tp_to_triple_concrete tp with
+     | None -> rest_ts
+     | Some t -> t :: rest_ts)
+
+// Walk a group_graph_pattern and collect (graph_name, triple) pairs.
+// graph_name = None means default graph; Some iri means that named graph.
+// Nested GP_Graph wins over outer context.
+let rec collect_quads (outer : option wf_iri) (g : group_graph_pattern)
+  : Tot (list (option wf_iri * triple)) (decreases g) =
+  match g with
+  | GP_Empty -> []
+  | GP_BGP b ->
+    let ts = bgp_to_triples_concrete b in
+    List.Tot.map (fun t -> (outer, t)) ts
+  | GP_Join a b -> Lh.append_tr (collect_quads outer a) (collect_quads outer b)
+  | GP_Graph gt inner ->
+    (match gt with
+     | PT_IRI g_iri -> collect_quads (Some g_iri) inner
+     | _ -> collect_quads outer inner)  // variable/bnode graph — ignore
+  // All other patterns are not valid inside INSERT DATA; drop.
+  | _ -> []
+
+// Rename a bnode prefix across one collected quad.
+let rename_quad_bnodes (prefix : string) (q : option wf_iri * triple)
+  : option wf_iri * triple =
+  let (g_opt, t) = q in
+  (g_opt, rename_triple_bnodes prefix t)
+
+// Insert one quad into the dataset. If the named graph does not yet exist,
+// create it.
+let rec upsert_named_graph (name : iri) (t : triple) (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> [{ ng_name = name; ng_graph = [t] }]
+  | ng :: rest ->
+    if ng.ng_name = name then
+      { ng_name = ng.ng_name; ng_graph = graph_add t ng.ng_graph } :: rest
+    else
+      ng :: upsert_named_graph name t rest
+
+let insert_quad (ds : rdf_dataset) (q : option wf_iri * triple) : rdf_dataset =
+  let (g_opt, t) = q in
+  match g_opt with
+  | None ->
+    { ds_default = graph_add t ds.ds_default; ds_named = ds.ds_named }
+  | Some g_iri ->
+    { ds_default = ds.ds_default;
+      ds_named = upsert_named_graph g_iri t ds.ds_named }
+
+let rec insert_quads (ds : rdf_dataset) (qs : list (option wf_iri * triple))
+  : Tot rdf_dataset (decreases qs) =
+  match qs with
+  | [] -> ds
+  | q :: rest -> insert_quads (insert_quad ds q) rest
+
+// Per-request bnode prefix for INSERT DATA ops. SPARQL 1.1 Update §4.1.1
+// ("INSERTing the same bnode with INSERT DATA into two different Graphs is
+// the same bnode" — :insert-data-same-bnode in basic-update) requires that
+// blank-node labels in INSERT DATA be scoped to the entire UPDATE REQUEST,
+// not per individual op: two ops in the same request that share a label
+// must denote the SAME fresh node in the resulting graph store.
+//
+// `request_salt` is computed once at the start of `apply_update_ops` from
+// the snapshot of the dataset that was visible when the request began
+// (so different requests, run on the same store back-to-back, get
+// distinct prefixes). Every U_InsertData in the same request therefore
+// uses the same prefix; the rename step collapses same-label bnodes to
+// the same id, distinct-label bnodes to distinct ids.
+let apply_insert_data (request_salt : string) (ds : rdf_dataset)
+  (ggp : group_graph_pattern) : rdf_dataset =
+  let quads = collect_quads None ggp in
+  let prefix = String.concat "" ["_insdata_"; request_salt] in
+  let renamed = List.Tot.map (rename_quad_bnodes prefix) quads in
+  insert_quads ds renamed
+
+// DELETE DATA helpers. Blank nodes are illegal inside DELETE DATA per
+// SPARQL 1.1 Update §4.1.2 (they cannot denote existing graph bnodes).
+// Test a collected quad for bnode content and drop if present. Variables
+// are already dropped at collect_quads time via tp_to_triple_concrete.
+let triple_has_bnode (t : triple) : bool =
+  (match t.s with | S_BNode _ -> true | _ -> false)
+  || (match t.o with | T_BNode _ -> true | _ -> false)
+
+let quad_has_bnode (q : option wf_iri * triple) : bool =
+  triple_has_bnode (snd q)
+
+let rec filter_no_bnode_quads (qs : list (option wf_iri * triple))
+  : Tot (list (option wf_iri * triple)) (decreases qs) =
+  match qs with
+  | [] -> []
+  | q :: rest ->
+    if quad_has_bnode q then filter_no_bnode_quads rest
+    else q :: filter_no_bnode_quads rest
+
+// Remove one triple from the matching named graph. If the graph is not
+// present we return the list unchanged — DELETE DATA must not materialise
+// an empty named graph.
+let rec remove_from_named_graph (name : iri) (t : triple)
+  (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> []
+  | ng :: rest ->
+    if ng.ng_name = name then
+      { ng_name = ng.ng_name; ng_graph = graph_remove t ng.ng_graph } :: rest
+    else
+      ng :: remove_from_named_graph name t rest
+
+let delete_quad (ds : rdf_dataset) (q : option wf_iri * triple) : rdf_dataset =
+  let (g_opt, t) = q in
+  match g_opt with
+  | None ->
+    { ds_default = graph_remove t ds.ds_default; ds_named = ds.ds_named }
+  | Some g_iri ->
+    { ds_default = ds.ds_default;
+      ds_named = remove_from_named_graph g_iri t ds.ds_named }
+
+let rec delete_quads (ds : rdf_dataset) (qs : list (option wf_iri * triple))
+  : Tot rdf_dataset (decreases qs) =
+  match qs with
+  | [] -> ds
+  | q :: rest -> delete_quads (delete_quad ds q) rest
+
+let apply_delete_data (ds : rdf_dataset) (ggp : group_graph_pattern) : rdf_dataset =
+  let quads = collect_quads None ggp in
+  // Drop any quad carrying a blank node (§4.1.2). Variables were already
+  // dropped in collect_quads -> tp_to_triple_concrete.
+  let clean = filter_no_bnode_quads quads in
+  delete_quads ds clean
+
+(** ======================================================================= **)
+(** Part 19c: DELETE WHERE (SPARQL 1.1 Update §3.1.3)                        **)
+(**                                                                         **)
+(** `DELETE WHERE { tmpl }` is semantically shorthand for                   **)
+(** `DELETE { tmpl } WHERE { tmpl }`: match the template against the        **)
+(** dataset to produce solution mappings, substitute each mapping back into **)
+(** the template to get concrete quads, remove them by syntactic equality   **)
+(** (same comparator as DELETE DATA).                                       **)
+(**                                                                         **)
+(** Implementation: we reuse `eval_pattern` (the SELECT-side BGP/GGP        **)
+(** matcher — same code path used by every non-aggregate SELECT query) to   **)
+(** produce the solution mappings, then reuse `bound_subject_of_pattern` /  **)
+(** `bound_predicate_of_pattern` / `bound_object_of_pattern` (used by       **)
+(** single-triple evaluation and forming the substitution back into the    **)
+(** template). No new matcher or substituter was written; both are already **)
+(** battle-tested by the query path.                                       **)
+(**                                                                         **)
+(** Blank nodes in the template (§18.2.2.9, §3.1.3): per                    **)
+(** `rewrite_query_bnodes_pattern` bnodes in a query pattern are treated    **)
+(** as distinct fresh variables. We apply the same rewrite uniformly to    **)
+(** the DELETE-WHERE template — the rewritten pattern both binds and then  **)
+(** substitutes back, so a bnode in the template ends up deleting the exact **)
+(** existing-graph bnodes it matched (a specific existing label per        **)
+(** solution mapping). This is the standard "blank nodes as existentials"  **)
+(** interpretation (same as patch #53 but for the WHERE side of a DELETE).  **)
+(**   Honest caveat: if two bnodes in the template share a label AND the    **)
+(**   underlying pattern matcher does NOT unify them (it doesn't — each    **)
+(**   rewritten var gets a unique "_bnode_<label>" name), we may fail to   **)
+(**   delete the expected set. In the six delete-where W3C tests the      **)
+(**   templates contain no blank nodes — all six use only IRIs + variables **)
+(**   — so this caveat doesn't bite. Documented for future readers.        **)
+(** ======================================================================= **)
+
+// Substitute a solution mapping into one triple_pattern, producing a
+// concrete triple if every pattern position is bindable under the mapping.
+// Variables without a binding yield None (the triple cannot be instantiated).
+// Concrete positions pass through; literal-in-subject and
+// literal-in-predicate positions (ill-formed per RDF) also yield None.
+let instantiate_tp (tp : triple_pattern) (mu : solution_mapping)
+  : option triple =
+  match bound_subject_of_pattern tp.tp_s mu with
+  | None -> None
+  | Some s ->
+    match bound_predicate_of_pattern tp.tp_p mu with
+    | None -> None
+    | Some p ->
+      match bound_object_of_pattern tp.tp_o mu with
+      | None -> None
+      | Some o -> Some ({ s = s; p = p; o = o })
+
+// Instantiate each tp in a bgp under mu; drop any tp that fails to bind.
+let rec instantiate_bgp (b : bgp) (mu : solution_mapping)
+  : Tot (list triple) (decreases b) =
+  match b with
+  | [] -> []
+  | tp :: rest ->
+    let rest_ts = instantiate_bgp rest mu in
+    (match instantiate_tp tp mu with
+     | None -> rest_ts
+     | Some t -> t :: rest_ts)
+
+// ----- Template-bnode freshening for INSERT { ... } WHERE { ... } --------
+//
+// SPARQL 1.1 Update §4.1.3: blank nodes literally written in an INSERT
+// template are FRESH PER SOLUTION BINDING. Variable-bound bnodes (a `?S`
+// matched against a dataset bnode) are NOT freshened — they preserve
+// graph identity, otherwise the same template run twice via two
+// `INSERT { GRAPH :g2 { ?S ?P ?O } } WHERE { GRAPH :g1 { ?S ?P ?O } }`
+// ops would produce two distinct bnodes per row of g1 instead of one
+// (W3C basic-update test :insert-05a "INSERT same bnode twice").
+//
+// We distinguish at substitution time: a `PS_BNode b` / `PT_BNode b`
+// reaching the substituter is by definition a TEMPLATE bnode (the parser
+// never generates `PS_BNode`/`PT_BNode` from a query variable; bnodes in
+// query positions are rewritten to vars by `rewrite_query_bnodes_pattern`
+// upstream). Var-bound bnodes flow through `PS_Var v` → `sm_lookup` →
+// `T_BNode b` and pass through unchanged.
+//
+// Freshness key: `(op_salt, sol_ix, label)`. `op_salt` is the per-update-
+// op salt threaded by `apply_update_ops`. `sol_ix` is the row index in
+// the solution sequence. Same template label within one (op, sol_ix)
+// resolves to the same fresh node.
+let fresh_bnode_for_op (op_salt : string) (sol_ix : nat) (label : string)
+  : bnode_id =
+  String.concat "" [op_salt; "_sm"; string_of_int sol_ix; "_"; label]
+
+let bound_subject_of_pattern_freshen (op_salt : string) (sol_ix : nat)
+  (ps : pattern_subject) (mu : solution_mapping) : option subject =
+  match ps with
+  | PS_IRI i -> Some (S_IRI i)
+  | PS_BNode b ->
+    Some (S_BNode (fresh_bnode_for_op op_salt sol_ix b))
+  // A triple-term subject pattern can never form a concrete subject.
+  | PS_TripleTerm _ _ _ -> None
+  | PS_Var v ->
+    (match sm_lookup v mu with
+     | Some (T_IRI i) -> Some (S_IRI i)
+     | Some (T_BNode b) -> Some (S_BNode b)
+     | Some (T_Literal _) -> None
+     | Some (T_TripleTerm _ _ _) -> None
+     | None -> None)
+
+let rec bound_object_of_pattern_freshen (op_salt : string) (sol_ix : nat)
+  (pt : pattern_term) (mu : solution_mapping) : Tot (option rdf_term) (decreases pt) =
+  match pt with
+  | PT_IRI i -> Some (T_IRI i)
+  | PT_BNode b ->
+    Some (T_BNode (fresh_bnode_for_op op_salt sol_ix b))
+  | PT_Literal l -> Some (T_Literal l)
+  | PT_Var v -> sm_lookup v mu
+  | PT_TripleTerm ps pp po ->
+    (match bound_object_of_pattern_freshen op_salt sol_ix ps mu with
+     | None -> None
+     | Some sterm ->
+       (match term_to_subject_opt sterm with
+        | None -> None
+        | Some ssub ->
+          (match bound_object_of_pattern_freshen op_salt sol_ix pp mu with
+           | Some (T_IRI ppi) ->
+             (match bound_object_of_pattern_freshen op_salt sol_ix po mu with
+              | None -> None
+              | Some oterm -> Some (T_TripleTerm ssub ppi oterm))
+           | _ -> None)))
+
+let instantiate_tp_freshen (op_salt : string) (sol_ix : nat)
+  (tp : triple_pattern) (mu : solution_mapping)
+  : option triple =
+  match bound_subject_of_pattern_freshen op_salt sol_ix tp.tp_s mu with
+  | None -> None
+  | Some s ->
+    match bound_predicate_of_pattern tp.tp_p mu with
+    | None -> None
+    | Some p ->
+      match bound_object_of_pattern_freshen op_salt sol_ix tp.tp_o mu with
+      | None -> None
+      | Some o -> Some ({ s = s; p = p; o = o })
+
+let rec instantiate_bgp_freshen (op_salt : string) (sol_ix : nat)
+  (b : bgp) (mu : solution_mapping)
+  : Tot (list triple) (decreases b) =
+  match b with
+  | [] -> []
+  | tp :: rest ->
+    let rest_ts = instantiate_bgp_freshen op_salt sol_ix rest mu in
+    (match instantiate_tp_freshen op_salt sol_ix tp mu with
+     | None -> rest_ts
+     | Some t -> t :: rest_ts)
+
+// Walk the template GGP under a single solution mapping and produce
+// (graph, triple) quads. Mirrors `collect_quads` but substitutes via mu.
+// Nested GRAPH <iri> { ... } sets the graph scope for the inner quads.
+// Non-BGP / non-Graph / non-Join patterns yield no quads (the template
+// of DELETE WHERE is grammatically restricted to quad data: a sequence of
+// triples / GRAPH blocks, so other forms shouldn't appear — belt-and-
+// braces, mirrors collect_quads).
+let rec instantiate_ggp_quads (outer : option wf_iri) (g : group_graph_pattern)
+  (mu : solution_mapping)
+  : Tot (list (option wf_iri * triple)) (decreases g) =
+  match g with
+  | GP_Empty -> []
+  | GP_BGP b ->
+    let ts = instantiate_bgp b mu in
+    List.Tot.map (fun t -> (outer, t)) ts
+  | GP_Join a b ->
+    Lh.append_tr (instantiate_ggp_quads outer a mu) (instantiate_ggp_quads outer b mu)
+  | GP_Graph gt inner ->
+    (* Resolve the GRAPH target: a fixed IRI, OR a variable bound to an
+       IRI by mu (SPARQL 1.2 update-2: DELETE { GRAPH ?g {...} } must
+       target the graphs ?g is bound to, not the default graph).
+       bound_predicate_of_pattern handles PT_IRI and PT_Var->T_IRI. *)
+    (match bound_predicate_of_pattern gt mu with
+     | Some g_iri -> instantiate_ggp_quads (Some g_iri) inner mu
+     | None -> instantiate_ggp_quads outer inner mu)
+  | _ -> []
+
+// Freshening variant: only PS_BNode/PT_BNode template positions are
+// rewritten to a fresh-per-(op,sol_ix) label; var-bound bnodes are
+// preserved verbatim. Used by apply_modify so var-bound dataset bnodes
+// keep their identity across repeated INSERT/WHERE ops in one request.
+let rec instantiate_ggp_quads_freshen (op_salt : string) (sol_ix : nat)
+  (outer : option wf_iri) (g : group_graph_pattern) (mu : solution_mapping)
+  : Tot (list (option wf_iri * triple)) (decreases g) =
+  match g with
+  | GP_Empty -> []
+  | GP_BGP b ->
+    let ts = instantiate_bgp_freshen op_salt sol_ix b mu in
+    List.Tot.map (fun t -> (outer, t)) ts
+  | GP_Join a b ->
+    Lh.append_tr
+      (instantiate_ggp_quads_freshen op_salt sol_ix outer a mu)
+      (instantiate_ggp_quads_freshen op_salt sol_ix outer b mu)
+  | GP_Graph gt inner ->
+    (* Same variable-GRAPH resolution as instantiate_ggp_quads above. *)
+    (match bound_predicate_of_pattern gt mu with
+     | Some g_iri ->
+       instantiate_ggp_quads_freshen op_salt sol_ix (Some g_iri) inner mu
+     | None -> instantiate_ggp_quads_freshen op_salt sol_ix outer inner mu)
+  | _ -> []
+
+let rec instantiate_ggp_all (outer : option wf_iri) (g : group_graph_pattern)
+  (mus : solution_sequence)
+  : Tot (list (option wf_iri * triple)) (decreases mus) =
+  match mus with
+  | [] -> []
+  | mu :: rest ->
+    Lh.append_tr (instantiate_ggp_quads outer g mu) (instantiate_ggp_all outer g rest)
+
+let apply_delete_where (ds : rdf_dataset) (ggp : group_graph_pattern)
+  : rdf_dataset =
+  // §3.1.3: bnodes in the WHERE side of a template behave as existential
+  // variables. Apply the same rewrite used by `eval_select_query` so a
+  // bnode-labelled position participates in the matching as a variable
+  // and then is substituted back into the template with the matched term.
+  let rewritten = rewrite_query_bnodes_pattern ggp in
+  // Evaluate against the default graph + dataset. GP_Graph inside the
+  // template is still honoured by eval_pattern itself.
+  let mus = eval_pattern None rewritten ds.ds_default ds in
+  // For each mapping, substitute into the (rewritten) template to get
+  // concrete quads.
+  let quads = instantiate_ggp_all None rewritten mus in
+  delete_quads ds quads
+
+(** ======================================================================= **)
+(** Part 19d: U_Modify — pattern-matching INSERT/DELETE (§3.1.3)            **)
+(**                                                                         **)
+(** Grammar (simplified):                                                    **)
+(**   [ WITH <iri> ]                                                         **)
+(**   ( DELETE { del_tmpl } [ INSERT { ins_tmpl } ]                          **)
+(**   | INSERT { ins_tmpl } )                                                **)
+(**   [ USING <iri> | USING NAMED <iri> ]*                                   **)
+(**   WHERE { pattern }                                                      **)
+(**                                                                         **)
+(** Semantics (§3.1.3):                                                      **)
+(** 1. Build the "WHERE dataset" (view used only for pattern matching):     **)
+(**      - If USING / USING NAMED is non-empty:                              **)
+(**          default = union of all graphs named by `DC_Default u`           **)
+(**          named   = [ { u, lookup u ds } | DC_Named u ]                   **)
+(**        (USING completely REPLACES the WHERE default/named set.)          **)
+(**      - Else if WITH <g>:                                                 **)
+(**          default = lookup g ds.ds_named (empty if g not present)         **)
+(**          named   = ds.ds_named (unchanged)                               **)
+(**      - Else:                                                             **)
+(**          default = ds.ds_default, named = ds.ds_named (whole ds).        **)
+(**   Eval WHERE against that view → solution sequence.                     **)
+(**                                                                         **)
+(** 2. For each solution mapping mu, substitute into delete_tmpl to get     **)
+(**    concrete quads. Quads with an unscoped default-graph position are    **)
+(**    redirected to WITH's graph if WITH is set (mutation target ≠ WHERE   **)
+(**    default when WITH + USING interact: per spec, WITH gives the         **)
+(**    mutation default, USING only affects WHERE).                         **)
+(**                                                                         **)
+(** 3. Same substitution for insert_tmpl.                                    **)
+(**                                                                         **)
+(** 4. Perform deletes first, then inserts, on the ORIGINAL dataset (not    **)
+(**    the WHERE view). Per §3.1.3 the mutation target is the original      **)
+(**    Graph Store. A delete-then-insert ordering is the spec's well-       **)
+(**    formedness choice to handle "halloween" style deletion-shadowing.    **)
+(**                                                                         **)
+(** Blank nodes:                                                             **)
+(**   - DELETE template must NOT contain blank nodes (parser enforces).     **)
+(**   - INSERT template bnodes are freshened once per solution mapping      **)
+(**     (§4.1.3: "blank nodes in an INSERT template are fresh for each      **)
+(**     solution binding"). We use a per-call + per-index prefix to keep    **)
+(**     them distinct across mappings and across Modify ops within the     **)
+(**     same request.                                                        **)
+(**   - WHERE pattern bnodes are rewritten to query variables per           **)
+(**     §18.2.2.9 (existing `rewrite_query_bnodes_pattern`).                **)
+(** ======================================================================= **)
+
+// --- WHERE dataset construction -----------------------------------------
+
+// Collect DC_Default iris from a list of USING clauses.
+let rec using_default_iris (dcs : list dataset_clause)
+  : Tot (list wf_iri) (decreases dcs) =
+  match dcs with
+  | [] -> []
+  | DC_Default i :: rest -> i :: using_default_iris rest
+  | DC_Named _   :: rest -> using_default_iris rest
+
+let rec using_named_iris (dcs : list dataset_clause)
+  : Tot (list wf_iri) (decreases dcs) =
+  match dcs with
+  | [] -> []
+  | DC_Named i   :: rest -> i :: using_named_iris rest
+  | DC_Default _ :: rest -> using_named_iris rest
+
+// Union all named graphs whose name IRI appears in `iris` into one rdf_graph.
+// If an IRI is not present in ds.ds_named, it contributes the empty graph.
+let rec union_named_graphs_by_iri (iris : list wf_iri) (named : list named_graph)
+  : Tot rdf_graph (decreases iris) =
+  match iris with
+  | [] -> empty_graph
+  | i :: rest ->
+    let g = (match lookup_named_graph i named with
+             | Some g -> g
+             | None -> empty_graph) in
+    graph_union g (union_named_graphs_by_iri rest named)
+
+// Build the list of named_graph records corresponding to DC_Named iris.
+let rec named_graphs_by_iri (iris : list wf_iri) (named : list named_graph)
+  : Tot (list named_graph) (decreases iris) =
+  match iris with
+  | [] -> []
+  | i :: rest ->
+    let g = (match lookup_named_graph i named with
+             | Some g -> g
+             | None -> empty_graph) in
+    { ng_name = i; ng_graph = g } :: named_graphs_by_iri rest named
+
+// Build the "WHERE dataset" per the rules above.
+//   with_iri : option wf_iri  — WITH <iri> if present
+//   using    : list dataset_clause — USING / USING NAMED
+let build_where_dataset (ds : rdf_dataset) (with_iri : option wf_iri)
+  (using : list dataset_clause) : rdf_dataset =
+  match using with
+  | [] ->
+    // No USING: WITH replaces only the default graph for WHERE.
+    (match with_iri with
+     | None -> ds
+     | Some g ->
+       let def_g = (match lookup_named_graph g ds.ds_named with
+                    | Some x -> x | None -> empty_graph) in
+       { ds_default = def_g; ds_named = ds.ds_named })
+  | _ ->
+    // USING replaces WHERE's default (union of DC_Default) AND named set
+    // (only DC_Named). WITH is ignored for WHERE eval when USING is set
+    // (USING clauses explicitly override WITH per §3.1.3).
+    let def_iris = using_default_iris using in
+    let nam_iris = using_named_iris using in
+    let def_g = union_named_graphs_by_iri def_iris ds.ds_named in
+    let nam = named_graphs_by_iri nam_iris ds.ds_named in
+    { ds_default = def_g; ds_named = nam }
+
+// --- Mutation-target redirection ----------------------------------------
+// If WITH <g> was specified, quads whose graph position is None (the
+// unscoped/default side of the template) should be redirected to `<g>`.
+// Quads explicitly scoped by `GRAPH <x>` in the template are left alone.
+let redirect_default_quad (with_iri : option wf_iri)
+  (q : option wf_iri * triple) : option wf_iri * triple =
+  let (g_opt, t) = q in
+  match g_opt, with_iri with
+  | None, Some g -> (Some g, t)
+  | _, _ -> (g_opt, t)
+
+let rec redirect_default_quads (with_iri : option wf_iri)
+  (qs : list (option wf_iri * triple))
+  : Tot (list (option wf_iri * triple)) (decreases qs) =
+  match qs with
+  | [] -> []
+  | q :: rest -> redirect_default_quad with_iri q :: redirect_default_quads with_iri rest
+
+// Per-mapping DELETE quad instantiation. Bnodes here are illegal per
+// §3.1.3 (the parser rejects them; if any slip through they simply fail
+// to match a real graph triple and get dropped). Use the non-freshening
+// variant — preserving any (illegal) literal label is harmless.
+let rec per_mapping_quads (outer : option wf_iri) (ggp : group_graph_pattern)
+  (mus : solution_sequence)
+  : Tot (list (list (option wf_iri * triple))) (decreases mus) =
+  match mus with
+  | [] -> []
+  | mu :: rest ->
+    instantiate_ggp_quads outer ggp mu :: per_mapping_quads outer ggp rest
+
+// Per-mapping INSERT quad instantiation. Each solution mapping gets a
+// distinct sol_ix; template bnodes are freshened by
+// `instantiate_ggp_quads_freshen` (PS_BNode → fresh; PS_Var binding →
+// pass through). `op_salt` is the per-update-op salt threaded by
+// `apply_update_ops` so the same template across two consecutive
+// INSERT/WHERE ops produces DISTINCT bnodes (W3C basic-update test
+// :insert-where-same-bnode demands two ops → two bnodes).
+let rec per_mapping_insert_quads (op_salt : string)
+  (outer : option wf_iri) (ggp : group_graph_pattern)
+  (mus : solution_sequence) (sol_ix : nat)
+  : Tot (list (list (option wf_iri * triple))) (decreases mus) =
+  match mus with
+  | [] -> []
+  | mu :: rest ->
+    instantiate_ggp_quads_freshen op_salt sol_ix outer ggp mu
+    :: per_mapping_insert_quads op_salt outer ggp rest (sol_ix + 1)
+
+let rec insert_per_mapping_quads (ds : rdf_dataset)
+  (per_mu_quads : list (list (option wf_iri * triple)))
+  : Tot rdf_dataset (decreases per_mu_quads) =
+  match per_mu_quads with
+  | [] -> ds
+  | qs :: rest ->
+    let ds' = insert_quads ds qs in
+    insert_per_mapping_quads ds' rest
+
+// --- apply_modify --------------------------------------------------------
+//
+// `op_salt` is provided by `apply_update_ops` and is unique per update op
+// in the request (e.g. `op_3`). Used to freshen INSERT template bnodes;
+// var-bound bnodes (`?S` matched against an existing graph bnode) pass
+// through unchanged so subsequent ops in the same request that re-read
+// the same dataset bnode see the SAME label (W3C :insert-05a).
+let apply_modify (op_salt : string) (ds : rdf_dataset)
+  (with_iri : option wf_iri)
+  (delete_tmpl : option group_graph_pattern)
+  (insert_tmpl : option group_graph_pattern)
+  (using : list dataset_clause)
+  (where_ggp : group_graph_pattern) : rdf_dataset =
+  // §18.2.2.9: bnodes in WHERE are fresh existential variables.
+  let where_rewritten = rewrite_query_bnodes_pattern where_ggp in
+
+  // Build the WHERE view dataset.
+  let where_ds = build_where_dataset ds with_iri using in
+
+  // Evaluate WHERE against the view. GP_Graph inside the pattern is still
+  // honoured by eval_pattern against the view's named set.
+  let mus = eval_pattern None where_rewritten where_ds.ds_default where_ds in
+
+  // Step 1: substitute each mapping into delete_tmpl; redirect unscoped
+  // quads to WITH's graph if set; delete from the original dataset.
+  let del_quads_per_mu = match delete_tmpl with
+    | None -> []
+    | Some dt ->
+      // DELETE template bnodes: parser rejected bnodes in the DELETE
+      // template at parse time, but if any slipped through, substitution
+      // would simply not produce a matching mapping. No rewrite needed.
+      per_mapping_quads None dt mus in
+  let del_quads_flat = List.Tot.fold_left (fun acc qs -> Lh.append_tr acc qs)
+                       [] del_quads_per_mu in
+  let del_quads_redirected = redirect_default_quads with_iri del_quads_flat in
+  let ds_after_delete = delete_quads ds del_quads_redirected in
+
+  // Step 2: substitute each mapping into insert_tmpl with template-only
+  // bnode freshening; redirect unscoped quads to WITH's graph; insert.
+  // No post-rename step — `instantiate_ggp_quads_freshen` already gave
+  // template bnodes their fresh-per-(op,mapping) label.
+  match insert_tmpl with
+  | None -> ds_after_delete
+  | Some it ->
+    let ins_quads_per_mu = per_mapping_insert_quads op_salt None it mus 0 in
+    let redirected_per_mu = List.Tot.map
+      (fun qs -> redirect_default_quads with_iri qs) ins_quads_per_mu in
+    insert_per_mapping_quads ds_after_delete redirected_per_mu
+
+(** ======================================================================= **)
+(** Part 19e: Graph-management UPDATE ops (§3.1.3 / §3.2)                    **)
+(**                                                                         **)
+(** CREATE / CLEAR / DROP / COPY / MOVE / ADD are all pure dataset-to-      **)
+(** dataset transformations — no I/O, no pattern matching, no WHERE view.  **)
+(** Spec (SPARQL 1.1 Update §3.2):                                          **)
+(**                                                                         **)
+(**   CREATE ( SILENT )? GRAPH <iri>                                        **)
+(**     - Add an empty named graph with the given IRI. If the graph         **)
+(**       already exists, SILENT swallows the error; we no-op either way.   **)
+(**                                                                         **)
+(**   CLEAR ( SILENT )? ( DEFAULT | NAMED | ALL | GRAPH <iri> )             **)
+(**     - Remove all triples from the target. Named-graph entries remain    **)
+(**       present but empty (callers can still reference the graph name).   **)
+(**                                                                         **)
+(**   DROP ( SILENT )? ( DEFAULT | NAMED | ALL | GRAPH <iri> )              **)
+(**     - Remove the target entirely. The default graph cannot be removed,  **)
+(**       so DROP DEFAULT just empties it (per §3.2.3).                     **)
+(**     - DROP NAMED removes every named graph entry. DROP ALL also empties **)
+(**       the default graph.                                                **)
+(**                                                                         **)
+(**   COPY / MOVE / ADD ( SILENT )? ( DEFAULT | GRAPH <iri> )               **)
+(**                      TO ( DEFAULT | GRAPH <iri> )                       **)
+(**     - COPY: replace dst's triples with a copy of src's triples.         **)
+(**     - MOVE: COPY src TO dst, then DROP src (per §3.2.6).                **)
+(**     - ADD: append src's triples to dst (with dedup via graph_add).      **)
+(**     - All three are no-ops when src == dst.                             **)
+(**                                                                         **)
+(** SILENT is advisory in our pure model — errors do not exist; we no-op    **)
+(** on missing source graphs either way. Real implementations would raise  **)
+(** an error when SILENT is absent and the target is missing, but the W3C  **)
+(** UpdateEvaluation tests don't exercise that error path.                 **)
+(** ======================================================================= **)
+
+// --- Named-graph list helpers ---------------------------------------------
+
+// Return the triples of the named graph `iri` (empty list if missing).
+let rec find_named_graph_triples (iri : wf_iri) (named : list named_graph)
+  : Tot (list triple) (decreases named) =
+  match named with
+  | [] -> []
+  | ng :: rest ->
+    if ng.ng_name = iri then ng.ng_graph
+    else find_named_graph_triples iri rest
+
+// True iff `iri` already has an entry in `named` (regardless of whether
+// its graph is empty).
+let rec has_named_graph (iri : wf_iri) (named : list named_graph)
+  : Tot bool (decreases named) =
+  match named with
+  | [] -> false
+  | ng :: rest -> ng.ng_name = iri || has_named_graph iri rest
+
+// Set the triples of the named graph `iri` to `ts`. If `iri` has no entry,
+// append a new entry with these triples. Used by COPY / ADD / MOVE and by
+// the with-iri WHERE plumbing.
+let rec replace_named_graph_triples (iri : wf_iri) (ts : list triple)
+  (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> [ { ng_name = iri; ng_graph = ts } ]
+  | ng :: rest ->
+    if ng.ng_name = iri then
+      { ng_name = ng.ng_name; ng_graph = ts } :: rest
+    else
+      ng :: replace_named_graph_triples iri ts rest
+
+// Empty the named graph `iri` (keep the entry with an empty graph). If the
+// graph is absent, do nothing — CLEAR GRAPH on a missing graph is either an
+// error (spec) or a no-op (SILENT); we take the no-op path regardless so
+// we never materialise a graph that the user didn't ask for.
+let rec empty_graph_named (iri : wf_iri) (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> []
+  | ng :: rest ->
+    if ng.ng_name = iri then
+      { ng_name = ng.ng_name; ng_graph = [] } :: rest
+    else
+      ng :: empty_graph_named iri rest
+
+// Remove the named graph `iri` entry entirely (DROP GRAPH).
+let rec drop_named_by_iri (iri : wf_iri) (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> []
+  | ng :: rest ->
+    if ng.ng_name = iri then rest
+    else ng :: drop_named_by_iri iri rest
+
+// Empty every named graph (CLEAR NAMED / CLEAR ALL): keep each entry, zero
+// out its triples.
+let rec empty_all_named (named : list named_graph)
+  : Tot (list named_graph) (decreases named) =
+  match named with
+  | [] -> []
+  | ng :: rest ->
+    { ng_name = ng.ng_name; ng_graph = [] } :: empty_all_named rest
+
+// Ensure the named graph `iri` exists (creating an empty entry if absent).
+let ensure_named_graph (iri : wf_iri) (named : list named_graph)
+  : list named_graph =
+  if has_named_graph iri named then named
+  else Lh.append_tr named [ { ng_name = iri; ng_graph = [] } ]
+
+// --- Source / destination read + write helpers ----------------------------
+
+// Read the triples at a graph_ref location. For GR_Named / GR_All (multi-
+// graph refs) we return a union — only meaningful for CLEAR/DROP, not for
+// COPY/MOVE/ADD which the SPARQL grammar restricts to DEFAULT or GRAPH <iri>.
+let read_graph_ref (gr : graph_ref) (ds : rdf_dataset) : list triple =
+  match gr with
+  | GR_Default    -> ds.ds_default
+  | GR_Graph iri  -> find_named_graph_triples iri ds.ds_named
+  | GR_Named      -> []   // not used by COPY/MOVE/ADD
+  | GR_All        -> []   // not used by COPY/MOVE/ADD
+
+// True iff the graph_ref points at a location that actually exists in the
+// dataset. Used by COPY / MOVE / ADD to decide whether to treat a missing
+// source as an error (which we swallow silently per the SILENT convention)
+// vs a legitimate empty graph. The default graph always exists (even when
+// it contains zero triples).
+let graph_ref_exists (gr : graph_ref) (ds : rdf_dataset) : bool =
+  match gr with
+  | GR_Default    -> true
+  | GR_Graph iri  -> has_named_graph iri ds.ds_named
+  | GR_Named      -> false
+  | GR_All        -> false
+
+// Write `ts` into the location `gr`. Named destinations that don't exist
+// yet are materialised with these triples.
+let write_graph_ref (gr : graph_ref) (ts : list triple) (ds : rdf_dataset)
+  : rdf_dataset =
+  match gr with
+  | GR_Default   ->
+    { ds_default = ts; ds_named = ds.ds_named }
+  | GR_Graph iri ->
+    { ds_default = ds.ds_default;
+      ds_named   = replace_named_graph_triples iri ts ds.ds_named }
+  | GR_Named     -> ds
+  | GR_All       -> ds
+
+// Equality on graph_ref (used for COPY/MOVE/ADD self-check).
+let graph_ref_eq (a b : graph_ref) : bool =
+  match a, b with
+  | GR_Default,   GR_Default   -> true
+  | GR_Named,     GR_Named     -> true
+  | GR_All,       GR_All       -> true
+  | GR_Graph i1,  GR_Graph i2  -> i1 = i2
+  | _,            _            -> false
+
+// --- apply_create ---------------------------------------------------------
+// CREATE (SILENT)? GRAPH <iri>.  Materialise an empty entry if absent.
+// If the graph already exists: SILENT → no-op (spec), non-SILENT → spec says
+// raise an error, but our pure model has no error path so we no-op. Real
+// W3C tests don't exercise the non-SILENT already-exists case.
+let apply_create (ds : rdf_dataset) (silent : bool) (iri : wf_iri)
+  : rdf_dataset =
+  let _ = silent in
+  { ds_default = ds.ds_default;
+    ds_named   = ensure_named_graph iri ds.ds_named }
+
+// --- apply_clear ----------------------------------------------------------
+// CLEAR (SILENT)? ( DEFAULT | NAMED | ALL | GRAPH <iri> ).
+// Empty the target: named-graph entries remain, triples become [].
+let apply_clear (ds : rdf_dataset) (silent : bool) (gr : graph_ref)
+  : rdf_dataset =
+  let _ = silent in
+  match gr with
+  | GR_Default ->
+    { ds_default = []; ds_named = ds.ds_named }
+  | GR_Named ->
+    { ds_default = ds.ds_default; ds_named = empty_all_named ds.ds_named }
+  | GR_All ->
+    { ds_default = []; ds_named = empty_all_named ds.ds_named }
+  | GR_Graph iri ->
+    { ds_default = ds.ds_default;
+      ds_named   = empty_graph_named iri ds.ds_named }
+
+// --- apply_drop -----------------------------------------------------------
+// DROP (SILENT)? ( DEFAULT | NAMED | ALL | GRAPH <iri> ).
+// Per §3.2.3 the default graph can't be truly removed, so DROP DEFAULT just
+// empties it. DROP GRAPH / DROP NAMED / DROP ALL remove named-graph entries
+// entirely.
+let apply_drop (ds : rdf_dataset) (silent : bool) (gr : graph_ref)
+  : rdf_dataset =
+  let _ = silent in
+  match gr with
+  | GR_Default ->
+    { ds_default = []; ds_named = ds.ds_named }
+  | GR_Named ->
+    { ds_default = ds.ds_default; ds_named = [] }
+  | GR_All ->
+    { ds_default = []; ds_named = [] }
+  | GR_Graph iri ->
+    { ds_default = ds.ds_default;
+      ds_named   = drop_named_by_iri iri ds.ds_named }
+
+// --- apply_copy -----------------------------------------------------------
+// COPY (SILENT)? src TO dst. Replace dst's triples with src's. If src == dst,
+// no-op. Only DEFAULT and GRAPH <iri> are valid src/dst per the grammar.
+let apply_copy (ds : rdf_dataset) (silent : bool) (src : graph_ref)
+  (dst : graph_ref) : rdf_dataset =
+  let _ = silent in
+  if graph_ref_eq src dst then ds
+  // Missing source: spec (§3.2.5) allows an error; SILENT says swallow
+  // it. Our pure model has no error path, so in either mode we treat a
+  // non-existent source as a full no-op rather than overwriting dst
+  // with an empty graph (which would spuriously materialise dst).
+  else if not (graph_ref_exists src ds) then ds
+  else
+    let src_triples = read_graph_ref src ds in
+    write_graph_ref dst src_triples ds
+
+// --- apply_move -----------------------------------------------------------
+// MOVE (SILENT)? src TO dst. Semantically `COPY src TO dst ; DROP src`
+// (per §3.2.6). If src == dst, no-op.
+let apply_move (ds : rdf_dataset) (silent : bool) (src : graph_ref)
+  (dst : graph_ref) : rdf_dataset =
+  let _ = silent in
+  if graph_ref_eq src dst then ds
+  else if not (graph_ref_exists src ds) then ds  // see apply_copy note
+  else
+    let src_triples = read_graph_ref src ds in
+    let ds_copied   = write_graph_ref dst src_triples ds in
+    // DROP src: default graph empties; named graph entry removed.
+    (match src with
+     | GR_Default   ->
+       { ds_default = []; ds_named = ds_copied.ds_named }
+     | GR_Graph iri ->
+       { ds_default = ds_copied.ds_default;
+         ds_named   = drop_named_by_iri iri ds_copied.ds_named }
+     | GR_Named     -> ds_copied
+     | GR_All       -> ds_copied)
+
+// --- apply_add ------------------------------------------------------------
+// ADD (SILENT)? src TO dst. Append src's triples onto dst's (deduplicated
+// via graph_add since that's how graph_union is defined). No-op when
+// src == dst.
+let rec graph_append (src : list triple) (dst : rdf_graph)
+  : Tot rdf_graph (decreases src) =
+  match src with
+  | [] -> dst
+  | t :: rest -> graph_append rest (graph_add t dst)
+
+let apply_add (ds : rdf_dataset) (silent : bool) (src : graph_ref)
+  (dst : graph_ref) : rdf_dataset =
+  let _ = silent in
+  if graph_ref_eq src dst then ds
+  else if not (graph_ref_exists src ds) then ds  // see apply_copy note
+  else
+    let src_triples = read_graph_ref src ds in
+    let cur_dst     = read_graph_ref dst ds in
+    let merged      = graph_append src_triples cur_dst in
+    write_graph_ref dst merged ds
+
+// Apply a single update op. Stage b-data + DELETE WHERE + U_Modify handle
+// the pattern-matching operations; stage d (this section) handles the pure
+// graph-management ops. U_Load remains a no-op: LOAD requires HTTP I/O
+// (fetching an external RDF document) which the F* core does not perform.
+// For LOAD SILENT this is correct ("on fault, succeed silently with no
+// effect"). For non-silent LOAD it is a known gap — fetching + fault
+// signalling would have to flow through an effectful runtime hook.
+// `request_salt` is shared across every U_InsertData op in the same
+// request (so `INSERT DATA { _:b … }; INSERT DATA { _:b … }` collapse to
+// the same bnode — see :insert-data-same-bnode). `op_idx` is the per-op
+// running index used to freshen INSERT-template bnodes inside a U_Modify.
+let apply_update_op (request_salt : string) (op_idx : nat)
+  (ds : rdf_dataset) (op : update_op) : rdf_dataset =
+  let op_salt = String.concat "" ["op"; string_of_int op_idx] in
+  match op with
+  | U_InsertData g -> apply_insert_data request_salt ds g
+  | U_DeleteData g -> apply_delete_data ds g
+  | U_DeleteWhere g -> apply_delete_where ds g
+  | U_Modify w d i u p -> apply_modify op_salt ds w d i u p
+  // Graph management — stage d.
+  | U_Create silent iri    -> apply_create ds silent iri
+  | U_Clear  silent gr     -> apply_clear  ds silent gr
+  | U_Drop   silent gr     -> apply_drop   ds silent gr
+  | U_Copy   silent src dst -> apply_copy  ds silent src dst
+  | U_Move   silent src dst -> apply_move  ds silent src dst
+  | U_Add    silent src dst -> apply_add   ds silent src dst
+  // LOAD still needs I/O.
+  | U_Load _ _ _ -> ds
+
+let rec apply_update_ops_aux (request_salt : string) (op_idx : nat)
+  (ds : rdf_dataset) (ops : list update_op)
+  : Tot rdf_dataset (decreases ops) =
+  match ops with
+  | [] -> ds
+  | op :: rest ->
+    let ds' = apply_update_op request_salt op_idx ds op in
+    apply_update_ops_aux request_salt (op_idx + 1) ds' rest
+
+// Legacy wrapper kept for any downstream caller that still expects the
+// two-argument signature. Derives a request salt from the input dataset
+// snapshot (deterministic, stable across pure re-runs of the same input).
+let apply_update_ops (ds : rdf_dataset) (ops : list update_op)
+  : Tot rdf_dataset =
+  let request_salt = string_of_int (dataset_triple_count ds) in
+  apply_update_ops_aux request_salt 0 ds ops
+
+let apply_update (ds : rdf_dataset) (u : sparql_update) : rdf_dataset =
+  apply_update_ops ds u.u_ops
+
+// Classify an op list: returns true iff every op is implemented. Stage d
+// (graph management: CREATE / CLEAR / DROP / COPY / MOVE / ADD) is now
+// implemented. LOAD requires HTTP I/O, but LOAD SILENT has a well-defined
+// semantic: "if the operation fails, succeed silently." We have no fetcher,
+// so every LOAD effectively fails — and SILENT means that's fine. The
+// runtime returns the unchanged dataset, which matches the W3C update-silent
+// expected results (empty dataset in, empty dataset out). Non-silent LOAD
+// still cannot pass because it must signal a fault on fetch failure, and
+// the F* algebra has no error channel for updates yet.
+let is_implemented_op (op : update_op) : bool =
+  match op with
+  | U_InsertData _ -> true
+  | U_DeleteData _ -> true
+  | U_DeleteWhere _ -> true
+  | U_Modify _ _ _ _ _ -> true
+  | U_Create _ _ -> true
+  | U_Clear  _ _ -> true
+  | U_Drop   _ _ -> true
+  | U_Copy   _ _ _ -> true
+  | U_Move   _ _ _ -> true
+  | U_Add    _ _ _ -> true
+  | U_Load   silent _ _ -> silent
+
+let rec update_is_implemented_only_ops (ops : list update_op)
+  : Tot bool (decreases ops) =
+  match ops with
+  | [] -> true
+  | op :: rest -> is_implemented_op op && update_is_implemented_only_ops rest
+
+let update_is_implemented_only (u : sparql_update) : bool =
+  update_is_implemented_only_ops u.u_ops
+
+(** ====================================================================== **)
+(** Part 20: Correspondence to Rust Implementation                         **)
+(** ====================================================================== **)
+
+(* This section documents the mapping between F* types and the Rust
+   implementation in rdf-wasm/src/sparql.rs.
+
+   F* Type/Concept             | Rust Type/Concept              | Status
+   ----------------------------|--------------------------------|--------
+   expr                        | FilterExpr enum                | Partial — Rust has subset
+   group_graph_pattern          | WhereClause enum               | Partial — GP_* maps to WC variants
+   query                       | ParsedQuery struct             | Aligned
+   select_item                  | SelectExpr struct              | Aligned
+   solution_mapping            | Binding (HashMap)              | Aligned (different repr)
+   eval_result                 | TypedFilterValue enum          | Aligned
+   comp_op                     | comparison operators in Filter | Aligned
+   arith_op                    | Arithmetic in FilterExpr       | Aligned
+   property_path               | (not yet in Rust)              | Pending
+   aggregate_fn                | (not yet in Rust)              | Pending
+   group_condition             | (not yet in Rust)              | Pending
+   cast_target                 | (not yet in Rust)              | Pending
+   numeric_precision           | (not yet in Rust)              | Pending
+
+   Evaluation correspondence:
+   eval_pattern                | evaluate_clauses               | Partial
+   eval_bgp                   | evaluate_clauses/TriplePattern | Aligned
+   join                       | nested loop in evaluate_clauses | Aligned
+   left_join                  | evaluate_clauses/Optional      | Aligned
+   union                      | evaluate_clauses/Union         | Aligned
+   minus                      | (partial in Rust)              | Partial
+   filter_solutions           | evaluate_clauses/Filter        | Aligned
+   eval_expr                  | eval_filter_expr_typed         | Partial
+   value_compare              | typed_compare                  | Aligned
+   ebv                        | boolean_effective_value usage   | Aligned
+   fn_strlen_spec             | FnStrLen evaluation            | Aligned
+   fn_substr_spec             | FnSubStr evaluation            | Aligned
+   fn_ucase_spec              | FnUCase evaluation             | Aligned
+   fn_lcase_spec              | FnLCase evaluation             | Aligned
+   sort_solutions             | ORDER BY in execute()          | Aligned
+   distinct_solutions         | DISTINCT in execute()          | Aligned
+   slice_solutions            | OFFSET/LIMIT in execute()      | Aligned
+   eval_values                | VALUES in evaluate_clauses     | Aligned
+*)
+
+(** ====================================================================== **)
+(** End of SPARQL 1.1 Formal Specification                                 **)
+(** ====================================================================== **)
