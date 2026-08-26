@@ -1,0 +1,385 @@
+/-
+L4Factoidal.Storage.DeltaLog — the durable-UPDATE delta log framing,
+ported from `formal/fstar/RDF.Store.Columnar.DeltaLog.fst`.
+
+The COTTAS store's base file is immutable; a SPARQL UPDATE appends to
+an append-only delta log beside it, and a later compaction folds the
+log into a new base. That makes the log's framing the crash-safety
+boundary of the whole store, which is why it is specified in the
+formal source rather than left to a writer — iron rule 11 again.
+
+Framing, per record:
+
+    [ magic : u32 'DLE1' ][ version : u8 ][ payload ][ checksum : u32 ]
+
+The checksum is a plain ADDITIVE mod-2^32 check, deliberately NOT a
+cryptographic digest. Its only job is to let a replay reject a TORN
+record — one whose append was interrupted by a crash — without
+decoding it. Whole-log drift detection is a separate mechanism (the
+sha256 hash-witness pattern); conflating the two would put a
+cryptographic cost on every append for a property appends do not
+need.
+-/
+import L4Factoidal.Storage.Bytes
+import L4Factoidal.RDF.Core
+
+namespace L4Factoidal.Storage
+
+open L4Factoidal.RDF
+
+/-- `'DLE1'` little-endian. -/
+def deltaEntryMagic : UInt32 := 0x31454C44
+def deltaEntryVersion : UInt8 := 1
+
+/-- `'DLB1'` — a batch of entries written atomically. -/
+def deltaBatchMagic : UInt32 := 0x31424C44
+/-- `'DLOG'` — the log file header. -/
+def deltaLogMagic : UInt32 := 0x474F4C44
+/-- `'CEP1'` — the compacted-epoch marker. -/
+def compactedEpochMagic : UInt32 := 0x31504543
+
+/-- Term tags. Each tag space is disjoint and under 256, so one byte
+    suffices. -/
+def termTagIri : UInt8 := 0
+def termTagBnode : UInt8 := 1
+def termTagLiteral : UInt8 := 2
+def termTagTripleTerm : UInt8 := 3
+
+/-- Entry kinds: what an UPDATE did. -/
+inductive EntryKind where
+  | insert | delete
+deriving Repr, DecidableEq, Inhabited
+
+def EntryKind.tag : EntryKind → UInt8
+  | .insert => 0
+  | .delete => 1
+
+def EntryKind.ofTag : UInt8 → Option EntryKind
+  | 0 => some .insert
+  | 1 => some .delete
+  | _ => none
+
+/-- The additive mod-2^32 checksum. -/
+def simpleChecksum (bs : List UInt8) : UInt32 :=
+  bs.foldl (fun acc b => acc + b.toUInt32) 0
+
+/-- One log record, framed. -/
+def frameEntry (payload : List UInt8) : List UInt8 :=
+  writeU32LE deltaEntryMagic ++ [deltaEntryVersion] ++ payload ++
+  writeU32LE (simpleChecksum payload)
+
+/-- Read one record back, given its payload length.
+
+    Every failure mode returns `none` and they are DISTINCT reasons a
+    replay must stop rather than continue: a wrong magic means this is
+    not a record boundary, an unknown version means a newer writer
+    produced it, a short buffer or a bad checksum means the append was
+    TORN by a crash. In every case the correct behaviour is to
+    truncate the log here — reading on would replay a half-written
+    update. -/
+def parseEntry (bs : List UInt8) (payloadLen : Nat) : Option (List UInt8) :=
+  match readU32LE bs 0 with
+  | none => none
+  | some magic =>
+      if magic != deltaEntryMagic then none
+      else match (bs.drop 4).head? with
+        | none => none
+        | some ver =>
+            if ver != deltaEntryVersion then none
+            else
+              let rest := bs.drop 5
+              let payload := rest.take payloadLen
+              if payload.length != payloadLen then none
+              else match readU32LE rest payloadLen with
+                | none => none
+                | some stored =>
+                    if stored != simpleChecksum payload then none
+                    else some payload
+
+/-- The bytes one framed record occupies. -/
+def entryFrameSize (payloadLen : Nat) : Nat := 4 + 1 + payloadLen + 4
+
+/-- Replay a log: read records until one fails, returning the payloads
+    recovered and whether the log ended CLEANLY.
+
+    A torn tail is NOT an error — a crash mid-append is expected, and
+    the recovery rule is "take every record that verifies, discard
+    from the first that does not". Returning the clean flag lets the
+    caller distinguish a tidy shutdown from a crash without changing
+    what it recovered. -/
+partial def replay (bs : List UInt8) (payloadLen : Nat) : List (List UInt8) × Bool :=
+  let rec go (bs : List UInt8) (acc : List (List UInt8)) : List (List UInt8) × Bool :=
+    if bs.isEmpty then (acc, true)
+    else match parseEntry bs payloadLen with
+      | none => (acc, false)          -- torn tail: stop here
+      | some p => go (bs.drop (entryFrameSize payloadLen)) (acc ++ [p])
+  go bs []
+
+/-- The compacted-epoch marker. A store whose base file was rebuilt
+    at epoch `n` must IGNORE log records from an earlier epoch, or a
+    replay would re-apply updates the compaction already folded in —
+    the double-apply bug this marker exists to prevent. -/
+structure EpochMarker where
+  epoch : UInt32
+deriving Repr, DecidableEq, Inhabited
+
+def frameEpoch (m : EpochMarker) : List UInt8 :=
+  writeU32LE compactedEpochMagic ++ writeU32LE m.epoch
+
+def parseEpoch (bs : List UInt8) : Option EpochMarker :=
+  match readU32LE bs 0, readU32LE bs 4 with
+  | some magic, some e =>
+      if magic == compactedEpochMagic then some ⟨e⟩ else none
+  | _, _ => none
+
+/-- Should a record from `recordEpoch` be replayed against a base
+    compacted at `baseEpoch`? Only records STRICTLY NEWER than the
+    base survive. -/
+def shouldReplay (baseEpoch recordEpoch : UInt32) : Bool := recordEpoch > baseEpoch
+
+/-! ## The delta entry itself
+
+The framing above carries an opaque payload. This section gives the
+payload its type and its bytes — the port of sections 3 and 4 of
+`RDF.Store.Columnar.DeltaLog.fst`, which the first landing of this
+module left out. An UPDATE's effect on the store is one of five
+things, and each is what a replay re-applies. -/
+
+/-- What one committed UPDATE operation did.
+
+    `clear` takes `none` for the default graph; `drop` and `create`
+    always name a graph, so they carry a bare `Iri`. -/
+inductive DeltaEntry where
+  | add    (t : Triple) (graph : Option Iri)
+  | remove (t : Triple) (graph : Option Iri)
+  | clear  (graph : Option Iri)
+  | drop   (graph : Iri)
+  | create (graph : Iri)
+  deriving Repr, DecidableEq
+
+def deTagAdd    : UInt8 := 0
+def deTagRemove : UInt8 := 1
+def deTagClear  : UInt8 := 2
+def deTagDrop   : UInt8 := 3
+def deTagCreate : UInt8 := 4
+
+def subjTagIri   : UInt8 := 0
+def subjTagBnode : UInt8 := 1
+
+/-! ### Length-prefixed strings
+
+A u32 little-endian BYTE length, then the UTF-8 bytes. The length
+counts bytes, not characters, which is what makes the parse a plain
+`take`/`drop` and keeps it independent of Lean's `String` internals. -/
+
+def bytesOfString (s : String) : List UInt8 := s.toUTF8.toList
+
+def stringOfBytes? (bs : List UInt8) : Option String :=
+  String.fromUTF8? ⟨bs.toArray⟩
+
+def serializeLString (s : String) : List UInt8 :=
+  let b := bytesOfString s
+  writeU32LE (UInt32.ofNat b.length) ++ b
+
+def parseU8 (bs : List UInt8) : Option (UInt8 × List UInt8) :=
+  match bs with
+  | []      => none
+  | b :: rest => some (b, rest)
+
+def parseLString (bs : List UInt8) : Option (String × List UInt8) :=
+  match readU32LE bs 0 with
+  | none => none
+  | some n =>
+      let n := n.toNat
+      let body := (bs.drop 4).take n
+      if body.length != n then none
+      else (stringOfBytes? body).map (fun s => (s, (bs.drop 4).drop n))
+
+/-! ### Terms, subjects, triples
+
+Two limits are inherited from the F\* module rather than repaired
+here, and both are REFUSALS, never silent corruption.
+
+**Triple terms.** `serializeTerm` emits a bare tag byte for an RDF 1.2
+triple term and `parseTerm` refuses tag 3, so a triple term written to
+a delta log cannot be read back. The F\* banner says the same and
+points at its own follow-up phase. Nothing in either tree claims a
+triple term round-trips through the log.
+
+**Base direction.** A `rdf:dirLangString` literal serialises its
+language tag but not its direction, so the parsed literal has a tag
+and no direction. `literalWf` rejects exactly that combination, so
+`parseTerm` returns `none`. The direction is not dropped into a
+wrong-but-accepted literal; the record is refused. -/
+
+def serializeTerm (t : Term) : List UInt8 :=
+  match t with
+  | .iri i   => termTagIri :: serializeLString i.val
+  | .bnode b => termTagBnode :: serializeLString b
+  | .literal l =>
+      termTagLiteral :: (serializeLString l.val.lexicalForm ++
+        serializeLString l.val.datatype.val ++
+        (match l.val.langTag with
+         | none     => [(0 : UInt8)]
+         | some tag => (1 : UInt8) :: serializeLString tag))
+  | .tripleTerm _ _ _ => [termTagTripleTerm]
+
+private def mkLiteral? (lex dt : String) (tag : Option String) : Option Term :=
+  if h : isIri dt then
+    let l : Literal := { lexicalForm := lex, datatype := ⟨dt, h⟩,
+                         langTag := tag, direction := none }
+    if hw : literalWf l then some (.literal ⟨l, hw⟩) else none
+  else none
+
+def parseTerm (bs : List UInt8) : Option (Term × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == termTagIri then
+    let (i, rest) ← parseLString afterTag
+    if h : isIri i then some (.iri ⟨i, h⟩, rest) else none
+  else if tag == termTagBnode then
+    let (b, rest) ← parseLString afterTag
+    some (.bnode b, rest)
+  else if tag == termTagLiteral then
+    let (lex, afterLex) ← parseLString afterTag
+    let (dt, afterDt)   ← parseLString afterLex
+    let (flag, afterFlag) ← parseU8 afterDt
+    if flag == 0 then
+      (mkLiteral? lex dt none).map (fun t => (t, afterFlag))
+    else if flag == 1 then do
+      let (tagStr, rest) ← parseLString afterFlag
+      (mkLiteral? lex dt (some tagStr)).map (fun t => (t, rest))
+    else none
+  else none
+
+def serializeSubject (s : Subject) : List UInt8 :=
+  match s with
+  | .iri i   => subjTagIri :: serializeLString i.val
+  | .bnode b => subjTagBnode :: serializeLString b
+
+def parseSubject (bs : List UInt8) : Option (Subject × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == subjTagIri then
+    let (i, rest) ← parseLString afterTag
+    if h : isIri i then some (.iri ⟨i, h⟩, rest) else none
+  else if tag == subjTagBnode then
+    let (b, rest) ← parseLString afterTag
+    some (.bnode b, rest)
+  else none
+
+def serializeTriple (t : Triple) : List UInt8 :=
+  serializeSubject t.s ++ serializeLString t.p.val ++ serializeTerm t.o
+
+def parseTriple (bs : List UInt8) : Option (Triple × List UInt8) := do
+  let (s, afterS) ← parseSubject bs
+  let (p, afterP) ← parseLString afterS
+  if h : isIri p then do
+    let (o, rest) ← parseTerm afterP
+    some ({ s := s, p := ⟨p, h⟩, o := o }, rest)
+  else none
+
+/-! ### Graph names
+
+A graph name is a plain `Iri`, NOT a `WfIri`. The F\* module says why:
+the default graph and the graph-management targets are not required to
+satisfy the IRI grammar, so there is no well-formedness check on the
+parse side either. -/
+
+def serializeGraphOpt (g : Option Iri) : List UInt8 :=
+  match g with
+  | none   => [(0 : UInt8)]
+  | some i => (1 : UInt8) :: serializeLString i
+
+def parseGraphOpt (bs : List UInt8) : Option (Option Iri × List UInt8) := do
+  let (tag, after) ← parseU8 bs
+  if tag == 0 then some (none, after)
+  else if tag == 1 then do
+    let (i, rest) ← parseLString after
+    some (some i, rest)
+  else none
+
+/-! ### The payload -/
+
+def serializeDeltaEntryPayload (e : DeltaEntry) : List UInt8 :=
+  match e with
+  | .add t g    => deTagAdd :: (serializeTriple t ++ serializeGraphOpt g)
+  | .remove t g => deTagRemove :: (serializeTriple t ++ serializeGraphOpt g)
+  | .clear g    => deTagClear :: serializeGraphOpt g
+  | .drop g     => deTagDrop :: serializeLString g
+  | .create g   => deTagCreate :: serializeLString g
+
+def parseDeltaEntryPayload (bs : List UInt8) : Option (DeltaEntry × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == deTagAdd then do
+    let (t, afterT) ← parseTriple afterTag
+    let (g, rest)   ← parseGraphOpt afterT
+    some (.add t g, rest)
+  else if tag == deTagRemove then do
+    let (t, afterT) ← parseTriple afterTag
+    let (g, rest)   ← parseGraphOpt afterT
+    some (.remove t g, rest)
+  else if tag == deTagClear then do
+    let (g, rest) ← parseGraphOpt afterTag
+    some (.clear g, rest)
+  else if tag == deTagDrop then do
+    let (g, rest) ← parseLString afterTag
+    some (.drop g, rest)
+  else if tag == deTagCreate then do
+    let (g, rest) ← parseLString afterTag
+    some (.create g, rest)
+  else none
+
+/-! ### Batches
+
+One committed UPDATE request's worth of entries. `seq` is the commit
+order and `epoch` is the base-file generation the batch was written
+against — the epoch guard above decides whether a replay applies it. -/
+
+structure DeltaBatch where
+  seq : Nat
+  epoch : Nat
+  ops : List DeltaEntry
+  deriving Repr, DecidableEq
+
+/-! ### Build-time checks
+
+Every round trip is checked with a NON-EMPTY tail, so a parser that
+consumed the wrong number of bytes fails the check instead of passing
+on a buffer that happened to end exactly where it stopped. -/
+
+private def tail : List UInt8 := [0xAA, 0xBB, 0xCC]
+
+private def rtEntry (e : DeltaEntry) : Bool :=
+  parseDeltaEntryPayload (serializeDeltaEntryPayload e ++ tail) == some (e, tail)
+
+private def exIri : WfIri := ⟨"http://example.org/s", by decide⟩
+private def exP   : WfIri := ⟨"http://example.org/p", by decide⟩
+
+#guard rtEntry (.clear none)
+#guard rtEntry (.clear (some "http://example.org/g"))
+#guard rtEntry (.drop "http://example.org/g")
+#guard rtEntry (.create "")
+#guard rtEntry (.add ⟨.iri exIri, exP, .iri exIri⟩ none)
+#guard rtEntry (.add ⟨.bnode "b0", exP, .bnode "b1"⟩ (some "http://example.org/g"))
+#guard rtEntry (.remove ⟨.iri exIri, exP, .literal (Literal.string "plain")⟩ none)
+#guard rtEntry (.remove ⟨.iri exIri, exP, .literal (Literal.langString "hi" "en")⟩ none)
+
+/-! A multi-byte UTF-8 lexical form round-trips: the length prefix
+counts BYTES, and a character count would be wrong here. -/
+
+#guard rtEntry (.add ⟨.iri exIri, exP, .literal (Literal.string "héllo — ☃")⟩ none)
+#guard (serializeLString "é").length == 6      -- 4 length bytes + 2 UTF-8 bytes
+
+/-! A triple term is REFUSED, not misread. -/
+
+#guard (parseTerm (serializeTerm (.tripleTerm (.iri exIri) exP (.iri exIri)))).isNone
+
+/-! An unknown entry tag is refused. -/
+
+#guard (parseDeltaEntryPayload [9, 0, 0, 0, 0]).isNone
+
+/-! A TRUNCATED length-prefixed string is refused rather than
+    returning a short string: the prefix claims 9 bytes and 3 follow. -/
+
+#guard (parseLString (writeU32LE 9 ++ [97, 98, 99])).isNone
+
+end L4Factoidal.Storage

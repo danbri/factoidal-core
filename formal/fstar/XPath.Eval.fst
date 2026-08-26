@@ -1,0 +1,2286 @@
+module XPath.Eval
+
+open FStar.String
+open FStar.List.Tot
+open FStar.Char
+open Parser.XML
+open Parser.XPath
+
+// XPath 1.0 evaluator over Parser.XML's already-parsed xml_node tree.
+// Pairs with Parser.XPath.fst's AST (parse_xpath). See
+// docs/designissues/2026-07-05-xforms-model-program-plan.md for the
+// Stage 1 scope, the axis-coverage table, and the disclosed IEEE-754
+// divergences summarized again just above `xpath_number` below.
+//
+// TWO RECURSION STYLES, deliberately different, mirroring how
+// Parser.XML.fst itself splits "parsing" (fuel-based) from "walking
+// an already-parsed tree" (plain structural recursion):
+//
+// - Axis builders (`descendant_items`/`ancestor_items`/etc.) walk the
+//   xml_node tree ALONE — no xp_expr involved — and use plain
+//   structural `decreases node`/`decreases nodes`/`decreases
+//   ancestors`, the same idiom as Parser.XML's `text_content`/
+//   `text_content_list`.
+// - The expression evaluator (`eval_expr` and its step/predicate
+//   helpers) has a genuine mutual-recursion cycle back to itself:
+//   evaluating a location step's predicate can require evaluating an
+//   arbitrary sub-expression (including a nested location path), and
+//   that sub-expression is evaluated once per candidate node in a
+//   list that is NOT a subterm of the expression AST — so there is no
+//   single structurally-decreasing measure across "iterate this
+//   runtime node list" and "recurse into this AST". This family uses
+//   an explicit `fuel:nat`, decremented by exactly 1 on every call
+//   (including "same expression, next item in the list"), sized from
+//   BOTH the expression's own size and the document's node count (see
+//   `initial_eval_fuel` below) — never a bare constant.
+
+(* ================================================================ *)
+(* Numbers                                                           *)
+(*                                                                   *)
+(* xpath_number mirrors, without importing, SPARQL11.Algebra's       *)
+(* promoted-type numeric representation (ER_Dbl/ER_Dec as scaled     *)
+(* decimals, `parse_to_scaled`/`format_as_double`, lines ~1281-1400   *)
+(* of SPARQL11.Algebra.fst) rather than a bit-level IEEE 754 double.  *)
+(* Two disclosed divergences from strict IEEE 754 follow (full        *)
+(* discussion in the program plan's "Number semantics" section):     *)
+(* no signed zero (mantissa is a plain `int`, `-0` normalizes to      *)
+(* `0`), and NaN/Infinity are tagged sentinels with EXACT rational    *)
+(* arithmetic on finite values rather than binary floating-point      *)
+(* rounding (materially more precise on values representable exactly *)
+(* in decimal, at the cost of not bit-matching IEEE 754 rounding      *)
+(* artifacts on pathological inputs).                                *)
+(* ================================================================ *)
+
+type xpath_number =
+  | XN_NaN
+  | XN_PosInf
+  | XN_NegInf
+  // value = mantissa / 10^scale
+  | XN_Finite : mantissa:int -> scale:nat -> xpath_number
+
+let rec xn_pow10 (n:nat) : Tot int (decreases n) =
+  if n = 0 then 1 else op_Multiply 10 (xn_pow10 (n - 1))
+
+let xn_abs (n:int) : int = if n >= 0 then n else 0 - n
+
+// Align two (mantissa,scale) pairs to a common scale, returning the
+// aligned mantissas.
+let xn_align (v1:int) (s1:nat) (v2:int) (s2:nat) : (int & int & nat) =
+  if s1 >= s2 then (v1, op_Multiply v2 (xn_pow10 (s1 - s2)), s1)
+  else (op_Multiply v1 (xn_pow10 (s2 - s1)), v2, s2)
+
+let xn_neg (n:xpath_number) : xpath_number =
+  match n with
+  | XN_NaN -> XN_NaN
+  | XN_PosInf -> XN_NegInf
+  | XN_NegInf -> XN_PosInf
+  | XN_Finite v s -> XN_Finite (0 - v) s
+
+let xn_compare (a b:xpath_number) : option int =
+  match a, b with
+  | XN_NaN, _ | _, XN_NaN -> None
+  | XN_PosInf, XN_PosInf -> Some 0
+  | XN_NegInf, XN_NegInf -> Some 0
+  | XN_PosInf, XN_NegInf -> Some 1
+  | XN_NegInf, XN_PosInf -> Some (-1)
+  | XN_PosInf, XN_Finite _ _ -> Some 1
+  | XN_Finite _ _, XN_PosInf -> Some (-1)
+  | XN_NegInf, XN_Finite _ _ -> Some (-1)
+  | XN_Finite _ _, XN_NegInf -> Some 1
+  | XN_Finite v1 s1, XN_Finite v2 s2 ->
+    let (n1, n2, _) = xn_align v1 s1 v2 s2 in
+    Some (if n1 < n2 then -1 else if n1 > n2 then 1 else 0)
+
+let xn_arith (op:xp_arith_op) (a b:xpath_number) : xpath_number =
+  match a, b with
+  | XN_NaN, _ | _, XN_NaN -> XN_NaN
+  | XN_PosInf, XN_PosInf ->
+    (match op with
+     | Ar_Add -> XN_PosInf | Ar_Sub -> XN_NaN | Ar_Mul -> XN_PosInf
+     | Ar_Div -> XN_NaN | Ar_Mod -> XN_NaN)
+  | XN_NegInf, XN_NegInf ->
+    (match op with
+     | Ar_Add -> XN_NegInf | Ar_Sub -> XN_NaN | Ar_Mul -> XN_PosInf
+     | Ar_Div -> XN_NaN | Ar_Mod -> XN_NaN)
+  | XN_PosInf, XN_NegInf ->
+    (match op with
+     | Ar_Add -> XN_NaN | Ar_Sub -> XN_PosInf | Ar_Mul -> XN_NegInf
+     | Ar_Div -> XN_NaN | Ar_Mod -> XN_NaN)
+  | XN_NegInf, XN_PosInf ->
+    (match op with
+     | Ar_Add -> XN_NaN | Ar_Sub -> XN_NegInf | Ar_Mul -> XN_NegInf
+     | Ar_Div -> XN_NaN | Ar_Mod -> XN_NaN)
+  | XN_PosInf, XN_Finite v _ ->
+    (match op with
+     | Ar_Add -> XN_PosInf | Ar_Sub -> XN_PosInf
+     | Ar_Mul -> if v = 0 then XN_NaN else if v > 0 then XN_PosInf else XN_NegInf
+     | Ar_Div -> if v = 0 then XN_NaN else if v > 0 then XN_PosInf else XN_NegInf
+     | Ar_Mod -> XN_NaN)
+  | XN_NegInf, XN_Finite v _ ->
+    (match op with
+     | Ar_Add -> XN_NegInf | Ar_Sub -> XN_NegInf
+     | Ar_Mul -> if v = 0 then XN_NaN else if v > 0 then XN_NegInf else XN_PosInf
+     | Ar_Div -> if v = 0 then XN_NaN else if v > 0 then XN_NegInf else XN_PosInf
+     | Ar_Mod -> XN_NaN)
+  | XN_Finite v _, XN_PosInf ->
+    (match op with
+     | Ar_Add -> XN_PosInf | Ar_Sub -> XN_NegInf
+     | Ar_Mul -> if v = 0 then XN_NaN else if v > 0 then XN_PosInf else XN_NegInf
+     | Ar_Div -> XN_Finite 0 0 | Ar_Mod -> XN_NaN)
+  | XN_Finite v _, XN_NegInf ->
+    (match op with
+     | Ar_Add -> XN_NegInf | Ar_Sub -> XN_PosInf
+     | Ar_Mul -> if v = 0 then XN_NaN else if v > 0 then XN_NegInf else XN_PosInf
+     | Ar_Div -> XN_Finite 0 0 | Ar_Mod -> XN_NaN)
+  | XN_Finite v1 s1, XN_Finite v2 s2 ->
+    (match op with
+     | Ar_Add -> let (n1, n2, s) = xn_align v1 s1 v2 s2 in XN_Finite (n1 + n2) s
+     | Ar_Sub -> let (n1, n2, s) = xn_align v1 s1 v2 s2 in XN_Finite (n1 - n2) s
+     | Ar_Mul -> XN_Finite (op_Multiply v1 v2) (s1 + s2)
+     | Ar_Div ->
+       if v2 = 0 then (if v1 = 0 then XN_NaN else if v1 > 0 then XN_PosInf else XN_NegInf)
+       else
+         // Fixed-precision decimal division (10^12 extra digits),
+         // same shape as SPARQL11.Algebra's int_div_decimal but
+         // returning a scaled pair instead of a formatted string.
+         // rv/10^rs = v1/10^s1 / (v2/10^s2); choose rs = s1+extra so
+         // rv = v1 * 10^(s2+extra) / v2 (all-nat exponents, no
+         // subtraction that could go negative).
+         let extra = 12 in
+         let scaled = op_Multiply v1 (xn_pow10 (s2 + extra)) in
+         XN_Finite (scaled / v2) (s1 + extra)
+     | Ar_Mod ->
+       if v2 = 0 then XN_NaN
+       else
+         let (n1, n2, s) = xn_align v1 s1 v2 s2 in
+         if n2 = 0 then XN_NaN else XN_Finite (n1 - op_Multiply (n1 / n2) n2) s)
+
+// Number ('.' Digits?)? production values arrive pre-scaled from the
+// parser (XE_Number). String -> number (the `number()` function and
+// numeric §3.4 coercions) follows the same grammar: optional
+// whitespace, optional '-', Digits ('.' Digits?)? | '.' Digits; no
+// E-notation (disclosed in the plan doc's Number-semantics section —
+// this is what the XPath 1.0 grammar's own `Number` production
+// defines, not a limitation this engine adds).
+let rec xn_list_drop_while (#a:Type) (f: a -> bool) (l: list a) : Tot (list a) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs -> if f x then xn_list_drop_while f xs else x :: xs
+
+let string_to_xn (s:string) : xpath_number =
+  let len = String.length s in
+  let cs = String.list_of_string s in
+  let is_sp (c:FStar.Char.char) = c = ' ' || c = '\t' || c = '\n' || c = '\r' in
+  let trimmed = List.Tot.rev (xn_list_drop_while is_sp (List.Tot.rev (xn_list_drop_while is_sp cs))) in
+  match trimmed with
+  | [] -> XN_NaN
+  | hd :: tl ->
+    let (neg, digits) = if hd = '-' then (true, tl) else (false, trimmed) in
+    // The XPath 1.0 `Number` production requires at least one digit
+    // (`Digits ('.' Digits?)? | '.' Digits`), so a bare "." (or ".", "-.")
+    // is NOT a number -> NaN. Guard here rather than in the shared literal
+    // parser so expression-literal parsing is untouched.
+    let is_ascii_digit (c:FStar.Char.char) =
+      let k = FStar.Char.int_of_char c in k >= 0x30 && k <= 0x39 in
+    if not (List.Tot.existsb is_ascii_digit digits) then XN_NaN
+    else
+    let s' = String.string_of_list digits in
+    match Parser.XPath.parse_number_lit s' 0 with
+    | Some (v, scale, pos') ->
+      if pos' = String.length s' && pos' > 0 then XN_Finite (if neg then 0 - v else v) scale
+      else XN_NaN
+    | None -> XN_NaN
+
+// Integers print without a decimal point; non-integers in plain
+// decimal (never E-notation — that's an xsd:double convention, not
+// XPath 1.0's `Number` production). No signed zero (see banner).
+let xn_to_string (n:xpath_number) : string =
+  match n with
+  | XN_NaN -> "NaN"
+  | XN_PosInf -> "Infinity"
+  | XN_NegInf -> "-Infinity"
+  | XN_Finite v s ->
+    if s = 0 then string_of_int v
+    else
+      let neg = v < 0 in
+      let av = xn_abs v in
+      let p = xn_pow10 s in
+      let ip = if p = 0 then av else av / p in
+      let fp = if p = 0 then 0 else av - op_Multiply ip p in
+      if fp = 0 then (if neg && ip <> 0 then "-" else "") ^ string_of_int ip
+      else
+        // Zero-pad the fraction digit string to exactly `target` chars.
+        // The recursion measure is the DEFICIT `k` (computed once, up
+        // front), never `target` itself -- an earlier version recursed
+        // on `pad (n:string) (target:nat) : Tot string (decreases target)`
+        // with `if String.length n >= target then n else pad ("0" ^ n)
+        // (target - 1)`, which both grows `n` AND shrinks `target` by 1
+        // per call, so the two converge and the loop stops after
+        // ceil((target - len n)/2) prepends instead of the full deficit
+        // -- silently dropping a leading zero whenever the picture needs
+        // 2+ digits of padding (string135/string133: shrinking XPath
+        // number literals collapse to duplicate digit strings once the
+        // fractional scale grows past the mantissa's own digit count by
+        // 2 or more).
+        let rec zeros_str (k:nat) : Tot string (decreases k) =
+          if k = 0 then "" else "0" ^ zeros_str (k - 1)
+        in
+        let pad (n:string) (target:nat) : string =
+          let len = String.length n in
+          if len >= target then n else zeros_str (target - len) ^ n
+        in
+        let frac_str = pad (string_of_int fp) s in
+        // strip trailing zeros, keep at least one digit
+        let rev_chars = List.Tot.rev (String.list_of_string frac_str) in
+        let rev_stripped = xn_list_drop_while (fun c -> c = '0') rev_chars in
+        let stripped_chars = if Nil? rev_stripped then ['0'] else List.Tot.rev rev_stripped in
+        let stripped = String.string_of_list stripped_chars in
+        (if neg then "-" else "") ^ string_of_int ip ^ "." ^ stripped
+
+let xn_is_zero (n:xpath_number) : bool =
+  match n with
+  | XN_Finite 0 _ -> true
+  | _ -> false
+
+let xn_to_bool (n:xpath_number) : bool =
+  match n with
+  | XN_NaN -> false
+  | XN_PosInf | XN_NegInf -> true
+  | XN_Finite v _ -> v <> 0
+
+// xn_pow10 s > 0 for every s (10^s >= 1), but xn_pow10's own return
+// type carries no such refinement, so every division below is guarded
+// by an explicit `if p = 0` branch — division only happens in the
+// branch where F* can refine `p` to nonzero from that check, the same
+// defensive pattern already used above in `xn_to_string`.
+
+let xn_round (n:xpath_number) : xpath_number =
+  match n with
+  | XN_Finite v s ->
+    if s = 0 then n
+    else
+      let p = xn_pow10 s in
+      if p = 0 then n
+      else
+        // XPath round(): round to nearest, .5 rounds toward positive
+        // infinity (spec §4.4), not round-half-to-even.
+        let half = p / 2 in
+        let q = if v >= 0 then (v + half) / p else 0 - ((0 - v + (p - half - 1)) / p) in
+        XN_Finite q 0
+  | _ -> n
+
+let xn_floor (n:xpath_number) : xpath_number =
+  match n with
+  | XN_Finite v s ->
+    if s = 0 then n
+    else
+      let p = xn_pow10 s in
+      if p = 0 then n
+      else
+        let q = if v >= 0 then v / p else (0 - (((0 - v) + p - 1) / p)) in
+        XN_Finite q 0
+  | _ -> n
+
+let xn_ceiling (n:xpath_number) : xpath_number =
+  match n with
+  | XN_Finite v s ->
+    if s = 0 then n
+    else
+      let p = xn_pow10 s in
+      if p = 0 then n
+      else
+        let q = if v >= 0 then (v + p - 1) / p else 0 - ((0 - v) / p) in
+        XN_Finite q 0
+  | _ -> n
+
+(* ================================================================ *)
+(* XSLT 1.0 format-number() / xsl:decimal-format (§12.3)              *)
+(*                                                                    *)
+(* Picture-string semantics are deferred by the XSLT spec to JDK's    *)
+(* java.text.DecimalFormat. All ten decimal-format symbols            *)
+(* (decimal-separator, grouping-separator, infinity, minus-sign, NaN, *)
+(* percent, per-mille, zero-digit, digit, pattern-separator) are      *)
+(* configurable per xsl:decimal-format, so picture PARSING itself     *)
+(* must read the current symbol set rather than hard-coding '#'/';'/  *)
+(* etc -- numberformat11-13/25/32/34 all rebind one of these symbols  *)
+(* and are only correct if parsing honours the override.              *)
+(*                                                                    *)
+(* Digit rendering does NOT assume ASCII '0'-'9': `zero-digit` names   *)
+(* the codepoint for digit 0, and digits 1-9 are the NEXT 9 codepoints *)
+(* (numberformat34's zero-digit="a" expects digit 4 to render as 'e',  *)
+(* the 5th codepoint after 'a') -- `digit_char_of` below implements    *)
+(* exactly that offset, never a byte-level '0'+d assumption (the same  *)
+(* codepoint-safety concern as the #307 `soc` fix in XSLT.Transform).  *)
+(*                                                                    *)
+(* Negative-subpicture affix rule (reverse-engineered from the        *)
+(* Apache-Xalan numberformat conformance gold files -- the JDK javadoc *)
+(* text describes something subtly different that the gold files do   *)
+(* not actually exhibit; see numberformat04/17/18/29/30/31 in          *)
+(* third_party/testing/xslt1-xalan): digit configuration (integer      *)
+(* min-digits, grouping size, fraction min/max, and the percent/per-   *)
+(* mille scale factor) ALWAYS comes from the POSITIVE sub-picture,     *)
+(* even when the negative sub-picture is the one selected. The         *)
+(* negative sub-picture's own literal prefix/suffix are used VERBATIM  *)
+(* when non-empty (numberformat17: minus-sign="_" override is ignored  *)
+(* because the negative sub-picture already spells out a literal "-"), *)
+(* but when a two-sub-picture pattern's negative half has NO literal   *)
+(* affix at all (numberformat04/31), the engine falls back to the      *)
+(* single-sub-picture rule: prepend minus-sign to the POSITIVE prefix.  *)
+(* With only one sub-picture, the negative prefix is UNCONDITIONALLY    *)
+(* minus-sign ++ positive-prefix (numberformat30's "--26,931.4": the    *)
+(* positive pattern's own literal "-" prefix plus the synthesized      *)
+(* minus-sign, not deduplicated).                                      *)
+(* ================================================================ *)
+
+noeq type decimal_format_symbols = {
+  dfs_name         : string;
+  dfs_decimal_sep  : char;
+  dfs_grouping_sep : char;
+  dfs_infinity     : string;
+  dfs_minus_sign   : char;
+  dfs_nan          : string;
+  dfs_percent      : char;
+  dfs_per_mille    : char;
+  dfs_zero_digit   : char;
+  dfs_digit        : char;
+  dfs_pattern_sep  : char;
+}
+
+// XSLT 1.0 §12.3 built-in defaults for the unnamed decimal-format.
+let default_decimal_format_symbols : decimal_format_symbols = {
+  dfs_name         = "";
+  dfs_decimal_sep  = '.';
+  dfs_grouping_sep = ',';
+  dfs_infinity     = "Infinity";
+  dfs_minus_sign   = '-';
+  dfs_nan          = "NaN";
+  dfs_percent      = '%';
+  dfs_per_mille    = FStar.Char.char_of_int 0x2030;
+  dfs_zero_digit   = '0';
+  dfs_digit        = '#';
+  dfs_pattern_sep  = ';';
+}
+
+// Last-declared-wins lookup by literal name text (plain string match --
+// this engine does not resolve xsl:decimal-format's `name` as a
+// namespace-qualified QName against in-scope prefixes; every Xalan
+// conformance fixture that uses a prefixed name (numberformat20/41)
+// passes the SAME literal text as both the declaration's name= and
+// format-number()'s 3rd argument, so plain string equality already
+// matches the fixture behavior without real QName resolution).
+let lookup_decimal_format (formats:list decimal_format_symbols) (name:string) : decimal_format_symbols =
+  match List.Tot.find (fun (f:decimal_format_symbols) -> f.dfs_name = name) (List.Tot.rev formats) with
+  | Some f -> f
+  | None -> default_decimal_format_symbols
+
+(* ---- small total helpers (all plain structural / nat recursion) --- *)
+
+let char_to_str (c:char) : string = String.string_of_list [c]
+
+let nat_abs (v:int) : nat = if v >= 0 then v else 0 - v
+
+let rec pow10_nat (n:nat) : Tot (r:nat{r > 0}) (decreases n) =
+  if n = 0 then 1 else op_Multiply 10 (pow10_nat (n - 1))
+
+// Round |v|/10^s to the nearest multiple of 10^-target, ties to even
+// (JDK DecimalFormat's default RoundingMode.HALF_EVEN), returning the
+// result as a plain nat scaled by 10^target (i.e. the digit string of
+// length `target` after the decimal point, plus the integer part, all
+// concatenated as one integer).
+let round_half_even_nat (num:nat) (den:nat{den > 0}) : nat =
+  let q = num / den in
+  let r = num % den in
+  let twice_r = op_Multiply 2 r in
+  if twice_r < den then q
+  else if twice_r > den then q + 1
+  else if q % 2 = 0 then q else q + 1
+
+let round_to_scale (v:int) (s:nat) (target:nat) : nat =
+  let av = nat_abs v in
+  if target >= s then op_Multiply av (pow10_nat (target - s))
+  else round_half_even_nat av (pow10_nat (s - target))
+
+// Multiply an xpath_number by 10^k exactly (percent = k2, per-mille = k3).
+let xn_mul_pow10 (n:xpath_number) (k:nat) : xpath_number =
+  match n with
+  | XN_Finite v s -> if s >= k then XN_Finite v (s - k) else XN_Finite (op_Multiply v (pow10_nat (k - s))) 0
+  | other -> other
+
+let rec digits_rev_of_nat (n:nat) : Tot (list nat) (decreases n) =
+  if n = 0 then [] else (n % 10) :: digits_rev_of_nat (n / 10)
+
+// Most-significant-digit-first decimal digits of `n` ([] for 0 -- an
+// int_min of 0 legitimately renders no integer digits at all, e.g. the
+// picture "#.##" formatting 0.5 as ".5").
+let int_digits_of_nat (n:nat) : list nat = List.Tot.rev (digits_rev_of_nat n)
+
+// Same fix as xn_to_string's `pad` above, same bug class: the deficit
+// `k` is computed once from `target` and `List.Tot.length l`, and the
+// recursion decreases on `k` alone -- never on `target` itself, which
+// an earlier version conflated with the stopping-length check
+// (`pad_left_zeros (0 :: l) (target - 1)` shrinks `target` in lockstep
+// with `l` growing, so it halts at ceil(deficit/2) prepended zeros
+// instead of the full deficit). That under-padding is exactly
+// numberformat09's "00.931|486" vs "000.931|486": a format-number
+// picture whose minimum-integer-digit count (`sp_int_min`, counting
+// zero-digit positions across the whole int_chars run, including any
+// embedded grouping-separator literal) exceeds the rendered value's
+// own digit count by 2 or more comes up one leading zero short.
+let rec zeros_nat (k:nat) : Tot (list nat) (decreases k) =
+  if k = 0 then [] else 0 :: zeros_nat (k - 1)
+
+let pad_left_zeros (l:list nat) (target:nat) : list nat =
+  let len = List.Tot.length l in
+  if len >= target then l else zeros_nat (target - len) @ l
+
+// Exactly `width` digits of `n` (n < 10^width), most-significant first.
+let rec frac_digits_fixed (n:nat) (width:nat) : Tot (list nat) (decreases width) =
+  if width = 0 then []
+  else
+    let p = pow10_nat (width - 1) in
+    ((n / p) % 10) :: frac_digits_fixed (n % p) (width - 1)
+
+// `l` is LSB-first (rightmost/least-significant fraction digit first).
+// Drop leading (= trailing, in true reading order) zero-VALUE digits
+// down to `min_len`, never below it.
+let rec trim_lsb_zeros (l:list nat) (min_len:nat) (cur_len:nat) : Tot (list nat) (decreases l) =
+  match l with
+  | [] -> []
+  | d :: rest -> if d = 0 && cur_len > min_len then trim_lsb_zeros rest min_len (cur_len - 1) else l
+
+let rec take_while_char (f:char -> bool) (l:list char) : Tot (list char) (decreases l) =
+  match l with
+  | [] -> []
+  | c :: rest -> if f c then c :: take_while_char f rest else []
+
+let rec drop_while_char (f:char -> bool) (l:list char) : Tot (list char) (decreases l) =
+  match l with
+  | [] -> []
+  | c :: rest -> if f c then drop_while_char f rest else l
+
+let rec split_at_char (cs:list char) (sep:char) : Tot (list char & option (list char)) (decreases cs) =
+  match cs with
+  | [] -> ([], None)
+  | c :: rest ->
+    if c = sep then ([], Some rest)
+    else
+      let (before, after) = split_at_char rest sep in
+      (c :: before, after)
+
+let rec count_char (l:list char) (c:char) : Tot nat (decreases l) =
+  match l with
+  | [] -> 0
+  | x :: rest -> (if x = c then 1 else 0) + count_char rest c
+
+// Grouping size: the digit-count of the group NEAREST the decimal point
+// (i.e. the last group before it), applied UNIFORMLY across the whole
+// integer part. This is not JDK's "primary/secondary grouping size"
+// feature (which would use a different size for the outermost groups)
+// -- numberformat35's "###,##0,00.00" -> "9,87,65,43,21.00" groups
+// EVERY position by the nearest interval's size (2), confirming the
+// engine this corpus was generated against does not implement the
+// two-tier feature either.
+let rec group_size_rev (rev_int_chars:list char) (dfs:decimal_format_symbols) (acc:nat) : Tot nat (decreases rev_int_chars) =
+  match rev_int_chars with
+  | [] -> 0
+  | c :: rest -> if c = dfs.dfs_grouping_sep then acc else group_size_rev rest dfs (acc + 1)
+
+noeq type subpicture = {
+  sp_prefix        : list char;
+  sp_suffix        : list char;
+  sp_int_min       : nat;
+  sp_group         : nat;
+  sp_frac_min      : nat;
+  sp_frac_max      : nat;
+  sp_has_percent   : bool;
+  sp_has_permille  : bool;
+}
+
+let is_numeric_pic_char (dfs:decimal_format_symbols) (c:char) : bool =
+  c = dfs.dfs_digit || c = dfs.dfs_zero_digit || c = dfs.dfs_grouping_sep || c = dfs.dfs_decimal_sep
+
+let parse_subpicture (cs:list char) (dfs:decimal_format_symbols) : subpicture =
+  let is_num = is_numeric_pic_char dfs in
+  let prefix = take_while_char (fun c -> not (is_num c)) cs in
+  let rest1 = drop_while_char (fun c -> not (is_num c)) cs in
+  let rev_rest1 = List.Tot.rev rest1 in
+  let rev_suffix = take_while_char (fun c -> not (is_num c)) rev_rest1 in
+  let suffix = List.Tot.rev rev_suffix in
+  let body = List.Tot.rev (drop_while_char (fun c -> not (is_num c)) rev_rest1) in
+  let (int_chars, frac_opt) = split_at_char body dfs.dfs_decimal_sep in
+  let frac_chars = (match frac_opt with Some f -> f | None -> []) in
+  let int_min = count_char int_chars dfs.dfs_zero_digit in
+  let group = group_size_rev (List.Tot.rev int_chars) dfs 0 in
+  let frac_min = count_char frac_chars dfs.dfs_zero_digit in
+  let frac_max = frac_min + count_char frac_chars dfs.dfs_digit in
+  let has_pct = List.Tot.existsb (fun c -> c = dfs.dfs_percent) (prefix @ suffix) in
+  let has_pm = List.Tot.existsb (fun c -> c = dfs.dfs_per_mille) (prefix @ suffix) in
+  { sp_prefix = prefix; sp_suffix = suffix; sp_int_min = int_min; sp_group = group;
+    sp_frac_min = frac_min; sp_frac_max = frac_max; sp_has_percent = has_pct; sp_has_permille = has_pm }
+
+let parse_picture (picture:string) (dfs:decimal_format_symbols) : (subpicture & option subpicture) =
+  let cs = String.list_of_string picture in
+  let (pos_chars, neg_opt) = split_at_char cs dfs.dfs_pattern_sep in
+  let pos_sp = parse_subpicture pos_chars dfs in
+  (pos_sp, (match neg_opt with Some nc -> Some (parse_subpicture nc dfs) | None -> None))
+
+// digit VALUE d (0-9) rendered at the codepoint `zero-digit + d` (the
+// Unicode "digit zero of a decimal digit family" convention DecimalFormat
+// uses for zero-digit overrides) -- falls back to the zero-digit glyph
+// itself if the offset would land in the UTF-16 surrogate gap (never
+// happens for realistic zero-digit choices, but keeps char_of_int total).
+let digit_char_of (dfs:decimal_format_symbols) (d:nat) : char =
+  let z = FStar.Char.int_of_char dfs.dfs_zero_digit in
+  let code = z + (d % 10) in
+  if code < 0xd7ff then FStar.Char.char_of_int code
+  else if code >= 0xe000 && code <= 0x10ffff then FStar.Char.char_of_int code
+  else dfs.dfs_zero_digit
+
+let rec render_digits (dfs:decimal_format_symbols) (ds:list nat) : Tot (list char) (decreases ds) =
+  match ds with
+  | [] -> []
+  | d :: rest -> digit_char_of dfs d :: render_digits dfs rest
+
+// rev_chars is rightmost-digit-first; inserts `sep` every `group`
+// digits counting from the right, never before the leftmost digit.
+let rec add_groups_from_right (rev_chars:list char) (group:nat) (idx:nat) (sep:char)
+  : Tot (list char) (decreases rev_chars) =
+  match rev_chars with
+  | [] -> []
+  | c :: rest ->
+    let idx' = idx + 1 in
+    if group > 0 && idx' % group = 0 && Cons? rest
+    then c :: sep :: add_groups_from_right rest group idx' sep
+    else c :: add_groups_from_right rest group idx' sep
+
+let render_int_part (dfs:decimal_format_symbols) (n:nat) (min_digits:nat) (group:nat) : list char =
+  let digs = pad_left_zeros (int_digits_of_nat n) min_digits in
+  let chars = render_digits dfs digs in
+  if group = 0 then chars
+  else List.Tot.rev (add_groups_from_right (List.Tot.rev chars) group 0 dfs.dfs_grouping_sep)
+
+let render_frac_part (dfs:decimal_format_symbols) (frac_val:nat) (frac_max:nat) (frac_min:nat) : list char =
+  if frac_max = 0 then []
+  else
+    let digs = frac_digits_fixed frac_val frac_max in
+    let trimmed = List.Tot.rev (trim_lsb_zeros (List.Tot.rev digs) frac_min frac_max) in
+    render_digits dfs trimmed
+
+// The pure core: XSLT 1.0 §12.3 format-number, picture-string semantics
+// per xpath-functions "Syntax of a picture string" (as deferred to by
+// the XSLT spec). See the module-section banner above for the
+// negative-subpicture affix rule and the digit/grouping conventions.
+let format_number_str (n:xpath_number) (picture:string) (dfs:decimal_format_symbols) : string =
+  match n with
+  | XN_NaN -> dfs.dfs_nan
+  | XN_PosInf -> dfs.dfs_infinity
+  | XN_NegInf -> char_to_str dfs.dfs_minus_sign ^ dfs.dfs_infinity
+  | XN_Finite mantissa scale ->
+    let (pos_sp, neg_sp_opt) = parse_picture picture dfs in
+    let is_neg = mantissa < 0 in
+    let scale_factor : nat = if pos_sp.sp_has_percent then 2 else if pos_sp.sp_has_permille then 3 else 0 in
+    (match xn_mul_pow10 (XN_Finite mantissa scale) scale_factor with
+     | XN_Finite v2 s2 ->
+       let m = round_to_scale v2 s2 pos_sp.sp_frac_max in
+       let p = pow10_nat pos_sp.sp_frac_max in
+       let int_part = m / p in
+       let frac_part = m % p in
+       let int_chars = render_int_part dfs int_part pos_sp.sp_int_min pos_sp.sp_group in
+       let frac_chars = render_frac_part dfs frac_part pos_sp.sp_frac_max pos_sp.sp_frac_min in
+       let show_frac = pos_sp.sp_frac_max > 0 && Cons? frac_chars in
+       let (final_prefix, final_suffix) =
+         if not is_neg then (pos_sp.sp_prefix, pos_sp.sp_suffix)
+         else
+           (match neg_sp_opt with
+            | None -> (dfs.dfs_minus_sign :: pos_sp.sp_prefix, pos_sp.sp_suffix)
+            | Some neg_sp ->
+              if Nil? neg_sp.sp_prefix && Nil? neg_sp.sp_suffix
+              then (dfs.dfs_minus_sign :: pos_sp.sp_prefix, pos_sp.sp_suffix)
+              else (neg_sp.sp_prefix, neg_sp.sp_suffix))
+       in
+       let body = int_chars @ (if show_frac then dfs.dfs_decimal_sep :: frac_chars else []) in
+       String.string_of_list (final_prefix @ body @ final_suffix)
+     | _ -> dfs.dfs_nan) // unreachable: xn_mul_pow10 on XN_Finite always yields XN_Finite
+
+(* ================================================================ *)
+(* Node-set items                                                    *)
+(*                                                                   *)
+(* `ancestors` is always the PROPER ancestors of the item's own node, *)
+(* nearest-first (immediate parent head, root last) — this ordering  *)
+(* choice is what makes `ancestor`/`ancestor-or-self` naturally       *)
+(* produce the reverse-document-order "proximity position" XPath     *)
+(* 1.0 §2.4 defines for reverse axes, with no separate bookkeeping.   *)
+(* ================================================================ *)
+
+// Every item carries a `path : list int` — the child-index chain from
+// the document root (root = []; child index i of a node with path P has
+// path P @ [i]; attribute j of an element with path P has path
+// P @ [-1; j], the -1 marker sorting attributes after their element but
+// before its children). Lexicographic compare of paths IS document
+// order (a proper prefix sorts first, so element-before-attributes-
+// before-children-before-following-sibling all fall out), and path
+// equality IS node identity (distinct nodes never share a path). This
+// is what powers the reverse/forward document-order axes and the
+// document-order + duplicate-removed union, neither of which the
+// ancestor list alone can express.
+noeq type xctx_item =
+  | CI_Elem    : path:list int -> ancestors:list xml_node -> node:xml_node -> xctx_item
+  | CI_Attr    : path:list int -> ancestors:list xml_node -> owner:xml_node -> attr:xml_attribute -> xctx_item
+  | CI_Text    : path:list int -> ancestors:list xml_node -> parent:xml_node -> text:string -> xctx_item
+  | CI_Comment : path:list int -> ancestors:list xml_node -> parent:xml_node -> text:string -> xctx_item
+  | CI_PI      : path:list int -> ancestors:list xml_node -> parent:xml_node -> target:string -> data:string -> xctx_item
+  // A namespace node (XPath 1.0 §5.4). Parser.XML has no namespace-node
+  // KIND, so these are synthesised on demand by `namespace_axis` from an
+  // element's in-scope declarations. `element`/`ancestors` are the parent
+  // element and ITS proper ancestors (so parent::/ancestor:: from a
+  // namespace node reach the element and above). `prefix` is the bound
+  // prefix ("" for the default namespace), `uri` the namespace URI. The
+  // node's string-value is `uri`, its name() is `prefix`. Its `path` is
+  // element_path @ [-2; rank]: the -2 marker sorts namespace nodes after
+  // their element and before its attributes (-1) and children, matching
+  // XPath document order, while `rank` fixes OUR implementation-defined
+  // sibling ordering (see inscope_ns_ordered) so doc_sort_dedup -- which
+  // xsl:for-each applies to the selected set -- preserves it.
+  | CI_Namespace : path:list int -> ancestors:list xml_node -> element:xml_node -> prefix:string -> uri:string -> xctx_item
+
+let item_path (it:xctx_item) : list int =
+  match it with
+  | CI_Elem p _ _ -> p
+  | CI_Attr p _ _ _ -> p
+  | CI_Text p _ _ _ -> p
+  | CI_Comment p _ _ _ -> p
+  | CI_PI p _ _ _ _ -> p
+  | CI_Namespace p _ _ _ _ -> p
+
+// Drop the last element of a path (the parent-of operation on a
+// child path); [] for the root's empty/singleton path.
+let rec path_drop_last (l:list int) : Tot (list int) (decreases l) =
+  match l with
+  | [] -> []
+  | [_] -> []
+  | x :: tl -> x :: path_drop_last tl
+
+// The owner-element path of an attribute (its path ends in [-1; j]).
+let attr_owner_path (p:list int) : list int = path_drop_last (path_drop_last p)
+
+// Lexicographic path compare: <0 / 0 / >0 for document order.
+let rec path_compare (a b:list int) : Tot int (decreases a) =
+  match a, b with
+  | [], [] -> 0
+  | [], _ -> -1
+  | _, [] -> 1
+  | x :: xs, y :: ys -> if x < y then -1 else if x > y then 1 else path_compare xs ys
+
+// Is `a` a (non-strict) prefix of `b`? (ancestor/descendant test.)
+let rec path_is_prefix (a b:list int) : Tot bool (decreases a) =
+  match a, b with
+  | [], _ -> true
+  | _, [] -> false
+  | x :: xs, y :: ys -> x = y && path_is_prefix xs ys
+
+// Children of `node` with document-order paths (parent_path @ [i]),
+// `i` the 0-based index over ALL children (element/text/comment/pi).
+let rec children_with_paths (parent_path:list int) (new_anc:list xml_node) (parent:xml_node)
+                            (nodes:list xml_node) (i:nat)
+  : Tot (list xctx_item) (decreases nodes) =
+  match nodes with
+  | [] -> []
+  | c :: rest ->
+    let cpath = parent_path @ [i] in
+    let item =
+      match c with
+      | XElement _ _ _ -> CI_Elem cpath new_anc c
+      | XText t -> CI_Text cpath new_anc parent t
+      | XCDATA t -> CI_Text cpath new_anc parent t
+      | XComment t -> CI_Comment cpath new_anc parent t
+      | XPI tg d -> CI_PI cpath new_anc parent tg d
+    in
+    item :: children_with_paths parent_path new_anc parent rest (i + 1)
+
+let child_items (path:list int) (ancestors:list xml_node) (node:xml_node) : list xctx_item =
+  children_with_paths path (node :: ancestors) node (element_children node) 0
+
+// Attribute nodes: path = owner_path @ [-1; j], the -1 marker sorting
+// them after the owner element but before its children.
+let rec attrs_with_paths (owner_path:list int) (ancestors:list xml_node) (owner:xml_node)
+                         (attrs:list xml_attribute) (j:nat)
+  : Tot (list xctx_item) (decreases attrs) =
+  match attrs with
+  | [] -> []
+  | a :: rest ->
+    CI_Attr (owner_path @ [(-1); j]) ancestors owner a
+      :: attrs_with_paths owner_path ancestors owner rest (j + 1)
+
+let attribute_items (path:list int) (ancestors:list xml_node) (node:xml_node) : list xctx_item =
+  attrs_with_paths path ancestors node (element_attrs node) 0
+
+let rec descendant_items (path:list int) (ancestors:list xml_node) (node:xml_node)
+  : Tot (list xctx_item) (decreases node) =
+  match node with
+  | XElement _ _ children -> descendant_items_children path (node :: ancestors) node children 0
+  | _ -> []
+
+and descendant_items_children (parent_path:list int) (new_anc:list xml_node) (parent:xml_node)
+                              (nodes:list xml_node) (i:nat)
+  : Tot (list xctx_item) (decreases nodes) =
+  match nodes with
+  | [] -> []
+  | hd :: tl ->
+    let cpath = parent_path @ [i] in
+    let self_item =
+      match hd with
+      | XElement _ _ _ -> [CI_Elem cpath new_anc hd]
+      | XText t -> [CI_Text cpath new_anc parent t]
+      | XCDATA t -> [CI_Text cpath new_anc parent t]
+      | XComment t -> [CI_Comment cpath new_anc parent t]
+      | XPI tg d -> [CI_PI cpath new_anc parent tg d]
+    in
+    self_item @ descendant_items cpath new_anc hd @ descendant_items_children parent_path new_anc parent tl (i + 1)
+
+// Nearest-first: p1 (immediate parent) :: p2 :: ... — see the module
+// banner for why this ordering directly gives reverse-axis proximity
+// position.
+let rec ancestor_items (self_path:list int) (ancestors:list xml_node)
+  : Tot (list xctx_item) (decreases ancestors) =
+  match ancestors with
+  | [] -> []
+  | p :: rest ->
+    let ppath = path_drop_last self_path in
+    CI_Elem ppath rest p :: ancestor_items ppath rest
+
+let item_ancestors (it:xctx_item) : list xml_node =
+  match it with
+  | CI_Elem _ anc _ -> anc
+  | CI_Attr _ anc _ _ -> anc
+  | CI_Text _ anc _ _ -> anc
+  | CI_Comment _ anc _ _ -> anc
+  | CI_PI _ anc _ _ _ -> anc
+  | CI_Namespace _ anc _ _ _ -> anc
+
+// parent axis: the owner element for an attribute; the immediate
+// ancestor for anything else (empty if already at the document root).
+let parent_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Attr p anc owner _ -> [CI_Elem (attr_owner_path p) anc owner]
+  // A namespace node's parent is its element (XPath 1.0 §5.4); the
+  // element sits at attr_owner_path (namespace path ends in [-2; rank],
+  // structurally like an attribute's [-1; j]).
+  | CI_Namespace p anc elem _ _ -> [CI_Elem (attr_owner_path p) anc elem]
+  | CI_Elem p anc _ | CI_Text p anc _ _ | CI_Comment p anc _ _ | CI_PI p anc _ _ _ ->
+    (match anc with [] -> [] | q :: rest -> [CI_Elem (path_drop_last p) rest q])
+
+// ancestor axis (nearest-first): for CI_Attr, the owner element is
+// itself the nearest ancestor (XPath 1.0 §2.3), then its own ancestors.
+let ancestor_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Attr p anc owner _ ->
+    let opath = attr_owner_path p in
+    CI_Elem opath anc owner :: ancestor_items opath anc
+  | CI_Namespace p anc elem _ _ ->
+    let opath = attr_owner_path p in
+    CI_Elem opath anc elem :: ancestor_items opath anc
+  | CI_Elem p anc _ | CI_Text p anc _ _ | CI_Comment p anc _ _ | CI_PI p anc _ _ _ ->
+    ancestor_items p anc
+
+let child_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Elem p anc n -> child_items p anc n
+  | _ -> []   // attribute/text/comment/pi nodes have no children
+
+let descendant_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Elem p anc n -> descendant_items p anc n
+  | _ -> []
+
+let attribute_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Elem p anc n -> attribute_items p anc n
+  | _ -> []
+
+// Sibling axes. `siblings_of` rebuilds the parent's child list (in
+// document order, with paths) from the item's ancestor chain; the
+// item's own path locates it among them. Attributes have no siblings
+// via these axes (XPath 1.0 §2.2).
+let siblings_of (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Elem p anc _ | CI_Text p anc _ _ | CI_Comment p anc _ _ | CI_PI p anc _ _ _ ->
+    (match anc with
+     | [] -> []                       // the root has no parent, hence no siblings
+     | parent :: grand -> child_items (path_drop_last p) grand parent)
+  | CI_Attr _ _ _ _ -> []
+  | CI_Namespace _ _ _ _ _ -> []   // namespace nodes have no siblings (§2.2)
+
+// following-sibling (forward axis, document order).
+let following_sibling_axis (it:xctx_item) : list xctx_item =
+  let p = item_path it in
+  List.Tot.filter (fun s -> path_compare (item_path s) p > 0) (siblings_of it)
+
+// preceding-sibling (reverse axis: nearest first = reverse document order).
+let preceding_sibling_axis (it:xctx_item) : list xctx_item =
+  let p = item_path it in
+  List.Tot.rev (List.Tot.filter (fun s -> path_compare (item_path s) p < 0) (siblings_of it))
+
+
+(* ================================================================ *)
+(* Node tests                                                        *)
+(*                                                                   *)
+(* A name/wildcard test matches only the axis's PRINCIPAL node type   *)
+(* (element for every axis here except `attribute`) — XPath 1.0 §2.3: *)
+(* `child::*` selects element children only, never text/comment.     *)
+(* ================================================================ *)
+
+let string_starts_with (s prefix:string) : bool =
+  let lp = String.length prefix in
+  String.length s >= lp && String.sub s 0 lp = prefix
+
+(* ================================================================ *)
+(* Namespace-URI-aware name tests (XPath 1.0 §2.3).                    *)
+(*                                                                     *)
+(* A PREFIXED name test (`p:local`) resolves its prefix against the    *)
+(* EXPRESSION's in-scope namespace context `nsctx` (a prefix -> URI    *)
+(* map the host threads in -- for XSLT this is the stylesheet          *)
+(* element's xmlns:* declarations). The candidate element's own name   *)
+(* resolves against the SOURCE tree's in-scope namespaces (its own     *)
+(* xmlns:*/xmlns attributes plus those inherited from its ancestors).  *)
+(* The test matches iff the local-names are equal AND the namespace    *)
+(* URIs are equal. This is what lets a stylesheet that binds           *)
+(* `html:`/`h:` to the XHTML namespace match source elements placed in *)
+(* that namespace via a DEFAULT `xmlns="..."` declaration.             *)
+(*                                                                     *)
+(* An UNprefixed name test has namespace-URI = null and therefore      *)
+(* matches ONLY null-namespace elements -- NOT default-namespaced ones *)
+(* (that would be XPath 2.0 default-element-namespace behaviour, wrong *)
+(* for XSLT 1.0). Attributes are never in the default namespace.       *)
+(*                                                                     *)
+(* When a prefix cannot be resolved in `nsctx` (a consumer that        *)
+(* threads no context -- Schematron/MathML pass []; or a genuinely     *)
+(* foreign prefix) the test falls back to the legacy textual           *)
+(* (qname-string) comparison so pre-namespace-aware callers keep their *)
+(* behaviour unchanged.                                                *)
+(* ================================================================ *)
+
+let rec find_char_from (s:string) (c:FStar.Char.char) (pos:nat) (len:nat{len = String.length s})
+  : Tot (option (n:nat{n < String.length s})) (decreases (if len > pos then len - pos else 0)) =
+  if pos >= len then None
+  else if String.index s pos = c then Some pos
+  else find_char_from s c (pos + 1) len
+
+let local_name_of (qn:string) : string =
+  match find_char_from qn ':' 0 (String.length qn) with
+  | Some i -> String.sub qn (i + 1) (String.length qn - i - 1)
+  | None -> qn
+
+// The "xml" prefix is bound to this URI in every document (Namespaces
+// in XML §3), independent of any declaration.
+let xpath_xml_ns_uri : string = "http://www.w3.org/XML/1998/namespace"
+
+// Prefix of a QName ("" when unprefixed).
+let prefix_of (qn:string) : string =
+  match find_char_from qn ':' 0 (String.length qn) with
+  | Some i -> String.sub qn 0 i
+  | None -> ""
+
+// If attribute `a` declares namespace prefix `pfx` (pfx="" = default
+// xmlns), the declared URI ("" for an explicit unbind); else None.
+let ns_decl_for (pfx:string) (a:xml_attribute) : option string =
+  if pfx = "" then (if a.attr_name = "xmlns" then Some a.attr_value else None)
+  else if a.attr_name = String.concat "" ["xmlns:"; pfx] then Some a.attr_value
+  else None
+
+let rec find_ns_in_attrs (pfx:string) (attrs:list xml_attribute)
+  : Tot (option string) (decreases attrs) =
+  match attrs with
+  | [] -> None
+  | a :: rest -> (match ns_decl_for pfx a with Some u -> Some u | None -> find_ns_in_attrs pfx rest)
+
+// Resolve `pfx` against a source element's own attributes then its
+// ancestors (nearest-first). None = not bound (so the default prefix ""
+// with no declaration means null namespace). An explicit unbind
+// (xmlns:pfx="" / xmlns="") normalises to None (null namespace).
+let rec resolve_ns_anc (pfx:string) (anc:list xml_node) : Tot (option string) (decreases anc) =
+  match anc with
+  | [] -> if pfx = "xml" then Some xpath_xml_ns_uri else None
+  | e :: rest ->
+    (match find_ns_in_attrs pfx (element_attrs e) with
+     | Some u -> if u = "" then None else Some u
+     | None -> resolve_ns_anc pfx rest)
+
+let resolve_ns_uri (pfx:string) (own_attrs:list xml_attribute) (anc:list xml_node) : option string =
+  match find_ns_in_attrs pfx own_attrs with
+  | Some u -> if u = "" then None else Some u
+  | None -> resolve_ns_anc pfx anc
+
+// Namespace URI of a source element given its tag, own attributes, and
+// ancestors (None = null namespace).
+let elem_ns_uri (tag:string) (own_attrs:list xml_attribute) (anc:list xml_node) : option string =
+  resolve_ns_uri (prefix_of tag) own_attrs anc
+
+(* ---- lang() support: xml:lang inheritance (XPath 1.0 §4.3) -------- *)
+
+// Nearest-first walk of an ancestor chain looking for the first element
+// bearing an xml:lang attribute. Mirrors resolve_ns_anc's "own attrs,
+// then ancestors, nearest wins" shape, keyed on the literal attribute
+// name (the project's existing xml:lang/xml:base convention -- see
+// Parser.RDFXML.fst's `find_attr "xml:lang" attrs` -- rather than a
+// namespace-URI-resolved lookup).
+let rec xml_lang_anc (anc:list xml_node) : Tot (option string) (decreases anc) =
+  match anc with
+  | [] -> None
+  | e :: rest ->
+    (match find_attr "xml:lang" (element_attrs e) with
+     | Some v -> Some v
+     | None -> xml_lang_anc rest)
+
+// The in-scope xml:lang for an xctx_item: its own element's xml:lang (or
+// the owning/containing element's, for attribute/text/comment/PI/
+// namespace items -- same per-constructor dispatch as ancestor_axis/
+// parent_axis), falling back to the nearest ancestor that declares one.
+// None = no xml:lang in scope anywhere on the ancestor-or-self path, so
+// lang() is false for any argument.
+let item_xml_lang (it:xctx_item) : option string =
+  match it with
+  | CI_Elem _ anc n ->
+    (match find_attr "xml:lang" (element_attrs n) with Some v -> Some v | None -> xml_lang_anc anc)
+  | CI_Attr _ anc owner _ ->
+    (match find_attr "xml:lang" (element_attrs owner) with Some v -> Some v | None -> xml_lang_anc anc)
+  | CI_Text _ anc parent _ | CI_Comment _ anc parent _ | CI_PI _ anc parent _ _ ->
+    (match find_attr "xml:lang" (element_attrs parent) with Some v -> Some v | None -> xml_lang_anc anc)
+  | CI_Namespace _ anc elem _ _ ->
+    (match find_attr "xml:lang" (element_attrs elem) with Some v -> Some v | None -> xml_lang_anc anc)
+
+// XPath 1.0 §4.3 lang(string): true iff `node_lang` equals `arg`
+// case-insensitively, or has `arg` as a case-insensitive sublanguage
+// prefix delimited by '-' (node "en-US" matches arg "en" but arg
+// "en-GB" does not match node "en-US" -- prefix matching runs only
+// node-extends-arg, never the reverse).
+let lang_matches (node_lang:string) (arg:string) : bool =
+  let nl = FStar.String.lowercase node_lang in
+  let al = FStar.String.lowercase arg in
+  nl = al || string_starts_with nl (al ^ "-")
+
+(* ================================================================ *)
+(* namespace:: axis (XPath 1.0 §2.2 / §5.4)                          *)
+(*                                                                   *)
+(* An element's namespace nodes are ONE per in-scope binding: its    *)
+(* own xmlns/xmlns:* declarations, plus those inherited from its     *)
+(* ancestors with the nearest declaration winning, plus the always-  *)
+(* present `xml` prefix (Namespaces in XML §3). An explicit unbind    *)
+(* (xmlns="" / xmlns:p="") removes a binding rather than adding one.  *)
+(*                                                                   *)
+(* XPath 1.0 §5.4 leaves the RELATIVE order of an element's          *)
+(* namespace nodes IMPLEMENTATION-DEFINED (as it does for the        *)
+(* attribute axis). We fix a deterministic, documented order so      *)
+(* results are reproducible across runs and platforms:               *)
+(*                                                                   *)
+(*   OUR ORDER: the default-namespace node (prefix "", from xmlns=)  *)
+(*   first when present, then every prefixed binding -- the `xml`     *)
+(*   binding included -- in ascending lexicographic (Unicode         *)
+(*   codepoint) order by prefix.                                     *)
+(*                                                                   *)
+(* This is a conformant choice, not a compatibility failure: a       *)
+(* fixture that pins a DIFFERENT namespace-node order (e.g. a        *)
+(* hash-table traversal order emitted by another processor) pins one *)
+(* implementation's private ordering, which §5.4 does not require any *)
+(* other implementation to reproduce.                                *)
+(* ================================================================ *)
+
+// (prefix, uri) declared by one attribute, if it is a namespace
+// declaration. prefix "" for the default xmlns; uri "" = an unbind.
+let ns_decl_of_attr (a:xml_attribute) : option (string & string) =
+  let n = String.length a.attr_name in
+  if a.attr_name = "xmlns" then Some ("", a.attr_value)
+  else if n >= 6 && string_starts_with a.attr_name "xmlns:" then
+    Some (String.sub a.attr_name 6 (n - 6), a.attr_value)
+  else None
+
+let rec mem_str_e (x:string) (xs:list string) : Tot bool (decreases xs) =
+  match xs with
+  | [] -> false
+  | h :: t -> if h = x then true else mem_str_e x t
+
+// Fold one element's attributes into the in-scope binding set. `seen`
+// records prefixes already resolved by a NEARER element (they win, so
+// a farther declaration of the same prefix is ignored). An unbind
+// (uri = "") marks the prefix seen without adding a binding.
+let rec add_elem_ns (seen:list string) (acc:list (string & string)) (attrs:list xml_attribute)
+  : Tot (list string & list (string & string)) (decreases attrs) =
+  match attrs with
+  | [] -> (seen, acc)
+  | a :: rest ->
+    (match ns_decl_of_attr a with
+     | Some (pfx, uri) ->
+       if mem_str_e pfx seen then add_elem_ns seen acc rest
+       else if uri = "" then add_elem_ns (pfx :: seen) acc rest       // unbind
+       else add_elem_ns (pfx :: seen) (acc @ [(pfx, uri)]) rest
+     | None -> add_elem_ns seen acc rest)
+
+// Walk element-then-ancestors (nearest-first); nearest declaration of
+// each prefix wins.
+let rec collect_ns (seen:list string) (acc:list (string & string)) (nodes:list xml_node)
+  : Tot (list (string & string)) (decreases nodes) =
+  match nodes with
+  | [] -> acc
+  | n :: rest ->
+    let (seen', acc') = add_elem_ns seen acc (element_attrs n) in
+    collect_ns seen' acc' rest
+
+// Lexicographic (Unicode codepoint) compare of two prefixes.
+let rec cp_list_cmp (a b:list FStar.Char.char) : Tot int (decreases a) =
+  match a, b with
+  | [], [] -> 0
+  | [], _ -> -1
+  | _, [] -> 1
+  | x :: xs, y :: ys ->
+    let cx = FStar.Char.int_of_char x in
+    let cy = FStar.Char.int_of_char y in
+    if cx < cy then -1 else if cx > cy then 1 else cp_list_cmp xs ys
+
+let prefix_cmp (a b:string) : int =
+  cp_list_cmp (String.list_of_string a) (String.list_of_string b)
+
+// Our documented sibling order: default namespace ("") first, then all
+// prefixed bindings ascending lexicographic by prefix.
+let ns_binding_leq (a b:(string & string)) : bool =
+  let pa = fst a in let pb = fst b in
+  if pa = "" then true
+  else if pb = "" then false
+  else prefix_cmp pa pb <= 0
+
+let rec ns_insert (x:(string & string)) (l:list (string & string))
+  : Tot (list (string & string)) (decreases l) =
+  match l with
+  | [] -> [x]
+  | y :: ys -> if ns_binding_leq x y then x :: l else y :: ns_insert x ys
+
+let rec ns_sort (l:list (string & string)) : Tot (list (string & string)) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs -> ns_insert x (ns_sort xs)
+
+// In-scope namespace bindings of an element, in OUR documented order.
+// The `xml` prefix is appended (as a binding among the prefixed set)
+// unless the element chain already bound it.
+let inscope_ns_ordered (elem:xml_node) (anc:list xml_node) : list (string & string) =
+  let raw = collect_ns [] [] (elem :: anc) in
+  let with_xml =
+    if mem_str_e "xml" (List.Tot.map fst raw) then raw
+    else raw @ [("xml", xpath_xml_ns_uri)]
+  in
+  ns_sort with_xml
+
+// Materialise the ordered bindings as CI_Namespace items. Rank `k`
+// becomes the last path component (elem_path @ [-2; k]) so document-
+// order sorting (doc_sort_dedup, applied by xsl:for-each) preserves
+// OUR order rather than re-sorting the nodes arbitrarily.
+let rec ns_items (p:list int) (anc:list xml_node) (elem:xml_node)
+                 (bs:list (string & string)) (k:nat)
+  : Tot (list xctx_item) (decreases bs) =
+  match bs with
+  | [] -> []
+  | (pfx, uri) :: rest ->
+    CI_Namespace (p @ [(-2); k]) anc elem pfx uri :: ns_items p anc elem rest (k + 1)
+
+// namespace:: axis: only element nodes have namespace nodes.
+let namespace_axis (it:xctx_item) : list xctx_item =
+  match it with
+  | CI_Elem p anc n -> ns_items p anc n (inscope_ns_ordered n anc) 0
+  | _ -> []
+
+let rec lookup_nsctx (nsctx:list (string & string)) (pfx:string)
+  : Tot (option string) (decreases nsctx) =
+  match nsctx with
+  | [] -> None
+  | (p, u) :: rest -> if p = pfx then Some u else lookup_nsctx rest pfx
+
+// Do two optional namespace URIs denote the same namespace? A test URI
+// of "" (empty in nsctx) denotes the null namespace, equal to None.
+let ns_uri_eq (a b:option string) : bool =
+  match a, b with
+  | None, None -> true
+  | Some x, Some y -> x = y
+  | Some x, None | None, Some x -> x = ""
+
+// Element name test: `nm` (the test QName) against a source element.
+let name_test_matches_elem (nsctx:list (string & string)) (nm:string)
+                           (own_attrs:list xml_attribute) (anc:list xml_node) (tag:string) : bool =
+  let tpfx = prefix_of nm in
+  let tlocal = local_name_of nm in
+  let elocal = local_name_of tag in
+  if tpfx = "" then
+    // unprefixed: null namespace, local-name must match a null-namespace element
+    elocal = tlocal && None? (elem_ns_uri tag own_attrs anc)
+  else
+    (match lookup_nsctx nsctx tpfx with
+     | None -> tag = nm   // prefix not in context: legacy textual fallback
+     | Some turi ->
+       elocal = tlocal && ns_uri_eq (elem_ns_uri tag own_attrs anc) (Some turi))
+
+// prefix:* wildcard element test.
+let prefix_test_matches_elem (nsctx:list (string & string)) (pfx:string)
+                             (own_attrs:list xml_attribute) (anc:list xml_node) (tag:string) : bool =
+  match lookup_nsctx nsctx pfx with
+  | None -> string_starts_with tag (pfx ^ ":")   // legacy textual fallback
+  | Some turi -> ns_uri_eq (elem_ns_uri tag own_attrs anc) (Some turi)
+
+// Attribute name test. Attributes are never in the default namespace,
+// so an unprefixed test matches only unprefixed attributes; a prefixed
+// test resolves the attribute's own prefix against its owner element.
+let attr_name_test (nsctx:list (string & string)) (nm:string)
+                   (anc:list xml_node) (owner:xml_node) (a:xml_attribute) : bool =
+  let tpfx = prefix_of nm in
+  if tpfx = "" then
+    prefix_of a.attr_name = "" && local_name_of a.attr_name = local_name_of nm
+  else
+    (match lookup_nsctx nsctx tpfx with
+     | None -> a.attr_name = nm   // legacy textual fallback
+     | Some turi ->
+       let apfx = prefix_of a.attr_name in
+       apfx <> "" &&
+       local_name_of a.attr_name = local_name_of nm &&
+       ns_uri_eq (resolve_ns_uri apfx (element_attrs owner) anc) (Some turi))
+
+let matches_node_test (nsctx:list (string & string)) (test:xp_nodetest) (it:xctx_item) : bool =
+  match test, it with
+  | NT_Node, _ -> true
+  | NT_Text, CI_Text _ _ _ _ -> true
+  | NT_Text, _ -> false
+  | NT_Comment, CI_Comment _ _ _ _ -> true
+  | NT_Comment, _ -> false
+  | NT_PI None, CI_PI _ _ _ _ _ -> true
+  | NT_PI (Some tgt), CI_PI _ _ _ t _ -> t = tgt
+  | NT_PI _, _ -> false
+  | NT_Any, CI_Elem _ _ _ -> true
+  | NT_Any, CI_Attr _ _ _ _ -> true
+  // `namespace::*` -- namespace is the axis's principal node type, so a
+  // bare wildcard matches every namespace node.
+  | NT_Any, CI_Namespace _ _ _ _ _ -> true
+  | NT_Any, _ -> false
+  | NT_Name nm, CI_Elem _ anc n ->
+    (match element_tag n with Some t -> name_test_matches_elem nsctx nm (element_attrs n) anc t | None -> false)
+  | NT_Name nm, CI_Attr _ anc owner a -> attr_name_test nsctx nm anc owner a
+  // `namespace::pfx` matches the namespace node whose name (its bound
+  // prefix) equals the test's local part (a namespace-node test is
+  // never itself namespaced, XPath 1.0 §2.3).
+  | NT_Name nm, CI_Namespace _ _ _ pfx _ -> nm = pfx
+  | NT_Name _, _ -> false
+  | NT_Prefix pfx, CI_Elem _ anc n ->
+    (match element_tag n with Some t -> prefix_test_matches_elem nsctx pfx (element_attrs n) anc t | None -> false)
+  | NT_Prefix pfx, CI_Attr _ _ _ a -> string_starts_with a.attr_name (pfx ^ ":")
+  | NT_Prefix _, _ -> false
+
+let filter_by_node_test (nsctx:list (string & string)) (test:xp_nodetest) (items:list xctx_item) : list xctx_item =
+  List.Tot.filter (matches_node_test nsctx test) items
+
+let rec list_last_or (default_val:xml_node) (l:list xml_node) : Tot xml_node (decreases l) =
+  match l with
+  | [] -> default_val
+  | [x] -> x
+  | _ :: tl -> list_last_or default_val tl
+
+// The document root as seen from any item — the outermost element of
+// its ancestor chain, or the item's own node if it has none.
+let root_of_item (it:xctx_item) : xml_node =
+  let self_node =
+    match it with
+    | CI_Elem _ _ n -> n
+    | CI_Attr _ _ owner _ -> owner
+    | CI_Text _ _ parent _ -> parent
+    | CI_Comment _ _ parent _ -> parent
+    | CI_PI _ _ parent _ _ -> parent
+    | CI_Namespace _ _ elem _ _ -> elem
+  in
+  list_last_or self_node (item_ancestors it)
+
+// All document node-items (root element + every descendant), in
+// document order, keyed by path — the substrate for the following /
+// preceding axes and for locating a context node's position.
+let all_document_items (it:xctx_item) : list xctx_item =
+  let root = root_of_item it in
+  CI_Elem [] [] root :: descendant_items [] [] root
+
+// The document node modelled as a real node. XML has no in-tree value
+// for the document node, so `doc_node_of` synthesises a tagless element
+// whose children ARE the document node's children (`doc_kids` = prolog
+// Comment/PI Misc, root element, epilog Comment/PI Misc). It is used only
+// as the starting context of an absolute location path evaluated from the
+// document node (eval_absolute_steps' doc-frame branch): its child axis
+// yields the prolog/epilog Misc plus the root element, so `//comment()`
+// reaches a prolog comment and `/child::name` reaches the root element as
+// a child of the document node. Under this frame the root element sits at
+// path [i] (its index among the document node's children) rather than [],
+// which is the price of representing the document node's OTHER children at
+// all -- paths stay mutually consistent, so document-order sort still
+// works. The synthetic element never leaves eval_absolute_steps.
+let doc_node_of (doc_kids:list xml_node) : xctx_item =
+  CI_Elem [] [] (XElement "" [] doc_kids)
+
+// The document node's children as items in document order -- used by the
+// XSLT layer (dnode_children / dnode_attrs_and_kids) for a `D_Doc` context
+// so the built-in / identity template processes prolog Comment/PI Misc,
+// the root element, then epilog Misc (copy-2601). The root element carries
+// no ancestors (it IS the outermost element); Comment/PI parents point at
+// the synthetic document element, whose only observable use is a Misc
+// node's string value, which is the Misc node's own text regardless.
+let doc_child_items (doc_kids:list xml_node) : list xctx_item =
+  children_with_paths [] [] (XElement "" [] doc_kids) doc_kids 0
+
+// following axis: nodes after the context node in document order,
+// excluding its descendants (XPath 1.0 §2.2). Ancestors sort before
+// the context node so are excluded by the path_compare > 0 test.
+let following_axis (it:xctx_item) : list xctx_item =
+  let p = item_path it in
+  List.Tot.filter
+    (fun x -> path_compare (item_path x) p > 0 && not (path_is_prefix p (item_path x)))
+    (all_document_items it)
+
+// preceding axis: nodes before the context node in document order,
+// excluding its ancestors; reverse axis, so reverse document order.
+let preceding_axis (it:xctx_item) : list xctx_item =
+  let p = item_path it in
+  List.Tot.rev
+    (List.Tot.filter
+      (fun x -> path_compare (item_path x) p < 0 && not (path_is_prefix (item_path x) p))
+      (all_document_items it))
+
+let apply_axis (ax:xp_axis) (it:xctx_item) : list xctx_item =
+  match ax with
+  | Ax_Self -> [it]
+  | Ax_Child -> child_axis it
+  | Ax_Descendant -> descendant_axis it
+  | Ax_DescendantOrSelf -> it :: descendant_axis it
+  | Ax_Parent -> parent_axis it
+  | Ax_Ancestor -> ancestor_axis it
+  | Ax_AncestorOrSelf -> it :: ancestor_axis it
+  | Ax_Attribute -> attribute_axis it
+  | Ax_FollowingSibling -> following_sibling_axis it
+  | Ax_PrecedingSibling -> preceding_sibling_axis it
+  | Ax_Following -> following_axis it
+  | Ax_Preceding -> preceding_axis it
+  | Ax_Namespace -> namespace_axis it
+
+
+(* ================================================================ *)
+(* Values: the four-way sum XPath 1.0 §1 defines                     *)
+(* ================================================================ *)
+
+noeq type xp_value =
+  | XV_Nodes : list xctx_item -> xp_value
+  | XV_Bool  : bool -> xp_value
+  | XV_Num   : xpath_number -> xp_value
+  | XV_Str   : string -> xp_value
+
+// One xsl:key entry (XSLT 1.0 §12.2): the key's expanded-name (namespace-
+// URI option, local-name — see resolve_key_qname), one string VALUE the
+// `use` expression produced at some matched node, and the matched node
+// ITSELF. XSLT.Transform.build_key_table produces the flat list (one
+// entry per (matched node, use-expr node-set member) pair — a `use` that
+// evaluates to a node-set contributes one entry per node in it, keyed by
+// THAT node's own string-value, not the whole set's); key() filters this
+// list by expanded-name and membership in the argument's wanted-value set.
+type key_entry = (option string & string) & string & xctx_item
+
+noeq type xp_env = {
+  env_item : xctx_item;
+  env_pos  : nat;
+  env_size : nat;
+  env_vars : list (string & xp_value);
+  // In-scope namespace context (prefix -> URI) for resolving PREFIXED
+  // name tests in this expression (XPath 1.0 §2.3). [] = no context
+  // (name tests fall back to legacy textual comparison).
+  env_nsctx : list (string & string);
+  // The document node's ordered children, when this expression is being
+  // evaluated FROM the document node (XSLT's D_Doc context): the prolog
+  // Comment/PI Misc, the root element, then the epilog Comment/PI Misc.
+  // Empty (or a singleton root) means "legacy: the root element stands in
+  // for the document node" -- prolog/epilog Misc are then invisible, as
+  // they were before this field existed, so every other caller sets it to
+  // [] and keeps byte-identical behavior. Only an absolute location path
+  // reads it (see eval_absolute_steps), so a relative context never cares.
+  env_doc_kids : list xml_node;
+  // (element-name, attribute-name) pairs declared type ID in the context
+  // document's DTD internal subset (Parser.XML). id() consults this to
+  // decide which attribute carries a node's unique identifier. [] when no
+  // DTD / no ID attribute is in scope (id() then selects nothing).
+  env_id_attrs : list (string & string);
+  // The stylesheet document's root element, so XSLT's document("") (empty
+  // string = the stylesheet itself) resolves to it. `xnode_none` (a
+  // tagless empty element) means "no stylesheet document available", and
+  // document("") then selects nothing.
+  env_style_root : xml_node;
+  // xsl:decimal-format table (named + default), for format-number()'s
+  // optional 3rd argument. [] means "no stylesheet decimal-formats in
+  // scope" -- format-number then always uses default_decimal_format_symbols
+  // (lookup_decimal_format's own fallback), same as XPath contexts that
+  // are not XSLT at all (Schematron.Validate, the bare eval_xpath_from_*
+  // entry points).
+  env_decimal_formats : list decimal_format_symbols;
+  // xsl:key table (XSLT.Transform.build_key_table), for key(). [] means
+  // "no stylesheet xsl:key declarations in scope" (or a non-XSLT XPath
+  // context, e.g. Schematron.Validate) -- key() then always selects the
+  // empty node-set, same as function-available("key") = true but a
+  // never-populated table would suggest (a disclosed divergence shared
+  // with every other XSLT-only context field here).
+  env_key_table : list key_entry;
+}
+
+// Sentinel "no document" node for env_style_root: an empty tagless
+// element. document("") treats it as unavailable.
+let xnode_none : xml_node = XElement "" [] []
+let is_xnode_none (n:xml_node) : bool =
+  match n with
+  | XElement t attrs kids -> t = "" && Nil? attrs && Nil? kids
+  | _ -> false
+
+let lookup_var (vars:list (string & xp_value)) (name:string) : option xp_value =
+  match List.Tot.find (fun (kv:(string & xp_value)) -> fst kv = name) vars with
+  | Some (_, v) -> Some v
+  | None -> None
+
+// String-value of a node (XPath 1.0 §5): element = concatenation of
+// all descendant text, attribute = its value, text/comment = their
+// content. `Parser.XML.text_content` already computes exactly the
+// element case (descendant text concatenation), reused directly.
+let item_string_value (it:xctx_item) : string =
+  match it with
+  | CI_Elem _ _ n -> text_content n
+  | CI_Attr _ _ _ a -> a.attr_value
+  | CI_Text _ _ _ t -> t
+  | CI_Comment _ _ _ t -> t
+  | CI_PI _ _ _ _ d -> d
+  | CI_Namespace _ _ _ _ uri -> uri   // §5.4: string-value = the URI
+
+// String-value of a node-SET: the string-value of the node "first in
+// document order" (§1.1). Simplification, disclosed in the program
+// plan: this engine takes the head of the list AS GENERATED, which is
+// correct document order for every forward axis (child, descendant,
+// descendant-or-self, self, attribute) but is the REVERSE of true
+// document order when the set came from a bare ancestor/
+// ancestor-or-self axis (nearest-nearest-first, by design, for
+// correct reverse-axis position() numbering — see the module banner).
+let nodeset_string_value (items:list xctx_item) : string =
+  match items with
+  | [] -> ""
+  | hd :: _ -> item_string_value hd
+
+let to_string_val (v:xp_value) : string =
+  match v with
+  | XV_Str s -> s
+  | XV_Num n -> xn_to_string n
+  | XV_Bool b -> if b then "true" else "false"
+  | XV_Nodes items -> nodeset_string_value items
+
+let to_bool_val (v:xp_value) : bool =
+  match v with
+  | XV_Bool b -> b
+  | XV_Num n -> xn_to_bool n
+  | XV_Str s -> String.length s > 0
+  | XV_Nodes items -> not (Nil? items)
+
+let to_number_val (v:xp_value) : xpath_number =
+  match v with
+  | XV_Num n -> n
+  | XV_Bool b -> XN_Finite (if b then 1 else 0) 0
+  | XV_Str s -> string_to_xn s
+  | XV_Nodes items -> string_to_xn (nodeset_string_value items)
+
+let xn_finite_int (n:xpath_number) : option int =
+  match n with
+  | XN_Finite v 0 -> Some v
+  | XN_Finite v s -> let p = xn_pow10 s in if p = 0 then None else Some (v / p)
+  | _ -> None
+
+
+(* ================================================================ *)
+(* Comparisons (§3.4) — see the program plan's comparison-semantics  *)
+(* note for why relational ops involving a node-set convert to       *)
+(* numbers while '='/'!=' compare strings.                           *)
+(* ================================================================ *)
+
+let apply_comp_bool (op:xp_comp_op) (a b:bool) : bool =
+  match op with
+  | Cmp_Eq -> a = b
+  | Cmp_Ne -> a <> b
+  | Cmp_Lt -> (not a) && b
+  | Cmp_Le -> (not a) || b
+  | Cmp_Gt -> a && (not b)
+  | Cmp_Ge -> a || (not b)
+
+// XN_NaN comparisons: '!=' is true (NaN is never equal to anything,
+// including itself), the other five are all false — IEEE 754
+// unordered-compare semantics.
+let apply_comp_num (op:xp_comp_op) (a b:xpath_number) : bool =
+  match xn_compare a b with
+  | None -> op = Cmp_Ne
+  | Some c ->
+    (match op with
+     | Cmp_Eq -> c = 0
+     | Cmp_Ne -> c <> 0
+     | Cmp_Lt -> c < 0
+     | Cmp_Le -> c <= 0
+     | Cmp_Gt -> c > 0
+     | Cmp_Ge -> c >= 0)
+
+let apply_comp_str (op:xp_comp_op) (a b:string) : bool =
+  match op with
+  | Cmp_Eq -> a = b
+  | Cmp_Ne -> a <> b
+  | Cmp_Lt -> String.compare a b < 0
+  | Cmp_Le -> String.compare a b <= 0
+  | Cmp_Gt -> String.compare a b > 0
+  | Cmp_Ge -> String.compare a b >= 0
+
+let rec exists_str (pred:string -> bool) (items:list xctx_item) : Tot bool (decreases items) =
+  match items with
+  | [] -> false
+  | hd :: tl -> pred (item_string_value hd) || exists_str pred tl
+
+let is_relational_op (op:xp_comp_op) : bool =
+  match op with Cmp_Lt | Cmp_Le | Cmp_Gt | Cmp_Ge -> true | _ -> false
+
+let xp_compare (op:xp_comp_op) (a b:xp_value) : bool =
+  match a, b with
+  | XV_Nodes na, XV_Nodes nb ->
+    if is_relational_op op then
+      exists_str (fun sa -> exists_str (fun sb -> apply_comp_num op (string_to_xn sa) (string_to_xn sb)) nb) na
+    else
+      exists_str (fun sa -> exists_str (fun sb -> apply_comp_str op sa sb) nb) na
+  | XV_Nodes na, XV_Num nb -> exists_str (fun sa -> apply_comp_num op (string_to_xn sa) nb) na
+  | XV_Num na, XV_Nodes nb -> exists_str (fun sb -> apply_comp_num op na (string_to_xn sb)) nb
+  | XV_Nodes na, XV_Str sb ->
+    if is_relational_op op then exists_str (fun sa -> apply_comp_num op (string_to_xn sa) (string_to_xn sb)) na
+    else exists_str (fun sa -> apply_comp_str op sa sb) na
+  | XV_Str sa, XV_Nodes nb ->
+    if is_relational_op op then exists_str (fun sb -> apply_comp_num op (string_to_xn sa) (string_to_xn sb)) nb
+    else exists_str (fun sb -> apply_comp_str op sa sb) nb
+  | XV_Nodes na, XV_Bool bb -> apply_comp_bool op (not (Nil? na)) bb
+  | XV_Bool ba, XV_Nodes nb -> apply_comp_bool op ba (not (Nil? nb))
+  | XV_Bool _, _ -> apply_comp_bool op (to_bool_val a) (to_bool_val b)
+  | _, XV_Bool _ -> apply_comp_bool op (to_bool_val a) (to_bool_val b)
+  | XV_Num _, _ -> apply_comp_num op (to_number_val a) (to_number_val b)
+  | _, XV_Num _ -> apply_comp_num op (to_number_val a) (to_number_val b)
+  | _, _ -> apply_comp_str op (to_string_val a) (to_string_val b)
+
+
+(* ================================================================ *)
+(* String function-library helpers (plain FStar.String — these       *)
+(* operate on already-decoded content strings, not the raw document, *)
+(* so there is no byte/codepoint hot-path concern the way there is   *)
+(* for Parser.XPath's own lexer; same posture SPARQL11.Algebra takes *)
+(* for its string built-ins).                                        *)
+(* ================================================================ *)
+
+let rec str_find_from (s sub:string) (pos:nat) (slen:nat{slen = String.length s}) (sublen:nat{sublen = String.length sub})
+  : Tot (option (n:nat{n + String.length sub <= String.length s})) (decreases (if slen + 1 > pos then slen + 1 - pos else 0)) =
+  if pos + sublen > slen then None
+  else if String.sub s pos sublen = sub then Some pos
+  else if pos >= slen then None
+  else str_find_from s sub (pos + 1) slen sublen
+
+let str_find (s sub:string) : option (n:nat{n + String.length sub <= String.length s}) =
+  let slen = String.length s in
+  let sublen = String.length sub in
+  if sublen = 0 then Some 0 else str_find_from s sub 0 slen sublen
+
+let string_starts_with2 (s prefix:string) : bool = string_starts_with s prefix
+
+let is_xp_space (c:FStar.Char.char) : bool = c = ' ' || c = '\t' || c = '\n' || c = '\r'
+
+let rec normalize_space_chars (cs:list FStar.Char.char) (in_space:bool)
+  : Tot (list FStar.Char.char) (decreases cs) =
+  match cs with
+  | [] -> []
+  | c :: rest ->
+    if is_xp_space c then
+      (if in_space then normalize_space_chars rest true else ' ' :: normalize_space_chars rest true)
+    else c :: normalize_space_chars rest false
+
+let normalize_space (s:string) : string =
+  let collapsed = normalize_space_chars (String.list_of_string s) true in
+  let rev = List.Tot.rev collapsed in
+  let rev' = match rev with ' ' :: rest -> rest | _ -> rev in
+  String.string_of_list (List.Tot.rev rev')
+
+(* translate(string, from, to) per XPath 1.0 §4.2 -- codepoint-based via
+   String.list_of_string/string_of_list (same posture as normalize_space
+   just above and ws_split_chars near id()), NOT byte indexing, so
+   multi-byte UTF-8 characters in `from`/`to` are matched and substituted
+   one codepoint at a time rather than one byte at a time. *)
+
+// Position of the FIRST occurrence of `c` in `from_cs` (0-based), or
+// None if `c` does not occur -- "first occurrence wins" per the spec
+// when a character is repeated in the `from` argument.
+let rec find_char_index (from_cs:list FStar.Char.char) (c:FStar.Char.char) (idx:nat)
+  : Tot (option nat) (decreases from_cs) =
+  match from_cs with
+  | [] -> None
+  | h :: t -> if h = c then Some idx else find_char_index t c (idx + 1)
+
+// The character at position `idx` (0-based) of `to_cs`, or None when
+// `idx` runs past the end -- that "falls off the end of `to`" case is
+// exactly how the spec drops a `from`-character with no replacement
+// (§4.2: "If there is no character in the third argument... then
+// characters ... are removed").
+let rec nth_char (to_cs:list FStar.Char.char) (idx:nat) : Tot (option FStar.Char.char) (decreases to_cs) =
+  match to_cs with
+  | [] -> None
+  | h :: t -> if idx = 0 then Some h else nth_char t (idx - 1)
+
+// One input character: kept unchanged if absent from `from_cs`,
+// substituted by the same-index character of `to_cs` if present there,
+// or dropped entirely if `from_cs` is longer than `to_cs` at that index.
+let translate_char (from_cs to_cs:list FStar.Char.char) (c:FStar.Char.char) : option FStar.Char.char =
+  match find_char_index from_cs c 0 with
+  | None -> Some c
+  | Some i -> nth_char to_cs i
+
+let rec translate_chars (from_cs to_cs:list FStar.Char.char) (cs:list FStar.Char.char)
+  : Tot (list FStar.Char.char) (decreases cs) =
+  match cs with
+  | [] -> []
+  | c :: rest ->
+    let tail = translate_chars from_cs to_cs rest in
+    (match translate_char from_cs to_cs c with
+     | Some c' -> c' :: tail
+     | None -> tail)
+
+let translate_str (s from_s to_s:string) : string =
+  String.string_of_list
+    (translate_chars (String.list_of_string from_s) (String.list_of_string to_s) (String.list_of_string s))
+
+let xn_le_int (a:xpath_number) (k:int) : bool =
+  match xn_compare a (XN_Finite k 0) with Some c -> c <= 0 | None -> false
+
+let xn_lt_int (k:int) (a:xpath_number) : bool =
+  match xn_compare (XN_Finite k 0) a with Some c -> c < 0 | None -> false
+
+// substring(string, start, length?) per XPath 1.0 §4.2: keep 1-based
+// positions P with round(start) <= P < round(start) + round(length).
+// No explicit length is defined as length = +Infinity (spec: "all
+// characters after the position specified"). Composing via xn_arith
+// for the end bound (rather than hand-matching Inf/NaN combinations)
+// is what gets `substring("12345", -1 div 0, 1 div 0) = ""` right:
+// -Infinity + Infinity = NaN, and NaN fails every comparison.
+let rec substring_collect (s:string) (start_r end_bound:xpath_number) (p:nat{p >= 1}) (slen:nat{slen = String.length s})
+  : Tot string (decreases (if slen + 1 > p then slen + 1 - p else 0)) =
+  if p > slen then ""
+  else
+    let rest = substring_collect s start_r end_bound (p + 1) slen in
+    if xn_le_int start_r p && xn_lt_int p end_bound then
+      String.concat "" [String.sub s (p - 1) 1; rest]
+    else rest
+
+let substring_impl (s:string) (start_n len_n:xpath_number) : string =
+  let start_r = xn_round start_n in
+  let len_r = xn_round len_n in
+  let end_bound = xn_arith Ar_Add start_r len_r in
+  substring_collect s start_r end_bound 1 (String.length s)
+
+let item_qname (it:xctx_item) : string =
+  match it with
+  | CI_Elem _ _ n -> (match element_tag n with Some t -> t | None -> "")
+  | CI_Attr _ _ _ a -> a.attr_name
+  | CI_PI _ _ _ tg _ -> tg   // name()/local-name() of a PI is its target
+  | CI_Namespace _ _ _ pfx _ -> pfx   // name()/local-name() = the bound prefix
+  | _ -> ""
+
+// namespace-uri() of a node (XPath 1.0 §4.1): the namespace URI of the
+// expanded name, or "" when the node has no namespace or is not an
+// element/attribute. An element's namespace is its tag prefix resolved
+// against its own xmlns:* declarations then its ancestors (nearest-
+// first); an unprefixed attribute is always in the null namespace, so
+// only a prefixed attribute has a non-empty namespace URI. Reuses the
+// same in-scope resolution (`elem_ns_uri`/`resolve_ns_uri`) that the
+// namespace-URI-aware name tests use, so selection and namespace-uri()
+// agree on what namespace a source node is in.
+let item_namespace_uri (it:xctx_item) : string =
+  match it with
+  | CI_Elem _ anc n ->
+    (match element_tag n with
+     | Some t -> (match elem_ns_uri t (element_attrs n) anc with Some u -> u | None -> "")
+     | None -> "")
+  | CI_Attr _ anc owner a ->
+    let pfx = prefix_of a.attr_name in
+    if pfx = "" then ""
+    else (match resolve_ns_uri pfx (element_attrs owner) anc with Some u -> u | None -> "")
+  | _ -> ""
+
+let rec sum_items (items:list xctx_item) : Tot xpath_number (decreases items) =
+  match items with
+  | [] -> XN_Finite 0 0
+  | hd :: tl -> xn_arith Ar_Add (string_to_xn (item_string_value hd)) (sum_items tl)
+
+// Insertion into a document-ordered list, dropping duplicates (a node
+// already present by path). Used to realise XPath 1.0 §3.3 union
+// semantics: result in document order with duplicates removed.
+let rec insert_by_doc (x:xctx_item) (l:list xctx_item) : Tot (list xctx_item) (decreases l) =
+  match l with
+  | [] -> [x]
+  | y :: ys ->
+    let c = path_compare (item_path x) (item_path y) in
+    if c < 0 then x :: l
+    else if c = 0 then l              // same node (identical path): keep existing
+    else y :: insert_by_doc x ys
+
+let rec doc_sort_dedup (l:list xctx_item) : Tot (list xctx_item) (decreases l) =
+  match l with
+  | [] -> []
+  | x :: xs -> insert_by_doc x (doc_sort_dedup xs)
+
+
+(* ================================================================ *)
+(* Fuel sizing for the evaluator                                     *)
+(*                                                                   *)
+(* Plain structural recursion over xp_expr/xp_step and over          *)
+(* xml_node — neither touches xctx_item or the fuel-based evaluator  *)
+(* below, so both are as safe as Parser.XML's own                    *)
+(* text_content/text_content_list (same structural-decrease idiom    *)
+(* across a type and its list).                                      *)
+(* ================================================================ *)
+
+let rec xp_expr_size (e:xp_expr) : Tot nat (decreases e) =
+  match e with
+  | XE_Path _ steps -> 1 + xp_steps_size steps
+  | XE_FilterPath primary preds steps -> 1 + xp_expr_size primary + xp_exprs_size preds + xp_steps_size steps
+  | XE_Union a b -> 1 + xp_expr_size a + xp_expr_size b
+  | XE_Or a b -> 1 + xp_expr_size a + xp_expr_size b
+  | XE_And a b -> 1 + xp_expr_size a + xp_expr_size b
+  | XE_Compare _ a b -> 1 + xp_expr_size a + xp_expr_size b
+  | XE_Arith _ a b -> 1 + xp_expr_size a + xp_expr_size b
+  | XE_Neg a -> 1 + xp_expr_size a
+  | XE_Number _ _ -> 1
+  | XE_Literal _ -> 1
+  | XE_VarRef _ -> 1
+  | XE_FunCall _ args -> 1 + xp_exprs_size args
+
+and xp_exprs_size (es:list xp_expr) : Tot nat (decreases es) =
+  match es with
+  | [] -> 0
+  | hd :: tl -> 1 + xp_expr_size hd + xp_exprs_size tl
+
+and xp_steps_size (ss:list xp_step) : Tot nat (decreases ss) =
+  match ss with
+  | [] -> 0
+  | hd :: tl -> 1 + xp_step_size hd + xp_steps_size tl
+
+and xp_step_size (s:xp_step) : Tot nat (decreases s) =
+  1 + xp_exprs_size s.step_preds
+
+let rec xml_node_count (n:xml_node) : Tot nat (decreases n) =
+  match n with
+  | XElement _ _ children -> 1 + xml_nodes_count children
+  | _ -> 1
+
+and xml_nodes_count (ns:list xml_node) : Tot nat (decreases ns) =
+  match ns with
+  | [] -> 0
+  | hd :: tl -> xml_node_count hd + xml_nodes_count tl
+
+// Threaded from BOTH the expression's own size and the document's
+// node count — never a bare constant (extraction-semantics trap #3).
+// See the module banner for why a single fuel decrement per call
+// (rather than a structural measure) is the safe choice for this
+// mutual-recursion shape.
+let initial_eval_fuel (e:xp_expr) (doc_nodes:nat) : nat =
+  op_Multiply (xp_expr_size e + 1) (op_Multiply (doc_nodes + 1) 24) + 4096
+
+
+// XSLT 1.0 function-available(): true for the XPath 1.0 core function
+// library and XSLT-added functions this evaluator implements; false
+// for everything else (including all XPath 2.0 / fn:* names). A bare
+// name only — namespaced names (containing ':') that are not one of
+// these are not available.
+let is_supported_xpath_function (nm:string) : bool =
+  nm = "position" || nm = "last" || nm = "count" ||
+  nm = "name" || nm = "local-name" || nm = "namespace-uri" ||
+  nm = "current" || nm = "string" || nm = "concat" ||
+  nm = "contains" || nm = "starts-with" ||
+  nm = "substring-before" || nm = "substring-after" || nm = "substring" ||
+  nm = "string-length" || nm = "normalize-space" || nm = "translate" ||
+  nm = "not" || nm = "true" || nm = "false" || nm = "boolean" || nm = "lang" ||
+  nm = "number" || nm = "sum" || nm = "floor" || nm = "ceiling" || nm = "round" ||
+  nm = "id" || nm = "document" || nm = "format-number" ||
+  nm = "key" || nm = "generate-id"
+
+(* ---- id() support: DTD ID-typed attribute lookup ------------------- *)
+
+// Whitespace-split a string into non-empty tokens (the id() argument is
+// tokenised on XML whitespace: space, tab, CR, LF).
+let rec ws_split_chars (cs:list FStar.Char.char) (cur:list FStar.Char.char) (acc:list string)
+  : Tot (list string) (decreases cs) =
+  match cs with
+  | [] -> List.Tot.rev (if Nil? cur then acc else String.string_of_list (List.Tot.rev cur) :: acc)
+  | c :: rest ->
+    if c = ' ' || c = '\t' || c = '\n' || c = '\r' then
+      ws_split_chars rest [] (if Nil? cur then acc else String.string_of_list (List.Tot.rev cur) :: acc)
+    else ws_split_chars rest (c :: cur) acc
+
+let ws_tokens (s:string) : list string = ws_split_chars (String.list_of_string s) [] []
+
+// Is (element-tag, attribute-name) declared with ATTLIST AttType ID?
+let rec id_attr_declared (id_attrs:list (string & string)) (tag:string) (attr:string)
+  : Tot bool (decreases id_attrs) =
+  match id_attrs with
+  | [] -> false
+  | (e, a) :: rest -> if e = tag && a = attr then true else id_attr_declared rest tag attr
+
+let rec str_mem (x:string) (xs:list string) : Tot bool (decreases xs) =
+  match xs with [] -> false | h :: t -> if h = x then true else str_mem x t
+
+// Element item bears an ID-typed attribute whose value is one of `wanted`.
+let elem_has_id (id_attrs:list (string & string)) (wanted:list string) (it:xctx_item) : bool =
+  match it with
+  | CI_Elem _ _ (XElement tag attrs _) ->
+    List.Tot.existsb
+      (fun (a:xml_attribute) -> id_attr_declared id_attrs tag a.attr_name && str_mem a.attr_value wanted)
+      attrs
+  | _ -> false
+
+// The wanted-id token set for an id() argument (XPath 1.0 §4.1): a
+// node-set contributes the whitespace-separated tokens of each node's
+// string-value; any other type contributes the tokens of its string.
+let id_wanted_tokens (v:xp_value) : list string =
+  match v with
+  | XV_Nodes items -> List.Tot.collect (fun it -> ws_tokens (item_string_value it)) items
+  | other -> ws_tokens (to_string_val other)
+
+(* ---- generate-id() support: a stable, path-derived identifier ------ *)
+
+// item_path is a document-order child-index chain (root = []) that is
+// unique per node WITHIN one evaluation frame (see the xctx_item banner)
+// -- exactly the "same node -> same id, distinct nodes -> distinct ids"
+// contract XSLT 1.0 §12.4 asks for. Render it as a string containing
+// none of '+' (idkey30/49 build accumulator strings like
+// `concat('+', generate-id(x), '+')` and assert the id itself never
+// contains '+', so the generated text must avoid it) by prefixing each
+// segment with an underscore and spelling a negative marker (attribute
+// -1, namespace -2 -- see the xctx_item banner) as "n<digits>" rather
+// than "-<digits>".
+let path_segment_str (n:int) : string =
+  if n < 0 then "n" ^ string_of_int (0 - n) else string_of_int n
+
+let rec path_to_id_string (p:list int) : Tot string (decreases p) =
+  match p with
+  | [] -> ""
+  | x :: rest -> "_" ^ path_segment_str x ^ path_to_id_string rest
+
+// Two DIFFERENT xctx_item values reached via different traversal frames
+// (e.g. a D_Doc-rooted absolute path vs. the same node reached as a
+// plain D_Item) can carry offset item_paths for what is structurally the
+// SAME source node (see match_id_pattern's "same_node" comment for the
+// exact mechanism) -- a corner this simple path-string scheme does not
+// paper over. Every idkey fixture this engine can otherwise run compares
+// generate-id() results produced from the SAME traversal frame (e.g.
+// context node vs. a relative select from it), where item_path is exact,
+// so the divergence is disclosed rather than hidden, not eliminated.
+let generate_id_of_item (it:xctx_item) : string =
+  "genid" ^ path_to_id_string (item_path it)
+
+(* ---- key() support: xsl:key expanded-name + node-set lookup -------- *)
+
+// A key's `name` (declared on xsl:key, or the first argument to key())
+// is a QName, expanded against the IN-SCOPE namespace context exactly
+// like XSLT.Transform.resolve_qname_ns resolves cdata-section-elements
+// (that helper cannot be called from here -- XSLT.Transform is the
+// HIGHER module, it opens XPath.Eval, not the reverse -- so the same
+// two-primitive resolution is repeated here). idkey53 declares
+// `xsl:key name="baz:mykey"` and looks it up as `key('bar:mykey', ...)`
+// where "baz" and "bar" are two prefixes bound to the SAME namespace URI
+// in the stylesheet -- textual name comparison would miss that, so both
+// xsl:key declaration and key() call resolve through this before being
+// compared/stored.
+let resolve_key_qname (nsctx:list (string & string)) (qn:string) : (option string & string) =
+  (lookup_nsctx nsctx (prefix_of qn), local_name_of qn)
+
+(* ================================================================ *)
+(* The evaluator — fuel-threaded, one call = one fuel unit, always.   *)
+(* ================================================================ *)
+
+let rec eval_expr (fuel:nat) (env:xp_env) (e:xp_expr) : Tot xp_value (decreases fuel) =
+  if fuel = 0 then XV_Str ""
+  else
+    match e with
+    | XE_Number v s -> XV_Num (XN_Finite v s)
+    | XE_Literal s -> XV_Str s
+    | XE_VarRef name -> (match lookup_var env.env_vars name with Some v -> v | None -> XV_Str "")
+    | XE_Neg e1 -> XV_Num (xn_neg (to_number_val (eval_expr (fuel - 1) env e1)))
+    | XE_Arith op a b ->
+      XV_Num (xn_arith op (to_number_val (eval_expr (fuel - 1) env a)) (to_number_val (eval_expr (fuel - 1) env b)))
+    | XE_Compare op a b ->
+      XV_Bool (xp_compare op (eval_expr (fuel - 1) env a) (eval_expr (fuel - 1) env b))
+    | XE_And a b ->
+      XV_Bool (to_bool_val (eval_expr (fuel - 1) env a) && to_bool_val (eval_expr (fuel - 1) env b))
+    | XE_Or a b ->
+      XV_Bool (to_bool_val (eval_expr (fuel - 1) env a) || to_bool_val (eval_expr (fuel - 1) env b))
+    | XE_Union a b ->
+      // XPath 1.0 §3.3: the union result is the two node-sets combined,
+      // in document order, with duplicates removed. Each item carries a
+      // document-order path (see xctx_item's banner); `doc_sort_dedup`
+      // sorts by that path and drops any node already present, so an
+      // overlapping union no longer over-counts.
+      (match eval_expr (fuel - 1) env a, eval_expr (fuel - 1) env b with
+       | XV_Nodes na, XV_Nodes nb -> XV_Nodes (doc_sort_dedup (na @ nb))
+       | XV_Nodes na, _ -> XV_Nodes (doc_sort_dedup na)
+       | _, XV_Nodes nb -> XV_Nodes (doc_sort_dedup nb)
+       | _, _ -> XV_Nodes [])
+    | XE_FunCall name args -> eval_funcall (fuel - 1) env name args
+    | XE_Path absolute steps ->
+      if absolute then XV_Nodes (eval_absolute_steps (fuel - 1) env (root_of_item env.env_item) env.env_doc_kids steps)
+      else XV_Nodes (eval_steps (fuel - 1) env [env.env_item] steps)
+    | XE_FilterPath primary preds steps ->
+      let pv = eval_expr (fuel - 1) env primary in
+      (match pv with
+       | XV_Nodes items0 ->
+         let items1 = filter_items_by_preds (fuel - 1) env items0 preds in
+         XV_Nodes (eval_steps (fuel - 1) env items1 steps)
+       | other -> if Nil? preds && Nil? steps then other else XV_Nodes [])
+
+// Absolute-path bootstrap (see the program plan's "bare '/'" note):
+// this engine's xml_node IS the document's root element (Parser.XML
+// has no separate document-node wrapper), so the very first step of
+// an absolute path is matched directly against the root item (as a
+// "self" test) rather than against the root's children — the
+// practically-useful reading of `/tagName`, at the cost of `name(/)`
+// returning the root's own tag rather than strict XPath 1.0's empty
+// document-node name (disclosed divergence).
+and eval_absolute_steps (fuel:nat) (env:xp_env) (root_node:xml_node) (doc_kids:list xml_node) (steps:list xp_step)
+  : Tot (list xctx_item) (decreases fuel) =
+  let vars = env.env_vars in
+  let nsctx = env.env_nsctx in
+  if fuel = 0 then []
+  // Doc-frame branch: when the document node has children BEYOND the root
+  // element (prolog/epilog Comment/PI Misc were retained by
+  // Parser.XML.parse_xml_document_children and threaded here via
+  // env_doc_kids), model the document node as a real starting context
+  // (`doc_node_of doc_kids`) and evaluate the whole absolute path from it
+  // with the ordinary relative-step machinery. `//comment()` then reaches
+  // prolog/epilog comments (child::comment() of the document node), and
+  // `/name` reaches the root element as a child of the document node --
+  // no root-as-self special-case needed, because the document node's real
+  // child axis already exposes the root element. Only reachable for the
+  // rare document carrying prolog/epilog Misc; every other document takes
+  // the legacy branch below (root_node stands in for the document node),
+  // byte-for-byte unchanged.
+  else if (match doc_kids with [] -> false | [_] -> false | _ -> true) then
+    (let doc_node = doc_node_of doc_kids in
+     match steps with
+     | [] -> [doc_node]
+     | _ -> eval_steps (fuel - 1) env [doc_node] steps)
+  else
+    let root_item = CI_Elem [] [] root_node in
+    match steps with
+    | [] -> [root_item]
+    | s :: rest ->
+      let expansion =
+        match s.step_axis with
+        | Ax_Child -> filter_by_node_test nsctx s.step_test [root_item]
+        | Ax_Self -> filter_by_node_test nsctx s.step_test [root_item]
+        | Ax_Descendant -> filter_by_node_test nsctx s.step_test (descendant_items [] [] root_node)
+        | Ax_DescendantOrSelf -> filter_by_node_test nsctx s.step_test (root_item :: descendant_items [] [] root_node)
+        | Ax_Attribute -> filter_by_node_test nsctx s.step_test (apply_axis Ax_Attribute root_item)
+        | _ -> []
+      in
+      let kept = filter_items_by_preds (fuel - 1) env expansion s.step_preds in
+      let normal = eval_steps (fuel - 1) env kept rest in
+      // The `//` abbreviation parses to an unpredicated `descendant-or-
+      // self::node()` step immediately followed by the real `child::`
+      // test step (see Parser.XPath's `dstep`). Real XPath treats `//X`
+      // at the start of an absolute path as `/descendant-or-self::node()
+      // /child::X`: the document ROOT NODE's only child is the document
+      // ELEMENT, so the root element itself must ALSO be tested against
+      // X as a "child of the document node" candidate -- not just
+      // matched as a `descendant-or-self` member the way every other
+      // step treats it (which `expansion` above already does, via
+      // `kept`/`normal`). This engine has no separate document-node
+      // wrapper (root_node IS the document element), so that extra
+      // candidacy has to be added explicitly here; every other node in
+      // the tree reaches its real children through the ordinary child
+      // axis and needs no such patch (only the document root lacks a
+      // "parent" step to fall out of naturally).
+      if s.step_axis = Ax_DescendantOrSelf && s.step_test = NT_Node && Nil? s.step_preds then
+        (match rest with
+         | nxt :: rest2 ->
+           if nxt.step_axis = Ax_Child then
+             let root_as_child =
+               if matches_node_test nsctx nxt.step_test root_item then [root_item] else [] in
+             let root_as_child' = filter_items_by_preds (fuel - 1) env root_as_child nxt.step_preds in
+             let extra = eval_steps (fuel - 1) env root_as_child' rest2 in
+             extra @ normal
+           else normal
+         | [] -> normal)
+      else normal
+
+and eval_steps (fuel:nat) (env:xp_env) (items:list xctx_item) (steps:list xp_step)
+  : Tot (list xctx_item) (decreases fuel) =
+  if fuel = 0 then items
+  else
+    match steps with
+    | [] -> items
+    | s :: rest ->
+      let expanded = expand_step_over_items (fuel - 1) env s items in
+      eval_steps (fuel - 1) env expanded rest
+
+and expand_step_over_items (fuel:nat) (env:xp_env) (s:xp_step) (items:list xctx_item)
+  : Tot (list xctx_item) (decreases fuel) =
+  if fuel = 0 then []
+  else
+    match items with
+    | [] -> []
+    | it :: rest ->
+      let raw = apply_axis s.step_axis it in
+      let tested = filter_by_node_test env.env_nsctx s.step_test raw in
+      let kept = filter_items_by_preds (fuel - 1) env tested s.step_preds in
+      kept @ expand_step_over_items (fuel - 1) env s rest
+
+// Predicates apply in sequence; each predicate's position()/last()
+// are recomputed against the SURVIVING list from the previous
+// predicate (spec-correct chained-predicate renumbering — e.g.
+// `foo[@bar][2]` means "2nd of the @bar-holding foo's", not "2nd foo
+// overall, if it also has @bar").
+and filter_items_by_preds (fuel:nat) (env:xp_env) (items:list xctx_item) (preds:list xp_expr)
+  : Tot (list xctx_item) (decreases fuel) =
+  if fuel = 0 then items
+  else
+    match preds with
+    | [] -> items
+    | p :: rest ->
+      let size = List.Tot.length items in
+      let kept = filter_one_pred (fuel - 1) env p items size 1 in
+      filter_items_by_preds (fuel - 1) env kept rest
+
+// Numeric predicate shorthand (§2.4): `[N]` keeps the node whose
+// proximity position equals N; any other value is boolean()-converted
+// (`boolean(node)` shorthand and, spec-strictly, boolean(number) is
+// value<>0, NOT position=value — but a bare `[N]` is parsed as an
+// XE_Number, so the XV_Num branch below IS specifically the numeric
+// shorthand, not a general boolean(number) coercion of some other
+// numeric expression like `[1+1]`, which XPath 1.0 also treats as the
+// SAME positional shorthand since §2.4 keys off the predicate
+// EXPRESSION's result type being number, not off its AST shape).
+//
+// The per-item predicate environment REUSES the outer `env`'s
+// id_attrs/style_root/decimal_formats/key_table/doc_kids (only
+// env_item/env_pos/env_size vary per candidate) so that id(), key(),
+// document(""), and format-number() called FROM a predicate (e.g. the
+// Muenchian-grouping idiom
+// `town[generate-id() = generate-id(key('places',@state)[1])]`) see
+// the SAME key table / DTD ID map / stylesheet root / decimal-format
+// table the enclosing select expression has -- rather than the empty
+// defaults this used to hard-code, which silently made key()/id()/
+// document()/format-number() always-empty inside ANY predicate
+// (idkey01 and the Muenchian-grouping cluster).
+and filter_one_pred (fuel:nat) (env:xp_env) (p:xp_expr) (items:list xctx_item) (size:nat) (pos:nat)
+  : Tot (list xctx_item) (decreases fuel) =
+  if fuel = 0 then [] // fuel exhaustion: fail closed (empty), never silently include
+  else
+    match items with
+    | [] -> []
+    | it :: rest ->
+      let e = { env with env_item = it; env_pos = pos; env_size = size } in
+      let v = eval_expr (fuel - 1) e p in
+      let keep =
+        match v with
+        | XV_Num n -> (match xn_finite_int (xn_round n) with Some k -> k = pos | None -> false)
+        | _ -> to_bool_val v
+      in
+      let tail = filter_one_pred (fuel - 1) env p rest size (pos + 1) in
+      if keep then it :: tail else tail
+
+and eval_concat_args (fuel:nat) (env:xp_env) (args:list xp_expr) : Tot string (decreases fuel) =
+  if fuel = 0 then ""
+  else
+    match args with
+    | [] -> ""
+    | a :: rest -> to_string_val (eval_expr (fuel - 1) env a) ^ eval_concat_args (fuel - 1) env rest
+
+and eval_funcall (fuel:nat) (env:xp_env) (name:string) (args:list xp_expr)
+  : Tot xp_value (decreases fuel) =
+  if fuel = 0 then XV_Str ""
+  else
+    if name = "position" then XV_Num (XN_Finite env.env_pos 0)
+    else if name = "last" then XV_Num (XN_Finite env.env_size 0)
+    else if name = "count" then
+      (match args with
+       | [a] ->
+         (match eval_expr (fuel - 1) env a with
+          | XV_Nodes items -> XV_Num (XN_Finite (List.Tot.length items) 0)
+          | _ -> XV_Num (XN_Finite 0 0))
+       | _ -> XV_Num (XN_Finite 0 0))
+    else if name = "id" then
+      // XPath 1.0 §4.1 id(): the elements of the context document whose
+      // ID-typed attribute (per the DTD internal-subset ATTLIST, threaded
+      // as env_id_attrs) has a value among the argument's id tokens.
+      (match args with
+       | [a] ->
+         let wanted = id_wanted_tokens (eval_expr (fuel - 1) env a) in
+         (match wanted with
+          | [] -> XV_Nodes []
+          | _ ->
+            let all = all_document_items env.env_item in
+            XV_Nodes (List.Tot.filter (elem_has_id env.env_id_attrs wanted) all))
+       | _ -> XV_Nodes [])
+    else if name = "document" then
+      // XSLT document(): only the empty-string form (the stylesheet itself
+      // as a source document) is supported here; it yields the stylesheet
+      // document's root node (env_style_root). Any other URI selects
+      // nothing (external-document loading is out of scope).
+      (match args with
+       | [a] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         if s = "" then
+           (if is_xnode_none env.env_style_root then XV_Nodes []
+            else XV_Nodes [CI_Elem [] [] env.env_style_root])
+         else XV_Nodes []
+       | _ -> XV_Nodes [])
+    else if name = "name" || name = "local-name" then
+      let items =
+        match args with
+        | [] -> [env.env_item]
+        | a :: _ -> (match eval_expr (fuel - 1) env a with XV_Nodes its -> its | _ -> [])
+      in
+      (match items with
+       | [] -> XV_Str ""
+       | it :: _ ->
+         let qn = item_qname it in
+         XV_Str (if name = "local-name" then local_name_of qn else qn))
+    else if name = "namespace-uri" then
+      // namespace-uri(node-set?) — the namespace URI of the first node in
+      // document order (here: the first of the argument's node-set, or the
+      // context node if no argument). "" for a null-namespace node or a
+      // non-element/attribute node.
+      let items =
+        match args with
+        | [] -> [env.env_item]
+        | a :: _ -> (match eval_expr (fuel - 1) env a with XV_Nodes its -> its | _ -> [])
+      in
+      (match items with
+       | [] -> XV_Str ""
+       | it :: _ -> XV_Str (item_namespace_uri it))
+    else if name = "current" then
+      // XSLT current(): the node the XSLT template is processing. This
+      // engine threads it as env_item at each XPath call-out, so at the
+      // outermost expression current() = the context node. Inside a
+      // location-step predicate the context node changes but env_item
+      // tracks it, so current() there returns the step's context rather
+      // than the XSLT current node (disclosed divergence; the faithful
+      // reading needs a separate current-node slot in xp_env).
+      XV_Nodes [env.env_item]
+    else if name = "string" then
+      (match args with
+       | [] -> XV_Str (item_string_value env.env_item)
+       | a :: _ -> XV_Str (to_string_val (eval_expr (fuel - 1) env a)))
+    else if name = "concat" then XV_Str (eval_concat_args (fuel - 1) env args)
+    else if name = "contains" then
+      (match args with
+       | [a; b] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let sub = to_string_val (eval_expr (fuel - 1) env b) in
+         XV_Bool (Some? (str_find s sub))
+       | _ -> XV_Bool false)
+    else if name = "starts-with" then
+      (match args with
+       | [a; b] ->
+         XV_Bool (string_starts_with2 (to_string_val (eval_expr (fuel - 1) env a)) (to_string_val (eval_expr (fuel - 1) env b)))
+       | _ -> XV_Bool false)
+    else if name = "substring-before" then
+      (match args with
+       | [a; b] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let sub = to_string_val (eval_expr (fuel - 1) env b) in
+         (match str_find s sub with Some i -> XV_Str (String.sub s 0 i) | None -> XV_Str "")
+       | _ -> XV_Str "")
+    else if name = "substring-after" then
+      (match args with
+       | [a; b] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let sub = to_string_val (eval_expr (fuel - 1) env b) in
+         (match str_find s sub with
+          | Some i ->
+            let sl = String.length sub in
+            XV_Str (String.sub s (i + sl) (String.length s - i - sl))
+          | None -> XV_Str "")
+       | _ -> XV_Str "")
+    else if name = "substring" then
+      (match args with
+       | [a; b] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let sv = to_number_val (eval_expr (fuel - 1) env b) in
+         XV_Str (substring_impl s sv XN_PosInf)
+       | [a; b; c] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let sv = to_number_val (eval_expr (fuel - 1) env b) in
+         let lv = to_number_val (eval_expr (fuel - 1) env c) in
+         XV_Str (substring_impl s sv lv)
+       | _ -> XV_Str "")
+    else if name = "string-length" then
+      let s = match args with [] -> item_string_value env.env_item | a :: _ -> to_string_val (eval_expr (fuel - 1) env a) in
+      XV_Num (XN_Finite (String.length s) 0)
+    else if name = "normalize-space" then
+      let s = match args with [] -> item_string_value env.env_item | a :: _ -> to_string_val (eval_expr (fuel - 1) env a) in
+      XV_Str (normalize_space s)
+    else if name = "translate" then
+      (match args with
+       | [a; b; c] ->
+         let s = to_string_val (eval_expr (fuel - 1) env a) in
+         let from_s = to_string_val (eval_expr (fuel - 1) env b) in
+         let to_s = to_string_val (eval_expr (fuel - 1) env c) in
+         XV_Str (translate_str s from_s to_s)
+       | _ -> XV_Str "")
+    else if name = "not" then
+      (match args with [a] -> XV_Bool (not (to_bool_val (eval_expr (fuel - 1) env a))) | _ -> XV_Bool true)
+    else if name = "true" then XV_Bool true
+    else if name = "false" then XV_Bool false
+    else if name = "boolean" then
+      (match args with [a] -> XV_Bool (to_bool_val (eval_expr (fuel - 1) env a)) | _ -> XV_Bool false)
+    else if name = "lang" then
+      // XPath 1.0 lang(string) (§4.3): true iff the context node's
+      // xml:lang (inherited ancestor-or-self, nearest wins -- item_xml_lang)
+      // equals the argument or has it as a case-insensitive sublanguage
+      // prefix (lang_matches). No argument / no in-scope xml:lang: false.
+      (match args with
+       | [a] ->
+         let arg = to_string_val (eval_expr (fuel - 1) env a) in
+         (match item_xml_lang env.env_item with
+          | Some nl -> XV_Bool (lang_matches nl arg)
+          | None -> XV_Bool false)
+       | _ -> XV_Bool false)
+    else if name = "number" then
+      (match args with
+       | [] -> XV_Num (to_number_val (XV_Str (item_string_value env.env_item)))
+       | a :: _ -> XV_Num (to_number_val (eval_expr (fuel - 1) env a)))
+    else if name = "sum" then
+      (match args with
+       | [a] -> (match eval_expr (fuel - 1) env a with XV_Nodes items -> XV_Num (sum_items items) | _ -> XV_Num (XN_Finite 0 0))
+       | _ -> XV_Num (XN_Finite 0 0))
+    else if name = "floor" then
+      (match args with [a] -> XV_Num (xn_floor (to_number_val (eval_expr (fuel - 1) env a))) | _ -> XV_Num XN_NaN)
+    else if name = "ceiling" then
+      (match args with [a] -> XV_Num (xn_ceiling (to_number_val (eval_expr (fuel - 1) env a))) | _ -> XV_Num XN_NaN)
+    else if name = "round" then
+      (match args with [a] -> XV_Num (xn_round (to_number_val (eval_expr (fuel - 1) env a))) | _ -> XV_Num XN_NaN)
+    else if name = "function-available" then
+      (match args with
+       | [a] -> XV_Bool (is_supported_xpath_function (to_string_val (eval_expr (fuel - 1) env a)))
+       | _ -> XV_Bool false)
+    else if name = "format-number" then
+      // XSLT 1.0 format-number(number, picture-string, decimal-format-name?)
+      // (§12.3). The named-format lookup falls back to the built-in
+      // defaults when the 3rd argument names a format not in scope
+      // (env_decimal_formats, threaded from the stylesheet's
+      // xsl:decimal-format declarations by XSLT.Transform.build_style).
+      (match args with
+       | [a; b] ->
+         let num = to_number_val (eval_expr (fuel - 1) env a) in
+         let pic = to_string_val (eval_expr (fuel - 1) env b) in
+         XV_Str (format_number_str num pic (lookup_decimal_format env.env_decimal_formats ""))
+       | [a; b; c] ->
+         let num = to_number_val (eval_expr (fuel - 1) env a) in
+         let pic = to_string_val (eval_expr (fuel - 1) env b) in
+         let nm = to_string_val (eval_expr (fuel - 1) env c) in
+         XV_Str (format_number_str num pic (lookup_decimal_format env.env_decimal_formats nm))
+       | _ -> XV_Str "")
+    else if name = "element-available" then
+      // We construct result nodes structurally; no extension elements
+      // are available. The XSLT built-in instruction set is handled by
+      // the transform engine, not via this XPath predicate, so report
+      // false for the XPath-visible element-availability probe.
+      XV_Bool false
+    else if name = "key" then
+      // XSLT 1.0 key(name, value) (§12.2): every node registered in
+      // env_key_table under the expanded-name `name` whose USE-value
+      // equals a member of `value`'s wanted-value set (a node-set
+      // argument contributes each of its nodes' own string-values; any
+      // other value contributes its single string form -- same shape as
+      // id()'s argument handling above). Result is document-order,
+      // duplicate-free (doc_sort_dedup), like every other node-set this
+      // evaluator produces.
+      (match args with
+       | [a; b] ->
+         let kname = resolve_key_qname env.env_nsctx (to_string_val (eval_expr (fuel - 1) env a)) in
+         let wanted =
+           match eval_expr (fuel - 1) env b with
+           | XV_Nodes items -> List.Tot.map item_string_value items
+           | other -> [to_string_val other]
+         in
+         let hits =
+           List.Tot.filter
+             (fun (e:key_entry) -> let (kn, kv, _) = e in kn = kname && str_mem kv wanted)
+             env.env_key_table
+         in
+         XV_Nodes (doc_sort_dedup (List.Tot.map (fun (e:key_entry) -> let (_, _, it) = e in it) hits))
+       | _ -> XV_Nodes [])
+    else if name = "generate-id" then
+      // XSLT 1.0 generate-id(node-set?) (§12.4): a string uniquely and
+      // consistently identifying the FIRST node (document order) of the
+      // argument node-set, or the context node with no argument. An
+      // empty node-set argument yields "" (no fixture pins this exact
+      // choice, but it is the common real-implementation behavior and
+      // never crashes).
+      (match args with
+       | [] -> XV_Str (generate_id_of_item env.env_item)
+       | a :: _ ->
+         (match eval_expr (fuel - 1) env a with
+          | XV_Nodes ns ->
+            (match doc_sort_dedup ns with
+             | it :: _ -> XV_Str (generate_id_of_item it)
+             | [] -> XV_Str "")
+          | _ -> XV_Str ""))
+    else XV_Str "" // unknown function name: Stage 1 scope, no crash
+
+
+(* ================================================================ *)
+(* Entry points                                                      *)
+(* ================================================================ *)
+
+// Locate `target` among `nodes` by structural identity, returning its
+// index (0 if absent — best-effort, see path_of_chain).
+let rec find_child_index (nodes:list xml_node) (target:xml_node) (i:nat)
+  : Tot nat (decreases nodes) =
+  match nodes with
+  | [] -> 0
+  | x :: rest -> if x = target then i else find_child_index rest target (i + 1)
+
+// Document-order path of a root-to-node chain [root; ...; parent; ctx],
+// each hop the child index of the next node within the current node.
+let rec path_of_chain (chain:list xml_node) : Tot (list int) (decreases chain) =
+  match chain with
+  | [] -> []
+  | [_] -> []
+  | parent :: rest ->
+    (match rest with
+     | [] -> []
+     | child :: _ ->
+       let i = find_child_index (element_children parent) child 0 in
+       i :: path_of_chain rest)
+
+// Reconstruct a context node's path from its ancestor chain
+// (nearest-first). Best-effort: structurally-identical siblings on the
+// ancestor path are indistinguishable, affecting only the document-order
+// axes from such a mid-document entry (eval_xpath_from_root is exact).
+let compute_ctx_path (ancestors:list xml_node) (ctx:xml_node) : list int =
+  path_of_chain (List.Tot.append (List.Tot.rev ancestors) [ctx])
+
+// Evaluate `expr_text` with the document root as the initial context
+// node (position 1, size 1) — the common case for a fresh document.
+let eval_xpath_from_root (root_node:xml_node) (vars:list (string & xp_value)) (expr_text:string)
+  : option xp_value =
+  match parse_xpath expr_text with
+  | None -> None
+  | Some e ->
+    let fuel = initial_eval_fuel e (xml_node_count root_node) in
+    let env = { env_item = CI_Elem [] [] root_node; env_pos = 1; env_size = 1; env_vars = vars; env_nsctx = []; env_doc_kids = []; env_id_attrs = []; env_style_root = xnode_none; env_decimal_formats = []; env_key_table = [] } in
+    Some (eval_expr fuel env e)
+
+// Evaluate with an arbitrary context node deeper in the document,
+// supplying its proper ancestors (nearest-first — see the xctx_item
+// banner) so relative axes (parent, ancestor, following absolute
+// paths via root_of_item) resolve correctly.
+let eval_xpath_from_item (ancestors:list xml_node) (context_node:xml_node) (vars:list (string & xp_value)) (expr_text:string)
+  : option xp_value =
+  match parse_xpath expr_text with
+  | None -> None
+  | Some e ->
+    let doc_nodes = xml_node_count context_node + xml_nodes_count ancestors in
+    let fuel = initial_eval_fuel e doc_nodes in
+    let env = { env_item = CI_Elem (compute_ctx_path ancestors context_node) ancestors context_node;
+                env_pos = 1; env_size = 1; env_vars = vars; env_nsctx = []; env_doc_kids = []; env_id_attrs = []; env_style_root = xnode_none; env_decimal_formats = []; env_key_table = [] } in
+    Some (eval_expr fuel env e)
