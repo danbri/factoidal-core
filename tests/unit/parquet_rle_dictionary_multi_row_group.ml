@@ -1,0 +1,552 @@
+(* parquet_rle_dictionary_multi_row_group.ml -- regression pin for issue
+   #98 (reopened 2026-07-05): the on-disk COTTAS/Parquet reader must
+   correctly decode RLE_DICTIONARY-encoded columns across every row
+   group, not just the first.
+
+   Root cause (see docs/designissues/2026-07-05-disk-backed-db-perf-review.md
+   roadmap item 1 and Parquet.Footer.fst's bug-history comments):
+
+     1. `probe_parquet_column_dictionary_page_offset[_in_row_group]` read
+        Thrift field 14 (`bloom_filter_offset`) instead of field 11
+        (`dictionary_page_offset`) off `ColumnMetaData`. DuckDB/pycottas
+        write a bloom filter after the data pages by default, so field 14
+        usually *was* present and looked like a valid offset -- but it
+        pointed at bloom-filter bytes, not a dictionary page header, so
+        decompression failed and the column read as undecodable.
+
+     2. Every column DuckDB/pycottas emits is Parquet-schema OPTIONAL
+        (confirmed via `parquet_schema()`; SQL `NOT NULL` on s/p/o is not
+        propagated to the Parquet REQUIRED repetition type), so every
+        data page opens with a definition-level run: a 4-byte LE
+        byte-length, then that many bytes of RLE-encoded levels, BEFORE
+        the actual value bytes. The DLBA decoder already skipped this
+        (`..._values_offset[_in_row_group]`); the RLE_DICTIONARY decoder
+        did not, so it silently misread definition-level bytes as the
+        dictionary bit-width + index stream. On some columns this still
+        produced a decode of the *right length* -- a silent wrong answer,
+        not a loud failure -- observed on medication.cottas's predicate
+        column (3-bit dictionary) before the fix.
+
+   Fixture: tests/unit/fixtures/parquet_rle_dictionary_multi_rg.cottas,
+   4,100 quads / 3 row groups (2048, 2048, 4), built by DuckDB with
+   PARQUET_VERSION v2 + DICTIONARY_SIZE_LIMIT 4 so p/g are
+   RLE_DICTIONARY in every row group and o adaptively switches from
+   DELTA_LENGTH_BYTE_ARRAY (row groups 0-1, 2048 distinct values each)
+   to RLE_DICTIONARY (row group 2, only 4 rows / 4 distinct values) --
+   the same adaptive-encoding shape the perf review measured on
+   gene.cottas. Row i (0-indexed, row order = insertion order): s =
+   "http://ex.org/s<i mod 4>", p = "http://ex.org/p<i mod 3>", o =
+   "lit<i>" (unique per row), g cycles gA / gB / DEFAULT every 3 rows.
+   Built via a direct DuckDB `INSERT` (not through
+   tools/corpus_pipeline.py), so cell values are bare strings, NOT
+   N-Quads-token-wrapped (no `<...>` / `"..."` the way real pycottas
+   output stores them) -- irrelevant here since this fixture pins
+   byte-level Parquet decode mechanics (row-group walk, dictionary-page
+   field number, definition-level skip), which do not care what string
+   content is inside a cell. Rebuild with tools/../scratchpad
+   make_fixture.py-equivalent logic if the shape ever needs to change;
+   do not hand-edit the binary. *)
+
+let passed = ref 0
+let failed = ref 0
+
+let check ~name ok =
+  if ok then begin
+    incr passed;
+    Printf.printf "  PASS  %s\n" name
+  end else begin
+    incr failed;
+    Printf.printf "  FAIL  %s\n" name
+  end
+
+(* Matches the convention in tests/unit/lifesci_closure_timing.ml etc.:
+   a repo-root-relative path. run-all.sh (and any manual invocation of
+   the compiled test binary) is expected to run with cwd = repo root. *)
+let fixture_dir = "tests/unit/fixtures"
+
+let fixture_path = Filename.concat fixture_dir "parquet_rle_dictionary_multi_rg.cottas"
+let truncated_path = Filename.concat fixture_dir "parquet_rle_dictionary_multi_rg.truncated.cottas"
+
+(* Second, single-row-group fixture pinning a DISTINCT bug from the same
+   #98-reopened investigation: the per-row-group and whole-column
+   dispatchers used to "try DELTA_LENGTH_BYTE_ARRAY first, and if it
+   returns Some at all, use it" before falling back to RLE_DICTIONARY.
+   That try-then-fallback shape is unsound -- the DLBA parser has no
+   encoding discriminator of its own, so pointed at RLE_DICTIONARY bytes
+   it can walk the generic varint header fields and land on an
+   internally-consistent-looking small/zero value_count, returning
+   `Some []` (or `Some` of a wrong-length list) instead of `None`. `Some
+   []` is indistinguishable from "this column has zero rows" to every
+   caller upstream -- a silent wrong answer, not a decode failure. This
+   is exactly the shape of the g21-fixture "silent COUNT=0" bug the perf
+   review recorded: 818 real quads, a genuinely RLE_DICTIONARY-encoded
+   named-graph column, decoding to zero rows through the OLD dispatcher
+   even though every individual RLE_DICTIONARY primitive worked in
+   isolation. Fixed by dispatching on the page header's OWN declared
+   encoding instead of a try/fallback.
+
+   parquet_rle_dictionary_named_graph_column.cottas: 818 quads, 1 row
+   group, g column RLE_DICTIONARY with exactly 2 distinct named graphs
+   (no default-graph rows at all -- this is what made the pre-fix bug
+   reproduce reliably: an all-named-graph column with nothing to fall
+   back on). Source data: s cycles "http://ex.org/s<i mod 200>", p
+   cycles "http://ex.org/p<i mod 5>", o = "val<i>" (unique per row), g
+   cycles gA/gB every other quad -- but DuckDB's on-disk physical row
+   order does not preserve insertion order for this table (see
+   `ng_expected_g` below), so point-lookup expectations are pinned from
+   an observed `parquet_scan` read, not derived from the source formula. *)
+let ng_fixture_path = Filename.concat fixture_dir "parquet_rle_dictionary_named_graph_column.cottas"
+let ng_expected_n = 818
+(* DuckDB's on-disk physical row order for this table does not match
+   source insertion order (internal chunking/threading during the
+   CREATE TABLE + executemany + COPY pipeline reorders rows) -- these
+   are the actual decoded values at each sampled index, read once via
+   `SELECT s,p,o,g FROM parquet_scan(...)` at fixture-build time and
+   pinned here as ground truth, not derived from a formula. *)
+let ng_expected_g = function
+  | 0 | 1 | 2 | 3 | 408 | 409 -> "<http://ex.org/gA>"
+  | 816 | 817 -> "<http://ex.org/gB>"
+  | i -> failwith (Printf.sprintf "ng_expected_g: no pinned value for row %d" i)
+
+let opt_get name = function
+  | FStar_Pervasives_Native.Some v -> v
+  | FStar_Pervasives_Native.None ->
+    check ~name:(name ^ " [must decode]") false;
+    failwith (name ^ ": decode returned None, aborting test")
+
+let expected_n = 4100
+
+let expected_s i = Printf.sprintf "http://ex.org/s%d" (i mod 4)
+let expected_p i = Printf.sprintf "http://ex.org/p%d" (i mod 3)
+let expected_o i = Printf.sprintf "lit%d" i
+let expected_g i = match i mod 3 with
+  | 0 -> "http://ex.org/gA"
+  | 1 -> "http://ex.org/gB"
+  | _ -> "DEFAULT"
+
+let string_of_cell = function
+  | FStar_Pervasives_Native.Some s -> s
+  | FStar_Pervasives_Native.None -> "<NONE-CELL>"
+
+let () =
+  Printf.printf "== parquet_rle_dictionary_multi_row_group ==\n";
+  Printf.printf "  fixture: %s\n%!" fixture_path;
+
+  if not (Sys.file_exists fixture_path) then begin
+    Printf.printf "  FAIL  fixture missing at %s\n" fixture_path;
+    Printf.printf "== summary: 0 pass, 1 fail (out of 1) ==\n";
+    exit 1
+  end;
+
+  (* 1. Multi-row-group shape sanity. *)
+  let rg_count =
+    opt_get "row_group_count" (Parquet_Footer.probe_parquet_row_group_count fixture_path) in
+  check ~name:"row_group_count = 3" (Z.to_int rg_count = 3);
+
+  (* 2. Every column decodes across ALL row groups, with the right total
+     row count -- this is the #98 Gap B assertion (multi-row-group). *)
+  let decode_col col_index =
+    opt_get (Printf.sprintf "decode column %d" col_index)
+      (Parquet_Footer.probe_parquet_column_decode_all_row_groups fixture_path (Z.of_int col_index))
+  in
+  let s_col = decode_col 0 in
+  let p_col = decode_col 1 in
+  let o_col = decode_col 2 in
+  let g_col = decode_col 3 in
+  check ~name:"s column row count" (List.length s_col = expected_n);
+  check ~name:"p column row count" (List.length p_col = expected_n);
+  check ~name:"o column row count" (List.length o_col = expected_n);
+  check ~name:"g column row count" (List.length g_col = expected_n);
+
+  (* 3. Point-lookup rows: check a sample spanning all three row groups
+     (including the tiny 4-row trailing group where o adaptively
+     switches from DLBA to RLE_DICTIONARY) decode to the exact expected
+     strings -- this is the #98 Gap A assertion (RLE_DICTIONARY value
+     correctness), not just "some string came out." *)
+  let sample_indices = [0; 1; 2; 2047; 2048; 2049; 4095; 4096; 4098; 4099] in
+  List.iter (fun i ->
+    let s = string_of_cell (List.nth s_col i) in
+    let p = string_of_cell (List.nth p_col i) in
+    let o = string_of_cell (List.nth o_col i) in
+    let g = string_of_cell (List.nth g_col i) in
+    check ~name:(Printf.sprintf "row %d s" i) (s = expected_s i);
+    check ~name:(Printf.sprintf "row %d p" i) (p = expected_p i);
+    check ~name:(Printf.sprintf "row %d o" i) (o = expected_o i);
+    check ~name:(Printf.sprintf "row %d g" i) (g = expected_g i)
+  ) sample_indices;
+
+  (* 4. Distinct-value counts: p and g must resolve through the
+     dictionary to exactly the low-cardinality set (3 each), not a
+     misaligned/garbage superset. *)
+  let distinct_count col =
+    let tbl = Hashtbl.create 16 in
+    List.iter (fun c -> Hashtbl.replace tbl (string_of_cell c) ()) col;
+    Hashtbl.length tbl
+  in
+  check ~name:"p distinct = 3" (distinct_count p_col = 3);
+  check ~name:"g distinct = 3" (distinct_count g_col = 3);
+  check ~name:"s distinct = 4" (distinct_count s_col = 4);
+  check ~name:"o distinct = 4100 (all unique)" (distinct_count o_col = expected_n);
+
+  (* 5. Loud failure on a corrupt/truncated variant: a store that cannot
+     be decoded must come back None, never a plausible-but-wrong answer
+     (CLAUDE.md: silent wrong answers are the priority failure mode,
+     worse than a hard error). The truncated file cuts the last row
+     group's data pages off mid-file. *)
+  if not (Sys.file_exists truncated_path) then
+    check ~name:"truncated fixture present" false
+  else begin
+    (match Parquet_Footer.probe_parquet_column_decode_all_row_groups
+             truncated_path (Z.of_int 3) with
+     | FStar_Pervasives_Native.None ->
+       check ~name:"truncated file: g column decode fails loudly (None)" true
+     | FStar_Pervasives_Native.Some lst ->
+       (* Acceptable alternate loud-failure shape: decoding succeeds in
+          length but must not silently agree with the untruncated file's
+          row count -- a length match here would mean the reader is
+          fabricating rows past EOF, which is the silent-wrong-answer
+          failure this test exists to catch. *)
+       check ~name:"truncated file: g column must not silently match full row count"
+         (List.length lst <> expected_n))
+  end;
+
+  (* 6. The second fixture: single-row-group, all-named-graph,
+     RLE_DICTIONARY graph column -- pins the encoding-based-dispatch fix
+     directly, since the multi-row-group fixture above happened not to
+     trigger the old try/fallback dispatcher's spurious-empty-decode bug
+     (byte-content-dependent; this fixture is the one that reliably did). *)
+  if not (Sys.file_exists ng_fixture_path) then
+    check ~name:"named-graph-column fixture present" false
+  else begin
+    let ng_rg_count =
+      opt_get "ng row_group_count"
+        (Parquet_Footer.probe_parquet_row_group_count ng_fixture_path) in
+    check ~name:"ng row_group_count = 1" (Z.to_int ng_rg_count = 1);
+
+    let ng_g_col =
+      opt_get "ng decode g column"
+        (Parquet_Footer.probe_parquet_column_decode_all_row_groups
+           ng_fixture_path (Z.of_int 3)) in
+    check ~name:"ng g column row count = 818 (not silently 0)"
+      (List.length ng_g_col = ng_expected_n);
+    check ~name:"ng g distinct = 2" (distinct_count ng_g_col = 2);
+    List.iter (fun i ->
+      let g = string_of_cell (List.nth ng_g_col i) in
+      check ~name:(Printf.sprintf "ng row %d g" i) (g = ng_expected_g i)
+    ) [0; 1; 2; 3; 408; 409; 816; 817]
+  end;
+
+  (* 7. Row-group-offset-table correctness pin (2026-07-05 follow-up to
+     issue #98 / the Mim3 footer-hex memoization): `probe_parquet_column_
+     chunk_in_row_group_locator` re-walks and skip-decodes every
+     PRECEDING row-group struct from scratch on every call, which is
+     O(rg_index) per call and, summed over an unpruned scan of every
+     row group, O(row_groups^2) -- see
+     docs/designissues/2026-07-05-disk-backed-db-perf-review.md roadmap
+     item 2. The fix computes every row group's start offset in ONE
+     linear pass (`probe_parquet_row_group_offset_table`) and threads it
+     through `_from_table` siblings of the `_in_row_group` family
+     instead of re-deriving it per call. This is a CORRECTNESS pin (not
+     a timing pin, per CLAUDE.md's "correctness pins matter more than
+     timing pins in unit tests"): every table-indexed probe must return
+     byte-identical results to the original per-call, path-based probe,
+     across all 3 row groups x 4 columns of the same fixture the rest of
+     this file already exercises -- a store with "enough groups" (3,
+     already used above) that the old O(rg_index) walk is exercised at
+     every index, not just rg_index=0. *)
+  let rg_offset_table =
+    opt_get "row_group_offset_table"
+      (Parquet_Footer.probe_parquet_row_group_offset_table fixture_path) in
+  check ~name:"offset table has 3 row-group starts"
+    (List.length rg_offset_table.Parquet_Footer.prgt_row_group_starts = 3);
+
+  for rg = 0 to 2 do
+    for col = 0 to 3 do
+      let via_table =
+        Parquet_Footer.probe_parquet_column_decode_in_row_group_from_table
+          rg_offset_table fixture_path (Z.of_int rg) (Z.of_int col) in
+      let via_path =
+        Parquet_Footer.probe_parquet_column_decode_in_row_group
+          fixture_path (Z.of_int rg) (Z.of_int col) in
+      check
+        ~name:(Printf.sprintf "table-indexed decode == path-based decode (rg=%d, col=%d)" rg col)
+        (via_table = via_path)
+    done
+  done;
+
+  (* Dictionary-only probe (used by the column-prune planner's per-query
+     dict cache, `RDF.CottasStore.fst`'s `populate_dict_cache_for_column`
+     -- the other measured O(row_groups^2) call site) must likewise
+     agree with the original path-based probe for every row group, on
+     the dictionary-bearing p and g columns (col 1, col 3). *)
+  for rg = 0 to 2 do
+    List.iter (fun col ->
+      let via_table =
+        Parquet_Footer.probe_parquet_column_dictionary_in_row_group_from_table
+          rg_offset_table fixture_path (Z.of_int rg) (Z.of_int col) in
+      let via_path =
+        Parquet_Footer.probe_parquet_column_dictionary_in_row_group
+          fixture_path (Z.of_int rg) (Z.of_int col) in
+      check
+        ~name:(Printf.sprintf "table-indexed dict == path-based dict (rg=%d, col=%d)" rg col)
+        (via_table = via_path)
+    ) [1; 3]
+  done;
+
+  (* 8. Cross-query dictionary cache (Tsade2 Phase E, 2026-07-06 --
+     docs/designissues/2026-07-05-disk-backed-db-perf-review.md roadmap
+     item 2's residual: the planner rebuilt its dict cache from scratch
+     on EVERY query, redoing the per-row-group dictionary decompress +
+     decode each time; `RDF.CottasStore.PageCache` now carries a
+     process-lifetime `dict_page_cache` the planner consults instead).
+     Correctness pins, per the same correctness-over-timing rule as
+     section 7:
+
+     (a) the global cached probe must return byte-identical results to
+         the raw path-based probe for every (rg, dictionary-bearing col)
+         -- on BOTH the first call (cache miss -> decode -> insert) and
+         a repeated call (cache hit -> stored value), because a hit that
+         differs from a fresh decode is exactly the stale/corrupt-cache
+         wrong-answer failure mode the kill switch exists to bisect;
+
+     (b) the pure F* LRU bookkeeping (`dpcache_get` / `dpcache_put` /
+         eviction at capacity) must behave as specified, since the OCaml
+         glue only threads a ref through these verified functions. *)
+  for rg = 0 to 2 do
+    List.iter (fun col ->
+      let via_path =
+        Parquet_Footer.probe_parquet_column_dictionary_in_row_group
+          fixture_path (Z.of_int rg) (Z.of_int col) in
+      let via_global_first =
+        RDF_CottasStore_PageCache.dpcache_probe_dict_in_row_group_global_from_table
+          rg_offset_table fixture_path (Z.of_int rg) (Z.of_int col) in
+      let via_global_again =
+        RDF_CottasStore_PageCache.dpcache_probe_dict_in_row_group_global_from_table
+          rg_offset_table fixture_path (Z.of_int rg) (Z.of_int col) in
+      check
+        ~name:(Printf.sprintf "global dict cache miss == path-based dict (rg=%d, col=%d)" rg col)
+        (via_global_first = via_path);
+      check
+        ~name:(Printf.sprintf "global dict cache hit == path-based dict (rg=%d, col=%d)" rg col)
+        (via_global_again = via_path)
+    ) [1; 3]
+  done;
+
+  (* (b) Pure LRU semantics of the F*-verified dict_page_cache. *)
+  let module PC = RDF_CottasStore_PageCache in
+  let z = Z.of_int in
+  let cap2 = z 2 in
+  let c0 = PC.dpcache_empty cap2 in
+  let k1 = (z 0, z 1) and k2 = (z 1, z 1) and k3 = (z 2, z 1) in
+  let c1 = PC.dpcache_put c0 k1 ["a"] cap2 in
+  let c2 = PC.dpcache_put c1 k2 ["b"] cap2 in
+  (match PC.dpcache_get c2 k1 with
+   | (FStar_Pervasives_Native.Some ["a"], _) ->
+     check ~name:"dpcache_get returns stored dict" true
+   | _ -> check ~name:"dpcache_get returns stored dict" false);
+  (* Touch k1 (bumps its age above k2's), then insert k3 past capacity:
+     k2 is now the LRU victim; k1 and k3 must survive. *)
+  let (_, c3) = PC.dpcache_get c2 k1 in
+  let c4 = PC.dpcache_put c3 k3 ["c"] cap2 in
+  (match PC.dpcache_get c4 k2 with
+   | (FStar_Pervasives_Native.None, _) ->
+     check ~name:"dpcache_put evicts LRU entry at capacity" true
+   | _ -> check ~name:"dpcache_put evicts LRU entry at capacity" false);
+  (match PC.dpcache_get c4 k1, PC.dpcache_get c4 k3 with
+   | (FStar_Pervasives_Native.Some ["a"], _), (FStar_Pervasives_Native.Some ["c"], _) ->
+     check ~name:"dpcache_put keeps recently-used + new entries" true
+   | _ -> check ~name:"dpcache_put keeps recently-used + new entries" false);
+  (* Capacity 0 disables the cache: puts are dropped, gets miss. *)
+  let cz = PC.dpcache_put (PC.dpcache_empty (z 0)) k1 ["a"] (z 0) in
+  (match PC.dpcache_get cz k1 with
+   | (FStar_Pervasives_Native.None, _) ->
+     check ~name:"dpcache capacity 0 stores nothing" true
+   | _ -> check ~name:"dpcache capacity 0 stores nothing" false);
+
+  (* 9. Selective-column exact-count regression (roadmap item 4,
+     2026-07-06: docs/designissues/2026-07-05-disk-backed-db-perf-
+     review.md). `cottas_ondisk_count_exact` used to decode ALL FOUR
+     s/p/o/g columns of every row group whenever ANY of s/p/o was
+     bound, even though `cell_match None _` always matches regardless
+     of the actual cell -- an unbound column's VALUE is never needed
+     for a count-only query, and on the gene corpus decoding the
+     unneeded high-cardinality s/o columns was measured as the
+     dominant cost of a ~55-58s cold COUNT. The fix
+     (`count_selective_matches_seq` / `bound_col_match` in
+     RDF.CottasStore.fst, driving `walk_row_groups_count_exact_global`)
+     decodes only the columns whose bound is actually `Some`. This pin
+     proves the new selective decoder returns the EXACT SAME count as
+     a naive full-column reference scan, across a spread of
+     bound-pattern shapes (bound-p-only, bound-p-and-o, bound-s-only,
+     bound-g-only, all-four-bound, no-bounds-at-all) and across all 3
+     row groups of this fixture (including the 4-row trailing group
+     where o adaptively switches encoding) -- the exact shape that
+     made the old function's blanket 4-column decode expensive. *)
+  Printf.printf "\n== selective-column exact count (roadmap item 4) ==\n%!";
+  let module CS = RDF_CottasStore_ColumnSeq in
+  let module Store = RDF_CottasStore in
+  let some x = FStar_Pervasives_Native.Some x in
+  let none = FStar_Pervasives_Native.None in
+  let rg_offset_table2 =
+    opt_get "row_group_offset_table (section 9)"
+      (Parquet_Footer.probe_parquet_row_group_offset_table fixture_path) in
+  (* Reference count: naive scan over the whole-column lists already
+     decoded in section 2/3 above (s_col/p_col/o_col/g_col), fully
+     independent of the new selective-decode function. *)
+  let cell_matches expected actual =
+    match expected with
+    | FStar_Pervasives_Native.None -> true
+    | FStar_Pervasives_Native.Some e -> e = actual
+  in
+  let naive_count bound_s bound_p bound_o bound_g =
+    let n = ref 0 in
+    for i = 0 to expected_n - 1 do
+      let s = string_of_cell (List.nth s_col i) in
+      let p = string_of_cell (List.nth p_col i) in
+      let o = string_of_cell (List.nth o_col i) in
+      let g = string_of_cell (List.nth g_col i) in
+      if cell_matches bound_s s && cell_matches bound_p p &&
+         cell_matches bound_o o && cell_matches bound_g g
+      then incr n
+    done;
+    !n
+  in
+  (* Selective-decode count: sum count_selective_matches_seq over the 3
+     row groups, decoding ONLY the bound columns (+ g, always -- same
+     contract as walk_row_groups_count_exact_global). *)
+  let selective_count bound_s bound_p bound_o bound_g =
+    let total = ref 0 in
+    for rg = 0 to 2 do
+      let g_col_seq =
+        opt_get (Printf.sprintf "seq-decode g col rg=%d" rg)
+          (CS.probe_parquet_column_decode_in_row_group_seq_from_table
+             rg_offset_table2 fixture_path (z rg) (z 3)) in
+      let decode_if bound col =
+        if bound <> none then
+          CS.probe_parquet_column_decode_in_row_group_seq_from_table
+            rg_offset_table2 fixture_path (z rg) (z col)
+        else none
+      in
+      let s_opt = decode_if bound_s 0 in
+      let p_opt = decode_if bound_p 1 in
+      let o_opt = decode_if bound_o 2 in
+      let n = CS.cottas_column_length g_col_seq in
+      let rg_count =
+        Store.count_selective_matches_seq
+          bound_s bound_p bound_o bound_g s_opt p_opt o_opt g_col_seq n (z 0) (z 0) in
+      total := !total + (Z.to_int rg_count)
+    done;
+    !total
+  in
+  let check_combo name bound_s bound_p bound_o bound_g =
+    let expected = naive_count bound_s bound_p bound_o bound_g in
+    let got = selective_count bound_s bound_p bound_o bound_g in
+    check ~name:(Printf.sprintf "selective count %s (expected %d, got %d)" name expected got)
+      (expected = got)
+  in
+  check_combo "bound-p-only" none (some "http://ex.org/p1") none none;
+  check_combo "bound-p-and-o" none (some "http://ex.org/p2") (some "lit4097") none;
+  check_combo "bound-s-only" (some "http://ex.org/s2") none none none;
+  check_combo "bound-g-only" none none none (some "http://ex.org/gA");
+  check_combo "all-four-bound" (some "http://ex.org/s0") (some "http://ex.org/p0")
+    (some "lit0") (some "http://ex.org/gA");
+  check_combo "no-bounds-at-all" none none none none;
+
+  (* 10. Selective-column SEARCH (2026-07-06 follow-up to item 9's
+     COUNT fix, docs/designissues/2026-07-05-disk-backed-db-perf-
+     review.md and the accompanying search-selective-decode design
+     note): `cottas_ondisk_search`'s output construction used to
+     round-trip every matched row's already-decoded column token
+     through `ondisk_lookup_*_id_global` (token -> corpus-wide id, via
+     the OCaml Bet7 lazy loader's `collect_distinct`, which decodes and
+     dedupes an ENTIRE COLUMN ACROSS EVERY ROW GROUP the first time
+     that column is touched, regardless of how few row groups a query
+     actually needed). `token_to_subject` / `_predicate` / `_object` /
+     `_graph_name` (new in RDF.CottasStore.fst) parse the raw column
+     token DIRECTLY into its typed term via `Parser.NTriples`'s
+     verified N-Triples term grammar instead -- no id, no corpus-wide
+     dictionary. This section pins those four functions directly
+     against hand-written, format-conformant tokens (`<iri>`,
+     `_:bnode`, `"lex"`, `"lex"@lang`, `"lex"^^<dt>` --
+     docs/cottas-format-v1.md section 4) rather than against this
+     file's own fixture, whose s/p/o sample values
+     (`http://ex.org/s0`, etc.) are NOT bracket-wrapped and so are not
+     valid IRI tokens per that grammar -- this fixture was built to
+     pin the byte-level Parquet/RLE_DICTIONARY decode (sections 1-9
+     above), never term-level parsing, and real pycottas-produced
+     artifacts DO bracket every IRI token (confirmed directly against
+     the gene.cottas corpus this fix was profiled against: `SELECT s
+     FROM parquet_scan(...)` returns
+     `<http://www.wikidata.org/entity/Q18053115>`, not the bare IRI).
+     End-to-end equivalence on a REAL, conformant, pycottas-built
+     store is covered by `tests/local/cottas_row_order_regressions.sh`
+     and `tests/local/cottas_corpus_regressions.sh`, which exercise
+     `cottas_ondisk_search` (via `sc_solve`/`sc_solve_limited`) through
+     the actual SPARQL engine with literal expected row counts, both
+     before and after this change. *)
+  Printf.printf "\n== direct token -> term parsing (selective SEARCH, 2026-07-06) ==\n%!";
+  let module G = RDF_Graph_Executable in
+  let module Store = RDF_CottasStore in
+  check ~name:"token_to_subject <iri>"
+    (Store.token_to_subject "<http://example.org/s>" = G.S_IRI "http://example.org/s");
+  check ~name:"token_to_subject _:bnode"
+    (Store.token_to_subject "_:b1" = G.S_BNode "b1");
+  check ~name:"token_to_predicate <iri>"
+    (Store.token_to_predicate "<http://example.org/p>" = "http://example.org/p");
+  check ~name:"token_to_object <iri>"
+    (Store.token_to_object "<http://example.org/o>" = G.T_IRI "http://example.org/o");
+  check ~name:"token_to_object _:bnode"
+    (Store.token_to_object "_:b2" = G.T_BNode "b2");
+  check ~name:"token_to_object bare literal (xsd:string)"
+    (match Store.token_to_object "\"hello\"" with
+     | G.T_Literal { G.lexical_form = "hello"; G.datatype = dt; G.lang_tag = None } ->
+       dt = "http://www.w3.org/2001/XMLSchema#string"
+     | _ -> false);
+  check ~name:"token_to_object language-tagged literal"
+    (match Store.token_to_object "\"bonjour\"@fr" with
+     | G.T_Literal { G.lexical_form = "bonjour";
+                     G.datatype = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+                     G.lang_tag = Some "fr" } -> true
+     | _ -> false);
+  check ~name:"token_to_object typed literal"
+    (match Store.token_to_object
+             "\"42\"^^<http://www.w3.org/2001/XMLSchema#integer>" with
+     | G.T_Literal { G.lexical_form = "42";
+                     G.datatype = "http://www.w3.org/2001/XMLSchema#integer";
+                     G.lang_tag = None } -> true
+     | _ -> false);
+  check ~name:"token_to_graph_name <iri>"
+    (Store.token_to_graph_name "<http://example.org/g>" = "http://example.org/g");
+  (* Malformed / non-conformant tokens must fall back to the SAME
+     out-of-range sentinels the id-based decode path
+     (`cottas_ondisk_decode_subject` / `_object`) already uses for
+     corrupt data, never raise or silently fabricate a plausible term. *)
+  check ~name:"token_to_subject malformed token -> sentinel, not a crash"
+    (Store.token_to_subject "not-a-valid-token" = G.S_BNode "cottas_decode_oor");
+  check ~name:"token_to_object malformed token -> sentinel, not a crash"
+    (Store.token_to_object "not-a-valid-token" = G.T_BNode "cottas_decode_oor");
+  (* `cottas_ondisk_row_tok_to_quad` composes the four parsers plus the
+     DEFAULT-graph sentinel handling (docs/cottas-format-v1.md section
+     6): a "DEFAULT" graph token must decode to `None`, not an IRI. *)
+  let row_default = {
+    Store.cqprt_s = "<http://example.org/s>";
+    Store.cqprt_p = "<http://example.org/p>";
+    Store.cqprt_o = "<http://example.org/o>";
+    Store.cqprt_g = "DEFAULT";
+  } in
+  let (t, g) = Store.cottas_ondisk_row_tok_to_quad row_default in
+  check ~name:"row_tok_to_quad: DEFAULT graph token -> None"
+    (g = FStar_Pervasives_Native.None);
+  check ~name:"row_tok_to_quad: triple fields parsed correctly"
+    (t.G.s = G.S_IRI "http://example.org/s" &&
+     t.G.p = "http://example.org/p" &&
+     t.G.o = G.T_IRI "http://example.org/o");
+  let row_named = { row_default with Store.cqprt_g = "<http://example.org/g>" } in
+  let (_, g2) = Store.cottas_ondisk_row_tok_to_quad row_named in
+  check ~name:"row_tok_to_quad: named graph token -> Some iri"
+    (g2 = FStar_Pervasives_Native.Some "http://example.org/g");
+
+  Printf.printf
+    "== summary: %d pass, %d fail (out of %d) ==\n"
+    !passed !failed (!passed + !failed);
+  if !failed > 0 then exit 1 else exit 0

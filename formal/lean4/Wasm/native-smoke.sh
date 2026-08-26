@@ -1,0 +1,401 @@
+#!/usr/bin/env bash
+#
+# native-smoke.sh — exercise EVERY op of the dispatch ABI
+# (Wasm/Dispatch.lean) once through the native CLI, so an ABI bug and a
+# wasm-toolchain bug can never be confused for one another.
+#
+#   formal/lean4/Wasm/native-smoke.sh
+#
+# Builds l4wasm-cli, then drives `l4wasm-cli call <op> <argsJsonFile>`
+# (and, for the dataset-handle ops whose state must survive across
+# calls, `l4wasm-cli callseq <seqJsonFile>` — several ops in one
+# process) with tiny inline fixtures and asserts the envelope keys the
+# F* npm entry (bin/npm-entry/entry_jsoo.ml) pins. Includes one error
+# path per family: bad Turtle (parse), DESCRIBE (query), unknown handle
+# (handles), unknown op (dispatch). Exits non-zero on any mismatch.
+set -euo pipefail
+
+LEAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$LEAN_DIR"
+command -v lake >/dev/null || { echo "lake not on PATH (export PATH=\$HOME/.elan/bin:\$PATH)"; exit 1; }
+
+echo "=== build l4wasm-cli"
+lake build l4wasm-cli >/dev/null
+CLI="$LEAN_DIR/.lake/build/bin/l4wasm-cli"
+[ -x "$CLI" ] || { echo "FAIL: $CLI not built"; exit 1; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+PASS=0
+FAIL=0
+
+# args <file> <arg>... — write a JSON array-of-strings args file.
+args() {
+  local out="$1"; shift
+  python3 - "$out" "$@" <<'EOF'
+import json, sys
+with open(sys.argv[1], "w") as f:
+    json.dump(sys.argv[2:], f)
+EOF
+}
+
+# checkseq <label> <seqfile> <python-assert-expr>
+# Runs `l4wasm-cli callseq <seqfile>` — several op/args pairs in ONE
+# process, which is what dataset-handle state needs — and hands the
+# expression the parsed envelopes as the list `rs`, in call order.
+checkseq() {
+  local label="$1" seqfile="$2" expr="$3"
+  local out
+  out="$("$CLI" callseq "$seqfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+rs = [json.loads(line) for line in sys.stdin if line.strip()]
+assert ($expr), rs
+"; then
+    echo "ok   $label"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $label"
+    printf '     output: %s\n' "$out"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# check <label> <op> <argsfile> <python-assert-expr>
+# The expression sees the parsed envelope as `r`.
+check() {
+  local label="$1" op="$2" argsfile="$3" expr="$4"
+  local out
+  out="$("$CLI" call "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+"; then
+    echo "ok   $label"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $label"
+    printf '     output: %s\n' "$out"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+echo "=== dispatch smoke ($TMP)"
+
+# --- Parse family -----------------------------------------------------
+TTL='@prefix ex: <http://example.org/> . ex:alice ex:knows ex:bob .'
+args "$TMP/parse.json" "$TTL" "turtle" ""
+check "parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json" \
+  'r["ok"] is True and r["count"] == 1 and "example.org/alice" in r["nquads"]'
+
+args "$TMP/parse-nt.json" '<http://e/a> <http://e/p> <http://e/b> .' "ntriples" ""
+check "parseToDatasetJson ntriples" parseToDatasetJson "$TMP/parse-nt.json" \
+  'r["ok"] is True and r["count"] == 1'
+
+args "$TMP/parse-bad.json" 'this is not turtle @@@' "turtle" ""
+check "parseToDatasetJson bad turtle -> error" parseToDatasetJson "$TMP/parse-bad.json" \
+  'r["ok"] is False and isinstance(r["error"], str) and len(r["error"]) > 0'
+
+args "$TMP/parse-jsonld.json" '{}' "jsonld" ""
+check "parseToDatasetJson jsonld -> named gap" parseToDatasetJson "$TMP/parse-jsonld.json" \
+  'r["ok"] is False and "JSON-LD" in r["error"]'
+
+NQ='<http://e/a> <http://e/p> <http://e/b> .
+<http://e/a> <http://e/p> <http://e/c> <http://e/g> .
+'
+args "$TMP/ser-nq.json" "$NQ"
+check "serializeNQuads" serializeNQuads "$TMP/ser-nq.json" \
+  'r["ok"] is True and "<http://e/g>" in r["nquads"] and r["nquads"].count(" .") == 2'
+
+args "$TMP/ser-ttl.json" "$NQ"
+check "serializeTurtle" serializeTurtle "$TMP/ser-ttl.json" \
+  'r["ok"] is True and "@prefix" in r["turtle"] and "<http://e/>" in r["turtle"]'
+
+# --- Query family -----------------------------------------------------
+DATA='<http://e/a> <http://e/p> <http://e/b> .
+'
+args "$TMP/q-select.json" "$DATA" 'SELECT ?s WHERE { ?s <http://e/p> ?o }'
+check "queryDataset select" queryDataset "$TMP/q-select.json" \
+  'r["ok"] is True and r["kind"] == "select" and isinstance(r["srj"], dict)
+   and r["srj"]["head"]["vars"] == ["s"]
+   and r["srj"]["results"]["bindings"][0]["s"]["value"] == "http://e/a"'
+
+args "$TMP/q-ask.json" "$DATA" 'ASK { <http://e/a> <http://e/p> <http://e/b> }'
+check "queryDataset ask" queryDataset "$TMP/q-ask.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+
+args "$TMP/q-construct.json" "$DATA" \
+  'CONSTRUCT { ?s <http://e/q> ?o } WHERE { ?s <http://e/p> ?o }'
+check "queryDataset construct" queryDataset "$TMP/q-construct.json" \
+  'r["ok"] is True and r["kind"] == "construct" and "<http://e/q>" in r["nquads"]'
+
+args "$TMP/q-describe.json" "$DATA" 'DESCRIBE <http://e/a>'
+check "queryDataset DESCRIBE -> error" queryDataset "$TMP/q-describe.json" \
+  'r["ok"] is False and r["error"] == "DESCRIBE is not supported by the npm entry yet"'
+
+args "$TMP/update.json" "$DATA" \
+  'INSERT DATA { <http://e/x> <http://e/p> <http://e/y> }'
+check "updateDataset" updateDataset "$TMP/update.json" \
+  'r["ok"] is True and "<http://e/x>" in r["nquads"] and "<http://e/a>" in r["nquads"]'
+
+# --- Canon family -----------------------------------------------------
+args "$TMP/canon.json" '_:b0 <http://e/p> "v" .
+'
+check "canonicalizeToNQuads" canonicalizeToNQuads "$TMP/canon.json" \
+  'r["ok"] is True and "_:c14n0" in r["nquads"]'
+
+# --- Reason family ----------------------------------------------------
+SUBCLASS='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> .
+<http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .
+'
+args "$TMP/owl-rdfs.json" "$SUBCLASS" "RDFS"
+check "owlClosure RDFS" owlClosure "$TMP/owl-rdfs.json" \
+  'r["ok"] is True and "<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> ." in r["nquads"]'
+
+args "$TMP/owl-rl.json" "$SUBCLASS" "OWL-RL"
+check "owlClosure OWL-RL" owlClosure "$TMP/owl-rl.json" \
+  'r["ok"] is True and "<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> ." in r["nquads"]'
+
+args "$TMP/owl-badmode.json" "$SUBCLASS" "nonsense"
+check "owlClosure unknown mode -> error" owlClosure "$TMP/owl-badmode.json" \
+  'r["ok"] is False and "unknown mode" in r["error"]'
+
+args "$TMP/rhodf.json" "$SUBCLASS"
+check "rhoDfClosure" rhoDfClosure "$TMP/rhodf.json" \
+  'r["ok"] is True and "<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> ." in r["ntriples"]
+   and isinstance(r["rounds"], int) and r["rounds"] >= 1'
+
+args "$TMP/frag-yes.json" "$SUBCLASS"
+check "rhoDfFragmentCheck true" rhoDfFragmentCheck "$TMP/frag-yes.json" \
+  'r["ok"] is True and r["fragment"] is True'
+
+args "$TMP/frag-no.json" '<http://e/a> <http://e/p> "a literal" .
+'
+check "rhoDfFragmentCheck false (literal object)" rhoDfFragmentCheck "$TMP/frag-no.json" \
+  'r["ok"] is True and r["fragment"] is False'
+
+SAMEAS='<http://e/a> <http://www.w3.org/2002/07/owl#sameAs> <http://e/b> .
+<http://e/a> <http://e/p> <http://e/v> .
+'
+args "$TMP/rdfsplus.json" "$SAMEAS"
+check "rdfsPlusClosure" rdfsPlusClosure "$TMP/rdfsplus.json" \
+  'r["ok"] is True and "<http://e/b> <http://e/p> <http://e/v> ." in r["ntriples"]
+   and isinstance(r["rounds"], int) and r["rounds"] >= 1'
+
+# --- OWL DL consistency / entailment (issue 586) ----------------------
+# Envelopes pinned against bin/npm-entry/entry_jsoo.ml's
+# owl_is_consistent_json / owl_entails_json: three-valued, budget-out
+# reported as null with a reason, never a silent false.
+args "$TMP/owl-cons-yes.json" "$SUBCLASS" ""
+check "owlIsConsistent consistent -> true, no reason" owlIsConsistent "$TMP/owl-cons-yes.json" \
+  'r["ok"] is True and r["consistent"] is True and "reason" not in r'
+
+NOTHING='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Nothing> .
+'
+args "$TMP/owl-cons-no.json" "$NOTHING" ""
+check "owlIsConsistent owl:Nothing member -> false + reason" owlIsConsistent "$TMP/owl-cons-no.json" \
+  'r["ok"] is True and r["consistent"] is False and "contradiction" in r["reason"]'
+
+# A cyclic TBox (A subClassOf someValuesFrom(p, A)) keeps the expansion
+# changing, so fuel 1 runs out mid-search: the verdict is null.
+CYCLIC='<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/A> .
+<http://e/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .
+_:r <http://www.w3.org/2002/07/owl#onProperty> <http://e/p> .
+_:r <http://www.w3.org/2002/07/owl#someValuesFrom> <http://e/A> .
+'
+args "$TMP/owl-cons-unk.json" "$CYCLIC" '{"fuel":"1"}'
+check "owlIsConsistent fuel 1 -> null (budget-out, fuel named)" owlIsConsistent "$TMP/owl-cons-unk.json" \
+  'r["ok"] is True and r["consistent"] is None and "budget-out" in r["reason"]
+   and "fuel 1 " in r["reason"]'
+
+# The same cyclic TBox at the default budget saturates under the
+# witness-depth cap: consistent.
+args "$TMP/owl-cons-cyc.json" "$CYCLIC" ""
+check "owlIsConsistent cyclic TBox, default fuel -> true" owlIsConsistent "$TMP/owl-cons-cyc.json" \
+  'r["ok"] is True and r["consistent"] is True'
+
+# Entailment via the closure path: a type D . follows from
+# a type C, C subClassOf D by cax-sco.
+CONCL='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> .
+'
+args "$TMP/owl-ent-yes.json" "$SUBCLASS" "$CONCL" ""
+check "owlEntails subclass typing -> true via closure" owlEntails "$TMP/owl-ent-yes.json" \
+  'r["ok"] is True and r["entailed"] is True and r["via"] == "closure"'
+
+# Not entailed: the negated conclusion is satisfiable beside the
+# premise (a countermodel), reported via the refutation path.
+UNRELATED='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/Zebra> .
+'
+args "$TMP/owl-ent-no.json" "$SUBCLASS" "$UNRELATED" ""
+check "owlEntails unrelated class -> false via refutation" owlEntails "$TMP/owl-ent-no.json" \
+  'r["ok"] is True and r["entailed"] is False and r["via"] == "refutation"
+   and "model" in r["reason"]'
+
+# Budget-out on a refutation goal: null, never a silent false.
+args "$TMP/owl-ent-unk.json" "$CYCLIC" "$UNRELATED" '{"fuel":"1"}'
+check "owlEntails fuel 1 -> null (budget-out)" owlEntails "$TMP/owl-ent-unk.json" \
+  'r["ok"] is True and r["entailed"] is None and r["via"] == "refutation"
+   and "budget-out" in r["reason"]'
+
+args "$TMP/owl-ent-badnq.json" 'not nquads @@@' "$CONCL" ""
+check "owlEntails bad premise -> error" owlEntails "$TMP/owl-ent-badnq.json" \
+  'r["ok"] is False and len(r["error"]) > 0'
+
+# --- Common Logic / IKL family ----------------------------------------
+IKL='(ist c (that (Dead OBL)))'
+args "$TMP/cl-parse.json" "$IKL"
+check "clParse ikl sentence" clParse "$TMP/cl-parse.json" \
+  'r["ok"] is True and r["sentences"] == 1 and r["pureCL"] is False
+   and r["normalized"] == "(ist c (that (Dead OBL)))"'
+
+args "$TMP/cl-parse-pure.json" '(married Jack Jill) (forall (x) (if (Boy x) (Human x)))'
+check "clParse pure CL text" clParse "$TMP/cl-parse-pure.json" \
+  'r["ok"] is True and r["sentences"] == 2 and r["pureCL"] is True'
+
+args "$TMP/cl-parse-bad.json" '(P a'
+check "clParse unclosed paren -> error" clParse "$TMP/cl-parse-bad.json" \
+  'r["ok"] is False and "unclosed" in r["error"]'
+
+# The proposition graph name is the sha256 content address of the
+# alpha-normalized canonical CLIF (issue 589):
+# echo -n '(Dead OBL)' | sha256sum
+# Graph-decoration translation (issue 581): count = graph-content
+# triples + decorations (ist link + rdfProjection here); the graph
+# holds record + content, nothing flattens into the default graph.
+# rdf:reifies must NOT appear (a reifier is an occurrence token,
+# reserved for future report nodes — review disposition 2026-08-25).
+# 5 occurrences of the graph IRI: link object, projection subject,
+# record subject + graph label, content graph label.
+DEADOBL_G='urn:cl:that:sha256:627ab6c4ca999f2605c342e052ef3fe6ae4f8c9a5744df8a09ef4f66819eddd0'
+args "$TMP/cl-ds.json" "$IKL" "urn:cl:"
+check "clToDataset proposition -> named graph" clToDataset "$TMP/cl-ds.json" \
+  'r["ok"] is True and r["count"] == 3 and r["skipped"] == 0
+   and "<urn:cl:c> <urn:cl:ist> <'"$DEADOBL_G"'> ." in r["nquads"]
+   and "<'"$DEADOBL_G"'> <urn:cl:def:rdfProjection> <<( <urn:cl:OBL> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:cl:Dead> )>> ." in r["nquads"]
+   and "reifies" not in r["nquads"]
+   and "<'"$DEADOBL_G"'> <urn:cl:def:sentence> \"(Dead OBL)\" <'"$DEADOBL_G"'> ." in r["nquads"]
+   and "<urn:cl:OBL> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <urn:cl:Dead> <'"$DEADOBL_G"'> ." in r["nquads"]
+   and r["nquads"].count("<'"$DEADOBL_G"'>") == 5'
+
+# A top-level `and` is ONE asserted proposition (review disposition
+# 2026-08-25 — no distribution): one asserts decoration, one graph
+# holding the (Dog Rex) content atom, the quantified conjunct skipped
+# and counted. count = asserts (1) + content (1); no projection (the
+# sentence is not a single atom).
+args "$TMP/cl-ds-skip.json" '(and (Dog Rex) (forall (x) (P x)))' "urn:cl:"
+check "clToDataset conjunction is one proposition, skips counted" clToDataset "$TMP/cl-ds-skip.json" \
+  'r["ok"] is True and r["count"] == 2 and r["skipped"] == 1
+   and r["nquads"].count("<urn:cl:kb> <urn:cl:def:asserts>") == 1'
+
+args "$TMP/cl-ds-bad.json" "$IKL" "nocolon"
+check "clToDataset bad base -> error" clToDataset "$TMP/cl-ds-bad.json" \
+  'r["ok"] is False and "not an IRI" in r["error"]'
+
+IKLDATA='<urn:cl:c> <http://e/label> "ctx" .
+'
+IKLQ='SELECT ?l ?g ?s WHERE { ?c <http://e/label> ?l . SERVICE <urn:ikl:kb> { ?c <urn:cl:ist> ?g } GRAPH ?g { ?s ?p <urn:cl:Dead> } }'
+args "$TMP/cl-q.json" "$IKLDATA" "$IKL" "$IKLQ"
+check "queryWithIklService service+graph join" queryWithIklService "$TMP/cl-q.json" \
+  'r["ok"] is True and r["kind"] == "select"
+   and r["srj"]["results"]["bindings"][0]["l"]["value"] == "ctx"
+   and r["srj"]["results"]["bindings"][0]["g"]["value"] == "'"$DEADOBL_G"'"
+   and r["srj"]["results"]["bindings"][0]["s"]["value"] == "urn:cl:OBL"'
+
+args "$TMP/cl-q-ask.json" "$IKLDATA" "$IKL" \
+  'ASK { SERVICE <urn:ikl:kb> { <urn:cl:c> <urn:cl:ist> ?g } }'
+check "queryWithIklService ask over service" queryWithIklService "$TMP/cl-q-ask.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+
+args "$TMP/cl-q-bad.json" "$IKLDATA" '(P a' 'SELECT ?s WHERE { ?s ?p ?o }'
+check "queryWithIklService bad CLIF -> error" queryWithIklService "$TMP/cl-q-bad.json" \
+  'r["ok"] is False and "CLIF parse error" in r["error"]'
+
+# --- Dataset handles (issue 585) --------------------------------------
+# Handle state lives in the process, so the dependent sequence runs
+# through `callseq`: open -> query -> update -> query -> serialize
+# (both formats) -> close -> use-after-close error.
+python3 - "$TMP/handles-seq.json" <<'EOF'
+import json, sys
+TTL = '@prefix ex: <http://e/> . ex:a ex:p ex:b .'
+seq = [
+  ["datasetOpen",      [TTL, "turtle", ""]],
+  ["datasetQuery",     ["h1", "SELECT ?s WHERE { ?s <http://e/p> ?o }"]],
+  ["datasetUpdate",    ["h1", "INSERT DATA { <http://e/x> <http://e/p> <http://e/y> }"]],
+  ["datasetQuery",     ["h1", "ASK { <http://e/x> <http://e/p> <http://e/y> }"]],
+  ["datasetSerialize", ["h1", "nquads"]],
+  ["datasetSerialize", ["h1", "turtle"]],
+  ["datasetClose",     ["h1"]],
+  ["datasetQuery",     ["h1", "ASK { ?s ?p ?o }"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "dataset handle lifecycle (open/query/update/serialize/close)" "$TMP/handles-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["handle"] == "h1" and rs[0]["count"] == 1
+   and rs[1]["ok"] is True and rs[1]["kind"] == "select"
+   and rs[1]["srj"]["results"]["bindings"][0]["s"]["value"] == "http://e/a"
+   and rs[2]["ok"] is True and rs[2]["count"] == 2
+   and rs[3]["ok"] is True and rs[3]["kind"] == "ask" and rs[3]["boolean"] is True
+   and rs[4]["ok"] is True and "<http://e/x>" in rs[4]["nquads"] and "<http://e/a>" in rs[4]["nquads"]
+   and rs[5]["ok"] is True and "@prefix" in rs[5]["turtle"]
+   and rs[6] == {"ok": True}
+   and rs[7]["ok"] is False and rs[7]["error"] == "unknown dataset handle: h1"'
+
+# Two handles are independent: an update through h2 must not leak into
+# h1, and closing h2 must leave h1 open. Also the per-family errors:
+# an unknown serialize format, and closing an unknown handle.
+python3 - "$TMP/handles-two.json" <<'EOF'
+import json, sys
+seq = [
+  ["datasetOpen",      ["<http://e/a> <http://e/p> <http://e/b> .", "ntriples", ""]],
+  ["datasetOpen",      ["<http://f/c> <http://f/q> <http://f/d> .", "ntriples", ""]],
+  ["datasetUpdate",    ["h2", "INSERT DATA { <http://f/x> <http://f/q> <http://f/y> }"]],
+  ["datasetSerialize", ["h1", "nquads"]],
+  ["datasetSerialize", ["h1", "trig"]],
+  ["datasetClose",     ["h2"]],
+  ["datasetClose",     ["h2"]],
+  ["datasetQuery",     ["h1", "ASK { <http://e/a> <http://e/p> <http://e/b> }"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "dataset handles are independent + per-family errors" "$TMP/handles-two.json" \
+  'rs[0]["handle"] == "h1" and rs[1]["handle"] == "h2"
+   and rs[2]["ok"] is True and rs[2]["count"] == 2
+   and rs[3]["ok"] is True and "<http://f/" not in rs[3]["nquads"]
+   and rs[4]["ok"] is False and "unknown format tag" in rs[4]["error"]
+   and rs[5] == {"ok": True}
+   and rs[6]["ok"] is False and rs[6]["error"] == "unknown dataset handle: h2"
+   and rs[7]["ok"] is True and rs[7]["boolean"] is True'
+
+# One-shot error paths reachable without process state.
+args "$TMP/h-open-bad.json" 'this is not turtle @@@' "turtle" ""
+check "datasetOpen bad turtle -> error, no handle" datasetOpen "$TMP/h-open-bad.json" \
+  'r["ok"] is False and "handle" not in r and len(r["error"]) > 0'
+
+args "$TMP/h-query-unknown.json" "h999" 'ASK { ?s ?p ?o }'
+check "datasetQuery unknown handle -> error" datasetQuery "$TMP/h-query-unknown.json" \
+  'r["ok"] is False and r["error"] == "unknown dataset handle: h999"'
+
+args "$TMP/h-open-arity.json" "just-one-arg"
+check "datasetOpen wrong arity -> error" datasetOpen "$TMP/h-open-arity.json" \
+  'r["ok"] is False and "expects 3 arguments" in r["error"]'
+
+# --- Dispatch reflection + unknown op ---------------------------------
+args "$TMP/empty.json"
+check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
+  'r["ok"] is True and isinstance(r["abiVersion"], str)
+   and set(["parseToDatasetJson","queryDataset","updateDataset",
+            "serializeNQuads","serializeTurtle","canonicalizeToNQuads",
+            "owlClosure","owlIsConsistent","owlEntails",
+            "rhoDfClosure","rhoDfFragmentCheck",
+            "rdfsPlusClosure","clParse","clToDataset",
+            "queryWithIklService","ops",
+            "datasetOpen","datasetQuery","datasetUpdate",
+            "datasetSerialize","datasetClose"]) <= set(r["ops"])'
+
+check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
+  'r["ok"] is False and "unknown op" in r["error"]'
+
+echo "=== native-smoke: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
+[ "$FAIL" -eq 0 ]
