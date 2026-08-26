@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BIN="${FACTOIDAL_BIN:-${ROOT}/formal/fstar/ocaml-output/factoidal}"
+QUERY_DIR="${ROOT}/tests/local/sparql"
+TMPDIR="${TMPDIR:-/tmp}"
+
+pass_count=0
+fail_count=0
+skip_count=0
+BERLIN_HDT="${BERLIN_HDT:-/tmp/Corpus3/berlin-dbpedia-page/v1/data.hdt}"
+BERLIN_GRAPH_IRI="${BERLIN_GRAPH_IRI:-https://factoidaldb.com/id/graph/berlin}"
+
+run_parser_pass() {
+  local name="$1"
+  local query_file="$2"
+  local output_file="${TMPDIR}/factoidal_sparql_regression_${name}.out"
+  shift 2
+
+  # Collect external fixture files from arguments to check before running
+  local fixtures=()
+  for arg in "$@"; do
+    # Check for /tmp paths (direct file paths)
+    if [[ "$arg" == /tmp/* ]]; then
+      fixtures+=("$arg")
+    # Check for GRAPH_IRI=FILE paths (from --named arguments)
+    elif [[ "$arg" == *=/tmp/* ]]; then
+      fixtures+=("${arg#*=}")
+    fi
+  done
+
+  # If any external fixtures are missing, skip this test
+  for fixture in "${fixtures[@]}"; do
+    if [[ ! -f "$fixture" ]]; then
+      echo "SKIP ${name} (external corpus not present: ${fixture})"
+      skip_count=$((skip_count + 1))
+      return
+    fi
+  done
+
+  if "${BIN}" "$@" --query "${query_file}" >"${output_file}" 2>&1; then
+    echo "PASS ${name}"
+    cat "${output_file}"
+    pass_count=$((pass_count + 1))
+  else
+    echo "FAIL ${name}"
+    cat "${output_file}"
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+run_parser_pass "prefix-a-semicolon" "${QUERY_DIR}/prefix_a_semicolon.rq" \
+  --data "${BERLIN_HDT}"
+
+run_parser_pass "signed-numeric-literals" \
+  "${ROOT}/third_party/testing/w3c/sparql/sparql10/expr-ops/query-add-literals.rq"
+
+run_parser_pass "named-graph" "${QUERY_DIR}/berlin_named_graph.rq" \
+  --named "${BERLIN_GRAPH_IRI}=${BERLIN_HDT}"
+
+run_parser_pass "bind-values" "${QUERY_DIR}/berlin_bind_values.rq" \
+  --data "${BERLIN_HDT}"
+
+run_parser_pass "named-ask" "${QUERY_DIR}/berlin_named_ask.rq" \
+  --named "${BERLIN_GRAPH_IRI}=${BERLIN_HDT}"
+
+run_parser_pass "named-group" "${QUERY_DIR}/berlin_named_group.rq" \
+  --named "${BERLIN_GRAPH_IRI}=${BERLIN_HDT}"
+
+run_parser_pass "named-subselect" "${QUERY_DIR}/berlin_named_subselect.rq" \
+  --named "${BERLIN_GRAPH_IRI}=${BERLIN_HDT}"
+
+# Issue #270: the SPARQL 1.1 grammar's LimitOffsetClauses production
+# allows LIMIT/OFFSET in EITHER order (`LimitClause OffsetClause? |
+# OffsetClause LimitClause?`); the parser only accepted LIMIT-before-
+# OFFSET. Self-contained (no external corpus): 5 rows, ORDER BY ?o so
+# the sliced window is deterministic, both orderings must parse AND
+# produce the identical (correct) 2-row slice [rows 2,3 of 5].
+LIMOFF_DATA="${TMPDIR}/factoidal_sparql_regression_limit_offset_order.nt"
+cat > "${LIMOFF_DATA}" <<'EOF'
+<http://x.org/a1> <http://x.org/p> "1" .
+<http://x.org/a2> <http://x.org/p> "2" .
+<http://x.org/a3> <http://x.org/p> "3" .
+<http://x.org/a4> <http://x.org/p> "4" .
+<http://x.org/a5> <http://x.org/p> "5" .
+EOF
+
+LIMOFF_Q_BASE='SELECT ?o WHERE { ?s <http://x.org/p> ?o } ORDER BY ?o'
+LIMOFF_EXPECTED='o
+2
+3'
+
+check_limoff () {
+  local name="$1" query="$2"
+  local out
+  if out="$("${BIN}" query --data "${LIMOFF_DATA}" -e "${query}" -o csv 2>&1)"; then
+    if [[ "${out}" == "${LIMOFF_EXPECTED}" ]]; then
+      echo "PASS ${name}"
+      pass_count=$((pass_count + 1))
+    else
+      echo "FAIL ${name}: unexpected rows: ${out}"
+      fail_count=$((fail_count + 1))
+    fi
+  else
+    echo "FAIL ${name}: query did not parse/run: ${out}"
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+check_limoff "limit-before-offset" "${LIMOFF_Q_BASE} LIMIT 2 OFFSET 1"
+check_limoff "offset-before-limit" "${LIMOFF_Q_BASE} OFFSET 1 LIMIT 2"
+
+echo "pass=${pass_count} fail=${fail_count} skip=${skip_count}"
+
+if [[ "${fail_count}" -ne 0 ]]; then
+  exit 1
+fi
+
+exit 0

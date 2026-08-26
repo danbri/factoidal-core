@@ -1,0 +1,2881 @@
+module Parser.Turtle
+
+open FStar.String
+open FStar.List.Tot
+open FStar.Char
+open Parser.FastString
+open Parser.IRI
+open Parser.Combinators
+open Parser.TurtleScanner
+open Parser.NTriples
+open RDF.Graph.Executable
+
+// Issue #70: Parser.FastString swaps the O(n) FStar.String primitives
+// (which go through BatUTF8 codepoint arithmetic) for O(1) byte-indexed
+// primitives. All hot-loop fs_byte_length/index/sub calls in this module
+// now use fs_byte_length/fs_byte_index/fs_byte_sub. See
+// docs/designissues/2026-04-20-turtle-parser-profile.md.
+
+(* ================================================================ *)
+(* Turtle parser state                                               *)
+(* ================================================================ *)
+
+(* Turtle extends N-Triples with prefixes, base IRIs, and syntactic sugar.
+   The parser threads state through all productions. *)
+noeq type turtle_state = {
+  prefixes: list (string & string);   (* prefix -> IRI base mapping *)
+  base_iri: string;                   (* current base IRI for relative resolution *)
+  bnode_counter: nat;                 (* counter for generating anonymous blank node IDs *)
+  ts_mode: rdf_syntax_mode;           (* RDF 1.1 vs 1.2 processing mode (#305 wave 2) *)
+}
+
+// RDF 1.1 default state: the mode field carries Mode_11 so every
+// existing entry point (which builds from empty_turtle_state) stays
+// byte-identical. The mode is threaded through turtle_state — already
+// passed to every production — so it is a real parameter of the parse,
+// not a global. Mode_12 forms unlock only when ts_mode = Mode_12.
+let empty_turtle_state : turtle_state = {
+  prefixes = [];
+  base_iri = "";
+  bnode_counter = 0;
+  ts_mode = Mode_11;
+}
+
+// RDF 1.2 seed state.
+let empty_turtle_state_12 : turtle_state = { empty_turtle_state with ts_mode = Mode_12 }
+
+(* Generate a fresh blank node ID and increment counter *)
+let fresh_bnode (st: turtle_state) : (bnode_id & turtle_state) =
+  let id = String.concat "" ["_anon"; string_of_int st.bnode_counter] in
+  (id, { st with bnode_counter = st.bnode_counter + 1 })
+
+(* List helpers for parser accumulators.
+   rev_prepend xs acc = rev xs @ acc, without building an intermediate list. *)
+let rec rev_prepend (#a:Type) (xs:list a) (acc:list a)
+  : Tot (list a) (decreases xs) =
+  match xs with
+  | [] -> acc
+  | x :: rest -> rev_prepend rest (x :: acc)
+
+let rec append_list (#a:Type) (xs:list a) (ys:list a)
+  : Tot (list a) (decreases xs) =
+  match xs with
+  | [] -> ys
+  | x :: rest -> x :: append_list rest ys
+
+(* ================================================================ *)
+(* Prefix resolution                                                 *)
+(* ================================================================ *)
+
+(* Look up a prefix in the state *)
+let rec lookup_prefix (pfx: string) (ps: list (string & string)) : option string =
+  match ps with
+  | [] -> None
+  | (k, v) :: rest -> if k = pfx then Some v else lookup_prefix pfx rest
+
+(* Unescape PN_LOCAL_ESC sequences in a local name. Per the Turtle
+   grammar §6.5, a literal backslash followed by one of
+   _~.-!$&'()*+,;=/?#@% stands for that reserved char, unescaped,
+   in the resolved IRI.
+
+   Use fuel-bounded recursion (rather than decreases (len - pos))
+   because SMT termination proofs at this file position are fragile —
+   adding more recursive functions near the doc-level recursion
+   sometimes breaks earlier-verified decreases clauses. Fuel bounded by
+   string length makes the proof trivial. *)
+// Issue #325: emits raw BYTE fragments (fs_byte_sub), not a `list char`
+// finished by String.string_of_list — which re-encoded every element as a
+// UTF-8 codepoint and so mojibake'd any non-ASCII local name that also
+// carried a PN_LOCAL_ESC: `ex:日\-本` resolved to <http://e.org/æ¥-æ¬>.
+// Escape-free local names never reach here (has_backslash_fuel below
+// short-circuits to the input unchanged), which is why plain non-ASCII
+// PN_LOCALs were always correct and this path went unnoticed.
+// Every PN_LOCAL_ESC-escapable character is ASCII, so taking the escaped
+// byte on its own is right.
+let rec unescape_pn_local_fuel (local: string) (pos: nat) (acc: list string) (fuel: nat)
+  : Tot (list string) (decreases fuel) =
+  if fuel = 0 then List.Tot.rev acc
+  else
+    let len = fs_byte_length local in
+    if pos >= len then List.Tot.rev acc
+    else
+      let c = fs_byte_index local pos in
+      if FStar.Char.int_of_char c = 0x5C && pos + 1 < len then
+        unescape_pn_local_fuel local (pos + 2)
+          (fs_byte_sub local (pos + 1) 1 :: acc) (fuel - 1)
+      else
+        unescape_pn_local_fuel local (pos + 1)
+          (fs_byte_sub local pos 1 :: acc) (fuel - 1)
+
+(* Fast check: does the string contain any backslash? If not we can
+   return the input unchanged and skip the list allocation. Called on
+   every prefixed-name resolution, which is very hot. *)
+let rec has_backslash_fuel (s: string) (pos: nat) (fuel: nat)
+  : Tot bool (decreases fuel) =
+  if fuel = 0 then false
+  else
+    let len = fs_byte_length s in
+    if pos >= len then false
+    else if FStar.Char.int_of_char (fs_byte_index s pos) = 0x5C then true
+    else has_backslash_fuel s (pos + 1) (fuel - 1)
+
+let unescape_pn_local (local: string) : string =
+  let len = fs_byte_length local in
+  if has_backslash_fuel local 0 (len + 1) then
+    String.concat "" (unescape_pn_local_fuel local 0 [] (len + 1))
+  else
+    local
+
+(* Resolve a prefixed name: prefix:localname -> full IRI.
+   PN_LOCAL_ESC sequences in the local part are unescaped before
+   concatenation (per Turtle §6.5). *)
+let resolve_prefixed_name (st: turtle_state) (prefix: string) (local: string) : option string =
+  match lookup_prefix prefix st.prefixes with
+  | Some base -> Some (String.concat "" [base; unescape_pn_local local])
+  | None -> None
+
+(* Find the last occurrence of '/' in a string, return index + 1
+   (the position after the last slash). Returns 0 if no slash found. *)
+let rec find_last_slash (s: string) (pos: nat)
+  : Tot (r:nat{r <= pos}) (decreases pos) =
+  if pos = 0 then 0
+  else
+    let idx = pos - 1 in
+    if idx < fs_byte_length s && FStar.Char.int_of_char (fs_byte_index s idx) = 0x2F (* '/' *)
+    then pos  (* return position after the slash *)
+    else find_last_slash s idx
+
+(* Remove the last path segment from a URI (everything after the last '/') *)
+let remove_last_segment (base: string) : string =
+  let len = fs_byte_length base in
+  if len = 0 then ""
+  else
+    let cut_pos = find_last_slash base len in
+    if cut_pos = 0 then base  (* no slash found, return as-is *)
+    else fs_byte_sub base 0 cut_pos
+
+(* Find the position of the next '/' in `s` at or after `pos` (where
+   pos is already known to be <= fs_byte_length s). Returns
+   fs_byte_length s if no slash remains. *)
+let rec find_next_slash (s: string) (pos: nat{pos <= fs_byte_length s}) (fuel: nat)
+  : Tot (r:nat{pos <= r /\ r <= fs_byte_length s}) (decreases fuel) =
+  let len = fs_byte_length s in
+  if fuel = 0 then pos
+  else if pos >= len then len
+  else if FStar.Char.int_of_char (fs_byte_index s pos) = 0x2F then pos
+  else find_next_slash s (pos + 1) (fuel - 1)
+
+(* RFC 3986 §5.2.4: remove_dot_segments — collapse "./" and "../" in a
+   path. Input is a "merged" path (already resolved via §5.2.3). Output
+   preserves trailing slash iff input ends in ".", "..", or "/".
+
+   We model the RFC's two-buffer algorithm by repeatedly consuming a
+   segment from the input, and pushing it onto an output list unless
+   it's "." (drop) or ".." (drop and pop one segment from output). *)
+let rec remove_dot_segments_step (input: string) (pos: nat) (out: list string) (fuel: nat)
+  : Tot (list string) (decreases fuel) =
+  if fuel = 0 then List.Tot.rev out
+  else
+    let len = fs_byte_length input in
+    if pos > len then List.Tot.rev out
+    else if pos = len then List.Tot.rev out
+    else
+      let slash_pos : nat = find_next_slash input pos (len - pos + 1) in
+      let has_slash = slash_pos < len in
+      let seg_end : nat = slash_pos in
+      let seg_len : nat = seg_end - pos in
+      let seg = fs_byte_sub input pos seg_len in
+      let seg_with_slash = if has_slash
+                           then String.concat "" [seg; "/"]
+                           else seg in
+      let next_pos : nat = if has_slash then slash_pos + 1 else len in
+      let out' =
+        if seg = "." then
+          (* "./" or trailing "." — drop input segment; if it's the
+             final "." without a slash, treat as empty trailing "/". *)
+          if has_slash then out
+          else (match out with
+                | [] -> ["/"]  (* promote bare "." -> "/" *)
+                | _ -> "/" :: (match out with _ :: rest -> rest | [] -> []))
+        else if seg = ".." then
+          (* Pop one element from out (if any), and if input had a slash
+             add a trailing "/"; if ".." is final, keep a "/". *)
+          let popped = match out with _ :: rest -> rest | [] -> [] in
+          if has_slash then popped else "/" :: popped
+        else
+          seg_with_slash :: out
+      in
+      remove_dot_segments_step input next_pos out' (fuel - 1)
+
+let remove_dot_segments (path: string) : string =
+  let len = fs_byte_length path in
+  let segs = remove_dot_segments_step path 0 [] (len + 2) in
+  String.concat "" segs
+
+(* Find the authority boundary in an absolute URI, i.e. the position of
+   the first '/' after "scheme://". Returns the length of the URI if
+   there's no hierarchical path. *)
+let rec find_authority_end (s: string) (pos: nat{pos <= fs_byte_length s}) (fuel: nat)
+  : Tot (r:nat{pos <= r /\ r <= fs_byte_length s}) (decreases fuel) =
+  let len = fs_byte_length s in
+  if fuel = 0 then pos
+  else if pos >= len then len
+  else if FStar.Char.int_of_char (fs_byte_index s pos) = 0x2F then pos
+  else find_authority_end s (pos + 1) (fuel - 1)
+
+let rec find_scheme_end (base: string) (p: nat{p <= fs_byte_length base}) (fuel: nat)
+  : Tot (r:nat{r <= fs_byte_length base}) (decreases fuel) =
+  let len = fs_byte_length base in
+  if fuel = 0 then 0
+  else if p >= len then 0
+  else if FStar.Char.int_of_char (fs_byte_index base p) = 0x3A then p + 1
+  else find_scheme_end base (p + 1) (fuel - 1)
+
+let find_path_start (base: string) : (r:nat{r <= fs_byte_length base}) =
+  let len = fs_byte_length base in
+  let scheme_end = find_scheme_end base 0 (len + 1) in
+  if scheme_end + 1 < len
+     && FStar.Char.int_of_char (fs_byte_index base scheme_end) = 0x2F
+     && FStar.Char.int_of_char (fs_byte_index base (scheme_end + 1)) = 0x2F
+  then
+    find_authority_end base (scheme_end + 2) (len - scheme_end)
+  else scheme_end
+
+(* Drop any query ("?...") or fragment ("#...") from the base before
+   resolving a relative reference. Per RFC 3986 §5.2.3. *)
+let rec find_query_or_fragment (s: string) (pos: nat{pos <= fs_byte_length s}) (fuel: nat)
+  : Tot (r:nat{pos <= r /\ r <= fs_byte_length s}) (decreases fuel) =
+  let len = fs_byte_length s in
+  if fuel = 0 then pos
+  else if pos >= len then len
+  else
+    let c = FStar.Char.int_of_char (fs_byte_index s pos) in
+    if c = 0x3F || c = 0x23 then pos
+    else find_query_or_fragment s (pos + 1) (fuel - 1)
+
+(* Resolve a relative IRI against the base IRI per RFC 3986 §5.2
+   Transform References. Delegates to Parser.IRI.resolve_iri_v2 —
+   a verbatim port of RFC 3986 §5.2 that parses base and reference
+   into five-component records, runs §5.2.2 (transform_references),
+   §5.2.3 (merge), §5.2.4 (remove_dot_segments), and §5.3
+   (recompose). *)
+let resolve_iri (st: turtle_state) (rel: string) : string =
+  resolve_iri_v2 st.base_iri rel
+
+(* ================================================================ *)
+(* Turtle whitespace: spaces, tabs, newlines, and comments           *)
+(* ================================================================ *)
+
+let is_turtle_ws (c: char) : bool =
+  let code = int_of_char c in
+  code = 0x20 || code = 0x09 || code = 0x0A || code = 0x0D
+
+(* Skip a single comment: # to end of line *)
+let rec skip_to_eol (input: string) (pos: nat) (fuel: nat) : Tot nat (decreases fuel) =
+  if fuel = 0 then pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then pos
+    else
+      let c = fs_byte_index input pos in
+      let code = int_of_char c in
+      if code = 0x0A || code = 0x0D then pos
+      else skip_to_eol input (pos + 1) (fuel - 1)
+
+(* Skip whitespace and comments (which start with # and go to end of line) *)
+let rec skip_ws_and_comments (input: string) (pos: nat) (fuel: nat) : Tot nat (decreases fuel) =
+  if fuel = 0 then pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then pos
+    else
+      let c = fs_byte_index input pos in
+      let code = int_of_char c in
+      if is_turtle_ws c then
+        skip_ws_and_comments input (pos + 1) (fuel - 1)
+      else if code = 0x23 then  (* '#' — comment *)
+        let pos' = skip_to_eol input (pos + 1) (len - pos) in
+        skip_ws_and_comments input pos' (fuel - 1)
+      else
+        pos
+
+let turtle_ws (input: string) (pos: nat) : parse_result unit =
+  ParseOk () (skip_ws_comments input pos)
+
+(* ================================================================ *)
+(* PN_CHARS_BASE, PN_CHARS_U, PN_CHARS — per Turtle grammar         *)
+(* ================================================================ *)
+
+// Flattened, ASCII-fast-path character predicates.
+// For ASCII (code < 0x80) we resolve immediately without checking Unicode ranges.
+// This is critical for performance: DBpedia and most RDF data is predominantly ASCII.
+
+let is_pn_chars_base (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    // ASCII fast path: only A-Z and a-z
+    (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)
+  else
+    // Unicode ranges (only reached for non-ASCII chars) — per Turtle §6.5.
+    (code >= 0x00C0 && code <= 0x00D6) ||
+    (code >= 0x00D8 && code <= 0x00F6) ||
+    (code >= 0x00F8 && code <= 0x02FF) ||
+    (code >= 0x0370 && code <= 0x037D) ||
+    (code >= 0x037F && code <= 0x1FFF) ||
+    (code >= 0x200C && code <= 0x200D) ||
+    (code >= 0x2070 && code <= 0x218F) ||
+    (code >= 0x2C00 && code <= 0x2FEF) ||
+    (code >= 0x3001 && code <= 0xD7FF) ||
+    (code >= 0xF900 && code <= 0xFDCF) ||
+    (code >= 0xFDF0 && code <= 0xFFFD) ||
+    (code >= 0x10000 && code <= 0xEFFFF)
+
+let is_pn_chars_u (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    // ASCII fast path: A-Z, a-z, _
+    (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A) || code = 0x5F
+  else
+    is_pn_chars_base c
+
+// Flattened is_pn_chars: single function, no call chain.
+// For ASCII, resolves in one branch: A-Z, a-z, 0-9, _, -
+let is_pn_chars (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    // ASCII fast path: A-Z, a-z, 0-9, _, -
+    (code >= 0x41 && code <= 0x5A) ||
+    (code >= 0x61 && code <= 0x7A) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code = 0x5F || code = 0x2D
+  else
+    // Unicode: PN_CHARS_BASE ranges + middle dot + combining chars + extenders
+    code = 0xB7 ||
+    (code >= 0x0300 && code <= 0x036F) ||
+    (code >= 0x203F && code <= 0x2040) ||
+    is_pn_chars_base c
+
+// ================================================================
+// Codepoint-aware PN_CHARS predicates (Pass-2 FastString migration,
+// issue #89). These take a raw Unicode codepoint (nat) rather than
+// an F*.Char.char, so the caller can walk UTF-8 byte sequences via
+// fs_cp_at without having to fold every byte through char_of_int.
+//
+// Semantics per Turtle §6.5 -- full PN_CHARS_BASE Unicode ranges,
+// including the astral plane U+10000..U+EFFFF that char_of_int can't
+// hold (F*'s char is capped at the BMP, codepoints up to U+D7FF for
+// safety). Byte versions above remain correct for ASCII and are kept
+// for call sites that only look at a single byte-sized delimiter.
+// ================================================================
+
+let is_pn_chars_base_cp (cp: nat) : bool =
+  if cp < 0x80 then
+    (cp >= 0x41 && cp <= 0x5A) || (cp >= 0x61 && cp <= 0x7A)
+  else
+    (cp >= 0x00C0 && cp <= 0x00D6) ||
+    (cp >= 0x00D8 && cp <= 0x00F6) ||
+    (cp >= 0x00F8 && cp <= 0x02FF) ||
+    (cp >= 0x0370 && cp <= 0x037D) ||
+    (cp >= 0x037F && cp <= 0x1FFF) ||
+    (cp >= 0x200C && cp <= 0x200D) ||
+    (cp >= 0x2070 && cp <= 0x218F) ||
+    (cp >= 0x2C00 && cp <= 0x2FEF) ||
+    (cp >= 0x3001 && cp <= 0xD7FF) ||
+    (cp >= 0xF900 && cp <= 0xFDCF) ||
+    (cp >= 0xFDF0 && cp <= 0xFFFD) ||
+    (cp >= 0x10000 && cp <= 0xEFFFF)
+
+let is_pn_chars_u_cp (cp: nat) : bool =
+  if cp < 0x80 then
+    (cp >= 0x41 && cp <= 0x5A) || (cp >= 0x61 && cp <= 0x7A) || cp = 0x5F
+  else
+    is_pn_chars_base_cp cp
+
+let is_pn_chars_cp (cp: nat) : bool =
+  if cp < 0x80 then
+    (cp >= 0x41 && cp <= 0x5A) ||
+    (cp >= 0x61 && cp <= 0x7A) ||
+    (cp >= 0x30 && cp <= 0x39) ||
+    cp = 0x5F || cp = 0x2D
+  else
+    cp = 0xB7 ||
+    (cp >= 0x0300 && cp <= 0x036F) ||
+    (cp >= 0x203F && cp <= 0x2040) ||
+    is_pn_chars_base_cp cp
+
+(* ================================================================ *)
+(* Prefixed name parser: prefix:local                                *)
+(* ================================================================ *)
+
+// Prefix namespace body char: is_pn_chars or dot
+let is_pname_ns_body_char (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    (code >= 0x41 && code <= 0x5A) ||
+    (code >= 0x61 && code <= 0x7A) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code = 0x5F || code = 0x2D || code = 0x2E
+  else
+    is_pn_chars c
+
+let span_to_string (input: string) (sp: span) : string =
+  if sp.sp_end >= sp.sp_start && sp.sp_end <= fs_byte_length input then
+    fs_byte_sub input sp.sp_start (sp.sp_end - sp.sp_start)
+  else
+    ""
+
+// Decode \uXXXX and \UXXXXXXXX escapes in an IRI body.
+// Scanner has already validated well-formedness; we just decode.
+//
+// Issue #325 — WHY THIS RETURNS FRAGMENTS AND NOT A CHAR LIST.
+// This function used to accumulate a `list char` of RAW BYTES read with
+// fs_byte_index and finish with String.string_of_list. Because
+// string_of_list re-encodes every element as a UTF-8 CODEPOINT, a byte
+// 0xE6 went in and the two bytes 0xC3 0xA6 came out: an IRIREF
+// <https://example.org/日本語> parsed to <https://example.org/æ¥æ¬èª>
+// (UTF-8 read as Latin-1) with no error anywhere. The literal on the
+// same source line was correct the whole time — literals go through
+// scan_short_string_span + span_to_string, i.e. fs_byte_sub, which is
+// byte-transparent. That asymmetry WAS the bug.
+//
+// The fix keeps the two kinds of content on the primitive that suits
+// them and never mixes them in one accumulator:
+//   raw bytes  -> fs_byte_sub, sliced in runs, byte-transparent
+//   escapes    -> fs_utf8_of_codepoint, encoded from a codepoint
+// Each recursive step emits one already-correctly-encoded fragment;
+// the caller concatenates once. fs_find_byte locates the next
+// backslash, so a run of raw bytes costs one fs_byte_sub regardless of
+// how many bytes or codepoints it spans (this also keeps the issue-#70
+// hot-path cost model: no per-byte allocation).
+let rec decode_iri_escape_frags (input: string) (pos: nat) (end_pos: nat)
+    (acc: list string) (fuel: nat)
+  : Tot (list string) (decreases fuel) =
+  let len = fs_byte_length input in
+  if fuel = 0 || pos >= end_pos || pos >= len then List.Tot.rev acc
+  else
+    let c = fs_byte_index input pos in
+    let code = int_of_char c in
+    if code = 0x5C && pos + 1 < end_pos && pos + 1 < len then
+      let next = fs_byte_index input (pos + 1) in
+      let ncode = int_of_char next in
+      if ncode = 0x75 && pos + 6 <= end_pos && pos + 6 <= len then
+        let h0 = hex_val (fs_byte_index input (pos + 2)) in
+        let h1 = hex_val (fs_byte_index input (pos + 3)) in
+        let h2 = hex_val (fs_byte_index input (pos + 4)) in
+        let h3 = hex_val (fs_byte_index input (pos + 5)) in
+        let cp = (h0 `op_Multiply` 4096) + (h1 `op_Multiply` 256) + (h2 `op_Multiply` 16) + h3 in
+        decode_iri_escape_frags input (pos + 6) end_pos
+          (fs_utf8_of_codepoint cp :: acc) (fuel - 1)
+      else if ncode = 0x55 && pos + 10 <= end_pos && pos + 10 <= len then
+        let h0 = hex_val (fs_byte_index input (pos + 2)) in
+        let h1 = hex_val (fs_byte_index input (pos + 3)) in
+        let h2 = hex_val (fs_byte_index input (pos + 4)) in
+        let h3 = hex_val (fs_byte_index input (pos + 5)) in
+        let h4 = hex_val (fs_byte_index input (pos + 6)) in
+        let h5 = hex_val (fs_byte_index input (pos + 7)) in
+        let h6 = hex_val (fs_byte_index input (pos + 8)) in
+        let h7 = hex_val (fs_byte_index input (pos + 9)) in
+        let cp = (h0 `op_Multiply` 268435456) + (h1 `op_Multiply` 16777216) +
+                 (h2 `op_Multiply` 1048576) + (h3 `op_Multiply` 65536) +
+                 (h4 `op_Multiply` 4096) + (h5 `op_Multiply` 256) +
+                 (h6 `op_Multiply` 16) + h7 in
+        decode_iri_escape_frags input (pos + 10) end_pos
+          (fs_utf8_of_codepoint cp :: acc) (fuel - 1)
+      else
+        // A backslash that is not a UCHAR: pass the byte through raw,
+        // exactly as before, but via fs_byte_sub so it stays a byte.
+        decode_iri_escape_frags input (pos + 1) end_pos
+          (fs_byte_sub input pos 1 :: acc) (fuel - 1)
+    else
+      // Byte-transparent run. Copy every byte up to the next backslash
+      // (or to end_pos) in ONE fs_byte_sub. `stop > pos` holds in every
+      // branch, so the fuel measure still decreases and the slice
+      // length `stop - pos` is a nat.
+      let nb = fs_find_byte input 0x5C pos in
+      let stop : nat =
+        if nb <= pos then pos + 1
+        else if nb < end_pos then nb
+        else end_pos
+      in
+      decode_iri_escape_frags input stop end_pos
+        (fs_byte_sub input pos (stop - pos) :: acc) (fuel - 1)
+
+let iri_ref_span_to_raw (input: string) (sp: iri_ref_span) : string =
+  if sp.irs_span.sp_end >= sp.irs_span.sp_start + 2 && sp.irs_span.sp_end <= fs_byte_length input then
+    let body_start : nat = sp.irs_span.sp_start + 1 in
+    let body_end : nat = sp.irs_span.sp_end - 1 in
+    // Fast path: an IRI with no backslash anywhere in its body is one
+    // fs_byte_sub, no fragment list, no concat. This is the case for
+    // essentially every IRI in real data.
+    if fs_find_byte input 0x5C body_start >= body_end then
+      fs_byte_sub input body_start (body_end - body_start)
+    else
+      String.concat ""
+        (decode_iri_escape_frags input body_start body_end []
+           (body_end - body_start + 1))
+  else
+    ""
+
+// RFC 3987 §2.2 (and Turtle/TriG IRIREF production) forbids these
+// characters from appearing in an IRI reference — including via UCHAR
+// escape. The scanner rejects bare occurrences; this catches ones that
+// slipped in through \uXXXX / \UXXXXXXXX. Called post-decode. Rejects:
+//   0x00-0x20  (control chars + space)
+//   0x22 '"'   0x3C '<'   0x3E '>'
+//   0x5C '\\'  0x5E '^'   0x60 '`'
+//   0x7B '{'   0x7C '|'   0x7D '}'
+let is_forbidden_iri_cp (c: int) : bool =
+  c <= 0x20 || c = 0x22 || c = 0x3C || c = 0x3E ||
+  c = 0x5C || c = 0x5E || c = 0x60 ||
+  c = 0x7B || c = 0x7C || c = 0x7D
+
+let rec contains_forbidden_iri_char_from (s: string) (pos: nat) (fuel: nat)
+  : Tot bool (decreases fuel) =
+  let len = String.length s in
+  if fuel = 0 || pos >= len then false
+  else
+    let c = FStar.Char.int_of_char (String.index s pos) in
+    if is_forbidden_iri_cp c then true
+    else contains_forbidden_iri_char_from s (pos + 1) (fuel - 1)
+
+let contains_forbidden_iri_char (s: string) : bool =
+  contains_forbidden_iri_char_from s 0 (String.length s + 1)
+
+(* Fast-path IRI resolver for the hot path of Turtle parsing. Routes
+   through the full RFC 3986 resolve_iri (which normalises ../ and ./)
+   only when the relative reference actually contains a "." segment
+   that might need normalisation — common case is a plain localname
+   that just appends. has_colon=true means the scanner already knows
+   there's a ':' in the raw IRI so it's treated as absolute. *)
+let rec has_dot_segment_fuel (s: string) (pos: nat) (at_seg_start: bool) (fuel: nat)
+  : Tot bool (decreases fuel) =
+  if fuel = 0 then false
+  else
+    let len = fs_byte_length s in
+    if pos >= len then false
+    else
+      let c = FStar.Char.int_of_char (fs_byte_index s pos) in
+      if c = 0x2F then has_dot_segment_fuel s (pos + 1) true (fuel - 1)
+      else if at_seg_start && c = 0x2E then
+        // At segment start; next char(s)
+        if pos + 1 >= len then true  // trailing "."
+        else
+          let c2 = FStar.Char.int_of_char (fs_byte_index s (pos + 1)) in
+          if c2 = 0x2F then true  // "./"
+          else if c2 = 0x2E then
+            if pos + 2 >= len then true  // trailing ".."
+            else
+              let c3 = FStar.Char.int_of_char (fs_byte_index s (pos + 2)) in
+              if c3 = 0x2F then true  // "../"
+              else has_dot_segment_fuel s (pos + 1) false (fuel - 1)
+          else has_dot_segment_fuel s (pos + 1) false (fuel - 1)
+      else has_dot_segment_fuel s (pos + 1) false (fuel - 1)
+
+let has_dot_segment (s: string) : bool =
+  has_dot_segment_fuel s 0 true (fs_byte_length s + 1)
+
+// The old hinted fast path mis-handled several reference shapes —
+// absolute-path "/g", query-only "?y", fragment-only "#s", network-
+// path "//g", and empty-string — by forwarding to an ad-hoc
+// `last-slash + rel` concat that ignores RFC 3986 §5.2 entirely.
+// With the Parser.IRI implementation now in place the only honest
+// fast path is "reference has a scheme, return as-is"; everything
+// else must go through the full §5.2 transform.
+let resolve_iri_hint (st: turtle_state) (rel: string) (has_colon: bool) : string =
+  if has_colon then rel
+  else resolve_iri st rel
+
+let is_ascii_hex_digit (c: char) : bool =
+  let code = int_of_char c in
+  (code >= 0x30 && code <= 0x39) ||
+  (code >= 0x41 && code <= 0x46) ||
+  (code >= 0x61 && code <= 0x66)
+
+let is_pn_local_esc_char (c: char) : bool =
+  let code = int_of_char c in
+  code = 0x5F || code = 0x7E || code = 0x2E || code = 0x2D ||
+  code = 0x21 || code = 0x24 || code = 0x26 || code = 0x27 ||
+  code = 0x28 || code = 0x29 || code = 0x2A || code = 0x2B ||
+  code = 0x2C || code = 0x3B || code = 0x3D || code = 0x2F ||
+  code = 0x3F || code = 0x23 || code = 0x40 || code = 0x25
+
+let rec validate_pname_ns_from (ns: string) (pos: nat) (fuel: nat) : Tot bool (decreases fuel) =
+  if fuel = 0 then true
+  else
+    let len = fs_byte_length ns in
+    if pos >= len then true
+    else
+      // Pass-2 codepoint walk (issue #89): ASCII byte fast path for common
+      // case (A-Z a-z 0-9 _ - .), UTF-8 decode only for bytes >= 0x80.
+      // Advance by the codepoint's byte length, not a hardcoded 1.
+      let b = fs_byte_at ns pos in
+      if b < 0x80 then
+        let ok =
+          (b >= 0x41 && b <= 0x5A) ||
+          (b >= 0x61 && b <= 0x7A) ||
+          (b >= 0x30 && b <= 0x39) ||
+          b = 0x5F || b = 0x2D || b = 0x2E
+        in
+        ok && validate_pname_ns_from ns (pos + 1) (fuel - 1)
+      else
+        let (cp, adv) = fs_cp_at ns pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        is_pn_chars_cp cp && validate_pname_ns_from ns (pos + advance) (fuel - 1)
+
+let validate_pname_ns (ns: string) : bool =
+  let len = fs_byte_length ns in
+  if len = 0 then true
+  else
+    let last = fs_byte_index ns (len - 1) in
+    int_of_char last <> 0x2E && validate_pname_ns_from ns 0 (len + 1)
+
+let rec validate_pn_local_from (local: string) (pos: nat) (is_first: bool) (fuel: nat)
+  : Tot bool (decreases fuel) =
+  if fuel = 0 then true
+  else
+    let len = fs_byte_length local in
+    if pos >= len then true
+    else
+      let b = fs_byte_at local pos in
+      if b = 0x25 then
+        pos + 2 < len &&
+        is_ascii_hex_digit (fs_byte_index local (pos + 1)) &&
+        is_ascii_hex_digit (fs_byte_index local (pos + 2)) &&
+        validate_pn_local_from local (pos + 3) false (fuel - 1)
+      else if b = 0x5C then
+        pos + 1 < len &&
+        is_pn_local_esc_char (fs_byte_index local (pos + 1)) &&
+        validate_pn_local_from local (pos + 2) false (fuel - 1)
+      else if b < 0x80 then
+        // Pass-2 codepoint walk (issue #89): stay on the byte fast path
+        // for ASCII and advance 1 byte; only fall through to fs_cp_at
+        // for the multibyte case below.
+        let ok =
+          if is_first then
+            (b >= 0x41 && b <= 0x5A) ||
+            (b >= 0x61 && b <= 0x7A) ||
+            (b >= 0x30 && b <= 0x39) ||
+            b = 0x5F || b = 0x3A
+          else
+            (b >= 0x41 && b <= 0x5A) ||
+            (b >= 0x61 && b <= 0x7A) ||
+            (b >= 0x30 && b <= 0x39) ||
+            b = 0x5F || b = 0x2D || b = 0x3A ||
+            (b = 0x2E && pos + 1 < len)
+        in
+        ok && validate_pn_local_from local (pos + 1) false (fuel - 1)
+      else
+        // Multibyte UTF-8: decode the codepoint, test it against the
+        // PN_CHARS_U / PN_CHARS tables, and advance by the codepoint's
+        // byte length so we don't test continuation bytes separately.
+        let (cp, adv) = fs_cp_at local pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        let ok = if is_first then is_pn_chars_u_cp cp else is_pn_chars_cp cp in
+        ok && validate_pn_local_from local (pos + advance) false (fuel - 1)
+
+let validate_pn_local (local: string) : bool =
+  let len = fs_byte_length local in
+  if len = 0 then true
+  else validate_pn_local_from local 0 true (len + 1)
+
+// Parse prefix namespace using position-scan: find colon, extract substring.
+let parse_pname_ns (input: string) (pos: nat) : parse_result string =
+  match scan_prefixed_name_span input pos with
+  | ParseOk pns _ ->
+    let ns = span_to_string input pns.pns_prefix in
+    if validate_pname_ns ns then
+      ParseOk ns pns.pns_local.sp_start
+    else
+      ParseFail "invalid prefix namespace" pos
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+(* Parse local name part (after the colon).
+   Local names can contain PN_CHARS, '.', ':', and percent-encoded chars.
+   For now we handle the common ASCII subset. *)
+// Flattened is_pn_local_char: single function, ASCII fast path
+let is_pn_local_char (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    // ASCII fast path: A-Z, a-z, 0-9, _, -, :, ., %, backslash
+    (code >= 0x41 && code <= 0x5A) ||
+    (code >= 0x61 && code <= 0x7A) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code = 0x5F || code = 0x2D || code = 0x3A ||
+    code = 0x2E || code = 0x25 || code = 0x5C
+  else
+    is_pn_chars c
+
+// Flattened is_pn_local_start: single function, ASCII fast path
+let is_pn_local_start (c: char) : bool =
+  let code = int_of_char c in
+  if code < 0x80 then
+    // ASCII fast path: A-Z, a-z, 0-9, _, :, %, backslash
+    (code >= 0x41 && code <= 0x5A) ||
+    (code >= 0x61 && code <= 0x7A) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code = 0x5F || code = 0x3A || code = 0x25 || code = 0x5C
+  else
+    is_pn_chars_u c
+
+// Trim trailing unescaped dots from a span end. A dot preceded by '\\' is
+// part of an escape sequence and must be preserved.
+let rec trim_trailing_dots_pos (input: string) (start: nat) (end_pos: nat)
+  : Tot nat (decreases end_pos) =
+  if end_pos <= start then start
+  else if end_pos > fs_byte_length input then end_pos
+  else
+    let c = fs_byte_index input (end_pos - 1) in
+    if int_of_char c = 0x2E then
+      if end_pos >= 2 && end_pos - 2 >= start &&
+         int_of_char (fs_byte_index input (end_pos - 2)) = 0x5C
+      then end_pos
+      else trim_trailing_dots_pos input start (end_pos - 1)
+    else end_pos
+
+// Uses ptake_while_pos: scans to find end position, then extracts substring in one shot.
+// No char list allocation, no List.rev, no string_of_list.
+// Trailing unescaped dots are trimmed so they remain available as triple
+// terminators (matching Turtle grammar's PN_LOCAL production).
+let parse_pn_local (input: string) (pos: nat) : parse_result string =
+  let scan_pos = if pos > 0 then pos - 1 else pos in
+  match scan_prefixed_name_span input scan_pos with
+  | ParseOk pns _ ->
+    if pns.pns_local.sp_start = pos then
+      let trimmed_end = trim_trailing_dots_pos input pns.pns_local.sp_start pns.pns_local.sp_end in
+      let trimmed_span = { sp_start = pns.pns_local.sp_start; sp_end = trimmed_end } in
+      let local = span_to_string input trimmed_span in
+      if validate_pn_local local then
+        ParseOk local trimmed_end
+      else
+        ParseFail "invalid prefixed name local part" pos
+    else
+      ParseOk "" pos
+  | ParseFail _ _ -> ParseOk "" pos
+
+(* Full prefixed name: pname_ns + pn_local *)
+let parse_prefixed_name (input: string) (pos: nat) : parse_result (string & string) =
+  match parse_pname_ns input pos with
+  | ParseOk ns pos' ->
+    begin match parse_pn_local input pos' with
+    | ParseOk local pos'' -> ParseOk (ns, local) pos''
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* IRI parsing (full IRIs and prefixed names)                        *)
+(* ================================================================ *)
+
+(* Parse a Turtle IRI: either <full-iri> or prefix:local *)
+let parse_turtle_iri (st: turtle_state) (input: string) (pos: nat) : parse_result iri =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected IRI" pos
+  else
+    let c = fs_byte_index input pos in
+    let code = int_of_char c in
+    if code = 0x3C then  (* '<' — full IRI, may be relative like <> *)
+      begin match scan_iri_ref_span input pos with
+      | ParseOk sp pos' ->
+        let i = iri_ref_span_to_raw input sp in
+        // Turtle/TriG eval-bad-01/02/03: UCHAR escape must not decode
+        // to a character forbidden in an IRIREF (space, <, >, etc.)
+        if contains_forbidden_iri_char i then
+          ParseFail "forbidden character in IRI" pos
+        else if sp.irs_has_colon then
+          ParseOk i pos'
+        else
+          (* Resolve relative IRI against base — empty string is valid in Turtle *)
+          let resolved = resolve_iri_hint st i false in
+          if is_iri resolved then ParseOk resolved pos'
+          else ParseFail "resolved IRI invalid" pos
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    else  (* Try prefixed name *)
+      begin match parse_prefixed_name input pos with
+      | ParseOk (prefix, local) pos' ->
+        begin match resolve_prefixed_name st prefix local with
+        | Some resolved -> ParseOk resolved pos'
+        | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) pos
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+
+(* ================================================================ *)
+(* Directive parsers: @prefix, @base, PREFIX, BASE                   *)
+(* ================================================================ *)
+
+// Parse @prefix directive: @prefix prefix: <iri> .
+// Uses scanner span + resolve_iri to handle relative IRIs like <#> and <foo/>
+let parse_at_prefix (st: turtle_state) (input: string) (pos: nat) : parse_result (string & string) =
+  match pstring "@prefix" input pos with
+  | ParseOk _ pos1 ->
+    begin match turtle_ws input pos1 with
+    | ParseOk () pos2 ->
+      begin match parse_pname_ns input pos2 with
+      | ParseOk ns pos3 ->
+        begin match turtle_ws input pos3 with
+        | ParseOk () pos4 ->
+          begin match scan_iri_ref_span input pos4 with
+          | ParseOk sp pos5 ->
+            let raw_iri = iri_ref_span_to_raw input sp in
+            let iri_val = resolve_iri_hint st raw_iri sp.irs_has_colon in
+            begin match turtle_ws input pos5 with
+            | ParseOk () pos6 ->
+              let len = fs_byte_length input in
+              if pos6 < len then
+                let dot = fs_byte_index input pos6 in
+                if int_of_char dot = 0x2E then
+                  ParseOk (ns, iri_val) (pos6 + 1)
+                else
+                  ParseFail "expected '.' after @prefix directive" pos6
+              else
+                ParseFail "expected '.' after @prefix directive" pos6
+            end
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+// Parse SPARQL-style PREFIX directive: PREFIX prefix: <iri> (no dot)
+let parse_sparql_prefix (st: turtle_state) (input: string) (pos: nat) : parse_result (string & string) =
+  match pstring_ci "PREFIX" input pos with
+  | ParseOk _ pos1 ->
+    begin match turtle_ws input pos1 with
+    | ParseOk () pos2 ->
+      begin match parse_pname_ns input pos2 with
+      | ParseOk ns pos3 ->
+        begin match turtle_ws input pos3 with
+        | ParseOk () pos4 ->
+          begin match scan_iri_ref_span input pos4 with
+          | ParseOk sp pos5 ->
+            let raw_iri = iri_ref_span_to_raw input sp in
+            let iri_val = resolve_iri_hint st raw_iri sp.irs_has_colon in
+            ParseOk (ns, iri_val) pos5
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+// Parse @base directive: @base <iri> .
+let parse_at_base (st: turtle_state) (input: string) (pos: nat) : parse_result string =
+  match pstring "@base" input pos with
+  | ParseOk _ pos1 ->
+    begin match turtle_ws input pos1 with
+    | ParseOk () pos2 ->
+      begin match scan_iri_ref_span input pos2 with
+      | ParseOk sp pos3 ->
+        let raw_iri = iri_ref_span_to_raw input sp in
+        let iri_val = resolve_iri_hint st raw_iri sp.irs_has_colon in
+        begin match turtle_ws input pos3 with
+        | ParseOk () pos4 ->
+          let len = fs_byte_length input in
+          if pos4 < len then
+            let dot = fs_byte_index input pos4 in
+            if int_of_char dot = 0x2E then
+              ParseOk iri_val (pos4 + 1)
+            else
+              ParseFail "expected '.' after @base directive" pos4
+          else
+            ParseFail "expected '.' after @base directive" pos4
+        end
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+// Parse SPARQL-style BASE directive: BASE <iri> (no dot)
+let parse_sparql_base (st: turtle_state) (input: string) (pos: nat) : parse_result string =
+  match pstring_ci "BASE" input pos with
+  | ParseOk _ pos1 ->
+    begin match turtle_ws input pos1 with
+    | ParseOk () pos2 ->
+      begin match scan_iri_ref_span input pos2 with
+      | ParseOk sp pos3 ->
+        let raw_iri = iri_ref_span_to_raw input sp in
+        let iri_val = resolve_iri_hint st raw_iri sp.irs_has_colon in
+        ParseOk iri_val pos3
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    end
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+// Parse any prefix directive (@prefix or PREFIX)
+let parse_prefix_directive (st: turtle_state) (input: string) (pos: nat) : parse_result (string & string) =
+  match parse_at_prefix st input pos with
+  | ParseOk v p -> ParseOk v p
+  | ParseFail _ _ -> parse_sparql_prefix st input pos
+
+// Parse any base directive (@base or BASE)
+let parse_base_directive (st: turtle_state) (input: string) (pos: nat) : parse_result string =
+  match parse_at_base st input pos with
+  | ParseOk v p -> ParseOk v p
+  | ParseFail _ _ -> parse_sparql_base st input pos
+
+(* ================================================================ *)
+(* Numeric literal parsers                                           *)
+(* ================================================================ *)
+
+let is_digit_char (c: char) : bool =
+  let code = int_of_char c in
+  code >= 0x30 && code <= 0x39
+
+(* Lookahead: does a well-formed EXPONENT (Turtle grammar: [eE] [+-]? [0-9]+)
+   start at byte offset `p`? Used so the digit-dot-EXPONENT DOUBLE form
+   (e.g. "123.E+1" — zero fractional digits before the exponent, legal
+   per DOUBLE ::= [0-9]+ '.' [0-9]* EXPONENT | ...) is recognised without
+   ever committing to consume the '.' unless what follows genuinely is
+   an exponent — a bare "123." with no digits and no exponent must still
+   fall back to INTEGER "123" plus a separate end-of-triple '.'. *)
+let is_valid_exponent_at (input: string) (p: nat) (len: nat) : bool =
+  if p >= len then false
+  else
+    let c = fs_byte_index input p in
+    let cd = int_of_char c in
+    if not (cd = 0x65 || cd = 0x45) then false  (* 'e' or 'E' *)
+    else if p + 1 >= len then false
+    else
+      let c1 = fs_byte_index input (p + 1) in
+      let cd1 = int_of_char c1 in
+      if cd1 = 0x2B || cd1 = 0x2D then  (* '+' or '-' *)
+        p + 2 < len && is_digit_char (fs_byte_index input (p + 2))
+      else
+        is_digit_char c1
+
+(* Parse an integer literal: [+-]?[0-9]+ *)
+(* Parse a numeric literal: integer, decimal, or double.
+   Returns (lexical_form, datatype_iri). *)
+let parse_numeric_literal (input: string) (pos: nat) : parse_result (string & wf_iri) =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected numeric literal" pos
+  else
+    (* Consume optional sign *)
+    let c0 = fs_byte_index input pos in
+    let code0 = int_of_char c0 in
+    let sign_str =
+      if code0 = 0x2B then "+"
+      else if code0 = 0x2D then "-"
+      else ""
+    in
+    let dpos : nat =
+      if code0 = 0x2B then pos + 1
+      else if code0 = 0x2D then pos + 1
+      else pos
+    in
+    (* Accumulate the numeric part: digits, dots, e/E *)
+    let rec collect_num (p: nat) (acc: list char) (has_dot: bool) (has_e: bool) (fuel: nat)
+      : Tot (parse_result (list char & bool & bool)) (decreases fuel) =
+      if fuel = 0 then ParseOk (acc, has_dot, has_e) p
+      else if p >= len then ParseOk (acc, has_dot, has_e) p
+      else
+        let ch = fs_byte_index input p in
+        let cd = int_of_char ch in
+        if is_digit_char ch then
+          collect_num (p + 1) (ch :: acc) has_dot has_e (fuel - 1)
+        else if cd = 0x2E && not has_dot && not has_e then
+          (* Check: dot followed by digit means decimal, dot followed by a
+             genuine EXPONENT means DOUBLE with zero fractional digits
+             (digit+ '.' digit* EXPONENT — the digit* may be empty, e.g.
+             "123.E+1"), otherwise it's the statement terminator. *)
+          if p + 1 < len then
+            let next = fs_byte_index input (p + 1) in
+            if is_digit_char next then
+              collect_num (p + 1) (ch :: acc) true has_e (fuel - 1)
+            else if is_valid_exponent_at input (p + 1) len then
+              (* Consume the dot only; the next loop iteration lands on
+                 the 'e'/'E' and the exponent branch below consumes it. *)
+              collect_num (p + 1) (ch :: acc) true has_e (fuel - 1)
+            else
+              (* Dot but no digit and no exponent after => "123." is
+                 integer "123" plus a separate end-of-triple '.'.
+                 Stop before the dot. *)
+              ParseOk (acc, has_dot, has_e) p
+          else
+            (* Dot at end of input — don't consume it *)
+            ParseOk (acc, has_dot, has_e) p
+        else if (cd = 0x65 || cd = 0x45) && not has_e then  (* 'e' or 'E' *)
+          (* Exponent part: optional sign + digits *)
+          if p + 1 < len then
+            let enext = fs_byte_index input (p + 1) in
+            let ecode = int_of_char enext in
+            if ecode = 0x2B || ecode = 0x2D then  (* sign after e *)
+              collect_num (p + 2) (enext :: ch :: acc) has_dot true (fuel - 1)
+            else if is_digit_char enext then
+              collect_num (p + 1) (ch :: acc) has_dot true (fuel - 1)
+            else
+              ParseOk (acc, has_dot, has_e) p
+          else
+            ParseOk (acc, has_dot, has_e) p
+        else
+          ParseOk (acc, has_dot, has_e) p
+    in
+    (* Handle case where number starts with '.' (like .5) *)
+    if dpos < len && int_of_char (fs_byte_index input dpos) = 0x2E then
+      (* '.' DIGIT+ EXPONENT? case: we have already consumed the leading
+         dot (has_dot = true) and have NOT yet seen an exponent
+         (has_e = false) — collect_num decides DOUBLE vs DECIMAL from
+         whatever exponent it finds after the digits that follow. Bug
+         #425: these two accumulator arguments were previously swapped
+         (has_dot=false, has_e=true), which primed has_e to true before
+         any 'e'/'E' had been scanned, so every leading-dot number
+         (".1", "+.7", ...) came out xsd:double even with no exponent —
+         and simultaneously made the real exponent character in cases
+         like "-.2e3" invisible to the `not has_e` guard below, causing
+         a spurious parse failure on the dangling "e3". *)
+      if dpos + 1 < len && is_digit_char (fs_byte_index input (dpos + 1)) then
+        let fuel = len - dpos in
+        begin match collect_num (dpos + 1) [fs_byte_index input dpos] true false fuel with
+        | ParseOk (acc, _, has_e) pos' ->
+          let num_str = String.string_of_list (List.Tot.rev acc) in
+          let lexical = String.concat "" [sign_str; num_str] in
+          let dt = if has_e then xsd_double else xsd_decimal in
+          ParseOk (lexical, dt) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else
+        ParseFail "expected digit after '.'" dpos
+    else if dpos <= len then
+      let fuel = len - dpos in
+      begin match collect_num dpos [] false false fuel with
+      | ParseOk (acc, has_dot, has_e) pos' ->
+        if List.Tot.length acc = 0 then
+          ParseFail "expected numeric literal" pos
+        else
+          let num_str = String.string_of_list (List.Tot.rev acc) in
+          let lexical = String.concat "" [sign_str; num_str] in
+          let dt =
+            if has_e then xsd_double
+            else if has_dot then xsd_decimal
+            else xsd_integer
+          in
+          ParseOk (lexical, dt) pos'
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    else
+      ParseFail "expected numeric literal" pos
+
+(* ================================================================ *)
+(* String literal parsers (single/double, short/long)                *)
+(* ================================================================ *)
+
+(* Parse long string body (triple-quoted): """...""" or '''...''' *)
+// Pass-3 issue #89: non-escape byte runs are walked one Unicode codepoint
+// at a time via fs_cp_at, so multi-byte UTF-8 sequences enter acc as one
+// codepoint entry and String.string_of_list (= BatUTF8.init) round-trips
+// them correctly. Pushing raw bytes would get them re-encoded a second
+// time and double the byte count.
+let rec parse_long_string_body (qch: char) (input: string) (pos: nat) (acc: list char) (fuel: nat)
+  : Tot (parse_result string) (decreases fuel) =
+  if fuel = 0 then ParseFail "unterminated long string" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated long string" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = int_of_char ch in
+      if ch = qch then
+        (* Check for triple quote ending *)
+        if pos + 2 < len then
+          let c1 = fs_byte_index input (pos + 1) in
+          let c2 = fs_byte_index input (pos + 2) in
+          if c1 = qch && c2 = qch then
+            ParseOk (String.string_of_list (List.Tot.rev acc)) (pos + 3)
+          else
+            (* Single quote char — part of content (ASCII byte). *)
+            parse_long_string_body qch input (pos + 1) (ch :: acc) (fuel - 1)
+        else
+          (* Not enough chars for triple quote — part of content (ASCII byte). *)
+          parse_long_string_body qch input (pos + 1) (ch :: acc) (fuel - 1)
+      else if code = 0x5C then  (* backslash — escape *)
+        if pos + 1 >= len then ParseFail "backslash at end of long string" pos
+        else
+          let esc = fs_byte_index input (pos + 1) in
+          let esc_code = int_of_char esc in
+          if esc_code = 0x74 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x09 :: acc) (fuel - 1)
+          else if esc_code = 0x6E then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x0A :: acc) (fuel - 1)
+          else if esc_code = 0x72 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x0D :: acc) (fuel - 1)
+          else if esc_code = 0x5C then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x5C :: acc) (fuel - 1)
+          else if esc_code = 0x22 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x22 :: acc) (fuel - 1)
+          else if esc_code = 0x27 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x27 :: acc) (fuel - 1)
+          else if esc_code = 0x62 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x08 :: acc) (fuel - 1)
+          else if esc_code = 0x66 then
+            parse_long_string_body qch input (pos + 2) (char_of_int 0x0C :: acc) (fuel - 1)
+          else if esc_code = 0x75 then  (* \uXXXX *)
+            if pos + 6 > len then ParseFail "incomplete \\u escape" pos
+            else
+              let h0 = hex_val (fs_byte_index input (pos + 2)) in
+              let h1 = hex_val (fs_byte_index input (pos + 3)) in
+              let h2 = hex_val (fs_byte_index input (pos + 4)) in
+              let h3 = hex_val (fs_byte_index input (pos + 5)) in
+              let cp = ((h0 `op_Multiply` 4096) + (h1 `op_Multiply` 256) + (h2 `op_Multiply` 16) + h3) in
+              if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\u escape" pos
+              else
+                parse_long_string_body qch input (pos + 6) (safe_char_of_int cp :: acc) (fuel - 1)
+          else if esc_code = 0x55 then  (* \UXXXXXXXX *)
+            if pos + 10 > len then ParseFail "incomplete \\U escape" pos
+            else
+              let h0 = hex_val (fs_byte_index input (pos + 2)) in
+              let h1 = hex_val (fs_byte_index input (pos + 3)) in
+              let h2 = hex_val (fs_byte_index input (pos + 4)) in
+              let h3 = hex_val (fs_byte_index input (pos + 5)) in
+              let h4 = hex_val (fs_byte_index input (pos + 6)) in
+              let h5 = hex_val (fs_byte_index input (pos + 7)) in
+              let h6 = hex_val (fs_byte_index input (pos + 8)) in
+              let h7 = hex_val (fs_byte_index input (pos + 9)) in
+              let cp = ((h0 `op_Multiply` 268435456) + (h1 `op_Multiply` 16777216) +
+                        (h2 `op_Multiply` 1048576) + (h3 `op_Multiply` 65536) +
+                        (h4 `op_Multiply` 4096) + (h5 `op_Multiply` 256) +
+                        (h6 `op_Multiply` 16) + h7) in
+              if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\U escape" pos
+              else
+                parse_long_string_body qch input (pos + 10) (safe_char_of_int cp :: acc) (fuel - 1)
+          else
+            ParseFail (String.concat "" ["invalid escape in long string: \\"; string_of_char esc]) pos
+      else if code < 0x80 then
+        (* ASCII byte fast path: byte value = codepoint, push as-is. *)
+        parse_long_string_body qch input (pos + 1) (ch :: acc) (fuel - 1)
+      else
+        (* Non-ASCII: decode the UTF-8 codepoint starting at pos, push it
+           as a single codepoint char into acc, and advance by the code-
+           point's byte length. See Pass-3 comment on parse_long_string_body.
+           fuel is bounded by the byte length of input, so the per-step
+           `fuel - 1` decrement is still adequate (the scan can only fire
+           `byte_length` times total). *)
+        let (cp, adv) = fs_cp_at input pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        parse_long_string_body qch input (pos + advance)
+          (safe_char_of_int cp :: acc) (fuel - 1)
+
+(* Parse single-quoted string body (for 'short' strings) *)
+let rec parse_single_string_body (input: string) (pos: nat) (acc: list char) (fuel: nat)
+  : Tot (parse_result string) (decreases fuel) =
+  if fuel = 0 then ParseFail "string too long" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "unterminated string literal" pos
+    else
+      let ch = fs_byte_index input pos in
+      let code = int_of_char ch in
+      if code = 0x27 then  (* single quote — end *)
+        ParseOk (String.string_of_list (List.Tot.rev acc)) (pos + 1)
+      else if code = 0x5C then  (* backslash *)
+        if pos + 1 >= len then ParseFail "backslash at end of string" pos
+        else
+          let esc = fs_byte_index input (pos + 1) in
+          let esc_code = int_of_char esc in
+          if esc_code = 0x74 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x09 :: acc) (fuel - 1)
+          else if esc_code = 0x6E then
+            parse_single_string_body input (pos + 2) (char_of_int 0x0A :: acc) (fuel - 1)
+          else if esc_code = 0x72 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x0D :: acc) (fuel - 1)
+          else if esc_code = 0x5C then
+            parse_single_string_body input (pos + 2) (char_of_int 0x5C :: acc) (fuel - 1)
+          else if esc_code = 0x27 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x27 :: acc) (fuel - 1)
+          else if esc_code = 0x22 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x22 :: acc) (fuel - 1)
+          else if esc_code = 0x62 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x08 :: acc) (fuel - 1)
+          else if esc_code = 0x66 then
+            parse_single_string_body input (pos + 2) (char_of_int 0x0C :: acc) (fuel - 1)
+          else if esc_code = 0x75 then
+            if pos + 6 > len then ParseFail "incomplete \\u escape" pos
+            else
+              let h0 = hex_val (fs_byte_index input (pos + 2)) in
+              let h1 = hex_val (fs_byte_index input (pos + 3)) in
+              let h2 = hex_val (fs_byte_index input (pos + 4)) in
+              let h3 = hex_val (fs_byte_index input (pos + 5)) in
+              let cp = ((h0 `op_Multiply` 4096) + (h1 `op_Multiply` 256) + (h2 `op_Multiply` 16) + h3) in
+              if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\u escape" pos
+              else
+                parse_single_string_body input (pos + 6) (safe_char_of_int cp :: acc) (fuel - 1)
+          else if esc_code = 0x55 then
+            if pos + 10 > len then ParseFail "incomplete \\U escape" pos
+            else
+              let h0 = hex_val (fs_byte_index input (pos + 2)) in
+              let h1 = hex_val (fs_byte_index input (pos + 3)) in
+              let h2 = hex_val (fs_byte_index input (pos + 4)) in
+              let h3 = hex_val (fs_byte_index input (pos + 5)) in
+              let h4 = hex_val (fs_byte_index input (pos + 6)) in
+              let h5 = hex_val (fs_byte_index input (pos + 7)) in
+              let h6 = hex_val (fs_byte_index input (pos + 8)) in
+              let h7 = hex_val (fs_byte_index input (pos + 9)) in
+              let cp = ((h0 `op_Multiply` 268435456) + (h1 `op_Multiply` 16777216) +
+                        (h2 `op_Multiply` 1048576) + (h3 `op_Multiply` 65536) +
+                        (h4 `op_Multiply` 4096) + (h5 `op_Multiply` 256) +
+                        (h6 `op_Multiply` 16) + h7) in
+              if not (valid_codepoint cp) then ParseFail "surrogate codepoint in \\U escape" pos
+              else
+                parse_single_string_body input (pos + 10) (safe_char_of_int cp :: acc) (fuel - 1)
+          else
+            ParseFail (String.concat "" ["invalid escape: \\"; string_of_char esc]) pos
+      else if code = 0x0A || code = 0x0D then
+        ParseFail "unescaped newline in short string literal" pos
+      else if code < 0x80 then
+        (* ASCII byte fast path. *)
+        parse_single_string_body input (pos + 1) (ch :: acc) (fuel - 1)
+      else
+        (* Pass-3 issue #89: decode the UTF-8 codepoint and push as one
+           codepoint char. Same rationale as parse_long_string_body. *)
+        let (cp, adv) = fs_cp_at input pos in
+        let advance : nat = if adv = 0 then 1 else adv in
+        parse_single_string_body input (pos + advance)
+          (safe_char_of_int cp :: acc) (fuel - 1)
+
+(* Parse a Turtle string literal: handles "", '', """""", '''''' variants *)
+let parse_turtle_string (input: string) (pos: nat) : parse_result string =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected string literal" pos
+  else
+    let c0 = fs_byte_index input pos in
+    let code0 = int_of_char c0 in
+    if code0 = 0x22 then  (* double quote *)
+      (* Check for long string """.."""" *)
+      if pos + 2 < len then
+        let c1 = fs_byte_index input (pos + 1) in
+        let c2 = fs_byte_index input (pos + 2) in
+        if int_of_char c1 = 0x22 && int_of_char c2 = 0x22 then
+          (* Long double-quoted string *)
+          let fuel = len - pos in
+          parse_long_string_body (char_of_int 0x22) input (pos + 3) [] fuel
+        else
+          begin match scan_short_string_span input pos with
+          | ParseOk sspan pos' ->
+            if int_of_char sspan.sss_quote = 0x22 then
+              ParseOk (span_to_string input sspan.sss_content) pos'
+            else
+              parse_string_literal input pos
+          | ParseFail _ _ ->
+            (* Short double-quoted string — fallback to full parser for escapes *)
+            parse_string_literal input pos
+          end
+      else
+        (* Too short for long — try short *)
+        begin match scan_short_string_span input pos with
+        | ParseOk sspan pos' ->
+          if int_of_char sspan.sss_quote = 0x22 then
+            ParseOk (span_to_string input sspan.sss_content) pos'
+          else
+            parse_string_literal input pos
+        | ParseFail _ _ ->
+          parse_string_literal input pos
+        end
+    else if code0 = 0x27 then  (* single quote *)
+      if pos + 2 < len then
+        let c1 = fs_byte_index input (pos + 1) in
+        let c2 = fs_byte_index input (pos + 2) in
+        if int_of_char c1 = 0x27 && int_of_char c2 = 0x27 then
+          (* Long single-quoted string *)
+          let fuel = len - pos in
+          parse_long_string_body (char_of_int 0x27) input (pos + 3) [] fuel
+        else
+          let fuel = len - pos in
+          begin match scan_short_string_span input pos with
+          | ParseOk sspan pos' ->
+            if int_of_char sspan.sss_quote = 0x27 then
+              ParseOk (span_to_string input sspan.sss_content) pos'
+            else
+              parse_single_string_body input (pos + 1) [] fuel
+          | ParseFail _ _ ->
+            (* Short single-quoted string *)
+            parse_single_string_body input (pos + 1) [] fuel
+          end
+      else
+        let fuel = len - pos in
+        begin match scan_short_string_span input pos with
+        | ParseOk sspan pos' ->
+          if int_of_char sspan.sss_quote = 0x27 then
+            ParseOk (span_to_string input sspan.sss_content) pos'
+          else
+            parse_single_string_body input (pos + 1) [] fuel
+        | ParseFail _ _ ->
+          parse_single_string_body input (pos + 1) [] fuel
+        end
+    else
+      ParseFail "expected string literal" pos
+
+(* ================================================================ *)
+(* Turtle literal parser with language tag or datatype               *)
+(* ================================================================ *)
+
+let parse_turtle_literal (st: turtle_state) (input: string) (pos: nat) : parse_result literal =
+  match parse_turtle_string input pos with
+  | ParseOk lexical pos' ->
+    let len = fs_byte_length input in
+    if pos' >= len then
+      ParseOk ({ lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None }) pos'
+    else
+      let next = fs_byte_index input pos' in
+      let next_code = int_of_char next in
+      if next_code = 0x40 then  (* '@' — language tag *)
+        (match st.ts_mode with
+         | Mode_12 ->
+           // RDF 1.2: `@lang` or `@lang--dir`. parse_lang_dir_12 validates
+           // the BCP47 tag and the direction token (`ltr`/`rtl`), and a
+           // dir picks datatype rdf:dirLangString.
+           begin match parse_lang_dir_12 input pos' with
+           | ParseOk (lang, dopt) pos'' ->
+             let dt = (match dopt with None -> rdf_lang_string | Some _ -> rdf_dir_lang_string) in
+             ParseOk ({ lexical_form = lexical; datatype = dt; lang_tag = Some lang; direction = dopt }) pos''
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         | Mode_11 ->
+           begin match parse_lang_tag input pos' with
+           | ParseOk lang pos'' ->
+             ParseOk ({ lexical_form = lexical; datatype = rdf_lang_string; lang_tag = Some lang; direction = None }) pos''
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if next_code = 0x5E then  (* '^' — might be '^^' datatype *)
+        if pos' + 1 < len then
+          let next2 = fs_byte_index input (pos' + 1) in
+          if int_of_char next2 = 0x5E then
+            (* '^^' followed by IRI or prefixed name *)
+            begin match parse_turtle_iri st input (pos' + 2) with
+            | ParseOk dt pos'' ->
+              if is_iri dt then
+                ParseOk ({ lexical_form = lexical; datatype = dt; lang_tag = None; direction = None }) pos''
+              else
+                ParseFail "invalid datatype IRI" pos'
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+          else
+            ParseOk ({ lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None }) pos'
+        else
+          ParseOk ({ lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None }) pos'
+      else
+        ParseOk ({ lexical_form = lexical; datatype = xsd_string; lang_tag = None; direction = None }) pos'
+  | ParseFail msg fpos -> ParseFail msg fpos
+
+(* ================================================================ *)
+(* Boolean literal parser                                            *)
+(* ================================================================ *)
+
+// Codepoint-aware boundary check for keyword lookahead (Pass 2, issue #89).
+// pstring matched an ASCII keyword; if what follows is a PN_CHARS char
+// we must reject because the keyword is actually part of a longer name.
+// For ASCII we stay on the byte fast path; only multibyte UTF-8 triggers
+// the codepoint decode.
+let pn_chars_follows (input: string) (pos: nat) : bool =
+  let len = fs_byte_length input in
+  if pos >= len then false
+  else
+    let b = fs_byte_at input pos in
+    if b < 0x80 then
+      (b >= 0x41 && b <= 0x5A) ||
+      (b >= 0x61 && b <= 0x7A) ||
+      (b >= 0x30 && b <= 0x39) ||
+      b = 0x5F || b = 0x2D
+    else
+      let (cp, _) = fs_cp_at input pos in
+      is_pn_chars_cp cp
+
+let parse_boolean_literal (input: string) (pos: nat) : parse_result literal =
+  match pstring "true" input pos with
+  | ParseOk _ pos' ->
+    (* Make sure next char is not alphanumeric (not part of a longer token) *)
+    if pn_chars_follows input pos' then
+      ParseFail "expected boolean literal" pos
+    else
+      ParseOk ({ lexical_form = "true"; datatype = xsd_boolean; lang_tag = None; direction = None }) pos'
+  | ParseFail _ _ ->
+    begin match pstring "false" input pos with
+    | ParseOk _ pos' ->
+      if pn_chars_follows input pos' then
+        ParseFail "expected boolean literal" pos
+      else
+        ParseOk ({ lexical_form = "false"; datatype = xsd_boolean; lang_tag = None; direction = None }) pos'
+    | ParseFail _ _ -> ParseFail "expected boolean literal" pos
+    end
+
+(* ================================================================ *)
+(* The 'a' keyword (shorthand for rdf:type)                          *)
+(* ================================================================ *)
+
+let rdf_type_iri : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+
+let parse_a_keyword (input: string) (pos: nat) : parse_result wf_iri =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected 'a'" pos
+  else
+    let c = fs_byte_index input pos in
+    if int_of_char c = 0x61 then  (* 'a' *)
+      let next_pos = pos + 1 in
+      (* Must be followed by whitespace or end to be a keyword, not part of a prefixed name *)
+      if next_pos >= len then
+        ParseOk rdf_type_iri next_pos
+      else
+        let nc = fs_byte_index input next_pos in
+        if is_turtle_ws nc || int_of_char nc = 0x23 then  (* whitespace or comment *)
+          ParseOk rdf_type_iri next_pos
+        else
+          ParseFail "expected 'a' keyword" pos
+    else
+      ParseFail "expected 'a'" pos
+
+(* ================================================================ *)
+(* RDF collection constants                                          *)
+(* ================================================================ *)
+
+let rdf_first_iri : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/1999/02/22-rdf-syntax-ns#first");
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
+
+let rdf_rest_iri : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest");
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
+
+let rdf_nil_iri : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil");
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
+
+// RDF 1.2 reifier vocabulary (epic #305, wave 3). The reified-triple
+// sugar `<< s p o >>`, the `~` reifier annotation and the `{| ... |}`
+// annotation block all expand to a reifier subject plus a triple
+//   reifier rdf:reifies <<( s p o )>>
+// whose object is an RDF 1.2 triple term (T_TripleTerm).
+let rdf_reifies_iri : wf_iri =
+  assert_norm (is_iri "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies");
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"
+
+(* ================================================================ *)
+(* Forward declarations for mutually recursive parsers               *)
+(* We use fuel-based recursion with explicit state threading.        *)
+(* ================================================================ *)
+
+(* Result type for object parsing: object term + generated triples + updated state *)
+noeq type object_result = {
+  or_term: rdf_term;
+  or_triples: list triple;
+  or_state: turtle_state;
+}
+
+(* Result type for subject parsing.
+   `sr_is_bnode_proplist` distinguishes `[ ... ]` shorthand (which may
+   stand as a full statement without a predicateObjectList) from every
+   other subject form (IRI, bnode label, collection) which *requires*
+   a predicateObjectList. Collections in particular must fail if they
+   appear alone — see trig-syntax-bad-list-03. *)
+noeq type subject_result = {
+  sr_subject: subject;
+  sr_triples: list triple;
+  sr_state: turtle_state;
+  sr_is_bnode_proplist: bool;
+}
+
+(* ================================================================ *)
+(* RDF 1.2 triple terms for Turtle/TriG (epic #305, wave 2).         *)
+(*                                                                   *)
+(* A triple term `<<( ttSubject ttPredicate ttObject )>>` occurs     *)
+(* ONLY in object position and is reached only when ts_mode =        *)
+(* Mode_12. ttSubject is an IRI / blank node / prefixed name (never  *)
+(* a literal); ttPredicate is an IRI or `a`; ttObject may nest       *)
+(* another triple term. Prefixes and base resolve through            *)
+(* turtle_state. The retired RDF-star `<< s p o >>` quoted-triple    *)
+(* form is rejected — only `<<(` opens a term. This is a self-       *)
+(* contained fuel recursion (it never re-enters the collection /     *)
+(* blank-node-property-list machinery, which cannot appear inside a  *)
+(* triple term), so it stays outside parse_turtle_object's mutual    *)
+(* block and cannot perturb those termination proofs.                *)
+(* ================================================================ *)
+
+let parse_tt_subject (st: turtle_state) (input: string) (pos: nat) : parse_result subject =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected triple-term subject" pos
+  else
+    let code = int_of_char (fs_byte_index input pos) in
+    if code = 0x5F then  (* '_' — blank node *)
+      begin match parse_bnode input pos with
+      | ParseOk b pos' -> ParseOk (S_BNode b) pos'
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+    else
+      begin match parse_turtle_iri st input pos with
+      | ParseOk i pos' ->
+        if is_iri i then ParseOk (S_IRI i) pos'
+        else ParseFail "invalid triple-term subject IRI" pos
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+
+let parse_tt_predicate (st: turtle_state) (input: string) (pos: nat) : parse_result wf_iri =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected triple-term predicate" pos
+  else
+    let code = int_of_char (fs_byte_index input pos) in
+    if code = 0x61 (* 'a' — rdf:type shorthand (falls through if a prefixed name) *) then
+      begin match parse_a_keyword input pos with
+      | ParseOk i pos' -> ParseOk i pos'
+      | ParseFail _ _ ->
+        begin match parse_turtle_iri st input pos with
+        | ParseOk i pos' -> if is_iri i then ParseOk i pos' else ParseFail "invalid predicate IRI" pos
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      end
+    else
+      begin match parse_turtle_iri st input pos with
+      | ParseOk i pos' -> if is_iri i then ParseOk i pos' else ParseFail "invalid predicate IRI" pos
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+
+// z3rlimit bump: the trivial `fuel`-decreases proof of this mutual block
+// became z3-brittle after `pstring_ci`/`match_ci_at` entered scope (an
+// unrelated recursive combinator perturbing the solver's search). The VCs
+// still discharge — no --lax/--admit — they just need more budget.
+#push-options "--z3rlimit 40"
+let rec parse_tt_object (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result rdf_term) (decreases fuel) =
+  if fuel = 0 then ParseFail "triple-term nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected triple-term object" pos
+    else
+      let code = int_of_char (fs_byte_index input pos) in
+      if code = 0x3C then  (* '<' — IRI or nested '<<(' triple term *)
+        (if pos + 2 < len
+            && int_of_char (fs_byte_index input (pos + 1)) = 0x3C
+            && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+           parse_turtle_triple_term st input pos (fuel - 1)
+         else if pos + 1 < len && int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           ParseFail "legacy '<< >>' quoted triple is not RDF 1.2 syntax" pos
+         else
+           begin match parse_turtle_iri st input pos with
+           | ParseOk i pos' -> if is_iri i then ParseOk (T_IRI i) pos' else ParseFail "invalid IRI" pos
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if code = 0x5F then  (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk (T_BNode b) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x22 || code = 0x27 then  (* '"' or '\'' — literal *)
+        begin match parse_turtle_literal st input pos with
+        | ParseOk lit pos' -> if literal_wf lit then ParseOk (T_Literal lit) pos' else ParseFail "invalid literal" pos
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else
+        begin match parse_boolean_literal input pos with
+        | ParseOk lit pos' -> ParseOk (T_Literal lit) pos'
+        | ParseFail _ _ ->
+          begin match parse_numeric_literal input pos with
+          | ParseOk (lexical, dt) pos' ->
+            let lit : literal = { lexical_form = lexical; datatype = dt; lang_tag = None; direction = None } in
+            if literal_wf lit then ParseOk (T_Literal lit) pos' else ParseFail "invalid numeric literal" pos
+          | ParseFail _ _ ->
+            begin match parse_turtle_iri st input pos with
+            | ParseOk i pos' -> if is_iri i then ParseOk (T_IRI i) pos' else ParseFail "invalid IRI" pos
+            | ParseFail _ _ -> ParseFail "expected triple-term object" pos
+            end
+          end
+        end
+
+and parse_turtle_triple_term (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result rdf_term) (decreases fuel) =
+  if fuel = 0 then ParseFail "triple-term nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos + 3 > len
+       || int_of_char (fs_byte_index input pos) <> 0x3C
+       || int_of_char (fs_byte_index input (pos + 1)) <> 0x3C
+       || int_of_char (fs_byte_index input (pos + 2)) <> 0x28 then
+      ParseFail "expected '<<('" pos
+    else
+      begin match turtle_ws input (pos + 3) with
+      | ParseFail msg fpos -> ParseFail msg fpos
+      | ParseOk () p1 ->
+        begin match parse_tt_subject st input p1 with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk subj p2 ->
+          begin match turtle_ws input p2 with
+          | ParseFail msg fpos -> ParseFail msg fpos
+          | ParseOk () p3 ->
+            begin match parse_tt_predicate st input p3 with
+            | ParseFail msg fpos -> ParseFail msg fpos
+            | ParseOk pred p4 ->
+              begin match turtle_ws input p4 with
+              | ParseFail msg fpos -> ParseFail msg fpos
+              | ParseOk () p5 ->
+                begin match parse_tt_object st input p5 (fuel - 1) with
+                | ParseFail msg fpos -> ParseFail msg fpos
+                | ParseOk obj p6 ->
+                  begin match turtle_ws input p6 with
+                  | ParseFail msg fpos -> ParseFail msg fpos
+                  | ParseOk () p7 ->
+                    if p7 + 3 > len then ParseFail "expected ')>>'" p7
+                    else if int_of_char (fs_byte_index input p7) = 0x29
+                         && int_of_char (fs_byte_index input (p7 + 1)) = 0x3E
+                         && int_of_char (fs_byte_index input (p7 + 2)) = 0x3E then
+                      ParseOk (T_TripleTerm subj pred obj) (p7 + 3)
+                    else ParseFail "expected ')>>'" p7
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+
+(* ================================================================ *)
+(* RDF 1.2 reified triples `<< s p o (~ reifier)? >>` (epic #305,     *)
+(* wave 3). A reified triple is syntactic sugar: it denotes a         *)
+(* *reifier* (a fresh blank node, or the `~`-named IRI / blank node)  *)
+(* and emits the triple                                              *)
+(*   reifier rdf:reifies <<( s p o )>>                                *)
+(* The reifier term takes the reified triple's place in the enclosing *)
+(* subject/object position. rtSubject / rtObject are narrower than a  *)
+(* full Turtle subject/object: iri / BlankNode (`_:x` or empty `[]`)  *)
+(* / nested reifiedTriple only (rtObject additionally admits literals *)
+(* and `<<( )>>` triple terms). Collections and non-empty `[ ... ]`   *)
+(* property lists are rejected (turtle12-syntax-bad-06 / bad-07).     *)
+(* This block is a self-contained fuel recursion — it never re-enters *)
+(* the collection / annotation / object-list machinery, so it does    *)
+(* not perturb those termination proofs. Reached only in Mode_12.     *)
+(* ================================================================ *)
+
+// Convert a reifier term (always an IRI or blank node) to a subject.
+// The wildcard arm is unreachable: parse_reifier / parse_reified_triple
+// only ever produce T_IRI or T_BNode reifiers.
+#pop-options
+let subject_of_reifier (t: rdf_term) : subject =
+  match t with
+  | T_IRI i -> S_IRI i
+  | T_BNode b -> S_BNode b
+  | _ -> S_BNode "reifier_error"
+
+// Parse a `~ (iri | BlankNode)?` reifier annotation. `pos` must be at
+// '~'. When no explicit reifier id follows, a fresh blank node is
+// minted. Returns the reifier term plus the advanced state / position.
+let parse_reifier (st: turtle_state) (input: string) (pos: nat)
+  : parse_result (rdf_term & turtle_state) =
+  let len = fs_byte_length input in
+  if pos >= len || int_of_char (fs_byte_index input pos) <> 0x7E then
+    ParseFail "expected '~'" pos
+  else
+    match turtle_ws input (pos + 1) with
+    | ParseFail msg fpos -> ParseFail msg fpos
+    | ParseOk () p1 ->
+      if p1 >= len then
+        let (b, st1) = fresh_bnode st in ParseOk (T_BNode b, st1) p1
+      else
+        let code = int_of_char (fs_byte_index input p1) in
+        if code = 0x5F then  (* '_' — blank node reifier *)
+          begin match parse_bnode input p1 with
+          | ParseOk b p2 -> ParseOk (T_BNode b, st) p2
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        else if code = 0x3C then  (* '<' — IRI reifier *)
+          begin match parse_turtle_iri st input p1 with
+          | ParseOk i p2 -> if is_iri i then ParseOk (T_IRI i, st) p2 else ParseFail "invalid reifier IRI" p1
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        else
+          (* Prefixed-name reifier, or no explicit reifier → fresh bnode *)
+          begin match parse_prefixed_name input p1 with
+          | ParseOk (prefix, local) p2 ->
+            begin match resolve_prefixed_name st prefix local with
+            | Some resolved -> if is_iri resolved then ParseOk (T_IRI resolved, st) p2 else ParseFail "invalid reifier IRI" p1
+            | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) p1
+            end
+          | ParseFail _ _ ->
+            let (b, st1) = fresh_bnode st in ParseOk (T_BNode b, st1) p1
+          end
+
+let rec parse_rt_subject (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (subject & list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "reified-triple nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected reified-triple subject" pos
+    else
+      let code = int_of_char (fs_byte_index input pos) in
+      if code = 0x3C then  (* '<' *)
+        (if pos + 2 < len
+            && int_of_char (fs_byte_index input (pos + 1)) = 0x3C
+            && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+           ParseFail "triple term not allowed as reified-triple subject" pos
+         else if pos + 1 < len && int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           begin match parse_reified_triple st input pos (fuel - 1) with
+           | ParseOk orr pos' ->
+             ParseOk (subject_of_reifier orr.or_term, orr.or_triples, orr.or_state) pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else
+           begin match parse_turtle_iri st input pos with
+           | ParseOk i pos' -> if is_iri i then ParseOk (S_IRI i, [], st) pos' else ParseFail "invalid subject IRI" pos
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if code = 0x5F then  (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk (S_BNode b, [], st) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5B then  (* '[' — only empty [] allowed *)
+        begin match turtle_ws input (pos + 1) with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk () p2 ->
+          if p2 < len && int_of_char (fs_byte_index input p2) = 0x5D then
+            let (b, st1) = fresh_bnode st in ParseOk (S_BNode b, [], st1) (p2 + 1)
+          else ParseFail "blank node property list not allowed in reified triple" pos
+        end
+      else
+        begin match parse_prefixed_name input pos with
+        | ParseOk (prefix, local) pos' ->
+          begin match resolve_prefixed_name st prefix local with
+          | Some resolved -> if is_iri resolved then ParseOk (S_IRI resolved, [], st) pos' else ParseFail "invalid resolved IRI" pos
+          | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) pos
+          end
+        | ParseFail _ _ -> ParseFail "expected reified-triple subject" pos
+        end
+
+and parse_rt_object (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (rdf_term & list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "reified-triple nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected reified-triple object" pos
+    else
+      let code = int_of_char (fs_byte_index input pos) in
+      if code = 0x3C then  (* '<' *)
+        (if pos + 2 < len
+            && int_of_char (fs_byte_index input (pos + 1)) = 0x3C
+            && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+           (* triple term is allowed as reified-triple object *)
+           begin match parse_turtle_triple_term st input pos (fuel - 1) with
+           | ParseOk tt pos' -> ParseOk (tt, [], st) pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else if pos + 1 < len && int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           begin match parse_reified_triple st input pos (fuel - 1) with
+           | ParseOk orr pos' -> ParseOk (orr.or_term, orr.or_triples, orr.or_state) pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else
+           begin match parse_turtle_iri st input pos with
+           | ParseOk i pos' -> if is_iri i then ParseOk (T_IRI i, [], st) pos' else ParseFail "invalid IRI" pos
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if code = 0x5F then  (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk (T_BNode b, [], st) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x22 || code = 0x27 then  (* '"' / '\'' — literal *)
+        begin match parse_turtle_literal st input pos with
+        | ParseOk lit pos' -> if literal_wf lit then ParseOk (T_Literal lit, [], st) pos' else ParseFail "invalid literal" pos
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5B then  (* '[' — only empty [] allowed *)
+        begin match turtle_ws input (pos + 1) with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk () p2 ->
+          if p2 < len && int_of_char (fs_byte_index input p2) = 0x5D then
+            let (b, st1) = fresh_bnode st in ParseOk (T_BNode b, [], st1) (p2 + 1)
+          else ParseFail "blank node property list not allowed in reified triple" pos
+        end
+      else
+        begin match parse_boolean_literal input pos with
+        | ParseOk lit pos' -> ParseOk (T_Literal lit, [], st) pos'
+        | ParseFail _ _ ->
+          begin match parse_numeric_literal input pos with
+          | ParseOk (lexical, dt) pos' ->
+            let lit : literal = { lexical_form = lexical; datatype = dt; lang_tag = None; direction = None } in
+            if literal_wf lit then ParseOk (T_Literal lit, [], st) pos' else ParseFail "invalid numeric literal" pos
+          | ParseFail _ _ ->
+            begin match parse_prefixed_name input pos with
+            | ParseOk (prefix, local) pos' ->
+              begin match resolve_prefixed_name st prefix local with
+              | Some resolved -> if is_iri resolved then ParseOk (T_IRI resolved, [], st) pos' else ParseFail "invalid resolved IRI" pos
+              | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) pos
+              end
+            | ParseFail _ _ -> ParseFail "expected reified-triple object" pos
+            end
+          end
+        end
+
+(* Parse `<< rtSubject verb rtObject reifier? >>` (NOT `<<(`). Returns an
+   object_result whose or_term is the reifier and whose or_triples carry
+   the `reifier rdf:reifies <<( s p o )>>` triple plus any side triples
+   from nested reified triples in subject / object position. *)
+and parse_reified_triple (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result object_result) (decreases fuel) =
+  if fuel = 0 then ParseFail "reified-triple nesting too deep" pos
+  else
+    let len = fs_byte_length input in
+    if pos + 2 > len
+       || int_of_char (fs_byte_index input pos) <> 0x3C
+       || int_of_char (fs_byte_index input (pos + 1)) <> 0x3C then
+      ParseFail "expected '<<'" pos
+    else if pos + 2 < len && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+      ParseFail "triple term is not a reified triple" pos
+    else
+      begin match turtle_ws input (pos + 2) with
+      | ParseFail msg fpos -> ParseFail msg fpos
+      | ParseOk () p1 ->
+        begin match parse_rt_subject st input p1 (fuel - 1) with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk (subj, subj_ts, st1) p2 ->
+          begin match turtle_ws input p2 with
+          | ParseFail msg fpos -> ParseFail msg fpos
+          | ParseOk () p3 ->
+            begin match parse_tt_predicate st1 input p3 with
+            | ParseFail msg fpos -> ParseFail msg fpos
+            | ParseOk pred p4 ->
+              begin match turtle_ws input p4 with
+              | ParseFail msg fpos -> ParseFail msg fpos
+              | ParseOk () p5 ->
+                begin match parse_rt_object st1 input p5 (fuel - 1) with
+                | ParseFail msg fpos -> ParseFail msg fpos
+                | ParseOk (obj_term, obj_ts, st2) p6 ->
+                  begin match turtle_ws input p6 with
+                  | ParseFail msg fpos -> ParseFail msg fpos
+                  | ParseOk () p7 ->
+                    let tt : rdf_term = T_TripleTerm subj pred obj_term in
+                    let side = append_list subj_ts obj_ts in
+                    if p7 < len && int_of_char (fs_byte_index input p7) = 0x7E then
+                      (* explicit reifier *)
+                      begin match parse_reifier st2 input p7 with
+                      | ParseFail msg fpos -> ParseFail msg fpos
+                      | ParseOk (rterm, st3) p8 ->
+                        begin match turtle_ws input p8 with
+                        | ParseFail msg fpos -> ParseFail msg fpos
+                        | ParseOk () p9 ->
+                          if p9 + 2 <= len
+                             && int_of_char (fs_byte_index input p9) = 0x3E
+                             && int_of_char (fs_byte_index input (p9 + 1)) = 0x3E then
+                            let reif : triple = { s = subject_of_reifier rterm; p = rdf_reifies_iri; o = tt } in
+                            ParseOk ({ or_term = rterm; or_triples = append_list side [reif]; or_state = st3 }) (p9 + 2)
+                          else ParseFail "expected '>>'" p9
+                        end
+                      end
+                    else
+                      (* implicit reifier → fresh blank node *)
+                      if p7 + 2 <= len
+                         && int_of_char (fs_byte_index input p7) = 0x3E
+                         && int_of_char (fs_byte_index input (p7 + 1)) = 0x3E then
+                        let (b, st3) = fresh_bnode st2 in
+                        let reif : triple = { s = S_BNode b; p = rdf_reifies_iri; o = tt } in
+                        ParseOk ({ or_term = T_BNode b; or_triples = append_list side [reif]; or_state = st3 }) (p7 + 2)
+                      else ParseFail "expected '>>'" p7
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+
+(* ================================================================ *)
+(* Main recursive Turtle parser — all productions in one mutual      *)
+(* recursion block using fuel for termination.                       *)
+(* ================================================================ *)
+
+(* Parse a Turtle object: IRI, blank node, literal, boolean, numeric,
+   anonymous blank node [], blank node property list [p o; ...],
+   or collection (...) *)
+let rec parse_turtle_object (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result object_result) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected object" pos
+    else
+      let c = fs_byte_index input pos in
+      let code = int_of_char c in
+      if code = 0x3C then  (* '<' — full IRI, or (Mode_12) '<<(' triple term *)
+        (if st.ts_mode = Mode_12 && pos + 2 < len
+            && int_of_char (fs_byte_index input (pos + 1)) = 0x3C
+            && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+           (* RDF 1.2 triple term in object position *)
+           begin match parse_turtle_triple_term st input pos fuel with
+           | ParseOk tt pos' -> ParseOk ({ or_term = tt; or_triples = []; or_state = st }) pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else if st.ts_mode = Mode_12 && pos + 1 < len
+                 && int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           (* RDF 1.2 reified triple '<< s p o (~ r)? >>' in object position *)
+           begin match parse_reified_triple st input pos fuel with
+           | ParseOk orr pos' -> ParseOk orr pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else
+           begin match parse_turtle_iri st input pos with
+           | ParseOk i pos' ->
+             if is_iri i then
+               ParseOk ({ or_term = T_IRI i; or_triples = []; or_state = st }) pos'
+             else ParseFail "invalid IRI" pos
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if code = 0x5F then  (* '_' — blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk ({ or_term = T_BNode b; or_triples = []; or_state = st }) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x22 || code = 0x27 then  (* '"' or '\'' — string literal *)
+        begin match parse_turtle_literal st input pos with
+        | ParseOk lit pos' ->
+          if literal_wf lit then
+            ParseOk ({ or_term = T_Literal lit; or_triples = []; or_state = st }) pos'
+          else ParseFail "invalid literal" pos
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5B then  (* '[' — anonymous blank node or blank node property list *)
+        let (bnode_id, st1) = fresh_bnode st in
+        (* Skip '[' *)
+        begin match turtle_ws input (pos + 1) with
+        | ParseOk () pos2 ->
+          if pos2 < len && int_of_char (fs_byte_index input pos2) = 0x5D then
+            (* [] — empty anonymous blank node *)
+            ParseOk ({ or_term = T_BNode bnode_id; or_triples = []; or_state = st1 }) (pos2 + 1)
+          else
+            (* [ predicate-object-list ] *)
+            begin match parse_predicate_object_list st1 (S_BNode bnode_id) input pos2 (fuel - 1) with
+            | ParseOk (triples, st2) pos3 ->
+              begin match turtle_ws input pos3 with
+              | ParseOk () pos4 ->
+                if pos4 < len && int_of_char (fs_byte_index input pos4) = 0x5D then
+                  ParseOk ({ or_term = T_BNode bnode_id; or_triples = triples; or_state = st2 }) (pos4 + 1)
+                else
+                  ParseFail "expected ']'" pos4
+              end
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+        end
+      else if code = 0x28 then  (* '(' — collection *)
+        parse_collection st input (pos + 1) (fuel - 1)
+      else
+        (* Try boolean *)
+        begin match parse_boolean_literal input pos with
+        | ParseOk lit pos' -> ParseOk ({ or_term = T_Literal lit; or_triples = []; or_state = st }) pos'
+        | ParseFail _ _ ->
+          (* Try numeric literal *)
+          begin match parse_numeric_literal input pos with
+          | ParseOk (lexical, dt) pos' ->
+            let lit : literal = { lexical_form = lexical; datatype = dt; lang_tag = None; direction = None } in
+            if literal_wf lit then
+              ParseOk ({ or_term = T_Literal lit; or_triples = []; or_state = st }) pos'
+            else
+              ParseFail "invalid numeric literal" pos
+          | ParseFail _ _ ->
+            (* Try prefixed name *)
+            begin match parse_prefixed_name input pos with
+            | ParseOk (prefix, local) pos' ->
+              begin match resolve_prefixed_name st prefix local with
+              | Some resolved ->
+                if is_iri resolved then
+                  ParseOk ({ or_term = T_IRI resolved; or_triples = []; or_state = st }) pos'
+                else ParseFail "invalid resolved IRI" pos
+              | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) pos
+              end
+            | ParseFail _ _ -> ParseFail "expected object" pos
+            end
+          end
+        end
+
+(* Parse an RDF collection: ( item1 item2 ... ) *)
+and parse_collection (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result object_result) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in collection" pos
+  else
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then ParseFail "unterminated collection" pos1
+      else if int_of_char (fs_byte_index input pos1) = 0x29 then  (* ')' — empty collection *)
+        ParseOk ({ or_term = T_IRI rdf_nil_iri; or_triples = []; or_state = st }) (pos1 + 1)
+      else
+        (* Parse first item *)
+        begin match parse_turtle_object st input pos1 (fuel - 1) with
+        | ParseOk first_obj pos2 ->
+          let (node_id, st2) = fresh_bnode first_obj.or_state in
+          let node_subj = S_BNode node_id in
+          let first_triple : triple = { s = node_subj; p = rdf_first_iri; o = first_obj.or_term } in
+          (* Parse remaining items *)
+          begin match parse_collection_rest st2 node_subj input pos2 (fuel - 1) with
+          | ParseOk (rest_triples, rest_term, st3) pos3 ->
+            let rest_triple : triple = { s = node_subj; p = rdf_rest_iri; o = rest_term } in
+            let all_triples = append_list first_obj.or_triples (first_triple :: rest_triple :: rest_triples) in
+            ParseOk ({ or_term = T_BNode node_id; or_triples = all_triples; or_state = st3 }) pos3
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+
+(* Parse remaining collection items after the first *)
+and parse_collection_rest (st: turtle_state) (prev_subj: subject) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list triple & rdf_term & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in collection rest" pos
+  else
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then ParseFail "unterminated collection" pos1
+      else if int_of_char (fs_byte_index input pos1) = 0x29 then  (* ')' — end *)
+        ParseOk ([], T_IRI rdf_nil_iri, st) (pos1 + 1)
+      else
+        (* Parse next item *)
+        begin match parse_turtle_object st input pos1 (fuel - 1) with
+        | ParseOk next_obj pos2 ->
+          let (node_id, st2) = fresh_bnode next_obj.or_state in
+          let node_subj = S_BNode node_id in
+          let first_triple : triple = { s = node_subj; p = rdf_first_iri; o = next_obj.or_term } in
+          begin match parse_collection_rest st2 node_subj input pos2 (fuel - 1) with
+          | ParseOk (rest_triples, rest_term, st3) pos3 ->
+            let rest_triple : triple = { s = node_subj; p = rdf_rest_iri; o = rest_term } in
+            let all_triples = append_list next_obj.or_triples (first_triple :: rest_triple :: rest_triples) in
+            ParseOk (all_triples, T_BNode node_id, st3) pos3
+          | ParseFail msg fpos -> ParseFail msg fpos
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+
+(* Parse object list: object (',' object)* *)
+and parse_object_list_rev (st: turtle_state) (subj: subject) (pred: wf_iri) (input: string) (pos: nat)
+    (acc_rev: list triple) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in object list" pos
+  else
+    begin match parse_turtle_object st input pos (fuel - 1) with
+    | ParseOk obj_res pos1 ->
+      let t : triple = { s = subj; p = pred; o = obj_res.or_term } in
+      let acc_rev0 = t :: rev_prepend obj_res.or_triples acc_rev in
+      (* RDF 1.2: an object may be followed by an annotation sequence
+         (`~ reifier` and / or `{| predicateObjectList |}`) that reifies
+         THIS triple {subj, pred, obj_res.or_term}. *)
+      begin match
+        (if obj_res.or_state.ts_mode = Mode_12 then
+           parse_annotations obj_res.or_state subj pred obj_res.or_term input pos1 (fuel - 1) None
+         else ParseOk ([], obj_res.or_state) pos1)
+      with
+      | ParseFail msg fpos -> ParseFail msg fpos
+      | ParseOk (ann_triples, st_a) pos1a ->
+        let acc_rev1 = rev_prepend ann_triples acc_rev0 in
+        (* Check for comma *)
+        begin match turtle_ws input pos1a with
+        | ParseOk () pos2 ->
+          let len = fs_byte_length input in
+          if pos2 < len && int_of_char (fs_byte_index input pos2) = 0x2C then
+            (* More objects *)
+            begin match turtle_ws input (pos2 + 1) with
+            | ParseOk () pos3 ->
+              parse_object_list_rev st_a subj pred input pos3 acc_rev1 (fuel - 1)
+            end
+          else
+            ParseOk (acc_rev1, st_a) pos2
+        end
+      end
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+
+(* RDF 1.2 annotation sequence following an object (epic #305, wave 3).
+   Grammar: `(reifier | '{|' predicateObjectList '|}')*`, where
+   `reifier ::= '~' (iri | BlankNode)?`. `base_subj/base_pred/base_obj`
+   are the triple being annotated. A `~` always emits a
+   `reifier rdf:reifies <<( base )>>` triple and becomes the *pending*
+   reifier. An annotation block reuses the pending reifier if one is set
+   (consuming it); otherwise it mints a fresh blank-node reifier and
+   emits its own reifies triple. The block's predicateObjectList is
+   attached to the reifier as subject. Returns the accumulated
+   annotation triples (forward order) plus the advanced state / pos. *)
+and parse_annotations (st: turtle_state) (base_subj: subject) (base_pred: wf_iri)
+    (base_obj: rdf_term) (input: string) (pos: nat) (fuel: nat)
+    (pending: option subject)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseOk ([], st) pos
+  else
+    let next_fuel : nat = if fuel >= 1 then fuel - 1 else 0 in
+    let len = fs_byte_length input in
+    begin match turtle_ws input pos with
+    | ParseFail _ _ -> ParseOk ([], st) pos
+    | ParseOk () p1 ->
+      if p1 >= len then ParseOk ([], st) p1
+      else
+        let code = int_of_char (fs_byte_index input p1) in
+        if code = 0x7E then  (* '~' reifier annotation *)
+          begin match parse_reifier st input p1 with
+          | ParseFail msg fpos -> ParseFail msg fpos
+          | ParseOk (rterm, st1) p2 ->
+            let rsubj = subject_of_reifier rterm in
+            let tt : rdf_term = T_TripleTerm base_subj base_pred base_obj in
+            let reif : triple = { s = rsubj; p = rdf_reifies_iri; o = tt } in
+            begin match parse_annotations st1 base_subj base_pred base_obj input p2 next_fuel (Some rsubj) with
+            | ParseFail msg fpos -> ParseFail msg fpos
+            | ParseOk (rest, st2) p3 -> ParseOk (reif :: rest, st2) p3
+            end
+          end
+        else if code = 0x7B && p1 + 1 < len
+                && int_of_char (fs_byte_index input (p1 + 1)) = 0x7C then  (* '{|' annotation block *)
+          let (rsubj, st1, pre_triples) =
+            (match pending with
+             | Some r -> (r, st, [])
+             | None ->
+               let (b, stb) = fresh_bnode st in
+               let tt : rdf_term = T_TripleTerm base_subj base_pred base_obj in
+               (S_BNode b, stb, [ ({ s = S_BNode b; p = rdf_reifies_iri; o = tt } <: triple) ])) in
+          begin match turtle_ws input (p1 + 2) with
+          | ParseFail msg fpos -> ParseFail msg fpos
+          | ParseOk () p2 ->
+            (* Reject an empty annotation block `{| |}` *)
+            if p2 + 1 < len && int_of_char (fs_byte_index input p2) = 0x7C
+               && int_of_char (fs_byte_index input (p2 + 1)) = 0x7D then
+              ParseFail "empty annotation block" p1
+            else
+              begin match parse_predicate_object_list st1 rsubj input p2 next_fuel with
+              | ParseFail msg fpos -> ParseFail msg fpos
+              | ParseOk (blk_triples, st2) p3 ->
+                begin match turtle_ws input p3 with
+                | ParseFail msg fpos -> ParseFail msg fpos
+                | ParseOk () p4 ->
+                  if p4 + 1 < len && int_of_char (fs_byte_index input p4) = 0x7C
+                     && int_of_char (fs_byte_index input (p4 + 1)) = 0x7D then
+                    begin match parse_annotations st2 base_subj base_pred base_obj input (p4 + 2) next_fuel None with
+                    | ParseFail msg fpos -> ParseFail msg fpos
+                    | ParseOk (rest, st3) p5 ->
+                      ParseOk (append_list pre_triples (append_list blk_triples rest), st3) p5
+                    end
+                  else ParseFail "expected '|}'" p4
+                end
+              end
+          end
+        else
+          ParseOk ([], st) p1
+    end
+
+and parse_object_list (st: turtle_state) (subj: subject) (pred: wf_iri) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in object list" pos
+  else
+    begin match parse_object_list_rev st subj pred input pos [] (fuel - 1) with
+    | ParseOk (triples_rev, st') pos' -> ParseOk (List.Tot.rev triples_rev, st') pos'
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+
+(* Parse a predicate: IRI, prefixed name, or 'a' keyword *)
+and parse_turtle_predicate (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result wf_iri) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit" pos
+  else
+    (* Try 'a' keyword first *)
+    match parse_a_keyword input pos with
+    | ParseOk iri_val pos' -> ParseOk iri_val pos'
+    | ParseFail _ _ ->
+      begin match parse_turtle_iri st input pos with
+      | ParseOk i pos' ->
+        if is_iri i then ParseOk i pos'
+        else ParseFail "invalid predicate IRI" pos
+      | ParseFail msg fpos -> ParseFail msg fpos
+      end
+
+(* Parse predicate-object list: predicate objectList (';' predicate objectList)* ';'? *)
+and parse_predicate_object_list_rev (st: turtle_state) (subj: subject) (input: string) (pos: nat)
+    (acc_rev: list triple) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in predicate-object list" pos
+  else
+    begin match parse_turtle_predicate st input pos (fuel - 1) with
+    | ParseOk pred pos1 ->
+      begin match turtle_ws input pos1 with
+      | ParseOk () pos2 ->
+        begin match parse_object_list_rev st subj pred input pos2 [] (fuel - 1) with
+        | ParseOk (triples1_rev, st1) pos3 ->
+          let acc_rev1 = append_list triples1_rev acc_rev in
+          (* Check for semicolon *)
+          begin match turtle_ws input pos3 with
+          | ParseOk () pos4 ->
+            let len = fs_byte_length input in
+            if pos4 < len && int_of_char (fs_byte_index input pos4) = 0x3B then
+              (* Skip semicolon and whitespace *)
+              begin match turtle_ws input (pos4 + 1) with
+              | ParseOk () pos5 ->
+                (* Check if there's another predicate or just trailing semicolons *)
+                if pos5 >= len then
+                  ParseOk (acc_rev1, st1) pos5
+                else
+                  let nc = fs_byte_index input pos5 in
+                  let ncode = int_of_char nc in
+                  if ncode = 0x2E || ncode = 0x5D || ncode = 0x3B || ncode = 0x7C || ncode = 0x7D then
+                    (* End of predicate-object list (dot, close bracket,
+                       another semicolon, or -- issue #434 -- '}' closing
+                       a TriG graph block: `;}` with nothing between the
+                       trailing separator and the block terminator is
+                       legal per predicateObjectList's optional tail
+                       after ';', and TriG additionally allows the last
+                       statement in a block to omit the final '.'. *)
+                    if ncode = 0x3B then
+                      (* Skip additional trailing semicolons *)
+                      parse_trailing_semicolons_rev st1 acc_rev1 subj input pos5 (fuel - 1)
+                    else
+                      ParseOk (acc_rev1, st1) pos5
+                  else
+                    (* Another predicate-object pair *)
+                    parse_predicate_object_list_rev st1 subj input pos5 acc_rev1 (fuel - 1)
+              end
+            else
+              ParseOk (acc_rev1, st1) pos4
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      end
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+
+and parse_predicate_object_list (st: turtle_state) (subj: subject) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit in predicate-object list" pos
+  else
+    begin match parse_predicate_object_list_rev st subj input pos [] (fuel - 1) with
+    | ParseOk (triples_rev, st') pos' -> ParseOk (List.Tot.rev triples_rev, st') pos'
+    | ParseFail msg fpos -> ParseFail msg fpos
+    end
+
+(* Skip trailing semicolons: ; ; ; before . or ] *)
+and parse_trailing_semicolons_rev (st: turtle_state) (triples_rev: list triple) (subj: subject)
+    (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseOk (triples_rev, st) pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseOk (triples_rev, st) pos
+    else
+      let c = fs_byte_index input pos in
+      if int_of_char c = 0x3B then
+        begin match turtle_ws input (pos + 1) with
+        | ParseOk () pos2 ->
+          if pos2 >= len then ParseOk (triples_rev, st) pos2
+          else
+            let nc = fs_byte_index input pos2 in
+            let ncode = int_of_char nc in
+            (* issue #434: '}' (TriG graph-block terminator) is a
+               trailing-semicolon stop character too, same reasoning
+               as the sibling check in parse_predicate_object_list_rev
+               above. *)
+            if ncode = 0x2E || ncode = 0x5D || ncode = 0x3B || ncode = 0x7C || ncode = 0x7D then
+              parse_trailing_semicolons_rev st triples_rev subj input pos2 (fuel - 1)
+            else
+              (* Another predicate-object pair after semicolons *)
+              begin match parse_predicate_object_list_rev st subj input pos2 [] (fuel - 1) with
+              | ParseOk (more_triples_rev, st2) pos3 ->
+                ParseOk (append_list more_triples_rev triples_rev, st2) pos3
+              | ParseFail msg fpos -> ParseFail msg fpos
+              end
+        end
+      else
+        ParseOk (triples_rev, st) pos
+
+(* Parse a Turtle subject: IRI, blank node, prefixed name, anonymous [], or collection () *)
+let parse_turtle_subject (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result subject_result) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit" pos
+  else
+    let len = fs_byte_length input in
+    if pos >= len then ParseFail "expected subject" pos
+    else
+      let c = fs_byte_index input pos in
+      let code = int_of_char c in
+      if code = 0x3C then  (* '<' — full IRI, or (Mode_12) '<<' reified triple *)
+        (if st.ts_mode = Mode_12 && pos + 2 < len
+            && int_of_char (fs_byte_index input (pos + 1)) = 0x3C
+            && int_of_char (fs_byte_index input (pos + 2)) = 0x28 then
+           (* triple term '<<(' is not a valid subject *)
+           ParseFail "triple term not allowed as subject" pos
+         else if st.ts_mode = Mode_12 && pos + 1 < len
+                 && int_of_char (fs_byte_index input (pos + 1)) = 0x3C then
+           (* RDF 1.2 reified triple as subject. Like a `[ ... ]` blank
+              node property list, it may stand as a full statement (just
+              the reifies triple) without a predicateObjectList. *)
+           begin match parse_reified_triple st input pos fuel with
+           | ParseOk orr pos' ->
+             ParseOk ({ sr_subject = subject_of_reifier orr.or_term;
+                        sr_triples = orr.or_triples; sr_state = orr.or_state;
+                        sr_is_bnode_proplist = true }) pos'
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end
+         else
+           begin match parse_turtle_iri st input pos with
+           | ParseOk i pos' ->
+             if is_iri i then
+               ParseOk ({ sr_subject = S_IRI i; sr_triples = []; sr_state = st;
+                          sr_is_bnode_proplist = false }) pos'
+             else ParseFail "invalid subject IRI" pos
+           | ParseFail msg fpos -> ParseFail msg fpos
+           end)
+      else if code = 0x5F then  (* '_' — labeled blank node *)
+        begin match parse_bnode input pos with
+        | ParseOk b pos' -> ParseOk ({ sr_subject = S_BNode b; sr_triples = []; sr_state = st;
+                                        sr_is_bnode_proplist = false }) pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else if code = 0x5B then  (* '[' — anonymous blank node or property list *)
+        let (bnode_id, st1) = fresh_bnode st in
+        begin match turtle_ws input (pos + 1) with
+        | ParseOk () pos2 ->
+          if pos2 < len && int_of_char (fs_byte_index input pos2) = 0x5D then
+            (* [] — empty anonymous blank node; NOT a valid bare statement *)
+            ParseOk ({ sr_subject = S_BNode bnode_id; sr_triples = []; sr_state = st1;
+                       sr_is_bnode_proplist = false }) (pos2 + 1)
+          else
+            (* [ predicate-object-list ] — valid as a bare statement *)
+            begin match parse_predicate_object_list st1 (S_BNode bnode_id) input pos2 (fuel - 1) with
+            | ParseOk (triples, st2) pos3 ->
+              begin match turtle_ws input pos3 with
+              | ParseOk () pos4 ->
+                if pos4 < len && int_of_char (fs_byte_index input pos4) = 0x5D then
+                  ParseOk ({ sr_subject = S_BNode bnode_id; sr_triples = triples; sr_state = st2;
+                             sr_is_bnode_proplist = true }) (pos4 + 1)
+                else
+                  ParseFail "expected ']'" pos4
+              end
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+        end
+      else if code = 0x28 then  (* '(' — collection as subject *)
+        begin match parse_collection st input (pos + 1) (fuel - 1) with
+        | ParseOk obj_res pos' ->
+          begin match obj_res.or_term with
+          | T_IRI i ->
+            ParseOk ({ sr_subject = S_IRI i; sr_triples = obj_res.or_triples; sr_state = obj_res.or_state;
+                       sr_is_bnode_proplist = false }) pos'
+          | T_BNode b ->
+            ParseOk ({ sr_subject = S_BNode b; sr_triples = obj_res.or_triples; sr_state = obj_res.or_state;
+                       sr_is_bnode_proplist = false }) pos'
+          | _ -> ParseFail "collection did not produce a valid subject" pos
+          end
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      else
+        (* Try prefixed name *)
+        begin match parse_prefixed_name input pos with
+        | ParseOk (prefix, local) pos' ->
+          begin match resolve_prefixed_name st prefix local with
+          | Some resolved ->
+            if is_iri resolved then
+              ParseOk ({ sr_subject = S_IRI resolved; sr_triples = []; sr_state = st;
+                         sr_is_bnode_proplist = false }) pos'
+            else ParseFail "invalid resolved IRI" pos
+          | None -> ParseFail (String.concat "" ["undefined prefix: "; prefix]) pos
+          end
+        | ParseFail _ _ -> ParseFail "expected subject" pos
+        end
+
+(* ================================================================ *)
+(* RDF 1.2 VERSION directive (epic #305, wave 3).                    *)
+(*                                                                   *)
+(* Two spellings, both Mode_12-only:                                 *)
+(*   VERSION "1.2"       (keyword form, case-insensitive, NO dot)    *)
+(*   @version "1.2" .    (at-form, REQUIRES trailing dot)            *)
+(* The value must be a SHORT string literal — a long triple-quoted   *)
+(* string ("""..."""/'''...''') or an unquoted token is rejected     *)
+(* (turtle12-version-bad-01..06). The version string's content is    *)
+(* not validated (turtle12-version-08 accepts "abc").                *)
+(* ================================================================ *)
+
+(* Accept exactly one SHORT string literal at `pos`; reject long
+   triple-quoted strings and non-string tokens. The value is discarded. *)
+let parse_version_short (input: string) (pos: nat) : parse_result unit =
+  let len = fs_byte_length input in
+  if pos >= len then ParseFail "expected version string" pos
+  else
+    let c0 = int_of_char (fs_byte_index input pos) in
+    if c0 = 0x22 || c0 = 0x27 then
+      if pos + 2 < len
+         && int_of_char (fs_byte_index input (pos + 1)) = c0
+         && int_of_char (fs_byte_index input (pos + 2)) = c0 then
+        ParseFail "long string not allowed in VERSION directive" pos
+      else
+        begin match parse_turtle_string input pos with
+        | ParseOk _ pos' -> ParseOk () pos'
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+    else ParseFail "expected string literal in VERSION directive" pos
+
+let parse_version_directive (st: turtle_state) (input: string) (pos: nat)
+  : parse_result unit =
+  let len = fs_byte_length input in
+  (* at-form: @version "..." . *)
+  match pstring "@version" input pos with
+  | ParseOk _ p1 ->
+    begin match turtle_ws input p1 with
+    | ParseFail msg fpos -> ParseFail msg fpos
+    | ParseOk () p2 ->
+      begin match parse_version_short input p2 with
+      | ParseFail msg fpos -> ParseFail msg fpos
+      | ParseOk () p3 ->
+        begin match turtle_ws input p3 with
+        | ParseFail msg fpos -> ParseFail msg fpos
+        | ParseOk () p4 ->
+          if p4 < len && int_of_char (fs_byte_index input p4) = 0x2E then ParseOk () (p4 + 1)
+          else ParseFail "expected '.' after @version directive" p4
+        end
+      end
+    end
+  | ParseFail _ _ ->
+    (* keyword form: VERSION / version "..."  (case-insensitive, no dot) *)
+    let kw =
+      (match pstring "VERSION" input pos with
+       | ParseOk _ p -> ParseOk () p
+       | ParseFail _ _ ->
+         (match pstring "version" input pos with
+          | ParseOk _ p -> ParseOk () p
+          | ParseFail m f -> ParseFail m f)) in
+    begin match kw with
+    | ParseFail msg fpos -> ParseFail msg fpos
+    | ParseOk () p1 ->
+      begin match turtle_ws input p1 with
+      | ParseFail msg fpos -> ParseFail msg fpos
+      | ParseOk () p2 ->
+        begin match parse_version_short input p2 with
+        | ParseOk () p3 -> ParseOk () p3
+        | ParseFail msg fpos -> ParseFail msg fpos
+        end
+      end
+    end
+
+(* ================================================================ *)
+(* Top-level Turtle document parser                                  *)
+(* ================================================================ *)
+
+(* Parse a single Turtle statement: directive or triples statement *)
+let parse_turtle_statement (st: turtle_state) (input: string) (pos: nat) (fuel: nat)
+  : Tot (parse_result (list triple & turtle_state)) (decreases fuel) =
+  if fuel = 0 then ParseFail "recursion limit" pos
+  else
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then ParseOk ([], st) pos1
+      else
+        (* Try prefix directive *)
+        begin match parse_prefix_directive st input pos1 with
+        | ParseOk (prefix, iri_val) pos2 ->
+          let new_prefixes = (prefix, iri_val) :: st.prefixes in
+          ParseOk ([], { st with prefixes = new_prefixes }) pos2
+        | ParseFail _ _ ->
+          // Try base directive
+          begin match parse_base_directive st input pos1 with
+          | ParseOk base_val pos2 ->
+            ParseOk ([], { st with base_iri = base_val }) pos2
+          | ParseFail _ _ ->
+            // RDF 1.2 VERSION directive (Mode_12 only); state-neutral
+            begin match
+              (if st.ts_mode = Mode_12 then parse_version_directive st input pos1
+               else ParseFail "not 1.2" pos1)
+            with
+            | ParseOk () pos2 -> ParseOk ([], st) pos2
+            | ParseFail _ _ ->
+            (* Must be a triples statement *)
+            begin match parse_turtle_subject st input pos1 fuel with
+            | ParseOk subj_res pos2 ->
+              begin match turtle_ws input pos2 with
+              | ParseOk () pos3 ->
+                (* Check if subject has property list (blank node property list as subject
+                   can be followed by just '.'). Collections CANNOT stand alone —
+                   see trig-syntax-bad-list-03: `{ ( 1 2 3 ) }` must be rejected. *)
+                if pos3 >= len then
+                  (* Only subject triples, no predicate-object list *)
+                  if subj_res.sr_is_bnode_proplist then
+                    ParseOk (subj_res.sr_triples, subj_res.sr_state) pos3
+                  else
+                    ParseFail "expected predicate after subject" pos3
+                else
+                  let nc = fs_byte_index input pos3 in
+                  let ncode = int_of_char nc in
+                  if ncode = 0x2E then
+                    // Subject followed directly by '.' — valid only for `[ ... ]`
+                    // bnode property lists (grammar §2.4), never for collections.
+                    if subj_res.sr_is_bnode_proplist then
+                      ParseOk (subj_res.sr_triples, subj_res.sr_state) (pos3 + 1)
+                    else
+                      ParseFail "expected predicate after subject" pos3
+                  else if ncode = 0x7D && subj_res.sr_is_bnode_proplist then
+                    // Inside a TriG graph block: '}' ends the block.
+                    // Blank node property list as sole statement is valid without dot.
+                    ParseOk (subj_res.sr_triples, subj_res.sr_state) pos3
+                  else
+                    let next_fuel : nat = if fuel >= 1 then fuel - 1 else 0 in
+                    begin match parse_predicate_object_list subj_res.sr_state subj_res.sr_subject input pos3 next_fuel with
+                    | ParseOk (po_triples, st2) pos4 ->
+                      let all_triples = append_list subj_res.sr_triples po_triples in
+                      // Expect '.'
+                      begin match turtle_ws input pos4 with
+                      | ParseOk () pos5 ->
+                        if pos5 < len && int_of_char (fs_byte_index input pos5) = 0x2E then
+                          ParseOk (all_triples, st2) (pos5 + 1)
+                        else if pos5 < len && int_of_char (fs_byte_index input pos5) = 0x7D then
+                          // '}' ends a TriG block — accept without dot
+                          ParseOk (all_triples, st2) pos5
+                        else
+                          // Missing dot — fail (strict per Turtle spec)
+                          ParseFail "expected '.' after triple" pos5
+                      end
+                    | ParseFail msg fpos -> ParseFail msg fpos
+                    end
+              end
+            | ParseFail msg fpos -> ParseFail msg fpos
+            end
+            end
+          end
+        end
+
+// Parse result with error tracking.
+//
+// tdr_error carries the FIRST error's (message, byte position) using
+// the same (string & nat) shape a ParseFail already carries, rather
+// than collapsing straight to a bare bool -- issue #334: the document
+// walk below computes exactly this message+position (via
+// parse_turtle_statement's ParseFail) and used to discard it, keeping
+// only a `has_error: bool`. That discard is what made an undeclared
+// prefix an invisible event: even the strict entry points (which
+// correctly fail via tdr_has_error) had zero information about WHERE
+// or WHY. tdr_error is now the source of truth; tdr_has_error is kept
+// (= Some? tdr_error) so existing `if r.tdr_has_error then None else
+// ...` callers are unaffected.
+noeq type turtle_doc_result = {
+  tdr_triples: list triple;
+  tdr_state: turtle_state;
+  tdr_has_error: bool;
+  tdr_error: option (string & nat);
+}
+
+let finish_turtle_doc (st: turtle_state) (acc: list triple) (err: option (string & nat))
+  : turtle_doc_result = {
+  tdr_triples = List.Tot.rev acc;
+  tdr_state = st;
+  tdr_has_error = Some? err;
+  tdr_error = err;
+}
+
+let rec count_triples (ts: list triple) : Tot nat (decreases ts) =
+  match ts with
+  | [] -> 0
+  | _ :: rest -> 1 + count_triples rest
+
+// Generic per-triple fold over one statement's worth of triples.
+// Used by fold_turtle_triples_acc below (CLI parse-stream query fast
+// path, SPARQL.Plan.Streamable.fst) so a statement's small triple list
+// is threaded into the running accumulator and discarded, rather than
+// consed onto a document-wide list the way parse_turtle_doc's `acc`
+// is.
+let rec fold_step_triples (#a: Type) (step: triple -> a -> a)
+    (ts: list triple) (acc: a)
+  : Tot a (decreases ts) =
+  match ts with
+  | [] -> acc
+  | t :: rest -> fold_step_triples step rest (step t acc)
+
+// Parse the full Turtle document: sequence of statements
+// The decreases/fuel proof here is right at the edge of Z3's default
+// query size. Without --split_queries, small shifts in surrounding
+// module content (new helpers, renames) can tip the single-query
+// verification into an assertion failure. Pin the option locally so
+// the proof doesn't regress silently.
+#push-options "--z3rlimit 30"
+let rec parse_turtle_doc (st: turtle_state) (input: string) (pos: nat)
+    (acc: list triple) (err: option (string & nat)) (fuel: nat)
+  : Tot turtle_doc_result (decreases fuel) =
+  if fuel = 0 then finish_turtle_doc st acc err
+  else
+    let next_fuel : nat = if fuel >= 1 then fuel - 1 else 0 in
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then finish_turtle_doc st acc err
+      else
+        begin match parse_turtle_statement st input pos1 fuel with
+        | ParseOk (triples, st') pos2 ->
+          if pos2 = pos1 then
+            // No progress -- stop
+            finish_turtle_doc st' (rev_prepend triples acc) err
+          else
+            parse_turtle_doc st' input pos2 (rev_prepend triples acc) err next_fuel
+        | ParseFail msg fpos ->
+          // Skip to next line on failure, keep walking (a lenient
+          // consumer like parse_turtle still wants the remaining
+          // well-formed triples) but record the FIRST failure's
+          // message + position -- first-error-wins, matching the
+          // module's existing single-error parse_result convention
+          // rather than inventing a multi-error mechanism.
+          let err' = (match err with Some _ -> err | None -> Some (msg, fpos)) in
+          let pos2 = skip_to_eol input pos1 (len - pos1) in
+          if pos2 = pos1 then
+            finish_turtle_doc st acc err'
+          else
+            parse_turtle_doc st input pos2 acc err' next_fuel
+        end
+
+let rec parse_turtle_count_doc (st: turtle_state) (input: string) (pos: nat)
+    (acc: nat) (has_error: bool) (fuel: nat)
+  : Tot (nat & bool) (decreases fuel) =
+  if fuel = 0 then (acc, has_error)
+  else
+    let fuel' : nat = if fuel >= 1 then fuel - 1 else 0 in
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then (acc, has_error)
+      else
+        begin match parse_turtle_statement st input pos1 fuel with
+        | ParseOk (triples, st') pos2 ->
+          let acc1 = acc + count_triples triples in
+          if pos2 = pos1 then
+            (acc1, has_error)
+          else
+            parse_turtle_count_doc st' input pos2 acc1 has_error fuel'
+        | ParseFail _ _ ->
+          let pos2 = skip_to_eol input pos1 (len - pos1) in
+          if pos2 = pos1 then
+            (acc, true)
+          else
+            parse_turtle_count_doc st input pos2 acc true fuel'
+        end
+
+// Generic streaming fold over a Turtle document, parameterized over
+// the accumulator type and a per-triple step function plus an early-
+// stop predicate. Structurally identical to parse_turtle_count_doc
+// above (same statement-at-a-time walk, same error recovery), except
+// the per-statement triples are threaded through `step` instead of
+// just counted, and the walk can stop early once `stop acc` holds
+// (used for ASK's "first match wins"). This is the CLI parse-stream
+// query fast path's hook into the Turtle parser (SPARQL.Plan.
+// Streamable.fst supplies `step`/`stop`; see that module's banner) —
+// no triple list is ever retained across statements, so memory stays
+// bounded the same way count_turtle_triples's is, for any accumulator
+// type `a` a caller chooses (a running count, a found-flag, etc).
+let rec fold_turtle_triples_acc (#a: Type)
+    (step: triple -> a -> a) (stop: a -> bool)
+    (st: turtle_state) (input: string) (pos: nat)
+    (acc: a) (has_error: bool) (fuel: nat)
+  : Tot (a & bool) (decreases fuel) =
+  if fuel = 0 then (acc, has_error)
+  else if stop acc then (acc, has_error)
+  else
+    let fuel' : nat = if fuel >= 1 then fuel - 1 else 0 in
+    let len = fs_byte_length input in
+    match turtle_ws input pos with
+    | ParseOk () pos1 ->
+      if pos1 >= len then (acc, has_error)
+      else
+        begin match parse_turtle_statement st input pos1 fuel with
+        | ParseOk (triples, st') pos2 ->
+          let acc1 = fold_step_triples step triples acc in
+          if stop acc1 then
+            (acc1, has_error)
+          else if pos2 = pos1 then
+            (acc1, has_error)
+          else
+            fold_turtle_triples_acc step stop st' input pos2 acc1 has_error fuel'
+        | ParseFail _ _ ->
+          let pos2 = skip_to_eol input pos1 (len - pos1) in
+          if pos2 = pos1 then
+            (acc, true)
+          else
+            fold_turtle_triples_acc step stop st input pos2 acc true fuel'
+        end
+#pop-options
+
+(* ================================================================ *)
+(* Entry point                                                       *)
+(* ================================================================ *)
+
+// Lenient: always returns triples (for positive tests, compatibility)
+let parse_turtle (input: string) : list triple =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state input 0 [] None fuel in
+  r.tdr_triples
+
+let parse_turtle_with_base (input: string) (base: string) : list triple =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  r.tdr_triples
+
+let count_turtle_triples (input: string) : nat =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let (count, _) = parse_turtle_count_doc empty_turtle_state input 0 0 false fuel in
+  count
+
+let count_turtle_triples_with_base (input: string) (base: string) : nat =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let (count, _) = parse_turtle_count_doc st input 0 0 false fuel in
+  count
+
+// Generic streaming fold entry points (CLI parse-stream query fast
+// path; see fold_turtle_triples_acc's banner above). `step` folds one
+// triple into the accumulator; `stop` lets the caller end the walk
+// early (e.g. ASK's first-match-wins). Memory-bounded the same way
+// count_turtle_triples is: no triple list is ever retained across
+// statements, regardless of what `a` is.
+let fold_turtle_triples (#a: Type) (step: triple -> a -> a) (stop: a -> bool)
+    (init: a) (input: string) : a =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let (acc, _) = fold_turtle_triples_acc step stop empty_turtle_state input 0 init false fuel in
+  acc
+
+let fold_turtle_triples_with_base (#a: Type) (step: triple -> a -> a) (stop: a -> bool)
+    (init: a) (input: string) (base: string) : a =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let (acc, _) = fold_turtle_triples_acc step stop st input 0 init false fuel in
+  acc
+
+// Strict: returns None if any parse errors were encountered
+let parse_turtle_strict (input: string) : option (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state input 0 [] None fuel in
+  if r.tdr_has_error then None else Some r.tdr_triples
+
+let parse_turtle_with_base_strict (input: string) (base: string) : option (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  if r.tdr_has_error then None else Some r.tdr_triples
+
+// Strict + diagnostic: like parse_turtle_strict, but surfaces WHERE
+// and WHY the document was rejected using the module's own
+// parse_result convention (ParseOk / ParseFail, the same shape every
+// statement-level parser above already returns) instead of collapsing
+// to a bare `option`. Fixes issue #334: an undeclared prefix (or any
+// other statement-level error) must produce a parse ERROR carrying
+// position information, not a silently-dropped statement -- and a
+// caller that needs to report the error (CLI, protocol client) should
+// not have to re-derive the byte offset that parse_turtle_statement's
+// ParseFail already computed and parse_turtle_doc used to discard.
+let parse_turtle_diagnostic (input: string) : parse_result (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state input 0 [] None fuel in
+  match r.tdr_error with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk r.tdr_triples len
+
+let parse_turtle_with_base_diagnostic (input: string) (base: string) : parse_result (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  match r.tdr_error with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk r.tdr_triples len
+
+(* ================================================================ *)
+(* RDF 1.2 Turtle entry points (epic #305, wave 2).                 *)
+(*                                                                   *)
+(* Same document walk, seeded with a Mode_12 turtle_state so the     *)
+(* object parser accepts `<<( )>>` triple terms and the literal      *)
+(* parser accepts `@lang--dir` directional strings. The mode is a    *)
+(* real parameter carried in turtle_state; `parse_turtle_mode`       *)
+(* dispatches so a consumer threads its `--rdf12` / CLI / npm option *)
+(* through one entry point. Note: reifying triples `<< s p o >>`,    *)
+(* the `~` reifier, and the `{| |}` annotation block are NOT yet     *)
+(* materialised — those need reifier-blank-node generation +         *)
+(* rdf:reifies emission (a later wave); this wave covers triple      *)
+(* terms + directional literals + legacy-form rejection.             *)
+(* ================================================================ *)
+
+// RDF 1.2 reifier dedup (eval-triple-terms pattern-01/02/08, SPARQL 1.2
+// reifier-enumeration bug): the `~ reifier` / `{| |}` annotation grammar
+// (parse_reifier / parse_annotations above) emits a `reifier rdf:reifies
+// <<( s p o )>>` triple at EVERY syntactic occurrence it's used at — by
+// design, since each occurrence is parsed independently with no
+// document-wide memory of what it already asserted. When the SAME named
+// reifier annotates the SAME base triple from two different statements
+// (e.g. data-2.ttl's pattern-3 section: `:a1 :b <<:s :p1 :o ~ :reifier>>
+// .` then `<<:s :p1 :o ~ :reifier>> :b :a2 .`), that is legal Turtle
+// re-asserting an identical `rdf:reifies` triple twice — and per RDF 1.1
+// Concepts §3 a graph is a SET of triples, so the duplicate must
+// collapse to one. Left un-deduped, the duplicate physically doubles in
+// `store_search` results, and since a BGP triple pattern re-querying a
+// reifier's own properties (`?R ?q ?z`) also self-matches the reifier's
+// `rdf:reifies` triple (by design — see basic-7/pattern-01's expected
+// results), the duplicate multiplies out across every join step downstream,
+// not just once. `graph_dedup_sort` (RDF.Graph.fsti) is the existing
+// O(N log N) set-reconciliation helper the RDFS/OWL-RL closure passes
+// already use for the same "emit freely, reconcile once" pattern.
+// Scoped to the four rdf12-mode entry points only — Mode_11 callers
+// (`parse_turtle`/`parse_turtle_with_base`/*_strict) are untouched, so
+// plain (non-reifier) RDF 1.1 Turtle parsing keeps its prior list
+// semantics and duplicate-triple corner cases exactly as before.
+let parse_turtle_12 (input: string) : list triple =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state_12 input 0 [] None fuel in
+  graph_dedup_sort r.tdr_triples
+
+let parse_turtle_with_base_12 (input: string) (base: string) : list triple =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  graph_dedup_sort r.tdr_triples
+
+let parse_turtle_strict_12 (input: string) : option (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state_12 input 0 [] None fuel in
+  if r.tdr_has_error then None else Some (graph_dedup_sort r.tdr_triples)
+
+let parse_turtle_with_base_strict_12 (input: string) (base: string) : option (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  if r.tdr_has_error then None else Some (graph_dedup_sort r.tdr_triples)
+
+// Diagnostic entry points for Mode_12, mirroring parse_turtle_diagnostic /
+// parse_turtle_with_base_diagnostic above -- issue #334's Turtle Mode 1.2
+// follow-up. The Mode_11 diagnostic entry points landed in #424 but the
+// --rdf12 CLI path kept calling the always-succeeds parse_turtle_12 /
+// parse_turtle_with_base_12, which has no error channel at all: an
+// undeclared prefix (or any other statement-level error) silently
+// dropped the offending statement with exit 0 and zero diagnostics.
+// parse_turtle_doc (shared with Mode_11) already threads tdr_error
+// through Mode_12 parsing; these entry points just surface it via the
+// module's ParseOk/ParseFail convention, same as the 1.1 versions.
+let parse_turtle_diagnostic_12 (input: string) : parse_result (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let r = parse_turtle_doc empty_turtle_state_12 input 0 [] None fuel in
+  match r.tdr_error with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk (graph_dedup_sort r.tdr_triples) len
+
+let parse_turtle_with_base_diagnostic_12 (input: string) (base: string) : parse_result (list triple) =
+  let len = fs_byte_length input in
+  let fuel = (len + 1) `op_Multiply` 2 in
+  let st = { empty_turtle_state_12 with base_iri = base } in
+  let r = parse_turtle_doc st input 0 [] None fuel in
+  match r.tdr_error with
+  | Some (msg, epos) -> ParseFail msg epos
+  | None -> ParseOk (graph_dedup_sort r.tdr_triples) len
+
+// Mode-parametrised dispatchers.
+let parse_turtle_with_base_mode (mode: rdf_syntax_mode) (input: string) (base: string) : list triple =
+  match mode with
+  | Mode_11 -> parse_turtle_with_base input base
+  | Mode_12 -> parse_turtle_with_base_12 input base
+
+let parse_turtle_with_base_strict_mode (mode: rdf_syntax_mode) (input: string) (base: string)
+  : option (list triple) =
+  match mode with
+  | Mode_11 -> parse_turtle_with_base_strict input base
+  | Mode_12 -> parse_turtle_with_base_strict_12 input base
