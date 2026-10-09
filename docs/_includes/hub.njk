@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Content-Security-Policy (task #105). A `<meta http-equiv>` CSP is
+  the only enforcement mechanism available on static GitHub Pages
+  hosting (no per-request server, so no response header) -- this is
+  the FIRST time this repo has stated the hub's CSP explicitly rather
+  than relying on the informal "we just don't load anything external"
+  convention (see third_party/leaflet/PROVENANCE.md, third_party/
+  observable/README.md). Two variants, selected by the `hubMode` page
+  variable (default "strict"; set to "live" only by web/hub-live.11ty.js's
+  generated twins):
+
+    strict (every ordinary hub post, e.g. /web/hub/21-.../) --
+      img-src/connect-src are 'self' only: no tile host, no remote
+      SPARQL endpoint, no network request of any kind can succeed.
+      This is WHY post 21's map has no raster basemap -- not a bug,
+      the policy this page states out loud.
+
+    live (the /web/hub-live/<slug>/ twin -- see the banner below) --
+      img-src and connect-src are additionally allowed `https:`, so a
+      cell MAY load OSM tiles or query a remote SPARQL endpoint (e.g.
+      the Fly.io demo). script-src and style-src are UNCHANGED between
+      modes: no third-party *code* can execute in either mode, only
+      third-party *data* (images, fetch responses) in live mode. That
+      distinction is the whole supply-chain point of the split.
+
+  Both variants carry 'unsafe-inline' and 'unsafe-eval' on script-src
+  and 'unsafe-inline' on style-src -- pre-existing architectural
+  requirements of this page, not something live mode introduces or
+  strict mode could drop: the runtime script a few hundred lines below
+  is itself an inline `<script type="module">` block (no per-request
+  nonce is possible on static hosting), and web/hub/reactive-cells.mjs's
+  makeDefinition() compiles every ```observable-js cell through `new
+  Function(...)` at runtime (the whole reactive-cell mechanism this
+  entire hub is built on). Every script SOURCE is still same-origin
+  only in both modes -- no external <script src="https://..."> host is
+  ever allowed, live mode or strict -- with one named exception: a
+  post whose own front matter sets `hubAllowRegistryCdn: true` (only
+  post 37, "Installed, not vendored", whose point is running the
+  @factoidal/core code published to the npm registry) gets exactly
+  `https://cdn.jsdelivr.net` and `https://unpkg.com` added to
+  script-src and connect-src, in BOTH modes (owner decision,
+  2026-08-25 -- before that the carve-out was live-twin-only and the
+  default page showed "registry unreachable" in every cell). Per-page
+  opt-in; every other post's policy is unchanged.
+
+  `frame-ancestors` is deliberately NOT in the policy below: the CSP
+  spec requires it be delivered as a real HTTP response header --
+  every browser ignores it (with a console warning) when set via
+  `<meta http-equiv>`. Including a directive the browser can't honor
+  would just be console noise on every hub page for no enforcement
+  gained.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data:{% if hubMode == 'live' %} https:{% endif %}; connect-src 'self'{% if hubMode == 'live' %} https:{% endif %}{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}; font-src 'self'; object-src 'none'; base-uri {% if hubMode == 'live' %}'self'{% else %}'none'{% endif %}">
+<title>{{ title }}{% if hubMode == 'live' %} (live mode){% endif %} — Factoidal</title>
+{% if hubMode == 'live' %}
+<!--
+  Live twins reuse the strict post's rendered HTML verbatim (see
+  web/hub-live.11ty.js), so every RELATIVE URL in that content -- the
+  post's prose links (../README/, ./24-hdt-.../) AND, more
+  load-bearing, any page-relative fetch() a cell makes at runtime
+  (post 24 fetches "../rml-core-ontology.hdt") -- was authored against
+  the strict post's /web/hub/<slug>/ directory. This <base> makes all
+  of them resolve there instead of against /web/hub-live/<slug>/,
+  where they would 404. It's also why live mode's CSP above says
+  base-uri 'self' where strict says 'none': strict pages have no
+  <base> and ban the element outright; live pages need exactly this
+  one, same-origin. Absolute paths (every `| url`-filtered asset in
+  this layout) are unaffected. Known tradeoff: in-page fragment links
+  (#section, the heading-anchor permalinks) also resolve against the
+  base, so clicking one from a live twin lands on the strict page's
+  section -- same content, strict capabilities; acceptable for a
+  secondary view of the same post.
+-->
+<base href="{{ ('/web/hub/' + livePostSlug + '/') | url }}">
+{% endif %}
+<!--
+  Vendored Leaflet (third_party/leaflet/, BSD-2-Clause, see its
+  PROVENANCE.md) — same-origin, no CDN, passthrough-copied to
+  /vendor/leaflet/ by docs/.eleventy.js. leaflet.js is Leaflet's own
+  prebuilt UMD bundle: loaded as a classic (non-module) script it runs
+  synchronously in document order and sets window.L, so it is ready
+  before the `type="module"` script below (module scripts always defer
+  until after parsing) reads window.L into the `L` cell binding.
+  leaflet.css is required for Leaflet's panes/controls to lay out
+  correctly even in the vector-only, no-tile-layer usage the hub's map
+  cell makes.
+-->
+<link rel="stylesheet" href="{{ '/vendor/leaflet/leaflet.css' | url }}">
+<script src="{{ '/vendor/leaflet/leaflet.js' | url }}"></script>
+<script type="module" src="{{ '/web/hub/assets/sparql-result-elements.mjs' | url }}"></script>
+<style>
+  /* Mobile-first: base rules target a ~390px phone; the only
+     widening is the max-width cap. No rule may cause page-level
+     horizontal scroll — wide tables/code scroll inside their own
+     box (overflow-x: auto). */
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 820px; margin: 1em auto; padding: 0 1em; line-height: 1.6; color: #333; background: #fff; overflow-wrap: break-word; }
+  @media (min-width: 720px) { body { margin: 2em auto; } }
+  h1 { border-bottom: 2px solid #2d6a4f; padding-bottom: 0.3em; }
+  h2 { margin-top: 1.8em; }
+  a { color: #2d6a4f; }
+  nav { margin-bottom: 1.5em; font-size: 0.95em; }
+  nav a { display: inline-block; padding: 0.5em 0.9em 0.5em 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; display: block; overflow-x: auto; }
+  @media (min-width: 720px) { table { display: table; overflow-x: visible; } }
+  th, td { border: 1px solid #ddd; padding: 0.4em 0.8em; text-align: left; }
+  th { background: #f5f5f5; }
+  pre { background: #f8f8f8; padding: 1em; overflow-x: auto; border-radius: 4px; }
+  code { background: #f0f0f0; padding: 0.15em 0.3em; border-radius: 3px; font-size: 0.9em; }
+  pre code { background: none; padding: 0; }
+  footer { margin-top: 3em; border-top: 1px solid #ddd; padding-top: 1em; font-size: 0.9em; color: #666; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #121417; color: #d6dbe1; }
+    a { color: #7fd0a7; }
+    h1 { border-bottom-color: #7fd0a7; }
+    th { background: #1d2126; }
+    th, td { border-color: #333a42; }
+    pre { background: #1a1e23; }
+    code { background: #22272d; }
+    footer { border-top-color: #333a42; color: #98a2ad; }
+  }
+  ul.post-series li.placeholder { color: #888; }
+  ul.post-series li.placeholder::after { content: " (planned)"; font-style: italic; }
+
+  /* Observable cell convention: a fenced ```observable-js block gets
+     turned into a live cell rendered in the .observable-cell div the
+     runtime script inserts right after it. See README below the
+     fenced-block markup on this page, and hub-cells.js. */
+  pre:has(> code.language-observable-js) {
+    border-left: 3px solid #2d6a4f;
+  }
+  /* Form-first notebooks may keep their implementation available through
+     the Edit control without putting a long source listing ahead of the
+     interactive surface. This is an explicit per-page choice. */
+  {% if hubHideCellSource %}
+  pre:has(> code.language-observable-js) { display: none; }
+  .observable-cell::before { display: none; }
+  {% endif %}
+  .observable-cell {
+    margin: 0 0 1.4em;
+    padding: 0.8em 1em;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+    min-height: 1.4em;
+  }
+  .observable-cell::before {
+    content: "\21b3 live cell output";
+    display: block;
+    font-size: 0.75em;
+    color: #888;
+    margin-bottom: 0.4em;
+  }
+  .observable-cell.observable-cell-error {
+    border-color: #c0392b;
+    color: #c0392b;
+    white-space: pre-wrap;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85em;
+  }
+  .observable-cell { overflow-x: auto; }
+  .observable-cell svg { max-width: 100%; height: auto; }
+
+  /* Leaflet map cells (docs/web/hub/21-geosparql-geometry-and-topology.md):
+     an explicit, non-collapsing height is required -- Leaflet lays out
+     its panes against the container's own box, and a height:0 div
+     renders nothing. The plain background below is the vendored vector
+     basemap's own background (docs/web/hub/assets/geo/), not a loading
+     flash -- strict mode never shows a raster tile layer; live mode
+     (data-hub-mode="live" on <body>) may add one on top of it. */
+  .hub-leaflet-map {
+    height: 420px;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 4px;
+    background: #eef3ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    .hub-leaflet-map { background: #1a1e23; }
+  }
+  /* The Fullscreen API target is the map container itself (task #105) --
+     Leaflet needs a real box size, not the UA's default fullscreen
+     sizing, which for a `div` is "as big as its content" (still
+     420px). :fullscreen / the vendor-prefixed variants restore full
+     viewport sizing while active; the custom control's own JS calls
+     map.invalidateSize() on the fullscreenchange event so Leaflet's
+     panes catch up in the same frame. */
+  .hub-leaflet-map:fullscreen,
+  .hub-leaflet-map:-webkit-full-screen {
+    height: 100vh;
+    max-width: 100vw;
+    border-radius: 0;
+  }
+  .leaflet-control-hub-fullscreen a {
+    font-size: 1.1em;
+    line-height: 26px;
+    text-align: center;
+  }
+  /* The Leaflet layers control (live mode's OSM-tile toggle -- see the
+     map cell's data-hub-mode="live" branch in post 21) styles its
+     collapsed toggle with background-image: url(images/layers.png) in
+     stock leaflet.css -- a PNG third_party/leaflet/PROVENANCE.md
+     deliberately does NOT vendor. Replace it with a text glyph so the
+     control never requests an image (same reasoning as the map's
+     circleMarker-instead-of-default-icon choice: zero image assets).
+     Equal specificity to leaflet.css's rule, but this <style> block
+     comes after that <link>, so source order wins the cascade. */
+  .leaflet-control-layers-toggle,
+  .leaflet-retina .leaflet-control-layers-toggle {
+    background-image: none;
+  }
+  .leaflet-control-layers-toggle::after {
+    content: "\1F5FA"; /* world-map glyph */
+    display: block;
+    font-size: 20px;
+    line-height: 36px;
+    text-align: center;
+  }
+  .leaflet-touch .leaflet-control-layers-toggle::after {
+    line-height: 44px;
+  }
+
+  /* Live-mode banner (task #105) -- present on every hub-live/<slug>/
+     twin (loud, amber) and, in a quieter neutral form, on every
+     ordinary strict post linking forward to its twin. Never shown on
+     the hub index/README (no series_order), which have no twin. */
+  .hub-live-banner {
+    margin: 0 0 1.2em;
+    padding: 0.7em 1em;
+    border-radius: 4px;
+    font-size: 0.92em;
+    background: #fff3cd;
+    border: 1px solid #f0d78c;
+    color: #6b5613;
+  }
+  .hub-live-banner a { color: inherit; text-decoration: underline; }
+  .hub-live-banner-strict {
+    background: #eef6f1;
+    border-color: #cfe4d7;
+    color: inherit;
+  }
+  @media (prefers-color-scheme: dark) {
+    .hub-live-banner { background: #3a3016; border-color: #5c4a1e; color: #f0d78c; }
+    .hub-live-banner-strict { background: #16201a; border-color: #2d4738; color: #d6dbe1; }
+  }
+
+  /* `pretty()` cell-output tables (see hub.njk's module script) --
+     reuses the page's own table/th/td rules for the grid itself; this
+     adds the scrollable wrapper (both axes -- the existing
+     overflow-x pattern plus a max-height/overflow-y cap for long
+     results) and the small caption/term styling pretty() needs that
+     nothing else on the page provides yet. */
+  .pretty-table-wrap {
+    max-height: 22em;
+    overflow: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+  .pretty-table-wrap table { margin: 0; }
+  .pretty-table-wrap thead th { position: sticky; top: 0; }
+  .pretty-caption {
+    font-size: 0.78em;
+    color: #888;
+    font-style: italic;
+    padding: 0.3em 0.6em 0;
+  }
+  .pretty-term {
+    font-family: ui-monospace, monospace;
+    font-size: 0.9em;
+  }
+  .pretty-value {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.95em;
+    padding: 0.1em 0.4em;
+    background: #f5f5f5;
+    border-radius: 3px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .pretty-table-wrap { border-color: #333a42; }
+    .pretty-caption { color: #98a2ad; }
+    .pretty-value { background: #1d2126; }
+  }
+
+  /* Cell chrome: the toolbar (Edit toggle + Run button) sits between
+     the code block and the output box. Mobile-first: tap targets are
+     >= 44px, laid out in a wrapping flex row so the row never forces
+     page-level horizontal scroll on a ~390px phone. */
+  .observable-cell-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    margin: 0.5em 0 0.8em;
+  }
+  .observable-cell-btn {
+    box-sizing: border-box;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.5em 1.1em;
+    font: inherit;
+    font-size: 0.85em;
+    color: #2d6a4f;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .observable-cell-btn:hover { background: #eef6f1; }
+  .observable-cell-btn:active { background: #e2efe8; }
+  .observable-cell-btn[aria-pressed="true"] {
+    background: #2d6a4f;
+    color: #fff;
+    border-color: #2d6a4f;
+  }
+  .observable-cell-hint {
+    flex-basis: 100%;
+    font-size: 0.78em;
+    color: #888;
+    font-style: italic;
+  }
+  .observable-cell-editor {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, monospace;
+    font-size: 0.9em;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-left: 3px solid #2d6a4f;
+    border-radius: 4px;
+    padding: 1em;
+    line-height: 1.5;
+    color: inherit;
+    resize: vertical;
+    overflow-x: auto;
+  }
+  .observable-cell-editor:focus {
+    outline: 2px solid #2d6a4f;
+    outline-offset: -1px;
+  }
+  /* Same specificity as `.observable-cell-editor { display: block }`
+     above, but author-origin `[hidden]` here needs the extra class in
+     the selector to win the tie -- a bare UA `[hidden]` rule would
+     lose to the author `display: block` declaration regardless of
+     specificity, since normal author rules outrank normal
+     user-agent rules irrespective of selector weight. */
+  .observable-cell-editor[hidden] {
+    display: none;
+  }
+
+  /* Folding chrome (https://github.com/danbri/factoidal/issues/686):
+     a cell flagged `closed` on its fence line mounts collapsed, with a
+     summary line and a toggle to open it -- see mountCell() below and
+     docs/web/hub/README.md's "Closed cells and the fold wrapper".
+     A native <details>/<summary> already implements focus handling and
+     Enter/Space toggling, so there is no custom key handling here.
+     `list-style: none` plus the WebKit-only marker rule below remove
+     the browser's own disclosure triangle in every engine so the
+     `::before` triangle is the only one drawn. `flex-wrap: wrap` on the
+     summary matches `.observable-cell-toolbar` above, for the same
+     reason: a long title must never force page-level horizontal
+     scroll on a ~390px phone. */
+  .observable-cell-fold {
+    margin: 0 0 1.4em;
+  }
+  .observable-cell-fold > summary.observable-cell-fold-summary {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    box-sizing: border-box;
+    min-height: 44px;
+    width: 100%;
+    padding: 0.5em 0.8em;
+    font: inherit;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #2d6a4f;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .observable-cell-fold > summary.observable-cell-fold-summary::-webkit-details-marker {
+    display: none;
+  }
+  .observable-cell-fold > summary.observable-cell-fold-summary::before {
+    content: "\25b8";
+    display: inline-block;
+    flex: none;
+    transition: transform 0.15s ease;
+  }
+  .observable-cell-fold[open] > summary.observable-cell-fold-summary::before {
+    transform: rotate(90deg);
+  }
+  .observable-cell-fold > summary.observable-cell-fold-summary:hover {
+    background: #eef6f1;
+  }
+  .observable-cell-fold > summary.observable-cell-fold-summary:active {
+    background: #e2efe8;
+  }
+  .observable-cell-fold > pre {
+    margin-top: 0.6em;
+  }
+  .observable-cell-fold-error > summary.observable-cell-fold-summary {
+    border-color: #c0392b;
+    color: #c0392b;
+  }
+
+  /* Reader-added cells (the "Add a cell" affordance): the reader can
+     append their own live cells running in the same fn/Factoidal/Plot/
+     d3/pretty scope as the pinned cells, and remove the ones they added.
+     Same visual language as a pinned cell; width-constrained so the
+     block never overflows horizontally on a narrow phone. */
+  .hub-user-cells {
+    margin-top: 2.5em;
+    border-top: 1px solid #ddd;
+    padding-top: 0.5em;
+  }
+  .hub-user-cells-intro { font-size: 0.9em; color: #666; }
+  .hub-user-cell {
+    margin: 0 0 1.6em;
+    padding-left: 0.8em;
+    border-left: 3px solid #2d6a4f;
+  }
+  .hub-add-cell-btn { margin-top: 0.5em; }
+  .jsonld-playground {
+    border: 1px solid #c8d8cf;
+    border-radius: 0.65rem;
+    padding: 1rem;
+    background: #f7fbf8;
+  }
+  .jsonld-playground label { display: grid; gap: 0.4rem; font-weight: 600; }
+  .jsonld-playground textarea {
+    box-sizing: border-box;
+    min-height: 15rem;
+    width: 100%;
+    resize: vertical;
+    border: 1px solid #aebfb5;
+    border-radius: 0.35rem;
+    padding: 0.75rem;
+    background: #fff;
+    color: inherit;
+    font: 0.88rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .jsonld-playground pre { max-height: 22rem; overflow: auto; white-space: pre-wrap; }
+
+  @media (prefers-color-scheme: dark) {
+    .observable-cell { background: #1a1e23; border-color: #333a42; }
+    .observable-cell.observable-cell-error { border-color: #e07060; color: #e07060; }
+    .observable-cell-btn { background: #1a1e23; border-color: #333a42; color: #7fd0a7; }
+    .observable-cell-btn:hover { background: #232830; }
+    .observable-cell-btn:active { background: #272d36; }
+    .observable-cell-btn[aria-pressed="true"] { background: #7fd0a7; color: #10130f; border-color: #7fd0a7; }
+    .observable-cell-render-label { color: #98a2ad; }
+    .observable-cell-hint { color: #98a2ad; }
+    .observable-cell-editor { background: #1a1e23; border-color: #333a42; border-left-color: #7fd0a7; }
+    .observable-cell-editor:focus { outline-color: #7fd0a7; }
+    .observable-cell-fold > summary.observable-cell-fold-summary { background: #1a1e23; border-color: #333a42; color: #7fd0a7; }
+    .observable-cell-fold > summary.observable-cell-fold-summary:hover { background: #232830; }
+    .observable-cell-fold > summary.observable-cell-fold-summary:active { background: #272d36; }
+    .observable-cell-fold-error > summary.observable-cell-fold-summary { border-color: #e07060; color: #e07060; }
+    .hub-user-cells { border-top-color: #333a42; }
+    .hub-user-cells-intro { color: #98a2ad; }
+  }
+</style>
+</head>
+<body data-hub-mode="{{ hubMode | default('strict') }}">
+<nav>
+  <a href="{{ '/' | url }}">Home</a>
+  <a href="{{ '/web/hub/' | url }}">Hub</a>
+  <a href="{{ '/web/hub/47-writing-hub-notebooks/' | url }}">Notebook guide</a>
+  <a href="{{ '/test-results/' | url }}">Test Results</a>
+  <a href="https://github.com/danbri/factoidal">GitHub</a>
+</nav>
+{% if hubMode == 'live' %}
+<div class="hub-live-banner" role="note">
+  <strong>Live mode</strong> — this page may load external map tiles
+  and query remote endpoints; the
+  <a href="{{ ('/web/hub/' + livePostSlug + '/') | url }}">standard hub</a>
+  is fully self-contained (same cells, no network).
+</div>
+{% elif series_order is defined and hubAllowRegistryCdn %}
+<div class="hub-live-banner hub-live-banner-strict" role="note">
+  This page loads the published @factoidal/core package from
+  cdn.jsdelivr.net / unpkg.com — the only external hosts its
+  Content-Security-Policy allows. A
+  <a href="{{ ('/web/hub-live/' + page.fileSlug + '/') | url }}">live mode</a>
+  twin of this same post can also load map tiles and remote SPARQL
+  endpoints.
+</div>
+{% elif series_order is defined %}
+<div class="hub-live-banner hub-live-banner-strict" role="note">
+  This page is fully self-contained: no external network request is
+  possible (see the Content-Security-Policy above). A
+  <a href="{{ ('/web/hub-live/' + page.fileSlug + '/') | url }}">live mode</a>
+  twin of this same post can load map tiles and remote SPARQL
+  endpoints.
+</div>
+{% endif %}
+{{ content | safe }}
+<footer>
+Factoidal — verified RDF/SPARQL{% if not hubEngineLabel %} from F*{% endif %}. Interactive cells on this
+page run entirely in your browser via {{ hubEngineLabel | default('the F*-extracted engine') }} and a
+vendored Observable runtime — no server, no CDN{% if hubMode == 'live' %}
+for any code; in live mode a cell may additionally load external map
+tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
+</footer>
+
+<!--
+  Runtime wiring for the ```observable-js cell convention. Loaded as a
+  module so import specifiers resolve; all imports are same-origin
+  Pages paths (respecting the /factoidal/ pathPrefix via the `url`
+  filter), never a CDN. See third_party/observable/README.md and
+  docs/web/hub/README.md for the convention this implements.
+-->
+<script type="module">
+import { Runtime } from "{{ '/vendor/observable/runtime.esm.js' | url }}";
+import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
+import * as Factoidal from "{{ '/npm/factoidal/browser.js' | url }}";
+import * as d3 from "{{ '/vendor/observable/d3.esm.js' | url }}";
+import * as Plot from "{{ '/vendor/observable/plot.esm.js' | url }}";
+import * as stdlib from "{{ '/vendor/observable/stdlib.esm.js' | url }}";
+// Project-owned reactive-cell compiler (NOT vendored third-party) --
+// same-origin, no CDN. Turns `name = expr` cells into named runtime
+// variables and infers each cell's cross-cell inputs. Shared verbatim
+// with the Node pinning harness (tests/hub/_helpers.mjs) so the browser
+// and the tests can never disagree about dependency inference. See
+// docs/web/hub/reactive-cells.mjs for the compiler and its limits.
+import { analyzeCell, cellInputs, makeDefinition, parseCellFlags } from "{{ '/vendor/hub/reactive-cells.mjs' | url }}";
+
+const runtime = new Runtime();
+const main = runtime.module();
+
+// ---------------------------------------------------------------------
+// `fn` — the typed, Dataset-returning cell surface.
+//
+// `Factoidal` (browser.js) is a raw, single-shot CLI wrapper: strings
+// in, SPARQL-JSON out (no Dataset, no Map<string, Term> bindings). The
+// typed API most hub posts are written against (`parse()` -> Dataset,
+// `query()` -> Bindings[] | boolean | Dataset) lives in
+// npm/factoidal/index.js, but that module is Node-only (CommonJS
+// `require`, `node:fs`, `node:crypto`) and cannot load in a browser
+// `<script type="module">` context. Rather than fork the engine or
+// re-mirror a browser build of it (both out of scope — see
+// docs/web/hub/README.md), this adapter reshapes `Factoidal`'s raw
+// CLI calls into the same external contract, entirely client-side:
+// parse() returns a small frozen Dataset-like wrapper over the
+// engine's own N-Quads dump; query() sniffs the query form (same
+// heuristic as npm/factoidal/lib/api.js's sniffQueryForm) to decide
+// whether to return an array of Map<string, Term> (SELECT), a
+// boolean (ASK), or another Dataset-like wrapper (CONSTRUCT). See
+// docs/web/hub/README.md for the full contract every post's cells are
+// written against.
+// ---------------------------------------------------------------------
+
+const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
+const RDF_LANGSTRING = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+
+function parseNQuadsTerm(str, i) {
+  while (i < str.length && (str[i] === " " || str[i] === "\t")) i++;
+  // RDF 1.2 triple term: <<( s p o )>> -> a Quad-shaped term. Checked
+  // before the '<' IRI case (a triple term also opens with '<').
+  if (str[i] === "<" && str[i + 1] === "<" && str[i + 2] === "(") {
+    let j = i + 3;
+    const [subject, a]   = parseNQuadsTerm(str, j); j = a;
+    const [predicate, b] = parseNQuadsTerm(str, j); j = b;
+    const [object, c]    = parseNQuadsTerm(str, j); j = c;
+    while (j < str.length && /\s/.test(str[j])) j++;
+    if (str[j] === ")" && str[j + 1] === ">" && str[j + 2] === ">") {
+      return [{ termType: "Quad", value: "", subject, predicate, object }, j + 3];
+    }
+    throw new Error("parseNQuads: unterminated triple term at offset " + i);
+  }
+  if (str[i] === "<") {
+    const end = str.indexOf(">", i);
+    return [{ termType: "NamedNode", value: str.slice(i + 1, end) }, end + 1];
+  }
+  if (str[i] === "_" && str[i + 1] === ":") {
+    let j = i + 2;
+    while (j < str.length && !/\s/.test(str[j])) j++;
+    return [{ termType: "BlankNode", value: str.slice(i + 2, j) }, j];
+  }
+  if (str[i] === '"') {
+    let j = i + 1;
+    let lex = "";
+    while (str[j] !== '"') {
+      if (str[j] === "\\") { lex += str[j] + str[j + 1]; j += 2; }
+      else { lex += str[j]; j++; }
+    }
+    j++; // closing quote
+    lex = lex
+      .replace(/\\"/g, '"').replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t").replace(/\\r/g, "\r")
+      .replace(/\\\\/g, "\\");
+    let datatype = XSD_STRING;
+    let language = "";
+    if (str[j] === "@") {
+      let k = j + 1;
+      while (k < str.length && /[a-zA-Z0-9-]/.test(str[k])) k++;
+      language = str.slice(j + 1, k);
+      datatype = RDF_LANGSTRING;
+      j = k;
+    } else if (str[j] === "^" && str[j + 1] === "^") {
+      const start = j + 3; // skip ^^<
+      const end = str.indexOf(">", start);
+      datatype = str.slice(start, end);
+      j = end + 1;
+    }
+    return [
+      { termType: "Literal", value: lex, language, datatype: { termType: "NamedNode", value: datatype } },
+      j,
+    ];
+  }
+  throw new Error("parseNQuads: unrecognized term at offset " + i + " in: " + str);
+}
+
+function parseNQuadsLine(line) {
+  const terms = [];
+  let i = 0;
+  while (terms.length < 4) {
+    while (i < line.length && (line[i] === " " || line[i] === "\t")) i++;
+    if (line[i] === "." && (i + 1 >= line.length || /\s/.test(line[i + 1]))) break;
+    const [term, next] = parseNQuadsTerm(line, i);
+    terms.push(term);
+    i = next;
+  }
+  const [subject, predicate, object, graph] = terms;
+  return { subject, predicate, object, graph: graph || null };
+}
+
+// Parse N-Triples/N-Quads text (as produced by Factoidal.toRdf() /
+// Factoidal.query({output: 'ntriples'})) into an array of quad-shaped
+// objects: {subject, predicate, object, graph}, each term
+// {termType, value, [language], [datatype]} — the same shape RDF/JS
+// terms expose for the fields these hub posts read.
+function parseNQuads(text) {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"))
+    .map(parseNQuadsLine);
+}
+
+class FnDataset {
+  constructor(nquadsText) {
+    this._text = nquadsText;
+    this._quads = parseNQuads(nquadsText);
+  }
+  get size() { return this._quads.length; }
+  [Symbol.iterator]() { return this._quads[Symbol.iterator](); }
+  toNQuads() { return this._text; }
+}
+
+// Lean twin of FnDataset (issue #585's page-level half: typed wrappers
+// over the dataset-handle ABI, `Wasm/Ops/Handles.lean`, so a hub cell
+// never has to carry N-Quads text through fn.l4Call itself). Where
+// FnDataset holds the parsed text in JS, L4Dataset holds a HANDLE --
+// the dataset stays parsed once, inside the wasm module's own store,
+// and every op after `fn.l4Parse` sends only the handle string. Same
+// external shape as FnDataset (`size`, `toNQuads()`) so the two engines'
+// cells read symmetrically; `_engine`/`handle` are read by
+// `fn.l4Query`/`fn.l4Update`, not meant for a cell to touch directly.
+class L4Dataset {
+  constructor(engine, handle, count) {
+    this._engine = engine;
+    this._handle = handle;
+    this._count = count;
+  }
+  get size() { return this._count; }
+  get handle() { return this._handle; }
+  toNQuads() {
+    return this._engine.call("datasetSerialize", [this._handle, "nquads"]).nquads;
+  }
+  /** Prefix-compacted Turtle of the same handle (datasetSerialize's other format). */
+  toTurtle() {
+    return this._engine.call("datasetSerialize", [this._handle, "turtle"]).turtle;
+  }
+}
+
+// Same heuristic as npm/factoidal/lib/api.js's sniffQueryForm: blank
+// out IRIs/comments first so '#' inside a PREFIX IRI or a keyword
+// appearing inside a string literal can't hide/fake the query verb.
+function sniffQueryForm(sparql) {
+  const cleaned = String(sparql).replace(/<[^>]*>/g, " ").replace(/#[^\n]*/g, " ");
+  const m = cleaned.match(/\b(select|ask|construct|describe)\b/i);
+  return m ? m[1].toLowerCase() : "select";
+}
+
+function srjTermToFn(t) {
+  if (t.type === "uri") return { termType: "NamedNode", value: t.value };
+  if (t.type === "bnode") return { termType: "BlankNode", value: t.value };
+  if (t.type === "triple") {
+    // RDF 1.2 triple term in SPARQL Results JSON -> a Quad-shaped term.
+    const v = t.value || {};
+    return {
+      termType: "Quad", value: "",
+      subject: srjTermToFn(v.subject),
+      predicate: srjTermToFn(v.predicate),
+      object: srjTermToFn(v.object),
+    };
+  }
+  // 'literal' | 'typed-literal'
+  const language = t["xml:lang"] || "";
+  const datatype = t.datatype || (language ? RDF_LANGSTRING : XSD_STRING);
+  return { termType: "Literal", value: t.value, language, datatype: { termType: "NamedNode", value: datatype } };
+}
+
+// Reshape a RAW, CLI-shaped Factoidal module (query/toRdf/canonicalize/
+// registerExtensionFunction/version, same shape as npm/factoidal/
+// browser.js's own exports -- see "Why `fn` is an adapter, not an
+// import" in docs/web/hub/README.md) into the typed Dataset-based shape
+// `fn` exposes. `fn.parse`/`fn.query` below are this same reshaping
+// hardcoded to the module-scope `Factoidal` (the same-origin bundle);
+// this is the parameterized version, used by `fn.loadRegistryPackage`
+// (post 37) to apply IDENTICAL reshaping to whichever raw module a
+// cell loaded from the npm registry CDN, so a cell can call
+// `registry.parse(...)`/`registry.query(...)` with the exact same
+// contract as `fn.parse`/`fn.query`.
+function makeTypedApiOverRaw(raw) {
+  return {
+    version: raw.version,
+    async parse(text, options) {
+      const opts = options || {};
+      const nq = await raw.toRdf(text, { format: opts.format || "turtle", baseIRI: opts.baseIRI });
+      return new FnDataset(nq);
+    },
+    async query(dataset, sparql, options) {
+      const opts = options || {};
+      const entail = opts.entail || "none";
+      const sparql12 = opts.sparql12 === true || String(opts.version || "") === "1.2";
+      const form = sniffQueryForm(sparql);
+      if (form === "construct" || form === "describe") {
+        const nt = await raw.query(dataset.toNQuads(), sparql, {
+          dataFormat: "nquads", entail, output: "ntriples", sparql12,
+        });
+        return new FnDataset(nt);
+      }
+      const result = await raw.query(dataset.toNQuads(), sparql, {
+        dataFormat: "nquads", entail, output: "json", sparql12,
+      });
+      if (form === "ask") return !!result.boolean;
+      const rows = (result.results && result.results.bindings) || [];
+      return rows.map((row) => {
+        const map = new Map();
+        for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+        return map;
+      });
+    },
+    async canonicalize(text, options) { return raw.canonicalize(text, options); },
+    async registerExtensionFunction(iri, f) { return raw.registerExtensionFunction(iri, f); },
+  };
+}
+
+const fn = {
+  /**
+   * Certified core-RDFS closure + its decidable fragment check (post
+   * 32: the six-rule operator with the decides-iff). "corerdfs" is the
+   * API name for the fragment the literature calls ρdf (Muñoz, Pérez &
+   * Gutierrez 2009); the rhoDf* names are literature-name aliases.
+   * Thin delegations to the browser adapter, same as lib/api.js.
+   */
+  async coreRdfsClosure(data) { return Factoidal.coreRdfsClosure(data); },
+  async coreRdfsCheck(data) { return Factoidal.coreRdfsCheck(data); },
+  async rdfsPlusClosure(data) { return Factoidal.rdfsPlusClosure(data); },
+  async rhoDfClosure(data) { return Factoidal.coreRdfsClosure(data); },
+  async rhoDfFragmentCheck(data) { return Factoidal.coreRdfsCheck(data); },
+  /**
+   * Full RDFS / OWL-RL closure (post 32's perf-comparison cell; the
+   * caps table advertised this ABI but no fn wrapper existed until
+   * post 32 called it — the node test harness masks fn-surface gaps,
+   * so wrappers must be added HERE when a page first uses one).
+   */
+  async owlClosure(data, mode) {
+    // Factoidal.owlClosure takes N-Quads; page cells hand us Turtle.
+    // Convert first or the ABI silently closes the EMPTY graph.
+    const nq = await Factoidal.toRdf(data, { format: "turtle" });
+    return Factoidal.owlClosure(nq, mode || 'RDFS');
+  },
+  /**
+   * Verified sigmoid showcase (post 28): sampled points + the
+   * engine-serialized MathML formula. Thin delegations -- found
+   * missing by the 2026-08-08 hub_browser_all.sh sweep (same masked
+   * fn-surface class as the rhoDf* gaps above).
+   */
+  async sigmoidPoints(params) { return Factoidal.sigmoidPoints(params); },
+  async sigmoidFormulaMathml() { return Factoidal.sigmoidFormulaMathml(); },
+  /**
+   * Parse an RDF document into an FnDataset (mirrors
+   * npm/factoidal/index.js's `parse(text, {format}) -> Dataset`).
+   */
+  async parse(text, options) {
+    const opts = options || {};
+    const nq = await Factoidal.toRdf(text, { format: opts.format || "turtle", baseIRI: opts.baseIRI });
+    return new FnDataset(nq);
+  },
+  /**
+   * Query an FnDataset (mirrors npm/factoidal/index.js's
+   * `query(data, sparql, {entail}) -> Bindings[] | boolean | Dataset`).
+   */
+  async query(dataset, sparql, options) {
+    const opts = options || {};
+    const entail = opts.entail || "none";
+    // SPARQL 1.2 opt-in: {sparql12:true} or {version:'1.2'} forwards to
+    // the engine's tokenize_12 parser + Mode_12 data load.
+    const sparql12 = opts.sparql12 === true || String(opts.version || "") === "1.2";
+    const form = sniffQueryForm(sparql);
+    if (form === "construct" || form === "describe") {
+      const nt = await Factoidal.query(dataset.toNQuads(), sparql, {
+        dataFormat: "nquads", entail, output: "ntriples", sparql12,
+      });
+      return new FnDataset(nt);
+    }
+    const result = await Factoidal.query(dataset.toNQuads(), sparql, {
+      dataFormat: "nquads", entail, output: "json", sparql12,
+    });
+    if (form === "ask") return !!result.boolean;
+    const rows = (result.results && result.results.bindings) || [];
+    return rows.map((row) => {
+      const map = new Map();
+      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+      return map;
+    });
+  },
+  /**
+   * In-memory COTTAS/Parquet bytes store (post 42; issue #595's
+   * persistence program; docs/designissues/2026-07-06-inmemory-bytes-
+   * store.md). Thin fn-shape wrappers over Factoidal.toCottas/
+   * openCottas/queryCottas/closeCottas (npm/factoidal/browser.js,
+   * already exported there) -- no fn wrapper existed until post 42
+   * called one, same masked-fn-surface class as the rhoDf-family and
+   * sigmoid gaps above (the node test harness can't see a missing browser-
+   * layer wrapper; only a live cell on a real post exposes it). This
+   * is the browser tier of the same reader/writer the CLI's
+   * `--data-cottas`/`--data-cottas-mem` serves on disk
+   * (skills/disk-storage-format/SKILL.md §6): bytes held in the wasm
+   * heap instead of a file, read-only, no entailment, no write
+   * overlay -- see Factoidal.queryCottas's own doc comment in
+   * browser.js for the full divergence list from fn.query().
+   */
+  async toCottas(dataset) { return Factoidal.toCottas(dataset.toNQuads()); },
+  async openCottas(bytes) { return Factoidal.openCottas(bytes); },
+  async queryCottas(handle, sparql) {
+    if (typeof handle !== "string") {
+      throw new TypeError("queryCottas: handle must be the string openCottas() returned");
+    }
+    const r = await Factoidal.queryCottas(handle, sparql);
+    if (r.kind === "ask") return !!r.boolean;
+    if (r.kind === "construct") return new FnDataset(r.nquads);
+    const rows = (r.srj.results && r.srj.results.bindings) || [];
+    return rows.map((row) => {
+      const map = new Map();
+      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+      return map;
+    });
+  },
+  async closeCottas(handle) { return Factoidal.closeCottas(handle); },
+  /**
+   * SPARQL 1.1 §17.6 extension functions (issue #463) + SERVICE
+   * endpoint snapshots (issue #57 family) — thin pass-throughs to the
+   * browser adapter, which owns the registry + async trampoline.
+   */
+  async registerExtensionFunction(iri, f) { return Factoidal.registerExtensionFunction(iri, f); },
+  async unregisterExtensionFunction(iri) { return Factoidal.unregisterExtensionFunction(iri); },
+  async clearExtensionFunctions() { return Factoidal.clearExtensionFunctions(); },
+  async registerServiceEndpoint(iri, data, options) { return Factoidal.registerServiceEndpoint(iri, data, options); },
+  async clearServiceEndpoints() { return Factoidal.clearServiceEndpoints(); },
+  /**
+   * Load the vendored wikifn-fstar compiled Wikifunctions engine
+   * (hub post 35; provenance in web/hub/assets/wikifn/README.md).
+   * Resolves once globalThis.wikifnCompiledCall / wikifnEngineCall
+   * exist; idempotent. The node-side twin lives in
+   * tests/hub/post35_test.mjs (reads the same vendored file from
+   * disk), mirroring post24's fn.queryHdt browser-vs-test duality.
+   */
+  async loadWikifunctions() {
+    if (typeof globalThis.wikifnCompiledCall === "function") return true;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "../assets/wikifn/wikifn_engine.js";
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("could not load wikifn_engine.js"));
+      document.head.appendChild(s);
+    });
+    if (typeof globalThis.wikifnCompiledCall !== "function") {
+      throw new Error("wikifn_engine.js loaded but did not export wikifnCompiledCall");
+    }
+    return true;
+  },
+  /**
+   * Load the Lean 4 engine compiled to WebAssembly (hub post 36).
+   * A SECOND, independent engine on the page: the rest of `fn` is the
+   * F*-derived OCaml compiled by js_of_ocaml, while this is Lean source
+   * compiled Lean -> C -> wasm32 by Emscripten. Built by
+   * formal/lean4/Wasm/build-wasm.sh; artifacts in web/hub/assets/l4/.
+   *
+   * Idempotent: the promise is cached, so a page with several L4 cells
+   * instantiates one module. The node-side twin lives in
+   * tests/hub/post36_test.mjs (imports the same loader from disk),
+   * mirroring the fn.loadWikifunctions duality above.
+   */
+  async loadL4() {
+    if (!this._l4Promise) {
+      // `?v=` is the eleventy build's BUILD_VERSION (docs/.eleventy.js
+      // computes it once and exposes it as the `buildVersion` template
+      // global — the same value docs/sw.js's cache name is stamped
+      // with). Changing the import URL per build is the fix for issue
+      // #584: the ServiceWorker serves same-origin assets stale-while-
+      // revalidate, so without a version-busted URL the first page
+      // load after a deploy can pair the new hub HTML with the
+      // PREVIOUS build's l4factoidal.js.
+      this._l4Promise = import("../assets/l4/l4factoidal.js?v={{ buildVersion }}").then((m) => m.loadL4());
+    }
+    return this._l4Promise;
+  },
+  /** The Lean-side ABI version string (hub post 36). */
+  async l4Version() {
+    return (await this.loadL4()).version();
+  },
+  /**
+   * Evaluate a Basic Graph Pattern with Lean's
+   * `L4Factoidal.SPARQL.evalBgp` inside wasm (hub post 36). `data` and
+   * `bgp` are arrays of SPARQL-Results-JSON-shaped term objects; the
+   * result is a SPARQL 1.1 Query Results JSON document.
+   */
+  async l4BgpQuery(data, bgp) {
+    return (await this.loadL4()).bgpQuery(data, bgp);
+  },
+  /**
+   * Generic dispatch into the Lean 4 engine (hub post 38): `op` is an
+   * op name from formal/lean4/Wasm/Dispatch.lean ("ops" lists them),
+   * `args` an array of positional string arguments. Returns the parsed
+   * {"ok":true,...} envelope; throws when the Lean side reports
+   * {"ok":false,"error":...}. One wrapper serves every dispatch op,
+   * because the envelopes match bin/npm-entry/entry_jsoo.ml op for op.
+   */
+  async l4Call(op, args) {
+    return (await this.loadL4()).call(op, args);
+  },
+  /**
+   * The dispatch ABI plus ONE contiguous byte region in and one out
+   * (hub post 54). The ops whose input is artifact bytes rather than
+   * text -- `storeQuery` is the one a notebook reaches for -- take
+   * their bytes this way: written straight into the wasm heap with no
+   * encoding, with `args` saying which window of the region belongs to
+   * which artifact. Lean bounds-checks every window, so a wrong offset
+   * is an ordinary refusal and never a memory fault.
+   *
+   * Returns the loader's {envelope, bytes} pair unchanged. Most ops
+   * answer with an empty `bytes`.
+   */
+  async l4CallBlobIO(op, args, blobIn) {
+    return (await this.loadL4()).callBlobIO(op, args, blobIn);
+  },
+  /**
+   * Open a Shardborough generation that lives under an HTTP base URL
+   * (hub post 54). Delegates to the store-over-HTTP host of
+   * `@factoidal/core`, mirrored under /npm/factoidal/ so the page loads
+   * it same-origin; the engine is this page's own, so one wasm module
+   * serves the whole notebook. The host fetches CURRENT, the manifest
+   * and exactly the artifacts the ENGINE's plan names, and checks each
+   * one against the SHA-256 the manifest commits before the bytes reach
+   * the module.
+   */
+  async openStoreOverHttp(baseUrl, options) {
+    const module = await import("{{ '/npm/factoidal/store-http/index.mjs' | url }}");
+    const engine = await this.loadL4();
+    return module.openStoreOverHttp(baseUrl, Object.assign({ engine }, options || {}));
+  },
+  /**
+   * Parse an RDF document into a Lean-side dataset handle (hub posts
+   * 36/38; issue #585's page-level half: WHY ARE WE PARSING TTL TO
+   * JSON NOT A GRAPH API -- owner, 2026-08-25). Mirrors `fn.parse`'s
+   * contract (`text, {format, baseIRI} -> Dataset`) but backs the
+   * result with `datasetOpen` (`Wasm/Ops/Handles.lean`): the text
+   * crosses the JS/wasm boundary exactly once, here, and every later
+   * `fn.l4Query`/`fn.l4Update` call carries only the returned
+   * L4Dataset's handle.
+   */
+  async l4Parse(text, options) {
+    const opts = options || {};
+    const engine = await this.loadL4();
+    const r = engine.call("datasetOpen", [text, opts.format || "turtle", opts.baseIRI || ""]);
+    return new L4Dataset(engine, r.handle, r.count);
+  },
+  /**
+   * Query an L4Dataset (mirrors `fn.query`'s contract: SELECT rows as
+   * an array of `Map<name, term>` -- the same `srjTermToFn`-shaped term
+   * objects `fn.query` returns -- ASK as a boolean, CONSTRUCT as a
+   * dataset). Divergence from `fn.query`: the Lean `datasetQuery`
+   * envelope carries its own `"kind"` field (`"select"|"ask"|
+   * "construct"`), so this dispatches on that instead of sniffing the
+   * SPARQL text the way `fn.query`'s `sniffQueryForm` does for the
+   * stateless F* ABI. A CONSTRUCT result comes back from
+   * `datasetQuery` as plain N-Quads text with no handle of its own
+   * (`Wasm/Ops/Query.lean`'s `queryParsedDataset` does not register one
+   * for its result graph), so it is wrapped in a text-backed
+   * `FnDataset`, not a further handle-backed `L4Dataset`.
+   */
+  async l4Query(dataset, sparql) {
+    const r = dataset._engine.call("datasetQuery", [dataset.handle, sparql]);
+    if (r.kind === "ask") return !!r.boolean;
+    if (r.kind === "select") {
+      const rows = (r.srj.results && r.srj.results.bindings) || [];
+      return rows.map((row) => {
+        const map = new Map();
+        for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+        return map;
+      });
+    }
+    if (r.kind === "construct") return new FnDataset(r.nquads);
+    throw new Error(`l4Query: unexpected result kind "${r.kind}"`);
+  },
+  /**
+   * Apply a SPARQL 1.1 Update to an L4Dataset. Divergence from
+   * `fn.update` (which returns a NEW FnDataset, leaving its argument
+   * untouched): `datasetUpdate` REPLACES the dataset stored under the
+   * same handle (`Wasm/Ops/Handles.lean`), so this mutates `dataset`'s
+   * cached size in place and returns the same object -- the handle
+   * identity does not change, only what it refers to.
+   */
+  async l4Update(dataset, sparqlUpdate) {
+    const r = dataset._engine.call("datasetUpdate", [dataset.handle, sparqlUpdate]);
+    dataset._count = r.count;
+    return dataset;
+  },
+  /**
+   * SHACL Core validation (mirrors npm/factoidal/index.js's
+   * `shaclValidate(data, shapes, options) -> Promise<{conforms, report}>`).
+   * `data`/`shapes` may each be raw RDF text (parsed with `options.format`,
+   * default "turtle") or an already-parsed FnDataset. Throws the same
+   * "predates the SHACL export" error `Factoidal.shaclValidate` throws
+   * if the loaded npm-entry bundle doesn't expose it -- callers that
+   * want to degrade gracefully should try/catch this call rather than
+   * assume it always resolves.
+   */
+  async shaclValidate(data, shapes, options) {
+    const opts = options || {};
+    if (typeof Factoidal.shaclValidate !== "function") {
+      throw new Error(
+        "shaclValidate: the loaded factoidal-npm-entry bundle predates the SHACL export");
+    }
+    const toNQuads = async (x) => (
+      x && typeof x.toNQuads === "function"
+        ? x.toNQuads()
+        : Factoidal.toRdf(x, { format: opts.format || "turtle" })
+    );
+    const dataNq = await toNQuads(data);
+    const shapesNq = await toNQuads(shapes);
+    const result = await Factoidal.shaclValidate(dataNq, shapesNq);
+    return { conforms: result.conforms, report: new FnDataset(result.reportNquads) };
+  },
+  /**
+   * OWL tableau materialisation (mirrors npm/factoidal/index.js's
+   * `tableauMaterialise(data, options) -> {dataset, addedCount}`):
+   * formal/fstar/Tableau.fst's tableau_materialise adds
+   * `i rdf:type <ClassExpression>` for every individual it proves is a
+   * member of an OWL class expression. `data` may be raw RDF text
+   * (parsed with `options.format`, default "turtle") or an FnDataset.
+   */
+  async tableauMaterialise(data, options) {
+    const opts = options || {};
+    if (typeof Factoidal.tableauMaterialise !== "function") {
+      throw new Error(
+        "tableauMaterialise: the loaded factoidal-npm-entry bundle predates the tableauMaterialise export");
+    }
+    const dataNq = data && typeof data.toNQuads === "function"
+      ? data.toNQuads()
+      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
+    const parsed = await Factoidal.tableauMaterialise(dataNq);
+    return { dataset: new FnDataset(parsed.nquads), addedCount: parsed.addedCount };
+  },
+  /**
+   * OWL DL inconsistency verdict (mirrors npm/factoidal/index.js's
+   * `tableauDlInconsistent(data, options) -> {inconsistent, rlAlone}`):
+   * the OWL-RL -> tableau -> OWL-RL -> is_inconsistent DL pipeline, with
+   * `rlAlone` the plain OWL-RL verdict on the same input for comparison.
+   */
+  async tableauDlInconsistent(data, options) {
+    const opts = options || {};
+    if (typeof Factoidal.tableauDlInconsistent !== "function") {
+      throw new Error(
+        "tableauDlInconsistent: the loaded factoidal-npm-entry bundle predates the tableauDlInconsistent export");
+    }
+    const dataNq = data && typeof data.toNQuads === "function"
+      ? data.toNQuads()
+      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
+    const parsed = await Factoidal.tableauDlInconsistent(dataNq);
+    return { inconsistent: parsed.inconsistent, rlAlone: parsed.rlAlone };
+  },
+  /**
+   * OWL DL consistency verdict via the verified clash-detecting tableau
+   * (mirrors npm/factoidal/index.js's `owlIsConsistent(data, options)
+   * -> {consistent, reason?}`): Tableau.Refute.tableau_consistent over
+   * the OWL-RL closure, the pure verified chain bin/owl-runner runs
+   * under `--regime dl`. `data` may be raw RDF text (parsed with
+   * `options.format`, default "turtle") or an FnDataset. `consistent`
+   * is true|false|null (null = budget-out, `reason` names the fuel cap
+   * -- never a silent false).
+   */
+  async owlIsConsistent(data, options) {
+    const opts = options || {};
+    if (typeof Factoidal.owlIsConsistent !== "function") {
+      throw new Error(
+        "owlIsConsistent: the loaded factoidal-npm-entry bundle predates the owlIsConsistent export");
+    }
+    const dataNq = data && typeof data.toNQuads === "function"
+      ? data.toNQuads()
+      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
+    const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
+    const parsed = await Factoidal.owlIsConsistent(dataNq, optsJson);
+    return parsed.reason === undefined
+      ? { consistent: parsed.consistent }
+      : { consistent: parsed.consistent, reason: parsed.reason };
+  },
+  /**
+   * OWL entailment check (mirrors npm/factoidal/index.js's
+   * `owlEntails(premise, conclusion, options) -> {entailed, via,
+   * reason?}`): the OWL-RL closure path then negate-and-refute. Each
+   * argument may be raw RDF text (parsed with `options.format`, default
+   * "turtle") or an FnDataset. `entailed` is true|false|null.
+   */
+  async owlEntails(premise, conclusion, options) {
+    const opts = options || {};
+    if (typeof Factoidal.owlEntails !== "function") {
+      throw new Error(
+        "owlEntails: the loaded factoidal-npm-entry bundle predates the owlEntails export");
+    }
+    const toNq = async (x) => (x && typeof x.toNQuads === "function"
+      ? x.toNQuads()
+      : Factoidal.toRdf(x, { format: opts.format || "turtle" }));
+    const premiseNq = await toNq(premise);
+    const conclusionNq = await toNq(conclusion);
+    const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
+    const parsed = await Factoidal.owlEntails(premiseNq, conclusionNq, optsJson);
+    return parsed.reason === undefined
+      ? { entailed: parsed.entailed, via: parsed.via }
+      : { entailed: parsed.entailed, via: parsed.via, reason: parsed.reason };
+  },
+  /**
+   * RDFC-1.0 canonicalization (mirrors npm/factoidal/index.js's
+   * `canonicalize(data, options) -> Promise<string>`): canonical
+   * blank-node labels plus sorted canonical N-Quads text. `data` may
+   * be raw RDF text (parsed with `options.format`, default "turtle")
+   * or an already-parsed FnDataset.
+   */
+  async canonicalize(data, options) {
+    const opts = options || {};
+    if (data && typeof data.toNQuads === "function") {
+      return Factoidal.canonicalize(data.toNQuads(), { format: "nquads" });
+    }
+    return Factoidal.canonicalize(data, { format: opts.format || "turtle" });
+  },
+  /**
+   * Apply a SPARQL 1.1 Update to an FnDataset, returning the updated
+   * FnDataset (mirrors npm/factoidal/index.js's
+   * `update(data, updateText) -> Promise<Dataset>`). Needs the
+   * npm-entry engine bundle -- reaches for `Factoidal.loadNpmEntry()`'s
+   * raw ABI internally so a cell never has to.
+   */
+  async update(dataset, updateText) {
+    const abi = await Factoidal.loadNpmEntry();
+    if (typeof abi.updateDataset !== "function") {
+      throw new Error(
+        "update: the loaded factoidal-npm-entry bundle predates the SPARQL Update export");
+    }
+    const nq = dataset && typeof dataset.toNQuads === "function"
+      ? dataset.toNQuads()
+      : await Factoidal.toRdf(dataset, { format: "turtle" });
+    const r = JSON.parse(abi.updateDataset(nq, updateText));
+    if (!r.ok) throw new Error(r.error || "update failed");
+    return new FnDataset(r.nquads);
+  },
+  /**
+   * Serialize a dataset (engine-produced bytes, sorted N-Quads order).
+   * Mirrors npm/factoidal/lib/api.js's `serialize(data, options)`.
+   * NOTE: this JSDoc deliberately never writes an inline object-type
+   * annotation as two adjacent open-brace characters -- Nunjucks reads
+   * that pair anywhere in this file, JS comment or not, as the start of
+   * a template expression, and fails the whole page's build. Same
+   * family as docs/web/hub/README.md's trap about this comment's own
+   * closing sequence appearing early inside itself -- a different pair
+   * of characters, same cause, and the reason this note avoids BOTH
+   * pairs rather than naming either one literally.
+   * @param {Dataset|string} data
+   * @param {object} [options]
+   * @param {'nquads'|'turtle'} [options.format]
+   * @param {string} [options.inputFormat]
+   * @param {object} [options.prefixes]
+   * @returns {Promise<string>}
+   *   'turtle' (prefix-compacted, subject-grouped -- entry_jsoo.ml's
+   *   serializeTurtle -> RDF_Turtle_Serialize.turtle_of_graph_auto)
+   *   flattens every named graph into the default graph (Turtle has no
+   *   named-graph notion); use 'nquads' (the default) when graph names
+   *   must survive. Needs the npm-entry engine bundle -- reaches for
+   *   `Factoidal.loadNpmEntry()`'s raw ABI internally, the same entry
+   *   `update` above uses.
+   */
+  async serialize(data, options) {
+    const opts = options || {};
+    const outFormat = String(opts.format || "nquads").toLowerCase();
+    if (outFormat !== "nquads" && outFormat !== "turtle") {
+      throw new TypeError("serialize: format must be 'nquads' or 'turtle'");
+    }
+    const abi = await Factoidal.loadNpmEntry();
+    let nq;
+    if (data && typeof data.toNQuads === "function") {
+      nq = data.toNQuads();
+    } else {
+      const parsed = JSON.parse(
+        abi.parseToDatasetJson(String(data), opts.inputFormat || "turtle", ""));
+      if (!parsed.ok) throw new Error(`serialize(parse): ${parsed.error}`);
+      nq = parsed.nquads;
+    }
+    if (outFormat === "turtle") {
+      if (opts.prefixes && typeof abi.serializeTurtleWith === "function") {
+        const r = JSON.parse(
+          abi.serializeTurtleWith(nq, JSON.stringify({ prefixes: opts.prefixes })));
+        if (!r.ok) throw new Error(`serialize: ${r.error}`);
+        return r.turtle;
+      }
+      if (typeof abi.serializeTurtle !== "function") {
+        throw new Error(
+          "serialize: the loaded factoidal-npm-entry bundle predates Turtle serialization");
+      }
+      const r = JSON.parse(abi.serializeTurtle(nq));
+      if (!r.ok) throw new Error(`serialize: ${r.error}`);
+      return r.turtle;
+    }
+    if (typeof abi.serializeNQuads !== "function") {
+      throw new Error(
+        "serialize: the loaded factoidal-npm-entry bundle predates N-Quads serialization");
+    }
+    const r = JSON.parse(abi.serializeNQuads(nq));
+    if (!r.ok) throw new Error(`serialize: ${r.error}`);
+    return r.nquads;
+  },
+  /**
+   * Feature probe for the npm-entry engine bundle backing this page
+   * (mirrors npm/factoidal/lib/api.js's `capabilities()` -- a
+   * `typeof entry.X === 'function'` check per feature, not a blanket
+   * version check). Never throws: `entry: false` on any failure to
+   * load the bundle, same as the Node-side capabilities()'s own
+   * try/catch-and-report-false contract.
+   */
+  async capabilities() {
+    const FEATURE_ABI_FN = {
+      shacl: "shaclValidate", shex: "shexValidate", owlClosure: "owlClosure",
+      coreRdfsClosure: "rhoDfClosure", coreRdfsCheck: "rhoDfFragmentCheck",
+      rdfsPlusClosure: "rdfsPlusClosure",
+      rhoDfClosure: "rhoDfClosure", rhoDfFragmentCheck: "rhoDfFragmentCheck",
+      rml: "rmlMap", csvw: "csvwToRdf", jsonld: "jsonldToRdf", rif: "rifEval",
+      xslt: "xsltTransform", mathml: "mathmlEval", xforms: "xformsRecalc",
+      jsonSchema: "jsonSchemaValidate", schematron: "schematronValidate",
+      toan: "toanSummation", matrix: "matrixDeterminant",
+    };
+    let abi;
+    try {
+      abi = await Factoidal.loadNpmEntry();
+    } catch (err) {
+      return { entry: false };
+    }
+    const caps = { entry: true };
+    for (const [name, fnName] of Object.entries(FEATURE_ABI_FN)) {
+      caps[name] = typeof abi[fnName] === "function";
+    }
+    return caps;
+  },
+  /**
+   * XSLT 1.0 transform (mirrors npm/factoidal/index.js's
+   * `xsltTransform(stylesheetXml, sourceXml) -> Promise<string>`).
+   */
+  async xsltTransform(stylesheetXml, sourceXml) {
+    return Factoidal.xsltTransform(stylesheetXml, sourceXml);
+  },
+  /**
+   * Evaluate a Content MathML document (mirrors npm/factoidal/index.js's
+   * `mathmlEval(contentMathmlXml, bindings) -> Promise<MathValue>`).
+   */
+  async mathmlEval(contentMathmlXml, bindings) {
+    return Factoidal.mathmlEval(contentMathmlXml, bindings);
+  },
+  /**
+   * XForms recalculate (mirrors npm/factoidal/index.js's
+   * `xformsRecalc(instanceXml, binds) -> Promise<{instance, validity}>`).
+   */
+  async xformsRecalc(instanceXml, binds) {
+    return Factoidal.xformsRecalc(instanceXml, binds);
+  },
+  /**
+   * JSON Schema (draft-07) validation (mirrors npm/factoidal/index.js's
+   * `jsonSchemaValidate(schemaJson, instanceJson) -> Promise<{valid, result, errors}>`).
+   */
+  async jsonSchemaValidate(schemaJson, instanceJson) {
+    return Factoidal.jsonSchemaValidate(schemaJson, instanceJson);
+  },
+  /**
+   * Schematron validation (mirrors npm/factoidal/index.js's
+   * `schematronValidate(schematronXml, instanceXml) -> Promise<{findings}>`).
+   */
+  async schematronValidate(schematronXml, instanceXml) {
+    return Factoidal.schematronValidate(schematronXml, instanceXml);
+  },
+  /** Finite summation, as Content MathML (mirrors npm/factoidal/index.js's toanSummation). */
+  async toanSummation(bodyExpr, idx, lo, hi) {
+    return Factoidal.toanSummation(bodyExpr, idx, lo, hi);
+  },
+  /** Finite product, as Content MathML (mirrors npm/factoidal/index.js's toanProduct). */
+  async toanProduct(bodyExpr, idx, lo, hi) {
+    return Factoidal.toanProduct(bodyExpr, idx, lo, hi);
+  },
+  /** Canonical simplification, as Content MathML (mirrors npm/factoidal/index.js's toanSimplify). */
+  async toanSimplify(expr) {
+    return Factoidal.toanSimplify(expr);
+  },
+  /** Derivative w.r.t. `variable`, as Content MathML (mirrors npm/factoidal/index.js's toanDiff). */
+  async toanDiff(expr, variable) {
+    return Factoidal.toanDiff(expr, variable);
+  },
+  /** `expr[variable := value]` simplified, as Content MathML (mirrors npm/factoidal/index.js's toanSubst). */
+  async toanSubst(expr, variable, value) {
+    return Factoidal.toanSubst(expr, variable, value);
+  },
+  /** Exact determinant of a square matrix (mirrors npm/factoidal/index.js's matrixDeterminant). */
+  async matrixDeterminant(matrix) {
+    return Factoidal.matrixDeterminant(matrix);
+  },
+  /** Dot product of two vectors (mirrors npm/factoidal/index.js's matrixScalarProduct). */
+  async matrixScalarProduct(a, b) {
+    return Factoidal.matrixScalarProduct(a, b);
+  },
+  /** Cross product of two 3-vectors (mirrors npm/factoidal/index.js's matrixVectorProduct). */
+  async matrixVectorProduct(a, b) {
+    return Factoidal.matrixVectorProduct(a, b);
+  },
+  /** Outer product of two vectors (mirrors npm/factoidal/index.js's matrixOuterProduct). */
+  async matrixOuterProduct(a, b) {
+    return Factoidal.matrixOuterProduct(a, b);
+  },
+  /**
+   * Run a SPARQL 1.1 query against a read-only HDT artifact's raw
+   * bytes (mirrors npm/factoidal/index.js's
+   * `queryHdt(hdtBytes, sparql) -> Promise<Bindings[] | boolean>`).
+   * Encapsulates the `Factoidal.runFactoidalCli(['--data-hdt', ...])`
+   * shim entirely -- a cell never builds the argv or fake-filesystem
+   * entry itself. Default graph only, SELECT/ASK only.
+   */
+  async queryHdt(hdtBytes, sparql) {
+    const result = await Factoidal.queryHdt(hdtBytes, sparql);
+    if (typeof result === "boolean") return result;
+    if (typeof result.boolean === "boolean") return result.boolean;
+    const rows = (result.results && result.results.bindings) || [];
+    return rows.map((row) => {
+      const map = new Map();
+      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+      return map;
+    });
+  },
+  /**
+   * Post 37 ("Installed, not vendored"): load the ACTUAL
+   * `@factoidal/core` package published to the npm registry, from a
+   * CDN that serves npm packages verbatim, and reshape it into the
+   * same typed contract `fn` exposes (see makeTypedApiOverRaw above).
+   * Tries jsdelivr then unpkg -- both mirror npm's exact file layout
+   * for this package (confirmed: browser.js's relative `./factoidal.js`
+   * / `./factoidal-npm-entry.js` fetches resolve against either CDN
+   * origin). This is the ONE cell binding in the whole hub that loads
+   * third-party CODE, not just third-party data -- see hub.njk's CSP
+   * comment at the top of this file for the narrow, per-page carve-out
+   * that makes the dynamic import() below survive CSP on this post's
+   * live twin; on every other page (and on this post's own strict/
+   * default page) the import is CSP-blocked and rejects, which the
+   * calling cell must catch itself (see the post's prose -- this
+   * function deliberately does NOT swallow the error, so the happy
+   * path stays assertable in the Node test).
+   */
+  async loadRegistryPackage(version) {
+    const v = version || "0.1.0";
+    const urls = [
+      `https://cdn.jsdelivr.net/npm/@factoidal/core@${v}/browser.js`,
+      `https://unpkg.com/@factoidal/core@${v}/browser.js`,
+    ];
+    const errors = [];
+    for (const url of urls) {
+      try {
+        const raw = await import(/* @vite-ignore */ url);
+        return makeTypedApiOverRaw(raw);
+      } catch (e) {
+        errors.push(`${url}: ${e && e.message}`);
+      }
+    }
+    throw new Error(
+      `loadRegistryPackage: could not load @factoidal/core@${v} from any CDN -- ${errors.join("; ")}`);
+  },
+};
+
+// ---------------------------------------------------------------------
+// `pretty` -- an opt-in, prettier rendering for cell output. A cell
+// that `return`s a raw array/object gets the Inspector's default
+// collapsed-JS-tree view; a cell that instead `return`s `pretty(value)`
+// gets a shape-dispatched DOM rendering instead:
+//
+//   (a) array of Map      -- SPARQL bindings rows (Map keys = vars)
+//                             -> a table, one column per variable.
+//   (b) array of plain {} -- table from the union of keys.
+//   (c) Dataset-like       -- (.size + Symbol.iterator yielding quads)
+//                             -> a triples/quads table (s/p/o[/g]).
+//   (d) plain object       -- a two-column key/value table.
+//   (e) scalar/string      -- a small styled value span.
+//   (f) anything else      -- returned unchanged; Inspector renders it.
+//
+// Term values (NamedNode/BlankNode/Literal, wherever they appear inside
+// a table cell) are shortened for display -- an IRI compacts to its
+// trailing path/fragment segment with the full IRI in a `title`
+// tooltip, a literal is quoted (with @lang or ^^datatype suffix, full
+// detail in the tooltip), a blank node gets a `_:` prefix. This is a
+// browser-only DOM-returning implementation; the Node-side test harness
+// (tests/hub/_helpers.mjs) provides a `pretty` stub with the same
+// shape-dispatch that returns a plain, DOM-free structure instead, so
+// pinned tests can assert on table shape without a browser. See
+// docs/web/hub/README.md's cell-bindings table for the contract both
+// sides implement.
+// ---------------------------------------------------------------------
+
+function prettyShortenIri(iri) {
+  const m = /[/#]([^/#]+)$/.exec(iri);
+  const tail = m ? m[1] : iri;
+  return tail.length > 0 ? tail : iri;
+}
+
+// Render one RDF/JS-shaped term ({termType, value, [language],
+// [datatype]}) as a compact <span> with the full detail in `title`;
+// anything that isn't actually a term-shaped object is rendered as
+// plain text so pretty() degrades gracefully on non-RDF data.
+function prettyTermNode(term) {
+  const span = document.createElement("span");
+  span.className = "pretty-term";
+  if (term && typeof term === "object" && typeof term.termType === "string") {
+    if (term.termType === "NamedNode") {
+      span.textContent = prettyShortenIri(term.value);
+      span.title = term.value;
+    } else if (term.termType === "BlankNode") {
+      span.textContent = "_:" + term.value;
+      span.title = "_:" + term.value;
+    } else if (term.termType === "Literal") {
+      let text = JSON.stringify(String(term.value));
+      let detail = '"' + term.value + '"';
+      if (term.language) {
+        text += "@" + term.language;
+        detail += "@" + term.language;
+      } else if (term.datatype && term.datatype.value && term.datatype.value !== XSD_STRING) {
+        text += "^^" + prettyShortenIri(term.datatype.value);
+        detail += "^^<" + term.datatype.value + ">";
+      }
+      span.textContent = text;
+      span.title = detail;
+    } else if (term.termType === "Quad") {
+      // RDF 1.2 triple term: render as <<( s p o )>> with inner terms
+      // shortened (a nested triple-term object collapses to <<(…)>>).
+      const part = (x) =>
+        !x ? "" :
+        x.termType === "Quad" ? "<<(…)>>" :
+        x.termType === "Literal" ? JSON.stringify(String(x.value)) :
+        x.termType === "BlankNode" ? "_:" + x.value :
+        prettyShortenIri(x.value || "");
+      span.textContent =
+        "<<( " + part(term.subject) + " " + part(term.predicate) + " " + part(term.object) + " )>>";
+      span.title = span.textContent;
+    } else {
+      span.textContent = String(term.value);
+    }
+  } else {
+    span.textContent = term === undefined || term === null ? "" : String(term);
+  }
+  return span;
+}
+
+function prettyIsPlainObject(v) {
+  if (typeof v !== "object" || v === null) return false;
+  if (Array.isArray(v)) return false;
+  if (v instanceof Map || v instanceof Set) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function prettyIsDatasetLike(v) {
+  return (
+    typeof v === "object" && v !== null && !Array.isArray(v) &&
+    !(v instanceof Map) && !(v instanceof Set) &&
+    typeof v.size === "number" && typeof v[Symbol.iterator] === "function"
+  );
+}
+
+// Render one SPARQL-Results-JSON-shaped term ({type: "uri"|"literal"|
+// "bnode", value, [datatype], ["xml:lang"]}) the same way prettyTermNode
+// renders an RDF/JS term -- a compact <span> with the full detail in
+// `title`. A separate function from prettyTermNode because the SRJ
+// shape (https://www.w3.org/TR/sparql11-results-json/) uses `type` not
+// `termType`, and a plain-string `datatype` rather than a nested term.
+function prettySrjTermNode(term) {
+  const span = document.createElement("span");
+  span.className = "pretty-term";
+  if (term.type === "uri") {
+    span.textContent = prettyShortenIri(term.value);
+    span.title = term.value;
+  } else if (term.type === "bnode") {
+    span.textContent = "_:" + term.value;
+    span.title = "_:" + term.value;
+  } else if (term.type === "literal") {
+    let text = JSON.stringify(String(term.value));
+    let detail = '"' + term.value + '"';
+    const lang = term["xml:lang"];
+    if (lang) {
+      text += "@" + lang;
+      detail += "@" + lang;
+    } else if (term.datatype && term.datatype !== XSD_STRING) {
+      text += "^^" + prettyShortenIri(term.datatype);
+      detail += "^^<" + term.datatype + ">";
+    }
+    span.textContent = text;
+    span.title = detail;
+  } else {
+    span.textContent = String(term.value);
+  }
+  return span;
+}
+
+function prettyCellNode(value) {
+  if (value && typeof value === "object" && typeof value.termType === "string") {
+    return prettyTermNode(value);
+  }
+  if (
+    value && typeof value === "object" && typeof value.value === "string" &&
+    (value.type === "uri" || value.type === "literal" || value.type === "bnode")
+  ) {
+    return prettySrjTermNode(value);
+  }
+  // Any other plain object or array: a compact JSON rendering instead of
+  // the useless "[object Object]" String() gives, with the full JSON in
+  // `title`. Owner screenshot, 2026-08-25: the Table toggle showed
+  // "[object Object]" in every cell of a row-object table because this
+  // fallback used to be a bare String(value).
+  if (value !== null && typeof value === "object") {
+    const span = document.createElement("span");
+    span.className = "pretty-value";
+    const json = JSON.stringify(value);
+    span.textContent = json.length > 80 ? json.slice(0, 80) + "…" : json;
+    span.title = json;
+    return span;
+  }
+  const span = document.createElement("span");
+  span.textContent = value === undefined || value === null ? "" : String(value);
+  return span;
+}
+
+function prettyCount(n, noun) {
+  return n + " " + noun + (n === 1 ? "" : "s");
+}
+
+function prettyBuildTable(columns, rows, captionText) {
+  const wrap = document.createElement("div");
+  wrap.className = "pretty-table-wrap";
+
+  const caption = document.createElement("div");
+  caption.className = "pretty-caption";
+  caption.textContent = captionText;
+  wrap.appendChild(caption);
+
+  const table = document.createElement("table");
+  table.className = "pretty-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const col of columns) {
+    const th = document.createElement("th");
+    th.textContent = col;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const cell of row) {
+      const td = document.createElement("td");
+      td.appendChild(prettyCellNode(cell));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function pretty(value) {
+  // (a) array of Map -- SPARQL bindings rows.
+  if (Array.isArray(value) && value.length > 0 && value.every((r) => r instanceof Map)) {
+    const columns = [];
+    for (const row of value) {
+      for (const k of row.keys()) if (!columns.includes(k)) columns.push(k);
+    }
+    const rows = value.map((row) => columns.map((c) => (row.has(c) ? row.get(c) : "")));
+    return prettyBuildTable(columns, rows, prettyCount(value.length, "row"));
+  }
+
+  // (c) Dataset-like -- checked ahead of the plain-object-array case
+  // below since a Dataset is not itself an Array.
+  if (prettyIsDatasetLike(value)) {
+    const quads = [...value];
+    const hasGraph = quads.some((q) => q && q.graph && q.graph.value);
+    const columns = hasGraph ? ["s", "p", "o", "g"] : ["s", "p", "o"];
+    const rows = quads.map((q) => {
+      const row = [q.subject, q.predicate, q.object];
+      if (hasGraph) row.push(q.graph || "");
+      return row;
+    });
+    return prettyBuildTable(columns, rows, prettyCount(quads.length, "row"));
+  }
+
+  // (b) array of plain objects -- table from the union of keys.
+  if (Array.isArray(value) && value.length > 0 && value.every(prettyIsPlainObject)) {
+    const columns = [];
+    for (const obj of value) {
+      for (const k of Object.keys(obj)) if (!columns.includes(k)) columns.push(k);
+    }
+    const rows = value.map((obj) => columns.map((k) => (k in obj ? obj[k] : "")));
+    return prettyBuildTable(columns, rows, prettyCount(value.length, "row"));
+  }
+
+  // (d) plain object -- two-column key/value table.
+  if (prettyIsPlainObject(value)) {
+    const entries = Object.entries(value);
+    return prettyBuildTable(["key", "value"], entries, prettyCount(entries.length, "field"));
+  }
+
+  // (e) scalars/strings -- a simple styled value span.
+  if (
+    typeof value === "string" || typeof value === "number" ||
+    typeof value === "boolean" || typeof value === "bigint"
+  ) {
+    const span = document.createElement("span");
+    span.className = "pretty-value";
+    span.textContent = String(value);
+    return span;
+  }
+
+  // (f) anything else (null, undefined, DOM nodes, functions, a lone
+  // Map, an empty array, ...) -- unchanged, so Inspector's own
+  // renderer handles it.
+  return value;
+}
+
+// Fixed bindings every cell gets access to, by parameter name — this
+// is the whole "standard library" a hub post can rely on. Extend this
+// list (and the mirrored `new Function(...)` parameter list below)
+// deliberately; it's the interface post-authoring (wave B) writes
+// against. See docs/web/hub/README.md for the full contract.
+const CELL_BINDINGS = ["Factoidal", "fn", "d3", "Plot", "html", "md", "pretty", "L"];
+main.variable().define("Factoidal", [], () => Factoidal);
+main.variable().define("fn", [], () => fn);
+main.variable().define("d3", [], () => d3);
+main.variable().define("Plot", [], () => Plot);
+// `html`/`md` are NOT bare exports of the Observable stdlib module —
+// they live on a `Library` INSTANCE (`stdlib.html` is undefined, which
+// made `html`... `` throw "undefined is not a function" in cells). Wire
+// them from a Library instance: `library.html` is the tag factory the
+// runtime invokes to yield the htl tag.
+const stdlibLibrary = new stdlib.Library();
+main.variable().define("html", [], stdlibLibrary.html);
+main.variable().define("md", [], stdlibLibrary.md);
+main.variable().define("pretty", [], () => pretty);
+// Leaflet (third_party/leaflet/, vendored, no CDN) -- loaded above as a
+// classic <script> that sets window.L; exposed as the `L` cell binding
+// so a cell can build a map without touching `window` directly.
+main.variable().define("L", [], () => window.L);
+
+// ---------------------------------------------------------------------
+// Reactive dataflow (ObservableHQ-style).
+//
+// `knownNames` is the set of names a cell may reference to create a
+// reactive dependency: the fixed builtins above, plus every cell's
+// declared name (a cell of the form `name = <expr>`). It's seeded with
+// the builtins here and grows as pinned + reader cells declare names.
+//
+// For each cell, analyzeCell() (docs/web/hub/reactive-cells.mjs) returns
+// its declared name (or null) and its referenced free identifiers;
+// cellInputs() intersects those refs with `knownNames` to get the exact
+// list of runtime inputs to wire. The vendored Observable runtime then
+// computes the topological order and re-runs dependents whenever an
+// input changes -- we never hand-order cells. Names NOT in `knownNames`
+// (Math, JSON, document, ...) stay resolved through ordinary JS scope,
+// so a standalone cell that references only globals + builtins behaves
+// byte-for-byte as it did before reactivity was added.
+//
+// Async is handled by the runtime natively: an input whose value is a
+// Promise (e.g. `graph = fn.parse(ttl)` returning a Promise, or a cell
+// that `await`s) is resolved before any dependent's definition runs, so
+// `query(graph, ...)` always sees a settled Dataset, never a pending
+// Promise.
+// ---------------------------------------------------------------------
+const knownNames = new Set(CELL_BINDINGS);
+
+// Compile one cell's source into a runtime variable definition + the
+// inputs to wire it with. Shared by the initial mount and every Run.
+// `makeDefinition` builds an async function whose parameters are exactly
+// `inputs`, positionally matching how the runtime resolves and passes
+// them; the body is the cell's value expression (with a `return`
+// supplied for the `name = expr` form) or the verbatim body for an
+// anonymous cell.
+function compileCell(source) {
+  const info = analyzeCell(source);
+  const inputs = cellInputs(info, knownNames);
+  return { name: info.name, inputs, definition: makeDefinition(inputs, info.body) };
+}
+
+// Output controller: values receive the same shape-aware `pretty()`
+// rendering automatically. SPARQL bindings and RDF datasets become
+// compact, scrollable tables; charts and DOM output pass through unchanged.
+function createOutput(name) {
+  const container = document.createElement("div");
+  container.className = "observable-cell";
+
+  const inspector = new Inspector(container);
+  const inspectorFulfilled = inspector.fulfilled.bind(inspector);
+  const inspectorRejected = inspector.rejected.bind(inspector);
+
+  function paint(value) {
+    container.classList.remove("observable-cell-error");
+    inspectorFulfilled(pretty(value), name);
+  }
+
+  inspector.fulfilled = (value) => {
+    paint(value);
+  };
+  inspector.rejected = (error, varName) => {
+    container.classList.add("observable-cell-error");
+    inspectorRejected(error, varName);
+  };
+
+  return {
+    container,
+    inspector,
+  };
+}
+
+function mountCell(codeEl, index) {
+  const pre = codeEl.closest("pre") || codeEl.parentElement;
+  let currentSource = codeEl.textContent;
+  let editing = false;
+
+  // The runtime variable's name is the cell's declared name (so later
+  // cells can reference it) or a stable per-index fallback for an
+  // anonymous cell. It's fixed at mount; editing the body re-runs under
+  // the same name so dependents stay wired.
+  const declaredName = analyzeCell(currentSource).name;
+  const runtimeName = declaredName || ("hubCell" + index);
+
+  // Fence flags (https://github.com/danbri/factoidal/issues/686):
+  // docs/.eleventy.js's fence renderer carries a ```observable-js
+  // fence line's flags through as this data attribute; parseCellFlags()
+  // is the same parser docs/.eleventy.js's own build-time text and
+  // tests/hub/_helpers.mjs's extractObservableCellsWithFlags() use, so
+  // all three agree on the same two flags.
+  const flagsRaw = codeEl.dataset.hubCellFlags || "";
+  const flags = parseCellFlags(flagsRaw);
+
+  // --- Editable source: a textarea seeded from the shipped code,
+  // swapped in for the static <pre> by the Edit toggle. A textarea
+  // (rather than a contenteditable region) is deliberate: iOS Safari's
+  // contenteditable caret placement and undo stack are unreliable
+  // (cursor jumps on re-render, inconsistent Enter-key node splitting),
+  // whereas a plain textarea gets the native mobile keyboard, native
+  // undo, and reliable autocorrect/autocapitalize suppression via
+  // ordinary attributes -- exactly what code entry on a phone needs.
+  const editor = document.createElement("textarea");
+  editor.className = "observable-cell-editor";
+  editor.spellcheck = false;
+  editor.setAttribute("autocapitalize", "off");
+  editor.setAttribute("autocorrect", "off");
+  editor.setAttribute("autocomplete", "off");
+  editor.setAttribute("wrap", "soft");
+  editor.setAttribute("aria-label", "Cell source (editable)");
+  editor.value = currentSource;
+  editor.rows = Math.min(20, Math.max(3, currentSource.split("\n").length));
+  editor.hidden = true;
+
+  function autoGrow() {
+    editor.style.height = "auto";
+    editor.style.height = editor.scrollHeight + "px";
+  }
+  editor.addEventListener("input", autoGrow);
+  editor.addEventListener("keydown", (ev) => {
+    // Cmd/Ctrl+Enter: run the current source without leaving the
+    // keyboard -- the desktop-friendly counterpart to the mobile Run
+    // button.
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+      ev.preventDefault();
+      runCell();
+    }
+  });
+
+  // --- Toolbar: Edit toggle + Run button, between the code and the
+  // output box. Tap targets are >= 44px (see .observable-cell-btn);
+  // deliberately quiet styling since the page is a blog first.
+  const toolbar = document.createElement("div");
+  toolbar.className = "observable-cell-toolbar";
+  toolbar.title = "Edit the code above and tap Run to re-execute it live in your browser.";
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "observable-cell-btn observable-cell-edit-btn";
+  editBtn.textContent = "Edit";
+  editBtn.setAttribute("aria-pressed", "false");
+  editBtn.addEventListener("click", () => {
+    if (editing) {
+      // "Done": apply the edit (same as Run) THEN leave edit mode.
+      // runCell() reads editor.value while `editing` is still true, so
+      // it captures the change and updates currentSource before we
+      // exit -- without this, Done silently discarded the edit (only
+      // Run applied it), and re-opening Edit reset editor.value back
+      // to the stale currentSource below.
+      runCell();
+      setEditing(false);
+    } else {
+      setEditing(true);
+    }
+  });
+
+  const runBtn = document.createElement("button");
+  runBtn.type = "button";
+  runBtn.className = "observable-cell-btn observable-cell-run-btn";
+  runBtn.textContent = "Run";
+  runBtn.addEventListener("click", runCell);
+
+  const output = createOutput(runtimeName);
+  const container = output.container;
+  container.setAttribute("data-hub-cell", String(index));
+
+  toolbar.appendChild(editBtn);
+  toolbar.appendChild(runBtn);
+
+  // Discoverability: a phone has no hover, so a title attribute alone
+  // (the desktop affordance above) is invisible on mobile -- the owner
+  // report this change fixes. Spell it out visibly, once per page, on
+  // the first cell only, so the read-flow isn't cluttered on every one.
+  if (index === 0) {
+    const hint = document.createElement("span");
+    hint.className = "observable-cell-hint";
+    hint.textContent = "Edit & re-run — computed in your browser.";
+    toolbar.appendChild(hint);
+  }
+
+  function setEditing(on) {
+    editing = on;
+    pre.hidden = on;
+    editor.hidden = !on;
+    editBtn.textContent = on ? "Done" : "Edit";
+    editBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) {
+      editor.value = currentSource;
+      requestAnimationFrame(() => {
+        autoGrow();
+        editor.focus();
+      });
+    }
+  }
+
+  // Folding chrome (https://github.com/danbri/factoidal/issues/686):
+  // wrap the cell's four blocks in <details>, with a leading <summary>
+  // ahead of them -- same DOM order inside as the flat layout above
+  // had, so tests/web-demos/*.sh's sibling-based walks
+  // (container.previousElementSibling === toolbar, etc.) are unaffected.
+  // Every cell mounts `open` except one flagged `closed`; a reader can
+  // always toggle it via the native <details>/<summary> behavior (no
+  // custom key handling needed -- it's focusable and responds to
+  // Enter/Space on its own).
+  const details = document.createElement("details");
+  details.className = "observable-cell-fold";
+  details.setAttribute("data-hub-cell-flags", flagsRaw);
+  details.open = !flags.closed;
+
+  const summary = document.createElement("summary");
+  summary.className = "observable-cell-fold-summary";
+  summary.textContent =
+    flags.title || (declaredName ? "Cell " + declaredName : "Cell " + (index + 1));
+  details.appendChild(summary);
+
+  pre.insertAdjacentElement("beforebegin", details);
+  details.appendChild(pre);
+  details.appendChild(editor);
+  details.appendChild(toolbar);
+  details.appendChild(container);
+
+  // The Inspector is wrapped by createOutput() above: a runtime error
+  // (thrown during the cell's async body, on the initial run or any
+  // subsequent Run) gets the existing .observable-cell-error styling,
+  // a later successful Run clears it, and the output-format toggle can
+  // re-render the cached value without re-running the cell.
+  const inspector = output.inspector;
+
+  // Layered on top of createOutput()'s own wrapping above (which reads
+  // .fulfilled/.rejected fresh on every settle -- see
+  // runtime.esm.js's variable_fulfilled/variable_rejected -- so a
+  // second layer here is safe): a rejected run also opens this cell's
+  // <details> and marks it with observable-cell-fold-error, so a
+  // reader is not left looking at a collapsed failure. A later
+  // successful run clears the mark but leaves the <details> open --
+  // it does not close itself back up.
+  const priorFulfilled = inspector.fulfilled;
+  const priorRejected = inspector.rejected;
+  inspector.fulfilled = (value) => {
+    details.classList.remove("observable-cell-fold-error");
+    priorFulfilled(value);
+  };
+  inspector.rejected = (error, varName) => {
+    details.classList.add("observable-cell-fold-error");
+    details.open = true;
+    priorRejected(error, varName);
+  };
+
+  function runCell() {
+    const source = editing ? editor.value : currentSource;
+    currentSource = source;
+    codeEl.textContent = source; // keep the static view in sync for next Edit/toggle
+    let compiled;
+    try {
+      // Re-analyze the (possibly edited) source: the inputs it references
+      // may have changed, so we recompute them against knownNames.
+      compiled = compileCell(source);
+    } catch (err) {
+      container.classList.add("observable-cell-error");
+      container.textContent = "Cell parse error: " + err.message;
+      details.classList.add("observable-cell-fold-error");
+      details.open = true;
+      return;
+    }
+    try {
+      // module.redefine(name, inputs, definition): looks up the
+      // already-defined variable by its stable runtimeName and re-runs
+      // variable.define on it, so the SAME Variable (and therefore the
+      // SAME attached Inspector/output node) recomputes with the new
+      // inputs + body -- and the runtime re-runs every dependent cell
+      // that references this name. See runtime.esm.js's module_redefine,
+      // which throws if the name was never defined, hence the initial
+      // define below runs first at mount.
+      main.redefine(runtimeName, compiled.inputs, compiled.definition);
+    } catch (err) {
+      container.classList.add("observable-cell-error");
+      container.textContent = "Cell define error: " + err.message;
+      details.classList.add("observable-cell-fold-error");
+      details.open = true;
+    }
+  }
+
+  let mount0;
+  try {
+    mount0 = compileCell(currentSource);
+  } catch (err) {
+    container.classList.add("observable-cell-error");
+    container.textContent = "Cell parse error: " + err.message;
+    details.classList.add("observable-cell-fold-error");
+    details.open = true;
+    return;
+  }
+
+  try {
+    main.variable(inspector).define(runtimeName, mount0.inputs, mount0.definition);
+  } catch (err) {
+    container.classList.add("observable-cell-error");
+    container.textContent = "Cell define error: " + err.message;
+    details.classList.add("observable-cell-fold-error");
+    details.open = true;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Reader-added cells. The pinned (```observable-js) cells above stay
+// exactly as authored; this lets a reader turn the page into their own
+// notebook -- append a fresh live cell (a textarea + Run) that evaluates
+// through the SAME compileCell()/CELL_BINDINGS path (so `fn`,
+// `Factoidal`, `Plot`, `d3`, `html`, `md`, `pretty` are all in scope),
+// with the same output-format toggle, and Remove the ones they add.
+// Each user cell gets its own runtime Variable (`userCell<seq>`); Remove
+// calls variable.delete() to tear it out of the module cleanly.
+// ---------------------------------------------------------------------
+
+const USER_CELL_STARTER =
+  "// Edit me, then tap Run. `fn`, `Factoidal`, `Plot`, `d3`, `html`,\n" +
+  "// `md`, `pretty` and `L` (Leaflet) are all in scope. Try the Output: Table toggle.\n" +
+  "return [\n" +
+  "  { n: 1, square: 1 },\n" +
+  "  { n: 2, square: 4 },\n" +
+  "  { n: 3, square: 9 },\n" +
+  "];";
+
+let userCellSeq = 0;
+
+function mountUserCell(listEl, initialSource) {
+  const seq = userCellSeq++;
+  const name = "userCell" + seq;
+
+  const block = document.createElement("div");
+  block.className = "hub-user-cell";
+  block.setAttribute("data-hub-user-cell", String(seq));
+
+  // Edit-first textarea (same reasons a textarea beats contenteditable
+  // as documented for the pinned-cell editor: native mobile keyboard,
+  // undo, and autocorrect/autocapitalize suppression).
+  const editor = document.createElement("textarea");
+  editor.className = "observable-cell-editor";
+  editor.spellcheck = false;
+  editor.setAttribute("autocapitalize", "off");
+  editor.setAttribute("autocorrect", "off");
+  editor.setAttribute("autocomplete", "off");
+  editor.setAttribute("wrap", "soft");
+  editor.setAttribute("aria-label", "Your cell source (editable)");
+  editor.value = initialSource;
+  editor.rows = Math.min(20, Math.max(3, initialSource.split("\n").length));
+
+  function autoGrow() {
+    editor.style.height = "auto";
+    editor.style.height = editor.scrollHeight + "px";
+  }
+  editor.addEventListener("input", autoGrow);
+  editor.addEventListener("keydown", (ev) => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+      ev.preventDefault();
+      runCell();
+    }
+  });
+
+  const output = createOutput(name);
+  const container = output.container;
+  container.setAttribute("data-hub-cell", "user-" + seq);
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "observable-cell-toolbar";
+
+  const runBtn = document.createElement("button");
+  runBtn.type = "button";
+  runBtn.className = "observable-cell-btn observable-cell-run-btn";
+  runBtn.textContent = "Run";
+  runBtn.addEventListener("click", runCell);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "observable-cell-btn observable-cell-remove-btn";
+  removeBtn.textContent = "Remove";
+  removeBtn.title = "Delete this cell you added";
+
+  toolbar.appendChild(runBtn);
+  toolbar.appendChild(removeBtn);
+
+  block.appendChild(editor);
+  block.appendChild(toolbar);
+  block.appendChild(container);
+  listEl.appendChild(block);
+
+  // One runtime Variable per user cell. First Run creates it; every
+  // later Run re-defines the SAME variable in place (the identical path
+  // module.redefine takes internally) so the same output box recomputes.
+  // Reader cells are reactive too: a `foo = ...` reader cell registers
+  // `foo` into knownNames, so a later reader cell (or an edited pinned
+  // cell) can reference it; an anonymous reader cell runs under the
+  // stable fallback name and can reference any pinned cell's variable.
+  let variable = null;
+
+  function runCell() {
+    const source = editor.value;
+    let compiled;
+    try {
+      compiled = compileCell(source);
+    } catch (err) {
+      container.classList.add("observable-cell-error");
+      container.textContent = "Cell parse error: " + err.message;
+      return;
+    }
+    const runtimeName = compiled.name || name;
+    try {
+      if (compiled.name) knownNames.add(compiled.name);
+      if (!variable) variable = main.variable(output.inspector);
+      variable.define(runtimeName, compiled.inputs, compiled.definition);
+    } catch (err) {
+      container.classList.add("observable-cell-error");
+      container.textContent = "Cell define error: " + err.message;
+    }
+  }
+
+  removeBtn.addEventListener("click", () => {
+    if (variable) {
+      try { variable.delete(); } catch (err) { /* variable already gone */ }
+      variable = null;
+    }
+    block.remove();
+  });
+
+  requestAnimationFrame(autoGrow);
+  return { runCell };
+}
+
+function initUserCells() {
+  const footer = document.querySelector("footer");
+  const section = document.createElement("section");
+  section.className = "hub-user-cells";
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Your own cells";
+  section.appendChild(heading);
+
+  const intro = document.createElement("p");
+  intro.className = "hub-user-cells-intro";
+  intro.textContent =
+    "Make this page your own notebook: add live cells that run in your " +
+    "browser with the same fn, Factoidal, Plot, d3 and pretty scope as " +
+    "the cells above. Edit the code, tap Run, and Remove the ones you " +
+    "don't want. Nothing you add is saved or sent anywhere.";
+  section.appendChild(intro);
+
+  const list = document.createElement("div");
+  list.className = "hub-user-cells-list";
+  section.appendChild(list);
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "observable-cell-btn hub-add-cell-btn";
+  addBtn.textContent = "+ Add a cell";
+  addBtn.addEventListener("click", () => {
+    const cell = mountUserCell(list, USER_CELL_STARTER);
+    cell.runCell(); // run the starter so the reader sees output immediately
+  });
+  section.appendChild(addBtn);
+
+  if (footer && footer.parentNode) footer.parentNode.insertBefore(section, footer);
+  else document.body.appendChild(section);
+}
+
+// Two passes so cross-cell references resolve regardless of document
+// order. Pass 1: register every cell's declared name into knownNames,
+// so a cell that references another cell's name (whether that cell
+// appears earlier OR later on the page) wires it as a reactive input.
+// Pass 2: mount each cell; the Observable runtime resolves the actual
+// topological order and re-runs dependents itself.
+const cellEls = [...document.querySelectorAll("pre > code.language-observable-js")];
+for (const el of cellEls) {
+  const declaredName = analyzeCell(el.textContent).name;
+  if (declaredName) knownNames.add(declaredName);
+}
+cellEls.forEach((codeEl, index) => mountCell(codeEl, index));
+
+initUserCells();
+</script>
+<script>
+// Offline support (issue #69). Registered here too — hub posts render
+// with this layout (not base.njk), so a visitor who deep-links straight
+// to a hub page still registers the SW on first load. The SW's scope
+// ("{{ '/' | url }}") is the whole site; base.njk registers the same
+// worker, so whichever page a visitor lands on first, offline works.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("{{ '/sw.js' | url }}?v={{ buildVersion }}", { scope: "{{ '/' | url }}" })
+      .catch((err) => console.warn("[sw] registration failed", err));
+  });
+
+  let swRefreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swRefreshing) return;
+    swRefreshing = true;
+    window.location.reload();
+  });
+}
+</script>
+</body>
+</html>

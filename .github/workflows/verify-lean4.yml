@@ -1,0 +1,79 @@
+name: Verify Lean 4 corpus
+
+# The Lean tree contains executable semantics, proof modules, and build-time
+# #guard tests.  A focused executable build is not a substitute for checking
+# the whole package: this workflow makes `lake build L4Factoidal` a required,
+# visible repository gate.
+on:
+  push:
+    branches:
+      - claude/main
+  pull_request:
+    paths:
+      - 'formal/lean4/**'
+      - '.github/workflows/verify-lean4.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-lean4-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lake build (full Lean corpus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The package's lean-toolchain is authoritative.  Keep setup separate
+      # from the command below so the exact full-corpus gate is explicit.
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          lake-package-directory: formal/lean4
+
+      - name: Build library, proofs, and build-time guards
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -o pipefail
+          lake build L4Factoidal 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+
+      # `lake build` alone is NOT the soundness gate, and it was the whole
+      # gate until 2026-09-03. A `sorry` fails the build, because Lean emits
+      # it with an elaboration error. A DELIBERATE user `axiom` does not: it
+      # compiles, and its appearance in a `#print axioms` line is an
+      # informational message. The same holds for `native_decide`, `unsafe`,
+      # `@[implemented_by]`, and for a new `partial def` — which compiles to
+      # an opaque constant, so no theorem can be stated about the function it
+      # declares (https://github.com/danbri/factoidal/issues/617).
+      #
+      # The audit reads the build log as well as the source, because a grep
+      # cannot see through an import: a clean-looking theorem can rest on a
+      # lemma in another file that carries the hatch, and only `#print axioms`
+      # reports that. This workflow keeps no `.lake` cache, so every run
+      # compiles and the log carries the `#print axioms` output. If it ever
+      # does not, the audit FAILS with "NOTHING READ" instead of passing
+      # quietly (anti-pattern 30).
+      - name: Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)
+        working-directory: ${{ github.workspace }}
+        run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
+
+      # The two HACL* @[extern] families cannot be checked by a #guard: an
+      # extern does not evaluate in the Lean interpreter that #guard runs in.
+      # l4vc-probe is where they ARE checked — the RFC 8032 Ed25519 vectors,
+      # and the `sha256 differential` section comparing Crypto.sha256Hacl with
+      # the pure Lean Crypto.sha256 on the FIPS 180-4 vectors, the SHA-256
+      # block/padding boundaries and a 1 MiB buffer. That equality is what
+      # makes the storage host's substitution of the HACL* hasher into
+      # Storage/BlockMerkle.lean sound, so it is a required gate. The probe
+      # exits non-zero on any failure.
+      - name: HACL* extern probe (Ed25519 vectors + sha256 differential)
+        working-directory: formal/lean4
+        run: lake exe l4vc-probe

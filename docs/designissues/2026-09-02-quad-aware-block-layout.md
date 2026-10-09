@@ -1,0 +1,220 @@
+# Quad-aware block layout: the design decision behind spec gate 4
+
+Status: decided by the owner 2026-09-02 evening (table below the options).
+Option B is landing in steps.
+
+* Step 1, 2026-09-03: the block layer. `IBK4` is specified byte for byte in
+  section 6.1.1 of `docs/shardborough-storage-spec.md` and implemented in
+  `formal/lean4/L4Factoidal/Storage/IndexedBlockWireV4.lean`, with the
+  round-trip and denotation theorems in `IndexedBlockWireV4Theorems.lean`.
+* Step 2, 2026-09-03: the manifest, the packer and activation. `SBM7` is
+  specified in section 6.3.1 and implemented in `Storage/ShardManifest.lean`,
+  with the round-trip theorem over every wire version in
+  `ShardManifestTheorems.lean`. `l4block-shard-pack INPUT OUTPUT ibk4` reads
+  TriG, N-Quads and Turtle and writes one IBK4 block per predicate across all
+  graphs; `l4block-shard-activate` verifies each artifact and checks its graph
+  set against the manifest entry; `l4block-id-v3-query` refuses an IBK4
+  generation by layout.
+* Step 3, 2026-09-03: the query path. `l4block-quad-query COLLECTION-ROOT
+  --query ...` (`Harness/QuadQuery.lean`) opens an activated SBM7 generation,
+  decodes the selected IBK4 blocks, builds the RDF dataset they denote and
+  evaluates the query with `env.dataset` set, so `GRAPH <iri>`, `GRAPH ?g`,
+  `FROM`, `FROM NAMED` and default-graph patterns all work. Entry selection is
+  `ShardManifest.quadEntriesForQuery`: the manifest graph set skips a block a
+  constant-IRI `GRAPH` clause cannot reach, and the constant-predicate
+  collector — widened to descend through a `GRAPH` clause — skips a block the
+  query never names. `l4block-id-v3-query` keeps refusing SBM7 by layout; the
+  two tools are siblings because SBM7 admits no index sidecar and no delta
+  log, which is what the IBK3 tool's structure is built around.
+* Not implemented: the graph-aware index sidecars (so every selected block is
+  read whole — there is no selective row access path inside an IBK4 block),
+  the in-block graph filter those sidecars would drive, a streaming TriG pack,
+  and compaction of an IBK4 generation.
+
+## Why now
+
+- Owner, 2026-08-31, verbatim: "Please acknowledge that named graphs remain
+  at the heart of our vision! Even if not in the MVP."
+- Owner goal, 2026-09-02: "snappy searches against increasingly large dataset
+  converted to Shardborough formed rdf indexed data." The next rung on the
+  corpus ladder is the UK Parliament dump, 347 MB of TriG with named graphs
+  (`third_party/data/ukparliament/`). The packer reads Turtle only, and the
+  current family (IBK3 + SBM6) is default-graph-oriented: hub post 50 assigns
+  a graph name to each block from its manifest, and the specification says
+  in section 6.1 that this is not graph identity.
+- Specification section 10, beta gate 4: "a settled RDF 1.2 term codec and
+  tagged GraphId/quad layout, and a generation manifest that commits the
+  blank-node scope of each source partition".
+
+## What the specification already fixes
+
+1. Versioned meaning (section 4.5): a change of bytes or meaning is a new
+   magic/version, never a reinterpretation. Whatever is chosen is `SBM7`
+   and, if rows change, `IBK4`.
+2. Blank-node scope (section 2.4.1): the manifest commits the scope used for
+   each source partition; the scope may span several named graphs of one
+   imported dataset; it is not the graph IRI.
+3. Named graphs, provenance, trust (section 9): the quad manifest preserves
+   default-versus-named identity, source voice where supplied, and which
+   graph set supplied schema premises.
+4. Assertions and derivations stay distinguishable (section 4.7): physical
+   duplication is allowed; query multiplicity is never inferred from
+   duplicate rows.
+5. Semantic neutrality (section 7): the layout stores quads; it does not
+   privilege a vocabulary.
+
+## Two ways to put the graph in the bytes
+
+### A. Graph-partitioned entries (manifest-level)
+
+Keep IBK3, PTD1, SRI2/OLI2 and TLI1 exactly as they are. Partition the
+source by (graph, predicate) instead of by predicate. `SBM7` adds to each
+manifest entry:
+
+- `graph : Option WfIri` (`none` is the default graph);
+- `blankNodeScope : String` (per source partition, section 2.4.1);
+- the existing predicate, artifact, sidecar and Merkle fields unchanged.
+
+A quad (g, s, p, o) is stored once, in the entry (g, p). The same triple in two
+graphs is two quads and is stored twice, which is the RDF dataset semantics,
+not duplication in the section 4.7 sense.
+
+Query planning: `GRAPH <iri> { … }` selects entries with that graph;
+`GRAPH ?g { … }` runs the pattern once per distinct graph and binds `?g`;
+patterns outside `GRAPH` select the default-graph entries; `FROM` and
+`FROM NAMED` become entry selections too. Every block-level theorem of today
+(round trips, hash joins, backend arms) carries over unchanged, because no
+block changes. The planner's completeness argument extends by one clause:
+every quad with graph g and predicate p lies in exactly one entry.
+
+Cost: the number of entries is (graphs × predicates present in each graph).
+For the UK Parliament dump and a Wikidata truthy extract that is small. For
+a Web corpus with one provenance graph per page
+(`docs/20260830-web-corpus-working-sets.md`) it is one small block per page
+and predicate, which defeats the per-block dictionary and the Merkle chunking
+(65,536-byte chunks against blocks of a few hundred bytes).
+
+### B. Graph column in the rows (block-level)
+
+`IBK4`: rows of five u32 fields (position, g, s, p, o) with g a local ID into
+the block's PTD1, one block per predicate across all graphs. Sidecars gain a
+graph dimension: SRI2 postings keyed by (g, s) or a separate graph postings
+sidecar; TLI1 unchanged. `GRAPH <iri>` becomes a bounded filter inside the
+block, with a graph index for selectivity.
+
+Cost: a new row codec, new sidecar semantics, new round-trip theorems for
+IBK4 and the graph-aware postings, a new physical scan with its refinement
+proof, and a repack of every existing generation (allowed: alpha).
+
+### C. A, then B where it is needed
+
+A now, because it unblocks the next rung with no byte-format change and
+every theorem intact. B later, as the layout for the many-small-graphs case
+(per-page provenance), chosen by a manifest-level `layout` label so both can
+coexist in one collection: an entry is either a graph-partitioned IBK3 or an
+IBK4 with an in-block graph column, and the planner reads the label.
+
+## Recommendation
+
+C, starting with A as `SBM7` + a TriG/N-Quads packer input. Reasons:
+
+- The UK Parliament rung is reachable in agent-days, not weeks: the TriG
+  parser exists (`Syntax/TriG`), the fast N-Quads parser exists, and the
+  packer's partition step changes from `p` to `(g, p)`.
+- The persisted executability census stops at "single-default-graph
+  QueryEvaluationTests" (535 eligible). With A, the eligibility extends to
+  the tests with `qt:graphData`, which gives an exact, official measure of
+  named-graph coverage on the persisted path the day it lands.
+- Hub post 50 stops assigning graph identity from its page manifest and
+  reads it from the `SBM7` entries, closing the caveat its prose carries.
+- Nothing about A is wasted if B follows: B is an additional entry kind under
+  the same manifest, and the blank-node-scope commitment is needed by both.
+
+## Work plan for A
+
+1. `Storage/ShardManifest.lean`: `SBM7` with `graph` and `blankNodeScope` per
+   entry; encoder admission equals decoder admission; a round-trip theorem in
+   the style of the five landed on 2026-09-02; `SBM6` stays readable.
+2. `Harness/PredicateShardPack.lean`: accept `.trig` and `.nq` input (the
+   existing parsers), partition by (graph, predicate), write the scope per
+   source file (a content digest is enough for a single import; section
+   2.4.1 says when it is not).
+3. `Harness/IndexedBlockV3Query.lean` and `ShardManifest.selectAll`: entry
+   selection by graph; `GRAPH <iri>`, `GRAPH ?g`, default-graph patterns;
+   the constant-predicate collector learns `.graph`.
+4. `tools/w3c-persisted-census.sh`: eligibility extended to `qt:graphData`
+   tests; the number becomes the named-graph coverage gate.
+5. Hub post 50: read graph identity from the manifest entries.
+6. The UK Parliament rung: pack, activate, the workload, plus the
+   `bench_ukpar_*` queries that already exist for the F\* store.
+
+## Owner decisions, 2026-09-02 evening (recorded from the four-question form)
+
+| Decision | Owner's choice | Note |
+| --- | --- | --- |
+| 1. Layout order | **B first** (graph column in the rows, `IBK4`), against the recommendation of A | The A-first argument (no byte change, theorems carry over) was put to the owner and overruled. One layout for all cases. |
+| 2. Default graph | `graph = none` | As recommended. |
+| 3. Blank-node scope | Content digest per source file, with the section 2.4.1 caveat as a manifest profile flag | As recommended. |
+| 4. Next work after the Turtle parser fix | Scale first: profile `l4block-shard-pack` and `l4block-shard-activate` on the UK Parliament store | Named-graph work (B) starts after pack and activate are linear. |
+
+The work plan for A above is kept as the record of the alternative; the
+plan to execute is B. Status of this document: decided; steps 1 and 2 of B
+landed 2026-09-03 (see the status line at the head of this file).
+
+## Work plan for B
+
+1. **Landed 2026-09-03.** `Storage/IndexedBlockWireV4.lean`: the quad block,
+   the biased graph column, the header graph-set summary, the round-trip and
+   denotation theorems.
+2. **Landed 2026-09-03.** `Storage/ShardManifest.lean`: `SBM7` with a
+   per-entry block kind, blank-node scope and graph-set summary, and a
+   manifest-level blank-node publication profile; the round-trip theorem in
+   `ShardManifestTheorems.lean`. `Storage/PredicateQuadBlocks.lean` and
+   `Harness/PredicateShardPack.lean`: the packer.
+   `Harness/ShardActivate.lean`: activation, including the graph-set
+   cross-check. `Harness/IndexedBlockV3Query.lean`: the refusal.
+3. The graph-aware index sidecars. SRI2, OLI2 and TLI1 are keyed by a
+   block-local ID with no graph dimension. Each needs a graph dimension, or a
+   separate graph-postings sidecar, with its own wire version and round-trip
+   theorem. **Still open**, and it is what bounds the query path below: with
+   no sidecar there is no selective row access, so every selected block is
+   read whole.
+4. **Landed 2026-09-03.** The query path: `GRAPH <iri>` entry selection from
+   the manifest graph sets, `GRAPH ?g` binding, default-graph patterns, `FROM`
+   and `FROM NAMED`. `Harness/QuadQuery.lean` and the two collectors in
+   `Storage/ShardManifest.lean` (`queryGraphNames?`,
+   `queryQuadConstantPredicates?`), whose exclusion argument is written down
+   in their doc comments and exercised by `#guard`s. The in-block graph filter
+   waits on item 3.
+5. The streaming TriG pack, so an IBK4 generation is not bounded by input
+   size. A batch boundary splits a predicate across blocks with partial graph
+   sets, so it needs either a graph-set pre-pass or a manifest that admits
+   several IBK4 blocks per predicate.
+6. **Landed 2026-09-03.** `tools/w3c-persisted-census.sh` extends eligibility
+   to the `qt:graphData` tests, and every executed test on BOTH passes now has
+   its answer compared with the reference in-memory engine over the same file.
+   Measured: default graph 535 executed, 535 matched, 0 differed (out of 535);
+   named graphs 29 executed, 29 matched, 0 differed (out of 35 eligible). The
+   6 named-graph refusals carry a relative IRI in the query text, which no
+   query CLI resolves; the reference engine refuses the same six.
+7. Hub post 50: read graph identity from the SBM7 entries.
+
+## 🧭 Decisions for the owner (as put, 2026-09-02 afternoon)
+
+1. A first (recommended), or B first?
+2. Default graph: `graph = none` in the entry (recommended), or a reserved
+   IRI?
+3. Blank-node scope per source file: the file's content digest for the
+   corpus-ladder files (recommended for now), with the section 2.4.1 caveat
+   recorded in the manifest as a profile flag.
+4. The UK Parliament dump's graph count decides how much of this the next
+   rung needs. Measured 2026-09-02 (text scan; the full Lean profile of the
+   347 MB file was stopped before it finished): the file has exactly one
+   graph block, an unlabelled `{ … }` opened at line 20, which in TriG is
+   the default graph. 5,325,830 lines, 2,581,138 of them statement-ending,
+   so of the order of 5 million triples once `;` and `,` continuations are
+   counted. So the UK Parliament rung is a scale rung, not a named-graph
+   rung: it can go through today's family with TriG input to the packer
+   (or the one-line conversion that drops the block braces), and the
+   quad-aware layout is what the Web-corpus and provenance-bearing rungs
+   need, not this one.

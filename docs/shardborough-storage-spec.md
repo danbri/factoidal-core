@@ -1,0 +1,1299 @@
+---
+title: Shardborough Storage and Execution Artifact Specification
+description: Versioned storage, index, integrity, update, and semantic-context formats for the Factoidal block engine.
+layout: spec.njk
+permalink: /shardborough-storage-spec/
+specStatus: Alpha Draft 0.3
+specDate: "2026-09-01"
+---
+
+# Shardborough storage and execution artifact specification
+
+## Abstract
+
+Shardborough is Factoidal's storage architecture for large RDF datasets and
+SPARQL execution. It groups dictionary-encoded RDF rows into immutable,
+predicate-partitioned blocks. Separate indexes support narrow range reads.
+Manifests bind the blocks and indexes into an atomic dataset generation and
+record their cryptographic identities. An append-only delta log supplies
+updates between generations.
+
+The formats and their validators are implemented in Lean 4. The same bytes are
+intended to work in local files, database values, object stores, native
+executables, and WebAssembly hosts. The immediate goals are selective I/O,
+portable execution, and explicit evidence relating stored bytes to SPARQL
+results.
+
+## Status of this document
+
+This document defines the current Factoidal format family. It is an alpha
+draft, not a W3C publication or an RDF interchange standard. Standard RDF
+syntaxes remain the data-exchange boundary.
+
+During alpha, the cited Lean definitions are normative for executable byte
+layouts. Before beta, this document must contain complete field tables and
+portable golden vectors so an independent implementation need not inspect Lean
+source.
+
+## 1. Scope and purpose
+
+### 1.1 What Shardborough is
+
+Shardborough consists of:
+
+- immutable RDF block formats and local term dictionaries;
+- independently readable subject, object, and term indexes;
+- manifests that publish a checked set of artifacts as one generation;
+- SHA-256 and fixed-chunk Merkle commitments for complete and range reads;
+- a durable delta log, compaction epoch, and atomic generation pointer;
+- Lean query paths that decode selected data and connect it to the Factoidal
+  SPARQL evaluator.
+
+A **block** is an independently encoded physical artifact. Current IBK3 blocks
+contain rows for one predicate. A **generation** is an immutable set of blocks
+and indexes admitted by one manifest. The current code calls this manifest a
+`ShardManifest`; distribution across machines is optional.
+
+The generation is read-only after publication. The database is not. Updates
+are appended to a durable log, merged with the active generation during reads,
+and periodically compacted into a new generation.
+
+### 1.2 Intended uses
+
+The design is intended for:
+
+- large RDF dumps and derived knowledge graphs;
+- collections of named graphs prepared in advance and selected as working
+  sets;
+- selective SPARQL scans and joins that should not fetch unrelated block,
+  dictionary, or index pages;
+- local, browser, edge, and distributed execution over the same physical
+  artifacts;
+- deployments that require corruption detection, reproducible generations,
+  or evidence linking an execution to exact input bytes.
+
+Predicate partitioning, sorted sidecar postings, term indexes, and manifest
+summaries are performance mechanisms. They reduce bytes read and decoded;
+they do not change RDF or SPARQL meaning. IBK3 primary rows currently retain
+source order within each predicate-local artifact.
+
+### 1.3 Adoption and interoperability
+
+Shardborough is first a Factoidal storage format. Other RDF databases do not
+need to adopt it. PostgreSQL, TiKV, object stores, and browser storage can host
+the artifacts as opaque byte ranges behind small adapters.
+
+It is not an RDF syntax, a replacement for SPARQL, or a global RDF term-ID
+registry. A backend need not implement RDF semantics or run Lean internally;
+it may provide durable bytes and range access to a native or WASM worker.
+
+Byte-level interoperability with independent readers is a beta goal. It
+requires complete field tables, golden files, feature negotiation, and
+cross-implementation tests. The alpha code does not yet make that claim.
+
+## 2. System model
+
+### 2.1 Bulk publication
+
+Bulk loading does not require SPARQL Update. The current Lean harness can parse
+Turtle and publish predicate-local IBK3 blocks, dictionaries, indexes, Merkle
+sidecars, and an SBM6 manifest. A complete publisher follows this order:
+
+```text
+RDF input
+   -> parse and assign block-local term IDs
+   -> partition source-order rows by predicate
+   -> encode IBK blocks and index sidecars
+   -> compute lengths, SHA-256 identities, and Merkle commitments
+   -> write an immutable generation
+   -> validate every cross-artifact relation
+   -> atomically replace CURRENT
+```
+
+Readers continue to use the preceding generation until the final activation
+step. A failed build is not made current.
+
+### 2.2 Query execution
+
+The query path keeps reference semantics and physical access separate:
+
+```text
+SPARQL text
+   -> parsed SPARQL algebra
+   -> physical block and index selection
+   -> verified range reads
+   -> row and term decoding
+   -> joins, filters, projection, and result formation
+   -> comparison or refinement against the Lean SPARQL evaluator
+```
+
+The current on-disk path accelerates a growing subset of triple-pattern and
+join shapes. Unsupported shapes require a complete fallback; they must not
+produce a partial answer. Full storage-backed SPARQL coverage is a project
+goal, not an alpha claim.
+
+### 2.3 Updates, recovery, and compaction
+
+SPARQL Update and other mutation interfaces may translate accepted operations
+to durable delta batches. The storage protocol does not require bulk imports
+to pass through SPARQL Update.
+
+Each committed batch has a sequence and compaction epoch. Readers replay valid
+batches after the active generation's compacted epoch. Compaction applies the
+eligible history to a new immutable generation, validates it, records its
+epoch, and activates it through `CURRENT`. This prevents a crash between base
+publication and log maintenance from applying an update twice.
+
+### 2.4 Block query workers
+
+A Shardborough block query worker is a small executable over authenticated
+block bytes. It is intended for use beside local files, PostgreSQL, TiKV,
+object storage, browser storage, or a remote range service. The host provides
+bytes and resource limits. The worker validates and decodes those bytes and
+performs a typed physical operation. RDF semantics do not move into the
+storage adapter.
+
+Here, *worker* names an execution role. It does not require a JavaScript Web
+Worker, an operating-system process, or a remote service. The browser example
+runs the operation in the page's existing Lean WASM runtime; another host may
+place the same operation in a thread or separate process.
+
+The responsibilities are deliberately split:
+
+```text
+coordinator
+  parse SPARQL; choose blocks, indexes and operations; combine fragments
+       |
+       v
+block worker
+  validate supplied bytes; execute a bounded scan or join fragment
+       |
+       v
+result fragment
+  typed rows or result bytes, counters, and evidence identities
+```
+
+The worker is not a second SPARQL implementation and is not necessarily a
+SPARQL Protocol endpoint. A deployment may put parsing and planning in the
+coordinator and send only a small physical program to workers. A self-contained
+edge application may run the coordinator and workers in one native or WASM
+process.
+
+#### 2.4.1 Current diagnostic API
+
+The Lean dispatch ABI currently exposes complete-artifact predicate scans:
+
+```text
+scanIBK2Predicate(ibk2Hex, predicateIri)
+scanIBK3Predicate(ibk3Hex, predicateIri, blankNodeScope)
+queryIBK3BlockSetPreview(blocksJson, blankNodeScope, sparql)
+```
+
+The IBK3 operation accepts three strings and returns a JSON envelope:
+
+```json
+{
+  "ok": true,
+  "format": "IBK3",
+  "blankNodeScope": "source:example-2026-09-01",
+  "rows": 3,
+  "ntriples": "<s1> <p> <o1> .\n..."
+}
+```
+
+Invalid hexadecimal text, an invalid predicate IRI, a failed IBK checksum,
+bad row positions or term references, a malformed PTD1 dictionary, and a
+non-predicate-local block are rejected. The operation uses the same Lean
+decoder and scan definition in native and WASM builds. The current diagnostic
+ABI also rejects a blank-node scope longer than 256 UTF-8 bytes.
+
+`blankNodeScope` is mandatory because N-Triples blank-node labels are local to
+an RDF document or dataset import unit. Blocks partitioned from the same unit
+use the same scope, so a blank node described under several predicates keeps
+one identity. Blocks from unrelated units use different scopes, so equal local
+labels do not merge when result fragments are composed. The worker encodes the
+scope to a grammar-safe prefix and applies it at every blank-node position.
+The scope is an import identity, not an IBK artifact identity: using a
+different scope for every predicate block would incorrectly split one source
+blank node. Reusing a scope for unrelated imports would incorrectly merge
+nodes. A production generation manifest must therefore commit the scope used
+for each source partition rather than accepting an arbitrary value at query
+time. The scope may span several named graphs when one imported RDF dataset
+shares blank nodes across them; it is not mechanically the graph IRI. A
+content digest is sufficient only when the publication profile also says that
+repeated imports of those bytes share one blank-node allocation. Otherwise the
+scope must include the import occurrence or equivalent provenance identity.
+
+The current operation emits N-Triples and carries no graph-name field. It
+therefore composes a default graph only. `blankNodeScope` preserves local node
+identity; it is not a substitute for a `GraphId`. A dataset-aware worker and
+future block layout must carry graph identity explicitly before this operation
+can preserve named graphs.
+
+The older two-argument IBK2 operation predates this rule and its N-Triples
+output must be treated as a single-document fragment. Multi-block composition
+uses the scoped IBK3 operation.
+
+`queryIBK3BlockSetPreview(blocksJson, blankNodeScope, sparql)` composes a
+small explicit set of complete IBK3 blocks — `blocksJson` is an array of
+`[predicateIri, ibk3Hex]` pairs — and evaluates one SPARQL query over them
+inside Lean, so no N-Triples text crosses the host boundary between decoding
+and evaluation. It is a browser-preview operation, named so it is not
+mistaken for the bounded protocol of section 2.4.2. Its limits bound INPUT
+and OUTPUT, not intermediate work: at most eight blocks, eight MiB of
+artifact bytes and 100,000 rows, checked against the hexadecimal length and
+the 13-byte IBK3 header before any artifact is decoded; only a basic graph
+pattern of at most four triple patterns, no `FROM`, `GROUP BY`, `HAVING` or
+`VALUES`; and `SELECT`/`CONSTRUCT` require `LIMIT <= 1000`. A join of two
+unbound patterns over thousands of rows a side is still evaluated in full by
+the reference evaluator before `LIMIT` applies, and one blank-node scope
+applies to the whole set. Every block must decode completely, and its
+declared predicate must identify every row, or the operation is refused.
+
+This API is useful for testing the execution boundary and for small browser
+demos. Hexadecimal transport, complete-block decoding, and N-Triples output
+copy the data and have no artifact or output-size limit. They are not the
+production remote-worker protocol. The caller must also authenticate the
+expected block identity: a self-consistent IBK3 file alone does not establish
+that it belongs to the active generation.
+
+The browser query operations (`queryDataset`, `datasetQuery`, and the
+block-set preview) evaluate `SELECT` and `ASK` through the same optimized
+Lean physical-plan path as the native host — `indexedDatasetBackend` with
+`runSelectQueryBackendDataset` — and fall back to the reference evaluator
+for any shape that path declines, so answers are never partial. A dataset
+handle builds its indexes once when opened.
+
+The native `l4block-id-v3-query` host has a broader, implemented path. It
+parses SPARQL, opens the active SBM generation, checks committed artifacts,
+uses SRI2/TLI1/OLI2 where the admitted query shape permits, merges durable
+deltas, and evaluates the selected materialization through the Lean SPARQL
+engine. It also has complete fallbacks for supported query forms. This native
+host demonstrates the intended coordinator role; it is not yet packaged as a
+network service.
+
+#### 2.4.2 Bounded worker protocol target
+
+The production boundary will use byte buffers or authenticated ranges and a
+versioned typed request. Its logical shape is:
+
+```text
+request
+  API version
+  operation or validated PushIR program
+  artifact identities and supplied byte ranges
+  blank-node import scope committed by the generation
+  snapshot / compaction epoch
+  row, byte, memory and output limits
+
+response
+  success or typed failure
+  row/result buffer
+  bytes requested, bytes consumed and rows produced
+  kernel, program and input identities
+```
+
+PushIR is the planned multi-operation language for this boundary. It is
+separate from IBK block bytes and from SPARQL algebra. It will be typed,
+versioned, deterministic and bounded, with operations such as range scan,
+column load, exact ID comparison, revision filtering, sorted intersection,
+projection, count and emit. It will not provide arbitrary recursion, network
+access, dynamic code loading, or unrestricted memory access.
+
+The protocol is backend-neutral. PostgreSQL may supply `bytea` values, TiKV
+may supply values or fixed chunks, and a browser may supply `ArrayBuffer`
+ranges from HTTP or OPFS. Each can run the same Lean-derived native or WASM
+kernel. Backend adapters therefore need storage, identity, range and resource
+control operations rather than their own RDF query engine.
+
+Before an internet-facing worker profile is specified, it requires:
+
+- a canonical binary request and response format with independent golden
+  vectors;
+- mandatory size, time, memory and output limits;
+- SBM generation and artifact-identity binding before decode;
+- authenticated range proofs where partial artifacts are supplied;
+- precise PushIR validation and denotation-preservation statements;
+- replay-safe snapshot and compaction-epoch handling;
+- conformance tests across native and WASM kernels.
+
+## 3. Deployment profiles
+
+| Profile | Artifact host | Execution | Alpha status |
+|---|---|---|---|
+| Local | directory of files with positioned range reads | native Lean executable and thin C I/O boundary | primary implemented path |
+| PostgreSQL | `bytea` values and metadata rows | coordinator or nearby worker using the same codecs | byte round-trip demonstrated; no Lean client adapter yet |
+| TiKV | values or fixed-size chunks addressed by manifest keys | colocated or nearby worker | planned |
+| Browser or edge | HTTP ranges, OPFS, or supplied buffers | Lean-derived WASM block kernel | complete-artifact IBK2/IBK3 scan ABI implemented; buffer/range protocol planned |
+| Distributed | content-addressed blocks in one or more hosts | coordinator sends bounded physical work to native or WASM workers | architectural target |
+
+The stable backend boundary is a manifest plus byte-range reads, not a second
+backend-specific RDF model. PushIR can describe bounded work near storage,
+but PushIR is not part of the block byte format.
+
+## 4. Design requirements
+
+1. **One physical object across hosts.** Local files, memory maps, PostgreSQL
+   `bytea`, TiKV values, browser storage, native Lean, and WASM may host the
+   same versioned bytes. A host supplies storage and positioned I/O; it does
+   not redefine RDF identity or SPARQL results.
+2. **Semantics remain above representation.** A block stores RDF terms and
+   rows. It must not silently privilege RDFS, OWL, SHACL, ShEx, RIF, another
+   rule language, Common Logic, IKL, or one application's ontology.
+3. **Semantic acceleration is explicit.** A derived block or index may exploit
+   a named semantic profile only when it is bound to the exact source,
+   schema/rules, graph scope, trust policy, and derivation identity that make
+   the optimization sound.
+4. **Unknown or stale metadata means fallback.** Missing evidence may make a
+   plan slower. It must not cause false negatives or silently broaden the
+   requested entailment regime.
+5. **Versioned meaning.** Existing magic/version pairs never acquire a new
+   byte interpretation or denotation. A change of bytes or meaning requires a
+   new version.
+6. **Integrity precedes decoding.** Activated generations bind artifact
+   lengths, SHA-256 identities, fixed-chunk Merkle roots, and role-specific
+   sidecar relations before selective reads are trusted.
+7. **Assertions and derivations remain distinguishable.** Physical
+   duplication for locality is permitted, but query multiplicity and source
+   provenance must not be inferred from duplicate storage rows.
+
+## 5. Authority and terminology
+
+The specification has three connected levels:
+
+```text
+RDF/SPARQL denotation and semantic-profile contracts
+                         |
+                         v
+versioned Lean data types, encoders, decoders, validators and refinements
+                         |
+                         v
+host realization: files / mmap / PostgreSQL / TiKV / OPFS / WASM buffers
+```
+
+- **Canonical bytes** means one admitted encoding for a stated physical
+  value. It does not by itself mean canonical RDF dataset identity.
+- **Canonical dataset identity** is a separate RDFC-1.0 or other explicitly
+  named normalization-and-hash operation over a declared dataset scope.
+- **Artifact identity** is the SHA-256 of exact stored bytes.
+- **Term ID** is an execution identifier. Current IBK3 IDs are local to one
+  artifact and are translated through its dictionary/TLI1 relation.
+- **Graph identity** must distinguish the default graph from an RDF term used
+  to name a graph. A normal term ID is not reserved as a default-graph
+  sentinel in the target model.
+
+## 6. Format registry
+
+### 6.0 Stated ceilings
+
+Every size limit of the formats below is a named number with a defined
+behaviour above it. The table is copied from
+[the wire-version-10 design record](designissues/2026-09-05-wire-version-10-scale.md)
+section 2, which decided them; it is repeated here because a reader of the
+specification must not have to find a design record to learn what a format
+refuses.
+
+| Quantity | Ceiling | Where | Above it |
+|---|---|---|---|
+| inline lexical form of a literal | `maxInlineLexicalBytes` = 65,536 bytes | term codec v2 | stored out-of-line, never inline |
+| out-of-line literal | `maxBlobBytes` = 2^32 − 1 bytes | manifest blob table | the packer refuses, naming the literal's subject and predicate |
+| any length-prefixed string on the wire (IRI, blank-node label, language tag, datatype IRI) | 2^32 − 1 bytes | term codec | refused by the encoder, never truncated |
+| rows in one block | `maxBlockRows` = 16,384 | packer cut policy | a new block |
+| estimated block bytes | `maxBlockWireBytes` = 2,097,152 | packer cut policy | a new block; one quad above the target still forms a block of its own |
+| terms in one block dictionary | 2^32 − 1 (local ID width) | IBK5 | unreachable under the row and byte targets |
+| one artifact's bytes | 2^32 − 1 | SHA-256 binding: the HACL* entry point takes a `uint32_t` length and returns an EMPTY digest above it | refused by the packer; activation refuses an empty digest |
+| entries in one manifest | 2^32 − 1 | SBM | unreachable at the sizes above |
+| one source statement (Turtle) | the packer's memory | `PackStream.lean` | a stated bounded-input exception: a Turtle statement is retained until it completes |
+| the wasm address space | 4 GiB | wasm32 | the same caps as the native tools, plus the stated `maxPack*` and `maxStoreHandle*` caps |
+| one zone-map bound in a manifest entry | `zoneBytes` = 64 bytes | SBM10 | the bound is the first 64 bytes of the key, and the entry is kept rather than dropped |
+
+Four independent u32 ceilings meet at 4 GB by coincidence. They are one row
+each here, and the format constants name them separately.
+
+Terabyte literals are refused by design at `maxBlobBytes`. Multi-megabyte
+literals are handled: out-of-line, chunk-verified, range-readable, not indexed
+by grams, and not counted against a block's byte target.
+
+### 6.1 Primary blocks and dictionaries
+
+| Name | Role | Current status | Executable definition |
+|---|---|---|---|
+| `BLK0` | Direct RDF-term transition block | superseded MVP format | [BlockWireV0.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/BlockWireV0.lean) |
+| `IBK1` | One dictionary plus fixed ID triples | readable prototype | [IndexedBlockWireV1.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV1.lean) |
+| `IBK2` | Predicate-selective segmented ID block | superseded; retained range-soundness results | [IndexedBlockWireV2.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV2.lean) |
+| `IBK3` | Current predicate-local fixed ID rows followed by an embedded pageable dictionary | current primary alpha block | [IndexedBlockWireV3.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV3.lean) |
+| `PTD1` | IBK3-local ID to RDF term, split into independently readable pages | current embedded dictionary | [PagedTermDictionary.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionary.lean) |
+| `IBK4` | Quad rows: one predicate, one or more graphs, a graph column in every row, a header graph-set summary, then the same embedded PTD1 | current quad-aware block; codec, round-trip theorem, packer and SBM7 manifest landed | [IndexedBlockWireV4.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV4.lean) |
+| `PTD2` | The PTD1 page layout over term codec v2 (`WireTerm`: an RDF 1.2 term, or an out-of-line literal named by byte length and SHA-256) | current embedded dictionary of IBK5; PTD1 and PTD2 are two instantiations of one generic module and share one round-trip theorem; packer and native readers landed 2026-09-05 | [PagedTermDictionaryV2.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryV2.lean), generic layout in [PagedTermDictionaryCore.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryCore.lean) |
+| `IBK5` | The IBK4 layout, field for field, over a PTD2 dictionary | current wire-version-10 block; codec, round-trip theorem, packer and native readers landed 2026-09-05 | [IndexedBlockWireV5.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV5.lean) |
+
+IBK3 contains triples and requires one predicate per artifact. Its current
+term codec accepts IRIs, blank nodes, and RDF 1.1-style literals, but refuses
+RDF 1.2 triple terms and directional literals. Current IDs and row counts use
+32-bit wire fields. These are explicit alpha limits.
+
+The target full RDF-store model is quad-aware. IBK3/SBM6 is
+default-graph-oriented and does not define a `GraphId` layout.
+`Manifest.sourceIdentity` is not a substitute for graph identity. Section 6.1.1
+defines IBK4, which carries graph identity in the rows, and section 6.3.1
+defines `SBM7`, the manifest that describes IBK4 artifacts and commits the
+blank-node scope of each source partition. The graph-aware index sidecars and
+the query planner are not defined yet.
+
+Section 6.1.2 defines `IBK5`, the wire-version-10 block, and section 6.1.3
+the term codec it carries.
+
+#### 6.1.1 IBK4 — quad rows with an in-block graph column
+
+IBK4 is the quad-aware primary block. One artifact still holds one predicate,
+and each row carries a graph column, so `GRAPH <iri> { ... }` is a bounded
+filter inside the block as well as a selection between manifest entries.
+
+An artifact MAY hold that predicate across every graph of a dataset, and a
+generation MAY instead carry several artifacts for one predicate whose graph
+sets are disjoint. Both are admitted, at every manifest version from SBM2 on,
+which does not require one entry per predicate. A reader MUST take the union
+of the entries for a predicate and MUST NOT assume there is one.
+`l4block-shard-pack` buckets quads by the pair (predicate, graph) and cuts a
+bucket's rows at two size targets, so a block it writes today holds ONE graph
+(`docs/designissues/2026-09-04-blocks-per-predicate.md`, amended 2026-09-05 in
+`docs/designissues/2026-09-05-wire-version-10-scale.md` section 5);
+generations packed before 2026-09-04 hold one block per predicate over every
+graph.
+
+Every integer field is unsigned little-endian. Every offset is a byte offset
+from the start of the artifact. Let `G` be `graphCount`, `R` be `rowCount` and
+`D` be `dictionaryBytes` as read from the header.
+
+**Fixed header, 17 bytes at offset 0**
+
+| Offset | Width | Field | Value |
+|---|---|---|---|
+| 0 | 4 | magic | `IBK4`, the bytes `0x49 0x42 0x4B 0x34` |
+| 4 | 1 | version | `4` |
+| 5 | 4 | `rowCount` | number of quad rows |
+| 9 | 4 | `dictionaryBytes` | byte length of the embedded PTD1 dictionary |
+| 13 | 4 | `graphCount` | number of distinct graph column values |
+
+**Graph-set summary, `G × 4` bytes at offset 17**
+
+One u32 graph column value per distinct graph, in first-occurrence row order.
+This is what lets a planner refuse a block for `GRAPH <iri>` after reading 17
+bytes plus this array, with no row and no dictionary page read. It is a
+summary, never an independent source of truth: `decode` recomputes the set
+from the rows it decoded and refuses an artifact whose stored summary differs.
+
+**Rows, `R × 20` bytes at offset `17 + G × 4`**
+
+| Offset in row | Width | Field |
+|---|---|---|
+| 0 | 4 | `position`, the source row index |
+| 4 | 4 | `g`, the graph column |
+| 8 | 4 | `s`, subject local ID |
+| 12 | 4 | `p`, predicate local ID |
+| 16 | 4 | `o`, object local ID |
+
+`s`, `p` and `o` are local IDs into the block's own PTD1 dictionary, as in
+IBK3.
+
+**Dictionary, `D` bytes at offset `17 + G × 4 + R × 20`**
+
+One complete PTD1 paged term dictionary, unchanged from IBK3. It validates its
+own page layout and its own CRC.
+
+**Checksum, 4 bytes at offset `17 + G × 4 + R × 20 + D`**
+
+CRC32C over every byte from offset 5 to the end of the dictionary — that is,
+over the whole artifact after the version byte and before the checksum itself.
+The artifact is exactly `21 + G × 4 + R × 20 + D` bytes long.
+
+**The graph column is a biased field, not a reserved ID.** Wire value `0` is
+the default graph. Wire value `k + 1` is the block-local term ID `k`, whose
+term is the graph name. The alternative — reserving local ID 0 as a
+default-graph sentinel that the dictionary never assigns — is refused by
+section 5 of this specification: "Graph identity must distinguish the default
+graph from an RDF term used to name a graph. A normal term ID is not reserved
+as a default-graph sentinel in the target model." The bias lives in the field,
+so PTD1 keeps assigning IDs from 0 and its codec, its page arithmetic and its
+round-trip theorem are unchanged. The cost is one usable ID: a block cannot
+name a graph whose local ID is `2^32 - 1`, which the admission list below
+states as a condition rather than leaving it to a silent truncation.
+
+**Admitted artifacts.** Encoder admission equals decoder admission: every item
+below is a test that `IndexedBlockWireV4.encode?` runs on the block and that
+`IndexedBlockWireV4.decode` runs again on what it read back.
+
+1. Every dictionary term is in the wire-supported term subset: IRIs, blank
+   nodes and RDF 1.1-style literals. RDF 1.2 triple terms and directional
+   literals are refused, as in IBK3.
+2. Every dictionary term satisfies the u32 length-prefix condition of the term
+   encoder (`termFitsU32`), so no string length is truncated.
+3. The dictionary size and the row count are below `2^32`.
+4. Every row's `s`, `p` and `o` is below `2^32`.
+5. Every row's graph column value `graphField(g)` is below `2^32`; that is, a
+   named graph's local ID is below `2^32 - 1`.
+6. Every graph-set summary entry satisfies the same bound.
+7. The block is nonempty and predicate-local: every row carries the same `p`.
+8. Row positions are exactly `0, 1, ..., rowCount - 1`.
+9. The dictionary has no repeated term, so its ID map is injective; and every
+   row resolves — `s` to an RDF subject, `p` to an IRI, `o` to any term, and a
+   named graph's `g` to an IRI or a blank node (`GraphRef`). A row whose graph
+   ID the dictionary never assigned is refused here, by the encoder and by the
+   decoder.
+10. The encoded graph-set summary is exactly the distinct graph column values
+    of the rows, in first-occurrence order.
+11. The framing is exact — no trailing bytes — and the CRC32C matches.
+
+**Denotation.** An admitted IBK4 artifact denotes the list of quads
+`(g, s, p, o)` in physical row order, where `s`, `p` and `o` are the RDF terms
+its dictionary assigns to the row's local IDs, and `g` is `none` for the
+default graph and `some name` for a named graph. This is the type
+`Option GraphRef × Triple`, the shape RDFC-1.0 canonicalization also uses.
+`denotes_decode_encode?` proves that decoding an encoded block gives the same
+list of quads.
+
+**Version rules.** IBK3 stays readable and is unchanged; nothing in this
+subsection alters its bytes or its meaning. IBK4 is a new magic/version pair,
+not a reinterpretation of IBK3 (section 4.5). Any later change to the byte
+layout or the meaning above requires a further new version, not an amendment
+of `IBK4`.
+
+#### 6.1.2 IBK5 — the IBK4 layout over a PTD2 dictionary
+
+IBK5 is the wire-version-10 block. Its byte layout is IBK4's, field for
+field — the 17-byte header, the graph-set summary, the 20-byte rows, the
+embedded dictionary, the CRC32C — with two changes: the magic is `IBK5`
+(bytes `0x49 0x42 0x4B 0x35`) with version byte `5`, and the dictionary is
+`PTD2`, whose terms are encoded with term codec v2 (section 6.1.3). An IBK4
+reader refuses an IBK5 artifact at the magic, and an IBK5 reader refuses an
+IBK4 artifact the same way; neither misreads the other.
+
+The decoded dictionary is an array of `WireTerm`: an RDF term, or an
+out-of-line literal (`BlobLiteral`: datatype, language tag, direction, byte
+length, SHA-256 of the UTF-8 lexical form). A blob may only be an object:
+`fromParts?` refuses a block whose subject, predicate or graph-name position
+resolves to a blob, as it refuses a literal in a subject position.
+
+**Admitted artifacts.** Encoder admission equals decoder admission:
+
+1. every dictionary term is admitted by term codec v2 (section 6.1.3);
+2. the dictionary size, the row count, every row's `s`, `p`, `o` and biased
+   graph column, and every graph-set summary entry are below `2^32`;
+3. the block is nonempty and predicate-local;
+4. PTD2's own admission holds for the dictionary array;
+5. `fromParts?` succeeds: no repeated term, every row resolves, no blob
+   outside an object position;
+6. the graph-set summary is the distinct graph column values in
+   first-occurrence order; the framing is exact and the CRC32C matches.
+
+**Denotation.** An admitted IBK5 artifact denotes the list of
+`(g, s, p, WireTerm)` rows in physical order. `resolveBlock`, given a way to
+fetch blob bytes by digest, turns that into RDF quads and refuses a missing
+blob, a byte count that disagrees with the term's length, bytes that hash to
+a different digest, or invalid UTF-8. Theorems, in
+[`IndexedBlockWireV5Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV5Theorems.lean):
+`decode_encode?`, `denotes_decode_encode?`, `resolveBlock_decode_encode?`,
+and `resolveBlock_decode_encode?_toWire` (resolving the decoded encoding of
+a block built from RDF quads returns those quads; it takes the interning
+step as a hypothesis, which the `#guard`s check concretely).
+
+`blobDigests` (ascending, distinct) is what the SBM10 entry's blob
+references are made from; `subjectKeys` and `objectKeys` are the v2 key
+bytes the SBM10 zone maps take their bounds from (section 6.3.2).
+
+#### 6.1.3 Term codec v2
+
+Module [`TermWireV2.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermWireV2.lean).
+Every integer little-endian; `lstring` is a u32 byte length then UTF-8
+bytes, as in the v1 codec of `DeltaLog`.
+
+| Tag | Term | Body |
+|---|---|---|
+| 0 | IRI | `lstring` |
+| 1 | blank node | `lstring` label |
+| 2 | literal, inline | `lstring` lexical form; `lstring` datatype IRI; u8 flag; if flag ≥ 1, `lstring` language tag |
+| 3 | triple term | subject: u8 (0 IRI, 1 blank node) + `lstring`; predicate `lstring`; object: one v2 term, recursively |
+| 4 | literal, out-of-line | `lstring` datatype IRI; u8 flag; if flag ≥ 1, `lstring` language tag; u64 byte length of the UTF-8 lexical form; 32 bytes SHA-256 of that lexical form |
+
+Flag: 0 no language tag; 1 language tag, no direction (`rdf:langString`);
+2 language tag, direction `ltr`; 3 language tag, direction `rtl` (both
+`rdf:dirLangString`). The decoder rebuilds the literal through
+`RDF.literalWf`, so a flag that disagrees with the datatype is refused.
+
+**Admission** (encoder equals decoder): every `lstring` below `2^32` bytes;
+an inline literal's lexical form at most `maxInlineLexicalBytes` = 65,536
+bytes; an out-of-line literal's byte length above that and at most
+`maxBlobBytes` = 2^32 − 1, with a 32-byte digest; the language tag and the
+direction agree with the datatype. The two length rules are the canonical
+choice: a literal at or below the ceiling MUST use tag 2, a longer one MUST
+use tag 4, and the decoder refuses the other, so one term has one encoding.
+The object of a triple term is parsed as an inline term, so a triple term
+whose object literal is above the ceiling has no encoding and is refused.
+
+The lexical form of a tag-4 literal is one artifact,
+`blob-<sha256 hex>.lit`, committed in the SBM10 blob table (section 6.3.2).
+Content addressing stores a literal shared by several blocks once.
+
+Theorems, in `TermWireV2Theorems.lean`: `parseTerm_serializeTerm?` (round
+trip, single hypothesis, no fuel in the statement), `toWire_inline_iff` and
+`toWire_blob_iff` (the canonical choice), `resolve_toWire` (a term written
+by the packer's `toWire` resolves back to itself given its own bytes).
+
+The v1 codec is unchanged and remains what IBK3, PTD1, TLI1 and the DLOG
+delta log use.
+
+### 6.2 Index sidecars
+
+| Name | Relation | Status |
+|---|---|---|
+| [`SRI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/SubjectRowIndexWire.lean) | local subject ID to row offsets | flat readable predecessor |
+| [`SRI2`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2.lean) | pageable, target-bound local ID to row offsets | current generic postings codec used in the subject role |
+| [`TLI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermLocalIndexWire.lean) | canonical RDF-term bytes to one target IBK3 local ID | current cross-artifact term bridge |
+| `OLI2` | local object ID to row offsets | current SBM6 object role, encoded with the generic SRI2 postings codec |
+| [`LGI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | character 3-grams of the case-folded lexical form of every literal in a block dictionary, to the local term IDs carrying each gram | current SBM8 and SBM9 literal-search role; posting gaps are fixed-width u32 |
+| [`LGI2`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the same relation, plus the local IDs of the literals the index did NOT gram | current SBM10 literal-search role; posting gaps are unsigned LEB128 varints; packer and native readers landed 2026-09-05 |
+| [`GBI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/GeoBBoxIndexWire.lean) | axis-aligned bounding box and CRS of every `geo:wktLiteral` term in a block dictionary | current SBM9 and SBM10 geometry role |
+
+LGI1 and LGI2 are CANDIDATE FILTERS, not answer sets: a planner that uses one
+re-evaluates the original SPARQL expression on the candidates, so its rows are
+the scan's rows. LGI2 differs from LGI1 in two ways. Its posting gaps are
+unsigned LEB128 varints, which on the `skos:prefLabel` block of the skosdex
+corpus (5,571,302 bytes, 45,806 rows, 60,856 dictionary terms, 21,843 grams,
+641,709 postings) takes the sidecar from 3,018,141 bytes, 54% of the block, to
+1,282,519 bytes, 23%. And its prefix carries a count and then that many
+ascending distinct local IDs, the OPAQUE list: the dictionary positions of the
+out-of-line literals, whose lexical form is not in the block and which
+therefore have no gram. The LGI2 candidate set is the gram intersection joined
+with that list, so an out-of-line literal is a candidate for every needle the
+index serves. `LiteralGramIndex.mem_candidatesOpaque_of_match` and
+`mem_candidatesOpaque_of_opaque` are the two halves of the superset property.
+
+The role of OLI2 is not inferred from its bytes. SBM6 places the artifact in
+the object-index field, and activation recomputes the canonical object-to-row
+relation from the target IBK3 block. SRI2 and OLI2 therefore share a codec but
+not a semantic role.
+
+### 6.3 Manifests and range integrity
+
+| Name | Adds |
+|---|---|
+| `SBM0` | ordered immutable artifact entries |
+| `SBM1` | fixed-chunk Merkle commitments |
+| `SBM2` | multiple bounded blocks for one predicate |
+| `SBM3` | mandatory SRI1 subject indexes |
+| `SBM4` | TLI1 term indexes |
+| `SBM5` | pageable SRI2 replacing SRI1 |
+| `SBM6` | mandatory object-role OLI2 indexes |
+| `SBM7` | IBK4 quad blocks: a per-entry block kind, blank-node scope and graph-set summary, and a manifest-level blank-node publication profile |
+| `SBM8` | mandatory LGI1 literal-search index in a fourth sidecar role |
+| `SBM9` | mandatory GBI1 geometry bounding-box index in a fifth sidecar role |
+| `SBM10` | IBK5 quad blocks with an LGI2 literal index: per-entry subject and object zone maps, per-entry blob references, and a manifest-level blob table of out-of-line literals. Packer and native readers landed 2026-09-05; `l4block-shard-pack` writes it under the layout tag `ibk5` |
+
+The current manifest structure records a wire version, source identity,
+term-registry version, physical-layout label, and ordered predicate/artifact
+entries. Each current artifact reference records a safe relative key, byte
+extent, SHA-256, and fixed-chunk Merkle reference.
+
+The companion `.merkle` file is currently the raw concatenation of 32-byte
+leaf hashes in chunk order. It has no independent magic/version. Its authority
+comes only from rebuilding its root and matching the root committed by SBM;
+activation additionally checks that the leaf sequence was derived from the
+same complete bytes whose SHA-256 is in the manifest. A future change to this
+sidecar requires explicit framing rather than silently changing this layout.
+
+The hash function of every leaf, node and artifact digest is SHA-256 as
+defined by the pure Lean `Crypto.sha256`, which every guard and theorem
+uses. A host may compute the same function through the HACL* binding
+`Crypto.sha256Hacl` (`Storage/BlockMerkle.lean`'s `Hasher` parameter; the
+native harness does, since 2026-09-02); `lake exe l4vc-probe` checks the two
+agree on the FIPS 180-4 vectors, the block and padding boundaries and a
+1 MiB buffer, and CI requires it. Bytes on disk do not depend on the choice.
+
+Merkle admission of selected ranges establishes that returned bytes belong to
+the committed artifact. It does not establish that an index contains every
+required posting. A reader may claim complete query results only for a
+generation that passed full activation, including complete block decoding and
+recomputation of each required sidecar relation. Direct selective reads from
+merely Merkle-committed files can be sound without being complete.
+
+#### 6.3.1 SBM7 — the manifest for quad blocks
+
+SBM7 is the manifest an IBK4 generation carries. It keeps every SBM0 field and
+every SBM1 chunk commitment, adds one manifest-level field and three per-entry
+fields, and writes NO index sidecar.
+
+**Manifest-level field.** After the layout label and before the entry count,
+SBM7 writes one length-prefixed UTF-8 string, `blankNodeProfile`. It says how
+each entry's `blankNodeScope` is to be read, which section 2.4.1 requires: a
+content digest identifies a blank-node allocation only when the publication
+profile also says that repeated imports of those bytes share one allocation.
+Two profiles are defined, and a manifest naming any other is refused:
+
+| Profile | Meaning |
+|---|---|
+| `content-digest-shared` | Repeated imports of the same source bytes share one blank-node allocation, so a content digest is a sufficient scope. `l4block-shard-pack` writes this. |
+| `import-occurrence` | The scope carries an import occurrence or equivalent provenance identity; two imports of identical bytes are two allocations. |
+
+**Per-entry fields.** Appended after the entry's chunk commitment, in this
+order:
+
+| Width | Field | Value |
+|---|---|---|
+| 1 | block kind | `0` is IBK3, `1` is IBK4 |
+| 4 + n | `blankNodeScope` | length-prefixed UTF-8, at most 256 bytes, nonempty |
+| 4 | graph count | number of members of the graph-set summary |
+| per member | graph name | one kind byte, then a length-prefixed UTF-8 name |
+
+A graph name's kind byte is `0` for the default graph (its name string is
+empty), `1` for an IRI, `2` for a blank node (its label is nonempty).
+
+**The graph-set summary carries NAMES, not the block's graph column values.**
+The IBK4 header summary of section 6.1.1 holds block-local term IDs, and
+resolving one to its graph name needs a PTD1 page of that block. A planner
+selecting entries for `GRAPH <iri> { ... }` from the manifest alone therefore
+needs the names, which is why a count plus a default-graph flag was not
+enough. The order is the block's first-occurrence row order, so the manifest
+summary and the block header summary are compared position by position at
+activation.
+
+**The manifest layout label and the per-entry block kind.** SBM0 through SBM6
+have no per-entry kind: their layout label fixes one codec for every entry
+(`predicate-ibk2-*` is IBK2, `predicate-ibk3-*` is IBK3). SBM7 keeps the label
+— it still names the generation's physical family and its sidecar contract —
+and adds the per-entry kind, which names the codec of that one artifact. The
+label admitted for SBM7 is `quad-ibk4-ptd1-merkle-v0`, and under it every entry
+must carry the kind `IBK4`. The kind `IBK3` exists in the type and on the wire
+so that a mixed generation is a widening of SBM7 admission rather than a new
+wire version; it is not admitted today. There is no compacted SBM7 label: the
+compactor does not build IBK4 generations, and a label nothing writes would be
+an untested reader path.
+
+**Admitted manifests.** Encoder admission equals decoder admission.
+
+1. Every SBM1 condition on the primary artifact: a nonempty byte extent, a
+   32-byte SHA-256, and a chunk commitment whose total byte count is the
+   artifact's.
+2. No index sidecar is present. SRI2, OLI2 and TLI1 are keyed by a block-local
+   ID with no graph dimension, so they cannot describe an IBK4 artifact; the
+   graph-aware sidecars are the next piece of work.
+3. Every entry's block kind is `IBK4`, matching the layout label.
+4. Every entry's `blankNodeScope` is nonempty and at most 256 UTF-8 bytes — the
+   same bound the diagnostic ABI of section 2.4.1 already imposes.
+5. Every entry's graph set is nonempty, lists no graph twice, and gives a
+   nonempty label to every blank-node graph name.
+6. The manifest's `blankNodeProfile` is one of the two defined profiles.
+7. Every SBM0 condition: unique artifact keys, contiguous ordinals, and the
+   per-entry field widths below 2^32. Predicate uniqueness is NOT among them:
+   `uniquePredicates` binds only versions below SBM2, so an SBM7 generation
+   may carry several entries for one predicate and a reader must take their
+   union (section 6.1.1).
+8. SBM0 through SBM6 must NOT carry the three per-entry fields or the
+   publication profile. A pre-SBM7 manifest carrying them would encode to bytes
+   that drop them, and the round trip would lose data without saying so.
+
+**Round trip.** `ShardManifestTheorems.decode?_encode?` proves
+`encode? manifest = some bytes → decode? bytes = some manifest`, over every
+wire version SBM0 through SBM7, with that as its only hypothesis.
+
+#### 6.3.2 SBM10 — zone maps, the blob table, and IBK5
+
+SBM10 is the manifest a wire-version-10 generation carries. It keeps every
+SBM9 field, adds three per-entry fields and one manifest-level field, and
+changes the block kind and the literal-index role. Design record:
+[the wire-version-10 record](designissues/2026-09-05-wire-version-10-scale.md)
+section 6.
+
+**Layout label and block kind.** The one label admitted for SBM10 is
+`quad-ibk5-ptd2-lgi2-gbi1-merkle-v0`, and under it every entry must carry the
+block kind `IBK5`, whose kind byte is `2`. `IBK5` is not a member of the IBK4
+label set: an IBK4 reader refuses an IBK5 artifact at its magic, and a reader
+selects its block codec by the manifest's label and kind before it opens any
+artifact, so a reader that does not implement IBK5 refuses the generation
+from the manifest alone. There is no compacted SBM10 label, for
+the reason SBM7 has none.
+
+**Per-entry fields.** Appended after the GBI1 sidecar reference and before the
+quad tail of section 6.3.1, in this order:
+
+| Width | Field | Value |
+|---|---|---|
+| 4 | blob count | number of blob-table positions this entry names |
+| 4 each | blob position | a position in the manifest blob table; ascending, no repeat, each below the table length |
+| 4 + n | `subjectMin` | the first `zoneBytes` (64) bytes of the smallest subject key in the block |
+| 4 + n | `subjectMax` | the first 64 bytes of the largest subject key |
+| 4 + n | `objectMin` | the first 64 bytes of the smallest object key |
+| 4 + n | `objectMax` | the first 64 bytes of the largest object key |
+
+A zone-map bound is a length-prefixed byte string, not a length-prefixed UTF-8
+string: it is a PREFIX of a key, and a prefix of UTF-8 need not be UTF-8.
+
+**A key and its order.** A key is the version-2 wire encoding of the term. The
+order is lexicographic on bytes, byte by byte with a proper prefix first: the
+canonical key order `TLI1` states, restated over version-2 bytes. It is
+`ShardManifest.lexLe`, written in the manifest module rather than imported so
+that the manifest does not depend on the term dictionary to state the order of
+its own fields.
+
+**Why the bounds are 64-byte prefixes.** A 64 KiB literal would otherwise put
+64 KiB into every entry that holds it. Truncation is sound because the order
+is preserved by taking a prefix of a fixed length:
+`ShardManifestTheorems.lexLe_take` proves `a ≤ b → a.take n ≤ b.take n`, and
+`zoneMap_sound` uses it to prove that a key at or above the block's smallest
+key and at or below its largest is inside the entry's truncated bounds. A
+planner that drops an entry on the zone test therefore never drops a block
+that holds a matching row.
+
+**Manifest-level field.** After the entry list: a u32 count, then one artifact
+reference per out-of-line literal, in the same framing an index sidecar uses
+(key, byte extent, SHA-256, fixed-chunk Merkle commitment). Each key is
+`blob-<64 lowercase hexadecimal>.lit` with the hexadecimal equal to that
+reference's own SHA-256, so a reader holding a version-2 out-of-line term can
+name the file its digest identifies. The table is ascending and distinct by
+SHA-256.
+
+**Planner use.** A pattern with a constant subject `s` excludes every entry
+whose subject zone cannot contain `key(s)`; likewise a constant object.
+`ShardManifest.quadEntriesForQueryWithKeys` runs that test beside the
+predicate and graph-name collectors of section 6.3.1. The key function is a
+parameter of that function, not an import, and every give-up keeps the entry:
+a collector that established nothing, an entry with no zone map, a term whose
+key cannot be computed, or an empty collected list. Selectivity depends on the
+source order. A subject-grouped source, which is what serialisers emit, gives
+disjoint ranges per block; a shuffled source gives overlapping ranges and a
+scan, which is correct and no worse than a generation with no zone maps.
+
+**Activation checks.** Beyond the admission list below, activation checks for
+every entry that each out-of-line term in the decoded dictionary names a
+digest that is the SHA-256 of an artifact in the blob table; that the
+artifact's bytes hash to its stated SHA-256, which equals the hexadecimal in
+its key; that its byte extent equals the term's stated byte length; and that
+the entry's position list is exactly the set of blobs its dictionary names.
+Those need the block bytes, so they are not part of manifest admission.
+
+**Admitted manifests.** Encoder admission equals decoder admission.
+
+1. Every SBM9 condition, with the LGI1 role now filled by an LGI2 artifact and
+   the block kind now `IBK5`.
+2. Every entry's blob positions are ascending, distinct, and below the length
+   of the blob table.
+3. Every entry carries both zone maps. Each bound is at most `zoneBytes` = 64
+   bytes, and each zone's lower bound is at or below its upper bound under
+   `lexLe`.
+4. Every blob-table reference is a fully committed artifact — a nonempty byte
+   extent, a 32-byte SHA-256, and a chunk commitment whose total byte count is
+   the artifact's — and its key is `blob-<hexadecimal>.lit` with the
+   hexadecimal equal to its SHA-256.
+5. The blob table is ascending and distinct by SHA-256.
+6. No blob key aliases a block key or a sidecar key.
+7. SBM0 through SBM9 must NOT carry a zone map, a blob position, or a blob
+   table. A manifest below version 10 carrying one would encode to bytes that
+   drop it, and the round trip would lose data without saying so. This is the
+   rule item 8 of section 6.3.1 states for SBM7's own fields.
+
+**Round trip.** `ShardManifestTheorems.decode?_encode?` proves
+`encode? manifest = some bytes → decode? bytes = some manifest`, over every
+wire version SBM0 through SBM10, with that as its only hypothesis. The
+version-10 entry shape is `decodeEntry_encodeEntry_quadZone`, and the framed
+objects it composes have their own lemmas:
+`decodeBytesField_encodeBytesField`, `decodeZone_encodeZone`,
+`decodeBlobRefs_encodeBlobRefs` and `decodeBlobTable_encodeBlobTable`. The
+zone-map soundness theorem is `zoneMap_sound`. Every one of them depends on
+`propext`, `Classical.choice` and `Quot.sound` only.
+
+SBM0 through SBM9 bytes are unchanged by SBM10's arrival.
+
+### 6.4 Durable update and generation protocol
+
+| Name | Role |
+|---|---|
+| `DLE1` | one framed and checksummed durable delta operation |
+| `DLB1` | sequenced, epoch-stamped, all-or-nothing batch of DLE1 operations |
+| `DLOG` | append-only header and DLB1 history |
+| `CEP1` | compacted epoch already folded into an immutable generation |
+| `CURRENT` | atomically replaced UTF-8 safe child-generation name |
+
+The DLE1/DLB1 checksum detects framing corruption and torn append tails; it is
+not a cryptographic identity. A writer validates the existing committed
+history, stamps new batches after the compacted epoch, appends under the host
+locking/fsync boundary, and never rewrites the immutable base in place.
+Compaction builds a fresh generation, writes its CEP1 marker, verifies it, and
+only then atomically replaces `CURRENT`. Recovery replays exactly the valid
+history suffix after CEP1.
+
+### 6.5 Related formats, not redefined here
+
+- **COTTAS v1** is the earlier Parquet-based quad store and remains a useful
+  import/export, compatibility, and differential path. Its detailed contract
+  is the [COTTAS v1 format](cottas-format-v1.md), and its operational sidecars
+  are catalogued in the
+  [disk-storage-format skill](https://github.com/danbri/factoidal/blob/claude/main/skills/disk-storage-format/SKILL.md).
+- **HDT** is an external RDF format with its own specification. Factoidal's
+  Lean HDT implementation is separate; IBK does not implement the HDT format.
+- **[RDFC-1.0 canonical N-Quads and hashes](https://www.w3.org/TR/rdf-canon/)**
+  identify declared RDF dataset content. They may identify a source or derived
+  generation but are not the IBK byte layout.
+- **S-expressions, physical plans, PushIR, execution records, and proof
+  certificates** are separately typed symbolic/execution languages. They may
+  refer to stored artifacts; they are not block bytes.
+
+## 7. Semantic neutrality and semantic context
+
+The base row denotation is RDF data, not “RDFS data”, “OWL data”, or “SHACL
+data”. Schema and rules are themselves data or separately identified programs.
+This permits the same asserted generation to be queried under simple RDF,
+RDF/RDFS, an OWL profile, a SPARQL entailment regime, a rule system, or no
+additional semantics.
+
+SBM6 does **not yet** encode enough information to make derived semantic
+artifacts self-describing. A successor manifest must be extensible by
+content-addressed, typed references rather than by a closed enumeration of
+favoured standards. At minimum it must be able to identify:
+
+```text
+artifact semantic role
+    asserted RDF | derived RDF | schema | ruleset | shapes |
+    validation report | derivation/evidence | application-defined role IRI
+
+source dataset and named-graph set
+RDF term-identity/canonicalization profile
+semantic or entailment profile IRI and version
+exact schema/rules/program artifact hashes
+graph and dataset scoping policy
+publisher/voice/authority boundary
+trust-policy identity
+derivation time and source generation identities
+implementation/program identity and evidence reference
+```
+
+The existing `sourceIdentity` and `termRegistryVersion` fields are the starting
+points for source and term-identity context. A successor should extend their
+contract rather than introduce parallel identities.
+
+An IRI names the language/profile; a digest fixes the exact artifact or
+program. This accommodates, without granting any one of them storage-level
+privilege:
+
+- [RDF](https://www.w3.org/TR/rdf11-mt/) and
+  [RDFS](https://www.w3.org/TR/rdf-schema/) semantics, including experimental
+  RDFS-Plus profiles;
+- [OWL profiles](https://www.w3.org/TR/owl2-profiles/) and
+  [SPARQL entailment regimes](https://www.w3.org/TR/sparql11-entailment/);
+- [RIF](https://www.w3.org/TR/rif-core/) and other rule languages such as
+  Datalog, N3 rules, SPARQL rule forms, SHACL Rules, application rules, and
+  typed Lean rule programs;
+- [SHACL](https://www.w3.org/TR/shacl/), SHACL extensions, and
+  [ShEx](https://shex.io/shex-semantics/) validation artifacts;
+- Common Logic and IKL propositions about datasets, programs, executions,
+  provenance, and assurance.
+
+SHACL and ShEx validation are not silently treated as entailment. A validator
+may produce a report, evidence, or a separately named derived graph. Likewise,
+Common Logic/IKL may describe and make claims about a computation without
+being required by the storage execution kernel.
+
+Asserted and derived triples should normally occupy separately identifiable
+graph/artifact layers. A client requesting simple semantics must be able to
+exclude derived closure data. A client accepting a named profile may select a
+validated materialized closure or run the profile on demand.
+
+## 8. Optional semantic access summaries
+
+This section describes optional derived indexes. SBM6 does not require them,
+and no wire identifiers have been assigned for them.
+
+### 8.1 Current exact-predicate behaviour
+
+Current Shardborough selection is exact-predicate only. A constant query
+predicate selects manifest entries whose predicate IRI is exactly equal. The
+Lean RDFS and OWL layers implement and reason about `rdfs:subPropertyOf`
+(`rdfs5`, `rdfs7`, and related OWL RL rules), but no current SBM6 sidecar or
+IBK3 physical planner turns a superproperty query into subordinate predicate
+block reads.
+
+Consequently, today a query for `dc:description` under an RDFS entailment
+regime must first use the logical materialization/closure route or another
+complete fallback. The fast exact-predicate path alone would be incomplete if
+it ignored trusted declarations such as:
+
+```turtle
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:shortDescription rdfs:subPropertyOf dc:description .
+```
+
+### 8.2 Predicate-entailment map
+
+One proposed acceleration is a separately committed derived
+artifact, provisionally called a **predicate-entailment map**; no wire magic is
+allocated by this draft. For a fixed semantic context it maps a queried
+superproperty to the exact predicate partitions whose rows can contribute:
+
+```text
+(source generation hash,
+ schema/rules hash,
+ entailment-profile identity,
+ graph-scope policy,
+ trust-policy hash)
+        + queried predicate q
+        -> admitted source predicates {p | profile licenses p <= q}
+```
+
+For plain/simple SPARQL the candidate set is `{q}`. Under an admitted RDFS
+profile it may include the reflexive-transitive `rdfs:subPropertyOf` closure
+below `q`. An OWL profile may additionally license equivalent-property
+relationships, but only if the profile's proved semantics says so.
+
+The physical planner may then either:
+
+1. scan and merge the listed exact-predicate blocks at query time; or
+2. open a content-addressed materialized superproperty block derived from the
+   same source and semantic-context identities.
+
+The earlier F* [OWL query rewriter](https://github.com/danbri/factoidal/blob/claude/main/formal/fstar/OWL.QueryRewrite.fst)
+implements superproperty access as a logical `UNION` rewrite. Its documented
+row-multiplication problem is one reason inferred triples must be deduplicated
+before SPARQL solution multiplicity is calculated; see
+[issue #236](https://github.com/danbri/factoidal/issues/236).
+
+The logical denotation is a graph set. If identical `(subject, object)` pairs
+reach the queried superproperty through multiple source predicates in the same
+graph, the inferred superproperty triple exists once. A physical union must
+therefore deduplicate at the inferred-triple boundary before exposing SPARQL
+solution multiplicity. In a quad layout, the deduplication key includes graph
+identity. Storage duplication must not become duplicate logical answers.
+
+The map does not establish schema authority. It is usable only when every
+context identity matches the query's requested regime and admitted trust/graph
+boundary. A missing, stale, conflicting, or untrusted map falls back to
+complete evaluation.
+
+### 8.3 Limits of predicate expansion
+
+Not every property rule reduces to a union of predicate blocks:
+
+- `owl:inverseOf` also swaps subject and object access roles;
+- transitive properties require reachability;
+- property chains require joins;
+- `owl:sameAs` may affect term identity in the semantic result without
+  changing raw RDF term identity;
+- non-monotonic or scoped rules may invalidate simple closure reuse.
+
+These need distinct typed physical operators or separately materialized,
+profile-bound derived artifacts. They must not be represented as one
+`subPropertyOf` bitmap or as global TermId allocation.
+
+### 8.4 Predicate-map proof obligations
+
+Before the predicate-entailment map becomes an exact fast path, Lean should
+establish, for each admitted profile:
+
+1. every selected subordinate predicate is licensed to entail the queried
+   predicate under the named context (soundness);
+2. every source predicate capable of contributing is selected when the path
+   claims completeness (no false-negative pruning);
+3. verified block rows denote the exact predicate fragments named by the map;
+4. merge plus inferred-triple deduplication gives the same solution bag as the
+   reference Lean evaluator under that entailment regime.
+
+The existing RDFS `rdfs5`/`rdfs7` definitions and soundness results are the
+semantic starting point. The missing work is the persisted context/index
+contract and its planner refinement. This work is tracked in
+[issue #636](https://github.com/danbri/factoidal/issues/636).
+
+### 8.5 Endpoint-type summaries
+
+A predicate block may have a small derived summary of the classes associated
+with its subject and object endpoints. The summary is intended to reject
+irrelevant blocks before their row and dictionary pages are fetched.
+
+For a role, class, and threshold, the summarized claim has this form:
+
+```text
+fraction of endpoints in role R having type C under context K >= threshold Q
+```
+
+The endpoint population must be stated. Useful choices include distinct RDF
+terms, distinct RDF resources, and row occurrences; they give different
+fractions. Subject and object roles are kept separate.
+
+A compact representation may use one Bloom filter per role and threshold, or
+one filter with domain-separated keys such as:
+
+```text
+at_least_1:subject:<canonical class key>
+at_least_half:subject:<canonical class key>
+all:object:<canonical class key>
+```
+
+Other quantized thresholds are allowed. Each version fixes its thresholds,
+hash functions, key encoding, bit count, and claimed false-positive rate.
+
+The interpretation follows the Bloom filter's one-sided error:
+
+- a negative `at_least_1` result proves that the block cannot satisfy the
+  corresponding type join, provided the summary was completely constructed;
+- a negative result at a higher threshold supplies a sound upper bound for
+  join ordering and bandwidth estimates;
+- a positive result is only a candidate claim. It may guide planning but does
+  not prove the threshold;
+- in particular, a positive `all` result cannot by itself justify removing a
+  type join. That requires an exact set, a checked certificate, or subsequent
+  verification.
+
+The indexed type relation may contain asserted types only, or it may include
+materialized supertypes. A summary containing supertypes must bind the exact
+source generation, named-graph scope, schema or rule-set digest, entailment
+profile, trust policy, and endpoint-population rule used to construct it. This
+permits a selected common vocabulary to be projected from many named graphs
+without making that vocabulary part of the base block format.
+
+Class keys may be canonical RDF-term keys or entries in a content-addressed
+vocabulary dictionary. A small exact bitmap for a common vocabulary can be
+combined with a Bloom filter for the long tail. Local IBK3 IDs are suitable
+only when the summary is bound to that exact block.
+
+The summary belongs in the manifest or in a content-addressed sidecar so it
+can be read before the block. No wire magic is allocated by this draft. An
+exact pruning path requires Lean results for complete construction, absence
+soundness, context matching, and equivalence with the unpruned evaluator.
+
+## 9. Named graphs, provenance, and trust
+
+Semantic profiles are scoped to a dataset, not presumed global. A schema
+triple in one untrusted Web page must not automatically govern every graph in
+a corpus. The target quad manifest must preserve:
+
+- default versus named graph identity;
+- site, publisher, user, extractor, and snapshot voice where supplied;
+- which graph set provided schema/rule premises;
+- whether a derived view flattens graphs for execution while retaining the
+  source graph relation;
+- retraction and recomputation dependencies.
+
+Publisher hints—including property characteristics, entity boundaries, and
+identifier assignments—are provenance-bearing inputs. They become physical
+accelerators only after validation under an explicit trust/profile boundary.
+The same rule applies to inverse-functional-property identity candidates and
+subproperty maps.
+
+## 10. Alpha compatibility and beta gates
+
+The current family is suitable for an experimental MVP/alpha in which data can
+be repacked after a version bump. It is not yet a stable external storage
+standard. Beta requires at least:
+
+1. complete field tables and portable golden vectors in this specification;
+2. general round-trip or denotation-preservation theorems for IBK3, PTD1,
+   SRI2/OLI2, TLI1, SBM6, and Merkle range admission;
+3. a proved bridge from verified selected rows to the reference Lean SPARQL
+   evaluator;
+4. a settled RDF 1.2 term codec and tagged GraphId/quad layout, and a
+   generation manifest that commits the blank-node scope of each source
+   partition instead of accepting a scope at query time (section 2.4.1);
+5. explicit semantic-context and provenance references for derived artifacts;
+6. identical-byte interoperability in at least two host paths;
+7. migration and feature-negotiation rules, including unknown-version refusal;
+8. crash, corruption, fuzz, and update/compaction regression coverage stated
+   by format and version;
+9. a generation pointer that commits the selected manifest identity rather
+   than only a directory name;
+10. a portable activation record or equivalent host contract distinguishing a
+    fully validated generation from files that have only passed range-level
+    integrity checks.
+
+### 10.1 Gate 2 progress (2026-09-02)
+
+Kernel-checked round-trip theorems now exist for the complete-artifact codecs
+of the current family. Each depends only on the three standard Lean axioms.
+
+| Codec | Theorem | Module | Admission hypotheses |
+| --- | --- | --- | --- |
+| Term codec (`serializeTerm` / `parseTerm`) | `parseTerm_serializeTerm` | [`Storage/TermCodecTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermCodecTheorems.lean) | `termSupported` (no base direction, no triple term); `termFitsU32` (every length-prefixed string below the u32 limit) |
+| PTD1 | `decode?_encode?` | [`Storage/PagedTermDictionaryTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryTheorems.lean) | none beyond `encode? terms = some bytes`: `supported` checks both term conditions |
+| IBK3 | `decode_encode?`, `denotes_decode_encode?` | [`Storage/IndexedBlockWireV3Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV3Theorems.lean) | none beyond `encode? block = some bytes`: `supported` runs the decoder's own `fromParts?` admission |
+| IBK4 | `decode_encode?`, `denotes_decode_encode?` | [`Storage/IndexedBlockWireV4Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV4Theorems.lean) | none beyond `encode? block = some bytes`: `supported` runs the graph-column bounds, the graph-set summary condition and the decoder's own `fromParts?` admission |
+| Term codec v2 | `parseTerm_serializeTerm?`, `resolve_toWire` | [`Storage/TermWireV2Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermWireV2Theorems.lean) | none beyond `serializeTerm? w = some bytes`: the encoder's admission is the decoder's |
+| PTD1 and PTD2, generic | `decode?_encode?` over `PagedFormat`, once | [`Storage/PagedTermDictionaryCoreTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryCoreTheorems.lean) | none beyond `encode? terms = some bytes`; PTD1's own definitions are proved equal to the generic ones by `rfl` and its bytes are unchanged (hub blocks byte-identical, 2026-09-05) |
+| IBK5 | `decode_encode?`, `denotes_decode_encode?`, `resolveBlock_decode_encode?` | [`Storage/IndexedBlockWireV5Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV5Theorems.lean) | none beyond `encode? block = some bytes` |
+| SBM10 | `decode?_encode?` (versions 0 through 10), `zoneMap_sound` | [`Storage/ShardManifestTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/ShardManifestTheorems.lean) | none beyond `encode? manifest = some bytes` |
+| LGI2 | `decodeLeb128_encodeLeb128`, `parsePostings2_encodePostings2`, `mem_candidatesOpaque_of_match`, `mem_candidatesOpaque_of_opaque` | [`Storage/LiteralGramIndexWire.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the whole-artifact round trip is checked by `#guard`, not proved: `decode2?` reads through `ByteArray.extract` and a CRC over a slice, as LGI1 does |
+| SRI2 (also the OLI2 object role) | `decode?_encode?` | [`Storage/SubjectRowIndexWireV2Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2Theorems.lean) | none beyond `encode? index = some bytes`: `supported` now runs `offsetsPermutation`, which the decoder re-runs |
+| TLI1 | `decode?_encode?` | [`Storage/TermLocalIndexWireTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermLocalIndexWireTheorems.lean) | none beyond `encode? index = some bytes`: `supported` now runs `localIdsPermutation`, `termSupported` and `termFitsU32b` |
+
+Findings recorded by these proofs:
+
+- `termFitsU32` was a real admission condition that `encode?` did not check:
+  the dictionary encoder calls the total term encoder, which writes a
+  truncated u32 length prefix for a string of 2^32 bytes or more. The guard
+  is now in `PagedTermDictionary.supported` (`termFitsU32b`), so the
+  encoder refuses such a term before it reaches the wire.
+- `IndexedBlock.fromParts?` refuses a dictionary with repeated terms and rows
+  whose IDs do not resolve to a subject, a predicate IRI and an object.
+  `IndexedBlockWireV3.supported` now runs that same test, so the encoder
+  refuses exactly the blocks the decoder would refuse.
+- `IndexedBlockWireV3.orderedRows?` takes a direct path when row positions are
+  already `0, 1, 2, ...`, which is what the encoder emits, and sorts only
+  otherwise. The answer is the same for every input; the direct path is what
+  the proof reasons about, because Lean core has no theorems about
+  `Array.qsort`.
+- The IBK3 theorem is stated on the two array fields and on the block
+  denotation, not on block equality: `IndexedBlock.Block` also carries two
+  hash maps.
+
+- SRI2's subject/offset ordering does not imply distinct row offsets, and
+  TLI1's key ordering does not imply distinct local IDs; both decoders check
+  the permutation property, and both encoders now check it too. TLI1's
+  encoder also required the two term-codec admission conditions, since the
+  decoder rebuilds the RDF term from the stored key.
+
+- IBK4's graph-set summary would be a second source of truth if the decoder
+  accepted it as written. It does not: `decode` recomputes the distinct graph
+  set from the rows it decoded and refuses a mismatch, so the summary is a
+  planning shortcut whose only admitted value is the one the rows imply.
+- IBK4's biased graph column costs one usable local ID (`2^32 - 1` cannot name
+  a graph). That is an admission condition in `supported`, not a silent
+  truncation of the field.
+
+Still open under gate 2: SBM6 and Merkle range admission.
+
+Gate 4 is partly met: IBK4 is the tagged quad layout at block level. The
+generation manifest that commits each source partition's blank-node scope
+(`SBM7`), the packer, the graph-aware sidecars and the planner are not done,
+and the RDF 1.2 term codec is unchanged.
+
+## 11. Implementation map and supporting design records
+
+- Current codecs and pure validators:
+  [formal/lean4/L4Factoidal/Storage/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/Storage)
+- Host I/O, publication, activation, compaction and query probes:
+  [formal/lean4/Harness/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/Harness)
+- Native/WASM block-worker operations and their dispatch ABI:
+  [formal/lean4/Wasm/Ops/Block.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/Wasm/Ops/Block.lean)
+  and
+  [formal/lean4/Wasm/Dispatch.lean](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/Wasm/Dispatch.lean)
+- Block-worker implementation milestone:
+  https://github.com/danbri/factoidal/issues/637
+- SPARQL reference semantics and refinements:
+  [formal/lean4/L4Factoidal/SPARQL/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/SPARQL)
+- RDFS and RDFS-Plus semantics:
+  [formal/lean4/L4Factoidal/RDFS/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/RDFS)
+- OWL and rule implementations:
+  [formal/lean4/L4Factoidal/OWL/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/OWL)
+  and
+  [formal/lean4/L4Factoidal/RIF/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/RIF)
+- Common Logic/IKL:
+  [formal/lean4/L4Factoidal/CL/](https://github.com/danbri/factoidal/tree/claude/main/formal/lean4/L4Factoidal/CL)
+- Symbolic execution architecture:
+  [Block engine, part 3](2026-08-blockengine_part3.md)
+- Web working sets, graph voice, RDFC, publisher hints, and identity profiles:
+  [Web-corpus working sets](20260830-web-corpus-working-sets.md)
+- Current physical-format chronology and measurements:
+  [IBK3 decode hot path](20260831-ibk3-decode-hot-path.md)
+
+## 12. Design authorship
+
+The Shardborough architecture and the design requirements in this document are
+by Dan Brickley. Implementation and editorial contributions are recorded in
+the Factoidal repository history.
