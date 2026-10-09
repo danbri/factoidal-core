@@ -23,7 +23,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -337,7 +337,17 @@ test('post18: the js npm-entry bundle DOES contain the delta-log exports (the co
 test('post18: the C demo transcript quoted in this post is real (formal/fstar/c-output/deltalog/demo/delta_log_demo)', (t) => {
   const demoBin = path.join(
     REPO_ROOT, 'formal', 'fstar', 'c-output', 'deltalog', 'demo', 'delta_log_demo');
-  assert.ok(fs.existsSync(demoBin), 'expected the compiled C delta-log demo binary to exist');
+  if (!fs.existsSync(demoBin)) {
+    // A build product since the 2026-10-09 split: the builds F* Linux job
+    // compiles it from the committed KaRaMeL C and ships it in the
+    // linux-x86_64 release. On Linux its absence is a failure (run
+    // tools/fetch-builds.sh); elsewhere no release carries it.
+    if (process.platform === 'linux' && process.arch === 'x64') {
+      assert.fail('delta_log_demo missing: run tools/fetch-builds.sh (linux-x86_64 release)');
+    }
+    t.skip(`delta_log_demo is shipped for linux-x86_64 only (${process.platform}/${process.arch})`);
+    return;
+  }
   const { execFileSync } = require('node:child_process');
   let out;
   try {
@@ -368,15 +378,22 @@ test('post18: the delta-log merge correspondence lemma this post cites is presen
 
 test('post18: the commits cited in this post are real, reachable commits', () => {
   const { execFileSync } = require('node:child_process');
+  // Ids are danbri/factoidal commits; resolve them through the split map.
+  // 8ff60eb (browser persistence) changed no formal/ file, so it exists only
+  // in danbri/factoidal: the map must say so, and the post links there.
   for (const sha of ['8ff60eb', 'bd9e5be', '4f8fc95', 'e8085da']) {
-    const out = execFileSync('git', ['cat-file', '-t', sha], { cwd: REPO_ROOT }).toString().trim();
-    assert.equal(out, 'commit', `expected ${sha} to be a commit reachable in this repo`);
+    const m = resolvePreSplitCommit(REPO_ROOT, sha);
+    assert.ok(m, `expected ${sha} in tools/repo-split/commit-map.tsv`);
+    if (sha === '8ff60eb') { assert.equal(m.kind, 'pruned'); continue; }
+    assert.equal(m.kind, 'rewritten', `expected ${sha} to have a rewritten core commit`);
+    const out = execFileSync('git', ['cat-file', '-t', m.core], { cwd: REPO_ROOT }).toString().trim();
+    assert.equal(out, 'commit', `expected core commit ${m.core} (from ${sha}) to be reachable in this repo`);
   }
 });
 
 test('post18: the zero-Python DuckDB verdict quoted in this post matches the real commit message', () => {
   const { execFileSync } = require('node:child_process');
-  const msg = execFileSync('git', ['log', '-1', '--format=%B', '4f8fc95'], { cwd: REPO_ROOT }).toString();
+  const msg = execFileSync('git', ['log', '-1', '--format=%B', resolvePreSplitCommit(REPO_ROOT, '4f8fc95').core], { cwd: REPO_ROOT }).toString();
   assert.match(msg, /DuckDB verdict: ACCEPTED byte-exact on 5-quad, 6,780-quad,\s+and\s+888,949-quad corpora/);
   assert.match(msg, /0 missing, 0 extra vs source/);
 });

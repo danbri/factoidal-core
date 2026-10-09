@@ -131,6 +131,10 @@ npm/factoidal/node_modules/
 !/docs/test-results/closure-bench-baseline.json
 !/docs/test-results/perf-quadstore-baseline.json
 !/docs/test-results/perf-quadstore-baseline.fragment.html
+!/docs/test-results/ukparliament-bench.json
+!/docs/test-results/ukparliament-bench.csv
+!/docs/test-results/ukparliament-bench-modern.json
+!/docs/test-results/ukparliament-bench-modern.csv
 /docs/npm/
 /docs/fstar-extracted/w3c-runner.js
 /docs/fstar-extracted/w3c-runner.wasm.js
@@ -155,7 +159,9 @@ npm/factoidal/node_modules/
 /npm/factoidal/factoidal-npm-entry-lite.js
 /npm/factoidal/factoidal-npm-entry-lite.wasm.js
 /npm/factoidal/factoidal-npm-entry-lite.wasm.assets/
-/npm/factoidal/l4-assets/
+/npm/factoidal/l4-assets/l4factoidal.js
+/npm/factoidal/l4-assets/l4factoidal.mjs
+/npm/factoidal/l4-assets/l4factoidal.wasm
 /npm/factoidal-lean/l4factoidal.js
 /npm/factoidal-lean/l4factoidal.mjs
 /npm/factoidal-lean/l4factoidal.wasm
@@ -169,3 +175,5 @@ npm/factoidal/node_modules/
 /formal/fstar/*.log
 /formal/fstar/ocaml-output/*.log
 /formal/lean4/COLL/
+/formal/fstar/c-output/**/*.o
+/formal/fstar/c-output/deltalog/demo/delta_log_demo

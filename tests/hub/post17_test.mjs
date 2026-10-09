@@ -7,7 +7,7 @@
 // gap this post used to document (`docs/_includes/hub.njk`'s `fn` had
 // no `update` method) is closed.
 
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -108,11 +108,14 @@ test('post17: the W3C SPARQL 1.1 Update suite is 176/176 in the committed dashbo
   assert.equal(total, 176, `expected 176 total Update-suite cases, found ${total}`);
 });
 
-test('post17: the three durable-UPDATE commits cited exist on this branch', () => {
+test('post17: the three durable-UPDATE commits cited exist (danbri/factoidal ids, mapped into factoidal-core)', () => {
   const { execFileSync } = require('node:child_process');
   for (const sha of ['868a20b', '1f27320', '5e8399a']) {
-    const out = execFileSync('git', ['cat-file', '-t', sha], { cwd: REPO_ROOT }).toString().trim();
-    assert.equal(out, 'commit', `expected ${sha} to be a commit reachable in this repo`);
+    const m = resolvePreSplitCommit(REPO_ROOT, sha);
+    assert.ok(m, `expected ${sha} in tools/repo-split/commit-map.tsv`);
+    assert.equal(m.kind, 'rewritten', `expected ${sha} to have a rewritten core commit`);
+    const out = execFileSync('git', ['cat-file', '-t', m.core], { cwd: REPO_ROOT }).toString().trim();
+    assert.equal(out, 'commit', `expected core commit ${m.core} (from ${sha}) to be reachable in this repo`);
   }
 });
 
@@ -151,6 +154,8 @@ test('post17: factoidal-http now routes the Graph Store Protocol (grounds the "l
 
 test('post17: the stage-8 HTTP-wiring commit cited exists on this branch', () => {
   const { execFileSync } = require('node:child_process');
-  const out = execFileSync('git', ['cat-file', '-t', 'e8085da'], { cwd: REPO_ROOT }).toString().trim();
-  assert.equal(out, 'commit', 'expected e8085da to be a commit reachable in this repo');
+  const m = resolvePreSplitCommit(REPO_ROOT, 'e8085da');
+  assert.ok(m && m.kind === 'rewritten', 'expected e8085da to have a rewritten core commit');
+  const out = execFileSync('git', ['cat-file', '-t', m.core], { cwd: REPO_ROOT }).toString().trim();
+  assert.equal(out, 'commit', `expected core commit ${m.core} (from e8085da) to be reachable in this repo`);
 });

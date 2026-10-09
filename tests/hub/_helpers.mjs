@@ -276,3 +276,29 @@ export function pretty(value) {
   // (f) anything else -- unchanged.
   return value;
 }
+
+// Commit citations made before the 2026-10-09 split name danbri/factoidal
+// commits. factoidal-core's history is rewritten to formal/ paths, so those
+// ids are not objects here. tools/repo-split/commit-map.tsv maps each one.
+// Returns { core, kind } for a cited 7-12 hex id, or null when the id is
+// not a danbri/factoidal claude/main commit. kind is 'rewritten' (the core
+// commit carries the same message, author and date), 'pruned' (the cited
+// commit changed no kept formal/ file; it exists only in danbri/factoidal),
+// or 'pruned-before-formal'.
+export function resolvePreSplitCommit(repoRoot, cited) {
+  const nodeFs = createRequireForHelpers('node:fs');
+  const nodePath = createRequireForHelpers('node:path');
+  const tsv = nodeFs.readFileSync(
+    nodePath.join(repoRoot, 'tools', 'repo-split', 'commit-map.tsv'), 'utf8');
+  for (const line of tsv.split('\n')) {
+    if (!line || line.startsWith('#') || line.startsWith('old\t')) continue;
+    const [oldId, newId, kind] = line.split('\t');
+    if (oldId.startsWith(cited)) return { core: newId, kind };
+  }
+  return null;
+}
+function createRequireForHelpers(m) {
+  return _helpersRequire(m);
+}
+import { createRequire as _helpersCreateRequire } from 'node:module';
+const _helpersRequire = _helpersCreateRequire(import.meta.url);

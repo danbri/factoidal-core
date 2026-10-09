@@ -6,7 +6,7 @@
 # every landing.
 #
 # Usage:
-#   tools/affected-tests.sh                 # base=merge-base(origin/claude/main, HEAD)
+#   tools/affected-tests.sh                 # base=merge-base(origin/main or origin/claude/core-split, HEAD)
 #                                            # head=working tree (incl. uncommitted changes)
 #   tools/affected-tests.sh <base>          # explicit base, head=working tree
 #   tools/affected-tests.sh <base> <head>   # explicit base and head (committed refs only)
@@ -46,13 +46,16 @@ else
   HEAD="${2:-}"
 
   if [ -z "$BASE" ]; then
-    BASE="$(git -C "$ROOT" merge-base origin/claude/main HEAD 2>/dev/null || true)"
-    if [ -z "$BASE" ]; then
-      BASE="$(git -C "$ROOT" merge-base main HEAD 2>/dev/null || true)"
-    fi
+    # factoidal-core's line is `main`; until the owner renames it, it is
+    # `claude/core-split`. (`origin/claude/main` in core is the stale
+    # pre-split copy: never a base.)
+    for CAND in origin/main origin/claude/core-split main; do
+      BASE="$(git -C "$ROOT" merge-base "$CAND" HEAD 2>/dev/null || true)"
+      [ -n "$BASE" ] && break
+    done
     if [ -z "$BASE" ]; then
       echo "affected-tests.sh: could not compute a default base ref (no" >&2
-      echo "  origin/claude/main or main reachable). Pass one explicitly:" >&2
+      echo "  origin/main, origin/claude/core-split or main reachable). Pass one explicitly:" >&2
       echo "  tools/affected-tests.sh <base-ref> [<head-ref>]" >&2
       exit 2
     fi

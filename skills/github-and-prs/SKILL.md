@@ -229,7 +229,7 @@ plain push from a long-lived local branch usually loses the race, and
 uncommitted) work. The pattern that works:
 
 ```bash
-git config user.email noreply@anthropic.com && git config user.name Claude  # once per clone
+git config user.email danbri@danbri.org && git config user.name "Dan Brickley"  # once per clone (iron rule 13: human identity only)
 git commit ...                        # commit locally as usual
 C=$(git rev-parse HEAD)
 git fetch origin claude/main

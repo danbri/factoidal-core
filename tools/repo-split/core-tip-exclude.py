@@ -17,7 +17,7 @@ TIP_EXCLUDE = [
     r'^bin/[^/]+/[^/.]+$',
     # Generated dashboard and measurements; the two measured baselines
     # that bench tools read as inputs stay.
-    r'^docs/test-results/(?!closure-bench-baseline\.json$|perf-quadstore-baseline\.(json|fragment\.html)$)',
+    r'^docs/test-results/(?!closure-bench-baseline\.json$|perf-quadstore-baseline\.(json|fragment\.html)$|ukparliament-bench(-modern)?\.(json|csv)$)',
     # Pages mirrors of the packages.
     r'^docs/npm/',
     # F* JS and wasm bundles (hand-written pages, clients and samples in
@@ -32,7 +32,7 @@ TIP_EXCLUDE = [
     # Engine bundles inside the npm packages.
     r'^npm/factoidal/factoidal(-npm-entry(-lite)?)?(\.wasm)?\.js$',
     r'^npm/factoidal/factoidal(-npm-entry(-lite)?)?\.wasm\.assets/',
-    r'^npm/factoidal/l4-assets/',
+    r'^npm/factoidal/l4-assets/l4factoidal\\.(js|mjs|wasm)$',
     r'^npm/factoidal-lean/l4factoidal\.(js|mjs|wasm)$',
     # Deployment (moves to danbri/factoidal-builds) and stray logs.
     r'^(Dockerfile|\.dockerignore|fly\.toml|serve-lifesci-demo\.sh)$',
