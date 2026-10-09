@@ -74,13 +74,10 @@ RDF-XML at scale.
 `tools/bench_ukpar_modern.py` (and the older `bench_ukpar_queries.py`)
 POST the 24 queries in `third_party/data/ukparliament/sparql/` to a
 running endpoint, wall-clock each with a per-query timeout, and emit
-CSV+JSON. The baselines were checked in at
-`docs/test-results/ukparliament-bench-modern.{csv,json}`. The 2026-10-09
-split did not carry them into `danbri/factoidal-core`: only
-`closure-bench-baseline.json` and `perf-quadstore-baseline.*` remain
-under `docs/test-results/` there, and the rest of that directory is
-generated and gitignored. The UK Parliament baselines are still in
-`danbri/factoidal` (branch `claude/main`).
+CSV+JSON. The baselines are checked in at
+`docs/test-results/ukparliament-bench{,-modern}.{csv,json}` (restored into
+`danbri/factoidal-core` after the 2026-10-09 split; `.gitignore` lists them
+as exceptions to the generated `docs/test-results/`).
 
 CI gate (inactive since 2026-10-09): `ukparliament-bench.yml` booted the
 daemon on the checked-in corpus, ran the bench, and diffed against the

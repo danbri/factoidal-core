@@ -141,11 +141,11 @@ Rules:
 - Never hand-edit anything under `docs/test-results/`.
 - Don't commit dashboard artifacts: they are gitignored in core. Build
   CI owns the published copy.
-- The two committed baselines in the same directory
-  (`closure-bench-baseline.json`, `perf-quadstore-baseline.*`) are
-  updated via their bench harness, not by hand. The UK Parliament
-  baselines `ukparliament-bench*.{csv,json}` were not carried into core
-  (see `perf-benchmarking`).
+- The committed baselines in the same directory
+  (`closure-bench-baseline.json`, `perf-quadstore-baseline.*`,
+  `ukparliament-bench{,-modern}.{csv,json}`) are updated via their bench
+  harness, not by hand. `.gitignore` excludes the rest of
+  `docs/test-results/` and lists these files as exceptions.
 
 ## The live SPARQL endpoint (Fly.io)
 
