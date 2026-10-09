@@ -65,6 +65,8 @@ def sourceConstraintOf : Constraint → Option Term
   | _ => none
 
 def severityToIri : Severity → WfIri
+  | .trace => shTrace
+  | .debug => shDebug
   | .info => shInfo
   | .warning => shWarning
   | .violation => shViolation
@@ -157,12 +159,21 @@ def boolLiteral (b : Bool) : WfLiteral :=
      langTag := none, direction := none }, rfl⟩
 
 /-- §3.6.1: the report graph — one `sh:ValidationReport` blank node
-with `sh:conforms`, one `sh:result` per validation result. -/
+with `sh:conforms`, one `sh:result` per validation result, and (SHACL
+1.2 §conformanceDisallows) one `sh:conformanceDisallows` per severity
+of an explicitly chosen conformance-disallow set. The default set is
+not stated: "If no values are present ... then a default set MUST be
+used". -/
 def reportToGraph (r : ValidationReport) : Graph :=
   let report : Subject := .bnode "_shacl_report0"
   let header : List Triple :=
     [ { s := report, p := rdfType, o := .iri shValidationReport },
       { s := report, p := shConforms, o := .literal (boolLiteral r.conforms) } ]
-  header ++ (resultsToTriples report r.results 0).1
+  let disallows : List Triple :=
+    match r.disallowed with
+    | some sevs => sevs.map fun sev =>
+        { s := report, p := shConformanceDisallows, o := .iri (severityToIri sev) }
+    | none => []
+  header ++ disallows ++ (resultsToTriples report r.results 0).1
 
 end L4Factoidal.SHACL

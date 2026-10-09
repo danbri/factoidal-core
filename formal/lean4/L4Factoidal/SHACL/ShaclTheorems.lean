@@ -42,18 +42,18 @@ open L4Factoidal.RDF
 /-! ## Empty / target-less shapes graphs -/
 
 /-- §3.1: with no shapes there are no results. -/
-theorem validate_empty_conforms (g : Graph) :
-    (validate g ShapesGraph.empty).conforms = true := by
-  simp [validate, ShapesGraph.empty]
+theorem validate_empty_conforms (g : Graph) (cfg : ValidationConfig) :
+    (validate g ShapesGraph.empty cfg).conforms = true := by
+  simp [validate, ShapesGraph.empty, ValidationEnv.conforms]
 
 /-- §2.1: only shapes with targets are validated. -/
-theorem validate_no_targets_conforms (g : Graph) (sg : ShapesGraph)
-    (h : ∀ s ∈ sg.shapes, s.targets = []) : (validate g sg).conforms = true := by
+theorem validate_no_targets_conforms (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig)
+    (h : ∀ s ∈ sg.shapes, s.targets = []) : (validate g sg cfg).conforms = true := by
   have hf : sg.shapes.filter (fun s => !s.targets.isEmpty) = [] := by
     rw [List.filter_eq_nil_iff]
     intro s hs
     simp [h s hs]
-  simp [validate, hf]
+  simp [validate, hf, ValidationEnv.conforms]
 
 /-! ## sh:minCount 0 -/
 
@@ -65,20 +65,21 @@ theorem minCount_zero_no_result (g : Graph) (sg : List Shape) (focus : Term) (s 
 
 /-! ## sh:not flips conformance -/
 
-/-- §4.6.1: for a node shape whose only component is `sh:not r` (and
-no property shapes), the focus node produces no result iff it does NOT
-conform to `r`'s shape — at two fuel units less, the cost of one
-nesting level. -/
-theorem notOf_flips (g : Graph) (sg : List Shape) (v : Term) (s rs : Shape) (r : ShapeRef)
+/-- §4.6.1 with SHACL 1.2 conformance checking: for a node shape whose
+only component is `sh:not r` (and no property shapes), the focus node
+produces no result iff it does NOT conform to `r`'s shape — at two
+fuel units less, the cost of one nesting level. -/
+theorem notOf_flips (env : ValidationEnv) (g : Graph) (sg : List Shape) (v : Term)
+    (s rs : Shape) (r : ShapeRef)
     (hc : s.constraints = [.notOf r]) (hp : s.isProperty = false)
     (hr : s.propertyRefs = []) (hl : lookupShape r sg = some rs) (fuel : Nat) :
-    (collectShapeViolations g sg v s (fuel + 2)).isEmpty =
-      !(collectShapeViolations g sg v rs fuel).isEmpty := by
+    (collectShapeViolations env g sg v s (fuel + 2)).isEmpty =
+      !env.conforms (collectShapeViolations env g sg v rs fuel) := by
   simp only [collectShapeViolations, evalOneConstraint, evalAggregate, evalAggregateNonRec,
     valueNodes, hc, hp, hr]
   simp only [hl, Bool.false_eq_true, ↓reduceIte, List.flatMap_cons, List.flatMap_nil,
     List.append_nil]
-  by_cases h : collectShapeViolations g sg v rs fuel = [] <;> simp [h]
+  by_cases h : env.conforms (collectShapeViolations env g sg v rs fuel) = true <;> simp [h]
 
 /-! ## §1.4 SHACL instance: the closure walk is sound and complete -/
 
@@ -528,11 +529,110 @@ theorem evalAggregateNonRec_eq_nil_iff (g : Graph) (sg : List Shape) (focus : Te
       simp [h v hv w hw]
   | _ => simp [evalAggregateNonRec, Spec.FocusSatisfies]
 
-/-! ## §3.4: no result iff conformance, at every fuel -/
+/-! ## §3.4: SHACL 1.2 conformance checking, at every fuel -/
 
-theorem evalAggregate_eq_nil_iff (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
-    (values : List Term) (cc : Constraint) (fuel : Nat) :
-    evalAggregate g sg focus s values cc fuel = [] ↔ Spec.AggConforms g sg s values cc fuel := by
+/-- A list of results that all carry the severity `sev` conforms iff it
+is empty or `sev` is outside the disallowed set. -/
+theorem conforms_uniform (env : ValidationEnv) (sev : Severity) (l : List Violation)
+    (h : ∀ x ∈ l, x.severity = sev) :
+    env.conforms l = true ↔ (env.blocks sev = true → l = []) := by
+  unfold ValidationEnv.conforms
+  constructor
+  · intro hall hb
+    cases l with
+    | nil => rfl
+    | cons x xs =>
+      exfalso
+      have hx := (List.all_eq_true.mp hall) x List.mem_cons_self
+      rw [h x List.mem_cons_self, hb] at hx
+      simp at hx
+  · intro himp
+    rw [List.all_eq_true]
+    intro x hx
+    cases hb : env.blocks sev with
+    | false => rw [h x hx, hb]; rfl
+    | true => rw [himp hb] at hx; simp at hx
+
+theorem conforms_append (env : ValidationEnv) (l1 l2 : List Violation) :
+    env.conforms (l1 ++ l2) = (env.conforms l1 && env.conforms l2) := by
+  simp [ValidationEnv.conforms]
+
+theorem conforms_flatMap {α : Type} (env : ValidationEnv) (l : List α) (f : α → List Violation) :
+    env.conforms (l.flatMap f) = true ↔ ∀ a ∈ l, env.conforms (f a) = true := by
+  simp [ValidationEnv.conforms]
+
+theorem conforms_nil (env : ValidationEnv) : env.conforms [] = true := rfl
+
+/-- Every result of one per-value component carries the shape's severity. -/
+theorem evalOneConstraint_severity (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (focus : Term) (s : Shape) (v : Term) (cc : Constraint) (fuel : Nat) :
+    ∀ x ∈ evalOneConstraint env g sg focus s v cc fuel, x.severity = s.severity := by
+  intro x hx
+  cases fuel with
+  | zero => simp [evalOneConstraint] at hx
+  | succ n =>
+    simp only [evalOneConstraint] at hx
+    split at hx <;> (repeat' split at hx) <;> simp_all [valueViolation]
+
+/-- Every result of one per-focus-node component carries the shape's severity. -/
+theorem evalAggregateNonRec_severity (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
+    (values : List Term) (cc : Constraint) :
+    ∀ x ∈ evalAggregateNonRec g sg focus s values cc, x.severity = s.severity := by
+  intro x hx
+  cases cc with
+  | minCount n | maxCount n | hasValue n =>
+    simp only [evalAggregateNonRec] at hx
+    split at hx <;> simp_all [focusViolation]
+  | uniqueLang b =>
+    simp only [evalAggregateNonRec] at hx
+    split at hx
+    · obtain ⟨_, _, rfl⟩ := List.mem_map.mp hx; rfl
+    · simp at hx
+  | closed ignored =>
+    simp only [evalAggregateNonRec] at hx
+    split at hx
+    · simp at hx
+    · obtain ⟨t, _, ht⟩ := List.mem_filterMap.mp hx
+      split at ht
+      · cases ht; rfl
+      · cases ht
+  | equals p =>
+    simp only [evalAggregateNonRec, List.mem_append] at hx
+    rcases hx with hx | hx <;>
+    · obtain ⟨_, _, ht⟩ := List.mem_filterMap.mp hx
+      split at ht
+      · cases ht
+      · cases ht; rfl
+  | disjoint p =>
+    simp only [evalAggregateNonRec] at hx
+    obtain ⟨_, _, ht⟩ := List.mem_filterMap.mp hx
+    split at ht
+    · cases ht; rfl
+    · cases ht
+  | lessThan p | lessThanOrEquals p =>
+    simp only [evalAggregateNonRec] at hx
+    obtain ⟨_, _, hx⟩ := List.mem_flatMap.mp hx
+    obtain ⟨_, _, ht⟩ := List.mem_filterMap.mp hx
+    split at ht
+    · cases ht
+    · cases ht; rfl
+  | _ => simp [evalAggregateNonRec] at hx
+
+/-- Every result of a qualified-cardinality component carries the shape's severity. -/
+theorem evalAggregate_severity (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (focus : Term) (s : Shape) (values : List Term) (cc : Constraint) (fuel : Nat) :
+    ∀ x ∈ evalAggregate env g sg focus s values cc fuel, x.severity = s.severity := by
+  intro x hx
+  cases fuel with
+  | zero => simp [evalAggregate] at hx
+  | succ n =>
+    simp only [evalAggregate] at hx
+    split at hx <;> (repeat' split at hx) <;> simp_all [focusViolation]
+
+theorem evalAggregate_eq_nil_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (focus : Term) (s : Shape) (values : List Term) (cc : Constraint) (fuel : Nat) :
+    evalAggregate env g sg focus s values cc fuel = [] ↔
+      Spec.AggConforms env g sg s values cc fuel := by
   cases fuel with
   | zero => simp [evalAggregate, Spec.AggConforms]
   | succ n =>
@@ -547,33 +647,56 @@ theorem ite_nil_any_iff {α β : Type} (l : List α) (P : α → Bool) (viol : L
     (hv : viol ≠ []) : (if l.any P then [] else viol) = [] ↔ ∃ r ∈ l, P r = true := by
   split <;> simp_all [List.any_eq_true]
 
-/-- The two judgments of the mutual group, by induction on the fuel. -/
-theorem conformance_iff (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
-    (∀ node s, collectShapeViolations g sg node s fuel = [] ↔ Spec.Conforms g sg node s fuel) ∧
-    (∀ focus s v cc, evalOneConstraint g sg focus s v cc fuel = [] ↔
-      Spec.ValueConforms g sg v cc fuel) := by
+/-- The two judgments of the mutual group, by induction on the fuel:
+the engine's results for a focus node and a shape pass SHACL 1.2
+conformance checking iff `Spec.Conforms` holds, and one per-value
+component produces no result iff `Spec.ValueConforms` holds. -/
+theorem conformance_iff (env : ValidationEnv) (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
+    (∀ node s, env.conforms (collectShapeViolations env g sg node s fuel) = true ↔
+      Spec.Conforms env g sg node s fuel) ∧
+    (∀ focus s v cc, evalOneConstraint env g sg focus s v cc fuel = [] ↔
+      Spec.ValueConforms env g sg v cc fuel) := by
   intro fuel
   induction fuel with
   | zero =>
     refine ⟨fun node s => ?_, fun focus s v cc => ?_⟩
-    · simp [collectShapeViolations, Spec.Conforms]
+    · simp [collectShapeViolations, Spec.Conforms, ValidationEnv.conforms]
     · simp [evalOneConstraint, Spec.ValueConforms]
   | succ n ih =>
     obtain ⟨ihc, ihv⟩ := ih
     refine ⟨fun node s => ?_, fun focus s v cc => ?_⟩
-    · simp only [collectShapeViolations, Spec.Conforms, List.append_eq_nil_iff,
-        List.flatMap_eq_nil_iff, ihv, evalAggregateNonRec_eq_nil_iff, evalAggregate_eq_nil_iff]
+    · -- the shape's own results all carry `s.severity`
+      have hown : ∀ x ∈ (valueNodes g node s).flatMap (fun v =>
+            s.constraints.flatMap fun cc => evalOneConstraint env g sg node s v cc n) ++
+          s.constraints.flatMap (fun cc => evalAggregateNonRec g sg node s (valueNodes g node s) cc) ++
+          s.constraints.flatMap (fun cc => evalAggregate env g sg node s (valueNodes g node s) cc n),
+          x.severity = s.severity := by
+        intro x hx
+        simp only [List.mem_append, List.mem_flatMap] at hx
+        rcases hx with (⟨v, _, cc, _, hx⟩ | ⟨cc, _, hx⟩) | ⟨cc, _, hx⟩
+        · exact evalOneConstraint_severity env g sg node s v cc n x hx
+        · exact evalAggregateNonRec_severity g sg node s _ cc x hx
+        · exact evalAggregate_severity env g sg node s _ cc n x hx
+      simp only [collectShapeViolations, Spec.Conforms]
+      rw [conforms_append, Bool.and_eq_true, conforms_uniform env s.severity _ hown,
+        conforms_flatMap]
+      simp only [List.append_eq_nil_iff, List.flatMap_eq_nil_iff, ihv,
+        evalAggregateNonRec_eq_nil_iff, evalAggregate_eq_nil_iff, conforms_flatMap]
       constructor
-      · rintro ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩
-        refine ⟨h1, h2, h3, fun v hv r hr ps hps => ?_⟩
-        have := h4 v hv r hr
-        simp only [hps] at this
-        exact (ihc v ps).mp this
-      · rintro ⟨h1, h2, h3, h4⟩
-        refine ⟨⟨⟨h1, h2⟩, h3⟩, fun v hv r hr => ?_⟩
-        cases hps : lookupShape r sg with
-        | none => rfl
-        | some ps => exact (ihc v ps).mpr (h4 v hv r hr ps hps)
+      · rintro ⟨h1, h4⟩
+        refine ⟨fun hb => ?_, fun v hv r hr ps hps => ?_⟩
+        · obtain ⟨⟨a, b⟩, c⟩ := h1 hb
+          exact ⟨a, b, c⟩
+        · have := h4 v hv r hr
+          simp only [hps] at this
+          exact (ihc v ps).mp this
+      · rintro ⟨h1, h4⟩
+        refine ⟨fun hb => ?_, fun v hv r hr => ?_⟩
+        · obtain ⟨a, b, c⟩ := h1 hb
+          exact ⟨⟨a, b⟩, c⟩
+        · cases hps : lookupShape r sg with
+          | none => exact conforms_nil env
+          | some ps => exact (ihc v ps).mpr (h4 v hv r hr ps hps)
     · cases cc with
       | notOf r =>
         simp only [evalOneConstraint, Spec.ValueConforms]
@@ -590,11 +713,11 @@ theorem conformance_iff (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
         · intro h r hr s2 hs2
           have := h r hr
           simp only [hs2] at this
-          exact (ihc v s2).mp (List.isEmpty_iff.mp this)
+          exact (ihc v s2).mp this
         · intro h r hr
           cases hs2 : lookupShape r sg with
           | none => rfl
-          | some s2 => exact List.isEmpty_iff.mpr ((ihc v s2).mpr (h r hr s2 hs2))
+          | some s2 => exact (ihc v s2).mpr (h r hr s2 hs2)
       | orOf rs =>
         simp only [evalOneConstraint, Spec.ValueConforms]
         rw [ite_nil_any_iff _ _ _ (List.cons_ne_nil _ _)]
@@ -604,11 +727,11 @@ theorem conformance_iff (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
           | none => simp [hs2] at hok
           | some s2 =>
             simp only [hs2] at hok
-            exact ⟨r, hr, s2, hs2, (ihc v s2).mp (List.isEmpty_iff.mp hok)⟩
+            exact ⟨r, hr, s2, hs2, (ihc v s2).mp hok⟩
         · rintro ⟨r, hr, s2, hs2, hc⟩
           refine ⟨r, hr, ?_⟩
           simp only [hs2]
-          exact List.isEmpty_iff.mpr ((ihc v s2).mpr hc)
+          exact (ihc v s2).mpr hc
       | xoneOf rs =>
         simp only [evalOneConstraint, Spec.ValueConforms]
         split <;> simp_all
@@ -625,17 +748,28 @@ theorem conformance_iff (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
         rw [← simpleValueCheck_iff' g _ v]
         split <;> simp_all
 
-theorem collectShapeViolations_eq_nil_iff (g : Graph) (sg : List Shape) (node : Term) (s : Shape)
-    (fuel : Nat) :
-    collectShapeViolations g sg node s fuel = [] ↔ Spec.Conforms g sg node s fuel :=
-  (conformance_iff g sg fuel).1 node s
+/-- SHACL 1.2 conformance checking for one focus node and one shape:
+the engine's results pass iff `Spec.Conforms` holds, at every fuel. -/
+theorem collectShapeViolations_conforms_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (node : Term) (s : Shape) (fuel : Nat) :
+    env.conforms (collectShapeViolations env g sg node s fuel) = true ↔
+      Spec.Conforms env g sg node s fuel :=
+  (conformance_iff env g sg fuel).1 node s
 
-/-- §3.1 / §3.6.1: the report conforms iff every focus node of every
-targeted shape conforms. -/
-theorem validate_conforms_iff (g : Graph) (sg : ShapesGraph) :
-    (validate g sg).conforms = true ↔ Spec.GraphConforms g sg := by
-  simp only [validate, Spec.GraphConforms, List.isEmpty_iff, List.flatMap_eq_nil_iff,
-    List.mem_filter, collectShapeViolations_eq_nil_iff]
+/-- No result at all is, in particular, conformance (whatever the
+disallowed set). -/
+theorem collectShapeViolations_eq_nil_conforms (env : ValidationEnv) (g : Graph)
+    (sg : List Shape) (node : Term) (s : Shape) (fuel : Nat)
+    (h : collectShapeViolations env g sg node s fuel = []) :
+    Spec.Conforms env g sg node s fuel :=
+  (collectShapeViolations_conforms_iff env g sg node s fuel).mp (by rw [h]; rfl)
+
+/-- §3.1 / SHACL 1.2 §conformance-definition: the report conforms iff
+every focus node of every targeted shape conforms. -/
+theorem validate_conforms_iff (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig) :
+    (validate g sg cfg).conforms = true ↔ Spec.GraphConforms cfg.toEnv g sg := by
+  simp only [validate, Spec.GraphConforms, conforms_flatMap, List.mem_filter,
+    collectShapeViolations_conforms_iff]
   constructor
   · intro h s hs ht fn hfn
     exact h s ⟨hs, by simpa using ht⟩ fn hfn
@@ -644,9 +778,10 @@ theorem validate_conforms_iff (g : Graph) (sg : ShapesGraph) :
 
 /-- Soundness in the direction the name suggests: a conforming report
 is a certificate of §3.4 conformance for every targeted focus node. -/
-theorem validate_sound (g : Graph) (sg : ShapesGraph) (h : (validate g sg).conforms = true) :
-    Spec.GraphConforms g sg :=
-  (validate_conforms_iff g sg).mp h
+theorem validate_sound (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig)
+    (h : (validate g sg cfg).conforms = true) :
+    Spec.GraphConforms cfg.toEnv g sg :=
+  (validate_conforms_iff g sg cfg).mp h
 
 /-! ## Axiom audit -/
 
@@ -657,7 +792,9 @@ theorem validate_sound (g : Graph) (sg : ShapesGraph) (h : (validate g sg).confo
 #print axioms isShaclInstance_iff
 #print axioms simpleValueCheck_iff
 #print axioms evalAggregateNonRec_eq_nil_iff
-#print axioms collectShapeViolations_eq_nil_iff
+#print axioms collectShapeViolations_conforms_iff
+#print axioms collectShapeViolations_eq_nil_conforms
+#print axioms conforms_uniform
 #print axioms validate_conforms_iff
 #print axioms validate_sound
 

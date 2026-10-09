@@ -185,30 +185,43 @@ theorem evalCustomComponent_eq_nil_iff (data : Graph) (focus : Term) (s : Shape)
 /-! ## §3.1 the report -/
 
 /-- The report's `sh:conforms` decomposes into SHACL Core conformance
-and the two SHACL-SPARQL passes. Item 2 of the module header's
-"not covered" list is exactly the step from the two pass-emptiness
-conjuncts to `Spec.GraphConformsWithSparql`'s own quantifiers. -/
-theorem validateWithSparql_conforms_iff (data shapesRaw : Graph) (sg : ShapesGraph) :
-    (validateWithSparql data shapesRaw sg).conforms = true ↔
-      Spec.GraphConforms data sg ∧
+and SHACL 1.2 conformance checking (`ValidationEnv.conforms`) of the
+two SHACL-SPARQL passes' results. Item 2 of the module header's "not
+covered" list is exactly the step from the two pass conjuncts to
+`Spec.GraphConformsWithSparql`'s own quantifiers. -/
+theorem validateWithSparql_conforms_iff (data shapesRaw : Graph) (sg : ShapesGraph)
+    (cfg : ValidationConfig) :
+    (validateWithSparql data shapesRaw sg cfg).conforms = true ↔
+      Spec.GraphConforms cfg.toEnv data sg ∧
       (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         (sparqlViolationsForShape data shapesRaw (distinctSubjects data) s).results = []) ∧
+         cfg.toEnv.conforms
+           (sparqlViolationsForShape data shapesRaw (distinctSubjects data) s).results = true) ∧
       (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         (customViolationsForShape data (distinctSubjects data) sg.shapes s
-            (validateFuel sg.shapes)).results = []) := by
-  have hcore : (validate data sg).results = [] ↔ Spec.GraphConforms data sg := by
-    have := validate_conforms_iff data sg
-    simpa [validate, List.isEmpty_iff] using this
-  simp only [validateWithSparql, SparqlOutcome.append, List.isEmpty_iff,
-    List.append_eq_nil_iff, SparqlOutcome.concat_results_eq_nil_iff, List.mem_map,
-    forall_exists_index, and_imp, forall_apply_eq_imp_iff₂, hcore, and_assoc]
+         cfg.toEnv.conforms (customViolationsForShape data (distinctSubjects data) sg.shapes s
+            (validateFuel sg.shapes)).results = true) := by
+  have hcore : cfg.toEnv.conforms (validate data sg cfg).results = true ↔
+      Spec.GraphConforms cfg.toEnv data sg := by
+    rw [← validate_conforms_iff data sg cfg]
+    simp [validate]
+  simp only [validateWithSparql, SparqlOutcome.append, conforms_append, Bool.and_eq_true,
+    hcore]
+  have hcat : ∀ (os : List SparqlOutcome),
+      cfg.toEnv.conforms (SparqlOutcome.concat os).results = true ↔
+        ∀ o ∈ os, cfg.toEnv.conforms o.results = true := by
+    intro os
+    induction os with
+    | nil => simp [SparqlOutcome.concat, SparqlOutcome.empty, conforms_nil]
+    | cons o rest ih =>
+      simp [SparqlOutcome.concat, SparqlOutcome.append, conforms_append, ih]
+  simp only [hcat, List.mem_map, forall_exists_index, and_imp, forall_apply_eq_imp_iff₂]
 
 /-- A conforming SHACL-SPARQL report is a certificate of SHACL Core
 conformance. -/
 theorem validateWithSparql_sound_core (data shapesRaw : Graph) (sg : ShapesGraph)
-    (h : (validateWithSparql data shapesRaw sg).conforms = true) :
-    Spec.GraphConforms data sg :=
-  ((validateWithSparql_conforms_iff data shapesRaw sg).mp h).1
+    (cfg : ValidationConfig)
+    (h : (validateWithSparql data shapesRaw sg cfg).conforms = true) :
+    Spec.GraphConforms cfg.toEnv data sg :=
+  ((validateWithSparql_conforms_iff data shapesRaw sg cfg).mp h).1
 
 /-! ## Axiom audit -/
 

@@ -231,6 +231,54 @@ def subjObjDoc : String :=
 #guard (run subjObjDoc).results.length == 2
 #guard (run subjObjDoc).results.map (·.severity) == [.violation, .custom (exIri "Mine")]
 
+/-! ### SHACL 1.2 §severity / §conformance-definition: sh:Debug and sh:Trace
+
+A result at a severity outside the conformance-disallow set (default
+sh:Violation, sh:Warning, sh:Info) is reported but does not make the
+report non-conforming; one inside it does. -/
+
+def debugDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Debug ."
+
+#guard (run debugDoc).results.length == 1
+#guard (run debugDoc).conforms == true
+#guard (run debugDoc).results.map (·.severity) == [.debug]
+
+def traceDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Trace ."
+
+#guard (run traceDoc).conforms == true
+#guard (run traceDoc).results.map (·.severity) == [.trace]
+
+def warningDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Warning ."
+
+#guard (run warningDoc).conforms == false
+
+/-- §conformanceDisallows: an engine-chosen set `{sh:Violation}` lets a
+sh:Warning result conform, and the report states the set. -/
+def runWith (body : String) (cfg : ValidationConfig) : ValidationReport :=
+  let g := ttl body
+  validate g (decodeShapesGraph g) cfg
+
+#guard (runWith warningDoc { disallowed := some [.violation] }).conforms == true
+#guard (runWith warningDoc { disallowed := some [.violation] }).results.length == 1
+#guard (reportToGraph (runWith warningDoc { disallowed := some [.violation] })).any fun t =>
+         t.p == shConformanceDisallows && t.o == .iri shViolation
+#guard !((reportToGraph (run warningDoc)).any fun t => t.p == shConformanceDisallows)
+#guard (runWith debugDoc { disallowed := some [.debug] }).conforms == false
+
+/-- Conformance checking inside sh:not uses the same set: `ex:Inner`'s
+only result is at sh:Debug, so `ex:n` CONFORMS to `ex:Inner` and
+sh:not reports it. -/
+def debugNotDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:not ex:Inner . " ++
+  "ex:Inner sh:class ex:C ; sh:severity sh:Debug ."
+
+#guard components (run debugNotDoc) == [shNotCC]
+#guard (run debugNotDoc).conforms == false
+#guard (runWith debugNotDoc { disallowed := some [.debug] }).conforms == true
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

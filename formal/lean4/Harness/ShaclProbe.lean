@@ -175,6 +175,13 @@ structure TestCase where
   expectConforms : Option Bool
   expectReport  : Option Graph
   expectFailure : Bool
+  /-- SHACL 1.2 §conformanceDisallows: the severities the expected
+  report names with `sh:conformanceDisallows`. The suite's own comment
+  (core/validation-reports/conformance-disallows-001): "the test
+  framework needs to use the values of sh:conformanceDisallows from the
+  mf:result" — so they are passed to the engine as its configured
+  conformance-disallow set; `none` selects the default set. -/
+  disallowed    : Option (List Severity) := none
 
 /-- The sub-directory label of a test file: the two path components
 after `/tests/` (`core/node`, `sparql/pre-binding`, …). -/
@@ -263,10 +270,17 @@ partial def collectFromFile (visited : IO.Ref (List String)) (path : String) :
         else match result with
           | some res => if expect.isSome then some (expectedReportGraph g res) else none
           | none => none
+      let disallowed : Option (List Severity) :=
+        match result with
+        | some res =>
+          let ds := (objectsOfTerm g res shConformanceDisallows).filterMap fun t =>
+            match t with | .iri i => some (severityOfIri i) | _ => none
+          if ds.isEmpty then none else some ds
+        | none => none
       own := own ++ [{ name := name, file := path, group := groupOf path,
                        data := dgraph, shapes := sgraph,
                        expectConforms := expect, expectReport := expectReport,
-                       expectFailure := expectFailure }]
+                       expectFailure := expectFailure, disallowed := disallowed }]
     return included ++ own
 
 /-! ## Running one test -/
@@ -291,7 +305,7 @@ def runTest (opts : Options) (tc : TestCase) : Outcome × Bool :=
       -- SHACL §5.3.1's `$shapesGraph` pre-binding needs the shapes
       -- graph's own triples as a named graph, which the decoded AST
       -- cannot supply.
-      let report := validateWithSparql data shapesG sg
+      let report := validateWithSparql data shapesG sg { disallowed := tc.disallowed }
       -- SHACL §5.3.2 / the suite's `mf:result sht:Failure`: a query
       -- that cannot be pre-bound must be rejected with a failure, and
       -- a failed validation produces no report to compare.

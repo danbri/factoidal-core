@@ -654,9 +654,10 @@ outcome: `conforms` / `results` are then a partial answer that the
 harness does not compare (SHACL §3.6.1 gives no report for a failed
 validation). -/
 
-def validateWithSparql (data shapesRaw : Graph) (sgraph : ShapesGraph) :
-    ValidationReport :=
-  let core := validate data sgraph
+def validateWithSparql (data shapesRaw : Graph) (sgraph : ShapesGraph)
+    (cfg : ValidationConfig := {}) : ValidationReport :=
+  let env := cfg.toEnv
+  let core := validate data sgraph cfg
   let shapes := sgraph.shapes
   let allSubjects := distinctSubjects data
   let fuel := validateFuel shapes
@@ -667,7 +668,8 @@ def validateWithSparql (data shapesRaw : Graph) (sgraph : ShapesGraph) :
     roots.map fun s => customViolationsForShape data allSubjects shapes s fuel
   let out := sparqlOut.append customOut
   let results := core.results ++ out.results
-  { conforms := results.isEmpty, results := results, failure := out.failure }
+  { conforms := env.conforms results, results := results, failure := out.failure,
+    disallowed := cfg.disallowed }
 
 /-! ## The specification of the SHACL-SPARQL components
 
@@ -743,8 +745,9 @@ def SparqlShapeConforms (data shapesRaw : Graph) (allSubjects : List Subject) (s
 /-- §3.1 with SHACL Part 2: SHACL Core conformance, plus every
 `sh:sparql` constraint and every constraint component of every
 targeted shape. -/
-def GraphConformsWithSparql (data shapesRaw : Graph) (sg : ShapesGraph) : Prop :=
-  GraphConforms data sg ∧
+def GraphConformsWithSparql (env : ValidationEnv) (data shapesRaw : Graph) (sg : ShapesGraph) :
+    Prop :=
+  GraphConforms env data sg ∧
   (∀ s ∈ sg.shapes, s.targets ≠ [] →
      SparqlShapeConforms data shapesRaw (distinctSubjects data) s) ∧
   (∀ s ∈ sg.shapes, s.targets ≠ [] →

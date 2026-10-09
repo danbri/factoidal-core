@@ -106,6 +106,11 @@ def shNkIRIOrLiteral       : WfIri := ⟨"http://www.w3.org/ns/shacl#IRIOrLitera
 
 /-! ## Severities (§3.6.1.3) -/
 
+/-- SHACL 1.2 §severity adds `sh:Trace` and `sh:Debug`, two levels
+below `sh:Info` that are not in the default conformance-disallow set
+(§conformance-definition). -/
+def shTrace     : WfIri := ⟨"http://www.w3.org/ns/shacl#Trace", rfl⟩
+def shDebug     : WfIri := ⟨"http://www.w3.org/ns/shacl#Debug", rfl⟩
 def shInfo      : WfIri := ⟨"http://www.w3.org/ns/shacl#Info", rfl⟩
 def shWarning   : WfIri := ⟨"http://www.w3.org/ns/shacl#Warning", rfl⟩
 def shViolation : WfIri := ⟨"http://www.w3.org/ns/shacl#Violation", rfl⟩
@@ -126,6 +131,8 @@ def shSourceConstraint : WfIri := ⟨"http://www.w3.org/ns/shacl#sourceConstrain
 def shResultSeverity   : WfIri := ⟨"http://www.w3.org/ns/shacl#resultSeverity", rfl⟩
 def shResultMessage    : WfIri := ⟨"http://www.w3.org/ns/shacl#resultMessage", rfl⟩
 def shDetail           : WfIri := ⟨"http://www.w3.org/ns/shacl#detail", rfl⟩
+/-- SHACL 1.2 §conformanceDisallows: the report's disallowed severities. -/
+def shConformanceDisallows : WfIri := ⟨"http://www.w3.org/ns/shacl#conformanceDisallows", rfl⟩
 
 /-! ## Constraint component IRIs (§4, one per Core component) -/
 
@@ -160,6 +167,47 @@ def shQualifiedMaxCountCC : WfIri :=
 def shClosedCC       : WfIri := ⟨"http://www.w3.org/ns/shacl#ClosedConstraintComponent", rfl⟩
 def shHasValueCC     : WfIri := ⟨"http://www.w3.org/ns/shacl#HasValueConstraintComponent", rfl⟩
 def shInCC           : WfIri := ⟨"http://www.w3.org/ns/shacl#InConstraintComponent", rfl⟩
+
+/-! ## SHACL 1.2 Core additions
+
+SHACL 1.2 Core (https://www.w3.org/TR/shacl12-core/): the list
+constraint components, sh:singleLine, sh:subsetOf, sh:someValue,
+sh:rootClass, sh:uniqueValuesFor, sh:closed sh:ByTypes, the
+sh:TripleTerm node kind, the sh:targetWhere / sh:shape targets, the
+sh:ShapeClass shortcut, and sh:values / sh:defaultValue. The node
+expression constraint sh:nodeByExpression is from SHACL 1.2 Node
+Expressions (https://www.w3.org/TR/shacl12-node-expr/). -/
+
+def shSingleLine      : WfIri := ⟨"http://www.w3.org/ns/shacl#singleLine", rfl⟩
+def shMemberShape     : WfIri := ⟨"http://www.w3.org/ns/shacl#memberShape", rfl⟩
+def shMinListLength   : WfIri := ⟨"http://www.w3.org/ns/shacl#minListLength", rfl⟩
+def shMaxListLength   : WfIri := ⟨"http://www.w3.org/ns/shacl#maxListLength", rfl⟩
+def shUniqueMembers   : WfIri := ⟨"http://www.w3.org/ns/shacl#uniqueMembers", rfl⟩
+def shSubsetOf        : WfIri := ⟨"http://www.w3.org/ns/shacl#subsetOf", rfl⟩
+def shSomeValue       : WfIri := ⟨"http://www.w3.org/ns/shacl#someValue", rfl⟩
+def shRootClass       : WfIri := ⟨"http://www.w3.org/ns/shacl#rootClass", rfl⟩
+def shUniqueValuesFor : WfIri := ⟨"http://www.w3.org/ns/shacl#uniqueValuesFor", rfl⟩
+def shNodeByExpression : WfIri := ⟨"http://www.w3.org/ns/shacl#nodeByExpression", rfl⟩
+def shByTypes         : WfIri := ⟨"http://www.w3.org/ns/shacl#ByTypes", rfl⟩
+def shNkTripleTerm    : WfIri := ⟨"http://www.w3.org/ns/shacl#TripleTerm", rfl⟩
+def shTargetWhere     : WfIri := ⟨"http://www.w3.org/ns/shacl#targetWhere", rfl⟩
+def shShape           : WfIri := ⟨"http://www.w3.org/ns/shacl#shape", rfl⟩
+def shShapeClass      : WfIri := ⟨"http://www.w3.org/ns/shacl#ShapeClass", rfl⟩
+def shValues          : WfIri := ⟨"http://www.w3.org/ns/shacl#values", rfl⟩
+def shDefaultValue    : WfIri := ⟨"http://www.w3.org/ns/shacl#defaultValue", rfl⟩
+def shSparqlExpr      : WfIri := ⟨"http://www.w3.org/ns/shacl#sparqlExpr", rfl⟩
+
+def shSingleLineCC      : WfIri := ⟨"http://www.w3.org/ns/shacl#SingleLineConstraintComponent", rfl⟩
+def shMemberShapeCC     : WfIri := ⟨"http://www.w3.org/ns/shacl#MemberShapeConstraintComponent", rfl⟩
+def shMinListLengthCC   : WfIri := ⟨"http://www.w3.org/ns/shacl#MinListLengthConstraintComponent", rfl⟩
+def shMaxListLengthCC   : WfIri := ⟨"http://www.w3.org/ns/shacl#MaxListLengthConstraintComponent", rfl⟩
+def shUniqueMembersCC   : WfIri := ⟨"http://www.w3.org/ns/shacl#UniqueMembersConstraintComponent", rfl⟩
+def shSubsetOfCC        : WfIri := ⟨"http://www.w3.org/ns/shacl#SubsetOfConstraintComponent", rfl⟩
+def shSomeValueCC       : WfIri := ⟨"http://www.w3.org/ns/shacl#SomeValueConstraintComponent", rfl⟩
+def shRootClassCC       : WfIri := ⟨"http://www.w3.org/ns/shacl#RootClassConstraintComponent", rfl⟩
+def shUniqueValuesForCC : WfIri := ⟨"http://www.w3.org/ns/shacl#UniqueValuesForConstraintComponent", rfl⟩
+def shNodeByExpressionCC : WfIri :=
+  ⟨"http://www.w3.org/ns/shacl#NodeByExpressionConstraintComponent", rfl⟩
 
 /-! ## SHACL-SPARQL vocabulary (Part 2, §5–§6)
 

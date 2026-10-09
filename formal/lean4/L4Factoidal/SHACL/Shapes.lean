@@ -42,10 +42,16 @@ open L4Factoidal.RDF
 
 /-! ## §3.6.1.3 severity -/
 
-/-- sh:severity. The Recommendation names three; any other IRI is
-allowed as a value ("the value of sh:severity is an IRI") and is
-reported back verbatim (core/misc/severity-002). -/
+/-- sh:severity. SHACL 1.2 §severity names five — `sh:Trace`,
+`sh:Debug`, `sh:Info`, `sh:Warning`, `sh:Violation`; any other IRI is
+allowed as a value ("Any IRI can be used as a severity") and is
+reported back verbatim (core/misc/severity-002). Which severities make
+a report non-conforming is the conformance-disallow set
+(`Validation.lean`, `defaultDisallowed`), not a property of the
+severity itself. -/
 inductive Severity where
+  | trace
+  | debug
   | info
   | warning
   | violation
@@ -321,6 +327,8 @@ def severityOfIri (i : WfIri) : Severity :=
   if i == shViolation then .violation
   else if i == shWarning then .warning
   else if i == shInfo then .info
+  else if i == shDebug then .debug
+  else if i == shTrace then .trace
   else .custom i
 
 /-! ## §2.3.1 path decoding

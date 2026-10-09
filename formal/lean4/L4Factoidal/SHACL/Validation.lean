@@ -87,9 +87,59 @@ structure ValidationReport where
   conforms : Bool
   results  : List Violation
   failure  : Option String := none
+  /-- SHACL 1.2 §conformanceDisallows: the conformance-disallow set the
+  validation used, when it was set explicitly (`some`); `none` means
+  the default set, which the report does not need to state ("If no
+  values are present ... then a default set MUST be used"). -/
+  disallowed : Option (List Severity) := none
   deriving Repr, Inhabited
 
 def conformingReport : ValidationReport := { conforms := true, results := [] }
+
+/-! ## SHACL 1.2 conformance checking
+
+SHACL 1.2 Core §conformance-definition: "A focus node conforms to a
+shape if and only if the set of result of the validation of the focus
+node against the shape does not contain any validation results with a
+severity level of the set of disallowed levels". §conformanceDisallows:
+the set is the report's `sh:conformanceDisallows` values, and "If no
+values are present ... a default set MUST be used, comprised of
+sh:Violation, sh:Warning, and sh:Info". So a `sh:Debug`, `sh:Trace` or
+other-IRI result is reported but does not make the report
+non-conforming (core/misc/severity-004, -005). The same set decides
+conformance checking inside the shape-expecting components (sh:not,
+sh:and, sh:or, sh:xone, sh:node, sh:qualifiedValueShape): "all
+shape-expecting constraint parameters of SHACL Core rely on
+conformance checking". -/
+
+/-- §conformanceDisallows: the default conformance-disallow set. -/
+def defaultDisallowed : List Severity := [.violation, .warning, .info]
+
+/-- What validation reads beyond the data graph and the shapes: the
+conformance-disallow set. -/
+structure ValidationEnv where
+  disallowed : List Severity := defaultDisallowed
+  deriving Inhabited
+
+/-- Does a result at severity `sev` count against conformance? -/
+def ValidationEnv.blocks (env : ValidationEnv) (sev : Severity) : Bool :=
+  env.disallowed.contains sev
+
+/-- §conformance-definition: a list of results conforms iff no result
+has a severity in the disallowed set. -/
+def ValidationEnv.conforms (env : ValidationEnv) (rs : List Violation) : Bool :=
+  rs.all fun r => !env.blocks r.severity
+
+/-- The caller's choices for one validation run. `disallowed` is the
+§conformanceDisallows customisation the Recommendation allows ("A
+validation engine MAY provide mechanisms to customize this set");
+`none` selects the default set. -/
+structure ValidationConfig where
+  disallowed : Option (List Severity) := none
+  deriving Inhabited
+
+def ValidationConfig.toEnv (cfg : ValidationConfig) : ValidationEnv :=
+  { disallowed := cfg.disallowed.getD defaultDisallowed }
 
 /-! ## XSD lexical spaces (port of `XSD.Datatypes.literal_ill_formed`)
 
@@ -593,28 +643,34 @@ def qualifiedShapeRefOf : Constraint → Option ShapeRef
   | _ => none
 
 mutual
-  /-- §3.4: every validation result of validating `node` against `s`. -/
-  def collectShapeViolations (data : Graph) (sg : List Shape) (node : Term) (s : Shape) :
-      Nat → List Violation
+  /-- §3.4: every validation result of validating `node` against `s`.
+  The shape's OWN results (per value node, per focus node, qualified)
+  all carry `s.severity`; the nested property shapes' results carry
+  theirs. -/
+  def collectShapeViolations (env : ValidationEnv) (data : Graph) (sg : List Shape)
+      (node : Term) (s : Shape) : Nat → List Violation
     | 0 => []
     | fuel + 1 =>
       let values := valueNodes data node s
       let perValue := values.flatMap fun v =>
-        s.constraints.flatMap fun cc => evalOneConstraint data sg node s v cc fuel
+        s.constraints.flatMap fun cc => evalOneConstraint env data sg node s v cc fuel
       let agg := s.constraints.flatMap fun cc => evalAggregateNonRec data sg node s values cc
-      let qualified := s.constraints.flatMap fun cc => evalAggregate data sg node s values cc fuel
+      let qualified := s.constraints.flatMap fun cc =>
+        evalAggregate env data sg node s values cc fuel
       -- §2.2: the property shapes of a shape are validated against its
       -- VALUE nodes (for a node shape, the focus node itself).
       let nested := values.flatMap fun v =>
         s.propertyRefs.flatMap fun r =>
           match lookupShape r sg with
           | none => []
-          | some ps => collectShapeViolations data sg v ps fuel
-      perValue ++ agg ++ qualified ++ nested
+          | some ps => collectShapeViolations env data sg v ps fuel
+      (perValue ++ agg ++ qualified) ++ nested
 
-  /-- One component against one value node. -/
-  def evalOneConstraint (data : Graph) (sg : List Shape) (focus : Term) (s : Shape)
-      (v : Term) (cc : Constraint) : Nat → List Violation
+  /-- One component against one value node. The shape-expecting
+  components ask the SHACL 1.2 conformance-checking question
+  (`ValidationEnv.conforms`) of the referenced shape. -/
+  def evalOneConstraint (env : ValidationEnv) (data : Graph) (sg : List Shape) (focus : Term)
+      (s : Shape) (v : Term) (cc : Constraint) : Nat → List Violation
     | 0 => []
     | fuel + 1 =>
       let viol := [valueViolation focus s cc v]
@@ -623,30 +679,30 @@ mutual
       | .notOf r =>
         match lookupShape r sg with
         | none => []
-        | some rs => if (collectShapeViolations data sg v rs fuel).isEmpty then viol else []
+        | some rs => if env.conforms (collectShapeViolations env data sg v rs fuel) then viol else []
       -- §4.6.2 sh:and: a result iff the value fails some shape.
       | .andOf rs =>
         if rs.all (fun r => match lookupShape r sg with
             | none => true
-            | some s2 => (collectShapeViolations data sg v s2 fuel).isEmpty)
+            | some s2 => env.conforms (collectShapeViolations env data sg v s2 fuel))
         then [] else viol
       -- §4.6.3 sh:or: a result iff the value conforms to no shape.
       | .orOf rs =>
         if rs.any (fun r => match lookupShape r sg with
             | none => false
-            | some s2 => (collectShapeViolations data sg v s2 fuel).isEmpty)
+            | some s2 => env.conforms (collectShapeViolations env data sg v s2 fuel))
         then [] else viol
       -- §4.6.4 sh:xone: a result iff the number of shapes conformed to is not exactly one.
       | .xoneOf rs =>
         let matched := rs.filter fun r => match lookupShape r sg with
           | none => false
-          | some s2 => (collectShapeViolations data sg v s2 fuel).isEmpty
+          | some s2 => env.conforms (collectShapeViolations env data sg v s2 fuel)
         if matched.length == 1 then [] else viol
       -- §4.7.1 sh:node: a result iff the value does not conform.
       | .nodeOf r =>
         match lookupShape r sg with
         | none => []
-        | some s2 => if (collectShapeViolations data sg v s2 fuel).isEmpty then [] else viol
+        | some s2 => if env.conforms (collectShapeViolations env data sg v s2 fuel) then [] else viol
       | _ =>
         match simpleValueCheck data cc v with
         | some true => []
@@ -656,24 +712,24 @@ mutual
   /-- §4.7.2 / §4.7.3 qualified cardinality over the value nodes of one
   focus node — the one aggregate that needs conformance counts (every
   other aggregate is `evalAggregateNonRec`). -/
-  def evalAggregate (data : Graph) (sg : List Shape) (focus : Term) (s : Shape)
-      (values : List Term) (cc : Constraint) : Nat → List Violation
+  def evalAggregate (env : ValidationEnv) (data : Graph) (sg : List Shape) (focus : Term)
+      (s : Shape) (values : List Term) (cc : Constraint) : Nat → List Violation
     | 0 => []
     | fuel + 1 =>
       match cc with
       | .qualifiedMinCount qref qmin qdisjoint =>
-        if qmin ≤ qualifyingCount data sg s values qref qdisjoint fuel then []
+        if qmin ≤ qualifyingCount env data sg s values qref qdisjoint fuel then []
         else [focusViolation focus s cc]
       | .qualifiedMaxCount qref qmax qdisjoint =>
-        if qualifyingCount data sg s values qref qdisjoint fuel ≤ qmax then []
+        if qualifyingCount env data sg s values qref qdisjoint fuel ≤ qmax then []
         else [focusViolation focus s cc]
       | _ => []
 
   /-- §4.7.2: the number of value nodes conforming to the qualified
   value shape and — with sh:qualifiedValueShapesDisjoint — to no
   sibling's qualified value shape. -/
-  def qualifyingCount (data : Graph) (sg : List Shape) (s : Shape) (values : List Term)
-      (qref : ShapeRef) (qdisjoint : Bool) : Nat → Nat
+  def qualifyingCount (env : ValidationEnv) (data : Graph) (sg : List Shape) (s : Shape)
+      (values : List Term) (qref : ShapeRef) (qdisjoint : Bool) : Nat → Nat
     | 0 => 0
     | fuel + 1 =>
       match lookupShape qref sg with
@@ -683,11 +739,12 @@ mutual
           match lookupShape r sg with
           | some sib => sib.constraints.filterMap qualifiedShapeRefOf
           | none => []
-        let conformsQ (v : Term) : Bool := (collectShapeViolations data sg v qs fuel).isEmpty
+        let conformsQ (v : Term) : Bool :=
+          env.conforms (collectShapeViolations env data sg v qs fuel)
         let excluded (v : Term) : Bool :=
           qdisjoint && siblingQrefs.any fun sr =>
             match lookupShape sr sg with
-            | some sqs => (collectShapeViolations data sg v sqs fuel).isEmpty
+            | some sqs => env.conforms (collectShapeViolations env data sg v sqs fuel)
             | none => false
         (values.filter fun v => conformsQ v && !excluded v).length
 end
@@ -700,17 +757,20 @@ def validateFuel (sg : List Shape) : Nat := sg.length * 4 + 50
 
 /-- §3.1: validate a data graph against a shapes graph. The shapes
 with targets (§2.1) are validated against their focus nodes; every
-other shape is reached only by reference. §3.6.1: `conforms` iff no
-result. -/
-def validate (data : Graph) (sg : ShapesGraph) : ValidationReport :=
+other shape is reached only by reference. SHACL 1.2
+§conformance-definition: `conforms` iff no result has a disallowed
+severity. -/
+def validate (data : Graph) (sg : ShapesGraph) (cfg : ValidationConfig := {}) :
+    ValidationReport :=
+  let env := cfg.toEnv
   let shapes := sg.shapes
   let allSubjects := distinctSubjects data
   let fuel := validateFuel shapes
   let roots := shapes.filter fun s => !s.targets.isEmpty
   let results := roots.flatMap fun s =>
     (shapeFocusNodes data allSubjects s).flatMap fun fn =>
-      collectShapeViolations data shapes fn s fuel
-  { conforms := results.isEmpty, results := results }
+      collectShapeViolations env data shapes fn s fuel
+  { conforms := env.conforms results, results := results, disallowed := cfg.disallowed }
 
 /-! ## The specification: conformance as a relation
 
@@ -793,55 +853,62 @@ def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
   | _ => True
 
 mutual
-  /-- §3.4 conformance of a focus node to a shape at a nesting budget:
-  every value node satisfies every per-value component, every
-  aggregate component holds over the value nodes, the logical and
-  shape-based components hold by recursion, and the focus node's value
-  nodes conform to every property shape. At budget 0 the relation is
-  vacuously true, matching the engine's sound-by-omission fuel exhaustion. -/
-  def Conforms (g : Graph) (sg : List Shape) (node : Term) (s : Shape) : Nat → Prop
+  /-- §3.4 conformance of a focus node to a shape at a nesting budget,
+  with SHACL 1.2 conformance checking: when the shape's own severity is
+  in the disallowed set, every value node satisfies every per-value
+  component, every aggregate component holds over the value nodes, and
+  the logical and shape-based components hold by recursion; whatever
+  the shape's severity, the focus node's value nodes conform to every
+  property shape (whose results carry the property shape's own
+  severity). At budget 0 the relation is vacuously true, matching the
+  engine's sound-by-omission fuel exhaustion. -/
+  def Conforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (node : Term) (s : Shape) :
+      Nat → Prop
     | 0 => True
     | fuel + 1 =>
       let values := valueNodes g node s
-      (∀ v ∈ values, ∀ cc ∈ s.constraints, ValueConforms g sg v cc fuel) ∧
-      (∀ cc ∈ s.constraints, FocusSatisfies g sg node s cc values) ∧
-      (∀ cc ∈ s.constraints, AggConforms g sg s values cc fuel) ∧
+      (env.blocks s.severity = true →
+        (∀ v ∈ values, ∀ cc ∈ s.constraints, ValueConforms env g sg v cc fuel) ∧
+        (∀ cc ∈ s.constraints, FocusSatisfies g sg node s cc values) ∧
+        (∀ cc ∈ s.constraints, AggConforms env g sg s values cc fuel)) ∧
       (∀ v ∈ values, ∀ r ∈ s.propertyRefs, ∀ ps, lookupShape r sg = some ps →
-        Conforms g sg v ps fuel)
+        Conforms env g sg v ps fuel)
 
   /-- A value node against one component, the recursive ones by
   `Conforms` at the smaller budget (§4.6, §4.7.1). -/
-  def ValueConforms (g : Graph) (sg : List Shape) (v : Term) (cc : Constraint) : Nat → Prop
-    | 0 => True
-    | fuel + 1 =>
-      match cc with
-      | .notOf r => ∀ rs, lookupShape r sg = some rs → ¬ Conforms g sg v rs fuel
-      | .andOf rs => ∀ r ∈ rs, ∀ s2, lookupShape r sg = some s2 → Conforms g sg v s2 fuel
-      | .orOf rs => ∃ r ∈ rs, ∃ s2, lookupShape r sg = some s2 ∧ Conforms g sg v s2 fuel
-      | .xoneOf rs =>
-        (rs.filter fun r => match lookupShape r sg with
-          | none => false
-          | some s2 => (collectShapeViolations g sg v s2 fuel).isEmpty).length = 1
-      | .nodeOf r => ∀ s2, lookupShape r sg = some s2 → Conforms g sg v s2 fuel
-      | _ => ValueSatisfies g cc v
-
-  /-- §4.7.2 / §4.7.3 qualified cardinality, by the engine's count. -/
-  def AggConforms (g : Graph) (sg : List Shape) (s : Shape) (values : List Term)
+  def ValueConforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (v : Term)
       (cc : Constraint) : Nat → Prop
     | 0 => True
     | fuel + 1 =>
       match cc with
-      | .qualifiedMinCount qref n d => n ≤ qualifyingCount g sg s values qref d fuel
-      | .qualifiedMaxCount qref n d => qualifyingCount g sg s values qref d fuel ≤ n
+      | .notOf r => ∀ rs, lookupShape r sg = some rs → ¬ Conforms env g sg v rs fuel
+      | .andOf rs => ∀ r ∈ rs, ∀ s2, lookupShape r sg = some s2 → Conforms env g sg v s2 fuel
+      | .orOf rs => ∃ r ∈ rs, ∃ s2, lookupShape r sg = some s2 ∧ Conforms env g sg v s2 fuel
+      | .xoneOf rs =>
+        (rs.filter fun r => match lookupShape r sg with
+          | none => false
+          | some s2 => env.conforms (collectShapeViolations env g sg v s2 fuel)).length = 1
+      | .nodeOf r => ∀ s2, lookupShape r sg = some s2 → Conforms env g sg v s2 fuel
+      | _ => ValueSatisfies g cc v
+
+  /-- §4.7.2 / §4.7.3 qualified cardinality, by the engine's count. -/
+  def AggConforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (s : Shape)
+      (values : List Term) (cc : Constraint) : Nat → Prop
+    | 0 => True
+    | fuel + 1 =>
+      match cc with
+      | .qualifiedMinCount qref n d => n ≤ qualifyingCount env g sg s values qref d fuel
+      | .qualifiedMaxCount qref n d => qualifyingCount env g sg s values qref d fuel ≤ n
       | _ => True
 end
 
-/-- §3.1 / §3.6.1: a data graph conforms to a shapes graph iff every
-focus node of every targeted shape conforms, at the engine's budget. -/
-def GraphConforms (g : Graph) (sg : ShapesGraph) : Prop :=
+/-- §3.1 / SHACL 1.2 §conformance-definition: a data graph conforms to
+a shapes graph iff every focus node of every targeted shape conforms,
+at the engine's budget. -/
+def GraphConforms (env : ValidationEnv) (g : Graph) (sg : ShapesGraph) : Prop :=
   ∀ s ∈ sg.shapes, s.targets ≠ [] →
     ∀ fn ∈ shapeFocusNodes g (distinctSubjects g) s,
-      Conforms g sg.shapes fn s (validateFuel sg.shapes)
+      Conforms env g sg.shapes fn s (validateFuel sg.shapes)
 
 end Spec
 
