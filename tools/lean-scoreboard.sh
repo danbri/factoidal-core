@@ -8,7 +8,8 @@
 #
 # Usage:
 #   tools/lean-scoreboard.sh [--only RUNNER[,RUNNER...]] [--resume]
-#                            [--json PATH] [--timeout SECONDS] [--list]
+#                            [--json PATH] [--logdir PATH] [--timeout SECONDS]
+#                            [--list]
 #                            [--verbose] [-h|--help]
 #
 #   --only     Run a subset. A name is a runner (l4w3c, l4owl-probe, ...) or a
@@ -18,6 +19,7 @@
 #              process died mid-run) is run again. Use this after a container
 #              restart.
 #   --json     Where to write the JSON rows.
+#   --logdir   Where to keep the runner logs (default .claude-runs/lean-scoreboard).
 #   --timeout  Wall-clock cap per runner, in seconds (default 1200).
 #   --list     Print the job ids and commands, then exit.
 #   --verbose  Also copy each runner's output to stderr while it runs.
@@ -68,6 +70,7 @@ while [ $# -gt 0 ]; do
     --only)    ONLY="${2:-}"; shift 2 || { echo "lean-scoreboard: --only needs a value" >&2; exit 2; } ;;
     --resume)  RESUME=1; shift ;;
     --json)    JSON_OUT="${2:-}"; shift 2 || { echo "lean-scoreboard: --json needs a path" >&2; exit 2; } ;;
+    --logdir)  LOGDIR="${2:-}"; shift 2 || { echo "lean-scoreboard: --logdir needs a path" >&2; exit 2; } ;;
     --timeout) RUNNER_TIMEOUT="${2:-}"; shift 2 || { echo "lean-scoreboard: --timeout needs a number" >&2; exit 2; } ;;
     --list)    LIST_ONLY=1; shift ;;
     --verbose) VERBOSE=1; shift ;;
@@ -76,7 +79,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$RUNNER_TIMEOUT" in ''|*[!0-9]*) echo "lean-scoreboard: --timeout must be a whole number of seconds" >&2; exit 2 ;; esac
-[ -n "$JSON_OUT" ] || { echo "lean-scoreboard: --json needs a path" >&2; exit 2; }
+[ -n "$JSON_OUT" ] && [ -n "$LOGDIR" ] || { echo "lean-scoreboard: --json and --logdir need a path" >&2; exit 2; }
 
 TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
 if [ -z "$TIMEOUT_BIN" ] && [ "$LIST_ONLY" -eq 0 ]; then
@@ -296,6 +299,16 @@ add_row() {
   JOB_ROWS=$((JOB_ROWS + 1))
   if [ "$status" = ok ] && [ "${f:-0}" -gt 0 ] 2>/dev/null; then JOB_FAILS=$((JOB_FAILS + f)); fi
   return 0
+}
+
+# append_note IDX TEXT -- add TEXT to the note field (field 10) of stored row IDX.
+append_note() {
+  local idx="$1" text="$2" a r l st p f o t pa nt c lg se rc rw d id
+  IFS="$US" read -r a r l st p f o t pa nt c lg se rc rw d id <<EOF2
+${ROWS[$idx]}
+EOF2
+  nt="${nt:+$nt; }$text"
+  ROWS[$idx]="${a}${US}${r}${US}${l}${US}${st}${US}${p}${US}${f}${US}${o}${US}${t}${US}${pa}${US}${nt}${US}${c}${US}${lg}${US}${se}${US}${rc}${US}${rw}${US}${d}${US}${id}"
 }
 
 # emit_status STATUS AREA LABEL REASON [RAW]   -- a row with no numbers
@@ -600,8 +613,9 @@ parse_csvw_probe() {
   if [ -z "$u" ] || [ -z "$r" ] || [ -z "$f" ] || [ -z "$t" ]; then
     emit_status unparsed "$CUR_AREA" "$CUR_LABEL" "summary line does not have the expected shape" "$line"; return
   fi
-  emit_ok "$CUR_AREA" "$CUR_LABEL" $((u + r)) "$f" 0 "$t" \
-    "* reader-level census, NOT a conformance score: pass = CSV files read ($u uniform width + $r ragged); it does not compare with the expected output" "$line"
+  if [ "$t" -eq 0 ]; then emit_status error "$CUR_AREA" "$CUR_LABEL" "read 0 files; nothing was measured" "$line"; return; fi
+  add_row census "$CUR_AREA" "$CUR_LABEL" "" "" "$t" "$t" true \
+    "* NOT a conformance score: $((u + r)) CSV files read ($u uniform width, $r ragged), $f failed to read; the probe does not compare with the expected output" "$line" ""
 }
 
 parse_xmlconf() {
@@ -622,7 +636,9 @@ EOF
 
 parse_xmlconf_probe() {
   local line a r t
-  line="$(pick_line '^summary: [0-9]+ accepted as well-formed' last)"
+  # The probe writes its summary to stderr while stdout is buffered, so the
+  # summary can start in the middle of a verdict line.
+  line="$(pick_line 'summary: [0-9]+ accepted as well-formed' last | sed -E 's/^.*(summary: )/\1/')"
   if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "$CUR_LABEL" "no 'summary:' line in the log"; return; fi
   a="$(printf '%s\n' "$line" | sed -nE 's/^summary: ([0-9]+) accepted as well-formed, ([0-9]+) rejected as malformed \(out of ([0-9]+) files\).*$/\1/p')"
   r="$(printf '%s\n' "$line" | sed -nE 's/^summary: ([0-9]+) accepted as well-formed, ([0-9]+) rejected as malformed \(out of ([0-9]+) files\).*$/\2/p')"
@@ -631,7 +647,7 @@ parse_xmlconf_probe() {
   if [ "$t" -eq 0 ]; then emit_status error "$CUR_AREA" "$CUR_LABEL" "read 0 files; nothing was measured" "$line"; return; fi
   # A census has no expected verdicts, so there is no pass or fail count.
   add_row census "$CUR_AREA" "$CUR_LABEL" "" "" "$t" "$t" true \
-    "* census, NOT a score: $a files accepted as well-formed, $r rejected (no expected verdict is read; l4xmlconf is the scored row)" "$line" ""
+    "* NOT a conformance score: $a files accepted as well-formed, $r rejected (no expected verdict is read; l4xmlconf is the scored row)" "$line" ""
 }
 
 parse_xpath() {
@@ -861,19 +877,19 @@ run_job() {
   [ -n "${JOB_STDIN[$i]}" ] && full="${JOB_STDIN[$i]} | $cmd"
 
   if [ "$RESUME" -eq 1 ] && [ -f "$meta" ] && [ -s "$log" ]; then
-    echo "[$((i + 1))/$JOB_N] $id: reusing finished log ($(meta_get "$meta" secs) s, rc $(meta_get "$meta" rc))" >&2
+    echo "[$SEL_POS/$SEL_N] $id: reusing finished log ($(meta_get "$meta" secs) s, rc $(meta_get "$meta" rc))" >&2
     return 0
   fi
   if [ ! -x "$BIN/${JOB_RUNNER[$i]}" ]; then
     rm -f "$meta"
     printf 'lean-scoreboard: runner binary not built: %s\n' "$BIN/${JOB_RUNNER[$i]}" > "$log"
     printf 'rc=127\nsecs=0\ntimeout_s=%s\ntimed_out=0\ncmd=%s\n' "$RUNNER_TIMEOUT" "$full" > "$meta"
-    echo "[$((i + 1))/$JOB_N] $id: runner binary missing" >&2
+    echo "[$SEL_POS/$SEL_N] $id: runner binary missing" >&2
     return 0
   fi
 
   rm -f "$meta"
-  echo "[$((i + 1))/$JOB_N] $id: running (cap ${RUNNER_TIMEOUT} s) ..." >&2
+  echo "[$SEL_POS/$SEL_N] $id: running (cap ${RUNNER_TIMEOUT} s) ..." >&2
   t0=$(date +%s)
   if [ -n "${JOB_STDIN[$i]}" ]; then
     ( eval "${JOB_STDIN[$i]}" ) | eval "$TIMEOUT_BIN -k 10 $RUNNER_TIMEOUT $cmd" 2>&1 | if [ "$VERBOSE" -eq 1 ]; then tee "$log" >&2; else tee "$log" > /dev/null; fi
@@ -885,12 +901,12 @@ run_job() {
   t1=$(date +%s)
   if [ "$rc" -eq 124 ] || { [ "$rc" -eq 137 ] && [ $((t1 - t0)) -ge "$RUNNER_TIMEOUT" ]; }; then timed_out=1; fi
   printf 'rc=%s\nsecs=%s\ntimeout_s=%s\ntimed_out=%s\ncmd=%s\n' "$rc" $((t1 - t0)) "$RUNNER_TIMEOUT" "$timed_out" "$full" > "$meta.tmp" && mv "$meta.tmp" "$meta"
-  echo "[$((i + 1))/$JOB_N] $id: done rc=$rc in $((t1 - t0)) s" >&2
+  echo "[$SEL_POS/$SEL_N] $id: done rc=$rc in $((t1 - t0)) s" >&2
 }
 
 # process_job INDEX -- read the saved log and meta, append rows.
 process_job() {
-  local i="$1" meta log rc secs timed_out reason line
+  local i="$1" meta log rc secs timed_out reason line first_row
   CUR_IDX="$i"; CUR_ID="${JOB_ID[$i]}"; CUR_RUNNER="${JOB_RUNNER[$i]}"
   CUR_AREA="${JOB_AREA[$i]}"; CUR_LABEL="${JOB_LABEL[$i]}"
   log="$LOGDIR/$CUR_ID.log"; meta="$LOGDIR/$CUR_ID.meta"
@@ -914,7 +930,11 @@ process_job() {
   elif [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
     emit_status error "$CUR_AREA" "$CUR_LABEL" "exit code $rc (0 and 1 are the runners' pass/fail codes)" "$(grep -E '.' "$log" | sed -n '$p')"
   else
+    first_row="$ROW_N"
     "${JOB_PARSER[$i]}"
+    if [ "$JOB_ROWS" -gt 0 ] && [ "$rc" = 1 ] && [ "$JOB_FAILS" -eq 0 ]; then
+      append_note "$first_row" "! exit code 1, but no row of this run shows a failure; the log has failures in a suite this run does not report (see the log)"
+    fi
     if [ "$JOB_ROWS" -eq 0 ]; then
       line="$(grep -E '(pass|fail|out of)' "$log" | sed -n '$p')"
       [ -n "$line" ] || line="$(grep -E '.' "$log" | sed -n '$p')"
@@ -1091,7 +1111,9 @@ fi
 
 T_START=$(date +%s)
 JOB_ROWS=0; JOB_FAILS=0
+SEL_N=${#SELECTED[@]}; SEL_POS=0
 for i in "${SELECTED[@]}"; do
+  SEL_POS=$((SEL_POS + 1))
   run_job "$i"
   process_job "$i"
 done
