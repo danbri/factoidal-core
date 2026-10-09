@@ -47,7 +47,17 @@
 # conformance runners), l4xmpp-serve (a server), and the l4block-* tools (the
 # persisted-store tools; their smoke tests are tools/blockengine-*-smoke.sh).
 #
-# Bash 3.2 compatible (macOS): no associative arrays, no mapfile.
+# Columns. "skip/other" is every count that is neither pass nor fail: skips,
+# unsupported cases, undecided cases, local overrides, cases the runner could
+# not read, cases it does not attempt. A row whose "other" has a meaning that
+# the runner's own words do not give gets a numbered note under the table. When
+# the runner prints no total, the script adds the counts and says so in the
+# note. A "census" row (xmlconf-probe, the CSV reader probe) counts files and has
+# no expected verdicts, so it shows "-" for pass and fail. A "none" row names a
+# specification area for which the Lean tree has no runner.
+#
+# Written without bash 4 features (no associative arrays, no mapfile) so that
+# it can run on macOS bash 3.2; it was tested only with bash 5.2.
 
 set -uo pipefail
 
