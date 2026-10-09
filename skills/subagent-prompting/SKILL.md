@@ -102,7 +102,11 @@ Every worktree-agent brief must include, before any build or test step:
 
     tools/ensure-test-env.sh    # idempotent: inits all testing
                                 # submodules + verifies per-suite
-                                # sentinels; exit 1 = scores will lie
+                                # sentinels; exit 1 = scores will lie.
+                                # Since 2026-10-09 it also runs
+                                # tools/fetch-builds.sh, which installs
+                                # bin/<platform>/ from a factoidal-builds
+                                # release (binaries are not committed)
 
 If the worktree is offline and init fails, the fallback is copying the
 named fixture dirs from the main checkout — but the agent must say so
@@ -357,3 +361,11 @@ Rules:
 4. Same trap for anything else built but not committed:
    `formal/fstar/ocaml-output/*.byte`, `docs/fstar-extracted/*` when
    regenerated, `.lake/build/` (cloned separately, on purpose).
+5. Since 2026-10-09 NO binary is tracked in `danbri/factoidal-core`
+   (iron rule 9), so rule 1 fails for every binary. A worktree gets
+   `bin/<platform>/` only from `tools/fetch-builds.sh` (run by
+   `tools/ensure-test-env.sh`, Step 0 above), and only when a
+   `danbri/factoidal-builds` release exists for a commit in the
+   worktree's history. Check that `bin/<platform>/<name>` exists in the
+   worktree after Step 0 before the brief promises it; otherwise the
+   brief tells the agent to build it.

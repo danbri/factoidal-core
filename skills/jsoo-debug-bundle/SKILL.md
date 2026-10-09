@@ -128,9 +128,14 @@ skill first.
 
 ## Cleanup / when not to use
 
-- The debug bundle is committed (Pages serves it). Do **not**
-  remove it casually; the `?jsoo-debug=1` path is part of the
-  public-demo debug surface now. If a future hardening pass wants
+- The debug bundle was committed in `danbri/factoidal` (Pages served
+  it). Since 2026-10-09 `docs/fstar-extracted/factoidal.debug.{js,map}`
+  are gitignored in `danbri/factoidal-core`, and no step of `build.yml`
+  in `danbri/factoidal-builds` builds them (read 2026-10-09). The
+  `?jsoo-debug=1` path loads them only where a deploy includes them;
+  build them locally with `build-jsoo-debug.sh` to debug. Do **not**
+  remove the `?jsoo-debug=1` path casually; it is part of the
+  public-demo debug surface. If a future hardening pass wants
   to drop it, pull the bundle + map + `jsUrl` debug branch
   together in one commit.
 - For a Node-only crash, skip this skill entirely. Build the

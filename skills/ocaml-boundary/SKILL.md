@@ -132,8 +132,8 @@ From `2026-05-07-io-verification-and-third-party.md`:
 
 | Target | Status | Notes |
 |---|---|---|
-| OCaml native | production | `build-ocaml.sh` all/extract/compile; binaries committed per Iron Rule #9 |
-| js_of_ocaml | works | `build-ocaml.sh js` → `docs/fstar-extracted/factoidal.js`; powers the browser demos; debug variant via `jsoo-debug-bundle` |
+| OCaml native | production | `build-ocaml.sh` all/extract/compile; binaries are built and published by `danbri/factoidal-builds`, not committed (iron rule 9, changed 2026-10-09) |
+| js_of_ocaml | works | `build-ocaml.sh js` → `docs/fstar-extracted/factoidal.js` (a build product, gitignored; `tools/fetch-builds.sh` installs the `web` release set); powers the browser demos; debug variant via `jsoo-debug-bundle` |
 | wasm_of_ocaml | works | `build-ocaml.sh wasm`; vendored zarith wasm runtime + `wasm_stub_shims.py`; the historical `functions`-suite hash crashes are why the pure-OCaml hash module exists |
 | KaRaMeL C | pilot | `--codegen krml` clean on 5 pure modules; `krml → .c` blocked on karamel install (needs ocaml<4.13 switch, prebuilt binary, or newer `wasm` pin) — `2026-05-07-c-build-and-roaring-plan.md` |
 

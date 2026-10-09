@@ -35,7 +35,7 @@ manifests + `tools/dispatch_test_suites.sh --diff`) and runs just
 those, with a labelled pass/fail line per suite:
 
 ```bash
-tools/affected-tests.sh                 # base=merge-base(origin/claude/main, HEAD)
+tools/affected-tests.sh                 # base=merge-base(origin/claude/main, HEAD); see the note below
                                          # head=working tree (incl. uncommitted changes)
 tools/affected-tests.sh <base>          # explicit base, head=working tree
 tools/affected-tests.sh <base> <head>   # explicit base and head (committed refs only)
@@ -49,9 +49,17 @@ in this checkout. Touching a **foundational** path
 (`.github/test-suites/_foundational.yaml`) fires every suite — that's
 by design, not a bug in the tool.
 
-**The full battery still gates release-grade landings** — nightly CI
-(`.github/workflows/w3c-tests.yml`) and any multi-package landing
-must still run the complete suite (`./w3c-tests.sh`) before those.
+Base branch in `danbri/factoidal-core` (2026-10-09): the script's default
+base is `origin/claude/main`. In core, `claude/main` is the older branch
+that the split did not overwrite, and core's current line is
+`claude/core-split` until the owner renames it to `main`. Pass the base
+explicitly (for example `tools/affected-tests.sh origin/claude/core-split`)
+and read the printed plan before trusting the suite list.
+
+**The full battery still gates release-grade landings** — the nightly
+full-suite run (`w3c-tests.yml`, inactive since 2026-10-09: see the
+"CI: what runs when" table) and any multi-package landing must still run
+the complete suite (`./w3c-tests.sh`) before those.
 `affected-tests.sh` is a fast local signal, not a substitute.
 
 ## Step 0: verify fixtures exist (or every score below lies)
@@ -81,9 +89,12 @@ different IRI strings) if CWD changes. The wrapper enforces this by
 script directly.
 
 It wraps `formal/fstar/generate-report.sh`, which picks the platform
-binaries from `bin/darwin-arm64/` or `bin/linux-x86_64/` (committed per
-Iron Rule #9 — a fresh clone runs tests with **no F\*/opam toolchain**)
-and drives three runners:
+binaries from `bin/darwin-arm64/` or `bin/linux-x86_64/`. Since
+2026-10-09 these are not committed (iron rule 9): `tools/fetch-builds.sh`
+installs them from the newest `danbri/factoidal-builds` release whose
+source commit is in your history, so a fresh clone runs tests with **no
+F\*/opam toolchain** once that has run (`tools/ensure-test-env.sh` calls
+it). It drives three runners:
 
 | Runner | Suites | Raw log |
 |---|---|---|
@@ -108,9 +119,11 @@ and drives three runners:
 
 Outputs: `docs/test-results/index.html` (dashboard),
 `latest.csv` / `latest.json` (machine-readable),
-`history/<iso-timestamp>.{csv,json}` (archive). These are
-**CI-maintained on the main lines** — do not commit local
-regenerations from feature branches; CI will overwrite them.
+`history/<iso-timestamp>.{csv,json}` (archive). Until 2026-10-09 these
+were committed and CI-maintained on the main lines. In
+`danbri/factoidal-core` they are generated and gitignored: do not commit
+them. The `web` release set of `danbri/factoidal-builds` carries a
+generated dashboard.
 
 Known reporting gap: rdf-canon scores appear in `latest.csv` but are
 not folded into `latest.json`'s RDF totals. Treat the CSV as the
@@ -260,19 +273,39 @@ regressions, parser error-recovery), Eclipse RDF4J (SPARQL 1.2 draft
 fixtures, SERVICE federation), Apache Jena (RDFS rule tests, pre-baked
 BSBM). The single best idea found there: Jena's shaded-old-build
 pattern — benchmark the current build against a **frozen older binary
-of itself** (we already commit binaries, so a
-`bin/<platform>/factoidal.v<N>` + diff script is cheap to add).
+of itself** (each built core commit has its own release in
+`danbri/factoidal-builds`, and `tools/fetch-builds.sh --commit <sha>`
+installs the build of a given commit. It installs into the same
+`bin/<platform>/` paths as the current build, so a diff script has to
+copy it aside first).
 
 ## CI: what runs when
 
+Since 2026-10-09 the workflows are split between two repositories.
+
+In `danbri/factoidal-core` (`.github/workflows/`, source-only gates that
+need no built binary):
+
 | Workflow | Role |
 |---|---|
-| `w3c-tests.yml` | Heavy pipeline on main lines + nightly cron: debounced, dual-platform shadow builds to `bin/ci-<platform>/`, full suites, commits dashboard artifacts |
-| `beyond-w3c.yml` | Per-PR native/JS parity over demo queries |
 | `verify-lean4.yml` | Lean 4 full-corpus gate: `lake build` of the whole tree (every `#guard`, every theorem) on each push to the main line; see `docs/20260831-lean-ci-gate.md` |
-| `ukparliament-bench.yml` | Perf-regression gate (see `perf-benchmarking`) |
+| `verify-fstar.yml` | F\* full-corpus verification (`make verify`, no `--lax`) |
 | `check-derived-files.yml`, `check-fstar-purity.yml`, `check-ocaml-output-cleanliness.yml`, `check-extraction.yml` | Boundary/extraction discipline gates (see `ocaml-boundary`) |
-| `dashboard-refresh.yml`, `deploy-pages.yml` | Publishing (see `site-and-dashboard`) |
+
+In `danbri/factoidal-builds`:
+
+| Workflow | Role |
+|---|---|
+| `build.yml` (active) | Builds a core commit (Lean native and wasm, F\* native, JS and wasm), runs its gates, and publishes releases `build-<12 hex>-<set>`. Polls core four times a day. Per `legacy-workflows/README.md` it replaces `w3c-tests.yml`; whether it runs every suite that `./w3c-tests.sh` runs was not checked |
+| `legacy-workflows/*.yml` (inactive, not under `.github/workflows/`) | `w3c-tests`, `beyond-w3c`, `conformance-rerun`, `dashboard-refresh`, `deploy-pages`, `fly-deploy`, `npm-publish`, `npm-publish-lean`, `ukparliament-bench`, `clean-room-build`, `debug-bytecode-build`. Each still assumes the old layout. What each port needs: `legacy-workflows/README.md` |
+
+Before 2026-10-09 `w3c-tests.yml` was the heavy pipeline on the main
+lines plus a nightly cron (debounced, dual-platform shadow builds to
+`bin/ci-<platform>/`, full suites, committed dashboard artifacts),
+`beyond-w3c.yml` ran per PR (native/JS parity over demo queries), and
+`ukparliament-bench.yml` was the perf-regression gate (see
+`perf-benchmarking`). `dashboard-refresh.yml` and `deploy-pages.yml` did
+the publishing (see `site-and-dashboard`). None of these runs now.
 
 `.github/test-suites/*.yaml` holds one manifest per suite (runner,
 args, log path, `domain`, `foundational`, trigger paths) — this
@@ -304,14 +337,19 @@ The durable fix (landed as `.github/workflows/conformance-rerun.yml`,
 epic #235): a **scheduled** (daily cron + `workflow_dispatch`) job that
 re-runs EVERY suite off the committed `bin/linux-x86_64` binaries via
 `generate-report.sh --run` and commits refreshed logs back — so drift
-becomes a visible scheduled-commit diff. Rules that follow:
+becomes a visible scheduled-commit diff. Since 2026-10-09 this workflow
+is inactive: it moved to `legacy-workflows/` in `danbri/factoidal-builds`
+(its port is the `build-ocaml.sh test` step and the Lean scoreboard in
+`build.yml`, per that README), and core no longer commits result logs.
+Gap 1 above is open again. No tracking issue is recorded here yet.
+Rules that follow:
 
 - Every new suite gets a manifest AND is covered by the scheduled re-run
   (it is, automatically, if `generate-report.sh --run` invokes its runner —
   check that it does).
 - Before quoting a suite's score as *current*, remember the committed log
   may be stale. If it matters, re-run the suite and read the LIVE number
-  (committed binaries, no toolchain). Cross-ref `obsolescence-sweep`
+  (release binaries from `tools/fetch-builds.sh`, no toolchain). Cross-ref `obsolescence-sweep`
   § "score-staleness trap."
 - Auditing "what's silently untested": the dangerous pattern is a clean
   fully-dispositioned score nobody re-verifies — NOT a big labeled skip

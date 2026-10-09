@@ -76,12 +76,19 @@ a day. Consequences for this skill's discipline:
 
 - A score you are about to quote as current is NOT trustworthy because it
   is committed — it is trustworthy only if a run produced it recently.
-  When it matters, **re-run the suite (committed binaries, no toolchain
-  needed) and read the LIVE number**, don't trust the committed log.
+  When it matters, **re-run the suite (binaries from
+  `tools/fetch-builds.sh`, no toolchain needed) and read the LIVE
+  number**, don't trust a stored log.
 - The durable fix is a scheduled re-run that commits refreshed logs, so
   drift becomes a visible diff (`.github/workflows/conformance-rerun.yml`,
   epic #235). A suite with no scheduled/triggered re-run path is a silent
-  gap regardless of how green its committed number looks.
+  gap regardless of how green its committed number looks. (Since
+  2026-10-09 `conformance-rerun.yml` is not in `danbri/factoidal-core`: it
+  moved to `legacy-workflows/` in `danbri/factoidal-builds` and is
+  inactive. The result logs and the dashboard are generated and
+  gitignored in core. The `web` release set carries the generated
+  dashboard. No scheduled re-run of the full suites is active until the
+  workflow is ported; see `legacy-workflows/README.md`.)
 - Cross-ref `test-suites` (§ Drift signal) and the boundary-audit method:
   when auditing "what's silently missing," the dangerous pattern is NOT
   big labeled skip pools (those are honest) — it's clean-looking fully-

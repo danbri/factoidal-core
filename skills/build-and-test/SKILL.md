@@ -94,8 +94,13 @@ extraction needs patches, use `extract` (which includes patches) or
 run `./ocaml-patches.sh` manually.
 
 Output binaries land in `bin/<platform>/` (e.g. `bin/linux-x86_64/`).
-Symlinks from `ocaml-output/` point to them. Per Iron Rule #9 the
-binaries are committed; do not skip them when staging.
+Symlinks from `ocaml-output/` point to them. Since 2026-10-09 (iron rule
+9) these binaries are NOT committed: `bin/linux-x86_64/` and
+`bin/darwin-arm64/` are in `.gitignore`, and `danbri/factoidal-builds`
+builds and publishes the release binaries. Do not stage or force-add
+them. The hand-written OCaml under `bin/<consumer>/` is source and is
+committed. A machine with no F\* toolchain gets the binaries with
+`tools/fetch-builds.sh` (see "W3C test runner" below).
 
 ### `./build-ocaml.sh test`
 
@@ -103,9 +108,12 @@ Runs unit tests. Does not run W3C tests — use `./w3c_runner` for those.
 
 ### `./build-ocaml.sh js`
 
-Produces `docs/fstar-extracted/factoidal.js` via js_of_ocaml. Used
-for the demo page deployment (CI rebuilds and commits it). For a
-source-mapped debuggable variant see the `jsoo-debug-bundle` skill.
+Produces `docs/fstar-extracted/factoidal.js` via js_of_ocaml. The
+bundle is not committed (it is in `.gitignore`). The `web` release set of
+`danbri/factoidal-builds` builds it, and `tools/fetch-builds.sh` installs
+it. The demo page deployment (Pages) has no workflow yet: see
+`site-and-dashboard`. For a source-mapped debuggable variant see the
+`jsoo-debug-bundle` skill.
 
 ### `./build-ocaml.sh wasm`
 
@@ -129,9 +137,14 @@ See `docs/designissues/2026-05-07-c-build-and-roaring-plan.md`.
 
 ## W3C test runner
 
-The committed binary is `bin/<platform>/w3c_runner` (works on a fresh
-clone with no toolchain). After a local build, a symlink also appears
-at `formal/fstar/ocaml-output/w3c_runner`.
+The binary is `bin/<platform>/w3c_runner`. It is not committed. On a
+fresh clone with no toolchain, run `tools/fetch-builds.sh` (or
+`tools/ensure-test-env.sh`, which calls it and also initialises the test
+submodules). The script installs the newest `danbri/factoidal-builds`
+release whose source commit is in your checkout's history, after it
+checks every file's sha256 against the release's `build-info.json`.
+After a local build, a symlink also appears at
+`formal/fstar/ocaml-output/w3c_runner`.
 
 ### Test data discovery
 
@@ -151,7 +164,8 @@ project root works; `formal/fstar/ocaml-output/` works.
 
 If the binary in `bin/linux-x86_64/` was built before the
 `third_party/...` paths were added, it'll only know the legacy paths
-and fail on a fresh checkout. Recompile.
+and fail on a fresh checkout. Recompile, or run `tools/fetch-builds.sh`
+to install a release built from a commit in your history.
 
 ### Output format
 

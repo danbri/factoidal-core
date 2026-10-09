@@ -14,8 +14,18 @@ Shardborough store and the WASM module. Everything else is plumbing for
 getting the formal code into runnable form (extraction, compilation,
 tests) or project documentation. The directory layout makes that visible.
 
+Three repositories exist since 2026-10-09 (record:
+`docs/designissues/2026-10-09-core-builds-split.md`). This tour maps
+`danbri/factoidal-core`, the source. `danbri/factoidal-builds` builds a
+core commit and publishes the compiled binaries, wasm modules and JS
+bundles as releases tagged `build-<12 hex core commit>-<set>`
+(`tools/fetch-builds.sh` installs them). `danbri/factoidal` is the
+previous single repository: it keeps the full history and the issue
+tracker. Until the owner renames the branch, core's default line is
+`claude/core-split`, not `main`.
+
 ```
-factoidal/
+factoidal-core/
 ├── CLAUDE.md                     short-and-tight project rules
 ├── README.md                     public-facing project overview
 ├── formal/                       VERIFIED CORE
@@ -51,16 +61,15 @@ factoidal/
 │   │   └── paper/roaring.{pdf,txt}   reference paper
 │   └── third_party/              future home for vendored F* deps
 │       └── (e.g. hacl-star/ for SHA-256 — see io-verification doc)
-├── bin/                          BINARIES + CONSUMER SOURCES
-│   ├── darwin-arm64/             committed binaries, macOS Apple Silicon
-│   ├── linux-x86_64/             committed binaries, Linux x86-64 (static):
-│   │                             factoidal, w3c_runner, owl_runner,
+├── bin/                          CONSUMER SOURCES (+ installed binaries, not committed)
+│   ├── <consumer>/               hand-written consumer .ml sources:
+│   │                             factoidal-cli/, w3c-runner/, owl-runner/,
+│   │                             factoidal-http/, factoidal-serve/, … (rule #11)
+│   ├── linux-x86_64/             NOT committed (gitignored). Installed by
+│   │                             tools/fetch-builds.sh from a factoidal-builds
+│   │                             release: factoidal, w3c_runner, owl_runner,
 │   │                             rdfc10_runner, factoidal-http, …
-│   ├── ci-linux-x86_64/          CI shadow builds (Fly deploy source of truth)
-│   ├── ci-darwin-arm64/          CI shadow builds
-│   └── <consumer>/               hand-written consumer .ml sources:
-│                                 factoidal-cli/, w3c-runner/, owl-runner/,
-│                                 factoidal-http/, factoidal-serve/, … (rule #11)
+│   └── darwin-arm64/             NOT committed (gitignored). Same, macOS arm64
 ├── third_party/                  VENDORED CORPORA + DATA
 │   ├── testing/                  W3C test fixture submodules
 │   │   ├── w3c/                  rdf-tests submodule
@@ -88,14 +97,15 @@ factoidal/
 │   │   └── (many historical drift / fix design docs)
 │   ├── skills/                   RETIRED (pre-pivot Rust-era; see README there)
 │   ├── code-name-glossary.md     Yod6 / Tet3 / etc. — historical decoder ring
-│   ├── test-results/
-│   │   ├── latest.json           most recent W3C run (CI-maintained)
-│   │   ├── ukparliament-bench-modern.json   perf baseline (harness-maintained)
-│   │   ├── history/              timestamped snapshots
-│   │   └── index.html            dashboard (deployed to gh-pages)
+│   ├── test-results/             generated dashboard: gitignored in core. Only
+│   │                             closure-bench-baseline.json and
+│   │                             perf-quadstore-baseline.* are committed
+│   │                             (the `web` release set carries the dashboard)
 │   ├── web/                      landing page + demo pages
 │   ├── deploy/                   Fly.io / Cloudflare tunnel notes
-│   └── fstar-extracted/          js_of_ocaml + wasm bundles for browser demo
+│   └── fstar-extracted/          demo pages, clients and samples (committed);
+│                                 the js_of_ocaml + wasm bundles are build
+│                                 products (gitignored, from the `web` release set)
 ├── skills/                       SKILL FILES (agentskills.io format)
 │   └── <name>/SKILL.md           listed in CLAUDE.md's ## Skills section
 ├── tests/                        first-party harnesses (unit, local
@@ -105,12 +115,15 @@ factoidal/
 │   ├── settings.json             permissions, hooks
 │   └── settings.local.json       local overrides
 ├── .github/
-│   ├── workflows/                CI configs
-│   │   ├── check-extraction.yml
-│   │   ├── check-fstar-purity.yml      (Omega3 — rule #11 gate)
-│   │   ├── w3c-tests.yml
-│   │   └── (...)
-│   └── scripts/
+│   ├── workflows/                source-only gates: check-extraction.yml,
+│   │                             check-fstar-purity.yml (Omega3 — rule #11 gate),
+│   │                             check-derived-files.yml,
+│   │                             check-ocaml-output-cleanliness.yml,
+│   │                             verify-fstar.yml, verify-lean4.yml.
+│   │                             Build, test, deploy and publish workflows live in
+│   │                             danbri/factoidal-builds (build.yml is active;
+│   │                             legacy-workflows/ holds the inactive rest)
+│   └── test-suites/              suite definitions (*.yaml)
 ├── kgx/                          SPARQL CONSTRUCT queries (future)
 ├── design_issues/                older design notes (e.g. roaring_fstar_plan.md)
 └── junk/do_not_use/              vibe-coded artifacts (DO NOT USE)

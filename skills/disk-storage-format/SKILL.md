@@ -335,12 +335,15 @@ All commands below were run this session against
 uncommitted mid-edit at the time; per this task's own brief and the
 `workflow-gotchas-debugging` skill's subagent-worktree-leakage lesson,
 verification here never touched or depended on that in-flight state).
-`.cmx`/`.cmi`/`.o` build artifacts are **not** committed (only `.ml`
-sources and the final linked `bin/<platform>/*` binaries are, per Iron
-Rule #9) — reproducing the `factoidal compact`/delta-log commands from
-a clean checkout requires `cd formal/fstar && ./build-ocaml.sh compile`
-first (safe to run in a separate worktree; the build lock is
-per-worktree, see `build-and-test` skill).
+`.cmx`/`.cmi`/`.o` build artifacts were not committed; at that time the
+final linked `bin/<platform>/*` binaries were (iron rule 9 then).
+Since 2026-10-09 the binaries are not committed either: they are built
+and published by `danbri/factoidal-builds`. To reproduce the
+`factoidal compact`/delta-log commands from a clean checkout, run
+`tools/fetch-builds.sh` (installs the release built from a commit in
+your history), or run `cd formal/fstar && ./build-ocaml.sh compile`
+(safe to run in a separate worktree; the build lock is per-worktree,
+see `build-and-test` skill).
 
 ### Import (two paths)
 

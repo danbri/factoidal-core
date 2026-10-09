@@ -1,25 +1,33 @@
 ---
 name: session-restore
-description: Restore a fresh or recycled VM/container/session to full working state in minutes, not hours — the cache inventory (toolchain-cache branch, .checked verification cache, pycottas venv, skill symlinks), what the bootstrap hook restores automatically vs what needs a command, the wasm_of_ocaml/binaryen ≥116 install path (proxy-blocked release binaries, conda-forge fallback), and the never-again rules from the 2026-07-03 session that burned ~90 minutes compiling F* from source twice. Use on any fresh clone, restored VM, new sandbox, when fstar.exe or test data is missing, when a wasm build fails on a missing `wasm-merge`, when a session is about to do something expensive that a previous session already did, or when adding a new cache-worthy artifact.
+description: Restore a fresh or recycled VM/container/session to full working state in minutes, not hours — the cache inventory (toolchain-cache branch of danbri/factoidal-builds, .checked verification cache, pycottas venv, skill symlinks), what the bootstrap hook restores automatically vs what needs a command, the wasm_of_ocaml/binaryen ≥116 install path (proxy-blocked release binaries, conda-forge fallback), and the never-again rules from the 2026-07-03 session that burned ~90 minutes compiling F* from source twice. Use on any fresh clone, restored VM, new sandbox, when fstar.exe or test data is missing, when a wasm build fails on a missing `wasm-merge`, when a session is about to do something expensive that a previous session already did, or when adding a new cache-worthy artifact.
 ---
 
 # Session / VM restoration: never rebuild what a previous session built
 
 An ephemeral container is recycled; the repo is the only durable
 store. Everything expensive a session produces must therefore either
-be committed (binaries, per Iron Rule #9), pushed to a cache branch,
-or accepted as lost. This skill is the inventory of what we cache,
-how restoration works, and the mistakes that motivated it.
+be committed (source), published by `danbri/factoidal-builds` (compiled
+binaries, wasm and JS bundles: built by CI from a pushed core commit and
+installed by `tools/fetch-builds.sh`, per iron rule 9 as changed
+2026-10-09), pushed to a cache branch of `danbri/factoidal-builds`, or
+accepted as lost. This skill is the inventory of what we cache, how
+restoration works, and the mistakes that motivated it.
 
-## Lean4 wasm build cache (toolchain-cache branch)
+## Lean4 wasm build cache (toolchain-cache branch of danbri/factoidal-builds)
 
-`l4wasm-work-cache-v4.33.1.tar.gz` on `origin/toolchain-cache` holds
-the Lean-to-wasm build's expensive intermediates (regenerated core C,
-wasm objects, runtime objects, sparse sources) keyed to lean-toolchain
-v4.33.1 + Emscripten 6.0.8 — 12.8 MB, saves ~15 minutes and the
-network fetches. Restore per that branch's README; Emscripten itself
+`l4wasm-work-cache-v4.33.1.tar.gz` on the `toolchain-cache` branch of
+`danbri/factoidal-builds` holds the Lean-to-wasm build's expensive
+intermediates (regenerated core C, wasm objects, runtime objects, sparse
+sources) keyed to lean-toolchain v4.33.1 + Emscripten 6.0.8 — 12.8 MB,
+saves ~15 minutes and the network fetches. Since 2026-10-09 the branch is
+NOT on `origin` of a core clone (`origin` is `danbri/factoidal-core`):
+fetch it from `https://github.com/danbri/factoidal-builds`, as
+`tools/install-toolchain-cache.sh` does (`FACTOIDAL_CACHE_REMOTE`
+overrides the remote). Restore per that branch's README; Emscripten itself
 reinstalls via emsdk (not cached, 1.7 GB), and uv.h comes from
-`apt-get install libuv1-dev`.
+`apt-get install libuv1-dev`. The `lean-wasm` job of `build.yml` in
+`danbri/factoidal-builds` restores the same file.
 
 ## What restores automatically (the bootstrap hook)
 
@@ -29,10 +37,10 @@ in remote sandboxes on every session start, all steps idempotent:
 | Restored | From | Cold cost | Warm cost |
 |---|---|---|---|
 | Test fixtures — ALL 14 `third_party/testing/*` submodules + per-suite sentinel verification (`tools/ensure-test-env.sh`; worktrees must run it themselves) | git | ~2-4 min (~500 MB) | no-op |
-| Committed binaries check + `ocaml-output/` symlinks | `bin/<platform>/` | instant | instant |
+| Build products (binaries, wasm, JS) from the newest `danbri/factoidal-builds` release whose source commit is in your history, sha256-checked, + `ocaml-output/` symlinks (`tools/fetch-builds.sh`, called by `tools/ensure-test-env.sh`) | `danbri/factoidal-builds` releases | one download per set (size not measured); exits 2 when no release matches your history (on 2026-10-09 none had been published yet) | no-op (`.factoidal-builds/<set>.tag` stamp) |
 | pycottas venv (`_tmp.junk/pycottas-venv`) | PyPI | ~1 min | no-op |
 | **Skill discovery symlinks** `.claude/skills/<n>` | regenerated fresh from `skills/*/` | instant | instant |
-| F\* toolchain (backgrounded) | `toolchain-cache` branch | ~2-4 min | no-op |
+| F\* toolchain (backgrounded) | `toolchain-cache` branch of `danbri/factoidal-builds` | ~2-4 min | no-op |
 | fstar-mcp binary + daemon | cargo / running pid | ~2-3 min | instant |
 | **Git freshness** (fetch + auto-ff when behind) | `origin/<branch>` | ~2 s | ~2 s |
 
@@ -56,11 +64,19 @@ landed work "isn't here," check freshness FIRST, not the code.
 
 ## The cache branches (orphan, never merged)
 
+Both branches live in `danbri/factoidal-builds` since 2026-10-09. Their
+trees are identical to the branches of the same names in
+`danbri/factoidal` at `ec785429ab23` (`toolchain-cache`) and
+`5a7d99429b6a` (`checked-cache`); each is a single commit
+(`docs/designissues/2026-10-09-core-builds-split.md`).
+
 - **`toolchain-cache`** — `bin/fstar.exe` + `lib/fstar` for the
   pinned F\* version (split <100MB chunks + SHA256SUMS). Consumer:
-  `tools/install-toolchain-cache.sh`. Rebuild when
-  `fstar_version` in `bin/ci-linux-x86_64/build-info.json` changes;
-  instructions in the branch README.
+  `tools/install-toolchain-cache.sh`. Rebuild when the `FSTAR_VERSION`
+  default in that script changes (it must equal the F\* version CI
+  builds with; `bin/ci-linux-x86_64/build-info.json`, which this line
+  named before the split, is not in core); instructions in the branch
+  README.
 - **`checked-cache`** (live 2026-07-03) — the repo's
   `formal/fstar/*.checked` verification cache (~13MB gzip, 88
   modules), snapshotted from the gates-green state. Restored by
@@ -72,11 +88,13 @@ landed work "isn't here," check freshness FIRST, not the code.
 
 **Gate rule (non-negotiable): cache artifacts are pushed only from a
 state that passed the full test battery** — F\* verification, the W3C
-suites, and the perf gates — exactly like the committed binaries
-(Iron Rule #9). A `.checked` set or toolchain snapshot from an
+suites, and the perf gates — exactly like the release binaries
+(`danbri/factoidal-builds` publishes a set only when its gates passed;
+iron rule 9). A `.checked` set or toolchain snapshot from an
 unproven tree would let every future session bootstrap from a
 regression. Same order of operations as binaries: build → gates →
-commit/push, never build → push → hope.
+push to the cache branch of `danbri/factoidal-builds`, never build →
+push → hope.
 
 Pattern for new cache artifacts: orphan branch, split files under
 100MB, SHA256SUMS, single amended commit (history of a cache is
@@ -98,11 +116,14 @@ natively — they are not optional decoration.
 ## Never-again rules (2026-07-03, ~90 wasted minutes)
 
 1. **Never compile F\* from source when a cache exists.** Check
-   `toolchain-cache` first; `tools/install-toolchain-cache.sh` is the
+   the `toolchain-cache` branch of `danbri/factoidal-builds` first;
+   `tools/install-toolchain-cache.sh` is the
    entry point. Source builds are for producing a NEW cache entry.
-2. **Never let opam choose the F\* version.** Pin to CI's
-   (`build-info.json`); a mismatched version verifies fine and then
-   churns every extracted `.ml` — we paid the full compile twice.
+2. **Never let opam choose the F\* version.** Pin to CI's (the
+   `FSTAR_VERSION` default in `tools/install-toolchain-cache.sh`, and
+   the toolchain versions in a release's `build-info.json`); a
+   mismatched version verifies fine and then churns every extracted
+   `.ml` — we paid the full compile twice.
    **Same for z3: check `z3 --version` says 4.13.3 after every
    restore.** A 2026-07-10 container shipped z3 4.16.0 first on PATH
    (both `/usr/local/bin/z3` and the opam switch's `z3`) with 4.13.3
@@ -114,8 +135,10 @@ natively — they are not optional decoration.
    `api.github.com` + release assets are blocked; PyPI/npm/crates are
    direct. Check `$HTTPS_PROXY/__agentproxy/status`. Release-only
    artifacts get mirrored into a cache branch — that is this repo's
-   standard answer, endorsed as policy. (Asked and answered
-   2026-07-03: upstream F\* binaries are NOT git-fetchable —
+   standard answer, endorsed as policy. (`tools/fetch-builds.sh` reads
+   releases through the API and downloads release assets, the endpoints
+   this test saw blocked; see `session-economy` for what was re-tested
+   on 2026-10-09.) (Asked and answered 2026-07-03: upstream F\* binaries are NOT git-fetchable —
    `FStarLang/FStar` carries source only, release assets are the
    blocked endpoint, and `FStarLang/binaries`' newest Linux tarball
    dates to 2021-04. Our `toolchain-cache` branch is not duplication
@@ -124,8 +147,10 @@ natively — they are not optional decoration.
    a session pays >10 minutes for reusable state, pushing it to a
    cache branch is part of finishing the task.
 5. **Restoration must never block the session.** Hook steps are
-   backgrounded and fail-open; a session can always run the committed
-   binaries with zero toolchain.
+   backgrounded and fail-open; a session can run the release binaries
+   with zero toolchain once `tools/fetch-builds.sh` has installed them
+   (it can do so only when a release exists for a commit in the
+   checkout's history).
 6. **Wasm builds need binaryen ≥ 116** (`wasm-merge` does not exist in
    Ubuntu apt's binaryen 108, so `opam install wasm_of_ocaml-compiler`
    fails at its runtime link step). GitHub release binaries are
@@ -166,7 +191,13 @@ gate, plus ~40 minutes of diagnosis and two failed repair attempts.
   6.9 GB free; the fetch dies with `fetch-pack: invalid index-pack
   output` (disk), and if you pipe it through `tail -1` the failure is
   MASKED because the pipeline exits 0 (anti-pattern #14 — capture the
-  fetch's own exit code).
+  fetch's own exit code). (That was `danbri/factoidal`. Since 2026-10-09
+  `danbri/factoidal-core` has no binaries in its history, and whether
+  an unshallow fetch now fits was not measured. The commits these tests
+  cite are not in core's rewritten history at all: all seven ids were
+  checked absent on 2026-10-09. They exist in `danbri/factoidal`, so the
+  repair below would have to fetch them from
+  `https://github.com/danbri/factoidal` instead of `origin` (untested).)
 - **The working repair costs bytes, not gigabytes.** The tests need
   the commit OBJECTS only, never their trees:
   1. resolve each short SHA to a full SHA with the GitHub API
@@ -179,9 +210,14 @@ gate, plus ~40 minutes of diagnosis and two failed repair attempts.
   `tests/hub/post18_test.mjs`; grep `cat-file` there when new posts
   add more.
 - The other fresh-container hub failure of that day — the C
-  delta-log demo binary post18 runs — is fixed PERMANENTLY: the
-  binary is committed since 2026-08-04 (`formal/fstar/.gitignore`
-  carries the war story). If it regresses, the gcc recipe is the
+  delta-log demo binary post18 runs — was fixed PERMANENTLY in
+  `danbri/factoidal`: the binary was committed from 2026-08-04
+  (`formal/fstar/.gitignore` carries the war story). (Since 2026-10-09
+  that fix is gone in core: the split dropped native executables, and
+  `formal/fstar/c-output/deltalog/demo/` holds only the two `.c`
+  sources, checked 2026-10-09. The post18 test that runs it needs the
+  binary built with the recipe below until a release set carries it.)
+  If it regresses, the gcc recipe is the
   tail of `tools/karamel-c-build.sh` with `KRML_HOME` pointing at a
   depth-1 clone of FStarLang/karamel (headers only; opam karamel
   does not install here — its depext wants python2.7).
