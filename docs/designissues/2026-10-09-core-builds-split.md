@@ -119,6 +119,22 @@ a stated method. Measured here: 2,554 commits on `claude/main` touch
    `tools/install-toolchain-cache.sh` reads them from there
    (`FACTOIDAL_CACHE_REMOTE` overrides).
 
+### 4a. Correction made in the same landing
+
+The first snapshot rule dropped all of `bin/` and all of
+`docs/test-results/` and `docs/fstar-extracted/`. That was wrong:
+`bin/<consumer>/` holds the hand-written OCaml of the CLI, the HTTP server
+and every F\* suite runner (iron rule 11 puts consumer tools there), and
+`docs/fstar-extracted/` and `docs/test-results/` hold hand-written pages,
+clients, samples and two benchmark baselines next to the generated files.
+`build-ocaml.sh` compiles `bin/<consumer>/*.ml`, so core without them could
+not build its own CLI. A follow-up commit restores those 109 files from the
+same source commit and narrows the rule to generated outputs only (object
+files and executables in `bin/`, the JS and wasm bundles, the result logs,
+the generated dashboard). `.gitignore` mirrors the narrowed rule. The Lean
+wasm glue `docs/web/hub/assets/l4/l4factoidal.mjs` is now a build product
+too: `Wasm/build-wasm.sh` regenerates it with the `.wasm` it must match.
+
 ## 5. How a checkout gets binaries now
 
 `tools/fetch-builds.sh` lists the releases of `danbri/factoidal-builds`,

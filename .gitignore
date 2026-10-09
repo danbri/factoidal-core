@@ -116,12 +116,36 @@ npm/factoidal/node_modules/
 
 # Build products, installed by tools/fetch-builds.sh from danbri/factoidal-builds
 # releases (2026-10-09 split; CLAUDE.md iron rule 9). Never committed here.
-/bin/
+# The rule mirrors tools/repo-split/core-tip-exclude.py.
+/bin/linux-x86_64/
+/bin/darwin-arm64/
+/bin/ci-*/
+/bin/*/*.cmi
+/bin/*/*.cmx
+/bin/*/*.cmo
+/bin/*/*.cmt
+/bin/*/*.o
+/bin/*/*.byte
 /.factoidal-builds/
-/docs/test-results/
+/docs/test-results/*
+!/docs/test-results/closure-bench-baseline.json
+!/docs/test-results/perf-quadstore-baseline.json
+!/docs/test-results/perf-quadstore-baseline.fragment.html
 /docs/npm/
-/docs/fstar-extracted/
-/docs/web/hub/assets/l4/*.wasm
+/docs/fstar-extracted/w3c-runner.js
+/docs/fstar-extracted/w3c-runner.wasm.js
+/docs/fstar-extracted/factoidal.js
+/docs/fstar-extracted/factoidal.wasm.js
+/docs/fstar-extracted/factoidal.debug.js
+/docs/fstar-extracted/factoidal.debug.map
+/docs/fstar-extracted/factoidal-npm-entry.js
+/docs/fstar-extracted/factoidal-npm-entry.wasm.js
+/docs/fstar-extracted/factoidal-npm-entry-lite.js
+/docs/fstar-extracted/factoidal-npm-entry-lite.wasm.js
+/docs/fstar-extracted/*.wasm.assets/
+/docs/fstar-extracted/*_results.log
+/docs/web/hub/assets/l4/l4factoidal.wasm
+/docs/web/hub/assets/l4/l4factoidal.mjs
 /npm/factoidal/factoidal.js
 /npm/factoidal/factoidal.wasm.js
 /npm/factoidal/factoidal.wasm.assets/

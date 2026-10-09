@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Factoidal — SPARQL demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --fg: #222;
+    --muted: #666;
+    --bg: #fff;
+    --surface: #f7f7f7;
+    --border: #e0e0e0;
+    --brand: #2d6a4f;
+    --brand-dark: #1b4332;
+    --error: #c0392b;
+    --ok: #2d6a4f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.5;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1.2em 1.5em 0.6em;
+  }
+  header h1 {
+    margin: 0 0 0.1em;
+    font-size: 1.7em;
+    color: var(--brand-dark);
+  }
+  header .tag {
+    color: var(--muted);
+    font-size: 0.95em;
+    margin-bottom: 0.8em;
+  }
+  nav.tabs {
+    display: flex;
+    gap: 0;
+    margin-top: 0.5em;
+  }
+  nav.tabs button {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 0.95em;
+    padding: 0.6em 1em;
+    cursor: pointer;
+    color: var(--muted);
+    font-family: inherit;
+  }
+  nav.tabs button.active {
+    color: var(--brand-dark);
+    border-bottom-color: var(--brand);
+    font-weight: 600;
+  }
+  nav.tabs button:hover:not(.active) {
+    color: var(--fg);
+  }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.5em;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Demo panel */
+  .editors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1em;
+    margin-bottom: 1em;
+  }
+  @media (max-width: 800px) { .editors { grid-template-columns: 1fr; } }
+  .editor label {
+    display: block;
+    font-size: 0.82em;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.3em;
+  }
+  .editor textarea {
+    width: 100%;
+    min-height: 240px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    padding: 0.6em 0.7em;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    resize: vertical;
+    background: var(--surface);
+  }
+  .editor textarea:focus {
+    outline: 2px solid var(--brand);
+    outline-offset: -1px;
+    background: #fff;
+  }
+  .editor textarea[readonly] {
+    background: #fafafa;
+    color: var(--muted);
+  }
+  .controls {
+    display: flex;
+    gap: 0.6em;
+    align-items: center;
+    margin-bottom: 1em;
+    flex-wrap: wrap;
+  }
+  button.run {
+    background: var(--brand);
+    color: white;
+    border: none;
+    padding: 0.55em 1.4em;
+    font-size: 1em;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button.run:hover { background: var(--brand-dark); }
+  button.run:disabled { background: #aaa; cursor: wait; }
+  /* Radio-button segmented control. Visually identical on desktop
+     and touch devices; hit targets are the full label, min 36px
+     tall. Hidden native inputs use the sr-only visually-hidden
+     pattern so they take up zero layout space (important — a plain
+     `position: absolute; opacity: 0` without a positioned parent
+     falls back to <body> and can overlap the textarea, eating
+     mouse-wheel and click events). Keyboard and screen-reader
+     behaviour stay intact. */
+  .radio-group {
+    position: relative;
+    display: inline-flex; border: 1px solid var(--border);
+    border-radius: 4px; overflow: hidden; background: var(--bg);
+  }
+  .radio-group input[type="radio"] {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; clip: rect(0 0 0 0); overflow: hidden;
+    white-space: nowrap; border: 0;
+  }
+  .radio-group label {
+    cursor: pointer; padding: 0.45em 0.9em; font-weight: 500;
+    font-size: 0.9em; color: var(--fg, #222); user-select: none;
+    display: inline-flex; align-items: center; min-height: 32px;
+    transition: background 0.1s;
+  }
+  .radio-group label + label { border-left: 1px solid var(--border); }
+  .radio-group label:hover { background: var(--surface); }
+  .radio-group label:has(input:checked) {
+    background: var(--brand); color: #fff; font-weight: 600;
+  }
+  .radio-group label:focus-within {
+    outline: 2px solid var(--brand); outline-offset: -2px;
+  }
+  @media (max-width: 520px) {
+    .radio-group label { padding: 0.55em 0.8em; min-height: 40px; }
+  }
+  /* Run-button pulse while a query is in flight — click-registered
+     feedback for slow engines (wasm warm-up, large datasets). */
+  @keyframes runPulse {
+    0%   { box-shadow: 0 0 0 0    rgba(45, 106, 79, 0.6); }
+    70%  { box-shadow: 0 0 0 12px rgba(45, 106, 79, 0); }
+    100% { box-shadow: 0 0 0 0    rgba(45, 106, 79, 0); }
+  }
+  button.run.running {
+    animation: runPulse 1.1s ease-out infinite;
+    background: var(--brand-dark);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    display: inline-block; width: 0.85em; height: 0.85em;
+    border: 2px solid var(--border); border-top-color: var(--brand);
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+    vertical-align: -0.18em; margin-right: 0.35em;
+  }
+  select.sample, select.dataset {
+    padding: 0.4em 0.5em;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    background: white;
+    max-width: 20em;
+  }
+  .controls label.ctl {
+    font-size: 0.85em;
+    color: var(--muted);
+  }
+  .status { color: var(--muted); font-size: 0.85em; margin-left: auto; }
+
+  #output-wrap {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    min-height: 4em;
+    max-height: 60vh;
+    overflow: auto;
+  }
+  #output-wrap.error { border-color: var(--error); background: #fff4f0; }
+  #output-wrap.empty { padding: 0.8em 1em; color: var(--muted); font-style: italic; }
+
+  table.results {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  table.results thead th {
+    position: sticky;
+    top: 0;
+    background: #eef;
+    border-bottom: 2px solid var(--brand);
+    padding: 0.5em 0.8em;
+    text-align: left;
+    color: var(--brand-dark);
+    font-weight: 600;
+    z-index: 1;
+  }
+  table.results tbody td {
+    padding: 0.35em 0.8em;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    max-width: 28em;
+    word-break: break-word;
+  }
+  table.results tbody tr:hover td { background: #fff; }
+  table.results td.iri { color: #1a4a8a; }
+  table.results td.bnode { color: #7b4397; }
+  table.results td.literal { color: #2d6a4f; }
+  table.results td.literal .lang,
+  table.results td.literal .dt {
+    color: var(--muted);
+    font-size: 0.82em;
+    margin-left: 0.3em;
+  }
+  table.results td.unbound { color: #aaa; font-style: italic; }
+
+  .ask-result {
+    padding: 1.2em 1em;
+    text-align: center;
+    font-size: 1.3em;
+    font-weight: 600;
+  }
+  .ask-result.yes { color: var(--ok); }
+  .ask-result.no  { color: var(--error); }
+
+  .result-meta {
+    padding: 0.4em 0.8em;
+    font-size: 0.82em;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    background: white;
+  }
+
+  pre.raw-error {
+    padding: 0.8em 1em;
+    margin: 0;
+    color: var(--error);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* About + tech panels */
+  .panel p { margin: 0.8em 0; }
+  .panel h2 { margin-top: 1.5em; font-size: 1.15em; color: var(--brand-dark); border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+  .panel h3 { margin-top: 1.2em; font-size: 1em; }
+  .panel a { color: var(--brand); }
+  .panel code { background: var(--surface); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  .panel pre { background: var(--surface); padding: 0.9em 1em; border-radius: 4px; overflow-x: auto; font-size: 0.88em; }
+  .panel table { border-collapse: collapse; margin: 1em 0; }
+  .panel th, .panel td { padding: 0.35em 0.7em; border: 1px solid var(--border); font-size: 0.92em; }
+  .panel th { background: var(--surface); }
+  .warn { padding: 0.6em 0.9em; background: #fff4e6; border-left: 3px solid #e67e22; margin: 0.8em 0; }
+  .artifact { padding: 0.5em 0.8em; background: var(--surface); border-left: 3px solid var(--brand); margin: 0.5em 0; }
+  footer { text-align: center; color: var(--muted); font-size: 0.85em; padding: 2em 1em; }
+
+  /* Dataset cards. Each <details class="dataset-card"> hosts one
+     <factoidal-sparql-client>. Collapsing keeps the page scannable —
+     there are six datasets below. */
+  details.dataset-card {
+    margin: 0.8em 0; border: 1px solid var(--border); border-radius: 4px;
+    background: #fff;
+  }
+  details.dataset-card[open] { background: #fff; }
+  details.dataset-card > summary {
+    list-style: none; cursor: pointer; padding: 0.6em 0.9em;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    color: var(--brand-dark); font-size: 0.95em;
+  }
+  details.dataset-card > summary::marker,
+  details.dataset-card > summary::-webkit-details-marker { display: none; }
+  details.dataset-card > summary::before {
+    content: "\25B8  "; color: var(--muted); display: inline-block;
+    transition: transform 0.15s; margin-right: 0.2em;
+  }
+  details.dataset-card[open] > summary::before { content: "\25BE  "; }
+  details.dataset-card > factoidal-sparql-client,
+  details.dataset-card > .card-note {
+    display: block; padding: 0.6em 0.9em;
+  }
+  details.dataset-card > factoidal-sparql-client { padding: 0.8em 0.9em; }
+  .card-note {
+    background: #fff8ec; color: #6b5919; font-size: 0.88em;
+    border-left: 3px solid #f0ad4e; padding: 0.5em 0.8em;
+    margin: 0.6em 0.9em 0;
+  }
+  /* Theme the web component to match the brand used elsewhere. */
+  factoidal-sparql-client {
+    --fc-brand: var(--brand);
+    --fc-brand-dark: var(--brand-dark);
+    --fc-border: var(--border);
+    --fc-surface: var(--surface);
+    --fc-muted: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Factoidal</h1>
+  <div class="tag">A formally verified RDF/SPARQL engine, running in your browser.</div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="demo" aria-selected="true">Demo</button>
+    <button class="tab" data-tab="about">About</button>
+    <button class="tab" data-tab="tech">Technical</button>
+  </nav>
+</header>
+
+<main>
+
+<section class="panel active" id="panel-demo" role="tabpanel">
+  <p>Pick a query, hit <strong>Run</strong>. The whole evaluator below is F*-extracted OCaml compiled to JavaScript or WebAssembly — no server, no network call. Each card below is a separate dataset with its own query dropdown. For a multi-file, multi-named-graph demo against real Wikidata data, see <a href="./demo-lifesci.html">the life-sciences demo</a>. For a Horn-clause forward-chaining engine, see the <a href="./demo-rif.html">RIF Core demo</a>. For JSON-LD parsing (toRdf) and RDFC-1.0 canonicalization loaded straight from this site's own npm package mirror — no npm install — see the <a href="./demo-jsonld-playground.html">JSON-LD Playground</a>.</p>
+
+  <details class="dataset-card" open>
+    <summary><strong>People &amp; friendships</strong> (~60 triples, Turtle)</summary>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js" warm
+        src-data='[{"url":"./samples/people.ttl","vfs":"/tmp/data.ttl"}]'>
+      <factoidal-query name="basic" label="List everyone by name">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?person ?name ?age
+WHERE {
+  ?person a foaf:Person ;
+          foaf:name ?name ;
+          foaf:age  ?age .
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="filter" label="Filter: people over 30">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?name ?age
+WHERE {
+  ?p foaf:name ?name ;
+     foaf:age  ?age .
+  FILTER (?age &gt; 30)
+}
+ORDER BY DESC(?age)
+      </factoidal-query>
+      <factoidal-query name="optional" label="OPTIONAL: email if known">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?name ?mbox
+WHERE {
+  ?p foaf:name ?name .
+  OPTIONAL { ?p foaf:mbox ?mbox }
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="friendsof" label="Friends of Alice">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+PREFIX ex:   &lt;http://example.org/&gt;
+
+SELECT ?friend ?friendName
+WHERE {
+  ex:alice foaf:knows ?friend .
+  ?friend foaf:name ?friendName .
+}
+ORDER BY ?friendName
+      </factoidal-query>
+      <factoidal-query name="mutual" label="Mutual friendships">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT DISTINCT ?a ?b
+WHERE {
+  ?a foaf:knows ?b .
+  ?b foaf:knows ?a .
+  FILTER (STR(?a) &lt; STR(?b))
+}
+ORDER BY ?a ?b
+      </factoidal-query>
+      <factoidal-query name="count-friends" label="Count friends per person">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?name (COUNT(?friend) AS ?nFriends)
+WHERE {
+  ?p foaf:name ?name ;
+     foaf:knows ?friend .
+}
+GROUP BY ?p ?name
+ORDER BY DESC(?nFriends)
+      </factoidal-query>
+      <factoidal-query name="ask" label="ASK: does Alice know someone who knows Eve?">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+PREFIX ex:   &lt;http://example.org/&gt;
+
+ASK {
+  ex:alice foaf:knows ?mid .
+  ?mid foaf:knows ex:eve .
+}
+      </factoidal-query>
+      <factoidal-query name="lang" label="Only German-tagged names">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?name
+WHERE {
+  ?p foaf:name ?name .
+  FILTER (LANG(?name) = "de")
+}
+      </factoidal-query>
+      <factoidal-query name="bind-upper" label="BIND + string functions">
+PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+
+SELECT ?name ?upper ?initial
+WHERE {
+  ?p foaf:name ?name .
+  BIND (UCASE(STR(?name))    AS ?upper)
+  BIND (SUBSTR(STR(?name),1,1) AS ?initial)
+}
+ORDER BY ?name
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+
+  <details class="dataset-card">
+    <summary><strong>Product catalogue</strong> (~80 triples, Turtle)</summary>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js"
+        src-data='[{"url":"./samples/catalog.ttl","vfs":"/tmp/data.ttl"}]'>
+      <factoidal-query name="cat-list" label="All products, by price">
+PREFIX sch: &lt;http://schema.org/&gt;
+PREFIX ex:  &lt;http://example.org/&gt;
+
+SELECT ?name ?category ?price
+WHERE {
+  ?p sch:name     ?name ;
+     sch:category ?category ;
+     ex:price     ?price .
+}
+ORDER BY DESC(?price)
+      </factoidal-query>
+      <factoidal-query name="cat-byCat" label="Count + average price by category">
+PREFIX sch: &lt;http://schema.org/&gt;
+PREFIX ex:  &lt;http://example.org/&gt;
+
+SELECT ?category (COUNT(?p) AS ?n) (AVG(?price) AS ?avgPrice)
+WHERE {
+  ?p sch:category ?category ;
+     ex:price     ?price .
+}
+GROUP BY ?category
+ORDER BY DESC(?n)
+      </factoidal-query>
+      <factoidal-query name="cat-outOfStock" label="Out of stock">
+PREFIX sch: &lt;http://schema.org/&gt;
+PREFIX ex:  &lt;http://example.org/&gt;
+
+SELECT ?name ?category
+WHERE {
+  ?p sch:name     ?name ;
+     sch:category ?category ;
+     ex:stock     0 .
+}
+ORDER BY ?category ?name
+      </factoidal-query>
+      <factoidal-query name="cat-topByCat" label="Max price per category">
+PREFIX sch: &lt;http://schema.org/&gt;
+PREFIX ex:  &lt;http://example.org/&gt;
+
+SELECT ?category (MAX(?price) AS ?topPrice)
+WHERE {
+  ?p sch:category ?category ;
+     ex:price     ?price .
+}
+GROUP BY ?category
+HAVING (MAX(?price) &gt; 50)
+ORDER BY DESC(?topPrice)
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+
+  <details class="dataset-card">
+    <summary><strong>Music — bands, members, albums</strong> (~70 triples, Turtle)</summary>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js"
+        src-data='[{"url":"./samples/music.ttl","vfs":"/tmp/data.ttl"}]'>
+      <factoidal-query name="mu-albums" label="Albums with year and artist">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+SELECT ?album ?year ?band
+WHERE {
+  ?a a &lt;http://purl.org/ontology/mo/Album&gt; ;
+     dc:title ?album ;
+     ex:year  ?year ;
+     ex:by    ?b .
+  ?b dc:title ?band .
+}
+ORDER BY ?year
+      </factoidal-query>
+      <factoidal-query name="mu-bandSize" label="Band size (COUNT members)">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+SELECT ?band (COUNT(?m) AS ?nMembers)
+WHERE {
+  ?g a &lt;http://purl.org/ontology/mo/MusicGroup&gt; ;
+     dc:title ?band ;
+     ex:member ?m .
+}
+GROUP BY ?g ?band
+ORDER BY DESC(?nMembers)
+      </factoidal-query>
+      <factoidal-query name="mu-albumPerBand" label="Albums per band (GROUP_CONCAT)">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+SELECT ?band (GROUP_CONCAT(?album; SEPARATOR=", ") AS ?albums)
+WHERE {
+  ?a a &lt;http://purl.org/ontology/mo/Album&gt; ;
+     dc:title ?album ;
+     ex:by    ?b .
+  ?b dc:title ?band .
+}
+GROUP BY ?b ?band
+ORDER BY ?band
+      </factoidal-query>
+      <factoidal-query name="mu-70s" label="Albums in the 1970s">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+SELECT ?album ?year
+WHERE {
+  ?a dc:title ?album ;
+     ex:year  ?year .
+  FILTER (?year &gt;= 1970 &amp;&amp; ?year &lt; 1980)
+}
+ORDER BY ?year
+      </factoidal-query>
+      <factoidal-query name="mu-path-performers" label="Property path: musicians per album">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+# Compound property path: album -&gt; band (ex:by) -&gt; musician (ex:member).
+# "?a ex:by/ex:member ?m" reads as one property path that walks two
+# edges without an intermediate variable for the band. The engine
+# does the join for you.
+SELECT ?album ?musician
+WHERE {
+  ?a a &lt;http://purl.org/ontology/mo/Album&gt; ;
+     dc:title ?album ;
+     ex:by/ex:member ?m .
+  ?m dc:title ?musician .
+}
+ORDER BY ?album ?musician
+      </factoidal-query>
+      <factoidal-query name="mu-path-colleagues" label="Property path: bandmates of Thom Yorke">
+PREFIX ex: &lt;http://example.org/music/&gt;
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+
+# "^ex:member" is the inverse path (band-of-this-musician), then
+# "/ex:member" forward again gets all members of that band. The
+# result is everyone who shares a band with Thom, Thom included —
+# FILTER strips him out.
+SELECT ?colleague
+WHERE {
+  ex:thom ^ex:member/ex:member ?m .
+  ?m dc:title ?colleague .
+  FILTER (?m != ex:thom)
+}
+ORDER BY ?colleague
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+
+  <details class="dataset-card">
+    <summary><strong>Places, countries, populations</strong> (~50 triples, Turtle)</summary>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js"
+        src-data='[{"url":"./samples/geo.ttl","vfs":"/tmp/data.ttl"}]'>
+      <factoidal-query name="geo-countries" label="Countries with capital + population">
+PREFIX ex:   &lt;http://example.org/geo/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+
+SELECT ?country ?capital ?population
+WHERE {
+  ?c a ex:Country ;
+     rdfs:label    ?country ;
+     ex:capital    ?cap ;
+     ex:population ?population .
+  ?cap rdfs:label  ?capital .
+}
+ORDER BY DESC(?population)
+      </factoidal-query>
+      <factoidal-query name="geo-continent" label="Total population by continent">
+PREFIX ex:   &lt;http://example.org/geo/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+
+SELECT ?continent (SUM(?pop) AS ?total)
+WHERE {
+  ?c a ex:Country ;
+     ex:inContinent ?k ;
+     ex:population  ?pop .
+  ?k rdfs:label ?continent .
+}
+GROUP BY ?k ?continent
+ORDER BY DESC(?total)
+      </factoidal-query>
+      <factoidal-query name="geo-big" label="Capitals of big-country Europe">
+PREFIX ex:   &lt;http://example.org/geo/&gt;
+PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+
+SELECT ?country ?capital
+WHERE {
+  ?c a ex:Country ;
+     rdfs:label    ?country ;
+     ex:inContinent ex:europe ;
+     ex:population  ?pop ;
+     ex:capital     ?cap .
+  ?cap rdfs:label ?capital .
+  FILTER (?pop &gt; 50000000)
+}
+ORDER BY ?country
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+
+  <details class="dataset-card">
+    <summary><strong>Named graphs — three libraries</strong> (~45 quads, TriG)</summary>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js"
+        src-data='[{"url":"./samples/libraries.trig","vfs":"/tmp/data.trig","graph":"urn:x:default"}]'>
+      <factoidal-query name="lib-list-books" label="Books grouped by library">
+PREFIX ex:     &lt;http://example.org/lib/&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?library ?book ?title
+WHERE {
+  GRAPH ?library {
+    ?book a schema:Book ; schema:name ?title .
+  }
+}
+ORDER BY ?library ?title
+      </factoidal-query>
+      <factoidal-query name="lib-multi-copy" label="Books held by multiple libraries">
+PREFIX ex:     &lt;http://example.org/lib/&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?title (COUNT(DISTINCT ?g) AS ?nCopies)
+WHERE {
+  GRAPH ?g { ?b a schema:Book ; schema:name ?title }
+}
+GROUP BY ?title
+HAVING (COUNT(DISTINCT ?g) &gt; 1)
+ORDER BY DESC(?nCopies) ?title
+      </factoidal-query>
+      <factoidal-query name="lib-catalog-meta" label="Library names from the default graph">
+PREFIX dc: &lt;http://purl.org/dc/terms/&gt;
+PREFIX ex: &lt;http://example.org/lib/&gt;
+
+SELECT ?library ?name
+WHERE {
+  ?library dc:title ?name .
+}
+ORDER BY ?library
+      </factoidal-query>
+      <factoidal-query name="lib-central-holdings" label="Central Library holdings only">
+PREFIX ex:     &lt;http://example.org/lib/&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?title ?author
+WHERE {
+  GRAPH ex:central { ?b schema:name ?title ; schema:author ?author }
+}
+ORDER BY ?title
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+
+  <details class="dataset-card">
+    <summary><strong>schema.org class hierarchy</strong> (entailment demo, Turtle)</summary>
+    <p class="card-note">
+      The <strong>Logic:</strong> radio in the toolbar (None / RDFS /
+      OWL-RL) switches entailment regime per run. Try "None" then
+      "RDFS" on the "All Places" query to see sub-class inference
+      kick in.
+    </p>
+    <factoidal-sparql-client
+        engines="js,wasm" default-engine="js"
+        default-logic="none"
+        src-data='[{"url":"./samples/schema-org.ttl","vfs":"/tmp/data.ttl"}]'>
+      <factoidal-query name="so-all-places" label="All Places (needs RDFS)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?s ?name
+WHERE {
+  ?s a schema:Place ;
+     schema:name ?name .
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="so-path-typechain" label="Property path: a/rdfs:subClassOf* (no entailment needed)">
+PREFIX rdfs:   &lt;http://www.w3.org/2000/01/rdf-schema#&gt;
+PREFIX schema: &lt;http://schema.org/&gt;
+
+# Classic SPARQL 1.1 pattern: "a/rdfs:subClassOf*" reads as
+# "rdf:type, then zero or more subClassOf hops". This finds every
+# instance that transitively is-a schema:Place without turning on
+# RDFS entailment at all — the engine walks the class chain on
+# the fly per the property path. Contrast with "?s a schema:Place"
+# (needs RDFS entailment to find hotels).
+SELECT ?instance ?name
+WHERE {
+  ?instance a/rdfs:subClassOf* schema:Place ;
+            schema:name ?name .
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="so-all-lodging" label="All LodgingBusinesses (needs RDFS)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?s ?name
+WHERE {
+  ?s a schema:LodgingBusiness ;
+     schema:name ?name .
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="so-all-restaurants" label="All Restaurants (needs RDFS)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+SELECT ?s ?name
+WHERE {
+  ?s a schema:Restaurant ;
+     schema:name ?name .
+}
+ORDER BY ?name
+      </factoidal-query>
+      <factoidal-query name="so-subproperty" label="legalName as schema:name (needs RDFS)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+# schema:legalName rdfs:subPropertyOf schema:name, so with RDFS on
+# ex:hotelZ (which only has a legalName) shows up here too.
+SELECT ?s ?name
+WHERE {
+  ?s schema:name ?name .
+}
+ORDER BY ?s
+      </factoidal-query>
+      <factoidal-query name="so-inverse" label="containedInPlace via inverseOf (needs OWL-RL)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+# The data only has ex:downtown schema:containsPlace ?x, so without
+# OWL-RL this returns nothing. With OWL-RL, prp-inv1 flips the arrow.
+SELECT ?sub ?container
+WHERE {
+  ?sub schema:containedInPlace ?container .
+}
+ORDER BY ?sub
+      </factoidal-query>
+      <factoidal-query name="so-sameas" label="sameAs substitution (needs OWL-RL)">
+PREFIX schema: &lt;http://schema.org/&gt;
+
+# ex:hotelZincLLC owl:sameAs ex:hotelZ, and both carry name triples.
+# With OWL-RL, eq-rep-s collapses them so ex:hotelZ has both names.
+SELECT ?s ?name
+WHERE {
+  ?s a schema:Hotel ; schema:name ?name .
+}
+ORDER BY ?s ?name
+      </factoidal-query>
+    </factoidal-sparql-client>
+  </details>
+</section>
+
+<section class="panel" id="panel-about" role="tabpanel">
+  <h2>What is Factoidal?</h2>
+  <p>Factoidal is an RDF 1.1 and SPARQL 1.1 implementation where the <strong>specification is the product</strong>. The semantics are written in <a href="https://www.fstar-lang.org/">F*</a>, a dependently-typed language with an SMT solver. The executable code you're running was obtained by extraction — not hand-written to "mirror" the spec.</p>
+
+  <h2>What can it do?</h2>
+  <p>Query any RDF data in Turtle, N-Triples, N-Quads, TriG, or RDF/XML. Supports the standard SPARQL 1.1 query language: <code>SELECT</code>, <code>ASK</code>, <code>CONSTRUCT</code>, <code>FILTER</code>, <code>OPTIONAL</code>, <code>UNION</code>, <code>MINUS</code>, <code>BIND</code>, <code>VALUES</code>, <code>EXISTS</code>/<code>NOT EXISTS</code>, <code>DISTINCT</code>, <code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code>, <code>GROUP BY</code>, <code>HAVING</code>, aggregates (<code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code>, <code>GROUP_CONCAT</code>, <code>SAMPLE</code>), subqueries, property paths, and 30+ built-in functions.</p>
+
+  <h2>How close is it to a reference implementation?</h2>
+  <p>Against the W3C conformance test suites (2026-04-25; <a href="https://danbri.github.io/factoidal/test-results/">live results</a>): <strong>SPARQL 1.1 ~622 pass / ~5 fail</strong> across SELECT/ASK/CONSTRUCT, full UPDATE grammar (INSERT DATA / DELETE DATA / DELETE WHERE / DELETE-INSERT WHERE, plus CLEAR/DROP/CREATE/ADD/MOVE/COPY graph management), federated SERVICE (in-process), LOAD SILENT, SPARQL Protocol (in-process), Graph Store HTTP Protocol (in-process), service description, and a verified property-path engine; <strong>RDF 1.1 1031/1031 parser tests pass</strong> across N-Triples, Turtle, N-Quads, TriG, RDF/XML, plus the rdf-mt model-theory suite. Entailment: RDFS + OWL 2 RL Datalog (<strong>13/30 PositiveEntailmentTests</strong>, the remaining 17 require negation-as-failure / contrapositive reasoning that OWL-RL cannot derive monotonically). RDF Dataset Canonicalization 1.0 (<strong>RDFC-1.0</strong>) is wired with HFDQ + 2-level neighbour-hash, F&#42;-verified clean. Remaining headline gaps: 3 entailment tests under SPARQL-DL tableau (paper-Q3, parent4, parent7), 1 GSP test that requires Turtle-body parsing for mismatched-payload detection.</p>
+
+  <h2>Why does it exist?</h2>
+  <p>The intent is to have a SPARQL evaluator whose correctness argument is mechanically checked rather than "we wrote lots of tests". Each W3C test that passes is one more sanity check on the F* spec; the proofs are what justify the implementation.</p>
+
+  <p><a href="https://github.com/danbri/factoidal">Source on GitHub &rarr;</a></p>
+</section>
+
+<section class="panel" id="panel-tech" role="tabpanel">
+  <h2>Build pipeline</h2>
+  <pre><code>F* .fst  ──fstar.exe --codegen OCaml──►  ocaml-output/*.ml
+                                         │
+                                         ├──ocamlfind ocamlc──►  bin/&lt;platform&gt;/factoidal   (native)
+                                         │
+                                         ├──js_of_ocaml──────►   docs/fstar-extracted/factoidal.js
+                                         │
+                                         └──wasm_of_ocaml────►   docs/fstar-extracted/w3c-runner.wasm.{js,assets/}
+</code></pre>
+  <p>See <a href="https://github.com/danbri/factoidal/blob/claude/main/formal/fstar/build-ocaml.sh"><code>formal/fstar/build-ocaml.sh</code></a> for the exact invocation. The demo above is driven by the js_of_ocaml output — the bytecode runs under js_of_ocaml's runtime, which provides an in-memory fake filesystem (<code>MlFakeDevice</code>) so the OCaml code can "open" files that only exist as JavaScript strings.</p>
+
+  <h2>Browser artifacts</h2>
+  <div class="artifact"><strong>factoidal.js</strong> — SPARQL + RDF parsing CLI, js_of_ocaml. What the demo above loads. Works in any modern browser or Node. The demo runs it with <code>-o json</code> and renders the SPARQL Results JSON as an HTML table.</div>
+  <div class="artifact"><strong>w3c-runner.js</strong> — the W3C conformance runner, js_of_ocaml. Same engine as factoidal; run it from Node with <code>node w3c-runner.js bind</code>.</div>
+  <div class="artifact"><strong>w3c-runner.wasm.js</strong> (loader) + <strong>w3c-runner.wasm.assets/</strong> — WebAssembly build via wasm_of_ocaml. 400 KB <code>.wasm</code> + 45 KB loader. Needs Wasm-GC (Chrome ≥ 119, Node ≥ 22; Firefox not yet). Node CLI only — no browser UI wired up to it yet.</div>
+  <div class="artifact"><strong>factoidal.wasm.js</strong> (loader) + <strong>factoidal.wasm.assets/</strong> — WebAssembly build of the query CLI. 372 KB <code>.wasm</code> + 38 KB loader. Smoke-tested under Node (<code>node factoidal.wasm.js -d data.ttl -e 'SELECT * WHERE { ?s ?p ?o }' -o json</code>). The demo above still uses <code>factoidal.js</code> (js_of_ocaml, synchronous) — a JS/wasm toggle is queued; the wasm loader is async and needs a small handler refactor.</div>
+
+  <h2>Wasm coverage vs native</h2>
+  <p>Per-suite totals match the native runner almost everywhere. One crash (<code>functions</code>, SHA/digestif C primitives with no proper wasm binding yet) and an unexplained 4-test gap in <code>property-path</code>.</p>
+  <table>
+  <thead><tr><th>Suite</th><th>native</th><th>wasm</th></tr></thead>
+  <tbody>
+  <tr><td>bind / bindings / exists / grouping / project-expression / csv-tsv-res / json-res / syntax-fed / syntax-query / aggregates / subquery / negation / construct / delete-insert / entailment / cast</td><td>identical</td><td>identical</td></tr>
+  <tr><td>property-path</td><td>33/33</td><td>29/33</td></tr>
+  <tr><td>functions</td><td>74/75</td><td>crash</td></tr>
+  </tbody>
+  </table>
+
+  <h2>Vendored wasm runtime (zarith)</h2>
+  <p>wasm_of_ocaml emits throwing stubs for any external C primitive it can't link. <code>fstar.lib</code> transitively pulls in zarith, stdint, sha, and digestif — about 150 such primitives. js_of_ocaml's JS stubs don't auto-link under wasm_of_ocaml: you need a companion <code>.wat</code> that imports JS functions and re-exports them under OCaml-facing names. <code>zarith_stubs_js</code> v0.17+ ships exactly that, so we vendor its <a href="https://github.com/danbri/factoidal/tree/claude/main/formal/fstar/ocaml-output/wasm_runtime"><code>runtime.wat</code> + <code>runtime_wasm.js</code></a> under <code>formal/fstar/ocaml-output/wasm_runtime/</code> (the installed opam <code>zarith_stubs_js</code> v0.16.1 predates the wasm files).</p>
+
+  <p>The remaining stdint/sha/digestif primitives get identity pass-through shims from <a href="https://github.com/danbri/factoidal/blob/claude/main/formal/fstar/ocaml-output/wasm_stub_shims.py"><code>wasm_stub_shims.py</code></a>. See <a href="https://github.com/ocsigen/js_of_ocaml/issues/2190">js_of_ocaml#2190</a> if your distro's <code>binaryen</code> package is missing <code>wasm-merge</code>.</p>
+
+  <h2>Running the CLI from Node</h2>
+  <pre><code>git clone --recurse-submodules https://github.com/danbri/factoidal.git
+cd factoidal/docs/fstar-extracted
+
+# SPARQL CLI:
+node factoidal.js -d data.ttl -e 'SELECT * WHERE { ?s ?p ?o }' -o json
+
+# W3C conformance runner (Node):
+node w3c-runner.js bind
+node w3c-runner.wasm.js bind</code></pre>
+
+  <h2>Known browser limitations</h2>
+  <div class="warn">
+    The demo's engine is js_of_ocaml (pure JavaScript). The wasm build
+    is not yet plugged into the UI — it's a Node CLI only. Hash built-ins
+    (<code>MD5</code>, <code>SHA1</code>, <code>SHA256</code>, <code>SHA384</code>,
+    <code>SHA512</code>) use Node's <code>crypto</code> module under
+    Node but return empty strings in the browser. Everything else runs
+    identically.
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Built from <a href="https://github.com/danbri/factoidal">github.com/danbri/factoidal</a>
+</footer>
+<!--
+  Demo driver is now inside the <factoidal-sparql-client> custom element
+  (see ./factoidal-sparql-client.js). Each <details class="dataset-card">
+  above hosts one client instance pre-populated via src-data + light-DOM
+  <factoidal-query> children. Page-level JS is minimal: just the tab
+  switcher. No query/engine orchestration lives here anymore.
+-->
+<script type="module" src="./factoidal-sparql-client.js"></script>
+<script>
+(() => {
+  // Tab switcher (Demo / About / Technical). The old page mixed this
+  // in with the SPARQL runner; now it is the only page-level JS left.
+  document.querySelectorAll('nav.tabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav.tabs .tab').forEach(b => {
+        b.classList.toggle('active', b === btn);
+        b.setAttribute('aria-selected', b === btn);
+      });
+      document.querySelectorAll('.panel').forEach(p =>
+        p.classList.toggle('active', p.id === 'panel-' + btn.dataset.tab));
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
