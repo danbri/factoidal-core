@@ -21,9 +21,23 @@ infer the repo from the remote and fails with:
 none of the git remotes configured for this repository point to a known GitHub host
 ```
 
-**Fix: every `gh` command takes `--repo danbri/factoidal` explicitly.**
+**Fix: every `gh` command takes `--repo <owner/name>` explicitly.**
 This is the single most common failure mode and accounts for ~all
 gh-related friction in this project.
+
+**Which repository (since 2026-10-09, the core/builds split):**
+
+| Work | Repository |
+|---|---|
+| Issues (create, comment, close; every issue URL) | `danbri/factoidal` — issues stay there; do not change issue URLs |
+| Pushes, branches and PRs of source (`formal/`, tests, tools, skills, docs sources, npm sources, `bin/<consumer>/`) | `danbri/factoidal-core` |
+| Build workflow runs, releases, `legacy-workflows/`, the `toolchain-cache` and `checked-cache` branches | `danbri/factoidal-builds` |
+
+So `--repo danbri/factoidal` in the examples below is correct for issue
+commands. For PR, branch and CI-run commands on source, read it as
+`--repo danbri/factoidal-core` (the two `gh run` examples as
+`--repo danbri/factoidal-builds` when you mean a build). The record is
+`docs/designissues/2026-10-09-core-builds-split.md`.
 
 ## Auth setup (one-time per sandbox)
 
@@ -80,14 +94,21 @@ echo "$GH_TOKEN" | gh auth login --with-token
 
 ### PR base
 
-- Default base branch is **`claude/main`**, not `main`.
-- Pass `--base claude/main` explicitly to gh commands.
+- In `danbri/factoidal` the default base branch was **`claude/main`**,
+  not `main`.
+- In `danbri/factoidal-core` the base is `main` once the owner renames
+  `claude/core-split` to `main`. Until then the base is
+  `claude/core-split`. The branch `claude/main` in that repository is
+  older and holds merge commits that `danbri/factoidal` does not have;
+  the split did not overwrite it (record, section 1).
+- Pass `--base` explicitly to gh commands.
 
 ### Standard PR creation
 
 ```bash
-gh pr create --repo danbri/factoidal \
-  --base claude/main \
+# --base is claude/core-split until the owner renames it to main
+gh pr create --repo danbri/factoidal-core \
+  --base claude/core-split \
   --head claude/<branch> \
   --title "..." \
   --body "$(cat <<'EOF'
@@ -103,11 +124,11 @@ EOF
 ### Standard inspection
 
 ```bash
-gh pr list --repo danbri/factoidal --state open
-gh pr list --repo danbri/factoidal --state merged --limit 50
-gh pr view 164 --repo danbri/factoidal
-gh pr view 164 --repo danbri/factoidal --json mergeable,mergeStateStatus
-gh pr checks 164 --repo danbri/factoidal
+gh pr list --repo danbri/factoidal-core --state open
+gh pr list --repo danbri/factoidal-core --state merged --limit 50
+gh pr view 164 --repo danbri/factoidal-core
+gh pr view 164 --repo danbri/factoidal-core --json mergeable,mergeStateStatus
+gh pr checks 164 --repo danbri/factoidal-core
 ```
 
 ### Merging
@@ -123,7 +144,9 @@ Force-push to a PR's head branch is acceptable when:
 1. The user has approved it (explicit "Y" or "yes").
 2. The branch is the user's own (or a Claude-generated branch).
 3. The remote tip has only a CI-shadow auto-commit on top of your
-   real work (clobbering the shadow is lossless).
+   real work (clobbering the shadow is lossless). (No workflow pushes
+   such commits to `danbri/factoidal-core` since 2026-10-09; this case
+   applied to `danbri/factoidal`.)
 
 **Never** force-push:
 
@@ -141,7 +164,7 @@ deleted. The recipe for safe cleanup:
 
 ```bash
 # 1. List all merged PRs and their head branches
-gh pr list --repo danbri/factoidal --state merged --limit 200 \
+gh pr list --repo danbri/factoidal-core --state merged --limit 200 \
   --json number,headRefName,title,mergedAt \
   > /tmp/merged-prs.json
 
@@ -177,7 +200,9 @@ been pushed elsewhere.
 
 ## CI
 
-This repo uses GitHub Actions. The relevant workflows:
+Since 2026-10-09 CI is split between two repositories. In
+`danbri/factoidal-core` (`.github/workflows/`) the gates need only source
+and a toolchain, never a built binary:
 
 | Workflow | Path | Trigger |
 |---|---|---|
@@ -185,30 +210,38 @@ This repo uses GitHub Actions. The relevant workflows:
 | `check-fstar-purity` (Omega3) | `.github/workflows/check-fstar-purity.yml` | PR diff |
 | `check-derived-files` | `.github/workflows/check-derived-files.yml` | PR |
 | `check-ocaml-output-cleanliness` | `.github/workflows/check-ocaml-output-cleanliness.yml` | PR |
-| `beyond-w3c` | `.github/workflows/beyond-w3c.yml` | PR (native/JS parity over demo queries) |
-| `w3c-tests` | `.github/workflows/w3c-tests.yml` | push to main lines (debounced) + nightly cron |
-| `dashboard-refresh` | `.github/workflows/dashboard-refresh.yml` | every push (regenerates dashboard from committed logs) |
-| `deploy-pages` | `.github/workflows/deploy-pages.yml` | push to `docs/**` + workflow_run of w3c-tests / dashboard-refresh |
-| `ukparliament-bench` | `.github/workflows/ukparliament-bench.yml` | push + PR + daily cron (perf gate) |
-| `debug-bytecode-build` | `.github/workflows/debug-bytecode-build.yml` | manual |
+| `verify-fstar` | `.github/workflows/verify-fstar.yml` | PR on F\* paths + nightly |
+| `verify-lean4` | `.github/workflows/verify-lean4.yml` | push to `main` or `claude/core-split`; PR on `formal/lean4/**` |
 
-The `w3c-tests` workflow auto-pushes a "ci(linux-x86_64): shadow
-build artifacts [skip ci]" commit to `claude/main` whenever the
-binaries change. PRs that have stale binaries diverge from
-`claude/main` here — usually merge-conflict on
-`bin/ci-linux-x86_64/build-info.json`. The standard fix is the
-`merge=ours` git driver (see CLAUDE.md).
+In `danbri/factoidal-builds`, `build.yml` builds a core commit, runs the
+build gates and publishes the `build-<12 hex>-<set>` releases (four polls
+of core a day, or `workflow_dispatch`). The eleven workflows that built,
+tested, published or deployed binaries before the split (`w3c-tests`,
+`beyond-w3c`, `conformance-rerun`, `dashboard-refresh`, `deploy-pages`,
+`fly-deploy`, `npm-publish`, `npm-publish-lean`, `ukparliament-bench`,
+`clean-room-build`, `debug-bytecode-build`) are inactive files under
+`legacy-workflows/` there; `legacy-workflows/README.md` states what each
+port needs.
+
+Before the split the `w3c-tests` workflow auto-pushed a
+"ci(linux-x86_64): shadow build artifacts [skip ci]" commit to
+`claude/main` whenever the binaries changed, and PRs with stale binaries
+conflicted on `bin/ci-linux-x86_64/build-info.json`; the `merge=ours` git
+driver was the fix. Neither the commits nor that path exist in
+`danbri/factoidal-core`.
 
 ```bash
-gh run list --repo danbri/factoidal --limit 10
-gh run view <run-id> --repo danbri/factoidal
-gh run watch <run-id> --repo danbri/factoidal
+gh run list --repo danbri/factoidal-core --limit 10       # source gates
+gh run list --repo danbri/factoidal-builds --limit 10     # builds and releases
+gh run view <run-id> --repo danbri/factoidal-core
+gh run watch <run-id> --repo danbri/factoidal-core
 ```
 
 ## What this skill does NOT do
 
 - Does not interact with private/forked repos. Scope is
-  `danbri/factoidal` only.
+  `danbri/factoidal` (issues), `danbri/factoidal-core` (source) and
+  `danbri/factoidal-builds` (builds and releases).
 - Does not bypass review — never `gh pr merge` without user OK.
 - Does not delete branches without user approval, even when "obviously"
   merged.
@@ -223,8 +256,10 @@ gh run watch <run-id> --repo danbri/factoidal
 
 ## Landing while CI keeps moving the branch (2026-07-04 pattern)
 
-CI pushes artifact commits to claude/main every few minutes, so a
-plain push from a long-lived local branch usually loses the race, and
+CI pushed artifact commits to claude/main every few minutes, so a
+plain push from a long-lived local branch usually lost the race (no
+workflow pushes artifact commits to `danbri/factoidal-core` since
+2026-10-09; the pattern still applies to any concurrent pusher), and
 `git rebase` refuses while the tree carries in-flight (gated,
 uncommitted) work. The pattern that works:
 

@@ -18,8 +18,12 @@ The SessionStart hook (`.claude/hooks/session-start.sh` →
 
 - initialised the two load-bearing test submodules
   (`third_party/testing/{w3c,rdf-canon}`);
-- smoke-checked the committed `bin/<platform>/` binaries and restored
-  the `ocaml-output/` symlinks the `tests/local/` scripts expect;
+- smoke-checked the `bin/<platform>/` binaries and restored the
+  `ocaml-output/` symlinks the `tests/local/` scripts expect. Since
+  2026-10-09 these binaries are not committed: they come from
+  `danbri/factoidal-builds` releases through `tools/fetch-builds.sh`
+  (run by `tools/ensure-test-env.sh`). The bootstrap block names the
+  installed release tag, or says to run `tools/fetch-builds.sh`;
 - provisioned the pycottas venv (`_tmp.junk/pycottas-venv`) for the
   COTTAS regression scripts;
 - installed/started the F\* MCP daemon on :3700 (when cargo exists);
@@ -34,7 +38,14 @@ repo works, including clones into /tmp; GitHub API and release-asset
 downloads 403; PyPI/npm/crates/golang registries are direct. Before
 declaring something unreachable, probe it and check
 `$HTTPS_PROXY/__agentproxy/status` — and record corrections in
-`fstar-env` § proxied sandboxes. What it does NOT set up: the opam/F\*/z3 toolchain (30–60
+`fstar-env` § proxied sandboxes. `tools/fetch-builds.sh` lists releases
+through the GitHub API and downloads release assets. On 2026-10-09 the
+API listing of `danbri/factoidal-builds` answered 200 from a sandbox, but
+the repository had no release yet, and the asset download was not tested
+(the 2026-07-03 test above saw release-asset downloads fail with 403).
+If the script exits 2 ("no release matches") or 1 ("download failed"),
+build locally with `build-ocaml.sh` instead of copying a binary by hand
+(iron rule 9). What the hook does NOT set up: the opam/F\*/z3 toolchain (30–60
 min build) — only needed for editing `.fst`; run the `fstar-env`
 skill when a session actually needs it, and background the install
 while doing binary-based work.

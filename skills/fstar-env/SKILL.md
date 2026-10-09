@@ -80,10 +80,12 @@ Both need: `unzip`, `curl` for fetching the z3 binary release.
 **Fast path first (2-4 minutes, no compiles).** There is no upstream
 apt/deb package for F\*, opam builds it from source (~25 min), and
 F\*'s prebuilt GitHub release binaries are 403'd by scoped sandbox
-proxies. So the repo carries its own prebuilt cache on the
-`toolchain-cache` orphan branch (split <100MB chunks of
-`bin/fstar.exe` + `lib/fstar`, SHA256-verified; main-line clones
-never pay for it). One command:
+proxies. So we keep our own prebuilt cache on the `toolchain-cache`
+orphan branch of `danbri/factoidal-builds` (since 2026-10-09; before that
+it was a branch of `danbri/factoidal`). It holds split <100MB chunks of
+`bin/fstar.exe` + `lib/fstar`, SHA256-verified, and a core clone never
+pays for it. The script reads it from `danbri/factoidal-builds`; set
+`FACTOIDAL_CACHE_REMOTE` to use a fork or a mirror. One command:
 
 ```bash
 tools/install-toolchain-cache.sh
@@ -94,9 +96,11 @@ apt ocaml (system 4.14.1 = CI's) + opam switch on the system compiler
 verification-ready immediately; the opam deps for compile/js install in
 the background (`.claude-runs/toolchain-deps.log`). The session
 bootstrap hook runs this automatically in remote sandboxes. When the
-pinned F\* version changes (see `fstar_version` in
-`bin/ci-linux-x86_64/build-info.json`), rebuild the chunks per the
-README on the `toolchain-cache` branch.
+pinned F\* version changes (the `FSTAR_VERSION` default in
+`tools/install-toolchain-cache.sh`; the toolchain versions of a CI build
+are in the `build-info.json` of a `danbri/factoidal-builds` release),
+rebuild the chunks per the README on the `toolchain-cache` branch of
+`danbri/factoidal-builds`.
 
 **The background opam deps are the full compile set**, not just the
 runtime helpers: `zarith sha digestif js_of_ocaml*` **plus** `fstar.lib`'s
@@ -121,9 +125,12 @@ eval $(opam env --switch=fstar)
 opam install -y fstar.2025.12.15 js_of_ocaml js_of_ocaml-compiler zarith_stubs_js sha digestif
 ```
 
-**Pin the F\* version to what CI extracts with** — read
-`fstar_version` in `bin/ci-linux-x86_64/build-info.json` (2025.12.15
-at the time of writing) and install exactly that. A newer opam F\*
+**Pin the F\* version to what CI extracts with** — read the
+`FSTAR_VERSION` default in `tools/install-toolchain-cache.sh` (2025.12.15
+when this was checked on 2026-10-09; the script comment says it must
+equal the CI version) and install exactly that. Before the 2026-10-09
+split this skill pointed at `bin/ci-linux-x86_64/build-info.json`, which
+core no longer holds. A newer opam F\*
 verifies fine but its `--codegen OCaml` output differs, so a local
 extraction churns all ~90 tracked `.ml` files against CI's and the
 tree thrashes between versions per committer. Verified the hard way
@@ -165,8 +172,8 @@ return 403 JSON, so release assets and API calls fail — the `z3.zip`
 above arrives as a ~175-byte error body and unzip fails. Package
 registries (PyPI, npm, crates.io, proxy.golang.org) bypass the proxy
 entirely. Consequences: anything published as a release asset needs a
-mirror (this repo's `toolchain-cache` branch) or a registry-published
-equivalent. Fallback that works because PyPI is open:
+mirror (the `toolchain-cache` branch of `danbri/factoidal-builds`) or a
+registry-published equivalent. Fallback that works because PyPI is open:
 
 ```bash
 python3 -m venv /tmp/z3venv && /tmp/z3venv/bin/pip install -q z3-solver==4.13.3.0
@@ -258,9 +265,12 @@ z3 errors will appear in the F\* output verbatim.
 Test corpora are git submodules under `third_party/testing/`. A clone
 made without `--recurse-submodules` has empty directories there, and
 the runners then report **zero tests** — worse, `./w3c-tests.sh`
-(without `--cached`) will overwrite the committed result logs and
-dashboard with a 0/0 run. If you ever see "0 pass, 0 fail", this is
-why: init the submodules, `git checkout` the clobbered logs, rerun.
+(without `--cached`) will write a 0/0 run into the result logs and the
+dashboard. Before 2026-10-09 those files were committed, so a 0/0 run
+overwrote tracked content. In `danbri/factoidal-core` they are generated
+and gitignored (`docs/test-results/`, `ocaml-output/*_results.log`). If
+you ever see "0 pass, 0 fail", this is why: init the submodules
+(`tools/ensure-test-env.sh` does it) and rerun.
 
 Two submodules are load-bearing for the test suites:
 
@@ -295,9 +305,12 @@ eval $(opam env --switch=fstar)   # always
 
 The script auto-detects the platform and writes binaries to
 `bin/<platform>/`, with symlinks under `ocaml-output/`. Pre-built
-binaries for `darwin-arm64` and `linux-x86_64` live in the repo and can
-be used directly without an F\* toolchain — but only if the spec
-hasn't changed since the last commit.
+binaries for `darwin-arm64` and `linux-x86_64` are no longer in the repo
+(since 2026-10-09; iron rule 9). `tools/fetch-builds.sh` installs the
+newest `danbri/factoidal-builds` release whose source commit is in your
+checkout's history, and you can use it without an F\* toolchain. It was
+built from that commit, so it does not reflect any `.fst` edit made
+after it.
 
 `build-ocaml.sh extract` re-extracts (use after editing `.fst` files
 or after a fresh checkout). `build-ocaml.sh compile` compiles
@@ -322,9 +335,9 @@ without re-extracting. **Important: `compile` does not apply
 For Claude Code on the web sessions, the toolchain isn't pre-installed
 in the sandbox. Two options:
 
-1. Use the committed pre-built binaries in `bin/<platform>/` for runtime
-   tests; only run `./w3c_runner` and similar, not `fstar.exe` /
-   `build-ocaml.sh`.
+1. Install the pre-built binaries with `tools/fetch-builds.sh` (or
+   `tools/ensure-test-env.sh`, which calls it) for runtime tests; only run
+   `./w3c_runner` and similar, not `fstar.exe` / `build-ocaml.sh`.
 2. Run a `SessionStart` hook (see the `session-start-hook` skill) that
    installs opam + the fstar switch + z3 4.13.3 from the binary release.
 
@@ -366,13 +379,14 @@ multi-hour job, not an env sanity test (issue #319).
 
 - `CLAUDE.md` — authoritative source for the iron rules here.
 - `build-and-test` skill — what to do once the env works.
-- `test-suites` skill — running the conformance suites (the committed
-  binaries in `bin/<platform>/` run them with NO toolchain at all).
+- `test-suites` skill — running the conformance suites (the binaries
+  that `tools/fetch-builds.sh` installs in `bin/<platform>/` run them
+  with NO toolchain at all).
 - `perf-benchmarking` skill — performance measurement setup.
 - `session-restore` skill — the fuller cache inventory this skill's
-  fast path draws on: the `toolchain-cache` orphan branch (what it
-  contains, when to rebuild it), the `.checked`-cache equivalent, and
-  the wasm/binaryen install path. This skill is repair/first-principles
+  fast path draws on: the `toolchain-cache` orphan branch of
+  `danbri/factoidal-builds` (what it contains, when to rebuild it), the
+  `.checked`-cache equivalent, and the wasm/binaryen install path. This skill is repair/first-principles
   setup; `session-restore` is "what should already be there and how to
   get it back fast."
 - `formal/roaring/src/Makefile` — example of a standalone

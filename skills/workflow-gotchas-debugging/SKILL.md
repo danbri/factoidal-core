@@ -559,11 +559,18 @@ run reports the numbers from BEFORE the change you just landed.
 
 ### Cause
 `needs_rebuild_from_sources` compares mtimes (`[[ "$src" -nt "$target" ]]`,
-build-ocaml.sh:241). This repo COMMITS its binaries (iron rule #9), so any
-git operation that materialises one — `merge`, `checkout -- bin/`,
-`stash pop`, conflict resolution with `--ours` — stamps it with `now`,
-newer than every source. mtime answers "when did this file appear here",
-which for a committed artifact is unrelated to "what produced it".
+build-ocaml.sh:241). Until 2026-10-09 this repo COMMITTED its binaries
+(iron rule #9), so any git operation that materialised one — `merge`,
+`checkout -- bin/`, `stash pop`, conflict resolution with `--ours` —
+stamped it with `now`, newer than every source. mtime answers "when did
+this file appear here", which for a committed artifact is unrelated to
+"what produced it". (In `danbri/factoidal-core` binaries are not
+committed, so git operations no longer touch them. A binary installed by
+`tools/fetch-builds.sh` can still show the symptom: the script copies it
+with `tar -xpf`, which by GNU tar default keeps the modification time
+from the archive, and that time is unrelated to your sources. The
+marker check below applies. This was reasoned from the script and the tar
+default and was not tested.)
 
 ### Detection (do this before trusting ANY measurement after a landing)
 Compare source against binary, not source against clock:
@@ -1585,7 +1592,10 @@ companion chain (`Cottas_offset_idx`, `Cottas_compound_po_writer`,
 the page-cache decoders), the `SPARQL11_Algebra` extension-function
 registry, the Parquet footer runtime glue, and `SHACL_Validation`'s
 `sh:sparql` dispatch marker. `bin/linux-x86_64/factoidal` was rebuilt
-from that state at 20:46 the same evening and committed.
+from that state at 20:46 the same evening and committed. (Since
+2026-10-09 binaries are built by `danbri/factoidal-builds` from a pushed
+core commit and are not committed; see iron rule 9. The `.ml` rules
+below are unchanged.)
 
 Nothing detected it. `git status` cannot: the files are tracked and the
 commit is clean. The build cannot: unpatched extraction output compiles.
@@ -1669,7 +1679,9 @@ Cheapest signal, in order: the census script's eligible count (it is
 already a FILTER NOT EXISTS query over the W3C manifests); the two
 `queryDataset FILTER (NOT) EXISTS` checks in `Wasm/native-smoke.sh`; the
 `#guard`s at the end of `L4Factoidal/SPARQL/StoreDataset.lean`;
-`tests/hub/l4_exists_regression_test.mjs` against the committed module.
+`tests/hub/l4_exists_regression_test.mjs` against the installed or
+locally built wasm module (not committed since 2026-10-09; run
+`tools/fetch-builds.sh` or `Wasm/build-wasm.sh` first).
 
 ### The rules
 

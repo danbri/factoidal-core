@@ -95,11 +95,11 @@ Caveats, all CONFIRMED by experiment or source:
 | `.checked` files | Serialized typechecked module (`--cache_checked_modules`) | `formal/fstar/*.fst.checked`, next to source; gitignored | Source **content digest** change (not mtime — CONFIRMED); any dependency's `.checked` going stale (cascades — CONFIRMED); F\* version change (PROPOSED, from F\* release practice; not tested here). NOT invalidated by `--z3rlimit_factor` change (CONFIRMED) | RDF.Bytes: 6.4s cold → 0.5s warm, 12x (CONFIRMED) |
 | ulib `.checked` | Pre-checked F\* stdlib | `~/.opam/fstar/lib/fstar/ulib.checked/` | Reinstalling/upgrading the fstar opam package | Ships with the package; stdlib never re-verified (CONFIRMED via --dep output paths) |
 | `.hints` files | Recorded z3 unsat cores for proof replay (`--record_hints` / `--use_hints`) | `Foo.fst.hints` next to source (or `--hint_dir`); JSON text | Query hash mismatch per top-level name; z3 version or `--z3seed` drift can break replay (PROPOSED) | **Measured negative on every module tested — REJECTED for the pipeline, 2026-07-04** (CONFIRMED, 4 modules incl. SPARQL11.Algebra, 2-3 repeats each; full table in P5). Slowdowns +20% to +80%; a hint MISS degrades gracefully (rc=0, warning line, plain-verify speed) |
-| Incremental-extract manifest | Per-module **dependency-closure digest** recorded from the last successful extract; `--force-full` bypasses it | `ocaml-output/.extract-state/manifest.tsv` — **tracked in git**, despite `.gitignore` claiming otherwise (see below) | Any change to the module's own `.fst`/`.fsti` **or to anything in its transitive in-list dependency closure** (CONFIRMED — see P2). Before 2026-07-29 a dependency-only change did NOT invalidate it, which was unsound for proofs (issue #320) | Skips fstar.exe invocation entirely (not just codegen) for modules genuinely unaffected by the edit — replaces the old flat "everyone after this point in the list" cascade. CONFIRMED via scratch harness, see P2 |
-| Committed `.ml` + binaries | Extraction output + `bin/<platform>/` | git (iron rule #9) | Re-extraction; `ocaml-patches.sh` rewrites `.ml` in place | Fresh clone runs tests with no toolchain |
+| Incremental-extract manifest | Per-module **dependency-closure digest** recorded from the last successful extract; `--force-full` bypasses it | `ocaml-output/.extract-state/manifest.tsv` — **tracked in git in `danbri/factoidal`**, despite `.gitignore` claiming otherwise (see below); not tracked in `danbri/factoidal-core` since 2026-10-09 | Any change to the module's own `.fst`/`.fsti` **or to anything in its transitive in-list dependency closure** (CONFIRMED — see P2). Before 2026-07-29 a dependency-only change did NOT invalidate it, which was unsound for proofs (issue #320) | Skips fstar.exe invocation entirely (not just codegen) for modules genuinely unaffected by the edit — replaces the old flat "everyone after this point in the list" cascade. CONFIRMED via scratch harness, see P2 |
+| Committed `.ml`; release binaries | Extraction output (`.ml`, committed) and `bin/<platform>/` (NOT committed since 2026-10-09) | `.ml`: git. Binaries: `danbri/factoidal-builds` releases, installed by `tools/fetch-builds.sh` (iron rule 9) | Re-extraction; `ocaml-patches.sh` rewrites `.ml` in place | Fresh clone runs tests with no toolchain after `tools/fetch-builds.sh` |
 | Compile skip | `needs_rebuild_from_sources` mtime check over all `.ml` + consumer sources | build-ocaml.sh lines 523-532 | Any single `.ml` newer than any binary → **full** recompile of everything (CONFIRMED) | Skips all ocamlopt invocations on a no-op |
-| CI opam cache | `~/.opam` via actions/cache | [w3c-tests.yml](../../.github/workflows/w3c-tests.yml), [check-extraction.yml](../../.github/workflows/check-extraction.yml) | Manual key bump only (static keys `opam-fstar-<OS>-v3` / `-v4`) | Skips ~10 min toolchain install (CONFIRMED present) |
-| CI `.checked` cache | `formal/fstar/*.fst.checked` via actions/cache | w3c-tests.yml only — **absent from check-extraction.yml** (CONFIRMED) | Key = `hashFiles('formal/fstar/*.fst','*.fsti')`; restore-keys prefix warms partial hits | Workflow comment: heavy pipeline ~25 min → ~5 min on no-.fst pushes |
+| CI opam cache | `~/.opam` via actions/cache | [check-extraction.yml](../../.github/workflows/check-extraction.yml) and [verify-fstar.yml](../../.github/workflows/verify-fstar.yml) in core; `build.yml` in `danbri/factoidal-builds`. (`w3c-tests.yml` moved to `factoidal-builds/legacy-workflows/` on 2026-10-09 and is inactive.) | Manual key bump only (static keys `opam-fstar-<OS>-v3` / `-v4`) | Skips ~10 min toolchain install (CONFIRMED present) |
+| CI `.checked` cache | `formal/fstar/*.fst.checked` via actions/cache | `check-extraction.yml` and `verify-fstar.yml` in core; `build.yml` in `danbri/factoidal-builds` (read 2026-10-09). When this row was first written only `w3c-tests.yml` had the block (now inactive in `factoidal-builds/legacy-workflows/`) | `check-extraction.yml`: key = `hashFiles('formal/fstar/*.fst','*.fsti')`; `verify-fstar.yml`: the same hash plus the F\* and z3 versions; restore-keys prefix warms partial hits | Workflow comment (about the old `w3c-tests.yml` heavy pipeline): ~25 min → ~5 min on no-.fst pushes |
 
 Per-phase wall-clock timing is now recorded on every `build-ocaml.sh`
 run: `.claude-runs/build-timings.csv` gets one appended line per phase
@@ -550,6 +550,11 @@ which match no closure digest, so the first run after it re-extracts
 everything once and then self-heals.
 
 **The manifest is tracked in git — CI was never protected from this.**
+(Measured in `danbri/factoidal`. Since the 2026-10-09 split the manifest
+is not tracked in `danbri/factoidal-core`: the split's path rule dropped
+`.extract-state/`, `git ls-files formal/fstar/ocaml-output/.extract-state`
+lists nothing, and the path is in `.gitignore`. A fresh core checkout has
+no manifest and extracts every module once.)
 Issue #320 recorded a mitigating belief worth stating precisely because
 it turned out to be false: *"clean CI checkouts do not restore the
 manifest, so main-branch CI is likely unaffected."* Checked, not
@@ -565,9 +570,11 @@ $ git cat-file -p HEAD:formal/fstar/ocaml-output/.extract-state/manifest.tsv | w
 build-cache state, not a committed artifact" — but gitignore does not
 untrack files already in the index, and these were added before the
 rule. So **every fresh checkout restores the manifest**, and the
-committed `.ml` files (iron rule #9) satisfy the other half of the skip
-predicate. Confirmed by running `./build-ocaml.sh extract` in a copy of
-the committed state with zero `.checked` files, i.e. what CI has:
+committed `.ml` files (iron rule #9, as it stood on that date; the
+`.ml` files are still committed, only binaries stopped being committed
+on 2026-10-09) satisfy the other half of the skip predicate. Confirmed
+by running `./build-ocaml.sh extract` in a copy of the committed state
+with zero `.checked` files, i.e. what CI has:
 
 ```
 Re-extracted modules: 10 (181 skipped as unchanged)
@@ -671,8 +678,11 @@ touching one `.ml`, before/after.
 - Add the `Cache F* .checked files` block (identical to
   w3c-tests.yml lines 289-295) to
   [check-extraction.yml](../../.github/workflows/check-extraction.yml),
-  which today has no `.checked` cache at all — every PR verify runs
-  cold (CONFIRMED). This is the cheapest single diff in this list.
+  which then had no `.checked` cache at all — every PR verify ran
+  cold (CONFIRMED when written). This is the cheapest single diff in
+  this list. Status read 2026-10-09: the block is present in
+  `check-extraction.yml`; `w3c-tests.yml` is no longer in this
+  repository (see the cache-layer table above).
 - Include toolchain versions in the `.checked` cache key. The
   correct key is `fstar-checked-<OS>-<fstar-version>-<z3-version>-
   ${{ hashFiles('formal/fstar/*.fst', 'formal/fstar/*.fsti') }}`:

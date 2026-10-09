@@ -343,8 +343,10 @@ larger args document, so it is kept for diagnostics only.
 
 Design record:
 [`docs/designissues/2026-09-03-wasm-shardborough-store-ops.md`](../../docs/designissues/2026-09-03-wasm-shardborough-store-ops.md).
-Gate: `bash tools/wasm-store-query-smoke.sh` (the committed wasm against
+Gate: `bash tools/wasm-store-query-smoke.sh` (the wasm module against
 generations the packer just wrote, rows compared with the native tools).
+The wasm is not committed since 2026-10-09: install it with
+`tools/fetch-builds.sh` or build it with `Wasm/build-wasm.sh` first.
 
 **The call stack a large collection needs.** Several engine paths recurse
 once per manifest entry and once per row. On a 3,286-block collection

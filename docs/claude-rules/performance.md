@@ -25,8 +25,10 @@ extrapolating to ~10GB RAM for 500MB — use `cottas-import` + the
 persistent artifact at that scale instead.
 
 Scaling is near-linear through 1M triples. Re-measure with
-`formal/fstar/bench-turtle-metrics.sh` (or the committed binary + the
-same fixtures) before quoting these; update this table when you do.
+`formal/fstar/bench-turtle-metrics.sh` (or a release binary installed by
+`tools/fetch-builds.sh` + the same fixtures) before quoting these; update
+this table when you do. The rows above were measured against committed
+binaries; since 2026-10-09 binaries are not committed (iron rule 9).
 
 For data at rest, still prefer the binary backends (HDT triples,
 COTTAS quads) over re-parsing text — see the caveats in
@@ -123,7 +125,10 @@ scale; fixes land in F\*, not OCaml patches — are captured in the
 - Never claim a speed win unless it was measured separately from a
   compliance change.
 - Never leave a perf claim in a doc without a date and a binary
-  provenance.
+  provenance. Since 2026-10-09 the provenance of a release binary is its
+  release tag in `danbri/factoidal-builds` (`build-<12 hex core
+  commit>-<set>`); `.factoidal-builds/<set>.tag` in a checkout records
+  which one `tools/fetch-builds.sh` installed.
 
 ## Persistence program (owner, 2026-08-25) — verbatim
 

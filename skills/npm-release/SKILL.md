@@ -1,6 +1,6 @@
 ---
 name: npm-release
-description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships, how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four committed wasm copies disagree.
+description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships, how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four wasm copies disagree.
 ---
 
 # Releasing the Factoidal npm packages
@@ -20,6 +20,13 @@ without a typed confirmation phrase.
 
 ## What builds what
 
+Since 2026-10-09 (iron rule 9) none of the built files named below is
+committed to `danbri/factoidal-core`; they are in `.gitignore`. The `web`
+release set of `danbri/factoidal-builds` carries the F\* JS and wasm
+bundles, the Lean wasm and its copies. `tools/fetch-builds.sh --set web`
+installs them into a checkout. The commands below write the same paths
+for a local build. Use them to test; do not stage their output.
+
 ### The Lean engine (WebAssembly)
 
 ```bash
@@ -36,6 +43,16 @@ installs **four byte-identical copies**:
 | 2 | `npm/factoidal/l4-assets/` | `npm install @factoidal/core` — the copy that ships |
 | 3 | `npm/factoidal-lean/` | the superseded companion package |
 | 4 | `docs/npm/lean/` | the Pages mirror of that companion |
+
+**Gap found 2026-10-09 (not resolved here):** the directory
+`npm/factoidal/l4-assets/` does not exist in `danbri/factoidal-core`. The
+split's path rule excluded the whole directory, including the
+`package.json` and `version.json` described below. `build-wasm.sh` only
+fills copy 2 when the directory exists; otherwise it prints
+"npm/factoidal/l4-assets absent — in-package step skipped". A core
+checkout therefore does not produce copy 2, and the `files` entry
+`l4-assets/` of the package has nothing to ship until the directory is
+restored.
 
 `npm/factoidal/l4-assets/` also holds a four-line `package.json` that
 says `{"type": "module"}`. The parent package sets no `"type"`, so `.js`
@@ -133,9 +150,21 @@ rebuild so the stamped `version.json` files agree with it.
 
 ## How publishing works
 
-`.github/workflows/npm-publish.yml`, trusted publishing through OIDC.
-There are no npm tokens anywhere in this repository, and there is no way
-to add one that would work.
+**Status 2026-10-09: no active publish workflow exists for
+`danbri/factoidal-core`.** `npm-publish.yml` and `npm-publish-lean.yml`
+moved to `factoidal-builds/legacy-workflows/` in `danbri/factoidal-builds`,
+where they are inactive (not under `.github/workflows/`). Porting them
+needs an owner step on npmjs.com: the Trusted Publisher entry must name
+repository `factoidal-builds` and the new workflow file. Read
+`legacy-workflows/README.md` in that repository for the current state of
+the port. The copies that remain in `danbri/factoidal` (branch
+`claude/main`) belong to that repository and build its tree, not the
+`factoidal-core` tree; do not use them to release core. The rest of this
+section describes the old workflow. A port has to reproduce it.
+
+`.github/workflows/npm-publish.yml` (old repository), trusted publishing
+through OIDC. There are no npm tokens anywhere in this repository, and
+there is no way to add one that would work.
 
 **The owner's npmjs.com account is security-key-only. Publishing with a
 token, or with a one-time password, always fails.** Do not suggest
@@ -145,8 +174,9 @@ publishes is the workflow.
 
 Trigger it in one of two ways:
 
-- `gh workflow run npm-publish.yml --repo danbri/factoidal`
-- push a tag matching `npm-v*`
+- `gh workflow run npm-publish.yml --repo danbri/factoidal` (old
+  repository only; see the status note above)
+- push a tag matching `npm-v*` (same)
 
 What the workflow does, in order:
 
@@ -171,7 +201,9 @@ Trusted Publisher → GitHub Actions, organization `danbri`, repository
 `factoidal`, workflow filename `npm-publish.yml`, environment blank,
 allowed action `npm publish`. Those fields are case-sensitive and npm
 validates them only at publish time, so a typo shows up as a failed
-publish and nothing earlier.
+publish and nothing earlier. That entry names `danbri/factoidal`; a
+workflow in `danbri/factoidal-builds` publishes only after the owner
+changes it.
 
 Cost: five to ten minutes with warm caches; about two hours with a cold
 `.checked` cache, because the tree re-verifies.
@@ -180,11 +212,13 @@ Cost: five to ten minutes with warm caches; about two hours with a cold
 
 Run these from the repository root, with the numbers each one must
 produce. A number that has moved is a finding to explain, not a number
-to overwrite.
+to overwrite. Gates that read `docs/fstar-extracted/*.js`, `npm/factoidal/`
+bundles or the Lean wasm need those files installed first
+(`tools/fetch-builds.sh`) or built locally.
 
 | Gate | Command | Expected, measured 2026-09-16 (0.8.0) |
 | --- | --- | --- |
-| hub notebooks | `node --test tests/hub/*_test.mjs` | 436 pass, 4 fail, 1 skipped (out of 441); the 4 are post17/post18 commit-citation checks that fail only on a shallow clone (0 fail on a full clone) |
+| hub notebooks | `node --test tests/hub/*_test.mjs` | 436 pass, 4 fail, 1 skipped (out of 441); the 4 are post17/post18 commit-citation checks that failed only on a shallow clone of `danbri/factoidal` (0 fail on a full clone). In `danbri/factoidal-core` they fail on every clone: the commit ids they cite (868a20b, 1f27320, 5e8399a, 8ff60eb, bd9e5be, 4f8fc95, e8085da) are absent from the rewritten history (checked 2026-10-09, 7 of 7 absent) |
 | package suite | `cd npm/factoidal && npm test` | 340 pass, 0 fail, 2 skipped (out of 342) |
 | npm-entry smoke | `node bin/npm-entry/smoke.mjs docs/fstar-extracted/factoidal-npm-entry.js` and the same with `factoidal-npm-entry-lite.js` | 33 pass, 0 fail (out of 33) for each bundle |
 | store host | `node tests/store-host/conformance.mjs` | 24 pass, 0 fail, 10 skipped (out of 34) under Node; Deno was not installed in the 2026-09-16 container, so its run is unmeasured there (2026-09-03: 29 pass, 0 fail (out of 29) under both) |
@@ -194,7 +228,7 @@ to overwrite.
 | Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | see the script's own report; needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`), absent from the 2026-09-16 container |
 | browser surface | `tests/web-demos/hub_browser_all.sh` | 54 pass, 0 fail (out of 54 posts); the node harness cannot see browser-only gaps; run this too |
 | bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 |
-| extraction drift | the `Check F\* Extraction` workflow on the release commit, or `./build-ocaml.sh extract --force-full` followed by `git diff --stat -- 'formal/fstar/ocaml-output/*.ml'` | no diff. The publish workflow runs this same check and refuses to publish on drift; it was red on `claude/main` from 2026-09-07 to the 0.8.0 preparation (two OWL modules, re-extracted in commit 93f012e) |
+| extraction drift | the `Check F\* Extraction` workflow (still in core) on the release commit, or `./build-ocaml.sh extract --force-full` followed by `git diff --stat -- 'formal/fstar/ocaml-output/*.ml'` | no diff. The publish workflow runs this same check and refuses to publish on drift; it was red on `claude/main` from 2026-09-07 to the 0.8.0 preparation (two OWL modules, re-extracted in commit 93f012e) |
 
 The package suite runs again inside `npm publish` through
 `prepublishOnly`, so a failure there aborts the publish after the
@@ -252,7 +286,7 @@ cheapest command that proves the shipped wasm loads and answers.
    in it. Read the skipped column before quoting the score
    (anti-pattern 3).
 8. **A git worktree has no `formal/lean4/.lake/build`.** Tools that need
-   the committed native binaries must fall back to the main checkout
+   the native Lean binaries must fall back to the main checkout
    (the conformance test reads the worktree's `.git` pointer file to
    find it) or take an `L4_BIN_DIR` override.
 9. **The version in `package.json` and the versions in the three
@@ -287,8 +321,10 @@ cheapest command that proves the shipped wasm loads and answers.
 - Bundle profiles (full and lite), the entry ABI contract and the
   measured sizes: [`docs/designissues/2026-09-16-npm-usability-and-bundle-profiles.md`](../../docs/designissues/2026-09-16-npm-usability-and-bundle-profiles.md)
   and `bin/npm-entry/README.md`.
-- Publish workflows: `.github/workflows/npm-publish.yml` and
-  `.github/workflows/npm-publish-lean.yml`.
+- Publish workflows: `npm-publish.yml` and `npm-publish-lean.yml`, now
+  inactive under `legacy-workflows/` in `danbri/factoidal-builds` (see
+  "How publishing works"). Release files: the `build-<12 hex>-<set>`
+  releases of `danbri/factoidal-builds`.
 - The persisted store the command drives:
   [`skills/shardborough-storage/SKILL.md`](../shardborough-storage/SKILL.md)
   and `docs/shardborough-storage-spec.md`.

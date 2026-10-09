@@ -168,8 +168,9 @@ location, known soft spots ranked, and a TWO-ATTEMPT STOP RULE with
 exact-error reporting ("a precise failure report is a valued
 deliverable"). Mandatory lines: Edit/Write only, never a python
 heredoc; `(* *)` comments NEST — `//` only; no admit/--lax; bounded
-`#push-options` allowed; restore the checked-cache branch snapshot
-before verifying (cold worktree chains cost hours); activate the
+`#push-options` allowed; restore the `checked-cache` branch snapshot
+(branch of `danbri/factoidal-builds`; `tools/install-toolchain-cache.sh`
+restores it) before verifying (cold worktree chains cost hours); activate the
 opam switch, exporting the six variables by hand if the eval form is
 rejected. Pin the exact `val` — agents cannot then weaken the
 statement, only fail loudly. Agents deliver SECTIONS; the
@@ -199,7 +200,8 @@ before committing, always).
 ## Operating the fleet
 
 - Worktree per agent (~1.2GB each — watch `df`; reclaim on landing;
-  the checked-cache snapshot makes worktree verifies fast).
+  the `checked-cache` snapshot from `danbri/factoidal-builds` makes
+  worktree verifies fast).
 - Agents may end "waiting for the monitor" mid-verify: that is not a
   report. Check the worktree (file written? `fstar.exe` alive?). A
   verify silent for HOURS is a wedged z3, not progress: kill it,

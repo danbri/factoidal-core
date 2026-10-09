@@ -20,15 +20,19 @@ Generates four fixtures in `/tmp/factoidal-metrics` (`prefixed-1000`,
 `examples/data/third_party/Berlin.ttl` is present), rebuilds `factoidal` from
 `ocaml-output/`, and runs `factoidal --count` under `/usr/bin/time`
 with `RUNS=5` reporting median/min/max seconds and peak RSS. Requires
-the F\* opam switch (it recompiles). To measure a **committed binary**
-without a toolchain, generate the same fixtures and time
+the F\* opam switch (it recompiles). To measure a **release binary**
+without a toolchain, run `tools/fetch-builds.sh` (it installs the
+binary built from a commit in your history; binaries are not committed
+since 2026-10-09), generate the same fixtures and time
 `bin/<platform>/factoidal --count` directly — keep the median-of-N
-discipline.
+discipline. Quote the release tag with the number.
 
 ### Parse + serialize throughput — `tools/bench-parse-serialize.sh`
 
-Runs against the **committed** `bin/<platform>/factoidal` /
+Runs against the installed `bin/<platform>/factoidal` /
 `factoidal-dump-nq` binaries only — no F\* toolchain, no rebuild.
+Install them with `tools/fetch-builds.sh` (binaries are not committed
+since 2026-10-09) or build them locally.
 Measures `factoidal count` (parse: N-Triples, Turtle, RDF/XML),
 `factoidal-dump-nq` (serialize: parse + sorted N-Quads dump), and
 `factoidal canonicalize` (RDFC-1.0; capped at 100k triples) at
@@ -44,7 +48,11 @@ Outputs `docs/test-results/perf-parse-serialize.json` (machine-
 readable) and `.../perf-parse-serialize.fragment.html` (included
 fail-soft by `formal/fstar/generate-report.sh` into the public
 dashboard). CI: the `parse-serialize-bench` job in
-`.github/workflows/ukparliament-bench.yml`.
+`ukparliament-bench.yml`. That workflow moved to
+`legacy-workflows/` in `danbri/factoidal-builds` on 2026-10-09 and is
+inactive; porting it means running against a release instead of
+committed binaries (`legacy-workflows/README.md`). The job does not run
+until then.
 
 **Known anomaly (measured 2026-07-04, committed `bin/linux-x86_64`):**
 `factoidal count` scales as expected (~80-90k triples/s through 1M,
@@ -66,15 +74,23 @@ RDF-XML at scale.
 `tools/bench_ukpar_modern.py` (and the older `bench_ukpar_queries.py`)
 POST the 24 queries in `third_party/data/ukparliament/sparql/` to a
 running endpoint, wall-clock each with a per-query timeout, and emit
-CSV+JSON. The checked-in baselines live at
-`docs/test-results/ukparliament-bench-modern.{csv,json}`.
+CSV+JSON. The baselines were checked in at
+`docs/test-results/ukparliament-bench-modern.{csv,json}`. The 2026-10-09
+split did not carry them into `danbri/factoidal-core`: only
+`closure-bench-baseline.json` and `perf-quadstore-baseline.*` remain
+under `docs/test-results/` there, and the rest of that directory is
+generated and gitignored. The UK Parliament baselines are still in
+`danbri/factoidal` (branch `claude/main`).
 
-CI gate: `.github/workflows/ukparliament-bench.yml` boots the daemon
-on the checked-in corpus, runs the bench, and diffs against the
-baseline via `.github/scripts/ukparliament_bench_diff.py` (zero
-successful queries = hard regression). It runs on push, PR, and a
-daily cron. If your change legitimately shifts the baseline, update
-the baseline JSON in the same PR and say why.
+CI gate (inactive since 2026-10-09): `ukparliament-bench.yml` booted the
+daemon on the checked-in corpus, ran the bench, and diffed against the
+baseline via `ukparliament_bench_diff.py` (zero successful queries = hard
+regression), on push, PR, and a daily cron. The workflow and the script
+moved to `legacy-workflows/` in `danbri/factoidal-builds`, where they do
+not run. Until they are ported, no automatic perf gate exists: run the
+bench by hand before and after a change that can move query latency. If
+your change legitimately shifts the baseline, update the baseline JSON in
+the same PR and say why.
 
 ### Other tools
 

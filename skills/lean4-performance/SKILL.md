@@ -111,7 +111,9 @@ take those. Use `csimp`.
   attributing a cost to the defect you happen to be holding.
 
 `tests/stack/run.sh` is the behavioural half of this: deep inputs on two
-routes, the committed wasm module in Node and the native CLI. Add a case there
+routes, the wasm module in Node (installed by `tools/fetch-builds.sh` or
+built by `Wasm/build-wasm.sh`; not committed since 2026-10-09) and the
+native CLI. Add a case there
 whenever you repair one of these.
 
 ## Factoidal RDF/block ingestion

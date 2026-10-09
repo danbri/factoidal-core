@@ -19,9 +19,9 @@ Design decision (owner-approved 2026-08-22):
 | `formal/lean4/Wasm/l4_shim.c` | the C boundary: init, `char *` ↔ Lean string, ownership |
 | `formal/lean4/Wasm/l4_stubs.c` | one stub (`initialize_libuv`) — see "the purity evidence" below |
 | `formal/lean4/Wasm/build-wasm.sh` | the whole pipeline, reproducible |
-| `docs/web/hub/assets/l4/l4factoidal.wasm` | the committed module |
-| `docs/web/hub/assets/l4/l4factoidal.mjs` | Emscripten's generated glue |
-| `docs/web/hub/assets/l4/l4factoidal.js` | our ES-module loader (`loadL4()`) |
+| `docs/web/hub/assets/l4/l4factoidal.wasm` | the module; a build product, not committed since 2026-10-09 (in `.gitignore`; the `web` release set of `danbri/factoidal-builds` carries it) |
+| `docs/web/hub/assets/l4/l4factoidal.mjs` | Emscripten's generated glue; a build product, not committed since 2026-10-09 |
+| `docs/web/hub/assets/l4/l4factoidal.js` | our ES-module loader (`loadL4()`); source, committed |
 | `tests/hub/post36_test.mjs` | the gate: cells of hub post 36 + the error paths |
 
 Measured on the first working build (2026-08-22, macOS arm64,
@@ -508,8 +508,11 @@ BYTES, not text" above.
    node harness binds `fn` to the node package and cannot see a missing
    browser wrapper.
 7. Extend `tests/hub/post36_test.mjs`, including an error path.
-8. Rerun `build-wasm.sh` and commit the rebuilt `.wasm` (binaries are
-   committed in this repo, iron rule #9).
+8. Rerun `build-wasm.sh` to test the change locally. Do not commit the
+   rebuilt `.wasm` or `.mjs`: since 2026-10-09 they are gitignored (iron
+   rule 9), and the `web` set of `danbri/factoidal-builds` builds them
+   from the pushed core commit. Before 2026-10-09 this step said to
+   commit the `.wasm`.
 
 ## Rebuilding after a Lean change
 
@@ -603,8 +606,12 @@ against the old core library.
    cleaning. (This is the wasm-side face of hazard #9 in
    `workflow-gotchas-debugging`.)
 
-10. **A wasm rebuild is not landed until all FOUR committed copies and
-   the committed NATIVE binary move together.** The copies are
+10. **A wasm rebuild is not complete until all FOUR copies and the
+   NATIVE binary move together.** (Until 2026-10-09 they were committed
+   and a landing had to move all of them; now none is committed. A local
+   rebuild must still move all four, and `build-wasm.sh` still checks
+   it. The `web` and `linux-x86_64` release sets carry them for other
+   checkouts.) The copies are
    `docs/web/hub/assets/l4/`, `npm/factoidal/l4-assets/`,
    `npm/factoidal-lean/` and `docs/npm/lean/`; they must be
    byte-identical, because the loader stamps ONE `WASM_VERSION` (the
@@ -616,10 +623,12 @@ against the old core library.
    left it holding the PREVIOUS wasm with everything green. Step 9 now
    syncs it and ends with a sha256 comparison across all four that
    FAILS the build on disagreement. Separately, `bin/linux-x86_64/l4factoidal`
-   is committed (iron rule #9) and is a SECOND artifact carrying the
-   same ops table: refresh it from `.lake/build/bin/l4factoidal` in the
-   same landing, or `l4factoidal ops` keeps reporting the old surface
-   long after the wasm is right.
+   was committed (iron rule #9 then) and is a SECOND artifact carrying
+   the same ops table: refresh it from `.lake/build/bin/l4factoidal`
+   after a local wasm rebuild, or `l4factoidal ops` keeps reporting the
+   old surface long after the wasm is right. Since 2026-10-09 the file
+   is not committed; the `linux-x86_64` release set carries the native
+   Lean CLI.
 
 11. **`wasm-ld: warning: function signature mismatch:
    lean_io_create_tempfile / lean_io_create_tempdir` is expected.**

@@ -82,7 +82,12 @@ shard packer, the proofs between them, the costs paid and open):
   Needed whenever a Lean change must reach the browser, and whenever
   `lean-toolchain` is bumped (the wasm objects are generated from the
   toolchain's core sources, so a version bump without a rebuild leaves
-  the artifact built against the old core library).
+  the artifact built against the old core library). Since 2026-10-09 the
+  outputs (`l4factoidal.wasm`, `l4factoidal.mjs` and their copies under
+  `npm/`) are NOT committed; they are in `.gitignore`. The `web` set of
+  `danbri/factoidal-builds` builds them from a core commit, and
+  `tools/fetch-builds.sh` installs them. A local run of the script is for
+  local testing; do not stage its output.
 - `lake env lean --run Demo.lean` — the human-facing tour: BGP rows
   printed Turtle-ish, the §18.5 MINUS domain-disjointness contrast,
   live monotonicity, RDF 1.2 triple-term matching, the literal
@@ -263,6 +268,10 @@ executable edge only.
    copy with a clone of the main checkout's file (`cmp -s` to verify
    identical, then `cp -c main/f wt/f.tmp && mv wt/f.tmp wt/f`) —
    blocks are shared, git sees no change, agents keep working.
+   (Since 2026-10-09 binaries and bundles are not committed, so a new
+   worktree of `danbri/factoidal-core` holds them only after
+   `tools/fetch-builds.sh` runs; see iron rule 9. The sizes above were
+   measured before the split.)
 7. **Well-founded recursion blocks `decide`/`rfl`.** A mutually
    recursive function group (the JSON parser's five functions)
    compiles via well-founded recursion, so the kernel cannot unfold it
