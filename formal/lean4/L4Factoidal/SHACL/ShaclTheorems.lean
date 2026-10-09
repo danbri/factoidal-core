@@ -343,7 +343,7 @@ theorem isShaclInstance_iff (g : Graph) (n : Term) (c : WfIri) :
 def isSimple : Constraint → Bool
   | .cls _ | .datatype _ | .nodeKind _ | .inSet _ | .pattern _ _ | .minLength _
   | .maxLength _ | .languageIn _ | .minInclusive _ | .maxInclusive _
-  | .minExclusive _ | .maxExclusive _ => true
+  | .minExclusive _ | .maxExclusive _ | .singleLine _ | .rootClass _ => true
   | _ => false
 
 theorem simpleValueCheck_isSome (g : Graph) (cc : Constraint) (v : Term) :
@@ -353,17 +353,37 @@ theorem simpleValueCheck_isSome (g : Graph) (cc : Constraint) (v : Term) :
 theorem simpleValueCheck_iff (g : Graph) (cc : Constraint) (v : Term) (hs : isSimple cc = true) :
     simpleValueCheck g cc v = some true ↔ Spec.ValueSatisfies g cc v := by
   cases cc with
-  | cls c =>
-    simp only [simpleValueCheck, Spec.ValueSatisfies, Option.some.injEq]
-    exact isShaclInstance_iff g v c
-  | datatype dt =>
-    cases v <;> simp [simpleValueCheck, Spec.ValueSatisfies]
-    intro _
-    exact ⟨Subtype.ext, fun h => h ▸ rfl⟩
-  | nodeKind nk =>
-    cases nk <;> cases v <;>
-      simp [simpleValueCheck, Spec.ValueSatisfies, Spec.NodeKindOk, nodeKindOk,
-        isBnodeTerm, isIriTerm, isLiteralTerm]
+  | cls cs =>
+    simp only [simpleValueCheck, Spec.ValueSatisfies, Option.some.injEq, List.any_eq_true]
+    exact ⟨fun ⟨c, hc, h⟩ => ⟨c, hc, (isShaclInstance_iff g v c).mp h⟩,
+           fun ⟨c, hc, h⟩ => ⟨c, hc, (isShaclInstance_iff g v c).mpr h⟩⟩
+  | datatype dts =>
+    cases v with
+    | literal l =>
+      simp only [simpleValueCheck, Spec.ValueSatisfies, Option.some.injEq, List.any_eq_true,
+        Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true', Term.literal.injEq, exists_eq_left']
+    | _ => simp [simpleValueCheck, Spec.ValueSatisfies]
+  | nodeKind nks =>
+    simp only [simpleValueCheck, Spec.ValueSatisfies, Option.some.injEq, List.any_eq_true]
+    have hk : ∀ nk, nodeKindOk v nk = true ↔ Spec.NodeKindOk nk v := by
+      intro nk
+      cases nk <;> cases v <;>
+        simp [Spec.NodeKindOk, nodeKindOk, isBnodeTerm, isIriTerm, isLiteralTerm,
+          isTripleTermTerm]
+    exact ⟨fun ⟨nk, hn, h⟩ => ⟨nk, hn, (hk nk).mp h⟩, fun ⟨nk, hn, h⟩ => ⟨nk, hn, (hk nk).mpr h⟩⟩
+  | singleLine b =>
+    cases v <;> cases b <;>
+      simp [simpleValueCheck, Spec.ValueSatisfies, hasLineBreak, List.any_eq_false]
+  | rootClass cs =>
+    cases v with
+    | iri i =>
+      simp only [simpleValueCheck, Spec.ValueSatisfies, Option.some.injEq, List.any_eq_true,
+        Term.iri.injEq, exists_eq_left']
+      exact ⟨fun ⟨c, hc, h⟩ =>
+               ⟨c, hc, superClasses_sound g i c (List.contains_iff_mem.mp h)⟩,
+             fun ⟨c, hc, h⟩ =>
+               ⟨c, hc, List.contains_iff_mem.mpr (superClasses_complete g i c h)⟩⟩
+    | _ => simp [simpleValueCheck, Spec.ValueSatisfies]
   | inSet items =>
     simp [simpleValueCheck, Spec.ValueSatisfies, termMem, List.any_eq_true]
   | pattern re flags =>
@@ -438,6 +458,12 @@ theorem simpleValueCheck_iff' (g : Graph) (cc : Constraint) (v : Term) :
   | maxExclusive t =>
     rw [← simpleValueCheck_iff g (.maxExclusive t) v rfl]
     simp [simpleValueCheck_ne_none g (.maxExclusive t) v rfl]
+  | singleLine b =>
+    rw [← simpleValueCheck_iff g (.singleLine b) v rfl]
+    simp [simpleValueCheck_ne_none g (.singleLine b) v rfl]
+  | rootClass cs =>
+    rw [← simpleValueCheck_iff g (.rootClass cs) v rfl]
+    simp [simpleValueCheck_ne_none g (.rootClass cs) v rfl]
   | _ => simp [simpleValueCheck, Spec.ValueSatisfies]
 
 /-! ## The per-focus-node components decide their specification -/

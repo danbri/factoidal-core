@@ -279,6 +279,67 @@ def debugNotDoc : String :=
 #guard (run debugNotDoc).conforms == false
 #guard (runWith debugNotDoc { disallowed := some [.debug] }).conforms == true
 
+/-! ### SHACL 1.2 list-valued sh:class / sh:datatype / sh:nodeKind (union)
+
+§ClassConstraintComponent: "Use lists for union semantics"; the same
+list form for sh:datatype and sh:nodeKind; sh:TripleTerm is the node
+kind of triple terms. -/
+
+def classListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b, ex:c, \"lit\" ; sh:class ( ex:A ex:B ) . " ++
+  "ex:a a ex:A . ex:b a ex:B . ex:c a ex:C ."
+
+#guard (run classListDoc).results.map (·.focus) == [.iri (exIri "c"), .literal (Literal.string "lit")]
+#guard components (run classListDoc) == [shClassCC, shClassCC]
+
+def datatypeListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"a\", \"b\"@en, 42, ex:i ; " ++
+  "sh:datatype ( xsd:string rdf:langString ) ."
+
+#guard (run datatypeListDoc).results.length == 2   -- 42 and ex:i
+
+def nodeKindListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, \"lit\", <<( ex:a ex:p ex:b )>> ; " ++
+  "sh:nodeKind ( sh:BlankNode sh:IRI ) ."
+
+/-- Validate an RDF 1.2 Turtle document (triple terms) against itself. -/
+def run12 (body : String) : ValidationReport :=
+  let g := match parseTurtle (prefixes ++ body) (some "http://example.org/doc") .rdf12 with
+    | .ok g => g
+    | .error _ => []
+  validate g (decodeShapesGraph g)
+
+#guard (run12 nodeKindListDoc).results.length == 2   -- the literal and the triple term
+
+def tripleTermKindDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, <<( ex:a ex:p ex:b )>> ; sh:nodeKind sh:TripleTerm ."
+
+#guard (run12 tripleTermKindDoc).results.map (·.focus) == [.iri (exIri "a")]
+
+/-! ### SHACL 1.2 §SingleLineConstraintComponent -/
+
+def singleLineDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"one\", \"two\\nlines\", \"cr\\rhere\", ex:i ; " ++
+  "sh:singleLine true ."
+
+#guard (run singleLineDoc).results.length == 2
+#guard components (run singleLineDoc) == [shSingleLineCC, shSingleLineCC]
+
+def singleLineFalseDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"two\\nlines\" ; sh:singleLine false ."
+
+#guard (run singleLineFalseDoc).conforms == true
+
+/-! ### SHACL 1.2 §RootClassConstraintComponent — rdfs:subClassOf*, reflexive -/
+
+def rootClassDoc : String :=
+  "ex:Dog rdfs:subClassOf ex:Mammal . ex:Mammal rdfs:subClassOf ex:Animal . " ++
+  "ex:S a sh:NodeShape ; sh:targetNode ex:Dog, ex:Animal, ex:Car, \"Dog\" ; sh:rootClass ex:Animal ."
+
+#guard (run rootClassDoc).results.map (·.focus) ==
+         [.iri (exIri "Car"), .literal (Literal.string "Dog")]
+#guard components (run rootClassDoc) == [shRootClassCC, shRootClassCC]
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

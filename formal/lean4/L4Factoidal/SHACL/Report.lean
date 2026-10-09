@@ -42,6 +42,8 @@ def constraintComponentIri : Constraint → WfIri
   | .disjoint _ => shDisjointCC
   | .lessThan _ => shLessThanCC
   | .lessThanOrEquals _ => shLessThanOrEqualsCC
+  | .singleLine _ => shSingleLineCC
+  | .rootClass _ => shRootClassCC
   | .notOf _ => shNotCC
   | .andOf _ => shAndCC
   | .orOf _ => shOrCC

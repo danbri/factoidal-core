@@ -508,6 +508,10 @@ def isLiteralTerm : Term → Bool
   | .literal _ => true
   | _ => false
 
+def isTripleTermTerm : Term → Bool
+  | .tripleTerm _ _ _ => true
+  | _ => false
+
 def nodeKindOk (t : Term) : NodeKind → Bool
   | .blankNode => isBnodeTerm t
   | .iri => isIriTerm t
@@ -515,6 +519,16 @@ def nodeKindOk (t : Term) : NodeKind → Bool
   | .blankNodeOrIri => isBnodeTerm t || isIriTerm t
   | .blankNodeOrLiteral => isBnodeTerm t || isLiteralTerm t
   | .iriOrLiteral => isIriTerm t || isLiteralTerm t
+  | .tripleTerm => isTripleTermTerm t
+
+/-- SHACL 1.2 §SingleLineConstraintComponent: the characters of the
+regular expression `[\f\r\n\v]` — form feed, carriage return, line
+feed, vertical tab. -/
+def isLineBreakChar (c : Char) : Bool :=
+  c == '\x0C' || c == '\r' || c == '\n' || c == '\x0B'
+
+/-- Does the lexical form contain a line break? -/
+def hasLineBreak (lex : String) : Bool := lex.toList.any isLineBreakChar
 
 /-- The per-VALUE-NODE check of the non-recursive components (§4.1,
 §4.3, §4.4.1–§4.4.4, §4.8.2): `some true` = the value node satisfies
@@ -524,12 +538,21 @@ uniqueLang, closed, hasValue are per focus node; the logical and
 shape-based components need conformance, see `evalOneConstraint`). -/
 def simpleValueCheck (data : Graph) (cc : Constraint) (v : Term) : Option Bool :=
   match cc with
-  | .cls c => some (isShaclInstance data v c)
-  | .datatype dt =>
+  | .cls cs => some (cs.any (isShaclInstance data v))
+  | .datatype dts =>
     some (match v with
-      | .literal l => l.val.datatype == dt && !literalIllFormed dt l.val.lexicalForm
+      | .literal l => dts.any fun dt =>
+          l.val.datatype == dt && !literalIllFormed dt l.val.lexicalForm
       | _ => false)
-  | .nodeKind nk => some (nodeKindOk v nk)
+  | .nodeKind nks => some (nks.any (nodeKindOk v))
+  | .singleLine b =>
+    some (match v with
+      | .literal l => !b || !hasLineBreak l.val.lexicalForm
+      | _ => true)
+  | .rootClass cs =>
+    some (match v with
+      | .iri i => cs.any fun c => (superClasses data i).contains c
+      | _ => false)
   | .inSet items => some (termMem v items)
   | .pattern re flags =>
     some (match termLexical v with | some lex => regexMatch lex re flags | none => false)
@@ -799,7 +822,7 @@ def IsInstance (g : Graph) (n : Term) (c : WfIri) : Prop :=
   ∃ s t, n.toSubject? = some s ∧
     ({ s := s, p := rdfType, o := .iri t } : Triple) ∈ g ∧ SubClassOf g t c
 
-/-- §4.1.3 node kinds. -/
+/-- §4.1.3 node kinds (SHACL 1.2 adds sh:TripleTerm). -/
 def NodeKindOk (nk : NodeKind) (v : Term) : Prop :=
   match nk with
   | .blankNode => ∃ b, v = .bnode b
@@ -808,15 +831,19 @@ def NodeKindOk (nk : NodeKind) (v : Term) : Prop :=
   | .blankNodeOrIri => (∃ b, v = .bnode b) ∨ (∃ i, v = .iri i)
   | .blankNodeOrLiteral => (∃ b, v = .bnode b) ∨ (∃ l, v = .literal l)
   | .iriOrLiteral => (∃ i, v = .iri i) ∨ (∃ l, v = .literal l)
+  | .tripleTerm => ∃ s p o, v = .tripleTerm s p o
 
 /-- The per-value components, declaratively. `True` for a component
 that is not per-value (those are in `FocusSatisfies` and `Conforms`). -/
 def ValueSatisfies (g : Graph) (cc : Constraint) (v : Term) : Prop :=
   match cc with
-  | .cls c => IsInstance g v c
-  | .datatype dt => ∃ l, v = .literal l ∧ l.val.datatype = dt ∧
+  | .cls cs => ∃ c ∈ cs, IsInstance g v c
+  | .datatype dts => ∃ l, v = .literal l ∧ ∃ dt ∈ dts, l.val.datatype = dt ∧
       literalIllFormed dt l.val.lexicalForm = false
-  | .nodeKind nk => NodeKindOk nk v
+  | .nodeKind nks => ∃ nk ∈ nks, NodeKindOk nk v
+  | .singleLine b => b = true → ∀ l, v = .literal l →
+      ∀ c ∈ l.val.lexicalForm.toList, isLineBreakChar c = false
+  | .rootClass cs => ∃ i, v = .iri i ∧ ∃ c ∈ cs, SubClassOf g i c
   | .inSet items => ∃ u ∈ items, Term.eqb u v = true
   | .pattern re flags => ∃ lex, termLexical v = some lex ∧ regexMatch lex re flags = true
   | .minLength n => ∃ lex, termLexical v = some lex ∧ n ≤ lex.length

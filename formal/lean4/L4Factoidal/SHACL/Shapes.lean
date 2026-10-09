@@ -60,6 +60,8 @@ inductive Severity where
 
 /-! ## §4.1.3 node kinds -/
 
+/-- The node kinds of §4.1.3, plus SHACL 1.2's `sh:TripleTerm` ("Any
+triple term matches only sh:TripleTerm"). -/
 inductive NodeKind where
   | blankNode
   | iri
@@ -67,6 +69,7 @@ inductive NodeKind where
   | blankNodeOrIri
   | blankNodeOrLiteral
   | iriOrLiteral
+  | tripleTerm
   deriving DecidableEq, Repr, Inhabited
 
 /-! ## §2.3.1 property paths -/
@@ -132,10 +135,14 @@ refer to other shapes by `ShapeRef`; they are resolved against the
 shapes graph at validation time, so the AST stays a finite tree over
 an arbitrary (possibly cyclic) shapes graph. -/
 inductive Constraint where
-  -- §4.1 value type
-  | cls (c : WfIri)
-  | datatype (dt : WfIri)
-  | nodeKind (nk : NodeKind)
+  -- §4.1 value type. SHACL 1.2 §ClassConstraintComponent,
+  -- §DatatypeConstraintComponent, §NodeKindConstraintComponent: the
+  -- parameter value is an IRI or a SHACL list of IRIs, and a value node
+  -- satisfies the constraint when it matches ANY member ("Use lists for
+  -- union semantics"); an IRI value decodes to a one-member list.
+  | cls (cs : List WfIri)
+  | datatype (dts : List WfIri)
+  | nodeKind (nks : List NodeKind)
   -- §4.2 cardinality
   | minCount (n : Nat)
   | maxCount (n : Nat)
@@ -155,6 +162,12 @@ inductive Constraint where
   | disjoint (p : Path)
   | lessThan (p : Path)
   | lessThanOrEquals (p : Path)
+  -- SHACL 1.2 §SingleLineConstraintComponent: with `true`, a literal
+  -- value node whose lexical form contains a line break violates.
+  | singleLine (b : Bool)
+  -- SHACL 1.2 §RootClassConstraintComponent: the value node is an IRI
+  -- that is a (reflexive, transitive) rdfs:subClassOf of a member.
+  | rootClass (cs : List WfIri)
   -- §4.6 logical
   | notOf (r : ShapeRef)
   | andOf (rs : List ShapeRef)
@@ -321,6 +334,7 @@ def nodeKindOfIri (i : WfIri) : Option NodeKind :=
   else if i == shNkBlankNodeOrIRI then some .blankNodeOrIri
   else if i == shNkBlankNodeOrLiteral then some .blankNodeOrLiteral
   else if i == shNkIRIOrLiteral then some .iriOrLiteral
+  else if i == shNkTripleTerm then some .tripleTerm
   else none
 
 def severityOfIri (i : WfIri) : Severity :=
@@ -407,6 +421,17 @@ def decodeTargets (g : Graph) (s : Subject) : List Target :=
 def shapeRefList (g : Graph) (head : Term) (fuel : Nat) : List ShapeRef :=
   (rdfListTerms g head fuel).filterMap termToShapeRef
 
+/-- SHACL 1.2: a parameter whose value "is either an IRI or a blank
+node that is a well-formed SHACL list where all members are IRIs"
+(sh:class, sh:datatype, sh:nodeKind, sh:rootClass): the IRIs it names.
+A literal is no such value (`none`). -/
+def iriOrIriList (g : Graph) (t : Term) (fuel : Nat) : Option (List WfIri) :=
+  match t with
+  | .iri i => some [i]
+  | .bnode _ => some ((rdfListTerms g t fuel).filterMap fun m =>
+      match m with | .iri i => some i | _ => none)
+  | _ => none
+
 /-- §4.7.2 / §4.7.3: sh:qualifiedMinCount / sh:qualifiedMaxCount apply
 only together with sh:qualifiedValueShape (core/node/qualified-001:
 the counts without a qualified shape impose nothing). -/
@@ -435,13 +460,15 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
   let maxCount := match firstNat (objectsOf g s shMaxCount) with
     | some n => [Constraint.maxCount n] | none => []
   let datatype := (objectsOf g s shDatatype).filterMap fun t =>
-    match t with | .iri i => some (Constraint.datatype i) | _ => none
+    (iriOrIriList g t fuel).map Constraint.datatype
   let nodeKind := (objectsOf g s shNodeKind).filterMap fun t =>
-    match t with
-    | .iri i => (nodeKindOfIri i).map Constraint.nodeKind
-    | _ => none
+    (iriOrIriList g t fuel).map fun is => Constraint.nodeKind (is.filterMap nodeKindOfIri)
   let cls := (objectsOf g s shClass).filterMap fun t =>
-    match t with | .iri i => some (Constraint.cls i) | _ => none
+    (iriOrIriList g t fuel).map Constraint.cls
+  let rootClass := (objectsOf g s shRootClass).filterMap fun t =>
+    (iriOrIriList g t fuel).map Constraint.rootClass
+  let singleLine := match firstBool (objectsOf g s shSingleLine) with
+    | some b => [Constraint.singleLine b] | none => []
   let inSet := match objectsOf g s shIn with
     | head :: _ => [Constraint.inSet (rdfListTerms g head fuel)] | [] => []
   let hasValue := (objectsOf g s shHasValue).map Constraint.hasValue
@@ -488,7 +515,8 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
     match firstBool (objectsOf g s shClosed) with
     | some true => [Constraint.closed ignored]
     | _ => []
-  minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ inSet ++ hasValue ++ pattern ++
+  minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ rootClass ++ singleLine ++
+  inSet ++ hasValue ++ pattern ++
   minLength ++ maxLength ++ languageIn ++ uniqueLang ++ minInc ++ maxInc ++ minExc ++ maxExc ++
   nots ++ ands ++ ors ++ xones ++ nodes ++ qualified ++ equals ++ disjoint ++ lessThan ++
   lessThanOrEquals ++ closed
