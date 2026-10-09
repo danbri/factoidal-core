@@ -378,7 +378,7 @@ only when the type triple's OBJECT is the subclass triple's SUBJECT. -/
 /-! The ρdf fragment is exactly five IRIs, and an ordinary predicate is
 not one of them. -/
 
-#guard rdfsAxiomaticTriples.length == 38
+#guard rdfsAxiomaticTriples.length == 41
 
 end Checks
 

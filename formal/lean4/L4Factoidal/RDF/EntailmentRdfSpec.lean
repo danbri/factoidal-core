@@ -190,7 +190,7 @@ engine's finite slice, which is the only property downstream needs. -/
 it is not empty — a soundness bridge into an empty table would prove
 nothing. -/
 
-#guard rdfAxiomaticTriples.length == 8
+#guard rdfAxiomaticTriples.length == 9
 
 end Checks
 
