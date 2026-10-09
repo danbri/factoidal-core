@@ -113,3 +113,35 @@ tests/xmpp/package-lock.json
 # installed by `npm install` inside npm/factoidal, not committed.
 # npm/factoidal/package-lock.json IS committed.
 npm/factoidal/node_modules/
+
+# Build products, installed by tools/fetch-builds.sh from danbri/factoidal-builds
+# releases (2026-10-09 split; CLAUDE.md iron rule 9). Never committed here.
+/bin/
+/.factoidal-builds/
+/docs/test-results/
+/docs/npm/
+/docs/fstar-extracted/
+/docs/web/hub/assets/l4/*.wasm
+/npm/factoidal/factoidal.js
+/npm/factoidal/factoidal.wasm.js
+/npm/factoidal/factoidal.wasm.assets/
+/npm/factoidal/factoidal-npm-entry.js
+/npm/factoidal/factoidal-npm-entry.wasm.js
+/npm/factoidal/factoidal-npm-entry.wasm.assets/
+/npm/factoidal/factoidal-npm-entry-lite.js
+/npm/factoidal/factoidal-npm-entry-lite.wasm.js
+/npm/factoidal/factoidal-npm-entry-lite.wasm.assets/
+/npm/factoidal/l4-assets/
+/npm/factoidal-lean/l4factoidal.js
+/npm/factoidal-lean/l4factoidal.mjs
+/npm/factoidal-lean/l4factoidal.wasm
+/formal/fstar/ocaml-output/*.cmi
+/formal/fstar/ocaml-output/*.cmx
+/formal/fstar/ocaml-output/*.cmo
+/formal/fstar/ocaml-output/*.o
+/formal/fstar/ocaml-output/*.byte
+/formal/fstar/ocaml-output/.extract-state/
+/formal/fstar/*_DONE
+/formal/fstar/*.log
+/formal/fstar/ocaml-output/*.log
+/formal/lean4/COLL/

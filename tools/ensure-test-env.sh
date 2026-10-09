@@ -85,6 +85,23 @@ check third_party/testing/solid-crud-tests/package.json          "solid-crud"   
 check third_party/testing/web-access-control-tests/package.json  "solid-wac"          "tools/solid-server-interop.sh (Web Access Control tests)"
 check third_party/testing/solid-specification-tests/run.sh       "solid-spec-tests"   "tools/solid-conformance-harness.sh (Gherkin harness, needs Docker)"
 
+# Build products (binaries, wasm, JS bundles) come from danbri/factoidal-builds
+# releases since the 2026-10-09 split (CLAUDE.md iron rule 9). Reported, not
+# counted as a fixture gap: Lean work needs none of them, and a fresh core
+# commit has no release until the builds CI has run on it.
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) BPLAT=linux-x86_64 ;; Darwin-arm64) BPLAT=darwin-arm64 ;; *) BPLAT="" ;;
+esac
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  FB_RC=0; "$ROOT/tools/fetch-builds.sh" >&2 || FB_RC=$?
+  [ "$FB_RC" -ne 0 ] && echo "ensure-test-env: tools/fetch-builds.sh exited $FB_RC (see above); F* binary suites may not run" >&2
+fi
+if [ -n "$BPLAT" ] && [ -x "$ROOT/bin/$BPLAT/factoidal" ]; then
+  printf "  ok       %-22s %s (%s)\n" "build products" "bin/$BPLAT" "$(cat "$ROOT/.factoidal-builds/$BPLAT.tag" 2>/dev/null || echo 'origin unknown')"
+else
+  printf "  ABSENT   %-22s %s  -> breaks: F* binary suites (w3c_runner, factoidal CLI); run tools/fetch-builds.sh\n" "build products" "bin/${BPLAT:-?}"
+fi
+
 if [ "$MISSING" -eq 1 ]; then
   echo "ensure-test-env: GAPS FOUND — do not trust 0/0 scores or ENOENT test failures from this checkout." >&2
   echo "ensure-test-env: rerun without --check (needs network) or copy fixtures from a populated checkout." >&2

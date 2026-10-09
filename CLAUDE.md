@@ -28,6 +28,29 @@ Owner, 2026-08-24, verbatim:
 
 > **only report to me in ASD-STE100 Simplified Technical English.**
 
+## Repository layout (owner, 2026-10-09)
+
+Owner, 2026-10-09, verbatim:
+
+> "We want factoidal to be built in factoidal build from fstar and lean4
+> trees in factoidal-core."
+> "Ensure all target specs have a complete and tested lean4
+> implementation"
+> "/goal complete performant suite all in lean4"
+
+- **`danbri/factoidal-core`** (this repository, branch `main`): the
+  source. `formal/fstar` and `formal/lean4` with their git history
+  (rewritten from `danbri/factoidal` to `formal/` paths only), plus tests,
+  tools, skills, docs sources and npm sources. No compiled artifacts.
+- **`danbri/factoidal-builds`**: the CI that builds Factoidal from a core
+  commit (Lean native and wasm, F\* native, JS and wasm), runs the gates,
+  and publishes one release per (core commit, artifact set). Its git
+  history holds only workflows, build scripts, the `toolchain-cache` and
+  `checked-cache` branches, and `latest/<set>.json` pointers.
+- **`danbri/factoidal`**: the previous single repository. Its full
+  history (2,531+ commits, binaries included) stays there as the record.
+  Issues stay there until moved.
+
 # Factoidal — a linked information system with graph data and the Web at its heart
 
 (Owner's framing, 2026-08-22.)
@@ -165,10 +188,17 @@ root-level Lake failures.
 8. **RDF semantics are not optional.** rdf-mt tests verify literal
    equivalence, datatype handling, language-tag normalization, RDFS
    closure rules. Core requirements, not "just inference."
-9. **Commit compiled binaries.** `bin/<platform>/factoidal` and
-   `bin/<platform>/w3c_runner` are committed so a fresh clone runs
-   tests without an F\* toolchain. `ocaml-output/` symlinks point at
-   the current platform's `bin/` dir. Do not gitignore binaries.
+9. **Binaries are built and published by `danbri/factoidal-builds`,
+   never committed here.** (Changed 2026-10-09 by the core/builds split;
+   until then this rule said "commit compiled binaries".) A fresh clone
+   still runs tests with no toolchain: `tools/fetch-builds.sh` installs
+   the newest release whose source commit is in this checkout's history
+   into `bin/<platform>/` (plus the wasm and JS bundles under `npm/` and
+   `docs/`), after checking every file's sha256 against the release's
+   `build-info.json`. `tools/ensure-test-env.sh` calls it. The installed
+   paths are in `.gitignore`. A binary that does not match a source
+   commit of this repository is not a test subject: never copy one in by
+   hand. Record: `docs/designissues/2026-10-09-core-builds-split.md`.
 10. **No `--lax`.** All F\* must verify under z3 4.13.3 with no `--lax`,
     no `--admit_smt_queries`, no escape-hatch flags. The last legacy
     exception (`SPARQL11.Parser.fst`'s two `--admit_smt_queries true`
@@ -469,7 +499,7 @@ three, and remove each worktree in the same turn you land its commit.**
 Each worktree holds a 1.5-2.8 GB copy of the Lean build cache; seven live
 at once filled the disk on 2026-09-03 and every tool call failed, including
 the one that would have diagnosed it. Before deleting a worktree, check it
-for unlanded commits (`git -C <path> log --oneline origin/claude/main..HEAD`)
+for unlanded commits (`git -C <path> log --oneline origin/main..HEAD`)
 — that sweep rescued a 301-line design document written twelve days
 earlier. Full recovery procedure: hazard #36 in
 `skills/workflow-gotchas-debugging`.

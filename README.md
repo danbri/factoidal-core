@@ -12,6 +12,17 @@ aggressively, because a change that broke standards compliance could
 not pass. Executable code is obtained by extraction from the formal
 source, never by hand-writing implementations that mirror it.
 
+**Repositories.** This is `danbri/factoidal-core`, the source: the F\*
+tree (`formal/fstar`) and the Lean 4 tree (`formal/lean4`, the intended
+full-scope target) with their history, the tests and the tools. Compiled
+binaries, wasm modules and JS bundles are built from a core commit by
+[`danbri/factoidal-builds`](https://github.com/danbri/factoidal-builds)
+and published there as releases. `tools/fetch-builds.sh` installs the
+release that matches your checkout (sha256-checked); `tools/ensure-test-env.sh`
+runs it together with the test-fixture submodules. The previous single
+repository, [`danbri/factoidal`](https://github.com/danbri/factoidal),
+keeps the full pre-split history and the issue tracker.
+
 **What "verified" means here — three rings.** Claims differ by layer,
 and the boundary matters more than the headline. Every module's exact
 position in these rings is machine-derived, per module, in the

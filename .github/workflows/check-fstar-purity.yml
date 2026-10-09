@@ -54,15 +54,15 @@ jobs:
         run: |
           set -euo pipefail
           # On PRs: diff against the PR base branch.
-          # On push to non-default branches: diff against origin/claude/main.
-          # On push to claude/main itself: diff against the previous commit.
+          # On push to non-default branches: diff against origin/main.
+          # On push to main itself: diff against the previous commit.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_REF="origin/${{ github.base_ref }}"
-          elif [ "${{ github.ref }}" = "refs/heads/claude/main" ] || \
+          elif [ "${{ github.ref }}" = "refs/heads/main" ] || \
                [ "${{ github.ref }}" = "refs/heads/main" ]; then
             BASE_REF="HEAD~1"
           else
-            BASE_REF="origin/claude/main"
+            BASE_REF="origin/main"
           fi
           echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
           echo "Diff base: $BASE_REF"

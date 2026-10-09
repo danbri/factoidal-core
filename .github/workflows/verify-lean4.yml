@@ -7,7 +7,7 @@ name: Verify Lean 4 corpus
 on:
   push:
     branches:
-      - claude/main
+      - main
   pull_request:
     paths:
       - 'formal/lean4/**'

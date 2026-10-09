@@ -66,9 +66,9 @@ esac
 BIN_STATUS="unknown platform: binaries must be built via build-ocaml.sh"
 if [[ -n "$PLAT" ]]; then
   if "$REPO_ROOT/bin/$PLAT/factoidal" --help >/dev/null 2>&1; then
-    BIN_STATUS="bin/$PLAT committed binaries OK (tests runnable with no toolchain)"
+    BIN_STATUS="bin/$PLAT binaries OK ($(cat "$REPO_ROOT/.factoidal-builds/$PLAT.tag" 2>/dev/null || echo "origin unknown"))"
   else
-    BIN_STATUS="bin/$PLAT binaries missing or not runnable — see skills/build-and-test"
+    BIN_STATUS="bin/$PLAT binaries missing or not runnable — run tools/fetch-builds.sh (releases of danbri/factoidal-builds)"
   fi
   # Iron Rule #9's second half: ocaml-output/ symlinks point at the
   # platform bin/ dir. build-ocaml.sh makes these after a local build,

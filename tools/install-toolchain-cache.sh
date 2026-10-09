@@ -23,6 +23,11 @@ DEPS_LOG="$REPO_ROOT/.claude-runs/toolchain-deps.log"
 
 log() { echo "install-toolchain-cache: $*" >&2; }
 
+# The cache branches live in danbri/factoidal-builds since the
+# 2026-10-09 split (build tooling moved with the builds). Override with
+# FACTOIDAL_CACHE_REMOTE for a fork or a mirror.
+CACHE_REMOTE="${FACTOIDAL_CACHE_REMOTE:-https://github.com/danbri/factoidal-builds}"
+
 # Retry a flaky network command up to 4x with quadratic backoff. The
 # sandbox network drops connections mid-fetch, and a single failure is
 # not a real error (handoff note 2026-07-10: "git fetch is flaky, retry
@@ -107,11 +112,11 @@ if [ ! -x "$SWITCH_PREFIX/bin/fstar.exe" ]; then
   log "fetching toolchain-cache branch chunks"
   TC=/tmp/toolchain-cache.$$
   mkdir -p "$TC"
-  retry git -C "$REPO_ROOT" fetch -q origin toolchain-cache \
+  retry git -C "$REPO_ROOT" fetch -q "$CACHE_REMOTE" toolchain-cache:refs/factoidal-cache/toolchain-cache \
     || { log "FETCH toolchain-cache FAILED after retries"; exit 1; }
   # git archive: reads the commit without touching the main worktree
   # or its index (safe while a build is running there)
-  git -C "$REPO_ROOT" archive --format=tar origin/toolchain-cache | tar -x -C "$TC" \
+  git -C "$REPO_ROOT" archive --format=tar refs/factoidal-cache/toolchain-cache | tar -x -C "$TC" \
     || { log "ARCHIVE toolchain-cache FAILED"; exit 1; }
   cat "$TC"/fstar-"$FSTAR_VERSION"-"$PLAT".tar.gz.part* > "$TC/fstar.tar.gz" \
     || { log "cache chunks for $FSTAR_VERSION/$PLAT not found"; exit 1; }
@@ -126,10 +131,10 @@ fi
 # 4b. .checked verification cache (gates-green snapshots only; see
 #     skills/session-restore gate rule). Partial hits are still wins.
 if [ ! -e "$REPO_ROOT/formal/fstar/RDF.Graph.Executable.fst.checked" ]; then
-  if retry git -C "$REPO_ROOT" fetch -q origin checked-cache 2>/dev/null; then
+  if retry git -C "$REPO_ROOT" fetch -q "$CACHE_REMOTE" checked-cache:refs/factoidal-cache/checked-cache 2>/dev/null; then
     CC=/tmp/checked-cache.$$
     mkdir -p "$CC"
-    git -C "$REPO_ROOT" archive --format=tar origin/checked-cache | tar -x -C "$CC" \
+    git -C "$REPO_ROOT" archive --format=tar refs/factoidal-cache/checked-cache | tar -x -C "$CC" \
       && ( cd "$CC" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ) \
       && tar -C "$REPO_ROOT/formal/fstar" -xzf "$CC"/checked-*.tar.gz \
       && log ".checked cache restored ($(ls "$REPO_ROOT"/formal/fstar/*.checked | wc -l) modules)" \
