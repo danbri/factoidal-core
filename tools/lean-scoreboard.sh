@@ -810,10 +810,11 @@ parse_diff() {
 }
 
 # --------------------------------------------------------------------------
-# Failing test ids: the first 10 failing ids of a log, by FAILKEY.
-# This reads saved logs only. It never truncates a runner's own output.
+# Failing test ids of a saved log, by FAILKEY, one per line. This reads saved
+# logs only; the caller shows the first 10. A runner's own output is never
+# truncated.
 # --------------------------------------------------------------------------
-fail_ids() {
+fail_ids_all() {
   local key="$1" log="$2"
   case "$key" in
     w3c|grddl|rif|mathml|xpath|geo)
@@ -856,7 +857,7 @@ fail_ids() {
       grep -E '^(DISAGREE|FSTAR-ERROR|LEAN-ERROR) ' "$log" | sed -E 's/^([A-Z-]+) ([^:]+):.*$/\1 \2/' ;;
     *)
       grep -E '^[[:space:]]*(FAIL|MISMATCH)[: ]' "$log" ;;
-  esac | awk 'NR <= 10'
+  esac
 }
 
 # --------------------------------------------------------------------------
@@ -1161,12 +1162,13 @@ for i in "${SELECTED[@]}"; do
       echo "First 10 failing test ids, from the saved logs:"
       printed_header=1
     fi
-    echo "  ${JOB_ID[$i]} (${JOB_FAILN[$i]} failing across its rows):"
-    ids="$(fail_ids "${JOB_FAILKEY[$i]}" "$LOGDIR/${JOB_ID[$i]}.log")"
-    if [ -z "$ids" ]; then
-      echo "    (the log lists no failing ids; run the command above with the runner's verbose flag)"
+    ids_all="$(fail_ids_all "${JOB_FAILKEY[$i]}" "$LOGDIR/${JOB_ID[$i]}.log")"
+    n_ids="$(printf '%s\n' "$ids_all" | grep -c .)"
+    if [ "$n_ids" -eq 0 ]; then
+      echo "  ${JOB_ID[$i]}: a row fails, and the log lists no failing id (run the command with the runner's verbose flag)"
     else
-      printf '%s\n' "$ids" | sed 's/^/    /'
+      echo "  ${JOB_ID[$i]}: $n_ids failing ids listed in the log"
+      printf '%s\n' "$ids_all" | awk 'NR <= 10' | sed 's/^/    /'
     fi
   fi
 done
