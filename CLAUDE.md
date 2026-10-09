@@ -38,7 +38,8 @@ Owner, 2026-10-09, verbatim:
 > implementation"
 > "/goal complete performant suite all in lean4"
 
-- **`danbri/factoidal-core`** (this repository, branch `main`): the
+- **`danbri/factoidal-core`** (this repository, branch `main`; until the
+  owner renames it, the branch is `claude/core-split`): the
   source. `formal/fstar` and `formal/lean4` with their git history
   (rewritten from `danbri/factoidal` to `formal/` paths only), plus tests,
   tools, skills, docs sources and npm sources. No compiled artifacts.

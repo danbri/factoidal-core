@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - claude/core-split
   pull_request:
     paths:
       - 'formal/lean4/**'

@@ -63,6 +63,7 @@ jobs:
             BASE_REF="HEAD~1"
           else
             BASE_REF="origin/main"
+            git rev-parse -q --verify "$BASE_REF" >/dev/null || BASE_REF="origin/claude/core-split"
           fi
           echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
           echo "Diff base: $BASE_REF"

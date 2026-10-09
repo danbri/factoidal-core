@@ -17,9 +17,9 @@ name: Check formal/fstar/ocaml-output/ cleanliness (rule #11 D)
 
 on:
   push:
-    branches: [main, master, claude/main]
+    branches: [main, claude/core-split]
   pull_request:
-    branches: [main, master, claude/main]
+    branches: [main, claude/core-split]
   workflow_dispatch:
 
 permissions:

@@ -19,7 +19,7 @@ Owner instructions:
 
 | Repository | Branch | Content |
 |---|---|---|
-| `danbri/factoidal-core` | `main` | `formal/` history (2,331 commits) + one snapshot commit with the rest of the source tree + the rewiring commit |
+| `danbri/factoidal-core` | `claude/core-split` (to become `main`) | `formal/` history (2,331 commits) + one snapshot commit with the rest of the source tree + the rewiring commit |
 | `danbri/factoidal-builds` | `main` | build workflows and scripts, `latest/<set>.json` pointers |
 | `danbri/factoidal-builds` | `toolchain-cache`, `checked-cache` | the F\* toolchain chunks, the Lean wasm work-dir cache, the F\* `.checked` cache (single commits, trees identical to the `danbri/factoidal` branches of the same name at `ec785429ab23` and `5a7d99429b6a`) |
 | `danbri/factoidal` | `claude/main` | unchanged: full history, binaries, issues |
@@ -28,8 +28,12 @@ The older `claude/main` and `claude/autoexec-scratchpad-assess-37oeok`
 branches in `danbri/factoidal-core` were NOT overwritten. `claude/main` there
 holds merge commits that `danbri/factoidal` does not have (`f4a81263cde0`),
 so a force push would have deleted the only copy. The new history is on
-`main`. 🧭 The repository default branch is a GitHub setting; this session
-cannot change it. Set it to `main`.
+`claude/core-split`: the session's push to a branch named `main` was refused
+by its permission policy, and branch renames and default-branch changes are
+GitHub settings it cannot reach. 🧭 Owner action: rename `claude/core-split`
+to `main` and make it the default branch. Until then, CLAUDE.md's "branch
+`main`" means `claude/core-split`; the builds workflows look for `main` first
+and fall back to `claude/core-split`, and the core gates run on both.
 
 ## 2. How the formal/ history was made
 
