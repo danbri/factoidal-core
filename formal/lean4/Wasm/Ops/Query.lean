@@ -360,6 +360,21 @@ private def nowInsert : String :=
 #guard hasText (queryDataset ""
   "ASK { BIND(NOW() AS ?a) BIND(NOW() AS ?b) FILTER(?a = ?b) }" none (some nowFixed))
   "\"boolean\":true"
+-- Positive: the same value inside an EXISTS (decided by the reference evaluator
+-- on the dataset), inside a sub-SELECT, and under NOT EXISTS.
+#guard hasText (queryDataset ""
+  "ASK { BIND(NOW() AS ?n) FILTER EXISTS { BIND(NOW() AS ?m) FILTER(?m = ?n) } }" none (some nowFixed))
+  "\"boolean\":true"
+#guard hasText (queryDataset ""
+  "ASK { { SELECT (NOW() AS ?a) WHERE {} } BIND(NOW() AS ?b) FILTER(?a = ?b) }" none (some nowFixed))
+  "\"boolean\":true"
+#guard hasText (queryDataset ""
+  "ASK { BIND(NOW() AS ?n) FILTER NOT EXISTS { BIND(NOW() AS ?m) FILTER(?m != ?n) } }" none (some nowFixed))
+  "\"boolean\":true"
+-- Negative: with no `now`, ?n is unbound, the comparison is an error, and the EXISTS fails.
+#guard hasText (queryDataset ""
+  "ASK { BIND(NOW() AS ?n) FILTER EXISTS { BIND(NOW() AS ?m) FILTER(?m = ?n) } }")
+  "\"boolean\":false"
 -- Positive: a request that calls NOW() in its WHERE clause inserts that value.
 #guard hasText (updateDataset "" nowInsert none (some nowFixed))
   "\\\"2026-10-10T12:34:56.789Z\\\"^^<http://www.w3.org/2001/XMLSchema#dateTime>"

@@ -342,6 +342,13 @@ Measured cost (full / core module, `-O3` after `wasm-opt`): +82,436 and +88,885
 bytes. The check after a rebuild: `queryDataset` with W3C `functions/now01.rq`
 answers `true` through `l4factoidal.js` and through `npm/factoidal`.
 
+Which C entries have the clock: `l4_call_c` (the shim routes it through
+`l4_call_io`) and `l4_call_blob_io_c`. The pure `l4_call` and `l4_call_blob_c`
+have none, by design, so `NOW()` is an error there; `l4_call_blob_c` stays pure
+because routing it through the IO entry would also run the ops that build an
+out region (`packNext`, `blobEcho`) and drop that region. The npm package calls
+`queryHdt` through `callBlobIO` for this reason.
+
 ## The C ABI and its memory rules
 
 Lean side (`Wasm/Exports.lean`):

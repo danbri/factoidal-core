@@ -425,7 +425,11 @@ def call (op : String) (argsJson : String) : String :=
 
 /-- The dispatch entry the `l4_call_blob` C export serves: the string
 arguments of `call`, plus one byte region. Every other op delegates to `call`,
-envelope for envelope, so a host may route everything through this entry. -/
+envelope for envelope, so a host may route everything through this entry.
+This entry is pure and has no clock: a `NOW()` in a `storeQuery` or `queryHdt`
+query is an error here (SPARQL 1.1 §17.4.5.1). The IO entry `callBlobIO` reads
+the clock once per query and serves both ops with it
+(https://github.com/danbri/factoidal/issues/743). -/
 def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
   match op with
   | "storeQuery" =>
