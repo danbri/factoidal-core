@@ -1706,6 +1706,148 @@ check "hpkeSeal refuses a 1-byte ephemeral key" \
   hpkeSeal "$TMP/hpke-shortkey.json" \
   'r["ok"] is False and "32 bytes" in r["error"]'
 
+# --- Envelope parity, https://github.com/danbri/factoidal/issues/685 ----
+# Positioned parse errors, prefixes, per-document blank-node scope,
+# serializeTurtleWith / datasetSerializeWith and bare literals.
+args "$TMP/pe-ttl.json" 'this is not turtle' turtle ""
+check "parse error carries offset, line, column and format (Turtle)" parseToDatasetJson "$TMP/pe-ttl.json" \
+  'r["ok"] is False and r["line"] == 1 and r["column"] == 5 and r["offset"] == 4
+   and r["format"] == "turtle" and r["error"].endswith("at line 1, column 5")'
+python3 - "$TMP/pe-dot.json" <<'EOF'
+import json, sys
+text = "@prefix ex: <http://example.org/> .\nex:a ex:p ex:o\nex:b ex:p ex:o2 .\n"
+json.dump([text, "turtle", ""], open(sys.argv[1], "w"))
+EOF
+check "a Turtle statement missing its dot is reported on the FOLLOWING line (line 3)" \
+  parseToDatasetJson "$TMP/pe-dot.json" \
+  'r["ok"] is False and r["line"] == 3 and r["column"] == 1 and "line 3, column 1" in r["error"]'
+python3 - "$TMP/pe-utf8.json" <<'EOF'
+import json, sys
+# The failure is on line 2; the column counts scalar values, not bytes.
+json.dump(["# ééé\n<http://x/s> <http://x/p> .", "ttl", ""], open(sys.argv[1], "w"))
+EOF
+check "the column of a parse error counts Unicode scalar values" parseToDatasetJson "$TMP/pe-utf8.json" \
+  'r["ok"] is False and r["line"] == 2 and r["column"] == 27'
+args "$TMP/pe-nt.json" '<http://x/s> <http://x/p> .' ntriples ""
+check "parse error carries a position (N-Triples)" parseToDatasetJson "$TMP/pe-nt.json" \
+  'r["ok"] is False and r["line"] == 1 and r["offset"] == r["column"] - 1 and r["format"] == "ntriples"'
+args "$TMP/pe-nq.json" '<http://x/s> <http://x/p> .' nquads ""
+check "parse error carries a position (N-Quads)" parseToDatasetJson "$TMP/pe-nq.json" \
+  'r["ok"] is False and r["line"] == 1 and "offset" in r and r["format"] == "nquads"'
+args "$TMP/pe-trig.json" '@prefix ex: <http://x/> . GRAPH ex:g { ex:s ex:p' trig ""
+check "parse error carries a position (TriG)" parseToDatasetJson "$TMP/pe-trig.json" \
+  'r["ok"] is False and r["line"] == 1 and "column" in r and r["format"] == "trig"'
+args "$TMP/pe-xml.json" '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:nodeID="333-555-666" /></rdf:RDF>' rdfxml ""
+check "an RDF/XML failure carries a message and a format, no position" parseToDatasetJson "$TMP/pe-xml.json" \
+  'r["ok"] is False and "line" not in r and "offset" not in r and r["format"] == "rdfxml"'
+args "$TMP/pe-rel.json" '<a> <b> <c> .' turtle ""
+check "a relative IRI with no base is a positioned error naming the IRI" parseToDatasetJson "$TMP/pe-rel.json" \
+  'r["ok"] is False and "IRI" in r["error"] and r["line"] == 1'
+args "$TMP/pe-tag.json" 'x' "Bogus" ""
+check "an unknown format tag answers the message and the tag, lower-cased" parseToDatasetJson "$TMP/pe-tag.json" \
+  'r["ok"] is False and "line" not in r and r["format"] == "bogus"'
+
+python3 - "$TMP/pfx.json" <<'EOF'
+import json, sys
+text = ("@prefix ex: <http://example.org/> .\n@prefix a: <http://a.org/> .\n"
+        "@prefix ex: <http://other.org/> .\nex:s a:p 1 .\n")
+json.dump([text, "turtle", ""], open(sys.argv[1], "w"))
+EOF
+check "prefixes: each label once, its latest binding, in declaration order" parseToDatasetJson "$TMP/pfx.json" \
+  'r["ok"] is True and list(r["prefixes"].items()) == [("a", "http://a.org/"), ("ex", "http://other.org/")]'
+args "$TMP/pfx-trig2.json" '@prefix ex: <http://x/> . <http://x/g> { ex:s ex:p ex:o }' trig ""
+check "prefixes are recorded for TriG" parseToDatasetJson "$TMP/pfx-trig2.json" \
+  'r["ok"] is True and r["prefixes"] == {"ex": "http://x/"}'
+args "$TMP/pfx-nq.json" '<http://x/s> <http://x/p> <http://x/o> .' nquads ""
+check "N-Quads has no prefixes: an empty object" parseToDatasetJson "$TMP/pfx-nq.json" \
+  'r["ok"] is True and r["prefixes"] == {}'
+
+# Blank-node scope: two documents that both write _:b0 stay two nodes. This
+# needs one process (a counter), so it is a callseq.
+python3 - "$TMP/scope-seq.json" <<'EOF'
+import json, sys
+json.dump([["parseToDatasetJson", ['_:b0 <http://x/p> "one" .', "nquads", ""]],
+           ["parseToDatasetJson", ['_:b0 <http://x/p> "two" .', "nquads", ""]],
+           ["parseToDatasetJson", ['@prefix x: <http://x/> . [] x:p "three" .', "turtle", ""]],
+           ["parseToDatasetJson", ['_:b0 <http://x/p> "one" .', "nquads", ""]]],
+          open(sys.argv[1], "w"))
+EOF
+checkseq "each parse gets its own blank-node scope (d0_, d1_, d2_, d3_)" "$TMP/scope-seq.json" \
+  'len(rs) == 4 and all(r["ok"] is True for r in rs)
+   and rs[0]["nquads"].startswith("_:d0_b0 ") and rs[1]["nquads"].startswith("_:d1_b0 ")
+   and rs[2]["nquads"].startswith("_:d2_") and rs[3]["nquads"].startswith("_:d3_b0 ")
+   and len({line.split(" ")[0] for r in rs for line in r["nquads"].splitlines()}) == 4'
+
+# Dataset handle: prefixes recorded at open, positioned error, serialization.
+python3 - "$TMP/h685-seq.json" <<'EOF'
+import json, sys
+ttl = "@prefix ex: <http://example.org/> .\nex:s ex:p 1, true, 1.5, \"x\", 5. .\n".replace("5. .", "\"5.\"^^<http://www.w3.org/2001/XMLSchema#decimal> .")
+seq = [["datasetOpen", [ttl, "turtle", ""]],
+       ["datasetSerialize", ["h1", "turtle"]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"literalShorthand": False})]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"prefixes": {"e": "http://example.org/"}})]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"prefixes": {}})]],
+       ["datasetSerializeWith", ["h1", "turtle", "{"]],
+       ["datasetSerializeWith", ["h1", "nquads", ""]],
+       ["datasetSerializeWith", ["h1", "n3", ""]],
+       ["datasetSerializeWith", ["h9", "turtle", ""]],
+       ["datasetOpen", ["this is not turtle", "turtle", ""]],
+       ["datasetClose", ["h1"]]]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "dataset handle: prefixes at open, handle prefixes in output, serializeWith options, bare literals" \
+  "$TMP/h685-seq.json" \
+  'len(rs) == 11
+   and rs[0]["ok"] is True and rs[0]["handle"] == "h1" and rs[0]["count"] == 5
+   and rs[0]["prefixes"] == {"ex": "http://example.org/"}
+   and "@prefix ex: <http://example.org/> ." in rs[1]["turtle"]
+   and "ex:s ex:p 1 , 1.5 , " in rs[1]["turtle"] and ", true , " in rs[1]["turtle"]
+   and rs[1]["turtle"].count("^^") == 1
+   and rs[2]["turtle"].count("^^") == 4 and "ex:s ex:p" in rs[2]["turtle"]
+   and "@prefix e: <http://example.org/> ." in rs[3]["turtle"] and "e:s e:p" in rs[3]["turtle"]
+   and "ex:" not in rs[3]["turtle"]
+   and "@prefix ex:" not in rs[4]["turtle"] and "@prefix ns1: <http://example.org/> ." in rs[4]["turtle"]
+   and rs[5]["ok"] is False and "optionsJson" in rs[5]["error"]
+   and rs[6]["ok"] is True and "nquads" in rs[6]
+   and rs[7]["ok"] is False and "unknown format tag" in rs[7]["error"]
+   and rs[8]["ok"] is False and "unknown dataset handle" in rs[8]["error"]
+   and rs[9]["ok"] is False and rs[9]["line"] == 1 and rs[9]["format"] == "turtle"
+   and rs[10]["ok"] is True'
+
+# serializeTurtleWith (stateless): the options, the default, and a bad optionsJson.
+python3 - "$TMP/stw.json" <<'EOF'
+import json, sys
+nq = '<http://x/s> <http://x/p> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .\n'
+json.dump([nq, json.dumps({"prefixes": {"ex": "http://x/"}, "literalShorthand": False})], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith: caller prefix wins, shorthand off keeps the quoted form" serializeTurtleWith "$TMP/stw.json" \
+  'r["ok"] is True and "@prefix ex: <http://x/> ." in r["turtle"] and "ex:s ex:p \"1\"^^xsd:integer ." in r["turtle"]'
+python3 - "$TMP/stw2.json" <<'EOF'
+import json, sys
+nq = '<http://x/s> <http://x/p> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .\n'
+json.dump([nq, ""], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith with no options prints the integer bare" serializeTurtleWith "$TMP/stw2.json" \
+  'r["ok"] is True and "^^" not in r["turtle"] and " 1 ." in r["turtle"]'
+python3 - "$TMP/stw3.json" <<'EOF'
+import json, sys
+json.dump(['<http://x/s> <http://x/p> <http://x/o> .\n', "not json"], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith refuses an optionsJson that is not JSON" serializeTurtleWith "$TMP/stw3.json" \
+  'r["ok"] is False and "optionsJson" in r["error"]'
+python3 - "$TMP/stw4.json" <<'EOF'
+import json, sys
+nq = ('<http://x/s> <http://x/p> "5."^^<http://www.w3.org/2001/XMLSchema#decimal> .\n'
+      '<http://x/s> <http://x/p> "1e3"^^<http://www.w3.org/2001/XMLSchema#double> .\n'
+      '<http://x/s> <http://x/p> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n'
+      '<http://x/s> <http://x/p> " 7"^^<http://www.w3.org/2001/XMLSchema#integer> .\n')
+json.dump([nq, ""], open(sys.argv[1], "w"))
+EOF
+check "bare literals only when the lexical form is the terminal: 1e3 and false bare, 5. and ' 7' quoted" \
+  serializeTurtleWith "$TMP/stw4.json" \
+  'r["ok"] is True and " 1e3" in r["turtle"] and " false" in r["turtle"]
+   and "\"5.\"^^xsd:decimal" in r["turtle"] and "\" 7\"^^xsd:integer" in r["turtle"]'
+
 # --- Stage 2 of https://github.com/danbri/factoidal/issues/713 ---------
 # Matrix and sigmoid (Wasm/Ops/Maths.lean). Envelope shapes follow
 # bin/npm-entry/entry_extras.ml.

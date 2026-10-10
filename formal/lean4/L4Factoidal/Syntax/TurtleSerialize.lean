@@ -21,9 +21,30 @@ Two abbreviations are used, both round-trip safe: a prefixed name when
 the local part validates, and the `a` keyword for `rdf:type`, which
 Turtle defines as its shorthand and the parser accepts unconditionally.
 
-Numeric and boolean literals are NOT sugared to bare `42` / `true` —
-correctness over sugar, as in F\*. The datatype IRI itself is
-abbreviated, since that is pure compaction with no ambiguity.
+Numeric and boolean literals are printed in their bare Turtle form (`42`,
+`1.5`, `1e3`, `true`) when the option `literalShorthand` is on, which is the
+default, AND the lexical form matches the grammar terminal of the literal's
+datatype (`literalShorthand` below: INTEGER, DECIMAL, DOUBLE and
+BooleanLiteral of Turtle §6.5). A lexical form that does not match, such as
+`"5."^^xsd:decimal` or one with a leading space, keeps the quoted form, so the
+printed text always reads back to the same (lexical form, datatype) pair. The
+datatype IRI in the quoted form is abbreviated, since that is pure compaction
+with no ambiguity.
+
+This follows `RDF.Turtle.Serialize.fst` as changed by
+https://github.com/danbri/factoidal/issues/681, which superseded the earlier
+quoted-only decision ("correctness over sugar") both trees carried. The Lean
+tree changed with it so that the two engines print the same text
+(https://github.com/danbri/factoidal/issues/685).
+
+## Options
+
+`TurtleRenderOptions.prefixes` is a caller-supplied table of (namespace IRI,
+`label:`) pairs that WINS over the derived one: a pair is emitted only when some
+IRI of the graph lies under its namespace, in the caller's order, the first
+occurrence of a namespace winning, and a derived label is never one a caller
+pair already took. `turtleOfGraphOpts` is the entry point; `turtleOfGraphAuto`
+is `turtleOfGraphOpts` with the defaults.
 
 ## Auto prefix derivation
 
@@ -96,9 +117,77 @@ def tsAbbreviateIri (table : PrefixTable) (iri : String) : String :=
       if tsLocalOk loc then abbr ++ loc else "<" ++ iri ++ ">"
   | none => "<" ++ iri ++ ">"
 
+/-! ## Bare literals — Turtle §6.5 terminals
+
+```
+INTEGER        ::= [+-]? [0-9]+
+DECIMAL        ::= [+-]? [0-9]* '.' [0-9]+
+DOUBLE         ::= [+-]? ( [0-9]+ '.' [0-9]* EXPONENT | '.' [0-9]+ EXPONENT | [0-9]+ EXPONENT )
+EXPONENT       ::= [eE] [+-]? [0-9]+
+BooleanLiteral ::= 'true' | 'false'
+```
+
+Each checker accepts a lexical form only when the terminal consumes the WHOLE
+string. Port of `is_turtle_integer_lexical` and its siblings. -/
+
+def isAsciiDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
+
+/-- `[+-]?` at the front. -/
+def dropSign : List Char → List Char
+  | '+' :: r => r
+  | '-' :: r => r
+  | cs => cs
+
+/-- `[0-9]*`: how many digits there are at the front, and what follows them. -/
+def scanDigits (cs : List Char) : Nat × List Char :=
+  ((cs.takeWhile isAsciiDigit).length, cs.dropWhile isAsciiDigit)
+
+/-- `[0-9]+` and nothing else. -/
+def allDigitsNonEmpty (cs : List Char) : Bool := !cs.isEmpty && cs.all isAsciiDigit
+
+/-- `EXPONENT`, consuming the whole remainder. -/
+def isExponentSuffix : List Char → Bool
+  | e :: r => (e == 'e' || e == 'E') && allDigitsNonEmpty (dropSign r)
+  | [] => false
+
+def isTurtleIntegerLexical (s : String) : Bool := allDigitsNonEmpty (dropSign s.toList)
+
+def isTurtleDecimalLexical (s : String) : Bool :=
+  match (scanDigits (dropSign s.toList)).2 with
+  | '.' :: frac => allDigitsNonEmpty frac
+  | _ => false
+
+def isTurtleDoubleLexical (s : String) : Bool :=
+  let r := dropSign s.toList
+  match r with
+  | '.' :: rest =>
+      let (n, after) := scanDigits rest
+      n > 0 && isExponentSuffix after
+  | c :: _ =>
+      if isAsciiDigit c then
+        let (_, afterInt) := scanDigits r
+        match afterInt with
+        | '.' :: rest => isExponentSuffix (scanDigits rest).2
+        | _ => isExponentSuffix afterInt
+      else false
+  | [] => false
+
+def isTurtleBooleanLexical (s : String) : Bool := s == "true" || s == "false"
+
+/-- The bare text of a literal whose datatype is `xsd:integer`, `xsd:decimal`,
+`xsd:double` or `xsd:boolean` AND whose lexical form matches that datatype's
+terminal; `none` otherwise, and the caller prints the quoted form. Port of
+`literal_shorthand`. -/
+def literalShorthand (l : Literal) : Option String :=
+  if l.datatype == xsdInteger && isTurtleIntegerLexical l.lexicalForm then some l.lexicalForm
+  else if l.datatype == xsdDecimal && isTurtleDecimalLexical l.lexicalForm then some l.lexicalForm
+  else if l.datatype == xsdDouble && isTurtleDoubleLexical l.lexicalForm then some l.lexicalForm
+  else if l.datatype == xsdBoolean && isTurtleBooleanLexical l.lexicalForm then some l.lexicalForm
+  else none
+
 /-! ## Terms -/
 
-def tsTermToTurtle (table : PrefixTable) : Term → String
+def tsTermToTurtle (table : PrefixTable) (shorthand : Bool) : Term → String
   | .iri i => tsAbbreviateIri table i.val
   | .bnode b => "_:" ++ b
   | .literal l =>
@@ -112,13 +201,16 @@ def tsTermToTurtle (table : PrefixTable) : Term → String
           "\"" ++ esc ++ "\"@" ++ tag ++ ds
       | none =>
           if l.val.datatype == xsdString then "\"" ++ esc ++ "\""
-          else "\"" ++ esc ++ "\"^^" ++ tsAbbreviateIri table l.val.datatype.val
+          else
+            match (if shorthand then literalShorthand l.val else none) with
+            | some bare => bare
+            | none => "\"" ++ esc ++ "\"^^" ++ tsAbbreviateIri table l.val.datatype.val
   | .tripleTerm s p o =>
       let subjStr := match s with
                      | .iri i => tsAbbreviateIri table i.val
                      | .bnode b => "_:" ++ b
       let predStr := if p == rdfType then "a" else tsAbbreviateIri table p.val
-      "<<( " ++ subjStr ++ " " ++ predStr ++ " " ++ tsTermToTurtle table o ++ " )>>"
+      "<<( " ++ subjStr ++ " " ++ predStr ++ " " ++ tsTermToTurtle table shorthand o ++ " )>>"
 
 def tsSubjectToTurtle (table : PrefixTable) : Subject → String
   | .iri i => tsAbbreviateIri table i.val
@@ -172,42 +264,42 @@ def finishPred (st : SubjState) : List String :=
 def finishSubj (st : SubjState) : String :=
   st.subjText ++ " " ++ joinWith " ;\n    " (finishPred st).reverse ++ " .\n\n"
 
-def walkTriples (table : PrefixTable) : List Triple → Option SubjState →
+def walkTriples (table : PrefixTable) (shorthand : Bool) : List Triple → Option SubjState →
     List String → List String
   | [], none, acc => acc
   | [], some s, acc => finishSubj s :: acc
   | t :: rest, none, acc =>
-      walkTriples table rest (some
+      walkTriples table shorthand rest (some
         { subj := t.s, subjText := tsSubjectToTurtle table t.s,
           curPred := t.p, curPredText := tsPredicateToTurtle table t.p,
-          curObjs := [tsTermToTurtle table t.o], predChunks := [] }) acc
+          curObjs := [tsTermToTurtle table shorthand t.o], predChunks := [] }) acc
   | t :: rest, some s, acc =>
-      let objText := tsTermToTurtle table t.o
+      let objText := tsTermToTurtle table shorthand t.o
       if s.subj == t.s then
         if s.curPred == t.p then
-          walkTriples table rest (some { s with curObjs := objText :: s.curObjs }) acc
+          walkTriples table shorthand rest (some { s with curObjs := objText :: s.curObjs }) acc
         else
-          walkTriples table rest (some
+          walkTriples table shorthand rest (some
             { s with curPred := t.p, curPredText := tsPredicateToTurtle table t.p,
                      curObjs := [objText], predChunks := finishPred s }) acc
       else
-        walkTriples table rest (some
+        walkTriples table shorthand rest (some
           { subj := t.s, subjText := tsSubjectToTurtle table t.s,
             curPred := t.p, curPredText := tsPredicateToTurtle table t.p,
             curObjs := [objText], predChunks := [] }) (finishSubj s :: acc)
 
-def renderTriples (table : PrefixTable) (g : Graph) : String :=
-  String.join (walkTriples table (sortTriples g) none []).reverse
+def renderTriples (table : PrefixTable) (shorthand : Bool) (g : Graph) : String :=
+  String.join (walkTriples table shorthand (sortTriples g) none []).reverse
 
 /-! ## The header and the entry point -/
 
 def renderPrefixHeader (table : PrefixTable) : List String :=
   table.map (fun (ns, abbr) => "@prefix " ++ abbr ++ " <" ++ ns ++ "> .\n")
 
-def turtleOfGraph (table : PrefixTable) (g : Graph) : String :=
+def turtleOfGraph (table : PrefixTable) (shorthand : Bool) (g : Graph) : String :=
   let headerLines := renderPrefixHeader table
   String.join headerLines ++ (if headerLines.isEmpty then "" else "\n") ++
-    renderTriples table g
+    renderTriples table shorthand g
 
 /-! ## Auto prefix derivation -/
 
@@ -256,21 +348,16 @@ def countRuns : List String → List (String × Nat)
         | [] => [(x, 1)]
       else (x, 1) :: countRuns (y :: rest)
 
-def insertByCountDesc (x : String × Nat) : List (String × Nat) → List (String × Nat)
-  | [] => [x]
-  | y :: ys => if x.2 > y.2 then x :: y :: ys else y :: insertByCountDesc x ys
+/-- Descending by count, STABLE: namespaces of equal count keep the order they
+had, which is what F\*'s `List.Tot.sortWith count_desc_compare` gives. (An
+insertion sort that places each element after its equals reverses the ties, and
+with them the order in which `ns1:`, `ns2:` … are handed out.) -/
+def sortByCountDesc (xs : List (String × Nat)) : List (String × Nat) :=
+  xs.mergeSort (fun a b => decide (b.2 ≤ a.2))
 
-def sortByCountDesc : List (String × Nat) → List (String × Nat)
-  | [] => []
-  | x :: xs => insertByCountDesc x (sortByCountDesc xs)
-
-def insertStr (x : String) : List String → List String
-  | [] => [x]
-  | y :: ys => if x ≤ y then x :: y :: ys else y :: insertStr x ys
-
-def sortStrs : List String → List String
-  | [] => []
-  | x :: xs => insertStr x (sortStrs xs)
+/-- Ascending, as F\*'s `List.Tot.sortWith String.compare`. -/
+def sortStrs (xs : List String) : List String :=
+  xs.mergeSort (fun a b => decide (a ≤ b))
 
 def assignLabels : Nat → List (String × Nat) → List (String × String)
   | _, [] => []
@@ -291,14 +378,70 @@ def wellKnownPrefixes : PrefixTable :=
   , ("http://purl.org/dc/elements/1.1/",            "dc:")
   , ("http://schema.org/",                          "schema:") ]
 
-def turtleOfGraphAuto (g : Graph) : String :=
-  let counted := countRuns (sortStrs (candidateNamespaces (collectIris g)))
+/-- Render options. -/
+structure TurtleRenderOptions where
+  /-- Caller-supplied (namespace IRI, `label:`) pairs; they win over the derived
+  table. -/
+  prefixes : PrefixTable := []
+  /-- Bare INTEGER, DECIMAL, DOUBLE and BooleanLiteral when the lexical form
+  qualifies. -/
+  literalShorthand : Bool := true
+
+/-- Does some IRI of the graph lie strictly under namespace `ns`? -/
+def tsAnyIriUsesNs (iris : List String) (ns : String) : Bool :=
+  iris.any (fun i => tsStartsWithStrict i ns)
+
+/-- The caller's pairs whose namespace some IRI of the graph uses, in the
+caller's order. The first occurrence of a namespace wins: a repeat is dropped
+even when the first occurrence went unused, and a namespace no IRI uses is not
+emitted. Port of `ts_user_used`. -/
+def tsUserUsed (iris : List String) : PrefixTable → List String → PrefixTable
+  | [], _ => []
+  | (ns, label) :: rest, seenNs =>
+      if seenNs.contains ns then tsUserUsed iris rest seenNs
+      else if tsAnyIriUsesNs iris ns then (ns, label) :: tsUserUsed iris rest (ns :: seenNs)
+      else tsUserUsed iris rest (ns :: seenNs)
+
+/-- `ns1:` … `ns8:`, skipping any label already taken by the caller's table or
+the well-known table, so a caller label `ns1:` is never given to another
+namespace. `idx` only grows, which is the termination measure. Port of
+`assign_labels_avoiding`. -/
+def assignLabelsAvoiding (reserved : List String) :
+    (fuel : Nat) → (idx : Nat) → List (String × Nat) → List (String × String)
+  | 0, _, _ => []
+  | _, _, [] => []
+  | fuel + 1, idx, (ns, n) :: rest =>
+      if idx ≥ 9 then []
+      else
+        let label := "ns" ++ toString idx ++ ":"
+        if reserved.contains label then assignLabelsAvoiding reserved fuel (idx + 1) ((ns, n) :: rest)
+        else (ns, label) :: assignLabelsAvoiding reserved fuel (idx + 1) rest
+
+/-- The prefix table for a graph and its options, then the document. Caller
+pairs first, then the well-known labels the graph uses, then at most
+`8 - (those)` numbered ones for the most frequent remaining namespaces. Port of
+`turtle_of_graph_opts`. -/
+def turtleOfGraphOpts (opts : TurtleRenderOptions) (g : Graph) : String :=
+  let iris := collectIris g
+  let counted := countRuns (sortStrs (candidateNamespaces iris))
   let presentNs := counted.map (·.1)
-  let known := wellKnownPrefixes.filter (fun p => presentNs.contains p.1)
+  let userUsed := tsUserUsed iris opts.prefixes []
+  let userNs := userUsed.map (·.1)
+  let userLabels := userUsed.map (·.2)
+  let known := (wellKnownPrefixes.filter (fun p => presentNs.contains p.1)).filter
+    (fun p => !userNs.contains p.1 && !userLabels.contains p.2)
   let knownNs := known.map (·.1)
-  let fresh := (sortByCountDesc counted).filter (fun p => !knownNs.contains p.1)
-  let budget := if known.length ≥ 8 then 0 else 8 - known.length
-  turtleOfGraph (known ++ assignLabels 1 (fresh.take budget)) g
+  let knownLabels := known.map (·.2)
+  let coveredNs := userNs ++ knownNs
+  let fresh := (sortByCountDesc counted).filter (fun p => !coveredNs.contains p.1)
+  let coveredLen := userUsed.length + known.length
+  let budget := if coveredLen ≥ 8 then 0 else 8 - coveredLen
+  let freshTop := fresh.take budget
+  let auto := assignLabelsAvoiding (userLabels ++ knownLabels) 10 1 freshTop
+  turtleOfGraph (userUsed ++ known ++ auto) opts.literalShorthand g
+
+/-- The default rendering: no caller prefixes, bare literals on. -/
+def turtleOfGraphAuto (g : Graph) : String := turtleOfGraphOpts {} g
 
 /-! ## Build-time checks
 
@@ -328,7 +471,7 @@ private def exTable : PrefixTable := [("http://example.org/", "ex:")]
 
 #guard tsPredicateToTurtle [] rdfType == "a"
 #guard tsPredicateToTurtle exTable (wi "http://example.org/p") == "ex:p"
-#guard tsTermToTurtle [] (.iri rdfType) ==
+#guard tsTermToTurtle [] true (.iri rdfType) ==
        "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
 
 /-! ### Literals -/
@@ -338,12 +481,101 @@ private def litT (lex : String) (dt : String) : Term :=
                        langTag := none, direction := none }
   if h : literalWf l then .literal ⟨l, h⟩ else .bnode "bad"
 
-#guard tsTermToTurtle [] (litT "x" "http://www.w3.org/2001/XMLSchema#string")
+#guard tsTermToTurtle [] true (litT "x" "http://www.w3.org/2001/XMLSchema#string")
        == "\"x\""
-#guard tsTermToTurtle [("http://www.w3.org/2001/XMLSchema#", "xsd:")]
+-- With shorthand OFF the quoted form is the only one (the pre-681 behaviour).
+#guard tsTermToTurtle [("http://www.w3.org/2001/XMLSchema#", "xsd:")] false
          (litT "1" "http://www.w3.org/2001/XMLSchema#integer") == "\"1\"^^xsd:integer"
-#guard tsTermToTurtle [] (litT "a\"b" "http://www.w3.org/2001/XMLSchema#string")
+#guard tsTermToTurtle [] true (litT "a\"b" "http://www.w3.org/2001/XMLSchema#string")
        == "\"a\\\"b\""
+
+/-! ### Bare literals: the grammar terminals, in both directions
+
+A bare form is printed only when the lexical form is exactly an INTEGER,
+DECIMAL, DOUBLE or BooleanLiteral of the literal's own datatype. -/
+
+private def xsd (n : String) : String := "http://www.w3.org/2001/XMLSchema#" ++ n
+private def bare (lex dt : String) : String := tsTermToTurtle [] true (litT lex (xsd dt))
+private def quoted (lex dt : String) : String := tsTermToTurtle [] false (litT lex (xsd dt))
+
+#guard bare "42" "integer" == "42"
+#guard bare "-7" "integer" == "-7"
+#guard bare "+7" "integer" == "+7"
+#guard bare "0" "integer" == "0"
+#guard bare "1.5" "decimal" == "1.5"
+#guard bare ".5" "decimal" == ".5"
+#guard bare "-0.50" "decimal" == "-0.50"
+#guard bare "1e3" "double" == "1e3"
+#guard bare "1.5E-3" "double" == "1.5E-3"
+#guard bare "1.e3" "double" == "1.e3"
+#guard bare ".5e+2" "double" == ".5e+2"
+#guard bare "true" "boolean" == "true"
+#guard bare "false" "boolean" == "false"
+-- Not a terminal of the datatype's own production: stays quoted.
+#guard bare "" "integer" == "\"\"^^<" ++ xsd "integer" ++ ">"
+#guard bare "+" "integer" == "\"+\"^^<" ++ xsd "integer" ++ ">"
+#guard bare "1.0" "integer" == "\"1.0\"^^<" ++ xsd "integer" ++ ">"
+#guard bare " 1" "integer" == "\" 1\"^^<" ++ xsd "integer" ++ ">"
+#guard bare "5." "decimal" == "\"5.\"^^<" ++ xsd "decimal" ++ ">"
+#guard bare "5" "decimal" == "\"5\"^^<" ++ xsd "decimal" ++ ">"
+#guard bare "." "decimal" == "\".\"^^<" ++ xsd "decimal" ++ ">"
+#guard bare "1.5" "double" == "\"1.5\"^^<" ++ xsd "double" ++ ">"
+#guard bare "1e" "double" == "\"1e\"^^<" ++ xsd "double" ++ ">"
+#guard bare "e5" "double" == "\"e5\"^^<" ++ xsd "double" ++ ">"
+#guard bare "INF" "double" == "\"INF\"^^<" ++ xsd "double" ++ ">"
+#guard bare "1" "boolean" == "\"1\"^^<" ++ xsd "boolean" ++ ">"
+#guard bare "True" "boolean" == "\"True\"^^<" ++ xsd "boolean" ++ ">"
+-- The datatype decides: a digit string typed as a string or a date is quoted.
+#guard bare "42" "string" == "\"42\""
+#guard bare "42" "long" == "\"42\"^^<" ++ xsd "long" ++ ">"
+-- Turned off, every one of them is quoted.
+#guard quoted "42" "integer" == "\"42\"^^<" ++ xsd "integer" ++ ">"
+#guard quoted "true" "boolean" == "\"true\"^^<" ++ xsd "boolean" ++ ">"
+
+-- Whole-graph output: the bare form reads back to the same graph, the quoted
+-- form too, and the two differ.
+private def numGraph : Graph :=
+  [ ⟨.iri (wi "http://x/a"), wi "http://x/n", litT "42" (xsd "integer")⟩
+  , ⟨.iri (wi "http://x/a"), wi "http://x/d", litT "1.5" (xsd "decimal")⟩
+  , ⟨.iri (wi "http://x/a"), wi "http://x/e", litT "1e3" (xsd "double")⟩
+  , ⟨.iri (wi "http://x/a"), wi "http://x/b", litT "true" (xsd "boolean")⟩
+  , ⟨.iri (wi "http://x/a"), wi "http://x/q", litT "5." (xsd "decimal")⟩ ]
+
+#guard ((turtleOfGraphOpts {} numGraph).splitOn "^^").length == 2
+#guard ((turtleOfGraphOpts { literalShorthand := false } numGraph).splitOn "^^").length == 6
+#guard (match parseTurtle (turtleOfGraphOpts {} numGraph) none .rdf12 with
+        | .ok g2 => sortTriples g2 == sortTriples numGraph
+        | .error _ => false)
+#guard (match parseTurtle (turtleOfGraphOpts { literalShorthand := false } numGraph) none .rdf12 with
+        | .ok g2 => sortTriples g2 == sortTriples numGraph
+        | .error _ => false)
+
+/-! ### Caller prefixes win, and are emitted only when used -/
+
+private def exOpts : TurtleRenderOptions :=
+  { prefixes := [("http://x/", "ex:"), ("http://unused.example/", "un:")] }
+
+#guard ((turtleOfGraphOpts exOpts numGraph).splitOn "@prefix ex: <http://x/> .").length == 2
+-- A namespace no IRI uses gets no header line.
+#guard ((turtleOfGraphOpts exOpts numGraph).splitOn "un:").length == 1
+-- The caller's label is the one used in the body.
+#guard ((turtleOfGraphOpts exOpts numGraph).splitOn "ex:a ex:").length == 2
+-- Without a caller table the derived one names the same namespace `ns1:`.
+#guard ((turtleOfGraphOpts {} numGraph).splitOn "@prefix ns1: <http://x/> .").length == 2
+-- A derived label never takes one the caller used: `ns1:` is reserved here.
+private def ns1Taken : TurtleRenderOptions := { prefixes := [("http://y/", "ns1:")] }
+private def twoNs : Graph :=
+  [ ⟨.iri (wi "http://y/a"), wi "http://x/p", .iri (wi "http://x/b")⟩ ]
+#guard ((turtleOfGraphOpts ns1Taken twoNs).splitOn "@prefix ns1: <http://y/> .").length == 2
+#guard ((turtleOfGraphOpts ns1Taken twoNs).splitOn "@prefix ns2: <http://x/> .").length == 2
+-- The first occurrence of a namespace wins over a later repeat.
+private def dup : TurtleRenderOptions :=
+  { prefixes := [("http://x/", "ex:"), ("http://x/", "other:")] }
+#guard ((turtleOfGraphOpts dup numGraph).splitOn "other:").length == 1
+-- Ties in count keep their order: `ns1:` goes to the namespace that sorts first.
+private def tie : Graph :=
+  [ ⟨.iri (wi "http://b.example/a"), wi "http://a.example/p", .iri (wi "http://c.example/c")⟩ ]
+#guard ((turtleOfGraphOpts {} tie).splitOn "@prefix ns1: <http://a.example/> .").length == 2
 
 /-! ### The round trip, through the real parser
 

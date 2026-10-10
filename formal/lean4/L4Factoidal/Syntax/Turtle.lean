@@ -1765,6 +1765,18 @@ def parseTurtle (text : String) (base : Option String := none) (mode : Mode := .
   | .error e     => .error e
   | .ok (ts, _) => .ok ts
 
+/-- `parseTurtle`, also returning the prefix map in force at the end of the
+document: every `@prefix` and `PREFIX` binding, MOST RECENT FIRST, a re-binding
+of a label shadowing the older one in front of it. A caller that wants each
+label once, in declaration order, filters and reverses (`Wasm/Ops/Parse.lean`'s
+`declarationOrderPrefixes`). The graph is exactly `parseTurtle`'s. -/
+def parseTurtleWithPrefixes (text : String) (base : Option String := none)
+    (mode : Mode := .rdf11) : Except ParseError (Graph × List (String × String)) :=
+  let cs := text.toList
+  match parseStatements (cs.length + 2) (TurtleState.initChars cs base mode) 0 cs [] with
+  | .error e     => .error e
+  | .ok (ts, st) => .ok (ts, st.prefixes)
+
 /-- Fold complete Turtle statements without first materialising a `Graph`.
     The document is still represented as characters in this first step; a
     byte-streaming host can later drive the same statement/state boundary. -/
