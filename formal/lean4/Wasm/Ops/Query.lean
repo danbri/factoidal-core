@@ -453,5 +453,84 @@ private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
   "ASK { ?a ?b ?c SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
   "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"
 
+/-! ### `text:query` and the GeoSPARQL non-topological functions through this op
+
+https://github.com/danbri/factoidal/issues/727. This op tries the backend
+runners first (`runSelectQueryBackendDataset`); a query that holds a
+`text:query` pattern makes them answer `none`, and the reference evaluator
+answers. These guards run the shapes whose backend fast path would read the
+`text:query` pattern as an ordinary triple and answer nothing: a plain SELECT,
+ASK, `COUNT(*)` and a LIMIT (the F* engine's defect on the last three is
+https://github.com/danbri/factoidal/issues/774). -/
+
+private def occurrences (hay needle : String) : Nat := (hay.splitOn needle).length - 1
+
+private def ftData : String :=
+  "<http://e/a> <http://www.w3.org/2000/01/rdf-schema#label> \"Solar panel array\" .\n" ++
+  "<http://e/b> <http://www.w3.org/2000/01/rdf-schema#label> \"Solar panel kit\" .\n" ++
+  "<http://e/c> <http://purl.org/dc/elements/1.1/title> \"Control panel\" .\n" ++
+  "<http://e/d> <http://www.w3.org/2000/01/rdf-schema#label> \"Water heater\" .\n" ++
+  "<http://e/a> <http://e/status> \"active\" .\n" ++
+  "<http://e/c> <http://e/status> \"retired\" .\n" ++
+  "<http://e/g1> <http://www.w3.org/2000/01/rdf-schema#label> \"panel in a graph\" <http://e/G> .\n"
+
+private def ftPre : String :=
+  "PREFIX text: <http://jena.apache.org/text#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> "
+
+private def ftQ (body : String) : String := queryDataset ftData (ftPre ++ body)
+
+-- SELECT: the default graph's three "panel" literals, not the heater, not the named graph.
+#guard occurrences (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" }") "\"type\":\"uri\"" == 3
+#guard hasText (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" }") "\"value\":\"http://e/c\""
+#guard !hasText (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" }") "\"value\":\"http://e/d\""
+#guard !hasText (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" }") "\"value\":\"http://e/g1\""
+-- Field restriction and AND of tokens.
+#guard occurrences (ftQ "SELECT ?s WHERE { ?s text:query (rdfs:label \"panel\") }")
+  "\"type\":\"uri\"" == 2
+#guard occurrences (ftQ "SELECT ?s WHERE { ?s text:query \"solar kit\" }") "\"type\":\"uri\"" == 1
+-- A join with an ordinary triple pattern.
+#guard occurrences (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" . ?s <http://e/status> \"active\" }")
+  "\"type\":\"uri\"" == 1
+-- GRAPH selects the graph that is searched.
+#guard hasText (ftQ "SELECT ?g ?s WHERE { GRAPH ?g { ?s text:query \"panel\" } }")
+  "\"value\":\"http://e/G\""
+#guard occurrences (ftQ "SELECT ?g ?s WHERE { GRAPH ?g { ?s text:query \"panel\" } }")
+  "\"value\":\"http://e/g1\"" == 1
+-- ASK, COUNT(*) and LIMIT: the shapes the backend fast paths take.
+#guard ftQ "ASK { ?s text:query \"panel\" }" == "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"
+#guard ftQ "ASK { ?s text:query \"zzzz\" }" == "{\"ok\":true,\"kind\":\"ask\",\"boolean\":false}"
+#guard hasText (ftQ "SELECT (COUNT(*) AS ?n) WHERE { ?s text:query \"panel\" }") "\"value\":\"3\""
+#guard occurrences (ftQ "SELECT ?s WHERE { ?s text:query \"panel\" } LIMIT 1") "\"type\":\"uri\"" == 1
+-- No match is zero rows, not an error.
+#guard hasText (ftQ "SELECT ?s WHERE { ?s text:query \"zzzz\" }") "\"bindings\":[]"
+-- Refused at parse time: an object that is not the jena-text argument.
+#guard hasText (ftQ "SELECT ?s WHERE { ?s text:query ?o }") "expected string or '(' after text:query"
+#guard hasText (ftQ "SELECT ?s WHERE { ?s text:query (\"panel\" 2) }")
+  "\"ok\":false"
+-- The backend runner declines exactly the queries that hold a text:query pattern.
+#guard (match parseSparql (ftPre ++ "SELECT ?s WHERE { ?s text:query \"panel\" }") with
+  | .ok q => (runSelectQueryBackendDataset {} q (indexedDatasetBackend Dataset.empty)).isNone
+  | .error _ => false)
+#guard (match parseSparql (ftPre ++ "SELECT ?s WHERE { ?s rdfs:label ?o }") with
+  | .ok q => (runSelectQueryBackendDataset {} q (indexedDatasetBackend Dataset.empty)).isSome
+  | .error _ => false)
+
+private def geoData : String :=
+  "<http://e/L> <http://e/g> \"POINT(-0.1278 51.5074)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral> .\n" ++
+  "<http://e/M> <http://e/g> \"POINT(-2.2426 53.4808)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral> .\n"
+
+private def geoQ (body : String) : String :=
+  queryDataset geoData ("PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " ++
+    "PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/> " ++ body)
+
+-- geof:distance (the F* value, typed xsd:double) and geof:envelope.
+#guard hasText (geoQ "SELECT ?d WHERE { <http://e/L> <http://e/g> ?a . <http://e/M> <http://e/g> ?b BIND(geof:distance(?a, ?b) AS ?d) }")
+  "\"value\":\"2.89252253232364639\""
+#guard hasText (geoQ "SELECT ?d WHERE { <http://e/L> <http://e/g> ?a . <http://e/M> <http://e/g> ?b BIND(geof:distance(?a, ?b, uom:degree) AS ?d) }")
+  "\"value\":\"2.89252253232364639\""
+#guard !hasText (geoQ "SELECT ?d WHERE { <http://e/L> <http://e/g> ?a . <http://e/M> <http://e/g> ?b BIND(geof:distance(?a, ?b, uom:metre) AS ?d) }")
+  "\"value\""
+#guard hasText (geoQ "SELECT ?e WHERE { <http://e/L> <http://e/g> ?a BIND(geof:envelope(?a) AS ?e) }")
+  "\"value\":\"POLYGON((-0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074))\""
 
 end L4Wasm.Ops

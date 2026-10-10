@@ -2814,6 +2814,21 @@ extending `SPARQL.DatasetRestriction.plannerFragment` and its theorem. -/
 #guard !L4Factoidal.SPARQL.DatasetRestriction.plannerFragment
   (.subSelect (mkQuery (.select .all) (.bgp [sampleTp])))
 
+/-! A `text:query` pattern (https://github.com/danbri/factoidal/issues/727) reads
+the literals of every triple in its field, which no collector bound covers: its
+own predicate IRI and its marker-typed object name no stored triple. Both
+fragment tests refuse it, so every collector keeps every entry. -/
+
+private def sampleTextTp : TriplePattern :=
+  { s := .var "s", p := .iri L4Factoidal.SPARQL.fulltextQueryPred,
+    o := .literal (L4Factoidal.SPARQL.encodeFulltextLiteral
+                    { field := none, terms := "panel", limit := none }) }
+
+#guard !L4Factoidal.SPARQL.DatasetRestriction.plannerFragment (.bgp [sampleTextTp])
+#guard !L4Factoidal.SPARQL.DatasetRestriction.plannerFragment (.bgp [sampleTp, sampleTextTp])
+#guard (nativeConstantPredicates? (.bgp [sampleTp, sampleTextTp])) == none
+#guard (nativeConstantPredicates? (.bgp [sampleTp])) == some [samplePredicate]
+
 /-! A two-entry manifest, a query the predicate collector narrows to ONE entry,
 and the answer over the entries the planner keeps equal to the answer over
 every entry. This is `plannerSoundness` on a concrete instance. -/

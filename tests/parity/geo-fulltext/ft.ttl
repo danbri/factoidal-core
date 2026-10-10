@@ -1,0 +1,11 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dc:   <http://purl.org/dc/elements/1.1/> .
+@prefix ex:   <http://example.org/> .
+ex:panel1 rdfs:label "Solar panel array" ; dc:title "Rooftop installation" ; ex:status "active" .
+ex:panel2 rdfs:label "Solar panel kit" ; dc:title "Backyard installation" ; ex:status "active" .
+ex:heater rdfs:label "Water heater" ; dc:title "Boiler room unit" ; ex:status "retired" .
+ex:battery rdfs:label "Battery storage panel" ; dc:title "Energy storage unit" ; ex:status "retired" .
+ex:controlpanel rdfs:label "Interface unit" ; dc:title "Control panel interface" ; ex:status "active" .
+ex:twice rdfs:label "panel, PANEL!" ; dc:title "another panel" ; ex:see ex:panel1 .
+ex:fr rdfs:label "Panneau solaire"@fr ; ex:count 42 .
+ex:num dc:title "Model 42 panel-mount" .

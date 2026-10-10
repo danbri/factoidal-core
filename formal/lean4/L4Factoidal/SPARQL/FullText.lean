@@ -384,4 +384,68 @@ private theorem exIri (s : String) : isIri ("http://e/" ++ s) = true := by
 #guard !objectMatchesQuery { field := none, terms := "ell", limit := none }
         (.literal (Literal.string "Hello there"))
 
+/-! ### Evaluation over a graph
+
+A five-triple graph: two labels with "panel", one title with "panel", one
+label without it, and a non-literal object carrying the word in its IRI. -/
+
+private def ex (s : String) : WfIri := ⟨"http://e/" ++ s, exIri s⟩
+private def lbl : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#label", rfl⟩
+private def ttl : WfIri := ⟨"http://purl.org/dc/elements/1.1/title", rfl⟩
+
+private def gPanels : Graph :=
+  [ { s := .iri (ex "a"), p := lbl, o := .literal (Literal.string "Solar panel array") },
+    { s := .iri (ex "b"), p := lbl, o := .literal (Literal.string "Solar panel kit") },
+    { s := .iri (ex "c"), p := ttl, o := .literal (Literal.string "Control panel") },
+    { s := .iri (ex "d"), p := lbl, o := .literal (Literal.string "Water heater") },
+    { s := .iri (ex "e"), p := lbl, o := .iri (ex "panel") } ]
+
+private def subjectsOf (rows : SolutionSeq) : List String :=
+  rows.filterMap (fun mu => match mu.lookup "s" with
+    | some (.iri i) => some i.val
+    | _ => none)
+
+private def q (terms : String) (field : Option WfIri := none) (limit : Option Nat := none) :
+    FulltextQuery := { field := field, terms := terms, limit := limit }
+
+-- No field: every literal is searched, in graph order; the IRI object is not.
+#guard subjectsOf (fulltextSolutions (q "panel") (.var "s") gPanels)
+         == ["http://e/a", "http://e/b", "http://e/c"]
+-- AND of tokens.
+#guard subjectsOf (fulltextSolutions (q "solar PANEL") (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard subjectsOf (fulltextSolutions (q "solar heater") (.var "s") gPanels) == []
+-- A field restricts the predicate.
+#guard subjectsOf (fulltextSolutions (q "panel" (some lbl)) (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard subjectsOf (fulltextSolutions (q "panel" (some ttl)) (.var "s") gPanels)
+         == ["http://e/c"]
+-- A limit keeps the first n matches in graph order; zero keeps none.
+#guard subjectsOf (fulltextSolutions (q "panel" none (some 2)) (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard (fulltextSolutions (q "panel" none (some 0)) (.var "s") gPanels).isEmpty
+-- The limit counts MATCHES before the subject is checked, as in the F*:
+-- a constant subject outside the first n matches gets no row.
+#guard (fulltextSolutions (q "panel" none (some 1)) (.iri (ex "b")) gPanels).isEmpty
+#guard (fulltextSolutions (q "panel") (.iri (ex "b")) gPanels).length == 1
+#guard (fulltextSolutions (q "panel") (.iri (ex "d")) gPanels).isEmpty
+-- The one-pass scan and the specification list agree on these graphs.
+#guard fulltextScan (q "panel" none (some 2)) gPanels == fulltextCandidates (q "panel" none (some 2)) gPanels
+#guard fulltextScan (q "panel" (some lbl)) gPanels == fulltextCandidates (q "panel" (some lbl)) gPanels
+
+/-! ### Recognising the pattern -/
+
+private def ftTp (obj : PatternTerm) : TriplePattern :=
+  { s := .var "s", p := .iri fulltextQueryPred, o := obj }
+
+#guard (ftTp (.literal (encodeFulltextLiteral (q "panel")))).fulltext? == some (q "panel")
+#guard bgpHasFulltext [ftTp (.literal (encodeFulltextLiteral (q "panel")))]
+-- A text:query predicate with an ordinary object is an ordinary triple pattern.
+#guard (ftTp (.literal (Literal.string "panel"))).fulltext?.isNone
+#guard (ftTp (.var "o")).fulltext?.isNone
+#guard !bgpHasFulltext [ftTp (.var "o")]
+-- The marker literal under any other predicate is an ordinary object.
+#guard ({ s := .var "s", p := .iri lbl,
+          o := .literal (encodeFulltextLiteral (q "panel")) } : TriplePattern).fulltext?.isNone
+
 end L4Factoidal.SPARQL

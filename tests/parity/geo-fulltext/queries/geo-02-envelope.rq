@@ -1,0 +1,6 @@
+PREFIX ex:   <http://example.org/>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+SELECT ?a ?e WHERE {
+  ?x ex:name ?a ; ex:hasGeom ?g .
+  BIND(geof:envelope(?g) AS ?e)
+} ORDER BY ?a
