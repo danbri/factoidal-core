@@ -14010,3 +14010,15 @@ old statement false):
 | `RIF.Core.Conformance.fst` `owl_direct_separation_inconsistent` | `RIF/Conformance.lean` (kept), superseded in the runner by `RIF/OwlDirect.lean` ROWL-Direct (ii)-(vii) | the runner called the narrow check for every profile |
 | `Parser.ShExC.fst` grammar fixes of 2026-07-10 | `ShEx/Compact.lean` (IRIREF, PN_LOCAL, REGEXP, LANGTAG, codeDecl, exclusions, facets, litNodeConstraint) | `l4shexc` negative-syntax 100 pass, 0 fail (out of 100) |
 | none (F\* does not score `negativeStructure/`) | `ShEx/Structure.lean` `structureErrors`, ShEx 2.1 §5.7 | `l4shexc` negative-structure 15 pass, 0 fail (out of 15) |
+
+## SPARQL DESCRIBE (2026-10-10)
+
+`evalDescribe` (`SPARQL/Query.lean`) answers DESCRIBE with the Concise Bounded
+Description (`RDF/ConciseBoundedDescription.lean`, `Graph.cbd`) of the
+resources the clause names, read from the active default graph. Design record,
+resource rule, the RDF 1.2 reading of CBD clause 3, the planner rule
+(`Query.patternBoundedReads`: a DESCRIBE query makes every pattern-driven
+planner open the complete store) and the list of surfaces:
+`docs/designissues/2026-10-10-sparql-describe.md`. Tracked at
+<https://github.com/danbri/factoidal/issues/698>. The F* tree still answers
+DESCRIBE with the empty graph.

@@ -1182,6 +1182,21 @@ of a BIND(EXISTS) is refused one level down instead, by
 #guard Expr.backendLocal existsQ == false
 #guard Expr.backendLocal notExistsQ == false
 
+/-! DESCRIBE reads every statement about the resources it names
+(`evalDescribe`), which no pattern selects, so `patternBoundedReads` refuses
+it although it carries no EXISTS. The EXISTS test alone admits it, and the
+first guard below shows why that is not enough. -/
+private def describeQuery : Query :=
+  mkQuery (.describe [.var "s"]) (.bgp [tpPredicateP])
+#guard describeQuery.expressionsOutsidePatternExistsFree == true
+#guard describeQuery.patternBoundedReads == false
+#guard (mkQuery (.describe []) (.bgp [tpPredicateP])).patternBoundedReads == false
+-- The other forms and the HAVING cases keep the answers they had.
+#guard havingFreeQuery.patternBoundedReads == true
+#guard havingExistsQuery.patternBoundedReads == false
+#guard (mkQuery (.construct []) (.bgp [tpPredicateP])).patternBoundedReads == true
+#guard (mkQuery .ask (.bgp [tpPredicateP])).patternBoundedReads == true
+
 /-! HAVING EXISTS. §18.6 substitutes the group's representative row into
 `{ ?s <q> ?z }`: for the group `?s = a` that is `{ <a> <q> ?z }`, which has one
 solution, and for `?s = g` it is `{ <g> <q> ?z }`, which has none. One group

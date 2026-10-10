@@ -300,7 +300,9 @@ same manifest and query.
 The EXISTS-outside-pattern guard is carried by the collectors themselves and
 is not re-implemented here: `queryNativeConstantPredicates?` and
 `queryQuadConstantPredicates?` both answer `none` unless
-`Query.expressionsOutsidePatternExistsFree`, and a `none` selects every entry.
+`Query.patternBoundedReads` (no EXISTS outside the pattern, and not a
+DESCRIBE, which reads every statement about the resources it names), and a
+`none` selects every entry.
 Section 18.6 evaluates an EXISTS in a projection, a GROUP BY key, a HAVING
 condition or an ORDER BY condition against the active graph, so a query
 carrying one must see the whole generation. -/
@@ -794,6 +796,16 @@ private def pinOverrunJson : String :=
 #guard (storeQueryPlan pinManifestHex
   "SELECT ?s (EXISTS { ?s ?q ?r } AS ?e) WHERE { ?s <http://example.org/p> ?o }").contains
     "ibk3-paged-merkle-full-manifest"
+-- The DESCRIBE guard: a DESCRIBE answers every statement about the resources
+-- it names, so no pattern may prune the shards. `DESCRIBE <s>` has an empty
+-- pattern, which the predicate collector alone would plan as zero shards.
+#guard (storeQueryPlan pinManifestHex "DESCRIBE <http://example.org/s>").contains
+    "ibk3-paged-merkle-full-manifest"
+#guard (storeQueryPlan pinManifestHex
+  "DESCRIBE ?s WHERE { ?s <http://example.org/p> ?o }").contains
+    "ibk3-paged-merkle-full-manifest"
+#guard !(storeQueryPlan pinManifestHex "DESCRIBE <http://example.org/s>").contains
+    "ibk3-paged-merkle(0)"
 #guard (storeQueryPlan pinManifestHex
   "SELECT ?s WHERE { ?s <http://example.org/p> ?o }").contains "\"keys\":[\"predicate-0.ibk3\"]"
 -- An SBM3 generation declares no literal index, so the sidecar list is empty.
@@ -817,6 +829,17 @@ private def pinOverrunJson : String :=
   pinArtifactsJson ByteArray.empty).contains "\"mode\":\"ibk3-paged-merkle(1)\""
 #guard (storeQuery pinManifestHex "ASK { ?s <http://example.org/p> ?o }"
   pinArtifactsJson ByteArray.empty).contains "\"boolean\":true"
+-- DESCRIBE over the generation: the description of the resource the clause
+-- names, in the `describe` envelope; a resource the generation says nothing
+-- about gets the empty graph.
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/s>"
+  pinArtifactsJson ByteArray.empty).contains "\"kind\":\"describe\""
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/s>"
+  pinArtifactsJson ByteArray.empty).contains
+    "<http://example.org/s> <http://example.org/p> <http://example.org/o> ."
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/o>"
+  pinArtifactsJson ByteArray.empty).contains "\"nquads\":\"\""
+
 #guard (storeQuery pinManifestHex "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"
   pinTamperedJson ByteArray.empty).contains "the manifest declares"
 #guard (storeQuery pinManifestHex "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"

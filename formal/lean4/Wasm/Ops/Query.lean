@@ -7,6 +7,7 @@ Envelopes match `bin/npm-entry/entry_jsoo.ml`:
     -> {"ok":true,"kind":"select","srj":{…SPARQL results JSON…}}
      | {"ok":true,"kind":"ask","boolean":true|false}
      | {"ok":true,"kind":"construct","nquads":"…"}
+     | {"ok":true,"kind":"describe","nquads":"…"}
      | {"ok":false,"error":"…"}
   updateDataset(nquads, sparqlUpdate)
     -> {"ok":true,"nquads":"…"} | {"ok":false,"error":"…"}
@@ -14,7 +15,11 @@ Envelopes match `bin/npm-entry/entry_jsoo.ml`:
 `srj` is a JSON OBJECT embedded in the envelope, not a string — the
 Lean `QueryResult.toSrj` document is spliced in verbatim (it is itself
 JSON produced by the ported serialiser, so the envelope stays valid
-JSON). DESCRIBE returns the F* entry's exact error text.
+JSON). DESCRIBE answers the Concise Bounded Description of the
+resources it names as N-Triples (`SPARQL/Query.lean`, `evalDescribe`);
+the F* entry answers it with an error envelope. The kind is `describe`,
+not `construct`, so a client can tell the two forms apart; the member
+that carries the graph is `nquads` in both.
 
 Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
@@ -46,7 +51,7 @@ path the native persisted query host uses: equivalence-aware indexes and
 hash joins, refined against the reference evaluator).  A query shape that
 path does not handle — it answers `none` — or a `FROM`/`FROM NAMED` clause
 falls back to the reference evaluator, so the answer is never partial.
-CONSTRUCT stays on the reference evaluator.  The backend is built once per
+CONSTRUCT and DESCRIBE stay on the reference evaluator.  The backend is built once per
 dataset handle (`Wasm/Ops/Handles.lean`); the stateless op builds it per
 call.
 
@@ -115,7 +120,15 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
         | .ok lines => okWith (extra ++ [("kind", .string "construct"),
                                          ("nquads", .string lines)])
     | .describe _ =>
-        errJson "DESCRIBE is not supported by the npm entry yet"
+        -- §16.4: the answer is one RDF graph, the Concise Bounded
+        -- Description of the resources named (`evalDescribe`). It is read
+        -- from the dataset itself, never from a backend: the description
+        -- takes statements no pattern selects.
+        let g := evalDescribe env ds q
+        match Graph.toNTriples g with
+        | .error e  => errJson s!"describe serialisation: {e}"
+        | .ok lines => okWith (extra ++ [("kind", .string "describe"),
+                                         ("nquads", .string lines)])
 
 /-- The `queryDataset` envelope family over an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetQuery`

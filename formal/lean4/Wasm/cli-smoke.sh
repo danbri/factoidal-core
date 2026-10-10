@@ -139,8 +139,40 @@ assert_text "query ask false -> exit 1" 1 out "false" \
 assert_text "query construct" 0 out "<http://e/q>" \
   "$CLI" query "$TMP/d.nt" --format ntriples \
     --query-string 'CONSTRUCT { ?s <http://e/q> ?o } WHERE { ?s <http://e/p> ?o }'
-assert_text "query DESCRIBE -> error" 1 err "DESCRIBE is not supported" \
-  "$CLI" query "$TMP/d.nt" --format ntriples --query-string 'DESCRIBE <http://e/a>'
+
+# DESCRIBE (SPARQL 1.1 §16.4) prints the Concise Bounded Description of the
+# resources it names: Alice's blank-node address is followed to its street,
+# Carol is unrelated, and an IRI with no statements has an empty description.
+cat > "$TMP/desc.nt" <<'DESCEOF'
+<http://e/a> <http://e/name> "Alice" .
+<http://e/a> <http://e/addr> _:b1 .
+_:b1 <http://e/street> "1 High St" .
+<http://e/c> <http://e/name> "Carol" .
+DESCEOF
+assert_text "query DESCRIBE <iri> follows the blank-node chain" 0 out "1 High St" \
+  "$CLI" query "$TMP/desc.nt" --format ntriples --query-string 'DESCRIBE <http://e/a>'
+run_cmd "$CLI" query "$TMP/desc.nt" --format ntriples --query-string 'DESCRIBE <http://e/a>'
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Alice' && ! printf '%s' "$OUT" | grep -q 'Carol'; then
+  pass "query DESCRIBE <iri> leaves out an unrelated resource"
+else
+  fail "query DESCRIBE <iri> leaves out an unrelated resource" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+fi
+run_cmd "$CLI" query "$TMP/desc.nt" --format ntriples \
+  --query-string 'DESCRIBE ?x WHERE { ?x <http://e/name> ?n } ORDER BY DESC(?n) LIMIT 1'
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Carol' && ! printf '%s' "$OUT" | grep -q 'Alice'; then
+  pass "query DESCRIBE ?x ORDER BY DESC LIMIT 1 describes one resource"
+else
+  fail "query DESCRIBE ?x ORDER BY DESC LIMIT 1 describes one resource" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+fi
+run_cmd "$CLI" query "$TMP/desc.nt" --format ntriples --query-string 'DESCRIBE <http://e/nobody>'
+if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then
+  pass "query DESCRIBE of an IRI with no statements -> empty graph"
+else
+  fail "query DESCRIBE of an IRI with no statements -> empty graph" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+fi
+assert_text "query bad SPARQL (DESCRIBE with no target) -> error" 1 err "SPARQL parse error" \
+  "$CLI" query "$TMP/d.nt" --format ntriples --query-string 'DESCRIBE WHERE { ?s ?p ?o }'
+
 assert_text "query missing --query/--query-string -> usage error" 2 err "need --query" \
   "$CLI" query "$TMP/d.nt" --format ntriples
 assert_text "query both --query and --query-string -> usage error" 2 err "pass only one" \

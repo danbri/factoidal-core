@@ -79,6 +79,7 @@ Readability contract: every definition cites the SPARQL 1.1 spec
 section it implements.
 -/
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.RDF.ConciseBoundedDescription
 
 namespace L4Factoidal.SPARQL
 
@@ -416,6 +417,31 @@ def Query.expressionsOutsidePatternExistsFree (query : Query) : Bool :=
     && (query.groupBy.getD []).all GroupCondition.existsFree
     && Expr.existsFreeList query.having
     && (query.modifier.orderBy.getD []).all OrderCondition.existsFree
+
+/-- Does the query form read statements that no pattern of the query
+selects? DESCRIBE does: it returns every statement about each resource
+it describes (`evalDescribe`), and the WHERE clause names the resources,
+not those statements. SELECT, ASK and CONSTRUCT read the dataset only
+through the pattern. -/
+def QueryForm.readsBeyondPattern : QueryForm → Bool
+  | .describe _ => true
+  | .select _ | .construct _ | .ask => false
+
+/-- The admission test of every planner that opens a PROPER SUBSET of a
+store's statements chosen from the query's pattern: the shards of the
+predicates the pattern names, the graphs it names, the blocks whose zone
+maps can hold its constants, the rows an index lists for its filter.
+
+The test holds when the pattern alone decides which statements the
+query reads. Two things break that. An `EXISTS` outside the pattern
+reads the active graph (`expressionsOutsidePatternExistsFree`). And a
+DESCRIBE form reads every statement about the resources it names, which
+`ASK`-style pruning by pattern predicates would drop: `DESCRIBE <x>`
+has an empty pattern, so a planner that read only the pattern's
+predicates would open no shard and describe nothing. A planner that
+fails this test opens the complete store. -/
+def Query.patternBoundedReads (query : Query) : Bool :=
+  query.expressionsOutsidePatternExistsFree && !query.form.readsBeyondPattern
 
 /-- Build a query, defaulting every optional part — the shape most
 call sites (and every test below) want. -/
@@ -2020,6 +2046,80 @@ def evalConstruct (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
       let omega0 := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
       let solutions := formSolutions env active q omega0
       (instantiateSolutions template solutions 0).foldl (fun g t => g.add t) Graph.empty
+  | _ => []
+
+/-! ### DESCRIBE — §16.4
+
+"The DESCRIBE form returns a single result RDF graph containing RDF data
+about resources ... The query service determines the description"
+(https://www.w3.org/TR/sparql11-query/#describe). The specification
+fixes WHICH resources are described and leaves WHAT is said about each
+to the service:
+
+  * §16.4.1: the IRIs written in the DESCRIBE clause;
+  * §16.4.2: the values the solutions bind to the variables written in
+    the clause. `DESCRIBE *` names every variable in scope in the WHERE
+    clause (grammar rule [11]); the parser gives it the empty target
+    list.
+
+A literal is not a resource a graph describes (it has no statements as
+subject), and neither is an RDF 1.2 triple term. A blank node bound to a
+variable is described, by the label it has in the queried graph.
+
+The description chosen here is the Concise Bounded Description,
+`Graph.cbd` in `RDF/ConciseBoundedDescription.lean`, taken from the
+active default graph of the query's dataset (`FROM` clauses applied, as
+for CONSTRUCT). The solutions come from `formSolutions`, so GROUP BY,
+HAVING, the trailing VALUES join, ORDER BY, OFFSET and LIMIT apply
+before the resources are collected: `DESCRIBE ?x WHERE { ... } LIMIT 1`
+describes the one resource of the first solution. Tracked at
+https://github.com/danbri/factoidal/issues/698. -/
+
+/-- Does the DESCRIBE clause need the solutions? An explicit list of
+IRIs names its resources without the WHERE clause. -/
+def describeNeedsSolutions (targets : List PatternTerm) : Bool :=
+  targets.isEmpty || targets.any fun
+    | .var _ => true
+    | _      => false
+
+/-- The resources a DESCRIBE query describes: the IRIs of the clause,
+then for each solution the described values of the clause's variables
+(for `DESCRIBE *`, of every variable of the solution except the
+variables `QueryPattern.rewriteBnodes` invents, which are not variables
+the user wrote). A value that is not an IRI or a blank node names no
+resource and is dropped. -/
+def describeRoots (targets : List PatternTerm) (solutions : SolutionSeq) :
+    List Subject :=
+  let explicit := targets.filterMap fun
+    | .iri i => some (Subject.iri i)
+    | _      => none
+  let bound :=
+    if targets.isEmpty then
+      (stripSyntheticBnodeVars solutions).flatMap fun mu =>
+        mu.filterMap fun b => b.2.toSubject?
+    else
+      solutions.flatMap fun mu =>
+        targets.filterMap fun
+          | .var v => (mu.lookup v).bind Term.toSubject?
+          | _      => none
+  explicit ++ bound
+
+/-- Evaluate a DESCRIBE query — §16.4: the union of the Concise Bounded
+Descriptions of the resources `describeRoots` collects from the
+solutions of `formSolutions`, taken from the active default graph. The
+result keeps the statement order of that graph. Every other query form
+gives the empty graph. -/
+def evalDescribe (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
+  let (ds', active) := applyDataset q.dataset ds ds.default
+  let env := { env with dataset := some ds' }
+  match q.form with
+  | .describe targets =>
+      let solutions :=
+        if describeNeedsSolutions targets then
+          formSolutions env active q
+            ((q.pattern.rewriteBnodes.lower env).evalIn ds' active)
+        else []
+      Graph.cbd active (describeRoots targets solutions)
   | _ => []
 
 end L4Factoidal.SPARQL

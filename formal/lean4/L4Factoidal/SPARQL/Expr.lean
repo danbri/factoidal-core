@@ -322,10 +322,12 @@ inductive SelectClause where
   | vars (items : List SelectItem)
   | all
 
-/-- §18.2 query forms. DESCRIBE is carried in the AST for completeness
-but evaluates to nothing, exactly as the F* source's `QF_Describe`
-does — the description shape is a policy decision the spec leaves to
-implementations, and this port makes no choice for it. -/
+/-- §18.2 query forms. `describe terms` lists the IRIs and variables of
+the DESCRIBE clause; `DESCRIBE *` is the empty list. The description of
+a resource is a policy decision the specification leaves to the query
+service (§16.4); `evalDescribe` in `Query.lean` returns the Concise
+Bounded Description. The F* source's `QF_Describe` evaluates to the
+empty graph. -/
 inductive QueryForm where
   | select    (sel : SelectClause)
   | construct (template : List TriplePattern)

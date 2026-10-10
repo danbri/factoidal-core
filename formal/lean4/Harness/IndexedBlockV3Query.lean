@@ -122,7 +122,17 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
       IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
       return 0
   | .describe _ =>
-      IO.eprintln "l4block-id-v3-query rejected: DESCRIBE needs an explicit description policy"; return 1
+      -- §16.4 DESCRIBE reads every statement about the resources it names,
+      -- which no pattern selects. `Query.patternBoundedReads` refuses every
+      -- selective path and the predicate collector for it, so `triples` is
+      -- the whole generation here (mode `ibk3-paged-merkle-full-manifest`),
+      -- and the delta is applied by `backendFor` as for CONSTRUCT.
+      let graph : Graph := evalDescribe emptyEnv
+        { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
+      IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+      IO.println s!"l4block-id-v3-query sse={query.toSse}"
+      IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
+      return 0
 
 /-- The narrow OLI2→SRI2 physical join has already established the two BGP
     constraints: every target row has a driver subject, and the driver object
@@ -346,12 +356,14 @@ private def objectBoundPredicate? (query : Query) : Option (WfIri × Term) :=
     subset.  §18.6 evaluates an `EXISTS` / `NOT EXISTS` against the ACTIVE
     GRAPH, so a query carrying one in its projection, a GROUP BY key, a
     HAVING condition or an ORDER BY condition may not take a selective path;
-    it falls through to the full-manifest read.
+    it falls through to the full-manifest read. A DESCRIBE form may not take
+    one either: its answer holds every statement about the resources it
+    names, and no pattern selects those.
     `ShardManifest.queryNativeConstantPredicates?` carries the same guard for
     the pattern-driven opener below
     (https://github.com/danbri/factoidal/issues/638). -/
 private def selectivePathAdmissible (query : Query) : Bool :=
-  query.expressionsOutsidePatternExistsFree
+  query.patternBoundedReads
 
 private def tryObjectIndexScan (directory : System.FilePath) (manifest : Manifest) (query : Query) :
     IO (Option UInt32) := do

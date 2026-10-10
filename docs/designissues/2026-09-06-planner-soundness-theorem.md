@@ -40,7 +40,9 @@ collectors already check at run time (they return `none` and keep every
 entry otherwise, so the theorem is vacuous exactly when the planner is
 conservative):
 
-* `Query.expressionsOutsidePatternExistsFree Q = true`;
+* `Query.patternBoundedReads Q = true` (that is,
+  `Query.expressionsOutsidePatternExistsFree Q = true` and `Q` is not a
+  DESCRIBE form, added 2026-10-10; the theorem is about SELECT and ASK);
 * `M.valid = true`, every entry of `E` decodes, and every entry's manifest
   fields agree with its block (this is what activation checks:
   `graphSet` equals the block's graph set, `subjectZone`/`objectZone`
@@ -264,8 +266,9 @@ evaluator in it.
 3. **The delegating arms**, per 6.4.
 4. **`env.dataset`.** The theorem is stated for a FIXED `env`, so it
    says nothing about a caller that builds `env.dataset` from the
-   selected entries. The `Query.expressionsOutsidePatternExistsFree`
-   guard stays on the collectors for that reason.
+   selected entries. The `Query.patternBoundedReads` guard
+   (`Query.expressionsOutsidePatternExistsFree` and not a DESCRIBE form)
+   stays on the collectors for that reason.
 
 
 ## 7. `BIND` enters the fragment, 2026-09-06 (second landing)

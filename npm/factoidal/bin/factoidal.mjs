@@ -203,14 +203,16 @@ every later query from what it retained.
 
 formats:
   table    a human display of the engine's SPARQL Query Results JSON;
-           ASK prints true or false, CONSTRUCT prints its N-Triples
+           ASK prints true or false, CONSTRUCT and DESCRIBE print their
+           N-Triples
   json     SELECT prints the engine's SPARQL 1.1 Query Results JSON
-           document; ASK and CONSTRUCT print the operation's envelope,
-           because the operation answers those two with a boolean and a
-           serialized graph rather than with a results document
-  nquads   CONSTRUCT only: the graph the engine serialized
-  turtle   CONSTRUCT only: that graph through the engine's own Turtle
-           writer, which flattens named graphs into the default graph
+           document; ASK, CONSTRUCT and DESCRIBE print the operation's
+           envelope, because the operation answers those with a boolean
+           or a serialized graph rather than with a results document
+  nquads   CONSTRUCT and DESCRIBE only: the graph the engine serialized
+  turtle   CONSTRUCT and DESCRIBE only: that graph through the engine's
+           own Turtle writer, which flattens named graphs into the default
+           graph
 
 not available, and why:
   --base IRI         the store query operation takes no base argument;
@@ -218,8 +220,6 @@ not available, and why:
   xml, csv, tsv      the engine has no operation that writes the SPARQL
                      Results XML, CSV or TSV documents, and writing one
                      here would be a second serializer (iron rule 7)
-  DESCRIBE           the engine answers "DESCRIBE is not supported by the
-                     npm entry yet"
 
 A store carrying a non-empty delta log is not served by this path: the
 operation reads the manifest's committed artifacts only. Use the native
@@ -752,7 +752,7 @@ function renderQueryResult (engine, result, format, limit, quiet) {
       return EXIT_OK
     }
     if (format !== 'table') {
-      err(`factoidal query: --format ${format} needs a CONSTRUCT query; this one is a SELECT`)
+      err(`factoidal query: --format ${format} needs a CONSTRUCT or DESCRIBE query; this one is a SELECT`)
       return EXIT_FAILURE
     }
     const shown = limit === null ? bindings : bindings.slice(0, limit)
@@ -772,13 +772,13 @@ function renderQueryResult (engine, result, format, limit, quiet) {
       return EXIT_OK
     }
     if (format !== 'table') {
-      err(`factoidal query: --format ${format} needs a CONSTRUCT query; this one is an ASK`)
+      err(`factoidal query: --format ${format} needs a CONSTRUCT or DESCRIBE query; this one is an ASK`)
       return EXIT_FAILURE
     }
     out(result.boolean ? 'true' : 'false')
     return EXIT_OK
   }
-  if (result.kind === 'construct') {
+  if (result.kind === 'construct' || result.kind === 'describe') {
     if (format === 'json') {
       out(JSON.stringify(result, null, 2))
       return EXIT_OK

@@ -158,7 +158,7 @@ def strippedPattern? : QueryPattern → Option (WfIri × VarName × Expr)
     HAVING condition or an ORDER BY condition is evaluated against the active
     graph (section 18.6), so it reads rows this restriction would drop. -/
 def plan? (query : Query) : Option Plan :=
-  if !query.dataset.isEmpty || !query.expressionsOutsidePatternExistsFree then none
+  if !query.dataset.isEmpty || !query.patternBoundedReads then none
   else do
     let (predicate, v, cond) ← strippedPattern? query.pattern
     let (op, geometry) ← callIn? v cond

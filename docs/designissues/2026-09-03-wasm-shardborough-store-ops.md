@@ -62,7 +62,8 @@ print in their `open-mode=NAME(n)` headers.
 
 The section 18.6 EXISTS guard is carried by the collectors and is not restated
 here. `queryNativeConstantPredicates?` and `queryQuadConstantPredicates?` both
-answer `none` unless `Query.expressionsOutsidePatternExistsFree`, and a `none`
+answer `none` unless `Query.patternBoundedReads` (that is,
+`Query.expressionsOutsidePatternExistsFree` and not a DESCRIBE form), and a `none`
 selects every entry — an EXISTS in a projection, a GROUP BY key, a HAVING
 condition or an ORDER BY condition is evaluated against the active graph, so
 the query must see the whole generation.

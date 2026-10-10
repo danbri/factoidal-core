@@ -94,7 +94,7 @@ def evalQueryNote (serviceIri : String) (q : Query) : String :=
   | .select _    => s!"SELECT evaluated: {(evalSelect env Dataset.empty q).2.length} rows"
   | .ask         => s!"ASK evaluated: {evalAsk env Dataset.empty q}"
   | .construct _ => s!"CONSTRUCT evaluated: {(evalConstruct env Dataset.empty q).length} triples"
-  | .describe _  => "DESCRIBE parsed (no description policy in the Lean tree)"
+  | .describe _  => s!"DESCRIBE evaluated: {(evalDescribe env Dataset.empty q).length} triples"
 
 /-- Apply a parsed update to the empty dataset; the summary is
 informational. -/

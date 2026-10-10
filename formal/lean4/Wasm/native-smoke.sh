@@ -11,7 +11,7 @@
 # calls, `l4wasm-cli callseq <seqJsonFile>` — several ops in one
 # process) with tiny inline fixtures and asserts the envelope keys the
 # F* npm entry (bin/npm-entry/entry_jsoo.ml) pins. Includes one error
-# path per family: bad Turtle (parse), DESCRIBE (query), unknown handle
+# path per family: bad Turtle (parse), bad SPARQL (query), unknown handle
 # (handles), unknown op (dispatch). Exits non-zero on any mismatch.
 set -euo pipefail
 
@@ -186,9 +186,43 @@ args "$TMP/q-construct.json" "$DATA" \
 check "queryDataset construct" queryDataset "$TMP/q-construct.json" \
   'r["ok"] is True and r["kind"] == "construct" and "<http://e/q>" in r["nquads"]'
 
-args "$TMP/q-describe.json" "$DATA" 'DESCRIBE <http://e/a>'
-check "queryDataset DESCRIBE -> error" queryDataset "$TMP/q-describe.json" \
-  'r["ok"] is False and r["error"] == "DESCRIBE is not supported by the npm entry yet"'
+# DESCRIBE (§16.4): the Concise Bounded Description of each resource the
+# clause names. Alice has a blank-node address that is followed to its
+# street; Carol is an unrelated subject; the literal "Alice" names nothing.
+DESC_DATA='<http://e/a> <http://e/name> "Alice" .
+<http://e/a> <http://e/addr> _:b1 .
+_:b1 <http://e/street> "1 High St" .
+<http://e/c> <http://e/name> "Carol" .
+'
+args "$TMP/q-describe.json" "$DESC_DATA" 'DESCRIBE <http://e/a>'
+check "queryDataset DESCRIBE follows the blank-node chain" queryDataset "$TMP/q-describe.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"].count(" .") == 3
+   and "1 High St" in r["nquads"] and "Carol" not in r["nquads"]'
+
+args "$TMP/q-describe-var.json" "$DESC_DATA" \
+  'DESCRIBE ?x WHERE { ?x <http://e/name> ?n } ORDER BY ?n LIMIT 1'
+check "queryDataset DESCRIBE ?x ORDER BY LIMIT 1 describes one resource" queryDataset "$TMP/q-describe-var.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"].count(" .") == 3
+   and "Alice" in r["nquads"] and "Carol" not in r["nquads"]'
+
+args "$TMP/q-describe-two.json" "$DESC_DATA" \
+  'DESCRIBE ?x WHERE { ?x <http://e/name> ?n }'
+check "queryDataset DESCRIBE ?x with two bindings describes both" queryDataset "$TMP/q-describe-two.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"].count(" .") == 4
+   and "Alice" in r["nquads"] and "Carol" in r["nquads"]'
+
+args "$TMP/q-describe-none.json" "$DESC_DATA" 'DESCRIBE <http://e/nobody>'
+check "queryDataset DESCRIBE of an IRI with no triples -> empty graph" queryDataset "$TMP/q-describe-none.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"] == ""'
+
+args "$TMP/q-describe-lit.json" "$DESC_DATA" \
+  'DESCRIBE ?n WHERE { <http://e/a> <http://e/name> ?n }'
+check "queryDataset DESCRIBE of a literal binding -> empty graph" queryDataset "$TMP/q-describe-lit.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"] == ""'
+
+args "$TMP/q-bad.json" "$DATA" 'DESCRIBE WHERE { ?s ?p ?o }'
+check "queryDataset bad SPARQL (DESCRIBE with no target) -> error" queryDataset "$TMP/q-bad.json" \
+  'r["ok"] is False and "SPARQL parse error" in r["error"]'
 
 args "$TMP/update.json" "$DATA" \
   'INSERT DATA { <http://e/x> <http://e/p> <http://e/y> }'
@@ -235,6 +269,22 @@ check "queryIBK3BlockSetPreview bounded select" queryIBK3BlockSetPreview "$TMP/b
    and r["srj"]["results"]["bindings"][0]["s"]["value"] == "http://e/a"'
 check "queryIBK3BlockSetPreview requires LIMIT" queryIBK3BlockSetPreview "$TMP/block-set-nolimit.json" \
   'r["ok"] is False and "require LIMIT" in r["error"]'
+
+# DESCRIBE over the block set: a subgraph of the decoded set, so no LIMIT.
+python3 - "$TMP/block-store/predicate-0.ibk3" "$TMP/block-set-describe.json" "$TMP/block-set-describe-bgp.json" <<'EOF'
+import json, pathlib, sys
+block = pathlib.Path(sys.argv[1]).read_bytes().hex()
+blocks = json.dumps([["http://e/p", block]])
+pathlib.Path(sys.argv[2]).write_text(json.dumps([blocks, "source:native-smoke",
+  "DESCRIBE <http://e/a>"]))
+pathlib.Path(sys.argv[3]).write_text(json.dumps([blocks, "source:native-smoke",
+  "DESCRIBE ?s WHERE { ?s <http://e/p> ?o }"]))
+EOF
+check "queryIBK3BlockSetPreview DESCRIBE by IRI" queryIBK3BlockSetPreview "$TMP/block-set-describe.json" \
+  'r["ok"] is True and r["kind"] == "describe"
+   and "<http://e/a> <http://e/p> <http://e/b> ." in r["nquads"]'
+check "queryIBK3BlockSetPreview DESCRIBE of a bound variable" queryIBK3BlockSetPreview "$TMP/block-set-describe-bgp.json" \
+  'r["ok"] is True and r["kind"] == "describe" and r["nquads"].count(" .") == 1'
 
 # --- Shardborough store family (manifest inspect / plan / query) ------
 # The WASM module has no file system, so a JavaScript host reads the files.
@@ -392,6 +442,19 @@ storeargs "$TMP/store-plan-exists.json" "$TMP/store-ibk3/manifest.sbm2" \
 check "storeQueryPlan refuses predicate selection under EXISTS" storeQueryPlan "$TMP/store-plan-exists.json" \
   'r["ok"] is True and r["mode"] == "ibk3-paged-merkle-full-manifest(2)" and r["shards"] == 2'
 
+# DESCRIBE reads every statement about the resources it names, so no pattern
+# may prune the shards. `DESCRIBE <http://e/a>` has an empty pattern, which the
+# predicate collector alone would plan as zero shards, and the pattern
+# `?s <http://e/p> ?o` would plan one shard and lose the `q` statement of a.
+storeargs "$TMP/store-plan-describe.json" "$TMP/store-ibk3/manifest.sbm2" \
+  'DESCRIBE <http://e/a>'
+check "storeQueryPlan opens the whole manifest for DESCRIBE <iri>" storeQueryPlan "$TMP/store-plan-describe.json" \
+  'r["ok"] is True and r["mode"] == "ibk3-paged-merkle-full-manifest(2)" and r["shards"] == 2'
+storeargs "$TMP/store-plan-describe-var.json" "$TMP/store-ibk3/manifest.sbm2" \
+  'DESCRIBE ?s WHERE { ?s <http://e/p> ?o }'
+check "storeQueryPlan opens the whole manifest for DESCRIBE ?s WHERE" storeQueryPlan "$TMP/store-plan-describe-var.json" \
+  'r["ok"] is True and r["mode"] == "ibk3-paged-merkle-full-manifest(2)" and r["shards"] == 2'
+
 # The HOST path: one contiguous region, no encoding, offset/len windows.
 blobargs "$TMP/store-query.json" "$TMP/store-query.blob" \
   "$TMP/store-ibk3/manifest.sbm2" 'SELECT ?s ?o WHERE { ?s <http://e/p> ?o }' \
@@ -401,6 +464,28 @@ checkblob "storeQuery answers over a supplied IBK3 block region" storeQuery \
   'r["ok"] is True and r["kind"] == "select" and r["shards"] == 1
    and r["mode"] == "ibk3-paged-merkle(1)"
    and len(r["srj"]["results"]["bindings"]) == 2'
+
+# DESCRIBE over the same generation. The plan opens both shards, so both
+# artifacts must be supplied, and the description of a holds the q statement
+# that the pattern predicate alone would have left unread. Supplying only the
+# p artifact is a refusal, not a partial description.
+blobargs "$TMP/store-describe.json" "$TMP/store-describe.blob" \
+  "$TMP/store-ibk3/manifest.sbm2" 'DESCRIBE ?s WHERE { ?s <http://e/p> <http://e/b> }' \
+  "$TMP/store-ibk3" predicate-0.ibk3 predicate-1.ibk3
+checkblob "storeQuery DESCRIBE reads every shard, not the pattern predicate's" storeQuery \
+  "$TMP/store-describe.json" "$TMP/store-describe.blob" \
+  'r["ok"] is True and r["kind"] == "describe" and r["shards"] == 2
+   and r["mode"] == "ibk3-paged-merkle-full-manifest(2)"
+   and r["nquads"].count(" .") == 2
+   and "<http://e/a> <http://e/p> <http://e/b> ." in r["nquads"]
+   and "<http://e/a> <http://e/q> \"one\" ." in r["nquads"]
+   and "<http://e/c>" not in r["nquads"]'
+blobargs "$TMP/store-describe-short.json" "$TMP/store-describe-short.blob" \
+  "$TMP/store-ibk3/manifest.sbm2" 'DESCRIBE <http://e/a>' \
+  "$TMP/store-ibk3" predicate-0.ibk3
+checkblob "storeQuery DESCRIBE refuses a region that lacks a shard of the full manifest" storeQuery \
+  "$TMP/store-describe-short.json" "$TMP/store-describe-short.blob" \
+  'r["ok"] is False'
 
 # The diagnostic hexadecimal form must answer exactly the same envelope, so a
 # fixture written either way pins the same behaviour.
