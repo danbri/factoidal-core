@@ -127,12 +127,31 @@ min-cardinality on `xsd:decimal` IS satisfiable. -/
 #guard valueSetMaxSize (.dense fullQInterval) == none
 #guard valueSetMaxSize .unconstrained == none
 #guard valueSetMaxSize (.family .string) == none
+/-! `xsd:boolean` holds exactly two values (XSD 1.1 Part 2 §3.3.2.1);
+the float and double families hold more than any cardinality. -/
+#guard valueSetMaxSize (.family .boolean) == some 2
+#guard valueSetMaxSize (.family .double) == none
 
 /-! An enumeration collapses only PROVABLY equal members, so the
 count can be too high but never too low. Two spellings of one half
 count as ONE. -/
 #guard valueSetMaxSize (.enum [decL "0.5", ratL "1/2"]) == some 1
 #guard valueSetMaxSize (.enum [intL "1", intL "2"]) == some 2
+
+/-! ## Provable membership: the counting direction
+
+`termProvablyInValueSet` is used to COUNT members against an upper
+bound, so a `true` must hold in every interpretation. A float is not on
+the `owl:real` line, a string is not an integer, and a space the
+datatype layer did not read (`unconstrained`) admits no proof. -/
+#guard termProvablyInValueSet (.family .string) (strL "Meg")
+#guard !(termProvablyInValueSet (.family .string) (intL "3"))
+#guard termProvablyInValueSet (.interval (baseIntervalFor xsdByte)) (intL "100")
+#guard !(termProvablyInValueSet (.interval (baseIntervalFor xsdByte)) (intL "300"))
+#guard termProvablyInValueSet (.dense fullQInterval) (decL "0.5")
+#guard !(termProvablyInValueSet (.dense fullQInterval) (fltL "0.5"))
+#guard termProvablyInValueSet (.enum [decL "0.5"]) (ratL "1/2")
+#guard !(termProvablyInValueSet .unconstrained (strL "Meg"))
 
 /-! ## Intersections -/
 

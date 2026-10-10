@@ -278,6 +278,46 @@ Rules that follow.
   ms, against a batch over the same 94 that did not return. Print the
   value, or the measurement is of a thunk.
 
+## 12. A negative test checks only the components it runs
+
+**Every component that can turn a unit into a pass must also run on the
+units where its "yes" is wrong.**
+
+> 🔴 **2026-10-10 (Lean OWL, `--dl`).** The PositiveEntailmentTest judge
+> passed a unit when the RL closure contained the conclusion OR when the
+> tableau refuted every negation goal of it. The NegativeEntailmentTest
+> judge ran the closure only. So no test in the corpus could catch the
+> refuter claiming an entailment that does not hold, and the DL
+> NegativeEntailmentTest line read 23 pass, 0 fail while measuring
+> nothing about the refuter. When the negative judge was made to ask the
+> same refutation, it fired on 3 of 23 units of
+> `type-negative-entailment.rdf`. All three were correct under the
+> Direct Semantics (two cases are RDF-Based only, one is OWL 2 Full
+> only), so the check now runs on the DIRECT, DL units, 11 of 23, and
+> the runner prints that count as `ne_refuter_checked`.
+
+## 13. A refutation needs EVERY branch, so a filtered branch list is unsound
+
+In a tableau, a node is refuted when every branch offered at a choice
+point closes. A filter or cap on the LIST of branches therefore makes a
+refutation easier, which is the unsound direction. A cut is sound only
+when the cut branch is counted as open (the rule then offers nothing,
+and the search answers "not refuted").
+
+> 🔴 **2026-10-10 (Lean OWL refuter, ported from F\*).** The ≤-rule
+> offered merges only between successors that are nodes, and dropped
+> pairs with a literal member. The F\* original's comment called this
+> "conservative (fewer merges attempted), never unsound". It is unsound:
+> `a : ≤ 2 dp`, `a dp 1`, `a dp "x"`, `a : ∃dp.xsd:integer`,
+> `a : ∃dp.¬xsd:integer` has a model (the witnesses are `1` and `"x"`),
+> and the refuter refuted it, because the only branch offered merged the
+> two witnesses. The same day a parser that ignored `owl:onDataRange`
+> read `DataMaxCardinality(1 dp xsd:string)` as `≤ 1 dp` and refuted a
+> consistent graph. Both were found by small probes written to break a
+> rule, not by the corpus: the consistency catalogs read
+> `refuter_flips_to_fail=0` throughout. Record:
+> `docs/designissues/2026-09-07-lean-owl-corpus-gap.md` § 15.
+
 ## The standing discipline
 
 1. State the acceptance criterion **as a number**, before the work.

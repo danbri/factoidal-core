@@ -55,7 +55,8 @@ either (record, section 2.3).
 ## TriG
 
 `parseTriGStatementsLenient` runs the strict top-level reader
-`readTriGStatement` first. When it succeeds, the walk is the strict walk.
+`readTriGStatement` (the linear reader over the `FastDataset` accumulator,
+2026-10-10) first. When it succeeds, the walk is the strict walk.
 When it fails on a graph block (`{ … }`, `GRAPH label { … }` or
 `label { … }`), the block is read again by `readTriGBlockRecover`, which
 recovers inside the block: each failing statement is reported and the body
@@ -277,14 +278,15 @@ def parseTurtleChunksLenient {α β : Type} (bnodePrefix : String) (step : α �
 /-- A graph block's body with recovery: `readGraphBody`, except that a
 failing statement is reported and the body resumes at `trigBodyResync`, and
 the end of input inside the block is reported and closes the block.
-`pos`/`cs` start just after the `{`. The run's `acc` is not touched; the
-body's triples are returned. `.error` only when `maxErrors` stops the walk
-(the run then says `stopped`). -/
+`pos`/`cs` start just after the `{`; `accRev` holds the block's triples newest
+first and the result is in source order, as in `readGraphBody`. The run's
+`acc` is not touched. `.error` only when `maxErrors` stops the walk (the run
+then says `stopped`). -/
 def readGraphBodyRecover {α β : Type} (report : β → Diagnostic → β) (opts : LenientOptions) :
     Nat → TurtleState → Nat → List Char → List Triple → TurtleLenientRun α β →
       Except ParseError (List Triple × TurtleState × Nat × List Char) × TurtleLenientRun α β
-  | 0, st, pos, cs, acc, run => (.ok (acc, st, pos, cs), run)
-  | fuel + 1, st, pos, cs, acc, run =>
+  | 0, st, pos, cs, accRev, run => (.ok (accRev.reverse, st, pos, cs), run)
+  | fuel + 1, st, pos, cs, accRev, run =>
       let (p1, r1) := tws pos cs
       let lp1 := run.linePos.advance pos (p1 - pos) cs
       match r1 with
@@ -294,8 +296,8 @@ def readGraphBodyRecover {α β : Type} (report : β → Diagnostic → β) (opt
           let e : ParseError := ⟨"unterminated graph block (expected '}')", p1⟩
           match ({ run with linePos := lp1 }).recordError opts report p1 r1 e with
           | (run', false) => (.error e, run')
-          | (run', true) => (.ok (acc, st, p1, []), run')
-      | '}' :: r2 => (.ok (acc, st, p1 + 1, r2), { run with linePos := lp1 })
+          | (run', true) => (.ok (accRev.reverse, st, p1, []), run')
+      | '}' :: r2 => (.ok (accRev.reverse, st, p1 + 1, r2), { run with linePos := lp1 })
       | _ =>
           let stmt : Except ParseError (List Triple × TurtleState × Nat × List Char) :=
             if isDirectiveAt r1 then .error ⟨"directives are not allowed inside a graph block", p1⟩
@@ -308,22 +310,22 @@ def readGraphBodyRecover {α β : Type} (report : β → Diagnostic → β) (opt
               | (run', false) => (.error e, run')
               | (run', true) =>
                   let (p2, r2) := trigBodyResync p1 r1 e.pos
-                  readGraphBodyRecover report opts fuel st p2 r2 acc
+                  readGraphBodyRecover report opts fuel st p2 r2 accRev
                     { run' with linePos := lp1.advance p1 (p2 - p1) r1 }
           | .ok (ts, st', p2, r2) =>
-              if p2 ≤ p1 then (.ok (acc ++ ts, st', p2, r2), { run with linePos := lp1 })
-              else readGraphBodyRecover report opts fuel st' p2 r2 (acc ++ ts)
+              let nextAcc := ts.reverse ++ accRev
+              if p2 ≤ p1 then (.ok (nextAcc.reverse, st', p2, r2), { run with linePos := lp1 })
+              else readGraphBodyRecover report opts fuel st' p2 r2 nextAcc
                      { run with linePos := lp1.advance p1 (p2 - p1) r1 }
 
 /-- A top-level TriG graph block read with recovery inside its body. `none`
 when the statement is not a graph block or its header does not parse; the
-caller then reports the strict error. The run's line state is at `pos` on
-entry. -/
+caller then reports the strict error. `fuel` is the caller's statement budget,
+as for `readTriGStatement`. The run's line state is at `pos` on entry. -/
 def readTriGBlockRecover {α β : Type} (report : β → Diagnostic → β) (opts : LenientOptions)
-    (st : TurtleState) (pos : Nat) (cs : List Char) (run : TurtleLenientRun α β) :
+    (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) (run : TurtleLenientRun α β) :
     Option (Except ParseError ((Option Subject × List Triple) × TurtleState × Nat × List Char) ×
       TurtleLenientRun α β) :=
-  let fuel := cs.length + 2
   let body (g : Option Subject) (st' : TurtleState) (p : Nat) (r : List Char) :=
     -- `p`, `r`: just after the `{`.
     let run' := { run with linePos := run.linePos.advance pos (p - pos) cs }
@@ -351,9 +353,10 @@ def readTriGBlockRecover {α β : Type} (report : β → Diagnostic → β) (opt
             | '{' :: r4 => body (some g) st2 (p3 + 1) r4
             | _ => none
 
-/-- `parseTriGStatements` with recovery (module header). -/
+/-- `parseTriGStatements` with recovery (module header). The accumulator is
+the strict walk's `FastDataset`. -/
 def parseTriGStatementsLenient {β : Type} (report : β → Diagnostic → β) (opts : LenientOptions) :
-    Nat → Nat → List Char → TurtleLenientRun Dataset β → TurtleLenientRun Dataset β
+    Nat → Nat → List Char → TurtleLenientRun FastDataset β → TurtleLenientRun FastDataset β
   | 0, _, _, run => run
   | fuel + 1, pos, cs, run =>
       let (p1, r1) := tws pos cs
@@ -361,17 +364,17 @@ def parseTriGStatementsLenient {β : Type} (report : β → Diagnostic → β) (
       match r1 with
       | [] => { run with linePos := lp1 }
       | _ =>
-          match readTriGStatement run.turtle p1 r1 with
+          match readTriGStatement fuel run.turtle p1 r1 with
           | .ok ((gname, ts), st', p2, r2) =>
-              let ds' := addTriplesTo run.acc gname ts
-              if r2.length ≥ r1.length then { run with acc := ds', turtle := st', linePos := lp1 }
+              let ds' := addTriplesToFast run.acc gname ts
+              if p2 ≤ p1 then { run with acc := ds', turtle := st', linePos := lp1 }
               else parseTriGStatementsLenient report opts fuel p2 r2
                      { run with acc := ds', turtle := st', linePos := lp1.advance p1 (p2 - p1) r1 }
           | .error e =>
               let run1 := { run with linePos := lp1 }
               -- A graph block: recover inside it, if that reports something.
               let recovered :=
-                match readTriGBlockRecover report opts run.turtle p1 r1 run1 with
+                match readTriGBlockRecover report opts fuel run.turtle p1 r1 run1 with
                 | some (.ok ((gname, ts), st', p2, r2), run2) =>
                     if run2.errors > run.errors || run2.stopped then
                       some (gname, ts, st', p2, r2, run2)
@@ -381,7 +384,7 @@ def parseTriGStatementsLenient {β : Type} (report : β → Diagnostic → β) (
                 | none => none
               match recovered with
               | some (gname, ts, st', p2, r2, run2) =>
-                  let run3 := { run2 with acc := addTriplesTo run.acc gname ts, turtle := st',
+                  let run3 := { run2 with acc := addTriplesToFast run.acc gname ts, turtle := st',
                                           linePos := lp1.advance p1 (p2 - p1) r1 }
                   if run2.stopped || p2 ≤ p1 then run3
                   else parseTriGStatementsLenient report opts fuel p2 r2 run3
@@ -400,8 +403,8 @@ def parseTriGLenientWithPrefixes (text : String) (base : Option String := none)
     Dataset × List Diagnostic × List (String × String) :=
   let cs := text.toList
   let out := parseTriGStatementsLenient pushDiag opts (cs.length + 2) 0 cs
-    (TurtleLenientRun.init Dataset.empty [] (TurtleState.init text base mode))
-  (out.acc, out.diags.reverse, out.turtle.prefixes)
+    (TurtleLenientRun.init ({} : FastDataset) [] (TurtleState.init text base mode))
+  (out.acc.toDataset, out.diags.reverse, out.turtle.prefixes)
 
 def parseTriGLenient (text : String) (base : Option String := none)
     (mode : Mode := .rdf11) (opts : LenientOptions := {}) : Dataset × List Diagnostic :=

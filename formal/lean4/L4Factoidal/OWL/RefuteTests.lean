@@ -1233,4 +1233,131 @@ private def ixSample : List (ClassExpr × ClassExpr) :=
 -- `≤ 1 p` is not edge-provable: no edge proves an upper bound.
 #guard ((TBoxIndex.build [(.maxCard 1 exP, .named exB)]).edgeProps).isEmpty
 
+
+/-! ## Qualified cardinality over a data range (`owl:onDataRange`)
+
+OWL 2 Mapping to RDF Graphs, Table 1: `DataMaxCardinality(n DPE DR)`
+is a restriction with `owl:maxQualifiedCardinality` and
+`owl:onDataRange T(DR)`. Until 2026-10-10 the parser read only
+`owl:onClass`, so the restriction below parsed as the UNQUALIFIED
+`≤ 1 dp`, and an individual with the two integer values `1` and `2` on
+`dp` was refuted. It has a model: neither value is an `xsd:string`.
+
+The second pair puts the same bound beside `≥ 2 dp.xsd:string`, which
+contradicts it, and beside `≥ 2 dp.xsd:integer`, which does not. Read
+unqualified, both pairs were `≥ 2 dp ⊓ ≤ 1 dp` and both were refuted. -/
+
+private def gMaxQualData : Graph :=
+  [ ⟨indI, rdfType, bnT "mq"⟩,
+    ⟨bn "mq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "mq", owlMaxQualifiedCardinality, cardLit "1"⟩,
+    ⟨bn "mq", owlOnDataRange, .iri xsdString⟩,
+    ⟨indI, exDp1, intT "1"⟩, ⟨indI, exDp1, intT "2"⟩ ]
+
+#guard (match parseClassExpr (Store.ofGraph gMaxQualData) (bnT "mq") 8 with
+        | .maxQualCard 1 p (.named d) => p == exDp1 && d == xsdString
+        | _ => false)
+#guard !(refuted gMaxQualData)
+
+private def gMinMaxQualData (minFiller : WfIri) : Graph :=
+  [ ⟨indI, rdfType, bnT "mq"⟩,
+    ⟨bn "mq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "mq", owlMaxQualifiedCardinality, cardLit "1"⟩,
+    ⟨bn "mq", owlOnDataRange, .iri xsdString⟩,
+    ⟨indI, rdfType, bnT "nq"⟩,
+    ⟨bn "nq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "nq", owlMinQualifiedCardinality, cardLit "2"⟩,
+    ⟨bn "nq", owlOnDataRange, .iri minFiller⟩ ]
+
+#guard refuted (gMinMaxQualData xsdString)
+#guard !(refuted (gMinMaxQualData xsdInteger))
+
+/-! `Qualified-cardinality-boolean` and `-restricted-int`
+(https://github.com/danbri/factoidal/issues/709). `= 2 dp.xsd:boolean`
+needs both boolean values, so each is entailed; the negation goal is the
+negative assertion, and `xsd:boolean` less the excluded value holds one
+value, fewer than two. `= 1 dp.xsd:boolean` does not force `true`.
+`= 3 dp.xsd:integer[≥ 1, ≤ 3]` forces `1`, `2` and `3`;
+`= 2 dp.xsd:integer[≥ 1, ≤ 3]` forces none of them. -/
+
+private def boolT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := xsdBoolean, langTag := none, direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff, xsdBoolean]⟩
+
+private def gExactQualBool (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "eq"⟩,
+    ⟨bn "eq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "eq", owlQualifiedCardinality, cardLit k⟩,
+    ⟨bn "eq", owlOnDataRange, .iri xsdBoolean⟩ ]
+
+#guard entailedByRefutation (gExactQualBool "2") [⟨indI, exDp1, boolT "true"⟩]
+#guard entailedByRefutation (gExactQualBool "2") [⟨indI, exDp1, boolT "false"⟩]
+#guard !entailedByRefutation (gExactQualBool "1") [⟨indI, exDp1, boolT "true"⟩]
+/-! Three boolean values do not exist: `= 3 dp.xsd:boolean` has no
+model, and `= 2` has one. -/
+#guard refuted (gExactQualBool "3")
+#guard !(refuted (gExactQualBool "2"))
+
+private def gExactQualRange (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "eq"⟩,
+    ⟨bn "eq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "eq", owlQualifiedCardinality, cardLit k⟩,
+    ⟨bn "eq", owlOnDataRange, bnT "dr"⟩,
+    ⟨bn "dr", owlOnDatatype, .iri xsdInteger⟩,
+    ⟨bn "dr", owlWithRestrictions, bnT "f1"⟩,
+    ⟨bn "f1", rdfFirst, bnT "fa"⟩, ⟨bn "f1", rdfRest, bnT "f2"⟩,
+    ⟨bn "f2", rdfFirst, bnT "fb"⟩, ⟨bn "f2", rdfRest, .iri rdfNil⟩,
+    ⟨bn "fa", facetMinInclusive, intT "1"⟩,
+    ⟨bn "fb", facetMaxInclusive, intT "3"⟩ ]
+
+#guard entailedByRefutation (gExactQualRange "3") [⟨indI, exDp1, intT "2"⟩]
+#guard !entailedByRefutation (gExactQualRange "2") [⟨indI, exDp1, intT "2"⟩]
+#guard refuted (gExactQualRange "4")
+#guard !(refuted (gExactQualRange "3"))
+
+/-! ## The ≤-rule does not branch where a literal could be identified
+
+`a : ≤ 2 dp`, `a dp 1`, `a dp "x"`, `a : ∃dp.xsd:integer`,
+`a : ∃dp.¬xsd:integer` has a model: the two existentials are met by
+`1` and `"x"`. The witnesses for them cannot be merged with a literal,
+so the rule offers no branch rather than only the witness pair. With
+`≤ 1 dp` the two provably different values violate the bound outright.
+-/
+
+private def gLiteralMerge (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "r"⟩,
+    ⟨bn "r", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "r", owlMaxCardinality, cardLit k⟩,
+    ⟨indI, exDp1, intT "1"⟩, ⟨indI, exDp1, strT "x"⟩,
+    ⟨indI, rdfType, bnT "s1"⟩,
+    ⟨bn "s1", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "s1", owlSomeValuesFrom, .iri xsdInteger⟩,
+    ⟨indI, rdfType, bnT "s2"⟩,
+    ⟨bn "s2", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "s2", owlSomeValuesFrom, bnT "c2"⟩,
+    ⟨bn "c2", L4Factoidal.OWL.owlDatatypeComplementOf, .iri xsdInteger⟩ ]
+
+#guard !(refuted (gLiteralMerge "2"))
+#guard refuted (gLiteralMerge "1")
+
+/-! ## A literal successor counts against `≤ k p.DR` (`New-Feature-DataQCR-001`)
+
+Two different `xsd:string` values entail `≥ 2 hasName.xsd:string`: the
+negation `≤ 1 hasName.xsd:string` is violated by the two literals, which
+are provably in the data range. One string and one integer do not
+entail it. -/
+
+private def gTwoNames (second : Term) : Graph :=
+  [ ⟨indI, exDp1, strT "Meg Griffin"⟩, ⟨indI, exDp1, second⟩ ]
+
+private def cMinTwoStrings : Graph :=
+  [ ⟨indI, rdfType, bnT "q"⟩,
+    ⟨bn "q", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "q", owlMinQualifiedCardinality, cardLit "2"⟩,
+    ⟨bn "q", owlOnDataRange, .iri xsdString⟩ ]
+
+#guard entailedByRefutation (gTwoNames (strT "Megan Griffin")) cMinTwoStrings
+#guard !entailedByRefutation (gTwoNames (intT "2")) cMinTwoStrings
+#guard !entailedByRefutation (gTwoNames (strT "Meg Griffin")) cMinTwoStrings
+
 end L4Factoidal.OWL.Refute

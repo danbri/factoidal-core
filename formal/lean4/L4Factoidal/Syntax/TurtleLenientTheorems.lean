@@ -113,7 +113,7 @@ theorem parseTurtleLenientWithPrefixes_of_ok (text : String) (base : Option Stri
 
 theorem parseTriGStatementsLenient_of_ok {β : Type} (report : β → Diagnostic → β)
     (opts : LenientOptions) :
-    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun Dataset β) (ds : Dataset)
+    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun FastDataset β) (ds : FastDataset)
       (st' : TurtleState),
       parseTriGStatements fuel run.turtle pos cs run.acc = .ok (ds, st') →
       ∃ lp, parseTriGStatementsLenient report opts fuel pos cs run
@@ -136,12 +136,12 @@ theorem parseTriGStatementsLenient_of_ok {β : Type} (report : β → Diagnostic
           exact ⟨_, rfl⟩
       | cons c rest =>
           simp only [hr] at h ⊢
-          cases hs : readTriGStatement run.turtle (tws pos cs).1 (c :: rest) with
+          cases hs : readTriGStatement fuel run.turtle (tws pos cs).1 (c :: rest) with
           | error e => simp [hs] at h
           | ok v =>
               obtain ⟨⟨gname, ts⟩, st2, p2, r2⟩ := v
               simp only [hs] at h ⊢
-              by_cases hp : r2.length ≥ (c :: rest).length
+              by_cases hp : p2 ≤ (tws pos cs).1
               · simp only [hp, if_true, Except.ok.injEq, Prod.mk.injEq] at h ⊢
                 obtain ⟨rfl, rfl⟩ := h
                 exact ⟨_, rfl⟩
@@ -155,7 +155,7 @@ theorem parseTriGLenient_of_ok (text : String) (base : Option String) (mode : Mo
     parseTriGLenient text base mode opts = (ds, []) := by
   simp only [parseTriG] at h
   cases hf : parseTriGStatements (text.toList.length + 2) (TurtleState.init text base mode) 0
-      text.toList Dataset.empty with
+      text.toList {} with
   | error e => rw [hf] at h; simp at h
   | ok v =>
       obtain ⟨d, st'⟩ := v
@@ -163,7 +163,7 @@ theorem parseTriGLenient_of_ok (text : String) (base : Option String) (mode : Mo
       simp only [Except.ok.injEq] at h
       obtain ⟨lp, hlp⟩ := parseTriGStatementsLenient_of_ok pushDiag opts
         (text.toList.length + 2) 0 text.toList
-        (TurtleLenientRun.init Dataset.empty [] (TurtleState.init text base mode)) d st' hf
+        (TurtleLenientRun.init ({} : FastDataset) [] (TurtleState.init text base mode)) d st' hf
       simp only [parseTriGLenient, parseTriGLenientWithPrefixes]
       rw [hlp]
       simp [TurtleLenientRun.init, h]
@@ -175,7 +175,7 @@ theorem parseTriGLenientWithPrefixes_of_ok (text : String) (base : Option String
     parseTriGLenientWithPrefixes text base mode opts = (ds, [], ps) := by
   simp only [parseTriGWithPrefixes] at h
   cases hf : parseTriGStatements (text.toList.length + 2) (TurtleState.init text base mode) 0
-      text.toList Dataset.empty with
+      text.toList {} with
   | error e => rw [hf] at h; simp at h
   | ok v =>
       obtain ⟨d, st'⟩ := v
@@ -184,7 +184,7 @@ theorem parseTriGLenientWithPrefixes_of_ok (text : String) (base : Option String
       obtain ⟨hd, hps⟩ := h
       obtain ⟨lp, hlp⟩ := parseTriGStatementsLenient_of_ok pushDiag opts
         (text.toList.length + 2) 0 text.toList
-        (TurtleLenientRun.init Dataset.empty [] (TurtleState.init text base mode)) d st' hf
+        (TurtleLenientRun.init ({} : FastDataset) [] (TurtleState.init text base mode)) d st' hf
       simp only [parseTriGLenientWithPrefixes]
       rw [hlp]
       simp [TurtleLenientRun.init, hd, hps]
@@ -388,11 +388,12 @@ theorem readGraphBodyRecover_grew' {α : Type} (opts : LenientOptions) (fuel : N
   rw [h] at hg
   exact hg
 
-theorem readTriGBlockRecover_grew {α : Type} (opts : LenientOptions) (st : TurtleState)
-    (pos : Nat) (cs : List Char) (run : TurtleLenientRun α (List Diagnostic))
+theorem readTriGBlockRecover_grew {α : Type} (opts : LenientOptions) (fuel : Nat)
+    (st : TurtleState) (pos : Nat) (cs : List Char) (run : TurtleLenientRun α (List Diagnostic))
     (res : Except ParseError ((Option Subject × List Triple) × TurtleState × Nat × List Char))
     (run2 : TurtleLenientRun α (List Diagnostic))
-    (h : readTriGBlockRecover pushDiag opts st pos cs run = some (res, run2)) : run2.Grew run := by
+    (h : readTriGBlockRecover pushDiag opts fuel st pos cs run = some (res, run2)) :
+    run2.Grew run := by
   simp only [readTriGBlockRecover] at h
   repeat' split at h
   all_goals first
@@ -404,7 +405,7 @@ theorem readTriGBlockRecover_grew {α : Type} (opts : LenientOptions) (st : Turt
 
 /-- The diagnostic list of the TriG walk only grows, at the front. -/
 theorem parseTriGStatementsLenient_diags_grow (opts : LenientOptions) :
-    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun Dataset (List Diagnostic))
+    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun FastDataset (List Diagnostic))
       (ys : List Diagnostic), (∃ l1, run.diags = l1 ++ ys) →
       ∃ l, (parseTriGStatementsLenient pushDiag opts fuel pos cs run).diags = l ++ ys := by
   intro fuel
@@ -417,11 +418,11 @@ theorem parseTriGStatementsLenient_diags_grow (opts : LenientOptions) :
       cases hr : (tws pos cs).2 with
       | nil => exact ⟨l1, hl1⟩
       | cons c rest =>
-          cases hs : readTriGStatement run.turtle (tws pos cs).1 (c :: rest) with
+          cases hs : readTriGStatement fuel run.turtle (tws pos cs).1 (c :: rest) with
           | ok v =>
               obtain ⟨⟨gname, ts⟩, st2, p2, r2⟩ := v
               simp only [hs]
-              by_cases hp : r2.length ≥ (c :: rest).length
+              by_cases hp : p2 ≤ (tws pos cs).1
               · simp only [hp, if_true]; exact ⟨l1, hl1⟩
               · simp only [hp, if_false]; exact ih _ _ _ ys ⟨l1, hl1⟩
           | error e =>
@@ -437,7 +438,7 @@ theorem parseTriGStatementsLenient_diags_grow (opts : LenientOptions) :
                     split at hrec
                     · simp only [Option.some.injEq, Prod.mk.injEq] at hrec
                       obtain ⟨-, -, -, -, -, rfl⟩ := hrec
-                      exact grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ heqB)
+                      exact grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ _ heqB)
                         (grew_linePos run _)
                     · simp at hrec
                   · rename_i e2 run2' heqB
@@ -445,7 +446,7 @@ theorem parseTriGStatementsLenient_diags_grow (opts : LenientOptions) :
                     split at hrec
                     · simp only [Option.some.injEq, Prod.mk.injEq] at hrec
                       obtain ⟨-, -, -, -, -, rfl⟩ := hrec
-                      exact grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ heqB)
+                      exact grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ _ heqB)
                         (grew_linePos run _)
                     · simp at hrec
                   · intro hrec; simp at hrec
@@ -462,7 +463,7 @@ theorem parseTriGStatementsLenient_diags_grow (opts : LenientOptions) :
                   exact ih _ _ _ ys ⟨d :: l1, by simp only; rw [hd]; simp [hl1]⟩
 
 private theorem parseTriGStatementsLenient_diags_ne (opts : LenientOptions) (fuel pos : Nat)
-    (cs : List Char) (run : TurtleLenientRun Dataset (List Diagnostic)) (xs l2 : List Diagnostic)
+    (cs : List Char) (run : TurtleLenientRun FastDataset (List Diagnostic)) (xs l2 : List Diagnostic)
     (hl2 : run.diags = l2 ++ xs) (hne : l2 ≠ []) :
     (parseTriGStatementsLenient pushDiag opts fuel pos cs run).diags ≠ xs := by
   obtain ⟨l, hl⟩ := parseTriGStatementsLenient_diags_grow opts fuel pos cs run run.diags
@@ -474,7 +475,7 @@ private theorem parseTriGStatementsLenient_diags_ne (opts : LenientOptions) (fue
   exact hne (List.eq_nil_of_length_eq_zero (by omega))
 
 theorem parseTriGStatements_ok_of_quiet (opts : LenientOptions) :
-    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun Dataset (List Diagnostic)),
+    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun FastDataset (List Diagnostic)),
       run.stopped = false →
       (parseTriGStatementsLenient pushDiag opts fuel pos cs run).diags = run.diags →
       ∃ ds st', parseTriGStatements fuel run.turtle pos cs run.acc = .ok (ds, st') := by
@@ -489,11 +490,11 @@ theorem parseTriGStatements_ok_of_quiet (opts : LenientOptions) :
       | nil => simp only [hr]; exact ⟨_, _, rfl⟩
       | cons c rest =>
           simp only [hr] at h ⊢
-          cases hs : readTriGStatement run.turtle (tws pos cs).1 (c :: rest) with
+          cases hs : readTriGStatement fuel run.turtle (tws pos cs).1 (c :: rest) with
           | ok v =>
               obtain ⟨⟨gname, ts⟩, st2, p2, r2⟩ := v
               simp only [hs] at h ⊢
-              by_cases hp : r2.length ≥ (c :: rest).length
+              by_cases hp : p2 ≤ (tws pos cs).1
               · simp only [hp, if_true]; exact ⟨_, _, rfl⟩
               · simp only [hp, if_false] at h ⊢
                 obtain ⟨ds, st', hf⟩ := ih p2 r2 _ (by exact hstop) h
@@ -513,7 +514,7 @@ theorem parseTriGStatements_ok_of_quiet (opts : LenientOptions) :
                     · rename_i hcond
                       simp only [Option.some.injEq, Prod.mk.injEq] at hrec
                       obtain ⟨-, -, -, -, -, rfl⟩ := hrec
-                      exact ⟨grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ heqB)
+                      exact ⟨grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ _ heqB)
                         (grew_linePos run _), hcond⟩
                     · simp at hrec
                   · rename_i e2 run2' heqB
@@ -522,7 +523,7 @@ theorem parseTriGStatements_ok_of_quiet (opts : LenientOptions) :
                     · rename_i hcond
                       simp only [Option.some.injEq, Prod.mk.injEq] at hrec
                       obtain ⟨-, -, -, -, -, rfl⟩ := hrec
-                      exact ⟨grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ heqB)
+                      exact ⟨grew_trans (readTriGBlockRecover_grew opts _ _ _ _ _ _ _ heqB)
                         (grew_linePos run _), by simp [hcond]⟩
                     · simp at hrec
                   · intro hrec; simp at hrec
@@ -559,10 +560,10 @@ theorem parseTriG_ok_of_lenient_quiet (text : String) (base : Option String) (mo
   simp only [parseTriGLenient, parseTriGLenientWithPrefixes, List.reverse_eq_nil_iff] at h
   obtain ⟨ds, st', hf⟩ := parseTriGStatements_ok_of_quiet opts
     (text.toList.length + 2) 0 text.toList
-    (TurtleLenientRun.init Dataset.empty [] (TurtleState.init text base mode)) rfl h
+    (TurtleLenientRun.init ({} : FastDataset) [] (TurtleState.init text base mode)) rfl h
   have hf' : parseTriGStatements (text.toList.length + 2) (TurtleState.init text base mode) 0
-      text.toList Dataset.empty = .ok (ds, st') := hf
-  exact ⟨ds, by simp [parseTriG, hf']⟩
+      text.toList {} = .ok (ds, st') := hf
+  exact ⟨ds.toDataset, by simp [parseTriG, hf']⟩
 
 /-! ## Axiom audit -/
 

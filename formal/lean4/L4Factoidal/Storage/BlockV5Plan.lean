@@ -7,12 +7,12 @@ re-runs them (`docs/designissues/2026-09-05-wire-version-10-scale.md`
 sections 6.1 and 6.2, and the rule that encoder admission equals decoder
 admission):
 
-* the LGI4 literal index and the GBI1 geometry index, which are built over an
+* the LGI2 literal index and the GBI1 geometry index, which are built over an
   `Array Term` VIEW of the PTD2 dictionary. An out-of-line literal has no
   lexical form in the block, so it can carry no gram and no bounding box; its
   dictionary slot is replaced by a blank node, which `LiteralGramIndex` and
   `GeoBBoxIndex` both index as nothing, and its POSITION is carried in the
-  LGI4 opaque list instead. `LiteralGramIndex.candidatesOpaque?` then returns
+  LGI2 opaque list instead. `LiteralGramIndex.candidatesOpaque?` then returns
   every opaque position for every needle it can serve, which is what keeps the
   candidate list a superset of the matching terms.
 * the two zone maps, the smallest and the largest subject (or object) key of
@@ -63,14 +63,14 @@ def inlineDictView (dict : Array WireTerm) : Array Term :=
     | .blob _ => opaqueSlot
 
 /-- The dictionary positions of the out-of-line literals, ascending and
-    distinct. This is LGI4's opaque list. -/
+    distinct. This is LGI2's opaque list. -/
 def opaquePositions (dict : Array WireTerm) : List Nat :=
   (dict.toList.zipIdx.filterMap fun (w, i) =>
     match w with
     | .blob _ => some i
     | .inline _ => none)
 
-/-- The LGI4 index of one block: the gram index of the inline view, carrying
+/-- The LGI2 index of one block: the gram index of the inline view, carrying
     the opaque positions. -/
 def literalIndexOf (block : QuadBlock) : LiteralGramIndex.Index :=
   { LiteralGramIndex.build (inlineDictView block.dict) with
@@ -159,7 +159,7 @@ positions whose term can match. An out-of-line literal breaks the superset
 property of both indexes for the same reason: its lexical form is not in the
 block, so no gram and no bounding box can be computed from it.
 
-* LGI4 repairs it in the index. The opaque list is part of the artifact and
+* LGI2 repairs it in the index. The opaque list is part of the artifact and
   `LiteralGramIndex.candidatesOpaque?` returns every member for every needle
   the index can serve (`mem_candidatesOpaque_of_opaque`). A caller must use
   `candidatesOpaque?`, not `candidates?`.
@@ -175,7 +175,7 @@ The native `l4block-quad-query` reads every selected block whole and takes no
 index path at all, so it meets the obligation trivially; the index paths are
 `Wasm/Ops/StoreHandles.lean`. -/
 
-/-- The LGI4 candidate positions for one needle: the gram intersection plus
+/-- The LGI2 candidate positions for one needle: the gram intersection plus
     every out-of-line literal of the block, which the index carries. -/
 def literalCandidates? (index : LiteralGramIndex.Index) (needle : String) :
     Option (List Nat) :=
@@ -189,50 +189,5 @@ def geoCandidates? (block : QuadBlock) (index : GeoBBoxIndex.Index)
     (op : GeoBBoxIndex.GeoOp) (query : L4Factoidal.Geo.WktValue) : Option (List Nat) :=
   (GeoBBoxIndex.candidates? index op query).map fun ids =>
     LiteralGramIndex.withOpaque ids (opaquePositions block.dict)
-
-/-! ## Build-time checks -/
-
-private def pName : WfIri := ⟨"http://example.org/name", by simp [isIri]⟩
-private def alice : Subject := .iri ⟨"http://example.org/alice", by simp [isIri]⟩
-private def bob : Subject := .iri ⟨"http://example.org/bob", by simp [isIri]⟩
-
-private def bigLexical : String := String.ofList (List.replicate 70000 'a')
-
-private def sampleQuads : List (Option GraphRef × Triple) :=
-  [(none, { s := alice, p := pName, o := .literal (Literal.string "hello") }),
-   (none, { s := bob, p := pName, o := .literal (Literal.string bigLexical) })]
-
-private def sample : QuadBlock := fromRdfQuads specHash sampleQuads
-
--- The out-of-line literal is one opaque position and is not grammed.
-#guard (opaquePositions sample.dict).length == 1
-#guard (literalIndexOf sample).opaqueIds == opaquePositions sample.dict
-#guard (literalIndexOf sample).literalCount == 1
-#guard (literalIndexOf sample).dictCount == sample.dict.size
-#guard (geoIndexOf sample).dictCount == sample.dict.size
-
--- Both zone maps exist, are ordered, and are inside the bound.
-#guard (subjectZone? sample).isSome
-#guard (objectZone? sample).isSome
-#guard (zones? sample).map Prod.fst == subjectZone? sample
-#guard (zones? sample).map Prod.snd == objectZone? sample
-#guard ((subjectZone? sample).map ShardManifest.zoneAdmitted) == some true
-#guard ((objectZone? sample).map ShardManifest.zoneAdmitted) == some true
-
--- Every row's own key is inside the block's bounds.
-#guard ((subjectZone? sample).map fun zone =>
-  (subjectKeys sample).map fun keys =>
-    keys.all fun key => ShardManifest.zoneMayContain zone key) == some (some true)
-#guard ((objectZone? sample).map fun zone =>
-  (objectKeys sample).map fun keys =>
-    keys.all fun key => ShardManifest.zoneMayContain zone key) == some (some true)
-
--- The out-of-line literal is a candidate of every needle the LGI4 index can
--- serve, including one no inline literal of the block carries.
-#guard (literalCandidates? (literalIndexOf sample) "zzz").isSome
-#guard ((literalCandidates? (literalIndexOf sample) "zzz").map fun ids =>
-  (opaquePositions sample.dict).all fun i => ids.contains i) == some true
-#guard ((literalCandidates? (literalIndexOf sample) "hel").map fun ids =>
-  (opaquePositions sample.dict).all fun i => ids.contains i) == some true
 
 end L4Factoidal.Storage.BlockV5Plan

@@ -92,8 +92,6 @@ def owlWithRestrictions : WfIri :=
   ⟨"http://www.w3.org/2002/07/owl#withRestrictions", rfl⟩
 def owlOnProperties : WfIri :=
   ⟨"http://www.w3.org/2002/07/owl#onProperties", rfl⟩
-def owlOnDataRange : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#onDataRange", rfl⟩
 
 /-! ## Structural / content classification -/
 

@@ -717,6 +717,11 @@ structure Measure where
   /-- Containment missed, goals stated, a goal has a countermodel:
   the refuter says the entailment does not hold. -/
   peCountermodel : Nat := 0
+  /-- NegativeEntailmentTest units whose non-conclusion the refuter was
+  asked about (`judgeNegative`, refuter regimes, DIRECT and DL cases).
+  A cross-check that is never asked is no evidence, so its reach is
+  printed. -/
+  neChecked      : Nat := 0
 deriving Repr
 
 def Measure.add (a b : Measure) : Measure :=
@@ -726,7 +731,8 @@ def Measure.add (a b : Measure) : Measure :=
     parseFailures := a.parseFailures + b.parseFailures,
     peNoGoals := a.peNoGoals + b.peNoGoals,
     peBudget := a.peBudget + b.peBudget,
-    peCountermodel := a.peCountermodel + b.peCountermodel }
+    peCountermodel := a.peCountermodel + b.peCountermodel,
+    neChecked := a.neChecked + b.neChecked }
 
 /-- What a judge returns: the verdict UNDER THE REGIME, the verdict the
 CLOSURE ALONE reached, and the measurement delta. The two verdicts are
@@ -1103,6 +1109,18 @@ def refuteEntailsWhyBounded (ms : Nat) (label : String) (closure : Graph)
 ({closure.length} triples, budget {rb}); no verdict"
     pure RefuteWhy.budget
 
+/-- The comprehension / existential-witness layer, applied ONCE over a
+stable closure, then one plain re-closure. Shared by the positive judge
+and, under a refuter regime, by the negative judge's cross-check, so
+both ask the refuter about the same graph. -/
+def withComprehension (r0 : ClosureResult) (capMs : Nat) : IO ClosureResult := do
+  let gw := L4Factoidal.OWL.Comp.comprehensionLayer r0.graph
+  if gw.length == r0.graph.length then pure r0 else
+    let t2 ← IO.monoMsNow
+    let r2 ← closureIO gw closureFuel (t2 + capMs)
+    pure { r2 with rounds := r0.rounds + r2.rounds,
+                   capped := r0.capped || r2.capped }
+
 def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) (strict : Bool)
     : IO Verdict := do
@@ -1129,13 +1147,7 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
         -- `type-inconsistency.rdf`). One plain re-closure afterwards
         -- lets ordinary rows see the witnesses' shape triples; it does
         -- NOT re-run the layer, so this cannot iterate.
-        let r ← do
-          let gw := L4Factoidal.OWL.Comp.comprehensionLayer r0.graph
-          if gw.length == r0.graph.length then pure r0 else
-            let t2 ← IO.monoMsNow
-            let r2 ← closureIO gw closureFuel (t2 + capMs)
-            pure { r2 with rounds := r0.rounds + r2.rounds,
-                           capped := r0.capped || r2.capped }
+        let r ← withComprehension r0 capMs
         let gc := if isDirectOnly c then excludeAnnotationTriples gc0 else gc0
         let m := { m with triplesParsed := m.triplesParsed + gc0.length }
         -- `strict`: one mapping for the whole conclusion graph
@@ -1192,8 +1204,8 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
           IO.println s!"PE-REFUTER-WITHHELD {c.id}: {repr w}"
           return { regime := closureOutcome, closure := closureOutcome, measure := m }
 
-def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
-    (strict : Bool)
+def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+    (rms : Nat) (strict : Bool)
     : IO Verdict := do
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
   match (match c.nonConclusion with
@@ -1217,7 +1229,36 @@ def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
         if !contained then
           if r.capped then
             return Verdict.same (.fail s!"cap: absence verdict on a closure that hit the budget after {r.rounds} rounds") m
-          else return Verdict.same .pass m
+          else if !rg.refuter || isRdfBasedOnly c || !c.species.contains "DL" then
+            return Verdict.same .pass m
+          else
+            -- Under a refuter regime the engine answers "entailed" on
+            -- containment OR on refutation of the negated conclusion
+            -- (`judgePositive`). A NegativeEntailmentTest is the case
+            -- where that answer MUST NOT be True (OWL 2 Conformance
+            -- §3.1.2.2), so the same refutation is asked here. A refuter
+            -- scored only on PositiveEntailmentTests cannot be caught
+            -- claiming an entailment that does not hold.
+            --
+            -- The refuter decides the Direct Semantics, so the check is
+            -- made only where the catalog says that semantics applies
+            -- (`test:semantics DIRECT`) to OWL 2 DL inputs
+            -- (`test:species DL`; Conformance §2.2.1 defines Direct
+            -- Semantics entailment over ontology structures that satisfy
+            -- the OWL 2 Syntax §3 restrictions). `WebOnt-Class-005` and
+            -- `WebOnt-Restriction-005` are RDF-BASED only, and their
+            -- `-direct` alternatives are PositiveEntailmentTests;
+            -- `WebOnt-Ontology-003` is FULL only, and its non-conclusion
+            -- differs from the premise's consequences only by an
+            -- `owl:Ontology` triple, which is no axiom.
+            let rc ← withComprehension r capMs
+            let w ← refuteEntailsWhyBounded rms c.id rc.graph gc rb
+            let m := { m with neChecked := m.neChecked + 1 }
+            if w == .entailed then
+              IO.println s!"NEGATIVE-REFUTER-ENTAILED {c.id}: the tableau refuted every negation goal of a non-conclusion"
+              return { regime := .fail s!"refuter: the tableau claims an entailment the catalog denies ({rc.graph.length} triples)",
+                       closure := .pass, measure := m }
+            else return Verdict.same .pass m
         else
           return Verdict.same (.fail s!"closure-gap: every non-conclusion triple was derived (unexpected entailment)") m
 
@@ -1286,7 +1327,7 @@ def judge (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) (strict : Bool)
     : String → IO Verdict
   | "PositiveEntailmentTest" => judgePositive cat c capMs rg rb rms strict
-  | "NegativeEntailmentTest" => judgeNegative cat c capMs rg strict
+  | "NegativeEntailmentTest" => judgeNegative cat c capMs rg rb rms strict
   | "ConsistencyTest"        => judgeConsistency cat c capMs rg rb rms
   | "InconsistencyTest"      => judgeInconsistency cat c capMs rg rb rms
   | ty                       => pure (Verdict.same (.unsupported s!"test type {ty}") {})
@@ -1398,7 +1439,8 @@ clashes={r.measure.clashes} cap_hits={r.measure.capHits} \
 parse_failures={r.measure.parseFailures} \
 refuter_passes={r.refuterPasses} refuter_flips_to_fail={r.refuterFlips} \
 pe_no_negation_goal={r.measure.peNoGoals} pe_refuter_budget={r.measure.peBudget} \
-pe_countermodel={r.measure.peCountermodel} wall_ms={r.wallMs}"
+pe_countermodel={r.measure.peCountermodel} \
+ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
   -- FAILs grouped by cause.
   let causes := (r.fails.map (·.1)).eraseDups
   for cause in causes do
@@ -2317,7 +2359,7 @@ triples_parsed={totalM.triplesParsed} closure_rounds={totalM.closureRounds} \
 clashes={totalM.clashes} cap_hits={totalM.capHits} parse_failures={totalM.parseFailures} \
 refuter_passes={totalRefPass} refuter_flips_to_fail={totalRefFlip} \
 pe_no_negation_goal={totalM.peNoGoals} pe_refuter_budget={totalM.peBudget} \
-pe_countermodel={totalM.peCountermodel}"
+pe_countermodel={totalM.peCountermodel} ne_refuter_checked={totalM.neChecked}"
   if o.regime.refuter then
     IO.println s!"REFUTER-REACH: {totalRefPass} units the closure failed were decided \
 by refutation; {totalM.peNoGoals} positive-entailment units the closure failed produced \

@@ -82,6 +82,67 @@ Rules from that repair:
   holds all the references) cost 3.9 s, so a ladder over the hub shape alone
   would have under-reported the cost 14-fold.
 
+## The 2026-10-10 survey: the shapes that were slow
+
+The survey in
+[`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`](../../docs/designissues/2026-10-10-lean-vs-fstar-performance.md)
+found six quadratic costs and three constant factors in the Lean tree. Look for
+these shapes first in any module that is slow on a large input.
+
+- **A specification that scans, used as the implementation.** `RDFS.step` read
+  premises with `g.filter` once per triple, and added conclusions with
+  `Graph.add` (a scan). Repair: keep the scanning definition, add an indexed
+  twin that returns the same LIST, prove the equality, and register
+  `@[csimp]` so every caller gets the fast one (`RDFS/Closure.lean`,
+  `RDFS/FullClosure.lean`). 100 to 500 times faster; 0.9 to 1.6 times the F*
+  time at the largest sizes measured.
+- **An indexed twin that nothing calls.** `OWL/RLClosureIndexed.lean` had the
+  indexed OWL RL closure with `indexedClosure_eq` (same list at every fuel)
+  since August; only the probe harness called it, and the command line called
+  the scanning `closure`. Two `csimp` theorems closed the gap (chain of 80
+  axioms: 8.6 s to 0.22 s; schema.org: over 120 s to 6.4 s). Before writing a
+  twin, grep for `*Indexed`, `*Fast` and `*Ix` definitions and check who calls
+  them.
+- **`List.length` of the remaining input in a loop.** The TriG reader did
+  `r1.length` per statement. `Syntax.Turtle.parseStatements` already declined a
+  fuel counter and compared positions; `Syntax/TriG.lean` had not been changed
+  with it. Grep for `.length` inside every recursive reader.
+- **An insertion sort in the algorithm.** `RDF/Canonical.lean`
+  (`sortBy`) and `Syntax/TurtleSerialize.lean` (`sortStrs`). Repair:
+  `List.mergeSort`. For a total preorder with ties, the equality with a stable
+  insertion sort has a general proof by way of `List.zipIdxLE`
+  (`CanonicalTheorems.sortBy_eq_mergeSort`); for strings, where equal means
+  identical, antisymmetry is enough (`TurtleSerialize.sortStrs_eq`).
+- **A list of groups searched and appended to per row.** `SPARQL/Query.lean`
+  `addToGroups`. Repair: array of groups plus a hash index on a bucket key that
+  is constant on order-equal values (`erEqual_erBucket`).
+- **A comparison that converts to lists.** `Canonical.strLe` built two
+  character lists per call: 57 percent of the instructions of `canonicalize`
+  after the sorts were repaired. Lean's native `String` order is the same order
+  (`charsLe_eq_not_lt`); a `csimp` theorem makes the compiler use it.
+
+Two more costs are not in an algorithm, and one hazard follows from the repairs:
+
+- **Top-level constants are evaluated when the module is initialised**, in every
+  executable that links the module. Five storage modules held 70,000-byte test
+  fixtures hashed with SHA-256 as `private def`s next to their `#guard`s;
+  together they cost 280 million instructions at process start (43 ms of CPU
+  time, 7 ms after the move). Keep fixtures that need real computation in a
+  `*Tests.lean` module that no executable imports.
+- **The command line is a client of the JSON ABI.** `l4factoidal parse` built
+  the whole dataset as N-Quads text in a JSON string, then parsed the JSON to
+  read one number: half the instructions of `parse`, and 3,659 MB of resident
+  memory for a 6.8 MB Turtle file (256 MB after the repair). Profile a verb by
+  phase before ranking a parser. `query`, `canonicalize`, `update` and `closure`
+  still read their input through `readAsNQuads` (parse, write N-Quads text,
+  parse the text again): 75 percent of the instructions of a COUNT query.
+- **`csimp` makes a guard compare a function with itself.** After
+  `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
+  closure g n` in a later module runs the same code on both sides. Restate the
+  specification under another name in the test module and prove the two equal
+  (`RLTests.closureScan_eq`), so the guard still compares two programs. The
+  guards on `strLe` compare with `charsLe a.toList b.toList` for the same reason.
+
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
 A function that recurses once per element of an input the CALLER sizes -- a
