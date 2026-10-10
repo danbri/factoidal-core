@@ -131,6 +131,44 @@ def redirectCase : List (String × String) :=
 #guard !((subjectsOf (graphOf (run redirectCase "http://ex/old"))).map (fun
           | .iri i => i.val | .bnode b => b)).contains "http://ex/old"
 
+/-! ## Retrieval is a parameter, so a language-negotiated resource needs no library support
+
+`fetch` may answer differently for an agent that asks for another
+language (RFC 9110 section 12.5.4). The GRDDL Test Cases cases
+`langconneg1` to `langconneg3` rest on this: an agent that retrieves the
+English representation, one that retrieves the German one, and one that
+retrieves both and merges the results (GRDDL section 2). -/
+
+def titleStyle : String :=
+  "<xsl:stylesheet version='1.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'" ++
+  " xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>" ++
+  "<xsl:template match='/'><rdf:RDF><rdf:Description rdf:about='http://ex/album'>" ++
+  "<rdf:value><xsl:value-of select='/doc/title'/></rdf:value></rdf:Description></rdf:RDF>" ++
+  "</xsl:template></xsl:stylesheet>"
+
+/-- The one resource has an English and a German representation. -/
+def negotiated (lang : String) : List (String × String) :=
+  [("http://ex/conneg",
+    "<doc xmlns:g='http://www.w3.org/2003/g/data-view#' g:transformation='http://ex/Title'><title>" ++
+    (if lang == "de" then "Hast Du Erfahrung?" else "Are You Experienced?") ++ "</title></doc>"),
+   ("http://ex/Title", titleStyle)]
+
+def runAs (lang : String) : Graph :=
+  match Id.run (glean (tableFetch (negotiated lang)) "http://ex/conneg") with
+  | .ok g => g.graph
+  | .error _ => []
+
+-- Each representation has its own GRDDL result, of one triple.
+#guard (runAs "en").length == 1
+#guard (runAs "de").length == 1
+-- Negative: the two results are different graphs (an agent that ignored
+-- the language would give the same graph twice).
+#guard runAs "en" != runAs "de"
+-- The agent that retrieves both: the merge has both titles, and no
+-- more than the two (the same representation twice adds nothing).
+#guard (mergeApart [runAs "en", runAs "de"]).length == 2
+#guard (mergeApart [runAs "en", runAs "en"]).length == 1
+
 /-! ## A source that cannot be retrieved is an error, never an empty result -/
 
 #guard (match run [] "http://ex/absent" with | .error _ => true | .ok _ => false)
