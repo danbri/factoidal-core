@@ -44,7 +44,7 @@ def registerServiceEndpoint (iri nq : String) : IO String := do
     pure (errJson "registerServiceEndpoint: the IRI must not be empty")
   else
     match parseNQuadsFast nq .rdf12 with
-    | .error e => pure (errJson (fmtParseError e))
+    | .error e => pure (errJson s!"registerServiceEndpoint: {fmtParseError e}")
     | .ok ds =>
         serviceRegistry.modify fun entries =>
           (entries.filter (fun p => p.1 != iri)) ++ [(iri, ds.default)]
