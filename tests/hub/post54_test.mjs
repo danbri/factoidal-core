@@ -103,7 +103,11 @@ test('post54: the page can reach the engine and the store the cell asks for', ()
   assert.match(njk, /async openStoreOverHttp\(baseUrl, options\)/);
   assert.match(njk, /\/npm\/factoidal\/store-http\/index\.mjs/);
   const eleventy = readFileSync(ELEVENTY, 'utf8');
-  assert.match(eleventy, /"\.\.\/npm\/factoidal\/store-http": "npm\/factoidal\/store-http"/);
+  // docs/.eleventy.js passes the package's browser files through from
+  // ../npm/factoidal/ to /npm/factoidal/, store-http among them.
+  assert.match(eleventy, /\[`\.\.\/npm\/factoidal\/\$\{rel\}`\]: `npm\/factoidal\/\$\{rel\}`/);
+  const list = /for \(const rel of \[([^\]]*)\]\)/.exec(eleventy);
+  assert.ok(list && /"store-http"/.test(list[1]), 'the package pass-through list names store-http');
   assert.match(eleventy, /"\.\.\/npm\/factoidal\/sample-store": "web\/hub\/assets\/store\/sample"/);
 });
 

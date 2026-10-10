@@ -140,7 +140,15 @@ localAiForKg = {
         return { graph: entry.graph, content: await response.text(), dataFormat: "turtle" };
       }));
       const started = performance.now();
-      const result = await Factoidal.queryDataset(data, query, { output: "json" });
+      // One N-Quads document: each file's triples, written into its named graph.
+      const lines = [];
+      for (const file of data) {
+        const parsed = await fn.parse(file.content, { format: file.dataFormat });
+        for (const line of parsed.toNQuads().split("\n")) {
+          if (line.trim()) lines.push(line.replace(/ \.\s*$/, ` <${file.graph}> .`));
+        }
+      }
+      const result = await fn.queryRaw(lines.join("\n"), query, { dataFormat: "nquads", output: "json" });
       const elapsedMs = Math.round(performance.now() - started);
       runOutput.textContent = JSON.stringify({ elapsedMs, result }, null, 2);
       runStatus.textContent = "Finished locally. No query was sent to a server.";

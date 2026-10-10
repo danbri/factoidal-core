@@ -22,27 +22,24 @@ implementing INSERT DATA, DELETE DATA, DELETE/INSERT WHERE, CLEAR, and
 full graph management (ADD/COPY/MOVE/CREATE/DROP) — LOAD is accepted by
 the algebra but rejected defensively at the HTTP sandbox layer
 (`SPARQL.Update.Analysis.fst`'s `update_has_load`, an operational
-policy decision, not a gap in the algebra). The W3C SPARQL 1.1 Update
-conformance suite — 14 manifests, 176 test cases — scores **176 pass, 0
-fail (out of 176)**, per
-[`docs/test-results/latest.json`](https://github.com/danbri/factoidal/blob/claude/main/docs/test-results/latest.json)
-(2026-07-06 05:29 UTC, commit
-[`616247d`](https://github.com/danbri/factoidal/commit/616247d)):
-`add` 8/8, `basic-update` 13/13, `clear` 4/4, `copy` 6/6, `delete`
-19/19, `delete-data` 6/6, `delete-insert` 17/17, `delete-where` 6/6,
-`drop` 4/4, `move` 6/6, `syntax-update-1` 54/54, `syntax-update-2`
-1/1, `update-silent` 13/13, `http-rdf-update` 19/19.
+policy decision, not a gap in the algebra). The cells on this page run
+the Lean engine of `@factoidal/core` (`formal/lean4`). Its W3C SPARQL
+1.1 run, `l4w3c` over `manifest-all.ttl` — the query, Update and
+protocol manifests, the 13 Update manifests among them — scores **631
+pass, 0 fail (out of 631)** in the committed
+[Lean conformance baseline](https://github.com/danbri/factoidal-core/blob/claude/core-split/docs/designissues/2026-10-09-lean-conformance-baseline.md)
+(2026-10-09). The F\* engine scored 176 pass, 0 fail (out of 176) on
+the 14 Update manifests of its own runner (2026-07-06, commit
+[`616247d`](https://github.com/danbri/factoidal/commit/616247d)).
 
 ### Try it — INSERT DATA, live
 
-`docs/_includes/hub.njk`'s `fn` adapter now wires up `update` —
-`fn.update(dataset, updateText)` — the same typed shape
-`npm/factoidal/index.js`'s `update(data, updateText) -> Dataset`
-exposes, built on the raw npm-entry ABI's `updateDataset` export
-underneath (the js_of_ocaml build this whole series' cells run
-against). This cell wraps it in a try/catch per the
-[cell contract](../README/)'s capability-check pattern (an older bundle
-might predate the Update export), and actually runs an INSERT DATA:
+`fn.update(dataset, updateText)` is the package's own
+`update(data, updateText) -> Dataset`, the same function under Node and
+in this page (the Lean engine compiled to WebAssembly). This cell wraps
+it in a try/catch per the [cell contract](../README/)'s
+capability-check pattern (an older wasm module might predate the Update
+operation), and actually runs an INSERT DATA:
 
 ```observable-js
 const ttl = `

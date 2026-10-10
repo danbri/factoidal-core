@@ -66,12 +66,12 @@ one of the 76 cases the score below covers.
 
 ## Running it, live
 
-`Factoidal.rmlMap(mappingNQuads, sourceData, sourceKind)` is a raw ABI
-export (see [`README.md`](./README.md)'s bindings table): the mapping
-graph as N-Quads text (`fn.parse()`'s Turtle-to-N-Quads step gets
-there from the Turtle above), the raw source data as text (JSON or
-CSV, never RDF), and `sourceKind` telling it which. The source data
-here is
+`fn.rmlMap(mapping, sourceData, sourceKind)` is the package's RML
+function (see [`README.md`](./README.md)'s bindings table): the mapping
+graph (the Turtle above), the raw source data as text (JSON or CSV,
+never RDF), and `sourceKind` naming it. It answers the generated
+triples as a Dataset. The iteration format is the one the mapping's
+`rml:referenceFormulation` states (RML Core). The source data here is
 [`RMLTC0002a-JSON`'s own `student.json`](https://github.com/danbri/factoidal/blob/claude/main/third_party/testing/rml-modules/rml-core/test-cases/RMLTC0002a-JSON/student.json):
 
 ```json
@@ -115,10 +115,9 @@ const STUDENT_JSON = JSON.stringify({
   students: [{ ID: 10, Name: "Venus" }],
 });
 
-const mappingNQuads = (await fn.parse(MAPPING_TTL)).toNQuads();
-const result = await Factoidal.rmlMap(mappingNQuads, STUDENT_JSON, "json");
+const result = await fn.rmlMap(MAPPING_TTL, STUDENT_JSON, "json");
 
-return { tripleCount: result.nquads.trim().split("\n").length, nquads: result.nquads };
+return { tripleCount: result.size, nquads: result.toNQuads() };
 ```
 
 Three triples: `foaf:name "Venus"`, `ex:id "10"^^xsd:integer` (RML
@@ -212,10 +211,7 @@ const FRIENDS_CSV = `id,name,age
 4,Ross Geller,37
 `;
 
-const mappingNQuads = (await fn.parse(MAPPING_TTL)).toNQuads();
-const result = await Factoidal.rmlMap(mappingNQuads, FRIENDS_CSV, "csv");
-
-const dataset = await fn.parse(result.nquads, { format: "nquads" });
+const dataset = await fn.rmlMap(MAPPING_TTL, FRIENDS_CSV, "csv");
 const rows = await fn.query(dataset, `# List every person's name and age produced by the mapping,
   # ordered by subject IRI.
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
@@ -241,7 +237,7 @@ sources, as both cells above used one of); the CSV fixture is real and
 vendored the same way but belongs to the sibling rml-io module, which
 this figure does not cover.
 
-`Factoidal.rmlMap` reads every triples map in one mapping graph against
+`fn.rmlMap` reads every triples map in one mapping graph against
 the *same* source data — joining two different logical sources isn't
 reachable through this single-call entry point (the full multi-source
 join driver is `bin/rml-runner/rml_runner.ml`, this project's native
@@ -261,4 +257,4 @@ verified-in-F\* engineering story.
 Every live cell above is pinned in
 [`tests/hub/post09_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post09_test.mjs) —
 the exact same source, executed against the real `npm/factoidal` typed
-API instead of the in-browser `fn`/`Factoidal` adapters.
+API, the same functions the page's `fn` carries.

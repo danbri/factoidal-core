@@ -58,7 +58,7 @@ non-whitespace character of the schema text decides the format, `{`
 means ShExJ, anything else is parsed as ShExC (no valid ShExC document
 starts with `{`). ShExJ is ShEx's JSON Schema form — the same schema
 above, hand-translated once, is what the first pair of live cells
-below sends to `Factoidal.shexValidate`; a later section on this page
+below sends to `fn.shexValidate`; a later section on this page
 sends the ShExC text you just read straight through instead.
 
 ```js
@@ -89,13 +89,13 @@ sends the ShExC text you just read straight through instead.
 }
 ```
 
-`shexValidate` is a raw `Factoidal` export, not one of the `fn` typed
-adapter's methods (see [`README.md`](./README.md) for the full
-bindings table) — its signature is `shexValidate(dataNQuads,
-schemaText, focus, shapeLabel)`: dataset-handle N-Quads text, the
-schema as ShExJ (JSON string) or ShExC (compact-syntax string) text,
-the focus node's IRI, and the shape's `id`. `fn.parse()` gets from
-Turtle to N-Quads text via `dataset.toNQuads()`.
+`fn.shexValidate(data, schemaText, focus, shapeLabel, {format})` is
+the package's typed function (see [`README.md`](./README.md) for the
+bindings table): the data (here N-Quads text, so `{format: "nquads"}`),
+the schema as ShExJ (JSON string) or ShExC (compact-syntax string) text,
+the focus node's IRI, and the shape's `id`. It answers the verdict as a
+boolean. `fn.parse()` gets from Turtle to N-Quads text via
+`dataset.toNQuads()`.
 
 ## A small Wikidata-shaped dataset
 
@@ -186,12 +186,9 @@ HUMAN_SHAPE_SCHEMA = JSON.stringify({
 ```observable-js
 tryShexValidate = async function(dataNQuads, schemaText, focus) {
   try {
-    if (typeof Factoidal.shexValidate !== "function") {
-      throw new Error("Factoidal.shexValidate is not exposed by this build");
-    }
-    const result = await Factoidal.shexValidate(
-      dataNQuads, schemaText, focus, "http://example.org/HumanShape");
-    return { available: true, verdict: result.verdict, deferred: result.deferred };
+    const verdict = await fn.shexValidate(
+      dataNQuads, schemaText, focus, "http://example.org/HumanShape", { format: "nquads" });
+    return { available: true, verdict, deferred: verdict === null };
   } catch (err) {
     return { available: false, note: err.message };
   }
@@ -308,5 +305,5 @@ listed in the [series plan](../../designissues/2026-07-05-docs-hub-plan.md).
 
 Every live cell above is pinned in
 [`tests/hub/post06_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post06_test.mjs) —
-the exact same source, executed against the real `npm/factoidal` typed
-API instead of the in-browser `fn`/`Factoidal` adapters.
+the exact same source, executed against `npm/factoidal`'s Node entry,
+which exports the same typed API the page's `fn` carries.

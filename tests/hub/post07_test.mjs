@@ -1,57 +1,19 @@
 // Pins every code sample in docs/web/hub/07-json-ld-rdf-as-json.md.
 
-import { createRequire } from 'node:module';
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const require = createRequire(import.meta.url);
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 const POST_FILE = '07-json-ld-rdf-as-json.md';
 
-function loadAbi() {
-  const bundlePath = process.env.FACTOIDAL_NPM_ENTRY;
-  assert.ok(bundlePath, 'FACTOIDAL_NPM_ENTRY must be set (see ./_helpers.mjs)');
-  const mod = require(bundlePath);
-  const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
-  assert.ok(abi, 'factoidalNpmEntry ABI object did not register');
-  return abi;
-}
-
-const abi = loadAbi();
-
 const cells = extractObservableCells(POST_FILE);
 
-// The post's cells call the raw `Factoidal.jsonldToRdf(jsonldText)`
-// contract (npm/factoidal/browser.js) directly, since there is no
-// `fn.jsonldToRdf` adapter in docs/_includes/hub.njk today.
-// browser.js's raw contract returns a PLAIN `{ok: true, nquads:
-// string}` object (verified by reading browser.js's jsonldToRdf,
-// which JSON.parses the npm-entry ABI's own response and returns it
-// as-is) -- NOT a Dataset with `.size`/`.toNQuads()`. This shim
-// reproduces that exact shape on top of the REAL npm/factoidal typed
-// API's `jsonldToRdf(jsonldText, options) -> Promise<Dataset>`, so the
-// cell source under test (which reads `result.nquads`, never
-// `result.size`) is pinned against the same contract a real browser
-// page's `Factoidal` binding actually exposes.
-// jsonldFromRdf mirrors npm/factoidal/browser.js's raw contract: it
-// calls the SAME npm-entry ABI function (abi.jsonldFromRdf) the browser
-// build loads and returns its {ok, jsonld} envelope as-is.
-const FactoidalNode = {
-  async jsonldToRdf(jsonldText, options) {
-    const ds = await factoidal.jsonldToRdf(jsonldText, options);
-    return { ok: true, nquads: ds.toNQuads() };
-  },
-  async jsonldFromRdf(nquads, options) {
-    assert.equal(typeof abi.jsonldFromRdf, 'function',
-      'the loaded bundle predates the jsonldFromRdf export');
-    const optionsJson = JSON.stringify(options || {});
-    const parsed = JSON.parse(abi.jsonldFromRdf(nquads, optionsJson));
-    if (!parsed.ok) throw new Error(parsed.error || 'jsonldFromRdf failed');
-    return parsed;
-  },
-};
+// The cells call the package's typed jsonldToRdf / jsonldFromRdf through
+// `fn`; the page binds `fn` and `Factoidal` to the same API
+// (npm/factoidal/browser.js, issue 726).
+const FactoidalNode = factoidal;
 
 test('post07: post has 5 live cells (ALICE_JSONLD hoisted into its own named cell)', () => {
   assert.equal(cells.length, 5, `expected 5 live cells, found ${cells.length}`);

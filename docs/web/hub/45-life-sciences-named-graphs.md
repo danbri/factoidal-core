@@ -75,10 +75,19 @@ lifeSciRunner = {
       }));
       output.textContent = "Parsing and evaluating SPARQL in this browser…";
       const started = performance.now();
-      const result = await Factoidal.queryDataset(files, lifeSciQuery, { output: "json" });
+      // One N-Quads document: each file's triples, written into its named graph.
+      const lines = [];
+      for (const file of files) {
+        const parsed = await fn.parse(file.content, { format: file.dataFormat });
+        for (const line of parsed.toNQuads().split("\n")) {
+          if (line.trim()) lines.push(line.replace(/ \.\s*$/, ` <${file.graph}> .`));
+        }
+      }
+      const dataset = await fn.parse(lines.join("\n"), { format: "nquads" });
+      const rows = await fn.query(dataset, lifeSciQuery);
       const elapsed = Math.round(performance.now() - started);
-      const rows = result.results?.bindings || [];
-      output.textContent = JSON.stringify({ elapsedMs: elapsed, rows: rows.length, firstRows: rows.slice(0, 5) }, null, 2);
+      const firstRows = rows.slice(0, 5).map((row) => Object.fromEntries([...row].map(([k, t]) => [k, t.value])));
+      output.textContent = JSON.stringify({ elapsedMs: elapsed, rows: rows.length, firstRows }, null, 2);
     } catch (error) {
       output.textContent = `Run failed: ${error.message}`;
     } finally {

@@ -37,45 +37,19 @@
 // off-native over HACL*'s wasm build). The check at the bottom grounds
 // both halves of that.
 
-import { createRequire } from 'node:module';
 import { extractObservableCells, runReactivePost, HUB_POST_DIR } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-const require = createRequire(import.meta.url);
 const POST_FILE = '13-verifiable-credentials-and-csvw.md';
 const REPO_ROOT = path.join(HUB_POST_DIR, '..', '..', '..');
 
-function loadAbi() {
-  const bundlePath = process.env.FACTOIDAL_NPM_ENTRY;
-  assert.ok(bundlePath, 'FACTOIDAL_NPM_ENTRY must be set (see ./_helpers.mjs)');
-  const mod = require(bundlePath);
-  const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
-  assert.ok(abi, 'factoidalNpmEntry ABI object did not register');
-  return abi;
-}
-
-const abi = loadAbi();
-// The npm-index default export is the real typed API `fn.canonicalize`
-// resolves to in the browser (via docs/_includes/hub.njk's `fn`
-// adapter, which wraps browser.js's `canonicalize` binding).
-const npmFactoidal = (await import('../../npm/factoidal/index.mjs')).default;
-const fn = { canonicalize: npmFactoidal.canonicalize };
-
-const Factoidal = {
-  async csvwToRdf(csvText, metadataJson, options) {
-    if (typeof abi.csvwToRdf !== 'function') {
-      throw new Error('csvwToRdf: the loaded factoidal-npm-entry bundle predates the CSVW export');
-    }
-    const meta = metadataJson == null ? '' : metadataJson;
-    const optionsJson = JSON.stringify(options || {});
-    const parsed = JSON.parse(abi.csvwToRdf(csvText, meta, optionsJson));
-    if (!parsed.ok) throw new Error(parsed.error || 'csvwToRdf failed');
-    return parsed;
-  },
-};
+// The cells call the package's typed API through `fn` (csvwToRdf ->
+// Dataset, canonicalize), as the page does (issue 726).
+const fn = (await import('../../npm/factoidal/index.mjs')).default;
+const Factoidal = fn;
 
 const cells = extractObservableCells(POST_FILE);
 
@@ -151,12 +125,13 @@ test('post13 cell 7 (CSVW minimal mode): 8 typed quads, no provenance, template 
 });
 
 test('post13: a CSVW cell degrades gracefully when the ABI lacks csvwToRdf', async () => {
-  const brokenFactoidal = {
+  const brokenFn = {
+    ...fn,
     async csvwToRdf() {
       throw new Error('csvwToRdf: the loaded factoidal-npm-entry bundle predates the CSVW export');
     },
   };
-  const post = runReactivePost(cells, { fn, Factoidal: brokenFactoidal });
+  const post = runReactivePost(cells, { fn: brokenFn, Factoidal });
   const result = await post.value(post.names[5]);
   assert.equal(result.available, false);
   assert.match(result.note, /predates the CSVW export/);
@@ -173,8 +148,8 @@ test('post13: the vendored tree-ops.csv + metadata fixture converts via the real
     path.join(REPO_ROOT, 'third_party', 'testing', 'csvw', 'examples', 'tree-ops.csv'), 'utf8');
   const metadataJson = fs.readFileSync(
     path.join(REPO_ROOT, 'third_party', 'testing', 'csvw', 'examples', 'tree-ops.csv-metadata.json'), 'utf8');
-  const result = await Factoidal.csvwToRdf(csvText, metadataJson, { base: 'http://example.org/' });
-  const lines = result.nquads.trim().split('\n');
+  const result = await fn.csvwToRdf(csvText, metadataJson, { base: 'http://example.org/' });
+  const lines = result.toNQuads().trim().split('\n');
   // The vendored fixture carries a fuller metadata document (dc:title,
   // dc:publisher, etc. -- see the file itself) than this post's
   // trimmed inline copy, so it emits more triples; what matters here

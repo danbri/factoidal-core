@@ -36,9 +36,8 @@ jsonldPlayground = {
     button.disabled = true;
     status.textContent = "Converting…";
     try {
-      const rdf = await Factoidal.jsonldToRdf(input.value);
-      rdfOut.textContent = rdf.nquads || "(no triples)";
-      const dataset = await fn.parse(rdf.nquads, { format: "nquads" });
+      const dataset = await fn.jsonldToRdf(input.value);
+      rdfOut.textContent = dataset.toNQuads() || "(no triples)";
       canonOut.textContent = await fn.canonicalize(dataset);
       status.textContent = "Done.";
     } catch (error) {

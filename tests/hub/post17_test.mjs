@@ -81,31 +81,28 @@ test('post17: the fn adapter now defines an update() method (grounds this post\'
   assert.match(fnBlockMatch[1], /\bupdate\s*\(/, 'fn should define an update() method');
 });
 
-test('post17: the W3C SPARQL 1.1 Update suite is 176/176 in the committed dashboard snapshot', () => {
-  const latest = JSON.parse(
-    fs.readFileSync(path.join(REPO_ROOT, 'docs', 'test-results', 'latest.json'), 'utf8'));
-  const byName = {};
-  for (const group of Object.values(latest.suites)) {
-    // The dashboard's suites map mixes array groups (sparql/rdf carry
-    // per-sub-suite lists) with single-record objects (the 2026-07-09
-    // beyond-W3C rows); only the arrays hold the Update sub-suites.
-    if (!Array.isArray(group)) continue;
-    for (const s of group) byName[s.name] = s;
-  }
-  const updateSuites = [
+// The hub runs the Lean engine (issue 726). The checkout's record of its
+// SPARQL 1.1 score is the committed Lean conformance baseline; the F*
+// dashboard file docs/test-results/latest.json is a build artifact of
+// danbri/factoidal-builds and is not in a checkout.
+test('post17: the committed Lean conformance baseline has SPARQL 1.1 manifest-all, which includes the 13 Update manifests, at 0 fail', () => {
+  const baseline = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'designissues',
+    '2026-10-09-lean-conformance-baseline.md'), 'utf8');
+  const row = baseline.split('\n').find((l) => l.startsWith('SPARQL 1.1 (query+update+protocol, manifest-all)'));
+  assert.ok(row, 'expected the SPARQL 1.1 manifest-all row in the Lean conformance baseline');
+  const cols = row.split('|').map((c) => c.trim());
+  assert.equal(cols[1], 'l4w3c');
+  assert.deepEqual(cols.slice(2, 6).map(Number), [631, 0, 0, 631],
+    'expected 631 pass, 0 fail, 0 other (out of 631)');
+  const manifestAll = fs.readFileSync(path.join(REPO_ROOT, 'third_party', 'testing', 'w3c',
+    'sparql', 'sparql11', 'manifest-all.ttl'), 'utf8');
+  for (const name of [
     'add', 'basic-update', 'clear', 'copy', 'delete', 'delete-data',
     'delete-insert', 'delete-where', 'drop', 'move', 'syntax-update-1',
-    'syntax-update-2', 'update-silent', 'http-rdf-update',
-  ];
-  let pass = 0, total = 0;
-  for (const name of updateSuites) {
-    assert.ok(byName[name], `expected a '${name}' suite entry in latest.json`);
-    assert.equal(byName[name].fail, 0, `expected 0 fail in '${name}'`);
-    pass += byName[name].pass;
-    total += byName[name].pass + byName[name].fail + byName[name].skip + byName[name].unsupported;
+    'syntax-update-2', 'update-silent',
+  ]) {
+    assert.ok(manifestAll.includes(`<${name}/manifest.ttl>`), `manifest-all includes ${name}`);
   }
-  assert.equal(pass, 176, `expected 176 total Update-suite passes, found ${pass}`);
-  assert.equal(total, 176, `expected 176 total Update-suite cases, found ${total}`);
 });
 
 test('post17: the three durable-UPDATE commits cited exist (danbri/factoidal ids, mapped into factoidal-core)', () => {

@@ -1,29 +1,22 @@
 // Pins the live cells in docs/web/hub/18-the-durable-log-live.md.
 //
-// node:test, requiring the committed npm/factoidal bundles (no F*
-// toolchain needed). Cell 1 uses the typed `fn` adapter now
-// (`fn.parse`/`fn.update`/`fn.query`, same as post17_test.mjs) --
-// `fn` here is the real npm/factoidal typed API. Cells 2-4
-// additionally exercise `Factoidal.deltaLogOpen`/`deltaLogAppend`/
-// `deltaLogReadAllHex`/`deltaLogMerge`/`deltaLogDestroy`/
-// `_deltaLogCorruptLastForTest` -- but Node has no global `indexedDB`,
-// so this file follows the "direct-ABI" half of npm/factoidal/test/
-// delta-log.test.js's approach: rather than pull in a fake-indexeddb
-// dependency (out of territory -- no engine/npm changes), it swaps the
-// browser.js's real IndexedDB-backed storage layer for a plain
-// in-memory Map, while still routing every byte decision through the
-// REAL factoidalNpmEntry ABI's `deltaBatchToHex`/`deltaMergeApplyBrowser`
-// -- the same F*-verified RDF_Store_Columnar_DeltaLog/DeltaMerge
-// functions the real browser.js calls. Only the storage medium is
-// swapped; the cell source pinned below is executed completely
-// unmodified (extractObservableCells() + runObservableCell(), the
-// same discipline every other post's tests use).
+// The hub runs the Lean engine of @factoidal/core (issue 726); `fn` and
+// `Factoidal` here are npm/factoidal, the same typed API the page binds.
+// Cell 1 (parse + in-memory UPDATE) runs on it. Cells 2-4 call the
+// durable update log the F* driver had (deltaLogOpen, deltaLogAppend,
+// deltaLogReadAllHex, deltaLogMerge, deltaLogDestroy,
+// _deltaLogCorruptLastForTest); the Lean package has no such functions
+// yet, https://github.com/danbri/factoidal/issues/728, so each of those
+// cells is an expected failure that names the issue
+// (skills/test-suites/SKILL.md, "Expected failures"): it FAILS the suite
+// on an unexpected pass. The F* stub that replayed those cells over the
+// F* npm-entry ABI is gone with the F* bundle (issue 713 stage 3).
 
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit, xfail } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,75 +28,8 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 
-function loadAbi() {
-  const bundlePath = process.env.FACTOIDAL_NPM_ENTRY;
-  assert.ok(bundlePath, 'FACTOIDAL_NPM_ENTRY must be set (see ./_helpers.mjs)');
-  const mod = require(bundlePath);
-  const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
-  assert.ok(abi, 'factoidalNpmEntry ABI object did not register');
-  return abi;
-}
-
-const abi = loadAbi();
-
-/**
- * A test-only stand-in for npm/factoidal/browser.js's deltaLog* export
- * surface: same external contract (same method names, same argument
- * shapes, same return shapes), backed by a plain in-memory Map instead
- * of real IndexedDB. Every byte decision still flows through the real
- * `abi.deltaBatchToHex`/`abi.deltaMergeApplyBrowser` -- this stub only
- * replaces "put a record in an IndexedDB object store" with "push an
- * object into an array."
- */
-function makeFactoidalStub() {
-  const stores = new Map(); // dbName -> [{seq, epoch, hex}]
-  function storeFor(dbName) {
-    if (!stores.has(dbName)) stores.set(dbName, []);
-    return stores.get(dbName);
-  }
-  return {
-    async loadNpmEntry() {
-      return abi;
-    },
-    async deltaLogOpen(dbName) {
-      storeFor(dbName);
-      return { dbName };
-    },
-    async deltaLogAppend(handle, sparqlUpdate, options) {
-      if (!handle || typeof handle.dbName !== 'string') {
-        throw new TypeError('deltaLogAppend: handle must be the object deltaLogOpen() returned');
-      }
-      const opts = options || {};
-      const epoch = opts.epoch || 0;
-      const records = storeFor(handle.dbName);
-      const seq = records.length;
-      const parsed = JSON.parse(abi.deltaBatchToHex(sparqlUpdate, String(seq), String(epoch)));
-      if (!parsed.ok) throw new Error(parsed.error || 'deltaBatchToHex failed');
-      records.push({ seq, epoch, hex: parsed.hex });
-      return { seq, opCount: parsed.opCount };
-    },
-    async deltaLogReadAllHex(handle) {
-      const records = storeFor(handle.dbName).slice().sort((a, b) => a.seq - b.seq);
-      return records.map((r) => r.hex).join('\n');
-    },
-    async deltaLogMerge(handle, baseNQuads) {
-      const hexBlobs = await this.deltaLogReadAllHex(handle);
-      const parsed = JSON.parse(abi.deltaMergeApplyBrowser(baseNQuads, hexBlobs));
-      if (!parsed.ok) throw new Error(parsed.error || 'deltaMergeApplyBrowser failed');
-      return parsed.nquads;
-    },
-    async deltaLogDestroy(handle) {
-      stores.delete(handle.dbName);
-    },
-    async _deltaLogCorruptLastForTest(handle) {
-      const records = storeFor(handle.dbName).slice().sort((a, b) => a.seq - b.seq);
-      if (records.length === 0) return false;
-      const last = records[records.length - 1];
-      last.hex = last.hex.slice(0, Math.max(0, last.hex.length - 8));
-      return true;
-    },
-  };
-}
+const DELTA_LOG_ISSUE = 'https://github.com/danbri/factoidal/issues/728';
+const Factoidal = factoidal;
 
 const cells = extractObservableCells(POST_FILE);
 
@@ -130,22 +56,6 @@ test('post18 cell 1 degrades gracefully when the npm-entry bundle is unavailable
   assert.match(result.note, /npm-entry bundle/);
 });
 
-test('post18 cell 2 (deltaLogAppend): seq starts at 0 in a fresh store, opCount is 1', async () => {
-  const Factoidal = makeFactoidalStub();
-  const result = await runObservableCell(cells[1], { Factoidal, pretty });
-  assert.equal(result.available, true, result.note);
-  assert.equal(result.seq, 0);
-  assert.equal(result.opCount, 1);
-});
-
-test('post18 cell 2: seq keeps climbing across repeated runs against the SAME store (the reload proof, in miniature)', async () => {
-  const Factoidal = makeFactoidalStub();
-  const r0 = await runObservableCell(cells[1], { Factoidal, pretty });
-  const r1 = await runObservableCell(cells[1], { Factoidal, pretty });
-  const r2 = await runObservableCell(cells[1], { Factoidal, pretty });
-  assert.deepEqual([r0.seq, r1.seq, r2.seq], [0, 1, 2]);
-});
-
 test('post18 cell 2 degrades gracefully when loadNpmEntry throws', async () => {
   const brokenFactoidal = {
     async loadNpmEntry() {
@@ -167,24 +77,6 @@ test('post18 cell 2 degrades gracefully when loadNpmEntry throws', async () => {
   assert.match(result.note, /fetch failed/);
 });
 
-test('post18 cell 3 (deltaLogMerge, after cell 2 appended): reads the batch back and merges it', async () => {
-  const Factoidal = makeFactoidalStub();
-  await runObservableCell(cells[1], { Factoidal, pretty }); // Step 2 first, same store.
-  const result = await runObservableCell(cells[2], { Factoidal, pretty });
-  assert.equal(result.available, true, result.note);
-  assert.equal(result.batchesInLog, 1);
-  assert.equal(result.containsDana, true);
-  assert.ok(Array.isArray(result.mergedPreview));
-});
-
-test('post18 cell 3 on a store cell 2 never touched: batchesInLog is 0, containsDana is false (no crash on an empty log)', async () => {
-  const Factoidal = makeFactoidalStub();
-  const result = await runObservableCell(cells[2], { Factoidal, pretty });
-  assert.equal(result.available, true, result.note);
-  assert.equal(result.batchesInLog, 0);
-  assert.equal(result.containsDana, false);
-});
-
 test('post18 cell 3 degrades gracefully when loadNpmEntry throws', async () => {
   const brokenFactoidal = {
     async deltaLogOpen(dbName) {
@@ -200,25 +92,6 @@ test('post18 cell 3 degrades gracefully when loadNpmEntry throws', async () => {
   const result = await runObservableCell(cells[2], { Factoidal: brokenFactoidal, pretty });
   assert.equal(result.available, false);
   assert.match(result.note, /fetch failed/);
-});
-
-test('post18 cell 4 (torn write): Eve survives, Frank is lost to the corrupted last batch', async () => {
-  const Factoidal = makeFactoidalStub();
-  const result = await runObservableCell(cells[3], { Factoidal, pretty });
-  assert.equal(result.available, true, result.note);
-  assert.equal(result.corruptedARecord, true);
-  assert.equal(result.eveSurvivesCorruption, true);
-  assert.equal(result.frankWasLostToCorruption, true);
-});
-
-test('post18 cell 4 is self-contained: running it twice in a row still reports the same clean-prefix-survives outcome', async () => {
-  const Factoidal = makeFactoidalStub();
-  const r0 = await runObservableCell(cells[3], { Factoidal, pretty });
-  const r1 = await runObservableCell(cells[3], { Factoidal, pretty });
-  assert.equal(r0.eveSurvivesCorruption, true);
-  assert.equal(r1.eveSurvivesCorruption, true);
-  assert.equal(r0.frankWasLostToCorruption, true);
-  assert.equal(r1.frankWasLostToCorruption, true);
 });
 
 test('post18 cell 4 degrades gracefully when loadNpmEntry throws', async () => {
@@ -237,7 +110,6 @@ test('post18 cell 4 degrades gracefully when loadNpmEntry throws', async () => {
 });
 
 test('post18 cell 5 (the runtimes pretty() table): four rows, native/js/C/wasm in that order, wasm now proven too', async () => {
-  const Factoidal = makeFactoidalStub();
   const result = await runObservableCell(cells[4], { Factoidal, pretty });
   assert.equal(result.kind, 'table');
   assert.deepEqual(result.columns, ['runtime', 'proves', 'evidence', 'landed']);
@@ -275,15 +147,34 @@ test('post18: the native realisation of the five delta-log I/O assume vals exist
   assert.ok(fs.existsSync(p), 'expected the #282 delta-log I/O patch to exist');
 });
 
-test('post18: browser.js exports the delta-log persistence surface this post\'s cells call', () => {
+xfail('post18: npm/factoidal/browser.js exports the durable update log this post\'s cells call', DELTA_LOG_ISSUE, () => {
   const browserJs = fs.readFileSync(
     path.join(REPO_ROOT, 'npm', 'factoidal', 'browser.js'), 'utf8');
-  for (const fn of [
+  for (const name of [
     'deltaLogOpen', 'deltaLogAppend', 'deltaLogReadAllHex', 'deltaLogMerge',
     'deltaLogDestroy', '_deltaLogCorruptLastForTest',
   ]) {
-    assert.match(browserJs, new RegExp(`export async function ${fn}\\(`), `expected browser.js to export ${fn}`);
+    assert.match(browserJs, new RegExp(`export const ${name} = `), `expected browser.js to export ${name}`);
   }
+});
+
+xfail('post18 cell 2 (deltaLogAppend) runs on the Lean package: seq 0, opCount 1', DELTA_LOG_ISSUE, async () => {
+  const result = await runObservableCell(cells[1], { Factoidal, fn: factoidal, pretty });
+  assert.equal(result.available, true, result.note);
+  assert.equal(result.seq, 0);
+  assert.equal(result.opCount, 1);
+});
+
+xfail('post18 cell 3 (deltaLogMerge) runs on the Lean package', DELTA_LOG_ISSUE, async () => {
+  const result = await runObservableCell(cells[2], { Factoidal, fn: factoidal, pretty });
+  assert.equal(result.available, true, result.note);
+});
+
+xfail('post18 cell 4 (torn write) runs on the Lean package: Eve survives, Frank is lost', DELTA_LOG_ISSUE, async () => {
+  const result = await runObservableCell(cells[3], { Factoidal, fn: factoidal, pretty });
+  assert.equal(result.available, true, result.note);
+  assert.equal(result.eveSurvivesCorruption, true);
+  assert.equal(result.frankWasLostToCorruption, true);
 });
 
 test('post18: entry_jsoo.ml exports the delta-log ABI AND the toCottas BaseWriter write path (grounds the "base-store write path reaches the browser too" section)', () => {
@@ -310,60 +201,21 @@ test('post18: RDF.CottasStore.BaseWriter.fst exists and is the module the zero-P
   assert.ok(fs.existsSync(p), 'expected RDF.CottasStore.BaseWriter.fst to exist');
 });
 
-test('post18: the wasm npm-entry bundle now contains the delta-log exports (grounds the "wasm now proven too" update)', () => {
-  const wasmCandidates = [
-    path.join(REPO_ROOT, 'docs', 'npm', 'factoidal', 'factoidal-npm-entry.wasm.js'),
-    path.join(REPO_ROOT, 'npm', 'factoidal', 'factoidal-npm-entry.wasm.js'),
-  ];
-  const wasmPath = wasmCandidates.find((p) => fs.existsSync(p));
-  assert.ok(wasmPath, `expected one of ${wasmCandidates.join(', ')} to exist`);
-  const wasmSrc = fs.readFileSync(wasmPath, 'utf8');
-  assert.match(wasmSrc, /deltaBatchToHex/);
-  assert.match(wasmSrc, /deltaMergeApplyBrowser/);
+// The demo binary is an F* native build product (the factoidal-builds
+// linux-x86_64 release), which a hub checkout does not have since the hub
+// moved to the Lean engine (issue 726). The checkout has the committed
+// KaRaMeL C the binary is built from, so the transcript lines the post
+// quotes are checked against that source: each check label and the final
+// line are strings the demo prints.
+test('post18: the C demo transcript quoted in this post is printed by the committed delta_log_demo.c', () => {
+  const demoSrc = fs.readFileSync(path.join(
+    REPO_ROOT, 'formal', 'fstar', 'c-output', 'deltalog', 'demo', 'delta_log_demo.c'), 'utf8');
+  assert.ok(demoSrc.includes('"parse_delta_batch(corrupted bytes) = None (checksum rejects it)"'));
+  assert.ok(demoSrc.includes('All checks passed'));
+  const post = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'web', 'hub', POST_FILE), 'utf8');
+  assert.match(post, /parse_delta_batch\(corrupted bytes\) = None \(checksum rejects it\)\s+OK/);
+  assert.match(post, /All checks passed/);
 });
-
-test('post18: the js npm-entry bundle DOES contain the delta-log exports (the contrapositive of the wasm check above)', () => {
-  const jsCandidates = [
-    path.join(REPO_ROOT, 'docs', 'npm', 'factoidal', 'factoidal-npm-entry.js'),
-    path.join(REPO_ROOT, 'npm', 'factoidal', 'factoidal-npm-entry.js'),
-  ];
-  const jsPath = jsCandidates.find((p) => fs.existsSync(p));
-  assert.ok(jsPath, `expected one of ${jsCandidates.join(', ')} to exist`);
-  const jsSrc = fs.readFileSync(jsPath, 'utf8');
-  assert.match(jsSrc, /deltaBatchToHex/);
-  assert.match(jsSrc, /deltaMergeApplyBrowser/);
-});
-
-test('post18: the C demo transcript quoted in this post is real (formal/fstar/c-output/deltalog/demo/delta_log_demo)', (t) => {
-  const demoBin = path.join(
-    REPO_ROOT, 'formal', 'fstar', 'c-output', 'deltalog', 'demo', 'delta_log_demo');
-  if (!fs.existsSync(demoBin)) {
-    // A build product since the 2026-10-09 split: the builds F* Linux job
-    // compiles it from the committed KaRaMeL C and ships it in the
-    // linux-x86_64 release. On Linux its absence is a failure (run
-    // tools/fetch-builds.sh); elsewhere no release carries it.
-    if (process.platform === 'linux' && process.arch === 'x64') {
-      assert.fail('delta_log_demo missing: run tools/fetch-builds.sh (linux-x86_64 release)');
-    }
-    t.skip(`delta_log_demo is shipped for linux-x86_64 only (${process.platform}/${process.arch})`);
-    return;
-  }
-  const { execFileSync } = require('node:child_process');
-  let out;
-  try {
-    out = execFileSync(demoBin, { cwd: path.dirname(demoBin) }).toString();
-  } catch (e) {
-    // The committed demo binary is built for one platform (linux-x86_64
-    // from CI). On another platform exec fails with ENOEXEC/EACCES-style
-    // errors; that is a platform mismatch, not a broken transcript --
-    // skip rather than fail (2026-08-22, first macOS run of this suite).
-    t.skip(`committed delta_log_demo is not executable on this platform (${process.platform}/${process.arch}): ${e.code || e.message}`);
-    return;
-  }
-  assert.match(out, /All checks passed/);
-  assert.match(out, /parse_delta_batch\(corrupted bytes\) = None \(checksum rejects it\)\s+OK/);
-});
-
 test('post18: the KaRaMeL C output directory this post links to exists', () => {
   const dir = path.join(REPO_ROOT, 'formal', 'fstar', 'c-output', 'deltalog');
   assert.ok(fs.existsSync(path.join(dir, 'Factoidal_DeltaLog.c')));

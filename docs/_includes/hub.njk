@@ -508,8 +508,8 @@
 {% endif %}
 {{ content | safe }}
 <footer>
-Factoidal — verified RDF/SPARQL{% if not hubEngineLabel %} from F*{% endif %}. Interactive cells on this
-page run entirely in your browser via {{ hubEngineLabel | default('the F*-extracted engine') }} and a
+Factoidal — verified RDF/SPARQL{% if not hubEngineLabel %} in Lean 4{% endif %}. Interactive cells on this
+page run entirely in your browser via {{ hubEngineLabel | default('the Lean 4 engine of @factoidal/core, compiled to WebAssembly') }} and a
 vendored Observable runtime — no server, no CDN{% if hubMode == 'live' %}
 for any code; in live mode a cell may additionally load external map
 tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
@@ -525,7 +525,7 @@ tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
 <script type="module">
 import { Runtime } from "{{ '/vendor/observable/runtime.esm.js' | url }}";
 import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
-import * as Factoidal from "{{ '/fstar-extracted/browser.js' | url }}";
+import * as Factoidal from "{{ '/npm/factoidal/browser.js' | url }}";
 import * as d3 from "{{ '/vendor/observable/d3.esm.js' | url }}";
 import * as Plot from "{{ '/vendor/observable/plot.esm.js' | url }}";
 import * as stdlib from "{{ '/vendor/observable/stdlib.esm.js' | url }}";
@@ -541,134 +541,31 @@ const runtime = new Runtime();
 const main = runtime.module();
 
 // ---------------------------------------------------------------------
-// `fn` — the typed, Dataset-returning cell surface.
+// `Factoidal` and `fn` — the engine bindings every cell gets.
 //
-// `Factoidal` (browser.js) is a raw, single-shot CLI wrapper: strings
-// in, SPARQL-JSON out (no Dataset, no Map<string, Term> bindings). The
-// typed API most hub posts are written against (`parse()` -> Dataset,
-// `query()` -> Bindings[] | boolean | Dataset) lives in
-// npm/factoidal/index.js, but that module is Node-only (CommonJS
-// `require`, `node:fs`, `node:crypto`) and cannot load in a browser
-// `<script type="module">` context. Rather than fork the engine or
-// re-mirror a browser build of it (both out of scope — see
-// docs/web/hub/README.md), this adapter reshapes `Factoidal`'s raw
-// CLI calls into the same external contract, entirely client-side:
-// parse() returns a small frozen Dataset-like wrapper over the
-// engine's own N-Quads dump; query() sniffs the query form (same
-// heuristic as npm/factoidal/lib/api.js's sniffQueryForm) to decide
-// whether to return an array of Map<string, Term> (SELECT), a
-// boolean (ASK), or another Dataset-like wrapper (CONSTRUCT). See
-// docs/web/hub/README.md for the full contract every post's cells are
-// written against.
+// `Factoidal` is @factoidal/core's own browser entry
+// (npm/factoidal/browser.js, passed through to /npm/factoidal/ by
+// docs/.eleventy.js): the Lean 4 engine compiled to WebAssembly, fetched
+// and compiled with WebAssembly.instantiateStreaming on the first call.
+// Its exports are the package's typed API, the same functions
+// npm/factoidal/index.mjs exports under Node (index.d.ts), so a cell and
+// the Node harness (tests/hub/) call one contract on one engine
+// (issue 726; the F* engine left the package in 0.9.0, issue 713).
+//
+// `fn` is that API plus the hub-only helpers below: the Lean dispatch
+// ABI (`l4Call`, `l4CallBlobIO`, handle-backed `l4Parse`/`l4Query`/
+// `l4Update`), the store-over-HTTP host, the Wikifunctions engine and the
+// registry loader. `fn.loadL4()` is the package's own loaded engine, so a
+// page instantiates one wasm module.
 // ---------------------------------------------------------------------
 
 const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
 const RDF_LANGSTRING = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
 
-function parseNQuadsTerm(str, i) {
-  while (i < str.length && (str[i] === " " || str[i] === "\t")) i++;
-  // RDF 1.2 triple term: <<( s p o )>> -> a Quad-shaped term. Checked
-  // before the '<' IRI case (a triple term also opens with '<').
-  if (str[i] === "<" && str[i + 1] === "<" && str[i + 2] === "(") {
-    let j = i + 3;
-    const [subject, a]   = parseNQuadsTerm(str, j); j = a;
-    const [predicate, b] = parseNQuadsTerm(str, j); j = b;
-    const [object, c]    = parseNQuadsTerm(str, j); j = c;
-    while (j < str.length && /\s/.test(str[j])) j++;
-    if (str[j] === ")" && str[j + 1] === ">" && str[j + 2] === ">") {
-      return [{ termType: "Quad", value: "", subject, predicate, object }, j + 3];
-    }
-    throw new Error("parseNQuads: unterminated triple term at offset " + i);
-  }
-  if (str[i] === "<") {
-    const end = str.indexOf(">", i);
-    return [{ termType: "NamedNode", value: str.slice(i + 1, end) }, end + 1];
-  }
-  if (str[i] === "_" && str[i + 1] === ":") {
-    let j = i + 2;
-    while (j < str.length && !/\s/.test(str[j])) j++;
-    return [{ termType: "BlankNode", value: str.slice(i + 2, j) }, j];
-  }
-  if (str[i] === '"') {
-    let j = i + 1;
-    let lex = "";
-    while (str[j] !== '"') {
-      if (str[j] === "\\") { lex += str[j] + str[j + 1]; j += 2; }
-      else { lex += str[j]; j++; }
-    }
-    j++; // closing quote
-    lex = lex
-      .replace(/\\"/g, '"').replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t").replace(/\\r/g, "\r")
-      .replace(/\\\\/g, "\\");
-    let datatype = XSD_STRING;
-    let language = "";
-    if (str[j] === "@") {
-      let k = j + 1;
-      while (k < str.length && /[a-zA-Z0-9-]/.test(str[k])) k++;
-      language = str.slice(j + 1, k);
-      datatype = RDF_LANGSTRING;
-      j = k;
-    } else if (str[j] === "^" && str[j + 1] === "^") {
-      const start = j + 3; // skip ^^<
-      const end = str.indexOf(">", start);
-      datatype = str.slice(start, end);
-      j = end + 1;
-    }
-    return [
-      { termType: "Literal", value: lex, language, datatype: { termType: "NamedNode", value: datatype } },
-      j,
-    ];
-  }
-  throw new Error("parseNQuads: unrecognized term at offset " + i + " in: " + str);
-}
-
-function parseNQuadsLine(line) {
-  const terms = [];
-  let i = 0;
-  while (terms.length < 4) {
-    while (i < line.length && (line[i] === " " || line[i] === "\t")) i++;
-    if (line[i] === "." && (i + 1 >= line.length || /\s/.test(line[i + 1]))) break;
-    const [term, next] = parseNQuadsTerm(line, i);
-    terms.push(term);
-    i = next;
-  }
-  const [subject, predicate, object, graph] = terms;
-  return { subject, predicate, object, graph: graph || null };
-}
-
-// Parse N-Triples/N-Quads text (as produced by Factoidal.toRdf() /
-// Factoidal.query({output: 'ntriples'})) into an array of quad-shaped
-// objects: {subject, predicate, object, graph}, each term
-// {termType, value, [language], [datatype]} — the same shape RDF/JS
-// terms expose for the fields these hub posts read.
-function parseNQuads(text) {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith("#"))
-    .map(parseNQuadsLine);
-}
-
-class FnDataset {
-  constructor(nquadsText) {
-    this._text = nquadsText;
-    this._quads = parseNQuads(nquadsText);
-  }
-  get size() { return this._quads.length; }
-  [Symbol.iterator]() { return this._quads[Symbol.iterator](); }
-  toNQuads() { return this._text; }
-}
-
-// Lean twin of FnDataset (issue #585's page-level half: typed wrappers
-// over the dataset-handle ABI, `Wasm/Ops/Handles.lean`, so a hub cell
-// never has to carry N-Quads text through fn.l4Call itself). Where
-// FnDataset holds the parsed text in JS, L4Dataset holds a HANDLE --
-// the dataset stays parsed once, inside the wasm module's own store,
-// and every op after `fn.l4Parse` sends only the handle string. Same
-// external shape as FnDataset (`size`, `toNQuads()`) so the two engines'
-// cells read symmetrically; `_engine`/`handle` are read by
-// `fn.l4Query`/`fn.l4Update`, not meant for a cell to touch directly.
+// Handle-backed dataset of the Lean dispatch ABI (issue #585's page-level
+// half, `Wasm/Ops/Handles.lean`): the dataset stays parsed inside the
+// wasm module and every op after `fn.l4Parse` sends only the handle.
+// `_engine`/`handle` are read by `fn.l4Query`/`fn.l4Update`.
 class L4Dataset {
   constructor(engine, handle, count) {
     this._engine = engine;
@@ -686,20 +583,12 @@ class L4Dataset {
   }
 }
 
-// Same heuristic as npm/factoidal/lib/api.js's sniffQueryForm: blank
-// out IRIs/comments first so '#' inside a PREFIX IRI or a keyword
-// appearing inside a string literal can't hide/fake the query verb.
-function sniffQueryForm(sparql) {
-  const cleaned = String(sparql).replace(/<[^>]*>/g, " ").replace(/#[^\n]*/g, " ");
-  const m = cleaned.match(/\b(select|ask|construct|describe)\b/i);
-  return m ? m[1].toLowerCase() : "select";
-}
-
+// One SPARQL Results JSON term (SPARQL 1.1 Query Results JSON Format § 3.2;
+// a `triple` term per SPARQL 1.2) as an RDF/JS-shaped term object.
 function srjTermToFn(t) {
   if (t.type === "uri") return { termType: "NamedNode", value: t.value };
   if (t.type === "bnode") return { termType: "BlankNode", value: t.value };
   if (t.type === "triple") {
-    // RDF 1.2 triple term in SPARQL Results JSON -> a Quad-shaped term.
     const v = t.value || {};
     return {
       termType: "Quad", value: "",
@@ -708,178 +597,67 @@ function srjTermToFn(t) {
       object: srjTermToFn(v.object),
     };
   }
-  // 'literal' | 'typed-literal'
   const language = t["xml:lang"] || "";
   const datatype = t.datatype || (language ? RDF_LANGSTRING : XSD_STRING);
   return { termType: "Literal", value: t.value, language, datatype: { termType: "NamedNode", value: datatype } };
 }
 
-// Reshape a RAW, CLI-shaped Factoidal module (query/toRdf/canonicalize/
-// registerExtensionFunction/version, same shape as npm/factoidal/
-// browser.js's own exports -- see "Why `fn` is an adapter, not an
-// import" in docs/web/hub/README.md) into the typed Dataset-based shape
-// `fn` exposes. `fn.parse`/`fn.query` below are this same reshaping
-// hardcoded to the module-scope `Factoidal` (the same-origin bundle);
-// this is the parameterized version, used by `fn.loadRegistryPackage`
-// (post 37) to apply IDENTICAL reshaping to whichever raw module a
-// cell loaded from the npm registry CDN, so a cell can call
-// `registry.parse(...)`/`registry.query(...)` with the exact same
-// contract as `fn.parse`/`fn.query`.
-function makeTypedApiOverRaw(raw) {
+function srjRows(srj) {
+  const rows = (srj && srj.results && srj.results.bindings) || [];
+  return rows.map((row) => {
+    const map = new Map();
+    for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
+    return map;
+  });
+}
+
+// Which result form a query has, for a registry module whose raw query()
+// does not say (same heuristic as the 0.8.x lib/api.js sniffQueryForm:
+// IRIs and comments are blanked first).
+function sniffQueryForm(sparql) {
+  const cleaned = String(sparql).replace(/<[^>]*>/g, " ").replace(/#[^\n]*/g, " ");
+  const m = cleaned.match(/\b(select|ask|construct|describe)\b/i);
+  return m ? m[1].toLowerCase() : "select";
+}
+
+// Typed parse/query/canonicalize over a @factoidal/core module from the
+// registry that predates 0.9.0: those browser.js files export the F*
+// driver's raw calls (strings in; SPARQL Results JSON or N-Triples out).
+// Datasets are built by this page's own engine from the N-Quads the
+// registry module answers, so a registry cell and a same-origin cell
+// hold the same Dataset type.
+function typedOverRawRegistryModule(raw) {
   return {
     version: raw.version,
     async parse(text, options) {
       const opts = options || {};
       const nq = await raw.toRdf(text, { format: opts.format || "turtle", baseIRI: opts.baseIRI });
-      return new FnDataset(nq);
+      return Factoidal.parse(nq, { format: "nquads" });
     },
     async query(dataset, sparql, options) {
       const opts = options || {};
       const entail = opts.entail || "none";
-      const sparql12 = opts.sparql12 === true || String(opts.version || "") === "1.2";
       const form = sniffQueryForm(sparql);
       if (form === "construct" || form === "describe") {
-        const nt = await raw.query(dataset.toNQuads(), sparql, {
-          dataFormat: "nquads", entail, output: "ntriples", sparql12,
-        });
-        return new FnDataset(nt);
+        const nt = await raw.query(dataset.toNQuads(), sparql, { dataFormat: "nquads", entail, output: "ntriples" });
+        return Factoidal.parse(nt, { format: "nquads" });
       }
-      const result = await raw.query(dataset.toNQuads(), sparql, {
-        dataFormat: "nquads", entail, output: "json", sparql12,
-      });
+      const result = await raw.query(dataset.toNQuads(), sparql, { dataFormat: "nquads", entail, output: "json" });
       if (form === "ask") return !!result.boolean;
-      const rows = (result.results && result.results.bindings) || [];
-      return rows.map((row) => {
-        const map = new Map();
-        for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
-        return map;
-      });
+      return srjRows(result);
     },
     async canonicalize(text, options) { return raw.canonicalize(text, options); },
     async registerExtensionFunction(iri, f) { return raw.registerExtensionFunction(iri, f); },
   };
 }
 
-const fn = {
-  /**
-   * Certified core-RDFS closure + its decidable fragment check (post
-   * 32: the six-rule operator with the decides-iff). "corerdfs" is the
-   * API name for the fragment the literature calls ρdf (Muñoz, Pérez &
-   * Gutierrez 2009); the rhoDf* names are literature-name aliases.
-   * Thin delegations to the browser adapter, same as lib/api.js.
-   */
-  async coreRdfsClosure(data) { return Factoidal.coreRdfsClosure(data); },
-  async coreRdfsCheck(data) { return Factoidal.coreRdfsCheck(data); },
-  async rdfsPlusClosure(data) { return Factoidal.rdfsPlusClosure(data); },
-  async rhoDfClosure(data) { return Factoidal.coreRdfsClosure(data); },
-  async rhoDfFragmentCheck(data) { return Factoidal.coreRdfsCheck(data); },
-  /**
-   * Full RDFS / OWL-RL closure (post 32's perf-comparison cell; the
-   * caps table advertised this ABI but no fn wrapper existed until
-   * post 32 called it — the node test harness masks fn-surface gaps,
-   * so wrappers must be added HERE when a page first uses one).
-   */
-  async owlClosure(data, mode) {
-    // Factoidal.owlClosure takes N-Quads; page cells hand us Turtle.
-    // Convert first or the ABI silently closes the EMPTY graph.
-    const nq = await Factoidal.toRdf(data, { format: "turtle" });
-    return Factoidal.owlClosure(nq, mode || 'RDFS');
-  },
-  /**
-   * Verified sigmoid showcase (post 28): sampled points + the
-   * engine-serialized MathML formula. Thin delegations -- found
-   * missing by the 2026-08-08 hub_browser_all.sh sweep (same masked
-   * fn-surface class as the rhoDf* gaps above).
-   */
-  async sigmoidPoints(params) { return Factoidal.sigmoidPoints(params); },
-  async sigmoidFormulaMathml() { return Factoidal.sigmoidFormulaMathml(); },
-  /**
-   * Parse an RDF document into an FnDataset (mirrors
-   * npm/factoidal/index.js's `parse(text, {format}) -> Dataset`).
-   */
-  async parse(text, options) {
-    const opts = options || {};
-    const nq = await Factoidal.toRdf(text, { format: opts.format || "turtle", baseIRI: opts.baseIRI });
-    return new FnDataset(nq);
-  },
-  /**
-   * Query an FnDataset (mirrors npm/factoidal/index.js's
-   * `query(data, sparql, {entail}) -> Bindings[] | boolean | Dataset`).
-   */
-  async query(dataset, sparql, options) {
-    const opts = options || {};
-    const entail = opts.entail || "none";
-    // SPARQL 1.2 opt-in: {sparql12:true} or {version:'1.2'} forwards to
-    // the engine's tokenize_12 parser + Mode_12 data load.
-    const sparql12 = opts.sparql12 === true || String(opts.version || "") === "1.2";
-    const form = sniffQueryForm(sparql);
-    if (form === "construct" || form === "describe") {
-      const nt = await Factoidal.query(dataset.toNQuads(), sparql, {
-        dataFormat: "nquads", entail, output: "ntriples", sparql12,
-      });
-      return new FnDataset(nt);
-    }
-    const result = await Factoidal.query(dataset.toNQuads(), sparql, {
-      dataFormat: "nquads", entail, output: "json", sparql12,
-    });
-    if (form === "ask") return !!result.boolean;
-    const rows = (result.results && result.results.bindings) || [];
-    return rows.map((row) => {
-      const map = new Map();
-      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
-      return map;
-    });
-  },
-  /**
-   * In-memory COTTAS/Parquet bytes store (post 42; issue #595's
-   * persistence program; docs/designissues/2026-07-06-inmemory-bytes-
-   * store.md). Thin fn-shape wrappers over Factoidal.toCottas/
-   * openCottas/queryCottas/closeCottas (npm/factoidal/browser.js,
-   * already exported there) -- no fn wrapper existed until post 42
-   * called one, same masked-fn-surface class as the rhoDf-family and
-   * sigmoid gaps above (the node test harness can't see a missing browser-
-   * layer wrapper; only a live cell on a real post exposes it). This
-   * is the browser tier of the same reader/writer the CLI's
-   * `--data-cottas`/`--data-cottas-mem` serves on disk
-   * (skills/disk-storage-format/SKILL.md §6): bytes held in the wasm
-   * heap instead of a file, read-only, no entailment, no write
-   * overlay -- see Factoidal.queryCottas's own doc comment in
-   * browser.js for the full divergence list from fn.query().
-   */
-  async toCottas(dataset) { return Factoidal.toCottas(dataset.toNQuads()); },
-  async openCottas(bytes) { return Factoidal.openCottas(bytes); },
-  async queryCottas(handle, sparql) {
-    if (typeof handle !== "string") {
-      throw new TypeError("queryCottas: handle must be the string openCottas() returned");
-    }
-    const r = await Factoidal.queryCottas(handle, sparql);
-    if (r.kind === "ask") return !!r.boolean;
-    if (r.kind === "construct") return new FnDataset(r.nquads);
-    const rows = (r.srj.results && r.srj.results.bindings) || [];
-    return rows.map((row) => {
-      const map = new Map();
-      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
-      return map;
-    });
-  },
-  async closeCottas(handle) { return Factoidal.closeCottas(handle); },
-  /**
-   * SPARQL 1.1 §17.6 extension functions (issue #463) + SERVICE
-   * endpoint snapshots (issue #57 family) — thin pass-throughs to the
-   * browser adapter, which owns the registry + async trampoline.
-   */
-  async registerExtensionFunction(iri, f) { return Factoidal.registerExtensionFunction(iri, f); },
-  async unregisterExtensionFunction(iri) { return Factoidal.unregisterExtensionFunction(iri); },
-  async clearExtensionFunctions() { return Factoidal.clearExtensionFunctions(); },
-  async registerServiceEndpoint(iri, data, options) { return Factoidal.registerServiceEndpoint(iri, data, options); },
-  async clearServiceEndpoints() { return Factoidal.clearServiceEndpoints(); },
+const hubHelpers = {
   /**
    * Load the vendored wikifn-fstar compiled Wikifunctions engine
    * (hub post 35; provenance in web/hub/assets/wikifn/README.md).
    * Resolves once globalThis.wikifnCompiledCall / wikifnEngineCall
    * exist; idempotent. The node-side twin lives in
-   * tests/hub/post35_test.mjs (reads the same vendored file from
-   * disk), mirroring post24's fn.queryHdt browser-vs-test duality.
+   * tests/hub/post35_test.mjs.
    */
   async loadWikifunctions() {
     if (typeof globalThis.wikifnCompiledCall === "function") return true;
@@ -896,30 +674,12 @@ const fn = {
     return true;
   },
   /**
-   * Load the Lean 4 engine compiled to WebAssembly (hub post 36).
-   * A SECOND, independent engine on the page: the rest of `fn` is the
-   * F*-derived OCaml compiled by js_of_ocaml, while this is Lean source
-   * compiled Lean -> C -> wasm32 by Emscripten. Built by
-   * formal/lean4/Wasm/build-wasm.sh; artifacts in web/hub/assets/l4/.
-   *
-   * Idempotent: the promise is cached, so a page with several L4 cells
-   * instantiates one module. The node-side twin lives in
-   * tests/hub/post36_test.mjs (imports the same loader from disk),
-   * mirroring the fn.loadWikifunctions duality above.
+   * The loaded Lean engine handle (call, callBlob, callBlobIO, version,
+   * bgpQuery) — the package's own (`Factoidal.loadEngine()`), so every
+   * cell on the page uses one wasm instance.
    */
   async loadL4() {
-    if (!this._l4Promise) {
-      // `?v=` is the eleventy build's BUILD_VERSION (docs/.eleventy.js
-      // computes it once and exposes it as the `buildVersion` template
-      // global — the same value docs/sw.js's cache name is stamped
-      // with). Changing the import URL per build is the fix for issue
-      // #584: the ServiceWorker serves same-origin assets stale-while-
-      // revalidate, so without a version-busted URL the first page
-      // load after a deploy can pair the new hub HTML with the
-      // PREVIOUS build's l4factoidal.js.
-      this._l4Promise = import("../assets/l4/l4factoidal.js?v={{ buildVersion }}").then((m) => m.loadL4());
-    }
-    return this._l4Promise;
+    return Factoidal.loadEngine();
   },
   /** The Lean-side ABI version string (hub post 36). */
   async l4Version() {
@@ -939,36 +699,26 @@ const fn = {
    * op name from formal/lean4/Wasm/Dispatch.lean ("ops" lists them),
    * `args` an array of positional string arguments. Returns the parsed
    * {"ok":true,...} envelope; throws when the Lean side reports
-   * {"ok":false,"error":...}. One wrapper serves every dispatch op,
-   * because the envelopes match bin/npm-entry/entry_jsoo.ml op for op.
+   * {"ok":false,"error":...}.
    */
   async l4Call(op, args) {
     return (await this.loadL4()).call(op, args);
   },
   /**
    * The dispatch ABI plus ONE contiguous byte region in and one out
-   * (hub post 54). The ops whose input is artifact bytes rather than
-   * text -- `storeQuery` is the one a notebook reaches for -- take
-   * their bytes this way: written straight into the wasm heap with no
-   * encoding, with `args` saying which window of the region belongs to
-   * which artifact. Lean bounds-checks every window, so a wrong offset
-   * is an ordinary refusal and never a memory fault.
-   *
-   * Returns the loader's {envelope, bytes} pair unchanged. Most ops
-   * answer with an empty `bytes`.
+   * (hub posts 42 and 54): `args` say which window of the region belongs
+   * to which artifact; Lean bounds-checks every window. Returns the
+   * loader's {envelope, bytes} pair unchanged.
    */
   async l4CallBlobIO(op, args, blobIn) {
     return (await this.loadL4()).callBlobIO(op, args, blobIn);
   },
   /**
    * Open a Shardborough generation that lives under an HTTP base URL
-   * (hub post 54). Delegates to the store-over-HTTP host of
-   * `@factoidal/core`, mirrored under /npm/factoidal/ so the page loads
-   * it same-origin; the engine is this page's own, so one wasm module
-   * serves the whole notebook. The host fetches CURRENT, the manifest
-   * and exactly the artifacts the ENGINE's plan names, and checks each
-   * one against the SHA-256 the manifest commits before the bytes reach
-   * the module.
+   * (hub post 54), through the package's store-over-HTTP host with this
+   * page's engine. The host fetches CURRENT, the manifest and exactly the
+   * artifacts the ENGINE's plan names, and checks each one against the
+   * SHA-256 the manifest commits before the bytes reach the module.
    */
   async openStoreOverHttp(baseUrl, options) {
     const module = await import("{{ '/npm/factoidal/store-http/index.mjs' | url }}");
@@ -977,13 +727,9 @@ const fn = {
   },
   /**
    * Parse an RDF document into a Lean-side dataset handle (hub posts
-   * 36/38; issue #585's page-level half: WHY ARE WE PARSING TTL TO
-   * JSON NOT A GRAPH API -- owner, 2026-08-25). Mirrors `fn.parse`'s
-   * contract (`text, {format, baseIRI} -> Dataset`) but backs the
-   * result with `datasetOpen` (`Wasm/Ops/Handles.lean`): the text
-   * crosses the JS/wasm boundary exactly once, here, and every later
-   * `fn.l4Query`/`fn.l4Update` call carries only the returned
-   * L4Dataset's handle.
+   * 36/38, `datasetOpen` in `Wasm/Ops/Handles.lean`): the text crosses
+   * the JS/wasm boundary once, and every later `fn.l4Query`/`fn.l4Update`
+   * call carries only the handle.
    */
   async l4Parse(text, options) {
     const opts = options || {};
@@ -992,40 +738,21 @@ const fn = {
     return new L4Dataset(engine, r.handle, r.count);
   },
   /**
-   * Query an L4Dataset (mirrors `fn.query`'s contract: SELECT rows as
-   * an array of `Map<name, term>` -- the same `srjTermToFn`-shaped term
-   * objects `fn.query` returns -- ASK as a boolean, CONSTRUCT as a
-   * dataset). Divergence from `fn.query`: the Lean `datasetQuery`
-   * envelope carries its own `"kind"` field (`"select"|"ask"|
-   * "construct"`), so this dispatches on that instead of sniffing the
-   * SPARQL text the way `fn.query`'s `sniffQueryForm` does for the
-   * stateless F* ABI. A CONSTRUCT result comes back from
-   * `datasetQuery` as plain N-Quads text with no handle of its own
-   * (`Wasm/Ops/Query.lean`'s `queryParsedDataset` does not register one
-   * for its result graph), so it is wrapped in a text-backed
-   * `FnDataset`, not a further handle-backed `L4Dataset`.
+   * Query an L4Dataset: SELECT rows as an array of `Map<name, term>`,
+   * ASK as a boolean, CONSTRUCT as a Dataset. The `datasetQuery`
+   * envelope carries its own `kind`.
    */
   async l4Query(dataset, sparql) {
     const r = dataset._engine.call("datasetQuery", [dataset.handle, sparql]);
     if (r.kind === "ask") return !!r.boolean;
-    if (r.kind === "select") {
-      const rows = (r.srj.results && r.srj.results.bindings) || [];
-      return rows.map((row) => {
-        const map = new Map();
-        for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
-        return map;
-      });
-    }
-    if (r.kind === "construct") return new FnDataset(r.nquads);
+    if (r.kind === "select") return srjRows(r.srj);
+    if (r.kind === "construct") return Factoidal.parse(r.nquads, { format: "nquads" });
     throw new Error(`l4Query: unexpected result kind "${r.kind}"`);
   },
   /**
-   * Apply a SPARQL 1.1 Update to an L4Dataset. Divergence from
-   * `fn.update` (which returns a NEW FnDataset, leaving its argument
-   * untouched): `datasetUpdate` REPLACES the dataset stored under the
-   * same handle (`Wasm/Ops/Handles.lean`), so this mutates `dataset`'s
-   * cached size in place and returns the same object -- the handle
-   * identity does not change, only what it refers to.
+   * Apply a SPARQL 1.1 Update to an L4Dataset. `datasetUpdate` REPLACES
+   * the dataset stored under the same handle, so this updates `dataset`'s
+   * cached size in place and returns the same object.
    */
   async l4Update(dataset, sparqlUpdate) {
     const r = dataset._engine.call("datasetUpdate", [dataset.handle, sparqlUpdate]);
@@ -1033,354 +760,15 @@ const fn = {
     return dataset;
   },
   /**
-   * SHACL Core validation (mirrors npm/factoidal/index.js's
-   * `shaclValidate(data, shapes, options) -> Promise<{conforms, report}>`).
-   * `data`/`shapes` may each be raw RDF text (parsed with `options.format`,
-   * default "turtle") or an already-parsed FnDataset. Throws the same
-   * "predates the SHACL export" error `Factoidal.shaclValidate` throws
-   * if the loaded npm-entry bundle doesn't expose it -- callers that
-   * want to degrade gracefully should try/catch this call rather than
-   * assume it always resolves.
-   */
-  async shaclValidate(data, shapes, options) {
-    const opts = options || {};
-    if (typeof Factoidal.shaclValidate !== "function") {
-      throw new Error(
-        "shaclValidate: the loaded factoidal-npm-entry bundle predates the SHACL export");
-    }
-    const toNQuads = async (x) => (
-      x && typeof x.toNQuads === "function"
-        ? x.toNQuads()
-        : Factoidal.toRdf(x, { format: opts.format || "turtle" })
-    );
-    const dataNq = await toNQuads(data);
-    const shapesNq = await toNQuads(shapes);
-    const result = await Factoidal.shaclValidate(dataNq, shapesNq);
-    return { conforms: result.conforms, report: new FnDataset(result.reportNquads) };
-  },
-  /**
-   * OWL tableau materialisation (mirrors npm/factoidal/index.js's
-   * `tableauMaterialise(data, options) -> {dataset, addedCount}`):
-   * formal/fstar/Tableau.fst's tableau_materialise adds
-   * `i rdf:type <ClassExpression>` for every individual it proves is a
-   * member of an OWL class expression. `data` may be raw RDF text
-   * (parsed with `options.format`, default "turtle") or an FnDataset.
-   */
-  async tableauMaterialise(data, options) {
-    const opts = options || {};
-    if (typeof Factoidal.tableauMaterialise !== "function") {
-      throw new Error(
-        "tableauMaterialise: the loaded factoidal-npm-entry bundle predates the tableauMaterialise export");
-    }
-    const dataNq = data && typeof data.toNQuads === "function"
-      ? data.toNQuads()
-      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
-    const parsed = await Factoidal.tableauMaterialise(dataNq);
-    return { dataset: new FnDataset(parsed.nquads), addedCount: parsed.addedCount };
-  },
-  /**
-   * OWL DL inconsistency verdict (mirrors npm/factoidal/index.js's
-   * `tableauDlInconsistent(data, options) -> {inconsistent, rlAlone}`):
-   * the OWL-RL -> tableau -> OWL-RL -> is_inconsistent DL pipeline, with
-   * `rlAlone` the plain OWL-RL verdict on the same input for comparison.
-   */
-  async tableauDlInconsistent(data, options) {
-    const opts = options || {};
-    if (typeof Factoidal.tableauDlInconsistent !== "function") {
-      throw new Error(
-        "tableauDlInconsistent: the loaded factoidal-npm-entry bundle predates the tableauDlInconsistent export");
-    }
-    const dataNq = data && typeof data.toNQuads === "function"
-      ? data.toNQuads()
-      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
-    const parsed = await Factoidal.tableauDlInconsistent(dataNq);
-    return { inconsistent: parsed.inconsistent, rlAlone: parsed.rlAlone };
-  },
-  /**
-   * OWL DL consistency verdict via the verified clash-detecting tableau
-   * (mirrors npm/factoidal/index.js's `owlIsConsistent(data, options)
-   * -> {consistent, reason?}`): Tableau.Refute.tableau_consistent over
-   * the OWL-RL closure, the pure verified chain bin/owl-runner runs
-   * under `--regime dl`. `data` may be raw RDF text (parsed with
-   * `options.format`, default "turtle") or an FnDataset. `consistent`
-   * is true|false|null (null = budget-out, `reason` names the fuel cap
-   * -- never a silent false).
-   */
-  async owlIsConsistent(data, options) {
-    const opts = options || {};
-    if (typeof Factoidal.owlIsConsistent !== "function") {
-      throw new Error(
-        "owlIsConsistent: the loaded factoidal-npm-entry bundle predates the owlIsConsistent export");
-    }
-    const dataNq = data && typeof data.toNQuads === "function"
-      ? data.toNQuads()
-      : await Factoidal.toRdf(data, { format: opts.format || "turtle" });
-    const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
-    const parsed = await Factoidal.owlIsConsistent(dataNq, optsJson);
-    return parsed.reason === undefined
-      ? { consistent: parsed.consistent }
-      : { consistent: parsed.consistent, reason: parsed.reason };
-  },
-  /**
-   * OWL entailment check (mirrors npm/factoidal/index.js's
-   * `owlEntails(premise, conclusion, options) -> {entailed, via,
-   * reason?}`): the OWL-RL closure path then negate-and-refute. Each
-   * argument may be raw RDF text (parsed with `options.format`, default
-   * "turtle") or an FnDataset. `entailed` is true|false|null.
-   */
-  async owlEntails(premise, conclusion, options) {
-    const opts = options || {};
-    if (typeof Factoidal.owlEntails !== "function") {
-      throw new Error(
-        "owlEntails: the loaded factoidal-npm-entry bundle predates the owlEntails export");
-    }
-    const toNq = async (x) => (x && typeof x.toNQuads === "function"
-      ? x.toNQuads()
-      : Factoidal.toRdf(x, { format: opts.format || "turtle" }));
-    const premiseNq = await toNq(premise);
-    const conclusionNq = await toNq(conclusion);
-    const optsJson = JSON.stringify(opts.fuel != null ? { fuel: String(opts.fuel) } : {});
-    const parsed = await Factoidal.owlEntails(premiseNq, conclusionNq, optsJson);
-    return parsed.reason === undefined
-      ? { entailed: parsed.entailed, via: parsed.via }
-      : { entailed: parsed.entailed, via: parsed.via, reason: parsed.reason };
-  },
-  /**
-   * RDFC-1.0 canonicalization (mirrors npm/factoidal/index.js's
-   * `canonicalize(data, options) -> Promise<string>`): canonical
-   * blank-node labels plus sorted canonical N-Quads text. `data` may
-   * be raw RDF text (parsed with `options.format`, default "turtle")
-   * or an already-parsed FnDataset.
-   */
-  async canonicalize(data, options) {
-    const opts = options || {};
-    if (data && typeof data.toNQuads === "function") {
-      return Factoidal.canonicalize(data.toNQuads(), { format: "nquads" });
-    }
-    return Factoidal.canonicalize(data, { format: opts.format || "turtle" });
-  },
-  /**
-   * Apply a SPARQL 1.1 Update to an FnDataset, returning the updated
-   * FnDataset (mirrors npm/factoidal/index.js's
-   * `update(data, updateText) -> Promise<Dataset>`). Needs the
-   * npm-entry engine bundle -- reaches for `Factoidal.loadNpmEntry()`'s
-   * raw ABI internally so a cell never has to.
-   */
-  async update(dataset, updateText) {
-    const abi = await Factoidal.loadNpmEntry();
-    if (typeof abi.updateDataset !== "function") {
-      throw new Error(
-        "update: the loaded factoidal-npm-entry bundle predates the SPARQL Update export");
-    }
-    const nq = dataset && typeof dataset.toNQuads === "function"
-      ? dataset.toNQuads()
-      : await Factoidal.toRdf(dataset, { format: "turtle" });
-    const r = JSON.parse(abi.updateDataset(nq, updateText));
-    if (!r.ok) throw new Error(r.error || "update failed");
-    return new FnDataset(r.nquads);
-  },
-  /**
-   * Serialize a dataset (engine-produced bytes, sorted N-Quads order).
-   * Mirrors npm/factoidal/lib/api.js's `serialize(data, options)`.
-   * NOTE: this JSDoc deliberately never writes an inline object-type
-   * annotation as two adjacent open-brace characters -- Nunjucks reads
-   * that pair anywhere in this file, JS comment or not, as the start of
-   * a template expression, and fails the whole page's build. Same
-   * family as docs/web/hub/README.md's trap about this comment's own
-   * closing sequence appearing early inside itself -- a different pair
-   * of characters, same cause, and the reason this note avoids BOTH
-   * pairs rather than naming either one literally.
-   * @param {Dataset|string} data
-   * @param {object} [options]
-   * @param {'nquads'|'turtle'} [options.format]
-   * @param {string} [options.inputFormat]
-   * @param {object} [options.prefixes]
-   * @returns {Promise<string>}
-   *   'turtle' (prefix-compacted, subject-grouped -- entry_jsoo.ml's
-   *   serializeTurtle -> RDF_Turtle_Serialize.turtle_of_graph_auto)
-   *   flattens every named graph into the default graph (Turtle has no
-   *   named-graph notion); use 'nquads' (the default) when graph names
-   *   must survive. Needs the npm-entry engine bundle -- reaches for
-   *   `Factoidal.loadNpmEntry()`'s raw ABI internally, the same entry
-   *   `update` above uses.
-   */
-  async serialize(data, options) {
-    const opts = options || {};
-    const outFormat = String(opts.format || "nquads").toLowerCase();
-    if (outFormat !== "nquads" && outFormat !== "turtle") {
-      throw new TypeError("serialize: format must be 'nquads' or 'turtle'");
-    }
-    const abi = await Factoidal.loadNpmEntry();
-    let nq;
-    if (data && typeof data.toNQuads === "function") {
-      nq = data.toNQuads();
-    } else {
-      const parsed = JSON.parse(
-        abi.parseToDatasetJson(String(data), opts.inputFormat || "turtle", ""));
-      if (!parsed.ok) throw new Error(`serialize(parse): ${parsed.error}`);
-      nq = parsed.nquads;
-    }
-    if (outFormat === "turtle") {
-      if (opts.prefixes && typeof abi.serializeTurtleWith === "function") {
-        const r = JSON.parse(
-          abi.serializeTurtleWith(nq, JSON.stringify({ prefixes: opts.prefixes })));
-        if (!r.ok) throw new Error(`serialize: ${r.error}`);
-        return r.turtle;
-      }
-      if (typeof abi.serializeTurtle !== "function") {
-        throw new Error(
-          "serialize: the loaded factoidal-npm-entry bundle predates Turtle serialization");
-      }
-      const r = JSON.parse(abi.serializeTurtle(nq));
-      if (!r.ok) throw new Error(`serialize: ${r.error}`);
-      return r.turtle;
-    }
-    if (typeof abi.serializeNQuads !== "function") {
-      throw new Error(
-        "serialize: the loaded factoidal-npm-entry bundle predates N-Quads serialization");
-    }
-    const r = JSON.parse(abi.serializeNQuads(nq));
-    if (!r.ok) throw new Error(`serialize: ${r.error}`);
-    return r.nquads;
-  },
-  /**
-   * Feature probe for the npm-entry engine bundle backing this page
-   * (mirrors npm/factoidal/lib/api.js's `capabilities()` -- a
-   * `typeof entry.X === 'function'` check per feature, not a blanket
-   * version check). Never throws: `entry: false` on any failure to
-   * load the bundle, same as the Node-side capabilities()'s own
-   * try/catch-and-report-false contract.
-   */
-  async capabilities() {
-    const FEATURE_ABI_FN = {
-      shacl: "shaclValidate", shex: "shexValidate", owlClosure: "owlClosure",
-      coreRdfsClosure: "rhoDfClosure", coreRdfsCheck: "rhoDfFragmentCheck",
-      rdfsPlusClosure: "rdfsPlusClosure",
-      rhoDfClosure: "rhoDfClosure", rhoDfFragmentCheck: "rhoDfFragmentCheck",
-      rml: "rmlMap", csvw: "csvwToRdf", jsonld: "jsonldToRdf", rif: "rifEval",
-      xslt: "xsltTransform", mathml: "mathmlEval", xforms: "xformsRecalc",
-      jsonSchema: "jsonSchemaValidate", schematron: "schematronValidate",
-      toan: "toanSummation", matrix: "matrixDeterminant",
-    };
-    let abi;
-    try {
-      abi = await Factoidal.loadNpmEntry();
-    } catch (err) {
-      return { entry: false };
-    }
-    const caps = { entry: true };
-    for (const [name, fnName] of Object.entries(FEATURE_ABI_FN)) {
-      caps[name] = typeof abi[fnName] === "function";
-    }
-    return caps;
-  },
-  /**
-   * XSLT 1.0 transform (mirrors npm/factoidal/index.js's
-   * `xsltTransform(stylesheetXml, sourceXml) -> Promise<string>`).
-   */
-  async xsltTransform(stylesheetXml, sourceXml) {
-    return Factoidal.xsltTransform(stylesheetXml, sourceXml);
-  },
-  /**
-   * Evaluate a Content MathML document (mirrors npm/factoidal/index.js's
-   * `mathmlEval(contentMathmlXml, bindings) -> Promise<MathValue>`).
-   */
-  async mathmlEval(contentMathmlXml, bindings) {
-    return Factoidal.mathmlEval(contentMathmlXml, bindings);
-  },
-  /**
-   * XForms recalculate (mirrors npm/factoidal/index.js's
-   * `xformsRecalc(instanceXml, binds) -> Promise<{instance, validity}>`).
-   */
-  async xformsRecalc(instanceXml, binds) {
-    return Factoidal.xformsRecalc(instanceXml, binds);
-  },
-  /**
-   * JSON Schema (draft-07) validation (mirrors npm/factoidal/index.js's
-   * `jsonSchemaValidate(schemaJson, instanceJson) -> Promise<{valid, result, errors}>`).
-   */
-  async jsonSchemaValidate(schemaJson, instanceJson) {
-    return Factoidal.jsonSchemaValidate(schemaJson, instanceJson);
-  },
-  /**
-   * Schematron validation (mirrors npm/factoidal/index.js's
-   * `schematronValidate(schematronXml, instanceXml) -> Promise<{findings}>`).
-   */
-  async schematronValidate(schematronXml, instanceXml) {
-    return Factoidal.schematronValidate(schematronXml, instanceXml);
-  },
-  /** Finite summation, as Content MathML (mirrors npm/factoidal/index.js's toanSummation). */
-  async toanSummation(bodyExpr, idx, lo, hi) {
-    return Factoidal.toanSummation(bodyExpr, idx, lo, hi);
-  },
-  /** Finite product, as Content MathML (mirrors npm/factoidal/index.js's toanProduct). */
-  async toanProduct(bodyExpr, idx, lo, hi) {
-    return Factoidal.toanProduct(bodyExpr, idx, lo, hi);
-  },
-  /** Canonical simplification, as Content MathML (mirrors npm/factoidal/index.js's toanSimplify). */
-  async toanSimplify(expr) {
-    return Factoidal.toanSimplify(expr);
-  },
-  /** Derivative w.r.t. `variable`, as Content MathML (mirrors npm/factoidal/index.js's toanDiff). */
-  async toanDiff(expr, variable) {
-    return Factoidal.toanDiff(expr, variable);
-  },
-  /** `expr[variable := value]` simplified, as Content MathML (mirrors npm/factoidal/index.js's toanSubst). */
-  async toanSubst(expr, variable, value) {
-    return Factoidal.toanSubst(expr, variable, value);
-  },
-  /** Exact determinant of a square matrix (mirrors npm/factoidal/index.js's matrixDeterminant). */
-  async matrixDeterminant(matrix) {
-    return Factoidal.matrixDeterminant(matrix);
-  },
-  /** Dot product of two vectors (mirrors npm/factoidal/index.js's matrixScalarProduct). */
-  async matrixScalarProduct(a, b) {
-    return Factoidal.matrixScalarProduct(a, b);
-  },
-  /** Cross product of two 3-vectors (mirrors npm/factoidal/index.js's matrixVectorProduct). */
-  async matrixVectorProduct(a, b) {
-    return Factoidal.matrixVectorProduct(a, b);
-  },
-  /** Outer product of two vectors (mirrors npm/factoidal/index.js's matrixOuterProduct). */
-  async matrixOuterProduct(a, b) {
-    return Factoidal.matrixOuterProduct(a, b);
-  },
-  /**
-   * Run a SPARQL 1.1 query against a read-only HDT artifact's raw
-   * bytes (mirrors npm/factoidal/index.js's
-   * `queryHdt(hdtBytes, sparql) -> Promise<Bindings[] | boolean>`).
-   * Encapsulates the `Factoidal.runFactoidalCli(['--data-hdt', ...])`
-   * shim entirely -- a cell never builds the argv or fake-filesystem
-   * entry itself. Default graph only, SELECT/ASK only.
-   */
-  async queryHdt(hdtBytes, sparql) {
-    const result = await Factoidal.queryHdt(hdtBytes, sparql);
-    if (typeof result === "boolean") return result;
-    if (typeof result.boolean === "boolean") return result.boolean;
-    const rows = (result.results && result.results.bindings) || [];
-    return rows.map((row) => {
-      const map = new Map();
-      for (const [name, term] of Object.entries(row)) map.set(name, srjTermToFn(term));
-      return map;
-    });
-  },
-  /**
-   * Post 37 ("Installed, not vendored"): load the ACTUAL
-   * `@factoidal/core` package published to the npm registry, from a
-   * CDN that serves npm packages verbatim, and reshape it into the
-   * same typed contract `fn` exposes (see makeTypedApiOverRaw above).
-   * Tries jsdelivr then unpkg -- both mirror npm's exact file layout
-   * for this package (confirmed: browser.js's relative `./factoidal.js`
-   * / `./factoidal-npm-entry.js` fetches resolve against either CDN
-   * origin). This is the ONE cell binding in the whole hub that loads
-   * third-party CODE, not just third-party data -- see hub.njk's CSP
-   * comment at the top of this file for the narrow, per-page carve-out
-   * that makes the dynamic import() below survive CSP on this post's
-   * live twin; on every other page (and on this post's own strict/
-   * default page) the import is CSP-blocked and rejects, which the
-   * calling cell must catch itself (see the post's prose -- this
-   * function deliberately does NOT swallow the error, so the happy
-   * path stays assertable in the Node test).
+   * Post 37 ("Installed, not vendored"): load the `@factoidal/core`
+   * package published to the npm registry from a CDN that serves npm
+   * packages verbatim (jsdelivr, then unpkg). A 0.9.0 or later
+   * browser.js is the typed API itself and is returned as loaded; an
+   * older one (the F* driver's raw calls) is given typed
+   * parse/query/canonicalize over this page's engine. This is the one
+   * cell binding that loads third-party CODE; the page's CSP blocks the
+   * import everywhere except this post's live twin, and the calling cell
+   * catches that rejection itself.
    */
   async loadRegistryPackage(version) {
     const v = version || "0.1.0";
@@ -1392,7 +780,8 @@ const fn = {
     for (const url of urls) {
       try {
         const raw = await import(/* @vite-ignore */ url);
-        return makeTypedApiOverRaw(raw);
+        if (typeof raw.openDataset === "function" && typeof raw.toRdf !== "function") return raw;
+        return typedOverRawRegistryModule(raw);
       } catch (e) {
         errors.push(`${url}: ${e && e.message}`);
       }
@@ -1401,6 +790,8 @@ const fn = {
       `loadRegistryPackage: could not load @factoidal/core@${v} from any CDN -- ${errors.join("; ")}`);
   },
 };
+
+const fn = Object.assign({}, Factoidal.default, hubHelpers);
 
 // ---------------------------------------------------------------------
 // `pretty` -- an opt-in, prettier rendering for cell output. A cell
