@@ -274,6 +274,11 @@ answer `true`.
   other agents. Wall times carry that load; CPU times less so. No step was
   repeated, so no row has a spread. Compare rows within this run only
   (`skills/perf-benchmarking`, "Baselines are per-host").
+- Wall time: the first process of the main run timed each step with the
+  harness's own clock around the process; the second process and the QUDT
+  watchdog run polled every 0.2 s and so round a step up by at most 0.2 s
+  (their shortest step took 2.1 s). The harness now takes the wall time from
+  `time -v`.
 - A stated pair passes from the closure alone. 20 passes of 20 there show that
   the closure keeps the premise and that the command line finishes; they show
   nothing about the tableau.

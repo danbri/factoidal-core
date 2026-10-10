@@ -207,6 +207,17 @@ def run_step(cmd, cap_s, as_bytes, stdout_path, workdir, rss_cap_bytes=0):
         pass
     with open(efile, "rb") as f:
         stderr = f.read().decode("utf-8", "replace")
+    # The poll loop below samples every 0.2 s, so its own clock rounds a
+    # short step up; take the wall time from time -v when it has one.
+    el = tv.get("Elapsed (wall clock) time (h:mm:ss or m:ss)")
+    if el:
+        try:
+            secs = 0.0
+            for part in el.split(":"):
+                secs = secs * 60 + float(part)
+            wall = secs
+        except ValueError:
+            pass
     rss_kb = int(tv.get("Maximum resident set size (kbytes)", "0") or 0)
     user = float(tv.get("User time (seconds)", "0") or 0)
     syst = float(tv.get("System time (seconds)", "0") or 0)
