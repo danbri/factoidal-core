@@ -310,7 +310,89 @@ refuter's clash site and the checker's facts about that node.
 
 ## 8. Measured
 
-FILLED_BY_MEASUREMENT
+Engine `c62db9ef` (branch `claude/wt-owl-cert`), corpus
+`third_party/testing/owl`, `l4owl-probe --dir third_party/testing/owl
+--dl --refute-ms 3000 <catalog>`, run under `prlimit --as=8000000000`
+(a 4 GB address-space cap makes every Lean binary abort with "failed to
+create thread": the runtime reserves address space for its thread
+pool; the cap limits reservations, not resident memory).
+
+### The verdicts did not change
+
+Every line the probe printed before this landing is byte-identical to
+the baseline run at `db3f045f` (the comparison drops only the new lines
+and the wall-clock figure; failing ids included). The same holds for the
+`tools/lean-scoreboard.sh --only l4owl-probe` run of the DL jobs.
+
+### Certificates per catalog
+
+| Catalog | Score (unchanged) | Decided by refutation | Certificate-checked | Unchecked |
+| --- | --- | --- | --- | --- |
+| type-inconsistency | 126 pass, 1 fail, 1 skip (out of 128) | 77 | 50 | 27 |
+| type-positive-entailment | 400 pass, 12 fail (out of 412) | 55 | 32 | 23 |
+| type-consistency | 571 pass, 12 fail (out of 583) | 55 | 32 | 23 |
+| syntax-dl | 422 pass, 1 fail, 1 skip (out of 424) | 113 | 72 | 41 |
+| type-negative-entailment | 46 pass, 0 fail (out of 46) | 0 | 0 | 0 |
+
+The catalogs overlap (`type-consistency.rdf` carries the
+positive-entailment units of `type-positive-entailment.rdf`; `syntax-dl`
+carries units of both), so the rows are not to be added. A
+positive-entailment unit counts as certificate-checked only when every
+one of its negation goals is (and then relies on obligation O3).
+
+### What the refutations use (step 2's count)
+
+`REFUTATION-USES` on type-inconsistency (77 units; a unit counts once
+per kind it uses):
+
+| Leaf clash source or branch kind | Units |
+| --- | --- |
+| complement `C` / `¬C` | 25 |
+| `≥` against `≤` on one node | 18 |
+| forced identification (`≤ 1`) | 18 |
+| datatype value space (range) | 11 |
+| pairwise-disjoint existentials against `≤ k` | 7 |
+| union branching | 4 |
+| `≤ k` against named different successors | 4 |
+| datatype value space (cardinality) | 3 |
+| `owl:Nothing` | 2 |
+| propositional clash | 2 |
+| counting rung (Farkas) | 2 |
+| graph-level `rdf:nil` structure (G4) | 2 |
+| graph-level `owl:hasKey` (G10) | 1 |
+| nominal identity | 1 |
+
+The first slice took these in this order: the complement and bound
+clashes with the TBox, contrapositives and witnesses (12 of 77
+checked); inverse properties and the counting-clash emission (25);
+qualified merge bounds and chained forced identifications (27); data
+cardinality restrictions as class names, the OilEd `P.x` encoding (50).
+Conjunction and disjunction introduction, nominals as class names,
+`SameIndividual` and the `≥ k` witness groups moved the entailment
+catalogs (type-positive-entailment from 19 to 32 of 55).
+
+### The 27 unchecked type-inconsistency units
+
+| Reason | Units |
+| --- | --- |
+| datatype value spaces (range 11, cardinality 3) | 14 |
+| functional data property with two different literals | 2 |
+| counting rung (`countingRefutes`) | 2 |
+| graph-level G4 (`rdf:nil`, 2) and G10 (`owl:hasKey`, 1) | 3 |
+| propositional clash | 2 |
+| nominal identity and the "spy point" nominal | 2 |
+| a chain of forced identifications the emitter cannot place | 1 |
+| `owl:topObjectProperty` | 1 |
+
+All are tracked on <https://github.com/danbri/factoidal/issues/764>.
+
+### Cost
+
+The certificate run repeats the refuter's search and then checks. Wall
+time of the catalog run, baseline against this landing:
+type-inconsistency 2.2 s to 3.8 s; type-positive-entailment 176 s to
+201 s; type-consistency 197 s to 254 s; syntax-dl 194 s to 249 s. No
+certificate run reached its 20 s wall clock.
 
 ## 9. Open obligations and open rules
 
