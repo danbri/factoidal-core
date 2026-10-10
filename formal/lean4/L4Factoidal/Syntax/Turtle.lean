@@ -1611,8 +1611,7 @@ theorem readCollectionCells_eq : ∀ (fuel : Nat) (st : TurtleState) (pos : Nat)
       split
       · rfl
       · simp [Except.map, linkCollectionResult]
-      · rename_i hne1 hne2
-        cases hobj : readObject f st p1 r1 with
+      · cases readObject f st p1 r1 with
         | error e => rfl
         | ok res =>
           rcases res with ⟨next, p2, r2⟩
@@ -1621,7 +1620,6 @@ theorem readCollectionCells_eq : ∀ (fuel : Nat) (st : TurtleState) (pos : Nat)
           cases readCollectionRest f next.state.freshBnode.snd p2 r2 with
           | error e => rfl
           | ok res => rfl
-
 
 /-- `readCollectionRest` run as the loop: no cells read yet. -/
 def readCollectionRestTR (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
@@ -1679,7 +1677,6 @@ theorem readCollection_eq (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List
         cases readCollectionRest f first.state.freshBnode.snd p2 r2 with
         | error e => rfl
         | ok res => rfl
-
 
 /-! ## Directives — [3] directive
 
