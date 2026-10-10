@@ -651,7 +651,15 @@ let decode_request
     else if ct = "application/sparql-query" then
       PR_Query body [] []
     else if ct = "application/sparql-update" then
-      PR_Update body [] []
+      // Protocol section 2.2.3 (update via POST directly): the dataset
+      // parameters using-graph-uri and using-named-graph-uri are URL query
+      // parameters. Section 2.2.4: a request with such a parameter AND a
+      // USING or WITH clause in the update MUST fail (W3C protocol test
+      // bad_update_dataset_conflict).
+      let kvs = parse_query_string effective_qs in
+      if kvs_have_using_param kvs && update_has_dataset_clause body then
+        PR_Bad "using-graph-uri/using-named-graph-uri query parameters conflict with USING/WITH in update text (Protocol 2.2.4)"
+      else PR_Update body [] []
     else if ct = "application/x-www-form-urlencoded" then
       let kvs = parse_query_string body in
       build_from_kvs false is_update kvs

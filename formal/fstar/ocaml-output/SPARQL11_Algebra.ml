@@ -3365,7 +3365,7 @@ let value_compare (v1 : eval_result) (v2 : eval_result) (op : comp_op) :
   | (ER_Term (RDF_Term.T_Literal l1), ER_Term (RDF_Term.T_Literal l2)) ->
       if (lit_datatype l1) = (lit_datatype l2)
       then
-        (if (lit_lang l1) = (lit_lang l2)
+        (if RDF_Term.lang_tag_option_eq (lit_lang l1) (lit_lang l2)
          then
            FStar_Pervasives_Native.Some
              (apply_comp_op

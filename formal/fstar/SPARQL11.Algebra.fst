@@ -2446,7 +2446,10 @@ let value_compare (v1 v2 : eval_result) (op : comp_op) : option bool =
   | ER_Term (T_Literal l1), ER_Term (T_Literal l2) ->
     if lit_datatype l1 = lit_datatype l2
     then
-      if lit_lang l1 = lit_lang l2
+      // RDF 1.1 Concepts section 3.3: language tags compare
+      // case-insensitively ("en" and "EN" are one tag), so STRLANG("abc", "EN")
+      // equals "abc"@en (SPARQL 1.1 W3C functions/strlang04).
+      if lang_tag_option_eq (lit_lang l1) (lit_lang l2)
       then Some (apply_comp_op (String.compare (lit_lexical l1) (lit_lexical l2)) op)
       else (match op with
             | CmpEq -> Some false
