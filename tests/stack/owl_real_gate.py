@@ -73,6 +73,11 @@ XFAIL: dict[str, str] = {
     # The Lean RDF/XML parser gives an xml:lang to the next sibling property
     # element, so two literals collapse into existing ones (11,703 triples).
     "ro-parse": "https://github.com/danbri/factoidal/issues/329",
+    # The closure fits in 1.4 GB; printing it needs more than 6 GB resident.
+    "qudt-closure": "https://github.com/danbri/factoidal/issues/758",
+    # Fits in 1.4 GB resident, but mimalloc's 1 GiB arena reservations exhaust
+    # the 6,000,000,000-byte address-space cap first.
+    "qudt-consistent": "https://github.com/danbri/factoidal/issues/759",
 }
 
 
