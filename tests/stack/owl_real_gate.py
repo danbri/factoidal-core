@@ -12,6 +12,7 @@ with the stated result:
             budget-out and fails the row)
   true      the verdict is `true`
   done      the step exits 0 (closure)
+  S         (species) l4owl-species finishes within S seconds
   N         (parse) the Lean parser reads N triples from the first source
             file; N is rdflib 7.6.0's count, recorded in the file's
             PROVENANCE.md
@@ -65,6 +66,7 @@ ROWS: dict[str, tuple] = {
     "cl-basic-closure": ("cl-basic", "closure", "done", None),
     "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
     "wine-closure-fstar": ("wine", "closure", "done", None),
+    "qudt-species": ("qudt", "species", 60, None),
     "qudt-closure": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
 }
@@ -85,6 +87,8 @@ XFAIL: dict[str, str] = {
     "cl-basic-consistent": "https://github.com/danbri/factoidal/issues/760",
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
+    # 253 s of CPU time on 130,404 triples.
+    "qudt-species": "https://github.com/danbri/factoidal/issues/766",
 }
 
 
@@ -107,6 +111,12 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
         if prep is None:
             return False, "the source files do not parse"
     out = str(wd / f"{step}.out")
+    if step == "species":
+        docs = sorted(str(p) for p in wd.glob("doc*.nt"))
+        r = bench.run_step([str(BIN_DIR / "l4owl-species")] + docs, int(expect), AS_BYTES,
+                           out, str(wd))
+        return r["status"] == "ok", (f"species: {r['status']}, {r['wall_s']:.1f} s "
+                                     f"(bound {expect} s), peak RSS {r['peak_rss_mb']:.0f} MB")
     if step == "closure" and rid.endswith("-fstar"):
         cmd = [str(FSTAR_BIN), "entail", "--data", str(merged), "--regime", "OWL-RL"]
     elif step == "closure":
