@@ -830,6 +830,9 @@ def valueSetMaxSize : ValueSet → Option Nat
   -- values, so no finite bound.
   | .dense qi        => if qIntervalEmpty qi then some 0 else none
   | .unconstrained   => none
+  -- XSD 1.1 Part 2 §3.3.2.1: the value space of `xsd:boolean` is
+  -- `{true, false}`. Every other family is infinite.
+  | .family .boolean => some 2
   | .family _        => none
 
 end L4Factoidal.XSD

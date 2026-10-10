@@ -1272,4 +1272,47 @@ private def gMinMaxQualData (minFiller : WfIri) : Graph :=
 #guard refuted (gMinMaxQualData xsdString)
 #guard !(refuted (gMinMaxQualData xsdInteger))
 
+/-! `Qualified-cardinality-boolean` and `-restricted-int`
+(https://github.com/danbri/factoidal/issues/709). `= 2 dp.xsd:boolean`
+needs both boolean values, so each is entailed; the negation goal is the
+negative assertion, and `xsd:boolean` less the excluded value holds one
+value, fewer than two. `= 1 dp.xsd:boolean` does not force `true`.
+`= 3 dp.xsd:integer[≥ 1, ≤ 3]` forces `1`, `2` and `3`;
+`= 2 dp.xsd:integer[≥ 1, ≤ 3]` forces none of them. -/
+
+private def boolT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := xsdBoolean, langTag := none, direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff, xsdBoolean]⟩
+
+private def gExactQualBool (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "eq"⟩,
+    ⟨bn "eq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "eq", owlQualifiedCardinality, cardLit k⟩,
+    ⟨bn "eq", owlOnDataRange, .iri xsdBoolean⟩ ]
+
+#guard entailedByRefutation (gExactQualBool "2") [⟨indI, exDp1, boolT "true"⟩]
+#guard entailedByRefutation (gExactQualBool "2") [⟨indI, exDp1, boolT "false"⟩]
+#guard !entailedByRefutation (gExactQualBool "1") [⟨indI, exDp1, boolT "true"⟩]
+/-! Three boolean values do not exist: `= 3 dp.xsd:boolean` has no
+model, and `= 2` has one. -/
+#guard refuted (gExactQualBool "3")
+#guard !(refuted (gExactQualBool "2"))
+
+private def gExactQualRange (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "eq"⟩,
+    ⟨bn "eq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "eq", owlQualifiedCardinality, cardLit k⟩,
+    ⟨bn "eq", owlOnDataRange, bnT "dr"⟩,
+    ⟨bn "dr", owlOnDatatype, .iri xsdInteger⟩,
+    ⟨bn "dr", owlWithRestrictions, bnT "f1"⟩,
+    ⟨bn "f1", rdfFirst, bnT "fa"⟩, ⟨bn "f1", rdfRest, bnT "f2"⟩,
+    ⟨bn "f2", rdfFirst, bnT "fb"⟩, ⟨bn "f2", rdfRest, .iri rdfNil⟩,
+    ⟨bn "fa", facetMinInclusive, intT "1"⟩,
+    ⟨bn "fb", facetMaxInclusive, intT "3"⟩ ]
+
+#guard entailedByRefutation (gExactQualRange "3") [⟨indI, exDp1, intT "2"⟩]
+#guard !entailedByRefutation (gExactQualRange "2") [⟨indI, exDp1, intT "2"⟩]
+#guard refuted (gExactQualRange "4")
+#guard !(refuted (gExactQualRange "3"))
+
 end L4Factoidal.OWL.Refute

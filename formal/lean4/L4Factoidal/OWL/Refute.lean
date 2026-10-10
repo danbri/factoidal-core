@@ -1299,11 +1299,31 @@ def datatypeRangeClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassE
   (collectDtProperties ls).any (fun p =>
     existsUnsatisfiableWitness p ls (fillerValueSet st p ls) (excludedValues g st i p))
 
-def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri) :=
+/-- Every label that demands `k` pairwise different `p`-fillers:
+    `(k, p, none)` for `≥ k p` and `= k p`, `(k, p, some D)` for the
+    QUALIFIED forms `≥ k p.D` and `= k p.D`.
+
+    OWL 2 Direct Semantics §2.2.3 (class expressions):
+    `DataMinCardinality(n DPE DR)` is
+    `{x | #{y | ⟨x,y⟩ ∈ (DPE)ᴰᴾ ∧ y ∈ (DR)ᴰᵀ} ≥ n}`. The `n` values
+    lie in `(DR)ᴰᵀ` AND in every space a filler of `DPE` is confined
+    to, so the qualified form meets the filler space with `DR`. A
+    filler the datatype layer does not read (an object class
+    expression, a datatype outside the map) leaves the space as it is,
+    which over-counts and withholds the clash.
+
+    Until 2026-10-10 the qualified forms were not collected, so
+    `DataExactCardinality(2 dp xsd:boolean)` beside
+    `NegativeDataPropertyAssertion(dp a "true"^^xsd:boolean)` was not
+    refuted (`Qualified-cardinality-boolean`,
+    https://github.com/danbri/factoidal/issues/709). -/
+def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri × Option ClassExpr) :=
   ls.filterMap (fun l => match l with
-    | .minCard k p   => some (k, p)
-    | .exactCard k p => some (k, p)
-    | _              => none)
+    | .minCard k p         => some (k, p, none)
+    | .exactCard k p       => some (k, p, none)
+    | .minQualCard k p d   => some (k, p, some d)
+    | .exactQualCard k p d => some (k, p, some d)
+    | _                    => none)
 
 /-- An upper bound on the values left in `vs` once `ex` is removed.
     For a finite integer interval it is the count less the excluded
@@ -1319,13 +1339,22 @@ def valueSetMaxSizeExcluding (vs : ValueSet) (ex : List Term) : Option Nat :=
           some (k - inside.length)
       | none => none
   | .enum _ => valueSetMaxSize (valueSetMinusValues vs ex)
+  -- `xsd:boolean` has the value space `{true, false}` (XSD 1.1 Part 2
+  -- §3.3.2); an excluded boolean value, read through its lexical
+  -- mapping (`"1"` and `"true"` are one value), removes one of them.
+  | .family .boolean =>
+      some (2 - (ex.filterMap termBoolOpt).eraseDups.length)
   | _ => valueSetMaxSize vs
 
 def datatypeCardinalityClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
     : Bool :=
-  (collectCardProps ls).any (fun (k, p) =>
+  (collectCardProps ls).any (fun (k, p, d?) =>
     k ≥ 1 &&
-    (match valueSetMaxSizeExcluding (fillerValueSet st p ls) (excludedValues g st i p) with
+    (let vs := fillerValueSet st p ls
+     let vs := match d? with
+       | some d => foldDatatypeConstraint vs d
+       | none   => vs
+     match valueSetMaxSizeExcluding vs (excludedValues g st i p) with
      | some m => k > m
      | none   => false))
 

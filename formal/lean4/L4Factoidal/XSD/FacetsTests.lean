@@ -127,6 +127,10 @@ min-cardinality on `xsd:decimal` IS satisfiable. -/
 #guard valueSetMaxSize (.dense fullQInterval) == none
 #guard valueSetMaxSize .unconstrained == none
 #guard valueSetMaxSize (.family .string) == none
+/-! `xsd:boolean` holds exactly two values (XSD 1.1 Part 2 §3.3.2.1);
+the float and double families hold more than any cardinality. -/
+#guard valueSetMaxSize (.family .boolean) == some 2
+#guard valueSetMaxSize (.family .double) == none
 
 /-! An enumeration collapses only PROVABLY equal members, so the
 count can be too high but never too low. Two spellings of one half
