@@ -379,6 +379,20 @@ bundles and builds from other toolchains are for private comparison builds
 `docs/designissues/2026-10-10-npm-lean-only.md`,
 https://github.com/danbri/factoidal/issues/713.
 
+### OWL 2 test scoring (owner, 2026-10-10)
+
+> "711 accept your recommendation"
+> "721 Add an OWL 2 RDF-Based Semantics"
+
+- https://github.com/danbri/factoidal/issues/711: `WebOnt-I5.5-005` is a
+  disputed fixture. It is a local override that names the issue, counted
+  apart, and stale (the run fails) if it ever passes. Reason: OWL 2 Mapping to
+  RDF Graphs §3.1.2 Table 4; its conclusion has no ontology header.
+- https://github.com/danbri/factoidal/issues/721: the Lean tree gets an OWL 2
+  RDF-Based Semantics regime. The 12 PositiveEntailmentTests that are DIRECT
+  with species FULL only, and the catalog's 482 RDF-BASED cases, are judged
+  there. They are not moved to an "unsupported" or "not applicable" bucket.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
