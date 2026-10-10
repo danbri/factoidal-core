@@ -55,7 +55,7 @@ else
   PLAYWRIGHT_IMPORT_SPEC="playwright"
 fi
 
-for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js docs/fstar-extracted/browser.js third_party/valis/vocabs/valis.ttl docs/web/hub/assets/valis-daw/audio.mjs; do
+for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js npm/factoidal/browser.js npm/factoidal/l4-assets/l4factoidal.wasm third_party/valis/vocabs/valis.ttl docs/web/hub/assets/valis-daw/audio.mjs; do
   [ -e "$f" ] || { echo "ENV MISSING: $f -- run the vendoring steps first (third_party/valis/PROVENANCE.md, docs/web/hub/assets/valis-daw/README.md)." >&2; exit 2; }
 done
 

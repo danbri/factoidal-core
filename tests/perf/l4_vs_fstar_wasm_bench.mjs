@@ -1,6 +1,13 @@
-// Benchmark: the Lean 4 wasm engine (docs/web/hub/assets/l4/) vs the
-// F*-extracted engines from the npm package — wasm_of_ocaml
-// (factoidal/wasm, WasmGC) and js_of_ocaml (factoidal, plain JS).
+// Benchmark: the Lean 4 engine of @factoidal/core (npm/factoidal, the
+// package's own typed API over its wasm in npm/factoidal/l4-assets/) vs
+// the F*-extracted npm-entry bundles, loaded BY PATH from
+// docs/fstar-extracted/ (installed by `tools/fetch-builds.sh --set web`;
+// since 0.9.0 they are not in the package, issue 713): wasm_of_ocaml
+// (factoidal-npm-entry.wasm.js, WasmGC) and js_of_ocaml
+// (factoidal-npm-entry.js). The F* bundles are driven through the same
+// typed wrappers (lib/api.mjs buildApi) the package uses, as
+// tests/engine-compare/engines.mjs does, so all three engines run
+// parse() then query() on the same Turtle text.
 //
 // Workload: K people, each with a :name and an :age triple (2K triples
 // total); the query is the two-pattern join from hub post 36
@@ -9,13 +16,9 @@
 // Measurement discipline (skills/perf-benchmarking):
 // - each engine runs in its OWN child process, so RSS deltas are not
 //   contaminated by a sibling engine's heap;
-// - init, data ingestion, and query are timed separately;
-// - query time is the median of 5 runs after 1 warmup;
-// - the known asymmetry is REPORTED, not hidden: the Lean ABI takes
-//   pre-built JSON triples (marshal cost inside the call, measured
-//   separately as stringifyMs), while the F* engines parse Turtle
-//   (parseMs). Neither number is comparable to the other's ingest —
-//   only queryMs is like-for-like once both sides hold the data.
+// - init, data ingestion (parseMs), and query are timed separately;
+// - query time is the median of 5 runs after 1 warmup.
+// An engine whose bundle is absent reports {error} and the driver goes on.
 //
 // Usage:
 //   node tests/perf/l4_vs_fstar_wasm_bench.mjs            # driver: all engines, K=100,1000,4000
@@ -62,36 +65,45 @@ async function runChild(engine, K) {
   const out = { engine, people: K, triples: 2 * K, node: process.version };
   const m0 = mem();
 
-  let queryOnce; // () => Promise<number of rows>
+  const t0 = now();
+  let factoidal;
   if (engine === 'l4') {
-    const t0 = now();
-    const { loadL4 } = await import(new URL('docs/web/hub/assets/l4/l4factoidal.js', ROOT).href);
-    const l4 = await loadL4();
-    out.initMs = +(now() - t0).toFixed(1);
-    const ts = now();
-    JSON.stringify(triples); // marshal share of each call, measured alone
-    out.stringifyMs = +(now() - ts).toFixed(1);
-    queryOnce = async () => {
-      const doc = await l4.bgpQuery(triples, BGP);
-      return doc.results.bindings.length;
-    };
+    factoidal = (await import(new URL('npm/factoidal/index.mjs', ROOT).href)).default;
   } else {
-    const t0 = now();
     const { createRequire } = await import('node:module');
+    const { existsSync } = await import('node:fs');
+    const { buildApi } = await import(new URL('npm/factoidal/lib/api.mjs', ROOT).href);
     const require = createRequire(import.meta.url);
-    const factoidal = require(p(engine === 'fstar-wasm' ? 'npm/factoidal/wasm.js' : 'npm/factoidal/index.js'));
-    // First parse forces engine init; time it apart from data size by
-    // parsing one triple first.
-    await factoidal.parse(`<${EX}a> <${EX}b> "c" .`, { format: 'ntriples', baseIRI: EX });
-    out.initMs = +(now() - t0).toFixed(1);
-    const tp = now();
-    const dataset = await factoidal.parse(ttl, { format: 'turtle', baseIRI: EX });
-    out.parseMs = +(now() - tp).toFixed(1);
-    queryOnce = async () => {
-      const rows = await factoidal.query(dataset, SPARQL);
-      return Array.isArray(rows) ? rows.length : rows.results.bindings.length;
-    };
+    const bundle = p(engine === 'fstar-wasm'
+      ? 'docs/fstar-extracted/factoidal-npm-entry.wasm.js'
+      : 'docs/fstar-extracted/factoidal-npm-entry.js');
+    if (!existsSync(bundle)) throw new Error(`${bundle} is absent: run tools/fetch-builds.sh --set web`);
+    factoidal = buildApi({
+      engineName: engine,
+      loadEntry: async () => {
+        const mod = require(bundle);
+        // The wasm_of_ocaml bundle registers its entry once the module
+        // has compiled; wait for it (10 s cap).
+        for (let i = 0; i < 200; i += 1) {
+          const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
+          if (abi) return abi;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        throw new Error(`${bundle} registered no factoidalNpmEntry`);
+      },
+    });
   }
+  // First parse forces engine init; time it apart from data size by
+  // parsing one triple first.
+  await factoidal.parse(`<${EX}a> <${EX}b> "c" .`, { format: 'ntriples', baseIRI: EX });
+  out.initMs = +(now() - t0).toFixed(1);
+  const tp = now();
+  const dataset = await factoidal.parse(ttl, { format: 'turtle', baseIRI: EX });
+  out.parseMs = +(now() - tp).toFixed(1);
+  const queryOnce = async () => {
+    const rows = await factoidal.query(dataset, SPARQL);
+    return Array.isArray(rows) ? rows.length : rows.results.bindings.length;
+  };
 
   const m1 = mem();
   out.rows = await queryOnce(); // warmup + sanity
@@ -110,9 +122,9 @@ function driver() {
   const sizes = process.env.BENCH_SIZES ? process.env.BENCH_SIZES.split(',').map(Number) : [100, 1000, 4000];
   const engines = ['l4', 'fstar-wasm', 'fstar-js'];
   const artifacts = {
-    'l4 wasm': ['docs/web/hub/assets/l4/l4factoidal.wasm', 'docs/web/hub/assets/l4/l4factoidal.mjs', 'docs/web/hub/assets/l4/l4factoidal.js'],
-    'fstar wasm_of_ocaml': ['npm/factoidal/factoidal-npm-entry.wasm.js', 'npm/factoidal/factoidal-npm-entry.wasm.assets'],
-    'fstar js_of_ocaml': ['npm/factoidal/factoidal.js'],
+    'l4 wasm': ['npm/factoidal/l4-assets/l4factoidal.wasm', 'npm/factoidal/l4-assets/l4factoidal.mjs', 'npm/factoidal/l4-assets/l4factoidal.js'],
+    'fstar wasm_of_ocaml': ['docs/fstar-extracted/factoidal-npm-entry.wasm.js', 'docs/fstar-extracted/factoidal-npm-entry.wasm.assets'],
+    'fstar js_of_ocaml': ['docs/fstar-extracted/factoidal-npm-entry.js'],
   };
   console.log('# artifact sizes (bytes)');
   for (const [name, files] of Object.entries(artifacts)) {

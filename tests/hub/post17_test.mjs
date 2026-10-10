@@ -74,11 +74,15 @@ test('post17 cell 2 degrades gracefully when the npm-entry bundle is unavailable
 // memory.
 // ---------------------------------------------------------------------
 
-test('post17: the fn adapter now defines an update() method (grounds this post\'s fn.update cells)', async () => {
+test('post17: the page\'s fn carries update() (grounds this post\'s fn.update cells)', async () => {
+  // hub.njk builds fn from the package's browser entry
+  // (Object.assign({}, Factoidal.default, hubHelpers)), so update is the
+  // package's own function.
   const hubNjk = fs.readFileSync(path.join(REPO_ROOT, 'docs', '_includes', 'hub.njk'), 'utf8');
-  const fnBlockMatch = hubNjk.match(/const fn = \{([\s\S]*?)\n\};/);
-  assert.ok(fnBlockMatch, 'hub.njk must define a `const fn = { ... }` object');
-  assert.match(fnBlockMatch[1], /\bupdate\s*\(/, 'fn should define an update() method');
+  assert.match(hubNjk, /const fn = Object\.assign\(\{\}, Factoidal\.default, hubHelpers\);/);
+  const browser = await import(path.join(REPO_ROOT, 'npm', 'factoidal', 'browser.js'));
+  assert.equal(typeof browser.default.update, 'function');
+  assert.equal(typeof browser.update, 'function');
 });
 
 // The hub runs the Lean engine (issue 726). The checkout's record of its

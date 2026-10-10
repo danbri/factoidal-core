@@ -277,8 +277,8 @@ post needs a new binding.
 
 | Name | What it is |
 |---|---|
-| `Factoidal` | the F\* engine's raw browser driver (`docs/fstar-extracted/browser.js`; until @factoidal/core 0.9.0 it was the package's `npm/factoidal/browser.js`, which is the Lean engine since 0.9.0, issue 713) — `query(dataString, sparqlString, {dataFormat, entail, output})` returns a raw SPARQL-JSON results object (or a raw string for non-JSON `output`), `toRdf()`/`canonicalize()` dump N-Quads text, `queryDataset()` handles multi-named-graph/multi-engine queries. No `Dataset`, no typed bindings — this is the CLI's own shape, one call in, one string/JSON out. |
-| `fn` | the **typed** cell-facing API: `fn.parse(text, {format}) -> Promise<Dataset>`, `fn.query(dataset, sparql, {entail}) -> Promise<Bindings[] \| boolean \| Dataset>` — the same external contract `npm/factoidal/index.js`'s Node-side typed API exposes (`parse()`/`query()`/`Dataset.size`/iteration/`toNQuads()`), reshaped from `Factoidal`'s raw calls by a small adapter defined inline in `hub.njk` (see "Why `fn` is an adapter, not an import" below). Use this for any cell that parses a document or runs SELECT/ASK/CONSTRUCT and wants to work with terms/bindings rather than raw JSON. |
+| `Factoidal` | `@factoidal/core`'s browser entry, `npm/factoidal/browser.js` (passed through to `/npm/factoidal/` by `docs/.eleventy.js`): the Lean 4 engine compiled to WebAssembly, fetched and compiled with `WebAssembly.instantiateStreaming` on the first call. Its exports are the package's typed API, the same functions `npm/factoidal/index.mjs` exports under Node (`index.d.ts`), plus `loadEngine()` and `setAssetsUrl()`. Since issue 726 (2026-10-10); until then it was the F\* engine's raw driver. |
+| `fn` | `Object.assign({}, Factoidal.default, hubHelpers)`: the package's typed API (`fn.parse(text, {format}) -> Promise<Dataset>`, `fn.query(dataset, sparql, {entail}) -> Promise<Bindings[] \| boolean \| Dataset>`, and every other function of `index.d.ts`), plus the hub-only helpers defined in `hub.njk`: the Lean dispatch ABI (`loadL4`, `l4Call`, `l4CallBlobIO`, `l4Parse`/`l4Query`/`l4Update`), `openStoreOverHttp`, `loadWikifunctions` and `loadRegistryPackage`. The Node harness (`tests/hub/`) binds `fn` to `npm/factoidal/index.mjs`, which exports the same functions. |
 | `d3` | vendored `d3` 7.9.0, for hand-rolled charts. |
 | `Plot` | vendored `@observablehq/plot` 0.6.17, for declarative charts. |
 | `html` | vendored `@observablehq/stdlib`'s tagged-template HTML helper. |
@@ -352,28 +352,20 @@ have access to `capabilities()` directly (it's Node-only, `npm/factoidal`'s
 typed API, not exposed on `browser.js`), so try/catch around the call
 itself is the client-side equivalent.
 
-### Why `fn` is an adapter, not an import
+### Why `fn` is the package itself
 
-`npm/factoidal/index.js` (and `fn.js`, the FP dataset wrapper it in
-turn wraps) is CommonJS and uses `node:fs`/`node:crypto`/`require()` —
-none of which exist in a browser. `npm/factoidal/browser.js` is the
-one browser-safe ESM entry point; its raw, CLI-shaped calls (`query`,
-`toRdf`, `canonicalize`, and the per-engine wrappers such as
-`xsltTransform`/`queryHdt`) are the primitives `fn` is built on, not
-what a hub cell calls directly. Rather than fork the engine, re-mirror
-a browser build of the whole typed API, or change `npm/factoidal`
-itself wholesale (out of this wave's territory — `npm/factoidal` and
-`lib/api.js` are verified-library-adjacent surfaces with their own
-test suite), `fn` is a small reshaping layer defined directly in
-`docs/_includes/hub.njk`: for `parse`/`query` it feeds the browser
-entry's `toRdf()`/`query()` results through a short N-Quads/SPARQL-JSON
-parser to produce Dataset/Map-shaped values; for the engine wrappers
-(XSLT, MathML, XForms, JSON Schema, Schematron, TOAN, matrix, HDT,
-SHACL, canonicalize, update, capabilities) it delegates straight
-through to the matching browser-entry function, unwrapped. It does not
-import `npm/factoidal`/`lib/api.js` directly — the browser entry
-(`browser.js`/`fn.js`/`index.d.ts` under `npm/factoidal/`, mirrored to
-`docs/npm/factoidal/`) is the only shared surface.
+Since 0.9.0 (issue 713) `@factoidal/core` has one ES-module core
+(`lib/api.mjs`) with two entries: `index.mjs` for Node and `browser.js`
+for a page. Both export the same typed functions over the same Lean wasm.
+So the page binds `fn` to the browser entry's API and adds only what a
+notebook needs beyond the package (the dispatch ABI helpers, the store
+over HTTP, the Wikifunctions engine, the registry loader), and the Node
+harness binds the Node entry. No reshaping layer sits between a cell and
+the package: a cell that passes `node --test tests/hub/postNN_test.mjs`
+calls the same function on the page. The F\* adapter that reshaped the
+F\* driver's raw calls, with its own N-Quads parser, was removed with
+issue 726. `tests/hub/fn_surface_parity_test.mjs` checks that every
+`fn.*` and `Factoidal.*` name a post calls is on the browser surface.
 
 ### Trap: `*/` inside a `fn`-wrapper JSDoc comment breaks EVERY post
 
@@ -591,13 +583,10 @@ toolbar/editor chrome added by this change.
   `"live"`) and degrade cleanly when it reads `"strict"` — the same
   cell source runs on both pages. See post 21's map cell for the
   worked example.
-- **js engine only.** The wasm_of_ocaml build
-  (`docs/npm/factoidal/browser-wasm.js`) is stale for newer CLI
-  surfaces cells rely on (`--dump-nq` byte-for-byte parity, etc.);
-  cells use the default js_of_ocaml path (`Factoidal`/`fn`'s default
-  engine), not `queryDataset(..., {engine: 'wasm'})`.
-- **No engine/npm/lib changes.** If a cell genuinely cannot be
-  expressed against `Factoidal`/`fn` as they stand, don't extend
-  `npm/factoidal` or `docs/npm/factoidal/` to make it work — write the
-  cell against the raw `Factoidal` API instead and note the gap in
-  the post's prose.
+- **One engine.** Cells run the Lean wasm of `@factoidal/core`
+  (`Factoidal`/`fn`). There is no second engine to select.
+- **No engine changes from a post.** If a cell cannot be expressed
+  against `Factoidal`/`fn` as they stand, the gap is a package or Lean
+  library change with its own issue and an expected-failure case in the
+  post's test (CLAUDE.md, "A stated shortfall is a failing test plus an
+  open issue"), not a cell-side workaround.

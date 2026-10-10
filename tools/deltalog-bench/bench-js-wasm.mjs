@@ -49,15 +49,18 @@ async function loadJsAbi() {
 }
 
 async function loadWasmAbi() {
-  const wasmEngine = require(path.join(REPO_ROOT, 'npm/factoidal/wasm.js'));
-  if (!wasmEngine.wasmAvailable()) {
-    throw new Error('wasm bundle / .wasm asset not present, or Node < 22');
+  // The F* wasm_of_ocaml npm-entry bundle, by path (since @factoidal/core
+  // 0.9.0 it is not in the package; tools/fetch-builds.sh --set web
+  // installs it under docs/fstar-extracted/). It registers its entry once
+  // the module has compiled.
+  const p = path.join(REPO_ROOT, 'docs/fstar-extracted/factoidal-npm-entry.wasm.js');
+  const mod = require(p);
+  for (let i = 0; i < 200; i += 1) {
+    const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
+    if (abi && typeof abi.deltaBatchToHex === 'function') return abi;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const abi = await wasmEngine._loadEntryForTest();
-  if (!abi || typeof abi.deltaBatchToHex !== 'function') {
-    throw new Error('wasm bundle missing deltaBatchToHex export');
-  }
-  return abi;
+  throw new Error('wasm bundle registered no factoidalNpmEntry with deltaBatchToHex (10 s)');
 }
 
 async function main() {

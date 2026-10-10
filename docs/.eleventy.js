@@ -332,7 +332,9 @@ module.exports = function(eleventyConfig) {
       "vendor/observable/stdlib.esm.js",
       "vendor/hub/reactive-cells.mjs",
       // The hub's engine (hub.njk): @factoidal/core's browser entry, the
-      // modules it imports, and the Lean wasm with its two loaders.
+      // modules it imports, and the Lean wasm's two loaders. The wasm
+      // itself (about 10 MB) is not precached: docs/sw.js keeps large
+      // wasm out of the install step and warms it from the first use.
       "npm/factoidal/browser.js",
       "npm/factoidal/rdfjs.mjs",
       "npm/factoidal/lib/api.mjs",
@@ -343,7 +345,6 @@ module.exports = function(eleventyConfig) {
       "npm/factoidal/store-host/errors.mjs",
       "npm/factoidal/l4-assets/l4factoidal.js",
       "npm/factoidal/l4-assets/l4factoidal.mjs",
-      "npm/factoidal/l4-assets/l4factoidal.wasm",
     ];
 
     const precacheUrls = candidates

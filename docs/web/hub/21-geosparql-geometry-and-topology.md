@@ -507,6 +507,14 @@ Edinburgh and Manchester — the two cities the earlier `sfWithin` query
 did *not* pair with the Greater London box. London is missing here,
 exactly because it is not disjoint from the box it sits inside.
 
+> **On this site's engine.** The hub runs the Lean 4 engine of
+> `@factoidal/core` since 0.9.0, and the Lean library does not implement
+> `geof:distance` or `geof:envelope` (GeoSPARQL 1.1 § 8.4) yet:
+> https://github.com/danbri/factoidal/issues/727. The two cells of this
+> section and the next do not give the answers the prose describes until
+> it does; `tests/hub/post21_test.mjs` carries both as expected failures
+> naming that issue.
+
 ## `geof:distance`: exact squared distance, one disclosed square root
 
 `geof:distance` returns a number, not a boolean, so it goes in the

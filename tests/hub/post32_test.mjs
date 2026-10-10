@@ -99,31 +99,23 @@ test('post32: the perf cell runs — both closures complete on the 60-class chai
   assert.ok(full);
 });
 
-test('post32: BROWSER-SURFACE PARITY — every fn.* name the page calls exists in the browser adapter AND the hub fn wrapper', async () => {
-  // The reactive harness binds fn to the NODE package, which masked
-  // two live-page breakages (fn.coreRdfsCheck, fn.owlClosure had
-  // no browser/hub wrappers — found by the owner on the deployed
-  // page, 2026-08-07). This text-level pin closes that class: every
-  // fn.<name>( reference in the page must appear as an export in the
-  // browser driver hub.njk imports (docs/fstar-extracted/browser.js) and
-  // as a method in the hub.njk fn object.
+test('post32: BROWSER-SURFACE PARITY — every fn.* name the page calls is on the browser fn', async () => {
+  // The reactive harness binds fn to the NODE package, which masked two
+  // live-page breakages (fn.coreRdfsCheck, fn.owlClosure had no browser
+  // wrappers — found by the owner on the deployed page, 2026-08-07).
+  // Since issue 726 the page's fn is @factoidal/core's browser entry plus
+  // hub.njk's hubHelpers, so each name must be a member of browser.js's
+  // API object (or a hub helper).
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../docs/web/hub/' + POST_FILE, import.meta.url), 'utf8');
-  const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
   const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
+  const browser = await import(new URL('../../npm/factoidal/browser.js', import.meta.url).href);
   const names = [...new Set([...page.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(m => m[1]))];
   assert.ok(names.length >= 4, `expected the page to call several fn.* functions, found ${names}`);
   for (const name of names) {
-    // The hub fn object must define a wrapper method (async name( ... ).
-    const inHub = new RegExp(`async\\s+${name}\\s*\\(`).test(hub);
-    assert.ok(inHub, `fn.${name} used by the page has no wrapper in docs/_includes/hub.njk's fn object`);
-    // If that wrapper delegates to a same-named Factoidal.* function,
-    // the browser adapter must export it (fn.parse delegates to
-    // toRdf etc., so same-name delegation is the only case checked).
-    if (new RegExp(`Factoidal\\.${name}\\s*\\(`).test(hub)) {
-      const inAdapter = new RegExp(`export\\s+(async\\s+)?function\\s+${name}\\b`).test(adapter);
-      assert.ok(inAdapter, `hub fn.${name} delegates to Factoidal.${name}, which docs/fstar-extracted/browser.js does not export`);
-    }
+    const inHelpers = new RegExp(`^ {2}async\\s+${name}\\s*\\(`, 'm').test(hub);
+    assert.ok(name in browser.default || inHelpers,
+      `fn.${name} used by the page is neither in npm/factoidal/browser.js nor a hub.njk helper`);
   }
 });
 
@@ -137,7 +129,7 @@ test('post32: every observable-js cell in the page parses and runs under the rea
   }
 });
 
-test('post32: the rhoDf* literature-name aliases stay wired (node + browser adapter + hub fn)', async () => {
+test('post32: the rhoDf* literature-name aliases stay wired (node entry + browser entry)', async () => {
   // Owner renamed the public API to coreRdfs* (2026-08-08); the ρdf
   // literature names remain as aliases so registry greps keep working.
   assert.equal(typeof factoidal.rhoDfClosure, 'function');
@@ -145,12 +137,9 @@ test('post32: the rhoDf* literature-name aliases stay wired (node + browser adap
   const viaAlias = await factoidal.rhoDfFragmentCheck(ORG_TTL);
   const viaPrimary = await factoidal.coreRdfsCheck(ORG_TTL);
   assert.deepEqual(viaAlias, viaPrimary);
-  const { readFileSync } = await import('node:fs');
-  const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
-  const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
+  const browser = await import(new URL('../../npm/factoidal/browser.js', import.meta.url).href);
   for (const name of ['rhoDfClosure', 'rhoDfFragmentCheck', 'coreRdfsClosure', 'coreRdfsCheck']) {
-    assert.ok(new RegExp(`export\\s+async\\s+function\\s+${name}\\b`).test(adapter), `browser.js lacks ${name}`);
-    assert.ok(new RegExp(`async\\s+${name}\\s*\\(`).test(hub), `hub.njk fn lacks ${name}`);
+    assert.equal(typeof browser[name], 'function', `browser.js lacks ${name}`);
   }
 });
 
