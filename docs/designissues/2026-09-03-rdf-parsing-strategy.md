@@ -168,6 +168,27 @@ table the Turtle `decodeEscape` mirrors), `IriResolve.lean` (RFC 3986),
 `IriScan.lean`, the `Locality*.lean` family (chunk-locality lemmas used by
 the N-Quads streaming proofs).
 
+## 3a. Recovery (lenient) mode: planned
+
+Issue: https://github.com/danbri/factoidal/issues/716. Owner, 2026-10-10,
+verbatim: "#716 is important for building validators and for streaming huge
+datasets through a parser".
+
+State on 2026-10-10: every Lean parser in sections 2 and 3 stops at the
+first error. The F\* npm entry's `parseDocument` recovers per statement.
+
+Requirements, from the two uses the owner named:
+- validators need every error, each with line, column, offset and a stable
+  error class;
+- huge datasets need recovery in the streaming executions (section 2.2,
+  `NQuadsFold`), memory bounded by the chunk plus the longest statement,
+  diagnostics emitted as they occur, and a maximum error count.
+
+Synchronisation points: the end of the line for N-Triples and N-Quads; the
+`TurtleStatementScan` candidate boundary for Turtle and TriG. Agreement
+obligations (rule 1 below): lenient equals strict on input with no errors;
+streaming lenient gives the same diagnostics as reference lenient.
+
 ## 4. Rules that follow
 
 1. A new fast path is added beside the reference parser with a theorem or,
