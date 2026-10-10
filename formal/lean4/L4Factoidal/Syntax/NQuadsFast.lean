@@ -12,7 +12,8 @@ This module keeps the SAME lexer and the SAME fold (`foldQuadLinesAcc`, the
 parametric consumer the streaming proofs are stated over) and replaces only
 the accumulator:
 
-- `FastGraph` keeps triples in reverse insertion order plus a hash map from a
+- `FastGraph` (now in `RDF/FastGraph.lean`, moved there 2026-10-10) keeps triples
+  in reverse insertion order plus a hash map from a
   bucket key to the triples carrying that key.  The key is the subject and
   predicate structurally and the object's `Term.joinKey`; `Term.joinKey` is
   constant on `Term.eqb` classes (`Term.joinKey_eq_of_eqb`), `Subject.eqb`
@@ -36,6 +37,7 @@ which serialises both parsers' results and compares them byte for byte
 `parseNQuadsFast_eq_parseNQuads` is proved in `NQuadsFastTheorems.lean`.
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
+import L4Factoidal.RDF.FastGraph
 import L4Factoidal.Syntax.NQuadsFold
 import Std.Data.HashMap
 
@@ -43,26 +45,6 @@ namespace L4Factoidal.Syntax
 
 open L4Factoidal.RDF
 open L4Factoidal.Syntax.NQuadsStreaming
-
-/-- Bucket key: subject and predicate structurally, object by `joinKey`. -/
-abbrev TripleKey := Subject × WfIri × Term
-
-def tripleKey (t : Triple) : TripleKey := (t.s, t.p, t.o.joinKey)
-
-/-- A graph under construction: reverse insertion order plus buckets. -/
-structure FastGraph where
-  rev : List Triple := []
-  buckets : Std.HashMap TripleKey (List Triple) := ∅
-
-/-- Set-semantics add with bucketed `Triple.eqb` membership — the fast twin
-    of `Graph.add t` (which is `if g.mem t then g else g ++ [t]`). -/
-def FastGraph.add (t : Triple) (g : FastGraph) : FastGraph :=
-  let k := tripleKey t
-  let bucket := g.buckets.getD k []
-  if bucket.any (fun u => u.eqb t) then g
-  else { rev := t :: g.rev, buckets := g.buckets.insert k (t :: bucket) }
-
-def FastGraph.toGraph (g : FastGraph) : Graph := g.rev.reverse
 
 /-- A dataset under construction.  `namesRev` is the reverse of the order in
     which graph names were first seen, which is the order `addQuad` keeps

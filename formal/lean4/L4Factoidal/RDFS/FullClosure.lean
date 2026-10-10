@@ -379,6 +379,68 @@ def fullClosureLoop (g : Graph) (fuel : Nat) : Graph :=
       let g' := fullStep g
       if g'.length = g.length then g else fullClosureLoop g' n
 
+/-! ## Indexed evaluation of the same rounds (2026-10-10)
+
+`fullStep` reads the six rdfs-core rows through `stepConclusions`, whose
+premise lookups scan the whole graph, and adds the result with the
+`Graph.add` scan; one round costs O(|g|^2) (see the section of the same name
+in `Closure.lean`). `fullStepFast` computes the same list of conclusions with
+`stepConclusionsIx` and adds it with `FastGraph.addAll`; `fullStepFast_eq`
+proves it equal to `fullStep` as a LIST, and `fullClosureLoop_eq_fast` is
+registered `@[csimp]`, so every later call of `fullClosureLoop`, and therefore
+of `fullClosure`, runs the indexed loop and prints the closure in the same
+order as before. The eight single-premise rows read one triple each and are
+unchanged. -/
+
+/-- `fullStepConclusions` with the rdfs-core rows read through an index. -/
+def fullStepConclusionsIx (g : Graph) : List Triple :=
+  stepConclusionsIx g ++
+  g.flatMap rdfD2For ++
+  g.flatMap rdfs4aFor ++
+  g.flatMap rdfs4bFor ++
+  g.flatMap rdfs6For ++
+  g.flatMap rdfs8For ++
+  g.flatMap rdfs10For ++
+  g.flatMap rdfs12For ++
+  g.flatMap rdfs13For
+
+theorem fullStepConclusionsIx_eq (g : Graph) :
+    fullStepConclusionsIx g = fullStepConclusions g := by
+  simp only [fullStepConclusionsIx, fullStepConclusions, stepConclusionsIx_eq]
+
+/-- One round with the indexed conclusions and the bucketed duplicate test. -/
+def fullStepFast (g : Graph) : Graph :=
+  ((FastGraph.ofGraph g).addAll (fullStepConclusionsIx g)).toGraph
+
+theorem fullStepFast_eq (g : Graph) : fullStepFast g = fullStep g := by
+  unfold fullStepFast fullStep
+  rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+    fullStepConclusionsIx_eq, addAll_eq_graphAddAll]
+
+/-- `fullClosureLoop` with `fullStepFast`. -/
+def fullClosureLoopFast (g : Graph) (fuel : Nat) : Graph :=
+  match fuel with
+  | 0     => g
+  | n + 1 =>
+      let g' := fullStepFast g
+      if g'.length = g.length then g else fullClosureLoopFast g' n
+
+theorem fullClosureLoopFast_eq (g : Graph) (fuel : Nat) :
+    fullClosureLoopFast g fuel = fullClosureLoop g fuel := by
+  induction fuel generalizing g with
+  | zero => rfl
+  | succ n ih =>
+      simp only [fullClosureLoopFast, fullClosureLoop, fullStepFast_eq]
+      split
+      · rfl
+      · exact ih _
+
+/-- The compiler emits `fullClosureLoopFast` for every later call of
+`fullClosureLoop`. -/
+@[csimp] theorem fullClosureLoop_eq_fast : @fullClosureLoop = @fullClosureLoopFast := by
+  funext g fuel
+  exact (fullClosureLoopFast_eq g fuel).symm
+
 /-- Fuel budget. Same counting shape as `closureFuelBound`: the loop
 only recurses on strict growth, and every conclusion is built from
 components of the seeded graph plus the fixed vocabulary IRIs this

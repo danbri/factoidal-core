@@ -45,6 +45,8 @@ trusts this file only through the proved theorems.
    soundness and saturation proofs one induction each.
 -/
 import L4Factoidal.RDFS.RdfsCore
+import L4Factoidal.RDF.FastGraph
+import Std.Data.HashMap
 
 namespace L4Factoidal.RDFS
 
@@ -184,6 +186,266 @@ def closure (g : Graph) (fuel : Nat) : Graph :=
   | n + 1 =>
       let g' := step g
       if g'.length = g.length then g else closure g' n
+
+/-! ## Indexed evaluation of the same rounds (2026-10-10)
+
+`step` reads its premises through list scans: `triplesWithPredicate g p` and
+`objectsOf g s p` each traverse all of `g`, once per triple of `g`, and
+`addAll` folds `Graph.add`, whose membership test is another traversal. One
+round therefore costs O(|g|^2), and the loop runs one round per derivation
+depth. Measured 2026-10-10 (`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`):
+the RDFS closure of a 160-class `rdfs:subClassOf` chain took 359 s, against
+0.66 s in the F\* engine.
+
+This section computes the SAME rounds with hash indexes and proves it:
+
+* `StepIndex.build g` holds, for each predicate, the triples of `g` that carry
+  it, and for each (subject, predicate), the objects of the matching triples,
+  both in the order of `g` (`StepIndex.byPred_getD`, `StepIndex.objs_getD`).
+  The row functions with an `Ix` suffix read those buckets instead of scanning;
+  `rdfs7ForIx_eq` .. `rdfs5ForIx_eq` prove each equal to its scanning twin, so
+  `stepConclusionsIx g = stepConclusions g` as LISTS (`stepConclusionsIx_eq`):
+  same triples, same order, same repetitions.
+* `stepFast` adds those conclusions with `FastGraph.addAll`, whose bucketed
+  membership test is proved equal to the `Graph.add` scan
+  (`FastGraph.addAll_toGraph`), so `stepFast g = step g` as lists
+  (`stepFast_eq`).
+* `closureFast` is `closure` with `stepFast`; `closureFast_eq` proves it equal
+  by induction on the fuel, and `closure_eq_closureFast` is registered
+  `@[csimp]`, so the compiler emits `closureFast` for every call of `closure`
+  made after this point: `closureFix`, `rhoDfClosure`, and the callers in
+  other modules. The definition of `closure`, and therefore every theorem
+  stated about it, is unchanged.
+
+The result is identical as a list, not only as a set, so the order of the
+printed closure does not change.
+-/
+
+/-- The premise index of one round. `byPred p` lists the triples of the graph
+with predicate `p`; `objs (s, p)` lists the objects of its `(s, p, ·)` triples.
+Both keep the order of the graph. -/
+structure StepIndex where
+  byPred : Std.HashMap WfIri (List Triple)
+  objs   : Std.HashMap (Subject × WfIri) (List Term)
+
+/-- Index a graph. The graph is traversed from its end so that consing
+leaves each bucket in graph order. -/
+def StepIndex.build (g : Graph) : StepIndex :=
+  { byPred := g.reverse.foldl (fun m t => m.insert t.p (t :: m.getD t.p [])) ∅
+  , objs := g.reverse.foldl
+      (fun m t => m.insert (t.s, t.p) (t.o :: m.getD (t.s, t.p) [])) ∅ }
+
+theorem foldl_byPred_getD (l : List Triple) :
+    ∀ (m : Std.HashMap WfIri (List Triple)) (k : WfIri),
+      (l.foldl (fun m t => m.insert t.p (t :: m.getD t.p [])) m).getD k []
+        = l.reverse.filter (fun t => t.p == k) ++ m.getD k [] := by
+  induction l with
+  | nil => intro m k; simp
+  | cons t ts ih =>
+      intro m k
+      rw [List.foldl_cons, ih, Std.HashMap.getD_insert, List.reverse_cons,
+        List.filter_append, List.append_assoc]
+      by_cases h : (t.p == k) = true
+      · have h' : t.p = k := eq_of_beq h
+        subst h'
+        simp only [beq_self_eq_true, if_true, List.filter_cons, List.filter_nil,
+          List.singleton_append]
+      · have h' : (t.p == k) = false := by simpa using h
+        simp only [h', Bool.false_eq_true, if_false, List.filter_cons, List.filter_nil,
+          List.nil_append]
+
+theorem StepIndex.byPred_getD (g : Graph) (p : WfIri) :
+    (StepIndex.build g).byPred.getD p [] = triplesWithPredicate g p := by
+  simp only [StepIndex.build, foldl_byPred_getD, List.reverse_reverse, triplesWithPredicate]
+  simp
+
+theorem foldl_objs_getD (l : List Triple) :
+    ∀ (m : Std.HashMap (Subject × WfIri) (List Term)) (k : Subject × WfIri),
+      (l.foldl (fun m t => m.insert (t.s, t.p) (t.o :: m.getD (t.s, t.p) [])) m).getD k []
+        = (l.reverse.filter (fun t => t.s == k.1 && t.p == k.2)).map (fun t => t.o)
+            ++ m.getD k [] := by
+  induction l with
+  | nil => intro m k; simp
+  | cons t ts ih =>
+      intro m k
+      rw [List.foldl_cons, ih, Std.HashMap.getD_insert, List.reverse_cons,
+        List.filter_append, List.map_append, List.append_assoc]
+      by_cases h : ((t.s, t.p) == k) = true
+      · have h' : (t.s, t.p) = k := eq_of_beq h
+        subst h'
+        simp only [beq_self_eq_true, if_true, Bool.and_self, List.filter_cons, List.map_cons,
+          List.filter_nil, List.map_nil, List.singleton_append]
+      · have h2 : ((t.s, t.p) == k) = false := by simpa using h
+        have h' : (t.s == k.1 && t.p == k.2) = false := by
+          cases hh : (t.s == k.1 && t.p == k.2)
+          · rfl
+          · exfalso
+            apply h
+            have hs : t.s = k.1 := eq_of_beq (by simpa using (Bool.and_eq_true_iff.mp hh).1)
+            have hp : t.p = k.2 := eq_of_beq (by simpa using (Bool.and_eq_true_iff.mp hh).2)
+            have : (t.s, t.p) = k := Prod.ext hs hp
+            subst this
+            exact beq_self_eq_true _
+        simp only [h2, h', Bool.false_eq_true, if_false, List.filter_cons, List.map_nil,
+          List.filter_nil, List.nil_append]
+
+theorem StepIndex.objs_getD (g : Graph) (s : Subject) (p : WfIri) :
+    (StepIndex.build g).objs.getD (s, p) [] = objectsOf g s p := by
+  simp only [StepIndex.build, foldl_objs_getD, List.reverse_reverse, objectsOf]
+  simp
+
+/-- `rdfs7For`, reading the predicate bucket. -/
+def rdfs7ForIx (ix : StepIndex) (decl : Triple) : List Triple :=
+  match decl.s, decl.o with
+  | .iri p, .iri q =>
+      if decl.p == rdfsSubPropertyOf then
+        (ix.byPred.getD p []).map (fun t => ⟨t.s, q, t.o⟩)
+      else []
+  | _, _ => []
+
+/-- `rdfs2For`, reading the predicate bucket. -/
+def rdfs2ForIx (ix : StepIndex) (decl : Triple) : List Triple :=
+  match decl.s with
+  | .iri p =>
+      if decl.p == rdfsDomain then
+        (ix.byPred.getD p []).map (fun t => ⟨t.s, rdfType, decl.o⟩)
+      else []
+  | _ => []
+
+/-- `rdfs3For`, reading the predicate bucket. -/
+def rdfs3ForIx (ix : StepIndex) (decl : Triple) : List Triple :=
+  match decl.s with
+  | .iri p =>
+      if decl.p == rdfsRange then
+        (ix.byPred.getD p []).filterMap (fun t =>
+          match t.o.toSubject? with
+          | some osub => some ⟨osub, rdfType, decl.o⟩
+          | none      => none)
+      else []
+  | _ => []
+
+/-- `rdfs9For`, reading the (subject, `rdfs:subClassOf`) bucket. -/
+def rdfs9ForIx (ix : StepIndex) (t : Triple) : List Triple :=
+  match t.o with
+  | .iri a =>
+      if t.p == rdfType then
+        (ix.objs.getD (Subject.iri a, rdfsSubClassOf) []).map
+          (fun b => ⟨t.s, rdfType, b⟩)
+      else []
+  | _ => []
+
+/-- `rdfs11For`, reading the (subject, `rdfs:subClassOf`) bucket. -/
+def rdfs11ForIx (ix : StepIndex) (t : Triple) : List Triple :=
+  if t.p == rdfsSubClassOf then
+    match t.o.toSubject? with
+    | some bsub =>
+        (ix.objs.getD (bsub, rdfsSubClassOf) []).map
+          (fun c => ⟨t.s, rdfsSubClassOf, c⟩)
+    | none => []
+  else []
+
+/-- `rdfs5For`, reading the (subject, `rdfs:subPropertyOf`) bucket. -/
+def rdfs5ForIx (ix : StepIndex) (t : Triple) : List Triple :=
+  if t.p == rdfsSubPropertyOf then
+    match t.o.toSubject? with
+    | some bsub =>
+        (ix.objs.getD (bsub, rdfsSubPropertyOf) []).map
+          (fun c => ⟨t.s, rdfsSubPropertyOf, c⟩)
+    | none => []
+  else []
+
+theorem rdfs7ForIx_eq (g : Graph) (decl : Triple) :
+    rdfs7ForIx (StepIndex.build g) decl = rdfs7For g decl := by
+  unfold rdfs7ForIx rdfs7For
+  split <;> simp [StepIndex.byPred_getD]
+
+theorem rdfs2ForIx_eq (g : Graph) (decl : Triple) :
+    rdfs2ForIx (StepIndex.build g) decl = rdfs2For g decl := by
+  unfold rdfs2ForIx rdfs2For
+  split <;> simp [StepIndex.byPred_getD]
+
+theorem rdfs3ForIx_eq (g : Graph) (decl : Triple) :
+    rdfs3ForIx (StepIndex.build g) decl = rdfs3For g decl := by
+  unfold rdfs3ForIx rdfs3For
+  split <;> simp [StepIndex.byPred_getD]
+
+theorem rdfs9ForIx_eq (g : Graph) (t : Triple) :
+    rdfs9ForIx (StepIndex.build g) t = rdfs9For g t := by
+  unfold rdfs9ForIx rdfs9For
+  split <;> simp [StepIndex.objs_getD]
+
+theorem rdfs11ForIx_eq (g : Graph) (t : Triple) :
+    rdfs11ForIx (StepIndex.build g) t = rdfs11For g t := by
+  unfold rdfs11ForIx rdfs11For
+  split
+  · split <;> simp [StepIndex.objs_getD]
+  · rfl
+
+theorem rdfs5ForIx_eq (g : Graph) (t : Triple) :
+    rdfs5ForIx (StepIndex.build g) t = rdfs5For g t := by
+  unfold rdfs5ForIx rdfs5For
+  split
+  · split <;> simp [StepIndex.objs_getD]
+  · rfl
+
+/-- `stepConclusions` with every premise read from an index built once. -/
+def stepConclusionsIx (g : Graph) : List Triple :=
+  let ix := StepIndex.build g
+  g.flatMap (rdfs7ForIx ix) ++
+  g.flatMap (rdfs2ForIx ix) ++
+  g.flatMap (rdfs3ForIx ix) ++
+  g.flatMap (rdfs9ForIx ix) ++
+  g.flatMap (rdfs11ForIx ix) ++
+  g.flatMap (rdfs5ForIx ix)
+
+/-- The indexed conclusions are the scanning conclusions: the same list. -/
+theorem stepConclusionsIx_eq (g : Graph) : stepConclusionsIx g = stepConclusions g := by
+  have h7 : rdfs7ForIx (StepIndex.build g) = rdfs7For g := funext (rdfs7ForIx_eq g)
+  have h2 : rdfs2ForIx (StepIndex.build g) = rdfs2For g := funext (rdfs2ForIx_eq g)
+  have h3 : rdfs3ForIx (StepIndex.build g) = rdfs3For g := funext (rdfs3ForIx_eq g)
+  have h9 : rdfs9ForIx (StepIndex.build g) = rdfs9For g := funext (rdfs9ForIx_eq g)
+  have h11 : rdfs11ForIx (StepIndex.build g) = rdfs11For g := funext (rdfs11ForIx_eq g)
+  have h5 : rdfs5ForIx (StepIndex.build g) = rdfs5For g := funext (rdfs5ForIx_eq g)
+  simp only [stepConclusionsIx, stepConclusions]
+  rw [h7, h2, h3, h9, h11, h5]
+
+/-- `addAll` is the left fold of `Graph.add` that `FastGraph.addAll`
+refines. -/
+theorem addAll_eq_graphAddAll (ts : List Triple) :
+    ∀ g : Graph, addAll g ts = graphAddAll g ts := by
+  induction ts with
+  | nil => intro g; rfl
+  | cons t ts ih => intro g; exact ih (g.add t)
+
+/-- One round with the indexed conclusions and the bucketed duplicate test. -/
+def stepFast (g : Graph) : Graph :=
+  ((FastGraph.ofGraph g).addAll (stepConclusionsIx g)).toGraph
+
+theorem stepFast_eq (g : Graph) : stepFast g = step g := by
+  unfold stepFast step
+  rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+    stepConclusionsIx_eq, addAll_eq_graphAddAll]
+
+/-- `closure` with `stepFast`. -/
+def closureFast (g : Graph) : Nat → Graph
+  | 0     => g
+  | n + 1 =>
+      let g' := stepFast g
+      if g'.length = g.length then g else closureFast g' n
+
+theorem closureFast_eq (g : Graph) (n : Nat) : closureFast g n = closure g n := by
+  induction n generalizing g with
+  | zero => rfl
+  | succ n ih =>
+      simp only [closureFast, closure, stepFast_eq]
+      split
+      · rfl
+      · exact ih _
+
+/-- The compiler emits `closureFast` for every later call of `closure`. -/
+@[csimp] theorem closure_eq_closureFast : @closure = @closureFast := by
+  funext g n
+  exact (closureFast_eq g n).symm
 
 /-- Repeated stepping with no fixpoint test — port of
 `rho_df_closure_iter` (line 124). Used by the theorems, not by

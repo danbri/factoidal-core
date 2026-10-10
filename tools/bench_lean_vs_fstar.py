@@ -28,9 +28,9 @@ kept in the file for audit.
 
 Usage
 -----
-  tools/bench-lean-vs-fstar.py --list
-  tools/bench-lean-vs-fstar.py --rows parse-nt,parse-ttl --out /tmp/x.jsonl
-  tools/bench-lean-vs-fstar.py --report /tmp/x.jsonl > table.md
+  tools/bench_lean_vs_fstar.py --list
+  tools/bench_lean_vs_fstar.py --rows parse-nt,parse-ttl --out /tmp/x.jsonl
+  tools/bench_lean_vs_fstar.py --report /tmp/x.jsonl > table.md
 
 Binaries (built in the working tree, not committed):
   Lean: formal/lean4/.lake/build/bin/{l4factoidal,l4shacl,l4jsonld-api}
@@ -53,9 +53,14 @@ import subprocess
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-LEAN = ROOT / "formal/lean4/.lake/build/bin/l4factoidal"
-LEAN_SHACL = ROOT / "formal/lean4/.lake/build/bin/l4shacl"
-LEAN_JSONLD = ROOT / "formal/lean4/.lake/build/bin/l4jsonld-api"
+# BENCH_LEAN_BIN_DIR points at a directory holding copies of the Lean binaries
+# (l4factoidal, l4shacl, l4jsonld-api). A survey that spans a rebuild of the
+# library must use a frozen copy, or the later rows measure a different binary.
+LEAN_BIN = Path(os.environ.get("BENCH_LEAN_BIN_DIR",
+                               str(ROOT / "formal/lean4/.lake/build/bin")))
+LEAN = LEAN_BIN / "l4factoidal"
+LEAN_SHACL = LEAN_BIN / "l4shacl"
+LEAN_JSONLD = LEAN_BIN / "l4jsonld-api"
 FSTAR = ROOT / "bin/linux-x86_64/factoidal"
 
 FIX = Path(os.environ.get("BENCH_FIXTURE_DIR",
