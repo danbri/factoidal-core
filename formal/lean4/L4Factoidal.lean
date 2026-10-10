@@ -116,6 +116,7 @@ import L4Factoidal.Tests
 import L4Factoidal.SPARQL.ExprTests
 import L4Factoidal.XML.Document
 import L4Factoidal.XML.Parser
+import L4Factoidal.XML.Canonical
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Wellformedness
 import L4Factoidal.XML.Theorems

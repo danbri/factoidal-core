@@ -9,10 +9,24 @@ tree against the suite's own `assert-xml` expected file.
 
 ## What the score means
 
-Four outcomes, not two:
+Five outcomes, not two:
 
   * **pass** — the produced text equals the expected text exactly,
     after stripping each side's XML declaration;
+  * **pass-canonical** — the texts differ, but their Canonical XML 1.0
+    forms are equal (`L4Factoidal.XML.Canonical`). This is the
+    suite's own definition of `assert-xml`: "The assertion is true if
+    the result of parsing and canonicalizing the XML given in the body
+    of the assert-xml element is the same (byte-for-byte) as the result
+    of canonicalizing the XML result of the query" (catalog-schema.xsd
+    of w3c/xslt30-test). Canonicalisation sorts attributes and
+    namespace declarations and removes redeclarations of a binding
+    already in force, so a document that differs from the expected
+    file only in attribute order is a pass, as the suite states. Each
+    side is wrapped in one element first, because an expected file may
+    hold a fragment; when either side does not parse even when
+    wrapped (an `html` or `text` output method), both sides are
+    compared as text;
   * **pass-loose** — they differ only by insignificant whitespace.
     The same collapse is applied to BOTH sides, so it can never turn
     a structural difference into a pass; it separates a real defect
@@ -44,6 +58,7 @@ Usage: `lake exe l4xslt [--base DIR] [--verbose] [tests-dir]`
        Apache Xalan mirror: `--base third_party/testing/xslt1-xalan`
 -/
 import L4Factoidal.XSLT.Transform
+import L4Factoidal.XML.Canonical
 import L4Factoidal.JSON.Parser
 
 open L4Factoidal.JSON
@@ -157,6 +172,8 @@ def readUtf8? (path : String) : IO (Option String) := do
 
 structure Tally where
   pass    : Nat := 0
+  /-- Equal under Canonical XML 1.0, unequal as text. -/
+  canon   : Nat := 0
   loose   : Nat := 0
   fail    : Nat := 0
   refused : Nat := 0
@@ -270,8 +287,19 @@ def main (args : List String) : IO UInt32 := do
                               IO.FS.writeFile (dd ++ "/" ++ cat ++ "__" ++ name ++ ".want") b
                           | none => pure ()
                         else pure ()
-                        let failed := a != b && looseForm a != looseForm b
+                        -- `assert-xml` compares CANONICAL forms. When
+                        -- either side is not XML even when wrapped,
+                        -- both are compared as text.
+                        let (ca, cb) := match L4Factoidal.XML.Canonical.canonicalFragment? a,
+                                              L4Factoidal.XML.Canonical.canonicalFragment? b with
+                          | some x, some y => (x, y)
+                          | _, _           => (a, b)
+                        let failed := a != b && ca != cb && looseForm a != looseForm b
+                                      && looseForm ca != looseForm cb
                         if a == b then t := { t with pass := t.pass + 1 }
+                        else if ca == cb then
+                          t := { t with canon := t.canon + 1 }
+                          IO.println s!"CANONICAL {cat}/{name}"
                         else if !failed then
                           t := { t with loose := t.loose + 1 }
                           IO.println s!"LOOSE {cat}/{name}"
@@ -288,10 +316,11 @@ def main (args : List String) : IO UInt32 := do
         | _, _, _ =>
             IO.println s!"ERROR {name}: the manifest entry is incomplete"
             t := { t with errors := t.errors + 1 }
-      let decided := t.pass + t.loose + t.fail
+      let decided := t.pass + t.canon + t.loose + t.fail
       IO.println ""
       IO.println s!"xslt EXACT: {t.pass} pass (out of {decided} decided)"
-      IO.println s!"xslt EXACT-or-WHITESPACE: {t.pass + t.loose} pass, {t.fail} fail (out of {decided} decided)"
+      IO.println s!"xslt CANONICAL (assert-xml): {t.pass + t.canon} pass (out of {decided} decided)"
+      IO.println s!"xslt CANONICAL-or-WHITESPACE: {t.pass + t.canon + t.loose} pass, {t.fail} fail (out of {decided} decided)"
       IO.println s!"REFUSED: {t.refused} cases the engine declined to transform"
       if t.notUtf8 > 0 then
         IO.println s!"NOT UTF-8 or missing: {t.notUtf8} cases (out of profile, not scored)"
