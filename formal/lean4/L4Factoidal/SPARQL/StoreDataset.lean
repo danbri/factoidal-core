@@ -520,23 +520,34 @@ def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBacke
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb
 
-/-- ASK. An empty answer is `some false` only when every backend
-decoded cleanly; otherwise it is `none`, because a column that failed
-to decode contributes zero rows silently and ASK would report a read
-failure as the answer `false`. -/
+/-- Does the answer of this ASK query change when the read drops rows?
+With no GROUP BY, no HAVING and no OFFSET the answer can only go from
+true to false when rows are lost: LIMIT and ORDER BY keep a non-empty
+sequence non-empty. GROUP BY and HAVING make the answer depend on counts
+(`HAVING (COUNT(*) < 2)` can turn from false to true when a row is
+lost), and OFFSET on the length of the sequence. -/
+def askNeedsCompleteRead (q : Query) : Bool :=
+  q.groupsSolutions || q.modifier.offset.isSome
+
+/-- ASK, with its SolutionModifier applied (§18.2.4, §18.2.5; grammar rule
+[12]) through the same steps as `evalAsk` (`formHasSolution`).
+
+An empty answer is `some false` only when every backend decoded cleanly;
+otherwise it is `none`, because a column that failed to decode
+contributes zero rows silently and ASK would report a read failure as the
+answer `false`. A `true` answer is kept when a read failed only if the
+modifiers cannot turn a shorter sequence into a true answer
+(`askNeedsCompleteRead`); a query that groups, filters groups or skips
+rows answers `none` on any decode failure, in both directions. -/
 def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
   match q.form with
   | .ask =>
       let omega0 := evalPatternBackend env dsb q.pattern dsb.default
-      let omega := match q.postValues with
-        | none => omega0
-        | some vals => SPARQL.join omega0 vals
-      match omega with
-      | [] =>
-          if backendDecodeFailure dsb.default
-             || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
-          then none else some false
-      | _ => some true
+      let answer := formHasSolution env env.activeGraph q omega0
+      let readFailed := backendDecodeFailure dsb.default
+        || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
+      if readFailed && (!answer || askNeedsCompleteRead q) then none
+      else some answer
   | _ => none
 
 /-- The blank-node rewrite happens once, at the entry point. The F*
@@ -681,13 +692,22 @@ theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
 theorem evalAskBackend_none_on_decode_failure (env : EvalEnv) (q : Query)
     (dsb : DatasetBackend) (hform : q.form = .ask)
     (hfail : backendDecodeFailure dsb.default = true)
-    (hempty : (match q.postValues with
-               | none => evalPatternBackend env dsb q.pattern dsb.default
-               | some vals =>
-                   SPARQL.join (evalPatternBackend env dsb q.pattern dsb.default) vals)
-              = []) :
+    (hempty : formHasSolution env env.activeGraph q
+                (evalPatternBackend env dsb q.pattern dsb.default) = false) :
     evalAskBackend env q dsb = none := by
-  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, if_true]
+  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, Bool.not_false,
+    Bool.true_and, if_true]
+
+/-- A query that groups, filters groups or skips rows has no answer to
+give from a read that dropped rows, whichever way the partial answer
+came out. -/
+theorem evalAskBackend_none_on_decode_failure_non_monotone (env : EvalEnv)
+    (q : Query) (dsb : DatasetBackend) (hform : q.form = .ask)
+    (hfail : backendDecodeFailure dsb.default = true)
+    (hmod : askNeedsCompleteRead q = true) :
+    evalAskBackend env q dsb = none := by
+  simp only [evalAskBackend, hform, hmod, hfail, Bool.true_or, Bool.or_true,
+    Bool.true_and, if_true]
 
 /-! ## Build-time checks -/
 
@@ -1160,6 +1180,7 @@ plus the default. -/
 #print axioms evalBgpBackend_allVars_list
 #print axioms countGroupByGraph_length
 #print axioms evalAskBackend_none_on_decode_failure
+#print axioms evalAskBackend_none_on_decode_failure_non_monotone
 #print axioms limitGraphVarAcc_bounded
 
 end L4Factoidal.SPARQL.StoreDataset

@@ -2767,12 +2767,18 @@ def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Q
              { md with distinct := dist, reduced := red } pv st.base, ts8)
 
 /-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier,
-followed by the [2] trailing ValuesClause. The SolutionModifier is NOT
-read: `evalAsk` applies none, so an ASK with GROUP BY, HAVING, ORDER BY,
-LIMIT or OFFSET is rejected rather than answered without its modifier.
-Tracked, with the CONSTRUCT / DESCRIBE GROUP BY gap, at
-https://github.com/danbri/factoidal/issues/699; the expected-fail case
-that issue asks for cannot be a `#guard` and is not yet written. -/
+followed by the [2] trailing ValuesClause.
+
+The SolutionModifier is read and kept in the `Query`. `evalAsk` and
+`evalAskBackend` apply it (SPARQL 1.1 §18.2.4, §18.2.5): ASK is true
+exactly when the solution sequence after GROUP BY, HAVING, the trailing
+VALUES join, ORDER BY, OFFSET and LIMIT is non-empty.
+
+A GROUP BY or HAVING clause makes the query group
+(`Query.groupsSolutions`), and then a trailing VALUES clause joins after
+grouping and HAVING (`attachValues`), as it does for CONSTRUCT and
+SELECT. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -2781,9 +2787,10 @@ def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Quer
     let (ds, ts2) ← pDatasetClauses f st ts1
     let ts3 := if peekTok ts2 == Token.whereKw then advTok ts2 else ts2
     let (pattern, ts4) ← pGroupGraphPattern f st ts3
-    let (vals, ts5) ← pTrailingValues f st ts4
-    let (pat, pv) := attachValues false pattern vals
-    .ok (Query.mk .ask ds pat none [] {} pv st.base, ts5)
+    let (r, ts5) ← pSolutionModifier f st ts4
+    let (vals, ts6) ← pTrailingValues f st ts5
+    let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
+    .ok (Query.mk .ask ds pat r.2.1 r.2.2 r.1 pv st.base, ts6)
 
 /-- [10] ConstructQuery — the full form and the `CONSTRUCT WHERE`
 short form, whose WHERE pattern must be a basic graph pattern. -/
@@ -2802,7 +2809,7 @@ def pConstructBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError
       else do
         let (r, ts5) ← pSolutionModifier f st ts4
         let (vals, ts6) ← pTrailingValues f st ts5
-        let (pat, pv) := attachValues r.2.1.isSome pattern vals
+        let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
         .ok (Query.mk (.construct (collectTemplateTriples pattern)) ds pat
                r.2.1 r.2.2 r.1 pv st.base, ts6)
     | .lbrace => do
@@ -2812,7 +2819,7 @@ def pConstructBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError
       let (pattern, ts5) ← pGroupGraphPattern f st ts4
       let (r, ts6)       ← pSolutionModifier f st ts5
       let (vals, ts7)    ← pTrailingValues f st ts6
-      let (pat, pv) := attachValues r.2.1.isSome pattern vals
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
       .ok (Query.mk (.construct (collectTemplateTriples tmpl)) ds pat
              r.2.1 r.2.2 r.1 pv st.base, ts7)
     | _ => pErr "expected WHERE or '{' after CONSTRUCT" ts1
@@ -2862,12 +2869,12 @@ def pDescribeAfterTargets (fuel : Nat) (st : PState) (targets : List PatternTerm
       let (pattern, ts3) ← pGroupGraphPattern f st ts2
       let (r, ts4)       ← pSolutionModifier f st ts3
       let (vals, ts5)    ← pTrailingValues f st ts4
-      let (pat, pv) := attachValues r.2.1.isSome pattern vals
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
       .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts5)
     | _ => do
       let (r, ts2) ← pSolutionModifier f st ts1
       let (vals, ts3) ← pTrailingValues f st ts2
-      let (pat, pv) := attachValues r.2.1.isSome .empty vals
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) .empty vals
       .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts3)
 
 end
