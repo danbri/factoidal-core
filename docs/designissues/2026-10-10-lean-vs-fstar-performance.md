@@ -783,7 +783,24 @@ Peak RSS at 4,000: 27 MB before and after (F*: 38 MB). Load 4 to 6.
   merged), or a decision that the round trip's normalisation is not wanted.
   Neither was done in the time.
 
-### 8.4 ORDER BY: profiled, recorded
+### 8.4 Gates after the last commit of this round
+
+Each equal to the run with the binaries before 8.1, and each runner log
+byte-identical: SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650);
+SPARQL 1.2 271 pass, 0 fail (out of 271); SHACL Core 1.0 98, SHACL-SPARQL 1.0
+22, SHACL 1.2 core 138, SHACL 1.2 sparql 25 pass, 0 fail (out of the same);
+SHACL 1.2 node expressions 140 pass, 0 fail, 2 unsupported (out of 142);
+SHACL 1.2 rules 88 pass (out of 88); RDF 1.1 1041 pass (out of 1041); RDF 1.2
+1358 pass (out of 1358); RDFC-1.0 86 pass (out of 86); RDF semantics 29 pass
+(out of 29); `l4rdfc-probe` 63 of 63, 1 of 1, 21 of 21, 1 of 1.
+`Wasm/cli-smoke.sh` 53 pass, 0 fail (out of 53); `Wasm/native-smoke.sh` 282
+pass, 0 fail (out of 282; not run before 8.1). Full `lake build` exits 0 (1314
+jobs). `tests/stack/lean_scaling.sh`: 15 pass, 0 fail, 1 expected-fail (out of
+16), the expected failure being `query-vs-parse` (issue 724). Lean hygiene
+audit: 0 sorry, 0 axiom, 0 native_decide, 0 unsafe, 0 implemented_by, 166
+partial def (unchanged).
+
+### 8.5 ORDER BY: profiled, recorded
 
 Callgrind, `ORDER BY ?s ?p LIMIT 20`, 1,250 paragraphs, binary after 8.2: 1.72
 billion instructions. `sortSolutionsFast` (Lean's merge sort, already n log n)
