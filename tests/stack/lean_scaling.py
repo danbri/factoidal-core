@@ -30,6 +30,9 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    22.8 s for 4x input before the repair, 0.12 s to 0.65 s after)
   count-distinct-star  SPARQL COUNT(DISTINCT *): DISTINCT rows inside an
                    aggregate (issue 722; 0.43 s to 11.7 s before, 0.11 s to 0.60 s after)
+  shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
+                   ex:Person nodes against 4 property shapes
+                   (https://github.com/danbri/factoidal/issues/723)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -51,6 +54,7 @@ expected failure passes, 2 when the binary is missing. Scores print as
 
 Usage:  tests/stack/lean_scaling.py [--runs N] [--only ROW[,ROW...]]
 Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4factoidal)
+        L4_SHACL_BIN   path of l4shacl (default: beside L4_BIN)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
 """
 
@@ -72,6 +76,7 @@ import bench_lean_vs_fstar as bl  # noqa: E402  (real-data slices)
 BOUND = 9.0
 FLOOR = 0.05
 BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4factoidal"))
+SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
@@ -80,6 +85,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
+    "shacl-person": "https://github.com/danbri/factoidal/issues/723",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -170,6 +176,10 @@ ROWS = {
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
                    "SELECT (COUNT(DISTINCT *) AS ?c) WHERE { ?s ?p ?o }"]),
+    "shacl-person": (
+        500,
+        lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
+        lambda p: [str(SHACL_BIN), "--conforms-only", str(p)]),
 }
 
 
