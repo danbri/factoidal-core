@@ -779,8 +779,14 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
   const local = '<http://e/x> <http://e/q> <http://e/y> .';
   await lean.clearServiceEndpoints();
   try {
-    assert.deepEqual(await lean.query(local, q, { format: 'ntriples' }), [],
-      'an unregistered endpoint is unreachable: no rows');
+    // SPARQL 1.1 Federated Query 2.4: with SILENT, a failed call is one
+    // solution with no bindings. Without SILENT the query must fail: the
+    // expected-failure case below (issue 717).
+    const silent = await lean.query(local,
+      `SELECT * WHERE { SERVICE SILENT <${ENDPOINT}> { ?s <http://e/p> ?o } }`,
+      { format: 'ntriples' });
+    assert.equal(silent.length, 1);
+    assert.equal([...silent[0].keys()].length, 0);
     const reg = await lean.registerServiceEndpoint(ENDPOINT,
       '<http://e/a> <http://e/p> "v" .', { format: 'ntriples' });
     assert.equal(reg.ok, true);
@@ -800,10 +806,27 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
     const replaced = await lean.query(local, q, { format: 'ntriples' });
     assert.deepEqual(replaced.map((r) => r.get('o').value), ['w']);
     await lean.clearServiceEndpoints();
-    assert.deepEqual(await lean.query(local, q, { format: 'ntriples' }), []);
   } finally {
     await lean.clearServiceEndpoints();
   }
+});
+
+// Expected failure (skills/test-suites § Expected failures).
+const SERVICE_ERROR_ISSUE = 'https://github.com/danbri/factoidal/issues/717';
+test(`xfail: SERVICE without SILENT to an unreachable endpoint fails the query (${SERVICE_ERROR_ISSUE})`, async (t) => {
+  if (await skipUnlessOps(t, 'clearServiceEndpoints')) return;
+  await lean.clearServiceEndpoints();
+  let failed = false;
+  try {
+    await assert.rejects(() => lean.query('<http://e/x> <http://e/q> <http://e/y> .',
+      'SELECT * WHERE { SERVICE <http://unregistered.example/sparql> { ?s ?p ?o } }',
+      { format: 'ntriples' }));
+  } catch (error) {
+    failed = true;
+    t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`);
+  }
+  assert.ok(failed,
+    `unexpected pass: SERVICE failure now raises an error — flip this xfail to an assertion and close ${SERVICE_ERROR_ISSUE}`);
 });
 
 test('registerServiceEndpoint: argument checks', async (t) => {

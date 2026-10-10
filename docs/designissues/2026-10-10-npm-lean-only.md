@@ -296,6 +296,9 @@ against a specification, and the one F\* limit that the Lean side lifts
   a failed `SERVICE` without `SILENT` an error of the query; the Lean evaluator
   has no error channel for it (`EvalEnv.services`, `SPARQL/Expr.lean`). Not
   changed here, because the same evaluator serves the W3C federated-query suite.
+  Tracked as https://github.com/danbri/factoidal/issues/717, with an
+  expected-failure case in `npm/factoidal/test/l4-parity.test.js`; `SERVICE
+  SILENT` already gives one solution with no bindings, as section 2.4 requires.
 - `csvwToRdf`: with `metadataJson == ''` the table is described by its own
   header row (embedded metadata, CSV on the Web tabular data model); the F\* test
   and the Lean engine give the same counts and subjects. A
