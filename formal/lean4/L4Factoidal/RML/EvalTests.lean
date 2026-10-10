@@ -20,7 +20,21 @@ open L4Factoidal.JSON
 -- Outside the subset: NOT a guess. The corpus writes one malformed
 -- path (`$.students[*]]`) and it is a negative case.
 #guard parseJsonPath "$.students[*]]" == none
-#guard parseJsonPath "students" == none
+#guard parseJsonPath "" == none
+#guard parseJsonPath "$.a[" == none
+#guard parseJsonPath "$.a[x]" == none
+-- RELATIVE paths: RML-IO and RML-CC write `name` and `values.*` where
+-- RML-Core writes `$.name`. This replaces the guard
+-- `parseJsonPath "students" == none`, which recorded the old reading
+-- that a path without `$` is outside the subset; RMLSTC0011a
+-- (`{name}` over a JSON source) and RMLTC-CC-0001-List (`values.*`)
+-- show it is not.
+#guard parseJsonPath "students" == some [.field "students"]
+#guard parseJsonPath "values.*" == some [.field "values", .wildcard]
+#guard parseJsonPath "departments[*].employees[*].name" ==
+       some [.field "departments", .wildcard, .field "employees", .wildcard, .field "name"]
+#guard parseJsonPath "$.*" == some [JStep.wildcard]
+#guard parseJsonPath "$.values.*" == some [.field "values", .wildcard]
 
 private def doc : Json :=
   .object [("students", .array [

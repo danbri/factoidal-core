@@ -248,7 +248,7 @@ defjob l4jsonld-frame l4jsonld-frame parse_jsonld_frame jsonld_frame \
   "JSON-LD framing" "" ""
 # --- RML ---------------------------------------------------------------------
 defjob l4rml l4rml parse_rml rml \
-  "RML Core" "" ""
+  "RML" "" ""
 # --- VC / DID / JOSE / crypto --------------------------------------------------
 defjob l4vc-probe l4vc-probe parse_block_rows bracket \
   "VC / DID / Data Integrity" "" ""
@@ -282,7 +282,6 @@ defjob l4diff l4diff parse_diff diff \
 # Areas with no Lean runner. Each claim was checked against
 # formal/lean4/Harness/*.lean and lakefile.lean when this script was written.
 NONE_ROWS="XForms (Bind, recalculate)|Lean library L4Factoidal/XForms/Bind.lean has build-time #guard checks only; no Harness runner
-RML-IO, RML-FNML, RML-CC, RML-star test cases|l4rml reads rml-core test-cases only
 EECC interop (vc-verifier-rules, webuild-attestations)|no Lean module or runner
 QUDT|no Lean module or runner"
 
@@ -742,17 +741,20 @@ parse_jsonld_frame() {
   row_sl "$CUR_AREA" "" '^jsonld-frame: [0-9]+ pass' last "other = local-override + unsupported"
 }
 
+# One row per RML module. The runner prints one line per module in the form
+#   <dir>/<module>/test-cases: N pass, M fail, K <bucket>, ... (out of T)
+# and the grammar scoreline_nums reads: every count that is not pass or fail is
+# "other". A module the runner did not print has no row here; the NONE_ROWS
+# table below names the modules that still have no Lean runner.
 parse_rml() {
-  local line nums nr neg
-  line="$(pick_line '^[^ ]*rml-core/test-cases: [0-9]+ pass' last)"
-  if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'rml-core/test-cases:' line in the log"; return; fi
-  if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
-  nr="$(line_int '^NOT READ: [0-9]+ cases')" || nr=""
-  neg="$(line_int '^NEGATIVE \(the mapping must be rejected\): [0-9]+ cases')" || neg=""
-  if [ -z "$nr" ] || [ -z "$neg" ]; then emit_status unparsed "$CUR_AREA" "" "NOT READ or NEGATIVE count is missing" "$line"; return; fi
-  set -- $nums
-  emit_ok "$CUR_AREA" "" "$1" "$2" $(($3 + nr + neg)) $(($1 + $2 + $3 + nr + neg)) \
-    "total derived; other = comparison gave up ($3) + not read ($nr) + negative cases the runner does not attempt ($neg)" "$line"
+  local entry m label line
+  for entry in rml-core:RML-Core rml-io:RML-IO rml-cc:RML-CC rml-star:RML-star rml-fnml:RML-FNML; do
+    m="${entry%%:*}"; label="${entry#*:}"
+    line="$(pick_line "^[^ ]*$m/test-cases: [0-9]+ pass" last)"
+    [ -n "$line" ] || continue
+    row_sl "$label" "" "^[^ ]*$m/test-cases: [0-9]+ pass" last \
+      "other = the buckets named in the runner line (fixture defect, unattempted cases with their reason)"
+  done
 }
 
 # One row per "label: N pass, M fail ... (out of T)" line at the start of a

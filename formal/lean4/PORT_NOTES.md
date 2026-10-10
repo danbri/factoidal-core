@@ -14090,3 +14090,26 @@ case fails: `ibm-1-1-valid-P03-ibm03v09` (the test contradicts XML 1.1
 `[77] TextDecl` and section 2.11). Record, spec clauses, defects found and
 the list of unchecked constraints:
 [`docs/designissues/2026-10-10-xml-profile-widened.md`](../../docs/designissues/2026-10-10-xml-profile-widened.md).
+
+## RML: the other four modules, and a validator (2026-10-10)
+
+`l4rml` now runs the five KG-Construct modules. Design record, error kinds,
+the representation of quoted triples, the function registry and the rules for
+calling a case a fixture defect:
+`docs/designissues/2026-10-10-rml-modules-in-lean.md`.
+
+| Module | Pass | Fail | Not scored | Total |
+|---|---|---|---|---|
+| rml-core | 75 | 0 | 1 fixture defect | 76 |
+| rml-io | 61 | 0 | 11 fixture defect, 1 database source | 73 |
+| rml-cc | 35 | 0 | 0 | 35 |
+| rml-star | 10 | 0 | 8 fixture defect | 18 |
+| rml-fnml | 20 | 0 | 0 | 20 |
+
+| F\* | Lean | Note |
+|---|---|---|
+| `RML.Eval.fst`, `RML.Mapping.fst` (plain term maps) | `RML/Mapping.lean`, `RML/Eval.lean` | the evaluator reads records (`RML/Record.lean`), not string maps, and reports data errors |
+| none (F\* `rml_runner` counts a rejected mapping as passed when its output is empty) | `RML/Validate.lean`, `RML/Run.lean` | MUST clauses of RML-Core, RML-CC, RML-star and RML-FNML found before any source is read; a rejected run has no quads |
+| none | `Codec/Lzma.lean`, `Codec/Xz.lean` | LZMA, LZMA2 and the xz container; the writer emits uncompressed chunks |
+| none | `RML/Functions.lean` | FnO description and implementation per function IRI |
+

@@ -277,7 +277,7 @@ marked "—".
 | SHACL 1.2 (core, node expr, sparql, rules) | 138+142+25+11 pass, 0 fail each; rules syntax 62, wellformed 7, stratification 8, all 0 fail | core 138 pass, 0 fail (out of 138); sparql 25 pass, 0 fail (out of 25); rules 88 pass, 0 fail (out of 88); node-expr 140 pass, 0 fail, 2 unsupported (out of 142) (2026-10-10, https://github.com/danbri/factoidal/issues/698) |
 | ShEx | 1182 pass, 0 fail (out of 1182) | 1075 pass, 104 fail (out of 1179 decided) |
 | JSON-LD (toRdf; expand; compact; flatten; fromRdf) | 467; 385; 245 pass 0 fail 1 skip (246); 58; 53 pass 0 fail 1 skip (54) | toRdf 467 pass, 0 fail (out of 467); api family 791 pass, 0 fail, 2 local-override (out of 793) |
-| RML Core / RML-IO | 76 pass, 0 fail (out of 76); IO 17 pass, 1 fail, 55 skip (out of 73) | core 60 pass, 0 fail (out of 60 compared) |
+| RML Core / RML-IO / RML-CC / RML-star / RML-FNML | Core 76 pass, 0 fail (out of 76); IO 17 pass, 1 fail, 55 skip (out of 73) | `l4rml` (2026-10-10): Core 75 pass, 0 fail, 1 fixture defect (out of 76); IO 61 pass, 0 fail, 11 fixture defect, 1 database source (out of 73); CC 35 pass, 0 fail (out of 35); star 10 pass, 0 fail, 8 fixture defect (out of 18); FNML 20 pass, 0 fail (out of 20) |
 | RIF Core | 46 pass, 0 fail, 4 skip (out of 50) | 24 pass, 2 fail (out of 26 decided), 13 undecided |
 | CSVW (csv2rdf; csv2json; validation) | 270; 270; 281 pass, 1 fail (out of 282) | csv2rdf 270 pass, 0 fail (out of 270); csv2json 270 pass, 0 fail (out of 270) |
 | XML conformance | 1447 pass, 0 fail, 1138 skip (out of 2585) | 1840 pass, 22 fail (out of 1862 in profile) |
