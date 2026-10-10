@@ -401,6 +401,7 @@ import L4Factoidal.XSD.FacetsTests
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
 import L4Factoidal.OWL.RefuteTests
+import L4Factoidal.OWL.RefuteCert
 import L4Factoidal.HTTP.Client
 import L4Factoidal.HTTP.ClientTests
 import L4Factoidal.HTTP.RunQuery

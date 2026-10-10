@@ -1,0 +1,570 @@
+/-
+L4Factoidal.OWL.RefuteCert — from a refutation of `OWL/Refute.lean` to a
+certificate `OWL/DirectCert.lean` checks.
+
+Design record: `docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`.
+Issue: https://github.com/danbri/factoidal/issues/651 (plan item 2).
+
+Three parts, none of them trusted:
+
+* `readOntology` reads the `DlOntology` fragment out of the graph the
+  refuter received. It returns a SUBSET of the axioms the graph states:
+  an axiom with a construct outside the fragment is left out. That every
+  axiom it returns is in the ontology the graph encodes is obligation O1
+  of the design record (§ 9).
+* `emitCert` turns the refuter's `SearchTrace` into a `Cert`.
+* `certify` runs the refuter, reads the ontology, emits the certificate
+  and runs `checkCert`. Only `checkCert` is trusted, through
+  `checkCert_sound`; a defect in the reader's choice of axioms or in
+  the emitter can make a certificate fail to check, and O1 is what
+  makes a checked certificate speak about the input graph.
+-/
+import L4Factoidal.OWL.Refute
+import L4Factoidal.OWL.DirectCert
+
+namespace L4Factoidal.OWL.Refute
+
+open L4Factoidal.RDF
+open L4Factoidal.OWL
+open L4Factoidal.OWL.RL
+
+/-! ## Names -/
+
+/-- An RDF resource as an individual name. A blank node keeps a `_:`
+    prefix; an IRI never starts with `_:` (its scheme starts with a
+    letter), so the map is injective. -/
+def indOfSubject : Subject → Ind
+  | .iri i   => i.val
+  | .bnode b => "_:" ++ b
+
+def indOfTerm : Term → Option Ind
+  | .iri i   => some i.val
+  | .bnode b => some ("_:" ++ b)
+  | _        => none
+
+/-! ## The vocabulary the reader skips -/
+
+def isReservedIri (i : WfIri) : Bool :=
+  i.val.startsWith "http://www.w3.org/2002/07/owl#" ||
+  i.val.startsWith "http://www.w3.org/1999/02/22-rdf-syntax-ns#" ||
+  i.val.startsWith "http://www.w3.org/2000/01/rdf-schema#" ||
+  i.val.startsWith "http://www.w3.org/2001/XMLSchema#"
+
+def owlObjectPropertyTypes : List WfIri :=
+  [owlObjectProperty, owlTransitiveProperty, owlSymmetricProperty, owlAsymmetricProperty,
+   owlReflexiveProperty, owlIrreflexiveProperty, owlInverseFunctionalProperty]
+
+/-- The object properties the graph declares (OWL 2 Mapping to RDF
+    Graphs Table 7, `ObjectProperty` declarations and the
+    characteristics that only object properties carry), less any that
+    are also declared data or annotation properties. -/
+def objectPropertiesOf (st : Store) : List WfIri :=
+  let typed (c : WfIri) : List WfIri :=
+    (st.withPredObj rdfType (.iri c)).filterMap (fun t => match t.s with
+      | .iri p => if isReservedIri p then none else some p
+      | .bnode _ => none)
+  let objs := (owlObjectPropertyTypes.flatMap typed).eraseDups
+  let others := typed owlDatatypeProperty ++ typed owlAnnotationProperty
+  objs.filter (fun p => !others.contains p)
+
+/-! ## Class expressions -/
+
+/-- `C₁ ⊓ … ⊓ Cₙ` as a right fold; the empty one is `owl:Thing`. -/
+def foldConj : List Concept → Concept
+  | []      => .top
+  | [c]     => c
+  | c :: cs => .conj c (foldConj cs)
+
+/-- `C₁ ⊔ … ⊔ Cₙ` as a right fold; the empty one is `owl:Nothing`. -/
+def foldDisj : List Concept → Concept
+  | []      => .bot
+  | [c]     => c
+  | c :: cs => .disj c (foldDisj cs)
+
+mutual
+
+/-- A parsed class expression in the `Concept` fragment, or `none`.
+    Every role must be a declared object property and every named class
+    a non-reserved IRI (or `owl:Thing` / `owl:Nothing`). -/
+def toConcept (isObj : WfIri → Bool) : ClassExpr → Option Concept
+  | .named c =>
+      if c == owlThing then some .top
+      else if c == owlNothing then some .bot
+      else if isReservedIri c then none
+      else some (.atom c.val)
+  | .someOf p c => if isObj p then (toConcept isObj c).map (.ex p.val) else none
+  | .allOf p c => if isObj p then (toConcept isObj c).map (.all p.val) else none
+  | .intersection cs => (toConceptList isObj cs).map foldConj
+  | .union cs => (toConceptList isObj cs).map foldDisj
+  | .complement c => (toConcept isObj c).map .neg
+  | .minCard n p => if isObj p then some (.atLeast n p.val) else none
+  | .maxCard n p => if isObj p then some (.atMost n p.val) else none
+  | .exactCard n p =>
+      if !isObj p then none
+      else if n == 0 then some (.atMost 0 p.val)
+      else some (.conj (.atLeast n p.val) (.atMost n p.val))
+  | .minQualCard n p c =>
+      if isObj p then (toConcept isObj c).map (.atLeastQ n p.val) else none
+  | .maxQualCard n p c =>
+      if isObj p then (toConcept isObj c).map (.atMostQ n p.val) else none
+  | .exactQualCard n p c =>
+      if !isObj p then none
+      else (toConcept isObj c).map (fun d =>
+        if n == 0 then .atMostQ 0 p.val d
+        else .conj (.atLeastQ n p.val d) (.atMostQ n p.val d))
+  | _ => none
+
+def toConceptList (isObj : WfIri → Bool) : List ClassExpr → Option (List Concept)
+  | [] => some []
+  | c :: cs =>
+      match toConcept isObj c, toConceptList isObj cs with
+      | some d, some ds => some (d :: ds)
+      | _, _ => none
+
+end
+
+/-! ## The reader -/
+
+/-- Drop repeated elements, keeping the first, in one pass. -/
+def dedupHash {α : Type} [BEq α] [Hashable α] (xs : List α) : List α :=
+  (xs.foldl (fun (acc : Std.HashSet α × Array α) x =>
+    if acc.1.contains x then acc else (acc.1.insert x, acc.2.push x)) ({}, #[])).2.toList
+
+/-- The `DlOntology` fragment of a graph (design record § 3, the table
+    of axioms). Each arm is one row of that table. -/
+def readOntology (g : Graph) : DlOntology := Id.run do
+  let st := Store.ofIndex (Index.ofGraph g)
+  let objs := objectPropertiesOf st
+  let isObj (p : WfIri) : Bool := objs.contains p
+  let fuel := g.length + 8
+  let ce (t : Term) : Option Concept := toConcept isObj (parseClassExpr st t fuel)
+  let ceS (s : Subject) : Option Concept := toConcept isObj (parseCeOfSubjectFuel st fuel s)
+  let both (a b : Option Concept) : List (Concept × Concept) :=
+    match a, b with
+    | some x, some y => [(x, y)]
+    | _, _ => []
+  let mut tbox : List (Concept × Concept) := []
+  let mut abox : List Assertion := []
+  let mut subRole : List (Role × Role) := []
+  for t in g do
+    if t.p == rdfsSubClassOf then
+      tbox := both (ceS t.s) (ce t.o) ++ tbox
+    else if t.p == owlEquivalentClass then
+      tbox := both (ceS t.s) (ce t.o) ++ both (ce t.o) (ceS t.s) ++ tbox
+    else if t.p == owlDisjointWith then
+      match ceS t.s, ce t.o with
+      | some x, some y => tbox := (.conj x y, .bot) :: tbox
+      | _, _ => pure ()
+    else if t.p == rdfsDomain then
+      match t.s with
+      | .iri p =>
+          if isObj p then
+            match ce t.o with
+            | some c => tbox := (.ex p.val .top, c) :: (.atLeast 1 p.val, c) :: tbox
+            | none => pure ()
+      | .bnode _ => pure ()
+    else if t.p == rdfsRange then
+      match t.s with
+      | .iri p =>
+          if isObj p then
+            match ce t.o with
+            | some c => tbox := (.top, .all p.val c) :: tbox
+            | none => pure ()
+      | .bnode _ => pure ()
+    else if t.p == rdfsSubPropertyOf || t.p == owlEquivalentProperty then
+      match t.s, t.o with
+      | .iri p, .iri q =>
+          if isObj p && isObj q then
+            subRole := (if t.p == owlEquivalentProperty then [(q.val, p.val)] else []) ++
+                       (p.val, q.val) :: subRole
+      | _, _ => pure ()
+    else if t.p == owlDifferentFrom then
+      match indOfTerm t.s.toTerm, indOfTerm t.o with
+      | some a, some b => abox := .diff a b :: abox
+      | _, _ => pure ()
+    else if t.p == rdfType then
+      match t.o with
+      | .iri c =>
+          if c == owlFunctionalProperty then
+            match t.s with
+            | .iri p => if isObj p then tbox := (.top, .atMost 1 p.val) :: tbox
+            | .bnode _ => pure ()
+          else if c == owlAllDifferent then
+            let members := (match firstObject st t.s owlMembers with
+              | some h => walkRdfList st h 64
+              | none => []) ++
+              (match firstObject st t.s owlDistinctMembers with
+              | some h => walkRdfList st h 64
+              | none => [])
+            let ms := members.filterMap indOfTerm
+            for a in ms do
+              for b in ms do
+                if a != b then abox := .diff a b :: abox
+          else if c == owlAllDisjointClasses then
+            let members := match firstObject st t.s owlMembers with
+              | some h => (walkRdfList st h 64).map ce
+              | none => []
+            if members.all Option.isSome then
+              let cs := members.filterMap id
+              for x in cs do
+                for y in cs do
+                  if x != y then tbox := (.conj x y, .bot) :: tbox
+          else
+            match ce t.o with
+            | some k => abox := .inst (indOfSubject t.s) k :: abox
+            | none => pure ()
+      | .bnode _ =>
+          match ce t.o with
+          | some k => abox := .inst (indOfSubject t.s) k :: abox
+          | none => pure ()
+      | _ => pure ()
+    else if isObj t.p then
+      match indOfTerm t.o with
+      | some b => abox := .rel t.p.val (indOfSubject t.s) b :: abox
+      | none => pure ()
+  -- A named class carrying a Boolean marker IS that expression
+  -- (EquivalentClasses(C CE)): both inclusions.
+  let markerSubs := ((g.filter (fun t =>
+      t.p == owlUnionOf || t.p == owlIntersectionOf || t.p == owlComplementOf)).filterMap
+      (fun t => match t.s with
+        | .iri c => some c
+        | .bnode _ => none)).eraseDups
+  for c in markerSubs do
+    if !isReservedIri c then
+      match ceS (.iri c) with
+      | some e =>
+          if e != .atom c.val then
+            tbox := (.atom c.val, e) :: (e, .atom c.val) :: tbox
+      | none => pure ()
+  let trans := ((st.withPredObj rdfType (.iri owlTransitiveProperty)).filterMap (fun t =>
+      match t.s with
+      | .iri p => if isObj p then some p.val else none
+      | .bnode _ => none)).eraseDups
+  return { tbox := dedupHash tbox.reverse, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
+           abox := dedupHash abox.reverse }
+
+/-! ## The emitter -/
+
+/-- A minted existential witness: an expansion edge into a `_:tw_` blank
+    node (`witnessId`). -/
+def isWitnessEdge (e : REdge) : Bool :=
+  match e.o with
+  | .bnode b => b.startsWith "_:tw_"
+  | _ => false
+
+/-- Apply the merges made so far, in order. -/
+def applyRen (ren : List (Ind × Ind)) (x : Ind) : Ind :=
+  ren.foldl (fun acc p => Ind.subst p.1 p.2 acc) x
+
+/-- The filler a witness was minted for: an `∃p.C` (or `≥ k p.C`) label of
+    the parent whose filler the witness carries, or `≥ k p` with no
+    filler. -/
+def witnessFiller (st : RState) (e : REdge) : Option ClassExpr :=
+  let wl := match e.o with
+    | .bnode b => labelsOf st (.bnode b)
+    | _ => []
+  (labelsOf st e.s).findSome? (fun l =>
+    match l with
+    | .someOf p c => if p == e.p && memCe c wl then some c else none
+    | .minQualCard k p c => if p == e.p && k ≥ 1 && memCe c wl then some c else none
+    | .minCard k p => if p == e.p && k ≥ 1 then some (.named owlThing) else none
+    | _ => none)
+
+/-- The `exWit` steps for the witnesses of `st` not yet introduced, in
+    creation order, and the introduced list after them. `none` when a
+    witness's filler is outside the fragment. -/
+def witnessSteps (isObj : WfIri → Bool) (ren : List (Ind × Ind)) (intro : List Ind)
+    (st : RState) : Option (List (Ind × Role × Concept × Ind) × List Ind) :=
+  st.extra.toList.foldl (fun acc e =>
+    match acc with
+    | none => none
+    | some (steps, seen) =>
+      if !isWitnessEdge e then some (steps, seen)
+      else
+        match indOfTerm e.o with
+        | none => none
+        | some x =>
+          if seen.contains x then some (steps, seen)
+          else
+            match witnessFiller st e with
+            | none => none
+            | some c =>
+              match toConcept isObj c with
+              | none => none
+              | some d =>
+                some (steps ++ [(applyRen ren (indOfSubject e.s), e.p.val, d, x)], x :: seen))
+    (some ([], intro))
+
+def wrapSteps (steps : List (Ind × Role × Concept × Ind)) (k : Cert) : Cert :=
+  steps.foldr (fun s acc => .exWit s.1 s.2.1 s.2.2.1 s.2.2.2 acc) k
+
+/-- The bound and the successors a merge point branched on: the first
+    group leader and `≤ k p` label with a non-empty pair list, as
+    `pendingMerge` finds it. -/
+def mergeSite (g : Graph) (st : RState) : Option (Subject × Nat × WfIri × List Term) :=
+  (groupLeaders st).findSome? (fun n =>
+    (labelsOf st n.id).findSome? (fun l =>
+      match l with
+      | .maxCard k p =>
+          if (mergePairsForLabel g st n.id l).isEmpty then none
+          else some (n.id, k, p, successorsOf g st n.id p false)
+      | _ => none))
+
+/-- For a forced identification of `t` with `u` on `before`: a group
+    leader with a `≤ 1 p` label that has both as `p`-successors. -/
+def forcedSite (g : Graph) (st : RState) (t u : Term) : Option (Subject × WfIri) :=
+  (groupLeaders st).findSome? (fun n =>
+    (labelsOf st n.id).findSome? (fun l =>
+      match l with
+      | .maxCard 1 p =>
+          let ss := successorsOf g st n.id p false
+          if ss.contains t && ss.contains u then some (n.id, p) else none
+      | _ => none))
+
+/-- The terms `after` identifies that `before` did not, each with its
+    representative in `after`. -/
+def newIdentifications (before after : RState) : List (Term × Term) :=
+  after.ident.filterMap (fun q =>
+    if before.ident.any (fun r => r.1 == q.1) then none else some (q.1, q.2))
+
+/-- The merge steps for the identifications `after` made over `before`,
+    and the renaming after them. -/
+def forcedSteps (g : Graph) (before after : RState) (ren : List (Ind × Ind))
+    : Option (List (Ind × Role × Ind × Ind) × List (Ind × Ind)) :=
+  (newIdentifications before after).foldl (fun acc q =>
+    match acc with
+    | none => none
+    | some (steps, ren') =>
+      match forcedSite g before q.1 q.2, indOfTerm q.1, indOfTerm q.2 with
+      | some (n, p), some tb, some ub =>
+          let x := applyRen ren' tb
+          let y := applyRen ren' ub
+          if x == y then some (steps, ren')
+          else some (steps ++ [(applyRen ren' (indOfSubject n), p.val, x, y)], ren' ++ [(x, y)])
+      | _, _, _ => none) (some ([], ren))
+
+/-- One single-case `merge` per forced identification, outermost first. -/
+def wrapMerges (steps : List (Ind × Role × Ind × Ind)) (k : Cert) : Cert :=
+  steps.foldr (fun s acc =>
+    .merge s.1 1 s.2.1 [s.2.2.1, s.2.2.2] (.cons s.2.2.1 s.2.2.2 acc .nil)) k
+
+def appendCases : MergeCases → MergeCases → MergeCases
+  | .nil, ys => ys
+  | .cons b c k rest, ys => .cons b c k (appendCases rest ys)
+
+mutual
+
+/-- The certificate for a trace. `ren` holds the merges made so far,
+    `intro` the witnesses introduced on this branch. -/
+def emitCert (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
+    : SearchTrace → Option Cert
+  | .none => none
+  | .leaf st => do
+      let (steps, _) ← witnessSteps isObj ren intro st
+      pure (wrapSteps steps .close)
+  | .forced before after sub => do
+      let (steps, intro') ← witnessSteps isObj ren intro before
+      let (merges, ren') ← forcedSteps g before after ren
+      let k ← emitCert isObj g ren' intro' sub
+      pure (wrapSteps steps (wrapMerges merges k))
+  | .union st i cs subs => do
+      let (steps, intro') ← witnessSteps isObj ren intro st
+      let ds ← toConceptList isObj cs
+      let k ← emitUnion isObj g ren intro' (applyRen ren (indOfSubject i)) ds subs
+      pure (wrapSteps steps k)
+  | .merge _ true _ _ => none
+  | .merge st false pairs subs => do
+      let (steps, intro') ← witnessSteps isObj ren intro st
+      let (n, k, p, succs) ← mergeSite g st
+      let names ← succs.mapM indOfTerm
+      let renamed := (names.take (k + 1)).map (applyRen ren)
+      let cases ← emitMergeCases isObj g ren intro' pairs subs
+      -- A pair of `renamed` the refuter did not branch on is provably
+      -- different there; its merge is offered with a bare `close`,
+      -- which checks when a `diff` fact becomes `diff c c`.
+      let closers := (pairsOf renamed).foldr (fun q acc => MergeCases.cons q.1 q.2 .close acc) .nil
+      pure (wrapSteps steps
+        (.merge (applyRen ren (indOfSubject n)) k p.val renamed (appendCases cases closers)))
+
+/-- Nested `split`s for a union's disjuncts, one sub-trace each. -/
+def emitUnion (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
+    (a : Ind) (ds : List Concept) : List SearchTrace → Option Cert
+  | [] => none
+  | [t] =>
+      match ds with
+      | [_] => emitCert isObj g ren intro t
+      | _ => none
+  | t :: ts =>
+      match ds with
+      | d :: rest@(_ :: _) => do
+          let l ← emitCert isObj g ren intro t
+          let r ← emitUnion isObj g ren intro a rest ts
+          pure (.split a d (foldDisj rest) l r)
+      | _ => none
+
+/-- The merge cases, one per branch pair, in the refuter's order. -/
+def emitMergeCases (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind))
+    (intro : List Ind) : List (Term × Term) → List SearchTrace → Option MergeCases
+  | [], _ => some .nil
+  | _, [] => none
+  | (x, y) :: ps, t :: ts => do
+      let xb ← indOfTerm x
+      let yb ← indOfTerm y
+      let bx := applyRen ren xb
+      let cy := applyRen ren yb
+      let k ← emitCert isObj g (ren ++ [(bx, cy)]) intro t
+      let rest ← emitMergeCases isObj g ren intro ps ts
+      pure (.cons bx cy k rest)
+
+end
+
+/-! ## Certifying a refutation -/
+
+/-- What `certify` found. -/
+inductive CertOutcome where
+  /-- The refuter refuted the graph and the certificate checked:
+      `checkCert_sound` says the read ontology has no model. -/
+  | proved
+  /-- The refuter refuted the graph; no checked certificate. -/
+  | unchecked (reason : String)
+  /-- The refuter did not refute the graph. -/
+  | notRefuted
+deriving Repr, Inhabited
+
+def CertOutcome.isProved : CertOutcome → Bool
+  | .proved => true
+  | _ => false
+
+/-- The ontology `certify` checks a certificate against. -/
+def certOntology (g : Graph) : DlOntology := readOntology g
+
+/-- Run the refuter on `g`; on a refutation, emit and check a
+    certificate. The verdict is the refuter's; this function only says
+    whether it is certified. -/
+def certify (g : Graph) (budget : Nat) : CertOutcome :=
+  match tableauConsistentTraced g budget with
+  | (some false, .immediate) => .unchecked "graph-level check (immediateInconsistency) emits no certificate"
+  | (some false, .counting) => .unchecked "counting rung (countingRefutes) emits no certificate"
+  | (some false, .search _ trace) =>
+      let O := certOntology g
+      let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
+      match emitCert (fun p => objs.contains p) g [] [] trace with
+      | none => .unchecked "the trace uses a construct the certificate cannot express"
+      | some c =>
+          if checkCert O c then .proved
+          else .unchecked "the certificate did not check"
+  | _ => .notRefuted
+
+end L4Factoidal.OWL.Refute
+
+namespace L4Factoidal.OWL.Refute
+
+open L4Factoidal.RDF
+open L4Factoidal.OWL
+
+/-! ## What a refutation used (instrumentation)
+
+The design record's step 2 asks which clash rules and which branching
+rules the refutations use, counted on the corpus, to decide which rules
+the checker needs first. `refutationProfile` reports, for one refuted
+graph, the clash source at every closed leaf and the number of each kind
+of branch point. It reads the refuter's own clash functions on the
+leaf states; it decides nothing. -/
+
+def clashLabelKind : ClassExpr → String
+  | .named _ => "owl:Nothing"
+  | .complement (.oneOf _) => "complement-of-nominal"
+  | .complement (.hasValue _ _) => "complement-of-hasValue"
+  | .complement (.dataRestriction _ _) => "complement-of-data-range"
+  | .complement _ => "complement"
+  | .minCard _ _ => "min-against-max"
+  | .someOf _ _ => "some-against-max"
+  | .hasValue _ _ => "hasValue-against-max"
+  | .minQualCard _ _ _ => "min-qualified-against-max"
+  | .oneOf _ => "nominal-distinct-members"
+  | .maxCard _ _ => "max-against-distinct-successors"
+  | .maxQualCard _ _ _ => "max-qualified-against-distinct-successors"
+  | _ => "other-label"
+
+/-- The clash source that closes a leaf state, in `clashNodes` order and
+    then the two late checks of `search`. -/
+def leafKind (g : Graph) (st : RState) : String :=
+  if inverseFunctionalClash g st then "inverse-functional"
+  else
+    match (groupLeaders st).findSome? (fun n =>
+        let ls := labelsOf st n.id
+        match ls.find? (clashForLabel g st n.id ls) with
+        | some l => some ("label:" ++ clashLabelKind l)
+        | none =>
+          if datatypeRangeClash g st n.id ls then some "datatype-range"
+          else if datatypeCardinalityClash g st n.id ls then some "datatype-cardinality"
+          else if countingClash st ls then some "disjoint-existentials-against-max"
+          else none) with
+    | some k => k
+    | none =>
+      if propositionalClash st then "propositional"
+      else if nominalClash g st then "nominal-identity"
+      else "unclassified"
+
+/-- Which graph-level check fired (`immediateInconsistency`'s order). -/
+def immediateKind (g : Graph) : String :=
+  if allDifferentViolation g then "G1-allDifferent"
+  else if bottomPropertyAssertion g then "G2-bottom-property"
+  else if selfDisjointPropertyInUse g then "G3-self-disjoint-property"
+  else if nilStructureViolation g then "G4-rdf:nil-structure"
+  else if hasSelfDisjointViolation g then "G5-hasSelf-disjoint"
+  else if thingIsNothing g then "G6-Thing-equals-Nothing"
+  else if disjointPropertiesShareAPair g then "G7-disjoint-properties"
+  else if allDisjointPropertiesViolation g then "G8-AllDisjointProperties"
+  else if asymmetryViolation g then "G9-asymmetric"
+  else if irreflexivityViolation g then "G9-irreflexive"
+  else if hasKeyViolation g then "G10-hasKey"
+  else "unclassified"
+
+structure RefutationProfile where
+  leaves : List String := []
+  unions : Nat := 0
+  merges : Nat := 0
+  nominals : Nat := 0
+  forced : Nat := 0
+  witnesses : Nat := 0
+deriving Repr, Inhabited
+
+def RefutationProfile.add (a b : RefutationProfile) : RefutationProfile :=
+  { leaves := a.leaves ++ b.leaves, unions := a.unions + b.unions,
+    merges := a.merges + b.merges, nominals := a.nominals + b.nominals,
+    forced := a.forced + b.forced, witnesses := max a.witnesses b.witnesses }
+
+mutual
+
+def traceProfile (g : Graph) : SearchTrace → RefutationProfile
+  | .none => {}
+  | .leaf st => { leaves := [leafKind g st],
+                  witnesses := (st.extra.toList.filter isWitnessEdge).length }
+  | .forced _ _ sub => { traceProfile g sub with forced := (traceProfile g sub).forced + 1 }
+  | .union _ _ _ subs =>
+      let p := traceProfileList g subs
+      { p with unions := p.unions + 1 }
+  | .merge _ nominal _ subs =>
+      let p := traceProfileList g subs
+      if nominal then { p with nominals := p.nominals + 1 } else { p with merges := p.merges + 1 }
+
+def traceProfileList (g : Graph) : List SearchTrace → RefutationProfile
+  | [] => {}
+  | t :: ts => (traceProfile g t).add (traceProfileList g ts)
+
+end
+
+/-- One line describing how the refuter refuted `g`, or `none` when it
+    did not. -/
+def refutationProfileLine (g : Graph) (budget : Nat) : Option String :=
+  match tableauConsistentTraced g budget with
+  | (some false, .immediate) => some s!"graph-level {immediateKind g}"
+  | (some false, .counting) => some "counting-rung"
+  | (some false, .search _ t) =>
+      let p := traceProfile g t
+      some s!"search leaves={(p.leaves.eraseDups)} unions={p.unions} merges={p.merges} \
+nominal_choices={p.nominals} forced_identifications={p.forced} max_witnesses={p.witnesses}"
+  | _ => none
+
+end L4Factoidal.OWL.Refute
