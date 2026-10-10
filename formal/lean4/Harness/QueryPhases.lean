@@ -25,6 +25,7 @@ allocator keeps freed pages, so `rss_kb` after a phase includes memory a
 finished phase released. `hwm_kb` is the peak so far.
 -/
 import Wasm.Ops.Parse
+import Wasm.Ops.ParseJsonLd
 import Wasm.Ops.Query
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
