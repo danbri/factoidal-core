@@ -95,7 +95,6 @@ once rather than re-deriving it each sweep:
 | `jsonld-compact__t0038` | Version dispute, not a defect. The test declares `option.specVersion=json-ld-1.0`; we implement 1.1, whose behaviour the suite's own `#tp001` pins. Retirable only by adding a real 1.0 processing mode. |
 | `jsonld-fromrdf__t0008` | Same version dispute. The manifest's own `purpose` says the input is deliberately only partially ordered. |
 | `jsonld-frame__t0010` | Same version dispute, in the framing suite: under JSON-LD 1.1 IRI Compaction (API §6.2) the input property `dcterms:creator` raises `IRI confused with prefix`; the fixture needs 1.0-era compaction as a whole. All three json-ld-1.0 disputes are tracked at https://github.com/danbri/factoidal/issues/703. |
-| `xmlconf__ibm-1-1-valid-P03-ibm03v09` | Fixture contradicts the Recommendation. XML 1.1 production [77] makes the encoding declaration mandatory in a text declaration, and section 2.11 makes NEL or #x2028 inside one a fatal error. The suite marks the case "questionable". Tracked in https://github.com/danbri/factoidal/issues/704. Read by `l4xmlconf` (suite `xmlconf`, key `test_id` is the manifest `ID`). |
 | `xslt-node-1601` | XPath 1.0 §5.4 makes namespace-node order implementation-defined. The fixture pins one processor's hash-table order; ours is equally conformant. No upstream fix is possible in principle. |
 | `rif/RDF_Combination_Constant_Equivalence_4` | Corpus data defect in a **read-only archive** (W3C rules WG closed), so nobody can correct it upstream. |
 

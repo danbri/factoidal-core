@@ -362,6 +362,14 @@ structure EntityDef where
   reference to it in content is the same "undeclared" verdict this
   parser gave before it recorded the declaration at all. -/
   resolved : Bool := true
+  /-- The caller supplied the text and it is not a well-formed external
+  parsed entity (a malformed `[77] TextDecl`, a character that is not
+  allowed): the message. XML 1.0 section 2.1 asks for the well-formedness
+  of the parsed entities "referenced directly or indirectly within the
+  document", so the fault is a fatal error where the entity is REFERENCED,
+  not where it is declared. An entity that no reference names is not
+  read (section 4.4.1, 4.4.3). -/
+  unreadable : Option String := none
 deriving DecidableEq, Repr, Inhabited
 
 /-- The declared general entities, or (kept apart, section 4.1) the

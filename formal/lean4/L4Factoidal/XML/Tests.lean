@@ -615,6 +615,25 @@ def withEnt (decl : String) (ent : String) : Bool :=
 #guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\" ?>x"
 #guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"encoding=\"UTF-8\"?>x"
 #guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+-- XML 1.0 section 2.1, third clause: the parsed entities "referenced
+-- directly or indirectly within the document" are well-formed. An
+-- entity that no reference names is not read, so a bad text declaration
+-- in it (xmlconf `ibm-1-1-valid-P03-ibm03v09.xml`: no encoding
+-- declaration) is no fault of the document; the same text IS a fault
+-- where a reference includes it.
+def unreferencedEnt (decl ent : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>text</a>")).toOption.isSome
+#guard unreferencedEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+#guard unreferencedEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\"?>x"
+#guard unreferencedEnt "" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+#guard !withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\"?>x"
+-- The same holds of an external PARAMETER entity.
+def pe (decl ent refer : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY % e SYSTEM \"e.ent\">" ++ refer ++ "]><a>text</a>")).toOption.isSome
+#guard pe "" "<?xml version=\"1.0\"?>" ""
+#guard !pe "" "<?xml version=\"1.0\"?>" "%e;"
+#guard pe "" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" "%e;"
 -- XML 1.1 §2.11 applies to external entities, and §2.2 to their text.
 #guard (match parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0085y") 
           (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>") with

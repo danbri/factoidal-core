@@ -524,6 +524,7 @@ def expandEntityValue (inAttr : Bool) (ents : EntityTable) (visited : List Strin
                 | some ed =>
                   if inAttr && ed.external then
                     .err "an attribute value may not reference an external entity, directly or indirectly (WFC: No External Entity References, section 4.4.4)" pos
+                  else if let some m := ed.unreadable then .err m pos
                   else if !ed.resolved then
                     if ents.lax then
                       expandEntityValue inAttr ents visited s pos' depth budget' acc
@@ -603,6 +604,7 @@ def parseReference (inAttr : Bool) (ents : EntityTable) (s : Chars) (pos : Nat) 
           | some ed =>
             if inAttr && ed.external then
               .err "an attribute value may not reference an external entity, directly or indirectly (WFC: No External Entity References, section 4.4.4)" pos
+            else if let some m := ed.unreadable then .err m pos
             else if !ed.resolved then
               (if ents.lax then .ok "" pos'
                else .err "reference to undeclared entity (WFC: Entity Declared)" pos)
@@ -2094,22 +2096,31 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                         if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
                         else .ok (declareEntity name ed ents, pes, name, none) p'
                     | some raw  =>
-                      match readTextDecl ents.version raw with
-                      -- A malformed `[77] TextDecl` in the entity is
-                      -- a fatal error in the DOCUMENT that declares
-                      -- the entity, not a reason to leave it
-                      -- undeclared.
-                      | .error m   => .err m p'
-                      | .ok body =>
-                      -- Section 2.11 applies to every external parsed
-                      -- entity, and section 4.3.4 applies the
-                      -- document's version to the entities it invokes.
-                      match prepareEntityText ents.version body with
-                      | .error m => .err m p'
-                      | .ok text =>
-                        let ed : EntityDef := { value := text, external := true }
-                        if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
-                        else .ok (declareEntity name ed ents, pes, name, none) p'
+                      -- A malformed `[77] TextDecl`, or text that
+                      -- section 2.11 or the `[2] Char` class refuses, is
+                      -- a fatal error where the entity is REFERENCED
+                      -- (XML 1.0 section 2.1: the parsed entities
+                      -- "referenced directly or indirectly within the
+                      -- document" are well-formed). Rejecting at the
+                      -- declaration refused documents that never name
+                      -- the entity (`ibm-1-1-valid-P03-ibm03v09.xml`).
+                      -- The entity is declared, unread, and carries the
+                      -- fault for the reference to report.
+                      let text? : Except String String :=
+                        match readTextDecl ents.version raw with
+                        | .error m => .error m
+                        | .ok body =>
+                          -- Section 2.11 applies to every external parsed
+                          -- entity, and section 4.3.4 applies the
+                          -- document's version to the entities it invokes.
+                          prepareEntityText ents.version body
+                      let ed : EntityDef :=
+                        match text? with
+                        | .ok text => { value := text, external := true }
+                        | .error m => { value := "", external := true, resolved := false,
+                                        unreadable := some m }
+                      if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
+                      else .ok (declareEntity name ed ents, pes, name, none) p'
 
 /-- What reading a declaration subset accumulates besides the two
 entity tables: the attribute declarations and the declared names, each
@@ -2199,6 +2210,12 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
                let extPe := ((lookupEntityDef name pes).map (·.external)).getD false
                match lookupEntity name pes with
                | none =>
+                   -- A parameter entity that was read and is not a
+                   -- well-formed external entity is a fatal error at
+                   -- its reference (XML 1.0 section 2.1).
+                   match (lookupEntityDef name pes).bind (·.unreadable) with
+                   | some m => .err m pos
+                   | none =>
                    parseSubset resolve endKind ext s (p1 + 1) ents pes
                      { dtd with incomplete := true } fuel
                | some text =>
