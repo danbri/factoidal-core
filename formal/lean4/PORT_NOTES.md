@@ -1346,15 +1346,9 @@ negative tests' error codes, 103 of 106 matching the manifest's
 
 ### Scoped out, and said so
 
-- **Frame expansion.** `ContextCore.frameExpansion` exists so the record
-  matches the F\* `active_context`, but the JSON-LD Framing relaxations
-  the F\* source gates on it (the five framing keywords passing through
-  expansion, Value Pattern `{}`/`[]`/array shapes surviving
-  value-object validation, array-shaped `@id`) are NOT ported. Framing
-  is a separate specification with a separate suite; this stage targets
-  §5.1/§5.2/§8 and the toRdf manifest. `JSONLD.Compact`,
-  `JSONLD.Flatten`, `JSONLD.Frame`, and `JSONLD.FromRdf` are likewise
-  not ported.
+- **Frame expansion** was scoped out at this stage and landed with
+  `JSONLD.Frame` (see the section of that name below). Compaction,
+  flattening and `JSONLD.FromRdf` landed in their own stages.
 - **Generalized RDF**, matching the F\* source: a blank-node PREDICATE
   is dropped rather than emitted, because this codebase's N-Quads
   grammar cannot express one either way.
@@ -4601,8 +4595,9 @@ is: one fixture out of 246, because the suite's contexts rarely define
 two terms of different length for one IRI. The build-time theorem is the
 stronger tripwire here, which is the argument for keeping both.
 
-What is NOT ported: JSON-LD Framing (`JSONLD.Frame.fst`) — a separate
-specification with a separate suite, and no manifest above needs it.
+What is NOT ported at this stage: JSON-LD Framing (`JSONLD.Frame.fst`) — a
+separate specification with a separate suite, and no manifest above needs it
+(it landed later; see the `JSONLD.Frame` section).
 ### CSVW: a REAL csv2rdf conformance runner, and what it measured
 (2026-08-22)
 
@@ -9395,50 +9390,101 @@ RML core suite after the `quadsOfMap` split: 60 pass, 0 fail (out of
 
 ## `JSONLD.Frame` → `L4Factoidal/JSONLD/Frame.lean`
 
-The JSON-LD 1.1 Framing algorithm: expand, flatten to a node map, match
-nodes against the frame, embed the matched references, wrap in
-`@graph`, compact against the frame's context.
+The JSON-LD 1.1 Framing algorithm (<https://www.w3.org/TR/json-ld11-framing/>):
+expand input and frame, generate the node map of every graph, run the
+Framing Algorithm §4.1 with Frame Matching §4.2 and Value Pattern Matching
+§4.3, prune and clean the result, compact it against the frame's context.
 
-📊 **jsonld-frame: 29 pass, 63 fail (out of 92)**, against the F\* tree's
-recorded 28 pass, 64 fail (out of 92). A new harness,
-`Harness/JsonLdFrameRun.lean` (`l4jsonld-frame`), reads the real
-`frame-manifest.jsonld` and compares with the same RFC 8785 rule every
-other JSON-LD runner in this project uses. Run it from the repository
-root; `lake exe` runs from `formal/lean4`, where the corpus is not.
+📊 **jsonld-frame: 91 pass, 1 fail, 0 unsupported (out of 92)**, against
+the F\* tree's recorded 28 pass, 64 fail (out of 92). The Lean port was 29
+pass, 63 fail (out of 92) before this stage. `Harness/JsonLdFrameRun.lean`
+(`l4jsonld-frame`) reads the real `frame-manifest.jsonld`, passes the
+`option` entries the manifest states (`processingMode` or `specVersion`,
+`omitGraph`, `ordered`, and `embed`, `explicit`, `requireAll`,
+`omitDefault`, `pruneBlankNodeIdentifiers` when present), and compares with
+the RFC 8785 rule every JSON-LD runner here uses. Run it from the
+repository root. Regression check after the expander change: toRdf 467
+pass, 0 fail (out of 467); the other five json-ld-api manifests 791 pass,
+0 fail, 2 local-override (out of 793), all unchanged.
 
-The remaining 63 need what neither tree implements: `@default`,
-`@omitDefault`, `@requireAll` OR-matching, the other `@embed` modes,
-`@reverse`, `@included`, named graphs, and value-object matching inside
-a property frame.
+**The one failure, `#t0010` "property CURIE conflict", is a version
+dispute and is left failing.** The manifest entry declares
+`specVersion: json-ld-1.0`. The input context defines the term
+`dcterms:creator` with no `dcterms` prefix, so the input property is the
+absolute IRI `dcterms:creator`; the frame context defines the prefix
+`dcterms`. Compacting that IRI against the frame context reaches the last
+step of API §6.2 IRI Compaction: "if the IRI scheme of var matches any
+term in active context with prefix flag set to true, and var has no IRI
+authority, an IRI confused with prefix error has been detected". The
+expected output exists only if a 1.0-era compactor returns the IRI as it
+is. It is the same class as `compact/#t0038`
+(`tests/local-overrides/jsonld-compact__t0038.json`). Disabling the
+check for `json-ld-1.0` mode is not enough: the output then has
+`"dcterms:creator": [node, null]`, because the node's property and the
+frame's own property (default `null`) compact to one key, and the expected
+output has the node alone. The check stays, as in `compact/#tp001`.
 
-**The frame is expanded under a different grammar, and the Lean
-expander did not have it.** `ActiveContext.frameExpansion` was already a
-field — carried so the port's shape matched the F\* source — but nothing
-read it. `JSONLD/Expand.lean` now does, in two places: an `@id` that is
-an array of IRIs or the empty object is a frame PATTERN rather than an
-invalid value, and the five framing directives survive as raw members
-instead of being dropped as keyword lookalikes. Without the second,
-the frame's own `@explicit` never reaches the algorithm, so a pair of
-`#guard`s frames the same document with and without it and shows the
-outputs differ.
+**Why the output is built in an arena.** §4.1 changes the output after it
+is built: `@embed: @last` (a `json-ld-1.0` value) turns an embedded node
+into a node reference when a later occurrence is embedded, and drops the
+embeds that lived inside the replaced node. The mutated node belongs to a
+parent still under construction higher in the recursion, which a pure
+walk cannot reach. The output is therefore an array of containers
+(`OCont`) that refer to each other by index (`OVal.ref`), with the
+unique-embeds map recording each embed's parent container; `FState` also
+holds the subject stack (the circular-reference test) and a count of
+output nodes per blank node identifier. The recursion runs in
+`StateT FState (Except JsonLdError)` and carries a `fuel` that decreases
+at each call, as the other JSON-LD modules do.
 
-`expandDocument` takes `frameExpansion` with a default of `false`, so
-every existing call site is unchanged, and only the FRAME is expanded
-with it set — never the input being framed. That asymmetry is the
-algorithm's.
+**Choices the specification leaves open, and what was chosen.**
+
+- *Order.* Subjects and properties are always visited in code-point
+  order. §4.1 requires this when `ordered` is true and leaves the order
+  open when it is false; the expected outputs of the suite are in this
+  order, with `ordered: true` only on `#t0060`. The option is accepted
+  and has no effect.
+- *Language tags* are lower-cased in the expanded input before framing
+  (API §5.1.2: "Processors MAY normalize language tags to lower case";
+  Framing §4.2 compares them without regard to case). Fixture `#t0045`
+  expects the lower-case form in the output. The change is in `Frame.lean`,
+  not in `Expand.lean`, because the expansion manifest keeps the case.
+- *Blank node pruning* counts the output nodes that carry the identifier,
+  plus its occurrences in `@type`, when each node is created. A node that
+  the algorithm then skips (one that the current top-level match already
+  embedded, reached again through a `@graph` or `@included` frame) is
+  counted. An identifier counted once is removed
+  (`pruneBlankNodeIdentifiers`, true unless the processing mode is
+  `json-ld-1.0`).
+- *`@embed`.* `true` is `@once`, `false` is `@never`; `@first` and `@last`
+  are accepted in `json-ld-1.0` mode only; `@link` is not accepted
+  (it needs shared nodes in the output, which the arena does not build).
+- *Value patterns.* A pattern component that is empty accepts only a value
+  that lacks the component; `{}` accepts any value that has it. A frame
+  object with `@value` is validated as a pattern, so `@type: @json` is
+  allowed there; node patterns still reject blank node identifiers and
+  relative IRIs as `@id` and `@type` entries (`invalid frame`).
+- *`@reverse`* visits the nodes of the root graph in code-point order.
+
+**The frame is expanded under a different grammar, and the Lean expander
+did not have it.** `ActiveContext.frameExpansion` was a field that nothing
+read. `JSONLD/Expand.lean` now reads it: `@id` is always an array in a
+frame; `@type` may be `{}`, `[]` or a default object `{"@default": IRI}`;
+a value object in a frame is a pattern whose `@value`, `@type` and
+`@language` stay arrays (`expandValuePattern`); `@default` is expanded with
+the flag off and a scalar stays a scalar; the other framing keywords are
+kept as one-element arrays; and the top-level frame is not dropped when it
+is free-floating (`{}`, or `@id` alone). `expandDocument` takes
+`frameExpansion` with a default of `false`, so every other call site is
+unchanged, and only the FRAME is expanded with it set. Two error codes were
+added for Framing §5.2: `invalid frame` and `invalid @embed value`.
 
 **The top-level `@graph` follows `omitGraph`, not the result's shape.**
-The option defaults to FALSE under `json-ld-1.0` processing and TRUE
-under 1.1, which is why the suite's expected outputs are split between
-the two shapes — 35 of 92 carry a top-level `@graph` and 56 do not.
-Compaction with `compactArrays` collapses `{"@graph": [node]}` to the
-bare node and drops the key, so under 1.0 the wrapper has to be put
-back. Measuring this was what found it: wrapping unconditionally scored
-15 pass, 63 fail (out of 92); reading the option scored 29.
-
-Regression check after the expander change: toRdf 467 pass, 0 fail
-(out of 467); the other five json-ld-api manifests 791 pass, 0 fail,
-2 local-override (out of 793) — both unchanged.
+The option defaults to FALSE under `json-ld-1.0` processing and TRUE under
+1.1, which is why the suite's expected outputs are split between the two
+shapes. With `omitGraph` the single result is a bare node, an empty result
+is `{}` with the context, and several results are under `@graph`; without
+it the results are always under `@graph`.
 
 ## `RDFS.SchemaSplit` → `L4Factoidal/RDFS/SchemaSplit.lean`
 

@@ -12,7 +12,7 @@ The pipeline follows the `frame()` method of Framing §5.1:
 
   1. expand the input and expand the frame (the frame under the Framing
      grammar, `JSONLD.Expand`'s `frameExpansion` flag);
-  2. generate the node map of the input (API §7.1, `JSONLD.Flatten.nmg`),
+  2. generate the node map of the input (API §7.2, `JSONLD.Flatten.nmg`),
      one node map per graph, plus the merged node map (API §7.3);
   3. run the Framing Algorithm (§4.1), with the Frame Matching Algorithm
      (§4.2) and the Value Pattern Matching Algorithm (§4.3);

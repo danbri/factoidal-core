@@ -24,18 +24,23 @@ IRI or keyword, property values array-wrapped, value objects using
 Everything the toRdf path needs, matching the F* source function for
 function.
 
+## Frame expansion
+
+`ContextCore.frameExpansion` selects the grammar JSON-LD Framing expands a
+FRAME under (API §5.1.2): an `@id` or `@type` that is an array of IRIs,
+the wildcard `{}` or (for `@type`) a default object; value objects that
+are value PATTERNS (`@value`, `@type`, `@language` as `{}` or arrays);
+the framing keywords `@default`, `@embed`, `@explicit`, `@omitDefault`
+and `@requireAll` kept as entries; and top-level frame objects that
+ordinary expansion drops as free-floating (`{}`, an `@id` alone). Every
+branch tests the flag, which is `false` for every input document, so
+the expansion and toRdf manifests measure the same behaviour as before
+the flag was read. `JSONLD.Frame` is the only caller that sets it.
+
 ## Scoped out (deliberately, and stated)
 
-  * **Frame expansion.** `JSONLD.Context.ContextCore.frameExpansion`
-    exists (so the record matches the F* `active_context`), but the
-    JSON-LD Framing relaxations the F* source gates on it — the five
-    framing keywords passing through, Value Pattern shapes (`{}` / `[]`
-    / arrays) surviving value-object validation, and array-shaped `@id`
-    — are NOT ported. JSON-LD Framing is a separate specification and a
-    separate suite; this module targets §5.1/§5.2 and the toRdf
-    manifest. A document that needs them fails honestly.
   * Compaction, flattening, and framing themselves
-    (`JSONLD.Compact.fst`, `JSONLD.Flatten.fst`, `JSONLD.Frame.fst`).
+    (`JSONLD.Compact`, `JSONLD.Flatten`, `JSONLD.Frame`).
 
 ## Fuel
 
