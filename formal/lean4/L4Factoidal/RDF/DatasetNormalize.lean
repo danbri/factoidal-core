@@ -501,4 +501,168 @@ theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (
             mkLiteral_ok _ _ hwf']
           rfl
 
+/-! ## Terms -/
+
+/-- The characters of a subject (or a graph label) in canonical form. -/
+def subjChars (s : Subject) : List Char := (Subject.toNTriples s).toList
+
+/-- The characters of an object term in canonical form. -/
+def termChars (t : Term) : List Char := (Term.toCanonicalNTriples t).toList
+
+theorem subjChars_iri (i : WfIri) : subjChars (.iri i) = '<' :: (i.val.toList ++ ['>']) := by
+  simp [subjChars, Subject.toNTriples]
+
+theorem subjChars_bnode (b : String) : subjChars (.bnode b) = '_' :: ':' :: b.toList := by
+  simp [subjChars, Subject.toNTriples]
+
+theorem termChars_iri (i : WfIri) : termChars (.iri i) = '<' :: (i.val.toList ++ ['>']) := by
+  simp [termChars, Term.toCanonicalNTriples]
+
+theorem termChars_bnode (b : String) : termChars (.bnode b) = '_' :: ':' :: b.toList := by
+  simp [termChars, Term.toCanonicalNTriples]
+
+theorem termChars_triple (s : Subject) (p : WfIri) (o : Term) :
+    termChars (.tripleTerm s p o) =
+      '<' :: '<' :: '(' :: ' ' :: (subjChars s ++ ' ' :: '<' :: (p.val.toList ++ '>' :: ' ' ::
+        (termChars o ++ [' ', ')', '>', '>']))) := by
+  simp [termChars, subjChars, Term.toCanonicalNTriples]
+
+theorem readSubject_safe (pos : Nat) (s : Subject) (rest : List Char) (h : subjectSafe s = true) :
+    ∃ p', readSubject pos (subjChars s ++ ' ' :: rest) = .ok (s, p', ' ' :: rest) := by
+  cases s with
+  | iri i =>
+      rw [subjChars_iri, List.cons_append, List.append_assoc, List.singleton_append]
+      exact ⟨_, readSubject_printSafe pos i (' ' :: rest) h⟩
+  | bnode b =>
+      rw [subjChars_bnode]
+      obtain ⟨p', hp⟩ := readBlankNodeLabel_safe pos b rest h
+      refine ⟨p', ?_⟩
+      simp only [List.cons_append, readSubject]
+      rw [hp]
+
+theorem readGraphLabel_safe (pos : Nat) (s : Subject) (rest : List Char) (h : subjectSafe s = true) :
+    ∃ p', readGraphLabel pos (subjChars s ++ ' ' :: rest) = .ok (s, p', ' ' :: rest) := by
+  cases s with
+  | iri i =>
+      rw [subjChars_iri, List.cons_append, List.append_assoc, List.singleton_append]
+      refine ⟨pos + i.val.length + 2, ?_⟩
+      simp only [readGraphLabel, readIriRef_printSafe pos i (' ' :: rest) h, mkIri_val]
+  | bnode b =>
+      rw [subjChars_bnode]
+      obtain ⟨p', hp⟩ := readBlankNodeLabel_safe pos b rest h
+      refine ⟨p', ?_⟩
+      simp only [List.cons_append, readGraphLabel]
+      rw [hp]
+
+theorem readPredicate_safe (pos : Nat) (i : WfIri) (rest : List Char) (h : iriPrintSafe i.val = true) :
+    ∃ p', readPredicate pos ('<' :: (i.val.toList ++ '>' :: ' ' :: rest)) = .ok (i, p', ' ' :: rest) :=
+  ⟨_, readPredicate_printSafe pos i (' ' :: rest) h⟩
+
+theorem iri_head_ne_lt (i : WfIri) (h : iriPrintSafe i.val = true) :
+    ∃ x xs, i.val.toList = x :: xs ∧ x ≠ '<' := by
+  have hne : i.val.toList ≠ [] := by
+    intro h0
+    have := i.property
+    simp [isIri, h0] at this
+  obtain ⟨x, xs, hx⟩ := List.exists_cons_of_ne_nil hne
+  refine ⟨x, xs, hx, ?_⟩
+  intro hxl
+  unfold iriPrintSafe at h
+  rw [hx] at h
+  simp only [List.all_cons, Bool.and_eq_true] at h
+  have := h.1
+  subst hxl
+  simp [IriSafeChar, isIriForbiddenCodepoint] at this
+
+theorem readObject11_safe (pos : Nat) (t : Term) (c : Char) (rest : List Char)
+    (hc : objFollow c = true) (h : termSafe .rdf11 t = true) :
+    ∃ p', readObject11 pos (termChars t ++ ' ' :: c :: rest) = .ok (t.lowerTags, p', ' ' :: c :: rest) := by
+  cases t with
+  | iri i =>
+      rw [termChars_iri, List.cons_append, List.append_assoc, List.singleton_append]
+      exact ⟨_, readObject11_printSafe pos i (' ' :: c :: rest) h⟩
+  | bnode b =>
+      rw [termChars_bnode]
+      obtain ⟨p', hp⟩ := readBlankNodeLabel_safe pos b (c :: rest) h
+      refine ⟨p', ?_⟩
+      simp only [List.cons_append, readObject11, Term.lowerTags]
+      rw [hp]
+  | literal wl =>
+      obtain ⟨p', hp⟩ := readLiteral_safe .rdf11 pos wl c rest hc h
+      refine ⟨p', ?_⟩
+      simp only [termChars, litChars_eq, List.cons_append, List.append_assoc, readObject11,
+        Term.lowerTags] at hp ⊢
+      rw [hp]
+  | tripleTerm s p o => simp [termSafe] at h
+
+theorem subjChars_head (s : Subject) : ∃ x xs, subjChars s = x :: xs ∧ isNtWs x = false := by
+  cases s with
+  | iri i => exact ⟨_, _, subjChars_iri i, by decide⟩
+  | bnode b => exact ⟨_, _, subjChars_bnode b, by decide⟩
+
+theorem termChars_head (t : Term) : ∃ x xs, termChars t = x :: xs ∧ isNtWs x = false := by
+  cases t with
+  | iri i => exact ⟨_, _, termChars_iri i, by decide⟩
+  | bnode b => exact ⟨_, _, termChars_bnode b, by decide⟩
+  | literal wl => exact ⟨_, _, litChars_eq wl, by decide⟩
+  | tripleTerm s p o => exact ⟨_, _, termChars_triple s p o, by decide⟩
+
+/-- Nesting depth of triple terms. -/
+def Term.ttDepth : Term → Nat
+  | .tripleTerm _ _ o => o.ttDepth + 1
+  | _ => 0
+
+theorem readObject12_safe : ∀ (t : Term) (f pos : Nat) (c : Char) (rest : List Char),
+    t.ttDepth < f → objFollow c = true → termSafe .rdf12 t = true →
+    ∃ p', readObject12 f pos (termChars t ++ ' ' :: c :: rest)
+      = .ok (t.lowerTags, p', ' ' :: c :: rest)
+  | .iri i, f + 1, pos, c, rest, _, _, h => by
+      obtain ⟨x, xs, hx, hxl⟩ := iri_head_ne_lt i h
+      have hr := readIriRef_printSafe pos i (' ' :: c :: rest) h
+      rw [termChars_iri, List.cons_append, List.append_assoc, List.singleton_append]
+      refine ⟨pos + i.val.length + 2, ?_⟩
+      rw [hx] at hr ⊢
+      simp only [List.cons_append] at hr ⊢
+      unfold readObject12
+      split
+      · rename_i h1; simp at h1; exact absurd h1.1 hxl
+      · rename_i h1; simp at h1; exact absurd h1.1 hxl
+      · rename_i h1; simp only [List.cons.injEq] at h1; obtain ⟨-, h1⟩ := h1; subst h1
+        simp only [hr, mkIri_val, Term.lowerTags]
+      · rename_i h1; simp at h1
+      · rename_i h1; simp at h1
+      · rename_i h1 h2 h3 h4 h5; exact absurd rfl (h3 _)
+  | .bnode b, f + 1, pos, c, rest, _, _, h => by
+      rw [termChars_bnode]
+      obtain ⟨p', hp⟩ := readBlankNodeLabel_safe pos b (c :: rest) h
+      refine ⟨p', ?_⟩
+      simp only [List.cons_append, readObject12, Term.lowerTags]
+      rw [hp]
+  | .literal wl, f + 1, pos, c, rest, _, hc, h => by
+      obtain ⟨p', hp⟩ := readLiteral_safe .rdf12 pos wl c rest hc h
+      refine ⟨p', ?_⟩
+      simp only [termChars, litChars_eq, List.cons_append, List.append_assoc, readObject12,
+        Term.lowerTags] at hp ⊢
+      rw [hp]
+  | .tripleTerm s p o, f + 1, pos, c, rest, hf, hc, h => by
+      simp only [termSafe, Bool.and_eq_true, beq_self_eq_true, true_and] at h
+      obtain ⟨⟨hs, hp⟩, ho⟩ := h
+      have hf' : o.ttDepth < f := by simp [Term.ttDepth] at hf; omega
+      obtain ⟨p2, hp2⟩ := readSubject_safe (pos + 3 + 1) s
+        ('<' :: (p.val.toList ++ '>' :: ' ' :: (termChars o ++ ' ' :: ')' :: '>' :: '>' :: ' ' :: c :: rest))) hs
+      obtain ⟨p4, hp4⟩ := readPredicate_safe (p2 + 1) p
+        (termChars o ++ ' ' :: ')' :: '>' :: '>' :: ' ' :: c :: rest) hp
+      obtain ⟨p6, hp6⟩ := readObject12_safe o f (p4 + 1) ')' ('>' :: '>' :: ' ' :: c :: rest) hf'
+        (by decide) ho
+      obtain ⟨sx, sxs, hsx, hsxw⟩ := subjChars_head s
+      obtain ⟨ox, oxs, hox, hoxw⟩ := termChars_head o
+      refine ⟨p6 + 1 + 3, ?_⟩
+      rw [termChars_triple]
+      rw [hsx] at hp2 ⊢
+      rw [hox] at hp2 hp4 hp6 ⊢
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hp2 hp4 hp6 ⊢
+      simp only [readObject12, skipWs_space _ hsxw, hp2,
+        skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6,
+        skipWs_space _ (show isNtWs ')' = false by decide), Term.lowerTags]
+
 end L4Factoidal.RDF
