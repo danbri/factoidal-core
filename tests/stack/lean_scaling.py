@@ -20,6 +20,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
   rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
+  group-by-few     SPARQL GROUP BY with 6 groups over many rows
+  group-by-many    SPARQL GROUP BY with one group per subject
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes, 1 when a pair fails, 2 when the binary is missing.
@@ -113,6 +115,16 @@ ROWS = {
         125,
         lambda n: bl.gen_canon("person", n),
         lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
+    "group-by-few": (
+        2500,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
+                   "SELECT ?p (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?p"]),
+    "group-by-many": (
+        1250,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
+                   "SELECT ?s (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s"]),
 }
 
 

@@ -969,6 +969,78 @@ the same query on 2026-08-26). -/
       (.bgp [{ s := .var "s", p := .var "p", o := .iri oEx1 }])))
   == []
 
+/-! ### The hash-indexed grouping agrees with the specification
+
+`groupSolutionsFast` (hash buckets, rows newest first) must return exactly the
+groups `groupSolutions` (`addToGroups` per row) returns: same keys, same first
+appearance order, same rows in input order. The keys below are evaluated
+values, so the cases that decide the bucket choice are exercised directly:
+`1`, `1.0` and `1.0E0` are order-equal across `xsd:integer`, `xsd:decimal` and
+`xsd:double` and must land in ONE group; an unbound variable is an error key;
+two literals that differ only in language tag or datatype are different
+groups. -/
+
+private def gkNum1  : EvalResult := .num 1
+private def gkDec1  : EvalResult := .dec "1.0"
+private def gkDbl1  : EvalResult := .dbl "1.0E0"
+private def gkNum2  : EvalResult := .num 2
+private def gkDec2  : EvalResult := .dec "2.00"
+private def gkTrue  : EvalResult := .bool true
+private def gkFalse : EvalResult := .bool false
+private def gkErr   : EvalResult := .error
+private def gkAlice : EvalResult := .term (.iri iAlice)
+private def gkBob   : EvalResult := .term (.iri iBob)
+private def gkBn    : EvalResult := .term (.bnode "b1")
+private def gkLitEn : EvalResult := .term (.literal (Literal.langString "chat" "en"))
+private def gkLitFr : EvalResult := .term (.literal (Literal.langString "chat" "fr"))
+private def gkLitPl : EvalResult := .term (.literal (Literal.string "chat"))
+private def gkLitI  : EvalResult := .term (nLit "1")
+
+private def gkeys : List (List EvalResult) :=
+  [ [gkNum1], [gkAlice], [gkDec1], [gkErr], [gkBob], [gkNum2], [gkDbl1], [gkTrue],
+    [gkLitEn], [gkDec2], [gkLitFr], [gkAlice, gkNum1], [gkLitPl], [gkAlice, gkDec1],
+    [gkBn], [gkFalse], [gkLitI], [gkErr], [gkBob, gkErr], [gkBn], [gkTrue], [gkLitEn],
+    [gkNum1], [], [], [gkAlice, gkNum2] ]
+
+/-- Row `i` carries its position, so rows are all distinct. -/
+private def gkRows (cycles : Nat) : List (List EvalResult × Binding) :=
+  (List.range (cycles * gkeys.length)).map (fun i =>
+    (gkeys[i % gkeys.length]!, [("i", nLit (toString i))]))
+
+private def gkShape (gs : List SolutionGroup) : List (List EvalResult × List Binding) :=
+  gs.map (fun g => (g.key, g.solutions))
+
+private def gkSpec (rows : List (List EvalResult × Binding)) : List SolutionGroup :=
+  rows.foldl (fun gs (r : List EvalResult × Binding) => addToGroups r.1 r.2 gs) []
+
+private def gkFast (rows : List (List EvalResult × Binding)) : List SolutionGroup :=
+  (rows.foldl (fun acc (r : List EvalResult × Binding) => acc.add r.1 r.2)
+    ({} : GroupAcc)).groups
+
+#guard gkShape (gkFast []) == gkShape (gkSpec [])
+#guard gkShape (gkFast (gkRows 1)) == gkShape (gkSpec (gkRows 1))
+#guard gkShape (gkFast (gkRows 2)) == gkShape (gkSpec (gkRows 2))
+#guard gkShape (gkFast (gkRows 7)) == gkShape (gkSpec (gkRows 7))
+
+-- The groups are the expected ones, so a grouping that put every row in one
+-- group, or every row in its own group, fails: 1, 1.0 and 1.0E0 share a group
+-- and so do the equal numeric pairs of the two-component keys.
+#guard (gkFast (gkRows 3)).length == (gkSpec (gkRows 3)).length
+#guard (gkFast (gkRows 3)).length > 10
+#guard (gkFast (gkRows 3)).length < gkeys.length
+#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions.length)) == some 4
+#guard ((gkFast (gkRows 2)).head?.map (fun g => g.solutions.length)) == some 8
+#guard (gkFast (gkRows 3)).all (fun g => g.solutions.length > 1)
+-- Rows keep their input order inside a group.
+#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions)) ==
+  some [[("i", nLit "0")], [("i", nLit "2")], [("i", nLit "6")], [("i", nLit "22")]]
+
+-- Order-equal keys share a bucket; the bucket separates the keys it may separate.
+#guard keyBucket [gkNum1] == keyBucket [gkDec1] && keyBucket [gkDec1] == keyBucket [gkDbl1]
+#guard keyBucket [gkAlice] != keyBucket [gkBob]
+#guard keyBucket [gkLitEn] != keyBucket [gkLitFr]
+#guard keyBucket [gkLitI] != keyBucket [gkLitPl]
+
 /-! ### Axiom audit — the whole pipeline is definition-only -/
 
 #print axioms GraphPattern.evalIn
