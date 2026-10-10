@@ -637,3 +637,62 @@ filesWithExt
 main
 rqFiles
 schemeBlind
+#
+# --- Added 2026-10-10 (https://github.com/danbri/factoidal/issues/746) ---
+# Each entry below states what bounds its recursion depth. "(b)" = the depth
+# is the nesting of a document or of a schema/ontology/frame, not its size;
+# "(c)" = the depth is bounded by a constant or by the height of a balanced
+# tree. Entries that were LENGTH-proportional over data were converted to
+# accumulator forms with csimp theorems instead (see the issue).
+OwlProbe_showCe  # (b) harness printer; class-expression nesting; operand lists via List.map
+sortStrings  # (c) Array.qsort left-partition recursion in the xmlconf harness; input: test ids of one manifest (at most 2,184); median-of-three pivot, expected depth O(log n), worst case n
+L4Factoidal_Codec_ofHex_go  # (c) private fixture decoder; only the three hex literals of Codec/Archive.lean; longest 1,024 bytes
+L4Factoidal_Crypto_hkdfBytesOfHex_go  # (c) private fixture decoder; only the RFC 5869 A.1 literals of Crypto/Hkdf.lean; longest 22 bytes
+L4Factoidal_Storage_LiteralGramIndexWire_bytesOfHexLiteral_go  # (c) private fixture decoder; only the two legacy LGI1/LGI2 literals; longest 806 bytes
+L4Factoidal_Storage_ShardManifest_swapLabelGo  # (c) private fixture helper; only the encodings of the fixed sample manifests of Storage/ShardManifest.lean (size not measured)
+L4Factoidal_XMPP_Server_run  # (c) private test driver of XMPP/Server.lean; its #guards pass at most 4 framing units
+L4Factoidal_OWL_SyntaxDL_listTriples  # (c) private test helper; its #guards pass lists of at most 3 terms
+L4Factoidal_OWL_Comp_interleave  # (c) called only by permutations
+L4Factoidal_OWL_Comp_permutations  # (c) adfEmission calls it only when the member list has at most permCap = 4 members
+L4Factoidal_JSONLD_flattenExpanded  # (c) Std.TreeMap foldrM over the graph map: depth is the height of a balanced tree, O(log n)
+L4Factoidal_JSONLD_Env_subjectsOf  # (c) Std.TreeMap keys (foldrM): height of a balanced tree, O(log n)
+L4Factoidal_JSONLD_OMap_upsert  # (c) Std.TreeMap insert: height of a balanced tree, O(log n)
+L4Factoidal_JSONLD_OMap_erase  # (c) Std.TreeMap erase: height of a balanced tree, O(log n)
+L4Factoidal_JSONLD_OMap_toSortedList  # (c) Std.TreeMap toList (foldrM): height of a balanced tree, O(log n)
+L4Factoidal_Text_CaseMap_sortedDedup  # (c) Array.qsort; input: the generated Unicode case tables (fixed) or one code point's variants (at most 4); expected depth O(log n)
+L4Factoidal_Text_CaseMap_normalizeRanges  # (c) Array.qsort over the ranges of one regex character class and their case variants; median-of-three pivot, expected depth O(log n), worst case n
+L4Factoidal_JSONLD_expandDefaultItems  # (b) items of one frame @default value (nested arrays flattened); the frame is the query, not the data; inside the expansion mutual block
+L4Factoidal_OWL_FS_parseDR  # (b) nesting of data ranges in an OWL functional-syntax document; fuel-bounded
+L4Factoidal_OWL_OwlXml_readDR  # (b) nesting of data-range elements in an OWL/XML document (operand lists are tail calls)
+L4Factoidal_OWL_OwlXml_readCE  # (b) nesting of class-expression elements in an OWL/XML document (operand lists are tail calls)
+L4Factoidal_OWL_Struct_mapDR  # (b) data-range nesting of one axiom (operand lists are tail calls)
+L4Factoidal_OWL_Struct_mapCE  # (b) class-expression nesting of one axiom (operand lists are tail calls)
+L4Factoidal_OWL_Refute_ClassExpr_hashCe  # (b) class-expression nesting
+L4Factoidal_OWL_Refute_ClassExpr_hashCeList  # (b) operands of ONE intersection or union in a node label (a right fold kept so hash values do not change); the tableau refuter is exponential in label size long before this depth matters
+L4Factoidal_OWL_Refute_distinctSubsetGo  # (c) the non-tail call lowers the wanted count m: depth <= m, the cardinality of one restriction, and the cut tl.length < m bounds it by the candidate count
+L4Factoidal_OWL_Refute_minSumGo  # (c) the non-tail call picks one (cardinality, property) pair: depth <= the restrictions on one node
+L4Factoidal_OWL_Refute_dpll  # (c) non-tail call = one decision level: depth <= the propositional variables of one node label's clause set, and <= fuel
+L4Factoidal_OWL_SyntaxDL_drDatatypes  # (b) data-range nesting in the RDF graph; fuel-bounded; list members via flatMap
+L4Factoidal_RDF_Term_ttDepth  # (b) nesting depth of RDF 1.2 triple terms (object position)
+L4Factoidal_RDF_Term_bnodeLabels  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_replaceTermIn  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_generalisableTerms  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RML_scopeTerm  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RML_renameTerm  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RML_termBnodes  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RML_relabelTerm  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RML_termsOfF  # (c) the only self-call clears rml:condition, so the next call takes the no-condition branch: depth 1
+L4Factoidal_RML_termMapAtF  # (b) chain of rml:condition term maps in the mapping graph; fuel-bounded
+L4Factoidal_RIF_OwlDirect_memberAsFrame  # (b) And/Or/Exists nesting of one RIF formula
+L4Factoidal_SHACL_uvfKey  # (b) key properties of one uniqueValuesFor constraint in the shapes graph
+L4Factoidal_ShEx_Compact_exclusionForms  # (b) exclusions written after one stem of a ShExC value set (other tokens are tail calls)
+L4Factoidal_ShEx_Structure_seListWalk  # (b) operands of one ShapeAnd/ShapeOr in the schema (mutual with seWalk)
+L4Factoidal_ShEx_Structure_teListWalk  # (b) triple expressions of one EachOf/OneOf in the schema (mutual with teWalk)
+L4Factoidal_XML_defaultedAttrs_go  # (b) ATTLIST declarations of one element type in the DTD
+L4Factoidal_XML_CP_deriv  # (b) nesting of one DTD content model
+L4Factoidal_XML_CP_derivSeq  # (b) members of one sequence of a DTD content model
+L4Factoidal_XML_CP_derivList  # (b) members of one choice of a DTD content model
+L4Factoidal_XSD_readSimpleType  # (b) simple-type derivation chain and nesting in the schema; fuel-bounded
+L4Factoidal_XSD_unionMembers  # (b) restriction chain of one simple type; fuel-bounded
+L4Factoidal_XSD_derivedOk  # (b) derivation chain of one simple type; fuel-bounded
+L4Factoidal_XSD_unreadablePatternsOfFuel  # (b) list/union nesting of one simple type; fuel-bounded
