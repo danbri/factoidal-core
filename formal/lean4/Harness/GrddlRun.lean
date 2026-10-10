@@ -33,7 +33,7 @@ named — never as a pass, and never as a failure of the engine.
 
 Usage: `lake exe l4grddl [tests-dir]`
 -/
-import L4Factoidal.GRDDL.Discovery
+import L4Factoidal.GRDDL.Agent
 import L4Factoidal.Syntax.NTriples
 
 open L4Factoidal.RDF
@@ -44,6 +44,7 @@ open L4Factoidal.Syntax
 /-! ## Mapping a suite IRI to a vendored file -/
 
 def tdPrefix : String := "http://www.w3.org/2001/sw/grddl-wg/td/"
+def tdPrefixHttps : String := "https://www.w3.org/2001/sw/grddl-wg/td/"
 def gPrefixHttp : String := "http://www.w3.org/2003/g/"
 def gPrefixHttps : String := "https://www.w3.org/2003/g/"
 
@@ -52,13 +53,16 @@ def stripFragment (iri : String) : String :=
   | some i => String.ofList (iri.toList.take i)
   | none   => iri
 
-/-- The two host trees the suite references, and nothing else. An IRI
-    outside them has no local file, which the caller reports as
+/-- The two host trees the suite references, and nothing else, under
+    either scheme: www.w3.org answers the `http` IRI with a redirection
+    to the same path under `https`, so both name one representation. An
+    IRI outside them has no local file, which the caller reports as
     UNAVAILABLE with the IRI named. -/
 def iriToLocal (docroot : String) (iri0 : String) : Option String :=
   let iri := stripFragment iri0
   let after (p : String) : String := String.ofList (iri.toList.drop p.length)
   if iri.startsWith tdPrefix then some (docroot ++ "/td/" ++ after tdPrefix)
+  else if iri.startsWith tdPrefixHttps then some (docroot ++ "/td/" ++ after tdPrefixHttps)
   else if iri.startsWith gPrefixHttp then some (docroot ++ "/g/" ++ after gPrefixHttp)
   else if iri.startsWith gPrefixHttps then some (docroot ++ "/g/" ++ after gPrefixHttps)
   else none
@@ -129,7 +133,7 @@ def schemeBlind (s : String) : String :=
     | head :: segs =>
         head ++ String.intercalate "" (segs.map (fun seg =>
           "_:b" ++ String.ofList (seg.toList.dropWhile (fun c =>
-            c.isAlphanum || c == '-' || c == '_')))))
+            c.isAlphanum || c == '-' || c == '_' || c == '.')))))
   String.intercalate "\n" ((lines.filter (· != "")).toArray.qsort (· < ·) |>.toList)
 
 inductive Verdict where
@@ -150,129 +154,158 @@ structure Tally where
   noTx    : Nat := 0
   unavail : Nat := 0
   refused : Nat := 0
+  /-- Not passed, but a related test (`g:alternative`, `g:subsumes`)
+      passed: the case `testft.py` counts as passed. Apart from `pass`. -/
+  related : Nat := 0
 deriving Inhabited
 
-/-- Fetch and parse a second document — a namespace document (§3) or a
-    profile document (§5). The FETCH is the runner's job; every
-    discovery decision over the parsed tree belongs to
-    `GRDDL.Discovery`. -/
-def secondDoc (docroot iri : String) : IO (Option Node) := do
+/-! ## Retrieval
+
+The runner's only job besides comparing: answer a retrieval request
+from the vendored files. `docroot/redirects.tsv` records the HTTP
+redirections the W3C server answers for suite IRIs; they are followed
+first (at most five hops), so the representation carries the IRI it was
+finally retrieved from — the base IRI the base-URI tests exercise
+(RFC 3986 section 5.1.3). Every decision over the retrieved documents is
+`GRDDL.Agent`'s. -/
+
+/-- `requested IRI -> Location`, from `redirects.tsv`. -/
+def readRedirects (docroot : String) : IO (List (String × String)) := do
+  let path := docroot ++ "/redirects.tsv"
+  if !(← System.FilePath.pathExists path) then return []
+  let text ← IO.FS.readFile path
+  return (text.splitOn "\n").filterMap (fun l =>
+    if l.startsWith "#" then none else
+    match l.splitOn "\t" with
+    | [src, _, loc] => some (src, (loc.trimAsciiEnd).toString)
+    | _ => none)
+
+def followRedirects (redirects : List (String × String)) : Nat → String → String
+  | 0, iri => iri
+  | n + 1, iri =>
+      match redirects.find? (·.1 == iri) with
+      | some (_, loc) => followRedirects redirects n loc
+      | none => iri
+
+def vendoredFetch (docroot : String) (redirects : List (String × String))
+    (iri0 : String) : IO (Option Representation) := do
+  let iri := followRedirects redirects 5 (stripFragment iri0)
   match ← readIri docroot iri with
-  | none     => return none
-  | some src => return (match parseXML src with
-      | .ok d    => some d.root
-      | .error _ => none)
+  | some text => return some { retrievedFrom := iri, text }
+  | none      => return none
 
-/-- Load a stylesheet's `xsl:import` / `xsl:include` targets, and
-    theirs, to a bounded depth. Returns the pairs keyed by the href AS
-    WRITTEN — that is what the reader looks up — and the hrefs that
-    are not in the vendored docroot. -/
-partial def loadImports (docroot : String) (styleIri : String) (root : Node)
-    (fuel : Nat) : IO (List (String × Node) × List String) := do
-  if fuel == 0 then return ([], [])
-  let mut acc : List (String × Node) := []
-  let mut miss : List String := []
-  for (_, href) in L4Factoidal.XSLT.importHrefs root do
-    let target := resolveIri styleIri href
-    match ← readIri docroot target with
-    | none => miss := miss ++ [target]
-    | some src => match parseXML src with
-      | .error _ => miss := miss ++ [target]
-      | .ok d =>
-          acc := acc ++ [(href, d.root)]
-          let (deeper, m2) ← loadImports docroot target d.root (fuel - 1)
-          acc := acc ++ deeper
-          miss := miss ++ m2
-  return (acc, miss)
+/-- Is this IRI inside the two trees the docroot mirrors? A document
+    outside them (the XHTML, RDF and SVG namespace documents,
+    `http://www.example.org/...`) is not vendored on purpose; see
+    PROVENANCE.md. -/
+def inSuiteTrees (iri : String) : Bool :=
+  (iriToLocal "" iri).isSome
 
-def runTest (docroot : String) (t : GTest) : IO Verdict := do
+def runTest (docroot : String) (redirects : List (String × String)) (t : GTest) :
+    IO Verdict := do
   match t.input, t.output with
   | none, _ | _, none => return .fail "the manifest entry names no input or output document"
   | some inIri, some outIri =>
-    match ← readIri docroot inIri with
-    | none => return .unavailable inIri
-    | some inputText =>
-      match parseXML inputText with
-      | .error e => return .refused s!"the input document is not well-formed XML: {e.message}"
-      | .ok source =>
-        let base := inIri
-        let root := source.root
-        -- §2 + §4, from the document itself.
-        let sameDoc := sameDocumentTransformations base root
-        -- §5: dereference each custom head @profile document.
-        let mut profileTx : List String := []
-        for p in customProfileUris base root do
-          match ← secondDoc docroot p with
-          | some tree => profileTx := profileTx ++ profileDocTransformations p tree
-          | none      => pure ()
-        -- §3: dereference the root element's namespace document.
-        let mut nsTx : List String := []
-        match rootNamespaceUri root with
-        | some nsu =>
-            match ← secondDoc docroot nsu with
-            | some tree => nsTx := namespaceDocTransformations nsu tree
-            | none      => pure ()
-        | none => pure ()
-        let xforms := (sameDoc ++ profileTx ++ nsTx).eraseDups
-        let isRdfXml := isRdfXmlRoot root
-        if xforms.isEmpty && !isRdfXml then
-          return .noTransformation
-        else
-          let mut styles : List (Document × List (String × Node)) := []
-          let mut missing : List String := []
-          for x in xforms do
-            match ← readIri docroot x with
-            | none => missing := missing ++ [x]
-            | some src => match parseXML src with
-              | .ok d    =>
-                  -- `xsl:import` / `xsl:include` targets, loaded
-                  -- transitively. `importHrefs` says WHICH hrefs the
-                  -- stylesheet wants; fetching them is the runner's
-                  -- job and the meaning of the merge is not.
-                  let (imps, miss) ← loadImports docroot x d.root 4
-                  missing := missing ++ miss
-                  styles := styles ++ [(d, imps)]
-              | .error _ => missing := missing ++ [x]
-          if !missing.isEmpty then
-            return .unavailable (String.intercalate ", " missing)
-          else
-            match ← readIri docroot outIri with
-            | none => return .unavailable outIri
-            | some expectedText =>
-              -- The GRDDL result describes the SOURCE document (a
-              -- transform's `rdf:about=""` denotes it), so the
-              -- expected graph is parsed against the source's
-              -- EFFECTIVE base — the one a root `xml:base` or an
-              -- XHTML `<base href>` may have moved — and never
-              -- against the output file's own URL.
-              match L4Factoidal.Syntax.RdfXml.parseRdfXml expectedText
-                      (some (docBase base root)) with
-              | .error e => return .refused s!"the expected output is not RDF/XML: {e.msg}"
-              | .ok expected =>
-                match grddlResult base source inputText styles with
-                | .error why => return .refused why
-                | .ok result =>
-                    if Graph.isomorphic? result expected then return .pass
-                    else
-                      -- A count alone does not say what differs.
-                      -- `GRDDL_DEBUG=<case>` prints both graphs, so a
-                      -- one-versus-one mismatch (a base-URI question)
-                      -- is told apart from a missing rule.
-                      let want := (← IO.getEnv "GRDDL_DEBUG").getD ""
-                      if want != "" && inIri.endsWith want then
-                        IO.println "--- produced ---"
-                        IO.println ((Graph.toNTriples result).toOption.getD "(unserialisable)")
-                        IO.println "--- expected ---"
-                        IO.println ((Graph.toNTriples expected).toOption.getD "(unserialisable)")
-                      let rt := (Graph.toNTriples result).toOption.getD ""
-                      let et := (Graph.toNTriples expected).toOption.getD ""
-                      let drift := rt != "" && schemeBlind rt == schemeBlind et
-                      return Verdict.fail
-                        (s!"produced {result.length} triple(s), expected {expected.length}"
-                         ++ (if drift then
-                               " — the two differ ONLY by the http/https scheme, which is"
-                               ++ " vendoring drift in the corpus, not a transform defect"
-                             else ""))
+    match ← glean (vendoredFetch docroot redirects) inIri with
+    | .error why =>
+        if (iriToLocal docroot inIri).isNone ||
+           (why.splitOn "not retrieved").length > 1 then return .unavailable inIri
+        else return .refused why
+    | .ok g =>
+      let missing := g.unretrieved.filter inSuiteTrees
+      if g.transformations.isEmpty && !g.isRdfXml then
+        if !missing.isEmpty then return .unavailable (String.intercalate ", " missing)
+        else return .noTransformation
+      else
+        match ← readIri docroot outIri with
+        | none => return .unavailable outIri
+        | some expectedText =>
+          -- The expected output describes the SOURCE (`rdf:about=""`
+          -- denotes it), so it is read against the input document's IRI
+          -- as the manifest names it, never the output file's URL. This
+          -- is what the W3C driver testft.py does
+          -- (`parse(outputUri, publicID=inputUri)`). The source's
+          -- in-document base is NOT applied a second time: an output that
+          -- carries its own `xml:base="../.."` (inline-rdf4) means it
+          -- relative to the input IRI.
+          match L4Factoidal.Syntax.RdfXml.parseRdfXml expectedText (some inIri) with
+          | .error e => return .refused s!"the expected output is not RDF/XML: {e.msg}"
+          | .ok expected0 =>
+            -- An RDF graph is a SET of triples. The parser's list can
+            -- repeat a triple (hl7-rim-pomr.rdf states 27 triples twice),
+            -- so the comparison deduplicates before the isomorphism test.
+            let expected := Graph.union [] expected0
+            let outcome := Graph.isomorphicOutcome g.graph expected
+            if outcome == .equal then return .pass
+            else if outcome == .budgetExceeded then
+              return .refused "the isomorphism search exceeded its budget; the graphs are not decided"
+            else if !missing.isEmpty then
+              return .unavailable (String.intercalate ", " missing)
+            else if !g.refusals.isEmpty then
+              return .refused (String.intercalate "; " g.refusals)
+            else
+              -- `GRDDL_DEBUG=<suffix of the input IRI>` prints both graphs.
+              let want := (← IO.getEnv "GRDDL_DEBUG").getD ""
+              if want != "" && inIri.endsWith want then
+                IO.println "--- produced ---"
+                IO.println ((Graph.toNTriples g.graph).toOption.getD "(unserialisable)")
+                IO.println "--- expected ---"
+                IO.println ((Graph.toNTriples expected).toOption.getD "(unserialisable)")
+                IO.println s!"--- transformations: {g.transformations}"
+                IO.println s!"--- not retrieved: {g.unretrieved}; not XML: {g.notXml}"
+              let rt := (Graph.toNTriples g.graph).toOption.getD ""
+              let et := (Graph.toNTriples expected).toOption.getD ""
+              let drift := rt != "" && schemeBlind rt == schemeBlind et
+              let outside := g.unretrieved.filter (fun i => !inSuiteTrees i)
+              return Verdict.fail
+                (s!"produced {g.graph.length} triple(s), expected {expected.length}"
+                 ++ (if drift then
+                       " — the two differ ONLY by the http/https scheme, which is"
+                       ++ " vendoring drift in the corpus, not a transform defect"
+                     else "")
+                 ++ (if !g.converged then " (the fixpoint was not reached)" else "")
+                 ++ (if outside.isEmpty then "" else
+                       s!" (not retrieved, outside the suite trees: {String.intercalate ", " outside})"))
+
+/-! ## Related tests (GRDDL Test Cases, "Tests with Multiple GRDDL Results")
+
+`g:alternative` (symmetric) joins tests whose source has several
+equally valid GRDDL results; an agent "should output at least one".
+`g:subsumes` points from the maximal-result test to the tests it
+merges. The W3C driver `testft.py`, shipped in the Recommendation's
+archive, counts a failing test as passed when a test it subsumes, a
+test subsuming it, or an alternative of it passed. This runner counts
+those cases in their own bucket, apart from pass. -/
+
+def gvNS : String := "http://www.w3.org/2001/sw/grddl-wg/td/grddl-test-vocabulary#"
+
+def relatedPairs (g : Graph) (p : String) : List (String × String) :=
+  g.filterMap (fun t =>
+    if t.p.val == gvNS ++ p then
+      match subjIri t.s, objIri t.o with
+      | some a, some b => some (a, b)
+      | _, _ => none
+    else none)
+
+/-- The tests reachable from `t` over `edges`, `fuel` steps deep. -/
+def reach (edges : List (String × String)) : Nat → List String → List String
+  | 0, seen => seen
+  | n + 1, seen =>
+      let next := (edges.filterMap (fun (a, b) => if seen.contains a then some b else none)).filter
+        (fun b => !seen.contains b)
+      if next.isEmpty then seen else reach edges n (seen ++ next.eraseDups)
+
+/-- Tests related to `t` the way `testft.py` reads the manifest:
+    subsuming (transitively), subsumed (transitively), and alternatives
+    in either direction (transitively). -/
+def relatedTests (mg : Graph) (t : String) : List String :=
+  let subs := relatedPairs mg "subsumes"
+  let alts := relatedPairs mg "alternative"
+  let n := mg.length + 1
+  let down := reach subs n [t]
+  let up := reach (subs.map (fun (a, b) => (b, a))) n [t]
+  let side := reach (alts ++ alts.map (fun (a, b) => (b, a))) n [t]
+  ((down ++ up ++ side).filter (· != t)).eraseDups
 
 def main (args : List String) : IO UInt32 := do
   let dir := args.head? |>.getD "third_party/testing/grddl"
@@ -290,28 +323,40 @@ def main (args : List String) : IO UInt32 := do
       return 1
   | .ok mg =>
     let tests := testsOf mg
-    let mut t : Tally := {}
+    let redirects ← readRedirects docroot
+    let mut verdicts : List (GTest × Verdict) := []
     for gt in tests do
-      let name := stripFragment gt.subject ++ "#" ++
-        (String.ofList (gt.subject.toList.drop (stripFragment gt.subject).length)).drop 1
+      verdicts := verdicts ++ [(gt, ← runTest docroot redirects gt)]
+    let passed := verdicts.filterMap (fun (gt, v) =>
+      match v with | .pass => some gt.subject | _ => none)
+    let mut t : Tally := {}
+    for (gt, v) in verdicts do
       let short := match (gt.subject.splitOn "#").getLast? with
         | some s => s
         | none   => gt.subject
-      let _ := name
-      match ← runTest docroot gt with
-      | .pass => t := { t with pass := t.pass + 1 }
-      | .fail why =>
+      let proxy := (relatedTests mg gt.subject).find? passed.contains
+      match v, proxy with
+      | .pass, _ => t := { t with pass := t.pass + 1 }
+      | _, some other =>
+          t := { t with related := t.related + 1 }
+          let why := match v with
+            | .fail w => w | .noTransformation => "no transformation found"
+            | .unavailable i => s!"not in the vendored docroot: {i}"
+            | .refused w => w | .pass => ""
+          let otherShort := ((other.splitOn "#").getLast?).getD other
+          IO.println s!"RELATED-PASS {short}: related test {otherShort} passed ({why})"
+      | .fail why, none =>
           t := { t with fail := t.fail + 1,
                         drift := t.drift + (if (why.splitOn "http/https").length > 1
                                             then 1 else 0) }
           IO.println s!"FAIL {short}: {why}"
-      | .noTransformation =>
+      | .noTransformation, none =>
           t := { t with noTx := t.noTx + 1 }
           IO.println s!"NO-TRANSFORMATION {short}"
-      | .unavailable iri =>
+      | .unavailable iri, none =>
           t := { t with unavail := t.unavail + 1 }
           IO.println s!"UNAVAILABLE {short}: not in the vendored docroot: {iri}"
-      | .refused why =>
+      | .refused why, none =>
           t := { t with refused := t.refused + 1 }
           IO.println s!"REFUSED {short}: {why}"
     let decided := t.pass + t.fail
@@ -325,6 +370,7 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"NO TRANSFORMATION FOUND: {t.noTx} cases name no transformation this stage can follow"
     IO.println s!"UNAVAILABLE: {t.unavail} cases need a document the vendored docroot does not carry"
     IO.println s!"REFUSED: {t.refused} cases the engine declined"
+    IO.println s!"RELATED TEST PASSED: {t.related} cases did not pass, but a test related by g:alternative or g:subsumes did (testft.py counts these as passed; counted apart here)"
     IO.println s!"  (out of {tests.length} tests in the manifest)"
     IO.println ""
     IO.println "Comparison is by graph ISOMORPHISM: blank-node labels are not"

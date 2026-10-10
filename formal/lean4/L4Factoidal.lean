@@ -418,6 +418,7 @@ import L4Factoidal.Math.Sigmoid
 import L4Factoidal.Math.SigmoidTests
 import L4Factoidal.XForms.BindTests
 import L4Factoidal.GRDDL.Discovery
+import L4Factoidal.GRDDL.Agent
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.TermCodecTheorems
 import L4Factoidal.Storage.PagedTermDictionaryCore
