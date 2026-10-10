@@ -54,6 +54,10 @@ async function loadWasmAbi() {
   // installs it under docs/fstar-extracted/). It registers its entry once
   // the module has compiled.
   const p = path.join(REPO_ROOT, 'docs/fstar-extracted/factoidal-npm-entry.wasm.js');
+  // The bundle finds its code file relative to require.main.filename, which
+  // an ES module main does not set; name the bundle itself
+  // (tests/perf/l4_vs_fstar_wasm_bench.mjs has the same note).
+  if (!process.mainModule) process.mainModule = { filename: p };
   const mod = require(p);
   for (let i = 0; i < 200; i += 1) {
     const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;

@@ -1150,6 +1150,34 @@ def numberRows (f : String → Binding → Binding) :
   | [],        _ => []
   | mu :: rest, i => f (toString i) mu :: numberRows f rest (i + 1)
 
+/-- `numberRows` with a reverse accumulator: one stack frame for any number
+of rows. `numberRows` conses after its recursive call, so it takes one frame
+per row; in the wasm module under Node's default stack a SELECT with a
+projection expression overflowed at about 11,000 rows ("Maximum call stack
+size exceeded"; https://github.com/danbri/factoidal/issues/713 stage 5). The
+`csimp` theorem below makes the compiler emit this definition for every call
+of `numberRows`, which stays the specification. -/
+def numberRowsTR (f : String → Binding → Binding) (rows : SolutionSeq) (i : Nat) :
+    SolutionSeq :=
+  go rows i []
+where
+  /-- The rows after `rest`'s predecessors, numbered from `i`, onto `acc`
+  (newest first). -/
+  go : SolutionSeq → Nat → SolutionSeq → SolutionSeq
+    | [],          _, acc => acc.reverse
+    | mu :: rest,  i, acc => go rest (i + 1) (f (toString i) mu :: acc)
+
+theorem numberRowsTR_go_eq (f : String → Binding → Binding) :
+    ∀ (rows : SolutionSeq) (i : Nat) (acc : SolutionSeq),
+      numberRowsTR.go f rows i acc = acc.reverse ++ numberRows f rows i
+  | [], _, acc => by simp [numberRowsTR.go, numberRows]
+  | mu :: rest, i, acc => by
+      simp [numberRowsTR.go, numberRows, numberRowsTR_go_eq f rest (i + 1)]
+
+@[csimp] theorem numberRows_eq_numberRowsTR : @numberRows = @numberRowsTR := by
+  funext f rows i
+  simp [numberRowsTR, numberRowsTR_go_eq]
+
 /-- `is_synthetic_bnode_var`: the variables `QueryPattern.rewriteBnodes`
 (below) invents for WHERE-clause blank nodes. -/
 def isSyntheticBnodeVar (v : VarName) : Bool := "_bnode_".isPrefixOf v

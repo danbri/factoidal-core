@@ -150,6 +150,9 @@ npm/factoidal/node_modules/
 /docs/fstar-extracted/*_results.log
 /docs/web/hub/assets/l4/l4factoidal.wasm
 /docs/web/hub/assets/l4/l4factoidal.mjs
+/docs/web/hub/assets/l4/l4factoidal-core.wasm
+/docs/web/hub/assets/l4/l4factoidal-core.mjs
+/docs/web/hub/assets/l4/l4factoidal-core.js
 /npm/factoidal/factoidal.js
 /npm/factoidal/factoidal.wasm.js
 /npm/factoidal/factoidal.wasm.assets/
@@ -162,6 +165,9 @@ npm/factoidal/node_modules/
 /npm/factoidal/l4-assets/l4factoidal.js
 /npm/factoidal/l4-assets/l4factoidal.mjs
 /npm/factoidal/l4-assets/l4factoidal.wasm
+/npm/factoidal/l4-assets/l4factoidal-core.js
+/npm/factoidal/l4-assets/l4factoidal-core.mjs
+/npm/factoidal/l4-assets/l4factoidal-core.wasm
 /npm/factoidal-lean/l4factoidal.js
 /npm/factoidal-lean/l4factoidal.mjs
 /npm/factoidal-lean/l4factoidal.wasm

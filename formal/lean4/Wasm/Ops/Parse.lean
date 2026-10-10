@@ -37,8 +37,18 @@ added after the lines above were written:
     counter. Format tags follow `RDF.Format.fst`'s `format_of_string` table
 for the formats the Lean engine parses; a `*12` tag routes to the RDF
 1.2 (`Mode.rdf12`) entry points, mirroring `entry_jsoo.ml`'s
-consumer-side dispatch. `jsonld` reads JSON-LD 1.1 through
-`JSONLD.parseJsonLd` with no document loader.
+consumer-side dispatch.
+
+JSON-LD is not in this module's table. The functions that read a document take
+an `ExtraReader` for the syntaxes outside the table (`parseTextToDatasetBy`
+and the other `…By` forms): the full dispatch passes `jsonLdReader`
+(`Wasm/Ops/ParseJsonLd.lean`, JSON-LD 1.1 through `JSONLD.parseJsonLd` with no
+document loader), and the core dispatch (`Wasm/CoreDispatch.lean`) passes a
+reader that refuses JSON-LD by name. That parameter is what lets the core wasm
+link without the JSON-LD library
+(https://github.com/danbri/factoidal/issues/713 stage 4). The names without
+`By` (`parseTextToDataset`, `parseToDatasetJson`, …) are the JSON-LD-reading
+forms and live in `Wasm/Ops/ParseJsonLd.lean`.
 
 Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note: the umbrella initializer dies under
@@ -52,7 +62,6 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
-import L4Factoidal.JSONLD.ToRdf
 import L4Factoidal.RDF.DatasetMerge
 import Wasm.Ops.FromDataset
 
@@ -79,10 +88,22 @@ def resolveModeAndTag (formatTag : String) : Mode × String :=
   | "trig12"               => (Mode.rdf12, "trig")
   | _                      => (Mode.rdf11, lo)
 
+/-- A reader for an RDF syntax outside this module's table. Given the
+lower-cased format tag, the text and the base IRI, it answers `none` when the
+tag is not its syntax. See the module header for the two readers. -/
+abbrev ExtraReader := String → String → Option String → Option (Except String Dataset)
+
+/-- The reader with no extra syntax: every tag outside the table is unknown. -/
+def noExtraReader : ExtraReader := fun _ _ _ => none
+
+/-- The format tags of JSON-LD 1.1 (`RDF.Format.fst`'s `format_of_string`). -/
+def jsonLdFormatTags : List String := [ "jsonld", "json-ld", "application/ld+json" ]
+
 /-- Parse `text` under `formatTag` into a `Dataset`. Graph-shaped
-formats (Turtle, N-Triples, RDF/XML) wrap as the default graph.
-Not private: `Wasm/Ops/Handles.lean`'s `datasetOpen` is the same parse. -/
-def parseTextToDataset (text formatTag baseIRI : String) :
+formats (Turtle, N-Triples, RDF/XML) wrap as the default graph; a tag outside
+the table goes to `extra`.
+Not private: `Wasm/Ops/Handles.lean`'s `datasetOpenBy` is the same parse. -/
+def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except String Dataset :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
@@ -98,19 +119,15 @@ def parseTextToDataset (text formatTag baseIRI : String) :
   | "trig" => (parseTriG text base mode).mapError fmtParseError
   | "rdfxml" | "rdf/xml" | "rdf" | "xml" =>
       wrapGraph (RdfXml.parseRdfXml text base)
-  | "jsonld" | "json-ld" | "application/ld+json" =>
-      -- JSON-LD 1.1 API, "Deserialize JSON-LD to RDF". No document loader
-      -- is installed (the F* entry has none either), so a remote `@context`
-      -- is the JSON-LD error `loading remote context failed`.
-      match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base
-              none none none with
-      | .ok ds    => .ok ds
-      | .error e  => .error s!"invalid or unsupported JSON-LD ({e.code})"
-  | _ => .error s!"unknown format tag '{formatTag}'"
+  | _ =>
+      match extra tag text base with
+      | some r => r
+      | none => .error s!"unknown format tag '{formatTag}'"
 
-/-- `parseToDatasetJson(text, formatTag, baseIRI)`. -/
-def parseToDatasetJson (text formatTag baseIRI : String) : String :=
-  match parseTextToDataset text formatTag baseIRI with
+/-- `parseToDatasetJson(text, formatTag, baseIRI)`, the pure entry's envelope
+(no prefixes, labels as written). -/
+def parseToDatasetJsonBy (extra : ExtraReader) (text formatTag baseIRI : String) : String :=
+  match parseTextToDatasetBy extra text formatTag baseIRI with
   | .error msg => errJson msg
   | .ok ds =>
       okWith [("count", .number (toString (datasetQuadCount ds))),
@@ -198,11 +215,12 @@ where
         if seen.contains label then go seen acc rest
         else go (label :: seen) ((label, iri) :: acc) rest
 
-/-- `parseTextToDataset`, with the position of a failure and the prefixes of
+/-- `parseTextToDatasetBy`, with the position of a failure and the prefixes of
 the document. The two share one dispatch table of formats; only the failure
 and the extra result differ. RDF/XML failures carry no position, as in the F*
-entry; so does JSON-LD. -/
-def parseDocumentOutcome (text formatTag baseIRI : String) :
+entry; so does a syntax read by `extra` (JSON-LD), which declares no
+prefixes. -/
+def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except ParseFailure ParseOutcome :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
@@ -229,14 +247,11 @@ def parseDocumentOutcome (text formatTag baseIRI : String) :
       match RdfXml.parseRdfXml text base with
       | .error e => .error (noPosition e.msg)
       | .ok g => .ok { ds := { default := g, named := [] }, prefixes := [] }
-  | "jsonld" | "json-ld" | "application/ld+json" =>
-      -- Same reader as `parseTextToDataset`: JSON-LD 1.1 through
-      -- `JSONLD.parseJsonLd`, no document loader, no position, no prefixes.
-      match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base
-              none none none with
-      | .ok ds   => .ok { ds := ds, prefixes := [] }
-      | .error e => .error (noPosition s!"invalid or unsupported JSON-LD ({e.code})")
-  | _ => .error (noPosition s!"unknown format tag '{formatTag}'")
+  | _ =>
+      match extra tag text base with
+      | some (.ok ds) => .ok { ds := ds, prefixes := [] }
+      | some (.error m) => .error (noPosition m)
+      | none => .error (noPosition s!"unknown format tag '{formatTag}'")
 
 /-- The display tag of an error envelope: the caller's own spelling,
 lower-cased, or `turtle` for the empty default. -/
@@ -270,9 +285,9 @@ def scopeBnodes (scope : String) (ds : Dataset) : Dataset :=
 
 /-- `parseToDatasetJson`, the parity envelope. `scope` is the blank-node label
 prefix, or `none` to keep the labels as written. -/
-def parseToDatasetJsonWith (scope : Option String) (text formatTag baseIRI : String) :
-    String :=
-  match parseDocumentOutcome text formatTag baseIRI with
+def parseToDatasetJsonWithBy (extra : ExtraReader) (scope : Option String)
+    (text formatTag baseIRI : String) : String :=
+  match parseDocumentOutcomeBy extra text formatTag baseIRI with
   | .error f => parseFailureEnvelope formatTag f
   | .ok o =>
       let ds := match scope with
@@ -292,9 +307,10 @@ def nextDocumentScope : IO String := do
 
 /-- `parseToDatasetJson` with a fresh blank-node scope per call. `callIO`
 serves this entry under the op name `parseToDatasetJson`. -/
-def parseToDatasetJsonScoped (text formatTag baseIRI : String) : IO String := do
+def parseToDatasetJsonScopedBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+    IO String := do
   let scope ← nextDocumentScope
-  pure (parseToDatasetJsonWith (some scope) text formatTag baseIRI)
+  pure (parseToDatasetJsonWithBy extra (some scope) text formatTag baseIRI)
 
 /-! ## `serializeTurtleWith` -/
 

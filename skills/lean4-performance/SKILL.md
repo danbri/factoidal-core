@@ -181,6 +181,19 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   specification under another name in the test module and prove the two equal
   (`RLTests.closureScan_eq`), so the guard still compares two programs. The
   guards on `strLe` compare with `charsLe a.toList b.toList` for the same reason.
+- **A csimp replacement needs its import.** The compiler applies a `@[csimp]`
+  theorem only while compiling a module that imports the module stating it.
+  `Wasm/Ops/Reason.lean` called `OWL.RL.closureFix` and got the indexed closure
+  through an import of `OWL.Refute` it did not need for that call. On
+  2026-10-10 the OWL DL ops moved to `ReasonDl.lean` (issue 713 stage 4, the
+  core wasm), the import went with them, and `owlClosure` silently compiled to
+  the scanning closure: the build, every guard and native-smoke stayed green.
+  The wasm size table found it, because the scanning rules of
+  `OWL/RLClosure.lean` were linked in again (113,186 bytes). Rule: a module
+  that calls a function with a `csimp` twin imports the module of the `csimp`
+  theorem explicitly, with a comment that says why; after moving imports,
+  compare the size table (`tools/wasm-size-profile.py`) of the module before
+  and after, and treat growth in a specification module as a lost `csimp`.
 
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
@@ -213,6 +226,22 @@ The first measurement, 2026-09-07: 833 self-recursions without a loop, 268
 mutual cycles; 598 input-length, 42 input-depth. Per area (length): JSON-LD 71,
 Shardborough 66, SPARQL 65, SHACL/ShEx 36, OWL 33, RDF parsers 18, XPath/XSLT
 18, XML 11.
+
+**The audit lists candidates; Node finds the ones that break first.** On
+2026-10-10 (issue 713 stage 5) the npm bench ran the wasm module under Node,
+whose default stack is about 1 MB and whose wasm frames are larger than native
+ones. A SELECT of 16,000 rows and a canonicalization of 24,000 blank-node
+quads failed with `RangeError: Maximum call stack size exceeded`, while the
+native build answered the same SELECT with a 512 KB stack. All four
+functions were already on the audit's allow-list: `SPARQL.numberRows`,
+`SPARQL.rowsJoined` (which also copied the rest of the Results JSON document
+once per row), `RDF.Canonical.collapseKeyedQQuads` and `dedupAdj`. To name
+the function of a wasm overflow, link the module once more with
+`--profiling-funcs` (same objects, about 4 minutes; `Wasm/build-wasm.sh`'s
+link line plus that flag) and print the `RangeError`'s stack in Node: the
+repeated frame is the recursion. Repair one, rebuild, run again: the next
+one appears only after the first is gone. `npm/factoidal/test/large-inputs.test.mjs`
+is the regression test.
 
 ### The repair: `csimp`, not a rewrite of the specification
 

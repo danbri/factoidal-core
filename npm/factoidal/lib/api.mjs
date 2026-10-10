@@ -25,6 +25,7 @@
 import { Dataset, dataFactory, termFromSrj } from '../rdfjs.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
+import { fullEngineMessage } from './lean-entry.mjs';
 
 const DATA_FORMAT_EXT = {
   turtle:    'ttl',
@@ -96,8 +97,14 @@ function optionsOf(fn, options) {
 }
 
 // The loaded wasm has no op for this operation (a build older than this
-// package, or a dispatch table that does not serve it).
-function missingOpError(what) {
+// package, or a dispatch table that does not serve it). When the entry is
+// the core engine and the op is one only the full engine serves, the error
+// names the entry that has it (issue 713 stage 4).
+function missingOpError(what, e, op) {
+  if (e && e.profile === 'core' && op && Array.isArray(e.fullOnlyOps) &&
+      e.fullOnlyOps.includes(op)) {
+    return new Error(`${what}: ${fullEngineMessage(`the op '${op}'`)}`);
+  }
   return new Error(
     `${what}: the loaded Lean wasm module has no dispatch op for this ` +
     'operation. The module is older than this package; rebuild it with ' +
@@ -1193,7 +1200,7 @@ function buildApi(driver) {
   // then undefined, which would otherwise surface as "e.x is not a
   // function". Fail with missingOpError(), which names the op.
   function requireEntryFn(e, fnName, what) {
-    if (typeof e[fnName] !== 'function') throw missingOpError(what);
+    if (typeof e[fnName] !== 'function') throw missingOpError(what, e, fnName);
   }
 
   /**

@@ -4,7 +4,9 @@
 //
 // This file resolves three files that must stay together and keep their
 // names -- l4factoidal.js, l4factoidal.mjs and l4factoidal.wasm -- and
-// imports the loader. The Emscripten glue resolves the .wasm sidecar from
+// imports the loader. The core engine (`@factoidal/core/core`, issue 713
+// stage 4) is the same three files under the name l4factoidal-core; every
+// function here takes the name, 'l4factoidal' (the full engine) by default. The Emscripten glue resolves the .wasm sidecar from
 // its own basename, so a rename breaks the load on every runtime
 // (skills/lean4-wasm-export, "the naming trap").
 //
@@ -52,6 +54,16 @@ export function packageDirectory () {
   return fileUrlToPath(new URL('..', import.meta.url).href).replace(/\/$/, '')
 }
 
+/** The two engines: the full module and the core module (issue 713 stage 4). */
+export const ENGINE_NAMES = Object.freeze(['l4factoidal', 'l4factoidal-core'])
+
+function checkName (name) {
+  if (!ENGINE_NAMES.includes(name)) {
+    throw new TypeError(`unknown engine '${name}' (expected one of ${ENGINE_NAMES.join(', ')})`)
+  }
+  return name
+}
+
 /**
  * The loader file of the first engine source that exists, or null.
  *
@@ -59,38 +71,44 @@ export function packageDirectory () {
  *   1. this package's own l4-assets/ (what `npm install` gives);
  *   2. $FACTOIDAL_L4_ASSETS (a custom deployment);
  *   3. the repository checkout layout, docs/web/hub/assets/l4/.
+ *
+ * @param {string} [name] 'l4factoidal' (the full engine) or 'l4factoidal-core'
  */
-export function resolveEngine () {
-  const inPackage = joinPath(packageDirectory(), 'l4-assets/l4factoidal.js')
+export function resolveEngine (name = 'l4factoidal') {
+  checkName(name)
+  const inPackage = joinPath(packageDirectory(), `l4-assets/${name}.js`)
   if (readable(inPackage)) return inPackage
   const override = environment('FACTOIDAL_L4_ASSETS')
   if (override !== null) {
-    const path = joinPath(override, 'l4factoidal.js')
+    const path = joinPath(override, `${name}.js`)
     if (readable(path)) return path
-    throw new Error(`FACTOIDAL_L4_ASSETS=${override} holds no l4factoidal.js`)
+    throw new Error(`FACTOIDAL_L4_ASSETS=${override} holds no ${name}.js`)
   }
   const inCheckout = joinPath(packageDirectory(),
-    '../../docs/web/hub/assets/l4/l4factoidal.js')
+    `../../docs/web/hub/assets/l4/${name}.js`)
   if (readable(inCheckout)) return inCheckout
   return null
 }
 
-let enginePromise = null
+const enginePromises = new Map()
 
 /**
- * Load the engine once and return its handle: `call(op, args)` and
- * `callBlob(op, args, bytes)`.
+ * Load an engine once per process and return its handle: `call(op, args)`,
+ * `callBlob(op, args, bytes)`, `callBlobIO(op, args, bytes)`.
+ *
+ * @param {string} [name] 'l4factoidal' (the full engine) or 'l4factoidal-core'
  */
-export function loadEngine () {
-  if (enginePromise !== null) return enginePromise
-  enginePromise = (async () => {
-    const loaderPath = resolveEngine()
+export function loadEngine (name = 'l4factoidal') {
+  checkName(name)
+  if (enginePromises.has(name)) return enginePromises.get(name)
+  const promise = (async () => {
+    const loaderPath = resolveEngine(name)
     if (loaderPath === null) {
       throw new Error(
-        'the Lean engine assets are missing. They normally ship in this ' +
+        `the Lean engine assets are missing (${name}). They normally ship in this ` +
         "package's own l4-assets/ directory; if it is absent this install " +
         'is incomplete. Otherwise set FACTOIDAL_L4_ASSETS to a directory ' +
-        'holding l4factoidal.js, l4factoidal.mjs and l4factoidal.wasm.')
+        `holding ${name}.js, ${name}.mjs and ${name}.wasm.`)
     }
     const url = loaderPath.startsWith('file://')
       ? loaderPath
@@ -98,7 +116,8 @@ export function loadEngine () {
     const module = await import(url)
     return module.loadL4()
   })()
-  return enginePromise
+  enginePromises.set(name, promise)
+  return promise
 }
 
 const HEX = (() => {
