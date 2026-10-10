@@ -34,8 +34,19 @@ record the prefixes of a Turtle or TriG document; Turtle output accepts the
 `prefixes` and `literalShorthand` options and prints bare numeric and boolean
 literals by default; and each document that is parsed gets its own blank-node
 scope, so merging two documents that both write `_:b0` keeps two nodes. The
-Lean engine still has no `{lenient: true}` parse and no SPARQL 1.2 handle
-query.
+Lean engine still has no SPARQL 1.2 handle query.
+
+**`factoidal/l4-core`: `parse(text, {lenient: true})`**
+([issue 716](https://github.com/danbri/factoidal/issues/716)). In Turtle, TriG,
+N-Triples and N-Quads the Lean engine skips each bad statement, keeps the good
+ones and lists one diagnostic per skipped statement in `dataset.diagnostics`:
+`message`, `offset`, `line`, `column` and a stable `class` (for example
+`undefined-prefix`, `bad-escape`, `unexpected-token`). The new option
+`maxErrors` stops the parse after that many diagnostics with one
+`too-many-errors` diagnostic. `capabilities().parseDiagnostics` is `true` on
+this engine. A document with no error gives the strict result and no
+diagnostics (a theorem in the Lean source). The F\* engine still reports at
+most one diagnostic and ignores `maxErrors`.
 
 **Store format: the literal index is renamed LGI3 and LGI4; re-pack older
 generations.** The literal search index folds each lexical form before it takes
