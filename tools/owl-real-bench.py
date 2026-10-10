@@ -525,8 +525,15 @@ def fmt_cell(r, key=None):
     if r is None:
         return "—"
     if r["status"] != "ok":
-        return r["status"]
-    s = f"{r['wall_s']:.2f} s, {r['peak_rss_mb']:.0f} MB"
+        s = f"{r['status']} at {r.get('wall_s', 0):.0f} s"
+        if r.get("peak_rss_source") == "sampled every 0.2 s":
+            s += f", {r['peak_rss_mb']:.0f} MB sampled"
+        elif r["status"] in ("TIMEOUT", "RSS_CAP"):
+            s += ", memory not recorded"
+        else:
+            s += f", {r['peak_rss_mb']:.0f} MB"
+        return s
+    s = f"{r['wall_s']:.2f} s ({r.get('user_s', 0) + r.get('sys_s', 0):.2f} CPU), {r['peak_rss_mb']:.0f} MB"
     if key and r.get(key) is not None:
         s = f"{r[key]}; " + s
     return s
@@ -536,6 +543,8 @@ def write_table(rows, path):
     by = {}
     order = []
     for r in rows:
+        if r["ontology"] == "_run":
+            continue
         if r["ontology"] not in by:
             by[r["ontology"]] = []
             order.append(r["ontology"])
@@ -572,6 +581,8 @@ def write_table(rows, path):
                  "Entailment check time, median and max | Peak RSS, max |")
     lines.append("|---|---:|---|---|---|---|")
     for o in order:
+        if o == "(empty graph)":
+            continue
         rs = [r for r in by[o] if r["step"] == "entails"]
         nc = next((r.get("named_classes") for r in by[o] if r.get("named_classes") is not None), "—")
 
