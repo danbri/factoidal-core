@@ -46,6 +46,7 @@ wasm32).
 -/
 import Wasm.Ops.Support
 import L4Factoidal.Syntax.Turtle
+import L4Factoidal.Syntax.TurtleChunkFold
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.TriG
@@ -91,7 +92,7 @@ def parseTextToDataset (text formatTag baseIRI : String) :
     | .error e => .error (fmtParseError e)
     | .ok g    => .ok { default := g, named := [] }
   match tag with
-  | "" | "turtle" | "ttl" => wrapGraph (parseTurtle text base mode)
+  | "" | "turtle" | "ttl" => wrapGraph (parseTurtleText text base mode)
   | "ntriples" | "nt" | "n-triples" => wrapGraph (parseNTriples text mode)
   | "nquads" | "nq" | "n-quads" =>
       (parseNQuadsFast text mode).mapError fmtParseError
