@@ -45,6 +45,28 @@ theorems gate the other executions.
 - Gates: W3C RDF 1.1 Turtle (313) and TriG (356); RDF 1.2 Turtle syntax
   (67) and eval (29), TriG syntax (35) and eval (25); all 0 fail on
   2026-09-02.
+- Collections ([15] `collection`, Turtle §2.8), since 2026-10-10
+  (https://github.com/danbri/factoidal/issues/678). `readCollection` reads
+  the first element and gives the rest to `readCollectionCells`. That function
+  reads one element per tail call: `readObject` reads the element, then
+  `freshBnode` allocates the element's cell, then the cell (blank node,
+  element term, element triples) goes onto a list that holds the newest cell
+  first. At the closing `)` the fold `linkCollectionCells` writes the
+  `rdf:first`/`rdf:rest` triples, last cell first, so the result lists the
+  cells in document order. Both functions compile to a `goto` loop in the
+  emitted C, so the LENGTH of a collection uses no stack. The blank-node
+  labels do not change: an element's own blank nodes are still allocated
+  before its cell's node. The F* source's recursion (`parse_collection_rest`)
+  stays as the readable `readCollectionRest`; 2.3 has the theorems.
+  - Bound that stays: the NESTING of terms inside a collection (a collection
+    or a `[ … ]` as an element) is still a recursion, three frames per level
+    (`readObject`, `readCollection`, `readCollectionCells`). Measured
+    2026-10-10, native, `LEAN_STACK_SIZE_KB=512`: `ex:s ex:p ( ( ( … ) ) )`
+    ran at 2,897 levels and overflowed at 2,909 (before the change: 2,000 ran,
+    2,500 overflowed). A triple term cannot hold a collection.
+  - Every Turtle reader gets the loop, because all of them reach collections
+    only through `readStatement`: `parseTurtle`, `parseTurtleText` and its
+    walk, the chunk fold, TriG, and the lenient readers.
 
 ### 2.2 Streaming execution for the shard packer
 
@@ -144,6 +166,16 @@ Modules, in data order:
 - `TurtleChunkFold.lean` (2026-10-10): `freshBnodePrefixText_eq`,
   `parseTurtleText_error` and `parseTurtleText_eq_of_walk` (section 2.2,
   item 5).
+- `Turtle.lean` (2026-10-10, collections, 2.1): `readCollectionCells_eq`,
+  the loop equals `readCollectionRest` with the cells read before it linked
+  in front, for every fuel, errors and positions included;
+  `readCollection_eq`, `readCollection` in the F* source's form
+  (`parse_collection` with the recursive tail); and the `@[csimp]` theorem
+  `readCollectionRest_eq_TR`, so a call of the readable form also compiles to
+  the loop. The `#guard`s in `TurtleTests.lean` pin exact blank-node labels
+  and triple order for nested collections; those in `TurtleChunkFoldTests.lean`
+  run a 500-element collection through the scanner walk, `parseTurtleText`
+  and a 97-character chunking.
 - Still not proved: the CHUNK-BOUNDARY half — that the streaming execution
   (2.2) reaches the same accumulator whatever the chunking, and so equals
   `parseTurtle` on the same text. It rests on `TurtleStatementScan` never
@@ -169,6 +201,7 @@ Modules, in data order:
 | --- | --- | --- | --- |
 | 2026-04 | stack overflow on large Turtle | non-tail recursion | `docs/2026-04-21-large-turtle-stack-overflow-fix-sketch.md` |
 | 2026-09-02 | quadratic `parseTurtle` | per-token `cs.length + 1` fuel in two literal readers | constant `literalFuel` + proofs |
+| 2026-10-10 | a Turtle collection of 100,000 elements overflowed a 512 KB native stack and a browser tab's stack; the largest that ran at 512 KB had about 4,500 elements (4,531 overflowed) | `readCollectionRest` (F* `parse_collection_rest`) made one recursive call per element | `readCollectionCells`, a tail call per element, and `linkCollectionCells` at the `)`, proved equal (2.1, 2.3). 100,000 elements run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before (https://github.com/danbri/factoidal/issues/678) |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
 | 2026-10-10 | `l4factoidal query` and `parse` peak at 35 bytes of resident memory per input byte (256 MB for 6.76 MB of `gene.ttl`; F*: 28 MB) | `parseTurtle`'s whole-document `text.toList` | `parseTurtleText`: the scanner walk over the `String` (2.2, item 5). Query peak 257.7 to 192.7 MB at 80,000 paragraphs, 37.0 to 26.0 bytes per input byte. Byte identity MEASURED, not proved |

@@ -205,6 +205,76 @@ def exBase : String := "http://example.org/dir/doc.ttl"
 #guard ttlRejects "@prefix p: <http://a/> . p:s p:p ( p:x ."
 #guard ttlRoundTrips "@prefix p: <http://a/> . p:s p:p ( ( p:x p:y ) p:z ) ."
 
+/-! ### Collections in constant stack (https://github.com/danbri/factoidal/issues/678)
+
+`readCollectionCells` reads the elements of a collection with a tail call
+and links the cells at the closing `)`; `readCollection_eq` and
+`readCollectionCells_eq` prove it equal to the F* source's recursion. These
+guards pin what that equality preserves: the blank-node labels (an element's
+own blank nodes are numbered before its cell's node), the order of the
+triples, and the errors. The LENGTH is measured by `tests/stack/run.sh
+--canary` (`turtle-collection`, 100,000 elements under a 512 KB stack). -/
+
+-- Labels and order with a `[ ]`, a nested collection and a literal as elements:
+-- `_:anon_0` is the `[ ]`, `_:anon_1` the first cell, `_:anon_2` the inner
+-- collection's cell, `_:anon_3` and `_:anon_4` the outer second and third cells.
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p ( [ p:q 1 ] ( 2 ) 3 ) ." ==
+  "_:anon_0 <http://a/q> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_0 .\n" ++
+  "_:anon_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_3 .\n" ++
+  "_:anon_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_2 .\n" ++
+  "_:anon_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_4 .\n" ++
+  "_:anon_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"3\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "<http://a/s> <http://a/p> _:anon_1 .\n"
+-- A collection as subject and as object in one statement; an empty
+-- collection inside a `[ ]` is `rdf:nil` and takes no label.
+#guard ttlToNT "@prefix p: <http://a/> . ( p:x [ p:r ( ) ] ( p:y ( p:z ) ) ) p:p ( 4 [ ] 5 ) ." ==
+  "_:anon_0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://a/x> .\n" ++
+  "_:anon_0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_2 .\n" ++
+  "_:anon_1 <http://a/r> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_1 .\n" ++
+  "_:anon_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_6 .\n" ++
+  "_:anon_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://a/y> .\n" ++
+  "_:anon_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_5 .\n" ++
+  "_:anon_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://a/z> .\n" ++
+  "_:anon_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_4 .\n" ++
+  "_:anon_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_6 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_3 .\n" ++
+  "_:anon_6 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"4\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_9 .\n" ++
+  "_:anon_9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:anon_8 .\n" ++
+  "_:anon_9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_10 .\n" ++
+  "_:anon_10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"5\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_10 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "_:anon_0 <http://a/p> _:anon_7 .\n"
+-- Errors: end of input before `)`, and an error inside a later element,
+-- which is the element's own error.
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p ( 1 2 3 " ==
+  "PARSE-ERROR: unterminated collection (expected ')')"
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p ( 1 2 ( 3 ." ==
+  "PARSE-ERROR: expected prefixed name"
+#guard ttlRejects "@prefix p: <http://a/> . p:s p:p ( 1 2 ] ."
+
+/-- A collection of `n` integer elements as the object of one triple. -/
+def ttlCollectionDoc (n : Nat) : String :=
+  "@prefix p: <http://a/> . p:s p:p ( " ++
+    " ".intercalate ((List.range n).map toString) ++ " ) ."
+
+-- 1,000 elements: 2 triples per cell and the statement triple; the first
+-- cell is `_:anon_0` with element 0, the last is `_:anon_999` with 999.
+#guard ttlCount (ttlCollectionDoc 1000) == 2001
+#guard ((ttlToNT (ttlCollectionDoc 1000)).splitOn "\n").take 2 ==
+  ["_:anon_0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"0\"^^<http://www.w3.org/2001/XMLSchema#integer> .",
+   "_:anon_0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:anon_1 ."]
+#guard (ttlToNT (ttlCollectionDoc 1000)).endsWith
+  ("_:anon_999 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+   "<http://a/s> <http://a/p> _:anon_0 .\n")
+
 /-! ## [16] NumericLiteral — INTEGER / DECIMAL / DOUBLE
 
 The lexical form is preserved exactly as written; only the datatype is

@@ -171,7 +171,9 @@ to 27.3 MB.
 - **A still-broken shortfall is an expected-failure in the suite, not a red
   gate and not a silent skip** (https://github.com/danbri/factoidal/issues/678, turtle-collection): the case passes the
   suite WHILE it overflows and turns the suite red if it ever stops, so the fix
-  flips the marker and closes the issue.
+  flips the marker and closes the issue. (It worked as written on 2026-10-10:
+  the repair made the native canary report "UNEXPECTED PASS: flip this xfail",
+  and the flip is in the same commit as the repair; see the last section.)
 
 ## Two findings paid for on 2026-10-10 (https://github.com/danbri/factoidal/issues/746)
 
@@ -332,3 +334,62 @@ marked `UNTRIAGED` (https://github.com/danbri/factoidal/issues/753). Rules:
 - Each miss gets a fixture in the tool's self-test that fails on the version
   that missed it (the self-test runs against an older copy with `--tool`).
 
+## A mutual-block recursion where each step needs the NEXT step's result (https://github.com/danbri/factoidal/issues/678, 2026-10-10)
+
+`Syntax/Turtle.lean` `readCollectionRest` read a collection `( e1 ... en )`
+with one recursive call per element, inside the `readObject` mutual block.
+It is not an accumulator conversion: cell i's `rdf:rest` is cell i+1's blank
+node, which is allocated only after element i+1 is read. The repair, and the
+pattern for this shape:
+
+- **Two passes inside the block, the second a fold.** `readCollectionCells`
+  reads an element (`readObject`), allocates the element's cell, pushes
+  (node, term, triples) onto a newest-first list and makes a tail call. At
+  the `)` the fold `linkCollectionCells` writes the cells' triples, last cell
+  first. The allocation order is unchanged (element, then its cell), so the
+  blank-node labels are unchanged. Check the emitted C: `readCollectionCells`
+  and `linkCollectionCells` each carry one `goto _start;` and no self-call.
+- **The readable form moves out of the block, with three theorems.**
+  `readCollectionRest` is now defined after the block (it calls `readObject`,
+  which is a constant there). `readCollectionCells_eq` proves the loop equal
+  to it with the earlier cells linked in front, for every fuel, errors
+  included; `readCollection_eq` restates `readCollection` in the F* source's
+  form; `@[csimp] readCollectionRest_eq_TR` covers any caller of the readable
+  form. The audit row of `readCollectionRest` moved from `unknown` (the audit
+  does not map mutual-block definitions; https://github.com/danbri/factoidal/issues/750)
+  to `replaced`.
+- **Measure the output, not only the stack.** `l4factoidal parse --out
+  nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the
+  W3C RDF 1.1 and 1.2 suites, against a copy of the binary from before the
+  change: 2,044 of 2,044 outputs byte-identical. The W3C runner compares
+  graphs up to blank-node renaming, so it cannot see a label change; the byte
+  comparison can.
+- **Canary numbers, native, `LEAN_STACK_SIZE_KB=512`, `parseToDatasetJson` on
+  `ex:s ex:p ( 0 1 ... n-1 ) .`:**
+
+  | | largest n that ran | first n that overflowed | n = 100,000 |
+  |---|---|---|---|
+  | before | about 4,500 | 4,531 | overflow (also at 1,024 and 4,096 KB) |
+  | after | 100,000 (not limited by stack) | none found | ran, 200,001 quads |
+
+  `tests/stack/run.sh --canary`, after: 29 pass, 0 fail (out of 29);
+  `turtle-collection` runs in the native canary (512 KB), the wasm canary
+  (Node `--stack-size=512`, 4,545 ms) and the wasm route (4,313 ms); the
+  only expected failures left are the three `xml-entities` rows
+  (https://github.com/danbri/factoidal/issues/673). Before the repair the
+  same suite was 29 pass, 0 fail (out of 29) with six rows expected failures
+  (the issue 749 section above); the wasm module of that run was not rebuilt
+  here, so the wasm "before" is that record, not a new measurement.
+- **The bound that stays is nesting.** Three frames per nesting level
+  (`readObject`, `readCollection`, `readCollectionCells`): at 512 KB,
+  `( ( ( ... ) ) )` ran at 2,897 levels and overflowed at 2,909 (before:
+  2,000 ran, 2,500 overflowed). That is a `depth` bound, which the document's
+  own nesting sets.
+- **A probe past the suite's sizes can exhaust the machine.** The probe at
+  n = 1,000,000 through `l4wasm-cli call parseToDatasetJson` was killed by
+  the memory cgroup (exit 137) at about 13.7 GB resident, and the kernel
+  killed another agent's job in the same cgroup. Run such a probe under
+  `prlimit --as=4000000000`, so that it fails alone. Node cannot run
+  WebAssembly under that limit (it reserves the wasm memory's address space
+  in advance); size a wasm probe from the native peak first
+  (`/usr/bin/time -v`).
