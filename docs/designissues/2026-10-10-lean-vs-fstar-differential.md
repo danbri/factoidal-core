@@ -157,9 +157,12 @@ F4 and F5 are on the command-line path only.
 
 No item is a comparison defect. `l4diff` compares the F\* rows with the
 Lean rows by the `l4w3c` comparator, and each item above differs from the W3C
-expected file on the F\* side. The skipped 392 are unchanged: 93 Update
-evaluation, 172 syntax, 30 Protocol, 13 Graph Store Protocol, 49 entailment
-regime, 6 SERVICE with `qt:serviceData`.
+expected file on the F\* side. The 392 skipped, counted from the skip lines of
+this run: 94 Update evaluation, 172 syntax (68 positive and 49 negative query
+syntax, 42 positive and 13 negative update syntax), 34 Protocol, 13 Graph
+Store Protocol, 3 service description, 70 with an entailment regime, 6 with
+`qt:serviceData`. (Issue 718 gives 93, 30 and 49 for three of these; those
+figures are not from this run.)
 
 Since this landing, the Lean side answers an error for a failed SERVICE call
 without SILENT (https://github.com/danbri/factoidal/issues/717), and
