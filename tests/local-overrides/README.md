@@ -42,6 +42,7 @@ tests/local-overrides/<suite>/<TestName>.override
 | `disposition`   | must be `local-override` for a runner to honour the file       |
 | `date`          | when the override was authored                                 |
 | `provenance`    | where the defect was confirmed upstream                        |
+| `issue`         | the open GitHub issue that tracks the disagreement (full URL)  |
 
 ## Runner contract
 

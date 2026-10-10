@@ -280,6 +280,8 @@ import L4Factoidal.RIF.EngineTests
 import L4Factoidal.RIF.EngineTheorems
 import L4Factoidal.RIF.Translation
 import L4Factoidal.RIF.Conformance
+import L4Factoidal.RIF.OwlDirect
+import L4Factoidal.RIF.OwlDirectTests
 import L4Factoidal.RIF.Xml
 import L4Factoidal.JSONSchema.Validate
 import L4Factoidal.JSONSchema.Tests
