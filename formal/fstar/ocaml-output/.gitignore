@@ -13,6 +13,12 @@
 # Symlinks here point to the current platform's binaries.
 w3c_runner
 factoidal
+*_runner
+factoidal-http
+factoidal_http_client
+depcheck
+parquet_probe
+cottas_ondisk_smoketest
 
 # js_of_ocaml output
 *.bc.js
