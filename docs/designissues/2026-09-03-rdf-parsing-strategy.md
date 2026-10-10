@@ -155,7 +155,8 @@ Modules, in data order:
   blocks under `docs/web/hub/assets/blocks/lifesci-crossgraph/`. For
   `parseTurtleText`, 2026-10-10: the guards of `TurtleChunkFoldTests.lean`
   and byte identity of the command line on the 1,130 `.ttl` and `.nt` files
-  of the W3C RDF 1.1 and 1.2 suites (13,560 of 13,560 outputs). Until
+  of the W3C RDF 1.1 and 1.2 suites (13,560 of 13,560 outputs; 13,572 of
+  13,572 with 10,000 paragraphs of `gene.ttl` added). Until
   2026-10-10 `TurtleChunkFoldTests.lean`, `TurtleStatementScanTests.lean` and
   `Utf8StreamTests.lean` were imported by no module, so `lake build` did not
   run their guards; the umbrella imports them now. The

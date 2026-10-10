@@ -1161,11 +1161,17 @@ before it).
     are not walked. The nine `gene.ttl` slices of 625 to 160,000 paragraphs:
     36 of 36 the same.
   * Byte comparison of standard output, standard error and exit status,
-    binary before against binary after: `parse`, `parse --out nquads` and
-    `query 'SELECT * WHERE { ?s ?p ?o }'`, formats `turtle` and `ttl12`, with
-    and without `--base`, on the 1,130 `.ttl` and `.nt` files of the W3C RDF
-    1.1 and 1.2 suites: 13,560 identical, 0 differ (out of 13,560). 166 of
-    the files contain `<<` and take the `parseTurtle` path.
+    binary before against the binary of the last commit (which also has the
+    change of 10.5a): `parse`, `parse --out nquads` and `query 'SELECT *
+    WHERE { ?s ?p ?o }'`, formats `turtle` and `ttl12`, with and without
+    `--base`, on the 1,130 `.ttl` and `.nt` files of the W3C RDF 1.1 and 1.2
+    suites and on 10,000 paragraphs of `gene.ttl`: 13,572 identical, 0
+    differ, 0 timed out (out of 13,572). 166 of the W3C files contain `<<`
+    and take the `parseTurtle` path. On 20,000, 40,000, 80,000 and 160,000
+    paragraphs, q1, q2, `GROUP BY ?p`, `SELECT DISTINCT ?o WHERE { ?s a ?o }`,
+    `parse` and `parse --out nquads`: 24 identical, 0 differ (out of 24). An
+    earlier run with the binary of 10.3 alone gave 13,560 of 13,560 on the W3C
+    files.
 * **Found on the way.** `TurtleChunkFoldTests.lean`,
   `TurtleStatementScanTests.lean` and `Utf8StreamTests.lean` were imported by
   no module, so `lake build` never built them and their guards never ran
@@ -1232,9 +1238,16 @@ table:
    bytes per triple at 80,000 paragraphs: a list cell, a `Triple`, a `Term`
    per position and a `String` per IRI occurrence; the parser makes a new
    `String` for each prefixed name it expands, so `wdt:P684` is stored once
-   per triple). Repair: intern IRIs while the walk folds statements (a
-   table from a string to the first equal string; the graph is EQUAL to the
-   one without the table, so the proof is an invariant of the table).
+   per statement that writes it: 514,957 IRI tokens with 77,505 distinct
+   values at 80,000 paragraphs). Tried: `internGraph` after the parse (a
+   table from a string to the first equal string, carried with its
+   invariant; `internGraph g = g` proved), applied in `parseTextToDataset`.
+   Peak 188 to 179 MB at 80,000 paragraphs and 0.36 s more CPU time (4.43 to
+   4.79 s), so it was not landed: the duplicates are allocated by the parse
+   before the pass frees them. The repair to try is the same table inside
+   the walk's statement step, so that a duplicate is freed as soon as it is
+   read; the equality then needs a simulation lemma for the chunk fold
+   (`consumeText`, `consumeCandidates`, `feedChar`) over two step functions.
 2. **`normalizeDataset`**, 8 more: the `FastGraph` that removes repeated
    triples holds a key tuple, a hash-map node and two list cells per triple
    while the parsed graph is still live. Tried: `normalizeDatasetFast` (no
@@ -1305,15 +1318,18 @@ per row; `memcpy` 54 percent).
 
 ### 10.7 Gates after the last commit of this round
 
-Each the same as the expected count in the task and as section 9.4:
+The SPARQL, RDF and RDFC-1.0 counts are equal to those of section 9.4:
 SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650); SPARQL 1.2 271 pass, 0
 fail (out of 271); RDF 1.1 1041 pass, 0 fail (out of 1041); RDF 1.2 1358 pass,
 0 fail (out of 1358); RDFC-1.0 86 pass, 0 fail (out of 86) (`l4w3c --quiet`
 on each manifest). `Wasm/native-smoke.sh` 303 pass, 0 fail (out of 303);
 `Wasm/cli-smoke.sh` 54 pass, 0 fail (out of 54).
-`tests/stack/lean_scaling.sh` 17 pass, 0 fail, 1 expected-fail (out of 18),
-the expected failure being `query-memory-fstar` (issue 729).
-`tests/stack/lenient_scaling.sh` 16 pass, 0 fail (out of 16). FULLBUILD
+`tests/stack/lean_scaling.sh` 17 pass, 0 fail, 2 expected-fail (out of 19),
+the expected failures being `query-memory-fstar` and `select-star` (issue
+729). `tests/stack/lenient_scaling.sh` 16 pass, 0 fail (out of 16). Full `lake
+build` exits 0 (1360 jobs). The gates were run twice, after 10.3 and after
+10.5a, with the same counts. Hygiene: the diff adds no `sorry`, `axiom`,
+`native_decide`, `unsafe`, `implemented_by` or `partial def`.
 
 ### 10.8 Text for the issue
 
@@ -1328,7 +1344,7 @@ open:
 > `parseTurtleText` (the statement scanner over the `String`, falling back to
 > `parseTurtle` on `<<` and on every refusal). Not proved equal; the walk
 > alone agrees with `parseTurtle` on 3,104 of 3,104 accepted W3C cases and the
-> command line's output is byte-identical on 13,560 of 13,560.
+> command line's output is byte-identical on 13,572 of 13,572.
 > Peak, `query` COUNT(*), 80,000 paragraphs: 257.7 MB before, 192.7 MB
 > after; F* 28.0 MB (6.9 times). Bytes of peak per input byte: 37.0 before,
 > 26.0 after, F* 2.1. Time within 10 percent; `parse` 11 to 16 percent slower.

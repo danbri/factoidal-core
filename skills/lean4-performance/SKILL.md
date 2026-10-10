@@ -195,8 +195,9 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   in memory with `String.foldl` or `String.all`, never with `toList`, on a
   whole-document path (`Syntax.parseTurtleText`). A change that removes a
   transient structure can leave the peak where it was: `normalizeDataset`
-  without its quad list was proved equal and changed nothing at the peak, so
-  it was not landed. The gate rows are `query-memory` and
+  without its quad list was proved equal and changed nothing at the peak, and
+  interning IRIs after the parse (proved equal) took 9 MB off 188 MB for 8
+  percent more CPU time; neither was landed. The gate rows are `query-memory` and
   `query-memory-fstar` in `tests/stack/lean_scaling.py`.
 - **A test module that nothing imports never runs.** `lake build` builds the
   modules the umbrella `L4Factoidal.lean` reaches. Until 2026-10-10
