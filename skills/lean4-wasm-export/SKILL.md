@@ -344,10 +344,24 @@ answers `true` through `l4factoidal.js` and through `npm/factoidal`.
 
 Which C entries have the clock: `l4_call_c` (the shim routes it through
 `l4_call_io`) and `l4_call_blob_io_c`. The pure `l4_call` and `l4_call_blob_c`
-have none, by design, so `NOW()` is an error there; `l4_call_blob_c` stays pure
-because routing it through the IO entry would also run the ops that build an
-out region (`packNext`, `blobEcho`) and drop that region. The npm package calls
-`queryHdt` through `callBlobIO` for this reason.
+have none, by design; `l4_call_blob_c` stays pure because routing it through
+the IO entry would also run the ops that build an out region (`packNext`,
+`blobEcho`) and drop that region. The npm package calls `queryHdt` through
+`callBlobIO` for this reason, and `tools/wasm-store-query-smoke.mjs` calls
+`storeQuery` through it when the engine has it.
+
+A host that must use a pure entry binds `NOW()` by passing the instant as an
+optional LAST argument `now`, an `xsd:dateTime` lexical form
+(https://github.com/danbri/factoidal/issues/748): `queryDataset` and
+`updateDataset` fourth (after the base IRI), `queryRaw` and `storeQuery`
+fourth, `queryHdt` second. An empty string, or no argument, means no instant,
+and `NOW()` is then an error as before; two- and three-argument hosts do not
+change. Any other text must be read by the strict XSD dateTime parser
+(`L4Factoidal.SPARQL.isDateTimeLexical`); a text it does not read is an error
+envelope (`"not an xsd:dateTime lexical form"`), never a silent "no instant".
+The IO entries take no `now`: they read the clock. `l4wasm-cli callpure`
+drives the pure `call` natively, and `l4wasm-cli callblob` the pure
+`callBlob`; `Wasm/native-smoke.sh` has the cases.
 
 ## The C ABI and its memory rules
 

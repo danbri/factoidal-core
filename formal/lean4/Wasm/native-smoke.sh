@@ -412,6 +412,18 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# The `l4block-*` query tools read the clock once per query through
+# `L4Wasm.Ops.emptyEnvNow`. Method: a regular-expression scan of the Harness
+# sources for `emptyEnv`, the environment with no clock (a tool that evaluates a
+# user query with it answers NOW() as an error). The scan cannot see an
+# environment built another way, such as `{}`; tools/blockengine-ibk4-quad-smoke.sh
+# runs W3C functions/now01.rq through one tool for that reason.
+# grep exits 1 when nothing matches (the expected result) and 2 on an error.
+EMPTYENV_RC=0
+EMPTYENV_USES="$(grep -n '\bemptyEnv\b' "$LEAN_DIR"/Harness/*.lean)" || EMPTYENV_RC=$?
+xverdict "no Harness query tool builds emptyEnv (every one reads the clock through emptyEnvNow)" "" \
+  "$( [ "$EMPTYENV_RC" -eq 1 ] && [ -z "$EMPTYENV_USES" ] && echo 1 || echo 0 )" "grep exit=$EMPTYENV_RC $EMPTYENV_USES"
+
 # argsappend <argsfile> <value> — append one string to a JSON args file.
 argsappend() {
   python3 - "$1" "$2" <<'PYEOF'

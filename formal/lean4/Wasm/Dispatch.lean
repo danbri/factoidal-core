@@ -480,7 +480,13 @@ via `call`, envelope for envelope. The core ops that need `IO` (dataset
 handles, the §17.6 and SERVICE registries, the IO forms of `queryDataset`,
 `queryDataset12`, `parseToDatasetJson` and `parseDocument`) are served by
 `Core.callIOArgsBy` with the JSON-LD reader; the arms here are the ops of the
-full table only. -/
+full table only.
+
+The ops that evaluate a query or an update read the system clock once per
+execution, so `NOW()` is bound (SPARQL 1.1 §17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). They take no `now` argument:
+the instant is an argument of the pure entries `call` and `callBlob` only
+(https://github.com/danbri/factoidal/issues/748). -/
 def callIO (op : String) (argsJson : String) : IO String :=
   let withArgs (k : List String → IO String) : IO String :=
     match decodeArgs argsJson with

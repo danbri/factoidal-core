@@ -59,6 +59,13 @@ Rules the commands enforce:
   root (CURRENT)". The older `l4block-shard-query` and
   `l4block-shard-merkle-query` read pre-SBM5 layouts (`manifest.sbm0`) and
   reject current generations; they are kept for the superseded formats.
+- **`NOW()` in the `l4block-*` query tools.** Each query tool reads the system
+  clock once per query execution (`Wasm/Ops/Clock.lean` `emptyEnvNow`), so
+  every `NOW()` of that query is one `xsd:dateTime` (SPARQL 1.1 §17.4.5.1,
+  https://github.com/danbri/factoidal/issues/748). Until 2026-10-10 they built
+  `emptyEnv`, and W3C `functions/now01.rq` answered `false`. A tool that
+  evaluates a user query must build its environment with `emptyEnvNow`, not
+  `emptyEnv`; `tools/blockengine-ibk4-quad-smoke.sh` checks one tool.
 - **An empty input packs and activates an empty generation.** Seen
   2026-09-02: a broken TriG-to-Turtle conversion produced a 0-byte file,
   `l4block-shard-pack` reported `triples=0 blocks=0` and

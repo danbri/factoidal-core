@@ -9,9 +9,10 @@
 // answers — is made in Lean (iron rule 7 of CLAUDE.md).
 //
 // The artifact bytes go across RAW: they are concatenated into one buffer
-// written straight into the wasm heap by `l4.callBlob`, with no hexadecimal
-// and no base64 anywhere. Each artifact is a {"key","offset","len"} window
-// into that buffer, and Lean bounds-checks every window.
+// written straight into the wasm heap by `l4.callBlobIO` (`l4.callBlob` on an
+// engine without it), with no hexadecimal and no base64 anywhere. Each
+// artifact is a {"key","offset","len"} window into that buffer, and Lean
+// bounds-checks every window.
 //
 //   node tools/wasm-store-query-smoke.mjs <generation-dir> <sparql> [--tamper]
 //   node tools/wasm-store-query-smoke.mjs <generation-dir> <sparql> --handle
@@ -40,6 +41,16 @@ const loaderUrl = new URL('../docs/web/hub/assets/l4/l4factoidal.js', import.met
 const { loadL4 } = await import(loaderUrl.href);
 const l4 = await loadL4();
 
+// `storeQuery` goes through the IO byte-region entry when the engine has it. The
+// pure `callBlob` reads no clock, so a NOW() in the query would be an error
+// there (SPARQL 1.1 section 17.4.5.1); `callBlobIO` reads the clock once for the
+// query (https://github.com/danbri/factoidal/issues/743 and
+// https://github.com/danbri/factoidal/issues/748). Both throw on an error
+// envelope, so the --tamper path below is the same on either.
+const storeQuery = (args, bytes) => (typeof l4.callBlobIO === 'function'
+  ? l4.callBlobIO('storeQuery', args, bytes).envelope
+  : l4.callBlob('storeQuery', args, bytes));
+
 const manifestHex = readFileSync(join(directory, 'manifest.sbm2')).toString('hex');
 
 const inspect = l4.call('storeManifestInspect', [manifestHex]);
@@ -64,7 +75,7 @@ const artifacts = plan.keys.map((key, i) => {
 
 if (tamper) {
   try {
-    l4.callBlob('storeQuery', [manifestHex, query, JSON.stringify(artifacts)], blob);
+    storeQuery([manifestHex, query, JSON.stringify(artifacts)], blob);
   } catch (error) {
     console.log(JSON.stringify({ refused: String(error.message) }));
     process.exit(0);
@@ -73,8 +84,7 @@ if (tamper) {
   process.exit(1);
 }
 
-const result = l4.callBlob('storeQuery',
-  [manifestHex, query, JSON.stringify(artifacts)], blob);
+const result = storeQuery([manifestHex, query, JSON.stringify(artifacts)], blob);
 
 if (handleMode) {
   // Open on every artifact the manifest declares, which is a superset of the
