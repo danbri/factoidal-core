@@ -97,9 +97,21 @@ export class ParseError extends Error {
 /** One recoverable-parse diagnostic from a `{lenient:true}` parse() call. */
 export interface ParseDiagnostic {
   message: string;
+  /** 0-based, counted in Unicode scalar values from the start of the text. */
   offset: number;
+  /** 1-based; a line ends at each LINE FEED. */
   line: number;
+  /** 1-based, counted in Unicode scalar values from the start of the line. */
   column: number;
+  /**
+   * The Lean engine's stable error class (issue 716): 'undefined-prefix',
+   * 'relative-iri', 'bad-iri', 'bad-escape', 'unterminated-string',
+   * 'bad-literal', 'bad-blank-node', 'bad-prefixed-name', 'bad-directive',
+   * 'bad-graph-name', 'rdf12-syntax', 'unclosed-group', 'nesting-limit',
+   * 'unexpected-token', 'internal' or 'too-many-errors'. Absent on the F*
+   * engine.
+   */
+  class?: string;
 }
 
 /**
@@ -206,6 +218,12 @@ export interface ParseOptions {
    * whole parse with a ParseError).
    */
   lenient?: boolean;
+  /**
+   * With `lenient`: stop after this many diagnostics; the parse then ends
+   * with one diagnostic of class 'too-many-errors'. Default: no limit. The
+   * Lean engine honours it; the F* engine ignores it.
+   */
+  maxErrors?: number;
 }
 
 export interface QueryOptions {

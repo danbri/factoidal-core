@@ -200,6 +200,11 @@ const STAGE2_OPS = [
   'didKeyResolve',
   'serializeTurtleWith',
   'datasetSerializeWith',
+  // parse(text, {lenient:true}): the recovery-mode parse
+  // (formal/lean4/Wasm/Ops/Lenient.lean,
+  // https://github.com/danbri/factoidal/issues/716). Listing it makes
+  // capabilities().parseDiagnostics true.
+  'parseDocument',
 ];
 OPS.push(...STAGE2_OPS);
 

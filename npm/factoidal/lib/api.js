@@ -724,7 +724,10 @@ function buildApi(driver) {
             'npm-entry bundle predates — rebuild build-ocaml.sh js + npm.');
         }
         const r = entryResult(
-          e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify({ lenient: true })),
+          e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify(
+            Number.isInteger(opts.maxErrors) && opts.maxErrors >= 0
+              ? { lenient: true, maxErrors: opts.maxErrors }
+              : { lenient: true })),
           'parse');
         return Dataset.fromNQuads(r.nquads, {
           blankNodePrefix: bnodePrefix,
