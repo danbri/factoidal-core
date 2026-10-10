@@ -3114,3 +3114,156 @@ banned in this repository. They are
 `de-*-DE` (the extended-versus-basic filtering difference),
 `func:numeric-divide` by zero, and the two RIF-DTB 3.2 date/dateTime
 containment directions.
+
+## F\* theorem classification ([issue 757](https://github.com/danbri/factoidal/issues/757))
+
+Owner, 2026-10-10, verbatim: "preserve the F* implementation as a reference
+until every relevant theorem is classified as: Reproved in Lean with the same
+meaning and hypotheses. Replaced by a clearly stronger Lean theorem.
+Superseded by a different explicitly justified semantic formulation.
+Intentionally abandoned, with the loss of assurance documented." The table
+of record is [`fstar-theorem-classification.tsv`](fstar-theorem-classification.tsv).
+The exit criterion is U = 0.
+
+### Tools
+
+| Command | What it does |
+| --- | --- |
+| `python3 tools/fstar-theorem-inventory.py --stats --out /tmp/inv.tsv` | Walks `formal/fstar` on each run. Lists every top-level lemma: module, name, kind, location, family, relevance, reason codes, local and external referencing declarations, statement sha256, statement. |
+| `python3 tools/check-fstar-theorem-classification.py` | Checks the TSV against the live inventory and the Lean tree (checks a to e below). Exit 0 when a to d hold. `--add-missing` appends U rows. `--no-lean` skips check c. |
+| `python3 tools/test_fstar_theorem_inventory.py` | Self-test of the inventory: 55 pass, 0 fail (out of 55), 2026-10-10. |
+| `python3 tools/test_check_fstar_theorem_classification.py` | Self-test of the checker: 11 pass, 0 fail (out of 11), 2026-10-10. |
+
+The checker: (a) every RELEVANT theorem has one row and every row names a
+theorem the inventory finds; (b) the row's `statement_sha256` is the current
+one, else the row is STALE and the check fails (a changed F\* statement
+reopens its row; no option rewrites a hash); (c) every named Lean theorem
+exists: a temporary file with one `#check @Name` per name runs under
+`lake env lean` with `formal/lean4` as the working directory, and Lean's
+error on a line is the authority (a grep only chooses the imports);
+(d) R, S and F name a Lean theorem, S, F and A carry a note; (e) counts
+"N of T" per family and in total.
+
+### Classes
+
+| Class | Meaning | Required |
+| --- | --- | --- |
+| R | Reproved in Lean with the same meaning and the same or weaker hypotheses, read side by side; definitions differ in name only. | Lean theorem |
+| S | Replaced by a clearly stronger Lean theorem. | Lean theorem, note: in what way stronger |
+| F | Superseded by a different, explicitly justified formulation. | Lean theorem, note: the justification |
+| A | Intentionally abandoned. | note: the loss of assurance, one sentence |
+| U | Not classified yet. A U row may carry a note recording what was read. | nothing |
+
+Before R or S, the Lean theorem's hypotheses are checked for its own
+conclusion (anti-pattern 29).
+
+### What the inventory counts, and the `grep` comparison
+
+Lemma forms recognised: `val`, `assume val`, `let`, `let rec` and `and`
+declarations at column 0 whose RESULT computation type starts with
+`Lemma` (the text after the first depth-0 `:` of the signature, cut at the
+last depth-0 `->`). Comments are removed first with the F\* lexer's rules:
+block comments nest, `//` ends the line. The form `let x = e <: Lemma` does
+not occur in the tree and is not recognised. Results `Pure unit`,
+`Ghost unit`, `GTot unit` and `squash` are not lemmas here; the tree has
+none (measured).
+
+`grep -rcE 'Lemma' formal/fstar --include='*.fst' --include='*.fsti'`
+counts 2057 lines in 94 files (2026-10-10, core 59723ce6). The inventory
+assigns each of those lines to one place (`--stats`, keys `grep_lines_*`):
+
+| Lines | Where the `Lemma` text is |
+| ---: | --- |
+| 1794 | the result type of a top-level lemma declaration |
+| 124 | the body of a declaration: a local `let ... : Lemma` inside a proof |
+| 109 | a comment or a string literal only |
+| 30 | a longer identifier only (`OWL.Semantics.MemLemmas`, `RoundTripLemmas`) |
+| 0 | a binder or other non-result position of a top-level signature |
+| **2057** | total, equal to the `grep` count |
+
+The 1794 declarations give **1787 lemmas** in 93 files: 7 lemmas have both a
+`val` and a `let` that carries the `Lemma` type, and one row is kept (the
+`.fsti` val, then the `.fst` val, then the let). Issue 757 quoted "about
+1,777 in 84 files" from an earlier regex count.
+
+### Relevance rule
+
+Applied by the inventory to the statement text and the reference sets. The
+lemma's own name is never read (anti-pattern 31). References are a WORD
+MATCH over the comment-free text of every top-level declaration, filtered by
+module visibility (the referring module is the lemma's module or names it,
+directly or through `include`); this over-approximates and never misses an
+explicit use. A lemma is RELEVANT when any code holds:
+
+| Code | Condition |
+| --- | --- |
+| EXT | referenced from a declaration of another module |
+| SPEC | the statement uses a definition of a specification module (a module name component `Spec`, derived on each run, plus `RDF.Entailment.Simple.Boundary`) |
+| SEM | the statement uses a definition of `OWL.Semantics`, `RDF.Entailment.Simple.ModelTheory`, `RDF.Entailment.RDFS.ModelTheory` or `RDF.Semantics.HypothesisWitness`, or an identifier with a segment interp, entails, entailment, model, satisfies, holds, denot, iext, icext and similar |
+| W3C | the statement uses a definition of a W3C-function module (RDFC-1.0, graph isomorphism, SPARQL algebra, JSON-LD, CSVW, SHACL, ShEx, XPath, XSD) |
+| PROP | an identifier segment names soundness, completeness, refinement, licensing, equivalence, fixpoint, termination or a round trip |
+| RT | the statement uses a parsing and a printing identifier |
+| ASSUMED | an `assume val` (none in the tree today) |
+| TOP | no declaration references it and it has no SMT pattern: an end result or an unused lemma; the rule cannot tell which |
+| PAT | it has an SMT pattern, so a word match cannot see its uses |
+| MULTI | referenced by more than one declaration, all in its own module |
+
+It is a HELPER (code LOCAL1) only when exactly one declaration of its own
+module references it, it has no SMT pattern, and no content code holds.
+Where the rule cannot decide, the row is RELEVANT. The module lists are in
+the tool header; a listed module that does not exist stops the tool.
+Over-approximation seen: `SEM` fires on `ig_wf_sp` because index
+well-formedness is defined in `OWL.Semantics`.
+
+### Counts (2026-10-10)
+
+`python3 tools/fstar-theorem-inventory.py --stats`: 1787 lemmas, **1383
+RELEVANT**, 404 HELPER. Relevant only by an undecided code: 151 TOP only,
+112 MULTI only.
+
+`python3 tools/check-fstar-theorem-classification.py` (36 Lean names, 0
+missing, `lake env lean` in `formal/lean4`):
+
+| Family | Relevant | R | S | F | A | U |
+| --- | ---: | --- | --- | --- | --- | --- |
+| RDF | 245 | 0 of 245 | 0 of 245 | 0 of 245 | 0 of 245 | 245 of 245 |
+| RDFS | 256 | 17 of 256 | 0 of 256 | 20 of 256 | 0 of 256 | 219 of 256 |
+| OWL | 178 | 0 of 178 | 0 of 178 | 51 of 178 | 0 of 178 | 127 of 178 |
+| SPARQL | 324 | 0 of 324 | 0 of 324 | 0 of 324 | 0 of 324 | 324 of 324 |
+| parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
+| other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
+| total | 1383 | 17 of 1383 | 0 of 1383 | 71 of 1383 | 0 of 1383 | 1295 of 1383 |
+
+### First tranche, and two decisions
+
+Classified: `RDF.Entailment.RDFS.ModelTheory` (44 relevant rows: 17 R, 20 F,
+7 U with a note) and `OWL.Semantics.Soundness` (53 rows: 51 F, 2 U with a
+note). The rest of the RDF entailment rungs, `OWL.Semantics`,
+`OWL.Semantics.MemLemmas` and `OWL.RL.Refinement` are U.
+
+- **RDFS rows rdfs5, rdfs9, rdfs11: F, not R.** F\* states each row over two
+  premise graphs (`rdfs5_derives2 gd gs`); Lean over one
+  (`Rdfs5Derives2 g g`). Each implies the other with g = gd ++ gs, but the
+  statements differ in more than names.
+- **`OWL.Semantics.Soundness` against `RL.rl_derives_holds`: F, not S.**
+  The Lean theorem covers every `Derives` constructor (73) where F\* covers
+  one engine rule function per lemma. It assumes the whole rule-shaped bundle
+  `RlConditions` and `RlReservedFree g`, and concludes at `rlExtend i A`; each
+  F\* lemma assumes only its rule's table condition and concludes at the same
+  assignment. Per F\* theorem the Lean hypotheses are not weaker, so "clearly
+  stronger" does not hold, although each `RlCond*` quantifies the property
+  over IRIs where the F\* `cond_*` quantifies over the whole domain.
+- **F\* engine theorems: F.** A statement about an F\* engine function
+  (`rdfs_rule_domain`, `owl_rule_*`) is replaced by the Lean engine's own
+  chain: emitted triples are derivable (`RDFS.fullClosureLoop_sound`,
+  `RL.closure_sound`) and derivable triples are true
+  (`RDF.derivesFull_holds`, `RL.rl_derives_holds`).
+- **Weaker or missing Lean counterparts (left U, noted in the TSV):**
+  `rdfs_closure_with_reflexivity_entails` and `_sound` (F\* proves the RDFS
+  regime entry point sound for `d_minimal`; the Lean regime closure seeds two
+  `rdf:XMLLiteral` rows and `Unified.unified_rdfs_closure_sound` needs
+  `rdf:XMLLiteral ∈ D`); `rdf_property_axiom_closure_entails` (no Lean
+  model-theoretic soundness of `RDFS.rdfClosure` under `RdfConditions`
+  only); `reflexivity_needs_rdfs_Class` and
+  `rdfs_reflexivity_axioms_preserves` (no Lean statement);
+  `lemma_pterms_agree` and `lemma_rdf_term_eq_iri` (not decided).
