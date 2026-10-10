@@ -8,7 +8,7 @@ our-result: request 3 of 4 fails: SPARQL_GraphStore reads no multipart/form-data
 kind: engine-gap
 disposition: local-override
 date: 2026-10-10
-issue: https://github.com/danbri/factoidal/issues/698
+issue: https://github.com/danbri/factoidal/issues/714
 provenance: w3c/rdf-tests ec2ba15, sparql/sparql11/graph-store-protocol/ (manifest-direct.ttl, manifest-indirect.ttl; structured ht:Connection form from 02f98ff)
 ---
 EXPECTED FAILURE, NOT A DISAGREEMENT WITH THE FIXTURE. The fixture is
@@ -35,5 +35,6 @@ How this file behaves
   shortfall is a failing test plus an open issue").
 
 Issue
-  The placeholder URL above stands for the issue that tracks "SPARQL.GraphStore
-  service: multipart/form-data bodies and graph creation with Location in F*".
+  https://github.com/danbri/factoidal/issues/714 (opened 2026-10-10): F*
+  SPARQL.GraphStore has no multipart/form-data bodies and no graph creation
+  with a Location header.
