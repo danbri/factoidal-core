@@ -753,8 +753,11 @@ def membershipsForBNodeCes (st : Store) (individuals : List Subject)
 def membershipsForNamedCes (st : Store) (individuals : List Subject)
     (ces : List Subject) : WorkM (List Triple) := do
   let mut acc : List (List Triple) := []
+  -- `parseCeOfSubject`'s fuel, computed once for the loop: it is the
+  -- graph's length, and reading that walks the whole list.
+  let fuel := st.graph.length + 8
   for ceS in ces do
-    match parseCeOfSubject st ceS with
+    match parseCeOfSubjectFuel st fuel ceS with
     | .named _   => pure ()
     | .unknown   => pure ()
     | ce         => if cePositiveSound ce then

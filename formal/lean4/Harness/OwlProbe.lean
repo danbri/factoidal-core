@@ -161,6 +161,7 @@ import L4Factoidal.OWL.Materialise
 import L4Factoidal.OWL.Comprehension
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.Syntax.RdfXml
 import Harness.Common
@@ -1295,14 +1296,19 @@ def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Out
   | none   => l ++ [(ty, Harness.Score.bump {} o)]
 
 def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb : Nat)
-    (rms : Nat) (strict : Bool) (verbose : Bool)
+    (rms : Nat) (strict : Bool) (verbose : Bool) (slowMs : Nat := 0)
     : IO CatalogResult := do
   let t0 ← IO.monoMsNow
   let mut r : CatalogResult := {}
   for c in cat.cases do
     for ty in testTypes do
       if c.types.contains ty then
+        let tu0 ← IO.monoMsNow
         let v ← judge cat c capMs rg rb rms strict ty
+        let tu1 ← IO.monoMsNow
+        -- `--slow-ms N`: name every unit that took N ms or more.
+        if slowMs > 0 && tu1 - tu0 ≥ slowMs then
+          IO.println s!"SLOW {c.id} [{ty}]: {tu1 - tu0} ms"
         let o := v.regime
         let m := v.measure
         let label := s!"{c.id} [{ty}]"
@@ -1411,6 +1417,8 @@ structure Opts where
   verbose : Bool := false
   /-- `--profile`: per-row timing of the list engine on `--case` ids. -/
   profile : Bool := false
+  /-- `--case ID` (repeatable): the cases `--profile` and
+  `--tbox-census` read, and the cases a scored run is restricted to. -/
   cases   : List String := []
   rounds  : Nat := 3
   /-- `--indexed-only`: profile rounds of the indexed engine alone
@@ -1435,6 +1443,12 @@ structure Opts where
   initial tableau state, and the resulting axiom-test count of ONE
   `onePass`. A count is immune to machine load; a stopwatch is not. -/
   tboxCensus : Bool := false
+  /-- `--trace`: print the refuter's saturated state for the `--case`
+  ids instead of scoring (`traceMain`). -/
+  trace : Bool := false
+  /-- `--slow-ms N`: print every unit whose judgement took `N` ms or
+  more (0, the default, prints none). -/
+  slowMs : Nat := 0
   /-- Decide conclusion containment by ONE blank-node mapping over the
   whole conclusion graph (the RDF 1.1 Semantics interpolation lemma).
   This is the default since 2026-09-04. `--wildcard-match` restores the
@@ -1450,6 +1464,8 @@ def parseArgs : List String → Opts → Opts
   | "-v" :: rest, o => parseArgs rest { o with verbose := true }
   | "--dir" :: d :: rest, o => parseArgs rest { o with dir := d }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--trace" :: rest, o => parseArgs rest { o with trace := true }
+  | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
   | "--indexed-only" :: rest, o => parseArgs rest { o with indexedOnly := true }
@@ -1547,10 +1563,12 @@ def profileMain (o : Opts) : IO UInt32 := do
 
 /-! ## `--tbox-census` — counting the refuter's work, not timing it
 
-`onePass` folds over the WHOLE TBox four times for a node: once in
-`injectGlobalAxioms`, once per LABEL in `applyAxioms`, once in
-`applyAxiomsEdges` and once in `applyAxiomsConj`. So one pass tests
-each axiom `3 * nodes + labels` times, and `search` runs up to
+Before 2026-10-10 `onePass` folded over the WHOLE TBox four times for
+a node: once in `injectGlobalAxioms`, once per LABEL in `applyAxioms`,
+once in `applyAxiomsEdges` and once in `applyAxiomsConj`, so one pass
+tested each axiom `3 * nodes + labels` times. It now reads the TBox
+through `Refute.TBoxIndex`, and the count printed here is the upper
+bound the index cuts down, not the work done. `search` runs up to
 `--refute-budget` passes per goal. These counts do not move when the
 machine is loaded, which a wall clock does. -/
 
@@ -1579,7 +1597,7 @@ def censusCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) : IO Uni
     let tb := L4Factoidal.OWL.Refute.collectAxioms g
     let tbd := (distinctAxioms tb).length
     let st := L4Factoidal.OWL.Refute.initState g
-    let nodes := st.nodes.length
+    let nodes := st.nodes.size
     let labels := st.nodes.foldl (fun a n => a + n.labels.length) 0
     let perPass := tb.length * (3 * nodes + labels)
     IO.println s!"TBOX-CENSUS {name} {c.id} closure={g.length} \
@@ -1599,6 +1617,226 @@ def censusMain (o : Opts) : IO UInt32 := do
         for c in cat.cases do
           if o.cases.isEmpty || o.cases.contains c.id then
             censusCase name cat c o.capMs
+  return 0
+
+/-! ## `--trace` — the refuter's saturated state, for one case
+
+`--trace --case ID [catalog.rdf]` runs the premise closure under the
+selected regime and then, instead of scoring, prints what the tableau
+refuter sees: the graph-level violation test, the TBox size, the node
+labels after deterministic saturation (`onePass` to quiescence, capped
+by `--rounds`), the pending union and merge choices, and the verdict
+of `tableauConsistent`. A diagnostic: it decides nothing. -/
+
+def shortIri (i : WfIri) : String :=
+  let s := i.val
+  let afterHash := Harness.lastAfter s "#"
+  if afterHash != s then afterHash else Harness.lastAfter s "/"
+
+def shortTerm : Term → String
+  | .iri i     => shortIri i
+  | .bnode b   => s!"_:{b}"
+  | .literal l => s!"\"{l.val.lexicalForm}\"^^{shortIri l.val.datatype}"
+  | t          => showTerm t
+
+def shortSubject (s : Subject) : String := shortTerm s.toTerm
+
+partial def showCe : L4Factoidal.OWL.ClassExpr → String
+  | .named c => shortIri c
+  | .someOf p c => s!"∃{shortIri p}.{showCe c}"
+  | .allOf p c => s!"∀{shortIri p}.{showCe c}"
+  | .hasValue p v => s!"∋{shortIri p}.{shortTerm v}"
+  | .intersection cs => "(" ++ String.intercalate " ⊓ " (cs.map showCe) ++ ")"
+  | .union cs => "(" ++ String.intercalate " ⊔ " (cs.map showCe) ++ ")"
+  | .complement c => s!"¬{showCe c}"
+  | .minCard n p => s!"≥{n}{shortIri p}"
+  | .maxCard n p => s!"≤{n}{shortIri p}"
+  | .exactCard n p => s!"={n}{shortIri p}"
+  | .minQualCard n p c => s!"≥{n}{shortIri p}.{showCe c}"
+  | .maxQualCard n p c => s!"≤{n}{shortIri p}.{showCe c}"
+  | .exactQualCard n p c => s!"={n}{shortIri p}.{showCe c}"
+  | .oneOf vs => "{" ++ String.intercalate "," (vs.map shortTerm) ++ "}"
+  | .dataRestriction dt fs =>
+      s!"{shortIri dt}[" ++ String.intercalate "," (fs.map (fun (f, v) =>
+        s!"{shortIri f} {shortTerm v}")) ++ "]"
+  | .unknown => "?"
+
+/-- Dump the refuter's view of one graph: TBox, saturated labels,
+    pending choices, verdict. `axioms` prints the TBox. -/
+def traceGraph (g : Graph) (rb : Nat) (passes : Nat) (axioms : Bool) : IO Unit := do
+    IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g} inCountingFragment={L4Factoidal.OWL.CountingOracle.inCountingFragment g} classSizeUnsat={L4Factoidal.OWL.CountingOracle.classSizeUnsat g}"
+    let tA ← IO.monoMsNow
+    let tb ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxioms g)
+    IO.println s!"  tbox axioms={tb.length}"
+    let tB ← IO.monoMsNow
+    IO.println s!"  TIME collectAxioms {tB - tA} ms"
+    -- The parts of `collectAxioms`, each timed on its own.
+    let t0 ← IO.monoMsNow
+    let ix ← IO.lazyPure (fun _ => Index.ofGraph g)
+    IO.println s!"  TIME Index.ofGraph size={ix.all.size} {(← IO.monoMsNow) - t0} ms"
+    let sto ← IO.lazyPure (fun _ => Store.ofIndex ix)
+    let t1 ← IO.monoMsNow
+    let us ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.unsatNamedClassesS sto)
+    IO.println s!"  TIME unsatNamedClasses n={us.length} {(← IO.monoMsNow) - t1} ms"
+    let t2 ← IO.monoMsNow
+    let a1 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedRestrictionAxioms us sto)
+    IO.println s!"  TIME namedRestrictionAxioms n={a1.length} {(← IO.monoMsNow) - t2} ms"
+    let t3 ← IO.monoMsNow
+    let a2 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedBooleanAxioms us sto ++
+      L4Factoidal.OWL.Refute.namedOneOfAxioms sto ++
+      L4Factoidal.OWL.Refute.disjointUnionAxioms us sto)
+    IO.println s!"  TIME boolean/oneOf/disjointUnion n={a2.length} {(← IO.monoMsNow) - t3} ms"
+    let t4 ← IO.monoMsNow
+    let a3 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.domainRangeAxioms us sto)
+    IO.println s!"  TIME domainRangeAxioms n={a3.length} {(← IO.monoMsNow) - t4} ms"
+    let t5 ← IO.monoMsNow
+    let raw ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxiomsS sto)
+    IO.println s!"  TIME collectAxiomsS n={raw.length} {(← IO.monoMsNow) - t5} ms"
+    let t6 ← IO.monoMsNow
+    let sp ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.splitUnionAntecedents raw)
+    IO.println s!"  TIME splitUnionAntecedents n={sp.length} {(← IO.monoMsNow) - t6} ms"
+    let t7 ← IO.monoMsNow
+    let dd ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.dedupAxioms sp)
+    IO.println s!"  TIME dedupAxioms n={dd.length} {(← IO.monoMsNow) - t7} ms"
+    if axioms then
+      for (a, d) in tb do
+        IO.println s!"    AX {showCe a} ⊑ {showCe d}"
+    let mut st : L4Factoidal.OWL.Refute.RState :=
+      { L4Factoidal.OWL.Refute.initState g with tbox := tb }
+    let mut n := 0
+    IO.println s!"  initState nodes={st.nodes.size}"
+    for _ in [0:passes] do
+      let t0 ← IO.monoMsNow
+      let cl := L4Factoidal.OWL.Refute.clashNodes g st
+      IO.println s!"  TIME clashNodes {(← IO.monoMsNow) - t0} ms -> {cl}"
+      if cl then break
+      let t1 ← IO.monoMsNow
+      let (st', ch) := L4Factoidal.OWL.Refute.onePass tb g st
+      IO.println s!"  TIME onePass {(← IO.monoMsNow) - t1} ms nodes={st'.nodes.size} changed={ch}"
+      st := st'
+      n := n + 1
+      if !ch then break
+    -- One round's rules timed apart, each over the saturated state (the
+    -- states are not threaded, so this apportions the work only).
+    let ix := L4Factoidal.OWL.Refute.TBoxIndex.build tb
+    let mut tRules := 0
+    let mut tAx := 0
+    let mut tEdges := 0
+    let mut tConj := 0
+    let mut nLabels := 0
+    let leaders := L4Factoidal.OWL.Refute.groupLeaders st
+    for nd in leaders do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      nLabels := nLabels + ls.length
+      let a0 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyLabelRules g st nd.id l).2)
+        if r then pure () else pure ()
+      let a1 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxioms
+          (ix.byKey.getD (L4Factoidal.OWL.Refute.ceIndexKey l) []) st nd.id l).2)
+        if r then pure () else pure ()
+      let a2 ← IO.monoNanosNow
+      let r2 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsEdges ix g st nd.id).2)
+      let a3 ← IO.monoNanosNow
+      let r3 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsConj ix st nd.id).2)
+      let a4 ← IO.monoNanosNow
+      if r2 || r3 then pure () else pure ()
+      tRules := tRules + (a1 - a0)
+      tAx := tAx + (a2 - a1)
+      tEdges := tEdges + (a3 - a2)
+      tConj := tConj + (a4 - a3)
+    IO.println s!"  ROUND leaders={leaders.length} labels={nLabels} labelRules={tRules / 1000000}ms axioms={tAx / 1000000}ms edges={tEdges / 1000000}ms conj={tConj / 1000000}ms edgeProps={ix.edgeProps.length}"
+    IO.println s!"  passes={n} clash={L4Factoidal.OWL.Refute.clashNodes g st} nodes={st.nodes.size} extra_edges={st.extra.size} ident={st.ident.length} distinct_groups={st.distinctGroups.length}"
+    let t2 ← IO.monoMsNow
+    let (stF, forced) := L4Factoidal.OWL.Refute.forcedIdentifications g st
+    IO.println s!"  forcedIdentifications changed={forced} ident_after={stF.ident.length}"
+    IO.println s!"  TIME forcedIdentifications {(← IO.monoMsNow) - t2} ms"
+    for (a, b) in stF.ident do
+      IO.println s!"    IDENT {shortTerm a} = {shortTerm b}"
+    -- Per-node cost of the propositional clash: label sets with two or
+    -- more unions, their clause sets, and the slowest ones.
+    let pix := L4Factoidal.OWL.Refute.LhsAtomIndex.build st.tbox
+    let mut rows : Array (Nat × Nat × Nat × Nat × String) := #[]
+    for nd in L4Factoidal.OWL.Refute.groupLeaders st do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      let nu := (ls.filter (fun l => match l with | .union _ => true | _ => false)).length
+      if nu ≥ 2 then
+        let tq ← IO.monoMsNow
+        let cs ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.nodeClausesIx pix ls 3)
+        let tq2 ← IO.monoMsNow
+        let r ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.clausesSatisfiable L4Factoidal.OWL.Refute.propFuel cs)
+        let tq3 ← IO.monoMsNow
+        rows := rows.push (tq3 - tq2, tq2 - tq, cs.length, ls.length, s!"{shortSubject nd.id} {repr r}")
+    let sorted := rows.qsort (fun a b => a.1 > b.1)
+    IO.println s!"  PROP nodes_with_2_unions={rows.size} total_sat_ms={rows.foldl (fun a r => a + r.1) 0} total_clause_ms={rows.foldl (fun a r => a + r.2.1) 0}"
+    for r in sorted.toList.take 5 do
+      IO.println s!"    PROP sat={r.1}ms clauses_built={r.2.1}ms n_clauses={r.2.2.1} labels={r.2.2.2.1} {r.2.2.2.2}"
+    let t3 ← IO.monoMsNow
+    IO.println s!"  propositionalClash={L4Factoidal.OWL.Refute.propositionalClash st}"
+    let t4 ← IO.monoMsNow
+    IO.println s!"  nominalClash={L4Factoidal.OWL.Refute.nominalClash g st}"
+    let t5 ← IO.monoMsNow
+    IO.println s!"  TIME propositional {t4 - t3} ms nominal {t5 - t4} ms"
+    IO.println s!"  pendingNominal={(L4Factoidal.OWL.Refute.pendingNominal g st).map List.length}"
+    for nd in st.nodes do
+      IO.println s!"    NODE {shortSubject nd.id}: {String.intercalate ", " (nd.labels.map showCe)}"
+    for e in st.extra do
+      IO.println s!"    EDGE {shortSubject e.s} {shortIri e.p} {shortTerm e.o} counts={e.counts}"
+    match L4Factoidal.OWL.Refute.pendingUnion st with
+    | some (i, cs) => IO.println s!"  pendingUnion {shortSubject i}: {String.intercalate " | " (cs.map showCe)}"
+    | none => IO.println "  pendingUnion none"
+    match L4Factoidal.OWL.Refute.pendingMerge g st with
+    | some ps => IO.println s!"  pendingMerge {String.intercalate "; " (ps.map (fun (a, b) => s!"{shortTerm a}={shortTerm b}"))}"
+    | none => IO.println "  pendingMerge none"
+    IO.println s!"  tableauConsistent(budget {rb}) = {repr (L4Factoidal.OWL.Refute.tableauConsistent g rb)}"
+
+def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
+    (rb : Nat) (passes : Nat) : IO Unit := do
+  IO.println s!"TRACE {name} {c.id}"
+  let (res, _) ← premiseClosure cat c capMs rg
+  match res with
+  | .error o => IO.println (o.line c.id)
+  | .ok r =>
+    traceGraph r.graph rb passes true
+    -- A positive-entailment case: the refutation goals of its
+    -- conclusion, each over the premise closure.
+    match c.conclusion with
+    | none => pure ()
+    | some ctxt =>
+      match parseDoc "conclusion" c.iri ctxt with
+      | .error e => IO.println s!"  conclusion parse error: {e}"
+      | .ok gc =>
+        -- The graph `judgePositive` hands the refuter: the closure
+        -- with the comprehension layer and one re-closure.
+        let gw := L4Factoidal.OWL.Comp.comprehensionLayer r.graph
+        let pg ← if gw.length == r.graph.length then pure r.graph else do
+          let t2 ← IO.monoMsNow
+          pure (← closureIO gw closureFuel (t2 + capMs)).graph
+        match L4Factoidal.OWL.Refute.negationGoals (renameConclusionBNodes gc) with
+        | none => IO.println "  GOALS none"
+        | some goals =>
+          IO.println s!"  GOALS {goals.length} (over {pg.length} triples)"
+          for goal in goals do
+            IO.println "  GOAL:"
+            for t in goal do
+              IO.println s!"    G {shortSubject t.s} {shortIri t.p} {shortTerm t.o}"
+            traceGraph (pg ++ goal) rb passes false
+
+def traceMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then catalogs else o.only
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then IO.println s!"  MISSING {name}"
+    else
+      match ← readCatalog p with
+      | none => pure ()
+      | some cat =>
+        for c in cat.cases do
+          if o.cases.contains c.id then
+            traceCase name cat c o.capMs o.regime o.refuteBudget o.rounds
   return 0
 
 def main (args : List String) : IO UInt32 := do
@@ -1635,6 +1873,7 @@ def main (args : List String) : IO UInt32 := do
 unrelated triple absent = {!unrelatedAbsent}"
   if o.tboxCensus then return (← censusMain o)
   if o.profile then return (← profileMain o)
+  if o.trace then return (← traceMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}
@@ -1651,10 +1890,14 @@ unrelated triple absent = {!unrelatedAbsent}"
     else
       match ← readCatalog p with
       | none => notRead := notRead ++ [name]
-      | some cat =>
+      | some cat0 =>
+        -- `--case ID` (repeatable) restricts the scored run to the named
+        -- cases. A filtered run's score line covers those cases only.
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         printCensus name cat.cases
         let r ← runCatalog name cat o.capMs o.regime o.refuteBudget o.refuteMs
-                  o.strictMatch o.verbose
+                  o.strictMatch o.verbose o.slowMs
         total := total.add r.score
         totalClosure := totalClosure.add r.closureScore
         totalRefPass := totalRefPass + r.refuterPasses
