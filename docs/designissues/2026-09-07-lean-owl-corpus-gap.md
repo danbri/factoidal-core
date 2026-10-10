@@ -1226,3 +1226,37 @@ the same four CPUs: type-inconsistency 2 s, type-positive-entailment
   normative functional-syntax premise when the RDF/XML one does not
   parse).
 * `WebOnt-description-logic-909`: https://github.com/danbri/factoidal/issues/299.
+
+## 16. Status — 2026-10-10, the OWL 2 RDF-Based Semantics regime and two runner changes
+
+Branch `claude/wt-owl-rdfbased`. Owner decisions, 2026-10-10, verbatim:
+"711 accept your recommendation"; "721 Add an OWL 2 RDF-Based
+Semantics". Full record:
+[`2026-10-10-owl2-rdf-based-semantics.md`](2026-10-10-owl2-rdf-based-semantics.md).
+
+* `l4owl-probe --rdf-based` (new line, `all.rdf`, the 482 RDF-BASED
+  cases): PositiveEntailmentTest 147 pass, 54 fail (out of 201);
+  InconsistencyTest 44 pass, 84 fail (out of 128); NegativeEntailmentTest
+  0 pass, 0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 pass, 0
+  fail, 347 not-refuted (out of 347); all units 191 pass, 138 fail, 370
+  not-refuted (out of 699). `not-refuted` is never counted as proved.
+* The 12 PositiveEntailmentTests of § 15.5 (DIRECT, species FULL only)
+  are judged there: 7 pass (`WebOnt-Class-001`, `-Class-003`,
+  `-I5.3-015`, `-I5.8-017`, `-Nothing-002`, `-equivalentProperty-005`,
+  `-imports-010`), 5 fail (`WebOnt-extra-credit-002`, `-003`, `-004`,
+  `-I5.5-001`, `-I5.5-002`), each with its reason in the record's § 7. The DL lines keep them as fails; they are
+  not moved to any "not applicable" bucket (CLAUDE.md, "OWL 2 test
+  scoring").
+* `WebOnt-I5.5-005` [species] is a local override
+  (`tests/local-overrides/owl-species__WebOnt-I5.5-005.json`,
+  https://github.com/danbri/factoidal/issues/711): species line 488
+  pass, 0 fail, 1 local-override (out of 489).
+* `FS2RDF-literals-ar`: judged from its normative functional-syntax
+  premise when the RDF/XML premise does not parse (coordinator default,
+  issue 721), with a `FIXTURE-DEFECT` log line. Its ConsistencyTest
+  passes on the RL, `--dl` consistency and syntax-dl lines; its species
+  verdict passes.
+
+Every other OWL line was re-measured with one binary per state; no unit
+went from pass to fail (record § 6.1).
+
