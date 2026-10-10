@@ -65,6 +65,23 @@ def universalFor (g goal : Graph) : List Triple :=
         else [])
     else [])
 
+/-- The universal typings the OWL 2 RL/RDF key row (`prp-key`) reads:
+for `c owl:hasKey (p1 … pn)` with `c` = `owl:Thing` or `rdfs:Resource`
+(Table 5.2: the class extension is IR), `x rdf:type c` for every subject
+`x` of a `pk`-triple. Premise-directed, like `universalFor` is
+goal-directed: adding `x rdf:type owl:Thing` for every subject of the
+graph would put the whole graph into the closure's `owl:Thing` rows. -/
+def universalForKeys (g : Graph) : List Triple :=
+  (g.filter (fun t => t.p == owlHasKey)).flatMap (fun t =>
+    match t.s with
+    | .iri c =>
+        if universalClasses.contains c then
+          (listSeqs g t.o (listFuel g)).flatMap (fun es => es.flatMap (fun e =>
+            (asIri e).flatMap (fun kp =>
+              (g.filter (fun u => u.p == kp)).map (fun u => (⟨u.s, rdfType, .iri c⟩ : Triple)))))
+        else []
+    | .bnode _ => [])
+
 def compSymAll (g : Graph) : List Triple :=
   g.flatMap (fun t =>
     if t.p == owlComplementOf then
@@ -258,7 +275,7 @@ def rbConclusions (g goal : Graph) : List Triple :=
   avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g ++
   listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allInNonEmpty ++
   listSubAll g owlIntersectionOf (fun es1 es2 => allInNonEmpty es2 es1) ++ hvEqPropAll g ++
-  literalValueFor g goal ++ minCardSuccAll g
+  literalValueFor g goal ++ minCardSuccAll g ++ universalForKeys g
 
 /-! ## Every executable conclusion is a rule application -/
 
@@ -294,6 +311,19 @@ theorem universalFor_derives {g goal : Graph} {t : Triple} (h : t ∈ universalF
       simp only [List.mem_map] at h
       obtain ⟨s, _, rfl⟩ := h
       exact RbDerives.universal s (by simpa using hc)
+    · simp at h
+  · simp at h
+
+theorem universalForKeys_derives {g : Graph} {t : Triple} (h : t ∈ universalForKeys g) :
+    RbDerives g t := by
+  simp only [universalForKeys, List.mem_flatMap] at h
+  obtain ⟨u, _, h⟩ := h
+  split at h
+  · split at h
+    · rename_i c _ hc
+      simp only [List.mem_flatMap, List.mem_map] at h
+      obtain ⟨_, _, _, _, _, _, v, _, rfl⟩ := h
+      exact RbDerives.universal v.s (by simpa using hc)
     · simp at h
   · simp at h
 
@@ -557,7 +587,7 @@ theorem minCardSuccAll_derives {g : Graph} {t : Triple} (h : t ∈ minCardSuccAl
 theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :
     RbDerives g t := by
   simp only [rbConclusions, List.mem_append] at h
-  rcases h with ((((((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
+  rcases h with (((((((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
   · exact axiomsFor_derives h
   · exact vocabTypeAll_derives h
   · exact universalFor_derives h
@@ -580,6 +610,7 @@ theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclus
   · exact hvEqPropAll_derives h
   · exact literalValueFor_derives h
   · exact minCardSuccAll_derives h
+  · exact universalForKeys_derives h
 
 /-- Every triple `rbConclusions` lists is OWL 2 RDF-Based entailed by `g`. -/
 theorem rbConclusions_entailed {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :

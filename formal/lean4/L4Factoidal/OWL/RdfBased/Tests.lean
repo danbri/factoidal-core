@@ -436,6 +436,21 @@ private def gMinCard (n : Term) (onP : WfIri) : Graph :=
 #guard memB (rbSaturate (gMinCard (lit "1" xsdIntIri) pP ++
   [⟨B "z", owlDisjointWith, Bt "z"⟩]) [] 8 1) ⟨S iA, rdfType, Bt "z"⟩
 
+/-! ## universalForKeys (Table 5.2, for the RL key row) -/
+
+-- New-Feature-Keys-002 shape: owl:Thing owl:hasKey (p)
+#guard has (oneA.map (fun t => if t.o == O iA then ⟨t.s, t.p, O pP⟩ else t) ++
+  [⟨S owlThing, owlHasKey, Bt "m1"⟩, ⟨S iA, pP, lit "1" xsdInteger⟩]) []
+  ⟨S iA, rdfType, O owlThing⟩
+-- a key on a class other than owl:Thing: no typing is added
+#guard !has (oneA.map (fun t => if t.o == O iA then ⟨t.s, t.p, O pP⟩ else t) ++
+  [⟨S cA, owlHasKey, Bt "m1"⟩, ⟨S iA, pP, lit "1" xsdInteger⟩]) []
+  ⟨S iA, rdfType, O cA⟩
+-- the subject does not use the key property
+#guard !has (oneA.map (fun t => if t.o == O iA then ⟨t.s, t.p, O pP⟩ else t) ++
+  [⟨S owlThing, owlHasKey, Bt "m1"⟩, ⟨S iA, pQ, lit "1" xsdInteger⟩]) []
+  ⟨S iA, rdfType, O owlThing⟩
+
 /-! ## Exclusions of a pair (Tables 5.9, 5.15) -/
 
 private def dp1 : WfIri := ⟨"http://ex/dp1", rfl⟩

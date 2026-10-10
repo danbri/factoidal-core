@@ -27,7 +27,7 @@ Comprehension Conditions [DEV]").
 |---|---|---|
 | `ax` | one of `rbAxioms` (premise-free) | Tables 5.2, 5.3, 5.5, 5.8, 5.9 |
 | `vocabType` | `x rdf:type E2` from `x rdf:type E1`, `ICEXT(E1) ⊆ ICEXT(E2)` | Tables 5.1, 5.2 |
-| `universal` | `x rdf:type owl:Thing` / `rdfs:Resource` | Table 5.2 |
+| `universal` | `x rdf:type owl:Thing` / `rdfs:Resource` (goal-directed, and for the subjects of key properties of a key on `owl:Thing`) | Table 5.2 |
 | `compSym` | `b owl:complementOf a` from `a owl:complementOf b` | Table 5.4 |
 | `allDiff` | `aj owl:differentFrom ak` from an `owl:AllDifferent` list | Tables 5.9, 5.10 |
 | `funSingleton` | `p rdf:type owl:FunctionalProperty` when the range is a one-element enumeration | Tables 5.5, 5.8, 5.13 |
