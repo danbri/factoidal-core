@@ -25,15 +25,26 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
   group-by-few     SPARQL GROUP BY with 6 groups over many rows
   group-by-many    SPARQL GROUP BY with one group per subject
+  count-distinct   SPARQL COUNT(DISTINCT ?s): the aggregate's DISTINCT
+  count-distinct-star  SPARQL COUNT(DISTINCT *): DISTINCT rows inside an aggregate
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
                    moved out of the executable's modules; 25 million and 7 ms
                    after)
 
+Expected failures (CLAUDE.md, "A stated shortfall is a failing test plus an
+open issue"; skills/test-suites/SKILL.md, "Expected failures"): a row listed in
+XFAIL is a cost that is known and not yet repaired. It still runs. When it
+fails the bound it prints "XFAIL" with its issue URL and counts as
+expected-fail, not as a pass; when it PASSES it prints "UNEXPECTED PASS" and
+counts as a failure, so the run is red until the row is removed from XFAIL
+(the repair turns the row into a real assertion) and the issue is closed.
+
 The script measures; it does not compare with the F* engine. Exit status 0
-when every pair passes, 1 when a pair fails, 2 when the binary is missing.
-Scores print as "N pass, M fail (out of T)".
+when every pair passes or fails as expected, 1 when a pair fails or an
+expected failure passes, 2 when the binary is missing. Scores print as
+"N pass, M fail, K expected-fail (out of T)".
 
 Usage:  tests/stack/lean_scaling.py [--runs N] [--only ROW[,ROW...]]
 Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4factoidal)
@@ -63,6 +74,15 @@ FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
 # Rows whose OUTPUT grows faster than their input use a larger bound.
 ROW_BOUND = {"owlrl-closure-chain": 20.0}
+# Rows that fail today, each with the open issue that tracks the cost. A row
+# leaves this table in the commit that repairs it.
+XFAIL = {
+    "count-distinct": "https://github.com/danbri/factoidal/issues/722",
+    "count-distinct-star": "https://github.com/danbri/factoidal/issues/722",
+}
+# A run longer than this is not repeated: the minimum of several runs only
+# removes timer and load noise, which is small against a run this long.
+REPEAT_LIMIT = 5.0
 
 
 def fixture(name: str, text_fn) -> Path:
@@ -139,6 +159,16 @@ ROWS = {
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
                    "SELECT ?s (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s"]),
+    "count-distinct": (
+        1250,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
+                   "SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE { ?s ?p ?o }"]),
+    "count-distinct-star": (
+        1250,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
+                   "SELECT (COUNT(DISTINCT *) AS ?c) WHERE { ?s ?p ?o }"]),
 }
 
 
@@ -155,6 +185,8 @@ def best_of(cmd, runs):
         if r.returncode != 0:
             return None, f"exit {r.returncode}: {r.stderr.decode('utf-8', 'replace')[:200]}"
         best = dt if best is None else min(best, dt)
+        if dt > REPEAT_LIMIT:
+            break
     return best, None
 
 
@@ -184,24 +216,34 @@ def main() -> int:
     names = [r for r in args.only.split(",") if r]
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     run_startup = (not names) or ("startup" in names)
-    passed = failed = 0
+    passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
           f"(rows in ROW_BOUND use their own bound); "
           f"minimum of {args.runs} runs; load average {os.getloadavg()[0]:.2f}")
     for rid in rows:
         x, make, cmd = ROWS[rid]
+        issue = XFAIL.get(rid)
         t1, e1 = best_of(cmd(make(x)), args.runs)
         t4, e4 = best_of(cmd(make(4 * x)), args.runs)
         if e1 or e4:
+            ok = False
+            detail = f"n={x} -> n={4 * x}: {e1 or e4}"
+        else:
+            bound = ROW_BOUND.get(rid, BOUND)
+            ok = t4 <= bound * max(t1, FLOOR)
+            detail = (f"n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
+                      f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
             failed += 1
-            print(f"  FAIL {rid}: n={x} -> n={4 * x}: {e1 or e4}")
-            continue
-        bound = ROW_BOUND.get(rid, BOUND)
-        ok = t4 <= bound * max(t1, FLOOR)
-        passed += ok
-        failed += (not ok)
-        print(f"  {'PASS' if ok else 'FAIL'} {rid}: n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
-              f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
     if run_startup:
         cpu, err = startup_row()
         if err:
@@ -213,7 +255,8 @@ def main() -> int:
             failed += (not ok)
             print(f"  {'PASS' if ok else 'FAIL'} startup: l4factoidal version {cpu * 1000:.1f} ms CPU "
                   f"(budget {STARTUP_BUDGET * 1000:.0f} ms)")
-    print(f"scaling: {passed} pass, {failed} fail (out of {passed + failed})")
+    print(f"scaling: {passed} pass, {failed} fail, {xfailed} expected-fail "
+          f"(out of {passed + failed + xfailed})")
     return 0 if failed == 0 else 1
 
 
