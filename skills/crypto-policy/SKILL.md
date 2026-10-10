@@ -166,6 +166,19 @@ Two-tier rule for `formal/lean4/` (analysis:
    under `npm/factoidal/hacl-wasm/`. No target gets a different
    crypto implementation.
 
+As built on 2026-10-10 (stage 2 of
+https://github.com/danbri/factoidal/issues/713): the Lean wasm module serves
+Ed25519 through the dispatch ops `vcEd25519SecretToPublic`, `vcEd25519Sign`,
+`vcEd25519Verify`, `vcEddsaCreateFromCanonical` and `vcEddsaVerifyFromCanonical`
+(`Wasm/Ops/Vc.lean`). The HACL\* in that module is the vendored C of
+`third_party/hacl` compiled to wasm32 by `build-wasm.sh` step 6, the same source
+the native build links. It is NOT the `hacl-wasm` npm artifact of item 3 above,
+so these ops need no `initHacl()` call and the Lean path does not read
+`npm/factoidal/hacl-wasm/`. The two builds of HACL\* share a source and a pinned
+commit and differ in the compiler. The `@[extern]` verifier answers `false` on a
+malformed or wrong-length input; `npm/factoidal/test/l4-parity-2.test.js` pins
+that, and checks the primitives against `node:crypto`.
+
 ### The `@[extern]` crypto family, as it stands 2026-09-07
 
 Every member is HACL\* from the SAME pinned commit,

@@ -42,11 +42,12 @@ export function query(
 /** `data` must NOT be a DatasetHandle -- call `handle.update()` directly instead. */
 export function update(data: DataInput, sparql: string): Promise<Dataset>;
 /**
- * Open a dataset handle against the Lean engine (issue #680). The
- * Lean engine's own gaps (https://github.com/danbri/factoidal/issues/685):
- * no `line`/`column`/`offset` on a parse error (the position is
- * inside the message text only), no `prefixes`, no
- * `literalShorthand`/`prefixes` option on `handle.serialize()`.
+ * Open a dataset handle against the Lean engine (issue #680). A Turtle or
+ * TriG document's prefixes are recorded on the handle and used by
+ * `handle.serialize({format: 'turtle'})`; `handle.serialize()` takes the
+ * `prefixes` and `literalShorthand` options; a parse failure rejects with a
+ * `ParseError` carrying `line`, `column` and `offset`
+ * (https://github.com/danbri/factoidal/issues/685).
  */
 export function openDataset(
   data: DataInput,
@@ -175,3 +176,68 @@ export const dataFactory: DataFactory;
 export const engine: 'lean4-wasm';
 export function available(): boolean;
 export const version: string;
+
+// ---------------------------------------------------------------------
+// Stage 2 of https://github.com/danbri/factoidal/issues/713: maths, VC and
+// DID, served by the Lean dispatch ops (Wasm/Ops/Maths.lean, Wasm/Ops/Vc.lean).
+// The signatures and result shapes are the ones index.d.ts declares for the
+// F* engine. The VC wrappers need no initialisation call: the Ed25519
+// operations go through the HACL* build linked into the wasm module.
+// ---------------------------------------------------------------------
+import type {
+  MatrixCell,
+  MatrixResult,
+  SigmoidParams,
+  ScaledValue,
+} from './index';
+
+export function matrixDeterminant(matrix: MatrixCell[][]): Promise<MatrixResult>;
+export function matrixScalarProduct(a: MatrixCell[], b: MatrixCell[]): Promise<MatrixResult>;
+export function matrixVectorProduct(a: MatrixCell[], b: MatrixCell[]): Promise<MatrixResult>;
+export function matrixOuterProduct(a: MatrixCell[], b: MatrixCell[]): Promise<MatrixResult>;
+export function sigmoidPoints(
+  params: SigmoidParams
+): Promise<Array<{ x: ScaledValue; y: ScaledValue }>>;
+export function sigmoidFormulaMathml(): Promise<string>;
+
+/** SHA-256 of the UTF-8 bytes of `message`, as lowercase hex. */
+export function vcSha256Hex(message: string): Promise<string>;
+/** Ed25519 public key (hex) of a 32-byte secret key (hex). */
+export function vcEd25519SecretToPublic(secretKeyHex: string): Promise<string>;
+/** Ed25519 signature (hex) over a hex-encoded message. */
+export function vcEd25519Sign(secretKeyHex: string, messageHex: string): Promise<string>;
+/**
+ * Ed25519 verification. Wrong key, tampered signature, altered message or a
+ * malformed-length input all resolve to false.
+ */
+export function vcEd25519Verify(
+  publicKeyHex: string,
+  messageHex: string,
+  signatureHex: string
+): Promise<boolean>;
+export function vcEddsaCreateFromCanonical(
+  secretKeyHex: string,
+  canonicalDocument: string,
+  canonicalConfig: string
+): Promise<string>;
+export function vcEddsaVerifyFromCanonical(
+  publicKeyHex: string,
+  canonicalDocument: string,
+  canonicalConfig: string,
+  proofValue: string
+): Promise<boolean>;
+export function vcCheckCredential(
+  v2ctxJson: string,
+  credentialJson: string
+): Promise<{ valid: boolean; reason?: string }>;
+export function vcCheckCredentialSubject(
+  credentialJson: string
+): Promise<{ valid: boolean; reason?: string }>;
+export function vcCheckNoDataLoss(
+  credentialJson: string
+): Promise<{ valid: boolean; reason?: string }>;
+export function vcCheckRelatedResourceDigests(
+  registryJson: string,
+  credentialJson: string
+): Promise<{ valid: boolean; reason?: string }>;
+export function didKeyResolve(didString: string): Promise<Dataset>;
