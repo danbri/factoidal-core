@@ -21,6 +21,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   trig-parse       TriG parse, many small graph blocks
   trig-big-graph   TriG parse, one graph block with all the triples
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
+  turtle-object-list  Turtle parse of one statement whose object list has n
+                   objects (`ex:s ex:p 0, 1, ... .`), 25,000 against 100,000.
+                   Expected failure naming issue 754: the object list is
+                   built with `acc ++ ...` (0.56 s at 6,250 and 10.33 s at
+                   25,000; 100,000 did not finish in 300 s)
   rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
   rdfc-bnode-unique  RDFC-1.0 canonicalisation of n persons, each a blank node with an
@@ -116,6 +121,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
+    "turtle-object-list": "https://github.com/danbri/factoidal/issues/754",
     "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "select-star": "https://github.com/danbri/factoidal/issues/729",
@@ -170,6 +176,12 @@ def trig_one_graph(n: int) -> str:
     return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
 
 
+def turtle_object_list(n: int) -> str:
+    """One statement, one subject, one predicate, n objects."""
+    objs = ", ".join(str(i) for i in range(n))
+    return f"@prefix ex: <{EX}> .\nex:s ex:p {objs} .\n"
+
+
 # row id -> (small size, make input path, command builder)
 ROWS = {
     "rdfs-closure-wideflat": (
@@ -196,6 +208,10 @@ ROWS = {
         2500,
         lambda n: fixture(f"trig-one-{n}.trig", lambda: trig_one_graph(n)),
         lambda p: [str(BIN), "parse", str(p), "--format", "trig"]),
+    "turtle-object-list": (
+        25000,
+        lambda n: fixture(f"turtle-object-list-{n}.ttl", lambda: turtle_object_list(n)),
+        lambda p: [str(BIN), "parse", str(p), "--format", "turtle"]),
     "turtle-serialize": (
         1250,
         lambda n: bl.gene_slice(n),

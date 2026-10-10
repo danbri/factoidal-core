@@ -265,7 +265,10 @@ fi
 # until the same day, when the XML reference scan became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
-    # No case is listed today.
+    # One statement with 10,000 `;` groups: readPredicateObjectList makes
+    # one recursive call per group. Overflows the native canary (512 KB),
+    # the wasm canary and the wasm route (measured 2026-10-10).
+    turtle-predicates) echo "https://github.com/danbri/factoidal/issues/754" ;;
   esac
 }
 
@@ -353,6 +356,7 @@ CASES=(
   "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
+  "turtle-predicates   parseToDatasetJson   args-turtle-predicates.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
   "sparql-union        queryDataset         args-sparql-union.json"
   "sparql-nested       queryDataset         args-sparql-nested.json"
