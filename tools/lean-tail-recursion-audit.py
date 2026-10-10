@@ -42,6 +42,13 @@ LIMITS OF THE METHOD (state these with any result)
     suspects; it does not prove a bound.
   * The scan sees only what was compiled.  A module absent from
     `.lake/build/ir` is not audited -- run `lake build` first.
+  * A symbol that ends in `___redArg` (the compiler's reduced-arity copy of
+    a definition) is not mapped back to its Lean declaration: it lands in
+    class `unknown`, which the gate does not check.  `OwlXml.readList` was
+    one on 2026-10-10 (https://github.com/danbri/factoidal/issues/746).
+  * The scan reads every `.c` under `.lake/build/ir`, including those of
+    modules that no longer exist when the `.lake` directory is restored from
+    a cache: a stale file is audited as if it were built.
 """
 
 import argparse, json, os, re, sys
