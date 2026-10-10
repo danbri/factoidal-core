@@ -1,6 +1,8 @@
 /-
-Harness.ShaclProbe — run the Lean SHACL Core validator over the real
-W3C SHACL test suite (`third_party/testing/shacl/data-shapes-test-suite`).
+Harness.ShaclProbe — run the Lean SHACL validator over the real W3C
+SHACL test suites: SHACL 1.0 (`third_party/testing/shacl/data-shapes-test-suite`)
+and SHACL 1.2 (`third_party/testing/shacl/shacl12-test-suite`, core and
+sparql manifests).
 
 Iron rule #6 applied to SHACL: the manifests and fixtures are read off
 disk with the Lean Turtle parser; nothing is synthesised. Mirrors
@@ -13,9 +15,16 @@ so the two trees' numbers share denominators:
   * `sht:dataGraph` / `sht:shapesGraph` are resolved against the file's
     own base (`<>` = the file itself, the common case) or loaded from
     the sibling file they name;
+  * every file is parsed as RDF 1.2 Turtle (the 1.2 suite writes
+    constraint reifiers with `{| … |}`); a file that cannot be read is
+    one FAILING entry, never dropped from the denominator;
   * the shapes graph is decoded (`SHACL.decodeShapesGraph`), the data
-    graph validated (`SHACL.validate`), and the report serialised
-    (`SHACL.reportToGraph`);
+    graph validated (`SHACL.validateFull`: Core, SHACL-SPARQL, node
+    expressions), and the report serialised (`SHACL.reportToGraph`);
+  * SHACL 1.2 §conformanceDisallows: the severities the expected report
+    names with sh:conformanceDisallows are passed to the engine as its
+    conformance-disallow set (the suite's own instruction in
+    core/validation-reports/conformance-disallows-001);
   * by default the FULL report is compared with the manifest's expected
     report under the suite's own "full compliance" rule
     (data-shapes-test-suite/index.html): the expected graph is the

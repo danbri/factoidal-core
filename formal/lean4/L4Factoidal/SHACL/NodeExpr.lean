@@ -34,6 +34,15 @@ collector exposed and no closure materialiser: it has `validate` over a
 `ShapesGraph`, and `isShaclInstance`, which already walks
 `rdfs:subClassOf`. So:
 
+* `evalNe` takes the SHAPES graph (where the expression's triples are)
+  and the FOCUS graph (the data) separately, as SHACL 1.2 Core
+  §node-expressions defines `evalExpr(expr, focusGraph, focusNode,
+  scope)`; the node-expr suite's runner passes one graph twice. It also
+  evaluates the SHACL-SPARQL 1.2 select and SPARQL expr expressions
+  (`Sparql.lean`).
+* `validateFull` (end of file) is the SHACL 1.2 validation entry point:
+  SHACL Core, SHACL-SPARQL, and node expressions through
+  `nodeExprEvaluator`.
 * `nodeConforms` asks SHACL 1.2 conformance checking
   (`ValidationEnv.conforms` of `collectShapeViolations`) of the single
   value node against the named shape — the judgment `validate` makes

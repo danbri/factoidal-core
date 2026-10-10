@@ -274,7 +274,7 @@ marked "—".
 | OWL 2, DL inconsistency (tableau) | 126 pass, 1 fail (out of 127) | 30 pass, 97 fail, 1 skip (out of 128) |
 | OWL 2, syntax / DL species | 319 pass, 2 fail, 2 skip (out of 323) | not verified |
 | SHACL Core / SHACL-SPARQL | 98 pass, 0 fail (out of 98); 22 pass, 0 fail (out of 22) | Core 98 pass, 0 fail (out of 98) |
-| SHACL 1.2 (core, node expr, sparql, rules) | 138+142+25+11 pass, 0 fail each; rules syntax 62, wellformed 7, stratification 8, all 0 fail | rules 88 pass, 0 fail (out of 88); node-expr 140 pass, 0 fail, 2 unsupported (out of 142) |
+| SHACL 1.2 (core, node expr, sparql, rules) | 138+142+25+11 pass, 0 fail each; rules syntax 62, wellformed 7, stratification 8, all 0 fail | core 138 pass, 0 fail (out of 138); sparql 25 pass, 0 fail (out of 25); rules 88 pass, 0 fail (out of 88); node-expr 140 pass, 0 fail, 2 unsupported (out of 142) (2026-10-10, https://github.com/danbri/factoidal/issues/698) |
 | ShEx | 1182 pass, 0 fail (out of 1182) | 1075 pass, 104 fail (out of 1179 decided) |
 | JSON-LD (toRdf; expand; compact; flatten; fromRdf) | 467; 385; 245 pass 0 fail 1 skip (246); 58; 53 pass 0 fail 1 skip (54) | toRdf 467 pass, 0 fail (out of 467); api family 791 pass, 0 fail, 2 local-override (out of 793) |
 | RML Core / RML-IO | 76 pass, 0 fail (out of 76); IO 17 pass, 1 fail, 55 skip (out of 73) | core 60 pass, 0 fail (out of 60 compared) |

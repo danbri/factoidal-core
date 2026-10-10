@@ -15,7 +15,10 @@ W3C SHACL Recommendation (20 July 2017), https://www.w3.org/TR/shacl/:
           `sh:validator` / `sh:nodeValidator` / `sh:propertyValidator`,
           §6.2.1 `sh:ask` validators (per value node), §6.2.2
           `sh:select` validators (per focus node), §6.3 the `{?param}`
-          message template.
+          message template;
+  * SHACL-SPARQL 1.2 §SelectExpression and §SPARQLExprExpression, the
+          SPARQL-based node expressions (`evalSparqlNodeExpr`), with the
+          static failure check `sparqlNodeExprProblem`.
 
 Port of `formal/fstar/SHACL.Validation.fst` sections 11k–11l
 (`subst_var_*`, `subst_vars_gp`, `prebinding_unsupported`,

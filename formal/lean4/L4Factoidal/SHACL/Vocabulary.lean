@@ -13,13 +13,18 @@ Scope: SHACL Core (§2 shapes and targets, §2.3.1 property paths, §3
 validation, §4 the Core constraint components) and SHACL-SPARQL (Part
 2: §5 sh:sparql constraints with sh:select / sh:prefixes / sh:declare,
 §6 constraint components with sh:parameter / sh:validator /
-sh:nodeValidator / sh:propertyValidator). The one SHACL-SPARQL feature
-NOT ported is the SPARQL-based target (`sh:target`, SHACL-AF); it is
-the only entry of `sparqlFeaturePredicates` — the predicates whose
-presence in a shapes graph the harness reports as `unsupported`, never
-silently skipped. SHACL 1.2 additions (sh:singleLine, sh:memberShape,
-sh:reifierShape, …) are not ported: the vendored suite
-(`third_party/testing/shacl/data-shapes-test-suite`) is the 1.1 suite.
+sh:nodeValidator / sh:propertyValidator), plus the SHACL 1.2 additions
+(SHACL 1.2 Core, https://www.w3.org/TR/shacl12-core/; SHACL-SPARQL 1.2,
+https://www.w3.org/TR/shacl12-sparql/): sh:Trace / sh:Debug and
+sh:conformanceDisallows, the list components, sh:singleLine,
+sh:subsetOf, sh:someValue, sh:rootClass, sh:uniqueValuesFor,
+sh:closed sh:ByTypes, sh:reifierShape, sh:TripleTerm, sh:targetWhere,
+sh:shape, sh:ShapeClass, sh:values / sh:defaultValue, sh:sparqlExpr and
+sh:nodeByExpression (SHACL 1.2 Node Expressions). The one SHACL-SPARQL
+feature NOT ported is the SPARQL-based target (`sh:target`, SHACL-AF);
+it is the only entry of `sparqlFeaturePredicates` — the predicates
+whose presence in a shapes graph the harness reports as `unsupported`,
+never silently skipped.
 -/
 import L4Factoidal.RDF.Core
 import L4Factoidal.RDFS.Vocabulary

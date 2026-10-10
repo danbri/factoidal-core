@@ -18,12 +18,18 @@ plus the SHACL-SPARQL decoders of section 11b (`prefix_header_for`,
 sh:sparql constraints (`Constraint.sparql`) and §6 constraint
 components (`Constraint.custom`), whose SPARQL text is kept as a
 string here and parsed at validation time (`Sparql.lean`), as the F*
-does. The F* constructors for SHACL 1.2 (list-valued sh:datatype,
-sh:singleLine, sh:memberShape, …), SHACL-AF (sh:values, sh:targetWhere)
-and the SPARQL-based target (T_Sparql) are not ported — see
-`Vocabulary.lean`'s header. A shapes graph that uses the SPARQL-based
-target predicate is recorded in `ShapesGraph.unsupported` so the
-harness can name it.
+does. SHACL 1.2 Core adds: list-valued sh:class / sh:datatype /
+sh:nodeKind, sh:singleLine, sh:rootClass, the list components
+(sh:memberShape, sh:minListLength, sh:maxListLength, sh:uniqueMembers),
+sh:subsetOf, sh:someValue, sh:uniqueValuesFor, sh:closed sh:ByTypes
+(`closedByTypesTable`), sh:reifierShape, sh:nodeByExpression, the
+targets sh:targetWhere (`Target.whereShape`) and sh:ShapeClass, sh:values
+/ sh:defaultValue (`Shape.valuesExpr`, `Shape.defaultValue`), and
+constraint reifiers carrying sh:severity / sh:message / sh:deactivated
+(`decodeConstraintsMeta`, `Shape.constraintMeta`, `withoutDeactivated`).
+The SPARQL-based target (F* T_Sparql, SHACL-AF sh:target) is not
+ported; a shapes graph that uses it is recorded in
+`ShapesGraph.unsupported` so the harness can name it.
 
 Decoding is a total function of the shapes graph. Every graph walk
 that follows runtime data (rdf:first/rdf:rest chains, nested path

@@ -1,11 +1,11 @@
 /-
 L4Factoidal.SHACL.ShaclTheorems — what is proved about the SHACL Core
-validator.
+validator, with SHACL 1.2 conformance checking.
 
   * `validate_empty_conforms` — an empty shapes graph conforms (§3.1).
-  * `validate_no_targets_conforms` — shapes without targets produce no
-    results (§2.1: "validation ... of the shapes graph's shapes with
-    targets").
+  * `validate_no_targets_conforms` — with no declared targets and no
+    sh:shape triple in the data graph (SHACL 1.2 §explicit-shape-target)
+    there is no focus node and no result (§2.1).
   * `minCount_zero_no_result` — `sh:minCount 0` never produces a
     result (§4.2.1).
   * `notOf_flips` — `sh:not` on a single-component node shape flips
@@ -13,22 +13,38 @@ validator.
   * `isShaclInstance_iff` — the engine's SHACL-instance test decides
     the §1.4 relation (rdf:type + rdfs:subClassOf*), both directions:
     the closure walk is sound and, with fuel `g.length + 1`, complete.
-  * `simpleValueCheck_iff` — every per-value Core component
-    (§4.1, §4.3, §4.4.1–4, §4.8.3) decides its declarative statement.
-  * `evalAggregateNonRec_eq_nil_iff` — every per-focus-node Core
-    component (§4.2, §4.4.5, §4.5, §4.8.1, §4.8.2) decides its
+  * `simpleValueCheck_iff` — every per-value component (§4.1, §4.3,
+    §4.4.1–4, §4.8.3, and SHACL 1.2 sh:singleLine, sh:rootClass,
+    sh:minListLength, sh:maxListLength, sh:uniqueMembers) decides its
     declarative statement.
-  * `collectShapeViolations_eq_nil_iff` — the engine produces no
-    result for a focus node and a shape iff `Spec.Conforms` holds
-    (§3.4), at every fuel; `validate_conforms_iff` lifts this to §3.1:
-    `(validate g sg).conforms = true ↔ Spec.GraphConforms g sg`.
+  * `evalAggregateNonRec_eq_nil_iff` — every per-focus-node component
+    (§4.2, §4.4.5, §4.5, §4.8.1 in both sh:closed forms, §4.8.2, and
+    SHACL 1.2 sh:subsetOf, sh:uniqueValuesFor) decides its declarative
+    statement.
+  * `collectShapeViolations_conforms_iff` — SHACL 1.2 conformance
+    checking (`ValidationEnv.conforms`: no result with a disallowed
+    severity) of the engine's results for a focus node and a shape iff
+    `Spec.Conforms` holds, at every fuel; `validate_conforms_iff` lifts
+    this to §3.1: `(validate g sg cfg).conforms = true ↔
+    Spec.GraphConforms (cfg.envFor g sg.shapes) g sg`. Under SHACL 1.2
+    "no result" and "conforms" differ (a sh:Debug result does not
+    count), so the SHACL 1.1 statement `collectShapeViolations … = [] ↔
+    Spec.Conforms …` is no longer true; its sound direction is
+    `collectShapeViolations_eq_nil_conforms`.
+  * `someValue_aggConforms_iff` — the sh:someValue clause of
+    `Spec.AggConforms` stated through `Spec.Conforms`.
 
-Two places where the specification names the engine rather than
-restating it, so that the equivalence there is by definition: the
-count of conforming value nodes for `sh:qualifiedValueShape`
-(`qualifyingCount`) and the number of matching shapes for `sh:xone`
-(the filter over `collectShapeViolations`). Everything else in
-`Spec` is stated with quantifiers over the data graph.
+Places where the specification names the engine rather than restating
+it, so that the equivalence there is by definition: the count of
+conforming value nodes for `sh:qualifiedValueShape` (`qualifyingCount`),
+the number of matching shapes for `sh:xone` (the filter over
+`collectShapeViolations`), the SHACL list reading (`shaclListMembers`),
+the sh:uniqueValuesFor key (`uvfKey`, `keyEq`) and target table
+(`ValidationEnv.targetsOf`), the sh:closed sh:ByTypes property table
+(computed at decode time from the shapes graph), the node-expression
+evaluator (`ValidationEnv.evalExpr`), and the focus nodes
+(`shapeFocusNodes`). Everything else in `Spec` is stated with
+quantifiers over the data graph.
 
 Axiom audit (`#print axioms` at the end): propext, Classical.choice,
 Quot.sound only. No `sorry`, no `axiom`, no `native_decide`.
@@ -1009,5 +1025,9 @@ theorem validate_sound (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig)
 #print axioms someValue_aggConforms_iff
 #print axioms validate_conforms_iff
 #print axioms validate_sound
+#print axioms closedViolations_eq_nil_iff
+#print axioms uvfClash_eq_false_iff
+#print axioms evalOneConstraint_severity
+#print axioms conformance_iff
 
 end L4Factoidal.SHACL

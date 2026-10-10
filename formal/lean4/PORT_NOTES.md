@@ -2900,7 +2900,7 @@ touch `Harness/Run.lean` / `Harness/Manifest.lean`).
 | F\* | Lean 4 | Notes |
 |---|---|---|
 | `SHACL.Validation.fst` §1, §11b (IRI constants) | `SHACL/Vocabulary.lean` | `assert_norm (is_iri …)` → `⟨"…", rfl⟩`; SHACL-SPARQL predicates kept only as `sparqlFeaturePredicates` for the `unsupported` report |
-| §2–§7 (`severity`, `node_kind`, `path`, `target`, `constraint_component`, `shape`) | `SHACL/Shapes.lean` (`Severity`, `NodeKind`, `Path`, `Target`, `Constraint`, `Shape`, `ShapesGraph`) | Core 1.1 constructors only; the SHACL 1.2 / SHACL-AF / SHACL-SPARQL constructors (`CC_DatatypeIn`, `CC_SingleLine`, `CC_MemberShape`, `CC_Sparql`, `CC_Custom`, `T_Sparql`, `values_query`, `target_where`, `constraint_meta`) are not ported |
+| §2–§7 (`severity`, `node_kind`, `path`, `target`, `constraint_component`, `shape`) | `SHACL/Shapes.lean` (`Severity`, `NodeKind`, `Path`, `Target`, `Constraint`, `Shape`, `ShapesGraph`) | Core 1.1 constructors at this stage; the SHACL 1.2 constructors (`CC_DatatypeIn`, `CC_SingleLine`, `CC_MemberShape`, `target_where`, `constraint_meta`, …) landed later (see "SHACL 1.2 core and SHACL-SPARQL 1.2" below) and SHACL-SPARQL (`CC_Sparql`, `CC_Custom`) in the SHACL-SPARQL stage; `T_Sparql` is still not ported |
 | §11a `rdf_list_terms`, §11c `parse_path`, §11f `build_targets` / `build_constraints` / `build_shape` / `parse_shape_from_graph_pure` | `rdfListTerms`, `decodePath`, `decodeTargets`, `decodeConstraints`, `decodeShape`, `decodeShapesGraph` | same fuel idiom (graph length bounds every data-driven walk); list-before-sh:*Path reading kept for path-strange-001/002 |
 | §11c `path_invert`, `eval_path_fuel` / `eval_seq_fuel` / `eval_alt_fuel` / `eval_plus_fuel` | `Path.invert`, `evalPathFuel` group, `evalPath` | structural recursion on the fuel; `dedupTerms` after every hop |
 | §11d `shacl_class_closure` / `is_shacl_instance` | `superClasses` (fixpoint over `addNew`), `isShaclInstance` | the F\* materialises the closure of the whole graph with the RDFS rules; the Lean walks rdfs:subClassOf from the node's rdf:type values — same §1.4 relation, proved both ways |
@@ -2969,7 +2969,10 @@ maxCount at the unit level too.
 - `collectShapeViolations_eq_nil_iff` (§3.4) and `validate_conforms_iff`
   / `validate_sound` (§3.1): the engine reports no result iff
   `Spec.Conforms` / `Spec.GraphConforms`, by induction on the fuel
-  through the mutual group.
+  through the mutual group. (Superseded by
+  `collectShapeViolations_conforms_iff` when SHACL 1.2 conformance
+  checking landed: a sh:Debug result coexists with conformance, so "no
+  result" and "conforms" are no longer the same statement.)
 
 Where the specification names the engine: `Spec.ValueConforms` for
 sh:xone counts matching shapes with the engine's filter, and
@@ -13893,3 +13896,76 @@ streaming HACL\* counterpart bound, so that one hash stays pure Lean.
 `L4Factoidal/Storage/ShardManifest.lean`'s `verifyEntry`/
 `openVerified?` (the IBK2 `Reader` boundary) were left on `pureHasher`
 — they are not on the IBK3 paths measured above.
+
+## SHACL 1.2 core and SHACL-SPARQL 1.2 (https://github.com/danbri/factoidal/issues/698, 2026-10-10)
+
+Implemented from the SHACL 1.2 Core and SHACL-SPARQL 1.2 editor's
+drafts vendored under `third_party/testing/shacl/shacl12-core` and
+`shacl12-sparql`, with `formal/fstar/SHACL*.fst` as the behaviour
+reference. Branch `claude/wt-shacl12`.
+
+| Suite (`l4shacl`, full report comparison) | Before | After |
+|---|---|---|
+| SHACL 1.2 core | 103 pass, 30 fail (out of 133) | 138 pass, 0 fail (out of 138) |
+| SHACL 1.2 sparql | 22 pass, 3 fail (out of 25) | 25 pass, 0 fail (out of 25) |
+| SHACL 1.0 core | 98 pass, 0 fail (out of 98) | 98 pass, 0 fail (out of 98) |
+| SHACL 1.0 sparql | 22 pass, 0 fail (out of 22) | 22 pass, 0 fail (out of 22) |
+| `l4shacl-nodeexpr` | 140 pass, 0 fail, 2 unsupported (out of 142) | unchanged |
+| `l4shacl-rules` | 88 pass, 0 fail (out of 88) | unchanged |
+
+⚠️ The denominator moved from 133 to 138 because of a harness defect,
+not new tests: `Harness/ShaclProbe.lean` parsed every file as RDF 1.1
+Turtle, and five core files that write constraint reifiers with the RDF
+1.2 annotation syntax `{| … |}` failed to parse and left the count
+(stderr said "cannot read"; the score line did not). The probe now
+parses RDF 1.2 Turtle and counts an unreadable file as a failing entry.
+
+What landed, by SHACL 1.2 section:
+
+- Conformance checking and sh:conformanceDisallows: `sh:Trace`,
+  `sh:Debug`; conformance = no result whose severity is in the
+  disallowed set (default Violation, Warning, Info), for the report and
+  inside every shape-expecting component (`ValidationEnv.conforms`).
+- List-valued sh:class / sh:datatype / sh:nodeKind, `sh:TripleTerm`,
+  sh:singleLine, sh:rootClass.
+- SHACL lists (`shaclListMembers`) and sh:memberShape, sh:minListLength,
+  sh:maxListLength, sh:uniqueMembers, with sh:detail results.
+- sh:subsetOf, sh:someValue, sh:uniqueValuesFor, sh:closed sh:ByTypes
+  (collectProperties over the shapes graph), sh:reifierShape /
+  sh:reificationRequired, sh:nodeByExpression (with sh:sourceConstraint).
+- Targets: sh:targetWhere, sh:shape (every shape, from the data graph),
+  sh:ShapeClass; sh:targetNode as a node expression; sh:values /
+  sh:defaultValue.
+- Constraint reifiers carrying sh:severity, sh:message, sh:deactivated.
+- sh:uniqueLang keys on (language tag, base direction).
+- SHACL-SPARQL 1.2 select and SPARQL expr node expressions; `evalNe`
+  now reads the expression from the shapes graph and data from the focus
+  graph; `validateFull` is the entry point with every evaluator.
+
+Readings taken where the text admits two (no test separates them):
+
+- sh:uniqueValuesFor, "No result is produced if V has no values for any
+  of the properties": read as "a node missing a value for some key
+  property has no key" (`uvfKey`), the F\* `uvf_key` reading.
+- sh:uniqueValuesFor's target table is computed before validation under
+  an environment with an empty table; a sh:targetWhere shape that itself
+  carries sh:uniqueValuesFor is a recursion SHACL leaves undefined
+  (§shapes-recursion).
+- sh:closed now checks the triples of each VALUE node (§4.8.1: "each
+  triple that has a value node as its subject"); it checked the focus
+  node, which differs for a property shape.
+
+Theorem changes (none weakened; each restated where SHACL 1.2 made the
+old statement false):
+
+- `collectShapeViolations_eq_nil_iff` → `collectShapeViolations_conforms_iff`
+  (+ `collectShapeViolations_eq_nil_conforms`, the sound direction).
+- `Spec.Conforms` gates each constraint on its own severity
+  (`Shape.severityOf`); `Spec.ValueConforms` takes the focus node and
+  the shape; `Spec.GraphConforms` / `validate_conforms_iff` quantify
+  over all shapes at `shapeFocusNodes`.
+- `validate_no_targets_conforms` gains the premise "no sh:shape triple
+  in the data graph".
+- New: `closedViolations_eq_nil_iff`, `uvfClash_eq_false_iff`,
+  `someValue_aggConforms_iff`, the per-constraint severity lemmas.
+

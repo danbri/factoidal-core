@@ -37,6 +37,14 @@ the numeric / dateTime / ill-formed-literal helpers of
   ported — see `Vocabulary.lean`; the F* `assume val
   eval_sparql_target_select` is a forward reference for exactly those,
   and nothing corresponds to it here.
+* SHACL 1.2: conformance is SHACL 1.2 conformance checking — no result
+  whose severity is in the conformance-disallow set
+  (`ValidationEnv.conforms`), for the report and inside every
+  shape-expecting component. Node expressions (sh:targetNode blank
+  nodes, sh:values, sh:defaultValue, sh:nodeByExpression) are evaluated
+  by `ValidationEnv.evalExpr`, a parameter: the default is the Core
+  evaluator (a term is its own output), and `NodeExpr.validateFull`
+  passes the full one (shnex library + SHACL-SPARQL expressions).
 
 The specification side (`Spec` namespace) states each ported Core
 component declaratively over the same data, and `Spec.Conforms` is
