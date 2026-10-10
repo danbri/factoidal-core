@@ -98,7 +98,13 @@ const nq = await serialize(ds, { format: "nquads" });
 > returned Dataset holds whatever the parser recovered (statements
 > before and after the error, for Turtle/TriG), and
 > `dataset.diagnostics` lists what was skipped. `lenient` needs the
-> npm-entry engine bundle.
+> npm-entry engine bundle. On the Lean engine (`factoidal/l4-core`) the
+> Turtle, TriG, N-Triples and N-Quads parsers skip each bad statement
+> and keep every good one; `dataset.diagnostics` has one entry per
+> skipped statement with `message`, `offset`, `line`, `column` and a
+> stable `class` (`undefined-prefix`, `bad-escape`, `unexpected-token`,
+> ...), and `{ lenient: true, maxErrors: n }` stops after `n` of them
+> ([issue 716](https://github.com/danbri/factoidal/issues/716)).
 
 CommonJS: `const factoidal = require("@factoidal/core")`.
 
