@@ -8,6 +8,12 @@ document and section it implements, files read top-to-bottom as
 concept walks, and the proofs are ordinary tactic scripts a reviewer
 can step through — no SMT solver in the loop.
 
+`factoidal-core` is Factoidal's new home. Lean 4 is also the implementation
+target, not only a reviewable specification. The Shardborough block and
+paged dictionary foundation is integrated here; native disk lifecycle
+integration remains open. See the [migration record](../../docs/20261010-shardborough-storage-foundation.md).
+Suite counts below record earlier runs, not a fresh run of this checkout.
+
 ## Reading order (for RDF/SPARQL reviewers)
 
 1. [`L4Factoidal/RDF/Core.lean`](L4Factoidal/RDF/Core.lean) — what a
@@ -67,7 +73,7 @@ decisions, and the assumption report against the originals.
 ```
 elan default stable          # or let lean-toolchain pin it
 cd formal/lean4
-lake build                   # library + proofs + #guard tests
+lake build L4Factoidal        # library + proofs + #guard tests
 ```
 
 No Lean dependencies beyond the pinned toolchain — no mathlib, no
@@ -76,13 +82,17 @@ vendored HACL\* Ed25519 under `third_party/hacl/` (Apache-2.0), which
 `lakefile.lean` compiles with the system `cc` into `libl4hacl.a`; see
 `Crypto/Ed25519.lean` for why it is the only extern.
 
+This checkout currently lacks `third_party/hacl/`, so native targets using
+the main Lake configuration need that dependency restored. The standalone
+`Bench/lakefile.lean` builds pure Lean benchmarks without that extern
+library; it does not supply native crypto or the full database executables.
+
 ## Relation to the F\* development
 
-The F\* tree remains the production engine (extracted to
-OCaml/JS/wasm/C, measured against the W3C suites). This Lean port is
-the specification made maximally reviewable, and the platform for the
-proof program where tactic-driven structural induction is the right
-tool. The two share vocabulary and test scenarios on purpose; where
-they must not be confused (engine equality vs term equality; spec
-evaluator vs indexed engine), both trees say so at the definition
-site.
+The F\* tree preserves the existing engine and its specification lineage.
+New Shardborough work is Lean 4 first in this repository, with executable
+implementations, refinement proofs and separate performance measurements.
+The two trees share vocabulary and test scenarios; neither a source-tree
+test run nor an F\* proof certifies a different Lean implementation. Keep
+engine equality distinct from term equality, and specification evaluators
+distinct from indexed execution, at each definition and proof boundary.

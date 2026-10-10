@@ -8,9 +8,10 @@ log into a new base. That makes the log's framing the crash-safety
 boundary of the whole store, which is why it is specified in the
 formal source rather than left to a writer — iron rule 11 again.
 
-Framing, per record:
+Framing, per record (matching the established F* `DLE1` format):
 
-    [ magic : u32 'DLE1' ][ version : u8 ][ payload ][ checksum : u32 ]
+    [ magic : u32 'DLE1' ][ version : u32 ][ payload length : u32 ]
+    [ payload ][ checksum : u32 ]
 
 The checksum is a plain ADDITIVE mod-2^32 check, deliberately NOT a
 cryptographic digest. Its only job is to let a replay reject a TORN
@@ -22,6 +23,8 @@ need.
 -/
 import L4Factoidal.Storage.Bytes
 import L4Factoidal.RDF.Core
+import Init.Omega
+import L4Factoidal.NatBounds
 
 namespace L4Factoidal.Storage
 
@@ -29,14 +32,17 @@ open L4Factoidal.RDF
 
 /-- `'DLE1'` little-endian. -/
 def deltaEntryMagic : UInt32 := 0x31454C44
-def deltaEntryVersion : UInt8 := 1
+def deltaEntryVersion : UInt32 := 1
 
 /-- `'DLB1'` — a batch of entries written atomically. -/
 def deltaBatchMagic : UInt32 := 0x31424C44
+def deltaBatchVersion : UInt32 := 1
 /-- `'DLOG'` — the log file header. -/
 def deltaLogMagic : UInt32 := 0x474F4C44
+def deltaLogVersion : UInt32 := 1
 /-- `'CEP1'` — the compacted-epoch marker. -/
 def compactedEpochMagic : UInt32 := 0x31504543
+def compactedEpochVersion : UInt32 := 1
 
 /-- Term tags. Each tag space is disjoint and under 256, so one byte
     suffices. -/
@@ -63,12 +69,80 @@ def EntryKind.ofTag : UInt8 → Option EntryKind
 def simpleChecksum (bs : List UInt8) : UInt32 :=
   bs.foldl (fun acc b => acc + b.toUInt32) 0
 
-/-- One log record, framed. -/
+/-- The log's sequence and epoch fields have the same u64 representation.
+Keeping these primitives near the epoch marker makes the companion format
+match the established F* `CEP1` framing rather than accidentally introducing
+a Lean-only u32 variant. -/
+def writeU64LE (n : UInt64) : List UInt8 :=
+  writeU32LE n.toUInt32 ++ writeU32LE (n >>> 32).toUInt32
+
+@[simp] theorem writeU64LE_length (n : UInt64) : (writeU64LE n).length = 8 := by
+  simp [writeU64LE]
+
+def readU64LE (bs : List UInt8) (pos : Nat) : Option UInt64 := do
+  let lo ← readU32LE bs pos
+  let hi ← readU32LE bs (pos + 4)
+  pure (lo.toUInt64 ||| (hi.toUInt64 <<< 32))
+
+private theorem bitVec64_toNat_64 : (64 : BitVec 64).toNat = 64 := by decide
+
+private theorem u64Low32 (n : UInt64) :
+    n.toUInt32.toBitVec = n.toBitVec.extractLsb' 0 32 := by
+  rw [UInt64.toBitVec_toUInt32, BitVec.setWidth_eq_extractLsb' (by decide)]
+
+private theorem u64High32 (n : UInt64) :
+    ((n >>> 32).toUInt32).toBitVec = n.toBitVec.extractLsb' 32 32 := by
+  rw [UInt64.toBitVec_toUInt32, UInt64.toBitVec_shiftRight]
+  simp only [BitVec.ushiftRight_eq', BitVec.toNat_umod,
+    UInt64.toNat_toBitVec, UInt64.toNat_ofNat, Nat.reducePow, Nat.reduceMod]
+  rw [bitVec64_toNat_64]
+  simp only [Nat.reduceMod]
+  rw [BitVec.setWidth_ushiftRight_eq_extractLsb]
+
+private theorem joinU64LowHigh32 (n : UInt64) :
+    n.toUInt32.toUInt64 ||| ((n >>> 32).toUInt32.toUInt64 <<< 32) = n := by
+  apply UInt64.toBitVec_inj.1
+  rw [UInt64.toBitVec_or, UInt64.toBitVec_shiftLeft,
+    UInt32.toBitVec_toUInt64, UInt32.toBitVec_toUInt64, u64Low32, u64High32]
+  simp only [BitVec.shiftLeft_eq', BitVec.toNat_umod,
+    UInt64.toNat_toBitVec, UInt64.toNat_ofNat, Nat.reducePow, Nat.reduceMod]
+  simp only [bitVec64_toNat_64, Nat.reduceMod]
+  rw [BitVec.or_comm, ← BitVec.setWidth_append_eq_shiftLeft_setWidth_or,
+    BitVec.extractLsb'_append_extractLsb']
+  simp
+
+/-- The u64 framing primitive is an inverse in front of arbitrary subsequent
+    bytes. It is expressed as two proved u32 fields and a checked bit-vector
+    reconstruction, matching the F* DLOG/CEP1 representation. -/
+theorem readU64LE_writeU64LE_append (n : UInt64) (rest : List UInt8) :
+    readU64LE (writeU64LE n ++ rest) 0 = some n := by
+  unfold readU64LE writeU64LE
+  rw [List.append_assoc]
+  rw [readU32LE_writeU32LE_append]
+  simp only [Nat.zero_add]
+  have hi : readU32LE
+      (writeU32LE n.toUInt32 ++ (writeU32LE (n >>> 32).toUInt32 ++ rest)) 4 =
+      some (n >>> 32).toUInt32 := by
+    simpa only [writeU32LE_length, List.append_assoc] using
+      (readU32LE_append_writeU32LE (writeU32LE n.toUInt32)
+        (n >>> 32).toUInt32 rest)
+  rw [hi]
+  simpa using joinU64LowHigh32 n
+
+def natFitsU64 (n : Nat) : Bool := n.toUInt64.toNat == n
+
+/-- One log record, framed.  The length is part of the record, so a replay
+    can safely move across records of different kinds and sizes. -/
 def frameEntry (payload : List UInt8) : List UInt8 :=
-  writeU32LE deltaEntryMagic ++ [deltaEntryVersion] ++ payload ++
+  writeU32LE deltaEntryMagic ++ writeU32LE deltaEntryVersion ++
+  writeU32LE (UInt32.ofNat payload.length) ++ payload ++
   writeU32LE (simpleChecksum payload)
 
-/-- Read one record back, given its payload length.
+/-- Checked DLE1 framing refuses payloads that exceed the u32 length field. -/
+def frameEntry? (payload : List UInt8) : Option (List UInt8) :=
+  if payload.length < UInt32.size then some (frameEntry payload) else none
+
+/-- Read one record back, using its encoded payload length.
 
     Every failure mode returns `none` and they are DISTINCT reasons a
     replay must stop rather than continue: a wrong magic means this is
@@ -77,27 +151,108 @@ def frameEntry (payload : List UInt8) : List UInt8 :=
     TORN by a crash. In every case the correct behaviour is to
     truncate the log here — reading on would replay a half-written
     update. -/
-def parseEntry (bs : List UInt8) (payloadLen : Nat) : Option (List UInt8) :=
+def parseEntry (bs : List UInt8) : Option (List UInt8 × List UInt8) :=
   match readU32LE bs 0 with
   | none => none
   | some magic =>
       if magic != deltaEntryMagic then none
-      else match (bs.drop 4).head? with
+      else match readU32LE bs 4 with
         | none => none
         | some ver =>
             if ver != deltaEntryVersion then none
-            else
-              let rest := bs.drop 5
-              let payload := rest.take payloadLen
-              if payload.length != payloadLen then none
-              else match readU32LE rest payloadLen with
-                | none => none
-                | some stored =>
-                    if stored != simpleChecksum payload then none
-                    else some payload
+            else match readU32LE bs 8 with
+              | none => none
+              | some payloadLen =>
+                  let n := payloadLen.toNat
+                  let afterHeader := bs.drop 12
+                  let payload := afterHeader.take n
+                  if payload.length != n then none
+                  else match readU32LE afterHeader n with
+                    | none => none
+                    | some stored =>
+                        if stored != simpleChecksum payload then none
+                        else some (payload, (afterHeader.drop n).drop 4)
 
 /-- The bytes one framed record occupies. -/
-def entryFrameSize (payloadLen : Nat) : Nat := 4 + 1 + payloadLen + 4
+def entryFrameSize (payloadLen : Nat) : Nat := 4 + 4 + 4 + payloadLen + 4
+
+private theorem readEntryVersion (payload rest : List UInt8) :
+    readU32LE (frameEntry payload ++ rest) 4 = some deltaEntryVersion := by
+  unfold frameEntry
+  exact readU32LE_append_writeU32LE (writeU32LE deltaEntryMagic) _ _
+
+private theorem readEntryLength (payload rest : List UInt8) :
+    readU32LE (frameEntry payload ++ rest) 8 = some (UInt32.ofNat payload.length) := by
+  unfold frameEntry
+  exact readU32LE_append_writeU32LE
+    (writeU32LE deltaEntryMagic ++ writeU32LE deltaEntryVersion) _ _
+
+private theorem dropEntryHeader (payload rest : List UInt8) :
+    (frameEntry payload ++ rest).drop 12 =
+      payload ++ writeU32LE (simpleChecksum payload) ++ rest := by
+  simp [frameEntry, writeU32LE, List.append_assoc]
+
+private theorem dropEntryFrame (payload rest : List UInt8) :
+    (frameEntry payload ++ rest).drop (12 + payload.length + 4) = rest := by
+  have hFrame : frameEntry payload ++ rest =
+      (writeU32LE deltaEntryMagic ++ writeU32LE deltaEntryVersion ++
+        writeU32LE (UInt32.ofNat payload.length)) ++
+        (payload ++ writeU32LE (simpleChecksum payload) ++ rest) := by
+    simp [frameEntry, List.append_assoc]
+  rw [hFrame]
+  have hHeaderLength :
+      (writeU32LE deltaEntryMagic ++ writeU32LE deltaEntryVersion ++
+        writeU32LE (UInt32.ofNat payload.length)).length = 12 := by simp
+  rw [show 12 + payload.length + 4 =
+      (writeU32LE deltaEntryMagic ++ writeU32LE deltaEntryVersion ++
+        writeU32LE (UInt32.ofNat payload.length)).length + (payload.length + 4) by
+      rw [hHeaderLength]
+      simp [Nat.add_assoc]]
+  rw [drop_append_length_add]
+  rw [List.append_assoc payload (writeU32LE (simpleChecksum payload)) rest]
+  rw [drop_append_length_add payload (writeU32LE (simpleChecksum payload) ++ rest) 4]
+  simpa using drop_append_length_add (writeU32LE (simpleChecksum payload)) rest 0
+
+/-- A well-sized DLE1 payload parses back to itself and leaves a following
+    record untouched. The size premise is material: a u32 length field cannot
+    faithfully represent an arbitrarily large Lean list. -/
+theorem parseEntry_frameEntry_append (payload rest : List UInt8)
+    (hSize : payload.length < UInt32.size) :
+    parseEntry (frameEntry payload ++ rest) = some (payload, rest) := by
+  unfold parseEntry
+  rw [show readU32LE (frameEntry payload ++ rest) 0 = some deltaEntryMagic by
+    unfold frameEntry
+    exact readU32LE_writeU32LE_append _ _]
+  rw [readEntryVersion, readEntryLength]
+  simp
+  rw [dropEntryHeader, Nat.mod_eq_of_lt hSize]
+  constructor
+  · apply Nat.min_eq_left
+    have hFrameLength : (frameEntry payload).length = 16 + payload.length := by
+      simp [frameEntry]
+      omega
+    rw [hFrameLength]
+    apply Nat.le_sub_of_add_le
+    calc
+      payload.length + 12 ≤ payload.length + 16 :=
+        Nat.add_le_add_left (by decide) _
+      _ = 16 + payload.length := Nat.add_comm _ _
+      _ ≤ (16 + payload.length) + rest.length := Nat.le_add_right _ _
+  · rw [readU32LE_append_writeU32LE payload (simpleChecksum payload) rest]
+    simp [dropEntryFrame]
+
+/-- Successful checked DLE1 framing, aligned with
+`RDF.Store.Columnar.DeltaLog.fst`, preserves the payload and suffix. -/
+theorem parseEntry_frameEntry?_append (payload encoded rest : List UInt8)
+    (encoded_ok : frameEntry? payload = some encoded) :
+    parseEntry (encoded ++ rest) = some (payload, rest) := by
+  unfold frameEntry? at encoded_ok
+  split at encoded_ok
+  · rename_i payload_fits
+    have encoded_eq : frameEntry payload = encoded := Option.some.inj encoded_ok
+    subst encoded
+    exact parseEntry_frameEntry_append payload rest payload_fits
+  · cases encoded_ok
 
 /-- Replay a log: read records until one fails, returning the payloads
     recovered and whether the log ended CLEANLY.
@@ -107,35 +262,120 @@ def entryFrameSize (payloadLen : Nat) : Nat := 4 + 1 + payloadLen + 4
     from the first that does not". Returning the clean flag lets the
     caller distinguish a tidy shutdown from a crash without changing
     what it recovered. -/
-partial def replay (bs : List UInt8) (payloadLen : Nat) : List (List UInt8) × Bool :=
-  let rec go (bs : List UInt8) (acc : List (List UInt8)) : List (List UInt8) × Bool :=
-    if bs.isEmpty then (acc, true)
-    else match parseEntry bs payloadLen with
-      | none => (acc, false)          -- torn tail: stop here
-      | some p => go (bs.drop (entryFrameSize payloadLen)) (acc ++ [p])
-  go bs []
+def replay (bs : List UInt8) : List (List UInt8) × Bool :=
+  /- The accumulator is reversed so each successfully decoded frame costs
+     O(1); reversing once at the end preserves on-disk order without the
+     former O(number-of-frames²) `acc ++ [payload]` behavior. -/
+  let rec go : Nat → List UInt8 → List (List UInt8) → List (List UInt8) × Bool
+    | 0, remaining, acc => (acc, remaining.isEmpty)
+    | fuel + 1, remaining, acc =>
+      if remaining.isEmpty then (acc, true)
+      else match parseEntry remaining with
+        | none => (acc, false)          -- torn tail: stop here
+        | some (payload, rest) => go fuel rest (payload :: acc)
+  let (reversed, clean) := go bs.length bs []
+  (reversed.reverse, clean)
 
 /-- The compacted-epoch marker. A store whose base file was rebuilt
     at epoch `n` must IGNORE log records from an earlier epoch, or a
     replay would re-apply updates the compaction already folded in —
     the double-apply bug this marker exists to prevent. -/
 structure EpochMarker where
-  epoch : UInt32
+  epoch : Nat
 deriving Repr, DecidableEq, Inhabited
 
+/-- `CEP1` has the same explicit magic/version/length/checksum framing as a
+delta record. It records the largest epoch already folded into this immutable
+base. An empty result is an explicit refusal of an unrepresentable epoch. -/
 def frameEpoch (m : EpochMarker) : List UInt8 :=
-  writeU32LE compactedEpochMagic ++ writeU32LE m.epoch
+  if !natFitsU64 m.epoch then [] else
+  let body := writeU64LE m.epoch.toUInt64
+  writeU32LE compactedEpochMagic ++ writeU32LE compactedEpochVersion ++
+    writeU32LE (UInt32.ofNat body.length) ++ body ++ writeU32LE (simpleChecksum body)
 
 def parseEpoch (bs : List UInt8) : Option EpochMarker :=
-  match readU32LE bs 0, readU32LE bs 4 with
-  | some magic, some e =>
-      if magic == compactedEpochMagic then some ⟨e⟩ else none
-  | _, _ => none
+  do
+    let magic ← readU32LE bs 0
+    if magic != compactedEpochMagic then none else
+    let version ← readU32LE bs 4
+    if version != compactedEpochVersion then none else
+    let bodyLen ← readU32LE bs 8
+    if bodyLen != 8 then none else
+    let afterHeader := bs.drop 12
+    let body := afterHeader.take bodyLen.toNat
+    if body.length != bodyLen.toNat then none else
+    let checksum ← readU32LE afterHeader bodyLen.toNat
+    let tail := (afterHeader.drop bodyLen.toNat).drop 4
+    if checksum != simpleChecksum body || !tail.isEmpty then none else
+    let epoch ← readU64LE body 0
+    some ⟨epoch.toNat⟩
+
+private theorem readEpochMagic (n : Nat) (h : natFitsU64 n = true) :
+    readU32LE (frameEpoch ⟨n⟩) 0 = some compactedEpochMagic := by
+  unfold frameEpoch
+  simp only [h, Bool.not_true]
+  exact readU32LE_writeU32LE_append _ _
+
+private theorem readEpochVersion (n : Nat) (h : natFitsU64 n = true) :
+    readU32LE (frameEpoch ⟨n⟩) 4 = some compactedEpochVersion := by
+  unfold frameEpoch
+  simp only [h, Bool.not_true]
+  exact readU32LE_append_writeU32LE (writeU32LE compactedEpochMagic) _ _
+
+private theorem readEpochLength (n : Nat) (h : natFitsU64 n = true) :
+    readU32LE (frameEpoch ⟨n⟩) 8 = some 8 := by
+  unfold frameEpoch
+  simp only [h, Bool.not_true, writeU64LE_length]
+  simpa using
+    (readU32LE_append_writeU32LE
+      (writeU32LE compactedEpochMagic ++ writeU32LE compactedEpochVersion) 8 _)
+
+private theorem dropEpochHeader (n : Nat) (h : natFitsU64 n = true) :
+    (frameEpoch ⟨n⟩).drop 12 =
+      writeU64LE n.toUInt64 ++ writeU32LE (simpleChecksum (writeU64LE n.toUInt64)) := by
+  simp [frameEpoch, h, writeU32LE]
+
+private theorem frameEpoch_length (n : Nat) (h : natFitsU64 n = true) :
+    (frameEpoch ⟨n⟩).length = 24 := by
+  simp [frameEpoch, h, writeU32LE]
+
+/-- The CEP1 companion codec preserves a representable compacted epoch.
+    This is the first Lean theorem for the crash-window marker; the parallel
+    F* result is `lemma_compacted_epoch_roundtrip` in
+    `RDF.Store.Columnar.DeltaLog.fst`. -/
+theorem parseEpoch_frameEpoch (n : Nat) (h : natFitsU64 n = true) :
+    parseEpoch (frameEpoch ⟨n⟩) = some ⟨n⟩ := by
+  have hnBound : n < UInt64.size := by
+    simpa [natFitsU64] using h
+  have hn : n.toUInt64.toNat = n := by
+    change (UInt64.ofNat n).toNat = n
+    rw [← UInt64.ofNatClamp_eq_ofNat n hnBound]
+    exact UInt64.toNat_ofNatClamp_of_lt hnBound
+  unfold parseEpoch
+  rw [readEpochMagic n h]
+  simp
+  rw [readEpochVersion n h]
+  simp
+  rw [readEpochLength n h]
+  simp
+  rw [dropEpochHeader n h]
+  simp [writeU64LE_length, frameEpoch_length n h]
+  have hchecksum : readU32LE
+      (writeU64LE n.toUInt64 ++ writeU32LE (simpleChecksum (writeU64LE n.toUInt64))) 8 =
+      some (simpleChecksum (writeU64LE n.toUInt64)) := by
+    simpa only [writeU64LE_length, List.append_assoc, List.append_nil] using
+      (readU32LE_append_writeU32LE (writeU64LE n.toUInt64)
+        (simpleChecksum (writeU64LE n.toUInt64)) [])
+  rw [hchecksum]
+  simp
+  rw [show readU64LE (writeU64LE n.toUInt64) 0 = some n.toUInt64 by
+    simpa using readU64LE_writeU64LE_append n.toUInt64 []]
+  simp [hn]
 
 /-- Should a record from `recordEpoch` be replayed against a base
     compacted at `baseEpoch`? Only records STRICTLY NEWER than the
     base survive. -/
-def shouldReplay (baseEpoch recordEpoch : UInt32) : Bool := recordEpoch > baseEpoch
+def shouldReplay (baseEpoch recordEpoch : Nat) : Bool := recordEpoch > baseEpoch
 
 /-! ## The delta entry itself
 
@@ -181,6 +421,14 @@ def serializeLString (s : String) : List UInt8 :=
   let b := bytesOfString s
   writeU32LE (UInt32.ofNat b.length) ++ b
 
+/-- Admission-preserving length-prefixed string encoding. The list-returning
+    compatibility encoder above remains useful for pure legacy code, but a
+    durable DLOG writer must refuse a string whose byte length would truncate
+    in its u32 prefix. -/
+def serializeLString? (s : String) : Option (List UInt8) :=
+  let b := bytesOfString s
+  if b.length >= two32 then none else some (writeU32LE (UInt32.ofNat b.length) ++ b)
+
 def parseU8 (bs : List UInt8) : Option (UInt8 × List UInt8) :=
   match bs with
   | []      => none
@@ -224,6 +472,47 @@ def serializeTerm (t : Term) : List UInt8 :=
          | some tag => (1 : UInt8) :: serializeLString tag))
   | .tripleTerm _ _ _ => [termTagTripleTerm]
 
+/-- Durable delta-term admission. Triple terms and directional literals are
+    refused because the current DLOG reader cannot recover their encoding. -/
+def serializeTerm? (t : Term) : Option (List UInt8) :=
+  match t with
+  | .iri i => (serializeLString? i.val).map (termTagIri :: ·)
+  | .bnode b => (serializeLString? b).map (termTagBnode :: ·)
+  | .literal l =>
+      if l.val.direction.isSome then none else do
+        let lexical ← serializeLString? l.val.lexicalForm
+        let datatype ← serializeLString? l.val.datatype.val
+        match l.val.langTag with
+        | none => some (termTagLiteral :: (lexical ++ datatype ++ [(0 : UInt8)]))
+        | some tag => do
+            let language ← serializeLString? tag
+            some (termTagLiteral :: (lexical ++ datatype ++ (1 : UInt8) :: language))
+  | .tripleTerm _ _ _ => none
+
+/-! ### The u32 length-prefix admission test
+
+`serializeTerm` is total: for a string of `2 ^ 32` bytes or more it writes a
+TRUNCATED u32 length prefix, and the record no longer reads back. The two
+decision procedures below are the admission test for that total encoder, so a
+block encoder can refuse such a term before it reaches the wire.
+`L4Factoidal.Storage.TermCodecTheorems` carries the `Prop` form `termFitsU32`
+and the equivalence `termFitsU32b_iff`. -/
+
+/-- The UTF-8 byte length of the string is below the u32 field limit. -/
+def stringFitsU32b (s : String) : Bool := (bytesOfString s).length < two32
+
+/-- Every length-prefixed string in the term fits its u32 length prefix. A
+    triple term has no encoding at all, so it never fits. -/
+def termFitsU32b : Term → Bool
+  | .iri i => stringFitsU32b i.val
+  | .bnode b => stringFitsU32b b
+  | .literal l =>
+      stringFitsU32b l.val.lexicalForm && stringFitsU32b l.val.datatype.val &&
+        (match l.val.langTag with
+         | none => true
+         | some tag => stringFitsU32b tag)
+  | .tripleTerm _ _ _ => false
+
 private def mkLiteral? (lex dt : String) (tag : Option String) : Option Term :=
   if h : isIri dt then
     let l : Literal := { lexicalForm := lex, datatype := ⟨dt, h⟩,
@@ -256,6 +545,11 @@ def serializeSubject (s : Subject) : List UInt8 :=
   | .iri i   => subjTagIri :: serializeLString i.val
   | .bnode b => subjTagBnode :: serializeLString b
 
+def serializeSubject? (s : Subject) : Option (List UInt8) :=
+  match s with
+  | .iri i => (serializeLString? i.val).map (subjTagIri :: ·)
+  | .bnode b => (serializeLString? b).map (subjTagBnode :: ·)
+
 def parseSubject (bs : List UInt8) : Option (Subject × List UInt8) := do
   let (tag, afterTag) ← parseU8 bs
   if tag == subjTagIri then
@@ -268,6 +562,12 @@ def parseSubject (bs : List UInt8) : Option (Subject × List UInt8) := do
 
 def serializeTriple (t : Triple) : List UInt8 :=
   serializeSubject t.s ++ serializeLString t.p.val ++ serializeTerm t.o
+
+def serializeTriple? (t : Triple) : Option (List UInt8) := do
+  let subject ← serializeSubject? t.s
+  let predicate ← serializeLString? t.p.val
+  let object ← serializeTerm? t.o
+  some (subject ++ predicate ++ object)
 
 def parseTriple (bs : List UInt8) : Option (Triple × List UInt8) := do
   let (s, afterS) ← parseSubject bs
@@ -289,6 +589,11 @@ def serializeGraphOpt (g : Option Iri) : List UInt8 :=
   | none   => [(0 : UInt8)]
   | some i => (1 : UInt8) :: serializeLString i
 
+def serializeGraphOpt? (g : Option Iri) : Option (List UInt8) :=
+  match g with
+  | none => some [(0 : UInt8)]
+  | some i => (serializeLString? i).map ((1 : UInt8) :: ·)
+
 def parseGraphOpt (bs : List UInt8) : Option (Option Iri × List UInt8) := do
   let (tag, after) ← parseU8 bs
   if tag == 0 then some (none, after)
@@ -306,6 +611,23 @@ def serializeDeltaEntryPayload (e : DeltaEntry) : List UInt8 :=
   | .clear g    => deTagClear :: serializeGraphOpt g
   | .drop g     => deTagDrop :: serializeLString g
   | .create g   => deTagCreate :: serializeLString g
+
+/-- Admission-preserving payload encoding used by durable DLB1/DLOG writers.
+    Every nested length prefix is checked, and unsupported triple terms are
+    rejected before framing rather than becoming a replay-time parse failure. -/
+def serializeDeltaEntryPayload? (e : DeltaEntry) : Option (List UInt8) :=
+  match e with
+  | .add t g => do
+      let triple ← serializeTriple? t
+      let graph ← serializeGraphOpt? g
+      some (deTagAdd :: (triple ++ graph))
+  | .remove t g => do
+      let triple ← serializeTriple? t
+      let graph ← serializeGraphOpt? g
+      some (deTagRemove :: (triple ++ graph))
+  | .clear g => (serializeGraphOpt? g).map (deTagClear :: ·)
+  | .drop g => (serializeLString? g).map (deTagDrop :: ·)
+  | .create g => (serializeLString? g).map (deTagCreate :: ·)
 
 def parseDeltaEntryPayload (bs : List UInt8) : Option (DeltaEntry × List UInt8) := do
   let (tag, afterTag) ← parseU8 bs
@@ -339,6 +661,205 @@ structure DeltaBatch where
   epoch : Nat
   ops : List DeltaEntry
   deriving Repr, DecidableEq
+
+/-- Remove batches whose effects are already included in the immutable base.
+    A missing marker means a never-compacted collection, so every committed
+    batch remains visible. -/
+def filterBatchesSinceEpoch : Option Nat → List DeltaBatch → List DeltaBatch
+  | none, batches => batches
+  | some baseEpoch, batches => batches.filter fun batch => shouldReplay baseEpoch batch.epoch
+
+/-- Split a committed history at a compacted epoch. Once a batch newer than
+    the base is seen, every remaining batch must also be newer. This is the
+    exact suffix form needed by compaction; an epoch that moves back across
+    the marker is refused rather than being silently reordered. -/
+def splitBatchesSinceEpoch? (baseEpoch : Nat) : List DeltaBatch → Option (List DeltaBatch × List DeltaBatch)
+  | [] => some ([], [])
+  | batch :: rest =>
+      if shouldReplay baseEpoch batch.epoch then
+        if rest.all (fun later => shouldReplay baseEpoch later.epoch) then
+          some ([], batch :: rest)
+        else none
+      else do
+        let (older, newer) ← splitBatchesSinceEpoch? baseEpoch rest
+        some (batch :: older, newer)
+
+/-- The partitioner's first output is a committed prefix and its second is
+    the exact `filterBatchesSinceEpoch` suffix. -/
+theorem splitBatchesSinceEpoch?_sound (baseEpoch : Nat) :
+    ∀ (batches older newer : List DeltaBatch),
+      splitBatchesSinceEpoch? baseEpoch batches = some (older, newer) →
+      batches = older ++ newer ∧
+        filterBatchesSinceEpoch (some baseEpoch) batches = newer
+  | [], older, newer, h => by
+      simp [splitBatchesSinceEpoch?, filterBatchesSinceEpoch] at h
+      rcases h with ⟨rfl, rfl⟩
+      simp [filterBatchesSinceEpoch]
+  | batch :: rest, older, newer, h => by
+      simp only [splitBatchesSinceEpoch?] at h
+      by_cases replay : shouldReplay baseEpoch batch.epoch
+      · simp only [if_pos replay] at h
+        by_cases later : rest.all (fun item => shouldReplay baseEpoch item.epoch)
+        · simp only [if_pos later, Option.some.injEq] at h
+          have hOlder : older = [] := (congrArg Prod.fst h).symm
+          have hNewer : newer = batch :: rest := (congrArg Prod.snd h).symm
+          subst older
+          subst newer
+          constructor
+          · simp
+          · have hAll : ∀ item, item ∈ rest → shouldReplay baseEpoch item.epoch = true := by
+              intro item hItem
+              exact List.all_eq_true.mp later item hItem
+            change (batch :: rest).filter (fun item => shouldReplay baseEpoch item.epoch) = batch :: rest
+            simp only [List.filter_cons, replay, if_true]
+            exact congrArg (batch :: ·) (List.filter_eq_self.mpr hAll)
+        · simp only [if_neg later] at h
+          cases h
+      · simp only [if_neg replay] at h
+        cases hSplit : splitBatchesSinceEpoch? baseEpoch rest with
+        | none => simp [hSplit] at h
+        | some pair =>
+            rcases pair with ⟨olderTail, newerTail⟩
+            simp [hSplit] at h
+            rcases h with ⟨hOlder, hNewer⟩
+            symm at hOlder
+            symm at hNewer
+            subst older
+            subst newer
+            obtain ⟨hHistory, hFilter⟩ :=
+              splitBatchesSinceEpoch?_sound baseEpoch rest olderTail newerTail hSplit
+            constructor
+            · simp [hHistory]
+            · change (batch :: rest).filter (fun item => shouldReplay baseEpoch item.epoch) = newerTail
+              simp only [List.filter_cons, replay, if_false]
+              exact hFilter
+
+/-- Replay admission used at the storage boundary. A legacy generation has no
+    marker and replays all committed batches. A compacted generation must
+    produce the proved epoch prefix/suffix partition. -/
+def replayBatchesSinceEpoch? : Option Nat → List DeltaBatch → Option (List DeltaBatch)
+  | none, batches => some batches
+  | some baseEpoch, batches => (splitBatchesSinceEpoch? baseEpoch batches).map Prod.snd
+
+/-- Durable DLOG history is in commit order. Sequence numbers must increase
+    strictly; epochs may repeat for several writes against one immutable base,
+    but must never decrease. Rejecting a malformed order makes the CEP1
+    replay filter a suffix of the admitted history, rather than trusting a
+    hand-crafted log to have that property. -/
+private def validBatchHistoryGo : Option Nat → Option Nat → List DeltaBatch → Bool
+  | _, _, [] => true
+  | previousSeq, previousEpoch, batch :: rest =>
+      let seqOK := previousSeq.map (fun previous => decide (previous < batch.seq)) |>.getD true
+      let epochOK := previousEpoch.map (fun previous => decide (previous ≤ batch.epoch)) |>.getD true
+      seqOK && epochOK && validBatchHistoryGo (some batch.seq) (some batch.epoch) rest
+
+def validBatchHistory (batches : List DeltaBatch) : Bool :=
+  validBatchHistoryGo none none batches
+
+/-! ### DLB1 committed batches and DLOG files
+
+`DeltaEntry` is intentionally framed on its own: a batch can therefore hold
+mixed add/remove/graph-management operations without an out-of-band payload
+size.  A `DLB1` frame commits the complete SPARQL Update request as one unit;
+the enclosing `DLOG` file is a header followed by such frames.  On recovery we
+accept only the valid prefix and return the untouched suffix, which is the
+expected result of a process dying during its final append. -/
+
+def serializeFramedDeltaEntry (e : DeltaEntry) : List UInt8 :=
+  frameEntry (serializeDeltaEntryPayload e)
+
+def serializeFramedDeltaEntry? (entry : DeltaEntry) : Option (List UInt8) := do
+  let payload ← serializeDeltaEntryPayload? entry
+  frameEntry? payload
+
+def parseFramedDeltaEntry (bs : List UInt8) : Option (DeltaEntry × List UInt8) := do
+  let (payload, rest) ← parseEntry bs
+  let (entry, payloadRest) ← parseDeltaEntryPayload payload
+  if payloadRest.isEmpty then some (entry, rest) else none
+
+def serializeDeltaBatchBody? (b : DeltaBatch) : Option (List UInt8) :=
+  if !natFitsU64 b.seq || !natFitsU64 b.epoch || b.ops.length >= two32 then none
+  else do
+    let entries ← b.ops.mapM serializeFramedDeltaEntry?
+    some (writeU64LE b.seq.toUInt64 ++ writeU64LE b.epoch.toUInt64 ++
+      writeU32LE (UInt32.ofNat b.ops.length) ++ entries.flatten)
+
+def parseNFramedDeltaEntries : Nat → List UInt8 → Option (List DeltaEntry × List UInt8)
+  | 0, bs => some ([], bs)
+  | n + 1, bs => do
+      let (entry, afterEntry) ← parseFramedDeltaEntry bs
+      let (rest, tail) ← parseNFramedDeltaEntries n afterEntry
+      some (entry :: rest, tail)
+
+def parseDeltaBatchBody (bs : List UInt8) : Option DeltaBatch := do
+  let seq ← readU64LE bs 0
+  let epoch ← readU64LE bs 8
+  let count ← readU32LE bs 16
+  let (ops, tail) ← parseNFramedDeltaEntries count.toNat (bs.drop 20)
+  if tail.isEmpty then some { seq := seq.toNat, epoch := epoch.toNat, ops } else none
+
+/-- Total DLB1 writer admission. A caller that cannot encode a batch receives
+    `none`, rather than an empty frame that could be silently omitted by a
+    whole-log writer. -/
+def serializeDeltaBatch? (b : DeltaBatch) : Option (List UInt8) := do
+  let body ← serializeDeltaBatchBody? b
+  if body.length >= two32 then none else
+  some (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+    writeU32LE (UInt32.ofNat body.length) ++ body ++ writeU32LE (simpleChecksum body))
+
+/-- Compatibility writer for existing in-memory callers. Durable writers must
+    use `serializeDeltaBatch?` and reject `none`; this legacy total projection
+    is retained only so older pure call sites do not acquire an unsound
+    implicit fallback. -/
+def serializeDeltaBatch (b : DeltaBatch) : List UInt8 :=
+  (serializeDeltaBatch? b).getD []
+
+def parseDeltaBatch (bs : List UInt8) : Option (DeltaBatch × List UInt8) := do
+  let magic ← readU32LE bs 0
+  if magic != deltaBatchMagic then none else
+  let version ← readU32LE bs 4
+  if version != deltaBatchVersion then none else
+  let bodyLen ← readU32LE bs 8
+  let afterHeader := bs.drop 12
+  let body := afterHeader.take bodyLen.toNat
+  if body.length != bodyLen.toNat then none else
+  let checksum ← readU32LE afterHeader bodyLen.toNat
+  if checksum != simpleChecksum body then none else
+  let batch ← parseDeltaBatchBody body
+  some (batch, (afterHeader.drop bodyLen.toNat).drop 4)
+
+def replayDeltaBatches (bs : List UInt8) : List DeltaBatch × List UInt8 :=
+  /- As with raw DLE1 replay, retain the order only once at the end. A DLOG
+     can contain many committed UPDATE batches, so repeated tail append here
+     made recovery needlessly quadratic. -/
+  let rec go : Nat → List UInt8 → List DeltaBatch → List DeltaBatch × List UInt8
+    | 0, remaining, acc => (acc, remaining)
+    | fuel + 1, remaining, acc =>
+      if remaining.isEmpty then (acc, [])
+      else match parseDeltaBatch remaining with
+        | none => (acc, remaining)
+        | some (batch, rest) => go fuel rest (batch :: acc)
+  let (reversed, tail) := go bs.length bs []
+  (reversed.reverse, tail)
+
+/-- Total DLOG writer admission: all committed batches must be representable.
+    Unlike `List.flatMap serializeDeltaBatch`, this cannot turn one rejected
+    batch into a log that silently lacks an UPDATE. -/
+def serializeLog? (batches : List DeltaBatch) : Option (List UInt8) := do
+  let frames ← batches.mapM serializeDeltaBatch?
+  pure (writeU32LE deltaLogMagic ++ writeU32LE deltaLogVersion ++ frames.flatten)
+
+/-- Compatibility writer for existing pure callers. New durable paths must use
+    `serializeLog?` and surface encoding refusal. -/
+def serializeLog (batches : List DeltaBatch) : List UInt8 :=
+  (serializeLog? batches).getD []
+
+def parseLog (bs : List UInt8) : Option (List DeltaBatch × List UInt8) := do
+  let magic ← readU32LE bs 0
+  if magic != deltaLogMagic then none else
+  let version ← readU32LE bs 4
+  if version != deltaLogVersion then none else
+  some (replayDeltaBatches (bs.drop 8))
 
 /-! ### Build-time checks
 
@@ -381,5 +902,11 @@ counts BYTES, and a character count would be wrong here. -/
     returning a short string: the prefix claims 9 bytes and 3 follow. -/
 
 #guard (parseLString (writeU32LE 9 ++ [97, 98, 99])).isNone
+
+private def historyBatch (seq epoch : Nat) : DeltaBatch := { seq, epoch, ops := [] }
+
+#guard validBatchHistory [historyBatch 1 1, historyBatch 2 1, historyBatch 3 2]
+#guard !validBatchHistory [historyBatch 1 2, historyBatch 2 1]
+#guard !validBatchHistory [historyBatch 2 1, historyBatch 1 1]
 
 end L4Factoidal.Storage

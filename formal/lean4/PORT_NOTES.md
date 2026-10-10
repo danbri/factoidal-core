@@ -13818,3 +13818,69 @@ regressions. F\* committed binary, same day:
 Method hazard write-up: hazard #33 in
 `skills/workflow-gotchas-debugging/SKILL.md` (iron rule 14, same
 landing).
+
+## 2026-10-10 — Shardborough storage foundation moves into factoidal-core
+
+Core base: `7f5c9623`. Source: clean storage modules in the sibling
+`factoidal` checkout at `0c331255b3a0fec0306b5459a944749364db891f`.
+This is a Lean-to-Lean migration, with the following F\* lineage, not a
+claim that a source-tree proof certifies the destination automatically.
+
+| Responsibility | F\* lineage | Landed Lean modules and assurance |
+|---|---|---|
+| Byte operations and checksums | `HDT.Container.fst` | `Storage.Bytes`: u32 inverse and allocation-free ByteArray CRC32C refinement |
+| Framed update history | `RDF.Store.Columnar.DeltaLog.fst` | `Storage.DeltaLog`, `DeltaLogTests`: total replay, established DLE1/DLB1/DLOG/CEP1 framing; u64, frame/suffix and epoch inverses; epoch history partition |
+| Term encoding | `HDT.Dictionary.fst`, `RDF.Store.Columnar.DeltaLog.fst` | `Storage.TermCodecTheorems`: checked encoding implies supported term and exact parse round trip |
+| Block representation | Lean-native formats; no exact F\* wire counterpart claimed | `Storage.BlockMvp`, `BlockWireV0`, `IndexedBlock`, `IndexedBlockWireV1/V2/V3`, tests: representation/scan refinements and wire regressions |
+| IBK3 whole-block codec | Lean-native format | `Storage.IndexedBlockWireV3Theorems`: successful checked encode implies decode preserves dictionary/rows and graph denotation |
+| Generic paged dictionary and PTD1 | Lean-native formats | `Storage.PagedTermDictionaryCore`, `PagedTermDictionary`, both theorem modules: checked encode/decode round trips and ByteArray/list decoder refinement |
+| Artifact and Merkle identity | Pure Lean SHA-256; no new F\* port | `Storage.BlockArtifact`, `BlockMerkle`, tests: parameterised hash operations and regression checks, not a general inclusion proof or native-hash equivalence |
+| Arithmetic support | Lean-native helpers | `NatBounds`: natural-number equalities used by the codecs |
+
+The migration adds 22 modules and reconciles existing `Bytes`, `DeltaLog`
+and `DeltaLogTests`. DLE1 now uses u32 magic, version and payload length;
+CEP1 uses explicit framing around its u64 epoch, matching the established
+F\* layouts. This replaces the older incompatible Lean-only layouts; it
+does not claim backward decoding of those obsolete layouts. Replay accepts
+mixed record lengths and returns only the valid prefix after a torn tail.
+
+Destination improvements beyond the sibling source: checked term/log writers
+refuse directional literals, which this legacy term wire format cannot
+represent; `frameEntry?` bounds the complete DLE1 payload before encoding.
+The former bug was reproduced by four failing guards before the fix. The
+latter has an unconditional successful-checked-frame parse/suffix theorem,
+without allocating an oversized test payload. Unchecked legacy encoders
+remain distinct APIs; new durable paths must use checked encoders.
+
+Review also exposed and fixed selective-range structural-admission gaps:
+row positions must match the requested start, prefix length must fit the
+declared row count, and the complete dictionary extent must match its page
+layout. Six refusal guards failed before these changes and pass afterward.
+The helpers still require admitted artifacts and authenticated ranges.
+Whole-log parsing/serialization remain raw codecs; `validBatchHistory` is a
+separate predicate that a durable host must enforce.
+
+Validation: focused checked-frame/term build passes (13 jobs); full
+`lake build L4Factoidal` passes (439 jobs). The imported block/index/dictionary
+modules contain 71 guards; `DeltaLogTests` contains 52. Headline axiom audits
+use only `propext`, `Classical.choice` and `Quot.sound`, with no new custom
+axioms, `sorry`, `native_decide`, `partial def` or extern realisations in the
+migrated modules. Existing linter warnings remain.
+
+Native smoke/baseline: `Bench.StorageCodecBench` builds through the standalone
+Bench Lake configuration (90 jobs), validates exact dictionary/rows/graph
+and canonical bytes, then times encode/decode separately with warmup and
+median-of-three runs. Fixtures of 500, 1,000 and 10,000 rows pass; the largest
+encodes in 70.92 ms and decodes in 46.45 ms on Darwin arm64/Lean 4.33.1.
+These are synthetic codec baselines, not an optimisation or database parity
+measurement. Exact results are in
+`docs/20261010-shardborough-storage-codec.csv`.
+
+Assurance limits: no general selective scan/page lookup theorem, authenticated
+partial-page admission proof, Merkle inclusion theorem or pure/native hash
+equivalence is added here. The native disk pack/query/activation/compaction
+executables and their I/O are not migrated in this increment. No real-corpus
+or QLever/Virtuoso parity claim follows from these synthetic storage tests.
+See `docs/20261010-shardborough-storage-foundation.md` for validation and
+remaining work. Shell-variable and copied-assurance-prose hazards are recorded
+in `skills/factoidal-lean-basics/SKILL.md` in the same landing.

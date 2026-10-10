@@ -6,10 +6,12 @@ import L4Factoidal.Storage.DeltaLog
 
 namespace L4Factoidal.Storage
 
+open L4Factoidal.RDF
+
 private def pay : List UInt8 := [10, 20, 30]
 
 -- Round trip.
-#guard parseEntry (frameEntry pay) 3 == some pay
+#guard parseEntry (frameEntry pay) == some (pay, [])
 #guard (frameEntry pay).length == entryFrameSize 3
 
 -- Magic numbers are the documented ASCII, little-endian.
@@ -21,29 +23,29 @@ private def pay : List UInt8 := [10, 20, 30]
 -- EVERY failure mode returns none, and each is a distinct reason a
 -- replay must stop rather than continue.
 -- Wrong magic: not a record boundary.
-#guard parseEntry ([0, 0, 0, 0] ++ (frameEntry pay).drop 4) 3 == none
+#guard parseEntry ([0, 0, 0, 0] ++ (frameEntry pay).drop 4) == none
 -- Unknown version: a newer writer produced this.
-#guard parseEntry ((frameEntry pay).set 4 99) 3 == none
+#guard parseEntry ((frameEntry pay).set 4 99) == none
 -- Corrupt payload: the append was torn.
-#guard parseEntry ((frameEntry pay).set 5 99) 3 == none
+#guard parseEntry ((frameEntry pay).set 12 99) == none
 -- Short buffer: torn mid-record.
-#guard parseEntry ((frameEntry pay).take 7) 3 == none
-#guard parseEntry [] 3 == none
+#guard parseEntry ((frameEntry pay).take 7) == none
+#guard parseEntry [] == none
 
 -- Replay of a clean log recovers every record and reports CLEAN.
 private def twoEntries : List UInt8 := frameEntry pay ++ frameEntry [1, 2, 3]
-#guard (replay twoEntries 3).1 == [pay, [1, 2, 3]]
-#guard (replay twoEntries 3).2 == true
+#guard (replay twoEntries).1 == [pay, [1, 2, 3]]
+#guard (replay twoEntries).2 == true
 
 -- A TORN TAIL is not an error: take every record that verifies,
 -- discard from the first that does not. This is the expected shape
 -- after a crash mid-append.
 private def tornLog : List UInt8 := frameEntry pay ++ (frameEntry [1, 2, 3]).take 6
-#guard (replay tornLog 3).1 == [pay]
-#guard (replay tornLog 3).2 == false      -- ...and the caller is told
+#guard (replay tornLog).1 == [pay]
+#guard (replay tornLog).2 == false      -- ...and the caller is told
 
 -- An empty log is clean, not torn.
-#guard (replay [] 3).2 == true
+#guard (replay []).2 == true
 
 -- The checksum is additive, and it changes when the payload does.
 #guard simpleChecksum [1, 2, 3] == 6
@@ -59,8 +61,67 @@ private def tornLog : List UInt8 := frameEntry pay ++ (frameEntry [1, 2, 3]).tak
 -- compaction's own folded-in updates get applied twice.
 #guard parseEpoch (frameEpoch ⟨7⟩) == some ⟨7⟩
 #guard parseEpoch [0, 0, 0, 0, 0, 0, 0, 0] == none
+#guard parseEpoch ((frameEpoch ⟨7⟩).take 13) == none
+#guard parseEpoch ((frameEpoch ⟨7⟩).set 12 99) == none
 #guard shouldReplay 5 6
 #guard !(shouldReplay 5 5)
 #guard !(shouldReplay 5 4)
+
+private def exIri : WfIri := ⟨"http://example.org/s", by decide⟩
+private def exP   : WfIri := ⟨"http://example.org/p", by decide⟩
+private def batch : DeltaBatch := {
+  seq := 7, epoch := 3,
+  ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "hello")⟩ none,
+          .remove ⟨.iri exIri, exP, .iri exIri⟩ (some "http://example.org/g")] }
+
+-- A compacted base through epoch 3 replays only the later request.
+#guard (filterBatchesSinceEpoch (some 3) [batch, { batch with seq := 8, epoch := 4 }]).map (·.seq) == [8]
+#guard (filterBatchesSinceEpoch none [batch]).map (·.seq) == [7]
+
+-- A committed batch carries variable-size entry frames, its own checksum,
+-- and round-trips with an arbitrary following batch untouched.
+#guard parseDeltaBatch (serializeDeltaBatch batch ++ [0xAA]) == some (batch, [0xAA])
+#guard parseLog (serializeLog [batch]) == some ([batch], [])
+-- Recovery's reverse accumulator preserves physical log order across batches.
+#guard parseLog (serializeLog [batch, { batch with seq := 8, epoch := 4 }])
+  == some ([batch, { batch with seq := 8, epoch := 4 }], [])
+#guard serializeDeltaBatch? batch == some (serializeDeltaBatch batch)
+#guard serializeLog? [batch] == some (serializeLog [batch])
+#guard (serializeDeltaBatch? { batch with seq := UInt64.size }).isNone
+#guard (serializeLog? [{ batch with epoch := UInt64.size }]).isNone
+-- A currently unsupported RDF-star term is rejected on the durable writer
+-- path rather than emitted as a frame that replay would later refuse.
+#guard (serializeDeltaEntryPayload?
+  (.add ⟨.iri exIri, exP, .tripleTerm (.iri exIri) exP (.iri exIri)⟩ none)).isNone
+#guard parseLog (serializeLog [batch] ++ (serializeDeltaBatch { batch with seq := 8 }).take 11)
+  == some ([batch], (serializeDeltaBatch { batch with seq := 8 }).take 11)
+
+#guard frameEntry pay ==
+  [68, 76, 69, 49, 1, 0, 0, 0, 3, 0, 0, 0, 10, 20, 30, 60, 0, 0, 0]
+#guard frameEntry? pay == some (frameEntry pay)
+#guard serializeFramedDeltaEntry? (.clear none) == some (serializeFramedDeltaEntry (.clear none))
+#guard parseEntry (frameEntry pay ++ [0xAA]) == some (pay, [0xAA])
+#guard replay (frameEntry [1] ++ frameEntry [2, 3, 4, 5]) == ([[1], [2, 3, 4, 5]], true)
+#guard parseEpoch (frameEpoch ⟨UInt32.size + 9⟩) == some ⟨UInt32.size + 9⟩
+#guard parseEpoch (frameEpoch ⟨7⟩ ++ [0xAA]) == none
+#guard frameEpoch ⟨UInt64.size⟩ == []
+
+private def directed : Term := .literal (Literal.dirLangString "hello" "en" .ltr)
+
+#guard (serializeTerm? directed).isNone
+#guard (serializeFramedDeltaEntry? (.add ⟨.iri exIri, exP, directed⟩ none)).isNone
+#guard (serializeDeltaEntryPayload? (.add ⟨.iri exIri, exP, directed⟩ none)).isNone
+#guard (serializeDeltaBatch?
+  { batch with ops := [.add ⟨.iri exIri, exP, directed⟩ none] }).isNone
+#guard (serializeLog?
+  [batch, { batch with seq := 8, ops := [.add ⟨.iri exIri, exP, directed⟩ none] }]).isNone
+
+#print axioms readU32LE_writeU32LE_append
+#print axioms crc32cAppendArray_eq
+#print axioms readU64LE_writeU64LE_append
+#print axioms parseEntry_frameEntry_append
+#print axioms parseEntry_frameEntry?_append
+#print axioms parseEpoch_frameEpoch
+#print axioms splitBatchesSinceEpoch?_sound
 
 end L4Factoidal.Storage

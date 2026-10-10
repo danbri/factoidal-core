@@ -80,6 +80,12 @@ measurement, never by assertion.
 Standing priorities: `docs/claude-rules/current-state.md` § Standing
 priorities.
 
+Repository direction (owner, 2026-10-10): **"Factoidal-core should be the
+new home for Factoidal."** New Shardborough work belongs here, Lean 4 first
+and test first. Bring runtime dependencies and proofs into this repository
+together; a successful build or measurement in the older `factoidal`
+checkout is not validation of this checkout.
+
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —
 > [agentskills.io](https://agentskills.io) format, vendor-neutral) and

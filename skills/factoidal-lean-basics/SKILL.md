@@ -46,6 +46,11 @@ Measured 2026-08-22, late: the library has zero `sorry`, zero user `axiom`, zero
   before trusting its silence.
 - The lakefile is `lakefile.lean` (Lean DSL) since the VC stage — the
   TOML format has no `extern_lib`; keep new targets in the DSL.
+- **zsh loop variable trap (2026-10-10):** `path` is a special array
+  tied to `PATH`. A read-only instruction-file loop used `for path in`
+  and two subsequent git metadata reads failed with `command not found`.
+  Run a fresh shell to restore the environment; use a descriptive ordinary
+  variable such as `instruction_file`, never `path`, for these loops.
 - `formal/lean4/lean-toolchain` pins the version (4.33.1 at
   creation); elan auto-fetches it. Bump only deliberately, own
   commit, green `lake build`.
@@ -303,6 +308,11 @@ executable edge only.
   simplification laws.
 - `PORT_NOTES.md` is the F\*↔Lean ledger: update its correspondence
   table and assumption report with every ported module.
+- When migrating modules between repositories, recheck assurance prose as
+  well as imports. On 2026-10-10, two copied hash-module headers referred to
+  an absent native harness and claimed universal hash agreement from finite
+  differential tests. Corrected before commit: tests are measurements, not
+  an equivalence theorem, and a source-tree run is not a destination-tree run.
 - Iron-rule-#6 discipline carries over: NO conformance claims for
   the Lean side until a Lean executable reads the same W3C manifests
   `bin/w3c-runner` does (ladder rung 3 on #466).

@@ -78,6 +78,20 @@ the baseline JSON in the same PR and say why.
 
 ### Other tools
 
+- `formal/lean4/Bench/StorageCodecBench.lean` — native IBK3 encode/decode
+  baseline with exact dictionary/rows/graph and canonical-byte validation.
+  From `formal/lean4`, build with
+  `lake -f Bench/lakefile.lean build l4storage-codec-bench`, then run
+  `.lake/build/bin/l4storage-codec-bench 500,1000,10000 3`.
+  Fixture creation and validation are excluded; each phase has a warmup and
+  median-of-N timed runs. This pure-codec target needs no HACL* extern and
+  does not measure disk lifecycle, query latency or competitor parity.
+- **Optional resource-wrapper trap (2026-10-10):** `/usr/bin/time -l`
+  ran the native codec successfully but then failed on sandbox-denied
+  `sysctl kern.clockrate`. Waiting for escalation cost 403.5 seconds, with
+  no codec process hung. Read wrapper stderr separately from benchmark
+  output, report the restriction promptly, and do not treat missing RSS as
+  a workload hang or block independent validation on an optional metric.
 - `tools/backend_benchmark.py` — backend comparisons.
 - `tools/compare_rdf_parser_counts.py` — parse-speed and count parity
   vs pyoxigraph.

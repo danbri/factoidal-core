@@ -1,5 +1,12 @@
 # Factoidal
 
+**Current home: `factoidal-core`.** New Shardborough development is Lean 4
+first and test first. The indexed block and paged dictionary foundation is
+now here; native disk query, activation and compaction integration remains
+in progress. See the [storage migration record](docs/20261010-shardborough-storage-foundation.md).
+Historical suite counts and deployment links below are not a fresh test run
+of this checkout.
+
 **A linked information system with graph data and the Web at its
 heart.** Factoidal stores, queries, links and serves RDF, with its
 APIs, interfaces and protocols grounded in the W3C specifications and
@@ -88,7 +95,20 @@ backend still carries that glue until #118 completes.
 
 **[Live W3C test results](https://danbri.github.io/factoidal/test-results/)**
 
-## Quick Start
+## Lean 4 Check
+
+With the pinned Lean toolchain installed:
+
+```bash
+cd formal/lean4
+lake build L4Factoidal
+```
+
+This checks the library, proofs and build-time regression tests. It does not
+run the W3C corpus or build all native executables. See the
+[Lean README](formal/lean4/README.md) for the native dependency boundary.
+
+## F* Quick Start
 
 ```bash
 # Install prerequisites
@@ -104,8 +124,8 @@ eval $(opam env --switch=fstar)
 opam install fstar z3 zarith sha digestif
 
 # Clone with W3C test data
-git clone --recurse-submodules https://github.com/danbri/factoidal.git
-cd factoidal
+git clone --recurse-submodules https://github.com/danbri/factoidal-core.git
+cd factoidal-core
 
 # Already cloned without submodules? The test runners need these two
 # (without them they report zero tests):
