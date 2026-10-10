@@ -1,10 +1,13 @@
-// A SELECT with 20,000 solutions answers on Node's default stack, on both
-// engines. Until 2026-10-10 the Lean evaluator numbered the rows of a SELECT
+// A SELECT with 20,000 solutions, and canonicalize() of 24,000 blank-node
+// quads, answer on Node's default stack, on both entries. Until 2026-10-10 the Lean evaluator numbered the rows of a SELECT
 // with a projection by a recursion that took one stack frame per row
 // (`SPARQL.numberRows`); the wasm module ran out of Node's stack at about
 // 11,000 rows ("Maximum call stack size exceeded"), where the native build,
 // with smaller frames and an 8 MB stack, did not. `numberRowsTR` and its
-// `csimp` theorem (formal/lean4/L4Factoidal/SPARQL/Query.lean) repair it.
+// `csimp` theorem (formal/lean4/L4Factoidal/SPARQL/Query.lean) repair it;
+// the Results JSON writer (`SPARQL.rowsJoined`) and the duplicate removal of
+// RDFC-1.0 (`RDF.Canonical.collapseKeyedQQuads`, `dedupAdj`) had the same
+// shape and are repaired the same way.
 // https://github.com/danbri/factoidal/issues/713 stage 5.
 
 import test from 'node:test';
@@ -31,5 +34,23 @@ for (const [name, api] of [['full', full], ['core', core]]) {
     } finally {
       await handle.close();
     }
+  });
+}
+
+const B = 8000;
+const bl = [];
+for (let i = 0; i < B; i += 1) {
+  bl.push(`_:p${i} <http://e/type> <http://e/Person> .`,
+    `_:p${i} <http://e/name> "Person ${i}" .`,
+    `_:p${i} <http://e/age> "${18 + (i % 60)}" .`);
+}
+const BNQ = bl.join('\n') + '\n';
+
+for (const [name, api] of [['full', full], ['core', core]]) {
+  test(`${name} entry: canonicalize of ${3 * B} blank-node quads answers on the default stack`, async () => {
+    const out = await api.canonicalize(BNQ, { format: 'nquads' });
+    const lines = out.split('\n').filter(Boolean);
+    assert.equal(lines.length, 3 * B);
+    assert.ok(lines.every((l) => l.startsWith('_:c14n')), 'every subject is a canonical label');
   });
 }

@@ -208,6 +208,37 @@ def dedupAdj : List String → List String
   | x :: y :: rest =>
       if x == y then dedupAdj (y :: rest) else x :: dedupAdj (y :: rest)
 
+/-- `dedupAdj` with an accumulator. `dedupAdj` conses after its recursive
+call: one stack frame per line. In the wasm module under Node's default
+stack, `canonicalize` of 24,000 quads ran out of stack here after
+`collapseKeyedQQuads` was repaired
+(https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp`
+theorem below makes the compiler emit this form for every call. -/
+def dedupAdjTR : List String → List String
+  | []        => []
+  | x :: rest => go x rest []
+where
+  /-- `x` is the last survivor so far; `acc` holds the earlier ones, newest
+  first. -/
+  go (x : String) : List String → List String → List String
+    | [],        acc => (x :: acc).reverse
+    | y :: rest, acc => if x == y then go y rest acc else go y rest (x :: acc)
+
+theorem dedupAdjTR_go_eq :
+    ∀ (rest : List String) (x : String) (acc : List String),
+      dedupAdjTR.go x rest acc = acc.reverse ++ dedupAdj (x :: rest)
+  | [], x, acc => by simp [dedupAdjTR.go, dedupAdj]
+  | y :: rest, x, acc => by
+      by_cases h : (x == y) = true
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y acc]
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y (x :: acc)]
+
+@[csimp] theorem dedupAdj_eq_dedupAdjTR : @dedupAdj = @dedupAdjTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons x rest => simp [dedupAdjTR, dedupAdjTR_go_eq]
+
 /-- Concatenate a list of strings. -/
 def joinStrings (xs : List String) : String := xs.foldl (· ++ ·) ""
 

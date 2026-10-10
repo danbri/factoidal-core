@@ -108,6 +108,11 @@ After stage 3 (§ 7) the wasm of 0.9.0 is 10,402,990 bytes raw and 2,042,240
 bytes with gzip -9; every JavaScript file `browser.js` loads is 67,446 bytes
 with gzip -9 together.
 
+After stage 4 (§ 9) the full module is 10.52 MB raw, 2.07 MB with gzip -9,
+and the core module `l4factoidal-core.wasm` (`@factoidal/core/core`) is
+5.66 MB raw, 1.07 MB with gzip -9: 3.1 times the F\* full bundle after
+compression.
+
 Speed: the 2026-08-22 benchmark (issue 476) measured the Lean query path as
 quadratic (2,891 ms against 205 ms for F\* wasm at 8,000 triples). The Lean
 evaluator has changed a lot since then; the Lean vs F\* survey of 2026-10-10
@@ -127,7 +132,11 @@ implementation:
    closed by stage 2; N-Quads order and the three differences listed above
    remain).
 4. Download size (about 3.4 times larger compressed) and query speed are not
-   yet measured to be acceptable for a browser default.
+   yet measured to be acceptable for a browser default. (Stage 4, § 9: the core
+   module is 3.1 times the F\* full bundle compressed. Stage 5, § 10: the Lean
+   engine is within 2 times the faster F\* bundle on every row at 12,000
+   triples and faster on parse and SHACL; at 3,000 triples ORDER BY and
+   GROUP BY are 2.0 to 2.2 times slower, issue NEW-1.)
 
 COTTAS is not a reason: the owner's ruling on issue 566 lets the package drop
 the F\* COTTAS functions in favour of the Lean store.
@@ -151,12 +160,16 @@ the F\* COTTAS functions in favour of the Lean store.
    comparison builds (and the differential harness `l4diff`). The COTTAS
    functions are replaced by the Lean store functions. Version 0.9.0.
    **Done 2026-10-10** (branch `claude/wt-npm-lean-3`); the record is § 7.
-4. Size profile: a smaller Lean wasm for the browser, from a dispatch table
+4. [x] Size profile: a smaller Lean wasm for the browser, from a dispatch table
    that reaches a subset of the library (the role `./lite` had), measured
-   against the F\* lite bundle.
-5. Speed: the npm benchmark (`tests/perf/l4_vs_fstar_wasm_bench.mjs`) re-run;
+   against the F\* lite bundle. **Done 2026-10-10** (branch
+   `claude/wt-npm-lean-45`): `l4factoidal-core.wasm` and the `./core` entry;
+   the record, with the bytes per Lean namespace, is § 9.
+5. [x] Speed: the npm benchmark (`tests/perf/l4_vs_fstar_wasm_bench.mjs`) re-run;
    any row where the Lean engine is more than 2 times slower becomes an
-   issue before the switch is published.
+   issue before the switch is published. **Done 2026-10-10** (same branch):
+   eight rows at three sizes, three stack overflows found and two families
+   repaired, the speed gate `npm run test:speed`; the record is § 10.
 
 ## 7. Stage 3: what landed (2026-10-10)
 
