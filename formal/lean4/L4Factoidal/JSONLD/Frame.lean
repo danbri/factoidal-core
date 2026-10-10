@@ -443,18 +443,73 @@ end
 order of their identifiers. -/
 def matchingSubjects (env : Env) (graph : String) (subjects : List String) (fr : Json)
     (fl : Flags) : Res (List String) :=
-  let fuel := Json.size fr + 16
-  let rec go : List String → Res (List String)
+  (matchingSubjectsGo env graph fr fl (Json.size fr + 16) subjects).map
+    (fun ids => ids.mergeSort (fun a b => !strLt b a))
+where
+  /-- The ids of `subjects` whose node matches, in the order given; the
+  first error stops the walk. -/
+  matchingSubjectsGo (env : Env) (graph : String) (fr : Json) (fl : Flags) (fuel : Nat) :
+      List String → Res (List String)
     | [] => .ok []
     | id :: rest =>
       match env.node graph id with
-      | none => go rest
+      | none => matchingSubjectsGo env graph fr fl fuel rest
       | some n =>
         match filterSubject env fl.requireAll n fr fuel with
         | .error e => .error e
-        | .ok true => (go rest).map (fun r => id :: r)
-        | .ok false => go rest
-  (go subjects).map (fun ids => ids.mergeSort (fun a b => !strLt b a))
+        | .ok true => (matchingSubjectsGo env graph fr fl fuel rest).map (fun r => id :: r)
+        | .ok false => matchingSubjectsGo env graph fr fl fuel rest
+
+/-- `matchingSubjects.matchingSubjectsGo` with a reverse accumulator: a
+tail call per subject. The walk visits every subject of a graph, so its
+length is the size of the data; the readable form conses after its
+recursive call, one frame per matching subject
+(https://github.com/danbri/factoidal/issues/746). The `csimp` theorem makes
+the compiler emit this form. -/
+def matchingSubjectsGoTR (env : Env) (graph : String) (fr : Json) (fl : Flags) (fuel : Nat)
+    (subjects : List String) : Res (List String) :=
+  go subjects []
+where
+  go : List String → List String → Res (List String)
+    | [], acc => .ok acc.reverse
+    | id :: rest, acc =>
+      match env.node graph id with
+      | none => go rest acc
+      | some n =>
+        match filterSubject env fl.requireAll n fr fuel with
+        | .error e => .error e
+        | .ok true => go rest (id :: acc)
+        | .ok false => go rest acc
+
+theorem matchingSubjectsGoTR_go_eq (env : Env) (graph : String) (fr : Json) (fl : Flags)
+    (fuel : Nat) : ∀ (subjects acc : List String),
+      matchingSubjectsGoTR.go env graph fr fl fuel subjects acc =
+        (matchingSubjects.matchingSubjectsGo env graph fr fl fuel subjects).map
+          (acc.reverse ++ ·)
+  | [], acc => by
+      simp [matchingSubjectsGoTR.go, matchingSubjects.matchingSubjectsGo, Except.map]
+  | id :: rest, acc => by
+      simp only [matchingSubjectsGoTR.go, matchingSubjects.matchingSubjectsGo]
+      cases env.node graph id with
+      | none => exact matchingSubjectsGoTR_go_eq env graph fr fl fuel rest acc
+      | some n =>
+          simp only
+          cases filterSubject env fl.requireAll n fr fuel with
+          | error e => rfl
+          | ok b =>
+              cases b with
+              | true =>
+                  simp only
+                  rw [matchingSubjectsGoTR_go_eq env graph fr fl fuel rest (id :: acc)]
+                  cases matchingSubjects.matchingSubjectsGo env graph fr fl fuel rest <;>
+                    simp [Except.map]
+              | false => exact matchingSubjectsGoTR_go_eq env graph fr fl fuel rest acc
+
+@[csimp] theorem matchingSubjectsGo_eq_TR :
+    @matchingSubjects.matchingSubjectsGo = @matchingSubjectsGoTR := by
+  funext env graph fr fl fuel subjects
+  rw [matchingSubjectsGoTR, matchingSubjectsGoTR_go_eq]
+  cases matchingSubjects.matchingSubjectsGo env graph fr fl fuel subjects <;> simp [Except.map]
 
 /-! ## The output arena -/
 
@@ -885,8 +940,8 @@ def matCont (arena : Array OCont) (i : Nat) (fuel : Nat) : Json :=
   | 0 => .null
   | fuel + 1 =>
     match arena[i]? with
-    | some (.arr vsRev) => .array (matVals arena vsRev.reverse fuel)
-    | some (.obj es) => .object (matEntries arena es.toList fuel)
+    | some (.arr vsRev) => .array (matValsAcc arena vsRev.reverse fuel [])
+    | some (.obj es) => .object (matEntriesAcc arena es.toList fuel [])
     | none => .null
 
 def matVals (arena : Array OCont) (vs : List OVal) (fuel : Nat) : List Json :=
@@ -908,7 +963,79 @@ def matEntries (arena : Array OCont) (es : List (String × OVal)) (fuel : Nat)
     | (k, .lit j) :: rest => (k, j) :: matEntries arena rest fuel
     | (k, .ref c) :: rest => (k, matCont arena c fuel) :: matEntries arena rest fuel
 
+/-- `matVals` onto a reverse accumulator: a tail call per value, so the
+number of values of one property costs no stack; only the nesting of
+containers (`matCont`) takes a frame per level. `matCont` calls this form;
+`matValsAcc_eq` proves it equal to `matVals`
+(https://github.com/danbri/factoidal/issues/746). -/
+def matValsAcc (arena : Array OCont) (vs : List OVal) (fuel : Nat) (acc : List Json) :
+    List Json :=
+  match fuel with
+  | 0 => acc.reverse
+  | fuel + 1 =>
+    match vs with
+    | [] => acc.reverse
+    | .lit j :: rest => matValsAcc arena rest fuel (j :: acc)
+    | .ref k :: rest => matValsAcc arena rest fuel (matCont arena k fuel :: acc)
+
+/-- `matEntries` onto a reverse accumulator (see `matValsAcc`). -/
+def matEntriesAcc (arena : Array OCont) (es : List (String × OVal)) (fuel : Nat)
+    (acc : List (String × Json)) : List (String × Json) :=
+  match fuel with
+  | 0 => acc.reverse
+  | fuel + 1 =>
+    match es with
+    | [] => acc.reverse
+    | (k, .lit j) :: rest => matEntriesAcc arena rest fuel ((k, j) :: acc)
+    | (k, .ref c) :: rest => matEntriesAcc arena rest fuel ((k, matCont arena c fuel) :: acc)
+
 end
+
+theorem matValsAcc_eq (arena : Array OCont) : ∀ (fuel : Nat) (vs : List OVal) (acc : List Json),
+    matValsAcc arena vs fuel acc = acc.reverse ++ matVals arena vs fuel
+  | 0, vs, acc => by simp [matValsAcc, matVals]
+  | _ + 1, [], acc => by simp [matValsAcc, matVals]
+  | fuel + 1, .lit j :: rest, acc => by
+      simp [matValsAcc, matVals, matValsAcc_eq arena fuel rest]
+  | fuel + 1, .ref k :: rest, acc => by
+      simp [matValsAcc, matVals, matValsAcc_eq arena fuel rest]
+
+theorem matEntriesAcc_eq (arena : Array OCont) :
+    ∀ (fuel : Nat) (es : List (String × OVal)) (acc : List (String × Json)),
+      matEntriesAcc arena es fuel acc = acc.reverse ++ matEntries arena es fuel
+  | 0, es, acc => by simp [matEntriesAcc, matEntries]
+  | _ + 1, [], acc => by simp [matEntriesAcc, matEntries]
+  | fuel + 1, (k, .lit j) :: rest, acc => by
+      simp [matEntriesAcc, matEntries, matEntriesAcc_eq arena fuel rest]
+  | fuel + 1, (k, .ref c) :: rest, acc => by
+      simp [matEntriesAcc, matEntries, matEntriesAcc_eq arena fuel rest]
+
+/-- `matCont` builds arrays and objects exactly as `matVals` and
+`matEntries` describe them. -/
+theorem matCont_arr (arena : Array OCont) (i fuel : Nat) (vsRev : List OVal)
+    (h : arena[i]? = some (.arr vsRev)) :
+    matCont arena i (fuel + 1) = .array (matVals arena vsRev.reverse fuel) := by
+  simp [matCont, h, matValsAcc_eq]
+
+theorem matCont_obj (arena : Array OCont) (i fuel : Nat) (es : OMap OVal)
+    (h : arena[i]? = some (.obj es)) :
+    matCont arena i (fuel + 1) = .object (matEntries arena es.toList fuel) := by
+  simp [matCont, h, matEntriesAcc_eq]
+
+/-- `matVals` with the empty accumulator: what the compiler emits for
+`matVals` (`csimp`), so no caller pays a frame per value. -/
+def matValsImpl (arena : Array OCont) (vs : List OVal) (fuel : Nat) : List Json :=
+  matValsAcc arena vs fuel []
+
+@[csimp] theorem matVals_eq_matValsImpl : @matVals = @matValsImpl := by
+  funext arena vs fuel; simp [matValsImpl, matValsAcc_eq]
+
+def matEntriesImpl (arena : Array OCont) (es : List (String × OVal)) (fuel : Nat) :
+    List (String × Json) :=
+  matEntriesAcc arena es fuel []
+
+@[csimp] theorem matEntries_eq_matEntriesImpl : @matEntries = @matEntriesImpl := by
+  funext arena es fuel; simp [matEntriesImpl, matEntriesAcc_eq]
 
 def OCont.weight : OCont → Nat
   | .arr vs => 1 + vs.length
