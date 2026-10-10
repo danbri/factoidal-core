@@ -1061,4 +1061,135 @@ no change, or the expansion would never stop. -/
   let st1 := (addLabel {} indI l).1
   !(addLabel st1 indI l).2
 
+
+/-! ## Named-subject class markers are equivalences
+
+`A owl:complementOf B` with `A` an IRI makes `A` exactly the complement
+of `B`: disjoint from it AND covering what `B` misses
+(`WebOnt-complementOf-001`). An individual in neither is refuted; with
+the marker on a blank node (an anonymous complement, no claim about
+`A`) it is not. -/
+
+private def gNamedComplement (named : Bool) : Graph :=
+  (if named then [⟨.iri exC, owlComplementOf, .iri exD⟩]
+   else [⟨bn "anon", owlComplementOf, .iri exD⟩]) ++
+  [ ⟨indI, rdfType, bnT "nc"⟩, ⟨bn "nc", owlComplementOf, .iri exC⟩,
+    ⟨indI, rdfType, bnT "nd"⟩, ⟨bn "nd", owlComplementOf, .iri exD⟩ ]
+
+#guard refuted (gNamedComplement true)
+#guard !(refuted (gNamedComplement false))
+
+/-! `c owl:disjointUnionOf (B G)` (`New-Feature-DisjointUnion-001`):
+a `c` that is not `G` is `B`. Without the axiom it need not be. -/
+
+private def exBoy : WfIri := ⟨"http://e/Boy", rfl⟩
+private def exGirl : WfIri := ⟨"http://e/Girl", rfl⟩
+
+private def gDisjointUnion (withAxiom : Bool) : Graph :=
+  (if withAxiom then
+    [ ⟨.iri exC, owlDisjointUnionOf, bnT "du"⟩,
+      ⟨bn "du", rdfFirst, .iri exBoy⟩, ⟨bn "du", rdfRest, bnT "du2"⟩,
+      ⟨bn "du2", rdfFirst, .iri exGirl⟩, ⟨bn "du2", rdfRest, .iri rdfNil⟩ ] else []) ++
+  [ ⟨indI, rdfType, .iri exC⟩,
+    ⟨indI, rdfType, bnT "ng"⟩, ⟨bn "ng", owlComplementOf, .iri exGirl⟩ ]
+
+#guard entailedByRefutation (gDisjointUnion true) [⟨indI, rdfType, .iri exBoy⟩]
+#guard !entailedByRefutation (gDisjointUnion false) [⟨indI, rdfType, .iri exBoy⟩]
+
+/-! A union antecedent fires on each disjunct (`WebOnt-unionOf-002`). -/
+#guard (splitUnionAntecedents [(.union [.named exC, .named exD], .named exE)]).length == 3
+
+/-! `i : ¬{a, b}` beside `i` identified with `a` is a clash. -/
+private def gNegNominal (member : Bool) : Graph :=
+  [ ⟨indI, rdfType, bnT "o1"⟩, ⟨bn "o1", owlOneOf, bnT "l1"⟩,
+    ⟨bn "l1", rdfFirst, .iri exY⟩, ⟨bn "l1", rdfRest, .iri rdfNil⟩,
+    ⟨indI, rdfType, bnT "neg"⟩, ⟨bn "neg", owlComplementOf, bnT "o2"⟩,
+    ⟨bn "o2", owlOneOf, bnT "l2"⟩,
+    ⟨bn "l2", rdfFirst, .iri (if member then exY else exZ)⟩,
+    ⟨bn "l2", rdfRest, .iri rdfNil⟩ ]
+
+#guard refuted (gNegNominal true)
+#guard !(refuted (gNegNominal false))
+
+/-! ## The min-sum counting clash (`WebOnt-description-logic-903`)
+
+`≥ 2 p` and `≥ 3 q` with `p, q ⊑ r` and disjoint ranges give five
+different `r`-successors: `≤ 4 r` clashes, `≤ 5 r` does not. Without
+the disjointness the successors may overlap. -/
+
+private def gMinSum (bound : String) (disjoint : Bool) : Graph :=
+  [ ⟨.iri exP, rdfsSubPropertyOf, .iri exR⟩, ⟨.iri exQ, rdfsSubPropertyOf, .iri exR⟩,
+    ⟨.iri exP, rdfsRange, .iri exC⟩, ⟨.iri exQ, rdfsRange, .iri exD⟩,
+    ⟨indI, rdfType, bnT "a"⟩, ⟨bn "a", owlOnProperty, .iri exP⟩,
+    ⟨bn "a", owlMinCardinality, cardLit "2"⟩,
+    ⟨indI, rdfType, bnT "b"⟩, ⟨bn "b", owlOnProperty, .iri exQ⟩,
+    ⟨bn "b", owlMinCardinality, cardLit "3"⟩,
+    ⟨indI, rdfType, bnT "m"⟩, ⟨bn "m", owlOnProperty, .iri exR⟩,
+    ⟨bn "m", owlMaxCardinality, cardLit bound⟩ ] ++
+  (if disjoint then [⟨.iri exC, owlDisjointWith, .iri exD⟩] else [])
+
+#guard refuted (gMinSum "4" true)
+#guard !(refuted (gMinSum "5" true))
+#guard !(refuted (gMinSum "4" false))
+
+/-! A named-subject `owl:oneOf` in a CONCLUSION is a claim
+(`c ≡ {a, b}`), not scaffolding: it gets two goals. -/
+#guard (negationGoals [⟨.iri exC, owlOneOf, bnT "ol"⟩,
+                       ⟨bn "ol", rdfFirst, .iri exY⟩, ⟨bn "ol", rdfRest, .iri rdfNil⟩]).map
+         List.length == some 2
+
+
+/-! ## Inverse-functional properties identify predecessors
+
+`p` inverse-functional with `x p a` and `y p a`: `x` and `y` are one
+element, so `x : C` and `y : ¬C` contradict each other; and two
+provably different predecessors are a clash outright. Without the
+declaration neither holds. -/
+
+private def exX : WfIri := ⟨"http://e/x", rfl⟩
+private def exA : WfIri := ⟨"http://e/a", rfl⟩
+private def exB : WfIri := ⟨"http://e/b", rfl⟩
+
+private def gIfp (declared : Bool) (different : Bool) : Graph :=
+  (if declared then [⟨.iri exP, rdfType, .iri owlInverseFunctionalProperty⟩] else []) ++
+  [ ⟨.iri exX, exP, .iri exA⟩, ⟨.iri exY, exP, .iri exA⟩ ] ++
+  (if different then [⟨.iri exX, owlDifferentFrom, .iri exY⟩]
+   else [ ⟨.iri exX, rdfType, .iri exC⟩,
+          ⟨.iri exY, rdfType, bnT "nc"⟩, ⟨bn "nc", owlComplementOf, .iri exC⟩ ])
+
+#guard refuted (gIfp true false)
+#guard refuted (gIfp true true)
+#guard !(refuted (gIfp false false))
+#guard !(refuted (gIfp false true))
+
+/-! ## A symmetric property is read in both directions
+
+`a p b` with `p` symmetric gives `b p a`, so `b : ∀p.⊥` clashes. -/
+
+private def gSymmetric (declared : Bool) : Graph :=
+  (if declared then [⟨.iri exP, rdfType, .iri owlSymmetricProperty⟩] else []) ++
+  [ ⟨.iri exA, exP, .iri exB⟩,
+    ⟨.iri exB, rdfType, bnT "av"⟩, ⟨bn "av", owlOnProperty, .iri exP⟩,
+    ⟨bn "av", owlAllValuesFrom, .iri owlNothing⟩ ]
+
+#guard refuted (gSymmetric true)
+#guard !(refuted (gSymmetric false))
+
+/-! ## The nominal choice branches over the members
+
+`x : {a, b}` with `a : C` and `b : C` puts `x` in `C` whichever member
+it is, so `x : ¬C` is refuted on both branches. With `b : D` instead,
+the branch `x = b` stays open. -/
+
+private def gNominalChoice (bothC : Bool) : Graph :=
+  [ ⟨.iri exX, rdfType, bnT "o"⟩, ⟨bn "o", owlOneOf, bnT "l1"⟩,
+    ⟨bn "l1", rdfFirst, .iri exA⟩, ⟨bn "l1", rdfRest, bnT "l2"⟩,
+    ⟨bn "l2", rdfFirst, .iri exB⟩, ⟨bn "l2", rdfRest, .iri rdfNil⟩,
+    ⟨.iri exA, rdfType, .iri exC⟩,
+    ⟨.iri exB, rdfType, .iri (if bothC then exC else exD)⟩,
+    ⟨.iri exX, rdfType, bnT "nc"⟩, ⟨bn "nc", owlComplementOf, .iri exC⟩ ]
+
+#guard refuted (gNominalChoice true)
+#guard !(refuted (gNominalChoice false))
+
 end L4Factoidal.OWL.Refute

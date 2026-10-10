@@ -1296,14 +1296,19 @@ def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Out
   | none   => l ++ [(ty, Harness.Score.bump {} o)]
 
 def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb : Nat)
-    (rms : Nat) (strict : Bool) (verbose : Bool)
+    (rms : Nat) (strict : Bool) (verbose : Bool) (slowMs : Nat := 0)
     : IO CatalogResult := do
   let t0 ← IO.monoMsNow
   let mut r : CatalogResult := {}
   for c in cat.cases do
     for ty in testTypes do
       if c.types.contains ty then
+        let tu0 ← IO.monoMsNow
         let v ← judge cat c capMs rg rb rms strict ty
+        let tu1 ← IO.monoMsNow
+        -- `--slow-ms N`: name every unit that took N ms or more.
+        if slowMs > 0 && tu1 - tu0 ≥ slowMs then
+          IO.println s!"SLOW {c.id} [{ty}]: {tu1 - tu0} ms"
         let o := v.regime
         let m := v.measure
         let label := s!"{c.id} [{ty}]"
@@ -1441,6 +1446,9 @@ structure Opts where
   /-- `--trace`: print the refuter's saturated state for the `--case`
   ids instead of scoring (`traceMain`). -/
   trace : Bool := false
+  /-- `--slow-ms N`: print every unit whose judgement took `N` ms or
+  more (0, the default, prints none). -/
+  slowMs : Nat := 0
   /-- Decide conclusion containment by ONE blank-node mapping over the
   whole conclusion graph (the RDF 1.1 Semantics interpolation lemma).
   This is the default since 2026-09-04. `--wildcard-match` restores the
@@ -1457,6 +1465,7 @@ def parseArgs : List String → Opts → Opts
   | "--dir" :: d :: rest, o => parseArgs rest { o with dir := d }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--trace" :: rest, o => parseArgs rest { o with trace := true }
+  | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
   | "--indexed-only" :: rest, o => parseArgs rest { o with indexedOnly := true }
@@ -1791,7 +1800,7 @@ unrelated triple absent = {!unrelatedAbsent}"
           else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         printCensus name cat.cases
         let r ← runCatalog name cat o.capMs o.regime o.refuteBudget o.refuteMs
-                  o.strictMatch o.verbose
+                  o.strictMatch o.verbose o.slowMs
         total := total.add r.score
         totalClosure := totalClosure.add r.closureScore
         totalRefPass := totalRefPass + r.refuterPasses

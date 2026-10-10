@@ -53,8 +53,8 @@ Class-expression scaffolding (restriction/list/declaration triples)
 constrains nothing on its own; it is kept verbatim in EVERY goal so a
 goal refuting a subsumption still has the defining structure of both
 classes available. A named-subject `owl:complementOf` / `owl:unionOf`
-/ `owl:intersectionOf` marker is an ASSERTED CLASS AXIOM, not
-scaffolding (F* 2026-07-28 note: `WebOnt-I5.2-004`'s conclusion is
+/ `owl:intersectionOf` / `owl:oneOf` marker is an ASSERTED CLASS AXIOM,
+not scaffolding (F* 2026-07-28 note: `WebOnt-I5.2-004`'s conclusion is
 exactly `notA owl:complementOf A`); a bnode-subject marker builds an
 anonymous expression and stays structural. Any predicate NOT
 classified structural is treated as content — the safe
@@ -164,6 +164,7 @@ def isStructuralTriple (t : Triple) : Bool :=
      | .iri c => isMetaTypeIri c
      | _      => false))
   || (if t.p == owlComplementOf || t.p == owlUnionOf || t.p == owlIntersectionOf
+         || t.p == owlOneOf
       then (match t.s with | .bnode _ => true | .iri _ => false)
       else isStructuralPredicate t.p))
 
@@ -451,7 +452,7 @@ def negateContentTriple (base : Graph) (t : Triple)
         [ compS, ⟨x, rdfType, .bnode peNegClassBNode⟩,
           compO, ⟨x, rdfType, .bnode peNegClassBNodeB⟩ ] ++ base
       some [g1, g2]
-  else if t.p == owlUnionOf || t.p == owlIntersectionOf then
+  else if t.p == owlUnionOf || t.p == owlIntersectionOf || t.p == owlOneOf then
     -- Named-subject boolean marker: the OWL 2 RDF mapping reads
     -- `S owl:unionOf (L)` as the class EQUALITY S ≡ CE(L) — refute
     -- S ⊑ CE(L) and CE(L) ⊑ S. A fresh bnode carrying the SAME

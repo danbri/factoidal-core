@@ -272,6 +272,10 @@ structure RState where
   subprop    : List (WfIri × WfIri) := []
   transProps : List WfIri := []
   funcProps  : List WfIri := []
+  /-- Declared `owl:InverseFunctionalProperty` IRIs: every element has
+      at most one `p`-PREDECESSOR (`forcedIdentifications`,
+      `inverseFunctionalClash`). -/
+  invFuncProps : List WfIri := []
   /-- Declared `rdfs:range` pairs. A range confines a property's
       fillers to a datatype, which is what lets the value-space rules
       bound them. -/
@@ -746,6 +750,61 @@ def successorsInFiller (st : RState) (c : ClassExpr) (ts : List Term) : List Ter
     | some j => memCe c (labelsOf st j)
     | none   => false)
 
+/-! ### The min-sum counting clash
+
+`≤ k r` on a node beside obligations `≥ mᵢ pᵢ` with every `pᵢ ⊑* r`
+and the `pᵢ` pairwise different with provably DISJOINT ranges: a
+`pᵢ`-successor and a `pⱼ`-successor lie in disjoint classes, so they
+are different elements, and each `pᵢ` contributes `mᵢ` different
+`r`-successors. If `Σ mᵢ > k` no model has the node (OWL 2 Direct
+Semantics §2.2, `ObjectMinCardinality` / `ObjectMaxCardinality`, with
+`ObjectPropertyRange` §2.3.2). The counts need no witnesses, which is
+what lets `WebOnt-description-logic-903`'s `≥ 200 p`, `≥ 300 q` against
+`≤ 499 r` be decided at all. Port of the F* `min_sum_counting_clash`. -/
+
+/-- The obligation a label puts on a property: `(m, p)` for `≥ m p`
+    and `≥ m p.C`; `∃p.C` and `∋p.v` oblige one successor. -/
+def minObligation : ClassExpr → Option (Nat × WfIri)
+  | .minCard m p       => if m ≥ 1 then some (m, p) else none
+  | .minQualCard m p _ => if m ≥ 1 then some (m, p) else none
+  | .someOf p _        => some (1, p)
+  | .hasValue p _      => some (1, p)
+  | _                  => none
+
+/-- Two classes the graph declares disjoint (`owl:disjointWith`, or the
+    disjointness half of `owl:complementOf`). -/
+def classesDeclaredDisjoint (st : RState) (a b : WfIri) : Bool :=
+  ((st.store.withSubjPred (.iri a) owlDisjointWith) ++
+   (st.store.withSubjPred (.iri a) owlComplementOf)).any (·.o == Term.iri b) ||
+  ((st.store.withSubjPred (.iri b) owlDisjointWith) ++
+   (st.store.withSubjPred (.iri b) owlComplementOf)).any (·.o == Term.iri a)
+
+/-- Some declared range of `p` is disjoint from some declared range of
+    `q`. Every declared range confines the fillers, so one pair is
+    enough. -/
+def rangesDisjoint (st : RState) (p q : WfIri) : Bool :=
+  let rp := st.ranges.filterMap (fun (x, d) => if x == p then some d else none)
+  let rq := st.ranges.filterMap (fun (x, d) => if x == q then some d else none)
+  rp.any (fun a => rq.any (fun b => classesDeclaredDisjoint st a b))
+
+/-- Is there a choice of obligations, on pairwise different properties
+    with pairwise disjoint ranges, whose counts reach `need`? `chosen`
+    holds the properties taken so far. Structural on the list. -/
+def minSumGo (st : RState) (chosen : List WfIri) : List (Nat × WfIri) → Nat → Bool
+  | _,            0        => true
+  | [],           _ + 1    => false
+  | (m, p) :: tl, need + 1 =>
+      (chosen.all (fun q => q != p && rangesDisjoint st q p) &&
+        minSumGo st (p :: chosen) tl (need + 1 - m))
+      || minSumGo st chosen tl (need + 1)
+
+def minSumClash (st : RState) (ls : List ClassExpr) (k : Nat) (r : WfIri) : Bool :=
+  let subs := subsOf st r
+  let cands := ls.filterMap (fun l => match minObligation l with
+    | some (m, p) => if subs.contains p then some (m, p) else none
+    | none        => none)
+  cands.length ≥ 2 && minSumGo st [] cands (k + 1)
+
 /-- One label's clash against the whole label set of its node. -/
 def clashForLabel (g : Graph) (st : RState) (i : Subject)
     (lsAll : List ClassExpr) (l : ClassExpr) : Bool :=
@@ -756,6 +815,9 @@ def clashForLabel (g : Graph) (st : RState) (i : Subject)
   | .complement c =>
       memCe c lsAll || (match c with
                         | .named x => x == owlThing
+                        -- `i : ¬{a₁ … aₘ}` with `i` identified with some
+                        -- `aⱼ`: the branch says `iᴵ = aⱼᴵ ∈ {a₁ … aₘ}ᴵ`.
+                        | .oneOf ms => ms.any (fun m => repOf st m == repOf st i.toTerm)
                         | _        => false)
   -- An obligation to HAVE a successor on the bottom property cannot
   -- be met: `EXT(owl:bottomObjectProperty)` is empty in every model.
@@ -782,8 +844,9 @@ def clashForLabel (g : Graph) (st : RState) (i : Subject)
       !ms.isEmpty && ms.all (distinctIn g st i.toTerm ·)
   | .maxCard k p =>
       let succs := successorsOf g st i p true
-      if k == 0 then !succs.isEmpty
-      else existsDistinctSubsetBy (distinctIn g st) succs (k + 1)
+      (if k == 0 then !succs.isEmpty
+       else existsDistinctSubsetBy (distinctIn g st) succs (k + 1))
+      || minSumClash st lsAll k p
   | .maxQualCard k p c =>
       let succs := successorsInFiller st c (successorsOf g st i p true)
       if k == 0 then !succs.isEmpty
@@ -1381,6 +1444,13 @@ def isResourceTerm : Term → Bool
   | _        => false
 
 def nominalClash (g : Graph) (st : RState) : Bool :=
+  -- Negative nominals: `i : ¬{m₁ … mₖ}` gives `¬E(i, mⱼ)` for each
+  -- member.
+  let negLabelled : List (Subject × List Term) := (groupLeaders st).filterMap (fun n =>
+    let ms := (labelsOf st n.id).flatMap (fun l => match l with
+      | .complement (.oneOf ms) => ms.filter isResourceTerm
+      | _                       => [])
+    if ms.isEmpty then none else some (n.id, ms))
   let labelled : List (Subject × List (List Term)) := (groupLeaders st).filterMap (fun n =>
     -- Only a nominal of individuals. A label whose members include a
     -- literal sits on a DATA witness (the existential of a data
@@ -1392,6 +1462,11 @@ def nominalClash (g : Graph) (st : RState) : Bool :=
     if os.isEmpty then none else some (n.id, os))
   if labelled.isEmpty then false
   else
+    -- The universe is the positive nominals' nodes and members only.
+    -- A negative nominal adds a clause only between terms already in
+    -- it: `E(a, b)` for a term outside the universe occurs in no other
+    -- clause, so a clause on it cannot make the set unsatisfiable, and
+    -- every extra term costs a cubic number of transitivity clauses.
     let u : List Term := ((labelled.map (fun q => repOf st q.1.toTerm)) ++
       (labelled.flatMap (fun q => q.2.flatten.filter isResourceTerm)).map (repOf st)).eraseDups
     let n := u.length
@@ -1422,10 +1497,46 @@ def nominalClash (g : Graph) (st : RState) : Bool :=
         (List.range n).filterMap (fun b =>
           if b == a || b == c then none
           else some [e a b false, e b c false, e a c true]))
-      let cs := oneOfClauses ++ apart ++ trans
+      let negClauses : List (List ILit) := negLabelled.flatMap (fun (i, ms) =>
+        match ix i.toTerm with
+        | none => []
+        | some a => ms.filterMap (fun m => (ix m).map (fun b =>
+            -- `i` already identified with a member: the clause is
+            -- empty, which the clash arm of `clashForLabel` reports too.
+            if a == b then [] else [e a b false])))
+      let cs := oneOfClauses ++ negClauses ++ apart ++ trans
       (dpll propFuel cs (Array.replicate (n * n) none)).1 == some false
 
+/-- The `p`-PREDECESSORS of `j`'s identification group: subjects of
+    `q`-edges into the group for every `q ⊑* p`, from the graph and the
+    expansion, and the successors of the group on every inverse of such
+    a `q`. Mapped to representatives. -/
+def predecessorsOf (st : RState) (j : Subject) (p : WfIri) : List Term :=
+  let roles := subsOf st p
+  let selves := identifiedWith st j.toTerm
+  let fromGraph := selves.flatMap (fun t => roles.flatMap (fun r =>
+    (st.store.withPredObj r t).map (·.s.toTerm)))
+  let fromExtra := st.extra.filterMap (fun e =>
+    if roles.contains e.p && selves.contains e.o then some e.s.toTerm else none)
+  let viaInverse := (selves.filterMap termAsSubject).flatMap (fun s => roles.flatMap (fun r =>
+    (inversesOf st.inv r).flatMap (fun r' =>
+      (st.store.withSubjPred s r').map (·.o) ++
+      st.extra.filterMap (fun e => if e.s == s && e.p == r' then some e.o else none))))
+  (fromGraph ++ fromExtra ++ viaInverse).map (repOf st) |>.eraseDups
+
+/-- `owl:InverseFunctionalProperty p` with two provably different
+    `p`-predecessors of one element: OWL 2 Direct Semantics §2.3.2
+    (`InverseFunctionalObjectProperty`) makes them one element. -/
+def inverseFunctionalClash (g : Graph) (st : RState) : Bool :=
+  st.invFuncProps.any (fun p =>
+    (groupLeaders st).any (fun n =>
+      existsDistinctSubsetBy (distinctIn g st)
+        ((predecessorsOf st n.id p).filter (fun t => match t with
+          | .literal _ => false
+          | _          => true)) 2))
+
 def clashNodes (g : Graph) (st : RState) : Bool :=
+  inverseFunctionalClash g st ||
   (groupLeaders st).any (fun n =>
     let ls := labelsOf st n.id
     ls.any (clashForLabel g st n.id ls)
@@ -1812,6 +1923,55 @@ def namedOneOfAxioms (st : Store) : List (ClassExpr × ClassExpr) :=
       | []      => []
       | members => [(.named c, .oneOf members), (.oneOf members, .named c)])
 
+def owlDisjointUnionOf : WfIri := ⟨"http://www.w3.org/2002/07/owl#disjointUnionOf", rfl⟩
+
+/-- A NAMED class that carries a Boolean marker itself:
+    `c owl:unionOf L`, `c owl:intersectionOf L` or `c owl:complementOf
+    D` with `c` an IRI. The OWL RDF mapping reads the marker as the
+    class expression whatever the subject is; on an IRI it says `c` IS
+    that expression (OWL 2 RDF-Based Semantics §5.4), so `c ≡ CE` with
+    both contrapositives, as `owl:equivalentClass` gives.
+
+    The `owl:complementOf` arm of `collectAxiomsS` could not do this
+    for a named subject: it parses the SUBJECT, and the parse of an IRI
+    carrying a marker is the marker's expression, so `A owl:complementOf
+    B` produced `¬B ⊑ ¬B` and `B ⊑ B` and lost both the disjointness
+    and the coverage (`WebOnt-complementOf-001`). -/
+def namedBooleanAxioms (us : List WfIri) (st : Store) : List (ClassExpr × ClassExpr) :=
+  let subs := ((st.withPred owlUnionOf ++ st.withPred owlIntersectionOf ++
+                st.withPred owlComplementOf).filterMap (fun t =>
+    match t.s with
+    | .iri c   => some c
+    | .bnode _ => none)).eraseDups
+  subs.flatMap (fun c =>
+    match parseNnfSubjectWith us st (.iri c) with
+    | .unknown => []
+    | .named d => if d == c then [] else [(.named c, .named d), (.named d, .named c)]
+    | ce       =>
+      if !ceDefinite ce then []
+      else
+        let nc := nnfNeg (.named c)
+        [(.named c, ce), (ce, .named c), (nnfNeg ce, nc), (nc, nnfNeg ce)])
+
+/-- `c owl:disjointUnionOf (C₁ … Cₙ)` (OWL 2 Syntax §9.1.4,
+    `DisjointUnion`): `c ≡ C₁ ⊔ … ⊔ Cₙ` and the `Cᵢ` pairwise disjoint. -/
+def disjointUnionAxioms (us : List WfIri) (st : Store) : List (ClassExpr × ClassExpr) :=
+  (st.withPred owlDisjointUnionOf).flatMap (fun t =>
+    match t.s with
+    | .bnode _ => []
+    | .iri c =>
+      let parts := (walkRdfList st t.o 64).map (parseNnfWith us st)
+      if parts.isEmpty || !parts.all ceDefinite then []
+      else
+        let u : ClassExpr := .union parts
+        let nc := nnfNeg (.named c)
+        [(.named c, u), (u, .named c), (nnfNeg u, nc), (nc, nnfNeg u)] ++
+        (unorderedCePairs parts).flatMap (fun (a, b) => [(a, nnfNeg b), (b, nnfNeg a)]))
+where
+  unorderedCePairs : List ClassExpr → List (ClassExpr × ClassExpr)
+    | []      => []
+    | a :: tl => tl.map (fun b => (a, b)) ++ unorderedCePairs tl
+
 /-- Is `d` a datatype, or a class every element is in? A range or
     domain of that kind constrains nothing an individual's label could
     carry: a datatype bounds data values, which no node stands for, and
@@ -1864,6 +2024,7 @@ def domainRangeAxioms (us : List WfIri) (st : Store) : List (ClassExpr × ClassE
 def collectAxiomsS (st : Store) : List (ClassExpr × ClassExpr) :=
   let us := unsatNamedClassesS st
   namedRestrictionAxioms us st ++ namedOneOfAxioms st ++ domainRangeAxioms us st ++
+  namedBooleanAxioms us st ++ disjointUnionAxioms us st ++
   st.graph.flatMap (fun t =>
     if t.p == rdfsSubClassOf then
       [(parseNnfSubjectWith us st t.s, parseNnfWith us st t.o)]
@@ -1905,6 +2066,16 @@ def axiomBeq (x y : ClassExpr × ClassExpr) : Bool :=
 def dedupAxioms (tb : List (ClassExpr × ClassExpr)) : List (ClassExpr × ClassExpr) :=
   (tb.foldl (fun acc a => if acc.any (axiomBeq a) then acc else a :: acc) []).reverse
 
+/-- `C₁ ⊔ … ⊔ Cₙ ⊑ D` also gives `Cᵢ ⊑ D` for each `i`. An axiom
+    fires when a node's label MATCHES its antecedent, and a node
+    labelled `Cᵢ` carries no union label, so the union antecedent never
+    fired on it (`WebOnt-unionOf-002`: `John : Human`, with
+    `B ≡ Animal ⊔ Human ⊔ Stone`, never became `B`). -/
+def splitUnionAntecedents (tb : List (ClassExpr × ClassExpr)) : List (ClassExpr × ClassExpr) :=
+  tb ++ tb.flatMap (fun (a, d) => match a with
+    | .union ds => ds.map (fun x => (x, d))
+    | _         => [])
+
 /-- The TBox of a graph, read through the HASH INDEX.
 
     `collectAxiomsS` parses a class expression for BOTH sides of every
@@ -1936,7 +2107,7 @@ theorem collectAxiomsRaw_eq (g : Graph) :
     label, and `search` runs it up to its budget per goal, so a
     duplicate is paid thousands of times. -/
 def collectAxioms (g : Graph) : List (ClassExpr × ClassExpr) :=
-  dedupAxioms (collectAxiomsRaw g)
+  dedupAxioms (splitUnionAntecedents (collectAxiomsRaw g))
 
 /-! ## Expansion -/
 
@@ -2407,7 +2578,20 @@ def mergeInto (st : RState) (a b : Term) : RState :=
     effect of the F* `merge_branch`/`identify_branch` at `k = 1`, where
     those branch over a choice that does not exist. -/
 def forcedIdentifications (g : Graph) (st : RState) : RState × Bool :=
-  (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
+  let identifyAll (a2 : RState × Bool) (targets : List Term) : RState × Bool :=
+    match targets with
+    | []      => a2
+    | t0 :: rest =>
+      rest.foldl (fun (a3 : RState × Bool) t =>
+        let s3 := a3.1
+        if repOf s3 t == repOf s3 t0 || distinctIn g s3 t t0 then a3
+        else (mergeInto s3 t t0, true)) a2
+  -- `owl:InverseFunctionalProperty p`: every `p`-predecessor of one
+  -- element is one element.
+  let byIfp := (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
+    acc.1.invFuncProps.foldl (fun (a2 : RState × Bool) p =>
+      identifyAll a2 ((predecessorsOf a2.1 n.id p).filter isMergeableTerm)) acc) (st, false)
+  (groupLeaders byIfp.1).foldl (fun (acc : RState × Bool) n =>
     (labelsOf acc.1 n.id).foldl (fun (a2 : RState × Bool) l =>
       let s := a2.1
       let targets : List Term := match l with
@@ -2416,14 +2600,37 @@ def forcedIdentifications (g : Graph) (st : RState) : RState × Bool :=
         | .maxQualCard 1 p c =>
             (successorsInFiller s c (successorsOf g s n.id p false)).filter isMergeableTerm
         | .oneOf [a] => if isMergeableTerm a then [n.id.toTerm, a] else []
+        -- A nominal with exactly ONE member not provably different
+        -- from the node, and none identified with it yet: the node is
+        -- that member in every model.
+        | .oneOf ms =>
+            if !ms.all isMergeableTerm ||
+               ms.any (fun m => repOf s m == repOf s n.id.toTerm) then []
+            else match ms.filter (fun m => !distinctIn g s n.id.toTerm m) with
+              | [m] => [n.id.toTerm, m]
+              | _   => []
         | _ => []
-      match targets with
-      | []      => a2
-      | t0 :: rest =>
-        rest.foldl (fun (a3 : RState × Bool) t =>
-          let s3 := a3.1
-          if repOf s3 t == repOf s3 t0 || distinctIn g s3 t t0 then a3
-          else (mergeInto s3 t t0, true)) a2) acc) (st, false)
+      identifyAll a2 targets) acc) byIfp
+
+/-- The nominal choice (the O-rule): the first node carrying a nominal
+    `{m₁ … mₖ}` of individuals, identified with none of them, and with
+    at least two members not provably different from it. In every
+    model the node IS one of those members, so the search branches over
+    them and needs every branch to close; a member provably different
+    from the node is no branch (no model takes it). One live member is
+    `forcedIdentifications`' case, none is `clashForLabel`'s. Port of
+    the F* `find_nominal_nodes`. -/
+def pendingNominal (g : Graph) (st : RState) : Option (List (Term × Term)) :=
+  (groupLeaders st).findSome? (fun n =>
+    (labelsOf st n.id).findSome? (fun l =>
+      match l with
+      | .oneOf ms =>
+          if ms.length < 2 || !ms.all isMergeableTerm ||
+             ms.any (fun m => repOf st m == repOf st n.id.toTerm) then none
+          else
+            let live := ms.filter (fun m => !distinctIn g st n.id.toTerm m)
+            if live.length ≥ 2 then some (live.map (fun m => (n.id.toTerm, m))) else none
+      | _ => none))
 
 /-- The first node whose `≤` label forces a merge, and the choices. -/
 def pendingMerge (g : Graph) (st : RState) : Option (List (Term × Term)) :=
@@ -2508,19 +2715,22 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
           tryAll cs n
         | none =>
           -- No union left. The ≤-rule may still force a choice, and
-          -- every mergeable pair must close.
+          -- every mergeable pair must close; then the nominal choice,
+          -- with the same AND over its branches.
+          let rec tryMerges (ps : List (Term × Term)) (b : Nat) : Verdict × Nat :=
+            match ps with
+            | []           => (.clash, b)
+            | (x, y) :: tl =>
+                match search tb g (mergeInto st' x y) b with
+                | (.clash, b') => tryMerges tl b'
+                | (.open', b') => (.open', b')
+                | (.out, b')   => (.out, b')
           match pendingMerge g st' with
-          | none       => (.open', n)
-          | some pairs =>
-            let rec tryMerges (ps : List (Term × Term)) (b : Nat) : Verdict × Nat :=
-              match ps with
-              | []           => (.clash, b)
-              | (x, y) :: tl =>
-                  match search tb g (mergeInto st' x y) b with
-                  | (.clash, b') => tryMerges tl b'
-                  | (.open', b') => (.open', b')
-                  | (.out, b')   => (.out, b')
-            tryMerges pairs n
+          | some pairs => tryMerges pairs n
+          | none =>
+            match pendingNominal g st' with
+            | some pairs => tryMerges pairs n
+            | none       => (.open', n)
 
 /-! ## The entry point -/
 
@@ -2535,7 +2745,13 @@ def initState (g : Graph) : RState :=
   let sp := collectPairs g rdfsSubPropertyOf
   let props := ((sp.map (·.1)) ++ (sp.map (·.2))).eraseDups
   let st0 : RState :=
-    { inv := collectPairs g owlInverseOf,
+    -- A symmetric property is its own inverse (OWL 2 Direct
+    -- Semantics §2.3.2: `SymmetricObjectProperty(p)` holds exactly
+    -- when `⟨x,y⟩ ∈ (p)ᴵ` implies `⟨y,x⟩ ∈ (p)ᴵ`), so the pair
+    -- `(p, p)` makes every edge readable in both directions.
+    { inv := collectPairs g owlInverseOf ++
+             (collectTypedIris g owlSymmetricProperty).map (fun p => (p, p)),
+      invFuncProps := collectTypedIris g owlInverseFunctionalProperty,
       subprop := sp,
       ranges := collectPairs g rdfsRange,
       transProps := collectTypedIris g owlTransitiveProperty,
