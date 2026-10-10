@@ -184,7 +184,8 @@ structure Module where
     run; listing it earlier would score a gap as a failure. -/
 def modules : List Module :=
   [ { name := "rml-core" }
-  , { name := "rml-io" } ]
+  , { name := "rml-io" }
+  , { name := "rml-cc", defaultBase := some "http://example.com/base/" } ]
 
 /-- How one case came out. -/
 inductive Outcome where

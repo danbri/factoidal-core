@@ -183,9 +183,136 @@ def asLiteral (tm : TermMap) : TermMap :=
 def anonLabel (id : String) (i : Nat) : String :=
   String.ofList (id.toList.filter (fun c => c.isAlphanum)) ++ "r" ++ toString i
 
+/-! ## What a generated term needs alongside it
+
+Most terms stand alone. A GATHER map (RML-CC) generates the head of a
+collection or container, and the triples that give that head its
+members have to be emitted with it; so does a quoted triple (RML-star),
+whose reifier needs a `rdf:reifies` triple. A term therefore travels as a
+`Gen`: the term, and the `Extra`s to emit in the same graph as the
+triple the term is part of.
+
+A collection is not rendered where it is made. A NAMED collection (one
+whose head is an IRI or a blank node the mapping names) that comes up
+more than once -- in several iterations, or from several members of a
+cartesian product -- is ONE collection, so its members are appended
+across all of them (RML-CC, "Generating well-formed named collections").
+That can only be decided after every iteration has run, so `GatherUse`
+records the use and `renderUses` merges and renders them at the end. -/
+
+/-- One occurrence of a collection or container: the head, what kind,
+    the members in order, and where it is wanted. -/
+structure GatherUse where
+  head    : Term
+  /-- The mapping named the head (a template, constant or reference). A
+      fresh head is never merged with another. -/
+  named   : Bool
+  kind    : GatherKind
+  members : List Term
+  /-- Names the occurrence: the same collection, generated once and placed
+      with several triples, carries one origin, so merging counts it once
+      and does not append its members twice. -/
+  origin  : String := ""
+  graph   : Option Term := none
+  targets : List String := []
+
+inductive Extra where
+  | triple (t : Triple)
+  | collection (c : GatherUse)
+
+structure Gen where
+  term   : Term
+  extras : List Extra := []
+
+/-- Everything a stretch of evaluation produces. -/
+structure Out where
+  quads : List QuadOut := []
+  uses  : List GatherUse := []
+  errs  : List RmlError := []
+
+instance : Append Out := ⟨fun a b =>
+  { quads := a.quads ++ b.quads, uses := a.uses ++ b.uses, errs := a.errs ++ b.errs }⟩
+
+def Out.empty : Out := {}
+
+def Out.join (os : List Out) : Out := os.foldl (· ++ ·) Out.empty
+
+/-- Emit the extras of a generated term in a graph, for a quad with the
+    given targets. -/
+def placeExtras (es : List Extra) (g : Option Term) (targets : List String) : Out :=
+  Out.join (es.map (fun e => match e with
+    | .triple t => { quads := [{ s := t.s, p := t.p, o := t.o, g := g, targets := targets }] }
+    | .collection c => { uses := [{ c with graph := g, targets := targets }] }))
+
+def nubStrings (xs : List String) : List String :=
+  xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
+
+/-- The cartesian product of a list of lists, in lexicographic order of
+    the lists' own order. -/
+def cartesian {α : Type} : List (List α) → List (List α)
+  | [] => [[]]
+  | xs :: rest => xs.flatMap (fun x => (cartesian rest).map (fun r => x :: r))
+
+private def rdfIri (n : String) : WfIri :=
+  if h : isIri ("http://www.w3.org/1999/02/22-rdf-syntax-ns#" ++ n)
+  then ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#" ++ n, h⟩ else ⟨"urn:invalid", rfl⟩
+
+def rdfTypeIri : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
+
+private def labelOf : Term → String
+  | .iri i => i.val
+  | .bnode b => b
+  | _ => "x"
+
+/-- The triples of one collection or container. A list's cells are the
+    head and fresh blank nodes; a container's members are numbered from 1.
+    Every triple is in the use's graph and carries its targets. -/
+def renderUse (u : GatherUse) : List QuadOut × List RmlError :=
+  match toSubject? u.head with
+  | none => ([], [RmlError.data "" "RML-CC, Gather maps: head"
+              "the head of a collection or container must be an IRI or a blank node"])
+  | some hs =>
+      let mk (s : Subject) (p : WfIri) (o : Term) : QuadOut :=
+        { s := s, p := p, o := o, g := u.graph, targets := u.targets }
+      match u.kind with
+      | .list =>
+          let n := u.members.length
+          let cellSubject (k : Nat) : Subject :=
+            if k == 0 then hs else .bnode (labelOf u.head ++ "_cell" ++ toString k)
+          (u.members.zipIdx.flatMap (fun (m, k) =>
+            [ mk (cellSubject k) (rdfIri "first") m
+            , mk (cellSubject k) (rdfIri "rest")
+                (if k + 1 == n then .iri (rdfIri "nil") else (cellSubject (k + 1)).toTerm) ]), [])
+      | kind =>
+          let cls := match kind with | .seq => "Seq" | .alt => "Alt" | _ => "Bag"
+          (mk hs rdfTypeIri (.iri (rdfIri cls)) ::
+           u.members.zipIdx.map (fun (m, k) => mk hs (rdfIri ("_" ++ toString (k + 1))) m), [])
+
+/-- Merge the NAMED uses with the same head, graph and kind, appending
+    members in the order the uses were produced; leave the others. A use
+    that repeats an origin in the same graph is the same collection placed
+    with another triple, and is dropped. -/
+def mergeUses (us : List GatherUse) : List GatherUse :=
+  us.foldl (fun (acc : List GatherUse) u =>
+    if acc.any (fun v => !u.origin.isEmpty && v.origin == u.origin && v.graph == u.graph) then acc
+    else if !u.named then acc ++ [u]
+    else
+      match acc.findIdx? (fun v => v.named && v.head == u.head && v.graph == u.graph && v.kind == u.kind) with
+      | some i => acc.modify i (fun v =>
+          { v with members := v.members ++ u.members, targets := nubStrings (v.targets ++ u.targets) })
+      | none => acc ++ [u]) []
+
+/-- Render every collection of a run. -/
+def renderUses (us : List GatherUse) : List QuadOut × List RmlError :=
+  let rs := (mergeUses us).map renderUse
+  (rs.flatMap (·.1), rs.flatMap (·.2))
+
+/-- The quads of an `Out`, collections rendered. -/
+def Out.finalQuads (o : Out) : List QuadOut := o.quads ++ (renderUses o.uses).1
+
 /-- The subjects one triples map generates from one record, and the data
-    errors met. `i` is the record's position, which an ANONYMOUS
-    blank-node subject needs.
+    errors met, for the plain forms only. `i` is the record's position,
+    which an ANONYMOUS blank-node subject needs.
 
     `rml:subjectMap [ rml:termType rml:BlankNode ]` states a term type
     and no form at all, and means "a fresh blank node for each
@@ -202,16 +329,10 @@ def subjectsOfE (tm : TriplesMap) (rec' : Record) (i : Nat) : List Subject × Li
 def subjectsOf (tm : TriplesMap) (rec' : Record) (i : Nat) : List Subject :=
   (subjectsOfE tm rec' i).1
 
-/-- The graph terms a list of graph maps produces. An EMPTY list is
-    not "the default graph" -- it is "this level states no graph", and
-    the caller unions the levels before deciding. -/
-def graphTermsOfE (base : Option String) (gs : List TermMap) (rec' : Record)
-    : List Term × List RmlError :=
-  let rs := gs.map (fun gm => termsOfE base (asIri gm) rec' false)
-  (rs.flatMap (·.1), rs.flatMap (·.2))
-
 /-- The graph terms of a list of graph maps, each with the logical
-    targets of the graph map that produced it. -/
+    targets of the graph map that produced it. An EMPTY list is not "the
+    default graph" -- it is "this level states no graph", and the caller
+    unions the levels before deciding. -/
 def graphTermsWithTargetsE (base : Option String) (gs : List TermMap) (rec' : Record)
     : List (Term × List String) × List RmlError :=
   let rs : List (List Term × List RmlError × List String) := gs.map (fun gm =>
@@ -219,15 +340,16 @@ def graphTermsWithTargetsE (base : Option String) (gs : List TermMap) (rec' : Re
     (r.1, r.2, gm.targets))
   (rs.flatMap (fun (ts, _, tg) => ts.map (fun t => (t, tg))), rs.flatMap (·.2.1))
 
+/-- The graph terms a list of graph maps produces. -/
+def graphTermsOf (base : Option String) (gs : List TermMap) (rec' : Record) : List Term :=
+  ((graphTermsWithTargetsE base gs rec').1).map (·.1)
+
 /-- The targets of the graph map(s) that generate graph `g`, across both
     levels. A quad in the default graph has none. -/
 def targetsOfGraph (gts : List (Term × List String)) (g : Option Term) : List String :=
   match g with
   | none => []
   | some t => (gts.filter (fun e => e.1 == t)).flatMap (·.2)
-
-def graphTermsOf (base : Option String) (gs : List TermMap) (rec' : Record) : List Term :=
-  (graphTermsOfE base gs rec').1
 
 /-- The graphs one triple goes into: the UNION of the subject map's
     graph maps and the predicate-object map's, and the default graph
@@ -244,8 +366,6 @@ def graphsFor (sgraphs pgraphs : List Term) : List (Option Term) :=
   match u with
   | [] => [none]
   | _  => u.map some
-
-def rdfTypeIri : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
 
 /-- The STRINGS one side of a join produces from a record. Both sides
     go through term generation, so a template side is expanded before
@@ -315,13 +435,130 @@ structure Env where
   all : Mapping
   src : SourceTable
 
+/-- The subjects of the parent triples map for the parent records a
+    referencing object map (or a gather member) selects.
+
+    With join conditions, a parent record is selected when every join
+    holds. With NONE, the two logical sources must be effectively equal
+    (`RML.Validate` checks it), and the parent iteration is the SAME
+    iteration as the child's (RML-Core, Joins: the example with the
+    thumbnail); pairing every child with every parent record would be a
+    cross product that no mapping asks for. -/
+def refTermsE (env : Env) (tm : TriplesMap) (i : Nat) (rec' : Record)
+    (parentId : String) (joins : List JoinCondition) : List Term × List RmlError :=
+  match env.all.find? (fun p => p.id == parentId) with
+  | none => ([], [])
+  | some parentMap =>
+      match env.src.get parentMap.source with
+      | .error e => ([], [e.withSite parentMap.id])
+      | .ok precs =>
+          let matched :=
+            if joins.isEmpty && parentMap.source == tm.source then
+              precs.zipIdx.filter (fun (_, pi) => pi == i)
+            else precs.zipIdx.filter (fun (prec, _) => joinHolds joins rec' prec)
+          let rs : List (List Term × List RmlError) := matched.map (fun (prec, pi) =>
+            let r := subjectsOfE parentMap prec pi
+            (r.1.map Subject.toTerm, r.2))
+          (rs.flatMap (·.1), rs.flatMap (·.2))
+
+/-! ## Term maps, evaluated
+
+`gensOfE` is the one place a term map becomes terms. A plain map
+(constant, reference, template) goes through `termsOfE`; a gather map
+builds collections. Evaluation is by FUEL, because a gather map's members
+are term maps and the nesting is read from a graph that could be cyclic:
+`fuel` bounds the depth and an exhausted fuel generates nothing. -/
+
+def gatherFuel : Nat := 8
+
+/-- The head of a collection when the mapping names none: a fresh blank
+    node, distinct for every triples map, record, position in the mapping
+    and member combination. -/
+def freshHead (tmId path : String) (i k : Nat) : Term :=
+  .bnode s!"gather_{anonLabel tmId 0}_{path}_r{i}_c{k}"
+
+/-- The collections a gather map builds from its members' term lists:
+    one for the `append` strategy, one per combination for the cartesian
+    product; none when there is nothing to gather. -/
+def collectionsOf (gs : GatherSpec) (lists : List (List Gen)) : List (List Gen) :=
+  match gs.strategy with
+  | .append => let all := lists.flatMap id; if all.isEmpty then [] else [all]
+  | .cartesianProduct => if lists.any (·.isEmpty) then [] else cartesian lists
+
+mutual
+
+/-- The members of a gather map, evaluated: the terms of each member map,
+    or of a referencing member. -/
+def memberGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (path : String) (i : Nat)
+    (gs : GatherSpec) (rec' : Record) : List (List Gen × List RmlError) :=
+  match fuel with
+  | 0 => []
+  | fuel + 1 =>
+    gs.members.zipIdx.map (fun (m, k) =>
+      match m with
+      | .term mm => gensOfE fuel env tm (path ++ s!".m{k}") i mm rec' true
+      | .ref parentId joins =>
+          let r := refTermsE env tm i rec' parentId joins
+          (r.1.map (fun t => { term := t }), r.2))
+
+/-- All the terms a term map generates from one record, with what they
+    need alongside. -/
+def gensOfE (fuel : Nat) (env : Env) (tm : TriplesMap) (path : String) (i : Nat)
+    (m : TermMap) (rec' : Record) (naturalTypes : Bool) : List Gen × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match m.gather with
+    | none =>
+        let r := termsOfE tm.base m rec' naturalTypes
+        (r.1.map (fun t => { term := t }), r.2)
+    | some gs =>
+        let memberRes := memberGensE fuel env tm path i gs rec'
+        let collections := collectionsOf gs (memberRes.map (·.1))
+        -- the heads: named by the map's expression, or fresh
+        let named := match m.form with | .unknown => false | _ => true
+        let headRes : List Term × List RmlError :=
+          if named then termsOfE tm.base (asIri { m with gather := none }) rec' false
+          else ([], [])
+        let one (c : List Gen) (k : Nat) (head : Term) : Gen :=
+          { term := head
+            extras := .collection { head := head, named := named, kind := gs.kind,
+                                    members := c.map (·.term),
+                                    origin := s!"{tm.id}|{path}|r{i}|c{k}|{labelOf head}" }
+                        :: c.flatMap (·.extras) }
+        let gens : List Gen :=
+          if collections.isEmpty then
+            if gs.allowEmpty then
+              match gs.kind with
+              | .list => [{ term := .iri (rdfIri "nil") }]
+              | _ => (if named then headRes.1 else [freshHead tm.id path i 0]).map (one [] 0)
+            else []
+          else
+            collections.zipIdx.flatMap (fun (c, k) =>
+              (if named then headRes.1 else [freshHead tm.id path i k]).map (one c k))
+        (gens, (memberRes.flatMap (·.2)) ++ headRes.2)
+
+end
+
+/-- The Gens of a subject map for one record: a gather map builds a
+    collection; a plain map yields subjects as `subjectsOfE` does. -/
+def subjectGensE (env : Env) (tm : TriplesMap) (rec' : Record) (i : Nat)
+    : List (Subject × List Extra) × List RmlError :=
+  match tm.subject.gather with
+  | some _ =>
+      let r := gensOfE gatherFuel env tm "s" i (asIri tm.subject) rec' false
+      (r.1.filterMap (fun g => (toSubject? g.term).map (fun s => (s, g.extras))), r.2)
+  | none =>
+      let r := subjectsOfE tm rec' i
+      (r.1.map (fun s => (s, [])), r.2)
+
 /-- The terms an OBJECT map generates from one record, and the errors
     met. A term map's datatype map and language map are evaluated first
     and become the datatype and language of the literals it makes. A
     referencing object map yields the SUBJECTS of the parent triples map
     for the parent records the joins select. -/
-def objectTermsE (env : Env) (tm : TriplesMap) (om : ObjectMap) (rec' : Record)
-    : List Term × List RmlError :=
+def objectGensE (env : Env) (tm : TriplesMap) (pi oi : Nat) (om : ObjectMap) (rec' : Record)
+    (i : Nat) : List Gen × List RmlError :=
   match om with
   | .term base dtm lm =>
       let dtRes : Option String × List RmlError :=
@@ -338,20 +575,11 @@ def objectTermsE (env : Env) (tm : TriplesMap) (om : ObjectMap) (rec' : Record)
       let base2 := match lmRes.1 with
         | some l => { base1 with language := some l }
         | none   => base1
-      let r := termsOfE tm.base base2 rec' true
+      let r := gensOfE gatherFuel env tm s!"p{pi}.o{oi}" i base2 rec' true
       (r.1, dtRes.2 ++ lmRes.2 ++ r.2)
   | .ref parentId joins =>
-      match env.all.find? (fun p => p.id == parentId) with
-      | none => ([], [])
-      | some parentMap =>
-          match env.src.get parentMap.source with
-          | .error e => ([], [e.withSite parentMap.id])
-          | .ok precs =>
-              let matched := precs.zipIdx.filter (fun (prec, _) => joinHolds joins rec' prec)
-              let rs : List (List Term × List RmlError) := matched.map (fun (prec, pi) =>
-                let r := subjectsOfE parentMap prec pi
-                (r.1.map Subject.toTerm, r.2))
-              (rs.flatMap (·.1), rs.flatMap (·.2))
+      let r := refTermsE env tm i rec' parentId joins
+      (r.1.map (fun t => { term := t }), r.2)
 
 /-- The logical targets of an object map: those of its term map and of
     its datatype and language maps. -/
@@ -360,37 +588,37 @@ def ObjectMap.targets : ObjectMap → List String
       base.targets ++ (dtm.map (·.targets)).getD [] ++ (lm.map (·.targets)).getD []
   | .ref _ _ => []
 
-/-- A list with each element once, first occurrence kept. -/
-def nubStrings (xs : List String) : List String :=
-  xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
-
 /-- The quads one predicate-object map generates for one subject. The
     targets of a quad are those of the subject map, the predicate map,
     the object map (with its datatype and language maps) and the graph
-    maps at both levels: every term map involved (RML-IO, "Logical
-    Target in RML"). -/
-def pomQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List String)) (rec' : Record)
-    (s : Subject) (pom : PredicateObjectMap) : List QuadOut × List RmlError :=
+    map that generated the quad's graph (RML-IO, "Logical Target in
+    RML": every term map involved). -/
+def pomQuadsE (env : Env) (tm : TriplesMap) (pi : Nat) (sgraphs : List (Term × List String))
+    (rec' : Record) (i : Nat) (s : Subject) (sExtras : List Extra)
+    (pom : PredicateObjectMap) : Out :=
   let predRes : List (List WfIri × List String × List RmlError) := pom.predicates.map (fun pm =>
     let r := termsOfE tm.base (asIri pm) rec' false
     (r.1.filterMap toPred?, pm.targets, r.2))
   let pgRes := graphTermsWithTargetsE tm.base pom.graphs rec'
   let graphs := graphsFor (sgraphs.map (·.1)) (pgRes.1.map (·.1))
   let graphTargetsOf := targetsOfGraph (sgraphs ++ pgRes.1)
-  let objRes : List (List Term × List String × List RmlError) := pom.objects.map (fun om =>
-    let r := objectTermsE env tm om rec'
-    (r.1, om.targets, r.2))
-  let quads : List QuadOut := predRes.flatMap (fun (ps, pt, _) =>
+  let objRes : List (List Gen × List String × List RmlError) :=
+    pom.objects.zipIdx.map (fun (om, oi) =>
+      let r := objectGensE env tm pi oi om rec' i
+      (r.1, om.targets, r.2))
+  let outs : List Out := predRes.flatMap (fun (ps, pt, _) =>
     ps.flatMap (fun p => objRes.flatMap (fun (os, ot, _) =>
       os.flatMap (fun o => graphs.map (fun g =>
-        ({ s := s, p := p, o := o, g := g,
-           targets := nubStrings (tm.subject.targets ++ pt ++ ot ++ graphTargetsOf g) } : QuadOut))))))
-  (quads, pgRes.2 ++ predRes.flatMap (·.2.2) ++ objRes.flatMap (·.2.2))
+        let targets := nubStrings (tm.subject.targets ++ pt ++ ot ++ graphTargetsOf g)
+        { quads := [{ s := s, p := p, o := o.term, g := g, targets := targets }] } ++
+          placeExtras (sExtras ++ o.extras) g targets)))))
+  Out.join outs ++ { errs := pgRes.2 ++ predRes.flatMap (·.2.2) ++ objRes.flatMap (·.2.2) }
 
-/-- The quads one triples map generates for one subject of one record:
-    the `rml:class` triples, then each predicate-object map's. -/
-def subjectQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List String)) (rec' : Record)
-    (s : Subject) : List QuadOut × List RmlError :=
+/-- Everything one triples map generates for one subject of one record:
+    the subject's own collection, the `rml:class` triples, then each
+    predicate-object map's. -/
+def subjectQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List String))
+    (rec' : Record) (i : Nat) (s : Subject) (sExtras : List Extra) : Out :=
   let typeQuads : List QuadOut :=
     tm.classes.flatMap (fun c =>
       match (if h : isIri c then some (⟨c, h⟩ : WfIri) else none) with
@@ -398,12 +626,15 @@ def subjectQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List St
       | some ci => (graphsFor (sgraphs.map (·.1)) []).map (fun g =>
           ({ s := s, p := rdfTypeIri, o := .iri ci, g := g,
              targets := nubStrings (tm.subject.targets ++ targetsOfGraph sgraphs g) } : QuadOut)))
-  let perPom : List (List QuadOut × List RmlError) :=
-    tm.poms.map (pomQuadsE env tm sgraphs rec' s)
-  (typeQuads ++ perPom.flatMap (·.1), perPom.flatMap (·.2))
+  -- the subject's own structure is emitted in the subject-level graphs even
+  -- when the map has no predicate-object map
+  let own : Out := Out.join ((graphsFor (sgraphs.map (·.1)) []).map (fun g =>
+    placeExtras sExtras g (nubStrings (tm.subject.targets ++ targetsOfGraph sgraphs g))))
+  own ++ { quads := typeQuads } ++
+    Out.join (tm.poms.zipIdx.map (fun (pom, pi) =>
+      pomQuadsE env tm pi sgraphs rec' i s sExtras pom))
 
-/-- The quads one triples map generates from an ALREADY-INDEXED record
-    list, and the errors met.
+/-- What one triples map generates from an ALREADY-INDEXED record list.
 
     The index travels WITH each record rather than being its position
     in this list, and that is the point: a caller that narrows the list
@@ -412,35 +643,52 @@ def subjectQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List St
     label. Renumbering after a filter moves every blank node the row
     generates, which is
     <https://github.com/danbri/factoidal/issues/558>. -/
-def quadsOfRecordsE (env : Env) (tm : TriplesMap) (recs : List (Record × Nat))
-    : List QuadOut × List RmlError :=
-  let per : List (List QuadOut × List RmlError) := recs.map (fun (rec', i) =>
-    let sr := subjectsOfE tm rec' i
+def outOfRecords (env : Env) (tm : TriplesMap) (recs : List (Record × Nat)) : Out :=
+  let per : List Out := recs.map (fun (rec', i) =>
+    let sr := subjectGensE env tm rec' i
     let gr := graphTermsWithTargetsE tm.base tm.graphs rec'
-    let perSubj : List (List QuadOut × List RmlError) :=
-      sr.1.map (subjectQuadsE env tm gr.1 rec')
-    (perSubj.flatMap (·.1), sr.2 ++ gr.2 ++ perSubj.flatMap (·.2)))
-  (per.flatMap (·.1), (per.flatMap (·.2)).map (RmlError.withSite tm.id))
+    Out.join (sr.1.map (fun (s, ex) => subjectQuadsE env tm gr.1 rec' i s ex)) ++
+      { errs := sr.2 ++ gr.2 })
+  let o := Out.join per
+  { o with errs := o.errs.map (RmlError.withSite tm.id) }
 
-/-- The quads of `quadsOfRecordsE`, with data errors dropped. -/
-def quadsOfRecords (env : Env) (tm : TriplesMap) (recs : List (Record × Nat))
-    : List QuadOut :=
-  (quadsOfRecordsE env tm recs).1
+/-- The quads of `outOfRecords`, with data errors dropped. -/
+def quadsOfRecords (env : Env) (tm : TriplesMap) (recs : List (Record × Nat)) : List QuadOut :=
+  (outOfRecords env tm recs).finalQuads
 
-/-- The quads one triples map generates, and the errors. A source that
-    cannot be opened is a SOURCE error: the file named by `rml:path` does
-    not exist (`RMLTC0002e`), which is not the same as a source with no
-    rows. -/
-def quadsOfMapE (env : Env) (tm : TriplesMap) : List QuadOut × List RmlError :=
+/-- What one triples map generates. A source that cannot be opened is a
+    SOURCE error: the file named by `rml:path` does not exist
+    (`RMLTC0002e`), which is not the same as a source with no rows. -/
+def outOfMap (env : Env) (tm : TriplesMap) : Out :=
   match env.src.get tm.source with
-  | .error e => ([], [e.withSite tm.id])
-  | .ok recs => quadsOfRecordsE env tm recs.zipIdx
-
-def quadsOfMap (env : Env) (tm : TriplesMap) : List QuadOut := (quadsOfMapE env tm).1
+  | .error e => { errs := [e.withSite tm.id] }
+  | .ok recs => outOfRecords env tm recs.zipIdx
 
 /-- `rml:defaultGraph` names the default graph, so a graph map that
     produces it is the same as producing none. -/
 def defaultGraphIri : String := rmlNs ++ "defaultGraph"
+
+/-- A blank node of the output is scoped to ONE graph (RML-Core, "Scope of
+    Blank Nodes"): the same label in two graphs is two blank nodes, so a
+    triple generated into several graphs must not share its blank nodes
+    between them. A quad in a named graph gets its blank nodes labelled
+    with the graph; the default graph keeps the labels as they are. -/
+def scopeTerm (suffix : String) : Term → Term
+  | .bnode b => .bnode (b ++ suffix)
+  | .tripleTerm s p o =>
+      .tripleTerm (match s with | .bnode b => .bnode (b ++ suffix) | s => s) p (scopeTerm suffix o)
+  | t => t
+
+def scopeBlankNodes (qs : List QuadOut) : List QuadOut :=
+  qs.map (fun q =>
+    match q.g with
+    | none => q
+    | some gt =>
+        let suffix := "~g~" ++ (match gt with
+          | .iri i => i.val | .bnode b => "_:" ++ b | _ => "")
+        { q with
+          s := match q.s with | .bnode b => .bnode (b ++ suffix) | s => s
+          o := scopeTerm suffix q.o })
 
 /-- The outcome of running a mapping: the quads, and every reason the
     run is to be rejected. A caller that accepts a run with errors has
@@ -454,17 +702,19 @@ structure EvalResult where
     gives one per case (`rml:defaultBaseIRI`, `base_iri` in its own
     metadata), and without it a template that produces `Carlos` yields
     no term at all instead of `http://example.com/Carlos`
-    (`RMLTC0019a`). -/
+    (`RMLTC0019a`). Collections are rendered once every triples map has
+    run, because a named collection is merged across them. -/
 def evalMappingWith (defaultBase : Option String) (m : Mapping) (src : SourceTable)
     : EvalResult :=
   let m := m.map (fun t => { t with base := t.base.orElse (fun _ => defaultBase) })
   let env : Env := { all := m, src := src }
-  let rs := m.map (quadsOfMapE env)
-  { quads := (rs.flatMap (·.1)).map (fun q =>
+  let o := Out.join (m.map (outOfMap env))
+  let rendered := renderUses o.uses
+  { quads := scopeBlankNodes ((o.quads ++ rendered.1).map (fun q =>
       match q.g with
       | some (.iri i) => if i.val == defaultGraphIri then { q with g := none } else q
-      | _             => q)
-    errors := rs.flatMap (·.2) }
+      | _             => q))
+    errors := o.errs ++ rendered.2 }
 
 /-- Run a whole mapping, opening each logical source through `fa`. -/
 def evalMappingFiles (defaultBase : Option String) (m : Mapping) (fa : FileAccess)

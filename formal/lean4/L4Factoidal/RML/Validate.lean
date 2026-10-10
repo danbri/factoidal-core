@@ -93,6 +93,8 @@ structure Ctx where
   tm          : String
   /-- The reference formulation its references are written in. -/
   formulation : String
+  /-- Every triples map node of the document, for references to them. -/
+  tmNodes     : List String := []
 
 def Ctx.site (c : Ctx) (pos : Position) (n : String) : String :=
   s!"{c.tm} {pos.label} {n}"
@@ -244,7 +246,7 @@ def checkTermMapNoDt (c : Ctx) (pos : Position) (n : String) : List RmlError :=
 
 /-- The checks for a term map and, one level down, for its datatype map
     and language map. -/
-def checkTermMap (c : Ctx) (pos : Position) (n : String) : List RmlError :=
+def checkTermMapBase (c : Ctx) (pos : Position) (n : String) : List RmlError :=
   let g := c.g
   checkTermMapNoDt c pos n ++
     (nodesOf g n (rmlIri "datatypeMap")).flatMap (checkTermMapNoDt c .datatype) ++
@@ -268,7 +270,7 @@ def checkJoin (cChild cParent : Ctx) (site j : String) : List RmlError :=
                    s!"'{l.val.lexicalForm}' is not a valid reference expression"]
         | _ => [RmlError.mapping site "RML-Core, Joins: join condition"
                  s!"rml:{short} must be a string"])
-      ++ maps.flatMap (checkTermMap c pos)
+      ++ maps.flatMap (checkTermMapBase c pos)
   side cChild "child" "childMap" .child ++ side cParent "parent" "parentMap" .parent
 
 /-- The logical source of a triples map, read the way the model reads
@@ -304,6 +306,66 @@ def checkRefObjectMap (c : Ctx) (tmNodes : List String) (n : String) : List RmlE
         need ++ joins.flatMap (checkJoin c parentCtx site)
   | _ => [RmlError.mapping site "RML-Core, Joins: referencing object map"
            "a referencing object map has exactly one rml:parentTriplesMap"]
+
+/-- The checks for the gather properties of a term map (RML-CC,
+    "Vocabulary definition"): a gather map has exactly one `rml:gather`, a
+    non-empty list of term maps (or referencing members), exactly one
+    `rml:gatherAs` that names a list or a container, at most one
+    `rml:strategy` that is `rml:append` or `rml:cartesianProduct`, and at
+    most one boolean `rml:allowEmptyListAndContainer`. The properties
+    mean nothing without `rml:gather`. -/
+def checkGather (c : Ctx) (pos : Position) (n : String) : List RmlError :=
+  let g := c.g
+  let site := c.site pos n
+  let err (msg : String) : List RmlError :=
+    [RmlError.mapping site "RML-CC, Vocabulary definition: rml:GatherMap" msg]
+  let nG := countOf g n "gather"
+  let others := ["gatherAs", "strategy", "allowEmptyListAndContainer"].filter
+    (fun p => countOf g n p > 0)
+  if nG == 0 then
+    (if others.isEmpty then []
+     else err "rml:gatherAs, rml:strategy and rml:allowEmptyListAndContainer need rml:gather")
+  else
+    let kindErrs :=
+      match objectsOf g n (rmlIri "gatherAs") with
+      | [.iri i] => if (gatherKindOf i.val).isSome then []
+                    else err "rml:gatherAs is rdf:List, rdf:Seq, rdf:Bag or rdf:Alt"
+      | _ => err "a gather map has exactly one rml:gatherAs"
+    let stratErrs :=
+      match objectsOf g n (rmlIri "strategy") with
+      | [] => []
+      | [.iri i] => if (gatherStrategyOf i.val).isSome then []
+                    else err "rml:strategy is rml:append or rml:cartesianProduct"
+      | _ => err "a gather map has at most one rml:strategy"
+    let emptyErrs :=
+      match objectsOf g n (rmlIri "allowEmptyListAndContainer") with
+      | [] => []
+      | [.literal l] => if l.val.lexicalForm == "true" || l.val.lexicalForm == "false" then []
+                        else err "rml:allowEmptyListAndContainer is true or false"
+      | _ => err "a gather map has at most one rml:allowEmptyListAndContainer"
+    let items :=
+      match objectsOf g n (rmlIri "gather") with
+      | [h] => listItems g h
+      | _ => []
+    let listErrs :=
+      if nG > 1 then err "a gather map has exactly one rml:gather"
+      else if items.isEmpty then err "rml:gather is a non-empty list of term maps"
+      else []
+    let memberErrs := items.flatMap (fun t => match nodeKey t with
+      | none => err "a member of a gather map is a term map"
+      | some k =>
+          if countOf g k "parentTriplesMap" > 0 then
+            -- a referencing member
+            (nodesOf g k (rmlIri "parentTriplesMap")).flatMap (fun p =>
+              if c.tmNodes.contains p then []
+              else err s!"rml:parentTriplesMap {p} is not a triples map")
+          else checkTermMapNoDt c pos k)
+    kindErrs ++ stratErrs ++ emptyErrs ++ listErrs ++ memberErrs
+
+/-- The checks for a term map, its datatype map and language map, and its
+    gather properties. -/
+def checkTermMap (c : Ctx) (pos : Position) (n : String) : List RmlError :=
+  checkTermMapBase c pos n ++ checkGather c pos n
 
 def checkPredicateObjectMap (c : Ctx) (tmNodes : List String) (pom : String) : List RmlError :=
   let g := c.g
@@ -349,7 +411,7 @@ def checkLogicalSource (c : Ctx) : List RmlError :=
 /-- Check one triples map. -/
 def checkTriplesMap (g : Graph) (tmNodes : List String) (tm : String) : List RmlError :=
   let ls := (logicalSourceNode g tm).getD ""
-  let c : Ctx := { g := g, tm := tm, formulation := formulationAt g ls }
+  let c : Ctx := { g := g, tm := tm, formulation := formulationAt g ls, tmNodes := tmNodes }
   let site := tm
   let nSm := countOf g tm "subjectMap" + countOf g tm "subject"
   let subjShape :=

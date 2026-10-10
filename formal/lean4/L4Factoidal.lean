@@ -293,6 +293,7 @@ import L4Factoidal.RML.Run
 import L4Factoidal.RML.EvalTests
 import L4Factoidal.RML.ValidateTests
 import L4Factoidal.RML.SourceTests
+import L4Factoidal.RML.CollectionTests
 import L4Factoidal.RML.VirtualSource
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps

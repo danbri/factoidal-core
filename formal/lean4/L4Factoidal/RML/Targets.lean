@@ -99,6 +99,40 @@ def datasetOfQuads (qs : List QuadOut) : Dataset :=
         graph := dedupGraph ((qs.filter (fun q =>
           match q.g.bind graphSubject? with | some m => m.eqb n | none => false)).map tripleOf) }) }
 
+/-- Every blank node label of a term, in order of appearance. -/
+private def termBnodes : Term → List String
+  | .bnode b => [b]
+  | .tripleTerm s _ o => (match s with | .bnode b => [b] | _ => []) ++ termBnodes o
+  | _ => []
+
+private def relabelTerm (m : List (String × String)) : Term → Term
+  | .bnode b => .bnode ((m.find? (·.1 == b)).map (·.2) |>.getD b)
+  | .tripleTerm s p o =>
+      .tripleTerm (match s with | .bnode b => .bnode ((m.find? (·.1 == b)).map (·.2) |>.getD b) | s => s)
+        p (relabelTerm m o)
+  | t => t
+
+private def relabelSubject (m : List (String × String)) : Subject → Subject
+  | .bnode b => .bnode ((m.find? (·.1 == b)).map (·.2) |>.getD b)
+  | s => s
+
+/-- Give every blank node a label every serialisation can write: `b0`,
+    `b1`, in order of first appearance. The labels the evaluator makes
+    carry template text and graph names (`l/a~g~http://...`), which no
+    syntax accepts as a blank node label, and the mapping from old to new
+    is injective, so two blank nodes stay two. -/
+def relabelBlankNodes (ds : Dataset) : Dataset :=
+  let graphTriples := ds.default ++ ds.named.flatMap (·.graph)
+  let names := ds.named.map (·.name)
+  let labels : List String :=
+    (graphTriples.flatMap (fun t => (match t.s with | .bnode b => [b] | _ => []) ++ termBnodes t.o)) ++
+    (names.flatMap (fun n => match n with | .bnode b => [b] | _ => []))
+  let uniq := labels.foldl (fun acc l => if acc.contains l then acc else acc ++ [l]) ([] : List String)
+  let m : List (String × String) := uniq.zipIdx.map (fun (l, k) => (l, "b" ++ toString k))
+  let rt (t : Triple) : Triple := { t with s := relabelSubject m t.s, o := relabelTerm m t.o }
+  { default := ds.default.map rt
+    named := ds.named.map (fun ng => { name := relabelSubject m ng.name, graph := ng.graph.map rt }) }
+
 /-- The union of a dataset's graphs: for a serialisation with no graphs. -/
 def datasetUnion (ds : Dataset) : Graph :=
   dedupGraph (ds.default ++ ds.named.flatMap (·.graph))
@@ -113,7 +147,8 @@ def trigOfDataset (ds : Dataset) : Except String String := do
   return out
 
 /-- Serialise a dataset in a format. -/
-def serializeDataset (fmt : Serialization) (ds : Dataset) : Except String String :=
+def serializeDataset (fmt : Serialization) (ds0 : Dataset) : Except String String :=
+  let ds := relabelBlankNodes ds0
   match fmt with
   | .nquads   => Syntax.Dataset.toNQuads ds .rdf12
   | .ntriples => Graph.toNTriples (datasetUnion ds) .rdf12
@@ -277,6 +312,17 @@ private def roundTrips (fmt : String) (withGraph : Bool) : Bool :=
 #guard entryName { target "" with path := "./dump1.nq.tar.gz" } == "dump1.nq"
 #guard entryName { target "" with path := "dump1.nq.gz" } == "dump1.nq"
 #guard entryName { target "" with path := "dump1.nq" } == "dump1.nq"
+-- Blank node labels no syntax accepts are replaced by labels it does, and
+-- two blank nodes stay two.
+private def oddBnodeQuads : List QuadOut :=
+  [ { s := .bnode "l/a~g~http://ex/g", p := iri! "http://ex/p", o := .bnode "x y", g := none }
+  , { s := .bnode "x y", p := iri! "http://ex/p", o := .literal (Literal.string "v"), g := none } ]
+#guard match serializeDataset .nquads (datasetOfQuads oddBnodeQuads) with
+       | .ok t => (t.splitOn "_:b0").length == 2 && (t.splitOn "_:b1").length == 3
+       | .error _ => false
+#guard match ourDump (target "") oddBnodeQuads with
+       | .ok ds => ds.default.length == 2
+       | .error _ => false
 -- UTF-16 target: the bytes differ from UTF-8 and read back the same.
 #guard match renderTarget { target "" with encoding := utf16Iri } qs,
              renderTarget (target "") qs with

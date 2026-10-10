@@ -56,19 +56,6 @@ structure LogicalSource where
   accessKind     : String := ""
 deriving Repr, Inhabited, BEq
 
-/-- `rml:joinCondition` — one `rml:child` / `rml:parent` pair.
-
-    Both sides are TERM MAPS, not reference strings. The shortcut
-    `rml:child "$.ID"` is the common form, but `rml:childMap` may hold
-    a template, and `RMLTC0030b` joins
-    `rml:childMap [ rml:template "http://example.com/{$.Sport}" ]`
-    against a parent template. Storing a string threw the template
-    away and the join then compared the wrong things. -/
-structure JoinCondition where
-  child  : TermMap
-  parent : TermMap
-deriving Repr
-
 /-- An OBJECT map: either a term map, or a reference to another
     triples map with join conditions.
 

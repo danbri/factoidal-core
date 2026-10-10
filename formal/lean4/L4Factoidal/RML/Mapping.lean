@@ -35,12 +35,80 @@ inductive RefFormulation where
   | jsonPath | xPath | csv | other (s : String)
 deriving Repr, DecidableEq, Inhabited
 
+/-- What a gather map builds (RML-CC, `rml:gatherAs`). -/
+inductive GatherKind where
+  | list | seq | bag | alt
+deriving Repr, DecidableEq, Inhabited
+
+/-- How a gather map combines the values of its term maps (RML-CC,
+    `rml:strategy`): append them into one collection, or form one
+    collection for each combination of one value from each term map. -/
+inductive GatherStrategy where
+  | append | cartesianProduct
+deriving Repr, DecidableEq, Inhabited
+
+mutual
+
 /-- How a term map produces its value. -/
 inductive TermMapForm where
   | constant  (t : Term)
   | reference (field : String)
   | template  (raw : String)
+  /-- RML-FNML, `rml:functionExecution`: the value is what a function
+      returns. -/
+  | function  (fe : FnExec)
   | unknown
+deriving Repr
+
+/-- `rml:joinCondition` — one `rml:child` / `rml:parent` pair.
+
+    Both sides are TERM MAPS, not reference strings. The shortcut
+    `rml:child "$.ID"` is the common form, but `rml:childMap` may hold
+    a template, and `RMLTC0030b` joins
+    `rml:childMap [ rml:template "http://example.com/{$.Sport}" ]`
+    against a parent template. Storing a string threw the template
+    away and the join then compared the wrong things. -/
+structure JoinCondition where
+  child  : TermMap
+  parent : TermMap
+deriving Repr
+
+/-- One input of a function execution: the parameter it binds, and the
+    term map that supplies the value. -/
+structure FnInput where
+  parameter : String
+  value     : TermMap
+deriving Repr
+
+/-- `rml:functionExecution` (RML-FNML): the function's IRI and its
+    inputs. -/
+structure FnExec where
+  function : String
+  inputs   : List FnInput
+deriving Repr
+
+/-- A member of a gather map: a term map, or a reference to another
+    triples map (RML-CC allows a referencing object map as a member,
+    `RMLTC-CC-0008-ROMa`). -/
+inductive GatherMember where
+  | term (m : TermMap)
+  | ref  (parent : String) (joins : List JoinCondition)
+deriving Repr
+
+/-- `rml:gather` and its companions (RML-CC). -/
+structure GatherSpec where
+  members    : List GatherMember
+  kind       : GatherKind
+  strategy   : GatherStrategy := .append
+  allowEmpty : Bool := false
+deriving Repr
+
+/-- `rml:quotedTriplesMap` (RML-star): the triples map whose triples
+    this term map quotes, and the join conditions when its logical source
+    differs. -/
+structure QuotedSpec where
+  parent : String
+  joins  : List JoinCondition := []
 deriving Repr
 
 structure TermMap where
@@ -51,7 +119,19 @@ structure TermMap where
   /-- `rml:logicalTarget`: the targets (RML-IO) every triple generated
       with this term map is exported to, as the nodes that name them. -/
   targets  : List String := []
+  /-- `rml:gather`: this map builds a collection or container. The
+      expression (`form`), when there is one, names its head node. -/
+  gather   : Option GatherSpec := none
+  /-- `rml:quotedTriplesMap`: this map quotes triples. -/
+  quoted   : Option QuotedSpec := none
+  /-- `rml:return`: which output of the function this map takes. -/
+  fnReturn : Option String := none
+  /-- `rml:condition` (RML-FNML): a boolean function map; when false the
+      term map generates nothing. -/
+  condition : Option TermMap := none
 deriving Repr
+
+end
 
 /-! ## Templates -/
 
@@ -280,6 +360,9 @@ def generateTermE (base : Option String) (tm : TermMap) (lookup : String → Opt
   match tm.form with
   | .constant t => .ok (some t)
   | .unknown    => .ok none
+  -- A function map has no value of its own here: `RML.Eval` runs the
+  -- function and hands the result to `generateTermE` as a constant text.
+  | .function _ => .ok none
   | .reference f =>
       match lookup f with
       | none   => .ok none

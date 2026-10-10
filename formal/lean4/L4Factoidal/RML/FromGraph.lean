@@ -55,10 +55,10 @@ def termTypeOf (iri : String) : Option TermType :=
   else if iri == rmlNs ++ "Literal" then some .literal
   else none
 
-/-- A TERM MAP at node `n`, or the SHORTCUT form where the value sits
-    directly on the parent (`rml:predicate ex:id` rather than
-    `rml:predicateMap [ rml:constant ex:id ]`). -/
-def termMapAt (g : Graph) (n : String) : TermMap :=
+/-- A TERM MAP at node `n` without its gather map, or the SHORTCUT form
+    where the value sits directly on the parent (`rml:predicate ex:id`
+    rather than `rml:predicateMap [ rml:constant ex:id ]`). -/
+def baseTermMapAt (g : Graph) (n : String) : TermMap :=
   let form : TermMapForm :=
     match strOf g n (rmlNs ++ "template") with
     | some t => .template t
@@ -78,6 +78,93 @@ def termMapAt (g : Graph) (n : String) : TermMap :=
 /-- A constant term map from a shortcut object. -/
 def constantMap (t : Term) : TermMap := { form := .constant t }
 
+/-- One side of a join: the `rml:child` / `rml:parent` SHORTCUT (a
+    reference expression) or the `rml:childMap` / `rml:parentMap` term
+    map, which may hold a template. -/
+def joinSide (g : Graph) (j : String) (short mapProp : String) : Option TermMap :=
+  match strOf g j (rmlNs ++ short) with
+  | some r => some { form := .reference r }
+  | none   => (nodesOf g j (rmlNs ++ mapProp)).head?.map (baseTermMapAt g)
+
+def joinsAt (g : Graph) (n : String) : List JoinCondition :=
+  (nodesOf g n (rmlNs ++ "joinCondition")).filterMap (fun j =>
+    match joinSide g j "child" "childMap", joinSide g j "parent" "parentMap" with
+    | some c, some p => some { child := c, parent := p }
+    | _, _           => none)
+
+def rdfFirstStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
+def rdfRestStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
+def rdfNilStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
+
+/-- The items of an RDF collection whose head is the term `h`, in order.
+    The walk is bounded by the size of the graph, so a cyclic or
+    malformed list ends instead of looping. -/
+def listItems (g : Graph) (h : Term) : List Term :=
+  let rec go (fuel : Nat) (cur : Term) (acc : List Term) : List Term :=
+    match fuel with
+    | 0 => acc
+    | fuel + 1 =>
+        match cur with
+        | .iri i => if i.val == rdfNilStr then acc else acc
+        | .bnode b =>
+            let first := (g.filter (fun t => subjKey t.s == "_:" ++ b && t.p.val == rdfFirstStr)).map (·.o)
+            let rest := (g.filter (fun t => subjKey t.s == "_:" ++ b && t.p.val == rdfRestStr)).map (·.o)
+            match first.head?, rest.head? with
+            | some f, some r => go fuel r (acc ++ [f])
+            | some f, none => acc ++ [f]
+            | _, _ => acc
+        | _ => acc
+  go (g.length + 1) h []
+
+def gatherKindOf (iri : String) : Option GatherKind :=
+  let r := "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  if iri == r ++ "List" then some .list
+  else if iri == r ++ "Seq" then some .seq
+  else if iri == r ++ "Bag" then some .bag
+  else if iri == r ++ "Alt" then some .alt
+  else none
+
+def gatherStrategyOf (iri : String) : Option GatherStrategy :=
+  if iri == rmlNs ++ "append" then some .append
+  else if iri == rmlNs ++ "cartesianProduct" then some .cartesianProduct
+  else none
+
+/-- How deep gather maps nest before the reader stops reading (a
+    mapping graph could be cyclic). -/
+def readFuel : Nat := 8
+
+mutual
+
+/-- A term map at `n`, with the gather map it carries, to a depth. -/
+def termMapAtF : Nat → Graph → String → TermMap
+  | 0, g, n => baseTermMapAt g n
+  | f + 1, g, n => { baseTermMapAt g n with gather := gatherAt f g n }
+
+/-- The gather map at `n`: its members (term maps, or referencing
+    members), `rml:gatherAs`, `rml:strategy` and
+    `rml:allowEmptyListAndContainer`. `none` when `n` has no
+    `rml:gather`. -/
+def gatherAt : Nat → Graph → String → Option GatherSpec
+  | 0, _, _ => none
+  | f + 1, g, n =>
+      match (objectsOf g n (rmlNs ++ "gather")).head? with
+      | none => none
+      | some h =>
+          let members : List GatherMember := (listItems g h).filterMap (fun t =>
+            (nodeKey t).map (fun k =>
+              match (nodesOf g k (rmlNs ++ "parentTriplesMap")).head? with
+              | some parent => GatherMember.ref parent (joinsAt g k)
+              | none => GatherMember.term (termMapAtF f g k)))
+          some { members := members
+                 kind := ((strOf g n (rmlNs ++ "gatherAs")).bind gatherKindOf).getD .list
+                 strategy := ((strOf g n (rmlNs ++ "strategy")).bind gatherStrategyOf).getD .append
+                 allowEmpty := (strOf g n (rmlNs ++ "allowEmptyListAndContainer")) == some "true" }
+
+end
+
+/-- A TERM MAP at node `n`. -/
+def termMapAt (g : Graph) (n : String) : TermMap := termMapAtF readFuel g n
+
 /-- Term maps for a property that has both a MAP form and a SHORTCUT
     form — `rml:predicateMap` / `rml:predicate`, `rml:objectMap` /
     `rml:object`, `rml:graphMap` / `rml:graph`. Both are collected:
@@ -85,20 +172,6 @@ def constantMap (t : Term) : TermMap := { form := .constant t }
 def mapsFor (g : Graph) (n : String) (mapProp shortcutProp : String) : List TermMap :=
   (nodesOf g n (rmlNs ++ mapProp)).map (termMapAt g)
   ++ (objectsOf g n (rmlNs ++ shortcutProp)).map constantMap
-
-/-- One side of a join: the `rml:child` / `rml:parent` SHORTCUT (a
-    reference expression) or the `rml:childMap` / `rml:parentMap` term
-    map, which may hold a template. -/
-def joinSide (g : Graph) (j : String) (short mapProp : String) : Option TermMap :=
-  match strOf g j (rmlNs ++ short) with
-  | some r => some { form := .reference r }
-  | none   => (nodesOf g j (rmlNs ++ mapProp)).head?.map (termMapAt g)
-
-def joinsAt (g : Graph) (n : String) : List JoinCondition :=
-  (nodesOf g n (rmlNs ++ "joinCondition")).filterMap (fun j =>
-    match joinSide g j "child" "childMap", joinSide g j "parent" "parentMap" with
-    | some c, some p => some { child := c, parent := p }
-    | _, _           => none)
 
 /-- An object map: a `rml:parentTriplesMap` makes it a reference, and
     everything else makes it a term map. -/
