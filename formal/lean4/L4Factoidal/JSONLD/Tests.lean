@@ -1,5 +1,6 @@
 /-
-L4Factoidal.JSONLD.Tests — compile-time executable checks.
+L4Factoidal.JSONLD.Tests — compile-time executable checks (the section at
+the end covers JSON-LD 1.1 Framing).
 
 Every `#guard` below is evaluated during `lake build`: a wrong answer is
 a BUILD FAILURE (the same discipline as `L4Factoidal/Tests.lean`).
@@ -17,6 +18,7 @@ measurement is the separate real-corpus run
 never a conformance claim (CLAUDE.md iron rule #6).
 -/
 import L4Factoidal.JSONLD.ToRdf
+import L4Factoidal.JSONLD.Frame
 
 namespace L4Factoidal.JSONLD.Tests
 
@@ -316,5 +318,256 @@ def toRdfCount (input : String) (base : Option String := none) : Option Nat :=
 -- `compound-literal`: a fresh blank node with three triples.
 #guard toRdfCount "{\"@id\":\"http://ex/s\",\"http://ex/p\":{\"@value\":\"v\",\"@language\":\"en\",\"@direction\":\"rtl\"}}"
        == some 1
+
+/-! ## JSON-LD 1.1 Framing (https://www.w3.org/TR/json-ld11-framing/)
+
+Each keyword has a pair of guards: the case where it acts and the case
+where it does not (or its opposite value). A framing engine that ignored
+the keyword, or applied it to everything, fails one of the pair. The
+conformance measurement is `l4jsonld-frame` on the W3C framing manifest. -/
+
+section Framing
+
+/-- Frame `input` with `frame` (no base IRI) and render the answer in RFC
+8785 form, or `ERR <error code>`. -/
+private def framed (input frame : String) (pm : Option String := none) : String :=
+  match frameDocument Loader.none input frame none pm with
+  | .ok j => jcsDocument j
+  | .error e => "ERR " ++ e.code
+
+/-- The same with explicit framing options. -/
+private def framedWith (input frame : String) (opts : FrameOptions) : String :=
+  match frameDocumentWith Loader.none input frame opts with
+  | .ok j => jcsDocument j
+  | .error e => "ERR " ++ e.code
+
+private def vocabCtx : String := r#""@context":{"@vocab":"http://e.org/"}"#
+
+/-- Two people; `a` knows `b`. -/
+private def people : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/a","@type":"Person","name":"Alice","knows":{"@id":"http://e.org/b"}},
+    {"@id":"http://e.org/b","@type":"Person","name":"Bob"}]}"#
+
+/-- A frame on `a` with extra frame members. -/
+private def frameA (extra : String) : String :=
+  "{" ++ vocabCtx ++ r#","@id":"http://e.org/a""# ++ extra ++ "}"
+
+private def aEmbedded : String :=
+  r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/a","@type":"Person","knows":{"@id":"http://e.org/b","@type":"Person","name":"Bob"},"name":"Alice"}"#
+
+private def aReference : String :=
+  r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/a","@type":"Person","knows":{"@id":"http://e.org/b"},"name":"Alice"}"#
+
+/-! ### `@embed` (§4.1, §5.3.2) -/
+
+-- `@never`: the node is a reference.  `@always`: the node is embedded.
+#guard framed people (frameA r#","knows":{"@embed":"@never"}"#) == aReference
+#guard framed people (frameA r#","knows":{"@embed":"@always"}"#) == aEmbedded
+-- The boolean forms: `false` is `@never`, `true` is `@once`.
+#guard framed people (frameA r#","knows":{"@embed":false}"#) == aReference
+#guard framed people (frameA r#","knows":{"@embed":true}"#) == aEmbedded
+-- Without `@embed` the default `@once` embeds the first occurrence.
+#guard framed people (frameA "") == aEmbedded
+-- `@once`: a second reference to the same node is a node reference.
+private def twiceReferenced : String :=
+  "{" ++ vocabCtx ++ r#","@id":"http://e.org/o","@type":"T",
+    "e1":{"@id":"http://e.org/m","nm":"M"},"e2":{"@id":"http://e.org/m","nm":"M"}}"#
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@once"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/o","@type":"T","e1":{"@id":"http://e.org/m","nm":"M"},"e2":{"@id":"http://e.org/m"}}"#
+-- `@always` embeds it both times.
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@always"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/o","@type":"T","e1":{"@id":"http://e.org/m","nm":"M"},"e2":{"@id":"http://e.org/m","nm":"M"}}"#
+-- A value outside `@always` / `@never` / `@once` is `invalid @embed value`.
+#guard framed people (frameA r#","knows":{"@embed":"@sometimes"}"#) == "ERR invalid @embed value"
+-- `@last` belongs to `json-ld-1.0` processing: the earlier embed becomes a
+-- node reference.  Under 1.1 processing it is an invalid value.
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@last"}"#) (some "json-ld-1.0")
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/o","@type":"T","e1":{"@id":"http://e.org/m"},"e2":{"@id":"http://e.org/m","nm":"M"}}]}"#
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@last"}"#)
+       == "ERR invalid @embed value"
+-- A cycle is cut by a node reference, even under `@always`.
+private def cyclic : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/a","@type":"P","k":{"@id":"http://e.org/b"}},
+    {"@id":"http://e.org/b","@type":"P","k":{"@id":"http://e.org/a"}}]}"#
+#guard framed cyclic (frameA r#","@embed":"@always""#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/a","@type":"P","k":{"@id":"http://e.org/b","@type":"P","k":{"@id":"http://e.org/a"}}}"#
+
+/-! ### `@explicit` -/
+
+#guard framed people (frameA r#","@explicit":true,"name":{}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/a","@type":"Person","name":"Alice"}"#
+#guard framed people (frameA r#","@explicit":false,"name":{}"#) == aEmbedded
+
+/-! ### `@default` and `@omitDefault` -/
+
+private def bobFrame (member : String) : String :=
+  "{" ++ vocabCtx ++ r#","@id":"http://e.org/b","email":"# ++ member ++ "}"
+-- A property the node lacks gets the default.
+#guard framed people (bobFrame r#"{"@default":"none"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","email":"none","name":"Bob"}"#
+-- `@omitDefault` in the property frame suppresses it.
+#guard framed people (bobFrame r#"{"@default":"none","@omitDefault":true}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","name":"Bob"}"#
+-- The `omitDefault` option does the same for every property.
+#guard framedWith people (bobFrame r#"{"@default":"none"}"#) { omitDefault := true }
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","name":"Bob"}"#
+-- With no `@default`, the missing property is `null`.
+#guard framed people (bobFrame "{}")
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","email":null,"name":"Bob"}"#
+-- `@default: @null` is `null` too.
+#guard framed people (bobFrame r#"{"@default":"@null"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","email":null,"name":"Bob"}"#
+-- A default `@type` applies to a node without a type.
+private def untyped : String := "{" ++ vocabCtx ++ r#","@id":"http://e.org/n2","p":1}"#
+#guard framed untyped ("{" ++ vocabCtx ++ r#","@type":{"@default":"Z"},"p":{}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n2","@type":"Z","p":1}"#
+-- The default does not overwrite a type the node has.
+#guard framed people ("{" ++ vocabCtx ++ r#","@id":"http://e.org/b","@type":{"@default":"Z"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","name":"Bob"}"#
+
+/-! ### `@requireAll` (§4.2) -/
+
+private def pq : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/n1","p":1,"q":2},{"@id":"http://e.org/n2","p":1}]}"#
+-- Default: one matching property is enough, so both nodes match.
+#guard framed pq ("{" ++ vocabCtx ++ r#","p":{},"q":{}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/n1","p":1,"q":2},{"@id":"http://e.org/n2","p":1,"q":null}]}"#
+-- `@requireAll: true`: every property must match, so only `n1`.
+#guard framed pq ("{" ++ vocabCtx ++ r#","@requireAll":true,"p":{},"q":{}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","p":1,"q":2}"#
+-- The `requireAll` option sets the same flag for a frame without the entry.
+#guard framedWith pq ("{" ++ vocabCtx ++ r#","p":{},"q":{}}"#) { requireAll := true }
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","p":1,"q":2}"#
+
+/-! ### Matching on `@type` and `@id` (§4.2) -/
+
+private def typedAndNot : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/n1","@type":"A"},{"@id":"http://e.org/n2","p":1}]}"#
+-- `[]` matches a node without a type, `{}` a node with one.
+#guard framed typedAndNot ("{" ++ vocabCtx ++ r#","@type":[]}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n2","p":1}"#
+#guard framed typedAndNot ("{" ++ vocabCtx ++ r#","@type":{}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","@type":"A"}"#
+-- A frame that matches nothing frames nothing.
+#guard framed people ("{" ++ vocabCtx ++ r#","@type":"Nothing"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"}}"#
+-- Both people match their type; the output has the two under `@graph`.
+#guard framed people ("{" ++ vocabCtx ++ r#","@type":"Person"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/a","@type":"Person","knows":{"@id":"http://e.org/b","@type":"Person","name":"Bob"},"name":"Alice"},{"@id":"http://e.org/b","@type":"Person","name":"Bob"}]}"#
+-- A blank node identifier is not a valid `@id` or `@type` pattern.
+#guard framed people ("{" ++ vocabCtx ++ r#","@id":"_:z"}"#) == "ERR invalid frame"
+#guard framed people ("{" ++ vocabCtx ++ r#","@type":"_:T"}"#) == "ERR invalid frame"
+
+/-! ### Value patterns (§4.3) -/
+
+private def xy : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/n1","p":"x"},{"@id":"http://e.org/n2","p":"y"}]}"#
+-- An exact value matches that value only.
+#guard framed xy ("{" ++ vocabCtx ++ r#","p":{"@value":"x"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","p":"x"}"#
+-- A value that no node holds matches no node.
+#guard framed xy ("{" ++ vocabCtx ++ r#","p":{"@value":"z"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"}}"#
+-- An array of values matches any of them.
+#guard framed xy ("{" ++ vocabCtx ++ r#","p":{"@value":["x","y"]}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/n1","p":"x"},{"@id":"http://e.org/n2","p":"y"}]}"#
+-- Language and datatype patterns: `{}` accepts any, a string accepts
+-- that one, and the value must otherwise lack the component.
+private def langTyped : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/n1","p":{"@value":"x","@language":"en"}},
+    {"@id":"http://e.org/n2","p":"x"},
+    {"@id":"http://e.org/n3","p":{"@value":"x","@type":"http://e.org/T"}}]}"#
+-- A language pattern compares without regard to case.
+#guard framed langTyped ("{" ++ vocabCtx ++ r#","p":{"@value":{},"@language":"EN"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","p":{"@language":"en","@value":"x"}}"#
+#guard framed langTyped ("{" ++ vocabCtx ++ r#","p":{"@value":{},"@language":"fr"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"}}"#
+-- A plain pattern matches the plain value only; a typed pattern, the typed.
+#guard framed langTyped ("{" ++ vocabCtx ++ r#","p":{"@value":"x"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n2","p":"x"}"#
+#guard framed langTyped ("{" ++ vocabCtx ++ r#","p":{"@value":"x","@type":"http://e.org/T"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n3","p":{"@type":"T","@value":"x"}}"#
+-- The matching function on its own.
+private def valueOf (s : String) : Json := (parseJson s).toOption.getD .null
+#guard valueMatch (valueOf r#"{"@value":["x","y"]}"#) (valueOf r#"{"@value":"y"}"#)
+#guard !valueMatch (valueOf r#"{"@value":["x","y"]}"#) (valueOf r#"{"@value":"z"}"#)
+#guard valueMatch (valueOf r#"{"@value":{}}"#) (valueOf r#"{"@value":"z"}"#)
+-- `{}` for the value does not let a language-tagged value through when
+-- the pattern lacks `@language`.
+#guard !valueMatch (valueOf r#"{"@value":{}}"#) (valueOf r#"{"@value":"z","@language":"en"}"#)
+#guard valueMatch (valueOf r#"{"@value":{},"@language":{}}"#) (valueOf r#"{"@value":"z","@language":"en"}"#)
+#guard !valueMatch (valueOf r#"{"@value":{},"@language":{}}"#) (valueOf r#"{"@value":"z"}"#)
+#guard valueMatch (valueOf r#"{"@value":{},"@type":[]}"#) (valueOf r#"{"@value":"z"}"#)
+#guard !valueMatch (valueOf r#"{"@value":{},"@type":[]}"#) (valueOf r#"{"@value":"z","@type":"t"}"#)
+
+/-! ### Blank node identifiers (§5.1) -/
+
+private def bnode : String := "{" ++ vocabCtx ++ r#","@id":"_:x","@type":"T","p":1}"#
+-- 1.1 processing prunes the identifier of a blank node that occurs once.
+#guard framed bnode ("{" ++ vocabCtx ++ r#","@type":"T"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@type":"T","p":1}"#
+-- 1.0 processing keeps it, relabelled by node map generation.
+#guard framed bnode ("{" ++ vocabCtx ++ r#","@type":"T"}"#) (some "json-ld-1.0")
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"_:b0","@type":"T","p":1}]}"#
+-- The `pruneBlankNodeIdentifiers` option overrides the processing mode.
+#guard framedWith bnode ("{" ++ vocabCtx ++ r#","@type":"T"}"#)
+         { pruneBlankNodeIdentifiers := some false }
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"_:b0","@type":"T","p":1}"#
+-- A blank node that occurs twice in the output keeps its identifier.
+private def sharedBnode : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/n1","q":{"@id":"_:x","p":1}},{"@id":"http://e.org/n2","q":{"@id":"_:x"}}]}"#
+#guard framed sharedBnode ("{" ++ vocabCtx ++ r#","q":{}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/n1","q":{"@id":"_:b0","p":1}},{"@id":"http://e.org/n2","q":{"@id":"_:b0","p":1}}]}"#
+
+/-! ### `@reverse`, `@included`, named graphs -/
+
+private def revDoc : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[
+    {"@id":"http://e.org/s1","@type":"A"},
+    {"@id":"http://e.org/s2","@type":"B","inc":{"@id":"http://e.org/s1"}}]}"#
+#guard framed revDoc ("{" ++ vocabCtx ++ r#","@type":"A","@reverse":{"inc":{}}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/s1","@reverse":{"inc":{"@id":"http://e.org/s2","@type":"B","inc":{"@id":"http://e.org/s1"}}},"@type":"A"}"#
+-- Without `@reverse` in the frame, the referencing node is not embedded.
+#guard framed revDoc ("{" ++ vocabCtx ++ r#","@type":"A"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/s1","@type":"A"}"#
+
+private def abDoc : String :=
+  "{" ++ vocabCtx ++ r#","@graph":[{"@id":"http://e.org/n1","@type":"A"},{"@id":"http://e.org/n2","@type":"B"}]}"#
+#guard framed abDoc ("{" ++ vocabCtx ++ r#","@type":"A","@included":{"@type":"B"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","@included":{"@id":"http://e.org/n2","@type":"B"},"@type":"A"}"#
+#guard framed abDoc ("{" ++ vocabCtx ++ r#","@type":"A"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/n1","@type":"A"}"#
+
+-- A frame with a top-level `@graph` descends into the named graph of a
+-- matched node.
+private def graphDoc : String :=
+  "{" ++ vocabCtx ++ r#","@id":"http://e.org/g","@type":"G","@graph":[{"@id":"http://e.org/n","@type":"N"}]}"#
+#guard framed graphDoc ("{" ++ vocabCtx ++ r#","@type":"G","@graph":{"@type":"N"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/n","@type":"N"}],"@id":"http://e.org/g","@type":"G"}"#
+#guard framed graphDoc ("{" ++ vocabCtx ++ r#","@type":"G","@graph":{"@type":"M"}}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/g","@type":"G"}"#
+
+/-! ### `omitGraph` (§5.1) -/
+
+-- One result: a bare node under 1.1, a `@graph` array under 1.0.
+#guard framed people ("{" ++ vocabCtx ++ r#","@id":"http://e.org/b"}"#)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@id":"http://e.org/b","@type":"Person","name":"Bob"}"#
+#guard framed people ("{" ++ vocabCtx ++ r#","@id":"http://e.org/b"}"#) (some "json-ld-1.0")
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/b","@type":"Person","name":"Bob"}]}"#
+-- The option overrides the mode.
+#guard (match frameDocument Loader.none people ("{" ++ vocabCtx ++ r#","@id":"http://e.org/b"}"#)
+                none none (some false) with
+        | .ok j => jcsDocument j
+        | .error e => "ERR " ++ e.code)
+       == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/b","@type":"Person","name":"Bob"}]}"#
+
+end Framing
 
 end L4Factoidal.JSONLD.Tests
