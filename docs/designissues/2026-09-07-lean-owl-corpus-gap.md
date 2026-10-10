@@ -971,3 +971,166 @@ score and the speed stay separate measurements:
 
 Both are performance work against a fixed verdict, measurable against
 the table above.
+
+
+## 14. Status — 2026-10-10, the tableau rules the F\* refuter had
+
+Tracking issue: <https://github.com/danbri/factoidal/issues/698>.
+
+### 14.1 The two profile-EL failures under the RL regime
+
+Both are outside what the OWL 2 RL/RDF rules (OWL 2 Profiles § 4.3,
+Tables 4 – 9) license, so both belong to the DL procedure and the RL
+score of `profile-EL.rdf` stays 118 pass, 2 fail (1 skip, out of 121).
+
+* `New-Feature-Keys-002` [InconsistencyTest]. `prp-key` needs
+  `T(Peter, rdf:type, owl:Thing)`, and no row of Tables 4 – 9 types an
+  individual as `owl:Thing` (cls-thing types `owl:Thing` itself as a
+  class; scm-cls is about classes). The premise is not an OWL 2 RL
+  ontology either: the class of `HasKey` must be a subClassExpression,
+  which excludes `owl:Thing`. The F\* RL regime passes it through its
+  `owl_thing_axioms` table ("`x rdf:type owl:Thing` for every IRI"),
+  an extension row, not a table row. Under `--dl` the tableau's
+  graph-level `owl:hasKey` check (G10) decides it.
+* `WebOnt-someValuesFrom-003` [PositiveEntailmentTest]. The conclusion
+  `fred parent _:a . _:a parent _:b` needs existential witnesses; no RL
+  row mints a node, and the catalog marks the case NOT in the RL
+  profile. Under `--dl` it is decided by the rolled-up goal of § 14.3.
+
+`profile-EL.rdf --dl`: 119 pass, 1 fail → **120 pass, 0 fail** (1 skip).
+
+### 14.2 Rules added to `OWL/Refute.lean`
+
+Each with the Direct Semantics argument in the code beside it.
+
+| rule | closes | F\* counterpart |
+|---|---|---|
+| `≥ k` generating rule, witnesses pairwise different (`distinctGroups`, `distinctIn`) | `-035` | `ensure_min_witnesses`, `rs_gendistinct` |
+| `∃p.{a}` is a counted edge to `a` | `-035` | `ensure_existential` |
+| deterministic identification under `≤ 1` and singleton nominals | `-108` | `merge_branch` at `k = 1` |
+| propositional clash per node (unions + TBox clauses, DPLL) | `-040`, `-504` | `find_union_nodes_scan` (unit propagation) |
+| identity clash over nominals (clauses over `E(a,b)` with transitivity) | `-502` | nominal branching |
+| named-subject `owl:oneOf` / Boolean markers / `owl:disjointUnionOf` as TBox equivalences | `-502`, PE ids | `seed_oneof_members` |
+| excluded values (negative assertions, disjoint data properties) and the `xsd:pattern` language check | the two disjoint-dataproperty ids, `Minus Infinity is not in owl:real` | `disjoint_dataprop_*_clash`, `negated_values` |
+| class-size counting rung (`CountingOracle.classSizeUnsat`) | `one=two`, `-910` | `class_size_refutes` |
+| min-sum counting clash | `-903` (PE) | `min_sum_counting_clash` |
+| `rdfs:domain` / `rdfs:range` as TBox axioms; property-assertion terms as nodes | PE ids | (closure-side in F\*) |
+| inverse-functional predecessors identified; symmetric = self-inverse; nominal choice branching | `SymmetricProperty-002`, `TransitiveProperty-002` | `identify_branch`, `find_nominal_nodes` |
+
+### 14.3 Goal builders added to `OWL/NegationGoals.lean`
+
+* Blank-node individuals in a conclusion are ROLLED UP into a class
+  expression (Horrocks and Tessaris, AAAI 2000): a forest of blank
+  nodes hanging off at most one named individual per tree becomes
+  `c : ∃p.C(x)` or `∃x. C(x)`; cycles and multi-parent shapes answer
+  `none`.
+* Property characteristics and IRI-to-IRI `owl:inverseOf` are axioms
+  of the conclusion with fresh-name goals.
+* A data assertion `s p "v"` negates to a negative property assertion.
+* A named-subject `owl:oneOf` is a class equivalence of the conclusion.
+
+### 14.4 Soundness repairs found on the way
+
+1. Property characteristics, IRI `owl:inverseOf` and named-subject
+   `owl:oneOf` in a CONCLUSION were classified as scaffolding and kept
+   in every goal — the conclusion's own claim was assumed while its
+   other conjuncts were proved. `WebOnt-TransitiveProperty-002` had
+   passed that way. Fixed; guard `!entailedByRefutation [i:C]
+   [p Functional, i:C]`.
+2. The `≤ k p.C` merge was offered over all successors, not only those
+   provably in `C`. Guard `gQualOutsideFiller`.
+3. The class-expression parser dropped `xsd:pattern` and the length
+   facets, so two different string restrictions parsed equal.
+4. A literal `owl:oneOf` on a data witness gave an empty identity
+   clause; caught by the negative guard `!(refuted (gMinusInf false))`
+   before landing.
+5. `addLabel` deduplicated with `ceEq`, which never equates expressions
+   holding `unknown`; such a label was re-added every pass and the
+   expansion never quiesced.
+
+### 14.5 Speed: the costs the new rules exposed
+
+The rules of § 14.2 put more axioms in the TBox (named Boolean,
+`owl:oneOf`, `owl:disjointUnionOf`, domain and range entries) and more
+nodes in the tableau (every end of a property assertion). The
+`type-consistency.rdf --dl` gate then ran past its 1,500-second cap,
+and `type-positive-entailment.rdf --dl` went from 333 s to 856 s.
+`--slow-ms 1000` named `WebOnt-miscellaneous-011` (the wine and food
+ontology: a 30,968-triple closure, 3,281 axioms, 818 nodes) at 555 s.
+`--trace` now prints the time of each refuter phase; on that unit:
+
+| phase | before | after | cause |
+|---|---|---|---|
+| `initState` | > 95 s | < 1 s | a fold through `addLabel` scanned the node list per triple |
+| one `onePass` round | 10.6 s | 0.12 s | every axiom tested at every node and label; label lists scanned per write |
+| `propositionalClash` | 20 s | 0.3 s | clause growth pulled in the whole TBox per node (3,850 clauses), one DPLL step per unit literal |
+| `collectAxioms` (premise / goal graph) | 1.7 s / 12 – 15 s | 0.09 s / 0.25 s | `parseCeOfSubject` read `st.graph.length` once per subject |
+
+The repairs, each with the argument for an unchanged answer in the
+code beside it:
+
+* `TBoxIndex`: the TBox split by the shallow key of the antecedent
+  (`ceIndexKey`; theorem `ceIndexKey_of_beq`), by the property of an
+  edge-provable antecedent, by the first conjunct of an intersection,
+  and the `owl:Thing` antecedents. A rule reads the subset that can
+  fire.
+* `RState.nodes` is an array with a subject-to-index map, each node
+  carries a hash index of its labels (`ClassExpr.hashCe`; theorem
+  `ClassExpr.hashCe_of_beq`), and the expansion edges are kept by
+  subject and by object. `wdepth` is a hash map.
+* `nodeClausesIx` grows the clause set only from atoms no label fixes.
+  On a saturated node an axiom keyed on a label has fired and one keyed
+  on the negation of a label is satisfied by it; a subset of the
+  clauses that has no model proves the node has none. DPLL assigns all
+  unit literals in one step. The answer is memoised per label set.
+* `parseCeOfSubjectFuel` takes the marker-walk fuel, computed once per
+  pass over the graph; `dedupAxioms` compares an axiom only with the
+  kept axioms of its key; `distinctIn` reads `owl:differentFrom`
+  through the store's membership test (`provablyDistinctS`) instead of
+  scanning the graph per pair.
+
+### 14.6 Scores
+
+Measured with `formal/lean4/.lake/build/bin/l4owl-probe --dir
+third_party/testing/owl`, `--dl --refute-ms 3000` for the DL regime.
+The baseline column is `docs/designissues/2026-10-09-lean-conformance-baseline.md`.
+
+| catalog, test type, regime | baseline 2026-10-09 | 2026-10-10 |
+|---|---|---|
+| default run TOTAL, RL regime (six catalogs) | 1229 pass, 218 fail, 2 skip, 8 unsupported (out of 1457) | unchanged |
+| profile-EL, all types, RL regime | 118 pass, 2 fail, 1 skip (out of 121) | unchanged (§ 14.1) |
+| profile-EL, all types, `--dl` | 119 pass, 1 fail, 1 skip (out of 121) | 120 pass, 0 fail, 1 skip |
+| type-inconsistency, InconsistencyTest, `--dl` | 116 pass, 11 fail, 1 skip (out of 128) | 126 pass, 1 fail, 1 skip |
+| type-positive-entailment, PositiveEntailmentTest, `--dl` | 169 pass, 35 fail, 2 unsupported (out of 206) | 192 pass, 12 fail, 2 unsupported |
+| type-consistency, ConsistencyTest, `--dl` (soundness gate) | 351 pass, 1 fail, 2 unsupported (out of 354) | unchanged; `refuter_flips_to_fail=0` |
+| syntax-dl, PositiveEntailmentTest, `--dl` | 73 pass, 15 fail, 2 unsupported (out of 90) | 88 pass, 0 fail, 2 unsupported |
+| syntax-dl, InconsistencyTest, `--dl` | 92 pass, 11 fail, 1 skip (out of 104) | 102 pass, 1 fail, 1 skip |
+| syntax-dl, ConsistencyTest and NegativeEntailmentTest, `--dl` | 211 pass, 1 fail, 2 unsupported (out of 214); 16 pass, 0 fail (out of 16) | unchanged; `refuter_flips_to_fail=0` |
+| syntax-dl, all types, RL regime | 302 pass, 117 fail, 5 other (out of 424) | unchanged |
+
+Wall clock, one catalog per process, two sibling agents on the
+same four CPUs: `type-consistency.rdf --dl` 346 s near the start of
+this work, past the 1,500-second cap before § 14.5, 185 s after;
+`type-positive-entailment.rdf --dl` 333 s, then 856 s, then 133 s.
+
+### 14.7 Left failing, with the reason
+
+Each is a W3C test that fails today in the runs above, tracked in
+<https://github.com/danbri/factoidal/issues/698> unless another issue
+is named.
+
+* `FS2RDF-literals-ar` [ConsistencyTest]: the RDF/XML parser rejects
+  the premise (`rdf:datatype` on a property element with element
+  content, RDF/XML § 7.2.16). No refuter change touches it.
+* `WebOnt-description-logic-909` [InconsistencyTest]: disputed fixture,
+  <https://github.com/danbri/factoidal/issues/299>; F\* fails it too, and
+  its class-size system is satisfiable (`OWL/CountingOracle.lean`
+  header).
+* PE, RDF/OWL vocabulary claims with no Direct Semantics axiom:
+  `WebOnt-Class-001`, `-Class-003`, `-I5.5-001`, `-I5.5-002`,
+  `-imports-010`, `-Nothing-002`. F\* fails `Class-001` and `-003`.
+* PE, `WebOnt-I5.3-015` (an `owl:imports` chain), `WebOnt-I5.8-017`
+  (a datatype IRI `owl:sameAs` another), `WebOnt-extra-credit-002`,
+  `-003`, `-004` (arithmetic): F\* fails all five.
+* PE, `WebOnt-equivalentProperty-005`: a restriction node with two
+  `owl:onProperty` values, which only the RDF-Based Semantics reads.

@@ -1563,10 +1563,12 @@ def profileMain (o : Opts) : IO UInt32 := do
 
 /-! ## `--tbox-census` — counting the refuter's work, not timing it
 
-`onePass` folds over the WHOLE TBox four times for a node: once in
-`injectGlobalAxioms`, once per LABEL in `applyAxioms`, once in
-`applyAxiomsEdges` and once in `applyAxiomsConj`. So one pass tests
-each axiom `3 * nodes + labels` times, and `search` runs up to
+Before 2026-10-10 `onePass` folded over the WHOLE TBox four times for
+a node: once in `injectGlobalAxioms`, once per LABEL in `applyAxioms`,
+once in `applyAxiomsEdges` and once in `applyAxiomsConj`, so one pass
+tested each axiom `3 * nodes + labels` times. It now reads the TBox
+through `Refute.TBoxIndex`, and the count printed here is the upper
+bound the index cuts down, not the work done. `search` runs up to
 `--refute-budget` passes per goal. These counts do not move when the
 machine is loaded, which a wall clock does. -/
 

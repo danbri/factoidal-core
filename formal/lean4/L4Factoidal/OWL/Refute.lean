@@ -1575,9 +1575,9 @@ def dpll (fuel : Nat) (cs : List (List ILit)) (asg : Array (Option Bool))
         match forced with
         | none    => (some false, n)
         | some a' => dpll n cs a'
-      else match open_.find? (fun c => c.length == 1) with
-      | some [u] => dpll n cs (asg.set! u.v (some u.pos))
-      | _ =>
+      else
+        -- No unit clause: branch on the first literal of the first
+        -- open clause.
         match open_.head? with
         | none   => (some true, n)
         | some c =>
