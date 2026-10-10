@@ -773,8 +773,9 @@ After the two `RDF.Canonical` repairs the Lean module canonicalizes 24,000
 blank-node quads on Node's default stack, which neither F\* bundle does. It is
 slow there: 16.9 s in the bench (one run) and 10.3 s in a gate run, against
 0.76 s and 1.03 s at 6,000 quads, 22 and 9.9 times the time for 4 times the
-input. That is https://github.com/danbri/factoidal/issues/745, held by the gate as `SCALING_XFAIL['canonicalize']`
-(bound: 9 times). Where the time goes is not measured here.
+input. That is https://github.com/danbri/factoidal/issues/745, held by the gate until its repair as `SCALING_XFAIL['canonicalize']`
+(bound: 9 times). The profile and the repair are in "Issue 745: where
+canonicalization spent its time" below.
 
 The Lean module after the repairs (Lean only, same sizes and inputs; load
 average 6 to 12, so these times are noisier than the table above; the ratio
@@ -836,8 +837,9 @@ engines, plus the sizes its expected-failure keys name, and requires the Lean
 time to be at most 2 times the faster F\* bundle. `XFAIL` holds
 no row (it held `order-by@small` and `group-by@small` until the repairs
 above). `MEMORY_XFAIL` holds `parse-turtle@large` with a bound of 256 MB of
-linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` holds `canonicalize`: the Lean
-time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745). Each
+linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` held `canonicalize`: the Lean
+time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745); since
+the repair below, `SCALING` asserts that bound and `SCALING_XFAIL` is empty. Each
 expected failure turns the gate red when it passes. Without the F\* bundles
 the gate exits 2. The placeholder issue URLs
 `https://github.com/danbri/factoidal/issues/744` and `…/https://github.com/danbri/factoidal/issues/745` are for the
@@ -864,6 +866,111 @@ load average 7.1): `xfail scaling canonicalize: Lean 1033.3 ms at 6000
 triples, 10265.9 ms at 24000 triples, bound 9 times`; `canonicalize@middle`
 ratio 0.69. ORDER BY at 12,000 triples measured 1.10, 1.24, 1.60 and 1.77 in
 four runs at load averages from 5 to 10: it is the row nearest the bound.
+
+### Issue 745: where canonicalization spent its time
+
+Profiled natively first: `l4factoidal canonicalize` runs the same
+`RDF.Canonical.canonicalize` as the wasm op `canonicalizeToNQuads` (through
+`Ops.canonicalizeOf`). Input: the bench's canonicalize row, k blank-node
+persons with an `rdf:type`, a `:name` and an `:age` (3k quads; every
+first-degree hash is unique, so §4.4 step 5 has no collision group).
+Wall and user time, one run each, load average about 5 on 4 shared CPUs:
+
+| k (blank nodes) | quads | before: wall | before: user | after: wall | after: user |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 3,000 | 0.25 s | 0.13 s | 0.15 s | 0.08 s |
+| 2,000 | 6,000 | 0.54 s | 0.45 s | 0.18 s | 0.16 s |
+| 4,000 | 12,000 | 2.23 s | 1.88 s | 0.35 s | 0.31 s |
+| 8,000 | 24,000 | 9.49 s | 8.82 s | 1.19 s | 0.77 s |
+
+The output is byte-identical before and after at all four sizes (`cmp`).
+
+`valgrind --tool=callgrind`, inclusive instructions in millions:
+
+| phase | 1,000 | 2,000 | 4,000 |
+|---|---:|---:|---:|
+| whole program, before | 1,433 | 4,043 | 13,809 |
+| `hfdqTableOf` (§4.4 step 3: §4.5 for every blank node) | 829 | 2,814 | 10,863 |
+| of which the `quadsForBnode` filter | 659 | 2,473 | 10,181 |
+| `relabelDataset` (`lookupMap`) | 67 | 186 | 879 |
+| `readDataset` (N-Quads parse) | 174 | 348 | 697 |
+| command line JSON envelope (`okWith` + `parseEnvelope`) | 219 | 442 | 886 |
+| whole program, after | - | 1,436 | 2,862 |
+| `hfdqTableOfIx`, after | - | 399 | 810 |
+
+The phase that grew superlinearly was the first-degree hash table: 3.4 and
+3.9 times per doubling, 79 percent of the instructions at 4,000 blank nodes.
+`hashFirstDegreeQuads` found the quads of its blank node with
+`quadsForBnode`, a filter over every quad of the dataset, and `hfdqTableOf`
+called it once per blank node: 8,000 blank nodes in 24,000 quads cost 192
+million calls of `quadMentionsBnode`. The second was `relabelDataset`: the
+label of each blank-node occurrence was found by `lookupMap`, a scan of the
+issued list (one entry per blank node). RDFC-1.0 §4.4 step 2 builds a "blank
+node to quads map" once; the port had replaced it with a filter per blank
+node. The insertion sort that the 2026-10-10 tail-recursion work changed
+(`insertSortedBy`) is still quadratic in time, but `sortBy` runs only on
+the blank nodes left unissued after fuel exhaustion, which no input reaches:
+it is not in the profile.
+
+The repair (`RDF/Canonical.lean`, specification definitions unchanged):
+
+- `bnodeQuadIndex`: the §4.4 step 2 map, a `Std.TreeMap` from a blank node
+  to its quads, built in one pass. `quadsForBnodeIx_bnodeQuadIndex` proves
+  it returns the list `quadsForBnode` returns, order included, for every
+  blank node; `hfdqTableOf_eq_hfdqTableOfIx` follows, and
+  `@[csimp] hfdqTableOf_eq_Ix` makes the compiler emit the indexed form.
+- `labelTree`: the issued list as a `Std.TreeMap`, inserted last entry
+  first so that the first entry of a label wins, as in `lookupMap`
+  (`labelTree_get?`). `relabelDatasetBy` is the relabelling walk over any
+  lookup function; `relabelDataset_eq_by` and `@[csimp]
+  relabelDataset_eq_fast` make the compiler build the tree once per call.
+- `CanonicalTests.lean` compares the indexed forms with the scanning
+  definitions written out in the test module (a guard on `hfdqTableOf`
+  alone would compare one program with itself), on a fixture with a blank
+  node twice in one quad, a blank-node graph name and a blank node inside
+  an RDF 1.2 triple term.
+
+RDFC-1.0: 86 pass, 0 fail (out of 86) before and after (`l4w3c` on
+`third_party/testing/rdf-canon/tests/manifest.ttl`).
+`tests/stack/lean_scaling.py` has the input as row `rdfc-bnode-unique`
+(2,000 and 8,000 blank nodes, bound 9 times): ratio 13.1 on the binary
+before the repair (fail), 4.4 after (pass).
+
+A second shape is still quadratic and is now
+https://github.com/danbri/factoidal/issues/751: blank nodes that share one
+first-degree hash (`_:p{i} rdf:type ex:Person`), so §4.4 step 5 runs Hash
+N-Degree Quads for each. 0.16 s at 2,000 blank nodes, 2.37 s at 8,000,
+11.62 s at 16,000 (user time). `hndqRun` does not get the map, so
+`buildBucketsFor` filters every quad once per call (761 million
+instructions at 2,000, 3,139 million at 4,000), and the issuer's
+`lookupIssued` scan and `issued ++ [x]` append grow the same way. The row
+`rdfc-bnode-collide` holds it as an expected failure naming that issue.
+
+The wasm module rebuilt from this change (`Wasm/build-wasm.sh`; full module
+10,666,063 bytes, core module 5,821,908 bytes), copied into
+`npm/factoidal/l4-assets`, two runs of the whole speed gate
+(`node tests/perf/npm_speed_gate.mjs`, Node 22.22.0, load average 3.0 and
+3.1 on 4 CPUs). Before the change the gate measured 1,033 ms and 10,266 ms
+for the same row (above):
+
+| run | Lean, 6,000 quads | Lean, 24,000 quads | ratio (bound 9) | `canonicalize@middle` against the faster F\* bundle |
+|---|---:|---:|---:|---:|
+| 1 | 271.1 ms | 1,258.9 ms | 4.6 | 291 ms against 969.7 ms, 0.30 |
+| 2 | 253.1 ms | 1,122.6 ms | 4.4 | 277.1 ms against 890.1 ms, 0.31 |
+
+Both runs: `npm_speed_gate: 9 pass, 0 fail, 1 expected failures (out of
+10)`; the expected failure is `parse-turtle@large` memory
+(https://github.com/danbri/factoidal/issues/744). The gate's `SCALING`
+list now asserts `canonicalize` (a time above the bound is a failure), and
+`SCALING_XFAIL` is empty.
+
+Other gates on the same tree: `Wasm/native-smoke.sh` 347 pass, 0 fail (out
+of 347); `npm test` in `npm/factoidal` 402 pass, 0 fail, 1 skipped (out of
+403; the skip needs the `esbuild` devDependency); `tests/stack/lean_scaling.sh`
+18 pass, 0 fail, 3 expected-fail (out of 21);
+`tools/lean-tail-recursion-audit.py --gate` passes (one new allow-list line,
+`relabelTermBy`, whose depth is the RDF 1.2 triple-term nesting, as for
+`relabelTerm`); `lake build` exit 0 (1382 jobs).
 
 ### What the F\* comparison found on the F\* side
 

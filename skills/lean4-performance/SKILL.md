@@ -73,6 +73,11 @@ Rules from that repair:
   `l4jsonld-api --dump-shapes`, then `cmp` the files: the suites compare
   with RFC 8785 canonical forms, which ignore member order, and the raw
   dump does not.
+- **An association list answers the FIRST entry of a key; `Std.TreeMap.insert`
+  keeps the LAST.** To replace a `lookup` over a list that can hold a key twice,
+  insert the entries last first (`labelTree` in `RDF/Canonical.lean`:
+  `m.reverse.foldl insert`, proved by `labelTree_get?` through
+  `List.foldl_reverse`).
 - **Measure first, with a ladder.** `l4jsonld-api --scale` prints the time
   of each phase at n, 2n, 4n, 8n and 16n for five document shapes and
   asserts time(4x) at most 9.0 times max(time(x), 20 ms) for the node map,
@@ -159,6 +164,22 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   After the index, two list folds with `acc ++ [x]` (`distinctSubjects`,
   `dedupTerms`) were 80 percent of what was left: profile again after each
   repair (https://github.com/danbri/factoidal/issues/723).
+- **A filter over the whole input once per key, where the specification
+  builds a map.** RDFC-1.0 §4.4 step 2 builds a "blank node to quads map" in
+  one pass. The port's `hashFirstDegreeQuads` filtered every quad for its
+  blank node instead, and `hfdqTableOf` called it once per blank node: 79
+  percent of the instructions of `canonicalize` at 4,000 blank nodes, 9.49 s
+  at 8,000 blank nodes in 24,000 quads
+  (https://github.com/danbri/factoidal/issues/745). A `csimp` could repair
+  it, because `hfdqTableOf` receives the quads AND every key, so its twin
+  builds the map once (`bnodeQuadIndex`, proved equal per key by
+  `quadsForBnodeIx_bnodeQuadIndex`): 1.19 s. The same filter one level down,
+  in `buildBucketsFor`, runs once per Hash N-Degree Quads call and gets one
+  key; a `csimp` on it would rebuild the map per call. The map has to come
+  from a caller that sees all the keys, which changes the signatures down the
+  chain (https://github.com/danbri/factoidal/issues/751, open). Look for a
+  `.filter` whose predicate names the element of an enclosing `map` over
+  all keys.
 - **A text round trip that a caller depends on is a function: name it and
   prove it.** The command line's canonical N-Quads round trip is not the
   identity: it lowers language tags and keeps each quad of a graph once (RDF

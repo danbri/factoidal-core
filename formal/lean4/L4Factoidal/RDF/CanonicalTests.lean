@@ -336,11 +336,79 @@ private def strSamples : List String :=
 #guard (strSamples.filter fun a => strSamples.any fun b => !strLe a b).length > 5
 #guard (strSamples.filter fun a => strSamples.any fun b => strLe a b && !strLe b a).length > 5
 
+/-! ## The blank node to quads map and the label search tree (issue 745)
+
+`hfdqTableOf` and `relabelDataset` compile to `hfdqTableOfIx` and
+`relabelDatasetFast` (`csimp`), so a guard that called `hfdqTableOf` on both
+sides would compare one program with itself. The guards below compare the
+indexed forms with the scanning definitions written out here: `quadsForBnode`
+(a filter, not replaced), `hashFirstDegreeQuads` (not replaced) and
+`relabelDatasetBy` over `lookupMap` (not replaced).
+
+The fixture has every slot a blank node can occupy: the same blank node twice
+in one quad (`_:x <p> _:x`), a blank-node graph name, a blank node only in a
+graph name (`_:g`), a blank node inside an RDF 1.2 triple term, and a quad
+with no blank node. -/
+
+def indexFixture : String :=
+  "_:x <http://example.com/#p> _:x .\n" ++
+  "_:x <http://example.com/#q> _:y _:g .\n" ++
+  "_:y <http://example.com/#r> \"lit\" .\n" ++
+  "<http://example.com/#s> <http://example.com/#t> <http://example.com/#u> _:g .\n" ++
+  "_:z <http://example.com/#v> <<( _:y <http://example.com/#w> _:x )>> .\n" ++
+  "<http://example.com/#s> <http://example.com/#t> <http://example.com/#u> .\n"
+
+def indexDs : Dataset :=
+  match parseNQuads indexFixture .rdf12 with
+  | .ok d    => d
+  | .error _ => Dataset.empty
+
+def indexQuads : List QQuad := dedupQQuads (datasetQuads indexDs)
+
+#guard indexQuads.length == 6
+#guard datasetBnodes indexDs == ["g", "x", "y", "z"]
+-- Every blank node, plus one that does not occur: the map answers what the filter answers.
+#guard ["g", "x", "y", "z", "nope"].all fun b =>
+  quadsForBnodeIx (bnodeQuadIndex indexQuads) b == quadsForBnode b indexQuads
+-- Teeth: the quad `_:x <p> _:x` is in the list of `_:x` once, not twice;
+-- `_:x` occurs in 3 quads (subject twice, inside the triple term once);
+-- a blank node that does not occur has no quads; the graph name counts.
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x").length == 3
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "g").length == 2
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "nope").isEmpty
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x") !=
+  (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x").reverse
+#guard hfdqTableOf .sha256 indexDs indexQuads ==
+  (datasetBnodes indexDs).map (fun b => (b, hashFirstDegreeQuads .sha256 b indexQuads))
+#guard hfdqTableOf .sha384 indexDs indexQuads ==
+  (datasetBnodes indexDs).map (fun b => (b, hashFirstDegreeQuads .sha384 b indexQuads))
+#guard hfdqTableOf .sha256 indexDs indexQuads != hfdqTableOf .sha384 indexDs indexQuads
+-- The search tree keeps the FIRST entry of a repeated label, as `lookupMap` does.
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "a" == some "1"
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "a" != some "3"
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "c" == none
+#guard ["a", "b", "c"].all fun b =>
+  (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? b == lookupMap b [("a", "1"), ("b", "2"), ("a", "3")]
+-- Relabelling through the tree equals relabelling through the scan, on every
+-- slot, with the canonical map and with a map that misses `_:z`.
+#guard relabelDataset (buildCanonicalMapping .sha256 indexDs) indexDs ==
+  relabelDatasetBy (fun b => lookupMap b (buildCanonicalMapping .sha256 indexDs)) indexDs
+#guard relabelDataset [("x", "c1"), ("g", "c0"), ("y", "c2")] indexDs ==
+  relabelDatasetBy (fun b => lookupMap b [("x", "c1"), ("g", "c0"), ("y", "c2")]) indexDs
+#guard relabelDataset [("x", "c1")] indexDs != indexDs
+#guard (relabelDataset [] indexDs) == indexDs
+-- The canonical form is the one the scanning definitions give, line for line.
+#guard indexDs.canonicalNQuads ==
+  joinStrings (dedupAdj (sortStrings ((datasetQuads (relabelDatasetBy
+    (fun b => lookupMap b (buildCanonicalMapping .sha256 indexDs)) indexDs)).map canonQuad)))
+
 /-! ## Axiom audit — the whole point of the Lean port -/
 
 #print axioms L4Factoidal.RDF.Canonical.canonicalize
 #print axioms L4Factoidal.RDF.Dataset.canonicalNQuads
 #print axioms L4Factoidal.RDF.Canonical.hashFirstDegreeQuads
 #print axioms L4Factoidal.RDF.Canonical.hndqRun
+#print axioms L4Factoidal.RDF.Canonical.hfdqTableOf_eq_Ix
+#print axioms L4Factoidal.RDF.Canonical.relabelDataset_eq_fast
 
 end L4Factoidal.RDF.CanonicalTests
