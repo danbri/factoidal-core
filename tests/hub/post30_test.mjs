@@ -22,8 +22,8 @@ const fn = (await import(NPM_FACTOIDAL_INDEX)).default;
 
 const cells = extractObservableCells(POST_FILE);
 
-test('post30: post ships twenty-one live cells', () => {
-  assert.equal(cells.length, 21, `expected 21 live cells, found ${cells.length}`);
+test('post30: post ships twenty-three live cells', () => {
+  assert.equal(cells.length, 23, `expected 23 live cells, found ${cells.length}`);
 });
 
 test('post30: dependency inference names the cells in order', () => {
@@ -50,6 +50,8 @@ test('post30: dependency inference names the cells in order', () => {
     'entailmentPremise',
     'entailmentConclusion',
     'entailmentVerdict',
+    'unionPremise',
+    'unionVerdict',
   ]);
 });
 
@@ -128,8 +130,23 @@ test('post30: a fuel:0 budget-out is reported as null, never a false', async () 
   assert.match(v.reason, /fuel 0/, 'the reason names the exhausted cap');
 });
 
-test('post30: owlEntails proves the someValuesFrom entailment by refutation', async () => {
+// The conclusion is in the OWL 2 RL/RDF closure of the premise:
+// cls-svf1 (OWL 2 Profiles § 4.3, Table 6) types Alice with the
+// someValuesFrom restriction and cax-eqc2 (Table 7) carries the type to
+// :ParentOfDoctor. owlEntails checks the closure first, so `via` is
+// 'closure'. (The F* closure had no cls-svf1 row and reached the same
+// verdict by refutation.)
+test('post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)', async () => {
   const post = runReactivePost(cells, { fn, pretty });
   const v = await post.value('entailmentVerdict');
+  assert.deepEqual(v, { entailed: true, via: 'closure' });
+});
+
+// No OWL 2 RL row derives a superclass of every member of a union from
+// membership of the union (cls-uni derives the union from a member), so
+// this entailment needs the refuter: both branches of the union close.
+test('post30: owlEntails proves the union entailment by refutation', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('unionVerdict');
   assert.deepEqual(v, { entailed: true, via: 'refutation' });
 });

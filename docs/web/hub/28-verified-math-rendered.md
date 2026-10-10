@@ -57,9 +57,10 @@ return pretty(mathmlDemo);
 `2 + 3` evaluates to `5/1` — a rational, kept as numerator over
 denominator rather than collapsed to the integer `5`, because the engine
 never assumes the next operation won't need the denominator. `1 / 0` is
-`undef (division-by-zero)`: `MathML.Content.fst`'s `mvalue` type has a
-constructor for "this has no value", so division by zero is a value the
-evaluator returns, not an exception it throws or a `NaN` it fabricates.
+`undef`, with the engine's reason in brackets: the Lean evaluator
+(`formal/lean4/L4Factoidal/MathML/Core.lean`) answers "no value" for an
+expression that has none, so division by zero is a value the evaluator
+returns, not an exception it throws or a `NaN` it fabricates.
 
 ## TOAN: an exact CAS that speaks Content MathML
 

@@ -110,10 +110,14 @@ return {
 
 `entail: 'RDFS'` leaves the result unchanged — `owl:equivalentClass`
 isn't an RDFS-vocabulary construct, so the RDFS closure has nothing to
-do with it. `entail: 'OWL-RL'` derives two more types: `foaf:Person`
-(via the equivalence, both directions) and `owl:Thing` (every OWL
-individual belongs to it). Same input graph, same query — the only
-thing that changed is which closure ran first.
+do with it. `entail: 'OWL-RL'` derives one more type: `foaf:Person`, by
+rule cax-eqc1 of the OWL 2 RL/RDF rules (OWL 2 Profiles § 4.3, Table 7).
+It adds neither `owl:Thing` nor `rdfs:Resource` as a type of `ex:alice`:
+no rule of Tables 4–9 types an individual as `owl:Thing` (cls-thing
+types `owl:Thing` itself as a class), and `rdfs:Resource` comes from the
+RDFS rules rdfs4a/rdfs4b, which belong to RDFS entailment, not to the
+OWL 2 RL rule set. Same input graph, same query — the only thing that
+changed is which closure ran first.
 
 Plain RDFS *can* express the same equivalence, though — assert
 `rdfs:subClassOf` in **both directions** and the subclass rule fires
