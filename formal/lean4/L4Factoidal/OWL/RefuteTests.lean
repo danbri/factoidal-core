@@ -1340,4 +1340,24 @@ private def gLiteralMerge (k : String) : Graph :=
 #guard !(refuted (gLiteralMerge "2"))
 #guard refuted (gLiteralMerge "1")
 
+/-! ## A literal successor counts against `≤ k p.DR` (`New-Feature-DataQCR-001`)
+
+Two different `xsd:string` values entail `≥ 2 hasName.xsd:string`: the
+negation `≤ 1 hasName.xsd:string` is violated by the two literals, which
+are provably in the data range. One string and one integer do not
+entail it. -/
+
+private def gTwoNames (second : Term) : Graph :=
+  [ ⟨indI, exDp1, strT "Meg Griffin"⟩, ⟨indI, exDp1, second⟩ ]
+
+private def cMinTwoStrings : Graph :=
+  [ ⟨indI, rdfType, bnT "q"⟩,
+    ⟨bn "q", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "q", owlMinQualifiedCardinality, cardLit "2"⟩,
+    ⟨bn "q", owlOnDataRange, .iri xsdString⟩ ]
+
+#guard entailedByRefutation (gTwoNames (strT "Megan Griffin")) cMinTwoStrings
+#guard !entailedByRefutation (gTwoNames (intT "2")) cMinTwoStrings
+#guard !entailedByRefutation (gTwoNames (strT "Meg Griffin")) cMinTwoStrings
+
 end L4Factoidal.OWL.Refute
