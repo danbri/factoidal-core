@@ -68,6 +68,16 @@ test('createSelector rejects an unknown backend', () => {
   assert.throws(() => select.createSelector({ backend: 'nope' }), TypeError);
 });
 
+// Stage 1 of https://github.com/danbri/factoidal/issues/713 gave the Lean
+// engine these main-entry functions. The table is derived from the
+// loaded wasm's real entry, so Lean reports true exactly when the
+// resolved wasm serves the ops (an older wasm reports false).
+const STAGE1_FUNCTIONS = ['tableauMaterialise', 'tableauDlInconsistent',
+  'rmlMap', 'csvwToRdf', 'jsonldToRdf', 'jsonldFromRdf', 'rifEval',
+  'xsltTransform', 'xmlWellformed', 'xpathEval', 'mathmlEval', 'xformsRecalc',
+  'jsonSchemaValidate', 'schematronValidate', 'toanSummation', 'toanProduct',
+  'toanSimplify', 'toanDiff', 'toanSubst'];
+
 test('capabilityTable is derived from live capabilities(), not hand-written', async () => {
   const table = await select.capabilityTable();
   // Every ALWAYS_IF_ENTRY-style function both engines' typed APIs wire
@@ -77,15 +87,23 @@ test('capabilityTable is derived from live capabilities(), not hand-written', as
     'owlIsConsistent', 'owlEntails']) {
     assert.equal(table[fn].fstar, true, `fstar should support ${fn}`);
   }
-  // shaclValidate/shexValidate/tableauMaterialise/rmlMap/csvwToRdf/
-  // jsonldToRdf/rifEval/xsltTransform are not in the Lean engine's
-  // 16-op typed-API surface (bin/linux-x86_64/l4factoidal ops lists 21
-  // raw ops; only 16 are wired to lib/api.js's typed wrappers) --
-  // Lean must report false for every one of them.
-  for (const fn of ['shaclValidate', 'shexValidate', 'tableauMaterialise',
-    'rmlMap', 'csvwToRdf', 'jsonldToRdf', 'rifEval', 'xsltTransform']) {
+  // shaclValidate and shexValidate are not implemented by the Lean
+  // engine (https://github.com/danbri/factoidal/issues/713 does not
+  // cover them): Lean must report false, F* true.
+  for (const fn of ['shaclValidate', 'shexValidate']) {
     assert.equal(table[fn].lean, false, `lean should NOT support ${fn}`);
     assert.equal(table[fn].fstar, true, `fstar should support ${fn}`);
+  }
+  for (const fn of STAGE1_FUNCTIONS) {
+    assert.equal(table[fn].fstar, true, `fstar should support ${fn}`);
+  }
+});
+
+test('capabilityTable: the stage-1 functions are supported by Lean when the wasm serves them', async (t) => {
+  if (await skipUnlessOp(t, 'rmlMap')) return;
+  const table = await select.capabilityTable();
+  for (const fn of STAGE1_FUNCTIONS) {
+    assert.equal(table[fn].lean, true, `lean should support ${fn}`);
   }
 });
 

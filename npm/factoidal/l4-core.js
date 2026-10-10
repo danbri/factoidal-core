@@ -11,20 +11,31 @@
 //   const ds = await factoidal.parse('<a> <b> "c" .', { format: 'ntriples' });
 //
 // Surface: the subset capabilities() reports. Operations the Lean
-// engine does not implement (SHACL, ShEx, HDT, COTTAS, VC crypto,
-// entailment-regime query modes, tableauMaterialise /
-// tableauDlInconsistent, RML/CSVW/JSON-LD/RIF) reject with a clear
-// engine-capability error rather than silently falling back to the F*
-// engine — the point of this entry is that everything it answers came
-// through the Lean extraction. See ./select.js (factoidal/select) for
-// an explicit, observable lean/fstar/lean1st/fstar1st/slowcompareboth
-// switch built on top of this and ./index.js (issue #618); this module
-// itself never falls back. owlIsConsistent / owlEntails ARE served
-// (the three-valued OWL DL verdict, formal/lean4 issue 586) when the
-// resolved wasm carries the ops — an older bundle answers "unknown op",
-// which surfaces as the entryResult error, so probe the `ops`
-// reflection before relying on them. The export list mirrors wasm.js
-// so callers can swap engines by import path alone.
+// engine does not implement yet (SHACL, ShEx, COTTAS, VC crypto and
+// did:key, the matrix and sigmoid helpers, entailment-regime query
+// modes) reject with a clear engine-capability error rather than
+// silently falling back to the F* engine -- the point of this entry is
+// that everything it answers came through the Lean extraction. See
+// ./select.js (factoidal/select) for an explicit, observable
+// lean/fstar/lean1st/fstar1st/slowcompareboth switch built on top of
+// this and ./index.js (issue #618); this module itself never falls
+// back. owlIsConsistent / owlEntails ARE served (the three-valued OWL
+// DL verdict, formal/lean4 issue 586) when the resolved wasm carries
+// the ops -- an older bundle answers "unknown op", which surfaces as
+// the entryResult error, so probe the `ops` reflection before relying
+// on them.
+//
+// https://github.com/danbri/factoidal/issues/713 stage 1 added the rest
+// of the F* main entry that the Lean library already implements:
+// jsonldToRdf, jsonldFromRdf, rmlMap, csvwToRdf, xmlWellformed,
+// xpathEval, xsltTransform, schematronValidate, jsonSchemaValidate,
+// mathmlEval, xformsRecalc, rifEval, queryHdt, tableauMaterialise,
+// tableauDlInconsistent, queryRaw, the extension-function and
+// SERVICE-endpoint registries, and the five toan* functions. Their
+// signatures and result shapes are index.d.ts's; the Lean dispatch ops
+// behind them are formal/lean4/Wasm/Ops/Formats.lean, Reasoning.lean,
+// QueryExtras.lean and ServiceReg.lean. The export list mirrors
+// wasm.js so callers can swap engines by import path alone.
 
 'use strict';
 
@@ -131,6 +142,33 @@ const OPS = [
   'datasetUpdate',
   'datasetSerialize',
   'datasetClose',
+  // Stage 1 of https://github.com/danbri/factoidal/issues/713: the
+  // format, transform and reasoning operations (Wasm/Ops/Formats.lean,
+  // Wasm/Ops/Reasoning.lean) ...
+  'jsonldToRdf',
+  'jsonldFromRdf',
+  'rmlMap',
+  'csvwToRdf',
+  'xmlWellformed',
+  'xpathEval',
+  'xsltTransform',
+  'schematronValidate',
+  'jsonSchemaValidate',
+  'mathmlEval',
+  'xformsRecalc',
+  'rifEval',
+  'tableauMaterialise',
+  'tableauDlInconsistent',
+  // ... the SPARQL SERVICE endpoint registry (Wasm/Ops/ServiceReg.lean) ...
+  'registerServiceEndpoint',
+  'clearServiceEndpoints',
+  // ... and the "think of a number" algebra (Wasm/Ops/Toan.lean), which
+  // the table already served but this list did not wire.
+  'toanSummation',
+  'toanProduct',
+  'toanSimplify',
+  'toanDiff',
+  'toanSubst',
 ];
 
 async function loadLeanEntry() {
@@ -159,7 +197,168 @@ async function loadLeanEntry() {
       }
     };
   }
+  installExtensionBridge(eng, entry);
+  installByteOps(eng, entry);
   return entry;
+}
+
+// ---------------------------------------------------------------------
+// SPARQL 1.1 section 17.6 extension functions.
+//
+// lib/api.js owns the registry, the memo table and the async
+// re-evaluation trampoline (they are engine independent). It hands the
+// entry `registerExtensionFunction(iri, bridge)`, where `bridge(iri,
+// argsJson)` answers a term object, a JavaScript primitive, null (the
+// section 17.6 error) or the pending marker for an unresolved promise.
+// The Lean module asks its host through ONE global,
+// `globalThis.__factoidalExtCall(iri, argsJson)`, which must answer one
+// SPARQL Results JSON binding-value object as a JSON string, or the
+// empty string for "no value" (formal/lean4/Wasm/ExtHost.lean).
+// `bin/ext.mjs` documents the same contract for the Lean command-line
+// host; this adapter turns lib/api.js's bridge answers into that wire
+// form. It makes no semantic decision: which IRIs reach the host and
+// what an absent answer means are decided in Lean.
+// ---------------------------------------------------------------------
+
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
+const EXT_PENDING_MARKER = '__FACTOIDAL_EXT_PENDING__';
+
+function encodeExtAnswer(out) {
+  if (out === null || out === undefined || out === EXT_PENDING_MARKER) return '';
+  if (typeof out === 'boolean') {
+    return JSON.stringify({ type: 'literal', value: out ? 'true' : 'false', datatype: XSD + 'boolean' });
+  }
+  if (typeof out === 'number') {
+    if (!Number.isFinite(out)) return '';
+    return Number.isInteger(out)
+      ? JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'integer' })
+      : JSON.stringify({ type: 'literal', value: String(out), datatype: XSD + 'double' });
+  }
+  if (typeof out === 'string') return JSON.stringify({ type: 'literal', value: out });
+  if (typeof out === 'object' && typeof out.type === 'string') return JSON.stringify(out);
+  return '';
+}
+
+function okEnvelope(extra) {
+  return JSON.stringify({ ok: true, ...(extra || {}) });
+}
+
+function failEnvelope(err) {
+  return JSON.stringify({ ok: false, error: String((err && err.message) || err) });
+}
+
+function installExtensionBridge(eng, entry) {
+  const bridges = new Map(); // iri -> lib/api.js bridge
+  const hostCall = (iri, argsJson) => {
+    const bridge = bridges.get(String(iri));
+    if (!bridge) return '';
+    try {
+      return encodeExtAnswer(bridge(String(iri), String(argsJson)));
+    } catch (_err) {
+      return '';
+    }
+  };
+  entry.registerExtensionFunction = (iri, bridge) => {
+    try {
+      eng.call('extRegister', [String(iri)]);
+      bridges.set(String(iri), bridge);
+      globalThis.__factoidalExtCall = hostCall;
+      return okEnvelope();
+    } catch (err) {
+      return failEnvelope(err);
+    }
+  };
+  entry.unregisterExtensionFunction = (iri) => {
+    try {
+      eng.call('extUnregister', [String(iri)]);
+      bridges.delete(String(iri));
+      return okEnvelope();
+    } catch (err) {
+      return failEnvelope(err);
+    }
+  };
+  entry.clearExtensionFunctions = () => {
+    try {
+      eng.call('extClear', []);
+      bridges.clear();
+      return okEnvelope();
+    } catch (err) {
+      return failEnvelope(err);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------
+// Ops that carry a byte region. queryHdt reads a whole .hdt file; the
+// dispatch ABI moves bytes as a blob (l4_call_blob), not as text, so a
+// multi-megabyte file is not doubled by an encoding.
+// ---------------------------------------------------------------------
+
+function installByteOps(eng, entry) {
+  if (typeof eng.callBlob !== 'function') return;
+  entry.queryHdt = (bytes, sparql) => {
+    try {
+      return JSON.stringify(eng.callBlob('queryHdt', [String(sparql)], bytes));
+    } catch (err) {
+      return failEnvelope(err);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------
+// queryRaw: one call, serialised answer. index.js keeps it as a legacy
+// export that drives the F* command-line bundle; here it is the
+// `queryRaw` dispatch op (Wasm/Ops/QueryExtras.lean). Same validation,
+// same result: parsed SPARQL results JSON for output 'json' (the
+// default), the raw text for every other output format.
+// ---------------------------------------------------------------------
+
+const RAW_OUTPUT_FORMATS = new Set(['json', 'csv', 'tsv', 'xml', 'table', 'ntriples']);
+const RAW_ENTAIL_VALUES = new Set(['none', 'RDFS', 'OWL-RL']);
+const RAW_DATA_FORMATS = {
+  turtle: 'turtle', ttl: 'turtle', ntriples: 'ntriples', nt: 'ntriples',
+  nquads: 'nquads', nq: 'nquads', trig: 'trig', rdfxml: 'rdfxml',
+  'rdf-xml': 'rdfxml', rdf: 'rdfxml',
+};
+
+async function queryRaw(dataString, queryString, options) {
+  if (typeof dataString !== 'string') {
+    throw new TypeError('queryRaw: dataString must be a string');
+  }
+  if (typeof queryString !== 'string') {
+    throw new TypeError('queryRaw: queryString must be a string');
+  }
+  const opts = options || {};
+  const dataFormat = String(opts.dataFormat || 'turtle').toLowerCase();
+  const entail = opts.entail || 'none';
+  const output = opts.output || 'json';
+  if (!(dataFormat in RAW_DATA_FORMATS)) {
+    throw new TypeError(`queryRaw: unknown dataFormat '${opts.dataFormat}'`);
+  }
+  if (!RAW_ENTAIL_VALUES.has(entail)) {
+    throw new TypeError(
+      `queryRaw: entail must be one of ${[...RAW_ENTAIL_VALUES].join(', ')}`);
+  }
+  if (!RAW_OUTPUT_FORMATS.has(output)) {
+    throw new TypeError(
+      `queryRaw: output must be one of ${[...RAW_OUTPUT_FORMATS].join(', ')}`);
+  }
+  const eng = await l4.loadL4();
+  let r;
+  try {
+    r = eng.call('queryRaw', [
+      dataString, queryString,
+      JSON.stringify({ dataFormat: RAW_DATA_FORMATS[dataFormat], entail, output }),
+    ]);
+  } catch (cause) {
+    const msg = String((cause && cause.message) || cause);
+    const err = new Error('SPARQL query failed: ' + msg);
+    err.exitCode = 1;
+    err.stderr = msg;
+    err.stdout = '';
+    throw err;
+  }
+  return output === 'json' ? JSON.parse(r.text) : r.text;
 }
 
 const api = buildApi({
@@ -171,6 +370,13 @@ const api = buildApi({
 module.exports = {
   parse: api.parse,
   query: api.query,
+  queryHdt: api.queryHdt,
+  queryRaw,
+  registerExtensionFunction: api.registerExtensionFunction,
+  unregisterExtensionFunction: api.unregisterExtensionFunction,
+  clearExtensionFunctions: api.clearExtensionFunctions,
+  registerServiceEndpoint: api.registerServiceEndpoint,
+  clearServiceEndpoints: api.clearServiceEndpoints,
   update: api.update,
   serialize: api.serialize,
   canonicalize: api.canonicalize,
@@ -192,6 +398,26 @@ module.exports = {
   // carries the ops (see the header note).
   owlIsConsistent: api.owlIsConsistent,
   owlEntails: api.owlEntails,
+  // Issue 713 stage 1: the format, transform and reasoning functions.
+  tableauMaterialise: api.tableauMaterialise,
+  tableauDlInconsistent: api.tableauDlInconsistent,
+  rmlMap: api.rmlMap,
+  csvwToRdf: api.csvwToRdf,
+  jsonldToRdf: api.jsonldToRdf,
+  jsonldFromRdf: api.jsonldFromRdf,
+  xmlWellformed: api.xmlWellformed,
+  xpathEval: api.xpathEval,
+  rifEval: api.rifEval,
+  xsltTransform: api.xsltTransform,
+  mathmlEval: api.mathmlEval,
+  xformsRecalc: api.xformsRecalc,
+  jsonSchemaValidate: api.jsonSchemaValidate,
+  schematronValidate: api.schematronValidate,
+  toanSummation: api.toanSummation,
+  toanProduct: api.toanProduct,
+  toanSimplify: api.toanSimplify,
+  toanDiff: api.toanDiff,
+  toanSubst: api.toanSubst,
   // Not implemented by this engine — kept on the surface so a caller
   // swapping engines gets the pinned capability error, not
   // `undefined is not a function`.

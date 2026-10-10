@@ -467,12 +467,12 @@ test('l4-core clNormalize: rejects a non-string argument', async (t) => {
 // capabilities honesty
 // ---------------------------------------------------------------------
 
-test('l4-core capabilities: entry true, shacl false, tableau false', async (t) => {
-  if (skipUnlessAvailable(t)) return;
+test('l4-core capabilities: entry true, shacl false, tableau true (issue 713 stage 1)', async (t) => {
+  if (await skipUnlessOp(t, 'tableauMaterialise')) return;
   const caps = await l4core.capabilities();
   assert.equal(caps.entry, true);
   assert.equal(caps.shacl, false);
-  assert.equal(caps.tableau, false);
+  assert.equal(caps.tableau, true);
   assert.equal(caps.owlClosure, true);
   assert.equal(caps.update, true);
   assert.equal(caps.canonicalize, true);

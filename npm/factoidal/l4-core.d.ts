@@ -170,6 +170,57 @@ export function owlEntails(
   reason?: string;
 }>;
 
+// Issue 713 stage 1: the rest of the F* main entry that the Lean
+// library implements. Signatures and result shapes are index.d.ts's,
+// so a caller can swap engines by import path alone; the typeof form
+// keeps the two declarations from drifting. Differences in what the
+// Lean engine answers are stated per function below.
+export const queryHdt: typeof import('./index').queryHdt;
+export const registerExtensionFunction: typeof import('./index').registerExtensionFunction;
+export const unregisterExtensionFunction: typeof import('./index').unregisterExtensionFunction;
+export const clearExtensionFunctions: typeof import('./index').clearExtensionFunctions;
+export const registerServiceEndpoint: typeof import('./index').registerServiceEndpoint;
+export const clearServiceEndpoints: typeof import('./index').clearServiceEndpoints;
+/** `output: 'table'` and `'ntriples'` are display formats; see Wasm/Ops/QueryExtras.lean. */
+export const queryRaw: typeof import('./index').queryRaw;
+/** Adds `budgetHit` to the F* result: true when the materialisation work budget ran out. */
+export function tableauMaterialise(
+  data: DataInput,
+  options?: { format?: DataFormat }
+): Promise<{ dataset: Dataset; addedCount: number; budgetHit?: boolean }>;
+export const tableauDlInconsistent: typeof import('./index').tableauDlInconsistent;
+export const rmlMap: typeof import('./index').rmlMap;
+export const csvwToRdf: typeof import('./index').csvwToRdf;
+export const jsonldToRdf: typeof import('./index').jsonldToRdf;
+export const jsonldFromRdf: typeof import('./index').jsonldFromRdf;
+export const xmlWellformed: typeof import('./index').xmlWellformed;
+export const xpathEval: typeof import('./index').xpathEval;
+export const rifEval: typeof import('./index').rifEval;
+export const xsltTransform: typeof import('./index').xsltTransform;
+/**
+ * As index.d.ts, plus two value kinds the F* engine had no value for: the
+ * Lean evaluator also evaluates Content MathML `vector` and `matrix`
+ * elements. Entries are `[numerator, denominator]` pairs.
+ */
+export function mathmlEval(
+  contentMathmlXml: string,
+  bindings?: Record<string, string>
+): Promise<
+  | { kind: 'rat'; num: number; den: number }
+  | { kind: 'bool'; value: boolean }
+  | { kind: 'undef'; reason: string }
+  | { kind: 'vector'; value: Array<[number, number]> }
+  | { kind: 'matrix'; value: Array<Array<[number, number]>> }
+>;
+export const xformsRecalc: typeof import('./index').xformsRecalc;
+export const jsonSchemaValidate: typeof import('./index').jsonSchemaValidate;
+export const schematronValidate: typeof import('./index').schematronValidate;
+export const toanSummation: typeof import('./index').toanSummation;
+export const toanProduct: typeof import('./index').toanProduct;
+export const toanSimplify: typeof import('./index').toanSimplify;
+export const toanDiff: typeof import('./index').toanDiff;
+export const toanSubst: typeof import('./index').toanSubst;
+
 export function capabilities(): Promise<Record<string, boolean | string>>;
 export const dataFactory: DataFactory;
 export const engine: 'lean4-wasm';
