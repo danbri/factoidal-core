@@ -72,20 +72,28 @@ against an older committed bundle instead of getting a confusing
   crypto section).
 - **MUC/MIX interop modules.**
 
-## Known upstream limit (found via this module's tests, 2026-09-07)
+## Upstream limit found via this module's tests (2026-09-07), repaired 2026-10-10
 
 `parseStanza`/`parseStreamHeader` delegate general XML parsing to the
 shared `L4Factoidal.XML` module (reused rather than duplicated — see
-the design record). Its entity-expansion handling is not tail-recursive
-over a run of *sequential* entity references in one text node: a text
-body with roughly 2,000+ consecutive entity references (e.g.
-`"&amp;".repeat(2000)`) overflows the wasm call stack
-(`Maximum call stack size exceeded`), while ~1,000 passes reliably. This
-is a limitation of the shared parser, not of this wrapper — filed here
-rather than silently worked around by reverting to a bespoke parser,
-which would reintroduce the duplication this module was written to
-avoid. `test/xmpp.test.mjs`'s adversarial case is pinned at 1,000 for
-exactly this reason.
+the design record). Until 2026-10-10 its scan of a text run or a start
+tag for references (`XML.scanRefs`) used one stack frame per reference:
+a text body with about 2,000 consecutive entity references (for example
+`"&amp;".repeat(2000)`) overflowed the wasm call stack
+(`Maximum call stack size exceeded`), and the adversarial test was
+pinned at 1,000. Issue: https://github.com/danbri/factoidal/issues/673.
+
+The scan is now a loop (`XML.scanRefsLoop`, proved equal to
+`XML.scanRefs`). Measured 2026-10-10 with the rebuilt wasm module:
+100,000 sequential references in a text node or an attribute value parse
+under `node --stack-size=512`; before the repair, 5,000 overflowed there.
+`test/xmpp.test.mjs` now parses a body of 10,000 `&amp;` references and
+checks the rendered payload. The depth of NESTED entity expansion (an
+entity whose replacement text references another entity) still costs one
+frame per level, bounded by the number of declared entities. RFC 6120
+§11.1 excludes DTD subsets and every entity reference except the five
+predefined ones from an XML stream, so conforming XMPP input has no
+nested expansion.
 
 ## Testing
 

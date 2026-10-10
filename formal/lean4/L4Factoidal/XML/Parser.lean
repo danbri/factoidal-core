@@ -1211,7 +1211,12 @@ accumulator gives the same result (`scanRefsLoop_eq`). A reference to a
 general entity still calls `entityHasWsCharRef`, whose own depth is the
 NESTING of entity declarations (an entity whose replacement text
 references another), bounded by its fuel `ents.defs.length + 1`: the
-number of declared entities, not the number of references. -/
+number of declared entities, not the number of references. The same bound
+holds for the other recursions on this path, the nested dives of
+`expandEntityValue` and the markup re-parse in `parseChildren`: one frame
+per level of nesting, at most the number of declared entities (WFC: No
+Recursion rejects a cycle). Measured depths are in
+`skills/danbri-function-precrime-checkers/SKILL.md`. -/
 def scanRefsLoop (ents : EntityTable) (s : Chars) (start stop : Nat)
     (fl : RefFlags) (u : Bool) : Nat → RefFlags × Bool
   | 0 => (fl, u)
