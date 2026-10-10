@@ -1,7 +1,8 @@
 # Shardborough storage foundation in factoidal-core
 
-Date: 2026-10-10. Status: migrated; preliminary full-library validation
-passes. Final validation after review changes is pending.
+Date: 2026-10-10. Status: committed in `6c7fa10c`; final full-library
+validation passes (439 jobs). Native runtime work follows in the
+[runtime record](20261010-shardborough-native-runtime.md).
 
 The owner directs that factoidal-core become Factoidal's home, with Lean 4
 and tests first. This change brings the existing pure Shardborough block

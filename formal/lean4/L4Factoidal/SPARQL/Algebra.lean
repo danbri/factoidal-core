@@ -17,7 +17,7 @@ What is deliberately NOT ported here (with why):
     SPECIFICATION-level evaluator is still here and still the spec:
     `evalTP` scans the graph list, the BGP evaluator takes patterns
     left-to-right, `join` is the nested-loop compatible-merge. The
-    keyed hash join and the graph bucketing ARE ported
+    keyed hash join and the cached graph bucketing ARE ported
     (2026-08-25, the "Hash-indexed evaluation" section below), each
     proved list-equal to its spec twin in
     `SPARQL/IndexedEvalRefinement.lean`; `GraphPattern.evalIn` runs
@@ -397,17 +397,19 @@ def leftJoin (omega1 omega2 : SolutionSeq) (cond : Binding → Bool) :
 
 /-! ## Hash-indexed evaluation — the performance path
 
-The functions above (`join`, `evalBgp`) are the §18.5/§18.3
-SPECIFICATION: nested-loop join, per-row graph scans. The functions in
-this section are what `GraphPattern.evalIn` actually runs: a hash join
+The functions above (`join`, `leftJoin`, `evalBgp`) are the
+§18.5/§18.3 SPECIFICATION: nested-loop join and left join, per-row
+graph scans. The functions in this section are what
+`GraphPattern.evalIn` actually runs: a hash join and a hash left join
 keyed on the shared always-bound variables, and a BGP evaluator that
 reuses graph buckets across patterns with the same bound positions.
 Singleton row sets reuse an existing bucket or scan without building
 an index. Each is proved EQUAL — as a list, order included — to its
 specification twin in `SPARQL/IndexedEvalRefinement.lean`
-(`hashJoin_eq_join`, `evalBgpIdx_eq_evalBgp`); that equality is what
-licenses the wiring. The plain functions remain the spec, and every
-theorem about them transfers across the equality.
+(`hashJoin_eq_join`, `hashLeftJoin_eq_leftJoin`,
+`evalBgpIdx_eq_evalBgp`); that equality is what licenses the wiring.
+The plain functions remain the spec, and every theorem about them
+transfers across the equality.
 
 Keys are canonicalised with `Term.joinKey` (RDF/Core.lean) because row
 compatibility is `Term.eqb`, which is coarser than structural
@@ -482,6 +484,34 @@ def hashJoin (omega1 omega2 : SolutionSeq) : SolutionSeq :=
   match joinKeyVars omega1 omega2 with
   | [] => join omega1 omega2
   | v :: vs => hashJoinKeyed (v :: vs) omega1 omega2
+
+/-- The keyed core of the hash left join: bucket Ω2 on the key ONCE,
+probe with each μ1's key. The per-μ1 structure is that of `leftJoin` —
+the condition-passing compatible merges, or μ1 itself when there are
+none — so the two agree row for row and in order. The `none` fallback
+(a μ1 missing a key variable) scans Ω2 as the nested loop would. -/
+def hashLeftJoinKeyed (kvs : List VarName) (omega1 omega2 : SolutionSeq)
+    (cond : Binding → Bool) : SolutionSeq :=
+  let idx := groupByKey (Binding.hashKey? kvs) omega2
+  omega1.flatMap (fun mu1 =>
+    let extended :=
+      (match Binding.hashKey? kvs mu1 with
+       | none => omega2
+       | some k => bucketOf idx (some k)).filterMap (fun mu2 =>
+        if mu1.compatible mu2 then
+          let merged := mu1.merge mu2
+          if cond merged then some merged else none
+        else none)
+    if extended.isEmpty then [mu1] else extended)
+
+/-- LeftJoin(Ω1, Ω2, expr) by hash: equal to `leftJoin` as a list —
+same rows, same order (`hashLeftJoin_eq_leftJoin`). With no usable key
+variable it IS the nested-loop `leftJoin`. -/
+def hashLeftJoin (omega1 omega2 : SolutionSeq) (cond : Binding → Bool) :
+    SolutionSeq :=
+  match joinKeyVars omega1 omega2 with
+  | [] => leftJoin omega1 omega2 cond
+  | v :: vs => hashLeftJoinKeyed (v :: vs) omega1 omega2 cond
 
 /-! ### The indexed BGP step
 
@@ -750,8 +780,12 @@ inductive GraphPattern where
   Jena: https://jena.apache.org/documentation/query/lateral-join.html -/
   | lateral  (l : GraphPattern) (r : Binding → GraphPattern)
   /-- `BIND(expr AS ?v)` appended to a pattern — §18.6. The binder is
-  abstract: `none` is the spec's "expression error, leave unbound". -/
-  | bind     (binder : Binding → Option Term) (v : VarName) (p : GraphPattern)
+  abstract: `none` is the spec's "expression error, leave unbound". It
+  is a function of the ACTIVE graph as well as the row, for the same
+  reason `filter` and `leftJoin` are: §18.6's EXISTS may appear in the
+  bound expression and is evaluated against the graph the enclosing
+  GRAPH clause selected. -/
+  | bind     (binder : Graph → Binding → Option Term) (v : VarName) (p : GraphPattern)
   /-- `VALUES (?x ?y) { (1 2) (3 UNDEF) }` — inline data, §10.2. -/
   | values   (vars : List VarName) (rows : List (List (Option Term)))
   /-- `SERVICE [SILENT] <iri> { P }` — §18.6 / SPARQL 1.1 Federated
@@ -767,8 +801,10 @@ inductive GraphPattern where
   algebra-level shape of a sub-SELECT (§18.2.4): evaluate the inner
   WHERE, then run the inner query's grouping / projection / DISTINCT /
   ORDER / slice pipeline over the result. `Query.lean` supplies that
-  pipeline as `post`. -/
-  | modified (post : SolutionSeq → SolutionSeq) (p : GraphPattern)
+  pipeline as `post`. That pipeline evaluates HAVING, the SELECT
+  expressions and ORDER BY, each of which may hold an EXISTS, so it
+  takes the ACTIVE graph too. -/
+  | modified (post : Graph → SolutionSeq → SolutionSeq) (p : GraphPattern)
   /-- `?s path ?o` — a property-path pattern, §18.4. -/
   | propertyPath (s : PatternSubject) (path : PropertyPath) (o : PatternTerm)
   /-- The empty group pattern `{}` — the identity for Join (§18.2.2.6:
@@ -795,16 +831,16 @@ of the row moves that obligation into the type.) -/
 /-- The BIND row loop (port of `fx_bind_rows`): row `i` is evaluated
 with its freshness context injected, and the value (if any, and if
 `v` is still unbound) is bound into the row WITHOUT the context. -/
-def bindRowsFresh (binder : Binding → Option Term) (v : VarName) :
-    SolutionSeq → Nat → SolutionSeq
+def bindRowsFresh (binder : Graph → Binding → Option Term) (active : Graph)
+    (v : VarName) : SolutionSeq → Nat → SolutionSeq
   | [],        _ => []
   | mu :: rest, i =>
-      let row := match binder (mu.withFreshnessCtx (toString i) v) with
+      let row := match binder active (mu.withFreshnessCtx (toString i) v) with
         | some t => match mu.lookup v with
                     | some _ => mu
                     | none   => mu.bind v t
         | none   => mu
-      row :: bindRowsFresh binder v rest (i + 1)
+      row :: bindRowsFresh binder active v rest (i + 1)
 
 def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
     SolutionSeq :=
@@ -843,8 +879,12 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   -- included.
   | .join l r       =>
       SPARQL.hashJoin (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
+  -- Wired to the hash left join; `hashLeftJoin_eq_leftJoin`
+  -- (IndexedEvalRefinement.lean) proves it returns exactly the
+  -- nested-loop `SPARQL.leftJoin` of the two operands, list order
+  -- included.
   | .leftJoin l r c =>
-      SPARQL.leftJoin (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
+      SPARQL.hashLeftJoin (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
         (c active)
   | .filter c q     => filterSeq (c active) (GraphPattern.evalIn ds active q)
   | .union l r      =>
@@ -884,7 +924,7 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   -- tag, port of `fx_bind_rows`); the result binds into the PRISTINE
   -- row.
   | .bind binder v q =>
-      bindRowsFresh binder v (GraphPattern.evalIn ds active q) 0
+      bindRowsFresh binder active v (GraphPattern.evalIn ds active q) 0
   | .values vars rows => evalValues vars rows
   -- SERVICE with a fixed endpoint. On a miss, SILENT yields one empty
   -- solution mapping and non-SILENT yields none — the F* arm exactly.
@@ -894,7 +934,7 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
       | none   => if silent then [Binding.empty] else []
   -- SERVICE ?v outside a join has no row to read the endpoint from.
   | .serviceVar _ _ silent _  => if silent then [Binding.empty] else []
-  | .modified post q => post (GraphPattern.evalIn ds active q)
+  | .modified post q => post active (GraphPattern.evalIn ds active q)
   -- §18.4 property paths, with the §18.2.2.5 constant-reflexivity fix.
   | .propertyPath ps path pt =>
       pathResultToSolutions ps pt

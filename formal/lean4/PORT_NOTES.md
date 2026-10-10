@@ -13884,3 +13884,54 @@ or QLever/Virtuoso parity claim follows from these synthetic storage tests.
 See `docs/20261010-shardborough-storage-foundation.md` for validation and
 remaining work. Shell-variable and copied-assurance-prose hazards are recorded
 in `skills/factoidal-lean-basics/SKILL.md` in the same landing.
+
+## 2026-10-10 — Native Shardborough runtime moves into factoidal-core
+
+Core base: `6c7fa10c`. Source: fetched `danbri/factoidal` commit
+`e505f643297922f195e940eb432d4f3ddf2c2a63`. The sibling working tree remains
+dirty and 125 commits behind. Git refused a safe fast-forward; the fetched
+commits change no `formal/lean4` or `third_party/hacl` files. Migration
+reads use the fetched commit, not uncommitted shared Lean definitions.
+
+| Responsibility | Lineage and destination | Assurance |
+| --- | --- | --- |
+| Artifact/generation and sidecar wire formats | Lean-native `Storage/ChunkedArtifact`, `ShardManifest*`, `GenerationVerify`, `SubjectRowIndex*`, `TermLocalIndex*`, literal/geometry index families | Checked codecs and stated admission predicates; manifest versions 0–10 round trip; no universal Merkle inclusion proof |
+| Quad/blob formats and pack state | Lean-native `IndexedBlockWireV4/V5*`, `TermWireV2*`, `PagedTermDictionaryV2*`, `PredicateBlocks`, `PredicateQuadBlocks*`, `PackStream*`, `QuadDataset`, `BlockV5Plan` | Executable pure Lean layouts and local/state refinements, not universally bounded-memory or selective-IO correctness |
+| Query/update | Existing SPARQL algebra/query/update lineage; shared `Algebra`, `IndexedEvalRefinement`, `Query*`, `StoreDataset`, `StoreFastPath`; new `DatasetRestriction`, `SharedSubjectTriple*`, `UpdateDelta*`, `PlannerSoundness` | Cached BGP exact-list proofs retained; dataset restriction and join/DISTINCT proofs; explicit admission refusals; persistent updates remain a subset of full Update |
+| Syntax | Existing RDF syntax lineage; `NQuadsFast*`, `Utf8Stream*`, `TurtleStatementScan*`, `TurtleChunkFold*`, `TurtleStreamStateTheorems` | Same lexical/reference semantics with local accumulator refinements, chunk composition and exact old-prefix/initial-state agreement; not a new full W3C run |
+| Datatypes/string/geometry | Existing W3C/OGC semantics lineage; `Fn/String`, `XSD/Datatypes*`, `SimpleType`, `Geo/BBoxSound`, required shared geometry definitions | Stated datatype and bounds proofs; no claim that all existing datatype consumers now call the new module |
+| Native crypto | HACL* extracted Ed25519/SHA-2 C restored with provenance and hashes; `Crypto/SHA2Native`, `Harness/NativeHasher` | Native differential tests, not universal pure/native equivalence or newly rerun HACL* verification |
+| Native disk lifecycle | `Harness/PredicateShardPack`, `ShardActivate`, `IndexedBlockV3Query`, `IndexedBlockV3MerkleScan`, `QuadQuery`, `QuadDump`, `DeltaLogTool`, `ShardDeltaCompact` plus shared Harness modules | Actual filesystem publication/query/update/compaction; OS/C/compiler behavior remains trusted |
+
+The 35 new Storage modules and 22 other new library modules are imported by
+the library root so proof and guard validation cannot be replaced with a
+smaller executable-only build. Host C stays limited to vendored crypto and
+POSIX IO. The packer's partial read loop is replaced by total bounded
+recursion with explicit exhaustion refusal.
+
+Destination regressions repair chunk-proof index binding, SRI1 offset bounds
+and uniqueness, language-case object-index admission, repeated-variable
+COUNT, expression LIMIT projection, empty named-graph grouping, and hidden
+blank-node bindings in LIMIT results. V3 non-prefix reads use an explicit
+row range rather than incorrectly treating selected rows as a prefix.
+Nat/native offset and allocation bounds are checked before POSIX reads.
+The new XSD calendar helper is renamed to avoid an umbrella-import collision
+with existing Facets; algorithm behavior is unchanged.
+
+Final destination library build passes (496 jobs), as does the ten-target
+native build (288 jobs). Native crypto/range checks pass 107/38 respectively;
+all five retained disk smoke scripts pass, including eight direct SELECT
+differential pairs and two safe fast-path positives. The small binding-site
+baseline records fresh-process medians: pack 38.019 ms, activation 34.539 ms,
+COUNT 26.917 ms, object lookup 27.408 ms and subject join 30.468 ms. These are
+not speedup or competitor measurements; RSS/server throughput is not measured.
+
+Builds, native lifecycle evidence, baseline methodology and remaining gaps
+are recorded in `docs/20261010-shardborough-native-runtime.md`. Native/pure
+hash equality, universal crash recovery, browser/WASM compatibility,
+large-data scaling and QLever/Virtuoso parity remain unestablished. New
+externs are explicit crypto/host IO boundaries, not added logical equality
+axioms. The migration adds no `sorry`, `native_decide`, custom axioms or
+partial definitions. Full W3C conformance requires separate destination
+manifest runs. The Lean basics skill records source freshness and serialized
+integration after deliberately red dependency builds.

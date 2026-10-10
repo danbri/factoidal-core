@@ -13,6 +13,20 @@ attributable to that commit.
 
 ## Harnesses
 
+### Lean native persisted route — `tools/blockengine-core-baseline.py`
+
+Run after the native pack/activation/query targets build in
+`formal/lean4`. The fixed, hashed 368-triple binding-site fixture exercises
+publication, activation, LIMIT zero, COUNT, object lookup and two joins.
+Each first/subsequent sample starts a fresh native process; it does not
+evict the OS page cache or measure steady-state server throughput. The
+JSON contains raw wall times, median/min/max, host/toolchain and binary
+hashes. `--warm-runs` defaults to five; per-process `--timeout` defaults
+to 120 seconds. Expected modes/cardinalities and the COUNT scalar are
+checked, not complete answer bags (the CLI prints ten preview rows).
+Do not infer large-data scaling, speedup or QLever/Virtuoso parity from
+this small baseline. See `docs/20261010-shardborough-native-runtime.md`.
+
 ### Turtle/parser throughput — `formal/fstar/bench-turtle-metrics.sh`
 
 Generates four fixtures in `/tmp/factoidal-metrics` (`prefixed-1000`,

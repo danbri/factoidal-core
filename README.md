@@ -1,9 +1,10 @@
 # Factoidal
 
 **Current home: `factoidal-core`.** New Shardborough development is Lean 4
-first and test first. The indexed block and paged dictionary foundation is
-now here; native disk query, activation and compaction integration remains
-in progress. See the [storage migration record](docs/20261010-shardborough-storage-foundation.md).
+first and test first. Shardborough's native pack, activation, disk query,
+update and compaction targets now live here with their Lean dependencies.
+See the [native runtime record](docs/20261010-shardborough-native-runtime.md)
+for validation and the remaining assurance and performance work.
 Historical suite counts and deployment links below are not a fresh test run
 of this checkout.
 

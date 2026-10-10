@@ -1,0 +1,122 @@
+/- Verified fixed-chunk artifact admission, independent of an SBM wire version.
+   It is the host-facing bridge between a Merkle commitment and a positioned
+   range read: the host supplies a chunk index, exact chunk bytes and proof;
+   this module decides whether those bytes are admitted under the declared
+   immutable artifact identity. -/
+import L4Factoidal.Storage.BlockMerkle
+
+namespace L4Factoidal.Storage.ChunkedArtifact
+
+open L4Factoidal.Storage.BlockMerkle
+
+structure Ref where
+  totalBytes : Nat
+  chunkBytes : Nat
+  chunkCount : Nat
+  root : Digest
+  deriving DecidableEq
+
+def expectedCount (totalBytes chunkBytes : Nat) : Nat :=
+  if chunkBytes == 0 then 0 else (totalBytes + chunkBytes - 1) / chunkBytes
+
+/-- Canonical fixed-width chunking directly over byte offsets.  Building a
+    `List UInt8` for every chunk makes full Merkle admission quadratic in the
+    artifact size. The reverse accumulator retains canonical ascending order
+    without repeatedly traversing the source bytes. -/
+def chunksOf (width : Nat) (bytes : ByteArray) : List ByteArray :=
+  if width == 0 then []
+  else
+    let rec go : Nat → Nat → List ByteArray → List ByteArray
+      | 0, _, reversed => reversed.reverse
+      | count + 1, offset, reversed =>
+          let next := min bytes.size (offset + width)
+          go count next (bytes.extract offset next :: reversed)
+    go (expectedCount bytes.size width) 0 []
+
+def valid (ref : Ref) : Bool :=
+  ref.totalBytes > 0 && ref.chunkBytes > 0 && ref.root.size == 32 &&
+    ref.chunkCount == expectedCount ref.totalBytes ref.chunkBytes
+
+private def canonicalLengths (width : Nat) : List ByteArray → Bool
+  | [] => false
+  | [last] => last.size > 0 && last.size <= width
+  | chunk :: rest => chunk.size == width && canonicalLengths width rest
+
+/-- Commit a chunk sequence under a supplied hash. `pureHasher` is the
+    specification; a packing host passes `Harness.nativeHasher` so the
+    root over a multi-megabyte artifact is built by HACL*'s C. -/
+def fromChunksWith? (h : Hasher) (width : Nat) (chunks : List ByteArray) : Option Ref :=
+  let totalBytes := chunks.foldl (fun n chunk => n + chunk.size) 0
+  let ref : Ref := { totalBytes, chunkBytes := width, chunkCount := chunks.length,
+                     root := rootOfChunksWith h chunks }
+  if valid ref && canonicalLengths width chunks
+  then some ref else none
+
+def fromChunks? (width : Nat) (chunks : List ByteArray) : Option Ref :=
+  fromChunksWith? pureHasher width chunks
+
+def offset? (ref : Ref) (index : Nat) : Option Nat :=
+  if valid ref && index < ref.chunkCount then some (index * ref.chunkBytes) else none
+
+def expectedBytes? (ref : Ref) (index : Nat) : Option Nat := do
+  let offset ← offset? ref index
+  some (min ref.chunkBytes (ref.totalBytes - offset))
+
+private def proofMatchesIndex : Nat → Nat → List Step → Bool
+  | count, index, [] => count == 1 && index == 0
+  | count, index, step :: rest =>
+      count > 1 && index < count && step.siblingOnLeft == (index % 2 == 1) &&
+        proofMatchesIndex ((count + 1) / 2) (index / 2) rest
+
+/-- Admission for one independently fetched fixed chunk. The caller is still
+    responsible for using `offset?` as the actual positioned-read offset and
+    obtaining the commitment from a trusted manifest. The proof's orientation
+    and depth must agree with this chunk index and the committed chunk count. -/
+def verifyChunkWith (h : Hasher) (ref : Ref) (index : Nat) (bytes : ByteArray)
+    (proof : List Step) : Bool :=
+  match expectedBytes? ref index with
+  | none => false
+  | some expected => bytes.size == expected && proofMatchesIndex ref.chunkCount index proof &&
+      BlockMerkle.verifyWith h ref.root bytes proof
+
+def verifyChunk (ref : Ref) (index : Nat) (bytes : ByteArray) (proof : List Step) : Bool :=
+  verifyChunkWith pureHasher ref index bytes proof
+
+private def c0 : ByteArray := ByteArray.mk #[1, 2]
+private def c1 : ByteArray := ByteArray.mk #[3, 4]
+private def c2 : ByteArray := ByteArray.mk #[5]
+private def chunks : List ByteArray := [c0, c1, c2]
+private def leaves := chunks.map leaf
+private def sample : Ref :=
+  { totalBytes := 5, chunkBytes := 2, chunkCount := 3, root := root leaves }
+
+private def generatedProofsVerify (chunks : List ByteArray) : Bool :=
+  match fromChunks? 2 chunks with
+  | none => false
+  | some ref =>
+      let leaves := chunks.map leaf
+      chunks.zipIdx.all fun (chunk, index) =>
+        ((proof? leaves index).map (verifyChunk ref index chunk)).getD false
+
+#guard valid sample
+#guard generatedProofsVerify [c0]
+#guard generatedProofsVerify [c0, c1]
+#guard generatedProofsVerify [c0, c1, c0, c2]
+#guard generatedProofsVerify [c0, c1, c0, c1, c2]
+#guard chunksOf 2 (ByteArray.mk #[1, 2, 3, 4, 5]) == chunks
+#guard (fromChunks? 2 chunks) == some sample
+#guard (fromChunks? 2 [c0, c2, c1]).isNone
+#guard offset? sample 0 == some 0
+#guard offset? sample 2 == some 4
+#guard expectedBytes? sample 2 == some 1
+#guard ((proof? leaves 0).map (verifyChunk sample 0 c0)) == some true
+#guard ((proof? leaves 2).map (verifyChunk sample 2 c2)) == some true
+#guard ((proof? leaves 2).map (verifyChunk sample 2 c1)) == some false
+#guard ((proof? leaves 0).map (verifyChunk sample 1 c0)) == some false
+#guard ((proof? leaves 1).map (verifyChunk sample 0 c1)) == some false
+#guard ((proof? leaves 0).map
+  (verifyChunk { sample with totalBytes := 2, chunkCount := 1 } 0 c0)) == some false
+#guard !(verifyChunk sample 3 c2 [])
+#guard !(verifyChunk { sample with chunkCount := 2 } 0 c0 [])
+
+end L4Factoidal.Storage.ChunkedArtifact

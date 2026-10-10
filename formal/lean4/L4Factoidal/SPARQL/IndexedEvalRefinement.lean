@@ -2,13 +2,15 @@
 L4Factoidal.SPARQL.IndexedEvalRefinement — the indexed evaluation path
 returns EXACTLY what the specification evaluator returns.
 
-`SPARQL/Algebra.lean` holds two evaluators for the same two
-operations. The specification pair — `join` (nested-loop
-compatible-merge, §18.5) and `evalBgp` (per-row graph scans, §18.3) —
-is what every earlier theorem is stated about. The engine pair —
-`hashJoin` and `evalBgpIdx` — buckets one side by a canonicalised key
-(`Term.joinKey`, RDF/Core.lean) in a `Std.HashMap` and probes instead
-of scanning. `GraphPattern.evalIn` runs the engine pair.
+`SPARQL/Algebra.lean` holds two evaluators for the same three
+operations. The specification trio — `join` and `leftJoin`
+(nested-loop compatible-merge, §18.5) and `evalBgp` (per-row graph
+scans, §18.3) — is what every earlier theorem is stated about. The
+engine trio — `hashJoin`, `hashLeftJoin` and `evalBgpIdx` — buckets one
+side by a canonicalised key (`Term.joinKey`, RDF/Core.lean) in a
+`Std.HashMap` and probes instead of scanning. `GraphPattern.evalIn`
+runs the engine trio, and `StoreDataset.evalPatternBackend`'s
+`.leftJoin` arm runs `hashLeftJoin`.
 
 The BGP engine reuses graph buckets between patterns with the same
 position mask. `BgpIndexCache.ValidFor` records that every retained
@@ -19,12 +21,14 @@ without building an index, and empty row sets stop evaluation.
 `evalBgpRowsCached_eq` proves that these choices
 preserve the complete ordered solution sequence.
 
-This file proves the two equalities that license that wiring:
+This file proves the three equalities that license that wiring:
 
   * `hashJoin_eq_join`   : `hashJoin o1 o2 = join o1 o2`
+  * `hashLeftJoin_eq_leftJoin` :
+    `hashLeftJoin o1 o2 cond = leftJoin o1 o2 cond`
   * `evalBgpIdx_eq_evalBgp` : `evalBgpIdx b g = evalBgp b g`
 
-Both are plain LIST equalities — same rows, same order, same binding
+All three are plain LIST equalities — same rows, same order, same binding
 layouts — not merely multiset agreement. Nothing downstream (DISTINCT,
 ORDER BY, slicing, result serialisation) can observe the switch, and
 every theorem about `join`/`evalBgp` transfers across `rw`.
@@ -40,7 +44,15 @@ keys — a row in any other bucket is incompatible and would have been
 filtered out by the nested loop anyway. Buckets preserve the build
 side's order (`bucketOf_groupByKey`: a bucket IS `filter (key · = k)`),
 so dropping the provably-incompatible rows changes nothing
-(`filterMap_eq_of_none_of_filter`).
+(`filterMap_eq_of_none_of_filter`). `bucketProbe_filterMap_eq` states
+that argument once, for any per-row map that returns `none` on
+incompatible rows.
+
+LEFT JOIN. The same core, applied to the map that also tests the
+OPTIONAL condition. Because the two `filterMap`s are equal as LISTS,
+the `extended.isEmpty` test that decides between the extensions and the
+unextended left row sees the same list on both sides, so the
+unextended rows land in the same places.
 
 BGP. For one triple pattern, a row's probe key (`probeKey?`) covers
 the positions the pattern pins under that row — constants and
@@ -195,6 +207,37 @@ theorem Binding.hashKey?_eq_of_compatible :
                       rw [Term.joinKey_eq_of_eqb heq,
                           Binding.hashKey?_eq_of_compatible vs hc hk1 hk2]
 
+/-- **The bucket-probe core**, shared by the hash join and the hash
+left join. Probing ONE bucket loses nothing, for any per-row map `f`
+that returns `none` on rows incompatible with the probe row: every
+build row the bucket drops carries a different key, and a different key
+means incompatible (`Binding.hashKey?_eq_of_compatible`), so `f` maps
+it to `none` anyway. `bucketOf_groupByKey` supplies the order. -/
+theorem bucketProbe_filterMap_eq {β : Type} (kvs : List VarName)
+    (mu1 : Binding) (o2 : SolutionSeq) (k : List Term)
+    (f : Binding → Option β)
+    (hb : ∀ v ∈ kvs, ∀ m ∈ o2, (Binding.lookup v m).isSome)
+    (hk1 : Binding.hashKey? kvs mu1 = some k)
+    (hf : ∀ mu2, mu1.compatible mu2 = false → f mu2 = none) :
+    (bucketOf (groupByKey (Binding.hashKey? kvs) o2) (some k)).filterMap f
+      = o2.filterMap f := by
+  rw [bucketOf_groupByKey]
+  apply filterMap_eq_of_none_of_filter
+  intro mu2 hmu2 hp
+  by_cases hc : mu1.compatible mu2 = true
+  · exfalso
+    have h2s : (Binding.hashKey? kvs mu2).isSome :=
+      Binding.hashKey?_isSome kvs mu2 (fun v hv => hb v hv mu2 hmu2)
+    cases hk2 : Binding.hashKey? kvs mu2 with
+    | none => rw [hk2] at h2s; simp at h2s
+    | some k2 =>
+        have : k = k2 := Binding.hashKey?_eq_of_compatible kvs hc hk1 hk2
+        subst this
+        rw [hk2] at hp
+        simp at hp
+  · simp only [Bool.not_eq_true] at hc
+    exact hf mu2 hc
+
 /-- The keyed hash join equals the nested loop whenever every build
 row binds every key variable. -/
 theorem hashJoinKeyed_eq_join (kvs : List VarName)
@@ -214,23 +257,21 @@ theorem hashJoinKeyed_eq_join (kvs : List VarName)
            = o2.filterMap
              (fun mu2 => if mu1.compatible mu2 = true
                          then some (mu1.merge mu2) else none)
-      rw [bucketOf_groupByKey]
-      apply filterMap_eq_of_none_of_filter
-      intro mu2 hmu2 hp
-      by_cases hc : mu1.compatible mu2 = true
-      · exfalso
-        have h2s : (Binding.hashKey? kvs mu2).isSome :=
-          Binding.hashKey?_isSome kvs mu2 (fun v hv => hb v hv mu2 hmu2)
-        cases hk2 : Binding.hashKey? kvs mu2 with
-        | none => rw [hk2] at h2s; simp at h2s
-        | some k2 =>
-            have : k = k2 := Binding.hashKey?_eq_of_compatible kvs hc hk1 hk2
-            subst this
-            rw [hk2] at hp
-            simp at hp
-      · simp only [Bool.not_eq_true] at hc
-        rw [hc]
-        rfl
+      exact bucketProbe_filterMap_eq kvs mu1 o2 k _ hb hk1
+        (fun mu2 hc => by rw [hc]; rfl)
+
+/-- Every variable `joinKeyVars` admits is bound in every row of the
+BUILD side — the hypothesis both keyed theorems take. -/
+theorem joinKeyVars_bound_right (o1 o2 : SolutionSeq) :
+    ∀ v ∈ joinKeyVars o1 o2, ∀ m ∈ o2, (Binding.lookup v m).isSome := by
+  cases o1 with
+  | nil => intro v hv; simp [joinKeyVars] at hv
+  | cons mu1 rest =>
+      intro v hv m hm
+      simp only [joinKeyVars] at hv
+      have := (List.mem_filter.mp hv).2
+      simp only [Bool.and_eq_true, List.all_eq_true] at this
+      exact this.2 m hm
 
 /-- **The join theorem.** The hash join returns the same solution
 sequence as §18.5's nested-loop `join` — the same LIST: same rows,
@@ -243,20 +284,76 @@ theorem hashJoin_eq_join (o1 o2 : SolutionSeq) :
   | cons v0 vs0 =>
       apply hashJoinKeyed_eq_join
       intro v hv m hm
-      -- `joinKeyVars` filtered on `o2.all (isSome ∘ lookup v)`.
-      unfold joinKeyVars at hkv
-      cases o1 with
-      | nil => cases hkv
-      | cons mu1 rest =>
-          have hvmem : v ∈ (mu1 :: rest).head!.domain.filter (fun v =>
-              (mu1 :: rest).all (fun m => (m.lookup v).isSome) &&
-              o2.all (fun m => (m.lookup v).isSome)) := by
-            simp only [List.head!] at *
-            rw [hkv]
-            exact hv
-          have := (List.mem_filter.mp hvmem).2
-          simp only [Bool.and_eq_true, List.all_eq_true] at this
-          exact this.2 m hm
+      exact joinKeyVars_bound_right o1 o2 v (by rw [hkv]; exact hv) m hm
+
+/-! ## The hash left join equals the nested-loop left join -/
+
+/-- The keyed hash left join equals the nested loop whenever every
+build row binds every key variable. The per-μ1 candidate list changes
+from Ω2 to Ω2's bucket at μ1's key; `bucketProbe_filterMap_eq` shows
+the two `filterMap`s agree as LISTS, so the `extended.isEmpty` test
+that decides between the extensions and the unextended μ1 sees the same
+list on both sides. -/
+theorem hashLeftJoinKeyed_eq_leftJoin (kvs : List VarName)
+    (o1 o2 : SolutionSeq) (cond : Binding → Bool)
+    (hb : ∀ v ∈ kvs, ∀ m ∈ o2, (Binding.lookup v m).isSome) :
+    hashLeftJoinKeyed kvs o1 o2 cond = leftJoin o1 o2 cond := by
+  unfold hashLeftJoinKeyed leftJoin
+  apply flatMap_congr
+  intro mu1 _
+  cases hk1 : Binding.hashKey? kvs mu1 with
+  | none => rfl
+  | some k =>
+      have hcore := bucketProbe_filterMap_eq kvs mu1 o2 k
+        (fun mu2 =>
+          if mu1.compatible mu2 = true then
+            (if cond (mu1.merge mu2) = true then some (mu1.merge mu2) else none)
+          else none)
+        hb hk1 (fun mu2 hc => by rw [hc]; rfl)
+      show (if ((bucketOf (groupByKey (Binding.hashKey? kvs) o2)
+                  (some k)).filterMap
+                 (fun mu2 =>
+                   if mu1.compatible mu2 = true then
+                     (if cond (mu1.merge mu2) = true
+                      then some (mu1.merge mu2) else none)
+                   else none)).isEmpty
+            then [mu1]
+            else (bucketOf (groupByKey (Binding.hashKey? kvs) o2)
+                   (some k)).filterMap
+                  (fun mu2 =>
+                    if mu1.compatible mu2 = true then
+                      (if cond (mu1.merge mu2) = true
+                       then some (mu1.merge mu2) else none)
+                    else none))
+           = (if (o2.filterMap
+                   (fun mu2 =>
+                     if mu1.compatible mu2 = true then
+                       (if cond (mu1.merge mu2) = true
+                        then some (mu1.merge mu2) else none)
+                     else none)).isEmpty
+              then [mu1]
+              else o2.filterMap
+                    (fun mu2 =>
+                      if mu1.compatible mu2 = true then
+                        (if cond (mu1.merge mu2) = true
+                         then some (mu1.merge mu2) else none)
+                      else none))
+      rw [hcore]
+
+/-- **The left-join theorem.** The hash left join returns the same
+solution sequence as §18.5's nested-loop `leftJoin` — the same LIST:
+same rows, same order, same binding layouts, unextended left rows
+included. -/
+theorem hashLeftJoin_eq_leftJoin (o1 o2 : SolutionSeq)
+    (cond : Binding → Bool) :
+    hashLeftJoin o1 o2 cond = leftJoin o1 o2 cond := by
+  unfold hashLeftJoin
+  cases hkv : joinKeyVars o1 o2 with
+  | nil => rfl
+  | cons v0 vs0 =>
+      apply hashLeftJoinKeyed_eq_leftJoin
+      intro v hv m hm
+      exact joinKeyVars_bound_right o1 o2 v (by rw [hkv]; exact hv) m hm
 
 /-! ## The indexed BGP equals the specification BGP -/
 
@@ -699,6 +796,7 @@ misses `x`, so `x` leaves the key and both rows still join. -/
 
 /-! ## Axiom audit -/
 
+#print axioms hashLeftJoin_eq_leftJoin
 #print axioms hashJoin_eq_join
 #print axioms cachedTpIndex_correct
 #print axioms evalBgpStepCached_correct

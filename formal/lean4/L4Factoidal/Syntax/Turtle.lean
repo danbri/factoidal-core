@@ -158,6 +158,23 @@ def maxUnderscoreRun : List Char → Nat → Nat → Nat
       if c == '_' then maxUnderscoreRun cs (cur + 1) (max (cur + 1) best)
       else maxUnderscoreRun cs 0 best
 
+structure UnderscoreRun where
+  current : Nat := 0
+  longest : Nat := 0
+
+def UnderscoreRun.feedChar (state : UnderscoreRun) (character : Char) : UnderscoreRun :=
+  if character == '_' then
+    let current := state.current + 1
+    { current, longest := max current state.longest }
+  else { state with current := 0 }
+
+def UnderscoreRun.feedChars (state : UnderscoreRun) : List Char → UnderscoreRun
+  | [] => state
+  | character :: rest => feedChars (state.feedChar character) rest
+
+def freshBnodePrefixOfLongest (longest : Nat) : String :=
+  "anon" ++ String.ofList (List.replicate (longest + 1) '_')
+
 /-- The prefix every GENERATED blank-node label carries for this
 document: `anon` followed by one more consecutive `_` than appears
 anywhere in the document text. No `_:LABEL` the document writes can
@@ -182,6 +199,10 @@ generated-label prefix. -/
 def TurtleState.init (text : String) (base : Option String) (mode : Mode) : TurtleState :=
   { prefixes := [], baseIri := base.getD "", bnodeCounter := 0,
     bnodePrefix := freshBnodePrefix text, mode := mode }
+
+def TurtleState.initWithBnodePrefix (bnodePrefix : String) (base : Option String)
+    (mode : Mode) : TurtleState :=
+  { prefixes := [], baseIri := base.getD "", bnodeCounter := 0, bnodePrefix, mode }
 
 /-- Mint a fresh anonymous blank-node label. Port of `fresh_bnode`. -/
 def TurtleState.freshBnode (st : TurtleState) : BNodeId × TurtleState :=
@@ -1627,6 +1648,11 @@ def parseStatements : Nat → TurtleState → Nat → List Char → List Triple 
           | .ok (ts, st', p2, r2) =>
               if r2.length ≥ r1.length then .ok (acc ++ ts, st')
               else parseStatements fuel st' p2 r2 (acc ++ ts)
+
+/-- The reversing accumulator used by `parseStatements`, named so a
+    streaming caller can fold with the same total step. -/
+def prependReverse (accRev : List Triple) (triples : List Triple) : List Triple :=
+  triples.reverse ++ accRev
 
 /-- Parse a complete Turtle document into a `Graph`.
 

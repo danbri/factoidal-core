@@ -27,10 +27,11 @@ Lean algebra states §18.6's EXISTS, and they are built at lowering
 time. So a backend-routed evaluator here either rebuilds the whole
 lowering or delegates.
 
-This module delegates: BGP, JOIN, UNION, MINUS, `GRAPH <constant>` and
-the empty pattern are backend-native; every other arm materialises the
-dataset and runs the algebra evaluator. That is the SAME device the F*
-source uses for its own hard arms, applied to more of them.
+This module delegates: BGP, JOIN, UNION, MINUS, `GRAPH <constant>`, the
+empty pattern, and FILTER / OPTIONAL whose condition is `backendLocal`
+are backend-native; every other arm materialises the dataset and runs
+the algebra evaluator. That is the SAME device the F* source uses for
+its own hard arms, applied to more of them.
 
 **What it costs is performance on those shapes, not correctness.** The
 delegate is the algebra evaluator, which is the semantic source of
@@ -68,6 +69,7 @@ a clean exit.
 No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.StoreFastPath
+import L4Factoidal.SPARQL.IndexedEvalRefinement
 
 namespace L4Factoidal.SPARQL.StoreDataset
 
@@ -137,8 +139,42 @@ the module header for why, and for what that costs. -/
 def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
     QueryPattern → GraphBackend → SolutionSeq
   | .bgp b, gb => evalBgpBackend b gb
+  -- A FILTER without active-graph-dependent expression forms can stay on the
+  -- backend path.  This is the intentionally conservative counterpart of the
+  -- `QueryPattern.lowerWith` closure: for `Expr.backendLocal`, existential
+  -- substitution is a no-op and `Expr.evalIn` needs only the row.  Other
+  -- filters retain the complete materialisation fallback below.
+  | .filter condition pattern, gb =>
+      if condition.backendLocal then
+        (evalPatternBackend env dsb pattern gb).filter
+          (fun row => ebvOrFalse (Expr.evalIn env row condition))
+      else
+        let ds0 := materialiseDatasetBackend dsb
+        let gCurrent := backendSearch gb patternBoundAll
+        let ds := { ds0 with default := gCurrent }
+        (QueryPattern.filter condition pattern).lowerWith env Binding.empty |>.evalIn ds gCurrent
+  -- The hash join, equal to `SPARQL.join` as a list (`hashJoin_eq_join`,
+  -- `IndexedEvalRefinement.lean`), as `GraphPattern.evalIn` already uses.
   | .join p1 p2, gb =>
-      SPARQL.join (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+      SPARQL.hashJoin (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+  -- OPTIONAL stays on the backend path under the same condition the
+  -- `.filter` arm uses: a `backendLocal` condition needs only the row,
+  -- so existential substitution is a no-op and the condition the
+  -- reference applies (`QueryPattern.lowerWith`'s `.leftJoin` arm,
+  -- Query.lean) reduces to `ebvOrFalse ∘ Expr.evalIn env` under the
+  -- empty seed binding. The join itself is the hash left join;
+  -- `hashLeftJoin_eq_leftJoin` (IndexedEvalRefinement.lean) proves it
+  -- returns exactly §18.5's `SPARQL.leftJoin`, list order included.
+  | .leftJoin p1 p2 cond, gb =>
+      if cond.backendLocal then
+        SPARQL.hashLeftJoin
+          (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+          (fun row => ebvOrFalse (Expr.evalIn env row cond))
+      else
+        let ds0 := materialiseDatasetBackend dsb
+        let gCurrent := backendSearch gb patternBoundAll
+        let ds := { ds0 with default := gCurrent }
+        (QueryPattern.leftJoin p1 p2 cond).lowerWith env Binding.empty |>.evalIn ds gCurrent
   | .union p1 p2, gb =>
       SPARQL.union (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
   | .minus p1 p2, gb =>
@@ -149,6 +185,50 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
       match lookupNamedBackend i.val dsb.named with
       | some g => evalPatternBackend env dsb p g
       | none => []
+  -- GRAPH with a VARIABLE evaluates the inner pattern against every
+  -- named backend and binds the variable to that graph's name, which is
+  -- §18.6's `ds.named.flatMap … bindIfCompatible` over the SAME list:
+  -- `materialiseDatasetBackend` builds `ds.named` from `dsb.named` in
+  -- order and drops exactly the names that are not well-formed IRIs, so
+  -- the same `wfIriOf?` test is applied here.
+  --
+  -- Without this arm the shape fell to the materialise-and-delegate
+  -- case below, which rebuilds the WHOLE dataset as lists for every
+  -- such query. That is what made `GRAPH ?g { ?c skos:prefLabel ?l }`
+  -- cost the same as reading the generation twice, and what overflowed
+  -- the wasm stack on a 45,806-row block
+  -- (https://github.com/danbri/factoidal/issues/653).
+  | .graph (.var v) p, _ =>
+      dsb.named.flatMap (fun ngb =>
+        match wfIriOf? ngb.name with
+        | none => []
+        | some i =>
+            (evalPatternBackend env dsb p ngb.backend).filterMap (fun mu =>
+              mu.bindIfCompatible v (.iri i)))
+  -- BIND with a `backendLocal` expression stays on the backend path, for
+  -- the same reason the `.filter` arm does: the binder reads only the row
+  -- and `EvalEnv`, so existential substitution is a no-op and the active
+  -- graph the reference binder receives is never consulted. The row list,
+  -- the freshness context and the already-bound-variable rule are the
+  -- reference's own `bindRowsFresh`, applied to the rows this evaluator
+  -- produced, so only the SOURCE of the rows differs from
+  -- `QueryPattern.lowerWith`'s `.bind` arm.
+  --
+  -- Without this arm the shape fell to the materialise-and-delegate case
+  -- below, which rebuilds the whole dataset as lists for every such query,
+  -- and — because the pattern then leaves
+  -- `SPARQL.DatasetRestriction.plannerFragment` — made all four collectors
+  -- of `Storage/ShardManifest.lean` keep every entry.
+  | .bind expression v pattern, gb =>
+      if expression.backendLocal then
+        bindRowsFresh (fun _ row => (Expr.evalIn env row expression).toTerm?)
+          [] v (evalPatternBackend env dsb pattern gb) 0
+      else
+        let ds0 := materialiseDatasetBackend dsb
+        let gCurrent := backendSearch gb patternBoundAll
+        let ds := { ds0 with default := gCurrent }
+        (QueryPattern.bind expression v pattern).lowerWith env Binding.empty
+          |>.evalIn ds gCurrent
   | .empty, _ => [Binding.empty]
   | p, gb =>
       -- Materialise and delegate. The active graph is this backend's
@@ -169,11 +249,14 @@ def countGroupByGraphAcc (graphVar countAlias : VarName) :
   | acc, [] => acc.reverse
   | acc, ngb :: rest =>
       let cnt := backendCountExact ngb.backend patternBoundAll
-      let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
-      let mu := match wfIriOf? ngb.name with
-                | some i => Binding.bind graphVar (.iri i) mu0
-                | none => mu0
-      countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
+      if cnt == 0 then countGroupByGraphAcc graphVar countAlias acc rest
+      else
+        match wfIriOf? ngb.name with
+        | none => countGroupByGraphAcc graphVar countAlias acc rest
+        | some i =>
+            let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
+            let mu := Binding.bind graphVar (.iri i) mu0
+            countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
 
 def countGroupByGraphSolutions (graphVar countAlias : VarName)
     (named : List NamedGraphBackend) : SolutionSeq :=
@@ -194,6 +277,73 @@ def predicateGroupByAcc (predVar countAlias : VarName) (gb : GraphBackend) :
 def predicateGroupBySolutions (predVar countAlias : VarName) (gb : GraphBackend)
     (preds : List WfIri) : SolutionSeq :=
   predicateGroupByAcc predVar countAlias gb [] preds
+
+/-! ### LIMIT push-down under `GRAPH ?v`
+
+`detectLimitSingleTpScoped` has already refused every shape whose match
+can reject a candidate the bound admits, and every shape where `?v`
+occurs inside the triple pattern. So each named graph contributes
+exactly the rows the backend returns, in backend order, and the answer
+is the first `k` of the concatenation §18.6 builds. -/
+
+def limitGraphVarAcc (v : VarName) (tp : TriplePattern) (limit : Nat) :
+    List NamedGraphBackend → SolutionSeq → SolutionSeq
+  | [], acc => acc.reverse
+  | ngb :: rest, acc =>
+      if limit <= acc.length then acc.reverse
+      else
+        match wfIriOf? ngb.name with
+        | none => limitGraphVarAcc v tp limit rest acc
+        | some i =>
+            -- `capsTakeN` again, for the same reason `evalLimitSingleTp`
+            -- truncates after the match: `solveLimited` is a backend
+            -- capability, so nothing here proves it honoured the limit.
+            let rows :=
+              capsTakeN (limit - acc.length)
+                ((backendSearchLimited ngb.backend (patternBoundFor tp Binding.empty)
+                    (limit - acc.length)).filterMap (fun t =>
+                  match tpMatch tp t Binding.empty with
+                  | none => none
+                  | some mu => mu.bindIfCompatible v (.iri i)))
+            limitGraphVarAcc v tp limit rest (rows.reverseAux acc)
+
+/-- The three scopes of the LIMIT push-down. `.active` is the existing
+one-graph path; `.named` routes to that graph's own backend and answers
+nothing for a graph the dataset does not name, exactly as §18.6's GRAPH
+arm does; `.everyNamed` walks the named backends. -/
+def evalLimitSingleTpScoped (sel : SelectClause) (tp : TriplePattern)
+    (scope : LimitScope) (k : Nat) (gb : GraphBackend) (dsb : DatasetBackend) :
+    SolutionSeq :=
+  match scope with
+  | .active => evalLimitSingleTp sel tp gb k
+  | .named g =>
+      match lookupNamedBackend g.val dsb.named with
+      | some target => evalLimitSingleTp sel tp target k
+      | none => []
+  | .everyNamed v =>
+      let omega := limitGraphVarAcc v tp k dsb.named []
+      match sel with
+      | .vars items => projectSolutions (selectItemVars items) omega
+      | .all => stripSyntheticBnodeVars omega
+
+/-- The push-down never returns more rows than the limit, in every
+scope. -/
+theorem limitGraphVarAcc_bounded (v : VarName) (tp : TriplePattern) (limit : Nat)
+    (named : List NamedGraphBackend) (acc : SolutionSeq) (hacc : acc.length <= limit) :
+    (limitGraphVarAcc v tp limit named acc).length <= limit := by
+  induction named generalizing acc with
+  | nil => simpa [limitGraphVarAcc] using hacc
+  | cons ngb rest ih =>
+      simp only [limitGraphVarAcc]
+      split
+      · simpa using hacc
+      · rename_i hlt
+        split
+        · exact ih acc hacc
+        · refine ih _ ?_
+          simp only [List.reverseAux_eq, List.length_append, List.length_reverse,
+                     capsTakeN, List.length_take]
+          omega
 
 /-- Shape detection plus capability availability. The fast path runs
 only when the target backend actually offers cheap predicate
@@ -300,12 +450,12 @@ def evalSelectBackendBgp (env : EvalEnv) (q : Query) (gb : GraphBackend) :
       else
         let ordered := match q.modifier.orderBy with
           | none => omega
-          | some o => sortSolutions (compareOnConditions env o) omega
+          | some o => sortSolutionsFast (compareOnConditions env env.activeGraph o) omega
         let projected := match sel with
           | .vars items => projectSolutions (selectItemVars items) ordered
           | .all => ordered
         let deduped :=
-          if q.modifier.distinct then distinctSolutions projected
+          if q.modifier.distinct then distinctSolutionsFast projected
           else if q.modifier.reduced then reducedSolutions projected
           else projected
         some (sliceSolutions q.modifier.offset q.modifier.limit deduped)
@@ -339,18 +489,18 @@ def evalSelectBackendOnGraph (env : EvalEnv) (q : Query) (gb : GraphBackend)
           let omega := predicateGroupBySolutions predVar countAlias target preds
           let ordered := match q.modifier.orderBy with
             | none => omega
-            | some o => sortSolutions (compareOnConditions env o) omega
+            | some o => sortSolutionsFast (compareOnConditions env env.activeGraph o) omega
           some (sliceSolutions q.modifier.offset q.modifier.limit ordered)
       | none =>
-          match detectLimitSingleTp q with
-          | some (tp, k) =>
+          match detectLimitSingleTpScoped q with
+          | some (tp, scope, k) =>
               match q.form with
-              | .select sel => some (evalLimitSingleTp sel tp gb k)
+              | .select sel => some (evalLimitSingleTpScoped sel tp scope k gb dsb)
               | _ => none
           | none =>
               match q.form with
               | .select _ =>
-                  some (selectPost env q (evalPatternBackend env dsb q.pattern gb))
+                  some (selectPost env env.activeGraph q (evalPatternBackend env dsb q.pattern gb))
               | _ => none
 
 /-- SELECT against the whole dataset. The GROUP BY ?g fast path is the
@@ -363,7 +513,7 @@ def evalSelectBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) 
       let omega := countGroupByGraphSolutions graphVar countAlias dsb.named
       let ordered := match q.modifier.orderBy with
         | none => omega
-        | some o => sortSolutions (compareOnConditions env o) omega
+        | some o => sortSolutionsFast (compareOnConditions env env.activeGraph o) omega
       some (sliceSolutions q.modifier.offset q.modifier.limit ordered)
   | none => evalSelectBackendOnGraph env q dsb.default dsb
 
@@ -416,6 +566,31 @@ theorem evalPatternBackend_union_native (env : EvalEnv) (dsb : DatasetBackend)
       = SPARQL.union (evalPatternBackend env dsb p1 gb)
                      (evalPatternBackend env dsb p2 gb) := by
   simp [evalPatternBackend]
+
+/-- OPTIONAL with a `backendLocal` condition is backend-native: both
+operands recurse on the backend path and the arm computes §18.5's
+LeftJoin over them (through `SPARQL.hashLeftJoin`, which
+`hashLeftJoin_eq_leftJoin` proves equal to `SPARQL.leftJoin` as a
+list). -/
+theorem evalPatternBackend_leftJoin_native (env : EvalEnv) (dsb : DatasetBackend)
+    (p1 p2 : QueryPattern) (cond : Expr) (gb : GraphBackend)
+    (h : cond.backendLocal = true) :
+    evalPatternBackend env dsb (.leftJoin p1 p2 cond) gb
+      = SPARQL.hashLeftJoin (evalPatternBackend env dsb p1 gb)
+          (evalPatternBackend env dsb p2 gb)
+          (fun row => ebvOrFalse (Expr.evalIn env row cond)) := by
+  simp [evalPatternBackend, h]
+
+/-- ... and it denotes the specification's nested-loop LeftJoin. -/
+theorem evalPatternBackend_leftJoin_spec (env : EvalEnv) (dsb : DatasetBackend)
+    (p1 p2 : QueryPattern) (cond : Expr) (gb : GraphBackend)
+    (h : cond.backendLocal = true) :
+    evalPatternBackend env dsb (.leftJoin p1 p2 cond) gb
+      = SPARQL.leftJoin (evalPatternBackend env dsb p1 gb)
+          (evalPatternBackend env dsb p2 gb)
+          (fun row => ebvOrFalse (Expr.evalIn env row cond)) := by
+  rw [evalPatternBackend_leftJoin_native env dsb p1 p2 cond gb h,
+      SPARQL.hashLeftJoin_eq_leftJoin]
 
 theorem evalPatternBackend_empty (env : EvalEnv) (dsb : DatasetBackend)
     (gb : GraphBackend) :
@@ -484,17 +659,21 @@ theorem evalBgpBackend_allVars_list (g : Graph) (sv pv ov : VarName) :
 
 /-! ## 9. What the GROUP BY paths guarantee -/
 
-/-- One row per named graph, however many that is. -/
+/-- One row per nonempty named graph with an admitted IRI name. Empty graphs
+    and invalid names contribute no group, just as the materialised GRAPH
+    pattern contributes no solution from either. -/
 theorem countGroupByGraph_length (graphVar countAlias : VarName) :
     ∀ (named : List NamedGraphBackend) (acc : SolutionSeq),
       (countGroupByGraphAcc graphVar countAlias acc named).length
-        = acc.length + named.length
+        = acc.length + (named.filter (fun ngb =>
+            backendCountExact ngb.backend patternBoundAll != 0 &&
+              (wfIriOf? ngb.name).isSome)).length
   | [], acc => by simp [countGroupByGraphAcc]
   | ngb :: rest, acc => by
-      simp only [countGroupByGraphAcc,
-                 countGroupByGraph_length graphVar countAlias rest,
-                 List.length_cons]
-      omega
+      simp only [countGroupByGraphAcc, List.filter_cons]
+      split
+      · simp_all [countGroupByGraph_length graphVar countAlias rest]
+      · split <;> simp_all [countGroupByGraph_length graphVar countAlias rest] <;> omega
 
 /-- A predicate with no rows contributes no group. -/
 theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
@@ -532,6 +711,48 @@ private def gNamed : Graph :=
 private def dsb1 : DatasetBackend :=
   { default := .list gDefault
   , named := [{ name := iG.val, backend := .list gNamed }] }
+
+private def repeatedVariableCountQuery : Query :=
+  mkQuery (.select (.vars [.expr (.aggregate .count false (.var "*")) "n"]))
+    (.bgp [{ s := .var "x", p := .iri iP, o := .var "x" }])
+
+private def limitProjectedExpressionQuery : Query :=
+  mkQuery (.select (.vars [.expr (.str (.var "o")) "label"]))
+    (.bgp [{ s := .var "s", p := .iri iP, o := .var "o" }])
+    (modifier := { limit := some 1 })
+
+#guard runSelectQueryBackendDataset {} repeatedVariableCountQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) repeatedVariableCountQuery).2
+#guard runSelectQueryBackendDataset {} limitProjectedExpressionQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitProjectedExpressionQuery).2
+
+private def groupedGraphCountQuery : Query :=
+  mkQuery (.select (.vars [.var "g", .expr (.aggregate .count false (.var "*")) "n"]))
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .var "p", o := .var "o" }]))
+    (groupBy := some [.var "g"])
+
+private def dsbWithEmptyNamed : DatasetBackend :=
+  { default := .list []
+  , named := [{ name := iA.val, backend := .list [] },
+              { name := iG.val, backend := .list gNamed }] }
+
+private def limitBlankNodeQuery : Query :=
+  mkQuery (.select .all)
+    (.bgp [{ s := .bnode "anonymous", p := .iri iP, o := .var "o" }])
+    (modifier := { limit := some 1 })
+
+private def limitNamedBlankNodeQuery : Query :=
+  mkQuery (.select .all)
+    (.graph (.var "g")
+      (.bgp [{ s := .bnode "anonymous", p := .iri iP, o := .var "o" }]))
+    (modifier := { limit := some 1 })
+
+#guard runSelectQueryBackendDataset {} groupedGraphCountQuery dsbWithEmptyNamed ==
+  some (evalSelect {} (materialiseDatasetBackend dsbWithEmptyNamed) groupedGraphCountQuery).2
+#guard runSelectQueryBackendDataset {} limitBlankNodeQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitBlankNodeQuery).2
+#guard runSelectQueryBackendDataset {} limitNamedBlankNodeQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitNamedBlankNodeQuery).2
 
 private def tpAll : TriplePattern :=
   { s := .var "s", p := .var "p", o := .var "o" }
@@ -600,6 +821,376 @@ one row carrying the exact count. -/
 #guard (runSelectQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsb1).isSome
         == false
 
+/-! §18.6 EXISTS / NOT EXISTS evaluate against `env.dataset`, which a
+caller of the backend runners must supply (the reference evaluator sets
+it itself).  The default graph holds `a p b` only, so NOT EXISTS of the
+reversed pattern keeps the row and EXISTS drops it.  Regression pin for
+2026-09-02: an environment without a dataset answered zero rows for the
+NOT EXISTS form. -/
+private def tpReversed : TriplePattern :=
+  { s := .var "o", p := .var "p", o := .var "s" }
+private def envWithDataset : EvalEnv :=
+  { dataset := some (materialiseDatasetBackend dsb1) }
+#guard (match runSelectQueryBackendDataset envWithDataset
+          (mkQuery (.select .all) (.filter (.notExistsPat (.bgp [tpReversed])) (.bgp [tpAll])))
+          dsb1 with
+        | some rows => rows.length | none => 99) == 1
+#guard (match runSelectQueryBackendDataset envWithDataset
+          (mkQuery (.select .all) (.filter (.existsPat (.bgp [tpReversed])) (.bgp [tpAll])))
+          dsb1 with
+        | some rows => rows.length | none => 99) == 0
+
+/-! OPTIONAL on the backend path answers exactly what the reference
+evaluator answers over the materialised dataset — the same rows, in the
+same order.
+
+`gDefault` is `a p b`. The right side of the OPTIONAL below matches
+`a p ?o2` (it does: `o2 = b`), so the left row EXTENDS; the second form
+asks for `?s p a`, which the default graph does not carry, so the left
+row is KEPT UNEXTENDED; the third form extends but a backend-local
+condition rejects the extension, so the left row is again kept
+unextended. -/
+private def tpSPO : TriplePattern :=
+  { s := .var "s", p := .var "p", o := .var "o" }
+private def tpExtend : TriplePattern :=
+  { s := .var "s", p := .var "p", o := .var "o2" }
+private def tpNoMatch : TriplePattern :=
+  { s := .var "s", p := .var "p", o := .iri iA }
+
+private def ljExtend : QueryPattern :=
+  .leftJoin (.bgp [tpSPO]) (.bgp [tpExtend]) (.boolLit true)
+private def ljUnmatched : QueryPattern :=
+  .leftJoin (.bgp [tpSPO]) (.bgp [tpNoMatch]) (.boolLit true)
+private def ljRejected : QueryPattern :=
+  .leftJoin (.bgp [tpSPO]) (.bgp [tpExtend]) (.isBlank (.var "o2"))
+
+private def backendRows (p : QueryPattern) : SolutionSeq :=
+  match runSelectQueryBackendDataset envWithDataset (mkQuery (.select .all) p) dsb1 with
+  | some rows => rows
+  | none => []
+
+private def referenceRows (p : QueryPattern) : SolutionSeq :=
+  (evalSelect envWithDataset (materialiseDatasetBackend dsb1)
+     (mkQuery (.select .all) p)).2
+
+/-! All three conditions are `backendLocal`, so all three exercise the
+NATIVE arm and not the materialise fallback. -/
+#guard (Expr.backendLocal (.boolLit true)) == true
+#guard (Expr.backendLocal (.isBlank (.var "o2"))) == true
+
+/-! (a) the OPTIONAL extends. -/
+#guard backendRows ljExtend == referenceRows ljExtend
+#guard (backendRows ljExtend).length == 1
+#guard (match (backendRows ljExtend).head? with
+        | some mu => (Binding.lookup "o2" mu).isSome | none => false) == true
+
+/-! (b) no compatible right row: the left row survives unextended. -/
+#guard backendRows ljUnmatched == referenceRows ljUnmatched
+#guard (backendRows ljUnmatched).length == 1
+#guard (match (backendRows ljUnmatched).head? with
+        | some mu => (Binding.lookup "o2" mu).isSome | none => true) == false
+
+/-! (c) a backend-local condition rejects the only extension: the left
+row survives unextended. -/
+#guard backendRows ljRejected == referenceRows ljRejected
+#guard (backendRows ljRejected).length == 1
+#guard (match (backendRows ljRejected).head? with
+        | some mu => (Binding.lookup "o2" mu).isSome | none => true) == false
+
+
+/-! §18.5 MINUS and §18.2.4 sub-SELECT on the backend path answer exactly
+what the reference evaluator answers.  Both are regression pins for
+anti-pattern 34: a routing change that moves either shape onto a runner
+without the reference dataset would silently drop or keep rows here. -/
+private def minusSame : QueryPattern :=
+  .minus (.bgp [tpSPO]) (.bgp [tpSPO])
+private def minusDisjoint : QueryPattern :=
+  .minus (.bgp [tpSPO]) (.bgp [tpNoMatch])
+private def subSelectAll : QueryPattern :=
+  .subSelect (mkQuery (.select .all) (.bgp [tpSPO]))
+
+#guard backendRows minusSame == referenceRows minusSame
+#guard (backendRows minusSame).length == 0
+#guard backendRows minusDisjoint == referenceRows minusDisjoint
+#guard (backendRows minusDisjoint).length == 1
+#guard backendRows subSelectAll == referenceRows subSelectAll
+#guard (backendRows subSelectAll).length == 1
+
+/-! ## BIND and constant-IRI paths on the selective manifest path
+
+`ShardManifest.nativeConstantPredicates?` now admits `BIND(e AS ?v)` for a
+`backendLocal` `e`, and a property path whose every step is a constant IRI.
+Admission means the store opener reads ONLY the blocks of the predicates the
+query names, so the two shapes below have to answer over that restricted read
+set exactly what the reference evaluator answers over the whole dataset.
+
+`gChain` is `a p b` and `b q g`, so the sequence path `p/q` relates `a` to `g`
+and reads only the `p` and `q` blocks. -/
+
+private def iQ : WfIri := ⟨"http://example.org/q", by decide⟩
+
+private def gChain : Graph :=
+  [ { s := .iri iA, p := iP, o := .iri iB },
+    { s := .iri iB, p := iQ, o := .iri iG } ]
+
+private def dsbChain : DatasetBackend := { default := .list gChain, named := [] }
+private def envChain : EvalEnv :=
+  { dataset := some (materialiseDatasetBackend dsbChain) }
+
+private def chainBackendRows (p : QueryPattern) : SolutionSeq :=
+  match runSelectQueryBackendDataset envChain (mkQuery (.select .all) p) dsbChain with
+  | some rows => rows
+  | none => []
+
+private def chainReferenceRows (p : QueryPattern) : SolutionSeq :=
+  (evalSelect envChain (materialiseDatasetBackend dsbChain)
+     (mkQuery (.select .all) p)).2
+
+/-! `UCASE(SUBSTR(STR(?o), 1, 1))` is the UK Parliament first-letter shape.
+The three forms are §17.4.2 / §17.4.3 functions of one variable, so the
+expression is `backendLocal` and the BIND adds no triple read of its own. -/
+private def bindFirstLetter : QueryPattern :=
+  .bind (.uCase (.substr (.str (.var "o")) (.numericLit 1) (some (.numericLit 1))))
+    "first" (.bgp [tpSPO])
+
+#guard (Expr.backendLocal
+  (.uCase (.substr (.str (.var "o")) (.numericLit 1) (some (.numericLit 1))))) == true
+#guard chainBackendRows bindFirstLetter == chainReferenceRows bindFirstLetter
+#guard (chainBackendRows bindFirstLetter).length == 2
+#guard (chainBackendRows bindFirstLetter).all
+  (fun mu => (Binding.lookup "first" mu).isSome) == true
+
+/-! The backend-native `.bind` arm against the reference, on the three cases
+that separate it from a plain map: an expression that ERRORS on every row
+(`?missing` is unbound, so §18.6 leaves the variable unbound rather than
+dropping the row), an expression that errors on SOME rows only, and a
+variable the row already binds (§18.6 keeps the row's own value). -/
+private def bindErrors : QueryPattern :=
+  .bind (.strLen (.str (.var "missing"))) "n" (.bgp [tpSPO])
+private def bindPartial : QueryPattern :=
+  .bind (.strLen (.str (.var "o"))) "n"
+    (.bind (.arith .add (.var "o") (.numericLit 1)) "sum" (.bgp [tpSPO]))
+private def bindRebound : QueryPattern :=
+  .bind (.iri iA) "o" (.bgp [tpSPO])
+
+#guard chainBackendRows bindErrors == chainReferenceRows bindErrors
+#guard (chainBackendRows bindErrors).all
+  (fun mu => (Binding.lookup "n" mu).isNone) == true
+#guard chainBackendRows bindPartial == chainReferenceRows bindPartial
+#guard chainBackendRows bindRebound == chainReferenceRows bindRebound
+#guard (chainBackendRows bindRebound).all
+  (fun mu => (Binding.lookup "o" mu) != some (Term.iri iA)) == true
+
+/-! A BIND whose expression is NOT `backendLocal` still delegates, and still
+agrees with the reference. `NOW()` reads `EvalEnv`, which the admission
+excludes. -/
+private def bindNotLocal : QueryPattern := .bind .now "t" (.bgp [tpSPO])
+
+#guard Expr.backendLocal .now == false
+#guard chainBackendRows bindNotLocal == chainReferenceRows bindNotLocal
+
+/-! A sequence of two constant-IRI steps: one pair, `a` to `g`. -/
+private def pathSequence : QueryPattern :=
+  .propertyPath (.var "s") (.sequence (.iri iP) (.iri iQ)) (.var "o")
+
+#guard chainBackendRows pathSequence == chainReferenceRows pathSequence
+#guard (chainBackendRows pathSequence).length == 1
+#guard (match (chainBackendRows pathSequence).head? with
+        | some mu => (Binding.lookup "o" mu) == some (Term.iri iG)
+        | none => false) == true
+
+/-! An alternative of two constant-IRI steps reads both blocks: two pairs. -/
+private def pathAlternative : QueryPattern :=
+  .propertyPath (.var "s") (.alternative (.iri iP) (.iri iQ)) (.var "o")
+
+#guard chainBackendRows pathAlternative == chainReferenceRows pathAlternative
+#guard (chainBackendRows pathAlternative).length == 2
+
+/-! An inverse of a constant IRI reads the same block, with the pair
+swapped. -/
+private def pathInverse : QueryPattern :=
+  .propertyPath (.var "s") (.inverse (.iri iP)) (.var "o")
+
+#guard chainBackendRows pathInverse == chainReferenceRows pathInverse
+#guard (match (chainBackendRows pathInverse).head? with
+        | some mu => (Binding.lookup "o" mu) == some (Term.iri iA)
+        | none => false) == true
+
+/-! ## EXISTS outside the WHERE clause and the selective read set
+
+https://github.com/danbri/factoidal/issues/638. §18.6 evaluates EXISTS /
+NOT EXISTS against the ACTIVE GRAPH, and `selectPost` runs HAVING, the SELECT
+expressions and ORDER BY over the query's `EvalEnv`, so an EXISTS in any of
+those positions reads triples the WHERE clause never names. A physical
+planner that opens only the predicates the WHERE clause names would evaluate
+such a query against a proper subset of the store, because
+`Harness/IndexedBlockV3Query.lean` `finish` builds `env.dataset` from exactly
+the entries it materialised.
+`Query.expressionsOutsidePatternExistsFree` is the admission test that keeps
+those queries on the full-store path.
+
+`gShardSplit` holds the two predicates a manifest would hold as two separate
+shards: `p` carries the subjects `a` and `g`, `q` carries only `a`. A HAVING
+EXISTS over `q` therefore has to read the `q` shard, which the WHERE clause
+never names.
+
+§18.6 IN THOSE POSITIONS IS IMPLEMENTED
+(https://github.com/danbri/factoidal/issues/639): `QueryPattern.lowerWith`
+substitutes existentials in a FILTER condition, an OPTIONAL condition and a
+BIND expression, and `selectPost` — now in the same mutual block, and taking
+the ACTIVE GRAPH — substitutes them in the HAVING conditions, in the ORDER BY
+conditions and in the projected `(expr AS ?v)` items. Every guard below states
+the §18.6 answer, computed by hand from `gShardSplit`, and pins that the
+backend runner and the reference evaluator both give it. Two positions are
+still the expression-layer error: a GROUP BY key expression, and an expression
+inside an aggregate's argument. -/
+
+private def gShardSplit : Graph :=
+  [ { s := .iri iA, p := iP, o := .iri iB },
+    { s := .iri iG, p := iP, o := .iri iB },
+    { s := .iri iA, p := iQ, o := .iri iB } ]
+
+private def dsbShardSplit : DatasetBackend := { default := .list gShardSplit, named := [] }
+private def envShardSplit : EvalEnv :=
+  { dataset := some (materialiseDatasetBackend dsbShardSplit) }
+
+private def tpPredicateP : TriplePattern := { s := .var "s", p := .iri iP, o := .var "o" }
+private def tpPredicateQ : TriplePattern := { s := .var "s", p := .iri iQ, o := .var "z" }
+
+/-- `EXISTS { ?s <q> ?z }` and its negation, the sub-pattern every query
+    below carries. Under `?s = a` it has one solution, under `?s = g` none. -/
+private def existsQ : Expr := .existsPat (.bgp [tpPredicateQ])
+private def notExistsQ : Expr := .notExistsPat (.bgp [tpPredicateQ])
+
+/-- The term `EXISTS` evaluates to, spelled out rather than derived: an
+    `xsd:boolean` literal. -/
+private def boolTerm (b : Bool) : Term :=
+  .literal (mkTypedLiteral (if b then "true" else "false") xsdBoolean)
+
+private def countStarItems : List SelectItem :=
+  [.var "s", .expr (.aggregate .count false (.var "*")) "n"]
+
+/-- `SELECT ?s (COUNT(*) AS ?n) WHERE { ?s <p> ?o } GROUP BY ?s
+    HAVING EXISTS { ?s <q> ?z }`. -/
+private def havingExistsQuery : Query :=
+  mkQuery (.select (.vars countStarItems)) (.bgp [tpPredicateP])
+    (groupBy := some [.var "s"])
+    (having := [existsQ])
+
+/-- The same query with `NOT EXISTS`. -/
+private def havingNotExistsQuery : Query :=
+  mkQuery (.select (.vars countStarItems)) (.bgp [tpPredicateP])
+    (groupBy := some [.var "s"])
+    (having := [notExistsQ])
+
+/-- The same query with no HAVING: the aggregate and the GROUP BY key are on
+    their own no reason to leave the selective path. -/
+private def havingFreeQuery : Query :=
+  mkQuery (.select (.vars countStarItems)) (.bgp [tpPredicateP])
+    (groupBy := some [.var "s"])
+
+/-- `SELECT * WHERE { ?s <p> ?o } ORDER BY EXISTS { ?s <q> ?z }`. -/
+private def orderByExistsQuery : Query :=
+  mkQuery (.select .all) (.bgp [tpPredicateP])
+    (modifier := { orderBy := some [.asc existsQ] })
+
+/-- `SELECT ?s (EXISTS { ?s <q> ?z } AS ?e) WHERE { ?s <p> ?o }`. -/
+private def projectExistsQuery : Query :=
+  mkQuery (.select (.vars [.var "s", .expr existsQ "e"])) (.bgp [tpPredicateP])
+
+/-- `SELECT * WHERE { ?s <p> ?o BIND(EXISTS { ?s <q> ?z } AS ?e) }`. -/
+private def bindExistsQuery : Query :=
+  mkQuery (.select .all) (.bind existsQ "e" (.bgp [tpPredicateP]))
+
+/-- The same BIND with `NOT EXISTS`. -/
+private def bindNotExistsQuery : Query :=
+  mkQuery (.select .all) (.bind notExistsQ "e" (.bgp [tpPredicateP]))
+
+private def splitBackendRows (q : Query) : SolutionSeq :=
+  match runSelectQueryBackendDataset envShardSplit q dsbShardSplit with
+  | some rows => rows
+  | none => []
+
+private def splitReferenceRows (q : Query) : SolutionSeq :=
+  (evalSelect envShardSplit (materialiseDatasetBackend dsbShardSplit) q).2
+
+/-- The value a row binds to a variable, or `none`. -/
+private def rowValue (v : VarName) (mu : Binding) : Option Term := Binding.lookup v mu
+
+/-- The column a solution sequence gives a variable. -/
+private def colValues (v : VarName) (rows : SolutionSeq) : List (Option Term) :=
+  rows.map (rowValue v)
+
+/-! The admission test: an aggregate and a GROUP BY key stay selective, an
+EXISTS in HAVING, in an ORDER BY condition or in a projected expression does
+not. A BIND lives inside `query.pattern`, so this test admits it; the read set
+of a BIND(EXISTS) is refused one level down instead, by
+`ShardManifest.nativeConstantPredicates?`, which admits a BIND only for a
+`backendLocal` expression and `EXISTS` is not one. -/
+#guard havingFreeQuery.expressionsOutsidePatternExistsFree == true
+#guard havingExistsQuery.expressionsOutsidePatternExistsFree == false
+#guard havingNotExistsQuery.expressionsOutsidePatternExistsFree == false
+#guard orderByExistsQuery.expressionsOutsidePatternExistsFree == false
+#guard projectExistsQuery.expressionsOutsidePatternExistsFree == false
+#guard bindExistsQuery.expressionsOutsidePatternExistsFree == true
+#guard Expr.backendLocal existsQ == false
+#guard Expr.backendLocal notExistsQ == false
+
+/-! HAVING EXISTS. §18.6 substitutes the group's representative row into
+`{ ?s <q> ?z }`: for the group `?s = a` that is `{ <a> <q> ?z }`, which has one
+solution, and for `?s = g` it is `{ <g> <q> ?z }`, which has none. One group
+survives, with COUNT 1. -/
+#guard splitBackendRows havingExistsQuery == splitReferenceRows havingExistsQuery
+#guard (splitBackendRows havingExistsQuery).length == 1
+#guard colValues "s" (splitBackendRows havingExistsQuery) == [some (Term.iri iA)]
+#guard colValues "n" (splitBackendRows havingExistsQuery)
+         == [some (Term.literal (mkTypedLiteral "1" xsdInteger))]
+
+/-! HAVING NOT EXISTS: the complementary group, also with COUNT 1. -/
+#guard splitBackendRows havingNotExistsQuery == splitReferenceRows havingNotExistsQuery
+#guard (splitBackendRows havingNotExistsQuery).length == 1
+#guard colValues "s" (splitBackendRows havingNotExistsQuery) == [some (Term.iri iG)]
+
+/-! ORDER BY EXISTS. `?s = a` gives `true`, `?s = g` gives `false`, and §15.1
+orders `false` before `true`, so the ascending order is `g` then `a` — the
+reverse of the input order, which is what makes this guard observe the
+substitution rather than the input. -/
+#guard splitBackendRows orderByExistsQuery == splitReferenceRows orderByExistsQuery
+#guard (splitBackendRows orderByExistsQuery).length == 2
+#guard colValues "s" (splitBackendRows orderByExistsQuery)
+         == [some (Term.iri iG), some (Term.iri iA)]
+
+/-! A projected `(EXISTS { … } AS ?e)`: two rows in input order, each carrying
+the boolean its own subject gives. -/
+#guard splitBackendRows projectExistsQuery == splitReferenceRows projectExistsQuery
+#guard (splitBackendRows projectExistsQuery).length == 2
+#guard colValues "s" (splitBackendRows projectExistsQuery)
+         == [some (Term.iri iA), some (Term.iri iG)]
+#guard colValues "e" (splitBackendRows projectExistsQuery)
+         == [some (boolTerm true), some (boolTerm false)]
+
+/-! `BIND(EXISTS { … } AS ?e)`: the same two booleans, bound inside the WHERE
+clause instead of projected. -/
+#guard splitBackendRows bindExistsQuery == splitReferenceRows bindExistsQuery
+#guard (splitBackendRows bindExistsQuery).length == 2
+#guard colValues "s" (splitBackendRows bindExistsQuery)
+         == [some (Term.iri iA), some (Term.iri iG)]
+#guard colValues "e" (splitBackendRows bindExistsQuery)
+         == [some (boolTerm true), some (boolTerm false)]
+
+/-! `BIND(NOT EXISTS { … } AS ?e)`: the two booleans swapped. -/
+#guard splitBackendRows bindNotExistsQuery == splitReferenceRows bindNotExistsQuery
+#guard (splitBackendRows bindNotExistsQuery).length == 2
+#guard colValues "e" (splitBackendRows bindNotExistsQuery)
+         == [some (boolTerm false), some (boolTerm true)]
+
+/-! The control query, which carries no EXISTS: one group per subject of `p`,
+each with COUNT 1, `a` before `g`. -/
+#guard splitBackendRows havingFreeQuery == splitReferenceRows havingFreeQuery
+#guard (splitBackendRows havingFreeQuery).length == 2
+#guard colValues "s" (splitBackendRows havingFreeQuery)
+         == [some (Term.iri iA), some (Term.iri iG)]
+
 /-! The COTTAS dataset constructor makes one backend per named graph
 plus the default. -/
 #guard (cottasOnDiskDatasetBackend
@@ -613,8 +1204,11 @@ plus the default. -/
 /-! ## Axiom audit -/
 
 #print axioms evalPatternBackend_bgp_native
+#print axioms evalPatternBackend_leftJoin_native
+#print axioms evalPatternBackend_leftJoin_spec
 #print axioms evalBgpBackend_allVars_list
 #print axioms countGroupByGraph_length
 #print axioms evalAskBackend_none_on_decode_failure
+#print axioms limitGraphVarAcc_bounded
 
 end L4Factoidal.SPARQL.StoreDataset

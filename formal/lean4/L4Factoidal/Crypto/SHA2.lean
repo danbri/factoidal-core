@@ -11,8 +11,14 @@ PUBLIC data, never secrets or MACs, so there is no side channel to
 protect and no constant-time requirement. This module is NOT approved
 for, and MUST NOT be used for, any signature, key-derivation,
 password, or MAC computation — those go through HACL* via `@[extern]`
-FFI only (the Lean tree's single permitted extern family; see
-crypto-policy §"Lean 4 tree amendment" item 2). MD5 and SHA-1 remain
+FFI only (the Lean tree's crypto extern family; see crypto-policy
+§"Lean 4 tree amendment" item 2). SHA-256 also HAS a HACL* binding
+now (`Crypto/SHA2Native.lean`, `sha256Hacl`), added 2026-09-02 for
+speed on large public artifacts. It does NOT replace this module:
+this one is the specification, it is what the `#guard`s below and
+every theorem evaluate, and a consumer that wants the fast one takes
+a hasher parameter rather than having one substituted underneath it.
+The two are compared at run time by `lake exe l4native-crypto-smoke`. MD5 and SHA-1 remain
 unported (out of scope for this landing; see `PORT_NOTES.md`).
 
 Implements FIPS PUB 180-4 (Secure Hash Standard, 2015-08):
@@ -337,7 +343,22 @@ def pad512 (m : ByteArray) : ByteArray :=
 (`data.size / 64`, and `data` already padded to a multiple of 64), so
 this is not a guessed bound — it is structural recursion on `fuel`,
 which the equation compiler accepts directly (no `termination_by`
-needed: `fuel + 1 → fuel` decreases). -/
+needed: `fuel + 1 → fuel` decreases).
+
+**This form is QUADRATIC in the message length and no caller should
+walk a large artifact with it.** `data.extract 64 data.size` COPIES the
+whole remaining message once per 64-byte block, so an `n`-byte message
+copies about `n^2 / 64` bytes. `processBlocks256At` below is the same
+fold without the copy, and `sha256` uses that one.
+
+Measured 2026-09-04 through the wasm `storeQuery` admission path
+(https://github.com/danbri/factoidal/issues/653), which hashed each
+artifact with `sha256`: 1,902,605 bytes cost 1,188 ms, 2,737,928 bytes
+2,465 ms and 5,571,302 bytes 10,060 ms. Fitting `t = c * n^k` to the
+first and last pair gives k = 2.01 and k = 1.98. The decode and the
+query evaluation over the same three blocks cost 434, 617 and 907 ms —
+linear — so the whole superlinear cost the issue reports was this
+copy. -/
 def processBlocks256 (h0 : Array UInt32) (data : ByteArray) (fuel : Nat) : Array UInt32 :=
   match fuel with
   | 0 => h0
@@ -346,7 +367,22 @@ def processBlocks256 (h0 : Array UInt32) (data : ByteArray) (fuel : Nat) : Array
       let rest := data.extract 64 data.size
       processBlocks256 (sha256CompressBlock h0 block) rest fuel
 
-/-- The SHA-384/512 analogue of `processBlocks256`, 128-byte blocks. -/
+/-- The positioned form of the SHA-256 block fold. Unlike
+    `processBlocks256`, it never constructs successively shorter suffixes of a
+    large input: each iteration copies just its 64-byte compression block.
+    This is the form used by the streaming public-data checksum API below. -/
+def processBlocks256At (h0 : Array UInt32) (data : ByteArray) (offset fuel : Nat) : Array UInt32 :=
+  match fuel with
+  | 0 => h0
+  | fuel + 1 =>
+      let block := data.extract offset (offset + 64)
+      processBlocks256At (sha256CompressBlock h0 block) data (offset + 64) fuel
+
+/-- The SHA-384/512 analogue of `processBlocks256`, 128-byte blocks.
+It carries the same quadratic copy, and it is kept because its only
+callers are the SPARQL `SHA384()` and `SHA512()` functions over short
+literals. Give it a positioned form before hashing an artifact with
+it. -/
 def processBlocks512 (h0 : Array UInt64) (data : ByteArray) (fuel : Nat) : Array UInt64 :=
   match fuel with
   | 0 => h0
@@ -358,10 +394,20 @@ def processBlocks512 (h0 : Array UInt64) (data : ByteArray) (fuel : Nat) : Array
 /-! ## Public API — §6.2.2/§6.4.2/§6.5 top-level hash functions -/
 
 /-- FIPS 180-4 §6.2 SHA-256 of an arbitrary `ByteArray`. Output is
-always 32 bytes (`SHA2Theorems.sha256_size`). -/
+always 32 bytes (`SHA2Theorems.sha256_size`).
+
+The fold is `processBlocks256At`, the positioned form. The equality
+with `processBlocks256` is not proved here — it is checked by the FIPS
+180-4 vectors of `Crypto/SHA2Tests.lean`, which run at build time as
+`#guard` and include a 10,000-byte message (157 blocks, so an
+off-by-one in the offset walk cannot pass), and by the HACL*
+differential of `lake exe l4native-crypto-smoke`, which compares this function
+with `sha256Hacl` on the block and padding boundaries and on a 1 MiB
+buffer. The streaming API below already walked with the same
+positioned form. -/
 def sha256 (m : ByteArray) : ByteArray :=
   let padded := pad256 m
-  let hFinal := processBlocks256 H256_0 padded (padded.size / 64)
+  let hFinal := processBlocks256At H256_0 padded 0 (padded.size / 64)
   ByteArray.empty
     |> (appendWord32BE · hFinal[0]!)
     |> (appendWord32BE · hFinal[1]!)
@@ -371,6 +417,82 @@ def sha256 (m : ByteArray) : ByteArray :=
     |> (appendWord32BE · hFinal[5]!)
     |> (appendWord32BE · hFinal[6]!)
     |> (appendWord32BE · hFinal[7]!)
+
+/-! ## Incremental SHA-256
+
+`Sha256Stream` is for immutable public byte artifacts such as an RDF source
+being ingested. It retains at most one incomplete compression block, so a
+file-backed loader can commit the same SHA-256 source identity as the
+whole-buffer reference encoder without retaining the source bytes for hashing.
+It is not a MAC, KDF, password primitive or signature operation. -/
+
+/-- Running state for an incremental SHA-256 digest. `pending` contains fewer
+    than 64 bytes after `update`; that invariant follows directly from the
+    complete-block split in the constructor. -/
+structure Sha256Stream where
+  h : Array UInt32 := H256_0
+  pending : ByteArray := ByteArray.empty
+  bytes : Nat := 0
+
+/-- Empty incremental SHA-256 state. -/
+def Sha256Stream.init : Sha256Stream := {}
+
+/-- The SHA-256 block fold as an INJECTABLE operation, so that a host may
+    substitute a C realisation of the compression walk without this library
+    depending on an extern for its own semantics. It is the streaming twin of
+    `Storage.BlockMerkle.Hasher`, which the packer already takes as an
+    explicit parameter, and it is used the same way: every `#guard`, every
+    theorem and every WebAssembly operation evaluates `pureBlockFold256`, and
+    only the native executable edge passes anything else.
+
+    `run h data offset blocks` must equal `processBlocks256At h data offset
+    blocks`: absorb `blocks` complete 64-byte compression blocks of `data`
+    starting at byte `offset` into the chaining state `h`. -/
+structure BlockFold256 where
+  run : Array UInt32 → ByteArray → Nat → Nat → Array UInt32
+
+/-- The specification block fold: the pure Lean positioned walk. -/
+def pureBlockFold256 : BlockFold256 := ⟨processBlocks256At⟩
+
+/-- Absorb a byte chunk with a given block fold, retaining only its final
+    incomplete 64-byte block. -/
+def Sha256Stream.updateWith (fold : BlockFold256) (stream : Sha256Stream)
+    (chunk : ByteArray) : Sha256Stream :=
+  let combined := stream.pending ++ chunk
+  let complete := combined.size / 64
+  let consumed := complete * 64
+  { h := fold.run stream.h combined 0 complete
+  , pending := combined.extract consumed combined.size
+  , bytes := stream.bytes + chunk.size }
+
+/-- Absorb a byte chunk, retaining only its final incomplete 64-byte block. -/
+def Sha256Stream.update (stream : Sha256Stream) (chunk : ByteArray) : Sha256Stream :=
+  Sha256Stream.updateWith pureBlockFold256 stream chunk
+
+/-- Serialize a completed SHA-256 chaining state. -/
+private def sha256Digest (hFinal : Array UInt32) : ByteArray :=
+  ByteArray.empty
+    |> (appendWord32BE · hFinal[0]!)
+    |> (appendWord32BE · hFinal[1]!)
+    |> (appendWord32BE · hFinal[2]!)
+    |> (appendWord32BE · hFinal[3]!)
+    |> (appendWord32BE · hFinal[4]!)
+    |> (appendWord32BE · hFinal[5]!)
+    |> (appendWord32BE · hFinal[6]!)
+    |> (appendWord32BE · hFinal[7]!)
+
+/-- Finalize a public-artifact SHA-256 stream using the complete input length
+    carried separately from its under-64-byte tail. -/
+def Sha256Stream.finishWith (fold : BlockFold256) (stream : Sha256Stream) : ByteArray :=
+  let r := (stream.pending.size + 1) % 64
+  let zeros := if r ≤ 56 then 56 - r else 120 - r
+  let padded := pushN (pushN (stream.pending.push 0x80) zeros (fun _ => 0)) 8
+    (fun i => natByteBE (stream.bytes * 8) 8 i)
+  sha256Digest (fold.run stream.h padded 0 (padded.size / 64))
+
+/-- Finalize a public-artifact SHA-256 stream with the specification fold. -/
+def Sha256Stream.finish (stream : Sha256Stream) : ByteArray :=
+  Sha256Stream.finishWith pureBlockFold256 stream
 
 /-- FIPS 180-4 §6.4 SHA-512 of an arbitrary `ByteArray`. Output is
 always 64 bytes (`SHA2Theorems.sha512_size`). -/

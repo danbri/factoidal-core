@@ -1,0 +1,239 @@
+{
+  "benchmark": "factoidal-core-native-binding-site-v1",
+  "binary_sha256": {
+    "l4block-id-v3-query": "65eea7595de1e52f609257d02b9c9583d0cb71bde1adb670242d0340f20a3ecb",
+    "l4block-shard-activate": "fb81b0cc944fb0f050939c0fad3239f51321c6261bfa0bd9c915d2fba0e5b335",
+    "l4block-shard-pack": "9cea2d18d433187db48b66b945f16bcf4bc9534ef086e82da26c4dc584290f1a"
+  },
+  "cache_note": "OS page cache is not evicted; first process is not disk-cold",
+  "fixture": "examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl",
+  "fixture_bytes": 13388,
+  "fixture_sha256": "51cae80658127e06a3cf1e9d7102101d0670ef0b41edf897aa17c667037c917d",
+  "fixture_triples": 368,
+  "lean_toolchain": "leanprover/lean4:v4.33.1",
+  "machine": "arm64",
+  "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+  "process_model": "fresh native process for every sample",
+  "scope": "Includes process startup, artifact admission and output; no competitor comparison",
+  "validation": "Expected physical modes, row cardinalities and COUNT scalar; not complete answer bags",
+  "warm_runs": 5,
+  "workloads": {
+    "activate": {
+      "first_process": {
+        "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+        "wall_ms": 34.515
+      },
+      "subsequent_max_ms": 34.610167,
+      "subsequent_median_ms": 34.539208,
+      "subsequent_min_ms": 34.399875,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+          "wall_ms": 34.399875
+        },
+        {
+          "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+          "wall_ms": 34.471416
+        },
+        {
+          "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+          "wall_ms": 34.575708
+        },
+        {
+          "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+          "wall_ms": 34.539208
+        },
+        {
+          "native_status": "l4block-shard-activate root=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection generation=generation-0 verified-logical-bytes=25311 pointer=CURRENT",
+          "wall_ms": 34.610167
+        }
+      ]
+    },
+    "limit-zero": {
+      "first_process": {
+        "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+        "wall_ms": 26.315334
+      },
+      "subsequent_max_ms": 26.521083,
+      "subsequent_median_ms": 26.431917,
+      "subsequent_min_ms": 26.316458,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+          "wall_ms": 26.443208
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+          "wall_ms": 26.431917
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+          "wall_ms": 26.429042
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+          "wall_ms": 26.521083
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0",
+          "wall_ms": 26.316458
+        }
+      ]
+    },
+    "object-index": {
+      "first_process": {
+        "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+        "wall_ms": 27.522666
+      },
+      "subsequent_max_ms": 27.488167,
+      "subsequent_median_ms": 27.407583,
+      "subsequent_min_ms": 27.26925,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+          "wall_ms": 27.488167
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+          "wall_ms": 27.406583
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+          "wall_ms": 27.407583
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+          "wall_ms": 27.446
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-sri2-tli1-oli2-object-scan(1) delta=base logical-read-bytes=9935 fetched-bytes=9951",
+          "wall_ms": 27.26925
+        }
+      ]
+    },
+    "object-subject-join": {
+      "first_process": {
+        "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+        "wall_ms": 30.471666
+      },
+      "subsequent_max_ms": 30.906,
+      "subsequent_median_ms": 30.706584,
+      "subsequent_min_ms": 30.526542,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+          "wall_ms": 30.706584
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+          "wall_ms": 30.526542
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+          "wall_ms": 30.81825
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+          "wall_ms": 30.906
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-oli2-object-subject-direct-select(2) delta=base logical-read-bytes=51485 fetched-bytes=51517",
+          "wall_ms": 30.623083
+        }
+      ]
+    },
+    "pack": {
+      "first_process": {
+        "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-0 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+        "wall_ms": 38.323916
+      },
+      "subsequent_max_ms": 38.151333,
+      "subsequent_median_ms": 38.018625,
+      "subsequent_min_ms": 37.886666,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-1 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+          "wall_ms": 38.151333
+        },
+        {
+          "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-2 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+          "wall_ms": 38.018625
+        },
+        {
+          "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-3 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+          "wall_ms": 37.964208
+        },
+        {
+          "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-4 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+          "wall_ms": 37.886666
+        },
+        {
+          "native_status": "l4block-shard-pack format=predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0 input=/Users/danbri/working/sandbox/october/factoidal-core/examples/wikidata/subsets/lifesci-kgx/data/binding_site.ttl triples=368 blocks=2 output=/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/factoidal-core-baseline-ygb1h7r9/collection/generation-5 manifest=manifest.sbm2 wire-version=6 chunk-bytes=65536",
+          "wall_ms": 38.085583
+        }
+      ]
+    },
+    "predicate-count": {
+      "first_process": {
+        "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+        "wall_ms": 26.719541
+      },
+      "subsequent_max_ms": 27.212167,
+      "subsequent_median_ms": 26.916834,
+      "subsequent_min_ms": 26.844375,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+          "wall_ms": 26.844375
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+          "wall_ms": 26.948208
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+          "wall_ms": 26.902542
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+          "wall_ms": 27.212167
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=1 open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes=4884 fetched-bytes=4892",
+          "wall_ms": 26.916834
+        }
+      ]
+    },
+    "subject-join": {
+      "first_process": {
+        "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+        "wall_ms": 30.208333
+      },
+      "subsequent_max_ms": 32.303417,
+      "subsequent_median_ms": 30.467958,
+      "subsequent_min_ms": 30.205667,
+      "subsequent_processes": [
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+          "wall_ms": 30.205667
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+          "wall_ms": 30.358958
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+          "wall_ms": 32.303417
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+          "wall_ms": 30.920916
+        },
+        {
+          "native_status": "l4block-id-v3-query shards=2 open-mode=ibk3-sri2-tli1-subject-join(2) delta=base logical-read-bytes=46434 fetched-bytes=46458",
+          "wall_ms": 30.467958
+        }
+      ]
+    }
+  }
+}

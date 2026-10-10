@@ -228,7 +228,10 @@ def predicateLocal (rows : Array IdTriple) : Bool :=
   | [] => false
   | row :: rest => rest.all fun later => later.p == row.p
 
-private def decodeRowRange? (rowStart : Nat) (bytes : ByteArray) : Option (List IdTriple) := do
+/-- Decode a contiguous row range, checking each encoded position against
+    `rowStart`. The caller must authenticate the bytes and obtain `rowStart`
+    from the admitted block's row layout. -/
+def decodeRowRange? (rowStart : Nat) (bytes : ByteArray) : Option (List IdTriple) := do
   if bytes.size % rowBytes != 0 then none else do
   let rows ← decodeRows (bytes.size / rowBytes) bytes
   if rows.zipIdx.all (fun (entry, index) => entry.position == rowStart + index) then
