@@ -18,6 +18,7 @@ vendored corpus files from disk.
 -/
 import L4Factoidal.XML.Theorems
 import L4Factoidal.XML.Wellformedness
+import L4Factoidal.XML.Encoding
 
 namespace L4Factoidal.XML.Tests
 
@@ -362,6 +363,146 @@ and trailing spaces discarded and each run of spaces collapsed. -/
 #guard !isValidNCName "a:b"
 #guard !isValidNCName ""
 #guard !isValidNCName "1abc"
+
+/-! ## Character encodings — XML 1.0 section 4.3.3 and Appendix F
+
+`decodeXmlBytes` turns the BYTES of an entity into text. The fixtures are
+built from code units so that each one states exactly which bytes it
+tests. -/
+
+/-- UTF-16 bytes for `s`: surrogate pairs above U+FFFF, optionally a byte
+order mark first. -/
+def utf16Bytes (s : String) (order : Endian) (bom : Bool) : ByteArray :=
+  let units : List Nat := s.toList.flatMap fun c =>
+    let n := c.toNat
+    if n < 0x10000 then [n]
+    else [0xD800 + (n - 0x10000) / 0x400, 0xDC00 + (n - 0x10000) % 0x400]
+  let units := (if bom then [0xFEFF] else []) ++ units
+  ByteArray.mk ((units.flatMap fun u =>
+    match order with
+    | .big => [u / 256, u % 256]
+    | .little => [u % 256, u / 256]).map Nat.toUInt8).toArray
+
+/-- The bytes of a list of byte values. -/
+def rawBytes (bs : List Nat) : ByteArray := ByteArray.mk (bs.map Nat.toUInt8).toArray
+
+/-- A string's UTF-8 bytes. -/
+def u8 (s : String) : ByteArray := s.toUTF8
+
+def decoded (bs : ByteArray) : Option String := (decodeXmlBytes bs).toOption
+
+/-- The constructor of the decoding error, or `none` when it decodes. -/
+def decodeFails (bs : ByteArray) : Bool := (decodeXmlBytesE bs).toOption.isNone
+
+-- UTF-16, both orders, with a byte order mark, including a character
+-- above U+FFFF (a surrogate pair).
+#guard decoded (utf16Bytes "<a>é日本😀</a>" .little true) == some "<a>é日本😀</a>"
+#guard decoded (utf16Bytes "<a>é日本😀</a>" .big true) == some "<a>é日本😀</a>"
+-- The byte order mark is consumed, not left as a character.
+#guard (decoded (utf16Bytes "<a/>" .big true)).map (·.toList.head?) == some (some '<')
+-- With a declaration, the mark and `UTF-16` agree.
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>" .little true)
+       == some "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"
+-- UTF-16 with NO byte order mark is legal only when a declaration names
+-- the byte order (Appendix F.1: `3C 00 3F 00` and `00 3C 00 3F`).
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>" .little false)
+       == some "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>"
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"utf-16be\"?><a/>" .big false)
+       == some "<?xml version=\"1.0\" encoding=\"utf-16be\"?><a/>"
+-- ...and `UTF-16` with no mark is the fatal error of section 4.3.3.
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>" .little false)
+-- ...as is no declaration at all (an entity with neither a mark nor a
+-- declaration must be UTF-8, and these bytes are not).
+#guard decodeFails (utf16Bytes "<?pi x?><a/>" .big false)
+-- ...and a declaration naming the OTHER byte order.
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16BE\"?><a/>" .little false)
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16BE\"?><a/>" .little true)
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>" .little true) != none
+-- The declaration must agree with the detected family (hst-lhs-008).
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"utf-8\"?><a/>" .big true)
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a/>" .little true)
+-- Illegal UTF-16: a lone surrogate of either kind, a pair in the wrong
+-- order, an odd number of bytes.
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x00, 0xD8])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x00, 0xDC, 0x3E, 0x00])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x00, 0xD8, 0x3C, 0x00])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x3E])
+-- UTF-8: a leading byte order mark is consumed.
+#guard decoded (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<a/>") == some "<a/>"
+#guard decoded (u8 "<a>é</a>") == some "<a>é</a>"
+-- A UTF-8 byte order mark with a declaration of anything else is an
+-- error (hst-lhs-007); with UTF-8 it is not.
+#guard decodeFails (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<?xml version='1.0' encoding='iso-8859-1'?><x/>")
+#guard decoded (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<?xml version='1.0' encoding='UTF-8'?><x/>")
+       == some "<?xml version='1.0' encoding='UTF-8'?><x/>"
+-- Illegal UTF-8: encoded surrogates, an overlong form, a code point
+-- above U+10FFFF, a truncated sequence, a stray continuation byte.
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xED, 0xA0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xED, 0xB0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xC0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xF7, 0x80, 0x80, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xE2, 0x82] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0x80] ++ u8 "</a>")
+-- A declaration of UTF-16 on an entity whose bytes are 8-bit.
+#guard decodeFails (u8 "<?xml version='1.0' encoding='UTF-16'?><x/>")
+#guard decodeFails (u8 "<?xml version='1.0' encoding='utf-16le'?><x/>")
+-- ISO-8859-1: byte 0xE9 is U+00E9, every byte is legal.
+#guard decoded (u8 "<?xml version='1.0' encoding='ISO-8859-1'?><x>" ++ rawBytes [0xE9, 0xFF, 0x80] ++ u8 "</x>")
+       == some "<?xml version='1.0' encoding='ISO-8859-1'?><x>éÿ\u0080</x>"
+-- The same bytes with no declaration are not UTF-8.
+#guard decodeFails (u8 "<x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+#guard decoded (u8 "<?xml version='1.0' encoding='latin1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+       == some "<?xml version='1.0' encoding='latin1'?><x>é</x>"
+-- US-ASCII: bytes above 127 are illegal.
+#guard decoded (u8 "<?xml version='1.0' encoding='US-ASCII'?><x>abc</x>")
+       == some "<?xml version='1.0' encoding='US-ASCII'?><x>abc</x>"
+#guard decodeFails (u8 "<?xml version='1.0' encoding='us-ascii'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+-- Encoding names are case-insensitive.
+#guard (decoded (u8 "<?xml version='1.0' encoding='iso-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).map
+         (·.toList.contains '\u00E9') == some true
+#guard (decoded (u8 "<?xml version='1.0' encoding='Iso-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).map
+         (·.toList.contains '\u00E9') == some true
+-- An encoding the decoder does not implement is reported by NAME, and
+-- is neither an error of the bytes nor a verdict on the document.
+#guard (decodeXmlBytesE (u8 "<?xml version='1.0' encoding='euc-jp'?><x/>")) matches .error (.unsupported "euc-jp")
+#guard (decodeXmlBytesE (u8 "<?xml version='1.0' encoding='Shift_JIS'?><x/>")) matches .error (.unsupported "Shift_JIS")
+#guard (decodeXmlBytesE (rawBytes [0x00, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x3F])) matches .error (.unsupported _)
+#guard (decodeXmlBytesE (rawBytes [0x4C, 0x6F, 0xA7, 0x94])) matches .error (.unsupported "EBCDIC")
+-- A conflict and a malformed byte sequence are NOT "unsupported".
+#guard !((decodeXmlBytesE (u8 "<?xml version='1.0' encoding='UTF-16'?><x/>")) matches .error (.unsupported _))
+-- An encoding name that is not an `[81] EncName` is the parser's to
+-- reject, not the decoder's: the bytes decode as UTF-8.
+#guard decoded (u8 "<?xml version='1.0' encoding='a/b'?><x/>") == some "<?xml version='1.0' encoding='a/b'?><x/>"
+-- Autodetection (Appendix F.1).
+#guard detectFamily (rawBytes [0xEF, 0xBB, 0xBF, 0x3C]) == .utf8Bom
+#guard detectFamily (rawBytes [0xFE, 0xFF, 0x00, 0x3C]) == .utf16Bom .big
+#guard detectFamily (rawBytes [0xFF, 0xFE, 0x3C, 0x00]) == .utf16Bom .little
+#guard detectFamily (rawBytes [0x00, 0x3C, 0x00, 0x3F]) == .utf16Bare .big
+#guard detectFamily (rawBytes [0x3C, 0x00, 0x3F, 0x00]) == .utf16Bare .little
+#guard detectFamily (rawBytes [0x3C, 0x3F, 0x78, 0x6D]) == .asciiCompatible
+#guard detectFamily (rawBytes [0x4C, 0x6F, 0xA7, 0x94]) == .ebcdic
+-- `FF FE 00 00` is UCS-4, not UTF-16 followed by U+0000.
+#guard (match detectFamily (rawBytes [0xFF, 0xFE, 0x00, 0x00]) with | .ucs4 _ => true | _ => false)
+#guard detectFamily (rawBytes []) == .asciiCompatible
+-- The empty entity decodes (to nothing); the parser rejects it.
+#guard decoded (rawBytes []) == some ""
+#guard (parseXMLBytes (rawBytes [])).toOption.isNone
+-- End to end: a UTF-16 document with `encoding="UTF-16"` parses from
+-- bytes. The same TEXT given to the String-level `parseXML` is refused,
+-- because a String is taken to have been UTF-8 and UTF-16 is the
+-- section 4.3.3 contradiction there.
+#guard (parseXMLBytes (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a x=\"é\">日本</a>" .little true)).toOption.isSome
+#guard (match parseXMLBytes (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a x=\"é\">日本</a>" .big true) with
+        | .ok d => (findAttr "x" d.root.elementAttrs, d.root.textContent)
+        | .error _ => (none, "")) == (some "é", "日本")
+#guard !isWellFormed "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"
+-- A document that does not decode is rejected, with the decoder's reason.
+#guard (match parseXMLBytes (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x3E]) with
+        | .error e => e.message.startsWith "UTF-16"
+        | .ok _ => false)
+-- ISO-8859-1 end to end.
+#guard (parseXMLBytes (u8 "<?xml version='1.0' encoding='ISO-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isSome
+#guard (parseXMLBytes (u8 "<?xml version='1.0'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isNone
 
 /-! ## RDF/XML checks — `XML.Wellformedness.fst`'s other half -/
 

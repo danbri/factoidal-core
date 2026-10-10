@@ -26,7 +26,12 @@ Structure and characters:
   3. §2.11 line-ending normalisation — every `#xD #xA` pair and every
      lone `#xD` becomes a single `#xA`, unconditionally, before any
      other parsing step.
-  4. §4.3.3 — a leading byte-order mark is consumed at position 0 only.
+  4. §4.3.3 — a leading byte-order mark is consumed at position 0 only,
+     and a `String` handed to `parseXML` is taken to have been UTF-8:
+     a declaration of UTF-16, or a mark with a declaration of another
+     encoding, is refused. For BYTES use `parseXMLBytes` in
+     `L4Factoidal.XML.Encoding`, which decodes UTF-8, UTF-16,
+     ISO-8859-1 and US-ASCII against the real bytes first.
 
 Element structure:
   5. **WFC: Element Type Match** (`[39] element`) — the `[42] ETag`
@@ -2349,14 +2354,18 @@ a missing `[23] XMLDecl` and a missing `[28] doctypedecl` are simply
 absent constructs, not errors. A declaration or DOCTYPE that IS present
 but malformed leaves the cursor where it was, and the element parser
 then rejects the document from there. -/
-def parseXMLWith (resolve : Resolver) (input : String) : Except XmlError Document :=
+def parseXMLCore (resolve : Resolver) (decoded : Bool) (input : String) :
+    Except XmlError Document :=
   let raw := input.toList
   -- Whether a byte order mark was there is needed by §4.3.3 below,
-  -- and `skipBom` consumes it.
-  let hadBom := match raw with
+  -- and `skipBom` consumes it. When the text came from
+  -- `decodeXmlBytes` the decoder has consumed the mark and applied
+  -- §4.3.3 against the real bytes, so neither step runs here: a
+  -- U+FEFF that is still in front is a character of the document.
+  let hadBom := !decoded && (match raw with
     | c :: _ => c.toNat == 0xFEFF
-    | []     => false
-  let chars := normalizeLineEndings (skipBom raw)
+    | []     => false)
+  let chars := normalizeLineEndings (if decoded then raw else skipBom raw)
   let s : Chars := chars.toArray
   let fuel := s.size + 1
   -- The declaration, if present, must be the very first thing: no
@@ -2366,7 +2375,7 @@ def parseXMLWith (resolve : Resolver) (input : String) : Except XmlError Documen
     match parseXmlDecl s 0 with
     | .ok d p => (some d, p)
     | .err _ _ => (none, 0)
-  match encodingConflict hadBom (decl.bind (·.encoding)) with
+  match (if decoded then none else encodingConflict hadBom (decl.bind (·.encoding))) with
   | some m => .error { message := m, position := 0 }
   | none   =>
   match collectMisc s pos1 [] fuel with
@@ -2403,6 +2412,22 @@ def parseXMLWith (resolve : Resolver) (input : String) : Except XmlError Documen
           else
             .ok { decl := decl, doctype := doctype,
                   prolog := pre1 ++ pre2, root := root, epilog := post }
+
+/-- Parse a document given as a Lean `String`: the caller has already
+decoded the bytes, and the text is taken to have been UTF-8. A leading
+U+FEFF is the UTF-8 byte order mark and is consumed; an encoding
+declaration naming UTF-16, or a byte order mark with a declaration naming
+a non-UTF-8 encoding, is the §4.3.3 contradiction and is refused. For
+bytes, use `parseXMLBytesWith` in `L4Factoidal.XML.Encoding`. -/
+def parseXMLWith (resolve : Resolver) (input : String) : Except XmlError Document :=
+  parseXMLCore resolve false input
+
+/-- Parse text that `decodeXmlBytes` produced from the bytes of a
+document. The byte-level §4.3.3 checks have already been made against the
+bytes themselves; a declaration of UTF-16 is not a contradiction in
+UTF-16 text. -/
+def parseDecodedXMLWith (resolve : Resolver) (input : String) : Except XmlError Document :=
+  parseXMLCore resolve true input
 
 /-- The document decision with NO external resource read — the
 behaviour every caller had before `parseXMLWith` existed, written out
