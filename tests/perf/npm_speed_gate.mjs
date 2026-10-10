@@ -2,10 +2,11 @@
 // (https://github.com/danbri/factoidal/issues/713 stage 5).
 //
 // For each row of tests/perf/l4_vs_fstar_wasm_bench.mjs, at the middle of
-// its three sizes, the gate runs the Lean engine and both F* npm-entry
-// bundles (each in its own child process, median of 5 runs after 1 warmup)
-// and requires
+// its three sizes (and at any other size an XFAIL key names, `row@large`),
+// the gate runs the Lean engine and both F* npm-entry bundles (each in its
+// own child process, median of 5 runs after 1 warmup) and requires
 //
+//     the Lean engine answers, and
 //     Lean time <= 2 x the time of the faster F* bundle.
 //
 // A row that does not meet the bound today is in XFAIL with the open issue
@@ -31,12 +32,15 @@ const ROOT = new URL('../../', import.meta.url);
 const BOUND = 2.0;
 
 /**
- * Rows the Lean engine does not yet run within BOUND times the F* engine.
- * Each names the open issue that tracks it. The coordinator replaces the
- * placeholder URLs with the issues it opens.
+ * Rows the Lean engine does not yet answer, or does not answer within BOUND
+ * times the F* engine. A key is a row name (at the gate's size) or
+ * `row@small|middle|large`. Each names the open issue that tracks it. The
+ * coordinator replaces the placeholder URLs with the issues it opens.
  */
 export const XFAIL = {
 };
+
+const SIZE_NAMES = ['small', 'middle', 'large'];
 
 const args = process.argv.slice(2);
 const arg = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -46,6 +50,18 @@ if (sizeIndex === undefined) {
   process.exit(2);
 }
 const rows = arg('--rows') ? arg('--rows').split(',') : Object.keys(ROWS);
+// (row, size index) pairs: the gate's size for every row, and the size of
+// every XFAIL key that names one.
+const cases = [];
+for (const row of rows) {
+  cases.push([row, sizeIndex]);
+  for (const key of Object.keys(XFAIL)) {
+    const [r, size] = key.split('@');
+    if (r === row && size && SIZE_NAMES.indexOf(size) !== sizeIndex) {
+      cases.push([row, SIZE_NAMES.indexOf(size)]);
+    }
+  }
+}
 
 for (const bundle of ['docs/fstar-extracted/factoidal-npm-entry.js',
   'docs/fstar-extracted/factoidal-npm-entry.wasm.js']) {
@@ -55,35 +71,46 @@ for (const bundle of ['docs/fstar-extracted/factoidal-npm-entry.js',
   }
 }
 
-const results = runMatrix({
-  rows,
-  engines: ['l4', 'fstar-wasm', 'fstar-js'],
-  sizesFor: (row) => [ROWS[row][sizeIndex]],
-  log: (r) => console.log(JSON.stringify(r)),
-});
+const results = [];
+for (const [row, si] of cases) {
+  results.push(...runMatrix({
+    rows: [row],
+    engines: ['l4', 'fstar-wasm', 'fstar-js'],
+    sizesFor: (r) => [ROWS[r][si]],
+    log: (r) => console.log(JSON.stringify(r)),
+  }).map((r) => ({ ...r, sizeName: SIZE_NAMES[si] })));
+}
 
 let failed = 0;
 let xfailed = 0;
 let passed = 0;
 const lines = [];
-for (const row of rows) {
-  const of = (engine) => results.find((r) => r.row === row && r.engine === engine);
+for (const [row, si] of cases) {
+  const sizeName = SIZE_NAMES[si];
+  const of = (engine) => results.find((r) => r.row === row && r.engine === engine &&
+    r.sizeName === sizeName);
   const lean = of('l4');
   const fstar = [of('fstar-wasm'), of('fstar-js')].filter((r) => r && r.ms !== undefined);
-  const issue = XFAIL[row];
+  const issue = XFAIL[`${row}@${sizeName}`] || (si === sizeIndex ? XFAIL[row] : undefined);
   if (!lean || lean.ms === undefined) {
-    failed += 1;
-    lines.push(`FAIL  ${row}: the Lean engine did not answer (${lean && lean.error})`);
+    const why = `${row}@${sizeName}: the Lean engine did not answer (${lean && lean.error})`;
+    if (issue) {
+      xfailed += 1;
+      lines.push(`xfail ${why} (${issue})`);
+    } else {
+      failed += 1;
+      lines.push(`FAIL  ${why}`);
+    }
     continue;
   }
   if (fstar.length === 0) {
     failed += 1;
-    lines.push(`FAIL  ${row}: no F* bundle answered; nothing to compare with`);
+    lines.push(`FAIL  ${row}@${sizeName}: no F* bundle answered; nothing to compare with`);
     continue;
   }
   const best = Math.min(...fstar.map((r) => r.ms));
   const ratio = lean.ms / Math.max(best, 0.1);
-  const what = `${row} (${lean.triples} triples): Lean ${lean.ms} ms, best F* ${best} ms, ratio ${ratio.toFixed(2)}`;
+  const what = `${row}@${sizeName} (${lean.triples} triples): Lean ${lean.ms} ms, best F* ${best} ms, ratio ${ratio.toFixed(2)}`;
   const ok = ratio <= BOUND;
   if (issue) {
     if (ok) {
@@ -104,5 +131,5 @@ for (const row of rows) {
 console.log('');
 for (const l of lines) console.log(l);
 console.log(`npm_speed_gate: ${passed} pass, ${failed} fail, ${xfailed} expected failures ` +
-  `(out of ${rows.length}); bound: Lean <= ${BOUND} x the faster F* bundle`);
+  `(out of ${cases.length}); bound: Lean <= ${BOUND} x the faster F* bundle`);
 process.exit(failed > 0 ? 1 : 0);
