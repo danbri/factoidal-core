@@ -288,7 +288,7 @@ class DatasetHandle {
     const run = () => entryResult(fn(this._handle, sparql), 'query');
     const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
     if (r.kind === 'ask') return r.boolean;
-    if (r.kind === 'construct') {
+    if (r.kind === 'construct' || r.kind === 'describe') {
       return Dataset.fromNQuads(r.nquads, { blankNodePrefix: this._freshBnodePrefix(), prefixes: { ...this._prefixes } });
     }
     return bindingsFromSrj(r.srj);
@@ -825,7 +825,7 @@ function buildApi(driver) {
       const r = await withExtensionRounds(() => entryResult(
         (sparql12 ? e.queryDataset12 : e.queryDataset)(nq, sparql), 'query'));
       if (r.kind === 'ask') return r.boolean;
-      if (r.kind === 'construct') {
+      if (r.kind === 'construct' || r.kind === 'describe') {
         return Dataset.fromNQuads(r.nquads, {
           blankNodePrefix: freshBnodePrefix(),
           prefixes: prefixesOfData(data),
@@ -2445,7 +2445,7 @@ function buildApi(driver) {
     requireEntryFn(e, 'queryCottas', 'queryCottas');
     const r = entryResult(e.queryCottas(handle, sparql), 'queryCottas');
     if (r.kind === 'ask') return r.boolean;
-    if (r.kind === 'construct') {
+    if (r.kind === 'construct' || r.kind === 'describe') {
       return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
     }
     return bindingsFromSrj(r.srj);

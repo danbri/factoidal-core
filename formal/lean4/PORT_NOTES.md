@@ -14021,4 +14021,5 @@ resource rule, the RDF 1.2 reading of CBD clause 3, the planner rule
 planner open the complete store) and the list of surfaces:
 `docs/designissues/2026-10-10-sparql-describe.md`. Tracked at
 <https://github.com/danbri/factoidal/issues/698>. The F* tree still answers
-DESCRIBE with the empty graph.
+DESCRIBE with the empty graph: <https://github.com/danbri/factoidal/issues/702>,
+expected-failure case in `npm/factoidal/test/describe.test.js`.

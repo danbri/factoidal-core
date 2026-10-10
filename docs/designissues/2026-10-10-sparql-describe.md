@@ -157,12 +157,16 @@ statement).
 
 The envelope kind is `describe`, not `construct`, so that a client can tell
 the two forms apart. The member that carries the graph is `nquads` in both.
+The npm wrappers (`npm/factoidal/lib/api.js`, `browser.js`,
+`bin/factoidal.mjs`) turn both kinds into a `Dataset`.
 
 ## 6. Open
 
 - The F* tree answers DESCRIBE with the empty graph
   (`SPARQL11.Algebra.fst`, `QF_Describe`). The two trees disagree until the
   F* side follows; the differential harness skips DESCRIBE for that reason.
-  Tracked at <https://github.com/danbri/factoidal/issues/698>.
+  Tracked at <https://github.com/danbri/factoidal/issues/702>, with the
+  expected-failure case in `npm/factoidal/test/describe.test.js` (the same
+  file asserts the Lean engine's answer through `factoidal/l4-core`).
 - Entailment regimes: `Harness/Run.lean` evaluates DESCRIBE over the
   closure-augmented dataset, as for the other forms. No test exercises it.
