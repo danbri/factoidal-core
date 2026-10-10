@@ -346,6 +346,19 @@ Lean functionality and gates land. Port functionality, not files.
   `tests/known-defects`). Nothing under `formal/fstar` is deleted.
 - Tracking: https://github.com/danbri/factoidal/issues/757.
 
+### Work is organised as OKR batches (owner, 2026-10-10)
+
+> "Ok lets organize work as OKRs, can you batch up some work as OKRs "batch
+> 1"? Track in a single issue and point to issues. I will review and approve
+> the goal."
+
+- One GitHub issue per batch holds the objectives and key results. Each key
+  result has a measured baseline, a target number, the command that measures
+  it (in its issue) and links to the issues that do the work.
+- The owner approves a batch before its new work starts. Work already
+  running when the batch is proposed continues.
+- Batch 1: https://github.com/danbri/factoidal/issues/768.
+
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
 > "Yeah DO NOT PORT THAT TERRIBLE HEX CRAP!!!"
