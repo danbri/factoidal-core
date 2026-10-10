@@ -196,6 +196,12 @@ defjob l4owl-probe-species l4owl-probe parse_owl_species owl \
 defjob l4owl-probe-fs-input l4owl-probe parse_owl_fs_input owl \
   "OWL 2 functional-style documents judged by the RL regime (cases with a functional-style premise)" "" \
   "--fs-input --dir $OWLDIR all.rdf"
+# OWL 2 RDF-Based Semantics (issue 721): every RDF-BASED case of all.rdf.
+# pass = entailment or inconsistency PROVED; "not-refuted" (counted as
+# other) = non-entailment or consistency NOT REFUTED, never a pass.
+defjob l4owl-probe-rdf-based l4owl-probe parse_owl_rdf_based owl \
+  "OWL 2, RDF-Based Semantics regime (RL closure + proved RDF-Based rules)" "" \
+  "--rdf-based --dir $OWLDIR all.rdf"
 # --- SHACL -------------------------------------------------------------------
 defjob l4shacl-core10 l4shacl parse_shacl shacl \
   "SHACL Core (1.0 suite)" "" \
@@ -583,6 +589,17 @@ parse_owl_species() {
     "pass = the functional-style premise, mapped to RDF, is isomorphic to the RDF/XML premise; fails are fixture defects listed in the log"
   row_sl "$CUR_AREA" "fs-rdfxml agreement, conclusion documents" \
     '^all\.rdf fs-rdfxml agreement \[conclusion\]: [0-9]+ pass' last
+}
+
+parse_owl_rdf_based() {
+  row_sl "$CUR_AREA" "PositiveEntailmentTest" '^all\.rdf PositiveEntailmentTest \[rdf-based\]: [0-9]+ pass' last \
+    "pass = entailment proved; fail = not proved"
+  row_sl "$CUR_AREA" "NegativeEntailmentTest" '^all\.rdf NegativeEntailmentTest \[rdf-based\]: [0-9]+ pass' last \
+    "other = not-refuted (no entailment derived; not a pass); fail = the non-conclusion was derived"
+  row_sl "$CUR_AREA" "ConsistencyTest" '^all\.rdf ConsistencyTest \[rdf-based\]: [0-9]+ pass' last \
+    "other = not-refuted (no clash derived; not a pass); fail = a clash row fired"
+  row_sl "$CUR_AREA" "InconsistencyTest" '^all\.rdf InconsistencyTest \[rdf-based\]: [0-9]+ pass' last \
+    "pass = inconsistency proved (a clash row fired); fail = not proved"
 }
 
 parse_owl_fs_input() {

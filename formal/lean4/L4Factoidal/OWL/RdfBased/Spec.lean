@@ -455,29 +455,29 @@ theorem wBase_default {p : WfIri}
 
 theorem wBase_sub (x y : WDom) :
     wBase (wI rdfsSubClassOf) x y ↔ ∀ z, wExt z x → wExt z y := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_comp (x y : WDom) :
     wBase (wI owlComplementOf) x y ↔ ∀ z, wExt z x ↔ ¬ wExt z y := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_diff (x y : WDom) : wBase (wI owlDifferentFrom) x y ↔ x ≠ y := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_oneOf (x y : WDom) :
     wBase (wI owlOneOf) x y ↔ (y = wI rdfNil → ∀ z, ¬ wExt z x) := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_first (x y : WDom) : ¬ wBase (wI rdfFirst) x y := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false, not_false_eq_true]
+  simp (config := { decide := true }) only [wBase, if_true, if_false, not_false_eq_true]
 
 theorem wBase_avf (x y : WDom) :
     wBase (wI owlAllValuesFrom) x y ↔ (∀ z, ¬ wExt z x) ∨ (∀ z, wExt z y) := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_svf (x y : WDom) :
     wBase (wI owlSomeValuesFrom) x y ↔ (∀ z, wExt z x) ∨ (∀ z, ¬ wExt z y) := by
-  simp (config := { decide := true }) only [wBase, wI_inj, if_true, if_false]
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem w_IC (x : witnessInterp.idom) : IC witnessInterp x := w_ic_plain (by decide) x
 
@@ -652,9 +652,9 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
       | some f2 =>
         rw [hf1, hf2] at hd
         have e1' : y = Sum.inr f1 := by
-          have := e1.2; simp only [witnessInterp, wI, hf1] at this; exact this
+          have := e1.2; simp only [wI, hf1] at this; exact this
         have e2' : y = Sum.inr f2 := by
-          have := e2.2; simp only [witnessInterp, wI, hf2] at this; exact this
+          have := e2.2; simp only [wI, hf2] at this; exact this
         have : f1 = f2 := by
           exact Sum.inr.inj (e1'.symm.trans e2')
         subst this
