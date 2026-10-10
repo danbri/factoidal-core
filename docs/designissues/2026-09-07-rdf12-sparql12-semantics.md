@@ -184,6 +184,11 @@ has not ratified.
 
 ### The choice made
 
+⚠️ Superseded on 2026-10-10: the working group adopted Reading 2
+(upstream `38bc6d9`), and the engine follows it. See "§ 3 reversed"
+at the end of this record. The text below is the record of the
+earlier choice.
+
 Implement Reading 1 — the position-aware clause — and record Reading 2
 here. Three reasons, in order:
 
@@ -429,21 +434,18 @@ every RDF / RDFS interpretation. The model theory has no condition for
   D-unsatisfiable graph D-entails any graph." The engine's current
   behaviour (Reading A) is correct; no `DInterpCond` change is needed.
 
-### Reverses § 3 when the fixture is bumped
+### § 3 reversed (done 2026-10-10)
 
 Upstream `38bc6d9` (2026-02-19) made `opaque-dir-language-string` a
 POSITIVE test ("Literals within reifying terms (including directional
-language strings) are transparent"), which is § 3's Reading 2. The
-vendored fixture still has the NEGATIVE version, which
-`stricterInTripleTerm` (`RDF/Entailment.lean`) exists to pass. With the
-upstream manifest the Lean engine fails that one test (28 pass, 1 fail,
-of 29). When the fixture is moved to upstream `main`, delete
-`stricterInTripleTerm` and the Reading 1 pins in the same landing.
-
-### Action for the coordinator
-
-Move `third_party/testing/w3c` to w3c/rdf-tests `main` (at least
-`7f939d0`). That removes the four failures above that the engine cannot
-fix correctly, adds `literal-type1`/`literal-type2` and the float/double
-tests to `rdf11/rdf-mt` (they pass), and requires the `stricterInTripleTerm`
-removal in the same landing.
+language strings) are transparent"), which is § 3's Reading 2.
+`third_party/testing/w3c` moved to w3c/rdf-tests `ec2ba15` (2026-10-08)
+on branch `claude/wt-w3c-fixtures`
+(https://github.com/danbri/factoidal/issues/698), and the same landing
+deleted `stricterInTripleTerm` (`RDF/Entailment.lean`): `termMatch` and
+`matchObject` compare a triple term's object with the regime's own
+`leq`. The Reading 1 `#guard`s in `RDF/EntailmentTests.lean` were
+replaced by the positive `opaque-dir-language-string` case and three
+negative cases (a different base direction, a different language tag, a
+different lexical form inside a triple term). Measured after the
+change: rdf12 `rdf-semantics` 29 pass, 0 fail (out of 29).

@@ -138,25 +138,10 @@ collection sound, and clause 1 is what makes value-equal literal
 matching sound (also inside triple terms, where `termMatch` recurses
 with the regime's `leq`). -/
 
-/-- Clause 1 survives the tightening `termMatch` applies inside a
-triple term: `stricterInTripleTerm leq` matches no pair that `leq`
-does not, so any interpretation that identifies every `leq`-matched
-pair identifies every pair matched by the tightened comparator too. -/
-theorem iLit_of_stricterInTripleTerm {i : Interp}
-    {leq : Literal → Literal → Bool}
-    (h1 : ∀ l1 l2 : WfLiteral, leq l1.val l2.val = true →
-       i.iLit l1 = i.iLit l2) :
-    ∀ l1 l2 : WfLiteral, RDF.stricterInTripleTerm leq l1.val l2.val = true →
-      i.iLit l1 = i.iLit l2 := by
-  intro l1 l2 h
-  simp only [RDF.stricterInTripleTerm, Bool.and_eq_true] at h
-  exact h1 l1 l2 h.1
-
 /-- A `termMatch` under a comparator whose matched literal pairs the
-interpretation identifies preserves denotation. Generalised over the
-comparator because `termMatch` tightens it at a triple-term boundary
-(`RDF.stricterInTripleTerm`), so the induction hypothesis is about a
-different comparator than the goal. -/
+interpretation identifies preserves denotation. Inside a triple term
+`termMatch` compares with the same comparator (RDF 1.2 triple terms are
+transparent). -/
 theorem termMatch_denot_of_iLit (i : Interp)
     (a : BnodeAssignment i.idom) :
     ∀ {u v : Term} {leq : Literal → Literal → Bool},
@@ -185,7 +170,7 @@ theorem termMatch_denot_of_iLit (i : Interp)
         <;> try simp at h
       obtain ⟨⟨hs, hp⟩, ho⟩ := h
       subst hs; subst hp
-      simp only [denotTerm, ih (iLit_of_stricterInTripleTerm h1) ho]
+      simp only [denotTerm, ih h1 ho]
 
 /-- A `termMatch` under `literalValueEq D` preserves denotation in
 every interpretation satisfying clause 1. -/

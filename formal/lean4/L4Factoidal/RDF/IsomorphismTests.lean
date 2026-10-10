@@ -369,4 +369,29 @@ reference to another blank node — the property section 5 leans on. -/
 #guard Triple.sigKey "a" (tb "a" iP (ob "b"))
          = "S I<http://example.org/p> B"
 
+/- An `rdf:XMLLiteral` is compared by its exclusive canonical form
+(`Literal.eqb`), so the blank-node signature compares it that way too.
+W3C rdf12 `rdf-xml/eval/rdf12-xml-an-14`: the same XML literal written
+with namespace declarations it does not use, and without them, each in
+a triple that also mentions a blank node. -/
+private def xl (s : String) : Term :=
+  .literal ⟨{ lexicalForm := s, datatype := rdfXMLLiteral, langTag := none,
+              direction := none }, rfl⟩
+
+private def xmlWithDecls : Graph :=
+  [ ti iA iP (xl "<br xmlns:eg=\"http://example.org/\"></br>"),
+    tb "x" iQ (xl "<br xmlns:eg=\"http://example.org/\"></br>") ]
+private def xmlBare : Graph :=
+  [ ti iA iP (xl "<br></br>"), tb "y" iQ (xl "<br></br>") ]
+private def xmlOther : Graph :=
+  [ ti iA iP (xl "<br></br>"), tb "y" iQ (xl "<hr></hr>") ]
+
+#guard Graph.isomorphic? xmlWithDecls xmlBare = true
+#guard Graph.isomorphic? xmlBare xmlWithDecls = true
+-- A different XML value is not the same literal.
+#guard Graph.isomorphic? xmlWithDecls xmlOther = false
+#guard Graph.isomorphic? xmlOther xmlBare = false
+#guard Triple.sigKey "x" (tb "x" iQ (xl "<br xmlns:eg=\"http://example.org/\"></br>"))
+         = Triple.sigKey "x" (tb "x" iQ (xl "<br></br>"))
+
 end L4Factoidal.RDF.IsoTests

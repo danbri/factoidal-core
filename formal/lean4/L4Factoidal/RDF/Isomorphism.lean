@@ -212,13 +212,28 @@ Soundness of the pruning: renaming blank nodes changes neither the
 predicate, nor any IRI or literal, nor which occurrences are `b`
 itself — so a real isomorphism maps `b` only to a blank node with an
 equal signature, and restricting candidates this way can never lose a
-mapping that the certificate would have accepted... with one
-qualification, recorded honestly: the key writes literals out
-lexically after folding the language tag, so two literals that
-`Literal.eqb` equates through `rdf:XMLLiteral` canonicalisation get
-DIFFERENT keys. That can only make the search give up early, never
-make it accept — the certificate is the sole arbiter of a `true`
-answer — and the identity fast path covers the case in practice. -/
+mapping that the certificate would have accepted. That needs the key
+to equate every pair of literals `Literal.eqb` equates: the language
+tag is folded to lower case (`langTagOptionEq` case-folds), and an
+`rdf:XMLLiteral` lexical form is written as its exclusive canonical
+form (`XmlCanon.canonicalize`; `Literal.eqb` compares XML literals by
+`XmlCanon.xmlCanonEq`, which is equality of those forms).
+
+Until 2026-10-10 the key wrote the XML literal's lexical form as it
+stood, so two literals `Literal.eqb` equates through canonicalisation
+got DIFFERENT keys and the search gave up on a real isomorphism. The
+W3C rdf12 test `rdf-xml/eval/rdf12-xml-an-14` showed it: the parser
+writes the ambient namespace declarations onto `<br/>`, the expected
+N-Triples writes `<br></br>`, and the triples that carry the literal
+also carry a blank node (`rdf:annotationNodeID`), so the identity fast
+path did not apply. -/
+
+/-- The lexical form a signature key writes for a literal: the
+exclusive canonical form for `rdf:XMLLiteral`, the lexical form
+otherwise. -/
+def sigLexical (l : Literal) : String :=
+  if l.datatype == rdfXMLLiteral then String.ofList (XmlCanon.canonicalize l.lexicalForm)
+  else l.lexicalForm
 
 private def dirKey : Option TextDirection → String
   | none      => "-"
@@ -235,7 +250,7 @@ def Term.sigKey (b : BNodeId) : Term → String
   | .iri i     => "I<" ++ i.val ++ ">"
   | .bnode c   => if c == b then "S" else "B"
   | .literal l =>
-      "L<" ++ l.val.lexicalForm ++ ">^<" ++ l.val.datatype.val ++ ">@"
+      "L<" ++ sigLexical l.val ++ ">^<" ++ l.val.datatype.val ++ ">@"
         ++ (l.val.langTag.getD "").toLower ++ dirKey l.val.direction
   | .tripleTerm s p o =>
       "T(" ++ Subject.sigKey b s ++ " I<" ++ p.val ++ "> "

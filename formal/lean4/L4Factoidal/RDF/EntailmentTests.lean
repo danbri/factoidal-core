@@ -450,17 +450,14 @@ def opaqueIriResult : Graph :=
 -- `opaque-dir-language-string`
 --
 -- Both fixtures are `mf:entailmentRegime "simple"` with
--- `mf:recognizedDatatypes ()`, identical in shape, and OPPOSITE in
--- polarity — they differ only by the `--ltr` base direction. The pair
--- is the tight test case of
--- `docs/designissues/2026-09-07-rdf12-sparql12-semantics.md` § 3, and
--- both readings are pinned here so neither can be flipped unseen.
---
--- Reading 1 (implemented, and what the suite requires): inside a
--- triple term a directional language tag compares case-SENSITIVELY.
--- Reading 2 (RDF 1.2 Concepts §3.3 as written): the language-tag
--- component of BOTH `rdf:langString` and `rdf:dirLangString` compares
--- without regard to ASCII case, in every position.
+-- `mf:recognizedDatatypes ()` and differ only by the `--ltr` base
+-- direction. Since w3c/rdf-tests 38bc6d9 both are POSITIVE: the
+-- language-tag component of `rdf:langString` and `rdf:dirLangString`
+-- compares without regard to ASCII case in every position, the inside
+-- of a triple term included (RDF 1.2 Concepts §3.3). The earlier
+-- NEGATIVE fixture and the position-aware comparator that passed it
+-- are recorded in
+-- `docs/designissues/2026-09-07-rdf12-sparql12-semantics.md` § 3.
 
 def dirLangLit (lex tag : String) (d : TextDirection) : Literal :=
   (Literal.dirLangString lex tag d).val
@@ -482,26 +479,38 @@ def langLit (lex tag : String) : Literal :=
   [⟨.iri exA, exB, .tripleTerm (.iri exA) exB (.literal (Literal.langString "hello" "en-US"))⟩]
   == true
 
--- `opaque-dir-language-string` (NEGATIVE): the same pair with a base
--- direction must NOT entail. This is Reading 1. Under Reading 2 this
--- `#guard` would read `== true` and the W3C fixture would fail.
+-- `opaque-dir-language-string` (POSITIVE since w3c/rdf-tests 38bc6d9):
+-- the same pair with a base direction also matches inside a triple
+-- term ("Literals within reifying terms (including directional
+-- language strings) are transparent").
 #guard regimeEntails .simple D0
   [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
       (.literal (Literal.dirLangString "hello" "en-us" .ltr))⟩]
   [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
       (.literal (Literal.dirLangString "hello" "en-US" .ltr))⟩]
-  == false
+  == true
 
--- The tightening is confined to the triple-term interior and to
--- `rdf:dirLangString`: it must not leak to a plain language string
--- inside a triple term (the guard two above), nor to a directional one
--- outside (the guard four above).
-#guard stricterInTripleTerm (literalValueEq D0)
-  (dirLangLit "hello" "en-us" .ltr) (dirLangLit "hello" "en-US" .ltr) == false
-#guard stricterInTripleTerm (literalValueEq D0)
-  (langLit "hello" "en-us") (langLit "hello" "en-US") == true
-#guard stricterInTripleTerm (literalValueEq D0)
-  (dirLangLit "hello" "en-US" .ltr) (dirLangLit "hello" "en-US" .ltr) == true
+-- Transparency is not a wildcard: inside a triple term a different
+-- base direction, a different language tag, or a different lexical
+-- form still does not match.
+#guard regimeEntails .simple D0
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.dirLangString "hello" "en-us" .ltr))⟩]
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.dirLangString "hello" "en-US" .rtl))⟩]
+  == false
+#guard regimeEntails .simple D0
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.dirLangString "hello" "en" .ltr))⟩]
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.dirLangString "hello" "fr" .ltr))⟩]
+  == false
+#guard regimeEntails .simple D0
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.langString "hello" "en-us"))⟩]
+  [⟨.iri exA, exB, .tripleTerm (.iri exA) exB
+      (.literal (Literal.langString "hallo" "en-us"))⟩]
+  == false
 
 -- `opaque-literal` (POSITIVE, regime "simple",
 -- `mf:recognizedDatatypes (xsd:integer)`): a non-empty D makes the
