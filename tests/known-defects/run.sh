@@ -396,7 +396,7 @@ fi
 
 # ---------------------------------------------------------------------
 # F* command-line SPARQL defects found by the Lean vs F* differential
-# (issues 736, 738, 739, 740; opened 2026-10-10; record:
+# (issues 736, 738, 739, 740, 747; opened 2026-10-10; record:
 # docs/designissues/2026-10-10-lean-vs-fstar-differential.md). Every query
 # and expected-result file is a real W3C test file from
 # third_party/testing/w3c.
@@ -695,6 +695,61 @@ else
   else
     record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
       "F* output is rejected but has no colon in a label (answer drifted): $(head -n 1 "$d/lean-parse.err")"
+  fi
+fi
+
+# 747: the F* SPARQL parser gives a [ ] node that is an item of a collection
+# the same blank node as the collection cell that holds it, so the cell is its
+# own rdf:first (SPARQL 1.1 4.1.4). Query: the W3C file
+# sparql10/syntax-sparql1/syntax-forms-01.rq,
+#   SELECT * WHERE { ( [ ?x ?y ] ) :p ( [ ?pa ?b ] 57 ) }
+# Data: fixtures/sparql-747-collection-bnode.ttl, the 9-triple graph of that
+# shape. Expected: one row, EXPECT747 below. Controls; failing any makes the
+# case an ERROR:
+#   1. both command lines read the data as 9 triples (so the defect is in the
+#      query, not the data);
+#   2. the Lean CLI answers exactly the expected row (the oracle; the Lean
+#      parser had the same defect until 2026-10-10, issue 742).
+# XFAIL: F* answers no row. XPASS: F* answers the expected row.
+S747_TITLE="F* gives [ ] in a collection the cell's blank node"
+EXPECT747="?b=<http://example.org/ns#b1> ?pa=<http://example.org/ns#pa1> ?x=<http://example.org/ns#x1> ?y=<http://example.org/ns#y1>"
+if [ -n "$SPARQL_PROBE_ERR" ]; then
+  record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR "$SPARQL_PROBE_ERR"
+else
+  d="${WORKDIR}/q747"; mkdir -p "$d"
+  data747="${ROOT}/tests/known-defects/fixtures/sparql-747-collection-bnode.ttl"
+  q747="${ROOT}/third_party/testing/w3c/sparql/sparql10/syntax-sparql1/syntax-forms-01.rq"
+  printf '%s\n' "$EXPECT747" > "$d/expected.rows"
+  fcount=$(timeout 60 "$BIN" count "$data747" < /dev/null 2> /dev/null | sed -n 's/.*: \([0-9]*\) triples$/\1/p')
+  lcount=$(timeout 60 "$L4_BIN" parse "$data747" --format turtle < /dev/null 2> /dev/null | tail -n 1)
+  frc=0; lrc=0
+  timeout 120 "$BIN" query --data "$data747" --query "$q747" -o json \
+      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err" || frc=$?
+  timeout 120 "$L4_BIN" query "$data747" --format turtle --query "$q747" \
+      < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
+  if [ ! -r "$q747" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR "no W3C query file ${q747#"$ROOT"/}"
+  elif [ "$fcount" != "9" ] || [ "$lcount" != "9" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "data control: F* reads ${fcount:-?} triples, Lean ${lcount:-?}; expected 9 each"
+  elif [ "$lrc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr" \
+     || ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "Lean oracle (exit ${lrc}) did not answer exactly the expected row; the expectation is unconfirmed"
+  elif [ "$frc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XPASS \
+      "F* now answers the expected row -- defect appears FIXED"
+  elif [ ! -s "$d/fstar.rows" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XFAIL \
+      "F* answers no row for syntax-forms-01.rq on a graph of its shape; the Lean CLI answers the expected row"
+  else
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "F* answers rows that are neither none nor the expected row (answer drifted): $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
   fi
 fi
 
