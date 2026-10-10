@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Generate a W3C conformance report for docs/test-results/.
 #
 # Inputs  (cached from the w3c_runner invocation):

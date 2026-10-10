@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build the minimal F*-based RDF -> canonical N-Quads serializer.
 #
 # Usage:

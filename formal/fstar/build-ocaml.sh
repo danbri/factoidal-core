@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build script for the F* → OCaml → JavaScript extraction pipeline
 #
 # Prerequisites:
