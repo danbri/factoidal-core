@@ -711,3 +711,4 @@ L4Factoidal_JSONLD_flSortByKey  # (b) members of one frame object or one node's 
 L4Factoidal_XML_Canonical_insertBy  # (b) attributes or namespace declarations of one element (listed here: the audit's csimp mark is by short name, and XSLT.insertBy shares it)
 L4Factoidal_Testing_interleave  # (c) test-case enumeration in the Testing library (partial def); inputs are generator lists
 L4Factoidal_Testing_removeFirstBy  # (c) property-test helper; inputs are generated test values
+L4Factoidal_SPARQL_ConstructLabelTests_termLabels  # (b) RDF 1.2 triple-term nesting in the object position; test helper over the #guard fixtures of ConstructLabelTests (arrived with the issue 742 fix, merged after the audit)
