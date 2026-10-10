@@ -1315,4 +1315,29 @@ private def gExactQualRange (k : String) : Graph :=
 #guard refuted (gExactQualRange "4")
 #guard !(refuted (gExactQualRange "3"))
 
+/-! ## The ≤-rule does not branch where a literal could be identified
+
+`a : ≤ 2 dp`, `a dp 1`, `a dp "x"`, `a : ∃dp.xsd:integer`,
+`a : ∃dp.¬xsd:integer` has a model: the two existentials are met by
+`1` and `"x"`. The witnesses for them cannot be merged with a literal,
+so the rule offers no branch rather than only the witness pair. With
+`≤ 1 dp` the two provably different values violate the bound outright.
+-/
+
+private def gLiteralMerge (k : String) : Graph :=
+  [ ⟨indI, rdfType, bnT "r"⟩,
+    ⟨bn "r", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "r", owlMaxCardinality, cardLit k⟩,
+    ⟨indI, exDp1, intT "1"⟩, ⟨indI, exDp1, strT "x"⟩,
+    ⟨indI, rdfType, bnT "s1"⟩,
+    ⟨bn "s1", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "s1", owlSomeValuesFrom, .iri xsdInteger⟩,
+    ⟨indI, rdfType, bnT "s2"⟩,
+    ⟨bn "s2", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "s2", owlSomeValuesFrom, bnT "c2"⟩,
+    ⟨bn "c2", L4Factoidal.OWL.owlDatatypeComplementOf, .iri xsdInteger⟩ ]
+
+#guard !(refuted (gLiteralMerge "2"))
+#guard refuted (gLiteralMerge "1")
+
 end L4Factoidal.OWL.Refute

@@ -2981,12 +2981,32 @@ def unorderedPairs : List Term → List (Term × Term)
   | []      => []
   | a :: tl => tl.map (fun b => (a, b)) ++ unorderedPairs tl
 
+/-- The pairs the ≤-rule branches on: every pair of successors not
+    provably different, since in every model of `≤ k p` with more than
+    `k` successors SOME such pair denotes one element. The rule closes
+    the node only when EVERY branch closes, so the list must hold every
+    pair a model may identify.
+
+    A literal is not a node and cannot be merged into one, so a pair
+    with a literal member cannot be a branch. Such a pair is not
+    dropped from the list: the rule offers NO branch at all when one
+    exists, and the search reads that as "no choice forced", which
+    withholds the refutation.
+
+    Until 2026-10-10 the literals were filtered out first and the
+    remaining pairs offered. `a : ≤ 2 dp`, `a dp 1`, `a dp "x"`,
+    `a : ∃dp.xsd:integer`, `a : ∃dp.¬xsd:integer` minted two
+    witnesses, offered only the witness pair, merged it into one node
+    labelled `xsd:integer` and `¬xsd:integer`, and refuted the graph.
+    It has a model: the witnesses are `1` and `"x"`. -/
 private def witnessPairs (g : Graph) (st : RState) (succs : List Term) (k : Nat)
     : List (Term × Term) :=
   if succs.length ≤ k then []
   else
-    (unorderedPairs (succs.filter isMergeableTerm)).filter (fun (a, b) =>
+    let pairs := (unorderedPairs succs).filter (fun (a, b) =>
       a != b && !(distinctIn g st a b))
+    if pairs.any (fun (a, b) => !isMergeableTerm a || !isMergeableTerm b) then []
+    else pairs
 
 /-- The witness pairs a `≤ k p` label could be forced to identify.
 
