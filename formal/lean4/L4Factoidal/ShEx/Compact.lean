@@ -213,6 +213,45 @@ def hexRun (s : Chars) (i n : Nat) : Option Nat :=
   (List.range n).foldl (fun acc k =>
     acc.bind (fun v => ((charAt s (i + k)).bind hexVal).map (fun d => v * 16 + d))) (some 0)
 
+/-- The characters `PN_LOCAL_ESC` may escape (ShEx 2.1 Appendix A,
+    the Turtle terminal). -/
+def pnLocalEscChars : List Char :=
+  ['_', '~', '.', '-', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '/',
+   '?', '#', '@', '%']
+
+/-- Is the raw text `s[i, j)` that `scanPnLocal` consumed a `PN_LOCAL`?
+    `scanPnLocal` admits any name character, any `%` and any
+    backslash pair so that it finds the END of the token; the grammar
+    is stricter, and this is where it is applied:
+
+    * the first character is `PN_CHARS_U`, `:`, a digit or a `PLX` —
+      not `-`, `.` or `·` (`negativeSyntax/PN_LOCAL-dash-start`);
+    * `PERCENT ::= '%' HEX HEX` (`PN_LOCAL-PERCENT-start`, `-mid` and `-end`);
+    * `PN_LOCAL_ESC ::= '\\' (one of pnLocalEscChars)`, so a UCHAR
+      is not part of a prefixed name (`PN_LOCAL-with-UCHAR.1`). -/
+def pnLocalOk (s : Chars) (i j : Nat) : Bool :=
+  let rec go (k : Nat) (fuel : Nat) : Bool :=
+    match fuel with
+    | 0 => true
+    | f + 1 =>
+      if j ≤ k then true
+      else match charAt s k with
+        | none => true
+        | some '%' =>
+            k + 2 < j && ((charAt s (k + 1)).bind hexVal).isSome &&
+              ((charAt s (k + 2)).bind hexVal).isSome && go (k + 3) f
+        | some '\\' =>
+            (match charAt s (k + 1) with
+             | some d => k + 1 < j && pnLocalEscChars.contains d && go (k + 2) f
+             | none   => false)
+        | some _ => go (k + 1) f
+  match charAt s i with
+  | none => true
+  | some c0 =>
+      if j ≤ i then true
+      else if c0 == '-' || c0 == '.' || c0 == '·' then false
+      else go i (j - i + 1)
+
 /-- One escape after a backslash: the six ShExC/Turtle short escapes
     and the two `\uXXXX` / `\UXXXXXXXX` forms. -/
 def readEscape (s : Chars) (i : Nat) : Option (Char × Nat) :=
@@ -243,6 +282,17 @@ theorem readEscape_lt {s : Chars} {i : Nat} {d : Char} {k : Nat}
     all_goals simp_all
     all_goals omega
 
+
+/-- `LANGTAG ::= '@' [a-zA-Z]+ ('-' [a-zA-Z0-9]+)*` (ShEx 2.1
+    Appendix A, the Turtle terminal), for the tag text after `@`. A
+    tag that begins with a digit is not one
+    (`negativeSyntax/STRING_LITERAL2-bad-LANGTAG`). -/
+def langTagOk (t : String) : Bool :=
+  match t.splitOn "-" with
+  | [] => false
+  | first :: rest =>
+      !first.isEmpty && first.all (fun c => c.isAlpha && c.toNat < 128) &&
+      rest.all (fun seg => !seg.isEmpty && seg.all (fun c => c.isAlphanum && c.toNat < 128))
 
 /-! ### Scanning one token -/
 
@@ -289,6 +339,12 @@ def scanString (s : Chars) (i : Nat) (q : Char) : Option (String × Nat) :=
          | (have he := readEscape_lt h2; omega))
   go start []
 
+/-- The characters a `REGEXP` may escape with a backslash, besides
+    the UCHAR forms (ShEx 2.1 Appendix A). -/
+def regexEscapeChars : List Char :=
+  ['n', 'r', 't', '\\', '|', '.', '?', '*', '+', '(', ')', '{', '}', '$', '-',
+   '[', ']', '^', '/']
+
 /-- Scan a regular-expression literal `/pattern/flags`. A backslash
     always consumes the next character, so `\/` denotes a slash; every
     OTHER escape is kept VERBATIM, backslash included, because the
@@ -317,9 +373,16 @@ def scanRegex (s : Chars) (i : Nat) : Option (String × String × Nat) :=
             (match hexRun s (j + 2) 8 with
              | some v => body (j + 10) (Char.ofNat v :: acc)
              | none   => body (j + 2) ('U' :: '\\' :: acc))
-        | some d   => body (j + 2) (d :: '\\' :: acc)
+        | some d   =>
+            -- `REGEXP ::= '/' ([^/\\\n\r] | '\\' [nrt\\|.?*+(){}$-\[\]^/]
+            -- | UCHAR)+ '/' [smix]*`: any other escape — `\1`, `\b`,
+            -- `\f` — is not a ShExC regular expression
+            -- (`1literalPattern_with_ECHAR_escape_*`).
+            if regexEscapeChars.contains d then body (j + 2) (d :: '\\' :: acc)
+            else none
         | none     => none
       else if c == '/' then some (acc.reverse, j + 1)
+      else if c == '\n' || c == '\r' then none
       else body (j + 1) (c :: acc)
   termination_by s.size - j
   decreasing_by all_goals (have hlt := charAt_lt h; omega)
@@ -333,7 +396,10 @@ def scanRegex (s : Chars) (i : Nat) : Option (String × String × Nat) :=
       termination_by s.size - k
       decreasing_by all_goals (have hlt := charAt_lt h; omega)
       let (fl, k) := flags j []
-      some (String.ofList pat, String.ofList fl.reverse, k)
+      -- The flags are `[smix]*`.
+      if fl.all (fun c => c == 's' || c == 'm' || c == 'i' || c == 'x') then
+        some (String.ofList pat, String.ofList fl.reverse, k)
+      else none
 
 /-- Scan a numeric literal, DOUBLE-AWARE first: `1e3` must not be read
     as the integer `1` followed by a name `e3` (anti-pattern 8). -/
@@ -378,7 +444,20 @@ def punctTable : List String :=
   ["^^", "//", "{", "}", "(", ")", "[", "]", ";", "|", ",", "@", "^", "$",
    "&", "=", "-", "~", "*", "+", "?", "!", ".", "%"]
 
-/-- Read the IRI between angle brackets. -/
+/-- The characters `IRIREF` excludes (ShEx 2.1 Appendix A, the
+    Turtle terminal): `#x00`-`#x20`, `<`, `>`, `"`, `{`, `}`, `|`,
+    `^`, `` ` `` and `\`. `>` ends the IRI and `\` opens a UCHAR, so
+    the scanner tests the rest here. -/
+def iriRefForbidden (d : Char) : Bool :=
+  d.toNat ≤ 0x20 || d == '<' || d == '"' || d == '{' || d == '}' ||
+  d == '|' || d == '^' || d == '`'
+
+/-- Read the IRI between angle brackets. `none` when it is
+    unterminated or breaks `IRIREF ::= '<' ([^#x00-#x20<>"{}|^`\] |
+    UCHAR)* '>'`: a space, an ECHAR such as `\n`, or a `PN_LOCAL_ESC`
+    such as `\/` is not part of an IRI reference
+    (`negativeSyntax/IRIREF-with-SPACE`, `-with-ECHAR`,
+    `-with-PN_LOCAL_ESC`). -/
 def scanAngle (s : Chars) (i : Nat) : Option (String × Nat) :=
   let rec go (j : Nat) (acc : List Char) : Option (String × Nat) :=
     match h : charAt s j with
@@ -390,11 +469,12 @@ def scanAngle (s : Chars) (i : Nat) : Option (String × Nat) :=
         -- them verbatim gave a predicate spelled
         -- `http://a.example/p\u0031` where the ShExJ twin has
         -- `.../p1` (1IRI_with_UCHAR.1dot) — a different IRI, so a
-        -- different schema.
+        -- different schema. Any other escape is not an IRIREF.
         (match charAt s (j + 1) with
          | some 'u' => (hexRun s (j + 2) 4).bind (fun v => go (j + 6) (Char.ofNat v :: acc))
          | some 'U' => (hexRun s (j + 2) 8).bind (fun v => go (j + 10) (Char.ofNat v :: acc))
-         | _        => go (j + 1) (d :: acc))
+         | _        => none)
+      else if iriRefForbidden d then none
       else go (j + 1) (d :: acc)
   termination_by s.size - j
   decreasing_by all_goals (have hlt := charAt_lt h; omega)
@@ -420,7 +500,7 @@ def tokenize (s : Chars) : Except String (List Tok) :=
       | some c =>
         if c == '<' then
           match scanAngle s (i + 1) with
-          | none          => .error "unterminated IRI reference"
+          | none          => .error "unterminated or malformed IRI reference"
           | some (raw, j) => go j (acc ++ [.iri raw]) f
         else if c == '"' || c == '\'' then
           match scanString s i c with
@@ -434,7 +514,8 @@ def tokenize (s : Chars) : Except String (List Tok) :=
               termination_by s.size - k
               decreasing_by all_goals (have hlt := charAt_lt h; omega)
               let (t, k) := tag (j + 1) []
-              if t.isEmpty then .error "empty language tag"
+              if !(langTagOk (String.ofList t.reverse)) then
+                .error s!"malformed language tag @{String.ofList t.reverse}"
               else
                 -- RDF 1.1 Concepts 3.3: the VALUE of a language tag is
                 -- its lowercase form. `"x"@en-UK` and `"x"@en-uk` are
@@ -453,7 +534,8 @@ def tokenize (s : Chars) : Except String (List Tok) :=
                     let (ns, m) := scanPnPrefix s k
                     if charAt s m == some ':' then
                       let (lp, m2) := scanPnLocal s (m + 1)
-                      go m2 (acc ++ [.str lex none (some (pnameTag ++ ns ++ ":" ++ lp))]) f
+                      if !(pnLocalOk s (m + 1) m2) then .error "malformed datatype prefixed name"
+                      else go m2 (acc ++ [.str lex none (some (pnameTag ++ ns ++ ":" ++ lp))]) f
                     else .error "malformed datatype prefixed name"
                   else .error "malformed datatype"
               | none => .error "truncated datatype"
@@ -481,6 +563,10 @@ def tokenize (s : Chars) : Except String (List Tok) :=
                    let _ := ns
                    if charAt s m == some ':' then (scanPnLocal s (m + 1)).2 else m)
           let k3 := skipTrivia s k2
+          -- `codeDecl ::= '%' iri (CODE | '%')`: the action is NAMED.
+          -- `%{ code %}` with no IRI is not ShExC
+          -- (`negativeSyntax/1dotUnlabeledCode1`).
+          if k2 == k then .error "a semantic action needs an IRI after '%'" else
           (match charAt s k3 with
            | some '%' => go (k3 + 1) acc f
            | some '{' =>
@@ -506,13 +592,14 @@ def tokenize (s : Chars) : Except String (List Tok) :=
           go (i + 2) (acc ++ [.punct "//"]) f
         else if c == '/' then
           match scanRegex s i with
-          | none              => .error "unterminated regular expression"
+          | none              => .error "unterminated or malformed regular expression"
           | some (pat, fl, j) => go j (acc ++ [.regex pat fl]) f
         else if isPnCharsU c then
           let (ns, j) := scanPnPrefix s i
           if charAt s j == some ':' then
             let (lp, k) := scanPnLocal s (j + 1)
-            go k (acc ++ [.pname ns lp]) f
+            if !(pnLocalOk s (j + 1) k) then .error s!"malformed prefixed name {ns}:{lp}"
+            else go k (acc ++ [.pname ns lp]) f
           else
             let up := ns.toUpper
             if keywords.contains up then go j (acc ++ [.kw up]) f
@@ -533,7 +620,8 @@ def tokenize (s : Chars) : Except String (List Tok) :=
            | none => go (i + 1) (acc ++ [.punct "@"]) f)
         else if c == ':' then
           let (lp, j) := scanPnLocal s (i + 1)
-          go j (acc ++ [.pname "" lp]) f
+          if !(pnLocalOk s (i + 1) j) then .error s!"malformed prefixed name :{lp}"
+          else go j (acc ++ [.pname "" lp]) f
         else
           match punctTable.find? (fun p =>
             (p.toList.zipIdx).all (fun (ch, k) => charAt s (i + k) == some ch)) with
@@ -614,6 +702,9 @@ def objectValueOfTok (st : PState) : Tok → Except String ObjectValue
   | .num lex dt => .ok (ObjectValue.literal lex none (some dt))
   | .kw "TRUE"  => .ok (ObjectValue.literal "true" none (some (xsdIri "boolean")))
   | .kw "FALSE" => .ok (ObjectValue.literal "false" none (some (xsdIri "boolean")))
+  -- `valueSetValue ::= iriRange | literalRange | languageRange | …`:
+  -- a blank node is none of them (`negativeSyntax/1val1bnode`).
+  | .bnode b    => .error s!"a blank node (_:{b}) is not a value set value"
   | t           => (resolveTerm st t).map ObjectValue.iri
 
 /-! ### Cardinality -/
@@ -662,6 +753,65 @@ def nodeKindOfKw : String → Option NodeKind
   | "LITERAL"    => some .literal
   | _            => none
 
+/-- Is facet `k` already set? ShExJ gives a `NodeConstraint` ONE member
+    per facet (`length`, `pattern`, `mininclusive`, …), so a facet
+    written twice has no abstract syntax: `IRI LENGTH 20 LENGTH 21` is
+    not a schema (`negativeSyntax/1iriLength2`, `1literalLength2`). -/
+def facetGiven (nc : NodeConstraint) : String → Bool
+  | "MININCLUSIVE"   => nc.minInclusive.isSome
+  | "MAXINCLUSIVE"   => nc.maxInclusive.isSome
+  | "MINEXCLUSIVE"   => nc.minExclusive.isSome
+  | "MAXEXCLUSIVE"   => nc.maxExclusive.isSome
+  | "TOTALDIGITS"    => nc.totalDigits.isSome
+  | "FRACTIONDIGITS" => nc.fractionDigits.isSome
+  | "LENGTH"         => nc.length.isSome
+  | "MINLENGTH"      => nc.minLength.isSome
+  | "MAXLENGTH"      => nc.maxLength.isSome
+  | "PATTERN"        => nc.pattern.isSome
+  | _                => false
+
+/-- The numeric datatypes, ShEx 2.1 §5.4.5: "the numeric value of RDF
+    Literals with datatypes listed in SPARQL 1.1 Operand Data Types" —
+    `xsd:integer`, `xsd:decimal`, `xsd:float`, `xsd:double` and the
+    types derived from `xsd:integer`. -/
+def isNumericDatatype (d : String) : Bool :=
+  ["integer", "decimal", "float", "double", "nonPositiveInteger",
+   "negativeInteger", "long", "int", "short", "byte", "nonNegativeInteger",
+   "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
+   "positiveInteger"].any (fun n => d == xsdIri n)
+
+/-- Can facet `k` follow the node constraint built so far? Two grammar
+    rules (ShEx 2.1 Appendix A) decide it:
+
+    * `nonLitNodeConstraint ::= nonLiteralKind stringFacet*`, so `IRI`,
+      `BNODE` and `NONLITERAL` take no numeric facet;
+    * a numeric facet constrains "the numeric value of RDF Literals with
+      [numeric] datatypes" (§5.4.5), and the shexTest suite rejects one
+      after a datatype that is not numeric
+      (`negativeSyntax/1unknowndatatypeMaxInclusive`). -/
+def facetAllowed (nc : NodeConstraint) (k : String) : Except String Unit :=
+  if facetGiven nc k then .error s!"facet {k} is given twice"
+  else if isNumericFacetKw k then
+    match nc.nodeKind, nc.datatype with
+    | some .iri, _ | some .bnode, _ | some .nonLiteral, _ =>
+        .error s!"numeric facet {k} after a non-literal node kind"
+    | _, some d =>
+        if isNumericDatatype d then .ok ()
+        else .error s!"numeric facet {k} on the non-numeric datatype {d}"
+    | _, none => .ok ()
+  else .ok ()
+
+/-- `litNodeConstraint` (ShEx 2.1 Appendix A): `LITERAL`, a datatype, a
+    value set, or numeric facets alone. Only a `nonLitNodeConstraint`
+    may be followed by a shape reference or definition in
+    `shapeAtom`, so `<dt1> @<S1>` is not ShExC
+    (`negativeSyntax/1datatypeRef1`). -/
+def isLitNodeConstraint (nc : NodeConstraint) : Bool :=
+  nc.nodeKind == some .literal || nc.datatype.isSome || !nc.values.isEmpty ||
+  (nc.nodeKind.isNone &&
+    (nc.minInclusive.isSome || nc.maxInclusive.isSome || nc.minExclusive.isSome ||
+     nc.maxExclusive.isSome || nc.totalDigits.isSome || nc.fractionDigits.isSome))
+
 /-- Apply one facet to the constraint being built. -/
 def applyFacet (nc : NodeConstraint) (k : String) : Tok → Except String NodeConstraint
   | .num lex _ =>
@@ -704,6 +854,7 @@ def applyFacet (nc : NodeConstraint) (k : String) : Tok → Except String NodeCo
 def parseOneExclusion (st : PState) (r : List Tok)
     : Except String (Option ((VsvKind × Exclusion) × List Tok)) :=
   match r with
+  | .punct "-" :: .bnode b :: _ => .error s!"a blank node (_:{b}) is not an exclusion"
   | .punct "-" :: .lang tg :: rest =>
       (match rest with
        | .punct "~" :: rest2 => .ok (some ((.language, .stem tg), rest2))
@@ -739,6 +890,39 @@ def parseExclusions (st : PState) (ts : List Tok)
       | .ok (some (e, r2))  => go r2 (acc ++ [e]) f
   go ts [] (ts.length + 1)
 
+/-- The GRAMMAR form of the token that follows an exclusion's `-`:
+    `iriExclusion ::= '-' iri '~'?`, `literalExclusion ::= '-' literal
+    '~'?`, `languageExclusion ::= '-' LANGTAG '~'?`. -/
+def exclusionForm : Tok → Option VsvKind
+  | .iri _ | .pname _ _ => some .iri
+  | .str _ _ _ | .num _ _ | .kw "TRUE" | .kw "FALSE" => some .literal
+  | .lang _ => some .language
+  | _ => none
+
+/-- The forms of every exclusion in a token run, in order. Read off
+    the tokens rather than the parsed values, because `"x"@en` is a
+    LITERAL in the grammar and the parsed value classifies it by its
+    language tag. -/
+def exclusionForms : List Tok → List VsvKind
+  | .punct "-" :: t :: rest =>
+      (match exclusionForm t with
+       | some k => k :: exclusionForms rest
+       | none   => exclusionForms rest)
+  | _ :: rest => exclusionForms rest
+  | [] => []
+
+/-- The exclusions of a range must all be of the range's own form: an
+    IRI stem excludes IRIs, a literal stem literals and a language
+    stem language tags, and a wildcard's exclusions are
+    "consistently iri, literal, or language" (ShEx 2.1 Appendix A,
+    `valueSetValue`). `stemForm` is `none` for a wildcard. The
+    `negativeSyntax/1val1*StemMinus*3` fixtures mix the forms. -/
+def exclusionsConsistent (stemForm : Option VsvKind) (consumed : List Tok) : Bool :=
+  match stemForm, exclusionForms consumed with
+  | some k, fs => fs.all (· == k)
+  | none, [] => true
+  | none, f :: fs => fs.all (· == f)
+
 /-- The kind a WILDCARD stem range restricts, read off its exclusions:
     a language exclusion makes it a `LanguageStemRange`, a literal one
     a `LiteralStemRange`, and anything else an `IriStemRange`. -/
@@ -758,7 +942,9 @@ def parseValueSetValue (st : PState) (ts : List Tok)
       (match parseExclusions st rest with
        | .error e     => .error e
        | .ok (es, r2) =>
-           .ok (.stemRange (wildcardKind es) .wildcard (es.map Prod.snd), r2))
+           if !(exclusionsConsistent none (rest.take (rest.length - r2.length))) then
+             .error "the exclusions of a wildcard range mix IRIs, literals and language tags"
+           else .ok (.stemRange (wildcardKind es) .wildcard (es.map Prod.snd), r2))
   | .lang tg :: rest =>
       -- `@fr` is an exact language, `@fr~` a language stem.
       (match rest with
@@ -767,7 +953,9 @@ def parseValueSetValue (st : PState) (ts : List Tok)
             | .error e      => .error e
             | .ok ([], r2)  => .ok (.stem .language (.plain tg), r2)
             | .ok (es, r2)  =>
-                .ok (.stemRange .language (.plain tg) (es.map Prod.snd), r2))
+                if !(exclusionsConsistent (some .language) (rest2.take (rest2.length - r2.length))) then
+                  .error "a language stem range excludes something that is not a language tag"
+                else .ok (.stemRange .language (.plain tg) (es.map Prod.snd), r2))
        | _ => .ok (.language tg, rest))
   | .punct "@" :: .punct "~" :: rest =>
       -- `@~` : EVERY language, i.e. a language stem whose stem is the
@@ -777,7 +965,9 @@ def parseValueSetValue (st : PState) (ts : List Tok)
        | .error e     => .error e
        | .ok ([], r2) => .ok (.stem .language (.plain ""), r2)
        | .ok (es, r2) =>
-           .ok (.stemRange .language (.plain "") (es.map Prod.snd), r2))
+           if !(exclusionsConsistent (some .language) (rest.take (rest.length - r2.length))) then
+             .error "a language stem range excludes something that is not a language tag"
+           else .ok (.stemRange .language (.plain "") (es.map Prod.snd), r2))
   | t :: rest =>
       match objectValueOfTok st t with
       | .error e => .error e
@@ -796,7 +986,9 @@ def parseValueSetValue (st : PState) (ts : List Tok)
              | .error e     => .error e
              | .ok ([], r2) => .ok (.stem kind (.plain stemStr), r2)
              | .ok (es, r2) =>
-                 .ok (.stemRange kind (.plain stemStr) (es.map Prod.snd), r2))
+                 if !(exclusionsConsistent (exclusionForm t) (rest2.take (rest2.length - r2.length))) then
+                   .error "a stem range excludes a value of a different form than its stem"
+                 else .ok (.stemRange kind (.plain stemStr) (es.map Prod.snd), r2))
         | _ => .ok (.object ov, rest)
   | [] => .error "unterminated value set"
 
@@ -830,22 +1022,26 @@ def parseNodeConstraint (st : PState) (ts : List Tok)
     | f + 1 =>
       match r with
       | .kw k :: v :: rest =>
-          if isNumericFacetKw k || (isStringFacetKw k && k != "PATTERN") then
-            match applyFacet nc k v with
-            | .error e   => .error e
-            | .ok nc2    => facets nc2 rest f
-          else if k == "PATTERN" then
-            match applyFacet nc k v with
-            | .error e => .error e
-            | .ok nc2  =>
-              -- An optional FLAGS string may follow a PATTERN.
-              (match rest with
-               | .str fl _ _ :: rest2 => facets { nc2 with flags := some fl } rest2 f
-               | _                    => facets nc2 rest f)
-          else .ok (nc, r)
+          (match (if isNumericFacetKw k || isStringFacetKw k then facetAllowed nc k else .ok ()) with
+           | .error e => .error e
+           | .ok _ =>
+            if isNumericFacetKw k || (isStringFacetKw k && k != "PATTERN") then
+              match applyFacet nc k v with
+              | .error e   => .error e
+              | .ok nc2    => facets nc2 rest f
+            else if k == "PATTERN" then
+              match applyFacet nc k v with
+              | .error e => .error e
+              | .ok nc2  =>
+                -- An optional FLAGS string may follow a PATTERN.
+                (match rest with
+                 | .str fl _ _ :: rest2 => facets { nc2 with flags := some fl } rest2 f
+                 | _                    => facets nc2 rest f)
+            else .ok (nc, r))
       | .regex pat fl :: rest =>
-          facets { nc with pattern := some pat,
-                           flags := if fl.isEmpty then none else some fl } rest f
+          if nc.pattern.isSome then .error "facet PATTERN is given twice"
+          else facets { nc with pattern := some pat,
+                                flags := if fl.isEmpty then none else some fl } rest f
       | _ => .ok (nc, r)
   match ts with
   | .kw k :: rest =>
@@ -990,7 +1186,10 @@ partial def parseShapeAtom (st : PState) (ts : List Tok)
         (match parseShapeOrRef st r2 with
          | .error e            => .error e
          | .ok (none, r3)      => .ok ([some (.nodeConstraint nc)], r3)
-         | .ok (some sr, r3)   => .ok ([some (.nodeConstraint nc), some sr], r3))
+         | .ok (some sr, r3)   =>
+             if isLitNodeConstraint nc then
+               .error "a literal node constraint cannot be followed by a shape reference or definition"
+             else .ok ([some (.nodeConstraint nc), some sr], r3))
     | .ok none =>
         (match parseShapeOrRef st ts with
          | .error e          => .error e

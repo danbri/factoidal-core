@@ -262,6 +262,8 @@ import L4Factoidal.ShEx.FromJson
 import L4Factoidal.ShEx.SchemaEq
 import L4Factoidal.ShEx.Compact
 import L4Factoidal.ShEx.CompactTests
+import L4Factoidal.ShEx.Structure
+import L4Factoidal.ShEx.StructureTests
 import L4Factoidal.RML.Mapping
 import L4Factoidal.RML.Tests
 import L4Factoidal.RML.JsonPath

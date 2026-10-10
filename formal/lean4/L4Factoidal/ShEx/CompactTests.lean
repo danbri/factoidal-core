@@ -210,4 +210,76 @@ wrapper (open1dotclosecardOpt). -/
              | [] => false)
         | .error _ => false)
 
+/-! ## The grammar's rejections (`negativeSyntax/`, 2026-10-10)
+
+The shexTest `negativeSyntax` suite lists 100 documents a conforming
+ShExC parser must refuse; `l4shexc` scores them. Twenty-two were
+ACCEPTED before this pass. Each guard pair below pins one rule: the
+fixture's shape is refused, and the nearest LEGAL document is still
+read, so a parser that refused everything would fail the second
+guard of every pair. -/
+
+private def wrap (body : String) : String :=
+  "PREFIX ex: <http://a.example/> <http://a.example/S1> { " ++ body ++ " }"
+
+-- `codeDecl ::= '%' iri (CODE | '%')`: a semantic action is named.
+#guard !(parsed (wrap "<http://a.example/p1> . %{ code1 %}"))
+#guard parsed (wrap "<http://a.example/p1> . %<http://a.example/code1>{ code1 %}")
+
+-- One member per facet in ShExJ, so a facet given twice is no schema.
+#guard !(parsed (wrap "<http://a.example/p1> IRI LENGTH 20 LENGTH 21"))
+#guard !(parsed (wrap "<http://a.example/p1> LITERAL /a/ /b/"))
+#guard parsed (wrap "<http://a.example/p1> IRI MINLENGTH 20 MAXLENGTH 21")
+
+-- A numeric facet needs a numeric datatype, and no non-literal kind.
+#guard !(parsed (wrap "<http://a.example/p1> <http://a.example/dt1> MAXINCLUSIVE 5"))
+#guard !(parsed (wrap "<http://a.example/p1> IRI MAXINCLUSIVE 5"))
+#guard parsed (wrap "<http://a.example/p1> <http://www.w3.org/2001/XMLSchema#integer> MAXINCLUSIVE 5")
+#guard parsed (wrap "<http://a.example/p1> LITERAL MAXINCLUSIVE 5")
+
+-- Only a NON-literal node constraint may be followed by a shape reference.
+#guard !(parsed (wrap "<http://a.example/p1> <http://a.example/dt1> @<http://a.example/S1>"))
+#guard parsed (wrap "<http://a.example/p1> IRI @<http://a.example/S1>")
+
+-- A blank node is not a value set value.
+#guard !(parsed (wrap "<http://a.example/p1> [_:a]"))
+#guard parsed (wrap "<http://a.example/p1> [<http://a.example/a>]")
+
+-- IRIREF admits UCHAR escapes only, and no space.
+#guard !(parsed (wrap "<http://a.example/p1\\n> ."))
+#guard !(parsed (wrap "<http://a.example/p1\\/> ."))
+#guard !(parsed (wrap "<http://a.example/p 1> ."))
+#guard parsed (wrap "<http://a.example/p\\u0031> .")
+
+-- PN_LOCAL: PERCENT is two hex digits, no leading dash, no UCHAR.
+#guard !(parsed (wrap "ex:p%1 ."))
+#guard !(parsed (wrap "ex:p%1g ."))
+#guard !(parsed (wrap "ex:%p1 ."))
+#guard !(parsed (wrap "ex:-p1 ."))
+#guard !(parsed (wrap "ex:p\\u0031 ."))
+#guard parsed (wrap "ex:p%31 .")
+#guard parsed (wrap "ex:p\\-1 .")
+#guard parsed (wrap "ex:p-1 .")
+
+-- REGEXP admits a fixed set of escapes.
+#guard !(parsed (wrap "<http://a.example/p1> /\\1/"))
+#guard !(parsed (wrap "<http://a.example/p1> /\\b/"))
+#guard !(parsed (wrap "<http://a.example/p1> /\\f/"))
+#guard parsed (wrap "<http://a.example/p1> /\\n\\.\\//")
+
+-- LANGTAG begins with a letter.
+#guard !(parsed (wrap "<http://a.example/p1> [\"string\"@1]"))
+#guard parsed (wrap "<http://a.example/p1> [\"string\"@en-1]")
+
+-- A stem range excludes values of its own form only.
+#guard !(parsed (wrap "<http://a.example/p1> [<http://a.example/v>~ - \"http://a.example/v1\"]"))
+#guard !(parsed (wrap "<http://a.example/p1> [@fr~ - \"@fr-be\"]"))
+#guard !(parsed (wrap "<http://a.example/p1> [\"v\"~ - <http://a.example/v1>]"))
+#guard !(parsed (wrap "<http://a.example/p1> [\"@fr\"~ - @fr-be]"))
+#guard !(parsed (wrap "<http://a.example/p1> [. - <http://a.example/v1> - \"v2\"]"))
+#guard parsed (wrap "<http://a.example/p1> [<http://a.example/v>~ - <http://a.example/v1>]")
+#guard parsed (wrap "<http://a.example/p1> [@fr~ - @fr-be]")
+#guard parsed (wrap "<http://a.example/p1> [\"v\"~ - \"v1\"]")
+#guard parsed (wrap "<http://a.example/p1> [. - \"v1\" - \"v2\"]")
+
 end L4Factoidal.ShEx.Compact

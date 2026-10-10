@@ -282,7 +282,6 @@ defjob l4diff l4diff parse_diff diff \
 # Areas with no Lean runner. Each claim was checked against
 # formal/lean4/Harness/*.lean and lakefile.lean when this script was written.
 NONE_ROWS="XForms (Bind, recalculate)|Lean library L4Factoidal/XForms/Bind.lean has build-time #guard checks only; no Harness runner
-ShEx negative syntax (100 ShExC reject fixtures)|l4shexc compares ShExC with ShExJ twins only; the reject fixtures are not read
 RML-IO, RML-FNML, RML-CC, RML-star test cases|l4rml reads rml-core test-cases only
 EECC interop (vc-verifier-rules, webuild-attestations)|no Lean module or runner
 QUDT|no Lean module or runner"
@@ -590,6 +589,15 @@ parse_shexc() {
     emit_status unparsed "$CUR_AREA" "" "a count is missing (match, mismatch, DECLINED, NO REFERENCE, .shex total)" "$line"; return
   fi
   emit_ok "$CUR_AREA" "" "$m" "$x" $((dec + nr)) "$tot" "pass = ShExC parse equals the ShExJ twin; other = declined by the parser ($dec) + no ShExJ twin ($nr)" "$line"
+  # The reject fixtures, read from negativeSyntax/ and negativeStructure/
+  # manifest.ttl by the same run; "missing" (named by the manifest, absent
+  # from the checkout) is the other column.
+  row_sl "ShEx negative syntax (ShExC reject fixtures)" "" '^shexc negative-syntax: [0-9]+ pass' last \
+    "pass = the ShExC parser rejects the file; other = named by the manifest and absent"
+  row_sl "ShEx negative structure (ShEx 2.1 section 5.7 schema requirements)" "" '^shexc negative-structure: [0-9]+ pass' last \
+    "pass = the parser or the section 5.7 structure check rejects the file; other = named by the manifest and absent"
+  row_sl "ShEx 2.1 section 5.7 structure check, validation schemas (over-strictness guard)" "" '^shexc structure check on validation schemas: [0-9]+ pass' last \
+    "pass = a schema the validation manifest names, with its imports, is NOT rejected"
 }
 
 parse_rif() {
@@ -846,7 +854,7 @@ fail_ids_all() {
     shex)
       grep -E '^FAIL ' "$log" | sed -E 's/^FAIL (.*) \(.*$/\1/' ;;
     shexc)
-      grep -E '^MISMATCH ' "$log" | sed -E 's/^MISMATCH ([^:]+):.*$/\1/' ;;
+      grep -E '^(MISMATCH|ACCEPTED|OVER-STRICT|MISSING) ' "$log" | sed -E 's/^([A-Z-]+) ([^:]+):.*$/\1 \2/' ;;
     xsd)
       grep -E '^  FAIL ' "$log" | sed -E 's/^  FAIL ([^ ]+) .*$/\1/' ;;
     xmlconf)
