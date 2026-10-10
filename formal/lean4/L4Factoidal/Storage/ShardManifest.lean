@@ -2013,20 +2013,24 @@ def headerLayout? (bytes : ByteArray) : Option String := do
   let (layout, _) ← decodeString afterRegistry
   some layout
 
-/-- The reason `decode?` refused these bytes, in one sentence a host can show.
-    A manifest whose layout label names a retired literal index (LGI1 or LGI2,
-    folded with the ASCII-only fold) gets the cause and the remedy. Any other
-    refusal keeps the general sentence. -/
-def refusalNote (bytes : ByteArray) : String :=
+/-- The reason `decode?` refused these bytes, when the reason is that the
+    layout label names a retired literal index (LGI1 or LGI2, folded with the
+    ASCII-only fold). The sentence gives the cause and the remedy. `none` for
+    every other refusal, which keeps the caller's general message. -/
+def retiredLayoutNote? (bytes : ByteArray) : Option String :=
   match headerLayout? bytes with
   | some layout =>
       if retiredLiteralIndexLayout layout then
-        s!"manifest layout '{layout}' names a literal index that was folded with the ASCII-only fold. " ++
-        "That index does not hold all the rows that the Unicode LCASE keeps. " ++
-        "Re-pack the generation with the current packer. " ++
-        "The packer writes LGI3 or LGI4."
-      else "bytes do not decode as an admitted manifest"
-  | none => "bytes do not decode as an admitted manifest"
+        some (s!"manifest layout '{layout}' names a literal index that was folded with the ASCII-only fold. " ++
+          "That index does not hold all the rows that the Unicode LCASE keeps. " ++
+          "Re-pack the generation with the current packer. " ++
+          "The packer writes LGI3 or LGI4.")
+      else none
+  | none => none
+
+/-- A sentence a host can show for bytes `decode?` refused. -/
+def refusalNote (bytes : ByteArray) : String :=
+  (retiredLayoutNote? bytes).getD "bytes do not decode as an admitted manifest"
 
 private def samplePredicate : WfIri := ⟨"https://example.test/p", by decide⟩
 

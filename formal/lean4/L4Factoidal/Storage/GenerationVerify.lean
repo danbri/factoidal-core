@@ -141,6 +141,29 @@ def objectIndexFailure : String :=
   "candidate object-index sidecar is missing, changed, malformed, or inconsistent with its block"
 def literalIndexFailure : String :=
   "candidate literal-index sidecar is missing, changed, malformed, or bound to another block"
+
+/-- The retired name (LGI1 or LGI2) that a literal-index sidecar's bytes start
+    with, or `none` when the sidecar is unreadable, unsafe to read, or not a
+    retired name. A sidecar that carries a retired name was folded with the
+    ASCII-only fold, so a refusal that names it tells the operator the one
+    remedy (re-pack) instead of listing four possible causes. Reads the sidecar:
+    callers use it on the failure path only. -/
+def retiredLiteralName? [Monad m] (read : Reader m) (index : ArtifactRef) : m (Option String) := do
+  if !safeLeafKey index.key then return none
+  match ← read index.key.value with
+  | none => return none
+  | some bytes => return L4Factoidal.Storage.LiteralGramIndexWire.retiredName? bytes
+
+/-- The first retired literal-index name among these entries' sidecars. -/
+def retiredLiteralSidecar? [Monad m] (read : Reader m) : List Entry → m (Option String)
+  | [] => pure none
+  | entry :: rest => do
+      match entry.literalIndex with
+      | none => retiredLiteralSidecar? read rest
+      | some index =>
+          match ← retiredLiteralName? read index with
+          | some name => pure (some name)
+          | none => retiredLiteralSidecar? read rest
 def geoIndexFailure : String :=
   "candidate geometry-index sidecar is missing, changed, malformed, or bound to another block"
 def quadEntryFailure : String :=
@@ -206,7 +229,7 @@ def objectIndexAgrees [Monad m] (read : Reader m) (version : Nat) (entry : Entry
                 decoded.pairs.toList ==
                   L4Factoidal.Storage.SubjectRowIndexWire.pairsOfObjects block.rows
 
-/-- LGI1, the SBM8 literal search index. What is checked here is that the
+/-- LGI3, the SBM8 literal search index. What is checked here is that the
     sidecar decodes under its own framing and CRC, that it names THIS block by
     digest, and that it is sized for this block's dictionary.
 
@@ -302,14 +325,23 @@ def verifyEntryIndexes [Monad m] (read : Reader m) (version : Nat)
     | none => pure true
     | some index => objectIndexAgrees read version entry index block?
   if !objectOk then return some objectIndexFailure
-  /- At version 10 the two candidate-filter sidecars are LGI2 and GBI1 over an
+  /- At version 10 the two candidate-filter sidecars are LGI4 and GBI1 over an
      IBK5 block, and both are checked by `verifyQuadV5Entry` against ONE decode
      of that block. Checking them here as well would decode it twice. -/
   let literalOk ← match entry.literalIndex with
     | none => pure true
     | some index =>
         if version == 10 then pure true else literalIndexAgrees read version entry index
-  if !literalOk then return some literalIndexFailure
+  if !literalOk then
+    /- A sidecar that starts with the magic of LGI1 or LGI2 is refused by every
+       decoder. Say so, because the remedy differs from the other causes. -/
+    match entry.literalIndex with
+    | some index =>
+        match ← retiredLiteralName? read index with
+        | some name =>
+            return some (L4Factoidal.Storage.LiteralGramIndexWire.retiredMessage name)
+        | none => return some literalIndexFailure
+    | none => return some literalIndexFailure
   let geoOk ← match entry.geoIndex with
     | none => pure true
     | some index => if version == 10 then pure true else geoIndexAgrees read version entry index
@@ -371,7 +403,7 @@ maps and the blob reference list. Encoder admission equals decoder admission,
 so activation recomputes what the packer computed and compares rather than
 trusting the sidecar's self-consistency.
 
-The LGI2 and GBI1 postings ARE recomputed here, unlike LGI1 and GBI1 at SBM8
+The LGI4 and GBI1 postings ARE recomputed here, unlike LGI3 and GBI1 at SBM8
 and SBM9, where the note in `literalIndexAgrees` explains what recomputing
 would have cost when one block held a whole predicate. Blocks are now cut at
 16,384 rows and 2,097,152 estimated bytes
@@ -447,7 +479,7 @@ def verifyQuadV5Entry [Monad m] (h : Hasher) (read : Reader m) (manifest : Manif
                       (L4Factoidal.Storage.IndexedBlockWireV5.blobDigests block).map
                         ByteArray.toList then return none
                   if !blobExtentsAgree refs block.dict then return none
-                  -- LGI2 and GBI1, rebuilt from this dictionary.
+                  -- LGI4 and GBI1, rebuilt from this dictionary.
                   match entry.literalIndex, entry.geoIndex with
                   | some literalRef, some geoRef =>
                       if !safeLeafKey literalRef.key || !safeLeafKey geoRef.key then

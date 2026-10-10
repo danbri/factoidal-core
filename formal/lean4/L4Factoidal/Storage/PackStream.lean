@@ -72,7 +72,7 @@ inductive PackFormat where
   | ibk3
   | ibk4
   /-- Wire version 10: IBK5 blocks over a PTD2 dictionary of version-2 terms,
-      an LGI2 literal index, the GBI1 geometry index unchanged, and an SBM10
+      an LGI4 literal index, the GBI1 geometry index unchanged, and an SBM10
       manifest with a blob table and per-entry zone maps
       (`docs/designissues/2026-09-05-wire-version-10-scale.md`). -/
   | ibk5
@@ -93,8 +93,8 @@ def artifactName : PackFormat → Nat → String
 def layoutName : PackFormat → String
   | .ibk2 => "predicate-ibk2-merkle-v2-streaming"
   | .ibk3 => "predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0"
-  | .ibk4 => "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
-  | .ibk5 => "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
+  | .ibk4 => "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
+  | .ibk5 => "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0"
 
 def registryVersion : PackFormat → String
   | .ibk2 => "local-ibk2-dict-v0"
@@ -107,6 +107,20 @@ def manifestVersion : PackFormat → Nat
   | .ibk3 => 6
   | .ibk4 => 9
   | .ibk5 => 10
+
+/- The packer's labels are the manifest's labels. `layoutName` repeats the two
+   strings that `ShardManifest.layoutConsistent` pins to wire versions 9 and 10
+   (a manifest that disagreed would not encode), so these guards fail the build
+   at once if one is edited without the other. The literal index fold changed on
+   2026-10-10 and the labels with it (LGI1 to LGI3, LGI2 to LGI4); a retired
+   label here would write no generation at all, and a guard says so. -/
+#guard L4Factoidal.Storage.ShardManifest.layoutConsistent (manifestVersion .ibk4) (layoutName .ibk4)
+#guard L4Factoidal.Storage.ShardManifest.layoutConsistent (manifestVersion .ibk5) (layoutName .ibk5)
+#guard L4Factoidal.Storage.ShardManifest.isIbk4Layout (layoutName .ibk4)
+#guard L4Factoidal.Storage.ShardManifest.isIbk5Layout (layoutName .ibk5)
+#guard !(L4Factoidal.Storage.ShardManifest.retiredLiteralIndexLayout (layoutName .ibk4))
+#guard !(L4Factoidal.Storage.ShardManifest.retiredLiteralIndexLayout (layoutName .ibk5))
+
 
 def encodeBlock? : PackFormat → L4Factoidal.Storage.IndexedBlock.Block → Option ByteArray
   | .ibk2, block => L4Factoidal.Storage.IndexedBlockWireV2.encode? block
@@ -598,7 +612,7 @@ def publishQuadBlocks (h : Hasher) (format : PackFormat) (scope : String) :
          table is complete and sorted. -/
       let (blobs, outRev) ← addBlobArtifacts h state.blobs outRev (blobLiteralsOfRows h rows)
       let entryDigests := L4Factoidal.Storage.IndexedBlockWireV5.blobDigests block
-      /- SBM10's LGI2 literal search index, built over the dictionary's inline
+      /- SBM10's LGI4 literal search index, built over the dictionary's inline
          literals and carrying the positions of the out-of-line ones as its
          opaque list. `BlockV5Plan` decides both, and the activation check
          rebuilds them the same way. -/
@@ -607,10 +621,10 @@ def publishQuadBlocks (h : Hasher) (format : PackFormat) (scope : String) :
           index := L4Factoidal.Storage.BlockV5Plan.literalIndexOf block }
       let (literalIndex, outRev) ←
         match L4Factoidal.Storage.LiteralGramIndexWire.encode2? literal with
-        | none => .error s!"could not encode LGI2 index for {predicate.val}"
+        | none => .error s!"could not encode LGI4 index for {predicate.val}"
         | some indexBytes => do
-            let (ref, made) ← sidecar h (name ++ ".lgi2") indexBytes
-              s!"could not commit LGI2 chunks for {predicate.val}"
+            let (ref, made) ← sidecar h (name ++ ".lgi4") indexBytes
+              s!"could not commit LGI4 chunks for {predicate.val}"
             pure (some ref, made.reverse ++ outRev)
       /- GBI1, unchanged from SBM9. A blob geometry is NOT in it: its WKT is
          not in the block, so no box can be computed. Every caller that turns
@@ -669,7 +683,7 @@ def publishQuadBlocks (h : Hasher) (format : PackFormat) (scope : String) :
         | none => .error s!"unresolvable graph name in block for {predicate.val}"
         | some names => pure (names.map GraphName.ofGraphRef)
       let outRev := merkleArtifact h name bytes :: { name := name, bytes := bytes } :: outRev
-      /- SBM8's LGI1 literal search index. It is written for EVERY block: a
+      /- SBM8's LGI3 literal search index. It is written for EVERY block: a
          block whose dictionary holds no literal carries an index with no
          gram, so an SBM8 reader never asks whether the role is present.
          `LiteralGramIndex.build` decides the grams and the posting order and
@@ -680,10 +694,10 @@ def publishQuadBlocks (h : Hasher) (format : PackFormat) (scope : String) :
           index := L4Factoidal.Storage.LiteralGramIndex.build block.dict }
       let (literalIndex, outRev) ←
         match L4Factoidal.Storage.LiteralGramIndexWire.encode? literal with
-        | none => .error s!"could not encode LGI1 index for {predicate.val}"
+        | none => .error s!"could not encode LGI3 index for {predicate.val}"
         | some indexBytes => do
-            let (ref, made) ← sidecar h (name ++ ".lgi1") indexBytes
-              s!"could not commit LGI1 chunks for {predicate.val}"
+            let (ref, made) ← sidecar h (name ++ ".lgi3") indexBytes
+              s!"could not commit LGI3 chunks for {predicate.val}"
             pure (some ref, made.reverse ++ outRev)
       /- SBM9's GBI1 geometry bounding-box index, written for EVERY block on
          the same rule: a block whose dictionary holds no geometry carries an

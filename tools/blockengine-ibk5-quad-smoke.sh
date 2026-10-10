@@ -23,7 +23,7 @@ nq="$repo_root/tests/local/data/quad_sample.nq"
 "$bin/l4block-shard-pack" "$trig" "$run_dir/trig" ibk5 >"$run_dir/pack-trig.txt"
 "$bin/l4block-shard-pack" "$nq" "$run_dir/nq" ibk5 >"$run_dir/pack-nq.txt"
 cat "$run_dir/pack-trig.txt"
-grep -q 'format=quad-ibk5-ptd2-lgi2-gbi1-merkle-v0 syntax=trig' "$run_dir/pack-trig.txt"
+grep -q 'format=quad-ibk5-ptd2-lgi4-gbi1-merkle-v0 syntax=trig' "$run_dir/pack-trig.txt"
 grep -q 'quads=6 blocks=4 graphs=3' "$run_dir/pack-trig.txt"
 grep -q 'wire-version=10' "$run_dir/pack-trig.txt"
 grep -q 'syntax=nquads' "$run_dir/pack-nq.txt"
@@ -33,11 +33,11 @@ grep -q 'quads=6 blocks=4 graphs=3' "$run_dir/pack-nq.txt"
 # publishes in first-seen KEY order. This fixture's graphs are not interleaved,
 # so its block SET is the one this script has always asserted; only the ORDER
 # of the four blocks can move, and no assertion below names an ordinal.
-# The block files carry the version in their name, and each has an LGI2 and a
+# The block files carry the version in their name, and each has an LGI4 and a
 # GBI1 sidecar.
 for b in 0 1 2 3; do
   test -f "$run_dir/trig/predicate-$b.ibk5"
-  test -f "$run_dir/trig/predicate-$b.ibk5.lgi2"
+  test -f "$run_dir/trig/predicate-$b.ibk5.lgi4"
   test -f "$run_dir/trig/predicate-$b.ibk5.gbi1"
   cmp "$run_dir/trig/predicate-$b.ibk5" "$run_dir/nq/predicate-$b.ibk5"
 done

@@ -539,7 +539,7 @@ check "storeQueryPlan reports a plan the query cap would refuse" storeQueryPlan 
 
 # --- The same three ops over an SBM8 generation of IBK4 quad blocks ---
 #
-# SBM8 is SBM7 plus the LGI1 literal search index in a fourth sidecar role,
+# SBM8 is SBM7 plus the LGI3 literal search index in a fourth sidecar role,
 # which is what `l4block-shard-pack ... ibk4` now writes. SBM7 generations
 # still decode and still answer; `tests/store-host/conformance.mjs` and
 # `l4block-literal-gate` cover an SBM7 store that declares no sidecar.
@@ -551,14 +551,14 @@ check "storeQueryPlan reports a plan the query cap would refuse" storeQueryPlan 
 storeargs "$TMP/store-inspect-ibk4.json" "$TMP/store-ibk4/manifest.sbm2"
 check "storeManifestInspect reports an IBK4 generation and its graph set" storeManifestInspect "$TMP/store-inspect-ibk4.json" \
   'r["ok"] is True and r["wireVersion"] == 9
-   and r["layout"] == "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+   and r["layout"] == "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
    and r["blankNodeProfile"] == "content-digest-shared"
    and len(r["entries"]) == 4
    and r["entries"][0]["blockKind"] == "IBK4"
-   and r["entries"][0]["sidecars"]["literalIndex"] == "predicate-0.ibk4.lgi1"
+   and r["entries"][0]["sidecars"]["literalIndex"] == "predicate-0.ibk4.lgi3"
    and len(r["entries"][0]["blankNodeScope"]) > 0
    and all(len(e["graphs"]) == 1 for e in r["entries"])
-   and all(e["sidecars"]["literalIndex"] == e["key"] + ".lgi1" for e in r["entries"])
+   and all(e["sidecars"]["literalIndex"] == e["key"] + ".lgi3" for e in r["entries"])
    and all(e["sidecars"]["geoIndex"] == e["key"] + ".gbi1" for e in r["entries"])
    and [g["kind"] for g in r["entries"][0]["graphs"]][0] == "default"
    and [g["value"] for g in r["entries"][2]["graphs"]] == ["http://example.org/g1"]'
@@ -568,7 +568,7 @@ storeargs "$TMP/store-plan-ibk4.json" "$TMP/store-ibk4/manifest.sbm2" \
 check "storeQueryPlan selects IBK4 entries by graph set" storeQueryPlan "$TMP/store-plan-ibk4.json" \
   'r["ok"] is True and r["mode"] == "ibk4-full-manifest(1)" and r["shards"] == 1
    and r["keys"] == ["predicate-2.ibk4"]
-   and r["sidecarKeys"] == ["predicate-2.ibk4.lgi1", "predicate-2.ibk4.gbi1"]'
+   and r["sidecarKeys"] == ["predicate-2.ibk4.lgi3", "predicate-2.ibk4.gbi1"]'
 
 blobargs "$TMP/store-query-ibk4.json" "$TMP/store-query-ibk4.blob" \
   "$TMP/store-ibk4/manifest.sbm2" \
@@ -608,10 +608,10 @@ storeargs "$TMP/store-inspect-ibk5.json" "$TMP/store-ibk5/manifest.sbm2"
 check "storeManifestInspect reports an IBK5 generation, its zone maps and its blob table" \
   storeManifestInspect "$TMP/store-inspect-ibk5.json" \
   'r["ok"] is True and r["wireVersion"] == 10
-   and r["layout"] == "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
+   and r["layout"] == "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0"
    and len(r["entries"]) == 5
    and all(e["blockKind"] == "IBK5" for e in r["entries"])
-   and all(e["sidecars"]["literalIndex"] == e["key"] + ".lgi2" for e in r["entries"])
+   and all(e["sidecars"]["literalIndex"] == e["key"] + ".lgi4" for e in r["entries"])
    and all(len(e["subjectZone"]["min"]) % 2 == 0 for e in r["entries"])
    and all(e["subjectZone"]["min"] <= e["subjectZone"]["max"] for e in r["entries"])
    and all(e["objectZone"]["min"] <= e["objectZone"]["max"] for e in r["entries"])
@@ -631,7 +631,7 @@ check "storeQueryPlan lists the blob keys an IBK5 plan reaches" storeQueryPlan \
   "$TMP/store-plan-ibk5.json" \
   'r["ok"] is True and r["mode"] == "ibk5-full-manifest(1)" and r["shards"] == 1
    and r["keys"] == ["'"$IBK5_BIG"'"]
-   and r["sidecarKeys"] == ["'"$IBK5_BIG"'.lgi2", "'"$IBK5_BIG"'.gbi1"]
+   and r["sidecarKeys"] == ["'"$IBK5_BIG"'.lgi4", "'"$IBK5_BIG"'.gbi1"]
    and len(r["blobKeys"]) == 1
    and r["blobKeys"][0].startswith("blob-") and r["blobKeys"][0].endswith(".lit")
    and r["bytes"] > 70000

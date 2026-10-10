@@ -582,7 +582,9 @@ private def run (directoryText queryText : String) : IO UInt32 := do
     let directory ← resolveStoreDirectory root
     let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
     match decode? manifestBytes, parseSparql queryText with
-    | none, _ => IO.eprintln "l4block-id-v3-query rejected: malformed SBM2 manifest"; return 1
+    | none, _ =>
+        IO.eprintln s!"l4block-id-v3-query rejected: {(retiredLayoutNote? manifestBytes).getD "malformed SBM2 manifest"}"
+        return 1
     | _, .error error => IO.eprintln s!"l4block-id-v3-query query parse error at {error.pos}: {error.msg}"; return 1
     | some manifest, .ok query =>
         if isIbk4Layout manifest.layout || manifest.version == 7 || manifest.version == 8 ||
