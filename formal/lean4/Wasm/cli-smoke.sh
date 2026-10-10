@@ -87,7 +87,10 @@ assert_text() {
   run_cmd "$@"
   local hay
   [ "$stream" = "out" ] && hay="$OUT" || hay="$ERR"
-  if [ "$RC" -eq "$want" ] && printf '%s' "$hay" | grep -qF -- "$needle"; then
+  # A here-string, not a pipe: with pipefail, `grep -q` closing the pipe early
+  # makes the writer die of SIGPIPE on a long text (the help text), and the
+  # pipeline then fails although the needle was found.
+  if [ "$RC" -eq "$want" ] && grep -qF -- "$needle" <<< "$hay"; then
     pass "$label"
   else
     fail "$label" "exit=$RC want=$want" "stdout=$OUT" "stderr=$ERR"
@@ -262,12 +265,12 @@ assert_json "query --query FILE: BASE in the text comes before the file's IRI" 0
 printf 'INSERT DATA { <s> <p> <o> }\n' > "$TMP/rel.ru"
 run_cmd "$CLI" update "$TMP/d.nt" --format ntriples --update "$TMP/rel.ru"
 verdict "update --update FILE: a relative IRI resolves against the file's IRI" "" \
-  "$( [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "<$TMPIRI/s> <$TMPIRI/p> <$TMPIRI/o> ." && echo 1 || echo 0 )" \
+  "$( [ "$RC" -eq 0 ] && grep -qF "<$TMPIRI/s> <$TMPIRI/p> <$TMPIRI/o> ." <<< "$OUT" && echo 1 || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 run_cmd "$CLI" update "$TMP/d.nt" --format ntriples --base http://example.org/b/ \
   --update-string 'INSERT DATA { <s> <p> <o> }'
 verdict "update --update-string --base IRI: a relative IRI resolves against IRI" "" \
-  "$( [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF '<http://example.org/b/s> <http://example.org/b/p> <http://example.org/b/o> .' && echo 1 || echo 0 )" \
+  "$( [ "$RC" -eq 0 ] && grep -qF '<http://example.org/b/s> <http://example.org/b/p> <http://example.org/b/o> .' <<< "$OUT" && echo 1 || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 
 # The five W3C queries of issue 741, with their data. The CLI reads one
@@ -339,7 +342,7 @@ else
   CL_OUT="$OUT"; CL_RC="$RC"
   WANT_CL="$("$CLI" parse "$C/constructlistresult.ttl" --format turtle)"
   run_cmd bash -c "printf '%s\n' \"\$1\" | '$CLI' parse --format ntriples" _ "$CL_OUT"
-  verdict "W3C construct/constructlist.rq output parses as N-Triples ($WANT_CL triples)" 742 \
+  verdict "W3C construct/constructlist.rq output parses as N-Triples ($WANT_CL triples)" "" \
     "$( [ "$CL_RC" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$OUT" = "$WANT_CL" ] && [ "$OUT" = 20 ] && echo 1 || echo 0 )" \
     "query exit=$CL_RC parse exit=$RC parse stdout=$OUT parse stderr=$ERR" "query stdout=$(printf '%s' "$CL_OUT" | head -n 2)"
 fi
