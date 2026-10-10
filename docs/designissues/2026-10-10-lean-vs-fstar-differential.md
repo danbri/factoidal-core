@@ -238,6 +238,7 @@ necessary" stood on issue 718 until this correction.
 | default (Lean library) | 234 agree, 18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of 650) |
 | `--lean-cli`, the released `l4factoidal` of the same build (before the fixes) | 233 agree, 19 disagree, 0 tie-order, 0 fstar-error, 6 lean-error, 392 skipped (out of 650) |
 | `--lean-cli`, `l4factoidal` with the fixes | 233 agree, 19 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of 650) |
+| `--lean-cli`, `l4factoidal` with the fixes and the `NOW()` clock read (issue 743) | 234 agree, 18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of 650) |
 
 With the released command line the six `lean-error` items are items 19 to 24,
 the defects of issues 741 and 742. In both `--lean-cli` runs the one extra
@@ -245,9 +246,16 @@ disagreement is `NOW()` (W3C `functions/now01`): the Lean command line
 answers `false`, the W3C expected answer is `true`. This is a third Lean
 command-line defect that the library comparison could not see: the ops path
 builds its evaluation environment with no clock, so `NOW()` is an error
-(SPARQL 1.1 §17.4.5.1). It is open as
-https://github.com/danbri/factoidal/issues/743, with an expected-failure case
-in `Wasm/cli-smoke.sh`.
+(SPARQL 1.1 §17.4.5.1). Tracked as
+https://github.com/danbri/factoidal/issues/743. Repaired 2026-10-10: every IO
+entry of the ops layer (`l4factoidal query` and `update`, and the IO dispatch
+ops `queryDataset`, `queryDataset12`, `updateDataset`, `queryRaw`,
+`datasetQuery`, `datasetQuery12`, `datasetUpdate`, `storeQuery`,
+`storeHandleQuery`, `queryHdt` through `callBlobIO`) reads the system clock
+once per execution (`Wasm/Ops/Clock.lean`) and passes it as `EvalEnv.now`. The
+pure ops take `now` as a parameter whose default is `none`. The last row of the
+table is the result: the `--lean-cli` run agrees with the default run. The
+case in `Wasm/cli-smoke.sh` is a plain assertion.
 
 **Rule.** When a differential, a known-defect oracle or a status report says
 that a tree is right, it names the surface it ran: the library (`l4w3c`,

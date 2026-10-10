@@ -563,7 +563,11 @@ necessary" report. Rules:
   0 lean-error, 392 skipped (out of 650); with the released command line from
   before the fixes, 6 of those items are `lean-error` (items 19 to 24). The
   19th disagreement is `NOW()`, a third command-line defect
-  (https://github.com/danbri/factoidal/issues/743).
+  (https://github.com/danbri/factoidal/issues/743); after the repair (the IO
+  entries read the clock once per execution) `--lean-cli` gives 234 agree,
+  18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of
+  650), the same as the default mode, and `l4diff --verbose` prints
+  `AGREE NOW()`.
 
 ## Expected failures (owner rule, 2026-09-07)
 

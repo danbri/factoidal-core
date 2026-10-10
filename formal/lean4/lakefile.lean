@@ -200,7 +200,7 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_lib l4wasm where
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
-             `Wasm.ExtHost, `Wasm.Ops.ExtFns,
+             `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
              `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,

@@ -324,6 +324,31 @@ touches Lean's IO, socket, DNS or task layers. If that list ever grows,
 something impure got exported; treat a new stub as a design question,
 not a build fix.
 
+### The wall clock (NOW(), 2026-10-10)
+
+The module reads the wall clock in one place: `Wasm/Ops/Clock.lean`, for
+SPARQL `NOW()` (https://github.com/danbri/factoidal/issues/743). It uses the
+toolchain's own `Std.Time.Timestamp.now`, whose C symbol
+`lean_get_current_time` is in the runtime's `io.cpp` (already built in step 5,
+over `std::chrono::system_clock`; Emscripten serves it from the host's clock).
+The one `Std.Time` module Lean code imports is `Std.Time.DateTime.Timestamp`,
+and its module initialiser chains through 26 `Std.Time` modules. Step 3 does
+not regenerate `Std/Time` as a directory (most of it reaches libuv); it
+generates exactly those 26, listed in `STD_TIME_MODULES` in `build-wasm.sh`.
+Trap: a module missing from that list is an undefined `initialize_Std_Time_*`
+symbol at the link in step 7, and a toolchain bump can change the closure
+(recompute it from the `import` lines of `Std/Time/DateTime/Timestamp.lean`).
+Measured cost (full / core module, `-O3` after `wasm-opt`): +82,436 and +88,885
+bytes. The check after a rebuild: `queryDataset` with W3C `functions/now01.rq`
+answers `true` through `l4factoidal.js` and through `npm/factoidal`.
+
+Which C entries have the clock: `l4_call_c` (the shim routes it through
+`l4_call_io`) and `l4_call_blob_io_c`. The pure `l4_call` and `l4_call_blob_c`
+have none, by design, so `NOW()` is an error there; `l4_call_blob_c` stays pure
+because routing it through the IO entry would also run the ops that build an
+out region (`packNext`, `blobEcho`) and drop that region. The npm package calls
+`queryHdt` through `callBlobIO` for this reason.
+
 ## The C ABI and its memory rules
 
 Lean side (`Wasm/Exports.lean`):

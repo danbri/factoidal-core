@@ -152,7 +152,8 @@ What still keeps F\* in the build:
   - canonicalization scaling: https://github.com/danbri/factoidal/issues/745;
   - 87 input-proportional recursions outside the allow list:
     https://github.com/danbri/factoidal/issues/746.
-- `NOW()` on the command line and wasm path:
+- `NOW()` on the command line and wasm path (repaired 2026-10-10: the IO
+  entries read the clock once per execution):
   https://github.com/danbri/factoidal/issues/743.
 - SERVICE follow-ups: https://github.com/danbri/factoidal/issues/735.
 - The browser durable log: https://github.com/danbri/factoidal/issues/728.

@@ -425,7 +425,11 @@ def call (op : String) (argsJson : String) : String :=
 
 /-- The dispatch entry the `l4_call_blob` C export serves: the string
 arguments of `call`, plus one byte region. Every other op delegates to `call`,
-envelope for envelope, so a host may route everything through this entry. -/
+envelope for envelope, so a host may route everything through this entry.
+This entry is pure and has no clock: a `NOW()` in a `storeQuery` or `queryHdt`
+query is an error here (SPARQL 1.1 §17.4.5.1). The IO entry `callBlobIO` reads
+the clock once per query and serves both ops with it
+(https://github.com/danbri/factoidal/issues/743). -/
 def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
   match op with
   | "storeQuery" =>
@@ -572,6 +576,15 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b, c] => do pure (← Ops.storeQueryIO a b c blob, ByteArray.empty)
       | .ok args      => pure (errJson s!"storeQuery expects 3 arguments, got {args.length}",
                                ByteArray.empty)
+  -- `queryHdt` is served here so that `NOW()` is the instant read once for the
+  -- query (SPARQL 1.1 §17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
+  | "queryHdt" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a]    => do pure (← Ops.queryHdtIO a blob, ByteArray.empty)
+      | .ok args   => pure (errJson s!"queryHdt expects 1 argument, got {args.length}",
+                            ByteArray.empty)
   | "storeOpen" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

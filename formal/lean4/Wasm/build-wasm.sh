@@ -188,14 +188,39 @@ export CORE_C LEAN_SRC
 # Init always; plus the Std subset the library imports (Std.Data.HashMap
 # / HashSet arrived with RLClosureIndexed and the COTTAS lazy dicts —
 # their initializers pull the Std/Data + Std/Classes import closure).
-# Std.Time / Std.Net / Std.Internal.UV are NOT regenerated: their C
+# Std.Net / Std.Internal.UV and most of Std.Time are NOT regenerated: their C
 # references libuv definitions the wasm link has only declarations for.
+#
+# The exception is the 26 Std.Time modules that `Std.Time.DateTime.Timestamp`
+# imports (listed below, none touches libuv). `Wasm/Ops/Clock.lean` imports
+# that one module to read the wall clock for NOW() (SPARQL 1.1 section
+# 17.4.5.1, https://github.com/danbri/factoidal/issues/743): its module
+# initialiser chains through those 26. The clock primitive itself,
+# `lean_get_current_time`, is in the runtime's io.cpp (step 5), over
+# `std::chrono::system_clock`, which Emscripten serves from the host's clock.
+# Recompute the list with the import closure of that module when the toolchain
+# is bumped: a module missing here is an undefined `initialize_Std_Time_*`
+# symbol at the link in step 8.
+STD_TIME_MODULES="Internal/Bounded Internal/UnitVal Internal
+  Time/Unit/Nanosecond Time/Unit/Second Time/Unit/Minute Time/Unit/Hour
+  Time/Unit/Millisecond Time/Unit/Basic Time/Basic Time/HourMarker
+  Time/PlainTime Time
+  Date/Unit/Day Date/Unit/Month Date/Unit/Year Date/Unit/Weekday Date/Unit/Week
+  Date/Unit/Basic Date/ValidDate Date/Basic Date/PlainDate Date
+  Duration DateTime/WallTime DateTime/Timestamp"
+STD_TIME_FILES=""
+for m in $STD_TIME_MODULES; do
+  [ -f "$LEAN_SRC/Std/Time/$m.lean" ] \
+    || { echo "Std.Time module $m is not in the toolchain sources"; exit 1; }
+  STD_TIME_FILES="$STD_TIME_FILES $LEAN_SRC/Std/Time/$m.lean"
+done
 STD_DIRS=""
 for d in "$LEAN_SRC/Std/Data" "$LEAN_SRC/Std/Classes" "$LEAN_SRC/Std/Do"; do
   [ -d "$d" ] && STD_DIRS="$STD_DIRS $d"
 done
 { echo "$LEAN_SRC/Init.lean"; find "$LEAN_SRC/Init" -name '*.lean'; \
-  [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; true; } \
+  [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; \
+  printf '%s\n' $STD_TIME_FILES; true; } \
   | xargs -P 8 -I{} bash -c 'gen_one "$@"' _ {}
 echo "  core C files: $(ls "$CORE_C"/*.c | wc -l | tr -d ' ')"
 

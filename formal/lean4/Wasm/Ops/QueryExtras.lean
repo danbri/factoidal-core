@@ -43,6 +43,7 @@ import Wasm.Ops.Support
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.ExtFns
+import Wasm.Ops.Clock
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Results
@@ -97,11 +98,13 @@ private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String D
   | other => .error
       s!"queryRaw: entail must be none, RDFS, OWL-RL, x-rdfscore or x-rdfsplus (got '{other}')"
 
-private def evalRaw (ds : Dataset) (sparql : String) : Except String RawAnswer :=
+private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := none) :
+    Except String RawAnswer :=
   match parseSparql sparql with
   | .error e => .error s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
-    let env : EvalEnv := { base := q.base, ext := extFnsWith [], dataset := some ds }
+    let env : EvalEnv := { base := q.base, ext := extFnsWith [], dataset := some ds,
+                           now := now }
     -- Federated Query §2.3: a failed SERVICE call without SILENT is the
     -- answer (`Query.serviceFailure`, issue 717).
     match q.serviceFailure env ds with
@@ -167,8 +170,11 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
     | other, _ => .error s!"queryRaw: unknown output format '{other}'"
 
 /-- `queryRaw(data, sparql, optsJson)`; `extra` reads the syntaxes outside
-`Wasm/Ops/Parse.lean`'s table. -/
-def queryRawBy (extra : ExtraReader) (data sparql optsJson : String) : String :=
+`Wasm/Ops/Parse.lean`'s table. `now` is the value of `NOW()` (SPARQL 1.1
+§17.4.5.1); this pure form reads no clock, so with `now = none` a `NOW()` call
+is an error (https://github.com/danbri/factoidal/issues/743). -/
+def queryRawBy (extra : ExtraReader) (data sparql optsJson : String)
+    (now : Option String := none) : String :=
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String :=
     match opts.bind (fun j => j.getString? k) with
@@ -184,12 +190,19 @@ def queryRawBy (extra : ExtraReader) (data sparql optsJson : String) : String :=
     match closeDefaultGraph (field "entail" "none") ds0 with
     | .error e => errJson e
     | .ok ds =>
-      match evalRaw ds sparql with
+      match evalRaw ds sparql now with
       | .error e => errJson e
       | .ok a =>
         match renderRaw output a with
         | .error e => errJson e
         | .ok text => okWith [("text", .string text)]
+
+/-- `queryRaw` through the IO dispatch entry: the same envelope, with the clock
+read ONCE for the query (SPARQL 1.1 §17.4.5.1), so `NOW()` is the instant of
+this call. -/
+def queryRawIOBy (extra : ExtraReader) (data sparql optsJson : String) : IO String := do
+  let now ← nowDateTime
+  pure (queryRawBy extra data sparql optsJson (some now))
 
 /-! ## Build-time checks (positive and negative) -/
 
@@ -224,6 +237,15 @@ private def rawEntail (regime q : String) : String :=
 #guard ((rawEntail "x-rdfsplus" askInv).splitOn "boolean\\\":true").length > 1
 #guard ((rawEntail "x-rdfscore" askInv).splitOn "boolean\\\":false").length > 1
 #guard (rawEntail "x-unknown" askD).startsWith "{\"ok\":false"
+
+-- NOW() (https://github.com/danbri/factoidal/issues/743): the pure form given a
+-- `now` answers it; given none, NOW() is an error and the variable is unbound.
+private def rawNow (now : Option String) : String :=
+  queryRawBy noExtraReader "" "SELECT ?n WHERE { BIND(NOW() AS ?n) }"
+    "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}" now
+#guard rawNow (some "2026-10-10T12:34:56Z") == "{\"ok\":true,\"text\":\"n\\r\\n2026-10-10T12:34:56Z\\r\\n\"}"
+#guard rawNow none == "{\"ok\":true,\"text\":\"n\\r\\n\\r\\n\"}"
+#guard rawNow (some "2000-01-01T00:00:00Z") != rawNow (some "2026-10-10T12:34:56Z")
 
 
 end L4Wasm.Ops
