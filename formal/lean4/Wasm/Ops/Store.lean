@@ -685,7 +685,7 @@ The answer is the ordinary `queryDataset` envelope with `"shards"` and
 `"mode"` in front of `"kind"`, so a host handles the result exactly as it
 handles `queryDataset`. -/
 def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
-    (extIris : List String := []) : String :=
+    (extIris : List String := []) (now : Option String := none) : String :=
   let outcome : Except String String := do
     let manifest ← decodeManifest? "storeQuery" manifestHex
     let query ← parseQuery "storeQuery" sparql
@@ -701,7 +701,7 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
         let quads ← readIbk5 sources blob blobs plan.entries []
         let ds := datasetOfQuads quads
         let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
-        pure (queryParsedDatasetWith ds backend sparql extra extIris)
+        pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk4 =>
         let quads ← readIbk4 sources blob plan.entries []
         let ds := datasetOfQuads quads
@@ -709,21 +709,25 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
         -- so such a dataset takes the reference evaluator, exactly as
         -- `Harness/QuadQuery.lean` does natively.
         let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
-        pure (queryParsedDatasetWith ds backend sparql extra extIris)
+        pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk3 =>
         let triples ← readIbk3 sources blob plan.entries []
         let ds : Dataset := { default := triples, named := [] }
-        pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql extra extIris)
+        pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql extra extIris
+                [] .v11 none now)
   match outcome with
   | .error e => errJson e
   | .ok envelope => envelope
 
 /-- `storeQuery` through the IO dispatch entry: the same envelope, with
 the caller's §17.6 extension registrations in scope (snapshot read once,
-before evaluation). -/
+before evaluation) and `NOW()` the instant read once here (§17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). -/
 def storeQueryIO (manifestHex sparql artifactsJson : String) (blob : ByteArray) :
     IO String := do
-  pure (storeQuery manifestHex sparql artifactsJson blob (← extSnapshot))
+  let extIris ← extSnapshot
+  let now ← nowDateTime
+  pure (storeQuery manifestHex sparql artifactsJson blob extIris (some now))
 
 /-! ## Executable ABI pins
 

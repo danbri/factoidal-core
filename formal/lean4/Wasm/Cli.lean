@@ -529,7 +529,11 @@ def queryCmd (args : List String) : IO UInt32 := do
       match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
       | .ok ds =>
-        match ← parseEnvelope (Ops.queryDatasetOf ds sparql queryBase) with
+        -- SPARQL 1.1 §17.4.5.1: `NOW()` is one instant for the whole query
+        -- execution. The clock is read here, at the edge, once, and passed to
+        -- the pure op (https://github.com/danbri/factoidal/issues/743).
+        let now ← Ops.nowDateTime
+        match ← parseEnvelope (Ops.queryDatasetOf ds sparql queryBase (some now)) with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
 
@@ -548,7 +552,11 @@ def updateCmd (args : List String) : IO UInt32 := do
       match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
       | .ok ds =>
-        match ← parseEnvelope (Ops.updateDatasetOf ds upd updateBase) with
+        -- One clock read per request: `NOW()` in a WHERE clause is the same
+        -- instant in every operation of the request (SPARQL 1.1 §17.4.5.1,
+        -- https://github.com/danbri/factoidal/issues/743).
+        let now ← Ops.nowDateTime
+        match ← parseEnvelope (Ops.updateDatasetOf ds upd updateBase (some now)) with
         | none => pure 1
         | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 

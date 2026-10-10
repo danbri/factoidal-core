@@ -218,6 +218,12 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   -- of the query or update text (`baseArg`).
   | "queryDataset"     => some (arityIO2Base op (fun a b c => Ops.queryDatasetIO a b c) args)
   | "queryDataset12"   => some (arityIO2Base op (fun a b c => Ops.queryDataset12IO a b c) args)
+  -- The update and `queryRaw` ops are pure in the table above; their IO forms read
+  -- the clock once per request, so `NOW()` in a WHERE clause or a query is the
+  -- instant of the call (SPARQL 1.1 §17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
+  | "updateDataset"    => some (arityIO2Base op (fun a b c => Ops.updateDatasetIO a b c) args)
+  | "queryRaw"         => some (arityIO3 op (Ops.queryRawIOBy extra) args)
   | "datasetOpen"      => some (arityIO3 op (Ops.datasetOpenBy extra) args)
   | "datasetQuery"     => some (arityIO2Base op (fun a b c => Ops.datasetQuery a b c) args)
   | "datasetQuery12"   => some (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c) args)

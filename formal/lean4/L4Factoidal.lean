@@ -468,6 +468,7 @@ import L4Factoidal.RDF.Format
 import L4Factoidal.SPARQL.JsonEscape
 import L4Factoidal.SPARQL.EvalLimits
 import L4Factoidal.SPARQL.TimeBudget
+import L4Factoidal.SPARQL.Now
 import L4Factoidal.OWL.DirectMappingFilter
 import L4Factoidal.RDFS.RDFSPlus
 import L4Factoidal.RDF.Pretty

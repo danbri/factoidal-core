@@ -572,6 +572,15 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b, c] => do pure (← Ops.storeQueryIO a b c blob, ByteArray.empty)
       | .ok args      => pure (errJson s!"storeQuery expects 3 arguments, got {args.length}",
                                ByteArray.empty)
+  -- `queryHdt` is served here so that `NOW()` is the instant read once for the
+  -- query (SPARQL 1.1 §17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
+  | "queryHdt" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a]    => do pure (← Ops.queryHdtIO a blob, ByteArray.empty)
+      | .ok args   => pure (errJson s!"queryHdt expects 1 argument, got {args.length}",
+                            ByteArray.empty)
   | "storeOpen" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)
