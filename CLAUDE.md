@@ -191,7 +191,9 @@ root-level Lake failures.
    closure rules. Core requirements, not "just inference."
 9. **Binaries are built and published by `danbri/factoidal-builds`,
    never committed here.** (Changed 2026-10-09 by the core/builds split;
-   until then this rule said "commit compiled binaries".) A fresh clone
+   until then this rule said "commit compiled binaries". Owner, 2026-10-10,
+   verbatim: "Actually we have committed build artifacts before to aid
+   testing in CI, but it got heavy hence new builds repo.") A fresh clone
    still runs tests with no toolchain: `tools/fetch-builds.sh` installs
    the newest release whose source commit is in this checkout's history
    into `bin/<platform>/` (plus the wasm and JS bundles under `npm/` and

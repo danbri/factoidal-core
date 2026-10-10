@@ -14,6 +14,9 @@ Owner instructions:
   repo."
 - 2026-10-09, verbatim: "We want factoidal to be built in factoidal build
   from fstar and lean4 trees in factoidal-core."
+- 2026-10-10, verbatim, on why the binaries moved: "Actually we have
+  committed build artifacts before to aid testing in CI, but it got heavy
+  hence new builds repo."
 
 ## 1. Result
 
