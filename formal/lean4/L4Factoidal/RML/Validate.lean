@@ -76,20 +76,6 @@ def rmlIri (local' : String) : String := rmlNs ++ local'
 /-- How many values `(n, rml:p)` has. -/
 def countOf (g : Graph) (n p : String) : Nat := (objectsOf g n (rmlIri p)).length
 
-/-- The reference formulation IRI of the logical source at `ls`. A blank
-    node typed `rml:XPathReferenceFormulation` names the XPath
-    formulation (RML-IO, "Reference formulations"). -/
-def formulationAt (g : Graph) (ls : String) : String :=
-  match objOf g ls (rmlIri "referenceFormulation") with
-  | some (.iri i) => i.val
-  | some (.bnode b) =>
-      if (objectsOf g ("_:" ++ b) rdfTypeStr).any (fun t => match t with
-           | .iri i => i.val == rmlIri "XPathReferenceFormulation" | _ => false)
-      then rmlIri "XPath" else ""
-  | _ => ""
-
-def jsonPathIri : String := rmlIri "JSONPath"
-
 /-- The logical source node of a triples map, if it states one. -/
 def logicalSourceNode (g : Graph) (tm : String) : Option String :=
   (nodesOf g tm (rmlIri "logicalSource")).head?

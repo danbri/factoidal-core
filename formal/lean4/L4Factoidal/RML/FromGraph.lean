@@ -72,7 +72,8 @@ def termMapAt (g : Graph) (n : String) : TermMap :=
   { form     := form
     termType := (strOf g n (rmlNs ++ "termType")).bind termTypeOf
     datatype := strOf g n (rmlNs ++ "datatype")
-    language := strOf g n (rmlNs ++ "language") }
+    language := strOf g n (rmlNs ++ "language")
+    targets  := nodesOf g n (rmlNs ++ "logicalTarget") }
 
 /-- A constant term map from a shortcut object. -/
 def constantMap (t : Term) : TermMap := { form := .constant t }
@@ -116,11 +117,84 @@ def pomAt (g : Graph) (n : String) : PredicateObjectMap :=
                        (fun t => ObjectMap.term (constantMap t) none none)
     graphs     := mapsFor g n "graphMap" "graph" }
 
+/-- The reference formulation IRI of the logical source at `ls`. A blank
+    node typed `rml:XPathReferenceFormulation` names the XPath
+    formulation (RML-IO, "Reference formulations"). -/
+def formulationAt (g : Graph) (ls : String) : String :=
+  match objOf g ls (rmlNs ++ "referenceFormulation") with
+  | some (.iri i) => i.val
+  | some (.bnode b) =>
+      if (objectsOf g ("_:" ++ b) rdfTypeStr).any (fun t => match t with
+           | .iri i => i.val == rmlNs ++ "XPathReferenceFormulation" | _ => false)
+      then rmlNs ++ "XPath" else ""
+  | _ => ""
+
+/-- The XPath namespace declarations of a reference formulation node
+    (RML-IO, `rml:namespace` with `rml:namespacePrefix` and
+    `rml:namespaceURL`). -/
+def namespacesAt (g : Graph) (ls : String) : List (String × String) :=
+  match objOf g ls (rmlNs ++ "referenceFormulation") with
+  | some (.bnode b) =>
+      (nodesOf g ("_:" ++ b) (rmlNs ++ "namespace")).filterMap (fun ns =>
+        match strOf g ns (rmlNs ++ "namespacePrefix"), strOf g ns (rmlNs ++ "namespaceURL") with
+        | some p, some u => some (p, u)
+        | _, _ => none)
+  | _ => []
+
+/-- The logical source at node `n`: the source access description
+    (`rml:source`) and the reference formulation and iterator. -/
 def sourceAt (g : Graph) (n : String) : LogicalSource :=
   let src := (nodesOf g n (rmlNs ++ "source")).head?
-  { path           := (src.bind (fun s => strOf g s (rmlNs ++ "path"))).getD ""
+  let srcStr := fun (p : String) => (src.bind (fun s => strOf g s (rmlNs ++ p)))
+  { path           := (srcStr "path").getD ""
     iterator       := strOf g n (rmlNs ++ "iterator")
-    refFormulation := (strOf g n (rmlNs ++ "referenceFormulation")).getD "" }
+    refFormulation := formulationAt g n
+    root           := (srcStr "root").getD ""
+    encoding       := (srcStr "encoding").getD ""
+    compression    := (srcStr "compression").getD ""
+    nulls          := (src.map (fun s =>
+                         (objectsOf g s (rmlNs ++ "null")).filterMap (fun t => match t with
+                           | .literal l => some l.val.lexicalForm
+                           | _ => none))).getD []
+    namespaces     := namespacesAt g n
+    accessKind     := (src.bind (fun s =>
+                         (objectsOf g s rdfTypeStr).filterMap (fun t => match t with
+                           | .iri i =>
+                               if i.val.startsWith "http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/"
+                               then some i.val else none
+                           | _ => none) |>.head?)).getD "" }
+
+/-- The logical targets of a mapping graph: every node a term map
+    names with `rml:logicalTarget`, and every node typed
+    `rml:LogicalTarget`. The access description is the node
+    `rml:target` points at. -/
+def logicalTargetsOf (g : Graph) : List LogicalTarget :=
+  let typed := (g.filter (fun t =>
+      t.p.val == rdfTypeStr &&
+      (match t.o with | .iri i => i.val == rmlNs ++ "LogicalTarget" | _ => false))).map
+    (fun t => subjKey t.s)
+  let named := (g.filter (fun t => t.p.val == rmlNs ++ "logicalTarget")).filterMap
+    (fun t => nodeKey t.o)
+  let nodes := (typed ++ named).foldl
+    (fun acc n => if acc.contains n then acc else acc ++ [n]) ([] : List String)
+  nodes.map (fun n =>
+    let acc := (nodesOf g n (rmlNs ++ "target")).head?
+    let accStr := fun (p : String) => (acc.bind (fun a => strOf g a (rmlNs ++ p)))
+    { id            := n
+      path          := (accStr "path").getD ""
+      root          := (accStr "root").getD ""
+      serialization := (strOf g n (rmlNs ++ "serialization")).getD ""
+      -- RML-IO puts `rml:compression` and `rml:encoding` on the target
+      -- access description; the corpus also writes them beside
+      -- `rml:serialization` on the logical target itself, so both are read.
+      compression   := ((accStr "compression").orElse (fun _ => strOf g n (rmlNs ++ "compression"))).getD ""
+      encoding      := ((accStr "encoding").orElse (fun _ => strOf g n (rmlNs ++ "encoding"))).getD ""
+      accessKind    :=
+        match acc with
+        | none => "no access description"
+        | some a =>
+            if (strOf g a (rmlNs ++ "path")).isSome then ""
+            else "an access description other than a file path" })
 
 /-- The classes whose instances are triples maps. RML-star adds the
     asserted and non-asserted subclasses. -/

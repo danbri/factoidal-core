@@ -115,15 +115,15 @@ private def person : Json :=
            ("nick", .null),
            ("addr", .object [("city", .string "X")])]
 
-#guard (refValuesE person "$.fname").2.isEmpty
-#guard (refValuesE person "$.amounts[*]").2.isEmpty
-#guard (refValuesE person "$.amounts[*]").1.length == 2
-#guard (refValuesE person "$.amounts").2.length == 1
-#guard (refValuesE person "$.addr").2.length == 1
+#guard (refValuesE (Record.json person) "$.fname").2.isEmpty
+#guard (refValuesE (Record.json person) "$.amounts[*]").2.isEmpty
+#guard (refValuesE (Record.json person) "$.amounts[*]").1.length == 2
+#guard (refValuesE (Record.json person) "$.amounts").2.length == 1
+#guard (refValuesE (Record.json person) "$.addr").2.length == 1
 -- `null` is Empty, not an error.
-#guard (refValuesE person "$.nick").2.isEmpty
-#guard (refValuesE person "$.nick").1.isEmpty
-#guard (refValuesE person "$.absent").2.isEmpty
+#guard (refValuesE (Record.json person) "$.nick").2.isEmpty
+#guard (refValuesE (Record.json person) "$.nick").1.isEmpty
+#guard (refValuesE (Record.json person) "$.absent").2.isEmpty
 
 /-! ## Static validation of the mapping graph -/
 

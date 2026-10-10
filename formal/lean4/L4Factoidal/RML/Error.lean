@@ -27,6 +27,10 @@ namespace L4Factoidal.RML
 
 inductive ErrorKind where
   | mapping | source | data
+  /-- Not a rejection of the mapping: the mapping needs something this
+      port does not have (a database, a compression codec, a function).
+      The run is not scored, and `bucket` says what is missing. -/
+  | unsupported
 deriving Repr, DecidableEq, Inhabited
 
 structure RmlError where
@@ -36,6 +40,9 @@ structure RmlError where
   /-- The specification clause the rejection enforces, quoted briefly. -/
   clause  : String
   message : String
+  /-- For an `unsupported` error, the name of what is missing; the
+      runner groups unattempted cases by it. -/
+  bucket  : String := ""
 deriving Repr, Inhabited
 
 def RmlError.mapping (site clause message : String) : RmlError :=
@@ -47,10 +54,14 @@ def RmlError.source (site clause message : String) : RmlError :=
 def RmlError.data (site clause message : String) : RmlError :=
   { kind := .data, site := site, clause := clause, message := message }
 
+def RmlError.unsupported (site clause bucket message : String) : RmlError :=
+  { kind := .unsupported, site := site, clause := clause, message := message, bucket := bucket }
+
 def ErrorKind.label : ErrorKind → String
   | .mapping => "mapping"
   | .source  => "source"
   | .data    => "data"
+  | .unsupported => "unsupported"
 
 /-- One line a human can read: kind, site, message, clause. -/
 def RmlError.render (e : RmlError) : String :=

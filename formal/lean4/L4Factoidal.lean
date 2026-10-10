@@ -269,6 +269,11 @@ import L4Factoidal.ShEx.Compact
 import L4Factoidal.ShEx.CompactTests
 import L4Factoidal.ShEx.Structure
 import L4Factoidal.ShEx.StructureTests
+import L4Factoidal.Codec.Crc32
+import L4Factoidal.Codec.Inflate
+import L4Factoidal.Codec.Archive
+import L4Factoidal.Syntax.RdfJson
+import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RML.Mapping
 import L4Factoidal.RML.Tests
 import L4Factoidal.RML.JsonPath
@@ -279,9 +284,15 @@ import L4Factoidal.RML.Error
 import L4Factoidal.RML.FromGraph
 import L4Factoidal.RML.Validate
 import L4Factoidal.RML.Eval
+import L4Factoidal.RML.Encoding
+import L4Factoidal.RML.Compression
+import L4Factoidal.RML.Record
+import L4Factoidal.RML.Open
+import L4Factoidal.RML.Targets
 import L4Factoidal.RML.Run
 import L4Factoidal.RML.EvalTests
 import L4Factoidal.RML.ValidateTests
+import L4Factoidal.RML.SourceTests
 import L4Factoidal.RML.VirtualSource
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps

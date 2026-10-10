@@ -48,6 +48,9 @@ structure TermMap where
   termType : Option TermType := none
   datatype : Option String := none
   language : Option String := none
+  /-- `rml:logicalTarget`: the targets (RML-IO) every triple generated
+      with this term map is exported to, as the nodes that name them. -/
+  targets  : List String := []
 deriving Repr
 
 /-! ## Templates -/
@@ -225,11 +228,26 @@ private def mkLiteralE (tm : TermMap) (lex : String) : Except RmlError Term :=
               match L4Factoidal.XSD.builtinOfIri? d with
               | some b => (L4Factoidal.XSD.lexicalMapWs b lex).isNone
               | none   => false
+            -- RML-Core, Natural mapping of source values: implementations
+            -- SHOULD apply the XSD canonical mapping to the lexical form
+            -- (`33` under `xsd:double` is `3.3E1`, `RMLTTC0002q`). Only a
+            -- value of a non-string type is rewritten; a string keeps its
+            -- characters.
+            let lexC :=
+              match L4Factoidal.XSD.builtinOfIri? d with
+              | some b =>
+                  match L4Factoidal.XSD.lexicalMapWs b lex with
+                  | some (.str _ _) => lex
+                  | some (.seq _) => lex
+                  | some (.qname ..) => lex
+                  | some v => L4Factoidal.XSD.canonicalMap b v
+                  | none => lex
+              | none => lex
             if illTyped then
               .error (RmlError.data "" "RML-Core, Datatype conversions: ill-typed literal"
                 s!"'{lex}' is not in the lexical space of <{d}>")
             else if h2 : (dt != rdfLangString && dt != rdfDirLangString) = true then
-              .ok (.literal ⟨{ lexicalForm := lex, datatype := dt, langTag := none,
+              .ok (.literal ⟨{ lexicalForm := lexC, datatype := dt, langTag := none,
                                direction := none }, by simpa [literalWf] using h2⟩)
             else .ok (.literal (Literal.string lex))
           else .error (RmlError.data "" termGenerationRules

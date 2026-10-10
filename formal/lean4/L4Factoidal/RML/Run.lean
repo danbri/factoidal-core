@@ -24,14 +24,26 @@ namespace L4Factoidal.RML
 open L4Factoidal.RDF
 open L4Factoidal.JSON
 
-/-- Validate a mapping graph, then evaluate it. -/
-def runMappingGraph (g : Graph) (defaultBase : Option String)
-    (docFor : String → Option Json) : EvalResult :=
+/-- Validate a mapping graph, then evaluate it over opened sources. A
+    rejection of either kind leaves no quads. -/
+def runMappingGraphWith (g : Graph) (defaultBase : Option String)
+    (open' : Mapping → SourceTable) : EvalResult :=
   let static := validateMapping g
   if !static.isEmpty then { quads := [], errors := static }
   else
-    let r := evalMappingE defaultBase (mappingOf g) docFor
+    let m := mappingOf g
+    let r := evalMappingWith defaultBase m (open' m)
     if r.errors.isEmpty then r else { quads := [], errors := r.errors }
+
+/-- Validate and evaluate, reading each logical source through `fa`. -/
+def runMappingGraphFiles (g : Graph) (defaultBase : Option String) (fa : FileAccess)
+    : EvalResult :=
+  runMappingGraphWith g defaultBase (fun m => buildSourceTable m fa)
+
+/-- Validate and evaluate over already-parsed JSON documents. -/
+def runMappingGraph (g : Graph) (defaultBase : Option String)
+    (docFor : String → Option Json) : EvalResult :=
+  runMappingGraphWith g defaultBase (fun m => jsonSourceTable m docFor)
 
 /-- Was the run rejected? -/
 def EvalResult.rejected (r : EvalResult) : Bool := !r.errors.isEmpty
