@@ -46,6 +46,9 @@ bench = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bench)
 
 BIN_DIR = Path(os.environ.get("L4_BIN_DIR", ROOT / "formal/lean4/.lake/build/bin"))
+# The F* command line (tools/fetch-builds.sh --set native). Rows whose id ends
+# in "-fstar" run it and are SKIPPED, not scored, when it is not installed.
+FSTAR_BIN = Path(os.environ.get("FSTAR_BIN", ROOT / "bin/linux-x86_64/factoidal"))
 WORK = Path(os.environ.get("OWL_REAL_FIXTURES", "/tmp/factoidal-owl-real-gate"))
 AS_BYTES = 6_000_000_000
 
@@ -92,7 +95,9 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
         if prep is None:
             return False, "the source files do not parse"
     out = str(wd / f"{step}.out")
-    if step == "closure":
+    if step == "closure" and rid.endswith("-fstar"):
+        cmd = [str(FSTAR_BIN), "entail", "--data", str(merged), "--regime", "OWL-RL"]
+    elif step == "closure":
         cmd = [lean, "closure", str(merged), "--format", "nquads", "--regime", "owl-rl"]
     elif step == "consistent":
         cmd = [lean, "owl-consistent", str(merged), "--format", "nquads"]
@@ -128,7 +133,7 @@ def main() -> int:
               "(cd formal/lean4 && lake build l4factoidal)", file=sys.stderr)
         return 2
     names = [r for r in a.only.split(",") if r] or list(ROWS)
-    passed = failed = xfailed = 0
+    passed = failed = xfailed = skipped = 0
     print(f"OWL real-ontology gate: wall-clock cap {a.cap_s} s, address-space cap "
           f"{AS_BYTES} bytes per step; load average {os.getloadavg()[0]:.2f}")
     for rid in names:
@@ -136,6 +141,10 @@ def main() -> int:
             print(f"  unknown row {rid}", file=sys.stderr)
             return 2
         issue = XFAIL.get(rid)
+        if rid.endswith("-fstar") and not FSTAR_BIN.exists():
+            skipped += 1
+            print(f"  SKIP {rid}: {FSTAR_BIN} not installed (tools/fetch-builds.sh --set native)")
+            continue
         ok, detail = run_row(rid, a.cap_s)
         if issue and not ok:
             xfailed += 1
@@ -149,7 +158,8 @@ def main() -> int:
             failed += (not ok)
             print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
     print(f"owl-real: {passed} pass, {failed} fail, {xfailed} expected-fail "
-          f"(out of {passed + failed + xfailed})")
+          f"(out of {passed + failed + xfailed})"
+          + (f"; {skipped} skipped (F* binary not installed)" if skipped else ""))
     return 0 if failed == 0 else 1
 
 

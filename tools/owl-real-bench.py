@@ -32,7 +32,15 @@ so each row carries wall time, user and system CPU time, the peak resident
 set size (ru_maxrss of the process tree) and the 1-minute load average at
 its start. A step killed by the wall-clock cap is recorded as TIMEOUT; a step
 that fails to allocate under the address-space cap is recorded as OOM. Neither
-is ever recorded as a verdict. After the first TIMEOUT or OOM among the
+is ever recorded as a verdict. The resident set of the process tree is also
+sampled every 0.2 s; a killed step reports that sample, because time -v then
+measures only the `timeout` process.
+
+`--rss-cap-mb MB` replaces prlimit with a watchdog that kills a step whose
+resident set passes MB (status RSS_CAP). An address-space cap is not a memory
+cap for a Lean executable: the Lean runtime reserves two 1 GiB thread stacks
+and its heap in 1 GiB regions, so under --as=6000000000 the OWL RL closure of
+QUDT failed to allocate with 1.25 GB resident (record, section 5). After the first TIMEOUT or OOM among the
 entailment checks of one ontology, the remaining checks of that ontology are
 recorded as NOT_RUN (each check recomputes the closure, so each would hit the
 same cap).
@@ -178,7 +186,9 @@ def run_step(cmd, cap_s, as_bytes, stdout_path, workdir, rss_cap_bytes=0):
             sampled = max(sampled, g)
             if rss_cap_bytes and g > rss_cap_bytes:
                 rss_killed = True
-                for x in reversed(pids):
+                # Kill the tree below /usr/bin/time, so that time -v still
+                # reports the CPU time of the killed command.
+                for x in reversed(pids[1:]):
                     try:
                         os.kill(x, 9)
                     except OSError:

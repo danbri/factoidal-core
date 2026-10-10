@@ -373,5 +373,9 @@ re-measurement is worse than nothing.**
 * `docs/designissues/2026-07-31-rdfs-performance-scalability.md` — the
   live plan, its measurements, and what measurement ruled out.
 * `tools/negative-test-vacuity.py` — the vacuity checker.
+* `tools/owl-real-bench.py` and
+  `docs/designissues/2026-10-10-owl-real-ontologies.md` — OWL RL closure, DL
+  consistency and DL entailment on ten real ontologies (section 2's rule
+  applied to the DL regime), with time, memory and the open issues.
 * `formal/fstar/RDF.Semantics.HypothesisWitness.fst` — theorem-vacuity
   witnesses.
