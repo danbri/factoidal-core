@@ -1240,11 +1240,12 @@ Semantics". Full record:
   0 pass, 0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 pass, 0
   fail, 347 not-refuted (out of 347); all units 191 pass, 138 fail, 370
   not-refuted (out of 699). `not-refuted` is never counted as proved.
-  Later the same day (branch `claude/wt-rdfbased-clash`), four clash rows
-  proved against the RDF-Based conditions (`OWL/RdfBased/Clash.lean`)
-  moved 7 InconsistencyTest units: InconsistencyTest 51 pass, 77 fail
-  (out of 128); all units 198 pass, 131 fail, 370 not-refuted (out of
-  699). The record's § 4.5, § 6 and § 7 list them.
+  Later the same day (branch `claude/wt-rdfbased-clash`), five clash rows
+  and two rules proved against the RDF-Based conditions
+  (`OWL/RdfBased/Clash.lean`, `Rules.lean`) moved 11 InconsistencyTest
+  units: InconsistencyTest 55 pass, 73 fail (out of 128); all units 202
+  pass, 127 fail, 370 not-refuted (out of 699). The record's § 4.5, § 6
+  and § 7 list them.
 * The 12 PositiveEntailmentTests of § 15.5 (DIRECT, species FULL only)
   are judged there: 7 pass (`WebOnt-Class-001`, `-Class-003`,
   `-I5.3-015`, `-I5.8-017`, `-Nothing-002`, `-equivalentProperty-005`,
