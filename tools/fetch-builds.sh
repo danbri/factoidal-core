@@ -141,6 +141,32 @@ PY
   # Install: copy over the checkout. Paths are relative to the repo root and
   # are all listed in .gitignore, so git status stays clean.
   ( cd "$TMP/x-$S" && tar -cf - . ) | ( cd "$REPO_ROOT" && tar -xpf - )
+  # Set each file's mode from build-info.json, so the result does not depend
+  # on how tar or the umask treat modes on this host. Releases before
+  # factoidal-builds eba0930 recorded 0644 for binaries (upload-artifact drops
+  # modes); a binary recorded 0644 is reported, not silently fixed.
+  MODE_RC=0
+  python3 - "$TMP/build-info-$S.json" "$REPO_ROOT" "$S" <<'PY' || MODE_RC=$?
+import json, os, sys
+info = json.load(open(sys.argv[1])); root, s = sys.argv[2], sys.argv[3]
+files = info['artifacts'][s + '.tar.gz']['files']
+bad = []
+for rel, f in files.items():
+    mode = int(f.get('mode', '644'), 8)
+    p = os.path.join(root, rel)
+    os.chmod(p, mode)
+    if rel.startswith('bin/') and not mode & 0o111:
+        with open(p, 'rb') as fh:
+            head = fh.read(4)
+        if head.startswith((b'\x7fELF', b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe', b'#!')):
+            bad.append(rel)
+if bad:
+    print(f"fetch-builds: {s}: {len(bad)} executables recorded without the execute bit "
+          f"(a release made before factoidal-builds eba0930); they will not run: {bad[0]} ...",
+          file=sys.stderr)
+    sys.exit(3)
+PY
+  if [ "$MODE_RC" -ne 0 ]; then RC=1; fi
   mkdir -p "$REPO_ROOT/.factoidal-builds"
   echo "$TAG" > "$STAMP"
   cp "$TMP/build-info-$S.json" "$REPO_ROOT/.factoidal-builds/$S.build-info.json"
