@@ -18,7 +18,7 @@ counts statements as read, so a repeated triple counts again.
 
 ## OWL 2 species
 
-SPECIES-PLACEHOLDER
+Verdict of `l4owl-species` on the Lean parser's N-Triples of the file(s), 2026-10-10: **Full**, 523 violations: `untyped-predicate` 296 and `untyped-class` 223 (the document carries SWRL rules, whose `swrl:` vocabulary has no OWL 2 DL typing), `reserved-vocabulary-subject` 4 (declarations of `rdfs:comment`, `rdfs:isDefinedBy`, `rdfs:label`, `rdfs:seeAlso` as `owl:AnnotationProperty`). The verdicts were not compared with a second species checker.
 
 The Lean species checker (`OWL.SyntaxDL.speciesViolations`, run by `l4owl-species`) decides OWL 2 DL against OWL 2 Full. It does not decide the EL, QL or RL profiles, so no profile is recorded here.
 

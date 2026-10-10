@@ -281,8 +281,15 @@ def prepare_merged(lean, files, fmt, wd):
     docs = []
     for i, f in enumerate(files):
         nt = os.path.join(wd, f"doc{i}.nt")
+        # Not a measured step; capped so that a file too large for the
+        # machine fails instead of exhausting it. MIMALLOC_ARENA_RESERVE keeps
+        # the address-space cap from failing a parse that fits in memory
+        # (https://github.com/danbri/factoidal/issues/759).
+        env = dict(os.environ, MIMALLOC_ARENA_RESERVE="64MiB")
         with open(nt, "wb") as out:
-            rc = subprocess.call([lean, "parse", f, "--format", fmt, "--out", "nquads"], stdout=out)
+            rc = subprocess.call(["timeout", "-s", "KILL", "1800", "prlimit",
+                                  "--as=8000000000", "--", lean, "parse", f, "--format", fmt,
+                                  "--out", "nquads"], stdout=out, env=env)
         if rc != 0:
             return None
         docs.append(nt)

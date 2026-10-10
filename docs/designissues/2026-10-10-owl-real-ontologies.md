@@ -81,6 +81,78 @@ its remaining checks are NOT_RUN. Each row records wall time, user and system
 CPU time, peak resident set size (`ru_maxrss`) and the 1-minute load average
 at its start.
 
-MACHINE-PLACEHOLDER
+Machine: a cloud container, Linux 6.18.44, 4 CPUs (Intel Xeon at 2.10 GHz,
+one thread per core), 15.7 GiB of memory, shared with two other agents; the
+1-minute load average was 5 to 9 through every run, so wall time is inflated
+and the CPU-time column is the better comparison. Binaries: Lean
+`l4factoidal` built from `eab58d16` (SHA-256 `40d6dd84…`, copied to a
+scratch directory before the run so that no rebuild changes it during the
+survey), F\* `factoidal` from release `build-ae3bb5df6f02-linux-x86_64`
+(`tools/fetch-builds.sh --set native`, SHA-256 `ff9a633c…`).
+
+## 2. Results
 
 TABLE-PLACEHOLDER
+
+## 3. Entailment checks
+
+ENTAILS-TABLE-PLACEHOLDER
+
+A stated pair is in the premise, so `owl-entails` answers it from the closure
+(`via: closure`) without the tableau. Those 20 rows measure the cost of one
+closure and check that nothing is lost; they do not test DL reasoning. The
+unrelated pairs reach the tableau refuter (`OWL.Refute.negationGoals`, then
+`tableauConsistent` on the closure plus the negated conclusion) whenever the
+closure does not contain the conclusion.
+
+## 4. The verdicts against HermiT
+
+HERMIT-PLACEHOLDER
+
+## 5. What did not finish, and the issues
+
+FAILURES-PLACEHOLDER
+
+## 6. Other findings
+
+OTHER-PLACEHOLDER
+
+## 7. What this method cannot see
+
+- One run per step, at a load average of 5 to 9 on 4 CPUs shared with two
+  other agents. Wall times carry that load; CPU times less so. No step was
+  repeated, so no row has a spread. Compare rows within this run only
+  (`skills/perf-benchmarking`, "Baselines are per-host").
+- A stated pair passes from the closure alone. 20 passes of 20 there show that
+  the closure keeps the premise and that the command line finishes; they show
+  nothing about the tableau.
+- An unrelated pair has no expectation in the harness. The HermiT comparison of
+  section 4 is the only check of those verdicts, and HermiT decides them from
+  its class hierarchy, so a pair that HermiT gets wrong is not seen either.
+- The consistency check of a consistent ontology that answers `true` shows that
+  the refuter did not close every branch. It does not show that the refuter
+  explored them all within its fuel; `unknown` is the budget-out answer, and
+  none was returned here.
+- The species verdicts come from one checker. They were not compared with a
+  second one (for example the OWL API profile checker).
+- An address-space cap is not a memory cap for a Lean executable
+  (https://github.com/danbri/factoidal/issues/759): the OOM rows under
+  `prlimit --as` say that the step did not finish under that cap, not that it
+  needs 6 GB. Section 5 gives the resident-set measurements.
+
+## 8. Reproduce
+
+```
+tools/fetch-builds.sh --set native                       # F* binary
+(cd formal/lean4 && lake build l4factoidal l4owl-species)
+python3 tools/owl-real-bench.py --out /tmp/owl-real --cap-s 600 --fstar-cap-s 300
+python3 tools/owl-real-bench.py --out /tmp/owl-real-rss --only qudt \
+    --rss-cap-mb 6000 --pairs 5 --no-fstar               # section 5
+python3 tools/owl-real-hermit.py /tmp/owl-real --hermit-jar HermiT.jar   # section 4
+tests/stack/owl_real_gate.sh                             # the gate
+```
+
+The table of section 2 is `OUT/table.md`; every number in it is a field of a
+row of `OUT/results.jsonl`, and each row carries the exact command it ran
+(`cmd`).
+

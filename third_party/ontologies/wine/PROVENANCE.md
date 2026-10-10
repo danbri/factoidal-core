@@ -19,7 +19,7 @@ counts statements as read, so a repeated triple counts again.
 
 ## OWL 2 species
 
-SPECIES-PLACEHOLDER
+Verdict of `l4owl-species` on the Lean parser's N-Triples of the file(s), 2026-10-10: **DL** for the merge of `wine.rdf` and `food.rdf` (0 violations). `wine.rdf` alone: Full, 1 violation (`unresolved-import` of `food`). The verdicts were not compared with a second species checker.
 
 The Lean species checker (`OWL.SyntaxDL.speciesViolations`, run by `l4owl-species`) decides OWL 2 DL against OWL 2 Full. It does not decide the EL, QL or RL profiles, so no profile is recorded here.
 
