@@ -343,7 +343,8 @@ theorem isShaclInstance_iff (g : Graph) (n : Term) (c : WfIri) :
 def isSimple : Constraint → Bool
   | .cls _ | .datatype _ | .nodeKind _ | .inSet _ | .pattern _ _ | .minLength _
   | .maxLength _ | .languageIn _ | .minInclusive _ | .maxInclusive _
-  | .minExclusive _ | .maxExclusive _ | .singleLine _ | .rootClass _ => true
+  | .minExclusive _ | .maxExclusive _ | .singleLine _ | .rootClass _
+  | .minListLength _ | .maxListLength _ | .uniqueMembers _ => true
   | _ => false
 
 theorem simpleValueCheck_isSome (g : Graph) (cc : Constraint) (v : Term) :
@@ -406,6 +407,16 @@ theorem simpleValueCheck_iff (g : Graph) (cc : Constraint) (v : Term) (hs : isSi
     cases v <;> cases t <;> simp [simpleValueCheck, Spec.ValueSatisfies]
   | maxExclusive t =>
     cases v <;> cases t <;> simp [simpleValueCheck, Spec.ValueSatisfies]
+  | minListLength n =>
+    cases h : shaclListMembers g v <;> simp [simpleValueCheck, Spec.ValueSatisfies, h]
+  | maxListLength n =>
+    cases h : shaclListMembers g v <;> simp [simpleValueCheck, Spec.ValueSatisfies, h]
+  | uniqueMembers b =>
+    cases h : shaclListMembers g v with
+    | none => simp [simpleValueCheck, Spec.ValueSatisfies, h]
+    | some ms =>
+      cases b <;> simp [simpleValueCheck, Spec.ValueSatisfies, h, dupMembers,
+        List.filter_eq_nil_iff]
   | _ => simp [isSimple] at hs
 
 /-- `simpleValueCheck_iff` without the `isSimple` side condition: for a
@@ -464,6 +475,15 @@ theorem simpleValueCheck_iff' (g : Graph) (cc : Constraint) (v : Term) :
   | rootClass cs =>
     rw [← simpleValueCheck_iff g (.rootClass cs) v rfl]
     simp [simpleValueCheck_ne_none g (.rootClass cs) v rfl]
+  | minListLength n =>
+    rw [← simpleValueCheck_iff g (.minListLength n) v rfl]
+    simp [simpleValueCheck_ne_none g (.minListLength n) v rfl]
+  | maxListLength n =>
+    rw [← simpleValueCheck_iff g (.maxListLength n) v rfl]
+    simp [simpleValueCheck_ne_none g (.maxListLength n) v rfl]
+  | uniqueMembers b =>
+    rw [← simpleValueCheck_iff g (.uniqueMembers b) v rfl]
+    simp [simpleValueCheck_ne_none g (.uniqueMembers b) v rfl]
   | _ => simp [simpleValueCheck, Spec.ValueSatisfies]
 
 /-! ## The per-focus-node components decide their specification -/
@@ -665,6 +685,10 @@ theorem evalAggregate_eq_nil_iff (env : ValidationEnv) (g : Graph) (sg : List Sh
     cases cc <;> simp only [evalAggregate, Spec.AggConforms]
     all_goals first | simp | (split <;> simp_all)
 
+theorem ite_eq_left_iff_nil {β : Type} (c : Prop) [Decidable c] (v : β) :
+    (if c then ([] : List β) else [v]) = [] ↔ c := by
+  split <;> simp_all
+
 theorem ite_nil_all_iff {α β : Type} (l : List α) (P : α → Bool) (viol : List β)
     (hv : viol ≠ []) : (if l.all P then [] else viol) = [] ↔ ∀ r ∈ l, P r = true := by
   split <;> simp_all [List.all_eq_true]
@@ -769,6 +793,19 @@ theorem conformance_iff (env : ValidationEnv) (g : Graph) (sg : List Shape) : �
           simp only [Option.some.injEq, forall_eq']
           rw [← ihc v s2]
           split <;> simp_all
+      | memberShape r =>
+        simp only [evalOneConstraint, Spec.ValueConforms]
+        cases hm : shaclListMembers g v with
+        | none => simp
+        | some members =>
+          cases hl : lookupShape r sg with
+          | none => simp
+          | some s2 =>
+            simp only [Option.some.injEq, exists_eq_left', forall_eq']
+            rw [ite_eq_left_iff_nil]
+            simp only [List.isEmpty_iff, List.filter_eq_nil_iff, Bool.not_eq_true',
+              Bool.not_eq_false, List.mem_eraseDups]
+            exact ⟨fun h m hm' => (ihc m s2).mp (h m hm'), fun h m hm' => (ihc m s2).mpr (h m hm')⟩
       | _ =>
         simp only [evalOneConstraint, Spec.ValueConforms]
         rw [← simpleValueCheck_iff' g _ v]

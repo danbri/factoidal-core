@@ -69,11 +69,15 @@ structure Violation where
   constraint  : Constraint
   severity    : Severity
   message     : Option WfLiteral
+  /-- §3.6.2.7 sh:detail: further results that explain this one. SHACL
+  1.2 asks for them for sh:memberShape (one per non-conforming member's
+  results) and sh:uniqueMembers (one per duplicated member). -/
+  details     : List Violation := []
   deriving Repr
 
 instance : Inhabited Violation :=
   ⟨{ focus := .bnode "", path := none, value := none, sourceShape := "",
-     constraint := default, severity := default, message := none }⟩
+     constraint := default, severity := default, message := none, details := [] }⟩
 
 /-- §3.6.1: `conforms` is true iff there are no validation results.
 `failure` is the SHACL-SPARQL failure channel (Part 2 §5.3.2: a query
@@ -508,6 +512,46 @@ def isLiteralTerm : Term → Bool
   | .literal _ => true
   | _ => false
 
+/-! ## SHACL 1.2 SHACL lists
+
+SHACL 1.2 Core §terminology, "SHACL Lists": "A SHACL list in an RDF
+graph G is an IRI or a blank node that is either rdf:nil (provided that
+rdf:nil has no value for either rdf:first or rdf:rest), or has exactly
+one value for the property rdf:first in G and exactly one value for the
+property rdf:rest in G that is also a SHACL list in G, and the list does
+not have itself as a value of the property path rdf:rest+ in G." The
+members are the rdf:first value followed by the members of the rdf:rest
+value. `visited` holds the list nodes already passed, so a node met
+again is the rdf:rest+ cycle the definition excludes; the fuel bounds
+the walk by the graph size (each step passes a distinct node that is
+the subject of an rdf:first triple), and running out answers "not a
+SHACL list". -/
+
+def shaclListMembersFuel (g : Graph) (visited : List Term) : Term → Nat → Option (List Term)
+  | _, 0 => none
+  | t, fuel + 1 =>
+    match t with
+    | .iri _ | .bnode _ =>
+      let firsts := dedupTerms (objectsOfTerm g t rdfFirst)
+      let rests := dedupTerms (objectsOfTerm g t rdfRest)
+      if t == .iri rdfNil then
+        if firsts.isEmpty && rests.isEmpty then some [] else none
+      else if visited.contains t then none
+      else
+        match firsts, rests with
+        | [f], [r] => (shaclListMembersFuel g (t :: visited) r fuel).map (f :: ·)
+        | _, _ => none
+    | _ => none
+
+/-- The members of `t` when `t` is a SHACL list in `g`, else `none`. -/
+def shaclListMembers (g : Graph) (t : Term) : Option (List Term) :=
+  shaclListMembersFuel g [] t (g.length + 2)
+
+/-- SHACL 1.2 §UniqueMembersConstraintComponent: the members that occur
+more than once (under term equality `Term.eqb`), each occurrence kept. -/
+def dupMembers (ms : List Term) : List Term :=
+  ms.filter fun m => 2 ≤ (ms.filter fun u => u.eqb m).length
+
 def isTripleTermTerm : Term → Bool
   | .tripleTerm _ _ _ => true
   | _ => false
@@ -553,6 +597,22 @@ def simpleValueCheck (data : Graph) (cc : Constraint) (v : Term) : Option Bool :
     some (match v with
       | .iri i => cs.any fun c => (superClasses data i).contains c
       | _ => false)
+  -- SHACL 1.2 §MinListLengthConstraintComponent /
+  -- §MaxListLengthConstraintComponent / §UniqueMembersConstraintComponent:
+  -- "Each value node v must be a SHACL list - if v is not a SHACL list
+  -- there is a validation result."
+  | .minListLength n =>
+    some (match shaclListMembers data v with
+      | some ms => decide (n ≤ ms.length)
+      | none => false)
+  | .maxListLength n =>
+    some (match shaclListMembers data v with
+      | some ms => decide (ms.length ≤ n)
+      | none => false)
+  | .uniqueMembers b =>
+    some (match shaclListMembers data v with
+      | some ms => !b || (dupMembers ms).isEmpty
+      | none => false)
   | .inSet items => some (termMem v items)
   | .pattern re flags =>
     some (match termLexical v with | some lex => regexMatch lex re flags | none => false)
@@ -588,6 +648,20 @@ def simpleValueCheck (data : Graph) (cc : Constraint) (v : Term) : Option Bool :
 def valueViolation (focus : Term) (s : Shape) (cc : Constraint) (v : Term) : Violation :=
   { focus := focus, path := s.path, value := some v, sourceShape := s.id,
     constraint := cc, severity := s.severity, message := s.message }
+
+/-- The sh:detail results of a per-value result (§3.6.2.7). SHACL 1.2
+§UniqueMembersConstraintComponent: "Each duplicate member m of a list v
+should be reported as a separate sh:detail in the validation result
+for v" — one per distinct duplicated member, with the member as
+sh:value. Every other per-value component has none. -/
+def valueDetails (data : Graph) (focus : Term) (s : Shape) (cc : Constraint) (v : Term) :
+    List Violation :=
+  match cc with
+  | .uniqueMembers _ =>
+    match shaclListMembers data v with
+    | some ms => (dedupTerms (dupMembers ms)).map (valueViolation focus s cc)
+    | none => []
+  | _ => []
 
 /-- A result without sh:value. -/
 def focusViolation (focus : Term) (s : Shape) (cc : Constraint) : Violation :=
@@ -726,10 +800,28 @@ mutual
         match lookupShape r sg with
         | none => []
         | some s2 => if env.conforms (collectShapeViolations env data sg v s2 fuel) then [] else viol
+      -- SHACL 1.2 §MemberShapeConstraintComponent: a value node that is
+      -- not a SHACL list is a result; otherwise a result iff some
+      -- member does not conform, with the non-conforming members'
+      -- results as its sh:detail values ("validation of individual
+      -- members should not be attempted" for a non-list).
+      | .memberShape r =>
+        match shaclListMembers data v with
+        | none => viol
+        | some members =>
+          match lookupShape r sg with
+          | none => []
+          | some ms =>
+            let bad := members.eraseDups.filter fun m =>
+              !env.conforms (collectShapeViolations env data sg m ms fuel)
+            if bad.isEmpty then []
+            else [{ valueViolation focus s cc v with
+                    details := bad.flatMap fun m => collectShapeViolations env data sg m ms fuel }]
       | _ =>
         match simpleValueCheck data cc v with
         | some true => []
-        | some false => viol
+        | some false => [{ valueViolation focus s cc v with
+                           details := valueDetails data focus s cc v }]
         | none => []
 
   /-- §4.7.2 / §4.7.3 qualified cardinality over the value nodes of one
@@ -844,6 +936,10 @@ def ValueSatisfies (g : Graph) (cc : Constraint) (v : Term) : Prop :=
   | .singleLine b => b = true → ∀ l, v = .literal l →
       ∀ c ∈ l.val.lexicalForm.toList, isLineBreakChar c = false
   | .rootClass cs => ∃ i, v = .iri i ∧ ∃ c ∈ cs, SubClassOf g i c
+  | .minListLength n => ∃ ms, shaclListMembers g v = some ms ∧ n ≤ ms.length
+  | .maxListLength n => ∃ ms, shaclListMembers g v = some ms ∧ ms.length ≤ n
+  | .uniqueMembers b => ∃ ms, shaclListMembers g v = some ms ∧
+      (b = true → ∀ m ∈ ms, (ms.filter fun u => u.eqb m).length < 2)
   | .inSet items => ∃ u ∈ items, Term.eqb u v = true
   | .pattern re flags => ∃ lex, termLexical v = some lex ∧ regexMatch lex re flags = true
   | .minLength n => ∃ lex, termLexical v = some lex ∧ n ≤ lex.length
@@ -916,6 +1012,8 @@ mutual
           | none => false
           | some s2 => env.conforms (collectShapeViolations env g sg v s2 fuel)).length = 1
       | .nodeOf r => ∀ s2, lookupShape r sg = some s2 → Conforms env g sg v s2 fuel
+      | .memberShape r => ∃ members, shaclListMembers g v = some members ∧
+          ∀ s2, lookupShape r sg = some s2 → ∀ m ∈ members, Conforms env g sg m s2 fuel
       | _ => ValueSatisfies g cc v
 
   /-- §4.7.2 / §4.7.3 qualified cardinality, by the engine's count. -/

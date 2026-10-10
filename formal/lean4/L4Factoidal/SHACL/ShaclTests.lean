@@ -340,6 +340,60 @@ def rootClassDoc : String :=
          [.iri (exIri "Car"), .literal (Literal.string "Dog")]
 #guard components (run rootClassDoc) == [shRootClassCC, shRootClassCC]
 
+/-! ### SHACL 1.2 SHACL lists and the list constraint components
+
+§terminology "SHACL Lists": exactly one rdf:first and one rdf:rest, no
+rdf:rest+ cycle; rdf:nil is the empty list. "Each value node v must be
+a SHACL list - if v is not a SHACL list there is a validation result." -/
+
+def listsDoc : String :=
+  "ex:l2 rdf:first 1 ; rdf:rest ( 2 ) . ex:l3 rdf:first 1 ; rdf:rest ( 2 1 ) . " ++
+  "ex:cyc rdf:first 1 ; rdf:rest ex:cyc . ex:two rdf:first 1, 2 ; rdf:rest rdf:nil . " ++
+  "ex:mixed rdf:first ex:a ; rdf:rest ( \"b\" ) ."
+
+#guard shaclListMembers (ttl listsDoc) (.iri rdfNil) == some []
+#guard (shaclListMembers (ttl listsDoc) (.iri (exIri "l3"))).map (·.length) == some 3
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "cyc")) == none
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "two")) == none
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "notAList")) == none
+
+def minListDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, rdf:nil, ex:cyc ; sh:minListLength 1 ."
+
+#guard (run minListDoc).results.map (·.focus) == [.iri rdfNil, .iri (exIri "cyc")]
+
+def maxListDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, ex:l3, rdf:nil ; sh:maxListLength 2 ."
+
+#guard (run maxListDoc).results.map (·.focus) == [.iri (exIri "l3")]
+#guard components (run maxListDoc) == [shMaxListLengthCC]
+
+def uniqueMembersDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, ex:l3, ex:x ; sh:uniqueMembers true ."
+
+-- ex:l3 has the duplicate 1 (one sh:detail); ex:x is not a list (no detail).
+#guard (run uniqueMembersDoc).results.map (·.focus) == [.iri (exIri "l3"), .iri (exIri "x")]
+#guard (run uniqueMembersDoc).results.map (·.details.length) == [1, 0]
+#guard ((run uniqueMembersDoc).results.flatMap (·.details)).map (·.value) ==
+         [some (.literal (L4Factoidal.SPARQL.mkTypedLiteral "1" xsdInteger))]
+
+def uniqueMembersFalseDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l3 ; sh:uniqueMembers false ."
+
+#guard (run uniqueMembersFalseDoc).conforms == true
+
+def memberShapeDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:mixed, ex:x, rdf:nil ; sh:memberShape ex:I . " ++
+  "ex:I sh:nodeKind sh:IRI ."
+
+-- ex:mixed has the literal member "b" (its nodeKind result is the detail);
+-- ex:x is not a list; rdf:nil has no members and conforms.
+#guard (run memberShapeDoc).results.map (·.focus) == [.iri (exIri "mixed"), .iri (exIri "x")]
+#guard components (run memberShapeDoc) == [shMemberShapeCC, shMemberShapeCC]
+#guard ((run memberShapeDoc).results.flatMap (·.details)).map
+         (fun d => constraintComponentIri d.constraint) == [shNodeKindCC]
+#guard (reportToGraph (run memberShapeDoc)).any fun t => t.p == shDetail
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

@@ -177,7 +177,8 @@ theorem evalCustomComponent_eq_nil_iff (data : Graph) (focus : Term) (s : Shape)
   | .minInclusive _ | .maxInclusive _ | .minExclusive _ | .maxExclusive _
   | .minLength _ | .maxLength _ | .pattern _ _ | .languageIn _ | .uniqueLang _
   | .equals _ | .disjoint _ | .lessThan _ | .lessThanOrEquals _
-  | .singleLine _ | .rootClass _
+  | .singleLine _ | .rootClass _ | .memberShape _ | .minListLength _ | .maxListLength _
+  | .uniqueMembers _
   | .notOf _ | .andOf _ | .orOf _ | .xoneOf _ | .nodeOf _
   | .qualifiedMinCount _ _ _ | .qualifiedMaxCount _ _ _
   | .closed _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>

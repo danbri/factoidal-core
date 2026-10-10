@@ -168,6 +168,14 @@ inductive Constraint where
   -- SHACL 1.2 §RootClassConstraintComponent: the value node is an IRI
   -- that is a (reflexive, transitive) rdfs:subClassOf of a member.
   | rootClass (cs : List WfIri)
+  -- SHACL 1.2 §core-components-list: the value node must be a SHACL
+  -- list; sh:memberShape — every member conforms to the shape;
+  -- sh:minListLength / sh:maxListLength — the member count; sh:uniqueMembers
+  -- — with `true`, no member occurs twice.
+  | memberShape (r : ShapeRef)
+  | minListLength (n : Nat)
+  | maxListLength (n : Nat)
+  | uniqueMembers (b : Bool)
   -- §4.6 logical
   | notOf (r : ShapeRef)
   | andOf (rs : List ShapeRef)
@@ -469,6 +477,14 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
     (iriOrIriList g t fuel).map Constraint.rootClass
   let singleLine := match firstBool (objectsOf g s shSingleLine) with
     | some b => [Constraint.singleLine b] | none => []
+  let memberShape := (objectsOf g s shMemberShape).filterMap fun t =>
+    (termToShapeRef t).map Constraint.memberShape
+  let minListLength := match firstNat (objectsOf g s shMinListLength) with
+    | some n => [Constraint.minListLength n] | none => []
+  let maxListLength := match firstNat (objectsOf g s shMaxListLength) with
+    | some n => [Constraint.maxListLength n] | none => []
+  let uniqueMembers := match firstBool (objectsOf g s shUniqueMembers) with
+    | some b => [Constraint.uniqueMembers b] | none => []
   let inSet := match objectsOf g s shIn with
     | head :: _ => [Constraint.inSet (rdfListTerms g head fuel)] | [] => []
   let hasValue := (objectsOf g s shHasValue).map Constraint.hasValue
@@ -516,6 +532,7 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
     | some true => [Constraint.closed ignored]
     | _ => []
   minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ rootClass ++ singleLine ++
+  memberShape ++ minListLength ++ maxListLength ++ uniqueMembers ++
   inSet ++ hasValue ++ pattern ++
   minLength ++ maxLength ++ languageIn ++ uniqueLang ++ minInc ++ maxInc ++ minExc ++ maxExc ++
   nots ++ ands ++ ors ++ xones ++ nodes ++ qualified ++ equals ++ disjoint ++ lessThan ++
