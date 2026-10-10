@@ -38,7 +38,7 @@
 // vars are unset only for the duration of that one call, then
 // restored immediately afterward for the same-origin side.
 
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty, resolvePreSplitCommit } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -125,22 +125,32 @@ test('post37: installed tarball version.json gitSha is an ancestor of (or equal 
     //
     // So: check shallowness first and SKIP with a reason. A test that
     // cannot see the thing it asserts must say so, not fail.
-    const isShallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'],
-      { cwd: REPO_ROOT, encoding: 'utf8' }).trim() === 'true';
-    const haveObject = (() => {
+    // The published tarball was built in danbri/factoidal. Since the
+    // 2026-10-09 split this checkout is danbri/factoidal-core, whose
+    // history was rewritten; tools/repo-split/commit-map.tsv maps each
+    // danbri/factoidal commit to its core commit. Use the mapped commit
+    // when the recorded one is not in this history.
+    const hasObject = (id) => {
       try {
-        execFileSync('git', ['cat-file', '-e', PKG_VERSION_JSON.gitSha],
-          { cwd: REPO_ROOT, stdio: 'pipe' });
+        execFileSync('git', ['cat-file', '-e', id], { cwd: REPO_ROOT, stdio: 'pipe' });
         return true;
       } catch { return false; }
-    })();
-    if (isShallow && !haveObject) {
-      t.skip(`shallow clone: ${PKG_VERSION_JSON.gitSha.slice(0, 12)} is beyond the ` +
+    };
+    let sha = PKG_VERSION_JSON.gitSha;
+    if (!hasObject(sha)) {
+      const mapped = resolvePreSplitCommit(REPO_ROOT, sha.slice(0, 12));
+      assert.ok(mapped, `gitSha ${sha.slice(0, 12)} is neither in this history nor in tools/repo-split/commit-map.tsv`);
+      sha = mapped.core;
+    }
+    const isShallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'],
+      { cwd: REPO_ROOT, encoding: 'utf8' }).trim() === 'true';
+    if (isShallow && !hasObject(sha)) {
+      t.skip(`shallow clone: ${sha.slice(0, 12)} is beyond the ` +
         'graft boundary, so ancestry is unanswerable here. Re-run with full history.');
       return;
     }
     // Throws if NOT an ancestor -- that IS the assertion.
-    execFileSync('git', ['merge-base', '--is-ancestor', PKG_VERSION_JSON.gitSha, 'HEAD'],
+    execFileSync('git', ['merge-base', '--is-ancestor', sha, 'HEAD'],
       { cwd: REPO_ROOT, stdio: 'pipe' });
   });
 

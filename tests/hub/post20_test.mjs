@@ -6,12 +6,16 @@
 // DOM-returning renderer. The cell source under test is the literal
 // string extracted from the shipped post -- not a hand-copied copy.
 
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty, xfail } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
+// Functions the F* engine served and the Lean engine does not yet:
+// https://github.com/danbri/factoidal/issues/727. Each case below is an expected failure naming it.
+const TEXT_GEO_ISSUE = 'https://github.com/danbri/factoidal/issues/727';
+
 const POST_FILE = '20-fulltext-search-text-query.md';
 
 const cells = extractObservableCells(POST_FILE);
@@ -43,7 +47,7 @@ test('post20 cell 1 (parse the dataset): 15 triples', async () => {
   assert.equal(result, 15);
 });
 
-test('post20 cell 2 (2-arity "panel"): 4 subjects across labels + a title', async () => {
+xfail('post20 cell 2 (2-arity "panel"): 4 subjects across labels + a title', TEXT_GEO_ISSUE, async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[3]);
   assert.deepEqual(subjects(result), [
@@ -54,7 +58,7 @@ test('post20 cell 2 (2-arity "panel"): 4 subjects across labels + a title', asyn
   ]);
 });
 
-test('post20 cell 3 (AND-by-default "solar panel"): only the 2 with both tokens', async () => {
+xfail('post20 cell 3 (AND-by-default "solar panel"): only the 2 with both tokens', TEXT_GEO_ISSUE, async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[4]);
   assert.deepEqual(subjects(result), [
@@ -63,7 +67,7 @@ test('post20 cell 3 (AND-by-default "solar panel"): only the 2 with both tokens'
   ]);
 });
 
-test('post20 cell 4 (list form, rdfs:label restriction): controlpanel dropped', async () => {
+xfail('post20 cell 4 (list form, rdfs:label restriction): controlpanel dropped', TEXT_GEO_ISSUE, async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[5]);
   assert.deepEqual(subjects(result), [
@@ -73,7 +77,7 @@ test('post20 cell 4 (list form, rdfs:label restriction): controlpanel dropped', 
   ]);
 });
 
-test('post20 cell 5 (list form + limit 2): capped count, no ranking claim', async () => {
+xfail('post20 cell 5 (list form + limit 2): capped count, no ranking claim', TEXT_GEO_ISSUE, async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[6]);
   assert.deepEqual(result, { matchCount: 2 });
@@ -85,7 +89,7 @@ test('post20 cell 6 (no-match): zero rows, no error', async () => {
   assert.deepEqual(result, { matchCount: 0 });
 });
 
-test('post20 cell 7 (BGP composition): text:query joins ex:status, retired dropped', async () => {
+xfail('post20 cell 7 (BGP composition): text:query joins ex:status, retired dropped', TEXT_GEO_ISSUE, async () => {
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const result = await post.value(post.names[8]);
   assert.deepEqual(subjects(result), [

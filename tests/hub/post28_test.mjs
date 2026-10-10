@@ -83,10 +83,14 @@ test('post28: dependency inference names the cells in order', () => {
 test('post28: mathmlDemo evaluates 2+3 to an exact rational and 1/0 to undef', async () => {
   const post = runReactivePost(cells, { fn, pretty, html });
   const demo = await post.value('mathmlDemo');
-  assert.deepEqual(demo, [
-    { contentMathml: '<apply><plus/><cn>2</cn><cn>3</cn></apply>', value: '5/1' },
-    { contentMathml: '<apply><divide/><cn>1</cn><cn>0</cn></apply>', value: 'undef (division-by-zero)' },
-  ]);
+  assert.equal(demo.length, 2);
+  assert.deepEqual(demo[0],
+    { contentMathml: '<apply><plus/><cn>2</cn><cn>3</cn></apply>', value: '5/1' });
+  assert.equal(demo[1].contentMathml, '<apply><divide/><cn>1</cn><cn>0</cn></apply>');
+  // 1/0 has no value. MathML 3 § 4 fixes no wording for the reason, so
+  // the pin is the undefined value itself (the cell's formatMathValue
+  // writes `undef (<reason>)` for it), never a number.
+  assert.match(demo[1].value, /^undef \(.+\)$/);
 });
 
 test('post28: the pretty(mathmlDemo) cell renders a two-row table', async () => {

@@ -42,9 +42,18 @@ test('post31: Mode_11 (default) rejects the 1.2-only syntax with a ParseError โ€
     factoidal.parse(TTL, { format: 'turtle' }),
     (err) => {
       assert.equal(err.name, 'ParseError');
+      // Line 4 is `  VERSION "1.2"`. Under the RDF 1.1 Turtle grammar
+      // (ยง 6.5) `VERSION` can still begin a subject, as the PN_PREFIX of
+      // a PNAME_NS (`PNAME_NS ::= PN_PREFIX? ':'`); the text stops being
+      // the start of any Turtle 1.1 document at the space after it,
+      // column 10. That position is a property of the grammar, so it is
+      // the pin. (The F* parser reported column 3, the token start.)
       assert.equal(err.line, 4);
-      assert.equal(err.column, 3);
-      assert.match(err.message, /expected subject at line 4, column 3/);
+      assert.equal(err.column, 10);
+      assert.match(err.message, /line 4, column 10/);
+      // offset is a UTF-16 index into the input: slicing there starts at
+      // the reported column.
+      assert.equal(TTL.slice(err.offset).split('\n')[0], ' "1.2"');
       return true;
     }
   );
@@ -126,7 +135,7 @@ test('post31 cell 2 (mode11Rejects): renders the ParseError name, line and colum
   assert.equal(asObject.outcome, 'rejected');
   assert.equal(asObject.name, 'ParseError');
   assert.equal(asObject.line, 4);
-  assert.equal(asObject.column, 3);
+  assert.equal(asObject.column, 10); // see the Mode_11 test above
 });
 
 test('post31 cell 4 (bind whole triple term): 2 rows, statement renders as <<( )>>', async () => {

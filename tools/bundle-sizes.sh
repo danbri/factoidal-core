@@ -19,10 +19,15 @@
 # Usage:
 #   tools/bundle-sizes.sh
 #
-# The "lite" bundle rows (issue #684) landed alongside npm/factoidal/
-# lite.js -- this script does not build anything itself, only measures
-# what is already on disk (run `formal/fstar/build-ocaml.sh npm` /
-# `Wasm/build-wasm.sh` first if a path below is missing).
+# Since @factoidal/core 0.9.0 the package ships one engine, the Lean 4
+# wasm (npm/factoidal/l4-assets/, issue 713). Those files, and the
+# JavaScript browser.js loads, are REQUIRED rows: a missing one is a
+# packaging problem and the script exits 1. The F* bundles are not in
+# the package any more; they are measured BY PATH under
+# docs/fstar-extracted/ (installed by `tools/fetch-builds.sh --set web`)
+# as OPTIONAL comparison rows, each prefixed `OPT:`, and a missing one is
+# reported and skipped. This script builds nothing (run
+# formal/lean4/Wasm/build-wasm.sh or tools/fetch-builds.sh first).
 
 set -uo pipefail
 
@@ -31,20 +36,22 @@ cd "$REPO_ROOT"
 
 OUT_JSON="docs/test-results/bundle-sizes.json"
 
-# Repo-root-relative paths, in the order the task brief listed them.
-# The two *.wasm.assets/*.wasm entries are resolved by glob below.
+# Repo-root-relative paths. GLOB: entries resolve to exactly one file.
 PATHS=(
-  "npm/factoidal/factoidal-npm-entry.js"
-  "npm/factoidal/factoidal.js"
-  "npm/factoidal/factoidal-npm-entry.wasm.js"
-  "GLOB:npm/factoidal/factoidal-npm-entry.wasm.assets/*.wasm"
-  "npm/factoidal/factoidal.wasm.js"
-  "GLOB:npm/factoidal/factoidal.wasm.assets/*.wasm"
   "npm/factoidal/l4-assets/l4factoidal.wasm"
   "npm/factoidal/l4-assets/l4factoidal.mjs"
-  "npm/factoidal/factoidal-npm-entry-lite.js"
-  "npm/factoidal/factoidal-npm-entry-lite.wasm.js"
-  "GLOB:npm/factoidal/factoidal-npm-entry-lite.wasm.assets/*.wasm"
+  "npm/factoidal/l4-assets/l4factoidal.js"
+  "npm/factoidal/browser.js"
+  "npm/factoidal/lib/api.mjs"
+  "npm/factoidal/lib/lean-entry.mjs"
+  "npm/factoidal/rdfjs.mjs"
+  "OPT:docs/fstar-extracted/factoidal-npm-entry.js"
+  "OPT:docs/fstar-extracted/factoidal.js"
+  "OPT:docs/fstar-extracted/factoidal-npm-entry.wasm.js"
+  "OPT:GLOB:docs/fstar-extracted/factoidal-npm-entry.wasm.assets/*.wasm"
+  "OPT:docs/fstar-extracted/factoidal-npm-entry-lite.js"
+  "OPT:docs/fstar-extracted/factoidal-npm-entry-lite.wasm.js"
+  "OPT:GLOB:docs/fstar-extracted/factoidal-npm-entry-lite.wasm.assets/*.wasm"
 )
 
 resolve_glob() {
@@ -76,15 +83,32 @@ printf '%-70s %12s %12s\n' 'path' 'rawBytes' 'gzipBytes'
 
 RESOLVE_RC=0
 for entry in "${PATHS[@]}"; do
+  optional=0
+  if [ "${entry#OPT:}" != "$entry" ]; then
+    optional=1
+    entry="${entry#OPT:}"
+  fi
   if [ "${entry#GLOB:}" != "$entry" ]; then
-    path="$(resolve_glob "${entry#GLOB:}")" || { RESOLVE_RC=1; continue; }
+    if ! path="$(resolve_glob "${entry#GLOB:}" 2>/dev/null)"; then
+      if [ "$optional" -eq 1 ]; then
+        echo "bundle-sizes: optional F* comparison file ${entry#GLOB:} absent (tools/fetch-builds.sh --set web); skipped" >&2
+      else
+        resolve_glob "${entry#GLOB:}" >/dev/null
+        RESOLVE_RC=1
+      fi
+      continue
+    fi
   else
     path="$entry"
   fi
 
   if [ ! -f "$REPO_ROOT/$path" ]; then
-    echo "bundle-sizes: missing $path -- run build-ocaml.sh npm / Wasm/build-wasm.sh first" >&2
-    RESOLVE_RC=1
+    if [ "$optional" -eq 1 ]; then
+      echo "bundle-sizes: optional F* comparison file $path absent (tools/fetch-builds.sh --set web); skipped" >&2
+    else
+      echo "bundle-sizes: missing $path -- run formal/lean4/Wasm/build-wasm.sh or tools/fetch-builds.sh --set web first" >&2
+      RESOLVE_RC=1
+    fi
     continue
   fi
 

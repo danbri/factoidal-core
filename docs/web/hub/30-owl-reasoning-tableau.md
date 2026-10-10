@@ -289,9 +289,10 @@ positive-entailment path uses. It first checks whether the conclusion is
 already in the OWL-RL closure of the premise (`via: "closure"`); if not,
 it negates the conclusion and asks the refuter whether premise-plus-
 negation is inconsistent (`via: "refutation"`). Here the conclusion is
-`:Alice a :ParentOfDoctor` — a `someValuesFrom` classification the
-closure never makes, so the entailment is decided by refuting its
-negation:
+`:Alice a :ParentOfDoctor` — a `someValuesFrom` classification that the
+OWL 2 RL/RDF rules already make: cls-svf1 (OWL 2 Profiles § 4.3, Table 6)
+types Alice with the restriction, and cax-eqc2 (Table 7) carries that type
+over the `owl:equivalentClass` to `:ParentOfDoctor`:
 
 ```observable-js
 entailmentPremise = `
@@ -313,12 +314,34 @@ entailmentConclusion = `@prefix : <http://example.org/> . :Alice a :ParentOfDoct
 entailmentVerdict = await fn.owlEntails(entailmentPremise, entailmentConclusion)
 ```
 
-`entailmentVerdict` is `{ entailed: true, via: "refutation" }`: the
-closure alone leaves it undecided, and the refuter proves it by finding
-no model of the premise where Alice is *not* a `ParentOfDoctor`. Like
-`owlIsConsistent`, `owlEntails` is three-valued — a refutation goal that
-exhausts its budget returns `entailed: null` with the cap named, never a
-false negative.
+`entailmentVerdict` is `{ entailed: true, via: "closure" }`. A union
+needs the refuter: no OWL 2 RL row reasons from membership of a union to
+membership of a superclass of every member (cls-uni goes the other way),
+so for Carol, a member of `Doctor ⊔ Nurse`, the conclusion `:Carol a
+:Clinician` is not in the closure:
+
+```observable-js
+unionPremise = `
+@prefix : <http://example.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+:Doctor a owl:Class . :Nurse a owl:Class . :Clinician a owl:Class .
+:Doctor rdfs:subClassOf :Clinician . :Nurse rdfs:subClassOf :Clinician .
+:MedicalStaff a owl:Class ;
+    owl:equivalentClass [ a owl:Class ; owl:unionOf ( :Doctor :Nurse ) ] .
+:Carol a owl:NamedIndividual , :MedicalStaff .
+`
+```
+
+```observable-js
+unionVerdict = await fn.owlEntails(unionPremise, `@prefix : <http://example.org/> . :Carol a :Clinician .`)
+```
+
+`unionVerdict` is `{ entailed: true, via: "refutation" }`: the refuter
+finds no model of the premise where Carol is *not* a `Clinician`, because
+each branch of the union (Doctor, Nurse) closes. Like `owlIsConsistent`,
+`owlEntails` is three-valued — a refutation goal that exhausts its budget
+returns `entailed: null` with the cap named, never a false negative.
 
 ## The standing measured proof
 

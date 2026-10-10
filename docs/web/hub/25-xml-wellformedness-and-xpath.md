@@ -37,18 +37,18 @@ XML = `<library>
 This first cell hands the parser that document:
 
 ```observable-js
-return await Factoidal.xmlWellformed(XML);
+return { wellformed: await fn.xmlWellformed(XML) };
 ```
 
-`{ ok: true, wellformed: true }`. Now break it — a closing tag that does
+`{ wellformed: true }`. Now break it — a closing tag that does
 not match the element it closes — and ask again:
 
 ```observable-js
 const BAD = `<library><book></shelf></library>`;
-return await Factoidal.xmlWellformed(BAD);
+return { wellformed: await fn.xmlWellformed(BAD) };
 ```
 
-`{ ok: true, wellformed: false }`. The `</shelf>` closes nothing that is
+`{ wellformed: false }`. The `</shelf>` closes nothing that is
 open, so `Parser_XML.parse_xml_document` returns `None`, and
 `xmlWellformed` reports the document as not well-formed. The decision is
 the accept/reject signal itself, straight from the F*-extracted parser —
@@ -59,13 +59,13 @@ the same signal the W3C conformance runner scores.
 XPath 1.0 is the query language for XML that predates — and inspired —
 SPARQL's property paths. An expression names a path through the
 document tree and returns a **node-set**, a string, a number, or a
-boolean. `Factoidal.xpathEval(xml, expr)` returns an envelope carrying
+boolean. `fn.xpathEval(xml, expr)` returns an object carrying
 the `resultType` and the value; for a node-set it lists each node's
 kind, name, and string-value. Here `//book/title` selects both title
 elements:
 
 ```observable-js
-const res = await Factoidal.xpathEval(XML, "//book/title");
+const res = await fn.xpathEval(XML, "//book/title");
 return pretty(res.nodes.map((n) => ({ kind: n.kind, name: n.name, value: n.value })));
 ```
 
@@ -90,7 +90,7 @@ const exprs = [
 ];
 const rows = [];
 for (const e of exprs) {
-  const r = await Factoidal.xpathEval(XML, e);
+  const r = await fn.xpathEval(XML, e);
   rows.push({
     expression: e,
     resultType: r.resultType,
@@ -153,5 +153,5 @@ sketches on top of it.
 
 Every live cell above is pinned in
 [`tests/hub/post25_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post25_test.mjs) —
-the exact same source, executed against the real `npm/factoidal`
-npm-entry ABI instead of the in-browser `Factoidal` adapter.
+the exact same source, executed against `npm/factoidal`'s Node entry,
+which exports the same typed API the page's `fn` carries.

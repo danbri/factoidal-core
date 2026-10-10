@@ -85,7 +85,7 @@ else
   PLAYWRIGHT_IMPORT_SPEC="playwright"
 fi
 
-for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js docs/fstar-extracted/browser.js docs/web/hub/assets/geo/london-boroughs.geojson; do
+for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js npm/factoidal/browser.js npm/factoidal/l4-assets/l4factoidal.wasm docs/web/hub/assets/geo/london-boroughs.geojson; do
   [ -e "$f" ] || { echo "Missing $f -- run the vendoring steps first." >&2; exit 2; }
 done
 

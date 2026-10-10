@@ -64,11 +64,18 @@ that is signal, not noise (the beyond-w3c parity CI exists because a
 demo regression slipped through once; its workflow `beyond-w3c.yml` is
 inactive since 2026-10-09, see the status note under "The static site").
 
-All `docs/fstar-extracted/demo-*.html` + `index.html` pages load the
-engine through the npm package's browser entry
-(`npm/factoidal/browser.js` / `browser-wasm.js`, mirrored read-only to
-`docs/npm/factoidal/`; the mirror is generated and not committed since
-2026-10-09) rather than hand-rolling their own fetch/eval —
+The hub (`docs/web/hub/`, `docs/_includes/hub.njk`) runs the published
+engine since 2026-10-10 (https://github.com/danbri/factoidal/issues/726):
+`Factoidal` is `npm/factoidal/browser.js` (the Lean wasm), passed through
+by `docs/.eleventy.js` from the package directory to `/npm/factoidal/`,
+and `fn` is that API plus the hub helpers. Gate a hub change on
+`node --test tests/hub/*_test.mjs` AND `tests/web-demos/hub_browser_all.sh`.
+The generated mirror `docs/npm/` is no longer read.
+
+The `docs/fstar-extracted/demo-*.html` + `index.html` pages are the F\*
+gallery: they load the F\* driver `docs/fstar-extracted/browser.js` (the
+F\* bundles come from `tools/fetch-builds.sh --set web`) rather than
+hand-rolling their own fetch/eval —
 either directly (`runFactoidalCli`, `queryDataset`, `toRdf`) or via the
 shared `factoidal-sparql-client.js` web component, which itself now
 calls into the package instead of duplicating byte-packing/argv/eval

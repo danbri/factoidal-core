@@ -1,56 +1,94 @@
 // BROWSER-SURFACE PARITY, all posts: every `fn.<name>(` a published hub
-// page calls must exist as an `async <name>(` wrapper in
-// docs/_includes/hub.njk's fn object, and any wrapper that delegates to
-// a same-named `Factoidal.<name>` must be exported by the browser driver
-// hub.njk imports, docs/fstar-extracted/browser.js (the F* engine's
-// driver; npm/factoidal/browser.js is the Lean engine since @factoidal/core
-// 0.9.0, issue 713).
+// page calls must exist on the browser `fn`, and every `Factoidal.<name>`
+// it reads must be an export of the module hub.njk binds as `Factoidal`.
 //
-// Why: the reactive node harness binds `fn` to the NODE package, so a
-// page can be fully green under `node --test` while its cells reject
-// (or silently compute over nothing) in a real browser, where `fn` is
-// the hand-curated hub.njk wrapper over the browser adapter. Three
-// live breakages of this class shipped before this pin existed:
+// On the page (docs/_includes/hub.njk), `Factoidal` is @factoidal/core's
+// browser entry, npm/factoidal/browser.js (the Lean engine, issue 726),
+// and `fn` is `Object.assign({}, Factoidal.default, hubHelpers)`: the
+// package's typed API plus the hub-only helpers defined in hub.njk. So a
+// name is on the browser surface when browser.js exports it or hubHelpers
+// defines it.
+//
+// Why: the reactive node harness binds `fn` to the NODE package
+// (npm/factoidal/index.mjs), so a page can be fully green under
+// `node --test` while its cells reject in a real browser. Three live
+// breakages of this class shipped before this pin existed:
 // fn.rhoDfFragmentCheck and fn.owlClosure (post 32, owner-reported
-// 2026-08-07/08) and fn.sigmoidFormulaMathml + fn.sigmoidPoints
-// (post 28, found by the 2026-08-08 hub_browser_all.sh sweep).
+// 2026-08-07/08) and fn.sigmoidFormulaMathml + fn.sigmoidPoints (post
+// 28, found by the 2026-08-08 hub_browser_all.sh sweep).
 //
-// This is a text-level pin: it proves the names EXIST on the browser
-// surface, not that they compute the right values there. Value-level
-// browser checks live in tests/web-demos/ (hub_browser_all.sh for
-// rejected cells on every post; hub_post32_value_check.sh for post
-// 32's cell values).
+// The export list is read by importing browser.js itself (the import
+// loads no wasm), so this pins the real module surface, not a text
+// match. Value-level browser checks live in tests/web-demos/
+// (hub_browser_all.sh for rejected cells on every post).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { xfail } from './_helpers.mjs';
+
+// Names a published post calls that the Lean package does not serve yet,
+// each with its open issue. Every one is also an expected-failure case
+// below, so the entry must go when the package gains the name.
+const KNOWN_GAPS = {
+  'Factoidal.deltaLogOpen': 'https://github.com/danbri/factoidal/issues/728',
+  'Factoidal.deltaLogAppend': 'https://github.com/danbri/factoidal/issues/728',
+  'Factoidal.deltaLogReadAllHex': 'https://github.com/danbri/factoidal/issues/728',
+  'Factoidal.deltaLogMerge': 'https://github.com/danbri/factoidal/issues/728',
+  'Factoidal.deltaLogDestroy': 'https://github.com/danbri/factoidal/issues/728',
+  'Factoidal._deltaLogCorruptLastForTest': 'https://github.com/danbri/factoidal/issues/728',
+};
 
 const HUB_DIR = new URL('../../docs/web/hub/', import.meta.url);
 const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
-const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
+const browser = await import(new URL('../../npm/factoidal/browser.js', import.meta.url).href);
+const nodeEntry = await import(new URL('../../npm/factoidal/index.mjs', import.meta.url).href);
 
 const postFiles = readdirSync(HUB_DIR).filter((f) => /^\d{2}-.*\.md$/.test(f)).sort();
 
-test('fn-surface parity: every fn.* name called by any published hub post has a hub.njk wrapper (and a browser.js export where it delegates by the same name)', () => {
+// The hubHelpers object literal of hub.njk, and the method names it defines.
+const helpersSource = (() => {
+  const start = hub.indexOf('const hubHelpers = {');
+  const end = hub.indexOf('\nconst fn = Object.assign({}, Factoidal.default, hubHelpers);');
+  assert.ok(start >= 0 && end > start, 'hub.njk defines hubHelpers and fn = Object.assign({}, Factoidal.default, hubHelpers)');
+  return hub.slice(start, end);
+})();
+const helperNames = new Set([...helpersSource.matchAll(/^ {2}async\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm)].map((m) => m[1]));
+
+test('fn-surface parity: hub.njk binds Factoidal to the package browser entry and builds fn from it', () => {
+  assert.match(hub, /import \* as Factoidal from "\{\{ '\/npm\/factoidal\/browser\.js' \| url \}\}";/);
+  assert.equal(typeof browser.default, 'object');
+  assert.ok(helperNames.has('l4Call') && helperNames.has('loadL4'), 'hubHelpers defines the Lean dispatch helpers');
+});
+
+test('fn-surface parity: browser.js exports every name the Node entry exports, except the Node-only store path', () => {
+  const nodeOnly = new Set(['sampleStorePath', 'sampleStoreFacts', 'loadEngine']);
+  const missing = Object.keys(nodeEntry).filter((n) => !nodeOnly.has(n) && !(n in browser));
+  assert.deepEqual(missing, [], 'names index.mjs exports and browser.js does not');
+});
+
+test('fn-surface parity: every fn.* and Factoidal.* name called by any published hub post is on the browser surface', () => {
   assert.ok(postFiles.length >= 30, `expected 30+ hub posts, found ${postFiles.length}`);
-  const missingWrapper = [];
-  const missingExport = [];
+  const missingFn = [];
+  const missingFactoidal = [];
   for (const f of postFiles) {
     const page = readFileSync(new URL(f, HUB_DIR), 'utf8');
-    const names = [...new Set([...page.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map((m) => m[1]))];
-    for (const name of names) {
-      if (!new RegExp(`async\\s+${name}\\s*\\(`).test(hub)) {
-        missingWrapper.push(`${f}: fn.${name}`);
-        continue;
-      }
-      if (new RegExp(`Factoidal\\.${name}\\s*\\(`).test(hub)
-          && !new RegExp(`export\\s+(async\\s+)?function\\s+${name}\\b`).test(adapter)) {
-        missingExport.push(`${f}: fn.${name}`);
-      }
+    const cells = [...page.matchAll(/```observable-js[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+    for (const name of new Set([...cells.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\b/g)].map((m) => m[1]))) {
+      if (!(name in browser.default) && !helperNames.has(name)) missingFn.push(`${f}: fn.${name}`);
+    }
+    for (const name of new Set([...cells.matchAll(/\bFactoidal\.([A-Za-z_][A-Za-z0-9_]*)\b/g)].map((m) => m[1]))) {
+      if (!(name in browser) && !(`Factoidal.${name}` in KNOWN_GAPS)) missingFactoidal.push(`${f}: Factoidal.${name}`);
     }
   }
-  assert.deepEqual(missingWrapper, [],
-    'fn.* names with no async wrapper in docs/_includes/hub.njk (cells REJECT live)');
-  assert.deepEqual(missingExport, [],
-    'hub wrappers delegating to a Factoidal.* function docs/fstar-extracted/browser.js does not export');
+  assert.deepEqual(missingFn, [],
+    'fn.* names that neither npm/factoidal/browser.js nor hub.njk hubHelpers defines (cells REJECT live)');
+  assert.deepEqual(missingFactoidal, [],
+    'Factoidal.* names npm/factoidal/browser.js does not export');
 });
+
+for (const [qualified, issue] of Object.entries(KNOWN_GAPS)) {
+  xfail(`fn-surface parity: npm/factoidal/browser.js exports ${qualified.split('.')[1]}`, issue, () => {
+    assert.ok(qualified.split('.')[1] in browser, `${qualified} is not exported`);
+  });
+}

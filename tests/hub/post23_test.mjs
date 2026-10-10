@@ -15,45 +15,21 @@
 // node/edge counts derived from the resolved document (the same
 // browser-vs-test duality documented for pretty() in hub/README.md).
 
-import { createRequire } from 'node:module';
 import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const require = createRequire(import.meta.url);
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 const POST_FILE = '23-decentralized-identifiers-did-key.md';
 
 const DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
 const VM = DID + '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
 
-function loadAbi() {
-  const bundlePath = process.env.FACTOIDAL_NPM_ENTRY;
-  assert.ok(bundlePath, 'FACTOIDAL_NPM_ENTRY must be set (see ./_helpers.mjs)');
-  const mod = require(bundlePath);
-  const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
-  assert.ok(abi, 'factoidalNpmEntry ABI object did not register');
-  return abi;
-}
+// The cells call the package's typed didKeyResolve -> Dataset through
+// `fn`, as the page does (issue 726).
+const Factoidal = factoidal;
 
-const abi = loadAbi();
-
-// Mirrors npm/factoidal/browser.js's didKeyResolve(): JSON-parse the
-// ABI's envelope, throw on {ok:false}, hand back {ok,did,nquads}.
-const Factoidal = {
-  async didKeyResolve(didString) {
-    assert.equal(typeof abi.didKeyResolve, 'function',
-      'the loaded bundle predates the did:key export');
-    const parsed = JSON.parse(abi.didKeyResolve(didString));
-    if (!parsed.ok) throw new Error(parsed.error || 'didKeyResolve failed');
-    return parsed;
-  },
-};
-
-// Echo stub for the vendored Observable Plot: each mark constructor
-// records its (data, options); Plot.plot echoes the spec. Enough to
-// assert the node/edge counts the cell derives from the DID Document.
 const Plot = {
   plot: (spec) => ({ isPlot: true, ...spec }),
   arrow: (data, options) => ({ mark: 'arrow', data, options }),

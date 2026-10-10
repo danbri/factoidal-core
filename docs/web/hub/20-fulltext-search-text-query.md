@@ -34,6 +34,14 @@ regression suite is
 [`tests/local/fulltext_slice1.sh`](https://github.com/danbri/factoidal/blob/claude/main/tests/local/fulltext_slice1.sh);
 every query below is drawn from it.
 
+> **On this site's engine.** The hub runs the Lean 4 engine of
+> `@factoidal/core` since 0.9.0, and the Lean SPARQL evaluator does not
+> serve `text:query` yet:
+> https://github.com/danbri/factoidal/issues/727. The query cells below
+> answer no rows here until it does; `tests/hub/post20_test.mjs` carries
+> each of them as an expected failure naming that issue. The prose
+> records what the F\* engine answered until 0.9.0.
+
 ## A small labelled dataset
 
 Five things, each with an `rdfs:label`, a `dc:title`, and an

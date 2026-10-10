@@ -86,13 +86,12 @@ discount*:
 The real fixture pairs this with a second rule for `silver` status
 (discount 5) and one ground fact (`customer017` is `gold`). Below,
 both rules run live against two customers — one gold, one silver —
-via `Factoidal.rifEval(rifRulesXml, dataNQuads)`
-(`npm/factoidal/browser.js`'s raw RIF export, forward-chaining
-saturation over `RIF.Core.Eval.fst`'s fixpoint). The call is wrapped
-in a try/catch: an older engine bundle that predates the RIF export
-would throw "the loaded factoidal-npm-entry bundle predates the RIF
-exports" rather than silently produce nothing, so this cell reports
-that instead of failing invisibly.
+via `fn.rifEval(data, rifRulesXml)`, the package's RIF Core
+forward-chaining saturation (the Lean module `L4Factoidal.RIF`), which
+answers the saturated dataset. The call is wrapped in a try/catch: an
+engine that does not serve the RIF operation rejects with the
+capability error rather than silently produce nothing, so this cell
+reports that instead of failing invisibly.
 
 ```observable-js
 const rifRulesXml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -164,14 +163,15 @@ const dataNQuads =
   '<http://example.org/example#customer042> <http://example.org/example#name> "Jane Roe" .\n';
 
 try {
-  const result = await Factoidal.rifEval(rifRulesXml, dataNQuads);
-  const discountLines = result.saturatedNquads
+  const data = await fn.parse(dataNQuads, { format: "nquads" });
+  const saturated = await fn.rifEval(data, rifRulesXml);
+  const discountLines = saturated.toNQuads()
     .split("\n")
     .filter((line) => line.includes("#discount"));
   return {
     available: true,
-    inputCount: result.inputCount,
-    derivedCount: result.derivedCount,
+    inputCount: data.size,
+    derivedCount: saturated.size - data.size,
     discounts: discountLines,
   };
 } catch (err) {
@@ -232,12 +232,12 @@ const dataNQuads =
   '<http://example.org/example#customer099> <http://example.org/example#name> "Sam Bronze" .\n';
 
 try {
-  const result = await Factoidal.rifEval(rifRulesXml, dataNQuads);
+  const data = await fn.parse(dataNQuads, { format: "nquads" });
+  const saturated = await fn.rifEval(data, rifRulesXml);
   return {
     available: true,
-    inputCount: result.inputCount,
-    derivedCount: result.derivedCount,
-    rounds: result.rounds,
+    inputCount: data.size,
+    derivedCount: saturated.size - data.size,
   };
 } catch (err) {
   return { available: false, note: err.message };
@@ -257,5 +257,5 @@ different concrete RDF syntaxes and showing the bytes converge.
 
 Every live cell above is pinned in
 [`tests/hub/post10_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post10_test.mjs),
-executed against the real npm-entry ABI the same way the in-browser
-`Factoidal` binding is, rather than a hand-copied approximation.
+executed against `npm/factoidal`'s Node entry, which exports the same
+typed API the page's `fn` carries.

@@ -291,8 +291,9 @@ failures are of four kinds:
 - files this checkout does not have: `docs/test-results/latest.json`
   (post17), and the `.eleventy.js` pass-through line post54 pins.
 
-Which engine the hub uses, and so which engine its node harness binds, is
-open: https://github.com/danbri/factoidal/issues/NEW-1.
+Which engine the hub uses was decided by the coordinator on 2026-10-10
+(https://github.com/danbri/factoidal/issues/726): the published one, Lean.
+§ 8 records the move.
 
 ### Gates
 
@@ -314,6 +315,120 @@ the merge; 9,622,969 after stages 1 and 2). No F\* bundle is in
 | `npm pack --dry-run` | 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` |
 
 The Lean changes add no `sorry`, `axiom`, `native_decide` or `partial def`.
+
+## 8. The hub on the Lean engine (issue 726, 2026-10-10)
+
+Branch `claude/wt-hub-lean` of danbri/factoidal-core.
+
+### Bindings
+
+`docs/_includes/hub.njk` imports `/npm/factoidal/browser.js` as `Factoidal`
+and binds `fn = Object.assign({}, Factoidal.default, hubHelpers)`: the
+package's typed API, plus the hub-only helpers (the Lean dispatch ABI
+`loadL4`/`l4Call`/`l4CallBlobIO`/`l4Parse`/`l4Query`/`l4Update`, where
+`loadL4()` is the package's own `loadEngine()`, so a page instantiates one
+wasm module; `openStoreOverHttp`; `loadWikifunctions`;
+`loadRegistryPackage`). The F\* raw-call adapter and its JavaScript N-Quads
+parser are removed. `docs/.eleventy.js` passes the package's browser files
+through from `npm/factoidal/` (browser.js, api.mjs, rdfjs.mjs, lib/,
+l4-assets/, store-host/, store-http/); the generated mirror `docs/npm/`
+is no longer read (the factoidal-builds `web` release still writes it; it
+can stop). The service worker precaches the engine's JavaScript and the
+two loaders; the 10 MB wasm is warmed on first use (precaching it made the
+first-visit install slow enough that post 42 missed the browser sweep's
+navigation deadline). `tests/hub/fn_surface_parity_test.mjs` imports
+browser.js and checks every `fn.*` and `Factoidal.*` name a post calls
+against its exports and the helpers.
+
+### The 34 node-harness failures
+
+Kind 1, Lean output against an F\* pin; each pin is now what the
+specification fixes:
+- post03: the OWL 2 RL/RDF rules (OWL 2 Profiles § 4.3, Tables 4-9) give
+  `foaf:Person` (cax-eqc1) and type no individual as `owl:Thing` (cls-thing,
+  Table 6, types `owl:Thing` itself as a class); `rdfs:Resource` comes from
+  rdfs4a/rdfs4b, RDFS entailment. The Lean closure is right; the F\*
+  answer came from extension tables. Pin and prose changed.
+- post27: SVRL `location` is an XPath that selects the context node; the
+  test evaluates the reported path on the instance.
+- post28: the undefined value is pinned, not the wording of its reason.
+- post30: the someValuesFrom conclusion is in the RL closure (cls-svf1,
+  Table 6; cax-eqc2, Table 7), so `via` is `closure`; a union example (no RL
+  row) shows the `refutation` path.
+- post31: column 10 is where the text stops being a prefix of any Turtle
+  1.1 document (`PNAME_NS ::= PN_PREFIX? ':'`); the F\* parser reported the
+  token start. The test also checks that `text.slice(err.offset)` starts
+  there.
+
+Kind 2, functions only F\* had:
+- post42 packs its TriG corpus in the page into one Shardborough generation
+  (layout ibk4, the quad layout; ops packBegin/packFeed/packNext/packEndPass/
+  packFinish) held in a Map, opens it with `openStore(reader, {generation})`
+  and queries the `Store`; the store and in-memory answers agree.
+- post20 (`text:query`) and post21 (`geof:distance`, `geof:envelope`):
+  expected failures naming https://github.com/danbri/factoidal/issues/727,
+  with a note in each post.
+- post18 (the browser durable update log): opened as
+  https://github.com/danbri/factoidal/issues/728; the three lifecycle cells
+  and the browser.js exports are expected failures naming it, and a note in
+  the post says steps 2-4 answer `{available: false}` on the Lean engine.
+
+Kind 3, cells that needed an F\* build: posts 06, 07, 09, 10, 13, 23, 25,
+45, 48 and 49 call the typed functions (`shexValidate`, `jsonldToRdf`,
+`jsonldFromRdf`, `rmlMap`, `rifEval`, `csvwToRdf`, `didKeyResolve`,
+`xmlWellformed`, `xpathEval`, `queryRaw`), and their tests bind the
+package instead of F\* ABI shims. post10's `rounds` member is gone (the
+Lean saturation reports no round count). post24 uses the package's
+`queryHdt`. post37 maps the 0.1.0 tarball's `gitSha` (a danbri/factoidal
+commit) through `tools/repo-split/commit-map.tsv` before the ancestry check.
+post12's `factoidal/wasm` capability check had no subject after 0.9.0; it
+is replaced by a check that the entry is gone, and the post's section says
+the package has one engine.
+
+Kind 4, checkout files:
+- post17 reads the committed Lean conformance baseline
+  (`docs/designissues/2026-10-09-lean-conformance-baseline.md`: SPARQL 1.1
+  manifest-all, which includes the 13 Update manifests, 631 pass, 0 fail
+  (out of 631)) instead of `docs/test-results/latest.json`, a build
+  artifact the checkout does not have; the prose says both figures.
+- post54 pins the new package pass-through instead of the removed
+  `"../npm/factoidal/store-http"` line.
+- post18's C demo transcript is checked against the committed KaRaMeL C
+  source (`delta_log_demo.c` prints both quoted lines); the demo binary is
+  an F\* native build product. Two checks of the F\* npm-entry bundles'
+  contents were removed: their subject is not in a hub checkout.
+
+### Tools that loaded files 0.9.0 removed
+
+`tests/perf/l4_vs_fstar_wasm_bench.mjs` runs the Lean engine through the
+package and the two F\* npm-entry bundles by path from
+`docs/fstar-extracted/` through the same `buildApi` wrappers (an absent
+bundle is reported as that engine's error); `tools/deltalog-bench/
+bench-js-wasm.mjs` loads the F\* wasm npm-entry bundle by path;
+`tools/bundle-sizes.sh` measures the package files as required rows and
+the F\* bundles as optional comparison rows; `tests/hub/post12_test.mjs`
+no longer requires `npm/factoidal/wasm.js`.
+
+### Gates (2026-10-10)
+
+No Lean source changed, so the wasm was not rebuilt: the runs use the
+module the issue-716 merge built from the same Lean tree (10,510,450
+bytes, sha256 `5da96d60…`), installed in `npm/factoidal/l4-assets/`. The
+newest factoidal-builds `web` release (`build-19c2f705e3e8-web`) predates
+stage 3 and lacks its operations. No F\* bundle or binary was installed.
+
+| Gate | Before | After |
+|---|---|---|
+| `node --test tests/hub/*_test.mjs` | 353 pass, 34 fail (out of 387) | 445 pass, 0 fail (out of 445), 18 of them expected failures: issue 727 (7), issue 728 (10), issue 690 (1, older) |
+| `tests/web-demos/hub_browser_all.sh` (headless Chromium) | not run on the Lean engine | 54 pass, 0 fail (out of 54 posts) |
+| `cd npm/factoidal && npm test` | 372 pass (coordinator) | 371 pass, 0 fail, 1 skipped (out of 372); the skip is the esbuild bundler case, esbuild not installed in this worktree; 4 expected failures |
+
+### Not done
+
+The three F\* gallery demos under `docs/fstar-extracted/` (`demo-cottas`,
+`demo-jsonld-playground`, `demo-rif`) still import the F\* driver
+`./browser.js` and its `runFactoidalCli`; they are not hub pages and need
+the F\* web bundles.
 
 ## 5. Stage 2: what landed (2026-10-10)
 

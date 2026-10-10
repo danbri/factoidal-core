@@ -61,16 +61,24 @@ test('post03: RDFS entailment does not know owl:equivalentClass', async () => {
   ]);
 });
 
-test('post03: OWL-RL entailment derives foaf:Person and owl:Thing via equivalentClass', async () => {
+// The OWL 2 RL/RDF rules (OWL 2 Profiles § 4.3, Tables 4-9) fix this
+// set. cax-eqc1 (Table 7) gives foaf:Person. No row types an individual
+// as owl:Thing: cls-thing (Table 6) has no premise and types owl:Thing
+// itself as an owl:Class. rdfs:Resource comes from rdfs4a/rdfs4b, which
+// are RDFS entailment rules (RDF 1.1 Semantics § 9.2.1), not OWL 2 RL
+// rows. The F* engine added both through extension tables
+// (owl_thing_axioms and its RDFS layer); see
+// docs/designissues/2026-09-07-lean-owl-corpus-gap.md § 14.1.
+const OWL_RL_TYPES = [
+  'http://xmlns.com/foaf/0.1/Person',
+  'https://schema.org/Person',
+];
+
+test('post03: OWL-RL entailment derives foaf:Person via equivalentClass (cax-eqc1), and no owl:Thing or rdfs:Resource typing', async () => {
   const dataset2 = await factoidal.parse(OWL_TTL);
   const rows = await factoidal.query(dataset2, Q, { entail: 'OWL-RL' });
   const types = rows.map((r) => r.get('type').value).sort();
-  assert.deepEqual(types, [
-    'http://www.w3.org/2000/01/rdf-schema#Resource',
-    'http://www.w3.org/2002/07/owl#Thing',
-    'http://xmlns.com/foaf/0.1/Person',
-    'https://schema.org/Person',
-  ]);
+  assert.deepEqual(types, OWL_RL_TYPES);
 });
 
 // ---------------------------------------------------------------------
@@ -111,21 +119,14 @@ test('post03 cell 2 (RDFS toggle): schema:Thing appears only with entailment', a
 test('post03 cell 3 (OWL-RL toggle): equivalentClass only fires under OWL-RL', async () => {
   const post = runReactivePost(cells, { fn: factoidal });
   const result = await post.value(post.names[2]);
-  assert.deepEqual(result, {
-    // this cell's shipped code sorts withOWLRL but not withRDFS, so
-    // the RDFS list is in derivation order: asserted type first, then
-    // the rdfs4a/4b-derived rdfs:Resource.
-    withRDFS: [
-      'https://schema.org/Person',
-      'http://www.w3.org/2000/01/rdf-schema#Resource',
-    ],
-    withOWLRL: [
-      'http://www.w3.org/2000/01/rdf-schema#Resource',
-      'http://www.w3.org/2002/07/owl#Thing',
-      'http://xmlns.com/foaf/0.1/Person',
-      'https://schema.org/Person',
-    ],
-  });
+  // The cell does not sort withRDFS, and a SELECT without ORDER BY has
+  // no fixed solution order (SPARQL 1.1 Query § 15.1), so compare it as
+  // a set.
+  assert.deepEqual([...result.withRDFS].sort(), [
+    'http://www.w3.org/2000/01/rdf-schema#Resource',
+    'https://schema.org/Person',
+  ]);
+  assert.deepEqual(result.withOWLRL, OWL_RL_TYPES);
 });
 
 test('post03 cell 4 (mutual subClassOf): equivalence in pure RDFS', async () => {

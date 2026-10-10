@@ -40,9 +40,8 @@ const PLAIN_JSON = JSON.stringify({
   "jobTitle": "Engineer",
 });
 
-const result = await Factoidal.jsonldToRdf(PLAIN_JSON);
-const tripleCount = result.nquads.trim().length === 0 ? 0 : result.nquads.trim().split("\n").length;
-return { tripleCount };
+const result = await fn.jsonldToRdf(PLAIN_JSON);
+return { tripleCount: result.size };
 ```
 
 Zero triples. `@id` alone asserts nothing by itself — it just names a
@@ -99,11 +98,8 @@ Run the same call as above, now with a context in place:
 ```observable-js
 async function tryJsonldToRdf(jsonldText) {
   try {
-    if (typeof Factoidal.jsonldToRdf !== "function") {
-      throw new Error("Factoidal.jsonldToRdf is not exposed by this build");
-    }
-    const result = await Factoidal.jsonldToRdf(jsonldText);
-    return { available: true, nquads: result.nquads };
+    const result = await fn.jsonldToRdf(jsonldText);
+    return { available: true, nquads: result.toNQuads() };
   } catch (err) {
     return { available: false, note: err.message };
   }
@@ -119,11 +115,9 @@ they're full IRIs instead of document-local strings. Same JSON
 structure, same keys, one small addition, and the data means something
 outside its own document.
 
-`Factoidal.jsonldToRdf` is a raw ABI export (`bin/npm-entry/entry_jsoo.ml`'s
-`jsonldToRdf`, per [`README.md`](./README.md)'s bindings table), not
-one of `fn`'s typed methods — it needs the npm-entry ABI bundle the
-same way `shexValidate` and `shaclValidate` do, so the `try`/`catch`
-capability check above is the same pattern
+`fn.jsonldToRdf(text, options)` is the package's JSON-LD toRdf
+function: it answers a Dataset (`.size`, `.toNQuads()`). The `try`/`catch`
+above is the same capability check
 [post 06](./06-shapes-the-other-dialect-shex.md) used for ShEx.
 `fn.parse(text, {format: 'jsonld'})` also parses JSON-LD (the common
 case, and the typed path every earlier post in this series uses), but
@@ -139,8 +133,8 @@ JSON-LD-specific query language required, starting from the same
 `ALICE_JSONLD` document above:
 
 ```observable-js
-const result = await Factoidal.jsonldToRdf(ALICE_JSONLD);
-const nquads = result.nquads;
+const result = await fn.jsonldToRdf(ALICE_JSONLD);
+const nquads = result.toNQuads();
 
 const reparsed = await fn.parse(nquads, { format: "nquads" });
 const rows = await fn.query(reparsed, `
@@ -154,7 +148,7 @@ const rows = await fn.query(reparsed, `
 return rows.map((r) => ({ name: r.get("name").value, title: r.get("title").value }));
 ```
 
-`fn.parse`'s N-Quads input is the exact text `Factoidal.jsonldToRdf`
+`fn.parse`'s N-Quads input is the exact text `fn.jsonldToRdf`
 produced two paragraphs up — nothing about the query layer knows or
 cares that this data started life as JSON.
 
@@ -164,7 +158,7 @@ Expansion has an inverse. JSON-LD's **fromRdf** algorithm (the
 "Serialize RDF as JSON-LD" direction) takes an RDF dataset and produces
 the **expanded-form** JSON-LD document for it: no `@context`, every
 predicate spelled as a full IRI, every value wrapped as a `@value`
-object. `Factoidal.jsonldFromRdf` runs it — hand it the same three
+object. `fn.jsonldFromRdf` runs it — hand it the same three
 triples as N-Quads and it hands back the node object they describe:
 
 ```observable-js
@@ -174,8 +168,7 @@ const NQUADS = [
   '<http://example.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> .',
 ].join("\n");
 
-const result = await Factoidal.jsonldFromRdf(NQUADS);
-return JSON.parse(result.jsonld);
+return await fn.jsonldFromRdf(NQUADS, { format: "nquads" });
 ```
 
 One node object: its `@id` is `http://example.org/alice`, its `@type`
@@ -214,5 +207,5 @@ labels, and how RDFC-1.0 makes them compare equal anyway.
 
 Every live cell above is pinned in
 [`tests/hub/post07_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post07_test.mjs) —
-the exact same source, executed against the real `npm/factoidal` typed
-API instead of the in-browser `fn`/`Factoidal` adapters.
+the exact same source, executed against `npm/factoidal`'s Node entry,
+which exports the same typed API the page's `fn` carries.

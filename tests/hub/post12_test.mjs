@@ -56,25 +56,9 @@ test('post12: capabilities() function list matches the table this post documents
   assert.equal(caps.csvw, true);
 });
 
-test('post12: the wasm entry\'s capabilities() now matches the js entry (grounds the "wasm caught up" prose update)', async () => {
-  let wasmFactoidal;
-  try {
-    wasmFactoidal = require('../../npm/factoidal/wasm.js');
-  } catch (err) {
-    // Environment has no WasmGC-capable Node -- skip rather than false-fail.
-    return;
-  }
-  const wasmCaps = await wasmFactoidal.capabilities();
-  const jsCaps = await factoidal.capabilities();
-  assert.equal(jsCaps.rif, true, 'js entry should support rif');
-  // The wasm entry's npm-entry ABI bundle was rebuilt and a
-  // require.main path bug in wasm.js's entry loader (which had
-  // silently reported every one of these as false, independent of
-  // whether the bundle actually had the function) is fixed. This
-  // assertion is the measured fact the post's "wasm caught up"
-  // section reports, not an assumption -- if this now fails, either
-  // the bundle regressed or the loader fix was reverted.
-  for (const key of ['shacl', 'shex', 'owlClosure', 'rml', 'csvw', 'jsonld', 'rif']) {
-    assert.equal(wasmCaps[key], true, `expected wasm caps.${key} to be true`);
-  }
+test('post12: the package has one entry; factoidal/wasm left in 0.9.0 (issue 713)', async () => {
+  const fs = await import('node:fs');
+  const pkg = JSON.parse(fs.readFileSync(new URL('../../npm/factoidal/package.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.exports['./wasm'], undefined, 'no ./wasm export');
+  assert.equal(fs.existsSync(new URL('../../npm/factoidal/wasm.js', import.meta.url)), false);
 });

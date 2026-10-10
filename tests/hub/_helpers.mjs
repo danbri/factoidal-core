@@ -30,7 +30,16 @@ import { analyzeCell, cellInputs, makeDefinition, parseCellFlags } from '../../d
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
-require(path.join(__dirname, '..', '..', 'npm', 'factoidal', 'test', 'helpers.js'));
+const npmTestHelpers = require(path.join(__dirname, '..', '..', 'npm', 'factoidal', 'test', 'helpers.js'));
+
+/**
+ * An expected failure that names its open issue (skills/test-suites/
+ * SKILL.md, "Expected failures"): `fn` runs; if it throws, the case passes
+ * as `xfail: <name> (<issue>)`; if it passes, the case FAILS, so the flip
+ * to an assertion and the issue closure cannot be forgotten. The same
+ * helper npm/factoidal/test/ uses.
+ */
+export const xfail = npmTestHelpers.xfail;
 
 export const NPM_FACTOIDAL_INDEX =
   path.join(__dirname, '..', '..', 'npm', 'factoidal', 'index.mjs');

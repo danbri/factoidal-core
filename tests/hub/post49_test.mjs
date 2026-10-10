@@ -23,7 +23,7 @@ test('post49: presents a reviewable proposal and runs it only on explicit action
   assert.match(cell, /LIMIT 20 as the final clause/);
   assert.match(cell, /Review and run this proposal locally/);
   assert.match(cell, /run\.addEventListener\("click"/);
-  assert.match(cell, /Factoidal\.queryDataset\(data, query/);
+  assert.match(cell, /fn\.queryRaw\(lines\.join\("\\n"\), query, \{ dataFormat: "nquads", output: "json" \}\)/);
   assert.match(cell, /Only a reviewed read-only SELECT, ASK, CONSTRUCT, or DESCRIBE/);
   assert.match(cell, /INSERT\|DELETE\|LOAD\|CLEAR\|CREATE\|DROP\|COPY\|MOVE\|ADD\|WITH\|USING\|SERVICE/);
   assert.match(cell, /SPARQL requires WHERE before LIMIT/);

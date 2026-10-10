@@ -20,6 +20,14 @@ require.main path bug in `wasm.js`'s entry loader that had silently
 broken every wasm-side capability probe (SHACL, ShEx, OWL/RDFS
 closure, RML, CSVW, JSON-LD, RIF, and this delta log alike) is fixed.
 
+> **On this site's engine.** The hub runs the Lean 4 engine of
+> `@factoidal/core` since 0.9.0. The Lean package has no durable update
+> log for a browser host yet, so steps 2–4 below answer
+> `{available: false}` here; step 1 runs. The gap is
+> https://github.com/danbri/factoidal/issues/728, with expected-failure
+> cases in `tests/hub/post18_test.mjs`. The rest of this page records
+> the F\* delta log that served these cells until 0.9.0.
+
 Nothing below is a mock. Every cell calls the real
 `RDF_Store_Columnar_DeltaLog`/`RDF_Store_Columnar_DeltaMerge` functions
 `fstar.exe --codegen` produced from

@@ -17,18 +17,9 @@ const POST_FILE = '09-mapping-tables-to-triples-rml.md';
 
 const cells = extractObservableCells(POST_FILE);
 
-// The post's cells call the raw `Factoidal.rmlMap(mappingNQuads,
-// sourceData, sourceKind)` contract (npm/factoidal/browser.js), not
-// the typed `fn` adapter -- RML has no `fn.rmlMap` wrapper in
-// docs/_includes/hub.njk today. This shim mirrors browser.js's return
-// shape (`{ok, nquads}`) on top of the REAL npm/factoidal typed API's
-// `rmlMap(mapping, sourceData, sourceKind, options) -> Promise<Dataset>`.
-const FactoidalNode = {
-  async rmlMap(mappingNQuads, sourceData, sourceKind) {
-    const ds = await factoidal.rmlMap(mappingNQuads, sourceData, sourceKind, { format: 'nquads' });
-    return { ok: true, nquads: ds.toNQuads() };
-  },
-};
+// The cells call the package's typed rmlMap(mapping, source, kind) ->
+// Dataset through `fn`, as the page does (issue 726).
+const FactoidalNode = factoidal;
 
 test('post09: post has at least 2 live cells', () => {
   assert.ok(cells.length >= 2, `expected >= 2 live cells, found ${cells.length}`);

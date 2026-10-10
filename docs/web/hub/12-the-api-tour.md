@@ -90,38 +90,17 @@ boolean, ..., rif: boolean}` — see
 promises server-side: a per-feature probe, not a blanket
 version check.
 
-## The wasm entry caught up
+## One engine since 0.9.0
 
-`npm/factoidal` ships two engines side by side: `require('factoidal')`
-(js_of_ocaml) and `require('factoidal/wasm')` (wasm_of_ocaml, Node
-≥ 22 / WasmGC). Both expose the identical function list above, and —
-measured directly against this repository's current wasm build —
-`factoidal/wasm`'s `capabilities()` now reports:
-
-```js
-{
-  entry: true, construct: true, update: true,
-  canonicalize: true, graphs: true, canonicalHash: true,
-  shacl: true, shex: true, owlClosure: true,
-  rml: true, csvw: true, jsonld: true, rif: true
-}
-```
-
-Two things make this work: the npm-entry ABI bundle
-(`factoidal-npm-entry.wasm.js`) includes every export the js_of_ocaml
-build ships, and a `require.main`-path bug in `wasm.js`'s entry loader
-is fixed — the loader
-resolved the bundle's `.wasm.assets/` directory relative to
-`require.main.filename`, which is wrong for any caller whose own main
-module lives somewhere else (any `test/` file, any downstream
-consumer), so the asset read threw deep inside wasm init and was
-silently swallowed, misreporting `entry: false` and every function
-built on it even when the bundle genuinely had the export. This whole
-series' live cells still run against the plain js engine per
-[`docs/web/hub/README.md`](../README/)'s "Constraints every cell must
-respect" — a separate, still-current constraint (the wasm CLI-bundle
-lags newer CLI surfaces like `--dump-nq` byte-for-byte parity), unrelated
-to the npm-entry ABI capability gap this section used to describe.
+Until 0.8.x, `npm/factoidal` shipped two F\* builds side by side:
+`require('factoidal')` (js_of_ocaml) and `require('factoidal/wasm')`
+(wasm_of_ocaml). Since 0.9.0 the package carries one engine, the Lean 4
+library compiled to WebAssembly
+([issue 713](https://github.com/danbri/factoidal/issues/713)), and
+`factoidal/wasm` is gone. The same module serves Node (`index.mjs`) and
+this page (`browser.js`), so `capabilities()` answers the same list in
+both places: the engine reports the operations it serves, and each
+feature flag is a probe of that list.
 
 ## What's next
 

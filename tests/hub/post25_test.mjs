@@ -9,46 +9,20 @@
 // the browser build loads, backed by require() instead of fetch().
 // `pretty` is the shared node-side stub from _helpers.mjs.
 
-import { createRequire } from 'node:module';
-import { extractObservableCells, runObservableCell, runReactivePost, pretty } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const require = createRequire(import.meta.url);
 const POST_FILE = '25-xml-wellformedness-and-xpath.md';
 
-function loadAbi() {
-  const bundlePath = process.env.FACTOIDAL_NPM_ENTRY;
-  assert.ok(bundlePath, 'FACTOIDAL_NPM_ENTRY must be set (see ./_helpers.mjs)');
-  const mod = require(bundlePath);
-  const abi = (mod && mod.factoidalNpmEntry) || globalThis.factoidalNpmEntry;
-  assert.ok(abi, 'factoidalNpmEntry ABI object did not register');
-  return abi;
-}
-
-const abi = loadAbi();
-
-// Mirrors npm/factoidal/browser.js's xmlWellformed()/xpathEval().
-const Factoidal = {
-  async xmlWellformed(xmlText) {
-    assert.equal(typeof abi.xmlWellformed, 'function',
-      'the loaded bundle predates the xmlWellformed export');
-    const parsed = JSON.parse(abi.xmlWellformed(xmlText));
-    if (!parsed.ok) throw new Error(parsed.error || 'xmlWellformed failed');
-    return parsed;
-  },
-  async xpathEval(xmlText, xpathExpr) {
-    assert.equal(typeof abi.xpathEval, 'function',
-      'the loaded bundle predates the xpathEval export');
-    const parsed = JSON.parse(abi.xpathEval(xmlText, xpathExpr));
-    if (!parsed.ok) throw new Error(parsed.error || 'xpathEval failed');
-    return parsed;
-  },
-};
+// The cells call the package's typed xmlWellformed -> boolean and
+// xpathEval -> XPathResult through `fn`, as the page does (issue 726).
+const fn = (await import(NPM_FACTOIDAL_INDEX)).default;
+const Factoidal = fn;
 
 const cells = extractObservableCells(POST_FILE);
-const B = { Factoidal, pretty };
+const B = { Factoidal, fn, pretty };
 
 test('post25: post has 5 live cells (XML hoisted into its own named cell)', () => {
   assert.equal(cells.length, 5, `expected 5 live cells, found ${cells.length}`);
@@ -66,13 +40,13 @@ test('post25: dependency inference wires XML into cells 2, 4, 5 (not the BAD cel
 test('post25 cell 1 (well-formed document): wellformed true', async () => {
   const post = runReactivePost(cells, B);
   const result = await post.value(post.names[1]);
-  assert.deepEqual(result, { ok: true, wellformed: true });
+  assert.deepEqual(result, { wellformed: true });
 });
 
 test('post25 cell 2 (mismatched close tag): wellformed false', async () => {
   const post = runReactivePost(cells, B);
   const result = await post.value(post.names[2]);
-  assert.deepEqual(result, { ok: true, wellformed: false });
+  assert.deepEqual(result, { wellformed: false });
 });
 
 test('post25 cell 3 (//book/title node-set): two title elements', async () => {

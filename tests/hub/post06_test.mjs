@@ -10,24 +10,10 @@ const POST_FILE = '06-shapes-the-other-dialect-shex.md';
 
 const cells = extractObservableCells(POST_FILE);
 
-// The post's cells call the raw `Factoidal.shexValidate(dataNQuads,
-// schemaJson, focus, shapeLabel)` contract (npm/factoidal/browser.js),
-// not the typed `fn` adapter -- ShEx has no `fn.shexValidate` wrapper
-// in docs/_includes/hub.njk today (only shaclValidate got one). This
-// tiny shim mirrors browser.js's raw signature/return shape
-// ({ok, verdict, deferred}, N-Quads text in) on top of the REAL
-// npm/factoidal typed API's `shexValidate(data, schemaJson, focus,
-// shape, options) -> Promise<boolean|null>`, since browser.js itself
-// needs a DOM/fetch environment this node:test run doesn't have. The
-// cell source under test is identical either way -- only this harness
-// binding differs from what a real browser page wires up.
-const FactoidalNode = {
-  async shexValidate(dataNQuads, schemaJson, focus, shapeLabel) {
-    const verdict = await factoidal.shexValidate(
-      dataNQuads, schemaJson, focus, shapeLabel || null, { format: 'nquads' });
-    return { ok: true, verdict, deferred: verdict === null };
-  },
-};
+// The cells call the package's typed shexValidate(data, schema, focus,
+// shape, {format}) -> boolean, through `fn`. The page binds `fn` to the
+// same API (npm/factoidal/browser.js, issue 726).
+const FactoidalNode = factoidal;
 
 test('post06: post has 10 live cells (WD_TTL/dataset/HUMAN_SHAPE_SCHEMA/tryShexValidate/HUMAN_SHAPE_SHEXC hoisted into named cells)', () => {
   assert.equal(cells.length, 10, `expected 10 live cells, found ${cells.length}`);

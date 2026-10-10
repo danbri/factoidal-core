@@ -52,9 +52,19 @@ test('post27: schematronBad reports one assert-fail finding as a table', async (
   const bad = await post.value('schematronBad');
   assert.equal(bad.kind, 'table');
   assert.deepEqual(bad.columns, ['type', 'context', 'test', 'message', 'path']);
-  assert.deepEqual(bad.rows, [
-    ['assert-fail', 'person', 'age', 'person must have an age', '/person'],
-  ]);
+  assert.equal(bad.rows.length, 1);
+  const [type, context, testExpr, message, location] = bad.rows[0];
+  assert.deepEqual([type, context, testExpr, message],
+    ['assert-fail', 'person', 'age', 'person must have an age']);
+  // SVRL (ISO/IEC 19757-3, Annex D) makes `location` an XPath that
+  // identifies the context node; it does not fix one spelling ('/person'
+  // and '/person[1]' select the same node). Assert what it fixes: the
+  // path, evaluated on the instance, selects exactly the person element.
+  const selected = await fn.xpathEval('<person><name>Bob</name></person>', location);
+  assert.equal(selected.resultType, 'nodeset');
+  assert.equal(selected.count, 1);
+  assert.equal(selected.nodes[0].kind, 'element');
+  assert.equal(selected.nodes[0].name, 'person');
 });
 
 test('post27: schematronGood clears the same rule', async () => {

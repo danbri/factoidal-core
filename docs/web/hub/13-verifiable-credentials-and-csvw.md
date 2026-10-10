@@ -213,8 +213,8 @@ run live below: **datatype coercion** — a column's declared `datatype`
 becomes the RDF literal's `^^` type — and **URI templates** — RFC 6570
 templates in `aboutUrl`/`propertyUrl` turn a cell value into a subject
 or predicate IRI. Below is a small municipal-facilities table run
-live through `Factoidal.csvwToRdf(csvText, metadataJson, options)`
-(`npm/factoidal/browser.js`'s raw CSVW export):
+live through `fn.csvwToRdf(csvText, metadataJson, options)`, the
+package's CSVW csv2rdf conversion, which answers a Dataset:
 
 {% raw %}
 
@@ -281,8 +281,8 @@ metadataJson = JSON.stringify({
 
 ```observable-js
 try {
-  const result = await Factoidal.csvwToRdf(csvText, metadataJson, { base: "http://example.org/" });
-  const lines = result.nquads.trim().split("\n");
+  const result = await fn.csvwToRdf(csvText, metadataJson, { base: "http://example.org/" });
+  const lines = result.toNQuads().trim().split("\n");
   const data = lines.filter((l) => l.includes("schema.org"));
   return {
     available: true,
@@ -305,8 +305,8 @@ provenance layer and emits only the typed row data:
 
 ```observable-js
 try {
-  const result = await Factoidal.csvwToRdf(csvText, metadataJson, { base: "http://example.org/", mode: "minimal" });
-  const lines = result.nquads.trim().split("\n");
+  const result = await fn.csvwToRdf(csvText, metadataJson, { base: "http://example.org/", mode: "minimal" });
+  const lines = result.toNQuads().trim().split("\n");
   return {
     available: true,
     totalQuads: lines.length,
@@ -376,5 +376,5 @@ RML, the functional dataset API, and the performance story.
 
 Every live cell above is pinned in
 [`tests/hub/post13_test.mjs`](https://github.com/danbri/factoidal/blob/claude/main/tests/hub/post13_test.mjs),
-executed against the real npm-entry ABI the same way the in-browser
-`Factoidal` binding is.
+executed against `npm/factoidal`'s Node entry, which exports the same
+typed API the page's `fn` carries.

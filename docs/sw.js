@@ -36,11 +36,11 @@ const CACHE = "factoidal-hub-" + BUILD_VERSION;
 
 // Deliberately short: the hub + home shell, and the JS module chain
 // the hub's live cells need on first load (Observable runtime/stdlib,
-// the project's own reactive-cell compiler, and the default
-// non-wasm Factoidal engine bundle). Content-hashed wasm assets are
-// NOT precached here — they're large, optional (the wasm engine path
-// is opt-in, not the hub's default), and the cache-first route below
-// warms them from real traffic on first use instead.
+// the project's own reactive-cell compiler, and the JavaScript of the
+// engine: @factoidal/core's browser.js, the modules it imports and the
+// Lean wasm's two loaders). The wasm modules are NOT precached here:
+// they are large (the Lean engine is about 10 MB), and the routes below
+// warm them from real traffic on first use instead.
 const PRECACHE_URLS = __PRECACHE_URLS__;
 
 // Content-hashed / immutable filename patterns: the URL changes
