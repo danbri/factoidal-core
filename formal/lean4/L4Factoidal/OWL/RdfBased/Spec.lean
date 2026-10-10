@@ -50,6 +50,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.OWL.Semantics
 import L4Factoidal.OWL.RLRules
+import L4Factoidal.XSD.Facets
 
 namespace L4Factoidal.OWL.RdfBased
 
@@ -229,6 +230,140 @@ def sameDecimalValue (d : WfIri) (s1 s2 : String) : Bool :=
   (d == xsdDecimal || d == xsdInteger) && decimalLexOk d s1 && decimalLexOk d s2 &&
   decimalCanon s1 == decimalCanon s2
 
+/-! ## Integer values of typed literals
+
+XSD 1.1 Part 2 § 3.4: the integer datatypes of the OWL 2 RDF-Based
+datatype map (§ 3.3) and the inclusive bounds of their value spaces;
+their lexical space is `[\-+]?[0-9]+` within the bounds (§ 3.4.13 and
+the derived types). The value spaces are subsets of the `xsd:decimal`
+value space, so equal integers of two of these datatypes are one value
+(OWL 2 Structural Specification § 4.2). -/
+
+/-- `(datatype, (lower bound, upper bound))`, `none` for unbounded. -/
+def intDtTable : List (WfIri × (Option Int × Option Int)) :=
+  [ (xsdInteger, (none, none)),
+    (xsdNonNegativeInteger, (some 0, none)),
+    (xsdPositiveInteger, (some 1, none)),
+    (xsdNonPositiveInteger, (none, some 0)),
+    (xsdNegativeInteger, (none, some (-1))),
+    (xsdLong, (some (-9223372036854775808), some 9223372036854775807)),
+    (xsdIntIri, (some (-2147483648), some 2147483647)),
+    (xsdShort, (some (-32768), some 32767)),
+    (xsdByte, (some (-128), some 127)),
+    (xsdUnsignedLong, (some 0, some 18446744073709551615)),
+    (xsdUnsignedInt, (some 0, some 4294967295)),
+    (xsdUnsignedShort, (some 0, some 65535)),
+    (xsdUnsignedByte, (some 0, some 255)) ]
+
+def intDtBounds (d : WfIri) : Option (Option Int × Option Int) :=
+  (intDtTable.find? (fun e => e.1 == d)).map (·.2)
+
+/-- `k` lies within the bounds. -/
+def inBounds (k : Int) (b : Option Int × Option Int) : Bool :=
+  b.1.all (fun lo => decide (lo ≤ k)) && b.2.all (fun hi => decide (k ≤ hi))
+
+/-- The integer a typed literal denotes, when its datatype is an integer
+datatype and its lexical form is in that datatype's lexical space. -/
+def intLitValue (l : WfLiteral) : Option Int :=
+  match intDtBounds l.val.datatype, XSD.parseFacetInt l.val.lexicalForm with
+  | some b, some k => if inBounds k b then some k else none
+  | _, _ => none
+
+/-- `xsd:float` or `xsd:double`. -/
+def isFloatingDt (d : WfIri) : Bool := d == XSD.xsdFloat || d == xsdDouble
+
+/-- A datatype whose value space is part of the value space of
+`owl:real`: `owl:real`, `owl:rational`, `xsd:decimal` and the integer
+datatypes. OWL 2 Structural Specification § 4.2: "the value spaces of
+xsd:double, xsd:float, and xsd:decimal are pairwise disjoint. In
+accordance with this principle, the value space of owl:real is defined
+as being disjoint with the value spaces of xsd:double and xsd:float". -/
+def onRealLine (e : WfIri) : Bool :=
+  e == XSD.owlReal || e == XSD.owlRational || e == xsdDecimal || (intDtBounds e).isSome
+
+/-- The literal is provably not in the value space of the datatype `e`:
+an integer outside the bounds of the integer datatype `e`, a literal
+of a datatype whose value space is disjoint from that of `e`
+(`RL.xsdValueSpacesDisjoint`), or an `xsd:float` / `xsd:double` literal
+against a datatype on the `owl:real` line (`onRealLine`). An ill-typed literal denotes no data
+value (§ 4.2), so it is not in the value space of `e` either. -/
+def litOutsideDt (l : WfLiteral) (e : WfIri) : Bool :=
+  (match intLitValue l, intDtBounds e with
+   | some k, some b => !inBounds k b
+   | _, _ => false) ||
+  xsdValueSpacesDisjoint l.val.datatype e ||
+  (isFloatingDt l.val.datatype && onRealLine e)
+
+/-- `s` is in the lexical space of `xsd:string` (XSD 1.1 Part 2 § 3.3.1:
+the sequences of characters that match the `Char` production of XML 1.0
+or XML 1.1; a Lean `Char` is never a surrogate, so the excluded code
+points are U+0000, U+FFFE and U+FFFF). -/
+def xsdStringLexOk (s : String) : Bool :=
+  s.toList.all (fun c => c.toNat != 0 && c.toNat != 0xFFFE && c.toNat != 0xFFFF)
+
+/-- The two literals provably denote different values: two integers that
+differ, or two `xsd:string` literals in the lexical space with different
+lexical forms (the lexical-to-value mapping of `xsd:string` is the
+identity). An ill-typed literal is never read here: its denotation is
+not in LV (§ 4.2) and nothing says which element it is. -/
+def litDistinct (l m : WfLiteral) : Bool :=
+  (match intLitValue l, intLitValue m with
+   | some a, some b => a != b
+   | _, _ => false) ||
+  (l.val.datatype == xsdString && m.val.datatype == xsdString &&
+   xsdStringLexOk l.val.lexicalForm && xsdStringLexOk m.val.lexicalForm &&
+   l.val.lexicalForm != m.val.lexicalForm)
+
+/-- The two literals provably denote one value: the same literal, or two
+integers that are equal. -/
+def litSame (l m : WfLiteral) : Bool :=
+  l.val == m.val ||
+  (match intLitValue l, intLitValue m with
+   | some a, some b => a == b
+   | _, _ => false)
+
+/-! ## Integer datatype restrictions (Table 5.7)
+
+XSD 1.1 Part 2 § 4.3.7 – § 4.3.10: `xsd:minInclusive v` keeps the values
+`≥ v`, `xsd:minExclusive v` those `> v`, `xsd:maxInclusive v` those
+`≤ v`, `xsd:maxExclusive v` those `< v`. `intRestrBounds e fv` is the
+bounds of `e` tightened by every pair of `fv` whose facet is one of the
+four and whose value is an integer literal; any other pair leaves the
+bounds as they are, so the bounds CONTAIN the restriction's value
+space. -/
+
+def xsdFacetMinInclusive : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#minInclusive", rfl⟩
+def xsdFacetMinExclusive : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#minExclusive", rfl⟩
+def xsdFacetMaxInclusive : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#maxInclusive", rfl⟩
+def xsdFacetMaxExclusive : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#maxExclusive", rfl⟩
+
+def maxLo (a : Option Int) (v : Int) : Option Int :=
+  match a with | some x => some (max x v) | none => some v
+
+def minHi (a : Option Int) (v : Int) : Option Int :=
+  match a with | some x => some (min x v) | none => some v
+
+/-- One facet pair tightens the bounds. -/
+def tightenBounds (b : Option Int × Option Int) (f : WfIri × WfLiteral) :
+    Option Int × Option Int :=
+  match intLitValue f.2 with
+  | some v =>
+      if f.1 == xsdFacetMinInclusive then (maxLo b.1 v, b.2)
+      else if f.1 == xsdFacetMinExclusive then (maxLo b.1 (v + 1), b.2)
+      else if f.1 == xsdFacetMaxInclusive then (b.1, minHi b.2 v)
+      else if f.1 == xsdFacetMaxExclusive then (b.1, minHi b.2 (v - 1))
+      else b
+  | none => b
+
+/-- The bounds of the restriction of `e` by the facet pairs `fv`. -/
+def intRestrBounds (e : WfIri) (fv : List (WfIri × WfLiteral)) : Option Int × Option Int :=
+  fv.foldl tightenBounds ((intDtBounds e).getD (none, none))
+
+/-- Two bounds pairs with no integer in common. -/
+def boundsDisjoint (a b : Option Int × Option Int) : Bool :=
+  (match a.1, b.2 with | some lo, some hi => decide (hi < lo) | _, _ => false) ||
+  (match b.1, a.2 with | some lo, some hi => decide (hi < lo) | _, _ => false)
+
 /-! ## The semantic conditions -/
 
 section Conditions
@@ -402,6 +537,91 @@ def CondDisjointDatatypes : Prop :=
   ∀ d1 d2 : WfIri, xsdValueSpacesDisjoint d1 d2 = true →
     ∀ y : i.idom, ¬ (icext i y (i.iIri d1) ∧ icext i y (i.iIri d2))
 
+/-- D-interpretations (§ 4.2, and the "general semantic conditions for
+datatypes" of the RDF Semantics that § 4.2 retains): for a datatype `e`
+of the datatype map, ICEXT(I(e)) is the value space of `e`, a subset of
+LV; IL("s"^^u) is L2V(u)(s) when s is in the lexical space of `u`, and is
+not in LV otherwise. So a literal that `litOutsideDt` places outside the
+value space of `e` is not in ICEXT(I(e)). -/
+def CondLitOutsideDt : Prop :=
+  ∀ (l : WfLiteral) (e : WfIri), litOutsideDt l e = true → ¬ icext i (i.iLit l) (i.iIri e)
+
+/-- Table 5.5 with § 4.2: an enumeration of literals has exactly their
+denotations as members ("ICEXT(z) = {a1, …, an}"), and IL maps two
+literals with different values to different elements (L2V). So a
+literal whose value differs from that of every listed literal is not a
+member. -/
+def CondOneOfLitExcl : Prop :=
+  ∀ (z s : i.idom) (as : List i.idom) (l : WfLiteral), SeqIs i s as →
+    i.iext (i.iIri owlOneOf) z s →
+    (∀ a ∈ as, ∃ m : WfLiteral, a = i.iLit m ∧ litDistinct l m = true) →
+    ¬ icext i (i.iLit l) z
+
+/-- § 4.2: IL("s"^^u) = L2V(u)(s); two literals `litSame` relates denote
+one value. -/
+def CondLitSame : Prop := ∀ l m : WfLiteral, litSame l m = true → i.iLit l = i.iLit m
+
+/-- Table 5.4, `owl:datatypeComplementOf`: "if (z, d) ∈
+IEXT(I(owl:datatypeComplementOf)) then ICEXT(z) = LV \ ICEXT(d)" — the
+part of the ⊆ half that says a member of `z` is not a member of `d`. -/
+def CondDatatypeComplementSub : Prop :=
+  ∀ z d y : i.idom, i.iext (i.iIri owlDatatypeComplementOf) z d → icext i y z → ¬ icext i y d
+
+/-- The premise of Table 5.7 for an integer datatype `e`: `(z, I(e)) ∈
+IEXT(I(owl:onDatatype))`, `(z, s) ∈ IEXT(I(owl:withRestrictions))`, `s`
+a sequence of `z1, …, zn` with n ≥ 1, each pair `(F, v)` of `fv` an
+assertion `(zk, IL(v)) ∈ IEXT(I(F))` of one of the `zk`, and every `zk`
+the subject of at least one pair of `fv`. Table 5.7 reads "(z1, v1) ∈
+IEXT(f1), …, (zn, vn) ∈ IEXT(fn)" with one pair per `zk`; the last
+clause lets every pair of `fv` be part of such a choice. -/
+def RestrictionFacets (z : i.idom) (e : WfIri) (fv : List (WfIri × WfLiteral)) : Prop :=
+  (intDtBounds e).isSome = true ∧ i.iext (i.iIri owlOnDatatype) z (i.iIri e) ∧
+  ∃ (s : i.idom) (zs : List i.idom), zs ≠ [] ∧ i.iext (i.iIri owlWithRestrictions) z s ∧
+    SeqIs i s zs ∧ (∀ f ∈ fv, ∃ zk ∈ zs, i.iext (i.iIri f.1) zk (i.iLit f.2)) ∧
+    (∀ zk ∈ zs, ∃ f ∈ fv, i.iext (i.iIri f.1) zk (i.iLit f.2))
+
+/-- Table 5.7: "ICEXT(z) = ICEXT(d) ∩ IF2V(d)((f1, v1)) ∩ … ∩
+IF2V(d)((fn, vn))", over an integer datatype (the bounds of § 3.4, the
+facets of § 4.3.7 – § 4.3.10). Every member is an integer `k` within
+`intRestrBounds e fv`, and `k` is IL of every literal whose integer value
+is `k` (for example `"k"^^xsd:integer`). -/
+def CondIntRestrMembers : Prop :=
+  ∀ (z : i.idom) (e : WfIri) (fv : List (WfIri × WfLiteral)), RestrictionFacets i z e fv →
+    ∀ y, icext i y z → ∃ (l : WfLiteral) (k : Int), intLitValue l = some k ∧
+      inBounds k (intRestrBounds e fv) = true ∧ y = i.iLit l
+
+/-- Table 5.7, the same reading: a literal whose integer value is outside
+`intRestrBounds e fv` is not a member. -/
+def CondIntRestrExcl : Prop :=
+  ∀ (z : i.idom) (e : WfIri) (fv : List (WfIri × WfLiteral)) (l : WfLiteral) (k : Int),
+    RestrictionFacets i z e fv → intLitValue l = some k →
+    inBounds k (intRestrBounds e fv) = false → ¬ icext i (i.iLit l) z
+
+/-- Table 5.6, `owl:minCardinality`: "if (z, n) ∈
+IEXT(I(owl:minCardinality)), (z, p) ∈ IEXT(I(owl:onProperty)) then
+ICEXT(z) = {x | #{y | (x, y) ∈ IEXT(p)} ≥ n}" — the ⊇ half for n = 0
+and n = 1, with n = IL(l) for an integer literal `l` (§ 4.2): a subject
+with a `p`-successor is a member. -/
+def CondMinCardLe1Sup : Prop :=
+  ∀ (z p x y : i.idom) (l : WfLiteral) (k : Int), intLitValue l = some k → 0 ≤ k → k ≤ 1 →
+    i.iext (i.iIri owlMinCardinality) z (i.iLit l) → i.iext (i.iIri owlOnProperty) z p →
+    i.iext p x y → icext i x z
+
+/-- Table 5.9, `owl:propertyDisjointWith`: the left-to-right half,
+"IEXT(p1) ∩ IEXT(p2) = ∅". -/
+def CondPropertyDisjointOnly : Prop :=
+  ∀ p1 p2 x y : i.idom, i.iext (i.iIri owlPropertyDisjointWith) p1 p2 →
+    i.iext p1 x y → ¬ i.iext p2 x y
+
+/-- Table 5.15, the `owl:targetValue` form: "if (z, a1) ∈
+IEXT(I(owl:sourceIndividual)), (z, p) ∈ IEXT(I(owl:assertionProperty)),
+(z, v) ∈ IEXT(I(owl:targetValue)) then … (a1, v) ∉ IEXT(p)", for a target
+value `v` = IL(m) of a literal `m`. -/
+def CondNpaTargetValue : Prop :=
+  ∀ (z a1 p : i.idom) (m : WfLiteral), i.iext (i.iIri owlSourceIndividual) z a1 →
+    i.iext (i.iIri owlAssertionProperty) z p → i.iext (i.iIri owlTargetValue) z (i.iLit m) →
+    ¬ i.iext p a1 (i.iLit m)
+
 end Conditions
 
 /-- The bundle. Every OWL 2 RDF-Based interpretation (Definition 4.2)
@@ -434,6 +654,15 @@ structure RdfBasedConditions (i : Interp) : Prop where
   sameAsOnly : CondSameAsOnly i
   typedLiteralValue : CondTypedLiteralValue i
   someValuesFromSub : CondSomeValuesFromSub i
+  litOutsideDt : CondLitOutsideDt i
+  oneOfLitExcl : CondOneOfLitExcl i
+  litSame : CondLitSame i
+  datatypeComplementSub : CondDatatypeComplementSub i
+  intRestrMembers : CondIntRestrMembers i
+  intRestrExcl : CondIntRestrExcl i
+  minCardLe1Sup : CondMinCardLe1Sup i
+  propertyDisjointOnly : CondPropertyDisjointOnly i
+  npaTargetValue : CondNpaTargetValue i
 
 /-- Entailment over the bundle (Definition 4.5, with the bundle in place
 of "OWL 2 RDF-Based interpretation"; see the header for why this
@@ -456,6 +685,16 @@ sequence is `rdf:nil`. -/
 
 abbrev WDom := Sum (Option WfIri) Nat
 
+/-- The value-space family the witness gives a datatype IRI:
+`RL.xsdFamily`, and `owl:real` and `owl:rational` in the numeric family. -/
+def wFamily (w : WfIri) : Option Nat :=
+  match xsdFamily w with
+  | some f => some f
+  | none => if w == XSD.owlReal || w == XSD.owlRational then some 2 else none
+
+theorem wFamily_of_xsd {w : WfIri} {f : Nat} (h : xsdFamily w = some f) : wFamily w = some f := by
+  simp [wFamily, h]
+
 def wI (w : WfIri) : WDom := .inl (some w)
 
 /-- The class extension of the witness. -/
@@ -465,7 +704,7 @@ def wExt (x c : WDom) : Prop :=
        x = wI rdfFirst ∨ x = wI rdfRest ∨ x = wI owlSameAs ∨ x = wI owlSomeValuesFrom
      else
        match c with
-       | .inl (some w) => (match xsdFamily w with
+       | .inl (some w) => (match wFamily w with
                            | some f => x = .inr f
                            | none => True)
        | _ => True)
@@ -486,6 +725,10 @@ def wBase (p x y : WDom) : Prop :=
   else if p = wI owlSomeValuesFrom then (∀ z, ¬ wExt z x) ∧ (∀ z, ¬ wExt z y)
   else if p = wI owlHasValue then ∀ z, ¬ wExt z x
   else if p = wI owlSameAs then x = y
+  else if p = wI owlDatatypeComplementOf then ∀ z, wExt z x → ¬ wExt z y
+  else if p = wI owlMinCardinality then y ≠ .inl none
+  else if p = wI owlTargetValue then y ≠ .inl none
+  else if p = wI owlPropertyDisjointWith then x = wI rdfFirst ∨ y = wI rdfFirst
   else True
 
 abbrev wIsDomRng (p : WDom) : Prop := p = wI rdfsDomain ∨ p = wI rdfsRange
@@ -519,7 +762,7 @@ theorem w_icext (x c : WDom) : icext witnessInterp x c = wExt x c := by
 /-- `wExt x c` holds for every `x` when `c` is a non-datatype class other
 than `owl:Nothing`. -/
 theorem wExt_plain {w : WfIri} (hn : w ≠ owlNothing) (hfn : w ≠ owlFunctionalProperty)
-    (hf : xsdFamily w = none) (x : WDom) : wExt x (wI w) := by
+    (hf : wFamily w = none) (x : WDom) : wExt x (wI w) := by
   refine ⟨wI_ne hn, ?_⟩
   rw [if_neg (wI_ne hfn)]
   simp only [wI, hf]
@@ -540,7 +783,7 @@ theorem w_ic (x c : witnessInterp.idom) : icext witnessInterp x c ↔ wExt x c :
 /-- A vocabulary IRI the witness treats as a plain class: not
 `owl:Nothing`, no datatype family. -/
 def wPlain (w : WfIri) : Bool :=
-  w != owlNothing && w != owlFunctionalProperty && (xsdFamily w).isNone
+  w != owlNothing && w != owlFunctionalProperty && (wFamily w).isNone
 
 theorem wExt_of_plain {w : WfIri} (h : wPlain w = true) (x : WDom) : wExt x (wI w) := by
   simp only [wPlain, Bool.and_eq_true, bne_iff_ne, ne_eq, Option.isNone_iff_eq_none] at h
@@ -562,11 +805,14 @@ theorem wBase_default {p : WfIri}
     (h : (p != rdfType && p != rdfsSubClassOf && p != owlComplementOf && p != owlDifferentFrom &&
           p != owlOneOf && p != owlUnionOf && p != owlIntersectionOf && p != rdfFirst &&
           p != rdfRest && p != owlAllValuesFrom && p != owlSomeValuesFrom &&
-          p != owlHasValue && p != owlSameAs) = true)
+          p != owlHasValue && p != owlSameAs && p != owlDatatypeComplementOf &&
+          p != owlMinCardinality && p != owlTargetValue && p != owlPropertyDisjointWith) = true)
     (x y : WDom) : wBase (wI p) x y := by
   simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, h11⟩, h12⟩, h13⟩ := h
-  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, if_false]
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, h11⟩, h12⟩, h13⟩, h14⟩,
+    h15⟩, h16⟩, h17⟩ := h
+  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+    h17, if_false]
 
 theorem wBase_sub (x y : WDom) :
     wBase (wI rdfsSubClassOf) x y ↔ ∀ z, wExt z x → wExt z y := by
@@ -614,11 +860,26 @@ theorem wBase_rest (x y : WDom) : wBase (wI rdfRest) x y ↔ y = wI rdfNil := by
 theorem wBase_sameAs (x y : WDom) : wBase (wI owlSameAs) x y ↔ x = y := by
   simp (config := { decide := true }) only [wBase, if_true, if_false]
 
+theorem wBase_dcomp (x y : WDom) :
+    wBase (wI owlDatatypeComplementOf) x y ↔ ∀ z, wExt z x → ¬ wExt z y := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
+theorem wBase_minc (x y : WDom) : wBase (wI owlMinCardinality) x y ↔ y ≠ .inl none := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
+theorem wBase_tv (x y : WDom) : wBase (wI owlTargetValue) x y ↔ y ≠ .inl none := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
+theorem wBase_pdw (x y : WDom) :
+    wBase (wI owlPropertyDisjointWith) x y ↔ x = wI rdfFirst ∨ y = wI rdfFirst := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
 /-- The IRIs `wBase` gives an extension of its own. -/
 def wSpecial : List WfIri :=
   [ rdfType, rdfsSubClassOf, owlComplementOf, owlDifferentFrom, owlOneOf, owlUnionOf,
     owlIntersectionOf, rdfFirst, rdfRest, owlAllValuesFrom, owlSomeValuesFrom, owlHasValue,
-    owlSameAs ]
+    owlSameAs, owlDatatypeComplementOf, owlMinCardinality, owlTargetValue,
+    owlPropertyDisjointWith ]
 
 theorem wBase_other {p : WDom} (h : ∀ w ∈ wSpecial, p ≠ wI w) (x y : WDom) : wBase p x y := by
   unfold wBase
@@ -628,7 +889,9 @@ theorem wBase_other {p : WDom} (h : ∀ w ∈ wSpecial, p ≠ wI w) (x y : WDom)
     if_neg (h owlIntersectionOf (by decide)), if_neg (h rdfFirst (by decide)),
     if_neg (h rdfRest (by decide)), if_neg (h owlAllValuesFrom (by decide)),
     if_neg (h owlSomeValuesFrom (by decide)), if_neg (h owlHasValue (by decide)),
-    if_neg (h owlSameAs (by decide))]
+    if_neg (h owlSameAs (by decide)), if_neg (h owlDatatypeComplementOf (by decide)),
+    if_neg (h owlMinCardinality (by decide)), if_neg (h owlTargetValue (by decide)),
+    if_neg (h owlPropertyDisjointWith (by decide))]
   trivial
 
 /-- `owl:Nothing` is related to every full-extension element other than
@@ -636,7 +899,8 @@ theorem wBase_other {p : WDom} (h : ∀ w ∈ wSpecial, p ≠ wI w) (x y : WDom)
 `owl:sameAs` and `owl:someValuesFrom`. -/
 theorem w_rel_nothing (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest)
     (h4 : p ≠ wI owlSameAs)
-    (h3 : p ≠ wI owlSomeValuesFrom) (y : WDom) (hy : ∀ u, wExt u y) (hyn : y ≠ wI rdfNil) :
+    (h3 : p ≠ wI owlSomeValuesFrom) (h5 : p ≠ wI owlPropertyDisjointWith) (y : WDom)
+    (hy : ∀ u, wExt u y) (hyn : y ≠ wI rdfNil) (hy0 : y ≠ .inl none) :
     wIext p (wI owlNothing) y := by
   have hN : ∀ u, ¬ wExt u (wI owlNothing) := fun u h => h.1 rfl
   have hNdr : ¬ wIsDomRng (wI owlNothing) := by
@@ -670,24 +934,42 @@ theorem w_rel_nothing (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest
   · subst e8; exact (wBase_avf _ _).mpr (Or.inl hN)
   by_cases e9 : p = wI owlHasValue
   · subst e9; exact (wBase_hv _ _).mpr hN
+  by_cases e10 : p = wI owlDatatypeComplementOf
+  · subst e10; exact (wBase_dcomp _ _).mpr (fun z hz => absurd hz (hN z))
+  by_cases e11 : p = wI owlMinCardinality
+  · subst e11; exact (wBase_minc _ _).mpr hy0
+  by_cases e12 : p = wI owlTargetValue
+  · subst e12; exact (wBase_tv _ _).mpr hy0
   refine wBase_other ?_ _ _
   intro w hw
   simp only [wSpecial, List.mem_cons, List.not_mem_nil, or_false] at hw
-  rcases hw with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-    assumption
+  rcases hw with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+    rfl | rfl | rfl <;> assumption
 
 /-- Every property of the witness other than `rdf:first`, `rdf:rest`,
 `owl:sameAs` and `owl:someValuesFrom` relates one element to two
 different ones. -/
 theorem w_nonfunctional (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest)
-    (h4 : p ≠ wI owlSameAs) (h5 : p ≠ wI owlSomeValuesFrom) :
+    (h4 : p ≠ wI owlSameAs) (h5 : p ≠ wI owlSomeValuesFrom)
+    (h6 : p ≠ wI owlPropertyDisjointWith) :
     ∃ x y1 y2 : WDom, wIext p x y1 ∧ wIext p x y2 ∧ y1 ≠ y2 := by
   have hT : ∀ u, wExt u (wI owlThing) := wExt_of_plain (by decide)
   have hR : ∀ u, wExt u (wI rdfsResource) := wExt_of_plain (by decide)
   have hTR : wI owlThing ≠ wI rdfsResource := wI_ne (by decide)
+  have n0 : ∀ w : WfIri, wI w ≠ (.inl none : WDom) := fun w h => by
+    simp only [wI, Sum.inl.injEq, reduceCtorEq] at h
   exact ⟨wI owlNothing, wI owlThing, wI rdfsResource,
-    w_rel_nothing p h1 h2 h4 h5 _ hT (wI_ne (by decide)),
-    w_rel_nothing p h1 h2 h4 h5 _ hR (wI_ne (by decide)), hTR⟩
+    w_rel_nothing p h1 h2 h4 h5 h6 _ hT (wI_ne (by decide)) (n0 _),
+    w_rel_nothing p h1 h2 h4 h5 h6 _ hR (wI_ne (by decide)) (n0 _), hTR⟩
+
+/-- `owl:propertyDisjointWith` relates `rdf:first` to every element. -/
+theorem w_pdw_nonfunctional :
+    wIext (wI owlPropertyDisjointWith) (wI rdfFirst) (wI owlThing) ∧
+    wIext (wI owlPropertyDisjointWith) (wI rdfFirst) (wI rdfsResource) := by
+  have h1 : wI owlPropertyDisjointWith ≠ wI rdfsDomain := wI_ne (by decide)
+  have h2 : wI owlPropertyDisjointWith ≠ wI rdfsRange := wI_ne (by decide)
+  rw [wIext_base h1 h2, wIext_base h1 h2]
+  exact ⟨(wBase_pdw _ _).mpr (Or.inl rfl), (wBase_pdw _ _).mpr (Or.inl rfl)⟩
 
 /-- `owl:Nothing` is the only element of the witness whose class
 extension is empty. -/
@@ -700,7 +982,7 @@ theorem w_empty_is_nothing (c : WDom) (h : ∀ z, ¬ wExt z c) : c = wI owlNothi
       exact h (wI rdfFirst) ⟨hn, by rw [if_pos rfl]; exact Or.inl rfl⟩
     · match c, hn, hf, h with
       | .inl (some w), hn, hf, h =>
-          cases hfam : xsdFamily w with
+          cases hfam : wFamily w with
           | none => exact h (.inl none) ⟨hn, by rw [if_neg hf]; simp [hfam]⟩
           | some f => exact h (.inr f) ⟨hn, by rw [if_neg hf]; simp [hfam]⟩
       | .inl none, hn, hf, h => exact h (.inl none) ⟨hn, by rw [if_neg hf]; trivial⟩
@@ -717,6 +999,50 @@ theorem w_seq_nil {s : witnessInterp.idom} {as : List witnessInterp.idom}
   | cons a rest =>
       obtain ⟨_, hf, _, _⟩ := h
       exact absurd ((w_iext (by decide) (by decide) _ _).mp hf) (wBase_first _ _)
+
+theorem intDtTable_family : ∀ e ∈ intDtTable, xsdFamily e.1 = some 2 := by decide
+
+theorem intDtBounds_family {e : WfIri} {b : Option Int × Option Int}
+    (h : intDtBounds e = some b) : xsdFamily e = some 2 := by
+  simp only [intDtBounds, Option.map_eq_some_iff] at h
+  obtain ⟨p, hp, _⟩ := h
+  have hmem := List.mem_of_find?_eq_some hp
+  have heq : p.1 = e := Subtype.ext (by simpa using List.find?_some hp)
+  rw [← heq]
+  exact intDtTable_family p hmem
+
+theorem w_litOutside_family {l : WfLiteral} {e : WfIri} (h : litOutsideDt l e = true) :
+    ∃ f, wFamily e = some f := by
+  simp only [litOutsideDt, Bool.or_eq_true] at h
+  rcases h with (h | h) | h
+  · split at h
+    · rename_i b _ hb
+      exact ⟨2, wFamily_of_xsd (intDtBounds_family hb)⟩
+    · simp at h
+  · unfold xsdValueSpacesDisjoint at h
+    split at h
+    · rename_i f1 f2 _ h2
+      exact ⟨f2, wFamily_of_xsd h2⟩
+    · simp at h
+  · simp only [Bool.and_eq_true, onRealLine, Bool.or_eq_true, beq_iff_eq] at h
+    obtain ⟨_, ((hr | hr) | hd) | hi⟩ := h
+    · subst hr; exact ⟨2, by decide⟩
+    · subst hr; exact ⟨2, by decide⟩
+    · subst hd; exact ⟨2, by decide⟩
+    · obtain ⟨b, hb⟩ := Option.isSome_iff_exists.mp hi
+      exact ⟨2, wFamily_of_xsd (intDtBounds_family hb)⟩
+
+/-- A literal of the witness denotes `inl none`, which is in no datatype
+extension. -/
+theorem w_lit_not_dt {e : WfIri} {f : Nat} (hf : wFamily e = some f) {l : WfLiteral}
+    (h : wExt (witnessInterp.iLit l) (wI e)) : False := by
+  have hF : wFamily owlFunctionalProperty = none := by decide
+  have hn : wI e ≠ wI owlFunctionalProperty := fun h' => by
+    rw [wI_inj.mp h', hF] at hf; cases hf
+  have h2 := h.2
+  rw [if_neg hn] at h2
+  simp only [wI, hf] at h2
+  cases h2
 
 theorem witness_conditions : RdfBasedConditions witnessInterp where
   vocabClasses := by
@@ -854,6 +1180,10 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     simp at hj
   functionalIf := by
     intro p _ hfun
+    have hpdw : p ≠ wI owlPropertyDisjointWith := by
+      intro hp
+      subst hp
+      exact absurd (hfun _ _ _ w_pdw_nonfunctional.1 w_pdw_nonfunctional.2) (wI_ne (by decide))
     have hpw : p = wI rdfFirst ∨ p = wI rdfRest ∨ p = wI owlSameAs ∨
         p = wI owlSomeValuesFrom := by
       rcases Classical.em (p = wI rdfFirst ∨ p = wI rdfRest ∨ p = wI owlSameAs ∨
@@ -862,7 +1192,7 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
       · obtain ⟨n1, n234⟩ := not_or.mp h
         obtain ⟨n2, n34⟩ := not_or.mp n234
         obtain ⟨n3, n4⟩ := not_or.mp n34
-        obtain ⟨x, y1, y2, e1, e2, hne⟩ := w_nonfunctional p n1 n2 n3 n4
+        obtain ⟨x, y1, y2, e1, e2, hne⟩ := w_nonfunctional p n1 n2 n3 n4 hpdw
         exact absurd (hfun x y1 y2 e1 e2) hne
     refine (w_ic _ _).mpr ⟨wI_ne (by decide), ?_⟩
     show (if wI owlFunctionalProperty = wI owlFunctionalProperty then
@@ -901,9 +1231,11 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
         have n2 : wI d2 ≠ wI owlFunctionalProperty := fun h => by
           rw [wI_inj.mp h, hF] at hf2; cases hf2
         have e1' : y = Sum.inr f1 := by
-          have := e1.2; rw [if_neg n1] at this; simp only [wI, hf1] at this; exact this
+          have := e1.2; rw [if_neg n1] at this
+          simp only [wI, wFamily_of_xsd hf1] at this; exact this
         have e2' : y = Sum.inr f2 := by
-          have := e2.2; rw [if_neg n2] at this; simp only [wI, hf2] at this; exact this
+          have := e2.2; rw [if_neg n2] at this
+          simp only [wI, wFamily_of_xsd hf2] at this; exact this
         have : f1 = f2 := by
           exact Sum.inr.inj (e1'.symm.trans e2')
         subst this
@@ -940,6 +1272,43 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     intro x c p y hsv _ hy
     rw [w_iext (by decide) (by decide), wBase_svf] at hsv
     exact absurd ((w_ic _ _).mp hy) (hsv.1 y)
+  litOutsideDt := by
+    intro l e h hm
+    have hf : ∃ f, wFamily e = some f := w_litOutside_family h
+    obtain ⟨f, hf⟩ := hf
+    have hm' := (w_ic _ _).mp hm
+    exact w_lit_not_dt hf hm'
+  oneOfLitExcl := by
+    intro z s as l hs ho _ hm
+    obtain ⟨_, rfl⟩ := w_seq_nil hs
+    have h := (wBase_oneOf _ _).mp ((w_iext (by decide) (by decide) _ _).mp ho) rfl
+    exact h _ ((w_ic _ _).mp hm)
+  litSame := by
+    intro _ _ _
+    rfl
+  datatypeComplementSub := by
+    intro z d y hzd hy hd
+    have h := (wBase_dcomp _ _).mp ((w_iext (by decide) (by decide) _ _).mp hzd)
+    exact h y ((w_ic _ _).mp hy) ((w_ic _ _).mp hd)
+  intRestrMembers := by
+    intro z e fv hr
+    obtain ⟨_, _, s, zs, hne, _, hs, _, _⟩ := hr
+    exact absurd (w_seq_nil hs).1 hne
+  intRestrExcl := by
+    intro z e fv l k hr
+    obtain ⟨_, _, s, zs, hne, _, hs, _, _⟩ := hr
+    exact absurd (w_seq_nil hs).1 hne
+  minCardLe1Sup := by
+    intro z p x y l k _ _ _ hm
+    exact absurd rfl ((wBase_minc _ _).mp ((w_iext (by decide) (by decide) _ _).mp hm))
+  propertyDisjointOnly := by
+    intro p1 p2 x y hd h1 h2
+    rcases (wBase_pdw _ _).mp ((w_iext (by decide) (by decide) _ _).mp hd) with rfl | rfl
+    · exact (wBase_first _ _) ((w_iext (by decide) (by decide) _ _).mp h1)
+    · exact (wBase_first _ _) ((w_iext (by decide) (by decide) _ _).mp h2)
+  npaTargetValue := by
+    intro z a1 p m _ _ ht
+    exact absurd rfl ((wBase_tv _ _).mp ((w_iext (by decide) (by decide) _ _).mp ht))
 
 /-- The one-triple graph `owl:Thing rdfs:subClassOf owl:Nothing`. -/
 def thingSubNothing : Triple := ⟨.iri owlThing, rdfsSubClassOf, .iri owlNothing⟩
