@@ -205,6 +205,15 @@ contain expansion and compaction, which this change did not touch. Measured
   at n = 16,000. `Compact.cmpAddValue` appends with `xs ++ [v]` and is the
   likely cause. It was not profiled.
 
+`fromRdf` (API 8.5, `FromRdf.lean`) does not use this node map. It builds
+its own `List FrNode`, and the same kind of scan remains in it (`findNode`,
+`ensureNode`, `nodeUpdateProp` maps over every node, `referencedOnce` filters
+the list of all references, `sortNodes` is an insertion sort). Measured
+2026-10-10 with `l4jsonld-api --once SHAPE fromRdf N` minus the same run for
+`toRdf` (which builds the dataset), one run each: `hub` shape 0.039 s, 0.166 s
+and 0.653 s at n = 1,000, 2,000 and 4,000 (a factor of about 4 per doubling);
+`fanout` shape 0.028 s, 0.125 s and 0.537 s. This change did not touch it.
+
 ## 5. Why the output is the same
 
 Two kinds of evidence.

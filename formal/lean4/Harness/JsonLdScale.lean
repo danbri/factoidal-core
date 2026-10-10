@@ -267,6 +267,14 @@ def runOnce (shapeName phase : String) (n : Nat) : IO UInt32 := do
          | .ok j => (match flattenExpanded j with | .ok xs => xs.length | .error _ => 0)
          | .error _ => 0)
       | "flatten+ctx" => resSize (flattenDocument loader doc (some ctxText) none none true none)
+      | "toRdf" =>
+        (match parseJsonLd loader doc none none none none with
+         | .ok ds => ds.default.length + ds.named.length | .error _ => 0)
+      | "fromRdf" =>
+        (match parseJsonLd loader doc none none none none with
+         | .ok ds => (match FromRdf.fromRdf ds FromRdf.defaultOptions with
+                      | some j => Json.size j | none => 0)
+         | .error _ => 0)
       | _ => resSize (frameDocument loader doc (sh.frame n) none none)
     IO.println s!"{shapeName} {phase} {n}: result size {r}"
     return 0
