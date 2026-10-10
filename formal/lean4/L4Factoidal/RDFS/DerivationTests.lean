@@ -56,13 +56,15 @@ def stepsWellTagged (d : Derivation) : Bool :=
 
 /-! ## The empty graph under full RDFS
 
-`fullClosure [] [] []` is the RDFS closure of the axiom set alone: 141
+`fullClosure [] [] []` is the RDFS closure of the axiom set alone: 150
 triples, none of them `base`. -/
 
 private def emptyWitness : Graph × Derivation := fullClosureWithProof [] [] []
 
-#guard emptyWitness.1.length = 141
-#guard emptyWitness.2.size = 141
+-- Re-measured 2026-10-09 after the four RDF 1.2 axiomatic triples (rdf:reifies, rdfs:Proposition) joined the seed table
+-- (141 under the RDF 1.1 tables).
+#guard emptyWitness.1.length = 150
+#guard emptyWitness.2.size = 150
 #guard premisesPointBackwards emptyWitness.2
 #guard stepsWellTagged emptyWitness.2
 #guard emptyWitness.1 == fullClosure [] [] []
@@ -152,8 +154,10 @@ private def schemaGraph : Graph :=
 private def schemaWitness : Graph × Derivation :=
   fullClosureWithProof [xsdString] [rdf1] schemaGraph
 
-#guard schemaWitness.1.length = 190
-#guard schemaWitness.2.size = 190
+-- Re-measured 2026-10-09 after the four RDF 1.2 axiomatic triples (rdf:reifies, rdfs:Proposition) joined the seed table
+-- (190 under the RDF 1.1 tables).
+#guard schemaWitness.1.length = 199
+#guard schemaWitness.2.size = 199
 #guard premisesPointBackwards schemaWitness.2
 #guard stepsWellTagged schemaWitness.2
 #guard schemaWitness.1 == fullClosure [xsdString] [rdf1] schemaGraph
@@ -165,17 +169,17 @@ private def ruleCount (d : Derivation) (r : RuleId) : Nat :=
   (d.toList.filter (fun st => st.rule == r)).length
 
 #guard ruleCount schemaWitness.2 .base = 6
-#guard ruleCount schemaWitness.2 .axiomatic = 53
-#guard ruleCount schemaWitness.2 .rdfs2 = 31
+#guard ruleCount schemaWitness.2 .axiomatic = 57  -- 53 under RDF 1.1
+#guard ruleCount schemaWitness.2 .rdfs2 = 33  -- 31 under RDF 1.1
 #guard ruleCount schemaWitness.2 .rdfs3 = 9
-#guard ruleCount schemaWitness.2 .rdfs4a = 19
+#guard ruleCount schemaWitness.2 .rdfs4a = 20  -- 19 under RDF 1.1
 #guard ruleCount schemaWitness.2 .rdfs4b = 10
 #guard ruleCount schemaWitness.2 .rdfs5 = 1
-#guard ruleCount schemaWitness.2 .rdfs6 = 20
+#guard ruleCount schemaWitness.2 .rdfs6 = 21  -- 20 under RDF 1.1
 #guard ruleCount schemaWitness.2 .rdfs7 = 2
 #guard ruleCount schemaWitness.2 .rdfs8 = 17
 #guard ruleCount schemaWitness.2 .rdfs9 = 3
-#guard ruleCount schemaWitness.2 .rdfs10 = 16
+#guard ruleCount schemaWitness.2 .rdfs10 = 17  -- 16 under RDF 1.1
 #guard ruleCount schemaWitness.2 .rdfs11 = 1
 #guard ruleCount schemaWitness.2 .rdfs12 = 1
 #guard ruleCount schemaWitness.2 .rdfs13 = 1
@@ -208,7 +212,7 @@ private def dataOnlyGraph : Graph := [⟨.iri exA, exP, .iri exB⟩]
 private def dataOnlyWitness : Graph × Derivation :=
   fullClosureWithProof [] [] dataOnlyGraph
 
-#guard dataOnlyWitness.1.length = 147
+#guard dataOnlyWitness.1.length = 156  -- 147 under the RDF 1.1 tables
 #guard premisesPointBackwards dataOnlyWitness.2
 #guard ruleCount dataOnlyWitness.2 .rdfD2 = 1
 #guard ruleAndPremises dataOnlyWitness.2 ⟨.iri exP, rdfType, .iri rdfProperty⟩

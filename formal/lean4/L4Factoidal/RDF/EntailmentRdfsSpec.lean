@@ -27,10 +27,11 @@ rdfs4a, rdfs4b, rdfs8 and rdfs13 are in the table here and are not in
 either tree's core closure. Writing them down is what makes the gap
 visible; the F\* source records the same, with the same reason.
 
-The two bnode-minting rows (rdfD1 and the 2004 reading of rdfs1) are
-excluded from `RdfsClosed` for the reason rung two excludes rdfD1: a
-graph closed under a name-minting rule is not finite, and the
-specification handles it by taking the closure "towards E".
+The bnode-minting rows (rdfD1, the 2004 reading of rdfs1, and RDF
+1.2's rdfs14 and rdfs14a) are excluded from `RdfsClosed` for the reason
+rung two excludes rdfD1: a graph closed under a name-minting rule is
+not finite, and the specification handles it by taking the closure
+"towards E".
 
 ## Two consequences that are not rows
 
@@ -190,6 +191,29 @@ rdfs:Literal ." NOT implemented. -/
 def Rdfs13Derives (g : Graph) (t : Triple) : Prop :=
   ∃ u : Triple, u ∈ g ∧ u.p = rdfType ∧ u.o = .iri rdfsDatatype ∧
     t = { s := u.s, p := rdfsSubClassOf, o := .iri rdfsLiteral }
+
+/-! ## RDF 1.2: the two rows about propositions
+
+RDF 1.2 Semantics §9.2.1, verbatim:
+
+> rdfs14  | Any triple ttt such that <<(aaa bbb ccc)>> appears in ttt |
+>           ttt[<<(aaa bbb ccc)>>/_:nnn] . _:nnn rdf:type rdfs:Proposition .
+> rdfs14a | (for every S, even empty) | _:nnn rdf:type rdfs:Proposition .
+
+Both mint a blank node, so they carry the label and the freshness side
+condition of rdfD1. The semantic condition they correspond to (§9):
+"If exist x,y,z such that IT(x,z,y)=r then < r,I(rdfs:Proposition)> is
+in IEXT(I(rdf:type))". -/
+
+def Rdfs14Derives (g : Graph) (b : BNodeId) (t1 t2 : Triple) : Prop :=
+  BnodeFreshFor b g ∧
+  ∃ u : Triple, u ∈ g ∧ ∃ (s : Subject) (p : WfIri) (o : Term),
+    TermAppearsIn (.tripleTerm s p o) u.o ∧
+    t1 = { s := u.s, p := u.p, o := termSubst (.tripleTerm s p o) (.bnode b) u.o } ∧
+    t2 = { s := .bnode b, p := rdfType, o := .iri rdfsProposition }
+
+def Rdfs14aDerives (g : Graph) (b : BNodeId) (t : Triple) : Prop :=
+  BnodeFreshFor b g ∧ t = { s := .bnode b, p := rdfType, o := .iri rdfsProposition }
 
 /-! ## The RDFS axiomatic triples
 
