@@ -2769,7 +2769,10 @@ def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Q
 /-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier,
 followed by the [2] trailing ValuesClause. The SolutionModifier is NOT
 read: `evalAsk` applies none, so an ASK with GROUP BY, HAVING, ORDER BY,
-LIMIT or OFFSET is rejected rather than answered without its modifier. -/
+LIMIT or OFFSET is rejected rather than answered without its modifier.
+Tracked, with the CONSTRUCT / DESCRIBE GROUP BY gap, at
+https://github.com/danbri/factoidal/issues/699; the expected-fail case
+that issue asks for cannot be a `#guard` and is not yet written. -/
 def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts

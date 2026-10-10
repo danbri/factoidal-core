@@ -1889,7 +1889,11 @@ sequence, as in Jena / RDF4J.
 Found by the differential harness (2026-08-22, generated seeds 169 and
 324): this function sliced the UNORDERED sequence, and so does the F*
 `eval_construct_query` — the two trees disagreed only because their
-unordered evaluation orders differ. -/
+unordered evaluation orders differ.
+
+GROUP BY and HAVING are NOT applied here: the template is instantiated
+over the ungrouped solutions. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def evalConstruct (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }
