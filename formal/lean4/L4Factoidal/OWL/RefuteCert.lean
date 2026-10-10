@@ -243,6 +243,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
   let mut abox : List Assertion := []
   let mut subRole : List (Role × Role) := []
   let mut inv : List (Role × Role) := []
+  let mut same : List (Ind × Ind) := []
   for t in g do
     if t.p == rdfsSubClassOf then
       tbox := both (ceS t.s) (ce t.o) ++ tbox
@@ -279,6 +280,10 @@ def readOntology (g : Graph) : DlOntology := Id.run do
           if isObj p && isObj q then
             subRole := (if t.p == owlEquivalentProperty then [(q.val, p.val)] else []) ++
                        (p.val, q.val) :: subRole
+      | _, _ => pure ()
+    else if t.p == owlSameAs then
+      match indOfTerm t.s.toTerm, indOfTerm t.o with
+      | some a, some b => if a != b then same := (a, b) :: same
       | _, _ => pure ()
     else if t.p == owlDifferentFrom then
       match indOfTerm t.s.toTerm, indOfTerm t.o with
@@ -375,7 +380,8 @@ def readOntology (g : Graph) : DlOntology := Id.run do
       for m in (String.mk (a.toList.drop nominalPrefix.length)).splitOn " " do
         abox := .inst m (.atom a) :: abox
   return { tbox := dedupHash tbox, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
-           abox := dedupHash abox.reverse, inv := dedupHash inv.reverse }
+           abox := dedupHash abox.reverse, inv := dedupHash inv.reverse,
+           same := dedupHash same.reverse }
 
 /-! ## The emitter -/
 
@@ -643,11 +649,16 @@ def certOntology (g : Graph) : DlOntology := readOntology g
     whether it is certified. -/
 def certify (g : Graph) (budget : Nat) : CertOutcome :=
   match tableauConsistentTraced g budget with
-  | (some false, .immediate) => .unchecked "graph-level check (immediateInconsistency) emits no certificate"
+  | (some false, .immediate) =>
+      -- No trace; the graph-level shapes the checker reads directly
+      -- (DifferentIndividuals against SameIndividual) close on a bare
+      -- `close`.
+      if checkCert (certOntology g) .close then .proved
+      else .unchecked "graph-level check (immediateInconsistency): no certificate the checker accepts"
   | (some false, .counting) => .unchecked "counting rung (countingRefutes) emits no certificate"
   | (some false, .search _ trace) =>
       let O := certOntology g
-      match emitCert (sigOf g) g [] [] trace with
+      match emitCert (sigOf g) g O.same [] trace with
       | none => .unchecked "the trace uses a construct the certificate cannot express"
       | some c =>
           if checkCert O c then .proved
@@ -846,9 +857,9 @@ def certifyDebug (g : Graph) (budget : Nat) : String :=
       let O := certOntology g
       let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
       let isObj := sigOf g
-      let certS := match emitCert isObj g [] [] trace with
+      let certS := match emitCert isObj g O.same [] trace with
         | some c =>
-            let leafClash := match firstLeafFacts O c (O.abox.map normAssertion) with
+            let leafClash := match firstLeafFacts O c (mergeAll O.same (O.abox.map normAssertion)) with
               | some F => toString (clashIn F)
               | none => "n/a"
             s!"[checkCert={checkCert O c} first_leaf_clash={leafClash}] " ++ (repr c).pretty 100000
@@ -863,8 +874,8 @@ def certifyDebug (g : Graph) (budget : Nat) : String :=
             let inner := match l with
               | .complement c => toConcept isObj c
               | _ => none
-            let facts := match emitCert isObj g [] [] trace with
-              | some c => firstLeafFacts O c (O.abox.map normAssertion)
+            let facts := match emitCert isObj g O.same [] trace with
+              | some c => firstLeafFacts O c (mergeAll O.same (O.abox.map normAssertion))
               | none => none
             let has (k : Option Concept) : String := match k, facts with
               | some k', some F => toString (F.contains (.inst (indOfSubject n) k'))

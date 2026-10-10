@@ -128,6 +128,12 @@ private def cC : Concept := .atom "C"
 #guard !checkCert { abox := [.rel "r" "a" "b", .rel "r" "a" "c", .inst "b" cC, .inst "c" (.neg cC)] }
   (.merge "a" 1 "r" ["b", "c"] (.cons "b" "c" .close .nil))
 
+/-! ### `SameIndividual` as a renaming: `DifferentIndividuals(a b)` with `a = b` -/
+#guard checkCert { same := [("a", "b")], abox := [.diff "a" "b"] } .close
+#guard !checkCert { abox := [.diff "a" "b"] } .close
+#guard checkCert { same := [("b", "a")], abox := [.inst "a" cC, .inst "b" (.neg cC)] } .close
+#guard !checkCert { same := [("b", "c")], abox := [.inst "a" cC, .inst "b" (.neg cC)] } .close
+
 /-! ### Axiom audit -/
 /-- info: 'L4Factoidal.OWL.checkCert_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms checkCert_sound

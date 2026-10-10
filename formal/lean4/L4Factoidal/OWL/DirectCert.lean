@@ -63,6 +63,8 @@ structure DlOntology where
   /-- `InverseObjectProperties(r s)` (Table 6), as pairs `(r, s)`;
       `SymmetricObjectProperty(r)` is the pair `(r, r)`. -/
   inv : List (Role × Role) := []
+  /-- `SameIndividual(a b)` (Table 10), as pairs. -/
+  same : List (Ind × Ind) := []
 deriving Repr
 
 /-- Every `SubClassOf(C D)` of the TBox holds: `(C)^C ⊆ (D)^C`. -/
@@ -74,10 +76,15 @@ def RespectsTBox {δ : Type} (I : Interp δ) (T : List (Concept × Concept)) : P
 def RespectsInv {δ : Type} (I : Interp δ) (P : List (Role × Role)) : Prop :=
   ∀ q ∈ P, ∀ x y, I.role q.1 x y ↔ I.role q.2 y x
 
+/-- Every `SameIndividual(a b)` holds: `(a)^I = (b)^I`. -/
+def RespectsSame {δ : Type} (ν : Ind → δ) (P : List (Ind × Ind)) : Prop :=
+  ∀ q ∈ P, ν q.1 = ν q.2
+
 /-- `(I, ν)` satisfies the ontology (Direct Semantics § 2.3.7, with
     § 2.4's anonymous individuals folded into `ν`). -/
 def DirectModel {δ : Type} (I : Interp δ) (ν : Ind → δ) (O : DlOntology) : Prop :=
-  RespectsRBox I O.rbox ∧ RespectsTBox I O.tbox ∧ RespectsInv I O.inv ∧ SatAll I ν O.abox
+  RespectsRBox I O.rbox ∧ RespectsTBox I O.tbox ∧ RespectsInv I O.inv ∧
+  RespectsSame ν O.same ∧ SatAll I ν O.abox
 
 /-! ## Negation normal form
 
@@ -1270,6 +1277,23 @@ def Ctx.ofOntology (O : DlOntology) : Ctx :=
   { T := T, R := O.rbox, L := edgeLhs T, inv := O.inv,
     B := (T.flatMap (fun ax => boolSubterms ax.1)).eraseDups }
 
+/-- The `SameIndividual` pairs applied to an ABox as renamings, first
+    pair first (`mergeInds`, the ≤-rule's renaming). -/
+def mergeAll (P : List (Ind × Ind)) (A : List Assertion) : List Assertion :=
+  P.foldl (fun acc q => mergeInds q.1 q.2 acc) A
+
+theorem satAll_mergeAll {δ : Type} {I : Interp δ} {ν : Ind → δ} :
+    ∀ {P : List (Ind × Ind)} {A : List Assertion},
+      RespectsSame ν P → SatAll I ν A → SatAll I ν (mergeAll P A) := by
+  intro P
+  induction P with
+  | nil => intro A _ hA; exact hA
+  | cons q P ih =>
+      intro A hP hA
+      simp only [mergeAll, List.foldl_cons]
+      exact ih (fun q' hq' => hP q' (List.Mem.tail _ hq'))
+        (satAll_mergeInds (hP q (List.Mem.head _)) hA)
+
 /-- The saturation round bound. The rounds stop earlier at a fixpoint;
     a bound that is too small makes a certificate fail to check, never
     the reverse. -/
@@ -1277,16 +1301,16 @@ def certFuel : Nat := 64
 
 /-- THE CHECKER: total, structural recursion on the certificate. -/
 def checkCert (O : DlOntology) (c : Cert) : Bool :=
-  checkF (Ctx.ofOntology O) certFuel (O.abox.map normAssertion) c
+  checkF (Ctx.ofOntology O) certFuel (mergeAll O.same (O.abox.map normAssertion)) c
 
 /-- SOUNDNESS: an accepted certificate leaves the ontology with no
     model under the OWL 2 Direct Semantics (Tables 4, 5, 6 and 10, in
     the fragment of `Concept`). -/
 theorem checkCert_sound {O : DlOntology} {c : Cert} (h : checkCert O c = true) :
     ¬ ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ), DirectModel I ν O := by
-  intro ⟨δ, I, ν, hR, hT, hInv, hA⟩
+  intro ⟨δ, I, ν, hR, hT, hInv, hSame, hA⟩
   have hC : CtxValid I (Ctx.ofOntology O) := ⟨respects_normTBox hT, hR, hInv⟩
-  refine checkF_sound hC certFuel c _ ν h ?_
+  refine checkF_sound hC certFuel c _ ν h (satAll_mergeAll hSame ?_)
   intro φ hφ
   have ⟨ψ, hψ, he⟩ := List.mem_map.mp hφ
   subst he
@@ -1298,6 +1322,7 @@ theorem checkCert_sound {O : DlOntology} {c : Cert} (h : checkCert O c = true) :
 theorem checkCert_not_consistent {R : RoleAxioms} {A : List Assertion} {c : Cert}
     (h : checkCert { rbox := R, abox := A } c = true) : ¬ Consistent R A := by
   intro ⟨δ, I, ν, hR, hA⟩
-  exact checkCert_sound h ⟨δ, I, ν, hR, (fun _ hax => by cases hax), (fun _ hq => by cases hq), hA⟩
+  exact checkCert_sound h ⟨δ, I, ν, hR, (fun _ hax => by cases hax), (fun _ hq => by cases hq),
+    (fun _ hq => by cases hq), hA⟩
 
 end L4Factoidal.OWL
