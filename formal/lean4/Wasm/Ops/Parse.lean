@@ -180,7 +180,7 @@ where
 /-- `parseTextToDataset`, with the position of a failure and the prefixes of
 the document. The two share one dispatch table of formats; only the failure
 and the extra result differ. RDF/XML failures carry no position, as in the F*
-entry; so does JSON-LD, which the Lean engine does not parse here. -/
+entry; so does JSON-LD. -/
 def parseDocumentOutcome (text formatTag baseIRI : String) :
     Except ParseFailure ParseOutcome :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
@@ -209,7 +209,12 @@ def parseDocumentOutcome (text formatTag baseIRI : String) :
       | .error e => .error (noPosition e.msg)
       | .ok g => .ok { ds := { default := g, named := [] }, prefixes := [] }
   | "jsonld" | "json-ld" | "application/ld+json" =>
-      .error (noPosition "JSON-LD is not in the Lean engine's v1 surface")
+      -- Same reader as `parseTextToDataset`: JSON-LD 1.1 through
+      -- `JSONLD.parseJsonLd`, no document loader, no position, no prefixes.
+      match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base
+              none none none with
+      | .ok ds   => .ok { ds := ds, prefixes := [] }
+      | .error e => .error (noPosition s!"invalid or unsupported JSON-LD ({e.code})")
   | _ => .error (noPosition s!"unknown format tag '{formatTag}'")
 
 /-- The display tag of an error envelope: the caller's own spelling,
