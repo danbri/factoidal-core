@@ -665,4 +665,153 @@ theorem readObject12_safe : ∀ (t : Term) (f pos : Nat) (c : Char) (rest : List
         skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6,
         skipWs_space _ (show isNtWs ')' = false by decide), Term.lowerTags]
 
+/-! ## No line break inside a term, and the RDF 1.2 object fuel -/
+
+/-- No character of the list is a line feed. -/
+def noNl (cs : List Char) : Bool := cs.all (fun c => c != '\n')
+
+theorem noNl_iri (i : WfIri) (h : iriPrintSafe i.val = true) : noNl i.val.toList = true := by
+  unfold noNl
+  unfold iriPrintSafe at h
+  rw [List.all_eq_true] at h ⊢
+  intro c hc
+  have := h c hc
+  simp only [IriSafeChar, Bool.and_eq_true, decide_eq_true_eq] at this
+  have h1 := this.1.1
+  simp only [bne_iff_ne, ne_eq]
+  intro hn; subst hn; simp at h1
+
+theorem noNl_bnode (b : String) (h : bnodeLabelSafe b = true) : noNl b.toList = true := by
+  unfold bnodeLabelSafe at h
+  unfold noNl
+  cases hb : b.toList with
+  | nil => rfl
+  | cons c0 body =>
+      rw [hb] at h
+      simp only [Bool.and_eq_true] at h
+      obtain ⟨⟨h0, hbody⟩, -⟩ := h
+      simp only [List.all_cons, Bool.and_eq_true]
+      constructor
+      · simp only [bne_iff_ne, ne_eq]; intro hn; subst hn; simp [isBnodeStartChar] at h0
+      · rw [List.all_eq_true] at hbody ⊢
+        intro c hc
+        have := hbody c hc
+        simp only [bne_iff_ne, ne_eq]; intro hn; subst hn; simp [isBnodeChar] at this
+
+theorem noNl_subj (s : Subject) (h : subjectSafe s = true) : noNl (subjChars s) = true := by
+  cases s with
+  | iri i =>
+      have := noNl_iri i h
+      simp only [noNl] at this ⊢
+      simp [subjChars_iri, this]
+  | bnode b =>
+      have := noNl_bnode b h
+      simp only [noNl] at this ⊢
+      simp [subjChars_bnode, this]
+
+theorem noNl_escOf (c : Char) (h : lexCharSafe c = true) : noNl (escOf c).toList = true := by
+  unfold lexCharSafe at h
+  cases he : canonEscapeChar c with
+  | none =>
+      simp only [noNl, escOf, he, String.toList_singleton, List.all_cons, List.all_nil,
+        Bool.and_true, bne_iff_ne, ne_eq]
+      intro hn; subst hn; simp [canonEscapeChar] at he
+  | some e =>
+      rw [he] at h
+      simp only [Bool.or_eq_true, beq_iff_eq] at h
+      rcases h with ((((((h | h) | h) | h) | h) | h) | h) <;> subst h <;> rfl
+
+theorem noNl_lit (wl : WfLiteral) (h : literalSafe .rdf12 wl.val = true) :
+    noNl (termChars (.literal wl)) = true := by
+  rcases wl with ⟨⟨lex, dt, tag, dir⟩, hwf⟩
+  simp only [literalSafe, Bool.and_eq_true] at h
+  obtain ⟨hlex, hrest⟩ := h
+  have hesc : noNl (escChars lex) = true := by
+    unfold escChars noNl
+    rw [List.all_flatMap, List.all_eq_true]
+    intro c hc
+    rw [List.all_eq_true] at hlex
+    exact noNl_escOf c (hlex c hc)
+  simp only [noNl] at hesc
+  simp only [termChars, litChars_eq, noNl, List.all_cons, List.all_append, hesc]
+  cases tag with
+  | some t =>
+      simp only at hrest
+      simp only [Bool.and_eq_true] at hrest
+      obtain ⟨c, cs, hlt, -, hall, -, -, -⟩ := langTagSafe_parts hrest.1
+      have hlt' : (lowerTagChars t).all (fun c => c != '\n') = true := by
+        rw [hlt, List.all_eq_true]
+        rw [List.all_eq_true] at hall
+        intro x hx
+        have := hall x hx
+        simp only [bne_iff_ne, ne_eq]; intro hn; subst hn; simp [isLangChar] at this
+      cases dir with
+      | none => simp [litSuffix, hlt']
+      | some d => cases d <;> simp [litSuffix, hlt', dirWord]
+  | none =>
+      by_cases hdt : dt = xsdString
+      · simp [litSuffix, hdt]
+      · have hsafe : iriPrintSafe dt.val = true := by
+          simp only [hdt, decide_false, Bool.false_or] at hrest; exact hrest
+        have := noNl_iri dt hsafe
+        simp only [noNl] at this
+        simp [litSuffix, hdt, this]
+
+theorem noNl_term : ∀ (t : Term), termSafe .rdf12 t = true → noNl (termChars t) = true
+  | .iri i, h => by
+      have := noNl_iri i h
+      simp only [noNl] at this ⊢
+      simp [termChars_iri, this]
+  | .bnode b, h => by
+      have := noNl_bnode b h
+      simp only [noNl] at this ⊢
+      simp [termChars_bnode, this]
+  | .literal wl, h => noNl_lit wl h
+  | .tripleTerm s p o, h => by
+      simp only [termSafe, Bool.and_eq_true, beq_self_eq_true, true_and] at h
+      obtain ⟨⟨hs, hp⟩, ho⟩ := h
+      have h1 := noNl_subj s hs
+      have h2 := noNl_iri p hp
+      have h3 := noNl_term o ho
+      simp only [noNl] at h1 h2 h3 ⊢
+      simp [termChars_triple, h1, h2, h3]
+
+theorem lineFuelGo_ge : ∀ (cs : List Char) (acc : Nat), acc ≤ lineFuelGo cs acc
+  | [], acc => by simp [lineFuelGo]
+  | c :: rest, acc => by
+      unfold lineFuelGo
+      split
+      · exact Nat.le_refl _
+      · exact Nat.le_trans (Nat.le_succ acc) (lineFuelGo_ge rest (acc + 1))
+
+theorem lineFuelGo_append : ∀ (xs ys : List Char) (acc : Nat), noNl xs = true →
+    lineFuelGo (xs ++ ys) acc = lineFuelGo ys (acc + xs.length)
+  | [], ys, acc, _ => by simp
+  | x :: xs, ys, acc, h => by
+      simp only [noNl, List.all_cons, Bool.and_eq_true, bne_iff_ne, ne_eq] at h
+      have hx : (x == '\n') = false := by simp [h.1]
+      simp only [List.cons_append, lineFuelGo, hx, Bool.false_eq_true, if_false]
+      rw [lineFuelGo_append xs ys (acc + 1) h.2]
+      simp only [List.length_cons]
+      congr 1
+      omega
+
+theorem ttDepth_le_length : ∀ (t : Term), t.ttDepth ≤ (termChars t).length
+  | .iri _ => Nat.zero_le _
+  | .bnode _ => Nat.zero_le _
+  | .literal _ => Nat.zero_le _
+  | .tripleTerm s p o => by
+      have := ttDepth_le_length o
+      rw [termChars_triple]
+      simp only [Term.ttDepth, List.length_cons, List.length_append]
+      omega
+
+theorem ttDepth_lt_lineFuel (t : Term) (ys : List Char) (h : termSafe .rdf12 t = true) :
+    t.ttDepth < lineFuel (termChars t ++ ys) := by
+  unfold lineFuel
+  rw [lineFuelGo_append _ _ _ (noNl_term t h)]
+  have h1 := lineFuelGo_ge ys (1 + (termChars t).length)
+  have h2 := ttDepth_le_length t
+  omega
+
 end L4Factoidal.RDF
