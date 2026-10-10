@@ -66,6 +66,14 @@ a column that fails to decode contributes zero rows silently, so
 downstream, and ASK would turn a read failure into a wrong answer with
 a clean exit.
 
+ASK applies its SolutionModifier (grammar rule [12];
+https://github.com/danbri/factoidal/issues/699). With only LIMIT and
+ORDER BY, rows lost to a decode failure can change an answer only from
+`true` to `false`, so a `true` answer stands. GROUP BY, HAVING and OFFSET
+depend on counts and positions, so for those `evalAskBackend` answers
+`none` on any decode failure, whether the partial answer is `true` or
+`false` (`askNeedsCompleteRead`).
+
 No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.StoreFastPath
