@@ -821,7 +821,7 @@ export async function openDataset(text, options) {
       }
       const r = await withExtensionRounds(() => abiEntryResult(fn(handle, sparql), 'query'));
       if (r.kind === 'ask') return { head: {}, boolean: r.boolean };
-      if (r.kind === 'construct') return r.nquads;
+      if (r.kind === 'construct' || r.kind === 'describe') return r.nquads;
       return r.srj;
     },
     async update(updateText) {
@@ -1051,7 +1051,7 @@ async function queryViaAbi(dataString, queryString, opts) {
   const r = await withExtensionRounds(
     () => abiEntryResult(qfn(nq, queryString), 'query'));
   if (r.kind === 'ask') return { head: {}, boolean: r.boolean };
-  if (r.kind === 'construct') {
+  if (r.kind === 'construct' || r.kind === 'describe') {
     if (opts.output === 'json') {
       throw new Error(
         'query: CONSTRUCT with output "json" is not supported on the ' +

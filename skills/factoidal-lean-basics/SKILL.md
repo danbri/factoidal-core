@@ -22,7 +22,7 @@ https://github.com/danbri/factoidal/issues/466
 | Cottas | `Cottas/*.lean` (33 files at `73209342c232`) | total reader/writer, dictionaries, on-disk search, selective decode, planning, pruning, counts, presence and offset indexes |
 | HDT | `HDT/*.lean` (5 files at `73209342c232`) | container, theorems, dictionary, triples, and static store |
 | SPARQL expressions | `SPARQL/Expr*.lean` | §17 EBV, scaled numerics (order proved), §17.3 logic, builtins; EXISTS/NOW/extension fns/SERVICE via `EvalEnv` parameters |
-| SPARQL query | `SPARQL/Query*.lean` | QueryPattern→GraphPattern lowering, forms, modifiers, aggregates; ORDER BY permutation + DISTINCT laws proved; LATERAL cases pinned |
+| SPARQL query | `SPARQL/Query*.lean` | QueryPattern→GraphPattern lowering, forms, modifiers, aggregates; ORDER BY permutation + DISTINCT laws proved; LATERAL cases pinned; DESCRIBE returns the Concise Bounded Description (`RDF/ConciseBoundedDescription.lean`, record: [`docs/designissues/2026-10-10-sparql-describe.md`](../../docs/designissues/2026-10-10-sparql-describe.md)) |
 | SPARQL results | `SPARQL/Results*.lean` | SRX/SRJ/CSV/TSV parse+serialise; SRJ N-row shape theorem proved |
 | RDFS | `RDFS/Vocabulary.lean`, `RdfsCore.lean`, `Closure*.lean` | rdfs-core derivation relation + closure; extensive/sound/complete-at-saturation proved |
 | RDF syntaxes | `Syntax/Lexing.lean`, `NTriples.lean`, `NQuads.lean`, `Turtle.lean`, `TriG.lean`, `IriResolve.lean`, `Harness/TurtleProbe.lean` | rdf11+rdf12 parse/serialise; RFC 3986 resolution (all §5.4 examples guarded); rdf-turtle eval 111 of 111, rdf-trig 107 of 108 |

@@ -629,6 +629,61 @@ Query §2). -/
     (p : GraphPattern) :
     (GraphPattern.service none false p).evalIn ds active = [] := rfl
 
+
+/-! ## §16.4 — DESCRIBE
+
+The specification fixes which resources a DESCRIBE query describes and
+leaves the description to the service (§16.4). What `evalDescribe`
+promises, whatever the description policy, is proved here: the answer
+is a subgraph of the active default graph, a resource named by IRI in
+the clause is described whatever the WHERE clause matches, and the
+other query forms describe nothing. That the description is the
+Concise Bounded Description is `Graph.cbd` in
+`RDF/ConciseBoundedDescription.lean`. -/
+
+/-- The answer of DESCRIBE is a subgraph of the active default graph:
+the default graph of the dataset after `FROM` / `FROM NAMED`. DESCRIBE
+invents no statement. -/
+theorem evalDescribe_subset (env : EvalEnv) (ds : Dataset) (q : Query) :
+    ∀ t ∈ evalDescribe env ds q, t ∈ (applyDataset q.dataset ds ds.default).2 := by
+  intro t ht
+  rcases hq : applyDataset q.dataset ds ds.default with ⟨ds', active⟩
+  unfold evalDescribe at ht
+  simp only [hq] at ht ⊢
+  split at ht
+  · exact cbd_subset _ _ t ht
+  · cases ht
+
+/-- Only a DESCRIBE query describes. -/
+theorem evalDescribe_of_not_describe (env : EvalEnv) (ds : Dataset) (q : Query)
+    (h : ∀ targets, q.form ≠ .describe targets) : evalDescribe env ds q = [] := by
+  unfold evalDescribe
+  split
+  rename_i ds' active _
+  split
+  · rename_i targets hform
+    exact absurd hform (h targets)
+  · rfl
+
+/-- Clause 1 of the description: a statement of the active default graph
+whose subject is an IRI named in the DESCRIBE clause is in the answer,
+whatever the WHERE clause matches (§16.4.1). -/
+theorem evalDescribe_mem_of_iri (env : EvalEnv) (ds : Dataset) (q : Query)
+    (targets : List PatternTerm) (hform : q.form = .describe targets)
+    (i : WfIri) (hi : PatternTerm.iri i ∈ targets) :
+    ∀ t ∈ (applyDataset q.dataset ds ds.default).2, t.s = Subject.iri i →
+      t ∈ evalDescribe env ds q := by
+  intro t ht hs
+  rcases hq : applyDataset q.dataset ds ds.default with ⟨ds', active⟩
+  simp only [hq] at ht
+  unfold evalDescribe
+  simp only [hq, hform]
+  apply cbd_root_triples _ _ t ht
+  rw [hs]
+  unfold describeRoots
+  simp only [List.mem_append, List.mem_filterMap]
+  exact Or.inl ⟨PatternTerm.iri i, hi, rfl⟩
+
 end L4Factoidal.SPARQL
 
 /-! ## Axiom audit
@@ -654,5 +709,8 @@ open L4Factoidal.SPARQL
 #print axioms DistinctBucketWf.bucketAnyEq
 #print axioms distinctSolutionsFastGo_eq
 #print axioms distinctSolutionsFast_eq
+#print axioms evalDescribe_subset
+#print axioms evalDescribe_of_not_describe
+#print axioms evalDescribe_mem_of_iri
 
 end Audit

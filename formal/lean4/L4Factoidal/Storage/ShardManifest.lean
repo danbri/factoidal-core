@@ -1004,13 +1004,15 @@ def nativeConstantPredicates? : QueryPattern → Option (List WfIri)
     expression outside the pattern is `Expr.existsFree`
     (https://github.com/danbri/factoidal/issues/638).
 
-    The test is `Query.expressionsOutsidePatternExistsFree` and NOT
+    The test is `Query.patternBoundedReads` (that is,
+    `Query.expressionsOutsidePatternExistsFree`, and a refusal of DESCRIBE,
+    whose answer takes statements no pattern selects) and NOT
     `Expr.backendLocal`: an aggregate, `IRI()`, `REGEX` or an extension call
     is legitimate in those positions and reads no triples, so rejecting them
     would send every ordinary `GROUP BY` / `ORDER BY` query down the
     full-manifest path for no soundness gain. -/
 def queryNativeConstantPredicates? (query : Query) : Option (List WfIri) :=
-  if query.expressionsOutsidePatternExistsFree then
+  if query.patternBoundedReads then
     nativeConstantPredicates? query.pattern
   else none
 
@@ -1117,8 +1119,8 @@ def plannerFragmentQuery (query : Query) : Bool :=
 /-- The graph names a whole query reads. Outside a `GRAPH` clause the active
     graph is the default graph, so that is the seed.
 
-    Two guards. `Query.expressionsOutsidePatternExistsFree` is the same
-    EXISTS guard `queryNativeConstantPredicates?` carries: section 18.6
+    Two guards. `Query.patternBoundedReads` is the same
+    EXISTS-and-DESCRIBE guard `queryNativeConstantPredicates?` carries: section 18.6
     evaluates an `EXISTS` in the projection, a GROUP BY key, a HAVING
     condition or an ORDER BY condition against the ACTIVE GRAPH, and
     `graphsReadFrom` reads only `query.pattern`. And a query carrying `FROM` /
@@ -1128,7 +1130,7 @@ def plannerFragmentQuery (query : Query) : Bool :=
     that here would duplicate `applyDataset`; refusing the selection costs
     only the reads it would have skipped. -/
 def queryGraphNames? (query : Query) : Option (List GraphName) :=
-  if query.expressionsOutsidePatternExistsFree && query.dataset.isEmpty
+  if query.patternBoundedReads && query.dataset.isEmpty
      && plannerFragmentQuery query then
     graphsReadFrom .defaultGraph query.pattern.rewriteBnodes
   else none
@@ -1177,7 +1179,7 @@ def quadNativeConstantPredicates? : QueryPattern → Option (List WfIri)
 /-- The query-level form, under the same EXISTS guard as
     `queryNativeConstantPredicates?`. -/
 def queryQuadConstantPredicates? (query : Query) : Option (List WfIri) :=
-  if query.expressionsOutsidePatternExistsFree && plannerFragmentQuery query then
+  if query.patternBoundedReads && plannerFragmentQuery query then
     quadNativeConstantPredicates? query.pattern.rewriteBnodes
   else none
 
@@ -1258,13 +1260,13 @@ def quadConstantTerms? (positionOf : TriplePattern → Option Term) :
     a HAVING condition or an ORDER BY condition against the active graph, and
     this collector reads only `query.pattern`. -/
 def queryQuadConstantSubjects? (query : Query) : Option (List Term) :=
-  if query.expressionsOutsidePatternExistsFree && plannerFragmentQuery query then
+  if query.patternBoundedReads && plannerFragmentQuery query then
     quadConstantTerms? (fun pattern => constantSubjectOf pattern.s)
       query.pattern.rewriteBnodes
   else none
 
 def queryQuadConstantObjects? (query : Query) : Option (List Term) :=
-  if query.expressionsOutsidePatternExistsFree && plannerFragmentQuery query then
+  if query.patternBoundedReads && plannerFragmentQuery query then
     quadConstantTerms? (fun pattern => constantObjectOf pattern.o)
       query.pattern.rewriteBnodes
   else none

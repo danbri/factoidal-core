@@ -236,8 +236,15 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
       IO.println s!"l4block-quad-query triples={graph.length} preview={toString (repr (graph.take 10))}"
       return 0
   | .describe _ =>
-      IO.eprintln "l4block-quad-query rejected: DESCRIBE needs an explicit description policy"
-      return 1
+      -- §16.4 DESCRIBE reads every statement about the resources it names,
+      -- which no pattern selects: `Query.patternBoundedReads` makes all
+      -- three entry collectors answer `none`, so `entries` is the whole
+      -- generation here.
+      let graph := evalDescribe env applied stripped
+      IO.println (header entries mode graphs bytes zoneExcluded)
+      IO.println s!"l4block-quad-query sse={query.toSse}"
+      IO.println s!"l4block-quad-query triples={graph.length} preview={toString (repr (graph.take 10))}"
+      return 0
 
 /-- The zone-map key function: the canonical version-2 wire bytes of a term,
     which are the bytes the packer compared when it computed an entry's zone

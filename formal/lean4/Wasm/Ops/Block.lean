@@ -22,12 +22,13 @@ worker should pass validated byte buffers directly once its buffer ABI exists.
      | {"ok":false,"error":"…"}
 
   queryIBK3BlockSetPreview(blocksJson, blankNodeScope, sparql)
-    -> the ordinary queryDataset SELECT / ASK / CONSTRUCT envelope
+    -> the ordinary queryDataset SELECT / ASK / CONSTRUCT / DESCRIBE envelope
 
 `blocksJson` is an array of `[predicateIri, ibk3Hex]` pairs.  The block-set
 operation is a bounded browser-preview bridge: at most eight complete blocks,
 eight MiB of decoded artifact bytes and 100,000 RDF rows.  SELECT and
-CONSTRUCT must carry `LIMIT <= 1000`.  It avoids the large intermediate
+CONSTRUCT must carry `LIMIT <= 1000`; a DESCRIBE answers a subgraph of the
+decoded set and needs none.  It avoids the large intermediate
 N-Triples serialization/reparse of composing `scanIBK3Predicate` results, but
 is not the future authenticated-range/PushIR worker API.
 
@@ -193,7 +194,14 @@ private def boundedQueryReason? (query : Query) : Option String :=
               if limit <= maxBlockSetResults then none
               else some s!"LIMIT must be at most {maxBlockSetResults}"
           | none => some s!"SELECT and CONSTRUCT require LIMIT <= {maxBlockSetResults}"
-      | .describe _ => some "DESCRIBE is not supported"
+      -- DESCRIBE returns a subgraph of the decoded block set, which the row
+      -- and byte caps above already bound, so it needs no LIMIT.
+      | .describe _ => none
+  -- A DESCRIBE with no WHERE clause names its resources by IRI.
+  | .empty =>
+      match query.form with
+      | .describe _ => none
+      | _ => some "only a basic graph pattern is accepted by this preview operation"
   | _ => some "only a basic graph pattern is accepted by this preview operation"
 
 /-- Query a small explicit set of complete IBK3 blocks without materializing

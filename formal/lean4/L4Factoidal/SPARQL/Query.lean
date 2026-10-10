@@ -418,6 +418,31 @@ def Query.expressionsOutsidePatternExistsFree (query : Query) : Bool :=
     && Expr.existsFreeList query.having
     && (query.modifier.orderBy.getD []).all OrderCondition.existsFree
 
+/-- Does the query form read statements that no pattern of the query
+selects? DESCRIBE does: it returns every statement about each resource
+it describes (`evalDescribe`), and the WHERE clause names the resources,
+not those statements. SELECT, ASK and CONSTRUCT read the dataset only
+through the pattern. -/
+def QueryForm.readsBeyondPattern : QueryForm → Bool
+  | .describe _ => true
+  | .select _ | .construct _ | .ask => false
+
+/-- The admission test of every planner that opens a PROPER SUBSET of a
+store's statements chosen from the query's pattern: the shards of the
+predicates the pattern names, the graphs it names, the blocks whose zone
+maps can hold its constants, the rows an index lists for its filter.
+
+The test holds when the pattern alone decides which statements the
+query reads. Two things break that. An `EXISTS` outside the pattern
+reads the active graph (`expressionsOutsidePatternExistsFree`). And a
+DESCRIBE form reads every statement about the resources it names, which
+`ASK`-style pruning by pattern predicates would drop: `DESCRIBE <x>`
+has an empty pattern, so a planner that read only the pattern's
+predicates would open no shard and describe nothing. A planner that
+fails this test opens the complete store. -/
+def Query.patternBoundedReads (query : Query) : Bool :=
+  query.expressionsOutsidePatternExistsFree && !query.form.readsBeyondPattern
+
 /-- Build a query, defaulting every optional part — the shape most
 call sites (and every test below) want. -/
 def mkQuery (form : QueryForm) (pattern : QueryPattern)

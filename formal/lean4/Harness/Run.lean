@@ -141,7 +141,11 @@ Rules, in the order the F* runner applies them:
   5. ASK: the evaluated boolean against the expected one;
   6. CONSTRUCT: the expected Turtle graph, by isomorphism;
   7. parse failure → FAIL (named); missing file → SKIP (path);
-     an entailment regime or DESCRIBE → `unsupported`, named. -/
+     an entailment regime → `unsupported`, named.
+  8. DESCRIBE: the evaluated Concise Bounded Description against the
+     expected Turtle graph, by isomorphism. The W3C suites hold no
+     DESCRIBE evaluation test (§16.4 leaves the description to the
+     service), so this arm has no manifest case today. -/
 
 /-- `NOW()` for the whole run: fixed, so a result is reproducible. -/
 def fixedNow : String := "2026-08-22T00:00:00Z"
@@ -522,8 +526,16 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
         s!"CONSTRUCT graph not isomorphic to the expected one (got {got.length} triples, expected {g.length})"
         (Graph.isomorphicOutcome got g)
       return { r with triplesCompared := got.length + g.length }
-  | .describe _, _ =>
-      return .ofOutcome (.unsupported "DESCRIBE (the Lean port fixes no description policy)")
+  | .describe _, .graph g =>
+      -- §16.4 leaves the description to the service, so no W3C test fixes
+      -- one. A manifest that did would give an expected graph; the answer
+      -- is compared with it by isomorphism, as for CONSTRUCT.
+      let got := evalDescribe env ds q
+      let r := isoResult
+        s!"DESCRIBE graph not isomorphic to the expected one (got {got.length} triples, expected {g.length})"
+        (Graph.isomorphicOutcome got g)
+      return { r with triplesCompared := got.length + g.length }
+  | .describe _, _        => return .ofOutcome (.fail "expected file is not a graph but the query is DESCRIBE")
   | .select _, .boolean _ => return .ofOutcome (.fail "expected file is a boolean result but the query is SELECT")
   | .select _, .graph _   => return .ofOutcome (.fail "expected file is a graph but the query is SELECT")
   | .ask, _               => return .ofOutcome (.fail "expected file is not a boolean result but the query is ASK")

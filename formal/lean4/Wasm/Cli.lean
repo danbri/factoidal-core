@@ -193,8 +193,8 @@ def printSelectTable (srj : Json) : IO Unit := do
     IO.println (String.intercalate "\t" (vars.map fun v => (bindingValue? row v).getD ""))
 
 /-- Print the `queryDataset` envelope family
-(select/ask/construct — DESCRIBE is already an error envelope, handled
-by `parseEnvelope`). -/
+(select/ask/construct/describe; an error envelope is handled by
+`parseEnvelope`). -/
 def printQueryResult (j : Json) (table : Bool) : IO UInt32 := do
   match j.getString? "kind" with
   | some "ask" =>
@@ -202,7 +202,7 @@ def printQueryResult (j : Json) (table : Bool) : IO UInt32 := do
       | some true => IO.println "true"; pure 0
       | some false => IO.println "false"; pure 1
       | none => IO.eprintln "internal: ask result missing boolean"; pure 1
-  | some "construct" =>
+  | some "construct" | some "describe" =>
       IO.println ((j.getString? "nquads").getD "")
       pure 0
   | some "select" =>

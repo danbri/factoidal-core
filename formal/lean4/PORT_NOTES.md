@@ -14001,3 +14001,14 @@ old statement false):
 - New: `closedViolations_eq_nil_iff`, `uvfClash_eq_false_iff`,
   `someValue_aggConforms_iff`, the per-constraint severity lemmas.
 
+## SPARQL DESCRIBE (2026-10-10)
+
+`evalDescribe` (`SPARQL/Query.lean`) answers DESCRIBE with the Concise Bounded
+Description (`RDF/ConciseBoundedDescription.lean`, `Graph.cbd`) of the
+resources the clause names, read from the active default graph. Design record,
+resource rule, the RDF 1.2 reading of CBD clause 3, the planner rule
+(`Query.patternBoundedReads`: a DESCRIBE query makes every pattern-driven
+planner open the complete store) and the list of surfaces:
+`docs/designissues/2026-10-10-sparql-describe.md`. Tracked at
+<https://github.com/danbri/factoidal/issues/698>. The F* tree still answers
+DESCRIBE with the empty graph.

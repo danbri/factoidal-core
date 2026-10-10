@@ -127,7 +127,7 @@ def compareOutputs (queryText : String) (env : EvalEnv) (ds : Dataset) (q : Quer
     (fstarOut : String) : DiffOutcome :=
   let tag := s!"query: {queryText.replace "\n" " "}"
   match q.form with
-  | .describe _ => .skipped "DESCRIBE (neither tree fixes a description policy)"
+  | .describe _ => .skipped "DESCRIBE (the F* tree answers it with the empty graph)"
   | .ask =>
       match parseSrj fstarOut with
       | .error e => .fstarError s!"F* JSON did not parse ({e}): {firstLine fstarOut}"

@@ -104,9 +104,9 @@ def evalQuery (env : EvalEnv) (store : Dataset) (q : Query) : Payload :=
                     .bindings vars rows
   | .ask         => .boolean (evalAsk env store q)
   | .construct _ => .graph (evalConstruct env store q)
-  -- The DESCRIBE result is not specified (§16.4); the AST evaluates it
-  -- to the empty graph (`SPARQL/Expr.lean`, `QueryForm`).
-  | .describe _  => .graph []
+  -- §16.4 leaves the description to the service; this one returns the
+  -- Concise Bounded Description (`evalDescribe`, `SPARQL/Query.lean`).
+  | .describe _  => .graph (evalDescribe env store q)
 
 /-- Execute one protocol request against the Graph Store `store`.
 `serviceIri` is the endpoint IRI, used as the BASE of the operation
@@ -193,6 +193,27 @@ private def askOf (r : Dataset × Response) : Option Bool :=
 -- §2.2.4: an update that cannot be executed is a 500.
 #guard (serve {} Dataset.empty "http://e/sparql" "POST" "/sparql" ""
   "application/sparql-update" "CLEAR GRAPH <http://example.org/absent>").2.status == 500
+-- §16.4: DESCRIBE answers a graph, the description of the resource the
+-- clause names; the protocol manifest's query_content_type_describe
+-- expects an RDF media type, which is the "RDF" result kind.
+private def storeDescribe : Dataset :=
+  { default := [⟨.iri iriS, iriP, .bnode "b"⟩, ⟨.bnode "b", iriP, .iri iriS⟩,
+                ⟨.iri iriG1, iriP, .iri iriG1⟩], named := [] }
+private def graphOf (r : Dataset × Response) : Option Graph :=
+  match r.2.payload with
+  | .graph g => some g
+  | _        => none
+#guard (serve {} storeDescribe "http://e/sparql" "POST" "/sparql" ""
+  "application/sparql-query" "DESCRIBE <http://example.org/s>").2.payload.formatName == "RDF"
+#guard graphOf (serve {} storeDescribe "http://e/sparql" "POST" "/sparql" ""
+  "application/sparql-query" "DESCRIBE <http://example.org/s>")
+  == some [⟨.iri iriS, iriP, .bnode "b"⟩, ⟨.bnode "b", iriP, .iri iriS⟩]
+-- An IRI the store holds nothing about has an empty description, and the
+-- status is still 200.
+#guard graphOf (serve {} storeDescribe "http://e/sparql" "POST" "/sparql" ""
+  "application/sparql-query" "DESCRIBE <http://example.org/absent>") == some []
+#guard (serve {} storeDescribe "http://e/sparql" "POST" "/sparql" ""
+  "application/sparql-query" "DESCRIBE <http://example.org/absent>").2.status == 200
 -- Result kinds, as the manifest's mf:expectedFormat names them.
 #guard (serve {} storeG1 "http://e/sparql" "GET" "/sparql" "query=SELECT%20*%20%7B%7D" "" "").2.payload.formatName == "tabular"
 #guard (serve {} storeG1 "http://e/sparql" "GET" "/sparql"
