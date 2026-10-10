@@ -40,7 +40,8 @@ structure Entry where
   base           : Option String
   processingMode : Option String
   omitGraph      : Option Bool
-  deriving Repr
+  /-- The framing options the manifest may state under `option`. -/
+  frameOpts      : FrameOptions
 
 def typesOf (j : Json) : List String :=
   match j.field? "@type" with
@@ -52,6 +53,23 @@ def kindOf (types : List String) : Kind :=
   if types.contains "jld:NegativeEvaluationTest" then .negative
   else if types.contains "jld:PositiveEvaluationTest" then .positive
   else .unknown
+
+/-- The framing options of a manifest entry's `option` object. `embed`
+is a string or a boolean (`true` is `@once`, `false` is `@never`). -/
+def frameOptionsOf (opt : Option Json) : FrameOptions :=
+  let b (k : String) : Option Bool := opt.bind (fun o => o.getBool? k)
+  let embed : Option String :=
+    match opt.bind (fun o => o.field? "embed") with
+    | some (.string s) => some s
+    | some (.bool true) => some "@once"
+    | some (.bool false) => some "@never"
+    | _ => none
+  { embed := embed.getD "@once",
+    explicit := (b "explicit").getD false,
+    omitDefault := (b "omitDefault").getD false,
+    requireAll := (b "requireAll").getD false,
+    pruneBlankNodeIdentifiers := b "pruneBlankNodeIdentifiers",
+    ordered := (b "ordered").getD false }
 
 def entryOf (j : Json) : Option Entry := do
   let input ← j.getString? "input"
@@ -71,7 +89,8 @@ def entryOf (j : Json) : Option Entry := do
          errorCode := j.getString? "expectErrorCode",
          base := optStr "base",
          processingMode := pm,
-         omitGraph := opt.bind (fun o => o.getBool? "omitGraph") }
+         omitGraph := opt.bind (fun o => o.getBool? "omitGraph"),
+         frameOpts := frameOptionsOf opt }
 
 def readFileOpt (p : System.FilePath) : IO (Option String) := do
   try pure (some (← IO.FS.readFile p)) catch _ => pure none
@@ -133,7 +152,9 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
     let base : Option String := match e.base with
                                 | some b => some b
                                 | none   => some (baseIri ++ e.input)
-    let got := frameDocument loader inputTxt frameTxt base e.processingMode e.omitGraph
+    let got := frameDocumentWith loader inputTxt frameTxt
+      { e.frameOpts with base := base, processingMode := e.processingMode,
+                         omitGraph := e.omitGraph }
     match e.kind with
     | .unknown => return .unsupported "unreachable"
     | .negative =>
@@ -197,13 +218,6 @@ def main (args : List String) : IO UInt32 := do
         failures := s!"{e.id} {e.name}: UNSUPPORTED {msg}" :: failures
     IO.println s!"jsonld-frame: {pass} pass, {fail} fail, {unsup} unsupported (out of {entries.length})"
     IO.println "  F* (recorded in docs/test-results/assurance-inventory.json): 28 pass, 64 fail, 0 skip (out of 92)"
-    IO.println ""
-    IO.println "The framing port implements the same subset the F* module does:"
-    IO.println "@type / @id / property matching, node embedding with a visited"
-    IO.println "set, and @explicit. @default, @omitDefault, @requireAll,"
-    IO.println "the other @embed modes, @reverse, @included, named graphs and"
-    IO.println "value-object matching are absent in BOTH trees, and are what"
-    IO.println "most of the remaining failures need."
     if !failures.isEmpty then
       IO.println ""
       IO.println "  failures:"
