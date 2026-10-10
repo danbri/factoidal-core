@@ -487,14 +487,16 @@ encoding — ten triples, no base. -/
 #guard (negationGoals [⟨indI, exP, .iri exY⟩]).map (·.map List.length)
        == some [10]
 
-/-! A property assertion with a LITERAL object has no sound negation
-in this encoding (`owl:oneOf` of a literal is a data range):
-conservative `none`. A purely structural conclusion has no content
-assertion to negate: `none`. -/
-#guard negationGoals
+/-! A property assertion with a LITERAL object has no `≤0 p.{y}`
+negation (`owl:oneOf` of a literal is a data range). Since 2026-10-10
+it negates to the negative property assertion instead — three triples,
+`owl:sourceIndividual` / `owl:assertionProperty` / `owl:targetValue`
+(this guard said `none` before that builder existed). A purely
+structural conclusion has no content assertion to negate: `none`. -/
+#guard (negationGoals
         [⟨indI, exP, .literal ⟨{ lexicalForm := "v", datatype := xsdString,
-                                 langTag := none, direction := none }, rfl⟩⟩]
-       == none
+                                 langTag := none, direction := none }, rfl⟩⟩]).map
+         (·.map List.length) == some [3]
 #guard negationGoals [⟨bn "r", owlOnProperty, .iri exP⟩] == none
 
 /-! End to end, entailed: `i ∈ C, C ⊑ D ⊨ i ∈ D`. The negated
@@ -999,5 +1001,64 @@ private def gFibres (k : String) : Graph :=
 #guard !countingRefutes (gFibres "2")
 #guard refuted (gFibres "3")
 #guard !(refuted (gFibres "2"))
+
+
+/-! ## Property axioms in a conclusion are claims, with goals of their own
+
+`WebOnt-FunctionalProperty-004`: `prop`'s range is a one-element
+class, so `prop` is functional. The goal is a fresh `a` with two
+different `prop`-successors; the range axiom puts both in the
+singleton. Without the range there is a model with two successors.
+`-InverseFunctionalProperty-004` is the same through the domain. -/
+
+private def exSingle : WfIri := ⟨"http://e/Singleton", rfl⟩
+
+private def gSingletonRange (withAxiom : Bool) (onDomain : Bool) : Graph :=
+  [ ⟨.iri exSingle, owlOneOf, bnT "sl"⟩,
+    ⟨bn "sl", rdfFirst, bnT "only"⟩, ⟨bn "sl", rdfRest, .iri rdfNil⟩,
+    ⟨bn "only", rdfType, .iri exSingle⟩ ] ++
+  (if withAxiom then
+    [⟨.iri exP, if onDomain then rdfsDomain else rdfsRange, .iri exSingle⟩] else [])
+
+#guard entailedByRefutation (gSingletonRange true false)
+  [⟨.iri exP, rdfType, .iri owlFunctionalProperty⟩]
+#guard !entailedByRefutation (gSingletonRange false false)
+  [⟨.iri exP, rdfType, .iri owlFunctionalProperty⟩]
+#guard entailedByRefutation (gSingletonRange true true)
+  [⟨.iri exP, rdfType, .iri owlInverseFunctionalProperty⟩]
+#guard !entailedByRefutation (gSingletonRange true true)
+  [⟨.iri exP, rdfType, .iri owlFunctionalProperty⟩]
+
+/-! A characteristic in the conclusion is not kept as scaffolding: with
+it in every goal, `p` would be ASSUMED functional while the other
+conjunct is proved. Here the premise has the membership and nothing
+about `p`, so the conclusion is not entailed. -/
+#guard !entailedByRefutation [⟨indI, rdfType, .iri exC⟩]
+  [⟨.iri exP, rdfType, .iri owlFunctionalProperty⟩, ⟨indI, rdfType, .iri exC⟩]
+#guard entailedByRefutation [⟨indI, rdfType, .iri exC⟩] [⟨indI, rdfType, .iri exC⟩]
+
+/-! `WebOnt-I5.8-010`: `∃p.xsd:nonPositiveInteger` with range
+`xsd:nonNegativeInteger` leaves the value `0`, so `john p "0"` is
+entailed; the goal is the negative assertion. Without the range the
+value may be `-1`. -/
+
+private def nonNegT : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#nonNegativeInteger", rfl⟩
+private def nonPosT : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#nonPositiveInteger", rfl⟩
+
+private def gJohnZero (range : Bool) : Graph :=
+  [ ⟨indI, rdfType, bnT "sv"⟩,
+    ⟨bn "sv", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "sv", owlSomeValuesFrom, .iri nonPosT⟩ ] ++
+  (if range then [⟨.iri exDp1, rdfsRange, .iri nonNegT⟩] else [])
+
+#guard entailedByRefutation (gJohnZero true) [⟨indI, exDp1, intT "0"⟩]
+#guard !entailedByRefutation (gJohnZero false) [⟨indI, exDp1, intT "0"⟩]
+
+/-! A label holding `unknown` is stored once: the second add reports
+no change, or the expansion would never stop. -/
+#guard
+  let l : ClassExpr := .allOf exP .unknown
+  let st1 := (addLabel {} indI l).1
+  !(addLabel st1 indI l).2
 
 end L4Factoidal.OWL.Refute

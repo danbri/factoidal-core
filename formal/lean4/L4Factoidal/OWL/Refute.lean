@@ -389,7 +389,14 @@ def addLabel (st : RState) (i : Subject) (c : ClassExpr) : RState × Bool :=
   match c with
   | .unknown => (st, false)
   | _ =>
-    if memCe c (labelsOf st i) then (st, false)
+    -- The duplicate test is SYNTACTIC (`ClassExpr.beq`), not `ceEq`:
+    -- `ceEq` refuses to equate two expressions containing `unknown`
+    -- (the right answer for a clash), so with it a label such as
+    -- `∀p.unknown` was never found present, was re-added on every
+    -- pass, and the expansion reported a change forever until the
+    -- budget ran out. Storing a label once is a bookkeeping question,
+    -- not a semantic one.
+    if (labelsOf st i).any (ClassExpr.beq c) then (st, false)
     else if st.nodes.any (fun n => n.id == i) then
       ({ st with nodes := st.nodes.map (fun n =>
            if n.id == i then { n with labels := n.labels ++ [c] } else n) }, true)
@@ -1038,10 +1045,27 @@ def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri) :=
     | .exactCard k p => some (k, p)
     | _              => none)
 
-def datatypeCardinalityClash (st : RState) (ls : List ClassExpr) : Bool :=
+/-- An upper bound on the values left in `vs` once `ex` is removed.
+    For a finite integer interval it is the count less the excluded
+    integers inside it; for an enumeration the enumeration's own bound
+    after removal. Every other shape keeps its bound without the
+    exclusion, which is an over-count, the withholding direction. -/
+def valueSetMaxSizeExcluding (vs : ValueSet) (ex : List Term) : Option Nat :=
+  match vs with
+  | .interval iv =>
+      match intervalCount iv with
+      | some k =>
+          let inside := (ex.filterMap termIntOpt).eraseDups.filter (valueInInterval · iv)
+          some (k - inside.length)
+      | none => none
+  | .enum _ => valueSetMaxSize (valueSetMinusValues vs ex)
+  | _ => valueSetMaxSize vs
+
+def datatypeCardinalityClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
+    : Bool :=
   (collectCardProps ls).any (fun (k, p) =>
     k ≥ 1 &&
-    (match valueSetMaxSize (fillerValueSet st p ls) with
+    (match valueSetMaxSizeExcluding (fillerValueSet st p ls) (excludedValues g st i p) with
      | some m => k > m
      | none   => false))
 
@@ -1406,7 +1430,7 @@ def clashNodes (g : Graph) (st : RState) : Bool :=
     let ls := labelsOf st n.id
     ls.any (clashForLabel g st n.id ls)
     || datatypeRangeClash g st n.id ls
-    || datatypeCardinalityClash st ls
+    || datatypeCardinalityClash g st n.id ls
     || countingClash st ls)
 
 /-! ## Graph-level violations
@@ -1788,6 +1812,48 @@ def namedOneOfAxioms (st : Store) : List (ClassExpr × ClassExpr) :=
       | []      => []
       | members => [(.named c, .oneOf members), (.oneOf members, .named c)])
 
+/-- Is `d` a datatype, or a class every element is in? A range or
+    domain of that kind constrains nothing an individual's label could
+    carry: a datatype bounds data values, which no node stands for, and
+    `owl:Thing` / `rdfs:Resource` hold of everything. -/
+def isTrivialOrDataRangeIri (st : Store) (d : WfIri) : Bool :=
+  d == owlThing || d == L4Factoidal.RDFS.rdfsResource || d == L4Factoidal.RDFS.rdfsLiteral ||
+  d.val.startsWith "http://www.w3.org/2001/XMLSchema#" ||
+  d.val.startsWith "http://www.w3.org/1999/02/22-rdf-syntax-ns#" ||
+  d == XSD.owlReal || d == XSD.owlRational ||
+  (st.withSubjPred (.iri d) rdfType).any (fun t => t.o == Term.iri rdfsDatatype)
+
+/-- `p rdfs:domain C` and `p rdfs:range C` as TBox axioms (OWL 2 Syntax
+    §9.2.6, `ObjectPropertyDomain` and `ObjectPropertyRange`, whose
+    Direct Semantics conditions are `∃p.⊤ ⊑ C` and `⊤ ⊑ ∀p.C`).
+
+    The RL closure applies both to the triples the premise asserts. The
+    expansion creates edges the closure never sees — a goal's fresh
+    pair, a generating-rule witness — and without these axioms nothing
+    puts a domain or range class on their ends. The range axiom has the
+    antecedent `owl:Thing`, so `injectGlobalAxioms` puts `∀p.C` on every
+    node and the `∀` rule carries `C` to every `p`-successor; the domain
+    axiom's antecedent `≥ 1 p` is proved by an asserted or counted edge
+    (`applyAxiomsEdges`). A datatype range or a trivial class gives no
+    axiom (`isTrivialOrDataRangeIri`). -/
+def domainRangeAxioms (us : List WfIri) (st : Store) : List (ClassExpr × ClassExpr) :=
+  let keep (o : Term) : Bool := match o with
+    | .iri d   => !isTrivialOrDataRangeIri st d
+    | .bnode _ => true
+    | _        => false
+  ((st.withPred rdfsDomain).filterMap (fun t =>
+    match t.s with
+    | .iri p =>
+        let c := parseNnfWith us st t.o
+        if keep t.o && ceDefinite c then some (.minCard 1 p, c) else none
+    | .bnode _ => none)) ++
+  ((st.withPred rdfsRange).filterMap (fun t =>
+    match t.s with
+    | .iri p =>
+        let c := parseNnfWith us st t.o
+        if keep t.o && ceDefinite c then some (.named owlThing, .allOf p c) else none
+    | .bnode _ => none))
+
 /-- Store-parameterised: the graph it reads is `st.graph`.
 
     Every lookup below runs through `st`, so the store decides the
@@ -1797,7 +1863,7 @@ def namedOneOfAxioms (st : Store) : List (ClassExpr × ClassExpr) :=
     two agree. -/
 def collectAxiomsS (st : Store) : List (ClassExpr × ClassExpr) :=
   let us := unsatNamedClassesS st
-  namedRestrictionAxioms us st ++ namedOneOfAxioms st ++
+  namedRestrictionAxioms us st ++ namedOneOfAxioms st ++ domainRangeAxioms us st ++
   st.graph.flatMap (fun t =>
     if t.p == rdfsSubClassOf then
       [(parseNnfSubjectWith us st t.s, parseNnfWith us st t.o)]
@@ -2458,6 +2524,13 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
 
 /-! ## The entry point -/
 
+/-- A predicate in the RDF, RDFS or OWL namespace: vocabulary, not a
+    property assertion between individuals. -/
+def isVocabularyPredicate (p : WfIri) : Bool :=
+  p.val.startsWith "http://www.w3.org/2002/07/owl#" ||
+  p.val.startsWith "http://www.w3.org/1999/02/22-rdf-syntax-ns#" ||
+  p.val.startsWith "http://www.w3.org/2000/01/rdf-schema#"
+
 def initState (g : Graph) : RState :=
   let sp := collectPairs g rdfsSubPropertyOf
   let props := ((sp.map (·.1)) ++ (sp.map (·.2))).eraseDups
@@ -2472,8 +2545,24 @@ def initState (g : Graph) : RState :=
       store := Store.ofIndex (Index.ofGraph g) }
   let store := Store.ofGraph g
   let us := unsatNamedClasses g
-  g.foldl (fun st t =>
+  let typed := g.foldl (fun st t =>
     if t.p == rdfType then (addLabel st t.s (parseNnfWith us store t.o)).1 else st) st0
+  -- Both ends of a property assertion are individuals, typed or not,
+  -- and the global rules (`injectGlobalAxioms`: `owl:Thing ⊑ C`, the
+  -- range axioms) hold of them as of every element. A term only ever
+  -- seen as the subject or object of an edge was no node, so none of
+  -- them reached it: the fresh pair of a `owl:FunctionalProperty`
+  -- refutation goal is exactly that shape.
+  g.foldl (fun st t =>
+    if isVocabularyPredicate t.p then st
+    else
+      let st1 := addNode st t.s
+      match t.o with
+      | .iri _ | .bnode _ =>
+          (match termAsSubject t.o with
+           | some o => addNode st1 o
+           | none   => st1)
+      | _ => st1) typed
 
 /-- The class-size counting rung (`OWL/CountingOracle.lean`), the
     Lean counterpart of the F* owl-runner's `class_size_refutes`.

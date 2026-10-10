@@ -1650,19 +1650,15 @@ partial def showCe : L4Factoidal.OWL.ClassExpr → String
         s!"{shortIri f} {shortTerm v}")) ++ "]"
   | .unknown => "?"
 
-def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
-    (rb : Nat) (passes : Nat) : IO Unit := do
-  IO.println s!"TRACE {name} {c.id}"
-  let (res, _) ← premiseClosure cat c capMs rg
-  match res with
-  | .error o => IO.println (o.line c.id)
-  | .ok r =>
-    let g := r.graph
+/-- Dump the refuter's view of one graph: TBox, saturated labels,
+    pending choices, verdict. `axioms` prints the TBox. -/
+def traceGraph (g : Graph) (rb : Nat) (passes : Nat) (axioms : Bool) : IO Unit := do
     IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g} inCountingFragment={L4Factoidal.OWL.CountingOracle.inCountingFragment g} classSizeUnsat={L4Factoidal.OWL.CountingOracle.classSizeUnsat g}"
     let tb := L4Factoidal.OWL.Refute.collectAxioms g
     IO.println s!"  tbox axioms={tb.length}"
-    for (a, d) in tb do
-      IO.println s!"    AX {showCe a} ⊑ {showCe d}"
+    if axioms then
+      for (a, d) in tb do
+        IO.println s!"    AX {showCe a} ⊑ {showCe d}"
     let mut st : L4Factoidal.OWL.Refute.RState :=
       { L4Factoidal.OWL.Refute.initState g with tbox := tb }
     let mut n := 0
@@ -1677,6 +1673,7 @@ def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Reg
     IO.println s!"  forcedIdentifications changed={forced} ident_after={stF.ident.length}"
     for (a, b) in stF.ident do
       IO.println s!"    IDENT {shortTerm a} = {shortTerm b}"
+    IO.println s!"  propositionalClash={L4Factoidal.OWL.Refute.propositionalClash st} nominalClash={L4Factoidal.OWL.Refute.nominalClash g st}"
     for nd in st.nodes do
       IO.println s!"    NODE {shortSubject nd.id}: {String.intercalate ", " (nd.labels.map showCe)}"
     for e in st.extra do
@@ -1688,6 +1685,38 @@ def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Reg
     | some ps => IO.println s!"  pendingMerge {String.intercalate "; " (ps.map (fun (a, b) => s!"{shortTerm a}={shortTerm b}"))}"
     | none => IO.println "  pendingMerge none"
     IO.println s!"  tableauConsistent(budget {rb}) = {repr (L4Factoidal.OWL.Refute.tableauConsistent g rb)}"
+
+def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
+    (rb : Nat) (passes : Nat) : IO Unit := do
+  IO.println s!"TRACE {name} {c.id}"
+  let (res, _) ← premiseClosure cat c capMs rg
+  match res with
+  | .error o => IO.println (o.line c.id)
+  | .ok r =>
+    traceGraph r.graph rb passes true
+    -- A positive-entailment case: the refutation goals of its
+    -- conclusion, each over the premise closure.
+    match c.conclusion with
+    | none => pure ()
+    | some ctxt =>
+      match parseDoc "conclusion" c.iri ctxt with
+      | .error e => IO.println s!"  conclusion parse error: {e}"
+      | .ok gc =>
+        -- The graph `judgePositive` hands the refuter: the closure
+        -- with the comprehension layer and one re-closure.
+        let gw := L4Factoidal.OWL.Comp.comprehensionLayer r.graph
+        let pg ← if gw.length == r.graph.length then pure r.graph else do
+          let t2 ← IO.monoMsNow
+          pure (← closureIO gw closureFuel (t2 + capMs)).graph
+        match L4Factoidal.OWL.Refute.negationGoals (renameConclusionBNodes gc) with
+        | none => IO.println "  GOALS none"
+        | some goals =>
+          IO.println s!"  GOALS {goals.length} (over {pg.length} triples)"
+          for goal in goals do
+            IO.println "  GOAL:"
+            for t in goal do
+              IO.println s!"    G {shortSubject t.s} {shortIri t.p} {shortTerm t.o}"
+            traceGraph (pg ++ goal) rb passes false
 
 def traceMain (o : Opts) : IO UInt32 := do
   let dir : System.FilePath := o.dir

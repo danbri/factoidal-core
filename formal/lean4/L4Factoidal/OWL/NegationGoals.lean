@@ -128,16 +128,44 @@ def isStructuralPredicate (p : WfIri) : Bool :=
   || p == owlWithRestrictions || p == owlOnProperties
   || p == rdfFirst || p == rdfRest
 
+/-- The property characteristics: `rdf:type` objects that ASSERT an
+    axiom (OWL 2 Syntax §9.2.4 – §9.2.10, `FunctionalObjectProperty`
+    and its siblings), not a declaration. -/
+def isCharacteristicIri (i : WfIri) : Bool :=
+  i == owlFunctionalProperty || i == owlInverseFunctionalProperty
+  || i == owlTransitiveProperty || i == owlSymmetricProperty
+  || i == owlAsymmetricProperty || i == owlIrreflexiveProperty
+  || i == owlReflexiveProperty
+
+/-- A conclusion triple that is an AXIOM about named properties even
+    though its predicate or object is OWL vocabulary: a property
+    characteristic on an IRI, or `owl:inverseOf` between two IRIs (OWL
+    2 Syntax §9.2.3, `InverseObjectProperties`). Read as scaffolding,
+    such a triple was KEPT in every refutation goal, which assumes the
+    conclusion's own claim while proving its other conjuncts — the
+    direction the module header names unsound. It is content, and gets
+    a goal of its own. -/
+def isPropertyAxiomTriple (t : Triple) : Bool :=
+  (match t.s with | .iri _ => true | .bnode _ => false) &&
+  ((t.p == rdfType && (match t.o with
+      | .iri c => isCharacteristicIri c
+      | _      => false)) ||
+   (t.p == owlInverseOf && (match t.o with
+      | .iri _ => true
+      | _      => false)))
+
 /-- Port of `is_structural_triple`, including the named-subject
-    boolean-marker exception (module header). -/
+    boolean-marker exception (module header), less the property axioms
+    of `isPropertyAxiomTriple`. -/
 def isStructuralTriple (t : Triple) : Bool :=
-  (t.p == rdfType &&
+  !isPropertyAxiomTriple t &&
+  ((t.p == rdfType &&
     (match t.o with
      | .iri c => isMetaTypeIri c
      | _      => false))
   || (if t.p == owlComplementOf || t.p == owlUnionOf || t.p == owlIntersectionOf
       then (match t.s with | .bnode _ => true | .iri _ => false)
-      else isStructuralPredicate t.p)
+      else isStructuralPredicate t.p))
 
 /-- The content assertions of a conclusion graph. -/
 def contentTriples (g : Graph) : List Triple :=
@@ -279,13 +307,91 @@ def propertyDomainRangeGoal (base : Graph) (p : WfIri) (c : Term)
   [ ⟨a, p, b.toTerm⟩, ⟨neg, owlComplementOf, c⟩,
     ⟨if onSubject then a else b, rdfType, .bnode peNegClassBNode⟩ ] ++ base
 
+/-! ### Property axioms and data assertions (2026-10-10)
+
+Each builder writes the negation of one OWL 2 Direct Semantics
+property axiom (Table 6 of https://www.w3.org/TR/owl2-direct-semantics/)
+on FRESH names:
+
+| conclusion | goal |
+|---|---|
+| `p rdf:type owl:FunctionalProperty` | fresh `a p b₁`, `a p b₂`, `b₁ ≠ b₂` |
+| `p rdf:type owl:InverseFunctionalProperty` | fresh `a₁ p b`, `a₂ p b`, `a₁ ≠ a₂` |
+| `p rdf:type owl:TransitiveProperty` | fresh `a p b`, `b p c`, `¬p(a, c)` |
+| `p rdf:type owl:SymmetricProperty` | fresh `a p b`, `¬p(b, a)` |
+| `p rdf:type owl:AsymmetricProperty` | fresh `a p b`, `b p a` |
+| `p rdf:type owl:IrreflexiveProperty` | fresh `a p a` |
+| `p rdf:type owl:ReflexiveProperty` | fresh `a` with `¬p(a, a)` |
+| `p owl:inverseOf q` | fresh `a p b` with `¬q(b, a)`; and `a q b` with `¬p(b, a)` |
+| `s p "v"` (a literal) | `NegativePropertyAssertion(p s "v")` |
+
+Each goal is the negated axiom's condition read off the table row: the
+axiom fails in a model exactly when some elements witness it, and the
+goal asserts such witnesses on fresh names. `≠` is
+`owl:differentFrom`; `¬p(x, y)` is the `negPairTriples` encoding. The
+data-assertion goal is the negative assertion's RDF form
+(`owl:sourceIndividual` / `owl:assertionProperty` /
+`owl:targetValue`, OWL 2 Mapping to RDF Table 16), which the refuter
+reads as an excluded value (`Refute.excludedValues`). -/
+
+def pePropCBNode  : BNodeId := "__factoidal_pe_prop_c"
+def pePropA2BNode : BNodeId := "__factoidal_pe_prop_a2"
+def pePropB2BNode : BNodeId := "__factoidal_pe_prop_b2"
+def peNpaBNode    : BNodeId := "__factoidal_pe_npa"
+
+/-- The goals negating `p rdf:type <characteristic>`. -/
+def characteristicGoals (base : Graph) (p c : WfIri) : Option (List Graph) :=
+  let a : Subject := .bnode pePropABNode
+  let b : Subject := .bnode pePropBBNode
+  let a2 : Subject := .bnode pePropA2BNode
+  let b2 : Subject := .bnode pePropB2BNode
+  let c3 : Subject := .bnode pePropCBNode
+  if c == owlFunctionalProperty then
+    some [[⟨a, p, b.toTerm⟩, ⟨a, p, b2.toTerm⟩, ⟨b, owlDifferentFrom, b2.toTerm⟩] ++ base]
+  else if c == owlInverseFunctionalProperty then
+    some [[⟨a, p, b.toTerm⟩, ⟨a2, p, b.toTerm⟩, ⟨a, owlDifferentFrom, a2.toTerm⟩] ++ base]
+  else if c == owlTransitiveProperty then
+    (negPairTriples a p c3.toTerm).map (fun ts =>
+      [[⟨a, p, b.toTerm⟩, ⟨b, p, c3.toTerm⟩] ++ ts ++ base])
+  else if c == owlSymmetricProperty then
+    (negPairTriples b p a.toTerm).map (fun ts => [[⟨a, p, b.toTerm⟩] ++ ts ++ base])
+  else if c == owlAsymmetricProperty then
+    some [[⟨a, p, b.toTerm⟩, ⟨b, p, a.toTerm⟩] ++ base]
+  else if c == owlIrreflexiveProperty then
+    some [[⟨a, p, a.toTerm⟩] ++ base]
+  else if c == owlReflexiveProperty then
+    (negPairTriples a p a.toTerm).map (fun ts => [ts ++ base])
+  else none
+
+/-- The goals negating `p owl:inverseOf q`: `p ⊑ inv(q)` and
+    `q ⊑ inv(p)`, both required. -/
+def inverseGoals (base : Graph) (p q : WfIri) : Option (List Graph) :=
+  let a : Subject := .bnode pePropABNode
+  let b : Subject := .bnode pePropBBNode
+  match negPairTriples b q a.toTerm, negPairTriples b p a.toTerm with
+  | some t1, some t2 =>
+      some [[⟨a, p, b.toTerm⟩] ++ t1 ++ base, [⟨a, q, b.toTerm⟩] ++ t2 ++ base]
+  | _, _ => none
+
+/-- The goal negating a data assertion `s p "v"`. -/
+def negativeDataGoal (base : Graph) (s : Subject) (p : WfIri) (v : Term) : Graph :=
+  let n : Subject := .bnode peNpaBNode
+  [⟨n, owlSourceIndividual, s.toTerm⟩, ⟨n, owlAssertionProperty, .iri p⟩,
+   ⟨n, owlTargetValue, v⟩] ++ base
+
 /-- One content assertion → the refutation goals it expands to (a
     conjunction — every goal required). `none` = unsupported shape.
     Port of `negate_content_triple`; each arm's Direct Semantics
     soundness argument is in the F* original and summarised here. -/
 def negateContentTriple (base : Graph) (t : Triple)
     : Option (List Graph) :=
-  if isClassMembership t then
+  if isPropertyAxiomTriple t then
+    match t.s, t.o with
+    | .iri p, .iri c =>
+        if t.p == owlInverseOf then inverseGoals base p c
+        else characteristicGoals base p c
+    | _, _ => none
+  else if isClassMembership t then
     -- (a) `i rdf:type C` → `i rdf:type ¬C`.
     let comp : Triple := ⟨.bnode peNegClassBNode, owlComplementOf, t.o⟩
     let member : Triple := ⟨t.s, rdfType, .bnode peNegClassBNode⟩
@@ -393,6 +499,11 @@ def negateContentTriple (base : Graph) (t : Triple)
     match negPairTriples t.s t.p t.o with
     | none    => none
     | some ts => some [ts ++ base]
+  else if (match t.s, t.o with
+           | .iri _, .literal _ => !isAxiomOrSpecialPredicate t.p
+           | _, _ => false) then
+    -- `s p "v"` → NegativeDataPropertyAssertion(p s "v").
+    some [negativeDataGoal base t.s t.p t.o]
   else none
 
 def negateContentList (base : Graph) : List Triple → Option (List Graph)
