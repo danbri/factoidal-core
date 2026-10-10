@@ -82,6 +82,7 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.Crypto.SHA2
+import Std.Data.TreeMap
 
 namespace L4Factoidal.RDF.Canonical
 
@@ -881,6 +882,120 @@ def hfdqTableOf (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
     List (BNodeId × String) :=
   (datasetBnodes ds).map (fun b => (b, hashFirstDegreeQuads alg b qs))
 
+/-! ### The blank node to quads map (§4.4 step 2)
+
+`hashFirstDegreeQuads` finds the quads of its blank node with
+`quadsForBnode`, a filter over EVERY quad of the dataset, and `hfdqTableOf`
+calls it once per blank node: B blank nodes and Q quads cost B times Q
+calls of `quadMentionsBnode`. On 8,000 blank nodes in 24,000 quads that was
+192 million calls, and 61 to 70 percent of the instructions of
+`l4factoidal canonicalize` at 2,000 blank nodes
+(https://github.com/danbri/factoidal/issues/745). RDFC-1.0 §4.4 step 2 builds
+the "blank node to quads map" once, with one pass over the quads.
+`bnodeQuadIndex` is that map: a `Std.TreeMap` from a blank node to the quads
+it occurs in, newest first. `quadsForBnodeIx_bnodeQuadIndex` proves that the
+map returns, for every blank node, the list `quadsForBnode` returns, in the
+same order, so `hfdqTableOf_eq_hfdqTableOfIx` holds for every dataset and the
+`csimp` theorem makes the compiler emit the indexed form. -/
+
+/-- The blank node to quads map, each list newest first. -/
+abbrev QuadIndex := Std.TreeMap BNodeId (List QQuad) compare
+
+/-- Add one quad to the map, under every blank node it mentions. Each new
+list is built from `m`, the map BEFORE this quad, so a blank node that
+occurs twice in the quad gets the quad once. -/
+def indexQuad (m : QuadIndex) (q : QQuad) : QuadIndex :=
+  (bnodesInQuad q).foldl (fun acc b => acc.insert b (q :: m.getD b [])) m
+
+/-- RDFC-1.0 §4.4 step 2: the blank node to quads map of `qs`. -/
+def bnodeQuadIndex (qs : List QQuad) : QuadIndex := qs.foldl indexQuad ∅
+
+/-- The quads of `target`, in input order, read from the map. -/
+def quadsForBnodeIx (ix : QuadIndex) (target : BNodeId) : List QQuad :=
+  (ix.getD target []).reverse
+
+private theorem quadIndex_getD_insert (t : QuadIndex) (a k : BNodeId) (v : List QQuad) :
+    (t.insert k v).getD a [] = if k = a then v else t.getD a [] := by
+  have := @Std.TreeMap.getD_insert _ _ _ t _ k a [] v
+  simpa [Std.compare_eq_iff_eq] using this
+
+private theorem foldl_insert_getD (m : QuadIndex) (q : QQuad) (a : BNodeId) :
+    ∀ (L : List BNodeId) (acc : QuadIndex),
+      (L.foldl (fun acc b => acc.insert b (q :: m.getD b [])) acc).getD a [] =
+        if a ∈ L then q :: m.getD a [] else acc.getD a []
+  | [], acc => by simp
+  | c :: L, acc => by
+      rw [List.foldl_cons, foldl_insert_getD m q a L, quadIndex_getD_insert]
+      by_cases hL : a ∈ L
+      · simp [hL]
+      · by_cases hc : c = a
+        · subst hc; simp
+        · have hac : a ≠ c := fun h => hc h.symm
+          simp [hL, hc, hac]
+
+/-- A blank node is in `bnodesInQuad q` exactly when `quadMentionsBnode`
+says the quad mentions it. -/
+theorem mem_bnodesInQuad_iff (a : BNodeId) (q : QQuad) :
+    a ∈ bnodesInQuad q ↔ quadMentionsBnode a q = true := by
+  obtain ⟨g, t⟩ := q
+  obtain ⟨s, p, o⟩ := t
+  unfold bnodesInQuad quadMentionsBnode
+  cases s <;> rcases g with _ | (_ | _) <;> simp <;> (try simp only [@eq_comm _ a]) <;> (try simp only [or_assoc])
+
+theorem indexQuad_getD (m : QuadIndex) (q : QQuad) (a : BNodeId) :
+    (indexQuad m q).getD a [] =
+      if quadMentionsBnode a q then q :: m.getD a [] else m.getD a [] := by
+  unfold indexQuad
+  rw [foldl_insert_getD]
+  by_cases h : quadMentionsBnode a q = true
+  · simp [h, (mem_bnodesInQuad_iff a q).2 h]
+  · have h' : a ∉ bnodesInQuad q := fun hm => h ((mem_bnodesInQuad_iff a q).1 hm)
+    simp [h, h']
+
+theorem foldl_indexQuad_getD (a : BNodeId) :
+    ∀ (qs : List QQuad) (m : QuadIndex),
+      (qs.foldl indexQuad m).getD a [] =
+        (qs.filter (quadMentionsBnode a)).reverse ++ m.getD a []
+  | [], m => by simp
+  | q :: qs, m => by
+      rw [List.foldl_cons, foldl_indexQuad_getD a qs, indexQuad_getD]
+      by_cases h : quadMentionsBnode a q = true
+      · simp [h]
+      · simp [h]
+
+/-- The map answers what the filter answers, for every blank node. -/
+theorem quadsForBnodeIx_bnodeQuadIndex (qs : List QQuad) (a : BNodeId) :
+    quadsForBnodeIx (bnodeQuadIndex qs) a = quadsForBnode a qs := by
+  unfold quadsForBnodeIx bnodeQuadIndex quadsForBnode
+  rw [foldl_indexQuad_getD]
+  simp
+
+/-- `hashFirstDegreeQuads` over the quads the map holds for `target`. -/
+def hashFirstDegreeQuadsIx (alg : HashAlgorithm) (ix : QuadIndex) (target : BNodeId) :
+    String :=
+  hashHex alg (joinStrings (sortStrings ((quadsForBnodeIx ix target).map (renderForHfdq target))))
+
+theorem hashFirstDegreeQuadsIx_eq (alg : HashAlgorithm) (qs : List QQuad) (b : BNodeId) :
+    hashFirstDegreeQuadsIx alg (bnodeQuadIndex qs) b = hashFirstDegreeQuads alg b qs := by
+  unfold hashFirstDegreeQuadsIx hashFirstDegreeQuads
+  rw [quadsForBnodeIx_bnodeQuadIndex]
+
+/-- `hfdqTableOf` with the map built once (§4.4 step 2) and read once per
+blank node (§4.4 step 3). -/
+def hfdqTableOfIx (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
+    List (BNodeId × String) :=
+  let ix := bnodeQuadIndex qs
+  (datasetBnodes ds).map (fun b => (b, hashFirstDegreeQuadsIx alg ix b))
+
+theorem hfdqTableOf_eq_hfdqTableOfIx (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
+    hfdqTableOf alg ds qs = hfdqTableOfIx alg ds qs := by
+  unfold hfdqTableOf hfdqTableOfIx
+  simp only [hashFirstDegreeQuadsIx_eq]
+
+/-- The compiler calls `hfdqTableOfIx` wherever the source says `hfdqTableOf`. -/
+@[csimp] theorem hfdqTableOf_eq_Ix : @hfdqTableOf = @hfdqTableOfIx := by
+  funext alg ds qs; exact hfdqTableOf_eq_hfdqTableOfIx alg ds qs
+
 /-- The full §4.4 run under an explicit Hash-N-Degree-Quads budget.
 `none` means the budget was spent before every blank node had a
 canonical identifier — the §4.4 "excessive calls to Hash N-Degree
@@ -943,6 +1058,94 @@ def relabelDataset (m : List (BNodeId × String)) (ds : Dataset) : Dataset :=
   { default := ds.default.map (relabelTriple m),
     named := ds.named.map (fun ng =>
       { name := relabelGraphName m ng.name, graph := ng.graph.map (relabelTriple m) }) }
+
+/-! ### Relabelling through a search tree
+
+`relabelDataset` finds each blank node's canonical label with `lookupMap`, a
+scan of the issued list, which has one entry per blank node: B blank nodes in
+Q quads cost about Q times B comparisons (6.4 percent of the instructions of
+`l4factoidal canonicalize` at 4,000 blank nodes, growing 4.7 times from 2,000;
+https://github.com/danbri/factoidal/issues/745). `relabelDatasetBy` is the
+same walk over any lookup function; `labelTree` holds the issued list in a
+`Std.TreeMap` whose answer is the FIRST entry of each label, as `lookupMap`'s
+is (`labelTree_get?`). The `csimp` theorem makes the compiler build the tree
+once per dataset. -/
+
+def relabelSubjectBy (look : BNodeId → Option String) : Subject → Subject
+  | .bnode b => match look b with | some l => .bnode l | none => .bnode b
+  | s        => s
+
+def relabelTermBy (look : BNodeId → Option String) : Term → Term
+  | .bnode b => match look b with | some l => .bnode l | none => .bnode b
+  | .tripleTerm s p o => .tripleTerm (relabelSubjectBy look s) p (relabelTermBy look o)
+  | t => t
+
+def relabelTripleBy (look : BNodeId → Option String) (t : Triple) : Triple :=
+  { s := relabelSubjectBy look t.s, p := t.p, o := relabelTermBy look t.o }
+
+def relabelDatasetBy (look : BNodeId → Option String) (ds : Dataset) : Dataset :=
+  { default := ds.default.map (relabelTripleBy look),
+    named := ds.named.map (fun ng =>
+      { name := relabelSubjectBy look ng.name, graph := ng.graph.map (relabelTripleBy look) }) }
+
+theorem relabelSubject_eq_by (m : List (BNodeId × String)) (s : Subject) :
+    relabelSubject m s = relabelSubjectBy (fun b => lookupMap b m) s := by
+  cases s <;> rfl
+
+theorem relabelTerm_eq_by (m : List (BNodeId × String)) :
+    ∀ (t : Term), relabelTerm m t = relabelTermBy (fun b => lookupMap b m) t
+  | .iri _ => rfl
+  | .bnode _ => rfl
+  | .literal _ => rfl
+  | .tripleTerm s p o => by
+      simp only [relabelTerm, relabelTermBy, relabelSubject_eq_by, relabelTerm_eq_by m o]
+
+theorem relabelDataset_eq_by (m : List (BNodeId × String)) (ds : Dataset) :
+    relabelDataset m ds = relabelDatasetBy (fun b => lookupMap b m) ds := by
+  have ht : relabelTriple m = relabelTripleBy (fun b => lookupMap b m) := by
+    funext t
+    simp only [relabelTriple, relabelTripleBy, relabelSubject_eq_by, relabelTerm_eq_by]
+  simp only [relabelDataset, relabelDatasetBy, relabelGraphName, ht, relabelSubject_eq_by]
+
+/-- The issued list as a search tree. Inserting from the LAST entry to the
+first leaves the first entry of each blank node in the tree. -/
+def labelTree (m : List (BNodeId × String)) : Std.TreeMap BNodeId String compare :=
+  m.reverse.foldl (fun t p => t.insert p.1 p.2) ∅
+
+private theorem labelTree_foldr_get? (b : BNodeId) :
+    ∀ (m : List (BNodeId × String)),
+      (m.foldr (fun p t => t.insert p.1 p.2) (∅ : Std.TreeMap BNodeId String compare)).get? b =
+        lookupMap b m
+  | [] => by simp [lookupMap]
+  | (k, v) :: rest => by
+      have h := @Std.TreeMap.getElem?_insert _ _ _
+        (rest.foldr (fun p t => t.insert p.1 p.2) (∅ : Std.TreeMap BNodeId String compare)) _ b k v
+      simp only [Std.compare_eq_iff_eq] at h
+      simp only [List.foldr_cons, Std.TreeMap.get?_eq_getElem?, h, lookupMap]
+      rw [← Std.TreeMap.get?_eq_getElem?, labelTree_foldr_get? b rest]
+      by_cases hk : k = b
+      · simp [hk]
+      · simp [hk]
+
+/-- The tree answers what `lookupMap` answers, for every blank node. -/
+theorem labelTree_get? (m : List (BNodeId × String)) (b : BNodeId) :
+    (labelTree m).get? b = lookupMap b m := by
+  unfold labelTree
+  rw [List.foldl_reverse]
+  exact labelTree_foldr_get? b m
+
+/-- `relabelDataset` with the label map built once as a search tree. -/
+def relabelDatasetFast (m : List (BNodeId × String)) (ds : Dataset) : Dataset :=
+  let t := labelTree m
+  relabelDatasetBy (fun b => t.get? b) ds
+
+/-- The compiler calls `relabelDatasetFast` wherever the source says
+`relabelDataset`. -/
+@[csimp] theorem relabelDataset_eq_fast : @relabelDataset = @relabelDatasetFast := by
+  funext m ds
+  rw [relabelDataset_eq_by]
+  unfold relabelDatasetFast
+  simp only [labelTree_get?]
 
 /-! ### Canonical N-Quads output -/
 
