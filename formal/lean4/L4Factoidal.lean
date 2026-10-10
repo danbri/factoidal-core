@@ -104,6 +104,7 @@ import L4Factoidal.Syntax.NQuadsLenient
 import L4Factoidal.Syntax.NQuadsLenientTheorems
 import L4Factoidal.Syntax.LexShift
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.Syntax.FileIri
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.TurtleFuelTheorems
 import L4Factoidal.Syntax.TurtleStatementScanTheorems

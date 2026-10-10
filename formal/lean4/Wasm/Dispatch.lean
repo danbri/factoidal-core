@@ -194,6 +194,19 @@ private def arity2 (op : String) (f : String → String → String) :
   | [a, b] => f a b
   | args => errJson s!"{op} expects 2 arguments, got {args.length}"
 
+/-- The query and update ops take an optional last argument, the base IRI of
+the query or update TEXT (SPARQL 1.1 §4.1.1.2, RFC 3986 §5.1,
+https://github.com/danbri/factoidal/issues/741). An empty string, or no
+argument, means no base: a relative IRI in the text is then a parse error, as
+before. Every host written against the two-argument contract keeps working. -/
+def baseArg (s : String) : Option String := if s.isEmpty then none else some s
+
+private def arity2Base (op : String) (f : String → String → Option String → String) :
+    List String → String
+  | [a, b] => f a b none
+  | [a, b, c] => f a b (baseArg c)
+  | args => errJson s!"{op} expects 2 or 3 arguments, got {args.length}"
+
 private def arity3 (op : String) (f : String → String → String → String) :
     List String → String
   | [a, b, c] => f a b c
@@ -350,8 +363,8 @@ def call (op : String) (argsJson : String) : String :=
   | .ok args =>
     match op with
     | "parseToDatasetJson"   => arity3 op parseToDatasetJson args
-    | "queryDataset"         => arity2 op queryDataset args
-    | "updateDataset"        => arity2 op updateDataset args
+    | "queryDataset"         => arity2Base op (fun a b c => queryDataset a b c) args
+    | "updateDataset"        => arity2Base op (fun a b c => updateDataset a b c) args
     | "serializeNQuads"      => arity1 op serializeNQuads args
     | "serializeTurtle"      => arity1 op serializeTurtle args
     | "canonicalizeToNQuads" => arity1 op canonicalizeToNQuads args
@@ -444,6 +457,12 @@ private def arityIO2 (op : String) (f : String → String → IO String) :
   | [a, b] => f a b
   | args => pure (errJson s!"{op} expects 2 arguments, got {args.length}")
 
+private def arityIO2Base (op : String) (f : String → String → Option String → IO String) :
+    List String → IO String
+  | [a, b] => f a b none
+  | [a, b, c] => f a b (baseArg c)
+  | args => pure (errJson s!"{op} expects 2 or 3 arguments, got {args.length}")
+
 private def arityIO3 (op : String) (f : String → String → String → IO String) :
     List String → IO String
   | [a, b, c] => f a b c
@@ -474,14 +493,16 @@ def callIO (op : String) (argsJson : String) : IO String :=
         match args with
         | [] => Ops.extList
         | args => pure (errJson s!"extList expects 0 arguments, got {args.length}"))
-  | "queryDataset"     => withArgs (arityIO2 op Ops.queryDatasetIO)
-  | "queryDataset12"   => withArgs (arityIO2 op Ops.queryDataset12IO)
+  -- The query and update ops take an optional third argument, the base IRI
+  -- of the query or update text (`baseArg`).
+  | "queryDataset"     => withArgs (arityIO2Base op (fun a b c => Ops.queryDatasetIO a b c))
+  | "queryDataset12"   => withArgs (arityIO2Base op (fun a b c => Ops.queryDataset12IO a b c))
   | "storeQuery"       => withArgs (arityIO3 op
                             (fun a b c => Ops.storeQueryIO a b c ByteArray.empty))
   | "datasetOpen"      => withArgs (arityIO3 op Ops.datasetOpen)
-  | "datasetQuery"     => withArgs (arityIO2 op Ops.datasetQuery)
-  | "datasetQuery12"   => withArgs (arityIO2 op Ops.datasetQuery12)
-  | "datasetUpdate"    => withArgs (arityIO2 op Ops.datasetUpdate)
+  | "datasetQuery"     => withArgs (arityIO2Base op (fun a b c => Ops.datasetQuery a b c))
+  | "datasetQuery12"   => withArgs (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c))
+  | "datasetUpdate"    => withArgs (arityIO2Base op (fun a b c => Ops.datasetUpdate a b c))
   | "datasetSerialize" => withArgs (arityIO2 op Ops.datasetSerialize)
   | "datasetSerializeWith" => withArgs (arityIO3 op Ops.datasetSerializeWith)
   -- Each document parsed through the IO entry gets its own blank-node scope
@@ -633,5 +654,24 @@ def decodeCallSeq (seqJson : String) :
               (op, (Json.array (ss.map Json.string)).toString)
         | _ => .error "callseq: each entry must be [op, [arg, …]]"
   | .ok _ => .error "callseq: document must be a JSON array"
+
+
+/-! ### The optional base argument of `queryDataset` / `updateDataset` (issue 741) -/
+
+private def dispatchHas (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"http://e/b/\"]")
+  "http://e/b/rel"
+-- Two arguments, or an empty third: no base, so the relative IRI is an error.
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\"]") "invalid IRI"
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"\"]") "invalid IRI"
+#guard dispatchHas
+  (call "updateDataset" "[\"\",\"INSERT DATA { <s> <p> <o> }\",\"http://e/b/\"]")
+  "<http://e/b/s> <http://e/b/p> <http://e/b/o> ."
+#guard dispatchHas (call "queryDataset" "[\"\",\"ASK {}\",\"\",\"x\"]") "expects 2 or 3 arguments"
+#guard dispatchHas (call "queryDataset" "[\"\"]") "expects 2 or 3 arguments"
 
 end L4Wasm

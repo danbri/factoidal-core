@@ -245,12 +245,12 @@ assert_text "update missing --update/--update-string -> usage error" 2 err "need
 TMPIRI="file://$(realpath "$TMP")"
 printf 'SELECT ?x WHERE { BIND(<rel> AS ?x) }\n' > "$TMP/rel.rq"
 run_cmd "$CLI" query "$TMP/d.nt" --format ntriples --query "$TMP/rel.rq"
-verdict "query --query FILE: a relative IRI resolves against the file's IRI" 741 \
+verdict "query --query FILE: a relative IRI resolves against the file's IRI" "" \
   "$( [ "$RC" -eq 0 ] && json_holds "r['results']['bindings'][0]['x']['value'] == '$TMPIRI/rel'" || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 run_cmd "$CLI" query "$TMP/d.nt" --format ntriples --base http://example.org/b/ \
   --query-string 'SELECT ?x WHERE { BIND(<rel> AS ?x) }'
-verdict "query --query-string --base IRI: a relative IRI resolves against IRI" 741 \
+verdict "query --query-string --base IRI: a relative IRI resolves against IRI" "" \
   "$( [ "$RC" -eq 0 ] && json_holds "r['results']['bindings'][0]['x']['value'] == 'http://example.org/b/rel'" || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 assert_text "query --query-string with no base: a relative IRI is an error" 1 err "invalid IRI" \
@@ -261,12 +261,12 @@ assert_json "query --query FILE: BASE in the text comes before the file's IRI" 0
   "$CLI" query "$TMP/d.nt" --format ntriples --query "$TMP/base.rq"
 printf 'INSERT DATA { <s> <p> <o> }\n' > "$TMP/rel.ru"
 run_cmd "$CLI" update "$TMP/d.nt" --format ntriples --update "$TMP/rel.ru"
-verdict "update --update FILE: a relative IRI resolves against the file's IRI" 741 \
+verdict "update --update FILE: a relative IRI resolves against the file's IRI" "" \
   "$( [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "<$TMPIRI/s> <$TMPIRI/p> <$TMPIRI/o> ." && echo 1 || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 run_cmd "$CLI" update "$TMP/d.nt" --format ntriples --base http://example.org/b/ \
   --update-string 'INSERT DATA { <s> <p> <o> }'
-verdict "update --update-string --base IRI: a relative IRI resolves against IRI" 741 \
+verdict "update --update-string --base IRI: a relative IRI resolves against IRI" "" \
   "$( [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF '<http://example.org/b/s> <http://example.org/b/p> <http://example.org/b/o> .' && echo 1 || echo 0 )" \
   "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 
@@ -308,25 +308,25 @@ else
   w3c_dataset "$TMP/w3c-graph.nq" "$B/empty.ttl" -- "$B/data01.ttl" "$B/data02.ttl"
   run_cmd "$CLI" query "$TMP/w3c-graph.nq" --format nquads --query "$B/graph.rq"
   D1="$(fileiri "$B/data01.ttl")"; D2="$(fileiri "$B/data02.ttl")"
-  verdict "W3C bindings/graph.rq (VALUES <data01.ttl> inside GRAPH)" 741 \
+  verdict "W3C bindings/graph.rq (VALUES <data01.ttl> inside GRAPH)" "" \
     "$( [ "$RC" -eq 0 ] && json_holds "sorted((b['g']['value'], b['t']['value']) for b in r['results']['bindings']) == sorted([('$D1','foo'),('$D1','bar'),('$D2','foo')])" || echo 0 )" \
     "exit=$RC" "stdout=$OUT" "stderr=$ERR"
   C="$W3C_SPARQL/construct"
   w3c_dataset "$TMP/w3c-cw04.nq" -- "$C/data.ttl"
   run_cmd "$CLI" query "$TMP/w3c-cw04.nq" --format nquads --query "$C/constructwhere04.rq"
   WANT_CW04="$("$CLI" parse "$C/constructwhere04result.ttl" --format turtle --out nquads | sed '/^$/d' | sort)"
-  verdict "W3C construct/constructwhere04.rq (FROM <data.ttl>)" 741 \
+  verdict "W3C construct/constructwhere04.rq (FROM <data.ttl>)" "" \
     "$( [ "$RC" -eq 0 ] && [ -n "$WANT_CW04" ] && [ "$(printf '%s\n' "$OUT" | sed '/^$/d' | sort)" = "$WANT_CW04" ] && echo 1 || echo 0 )" \
     "exit=$RC" "stdout=$OUT" "stderr=$ERR"
   E="$W3C_SPARQL/exists"
   w3c_dataset "$TMP/w3c-ex03.nq" "$E/exists01.ttl" -- "$E/exists02.ttl"
-  select_vs_srx "W3C exists/exists03.rq (GRAPH <exists02.ttl>)" 741 \
+  select_vs_srx "W3C exists/exists03.rq (GRAPH <exists02.ttl>)" "" \
     "$TMP/w3c-ex03.nq" "$E/exists03.rq" "$E/exists03.srx"
   P="$W3C_SPARQL/property-path"
   w3c_dataset "$TMP/w3c-ng.nq" -- "$P/ng-01.ttl" "$P/ng-02.ttl" "$P/ng-03.ttl"
-  select_vs_srx "W3C property-path/path-ng-01.rq (GRAPH <ng-01.ttl>)" 741 \
+  select_vs_srx "W3C property-path/path-ng-01.rq (GRAPH <ng-01.ttl>)" "" \
     "$TMP/w3c-ng.nq" "$P/path-ng-01.rq" "$P/path-ng-01.srx"
-  select_vs_srx "W3C property-path/path-ng-02.rq (GRAPH <ng-01.ttl> with a path)" 741 \
+  select_vs_srx "W3C property-path/path-ng-02.rq (GRAPH <ng-01.ttl> with a path)" "" \
     "$TMP/w3c-ng.nq" "$P/path-ng-02.rq" "$P/path-ng-01.srx"
 
   # --- CONSTRUCT blank node labels (https://github.com/danbri/factoidal/issues/742)
