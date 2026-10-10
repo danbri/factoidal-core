@@ -773,7 +773,7 @@ After the two `RDF.Canonical` repairs the Lean module canonicalizes 24,000
 blank-node quads on Node's default stack, which neither F\* bundle does. It is
 slow there: 16.9 s in the bench (one run) and 10.3 s in a gate run, against
 0.76 s and 1.03 s at 6,000 quads, 22 and 9.9 times the time for 4 times the
-input. That is https://github.com/danbri/factoidal/issues/745, held by the gate as `SCALING_XFAIL['canonicalize']`
+input. That is https://github.com/danbri/factoidal/issues/745, held by the gate until its repair as `SCALING_XFAIL['canonicalize']`
 (bound: 9 times). The profile and the repair are in "Issue 745: where
 canonicalization spent its time" below.
 
@@ -837,8 +837,9 @@ engines, plus the sizes its expected-failure keys name, and requires the Lean
 time to be at most 2 times the faster F\* bundle. `XFAIL` holds
 no row (it held `order-by@small` and `group-by@small` until the repairs
 above). `MEMORY_XFAIL` holds `parse-turtle@large` with a bound of 256 MB of
-linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` holds `canonicalize`: the Lean
-time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745). Each
+linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` held `canonicalize`: the Lean
+time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745); since
+the repair below, `SCALING` asserts that bound and `SCALING_XFAIL` is empty. Each
 expected failure turns the gate red when it passes. Without the F\* bundles
 the gate exits 2. The placeholder issue URLs
 `https://github.com/danbri/factoidal/issues/744` and `…/https://github.com/danbri/factoidal/issues/745` are for the
@@ -945,7 +946,31 @@ instructions at 2,000, 3,139 million at 4,000), and the issuer's
 `lookupIssued` scan and `issued ++ [x]` append grow the same way. The row
 `rdfc-bnode-collide` holds it as an expected failure naming that issue.
 
-WASM_GATE_PLACEHOLDER
+The wasm module rebuilt from this change (`Wasm/build-wasm.sh`; full module
+10,666,063 bytes, core module 5,821,908 bytes), copied into
+`npm/factoidal/l4-assets`, two runs of the whole speed gate
+(`node tests/perf/npm_speed_gate.mjs`, Node 22.22.0, load average 3.0 and
+3.1 on 4 CPUs). Before the change the gate measured 1,033 ms and 10,266 ms
+for the same row (above):
+
+| run | Lean, 6,000 quads | Lean, 24,000 quads | ratio (bound 9) | `canonicalize@middle` against the faster F\* bundle |
+|---|---:|---:|---:|---:|
+| 1 | 271.1 ms | 1,258.9 ms | 4.6 | 291 ms against 969.7 ms, 0.30 |
+| 2 | 253.1 ms | 1,122.6 ms | 4.4 | 277.1 ms against 890.1 ms, 0.31 |
+
+Both runs: `npm_speed_gate: 9 pass, 0 fail, 1 expected failures (out of
+10)`; the expected failure is `parse-turtle@large` memory
+(https://github.com/danbri/factoidal/issues/744). The gate's `SCALING`
+list now asserts `canonicalize` (a time above the bound is a failure), and
+`SCALING_XFAIL` is empty.
+
+Other gates on the same tree: `Wasm/native-smoke.sh` 347 pass, 0 fail (out
+of 347); `npm test` in `npm/factoidal` 402 pass, 0 fail, 1 skipped (out of
+403; the skip needs the `esbuild` devDependency); `tests/stack/lean_scaling.sh`
+18 pass, 0 fail, 3 expected-fail (out of 21);
+`tools/lean-tail-recursion-audit.py --gate` passes (one new allow-list line,
+`relabelTermBy`, whose depth is the RDF 1.2 triple-term nesting, as for
+`relabelTerm`); `lake build` exit 0 (1382 jobs).
 
 ### What the F\* comparison found on the F\* side
 

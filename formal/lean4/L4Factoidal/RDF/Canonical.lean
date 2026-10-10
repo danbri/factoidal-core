@@ -76,9 +76,17 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      omitting them.
   6. Not ported: the F* performance machinery whose only purpose is
      the OCaml extraction's cost model (byte-level `fs_byte_at`
-     scanning, the `bn_lookup_tree` balanced BST for relabelling, the
-     accumulator/`rev` rewrites of every list build). The spec/engine
-     split of this Lean tree keeps the specification evaluator plain.
+     scanning, the accumulator/`rev` rewrites of every list build).
+     Where a plain definition was measured to cost time or stack, a
+     fast twin sits beside it with a proved `csimp` equality, and the
+     definition stays as written: the merge sort (item 4), the
+     accumulator forms of `dedupAdj` and `collapseKeyedQQuads`, the
+     §4.4 step 2 blank node to quads map (`bnodeQuadIndex`, replacing a
+     filter over every quad per blank node) and a search tree for
+     relabelling (`labelTree`, the role of F*'s `bn_lookup_tree`);
+     https://github.com/danbri/factoidal/issues/745. The Hash N-Degree
+     Quads path still filters every quad per call:
+     https://github.com/danbri/factoidal/issues/751.
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.Crypto.SHA2
