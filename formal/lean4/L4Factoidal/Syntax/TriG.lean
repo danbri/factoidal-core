@@ -250,4 +250,13 @@ def parseTriG (text : String) (base : Option String := none) (mode : Mode := .rd
   | .error e    => .error e
   | .ok (ds, _) => .ok ds
 
+/-- `parseTriG`, also returning the prefix map in force at the end of the
+document, most recent binding first (see `parseTurtleWithPrefixes`). -/
+def parseTriGWithPrefixes (text : String) (base : Option String := none)
+    (mode : Mode := .rdf11) : Except ParseError (Dataset × List (String × String)) :=
+  let cs := text.toList
+  match parseTriGStatements (cs.length + 2) (TurtleState.init text base mode) 0 cs Dataset.empty with
+  | .error e     => .error e
+  | .ok (ds, st) => .ok (ds, st.prefixes)
+
 end L4Factoidal.Syntax

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+**`factoidal/l4-core` serves the maths, VC and DID functions, and matches the
+F\* engine's envelopes** (stage 2 of
+[issue 713](https://github.com/danbri/factoidal/issues/713)). New on the Lean
+engine, with the signatures and result shapes `index.d.ts` declares:
+`matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`,
+`matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml`, `vcSha256Hex`,
+`vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`,
+`vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcCheckCredential`,
+`vcCheckCredentialSubject`, `vcCheckNoDataLoss`,
+`vcCheckRelatedResourceDigests` and `didKeyResolve`. The Ed25519 operations run
+HACL\* compiled into the wasm module; they need no `initHacl()` call. Envelope
+parity ([issue 685](https://github.com/danbri/factoidal/issues/685)): a Turtle,
+TriG, N-Triples or N-Quads syntax error rejects with a `ParseError` carrying
+`line`, `column`, `offset` and `format` (the Lean `offset` counts Unicode scalar
+values, the F\* `offset` counts UTF-8 bytes); `parse()` and `openDataset()`
+record the prefixes of a Turtle or TriG document; Turtle output accepts the
+`prefixes` and `literalShorthand` options and prints bare numeric and boolean
+literals by default; and each document that is parsed gets its own blank-node
+scope, so merging two documents that both write `_:b0` keeps two nodes. The
+Lean engine still has no `{lenient: true}` parse and no SPARQL 1.2 handle
+query.
+
 **Store format: the literal index is renamed LGI3 and LGI4; re-pack older
 generations.** The literal search index folds each lexical form before it takes
 character 3-grams. On 2026-10-10 the fold changed from ASCII-only to the Unicode

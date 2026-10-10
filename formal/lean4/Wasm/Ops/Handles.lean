@@ -7,13 +7,18 @@ re-parse it; these ops hold the parsed `Dataset` in a module-level
 store so later calls carry only a handle string and the query:
 
   datasetOpen(text, formatTag, baseIri)
-    -> {"ok":true,"handle":"h1","count":N} | {"ok":false,"error":"…"}
+    -> {"ok":true,"handle":"h1","count":N,"prefixes":{label:iri}}
+     | the positioned parse-error envelope of Wasm/Ops/Parse.lean
   datasetQuery(handle, sparql)
     -> the queryDataset envelope family verbatim (Wasm/Ops/Query.lean)
   datasetUpdate(handle, sparqlUpdate)
     -> {"ok":true,"count":N}   — the stored dataset is REPLACED
   datasetSerialize(handle, formatTag)   — nquads | turtle
     -> {"ok":true,"nquads":"…"} | {"ok":true,"turtle":"…"}
+  datasetSerializeWith(handle, formatTag, optionsJson)
+    -> the same envelopes; `optionsJson` is `{"prefixes":{label:iri},
+       "literalShorthand":bool}` as for `serializeTurtleWith`
+       (https://github.com/danbri/factoidal/issues/685)
   datasetClose(handle)
     -> {"ok":true}
 
@@ -58,9 +63,13 @@ the optimized physical-plan path without rebuilding indexes. -/
 structure OpenDataset where
   ds : Dataset
   backend : DatasetBackend
+  /-- The prefixes the document declared, each label once, in declaration order.
+  Turtle output of the handle uses them. -/
+  prefixes : List (String × String) := []
 
-private def openDataset (ds : Dataset) : OpenDataset :=
-  { ds, backend := indexedDatasetBackend ds }
+private def openDataset (ds : Dataset) (prefixes : List (String × String) := []) :
+    OpenDataset :=
+  { ds, backend := indexedDatasetBackend ds, prefixes }
 
 /-- The open datasets, keyed by handle string. -/
 initialize handleTable : IO.Ref (Std.HashMap String OpenDataset) ← IO.mkRef ∅
@@ -80,14 +89,17 @@ private def withHandle (h : String) (f : OpenDataset → IO String) : IO String 
 store, and answer the new handle plus the quad count. A parse failure
 stores nothing and issues no handle. -/
 def datasetOpen (text formatTag baseIri : String) : IO String := do
-  match parseTextToDataset text formatTag baseIri with
-  | .error msg => pure (errJson msg)
-  | .ok ds =>
+  match parseDocumentOutcome text formatTag baseIri with
+  | .error f => pure (parseFailureEnvelope formatTag f)
+  | .ok o =>
+      -- The document gets its own blank-node scope, as `parseToDatasetJsonScoped`.
+      let ds := scopeBnodes (← nextDocumentScope) o.ds
       let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"h{n}"
-      handleTable.modify (·.insert h (openDataset ds))
+      handleTable.modify (·.insert h (openDataset ds o.prefixes))
       pure (okWith [("handle", .string h),
-                    ("count", .number (toString (datasetQuadCount ds)))])
+                    ("count", .number (toString (datasetQuadCount ds))),
+                    ("prefixes", prefixesJson o.prefixes)])
 
 /-- `datasetQuery(handle, sparql)` — the `queryDataset` envelope family
 over the stored dataset and its cached indexed backend, without the
@@ -105,13 +117,17 @@ def datasetUpdate (h updateText : String) : IO String :=
     match applyUpdateText od.ds updateText with
     | .error e => pure (errJson e)
     | .ok ds' => do
-        handleTable.modify (·.insert h (openDataset ds'))
+        handleTable.modify (·.insert h (openDataset ds' od.prefixes))
         pure (okWith [("count", .number (toString (datasetQuadCount ds')))])
 
-/-- `datasetSerialize(handle, formatTag)` — canonical N-Quads, or the
-prefix-compacted Turtle of the stateless `serializeTurtle` (named
-graphs flattened into the default graph on the turtle path, exactly as
-there). -/
+/-- The handle's own prefixes as the renderer's (namespace, `label:`) pairs. -/
+private def handlePrefixTable (od : OpenDataset) : PrefixTable :=
+  od.prefixes.map fun (label, iri) => (iri, label ++ ":")
+
+/-- `datasetSerialize(handle, formatTag)` — canonical N-Quads, or Turtle in
+which the handle's own prefixes (the ones `datasetOpen` recorded) name their
+namespaces; named graphs are flattened into the default graph on the turtle
+path. -/
 def datasetSerialize (h formatTag : String) : IO String :=
   withHandle h fun od =>
     let ds := od.ds
@@ -119,10 +135,28 @@ def datasetSerialize (h formatTag : String) : IO String :=
     | "" | "nquads" | "nq" | "n-quads" =>
         pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
     | "turtle" | "ttl" =>
-        let g := ds.default ++ ds.named.flatMap (·.graph)
-        pure (okWith [("turtle", .string (turtleOfGraphAuto g))])
+        pure (okWith [("turtle", .string
+          (turtleOfGraphOpts { prefixes := handlePrefixTable od } (flattenedGraph ds)))])
     | _ =>
         pure (errJson s!"datasetSerialize: unknown format tag '{formatTag}' (nquads | turtle)")
+
+/-- `datasetSerializeWith(handle, formatTag, optionsJson)` — as
+`datasetSerialize`, with the caller's options. An absent `prefixes` member keeps
+the handle's own prefixes; a present one replaces them. -/
+def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
+  withHandle h fun od =>
+    let ds := od.ds
+    match formatTag.toLower with
+    | "" | "nquads" | "nq" | "n-quads" =>
+        pure (okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))])
+    | "turtle" | "ttl" =>
+        match turtleOptionsOfJson (handlePrefixTable od) optionsJson with
+        | .error msg => pure (errJson msg)
+        | .ok opts =>
+            pure (okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))])
+    | _ =>
+        pure (errJson
+          s!"datasetSerializeWith: unknown format tag '{formatTag}' (nquads | turtle)")
 
 /-- `datasetClose(handle)` — drop the dataset from the store. Closing
 an unknown (or already-closed) handle is the shared handle error. -/

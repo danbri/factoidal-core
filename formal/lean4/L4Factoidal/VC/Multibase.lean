@@ -239,6 +239,56 @@ def multikeyToEd25519PublicKey? (mk : String) : Option Bytes :=
 def multikeyToEd25519SecretKey? (mk : String) : Option Bytes :=
   multikeyToKey? ed25519PrivPrefix mk
 
+/-! ## base64 and base64url, lenient
+
+Port of `b64_decode_go` / `base64_flex_decode` / `base64_to_hex` in
+`formal/fstar/VC.Multibase.fst`, the decoder `VC.Credential`'s relatedResource
+digest check needs: a `digestMultibase` is multibase `u` (base64url, no
+padding) over the raw hash bytes, and a `digestSRI` is `<algo>-<base64>`
+whose payload real-world values write in the standard alphabet.
+
+One decoder covers both: `+` and `-` both mean 62, `/` and `_` both mean 63,
+and a trailing `=` is skipped. Leniency can only accept more encodings of the
+same bytes; the byte comparison against a known digest is what accepts or
+rejects a value. Bits left over at the end (the 2 or 4 low bits of a length
+that is not a multiple of 4 characters) are dropped, as RFC 4648 §3.5 allows
+a decoder to do. -/
+
+/-- Value of one base64 character in either alphabet (RFC 4648 §4 and §5). -/
+def b64CharVal? (c : Char) : Option Nat :=
+  let x := c.toNat
+  if 0x41 ≤ x ∧ x ≤ 0x5A then some (x - 0x41)
+  else if 0x61 ≤ x ∧ x ≤ 0x7A then some (x - 0x61 + 26)
+  else if 0x30 ≤ x ∧ x ≤ 0x39 then some (x - 0x30 + 52)
+  else if x = 0x2B ∨ x = 0x2D then some 62
+  else if x = 0x2F ∨ x = 0x5F then some 63
+  else none
+
+/-- The decoding loop. `acc` holds the `nbits` (below 8) bits not yet emitted;
+`out` is the decoded bytes in REVERSE order, so the loop is a tail call and a
+long input costs no stack. Port of `b64_decode_go`. -/
+def b64DecodeGo : List Char → Nat → Nat → List UInt8 → Option Bytes
+  | [], _, _, out => some out.reverse
+  | c :: tl, acc, nbits, out =>
+    if c == '=' then b64DecodeGo tl acc nbits out
+    else
+      match b64CharVal? c with
+      | none => none
+      | some d =>
+        let acc2 := acc * 64 + d
+        let nbits2 := nbits + 6
+        if nbits2 ≥ 8 then
+          let rem := nbits2 - 8
+          b64DecodeGo tl (acc2 % 2 ^ rem) rem (UInt8.ofNat ((acc2 / 2 ^ rem) % 256) :: out)
+        else b64DecodeGo tl acc2 nbits2 out
+
+/-- Port of `base64_flex_decode`. `none` on a character outside both
+alphabets and `=`. -/
+def base64FlexDecode (s : String) : Option Bytes := b64DecodeGo s.toList 0 0 []
+
+/-- base64(url) text → lowercase hex. Port of `base64_to_hex`. -/
+def base64ToHex (s : String) : Option String := (base64FlexDecode s).map hexOfBytes
+
 /-! ## `ByteArray` boundary -/
 
 /-- Byte list → `ByteArray` (the FFI / hash boundary type). -/

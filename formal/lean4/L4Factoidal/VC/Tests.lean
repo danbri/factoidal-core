@@ -261,4 +261,27 @@ def sampleDoc : Json := .object [("@context", .string vcV2ContextIri), ("id", .s
          (setField "proof" (.object [("previousProof", .string "urn:p"), ("type", .string "DataIntegrityProof")]) sampleDoc)
        |> fun r => r != .ok ())
 
+/-! ### base64 and base64url, lenient (the relatedResource digest decoder) -/
+
+-- RFC 4648 §10 vectors (padding optional).
+#guard base64ToHex "" == some ""
+#guard base64ToHex "Zg==" == some "66"
+#guard base64ToHex "Zg" == some "66"
+#guard base64ToHex "Zm8=" == some "666f"
+#guard base64ToHex "Zm9v" == some "666f6f"
+#guard base64ToHex "Zm9vYg==" == some "666f6f62"
+#guard base64ToHex "Zm9vYmE=" == some "666f6f6261"
+#guard base64ToHex "Zm9vYmFy" == some "666f6f626172"
+-- Both alphabets give the same bytes: `+` and `-` are 62, `/` and `_` are 63.
+#guard base64ToHex "+/8=" == some "fbff"
+#guard base64ToHex "-_8" == some "fbff"
+-- SHA-256("abc") written as standard base64 and as base64url without padding.
+#guard base64ToHex "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+       == some "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+#guard base64ToHex "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0"
+       == some "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+-- A character outside both alphabets refuses; it is never skipped.
+#guard base64ToHex "Zm9v*" == none
+#guard base64ToHex "Zm 9v" == none
+
 end L4Factoidal.VC.Tests

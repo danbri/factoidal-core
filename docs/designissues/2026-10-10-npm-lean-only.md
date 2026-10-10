@@ -46,17 +46,30 @@ have no Lean path in the package:
 | Stores | `queryHdt`; `openCottas`, `queryCottas`, `closeCottas`, `toCottas` | HDT: yes. COTTAS: no; the owner ruled F\* COTTAS essentially unused (issue 566); the Lean store (IBK3 generations, `storeOpen`/`storeQuery` ops) is the replacement, with a different format | HDT: no; store: yes |
 | Reasoning | `tableauMaterialise`, `tableauDlInconsistent` | yes (OWL refuter / tableau) | no |
 | Query plumbing | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions`, `registerServiceEndpoint`, `clearServiceEndpoints`, `queryRaw` | yes | extension functions: yes (`extRegister` ...); SERVICE endpoints and raw results: no |
-| Maths | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst`, `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | yes (`L4Factoidal/Math`) | ToaN: yes; matrix, sigmoid: no |
-| VC and DID | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | yes except `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests` (issue 578 gap 3) | no (issue 578 gap 1) |
+| Maths | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst`, `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | yes (`L4Factoidal/Math`) | ToaN: yes; matrix, sigmoid: yes since stage 2 (`Wasm/Ops/Maths.lean`) |
+| VC and DID | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | yes; `vcCheckNoDataLoss` and `vcCheckRelatedResourceDigests` landed in stage 2 (`L4Factoidal/VC/Credential.lean`, namespace `Doc`) | yes since stage 2 (`Wasm/Ops/Vc.lean`) |
+
+The table above is the state on 2026-10-10 before stage 1 and stage 2. After
+stage 2 the Maths row and the VC and DID row have a Lean library and a
+dispatch op for every name; stage 1 changes the other rows.
 
 Behaviour differences of the Lean engine through the npm wrapper, already
-recorded:
+recorded on 2026-10-10:
 - envelope parity: parse-error position, prefixes on a dataset handle,
   `serializeTurtleWith`, literal shorthand in Turtle output (issue 685,
   expected-failure cases in `npm/factoidal/test/`);
 - blank-node labels are not salted per document when documents are merged
   (`test/l4-core.test.js` header);
 - N-Quads line order differs (content is compared sorted).
+
+State after stage 2 (2026-10-10): the first two are closed; see § 5. The
+N-Quads line order still differs. Three differences remain, each stated here
+so the stage 3 switch does not hide them:
+- the Lean `offset` of a parse error counts Unicode scalar values, the F\*
+  `offset` counts UTF-8 bytes (`line` and `column` agree);
+- the Lean parser has no `{lenient: true}` mode, so `parse()` with that option
+  and `capabilities().parseDiagnostics` stay unserved on the Lean engine;
+- `datasetQuery12` (SPARQL 1.2 over a handle) is unserved on the Lean engine.
 
 Size, measured on the 2026-09-08 Lean wasm (6,359,842 bytes) and the F\*
 bundles of factoidal-builds run 11:
@@ -84,10 +97,11 @@ implementation:
    wasm dispatch ABI or not wrapped in JavaScript. 38 of them are already in
    the Lean library with their W3C suites passing.
 2. Two Lean library gaps: the VCDM data-loss and related-resource-digest
-   checks (issue 578 gap 3), and SPARQL SERVICE endpoint registration from
-   the host.
-3. Recorded behaviour differences (issue 685, blank-node salting, N-Quads
-   order).
+   checks (issue 578 gap 3; closed by stage 2), and SPARQL SERVICE endpoint
+   registration from the host.
+3. Recorded behaviour differences (issue 685 and blank-node salting, both
+   closed by stage 2; N-Quads order and the three differences listed above
+   remain).
 4. Download size (about 3.4 times larger compressed) and query speed are not
    yet measured to be acceptable for a browser default.
 
@@ -101,7 +115,8 @@ the F\* COTTAS functions in favour of the Lean store.
    running the existing F\*-engine npm tests for that function against the
    Lean engine (same inputs, same expected results).
 2. Maths, VC and DID (issue 578 items 2-4), and the envelope parity of
-   issue 685 and blank-node salting.
+   issue 685 and blank-node salting. **Done 2026-10-10** (branch
+   `claude/wt-npm-lean-2`); the record is § 5.
 3. Switch: `.`, `./api`, `./fn`, `./browser` load the Lean engine; the F\*
    bundles, `hacl-wasm/`, `./wasm`, `./browser-wasm` and `./lite` leave the
    package. The F\* bundles stay as factoidal-builds artifacts for private
@@ -113,3 +128,84 @@ the F\* COTTAS functions in favour of the Lean store.
 5. Speed: the npm benchmark (`tests/perf/l4_vs_fstar_wasm_bench.mjs`) re-run;
    any row where the Lean engine is more than 2 times slower becomes an
    issue before the switch is published.
+
+## 5. Stage 2: what landed (2026-10-10)
+
+Everything below is in `danbri/factoidal-core`, branch `claude/wt-npm-lean-2`.
+Each name has a dispatch op of the same name, takes string arguments, and answers
+the envelope `bin/npm-entry/entry_extras.ml` answers. `npm/factoidal/lib/api.js`
+already held the typed wrappers, so `l4-core.js` lists the op names (`STAGE2_OPS`)
+and re-exports the wrappers.
+
+**Maths** (`Wasm/Ops/Maths.lean`): `matrixDeterminant`, `matrixScalarProduct`,
+`matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`,
+`sigmoidFormulaMathml`. The Lean matrix entry has no reason on an undefined
+entry; a scalar `undef` result reports `division-by-zero`, which is the only way
+these operations produce one. `sigmoidPoints` refuses a count above 1,000,000
+(the F\* entry has no cap).
+
+**VC and DID** (`Wasm/Ops/Vc.lean`): the six crypto functions, the four checks
+and `didKeyResolve`.
+- Ed25519 goes through the `@[extern]` HACL\* binding of
+  `L4Factoidal/Crypto/Ed25519.lean`. `build-wasm.sh` compiles that C into the
+  wasm module, so these ops do not use the `hacl-wasm` npm artifact and need no
+  `initHacl()` call. SHA-256 is the pure Lean `hashHex`, as
+  `skills/crypto-policy/SKILL.md` allows for hashes over public data.
+- `L4Factoidal/VC/Credential.lean` namespace `Doc` ports the rest of
+  `VC.Credential.fst`: `checkFromString` (`vc_check_from_string`),
+  `checkCredentialSubjectFromString`, `checkNoDataLossFromString` and
+  `checkRelatedResourceDigestsFromString`. `VC/Context.lean` gained the port of
+  `VC.Context.fst`'s type-term resolution, and `VC/Multibase.lean` the lenient
+  base64 decoder the digest check needs. The earlier strict layer
+  (`checkCredential`, issuer required) is unchanged.
+- Differences from the F\* module, in the header of `Credential.lean`: a tab is
+  not IRI-shaped, `validFrom` and `validUntil` use the XSD 1.1 lexical mapping, and
+  a timezone-less value compares with a timezoned one through the ±14:00 window.
+
+**Envelope parity** (issue 685; `Wasm/Ops/Parse.lean`, `Handles.lean`,
+`Syntax/TurtleSerialize.lean`):
+- a Turtle, TriG, N-Triples or N-Quads failure answers `error` with
+  ` at line L, column C`, and `offset`, `line`, `column`, `format`;
+- `parseToDatasetJson` and `datasetOpen` answer `prefixes` (each label once, latest
+  binding, declaration order) and the handle keeps them;
+- `serializeTurtleWith` and `datasetSerializeWith` take
+  `{"prefixes":{label:iri},"literalShorthand":bool}`;
+- Turtle output prints INTEGER, DECIMAL, DOUBLE and BooleanLiteral bare when the
+  lexical form is the terminal. This follows the F\* change of issue 681; the
+  Lean module had carried the quoted-only rule, and its guard was replaced;
+- ties in the namespace count keep their order (stable sort), as F\*'s
+  `sortWith` does.
+
+**Blank-node scope**: the IO entry (`callIO`, which the wasm wire and the native
+CLI use) serves `parseToDatasetJson` and `datasetOpen` through a counter and
+prefixes every blank-node label with `d<N>_`, as `scope_dataset_bnodes` does in
+the F\* entry. The pure `call` keeps the labels as written, because it has no
+counter.
+
+**Loader**: `docs/web/hub/assets/l4/l4factoidal.js` throws an `Error` whose
+message is unchanged and whose `.envelope` is the whole `{"ok":false,...}`
+document. Without it `l4-core.js` could not pass `line` and `column` to
+`entryResult`.
+
+Measured on 2026-10-10 (Lean wasm built by `Wasm/build-wasm.sh`: 7,828,865 bytes,
+against 6,359,842 bytes on 2026-09-08; the growth has more causes than stage 2,
+and stage 4 measures the sizes):
+
+| Gate | Result |
+|---|---|
+| `lake build` | exit 0 (1292 jobs) |
+| `formal/lean4/Wasm/native-smoke.sh` | 223 pass, 0 fail (out of 223); 152 before stage 2 |
+| `lake exe l4vc-probe` | 236 pass, 0 fail (out of 236); 119 before. The new section scores the 117 scorable VCDM 2.0 fixtures: 117 pass, 0 fail (out of 117), the F\* runner's score |
+| `node --test test/l4-parity-2.test.js test/l4-core.test.js` | 69 pass, 1 fail, 3 skipped (out of 73). The fail is the existing case "l4-core vs F* engine: same join", which needs the F\* bundle; the 3 skips are the new F\* cross-checks |
+| full `node --test` in `npm/factoidal`, base JS against the new wasm | 136 pass, 100 fail, 106 skipped (out of 342) |
+| full `node --test` in `npm/factoidal`, stage 2 | 171 pass, 98 fail, 108 skipped (out of 377). The failing names are the base set minus two expected-failure cases that now pass; all 98 need the F\* bundle, which this container does not have (no `web` release exists in `danbri/factoidal-builds`) |
+| `tests/lws/server.mjs`, `tests/solid/server/protocol.mjs`, `tests/solid/client/against-own-server.mjs`, `tests/store-host/conformance.mjs` | 8, 12, 7 and 34 pass, 0 fail |
+
+Not measured: the F\* cross-checks in `l4-parity-2.test.js` (matrix and sigmoid
+results, the 120 VC fixtures) because no F\* bundle was available. They run when
+the bundle is present.
+
+`npm/factoidal/test/l4-parity-2.test.js` holds the npm cases, including a
+cross-check of the Ed25519 and SHA-256 results against `node:crypto`, of the
+sigmoid against `Math.exp`, of the VC fixtures through the wasm, and, when the F\*
+bundle is present, of the maths and the VC verdicts against the F\* engine.

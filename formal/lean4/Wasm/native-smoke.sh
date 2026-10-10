@@ -1706,6 +1706,395 @@ check "hpkeSeal refuses a 1-byte ephemeral key" \
   hpkeSeal "$TMP/hpke-shortkey.json" \
   'r["ok"] is False and "32 bytes" in r["error"]'
 
+# --- Envelope parity, https://github.com/danbri/factoidal/issues/685 ----
+# Positioned parse errors, prefixes, per-document blank-node scope,
+# serializeTurtleWith / datasetSerializeWith and bare literals.
+args "$TMP/pe-ttl.json" 'this is not turtle' turtle ""
+check "parse error carries offset, line, column and format (Turtle)" parseToDatasetJson "$TMP/pe-ttl.json" \
+  'r["ok"] is False and r["line"] == 1 and r["column"] == 5 and r["offset"] == 4
+   and r["format"] == "turtle" and r["error"].endswith("at line 1, column 5")'
+python3 - "$TMP/pe-dot.json" <<'EOF'
+import json, sys
+text = "@prefix ex: <http://example.org/> .\nex:a ex:p ex:o\nex:b ex:p ex:o2 .\n"
+json.dump([text, "turtle", ""], open(sys.argv[1], "w"))
+EOF
+check "a Turtle statement missing its dot is reported on the FOLLOWING line (line 3)" \
+  parseToDatasetJson "$TMP/pe-dot.json" \
+  'r["ok"] is False and r["line"] == 3 and r["column"] == 1 and "line 3, column 1" in r["error"]'
+python3 - "$TMP/pe-utf8.json" <<'EOF'
+import json, sys
+# The failure is on line 2; the column counts scalar values, not bytes.
+json.dump(["# ééé\n<http://x/s> <http://x/p> .", "ttl", ""], open(sys.argv[1], "w"))
+EOF
+check "the column of a parse error counts Unicode scalar values" parseToDatasetJson "$TMP/pe-utf8.json" \
+  'r["ok"] is False and r["line"] == 2 and r["column"] == 27'
+args "$TMP/pe-nt.json" '<http://x/s> <http://x/p> .' ntriples ""
+check "parse error carries a position (N-Triples)" parseToDatasetJson "$TMP/pe-nt.json" \
+  'r["ok"] is False and r["line"] == 1 and r["offset"] == r["column"] - 1 and r["format"] == "ntriples"'
+args "$TMP/pe-nq.json" '<http://x/s> <http://x/p> .' nquads ""
+check "parse error carries a position (N-Quads)" parseToDatasetJson "$TMP/pe-nq.json" \
+  'r["ok"] is False and r["line"] == 1 and "offset" in r and r["format"] == "nquads"'
+args "$TMP/pe-trig.json" '@prefix ex: <http://x/> . GRAPH ex:g { ex:s ex:p' trig ""
+check "parse error carries a position (TriG)" parseToDatasetJson "$TMP/pe-trig.json" \
+  'r["ok"] is False and r["line"] == 1 and "column" in r and r["format"] == "trig"'
+args "$TMP/pe-xml.json" '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:nodeID="333-555-666" /></rdf:RDF>' rdfxml ""
+check "an RDF/XML failure carries a message and a format, no position" parseToDatasetJson "$TMP/pe-xml.json" \
+  'r["ok"] is False and "line" not in r and "offset" not in r and r["format"] == "rdfxml"'
+args "$TMP/pe-rel.json" '<a> <b> <c> .' turtle ""
+check "a relative IRI with no base is a positioned error naming the IRI" parseToDatasetJson "$TMP/pe-rel.json" \
+  'r["ok"] is False and "IRI" in r["error"] and r["line"] == 1'
+args "$TMP/pe-tag.json" 'x' "Bogus" ""
+check "an unknown format tag answers the message and the tag, lower-cased" parseToDatasetJson "$TMP/pe-tag.json" \
+  'r["ok"] is False and "line" not in r and r["format"] == "bogus"'
+
+python3 - "$TMP/pfx.json" <<'EOF'
+import json, sys
+text = ("@prefix ex: <http://example.org/> .\n@prefix a: <http://a.org/> .\n"
+        "@prefix ex: <http://other.org/> .\nex:s a:p 1 .\n")
+json.dump([text, "turtle", ""], open(sys.argv[1], "w"))
+EOF
+check "prefixes: each label once, its latest binding, in declaration order" parseToDatasetJson "$TMP/pfx.json" \
+  'r["ok"] is True and list(r["prefixes"].items()) == [("a", "http://a.org/"), ("ex", "http://other.org/")]'
+args "$TMP/pfx-trig2.json" '@prefix ex: <http://x/> . <http://x/g> { ex:s ex:p ex:o }' trig ""
+check "prefixes are recorded for TriG" parseToDatasetJson "$TMP/pfx-trig2.json" \
+  'r["ok"] is True and r["prefixes"] == {"ex": "http://x/"}'
+args "$TMP/pfx-nq.json" '<http://x/s> <http://x/p> <http://x/o> .' nquads ""
+check "N-Quads has no prefixes: an empty object" parseToDatasetJson "$TMP/pfx-nq.json" \
+  'r["ok"] is True and r["prefixes"] == {}'
+
+# Blank-node scope: two documents that both write _:b0 stay two nodes. This
+# needs one process (a counter), so it is a callseq.
+python3 - "$TMP/scope-seq.json" <<'EOF'
+import json, sys
+json.dump([["parseToDatasetJson", ['_:b0 <http://x/p> "one" .', "nquads", ""]],
+           ["parseToDatasetJson", ['_:b0 <http://x/p> "two" .', "nquads", ""]],
+           ["parseToDatasetJson", ['@prefix x: <http://x/> . [] x:p "three" .', "turtle", ""]],
+           ["parseToDatasetJson", ['_:b0 <http://x/p> "one" .', "nquads", ""]]],
+          open(sys.argv[1], "w"))
+EOF
+checkseq "each parse gets its own blank-node scope (d0_, d1_, d2_, d3_)" "$TMP/scope-seq.json" \
+  'len(rs) == 4 and all(r["ok"] is True for r in rs)
+   and rs[0]["nquads"].startswith("_:d0_b0 ") and rs[1]["nquads"].startswith("_:d1_b0 ")
+   and rs[2]["nquads"].startswith("_:d2_") and rs[3]["nquads"].startswith("_:d3_b0 ")
+   and len({line.split(" ")[0] for r in rs for line in r["nquads"].splitlines()}) == 4'
+
+# Dataset handle: prefixes recorded at open, positioned error, serialization.
+python3 - "$TMP/h685-seq.json" <<'EOF'
+import json, sys
+ttl = "@prefix ex: <http://example.org/> .\nex:s ex:p 1, true, 1.5, \"x\", 5. .\n".replace("5. .", "\"5.\"^^<http://www.w3.org/2001/XMLSchema#decimal> .")
+seq = [["datasetOpen", [ttl, "turtle", ""]],
+       ["datasetSerialize", ["h1", "turtle"]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"literalShorthand": False})]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"prefixes": {"e": "http://example.org/"}})]],
+       ["datasetSerializeWith", ["h1", "turtle", json.dumps({"prefixes": {}})]],
+       ["datasetSerializeWith", ["h1", "turtle", "{"]],
+       ["datasetSerializeWith", ["h1", "nquads", ""]],
+       ["datasetSerializeWith", ["h1", "n3", ""]],
+       ["datasetSerializeWith", ["h9", "turtle", ""]],
+       ["datasetOpen", ["this is not turtle", "turtle", ""]],
+       ["datasetClose", ["h1"]]]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "dataset handle: prefixes at open, handle prefixes in output, serializeWith options, bare literals" \
+  "$TMP/h685-seq.json" \
+  'len(rs) == 11
+   and rs[0]["ok"] is True and rs[0]["handle"] == "h1" and rs[0]["count"] == 5
+   and rs[0]["prefixes"] == {"ex": "http://example.org/"}
+   and "@prefix ex: <http://example.org/> ." in rs[1]["turtle"]
+   and "ex:s ex:p 1 , 1.5 , " in rs[1]["turtle"] and ", true , " in rs[1]["turtle"]
+   and rs[1]["turtle"].count("^^") == 1
+   and rs[2]["turtle"].count("^^") == 4 and "ex:s ex:p" in rs[2]["turtle"]
+   and "@prefix e: <http://example.org/> ." in rs[3]["turtle"] and "e:s e:p" in rs[3]["turtle"]
+   and "ex:" not in rs[3]["turtle"]
+   and "@prefix ex:" not in rs[4]["turtle"] and "@prefix ns1: <http://example.org/> ." in rs[4]["turtle"]
+   and rs[5]["ok"] is False and "optionsJson" in rs[5]["error"]
+   and rs[6]["ok"] is True and "nquads" in rs[6]
+   and rs[7]["ok"] is False and "unknown format tag" in rs[7]["error"]
+   and rs[8]["ok"] is False and "unknown dataset handle" in rs[8]["error"]
+   and rs[9]["ok"] is False and rs[9]["line"] == 1 and rs[9]["format"] == "turtle"
+   and rs[10]["ok"] is True'
+
+# serializeTurtleWith (stateless): the options, the default, and a bad optionsJson.
+python3 - "$TMP/stw.json" <<'EOF'
+import json, sys
+nq = '<http://x/s> <http://x/p> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .\n'
+json.dump([nq, json.dumps({"prefixes": {"ex": "http://x/"}, "literalShorthand": False})], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith: caller prefix wins, shorthand off keeps the quoted form" serializeTurtleWith "$TMP/stw.json" \
+  'r["ok"] is True and "@prefix ex: <http://x/> ." in r["turtle"] and "ex:s ex:p \"1\"^^xsd:integer ." in r["turtle"]'
+python3 - "$TMP/stw2.json" <<'EOF'
+import json, sys
+nq = '<http://x/s> <http://x/p> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .\n'
+json.dump([nq, ""], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith with no options prints the integer bare" serializeTurtleWith "$TMP/stw2.json" \
+  'r["ok"] is True and "^^" not in r["turtle"] and " 1 ." in r["turtle"]'
+python3 - "$TMP/stw3.json" <<'EOF'
+import json, sys
+json.dump(['<http://x/s> <http://x/p> <http://x/o> .\n', "not json"], open(sys.argv[1], "w"))
+EOF
+check "serializeTurtleWith refuses an optionsJson that is not JSON" serializeTurtleWith "$TMP/stw3.json" \
+  'r["ok"] is False and "optionsJson" in r["error"]'
+python3 - "$TMP/stw4.json" <<'EOF'
+import json, sys
+nq = ('<http://x/s> <http://x/p> "5."^^<http://www.w3.org/2001/XMLSchema#decimal> .\n'
+      '<http://x/s> <http://x/p> "1e3"^^<http://www.w3.org/2001/XMLSchema#double> .\n'
+      '<http://x/s> <http://x/p> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n'
+      '<http://x/s> <http://x/p> " 7"^^<http://www.w3.org/2001/XMLSchema#integer> .\n')
+json.dump([nq, ""], open(sys.argv[1], "w"))
+EOF
+check "bare literals only when the lexical form is the terminal: 1e3 and false bare, 5. and ' 7' quoted" \
+  serializeTurtleWith "$TMP/stw4.json" \
+  'r["ok"] is True and " 1e3" in r["turtle"] and " false" in r["turtle"]
+   and "\"5.\"^^xsd:decimal" in r["turtle"] and "\" 7\"^^xsd:integer" in r["turtle"]'
+
+# --- Stage 2 of https://github.com/danbri/factoidal/issues/713 ---------
+# Matrix and sigmoid (Wasm/Ops/Maths.lean). Envelope shapes follow
+# bin/npm-entry/entry_extras.ml.
+args "$TMP/m-det.json" '[[1,2],[3,4]]'
+check "matrixDeterminant 2x2 is exact" matrixDeterminant "$TMP/m-det.json" \
+  'r["ok"] is True and r["result"] == "-2" and r["reason"] == ""'
+args "$TMP/m-det-ns.json" '[[1,2,3],[4,5,6]]'
+check "matrixDeterminant of a non-square matrix is undef with a reason" \
+  matrixDeterminant "$TMP/m-det-ns.json" \
+  'r["ok"] is True and r["result"] == "undef" and "square" in r["reason"]'
+args "$TMP/m-det-rat.json" '[[[1,2],0],[0,[1,2]]]'
+check "matrixDeterminant keeps exact rational entries" matrixDeterminant "$TMP/m-det-rat.json" \
+  'r["ok"] is True and r["result"] == "1/4"'
+args "$TMP/m-det-zero-den.json" '[[1,[1,0]],[3,4]]'
+check "matrixDeterminant with a zero denominator is undef, division-by-zero" \
+  matrixDeterminant "$TMP/m-det-zero-den.json" \
+  'r["ok"] is True and r["result"] == "undef" and r["reason"] == "division-by-zero"'
+args "$TMP/m-det-badjson.json" 'not json'
+check "matrixDeterminant on invalid JSON -> error" matrixDeterminant "$TMP/m-det-badjson.json" \
+  'r["ok"] is False and "invalid JSON" in r["error"]'
+args "$TMP/m-det-badcell.json" '[[1.5,2],[3,4]]'
+check "matrixDeterminant refuses a non-integer cell" matrixDeterminant "$TMP/m-det-badcell.json" \
+  'r["ok"] is False and "each cell" in r["error"]'
+args "$TMP/m-dot.json" '[1,2,3]' '[4,5,6]'
+check "matrixScalarProduct" matrixScalarProduct "$TMP/m-dot.json" \
+  'r["ok"] is True and r["result"] == "32"'
+args "$TMP/m-dot-bad.json" '[1,2,3]' '[4,5]'
+check "matrixScalarProduct of unequal lengths is undef" matrixScalarProduct "$TMP/m-dot-bad.json" \
+  'r["ok"] is True and r["result"] == "undef" and "length" in r["reason"]'
+args "$TMP/m-cross.json" '[1,0,0]' '[0,1,0]'
+check "matrixVectorProduct e_x x e_y = e_z" matrixVectorProduct "$TMP/m-cross.json" \
+  'r["ok"] is True and r["result"] == "[0,0,1]"'
+args "$TMP/m-cross-bad.json" '[1,0]' '[0,1]'
+check "matrixVectorProduct of 2-vectors is undef" matrixVectorProduct "$TMP/m-cross-bad.json" \
+  'r["ok"] is True and r["result"] == "undef"'
+args "$TMP/m-outer.json" '[1,2]' '[3,4]'
+check "matrixOuterProduct" matrixOuterProduct "$TMP/m-outer.json" \
+  'r["ok"] is True and r["result"] == "[[3,4],[6,8]]"'
+args "$TMP/m-one-arg.json" '[1,2]'
+check "matrixOuterProduct with one argument -> arity error" matrixOuterProduct "$TMP/m-one-arg.json" \
+  'r["ok"] is False and "expects 2 arguments" in r["error"]'
+
+args "$TMP/sig.json" '{"k":"1","x0":"0","l":"1","xmin":"-6","xmax":"6","n":"24"}'
+check "sigmoidPoints: 25 points, exact midpoint, nine decimals" sigmoidPoints "$TMP/sig.json" \
+  'r["ok"] is True and len(r["points"]) == 25
+   and r["points"][12]["x"]["decimal"] == "0.000000000"
+   and r["points"][12]["y"]["decimal"] == "0.500000000"
+   and r["points"][12]["y"]["mantissa"] == "500000000" and r["points"][12]["y"]["scale"] == "9"
+   and all(float(r["points"][i]["y"]["decimal"]) < float(r["points"][i + 1]["y"]["decimal"])
+           for i in range(24))
+   and abs(float(r["points"][0]["y"]["decimal"]) - 1 / (1 + 2.718281828459045 ** 6)) < 2e-9'
+args "$TMP/sig-neg.json" '{"k":"1","x0":"0","l":"1","xmin":"-6","xmax":"6","n":"-1"}'
+check "sigmoidPoints refuses a negative count" sigmoidPoints "$TMP/sig-neg.json" \
+  'r["ok"] is False and "negative" in r["error"]'
+args "$TMP/sig-missing.json" '{"k":"1"}'
+check "sigmoidPoints names a missing field" sigmoidPoints "$TMP/sig-missing.json" \
+  'r["ok"] is False and "x0" in r["error"]'
+args "$TMP/sig-nodec.json" '{"k":"one","x0":"0","l":"1","xmin":"-6","xmax":"6","n":"2"}'
+check "sigmoidPoints refuses a non-decimal parameter" sigmoidPoints "$TMP/sig-nodec.json" \
+  'r["ok"] is False and "not a decimal" in r["error"]'
+args "$TMP/empty0.json"
+check "sigmoidFormulaMathml" sigmoidFormulaMathml "$TMP/empty0.json" \
+  'r["ok"] is True and r["mathml"].startswith("<math ") and "<mfrac>" in r["mathml"]
+   and "<msup><mi>e</mi>" in r["mathml"]'
+
+# Ed25519 and SHA-256 (Wasm/Ops/Vc.lean), over the RFC 8032 section 7.1 vectors.
+V1_SK=9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
+V1_PK=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+V1_SIG=e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+V2_PK=3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c
+V1_SIG_BAD="${V1_SIG:0:126}00"
+args "$TMP/sha.json" abc
+check "vcSha256Hex FIPS 180-4 abc" vcSha256Hex "$TMP/sha.json" \
+  'r["ok"] is True and r["sha256"] == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"'
+args "$TMP/ed-pk.json" "$V1_SK"
+check "vcEd25519SecretToPublic RFC 8032 TEST 1" vcEd25519SecretToPublic "$TMP/ed-pk.json" \
+  'r["ok"] is True and r["publicKeyHex"] == "'"$V1_PK"'"'
+args "$TMP/ed-pk-bad.json" "ab"
+check "vcEd25519SecretToPublic refuses a 1-byte key" vcEd25519SecretToPublic "$TMP/ed-pk-bad.json" \
+  'r["ok"] is False and "malformed secret key" in r["error"]'
+args "$TMP/ed-sign.json" "$V1_SK" ""
+check "vcEd25519Sign RFC 8032 TEST 1 (empty message)" vcEd25519Sign "$TMP/ed-sign.json" \
+  'r["ok"] is True and r["signatureHex"] == "'"$V1_SIG"'"'
+args "$TMP/ed-sign-bad.json" "$V1_SK" "zz"
+check "vcEd25519Sign refuses a non-hex message" vcEd25519Sign "$TMP/ed-sign-bad.json" \
+  'r["ok"] is False and "malformed input" in r["error"]'
+args "$TMP/ed-v-ok.json" "$V1_PK" "" "$V1_SIG"
+check "vcEd25519Verify accepts the published triple" vcEd25519Verify "$TMP/ed-v-ok.json" \
+  'r["ok"] is True and r["valid"] is True'
+args "$TMP/ed-v-key.json" "$V2_PK" "" "$V1_SIG"
+check "vcEd25519Verify REJECTS a wrong public key" vcEd25519Verify "$TMP/ed-v-key.json" \
+  'r["ok"] is True and r["valid"] is False'
+args "$TMP/ed-v-sig.json" "$V1_PK" "" "$V1_SIG_BAD"
+check "vcEd25519Verify REJECTS a tampered signature" vcEd25519Verify "$TMP/ed-v-sig.json" \
+  'r["ok"] is True and r["valid"] is False'
+args "$TMP/ed-v-msg.json" "$V1_PK" "73" "$V1_SIG"
+check "vcEd25519Verify REJECTS a different message" vcEd25519Verify "$TMP/ed-v-msg.json" \
+  'r["ok"] is True and r["valid"] is False'
+args "$TMP/ed-v-short.json" "ab" "" "$V1_SIG"
+check "vcEd25519Verify REJECTS a 1-byte public key" vcEd25519Verify "$TMP/ed-v-short.json" \
+  'r["ok"] is True and r["valid"] is False'
+args "$TMP/ed-v-nonhex.json" "zz" "" "$V1_SIG"
+check "vcEd25519Verify REJECTS a non-hex public key" vcEd25519Verify "$TMP/ed-v-nonhex.json" \
+  'r["ok"] is True and r["valid"] is False'
+
+# eddsa-rdfc-2022 over the canonical forms of the W3C vc-di-eddsa section 3.4
+# test vectors (the same strings as VC/Tests.lean).
+SPEC_SK=c96ef9ea10c5e414c471723aff9de72c35fa5b70fae97e8832ecac7d2e2b8ed6
+SPEC_PK=b00d8d938e7f773d51565aad36a623f5344f7f5d1960f9cf3e8e12620ea2810f
+SPEC_PV=z2YwC8z3ap7yx1nZYCg4L3j3ApHsF8kgPdSb5xoS1VR7vPG3F561B52hYnQF9iseabecm3ijx4K1FBTQsCZahKZme
+SPEC_VM=did:key:z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2#z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2
+cat > "$TMP/spec-doc.nq" <<'EOF'
+<did:example:abcdefgh> <https://www.w3.org/ns/credentials/examples#alumniOf> "The School of Examples" .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/ns/credentials/examples#AlumniCredential> .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <https://schema.org/description> "A minimum viable example of an Alumni Credential." .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <https://schema.org/name> "Alumni Credential" .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:abcdefgh> .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <https://www.w3.org/2018/credentials#issuer> <https://vc.example/issuers/5678> .
+<urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33> <https://www.w3.org/2018/credentials#validFrom> "2023-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+EOF
+{
+  cat <<'EOF'
+_:c14n0 <http://purl.org/dc/terms/created> "2023-02-24T23:36:38Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+_:c14n0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> .
+_:c14n0 <https://w3id.org/security#cryptosuite> "eddsa-rdfc-2022"^^<https://w3id.org/security#cryptosuiteString> .
+_:c14n0 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> .
+EOF
+  printf '_:c14n0 <https://w3id.org/security#verificationMethod> <%s> .\n' "$SPEC_VM"
+} > "$TMP/spec-cfg.nq"
+# stage2args <out> <file-or-literal>... — an argument that names an existing
+# file is replaced by that file's exact contents (a canonical form ends in a
+# newline, which command substitution would strip).
+stage2args() {
+  local out="$1"; shift
+  python3 - "$out" "$@" <<'EOF'
+import json, os, sys
+out, rest = sys.argv[1], sys.argv[2:]
+json.dump([open(a).read() if os.path.isfile(a) else a for a in rest], open(out, "w"))
+EOF
+}
+stage2args "$TMP/dix-create.json" "$SPEC_SK" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq"
+check "vcEddsaCreateFromCanonical reproduces the W3C section 3.4 proofValue" \
+  vcEddsaCreateFromCanonical "$TMP/dix-create.json" \
+  'r["ok"] is True and r["proofValue"] == "'"$SPEC_PV"'"'
+stage2args "$TMP/dix-create-bad.json" "ab" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq"
+check "vcEddsaCreateFromCanonical refuses a 1-byte key" \
+  vcEddsaCreateFromCanonical "$TMP/dix-create-bad.json" \
+  'r["ok"] is False and "malformed key" in r["error"]'
+stage2args "$TMP/dix-verify.json" "$SPEC_PK" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq" "$SPEC_PV"
+check "vcEddsaVerifyFromCanonical accepts the W3C section 3.4 proof" \
+  vcEddsaVerifyFromCanonical "$TMP/dix-verify.json" \
+  'r["ok"] is True and r["verified"] is True'
+stage2args "$TMP/dix-verify-key.json" "$V1_PK" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq" "$SPEC_PV"
+check "vcEddsaVerifyFromCanonical REJECTS a wrong key" \
+  vcEddsaVerifyFromCanonical "$TMP/dix-verify-key.json" \
+  'r["ok"] is True and r["verified"] is False'
+sed 's/Alumni Credential/Alumni CredentiaL/' "$TMP/spec-doc.nq" > "$TMP/spec-doc-bad.nq"
+stage2args "$TMP/dix-verify-doc.json" "$SPEC_PK" "$TMP/spec-doc-bad.nq" "$TMP/spec-cfg.nq" "$SPEC_PV"
+check "vcEddsaVerifyFromCanonical REJECTS a tampered document" \
+  vcEddsaVerifyFromCanonical "$TMP/dix-verify-doc.json" \
+  'r["ok"] is True and r["verified"] is False'
+SPEC_PV_BAD="${SPEC_PV:0:5}${SPEC_PV:6:1}${SPEC_PV:5:1}${SPEC_PV:7}"
+stage2args "$TMP/dix-verify-pv.json" "$SPEC_PK" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq" "$SPEC_PV_BAD"
+check "vcEddsaVerifyFromCanonical REJECTS a tampered proofValue" \
+  vcEddsaVerifyFromCanonical "$TMP/dix-verify-pv.json" \
+  'r["ok"] is True and r["verified"] is False'
+stage2args "$TMP/dix-verify-nomb.json" "$SPEC_PK" "$TMP/spec-doc.nq" "$TMP/spec-cfg.nq" "2YwC8z3a"
+check "vcEddsaVerifyFromCanonical REJECTS a proofValue with no multibase prefix" \
+  vcEddsaVerifyFromCanonical "$TMP/dix-verify-nomb.json" \
+  'r["ok"] is True and r["verified"] is False'
+
+# did:key
+args "$TMP/did.json" "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+check "didKeyResolve returns the DID document as N-Triples" didKeyResolve "$TMP/did.json" \
+  'r["ok"] is True and r["did"].startswith("did:key:z6Mk")
+   and r["nquads"].count(" .\n") == 8 and "Ed25519VerificationKey2020" in r["nquads"]'
+args "$TMP/did-secp.json" "did:key:zQ3shokFTS3brHcDQrn82RUDfCZESWL1ZdCEJwekUDPQiYBme"
+check "didKeyResolve refuses a secp256k1 did:key" didKeyResolve "$TMP/did-secp.json" \
+  'r["ok"] is False and "not a resolvable did:key" in r["error"]'
+args "$TMP/did-web.json" "did:web:example.com"
+check "didKeyResolve refuses another DID method" didKeyResolve "$TMP/did-web.json" \
+  'r["ok"] is False'
+
+# VCDM 2.0 checks (VC/Credential.lean, Doc).
+V2CTX='{"@context":{"@protected":true}}'
+VC_OK='{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential"],"credentialSubject":{"id":"did:example:s"}}'
+VC_NOSUBJ='{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential"]}'
+args "$TMP/vcc-ok.json" "$V2CTX" "$VC_OK"
+check "vcCheckCredential accepts a minimal credential" vcCheckCredential "$TMP/vcc-ok.json" \
+  'r["ok"] is True and r["valid"] is True and "reason" not in r'
+args "$TMP/vcc-bad.json" "$V2CTX" "$VC_NOSUBJ"
+check "vcCheckCredential REJECTS a credential with no subject, naming why" \
+  vcCheckCredential "$TMP/vcc-bad.json" \
+  'r["ok"] is True and r["valid"] is False and r["reason"] == "missing credentialSubject"'
+args "$TMP/vcc-ctx.json" "$V2CTX" '{"@context":["https://ex.org/c","https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential"],"credentialSubject":{"a":1}}'
+check "vcCheckCredential REJECTS a base context that is not first" vcCheckCredential "$TMP/vcc-ctx.json" \
+  'r["ok"] is True and r["valid"] is False and "FIRST" in r["reason"]'
+args "$TMP/vcc-nojson.json" "$V2CTX" '{'
+check "vcCheckCredential REJECTS malformed JSON" vcCheckCredential "$TMP/vcc-nojson.json" \
+  'r["ok"] is True and r["valid"] is False and "not well-formed" in r["reason"]'
+args "$TMP/vcc-badctx.json" 'nope' "$VC_OK"
+check "vcCheckCredential with an unparseable v2 context -> error" vcCheckCredential "$TMP/vcc-badctx.json" \
+  'r["ok"] is False and "v2ctx" in r["error"]'
+args "$TMP/vcs-ok.json" '{"type":["VerifiableCredential"],"credentialSubject":{"a":1}}'
+check "vcCheckCredentialSubject accepts a subject with no @context" vcCheckCredentialSubject "$TMP/vcs-ok.json" \
+  'r["ok"] is True and r["valid"] is True'
+args "$TMP/vcs-bad.json" '{"type":["VerifiableCredential"],"credentialSubject":{}}'
+check "vcCheckCredentialSubject REJECTS an empty subject" vcCheckCredentialSubject "$TMP/vcs-bad.json" \
+  'r["ok"] is True and r["valid"] is False and "no claims" in r["reason"]'
+args "$TMP/vcl-ok.json" '{"@context":{"Known":"https://ex.org/Known","name":"https://schema.org/name"},"type":["Known"],"credentialSubject":{"name":"x"}}'
+check "vcCheckNoDataLoss accepts defined terms" vcCheckNoDataLoss "$TMP/vcl-ok.json" \
+  'r["ok"] is True and r["valid"] is True'
+args "$TMP/vcl-type.json" '{"@context":{"Known":"https://ex.org/Known"},"type":["Unknown"],"credentialSubject":{"a":1}}'
+check "vcCheckNoDataLoss REJECTS an undefined type term" vcCheckNoDataLoss "$TMP/vcl-type.json" \
+  'r["ok"] is True and r["valid"] is False and "DATA_LOSS_DETECTION_ERROR" in r["reason"]'
+args "$TMP/vcl-key.json" '{"@context":{"name":"https://schema.org/name","Known":"https://ex.org/Known"},"type":["Known"],"credentialSubject":{"nick":"x"}}'
+check "vcCheckNoDataLoss REJECTS an undefined credentialSubject key" vcCheckNoDataLoss "$TMP/vcl-key.json" \
+  'r["ok"] is True and r["valid"] is False and "credentialSubject" in r["reason"]'
+args "$TMP/vcl-remote.json" '{"@context":"https://www.w3.org/ns/credentials/v2","type":["VerifiableCredential"],"credentialSubject":{"a":1}}'
+check "vcCheckNoDataLoss REJECTS a remote context it cannot fetch" vcCheckNoDataLoss "$TMP/vcl-remote.json" \
+  'r["ok"] is True and r["valid"] is False and "could not process @context" in r["reason"]'
+RR_REG='[{"id":"https://www.w3.org/ns/credentials/v2","digestsHex":["24a18c90e9856d526111f29376e302d970b2bd10182e33959995b0207d7043b9"]}]'
+RR_OK='{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential"],"credentialSubject":{"a":1},"relatedResource":[{"id":"https://www.w3.org/ns/credentials/v2","digestMultibase":"uJKGMkOmFbVJhEfKTduMC2XCyvRAYLjOVmZWwIH1wQ7k"}]}'
+RR_BAD='{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential"],"credentialSubject":{"a":1},"relatedResource":[{"id":"https://www.w3.org/ns/credentials/v2","digestMultibase":"uJKGMkOmFbVJhEfKTduMC2XCyvRAYLjOVmZWwIH1wQ7j"}]}'
+args "$TMP/rr-ok.json" "$RR_REG" "$RR_OK"
+check "vcCheckRelatedResourceDigests accepts a matching digestMultibase" \
+  vcCheckRelatedResourceDigests "$TMP/rr-ok.json" \
+  'r["ok"] is True and r["valid"] is True'
+args "$TMP/rr-bad.json" "$RR_REG" "$RR_BAD"
+check "vcCheckRelatedResourceDigests REJECTS a digest that matches no revision" \
+  vcCheckRelatedResourceDigests "$TMP/rr-bad.json" \
+  'r["ok"] is True and r["valid"] is False and "does not match" in r["reason"]'
+args "$TMP/rr-one.json" "$RR_REG"
+check "vcCheckRelatedResourceDigests with one argument -> arity error" \
+  vcCheckRelatedResourceDigests "$TMP/rr-one.json" \
+  'r["ok"] is False and "expects 2 arguments" in r["error"]'
+
+args "$TMP/empty-stage2.json"
+check "ops reflection lists the stage 2 ops" ops "$TMP/empty-stage2.json" \
+  'set(["matrixDeterminant","matrixScalarProduct","matrixVectorProduct",
+        "matrixOuterProduct","sigmoidPoints","sigmoidFormulaMathml",
+        "vcSha256Hex","vcEd25519SecretToPublic","vcEd25519Sign","vcEd25519Verify",
+        "vcEddsaCreateFromCanonical","vcEddsaVerifyFromCanonical",
+        "vcCheckCredential","vcCheckCredentialSubject","vcCheckNoDataLoss",
+        "vcCheckRelatedResourceDigests","didKeyResolve"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
