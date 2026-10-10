@@ -808,6 +808,39 @@ checkseq "storeHandleQuery NOW() is the system clock, one value for every row" "
    and len({b["n"]["value"] for b in rs[1]["srj"]["results"]["bindings"]}) == 1
    and '"$NOWOK"'(rs[1]["srj"]["results"]["bindings"][0]["n"]["value"])'
 
+# --- factoidal serve: the storeServe ops (Wasm/Ops/StoreServe.lean, issue 669)
+# The engine names the files a server reads; the HTTP exchange itself needs a
+# byte region in and out, which `tests/store-serve/serve.mjs` drives over a
+# socket. Here: the names, the open over hex descriptors, the refusals.
+storeargs "$TMP/serve-keys.json" "$TMP/store-ibk3/manifest.sbm2"
+check "storeServeKeys names every block and the two state files" storeServeKeys "$TMP/serve-keys.json" \
+  'r["ok"] is True and len(r["keys"]) == 2 and all(k.endswith(".ibk3") for k in r["keys"])
+   and r["state"] == ["deltas.dlog","compacted.epoch"]'
+check "storeServeKeys refuses bytes that do not decode" storeServeKeys "$TMP/store-inspect-bad.json" \
+  'r["ok"] is False and "do not decode" in r["error"]'
+python3 - "$TMP/serve-seq.json" "$TMP/store-ibk3/manifest.sbm2" "$TMP/store-ibk3" <<'EOF'
+import json, pathlib, sys
+out, manifest, directory = sys.argv[1:4]
+manifest_hex = pathlib.Path(manifest).read_bytes().hex()
+payload = json.dumps([{"key": p.name, "bytes": p.read_bytes().hex()}
+                      for p in sorted(pathlib.Path(directory).glob("*.ibk3"))])
+seq = [
+  ["storeServeOpen",    [manifest_hex, payload, "[]", "{}"]],
+  ["storeServeRequest", ["v1"]],
+  ["storeServeOpen",    [manifest_hex, payload, '[{"key":"other.file","bytes":""}]', "{}"]],
+  ["storeServeClose",   ["v1"]],
+  ["storeServeClose",   ["v1"]],
+]
+json.dump(seq, open(out, "w"))
+EOF
+checkseq "storeServeOpen opens an IBK3 generation for the default graph; refusals by name" "$TMP/serve-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["handle"] == "v1" and rs[0]["rows"] == 3
+   and rs[0]["writeScope"] == "default-graph" and rs[0]["deltaBatches"] == 0
+   and rs[1]["ok"] is False and "byte region" in rs[1]["error"]
+   and rs[2]["ok"] is False and "is not a state file" in rs[2]["error"]
+   and rs[3]["ok"] is True
+   and rs[4]["ok"] is False and "unknown serve handle" in rs[4]["error"]'
+
 # A window that runs past the end of the region the call carried is an
 # ordinary refusal, not a memory fault: Lean never receives a host pointer.
 python3 - "$TMP/store-query.json" "$TMP/store-query-overrun.json" <<'EOF'
@@ -2829,7 +2862,10 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "registerServiceEndpoint","clearServiceEndpoints",
             "extRegister","extUnregister","extClear","extList"]) <= set(r["ops"])
    and r["blobOps"] == ["storeQuery","activateVerify","queryHdt"]
-   and r["blobIoOps"] == ["blobEcho","packFeed","packNext"]'
+   and set(["storeServeKeys","storeServeOpen","storeServeRequest",
+            "storeServeCommit","storeServeClose"]) <= set(r["ops"])
+   and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
+                          "storeServeRequest","storeServeCommit"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'

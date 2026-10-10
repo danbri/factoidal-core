@@ -3,7 +3,7 @@
 # specification reserves for the engine (CLAUDE.md iron rule 7). Two groups
 # of host files, two rules, one method.
 #
-# GROUP 1, the LWS and Solid hosts: no PROTOCOL decision. This lint fails
+# GROUP 1, the LWS, Solid and SPARQL endpoint hosts: no PROTOCOL decision. This lint fails
 # when one of those files contains
 #
 #   * an HTTP status other than 500 (the host's own failure);
@@ -43,11 +43,17 @@ protocol_files=(
   "$root/npm/factoidal/lws/server.mjs"
   "$root/npm/factoidal/solid/server/index.mjs"
   "$root/npm/factoidal/solid/client/index.mjs"
+  # `factoidal serve`: the SPARQL Protocol / Graph Store host, which is
+  # both a protocol host and a store host, so it is in both groups.
+  "$root/npm/factoidal/bin/serve.mjs"
+  "$root/npm/factoidal/bin/serve-worker.mjs"
 )
 store_files=(
   "$root/npm/factoidal/store-http/index.mjs"
   "$root/npm/factoidal/store-host/index.mjs"
   "$root/npm/factoidal/bin/store.mjs"
+  "$root/npm/factoidal/bin/serve.mjs"
+  "$root/npm/factoidal/bin/serve-worker.mjs"
 )
 
 protocol_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|\binbox\b'
