@@ -19,15 +19,19 @@ full closure computes is derivable (`fullClosure_sound`).
 RDF 1.1 Semantics §8.1, RDF entailment rules:
 
   * rdfD2  `xxx aaa yyy .`  ⊢  `aaa rdf:type rdf:Property .`
-  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢  `_:nnn rdf:type ddd .`
-    NOT a row here: it mints a fresh blank node per literal. Its only
-    observable consequences on a non-generalised conclusion graph are
-    (a) `_:b rdf:type ddd` answered by a blank node that can ALSO map
-    to the literal itself under simple entailment, which the instance
-    search in `RDF/Entailment.lean` permits, and (b) D-inconsistency
-    of ill-formed literals, which `Entailment.dInconsistent` decides.
-    The F\* tree makes the same cut (`RDFS.Closure.fsti` banner:
-    "rdfD1 ... mint fresh blank nodes — a scoped gap").
+  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢
+           `xxx aaa _:nnn . _:nnn rdf:type ddd .`
+    NOT a row here: it mints a fresh blank node per literal, and this
+    closure must mint none (the SPARQL entailment regimes answer over
+    it; see `RDF.Regime.closure`). The graph-entailment procedure
+    applies it, with RDF 1.2's rdfs14 and rdfs14a, BEFORE this closure
+    runs (`RDF.Regime.generalize`, `RDF/Entailment.lean`). Until
+    2026-10-09 this note claimed the conclusion `_:b rdf:type ddd` was
+    answered by mapping `_:b` to the literal itself; that is false —
+    `_:b` is in SUBJECT position there, where a literal cannot go — and
+    the rdf12 `literal-type` test failed for it. The F\* tree still
+    makes the cut (`RDFS.Closure.fsti` banner: "rdfD1 ... mint fresh
+    blank nodes — a scoped gap").
 
 RDF 1.1 Semantics §9.2, RDFS entailment rules (quoted from the table):
 
@@ -87,7 +91,8 @@ namespace L4Factoidal.RDFS
 
 open L4Factoidal.RDF
 
-/-! ## Axiomatic triples — RDF 1.1 Semantics §8.2 and §9.3 -/
+/-! ## Axiomatic triples — RDF 1.1 Semantics §8.2 and §9.3, with the
+four rows RDF 1.2 Semantics §8 and §9 add -/
 
 /-- Shorthand: an all-IRI triple. -/
 def iriTriple (s p o : WfIri) : Triple := ⟨.iri s, p, .iri o⟩
@@ -122,12 +127,16 @@ def containerMembershipIn (g : Graph) : List WfIri :=
 Quoted: "rdf:type rdf:type rdf:Property . rdf:subject rdf:type
 rdf:Property . rdf:predicate … rdf:object … rdf:first … rdf:rest …
 rdf:value rdf:type rdf:Property . rdf:nil rdf:type rdf:List . rdf:_1
-rdf:type rdf:Property . rdf:_2 … ". -/
+rdf:type rdf:Property . rdf:_2 … ". Plus the row RDF 1.2 Semantics §8
+adds: "rdf:reifies rdf:type rdf:Property ." The finite part is the
+same list as `RDF.rdfAxiomaticTriples` (`RDF/VocabularyAxioms.lean`);
+`Unified/RdfsSchema.axiomaticTriples_hold` checks the inclusion. -/
 def rdfAxiomaticTriples (cmps : List WfIri) : Graph :=
   [ iriTriple rdfType rdfType rdfProperty,
     iriTriple rdfSubject rdfType rdfProperty,
     iriTriple rdfPredicate rdfType rdfProperty,
     iriTriple rdfObject rdfType rdfProperty,
+    iriTriple rdfReifies rdfType rdfProperty,  -- RDF 1.2 Semantics §8
     iriTriple rdfFirst rdfType rdfProperty,
     iriTriple rdfRest rdfType rdfProperty,
     iriTriple rdfValue rdfType rdfProperty,
@@ -136,9 +145,12 @@ def rdfAxiomaticTriples (cmps : List WfIri) : Graph :=
 
 /-- §9.3, the RDFS axiomatic triples (the fixed part). Transcribed in
 the table's order: the `rdfs:domain` block, the `rdfs:range` block,
-then the subclass / subproperty / datatype block. -/
+then the subclass / subproperty / datatype block. The three rows RDF 1.2
+Semantics §9 adds (`rdf:reifies` domain and range, `rdfs:Proposition
+rdfs:subClassOf rdfs:Resource`) sit where the RDF 1.2 table puts them. -/
 def rdfsAxiomaticTriplesFixed : Graph :=
   [ iriTriple rdfType rdfsDomain rdfsResource,
+    iriTriple rdfReifies rdfsDomain rdfsResource,           -- RDF 1.2 §9
     iriTriple rdfsDomain rdfsDomain rdfProperty,
     iriTriple rdfsRange rdfsDomain rdfProperty,
     iriTriple rdfsSubPropertyOf rdfsDomain rdfProperty,
@@ -156,6 +168,7 @@ def rdfsAxiomaticTriplesFixed : Graph :=
     iriTriple rdfValue rdfsDomain rdfsResource,
 
     iriTriple rdfType rdfsRange rdfsClass,
+    iriTriple rdfReifies rdfsRange rdfsProposition,         -- RDF 1.2 §9
     iriTriple rdfsDomain rdfsRange rdfsClass,
     iriTriple rdfsRange rdfsRange rdfsClass,
     iriTriple rdfsSubPropertyOf rdfsRange rdfProperty,
@@ -176,6 +189,7 @@ def rdfsAxiomaticTriplesFixed : Graph :=
     iriTriple rdfBag rdfsSubClassOf rdfsContainer,
     iriTriple rdfSeq rdfsSubClassOf rdfsContainer,
     iriTriple rdfsContainerMembershipProperty rdfsSubClassOf rdfProperty,
+    iriTriple rdfsProposition rdfsSubClassOf rdfsResource,  -- RDF 1.2 §9
     iriTriple rdfsIsDefinedBy rdfsSubPropertyOf rdfsSeeAlso,
     iriTriple rdfXMLLiteral rdfType rdfsDatatype,
     iriTriple rdfXMLLiteral rdfsSubClassOf rdfsLiteral,

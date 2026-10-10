@@ -9,7 +9,9 @@ Rung two of the entailment ladder: above simple entailment
 
 Baseline: RDF 1.1 Semantics §8, "RDF Interpretations" — the semantic
 conditions, the RDF axiomatic triples, and the two-row entailment rule
-table. Cross-checked against Hayes, RDF Semantics (2004) §3, the
+table. Since 2026-10-09 the axiomatic triples are RDF 1.2 Semantics §8's
+(one added row, `rdf:reifies rdf:type rdf:Property .`) and rdfD1 is
+stated in its RDF 1.2 form. Cross-checked against Hayes, RDF Semantics (2004) §3, the
 baseline the normative OWL 2 specifications build on.
 
 Like the simple-entailment transcription, this module computes nothing
@@ -23,13 +25,16 @@ with `rdf:langString` and `xsd:string` always in D. Keeping D a
 parameter is what lets the rdfD1 row be stated at all without
 prejudging which datatypes an implementation recognises.
 
-## rdfD1 is specified and NOT implemented, deliberately
+## rdfD1 mints a blank node, so no closure applies it
 
-The shipping tree implements no rdfD1 — in either the F\* or the Lean
-engine. It is written here so the rule table is COMPLETE in the
-document and the gap is visible, and so a completeness statement about
-the RDFS rung can name the fragment where rdfD1 cannot fire. A rule
-table with a row quietly missing reads as a table with no gap.
+rdfD1 is stated here in its RDF 1.2 form. No closure function applies
+it (a closed graph would be infinite). Since 2026-10-09 the Lean
+graph-entailment procedure applies it once per literal "towards E"
+(`RDF.Regime.generalize`, `RDF/Entailment.lean`), and
+`RDF/EntailmentGeneralize.lean` proves every triple that step adds is a
+conclusion of `RdfD1Derives` (or of the RDFS rows rdfs14 / rdfs14a in
+`RDF.EntailmentRdfsSpec`) for a fresh label. The F\* engine does not
+implement rdfD1.
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.VocabularyAxioms
@@ -66,28 +71,66 @@ def RdfD2Derives (g : Graph) (t : Triple) : Prop :=
 
 /-! ## Row rdfD1
 
-§8, verbatim:
+RDF 1.2 Semantics §8.1.1, verbatim:
 
-> rdfD1 | xxx aaa "sss"^^ddd . (for ddd in D) |
->         xxx aaa _:nnn . _:nnn rdf:type ddd .
+> rdfD1 | Any triple ttt such that "sss"^^ddd appears in ttt, for ddd in D |
+>         ttt["sss"^^ddd/_:nnn] . _:nnn rdf:type ddd .
+
+RDF 1.1 Semantics §8.1 stated the premise as `xxx aaa "sss"^^ddd .`, a
+literal in object position; RDF 1.2 widens it to a literal anywhere in
+the triple, which adds the interior of a triple term
+(`rdfD1_rdf11_row` below shows the RDF 1.1 row is an instance). In this
+term model a literal or a triple term can appear only along a triple's
+OBJECT CHAIN — the object, then the object of a triple-term object, and
+so on — because a triple term's subject is an IRI or a blank node and
+its predicate an IRI (`Term.tripleTerm`).
 
 The conclusion MINTS A FRESH BLANK NODE, so the relation carries the
 label as an explicit parameter plus a freshness side condition rather
 than hiding it in an existential: a rule that may invent a name is not
 a function of its premise alone. -/
 
-/-- Freshness at the top level of a triple. An RDF 1.2 triple term
-could bury the same label deeper; rdfD1 is not implemented in either
-tree, so nothing depends on that case. -/
+/-- `x` appears in the object chain of a term (RDF 1.2 Semantics §8.1.1,
+"appears in ttt"). -/
+def TermAppearsIn (x : Term) : Term → Prop
+  | .tripleTerm s p o => Term.tripleTerm s p o = x ∨ TermAppearsIn x o
+  | t => t = x
+
+/-- `ttt[x/r]` on the object chain: every occurrence of `x` replaced by
+`r` (RDF 1.2 Semantics, the substitution mapping notation of §8.1.1). -/
+def termSubst (x r : Term) : Term → Term
+  | .tripleTerm s p o =>
+      if Term.tripleTerm s p o = x then r else .tripleTerm s p (termSubst x r o)
+  | t => if t = x then r else t
+
+/-- Blank node `b` occurs in a term, triple-term interiors included. -/
+def TermMentionsBnode (b : BNodeId) : Term → Prop
+  | .iri _ => False
+  | .bnode c => c = b
+  | .literal _ => False
+  | .tripleTerm s _ o => s = Subject.bnode b ∨ TermMentionsBnode b o
+
+/-- `b` is a label `g` does not use, at any depth. (Until 2026-10-09
+this checked the top level only; an RDF 1.2 triple term can hold the
+same label in its interior.) -/
 def BnodeFreshFor (b : BNodeId) (g : Graph) : Prop :=
-  ∀ t : Triple, t ∈ g → t.s ≠ Subject.bnode b ∧ t.o ≠ Term.bnode b
+  ∀ t : Triple, t ∈ g → t.s ≠ Subject.bnode b ∧ ¬ TermMentionsBnode b t.o
 
 def RdfD1Derives (D : DatatypeSet) (g : Graph) (b : BNodeId) (t1 t2 : Triple) : Prop :=
   BnodeFreshFor b g ∧
   ∃ u : Triple, u ∈ g ∧ ∃ l : WfLiteral,
-    u.o = .literal l ∧ D l.val.datatype ∧
-    t1 = { s := u.s, p := u.p, o := .bnode b } ∧
+    TermAppearsIn (.literal l) u.o ∧ D l.val.datatype ∧
+    t1 = { s := u.s, p := u.p, o := termSubst (.literal l) (.bnode b) u.o } ∧
     t2 = { s := .bnode b, p := rdfType, o := .iri l.val.datatype }
+
+/-- The RDF 1.1 row (`xxx aaa "sss"^^ddd .` ⊢ `xxx aaa _:nnn . _:nnn
+rdf:type ddd .`) is an instance of the RDF 1.2 row. -/
+theorem rdfD1_rdf11_row {D : DatatypeSet} {g : Graph} {b : BNodeId} {u : Triple}
+    {l : WfLiteral} (hfresh : BnodeFreshFor b g) (hu : u ∈ g)
+    (ho : u.o = .literal l) (hD : D l.val.datatype) :
+    RdfD1Derives D g b { s := u.s, p := u.p, o := .bnode b }
+      { s := .bnode b, p := rdfType, o := .iri l.val.datatype } :=
+  ⟨hfresh, u, hu, l, by rw [ho]; rfl, hD, by rw [ho]; simp [termSubst], rfl⟩
 
 /-! ## The RDF axiomatic triples
 
@@ -121,7 +164,8 @@ triples and is shut under the rule table.
 
 rdfD1 is EXCLUDED from `RdfClosed` on purpose: it mints fresh blank
 nodes, so a graph closed under it is not finite. The specification text
-handles this the same way, by taking the closure "towards E". -/
+handles this the same way, by taking the closure "towards E" — which is
+what `RDF.Regime.generalize` does before the closure runs. -/
 
 def RdfClosed (g : Graph) : Prop :=
   (∀ t, RdfAxiomatic t → t ∈ g) ∧ (∀ t, RdfD2Derives g t → t ∈ g)
@@ -190,7 +234,19 @@ engine's finite slice, which is the only property downstream needs. -/
 it is not empty — a soundness bridge into an empty table would prove
 nothing. -/
 
-#guard rdfAxiomaticTriples.length == 8
+#guard rdfAxiomaticTriples.length == 9
+
+/-! rdfD1's substitution reaches into a triple term and replaces only
+the literal it names. -/
+
+private def lit42 : Term := .literal (Literal.string "42")
+private def tt42 : Term :=
+  .tripleTerm (.iri (iriW "http://e.org/a")) (iriW "http://e.org/b") lit42
+
+#guard termSubst lit42 (.bnode "n") tt42 ==
+  .tripleTerm (.iri (iriW "http://e.org/a")) (iriW "http://e.org/b") (.bnode "n")
+#guard termSubst lit42 (.bnode "n") (.iri (iriW "http://e.org/a")) ==
+  .iri (iriW "http://e.org/a")
 
 end Checks
 

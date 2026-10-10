@@ -86,7 +86,7 @@ theorem rdfAxioms_pred {cmps : List WfIri} {t : Triple}
   simp only [rdfAxiomaticTriples, List.mem_append, List.mem_map] at h
   rcases h with h | h
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at h
-    rcases h with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> rfl
+    rcases h with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> rfl
   · obtain ⟨c, -, hc⟩ := h; rw [← hc]; rfl
 
 /-! ## The fixed table has no `rdfs:subClassOf` self-loop
@@ -101,14 +101,19 @@ theorem selfloop_not_in_fixed (c : WfIri) :
   simp only [rdfsAxiomaticTriplesFixed, owlClassReflTriple, iriTriple,
              List.mem_cons, List.not_mem_nil, or_false, Triple.mk.injEq,
              Subject.iri.injEq, Term.iri.injEq] at h
+  -- 17 `rdfs:domain` rows, 17 `rdfs:range` rows (each block carries
+  -- one RDF 1.2 `rdf:reifies` row), then five `rdfs:subClassOf` rows
+  -- (the fifth is RDF 1.2's `rdfs:Proposition rdfs:subClassOf
+  -- rdfs:Resource`), subPropertyOf, the `rdf:type` row, and two more
+  -- `rdfs:subClassOf` rows.
   rcases h with ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
-    | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
-    | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩
+    | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
+    | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩
   all_goals first
     | exact absurd hp (by decide)

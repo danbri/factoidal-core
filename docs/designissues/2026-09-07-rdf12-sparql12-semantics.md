@@ -341,3 +341,109 @@ pass, 0 fail (of 403); `l4rdfxml-probe` 132 of 132 eval-isomorphic and
 115 of 115 reject-negative, 108 of 108 eval-iso; `l4rdfc-probe` 63 of
 63 rdfc10 eval, 21 of 21 map eval, 1 of 1 sha384, 1 of 1 negative;
 `l4rdfs-semi` 6 of 6.
+
+## 2026-10-09 addendum — the seven residuals, re-diagnosed against upstream
+
+Tracking issue: https://github.com/danbri/factoidal/issues/698. Measured
+with `formal/lean4/.lake/build/bin/l4rdf-semantics` from the repository
+root. Fixture: `third_party/testing/w3c` at w3c/rdf-tests commit
+`35c503a` (2026-02-25). Upstream `main` was `ec2ba15` on 2026-10-09.
+
+| suite | before | after |
+| --- | --- | --- |
+| `rdf-semantics` (vendored fixture) | 40 pass, 7 fail (of 47) | 43 pass, 4 fail (of 47) |
+| `rdf-semantics` (upstream `main`, run from a scratch clone) | 26 pass, 3 fail (of 29) | 28 pass, 1 fail (of 29) |
+| `rdf11/rdf-mt` (upstream `main`, scratch clone) | 47 pass, 1 fail (of 48) | 48 pass, 0 fail (of 48) |
+| `l4w3c` `rdf/rdf12/manifest.ttl` | 1356 pass, 7 fail (of 1363) | 1359 pass, 4 fail (of 1363) |
+| `l4w3c` `rdf/rdf11/manifest.ttl` | 1031 pass, 0 fail (of 1031) | 1031 pass, 0 fail (of 1031) |
+| `l4w3c` SPARQL 1.1 entailment | 70 pass, 0 fail (of 70) | 70 pass, 0 fail (of 70) |
+| `l4w3c` SPARQL 1.1 `manifest-all.ttl` | 631 pass, 0 fail (of 631) | 631 pass, 0 fail (of 631) |
+
+### Fixed in the engine
+
+* `reifies-range` — RDF 1.2 Semantics §9 lists `rdf:reifies rdfs:range
+  rdfs:Proposition .` as an RDFS AXIOMATIC TRIPLE, with `rdf:reifies
+  rdfs:domain rdfs:Resource .` and `rdfs:Proposition rdfs:subClassOf
+  rdfs:Resource .`; §8 adds the RDF axiom `rdf:reifies rdf:type
+  rdf:Property .`. The four rows are now in both axiom tables (spec:
+  `RDF/VocabularyAxioms.lean`; engine: `RDFS/FullClosure.lean`). rdfs3
+  then derives the test's conclusion under `.rdfs`. This replaces the
+  "prove the widened closure sound" plan of § 2 cause E: the soundness
+  proofs (`axiomaticTriples_hold`, `unified_rdfs_closure_sound`,
+  `regime_sound_rdfs`) are parametric in the seed table and needed no
+  change. The extra rule step `rdf12ReifiesClosure` was removed.
+* `literal-type` — rdfD1 (§8.1.1). § 2 cause D called this a term-model
+  limit. It is not: rdfD1's conclusion is an ordinary RDF graph
+  (`:a :b _:x . _:x rdf:type xsd:integer .`). What blocked it is that
+  the pattern mints a blank node. `RDF.Regime.generalize` now applies
+  rdfD1 once per literal "towards E" (§A of the specification): one
+  fresh surrogate blank node per literal, the triples with the literal
+  replaced by it, and its `rdf:type` triple — the surrogate blank node
+  method of ter Horst [HORST05]. `RDFS/FullClosure.lean`'s header used
+  to claim the rdfD1 conclusion `_:b rdf:type ddd` is answered by a
+  blank node mapped to the literal itself; that is false (the blank
+  node is in SUBJECT position, where a literal cannot go) and the
+  header now says so.
+* `triple-terms-propositions` — rdfs14 (§9.2.1), the same mechanism with
+  `rdfs:Proposition` as the class, plus rdfs14a (`_:nnn rdf:type
+  rdfs:Proposition` for every graph). RDFS regimes only.
+
+The generalisation runs in `regimeEntails` / `regimeInconsistent` only,
+BEFORE `Regime.closure`, and only for `.rdf`, `.rdfs`, `.rdfsPlus`.
+`Regime.closure` itself mints no blank node, because the SPARQL
+entailment regimes answer over it and `regime_sound_rdfs` states their
+soundness under the Skolem assignment of the queried graph — a fresh
+blank node would falsify that statement. `.d` is unchanged, which keeps
+`Unified/DSchema.regimeEntails_d_sound_mt`.
+
+Spec side: `RdfD1Derives` (now the RDF 1.2 "appears in" form, with
+`TermAppearsIn`, `termSubst`, and `BnodeFreshFor` checking triple-term
+interiors), `Rdfs14Derives`, `Rdfs14aDerives`.
+`RDF/EntailmentGeneralize.lean` proves `surrogateTriples_licensed`:
+every triple the step adds is a conclusion of one of these rows for a
+label fresh for the input graph. Not proved: that the rows are true in
+every RDF / RDFS interpretation. The model theory has no condition for
+§8's datatype clause or §9's proposition clause yet.
+
+### Not fixable against the vendored fixture — upstream has changed the tests
+
+* `annotation`, `annotation-unfolded`. § 2 cause C ("reifier identity")
+  was the wrong diagnosis. The vendored `test007r2.ttl` and
+  `test007a2.ttl` are `:a1 :p1 <<( :a :b :c )>>.`, a defect of the
+  mechanical conversion in w3c/rdf-tests `06fb431` (2025-06-16; the
+  RDF-star original was `<< :a :b :c >> :p1 :o1.`). Each expected graph
+  names an IRI (`:a1`, `:o1`) absent from its premise, so the premise
+  does not simply entail it (RDF 1.2 Semantics §5.3: "If E contains an
+  IRI which does not occur anywhere in S, then S does not simply entail
+  E"). Upstream fixed both files in `7298418`
+  (2026-02-19, P.-A. Champin). With the upstream files the Lean engine
+  passes both, unchanged — so the Turtle `{| |}` expansion is correct.
+* `malformed-literal-no-spurious`, `malformed-literal-bnode-neg`. § 4
+  chose "Reading B is very probably right". The working group decided
+  Reading A: upstream `5d82be0` (2026-02-19) deleted both tests —
+  "in the CG-spec, those ill-typed literals did not cause
+  inconsistency. Now they do, which is tested by the (remaining) test
+  #malformed-literal. Those ... are therefore wrong in RDF 1.2, and must
+  go." RDF 1.2 Semantics §7.1: "any triple, and hence any graph,
+  containing an ill-typed literal will be D-unsatisfiable"; §7.2: "A
+  D-unsatisfiable graph D-entails any graph." The engine's current
+  behaviour (Reading A) is correct; no `DInterpCond` change is needed.
+
+### Reverses § 3 when the fixture is bumped
+
+Upstream `38bc6d9` (2026-02-19) made `opaque-dir-language-string` a
+POSITIVE test ("Literals within reifying terms (including directional
+language strings) are transparent"), which is § 3's Reading 2. The
+vendored fixture still has the NEGATIVE version, which
+`stricterInTripleTerm` (`RDF/Entailment.lean`) exists to pass. With the
+upstream manifest the Lean engine fails that one test (28 pass, 1 fail,
+of 29). When the fixture is moved to upstream `main`, delete
+`stricterInTripleTerm` and the Reading 1 pins in the same landing.
+
+### Action for the coordinator
+
+Move `third_party/testing/w3c` to w3c/rdf-tests `main` (at least
+`7f939d0`). That removes the four failures above that the engine cannot
+fix correctly, adds `literal-type1`/`literal-type2` and the float/double
+tests to `rdf11/rdf-mt` (they pass), and requires the `stricterInTripleTerm`
+removal in the same landing.

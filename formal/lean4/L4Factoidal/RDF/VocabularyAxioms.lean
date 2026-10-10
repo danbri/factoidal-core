@@ -5,7 +5,12 @@ Port of `formal/fstar/RDF.Vocabulary.Axioms.fst` (258 lines).
 
 RDF 1.1 Semantics publishes finite tables of axiomatic triples
 (<https://www.w3.org/TR/rdf11-mt/>, §"RDF axiomatic triples" and
-§"RDFS axiomatic triples"). Before the F\* module they had no
+§"RDFS axiomatic triples"). RDF 1.2 Semantics
+(<https://www.w3.org/TR/rdf12-semantics/>, §8 "RDF axioms" and §9 "RDFS
+axiomatic triples") keeps every RDF 1.1 row and adds four, all about
+`rdf:reifies` and `rdfs:Proposition`; the tables below are the RDF 1.2
+tables, and each added row is marked "RDF 1.2" where it sits. Before the
+F\* module they had no
 declarative representation anywhere in the tree: their consequences were
 hard-coded as closure rules and reflexivity axioms were harvested
 programmatically. This is the tables as literal triple lists, auditable
@@ -62,14 +67,18 @@ open L4Factoidal.RDFS
 
 /-! ## RDF axiomatic triples
 
-<https://www.w3.org/TR/rdf11-mt/>, §"RDF axiomatic triples". Finite rows
-only — the `rdf:_n` family is excluded, see the module header. -/
+<https://www.w3.org/TR/rdf11-mt/>, §"RDF axiomatic triples", plus the one
+row RDF 1.2 Semantics §8 adds (`rdf:reifies rdf:type rdf:Property .`, in
+the position the RDF 1.2 table gives it). Finite rows only — the
+`rdf:_n` family is excluded, see the module header. -/
 
 def rdfAxiomaticTriples : List Triple := [
   ⟨.iri rdfType, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfSubject, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfPredicate, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfObject, rdfType, .iri rdfProperty⟩,
+  -- RDF 1.2 Semantics §8
+  ⟨.iri rdfReifies, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfFirst, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfRest, rdfType, .iri rdfProperty⟩,
   ⟨.iri rdfValue, rdfType, .iri rdfProperty⟩,
@@ -78,11 +87,16 @@ def rdfAxiomaticTriples : List Triple := [
 
 /-! ## RDFS axiomatic triples
 
-<https://www.w3.org/TR/rdf11-mt/>, §"RDFS axiomatic triples". Same
-exclusion, same reason. -/
+<https://www.w3.org/TR/rdf11-mt/>, §"RDFS axiomatic triples", plus the
+three rows RDF 1.2 Semantics §9 adds (`rdf:reifies rdfs:domain
+rdfs:Resource .`, `rdf:reifies rdfs:range rdfs:Proposition .`,
+`rdfs:Proposition rdfs:subClassOf rdfs:Resource .`), each in the
+position the RDF 1.2 table gives it. Same exclusion, same reason. -/
 
 def rdfsAxiomaticTriples : List Triple := [
   ⟨.iri rdfType, rdfsDomain, .iri rdfsResource⟩,
+  -- RDF 1.2 Semantics §9
+  ⟨.iri rdfReifies, rdfsDomain, .iri rdfsResource⟩,
   ⟨.iri rdfsDomain, rdfsDomain, .iri rdfProperty⟩,
   ⟨.iri rdfsRange, rdfsDomain, .iri rdfProperty⟩,
   ⟨.iri rdfsSubPropertyOf, rdfsDomain, .iri rdfProperty⟩,
@@ -99,6 +113,8 @@ def rdfsAxiomaticTriples : List Triple := [
   ⟨.iri rdfsLabel, rdfsDomain, .iri rdfsResource⟩,
   ⟨.iri rdfValue, rdfsDomain, .iri rdfsResource⟩,
   ⟨.iri rdfType, rdfsRange, .iri rdfsClass⟩,
+  -- RDF 1.2 Semantics §9
+  ⟨.iri rdfReifies, rdfsRange, .iri rdfsProposition⟩,
   ⟨.iri rdfsDomain, rdfsRange, .iri rdfsClass⟩,
   ⟨.iri rdfsRange, rdfsRange, .iri rdfsClass⟩,
   ⟨.iri rdfsSubPropertyOf, rdfsRange, .iri rdfProperty⟩,
@@ -118,13 +134,16 @@ def rdfsAxiomaticTriples : List Triple := [
   ⟨.iri rdfBag, rdfsSubClassOf, .iri rdfsContainer⟩,
   ⟨.iri rdfSeq, rdfsSubClassOf, .iri rdfsContainer⟩,
   ⟨.iri rdfsContainerMembershipProperty, rdfsSubClassOf, .iri rdfProperty⟩,
+  -- RDF 1.2 Semantics §9
+  ⟨.iri rdfsProposition, rdfsSubClassOf, .iri rdfsResource⟩,
   ⟨.iri rdfsIsDefinedBy, rdfsSubPropertyOf, .iri rdfsSeeAlso⟩,
   ⟨.iri rdfsDatatype, rdfsSubClassOf, .iri rdfsClass⟩
 ]
 
 /-! ## The combined finite seed graph
 
-8 RDF rows plus 38 RDFS rows. Not consumed anywhere —
+9 RDF rows plus 41 RDFS rows (RDF 1.1: 8 plus 38; RDF 1.2 Semantics adds
+1 plus 3). Not consumed anywhere —
 see the seed-graph gate in the module header. -/
 
 def finiteAxiomaticTriples : List Triple :=
@@ -134,13 +153,14 @@ def finiteAxiomaticTriples : List Triple :=
 
 ### The row counts are pinned
 
-The F\* module's own comment says "46 triples: 8 RDF + 38 RDFS". A
-dropped row is the failure mode a table like this has, and nothing else
-would notice one. -/
+The F\* module's own comment says "46 triples: 8 RDF + 38 RDFS" — the
+RDF 1.1 tables. The RDF 1.2 tables are 9 and 41 (four added rows, all
+about `rdf:reifies` and `rdfs:Proposition`). A dropped row is the failure
+mode a table like this has, and nothing else would notice one. -/
 
-#guard rdfAxiomaticTriples.length == 8
-#guard rdfsAxiomaticTriples.length == 38
-#guard finiteAxiomaticTriples.length == 46
+#guard rdfAxiomaticTriples.length == 9
+#guard rdfsAxiomaticTriples.length == 41
+#guard finiteAxiomaticTriples.length == 50
 
 /-! ### No duplicates
 
@@ -167,6 +187,22 @@ systematic error such as subject and object being swapped. -/
 #guard finiteAxiomaticTriples.any (fun t =>
   t.s == Subject.iri rdfsDatatype && t.p == rdfsSubClassOf
   && t.o == Term.iri rdfsClass)
+
+/-! The four RDF 1.2 rows, read off RDF 1.2 Semantics §8 and §9. The
+range row is the one the rdf12 `reifies-range` test exercises; its
+object is `rdfs:Proposition`, never `rdf:Statement`. -/
+
+#guard finiteAxiomaticTriples.any (fun t =>
+  t.s == Subject.iri rdfReifies && t.p == rdfType && t.o == Term.iri rdfProperty)
+#guard finiteAxiomaticTriples.any (fun t =>
+  t.s == Subject.iri rdfReifies && t.p == rdfsDomain && t.o == Term.iri rdfsResource)
+#guard finiteAxiomaticTriples.any (fun t =>
+  t.s == Subject.iri rdfReifies && t.p == rdfsRange && t.o == Term.iri rdfsProposition)
+#guard finiteAxiomaticTriples.any (fun t =>
+  t.s == Subject.iri rdfsProposition && t.p == rdfsSubClassOf
+  && t.o == Term.iri rdfsResource)
+#guard !finiteAxiomaticTriples.any (fun t =>
+  t.s == Subject.iri rdfReifies && t.p == rdfsRange && t.o == Term.iri rdfStatement)
 
 /-! ### The infinite families are ABSENT
 

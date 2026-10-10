@@ -310,18 +310,110 @@ def plainLit (lex : String) (dt : WfIri) : Literal :=
 -- `RDFS-Plus` is a recognised regime name (`opaque-iri`, `opaque-iri-control`).
 #guard Regime.ofName? "RDFS-Plus" == some .rdfsPlus
 
--- `reifies-range`: `:a rdf:reifies :b` |- `:b rdf:type rdfs:Proposition`.
-#guard reifiesPropOf ⟨.iri exA, rdfReifiesIri, .iri exB⟩ ==
-  [⟨.iri exB, rdfType, .iri rdfsPropositionIri⟩]
--- Under `.rdfsPlus`, not `.rdfs`: the RDF 1.2 reifies-range step is a
--- WIDENING of the RDFS closure, and `.rdfs` must stay `fullClosure`,
--- which `Unified/SparqlAdequacy.regime_sound_rdfs` is stated about.
-#guard regimeEntails .rdfsPlus D0 [⟨.iri exA, rdfReifiesIri, .iri exB⟩]
-  [⟨.iri exB, rdfType, .iri rdfsPropositionIri⟩] == true
+-- `reifies-range` (RDFS): `:a rdf:reifies :b` |- `:b rdf:type
+-- rdfs:Proposition`, by rdfs3 from the RDF 1.2 RDFS axiomatic triple
+-- `rdf:reifies rdfs:range rdfs:Proposition` (RDF 1.2 Semantics §9).
+-- CORRECTED 2026-10-09: until then the `.rdfs` pin below said `false`,
+-- recording that the range lived only in `.rdfsPlus` as an extra rule
+-- step. RDF 1.2 Semantics states it as an RDFS axiom, so RDFS entailment
+-- holds; the axiom is now in the seed table `fullClosure` is
+-- parametric in, and `.rdfs` stays `fullClosure`.
+#guard regimeEntails .rdfs D0 [⟨.iri exA, rdfReifies, .iri exB⟩]
+  [⟨.iri exB, rdfType, .iri rdfsProposition⟩] == true
+#guard regimeEntails .rdfsPlus D0 [⟨.iri exA, rdfReifies, .iri exB⟩]
+  [⟨.iri exB, rdfType, .iri rdfsProposition⟩] == true
+-- The range types the OBJECT only: the subject is not a proposition.
+#guard regimeEntails .rdfs D0 [⟨.iri exA, rdfReifies, .iri exB⟩]
+  [⟨.iri exA, rdfType, .iri rdfsProposition⟩] == false
+-- An RDFS axiom, so not an RDF entailment.
+#guard regimeEntails .rdf D0 [⟨.iri exA, rdfReifies, .iri exB⟩]
+  [⟨.iri exB, rdfType, .iri rdfsProposition⟩] == false
+-- The RDF 1.2 RDF axiom `rdf:reifies rdf:type rdf:Property` (§8): from
+-- the empty graph under RDF, and not under simple entailment.
+#guard regimeEntails .rdf D0 [] [⟨.iri rdfReifies, rdfType, .iri rdfProperty⟩] == true
+#guard regimeEntails .simple D0 [] [⟨.iri rdfReifies, rdfType, .iri rdfProperty⟩] == false
+-- The remaining two RDF 1.2 RDFS axioms, from the empty graph.
+#guard regimeEntails .rdfs D0 [] [⟨.iri rdfReifies, rdfsDomain, .iri rdfsResource⟩] == true
+#guard regimeEntails .rdfs D0 [] [⟨.iri rdfsProposition, rdfsSubClassOf, .iri rdfsResource⟩] == true
 
--- and NOT under `.rdfs`, which is the plain RDFS closure.
-#guard regimeEntails .rdfs D0 [⟨.iri exA, rdfReifiesIri, .iri exB⟩]
-  [⟨.iri exB, rdfType, .iri rdfsPropositionIri⟩] == false
+/-! ### rdfD1 — `literal-type` (RDF 1.2 Semantics §8.1.1)
+
+`:a :b "42"^^xsd:integer` RDF-entails `:a :b _:x . _:x rdf:type
+xsd:integer` when `xsd:integer` is recognised. The conclusion's `_:x`
+is in SUBJECT position in its second triple, so it cannot be answered
+by the literal itself; it is answered by the surrogate blank node
+`Regime.generalize` adds. -/
+
+def bX : Term := .bnode "x"
+def literalTypeAction : Graph := [⟨.iri exA, exB, typed "42" xsdInteger⟩]
+def literalTypeResult : Graph :=
+  [⟨.iri exA, exB, bX⟩, ⟨.bnode "x", rdfType, .iri xsdInteger⟩]
+#guard regimeEntails .rdf (withMinimalD [xsdInteger]) literalTypeAction literalTypeResult == true
+#guard regimeEntails .rdfs (withMinimalD [xsdInteger]) literalTypeAction literalTypeResult == true
+-- Not when `xsd:integer` is unrecognised: rdfD1 is "for ddd in D".
+#guard regimeEntails .rdf D0 literalTypeAction literalTypeResult == false
+-- Not under simple or D entailment: rdfD1 rests on the RDF semantic
+-- condition on `rdf:type` (§8).
+#guard regimeEntails .simple (withMinimalD [xsdInteger]) literalTypeAction literalTypeResult == false
+#guard regimeEntails .d (withMinimalD [xsdInteger]) literalTypeAction literalTypeResult == false
+-- Not into another datatype: the surrogate is typed with the literal's
+-- own datatype only.
+#guard regimeEntails .rdf (withMinimalD [xsdInteger, xsdDecimal]) literalTypeAction
+  [⟨.iri exA, exB, bX⟩, ⟨.bnode "x", rdfType, .iri xsdBoolean⟩] == false
+-- A plain literal is an `xsd:string`, which every RDF interpretation
+-- recognises (§8).
+#guard regimeEntails .rdf D0 [⟨.iri exA, exB, .literal (Literal.string "s")⟩]
+  [⟨.iri exA, exB, bX⟩, ⟨.bnode "x", rdfType, .iri xsdString⟩] == true
+-- The surrogate denotes the literal's value, so it carries the
+-- literal's other triples too: one blank node for both positions.
+#guard regimeEntails .rdf (withMinimalD [xsdInteger])
+  [⟨.iri exA, exB, typed "42" xsdInteger⟩, ⟨.iri exC, exD, typed "42" xsdInteger⟩]
+  [⟨.iri exA, exB, bX⟩, ⟨.iri exC, exD, bX⟩, ⟨.bnode "x", rdfType, .iri xsdInteger⟩] == true
+-- rdfD1 inside a triple term ("appears in ttt", RDF 1.2).
+#guard regimeEntails .rdf (withMinimalD [xsdInteger])
+  [⟨.iri exA, exP, .tripleTerm (.iri exB) exC (typed "42" xsdInteger)⟩]
+  [⟨.iri exA, exP, .tripleTerm (.iri exB) exC bX⟩, ⟨.bnode "x", rdfType, .iri xsdInteger⟩] == true
+-- Freshness: an existing blank node `_:_0` typed `xsd:boolean` must not
+-- be confused with a surrogate. If a surrogate were labelled `_0`, the
+-- typed `xsd:boolean` triple would attach to `:a :b`'s object.
+#guard regimeEntails .rdf (withMinimalD [xsdInteger])
+  [⟨.iri exA, exB, typed "42" xsdInteger⟩, ⟨.bnode "_0", rdfType, .iri xsdBoolean⟩,
+   ⟨.bnode "_", rdfType, .iri xsdBoolean⟩, ⟨.bnode "__0", rdfType, .iri xsdBoolean⟩]
+  [⟨.iri exA, exB, bX⟩, ⟨.bnode "x", rdfType, .iri xsdBoolean⟩] == false
+#guard (freshLabelPrefix [⟨.bnode "_0", rdfType, .iri xsdBoolean⟩]).length == 3
+
+/-! ### rdfs14 and rdfs14a — `triple-terms-propositions` (RDF 1.2 Semantics §9.2.1) -/
+
+def ttABC : Term := .tripleTerm (.iri exA) exB (.iri exC)
+def ttPropAction : Graph := [⟨.iri exX, exP, ttABC⟩]
+def ttPropResult : Graph := [⟨.iri exX, exP, bX⟩, ⟨.bnode "x", rdfType, .iri rdfsProposition⟩]
+#guard regimeEntails .rdfs D0 ttPropAction ttPropResult == true
+#guard regimeEntails .rdfsPlus D0 ttPropAction ttPropResult == true
+-- rdfs14 is an RDFS pattern: not under RDF or simple entailment.
+#guard regimeEntails .rdf D0 ttPropAction ttPropResult == false
+#guard regimeEntails .simple D0 ttPropAction ttPropResult == false
+-- The triple term is NOT asserted (`triple-term-not-asserted`, under
+-- RDFS too): the surrogate does not make `:a :b :c` true.
+#guard regimeEntails .rdfs D0 ttPropAction [⟨.iri exA, exB, .iri exC⟩] == false
+-- An IRI object is not thereby a proposition.
+#guard regimeEntails .rdfs D0 [⟨.iri exX, exP, .iri exY⟩]
+  [⟨.iri exX, exP, bX⟩, ⟨.bnode "x", rdfType, .iri rdfsProposition⟩] == false
+-- Nested triple terms: the §9.2.1 example. `ex:a ex:b <<( ex:c ex:d
+-- <<( ex:e ex:f ex:g )>> )>>` entails both generalisations.
+def ttNested : Term := .tripleTerm (.iri exC) exD ttABC
+#guard regimeEntails .rdfs D0 [⟨.iri exX, exP, ttNested⟩]
+  [⟨.iri exX, exP, .tripleTerm (.iri exC) exD (.bnode "b1")⟩,
+   ⟨.iri exX, exP, .bnode "b2"⟩,
+   ⟨.bnode "b1", rdfType, .iri rdfsProposition⟩,
+   ⟨.bnode "b2", rdfType, .iri rdfsProposition⟩] == true
+-- rdfs14a: the empty graph RDFS-entails `_:n rdf:type rdfs:Proposition`,
+-- and does not RDF-entail it.
+#guard regimeEntails .rdfs D0 [] [⟨.bnode "n", rdfType, .iri rdfsProposition⟩] == true
+#guard regimeEntails .rdf D0 [] [⟨.bnode "n", rdfType, .iri rdfsProposition⟩] == false
+-- The `reifies` object that is a triple term: rdfs3 cannot type it (it
+-- is not a subject); rdfs14 does.
+#guard regimeEntails .rdfs D0 [⟨.bnode "r", rdfReifies, ttABC⟩]
+  [⟨.bnode "s", rdfReifies, bX⟩, ⟨.bnode "x", rdfType, .iri rdfsProposition⟩] == true
 
 -- `opaque-iri`: `owl:sameAs` substitutes even inside a triple term's
 -- interior. `:clark :reports <<( :superman :can :fly )>>` +
