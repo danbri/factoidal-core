@@ -52,7 +52,7 @@ OUT/results.jsonl and a Markdown table in OUT/table.md.
 
 Usage:
   python3 tools/owl-real-bench.py [--out DIR] [--only a,b] [--cap-s 600]
-      [--fstar-cap-s S] [--as-bytes 6000000000] [--pairs 20] [--fuel N] [--optional]
+      [--fstar-cap-s S] [--as-bytes 6000000000 | --rss-cap-mb MB] [--pairs 20] [--fuel N] [--optional]
       [--no-fstar] [--lean-bin DIR] [--fstar-bin FILE] [--table-only]
 
 Exit 0 when every step ran (a TIMEOUT or OOM is a result, not an error);
@@ -127,17 +127,65 @@ def loadavg():
         return None
 
 
-def run_step(cmd, cap_s, as_bytes, stdout_path, workdir):
-    """Run CMD under time -v, timeout and prlimit. Returns a dict."""
+PAGE = os.sysconf("SC_PAGE_SIZE")
+
+
+def tree_rss(root):
+    """(resident bytes, pids) of process ROOT and all its descendants, read
+    from /proc. By parent links, not by process group: `timeout` puts its
+    child in a process group of its own."""
+    kids = {}
+    rss = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                st = f.read()
+            ppid = int(st[st.rindex(")") + 2:].split()[1])
+            with open(f"/proc/{d}/statm") as f:
+                rss[int(d)] = int(f.read().split()[1]) * PAGE
+            kids.setdefault(ppid, []).append(int(d))
+        except (OSError, ValueError, IndexError):
+            continue
+    todo, seen = [root], []
+    while todo:
+        x = todo.pop()
+        seen.append(x)
+        todo.extend(kids.get(x, []))
+    return sum(rss.get(x, 0) for x in seen), seen
+
+
+def run_step(cmd, cap_s, as_bytes, stdout_path, workdir, rss_cap_bytes=0):
+    """Run CMD under time -v and timeout, and either prlimit --as=AS_BYTES
+    (rss_cap_bytes == 0) or a watchdog that kills the process group when its
+    resident set passes RSS_CAP_BYTES (polled every 0.2 s). Returns a dict."""
     tfile = os.path.join(workdir, "time.txt")
     efile = os.path.join(workdir, "stderr.txt")
     full = ["/usr/bin/time", "-v", "-o", tfile,
-            "timeout", "-s", "KILL", str(cap_s),
-            "prlimit", f"--as={as_bytes}", "--"] + cmd
+            "timeout", "-s", "KILL", str(cap_s)]
+    if not rss_cap_bytes:
+        full += ["prlimit", f"--as={as_bytes}", "--"]
+    full += cmd
     la = loadavg()
     t0 = time.monotonic()
+    rss_killed = False
+    sampled = 0
     with open(stdout_path, "wb") as out, open(efile, "wb") as err:
-        rc = subprocess.call(full, stdout=out, stderr=err)
+        p = subprocess.Popen(full, stdout=out, stderr=err)
+        while p.poll() is None:
+            g, pids = tree_rss(p.pid)
+            sampled = max(sampled, g)
+            if rss_cap_bytes and g > rss_cap_bytes:
+                rss_killed = True
+                for x in reversed(pids):
+                    try:
+                        os.kill(x, 9)
+                    except OSError:
+                        pass
+                break
+            time.sleep(0.2)
+        rc = p.wait()
     wall = time.monotonic() - t0
     tv = {}
     try:
@@ -153,7 +201,9 @@ def run_step(cmd, cap_s, as_bytes, stdout_path, workdir):
     user = float(tv.get("User time (seconds)", "0") or 0)
     syst = float(tv.get("System time (seconds)", "0") or 0)
     low = stderr.lower()
-    if rc == 137 and wall >= cap_s - 1:
+    if rss_killed:
+        status = "RSS_CAP"
+    elif rc == 137 and wall >= cap_s - 1:
         status = "TIMEOUT"
     elif ("out of memory" in low or "out_of_memory" in low
           or "cannot allocate" in low or "std::bad_alloc" in low):
@@ -162,8 +212,15 @@ def run_step(cmd, cap_s, as_bytes, stdout_path, workdir):
         status = "ok"
     else:
         status = f"ERROR(rc={rc})"
+    # ru_maxrss is lost when timeout or the watchdog kills the process tree
+    # (time -v then reports the timeout process itself), so a killed step
+    # reports the largest resident set sampled every 0.2 s instead.
+    killed = status in ("TIMEOUT", "RSS_CAP")
+    peak = (sampled if killed else rss_kb * 1024) / (1024 * 1024)
     return {"status": status, "rc": rc, "wall_s": round(wall, 3),
-            "user_s": user, "sys_s": syst, "peak_rss_mb": round(rss_kb / 1024, 1),
+            "user_s": user, "sys_s": syst, "peak_rss_mb": round(peak, 1),
+            "peak_rss_source": "sampled every 0.2 s" if killed else "ru_maxrss",
+            "rss_sampled_mb": round(sampled / (1024 * 1024), 1),
             "load1": la, "stderr_tail": stderr.strip()[-400:],
             "cmd": " ".join(cmd)}
 
@@ -340,7 +397,7 @@ def bench_ontology(onto, a, rows, results_path):
                 cmd = [lean, "parse", f, "--format", fmt]
             else:
                 cmd = [fstar, "count", f]
-            r = run_step(cmd, a.cap_s if engine == "lean" else a.fstar_cap_s, a.as_bytes, out, wd)
+            r = run_step(cmd, a.cap_s if engine == "lean" else a.fstar_cap_s, a.as_bytes, out, wd, a.rss_cap)
             txt = first_line(out)
             m = re.search(r"(\d+)", txt.split(":")[-1]) if txt else None
             r["triples"] = int(m.group(1)) if (m and r["status"] == "ok") else None
@@ -371,7 +428,7 @@ def bench_ontology(onto, a, rows, results_path):
 
     # --- species (Lean) ------------------------------------------------------
     out = os.path.join(wd, "species.out")
-    r = run_step([species] + docs, a.cap_s, a.as_bytes, out, wd)
+    r = run_step([species] + docs, a.cap_s, a.as_bytes, out, wd, a.rss_cap)
     try:
         sp = json.loads(first_line(out))
         r.update({"species": sp["species"], "violations": int(sp["violations"]),
@@ -388,7 +445,7 @@ def bench_ontology(onto, a, rows, results_path):
             cmd = [lean, "closure", merged, "--format", "nquads", "--regime", "owl-rl"]
         else:
             cmd = [fstar, "entail", "--data", merged, "--regime", "OWL-RL"]
-        r = run_step(cmd, a.cap_s if engine == "lean" else a.fstar_cap_s, a.as_bytes, out, wd)
+        r = run_step(cmd, a.cap_s if engine == "lean" else a.fstar_cap_s, a.as_bytes, out, wd, a.rss_cap)
         if r["status"] == "ok" and r["rc"] == 0:
             n = count_lines(out)
             r["closure_triples"] = n
@@ -406,7 +463,7 @@ def bench_ontology(onto, a, rows, results_path):
     cmd = [lean, "owl-consistent", merged, "--format", "nquads"]
     if a.fuel:
         cmd += ["--fuel", str(a.fuel)]
-    r = run_step(cmd, a.cap_s, a.as_bytes, out, wd)
+    r = run_step(cmd, a.cap_s, a.as_bytes, out, wd, a.rss_cap)
     verdict = first_line(out) if r["status"] == "ok" else None
     if r["status"] == "ok" and verdict not in ("true", "false", "unknown"):
         r["status"] = f"ERROR(rc={r['rc']})"
@@ -434,7 +491,7 @@ def bench_ontology(onto, a, rows, results_path):
             cmd = [lean, "owl-entails", merged, concl, "--format", "nquads"]
             if a.fuel:
                 cmd += ["--fuel", str(a.fuel)]
-            r = run_step(cmd, a.cap_s, a.as_bytes, out, wd)
+            r = run_step(cmd, a.cap_s, a.as_bytes, out, wd, a.rss_cap)
             verdict = first_line(out) if r["status"] == "ok" else None
             if r["status"] == "ok" and verdict not in ("true", "false", "unknown"):
                 r["status"] = f"ERROR(rc={r['rc']})"
@@ -442,7 +499,7 @@ def bench_ontology(onto, a, rows, results_path):
             r["verdict"] = verdict
             r["reason"] = r.pop("stderr_tail", "")[-200:] if verdict in ("false", "unknown") else ""
             emit(rows, results_path, row("entails", "lean", r, summary=f"{kind} verdict={verdict}", **extra))
-            if r["status"] in ("TIMEOUT", "OOM"):
+            if r["status"] in ("TIMEOUT", "OOM", "RSS_CAP"):
                 stop = (f"an earlier entailment check of this ontology ended {r['status']}; "
                         "each check recomputes the closure, so the rest were not run")
 
@@ -509,6 +566,8 @@ def write_table(rows, path):
                     c[r["verdict"]] += 1
                 elif r["status"] in c:
                     c[r["status"]] += 1
+                elif r["status"] == "RSS_CAP":
+                    c["OOM"] += 1
                 else:
                     c["ERROR"] += 1
             s = (f"{c['true']} / {c['false']} / {c['unknown']} / {c['TIMEOUT']} / {c['OOM']} / "
@@ -516,7 +575,7 @@ def write_table(rows, path):
             if c["ERROR"]:
                 s += f", {c['ERROR']} error"
             return s
-        ran = sorted(r["wall_s"] for r in rs if r["status"] in ("ok", "TIMEOUT", "OOM"))
+        ran = sorted(r["wall_s"] for r in rs if r["status"] in ("ok", "TIMEOUT", "OOM", "RSS_CAP"))
         med = f"{ran[len(ran) // 2]:.2f} s, {ran[-1]:.2f} s" if ran else "—"
         rss = max((r.get("peak_rss_mb", 0) for r in rs), default=0)
         lines.append(f"| {o} | {nc} | {tally('stated')} | {tally('unrelated')} | {med} | {rss:.0f} MB |")
@@ -532,6 +591,9 @@ def main():
     ap.add_argument("--cap-s", type=int, default=600)
     ap.add_argument("--fstar-cap-s", type=int, default=0, help="cap for the F* steps (0: --cap-s)")
     ap.add_argument("--as-bytes", type=int, default=6_000_000_000)
+    ap.add_argument("--rss-cap-mb", type=int, default=0,
+                    help="instead of prlimit --as, kill a step whose resident set passes this many MB "
+                         "(status RSS_CAP); see the record, section 5, for why")
     ap.add_argument("--pairs", type=int, default=20)
     ap.add_argument("--seed", type=int, default=651)
     ap.add_argument("--fuel", type=int, default=0, help="--fuel for owl-consistent / owl-entails (0: the CLI default)")
@@ -543,6 +605,7 @@ def main():
     a = ap.parse_args()
     a.out = os.path.abspath(a.out)
     a.fstar_cap_s = a.fstar_cap_s or a.cap_s
+    a.rss_cap = a.rss_cap_mb * 1024 * 1024
     os.makedirs(a.out, exist_ok=True)
     results = os.path.join(a.out, "results.jsonl")
     if a.table_only:
@@ -568,7 +631,8 @@ def main():
     meta = {"ontology": "_run", "step": "meta", "engine": "-", "status": "ok",
             "date_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "uname": " ".join(os.uname()), "nproc": os.cpu_count(),
-            "cap_s": a.cap_s, "fstar_cap_s": a.fstar_cap_s, "as_bytes": a.as_bytes, "pairs": a.pairs, "seed": a.seed,
+            "cap_s": a.cap_s, "fstar_cap_s": a.fstar_cap_s, "as_bytes": None if a.rss_cap else a.as_bytes,
+            "rss_cap_mb": a.rss_cap_mb or None, "pairs": a.pairs, "seed": a.seed,
             "fuel": a.fuel or "CLI default",
             "lean_bin_sha256": sha256_of(os.path.join(a.lean_bin, "l4factoidal")),
             "fstar_bin_sha256": None if a.no_fstar else sha256_of(a.fstar_bin),
@@ -588,7 +652,7 @@ def main():
         cmd = ([os.path.join(a.lean_bin, "l4factoidal"), "closure", empty, "--format", "nquads",
                 "--regime", "owl-rl"] if engine == "lean"
                else [a.fstar_bin, "entail", "--data", empty, "--regime", "OWL-RL"])
-        r = run_step(cmd, a.cap_s, a.as_bytes, out, wd)
+        r = run_step(cmd, a.cap_s, a.as_bytes, out, wd, a.rss_cap)
         r["closure_triples"] = count_lines(out) if r["status"] == "ok" else None
         emit(rows, results, dict(r, ontology="(empty graph)", step="closure", engine=engine,
                                  input_triples=0, triples_added=r["closure_triples"],
