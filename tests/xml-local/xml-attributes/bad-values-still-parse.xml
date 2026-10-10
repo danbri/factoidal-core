@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc EMPTY>
+<!ATTLIST doc xml:lang CDATA #IMPLIED xml:id ID #IMPLIED xml:base CDATA #IMPLIED>
+]>
+<doc xml:lang="!" xml:id="p:q" xml:base="%"/>

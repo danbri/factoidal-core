@@ -48,12 +48,37 @@ The XML 1.1 line also covers the IBM XML 1.1 manifests under
 Reporting these as failures would understate the parser; folding them
 into passes would overstate it. Both numbers are printed.
 
+## The repository-local fixtures
+
+`tests/xml-local/xml-local.xml` is a manifest in the format of the suite
+(`testcases.dtd`) for behaviour the W3C suite does not exercise: attribute
+defaults, the value syntax of `xml:lang`, `xml:id` and `xml:base`, and the
+nesting of parameter entities in external parameter entities. It is scored
+on its own line, `xml-local`. Its header says what each attribute means.
+A case with an `XFAIL` attribute names an open issue and is expected to
+fail: it is counted in the `expected-fail` bucket, and the run fails if it
+passes.
+
+## Local overrides
+
+`tests/local-overrides/*.json` with `"suite": "xmlconf"` name a case by its
+manifest `ID` (key `test_id`) and the open issue that tracks the dispute
+(key `issue`). An overridden case still runs. On every score line it
+belongs to it is counted in a `local-override` bucket, never as a pass. If
+the case passes on a line, the override is STALE: that is a failure of the
+line, and the run says which file to delete. An override that names no case
+the runner scored is also a failure. The run exits 1 if any line has a
+failure.
+
 Usage: `lake exe l4xmlconf [xmlconf-dir]`
 -/
 import L4Factoidal.XML.Parser
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Validity
+import L4Factoidal.XML.Canonical
+import L4Factoidal.XML.XmlAttributes
+import L4Factoidal.JSON.Parser
 
 open L4Factoidal.XML
 
@@ -73,47 +98,108 @@ def dirOf (p : String) : String :=
   | _ :: rest => if rest.isEmpty then "" else String.intercalate "/" rest.reverse ++ "/"
   | []        => ""
 
+/-- The three buckets of one score line. A `local-override` case is a
+    disputed fixture (tests/local-overrides): it is never a pass. -/
+structure Tally where
+  pass : Nat := 0
+  fail : Nat := 0
+  overridden : Nat := 0
+deriving Repr, Inhabited
+
+def Tally.add (a b : Tally) : Tally :=
+  { pass := a.pass + b.pass, fail := a.fail + b.fail, overridden := a.overridden + b.overridden }
+
+def Tally.total (t : Tally) : Nat := t.pass + t.fail + t.overridden
+
+/-- "N pass, M fail, K local-override" -/
+def Tally.text (t : Tally) : String :=
+  s!"{t.pass} pass, {t.fail} fail, {t.overridden} local-override"
+
+/-- Which score line a verdict belongs to. -/
+inductive Line where
+  | plain | ns | enc | x11 | vValid | vInvalid | vNotWf | outDef
+deriving Repr, BEq, Inhabited
+
+def Line.name : Line → String
+  | .plain => "plain" | .ns => "namespaces" | .enc => "encodings" | .x11 => "xml 1.1"
+  | .vValid => "validating (valid)" | .vInvalid => "validating (invalid)"
+  | .vNotWf => "validating (not-wf)"
+  | .outDef => "output (defaults)"
+
 structure Counts where
-  scored      : Nat := 0
-  pass        : Nat := 0
-  fail        : Nat := 0
+  plain       : Tally := {}
+  ns          : Tally := {}   -- Namespaces-in-XML cases, scored with the namespace check
+  enc         : Tally := {}   -- the document or a named entity is not plain UTF-8: decoded, then scored
+  x11         : Tally := {}   -- XML 1.1 cases, read by the XML 1.1 rules
+  -- The VALIDATING line: parse, then the validity constraints, per TYPE.
+  vValid      : Tally := {}
+  vInvalid    : Tally := {}
+  vNotWf      : Tally := {}
+  -- The OUTPUT line: cases in which the parser supplied a default, compared
+  -- with the suite's canonical output.
+  outDef      : Tally := {}
   optional    : Nat := 0   -- TYPE="error": behaviour is optional
-  x11Pass     : Nat := 0   -- XML 1.1 cases, read by the XML 1.1 rules
-  x11Fail     : Nat := 0
   x11Optional : Nat := 0   -- XML 1.1 cases of TYPE="error"
-  encPass     : Nat := 0   -- the document or a named entity is not plain UTF-8: decoded, then scored
-  encFail     : Nat := 0
+  nsOptional  : Nat := 0   -- Namespaces-in-XML cases of TYPE="error"
   encUnsupported : List String := []  -- ... or in an encoding the decoder does not implement (names)
   otherEdition : Nat := 0  -- EDITION says the case is not about 1.0 5e
-  nsPass      : Nat := 0   -- Namespaces-in-XML cases, scored with the namespace check
-  nsFail      : Nat := 0
-  nsOptional  : Nat := 0   -- Namespaces-in-XML cases of TYPE="error"
-  -- The VALIDATING line: parse, then the validity constraints.
-  -- (passes, failures) per TYPE, and the cases whose DTD could not be read.
-  vValidPass : Nat := 0
-  vValidFail : Nat := 0
-  vInvalidPass : Nat := 0
-  vInvalidFail : Nat := 0
-  vNotWfPass : Nat := 0
-  vNotWfFail : Nat := 0
-  vUndecided : Nat := 0
+  vUndecided : Nat := 0    -- valid cases whose DTD could not be read in full
   fileMissing : Nat := 0
+  /-- Failures that are not a verdict: a stale override. -/
+  stale : List String := []
+  /-- Overrides that took effect: (case id, line name). -/
+  applied : List (String × String) := []
 deriving Repr, Inhabited
 
 def Counts.add (a b : Counts) : Counts :=
-  { scored := a.scored + b.scored, pass := a.pass + b.pass, fail := a.fail + b.fail,
+  { plain := a.plain.add b.plain, ns := a.ns.add b.ns, enc := a.enc.add b.enc, x11 := a.x11.add b.x11,
+    vValid := a.vValid.add b.vValid, vInvalid := a.vInvalid.add b.vInvalid,
+    vNotWf := a.vNotWf.add b.vNotWf, outDef := a.outDef.add b.outDef,
     optional := a.optional + b.optional,
-    x11Pass := a.x11Pass + b.x11Pass, x11Fail := a.x11Fail + b.x11Fail,
     x11Optional := a.x11Optional + b.x11Optional,
-    encPass := a.encPass + b.encPass, encFail := a.encFail + b.encFail,
-    encUnsupported := a.encUnsupported ++ b.encUnsupported, otherEdition := a.otherEdition + b.otherEdition,
-    nsPass := a.nsPass + b.nsPass, nsFail := a.nsFail + b.nsFail,
     nsOptional := a.nsOptional + b.nsOptional,
-    vValidPass := a.vValidPass + b.vValidPass, vValidFail := a.vValidFail + b.vValidFail,
-    vInvalidPass := a.vInvalidPass + b.vInvalidPass, vInvalidFail := a.vInvalidFail + b.vInvalidFail,
-    vNotWfPass := a.vNotWfPass + b.vNotWfPass, vNotWfFail := a.vNotWfFail + b.vNotWfFail,
+    encUnsupported := a.encUnsupported ++ b.encUnsupported, otherEdition := a.otherEdition + b.otherEdition,
     vUndecided := a.vUndecided + b.vUndecided,
-    fileMissing := a.fileMissing + b.fileMissing }
+    fileMissing := a.fileMissing + b.fileMissing,
+    stale := a.stale ++ b.stale, applied := a.applied ++ b.applied }
+
+/-- The validating line, all three TYPEs together. -/
+def Counts.validating (c : Counts) : Tally := (c.vValid.add c.vInvalid).add c.vNotWf
+
+def Counts.ofTally (line : Line) (t : Tally) : Counts :=
+  match line with
+  | .plain => { plain := t } | .ns => { ns := t } | .enc => { enc := t } | .x11 => { x11 := t }
+  | .vValid => { vValid := t } | .vInvalid => { vInvalid := t } | .vNotWf => { vNotWf := t }
+  | .outDef => { outDef := t }
+
+/-- One case on one line. `ov` says an override names the case; `ok` says
+    the verdict matched the manifest's TYPE. An overridden case that does
+    not match is counted in the `local-override` bucket. One that matches
+    is a failure of the line (STALE), never a pass. -/
+def Counts.verdict (line : Line) (id : String) (ov ok : Bool) : Counts :=
+  if ov then
+    if ok then
+      { Counts.ofTally line { fail := 1 } with
+        stale := [s!"{id}: STALE local override on the {line.name} line: the case now passes; delete its file in tests/local-overrides/ and close its issue"],
+        applied := [(id, line.name)] }
+    else { Counts.ofTally line { overridden := 1 } with applied := [(id, line.name)] }
+  else Counts.ofTally line (if ok then { pass := 1 } else { fail := 1 })
+
+-- The bookkeeping, pinned. A plain pass and a plain failure stay what they
+-- are; an overridden failure goes to its own bucket and is never a pass; an
+-- overridden PASS is a failure of the line and a STALE note.
+#guard (Counts.verdict .x11 "a" false true).x11.pass == 1
+#guard (Counts.verdict .x11 "a" false false).x11.fail == 1
+#guard (Counts.verdict .x11 "a" true false).x11.overridden == 1
+#guard (Counts.verdict .x11 "a" true false).x11.pass == 0
+#guard (Counts.verdict .x11 "a" true false).x11.fail == 0
+#guard (Counts.verdict .x11 "a" true false).stale.isEmpty
+#guard (Counts.verdict .x11 "a" true true).x11.pass == 0
+#guard (Counts.verdict .x11 "a" true true).x11.fail == 1
+#guard (Counts.verdict .x11 "a" true true).stale.length == 1
+#guard (Counts.verdict .vValid "a" true false).validating.overridden == 1
+#guard (Counts.verdict .vNotWf "a" true true).validating.fail == 1
+#guard ((Counts.verdict .plain "a" true false).add (Counts.verdict .plain "b" false true)).plain.total == 2
 
 /-- The sub-manifests, relative to the suite root. Listed rather than
     discovered so the denominator is stable and a missing file is
@@ -142,7 +228,38 @@ def subManifests : List String :=
 def isNamespaceSuite (rel : String) : Bool :=
   rel.startsWith "eduni/namespaces/"
 
-def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := do
+def replaceAll (a b : String) (s : String) : String := String.intercalate b (s.splitOn a)
+
+/-- Put the suite's "Second Canonical Form" and Canonical XML 1.0 on common
+    ground, so that attribute values can be compared. The suite's output
+    files (`testcases.dtd`) differ from Canonical XML 1.0 in: a leading
+    `<!DOCTYPE ... ]>` that lists the notations; a leading `<?xml
+    version="1.1"?>` for XML 1.1 documents; `&quot;` and `&gt;` in text and
+    attribute values; decimal references for tab, line feed and carriage
+    return (Canonical XML writes hexadecimal ones); a space before `?>` in a
+    processing instruction. Line ends, tabs and carriage returns are then
+    removed, because the two forms also differ in how they write them. -/
+def commonCanonicalForm (s : String) : String :=
+  let s :=
+    if s.startsWith "<!DOCTYPE" then
+      match s.splitOn "]>\n" with
+      | _ :: rest => String.intercalate "]>\n" rest
+      | [] => s
+    else s
+  let s := replaceAll "<?xml version=\"1.1\"?>" "" s
+  let s := replaceAll "&quot;" "\"" s
+  let s := replaceAll "&gt;" ">" s
+  let s := replaceAll "&#13;" "&#xD;" s
+  let s := replaceAll "&#10;" "&#xA;" s
+  let s := replaceAll "&#9;" "&#x9;" s
+  let s := replaceAll "&#x9;" "\t" s
+  let s := replaceAll "&#xA;" "\n" s
+  let s := replaceAll "&#xD;" "\r" s
+  let s := replaceAll " ?>" "?>" s
+  replaceAll "\t" " " (replaceAll "\n" "" (replaceAll "\r" "" s))
+
+def runManifest (root : String) (rel : String) (verbose : Bool)
+    (overrides : List String) : IO Counts := do
   let path := root ++ "/" ++ rel
   if !(← System.FilePath.pathExists path) then
     IO.println s!"sub-manifest not found: {rel}"
@@ -365,12 +482,12 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                 let want := ty != "not-wf"
                 let plainCase := docPlain && entityPlain
                 let ok := accepted == want
+                let ov := overrides.contains id
                 c := Counts.add c
-                  (if nsAware then (if ok then { nsPass := 1 } else { nsFail := 1 })
-                   else if is11 then (if ok then { x11Pass := 1 } else { x11Fail := 1 })
-                   else if plainCase then
-                     (if ok then { scored := 1, pass := 1 } else { scored := 1, fail := 1 })
-                   else (if ok then { encPass := 1 } else { encFail := 1 }))
+                  (if nsAware then Counts.verdict .ns id ov ok
+                   else if is11 then Counts.verdict .x11 id ov ok
+                   else if plainCase then Counts.verdict .plain id ov ok
+                   else Counts.verdict .enc id ov ok)
                 -- The VALIDATING line. A `not-wf` case must still be
                 -- refused by the parser. A `valid` case must parse and
                 -- pass every validity constraint; an `invalid` case must
@@ -387,28 +504,47 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                     | some d => (d.doctype.map (·.incomplete)).getD false
                     | none => false
                   if ty == "not-wf" then
-                    c := Counts.add c (if parsed.isNone then { vNotWfPass := 1 } else { vNotWfFail := 1 })
+                    c := Counts.add c (Counts.verdict .vNotWf id ov parsed.isNone)
                   else if incompleteDtd && ty == "valid" then
-                    if violations.isEmpty then c := Counts.add c { vValidPass := 1 }
+                    if violations.isEmpty then c := Counts.add c (Counts.verdict .vValid id ov true)
                     else c := Counts.add c { vUndecided := 1 }
                   else if parsed.isNone then
-                    c := Counts.add c (if ty == "valid" then { vValidFail := 1 } else { vInvalidFail := 1 })
+                    c := Counts.add c (if ty == "valid" then Counts.verdict .vValid id ov false
+                                       else Counts.verdict .vInvalid id ov false)
                   else if ty == "valid" then
-                    c := Counts.add c (if violations.isEmpty then { vValidPass := 1 } else { vValidFail := 1 })
+                    c := Counts.add c (Counts.verdict .vValid id ov violations.isEmpty)
                   else
-                    c := Counts.add c (if violations.isEmpty then { vInvalidFail := 1 } else { vInvalidPass := 1 })
+                    c := Counts.add c (Counts.verdict .vInvalid id ov !violations.isEmpty)
                   if verbose && ty == "valid" && !violations.isEmpty && parsed.isSome then
                     IO.println s!"VFAIL {id} (valid): {(violations.take 3).map (fun v => v.vc ++ ": " ++ v.message)}"
                   if verbose && ty == "invalid" && violations.isEmpty && parsed.isSome then
                     IO.println s!"VFAIL {id} (invalid): no violation found"
                   if verbose && ty == "invalid" && !violations.isEmpty && parsed.isSome then
                     IO.println s!"VINVALID {id}: {(violations.map (·.vc)).eraseDups}"
+                -- The OUTPUT line. A case whose OUTPUT file the suite
+                -- provides, and in which the parser supplied a declared
+                -- default (XML 1.0 sections 3.3.2 and 5.1), must report the
+                -- canonical form the file holds. Defaults are the one thing
+                -- the suite's other lines cannot see: `valid` and `invalid`
+                -- cases are scored on whether the parse is accepted.
+                match attr? "OUTPUT" t, withNotes with
+                | some outRel, .ok (d, ns) =>
+                    if !nsAware && ty != "not-wf" && ns.elems.any (fun e => !e.defaulted.isEmpty) then
+                      let outPath := base ++ outRel
+                      if ← System.FilePath.pathExists outPath then
+                        let expected ← IO.FS.readFile outPath
+                        let got := L4Factoidal.XML.Canonical.canonDocumentNoComments d
+                        let okOut := commonCanonicalForm got == commonCanonicalForm expected
+                        c := Counts.add c (Counts.verdict .outDef id false okOut)
+                        if verbose && !okOut then
+                          IO.println s!"OUTPUT-FAIL {id}: got {commonCanonicalForm got} expected {commonCanonicalForm expected}"
+                | _, _ => pure ()
                 if verbose && is11 && ty == "not-wf" then
                   IO.println s!"X11 {id} (not-wf): rejected -- {why}"
                 if verbose && !plainCase && !nsAware && !is11 then
                   IO.println s!"ENC {id} ({ty}): {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
                 if !ok && verbose then
-                  IO.println s!"FAIL {id} ({ty}): {uri} was {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
+                  IO.println s!"{if ov then "OVERRIDDEN" else "FAIL"} {id} ({ty}): {uri} was {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
       return c
 
 /-- ": euc-jp x2, shift_jis x1", or "" for none. -/
@@ -418,6 +554,151 @@ def encodingNames (names : List String) : String :=
     let keys := (names.map (·.toLower)).eraseDups
     ": " ++ String.intercalate ", " (keys.map fun k => s!"{k} x{(names.filter (fun n => n.toLower == k)).length}")
 
+/-! ## The repository-local fixtures -/
+
+/-- The directory of a path, without a trailing slash (`.` for none). -/
+def dirName (p : String) : String :=
+  match (p.splitOn "/").reverse with
+  | _ :: rest => if rest.isEmpty then "." else String.intercalate "/" rest.reverse
+  | [] => "."
+
+/-- The text of every file in a directory, by file name. -/
+def readDirTexts (dir : String) : IO (List (String × String)) := do
+  let mut out : List (String × String) := []
+  if ← System.FilePath.isDir dir then
+    for e in (← System.FilePath.readDir dir) do
+      if !(← System.FilePath.isDir e.path) then
+        let b ← IO.FS.readBinFile e.path
+        match decodeXmlBytesE b with
+        | .ok t => out := (e.fileName, t) :: out
+        | .error _ => pure ()
+  pure out
+
+def sortStrings (xs : List String) : List String :=
+  (xs.toArray.qsort (fun a b => decide (a < b))).toList
+
+def kindWord : XmlAttrKind → String
+  | .lang => "lang" | .id => "id" | .base => "base"
+
+/-- Why a case of the local manifest fails, or `[]` when it holds. `ty` is
+    the manifest TYPE. The other arguments are the extensions the case
+    carries (see the manifest header). -/
+def localFailures (text : String) (files : List (String × String)) (ty : String)
+    (violations c14n issues nswf : Option String) : List String :=
+  let resolve : Resolver := fun sysId =>
+    let name := ((sysId.splitOn "/").getLast?).getD sysId
+    (files.find? (fun f => f.1 == name)).map (·.2)
+  match parseXMLNotes resolve true text with
+  | .error e =>
+      if ty == "not-wf" then [] else [s!"rejected: {e.message}"]
+  | .ok (d, notes) =>
+      let vs := validateWithNotes d notes
+      let vcs := (vs.map (·.vc)).eraseDups
+      let byType :=
+        if ty == "not-wf" then ["accepted, but TYPE is not-wf"]
+        else if ty == "valid" then
+          (if vs.isEmpty then [] else [s!"valid case breaks {vcs}"])
+        else if ty == "invalid" then
+          (if vs.isEmpty then ["invalid case breaks no validity constraint"] else [])
+        else [s!"unknown TYPE {ty}"]
+      let byViolations :=
+        match violations with
+        | none => []
+        | some v =>
+            let want := (v.splitOn "|").filter (· != "")
+            if sortStrings want == sortStrings vcs then []
+            else [s!"breaks {vcs}, expected {want}"]
+      let byC14n :=
+        match c14n with
+        | none => []
+        | some expected =>
+            let got := L4Factoidal.XML.Canonical.canonDocumentNoComments d
+            if got == expected then [] else [s!"canonical form {got}, expected {expected}"]
+      let byIssues :=
+        match issues with
+        | none => []
+        | some i =>
+            let want := (i.splitOn " ").filter (· != "")
+            let got := d.xmlAttributeIssues.map fun x => s!"{kindWord x.kind}:{x.element}"
+            if got == want then [] else [s!"xml attribute issues {got}, expected {want}"]
+      let byNswf :=
+        match nswf with
+        | none => []
+        | some n =>
+            if d.namespaceWellFormed == (n == "yes") then []
+            else [s!"namespace well-formed is {d.namespaceWellFormed}, expected {n}"]
+      byType ++ byViolations ++ byC14n ++ byIssues ++ byNswf
+
+/-- Run `tests/xml-local/xml-local.xml`. Returns the tally, how many
+    expected failures failed as expected, and the failures. -/
+def runLocal (manifest : String) (verbose : Bool) : IO (Tally × Nat × List String) := do
+  if !(← System.FilePath.pathExists manifest) then
+    return ({ fail := 1 }, 0, [s!"xml-local manifest not found: {manifest}"])
+  let src ← IO.FS.readFile manifest
+  match parseXML src with
+  | .error e => return ({ fail := 1 }, 0, [s!"xml-local manifest does not parse: {e}"])
+  | .ok doc =>
+    let base := dirName manifest
+    let mut t : Tally := {}
+    let mut xfailed := 0
+    let mut msgs : List String := []
+    for tc in testElements doc.root do
+      let id := (attr? "ID" tc).getD "?"
+      let ty := (attr? "TYPE" tc).getD ""
+      let uri := (attr? "URI" tc).getD ""
+      let path := base ++ "/" ++ uri
+      let readOpt (rel : Option String) : IO (Option String) := do
+        match rel with
+        | none => pure none
+        | some r =>
+            let fp := base ++ "/" ++ r
+            if ← System.FilePath.pathExists fp then pure (some (← IO.FS.readFile fp)) else pure (some s!"<<expected file {r} is missing>>")
+      if !(← System.FilePath.pathExists path) then
+        t := t.add { fail := 1 }
+        msgs := msgs ++ [s!"{id}: document not on disk: {path}"]
+      else
+        let bytes ← IO.FS.readBinFile path
+        let text := match decodeXmlBytesE bytes with | .ok x => x | .error _ => ""
+        let files ← readDirTexts (dirName path)
+        let c14n ← readOpt (attr? "C14N" tc)
+        let reasons := localFailures text files ty (attr? "VIOLATIONS" tc) c14n
+          (attr? "ISSUES" tc) (attr? "NSWF" tc)
+        let xfail := attr? "XFAIL" tc
+        if verbose && !reasons.isEmpty then
+          IO.println s!"LOCAL-FAIL {id}: {reasons}"
+        match xfail, reasons.isEmpty with
+        | none, true => t := t.add { pass := 1 }
+        | none, false =>
+            t := t.add { fail := 1 }
+            msgs := msgs ++ [s!"{id}: {reasons}"]
+        | some _, false => xfailed := xfailed + 1
+        | some issue, true =>
+            t := t.add { fail := 1 }
+            msgs := msgs ++ [s!"{id}: UNEXPECTED PASS: remove XFAIL, the case passes (issue {issue})"]
+    if t.total + xfailed == 0 then
+      return ({ fail := 1 }, 0, [s!"xml-local manifest has no TEST: {manifest}"])
+    return (t, xfailed, msgs)
+
+/-- Read `tests/local-overrides/*.json` (relative to the current directory,
+    the repository root) and return `(test_id, issue)` for the files whose
+    `suite` is `suite`. An absent directory means no overrides. Same files
+    and keys `Harness/JsonLdFrameRun.lean` reads. -/
+def loadLocalOverrides (suite : String) : IO (List (String × String)) := do
+  let dir : System.FilePath := "tests" / "local-overrides"
+  let entries ← try dir.readDir catch _ => pure #[]
+  let mut out : List (String × String) := []
+  for f in entries do
+    if !f.fileName.endsWith ".json" then continue
+    let txt ← try IO.FS.readFile (dir / f.fileName) catch _ => pure ""
+    match L4Factoidal.JSON.parseJson txt with
+    | .error _ => pure ()
+    | .ok j =>
+      if (j.getString? "suite").getD "" == suite then
+        match j.getString? "test_id" with
+        | some i => out := (i, (j.getString? "issue").getD "(no issue named)") :: out
+        | none   => pure ()
+  pure out
+
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "--verbose"
   let dir := (args.filter (fun a => !a.startsWith "--")).head?
@@ -426,23 +707,29 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"xmlconf runner: corpus not found: {dir}"
     IO.println "run tools/ensure-test-env.sh from the repository root first"
     return 1
+  let overrideList ← loadLocalOverrides "xmlconf"
+  let overrideIds := overrideList.map (·.1)
   let mut total : Counts := {}
   for m in subManifests do
-    let c ← runManifest dir m verbose
+    let c ← runManifest dir m verbose overrideIds
     if verbose then
-      IO.println s!"manifest {m}: {c.scored + c.encPass + c.encFail + c.nsPass + c.nsFail + c.x11Pass + c.x11Fail} scored"
+      IO.println s!"manifest {m}: {c.plain.total + c.enc.total + c.ns.total + c.x11.total} scored"
       (← IO.getStdout).flush
     total := Counts.add total c
+  let (localTally, localXfail, localMsgs) ← runLocal "tests/xml-local/xml-local.xml" verbose
+  -- An override that took effect on no line names no scored case.
+  let unmatched := overrideList.filter (fun (i, _) => !(total.applied.any (fun (a, _) => a == i)))
   IO.println ""
-  IO.println s!"xml conformance SCORED: {total.pass} pass, {total.fail} fail (out of {total.scored} in profile)"
-  IO.println s!"namespaces SCORED: {total.nsPass} pass, {total.nsFail} fail (out of {total.nsPass + total.nsFail} Namespaces-in-XML cases; XML parse + namespace well-formedness)"
-  IO.println s!"encodings SCORED: {total.encPass} pass, {total.encFail} fail (out of {total.encPass + total.encFail} cases whose document or entity is not plain UTF-8; decoded by decodeXmlBytes)"
-  IO.println s!"xml 1.1 SCORED: {total.x11Pass} pass, {total.x11Fail} fail (out of {total.x11Pass + total.x11Fail} XML 1.1 cases; the document's declaration selects the rules)"
-  let vp := total.vValidPass + total.vInvalidPass + total.vNotWfPass
-  let vf := total.vValidFail + total.vInvalidFail + total.vNotWfFail
-  IO.println s!"validating SCORED: {vp} pass, {vf} fail (out of {vp + vf}; parse, then the validity constraints; the Namespaces suites are not read in this mode)"
-  IO.println s!"  valid: {total.vValidPass} pass, {total.vValidFail} fail (out of {total.vValidPass + total.vValidFail}), invalid: {total.vInvalidPass} pass, {total.vInvalidFail} fail (out of {total.vInvalidPass + total.vInvalidFail}), not-wf: {total.vNotWfPass} pass, {total.vNotWfFail} fail (out of {total.vNotWfPass + total.vNotWfFail})"
+  IO.println s!"xml conformance SCORED: {total.plain.text} (out of {total.plain.total} in profile)"
+  IO.println s!"namespaces SCORED: {total.ns.text} (out of {total.ns.total} Namespaces-in-XML cases; XML parse + namespace well-formedness)"
+  IO.println s!"encodings SCORED: {total.enc.text} (out of {total.enc.total} cases whose document or entity is not plain UTF-8; decoded by decodeXmlBytes)"
+  IO.println s!"xml 1.1 SCORED: {total.x11.text} (out of {total.x11.total} XML 1.1 cases; the document's declaration selects the rules)"
+  let v := total.validating
+  IO.println s!"validating SCORED: {v.text} (out of {v.total}; parse, then the validity constraints; the Namespaces suites are not read in this mode)"
+  IO.println s!"  valid: {total.vValid.text} (out of {total.vValid.total}), invalid: {total.vInvalid.text} (out of {total.vInvalid.total}), not-wf: {total.vNotWf.text} (out of {total.vNotWf.total})"
   IO.println s!"  {total.vUndecided} valid cases left out: their DTD could not be read in full"
+  IO.println s!"output SCORED: {total.outDef.text} (out of {total.outDef.total} valid and invalid cases in which the parser supplied a declared default; the canonical form it reports is compared with the suite's OUTPUT file, differences of notation lists and escapes removed)"
+  IO.println s!"xml-local: {localTally.pass} pass, {localTally.fail} fail, {localXfail} expected-fail (out of {localTally.total + localXfail}; tests/xml-local/xml-local.xml, repository-local fixtures for attribute defaults, xml:lang / xml:id / xml:base and parameter-entity nesting)"
   IO.println s!"OUT OF PROFILE, reported not scored: {total.optional} optional-behaviour (TYPE=error),"
   IO.println s!"  {total.nsOptional} optional-behaviour in the Namespaces suites (TYPE=error),"
   IO.println s!"  {total.x11Optional} optional-behaviour in the XML 1.1 suites (TYPE=error),"
@@ -451,6 +738,21 @@ def main (args : List String) : IO UInt32 := do
   if total.fileMissing > 0 then
     IO.println s!"  {total.fileMissing} referenced files not on disk"
   IO.println ""
+  if !overrideList.isEmpty then
+    IO.println "LOCAL OVERRIDES (tests/local-overrides, suite xmlconf): a disputed case is counted in"
+    IO.println "the local-override bucket of each line it belongs to, never as a pass."
+    for (i, issue) in overrideList.reverse do
+      let lines := (total.applied.filter (fun (a, _) => a == i)).map (·.2)
+      IO.println s!"  {i}: {issue} ({String.intercalate ", " lines})"
+    IO.println ""
+  for m in total.stale do IO.println s!"FAILURE: {m}"
+  for m in localMsgs do IO.println s!"FAILURE: xml-local {m}"
+  -- A line over no case has measured nothing.
+  let outEmpty := total.outDef.total == 0
+  if outEmpty then
+    IO.println "FAILURE: the output line has no case: no document of the suite got a default supplied, or its OUTPUT file is missing"
+  for (i, issue) in unmatched do
+    IO.println s!"FAILURE: local override {i} ({issue}) matches no scored case"
   IO.println "Profile: XML 1.0 (Fifth Edition) and XML 1.1. The parser is NON-VALIDATING;"
   IO.println "validity is a separate layer. Bytes are decoded as UTF-8, UTF-16,"
   IO.println "ISO-8859-1 or US-ASCII (XML 1.0 section 4.3.3, Appendix F)."
@@ -465,4 +767,7 @@ def main (args : List String) : IO UInt32 := do
   IO.println "`not-wf` must still be refused by the parser."
   IO.println "Counting out-of-profile cases as failures would understate the parser;"
   IO.println "counting them as passes would overstate it."
-  return 0
+  let anyFail := total.plain.fail + total.ns.fail + total.enc.fail + total.x11.fail
+    + total.validating.fail + total.outDef.fail + total.stale.length + unmatched.length
+    + localTally.fail + (if outEmpty then 1 else 0)
+  return (if anyFail > 0 then 1 else 0)

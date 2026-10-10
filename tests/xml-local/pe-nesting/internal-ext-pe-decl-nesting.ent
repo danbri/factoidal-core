@@ -1,0 +1,2 @@
+<!ENTITY % end ">">
+<!ELEMENT a EMPTY %end;

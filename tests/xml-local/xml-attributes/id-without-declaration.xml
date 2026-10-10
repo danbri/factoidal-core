@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc (p*)>
+<!ELEMENT p EMPTY>
+]>
+<doc><p xml:id="a"/><p xml:id="  b  "/></doc>

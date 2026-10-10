@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a EMPTY>
+<!ENTITY % unread SYSTEM "not-on-disk.ent">
+%unread;
+<!ATTLIST a x CDATA "dx">
+]>
+<a/>

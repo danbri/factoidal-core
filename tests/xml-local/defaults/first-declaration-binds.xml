@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a EMPTY>
+<!ATTLIST a x CDATA "first">
+<!ATTLIST a x CDATA "second">
+]>
+<a/>

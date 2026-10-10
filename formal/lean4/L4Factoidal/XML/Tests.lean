@@ -615,6 +615,25 @@ def withEnt (decl : String) (ent : String) : Bool :=
 #guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\" ?>x"
 #guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"encoding=\"UTF-8\"?>x"
 #guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+-- XML 1.0 section 2.1, third clause: the parsed entities "referenced
+-- directly or indirectly within the document" are well-formed. An
+-- entity that no reference names is not read, so a bad text declaration
+-- in it (xmlconf `ibm-1-1-valid-P03-ibm03v09.xml`: no encoding
+-- declaration) is no fault of the document; the same text IS a fault
+-- where a reference includes it.
+def unreferencedEnt (decl ent : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>text</a>")).toOption.isSome
+#guard unreferencedEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+#guard unreferencedEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\"?>x"
+#guard unreferencedEnt "" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+#guard !withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\"?>x"
+-- The same holds of an external PARAMETER entity.
+def pe (decl ent refer : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY % e SYSTEM \"e.ent\">" ++ refer ++ "]><a>text</a>")).toOption.isSome
+#guard pe "" "<?xml version=\"1.0\"?>" ""
+#guard !pe "" "<?xml version=\"1.0\"?>" "%e;"
+#guard pe "" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" "%e;"
 -- XML 1.1 §2.11 applies to external entities, and §2.2 to their text.
 #guard (match parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0085y") 
           (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>") with
@@ -809,7 +828,13 @@ def attDoc (decl attrs : String) : String :=
 #guard breaks "Attribute Default Legal" (attDoc "x (p|q) \"r\"" "")
 #guard breaks "Attribute Default Legal" (attDoc "x IDREF \"1\"" "")
 #guard breaks "Attribute Default Legal" (attDoc "x IDREFS \"a 1\"" "")
-#guard valid (attDoc "x IDREFS \"a b\"" "")
+-- A default is a value the processor supplies (section 3.3.2), so the value
+-- constraints of the declared type apply to it: the IDREFS default below
+-- names no ID, which is a violation of IDREF. (Until defaults were
+-- supplied this document was reported valid, because the checks looked
+-- at the specified attributes only.)
+#guard breaks "IDREF" (attDoc "x IDREFS \"a b\"" "")
+#guard valid (attDoc "x IDREFS \"i i\" i ID #IMPLIED" "i=\"i\"")
 -- ENTITY attributes name unparsed entities, whose notations are declared.
 def entDoc (decls attrs : String) : String :=
   "<!DOCTYPE a [<!ELEMENT a ANY><!NOTATION n SYSTEM \"x\"><!ENTITY u SYSTEM \"x\" NDATA n>" ++ decls ++ "]><a " ++ attrs ++ "/>"
@@ -861,6 +886,36 @@ def extDoc (dtd : String) : Option (List String) :=
 #guard extDoc "<!ENTITY % e \"INCLUDE[\"><!ELEMENT a EMPTY><![ %e; <!ATTLIST a x CDATA \"v\"> ]]>"
        == some ["Proper Conditional Section/PE Nesting"]
 #guard extDoc "<!ENTITY % e \"INCLUDE\"><!ELEMENT a EMPTY><![ %e; [ <!ATTLIST a x CDATA \"v\"> ]]>" == some []
+
+-- ...and in an external parameter entity that the INTERNAL subset
+-- references. WFC PEs in Internal Subset (section 2.8) keeps a reference
+-- out of the markup declarations of the internal subset itself, "(This
+-- does not apply to references that occur in external parameter entities
+-- or to the external subset.)" The text of such an entity is read as the
+-- external subset's is, and the nesting constraints apply to it.
+def intDoc (ent : String) : Option (List String) :=
+  vcsWith (files [("x.ent", ent)]) "<!DOCTYPE a [<!ENTITY % x SYSTEM \"x.ent\">%x;]><a/>"
+#guard intDoc "<!ELEMENT a EMPTY>" == some []
+#guard intDoc "<!ENTITY % e \"EMPTY\"><!ELEMENT a %e;>" == some []
+#guard intDoc "<!ENTITY % e \"(b,c)?\"><!ELEMENT b EMPTY><!ELEMENT c EMPTY><!ELEMENT a %e;>" == some []
+#guard intDoc "<!ENTITY % e \"(#PCDATA\"><!ELEMENT a %e;)>" == some ["Proper Group/PE Nesting"]
+#guard intDoc "<!ENTITY % e \">\"><!ELEMENT a (#PCDATA) %e;" == some ["Proper Declaration/PE Nesting"]
+#guard intDoc "<!ENTITY % e \"INCLUDE[\"><!ELEMENT a EMPTY><![ %e; <!ATTLIST a x CDATA \"v\"> ]]>"
+       == some ["Proper Conditional Section/PE Nesting"]
+#guard intDoc "<!ENTITY % e \"INCLUDE\"><!ELEMENT a EMPTY><![ %e; [ <!ATTLIST a x CDATA \"v\"> ]]>" == some []
+-- An entity declared in that entity, whose replacement text holds a
+-- reference written as a character reference, is included inside the
+-- external context too.
+#guard intDoc "<!ENTITY % c \"EMPTY\"><!ENTITY % e \"<!ELEMENT a &#37;c;>\">%e;" == some []
+-- The same references inside a declaration of the internal subset are not
+-- well-formed, with or without an entity between.
+#guard vcs "<!DOCTYPE a [<!ENTITY % c \"EMPTY\"><!ELEMENT a %c;>]><a/>" == none
+#guard vcs "<!DOCTYPE a [<!ENTITY % c \"EMPTY\"><!ENTITY % e \"<!ELEMENT a &#37;c;>\">%e;]><a/>" == none
+-- A reference between declarations whose replacement text is not whole
+-- declarations is not well-formed (WFC PE Between Declarations), so the
+-- nesting constraint cannot be the one it breaks.
+#guard vcs "<!DOCTYPE a [<!ENTITY % e \"<!ELEMENT a EMPTY\">%e;>]><a/>" == none
+#guard vcs "<!DOCTYPE a [<!ENTITY % e \"<!ELEMENT a EMPTY>\">%e;]><a/>" == some []
 
 -- Standalone Document Declaration (2.9): nothing read from outside the
 -- document may decide the content of a document that says standalone=yes.
@@ -1139,5 +1194,129 @@ private def okEnt : String := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>any"
 #guard wfExt okEnt ("<!DOCTYPE root [<!ELEMENT root ANY>" ++
            "<!ATTLIST root a CDATA #IMPLIED>" ++
            "<!ENTITY int \"v\">]><root a=\"&int;\"></root>")
+
+/-! ## Attribute defaults — XML 1.0 §3.3.2 and §5.1
+
+"If the declaration is of a default value, the processor supplies the
+default when the attribute is not specified" (§3.3.2), and a processor
+that has read the declaration must do so even when it does not validate
+(§5.1). The tree shows the supplied attributes after the specified ones,
+in the order of the declarations; the parser's notes name them. -/
+
+/-- The attributes of the root of `src`, as (name, value), or `none` when
+the document is refused. -/
+def rootAttrsWith (r : Resolver) (src : String) : Option (List (String × String)) :=
+  match parseXMLWith r src with
+  | .ok d => some (d.root.elementAttrs.map (fun a => (a.name, a.value)))
+  | .error _ => none
+def rootAttrs (src : String) : Option (List (String × String)) := rootAttrsWith noFiles src
+
+-- A declared default is supplied; a specified value wins over it.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"d\">]><a/>" == some [("x", "d")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"d\">]><a x=\"v\"/>" == some [("x", "v")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"d\">]><a></a>" == some [("x", "d")]
+-- #FIXED supplies its value as a default too (§3.3.2).
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA #FIXED \"f\">]><a/>" == some [("x", "f")]
+-- #REQUIRED and #IMPLIED supply nothing.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA #REQUIRED>]><a/>" == some []
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA #IMPLIED>]><a/>" == some []
+-- A declaration for another element type supplies nothing.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST b x CDATA \"d\">]><a/>" == some []
+-- No document type declaration: nothing to read.
+#guard rootAttrs "<a/>" == some []
+-- Specified attributes come first, then the defaults in declaration order.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"1\" y CDATA \"2\" z CDATA \"3\">]><a y=\"s\"/>"
+       == some [("y", "s"), ("x", "1"), ("z", "3")]
+-- The first declaration of an attribute is binding (§3.3).
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"first\"><!ATTLIST a x CDATA \"second\">]><a/>"
+       == some [("x", "first")]
+-- Every element of the type gets it, nested ones and those that arrive in
+-- an entity's replacement text.
+#guard (match parseXML "<!DOCTYPE a [<!ATTLIST b x CDATA \"d\">]><a><b/><b x=\"s\"/></a>" with
+        | .ok d => (d.root.elementChildren.map (fun c => c.elementAttrs.map (fun t => (t.name, t.value))))
+                     == [[("x", "d")], [("x", "s")]]
+        | .error _ => false)
+#guard (match parseXML "<!DOCTYPE a [<!ATTLIST b x CDATA \"d\"><!ENTITY e \"<b/>\">]><a>&e;</a>" with
+        | .ok d => (d.root.elementChildren.map (fun c => c.elementAttrs.map (fun t => (t.name, t.value))))
+                     == [[("x", "d")]]
+        | .error _ => false)
+-- §3.3.3 applies to the default as to a specified value: literal white
+-- space becomes a space, references are replaced, character references to
+-- white space are kept, and a value of a type other than CDATA is
+-- collapsed.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"p\tq\">]><a/>" == some [("x", "p q")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"p&#9;q\">]><a/>" == some [("x", "p\tq")]
+#guard rootAttrs "<!DOCTYPE a [<!ENTITY e \"v\"><!ATTLIST a x CDATA \"1&e;2&lt;3\">]><a/>" == some [("x", "1v2<3")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x NMTOKENS \"  p   q \">]><a/>" == some [("x", "p q")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x (p|q) \" q \">]><a/>" == some [("x", "q")]
+-- ...and a specified value is still normalised by its declared type.
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x NMTOKENS \"d\">]><a x=\" p   q \"/>" == some [("x", "p q")]
+-- The parser's notes name the attributes it supplied, and only those.
+def definedNames (src : String) : Option (List (List String)) :=
+  match parseXMLNotes noFiles false src with
+  | .ok (_, n) => some (n.elems.reverse.map (·.defaulted))
+  | .error _ => none
+#guard definedNames "<!DOCTYPE a [<!ATTLIST a x CDATA \"1\" y CDATA \"2\">]><a y=\"s\"/>" == some [["x"]]
+#guard definedNames "<!DOCTYPE a [<!ATTLIST a x CDATA \"1\">]><a x=\"s\"/>" == some [[]]
+-- The external subset is read when the caller can supply it, and its
+-- defaults are supplied; when it cannot be read, they are not.
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"ext\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>"
+       == some [("x", "ext")]
+#guard rootAttrs "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == some []
+-- A declaration made after a parameter-entity reference that was NOT read
+-- is not processed (§5.1) unless the document is standalone.
+#guard rootAttrs "<!DOCTYPE a [%unread;<!ATTLIST a x CDATA \"d\">]><a/>" == some []
+#guard rootAttrs "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [%unread;<!ATTLIST a x CDATA \"d\">]><a/>"
+       == some [("x", "d")]
+#guard rootAttrs "<!DOCTYPE a [<!ATTLIST a x CDATA \"d\">%unread;]><a/>" == some [("x", "d")]
+-- A default `xmlns` declaration is a namespace declaration (Namespaces in
+-- XML 1.0 §3): the document below is namespace-well-formed only because
+-- the prefix is bound by the supplied attribute.
+#guard (match parseXML "<!DOCTYPE p:a [<!ATTLIST p:a xmlns:p CDATA \"urn:u\">]><p:a/>" with
+        | .ok d => d.namespaceWellFormed
+        | .error _ => false)
+#guard (match parseXML "<!DOCTYPE p:a [<!ATTLIST p:a q CDATA \"urn:u\">]><p:a/>" with
+        | .ok d => !d.namespaceWellFormed
+        | .error _ => false)
+-- Standalone Document Declaration reads the supplied attributes: a default
+-- declared outside the document breaks it, one declared inside does not.
+#guard saDoc "yes" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA #FIXED \"d\">" "" == some ["Standalone Document Declaration"]
+#guard vcsWith noFiles
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">]><a/>" == some []
+-- A supplied value is checked as a specified one is.
+#guard vcsWith noFiles "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x CDATA #FIXED \"d\">]><a/>" == some []
+#guard vcsWith noFiles "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x CDATA #FIXED \"d\">]><a x=\"e\"/>"
+       == some ["Fixed Attribute Default"]
+
+-- A default that is not an `[10] AttValue` breaks the well-formedness
+-- constraints on attribute values; in the external subset it is met when it
+-- is supplied. (In the internal subset it is refused where it is declared,
+-- see "An attribute DEFAULT is an AttValue" above.)
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"<\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == none
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"&e;\"><!ENTITY e \"<b/>\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == none
+#guard rootAttrsWith (files [("x.dtd", "<!ENTITY e \"v\"><!ATTLIST a x CDATA \"&e;\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == some [("x", "v")]
+-- ...and a tag that specifies the attribute never meets it.
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"<\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"s\"/>" == some [("x", "s")]
+
+/-! ## Entity declarations after an unread parameter entity — XML 1.0 §5.1
+
+"Except when standalone="yes", they must not process entity declarations or
+attribute-list declarations encountered after a reference to a parameter
+entity that is not read." -/
+
+def entText (src : String) : Option String := rootText src
+-- A general entity declared after the reference is not processed; the
+-- reference to it is not replaced (§4.1: the constraint is then a validity
+-- one, and a non-validating processor does not report it).
+#guard entText "<!DOCTYPE a [<!ENTITY % u SYSTEM \"gone.ent\">%u;<!ENTITY e \"x\">]><a>&e;</a>" == some ""
+-- Declared before it, it is processed.
+#guard entText "<!DOCTYPE a [<!ENTITY e \"x\"><!ENTITY % u SYSTEM \"gone.ent\">%u;]><a>&e;</a>" == some "x"
+-- standalone="yes": processed either way.
+#guard entText "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [<!ENTITY % u SYSTEM \"gone.ent\">%u;<!ENTITY e \"x\">]><a>&e;</a>" == some "x"
+-- A parameter entity that is read lets the declarations after it stand.
+#guard (match parseXMLWith (files [("u.ent", "<!ENTITY f \"y\">")])
+            "<!DOCTYPE a [<!ENTITY % u SYSTEM \"u.ent\">%u;<!ENTITY e \"x\">]><a>&e;&f;</a>" with
+        | .ok d => some d.root.textContent
+        | .error _ => none) == some "xy"
 
 end L4Factoidal.XML.Tests
