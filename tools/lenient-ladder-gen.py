@@ -46,9 +46,10 @@ def good_terms(i: int):
     return s, p, o
 
 
-def bad_line(i: int, fmt: str) -> str:
-    """A malformed statement, one per line, terminated like a good one."""
-    k = (i // 1) % 5
+def bad_line(i: int, j: int, fmt: str) -> str:
+    """The `j`-th malformed statement (statement number `i`), one per line,
+    terminated like a good one. The kind rotates with `j`."""
+    k = j % 5
     if k == 0:  # missing object
         return f"<http://example.org/s/{i}> <http://example.org/p/x> ."
     if k == 1:
@@ -80,7 +81,7 @@ def main() -> int:
             h.write("PREFIX exo: <http://example.org/o/>\n")
         for i in range(args.statements):
             if args.error_every > 0 and i % args.error_every == args.error_every - 1:
-                h.write(bad_line(i, args.format) + "\n")
+                h.write(bad_line(i, bad, args.format) + "\n")
                 bad += 1
                 continue
             s, p, o = good_terms(i)
