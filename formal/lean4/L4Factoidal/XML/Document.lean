@@ -498,6 +498,10 @@ structure Doctype where
   subset or an external parameter entity the caller could not supply. A
   validity check over an incomplete DTD can only say what it saw. -/
   incomplete : Bool := false
+  /-- Validity constraints on the nesting of parameter-entity replacement
+  text that the DTD's text broke: (constraint name, message). A
+  non-validating processor reads such a DTD without complaint (E14). -/
+  peNesting : List (String × String) := []
 deriving DecidableEq, Repr, Inhabited
 
 /-- `(element name, attribute name)` pairs declared `[54] AttType` =

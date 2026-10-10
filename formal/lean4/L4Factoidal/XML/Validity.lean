@@ -412,6 +412,7 @@ def checkAttDeclsOf (dt : Doctype) (elem : String) : List Violation :=
 
 /-- All declaration-level constraints. -/
 def checkDeclarations (dt : Doctype) : List Violation :=
+  (dt.peNesting.map fun (vc, m) => { vc := vc, message := m }) ++
   let elemNames := dt.elementDecls.map (·.name)
   (if elemNames.length == elemNames.eraseDups.length then []
    else [{ vc := "Unique Element Type Declaration", message := "an element type is declared more than once" }]) ++
@@ -421,15 +422,19 @@ def checkDeclarations (dt : Doctype) : List Violation :=
      if dt.declared.notations.contains nt then none
      else some { vc := "Notation Declared", message := s!"entity {e} names the undeclared notation {nt}" })
 
-/-- **Element Valid** for one element's content. -/
-def checkContent (dt : Doctype) (tag : String) (children : List Node) : List Violation :=
+/-- **Element Valid** for one element's content. `note` says what the
+parser saw that the tree no longer shows: a reference in the content. -/
+def checkContent (dt : Doctype) (tag : String) (note : ElemNote) (children : List Node) :
+    List Violation :=
   match elementDeclOf dt.elementDecls tag with
   | none => [{ vc := "Element Valid", message := s!"element {tag} is not declared" }]
   | some ed =>
     match parseContentSpecText ed.spec with
     | none => []
     | some .empty =>
-        if children.isEmpty then []
+        -- EMPTY means no content at all: not a comment, not white space,
+        -- and not a reference, even one to an entity with no text.
+        if children.isEmpty && !note.entityRef then []
         else [{ vc := "Element Valid", message := s!"element {tag} is declared EMPTY and has content" }]
     | some .any =>
         (childNames children).filterMap fun n =>
@@ -448,6 +453,13 @@ def checkContent (dt : Doctype) (tag : String) (children : List Node) : List Vio
         (if badText then
            [{ vc := "Element Valid",
               message := s!"element {tag} has element content and holds character data" }]
+         else []) ++
+        -- White space between the children must be literal `[3] S`;
+        -- one that a character reference put there is character data
+        -- (errata E15, XML 1.0 section 3, Element Valid).
+        (if note.wsCharRef then
+           [{ vc := "Element Valid",
+              message := s!"element {tag} has element content and holds a character reference to white space" }]
          else []) ++
         (if cp.matches (childNames children) then []
          else [{ vc := "Element Valid",
@@ -518,33 +530,86 @@ def checkAttributes (dt : Doctype) (tag : String) (attrs : List Attribute) :
       | none => none
   (required ++ results.flatMap (·.1), results.flatMap (·.2.1), results.flatMap (·.2.2))
 
+/-- **Standalone Document Declaration** (§2.9) for one element, in a
+document that says `standalone="yes"`: no declaration read from outside
+the document may have decided anything about this element. -/
+def checkStandalone (dt : Doctype) (tag : String) (note : ElemNote)
+    (attrs : List Attribute) (children : List Node) : List Violation :=
+  -- attributes with a default value that the element leaves out
+  let defaults :=
+    (((dt.attDecls.filter (fun a => a.element == tag)).map (·.name)).eraseDups).filterMap fun n =>
+      match attDeclOf dt.attDecls tag n with
+      | some d =>
+          if d.external && !attrs.any (·.name == n) then
+            match d.defaultDecl with
+            | .fixed _ | .value _ =>
+                some { vc := "Standalone Document Declaration",
+                       message := s!"{tag} lacks {n}, whose default is declared outside the document" }
+            | _ => none
+          else none
+      | none => none
+  -- tokenized attributes whose value normalisation changed
+  let normalised := note.normalized.filterMap fun n =>
+    match attDeclOf dt.attDecls tag n with
+    | some d =>
+        if d.external then
+          some { vc := "Standalone Document Declaration",
+                 message := s!"the value of {n} of {tag} depends on a declaration outside the document" }
+        else none
+    | none => none
+  -- white space directly in an element whose element content is declared outside
+  let ws :=
+    match elementDeclOf dt.elementDecls tag with
+    | some ed =>
+        if ed.external then
+          match parseContentSpecText ed.spec with
+          | some (.children _) =>
+              if children.any (fun c => match c with | .text _ => true | _ => false) then
+                [{ vc := "Standalone Document Declaration",
+                   message := s!"white space occurs directly in {tag}, whose element content is declared outside the document" }]
+              else []
+          | _ => []
+        else []
+    | none => []
+  defaults ++ normalised ++ ws
+
+/-- What a walk of the tree hands back: the violations, the ID values, the
+IDREF tokens, and the notes not yet used. -/
+abbrev Walk := List Violation × List String × List String × List ElemNote
+
 mutual
 
-/-- Walk an element, collecting violations, ID values and IDREF tokens. -/
-def validateElement (dt : Doctype) : Node → List Violation × List String × List String
+/-- Walk an element, collecting violations, ID values and IDREF tokens. The
+notes come in post-order: an element's own note follows its descendants'. -/
+def validateElement (dt : Doctype) (standalone : Bool) (ns : List ElemNote) : Node → Walk
   | .element tag attrs children =>
-      let here := checkContent dt tag children
+      let (cv, cids, crefs, ns') := validateChildren dt standalone ns children
+      let note := ns'.headD {}
+      let here := checkContent dt tag note children
       let (av, ids, refs) := checkAttributes dt tag attrs
-      let (cv, cids, crefs) := validateChildren dt children
-      (here ++ av ++ cv, ids ++ cids, refs ++ crefs)
-  | _ => ([], [], [])
+      let sa := if standalone then checkStandalone dt tag note attrs children else []
+      (here ++ av ++ sa ++ cv, ids ++ cids, refs ++ crefs, ns'.drop 1)
+  | _ => ([], [], [], ns)
 
-def validateChildren (dt : Doctype) : List Node → List Violation × List String × List String
-  | [] => ([], [], [])
+def validateChildren (dt : Doctype) (standalone : Bool) (ns : List ElemNote) :
+    List Node → Walk
+  | [] => ([], [], [], ns)
   | n :: rest =>
-      let (v1, i1, r1) := validateElement dt n
-      let (v2, i2, r2) := validateChildren dt rest
-      (v1 ++ v2, i1 ++ i2, r1 ++ r2)
+      let (v1, i1, r1, ns1) := validateElement dt standalone ns n
+      let (v2, i2, r2, ns2) := validateChildren dt standalone ns1 rest
+      (v1 ++ v2, i1 ++ i2, r1 ++ r2, ns2)
 
 end
 
-/-- Every validity constraint this layer checks, over a parsed document.
-An empty list means the document is valid by those constraints. -/
-def validate (d : Document) : List Violation :=
+/-- Every validity constraint this layer checks, over a parsed document
+and the notes the parser made while reading it (`parseXMLNotes`). An empty
+list means the document is valid by those constraints. -/
+def validateWithNotes (d : Document) (notes : Notes) : List Violation :=
   match d.doctype with
   | none => [{ vc := "Valid Document", message := "the document has no document type declaration (XML 1.0 section 2.8)" }]
   | some dt =>
-    let (vs, ids, refs) := validateElement dt d.root
+    let standalone := (d.decl.bind (·.standalone)) == some "yes"
+    let (vs, ids, refs, _) := validateElement dt standalone notes.elems.reverse d.root
     let root : List Violation :=
       match d.root.elementTag with
       | some t =>
@@ -558,9 +623,35 @@ def validate (d : Document) : List Violation :=
       refs.filterMap fun r =>
         if ids.contains r then none
         else some { vc := "IDREF", message := s!"{r} matches no ID" }
-    checkDeclarations dt ++ root ++ vs ++ dupIds ++ danglingRefs
+    let undeclared : List Violation :=
+      if notes.undeclared then
+        [{ vc := "Entity Declared",
+           message := "the document references an entity that no declaration it could read defines" }]
+      else []
+    checkDeclarations dt ++ root ++ vs ++ dupIds ++ danglingRefs ++ undeclared
 
-/-- The document is valid by every constraint checked here. -/
+/-- `validateWithNotes` for a document parsed without notes: the facts the
+tree cannot show (references in content, normalised values, undeclared
+entities) are taken to be absent. -/
+def validate (d : Document) : List Violation :=
+  validateWithNotes d { elems := (List.replicate (countElements d.root) {}) }
+where
+  countElements : Node → Nat
+    | .element _ _ cs => 1 + countList cs
+    | _ => 0
+  countList : List Node → Nat
+    | [] => 0
+    | c :: rest => countElements c + countList rest
+
+/-- Parse `input` (with the files `resolve` can supply) and check it:
+`error` when it is not well-formed, otherwise the violated constraints. -/
+def validateXML (resolve : Resolver) (input : String) : Except XmlError (List Violation) :=
+  match parseXMLNotes resolve false input with
+  | .ok (d, notes) => .ok (validateWithNotes d notes)
+  | .error e => .error e
+
+/-- The document is valid by every constraint checked here, without the
+parser's notes. -/
 def Document.isValid (d : Document) : Bool := (validate d).isEmpty
 
 end L4Factoidal.XML

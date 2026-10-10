@@ -275,18 +275,33 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                         cands := cands ++
                           [(entry.fileName, "../" ++ entry.fileName ++ "/",
                             entry.path.toString)]
-                  for (dname, pfx, dpath) in cands do
-                    if (text.splitOn (dname ++ "/")).length > 1 then
-                      for entry in (← System.FilePath.readDir dpath) do
-                        let ep := entry.path.toString
-                        if !(← System.FilePath.isDir ep) then
-                          let b ← IO.FS.readBinFile ep
-                          let plain := (String.fromUTF8? b).isSome
-                          match decodeXmlBytesE b with
-                          | .error (.unsupported n) =>
-                              unreadable := unreadable ++ [(pfx ++ entry.fileName, n)]
-                          | .error _ => fetched := fetched ++ [(pfx ++ entry.fileName, ep, none, plain)]
-                          | .ok t => fetched := fetched ++ [(pfx ++ entry.fileName, ep, some t, plain)]
+                  -- A named directory may hold entities that name
+                  -- another one (`eduni/errata-2e/E18.xml` names
+                  -- `subdir1/E18-pe`, which names `../subdir2/`), so the
+                  -- texts read so far are searched for further
+                  -- directory names, a few rounds.
+                  let mut loadedDirs : List String := []
+                  let mut frontier : List String := [text]
+                  for _round in [0:3] do
+                    let mut next : List String := []
+                    if !frontier.isEmpty then
+                      for (dname, pfx, dpath) in cands do
+                        if !(loadedDirs.contains pfx) &&
+                           frontier.any (fun t => (t.splitOn (dname ++ "/")).length > 1) then
+                          loadedDirs := loadedDirs ++ [pfx]
+                          for entry in (← System.FilePath.readDir dpath) do
+                            let ep := entry.path.toString
+                            if !(← System.FilePath.isDir ep) then
+                              let b ← IO.FS.readBinFile ep
+                              let plain := (String.fromUTF8? b).isSome
+                              match decodeXmlBytesE b with
+                              | .error (.unsupported n) =>
+                                  unreadable := unreadable ++ [(pfx ++ entry.fileName, n)]
+                              | .error _ => fetched := fetched ++ [(pfx ++ entry.fileName, ep, none, plain)]
+                              | .ok t =>
+                                  fetched := fetched ++ [(pfx ++ entry.fileName, ep, some t, plain)]
+                                  next := next ++ [t]
+                    frontier := next
                 -- Only files the document NAMES count. A stray file in
                 -- a directory says nothing about this case.
                 let named : String → Bool := fun key => (text.splitOn key).length > 1
@@ -303,19 +318,34 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                   | some (_, _, t, _) => t
                   | none =>
                     let name := ((sysId.splitOn "/").getLast?).getD sysId
-                    (fetched.find? (fun (k, _, _, _) => k == name)).bind (·.2.2.1)
+                    match fetched.find? (fun (k, _, _, _) => k == name) with
+                    | some (_, _, t, _) => t
+                    | none =>
+                      -- A relative identifier whose `../` climbs out of
+                      -- the directory the declaring entity lives in:
+                      -- `subdir1/E18-pe` names `../subdir2/E18-extpe`.
+                      -- The pure resolver is not told which entity the
+                      -- declaration is in, so match what is left of the
+                      -- identifier against the end of a path read.
+                      let rest := (sysId.splitOn "/").filter (fun seg => seg != ".." && seg != ".")
+                      let tail := String.intercalate "/" rest
+                      (fetched.find? (fun (k, _, _, _) => k == tail || k.endsWith ("/" ++ tail))).bind (·.2.2.1)
                 match entityUnsupported.head? with
                 | some (key, name) =>
                     if verbose then IO.println s!"UNSUPPORTED-ENCODING {id}: entity {key} is in {name}"
                     c := Counts.add c { encUnsupported := [name] }
                 | none =>
-                let outcome : Except String Document :=
+                let withNotes : Except String (Document × Notes) :=
                   match docRead with
                   | .error e => .error e.message
                   | .ok t =>
-                      match parseDecodedXMLWith resolve t with
-                      | .ok d => .ok d
+                      match parseXMLNotes resolve true t with
+                      | .ok r => .ok r
                       | .error e => .error e.message
+                let outcome : Except String Document :=
+                  match withNotes with
+                  | .ok (d, _) => .ok d
+                  | .error m => .error m
                 -- A Namespaces-in-XML case asks for namespace
                 -- well-formedness ON TOP OF XML well-formedness
                 -- (Namespaces in XML 1.0 section 1: a document is
@@ -350,9 +380,9 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                 -- the validator can only say what it saw.
                 if !nsAware then
                   let parsed := outcome.toOption
-                  let violations := match parsed with
-                    | some d => validate d
-                    | none => []
+                  let violations := match withNotes with
+                    | .ok (d, ns) => validateWithNotes d ns
+                    | .error _ => []
                   let incompleteDtd := match parsed with
                     | some d => (d.doctype.map (·.incomplete)).getD false
                     | none => false
@@ -371,6 +401,8 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                     IO.println s!"VFAIL {id} (valid): {(violations.take 3).map (fun v => v.vc ++ ": " ++ v.message)}"
                   if verbose && ty == "invalid" && violations.isEmpty && parsed.isSome then
                     IO.println s!"VFAIL {id} (invalid): no violation found"
+                  if verbose && ty == "invalid" && !violations.isEmpty && parsed.isSome then
+                    IO.println s!"VINVALID {id}: {(violations.map (·.vc)).eraseDups}"
                 if verbose && is11 && ty == "not-wf" then
                   IO.println s!"X11 {id} (not-wf): rejected -- {why}"
                 if verbose && !plainCase && !nsAware && !is11 then
@@ -419,13 +451,18 @@ def main (args : List String) : IO UInt32 := do
   if total.fileMissing > 0 then
     IO.println s!"  {total.fileMissing} referenced files not on disk"
   IO.println ""
-  IO.println "Profile: XML 1.0 (Fifth Edition) and XML 1.1, NON-VALIDATING. Bytes are decoded as"
-  IO.println "UTF-8, UTF-16, ISO-8859-1 or US-ASCII (XML 1.0 section 4.3.3, Appendix F)."
+  IO.println "Profile: XML 1.0 (Fifth Edition) and XML 1.1. The parser is NON-VALIDATING;"
+  IO.println "validity is a separate layer. Bytes are decoded as UTF-8, UTF-16,"
+  IO.println "ISO-8859-1 or US-ASCII (XML 1.0 section 4.3.3, Appendix F)."
   IO.println "The XML suites are read as plain XML, where ':' is an ordinary name"
   IO.println "character. The Namespaces suites (eduni/namespaces) are read with the"
   IO.println "Namespaces-in-XML well-formedness check on top of the XML parse."
-  IO.println "A `valid` and an `invalid` case must BOTH be accepted: `invalid` means"
-  IO.println "it violates the DTD, which a non-validating parser is not asked to"
-  IO.println "notice. Counting those as failures would understate the parser;"
-  IO.println "counting the out-of-profile cases as passes would overstate it."
+  IO.println "In the plain, namespaces, encodings and XML 1.1 lines a `valid` and an"
+  IO.println "`invalid` case must BOTH be accepted: `invalid` means the document"
+  IO.println "violates its DTD, which a non-validating parser is not asked to notice."
+  IO.println "The validating line parses, then checks the validity constraints"
+  IO.println "(XML/Validity.lean): `valid` must pass them, `invalid` must break one,"
+  IO.println "`not-wf` must still be refused by the parser."
+  IO.println "Counting out-of-profile cases as failures would understate the parser;"
+  IO.println "counting them as passes would overstate it."
   return 0

@@ -19,6 +19,7 @@ vendored corpus files from disk.
 import L4Factoidal.XML.Theorems
 import L4Factoidal.XML.Wellformedness
 import L4Factoidal.XML.Encoding
+import L4Factoidal.XML.Validity
 
 namespace L4Factoidal.XML.Tests
 
@@ -659,6 +660,238 @@ def withEnt (decl : String) (ent : String) : Bool :=
 #guard isNamespaceWellFormedDoc (v11 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
 #guard !isNamespaceWellFormedDoc (v10 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
 
+/-! ## Validity — XML 1.0 section 3 and the validity constraints elsewhere
+
+`validateXML` parses, then checks the constraints. `vcs` is the set of
+constraint names a document violates (`none` when it is not
+well-formed); `valid` is "well-formed and no violation".
+
+Each constraint has a document that breaks it and one that does not, so a
+checker that answers "valid" for everything, or "invalid" for everything,
+fails the build. -/
+
+def noFiles : Resolver := fun _ => none
+def files (fs : List (String × String)) : Resolver :=
+  fun id => (fs.find? (fun f => f.1 == id)).map (·.2)
+
+def vcsWith (r : Resolver) (doc : String) : Option (List String) :=
+  match validateXML r doc with
+  | .ok vs => some ((vs.map (·.vc)).eraseDups)
+  | .error _ => none
+def vcs (doc : String) : Option (List String) := vcsWith noFiles doc
+def valid (doc : String) : Bool := vcs doc == some []
+def breaks (vc : String) (doc : String) : Bool :=
+  match vcs doc with
+  | some l => l.contains vc
+  | none => false
+
+-- A document with no document type declaration is not valid (section 2.8).
+#guard !valid "<a/>"
+#guard breaks "Valid Document" "<a/>"
+-- ...and a minimal valid one.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>"
+-- Root Element Type.
+#guard breaks "Root Element Type" "<!DOCTYPE b [<!ELEMENT a EMPTY>]><a/>"
+#guard !breaks "Root Element Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>"
+
+-- Element Valid: EMPTY means no content at all.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a> </a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a><!-- c --></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a><?p x?></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a>&amp;</a>"
+-- ...not even a reference to an entity whose text is empty.
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ENTITY e \"\">]><a>&e;</a>"
+-- ANY: every child element must be declared.
+#guard valid "<!DOCTYPE a [<!ELEMENT a ANY><!ELEMENT b EMPTY>]><a>t<b/>t<!-- c --></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a ANY>]><a><b/></a>"
+-- An element with no declaration at all.
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a ANY>]><a><z/></a>"
+-- Mixed content: text and only the named children.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA|b)*><!ELEMENT b EMPTY>]><a>t<b/>u<b/></a>"
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA)>]><a>text</a>"
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA)*>]><a>text</a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|b)*><!ELEMENT b EMPTY><!ELEMENT c EMPTY>]><a><c/></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (#PCDATA)><!ELEMENT b EMPTY>]><a><b/></a>"
+-- Element content: the sequence of children matches the model.
+def seqDoc (model body : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a " ++ model ++ "><!ELEMENT b EMPTY><!ELEMENT c EMPTY><!ELEMENT d EMPTY>]><a>" ++ body ++ "</a>"
+#guard valid (seqDoc "(b,c)" "<b/><c/>")
+#guard !valid (seqDoc "(b,c)" "<b/>")
+#guard !valid (seqDoc "(b,c)" "<c/><b/>")
+#guard !valid (seqDoc "(b,c)" "<b/><c/><c/>")
+#guard !valid (seqDoc "(b,c)" "")
+#guard valid (seqDoc "(b|c)" "<c/>")
+#guard !valid (seqDoc "(b|c)" "<b/><c/>")
+#guard !valid (seqDoc "(b|c)" "<d/>")
+#guard valid (seqDoc "(b?,c)" "<c/>")
+#guard valid (seqDoc "(b?,c)" "<b/><c/>")
+#guard !valid (seqDoc "(b?,c)" "<b/><b/><c/>")
+#guard !valid (seqDoc "(b?,c)" "")
+#guard valid (seqDoc "(b?,c?)" "")
+#guard valid (seqDoc "(b|c*)" "")
+#guard !valid (seqDoc "(b|c)" "")
+#guard valid (seqDoc "(b*)" "")
+#guard valid (seqDoc "(b*)" "<b/><b/><b/>")
+#guard !valid (seqDoc "(b+)" "")
+#guard valid (seqDoc "(b+)" "<b/><b/>")
+#guard valid (seqDoc "(b,(c|d)*,b?)" "<b/><c/><d/><c/>")
+#guard valid (seqDoc "(b,(c|d)*,b?)" "<b/><c/><b/>")
+#guard !valid (seqDoc "(b,(c|d)*,b?)" "<b/><b/><b/>")
+#guard valid (seqDoc "((b,c)|d)+" "<b/><c/><d/><b/><c/>")
+#guard !valid (seqDoc "((b,c)|d)+" "<b/><d/>")
+#guard valid (seqDoc "(b*,b)" "<b/><b/>")
+#guard valid (seqDoc "( b , c )" "<b/><c/>")
+#guard valid (seqDoc "(b)" "<b/>")
+-- White space between children is allowed; character data, a CDATA
+-- section (even an empty one) and a character reference to white space
+-- are not. Comments and processing instructions are.
+#guard valid (seqDoc "(b,c)" " <b/>\n<c/> ")
+#guard valid (seqDoc "(b,c)" "<b/><!-- c --><?p x?><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/>x<c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/><![CDATA[ ]]><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/><![CDATA[]]><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/>&#32;<c/>")
+-- ...but a literal white space inside an entity's replacement text is.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (b)><!ELEMENT b EMPTY><!ENTITY sp \" \">]><a>&sp;<b/></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (b)><!ELEMENT b EMPTY><!ENTITY sp \"&#38;#32;\">]><a>&sp;<b/></a>"
+-- A parsed model reads back as written.
+#guard (match parseContentSpecText "(b, (c | d)*, e?)" with
+        | some (.children cp) => cp.matches ["b", "c", "d", "c"] && !cp.matches ["c"]
+        | _ => false)
+#guard (match parseContentSpecText "(#PCDATA | b | c)*" with | some (.mixed ns) => ns == ["b", "c"] | _ => false)
+#guard (match parseContentSpecText "EMPTY" with | some .empty => true | _ => false)
+#guard (match parseContentSpecText "ANY" with | some .any => true | _ => false)
+
+-- Declarations. Unique Element Type Declaration; No Duplicate Types.
+#guard breaks "Unique Element Type Declaration" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ELEMENT a EMPTY>]><a/>"
+#guard breaks "No Duplicate Types" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|a|a)*>]><a/>"
+#guard !breaks "No Duplicate Types" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|a)*>]><a/>"
+
+-- Attributes. Required Attribute, Attribute Value Type (declared), Fixed.
+def attDoc (decl attrs : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a " ++ decl ++ ">]><a " ++ attrs ++ "/>"
+#guard valid (attDoc "x CDATA #REQUIRED" "x=\"1\"")
+#guard breaks "Required Attribute" (attDoc "x CDATA #REQUIRED" "")
+#guard valid (attDoc "x CDATA #IMPLIED" "")
+#guard breaks "Attribute Value Type" (attDoc "x CDATA #IMPLIED" "y=\"1\"")
+#guard valid (attDoc "x CDATA #FIXED \"v\"" "x=\"v\"")
+#guard valid (attDoc "x CDATA #FIXED \"v\"" "")
+#guard breaks "Fixed Attribute Default" (attDoc "x CDATA #FIXED \"v\"" "x=\"w\"")
+-- Types: ID, IDREF(S), ENTITY/ENTITIES, NMTOKEN(S), enumerations, notations.
+#guard valid (attDoc "x ID #IMPLIED" "x=\"n1\"")
+#guard breaks "ID" (attDoc "x ID #IMPLIED" "x=\"1n\"")
+#guard breaks "ID" (attDoc "x ID #IMPLIED y ID #IMPLIED" "x=\"n\" y=\"n\"")
+#guard breaks "One ID per Element Type" (attDoc "x ID #IMPLIED y ID #IMPLIED" "")
+#guard breaks "ID Attribute Default" (attDoc "x ID \"d\"" "")
+#guard breaks "ID Attribute Default" (attDoc "x ID #FIXED \"d\"" "")
+#guard valid (attDoc "x ID #REQUIRED" "x=\"n\"")
+#guard valid (attDoc "x ID #IMPLIED y IDREF #IMPLIED" "x=\"n\" y=\"n\"")
+#guard breaks "IDREF" (attDoc "x ID #IMPLIED y IDREF #IMPLIED" "x=\"n\" y=\"m\"")
+#guard breaks "IDREF" (attDoc "y IDREF #IMPLIED" "y=\"1x\"")
+#guard valid (attDoc "x ID #IMPLIED y IDREFS #IMPLIED" "x=\"n\" y=\"n n\"")
+#guard breaks "IDREF" (attDoc "x ID #IMPLIED y IDREFS #IMPLIED" "x=\"n\" y=\"n m\"")
+#guard breaks "IDREFS" (attDoc "y IDREFS #IMPLIED" "y=\"\"")
+#guard valid (attDoc "x NMTOKEN #IMPLIED" "x=\"1a-b\"")
+#guard breaks "Name Token" (attDoc "x NMTOKEN #IMPLIED" "x=\"a b\"")
+#guard valid (attDoc "x NMTOKENS #IMPLIED" "x=\"1a b2\"")
+#guard breaks "Name Token" (attDoc "x NMTOKENS #IMPLIED" "x=\"a @\"")
+#guard valid (attDoc "x (p|q) #IMPLIED" "x=\"p\"")
+#guard breaks "Enumeration" (attDoc "x (p|q) #IMPLIED" "x=\"r\"")
+#guard breaks "No Duplicate Tokens" (attDoc "x (p|p) #IMPLIED" "")
+-- An enumerated value is compared after the type's normalisation.
+#guard valid (attDoc "x (p|q) #IMPLIED" "x=\" p \"")
+-- The value of a tokenized attribute is normalised before it is checked.
+#guard valid (attDoc "x NMTOKENS #IMPLIED" "x=\"  a   b  \"")
+-- Attribute Default Legal.
+#guard breaks "Attribute Default Legal" (attDoc "x NMTOKEN \"a b\"" "")
+#guard valid (attDoc "x NMTOKEN \"ab\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x (p|q) \"r\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x IDREF \"1\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x IDREFS \"a 1\"" "")
+#guard valid (attDoc "x IDREFS \"a b\"" "")
+-- ENTITY attributes name unparsed entities, whose notations are declared.
+def entDoc (decls attrs : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a ANY><!NOTATION n SYSTEM \"x\"><!ENTITY u SYSTEM \"x\" NDATA n>" ++ decls ++ "]><a " ++ attrs ++ "/>"
+#guard valid (entDoc "<!ATTLIST a e ENTITY #IMPLIED>" "e=\"u\"")
+#guard breaks "Entity Name" (entDoc "<!ATTLIST a e ENTITY #IMPLIED>" "e=\"v\"")
+#guard breaks "Entity Name" (entDoc "<!ENTITY p \"text\"><!ATTLIST a e ENTITY #IMPLIED>" "e=\"p\"")
+#guard valid (entDoc "<!ATTLIST a e ENTITIES #IMPLIED>" "e=\"u u\"")
+#guard breaks "Entity Name" (entDoc "<!ATTLIST a e ENTITIES #IMPLIED>" "e=\"u v\"")
+#guard breaks "Notation Declared" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ENTITY u SYSTEM \"x\" NDATA zz>]><a/>"
+#guard valid (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED>" "nt=\"n\"")
+#guard breaks "Notation Attributes" (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED>" "nt=\"m\"")
+#guard breaks "Notation Attributes" (entDoc "<!ATTLIST a nt NOTATION (zz) #IMPLIED>" "")
+#guard breaks "One Notation Per Element Type"
+  (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED nu NOTATION (n) #IMPLIED>" "")
+#guard breaks "No Notation on Empty Element"
+  "<!DOCTYPE a [<!ELEMENT a EMPTY><!NOTATION n SYSTEM \"x\"><!ATTLIST a nt NOTATION (n) #IMPLIED>]><a/>"
+-- xml:space, when used, must be declared as an enumeration offering one of
+-- its two values (section 2.10); xml:lang must be declared like any other.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a xml:space (default|preserve) #IMPLIED>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a xml:space CDATA #IMPLIED>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xml:lang=\"en\"/>"
+-- An attribute that is only a namespace declaration is an attribute too.
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xmlns:p=\"http://e/\"/>"
+-- ID values are unique across the document.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (b,b)><!ELEMENT b EMPTY><!ATTLIST b i ID #REQUIRED>]><a><b i=\"x\"/><b i=\"y\"/></a>"
+#guard breaks "ID" "<!DOCTYPE a [<!ELEMENT a (b,b)><!ELEMENT b EMPTY><!ATTLIST b i ID #REQUIRED>]><a><b i=\"x\"/><b i=\"x\"/></a>"
+
+-- The first declaration of an attribute is binding (section 3.3).
+#guard valid (attDoc "x CDATA #IMPLIED x ID #IMPLIED" "x=\"1 \"")
+#guard breaks "ID" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x ID #IMPLIED x CDATA #IMPLIED>]><a x=\"1 \"/>"
+
+-- Entity Declared (4.1): with a parameter-entity reference in the DTD an
+-- undeclared general entity is a validity error, not a well-formedness one.
+#guard breaks "Entity Declared"
+  "<!DOCTYPE a [<!ENTITY % pe \"<!ENTITY e 't'>\">%pe;<!ELEMENT a ANY>]><a>&z;</a>"
+#guard valid
+  "<!DOCTYPE a [<!ENTITY % pe \"<!ENTITY e 't'>\">%pe;<!ELEMENT a ANY>]><a>&e;</a>"
+
+-- Parameter-entity nesting (sections 2.8, 3.2.1, 3.4), in an external
+-- subset.
+def extDoc (dtd : String) : Option (List String) :=
+  vcsWith (files [("x.dtd", dtd)]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>"
+#guard extDoc "<!ELEMENT a EMPTY>" == some []
+#guard extDoc "<!ENTITY % e \"(#PCDATA\"><!ELEMENT a %e;)>" == some ["Proper Group/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"(b,c)?\"><!ELEMENT b EMPTY><!ELEMENT c EMPTY><!ELEMENT a %e;>" == some []
+#guard extDoc "<!ENTITY % e \">\"><!ELEMENT a (#PCDATA) %e;" == some ["Proper Declaration/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"EMPTY\"><!ELEMENT a %e;>" == some []
+#guard extDoc "<!ENTITY % e \"INCLUDE[\"><!ELEMENT a EMPTY><![ %e; <!ATTLIST a x CDATA \"v\"> ]]>"
+       == some ["Proper Conditional Section/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"INCLUDE\"><!ELEMENT a EMPTY><![ %e; [ <!ATTLIST a x CDATA \"v\"> ]]>" == some []
+
+-- Standalone Document Declaration (2.9): nothing read from outside the
+-- document may decide the content of a document that says standalone=yes.
+def saDoc (standalone dtd body : String) : Option (List String) :=
+  vcsWith (files [("x.dtd", dtd)])
+    ("<?xml version=\"1.0\" standalone=\"" ++ standalone ++ "\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a>" ++ body ++ "</a>")
+-- an externally declared default the element leaves out
+#guard saDoc "yes" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">" "" == some ["Standalone Document Declaration"]
+#guard saDoc "no" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">" "" == some []
+#guard saDoc "yes" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA #IMPLIED>" "" == some []
+-- ...but not when the element gives the value itself
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"v\"/>" == some []
+-- white space directly inside an externally declared element-content type
+#guard saDoc "yes" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" " <b/>" == some ["Standalone Document Declaration"]
+#guard saDoc "yes" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" "<b/>" == some []
+#guard saDoc "no" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" " <b/>" == some []
+-- a tokenized attribute whose value normalisation would change
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\" p  q \"/>"
+  == some ["Standalone Document Declaration"]
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"p q\"/>" == some []
+-- declared in the INTERNAL subset, the same document is standalone
+#guard vcsWith noFiles
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>]><a x=\" p  q \"/>"
+  == some []
+
+-- A document the parser refuses has no verdict.
+#guard vcs "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a></b>" == none
+
 /-! ## RDF/XML checks — `XML.Wellformedness.fst`'s other half -/
 
 #guard isForbiddenNodeElementName "http://www.w3.org/1999/02/22-rdf-syntax-ns#li"
@@ -720,6 +953,8 @@ Lean's standard foundations; no `sorry`, no user `axiom`, no
 #print axioms Node.wellFormedList_eq_all
 #print axioms Node.wellFormed_of_mem_children
 #print axioms Node.serializeList_cons
+#print axioms normalizeLineEndings11TR_eq
+#print axioms normalizeLineEndings11_eq_normalizeLineEndings11Impl
 #print axioms parseXML
 #print axioms isNamespaceWellFormed
 

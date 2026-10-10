@@ -248,6 +248,8 @@ def declaredEncoding (text : String) : Option String :=
 /-- The leading bytes of `bs` up to and including the first `?>`, or all
 of them, read as ASCII (Appendix F.2). -/
 def declarationPrefix (bs : ByteArray) : String :=
+  -- Only an entity that begins with `<?xml` has a declaration to read.
+  if !startsWithBytes bs [0x3C, 0x3F, 0x78, 0x6D, 0x6C] then "" else
   let n := bs.size
   let stop := Id.run do
     let mut stop := n
