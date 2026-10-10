@@ -153,21 +153,20 @@ Steps per ontology, from `OUT/table.md` of the run. A cell is: count; wall time 
 
 ## 3. Entailment checks
 
-ENTAILS-Steps per ontology, from `OUT/table.md` of the run. A cell is: count; wall time (CPU time), peak resident set. "added" is the closure size minus the input size; the first row is the closure of the empty graph (the axiomatic triples each engine adds).
+Pairs per ontology. "not run" counts the checks skipped after a TIMEOUT or OOM of the same ontology. Times are wall time of one `owl-entails` run, closure included.
 
-| Ontology | Input triples | Species (Lean) | Parse, Lean | Parse, F* | OWL RL closure, Lean | OWL RL closure, F* | Consistent, Lean |
-|---|---:|---|---|---|---|---|---|
-| (empty graph) | — | — | — | — | 68 added; 0.05 s (0.03 CPU), 23 MB | 319 added; 0.03 s (0.02 CPU), 15 MB | — |
-| skos | 252 | DL (0 violations) | 252; 0.03 s (0.02 CPU), 23 MB | 254; 0.02 s (0.01 CPU), 15 MB | 663 added; 0.06 s (0.05 CPU), 35 MB | 1204 added; 0.13 s (0.12 CPU), 18 MB | true; 0.06 s (0.05 CPU), 24 MB |
-| foaf | 631 | FULL (1 violations) | 631; 0.03 s (0.02 CPU), 23 MB | 635; 0.02 s (0.01 CPU), 15 MB | 1241 added; 0.11 s (0.10 CPU), 43 MB | 1796 added; 0.34 s (0.34 CPU), 21 MB | true; 0.14 s (0.12 CPU), 26 MB |
-| prov-o | 1146 | FULL (13 violations) | 1146; 0.02 s (0.01 CPU), 23 MB | 1146; 0.03 s (0.02 CPU), 15 MB | 2120 added; 0.28 s (0.26 CPU), 59 MB | 6075 added; 10.35 s (9.40 CPU), 35 MB | true; 1.33 s (0.70 CPU), 28 MB |
-| bfo | 1015 | DL (0 violations) | 1015; 0.10 s (0.04 CPU), 25 MB | 1015; 0.13 s (0.04 CPU), 15 MB | 2822 added; 0.52 s (0.30 CPU), 63 MB | 3310 added; 1.05 s (0.71 CPU), 25 MB | true; 2.38 s (1.65 CPU), 33 MB |
-| pizza | 1944 | DL (0 violations) | 1944; 0.05 s (0.03 CPU), 27 MB | 1944; 0.05 s (0.04 CPU), 16 MB | 10869 added; 0.98 s (0.90 CPU), 161 MB | 7774 added; 1.99 s (1.89 CPU), 42 MB | true; 0.78 s (0.60 CPU), 43 MB |
-| wine | 2709 | DL (0 violations) | 2709; 0.07 s (0.05 CPU), 23 MB | 2912; 0.16 s (0.05 CPU), 15 MB | 26149 added; 5.83 s (5.37 CPU), 421 MB | TIMEOUT at 300 s, memory not recorded | true; 21.92 s (18.01 CPU), 80 MB |
-| ro | 11703 | FULL (523 violations) | 11703; 0.38 s (0.35 CPU), 69 MB | 11705; 0.33 s (0.30 CPU), 22 MB | 31033 added; 7.96 s (7.73 CPU), 511 MB | TIMEOUT at 300 s, memory not recorded | TIMEOUT at 600 s, memory not recorded |
-| schema.org | 17949 | FULL (10554 violations) | 17949; 0.20 s (0.18 CPU), 30 MB | 17949; 0.35 s (0.33 CPU), 17 MB | 42821 added; 4.60 s (4.46 CPU), 697 MB | TIMEOUT at 300 s, memory not recorded | true; 44.28 s (43.11 CPU), 104 MB |
-| cl-basic | 78833 | FULL (7 violations) | 78833; 3.95 s (2.72 CPU), 479 MB | 78835; 3.61 s (2.63 CPU), 73 MB | 84611 added; 26.68 s (19.80 CPU), 1956 MB | TIMEOUT at 300 s, 947 MB sampled | TIMEOUT at 600 s, 446 MB sampled |
-| qudt | 130404 | FULL (7334 violations) | 130404; 2.11 s (1.27 CPU), 257 MB | 130404; 3.18 s (2.00 CPU), 28 MB | OOM at 27 s, 1219 MB | TIMEOUT at 300 s, 661 MB sampled | OOM at 34 s, 1219 MB |
+| Ontology | Named classes | Stated pairs: true / false / unknown / TIMEOUT / OOM / not run (out of N) | Unrelated pairs: true / false / unknown / TIMEOUT / OOM / not run (out of N) | Entailment check time, median and max | Peak RSS, max |
+|---|---:|---|---|---|---|
+| skos | 4 | 1 / 0 / 0 / 0 / 0 / 0 (out of 1) | 0 / 4 / 0 / 0 / 0 / 0 (out of 4) | 0.06 s, 0.07 s | 24 MB |
+| foaf | 15 | 9 / 0 / 0 / 0 / 0 / 0 (out of 9) | 0 / 20 / 0 / 0 / 0 / 0 (out of 20) | 0.14 s, 0.28 s | 26 MB |
+| prov-o | 30 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 0 / 20 / 0 / 0 / 0 / 0 (out of 20) | 0.50 s, 1.47 s | 30 MB |
+| bfo | 36 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 2 / 18 / 0 / 0 / 0 / 0 (out of 20) | 0.38 s, 3.01 s | 34 MB |
+| pizza | 99 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 2 / 18 / 0 / 0 / 0 / 0 (out of 20) | 0.60 s, 1.75 s | 44 MB |
+| wine | 137 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 0 / 20 / 0 / 0 / 0 / 0 (out of 20) | 15.88 s, 33.05 s | 83 MB |
+| ro | 58 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 0 / 0 / 0 / 1 / 0 / 19 (out of 20) | 10.18 s, 600.01 s | 77 MB |
+| schema.org | 1010 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 0 / 20 / 0 / 0 / 0 / 0 (out of 20) | 44.80 s, 51.76 s | 104 MB |
+| cl-basic | 3616 | 20 / 0 / 0 / 0 / 0 / 0 (out of 20) | 0 / 0 / 0 / 1 / 0 / 19 (out of 20) | 11.91 s, 600.19 s | 447 MB |
+| qudt | 228 | 0 / 0 / 0 / 0 / 1 / 19 (out of 20) | 0 / 0 / 0 / 0 / 0 / 20 (out of 20) | 30.40 s, 30.40 s | 1219 MB |
 
 A stated pair is in the premise, so `owl-entails` answers it from the closure
 (`via: closure`) without the tableau. Those 20 rows measure the cost of one
@@ -201,9 +200,10 @@ from which it decides each pair.
 watchdog run); all 284 agree. The 4 unrelated pairs that the Lean engine answers `true` are
 subsumptions HermiT also derives: in BFO, site under independent continuant
 and relational quality under entity; in Pizza, sundried tomato topping under
-food, and `American` under `NonVegetarianPizza`. The last one needs the
-complement in the definition of `NonVegetarianPizza`, so the tableau decides
-it, not the RL closure.
+food, and `American` under `NonVegetarianPizza`. The last one is not in the
+OWL RL closure of Pizza (`closure --regime owl-rl` does not contain the
+triple), so the tableau refuter decided it; `NonVegetarianPizza` is defined
+with a complement. Gate row `pizza-entails-american` keeps it.
 
 ## 5. What did not finish, and the issues
 
@@ -257,7 +257,9 @@ answer `true`.
   is 68 triples in Lean and 319 in F\*; on Pizza Lean adds 10,869 triples and
   F\* 7,774. The difference was not analysed here.
 - **Species.** Four of the ten are OWL 2 DL for the Lean checker (SKOS, BFO,
-  Pizza, wine with food). FOAF, PROV-O, RO, the Cell Ontology and QUDT are Full.
+  Pizza, wine with food). FOAF, PROV-O, RO, schema.org, the Cell Ontology and
+  QUDT are Full (schema.org: 10,554 violations, mostly properties used without
+  an OWL typing).
   The most common reason in the OBO and PROV-O files is
   `reserved-vocabulary-subject`: the files declare `rdfs:label`,
   `rdfs:comment` or `rdfs:seeAlso` as `owl:AnnotationProperty` (the OWL API
