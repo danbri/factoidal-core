@@ -53,6 +53,7 @@ Usage: `lake exe l4xmlconf [xmlconf-dir]`
 import L4Factoidal.XML.Parser
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Encoding
+import L4Factoidal.XML.Validity
 
 open L4Factoidal.XML
 
@@ -87,6 +88,15 @@ structure Counts where
   nsPass      : Nat := 0   -- Namespaces-in-XML cases, scored with the namespace check
   nsFail      : Nat := 0
   nsOptional  : Nat := 0   -- Namespaces-in-XML cases of TYPE="error"
+  -- The VALIDATING line: parse, then the validity constraints.
+  -- (passes, failures) per TYPE, and the cases whose DTD could not be read.
+  vValidPass : Nat := 0
+  vValidFail : Nat := 0
+  vInvalidPass : Nat := 0
+  vInvalidFail : Nat := 0
+  vNotWfPass : Nat := 0
+  vNotWfFail : Nat := 0
+  vUndecided : Nat := 0
   fileMissing : Nat := 0
 deriving Repr, Inhabited
 
@@ -99,6 +109,10 @@ def Counts.add (a b : Counts) : Counts :=
     encUnsupported := a.encUnsupported ++ b.encUnsupported, otherEdition := a.otherEdition + b.otherEdition,
     nsPass := a.nsPass + b.nsPass, nsFail := a.nsFail + b.nsFail,
     nsOptional := a.nsOptional + b.nsOptional,
+    vValidPass := a.vValidPass + b.vValidPass, vValidFail := a.vValidFail + b.vValidFail,
+    vInvalidPass := a.vInvalidPass + b.vInvalidPass, vInvalidFail := a.vInvalidFail + b.vInvalidFail,
+    vNotWfPass := a.vNotWfPass + b.vNotWfPass, vNotWfFail := a.vNotWfFail + b.vNotWfFail,
+    vUndecided := a.vUndecided + b.vUndecided,
     fileMissing := a.fileMissing + b.fileMissing }
 
 /-- The sub-manifests, relative to the suite root. Listed rather than
@@ -327,6 +341,36 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                    else if plainCase then
                      (if ok then { scored := 1, pass := 1 } else { scored := 1, fail := 1 })
                    else (if ok then { encPass := 1 } else { encFail := 1 }))
+                -- The VALIDATING line. A `not-wf` case must still be
+                -- refused by the parser. A `valid` case must parse and
+                -- pass every validity constraint; an `invalid` case must
+                -- parse and break one. The Namespaces suites are about
+                -- another layer and are not read in this mode. A case
+                -- whose DTD could not be read in full is counted apart:
+                -- the validator can only say what it saw.
+                if !nsAware then
+                  let parsed := outcome.toOption
+                  let violations := match parsed with
+                    | some d => validate d
+                    | none => []
+                  let incompleteDtd := match parsed with
+                    | some d => (d.doctype.map (·.incomplete)).getD false
+                    | none => false
+                  if ty == "not-wf" then
+                    c := Counts.add c (if parsed.isNone then { vNotWfPass := 1 } else { vNotWfFail := 1 })
+                  else if incompleteDtd && ty == "valid" then
+                    if violations.isEmpty then c := Counts.add c { vValidPass := 1 }
+                    else c := Counts.add c { vUndecided := 1 }
+                  else if parsed.isNone then
+                    c := Counts.add c (if ty == "valid" then { vValidFail := 1 } else { vInvalidFail := 1 })
+                  else if ty == "valid" then
+                    c := Counts.add c (if violations.isEmpty then { vValidPass := 1 } else { vValidFail := 1 })
+                  else
+                    c := Counts.add c (if violations.isEmpty then { vInvalidFail := 1 } else { vInvalidPass := 1 })
+                  if verbose && ty == "valid" && !violations.isEmpty && parsed.isSome then
+                    IO.println s!"VFAIL {id} (valid): {(violations.take 3).map (fun v => v.vc ++ ": " ++ v.message)}"
+                  if verbose && ty == "invalid" && violations.isEmpty && parsed.isSome then
+                    IO.println s!"VFAIL {id} (invalid): no violation found"
                 if verbose && is11 && ty == "not-wf" then
                   IO.println s!"X11 {id} (not-wf): rejected -- {why}"
                 if verbose && !plainCase && !nsAware && !is11 then
@@ -362,6 +406,11 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"namespaces SCORED: {total.nsPass} pass, {total.nsFail} fail (out of {total.nsPass + total.nsFail} Namespaces-in-XML cases; XML parse + namespace well-formedness)"
   IO.println s!"encodings SCORED: {total.encPass} pass, {total.encFail} fail (out of {total.encPass + total.encFail} cases whose document or entity is not plain UTF-8; decoded by decodeXmlBytes)"
   IO.println s!"xml 1.1 SCORED: {total.x11Pass} pass, {total.x11Fail} fail (out of {total.x11Pass + total.x11Fail} XML 1.1 cases; the document's declaration selects the rules)"
+  let vp := total.vValidPass + total.vInvalidPass + total.vNotWfPass
+  let vf := total.vValidFail + total.vInvalidFail + total.vNotWfFail
+  IO.println s!"validating SCORED: {vp} pass, {vf} fail (out of {vp + vf}; parse, then the validity constraints; the Namespaces suites are not read in this mode)"
+  IO.println s!"  valid: {total.vValidPass} pass, {total.vValidFail} fail (out of {total.vValidPass + total.vValidFail}), invalid: {total.vInvalidPass} pass, {total.vInvalidFail} fail (out of {total.vInvalidPass + total.vInvalidFail}), not-wf: {total.vNotWfPass} pass, {total.vNotWfFail} fail (out of {total.vNotWfPass + total.vNotWfFail})"
+  IO.println s!"  {total.vUndecided} valid cases left out: their DTD could not be read in full"
   IO.println s!"OUT OF PROFILE, reported not scored: {total.optional} optional-behaviour (TYPE=error),"
   IO.println s!"  {total.nsOptional} optional-behaviour in the Namespaces suites (TYPE=error),"
   IO.println s!"  {total.x11Optional} optional-behaviour in the XML 1.1 suites (TYPE=error),"

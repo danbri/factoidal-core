@@ -544,8 +544,16 @@ def expandEntityValue (inAttr : Bool) (ents : EntityTable) (visited : List Strin
                       -- see this call keep the depth and drop the budget.
                       expandEntityValue inAttr ents visited s pos' (depth' + 1) budget' (decoded :: acc)
       else
+        -- Section 3.3.3, step 3: when an entity reference is met in an
+        -- attribute value, its replacement text is processed by the same
+        -- algorithm, so a white space CHARACTER in it (#x9, #xA, #xD,
+        -- whether written there or put there by a character reference in
+        -- the declaration) becomes a space. A character reference IN the
+        -- attribute value keeps the character itself; that case is
+        -- `parseReference`, not this function.
+        let out := if inAttr && (ch == '\t' || ch == '\n' || ch == '\r') then ' ' else ch
         expandEntityValue inAttr ents visited s (pos + 1) depth budget'
-          (String.singleton ch :: acc)
+          (String.singleton out :: acc)
 termination_by (depth, budget)
 
 /-- Parse one `[67] Reference` whose leading `&` has already been
@@ -1464,19 +1472,30 @@ def parseContentSpec (s : Chars) (pos : Nat) : PResult Unit :=
 
 /-- `[45] elementdecl ::= '<!ELEMENT' S Name S contentspec S? '>'`,
     with `[46] contentspec ::= 'EMPTY' | 'ANY' | Mixed | children`. -/
-def parseElementDecl (s : Chars) (pos : Nat) : PResult Unit :=
+def parseElementDecl (s : Chars) (pos : Nat) : PResult ElementDecl :=
   match pstring "<!ELEMENT" s pos with
   | .err m p => .err m p
   | .ok _ p1 => match skipSpace1 s p1 with
     | .err m p => .err m p
     | .ok _ p2 => match parseName s p2 with
       | .err m p => .err m p
-      | .ok _ p3 => match skipSpace1 s p3 with
+      | .ok name p3 => match skipSpace1 s p3 with
         | .err m p => .err m p
         | .ok _ p4 =>
             match parseContentSpec s p4 with
             | .err m p => .err m p
-            | .ok _ p5 => declEnd s p5
+            | .ok _ p5 =>
+                match declEnd s p5 with
+                | .err m p => .err m p
+                | .ok _ p6 => .ok { name := name, spec := sub s p4 p5 } p6
+
+/-- The tokens of a parenthesised `|`-separated list, read from the
+text `[start, stop)` that `parenList` has already accepted (`start` is at
+the `(`, `stop` just after the `)`). The shape was checked, so the split
+is on `|` and trims `[3] S`. -/
+def parenTokens (s : Chars) (start stop : Nat) : List String :=
+  let inner := sub s (start + 1) (stop - 1)
+  (inner.splitOn "|").map fun t => String.ofList ((t.toList.dropWhile isXmlSpace).reverse.dropWhile isXmlSpace).reverse
 
 /-- The ten `[54] AttType` forms. `NOTATION` takes an enumeration. -/
 def parseAttType (s : Chars) (pos : Nat) : PResult AttType :=
@@ -1497,14 +1516,14 @@ def parseAttType (s : Chars) (pos : Nat) : PResult AttType :=
               | .err m p => .err m p
               | .ok _ p' => .ok () p') '|' s p1 with
             | .err m p => .err m p
-            | .ok _ p2 => .ok .NOTATION p2
+            | .ok _ p2 => .ok (.NOTATION (parenTokens s p1 p2)) p2
       else if pos < s.size && charAt s pos == '(' then
         -- `[59] Enumeration`: a `|`-separated list of Nmtokens. A
         -- COMMA-separated one is an SGML-ism, not XML (not-wf
         -- `attlist03`).
         match parenList parseNmtoken '|' s pos with
         | .err m p => .err m p
-        | .ok _ p2 => .ok .Enumeration p2
+        | .ok _ p2 => .ok (.Enumeration (parenTokens s pos p2)) p2
       else .err "expected an attribute type" pos
 
 /-- `[60] DefaultDecl ::= '#REQUIRED' | '#IMPLIED'
@@ -1870,7 +1889,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
     input at least announces itself. -/
 def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Nat)
     (ents : EntityTable) (pes : EntityTable) :
-    PResult (EntityTable × EntityTable × String) :=
+    PResult (EntityTable × EntityTable × String × Option String) :=
   match pstring "<!ENTITY" s pos with
   | .err m p => .err m p
   | .ok _ p1 =>
@@ -1901,8 +1920,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                   -- A PARAMETER entity is not a general entity, so it
                   -- never enters the table a `&name;` reference reads.
                   -- It has its OWN table, which `%name;` reads.
-                  if isPE then .ok (ents, declareEntity name { value := value } pes, name) p7
-                  else .ok (declareEntity name { value := value } ents, pes, name) p7
+                  if isPE then .ok (ents, declareEntity name { value := value } pes, name, none) p7
+                  else .ok (declareEntity name { value := value } ents, pes, name, none) p7
           else
             match parseExternalIDSys s p5 with
             | .err m p => .err m p
@@ -1917,12 +1936,12 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                   | .err m p => .err m p
                   | .ok _ p8 => match parseName s p8 with
                     | .err m p => .err m p
-                    | .ok _ p9 => match declEnd s p9 with
+                    | .ok ntName p9 => match declEnd s p9 with
                       | .err m p => .err m p
                       -- An UNPARSED entity (one with an NDataDecl) is
                       -- never included by a reference, so it enters
                       -- neither table.
-                      | .ok _ p10 => .ok (ents, pes, name) p10
+                      | .ok _ p10 => .ok (ents, pes, name, some ntName) p10
               else match declEnd s p6 with
                 | .err m p => .err m p
                 | .ok _ p' =>
@@ -1943,8 +1962,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                     | none      =>
                         let ed : EntityDef :=
                           { value := "", external := true, resolved := false }
-                        if isPE then .ok (ents, declareEntity name ed pes, name) p'
-                        else .ok (declareEntity name ed ents, pes, name) p'
+                        if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
+                        else .ok (declareEntity name ed ents, pes, name, none) p'
                     | some raw  =>
                       match readTextDecl ents.version raw with
                       -- A malformed `[77] TextDecl` in the entity is
@@ -1960,8 +1979,8 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                       | .error m => .err m p'
                       | .ok text =>
                         let ed : EntityDef := { value := text, external := true }
-                        if isPE then .ok (ents, declareEntity name ed pes, name) p'
-                        else .ok (declareEntity name ed ents, pes, name) p'
+                        if isPE then .ok (ents, declareEntity name ed pes, name, none) p'
+                        else .ok (declareEntity name ed ents, pes, name, none) p'
 
 /-- What reading a declaration subset accumulates besides the two
 entity tables: the attribute declarations and the declared names, each
@@ -1969,6 +1988,9 @@ in reverse order of declaration. -/
 structure DtdAcc where
   atts  : List AttDecl := []
   names : DeclaredNames := {}
+  elems : List ElementDecl := []
+  unparsed : List (String × String) := []
+  incomplete : Bool := false
 deriving Repr, Inhabited
 
 /-- Where a declaration subset ENDS. The three are different
@@ -2002,7 +2024,7 @@ def skipIgnoreSect (s : Chars) (pos depth : Nat) : Nat → PResult Unit
     INCLUDED — its replacement text is parsed as declarations right
     there — which is how an external subset held in a parameter entity
     reaches the parser at all. -/
-def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
+def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
     (s : Chars) (pos : Nat) (ents : EntityTable) (pes : EntityTable)
     (dtd : DtdAcc) :
     Nat → PResult (EntityTable × EntityTable × DtdAcc)
@@ -2020,7 +2042,7 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
             if peekLit "]]>" s pos then .ok (ents, pes, dtd) (pos + 3)
             else .err "expected ']]>' at the end of an INCLUDE section" pos
         | .eof       => .err "unexpected ']' in an external subset" pos
-      else if isXmlSpace ch then parseSubset resolve endKind s (pos + 1) ents pes dtd fuel
+      else if isXmlSpace ch then parseSubset resolve endKind ext s (pos + 1) ents pes dtd fuel
       else if ch == '%' then
         -- `[69] PEReference ::= '%' Name ';'`. Scanning to the next
         -- `;` accepted `% pe;`, which has a space where the Name must
@@ -2042,47 +2064,56 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
                -- so the table records it here and not at the
                -- declaration.
                let pes := { pes with sawPe := true }
+               let extPe := ((lookupEntityDef name pes).map (·.external)).getD false
                match lookupEntity name pes with
-               | none => parseSubset resolve endKind s (p1 + 1) ents pes dtd fuel
+               | none =>
+                   parseSubset resolve endKind ext s (p1 + 1) ents pes
+                     { dtd with incomplete := true } fuel
                | some text =>
                    let arr : Chars := text.toList.toArray
-                   match parseSubset resolve .eof arr 0 ents pes dtd fuel with
+                   match parseSubset resolve .eof (ext || extPe) arr 0 ents pes dtd fuel with
                    | .err m p => .err m p
                    | .ok (ents', pes', dtd') _ =>
-                       parseSubset resolve endKind s (p1 + 1) ents' pes' dtd' fuel)
+                       parseSubset resolve endKind ext s (p1 + 1) ents' pes' dtd' fuel)
       else if ch == '<' then
         if peekLit "<!--" s pos then
           match parseComment ents.version s pos with
           | .err m p => .err m p
-          | .ok _ pos' => parseSubset resolve endKind s pos' ents pes dtd fuel
+          | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
         else if peekLit "<!ENTITY" s pos then
           match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
           | .err m p => .err m p
-          | .ok (ents', pes', name) pos' =>
-              parseSubset resolve endKind s pos' ents' pes'
-                { dtd with names := { dtd.names with entities := name :: dtd.names.entities } } fuel
+          | .ok (ents', pes', name, ndata) pos' =>
+              parseSubset resolve endKind ext s pos' ents' pes'
+                { dtd with
+                    names := { dtd.names with entities := name :: dtd.names.entities },
+                    unparsed := match ndata with
+                      | some nt => (name, nt) :: dtd.unparsed
+                      | none => dtd.unparsed } fuel
         else if peekLit "<?" s pos then
           match parsePi ents.version s pos with
           | .err m p => .err m p
           | .ok node pos' =>
               let target := match node with | .pi t _ => [t] | _ => []
-              parseSubset resolve endKind s pos' ents pes
+              parseSubset resolve endKind ext s pos' ents pes
                 { dtd with names := { dtd.names with piTargets := target ++ dtd.names.piTargets } } fuel
         else if peekLit "<!ELEMENT" s pos then
           match parseElementDecl s pos with
           | .err m p => .err m p
-          | .ok _ pos' => parseSubset resolve endKind s pos' ents pes dtd fuel
+          | .ok ed pos' =>
+              parseSubset resolve endKind ext s pos' ents pes
+                { dtd with elems := { ed with external := ext } :: dtd.elems } fuel
         else if peekLit "<!ATTLIST" s pos then
           match parseAttlistDecl (endKind == .bracket) ents s pos with
           | .err m p => .err m p
           | .ok decls pos' =>
-            parseSubset resolve endKind s pos' ents pes
-              { dtd with atts := decls.reverse ++ dtd.atts } fuel
+            parseSubset resolve endKind ext s pos' ents pes
+              { dtd with atts := (decls.map fun d => { d with external := ext }).reverse ++ dtd.atts } fuel
         else if peekLit "<!NOTATION" s pos then
           match parseNotationDecl s pos with
           | .err m p => .err m p
           | .ok name pos' =>
-              parseSubset resolve endKind s pos' ents pes
+              parseSubset resolve endKind ext s pos' ents pes
                 { dtd with names := { dtd.names with notations := name :: dtd.names.notations } } fuel
         else if peekLit "<![" s pos then
           -- `[61] conditionalSect` is an EXTERNAL-subset production.
@@ -2095,17 +2126,17 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
             if peekLit "INCLUDE" s p1 then
               let p2 := skipSpace s (p1 + 7)
               if p2 < s.size && charAt s p2 == '[' then
-                match parseSubset resolve .condClose s (p2 + 1) ents pes dtd fuel with
+                match parseSubset resolve .condClose ext s (p2 + 1) ents pes dtd fuel with
                 | .err m p => .err m p
                 | .ok (ents', pes', dtd') pos' =>
-                    parseSubset resolve endKind s pos' ents' pes' dtd' fuel
+                    parseSubset resolve endKind ext s pos' ents' pes' dtd' fuel
               else .err "expected '[' after INCLUDE ([62] includeSect)" p2
             else if peekLit "IGNORE" s p1 then
               let p2 := skipSpace s (p1 + 6)
               if p2 < s.size && charAt s p2 == '[' then
                 match skipIgnoreSect s (p2 + 1) 1 (s.size + 1) with
                 | .err m p => .err m p
-                | .ok _ pos' => parseSubset resolve endKind s pos' ents pes dtd fuel
+                | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
               else .err "expected '[' after IGNORE ([63] ignoreSect)" p2
             else .err "expected INCLUDE or IGNORE ([61] conditionalSect)" p1
         else .err "malformed declaration" pos
@@ -2248,7 +2279,7 @@ def peScan (resolve : Resolver) (s : Chars) (pos : Nat) (pes : EntityTable)
                 -- do that; `parseSubset` produces the real message
                 -- afterwards either way.
                 peScan resolve s (pos + 2) pes ("<!" :: acc) .decl depth fuel'
-            | .ok (_, pes', _) e => peScan resolve s e pes' (sub s pos e :: acc) .top depth fuel'
+            | .ok (_, pes', _, _) e => peScan resolve s e pes' (sub s pos e :: acc) .top depth fuel'
           else if peekLit "<![" s pos then
             peScan resolve s (pos + 3) pes ("<![" :: acc) .decl depth fuel'
           else if peekLit "<!" s pos then
@@ -2291,7 +2322,7 @@ def parseDoctype (resolve : Resolver) (ver : XmlVersion) (standalone : Bool)
           -- over a later one of the same name (§4.2).
           let p4 := skipSpace s p3'
           match (if p4 < s.size && charAt s p4 == '[' then
-                   match parseSubset resolve .bracket s (p4 + 1) { version := ver } { version := ver } {} (s.size + 1) with
+                   match parseSubset resolve .bracket false s (p4 + 1) { version := ver } { version := ver } {} (s.size + 1) with
                    | .err m p => PResult.err m p
                    | .ok r p5 => PResult.ok r p5
                  else PResult.ok ((({ version := ver }, { version := ver }, {}) :
@@ -2318,7 +2349,7 @@ def parseDoctype (resolve : Resolver) (ver : XmlVersion) (standalone : Bool)
                        let raw : Chars := body.toList.toArray
                        let arr : Chars :=
                          (peScan resolve raw 0 pes [] .top (raw.size + 1) (raw.size + 1)).toList.toArray
-                       match parseSubset resolve .eof arr 0 ents pes dtd (arr.size + 1) with
+                       match parseSubset resolve .eof true arr 0 ents pes dtd (arr.size + 1) with
                        | .err m _ => PResult.err ("in the external subset: " ++ m) p5
                        | .ok r _  => PResult.ok r p5) with
             | .err m p => .err m p
@@ -2350,7 +2381,9 @@ def parseDoctype (resolve : Resolver) (ver : XmlVersion) (standalone : Bool)
               let p6 := skipSpace s p5
               if p6 < s.size && charAt s p6 == '>' then
                 .ok { rootName := rootName, entities := entsOut, attDecls := dtdAll.atts,
-                      systemId := sysId, declared := dtdAll.names } (p6 + 1)
+                      systemId := sysId, declared := dtdAll.names,
+                      elementDecls := dtdAll.elems, unparsedEntities := dtdAll.unparsed,
+                      incomplete := dtdAll.incomplete || (sysId.isSome && !extRead) } (p6 + 1)
               else .err "DOCTYPE: expected '>' after the document type declaration" p6
 
 /-! ## `[27] Misc` — the prolog and epilog

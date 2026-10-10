@@ -404,10 +404,10 @@ inductive AttType where
   | ENTITIES
   | NMTOKEN
   | NMTOKENS
-  /-- `NOTATION (n1 | n2 …)` — the names are not kept. -/
-  | NOTATION
-  /-- `(v1 | v2 …)` — the tokens are not kept. -/
-  | Enumeration
+  /-- `NOTATION (n1 | n2 …)` — the notation names, in order. -/
+  | NOTATION (names : List String)
+  /-- `(v1 | v2 …)` — the enumerated tokens, in order. -/
+  | Enumeration (tokens : List String)
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[60] DefaultDecl ::= '#REQUIRED' | '#IMPLIED' | (('#FIXED' S)?
@@ -426,6 +426,23 @@ structure AttDecl where
   name : String
   type : AttType
   defaultDecl : AttDefault
+  /-- Declared in the external subset or in an external parameter
+  entity (XML 1.0 §2.9: such a declaration may not affect a document
+  that says `standalone="yes"`). -/
+  external : Bool := false
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[45] elementdecl`, with its `[46] contentspec` kept as the text the
+declaration gave (`EMPTY`, `ANY`, a `[51] Mixed` or a `[47] children`
+group), after any parameter-entity references in it were replaced. The
+content model is read out of the text by the validity layer; the parser
+checks only its shape. -/
+structure ElementDecl where
+  name : String
+  spec : String
+  /-- Declared in the external subset or in an external parameter
+  entity. -/
+  external : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
 /-- The names a DTD declares, kept because Namespaces in XML 1.0 §6
@@ -470,6 +487,17 @@ structure Doctype where
   systemId : Option String := none
   /-- The names the DTD declares. -/
   declared : DeclaredNames := {}
+  /-- Every `[45] elementdecl`, in REVERSE order of declaration. -/
+  elementDecls : List ElementDecl := []
+  /-- The unparsed entities (`[76] NDataDecl`): entity name and notation
+  name, in reverse order of declaration. A general entity with an
+  `NDATA` part is never included by a reference, so it is in no
+  `EntityTable`. -/
+  unparsedEntities : List (String × String) := []
+  /-- Some part of the DTD was named but could not be read: an external
+  subset or an external parameter entity the caller could not supply. A
+  validity check over an incomplete DTD can only say what it saw. -/
+  incomplete : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
 /-- `(element name, attribute name)` pairs declared `[54] AttType` =

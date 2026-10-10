@@ -251,9 +251,7 @@ def XmlDecl.serialize (d : XmlDecl) : String :=
   (match d.standalone with | none => "" | some s => " standalone=\"" ++ s ++ "\"") ++
   "?>"
 
-/-- `[54] AttType` back to its keyword. The names of a `NOTATION` list
-and the tokens of an enumeration are not kept by the parser, so one
-placeholder name is written; it re-parses to the same `AttType`. -/
+/-- `[54] AttType` back to its keyword and token list. -/
 def AttType.serialize : AttType → String
   | .CDATA => "CDATA"
   | .ID => "ID"
@@ -263,8 +261,8 @@ def AttType.serialize : AttType → String
   | .ENTITIES => "ENTITIES"
   | .NMTOKEN => "NMTOKEN"
   | .NMTOKENS => "NMTOKENS"
-  | .NOTATION => "NOTATION (n)"
-  | .Enumeration => "(n)"
+  | .NOTATION names => "NOTATION (" ++ String.intercalate "|" names ++ ")"
+  | .Enumeration tokens => "(" ++ String.intercalate "|" tokens ++ ")"
 
 /-- A literal in the quote it does not contain. -/
 def quoteLiteral (lit : String) : String :=
@@ -288,16 +286,24 @@ read out of it.
 The declaration lists are emitted REVERSED. Both are built by
 prepending as the internal subset is scanned, so the stored order is
 the reverse of the document order; reversing on the way out is what
-makes the re-parse rebuild the identical lists. The names in
-`declared` beyond the entity names that `entities` already carries are
-not re-emitted. -/
+makes the re-parse rebuild the identical lists. Notations and unparsed
+entities are re-emitted with a placeholder system identifier (the parser
+does not keep it), and the processing-instruction targets and the
+parameter-entity names in `declared` are not re-emitted. -/
 def Doctype.serialize (dt : Doctype) : String :=
-  if dt.entities.defs.isEmpty && dt.attDecls.isEmpty then
+  if dt.entities.defs.isEmpty && dt.attDecls.isEmpty && dt.elementDecls.isEmpty &&
+     dt.unparsedEntities.isEmpty && dt.declared.notations.isEmpty then
     "<!DOCTYPE " ++ dt.rootName ++ ">"
   else
     "<!DOCTYPE " ++ dt.rootName ++ " [" ++
     String.join (dt.entities.defs.reverse.map fun e =>
       "<!ENTITY " ++ e.1 ++ " \"" ++ e.2.value ++ "\">") ++
+    String.join (dt.unparsedEntities.reverse.map fun e =>
+      "<!ENTITY " ++ e.1 ++ " SYSTEM \"x\" NDATA " ++ e.2 ++ ">") ++
+    String.join (dt.declared.notations.reverse.map fun n =>
+      "<!NOTATION " ++ n ++ " SYSTEM \"x\">") ++
+    String.join (dt.elementDecls.reverse.map fun e =>
+      "<!ELEMENT " ++ e.name ++ " " ++ e.spec ++ ">") ++
     String.join (dt.attDecls.reverse.map AttDecl.serialize) ++
     "]>"
 

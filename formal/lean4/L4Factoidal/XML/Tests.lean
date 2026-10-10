@@ -348,8 +348,8 @@ and trailing spaces discarded and each run of spaces collapsed. -/
         | .error _ => []) ==
        [("a", .CDATA, .implied), ("b", .ID, .required), ("c", .IDREF, .implied),
         ("d", .IDREFS, .implied), ("e", .ENTITY, .implied), ("f", .ENTITIES, .implied),
-        ("g", .NMTOKEN, .implied), ("h", .NMTOKENS, .implied), ("i", .NOTATION, .implied),
-        ("j", .Enumeration, .value "x"), ("k", .CDATA, .fixed "z")]
+        ("g", .NMTOKEN, .implied), ("h", .NMTOKENS, .implied), ("i", .NOTATION ["n"], .implied),
+        ("j", .Enumeration ["x", "y"], .value "x"), ("k", .CDATA, .fixed "z")]
 -- ...and re-parse unchanged after serialisation.
 #guard roundTripsFrom ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED b ID #REQUIRED " ++
           "c IDREF #IMPLIED d IDREFS #IMPLIED e ENTITY #IMPLIED f ENTITIES #IMPLIED " ++
