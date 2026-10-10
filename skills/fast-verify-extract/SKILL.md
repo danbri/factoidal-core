@@ -703,6 +703,12 @@ wall-clock on a docs-only PR and a one-module PR, before/after.
 
 ### P5 — hints — MEASURED AND REJECTED, 2026-07-04
 
+Hints as a source of proof content for the Lean port (unsat cores, not
+replay) were assessed on 2026-10-10. Coordinator recommendation: do not adopt; the owner has not decided:
+`docs/designissues/2026-10-10-fstar-smt-artifacts-and-lean-migration.md`.
+It has one `--query_stats` measurement: in `RDF.Entailment.RDFS.ModelTheory`,
+40 of 45 queries used less than 0.13 of the resource limit.
+
 The experiment this proposal asked for was run (scratch-isolated
 source copies, F\* 2025.12.15, z3 4.13.3, warm dependency
 `.checked`, comment-only edit invalidating the target's `.checked`
