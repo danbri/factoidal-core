@@ -69,17 +69,18 @@ def objectPropertiesOf (st : Store) : List WfIri :=
 
 /-! ## Class expressions -/
 
-/-- `C₁ ⊓ … ⊓ Cₙ` as a right fold; the empty one is `owl:Thing`. -/
-def foldConj : List Concept → Concept
+/-- `C₁ ⊓ (… ⊓ Cₙ)`, nested to the right; the empty one is `owl:Thing`.
+    Built from the last operand back, so the loop is a tail call. -/
+def foldConj (cs : List Concept) : Concept :=
+  match cs.reverse with
   | []      => .top
-  | [c]     => c
-  | c :: cs => .conj c (foldConj cs)
+  | x :: xs => xs.foldl (fun acc c => .conj c acc) x
 
-/-- `C₁ ⊔ … ⊔ Cₙ` as a right fold; the empty one is `owl:Nothing`. -/
-def foldDisj : List Concept → Concept
+/-- `C₁ ⊔ (… ⊔ Cₙ)`, nested to the right; the empty one is `owl:Nothing`. -/
+def foldDisj (cs : List Concept) : Concept :=
+  match cs.reverse with
   | []      => .bot
-  | [c]     => c
-  | c :: cs => .disj c (foldDisj cs)
+  | x :: xs => xs.foldl (fun acc c => .disj c acc) x
 
 /-- Which properties the reader treats as object properties and which
     as data properties. -/
@@ -165,12 +166,16 @@ def toConcept (sig : Sig) : ClassExpr → Option Concept
         else .conj (.atLeastQ n p.val d) (.atMostQ n p.val d))
   | _ => none
 
-def toConceptList (sig : Sig) : List ClassExpr → Option (List Concept)
-  | [] => some []
+def toConceptList (sig : Sig) (cs : List ClassExpr) : Option (List Concept) :=
+  toConceptListAcc sig [] cs
+
+/-- `toConceptList` onto a reversed accumulator: a tail call per operand. -/
+def toConceptListAcc (sig : Sig) (acc : List Concept) : List ClassExpr → Option (List Concept)
+  | [] => some acc.reverse
   | c :: cs =>
-      match toConcept sig c, toConceptList sig cs with
-      | some d, some ds => some (d :: ds)
-      | _, _ => none
+      match toConcept sig c with
+      | some d => toConceptListAcc sig (d :: acc) cs
+      | none => none
 
 end
 
@@ -502,9 +507,14 @@ def wrapMerges (steps : List (Ind × Role × Ind × Ind)) (k : Cert) : Cert :=
   steps.foldr (fun s acc =>
     .merge s.1 1 s.2.1 [s.2.2.1, s.2.2.2] (.cons s.2.2.1 s.2.2.2 acc .nil)) k
 
-def appendCases : MergeCases → MergeCases → MergeCases
-  | .nil, ys => ys
-  | .cons b c k rest, ys => .cons b c k (appendCases rest ys)
+/-- `xs` reversed onto `acc`: a tail call per case. -/
+def revCasesOnto : MergeCases → MergeCases → MergeCases
+  | .nil, acc => acc
+  | .cons b c k rest, acc => revCasesOnto rest (.cons b c k acc)
+
+/-- `xs` followed by `ys`. -/
+def appendCases (xs ys : MergeCases) : MergeCases :=
+  revCasesOnto (revCasesOnto xs .nil) ys
 
 /-- Where `countingClash` fires on a leaf state: the node, the bound
     `≤ k p`, and `k + 1` pairwise-disjoint existential fillers on `p`

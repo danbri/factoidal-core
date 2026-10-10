@@ -959,6 +959,22 @@ def pairsOf : List Ind → List (Ind × Ind)
   | []      => []
   | b :: bs => bs.map (fun c => (b, c)) ++ pairsOf bs
 
+/-- `pairsOf` onto a reverse accumulator: a tail call per element. -/
+def pairsOfTR (l : List Ind) : List (Ind × Ind) := go l []
+where
+  go : List Ind → List (Ind × Ind) → List (Ind × Ind)
+    | [], acc => acc.reverse
+    | b :: bs, acc => go bs ((bs.map (fun c => (b, c))).reverse ++ acc)
+
+theorem pairsOfTR_go_eq :
+    ∀ (l : List Ind) (acc : List (Ind × Ind)),
+      pairsOfTR.go l acc = acc.reverse ++ pairsOf l
+  | [], acc => by simp [pairsOfTR.go, pairsOf]
+  | b :: bs, acc => by simp [pairsOfTR.go, pairsOf, pairsOfTR_go_eq bs]
+
+@[csimp] theorem pairsOf_eq_TR : @pairsOf = @pairsOfTR := by
+  funext l; simp [pairsOfTR, pairsOfTR_go_eq]
+
 /-- Can `x` be a fresh witness for an `r`-successor in `c` at `a`? -/
 def exAvailable (S : List Assertion) (a : Ind) (r : Role) (c : Concept) : Bool :=
   S.contains (.inst a (.ex r c)) ||

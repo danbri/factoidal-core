@@ -3207,26 +3207,25 @@ instance : Inhabited SearchTrace := ⟨.none⟩
     same withholding as every other cap here.
 
     Returns the verdict, what is left of the budget, and the trace of
-    what closed (`SearchTrace`; `none` unless the verdict is `clash`). -/
+    what closed (`SearchTrace`; `none` unless the verdict is `clash`).
+    `wrap` is applied to the trace of a clash; it carries the forced
+    identifications made on the way down, so that every self-call that
+    was a tail call before the trace existed stays one. -/
 partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
-    (budget : Nat) : Verdict × Nat × SearchTrace :=
+    (budget : Nat) (wrap : SearchTrace → SearchTrace := id) : Verdict × Nat × SearchTrace :=
   match budget with
   | 0     => (.out, 0, .none)
   | n + 1 =>
-    if clashNodes g st then (.clash, n, .leaf st)
+    if clashNodes g st then (.clash, n, wrap (.leaf st))
     else
       let (st', changed) := onePass tb g st
-      if changed then search tb g st' n
-      else if clashNodes g st' then (.clash, n, .leaf st')
+      if changed then search tb g st' n wrap
+      else if clashNodes g st' then (.clash, n, wrap (.leaf st'))
       else
         -- Identifications every model makes come before any choice.
         let (stF, forced) := forcedIdentifications g st'
-        if forced then
-          match search tb g stF n with
-          | (v, b, t) => (v, b, match v with
-                                | .clash => .forced st' stF t
-                                | _      => .none)
-        else if propositionalClash st' || nominalClash g st' then (.clash, n, .leaf st')
+        if forced then search tb g stF n (fun t => wrap (.forced st' stF t))
+        else if propositionalClash st' || nominalClash g st' then (.clash, n, wrap (.leaf st'))
         else
         match pendingUnion st' with
         | some (i, cs) =>
@@ -3236,7 +3235,7 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
           let rec tryAll (ds : List ClassExpr) (b : Nat) (acc : List SearchTrace)
               : Verdict × Nat × SearchTrace :=
             match ds with
-            | []      => (.clash, b, .union st' i cs acc.reverse)
+            | []      => (.clash, b, wrap (.union st' i cs acc.reverse))
             | c :: tl =>
                 let (sb, _) := addLabel { st' with
                   nodes := st'.nodes.map (fun m =>
@@ -3258,7 +3257,7 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
           let rec tryMerges (nominal : Bool) (all ps : List (Term × Term)) (b : Nat)
               (acc : List SearchTrace) : Verdict × Nat × SearchTrace :=
             match ps with
-            | []           => (.clash, b, .merge st' nominal all acc.reverse)
+            | []           => (.clash, b, wrap (.merge st' nominal all acc.reverse))
             | (x, y) :: tl =>
                 match search tb g (mergeInto st' x y) b with
                 | (.clash, b', t) => tryMerges nominal all tl b' (t :: acc)

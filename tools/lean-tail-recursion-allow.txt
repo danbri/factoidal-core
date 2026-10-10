@@ -713,3 +713,17 @@ L4Factoidal_Testing_interleave  # (c) test-case enumeration in the Testing libra
 L4Factoidal_Testing_removeFirstBy  # (c) property-test helper; inputs are generated test values
 L4Factoidal_SPARQL_ConstructLabelTests_termLabels  # (b) RDF 1.2 triple-term nesting in the object position; test helper over the #guard fixtures of ConstructLabelTests (arrived with the issue 742 fix, merged after the audit)
 L4Factoidal_RDF_Canonical_relabelTermBy  # (b) RDF 1.2 triple-term nesting in the object position (the N-Quads reader bounds it with readObject12 fuel); the same recursion as relabelTerm, which csimp now replaces through relabelDatasetFast (https://github.com/danbri/factoidal/issues/745)
+#
+# --- Added 2026-10-10, OWL DL refutation certificates
+# (docs/designissues/2026-10-10-owl-dl-refutation-certificates.md,
+# https://github.com/danbri/factoidal/issues/651) ---
+L4Factoidal_OWL_Refute_toConcept  # (b) class-expression nesting; operand lists go through the tail-recursive toConceptListAcc
+L4Factoidal_OWL_Refute_conceptAtoms  # (b) class-expression nesting
+L4Factoidal_OWL_boolSubterms  # (b) class-expression nesting of one TBox left-hand side
+L4Factoidal_OWL_checkF  # (b) certificate nesting; certificates come from emitCert, one node per search step, so the depth is bounded by the refuter's threaded budget (default 64); a deeper certificate costs stack, never soundness
+L4Factoidal_OWL_pickDistinct  # (c) maxClashAt passes at most 16 candidates (take 16)
+L4Factoidal_OWL_Refute_emitCert  # (c) depth of a refuter search trace: each trace node consumed budget, default 64
+L4Factoidal_OWL_Refute_emitUnion  # (b) the disjuncts of one union label; each closed branch consumed budget
+L4Factoidal_OWL_Refute_emitMergeCases  # (c) the pairs one merge point branched on; each closed branch consumed budget
+L4Factoidal_OWL_Refute_traceProfile  # (c) depth of a refuter search trace, as emitCert
+L4Factoidal_OWL_Refute_traceProfileList  # (c) the branches of one trace node, as emitUnion and emitMergeCases
