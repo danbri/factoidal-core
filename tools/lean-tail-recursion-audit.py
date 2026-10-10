@@ -116,7 +116,7 @@ WHAT THIS TOOL MISSED, AND WHY (keep this list; each entry cost a defect)
     fixture for each defect in this list.
 """
 
-import argparse, json, os, re, sys
+import argparse, fnmatch, json, os, re, sys
 from collections import defaultdict
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -980,6 +980,13 @@ def run_audit(ir_dir=None, lean_dir=None, repo=None):
     }
 
 
+def allowed(decl, allow):
+    """Is `decl` on the allow list?  A line with `*` is an fnmatch pattern."""
+    if decl in allow:
+        return True
+    return any("*" in pat and fnmatch.fnmatchcase(decl, pat) for pat in allow)
+
+
 def read_allow(path):
     """decl -> comment (the text after `#`, possibly empty)."""
     allow = {}
@@ -1110,14 +1117,16 @@ def main(argv=None):
         allow = read_allow(allow_path)
         offenders = {}
         for r in rows:
-            if r["class"] in GATED and r["decl"] not in allow:
+            if r["class"] in GATED and not allowed(r["decl"], allow):
                 offenders.setdefault(r["decl"], r)
         gated_decls = set(r["decl"] for r in rows if r["class"] in GATED)
-        unused = sorted(d for d in allow if d not in gated_decls)
+        unused = sorted(d for d in allow if d not in gated_decls and not (
+            "*" in d and any(fnmatch.fnmatchcase(g, d) for g in gated_decls)))
         pending = sum(1 for d, c in allow.items() if "PENDING" in c)
+        untriaged = sum(1 for d, c in allow.items() if "UNTRIAGED" in c)
         print()
-        print("Allow list: %d lines, %d marked (a) PENDING, %d match no gated row"
-              % (len(allow), pending, len(unused)))
+        print("Allow list: %d lines, %d marked (a) PENDING, %d marked UNTRIAGED, %d match no gated row"
+              % (len(allow), pending, untriaged, len(unused)))
         if offenders:
             print()
             print("GATE FAIL: %d recursive declaration(s) of class %s not in %s"

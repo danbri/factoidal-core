@@ -1,8 +1,19 @@
 # Baseline for `tools/lean-tail-recursion-audit.py --gate`.
-# Every declaration below recurses over an input-proportional
-# structure without a tail-call loop.  The gate fails when a NEW
-# one appears.  Removing a line is the goal; adding one needs a
-# reason in the commit message.
+# Every declaration below recurses without a tail-call loop and is of a
+# gated class (length, depth, counter, unknown).  The gate fails when a
+# declaration of a gated class is not listed.  Removing a line is the goal;
+# adding one needs a reason on the line.  Since 2026-10-10 a line holding `*`
+# is an fnmatch pattern over declaration names.
+# Markers after `#`:
+#   (b)  the depth is the nesting of a document, schema, ontology or query
+#   (c)  the depth has a constant or logarithmic bound
+#   (a) PENDING <issue>  LENGTH- or VALUE-proportional over data; the issue
+#        lists it for conversion; the line keeps the gate green meanwhile
+#   UNTRIAGED <issue>  found by the 2026-10-10 repair (issue 750); no bound
+#        stated yet; the issue tracks the triage
+# The lines up to the first `# ---` section carry no reason: they are the
+# first baseline, recorded before reasons were required (imported from
+# danbri/factoidal in the 2026-10-09 split).
 CanonProbe_main
 CanonProbe_oddIndexed
 CanonProbe_pairUp
@@ -712,3 +723,653 @@ L4Factoidal_XML_Canonical_insertBy  # (b) attributes or namespace declarations o
 L4Factoidal_Testing_interleave  # (c) test-case enumeration in the Testing library (partial def); inputs are generator lists
 L4Factoidal_Testing_removeFirstBy  # (c) property-test helper; inputs are generated test values
 L4Factoidal_SPARQL_ConstructLabelTests_termLabels  # (b) RDF 1.2 triple-term nesting in the object position; test helper over the #guard fixtures of ConstructLabelTests (arrived with the issue 742 fix, merged after the audit)
+#
+# --- Added 2026-10-10 by the audit repair of https://github.com/danbri/factoidal/issues/750 ---
+# The repaired audit gates mutual cycles, `counter` and `unknown`, reads
+# comments correctly and matches @[csimp] by full name. Triaged entries:
+# (b)/(c) as above; "(a) PENDING <issue>" = LENGTH- or VALUE-proportional
+# over data, to be converted (listed in the issue; this entry keeps the gate
+# green while the list stays visible).
+L4Factoidal_OWL_instDecidableEqConcept_decEq  # (b) derived DecidableEq: nesting of one tableau concept
+L4Factoidal_RDF_instHashableTerm_hash  # (b) derived Hashable: nesting depth of RDF 1.2 triple terms
+L4Factoidal_Regex_instDecidableEqRe_decEq  # (b) derived DecidableEq: nesting of one regular expression
+L4Factoidal_Regex_instDecidableEqCRe_decEq  # (b) derived DecidableEq: nesting of one regular expression
+L4Factoidal_SPARQL_instDecidableEqPatternTerm_decEq  # (b) derived DecidableEq: nesting depth of RDF 1.2 triple terms in one pattern term
+Harness_HdtProbe_stage2Score  # (c) test harness; List.sum (List.foldr specialised) over the counts of one HDT probe fixture
+OwlProbe_renameTermBNode  # (b) harness; RDF 1.2 triple-term nesting
+OwlProbe_traceGraph  # (c) Array.qsort in the OWL probe; expected depth O(log n)
+Harness_quadCount  # (c) test harness; List.sum (List.foldr specialised) over the graphs of one test dataset
+Harness_XmppServe_drainMailbox  # (c) Array.qsort in the XMPP test server; messages of one mailbox; expected depth O(log n)
+locationHints_pairs  # (c) test harness; the schemaLocation hints of one XSD test
+L4Factoidal_Cottas_BaseWriterPrims_bitsNeeded  # (c) bit length of one id or count (at most 64)
+L4Factoidal_Cottas_BaseWriterPrims_leUintDecode  # (c) one fixed-width little-endian field (at most 8 bytes)
+L4Factoidal_Cottas_BaseWriterPrims_uvarintDecode  # (c) bytes of one LEB128 value; fuel-bounded
+L4Factoidal_Cottas_OnDiskStore_namedGraphsAux  # (a) PENDING https://github.com/danbri/factoidal/issues/752 COTTAS: one frame per named graph of a store
+L4Factoidal_Cottas_OnDiskStore_objectToRevmapKey  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_Geo_Scaled_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the fraction digits of one WKT coordinate
+L4Factoidal_Geo_Wkt_takeDigits  # (a) PENDING https://github.com/danbri/factoidal/issues/752 digits of one number in a WKT literal: one frame per digit
+L4Factoidal_JSONLD_FState_removeEmbed_replaceFirst  # (a) PENDING https://github.com/danbri/factoidal/issues/752 framing: one frame per value of one property before the match (data)
+L4Factoidal_Math_Sigmoid_ifact  # (c) k! for the Taylor term index k, bounded by the fixed term count of the working precision
+L4Factoidal_Math_Sigmoid_ipow  # (c) 2^shift for the range-reduction shift of the working precision
+L4Factoidal_Math_Sigmoid_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of the input decimal minus the working scale
+L4Factoidal_Math_Sigmoid_wpIPow  # (c) r^k for the Taylor term index k, bounded by the fixed term count
+L4Factoidal_MathML_powNat  # (a) PENDING https://github.com/danbri/factoidal/issues/752 x^n with n from a MathML <power> in the document: one frame per unit of the exponent
+L4Factoidal_OWL_QueryRewriteCore_expandCeSubject  # (b) class-expression nesting in the ontology; fuel-bounded
+L4Factoidal_OWL_QueryRewriteJoins_normaliseJoins  # (b) nesting of graph patterns in one query
+L4Factoidal_OWL_QueryRewriteNested_patternHasCeMarker  # (b) nesting of graph patterns in one query
+L4Factoidal_OWL_QueryRewriteNested_rewritePatternNested  # (b) nesting of graph patterns in one query
+L4Factoidal_OWL_QueryRewriteCore_rewritePattern  # (b) nesting of graph patterns in one query
+L4Factoidal_OWL_Refute_disjointUnionAxioms_unorderedCePairs  # (b) operands of one DisjointUnion axiom
+L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Hash N-Degree Quads (RDFC-1.0 4.8) recursion over blank-node paths; depth follows the blank nodes of one gadget, the budget bounds calls, not depth (confirm)
+L4Factoidal_RDF_Canonical_rewriteTermForHfdq  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_Term_joinKey  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_Term_lowerTags  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_Term_instance?  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_substTerm  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_termSubst  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_Term_renameBnodes  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_RDF_Graph_dedup  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per triple of a graph (Isomorphism.lean; the comment says it is off the answer path: confirm the callers)
+L4Factoidal_RDF_denotTerm  # (b) nesting depth of RDF 1.2 triple terms; model-theoretic definition
+L4Factoidal_RDF_XmlCanon_emitDecls  # (b) namespace declarations of one XML element (canonical XML of an rdf:XMLLiteral)
+L4Factoidal_RDF_XmlCanon_insertAttr  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
+L4Factoidal_RDF_XmlCanon_renderAttrs  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
+L4Factoidal_RDF_XmlCanon_sortAttrs  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
+L4Factoidal_RDF_XmlCanon_walk  # (a) PENDING https://github.com/danbri/factoidal/issues/752 canonical XML of an rdf:XMLLiteral: one frame per character or node of the literal text (fuel = literal length)
+L4Factoidal_Regex_Derivative_deriv  # (b) nesting of one regular expression
+L4Factoidal_Regex_Exec_nderiv  # (b) nesting of one regular expression
+L4Factoidal_Regex_Re_size  # (b) nesting of one regular expression
+L4Factoidal_Regex_memStar  # (a) PENDING https://github.com/danbri/factoidal/issues/752 regex membership specification: one frame per character of the word; the executable path uses Exec.nderiv (confirm no runtime caller)
+L4Factoidal_Regex_nullable  # (b) nesting of one regular expression
+L4Factoidal_Regex_reCmp  # (b) nesting of two regular expressions
+L4Factoidal_Regex_CRe_dotAll  # (b) nesting of one regular expression
+L4Factoidal_Regex_CRe_repeatExact  # (b) the count of one {n} quantifier in the pattern (query or schema text)
+L4Factoidal_Regex_CRe_size  # (b) nesting of one regular expression
+L4Factoidal_Regex_absorbMarkers  # (b) nesting of one regular expression
+L4Factoidal_Regex_cmatch  # (a) PENDING https://github.com/danbri/factoidal/issues/752 regex matcher: the .cat case recurses per piece of the pattern and the star case per repetition over the matched string (a literal in the data)
+L4Factoidal_Regex_cparseAlt  # (b) branches of one alternation in one regex pattern (query text); fuel-bounded
+L4Factoidal_Regex_cparseSeq  # (b) atoms of one sequence in one regex pattern (query text); fuel-bounded
+L4Factoidal_Regex_dotAll  # (b) nesting of one regular expression
+L4Factoidal_Regex_expandTemplate  # (b) characters of one fn:replace replacement template (query text)
+L4Factoidal_Regex_replaceLoop  # (a) PENDING https://github.com/danbri/factoidal/issues/752 fn:replace: one frame per match in the input string (a literal in the data)
+L4Factoidal_Regex_XSDPattern_parseAlt  # (b) branches of one alternation in one xsd:pattern (schema text); fuel-bounded
+L4Factoidal_Regex_XSDPattern_parseSeq  # (b) atoms of one sequence in one xsd:pattern (schema text); fuel-bounded
+L4Factoidal_SHACL_pathListToRdf  # (b) members of one sequence or alternative SHACL path
+L4Factoidal_SHACL_pathToRdf  # (b) nesting of one SHACL property path
+L4Factoidal_SHACL_decodePath  # (b) nesting of one SHACL property path in the shapes graph; fuel-bounded
+L4Factoidal_SHACL_decodePathList  # (b) RDF list of one sequence or alternative SHACL path in the shapes graph; fuel-bounded
+L4Factoidal_SHACL_pathListToSparql  # (b) members of one sequence or alternative SHACL path
+L4Factoidal_SHACL_pathToSparqlAtom  # (b) nesting of one SHACL property path
+L4Factoidal_SHACL_substVarBgp  # (b) triple patterns of one basic graph pattern in a sh:sparql query (shapes graph, not data)
+L4Factoidal_SHACL_substVarExpr  # (b) nesting of one expression in a sh:sparql query
+L4Factoidal_SHACL_substVarExprs  # (b) arguments of one expression in a sh:sparql query
+L4Factoidal_SHACL_substVarPattern  # (b) nesting of graph patterns in one sh:sparql query
+L4Factoidal_SHACL_substVarTerm  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
+L4Factoidal_SHACL_Path_invert  # (b) nesting of one SHACL property path
+L4Factoidal_SHACL_Path_invertList  # (b) members of one sequence or alternative SHACL path
+L4Factoidal_SHACL_duplicatedLangTags_distinctDups  # (a) PENDING https://github.com/danbri/factoidal/issues/752 the values of one property at one focus node (data): one frame per value
+L4Factoidal_SHACL_evalPathFuel  # (b) nesting of one SHACL property path; fuel-bounded
+L4Factoidal_SHACL_evalPathFuelIx  # (b) nesting of one SHACL property path; fuel-bounded
+L4Factoidal_SPARQL_GraphPattern_evalIn  # (b) nesting of graph patterns in one query (reference evaluator)
+L4Factoidal_SPARQL_GraphPattern_serviceFailure  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_DatasetRestriction_graphFree  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_DatasetRestriction_graphVarIn  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_countDigitsFuel  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
+L4Factoidal_SPARQL_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale (fraction digits) of a decimal literal or a difference of scales: one frame per digit
+L4Factoidal_SPARQL_ggpHasVar  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_pAnnotations  # (b) annotation blocks on one triple in the query text; fuel-bounded
+L4Factoidal_SPARQL_pCollection  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per element of one RDF collection in the query or update text (the SPARQL twin of issue 678; INSERT DATA can carry data)
+L4Factoidal_SPARQL_pGroupOrUnion  # (b) UNION branches of one group in the query text; fuel-bounded
+L4Factoidal_SPARQL_tpHasVar_ptHasVar  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
+L4Factoidal_SPARQL_dedupPath  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per (subject, object) pair of a property-path result (data)
+L4Factoidal_SPARQL_Protocol_indentBudget  # (c) indentation of one line of a protocol test description
+L4Factoidal_SPARQL_Protocol_readHeaders  # (c) header lines of one HTTP message in a protocol test description
+L4Factoidal_SPARQL_Protocol_rtrimBlanks  # (c) lines of one protocol test description
+L4Factoidal_SPARQL_Protocol_takeIndented  # (c) lines of one protocol test description
+L4Factoidal_SPARQL_QueryPattern_mentionsService  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_QueryPattern_rewriteBnodes  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_groundObject  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
+L4Factoidal_SPARQL_patHasBnode  # (b) nesting of graph patterns in one update request
+L4Factoidal_SPARQL_patHasGraph  # (b) nesting of graph patterns in one update request
+L4Factoidal_SPARQL_patHasNestedGraph  # (b) nesting of graph patterns in one update request
+L4Factoidal_SPARQL_patHasVar  # (b) nesting of graph patterns in one update request
+L4Factoidal_Solid_Server_unvarTerm  # (b) nesting depth of RDF 1.2 triple terms in one N3 Patch term
+L4Factoidal_Storage_PredicateQuadBlocks_termWireBytes  # (b) nesting depth of RDF 1.2 triple terms
+L4Factoidal_Syntax_RdfXml_collectionList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 RDF/XML rdf:parseType="Collection": one frame per member element (data)
+L4Factoidal_Syntax_RdfXml_dedupScope  # (b) namespace declarations of one element
+L4Factoidal_Syntax_RdfXml_propertyAttrTriples  # (b) attributes of one RDF/XML element
+L4Factoidal_Syntax_RdfXml_renderAttrs  # (b) attributes of one XML element
+L4Factoidal_Syntax_RdfXml_serializeNodes  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per sibling node when an XMLLiteral is serialised (data); fuel-bounded
+L4Factoidal_Syntax_readAnnotations  # (b) annotation blocks on one Turtle triple; was hidden as `replaced` by the short-name csimp mark of OwlXml.readAnnotations
+L4Factoidal_Syntax_readCollectionRest  # (a) PENDING https://github.com/danbri/factoidal/issues/678 one frame per element of one Turtle collection (the canary's turtle-collection case: 100,000 items)
+L4Factoidal_Syntax_readPredicateObjectList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per `;`-separated predicate of one Turtle subject (confirm; mutual with readObject)
+L4Factoidal_Syntax_assignLabelsAvoiding  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Turtle serializer: one frame per blank-node label to assign (data)
+L4Factoidal_Syntax_tsUserUsed  # (c) prefixes of the serializer's prefix table
+L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
+L4Factoidal_VC_Multibase_natToBytesBE  # (a) PENDING https://github.com/danbri/factoidal/issues/752 bytes of one big-endian number: one frame per byte of the value decoded from a multibase string
+L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
+L4Factoidal_XML_entityHasWsCharRef_go  # (b) nesting of entity references inside entity definitions of the DTD; fuel = entity count
+L4Factoidal_XML_scanRefs  # (a) PENDING https://github.com/danbri/factoidal/issues/673 one frame per entity or character reference in one text run or start tag (the canary's xml-entities case: 10,000 references overflow 512 KB)
+L4Factoidal_XML_validate_countList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 children of one element during DTD validation: one frame per child (data)
+L4Factoidal_XPath_Num_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of an xs:decimal value: one frame per digit
+L4Factoidal_XSD_natDigits_go  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
+L4Factoidal_XSD_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is a digit count of a literal under facet checks: one frame per digit
+L4Factoidal_XSD_pow2i  # (c) called with the constants 150 and 23 only (float facet checks)
+L4Factoidal_XSLT_parseSteps_build  # (b) steps of one XSLT match pattern (stylesheet text)
+L4Wasm_Ops_roundsToFixpoint  # (c) one frame per closure round; the cap argument bounds it (rounds, not triples)
+*_instRepr*  # (b) derived Repr instances of recursive inductive types (138 declarations on 2026-10-10): the recursion follows the nesting of the value printed
+#
+# --- UNTRIAGED (same landing): recursive through a mutual cycle, or found once
+# the indexer read comments, sections and `where` helpers correctly. No bound is
+# stated yet; each line is a work item of https://github.com/danbri/factoidal/issues/753 ---
+Harness_matchBack  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/Compare.lean:160
+Harness_tryCands  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/Compare.lean:169
+jsonEquiv  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Harness/CsvwJsonRun.lean:33
+Harness_Diff_diffManifest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/Differential.lean:338
+JsonLdApiProbe_walkDir  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/JsonLdApiProbe.lean:172
+JsonLdFrameRun_walkDir  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/JsonLdFrameRun.lean:99
+JsonLdProbe_walkDir  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/JsonLdProbe.lean:152
+schemaKeywords  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, Harness/JsonSchemaRun.lean:63
+Harness_runManifest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/Main.lean:60
+OwlProbe_elementsOfAux  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/OwlProbe.lean:196
+OwlProbe_searchMapping  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/OwlProbe.lean:475
+tmOfGround  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/RifRun.lean:168
+absGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, Harness/ShExRun.lean:231
+absShape  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, Harness/ShExRun.lean:220
+absTc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, Harness/ShExRun.lean:235
+absTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, Harness/ShExRun.lean:225
+loadSchema  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/ShExRun.lean:137
+Harness_ShaclNodeExpr_collectManifests  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/ShaclNodeExprRun.lean:136
+ShaclProbe_collectFromFile  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/ShaclProbe.lean:249
+ShaclProbe_resultClosure  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/ShaclProbe.lean:160
+testElements  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, Harness/XmlConfRun.lean:86
+L4Factoidal_CL_bindingToClif  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/CL/Clif.lean:538
+L4Factoidal_CL_parseSExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/Clif.lean:181
+L4Factoidal_CL_parseSExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/Clif.lean:197
+L4Factoidal_CL_readQuantBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/CL/Clif.lean:302
+L4Factoidal_CL_bindMarksLexable  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:117
+L4Factoidal_CL_bindStructEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:181
+L4Factoidal_CL_sentsMarksLexable  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:137
+L4Factoidal_CL_sentsStructEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:203
+L4Factoidal_CL_seqMarksLexable  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:111
+L4Factoidal_CL_seqStructEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/ClifAdequacy.lean:174
+L4Factoidal_CL_satAllFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/CL/FiniteSat.lean:270
+L4Factoidal_CL_satAnyFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/CL/FiniteSat.lean:276
+L4Factoidal_CL_satEX  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/CL/FiniteSat.lean:300
+L4Factoidal_CL_satFA  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/CL/FiniteSat.lean:285
+L4Factoidal_CL_seqsUpTo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/FiniteSat.lean:240
+L4Factoidal_CL_noSeqQuantList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/FiniteSatTheorems.lean:98
+L4Factoidal_CL_noIntrBinds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/Normalize.lean:679
+L4Factoidal_CL_noIntrSeq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/Normalize.lean:673
+L4Factoidal_CL_noIntrSs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/CL/Normalize.lean:702
+L4Factoidal_CL_sentencesPureCL  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/Syntax.lean:171
+L4Factoidal_CL_seqItemsPureCL  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/CL/Syntax.lean:144
+L4Factoidal_CSVW_commonTriples  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/CSVW/Common.lean:133
+L4Factoidal_CSVW_commonJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/CSVW/JsonDoc.lean:104
+L4Factoidal_CSVW_jsonMentions  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/CSVW/JsonDoc.lean:133
+L4Factoidal_CSVW_substituteRefs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/CSVW/JsonDoc.lean:161
+L4Factoidal_CSVW_checkCommonValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/CSVW/Validate.lean:178
+L4Factoidal_GRDDL_iterate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/GRDDL/Agent.lean:313
+L4Factoidal_GRDDL_loadImports  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/GRDDL/Agent.lean:214
+L4Factoidal_GRDDL_collectLinks  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/GRDDL/Discovery.lean:163
+L4Factoidal_GRDDL_headElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/GRDDL/Discovery.lean:143
+L4Factoidal_Geo_BBox_ofGeometry  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/Geo/BBox.lean:50
+L4Factoidal_Geo_components  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Geo/Topology.lean:363
+L4Factoidal_Geo_Geometry_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/Geo/Types.lean:138
+L4Factoidal_Geo_Geometry_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Geo/Types.lean:149
+L4Factoidal_Geo_Wkt_geometry  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Geo/Wkt.lean:176
+L4Factoidal_Geo_Wkt_serializeGeometry  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Geo/Wkt.lean:314
+L4Factoidal_JSON_parseArray  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSON/Parser.lean:381
+L4Factoidal_JSON_parseItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSON/Parser.lean:393
+L4Factoidal_JSON_parseMembers  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSON/Parser.lean:357
+L4Factoidal_JSON_parseObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSON/Parser.lean:343
+L4Factoidal_JSON_parseValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSON/Parser.lean:313
+L4Factoidal_JSON_toStringCompact  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:122
+L4Factoidal_JSON_toStringFieldsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:155
+L4Factoidal_JSON_toStringFieldsPrettyAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:257
+L4Factoidal_JSON_toStringItemsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:149
+L4Factoidal_JSON_toStringItemsPrettyAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:249
+L4Factoidal_JSON_toStringPrettyAt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Serialize.lean:218
+L4Factoidal_JSON_Json_decEqJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSON/Value.lean:68
+L4Factoidal_JSON_Json_decEqJsonFields  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSON/Value.lean:106
+L4Factoidal_JSON_Json_size  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSON/Value.lean:144
+L4Factoidal_JSONLD_cmpItemAdd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:1154
+L4Factoidal_JSONLD_compactElem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:841
+L4Factoidal_JSONLD_compactFields  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:951
+L4Factoidal_JSONLD_compactMap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:881
+L4Factoidal_JSONLD_compactMapBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:921
+L4Factoidal_JSONLD_compactOneItem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:1044
+L4Factoidal_JSONLD_compactPropItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Compact.lean:1029
+L4Factoidal_JSONLD_contextProcessArray  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/JSONLD/Context.lean:1103
+L4Factoidal_JSONLD_contextProcessFields  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/JSONLD/Context.lean:1117
+L4Factoidal_JSONLD_contextProcessOneField  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/JSONLD/Context.lean:1136
+L4Factoidal_JSONLD_dropFfNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 4, L4Factoidal/JSONLD/Expand.lean:776
+L4Factoidal_JSONLD_expandAliasedField  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1500
+L4Factoidal_JSONLD_expandItem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1582
+L4Factoidal_JSONLD_expandNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:850
+L4Factoidal_JSONLD_expandNodeFromMap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:887
+L4Factoidal_JSONLD_expandOneField  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:934
+L4Factoidal_JSONLD_expandOrdinaryProperty  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1086
+L4Factoidal_JSONLD_expandPropertyItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1192
+L4Factoidal_JSONLD_expandReverseProperty  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1128
+L4Factoidal_JSONLD_indexKeyField  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 26, L4Factoidal/JSONLD/Expand.lean:1245
+L4Factoidal_JSONLD_nmgItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/JSONLD/Flatten.lean:383
+L4Factoidal_JSONLD_nmgNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/JSONLD/Flatten.lean:398
+L4Factoidal_JSONLD_nmgProps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/JSONLD/Flatten.lean:506
+L4Factoidal_JSONLD_nmgReverseEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/JSONLD/Flatten.lean:525
+L4Factoidal_JSONLD_nmgReverseValues  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/JSONLD/Flatten.lean:538
+L4Factoidal_JSONLD_FState_removeEmbed_dropDependents  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/JSONLD/Frame.lean:647
+L4Factoidal_JSONLD_cleanupNull  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSONLD/Frame.lean:1077
+L4Factoidal_JSONLD_cleanupPreserve  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/JSONLD/Frame.lean:1053
+L4Factoidal_JSONLD_filterKeys  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/JSONLD/Frame.lean:358
+L4Factoidal_JSONLD_filterSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/JSONLD/Frame.lean:349
+L4Factoidal_JSONLD_frameListItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:845
+L4Factoidal_JSONLD_frameOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:730
+L4Factoidal_JSONLD_frameProps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:790
+L4Factoidal_JSONLD_frameRec  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:705
+L4Factoidal_JSONLD_frameReverseProps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:894
+L4Factoidal_JSONLD_frameReverseSubjects  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:907
+L4Factoidal_JSONLD_frameSubjects  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:716
+L4Factoidal_JSONLD_frameValues  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/JSONLD/Frame.lean:811
+L4Factoidal_JSONLD_lowerLanguages  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSONLD/Frame.lean:1092
+L4Factoidal_JSONLD_matCont  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONLD/Frame.lean:938
+L4Factoidal_JSONLD_matEntriesAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONLD/Frame.lean:982
+L4Factoidal_JSONLD_matValsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONLD/Frame.lean:971
+L4Factoidal_JSONLD_nodeMatch  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/JSONLD/Frame.lean:337
+L4Factoidal_JSONLD_FromRdf_Ov_eqb  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:104
+L4Factoidal_JSONLD_FromRdf_Ov_eqbList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:110
+L4Factoidal_JSONLD_FromRdf_ovToJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:480
+L4Factoidal_JSONLD_FromRdf_resolveOv  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/JSONLD/FromRdf.lean:450
+L4Factoidal_JSONLD_expandFieldsR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:717
+L4Factoidal_JSONLD_expandGraphNodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:805
+L4Factoidal_JSONLD_expandNodeR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:683
+L4Factoidal_JSONLD_expandPropertyR  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:788
+L4Factoidal_JSONLD_expandReverseEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:750
+L4Factoidal_JSONLD_expandReverseMap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:740
+L4Factoidal_JSONLD_expandReverseProp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:771
+L4Factoidal_JSONLD_expandValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 9, L4Factoidal/JSONLD/ToRdf.lean:621
+L4Factoidal_JSONLD_jcsSerialize  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONLD/ToRdf.lean:308
+L4Factoidal_JSONSchema_collectIds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/JSONSchema/Validate.lean:334
+L4Factoidal_JSONSchema_jsonEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/JSONSchema/Validate.lean:135
+L4Factoidal_JSONSchema_validateIn  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/JSONSchema/Validate.lean:424
+L4Factoidal_Math_detRows  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Math/Matrix.lean:138
+L4Factoidal_Math_exprKey  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Math/Simplify.lean:51
+L4Factoidal_Math_simplify  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/Math/Simplify.lean:265
+L4Factoidal_Math_subst  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Math/Subst.lean:19
+L4Factoidal_MathML_eval  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/MathML/Core.lean:234
+L4Factoidal_MathML_exprOfJsonFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/MathML/FromJson.lean:80
+L4Factoidal_MathML_exprToJson  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/MathML/FromJson.lean:164
+L4Factoidal_MathML_exprOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/MathML/FromXml.lean:113
+L4Factoidal_MathML_content  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/MathML/Present.lean:209
+L4Factoidal_MathML_presApply  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/MathML/Present.lean:162
+L4Factoidal_OWL_ClassExpr_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/ClassExpr.lean:135
+L4Factoidal_OWL_ClassExpr_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/ClassExpr.lean:154
+L4Factoidal_OWL_parseCeMarkers  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 4, L4Factoidal/OWL/ClassExpr.lean:267
+L4Factoidal_OWL_parseClassExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 4, L4Factoidal/OWL/ClassExpr.lean:244
+L4Factoidal_OWL_parseClassExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/OWL/ClassExpr.lean:331
+L4Factoidal_OWL_FS_parseAnnotationBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/FunctionalSyntax.lean:501
+L4Factoidal_OWL_FS_parseAnns  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/FunctionalSyntax.lean:490
+L4Factoidal_OWL_FS_parseCE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/OWL/FunctionalSyntax.lean:372
+L4Factoidal_OWL_FS_parseCEBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/FunctionalSyntax.lean:383
+L4Factoidal_OWL_FS_parseCEs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/FunctionalSyntax.lean:481
+L4Factoidal_OWL_FS_parseDRs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/FunctionalSyntax.lean:364
+L4Factoidal_OWL_Mat_allIsMember  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/OWL/Materialise.lean:397
+L4Factoidal_OWL_Mat_anyIsMember  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/OWL/Materialise.lean:382
+L4Factoidal_OWL_Mat_candidatesFor  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/Materialise.lean:706
+L4Factoidal_OWL_Mat_ceListPositiveSound  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/Materialise.lean:478
+L4Factoidal_OWL_Mat_cePositiveSound  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/Materialise.lean:468
+L4Factoidal_OWL_Refute_rollUp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/NegationGoals.lean:578
+L4Factoidal_OWL_OwlXml_elOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/OwlXml.lean:66
+L4Factoidal_OWL_OwlXml_elsOfAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/OwlXml.lean:74
+L4Factoidal_OWL_OwlXml_readAnnTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/OwlXml.lean:400
+L4Factoidal_OWL_OwlXml_readAnnotation  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/OwlXml.lean:393
+L4Factoidal_OWL_OwlXml_readCEsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/OwlXml.lean:344
+L4Factoidal_OWL_OwlXml_readDRsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/OwlXml.lean:286
+L4Factoidal_OWL_OwlXml_readObjCard  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/OwlXml.lean:353
+L4Factoidal_OWL_RL_chainTargets  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosure.lean:238
+L4Factoidal_OWL_RL_listCells  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosure.lean:190
+L4Factoidal_OWL_RL_listElems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosure.lean:178
+L4Factoidal_OWL_RL_listSeqs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/OWL/RLClosure.lean:205
+L4Factoidal_OWL_RL_chainTargetsS  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosureIndexed.lean:215
+L4Factoidal_OWL_RL_listCellsS  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosureIndexed.lean:192
+L4Factoidal_OWL_RL_listElemsS  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/RLClosureIndexed.lean:185
+L4Factoidal_OWL_RL_listSeqsS  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/OWL/RLClosureIndexed.lean:199
+L4Factoidal_OWL_Refute_ceDefinite  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/Refute.lean:222
+L4Factoidal_OWL_Refute_ceListDefinite  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/Refute.lean:234
+L4Factoidal_OWL_Refute_search  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/Refute.lean:3188
+L4Factoidal_OWL_Refute_search_tryAll  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/Refute.lean:3209
+L4Factoidal_OWL_Refute_search_tryMerges  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/OWL/Refute.lean:3230
+L4Factoidal_OWL_Struct_mapCEsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/StructureRdf.lean:420
+L4Factoidal_OWL_Struct_mapDRsAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/StructureRdf.lean:270
+L4Factoidal_OWL_Struct_tann  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/OWL/StructureRdf.lean:461
+L4Factoidal_OWL_Struct_tannList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/OWL/StructureRdf.lean:475
+L4Factoidal_RDF_jsonArrEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/RDF/Entailment.lean:493
+L4Factoidal_RDF_jsonObjEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/RDF/Entailment.lean:501
+L4Factoidal_RDF_jsonValueEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/RDF/Entailment.lean:481
+L4Factoidal_RDF_searchInstance  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RDF/Entailment.lean:249
+L4Factoidal_RDF_searchBijectionFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RDF/Isomorphism.lean:377
+L4Factoidal_RDF_tryCandidates  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RDF/Isomorphism.lean:387
+L4Factoidal_RIF_Conformance_allSentencesSafe  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:403
+L4Factoidal_RIF_Conformance_allSentencesSafeList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:414
+L4Factoidal_RIF_Conformance_andFixpoint  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RIF/Conformance.lean:330
+L4Factoidal_RIF_Conformance_bodyAtomsOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:598
+L4Factoidal_RIF_Conformance_boundClosure  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RIF/Conformance.lean:297
+L4Factoidal_RIF_Conformance_collectAllVars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:170
+L4Factoidal_RIF_Conformance_collectAtomOpIris  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:535
+L4Factoidal_RIF_Conformance_collectDeclaredVars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:101
+L4Factoidal_RIF_Conformance_collectFramePropertyIris  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:558
+L4Factoidal_RIF_Conformance_collectVarsExclDeclare  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:79
+L4Factoidal_RIF_Conformance_hasVariableFrameProperty  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:440
+L4Factoidal_RIF_Conformance_hasVariableFramePropertyList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Conformance.lean:454
+L4Factoidal_RIF_Conformance_intersectRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RIF/Conformance.lean:351
+L4Factoidal_RIF_Conformance_oneAndRound  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RIF/Conformance.lean:337
+L4Factoidal_RIF_Conformance_orIntersection  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RIF/Conformance.lean:344
+L4Factoidal_RIF_boundFix_flat  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:620
+L4Factoidal_RIF_externalIrisFormula  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:480
+L4Factoidal_RIF_externalIrisTm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:457
+L4Factoidal_RIF_groundTm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:57
+L4Factoidal_RIF_qualifyTm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:529
+L4Factoidal_RIF_runConds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:318
+L4Factoidal_RIF_varsOfTm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Engine.lean:563
+L4Factoidal_RIF_OwlDirect_constsOfFormula  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/OwlDirect.lean:449
+L4Factoidal_RIF_OwlDirect_constsOfTm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/OwlDirect.lean:434
+L4Factoidal_RIF_OwlDirect_dlFormula  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/RIF/OwlDirect.lean:420
+L4Factoidal_RIF_OwlDirect_tmOfG  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/RIF/OwlDirect.lean:343
+L4Factoidal_RIF_OwlDirect_typeClassesOfFormula  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/OwlDirect.lean:463
+L4Factoidal_RIF_parseFormulasGoF  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Ps.lean:395
+L4Factoidal_RIF_parseTermF  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Ps.lean:239
+L4Factoidal_RIF_parseTermsGoF  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Ps.lean:271
+L4Factoidal_RIF_GTerm_decEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/RIF/Syntax.lean:48
+L4Factoidal_RIF_collectAtoms  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/RIF/Translation.lean:260
+L4Factoidal_RIF_Xml_parseBodyNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Xml.lean:378
+L4Factoidal_RIF_Xml_parseGroupNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Xml.lean:588
+L4Factoidal_RIF_Xml_parseOpAndArgsFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/RIF/Xml.lean:244
+L4Factoidal_RIF_Xml_parseSentenceContent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RIF/Xml.lean:499
+L4Factoidal_RIF_Xml_parseTermFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/RIF/Xml.lean:215
+L4Factoidal_RIF_Xml_parseTermHostFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/RIF/Xml.lean:267
+L4Factoidal_RML_cartesian  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RML/Eval.lean:97
+L4Factoidal_RML_fnValuesF  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/RML/Eval.lean:187
+L4Factoidal_RML_gensOfE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:651
+L4Factoidal_RML_inputValuesF  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/RML/Eval.lean:227
+L4Factoidal_RML_memberGensE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:639
+L4Factoidal_RML_objectGensE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:757
+L4Factoidal_RML_quotedGensE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:695
+L4Factoidal_RML_quotedTriplesOfE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:717
+L4Factoidal_RML_refGensE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:617
+L4Factoidal_RML_subjectGensE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 15, L4Factoidal/RML/Eval.lean:740
+L4Factoidal_RML_execAt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RML/FromGraph.lean:172
+L4Factoidal_RML_gatherAt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/RML/FromGraph.lean:191
+L4Factoidal_RML_evalSteps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/RML/JsonPath.lean:81
+L4Factoidal_Regex_cparseAtom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Regex/XPath.lean:404
+L4Factoidal_Regex_cparseCap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Regex/XPath.lean:441
+L4Factoidal_Regex_cparseGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Regex/XPath.lean:428
+L4Factoidal_Regex_cparseNoncap  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Regex/XPath.lean:451
+L4Factoidal_Regex_cparseRep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Regex/XPath.lean:394
+L4Factoidal_Regex_XSDPattern_parseAtom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Regex/XSDPattern.lean:384
+L4Factoidal_Regex_XSDPattern_parseGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Regex/XSDPattern.lean:403
+L4Factoidal_Regex_XSDPattern_parseGroupClose  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Regex/XSDPattern.lean:417
+L4Factoidal_Regex_XSDPattern_parseRep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Regex/XSDPattern.lean:376
+L4Factoidal_SHACL_resultToTriples  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SHACL/Report.lean:134
+L4Factoidal_SHACL_Path_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/SHACL/Shapes.lean:101
+L4Factoidal_SHACL_Path_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SHACL/Shapes.lean:110
+L4Factoidal_SHACL_customViolationsForOccurrence  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/SHACL/Sparql.lean:713
+L4Factoidal_SHACL_substVarExprOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/SHACL/Sparql.lean:261
+L4Factoidal_SHACL_collectShapeViolations  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/SHACL/Validation.lean:983
+L4Factoidal_SHACL_evalAggregate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/SHACL/Validation.lean:1102
+L4Factoidal_SHACL_evalAltFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:453
+L4Factoidal_SHACL_evalAltFuelIx  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:500
+L4Factoidal_SHACL_evalOneConstraint  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/SHACL/Validation.lean:1005
+L4Factoidal_SHACL_evalPlusFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:457
+L4Factoidal_SHACL_evalPlusFuelIx  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:504
+L4Factoidal_SHACL_evalSeqFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:446
+L4Factoidal_SHACL_evalSeqFuelIx  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SHACL/Validation.lean:493
+L4Factoidal_SHACL_qualifyingCount  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/SHACL/Validation.lean:1126
+L4Factoidal_SPARQL_evalBgpFrom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Algebra.lean:339
+L4Factoidal_SPARQL_Expr_evalOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/SPARQL/Expr.lean:2109
+L4Factoidal_SPARQL_exprsHaveAggregate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:430
+L4Factoidal_SPARQL_ggpLabeledBnodesQ  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:592
+L4Factoidal_SPARQL_pAddExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:939
+L4Factoidal_SPARQL_pAddRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:947
+L4Factoidal_SPARQL_pAggregate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1273
+L4Factoidal_SPARQL_pAndExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:855
+L4Factoidal_SPARQL_pAndRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:863
+L4Factoidal_SPARQL_pArgListCall  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1191
+L4Factoidal_SPARQL_pAskBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2805
+L4Factoidal_SPARQL_pB1  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1321
+L4Factoidal_SPARQL_pB2  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1331
+L4Factoidal_SPARQL_pB3  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1344
+L4Factoidal_SPARQL_pConstructBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2820
+L4Factoidal_SPARQL_pDescribeAfterTargets  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2883
+L4Factoidal_SPARQL_pDescribeBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2870
+L4Factoidal_SPARQL_pExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:829
+L4Factoidal_SPARQL_pExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:915
+L4Factoidal_SPARQL_pExprListRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:926
+L4Factoidal_SPARQL_pFilterExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1589
+L4Factoidal_SPARQL_pFuncCall  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1402
+L4Factoidal_SPARQL_pGgpBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1480
+L4Factoidal_SPARQL_pGroupByList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2584
+L4Factoidal_SPARQL_pGroupConcat  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1292
+L4Factoidal_SPARQL_pGroupCondition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2562
+L4Factoidal_SPARQL_pGroupGraphPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1454
+L4Factoidal_SPARQL_pHavingList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2632
+L4Factoidal_SPARQL_pIfExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1177
+L4Factoidal_SPARQL_pInList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:904
+L4Factoidal_SPARQL_pMulExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:962
+L4Factoidal_SPARQL_pMulRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:970
+L4Factoidal_SPARQL_pObjectListPath  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2318
+L4Factoidal_SPARQL_pObjectListSimple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2300
+L4Factoidal_SPARQL_pObjectWithExtras  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:1930
+L4Factoidal_SPARQL_pOrExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:836
+L4Factoidal_SPARQL_pOrRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:844
+L4Factoidal_SPARQL_pOrderByList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2621
+L4Factoidal_SPARQL_pOrderCondition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2596
+L4Factoidal_SPARQL_pPathAltRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2162
+L4Factoidal_SPARQL_pPathAlternative  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2154
+L4Factoidal_SPARQL_pPathElt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2206
+L4Factoidal_SPARQL_pPathEltOrInverse  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2194
+L4Factoidal_SPARQL_pPathPrimary  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2219
+L4Factoidal_SPARQL_pPathSeqRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2182
+L4Factoidal_SPARQL_pPathSequence  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/SPARQL/Parser.lean:2174
+L4Factoidal_SPARQL_pPnameExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1412
+L4Factoidal_SPARQL_pPredObjList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2332
+L4Factoidal_SPARQL_pPrimaryExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1005
+L4Factoidal_SPARQL_pRegex  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1214
+L4Factoidal_SPARQL_pReifiedTriplePattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2054
+L4Factoidal_SPARQL_pRelExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:875
+L4Factoidal_SPARQL_pRelRhs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:896
+L4Factoidal_SPARQL_pReplace  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1232
+L4Factoidal_SPARQL_pSelectBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2738
+L4Factoidal_SPARQL_pSelectItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2502
+L4Factoidal_SPARQL_pSelectQuery  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2433
+L4Factoidal_SPARQL_pSelectVars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2490
+L4Factoidal_SPARQL_pSolutionModifier  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2661
+L4Factoidal_SPARQL_pSubstr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1252
+L4Factoidal_SPARQL_pTripleTermPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2003
+L4Factoidal_SPARQL_pTtDataComponent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:1748
+L4Factoidal_SPARQL_pTtDataTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:1703
+L4Factoidal_SPARQL_pTtExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1389
+L4Factoidal_SPARQL_pTtExprComponent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1360
+L4Factoidal_SPARQL_pTtPatComponent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2016
+L4Factoidal_SPARQL_sseQuery  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SPARQL/Parser.lean:3113
+L4Factoidal_SPARQL_sseSelectItem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SPARQL/Parser.lean:3136
+L4Factoidal_SPARQL_validateBnodeScopeQ  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:640
+L4Factoidal_SPARQL_Expr_backendLocalList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:310
+L4Factoidal_SPARQL_Expr_existsFreeList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:374
+L4Factoidal_SPARQL_Expr_rewriteBnodesOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1503
+L4Factoidal_SPARQL_QueryForm_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1530
+L4Factoidal_SPARQL_Query_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1513
+L4Factoidal_SPARQL_SelectClause_rewriteBnodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1536
+L4Factoidal_SPARQL_compareOnCondition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1842
+L4Factoidal_SPARQL_compareOnConditions  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1854
+L4Factoidal_SPARQL_evalSelectItemGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1880
+L4Factoidal_SPARQL_evalSelectItemsRowFrom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1912
+L4Factoidal_SPARQL_havingSatisfies  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1867
+L4Factoidal_SPARQL_selectPost  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1924
+L4Factoidal_SPARQL_subSelectAssignableVars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:1233
+L4Factoidal_SPARQL_substituteExistentialsOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 19, L4Factoidal/SPARQL/Query.lean:1800
+L4Factoidal_SPARQL_StoreBackend_capsOfBackend  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/SPARQL/StoreBackend.lean:134
+L4Factoidal_SPARQL_StorePlan_evalBgpConcatMapAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/StorePlan.lean:147
+L4Factoidal_SPARQL_StorePlan_evalBgpFromMuFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/StorePlan.lean:154
+L4Factoidal_Schematron_textOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Schematron/FromXml.lean:58
+L4Factoidal_ShEx_Compact_parseGroupTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1311
+L4Factoidal_ShEx_Compact_parseGroupTripleExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1313
+L4Factoidal_ShEx_Compact_parseShapeAnd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1142
+L4Factoidal_ShEx_Compact_parseShapeAnd_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1144
+L4Factoidal_ShEx_Compact_parseShapeAtom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1169
+L4Factoidal_ShEx_Compact_parseShapeDefinition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1221
+L4Factoidal_ShEx_Compact_parseShapeExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1124
+L4Factoidal_ShEx_Compact_parseShapeExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1126
+L4Factoidal_ShEx_Compact_parseShapeOrRef  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1204
+L4Factoidal_ShEx_Compact_parseTripleConstraint  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1387
+L4Factoidal_ShEx_Compact_parseTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1289
+L4Factoidal_ShEx_Compact_parseTripleExpr_go  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 14, L4Factoidal/ShEx/Compact.lean:1291
+L4Factoidal_ShEx_tripleExprOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 4, L4Factoidal/ShEx/FromJson.lean:194
+L4Factoidal_ShEx_chainResidueOk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:305
+L4Factoidal_ShEx_directExtends  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:252
+L4Factoidal_ShEx_findTeInShapeExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:82
+L4Factoidal_ShEx_findTeInShapeExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:95
+L4Factoidal_ShEx_findTeInTripleExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:103
+L4Factoidal_ShEx_findTeInTripleExprList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 4, L4Factoidal/ShEx/Satisfies.lean:119
+L4Factoidal_ShEx_flattenSE  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Satisfies.lean:198
+L4Factoidal_ShEx_reachesLabel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Satisfies.lean:258
+L4Factoidal_ShEx_satisfiesExtends  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/ShEx/Satisfies.lean:394
+L4Factoidal_ShEx_satisfiesLabel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/ShEx/Satisfies.lean:378
+L4Factoidal_ShEx_groupEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:63
+L4Factoidal_ShEx_shapeEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:47
+L4Factoidal_ShEx_shapeExprEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:32
+L4Factoidal_ShEx_shapeExprListEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:42
+L4Factoidal_ShEx_tripleConstraintEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:72
+L4Factoidal_ShEx_tripleExprEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:56
+L4Factoidal_ShEx_tripleExprListEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:67
+L4Factoidal_ShEx_tripleExprOptEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 8, L4Factoidal/ShEx/SchemaEq.lean:51
+L4Factoidal_ShEx_arcSatisfiesAll  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Shapes.lean:84
+L4Factoidal_ShEx_arcSatisfiesAny  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/ShEx/Shapes.lean:89
+L4Factoidal_ShEx_matchStates  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/ShEx/Shapes.lean:197
+L4Factoidal_ShEx_mentionedPredicates  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Shapes.lean:49
+L4Factoidal_ShEx_tripleConstraintsWith  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/ShEx/Shapes.lean:228
+L4Factoidal_ShEx_Structure_groupWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:163
+L4Factoidal_ShEx_Structure_seOptWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:159
+L4Factoidal_ShEx_Structure_seWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:116
+L4Factoidal_ShEx_Structure_shapeWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:134
+L4Factoidal_ShEx_Structure_tcWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:150
+L4Factoidal_ShEx_Structure_teOptWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:140
+L4Factoidal_ShEx_Structure_teWalk  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/ShEx/Structure.lean:144
+L4Factoidal_Storage_GenerationVerify_retiredLiteralSidecar?  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:158
+L4Factoidal_Storage_GenerationVerify_verifyBlobArtifacts  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:424
+L4Factoidal_Storage_GenerationVerify_verifyFullEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/Storage/GenerationVerify.lean:105
+L4Factoidal_Storage_GenerationVerify_verifyIbk3Entries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:540
+L4Factoidal_Storage_GenerationVerify_verifyIndexSidecars  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:351
+L4Factoidal_Storage_GenerationVerify_verifyQuadEntries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:390
+L4Factoidal_Storage_GenerationVerify_verifyQuadV5Entries  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Storage/GenerationVerify.lean:512
+L4Factoidal_Syntax_RdfXml_nodeElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:732
+L4Factoidal_Syntax_RdfXml_propertyElt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:789
+L4Factoidal_Syntax_RdfXml_propertyEltBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:833
+L4Factoidal_Syntax_RdfXml_propertyEltList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:777
+L4Factoidal_Syntax_RdfXml_serializeNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/RdfXml.lean:635
+L4Factoidal_Syntax_readCollection  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1282
+L4Factoidal_Syntax_readObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1211
+L4Factoidal_Syntax_readObjectList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1338
+L4Factoidal_Syntax_readPredicateObjectListMore  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1449
+L4Factoidal_Syntax_readReifiedTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1162
+L4Factoidal_Syntax_readRtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1118
+L4Factoidal_Syntax_readRtSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1085
+L4Factoidal_Syntax_readTripleTerm  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/Turtle.lean:1004
+L4Factoidal_Syntax_readTtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/Turtle.lean:963
+L4Factoidal_Testing_noAdjacentCharData  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Testing/Enumerate.lean:177
+L4Factoidal_Testing_nodes  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Testing/Enumerate.lean:116
+L4Factoidal_Testing_genPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 5, L4Factoidal/Testing/Gen.lean:253
+L4Factoidal_Testing_listOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Testing/Gen.lean:90
+L4Factoidal_Unified_matchBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Unified/Datalog.lean:392
+L4Factoidal_Unified_rifCollect  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Unified/RifEmbed.lean:214
+L4Factoidal_XML_Canonical_canonNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:161
+L4Factoidal_XML_Canonical_canonNodesAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:175
+L4Factoidal_XML_Canonical_dropComments  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:219
+L4Factoidal_XML_Canonical_dropCommentsListAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Canonical.lean:225
+L4Factoidal_XML_Node_decEq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Document.lean:262
+L4Factoidal_XML_Node_textContent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Document.lean:640
+L4Factoidal_XML_checkChildren  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:246
+L4Factoidal_XML_checkElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:228
+L4Factoidal_XML_cpListGo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1601
+L4Factoidal_XML_entityHasWsCharRef  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Parser.lean:1140
+L4Factoidal_XML_parseChoiceOrSeq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1623
+L4Factoidal_XML_parseCp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1585
+L4Factoidal_XML_parseElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Parser.lean:1333
+L4Factoidal_XML_Node_serialize  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:228
+L4Factoidal_XML_Node_wellFormed  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:97
+L4Factoidal_XML_Node_wellFormedList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:119
+L4Factoidal_XML_CP_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XML/Validity.lean:69
+L4Factoidal_XML_CP_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:80
+L4Factoidal_XML_CP_nullable  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 3, L4Factoidal/XML/Validity.lean:90
+L4Factoidal_XML_CP_nullableAll  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:100
+L4Factoidal_XML_CP_nullableAny  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:104
+L4Factoidal_XML_parseCP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:193
+L4Factoidal_XML_parseGroup  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:209
+L4Factoidal_XML_parseItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:230
+L4Factoidal_XML_validateChildrenAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:574
+L4Factoidal_XML_validateElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:560
+L4Factoidal_XML_validate_countElements  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:650
+L4Factoidal_XML_Node_attributePairs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:275
+L4Factoidal_XML_Node_attributePairsListAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:282
+L4Factoidal_XMPP_Wire_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XMPP/Wire.lean:53
+L4Factoidal_XPath_Full_descendantsOf  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Data.lean:251
+L4Factoidal_XPath_Full_nodeText  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Data.lean:177
+L4Factoidal_XPath_Full_applyPreds  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:426
+L4Factoidal_XPath_Full_evalCall  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:489
+L4Factoidal_XPath_Full_evalStep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:420
+L4Factoidal_XPath_Full_evalSteps  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 10, L4Factoidal/XPath/Eval.lean:414
+L4Factoidal_XPath_Full_pAddTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:320
+L4Factoidal_XPath_Full_pAdditive  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:315
+L4Factoidal_XPath_Full_pAnd  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:286
+L4Factoidal_XPath_Full_pAndTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:291
+L4Factoidal_XPath_Full_pArgs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:424
+L4Factoidal_XPath_Full_pArgsTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:431
+L4Factoidal_XPath_Full_pEqTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:304
+L4Factoidal_XPath_Full_pEquality  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:299
+L4Factoidal_XPath_Full_pFilterStart  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:397
+L4Factoidal_XPath_Full_pMulTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:335
+L4Factoidal_XPath_Full_pMultiplicative  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:330
+L4Factoidal_XPath_Full_pOr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:273
+L4Factoidal_XPath_Full_pOrTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:278
+L4Factoidal_XPath_Full_pPath  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:363
+L4Factoidal_XPath_Full_pRelTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:445
+L4Factoidal_XPath_Full_pRelative  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:440
+L4Factoidal_XPath_Full_pStep  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:457
+L4Factoidal_XPath_Full_pUnion  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:350
+L4Factoidal_XPath_Full_pUnionTail  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 21, L4Factoidal/XPath/Expr.lean:355
+L4Factoidal_XPath_allPaths  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:87
+L4Factoidal_XPath_evalPath  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:435
+L4Factoidal_XPath_pArgs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:288
+L4Factoidal_XPath_pCmp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:271
+L4Factoidal_XPath_pPrimary  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XPath/Mini.lean:303
+L4Factoidal_XPath_stringValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XPath/Mini.lean:397
+L4Factoidal_XSD_Val_beq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSD/Datatypes.lean:348
+L4Factoidal_XSD_Val_beqList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:361
+L4Factoidal_XSD_canonicalMapFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:1247
+L4Factoidal_XSD_lexicalMapFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/Datatypes.lean:1061
+L4Factoidal_XSD_ciNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/SchemaReader.lean:352
+L4Factoidal_XSD_ciNodesAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSD/SchemaReader.lean:361
+L4Factoidal_XSD_hasAssertionFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSD/SimpleType.lean:257
+L4Factoidal_XSD_valueOfFuel  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSD/SimpleType.lean:202
+L4Factoidal_XSLT_applyTo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1023
+L4Factoidal_XSLT_bindCalled  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1207
+L4Factoidal_XSLT_bindParams  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1048
+L4Factoidal_XSLT_bindUnknown  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1186
+L4Factoidal_XSLT_calledOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1195
+L4Factoidal_XSLT_copyNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:637
+L4Factoidal_XSLT_evalBinding  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:1061
+L4Factoidal_XSLT_instOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:878
+L4Factoidal_XSLT_instOne_pick  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 11, L4Factoidal/XSLT/Transform.lean:909
+L4Factoidal_XSLT_readBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/XSLT/Transform.lean:261
+L4Factoidal_XSLT_readOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/XSLT/Transform.lean:295
+L4Factoidal_XSLT_readStylesheetWith  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:430
+L4Factoidal_XSLT_rnodeText  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:1121
+L4Factoidal_XSLT_rnodeToNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:838
+L4Factoidal_XSLT_serializeNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:596
+L4Factoidal_XSLT_stripNsDecls  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 2, L4Factoidal/XSLT/Transform.lean:646
+L4Factoidal_XSLT_stripWsIn  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XSLT/Transform.lean:1139
+L4Factoidal_XSLT_unknownOne  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/XSLT/Transform.lean:1174
+L4Wasm_Json_pArr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:205
+L4Wasm_Json_pObj  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:216
+L4Wasm_Json_pValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:185
+L4Wasm_Json_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:106
+L4Wasm_decodeSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:331
+L4Wasm_termIriString  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:340
