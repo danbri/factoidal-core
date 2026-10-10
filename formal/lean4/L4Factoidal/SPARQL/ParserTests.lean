@@ -405,8 +405,15 @@ the file header on why the committed binary could not be the oracle. -/
 #guard sseOf "DESCRIBE <http://a/x>" ==
   "(describe\n  (table unit))"
 
+-- `[ … ]` is named from the token after `[` (`bracketBnodeId`), so the F*
+-- `_:_:bnode_6` (the `[` position) is `_:_:bnode_5` here. The F* name is the
+-- position a collection cell around the `[` also uses, which made `( [ … ] )`
+-- one node (issue 742's guards, `ConstructLabelTests.lean`).
 #guard sseOf "SELECT ?s { ?s <http://a/p> [ <http://a/q> \"v\" ] }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_6))\n  (bgp (triple _:_:bnode_6 <http://a/q> \"v\"))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_5))\n  (bgp (triple _:_:bnode_5 <http://a/q> \"v\"))))"
+-- The cell and the element of `( [ … ] )` are two nodes.
+#guard sseOf "SELECT ?s { ?s <http://a/p> ( [ <http://a/q> \"v\" ] ) }" ==
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_7))\n  (join (bgp (triple _:_:bnode_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:_:bnode_6)\n    (triple _:_:bnode_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>))\n  (bgp (triple _:_:bnode_6 <http://a/q> \"v\")))))"
 
 #guard sseOf "SELECT ?s { ?s <http://a/p> (1 2) }" ==
   "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_5))\n  (join (bgp (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"1\")\n    (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:_:bnode_4))\n  (bgp (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\")\n    (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>)))))"

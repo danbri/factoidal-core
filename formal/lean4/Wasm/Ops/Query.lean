@@ -67,13 +67,20 @@ such a dataset — the same rule `Harness/QuadQuery.lean` applies natively.
 
 `extra` members are placed immediately after `"ok":true` in every arm, so an
 op can add its own fields (shard count, open mode) to the shared envelope
-without introducing a second envelope shape. -/
+without introducing a second envelope shape.
+
+`base` is the base IRI of the query TEXT (SPARQL 1.1 §4.1.1.2; RFC 3986
+§5.1): a relative IRI in the query resolves against it, after any `BASE` the
+text declares (§5.1.1). For a query read from a file the caller passes the
+file's IRI (§5.1.3). `none` means no base, and a relative IRI is then a parse
+error (https://github.com/danbri/factoidal/issues/741). -/
 def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     (sparql : String) (extra : List (String × Json) := [])
     (extIris : List String := [])
     (services : List (String × Graph) := [])
-    (version : SparqlVersion := .v11) : String :=
-  match parseSparql sparql none version with
+    (version : SparqlVersion := .v11)
+    (base : Option String := none) : String :=
+  match parseSparql sparql base version with
   | .error e => errJson s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
     -- The query-facing WASM entry installs the same explicit GeoSPARQL
@@ -149,32 +156,35 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
 /-- The `queryDataset` envelope family over an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetQuery`
 (`Wasm/Ops/Handles.lean`), so both answer byte-identical envelopes.  The
-stateless form indexes the dataset for this one call. -/
-def queryParsedDataset (ds : Dataset) (sparql : String) : String :=
-  queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql
+stateless form indexes the dataset for this one call. `base` is the query
+text's base IRI (`queryParsedDatasetWith`). -/
+def queryParsedDataset (ds : Dataset) (sparql : String)
+    (base : Option String := none) : String :=
+  queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql (base := base)
 
 /-- `queryDataset(nquads, sparql)`. The N-Quads argument is read in
 RDF 1.2 mode: the engine's own ops emit RDF 1.2 canonical N-Quads,
 including `<<( … )>>` triple terms, so the query op must read back
 what the op family writes. RDF 1.2 N-Quads is a superset of the 1.1
-grammar; `Mode.rdf11` stays the default everywhere else. -/
-def queryDataset (nq sparql : String) : String :=
+grammar; `Mode.rdf11` stays the default everywhere else. `base` is the query text's
+base IRI (`queryParsedDatasetWith`). -/
+def queryDataset (nq sparql : String) (base : Option String := none) : String :=
   match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds   => queryParsedDataset ds sparql
+  | .ok ds   => queryParsedDataset ds sparql base
 
 /-- `queryDataset` through the IO dispatch entry: the same envelope,
 with the caller's §17.6 extension registrations in scope. The snapshot
 is read ONCE here, before evaluation starts, so every call the query
 makes runs against the same registration set. -/
-def queryDatasetIO (nq sparql : String) : IO String := do
+def queryDatasetIO (nq sparql : String) (base : Option String := none) : IO String := do
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   match parseNQuadsFast nq .rdf12 with
   | .error e => pure (errJson (fmtParseError e))
   | .ok ds   =>
       pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
-              extIris services)
+              extIris services .v11 base)
 
 /-- `queryDataset12(nquads, sparql)`: the `queryDataset` envelope family, with
 the query read by the SPARQL 1.2 grammar (`SparqlVersion.v12`: triple-term
@@ -183,22 +193,24 @@ patterns `<<( s p o )>>`, reified triples `<< s p o >>`, annotations, and the
 F\* entry has the op of the same name (`entry_jsoo.ml`). Served through the
 IO entry, so the caller's extension and SERVICE registrations are in scope,
 as for `queryDatasetIO`. -/
-def queryDataset12IO (nq sparql : String) : IO String := do
+def queryDataset12IO (nq sparql : String) (base : Option String := none) : IO String := do
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   match parseNQuadsFast nq .rdf12 with
   | .error e => pure (errJson (fmtParseError e))
   | .ok ds   =>
       pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
-              extIris services .v12)
+              extIris services .v12 base)
 
 /-- Parse and apply a SPARQL Update to an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetUpdate`
 (`Wasm/Ops/Handles.lean`). The error strings are the envelope error
-texts both ops answer. -/
-def applyUpdateText (ds : Dataset) (updateText : String) :
-    Except String Dataset :=
-  match parseSparqlUpdate updateText with
+texts both ops answer. `base` is the base IRI of the update TEXT (SPARQL 1.1
+Update §3 uses the query grammar's IRI resolution, Query §4.1.1.2; RFC 3986
+§5.1), as for `queryParsedDatasetWith`. -/
+def applyUpdateText (ds : Dataset) (updateText : String)
+    (base : Option String := none) : Except String Dataset :=
+  match parseSparqlUpdate updateText base with
   | .error e => .error s!"SPARQL update parse error: {fmtParseError e}"
   | .ok u =>
   match applyUpdate ds u with
@@ -206,41 +218,73 @@ def applyUpdateText (ds : Dataset) (updateText : String) :
   | .ok ds'   => .ok ds'
 
 /-- The `updateDataset` envelope over an ALREADY-PARSED dataset. -/
-def updateParsedDataset (ds : Dataset) (updateText : String) : String :=
-  match applyUpdateText ds updateText with
+def updateParsedDataset (ds : Dataset) (updateText : String)
+    (base : Option String := none) : String :=
+  match applyUpdateText ds updateText base with
   | .error e  => errJson e
   | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
 
 /-- `updateDataset(nquads, sparqlUpdate)`. RDF 1.2 read mode for the
 same reason as `queryDataset` above: the stateless pair must accept
 its own canonical N-Quads output. -/
-def updateDataset (nq updateText : String) : String :=
+def updateDataset (nq updateText : String) (base : Option String := none) : String :=
   match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds => updateParsedDataset ds updateText
+  | .ok ds => updateParsedDataset ds updateText base
 
 /-! ### The same ops over a dataset the caller parsed (`FromDataset.lean`)
 
 The command line's entries (issue 724). Each answers the envelope the text op
 answers on the dataset's canonical N-Quads, for every dataset. -/
 
-def queryDatasetOf (ds : Dataset) (sparql : String) : String :=
-  withOpsDataset .rdf12 ds (fun d => queryParsedDataset d sparql)
+def queryDatasetOf (ds : Dataset) (sparql : String) (base : Option String := none) : String :=
+  withOpsDataset .rdf12 ds (fun d => queryParsedDataset d sparql base)
 
-theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) :
-    queryDatasetOf ds sparql = queryDataset (Dataset.toCanonicalNQuads ds) sparql := by
+theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) (base : Option String) :
+    queryDatasetOf ds sparql base =
+      queryDataset (Dataset.toCanonicalNQuads ds) sparql base := by
   unfold queryDatasetOf queryDataset
   rw [withOpsDataset_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
-def updateDatasetOf (ds : Dataset) (updateText : String) : String :=
-  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText)
+def updateDatasetOf (ds : Dataset) (updateText : String) (base : Option String := none) :
+    String :=
+  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base)
 
-theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) :
-    updateDatasetOf ds updateText = updateDataset (Dataset.toCanonicalNQuads ds) updateText := by
+theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) (base : Option String) :
+    updateDatasetOf ds updateText base =
+      updateDataset (Dataset.toCanonicalNQuads ds) updateText base := by
   unfold updateDatasetOf updateDataset
   rw [withOpsDataset_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
+
+/-! ### The query text's base IRI (https://github.com/danbri/factoidal/issues/741)
+
+SPARQL 1.1 §4.1.1.2 and RFC 3986 §5.1: a relative IRI in the query or update
+text resolves against the base the caller gives; a `BASE` in the text comes
+first (§5.1.1); with no base a relative IRI is a parse error. -/
+
+private def hasText (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+private def relSelect : String := "SELECT ?x WHERE { BIND(<rel> AS ?x) }"
+
+#guard hasText (queryDataset "" relSelect (some "http://e/b/")) "\"value\":\"http://e/b/rel\""
+#guard hasText (queryDataset "" relSelect) "invalid IRI"
+#guard !hasText (queryDataset "" relSelect) "\"ok\":true"
+-- A BASE in the text comes before the caller's base.
+#guard hasText (queryDataset "" ("BASE <http://q/> " ++ relSelect) (some "http://e/b/"))
+  "\"value\":\"http://q/rel\""
+#guard !hasText (queryDataset "" ("BASE <http://q/> " ++ relSelect) (some "http://e/b/"))
+  "http://e/b/rel"
+-- Update: the inserted triple carries the resolved IRIs.
+#guard hasText (updateDataset "" "INSERT DATA { <s> <p> <o> }" (some "http://e/b/"))
+  "<http://e/b/s> <http://e/b/p> <http://e/b/o> ."
+#guard !hasText (updateDataset "" "INSERT DATA { <s> <p> <o> }") "\"ok\":true"
+-- The dataset-taking forms pass the base on.
+#guard hasText (queryDatasetOf Dataset.empty relSelect (some "http://e/b/"))
+  "\"value\":\"http://e/b/rel\""
+#guard hasText (updateDatasetOf Dataset.empty "INSERT DATA { <s> <p> <o> }" (some "http://e/b/"))
+  "<http://e/b/s>"
 
 /-! ### SPARQL 1.2 query mode (`queryDataset12`, `datasetQuery12`)
 

@@ -108,28 +108,28 @@ def datasetOpenBy (extra : ExtraReader) (text formatTag baseIri : String) : IO S
 /-- `datasetQuery(handle, sparql)` — the `queryDataset` envelope family
 over the stored dataset and its cached indexed backend, without the
 per-call N-Quads round trip. -/
-def datasetQuery (h sparql : String) : IO String := do
+def datasetQuery (h sparql : String) (base : Option String := none) : IO String := do
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   withHandle h fun od =>
-    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services)
+    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v11 base)
 
 /-- `datasetQuery12(handle, sparql)` — `datasetQuery` with the query read by
 the SPARQL 1.2 grammar (`queryDataset12IO` in `Wasm/Ops/Query.lean`). The
 envelope family is the same; a SPARQL 1.2 term in a 1.1 query is a parse
 error of `datasetQuery`, and it is accepted here. -/
-def datasetQuery12 (h sparql : String) : IO String := do
+def datasetQuery12 (h sparql : String) (base : Option String := none) : IO String := do
   let extIris ← extSnapshot
   let services ← serviceSnapshot
   withHandle h fun od =>
-    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v12)
+    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v12 base)
 
 /-- `datasetUpdate(handle, sparqlUpdate)` — apply the update and
 REPLACE the stored dataset (and rebuild its index); answers the new quad
 count. On a parse or evaluation error the stored dataset is unchanged. -/
-def datasetUpdate (h updateText : String) : IO String :=
+def datasetUpdate (h updateText : String) (base : Option String := none) : IO String :=
   withHandle h fun od =>
-    match applyUpdateText od.ds updateText with
+    match applyUpdateText od.ds updateText base with
     | .error e => pure (errJson e)
     | .ok ds' => do
         handleTable.modify (·.insert h (openDataset ds' od.prefixes))

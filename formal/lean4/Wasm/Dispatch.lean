@@ -609,4 +609,23 @@ def decodeCallSeq (seqJson : String) :
         | _ => .error "callseq: each entry must be [op, [arg, …]]"
   | .ok _ => .error "callseq: document must be a JSON array"
 
+
+/-! ### The optional base argument of `queryDataset` / `updateDataset` (issue 741) -/
+
+private def dispatchHas (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"http://e/b/\"]")
+  "http://e/b/rel"
+-- Two arguments, or an empty third: no base, so the relative IRI is an error.
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\"]") "invalid IRI"
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"\"]") "invalid IRI"
+#guard dispatchHas
+  (call "updateDataset" "[\"\",\"INSERT DATA { <s> <p> <o> }\",\"http://e/b/\"]")
+  "<http://e/b/s> <http://e/b/p> <http://e/b/o> ."
+#guard dispatchHas (call "queryDataset" "[\"\",\"ASK {}\",\"\",\"x\"]") "expects 2 or 3 arguments"
+#guard dispatchHas (call "queryDataset" "[\"\"]") "expects 2 or 3 arguments"
+
 end L4Wasm
