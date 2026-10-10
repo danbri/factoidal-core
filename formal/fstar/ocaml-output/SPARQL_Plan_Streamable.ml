@@ -78,9 +78,12 @@ let pattern_bound_of_tp (tp : SPARQL11_Algebra.triple_pattern) :
          SPARQL11_Algebra.sm_empty)
   }
 let common_modifiers_ok (q : SPARQL11_Algebra.query) : Prims.bool=
-  (((((FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_group_by) &&
-        (FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_having))
-       && (FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_values))
+  ((((((FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_group_by)
+         &&
+         (FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_having))
+        && (FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_values))
+       &&
+       (FStar_Pervasives_Native.uu___is_None q.SPARQL11_Algebra.q_post_values))
       &&
       (Prims.op_Negation
          (q.SPARQL11_Algebra.q_modifier).SPARQL11_Algebra.sm_distinct))
@@ -169,7 +172,13 @@ let detect_ask_default (q : SPARQL11_Algebra.query) :
   stream_plan FStar_Pervasives_Native.option=
   match q.SPARQL11_Algebra.q_form with
   | SPARQL11_Algebra.QF_Ask ->
-      if FStar_Pervasives_Native.uu___is_Some q.SPARQL11_Algebra.q_values
+      if
+        ((Prims.op_Negation (common_modifiers_ok q)) ||
+           (FStar_Pervasives_Native.uu___is_Some
+              (q.SPARQL11_Algebra.q_modifier).SPARQL11_Algebra.sm_offset))
+          ||
+          (FStar_Pervasives_Native.uu___is_Some
+             (q.SPARQL11_Algebra.q_modifier).SPARQL11_Algebra.sm_limit)
       then FStar_Pervasives_Native.None
       else
         (match extract_single_tp_bgp q.SPARQL11_Algebra.q_pattern with

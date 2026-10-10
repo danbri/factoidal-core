@@ -70,7 +70,8 @@ let mk_query
     (form : query_form) (pattern : group_graph_pattern) : query =
   { q_base = FStar_Pervasives_Native.None; q_prefixes = []; q_form = form;
     q_dataset = []; q_pattern = pattern; q_group_by = group_by;
-    q_having = having; q_modifier = modifier; q_values = values }
+    q_having = having; q_modifier = modifier; q_values = values;
+    q_post_values = FStar_Pervasives_Native.None }
 
 let ex n = "http://example.org/" ^ n
 let t s p o : triple = { s; p; o }

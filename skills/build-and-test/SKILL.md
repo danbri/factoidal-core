@@ -104,7 +104,31 @@ committed. A machine with no F\* toolchain gets the binaries with
 
 ### `./build-ocaml.sh test`
 
-Runs unit tests. Does not run W3C tests — use `./w3c_runner` for those.
+Runs `w3c_runner --all` from the repository root (W3C SPARQL 1.1 and
+RDF 1.1), writes `ocaml-output/w3c_results.log`, cuts it into the
+`sparql_results.log` and `rdf_results.log` that `generate-report.sh`
+reads, and refreshes `docs/test-results/`. It does not run the F\* unit
+tests (`tests/unit/run-all.sh`) or the other runners.
+
+**Exit status.** The first non-zero of:
+
+1. the status of `w3c_runner --all`: 0 when no suite has a FAIL and no
+   local override is stale; 1 when a test fails or an override is stale (the
+   overridden test now passes: delete the file under
+   `tests/local-overrides/`); 2 when the run is untrustworthy (a suite has
+   no manifest, a manifest yields no tests, nothing was discovered);
+2. the status of `generate-report.sh`.
+
+Honoured local overrides are counted apart (`local-override` column of each
+suite line and of `TOTAL:`) and do not fail the run. The last line is
+`TEST_STATUS=OK` or `TEST_STATUS=FAIL (...)`.
+
+War story (2026-10-10): until then the step discarded the runner status
+(`W3C_RC` was set and never read), and ran `generate-report.sh` without the
+logs that script reads, so in a fresh checkout it exited 1 whatever the
+tests did. After the w3c-rdf-tests move to ec2ba15 the step failed for the
+second reason while the first would have let 63 failing SPARQL tests pass.
+Read the `TOTAL:` and `TEST_STATUS` lines, not the exit status alone.
 
 ### `./build-ocaml.sh js`
 

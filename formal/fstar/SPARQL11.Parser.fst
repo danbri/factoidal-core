@@ -1510,6 +1510,27 @@ let parse_signed_numeric_literal_pt (sign:string) (ts:token_stream)
 let ggp_join (a b : group_graph_pattern) : group_graph_pattern =
   match a with GP_Empty -> b | _ -> match b with GP_Empty -> a | _ -> GP_Join a b
 
+// The variables of a trailing VALUES clause (none when the query has none).
+let trailing_values_vars
+    (vals : option (list var_name & list (list (option rdf_term))))
+  : list var_name =
+  match vals with
+  | None -> []
+  | Some (vars, _) -> vars
+
+// Where the trailing VALUES clause of a query goes (SPARQL 1.1 18.2.4.3). The
+// clause is joined AFTER grouping and HAVING, so a query that groups keeps its
+// rows in q_post_values. A query that does not group has no step between the
+// WHERE clause and the join, and the clause is joined into the pattern.
+let place_trailing_values (groups : bool) (pattern : group_graph_pattern)
+    (vals : option (list var_name & list (list (option rdf_term))))
+  : group_graph_pattern & option (list (list (var_name & rdf_term))) =
+  match vals with
+  | None -> (pattern, None)
+  | Some (vars, rows) ->
+    if groups then (pattern, Some (eval_values vars rows))
+    else (ggp_join pattern (GP_Values vars rows), None)
+
 // Helper: add a triple or path pattern to a GGP accumulator
 let ggp_add_triple (acc : group_graph_pattern) (tp : triple_pattern) : group_graph_pattern =
   match acc with
@@ -2887,6 +2908,19 @@ and parse_values_clause (pm : prefix_map) (fuel : nat) (ts : token_stream)
              end end end end)
   | _ -> ParseErr "expected variable or '(' after VALUES"
 
+// The trailing ValuesClause of a query (grammar rule [28]; the end of
+// `Query` and of `SubSelect`): absent, or VALUES with its data block.
+and parse_trailing_values (pm : prefix_map) (fuel : nat) (ts : token_stream)
+  : Tot (parse_result (option (list var_name & list (list (option rdf_term))))) (decreases fuel) =
+  if fuel = 0 then ParseErr "recursion limit"
+  else match parse_peek ts with
+  | Tok_VALUES ->
+    (match parse_values_clause pm (fuel-1) (parse_advance ts) with
+     | ParseOk (GP_Values vars rows) ts' -> ParseOk (Some (vars, rows)) ts'
+     | ParseOk _ _ -> ParseErr "expected a VALUES data block"
+     | ParseErr m -> ParseErr m)
+  | _ -> ParseOk None ts
+
 // Parse single-variable VALUES data: v1 v2 v3 ... (no parens around each)
 and parse_single_var_values (pm : prefix_map) (fuel : nat)
   (acc : list (option rdf_term)) (ts : token_stream)
@@ -3713,13 +3747,24 @@ and parse_select_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (ts 
           begin match parse_solution_modifier pm (fuel-1) ts5 with
           | ParseErr m -> ParseErr m
           | ParseOk (modifier, gb, hv) ts6 ->
+            // The trailing ValuesClause (grammar rule [28], end of SubSelect and
+            // of Query). It is read before the scope rules below: its variables
+            // are in scope for them.
+            begin match parse_trailing_values pm (fuel-1) ts6 with
+            | ParseErr m -> ParseErr m
+            | ParseOk vals ts7 ->
+            let values_vars = trailing_values_vars vals in
             // SELECT * with GROUP BY is not allowed per SPARQL 1.1
             if Select_All? sel && Some? gb then
               ParseErr "SELECT * not allowed with GROUP BY"
-            // Check ungrouped variables in SELECT projection
+            // Check ungrouped variables in SELECT projection. A variable that
+            // the trailing VALUES clause binds is in scope after grouping
+            // (SPARQL 1.1 18.2.4.3 joins it after Group and before the SELECT
+            // expressions; W3C syntax-query group-by-values-scope-01 and -02).
             else if Some? gb && (
               let gcs = Some?.v gb in
               let is_grouped (v : var_name) : bool =
+                List.Tot.mem v values_vars ||
                 not (List.Tot.for_all (fun (gc : group_condition) ->
                   match gc with
                   | GC_Var gv -> not (streq gv v)
@@ -3745,42 +3790,39 @@ and parse_select_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (ts 
                   | _ -> true) items) in
                 let has_ungrouped = not (List.Tot.for_all (fun (item : select_item) ->
                   match item with
-                  | SI_Var _ -> false
-                  | SI_Expr e _ -> not (expr_has_ungrouped_var (fun _ -> false) e)
+                  | SI_Var v -> List.Tot.mem v values_vars
+                  | SI_Expr e _ -> not (expr_has_ungrouped_var (fun v -> List.Tot.mem v values_vars) e)
                   ) items) in
                 has_agg && has_ungrouped
               | _ -> false) then
               ParseErr "SELECT projects ungrouped variable"
-            // Check: (expr AS ?v) must not alias a variable already in scope from WHERE
+            // Check: (expr AS ?v) must not alias a variable already in scope
+            // from WHERE or from the trailing VALUES clause (W3C syntax-query
+            // group-by-values-scope-03).
             else if (match sel with
               | Select_Vars items ->
                 not (List.Tot.for_all (fun (item : select_item) ->
                   match item with
-                  | SI_Expr _ v -> not (ggp_has_var v pattern)
+                  | SI_Expr _ v -> not (ggp_has_var v pattern) && not (List.Tot.mem v values_vars)
                   | _ -> true) items)
               | _ -> false) then
               ParseErr "SELECT expression aliases variable already in scope"
             else
-            // Check for post-query VALUES clause
-            let (vals, ts7) = begin match parse_peek ts6 with
-              | Tok_VALUES ->
-                (match parse_values_clause pm (fuel-1) (parse_advance ts6) with
-                 | ParseOk (GP_Values vars rows) ts' -> (Some (vars, rows), ts')
-                 | _ -> (None, ts6))
-              | _ -> (None, ts6) end in
+            let groups = Some? gb || Some? hv || select_has_aggregates sel in
+            let (pattern', post_values) = place_trailing_values groups pattern vals in
             ParseOk ({
               q_base = base;
               q_prefixes = pm;
               q_form = QF_Select sel;
               q_dataset = ds;
-              q_pattern = (match vals with
-                | Some (vars, rows) -> ggp_join pattern (GP_Values vars rows)
-                | None -> pattern);
+              q_pattern = pattern';
               q_group_by = gb;
               q_having = hv;
               q_modifier = { modifier with sm_distinct = dist; sm_reduced = red };
-              q_values = None
+              q_values = None;
+              q_post_values = post_values
             }) ts7
+            end
           end end end end end
 
 (* Parse ASK body *)
@@ -3797,12 +3839,23 @@ and parse_ask_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (ts : t
       begin match parse_group_graph_pattern pm (fuel-1) ts'' with
       | ParseErr m -> ParseErr m
       | ParseOk pattern ts3 ->
-        ParseOk ({
-          q_base = base; q_prefixes = pm; q_form = QF_Ask;
-          q_dataset = ds; q_pattern = pattern;
-          q_group_by = None; q_having = None; q_modifier = default_modifier;
-          q_values = None
-        }) ts3
+        // AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier
+        // (grammar rule [12]), then the trailing ValuesClause.
+        begin match parse_solution_modifier pm (fuel-1) ts3 with
+        | ParseErr m -> ParseErr m
+        | ParseOk (modifier, gb, hv) ts4 ->
+          begin match parse_trailing_values pm (fuel-1) ts4 with
+          | ParseErr m -> ParseErr m
+          | ParseOk vals ts5 ->
+            let (pattern', post_values) =
+              place_trailing_values (Some? gb || Some? hv) pattern vals in
+            ParseOk ({
+              q_base = base; q_prefixes = pm; q_form = QF_Ask;
+              q_dataset = ds; q_pattern = pattern';
+              q_group_by = gb; q_having = hv; q_modifier = modifier;
+              q_values = None; q_post_values = post_values
+            }) ts5
+          end end
       end end end
 
 // Parse CONSTRUCT body
@@ -3829,13 +3882,20 @@ and parse_construct_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (
           | ParseOk (modifier, gb, hv) ts4 ->
             // CONSTRUCT WHERE shorthand: template *is* the WHERE BGP.
             let template = collect_template_triples pattern in
-            ParseOk ({
-              q_base = base; q_prefixes = pm;
-              q_form = QF_Construct template;
-              q_dataset = ds; q_pattern = pattern;
-              q_group_by = gb; q_having = hv;
-              q_modifier = modifier; q_values = None
-            }) ts4
+            begin match parse_trailing_values pm (fuel-1) ts4 with
+            | ParseErr m -> ParseErr m
+            | ParseOk vals ts5 ->
+              let (pattern', post_values) =
+                place_trailing_values (Some? gb || Some? hv) pattern vals in
+              ParseOk ({
+                q_base = base; q_prefixes = pm;
+                q_form = QF_Construct template;
+                q_dataset = ds; q_pattern = pattern';
+                q_group_by = gb; q_having = hv;
+                q_modifier = modifier; q_values = None;
+                q_post_values = post_values
+              }) ts5
+            end
           end end end
     | Tok_LBRACE ->
       // CONSTRUCT { template } (FROM ...)* WHERE { pattern } — full form
@@ -3856,13 +3916,20 @@ and parse_construct_body (pm : prefix_map) (fuel : nat) (base : option wf_iri) (
           | ParseErr m -> ParseErr m
           | ParseOk (modifier, gb, hv) ts4 ->
             let template = collect_template_triples template_pat in
-            ParseOk ({
-              q_base = base; q_prefixes = pm;
-              q_form = QF_Construct template;
-              q_dataset = ds; q_pattern = pattern;
-              q_group_by = gb; q_having = hv;
-              q_modifier = modifier; q_values = None
-            }) ts4
+            begin match parse_trailing_values pm (fuel-1) ts4 with
+            | ParseErr m -> ParseErr m
+            | ParseOk vals ts5 ->
+              let (pattern', post_values) =
+                place_trailing_values (Some? gb || Some? hv) pattern vals in
+              ParseOk ({
+                q_base = base; q_prefixes = pm;
+                q_form = QF_Construct template;
+                q_dataset = ds; q_pattern = pattern';
+                q_group_by = gb; q_having = hv;
+                q_modifier = modifier; q_values = None;
+                q_post_values = post_values
+              }) ts5
+            end
           end end end end
     | _ -> ParseErr "expected WHERE or '{' after CONSTRUCT"
     end end
@@ -3943,26 +4010,40 @@ and parse_describe_after_targets (pm : prefix_map) (fuel : nat) (base : option w
           begin match parse_solution_modifier pm (fuel-1) ts3 with
           | ParseErr m -> ParseErr m
           | ParseOk (modifier, gb, hv) ts4 ->
-            ParseOk ({
-              q_base = base; q_prefixes = pm;
-              q_form = QF_Describe targets;
-              q_dataset = ds; q_pattern = pattern;
-              q_group_by = gb; q_having = hv;
-              q_modifier = modifier; q_values = None
-            }) ts4
+            begin match parse_trailing_values pm (fuel-1) ts4 with
+            | ParseErr m -> ParseErr m
+            | ParseOk vals ts5 ->
+              let (pattern', post_values) =
+                place_trailing_values (Some? gb || Some? hv) pattern vals in
+              ParseOk ({
+                q_base = base; q_prefixes = pm;
+                q_form = QF_Describe targets;
+                q_dataset = ds; q_pattern = pattern';
+                q_group_by = gb; q_having = hv;
+                q_modifier = modifier; q_values = None;
+                q_post_values = post_values
+              }) ts5
+            end
           end end
       | _ ->
         // No WHERE clause — pattern is empty, modifiers still parsed.
         begin match parse_solution_modifier pm (fuel-1) ts1 with
         | ParseErr m -> ParseErr m
         | ParseOk (modifier, gb, hv) ts4 ->
-          ParseOk ({
-            q_base = base; q_prefixes = pm;
-            q_form = QF_Describe targets;
-            q_dataset = ds; q_pattern = GP_Empty;
-            q_group_by = gb; q_having = hv;
-            q_modifier = modifier; q_values = None
-          }) ts4
+          begin match parse_trailing_values pm (fuel-1) ts4 with
+          | ParseErr m -> ParseErr m
+          | ParseOk vals ts5 ->
+            let (pattern', post_values) =
+              place_trailing_values (Some? gb || Some? hv) GP_Empty vals in
+            ParseOk ({
+              q_base = base; q_prefixes = pm;
+              q_form = QF_Describe targets;
+              q_dataset = ds; q_pattern = pattern';
+              q_group_by = gb; q_having = hv;
+              q_modifier = modifier; q_values = None;
+              q_post_values = post_values
+            }) ts5
+          end
         end
       end end
 
@@ -4162,9 +4243,24 @@ and parse_order_by_list (pm : prefix_map) (fuel : nat)
   if fuel = 0 then ParseOk (List.Tot.rev acc) ts
   else match parse_peek ts with
   | Tok_ASC | Tok_DESC | Tok_VAR _ | Tok_LPAREN | Tok_IRI _ | Tok_PNAME _
+  // OrderCondition ::= ... | Constraint | Var, and a Constraint is a
+  // BrackettedExpression, a BuiltInCall or a FunctionCall (grammar rules
+  // [23], [68]): every built-in call keyword starts a condition, as in the
+  // FILTER list above. Before 2026-10-10 the list stopped at COALESCE, so
+  // `ORDER BY LCASE(?x)` ended the ORDER BY clause before LCASE.
   | Tok_STR | Tok_LANG | Tok_LANGMATCHES | Tok_DATATYPE | Tok_BOUND
-  | Tok_IF | Tok_IRI_KW | Tok_URI | Tok_CONCAT | Tok_ISIRI | Tok_ISBLANK
-  | Tok_ISLITERAL | Tok_ISNUMERIC | Tok_SAMETERM | Tok_COALESCE ->
+  | Tok_IF | Tok_IRI_KW | Tok_URI | Tok_BNODE_KW | Tok_RAND
+  | Tok_ABS | Tok_CEIL | Tok_FLOOR | Tok_ROUND
+  | Tok_CONCAT | Tok_STRLEN | Tok_UCASE | Tok_LCASE
+  | Tok_ENCODE_FOR_URI | Tok_CONTAINS | Tok_STRSTARTS | Tok_STRENDS
+  | Tok_STRBEFORE | Tok_STRAFTER | Tok_REPLACE | Tok_REGEX | Tok_SUBSTR
+  | Tok_ISIRI | Tok_ISBLANK | Tok_ISLITERAL | Tok_ISNUMERIC
+  | Tok_SAMETERM | Tok_STRDT | Tok_STRLANG
+  | Tok_COALESCE | Tok_NOW | Tok_UUID | Tok_STRUUID
+  | Tok_YEAR | Tok_MONTH | Tok_DAY | Tok_HOURS | Tok_MINUTES | Tok_SECONDS
+  | Tok_TIMEZONE | Tok_TZ
+  | Tok_MD5 | Tok_SHA1 | Tok_SHA256 | Tok_SHA384 | Tok_SHA512
+  | Tok_EXISTS | Tok_NOT ->
     (match parse_order_condition pm (fuel-1) ts with
      | ParseErr m -> ParseErr m
      | ParseOk oc ts' -> parse_order_by_list pm (fuel-1) (oc :: acc) ts')
@@ -4236,6 +4332,10 @@ and parse_solution_modifier (pm : prefix_map) (fuel : nat) (ts : token_stream)
     // parse_int_str returns option int, so ascribe to nat under an
     // explicit non-negativity guard (Tok_INTEGER carries unsigned
     // digits, so the negative branch is unreachable in practice).
+    // A LIMIT or OFFSET keyword that is not followed by an integer is left in
+    // the stream: the query then ends before it and the caller reports
+    // "unexpected tokens after query". Consuming the keyword (the former
+    // behaviour) made `ASK {} LIMIT` and `SELECT * {} LIMIT` parse.
     let try_limit_clause (ts : token_stream) : (option nat & token_stream) =
       begin match parse_peek ts with
       | Tok_LIMIT ->
@@ -4243,9 +4343,9 @@ and parse_solution_modifier (pm : prefix_map) (fuel : nat) (ts : token_stream)
         (match parse_peek ts' with
          | Tok_INTEGER n ->
            (match parse_int_str n with
-            | Some i -> if i >= 0 then (Some (i <: nat), parse_advance ts') else (None, ts')
-            | None -> (None, ts'))
-         | _ -> (None, ts'))
+            | Some i -> if i >= 0 then (Some (i <: nat), parse_advance ts') else (None, ts)
+            | None -> (None, ts))
+         | _ -> (None, ts))
       | _ -> (None, ts) end in
     let try_offset_clause (ts : token_stream) : (option nat & token_stream) =
       begin match parse_peek ts with
@@ -4254,9 +4354,9 @@ and parse_solution_modifier (pm : prefix_map) (fuel : nat) (ts : token_stream)
         (match parse_peek ts' with
          | Tok_INTEGER n ->
            (match parse_int_str n with
-            | Some i -> if i >= 0 then (Some (i <: nat), parse_advance ts') else (None, ts')
-            | None -> (None, ts'))
-         | _ -> (None, ts'))
+            | Some i -> if i >= 0 then (Some (i <: nat), parse_advance ts') else (None, ts)
+            | None -> (None, ts))
+         | _ -> (None, ts))
       | _ -> (None, ts) end in
     // LIMIT
     let (limit_before_offset, ts) = try_limit_clause ts in

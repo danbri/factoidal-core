@@ -87,7 +87,8 @@ let query_in_fragment_1 (q : query) : bool =
   Nil? q.q_prefixes &&
   None? q.q_base &&
   Nil? q.q_dataset &&
-  None? q.q_values
+  None? q.q_values &&
+  None? q.q_post_values
 
 let bgp_of_1 (q : query{query_in_fragment_1 q}) : bgp =
   match q.q_pattern with
@@ -522,6 +523,28 @@ let lemma_parse_group_graph_pattern_ask_bgp pm b after_rbrace fuel =
   assert (parse_expect Tok_RBRACE (Tok_RBRACE :: after_rbrace) == ParseOk () after_rbrace)
 #pop-options
 
+(* ---- What follows the ASK pattern: the SolutionModifier (grammar rule
+   [12]) and the trailing ValuesClause. The token stream after the closing
+   brace must not start a clause; the main theorem uses [Tok_EOF]. ---- *)
+let ask_tail_clean (ts : token_stream) : bool =
+  match parse_peek ts with
+  | Tok_GROUP | Tok_HAVING | Tok_ORDER | Tok_LIMIT | Tok_OFFSET | Tok_VALUES -> false
+  | _ -> true
+
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 4"
+val lemma_parse_solution_modifier_clean
+    (pm : prefix_map) (fuel : nat{fuel >= 1}) (ts : token_stream)
+  : Lemma (requires ask_tail_clean ts)
+          (ensures parse_solution_modifier pm fuel ts == ParseOk (default_modifier, None, None) ts)
+let lemma_parse_solution_modifier_clean pm fuel ts = ()
+
+val lemma_parse_trailing_values_clean
+    (pm : prefix_map) (fuel : nat{fuel >= 1}) (ts : token_stream)
+  : Lemma (requires ask_tail_clean ts)
+          (ensures parse_trailing_values pm fuel ts == ParseOk None ts)
+let lemma_parse_trailing_values_clean pm fuel ts = ()
+#pop-options
+
 (* ---- ASK-body wrapper (consume Tok_ASK, no FROM/WHERE, build the
    query record) ---- *)
 #push-options "--z3rlimit 800 --fuel 8 --ifuel 8"
@@ -530,18 +553,21 @@ val lemma_parse_ask_body_1
     (b : bgp{bgp_in_fragment_1 b /\ List.Tot.length b >= 1})
     (after_eof : token_stream) (fuel : nat)
   : Lemma
-      (requires fuel >= 10 + List.Tot.length b)
+      (requires fuel >= 10 + List.Tot.length b /\ ask_tail_clean after_eof)
       (ensures parse_ask_body pm fuel base
                  (Tok_ASK :: (Tok_LBRACE :: (bgp_tokens_1 b @ (Tok_RBRACE :: after_eof))))
                == ParseOk ({ q_base = base; q_prefixes = pm; q_form = QF_Ask;
                              q_dataset = []; q_pattern = GP_BGP b;
                              q_group_by = None; q_having = None;
-                             q_modifier = default_modifier; q_values = None })
+                             q_modifier = default_modifier; q_values = None;
+                             q_post_values = None })
                           after_eof)
 let lemma_parse_ask_body_1 pm base b after_eof fuel =
   let inner = Tok_LBRACE :: (bgp_tokens_1 b @ (Tok_RBRACE :: after_eof)) in
   assert (parse_peek inner == Tok_LBRACE);
-  lemma_parse_group_graph_pattern_ask_bgp pm b after_eof (fuel - 1)
+  lemma_parse_group_graph_pattern_ask_bgp pm b after_eof (fuel - 1);
+  lemma_parse_solution_modifier_clean pm (fuel - 1) after_eof;
+  lemma_parse_trailing_values_clean pm (fuel - 1) after_eof
 #pop-options
 
 (* ---- resolve_relative_iri_tokens identity on the fragment's tokens:
@@ -590,13 +616,15 @@ val lemma_parse_select_query_ask_bgp
     (b : bgp{bgp_in_fragment_1 b /\ List.Tot.length b >= 1}) (after_eof : token_stream) (fuel : nat)
   : Lemma
       (requires fuel >= ask_bgp_fuel_cost (List.Tot.length b) /\
-                resolve_relative_iri_tokens None after_eof == after_eof)
+                resolve_relative_iri_tokens None after_eof == after_eof /\
+                ask_tail_clean after_eof)
       (ensures parse_select_query [] None fuel
                  (Tok_ASK :: (Tok_LBRACE :: (bgp_tokens_1 b @ (Tok_RBRACE :: after_eof))))
                == ParseOk ({ q_base = None; q_prefixes = []; q_form = QF_Ask;
                              q_dataset = []; q_pattern = GP_BGP b;
                              q_group_by = None; q_having = None;
-                             q_modifier = default_modifier; q_values = None })
+                             q_modifier = default_modifier; q_values = None;
+                             q_post_values = None })
                           after_eof)
 let lemma_parse_select_query_ask_bgp b after_eof fuel =
   let ts = Tok_ASK :: (Tok_LBRACE :: (bgp_tokens_1 b @ (Tok_RBRACE :: after_eof))) in
@@ -624,9 +652,11 @@ val parse_select_query_token_level
                == ParseOk ({ q_base = None; q_prefixes = []; q_form = QF_Ask;
                              q_dataset = []; q_pattern = GP_BGP b;
                              q_group_by = None; q_having = None;
-                             q_modifier = default_modifier; q_values = None })
+                             q_modifier = default_modifier; q_values = None;
+                             q_post_values = None })
                           [Tok_EOF])
 let parse_select_query_token_level b fuel =
+  assert_norm (ask_tail_clean [Tok_EOF]);
   lemma_parse_select_query_ask_bgp b [Tok_EOF] fuel
 #pop-options
 
@@ -651,7 +681,8 @@ let parse_select_query_token_level_query q fuel =
   assert (q == { q_base = None; q_prefixes = []; q_form = QF_Ask;
                  q_dataset = []; q_pattern = GP_BGP b;
                  q_group_by = None; q_having = None;
-                 q_modifier = default_modifier; q_values = None })
+                 q_modifier = default_modifier; q_values = None;
+                             q_post_values = None })
 #pop-options
 (* ============================================================ *)
 (* STAGE (a) / IMPOSSIBILITY: the string-level tokenization lemma  *)

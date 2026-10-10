@@ -759,7 +759,8 @@ let mk_ask_bgp_query (bgp : SPARQL11_Algebra.bgp) : SPARQL11_Algebra.query =
         sm_reduced = false;
         sm_offset = FStar_Pervasives_Native.None;
         sm_limit = FStar_Pervasives_Native.None };
-    q_values = FStar_Pervasives_Native.None }
+    q_values = FStar_Pervasives_Native.None;
+    q_post_values = FStar_Pervasives_Native.None }
 
 (* Flattened via exceptions (same shape as run_test's Test_error above)
    rather than a deep match-pyramid -- easier to keep parenthesization

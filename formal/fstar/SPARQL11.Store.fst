@@ -730,6 +730,7 @@ let detect_streaming_count_star (q : query) : option (var_name & triple_pattern 
        if Some? q.q_group_by then None
        else if Some? q.q_having then None
        else if Some? q.q_values then None
+       else if Some? q.q_post_values then None
        else if q.q_modifier.sm_distinct then None
        else if q.q_modifier.sm_reduced then None
        else if Some? q.q_modifier.sm_order_by then None
@@ -771,6 +772,7 @@ let detect_streaming_count_group_by_graph (q : query)
   | QF_Select (Select_Vars items) ->
     if Some? q.q_having then None
     else if Some? q.q_values then None
+    else if Some? q.q_post_values then None
     else if q.q_modifier.sm_distinct then None
     else if q.q_modifier.sm_reduced then None
     else
@@ -882,6 +884,7 @@ let detect_streaming_count_group_by_predicate (q : query)
   | QF_Select (Select_Vars items) ->
     if Some? q.q_having then None
     else if Some? q.q_values then None
+    else if Some? q.q_post_values then None
     else if q.q_modifier.sm_distinct then None
     else if q.q_modifier.sm_reduced then None
     else
@@ -1016,6 +1019,7 @@ let detect_limit_single_tp (q : query) : option (triple_pattern & nat) =
     else if Some? q.q_group_by then None
     else if Some? q.q_having then None
     else if Some? q.q_values then None
+    else if Some? q.q_post_values then None
     else if q.q_modifier.sm_distinct then None
     else if q.q_modifier.sm_reduced then None
     else if Some? q.q_modifier.sm_order_by then None
@@ -1258,6 +1262,9 @@ and eval_select_query_backend_bgp (q : query) (gb : graph_backend)
       | None -> select_has_aggregates sel in
     if needs_grouping then None
     else
+      let omega = match q.q_post_values with
+        | None -> omega
+        | Some vals -> join omega vals in
       let omega' = match sel with
         | Select_Vars items -> eval_select_items base items omega []
         | Select_All -> omega in
@@ -1343,28 +1350,14 @@ and eval_select_query_backend_on_graph (q : query) (gb : graph_backend) (dsb : d
         | Some _ -> true
         | None -> select_has_aggregates sel in
       if needs_grouping then
-        let groups = match q.q_group_by with
-          | Some conds -> group_by base conds omega
-          | None -> implicit_group omega in
-        let filtered_groups = match q.q_having with
-          | Some conditions -> having_filter base conditions groups
-          | None -> groups in
-        let omega' = match sel with
-          | Select_Vars items -> aggregate_groups base items filtered_groups
-          | Select_All ->
-            List.Tot.map (fun (grp : group) ->
-              match grp.g_solutions with
-              | mu :: _ -> mu
-              | [] -> sm_empty) filtered_groups in
-        let ordered = match q.q_modifier.sm_order_by with
-          | None -> omega'
-          | Some o -> sort_solutions base o omega' in
-        let deduped =
-          if q.q_modifier.sm_distinct then distinct_solutions ordered
-          else if q.q_modifier.sm_reduced then reduced_solutions ordered
-          else ordered in
-        Some (slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped)
+        // The one grouped pipeline (SPARQL11.Algebra.eval_grouped_select):
+        // GROUP BY, HAVING, the trailing VALUES join, aggregation and SELECT
+        // expressions, ORDER BY, projection, DISTINCT, Slice.
+        Some (eval_grouped_select base q sel omega)
       else
+        let omega = match q.q_post_values with
+          | None -> omega
+          | Some vals -> join omega vals in
         let omega' = match sel with
           | Select_Vars items -> eval_select_items base items omega []
           | Select_All -> omega in
@@ -1408,7 +1401,9 @@ and eval_ask_query_backend_dataset (q : query) (dsb : dataset_backend)
     let omega = match q.q_values with
       | None -> omega0
       | Some vals -> join omega0 vals in
-    (match omega with
+    // GROUP BY, HAVING, the trailing VALUES join, OFFSET and LIMIT
+    // (SPARQL11.Algebra.ask_solutions); ASK is true when anything is left.
+    (match ask_solutions q.q_base q omega with
      | [] ->
        // Issue #269: an empty solution set is only a valid `false`
        // answer if every COTTAS on-disk backend touched by this query
@@ -1431,7 +1426,18 @@ and eval_ask_query_backend_dataset (q : query) (dsb : dataset_backend)
           List.Tot.existsb backend_decode_failure named_backends
        then None
        else Some false
-     | _ -> Some true)
+     | _ ->
+       // A true answer read from a PARTIAL read is only sound when more rows
+       // cannot turn it false. GROUP BY, HAVING and OFFSET are not monotone
+       // in the rows (HAVING (COUNT(*) < 3) holds on a short read and fails
+       // on the whole one), so after a decode failure they answer None.
+       let named_backends = List.Tot.map
+         (fun (ngb : named_graph_backend) -> ngb.ngb_graph) dsb.dsb_named in
+       if (Some? q.q_group_by || Some? q.q_having || Some? q.q_modifier.sm_offset) &&
+          (backend_decode_failure dsb.dsb_default ||
+           List.Tot.existsb backend_decode_failure named_backends)
+       then None
+       else Some true)
   | _ -> None
 
 // Priority 2c (Jena basic-probe regression): the algebra path rewrites

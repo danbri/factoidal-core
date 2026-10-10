@@ -532,6 +532,13 @@ record. Conventions, by test kind:
   a Node case instead, and say so beside the header prose.
 - **F\* runners**: the `tests/local-overrides/` reason string carries the
   issue URL; a passing overridden test is a failure of the runner.
+  `bin/w3c-runner/w3c_runner.ml` implements this for every suite it runs
+  (`tests/local-overrides/<suite>/*.override`, kind `engine-gap`): the test
+  still runs, a FAIL is printed as `OVERRIDE:` and counted in its own
+  `local-override` column, and a PASS prints `STALE local-override` and makes
+  the run exit 1. The three graph-store-protocol files are the model.
+  Record of the 2026-10-10 landing (manifest shapes, classification, scores):
+  `docs/designissues/2026-10-10-fstar-w3c-ec2ba15.md`.
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.

@@ -685,6 +685,14 @@ and query = {
   q_having   : option (list having_condition);
   q_modifier : solution_modifier;
   q_values   : option (list (list (var_name * rdf_term)));  (* Post-query VALUES *)
+  // The trailing VALUES clause of a query that groups (GROUP BY, HAVING or an
+  // aggregate in the SELECT clause). SPARQL 1.1 section 18.2.4.3: it is joined
+  // AFTER grouping and HAVING and BEFORE the SELECT expressions, so it cannot
+  // be a pattern in q_pattern, and it is not q_values, which joins BEFORE
+  // grouping (SHACL pre-binding of $this). The parser puts the clause of a
+  // query that does not group into q_pattern, where the join order does not
+  // matter.
+  q_post_values : option (list (list (var_name * rdf_term)));
 }
 
 // Rebind a query's post-query VALUES rows. Used by SHACL.Validation for
@@ -3247,7 +3255,7 @@ let lateral_wrap_as_query (p : group_graph_pattern) : query =
     q_dataset = []; q_pattern = p; q_group_by = None; q_having = None;
     q_modifier = { sm_order_by = None; sm_distinct = false; sm_reduced = false;
                    sm_offset = None; sm_limit = None };
-    q_values = None }
+    q_values = None; q_post_values = None }
 
 (** ====================================================================== **)
 (** Lazy per-bucket index construction — query-shape pre-pass (2026-07-06) **)
@@ -3531,6 +3539,9 @@ and query_all_vars (q : query) : Tot (list var_name) (decreases q) =
      | None -> []
      | Some ocs -> order_conditions_vars ocs)
   @ (match q.q_values with
+     | None -> []
+     | Some rows -> values_rows_vars rows)
+  @ (match q.q_post_values with
      | None -> []
      | Some rows -> values_rows_vars rows)
 
@@ -5943,6 +5954,180 @@ let strip_synthetic_bnode_vars_mu (mu : solution_mapping) : solution_mapping =
 let strip_synthetic_bnode_vars (omega : solution_sequence) : solution_sequence =
   List.Tot.map strip_synthetic_bnode_vars_mu omega
 
+
+(* ================================================================ *)
+(* GROUP BY, HAVING and the trailing VALUES clause, for every query *)
+(* form (SPARQL 1.1 sections 18.2.4.1 to 18.2.4.4).                 *)
+(*                                                                   *)
+(* After Group and HAVING the solution sequence has one solution per *)
+(* surviving group. Only the variables GROUP BY names are in scope   *)
+(* in it (18.2.4.1). The trailing VALUES clause is then joined       *)
+(* (18.2.4.3): a group is paired with every VALUES row that is       *)
+(* compatible with its key. A SELECT evaluates its projection         *)
+(* expressions next (18.2.4.4), then ORDER BY, projection, DISTINCT  *)
+(* and Slice; ASK and CONSTRUCT have no projection.                  *)
+(* ================================================================ *)
+
+// The variables GROUP BY leaves in scope: GROUP BY ?v and
+// GROUP BY (expr AS ?v). GROUP BY (expr) and GROUP BY builtin(...) name none.
+let rec group_key_var_names (conds : list group_condition)
+  : Tot (list var_name) (decreases conds) =
+  match conds with
+  | [] -> []
+  | GC_Var v :: rest -> v :: group_key_var_names rest
+  | GC_Expr _ (Some v) :: rest -> v :: group_key_var_names rest
+  | _ :: rest -> group_key_var_names rest
+
+let group_key_names_of (gb : option (list group_condition)) : list var_name =
+  match gb with
+  | None -> []
+  | Some conds -> group_key_var_names conds
+
+// The solution a group contributes after grouping: the named GROUP BY
+// variables with the value the solutions of the group share.
+let group_key_binding (keys : list var_name) (g : group) : solution_mapping =
+  match g.g_solutions with
+  | mu :: _ -> List.Tot.filter (fun (b : var_name & rdf_term) -> List.Tot.mem (fst b) keys) mu
+  | [] -> []
+
+// Join(P, ToMultiSet(data)) where P is the grouped sequence: every group is
+// paired with each VALUES row compatible with its key binding. With no
+// trailing VALUES clause each group is paired with the empty row.
+let group_values_overlays (keys : list var_name)
+                          (pv : option (list solution_mapping)) (g : group)
+  : list solution_mapping =
+  match pv with
+  | None -> [sm_empty]
+  | Some vals ->
+    let kb = group_key_binding keys g in
+    List.Tot.filter (fun (mv : solution_mapping) -> sm_compatible kb mv) vals
+
+let group_overlay_pairs (keys : list var_name)
+                        (pv : option (list solution_mapping)) (groups : list group)
+  : list (group & solution_mapping) =
+  Lh.concatMap_tr
+    (fun (g : group) ->
+       List.Tot.map (fun (ov : solution_mapping) -> (g, ov))
+         (group_values_overlays keys pv g))
+    groups
+
+// GROUP BY, then HAVING, over the solutions of the WHERE clause. With no
+// GROUP BY the whole sequence is one group.
+let grouped_and_filtered (base : option wf_iri) (q : query) (omega : solution_sequence)
+  : list group =
+  let groups = match q.q_group_by with
+    | Some conds -> group_by base conds omega
+    | None -> implicit_group omega in
+  match q.q_having with
+  | Some conditions -> having_filter base conditions groups
+  | None -> groups
+
+// The row a (group, VALUES row) pair gives the SELECT clause: the VALUES row
+// laid over the group's representative solution. A VALUES variable is
+// visible to the projection even when the WHERE clause never binds it, and
+// ORDER BY can read a variable that the projection drops.
+let group_row_base (g : group) (ov : solution_mapping) : solution_mapping =
+  let rep = match g.g_solutions with
+    | mu :: _ -> mu
+    | [] -> sm_empty in
+  sm_merge ov rep
+
+// A SELECT item in a grouped row: aggregates are replaced by their values over
+// the group, the rest is evaluated on the row.
+let eval_select_item_group_row (base : option wf_iri) (item : select_item)
+                               (g : group) (row : solution_mapping)
+  : option (var_name & rdf_term) =
+  match item with
+  | SI_Var v ->
+    (match sm_lookup v row with
+     | Some t -> Some (v, t)
+     | None -> None)
+  | SI_Expr e v ->
+    (match er_to_term (eval_expr_with_base base (rewrite_aggregates base e g) row) with
+     | Some t -> Some (v, t)
+     | None -> None)
+
+// The SELECT clause's own bindings first, then the other variables of the row,
+// so that ORDER BY (before projection) can name them. A projected name is
+// taken from the items only: an item whose expression fails stays unbound.
+let grouped_select_row (base : option wf_iri) (items : list select_item)
+                       (g : group) (ov : solution_mapping)
+  : solution_mapping =
+  let row = group_row_base g ov in
+  let own = list_filter_map (fun (item : select_item) -> eval_select_item_group_row base item g row) items in
+  let item_vars = select_item_vars items in
+  List.Tot.append own
+    (List.Tot.filter (fun (b : var_name & rdf_term) -> not (List.Tot.mem (fst b) item_vars)) row)
+
+// Steps 2 to 9 of a SELECT query that groups, given the solutions of the WHERE
+// clause (after the q_values pre-binding join).
+let eval_grouped_select (base : option wf_iri) (q : query) (sel : select_clause)
+                        (omega : solution_sequence)
+  : solution_sequence =
+  let filtered = grouped_and_filtered base q omega in
+  let keys = group_key_names_of q.q_group_by in
+  let pairs = group_overlay_pairs keys q.q_post_values filtered in
+  let rows = match sel with
+    | Select_Vars items ->
+      Lh.concatMap_tr (fun (p : group & solution_mapping) ->
+        [grouped_select_row base items (fst p) (snd p)]) pairs
+    | Select_All ->
+      // SELECT * with GROUP BY: representative solutions, without the
+      // rewriter's synthetic _bnode_* variables.
+      strip_synthetic_bnode_vars
+        (Lh.concatMap_tr (fun (p : group & solution_mapping) ->
+           [group_row_base (fst p) (snd p)]) pairs) in
+  let ordered = match q.q_modifier.sm_order_by with
+    | None -> rows
+    | Some o -> sort_solutions base o rows in
+  let projected = match sel with
+    | Select_Vars items -> project_solutions (select_item_vars items) ordered
+    | Select_All -> ordered in
+  let deduped =
+    if q.q_modifier.sm_distinct then distinct_solutions projected
+    else if q.q_modifier.sm_reduced then reduced_solutions projected
+    else projected in
+  slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped
+
+// Does an ASK or CONSTRUCT query group its solutions? (A SELECT also groups
+// on an aggregate in its projection; see needs_grouping.) A HAVING clause
+// with no GROUP BY groups the whole sequence into one group (11.2, 18.2.4.1).
+let form_groups_solutions (q : query) : bool =
+  Some? q.q_group_by || Some? q.q_having
+
+// The solution sequence of a query form without a SELECT clause, before
+// ORDER BY and Slice: GROUP BY, HAVING and the trailing VALUES join. One
+// solution per surviving (group, VALUES row), binding the named GROUP BY
+// variables and the VALUES variables only (18.2.4.1).
+let form_rows (base : option wf_iri) (q : query) (omega : solution_sequence)
+  : solution_sequence =
+  if form_groups_solutions q then
+    let filtered = grouped_and_filtered base q omega in
+    let keys = group_key_names_of q.q_group_by in
+    Lh.concatMap_tr (fun (p : group & solution_mapping) ->
+      [sm_merge (snd p) (group_key_binding keys (fst p))])
+      (group_overlay_pairs keys q.q_post_values filtered)
+  else
+    match q.q_post_values with
+    | None -> omega
+    | Some vals -> join omega vals
+
+// The answer set an ASK query reads: Slice(form_rows). ORDER BY permutes the
+// sequence and cannot change whether it is empty.
+let ask_solutions (base : option wf_iri) (q : query) (omega : solution_sequence)
+  : solution_sequence =
+  slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit (form_rows base q omega)
+
+// The solutions a CONSTRUCT template is instantiated over:
+// Slice(OrderBy(form_rows)) (16.2, 18.4).
+let construct_solutions (base : option wf_iri) (q : query) (omega : solution_sequence)
+  : solution_sequence =
+  let rows = form_rows base q omega in
+  let ordered = match q.q_modifier.sm_order_by with
+    | None -> rows
+    | Some o -> sort_solutions base o rows in
+  slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit ordered
+
 (* ================================================================ *)
 (* Top-level dataset-clause application (FROM / FROM NAMED, §13.2). *)
 (*                                                                   *)
@@ -6530,7 +6715,8 @@ and eval_select_query (q : query) (g : rdf_graph) (ds : rdf_dataset)
       eval_pattern_store base q.q_pattern
         (graph_to_store_for q.q_pattern g) (dataset_to_store_for q.q_pattern ds) in
 
-    (* 1b. Post-query VALUES — join against WHERE results *)
+    (* 1b. q_values: pre-bound rows, joined with the WHERE results BEFORE
+       grouping. *)
     let omega = match q.q_values with
       | None -> omega0
       | Some vals -> join omega0 vals in
@@ -6540,46 +6726,17 @@ and eval_select_query (q : query) (g : rdf_graph) (ds : rdf_dataset)
       | Some _ -> true
       | None -> select_has_aggregates sel in
 
-    if needs_grouping then begin
-      (* 2a. Partition solutions into groups *)
-      let groups = match q.q_group_by with
-        | Some conds -> group_by base conds omega
-        | None -> implicit_group omega in
-
-      (* 3. HAVING — filter groups *)
-      let filtered_groups = match q.q_having with
-        | Some conditions -> having_filter base conditions groups
-        | None -> groups in
-
-      (* 4. Aggregation — evaluate aggregate SELECT items per group *)
-      let omega' = match sel with
-        | Select_Vars items -> aggregate_groups base items filtered_groups
-        | Select_All ->
-          (* SELECT * with GROUP BY: return representative solutions,
-             stripping rewriter-introduced synthetic _bnode_* vars (see
-             is_synthetic_bnode_var). *)
-          let reps = List.Tot.map (fun (grp : group) ->
-            match grp.g_solutions with
-            | mu :: _ -> mu
-            | [] -> sm_empty) filtered_groups in
-          strip_synthetic_bnode_vars reps in
-
-      (* 6. ORDER BY *)
-      let ordered = match q.q_modifier.sm_order_by with
-        | None -> omega'
-        | Some o -> sort_solutions base o omega' in
-
-      (* 8. DISTINCT / REDUCED *)
-      let deduped =
-        if q.q_modifier.sm_distinct then distinct_solutions ordered
-        else if q.q_modifier.sm_reduced then reduced_solutions ordered
-        else ordered in
-
-      (* 9. OFFSET / LIMIT *)
-      slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit deduped
-    end
+    if needs_grouping then
+      (* 2 to 9: GROUP BY, HAVING, the trailing VALUES join, aggregation and
+         SELECT expressions, ORDER BY, projection, DISTINCT, Slice. *)
+      eval_grouped_select base q sel omega
     else begin
       (* No grouping — original pipeline *)
+
+      (* 1c. The trailing VALUES clause of a query that does not group. *)
+      let omega = match q.q_post_values with
+        | None -> omega
+        | Some vals -> join omega vals in
 
       (* 5. SELECT expressions — evaluate (expr AS ?var) *)
       let omega' = match sel with
@@ -6693,7 +6850,7 @@ let eval_ask_query (q : query) (g : rdf_graph) (ds : rdf_dataset) : bool =
     let omega = match q.q_values with
       | None -> omega0
       | Some vals -> join omega0 vals in
-    (match omega with
+    (match ask_solutions base q omega with
      | [] -> false
      | _ -> true)
   | _ -> false
@@ -6855,13 +7012,12 @@ let eval_construct_query (q : query) (g : rdf_graph) (ds : rdf_dataset) : list t
     let omega = match q.q_values with
       | None -> omega0
       | Some vals -> join omega0 vals in
-    (* SPARQL §16.2: CONSTRUCT ignores ORDER BY / OFFSET / LIMIT
-       modifiers at the solution level for set semantics, but a LIMIT
-       on the WHERE does limit which bindings drive the template.
-       Apply slice here to match Jena / rdf4j behaviour. *)
-    let limited =
-      slice_solutions q.q_modifier.sm_offset q.q_modifier.sm_limit omega
-    in
+    (* SPARQL §16.2, §18.2.4, §18.4: the template is instantiated over
+       Slice(OrderBy(form_rows)): GROUP BY and HAVING group the solutions
+       first, the trailing VALUES clause is joined after grouping, then
+       ORDER BY, OFFSET and LIMIT select the solutions that drive the
+       template. *)
+    let limited = construct_solutions base q omega in
     dedup_triples (instantiate_solutions template limited 0)
   | _ -> []
 
