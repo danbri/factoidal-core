@@ -3,6 +3,7 @@ Harness.QueryPhases — `l4query-phases`: the phases of `l4factoidal query`,
 one at a time, with the resident memory after each.
 
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
+    l4query-phases --walk-check LIST
 
 PHASE is one of `read`, `parse`, `normalize`, `index`, `eval`, `output`
 (default `output`). The program runs the same functions, in the same order,
@@ -27,10 +28,12 @@ import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.Syntax.TurtleChunkFold
 
 namespace Harness.QueryPhases
 
 open L4Factoidal.RDF
+open L4Factoidal.Syntax (Mode)
 open L4Factoidal.SPARQL.StoreDataset
 
 /-- The value in kB of `key` (`VmRSS`, `VmHWM`) in `/proc/self/status`;
@@ -58,8 +61,42 @@ def flagValue (args : List String) (flag : String) : Option String :=
   | _ :: v :: _ => some v
   | _ => none
 
+/-- `--walk-check LIST`: for every file named in LIST (one path per line),
+in both RDF modes, with and without a base IRI, compare the scanner walk of
+`Syntax.parseTurtleText` alone (`parseTurtleWalk`, no fallback) with
+`parseTurtle`. Counts the cases `parseTurtle` accepts and, among them, where
+the walk gives the same graph, refuses (so `parseTurtleText` falls back), or
+gives a different graph (exit 1). A document with `<<` is not walked. -/
+def walkCheck (listFile : String) : IO UInt32 := do
+  let files := (← IO.FS.readFile listFile).splitOn "\n" |>.filter (· ≠ "")
+  let mut refOk := 0
+  let mut agree := 0
+  let mut fallback := 0
+  let mut differ := 0
+  let mut refErr := 0
+  let mut skipped := 0
+  for f in files do
+    let text ← IO.FS.readFile f
+    for mode in [Mode.rdf11, Mode.rdf12] do
+      for base in [none, some "http://example.org/base/dir/doc"] do
+        if L4Factoidal.Syntax.hasDoubleLt text then skipped := skipped + 1 else
+        match L4Factoidal.Syntax.parseTurtle text base mode with
+        | .error _ => refErr := refErr + 1
+        | .ok g =>
+          refOk := refOk + 1
+          match L4Factoidal.Syntax.parseTurtleWalk text base mode with
+          | .error _ => fallback := fallback + 1
+          | .ok g' =>
+            if g' == g then agree := agree + 1
+            else
+              differ := differ + 1
+              IO.println s!"DIFFER {f}"
+  IO.println s!"files {files.length}; cases: parseTurtle accepts {refOk} (walk agrees {agree}, walk refuses {fallback}, walk differs {differ}); parseTurtle refuses {refErr}; with << {skipped}"
+  pure (if differ == 0 then 0 else 1)
+
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["--walk-check", listFile] => walkCheck listFile
   | [] =>
       IO.eprintln "usage: l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]"
       pure 2

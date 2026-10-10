@@ -172,12 +172,15 @@ def parseTurtleWalk (text : String) (base : Option String := none) (mode : Mode 
 **Not proved:** that the walk returns `parseTurtle`'s graph whenever it
 succeeds (the chunk-boundary half of
 `docs/designissues/2026-09-03-rdf-parsing-strategy.md` §2.3). Stand-ins: the
-`#guard`s in `TurtleChunkFoldTests.lean` (every two-way split and
-one-character chunks of 20 sources, and `parseTurtleText` against
-`parseTurtle` on the same sources), and byte comparison of `l4factoidal`
-`parse`, `parse --out nquads` and `query` against the binary before, on every
-Turtle file of the W3C RDF 1.1 and 1.2 suites and on `gene.ttl` slices
-(`docs/designissues/2026-10-10-lean-vs-fstar-performance.md` §10). -/
+`#guard`s in `TurtleChunkFoldTests.lean` (the walk alone against
+`parseTurtle` on 23 documents in both modes; `parseTurtleText` against
+`parseTurtle`, errors included, on those and 7 refused documents);
+`l4query-phases --walk-check` (the walk alone against `parseTurtle` on every
+`.ttl` and `.nt` file of the W3C RDF 1.1 and 1.2 suites: 3,104 of 3,104
+accepted cases the same, 2026-10-10); and byte comparison of `l4factoidal`
+`parse`, `parse --out nquads` and `query` against the binary before on the
+same files (`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`
+§10). -/
 def parseTurtleText (text : String) (base : Option String := none) (mode : Mode := .rdf11) :
     Except ParseError Graph :=
   if hasDoubleLt text then parseTurtle text base mode

@@ -175,6 +175,30 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   (`String.all_bool_eq`); a `csimp` for `iriPrintSafe` took the check to 21
   percent and the query from 335 to 272 million instructions. Profile the
   repaired path again before recording its number.
+- **Memory is a resource of its own; rank it and measure it by phase.** The
+  first three survey rounds ranked by time only, and a COUNT query that held 9
+  times the F* engine's resident memory did not rank
+  (https://github.com/danbri/factoidal/issues/729). `l4query-phases FILE
+  --stop-after PHASE` (`Harness/QueryPhases.lean`) runs the phases of
+  `l4factoidal query` and prints `VmRSS`/`VmHWM`; run it under `/usr/bin/time
+  -v` once per phase over a ladder that spans at least 16 times, and divide
+  the difference of the peaks by the difference of the input sizes. The peak
+  was `parseTurtle`'s `text.toList`: a `List Char` costs 35 bytes of peak
+  resident memory per input byte, and nothing after it raised the peak
+  (`--stop-after chars` reproduces it alone). Read a `String` that is already
+  in memory with `String.foldl` or `String.all`, never with `toList`, on a
+  whole-document path (`Syntax.parseTurtleText`). A change that removes a
+  transient structure can leave the peak where it was: `normalizeDataset`
+  without its quad list was proved equal and changed nothing at the peak, so
+  it was not landed. The gate rows are `query-memory` and
+  `query-memory-fstar` in `tests/stack/lean_scaling.py`.
+- **A test module that nothing imports never runs.** `lake build` builds the
+  modules the umbrella `L4Factoidal.lean` reaches. Until 2026-10-10
+  `TurtleChunkFoldTests.lean`, `TurtleStatementScanTests.lean` and
+  `Utf8StreamTests.lean` were reached by nothing, and a design record cited
+  the chunk-split guards of the first as evidence. After adding a `*Tests.lean`
+  module, check that `.lake/build/lib/lean/.../<Module>Tests.olean` exists
+  after `lake build`.
 - **`csimp` makes a guard compare a function with itself.** After
   `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
   closure g n` in a later module runs the same code on both sides. Restate the

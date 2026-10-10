@@ -91,7 +91,11 @@ An n log n cost gives 2.1 to 2.3 at these sizes. 4.0 is quadratic.
 **Ranked.** A row is ranked when, at its largest size where both engines
 finished, Lean takes more than 2.0 times the F* time, or when its growth per
 doubling is more than 2.5 and the larger case took at least 0.2 s. Where Lean
-reached the cap and F* did not, the ratio is a lower bound.
+reached the cap and F* did not, the ratio is a lower bound. Since section 10
+(https://github.com/danbri/factoidal/issues/729) a row is also ranked when, at
+that size, the Lean peak resident set is more than 3 times the F* one
+(`--report` prints both peaks and their ratio). The first three rounds ranked
+by time only, so a query that held 9 times the F* memory did not rank.
 
 **Inputs.** The generators are in `tools/bench_lean_vs_fstar.py`; the files are
 written to `/tmp/factoidal-bench-lean-vs-fstar` and not committed.
@@ -560,7 +564,8 @@ proved" and names the byte comparison and the guards that stand in for it.
 
 Later rounds: COUNT(DISTINCT) and shacl-person were repaired in section 8;
 query-q1 to q6, ORDER BY and ser-ttl-gene in section 9 (9.3 has the numbers
-after). The table below is the state after the first round.
+after); the peak memory of query-q1 and q2 in section 10. The table below is
+the state after the first round.
 
 Ranked by the rule in section 2, after all repairs, from the survey with the
 binaries of the last commit. The coordinator opens one issue per row; the links
@@ -1036,6 +1041,271 @@ after. `tests/stack/lean_scaling.sh` 16 pass, 0 fail, 0 expected-fail (out of
 Lean hygiene audit: 0 sorry, 0 axiom, 0 native_decide, 0 unsafe, 0
 implemented_by, 166 partial def (unchanged).
 
+## 10. Fourth round: peak memory of a query (https://github.com/danbri/factoidal/issues/729, branch `claude/wt-perf-mem`)
+
+Section 9.3 left one cost open: at 80,000 paragraphs of `gene.ttl` a Lean
+`query` peaked at 259 MB of resident memory and the F* engine at 28 MB. The
+ranking rule of section 2 ranked time only, so the row did not rank. This
+round measured where the memory is held, repaired the largest holder, and
+added the memory rule (section 2) and two gate rows.
+
+Binaries: before, built from `f7aa1a33` and copied once
+(`l4factoidal` and the phase harness below); after, built from the last
+commit of the branch and copied once. F*: `bin/linux-x86_64/factoidal` of the
+core checkout. Load average 2 to 16 during the measurements; peak resident
+memory does not depend on load, time does.
+
+### 10.1 Method, and what it cannot see
+
+* **Peak resident set**, `/usr/bin/time -v` ("Maximum resident set size"),
+  one run per case, over the ladder 10,000, 20,000, 40,000, 80,000 and
+  160,000 paragraphs (847,023 to 13,509,433 bytes; 160,000 is about 16
+  times 10,000, so the slope is not fitted over a 4x span only, the error of
+  `2026-09-05-shard-pack-profile-and-memory.md` section 3).
+* **Phases.** `l4query-phases FILE --stop-after PHASE` (new,
+  `formal/lean4/Harness/QueryPhases.lean`) runs the functions of `queryCmd`
+  in its order: `read` (`IO.FS.readFile`), `parse`
+  (`Ops.parseTextToDataset`), `normalize` (`datasetForOps`, which is
+  `normalizeDataset` on these files), `index` (`indexedDatasetBackend`),
+  `eval` (`queryParsedDatasetWith`), `output`. It prints `VmRSS` and `VmHWM`
+  after each phase. The peak of a process that stops after a phase is the
+  most that this phase and the ones before it held at one time. A diagnostic
+  phase `chars` computes only `text.toList.length`.
+* **Bytes per input byte** is the slope (peak at 160,000 minus peak at 10,000)
+  divided by (bytes at 160,000 minus bytes at 10,000). The start-up memory of
+  the process (about 12 MB for Lean, 14 MB for F*) cancels.
+
+What it cannot see:
+
+1. The allocator keeps and reuses freed memory. A phase that frees memory and
+   a later phase that allocates the same amount do not add; the increments
+   below are increments of the PEAK, not sizes of data structures.
+2. Lean exposes no allocation counter, and `valgrind --tool=massif` sees the
+   allocator's segments, not the objects. No heap profile was taken.
+3. One query shape (COUNT) and one file. A query that returns many rows (q4,
+   q6 of section 9.3) holds its answer as well.
+
+### 10.2 Where the memory was
+
+Peak resident set (KB) of `l4query-phases` stopping after each phase, query
+`SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }`:
+
+| paragraphs | bytes | read | parse | normalize | index | eval |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 847,023 | 14,324 | 42,972 | 42,928 | 42,812 | 43,012 |
+| 20,000 | 1,706,149 | 16,260 | 73,908 | 73,708 | 73,712 | 73,752 |
+| 40,000 | 3,399,450 | 18,204 | 135,352 | 135,080 | 135,328 | 135,272 |
+| 80,000 | 6,761,194 | 24,064 | 256,140 | 256,216 | 256,064 | 256,280 |
+| 160,000 | 13,509,433 | 38,944 | 499,892 | 499,872 | 500,096 | 500,032 |
+
+Bytes of peak per input byte: read 2.0, parse 37.0, and no later phase adds
+anything. At 80,000 paragraphs, `--stop-after chars` (the `String.toList` of
+the file and nothing else) peaks at 255,908 KB, the same as the whole query.
+
+**Cause.** `Syntax.parseTurtle` begins with `let cs := text.toList`. A cons
+cell is 24 bytes and one allocation per character; with the allocator's
+overhead the list costs 35 bytes of peak resident memory per input byte, the
+whole of the peak. The parser frees the list as it reads it, so the dataset,
+the normalised dataset and the index are built inside memory the list
+released, and none of them raised the peak. The other causes the issue named
+were checked: the input is held as `String` and as `List Char` at once (yes,
+this); terms are full `String`s per occurrence (yes, but they did not set the
+peak); a list of quads beside an indexed form (`normalizeDataset` builds
+`quadList`, but it did not set the peak; see 10.5); the solution sequence of
+COUNT is a full list (yes: the reference evaluator without the index also
+peaks at 190 MB at 80,000 paragraphs after the repair; it did not set the peak
+before it).
+
+### 10.3 Repair: Turtle read without the whole-document character list
+
+* **Change.** `Syntax/TurtleChunkFold.lean`: `parseTurtleText text base mode`.
+  It reads the characters of the `String` in place (`String.foldl`), gives
+  them one at a time to the statement scanner (`TurtleStatementScan`,
+  `TurtleChunkFoldState.feedChar`), and reads each completed candidate with
+  the reference grammar's `readStatement`, carrying `TurtleState` across
+  candidates, as the shard packer has done since 2026-09-05. Only the current
+  candidate is a character list. The generated blank-node prefix is computed
+  from the whole text without a list (`freshBnodePrefixText`). A document
+  that contains `<<` is read by `parseTurtle` (the scanner reads `<` as an
+  IRIREF up to the first `>`, so inside an RDF 1.2 triple term its lexical
+  mode can differ from the grammar's). When the walk fails, the document is
+  read again by `parseTurtle`. `Ops.parseTextToDataset` (the input of every
+  RDF verb of the command line, and of the wasm `parse`, `datasetOpen` and
+  `queryDataset` family) reads Turtle with it.
+* **Proved.** `freshBnodePrefixText_eq` (the prefix is
+  `freshBnodePrefix`'s); `parseTurtleText_error` (every error
+  `parseTurtleText` reports is the one `parseTurtle` reports, message and
+  offset); `parseTurtleText_eq_of_walk` (where the walk gives `parseTurtle`'s
+  answer, so does `parseTurtleText`). **Not proved:** that the walk gives
+  `parseTurtle`'s graph whenever it succeeds: the chunk-boundary half of
+  `2026-09-03-rdf-parsing-strategy.md` section 2.3, open since September.
+  Stand-ins:
+  * `#guard`s in `Syntax/TurtleChunkFoldTests.lean`: the walk ALONE equals
+    `parseTurtle` on 23 accepted documents in both RDF modes, and on one more
+    with a base IRI (comments, the no-dot directives, long strings holding dots and
+    quotes, decimals, a dot after an integer, blank-node property lists,
+    collections, a document label next to the generated prefix, empty and
+    comment-only documents, relative IRIs under a changing base, prefixed
+    names with dots); `parseTurtleText` equals `parseTurtle`, error included,
+    on those and on 7 refused documents; the walk refuses two documents
+    `parseTurtle` accepts (a `PREFIX` split over two lines, a subject `base:s`
+    whose statement goes on to the next line) and `parseTurtleText` falls back
+    and agrees; `hasDoubleLt` on four strings; the RDF 1.2 triple-term
+    document goes to `parseTurtle`. Sabotage check: dropping the final
+    reverse of the walk fails three guards.
+  * The walk alone against `parseTurtle`, `l4query-phases --walk-check LIST`:
+    every `.ttl` and `.nt` file of the W3C RDF 1.1 and 1.2 suites (1,130
+    files), in both RDF modes, with and without a base IRI: `parseTurtle`
+    accepts 3,104 cases, and the walk gives the same graph on 3,104, refuses
+    0 and differs on 0; `parseTurtle` refuses 752; 664 cases contain `<<` and
+    are not walked. The nine `gene.ttl` slices of 625 to 160,000 paragraphs:
+    36 of 36 the same.
+  * Byte comparison of standard output, standard error and exit status,
+    binary before against binary after: `parse`, `parse --out nquads` and
+    `query 'SELECT * WHERE { ?s ?p ?o }'`, formats `turtle` and `ttl12`, with
+    and without `--base`, on the 1,130 `.ttl` and `.nt` files of the W3C RDF
+    1.1 and 1.2 suites: 13,560 identical, 0 differ (out of 13,560). 166 of
+    the files contain `<<` and take the `parseTurtle` path.
+* **Found on the way.** `TurtleChunkFoldTests.lean`,
+  `TurtleStatementScanTests.lean` and `Utf8StreamTests.lean` were imported by
+  no module, so `lake build` never built them and their guards never ran
+  (anti-pattern 28: section 2.2 of the parsing record cites "1,115 chunkings,
+  0 disagreements" from the first of them). The umbrella now imports all
+  three; they pass.
+
+### 10.4 After
+
+Peak resident set (MB), `l4factoidal query`, q1 = COUNT(*), q2 = COUNT of
+`wdt:P684`, and `parse`:
+
+| paragraphs | q1 before | q1 after | q2 after | parse before | parse after | F* q1 | Lean/F* q1 before | after |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 49.0 | 43.5 | 42.7 | 49.0 | 39.1 | 16.0 | 3.1 | 2.7 |
+| 20,000 | 81.0 | 65.1 | 69.1 | 80.8 | 56.9 | 17.9 | 4.5 | 3.6 |
+| 40,000 | 140.2 | 111.0 | 114.7 | 140.8 | 92.8 | 21.2 | 6.6 | 5.2 |
+| 80,000 | 257.7 | 192.7 | 200.8 | 259.0 | 163.0 | 28.0 | 9.2 | 6.9 |
+| 160,000 | 495.7 | 357.0 | 375.0 | 497.3 | 305.1 | 41.0 | 12.1 | 8.7 |
+
+Bytes of peak per input byte: q1 37.0 before, 26.0 after; q2 27.5 after;
+`parse` 37.1 before, 22.0 after; F* 2.1.
+
+Phases after (KB, as in 10.2):
+
+| paragraphs | read | parse | normalize | index | eval |
+|---:|---:|---:|---:|---:|---:|
+| 10,000 | 14,320 | 24,672 | 30,464 | 36,700 | 36,888 |
+| 20,000 | 16,332 | 36,604 | 48,904 | 59,288 | 59,464 |
+| 40,000 | 17,912 | 59,384 | 85,828 | 103,336 | 103,576 |
+| 80,000 | 24,600 | 106,288 | 157,560 | 188,180 | 188,016 |
+| 160,000 | 38,704 | 200,580 | 302,872 | 355,772 | 356,404 |
+
+Bytes of peak per input byte, after: read 2.0, parse 14.2, normalize 22.0,
+index 25.8, eval 25.8. Each later phase now raises the peak.
+
+Time, CPU seconds (user plus system), minimum of 3 runs, the three programs
+interleaved, load 2.4 to 7.3:
+
+| case | Lean before | Lean after | F* | Lean/F* before | after |
+|---|---:|---:|---:|---:|---:|
+| q1, 80,000 | 4.36 | 4.76 | 3.04 | 1.4 | 1.6 |
+| q2, 80,000 | 4.81 | 4.52 | 3.21 | 1.5 | 1.4 |
+| `parse`, 80,000 | 2.09 | 2.43 | - | - | - |
+| q1, 160,000 | 8.38 | 8.65 | 6.22 | 1.3 | 1.4 |
+| q2, 160,000 | 9.73 | 8.95 | 6.18 | 1.6 | 1.4 |
+| `parse`, 160,000 | 5.64 | 6.24 | - | - | - |
+
+The walk costs `parse` 11 to 16 percent more CPU time than `parseTurtle`
+(per character it advances the scanner's state and keeps the current
+candidate as a reversed list, then turns each candidate into a `String` and
+back into a list); a query differs by less than the noise of these runs (plus
+or minus 10 percent). The F* q1 time at 160,000 is from three separate runs
+(6.22 to 7.76 s): in the interleaved run one F* run ended early and its time
+is not used. No row's time ratio is above 2.0.
+
+### 10.5 What holds the memory now, and what was tried
+
+Issue 729 stays open: Lean is 6.9 times the F* peak at 80,000 paragraphs and
+8.7 times at 160,000, above the rule of section 2. In the order of the phase
+table:
+
+1. **The parsed graph**, 12 bytes per input byte above the text (about 240
+   bytes per triple at 80,000 paragraphs: a list cell, a `Triple`, a `Term`
+   per position and a `String` per IRI occurrence; the parser makes a new
+   `String` for each prefixed name it expands, so `wdt:P684` is stored once
+   per triple). Repair: intern IRIs while the walk folds statements (a
+   table from a string to the first equal string; the graph is EQUAL to the
+   one without the table, so the proof is an invariant of the table).
+2. **`normalizeDataset`**, 8 more: the `FastGraph` that removes repeated
+   triples holds a key tuple, a hash-map node and two list cells per triple
+   while the parsed graph is still live. Tried: `normalizeDatasetFast` (no
+   `quadList`; a triple whose object has no language tag kept as the same
+   value; `@[csimp]`, proved). Peak unchanged at 80,000 paragraphs (157 MB
+   and 188 MB), so it was not landed. The step that would help is to remove
+   repeated triples while parsing, so that the parsed graph is not live
+   beside a second structure.
+3. **The index** (`OWL.RL.Index.ofGraph`, built for every query): an array, a
+   hash set and five hash maps of lists. COUNT(*) reads none of the maps
+   (`igSearch` with no bound position returns `all`), q2 reads `byP` only.
+   Repair: build each access path when a query first needs it; the SPARQL
+   refinement proofs are stated over `igSearch`, which would need the same
+   statement over the lazy form.
+4. **The solution sequence.** `evalSelect` builds every solution before the
+   aggregate counts them; the reference evaluator without the index peaks at
+   190 MB at 80,000 paragraphs (`--no-index`).
+
+### 10.6 The memory rule and the gate rows
+
+* Section 2 now ranks a row when its Lean peak resident set at the largest
+  size where both engines finished is more than 3 times the F* one.
+  `tools/bench_lean_vs_fstar.py --report` prints both peaks and the ratio.
+  By this rule, query-q1 and q2 rank (9.2 before, 6.9 after, at 80,000
+  paragraphs); q3 to q6, for which the F* engine also holds 167 to 233 MB,
+  were 1.1 to 1.6 in section 9.3 and do not.
+* `tests/stack/lean_scaling.py` row `query-memory`: the bytes of peak per
+  input byte of `query` COUNT(*), 10,000 to 40,000 paragraphs, at most 32.
+  The whole-document `List Char` costs 35 on its own (10.2), so any path that
+  builds it again fails the row. 37.8 before (expected failure naming issue
+  729), 27.1 and 27.3 after (assertion).
+* Row `query-memory-fstar`: the same slope, at most 6.0, which is 3 times the
+  F* engine's 2.1. It is an expected failure naming issue 729 (27.2 after):
+  the open part of the issue as a test that fails today.
+
+### 10.7 Gates after the last commit of this round
+
+Each the same as the expected count in the task and as section 9.4:
+SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650); SPARQL 1.2 271 pass, 0
+fail (out of 271); RDF 1.1 1041 pass, 0 fail (out of 1041); RDF 1.2 1358 pass,
+0 fail (out of 1358); RDFC-1.0 86 pass, 0 fail (out of 86) (`l4w3c --quiet`
+on each manifest). `Wasm/native-smoke.sh` 303 pass, 0 fail (out of 303);
+`Wasm/cli-smoke.sh` 54 pass, 0 fail (out of 54).
+`tests/stack/lean_scaling.sh` 17 pass, 0 fail, 1 expected-fail (out of 18),
+the expected failure being `query-memory-fstar` (issue 729).
+`tests/stack/lenient_scaling.sh` 16 pass, 0 fail (out of 16). FULLBUILD
+
+### 10.8 Text for the issue
+
+For a comment on https://github.com/danbri/factoidal/issues/729, which stays
+open:
+
+> **Partly repaired** (`claude/wt-perf-mem`, design record section 10).
+> Phase measurement (`l4query-phases --stop-after PHASE`, 10,000 to 160,000
+> paragraphs of `gene.ttl`): the whole peak was `parseTurtle`'s
+> `text.toList`, 35 bytes of resident memory per input byte; nothing after it
+> raised the peak. `Ops.parseTextToDataset` now reads Turtle with
+> `parseTurtleText` (the statement scanner over the `String`, falling back to
+> `parseTurtle` on `<<` and on every refusal). Not proved equal; the walk
+> alone agrees with `parseTurtle` on 3,104 of 3,104 accepted W3C cases and the
+> command line's output is byte-identical on 13,560 of 13,560.
+> Peak, `query` COUNT(*), 80,000 paragraphs: 257.7 MB before, 192.7 MB
+> after; F* 28.0 MB (6.9 times). Bytes of peak per input byte: 37.0 before,
+> 26.0 after, F* 2.1. Time within 10 percent; `parse` 11 to 16 percent slower.
+> Still open: the parsed graph (12 bytes per input byte, one `String` per IRI
+> occurrence), `normalizeDataset`'s duplicate-removal table while the parsed
+> graph is live (8), the index built for every query (4), the solution
+> sequence of COUNT. Gate rows: `query-memory` (at most 32 bytes per input
+> byte, passes) and `query-memory-fstar` (at most 6, expected failure naming
+> this issue).
+
 ## 7. How to repeat
 
 ```
@@ -1049,6 +1319,9 @@ tests/stack/lean_scaling.sh                   # the regression gate
 valgrind --tool=callgrind --callgrind-out-file=/tmp/cg.out \
     formal/lean4/.lake/build/bin/l4factoidal parse FILE --format turtle
 callgrind_annotate --inclusive=yes /tmp/cg.out | head -40
+# peak memory by phase (section 10)
+/usr/bin/time -v formal/lean4/.lake/build/bin/l4query-phases FILE --stop-after parse
+formal/lean4/.lake/build/bin/l4query-phases --walk-check LIST   # walk against parseTurtle
 ```
 
 `tests/stack/lean_scaling.sh` asserts time(4x) <= 9.0 x max(time(x), 50 ms) for
