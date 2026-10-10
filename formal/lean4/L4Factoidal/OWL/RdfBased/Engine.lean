@@ -194,6 +194,27 @@ def hvEqPropAll (g : Graph) : List Triple :=
                         else [])))))
             else [])))))
 
+/-- The typed-literal value rule, goal-directed: for every goal triple
+whose object is an `xsd:decimal` or `xsd:integer` literal `l2`, every
+triple of `g` with the same predicate whose object `l1` has the same
+datatype or a datatype IRI `owl:sameAs` it, and the same value. -/
+def literalValueFor (g goal : Graph) : List Triple :=
+  goal.flatMap (fun gt =>
+    match gt.o with
+    | .literal l2 =>
+        if l2.val.datatype == xsdDecimal || l2.val.datatype == xsdInteger then
+          (g.filter (fun t => t.p == gt.p)).flatMap (fun t =>
+            match t.o with
+            | .literal l1 =>
+                if l1.val.langTag == none &&
+                   sameDecimalValue l2.val.datatype l1.val.lexicalForm l2.val.lexicalForm &&
+                   (l1.val.datatype == l2.val.datatype ||
+                    memB g ⟨.iri l1.val.datatype, owlSameAs, .iri l2.val.datatype⟩)
+                then [(⟨t.s, t.p, .literal l2⟩ : Triple)] else []
+            | _ => [])
+        else []
+    | _ => [])
+
 /-- Every member of `a` is a member of `b`. -/
 def allIn (a b : List Term) : Bool := a.all (fun e => decide (e ∈ b))
 
@@ -205,7 +226,8 @@ def rbConclusions (g goal : Graph) : List Triple :=
   singletonAll g rdfsDomain owlInverseFunctionalProperty ++ typeDomainSubAll g ++
   avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g ++
   listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allIn ++
-  listSubAll g owlIntersectionOf (fun es1 es2 => allIn es2 es1) ++ hvEqPropAll g
+  listSubAll g owlIntersectionOf (fun es1 es2 => allIn es2 es1) ++ hvEqPropAll g ++
+  literalValueFor g goal
 
 /-! ## Every executable conclusion is a rule application -/
 
@@ -450,10 +472,37 @@ theorem hvEqPropAll_derives {g : Graph} {t : Triple} (h : t ∈ hvEqPropAll g) :
     · simp at h
   · simp at h
 
+theorem literalValueFor_derives {g goal : Graph} {t : Triple} (h : t ∈ literalValueFor g goal) :
+    RbDerives g t := by
+  simp only [literalValueFor, List.mem_flatMap] at h
+  obtain ⟨gt, _, h⟩ := h
+  split at h
+  · rename_i l2 _
+    split at h
+    · simp only [List.mem_flatMap, List.mem_filter] at h
+      obtain ⟨u, ⟨hu, _⟩, h⟩ := h
+      split at h
+      · rename_i l1 ho
+        split at h
+        · rename_i hc
+          simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hc
+          obtain ⟨⟨hl, hv⟩, hdt⟩ := hc
+          simp only [List.mem_singleton] at h
+          subst h
+          have hm : (⟨u.s, u.p, .literal l1⟩ : Triple) ∈ g := mem_of_parts hu rfl rfl ho
+          refine RbDerives.literalValue hm ?_ (by simpa using hl) hv
+          rcases hdt with hdt | hdt
+          · exact Or.inl hdt
+          · exact Or.inr (mem_of_memB hdt)
+        · simp at h
+      · simp at h
+    · simp at h
+  · simp at h
+
 theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :
     RbDerives g t := by
   simp only [rbConclusions, List.mem_append] at h
-  rcases h with ((((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
+  rcases h with (((((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
   · exact axiomsFor_derives h
   · exact vocabTypeAll_derives h
   · exact universalFor_derives h
@@ -472,6 +521,7 @@ theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclus
   · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
     exact RbDerives.interSub h1 h2 hl1 hl2 (allIn_spec hok)
   · exact hvEqPropAll_derives h
+  · exact literalValueFor_derives h
 
 /-- Every triple `rbConclusions` lists is OWL 2 RDF-Based entailed by `g`. -/
 theorem rbConclusions_entailed {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :

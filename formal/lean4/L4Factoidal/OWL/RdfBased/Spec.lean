@@ -191,6 +191,44 @@ def vocabPropTable : List PropRow :=
 `ICEXT(I(owl:Thing)) = IR` and `ICEXT(I(rdfs:Resource)) = IR`. -/
 def universalClasses : List WfIri := [owlThing, rdfsResource]
 
+/-! ## Decimal lexical forms
+
+XSD 1.1 Part 2 § 3.3.3: the lexical space of `xsd:decimal` is
+`(\+|-)?([0-9]+(\.[0-9]*)?|\.[0-9]+)`; § 3.4.13: that of `xsd:integer`
+is `[\-+]?[0-9]+`. `decimalCanon` maps a lexical form in the decimal
+lexical space to (negative, integer digits without leading zeros,
+fraction digits without trailing zeros), with zero always non-negative;
+two lexical forms denote the same decimal value exactly when their
+canonical forms are equal. -/
+
+def decimalCanon (s : String) : Option (Bool × List Char × List Char) :=
+  let cs := s.toList
+  let (neg, body) := match cs with
+    | '-' :: r => (true, r)
+    | '+' :: r => (false, r)
+    | r => (false, r)
+  let intPart := body.takeWhile (· != '.')
+  let rest := body.dropWhile (· != '.')
+  let (dot, frac) := match rest with
+    | '.' :: f => (true, f)
+    | _ => (false, [])
+  let digits := fun (l : List Char) => l.all Char.isDigit
+  if digits intPart && digits frac && (!intPart.isEmpty || (dot && !frac.isEmpty)) then
+    let i' := intPart.dropWhile (· == '0')
+    let f' := (frac.reverse.dropWhile (· == '0')).reverse
+    some (if i'.isEmpty && f'.isEmpty then false else neg, i', f')
+  else none
+
+/-- `s` is in the lexical space of `d` (`xsd:decimal` or `xsd:integer`). -/
+def decimalLexOk (d : WfIri) (s : String) : Bool :=
+  (decimalCanon s).isSome && (d == xsdDecimal || (d == xsdInteger && !s.toList.contains '.'))
+
+/-- `d` is `xsd:decimal` or `xsd:integer`, both lexical forms are in its
+lexical space, and they denote one value. -/
+def sameDecimalValue (d : WfIri) (s1 s2 : String) : Bool :=
+  (d == xsdDecimal || d == xsdInteger) && decimalLexOk d s1 && decimalLexOk d s2 &&
+  decimalCanon s1 == decimalCanon s2
+
 /-! ## The semantic conditions -/
 
 section Conditions
@@ -327,6 +365,20 @@ def CondEquivalentPropertyIf : Prop :=
   ∀ p1 p2 : i.idom, IP i p1 → IP i p2 → (∀ x y, i.iext p1 x y ↔ i.iext p2 x y) →
     i.iext (i.iIri owlEquivalentProperty) p1 p2
 
+/-- Table 5.9, `owl:sameAs`: the left-to-right half. -/
+def CondSameAsOnly : Prop :=
+  ∀ a1 a2 : i.idom, i.iext (i.iIri owlSameAs) a1 a2 → a1 = a2
+
+/-- § 4.2: "IL("s"^^u) = L2V(d)(s), provided that d is a datatype of D,
+IS(u) = d, and s is in the lexical space LS(d)". For `d` = `xsd:decimal`
+or `xsd:integer` (both in every OWL 2 RDF-Based datatype map, § 3.3):
+when `IS(u) = IS(d)` and `s1`, `s2` are lexical forms of `d` with one
+value, `"s1"^^u` and `"s2"^^d` denote that value. -/
+def CondTypedLiteralValue : Prop :=
+  ∀ l1 l2 : WfLiteral, l1.val.langTag = none →
+    sameDecimalValue l2.val.datatype l1.val.lexicalForm l2.val.lexicalForm = true →
+    i.iIri l1.val.datatype = i.iIri l2.val.datatype → i.iLit l1 = i.iLit l2
+
 /-- Datatype value spaces that are disjoint have disjoint class
 extensions. RDF 1.1 Semantics §9 (D-interpretations: `ICEXT(I(u))` is
 the value space of the datatype `I(u)` for every recognised `u`), §4.1
@@ -368,6 +420,8 @@ structure RdfBasedConditions (i : Interp) : Prop where
   hasValueSub : CondHasValueSub i
   functionalOnly : CondFunctionalOnly i
   equivalentPropertyIf : CondEquivalentPropertyIf i
+  sameAsOnly : CondSameAsOnly i
+  typedLiteralValue : CondTypedLiteralValue i
 
 /-- Entailment over the bundle (Definition 4.5, with the bundle in place
 of "OWL 2 RDF-Based interpretation"; see the header for why this
@@ -381,8 +435,10 @@ literals and triple terms denote `inl none`; `inr f` is a member of
 the class extension of every datatype of value-space family `f`
 (`RL.xsdFamily`). Every element is in the extension of every class
 except `owl:Nothing` (empty), the datatypes (one element per family) and
-`owl:FunctionalProperty` (exactly `rdf:first` and `rdf:rest`, the two
-functional properties of the witness, `w_nonfunctional`). Each vocabulary property the bundle constrains gets the
+`owl:FunctionalProperty` (exactly `rdf:first`, `rdf:rest` and
+`owl:sameAs`, the functional properties of the witness,
+`w_nonfunctional`). Every literal denotes one element, so
+`CondTypedLiteralValue` holds trivially. Each vocabulary property the bundle constrains gets the
 extension the bundle demands; `rdf:first` is empty, so the only
 sequence is `rdf:nil`. -/
 
@@ -393,7 +449,7 @@ def wI (w : WfIri) : WDom := .inl (some w)
 /-- The class extension of the witness. -/
 def wExt (x c : WDom) : Prop :=
   c ≠ wI owlNothing ∧
-    (if c = wI owlFunctionalProperty then x = wI rdfFirst ∨ x = wI rdfRest
+    (if c = wI owlFunctionalProperty then x = wI rdfFirst ∨ x = wI rdfRest ∨ x = wI owlSameAs
      else
        match c with
        | .inl (some w) => (match xsdFamily w with
@@ -416,6 +472,7 @@ def wBase (p x y : WDom) : Prop :=
   else if p = wI owlAllValuesFrom then (∀ z, ¬ wExt z x) ∨ (∀ z, wExt z y)
   else if p = wI owlSomeValuesFrom then (∀ z, wExt z x) ∨ (∀ z, ¬ wExt z y)
   else if p = wI owlHasValue then ∀ z, ¬ wExt z x
+  else if p = wI owlSameAs then x = y
   else True
 
 abbrev wIsDomRng (p : WDom) : Prop := p = wI rdfsDomain ∨ p = wI rdfsRange
@@ -492,11 +549,11 @@ theorem wBase_default {p : WfIri}
     (h : (p != rdfType && p != rdfsSubClassOf && p != owlComplementOf && p != owlDifferentFrom &&
           p != owlOneOf && p != owlUnionOf && p != owlIntersectionOf && p != rdfFirst &&
           p != rdfRest && p != owlAllValuesFrom && p != owlSomeValuesFrom &&
-          p != owlHasValue) = true)
+          p != owlHasValue && p != owlSameAs) = true)
     (x y : WDom) : wBase (wI p) x y := by
   simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, h11⟩, h12⟩ := h
-  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, if_false]
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, h11⟩, h12⟩, h13⟩ := h
+  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, if_false]
 
 theorem wBase_sub (x y : WDom) :
     wBase (wI rdfsSubClassOf) x y ↔ ∀ z, wExt z x → wExt z y := by
@@ -541,10 +598,14 @@ theorem wBase_type (x y : WDom) : wBase (wI rdfType) x y ↔ wExt x y := by
 theorem wBase_rest (x y : WDom) : wBase (wI rdfRest) x y ↔ y = wI rdfNil := by
   simp (config := { decide := true }) only [wBase, if_true, if_false]
 
+theorem wBase_sameAs (x y : WDom) : wBase (wI owlSameAs) x y ↔ x = y := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
 /-- The IRIs `wBase` gives an extension of its own. -/
 def wSpecial : List WfIri :=
   [ rdfType, rdfsSubClassOf, owlComplementOf, owlDifferentFrom, owlOneOf, owlUnionOf,
-    owlIntersectionOf, rdfFirst, rdfRest, owlAllValuesFrom, owlSomeValuesFrom, owlHasValue ]
+    owlIntersectionOf, rdfFirst, rdfRest, owlAllValuesFrom, owlSomeValuesFrom, owlHasValue,
+    owlSameAs ]
 
 theorem wBase_other {p : WDom} (h : ∀ w ∈ wSpecial, p ≠ wI w) (x y : WDom) : wBase p x y := by
   unfold wBase
@@ -553,13 +614,15 @@ theorem wBase_other {p : WDom} (h : ∀ w ∈ wSpecial, p ≠ wI w) (x y : WDom)
     if_neg (h owlOneOf (by decide)), if_neg (h owlUnionOf (by decide)),
     if_neg (h owlIntersectionOf (by decide)), if_neg (h rdfFirst (by decide)),
     if_neg (h rdfRest (by decide)), if_neg (h owlAllValuesFrom (by decide)),
-    if_neg (h owlSomeValuesFrom (by decide)), if_neg (h owlHasValue (by decide))]
+    if_neg (h owlSomeValuesFrom (by decide)), if_neg (h owlHasValue (by decide)),
+    if_neg (h owlSameAs (by decide))]
   trivial
 
 /-- `owl:Nothing` is related to every full-extension element other than
-`rdf:nil` by every property except `rdf:first`, `rdf:rest` and
-`owl:someValuesFrom`. -/
+`rdf:nil` by every property except `rdf:first`, `rdf:rest`,
+`owl:sameAs` and `owl:someValuesFrom`. -/
 theorem w_rel_nothing (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest)
+    (h4 : p ≠ wI owlSameAs)
     (h3 : p ≠ wI owlSomeValuesFrom) (y : WDom) (hy : ∀ u, wExt u y) (hyn : y ≠ wI rdfNil) :
     wIext p (wI owlNothing) y := by
   have hN : ∀ u, ¬ wExt u (wI owlNothing) := fun u h => h.1 rfl
@@ -597,12 +660,13 @@ theorem w_rel_nothing (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest
   refine wBase_other ?_ _ _
   intro w hw
   simp only [wSpecial, List.mem_cons, List.not_mem_nil, or_false] at hw
-  rcases hw with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hw with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     assumption
 
-/-- Every property of the witness other than `rdf:first` and `rdf:rest`
-relates one element to two different ones. -/
-theorem w_nonfunctional (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest) :
+/-- Every property of the witness other than `rdf:first`, `rdf:rest`
+and `owl:sameAs` relates one element to two different ones. -/
+theorem w_nonfunctional (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRest)
+    (h4 : p ≠ wI owlSameAs) :
     ∃ x y1 y2 : WDom, wIext p x y1 ∧ wIext p x y2 ∧ y1 ≠ y2 := by
   have hT : ∀ u, wExt u (wI owlThing) := wExt_of_plain (by decide)
   have hR : ∀ u, wExt u (wI rdfsResource) := wExt_of_plain (by decide)
@@ -614,8 +678,8 @@ theorem w_nonfunctional (p : WDom) (h1 : p ≠ wI rdfFirst) (h2 : p ≠ wI rdfRe
       exact (wBase_svf _ _).mpr (Or.inl hT)
     exact ⟨_, _, _, hb (wI owlThing), hb (wI rdfsResource), hTR⟩
   · exact ⟨wI owlNothing, wI owlThing, wI rdfsResource,
-      w_rel_nothing p h1 h2 hs _ hT (wI_ne (by decide)),
-      w_rel_nothing p h1 h2 hs _ hR (wI_ne (by decide)), hTR⟩
+      w_rel_nothing p h1 h2 h4 hs _ hT (wI_ne (by decide)),
+      w_rel_nothing p h1 h2 h4 hs _ hR (wI_ne (by decide)), hTR⟩
 
 theorem w_IC (x : witnessInterp.idom) : IC witnessInterp x := w_ic_plain (by decide) x
 
@@ -771,15 +835,16 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     simp at hj
   functionalIf := by
     intro p _ hfun
-    have hpw : p = wI rdfFirst ∨ p = wI rdfRest := by
-      rcases Classical.em (p = wI rdfFirst ∨ p = wI rdfRest) with h | h
+    have hpw : p = wI rdfFirst ∨ p = wI rdfRest ∨ p = wI owlSameAs := by
+      rcases Classical.em (p = wI rdfFirst ∨ p = wI rdfRest ∨ p = wI owlSameAs) with h | h
       · exact h
-      · obtain ⟨n1, n2⟩ := not_or.mp h
-        obtain ⟨x, y1, y2, e1, e2, hne⟩ := w_nonfunctional p n1 n2
+      · obtain ⟨n1, n23⟩ := not_or.mp h
+        obtain ⟨n2, n3⟩ := not_or.mp n23
+        obtain ⟨x, y1, y2, e1, e2, hne⟩ := w_nonfunctional p n1 n2 n3
         exact absurd (hfun x y1 y2 e1 e2) hne
     refine (w_ic _ _).mpr ⟨wI_ne (by decide), ?_⟩
     show (if wI owlFunctionalProperty = wI owlFunctionalProperty then
-        p = wI rdfFirst ∨ p = wI rdfRest else _)
+        p = wI rdfFirst ∨ p = wI rdfRest ∨ p = wI owlSameAs else _)
     rw [if_pos rfl]; exact hpw
   inverseFunctionalIf := by
     intro p _ _
@@ -831,14 +896,23 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     intro p x y1 y2 hp h1 h2
     have hp' := ((w_ic _ _).mp hp).2
     rw [if_pos rfl] at hp'
-    rcases hp' with rfl | rfl
+    rcases hp' with rfl | rfl | rfl
     · exact absurd ((w_iext (by decide) (by decide) _ _).mp h1) (wBase_first _ _)
     · have e1 := (wBase_rest _ _).mp ((w_iext (by decide) (by decide) _ _).mp h1)
       have e2 := (wBase_rest _ _).mp ((w_iext (by decide) (by decide) _ _).mp h2)
       rw [e1, e2]
+    · have e1 := (wBase_sameAs _ _).mp ((w_iext (by decide) (by decide) _ _).mp h1)
+      have e2 := (wBase_sameAs _ _).mp ((w_iext (by decide) (by decide) _ _).mp h2)
+      rw [← e1, ← e2]
   equivalentPropertyIf := by
     intro p1 p2 _ _ _
     exact (w_iext (by decide) (by decide) _ _).mpr (wBase_default (by decide) _ _)
+  sameAsOnly := by
+    intro a1 a2 h
+    exact (wBase_sameAs _ _).mp ((w_iext (by decide) (by decide) _ _).mp h)
+  typedLiteralValue := by
+    intro _ _ _ _ _
+    rfl
 
 /-- The one-triple graph `owl:Thing rdfs:subClassOf owl:Nothing`. -/
 def thingSubNothing : Triple := ⟨.iri owlThing, rdfsSubClassOf, .iri owlNothing⟩

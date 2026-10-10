@@ -177,6 +177,33 @@ private def gHv (qFunctional : Bool) : Graph :=
 -- q not functional: no equivalence
 #guard !has (gHv false) [] ⟨S pP, owlEquivalentProperty, O pQ⟩
 
+/-! ## literalValue (§ 4.2, Table 5.9) -/
+
+-- the decimal lexical space and value equality (XSD 1.1 Part 2 § 3.3.3)
+#guard sameDecimalValue xsdDecimal "01" "1"
+#guard sameDecimalValue xsdDecimal "1.50" "+1.5"
+#guard sameDecimalValue xsdDecimal "-0" "0.0"
+#guard sameDecimalValue xsdDecimal ".5" "0.5"
+#guard !sameDecimalValue xsdDecimal "1" "2"
+#guard !sameDecimalValue xsdDecimal "1e0" "1"
+#guard !sameDecimalValue xsdDecimal "" ""
+-- "1.0" is not in the lexical space of xsd:integer
+#guard !sameDecimalValue xsdInteger "1.0" "1"
+#guard sameDecimalValue xsdInteger "007" "7"
+
+private def bar : WfIri := ⟨"http://ex/bar", rfl⟩
+private def lit (s : String) (d : WfIri) : Term :=
+  if h : literalWf ⟨s, d, none, none⟩ then .literal ⟨⟨s, d, none, none⟩, h⟩ else .iri d
+-- WebOnt-I5.8-017 shape: a datatype IRI that is owl:sameAs xsd:decimal
+#guard has [⟨S iX, pP, lit "01" bar⟩, ⟨S bar, owlSameAs, O xsdDecimal⟩]
+  [⟨S iX, pP, lit "1" xsdDecimal⟩] ⟨S iX, pP, lit "1" xsdDecimal⟩
+-- without the alias the two literals need not denote one value
+#guard !has [⟨S iX, pP, lit "01" bar⟩] [⟨S iX, pP, lit "1" xsdDecimal⟩]
+  ⟨S iX, pP, lit "1" xsdDecimal⟩
+-- with the alias but a different value
+#guard !has [⟨S iX, pP, lit "02" bar⟩, ⟨S bar, owlSameAs, O xsdDecimal⟩]
+  [⟨S iX, pP, lit "1" xsdDecimal⟩] ⟨S iX, pP, lit "1" xsdDecimal⟩
+
 /-! ## End to end: RL closure and the rules, alternating -/
 
 private def sat (g goal : Graph) (t : Triple) : Bool := memB (rbSaturate g goal 8 2) t

@@ -39,6 +39,7 @@ Comprehension Conditions [DEV]").
 | `oneOfSub` | `c1 rdfs:subClassOf c2` when every member of `c1`'s enumeration is a member of `c2`'s | Tables 5.5, 5.8 |
 | `unionSub` | `c1 rdfs:subClassOf c2` when every operand of `c1`'s union is an operand of `c2`'s | Tables 5.4, 5.8 |
 | `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s intersection is an operand of `c1`'s | Tables 5.4, 5.8 |
+| `literalValue` | `s p "s2"^^d` from `s p "s1"^^u` when `u` is `d` or `u owl:sameAs d`, `d` is `xsd:decimal` or `xsd:integer`, and the lexical forms denote one value | § 4.2 (IL), Table 5.9 |
 | `hvEqProp` | `p owl:equivalentProperty q` when `p`, `q` are functional with domain `d`, and `d` is a subclass of `∋ v` restrictions on `p` and on `q` with the same value | Tables 5.6, 5.8, 5.9, 5.13 |
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
@@ -147,6 +148,13 @@ inductive RbDerives (g : Graph) : Triple → Prop where
       (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
       (hsub : ∀ e ∈ es2, e ∈ es1) :
       RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
+  | literalValue {s : Subject} {p : WfIri} {l1 l2 : WfLiteral}
+      (hm : (⟨s, p, .literal l1⟩ : Triple) ∈ g)
+      (hu : l1.val.datatype = l2.val.datatype ∨
+        (⟨.iri l1.val.datatype, owlSameAs, .iri l2.val.datatype⟩ : Triple) ∈ g)
+      (hl : l1.val.langTag = none)
+      (hv : sameDecimalValue l2.val.datatype l1.val.lexicalForm l2.val.lexicalForm = true) :
+      RbDerives g ⟨s, p, .literal l2⟩
   | hvEqProp {p q d r1 r2 : Subject} {v : Term}
       (hdp : (⟨p, rdfsDomain, d.toTerm⟩ : Triple) ∈ g)
       (hdq : (⟨q, rdfsDomain, d.toTerm⟩ : Triple) ∈ g)
@@ -350,6 +358,16 @@ theorem rbDerives_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll 
       intro c hcm
       obtain ⟨e, he, rfl⟩ := List.mem_map.mp hcm
       exact (he1 x).mp hx _ (List.mem_map.mpr ⟨e, hsub e he, rfl⟩)
+  | literalValue hm hu hl hv =>
+      rename_i s p l1 l2
+      have t := hA _ hm
+      have hI : i.iIri l1.val.datatype = i.iIri l2.val.datatype := by
+        rcases hu with h | h
+        · rw [h]
+        · exact hc.sameAsOnly _ _ (hA _ h)
+      show i.iext (i.iIri p) (denotSubject i A s) (i.iLit l2)
+      rw [← hc.typedLiteralValue l1 l2 hl hv hI]
+      exact t
   | hvEqProp hdp hdq hs1 hs2 ho1 hv1 ho2 hv2 hfp hfq =>
       rename_i p q d r1 r2 v
       have tdp := hA _ hdp
