@@ -59,7 +59,7 @@ const ds = await parse(`
   _:b foaf:name "Bob" .
 `, { format: "turtle" });
 
-// SELECT: bindings are Map<variableName, RDF/JS Term>.
+// SELECT: bindings are Map<variableName, RDF/JS Term>, in SELECT order.
 const rows = await query(ds, `
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   SELECT ?name WHERE { ?p foaf:name ?name } ORDER BY ?name
@@ -920,9 +920,9 @@ from danbri/factoidal-core; `gzip -9` of each file):
 | `l4-assets/l4factoidal.wasm` (the whole Lean library) | 10,402,990 bytes | 2,042,240 bytes |
 | `l4-assets/l4factoidal.mjs` (Emscripten glue) | 64,391 bytes | 18,307 bytes |
 | `l4-assets/l4factoidal.js` (loader) | 13,460 bytes | 4,853 bytes |
-| `lib/api.mjs` (the wrappers) | 111,315 bytes | 29,842 bytes |
-| every JavaScript file `browser.js` loads, together | 229,777 bytes | 67,248 bytes |
-| the tarball (`npm pack`, 161 files) | 12,040,930 bytes unpacked | 2,410,213 bytes |
+| `lib/api.mjs` (the wrappers) | 111,836 bytes | 30,042 bytes |
+| every JavaScript file `browser.js` loads, together | 230,293 bytes | 67,446 bytes |
+| the tarball (`npm pack`, 161 files) | 12,042,704 bytes unpacked | 2,410,574 bytes |
 
 A browser page that loads `browser.js` transfers about 2.1 MB with gzip, of
 which 2.04 MB is the wasm. One dispatch table reaches the whole library, so

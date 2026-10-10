@@ -317,10 +317,10 @@ async function query(ds, sparql, options) {
  */
 // Case-insensitive regime aliases ('rdfs', 'owl-rl', 'owlrl', 'owl_rl')
 // normalized to the engine's exact-case ENTAIL_VALUES spelling ('RDFS',
-// 'OWL-RL'); anything else (including already-correct casing, or a
-// genuinely invalid value) passes through unchanged so engineApi.query's
-// own validation reports the honest error rather than this function
-// guessing at what the caller meant.
+// 'OWL-RL'); anything else (including already-correct casing, or a value
+// that names no regime) passes through unchanged, so engineApi.query's own
+// validation reports the error and this function does not guess what the
+// caller meant.
 const ENTAIL_REGIME_ALIASES = {
   none: 'none', rdfs: 'RDFS', 'owl-rl': 'OWL-RL', owlrl: 'OWL-RL', owl_rl: 'OWL-RL',
 };

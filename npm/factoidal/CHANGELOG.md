@@ -69,6 +69,9 @@ Changed:
   converts. (`line` is 1-based; `column` counts Unicode scalar values.) This
   unit is a coordinator default, recorded in
   `docs/designissues/2026-10-10-npm-lean-only.md`.
+- Each SELECT solution `Map` iterates in the order of the SELECT clause
+  (`head.vars`); it followed the member order of the engine's JSON binding
+  objects, which carries no meaning.
 - DESCRIBE answers the Concise Bounded Description of each named resource
   (the F\* engine answered the empty graph,
   [issue 702](https://github.com/danbri/factoidal/issues/702)).

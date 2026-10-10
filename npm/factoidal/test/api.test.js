@@ -619,3 +619,29 @@ test('entail none: baseline returns zero worksWith rows (both regimes really add
     'PREFIX : <http://example.org/org#> SELECT * WHERE { ?x :worksWith ?y }');
   assert.equal(rows.length, 0);
 });
+
+// SPARQL 1.1 Query Results JSON Format section 3.1: `head.vars` gives the
+// projection order; the members of a binding object are unordered (RFC 8259
+// section 4). Each solution Map iterates in the SELECT order, here not
+// alphabetical, on the plain path and through a dataset handle.
+test('query: each solution Map iterates in the SELECT projection order', async () => {
+  const ds = await parse(TTL);
+  const q = 'PREFIX foaf: <http://xmlns.com/foaf/0.1/> ' +
+    'SELECT ?name ?age ?p WHERE { ?p foaf:name ?name ; foaf:age ?age }';
+  const rows = await query(ds, q);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([...rows[0].keys()], ['name', 'age', 'p']);
+  const reversed = await query(ds, q.replace('?name ?age ?p', '?p ?age ?name'));
+  assert.deepEqual([...reversed[0].keys()], ['p', 'age', 'name']);
+  const h = await factoidal.openDataset(TTL);
+  try {
+    const viaHandle = await h.query(q);
+    assert.deepEqual([...viaHandle[0].keys()], ['name', 'age', 'p']);
+  } finally {
+    await h.close();
+  }
+  // An unbound variable is absent from the Map; the bound ones keep the order.
+  const opt = await query(ds, 'PREFIX foaf: <http://xmlns.com/foaf/0.1/> ' +
+    'SELECT ?z ?name ?a WHERE { ?p foaf:name ?name OPTIONAL { ?p foaf:age ?a } }');
+  assert.deepEqual(opt.map((r) => [...r.keys()].join(' ')).sort(), ['name', 'name', 'name a']);
+});

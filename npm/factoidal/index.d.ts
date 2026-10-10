@@ -190,7 +190,9 @@ export type EntailRegime = 'none' | 'RDFS' | 'OWL-RL' | 'x-rdfscore' | 'x-rdfspl
 
 /**
  * One SELECT solution: a Map from variable name (no leading '?') to
- * the bound RDF/JS term. Unbound variables are absent from the Map.
+ * the bound RDF/JS term. Unbound variables are absent from the Map. The
+ * Map iterates in the order of the SELECT clause (the `head.vars` of the
+ * SPARQL 1.1 Query Results JSON Format, section 3.1).
  */
 export type Bindings = Map<string, Term>;
 

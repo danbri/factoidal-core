@@ -128,12 +128,20 @@ function bytesToUint8Array(bytesLike, who) {
 }
 
 // SRJ bindings -> Array<Map<string, Term>>
+// The members of a JSON object are unordered (RFC 8259 section 4), so a
+// binding object does not give the column order; `head.vars` (SPARQL 1.1
+// Query Results JSON Format section 3.1) does. Each Map iterates in
+// `head.vars` order, then any variable `head.vars` does not list.
 function bindingsFromSrj(srj) {
   const rows = (srj && srj.results && srj.results.bindings) || [];
+  const vars = (srj && srj.head && Array.isArray(srj.head.vars)) ? srj.head.vars : [];
   return rows.map((row) => {
     const map = new Map();
+    for (const name of vars) {
+      if (Object.prototype.hasOwnProperty.call(row, name)) map.set(name, termFromSrj(row[name]));
+    }
     for (const [name, term] of Object.entries(row)) {
-      map.set(name, termFromSrj(term));
+      if (!map.has(name)) map.set(name, termFromSrj(term));
     }
     return map;
   });

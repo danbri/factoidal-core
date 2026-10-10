@@ -99,7 +99,7 @@ because one dispatch table reaches the whole library, so the linker can drop
 nothing.
 
 After stage 3 (§ 7) the wasm of 0.9.0 is 10,402,990 bytes raw and 2,042,240
-bytes with gzip -9; every JavaScript file `browser.js` loads is 67,248 bytes
+bytes with gzip -9; every JavaScript file `browser.js` loads is 67,446 bytes
 with gzip -9 together.
 
 Speed: the 2026-08-22 benchmark (issue 476) measured the Lean query path as
@@ -222,6 +222,17 @@ scalar values; `utf16OffsetOf` in `lib/api.mjs` converts. The F\* engine
 counted UTF-8 bytes. This unit is a coordinator default for issue 713 stage 3,
 not an owner decision. Cases with U+1F600 in `test/parse-errors.test.js`.
 
+### SELECT solution order of variables
+
+The Lean engine writes the members of each SPARQL Results JSON binding
+object in name order; `head.vars` is in SELECT order. The wrapper built each
+solution `Map` from the binding object, so the Map iterated in name order.
+A JSON object is unordered (RFC 8259 § 4), so `bindingsFromSrj` in
+`lib/api.mjs` now takes the order from `head.vars` (SPARQL 1.1 Query Results
+JSON Format § 3.1). Case: "query: each solution Map iterates in the SELECT
+projection order" in `test/api.test.js` (fails without the change). Hub
+posts 19, 21 and 31 pinned the SELECT order and pass again.
+
 ### Tests
 
 All tests that load `.`, `./api`, `./fn` or `./browser` run on the Lean
@@ -252,22 +263,27 @@ which was the F\* API. That driver is kept at
 service-worker precache list and the hub browser checks point at it. The hub
 node harness (`tests/hub/`) binds `npm/factoidal`, which is now the Lean
 engine, so the node harness and the hub pages test different engines.
-On the stage 3 tree with no F\* bundle installed, the hub node suite is 346
-pass, 41 fail (out of 387); the same container before stage 3 gave 203 pass,
-184 fail (out of 387), because the harness then bound the F\* bundles, which
-were not installed. The 41 failures are of four kinds:
-- Lean output that differs from the F\* output the post pins: `SELECT *`
-  variable order (post19, post31), the parse-error column (post31), the
+On the stage 3 tree with no F\* bundle and no F\* native binary installed,
+the hub node suite is 353 pass, 34 fail (out of 387). Before stage 3 it was
+203 pass, 184 fail (out of 387), measured in another checkout of the same
+container (`/home/user/work/core-main`) which had the F\* native binary but no
+F\* web bundle; the node harness then bound the F\* bundles, which were not
+installed. Two of the hub checks read the browser driver: they now read
+`docs/fstar-extracted/browser.js`, the file `hub.njk` imports. The 34
+failures are of four kinds:
+- Lean output that differs from the F\* output the post pins: the parse-error
+  column (post31: the Lean parser reports the position after the token), the
   members of the OWL-RL closure (post03: no `rdfs:Resource` and `owl:Thing`
   types), the MathML `undef` reason (post28), the Schematron location
   `/person[1]` (post27), the `via` member of `owlEntails` (post30);
 - functions the Lean package does not have: COTTAS (post42), `text:query`
-  (post20), the GeoSPARQL functions (post21), the F\* command-line driver
-  (post24, post37);
-- files that need the F\* npm-entry bundle (`FACTOIDAL_NPM_ENTRY`: post07,
-  post10, post13, post18, post23, post25);
-- checks of the F\* browser adapter (the fn-surface parity check, post32)
-  and of the dashboard snapshot (post17), post54.
+  (post20), `geof:distance` and `geof:envelope` (post21);
+- files and cells that need an F\* build: the npm-entry bundle
+  (`FACTOIDAL_NPM_ENTRY`: post07, post10, post13, post18, post23, post25), the
+  native binary or the js_of_ocaml bundle (post24), the installed F\*
+  `version.json` (post37);
+- files this checkout does not have: `docs/test-results/latest.json`
+  (post17), and the `.eleventy.js` pass-through line post54 pins.
 
 Which engine the hub uses, and so which engine its node harness binds, is
 open: https://github.com/danbri/factoidal/issues/NEW-1.
@@ -283,13 +299,13 @@ the merge; 9,622,969 after stages 1 and 2). No F\* bundle is in
 |---|---|
 | `lake build` (in `formal/lean4`) | exit 0 (1314 jobs) |
 | `formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); 282 before stage 3 |
-| `cd npm/factoidal && npm test` | 370 pass, 0 fail, 0 skipped (out of 370), 6 of them the expected-failure cases above. Before stage 3, with no F\* bundle: 227 pass, 98 fail, 108 skipped (out of 433) |
+| `cd npm/factoidal && npm test` | 371 pass, 0 fail, 0 skipped (out of 371), 6 of them the expected-failure cases above. Before stage 3, with no F\* bundle: 227 pass, 98 fail, 108 skipped (out of 433) |
 | `tests/lws/server.mjs`, `tests/solid/server/protocol.mjs`, `tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
 | `tests/store-host/conformance.mjs`, `tests/store-host/cli.mjs` | 34 and 33 pass, 0 fail |
-| `tests/web-demos/npm_browser_smoke.sh` (headless Chromium, static page, local Node HTTP server) | PASS: parse, SELECT, `canonicalize`, `xpathEval`, `openStore` over `fetch`; `instantiateStreaming` called once; wasm served as `application/wasm`; 1226 ms to settle |
+| `tests/web-demos/npm_browser_smoke.sh` (headless Chromium, static page, local Node HTTP server) | PASS: parse, SELECT, `canonicalize`, `xpathEval`, `openStore` over `fetch`; `instantiateStreaming` called once; wasm served as `application/wasm`; 1776 ms to settle |
 | `tests/web-demos/bundler_csp_smoke.sh` | PASS (esbuild bundle under `script-src 'self' 'wasm-unsafe-eval'`) |
 | `tests/engine-compare/run.sh` with the F\* bundle of factoidal-builds `build-dba1bdb1d320-web` | 7 pass, 0 fail (out of 7), one of them the issue 702 expected failure; exit 2 with no bundle |
-| `npm pack --dry-run` | 161 files, 2,410,213 bytes packed, 12,040,930 unpacked; no F\* bundle, no `hacl-wasm/` |
+| `npm pack --dry-run` | 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` |
 
 The Lean changes add no `sorry`, `axiom`, `native_decide` or `partial def`.
 

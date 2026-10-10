@@ -1,8 +1,10 @@
 // BROWSER-SURFACE PARITY, all posts: every `fn.<name>(` a published hub
 // page calls must exist as an `async <name>(` wrapper in
 // docs/_includes/hub.njk's fn object, and any wrapper that delegates to
-// a same-named `Factoidal.<name>` must be exported by
-// npm/factoidal/browser.js.
+// a same-named `Factoidal.<name>` must be exported by the browser driver
+// hub.njk imports, docs/fstar-extracted/browser.js (the F* engine's
+// driver; npm/factoidal/browser.js is the Lean engine since @factoidal/core
+// 0.9.0, issue 713).
 //
 // Why: the reactive node harness binds `fn` to the NODE package, so a
 // page can be fully green under `node --test` while its cells reject
@@ -25,7 +27,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const HUB_DIR = new URL('../../docs/web/hub/', import.meta.url);
 const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
-const adapter = readFileSync(new URL('../../npm/factoidal/browser.js', import.meta.url), 'utf8');
+const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
 
 const postFiles = readdirSync(HUB_DIR).filter((f) => /^\d{2}-.*\.md$/.test(f)).sort();
 
@@ -50,5 +52,5 @@ test('fn-surface parity: every fn.* name called by any published hub post has a 
   assert.deepEqual(missingWrapper, [],
     'fn.* names with no async wrapper in docs/_includes/hub.njk (cells REJECT live)');
   assert.deepEqual(missingExport, [],
-    'hub wrappers delegating to a Factoidal.* function npm/factoidal/browser.js does not export');
+    'hub wrappers delegating to a Factoidal.* function docs/fstar-extracted/browser.js does not export');
 });
