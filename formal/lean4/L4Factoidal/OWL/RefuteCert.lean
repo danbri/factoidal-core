@@ -87,12 +87,21 @@ def foldDisj (cs : List Concept) : Concept :=
 structure Sig where
   obj  : WfIri → Bool
   data : WfIri → Bool := fun _ => false
+  /-- IRIs the graph types `rdfs:Datatype`: a datatype is no class of
+      the object domain, so it is never read as a class name. -/
+  datatype : WfIri → Bool := fun _ => false
 
 /-- The data properties the graph declares (`owl:DatatypeProperty`), less
     any also declared object or annotation properties. -/
 def dataPropertiesOf (st : Store) (objs : List WfIri) : List WfIri :=
   ((st.withPredObj rdfType (.iri owlDatatypeProperty)).filterMap (fun t => match t.s with
     | .iri p => if isReservedIri p || objs.contains p then none else some p
+    | .bnode _ => none)).eraseDups
+
+/-- The IRIs the graph types `rdfs:Datatype`. -/
+def datatypesOf (st : Store) : List WfIri :=
+  ((st.withPredObj rdfType (.iri rdfsDatatype)).filterMap (fun t => match t.s with
+    | .iri d => some d
     | .bnode _ => none)).eraseDups
 
 /-- `DataMinCardinality(n DP)` and `DataMaxCardinality(n DP)` (Table 4)
@@ -125,7 +134,7 @@ def toConcept (sig : Sig) : ClassExpr → Option Concept
   | .named c =>
       if c == owlThing then some .top
       else if c == owlNothing then some .bot
-      else if isReservedIri c then none
+      else if isReservedIri c || sig.datatype c then none
       else some (.atom c.val)
   | .someOf p c => if sig.obj p then (toConcept sig c).map (.ex p.val) else none
   | .allOf p c => if sig.obj p then (toConcept sig c).map (.all p.val) else none
@@ -231,7 +240,9 @@ def readOntology (g : Graph) : DlOntology := Id.run do
   let objs := objectPropertiesOf st
   let isObj (p : WfIri) : Bool := objs.contains p
   let datas := dataPropertiesOf st objs
-  let sig : Sig := { obj := isObj, data := fun p => datas.contains p }
+  let dts := datatypesOf st
+  let sig : Sig := { obj := isObj, data := fun p => datas.contains p,
+                     datatype := fun d => dts.contains d }
   let fuel := g.length + 8
   let ce (t : Term) : Option Concept := toConcept sig (parseClassExpr st t fuel)
   let ceS (s : Subject) : Option Concept := toConcept sig (parseCeOfSubjectFuel st fuel s)
@@ -341,7 +352,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
     if t.p == owlDisjointUnionOf then
       match t.s with
       | .iri c =>
-          if !isReservedIri c then
+          if !isReservedIri c && !dts.contains c then
             let parts := (walkRdfList st t.o 64).map ce
             if !parts.isEmpty && parts.all Option.isSome then
               let ps := parts.filterMap id
@@ -359,7 +370,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
         | .iri c => some c
         | .bnode _ => none)).eraseDups
   for c in markerSubs do
-    if !isReservedIri c then
+    if !isReservedIri c && !dts.contains c then
       match ceS (.iri c) with
       | some e =>
           if e != .atom c.val then
@@ -703,7 +714,9 @@ def sigOf (g : Graph) : Sig :=
   let st := Store.ofIndex (Index.ofGraph g)
   let objs := objectPropertiesOf st
   let datas := dataPropertiesOf st objs
-  { obj := fun p => objs.contains p, data := fun p => datas.contains p }
+  let dts := datatypesOf st
+  { obj := fun p => objs.contains p, data := fun p => datas.contains p,
+    datatype := fun d => dts.contains d }
 
 /-- The ontology `certify` checks a certificate against. -/
 def certOntology (g : Graph) : DlOntology := readOntology g

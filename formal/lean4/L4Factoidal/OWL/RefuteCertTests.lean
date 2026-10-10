@@ -117,6 +117,24 @@ private def nominalGraph (edge : Bool) : Graph :=
 #guard proved (nominalGraph true)
 #guard !refuted (nominalGraph false)
 
+/-! ## A declared datatype is never read as a class name
+
+`i : D` beside `i : ¬D`. With `D` a class the graph is refuted and
+certified; with `D` typed `rdfs:Datatype` the reader leaves both
+memberships out (a datatype is no class of the object domain), so the
+refutation, if the refuter finds one, is not certified. -/
+
+private def exDT : WfIri := ⟨"http://e/DT", rfl⟩
+
+private def complementGraph (datatype : Bool) : Graph :=
+  (if datatype then [⟨.iri exDT, rdfType, .iri rdfsDatatype⟩] else []) ++
+  [ ⟨.iri exI, rdfType, .iri exDT⟩, ⟨.iri exI, rdfType, .bnode "n"⟩,
+    ⟨.bnode "n", owlComplementOf, .iri exDT⟩ ]
+
+#guard refuted (complementGraph false)
+#guard proved (complementGraph false)
+#guard !proved (complementGraph true)
+
 /-! ## EXPECTED FAILURE (https://github.com/danbri/factoidal/issues/764)
 
 A functional data property with two different integer values. The refuter
