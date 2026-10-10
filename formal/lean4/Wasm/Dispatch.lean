@@ -52,6 +52,7 @@ import Wasm.Ops.Canon
 import Wasm.Ops.Block
 import Wasm.Ops.Store
 import Wasm.Ops.StoreHandles
+import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
 import Wasm.Ops.Handles
@@ -163,7 +164,8 @@ reads one chunk of the source from the IN region and builds no OUT region;
 `packNext` reads nothing and returns one artifact's bytes. Both are here
 because both are served by the one entry which carries a region in either
 direction. -/
-def blobIoOpNames : List String := [ "blobEcho", "packFeed", "packNext" ]
+def blobIoOpNames : List String :=
+  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit" ]
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -265,6 +267,18 @@ def packOpNames : List String :=
   , "packFinish"
   , "packClose" ]
 
+/-- The SPARQL endpoint op names over a served generation
+(`Wasm/Ops/StoreServe.lean`, https://github.com/danbri/factoidal/issues/669),
+served ONLY by `callIO` and `callBlobIO`: the served handles are an `IO.Ref`.
+`storeServeRequest` and `storeServeCommit` answer a byte region, so they are
+in `blobIoOpNames` too. -/
+def storeServeOpNames : List String :=
+  [ "storeServeKeys"
+  , "storeServeOpen"
+  , "storeServeRequest"
+  , "storeServeCommit"
+  , "storeServeClose" ]
+
 /-- The Linked Web Storage 1.0 and Solid Protocol op names
 (`Wasm/Ops/Lws.lean`, `Wasm/Ops/Solid.lean`), served ONLY by `callIO`: the
 server operations hold a storage in a handle table, which the pure `call`
@@ -356,7 +370,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 /-- The `ops` reflection of `callIO`: every op of the full table. -/
 def opsReflectionIO : String :=
   opsReflectionFor
-    (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
        ++ extOpNames ++ lwsSolidOpNames
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
@@ -524,6 +538,20 @@ def callIO (op : String) (argsJson : String) : IO String :=
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
   | "storeHandleClose" => withArgs (arityIO1 op Ops.storeHandleClose)
+  -- The SPARQL endpoint over a served generation (issue 669). The open
+  -- carries a byte region; through this entry it takes the hex descriptor
+  -- form only, like `storeOpen`.
+  | "storeServeKeys"   => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.storeServeKeys a)
+      | args => pure (errJson s!"storeServeKeys expects 1 argument, got {args.length}"))
+  | "storeServeOpen"   => withArgs (fun args =>
+      match args with
+      | [a, b, c, d] => Ops.storeServeOpen a b c d ByteArray.empty
+      | args => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}"))
+  | "storeServeClose"  => withArgs (arityIO1 op Ops.storeServeClose)
+  | "storeServeRequest" | "storeServeCommit" =>
+      pure (errJson s!"{op} answers a byte region; call it through l4_call_blob_io")
   -- Linked Web Storage 1.0 and the Solid Protocol
   -- (https://github.com/danbri/factoidal/issues/659). `lwsOpen`,
   -- `solidOpen`, `solidClientRequest` and `solidClientResponse` take their
@@ -601,6 +629,24 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a]    => do pure (← Ops.queryHdtIO a blob, ByteArray.empty)
       | .ok args   => pure (errJson s!"queryHdt expects 1 argument, got {args.length}",
                             ByteArray.empty)
+  | "storeServeOpen" =>
+      match decodeArgs argsJson with
+      | .error e            => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c, d]    => do pure (← Ops.storeServeOpen a b c d blob, ByteArray.empty)
+      | .ok args            => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}",
+                                     ByteArray.empty)
+  | "storeServeRequest" =>
+      match decodeArgs argsJson with
+      | .error e  => pure (errJson e, ByteArray.empty)
+      | .ok [a]   => Ops.storeServeRequest a blob
+      | .ok args  => pure (errJson s!"storeServeRequest expects 1 argument, got {args.length}",
+                           ByteArray.empty)
+  | "storeServeCommit" =>
+      match decodeArgs argsJson with
+      | .error e        => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c]   => Ops.storeServeCommit a b c
+      | .ok args        => pure (errJson s!"storeServeCommit expects 3 arguments, got {args.length}",
+                                 ByteArray.empty)
   | "storeOpen" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)

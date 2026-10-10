@@ -45,7 +45,7 @@ store:
      change to a named graph there is refused with 501 rather than written
      where no other reader would see it. A quad generation (IBK4, IBK5)
      takes every graph; no native reader replays its log yet
-     (https://github.com/danbri/factoidal/issues/779).
+     (https://github.com/danbri/factoidal/issues/770).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
