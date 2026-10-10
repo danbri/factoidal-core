@@ -227,4 +227,19 @@ def langMatchesBasic (tag range : String) : Bool :=
 #guard langMatchesBasic "de-Latn-DE" "de-*-DE" = false
 #guard langMatchesBasic "de-DE-1996" "de-DE" = true
 
+-- F&O 5.4.7 and 5.4.8, the examples the specification lists, and the cases
+-- that need Unicode default case mapping (Text.CaseMap; issue
+-- https://github.com/danbri/factoidal/issues/706).
+#guard upperCase "abCd0" = "ABCD0"
+#guard lowerCase "ABc!D" = "abc!d"
+#guard upperCase "école" = "ÉCOLE"
+#guard lowerCase "ÉCOLE" = "école"
+#guard upperCase "straße" = "STRASSE"
+#guard lowerCase "straße" = "straße"
+#guard lowerCase "ΑΣ" = "ας"
+#guard upperCase "ÉCOLE" = "ÉCOLE"
+#guard upperCase "123 !?" = "123 !?"
+#guard upperCase "é" != "é"
+#guard lowerCase "É" != "É"
+
 end L4Factoidal.Fn.String

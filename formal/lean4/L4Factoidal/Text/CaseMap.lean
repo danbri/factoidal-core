@@ -198,10 +198,22 @@ def lowerGo : List Char → List Char → String → String
         else (fullLower c.toNat).foldl pushCp acc
       lowerGo rest (c :: before) out
 
+/-- Lowercase of a string that has no capital sigma: no character needs its
+neighbours, so one pass over the string suffices. `lowerCase` uses it when the
+string holds no U+03A3, and `lowerGo` gives the same result there
+(`CaseMapTests`). -/
+def lowerNoSigma (s : String) : String :=
+  s.foldl
+    (fun acc c =>
+      if c.val < 0x80 then acc.push c.toLower
+      else (fullLower c.toNat).foldl pushCp acc)
+    ""
+
 /-- Unicode full lowercase of a string, with the Final_Sigma context rule:
 `fn:lower-case`, `LCASE`. The result can be longer than the argument (`İ`
 gives `i` and U+0307). -/
-def lowerCase (s : String) : String := lowerGo s.toList [] ""
+def lowerCase (s : String) : String :=
+  if s.any (fun c => c.val == 0x3A3) then lowerGo s.toList [] "" else lowerNoSigma s
 
 /-- Simple case folding of a string, character by character: CaseFolding.txt
 statuses C and S. The result has the length of the argument. -/
@@ -243,29 +255,34 @@ def sortedDedup (xs : List Nat) : Array Nat :=
 
 /-- Every code point that can have a case-variant other than itself: those
 whose uppercase or lowercase is not themselves, and the single code points
-those map to. A code point outside this array is its own only variant. -/
-def caseAffected : Array Nat :=
+those map to. A code point outside this array is its own only variant. The
+array is built on first use (a `Thunk`) so that a program which never asks for
+a case-variant pays nothing at start-up. -/
+def caseAffected : Thunk (Array Nat) := Thunk.mk fun _ =>
   let keys := runKeys upperRanges ++ runKeys lowerRanges
     ++ specialUpper.toList.map (·.1) ++ specialLower.toList.map (·.1)
   sortedDedup (keys ++ keys.flatMap (fun k => fullUpper k ++ fullLower k))
 
 /-- The code points of `caseAffected` that lie in `[lo, hi]`. -/
 def affectedIn (lo hi : Nat) : Array Nat :=
-  caseAffected.extract (lowerBound caseAffected id lo) (upperBound caseAffected id hi 0 caseAffected.size)
+  let all := caseAffected.get
+  all.extract (lowerBound all id lo) (upperBound all id hi 0 all.size)
 
 /-- The two groupings that define the relation: the code points of
-`caseAffected` by lowercase, and by uppercase. -/
-def variantGroups : Std.HashMap (List Nat) (List Nat) × Std.HashMap (List Nat) (List Nat) :=
-  caseAffected.foldl
-    (fun (byLower, byUpper) c =>
-      ( byLower.insert (fullLower c) (c :: (byLower.getD (fullLower c) [])),
-        byUpper.insert (fullUpper c) (c :: (byUpper.getD (fullUpper c) [])) ))
-    (∅, ∅)
+`caseAffected` by lowercase, and by uppercase. Built on first use. -/
+def variantGroups : Thunk (Std.HashMap (List Nat) (List Nat) × Std.HashMap (List Nat) (List Nat)) :=
+  Thunk.mk fun _ =>
+    caseAffected.get.foldl
+      (fun (byLower, byUpper) c =>
+        ( byLower.insert (fullLower c) (c :: (byLower.getD (fullLower c) [])),
+          byUpper.insert (fullUpper c) (c :: (byUpper.getD (fullUpper c) [])) ))
+      (∅, ∅)
 
 /-- `c` and all its case-variants, without repeats, ascending. -/
 def caseVariants (c : Nat) : List Nat :=
-  let sameLower := variantGroups.1.getD (fullLower c) []
-  let sameUpper := variantGroups.2.getD (fullUpper c) []
+  let groups := variantGroups.get
+  let sameLower := groups.1.getD (fullLower c) []
+  let sameUpper := groups.2.getD (fullUpper c) []
   (sortedDedup (c :: (sameLower ++ sameUpper))).toList
 
 /-- Sort ascending and merge overlapping or adjacent intervals. Empty

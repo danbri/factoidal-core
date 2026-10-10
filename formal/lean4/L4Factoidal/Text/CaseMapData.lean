@@ -761,7 +761,7 @@ def specialUpper : Array (Nat × List Nat) := #[
   (0xFB17, [0x544, 0x53D])
 ]
 
-/-- Unconditional full lowercase mappings that differ from the simple one, SpecialCasing.txt (1 code points, sorted). -/
+/-- Unconditional full lowercase mappings that differ from the simple one, SpecialCasing.txt (1 code point, sorted). -/
 def specialLower : Array (Nat × List Nat) := #[
   (0x130, [0x69, 0x307])
 ]

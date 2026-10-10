@@ -32,6 +32,7 @@ https://github.com/danbri/factoidal/issues/466
 | Crypto | `Crypto/SHA2*.lean`, `Crypto/Ed25519.lean` | SHA-256/384/512 + `HashAlgorithm` agility; size theorems; FIPS vectors (million-byte ones parked opt-in). Ed25519 = the ONE `@[extern]` (HACL\* C through `lakefile.lean` `extern_lib`) |
 | JSON-LD 1.1 | `JSONLD/{Context,Expand,ToRdf,Compact,Flatten,FromRdf,Html,Frame}.lean`, `Harness/{JsonLdProbe,JsonLdApiProbe,JsonLdFrameRun}.lean` | context processing, expansion, toRdf, compaction (§6), flattening (§7), Serialize RDF as JSON-LD (§8.5-8.7), HTML script extraction, Framing (`l4jsonld-frame`, run from the repo root: 91 pass, 1 fail (out of 92); the one failure, `#t0010`, is a json-ld-1.0 version dispute); loader is a parameter. `l4jsonld-probe` toRdf 467 pass, 0 fail, 0 skip (out of 467); `l4jsonld-api` expand+compact+flatten+fromRdf+html 791 pass, 0 fail, 2 local-override (out of 793) — matching the F\* runners manifest for manifest |
 | VC / DID | `VC/*.lean`, `Harness/VcProbe.lean` | Data Integrity `eddsa-rdfc-2022` create/verify (canonical forms, datasets, JSON-LD documents; primitives are parameters), base58/multibase with the decode-of-encode theorem, did:key both ways; `l4vc-probe` 58 pass, 0 fail (RFC 8032 22, did:key 8, vc_runner roundtrip 8, W3C vc-di-eddsa spec vectors 20) |
+| Unicode case mapping | `Text/CaseMap.lean`, `Text/CaseMapData.lean` (generated), `Text/CaseMapTests.lean`, `tools/gen_casemap.py` | Unicode default case mapping (`upperCase`, `lowerCase` with SpecialCasing unconditional lines and Final_Sigma, language-independent), simple `caseFold`, F&O 3.1 5.6.1.1 `caseVariants`/`ciRanges`, the index fold `searchFold`; tables are sorted run arrays searched by binary search, generated from Unicode 15.1.0 with source digests in the header. Callers: `Fn.String.upperCase`/`lowerCase` (SPARQL UCASE/LCASE, RIF, GREL), regex flag `i` (`XSDPattern.parseCpsWith`), `Storage/LiteralGramIndex.lean`. Lean core `String.toUpper`/`toLower` map ASCII only: use them for BCP 47 tags, header names and grammar keywords, never for text; record: [`docs/designissues/2026-10-10-unicode-case-mapping.md`](../../docs/designissues/2026-10-10-unicode-case-mapping.md) |
 | Wasm | `Wasm/`, `docs/web/hub/assets/l4/`, skill `lean4-wasm-export` | Lean→C→wasm via Emscripten (1.4 MB, ~40 ms load); hub post 36 runs Lean and F\* side by side |
 | Tests/demo | `Tests.lean`, `Demo.lean` | build-time guards + `#print axioms` audit; runnable tour |
 | Docs | `README.md` / `PORT_NOTES.md` | reviewer reading order / F\* correspondence, decisions, assumption report |
@@ -148,6 +149,14 @@ Rules when you touch any of them:
   `fn:encode-for-uri` in `SPARQL/Expr.lean` and
   `encodeForUri_sparql` stops type-checking. A comment saying "do not
   duplicate this" does not do that.
+* Changing `Fn.String.lowerCase` changes the literal search index fold in
+  the same landing (`Storage/LiteralGramIndex.foldChars`). The index header
+  said the two "cannot drift because there is one function"; that held only
+  while both were `String.toLower`. Moving `LCASE` to Unicode default case
+  mapping without the fold would have made the index drop rows the scan keeps
+  (`École Normale` for the needle `école`), with every suite green, because no
+  guard tied the two. The guards are now in `LiteralGramIndex.lean`
+  (2026-10-10, https://github.com/danbri/factoidal/issues/706).
 * A `#guard` where a theorem is expected usually means both sides call
   an `@[extern]` `String` primitive (`toLower`, `startsWith`), which
   the KERNEL cannot reduce: `decide` gets stuck and `rfl` fails.
@@ -201,7 +210,7 @@ each dissolve by parameterisation when their feature is ported:
 | F\* `assume val` | Pure Lean form |
 |---|---|
 | SHA/MD5 hash builtins (§17.4.4) | implement in pure Lean; provable against a spec |
-| Unicode case mapping | pure tables/functions |
+| Unicode case mapping | pure tables/functions: **done 2026-10-10**, `Text/CaseMap.lean` with tables generated from Unicode 15.1.0 (`tools/gen_casemap.py`), record `docs/designissues/2026-10-10-unicode-case-mapping.md` |
 | `NOW()` | timestamp passed as an argument; clock read once in `IO main` |
 | `extension_function_call` (§17.6) | a typed function argument to eval, not a global registry |
 | `service_endpoint_lookup` | an endpoint→graph map passed into evaluation |
@@ -339,6 +348,14 @@ executable edge only.
     that mentions `f x`, and `rw [h] at k ⊢` then FAILS, because the
     goal no longer contains the pattern. Two rounds of the same error
     cost a rebuild each (2026-08-24).
+
+15. **A `/-- ... -/` doc comment in front of `#guard` is a parse error**
+    ("unexpected token '#guard'"; the doc comment must precede a declaration).
+    Use `--` lines or a plain `/- ... -/` before a guard. And Lean string
+    literals have `\xHH` and `\uHHHH` (exactly four hex digits) but NOT
+    `\u{...}`: write an astral character (U+10400 and above) as the character
+    itself or as `String.singleton (Char.ofNat n)` (2026-10-10, `Text/
+    CaseMapTests.lean`; one build round each).
 
 - **`lake build l4w3c` is not `lake build`.** The harness target skips
   every theorem-only module (`*Refinement.lean`, `*Theorems.lean` files

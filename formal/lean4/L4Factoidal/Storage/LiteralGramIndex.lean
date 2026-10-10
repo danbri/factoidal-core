@@ -639,6 +639,59 @@ needle the index serves, and is not a candidate for a needle it refuses. -/
 #guard agreesWithSpecOpaque sampleDict [0, 3] "water"
 #guard agreesWithSpecOpaque sampleDict [3] "ab"
 
+/-! Unicode `LCASE` (https://github.com/danbri/factoidal/issues/706). `LCASE`
+is the full lowercase mapping with the Final_Sigma rule, so a row that
+`CONTAINS(LCASE(?x), "needle")` keeps is a row whose lowercased text holds the
+needle. The index must list it. With the ASCII-only fold the lexical form
+`École Normale` carried the grams `Éco` and `Nor`, and the needle `école` the
+gram `éco`, so the filter dropped a row the scan keeps. -/
+
+private def uniDict : Array Term :=
+  #[lit "École Normale", lit "\u212AELVIN", lit "İstanbul", lit "ΟΔΥΣΣΕΥΣ", lit "Straße", lit "plain"]
+
+/-- The positions a scan keeps for `CONTAINS(LCASE(?x), needle)`. -/
+private def scanLcase (dict : Array Term) (needle : String) : List Nat :=
+  (List.range dict.size).filter fun i =>
+    match dict[i]? with
+    | some (.literal l) =>
+        listContainsSublist needle.toList (Fn.String.lowerCase l.val.lexicalForm).toList
+    | _ => false
+
+/-- The index lists every position the scan keeps (or declines to serve). -/
+private def lcaseSound (dict : Array Term) (needle : String) : Bool :=
+  match candidatesSpec dict needle with
+  | none => true
+  | some ids => (scanLcase dict needle).all (ids.contains ·)
+
+#guard scanLcase uniDict "école" == [0]
+#guard scanLcase uniDict "kelvin" == [1]            -- KELVIN SIGN lower-cases to k
+#guard scanLcase uniDict "i\u0307stanbul" == [2]     -- İ lower-cases to i + U+0307
+#guard scanLcase uniDict "οδυσσευς" == [3]          -- final sigma at the word end
+#guard scanLcase uniDict "straße" == [4]
+#guard candidatesSpec uniDict "école" == some [0]
+#guard candidatesSpec uniDict "kelvin" == some [1]
+#guard candidatesSpec uniDict "i\u0307stanbul" == some [2]
+#guard candidatesSpec uniDict "οδυσσευς" == some [3]
+#guard candidatesSpec uniDict "straße" == some [4]
+#guard lcaseSound uniDict "école"
+#guard lcaseSound uniDict "kelvin"
+#guard lcaseSound uniDict "i\u0307stanbul"
+#guard lcaseSound uniDict "οδυσσευς"
+#guard lcaseSound uniDict "straße"
+#guard lcaseSound uniDict "plain"
+-- a needle that is in no lexical form lists nothing
+#guard candidatesSpec uniDict "ecole" == some []
+-- case-sensitive shapes (no LCASE) are served by the same fold
+#guard (candidatesSpec uniDict "École").getD [] == [0]
+#guard agreesWithSpec uniDict "école"
+#guard agreesWithSpec uniDict "kelvin"
+#guard agreesWithSpec uniDict "οδυσσευς"
+-- the fold of the engine's LCASE result is the fold of its argument
+#guard uniDict.toList.all fun t =>
+  foldedOfTerm t == foldChars (match t with
+    | .literal l => (Fn.String.lowerCase l.val.lexicalForm).toList
+    | _ => [])
+
 #print axioms mem_candidatesSpec
 #print axioms mem_candidatesOpaque_of_match
 #print axioms mem_candidatesOpaque_of_opaque

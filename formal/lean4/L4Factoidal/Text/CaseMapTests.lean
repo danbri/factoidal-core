@@ -184,6 +184,20 @@ no cased letter follows (case-ignorable characters may intervene); otherwise
 #guard lowerCase "ΑΣΑ" != "αςα"
 #guard lowerCase "Σ" != "ς"
 
+/-! #### The one-pass path agrees with the context-aware loop
+
+`lowerCase` takes the one-pass path for a string without U+03A3. The loop
+`lowerGo` is the definition; the two must agree wherever the fast path applies. -/
+
+#guard caseAffected.get.toList.all fun c =>
+  c == 0x3A3 ||
+    let s := String.singleton (Char.ofNat c)
+    lowerNoSigma s == lowerGo s.toList [] ""
+#guard ["", "ABC école", "İSTANBUL ẞ \u212A", "123 !?-_ 日本語 Ꭰ 𐐀"].all fun s =>
+  lowerNoSigma s == lowerGo s.toList [] "" && lowerCase s == lowerNoSigma s
+-- with a sigma the loop decides
+#guard lowerCase "ΑΣ" != lowerNoSigma "ΑΣ"
+
 /-! ### 5. `caseFold` -/
 
 #guard caseFold "" == ""
@@ -219,15 +233,15 @@ no cased letter follows (case-ignorable characters may intervene); otherwise
 def variantsConsistent (c : Nat) : Bool :=
   (caseVariants c).all fun v => isCaseVariant c v && (caseVariants v).contains c
 
-#guard caseAffected.toList.all variantsConsistent
+#guard caseAffected.get.toList.all variantsConsistent
 
 /-- A sample of code points checked against EVERY case-affected code point: no
 variant is missing from the grouped answer. -/
 def variantsComplete (c : Nat) : Bool :=
-  caseAffected.toList.all fun v => !isCaseVariant c v || (caseVariants c).contains v
+  caseAffected.get.toList.all fun v => !isCaseVariant c v || (caseVariants c).contains v
 
-#guard ((List.range caseAffected.size).filter (· % 64 == 0)).all fun i =>
-  variantsComplete (caseAffected.getD i 0)
+#guard ((List.range caseAffected.get.size).filter (· % 64 == 0)).all fun i =>
+  variantsComplete (caseAffected.get.getD i 0)
 -- and the classes where the F&O relation and CaseFolding.txt differ, or that
 -- have three members
 #guard [0x49, 0x69, 0x131, 0x3B8, 0x3D1, 0x3F4, 0x398, 0x6B, 0x212A, 0x3C2, 0xDF, 0x1E9E].all variantsComplete
@@ -253,13 +267,13 @@ These hold for the tables as generated; a regenerated table that breaks one
 fails the build. -/
 
 -- `lowerCase` of a lower-case string is the string.
-#guard caseAffected.toList.all fun c =>
+#guard caseAffected.get.toList.all fun c =>
   let s := String.singleton (Char.ofNat c)
   lowerCase (lowerCase s) == lowerCase s
 
 -- The search fold ignores the difference between a string and its `LCASE`:
 -- the property the literal search index needs (`Storage.LiteralGramIndex`).
-#guard caseAffected.toList.all fun c =>
+#guard caseAffected.get.toList.all fun c =>
   let s := String.singleton (Char.ofNat c)
   searchFold (lowerCase s).toList == searchFold s.toList
 

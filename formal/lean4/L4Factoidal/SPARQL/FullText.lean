@@ -83,8 +83,11 @@ def isAsciiUpper (c : Char) : Bool := c.toNat ≥ 0x41 && c.toNat ≤ 0x5A
 def isAsciiLowerC (c : Char) : Bool := c.toNat ≥ 0x61 && c.toNat ≤ 0x7A
 def isAsciiAlnum (c : Char) : Bool := isAsciiDigitC c || isAsciiUpper c || isAsciiLowerC c
 
-/-- ASCII-only case fold. NOT `String.toLower`, which is Unicode-aware —
-    see the module header on why the floor is deliberate. -/
+/-- ASCII-only case fold, written out here and not taken from a library
+    function — see the module header on why the floor is deliberate. This
+    tokeniser is not an `UCASE` / `LCASE` consumer, and
+    `Text.CaseMap.lowerCase` (Unicode default case mapping) does not apply to
+    it. -/
 def asciiFoldChar (c : Char) : Char :=
   if isAsciiUpper c then Char.ofNat (c.toNat + 32) else c
 

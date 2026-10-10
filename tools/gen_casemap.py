@@ -183,6 +183,10 @@ def compress(mapping):
     return runs
 
 
+def plural(n, noun):
+    return "%d %s%s" % (n, noun, "" if n == 1 else "s")
+
+
 def hexlist(cps):
     return "[" + ", ".join("0x%X" % c for c in cps) + "]"
 
@@ -294,7 +298,7 @@ def render(files, upper, lower, full_upper, full_lower, conditional, fold,
                fold_runs)
 
     def special_def(name, doc, table):
-        w("/-- %s (%d code points, sorted). -/" % (doc, len(table)))
+        w("/-- %s (%s, sorted). -/" % (doc, plural(len(table), "code point")))
         w("def %s : Array (Nat × List Nat) := #[" % name)
         items = sorted(table.items())
         for n, (cp, cps) in enumerate(items):
