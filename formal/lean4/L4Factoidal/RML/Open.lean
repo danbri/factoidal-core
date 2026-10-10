@@ -29,7 +29,7 @@ rows that happen to fit.
 
 ## Scope
 
-JSONPath, CSV and XPath over files. `rml:SQL2008Table` and
+JSONPath, CSV and XPath over files, and SPARQL (`formats:SPARQL_Results_CSV`) when the host supplies a query engine (`FileAccess.sparql`; `RML/SparqlSource.lean` is one). `rml:SQL2008Table` and
 `rml:SQL2008Query` need a database; a source with a D2RQ access
 description is rejected with a source error that says so.
 -/
@@ -51,6 +51,12 @@ open L4Factoidal.XPath.Full
     a literal directory, or empty) and a path, to the file's bytes. -/
 structure FileAccess where
   read : String → String → Option ByteArray
+  /-- A SPARQL SELECT engine, for a source whose reference formulation is
+      `formats:SPARQL_Results_CSV`: the file name, the file's text and the
+      query to the rows of the results. A host without one leaves it empty,
+      and such a source is `unsupported`. It is a seam, as the file system
+      is, so that this module does not depend on the SPARQL parser. -/
+  sparql : Option (String → String → String → Except String (List Record)) := none
 
 private def srcErr (ls : LogicalSource) (msg : String) : RmlError :=
   RmlError.source ls.path "RML-IO, Logical Source: source" msg
@@ -140,8 +146,13 @@ def openRecords (ls : LogicalSource) (fa : FileAccess) : Except RmlError (List R
     | .error _ => .error (srcErr ls "the file is not well-formed XML")
     | .ok d => wrap (xmlRecords ls.iterator ls.namespaces d.children)
   else if form == sparqlResultsCsvIri then
-    .error (RmlError.unsupported ls.path "RML-IO, Reference formulations" "SPARQL query source"
-      "the source is a file queried with SPARQL; this port does not yet run the query")
+    match fa.sparql with
+    | none => .error (RmlError.unsupported ls.path "RML-IO, Reference formulations" "SPARQL query source"
+        "the source is a file queried with SPARQL, and the host supplies no SPARQL engine")
+    | some run =>
+        match ls.iterator with
+        | none => .error (srcErr ls "a SPARQL query source needs the query as its rml:iterator")
+        | some query => wrap (run ls.path text query)
   else if form == "http://w3id.org/rml/SQL2008Table" || form == "http://w3id.org/rml/SQL2008Query" then
     .error (RmlError.unsupported ls.path "RML-IO, Reference formulations" "database source"
       s!"the reference formulation '{form}' needs a relational database")
@@ -206,6 +217,13 @@ private def peopleXml : String :=
 #guard match openRecords xmlLs (files [("a.xml", "<people>")]) with
        | .error _ => true | .ok _ => false
 
+-- A SPARQL source without a host engine is `unsupported`, not an empty source
+-- and not guessed.
+#guard match openRecords { path := "Friends.nt", iterator := some "SELECT * WHERE { ?s ?p ?o }",
+                           refFormulation := sparqlResultsCsvIri }
+         (files [("Friends.nt", "")]) with
+       | .error e => e.kind == .unsupported && e.bucket == "SPARQL query source" | .ok _ => false
+
 -- A database source and an unknown formulation are `unsupported`, not
 -- guessed and not an empty source.
 #guard match openRecords { csvLs with accessKind := "http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#Database" }
@@ -228,12 +246,17 @@ private def utf16Files : FileAccess :=
 #guard match openRecords { csvLs with compression := "http://w3id.org/rml/gzip" }
          (files [("a.csv", "id\n1\n")]) with
        | .error e => e.kind == .source | .ok _ => false
--- A compressed file is read through its codec; tar.xz is a gap and says so.
+-- A compressed file is read through its codec.
 private def gz : FileAccess :=
   { read := fun _ _ => (compress .gzip "a.csv" "id,name\n1,A\n".toUTF8).toOption }
 #guard match openRecords { csvLs with compression := "http://w3id.org/rml/gzip" } gz with
        | .ok rs => rs.length == 1 | .error _ => false
+private def txz : FileAccess :=
+  { read := fun _ _ => (compress .tarxz "a.csv" "id,name\n1,A\n".toUTF8).toOption }
+#guard match openRecords { csvLs with compression := "http://w3id.org/rml/tarxz" } txz with
+       | .ok rs => rs.length == 1 | .error _ => false
+-- gzip bytes are not tar.xz: a source error, not an unsupported codec
 #guard match openRecords { csvLs with compression := "http://w3id.org/rml/tarxz" } gz with
-       | .error e => e.kind == .unsupported && e.bucket == "tar.xz codec" | .ok _ => false
+       | .error e => e.kind == .source | .ok _ => false
 
 end L4Factoidal.RML

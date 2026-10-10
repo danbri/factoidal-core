@@ -13,6 +13,7 @@ answers: the first is a gap in the port, the second a bad file.
 -/
 import L4Factoidal.RML.Error
 import L4Factoidal.Codec.Archive
+import L4Factoidal.Codec.Xz
 
 namespace L4Factoidal.RML
 
@@ -54,7 +55,11 @@ def decompress (c : Compression) (b : ByteArray) : Except CodecError ByteArray :
   | .gzip => corrupt (gunzip b)
   | .zip => corrupt ((unzipFirst b).map (·.2))
   | .targz => corrupt (do (untarFirst (← gunzip b)).map (·.2))
-  | .tarxz => .error (.unsupported "tar.xz")
+  | .tarxz =>
+      match unxz b with
+      | .error (.unsupported w) => .error (.unsupported w)
+      | .error (.corrupt m) => .error (.corrupt m)
+      | .ok tarBytes => corrupt ((untarFirst tarBytes).map (·.2))
 
 /-- Apply a compression to a document. `entry` names the file inside an
     archive (zip, tar). -/
@@ -64,7 +69,7 @@ def compress (c : Compression) (entry : String) (b : ByteArray) : Except CodecEr
   | .gzip => .ok (gzip b)
   | .zip => .ok (zipSingle entry b)
   | .targz => .ok (gzip (tarSingle entry b))
-  | .tarxz => .error (.unsupported "tar.xz")
+  | .tarxz => .ok (xz (tarSingle entry b))
 
 /-! ## Build-time checks -/
 
@@ -82,9 +87,13 @@ private def doc : ByteArray := "x,y\n1,2\n".toUTF8
 #guard match decompress .gzip doc with | .error (.corrupt _) => true | _ => false
 #guard match decompress .zip doc with | .error (.corrupt _) => true | _ => false
 #guard match decompress .targz doc with | .error (.corrupt _) => true | _ => false
--- tar.xz has no codec yet, and says so.
-#guard match decompress .tarxz doc with | .error (.unsupported _) => true | _ => false
-#guard match compress .tarxz "a" doc with | .error (.unsupported _) => true | _ => false
+#guard match compress .tarxz "a.csv" doc with
+       | .ok c => (decompress .tarxz c).toOption == some doc && c != doc | .error _ => false
+-- ...and an xz file without a tar archive in it, or a tar archive that is not
+-- xz-compressed, is corrupt.
+#guard match decompress .tarxz doc with | .error (.corrupt _) => true | _ => false
+#guard match decompress .tarxz (xz doc) with | .error (.corrupt _) => true | _ => false
+#guard match decompress .tarxz (tarSingle "a" doc) with | .error (.corrupt _) => true | _ => false
 -- The IRIs.
 #guard Compression.ofIri? "" == some .none
 #guard Compression.ofIri? "http://w3id.org/rml/targz" == some .targz

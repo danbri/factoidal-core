@@ -300,15 +300,15 @@ private def roundTrips (fmt : String) (withGraph : Bool) : Bool :=
 -- An unknown format and a non-file target are errors, not an empty file.
 #guard (ourDump (target "http://example.com/fmt") qs).toOption.isNone
 #guard (ourDump { target "" with accessKind := "x" } qs).toOption.isNone
--- Compressed targets round-trip through their codec; tar.xz is a gap and says so.
+-- Compressed targets round-trip through their codec.
 #guard match ourDump { target "" with compression := "http://w3id.org/rml/gzip" } qs with
        | .ok ds => (ds.default ++ ds.named.flatMap (·.graph)).length == 4 | .error _ => false
 #guard match ourDump { target "" with compression := "http://w3id.org/rml/zip", path := "d.nq.zip" } qs with
        | .ok ds => (ds.default ++ ds.named.flatMap (·.graph)).length == 4 | .error _ => false
 #guard match ourDump { target "" with compression := "http://w3id.org/rml/targz", path := "d.nq.tar.gz" } qs with
        | .ok ds => (ds.default ++ ds.named.flatMap (·.graph)).length == 4 | .error _ => false
-#guard match ourDump { target "" with compression := "http://w3id.org/rml/tarxz" } qs with
-       | .error (.unsupported b _) => b == "tar.xz codec" | _ => false
+#guard match ourDump { target "" with compression := "http://w3id.org/rml/tarxz", path := "d.nq.tar.xz" } qs with
+       | .ok ds => (ds.default ++ ds.named.flatMap (·.graph)).length == 4 | .error _ => false
 #guard entryName { target "" with path := "./dump1.nq.tar.gz" } == "dump1.nq"
 #guard entryName { target "" with path := "dump1.nq.gz" } == "dump1.nq"
 #guard entryName { target "" with path := "dump1.nq" } == "dump1.nq"

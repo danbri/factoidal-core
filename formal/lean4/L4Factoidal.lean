@@ -272,6 +272,9 @@ import L4Factoidal.ShEx.StructureTests
 import L4Factoidal.Codec.Crc32
 import L4Factoidal.Codec.Inflate
 import L4Factoidal.Codec.Archive
+import L4Factoidal.Codec.Lzma
+import L4Factoidal.Codec.Xz
+import L4Factoidal.Codec.XzTests
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RML.Mapping
@@ -296,6 +299,7 @@ import L4Factoidal.RML.SourceTests
 import L4Factoidal.RML.CollectionTests
 import L4Factoidal.RML.Star
 import L4Factoidal.RML.StarTests
+import L4Factoidal.RML.SparqlSource
 import L4Factoidal.RML.Functions
 import L4Factoidal.RML.FunctionTests
 import L4Factoidal.RML.VirtualSource

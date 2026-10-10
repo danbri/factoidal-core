@@ -48,6 +48,7 @@ import L4Factoidal.RML.Open
 import L4Factoidal.RML.Targets
 import L4Factoidal.RML.Star
 import L4Factoidal.RML.Functions
+import L4Factoidal.RML.SparqlSource
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
@@ -173,7 +174,7 @@ def baseName (p : String) : String := ((p.splitOn "/").getLast?).getD p
 /-- The seam to the file system the library asks for: a path, whatever
     its root, names a file of the case directory by its last component. -/
 def fileAccessOf (files : List (String × ByteArray)) : FileAccess :=
-  { read := fun _ p => (files.find? (fun (n, _) => n == baseName p)).map (·.2) }
+  FileAccess.withSparql { read := fun _ p => (files.find? (fun (n, _) => n == baseName p)).map (·.2) }
 
 /-- What a module's cases look like on disk. -/
 structure Module where
@@ -219,20 +220,35 @@ def mergeDatasetReifiers (ds : Dataset) : Dataset :=
   { default := mergeReifiers ds.default
     named := ds.named.map (fun ng => { ng with graph := mergeReifiers ng.graph }) }
 
+/-- Cases whose expected output differs from the natural mapping of their
+    own data in literal datatypes only, each with the evidence. A case is
+    on this list by decision, not by a rule that any datatype-only mismatch
+    is a fixture defect: such a rule would turn a library that drops the
+    datatype of every JSON number into a column of "fixture defects" and
+    no failure. A case on the list whose mismatch is more than datatypes,
+    or that passes, is a failure, and so is a datatype-only mismatch of a
+    case that is not on it. -/
+def datatypeDefects : List (String × String) :=
+  let sibling := "the expected dump writes the age as a plain literal; the source holds the number 33, and the same mapping's other dumps in this module write it as xsd:integer"
+  [ ("RMLTTC0004a", sibling), ("RMLTTC0004c", sibling), ("RMLTTC0004f", sibling)
+  , ("RMLTTC0004g", sibling), ("RMLTTC0005b", sibling), ("RMLTTC0006b", sibling)
+  , ("RMLTTC0006c", sibling), ("RMLTTC0006d", sibling), ("RMLTTC0006e", sibling)
+  , ("RMLSTC0003",
+      "the expected output writes the ages as xsd:integer; the data file holds plain literals, the results of a SPARQL query serialised as CSV are strings, and the mapping states no datatype") ]
+
 /-- Compare a produced dataset with an expected one. A mismatch that
-    disappears when every datatype is erased means the EXPECTED file lost
-    the datatypes the natural mapping gives (`RMLTTC0004c` expects
-    `"33"` where the source value is the number 33 and the sibling
-    N-Quads dump expects `"33"^^xsd:integer`): the fixtures disagree with
-    each other, and the case is a fixture defect. -/
-def compareDatasets (got want : Dataset) : Outcome :=
+    disappears when every datatype is erased is a fixture defect only for
+    a case on `datatypeDefects`. -/
+def compareDatasets (id : String) (got want : Dataset) : Outcome :=
   let g := flattenDataset (mergeDatasetReifiers got)
   let w := flattenDataset (mergeDatasetReifiers want)
   match sameGraph g w with
   | .fail msg =>
       match sameGraph (eraseDatatypes g) (eraseDatatypes w) with
-      | .pass => .bucket "fixture defect"
-          "the expected output has lost the datatypes the natural mapping gives"
+      | .pass =>
+          match datatypeDefects.find? (fun d => d.1 == id) with
+          | some d => .bucket "fixture defect" d.2
+          | none => .fail (msg ++ "; the datasets differ in literal datatypes only, and the case is not on the fixture-defect list")
       | _ => .fail msg
   | o => o
 
@@ -280,7 +296,7 @@ def withoutLabelLines (files : List (String × ByteArray)) : Option (List (Strin
 /-- Run a positive case on the given files and compare the result with the
     expected dataset: the default target first, then each logical target's
     file. -/
-def judge (mg : Graph) (baseOf : Option String) (files : List (String × ByteArray))
+def judge (id : String) (mg : Graph) (baseOf : Option String) (files : List (String × ByteArray))
     (want : Dataset) : Outcome × EvalResult :=
   let r := runMappingGraphFiles mg baseOf (fileAccessOf files)
   match firstUnsupported r.errors with
@@ -288,7 +304,7 @@ def judge (mg : Graph) (baseOf : Option String) (files : List (String × ByteArr
   | none =>
     if r.rejected then (.fail s!"a valid mapping was rejected\n{renderErrors r.errors}", r)
     else
-      let first := compareDatasets (datasetOfQuads (quadsFor none r.quads)) want
+      let first := compareDatasets id (datasetOfQuads (quadsFor none r.quads)) want
       let outcome := (logicalTargetsOf mg).foldl (fun (o : Outcome) lt =>
         match o with
         | .pass =>
@@ -300,7 +316,7 @@ def judge (mg : Graph) (baseOf : Option String) (files : List (String × ByteArr
                 | .error (.unsupported b why), _ | _, .error (.unsupported b why) => .bucket b why
                 | .error (.failed m), _ => .fail s!"the expected file '{fname}' cannot be read: {m}"
                 | _, .error (.failed m) => .fail s!"our dump for '{fname}' cannot be made: {m}"
-                | .ok wantDs, .ok gotDs => compareDatasets gotDs wantDs
+                | .ok wantDs, .ok gotDs => compareDatasets id gotDs wantDs
         | o => o) first
       (outcome, r)
 
@@ -370,7 +386,7 @@ def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
         "RMLTC0027b's output.nq writes <http://example.com/Person/Emily Smith>, " ++
         "and an IRIREF may not contain a space.")
   | .ok mg, .ok want =>
-      let (outcome0, r) := judge mg baseOf files want
+      let (outcome0, r) := judge name mg baseOf files want
       if dump == some name then
         let got := flattenQuads r.quads
         let wantG := flattenDataset want
@@ -389,10 +405,19 @@ def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
             match withoutLabelLines files with
             | none => outcome0
             | some files' =>
-                match (judge mg baseOf files' want).1 with
+                match (judge name mg baseOf files' want).1 with
                 | .pass => .bucket "fixture defect"
                     "a data file starts with the line **Input N**, the label of the test generator, which is not CSV data"
                 | _ => outcome0
+        | o => o
+      -- A case on the fixture-defect list that passes outright is a failure
+      -- of the list: remove the entry.
+      let outcome : Outcome :=
+        match outcome with
+        | .pass =>
+            if datatypeDefects.any (fun d => d.1 == name) then
+              .fail "the case is on the fixture-defect list and passes; remove it from the list"
+            else .pass
         | o => o
       match outcome with
       | .pass => t := { t with pass := t.pass + 1 }
