@@ -31,6 +31,17 @@ rather than counting as a failure:
   * `unreadable` — the instance or schema document does not parse, the
     element declaration is not found, or the schema names a type that
     may not be used in a schema document (`xs:anyAtomicType`, §3.4.1).
+    A declaration is found by EXPANDED name (Part 1 §3.3.4.3 clause 1):
+    in the group's schema first, then in the schema document the
+    instance names for its namespace in `xsi:schemaLocation` (or
+    `xsi:noNamespaceSchemaLocation`), which this runner reads as the
+    hint Part 1 §4.3.2 makes it.
+
+An `xsi:type` on the instance's element is applied by the library
+(`SchemaReader.governing`, Part 1 §3.3.4.3 clause 4): the element is
+validated against the type it names, and is INVALID when that name does
+not resolve or does not name a type validly substitutable for the
+declared one.
   * `not-simple` — the instance's document element has element
     children, so it is not a datatype instance.
 
@@ -172,6 +183,38 @@ def readDoc (path : String) : IO (Option Document) := do
     | .ok d    => return some d
     | .error _ => return none
 
+/-- The schema documents an instance names for one namespace, as
+`xsi:schemaLocation` pairs (or `xsi:noNamespaceSchemaLocation` for no
+namespace), resolved against the instance's directory. -/
+def locationHints (instDir : String) (root : Node) (ns : Option String) : List String :=
+  let rel := match ns with
+    | some u =>
+        let items := qnameList ((xsiAttr? root "schemaLocation").getD "")
+        let rec pairs : List String → List String
+          | n :: loc :: rest => (if n == u then [loc] else []) ++ pairs rest
+          | _ => []
+        pairs items
+    | none => qnameList ((xsiAttr? root "noNamespaceSchemaLocation").getD "")
+  rel.map (fun r => normalizePath (instDir ++ r))
+
+/-- The schema that declares the instance's document element: the
+group's, else the first hinted schema document that does. The hint is
+read only when the group's schema has no declaration for the element's
+expanded name. -/
+def schemaFor (group : SchemaDoc) (instDir : String) (root : Node)
+    : IO (Option SchemaDoc) := do
+  let ns := rootNamespace root
+  let nm := localOf (tagOf root)
+  if (elementDecl? group ns nm).isSome then return some group
+  for path in locationHints instDir root ns do
+    match ← readDoc path with
+    | none => pure ()
+    | some d =>
+      match readSchema d with
+      | some s => if (elementDecl? s ns nm).isSome then return some s
+      | none   => pure ()
+  return none
+
 def runGroup (base : String) (group : Node) (verbose : Bool) : IO GroupResult := do
   let kids := elementChildren group
   let schemaTests := kids.filter (fun c => localOf (tagOf c) == "schemaTest")
@@ -220,21 +263,49 @@ def runGroup (base : String) (group : Node) (verbose : Bool) : IO GroupResult :=
                                unreadable := r.counts.unreadable + 1 } }
             | some idoc =>
               let root := idoc.root
+              let ns := rootNamespace root
+              let nm := localOf (tagOf root)
               if hasElementChild root then
                 r := { r with counts := { r.counts with
                          notSimple := r.counts.notSimple + 1 } }
               else
-                match elementType? schema (localOf (tagOf root)) with
+                match ← schemaFor schema (dirOf (normalizePath (base ++ ih))) root with
                 | none => r := { r with counts := { r.counts with
                                    unreadable := r.counts.unreadable + 1 } }
-                | some ty =>
-                  if (elementValueConstraint? schema (localOf (tagOf root))).isSome then
+                | some sch =>
+                if sch.klass == .structures then
+                  r := { r with counts := { r.counts with
+                           structures := r.counts.structures + 1 } }
+                else if sch.klass == .mixed then
+                  r := { r with counts := { r.counts with
+                           mixed := r.counts.mixed + 1 } }
+                else
+                match (elementDecl? sch ns nm).bind (fun d =>
+                        (declaredRef? sch d.2.2.2).map (fun t => (d.2.2.2, t))) with
+                | none => r := { r with counts := { r.counts with
+                                   unreadable := r.counts.unreadable + 1 } }
+                | some (declNode, declared) =>
+                  -- Part 1 §3.3.4.3 clause 4: an `xsi:type` that does not
+                  -- resolve, or names a type not validly substitutable for
+                  -- the declared one, makes the element invalid whatever
+                  -- its value.
+                  let gov := governing sch declNode declared root
+                  let tyOpt : Option (Option SimpleType) := match gov with
+                    | .ok t => some (t.resolve? sch)
+                    | _     => none
+                  match tyOpt with
+                  | some none => r := { r with counts := { r.counts with
+                                          unreadable := r.counts.unreadable + 1 } }
+                  | _ =>
+                  if (elementValueConstraint? sch ns nm).isSome then
                     r := { r with counts := { r.counts with
                              valueConstraint := r.counts.valueConstraint + 1 } }
-                  else if ty.hasAssertion then
+                  else if (match tyOpt with | some (some ty) => ty.hasAssertion | _ => false) then
                     r := { r with counts := { r.counts with
                              assertion := r.counts.assertion + 1 } }
-                  else if !ty.unreadablePatternsOf.isEmpty then
+                  else if (match tyOpt with
+                           | some (some ty) => !ty.unreadablePatternsOf.isEmpty
+                           | _ => false) then
                     r := { r with counts := { r.counts with
                              badPattern := r.counts.badPattern + 1 } }
                   else if isNilled root then
@@ -242,18 +313,23 @@ def runGroup (base : String) (group : Node) (verbose : Bool) : IO GroupResult :=
                              nilled := r.counts.nilled + 1 } }
                   else
                   let expected := (expectedValidity group it).getD "valid"
-                  let got := validate ty (textOf root)
+                  let got := match tyOpt with
+                    | some (some ty) => validate ty (textOf root)
+                    | _              => false
+                  let label := match tyOpt with
+                    | some (some ty) => labelOf ty
+                    | _              => "«xsi:type»"
                   let ok := (got && expected == "valid") || (!got && expected == "invalid")
-                  let nm := (attrOf "name" it).getD "?"
+                  let tn := (attrOf "name" it).getD "?"
                   if verbose && !ok then
-                    IO.println s!"  FAIL {nm}  type={labelOf ty} expected={expected} got={got} lex={repr (textOf root)}"
+                    IO.println s!"  FAIL {tn}  type={label} expected={expected} got={got} lex={repr (textOf root)}"
                   r := { r with
                     counts := { r.counts with
                       scored := r.counts.scored + 1,
                       pass := r.counts.pass + (if ok then 1 else 0),
                       fail := r.counts.fail + (if ok then 0 else 1) },
-                    tally := r.tally.bump (labelOf ty) ok,
-                    fails := if ok then r.fails else nm :: r.fails }
+                    tally := r.tally.bump label ok,
+                    fails := if ok then r.fails else tn :: r.fails }
         return r
 
 def runTestSet (root : String) (rel : String) (verbose : Bool) : IO GroupResult := do
