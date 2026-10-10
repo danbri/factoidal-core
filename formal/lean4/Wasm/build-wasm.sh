@@ -5,10 +5,20 @@
 #
 #   formal/lean4/Wasm/build-wasm.sh [work-dir]
 #
-# Outputs (committed, per the repo's commit-binaries rule):
-#   docs/web/hub/assets/l4/l4factoidal.wasm   the module
+# Outputs (build products, gitignored since 2026-10-09; the `web` release
+# set of danbri/factoidal-builds carries them):
+#   docs/web/hub/assets/l4/l4factoidal.wasm   the full module
 #   docs/web/hub/assets/l4/l4factoidal.mjs    Emscripten's glue
-#   docs/web/hub/assets/l4/l4factoidal.js     our ES-module loader
+#   docs/web/hub/assets/l4/l4factoidal.js     our ES-module loader (source,
+#                                             committed; step 9 stamps it)
+#   docs/web/hub/assets/l4/l4factoidal-core.{wasm,mjs,js}
+#       the CORE module (issue 713 stage 4): Wasm/CoreExports.lean over the
+#       core dispatch of Wasm/CoreDispatch.lean, a subset of the ops whose
+#       import closure leaves most of the library out, so the linker drops
+#       it. Its loader is generated from l4factoidal.js (step 8).
+#   $WORK/<module>.map, $WORK/<module>.size.md, $WORK/<module>.size-modules.md
+#       the wasm-ld link map and the size tables tools/wasm-size-profile.py
+#       makes from it (bytes per Lean namespace and per module)
 #
 # The glue's basename decides the sidecar name it looks for: emcc's
 # output `l4factoidal.mjs` resolves `l4factoidal.wasm` next to itself.
@@ -270,7 +280,12 @@ echo "  runtime objects: $(ls "$RT_OBJ"/*.o | wc -l | tr -d ' ') (incl. mimalloc
 
 # ---------------------------------------------------------------------
 say "step 6 — compile our library's C, the shim and the stub"
-rm -f "$LIB_OBJ"/*.o
+# Incremental and parallel: an object is recompiled when its .c is newer, and
+# objects whose module is gone are deleted (the stale-ir rule below). Until
+# 2026-10-10 this step deleted every object and compiled ~740 files one at a
+# time, about seven minutes on 4 CPUs; L4_WASM_JOBS sets the parallelism.
+JOBS="${L4_WASM_JOBS:-4}"
+LIBC_LIST="$WORK/lib-c.list"; : > "$LIBC_LIST"
 # Wasm/Main.c is the NATIVE CLI driver: it defines `main` and pulls in
 # lean_setup_args. It must never be linked into the wasm module — and
 # neither may Wasm/Cli.c (the l4factoidal CLI, its own `main`) nor ANY
@@ -290,9 +305,34 @@ while IFS= read -r f; do
   # C whose source module still exists.
   src="$LEAN_DIR/${rel%.c}.lean"
   [ -f "$src" ] || { echo "  (skipping stale ir: $rel — no $src)"; continue; }
-  emcc $CFLAGS -c "$f" -o "$LIB_OBJ/$b.o"
+  printf '%s %s\n' "$f" "$b" >> "$LIBC_LIST"
 done < <(find "$LEAN_DIR/.lake/build/ir" -name '*.c')
+# Delete every Lean library object that is not in the list (a module that was
+# deleted or renamed, or an object of an earlier layout), so a stale object
+# can never reach the link. The C objects compiled below are rebuilt anyway.
+for o in "${LIB_OBJ:?}"/*.o; do
+  [ -e "$o" ] || continue
+  b="$(basename "${o%.o}")"
+  case "$b" in Hacl_*|Lib_*|l4_*) continue;; esac
+  grep -q " $b\$" "$LIBC_LIST" || rm -f "$o"
+done
+lib_cc_one() {
+  local f="$1" b="$2" o="$LIB_OBJ/$2.o"
+  if [ -s "$o" ] && [ "$o" -nt "$f" ]; then return 0; fi
+  emcc $CFLAGS -c "$f" -o "$o.tmp" && mv "$o.tmp" "$o" \
+    || { echo "CC-FAIL $b" >&2; rm -f "$o.tmp" "$o"; return 1; }
+}
+export -f lib_cc_one
+export LIB_OBJ
+LIBCC_RC=0
+xargs -P "$JOBS" -L 1 bash -c 'lib_cc_one "$0" "$1"' < "$LIBC_LIST" || LIBCC_RC=$?
+[ "$LIBCC_RC" -eq 0 ] || { echo "step 6: a library C file failed to compile"; exit 1; }
+echo "  Lean library objects: $(wc -l < "$LIBC_LIST" | tr -d ' ')"
+# The shim, once per module: its initialiser names the exports module that
+# module links (Wasm/l4_shim.c, L4_INIT_MODULE).
 emcc $CFLAGS -c "$LEAN_DIR/Wasm/l4_shim.c"  -o "$LIB_OBJ/l4_shim.o"
+emcc $CFLAGS -DL4_INIT_MODULE=initialize_l4factoidal_Wasm_CoreExports \
+     -c "$LEAN_DIR/Wasm/l4_shim.c"  -o "$LIB_OBJ/l4_shim_core.o"
 emcc $CFLAGS -c "$LEAN_DIR/Wasm/l4_stubs.c" -o "$LIB_OBJ/l4_stubs.o"
 # HACL* Ed25519 + SHA-256 + P-256 + bignum — the library's `@[extern]`
 # crypto family (L4Factoidal/Crypto/Ed25519.lean, Crypto/SHA2Native.lean,
@@ -350,14 +390,29 @@ emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_ext.c" -o "$LIB_OBJ/l4_ext.o"
 echo "  library objects: $(ls "$LIB_OBJ"/*.o | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------
-say "step 7 — link"
+say "step 7 — link the full module and the core module"
 # em++ (not emcc) for the link: the C driver does not pull in libc++,
 # and Lean's runtime is C++.
 # The linker's dead-code elimination is what keeps this small — most of
 # Init is never reached from the exported entry points.
-em++ -O3 -DNDEBUG -fwasm-exceptions \
-  "$LIB_OBJ"/*.o "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
-  -o "$WORK/l4factoidal.mjs" \
+#
+# Two modules from one set of objects. Wasm_Exports.o and Wasm_CoreExports.o
+# define the same C symbols, so each link takes one of them and the shim
+# object compiled for its initialiser:
+#   l4factoidal.wasm       Wasm_Exports.o      + l4_shim.o
+#   l4factoidal-core.wasm  Wasm_CoreExports.o  + l4_shim_core.o
+# Every other object goes to both links; the core link drops what the core
+# dispatch does not reach (`--gc-sections`, the default).
+link_module() {
+  local name="$1" skip_exports="$2" skip_shim="$3"
+  local objs=()
+  for o in "$LIB_OBJ"/*.o; do
+    case "$(basename "$o")" in "$skip_exports"|"$skip_shim") continue;; esac
+    objs+=("$o")
+  done
+  em++ -O3 -DNDEBUG -fwasm-exceptions \
+  "${objs[@]}" "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
+  -o "$WORK/$name.mjs" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 \
   -sEXPORTED_FUNCTIONS=_l4_init,_l4_version_c,_l4_bgp_query_c,_l4_call_c,_l4_call_blob_c,_l4_call_blob_io_c,_l4_free_result,_l4_free_blob,_l4_collect,_l4_mem_report_c,_l4_mem_stats_c,_l4_heap_tags_c,_l4_mi_option_set,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8,HEAPU8,getValue,setValue \
@@ -365,7 +420,15 @@ em++ -O3 -DNDEBUG -fwasm-exceptions \
   -sSTACK_SIZE=8MB \
   -sENVIRONMENT=web,worker,node \
   -sASSERTIONS=0 \
-  -Wl,--Map="$WORK/l4factoidal.map"
+  -Wl,--Map="$WORK/$name.map"
+  python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
+      --wasm "$WORK/$name.wasm" --top 60 > "$WORK/$name.size.md"
+  python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
+      --wasm "$WORK/$name.wasm" --by module --top 2000 > "$WORK/$name.size-modules.md"
+  echo "  $name.wasm: $(wc -c < "$WORK/$name.wasm") bytes (size table: $WORK/$name.size.md)"
+}
+link_module l4factoidal      Wasm_CoreExports.o l4_shim_core.o
+link_module l4factoidal-core Wasm_Exports.o     l4_shim.o
 
 # ---------------------------------------------------------------------
 say "step 8 — install artifacts"
@@ -373,9 +436,20 @@ say "step 8 — install artifacts"
 # name and let our loader supply the bytes explicitly anyway.
 cp "$WORK/l4factoidal.mjs"  "$ASSETS/l4factoidal.mjs"
 cp "$WORK/l4factoidal.wasm" "$ASSETS/l4factoidal.wasm"
+cp "$WORK/l4factoidal-core.mjs"  "$ASSETS/l4factoidal-core.mjs"
+cp "$WORK/l4factoidal-core.wasm" "$ASSETS/l4factoidal-core.wasm"
+# The core module's loader is l4factoidal.js with the glue it imports and the
+# content-hash stamp changed: one loader source, two generated copies. The
+# core glue resolves l4factoidal-core.wasm from its own basename.
+CORE_SHA=$(sha256sum "$ASSETS/l4factoidal-core.wasm" | cut -d' ' -f1)
+sed -E -e "s|from './l4factoidal\.mjs';|from './l4factoidal-core.mjs';|" \
+       -e "s/^const WASM_VERSION = \"[0-9a-f]*\";/const WASM_VERSION = \"${CORE_SHA:0:12}\";/" \
+       "$ASSETS/l4factoidal.js" > "$ASSETS/l4factoidal-core.js"
+grep -q "from './l4factoidal-core.mjs';" "$ASSETS/l4factoidal-core.js" \
+  || { echo "step 8: the core loader does not import l4factoidal-core.mjs (the loader's import line changed)"; exit 1; }
 ls -l "$ASSETS"
 echo
-echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm")"
+echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm") (full), $(wc -c < "$ASSETS/l4factoidal-core.wasm") (core)"
 # ---------------------------------------------------------------------
 say "step 9 — companion npm package + Pages mirror + provenance"
 NPMLEAN="$LEAN_DIR/../../npm/factoidal-lean"
@@ -432,17 +506,23 @@ PYEOF
   L4ASSETS="$LEAN_DIR/../../npm/factoidal/l4-assets"
   if [ -d "$L4ASSETS" ]; then
     cp "$ASSETS/l4factoidal.js" "$ASSETS/l4factoidal.mjs" "$ASSETS/l4factoidal.wasm" "$L4ASSETS/"
+    cp "$ASSETS/l4factoidal-core.js" "$ASSETS/l4factoidal-core.mjs" \
+       "$ASSETS/l4factoidal-core.wasm" "$L4ASSETS/"
     # Its version.json carries `engine` and `note` members the companion
     # package's does not, so refresh the provenance fields in place
     # instead of overwriting the file.
-    python3 - "$L4ASSETS/version.json" "$NPMLEAN/version.json" <<'PYSYNC'
-import json, sys
+    python3 - "$L4ASSETS/version.json" "$NPMLEAN/version.json" "$ASSETS/l4factoidal-core.wasm" "$CORE_SHA" <<'PYSYNC'
+import json, os, sys
 dst_path, src_path = sys.argv[1], sys.argv[2]
+core_wasm, core_sha = sys.argv[3], sys.argv[4]
 src = json.load(open(src_path))
 dst = json.load(open(dst_path))
 for k in ("version", "gitSha", "builtAt", "leanToolchain", "emscripten",
           "abiVersion", "wasmSha256", "wasmBytes", "claims"):
     dst[k] = src[k]
+# The core module (issue 713 stage 4), built from the same commit.
+dst["coreWasmSha256"] = core_sha
+dst["coreWasmBytes"] = os.path.getsize(core_wasm)
 # A stale-artifact note is a claim about the PREVIOUS build; a fresh
 # build is exactly the event that retires it.
 dst.pop("sourceDrift", None)
@@ -468,8 +548,16 @@ PYSYNC
       BADCOPY=1
     fi
   done
+  for d in "$ASSETS" "$LEAN_DIR/../../npm/factoidal/l4-assets"; do
+    [ -f "$d/l4factoidal-core.wasm" ] || continue
+    THIS=$(sha256sum "$d/l4factoidal-core.wasm" | cut -d' ' -f1)
+    if [ "$THIS" != "$CORE_SHA" ]; then
+      echo "  MISMATCH $d/l4factoidal-core.wasm has $THIS, expected $CORE_SHA"
+      BADCOPY=1
+    fi
+  done
   [ "$BADCOPY" -eq 0 ] || { echo "committed wasm copies disagree — refusing to report success"; exit 1; }
-  echo "  all committed wasm copies agree ($WASM_SHA)"
+  echo "  all committed wasm copies agree ($WASM_SHA; core $CORE_SHA)"
 else
   echo "  (npm/factoidal-lean absent — companion step skipped)"
 fi

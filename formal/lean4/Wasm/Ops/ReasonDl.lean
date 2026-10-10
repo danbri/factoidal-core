@@ -22,6 +22,9 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Wasm.Ops.Support
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.OWL.RLClosure
+-- The `@[csimp]` theorem that makes `OWL.RL.closureFix` compile to the
+-- indexed closure (see the note in `Wasm/Ops/Reason.lean`).
+import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
 

@@ -23,6 +23,27 @@
 // an absent answer means, which artifact a query reads, are decided in Lean.
 
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
+
+// The two npm entries and the engine each loads (issue 713 stage 4). The
+// core engine's `ops` reflection lists what only the full engine serves
+// (`fullOnlyOps`, `fullOnlyFormats`); a call to one of those names the
+// entry that has it.
+export const FULL_ENTRY = '@factoidal/core';
+export const CORE_ENTRY = '@factoidal/core/core';
+
+/**
+ * The message of a refusal by the core engine of something only the full
+ * engine serves.
+ * @param {string} what the function, op or format refused
+ */
+export function fullEngineMessage(what) {
+  return `${what} is not in the core engine that '${CORE_ENTRY}' loads ` +
+    `(l4factoidal-core.wasm); import '${FULL_ENTRY}', whose full engine ` +
+    '(l4factoidal.wasm) serves it';
+}
+
+// The ops whose second argument is a format tag of a document they read.
+const DOCUMENT_FORMAT_OPS = new Set(['parseToDatasetJson', 'datasetOpen', 'parseDocument']);
 const EXT_PENDING_MARKER = '__FACTOIDAL_EXT_PENDING__';
 
 function okEnvelope(extra) {
@@ -116,11 +137,29 @@ export function entryFromEngine(eng) {
       '(the value loadL4() of l4-assets/l4factoidal.js resolves to)');
   }
   const reflection = eng.call('ops', []);
-  const entry = { abiVersion: String(reflection.abiVersion), engine: eng };
+  // `engine` is "core" for l4factoidal-core.wasm and "full" for
+  // l4factoidal.wasm; a module older than issue 713 stage 4 has no member and
+  // is the full engine.
+  const profile = reflection.engine === 'core' ? 'core' : 'full';
+  const entry = {
+    abiVersion: String(reflection.abiVersion),
+    engine: eng,
+    profile,
+    fullOnlyOps: Array.isArray(reflection.fullOnlyOps) ? reflection.fullOnlyOps.map(String) : [],
+    fullOnlyFormats: Array.isArray(reflection.fullOnlyFormats)
+      ? reflection.fullOnlyFormats.map((f) => String(f).toLowerCase()) : [],
+  };
   const ops = Array.isArray(reflection.ops) ? reflection.ops : [];
   for (const op of ops) {
     if (op === 'ops') continue;
+    const formatChecked = DOCUMENT_FORMAT_OPS.has(op) && entry.fullOnlyFormats.length > 0;
     entry[op] = (...args) => {
+      if (formatChecked && entry.fullOnlyFormats.includes(String(args[1] ?? '').toLowerCase())) {
+        return JSON.stringify({
+          ok: false, servedBy: 'full',
+          error: fullEngineMessage(`the format '${args[1]}'`),
+        });
+      }
       try {
         return JSON.stringify(eng.call(op, args.map(String)));
       } catch (err) {

@@ -62,6 +62,17 @@
       "types": "./browser.d.ts",
       "default": "./browser.js"
     },
+    "./core": {
+      "types": "./core.d.ts",
+      "browser": "./core-browser.js",
+      "import": "./core.mjs",
+      "require": "./core.js",
+      "default": "./core.js"
+    },
+    "./core-browser": {
+      "types": "./core-browser.d.ts",
+      "default": "./core-browser.js"
+    },
     "./package.json": "./package.json",
     "./l4": {
       "types": "./l4.d.ts",
@@ -114,6 +125,11 @@
     "fn.d.ts",
     "browser.js",
     "browser.d.ts",
+    "core.js",
+    "core.mjs",
+    "core.d.ts",
+    "core-browser.js",
+    "core-browser.d.ts",
     "l4.js",
     "l4.d.ts",
     "l4-core.js",

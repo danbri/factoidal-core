@@ -52,6 +52,9 @@ import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.OWL.RLClosure
+-- The `@[csimp]` theorem that makes `OWL.RL.closureFix` compile to the
+-- indexed closure (see the note in `Wasm/Ops/Reason.lean`).
+import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.RDFS.Closure
 import L4Factoidal.RDFS.RDFSPlus
 

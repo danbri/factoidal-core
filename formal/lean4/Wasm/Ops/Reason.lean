@@ -34,6 +34,15 @@ import L4Factoidal.RDFS.Closure
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.RDFS.RDFSPlus
 import L4Factoidal.OWL.RLClosure
+-- The indexed OWL 2 RL closure. `OWL.RL.closureFix` is the scanning
+-- specification; this module's `@[csimp]` theorem `closureFix_eq_indexed`
+-- makes the compiler emit `closureFixIndexed` for every call, but only in a
+-- module where it is imported. Until 2026-10-10 this file had it through
+-- `OWL.Refute`; when the OWL DL ops moved to `ReasonDl.lean` the import went
+-- with them, and `owlClosure` compiled to the scanning closure (the scanning
+-- rules of `OWL/RLClosure.lean`, 113 KB more code, were linked in again).
+-- Keep the import explicit.
+import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.Syntax.NQuadsFast
 
 namespace L4Wasm.Ops
