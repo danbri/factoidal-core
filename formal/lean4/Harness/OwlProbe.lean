@@ -1579,8 +1579,13 @@ structure RbScore where
   fail : Nat := 0
   notRefuted : Nat := 0
   unsupported : Nat := 0
+  /-- Units named by a local override (`tests/local-overrides`, suite
+  `owl-rdf-based`) whose verdict fails: counted here, never as a pass or a
+  fail. -/
+  overridden : Nat := 0
 
-def RbScore.total (s : RbScore) : Nat := s.pass + s.fail + s.notRefuted + s.unsupported
+def RbScore.total (s : RbScore) : Nat :=
+  s.pass + s.fail + s.notRefuted + s.unsupported + s.overridden
 
 def RbScore.bump (s : RbScore) : RbOutcome → RbScore
   | .proved => { s with pass := s.pass + 1 }
@@ -1590,11 +1595,12 @@ def RbScore.bump (s : RbScore) : RbOutcome → RbScore
 
 def RbScore.add (a b : RbScore) : RbScore :=
   { pass := a.pass + b.pass, fail := a.fail + b.fail,
-    notRefuted := a.notRefuted + b.notRefuted, unsupported := a.unsupported + b.unsupported }
+    notRefuted := a.notRefuted + b.notRefuted, unsupported := a.unsupported + b.unsupported,
+    overridden := a.overridden + b.overridden }
 
 def RbScore.line (label : String) (s : RbScore) : String :=
   s!"{label}: {s.pass} pass, {s.fail} fail, {s.notRefuted} not-refuted, \
-{s.unsupported} unsupported (out of {s.total})"
+{s.unsupported} unsupported, {s.overridden} local-override (out of {s.total})"
 
 structure RbMeasure where
   capHits : Nat := 0
@@ -1716,9 +1722,20 @@ structure RbCatalogResult where
   fails : List String := []
   units : Nat := 0
   wallMs : Nat := 0
+  /-- Override ids that took effect (a unit of the case failed). -/
+  applied : List String := []
+  /-- Override ids with a unit that now passes: each fails the run. -/
+  stale : List String := []
 
+/-- `overrides`: `(test_id, issue)` of the local overrides of suite
+`owl-rdf-based` (`loadLocalOverrides`, below). A FAILING unit of a named
+case is counted in the `local-override` bucket and printed as `OVERRIDE`;
+a PASSING one is printed `STALE` and fails the run. Other outcomes
+(not-refuted, unsupported) are counted as usual. The verdict itself is
+never changed. First entries: `WebOnt-I5.5-001` and `-002`,
+https://github.com/danbri/factoidal/issues/734. -/
 def runRdfBased (name : String) (cat : Catalog) (capMs : Nat) (verbose : Bool)
-    : IO RbCatalogResult := do
+    (overrides : List (String × String) := []) : IO RbCatalogResult := do
   let t0 ← IO.monoMsNow
   let mut r : RbCatalogResult := {}
   for c in cat.cases do
@@ -1728,17 +1745,34 @@ def runRdfBased (name : String) (cat : Catalog) (capMs : Nat) (verbose : Bool)
       if c.types.contains ty && inRdfBasedRegime c ty then
         let (o, m) ← rbJudge cat c capMs ty
         let label := s!"{c.id} [{ty}]"
-        match o with
-        | .proved | .notRefuted => if verbose then IO.println (o.line label)
-        | .notProved _ | .refuted _ =>
-            IO.println (o.line label)
-            r := { r with fails := r.fails ++ [label] }
-        | .unsupported _ => IO.println (o.line label)
+        let ov := overrides.find? (fun kv => kv.1 == c.id)
+        let isFail := match o with | .notProved _ | .refuted _ => true | _ => false
+        let isPass := match o with | .proved => true | _ => false
+        match ov with
+        | some (_, issue) =>
+            if isFail then
+              let why := match o with | .notProved w | .refuted w => w | _ => ""
+              IO.println s!"OVERRIDE {label}: {why} (local override, {issue})"
+              r := { r with applied := r.applied ++ [c.id] }
+            else if isPass then
+              IO.println s!"STALE {label}: the unit passes; delete its file in \
+tests/local-overrides/ and close {issue}"
+              r := { r with stale := r.stale ++ [c.id] }
+            else if verbose then IO.println (o.line label)
+        | none =>
+          match o with
+          | .proved | .notRefuted => if verbose then IO.println (o.line label)
+          | .notProved _ | .refuted _ =>
+              IO.println (o.line label)
+              r := { r with fails := r.fails ++ [label] }
+          | .unsupported _ => IO.println (o.line label)
         if m.capHits > 0 then IO.println s!"CAP {label}: the closure budget ran out"
+        let bumpU := fun (s : RbScore) =>
+          if ov.isSome && isFail then { s with overridden := s.overridden + 1 } else s.bump o
         let pt := match r.perType.find? (fun p => p.1 == ty) with
-          | some _ => r.perType.map (fun p => if p.1 == ty then (p.1, p.2.bump o) else p)
-          | none => r.perType ++ [(ty, RbScore.bump {} o)]
-        r := { r with score := r.score.bump o, perType := pt, measure := r.measure.add m,
+          | some _ => r.perType.map (fun p => if p.1 == ty then (p.1, bumpU p.2) else p)
+          | none => r.perType ++ [(ty, bumpU {})]
+        r := { r with score := bumpU r.score, perType := pt, measure := r.measure.add m,
                       units := r.units + 1 }
   let t1 ← IO.monoMsNow
   r := { r with wallMs := t1 - t0 }
@@ -2651,6 +2685,9 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
   IO.println "  fail = not proved (positive, inconsistency) or refuted (negative, consistency)."
   let mut total : RbScore := {}
   let mut notRead : List String := []
+  let overrides ← loadLocalOverrides "owl-rdf-based"
+  let mut applied : List String := []
+  let mut stale : List String := []
   for name in names do
     let p := dir / name
     if !(← p.pathExists) then
@@ -2662,12 +2699,27 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
       | some cat0 =>
         let cat := if o.cases.isEmpty then cat0
           else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
-        let r ← runRdfBased name cat o.capMs o.verbose
+        let r ← runRdfBased name cat o.capMs o.verbose overrides
         total := total.add r.score
+        applied := applied ++ r.applied
+        stale := stale ++ r.stale
         IO.println ""
   for f in notRead do
     IO.println s!"  catalog not read: {f}"
-  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 then 0 else 1)
+  if !overrides.isEmpty then
+    IO.println "LOCAL OVERRIDES (tests/local-overrides, suite owl-rdf-based): a disputed case"
+    IO.println "is counted in the local-override bucket, never as a pass."
+    for (i, issue) in overrides do
+      IO.println s!"  {i}: {issue}"
+  for i in stale do
+    IO.println s!"FAILURE: STALE local override {i}: a unit of the case now passes"
+  let unmatched := overrides.filter (fun kv =>
+    !(applied.contains kv.1) && !(stale.contains kv.1) &&
+    (o.cases.isEmpty || o.cases.contains kv.1))
+  for (i, issue) in unmatched do
+    IO.println s!"FAILURE: local override {i} ({issue}) matches no failing unit"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 &&
+             stale.isEmpty && unmatched.isEmpty then 0 else 1)
 
 /-- `--species`: read each catalog, score the species facet of every
 case that carries one. The default catalog is `all.rdf`, the union of

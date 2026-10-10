@@ -1,0 +1,13 @@
+{
+  "test_id": "WebOnt-I5.5-001",
+  "suite": "owl-rdf-based",
+  "issue": "https://github.com/danbri/factoidal/issues/734",
+  "dispute_kind": "expectation-without-normative-condition",
+  "upstream_expectation": "PositiveEntailmentTest under test:semantics RDF-BASED: the conclusion follows when rdf:first is an owl:FunctionalProperty (catalog description of WebOnt-I5.5-001; test:status Proposed, not Approved)",
+  "our_expectation": "not entailed under the OWL 2 RDF-Based Semantics: no condition of the 2012 semantics makes rdf:first functional",
+  "rationale": "RDF 1.1 Semantics, Appendix D (RDF collections): \"RDF imposes no 'well-formedness' conditions on the use of this vocabulary\", with a list node that has two rdf:first values as its example; a semantic extension \"may\" exclude such interpretations. OWL 2 RDF-Based Semantics section 5 (Sequence expressions) is that extension and declines: \"there are no semantic constraints that enforce 'well-formed' sequence structures. So, for example, it is possible for a sequence head s to refer to more than one sequence.\" The OWL 2 test catalog marks this case test:status Proposed, never Approved. The regime proves its rules sound against RdfBasedConditions (formal/lean4/L4Factoidal/OWL/RdfBased/Spec.lean); a functionality rule for the collection vocabulary would not be sound against them. Owner, 2026-10-10, verbatim: \"as rdfs editor and rdfcore wg cochair I consider those properties functional by their definitions, even if the available languages at the time didnt make it easy to state. We can go either way, be guided by related specs/tests. Just decide and move on.\" The coordinator decided by the related specifications above (option 2 of the issue). A semantic extension that makes rdf:first and rdf:rest functional, which RDF 1.1 Semantics Appendix D permits, would be a separate opt-in regime with its own condition bundle; it is not built. This is a disposition, not a semantic change: the regime still computes and prints its real verdict; the override only counts the failing PositiveEntailmentTest unit in the local-override bucket. If the unit starts to pass, the runner reports the override STALE and the run fails.",
+  "spec": "https://www.w3.org/TR/rdf11-mt/ (Appendix D, RDF collections) and https://www.w3.org/TR/owl2-rdf-based-semantics/ (section 5, sequence expressions)",
+  "disposition": "local-override",
+  "owner_directive": "as rdfs editor and rdfcore wg cochair I consider those properties functional by their definitions, even if the available languages at the time didnt make it easy to state. We can go either way, be guided by related specs/tests. Just decide and move on. (owner, 2026-10-10)",
+  "date": "2026-10-10"
+}

@@ -393,6 +393,25 @@ https://github.com/danbri/factoidal/issues/713.
   with species FULL only, and the catalog's 482 RDF-BASED cases, are judged
   there. They are not moved to an "unsupported" or "not applicable" bucket.
 
+### rdf:first and rdf:rest functionality in the RDF-Based regime (owner, 2026-10-10)
+
+> "as rdfs editor and rdfcore wg cochair I consider those properties
+> functional by their definitions, even if the available languages at the
+> time didnt make it easy to state. We can go either way, be guided by
+> related specs/tests. Just decide and move on."
+
+- Decided by the coordinator, guided by the related specifications as asked:
+  WebOnt-I5.5-001 and -002 are local overrides of suite `owl-rdf-based`
+  (https://github.com/danbri/factoidal/issues/734), counted apart and STALE
+  (the run fails) if they ever pass. Reasons: RDF 1.1 Semantics Appendix D
+  imposes no well-formedness conditions on the collection vocabulary and
+  leaves them to semantic extensions; OWL 2 RDF-Based Semantics section 5,
+  that extension, declines them; the catalog marks both cases `Proposed`.
+- The owner's reading (functional by definition) is not built into the
+  regime, whose rules are proved against the 2012 conditions. A semantic
+  extension that adds it is permitted by Appendix D and would be its own
+  opt-in regime with its own condition bundle.
+
 ### GRDDL: 13 disputed cases are not valid tests currently (owner, 2026-10-10)
 
 > "Grddl - postpone for now, i am making enquiries. So just mark it as not a
