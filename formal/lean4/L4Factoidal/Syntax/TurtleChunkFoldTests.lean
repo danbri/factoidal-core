@@ -145,6 +145,24 @@ private def acceptedSources : List String := [
 #guard acceptedSources.all (fun s => textMatches s)
 #guard acceptedSources.all (fun s => walkMatches s .rdf12)
 #guard textMatches "<s> <p> <o> .\n" .rdf11 (some "http://base.example/dir/")
+
+-- A collection read through the scanner walk, nested and long, with a dot
+-- inside a string and a decimal, and its chunked fold at every 97th
+-- character: the same
+-- graph and the same blank-node labels as `parseTurtle`
+-- (https://github.com/danbri/factoidal/issues/678).
+private def collectionSource : String :=
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ( [ ex:q ( 1 2 ) ] ( ) ex:o \"a. b\"\n  3.0 ) .\n" ++
+  "( " ++ " ".intercalate ((List.range 500).map toString) ++ " ) ex:p ( ( ( 4 ) ) ) .\n"
+#guard walkMatches collectionSource
+#guard textMatches collectionSource
+#guard chunksMatchParser collectionSource
+  ((List.range (collectionSource.length / 97 + 1)).map
+    (fun i => String.ofList ((collectionSource.toList.drop (97 * i)).take 97)))
+-- Negative: an unterminated collection is refused with `parseTurtle`'s error.
+#guard textMatches "@prefix ex: <http://example.org/> .\nex:s ex:p ( 1 2 .\n"
+#guard match parseTurtleText "@prefix ex: <http://example.org/> .\nex:s ex:p ( 1 2 .\n" with
+  | .error _ => true | .ok _ => false
 #guard walkMatches "<s> <p> <o> .\n" .rdf11 (some "http://base.example/dir/")
 
 -- Documents `parseTurtle` refuses: `parseTurtleText` reports the same error,

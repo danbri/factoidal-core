@@ -882,6 +882,30 @@ structure SubjResult where
   state           : TurtleState
   isBnodePropList : Bool
 
+/-- One cell of a collection `( e1 ... en )` that has been read but not yet
+linked: the cell's blank node, the element's term (the cell's `rdf:first`
+object), and the element's own side triples. -/
+structure CollectionCell where
+  node    : BNodeId
+  first   : Term
+  triples : List Triple
+
+/-- Link read cells into the `rdf:first`/`rdf:rest` chain (Turtle §2.8).
+`cells` holds the cells NEWEST FIRST; `ts` and `rest` are the triples and the
+term of everything after the newest cell (`[]` and `rdf:nil` at the closing
+`)`). Each step puts one cell's triples in front of `ts` and makes its node
+the `rest` of the cell before it, so the result lists the cells in document
+order. A tail call per cell
+(https://github.com/danbri/factoidal/issues/678). -/
+def linkCollectionCells : List CollectionCell → List Triple → Term → List Triple × Term
+  | [], ts, rest => (ts, rest)
+  | c :: cells, ts, rest =>
+      linkCollectionCells cells
+        (c.triples ++
+          ({ s := .bnode c.node, p := rdfFirst, o := c.first } ::
+           { s := .bnode c.node, p := rdfRest,  o := rest } :: ts))
+        (.bnode c.node)
+
 /-- A term standing in reifier position becomes a subject. -/
 def subjectOfTerm : Term → Subject
   | .iri i   => .iri i
@@ -1278,7 +1302,10 @@ termination_by fuel
 `rdf:first`/`rdf:rest` chain terminated by `rdf:nil` (Turtle §2.8). An
 EMPTY collection is the IRI `rdf:nil` itself and emits no triples.
 `pos`/`cs` start just after the opening `(`. Port of
-`parse_collection`. -/
+`parse_collection`. The elements after the first are read by
+`readCollectionCells`, a tail call per element; `readCollection_eq` (after
+this block) states this definition in the F* source's form, with the
+recursive `readCollectionRest`. -/
 def readCollection (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
     Except ParseError (ObjResult × Nat × List Char) :=
   match fuel with
@@ -1293,21 +1320,25 @@ def readCollection (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) 
         | .error e => .error e
         | .ok (first, p2, r2) =>
             let (node, st2) := first.state.freshBnode
-            let nodeSubj : Subject := .bnode node
-            match readCollectionRest f st2 p2 r2 with
+            match readCollectionCells f st2 p2 r2 [⟨node, first.term, first.triples⟩] with
             | .error e => .error e
-            | .ok (restTriples, restTerm, st3, p3, r3) =>
-                .ok (⟨.bnode node,
-                      first.triples ++
-                        ({ s := nodeSubj, p := rdfFirst, o := first.term } ::
-                         { s := nodeSubj, p := rdfRest,  o := restTerm } :: restTriples),
-                      st3⟩, p3, r3)
+            | .ok (ts, t, st3, p3, r3) => .ok (⟨t, ts, st3⟩, p3, r3)
 termination_by fuel
 
-/-- The tail of a collection after its first element. Returns the tail's
-triples, the term standing for the tail (`rdf:nil` or the next node's
-blank node), and the advanced state. Port of `parse_collection_rest`. -/
-def readCollectionRest (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+/-- The elements of a collection after the cells already read, which
+`cells` holds newest first. Each element is read by `readObject`, then its
+cell's blank node is allocated (so the element's own blank nodes come
+first, as in `parse_collection_rest`), and the cell is pushed onto `cells`
+by a tail call: the LENGTH of a collection uses no stack
+(https://github.com/danbri/factoidal/issues/678). At the closing `)` the
+cells are linked by `linkCollectionCells`. Returns the triples, the term
+standing for the cells (`rdf:nil` when there are none), and the advanced
+state. Stack depth is the nesting of the element terms (a collection or a
+`[ … ]` inside an element), which the document bounds and the fuel caps.
+`readCollectionCells_eq` (after this block) proves it equal to the
+readable recursion `readCollectionRest`. -/
+def readCollectionCells (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char)
+    (cells : List CollectionCell) :
     Except ParseError (List Triple × Term × TurtleState × Nat × List Char) :=
   match fuel with
   | 0 => .error ⟨"recursion limit in collection tail", pos⟩
@@ -1315,20 +1346,15 @@ def readCollectionRest (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Ch
     let (p1, r1) := tws pos cs
     match r1 with
     | []        => .error ⟨"unterminated collection (expected ')')", p1⟩
-    | ')' :: r2 => .ok ([], .iri rdfNil, st, p1 + 1, r2)
+    | ')' :: r2 =>
+        let (ts, t) := linkCollectionCells cells [] (.iri rdfNil)
+        .ok (ts, t, st, p1 + 1, r2)
     | _ =>
         match readObject f st p1 r1 with
         | .error e => .error e
         | .ok (next, p2, r2) =>
             let (node, st2) := next.state.freshBnode
-            let nodeSubj : Subject := .bnode node
-            match readCollectionRest f st2 p2 r2 with
-            | .error e => .error e
-            | .ok (restTriples, restTerm, st3, p3, r3) =>
-                .ok (next.triples ++
-                       ({ s := nodeSubj, p := rdfFirst, o := next.term } ::
-                        { s := nodeSubj, p := rdfRest,  o := restTerm } :: restTriples),
-                     .bnode node, st3, p3, r3)
+            readCollectionCells f st2 p2 r2 (⟨node, next.term, next.triples⟩ :: cells)
 termination_by fuel
 
 /-- [8] `objectList ::= object (',' object)*`, emitting one triple per
@@ -1522,6 +1548,138 @@ def readSubjectTurtle (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Cha
         | .ok (i, pos', rest) => .ok (⟨.iri i, [], st, false⟩, pos', rest)
 
 end
+
+/-! ### Collections: the readable recursion and the loop
+
+`readCollectionRest` is the F* source's `parse_collection_rest`: one
+recursive call per element, so a collection of n elements takes n stack
+frames. It is the readable form of the collection tail; the parser runs
+`readCollectionCells`, a tail call per element, and the theorems below prove
+the two equal (`readCollectionCells_eq`, and `@[csimp]` for any caller of
+the readable form). `readCollection_eq` restates `readCollection` in the F*
+source's form. https://github.com/danbri/factoidal/issues/678 -/
+
+/-- The tail of a collection after its first element. Returns the tail's
+triples, the term standing for the tail (`rdf:nil` or the next node's
+blank node), and the advanced state. Port of `parse_collection_rest`. -/
+def readCollectionRest (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × Term × TurtleState × Nat × List Char) :=
+  match fuel with
+  | 0 => .error ⟨"recursion limit in collection tail", pos⟩
+  | f + 1 =>
+    let (p1, r1) := tws pos cs
+    match r1 with
+    | []        => .error ⟨"unterminated collection (expected ')')", p1⟩
+    | ')' :: r2 => .ok ([], .iri rdfNil, st, p1 + 1, r2)
+    | _ =>
+        match readObject f st p1 r1 with
+        | .error e => .error e
+        | .ok (next, p2, r2) =>
+            let (node, st2) := next.state.freshBnode
+            let nodeSubj : Subject := .bnode node
+            match readCollectionRest f st2 p2 r2 with
+            | .error e => .error e
+            | .ok (restTriples, restTerm, st3, p3, r3) =>
+                .ok (next.triples ++
+                       ({ s := nodeSubj, p := rdfFirst, o := next.term } ::
+                        { s := nodeSubj, p := rdfRest,  o := restTerm } :: restTriples),
+                     .bnode node, st3, p3, r3)
+
+/-- What `readCollectionCells` adds to a result of the readable recursion:
+the cells read before it, linked in front. -/
+def linkCollectionResult (cells : List CollectionCell)
+    (r : List Triple × Term × TurtleState × Nat × List Char) :
+    List Triple × Term × TurtleState × Nat × List Char :=
+  let (ts, t) := linkCollectionCells cells r.1 r.2.1
+  (ts, t, r.2.2)
+
+/-- The loop equals the readable recursion with the cells already read
+linked in front: the same triples in the same order, the same blank-node
+labels (the state goes through the same `readObject` and `freshBnode` calls
+in the same order), the same errors at the same positions, for every fuel. -/
+theorem readCollectionCells_eq : ∀ (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char)
+    (cells : List CollectionCell),
+    readCollectionCells fuel st pos cs cells =
+      (readCollectionRest fuel st pos cs).map (linkCollectionResult cells)
+  | 0, st, pos, cs, cells => by
+      rw [readCollectionCells, readCollectionRest]; rfl
+  | f + 1, st, pos, cs, cells => by
+      rw [readCollectionCells, readCollectionRest]
+      generalize tws pos cs = x
+      rcases x with ⟨p1, r1⟩
+      dsimp only
+      split
+      · rfl
+      · simp [Except.map, linkCollectionResult]
+      · rename_i hne1 hne2
+        cases hobj : readObject f st p1 r1 with
+        | error e => rfl
+        | ok res =>
+          rcases res with ⟨next, p2, r2⟩
+          dsimp only
+          rw [readCollectionCells_eq f]
+          cases readCollectionRest f next.state.freshBnode.snd p2 r2 with
+          | error e => rfl
+          | ok res => rfl
+
+
+/-- `readCollectionRest` run as the loop: no cells read yet. -/
+def readCollectionRestTR (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × Term × TurtleState × Nat × List Char) :=
+  readCollectionCells fuel st pos cs []
+
+@[csimp] theorem readCollectionRest_eq_TR : @readCollectionRest = @readCollectionRestTR := by
+  funext fuel st pos cs
+  rw [readCollectionRestTR, readCollectionCells_eq]
+  cases readCollectionRest fuel st pos cs <;> rfl
+
+/-- `readCollection` in the F* source's form (`parse_collection`): the
+first element, its cell, and the readable recursion for the tail. -/
+theorem readCollection_eq (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Char) :
+    readCollection fuel st pos cs =
+      match fuel with
+      | 0 => .error ⟨"recursion limit in collection", pos⟩
+      | f + 1 =>
+        let (p1, r1) := tws pos cs
+        match r1 with
+        | []        => .error ⟨"unterminated collection (expected ')')", p1⟩
+        | ')' :: r2 => .ok (⟨.iri rdfNil, [], st⟩, p1 + 1, r2)
+        | _ =>
+            match readObject f st p1 r1 with
+            | .error e => .error e
+            | .ok (first, p2, r2) =>
+                let (node, st2) := first.state.freshBnode
+                let nodeSubj : Subject := .bnode node
+                match readCollectionRest f st2 p2 r2 with
+                | .error e => .error e
+                | .ok (restTriples, restTerm, st3, p3, r3) =>
+                    .ok (⟨.bnode node,
+                          first.triples ++
+                            ({ s := nodeSubj, p := rdfFirst, o := first.term } ::
+                             { s := nodeSubj, p := rdfRest,  o := restTerm } :: restTriples),
+                          st3⟩, p3, r3) := by
+  cases fuel with
+  | zero => rw [readCollection]
+  | succ f =>
+    rw [readCollection]
+    generalize tws pos cs = x
+    rcases x with ⟨p1, r1⟩
+    dsimp only
+    split
+    · rfl
+    · rfl
+    · -- The statement's `match r1` is the same matcher as the definition's,
+      -- so `split` has split both sides.
+      cases readObject f st p1 r1 with
+      | error e => rfl
+      | ok res =>
+        rcases res with ⟨first, p2, r2⟩
+        dsimp only
+        rw [readCollectionCells_eq]
+        cases readCollectionRest f first.state.freshBnode.snd p2 r2 with
+        | error e => rfl
+        | ok res => rfl
+
 
 /-! ## Directives — [3] directive
 
