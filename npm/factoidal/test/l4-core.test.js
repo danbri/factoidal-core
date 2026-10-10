@@ -486,6 +486,29 @@ test('l4-core capabilities: entry true, shacl false, tableau false', async (t) =
   assert.equal(caps.canonicalize, true);
 });
 
+// Expected failure (skills/test-suites § Expected failures): the Lean
+// parsers have no recovery mode, so parse(..., {lenient:true}) cannot skip
+// a bad statement and report it.
+const LENIENT_ISSUE = 'https://github.com/danbri/factoidal/issues/716';
+test(`xfail: l4-core parse({lenient:true}) keeps good statements and reports the bad one (${LENIENT_ISSUE})`, async (t) => {
+  if (skipUnlessAvailable(t)) return;
+  const ttl = `<${X}a> <${X}p> "1" .\n<${X}b> <${X}p> .\n<${X}c> <${X}p> "3" .\n`;
+  let failed = false;
+  try {
+    const caps = await l4core.capabilities();
+    assert.equal(caps.parseDiagnostics, true);
+    const ds = await l4core.parse(ttl, { format: 'turtle', lenient: true });
+    assert.equal(ds.size, 2);
+    assert.equal(ds.diagnostics.length, 1);
+    assert.equal(ds.diagnostics[0].line, 2);
+  } catch (error) {
+    failed = true;
+    t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`);
+  }
+  assert.ok(failed,
+    `unexpected pass: lenient parse now works — flip this xfail to an assertion and close ${LENIENT_ISSUE}`);
+});
+
 // ---------------------------------------------------------------------
 // error pins — the exact texts api.js produces on this driver
 // ---------------------------------------------------------------------
