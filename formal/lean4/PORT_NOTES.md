@@ -14153,5 +14153,6 @@ Design record, the call-site classification (which `toLower` calls are ASCII
 by specification), the F&O versus CaseFolding.txt differences, and the effect
 on the literal search index:
 `docs/designissues/2026-10-10-unicode-case-mapping.md`. Tracked at
-<https://github.com/danbri/factoidal/issues/706>. The F* tree is unchanged
-(ASCII).
+<https://github.com/danbri/factoidal/issues/706>. The F* tree is unchanged;
+its UCASE/LCASE gap is tracked at
+<https://github.com/danbri/factoidal/issues/250>.

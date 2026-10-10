@@ -170,8 +170,10 @@ behaviour (`parseCps = parseCpsWith false`).
 `ciRanges` returns sorted, merged intervals. `[A-Z]` with `i` becomes
 `[A-Za-z]` plus U+0131, U+017F and U+212A.
 
-The F* tree still folds the ASCII letters after parsing (`rx_fold_ci`). On
-non-ASCII input and on negated classes the two trees now differ. The
+The F* tree still folds the ASCII letters after parsing (`rx_fold_ci`), and
+its `UCASE`/`LCASE` map `A`-`Z` only (tracked at
+<https://github.com/danbri/factoidal/issues/250>). On non-ASCII input and on
+negated classes the two trees now differ. The
 `l4diff` runner compares the trees on the W3C manifests, whose regex tests are
 ASCII.
 
