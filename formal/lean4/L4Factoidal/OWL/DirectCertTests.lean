@@ -110,6 +110,28 @@ private def cC : Concept := .atom "C"
 #guard !checkCert { abox := [.inst "a" (.atMost 1 "r"), .rel "r" "a" "b", .rel "r" "a" "c"] }
   .close
 
+/-! ### Named successors kept apart by complementary memberships (leaf) -/
+#guard checkCert { abox := [.inst "a" (.atMost 1 "r"), .rel "r" "a" "b", .rel "r" "a" "c",
+                            .inst "b" cC, .inst "c" (.neg cC)] } .close
+#guard !checkCert { abox := [.inst "a" (.atMost 1 "r"), .rel "r" "a" "b", .rel "r" "a" "c",
+                             .inst "b" cC] } .close
+
+/-! ### `geWit`: `≥ 2 p`, `≥ 2 q`, `p, q ⊑ r`, `∀p.C`, `∀q.¬C` against `≤ 3 r` -/
+private def minSumAbox : List Assertion :=
+  [.inst "a" (.atLeast 2 "p"), .inst "a" (.atLeast 2 "q"), .inst "a" (.atMost 3 "r"),
+   .inst "a" (.all "p" cC), .inst "a" (.all "q" (.neg cC))]
+#guard checkCert { rbox := ⟨[("p", "r"), ("q", "r")], []⟩, abox := minSumAbox }
+  (.geWit "a" "p" .top ["x1", "x2"] (.geWit "a" "q" .top ["y1", "y2"] .close))
+-- Without `∀q.¬C` the two groups may overlap: four names, possibly three elements.
+#guard !checkCert { rbox := ⟨[("p", "r"), ("q", "r")], []⟩, abox := minSumAbox.take 4 }
+  (.geWit "a" "p" .top ["x1", "x2"] (.geWit "a" "q" .top ["y1", "y2"] .close))
+-- More witnesses than the bound licenses are rejected.
+#guard !checkCert { rbox := ⟨[("p", "r"), ("q", "r")], []⟩, abox := minSumAbox }
+  (.geWit "a" "p" .top ["x1", "x2", "x3"] (.geWit "a" "q" .top ["y1", "y2"] .close))
+-- A witness name already in use is rejected.
+#guard !checkCert { rbox := ⟨[("p", "r"), ("q", "r")], []⟩, abox := minSumAbox }
+  (.geWit "a" "p" .top ["a", "x2"] (.geWit "a" "q" .top ["y1", "y2"] .close))
+
 /-! ### `merge`: a functional role (`⊤ ⊑ ≤ 1 r`) identifies `b` and `c` -/
 #guard checkCert { tbox := [(.top, .atMost 1 "r")],
                    abox := [.rel "r" "a" "b", .rel "r" "a" "c", .inst "b" cC, .inst "c" (.neg cC)] }

@@ -419,11 +419,17 @@ def witnessFiller (st : RState) (e : REdge) : Option ClassExpr :=
       | .someOf p _ => if p == e.p then some (.named owlThing) else none
       | _ => none)
 
-/-- The `exWit` steps for the witnesses of `st` not yet introduced, in
+/-- One witness introduction: a fresh `∃` witness, or a group of
+    pairwise-different `≥ k` witnesses (`RState.distinctGroups`). -/
+inductive WStep where
+  | ex (a : Ind) (r : Role) (c : Concept) (x : Ind)
+  | ge (a : Ind) (r : Role) (c : Concept) (xs : List Ind)
+
+/-- The witness steps for the witnesses of `st` not yet introduced, in
     creation order, and the introduced list after them. `none` when a
     witness's filler is outside the fragment. -/
 def witnessSteps (isObj : Sig) (ren : List (Ind × Ind)) (intro : List Ind)
-    (st : RState) : Option (List (Ind × Role × Concept × Ind) × List Ind) :=
+    (st : RState) : Option (List WStep × List Ind) :=
   st.extra.toList.foldl (fun acc e =>
     match acc with
     | none => none
@@ -443,11 +449,66 @@ def witnessSteps (isObj : Sig) (ren : List (Ind × Ind)) (intro : List Ind)
               match toConcept isObj c with
               | none => none
               | some d =>
-                some (steps ++ [(applyRen ren (indOfSubject e.s), e.p.val, d, x)], x :: seen))
+                let a := applyRen ren (indOfSubject e.s)
+                -- A member of a generating-rule group: the whole group at
+                -- once, pairwise different.
+                match st.distinctGroups.find? (fun grp => grp.contains e.o) with
+                | some grp =>
+                    let xs := grp.filterMap indOfTerm
+                    some (steps ++ [.ge a e.p.val d xs], xs ++ seen)
+                | none => some (steps ++ [.ex a e.p.val d x], x :: seen))
     (some ([], intro))
 
-def wrapSteps (steps : List (Ind × Role × Concept × Ind)) (k : Cert) : Cert :=
-  steps.foldr (fun s acc => .exWit s.1 s.2.1 s.2.2.1 s.2.2.2 acc) k
+def wrapSteps (steps : List WStep) (k : Cert) : Cert :=
+  steps.foldr (fun s acc => match s with
+    | .ex a r c x => .exWit a r c x acc
+    | .ge a r c xs => .geWit a r c xs acc) k
+
+/-- Which obligations `minSumClash` added up: `minSumGo`, returning the
+    choice instead of a Boolean. -/
+def minSumPick (st : RState) (chosen : List WfIri) : List (Nat × WfIri) → Nat → Option (List (Nat × WfIri))
+  | _, 0 => some []
+  | [], _ + 1 => none
+  | (m, p) :: tl, need + 1 =>
+      let take : Option (List (Nat × WfIri)) :=
+        if chosen.all (fun q => q != p && rangesDisjoint st q p) then
+          (minSumPick st (p :: chosen) tl (need + 1 - m)).map ((m, p) :: ·)
+        else none
+      match take with
+      | some l => some l
+      | none => minSumPick st chosen tl (need + 1)
+
+/-- The certificate for a min-sum counting clash: per chosen obligation
+    `≥ m p` a group of `m` pairwise-different witnesses (one `∃`
+    witness for `m = 1`), then `close`. Withheld when the counts add up
+    to more than 64 witnesses. -/
+def minSumCert (isObj : Sig) (ren : List (Ind × Ind)) (st : RState) : Option Cert :=
+  (groupLeaders st).findSome? (fun n =>
+    let ls := labelsOf st n.id
+    ls.findSome? (fun l =>
+      match l with
+      | .maxCard k r =>
+        let subs := subsOf st r
+        let cands := ls.filterMap (fun l' => match minObligation l' with
+          | some (m, p) => if subs.contains p then some (m, p) else none
+          | none => none)
+        match minSumPick st [] cands (k + 1) with
+        | none => none
+        | some picked =>
+          if (picked.map (·.1)).foldl (· + ·) 0 > 64 then none else
+          let a := applyRen ren (indOfSubject n.id)
+          let steps : List (Option WStep) := picked.zipIdx.map (fun ((m, p), i) =>
+            match ls.find? (fun l' => minObligation l' == some (m, p)) with
+            | none => none
+            | some l' =>
+              let names := (List.range m).map (fun j => s!"_:_:cert_ms_{i}_{j}__{a}")
+              match toConcept isObj l' with
+              | some (.atLeast _ r') => some (.ge a r' .top names)
+              | some (.atLeastQ _ r' c) => some (.ge a r' c names)
+              | some (.ex r' c) => some (.ex a r' c s!"_:_:cert_ms_{i}_0__{a}")
+              | _ => none)
+          if steps.all Option.isSome then some (wrapSteps (steps.filterMap id) .close) else none
+      | _ => none))
 
 /-- The bound and the successors a merge point branched on: the first
     group leader and `≤ k p` label with a non-empty pair list, as
@@ -560,7 +621,10 @@ def emitCert (isObj : Sig) (g : Graph) (ren : List (Ind × Ind)) (intro : List I
       let (steps, _) ← witnessSteps isObj ren intro st
       match countingCert isObj ren st with
       | some k => pure (wrapSteps steps k)
-      | none => pure (wrapSteps steps .close)
+      | none =>
+        match minSumCert isObj ren st with
+        | some k => pure (wrapSteps steps k)
+        | none => pure (wrapSteps steps .close)
   | .forced before after sub => do
       let (steps, intro') ← witnessSteps isObj ren intro before
       let (merges, ren') ← forcedSteps g before after ren
@@ -801,6 +865,8 @@ def firstLeafFacts (O : DlOntology) : Cert → List Assertion → Option (List A
       firstLeafFacts O l (.inst a c :: saturate (Ctx.ofOntology O) certFuel F)
   | .exWit a r c x k, F =>
       firstLeafFacts O k (.rel r a x :: .inst x c :: saturate (Ctx.ofOntology O) certFuel F)
+  | .geWit a r c xs k, F =>
+      firstLeafFacts O k (geFacts a r c xs ++ saturate (Ctx.ofOntology O) certFuel F)
   | .merge _ _ _ _ (.cons b c k _), F =>
       firstLeafFacts O k (mergeInds b c (saturate (Ctx.ofOntology O) certFuel F))
   | .merge _ _ _ _ .nil, _ => none

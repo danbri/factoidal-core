@@ -812,9 +812,52 @@ def pickDistinct (D : Ind → Ind → Bool) : Nat → List Ind → List Ind → 
         | none   => pickDistinct D (k + 1) chosen bs
       else pickDistinct D (k + 1) chosen bs
 
-/-- `a` and `b` are different by a `diff` fact, in either order. -/
+/-- `a : ¬C` and `b : C` for some `C`: the two are different elements. -/
+def complementApart (F : List Assertion) (a b : Ind) : Bool :=
+  F.any (fun ψ => match ψ with
+    | .inst a' (.neg c) => a' == a && F.contains (.inst b c)
+    | _ => false)
+
+/-- `a` and `b` are different by a `diff` fact, in either order, or by
+    complementary class memberships. -/
 def diffIn (F : List Assertion) (a b : Ind) : Bool :=
-  F.contains (.diff a b) || F.contains (.diff b a)
+  F.contains (.diff a b) || F.contains (.diff b a) ||
+  complementApart F a b || complementApart F b a
+
+theorem complementApart_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {F : List Assertion}
+    (hF : SatAll I ν F) {a b : Ind} (h : complementApart F a b = true) : ν a ≠ ν b := by
+  have ⟨ψ, hψ, hm⟩ := List.any_eq_true.mp h
+  cases ψ with
+  | inst a' k =>
+      cases k with
+      | neg c =>
+          simp only [Bool.and_eq_true, beq_iff_eq, List.contains_iff_mem] at hm
+          obtain ⟨rfl, hb⟩ := hm
+          intro he
+          have hna : ¬ I.sem c (ν a') := hF _ hψ
+          exact hna (he ▸ hF _ hb)
+      | atom _ => simp at hm
+      | top => simp at hm
+      | bot => simp at hm
+      | conj _ _ => simp at hm
+      | disj _ _ => simp at hm
+      | all _ _ => simp at hm
+      | ex _ _ => simp at hm
+      | atLeast _ _ => simp at hm
+      | atMost _ _ => simp at hm
+      | atLeastQ _ _ _ => simp at hm
+      | atMostQ _ _ _ => simp at hm
+  | rel _ _ _ => simp at hm
+  | diff _ _ => simp at hm
+
+theorem diffIn_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {F : List Assertion}
+    (hF : SatAll I ν F) {a b : Ind} (h : diffIn F a b = true) : ν a ≠ ν b := by
+  simp only [diffIn, Bool.or_eq_true, List.contains_iff_mem] at h
+  rcases h with ((hd | hd) | hc) | hc
+  · exact hF _ hd
+  · exact fun he => (hF _ hd) he.symm
+  · exact complementApart_sound hF hc
+  · exact fun he => complementApart_sound hF hc he.symm
 
 /-- The named `r`-successors of `a` in `F` that are in the filler. -/
 def boundedSuccs (F : List Assertion) (a : Ind) (r : Role) (oc : Option Concept) : List Ind :=
@@ -860,10 +903,7 @@ theorem maxClashAt_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {F : List
       refine ⟨l.map ν, by simp [hlen], ?_, ?_⟩
       · refine pairwise_map_of ν ?_ hpw
         intro x y hxy
-        simp only [diffIn, Bool.or_eq_true, List.contains_iff_mem] at hxy
-        rcases hxy with hd | hd
-        · exact hF _ hd
-        · exact fun he => (hF _ hd) he.symm
+        exact diffIn_sound hF hxy
       · intro y hy
         have ⟨b, hb, hby⟩ := List.mem_map.mp hy
         subst hby
@@ -953,6 +993,10 @@ inductive Cert where
       refutes the merge of the pair (`Refuted.leqMerge`, over unordered
       pairs). -/
   | merge (a : Ind) (n : Nat) (r : Role) (l : List Ind) (cases : MergeCases)
+  /-- `a : ≥ m r.C` (or `≥ m r` with `C = ⊤`) is derivable and `xs` is at
+      most `m` fresh, distinct names; the extension by `r`-successors
+      `xs` in `C`, pairwise `diff`, is refuted (the SHIQ `≥`-rule). -/
+  | geWit (a : Ind) (r : Role) (c : Concept) (xs : List Ind) (k : Cert)
 
 /-- The merge cases of `Cert.merge`: `(b, c, k)` refutes `mergeInds b c`. -/
 inductive MergeCases where
@@ -1041,6 +1085,18 @@ theorem boundAt_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : List As
     | rel _ _ _ => simp at hm
     | diff _ _ => simp at hm
 
+/-- The facts a `geWit` step adds. -/
+def geFacts (a : Ind) (r : Role) (c : Concept) (xs : List Ind) : List Assertion :=
+  xs.map (fun x => Assertion.rel r a x) ++ xs.map (fun x => Assertion.inst x c) ++
+  (pairsOf xs).map (fun p => Assertion.diff p.1 p.2)
+
+/-- Is `a : ≥ m r.C` (or `≥ m r`, for `C = ⊤`) derivable with `n ≤ m`? -/
+def geAvailable (S : List Assertion) (a : Ind) (n : Nat) (r : Role) (c : Concept) : Bool :=
+  S.any (fun ψ => match ψ with
+    | .inst a' (.atLeastQ m r' c') => a' == a && r' == r && c' == c && decide (n ≤ m)
+    | .inst a' (.atLeast m r') => a' == a && r' == r && c == .top && decide (n ≤ m)
+    | _ => false)
+
 /-- `merge`'s side conditions on the saturated facts. -/
 def mergeReady (S : List Assertion) (a : Ind) (n : Nat) (r : Role) (l : List Ind) : Bool :=
   boundAt S a n r l && l.length == n + 1 && decide l.Nodup &&
@@ -1063,6 +1119,11 @@ def checkF (C : Ctx) (fuel : Nat) (F : List Assertion) : Cert → Bool
       let S := saturate C fuel F
       mergeReady S a n r l &&
       (pairsOf l).all (fun p => checkCases C fuel S p.1 p.2 cases)
+  | .geWit a r c xs k =>
+      let S := saturate C fuel F
+      geAvailable S a xs.length r c && decide xs.Nodup &&
+      xs.all (fun x => !(indsOf S).contains x) &&
+      checkF C fuel (geFacts a r c xs ++ S) k
 
 /-- Some case refutes the merge of `b` and `c`, in either direction. -/
 def checkCases (C : Ctx) (fuel : Nat) (S : List Assertion) (b c : Ind) : MergeCases → Bool
@@ -1152,6 +1213,126 @@ theorem exAvailable_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : Lis
     | rel _ _ _ => simp at hm
     | diff _ _ => simp at hm
 
+/-- An assignment changed at the names `xs`, the `j`-th to the `j`-th
+    element of `l`. -/
+def bendList {δ : Type} (ν : Ind → δ) : List Ind → List δ → Ind → δ
+  | x :: xs, y :: ys => fun i => if i = x then y else bendList ν xs ys i
+  | _, _ => ν
+
+theorem bendList_notin {δ : Type} (ν : Ind → δ) :
+    ∀ (xs : List Ind) (l : List δ) (i : Ind), i ∉ xs → bendList ν xs l i = ν i
+  | [], _, _, _ => by simp [bendList]
+  | _ :: _, [], _, _ => by simp [bendList]
+  | x :: xs, y :: ys, i, hi => by
+      have hix : i ≠ x := fun h => hi (h ▸ List.Mem.head _)
+      simp only [bendList, if_neg hix]
+      exact bendList_notin ν xs ys i (fun h => hi (List.Mem.tail _ h))
+
+theorem bendList_map {δ : Type} (ν : Ind → δ) :
+    ∀ (xs : List Ind) (l : List δ), xs.Nodup → xs.length = l.length →
+      xs.map (bendList ν xs l) = l
+  | [], [], _, _ => rfl
+  | [], _ :: _, _, h => by simp at h
+  | _ :: _, [], _, h => by simp at h
+  | x :: xs, y :: ys, hnd, hlen => by
+      have hx : x ∉ xs := (List.nodup_cons.mp hnd).1
+      simp only [List.map_cons, bendList, List.cons.injEq]
+      refine ⟨by simp, ?_⟩
+      have hcongr : xs.map (fun i => if i = x then y else bendList ν xs ys i) =
+          xs.map (bendList ν xs ys) := by
+        apply List.map_congr_left
+        intro z hz
+        have hzx : z ≠ x := fun h => hx (h ▸ hz)
+        simp [hzx]
+      rw [hcongr]
+      exact bendList_map ν xs ys (List.nodup_cons.mp hnd).2 (by simpa using hlen)
+
+theorem pairwise_of_mem_pairsOf {R : Ind → Ind → Prop} :
+    ∀ {l : List Ind}, l.Pairwise R → ∀ {b c : Ind}, (b, c) ∈ pairsOf l → R b c := by
+  intro l hl
+  induction hl with
+  | nil => intro b c h; simp [pairsOf] at h
+  | @cons x xs hx _ ih =>
+      intro b c h
+      simp only [pairsOf, List.mem_append, List.mem_map, Prod.mk.injEq] at h
+      rcases h with ⟨c', hc', rfl, rfl⟩ | h
+      · exact hx c' hc'
+      · exact ih h
+
+theorem geAvailable_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : List Assertion}
+    (hS : SatAll I ν S) {a : Ind} {n : Nat} {r : Role} {c : Concept}
+    (h : geAvailable S a n r c = true) :
+    (a ∈ indsOf S) ∧ ∃ l : List δ, l.length = n ∧ l.Pairwise (· ≠ ·) ∧
+      ∀ y ∈ l, I.role r (ν a) y ∧ I.sem c y := by
+  have ⟨ψ, hψ, hm⟩ := List.any_eq_true.mp h
+  cases ψ with
+  | inst a' k =>
+      cases k with
+      | atLeastQ m r' c' =>
+          simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hm
+          obtain ⟨⟨⟨rfl, rfl⟩, rfl⟩, hn⟩ := hm
+          refine ⟨List.mem_flatMap.mpr ⟨_, hψ, by simp [Assertion.inds]⟩, ?_⟩
+          have ⟨l, hlen, hpw, hall⟩ := hS _ hψ
+          refine ⟨l.take n, by rw [List.length_take, hlen]; omega,
+            hpw.sublist (List.take_sublist _ _), ?_⟩
+          intro y hy
+          exact hall y ((List.take_sublist _ _).subset hy)
+      | atLeast m r' =>
+          simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hm
+          obtain ⟨⟨⟨rfl, rfl⟩, rfl⟩, hn⟩ := hm
+          refine ⟨List.mem_flatMap.mpr ⟨_, hψ, by simp [Assertion.inds]⟩, ?_⟩
+          have ⟨l, hlen, hpw, hall⟩ := hS _ hψ
+          refine ⟨l.take n, by rw [List.length_take, hlen]; omega,
+            hpw.sublist (List.take_sublist _ _), ?_⟩
+          intro y hy
+          exact ⟨hall y ((List.take_sublist _ _).subset hy), trivial⟩
+      | atom _ => simp at hm
+      | top => simp at hm
+      | bot => simp at hm
+      | neg _ => simp at hm
+      | conj _ _ => simp at hm
+      | disj _ _ => simp at hm
+      | all _ _ => simp at hm
+      | ex _ _ => simp at hm
+      | atMost _ _ => simp at hm
+      | atMostQ _ _ _ => simp at hm
+  | rel _ _ _ => simp at hm
+  | diff _ _ => simp at hm
+
+/-- The `geWit` step, semantically: with `ν` bent at the fresh names
+    `xs` onto the semantic witness list, every added fact holds and the
+    old facts are untouched. -/
+theorem satAll_geFacts {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : List Assertion}
+    (hS : SatAll I ν S) {a : Ind} {r : Role} {c : Concept} {xs : List Ind}
+    (hnd : xs.Nodup) (hfresh : ∀ x ∈ xs, x ∉ indsOf S) (ha : a ∈ indsOf S)
+    {l : List δ} (hlen : l.length = xs.length) (hpw : l.Pairwise (· ≠ ·))
+    (hall : ∀ y ∈ l, I.role r (ν a) y ∧ I.sem c y) :
+    SatAll I (bendList ν xs l) (geFacts a r c xs ++ S) := by
+  have hmap := bendList_map ν xs l hnd hlen.symm
+  have hax : a ∉ xs := fun h => hfresh a h ha
+  have hνa : bendList ν xs l a = ν a := bendList_notin ν xs l a hax
+  have hin : ∀ x ∈ xs, bendList ν xs l x ∈ l := by
+    intro x hx
+    have hm : bendList ν xs l x ∈ xs.map (bendList ν xs l) := List.mem_map.mpr ⟨x, hx, rfl⟩
+    rwa [hmap] at hm
+  have hpwx : xs.Pairwise (fun u v => bendList ν xs l u ≠ bendList ν xs l v) := by
+    rw [← hmap] at hpw
+    exact List.pairwise_map.mp hpw
+  intro φ hφ
+  simp only [geFacts, List.mem_append, List.mem_map] at hφ
+  rcases hφ with ((⟨x, hx, rfl⟩ | ⟨x, hx, rfl⟩) | ⟨p, hp, rfl⟩) | hφ
+  · show I.role r (bendList ν xs l a) (bendList ν xs l x)
+    rw [hνa]
+    exact (hall _ (hin x hx)).1
+  · show I.sem c (bendList ν xs l x)
+    exact (hall _ (hin x hx)).2
+  · show bendList ν xs l p.1 ≠ bendList ν xs l p.2
+    exact pairwise_of_mem_pairsOf hpwx hp
+  · refine satisfies_agree ?_ (hS _ hφ)
+    intro i hi
+    have hiS : i ∈ indsOf S := List.mem_flatMap.mpr ⟨_, hφ, hi⟩
+    exact bendList_notin ν xs l i (fun h => hfresh i h hiS)
+
 mutual
 
 theorem checkF_sound {δ : Type} {I : Interp δ} {C : Ctx} (hC : CtxValid I C)
@@ -1232,6 +1413,19 @@ theorem checkF_sound {δ : Type} {I : Interp δ} {C : Ctx} (hC : CtxValid I C)
         refine pairwise_map_ne_of_injOn hnd ?_
         intro b hb c hc hbc hEq
         exact hcoll ⟨b, hb, c, hc, hbc, hEq⟩
+  | .geWit a r c xs k, F, ν, h, hF => by
+      simp only [checkF, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,
+        Bool.not_eq_true'] at h
+      obtain ⟨⟨⟨hav, hnd⟩, hfr⟩, hk⟩ := h
+      have hS := saturate_sound hC fuel hF
+      have hfresh : ∀ x ∈ xs, x ∉ indsOf (saturate C fuel F) := by
+        intro x hx hm
+        have h1 := hfr x hx
+        rw [List.contains_iff_mem.mpr hm] at h1
+        cases h1
+      have ⟨ha, l, hlen, hpw, hall⟩ := geAvailable_sound hS hav
+      exact checkF_sound hC fuel k _ (bendList ν xs l) hk
+        (satAll_geFacts hS hnd hfresh ha hlen hpw hall)
 
 theorem checkCases_sound {δ : Type} {I : Interp δ} {C : Ctx} (hC : CtxValid I C)
     (fuel : Nat) : ∀ (cases : MergeCases) (S : List Assertion) (b c : Ind) (ν : Ind → δ),

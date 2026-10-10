@@ -727,3 +727,4 @@ L4Factoidal_OWL_Refute_emitUnion  # (b) the disjuncts of one union label; each c
 L4Factoidal_OWL_Refute_emitMergeCases  # (c) the pairs one merge point branched on; each closed branch consumed budget
 L4Factoidal_OWL_Refute_traceProfile  # (c) depth of a refuter search trace, as emitCert
 L4Factoidal_OWL_Refute_traceProfileList  # (c) the branches of one trace node, as emitUnion and emitMergeCases
+L4Factoidal_OWL_Refute_minSumPick  # (b) the minimum-cardinality labels of one node, as Refute.minSumGo; the result is used only when it names at most 64 witnesses
