@@ -268,8 +268,12 @@ export function runMatrix({ rows = Object.keys(ROWS), engines = ENGINES, scale =
         if (r.status === 0 && line) {
           res = JSON.parse(line);
         } else {
+          // The first line naming an error, and the last line, of the
+          // child's stderr (a stack trace alone does not say what failed).
+          const err = (r.stderr || 'nonzero exit').trim().split('\n');
+          const named = err.find((l) => /Error|Exception|exceeded|abort/i.test(l)) || '';
           const why = r.error ? String(r.error.message || r.error)
-            : (r.stderr || 'nonzero exit').trim().split('\n').slice(-3).join(' | ');
+            : [named.trim(), err[err.length - 1].trim()].filter(Boolean).join(' | ');
           res = { engine, row, people: k, triples: 3 * k, error: why.slice(0, 400) };
         }
         results.push(res);

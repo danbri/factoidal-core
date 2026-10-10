@@ -160,6 +160,51 @@ def rowsJoined : SolutionSeq → String
   | [r] => rowJson r
   | r :: rest => rowJson r ++ "," ++ rowsJoined rest
 
+/-- `",row1,row2,…"`: each row object of `rows` with a comma in front. The
+specification of the tail `rowsJoinedTR` appends; not used at run time. -/
+def rowsJoinedTail : SolutionSeq → String
+  | [] => ""
+  | r :: rest => "," ++ rowJson r ++ rowsJoinedTail rest
+
+/-- `rowsJoined` with an accumulator. `rowsJoined` appends its own result
+after the recursive call, so it takes one stack frame per row and copies the
+rest of the document once per row (`rowJson r ++ "," ++ rest`). In the wasm
+module under Node's default stack a SELECT of about 11,000 rows ran out of
+stack here ("Maximum call stack size exceeded";
+https://github.com/danbri/factoidal/issues/713 stage 5). This form appends
+each row to one accumulator, in one frame. The `csimp` theorem below makes
+the compiler emit it for every call of `rowsJoined`, which stays the
+specification `ResultsTheorems.lean` reasons about. -/
+def rowsJoinedTR : SolutionSeq → String
+  | [] => ""
+  | r :: rest => go (rowJson r) rest
+where
+  /-- `acc` followed by `rowsJoinedTail rows`. -/
+  go (acc : String) : SolutionSeq → String
+    | [] => acc
+    | r :: rest => go (acc ++ "," ++ rowJson r) rest
+
+theorem rowsJoined_cons (r : Binding) :
+    ∀ rest : SolutionSeq, rowsJoined (r :: rest) = rowJson r ++ rowsJoinedTail rest
+  | [] => by simp [rowsJoined, rowsJoinedTail, String.append_empty]
+  | r2 :: rest2 => by
+      rw [show rowsJoined (r :: r2 :: rest2) = rowJson r ++ "," ++ rowsJoined (r2 :: rest2)
+            from rfl, rowsJoined_cons r2 rest2]
+      simp [rowsJoinedTail, String.append_assoc]
+
+theorem rowsJoinedTR_go_eq :
+    ∀ (acc : String) (rows : SolutionSeq),
+      rowsJoinedTR.go acc rows = acc ++ rowsJoinedTail rows
+  | acc, [] => by simp [rowsJoinedTR.go, rowsJoinedTail, String.append_empty]
+  | acc, r :: rest => by
+      simp [rowsJoinedTR.go, rowsJoinedTail, rowsJoinedTR_go_eq _ rest, String.append_assoc]
+
+@[csimp] theorem rowsJoined_eq_rowsJoinedTR : @rowsJoined = @rowsJoinedTR := by
+  funext rows
+  cases rows with
+  | nil => rfl
+  | cons r rest => simp [rowsJoinedTR, rowsJoinedTR_go_eq, rowsJoined_cons]
+
 /-- `r.toSrj` — the complete SRJ document. Port of
 `serialise_response_json`/`serialise_response_boolean_json`. -/
 def QueryResult.toSrj : QueryResult → String

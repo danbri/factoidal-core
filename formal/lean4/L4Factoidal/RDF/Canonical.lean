@@ -324,6 +324,43 @@ def collapseKeyedQQuads : List (String × QQuad) → List QQuad
       if k1 == k2 then collapseKeyedQQuads ((k2, q2) :: rest)
       else q1 :: collapseKeyedQQuads ((k2, q2) :: rest)
 
+/-- `collapseKeyedQQuads` with an accumulator. `collapseKeyedQQuads` conses
+after its recursive call: one stack frame per quad. In the wasm module under
+Node's default stack, `canonicalize` of 24,000 quads ran out of stack here
+("Maximum call stack size exceeded";
+https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp` theorem
+below makes the compiler emit this form for every call. -/
+def collapseKeyedQQuadsTR : List (String × QQuad) → List QQuad
+  | []             => []
+  | (k, q) :: rest => go k q rest []
+where
+  /-- `q`, keyed `k`, is the last survivor so far; `acc` holds the earlier
+  survivors, newest first. -/
+  go (k : String) (q : QQuad) : List (String × QQuad) → List QQuad → List QQuad
+    | [],                acc => (q :: acc).reverse
+    | (k2, q2) :: rest,  acc =>
+        if k == k2 then go k2 q2 rest acc else go k2 q2 rest (q :: acc)
+
+theorem collapseKeyedQQuadsTR_go_eq :
+    ∀ (rest : List (String × QQuad)) (k : String) (q : QQuad) (acc : List QQuad),
+      collapseKeyedQQuadsTR.go k q rest acc =
+        acc.reverse ++ collapseKeyedQQuads ((k, q) :: rest)
+  | [], k, q, acc => by simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads]
+  | (k2, q2) :: rest, k, q, acc => by
+      by_cases h : (k == k2) = true
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 acc]
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 (q :: acc)]
+
+@[csimp] theorem collapseKeyedQQuads_eq_TR : @collapseKeyedQQuads = @collapseKeyedQQuadsTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons p rest =>
+      obtain ⟨k, q⟩ := p
+      simp [collapseKeyedQQuadsTR, collapseKeyedQQuadsTR_go_eq]
+
 def dedupQQuads (qs : List QQuad) : List QQuad :=
   collapseKeyedQQuads (sortByFast (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
 

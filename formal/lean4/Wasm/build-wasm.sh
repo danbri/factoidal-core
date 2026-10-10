@@ -430,6 +430,16 @@ link_module() {
 link_module l4factoidal      Wasm_CoreExports.o l4_shim_core.o
 link_module l4factoidal-core Wasm_Exports.o     l4_shim.o
 
+# L4_WASM_NO_INSTALL=1: stop here, with both modules and their size tables in
+# the work directory and nothing installed. For a build that must not replace
+# the modules a running benchmark or test loads (2026-10-10, issue 713 stage
+# 5: a rebuild during the Lean vs F* bench would have swapped the wasm under
+# its child processes).
+if [ "${L4_WASM_NO_INSTALL:-0}" = "1" ]; then
+  echo "L4_WASM_NO_INSTALL=1: built $WORK/l4factoidal.wasm and $WORK/l4factoidal-core.wasm; nothing installed"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------
 say "step 8 — install artifacts"
 # The glue looks for its sibling by the basename emcc chose; keep that
