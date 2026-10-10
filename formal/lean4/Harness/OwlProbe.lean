@@ -1543,7 +1543,8 @@ are annotated test:profile RL. Only those units are inside the claim of this reg
 (OWL 2 Conformance 2.2.1, 3.2.6). A unit outside the claim can fail by design, and its failure \
 is not a defect of the closure. Every unit stays counted in the other lines.",
        s!"SCOPE [{tag}]: a TOTAL line adds catalogs that overlap, and it includes units outside the \
-claim. For the RL conformance number, read the profile-RL.rdf lines."]
+claim. For the RL conformance number, read the profile-RL.rdf lines: the IN-SCOPE line for the \
+Approved units, and the line without a split for all units."]
   | .directDl =>
       [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units of cases with status Approved, species DL \
 and semantics DIRECT. The OWL 2 DL entailment checker takes OWL 2 DL documents \
@@ -1556,6 +1557,86 @@ A Proposed or Extracredit unit is not inside the claim (OWL 2 Conformance 3.2.8,
       [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units with status Approved. Every case is an \
 OWL 2 Full document. A pass is a proved entailment or a proved inconsistency; a not-refuted unit \
 is never a pass."]
+
+/-! ### Guards for the reporting functions
+
+Positive and negative: a `Scope.inScope` that answers yes for every
+unit, a status or species bucket that is mis-assigned, or a split that
+drops or repeats a unit, fails the build. The six cases cover every
+branch: an Approved DL case that is RL, a Proposed FULL-only case, an
+Extracredit DL case, a case without status, an Approved FULL-only case,
+and an Approved DL case that is not DIRECT. -/
+
+private def gCase (id : String) (st sp sem pr : List String) : Case :=
+  { id := id, status := st, species := sp, semantics := sem, profiles := pr }
+
+private def gA : Case := gCase "a" ["Approved"] ["FULL", "DL"] ["DIRECT", "RDF-BASED"] ["RL"]
+private def gB : Case := gCase "b" ["Proposed"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gC : Case := gCase "c" ["Extracredit"] ["FULL", "DL"] ["DIRECT"] []
+private def gD : Case := gCase "d" [] ["FULL"] [] []
+private def gE : Case := gCase "e" ["Approved"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gF : Case := gCase "f" ["Approved"] ["FULL", "DL"] ["RDF-BASED"] []
+
+private def gUnits : List (UnitFacts × Harness.Outcome) :=
+  [(UnitFacts.ofCase gA "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gB "PositiveEntailmentTest", .fail "x"),
+   (UnitFacts.ofCase gC "InconsistencyTest", .fail "y"),
+   (UnitFacts.ofCase gD "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gE "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gF "ConsistencyTest", .fail "z")]
+
+private def gLines (sc : Scope) (tag : String) : List String :=
+  breakdownLines "g.rdf" tag sc gUnits ({} : Harness.Score) (fun s o => s.bump o)
+    Harness.Score.line
+
+#guard [gA, gB, gC, gD].map statusOf == ["Approved", "Proposed", "Extracredit", "other"]
+#guard [gA, gB, gD].map speciesOf == ["DL", "FULL-only", "FULL-only"]
+#guard speciesOf (gCase "z" [] [] [] []) == "none"
+-- Direct Semantics claim: Approved, DL and DIRECT. Each of the five other
+-- cases fails one condition.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.directDl.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RL claim: Approved and annotated profile RL.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rlProfile.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RDF-Based claim: status Approved only.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rdfBased.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, true, true]
+#guard gLines .directDl "dl" ==
+  ["BY-STATUS g.rdf [dl] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [dl] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [dl] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [dl] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "IN-SCOPE g.rdf [dl] status Approved, species DL, semantics DIRECT: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+#guard gLines .rlProfile "rl-closure" ==
+  ["BY-STATUS g.rdf [rl-closure] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [rl-closure] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [rl-closure] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [rl-closure] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-PROFILE g.rdf [rl-closure] RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-PROFILE g.rdf [rl-closure] not-RL: 2 pass, 3 fail, 0 skip, 0 unsupported (out of 5)",
+   "IN-SCOPE g.rdf [rl-closure] status Approved, case annotated test:profile RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+-- The lines of one facet add up to the catalog: 6 units in each split.
+#guard (["Approved", "Proposed", "Extracredit", "other"].map fun b =>
+    (gUnits.filter (fun p => p.1.status == b)).length).foldl (· + ·) 0 == gUnits.length
+#guard (["DL", "FULL-only", "none"].map fun k =>
+    (gUnits.filter (fun p => p.1.species == k)).length).foldl (· + ·) 0 == gUnits.length
+-- The failing block names each failing unit with its status, species and scope.
+#guard failingLines "g.rdf" "dl" .directDl 6
+    ((gUnits.filter (fun p => p.2.isFail)).map (fun p => (p.1, ""))) ==
+  ["FAILING-UNITS g.rdf [dl]: 3 (out of 6)",
+   "  FAILING-UNIT g.rdf [dl] b [PositiveEntailmentTest]: status Proposed, species FULL-only, in scope no",
+   "  FAILING-UNIT g.rdf [dl] c [InconsistencyTest]: status Extracredit, species DL, in scope no",
+   "  FAILING-UNIT g.rdf [dl] f [ConsistencyTest]: status Approved, species DL, in scope no"]
+#guard failingLines "g.rdf" "dl" .directDl 1 [(UnitFacts.ofCase gA "ConsistencyTest", "")] ==
+  ["FAILING-UNITS g.rdf [dl]: 1 (out of 1)",
+   "  FAILING-UNIT g.rdf [dl] a [ConsistencyTest]: status Approved, species DL, in scope yes"]
+-- No failing unit: the header is printed, with 0.
+#guard failingLines "g.rdf" "dl" .directDl 6 [] == ["FAILING-UNITS g.rdf [dl]: 0 (out of 6)"]
 
 /-! ## Per-catalog run -/
 
