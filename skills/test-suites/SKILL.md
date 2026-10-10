@@ -455,6 +455,125 @@ refinements from 2026-07-04:
 - Cap ad-hoc runs at 10 minutes (`timeout 600`, anti-pattern #17); log
   long runs under `.claude-runs/` (#19).
 
+## OWL 2 scoring in the Lean probe (`l4owl-probe`)
+
+Record of the 2026-10-10 reporting change. The probe changed its output
+only. No verdict changed, and every score line that existed before is
+byte-identical (checked by diffing the scoreboard logs of all 10
+`l4owl-probe` jobs before and after, ignoring the `wall_ms` field).
+Run it with `tools/lean-scoreboard.sh --only l4owl-probe`. The DL jobs
+start threads: under `prlimit --as=4000000000` they abort with "failed to
+create thread" (exit 134, 0 s), and `lake` itself needs more than 8 GB of address space. Use
+`prlimit --as=16000000000` for them and for `lake`.
+
+**The unit.** One unit is one pair (test case, test type). A case that has
+two test types gives two units. The existing lines count units.
+
+**The regimes.** Each regime makes one conformance claim. A unit is inside
+the claim ("in scope") when its case meets the condition below. The
+conditions come from OWL 2 Conformance
+(https://www.w3.org/TR/owl2-conformance/): 2.2.1 (entailment checkers),
+3.2.4 (`test:semantics`), 3.2.5 (`test:species`), 3.2.6 (`test:profile`),
+3.2.8 and section 4 (`test:status`).
+
+| Tag in the lines | Flags | Claim | In scope |
+|---|---|---|---|
+| `rl-closure` | none | OWL 2 RL entailment checker. Complete for OWL 2 RL ontologies only. | status Approved, case annotated `test:profile RL` |
+| `dl` | `--dl` | OWL 2 DL entailment checker, Direct Semantics. Takes OWL 2 DL documents. | status Approved, species DL, semantics DIRECT |
+| `rl-refute` | `--rl-refute` | as `dl` | as `dl` |
+| `rdf-based` | `--rdf-based` | RDF-Based Semantics, OWL 2 Full documents (https://github.com/danbri/factoidal/issues/721) | status Approved |
+
+A unit outside the claim stays counted in every existing line. The new
+lines only add a view. In particular the 12 `PositiveEntailmentTest`
+units of FULL-only cases annotated DIRECT stay in the DL-regime numbers
+where they were, and the RDF-Based regime judges them too (issue 721).
+
+**Status.** Approved cases are the official test repository. A Proposed
+case is a case the Working Group did not decide. An Extracredit case is
+approved, and nobody expects an implementation to pass it (section 4).
+"other" is every other value: Rejected, or no `test:status` at all (the
+catalog all.rdf has 29 cases with none).
+
+**Species.** The probe reads a case as DL when `test:species` names DL.
+Every case also names FULL. "FULL-only" means FULL without DL.
+
+**The new lines** (per catalog and regime, after the existing lines of the
+catalog; once more for the TOTAL, which adds overlapping catalogs):
+
+```
+BY-STATUS  <catalog> [<tag>] Approved|Proposed|Extracredit|other: N pass, M fail, ... (out of T)
+BY-SPECIES <catalog> [<tag>] DL|FULL-only: ...
+BY-PROFILE <catalog> [rl-closure] RL|not-RL: ...
+IN-SCOPE   <catalog> [<tag>] <condition>: ...
+FAILING-UNITS <catalog> [<tag>]: N (out of T)
+  FAILING-UNIT <catalog> [<tag>] <id> [<TestType>]: status S, species P, in scope yes|no
+SCOPE [<tag>]: what IN-SCOPE counts, printed once per run
+```
+
+The lines of one facet add up to the catalog line they split. The counts
+use the grammar of the regime's own score line (the RDF-Based regime adds
+`not-refuted` and `local-override`). `FAILING-UNITS` is printed with 0
+when no unit fails. A failing unit that a local override counts apart is
+named too, with the issue. The unit tests are `#guard` cases in
+`Harness/OwlProbe.lean`: an `inScope` that says yes to every unit, or a
+split that loses a unit, fails the build.
+
+**Scoreboard rows.** `tools/lean-scoreboard.sh` adds one row per catalog
+and regime, labelled `<catalog> Approved, in scope`, after the existing
+rows of the same job (15 rows in a run of all 10 jobs; 61 rows became 76).
+Each row has a note that says what is in and what is out. The row is the
+conformance number of the regime on that catalog. The rows without
+"in scope" in the label count all units of all statuses.
+
+**Measured 2026-10-10** (Lean 4.33.1, checkout `claude/wt-owl-report`
+before the merge; the numbers move with the tree):
+
+| Regime and catalog | All units | In scope |
+|---|---|---|
+| `rl-closure`, profile-RL.rdf | 126 pass, 0 fail (out of 126) | 102 pass, 0 fail (out of 102) |
+| `rl-closure`, profile-EL.rdf | 118 pass, 2 fail, 1 skip (out of 121) | 66 pass, 0 fail (out of 66) |
+| `rl-closure`, profile-QL.rdf | 87 pass, 0 fail (out of 87) | 53 pass, 0 fail (out of 53) |
+| `rl-closure`, TOTAL of 6 overlapping catalogs | 1234 pass, 221 fail, 2 skip (out of 1457) | 379 pass, 0 fail (out of 379) |
+| `dl`, type-inconsistency.rdf | 126 pass, 1 fail, 1 skip (out of 128) | 97 pass, 0 fail (out of 97) |
+| `dl`, type-positive-entailment.rdf (PE and Consistency units) | 400 pass, 12 fail (out of 412) | 150 pass, 0 fail (out of 150) |
+| `dl`, type-consistency.rdf | 571 pass, 12 fail (out of 583) | 253 pass, 0 fail (out of 253) |
+| `dl`, syntax-dl.rdf | 422 pass, 1 fail, 1 skip (out of 424) | 350 pass, 0 fail (out of 350) |
+| `dl`, type-negative-entailment.rdf | 46 pass, 0 fail (out of 46) | 18 pass, 0 fail (out of 18) |
+| `rdf-based`, all.rdf | 202 pass, 125 fail, 370 not-refuted, 0 unsupported, 2 local-override (out of 699) | 155 pass, 103 fail, 242 not-refuted, 0 unsupported, 0 local-override (out of 500) |
+
+What the split shows:
+
+- The 221 failures of the RL closure over the whole catalog are all in
+  cases not annotated `test:profile RL`: the RL-annotated units are 471
+  pass, 0 fail (out of 471), the others 763 pass, 221 fail, 2 skip (out of
+  986). The closure is incomplete there by design (OWL 2 Conformance 2.2.1).
+  A failure there is not a defect of the closure.
+- The 12 failing units of the DL regime in type-positive-entailment.rdf are
+  all status Proposed and species FULL-only. The one failing inconsistency
+  unit (`WebOnt-description-logic-909`) is status Extracredit, species DL.
+- The RDF-Based numbers: a `not-refuted` unit is never a pass. The regime
+  proves entailments and inconsistencies and never proves their absence.
+
+**Rules for quoting an OWL number.**
+
+1. Give the regime tag and the line. Give the `IN-SCOPE` line as the
+   conformance number and say which condition it uses. Give the unsplit
+   line as the count of all units of all statuses.
+2. Do not quote a `rl-closure` TOTAL as OWL 2 RL conformance. It adds
+   catalogs that overlap and units outside the RL claim. Read the
+   profile-RL.rdf lines.
+3. Do not move a unit out of a numerator because it is out of scope. The
+   scope view is an addition.
+4. The probe prints no F\* number. Until 2026-10-10 it printed a 13-line
+   block with four fixed F\* figures ("owl2_profile_el 119 pass, 1 fail
+   (out of 120)" and three more), copied from an old
+   `docs/test-results/latest.json` on 2026-08-22 and printed on every run.
+   They read as measurements of the run and were not. The F\* column of the
+   two OWL rows (EL profile, type-inconsistency) in
+   `docs/designissues/2026-10-09-lean-conformance-baseline.md` repeats
+   them. An F\* comparison has to come from a measured F\* run (for
+   example `tests/known-defects/run.sh`, or `l4diff`).
+
 ## What this skill does NOT cover
 
 - Building the runners — `build-and-test` skill.
