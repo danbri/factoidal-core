@@ -150,6 +150,35 @@ def closedDoc : String :=
 #guard (run closedDoc).results.length == 2
 #guard (run closedDoc).results.all fun v => v.path == some (.pred (exIri "bad"))
 
+/-- §4.8.1: the triples checked are those "that [have] a value node as
+[their] subject" — for a property shape, the path's values, not the
+focus node. -/
+def closedPropertyDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:p ; sh:closed true ; " ++
+  "sh:ignoredProperties ( ex:ok ) ] . ex:n ex:p ex:v . ex:v ex:ok 1 ; ex:bad 2 ."
+
+#guard (run closedPropertyDoc).results.map (·.path) == [some (.pred (exIri "bad"))]
+#guard (run closedPropertyDoc).results.map (·.focus) == [.iri (exIri "n")]
+
+/-! ### SHACL 1.2 sh:closed sh:ByTypes — collectProperties over the shapes graph -/
+
+def closedByTypesDoc : String :=
+  "ex:Root a rdfs:Class, sh:NodeShape ; sh:property [ sh:path ex:rootP ] ; sh:closed sh:ByTypes . " ++
+  "ex:Sub a rdfs:Class, sh:NodeShape ; rdfs:subClassOf ex:Root ; sh:property [ sh:path ex:subP ] . " ++
+  "ex:SubShape a sh:NodeShape ; sh:targetClass ex:Sub ; sh:node ex:Extra . " ++
+  "ex:Extra a sh:NodeShape ; sh:property [ sh:path ex:extraP ] . " ++
+  "ex:bad a ex:Root ; ex:subP 1 . ex:ok1 a ex:Root ; ex:rootP 1 . " ++
+  "ex:ok2 a ex:Sub ; ex:rootP 1 ; ex:subP 2 ; ex:extraP 3 ."
+
+-- ex:Root's own instances may use ex:rootP only; an ex:Sub instance
+-- also ex:subP (its own shape), ex:rootP (superclass) and ex:extraP
+-- (sh:targetClass ex:Sub, then sh:node ex:Extra).
+#guard (run closedByTypesDoc).results.map (·.focus) == [.iri (exIri "bad")]
+#guard (run closedByTypesDoc).results.map (·.path) == [some (.pred (exIri "subP"))]
+#guard components (run closedByTypesDoc) == [shClosedCC]
+#guard (collectProperties (ttl closedByTypesDoc) (exIri "Sub")).contains (exIri "extraP")
+#guard !(collectProperties (ttl closedByTypesDoc) (exIri "Root")).contains (exIri "subP")
+
 /-! ### §4.4.5 sh:uniqueLang — lexical "true" only -/
 
 def uniqueLangDoc : String :=

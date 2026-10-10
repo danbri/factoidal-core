@@ -193,6 +193,13 @@ inductive Constraint where
   | qualifiedMaxCount (r : ShapeRef) (n : Nat) (disjoint : Bool)
   -- §4.8 other
   | closed (ignored : List WfIri)
+  -- SHACL 1.2 §ClosedConstraintComponent, `sh:closed sh:ByTypes`: the
+  -- allowed predicates of a value node are rdf:type, the ignored
+  -- properties, and collectProperties(T) for each rdf:type T of the
+  -- value node. `table` holds collectProperties for every IRI subject of
+  -- the shapes graph, computed at decode time (the algorithm reads only
+  -- the shapes graph); a type with no entry contributes nothing.
+  | closedByTypes (table : List (WfIri × List WfIri)) (ignored : List WfIri)
   | hasValue (t : Term)
   | inSet (items : List Term)
   -- SHACL-SPARQL Part 2 §5.1: a sh:sparql constraint. `node` is the
@@ -359,6 +366,57 @@ def severityOfIri (i : WfIri) : Severity :=
   else if i == shTrace then .trace
   else .custom i
 
+/-! ## §1.4 SHACL instance
+
+Defined here, before the decoder, because SHACL 1.2's decoder needs it
+too: the implicit class target (§implicit-targetClass, "SHACL instance
+of rdfs:Class in SG") and sh:closed sh:ByTypes (§ClosedConstraintComponent,
+"S is a SHACL instance of rdfs:Class in the shapes graph") read the
+SHACL-instance relation of the SHAPES graph. -/
+
+/-- The direct rdfs:subClassOf superclasses of `c` (IRI objects only). -/
+def directSupers (g : Graph) (c : WfIri) : List WfIri :=
+  (objectsOf g (.iri c) rdfsSubClassOf).filterMap fun t =>
+    match t with
+    | .iri d => some d
+    | _ => none
+
+/-- Append the elements of `xs` not already in `acc`, in order. -/
+def addNew (acc : List WfIri) : List WfIri → List WfIri
+  | [] => acc
+  | d :: rest => addNew (if acc.contains d then acc else acc ++ [d]) rest
+
+/-- One step of the rdfs:subClassOf closure: add every direct
+superclass of every class in `cs`. -/
+def superClassesStep (g : Graph) (cs : List WfIri) : List WfIri :=
+  addNew cs (cs.flatMap (directSupers g))
+
+/-- The SHACL superclasses of `c` (reflexive, transitive), computed
+as a fixpoint: stop when a step adds nothing. The fuel bounds the
+number of steps; each productive step adds a class that is the object
+of some rdfs:subClassOf triple, so `g.length + 1` steps always reach
+the fixpoint (`ShaclTheorems.lean`, `superClasses_complete`). -/
+def superClassesFuel (g : Graph) : List WfIri → Nat → List WfIri
+  | cs, 0 => cs
+  | cs, fuel + 1 =>
+    let cs' := superClassesStep g cs
+    if cs'.length ≤ cs.length then cs else superClassesFuel g cs' fuel
+
+def superClasses (g : Graph) (c : WfIri) : List WfIri :=
+  superClassesFuel g [c] (g.length + 1)
+
+/-- §1.4: `n` is a SHACL instance of `c` iff some rdf:type of `n` is a
+SHACL subclass of `c` (rdfs:subClassOf*, reflexive), in the data graph
+only. -/
+def isShaclInstance (g : Graph) (n : Term) (c : WfIri) : Bool :=
+  match n.toSubject? with
+  | none => false
+  | some s =>
+    (objectsOf g s rdfType).any fun t =>
+      match t with
+      | .iri ti => (superClasses g ti).contains c
+      | _ => false
+
 /-! ## §2.3.1 path decoding
 
 The seven forms: a predicate path is an IRI; the others are blank
@@ -445,6 +503,72 @@ def iriOrIriList (g : Graph) (t : Term) (fuel : Nat) : Option (List WfIri) :=
   | .bnode _ => some ((rdfListTerms g t fuel).filterMap fun m =>
       match m with | .iri i => some i | _ => none)
   | _ => none
+
+/-! ## SHACL 1.2 sh:closed sh:ByTypes — collectProperties
+
+SHACL 1.2 Core §ClosedConstraintComponent:
+
+    function collectProperties(S)
+        add all IRI properties that can be reached from S via the SPARQL path
+                sh:property/sh:path
+        if S is a SHACL instance of rdfs:Class in the shapes graph {
+            for each triple in the shapes graph matching (S rdfs:subClassOf ?o)
+                collectProperties(?o)
+            for each triple in the shapes graph matching (?s sh:targetClass S)
+                collectProperties(?s)
+        }
+        if S is a SHACL instance of sh:NodeShape in the shapes graph
+            for each triple in the shapes graph matching (S sh:node ?o)
+                collectProperties(?o)
+
+"implementations need to avoid infinite loops in the algorithm above by
+preventing it from visiting the same `S` twice": a work list with a
+visited list. The fuel bounds the number of work-list pops; every node
+pushed is the object or subject of a distinct triple, so `2 * |g| + 2`
+pops always empty the list. -/
+
+/-- "SHACL instance of rdfs:Class in the shapes graph". `sh:ShapeClass`
+counts (§implicit-targetClass: "The class sh:ShapeClass is an
+rdfs:subClassOf of both sh:NodeShape and rdfs:Class", a vocabulary
+triple the shapes graph need not repeat), and so does `owl:Class`, as
+for the implicit class target below. -/
+def isClassInShapes (g : Graph) (n : Term) : Bool :=
+  isShaclInstance g n rdfsClass || isShaclInstance g n owlClass ||
+  isShaclInstance g n shShapeClass
+
+/-- "SHACL instance of sh:NodeShape in the shapes graph" (sh:ShapeClass
+is a subclass of sh:NodeShape). -/
+def isNodeShapeInShapes (g : Graph) (n : Term) : Bool :=
+  isShaclInstance g n shNodeShape || isShaclInstance g n shShapeClass
+
+/-- The IRI properties reachable from `n` via `sh:property/sh:path`. -/
+def propertyPathIris (g : Graph) (n : Term) : List WfIri :=
+  (objectsOfTerm g n shProperty).flatMap fun ps =>
+    (objectsOfTerm g ps shPath).filterMap fun t => match t with | .iri i => some i | _ => none
+
+def collectPropertiesFuel (g : Graph) : List Term → List Term → List WfIri → Nat → List WfIri
+  | _, _, acc, 0 => acc
+  | [], _, acc, _ + 1 => acc
+  | n :: rest, visited, acc, fuel + 1 =>
+    if visited.contains n then collectPropertiesFuel g rest visited acc fuel
+    else
+      let viaClass :=
+        if isClassInShapes g n then objectsOfTerm g n rdfsSubClassOf ++ subjectsOf g shTargetClass n
+        else []
+      let viaNode := if isNodeShapeInShapes g n then objectsOfTerm g n shNode else []
+      collectPropertiesFuel g (rest ++ viaClass ++ viaNode) (n :: visited)
+        (acc ++ propertyPathIris g n) fuel
+
+def collectProperties (g : Graph) (c : WfIri) : List WfIri :=
+  collectPropertiesFuel g [.iri c] [] [] (2 * g.length + 2)
+
+/-- collectProperties for every IRI subject of the shapes graph (only an
+IRI with triples of its own in the shapes graph can contribute). -/
+def closedByTypesTable (g : Graph) : List (WfIri × List WfIri) :=
+  (distinctSubjects g).filterMap fun s =>
+    match s with
+    | .iri i => some (i, collectProperties g i)
+    | .bnode _ => none
 
 /-- §4.7.2 / §4.7.3: sh:qualifiedMinCount / sh:qualifiedMaxCount apply
 only together with sh:qualifiedValueShape (core/node/qualified-001:
@@ -537,9 +661,13 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
       | head :: _ => (rdfListTerms g head fuel).filterMap fun t =>
           match t with | .iri i => some i | _ => none
       | [] => []
-    match firstBool (objectsOf g s shClosed) with
-    | some true => [Constraint.closed ignored]
-    | _ => []
+    match objectsOf g s shClosed with
+    | .iri i :: _ =>
+      if i == shByTypes then [Constraint.closedByTypes (closedByTypesTable g) ignored] else []
+    | vals =>
+      match firstBool vals with
+      | some true => [Constraint.closed ignored]
+      | _ => []
   minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ rootClass ++ singleLine ++
   memberShape ++ minListLength ++ maxListLength ++ uniqueMembers ++
   inSet ++ hasValue ++ pattern ++

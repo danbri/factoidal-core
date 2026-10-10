@@ -58,6 +58,7 @@ def constraintComponentIri : Constraint → WfIri
   | .qualifiedMinCount _ _ _ => shQualifiedMinCountCC
   | .qualifiedMaxCount _ _ _ => shQualifiedMaxCountCC
   | .closed _ => shClosedCC
+  | .closedByTypes _ _ => shClosedCC
   | .hasValue _ => shHasValueCC
   | .inSet _ => shInCC
   -- SHACL-SPARQL: §5.1 results name sh:SPARQLConstraintComponent; §6

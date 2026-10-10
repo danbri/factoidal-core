@@ -362,51 +362,6 @@ def duplicatedLangTags (values : List Term) : List String :=
       else distinctDups (x :: seen) rest
   distinctDups [] langs
 
-/-! ## §1.4 SHACL instance -/
-
-/-- The direct rdfs:subClassOf superclasses of `c` (IRI objects only). -/
-def directSupers (g : Graph) (c : WfIri) : List WfIri :=
-  (objectsOf g (.iri c) rdfsSubClassOf).filterMap fun t =>
-    match t with
-    | .iri d => some d
-    | _ => none
-
-/-- Append the elements of `xs` not already in `acc`, in order. -/
-def addNew (acc : List WfIri) : List WfIri → List WfIri
-  | [] => acc
-  | d :: rest => addNew (if acc.contains d then acc else acc ++ [d]) rest
-
-/-- One step of the rdfs:subClassOf closure: add every direct
-superclass of every class in `cs`. -/
-def superClassesStep (g : Graph) (cs : List WfIri) : List WfIri :=
-  addNew cs (cs.flatMap (directSupers g))
-
-/-- The SHACL superclasses of `c` (reflexive, transitive), computed
-as a fixpoint: stop when a step adds nothing. The fuel bounds the
-number of steps; each productive step adds a class that is the object
-of some rdfs:subClassOf triple, so `g.length + 1` steps always reach
-the fixpoint (`ShaclTheorems.lean`, `superClasses_complete`). -/
-def superClassesFuel (g : Graph) : List WfIri → Nat → List WfIri
-  | cs, 0 => cs
-  | cs, fuel + 1 =>
-    let cs' := superClassesStep g cs
-    if cs'.length ≤ cs.length then cs else superClassesFuel g cs' fuel
-
-def superClasses (g : Graph) (c : WfIri) : List WfIri :=
-  superClassesFuel g [c] (g.length + 1)
-
-/-- §1.4: `n` is a SHACL instance of `c` iff some rdf:type of `n` is a
-SHACL subclass of `c` (rdfs:subClassOf*, reflexive), in the data graph
-only. -/
-def isShaclInstance (g : Graph) (n : Term) (c : WfIri) : Bool :=
-  match n.toSubject? with
-  | none => false
-  | some s =>
-    (objectsOf g s rdfType).any fun t =>
-      match t with
-      | .iri ti => (superClasses g ti).contains c
-      | _ => false
-
 /-! ## §2.1 targets -/
 
 /-- §2.1.1–§2.1.4 and §2.1.3.1. `allSubjects` are the candidate focus
@@ -676,6 +631,38 @@ def pathPredicatesOfShape (sg : List Shape) (s : Shape) : List WfIri :=
     | some ps => match ps.path with | some (.pred p) => some p | _ => none
     | none => none
 
+/-- §4.8.1 sh:closed: "there is a validation result for each triple
+that has a value node as its subject and a predicate that is not in P
+... The validation result MUST have the predicate of the triple as its
+sh:resultPath, and the object of the triple as its sh:value." `allowed`
+gives P (with the ignored properties) for a value node. -/
+def closedViolations (data : Graph) (focus : Term) (s : Shape) (cc : Constraint)
+    (values : List Term) (allowed : Subject → List WfIri) : List Violation :=
+  values.flatMap fun v =>
+    match v.toSubject? with
+    | none => []
+    | some subj =>
+      data.filterMap fun t =>
+        if t.s == subj && !(allowed subj).contains t.p
+        then some { focus := focus, path := some (.pred t.p), value := some t.o,
+                    sourceShape := s.id, constraint := cc,
+                    severity := s.severity, message := s.message }
+        else none
+
+/-- SHACL 1.2 sh:closed sh:ByTypes: "P is the set of IRI properties that
+can be reached from the value node via the following algorithm, plus
+rdf:type" — collectProperties(T) for each rdf:type T of the value node
+in the data graph, looked up in the decode-time table — plus the
+ignored properties. -/
+def byTypesAllowed (data : Graph) (table : List (WfIri × List WfIri)) (ignored : List WfIri)
+    (subj : Subject) : List WfIri :=
+  rdfType :: ignored ++ (objectsOf data subj rdfType).flatMap fun t =>
+    match t with
+    | .iri ti => match table.find? (fun e => e.1 == ti) with
+      | some e => e.2
+      | none => []
+    | _ => []
+
 /-- The per-FOCUS-NODE check of the non-recursive aggregate
 components, given the value nodes: §4.2 cardinality, §4.4.5
 uniqueLang, §4.5 property pairs, §4.8.1 closed, §4.8.2 hasValue. The
@@ -692,16 +679,9 @@ def evalAggregateNonRec (data : Graph) (sg : List Shape) (focus : Term) (s : Sha
   | .uniqueLang b =>
     if b then (duplicatedLangTags values).map (fun _ => focusViolation focus s cc) else []
   | .closed ignored =>
-    match focus.toSubject? with
-    | none => []
-    | some subj =>
-      let allowed := pathPredicatesOfShape sg s ++ ignored
-      data.filterMap fun t =>
-        if t.s == subj && !allowed.contains t.p
-        then some { focus := focus, path := some (.pred t.p), value := some t.o,
-                    sourceShape := s.id, constraint := cc,
-                    severity := s.severity, message := s.message }
-        else none
+    closedViolations data focus s cc values fun _ => pathPredicatesOfShape sg s ++ ignored
+  | .closedByTypes table ignored =>
+    closedViolations data focus s cc values (byTypesAllowed data table ignored)
   | .equals p =>
     let others := evalPath data focus p
     (values.filterMap fun v => if termMem v others then none else some (valueViolation focus s cc v)) ++
@@ -970,6 +950,11 @@ def ValueSatisfies (g : Graph) (cc : Constraint) (v : Term) : Prop :=
       numericCmpLt lv.val lt.val = some true
   | _ => True
 
+/-- §4.8.1 sh:closed, declaratively: every triple whose subject is a
+value node has an allowed predicate. -/
+def ClosedOk (g : Graph) (values : List Term) (allowed : Subject → List WfIri) : Prop :=
+  ∀ v ∈ values, ∀ subj, v.toSubject? = some subj → ∀ t ∈ g, t.s = subj → t.p ∈ allowed subj
+
 /-- The per-focus-node components over the value nodes, declaratively.
 `True` for the components handled elsewhere. -/
 def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
@@ -986,8 +971,8 @@ def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
   | .lessThan p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLt v w = true
   | .lessThanOrEquals p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLe v w = true
   | .subsetOf p => ∀ v ∈ values, ∃ u ∈ evalPath g focus p, Term.eqb u v = true
-  | .closed ignored => ∀ subj, focus.toSubject? = some subj →
-      ∀ t ∈ g, t.s = subj → t.p ∈ pathPredicatesOfShape sg s ++ ignored
+  | .closed ignored => ClosedOk g values fun _ => pathPredicatesOfShape sg s ++ ignored
+  | .closedByTypes table ignored => ClosedOk g values (byTypesAllowed g table ignored)
   | _ => True
 
 mutual

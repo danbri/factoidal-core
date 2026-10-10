@@ -181,7 +181,7 @@ theorem evalCustomComponent_eq_nil_iff (data : Graph) (focus : Term) (s : Shape)
   | .uniqueMembers _ | .subsetOf _ | .someValue _
   | .notOf _ | .andOf _ | .orOf _ | .xoneOf _ | .nodeOf _
   | .qualifiedMinCount _ _ _ | .qualifiedMaxCount _ _ _
-  | .closed _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>
+  | .closed _ | .closedByTypes _ _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>
     simp [SparqlOutcome.empty]
 
 /-! ## §3.1 the report -/

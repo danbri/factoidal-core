@@ -488,6 +488,48 @@ theorem simpleValueCheck_iff' (g : Graph) (cc : Constraint) (v : Term) :
 
 /-! ## The per-focus-node components decide their specification -/
 
+/-- §4.8.1 sh:closed (either form): no result iff `Spec.ClosedOk`. -/
+theorem closedViolations_eq_nil_iff (g : Graph) (focus : Term) (s : Shape) (cc : Constraint)
+    (values : List Term) (allowed : Subject → List WfIri) :
+    closedViolations g focus s cc values allowed = [] ↔ Spec.ClosedOk g values allowed := by
+  unfold closedViolations Spec.ClosedOk
+  simp only [List.flatMap_eq_nil_iff]
+  apply forall_congr'; intro v; apply imp_congr_right; intro _
+  cases h : v.toSubject? with
+  | none => simp
+  | some subj =>
+    simp only [List.filterMap_eq_nil_iff, Option.some.injEq, forall_eq']
+    constructor
+    · intro hall t ht hts
+      have := hall t ht
+      split at this
+      · exact absurd this (by simp)
+      · rename_i hcond
+        simp only [hts, beq_self_eq_true, Bool.true_and, Bool.not_eq_true',
+          Bool.not_eq_false] at hcond
+        first
+          | exact List.contains_iff_mem.mp hcond
+          | exact hcond
+    · intro hall t ht
+      by_cases hts : t.s = subj
+      · have hc : (allowed subj).contains t.p = true :=
+          List.contains_iff_mem.mpr (hall t ht hts)
+        simp only [hts, hc, beq_self_eq_true, Bool.true_and, Bool.not_true, Bool.false_eq_true,
+          ↓reduceIte]
+      · simp [hts]
+
+theorem closedViolations_severity (g : Graph) (focus : Term) (s : Shape) (cc : Constraint)
+    (values : List Term) (allowed : Subject → List WfIri) :
+    ∀ x ∈ closedViolations g focus s cc values allowed, x.severity = s.severity := by
+  intro x hx
+  obtain ⟨v, _, hv⟩ := List.mem_flatMap.mp hx
+  split at hv
+  · simp at hv
+  · obtain ⟨t, _, ht⟩ := List.mem_filterMap.mp hv
+    split at ht
+    · cases ht; rfl
+    · cases ht
+
 theorem termMem_iff (t : Term) (l : List Term) :
     termMem t l = true ↔ ∃ u ∈ l, Term.eqb u t = true := by
   simp [termMem, List.any_eq_true]
@@ -510,28 +552,10 @@ theorem evalAggregateNonRec_eq_nil_iff (g : Graph) (sg : List Shape) (focus : Te
     cases b <;> simp [evalAggregateNonRec, Spec.FocusSatisfies]
   | closed ignored =>
     simp only [evalAggregateNonRec, Spec.FocusSatisfies]
-    cases h : focus.toSubject? with
-    | none => simp
-    | some subj =>
-      simp only [List.filterMap_eq_nil_iff, Option.some.injEq, forall_eq']
-      constructor
-      · intro hall t ht hts
-        have := hall t ht
-        split at this
-        · exact absurd this (by simp)
-        · rename_i hcond
-          simp only [hts, beq_self_eq_true, Bool.true_and, Bool.not_eq_true',
-            Bool.not_eq_false] at hcond
-          first
-            | exact List.contains_iff_mem.mp hcond
-            | exact hcond
-      · intro hall t ht
-        by_cases hts : t.s = subj
-        · have hc : (pathPredicatesOfShape sg s ++ ignored).contains t.p = true :=
-            List.contains_iff_mem.mpr (hall t ht hts)
-          simp only [hts, hc, beq_self_eq_true, Bool.true_and, Bool.not_true, Bool.false_eq_true,
-            ↓reduceIte]
-        · simp [hts]
+    exact closedViolations_eq_nil_iff g focus s _ values _
+  | closedByTypes table ignored =>
+    simp only [evalAggregateNonRec, Spec.FocusSatisfies]
+    exact closedViolations_eq_nil_iff g focus s _ values _
   | equals p =>
     simp only [evalAggregateNonRec, Spec.FocusSatisfies, List.append_eq_nil_iff,
       List.filterMap_eq_nil_iff]
@@ -642,14 +666,9 @@ theorem evalAggregateNonRec_severity (g : Graph) (sg : List Shape) (focus : Term
     split at hx
     · obtain ⟨_, _, rfl⟩ := List.mem_map.mp hx; rfl
     · simp at hx
-  | closed ignored =>
+  | closed ignored | closedByTypes _ ignored =>
     simp only [evalAggregateNonRec] at hx
-    split at hx
-    · simp at hx
-    · obtain ⟨t, _, ht⟩ := List.mem_filterMap.mp hx
-      split at ht
-      · cases ht; rfl
-      · cases ht
+    exact closedViolations_severity g focus s _ values _ x hx
   | equals p =>
     simp only [evalAggregateNonRec, List.mem_append] at hx
     rcases hx with hx | hx <;>
