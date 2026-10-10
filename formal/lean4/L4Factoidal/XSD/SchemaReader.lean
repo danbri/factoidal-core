@@ -353,17 +353,36 @@ def ciNode (bs : NsBindings) : Node → Option Node
   | .element t attrs kids =>
       let bs2 := bindingsOf attrs ++ bs
       if ciIgnored bs2 attrs then none
-      else some (.element t attrs (ciNodes bs2 kids))
+      else some (.element t attrs (ciNodesAcc bs2 kids []))
   | other => some other
 
-def ciNodes (bs : NsBindings) : List Node → List Node
-  | []      => []
-  | n :: ns =>
+/-- `ci` of each node of `ns` that is kept, after `acc` (earlier ones,
+newest first): a tail call per sibling (https://github.com/danbri/factoidal/issues/746). -/
+def ciNodesAcc (bs : NsBindings) : List Node → List Node → List Node
+  | [], acc => acc.reverse
+  | n :: ns, acc =>
       match ciNode bs n with
-      | some m => m :: ciNodes bs ns
-      | none   => ciNodes bs ns
+      | some m => ciNodesAcc bs ns (m :: acc)
+      | none   => ciNodesAcc bs ns acc
 
 end
+
+/-- `ci` of each node of a list, the ignored ones dropped. -/
+def ciNodes (bs : NsBindings) (ns : List Node) : List Node := ciNodesAcc bs ns []
+
+theorem ciNodesAcc_eq (bs : NsBindings) (ns : List Node) :
+    ∀ acc : List Node, ciNodesAcc bs ns acc = acc.reverse ++ ns.filterMap (ciNode bs) := by
+  induction ns with
+  | nil => intro acc; simp [ciNodesAcc]
+  | cons n rest ih =>
+      intro acc
+      cases h : ciNode bs n with
+      | none => simp [ciNodesAcc, h, ih]
+      | some m => simp [ciNodesAcc, h, ih]
+
+theorem ciNodes_eq (bs : NsBindings) (ns : List Node) :
+    ciNodes bs ns = ns.filterMap (ciNode bs) := by
+  simp [ciNodes, ciNodesAcc_eq]
 
 /-- §4.2.2 for the `<schema>` element: when it is itself ignored, the
 document keeps it with no children. -/

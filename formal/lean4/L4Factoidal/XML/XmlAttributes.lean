@@ -248,14 +248,38 @@ mutual
 /-- Every (element name, attribute) pair under a node, in document order. -/
 def Node.attributePairs : Node → List (String × Attribute)
   | .element tag attrs children =>
-      attrs.map (fun a => (tag, a)) ++ Node.attributePairsList children
+      attrs.map (fun a => (tag, a)) ++ Node.attributePairsListAcc children []
   | _ => []
 
-def Node.attributePairsList : List Node → List (String × Attribute)
-  | [] => []
-  | n :: rest => Node.attributePairs n ++ Node.attributePairsList rest
+/-- The pairs under `ns`, after `acc` (earlier pairs, newest first): a tail
+call per sibling, so the number of siblings costs no stack (https://github.com/danbri/factoidal/issues/746). -/
+def Node.attributePairsListAcc : List Node → List (String × Attribute) →
+    List (String × Attribute)
+  | [], acc => acc.reverse
+  | n :: rest, acc => Node.attributePairsListAcc rest ((Node.attributePairs n).reverse ++ acc)
 
 end
+
+/-- Every (element name, attribute) pair under a list of nodes. -/
+def Node.attributePairsList (ns : List Node) : List (String × Attribute) :=
+  Node.attributePairsListAcc ns []
+
+theorem Node.attributePairsListAcc_eq (ns : List Node) :
+    ∀ acc : List (String × Attribute),
+      Node.attributePairsListAcc ns acc = acc.reverse ++ Node.attributePairsList ns := by
+  induction ns with
+  | nil => intro acc; simp [Node.attributePairsList, Node.attributePairsListAcc]
+  | cons n rest ih =>
+      intro acc
+      simp only [Node.attributePairsList, Node.attributePairsListAcc]
+      rw [ih, ih]
+      simp
+
+theorem Node.attributePairsList_cons (n : Node) (rest : List Node) :
+    Node.attributePairsList (n :: rest) =
+      Node.attributePairs n ++ Node.attributePairsList rest := by
+  simp only [Node.attributePairsList, Node.attributePairsListAcc]
+  rw [Node.attributePairsListAcc_eq]; simp; rfl
 
 /-- Every problem with an `xml:lang`, `xml:id` or `xml:base` attribute of
 the document, in document order, then the declarations.

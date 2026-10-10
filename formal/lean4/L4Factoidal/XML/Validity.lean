@@ -559,7 +559,7 @@ mutual
 notes come in post-order: an element's own note follows its descendants'. -/
 def validateElement (dt : Doctype) (standalone : Bool) (ns : List ElemNote) : Node → Walk
   | .element tag attrs children =>
-      let (cv, cids, crefs, ns') := validateChildren dt standalone ns children
+      let (cv, cids, crefs, ns') := validateChildrenAcc dt standalone ns children [] [] []
       let note := ns'.headD {}
       let here := checkContent dt tag note children
       let (av, ids, refs) := checkAttributes dt tag attrs
@@ -567,15 +567,50 @@ def validateElement (dt : Doctype) (standalone : Bool) (ns : List ElemNote) : No
       (here ++ av ++ sa ++ cv, ids ++ cids, refs ++ crefs, ns'.drop 1)
   | _ => ([], [], [], ns)
 
-def validateChildren (dt : Doctype) (standalone : Bool) (ns : List ElemNote) :
-    List Node → Walk
-  | [] => ([], [], [], ns)
-  | n :: rest =>
+/-- The walk of a list of siblings, with the violations, ID values and
+IDREF tokens of the earlier siblings in `va`, `ia`, `ra` (reversed): a
+tail call per sibling, so the number of children of one element costs no
+stack (https://github.com/danbri/factoidal/issues/746). -/
+def validateChildrenAcc (dt : Doctype) (standalone : Bool) (ns : List ElemNote) :
+    List Node → List Violation → List String → List String → Walk
+  | [], va, ia, ra => (va.reverse, ia.reverse, ra.reverse, ns)
+  | n :: rest, va, ia, ra =>
       let (v1, i1, r1, ns1) := validateElement dt standalone ns n
-      let (v2, i2, r2, ns2) := validateChildren dt standalone ns1 rest
-      (v1 ++ v2, i1 ++ i2, r1 ++ r2, ns2)
+      validateChildrenAcc dt standalone ns1 rest (v1.reverse ++ va) (i1.reverse ++ ia)
+        (r1.reverse ++ ra)
 
 end
+
+/-- The walk of a list of siblings, in document order. -/
+def validateChildren (dt : Doctype) (standalone : Bool) (ns : List ElemNote)
+    (nodes : List Node) : Walk :=
+  validateChildrenAcc dt standalone ns nodes [] [] []
+
+theorem validateChildrenAcc_eq (dt : Doctype) (standalone : Bool) (nodes : List Node) :
+    ∀ (ns : List ElemNote) (va : List Violation) (ia ra : List String),
+      validateChildrenAcc dt standalone ns nodes va ia ra =
+        let w := validateChildren dt standalone ns nodes
+        (va.reverse ++ w.1, ia.reverse ++ w.2.1, ra.reverse ++ w.2.2.1, w.2.2.2) := by
+  induction nodes with
+  | nil => intro ns va ia ra; simp [validateChildren, validateChildrenAcc]
+  | cons n rest ih =>
+      intro ns va ia ra
+      simp only [validateChildren, validateChildrenAcc]
+      rw [ih, ih]
+      simp
+
+theorem validateChildren_nil (dt : Doctype) (standalone : Bool) (ns : List ElemNote) :
+    validateChildren dt standalone ns [] = ([], [], [], ns) := rfl
+
+theorem validateChildren_cons (dt : Doctype) (standalone : Bool) (ns : List ElemNote)
+    (n : Node) (rest : List Node) :
+    validateChildren dt standalone ns (n :: rest) =
+      let (v1, i1, r1, ns1) := validateElement dt standalone ns n
+      let (v2, i2, r2, ns2) := validateChildren dt standalone ns1 rest
+      (v1 ++ v2, i1 ++ i2, r1 ++ r2, ns2) := by
+  simp only [validateChildren, validateChildrenAcc]
+  rw [validateChildrenAcc_eq]
+  simp [validateChildren]
 
 /-- Every validity constraint this layer checks, over a parsed document
 and the notes the parser made while reading it (`parseXMLNotes`). An empty
