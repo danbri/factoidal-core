@@ -106,6 +106,8 @@ import L4Factoidal.Syntax.TurtleFuelTheorems
 import L4Factoidal.Syntax.TurtleStatementScanTheorems
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.TriG
+import L4Factoidal.Syntax.TurtleLenient
+import L4Factoidal.Syntax.TurtleLenientTheorems
 import L4Factoidal.Syntax.TurtleTests
 import L4Factoidal.Syntax.TurtleTheorems
 import L4Factoidal.Syntax.SyntaxTests

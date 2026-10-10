@@ -141,7 +141,8 @@ def classifyParseMessage (msg : String) : DiagnosticClass :=
       msg == "expected '^^'" || msg == "expected '@'" ||
       msg.startsWith "expected string literal" || msg.startsWith "expected '\"'" then .badLiteral
   else if has "blank node label" || has "'_:'" then .badBlankNode
-  else if has "prefixed name" || has "PNAME_NS" then .badPrefixedName
+  else if (has "prefixed name" && !msg.startsWith "expected prefixed name") || has "PNAME_NS" then
+    .badPrefixedName
   else if has "graph name" || has "graph label" || has "nested GRAPH" then .badGraphName
   else if has "RDF 1.2" || has "legacy '<< >>'" then .rdf12Syntax
   else if has "unterminated collection" || has "unterminated graph block" ||
@@ -266,7 +267,9 @@ def LenientOptions.allows (o : LenientOptions) (n : Nat) : Bool :=
 #guard classifyParseMessage "expected '_:' (BLANK_NODE_LABEL)" == .badBlankNode
 #guard classifyParseMessage "invalid prefix in prefixed name" == .badPrefixedName
 #guard classifyParseMessage "invalid prefixed name local part" == .badPrefixedName
-#guard classifyParseMessage "expected prefixed name" == .badPrefixedName
+-- The Turtle readers fall back to a prefixed name for any token they cannot
+-- otherwise read, so "expected prefixed name" is a missing term, not a bad name.
+#guard classifyParseMessage "expected prefixed name" == .unexpectedToken
 #guard classifyParseMessage "expected ':' in prefixed name" == .badPrefixedName
 #guard classifyParseMessage "expected PNAME_NS (prefix followed by ':')" == .badPrefixedName
 #guard classifyParseMessage "expected '.' after @prefix directive" == .badDirective
@@ -287,6 +290,8 @@ def LenientOptions.allows (o : LenientOptions) (n : Nat) : Bool :=
 #guard classifyParseMessage "triple term <<( )>> requires RDF 1.2 mode" == .rdf12Syntax
 #guard classifyParseMessage "reified triple << >> requires RDF 1.2 mode" == .rdf12Syntax
 #guard classifyParseMessage "not RDF 1.2" == .rdf12Syntax
+-- The lenient Turtle walk's own message for `VERSION` in an RDF 1.1 document.
+#guard classifyParseMessage "a version directive requires RDF 1.2 mode" == .rdf12Syntax
 #guard classifyParseMessage "legacy '<< >>' quoted triple is not RDF 1.2 syntax" == .rdf12Syntax
 #guard classifyParseMessage "unterminated collection (expected ')')" == .unclosedGroup
 #guard classifyParseMessage "unterminated graph block (expected '}')" == .unclosedGroup
