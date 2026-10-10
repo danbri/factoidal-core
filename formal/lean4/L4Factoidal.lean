@@ -14,6 +14,7 @@ import L4Factoidal.RDF.ListHelpers
 import L4Factoidal.RDF.XmlCanon
 import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
+import L4Factoidal.RDF.FastGraph
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
@@ -278,6 +279,7 @@ import L4Factoidal.ShEx.Structure
 import L4Factoidal.ShEx.StructureTests
 import L4Factoidal.Codec.Crc32
 import L4Factoidal.Codec.Inflate
+import L4Factoidal.Codec.InflateTests
 import L4Factoidal.Codec.Archive
 import L4Factoidal.Codec.Lzma
 import L4Factoidal.Codec.Xz
@@ -414,8 +416,10 @@ import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.TermCodecTheorems
 import L4Factoidal.Storage.PagedTermDictionaryCore
 import L4Factoidal.Storage.TermWireV2
+import L4Factoidal.Storage.TermWireV2Tests
 import L4Factoidal.Storage.TermWireV2Theorems
 import L4Factoidal.Storage.PagedTermDictionaryV2
+import L4Factoidal.Storage.PagedTermDictionaryV2Tests
 import L4Factoidal.Storage.PagedTermDictionaryV2Theorems
 import L4Factoidal.Storage.DeltaLogTests
 import L4Factoidal.Storage.BlockMvp
@@ -520,8 +524,10 @@ import L4Factoidal.Storage.IndexedBlockWireV3Tests
 import L4Factoidal.Storage.IndexedBlockWireV4
 import L4Factoidal.Storage.IndexedBlockWireV4Theorems
 import L4Factoidal.Storage.IndexedBlockWireV5
+import L4Factoidal.Storage.IndexedBlockWireV5Tests
 import L4Factoidal.Storage.IndexedBlockWireV5Theorems
 import L4Factoidal.Storage.BlockV5Plan
+import L4Factoidal.Storage.BlockV5PlanTests
 import L4Factoidal.Storage.PredicateBlocks
 import L4Factoidal.Storage.PredicateQuadBlocks
 import L4Factoidal.Storage.PredicateQuadBlocksTheorems

@@ -58,10 +58,16 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      explicit (`canonicalizeExceedsBudget`), so a poison input is a
      reported abort rather than a wrong answer.
   4. Sorting. F* uses a merge sort (its inputs reach 100k+ lines).
-     Here sorting is a STABLE INSERTION SORT: the same total preorder,
+     `sortBy` here is a STABLE INSERTION SORT: the same total preorder,
      the same stable tie-breaking, and short enough to prove sorted
-     (`RDF/CanonicalTheorems.lean`). The whole W3C corpus is under 50
-     lines per file.
+     (`RDF/CanonicalTheorems.lean`). It is the specification of the
+     sort and costs O(n^2): 4,000 quads took 25 s (2026-10-10). The
+     algorithm runs `sortByFast`, `List.mergeSort`, at the five places
+     where the input grows with the dataset, and
+     `CanonicalTheorems.sortBy_eq_mergeSort` proves the two return the
+     same list for every total preorder, ties included. The whole W3C
+     corpus is under 50 lines per file, so the suites cannot see the
+     difference; `tests/stack/lean_scaling.sh` can.
   5. Not ported: the F* module's Section 6b/6c "bounded neighbour
      hash" ladder (`compute_all_nbr1`/`nbr2`/`nbr3`, `bn_full_key`,
      `sort_full_keys`). Those are dead code in the F* tree — an
@@ -102,6 +108,70 @@ def charsLe : List Char → List Char → Bool
 /-- Code-point ≤ over strings (RDFC-1.0 §3, "code point order"). -/
 def strLe (a b : String) : Bool := charsLe a.toList b.toList
 
+/-! ### The comparison the compiler emits
+
+`strLe` builds two character lists for every comparison. On a graph of 2,000
+IRIs without blank nodes that conversion (`lean_string_data`) and the list walk
+are 57 percent of the instructions of `canonicalize`, after the sorts were
+changed to merge sorts (survey of 2026-10-10,
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`). Lean's order on
+`String` is the same lexicographic order on code points, and its decision
+procedure is native code. `strLe_eq_not_lt` proves the equality; the `csimp`
+theorem makes every function compiled after this point call `strLeFast`. The
+definition of `strLe` and every theorem about it do not change. -/
+
+private theorem char_lt_iff (x y : Char) : x < y ↔ x.val.toNat < y.val.toNat :=
+  UInt32.lt_iff_toNat_lt
+
+private theorem char_eq_of_not_lt {x y : Char} (h1 : ¬ x.val < y.val)
+    (h2 : ¬ y.val < x.val) : x = y := by
+  apply Char.ext
+  exact UInt32.le_antisymm (UInt32.not_lt.1 h2) (UInt32.not_lt.1 h1)
+
+/-- `charsLe` is the negation of Lean's list order read backwards. -/
+theorem charsLe_eq_not_lt : ∀ (as bs : List Char), charsLe as bs = !decide (bs < as)
+  | [], bs => by
+      cases bs with
+      | nil => simp [charsLe]
+      | cons b bs => simp [charsLe, List.not_lt_nil]
+  | a :: as, [] => by simp [charsLe, List.nil_lt_cons]
+  | a :: as, b :: bs => by
+      have ih := charsLe_eq_not_lt as bs
+      have key : (b :: bs < a :: as) ↔ (b < a ∨ b = a ∧ bs < as) := List.cons_lt_cons_iff
+      simp only [charsLe]
+      by_cases h1 : a.val < b.val
+      · have h1' := (UInt32.lt_iff_toNat_lt).1 h1
+        have hn : ¬ (b :: bs < a :: as) := by
+          rw [key]
+          rintro (h | ⟨h, _⟩)
+          · have := (char_lt_iff b a).1 h; omega
+          · subst h; omega
+        simp [h1, hn]
+      · by_cases h2 : b.val < a.val
+        · have hp : (b :: bs < a :: as) := key.2 (Or.inl h2)
+          simp [h1, h2, hp]
+        · have heq : b = a := (char_eq_of_not_lt h2 h1)
+          have hiff : (b :: bs < a :: as) ↔ bs < as := by
+            rw [key]
+            constructor
+            · rintro (h | ⟨_, h⟩)
+              · exact absurd h h2
+              · exact h
+            · intro h; exact Or.inr ⟨heq, h⟩
+          simp [h1, h2, ih, hiff]
+
+theorem strLe_eq_not_lt (a b : String) : strLe a b = !decide (b < a) := by
+  unfold strLe
+  rw [charsLe_eq_not_lt]
+  rfl
+
+/-- `strLe` through Lean's native string order. -/
+def strLeFast (a b : String) : Bool := !decide (b < a)
+
+/-- The compiler calls `strLeFast` wherever the source says `strLe`. -/
+@[csimp] theorem strLe_eq_strLeFast : @strLe = @strLeFast :=
+  funext fun a => funext fun b => strLe_eq_not_lt a b
+
 /-! ## Stable insertion sort
 
 Stability matters: RDFC-1.0 §4.4 step 5.3 orders exploration results
@@ -119,8 +189,14 @@ def insertSortedBy (le : α → α → Bool) (x : α) : List α → List α
 def sortBy (le : α → α → Bool) (xs : List α) : List α :=
   xs.foldl (fun acc x => insertSortedBy le x acc) []
 
+/-- The sort the algorithm runs: `List.mergeSort`, O(n log n) and stable.
+`CanonicalTheorems.sortBy_eq_mergeSort` proves it returns exactly what
+`sortBy` returns whenever `le` is transitive and total, and every
+comparator passed to it below is `strLe` on a projection. -/
+def sortByFast (le : α → α → Bool) (xs : List α) : List α := xs.mergeSort le
+
 /-- Sort strings into code-point order (RDFC-1.0 §3). -/
-def sortStrings (xs : List String) : List String := sortBy strLe xs
+def sortStrings (xs : List String) : List String := sortByFast strLe xs
 
 /-- Drop adjacent duplicates from a sorted list — RDF set semantics
 (RDF 1.1 Concepts §4: a dataset's quads form a set). The F* source
@@ -249,7 +325,7 @@ def collapseKeyedQQuads : List (String × QQuad) → List QQuad
       else q1 :: collapseKeyedQQuads ((k2, q2) :: rest)
 
 def dedupQQuads (qs : List QQuad) : List QQuad :=
-  collapseKeyedQQuads (sortBy (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
+  collapseKeyedQQuads (sortByFast (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
 
 /-! ## Blank-node enumeration -/
 
@@ -635,7 +711,7 @@ def groupSortedHfdq : List (BNodeId × String) → String → List BNodeId → L
       else groupSortedHfdq rest h [b] ((curH, curMembers.reverse) :: acc)
 
 def groupByHfdq (table : List (BNodeId × String)) : List Bucket :=
-  match sortBy (fun a b => strLe a.2 b.2) table with
+  match sortByFast (fun a b => strLe a.2 b.2) table with
   | []               => []
   | (b0, h0) :: rest => groupSortedHfdq rest h0 [b0] []
 
@@ -684,7 +760,7 @@ def processCollisionMembers (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
     (hfdqTable : List (BNodeId × String)) (st : IssuerState) (members : List BNodeId)
     (hb : HndqBudget) : IssuerState × HndqBudget :=
   let (results, hb1) := exploreMembers alg fuel qs hfdqTable st members hb
-  (replayAll st (sortBy (fun a b => strLe a.1 b.1) results), hb1)
+  (replayAll st (sortByFast (fun a b => strLe a.1 b.1) results), hb1)
 
 /-- §4.4 step 5: the collision groups, in hash order. -/
 def processCollisionGroups (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
@@ -811,7 +887,7 @@ def canonicalize (ds : Dataset) (alg : HashAlgorithm := .sha256) : CanonResult :
   | none => { nquads := joinStrings (canonicalLinesOf ds), issued := [], aborted := true }
   | some m =>
       { nquads  := joinStrings (canonicalLinesOf (relabelDataset m ds)),
-        issued  := sortBy (fun a b => strLe a.1 b.1) m,
+        issued  := sortByFast (fun a b => strLe a.1 b.1) m,
         aborted := false }
 
 /-- The canonical N-Quads document of a dataset. -/

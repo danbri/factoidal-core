@@ -355,9 +355,96 @@ with them the order in which `ns1:`, `ns2:` … are handed out.) -/
 def sortByCountDesc (xs : List (String × Nat)) : List (String × Nat) :=
   xs.mergeSort (fun a b => decide (b.2 ≤ a.2))
 
-/-- Ascending, as F\*'s `List.Tot.sortWith String.compare`. -/
+/-- Insertion sort: the specification of `sortStrs`. Quadratic; kept as the
+meaning of the sort and as the right-hand side of `sortStrs_eq`. -/
+def insertStr (x : String) : List String → List String
+  | [] => [x]
+  | y :: ys => if x ≤ y then x :: y :: ys else y :: insertStr x ys
+
+def sortStrsSpec : List String → List String
+  | [] => []
+  | x :: xs => insertStr x (sortStrsSpec xs)
+
+/-- The sort `turtleOfGraphAuto` runs: merge sort, O(n log n). The input is one
+namespace string per IRI occurrence in the graph, so n is the size of the
+graph; the insertion sort it replaces took 18 s on 22,000 triples. -/
 def sortStrs (xs : List String) : List String :=
-  xs.mergeSort (fun a b => decide (a ≤ b))
+  xs.mergeSort (fun a b => a ≤ b)
+
+/-- Inserting keeps the elements. -/
+theorem insertStr_perm (x : String) : ∀ ys : List String, List.Perm (insertStr x ys) (x :: ys)
+  | [] => List.Perm.refl _
+  | y :: ys => by
+      unfold insertStr
+      split
+      · exact List.Perm.refl _
+      · exact ((insertStr_perm x ys).cons y).trans (List.Perm.swap x y ys)
+
+/-- Inserting into a sorted list gives a sorted list. -/
+theorem insertStr_pairwise (x : String) :
+    ∀ ys : List String, ys.Pairwise (fun a b => decide (a ≤ b) = true) →
+      (insertStr x ys).Pairwise (fun a b => decide (a ≤ b) = true)
+  | [], _ => by simp [insertStr]
+  | y :: ys, h => by
+      unfold insertStr
+      split
+      · rename_i hxy
+        have h0 := h
+        rw [List.pairwise_cons] at h ⊢
+        refine ⟨?_, h0⟩
+        intro b hb
+        rcases List.mem_cons.mp hb with rfl | hb
+        · simpa using hxy
+        · have := h.1 b hb
+          have hyb : y ≤ b := by simpa using this
+          simpa using Std.le_trans hxy hyb
+      · rename_i hxy
+        rw [List.pairwise_cons] at h ⊢
+        refine ⟨?_, insertStr_pairwise x ys h.2⟩
+        intro b hb
+        have hb' : b ∈ x :: ys := (insertStr_perm x ys).mem_iff.mp hb
+        rcases List.mem_cons.mp hb' with rfl | hb'
+        · have : y ≤ b := by
+            rcases (Std.le_total : y ≤ b ∨ b ≤ y) with h1 | h1
+            · exact h1
+            · exact absurd h1 hxy
+          simpa using this
+        · simpa using h.1 b hb'
+
+/-- The insertion sort returns a permutation of its input. -/
+theorem sortStrsSpec_perm : ∀ xs : List String, List.Perm (sortStrsSpec xs) xs
+  | [] => List.Perm.refl _
+  | x :: xs => by
+      unfold sortStrsSpec
+      exact (insertStr_perm x _).trans ((sortStrsSpec_perm xs).cons x)
+
+/-- The insertion sort returns a list sorted by `≤`. -/
+theorem sortStrsSpec_pairwise : ∀ xs : List String,
+    (sortStrsSpec xs).Pairwise (fun a b => decide (a ≤ b) = true)
+  | [] => by simp [sortStrsSpec]
+  | x :: xs => by
+      unfold sortStrsSpec
+      exact insertStr_pairwise x _ (sortStrsSpec_pairwise xs)
+
+/-- The merge sort returns exactly what the insertion sort returns: both are
+sorted permutations of the input, and `≤` on strings is antisymmetric. So the
+prefix table `turtleOfGraphAuto` derives is the one it derived before. -/
+theorem sortStrs_eq (xs : List String) : sortStrs xs = sortStrsSpec xs := by
+  unfold sortStrs
+  have hp : (xs.mergeSort (fun a b => a ≤ b)).Pairwise (fun a b => decide (a ≤ b) = true) :=
+    List.pairwise_mergeSort
+      (fun a b c hab hbc => by
+        simp only [decide_eq_true_eq] at hab hbc ⊢
+        exact Std.le_trans hab hbc)
+      (fun a b => by
+        simp only [Bool.or_eq_true, decide_eq_true_eq]
+        exact (Std.le_total : a ≤ b ∨ b ≤ a)) xs
+  refine List.Perm.eq_of_pairwise (le := fun a b => decide (a ≤ b) = true) ?_ hp
+    (sortStrsSpec_pairwise xs) ?_
+  · intro a b _ _ hab hba
+    simp only [decide_eq_true_eq] at hab hba
+    exact Std.le_antisymm hab hba
+  · exact (List.mergeSort_perm xs _).trans (sortStrsSpec_perm xs).symm
 
 def assignLabels : Nat → List (String × Nat) → List (String × String)
   | _, [] => []
