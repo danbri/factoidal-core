@@ -415,4 +415,65 @@ private def wl (s : String) (d : WfIri) : WfLiteral :=
 #guard litOutsideDt (wl "3" xsdInteger) xsdString
 #guard !litOutsideDt (wl "3" xsdInteger) xsdDecimal
 
+/-! ## minCardSucc (Table 5.6, `owl:minCardinality` 0 or 1) -/
+
+private def gMinCard (n : Term) (onP : WfIri) : Graph :=
+  [⟨B "z", owlMinCardinality, n⟩, ⟨B "z", owlOnProperty, O onP⟩, ⟨S iA, pP, O iB⟩]
+#guard has (gMinCard (lit "1" xsdIntIri) pP) [] ⟨S iA, rdfType, Bt "z"⟩
+#guard has (gMinCard (lit "0" xsdNonNegativeInteger) pP) [] ⟨S iA, rdfType, Bt "z"⟩
+-- two successors are needed for a minimum of 2
+#guard !has (gMinCard (lit "2" xsdNonNegativeInteger) pP) [] ⟨S iA, rdfType, Bt "z"⟩
+-- the restriction is on another property
+#guard !has (gMinCard (lit "1" xsdIntIri) pQ) [] ⟨S iA, rdfType, Bt "z"⟩
+-- the object of the subject's edge is not a member
+#guard !has (gMinCard (lit "1" xsdIntIri) pP) [] ⟨S iB, rdfType, Bt "z"⟩
+-- a comprehension witness of the RL closure is not read (§ 8 is not normative)
+#guard !has [⟨B "__rl_minc1__http://ex/p", owlMinCardinality, lit "1" xsdNonNegativeInteger⟩,
+  ⟨B "__rl_minc1__http://ex/p", owlOnProperty, O pP⟩, ⟨S iA, pP, O iB⟩] []
+  ⟨S iA, rdfType, Bt "__rl_minc1__http://ex/p"⟩
+-- WebOnt-disjointWith-010 shape: the RL closure then has `a rdf:type _:z`
+-- next to `_:z owl:disjointWith _:z`, which the RL clash row cax-dw reads
+#guard memB (rbSaturate (gMinCard (lit "1" xsdIntIri) pP ++
+  [⟨B "z", owlDisjointWith, Bt "z"⟩]) [] 8 1) ⟨S iA, rdfType, Bt "z"⟩
+
+/-! ## Exclusions of a pair (Tables 5.9, 5.15) -/
+
+private def dp1 : WfIri := ⟨"http://ex/dp1", rfl⟩
+private def dp2 : WfIri := ⟨"http://ex/dp2", rfl⟩
+-- intOneSucc. Inconsistent Disjoint Dataproperties shape: a dp1 10,
+-- a ∈ ∃dp2.integer[≥ 10, ≤ 10], dp1 and dp2 disjoint.
+private def gDisjDp (v : String) (hi : String) : Graph :=
+  [ ⟨S iA, dp1, lit v xsdInteger⟩, ⟨S dp1, owlPropertyDisjointWith, O dp2⟩,
+    ⟨S iA, rdfType, Bt "r"⟩, ⟨B "r", owlSomeValuesFrom, Bt "d"⟩, ⟨B "r", owlOnProperty, O dp2⟩,
+    ⟨B "d", owlOnDatatype, O xsdInteger⟩, ⟨B "d", owlWithRestrictions, Bt "l"⟩,
+    ⟨B "l", rdfFirst, Bt "f1"⟩, ⟨B "l", rdfRest, Bt "l2"⟩,
+    ⟨B "l2", rdfFirst, Bt "f2"⟩, ⟨B "l2", rdfRest, O rdfNil⟩,
+    ⟨B "f1", xsdFacetMinInclusive, lit "10" xsdInteger⟩,
+    ⟨B "f2", xsdFacetMaxInclusive, lit hi xsdInteger⟩ ]
+#guard clashes (gDisjDp "10" "10")
+#guard clashes (gDisjDp "+010" "10")
+-- the restriction holds 10 and 11: no clash from one value
+#guard !clashes (gDisjDp "10" "11")
+-- the asserted value is 9
+#guard !clashes (gDisjDp "9" "10")
+-- the disjointness stated the other way round
+#guard clashes ((gDisjDp "10" "10").map (fun t =>
+  if t.p == owlPropertyDisjointWith then ⟨S dp2, owlPropertyDisjointWith, O dp1⟩ else t))
+-- litSucc with a negative property assertion and owl:real.
+-- Minus Infinity is not in owl:real shape: ∀dp.owl:real, ∃dp.{-INF^^float, -0},
+-- and the negative assertion (a, dp, 0^^unsignedInt).
+private def gMinusInf (npaValue : Term) : Graph :=
+  succG (Bt "e") [O XSD.owlReal] ++ lits2 "l1" (lit "-INF" XSD.xsdFloat) (lit "-0" xsdInteger) ++
+  [⟨B "e", owlOneOf, Bt "l1"⟩, ⟨B "n", rdfType, O owlNegativePropertyAssertion⟩,
+   ⟨B "n", owlSourceIndividual, O iA⟩, ⟨B "n", owlAssertionProperty, O pP⟩,
+   ⟨B "n", owlTargetValue, npaValue⟩]
+#guard clashes (gMinusInf (lit "0" xsdUnsignedInt))
+#guard !clashes (gMinusInf (lit "1" xsdUnsignedInt))
+-- the negative assertion is about another subject
+#guard !clashes ((gMinusInf (lit "0" xsdUnsignedInt)).map (fun t =>
+  if t.p == owlSourceIndividual then ⟨B "n", owlSourceIndividual, O iB⟩ else t))
+#guard litOutsideDt (wl "-INF" XSD.xsdFloat) XSD.owlReal
+#guard litOutsideDt (wl "1.0" xsdDouble) xsdIntIri
+#guard !litOutsideDt (wl "-INF" XSD.xsdFloat) XSD.xsdFloat
+
 end L4Factoidal.OWL.RdfBased.Tests

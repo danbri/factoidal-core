@@ -41,6 +41,7 @@ Comprehension Conditions [DEV]").
 | `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s intersection is an operand of `c1`'s | Tables 5.4, 5.8 |
 | `literalValue` | `s p "s2"^^d` from `s p "s1"^^u` when `u` is `d` or `u owl:sameAs d`, `d` is `xsd:decimal` or `xsd:integer`, and the lexical forms denote one value | § 4.2 (IL), Table 5.9 |
 | `hvEqProp` | `p owl:equivalentProperty q` when `p`, `q` are functional with domain `d`, and `d` is a subclass of `∋ v` restrictions on `p` and on `q` with the same value | Tables 5.6, 5.8, 5.9, 5.13 |
+| `minCardSucc` | `x rdf:type z` from `z owl:minCardinality n` (n = 0 or 1), `z owl:onProperty p`, `x p y` | Table 5.6, § 4.2 |
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -169,6 +170,12 @@ inductive RbDerives (g : Graph) : Triple → Prop where
       (hfp : (⟨p, rdfType, .iri owlFunctionalProperty⟩ : Triple) ∈ g)
       (hfq : (⟨q, rdfType, .iri owlFunctionalProperty⟩ : Triple) ∈ g) :
       RbDerives g ⟨p, owlEquivalentProperty, q.toTerm⟩
+  | minCardSucc {x z : Subject} {p : WfIri} {y : Term} {l : WfLiteral} {k : Int}
+      (hm : (⟨z, owlMinCardinality, .literal l⟩ : Triple) ∈ g)
+      (ho : (⟨z, owlOnProperty, .iri p⟩ : Triple) ∈ g)
+      (hxy : (⟨x, p, y⟩ : Triple) ∈ g) (hk : intLitValue l = some k) (h0 : 0 ≤ k)
+      (h1 : k ≤ 1) :
+      RbDerives g ⟨x, rdfType, z.toTerm⟩
 
 /-! ## Table facts, checked by evaluation -/
 
@@ -402,6 +409,11 @@ theorem rbDerives_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll 
         have hqv := hc.hasValueSub _ _ _ x tv2 to2 (hsub2 x hxd)
         rw [hc.functionalOnly _ x y _ tfq hxy hqv]
         exact hpv
+  | minCardSucc hm ho hxy hk h0 h1 =>
+      rename_i x z p y l k
+      show i.iext (i.iIri rdfType) (denotSubject i A x) (denotTerm i A z.toTerm)
+      rw [denot_toTerm]
+      exact hc.minCardLe1Sup _ _ _ _ l k hk h0 h1 (hA _ hm) (hA _ ho) (hA _ hxy)
 
 end Soundness
 

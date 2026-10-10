@@ -102,6 +102,20 @@ inductive IntOut (g : Graph) (b : Option Int × Option Int) : Term → Prop wher
   | restr {d : Subject} {e : WfIri} {fv : List (WfIri × WfLiteral)} (hr : IntRestr g d e fv)
       (hdis : boundsDisjoint b (intRestrBounds e fv) = true) : IntOut g b d.toTerm
 
+/-- `(x, IL(l)) ∉ IEXT(p)`: a negative property assertion with a target
+value that `l` has (Table 5.15), or a property disjoint with `p` that
+relates `x` to a literal with `l`'s value (Table 5.9). -/
+inductive PairOut (g : Graph) (x : Subject) (p : Term) (l : WfLiteral) : Prop where
+  | npa {z : Subject} {m : WfLiteral}
+      (h1 : (⟨z, owlSourceIndividual, x.toTerm⟩ : Triple) ∈ g)
+      (h2 : (⟨z, owlAssertionProperty, p⟩ : Triple) ∈ g)
+      (h3 : (⟨z, owlTargetValue, .literal m⟩ : Triple) ∈ g) (hs : litSame l m = true) :
+      PairOut g x p l
+  | pdw {ps : Subject} {q : WfIri} {m : WfLiteral} (hp : p = ps.toTerm)
+      (hd : (⟨ps, owlPropertyDisjointWith, .iri q⟩ : Triple) ∈ g ∨
+        (⟨.iri q, owlPropertyDisjointWith, p⟩ : Triple) ∈ g)
+      (hq : (⟨x, q, .literal m⟩ : Triple) ∈ g) (hs : litSame l m = true) : PairOut g x p l
+
 /-! ## The clash relation -/
 
 inductive RbClash (g : Graph) : Prop where
@@ -128,8 +142,9 @@ inductive RbClash (g : Graph) : Prop where
       (h3 : (⟨r, owlOnProperty, p⟩ : Triple) ∈ g)
       (hcd : c.toTerm = sv ∨ AllSucc g x p c.toTerm)
       (ho : (⟨c, owlOneOf, lst⟩ : Triple) ∈ g) (hl : ListDenotes g lst es)
-      (hout : ∀ t ∈ es, ∃ (l : WfLiteral) (d : Term), t = .literal l ∧
-        (d = sv ∨ AllSucc g x p d) ∧ LitOut g l d) : RbClash g
+      (hout : ∀ t ∈ es, ∃ l : WfLiteral, t = .literal l ∧
+        ((∃ d : Term, (d = sv ∨ AllSucc g x p d) ∧ LitOut g l d) ∨ PairOut g x p l)) :
+      RbClash g
   /-- The same successor is a member of an integer restriction `c` and of
   a class `d` that excludes every integer within `c`'s bounds. -/
   | intSucc {x r c : Subject} {p sv d : Term} {e : WfIri} {fv : List (WfIri × WfLiteral)}
@@ -138,6 +153,17 @@ inductive RbClash (g : Graph) : Prop where
       (h3 : (⟨r, owlOnProperty, p⟩ : Triple) ∈ g)
       (hcd : c.toTerm = sv ∨ AllSucc g x p c.toTerm) (hr : IntRestr g c e fv)
       (hdd : d = sv ∨ AllSucc g x p d) (hout : IntOut g (intRestrBounds e fv) d) : RbClash g
+  /-- The same successor is a member of an integer restriction `c` whose
+  bounds hold one integer `k`, and the pair `(x, k)` is excluded from `p`
+  (`PairOut`, for every literal with value `k`). -/
+  | intOneSucc {x r c : Subject} {p sv : Term} {e : WfIri} {fv : List (WfIri × WfLiteral)}
+      {k : Int}
+      (h1 : (⟨x, rdfType, r.toTerm⟩ : Triple) ∈ g)
+      (h2 : (⟨r, owlSomeValuesFrom, sv⟩ : Triple) ∈ g)
+      (h3 : (⟨r, owlOnProperty, p⟩ : Triple) ∈ g)
+      (hcd : c.toTerm = sv ∨ AllSucc g x p c.toTerm) (hr : IntRestr g c e fv)
+      (hb : intRestrBounds e fv = (some k, some k))
+      (hout : ∀ l : WfLiteral, intLitValue l = some k → PairOut g x p l) : RbClash g
 
 theorem boundsDisjoint_spec {k : Int} {a b : Option Int × Option Int}
     (hd : boundsDisjoint a b = true) (ha : inBounds k a = true) : inBounds k b = false := by
@@ -264,6 +290,30 @@ theorem intOut_holds {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i A
       rw [denot_toTerm]
       exact hc.intRestrExcl _ _ _ l k (intRestr_holds hA hr) hk (boundsDisjoint_spec hdis hb)
 
+theorem pairOut_holds {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i A g)
+    {x : Subject} {p : Term} {l : WfLiteral} (h : PairOut g x p l) :
+    ¬ i.iext (denotTerm i A p) (denotSubject i A x) (i.iLit l) := by
+  intro hxl
+  cases h with
+  | npa h1 h2 h3 hs =>
+      rename_i z m
+      have t1 := hA _ h1
+      simp only [TripleHolds, denot_toTerm] at t1
+      rw [hc.litSame l m hs] at hxl
+      exact hc.npaTargetValue _ _ _ m t1 (hA _ h2) (hA _ h3) hxl
+  | pdw hp hd hq hs =>
+      rename_i ps q m
+      have tq : i.iext (i.iIri q) (denotSubject i A x) (i.iLit m) := hA _ hq
+      rw [hc.litSame l m hs] at hxl
+      rcases hd with hd | hd
+      · have td := hA _ hd
+        simp only [TripleHolds] at td
+        subst hp
+        rw [denot_toTerm] at hxl
+        exact hc.propertyDisjointOnly _ _ _ _ td hxl tq
+      · have td : i.iext (i.iIri owlPropertyDisjointWith) (i.iIri q) (denotTerm i A p) := hA _ hd
+        exact hc.propertyDisjointOnly _ _ _ _ td tq hxl
+
 theorem rbClash_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i A g)
     (h : RbClash g) : False := by
   cases h with
@@ -301,8 +351,10 @@ theorem rbClash_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i 
         rwa [denot_toTerm] at this
       obtain ⟨_, hext⟩ := (hc.oneOf _ _ _ (holds_seqIs (fun u hu => hA u hu) hl)).mp (hA _ ho)
       obtain ⟨t, ht, rfl⟩ := List.mem_map.mp ((hext y).mp hyc)
-      obtain ⟨l, d, rfl, hdd, hlo⟩ := hout t ht
-      exact litOut_holds hc hA hlo (succ_member hc hA hy hysv hdd)
+      obtain ⟨l, rfl, hl⟩ := hout t ht
+      rcases hl with ⟨d, hdd, hlo⟩ | hpo
+      · exact litOut_holds hc hA hlo (succ_member hc hA hy hysv hdd)
+      · exact pairOut_holds hc hA hpo hy
   | intSucc h1 h2 h3 hcd hr hdd hout =>
       rename_i x r c p sv d e fv
       have t1 := hA _ h1
@@ -313,6 +365,21 @@ theorem rbClash_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i 
         rwa [denot_toTerm] at this
       obtain ⟨l, k, hk, hb, rfl⟩ := hc.intRestrMembers _ _ _ (intRestr_holds hA hr) y hyc
       exact intOut_holds hc hA hout hk hb (succ_member hc hA hy hysv hdd)
+  | intOneSucc h1 h2 h3 hcd hr hb hout =>
+      rename_i x r c p sv e fv k
+      have t1 := hA _ h1
+      simp only [TripleHolds, denot_toTerm] at t1
+      obtain ⟨y, hy, hysv⟩ := hc.someValuesFromSub _ _ _ _ (hA _ h2) (hA _ h3) t1
+      have hyc : icext i y (denotSubject i A c) := by
+        have := succ_member hc hA hy hysv hcd
+        rwa [denot_toTerm] at this
+      obtain ⟨l, k', hk', hin, rfl⟩ := hc.intRestrMembers _ _ _ (intRestr_holds hA hr) y hyc
+      have hkk : k' = k := by
+        rw [hb] at hin
+        simp only [inBounds, Option.all_some, Bool.and_eq_true, decide_eq_true_eq] at hin
+        omega
+      subst hkk
+      exact pairOut_holds hc hA (hout l hk') hy
 
 end Soundness
 
@@ -426,15 +493,37 @@ def intOutB (g : Graph) (b : Option Int × Option Int) (d : Term) : Bool :=
   (asSubject d).any (fun ds =>
     (intRestrs g ds).any (fun r => boundsDisjoint b (intRestrBounds r.1 r.2)))
 
+/-- Decides `PairOut g x p l`, with `ok m` in place of `litSame l m`. -/
+def pairOutB (g : Graph) (x : Subject) (p : Term) (ok : WfLiteral → Bool) : Bool :=
+  (withPredObj g owlSourceIndividual x.toTerm).any (fun t1 =>
+    memB g ⟨t1.s, owlAssertionProperty, p⟩ &&
+    (withSubjPred g t1.s owlTargetValue).any (fun t3 => (asLit t3.o).any ok)) ||
+  (asSubject p).any (fun ps =>
+    ((withSubjPred g ps owlPropertyDisjointWith).map (·.o) ++
+     (withPredObj g owlPropertyDisjointWith p).map (·.s.toTerm)).any (fun qt =>
+      (asIri qt).any (fun q => (withSubjPred g x q).any (fun t => (asLit t.o).any ok))))
+
 /-- `litSucc`: some class of the successor is an enumeration of literals,
-each excluded by some class of the successor. -/
+each excluded by some class of the successor or by `PairOut`. -/
 def litSuccAny (g : Graph) : Bool :=
   (succFrames g).any (fun fr =>
     (succClasses g fr).any (fun c => (asSubject c).any (fun cs =>
       (enumLists g cs).any (fun es =>
         es.all (fun t => match t with
-          | .literal l => (succClasses g fr).any (fun d => litOutB g l d)
+          | .literal l => (succClasses g fr).any (fun d => litOutB g l d) ||
+              pairOutB g fr.1 fr.2.2.2 (litSame l)
           | _ => false)))))
+
+/-- `intOneSucc`: some class of the successor is an integer restriction
+whose bounds hold one integer `k`, and `PairOut` excludes `k`. -/
+def intOneSuccAny (g : Graph) : Bool :=
+  (succFrames g).any (fun fr =>
+    (succClasses g fr).any (fun c => (asSubject c).any (fun cs =>
+      (intRestrs g cs).any (fun r =>
+        match intRestrBounds r.1 r.2 with
+        | (some lo, some hi) =>
+            decide (lo = hi) && pairOutB g fr.1 fr.2.2.2 (fun m => intLitValue m == some lo)
+        | _ => false))))
 
 /-- `intSucc`: some class of the successor is an integer restriction whose
 bounds another class of the successor excludes. -/
@@ -445,7 +534,7 @@ def intSuccAny (g : Graph) : Bool :=
         (succClasses g fr).any (fun d => intOutB g (intRestrBounds r.1 r.2) d)))))
 
 def rbClashAny (g : Graph) : Bool :=
-  thingEnumAny g || svfAvfDtAny g || litSuccAny g || intSuccAny g
+  thingEnumAny g || svfAvfDtAny g || litSuccAny g || intSuccAny g || intOneSuccAny g
 
 theorem thingEnumAny_spec {g : Graph} (h : thingEnumAny g = true) : RbClash g := by
   simp only [thingEnumAny, List.any_eq_true, List.mem_filter, Bool.and_eq_true,
@@ -615,6 +704,32 @@ theorem intOutB_spec {g : Graph} {b : Option Int × Option Int} {d : Term}
   · rw [mem_asSubject hds]
     exact IntOut.restr (intRestrs_spec hr) h
 
+theorem pairOutB_spec {g : Graph} {x : Subject} {p : Term} {ok : WfLiteral → Bool}
+    (h : pairOutB g x p ok = true) :
+    ∀ l : WfLiteral, (∀ m, ok m = true → litSame l m = true) → PairOut g x p l := by
+  intro l hok
+  simp only [pairOutB, Bool.or_eq_true, List.any_eq_true, Bool.and_eq_true] at h
+  rcases h with ⟨t1, ht1, hm, t3, ht3, m, hm3, hokm⟩ | ⟨ps, hps, qt, hqt, q, hq, t, ht, m, hm, hokm⟩
+  · obtain ⟨ht1g, ht1p, ht1o⟩ := mem_withPredObj ht1
+    obtain ⟨ht3g, ht3s, ht3p⟩ := mem_withSubjPred ht3
+    exact PairOut.npa (mem_of_parts ht1g rfl ht1p ht1o) (mem_of_memB hm)
+      (mem_of_parts ht3g ht3s ht3p (mem_asLit hm3)) (hok m hokm)
+  · have hp := mem_asSubject hps
+    obtain ⟨htg, hts, htp⟩ := mem_withSubjPred ht
+    have hq' := mem_asIri hq
+    refine PairOut.pdw hp ?_ (mem_of_parts htg hts htp (mem_asLit hm)) (hok m hokm)
+    rcases List.mem_append.mp hqt with h' | h'
+    · obtain ⟨u, hu, rfl⟩ := List.mem_map.mp h'
+      obtain ⟨hug, hus, hup⟩ := mem_withSubjPred hu
+      exact Or.inl (mem_of_parts hug hus hup hq')
+    · obtain ⟨u, hu, rfl⟩ := List.mem_map.mp h'
+      obtain ⟨hug, hup, huo⟩ := mem_withPredObj hu
+      have hus : u.s = Subject.iri q := by
+        cases hs : u.s with
+        | iri w => rw [hs] at hq'; simpa [Subject.toTerm] using hq'
+        | bnode b => rw [hs] at hq'; simp [Subject.toTerm] at hq'
+      exact Or.inr (mem_of_parts hug hus hup huo)
+
 theorem litSuccAny_spec {g : Graph} (h : litSuccAny g = true) : RbClash g := by
   simp only [litSuccAny, List.any_eq_true] at h
   obtain ⟨fr, hfr, c, hc, cs, hcs, es, hes, h⟩ := h
@@ -627,8 +742,12 @@ theorem litSuccAny_spec {g : Graph} (h : litSuccAny g = true) : RbClash g := by
   have := List.all_eq_true.mp h t ht
   split at this
   · rename_i l
-    obtain ⟨d, hd, hout⟩ := List.any_eq_true.mp this
-    exact ⟨l, d, rfl, succClasses_spec hd, litOutB_spec hout⟩
+    refine ⟨l, rfl, ?_⟩
+    simp only [Bool.or_eq_true] at this
+    rcases this with h' | h'
+    · obtain ⟨d, hd, hout⟩ := List.any_eq_true.mp h'
+      exact Or.inl ⟨d, succClasses_spec hd, litOutB_spec hout⟩
+    · exact Or.inr (pairOutB_spec h' l (fun m hm => hm))
   · simp at this
 
 theorem intSuccAny_spec {g : Graph} (h : intSuccAny g = true) : RbClash g := by
@@ -640,13 +759,34 @@ theorem intSuccAny_spec {g : Graph} (h : intSuccAny g = true) : RbClash g := by
   exact RbClash.intSucc h1 h2 h3 hcd (intRestrs_spec hr) (succClasses_spec hd)
     (intOutB_spec hout)
 
+theorem litSame_of_int {l m : WfLiteral} {k : Int} (hl : intLitValue l = some k)
+    (hm : intLitValue m = some k) : litSame l m = true := by
+  simp [litSame, hl, hm]
+
+theorem intOneSuccAny_spec {g : Graph} (h : intOneSuccAny g = true) : RbClash g := by
+  simp only [intOneSuccAny, List.any_eq_true] at h
+  obtain ⟨fr, hfr, c, hc, cs, hcs, r, hr, h⟩ := h
+  obtain ⟨h1, h2, h3⟩ := succFrames_spec hfr
+  have hcd := succClasses_spec hc
+  rw [mem_asSubject hcs] at hcd
+  split at h
+  · rename_i lo hi hb
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨hlh, hpo⟩ := h
+    subst hlh
+    refine RbClash.intOneSucc h1 h2 h3 hcd (intRestrs_spec hr) hb ?_
+    intro l hl
+    exact pairOutB_spec hpo l (fun m hm => litSame_of_int hl (by simpa using hm))
+  · simp at h
+
 theorem rbClashAny_spec {g : Graph} (h : rbClashAny g = true) : RbClash g := by
   simp only [rbClashAny, Bool.or_eq_true] at h
-  rcases h with ((h | h) | h) | h
+  rcases h with (((h | h) | h) | h) | h
   · exact thingEnumAny_spec h
   · exact svfAvfDtAny_spec h
   · exact litSuccAny_spec h
   · exact intSuccAny_spec h
+  · exact intOneSuccAny_spec h
 
 /-- What the regime reads: a `true` answer is a proof of inconsistency. -/
 theorem rbClashAny_unsat {g : Graph} (h : rbClashAny g = true) {i : Interp}
