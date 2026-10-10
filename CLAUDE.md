@@ -328,6 +328,24 @@ workstream. It does not claim current Lean/F* parity. Keep the existing F*
 path executable as lineage and a differential oracle until the corresponding
 Lean functionality and gates land. Port functionality, not files.
 
+### F\* stays as the reference until every relevant theorem is classified (owner, 2026-10-10)
+
+> "preserve the F* implementation as a reference until every relevant
+> theorem is classified as:
+> Reproved in Lean with the same meaning and hypotheses.
+> Replaced by a clearly stronger Lean theorem.
+> Superseded by a different explicitly justified semantic formulation.
+> Intentionally abandoned, with the loss of assurance documented."
+
+- This is the exit criterion for retiring the F\* tree. It adds to the
+  2026-08-29 decision below (keep F\* as lineage and differential oracle
+  until the Lean functionality and gates land): both must hold.
+- Until every relevant F\* theorem has one of the four classes, with the
+  Lean theorem named (or the justification or the loss written), F\* stays
+  in `danbri/factoidal-builds` CI and in the differential tests (`l4diff`,
+  `tests/known-defects`). Nothing under `formal/fstar` is deleted.
+- Tracking: https://github.com/danbri/factoidal/issues/757.
+
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
 > "Yeah DO NOT PORT THAT TERRIBLE HEX CRAP!!!"
