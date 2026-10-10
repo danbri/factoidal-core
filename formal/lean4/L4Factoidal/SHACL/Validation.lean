@@ -366,17 +366,24 @@ def langMatchesRange (tag range : String) : Bool :=
   t == r || t.startsWith (r ++ "-")
 
 /-- §4.4.5 sh:uniqueLang: the language tags used by two or more of the
-values (case-insensitive), each listed once — one result per tag. -/
-def duplicatedLangTags (values : List Term) : List String :=
+values (case-insensitive), each listed once — one result per tag.
+SHACL 1.2 §UniqueLangConstraintComponent: "For value nodes of datatype
+rdf:dirLangString, the base direction is included in the uniqueness
+condition, e.g., "1"@ar--rtl and "1"@ar-ltr are different, as is the
+pair "1"@ar--rtl and "1"@ar" — so the key is the tag together with the
+base direction. -/
+def duplicatedLangTags (values : List Term) : List (String × Option TextDirection) :=
   let langs := values.filterMap fun t =>
     match t with
-    | .literal l => l.val.langTag
+    | .literal l => l.val.langTag.map fun tag => (tag, l.val.direction)
     | _ => none
-  let count (x : String) : Nat := (langs.filter (langTagEq x)).length
-  let rec distinctDups (seen : List String) : List String → List String
+  let keyEq (a b : String × Option TextDirection) : Bool := langTagEq a.1 b.1 && a.2 == b.2
+  let count (x : String × Option TextDirection) : Nat := (langs.filter (keyEq x)).length
+  let rec distinctDups (seen : List (String × Option TextDirection)) :
+      List (String × Option TextDirection) → List (String × Option TextDirection)
     | [] => []
     | x :: rest =>
-      if seen.any (langTagEq x) then distinctDups seen rest
+      if seen.any (keyEq x) then distinctDups seen rest
       else if count x ≥ 2 then x :: distinctDups (x :: seen) rest
       else distinctDups (x :: seen) rest
   distinctDups [] langs

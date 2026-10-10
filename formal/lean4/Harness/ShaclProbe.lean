@@ -84,17 +84,27 @@ def fileUri (absPath : String) : String := "file://" ++ absPath
 def pathOfFileIri (iri : String) : Option String :=
   if iri.startsWith "file://" then some (stripFileScheme iri) else none
 
-/-- Parse a Turtle file against its own `file://` IRI as base. -/
-def parseTtlFile (absPath : String) : IO (Option (Graph × String)) := do
+/-- Parse a Turtle file against its own `file://` IRI as base, as RDF
+1.2 Turtle: the SHACL 1.2 suite writes constraint reifiers with the
+annotation syntax `{| … |}` (core/misc/severity-003,
+core/property/reifierShape-001, …), which RDF 1.1 Turtle rejects. The
+error text is returned so a file that cannot be read is COUNTED as a
+failure, never dropped from the denominator. -/
+def parseTtlFileE (absPath : String) : IO (Except String (Graph × String)) := do
   match ← readOpt absPath with
-  | none => return none
+  | none => return .error "file not found"
   | some raw =>
     let base := fileUri absPath
-    match parseTurtle raw (some base) with
-    | .ok g => return some (g, base)
-    | .error e =>
-      IO.eprintln s!"l4shacl: {absPath}: Turtle parse error: {e}"
-      return none
+    match parseTurtle raw (some base) .rdf12 with
+    | .ok g => return .ok (g, base)
+    | .error e => return .error s!"Turtle parse error: {e}"
+
+def parseTtlFile (absPath : String) : IO (Option (Graph × String)) := do
+  match ← parseTtlFileE absPath with
+  | .ok r => return some r
+  | .error e =>
+    IO.eprintln s!"l4shacl: {absPath}: {e}"
+    return none
 
 /-! ## Thin graph accessors -/
 
@@ -183,6 +193,8 @@ structure TestCase where
   mf:result" — so they are passed to the engine as its configured
   conformance-disallow set; `none` selects the default set. -/
   disallowed    : Option (List Severity) := none
+  /-- The file could not be read or parsed: the entry is a failure. -/
+  readError     : Option String := none
 
 /-- The sub-directory label of a test file: the two path components
 after `/tests/` (`core/node`, `sparql/pre-binding`, …). -/
@@ -229,11 +241,14 @@ partial def collectFromFile (visited : IO.Ref (List String)) (path : String) :
     IO (List TestCase) := do
   if (← visited.get).contains path then return []
   visited.modify (path :: ·)
-  match ← parseTtlFile path with
-  | none =>
-    IO.eprintln s!"l4shacl: cannot read {path}"
-    return []
-  | some (g, base) =>
+  match ← parseTtlFileE path with
+  | .error e =>
+    IO.eprintln s!"l4shacl: cannot read {path}: {e}"
+    -- Counted, not dropped: one failing entry for the unreadable file.
+    return [{ name := s!"(unreadable file) {path}", file := path, group := groupOf path,
+              data := none, shapes := none, expectConforms := none, expectReport := none,
+              expectFailure := false, readError := some e }]
+  | .ok (g, base) =>
     let root := iriTerm base
     let mut included : List TestCase := []
     for inc in objectsOfTerm g root mfInclude do
@@ -294,6 +309,9 @@ def canonOf (g : Graph) : Canonical.CanonResult :=
   Canonical.canonicalize { default := g, named := [] }
 
 def runTest (opts : Options) (tc : TestCase) : Outcome × Bool :=
+  match tc.readError with
+  | some e => (.fail s!"cannot read the test file: {e}", false)
+  | none =>
   match tc.data, tc.shapes with
   | none, _ => (.skip "no dataGraph resolved from mf:action", false)
   | _, none => (.skip "no shapesGraph resolved from mf:action", false)

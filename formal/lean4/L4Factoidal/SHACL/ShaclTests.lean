@@ -37,6 +37,13 @@ def run (body : String) : ValidationReport :=
   let g := ttl body
   validate g (decodeShapesGraph g)
 
+/-- Validate an RDF 1.2 Turtle document (triple terms) against itself. -/
+def run12 (body : String) : ValidationReport :=
+  let g := match parseTurtle (prefixes ++ body) (some "http://example.org/doc") .rdf12 with
+    | .ok g => g
+    | .error _ => []
+  validate g (decodeShapesGraph g)
+
 def components (r : ValidationReport) : List WfIri :=
   r.results.map fun v => constraintComponentIri v.constraint
 
@@ -194,6 +201,19 @@ def uniqueLangOneDoc : String :=
 
 #guard (run uniqueLangOneDoc).conforms == true
 
+/-- SHACL 1.2 §UniqueLangConstraintComponent: the base direction is part
+of the key ("1"@ar--rtl and "1"@ar are different). Parsed as RDF 1.2. -/
+def uniqueLangDirOkDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:label ; sh:uniqueLang true ] . " ++
+  "ex:n ex:label \"A\"@ar, \"A\"@ar--ltr, \"A\"@ar--rtl ."
+
+def uniqueLangDirBadDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:label ; sh:uniqueLang true ] . " ++
+  "ex:n ex:label \"A\"@ar--ltr, \"B\"@ar--ltr, \"C\"@ar ."
+
+#guard (run12 uniqueLangDirOkDoc).conforms == true
+#guard (run12 uniqueLangDirBadDoc).results.length == 1
+
 /-! ### §4.5.3 sh:lessThan — one result per incomparable pair -/
 
 def lessThanDoc : String :=
@@ -331,13 +351,6 @@ def datatypeListDoc : String :=
 def nodeKindListDoc : String :=
   "ex:S a sh:NodeShape ; sh:targetNode ex:a, \"lit\", <<( ex:a ex:p ex:b )>> ; " ++
   "sh:nodeKind ( sh:BlankNode sh:IRI ) ."
-
-/-- Validate an RDF 1.2 Turtle document (triple terms) against itself. -/
-def run12 (body : String) : ValidationReport :=
-  let g := match parseTurtle (prefixes ++ body) (some "http://example.org/doc") .rdf12 with
-    | .ok g => g
-    | .error _ => []
-  validate g (decodeShapesGraph g)
 
 #guard (run12 nodeKindListDoc).results.length == 2   -- the literal and the triple term
 
