@@ -287,6 +287,32 @@ def splitEvaluable (s : Subst) : List Atom → Option (Atom × List Atom)
       if condEvaluable s a then some (a, rest)
       else (splitEvaluable s rest).map (fun (b, r) => (b, a :: r))
 
+/-- `splitEvaluable` with the passed conditions on a reverse accumulator: a
+tail call per condition (https://github.com/danbri/factoidal/issues/746). -/
+def splitEvaluableTR (s : Subst) (as : List Atom) : Option (Atom × List Atom) := go as []
+where
+  go : List Atom → List Atom → Option (Atom × List Atom)
+    | [], _ => none
+    | a :: rest, acc =>
+        if condEvaluable s a then some (a, acc.reverse ++ rest) else go rest (a :: acc)
+
+theorem splitEvaluableTR_go_eq (s : Subst) :
+    ∀ (as acc : List Atom),
+      splitEvaluableTR.go s as acc =
+        (splitEvaluable s as).map (fun (b, r) => (b, acc.reverse ++ r))
+  | [], acc => by simp [splitEvaluableTR.go, splitEvaluable]
+  | a :: rest, acc => by
+      by_cases h : condEvaluable s a = true
+      · simp [splitEvaluableTR.go, splitEvaluable, h]
+      · simp only [splitEvaluableTR.go, splitEvaluable, h]
+        rw [splitEvaluableTR_go_eq s rest]
+        cases splitEvaluable s rest <;> simp
+
+@[csimp] theorem splitEvaluable_eq_TR : @splitEvaluable = @splitEvaluableTR := by
+  funext s as
+  simp only [splitEvaluableTR, splitEvaluableTR_go_eq]
+  cases splitEvaluable s as <;> simp
+
 /-- Apply the pending conditions to a fixed point. Fuel is the pending
     count, since each step removes one. -/
 def runConds (facts : Facts) : Nat → Subst → List Atom → List Subst × Bool

@@ -2990,6 +2990,23 @@ def unorderedPairs : List Term → List (Term × Term)
   | []      => []
   | a :: tl => tl.map (fun b => (a, b)) ++ unorderedPairs tl
 
+/-- `unorderedPairs` onto a reverse accumulator: a tail call per element
+(https://github.com/danbri/factoidal/issues/746). -/
+def unorderedPairsTR (ts : List Term) : List (Term × Term) := go ts []
+where
+  go : List Term → List (Term × Term) → List (Term × Term)
+    | [], acc => acc.reverse
+    | a :: tl, acc => go tl ((tl.map (fun b => (a, b))).reverse ++ acc)
+
+theorem unorderedPairsTR_go_eq :
+    ∀ (ts : List Term) (acc : List (Term × Term)),
+      unorderedPairsTR.go ts acc = acc.reverse ++ unorderedPairs ts
+  | [], acc => by simp [unorderedPairsTR.go, unorderedPairs]
+  | a :: tl, acc => by simp [unorderedPairsTR.go, unorderedPairs, unorderedPairsTR_go_eq tl]
+
+@[csimp] theorem unorderedPairs_eq_TR : @unorderedPairs = @unorderedPairsTR := by
+  funext ts; simp [unorderedPairsTR, unorderedPairsTR_go_eq]
+
 /-- The pairs the ≤-rule branches on: every pair of successors not
     provably different, since in every model of `≤ k p` with more than
     `k` successors SOME such pair denotes one element. The rule closes

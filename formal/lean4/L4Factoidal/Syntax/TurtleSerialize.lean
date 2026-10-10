@@ -446,6 +446,11 @@ theorem sortStrs_eq (xs : List String) : sortStrs xs = sortStrsSpec xs := by
     exact Std.le_antisymm hab hba
   · exact (List.mergeSort_perm xs _).trans (sortStrsSpec_perm xs).symm
 
+/-- Any call of the specification runs the merge sort: the insertion sort
+takes one stack frame per string as well as quadratic time (https://github.com/danbri/factoidal/issues/746). -/
+@[csimp] theorem sortStrsSpec_eq_sortStrs : @sortStrsSpec = @sortStrs := by
+  funext xs; exact (sortStrs_eq xs).symm
+
 def assignLabels : Nat → List (String × Nat) → List (String × String)
   | _, [] => []
   | idx, (ns, _) :: rest =>

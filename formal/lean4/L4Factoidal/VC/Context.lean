@@ -184,6 +184,27 @@ def termsOfFields (isProt : Bool) : List (String × Json) → List (String × Te
       if isKeywordKey k then termsOfFields isProt tl
       else (k, { iri := termIriOfValue v, isProtected := isProt }) :: termsOfFields isProt tl
 
+/-- One field of a context object as a term definition. -/
+def termOfField (isProt : Bool) (kv : String × Json) : Option (String × TermDef) :=
+  if isKeywordKey kv.1 then none
+  else some (kv.1, { iri := termIriOfValue kv.2, isProtected := isProt })
+
+/-- `termsOfFields` as `List.filterMap` (a loop; one frame per field
+otherwise) (https://github.com/danbri/factoidal/issues/746). -/
+def termsOfFieldsTR (isProt : Bool) (fs : List (String × Json)) : List (String × TermDef) :=
+  fs.filterMap (termOfField isProt)
+
+theorem termsOfFields_eq_filterMap (isProt : Bool) :
+    ∀ fs : List (String × Json), termsOfFields isProt fs = fs.filterMap (termOfField isProt)
+  | [] => rfl
+  | (k, v) :: tl => by
+      by_cases h : isKeywordKey k = true
+      · simp [termsOfFields, termOfField, h, termsOfFields_eq_filterMap isProt tl]
+      · simp [termsOfFields, termOfField, h, termsOfFields_eq_filterMap isProt tl]
+
+@[csimp] theorem termsOfFields_eq_TR : @termsOfFields = @termsOfFieldsTR := by
+  funext isProt fs; exact termsOfFields_eq_filterMap isProt fs
+
 /-- The base VCDM 2.0 term map, read from the vendored context document
 (top-level shape `{"@context": {…}}`). -/
 def baseTerms (v2ctx : Json) : List (String × TermDef) :=
