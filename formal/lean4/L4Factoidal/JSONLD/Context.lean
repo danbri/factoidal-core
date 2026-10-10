@@ -110,6 +110,13 @@ inductive JsonLdError where
   /-- HTML Content Algorithms: the script element's content is not the
   JSON it must be. -/
   | invalidScriptElement
+  /-- JSON-LD Framing §5.2: the frame is not a single frame object, or its
+  `@id` or `@type` entry holds an entry that is not an IRI, a wildcard or
+  a default object (blank node identifiers included). -/
+  | invalidFrame
+  /-- JSON-LD Framing §5.2: the value of `@embed` is not one the object
+  embed flag accepts. -/
+  | invalidEmbedValue
   | notJsonLd
   deriving DecidableEq, Repr
 
@@ -166,6 +173,8 @@ def code : JsonLdError → String
   | conflictingIndexes          => "conflicting indexes"
   | loadingDocumentFailed       => "loading document failed"
   | invalidScriptElement        => "invalid script element"
+  | invalidFrame                => "invalid frame"
+  | invalidEmbedValue           => "invalid @embed value"
   | notJsonLd                   => "not JSON-LD"
 
 instance : ToString JsonLdError := ⟨code⟩

@@ -152,7 +152,7 @@ case: pull out `@value` / `@language` / `@type` / `@direction` /
 `@type` (mutually exclusive) but MAY coexist with `@language`. What the
 emitted direction becomes at the RDF layer is `JSONLD.ToRdf`'s
 `rdfDirection` concern; here it is just another expanded-form field. -/
-def expandValueObject (ac : ActiveContext) (fields : List (String × Json)) : Res Json :=
+def expandValueObjectOrdinary (ac : ActiveContext) (fields : List (String × Json)) : Res Json :=
   match findAliasedField ac "@value" fields with
   | none => .error .invalidValueObject
   | some (_, v) =>
@@ -221,6 +221,107 @@ def expandValueObject (ac : ActiveContext) (fields : List (String × Json)) : Re
               if stringHasSpace iri then .error .invalidTypedValue
               else .ok (.object (("@value", v) :: ("@type", .string iri) :: idx))
           | none, none => .ok (.object (("@value", v) :: idx))
+
+/-! ### Frame-mode value patterns
+
+JSON-LD 1.1 API §5.1.2: "When the frameExpansion flag is set, value MAY be
+an empty map or an array of scalar values" for `@value`; `@type` and
+`@language` of a value object likewise MAY be an empty map (the wildcard)
+or an array.  The expanded pattern keeps each of the three as an ARRAY, so
+that the matching algorithm of JSON-LD Framing 1.1 §4.3 reads them
+uniformly: `[]` is "match none", `[{}]` is the wildcard, and any other
+array is the set of accepted values. -/
+
+/-- One entry of a `@value` pattern: a scalar, or the wildcard `{}`. -/
+def patternScalarOk : Json → Bool
+  | .string _ | .number _ | .bool _ => true
+  | .object [] => true
+  | _ => false
+
+/-- One entry of a `@type` or `@language` pattern: a string, or `{}`. -/
+def patternStringOk : Json → Bool
+  | .string _ | .object [] => true
+  | _ => false
+
+/-- Lower-case the string entries of a language pattern. The framing
+spec compares `@language` values "without regard to case" (§4.2). -/
+def lowerPatternLanguages : List Json → List Json
+  | [] => []
+  | .string s :: rest => .string (String.ofList (s.toList.map Char.toLower)) :: lowerPatternLanguages rest
+  | other :: rest => other :: lowerPatternLanguages rest
+
+/-- IRI-expand the string entries of a `@type` pattern; `none` when one
+cannot be expanded or is a blank node identifier. -/
+def expandPatternTypes (ac : ActiveContext) : List Json → Option (List Json)
+  | [] => some []
+  | .object [] :: rest => (expandPatternTypes ac rest).map (fun r => .object [] :: r)
+  | .string t :: rest =>
+    if isBnodeShaped t then none
+    else
+      match expandIri ac t true with
+      | none => none
+      | some iri =>
+        if stringHasSpace iri then none
+        else (expandPatternTypes ac rest).map (fun r => .string iri :: r)
+  | _ => none
+
+/-- A value object written in a frame is a VALUE PATTERN (Framing §4.3). -/
+def expandValuePattern (ac : ActiveContext) (fields : List (String × Json)) (v : Json)
+    : Res Json :=
+  if !valueObjectKeysValid ac fields then .error .invalidValueObject
+  else
+    let vals : List Json := match v with | .null => [] | _ => asArray v
+    if !vals.all patternScalarOk then .error .invalidValueObjectValue
+    else
+      let typeItems : Option (List Json) :=
+        match findAliasedField ac "@type" fields with
+        | none => none
+        | some (_, tv) => some (asArray tv)
+      let langItems : Option (List Json) :=
+        match findAliasedField ac "@language" fields with
+        | none | some (_, .null) => none
+        | some (_, lv) => some (asArray lv)
+      if (match typeItems with | some ts => !ts.all patternStringOk | none => false) then
+        .error .invalidTypedValue
+      else if (match langItems with | some ls => !ls.all patternStringOk | none => false) then
+        .error .invalidLanguageTaggedString
+      else if (match findAliasedField ac "@index" fields with
+               | some (_, .string _) => false | some _ => true | none => false) then
+        .error .invalidIndexValue
+      else
+        let typeOut : Option (Option (List Json)) :=
+          match typeItems with
+          | none => some none
+          | some ts => (expandPatternTypes ac ts).map some
+        match typeOut with
+        | none => .error .invalidTypedValue
+        | some tOut =>
+          let idx : List (String × Json) :=
+            match findAliasedField ac "@index" fields with
+            | some (_, .string s) => [("@index", .string s)]
+            | _ => []
+          .ok (.object (("@value", .array vals)
+                :: (match tOut with | some ts => [("@type", Json.array ts)] | none => [])
+                ++ (match langItems with
+                    | some ls => [("@language", Json.array (lowerPatternLanguages ls))]
+                    | none => [])
+                ++ idx))
+
+/-- Does this value object's `@type` expand to `@json`? -/
+def valueObjectIsJson (ac : ActiveContext) (fields : List (String × Json)) : Bool :=
+  match findAliasedField ac "@type" fields with
+  | some (_, .string t) => expandIri ac t true == some "@json"
+  | _ => false
+
+/-- §5.1.2 value object expansion. Under the Framing grammar a value
+object is a pattern (`expandValuePattern`), except for `@json` literals,
+which keep their ordinary shape. -/
+def expandValueObject (ac : ActiveContext) (fields : List (String × Json)) : Res Json :=
+  match findAliasedField ac "@value" fields with
+  | none => .error .invalidValueObject
+  | some (_, v) =>
+    if ac.cur.frameExpansion && !valueObjectIsJson ac fields then expandValuePattern ac fields v
+    else expandValueObjectOrdinary ac fields
 
 /-- Split a node object's members into its (at most one) `@context`
 value and the rest. -/
@@ -625,6 +726,41 @@ termination_by _ fuel => fuel
 
 end
 
+/-- Under the Framing grammar the expanded `@id` of a frame object is
+ALWAYS an array (API §5.1.2: "expanded value will be an array of one or
+more of the values"): `[iri]`, `[iri, ...]`, or `[{}]` for the wildcard.
+Outside frame expansion the result is returned unchanged. -/
+def frameIdArray (ac : ActiveContext) (r : Res (Option (List (String × Json))))
+    : Res (Option (List (String × Json))) :=
+  if !ac.cur.frameExpansion then r
+  else
+    match r with
+    | .ok (some [("@id", .string s)]) => .ok (some [("@id", .array [.string s])])
+    | .ok (some [("@id", .object [])]) => .ok (some [("@id", .array [.object []])])
+    | other => other
+
+/-- A frame's `@type` entry (API §5.1.2, Framing §4.1.1): an IRI, an array
+of IRIs, the wildcard `{}`, "match none" `[]`, or a default object
+`{"@default": IRI}`. Expanded form is always an array whose entries are
+IRIs, `{}`, or `{"@default": [IRI...]}`. `none` is "invalid type value". -/
+def expandFrameTypeEntry (ac : ActiveContext) : Json → Option (List Json)
+  | .string t => some (expandTypeItems ac [.string t])
+  | .object [] => some [.object []]
+  | .object [("@default", d)] =>
+    let ds := asArray d
+    if typeEntriesAllStrings ds then some [.object [("@default", .array (expandTypeItems ac ds))]]
+    else none
+  | _ => none
+
+def expandFrameTypeValue (ac : ActiveContext) (value : Json) : Option (List Json) :=
+  match value with
+  | .array items =>
+    items.foldr (fun it acc =>
+      match expandFrameTypeEntry ac it, acc with
+      | some xs, some rest => some (xs ++ rest)
+      | _, _ => none) (some [])
+  | other => expandFrameTypeEntry ac other
+
 /-! ## The fuel-threaded expansion group
 
 Result shapes, matching the F* source:
@@ -729,6 +865,7 @@ def expandOneField (loader : Loader) (ac ac0 : ActiveContext) (key : String) (va
   | 0 => .error .contextOverflow
   | fuel + 1 =>
   if key == "@id" then
+    frameIdArray ac <|
     match value with
     | .string s =>
       -- An `@id` VALUE that is a keyword lookalike expands to null,
@@ -764,7 +901,11 @@ def expandOneField (loader : Loader) (ac ac0 : ActiveContext) (key : String) (va
     | _ => .error .invalidIdValue
   else if key == "@type" then
     -- `ac0`, not `ac`: see `expandFieldsList`'s doc comment.
-    if typeEntriesAllStrings (asArray value)
+    if ac.cur.frameExpansion then
+      match expandFrameTypeValue ac0 value with
+      | some items => .ok (some [("@type", .array items)])
+      | none => .error .invalidTypeValue
+    else if typeEntriesAllStrings (asArray value)
     then .ok (some [("@type", .array (expandTypeValues ac0 value))])
     else .error .invalidTypeValue
   else if key == "@graph" then
@@ -816,7 +957,17 @@ def expandOneField (loader : Loader) (ac ac0 : ActiveContext) (key : String) (va
   -- framing algorithm's job. Checked on the literal spelling only,
   -- since a frame document always writes these keywords out.
   else if ac.cur.frameExpansion && isFramingKeyword key then
-    .ok (some [(key, value)])
+    if key == "@default" then
+      -- API §5.1.2: the value of `@default` is expanded with the
+      -- frameExpansion flag OFF and the keyword as the active property.
+      -- A scalar stays a bare scalar (value expansion does not wrap the
+      -- value of a keyword property); an object is expanded as a value
+      -- object or node object.
+      match expandDefaultItems loader (ac.upd (fun c => { c with frameExpansion := false }))
+              (asArray value) fuel with
+      | .error e => .error e
+      | .ok items => .ok (some [("@default", .array items)])
+    else .ok (some [(key, .array (asArray value))])
   else if actualKeyword key then .error .invalidLocalContext
   else if keywordLookalike key then .ok none
   else
@@ -1460,6 +1611,39 @@ def expandItem (loader : Loader) (ac : ActiveContext) (typeMap : Option String)
       | .ok outItems => .ok (some (.object [("@list", .array outItems)]))
 termination_by fuel
 
+/-- The value of a frame's `@default` (API §5.1.2): scalars stay as they
+are, `null` is dropped, arrays are flattened, and objects are expanded as
+value objects or node objects under the ordinary grammar (the caller has
+switched `frameExpansion` off). -/
+def expandDefaultItems (loader : Loader) (ac : ActiveContext) (items : List Json) (fuel : Nat)
+    : Res (List Json) :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match items with
+    | [] => .ok []
+    | .null :: rest => expandDefaultItems loader ac rest fuel
+    | .array inner :: rest =>
+      match expandDefaultItems loader ac inner fuel with
+      | .error e => .error e
+      | .ok a =>
+        match expandDefaultItems loader ac rest fuel with
+        | .error e => .error e
+        | .ok b => .ok (a ++ b)
+    | (.object fields) :: rest =>
+      match expandItem loader ac none none none false (.object fields) fuel with
+      | .error e => .error e
+      | .ok none => expandDefaultItems loader ac rest fuel
+      | .ok (some one) =>
+        match expandDefaultItems loader ac rest fuel with
+        | .error e => .error e
+        | .ok b => .ok (one :: b)
+    | scalar :: rest =>
+      match expandDefaultItems loader ac rest fuel with
+      | .error e => .error e
+      | .ok b => .ok (scalar :: b)
+termination_by fuel
+
 /-- The contents of a `@graph` array: each entry is expanded as a node
 object; a malformed entry is DROPPED rather than failing the whole
 graph. Free-floating entries (a bare scalar, a value object, a list
@@ -1560,28 +1744,35 @@ def expand (loader : Loader) (ac : ActiveContext) (doc : Json) : Res Json :=
             then ac.upd (fun c => { c with docUrl := c.base, originalBase := c.base })
             else ac
   let fuel := 4 * Json.size doc + 48
+  -- A FRAME keeps its free-floating top-level objects (an empty frame
+  -- `{}`, a frame with only `@id`, a value pattern): they are exactly the
+  -- frames the framing algorithm matches against (API §5.1.2, the
+  -- `keepFreeFloatingNodes` behaviour of frame expansion).
+  let keepFree := ac.cur.frameExpansion
+  let dropFree (items : List Json) : List Json :=
+    if keepFree then items else dropFfItems items (4 * fuel)
   match doc with
   | .object fields0 =>
     -- A top-level value or list object is free-floating (a value object
     -- cannot carry `@context`, so no extraction is needed first).
-    if hasField "@value" fields0 || hasField "@list" fields0 then .ok (.array [])
+    if !keepFree && (hasField "@value" fields0 || hasField "@list" fields0) then .ok (.array [])
     else
       match expandNode loader ac doc fuel with
       | .error e => .error e
-      | .ok (.object []) => .ok (.array [])
+      | .ok (.object []) => .ok (.array (if keepFree then [.object []] else []))
       | .ok (.object fields1) =>
         -- Free-floating drop at the top level and in every `@graph` value
         -- array. Fuel is sized from the INPUT document and expansion can
         -- grow the tree by a small constant factor, so over-provision the
         -- walk: exhaustion degrades to "no drop", never to failure.
         if onlyGraphKeys fields1
-        then .ok (.array (dropFfItems (collectGraphValues fields1) (4 * fuel)))
-        else .ok (.array (dropFfItems [.object fields1] (4 * fuel)))
-      | .ok nodeObj => .ok (.array (dropFfItems [nodeObj] (4 * fuel)))
+        then .ok (.array (dropFree (collectGraphValues fields1)))
+        else .ok (.array (dropFree [.object fields1]))
+      | .ok nodeObj => .ok (.array (dropFree [nodeObj]))
   | .array items =>
     match expandTopItems loader ac items fuel with
     | .error e => .error e
-    | .ok outs => .ok (.array (dropFfItems outs (4 * fuel)))
+    | .ok outs => .ok (.array (dropFree outs))
   | _ => .error .notJsonLd
 
 end L4Factoidal.JSONLD
