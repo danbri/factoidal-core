@@ -173,6 +173,89 @@ def plainTerm : TermDef :=
                        | .error _  => false)
         | .error _ => false)
 
+/-! ## Guards — the node map's persistent maps
+
+`Flatten.lean` keeps the node map in `OMap` / `Std.TreeMap` / `DedupArr`
+(see `NodeMapTheorems.lean` for the proofs against the association-list
+definitions). These guards pin the behaviour the proofs state, with a
+negative case beside each positive one. -/
+
+-- `OMap`: first-insertion order, replacement in place, sorted traversal.
+#guard ((((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).upsert "b" 3).toList
+         == [("b", 3), ("a", 2)]
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).toSortedList
+         == [("a", 2), ("b", 1)]
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).find? "a" == some 2
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).find? "c" == none
+#guard ((((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).erase "b").toList == [("a", 2)]
+
+-- `DedupArr`: "already in the array" is canonical-form equality
+-- (member order of an object is irrelevant, array order is not).
+#guard (DedupArr.empty.push (.object [("@id", .string "x"), ("@value", .string "y")])).has
+         (.object [("@value", .string "y"), ("@id", .string "x")])
+#guard !(DedupArr.empty.push (.string "x")).has (.string "y")
+#guard !(DedupArr.empty.push (.array [.string "x", .string "y"])).has
+         (.array [.string "y", .string "x"])
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "x") true).toList == [.string "x"]
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "x") false).toList
+         == [.string "x", .string "x"]
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "z") true).toList
+         == [.string "x", .string "z"]
+
+-- Node map generation end to end, on expanded input read from text.
+def flatEq (input expected : String) : Bool :=
+  match parseJson input, parseJson expected with
+  | .ok i, .ok e =>
+    (match flattenExpanded i with
+     | .ok nodes => expandedEqual (.array nodes) e
+     | .error _  => false)
+  | _, _ => false
+
+-- the same reference twice under one property is collected once, and a
+-- list keeps the order its items had
+#guard flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":2},{\"@value\":1}]}]}]"
+-- values of a property keep their append order (three distinct nodes)
+#guard flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/z\"}]}]"
+-- nodes come out in code-point order of their identifiers, and two
+-- entries for one id merge into one node
+#guard flatEq
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/q\":[{\"@value\":3}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}],\"http://e/q\":[{\"@value\":3}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/q\":[{\"@value\":3}]}]"
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}],\"http://e/q\":[{\"@value\":3}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]}]"
+-- blank nodes are relabelled in first-issue order
+#guard flatEq
+  "[{\"@id\":\"_:x\",\"http://e/p\":[{\"@id\":\"_:y\"}]},{\"@id\":\"_:y\",\"http://e/q\":[{\"@value\":1}]}]"
+  "[{\"@id\":\"_:b0\",\"http://e/p\":[{\"@id\":\"_:b1\"}]},{\"@id\":\"_:b1\",\"http://e/q\":[{\"@value\":1}]}]"
+#guard !flatEq
+  "[{\"@id\":\"_:x\",\"http://e/p\":[{\"@id\":\"_:y\"}]},{\"@id\":\"_:y\",\"http://e/q\":[{\"@value\":1}]}]"
+  "[{\"@id\":\"_:b1\",\"http://e/p\":[{\"@id\":\"_:b0\"}]},{\"@id\":\"_:b0\",\"http://e/q\":[{\"@value\":1}]}]"
+-- a named graph is folded under its name node, ordered by name
+#guard flatEq
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+  "[{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]},{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+-- two different @index values for one node id are an error
+#guard (match parseJson "[{\"@id\":\"http://e/a\",\"@index\":\"x\"},{\"@id\":\"http://e/a\",\"@index\":\"y\"}]" with
+        | .ok j => (match flattenExpanded j with | .error e => e.code == "conflicting indexes" | .ok _ => false)
+        | .error _ => false)
+#guard (match parseJson "[{\"@id\":\"http://e/a\",\"@index\":\"x\"},{\"@id\":\"http://e/a\",\"@index\":\"x\"}]" with
+        | .ok j => (match flattenExpanded j with | .ok _ => true | .error _ => false)
+        | .error _ => false)
+
 /-! ## Guards — Serialize RDF as JSON-LD (API §8.5-8.7) -/
 
 #guard FromRdf.fromRdf L4Factoidal.RDF.Dataset.empty FromRdf.defaultOptions

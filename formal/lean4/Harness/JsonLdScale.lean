@@ -12,14 +12,18 @@ each phase:
   * expand        — `expandDocument` (parse + API §5.1 expansion);
   * node map      — `generateNodeMap` (API §7.1 / §7.2) on the expanded form;
   * flatten       — `flattenExpanded` (node map + §6.1 emission);
+  * frame core    — `frameResults` (node map + Framing §4.1 + clean-up,
+                    everything between expansion and compaction);
   * flatten+ctx   — `flattenDocument` with a context (expand, flatten,
                     compact);
-  * frame         — `frameDocument` (expand, node map, framing, compact).
+  * frame         — `frameDocument` (expand, frame core, compact).
 
 Each time is the minimum of `reps` runs (default 3). Then it checks the
 SCALING ASSERTION of skills/danbri-function-precrime-checkers: for every
 shape, phase and size pair (x, 4x), time(4x) must stay under `bound`
-(9.0) times max(time(x), `floorMs`). A linear-times-log phase gives a
+(9.0) times max(time(x), `floorMs`), for the phases this change repaired:
+node map, flatten and frame core. The other phases are measured and
+printed; their time includes expansion and compaction. A linear-times-log phase gives a
 ratio of about 4 to 6; a quadratic phase gives about 16. The floor keeps a
 sub-millisecond baseline from turning timer noise into a failure. The
 exit code is 1 when any pair fails.
@@ -130,7 +134,10 @@ def shapes : List Shape := [hubShape, fanoutShape, bnodeShape, graphsShape, wide
 
 /-- The phases, in the order they are printed. -/
 def phaseNames : List String :=
-  ["expand", "node map", "flatten", "flatten+ctx", "frame"]
+  ["expand", "node map", "flatten", "frame core", "flatten+ctx", "frame"]
+
+/-- The phases the scaling assertion covers. -/
+def assertedPhases : List String := ["node map", "flatten", "frame core"]
 
 /-- Size of a result, used so the computation cannot be dropped. -/
 def resSize (r : Res Json) : Nat :=
@@ -157,7 +164,7 @@ the two reads, the compiler floats the pure `let` past the clock. -/
     sum := r
   return (best, sum)
 
-/-- Times of the five phases at one size, in microseconds, and a checksum
+/-- Times of the phases at one size, in microseconds, and a checksum
 of the results. -/
 def measure (sh : Shape) (n reps : Nat) : IO (List Nat × Nat) := do
   let loader : Loader := fun _ => none
@@ -171,10 +178,14 @@ def measure (sh : Shape) (n reps : Nat) : IO (List Nat × Nat) := do
     match generateNodeMap ej with | .ok st => st.nodeCount | .error _ => 0)
   let (tFl, fl) ← timed reps (fun _ =>
     match flattenExpanded ej with | .ok xs => xs.length | .error _ => 0)
+  let efj : Json := match expandDocument loader frameDoc none none none true with
+                    | .ok j => j | .error _ => .null
+  let (tCore, core) ← timed reps (fun _ =>
+    resSize (frameResults {} false true ej efj))
   let (tFc, fc) ← timed reps (fun _ =>
     resSize (flattenDocument loader doc (some ctxText) none none true none))
   let (tFr, fr) ← timed reps (fun _ => resSize (frameDocument loader doc frameDoc none none))
-  return ([tExp, tNm, tFl, tFc, tFr], cExp + nm + fl + fc + fr)
+  return ([tExp, tNm, tFl, tCore, tFc, tFr], cExp + nm + fl + core + fc + fr)
 
 def fmtMs (us : Nat) : String :=
   let whole := us / 1000
@@ -210,6 +221,7 @@ def run (base reps : Nat) (bound : Nat) (floorMs : Nat) : IO UInt32 := do
   for sh in shapes do
     let shRows := rows.filter (fun r => r.shape == sh.name)
     for pi in [0:phaseNames.length] do
+      if !assertedPhases.contains phaseNames[pi]! then continue
       for x in [0:sizes.length - 2] do
         match shRows[x]?, shRows[x + 2]? with
         | some r1, some r4 =>

@@ -467,10 +467,11 @@ inductive OVal where
 /-- An output container: a JSON array, or a JSON object whose members are
 values or other containers. The items of an `arr` are stored NEWEST FIRST,
 so adding an item is a `cons`; `matCont` reverses once when it builds the
-JSON value. -/
+JSON value. The members of an `obj` are an insertion-ordered map, so
+setting a member does not scan the members already present. -/
 inductive OCont where
   | arr : List OVal → OCont
-  | obj : List (String × OVal) → OCont
+  | obj : OMap OVal → OCont
 
 structure FState where
   arena : Array OCont
@@ -519,12 +520,12 @@ def allocM (c : OCont) : FM Nat :=
 /-- The object member of a container, if it is an object. -/
 def FState.member (st : FState) (i : Nat) (k : String) : Option OVal :=
   match st.get i with
-  | .obj es => flLookup es k
+  | .obj es => es.find? k
   | .arr _ => none
 
 def FState.setMember (st : FState) (i : Nat) (k : String) (v : OVal) : FState :=
   match st.get i with
-  | .obj es => st.put i (.obj (flUpd es k v))
+  | .obj es => st.put i (.obj (es.upsert k v))
   | .arr _ => st
 
 /-- The `@id` of an output value, if it is a node or a node reference. -/
@@ -549,7 +550,7 @@ def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (it
     match property with
     | none => st
     | some p =>
-      match flLookup es p with
+      match es.find? p with
       | some (.ref k) =>
         (match st.get k with
          | .arr xs => st.put k (.arr (item :: xs))
@@ -557,7 +558,7 @@ def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (it
       | _ =>
         let k := st.arena.size
         let st1 := { st with arena := st.arena.push (.arr [item]) }
-        st1.put parent (.obj (flUpd es p (.ref k)))
+        st1.put parent (.obj (es.upsert p (.ref k)))
 
 /-- §4.1: replace the embedded node `id` by a node reference, drop the
 embeds that depended on it. Mirrors the legacy `@last` handling: the
@@ -579,7 +580,7 @@ def FState.removeEmbed (st : FState) (g id : String) : FState :=
         match prop with
         | none => st
         | some p =>
-          match flLookup es p with
+          match es.find? p with
           | some (.ref k) =>
             (match st.get k with
              | .arr xsRev =>
@@ -627,7 +628,7 @@ def ensureObjMember (parent : Nat) (k : String) : FM Nat := do
   match st.member parent k with
   | some (.ref a) => pure a
   | _ =>
-    let a ← allocM (.obj [])
+    let a ← allocM (.obj OMap.empty)
     modify (fun s => s.setMember parent k (.ref a))
     pure a
 
@@ -682,7 +683,7 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
       if property.isNone then { st with embeds := Std.TreeMap.empty.insert graph OMap.empty }
       else if st.embeds.contains graph then st
       else { st with embeds := st.embeds.insert graph OMap.empty })
-    let out ← allocM (.obj [("@id", .lit (.string id))])
+    let out ← allocM (.obj (OMap.empty.upsert "@id" (.lit (.string id))))
     if isBnodeId id then modify (fun st => st.bumpBnode id)
     let st ← StateT.get
     if !embedded && st.hasEmbed graph id then
@@ -771,7 +772,7 @@ def frameValues (env : Env) (graph : String) (fr : Json) (fl : Flags) (out : Nat
              | none => implicitFrame fl)
           | none => implicitFrame fl
         let arrIdx ← allocM (.arr [])
-        let lst ← allocM (.obj [("@list", .ref arrIdx)])
+        let lst ← allocM (.obj (OMap.empty.upsert "@list" (.ref arrIdx)))
         addOutputM out (some prop) (.ref lst)
         frameListItems env graph lsub lst (getValues o "@list") fuel
       else if isSubjectRef o then
@@ -885,7 +886,7 @@ def matCont (arena : Array OCont) (i : Nat) (fuel : Nat) : Json :=
   | fuel + 1 =>
     match arena[i]? with
     | some (.arr vsRev) => .array (matVals arena vsRev.reverse fuel)
-    | some (.obj es) => .object (matEntries arena es fuel)
+    | some (.obj es) => .object (matEntries arena es.toList fuel)
     | none => .null
 
 def matVals (arena : Array OCont) (vs : List OVal) (fuel : Nat) : List Json :=
@@ -911,7 +912,7 @@ end
 
 def OCont.weight : OCont → Nat
   | .arr vs => 1 + vs.length
-  | .obj es => 1 + es.length
+  | .obj es => 1 + es.size
 
 /-- The JSON tree of the whole arena, rooted at container `root`. -/
 def FState.materialize (st : FState) (root : Nat) : Json :=
@@ -998,6 +999,34 @@ def mergeNodeMaps (graphs : Std.TreeMap String NmGraph) : NmGraph :=
 def frameNamesGraph (ac : ActiveContext) (frameRoot : Json) : Bool :=
   (objFields frameRoot).any (fun kv => kv.1 != "@context" && expandIri ac kv.1 true == some "@graph")
 
+/-- The framing algorithm proper (Framing §5.1 steps 4 to 8): node map
+generation on the expanded input, the Framing Algorithm of §4.1 over it,
+and the removal of `@preserve` wrappers and singleton blank node
+identifiers. The result is the framed array BEFORE compaction.
+`merged` selects the merged graph as the graph to frame (the frame has no
+top-level `@graph`). -/
+def frameResults (opts : FrameOptions) (mode10 merged : Bool) (expandedRaw expandedFrame : Json)
+    : Res Json :=
+  let expanded := lowerLanguages expandedRaw (Json.size expandedRaw + 8)
+  match generateNodeMap expanded with
+  | .error e => .error e
+  | .ok nst =>
+    let graphs := if merged then nst.graphs.insert "@merged" (mergeNodeMaps nst.graphs)
+                  else nst.graphs
+    let root := if merged then "@merged" else "@default"
+    let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }
+    let fuel := 64 * (Json.size expanded + Json.size expandedFrame) + 4096
+    let init : FState :=
+      { arena := #[.arr []], stack := [], embeds := Std.TreeMap.empty,
+        bnodes := Std.TreeMap.empty }
+    match (frameRec env root false (env.subjectsOf root) expandedFrame 0 none fuel).run init with
+    | .error e => .error e
+    | .ok ((), st) =>
+      let prune := opts.pruneBlankNodeIdentifiers.getD (!mode10)
+      let clear := if prune then singletonBnodes st else Std.TreeSet.empty
+      let tree := st.materialize 0
+      .ok (cleanupPreserve clear tree (Json.size tree + 8))
+
 /-- Frame `input` according to `frame` (Framing §5.1, `frame()`). -/
 def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOptions) : Res Json :=
   let mode10 := opts.processingMode == some "json-ld-1.0"
@@ -1024,26 +1053,10 @@ def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOpti
                | none => .ok acSeed) with
         | .error e => .error e
         | .ok ac =>
-          let expanded := lowerLanguages expandedRaw (Json.size expandedRaw + 8)
           let merged := !frameNamesGraph ac frameRoot
-          match generateNodeMap expanded with
+          match frameResults opts mode10 merged expandedRaw expandedFrame with
           | .error e => .error e
-          | .ok nst =>
-            let graphs := if merged then nst.graphs.insert "@merged" (mergeNodeMaps nst.graphs)
-                          else nst.graphs
-            let root := if merged then "@merged" else "@default"
-            let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }
-            let fuel := 64 * (Json.size expanded + Json.size expandedFrame) + 4096
-            let init : FState :=
-              { arena := #[.arr []], stack := [], embeds := Std.TreeMap.empty,
-                bnodes := Std.TreeMap.empty }
-            match (frameRec env root false (env.subjectsOf root) expandedFrame 0 none fuel).run init with
-            | .error e => .error e
-            | .ok ((), st) =>
-              let prune := opts.pruneBlankNodeIdentifiers.getD (!mode10)
-              let clear := if prune then singletonBnodes st else Std.TreeSet.empty
-              let tree := st.materialize 0
-              let results := cleanupPreserve clear tree (Json.size tree + 8)
+          | .ok results =>
               let co : CmpOpts := { arrays := opts.compactArrays, rel := true }
               match compactElem loader ac none results co (16 * Json.size results + 128) with
               | .error e => .error e

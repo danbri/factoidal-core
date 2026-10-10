@@ -231,7 +231,10 @@ def nodeSetIndex (n : NmNode) (idx : Json) : Option NmNode :=
   | none     => some (n.upsert "@index" (.one idx))
 
 /-- A node that consists only of an `@id` entry. -/
-def nodeHasOnlyId (n : NmNode) : Bool := n.size == 1 && n.contains "@id"
+def nodeHasOnlyId (n : NmNode) : Bool :=
+  match n.rev with
+  | [k] => k == "@id"
+  | _   => false
 
 /-! ## State-level operations -/
 
