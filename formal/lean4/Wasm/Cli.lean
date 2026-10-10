@@ -4,13 +4,22 @@ engine, so a person or a script can use it without knowing the
 dispatch ABI (`Wasm/Dispatch.lean`).
 
 This module is thin argument parsing and JSON-envelope decoding ONLY
-(`parse` without `--out` asks `Ops.parseTextToDataset` for the count directly,
-see `parseCountOutput`).
+(`parse` without `--out` asks `Ops.parseTextToDataset` for the dataset and
+prints the size of its RDF 1.1 Concepts normal form, see `parseCountOutput`).
 Every verb below calls one of the `Wasm/Ops/*.lean` functions the wasm
 build and `l4wasm-cli` also call — the same `parseToDatasetJson`,
 `queryDataset`, `owlClosure`, `clParse`, … — and prints the field a
 person wants from the envelope those functions already return. No RDF,
 SPARQL, OWL or CL semantics live here.
+
+The verbs that read RDF (`query`, `update`, `canonicalize`, `closure`,
+`owl-consistent`, `owl-entails`) give the op the PARSED dataset through the
+`*Of` forms (`Ops.queryDatasetOf`, ...). Until 2026-10-10 they wrote the
+dataset as canonical N-Quads and the op parsed the text again
+(https://github.com/danbri/factoidal/issues/724). Each `*Of` op is proved to
+answer the envelope the text op answers on that text (`queryDatasetOf_eq`,
+`canonicalizeOf_eq`, ...; `RDF/DatasetNormalize.lean`), so the printed
+output, row order included, is unchanged.
 
   l4factoidal parse data.ttl --out nquads
   l4factoidal query data.ttl --query-string 'SELECT * WHERE { ?s ?p ?o }'
@@ -93,19 +102,16 @@ def readInput (pathOpt : Option String) : IO (Except String String) := do
         pure (.error s!"{path}: {e}")
 
 /-- Read `pathOpt` under `formatTag`/`baseIri` via the SAME
-`parseTextToDataset` the dispatch ops use, and re-serialise to
-canonical N-Quads — the input path every RDF-consuming verb below
-shares (`query`, `update`, `canonicalize`, `closure`, `owl-consistent`,
-`owl-entails`), because every stateless op past `parse`
-itself takes N-Quads text (`Wasm/Ops/*.lean` module headers). -/
-def readAsNQuads (pathOpt : Option String) (formatTag baseIri : String) :
-    IO (Except String String) := do
+`parseTextToDataset` the dispatch ops use — the input path every
+RDF-consuming verb below shares (`query`, `update`, `canonicalize`,
+`closure`, `owl-consistent`, `owl-entails`). The verb hands the dataset to
+an `Ops.*Of` function, which gives the op what the N-Quads text round trip
+would have given it (`Wasm/Ops/FromDataset.lean`). -/
+def readDataset (pathOpt : Option String) (formatTag baseIri : String) :
+    IO (Except String Dataset) := do
   match ← readInput pathOpt with
   | .error e => pure (.error e)
-  | .ok text =>
-      match Ops.parseTextToDataset text formatTag baseIri with
-      | .error e => pure (.error e)
-      | .ok ds => pure (.ok (Dataset.toCanonicalNQuads ds))
+  | .ok text => pure (Ops.parseTextToDataset text formatTag baseIri)
 
 /-- Resolve a `--foo FILE` / `--foo-string TEXT` pair (exactly one of
 the two) into the text it names — shared by `query` and `update`.
@@ -317,7 +323,11 @@ def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : 
               printLines out.lines
               pure (some (.ok (count, n + out.diags.length)))
 
-/-- `parse --lenient`. Exit 1 when any diagnostic was written. -/
+/-- `parse --lenient`. Exit 1 when any diagnostic was written. The count it
+prints is the number of statements read: a repeated triple counts each time.
+Strict `parse` counts the normalised dataset (`parseCountOutput`, issue 724);
+removing repeats here would need memory that grows with the input, which the
+streaming recovery mode must not use (issue 716). -/
 def parseLenientCmd (s : Scanned) : IO UInt32 := do
   let format := (s.value? "--format").getD "turtle"
   let base := (s.value? "--base").getD ""
@@ -367,12 +377,16 @@ def parseLenientCmd (s : Scanned) : IO UInt32 := do
       if !emit then IO.println (toString count)
       pure (if nDiags > 0 then 1 else 0)
 
-/-- The text `parse` prints when `--out` is absent: the quad count, or the
-parser's error text. -/
+/-- The text `parse` prints when `--out` is absent: the number of quads of
+the parsed dataset in its RDF 1.1 Concepts normal form (`normalizeDataset`:
+§3, "An RDF graph is a set of RDF triples", so a repeated triple counts once;
+§3.3, language tags in lower case), or the parser's error text. It is the
+dataset `query` and the other verbs evaluate on (issue 724), so `parse` and a
+`COUNT(*)` query over the default graph agree. -/
 def parseCountOutput (text format base : String) : Except String String :=
   match Ops.parseTextToDataset text format base with
   | .error msg => .error msg
-  | .ok ds => .ok (toString (Ops.datasetQuadCount ds))
+  | .ok ds => .ok (toString (Ops.datasetQuadCount (normalizeDataset ds)))
 
 /-- The same text read back out of the envelope: what `parse` printed before
 2026-10-10, kept so the guards below can compare the two. -/
@@ -414,6 +428,30 @@ private def sampleTtl : String :=
 #guard !sameOutput (.ok "2") (.ok "3")
 #guard !sameOutput (.ok "2") (.error "2")
 
+/-- Issue 724's example: one triple written twice, a tag in upper case. -/
+private def sampleRepeat : String :=
+  "@prefix e: <http://e/> .\ne:a e:p e:b .\ne:a e:p e:b .\ne:a e:q \"x\"@EN ."
+
+/-- The count a `COUNT(*)` query over the parsed text answers, through the
+command line's own path. -/
+private def queryCountOf (text : String) : Option String :=
+  match Ops.parseTextToDataset text "turtle" "" with
+  | .error _ => none
+  | .ok ds =>
+      match parseJson (Ops.queryDatasetOf ds "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }") with
+      | .error _ => none
+      | .ok j =>
+          ((j.field? "srj").bind (fun srj => (srj.field? "results").bind
+            (fun r => r.getArray? "bindings"))).bind fun rows =>
+              rows.head?.bind (fun row => bindingValue? row "c")
+
+-- `parse` counts the set: 2, where the envelope of the parser's list said 3.
+#guard parseCountOutput sampleRepeat "turtle" "" matches .ok "2"
+#guard parseCountViaEnvelope sampleRepeat "turtle" "" matches .ok "3"
+-- And `query` COUNT(*) on the same text says 2 as well.
+#guard queryCountOf sampleRepeat == some "2"
+#guard queryCountOf sampleTtl == some "4"
+
 def parseCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--out", "--max-errors"] ["--lenient"] args with
   | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 2
@@ -436,18 +474,23 @@ def parseCmd (args : List String) : IO UInt32 := do
           | .error msg => IO.eprintln msg; pure 1
           | .ok n => IO.println n; pure 0
       | some out =>
-        match ← parseEnvelope (Ops.parseToDatasetJson text format base) with
-        | none => pure 1
-        | some j =>
+        -- The text is printed as the op computes it, without the JSON
+        -- envelope `parseToDatasetJson` / `serializeTurtle` wrap it in and
+        -- this verb used to decode again (issue 724). `--out nquads` is the
+        -- envelope's `nquads` member, `Dataset.toCanonicalNQuads`;
+        -- `--out turtle` is `serializeTurtle` on that text
+        -- (`Ops.serializeTurtleTextOf_eq`).
+        match Ops.parseTextToDataset text format base with
+        | .error msg => IO.eprintln msg; pure 1
+        | .ok ds =>
           match out with
           | "nquads" =>
-              IO.println ((j.getString? "nquads").getD "")
+              IO.println (Dataset.toCanonicalNQuads ds)
               pure 0
           | "turtle" =>
-              let nq := (j.getString? "nquads").getD ""
-              match ← parseEnvelope (Ops.serializeTurtle nq) with
-              | none => pure 1
-              | some jt => IO.println ((jt.getString? "turtle").getD ""); pure 0
+              match Ops.serializeTurtleTextOf ds with
+              | .error e => IO.eprintln e; pure 1
+              | .ok t => IO.println t; pure 0
           | other =>
               IO.eprintln s!"l4factoidal parse: unknown --out '{other}' (nquads | turtle)"
               pure 2
@@ -461,10 +504,10 @@ def queryCmd (args : List String) : IO UInt32 := do
     | .ok sparql =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
-      match ← readAsNQuads s.positional[0]? format base with
+      match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
-      | .ok nq =>
-        match ← parseEnvelope (Ops.queryDataset nq sparql) with
+      | .ok ds =>
+        match ← parseEnvelope (Ops.queryDatasetOf ds sparql) with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
 
@@ -477,10 +520,10 @@ def updateCmd (args : List String) : IO UInt32 := do
     | .ok upd =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
-      match ← readAsNQuads s.positional[0]? format base with
+      match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
-      | .ok nq =>
-        match ← parseEnvelope (Ops.updateDataset nq upd) with
+      | .ok ds =>
+        match ← parseEnvelope (Ops.updateDatasetOf ds upd) with
         | none => pure 1
         | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 
@@ -490,10 +533,10 @@ def canonicalizeCmd (args : List String) : IO UInt32 := do
   | .ok s =>
     let format := (s.value? "--format").getD "nquads"
     let base := (s.value? "--base").getD ""
-    match ← readAsNQuads s.positional[0]? format base with
+    match ← readDataset s.positional[0]? format base with
     | .error e => IO.eprintln e; pure 1
-    | .ok nq =>
-      match ← parseEnvelope (Ops.canonicalizeToNQuads nq) with
+    | .ok ds =>
+      match ← parseEnvelope (Ops.canonicalizeOf ds) with
       | none => pure 1
       | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 
@@ -512,15 +555,15 @@ def closureCmd (args : List String) : IO UInt32 := do
       else
         let format := (s.value? "--format").getD "turtle"
         let base := (s.value? "--base").getD ""
-        match ← readAsNQuads s.positional[0]? format base with
+        match ← readDataset s.positional[0]? format base with
         | .error e => IO.eprintln e; pure 1
-        | .ok nq =>
+        | .ok ds =>
           let raw :=
             match regime with
-            | "rdfs"      => Ops.owlClosure nq "RDFS"
-            | "owl-rl"    => Ops.owlClosure nq "OWL-RL"
-            | "rho-df"    => Ops.rhoDfClosure nq
-            | _           => Ops.rdfsPlusClosure nq
+            | "rdfs"      => Ops.owlClosureOf ds "RDFS"
+            | "owl-rl"    => Ops.owlClosureOf ds "OWL-RL"
+            | "rho-df"    => Ops.rhoDfClosureOf ds
+            | _           => Ops.rdfsPlusClosureOf ds
           match ← parseEnvelope raw with
           | none => pure 1
           | some j =>
@@ -535,10 +578,10 @@ def owlConsistentCmd (args : List String) : IO UInt32 := do
     let format := (s.value? "--format").getD "turtle"
     let base := (s.value? "--base").getD ""
     let opts := optsJsonOfFuel (s.value? "--fuel")
-    match ← readAsNQuads s.positional[0]? format base with
+    match ← readDataset s.positional[0]? format base with
     | .error e => IO.eprintln e; pure 1
-    | .ok nq =>
-      match ← parseEnvelope (Ops.owlIsConsistent nq opts) with
+    | .ok ds =>
+      match ← parseEnvelope (Ops.owlIsConsistentOf ds opts) with
       | none => pure 1
       | some j => printVerdict j "consistent"
 
@@ -551,13 +594,13 @@ def owlEntailsCmd (args : List String) : IO UInt32 := do
         let format := (s.value? "--format").getD "turtle"
         let base := (s.value? "--base").getD ""
         let opts := optsJsonOfFuel (s.value? "--fuel")
-        match ← readAsNQuads (some premiseFile) format base with
+        match ← readDataset (some premiseFile) format base with
         | .error e => IO.eprintln e; pure 1
-        | .ok premiseNq =>
-          match ← readAsNQuads (some conclFile) format base with
+        | .ok premiseDs =>
+          match ← readDataset (some conclFile) format base with
           | .error e => IO.eprintln e; pure 1
-          | .ok conclNq =>
-            match ← parseEnvelope (Ops.owlEntails premiseNq conclNq opts) with
+          | .ok conclDs =>
+            match ← parseEnvelope (Ops.owlEntailsOf premiseDs conclDs opts) with
             | none => pure 1
             | some j => printVerdict j "entailed"
     | _, _ =>

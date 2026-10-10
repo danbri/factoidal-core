@@ -121,6 +121,19 @@ if [ "$STDIN_COUNT" = "1" ]; then pass "parse stdin (no file arg)"; else
   fail "parse stdin (no file arg)" "got '$STDIN_COUNT'"
 fi
 
+# Issue 724: `parse` counts the graph as a set (RDF 1.1 Concepts §3) and a
+# COUNT(*) query over the same file agrees with it (before: 3 and 2).
+printf '@prefix e: <http://e/> .\ne:a e:p e:b .\ne:a e:p e:b .\ne:a e:q "x"@EN .\n' > "$TMP/repeat.ttl"
+REP_PARSE="$("$CLI" parse "$TMP/repeat.ttl" --format turtle)"
+REP_QUERY="$("$CLI" query "$TMP/repeat.ttl" --format turtle \
+  --query-string 'SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }' --table | sed -n 2p)"
+if [ "$REP_PARSE" = "2" ] && [ "$REP_QUERY" = "2" ]; then
+  pass "parse and query COUNT(*) agree on a repeated triple (issue 724)"
+else
+  fail "parse and query COUNT(*) agree on a repeated triple (issue 724)" \
+    "parse='$REP_PARSE' query='$REP_QUERY'"
+fi
+
 # --- query ---------------------------------------------------------------
 printf '<http://e/a> <http://e/p> <http://e/b> .\n' > "$TMP/d.nt"
 

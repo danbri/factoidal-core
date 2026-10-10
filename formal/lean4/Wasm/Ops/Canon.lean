@@ -19,6 +19,7 @@ import Wasm.Ops.Support
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuadsFast
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -26,15 +27,30 @@ open L4Factoidal.RDF
 open L4Factoidal.Syntax
 open L4Factoidal.JSON
 
+/-- The `canonicalizeToNQuads` envelope over an ALREADY-PARSED dataset. -/
+def canonicalizeParsed (ds : Dataset) : String :=
+  let r := L4Factoidal.RDF.Canonical.canonicalize ds
+  if r.aborted then
+    errJson "canonicalizeToNQuads: RDFC-1.0 §4.4 excessive-calls budget exceeded"
+  else
+    okWith [("nquads", .string r.nquads)]
+
 /-- `canonicalizeToNQuads(nquads)`. -/
 def canonicalizeToNQuads (nq : String) : String :=
   match parseNQuadsFast nq with
   | .error e => errJson (fmtParseError e)
-  | .ok ds =>
-    let r := L4Factoidal.RDF.Canonical.canonicalize ds
-    if r.aborted then
-      errJson "canonicalizeToNQuads: RDFC-1.0 §4.4 excessive-calls budget exceeded"
-    else
-      okWith [("nquads", .string r.nquads)]
+  | .ok ds => canonicalizeParsed ds
+
+/-- `canonicalizeToNQuads` over a dataset the caller parsed (`FromDataset.lean`,
+issue 724): the envelope the text op answers on the dataset's canonical
+N-Quads, for every dataset. -/
+def canonicalizeOf (ds : Dataset) : String :=
+  withOpsDataset .rdf11 ds canonicalizeParsed
+
+theorem canonicalizeOf_eq (ds : Dataset) :
+    canonicalizeOf ds = canonicalizeToNQuads (Dataset.toCanonicalNQuads ds) := by
+  unfold canonicalizeOf canonicalizeToNQuads
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
 
 end L4Wasm.Ops

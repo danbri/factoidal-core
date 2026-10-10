@@ -1090,4 +1090,20 @@ private def cdGroup : SolutionGroup :=
 #print axioms evalConstruct
 #print axioms evalPath
 
+
+/-! ### ORDER BY order through the native string comparison
+
+`strCompare` compiles to `strCompareFast` (`Expr.lean`, `csimp`). These check
+that the §15.1 order still reads the code point order of IRIs, blank-node
+labels and lexical forms, in both directions. -/
+
+#guard sparqlOrder (.term (.iri (iriQ "http://e/a"))) (.term (.iri (iriQ "http://e/b"))) == -1
+#guard sparqlOrder (.term (.iri (iriQ "http://e/b"))) (.term (.iri (iriQ "http://e/a"))) == 1
+#guard sparqlOrder (.term (.iri (iriQ "http://e/a"))) (.term (.iri (iriQ "http://e/a"))) == 0
+#guard sparqlOrder (.term (.bnode "b10")) (.term (.bnode "b2")) == -1
+#guard sparqlOrder (.term (.literal (Literal.string "b"))) (.term (.literal (Literal.string "ab"))) == 1
+#guard sparqlOrder (.term (.literal (Literal.string "Z"))) (.term (.literal (Literal.string "a"))) == -1
+#guard erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "x")))
+#guard !erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "X")))
+
 end L4Factoidal.SPARQL.QueryTests
