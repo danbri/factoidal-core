@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+**Store format: the literal index is renamed LGI3 and LGI4; re-pack older
+generations.** The literal search index folds each lexical form before it takes
+character 3-grams. On 2026-10-10 the fold changed from ASCII-only to the Unicode
+case mapping that SPARQL `LCASE` uses
+([issue 706](https://github.com/danbri/factoidal/issues/706)), so the grams of a
+non-ASCII literal differ and an index written under the old fold lacks rows the
+Unicode `LCASE` keeps. The two layouts are now named LGI3 (was LGI1, sidecar
+`.lgi3`) and LGI4 (was LGI2, sidecar `.lgi4`), and the manifest layout labels
+changed with them. A generation packed earlier names LGI1 or LGI2; `storeOpen`,
+`storeManifestInspect`, `storeQueryPlan`, `storeQuery`, `l4block-shard-activate`
+and `l4block-quad-query` refuse it with the cause and ask for a re-pack.
+`storeOpen` and `storeHandleList` also report `literalIndexes` and
+`geoIndexes`, the number of retained blocks that hold a decoded index of each
+kind. Record: `docs/designissues/2026-10-10-literal-index-lgi3.md`.
+
 ## 0.8.0 — 2026-09-16
 
 **Behaviour change: parsing is strict by default.** `parse()` (and

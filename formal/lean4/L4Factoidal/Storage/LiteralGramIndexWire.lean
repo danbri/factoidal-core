@@ -1,15 +1,48 @@
 /-
-L4Factoidal.Storage.LiteralGramIndexWire — LGI1 literal search index bytes.
+L4Factoidal.Storage.LiteralGramIndexWire — LGI3 and LGI4 literal search index
+bytes.
 
 Design record: `docs/designissues/2026-09-04-literal-token-index.md`, section 3.
+The rename from LGI1 and LGI2 to LGI3 and LGI4, and the reason for it:
+`docs/designissues/2026-10-10-literal-index-lgi3.md`.
 
-LGI1 is an immutable companion to one IBK3 or IBK4 block. It stores, for every
+## Names
+
+The index has two layouts. Each was renamed once, on 2026-10-10, when its fold
+changed from the ASCII-only `String.toLower` to the Unicode
+`Text.CaseMap.searchFold` (https://github.com/danbri/factoidal/issues/706). For
+a non-ASCII literal the grams, and so the bytes, differ.
+
+    first layout   (fixed-width gaps, no opaque list)   LGI1 until 2026-10-10, LGI3 now
+    second layout  (varint gaps, opaque list)           LGI2 until 2026-10-10, LGI4 now
+
+The identifiers keep their old shape: `magic`, `version`, `encode?`, `decode?`,
+`supported`, `Prefix` and `prefixBytes` are the first layout; the same names
+with the suffix `2` are the second. Only their VALUES changed: `magic` is the
+magic of LGI3, `magic2` the magic of LGI4. The encoders write the new names and
+nothing else. The decoders admit the new names and nothing else.
+
+A byte string that starts with the magic of LGI1 or LGI2 is not an LGI3 or LGI4
+index. It holds grams folded with the ASCII-only fold, so it is not a superset
+of the rows the Unicode `LCASE` keeps, and a reader that trusted it would drop
+rows without saying so. `retiredName?` recognises those two magics and
+`refusal` says why a reader refused the bytes. No decoder here reads either.
+
+LGI3 is the LGI1 byte layout and LGI4 is the LGI2 byte layout, with the magic
+and the version byte changed. Nothing else about the bytes changed: the CRC32C
+covers the payload after the version byte, so an LGI1 file with its magic and
+version replaced is the LGI3 file of the same index, when the index was built
+with the same fold. `#guard`s below pin that for ASCII text.
+
+## LGI3
+
+LGI3 is an immutable companion to one IBK3 or IBK4 block. It stores, for every
 character 3-gram of the case-folded lexical form of every literal in the block
 dictionary, the ascending local term IDs that carry that gram. The local IDs
 are the PTD1 dictionary positions TLI1 uses, so a candidate reaches rows
 through the existing OLI2 object index and no second identity scheme appears.
 
-    magic "LGI1", version 1
+    magic "LGI3", version 3
     prefix   u32 magic, u8 version, [32] targetIBKSha256,
              u32 gramLength, u32 dictCount, u32 literalCount,
              u32 gramCount, u32 directoryBytes, u32 postingsBytes
@@ -34,24 +67,25 @@ the directory extents are contiguous and cover the posting area exactly. An
 encoder that emitted bytes its own decoder refuses would be a defect, and
 `#guard`s below pin the round trip and four rejections.
 
-## LGI2
+## LGI4
 
-Version 2 changes two things and keeps every other byte rule.
+Version 4 changes two things and keeps every other byte rule.
 
-    magic "LGI2", version 2
+    magic "LGI4", version 4
     prefix   u32 magic, u8 version, [32] targetIBKSha256,
              u32 gramLength, u32 dictCount, u32 literalCount,
              u32 gramCount, u32 directoryBytes, u32 postingsBytes,
              u32 opaqueCount
     opaque   opaqueCount ascending distinct u32 local IDs
-    directory  as LGI1, except that a run's `length` is its byte length and is
+    directory  as LGI3, except that a run's `length` is its byte length and is
              no longer four times its posting count
     postings per gram: the first ID as an unsigned LEB128 varint, then each
              later ID as the LEB128 gap from the previous one
     u32      crc32c(payload)
 
-The gaps were fixed-width `u32` in LGI1. On the SKOS `skos:prefLabel` block
-that is 3,018,141 bytes against a 5,571,302 byte block, 54%.
+The gaps were fixed-width `u32` in LGI3 (and in LGI1 before it). On the SKOS
+`skos:prefLabel` block that is 3,018,141 bytes against a 5,571,302 byte block,
+54%.
 
 The opaque list holds the dictionary positions of the literals the index did
 NOT gram: the out-of-line (tag 4) literals of the version-2 term codec, whose
@@ -60,21 +94,26 @@ them for every needle it serves, and
 `LiteralGramIndex.mem_candidatesOpaque_of_opaque` states that they are always
 candidates, so the filter stays a superset when a block holds blob literals.
 
-LGI1 bytes are unchanged. An LGI1 artifact carrying a non-empty opaque list is
-refused by `supported`, because LGI1 has nowhere to write it.
+LGI3 bytes carry no opaque list. An LGI3 artifact carrying a non-empty opaque
+list is refused by `supported`, because LGI3 has nowhere to write it.
 
 ## Theorem status
 
 `decodeLeb128_encodeLeb128` and `parsePostings2_encodePostings2` are proved:
-the varint and one posting run round-trip. The END-TO-END LGI2 round trip is
-pinned by the `#guard`s below and NOT by a theorem, which is the position LGI1
+the varint and one posting run round-trip. The END-TO-END LGI4 round trip is
+pinned by the `#guard`s below and NOT by a theorem, which is the position LGI3
 is in for the same reason: `decode?` reads through `ByteArray.extract` and a
 crc32c over a slice, and no lemma relates those to the encoder's list
 assembly yet.
 
+`decode?_not_retired`, `decode2?_not_retired` and `retired_refused` are proved:
+neither decoder accepts a byte string that starts with the magic of LGI1 or
+LGI2, and a reader that asks `retiredName?` after a refusal is never told
+"re-pack" about bytes a decoder accepted.
+
 There is ONE decoder here. `TermLocalIndexWire` carries a `decodeSpec?` beside
 its `decode?` because its byte-indexed reader is an optimisation of a list
-reader and the two must be proved equal; LGI1 has no such pair yet, so there
+reader and the two must be proved equal; LGI3 has no such pair yet, so there
 is nothing to prove equal and no theorem is claimed.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
@@ -90,17 +129,26 @@ open L4Factoidal.Storage
 open L4Factoidal.Storage.BlockWireV0
 open L4Factoidal.Storage.LiteralGramIndex
 
-def magic : UInt32 := 0x3149474C /-- `LGI1` little endian. -/
-def version : UInt8 := 1
+/-- `LGI3` little endian: the first layout's magic. -/
+def magic : UInt32 := 0x3349474C
+def version : UInt8 := 3
 def prefixBytes : Nat := 4 + 1 + 32 + 4 + 4 + 4 + 4 + 4 + 4
 def crcBytes : Nat := 4
 
-def magic2 : UInt32 := 0x3249474C /-- `LGI2` little endian. -/
-def version2 : UInt8 := 2
-/-- LGI1's prefix plus the u32 `opaqueCount`. -/
+/-- `LGI4` little endian: the second layout's magic. -/
+def magic2 : UInt32 := 0x3449474C
+def version2 : UInt8 := 4
+/-- LGI3's prefix plus the u32 `opaqueCount`. -/
 def prefixBytes2 : Nat := prefixBytes + 4
 
-/-- The fixed LGI1 prefix. A range reader obtains this before it fetches the
+/-- `LGI1` little endian. RETIRED 2026-10-10: the first layout under the
+ASCII-only fold. No encoder writes it and no decoder reads it. It is named here
+only so that a reader can say why it refused the bytes. -/
+def retiredMagic1 : UInt32 := 0x3149474C
+/-- `LGI2` little endian. RETIRED 2026-10-10, as `retiredMagic1`. -/
+def retiredMagic2 : UInt32 := 0x3249474C
+
+/-- The fixed LGI3 prefix. A range reader obtains this before it fetches the
 directory or any posting run. -/
 structure Prefix where
   targetIBKSha256 : ByteArray
@@ -112,7 +160,7 @@ structure Prefix where
   postingsBytes : Nat
   deriving DecidableEq
 
-/-- The fixed LGI2 prefix: LGI1's fields plus the count of opaque local IDs. -/
+/-- The fixed LGI4 prefix: LGI3's fields plus the count of opaque local IDs. -/
 structure Prefix2 where
   targetIBKSha256 : ByteArray
   gramLength : Nat
@@ -146,6 +194,38 @@ def takeExact (n : Nat) (xs : List UInt8) : Option (List UInt8 × List UInt8) :=
   let taken := xs.take n
   if taken.length == n then some (taken, xs.drop n) else none
 
+/-! ## 0. Retired names
+
+The first layout was named LGI1 and the second LGI2 until 2026-10-10. Both
+folded the lexical form with `String.toLower`, which changes `A` to `Z` only.
+The index now folds with `Text.CaseMap.searchFold`, so for a non-ASCII literal
+the grams differ, and an index written under the old fold is not a superset of
+the rows the Unicode `LCASE` keeps. A reader that trusted one would drop rows
+and report nothing. So the decoders below admit the new magic only, and the
+two functions here let a caller say WHY it refused. -/
+
+/-- The retired name whose magic starts `bytes`, if any. -/
+def retiredName? (bytes : ByteArray) : Option String :=
+  match readU32LE (listOfByteArray (bytes.extract 0 4)) 0 with
+  | some found =>
+      if found == retiredMagic1 then some "LGI1"
+      else if found == retiredMagic2 then some "LGI2"
+      else none
+  | none => none
+
+/-- What a reader says about a retired index. -/
+def retiredMessage (name : String) : String :=
+  s!"literal index {name} was folded with the ASCII-only fold. " ++
+  "It does not hold all the rows that the Unicode LCASE keeps. " ++
+  "Re-pack the generation with the current packer. " ++
+  "The packer writes LGI3 or LGI4."
+
+/-- Why a reader refused the bytes of a literal index sidecar. -/
+def refusal (bytes : ByteArray) : String :=
+  match retiredName? bytes with
+  | some name => retiredMessage name
+  | none => "literal index sidecar is malformed, truncated, or fails its checksum"
+
 /-! ## 1. Admission -/
 
 /-- Strictly ascending local IDs. An equal pair is refused: a posting list is
@@ -172,7 +252,7 @@ def supported (artifact : Artifact) : Bool :=
         fitsU32 posting.ids.length &&
         posting.ids.all (fun id => id < artifact.index.dictCount)) &&
     gramsAscending artifact.index.postings.toList &&
-    /- LGI1 has no field for the opaque list, so an artifact carrying one is
+    /- LGI3 has no field for the opaque list, so an artifact carrying one is
        refused rather than written without it. -/
     artifact.index.opaqueIds.isEmpty
 
@@ -224,7 +304,7 @@ def encode? (artifact : Artifact) : Option ByteArray := do
 
 /-! ## 3. Decoding -/
 
-/-- Strictly decode just the fixed-length LGI1 prefix. -/
+/-- Strictly decode just the fixed-length LGI3 prefix. -/
 def decodePrefix? (bytes : ByteArray) : Option Prefix := do
   if bytes.size != prefixBytes then none else do
   let input := listOfByteArray bytes
@@ -295,7 +375,7 @@ def decodeRuns (dictCount : Nat) (runs : ByteArray) :
           entry.gram.length != gramLength then none else
         decodeRuns dictCount runs rest ({ gram := entry.gram, ids } :: reversed)
 
-/-- The LGI1 admission decoder. Every encoder condition is re-run here. -/
+/-- The LGI3 admission decoder. Every encoder condition is re-run here. -/
 def decode? (bytes : ByteArray) : Option Artifact := do
   if bytes.size < prefixBytes + crcBytes then none else do
   let header ← decodePrefix? (bytes.extract 0 prefixBytes)
@@ -321,13 +401,13 @@ def decode? (bytes : ByteArray) : Option Artifact := do
 def entryFor? (entries : List DirectoryEntry) (wanted : List Char) : Option DirectoryEntry :=
   entries.find? (fun entry => entry.gram == wanted)
 
-/-! ## 4. LGI2
+/-! ## 4. LGI4
 
 ### 4.1 Unsigned LEB128
 
 Seven bits of the value per byte, the low group first, the continuation bit
 set on every byte except the last. A gap below 128 therefore costs one byte
-where LGI1 spends four. -/
+where LGI3 spends four. -/
 
 def encodeLeb128 (n : Nat) : List UInt8 :=
   if h : n < 128 then [UInt8.ofNat n]
@@ -488,9 +568,9 @@ theorem parsePostings2_postingRunBytes2 (posting : Posting)
   simpa [postingRunBytes2] using
     parsePostings2_encodePostings2 posting.ids 0 [] hgaps hbound
 
-/-! ### 4.3 The LGI2 artifact -/
+/-! ### 4.3 The LGI4 artifact -/
 
-/-- The LGI2 encoder gate. `decode2?` re-runs every conjunct on what it
+/-- The LGI4 encoder gate. `decode2?` re-runs every conjunct on what it
 reads. -/
 def supported2 (artifact : Artifact) : Bool :=
   artifact.targetIBKSha256.size == 32 &&
@@ -535,7 +615,7 @@ def encode2? (artifact : Artifact) : Option ByteArray := do
     encodeOpaque artifact.index.opaqueIds ++ directory ++ runs
   some <| byteArrayOfList (writeU32LE magic2 ++ [version2] ++ payload ++ writeU32LE (crc32c payload))
 
-/-- Strictly decode just the fixed-length LGI2 prefix. -/
+/-- Strictly decode just the fixed-length LGI4 prefix. -/
 def decodePrefix2? (bytes : ByteArray) : Option Prefix2 := do
   if bytes.size != prefixBytes2 then none else do
   let input := listOfByteArray bytes
@@ -564,7 +644,7 @@ def parseOpaque : Nat → List UInt8 → List Nat → Option (List Nat)
       let value ← readU32LE xs 0
       parseOpaque count (xs.drop 4) (value.toNat :: reversed)
 
-/-- The LGI2 form of `entriesContiguous`. A run's byte length is no longer four
+/-- The LGI4 form of `entriesContiguous`. A run's byte length is no longer four
 times its posting count, because the gaps are varints, so the test is that the
 extents are contiguous from zero and that a run holds at least one ID. -/
 def entriesContiguous2 : List DirectoryEntry → Nat → Bool
@@ -584,7 +664,7 @@ def decodeRuns2 (dictCount : Nat) (runs : ByteArray) :
           entry.gram.length != gramLength then none else
         decodeRuns2 dictCount runs rest ({ gram := entry.gram, ids } :: reversed)
 
-/-- The LGI2 admission decoder. Every encoder condition is re-run here. -/
+/-- The LGI4 admission decoder. Every encoder condition is re-run here. -/
 def decode2? (bytes : ByteArray) : Option Artifact := do
   if bytes.size < prefixBytes2 + crcBytes then none else do
   let header ← decodePrefix2? (bytes.extract 0 prefixBytes2)
@@ -610,6 +690,119 @@ def decode2? (bytes : ByteArray) : Option Artifact := do
          index := { gramLength := gramLength, dictCount := header.dictCount,
                     literalCount := header.literalCount,
                     postings := postings.toArray, opaqueIds := opaqueIds } }
+
+/-! ## 5. The decoders admit the new magic only
+
+`retiredName?` is the question a reader asks AFTER a decoder refused. These
+theorems state the other half: a byte string either decoder ACCEPTS is never a
+retired name, so a reader cannot be told "re-pack" about a file it read. The
+proof goes through the first four bytes, which `decodePrefix?` reads from an
+`extract` of the artifact and `retiredName?` reads from another. -/
+
+theorem magics_distinct :
+    retiredMagic1 ≠ magic ∧ retiredMagic1 ≠ magic2 ∧ retiredMagic2 ≠ magic ∧
+    retiredMagic2 ≠ magic2 ∧ magic ≠ magic2 := by decide
+
+theorem decodePrefix?_magic (bytes : ByteArray) (p : Prefix) (h : decodePrefix? bytes = some p) :
+    readU32LE (listOfByteArray bytes) 0 = some magic := by
+  unfold decodePrefix? at h
+  by_cases hs : (bytes.size != prefixBytes) = true
+  · simp [hs] at h
+  cases hm : readU32LE (listOfByteArray bytes) 0 with
+  | none => simp [hs, hm] at h
+  | some fm =>
+    simp [hs, hm] at h
+    rw [h.1]
+
+theorem decodePrefix2?_magic (bytes : ByteArray) (p : Prefix2)
+    (h : decodePrefix2? bytes = some p) :
+    readU32LE (listOfByteArray bytes) 0 = some magic2 := by
+  unfold decodePrefix2? at h
+  by_cases hs : (bytes.size != prefixBytes2) = true
+  · simp [hs] at h
+  cases hm : readU32LE (listOfByteArray bytes) 0 with
+  | none => simp [hs, hm] at h
+  | some fm =>
+    simp [hs, hm] at h
+    rw [h.1]
+
+/-- A prefix of an artifact reads, element by element, as the artifact does. -/
+theorem extract_get (bytes : ByteArray) (n i : Nat) (hi : i < n) :
+    (listOfByteArray (bytes.extract 0 n))[i]? = (listOfByteArray bytes)[i]? := by
+  simp [listOfByteArray, ByteArray.extract, ByteArray.copySlice]
+  rw [List.getElem?_take_of_lt hi, Array.getElem?_toList]
+
+theorem take4_extract (bytes : ByteArray) (n : Nat) (h4 : 4 ≤ n) :
+    (listOfByteArray (bytes.extract 0 n)).take 4 = (listOfByteArray bytes).take 4 := by
+  apply List.ext_getElem?
+  intro i
+  by_cases hi : i < 4
+  · rw [List.getElem?_take_of_lt hi, List.getElem?_take_of_lt hi]
+    exact extract_get bytes n i (by omega)
+  · simp [List.getElem?_take, hi]
+
+/-- `readU32LE` at position zero looks at the first four elements only. -/
+theorem readU32LE_take4 (a b : List UInt8) (h : a.take 4 = b.take 4) :
+    readU32LE a 0 = readU32LE b 0 := by
+  rcases a with _ | ⟨a0, _ | ⟨a1, _ | ⟨a2, _ | ⟨a3, a'⟩⟩⟩⟩ <;>
+  rcases b with _ | ⟨b0, _ | ⟨b1, _ | ⟨b2, _ | ⟨b3, b'⟩⟩⟩⟩ <;>
+  simp_all [readU32LE]
+
+theorem readU32LE_extract (bytes : ByteArray) (n : Nat) (h4 : 4 ≤ n) :
+    readU32LE (listOfByteArray (bytes.extract 0 n)) 0 = readU32LE (listOfByteArray bytes) 0 :=
+  readU32LE_take4 _ _ (take4_extract bytes n h4)
+
+theorem retiredName?_of_magic (bytes : ByteArray) (m : UInt32)
+    (h : readU32LE (listOfByteArray bytes) 0 = some m) :
+    retiredName? bytes = if m == retiredMagic1 then some "LGI1"
+      else if m == retiredMagic2 then some "LGI2" else none := by
+  unfold retiredName?
+  rw [readU32LE_extract bytes 4 (by omega), h]
+
+/-- An LGI3 artifact the decoder accepts is not a retired name. -/
+theorem decode?_not_retired (bytes : ByteArray) (a : Artifact) (h : decode? bytes = some a) :
+    retiredName? bytes = none := by
+  unfold decode? at h
+  by_cases hsize : bytes.size < prefixBytes + crcBytes
+  · simp [hsize] at h
+  cases hp : decodePrefix? (bytes.extract 0 prefixBytes) with
+  | none => simp [hsize, hp] at h
+  | some header =>
+    have hm := decodePrefix?_magic _ _ hp
+    have hm' : readU32LE (listOfByteArray bytes) 0 = some magic := by
+      rw [← readU32LE_extract bytes prefixBytes (by decide)]; exact hm
+    rw [retiredName?_of_magic bytes magic hm']
+    have h1 : (magic == retiredMagic1) = false := by decide
+    have h2 : (magic == retiredMagic2) = false := by decide
+    simp [h1, h2]
+
+/-- An LGI4 artifact the decoder accepts is not a retired name. -/
+theorem decode2?_not_retired (bytes : ByteArray) (a : Artifact) (h : decode2? bytes = some a) :
+    retiredName? bytes = none := by
+  unfold decode2? at h
+  by_cases hsize : bytes.size < prefixBytes2 + crcBytes
+  · simp [hsize] at h
+  cases hp : decodePrefix2? (bytes.extract 0 prefixBytes2) with
+  | none => simp [hsize, hp] at h
+  | some header =>
+    have hm := decodePrefix2?_magic _ _ hp
+    have hm' : readU32LE (listOfByteArray bytes) 0 = some magic2 := by
+      rw [← readU32LE_extract bytes prefixBytes2 (by decide)]; exact hm
+    rw [retiredName?_of_magic bytes magic2 hm']
+    have h1 : (magic2 == retiredMagic1) = false := by decide
+    have h2 : (magic2 == retiredMagic2) = false := by decide
+    simp [h1, h2]
+
+/-- The refusal of a retired name is a refusal by BOTH decoders. -/
+theorem retired_refused (bytes : ByteArray) (name : String) (h : retiredName? bytes = some name) :
+    decode? bytes = none ∧ decode2? bytes = none := by
+  constructor
+  · cases hd : decode? bytes with
+    | none => rfl
+    | some a => rw [decode?_not_retired bytes a hd] at h; simp at h
+  · cases hd : decode2? bytes with
+    | none => rfl
+    | some a => rw [decode2?_not_retired bytes a hd] at h; simp at h
 
 /-- The encoded byte count of one index in each version, for the size
 measurement of the design record. -/
@@ -647,10 +840,11 @@ private def outOfRange : Artifact :=
 #guard ((decode? sampleBytes).map (fun a => candidates? a.index "glacier"))
   == some (candidatesSpec sampleDict "glacier")
 
-/-! ## LGI2 samples
+/-! ## LGI4 samples
 
-The same fixture with an opaque list, through the version-2 codec. LGI1 bytes
-are untouched: every `#guard` above still runs against `encode?`/`decode?`. -/
+The same fixture with an opaque list, through the second layout's codec. The
+first layout is untouched: every `#guard` above still runs against
+`encode?`/`decode?`. -/
 
 private def sample2 : Artifact :=
   { sample with index := { sample.index with opaqueIds := [3] } }
@@ -668,7 +862,7 @@ private def outOfRangeOpaque : Artifact :=
 #guard (decode2? (sample2Bytes.extract 0 (sample2Bytes.size - 1))).isNone
 #guard (encode2? unsortedOpaque).isNone
 #guard (encode2? outOfRangeOpaque).isNone
--- LGI1 has no field for the opaque list, so it refuses an artifact with one.
+-- LGI3 has no field for the opaque list, so it refuses an artifact with one.
 #guard (encode? sample2).isNone
 #guard supported sample
 -- Neither decoder reads the other's bytes: the magic and the version differ.
@@ -676,7 +870,7 @@ private def outOfRangeOpaque : Artifact :=
 #guard (decode2? sampleBytes).isNone
 #guard (decodePrefix2? (sample2Bytes.extract 0 prefixBytes2)).map Prefix2.opaqueCount == some 1
 #guard prefixBytes2 == prefixBytes + 4
--- The candidate set of the decoded LGI2 index is the specification's union.
+-- The candidate set of the decoded LGI4 index is the specification's union.
 #guard ((decode2? sample2Bytes).map (fun a => candidatesOpaque? a.index "water"))
   == some (candidatesSpecOpaque sampleDict [3] "water")
 #guard ((decode2? sample2Bytes).map (fun a => candidatesOpaque? a.index "bicycle"))
@@ -690,11 +884,119 @@ private def outOfRangeOpaque : Artifact :=
 #guard (encodeLeb128 4294967295).length == 5
 #guard decodeLeb128 (encodeLeb128 4294967295 ++ [9]) == some (4294967295, [9])
 #guard decodeLeb128 (encodeLeb128 300) == some (300, [])
--- LGI2 is smaller than LGI1 on this fixture, which has small gaps.
+-- LGI4 is smaller than LGI3 on this fixture, which has small gaps.
 #guard match encodedBytes1 sample, encodedBytes2 sample with
   | some one, some two => two < one
   | _, _ => false
 
+
+/-! ## The rename of 2026-10-10: LGI1 to LGI3, LGI2 to LGI4
+
+`legacyLgi1` and `legacyLgi2` are the bytes the encoders wrote for `sample` and
+`sample2` BEFORE the rename (produced from the tree at commit 685326b2 with the
+ASCII-only fold; the sample text is ASCII). They pin three statements:
+
+* the new encoders write the new magic and version and nothing else about the
+  bytes changed: an old file with its magic and version replaced is exactly
+  the file the new encoder writes for the same ASCII index;
+* the new decoders refuse the old files;
+* a refusal names the cause. -/
+
+private def nibble (c : Char) : Nat :=
+  if c.toNat >= 97 then c.toNat - 87 else c.toNat - 48
+
+private def bytesOfHexLiteral (hex : String) : ByteArray :=
+  let rec go : List Char → List UInt8
+    | hi :: lo :: rest => UInt8.ofNat (nibble hi * 16 + nibble lo) :: go rest
+    | _ => []
+  ByteArray.mk (go hex.toList).toArray
+
+private def legacyLgi1 : ByteArray := bytesOfHexLiteral
+  "4c4749310107070707070707070707070707070707070707070707070707070707070707070300000005000000040000001f0000004d0200009800000003000000206c6100000000040000000100000003000000207665040000000400000001000000030000006163690800000004000000010000000300000061676f0c000000040000000100000003000000616c6c10000000040000000100000003000000617465140000000c000000030000000300000063696520000000040000000100000003000000636c6524000000040000000100000003000000646572280000000400000001000000030000006568692c00000004000000010000000300000065722030000000080000000200000003000000657266380000000400000001000000030000006572773c00000004000000010000000300000066616c40000000040000000100000003000000676c6144000000040000000100000003000000676f6f480000000400000001000000030000006869634c00000004000000010000000300000069636c50000000040000000100000003000000696572540000000400000001000000030000006c6163580000000400000001000000030000006c61675c0000000400000001000000030000006e6465600000000400000001000000030000006f6f6e6400000004000000010000000300000072206c680000000400000001000000030000007220766c0000000400000001000000030000007266617000000004000000010000000300000072776174000000040000000100000003000000746572780000000c0000000300000003000000756e6484000000040000000100000003000000766568880000000400000001000000030000007761748c0000000c00000003000000020000000100000002000000020000000400000000000000010000000300000002000000010000000100000001000000010000000100000004000000010000000400000002000000020000000100000001000000020000000200000002000000010000000200000002000000010000000400000001000000000000000100000003000000010000000100000000000000010000000300000052daf0ee"
+
+private def legacyLgi2 : ByteArray := bytesOfHexLiteral
+  "4c4749320207070707070707070707070707070707070707070707070707070707070707070300000005000000040000001f0000004d02000026000000010000000300000003000000206c6100000000010000000100000003000000207665010000000100000001000000030000006163690200000001000000010000000300000061676f03000000010000000100000003000000616c6c040000000100000001000000030000006174650500000003000000030000000300000063696508000000010000000100000003000000636c65090000000100000001000000030000006465720a0000000100000001000000030000006568690b0000000100000001000000030000006572200c0000000200000002000000030000006572660e0000000100000001000000030000006572770f00000001000000010000000300000066616c10000000010000000100000003000000676c6111000000010000000100000003000000676f6f120000000100000001000000030000006869631300000001000000010000000300000069636c14000000010000000100000003000000696572150000000100000001000000030000006c6163160000000100000001000000030000006c6167170000000100000001000000030000006e6465180000000100000001000000030000006f6f6e1900000001000000010000000300000072206c1a0000000100000001000000030000007220761b0000000100000001000000030000007266611c0000000100000001000000030000007277611d0000000100000001000000030000007465721e000000030000000300000003000000756e642100000001000000010000000300000076656822000000010000000100000003000000776174230000000300000003000000020102020400010302010101010104010402020101020202010202010401000103010100010322a15c96"
+
+/-- The first five bytes (magic and version) replaced, the rest kept. -/
+private def withHeader (bytes : ByteArray) (m : UInt32) (v : UInt8) : ByteArray :=
+  byteArrayOfList (writeU32LE m ++ [v] ++ (listOfByteArray bytes).drop 5)
+
+-- The encoders write the new names.
+#guard sampleBytes.extract 0 4 == "LGI3".toUTF8
+#guard sample2Bytes.extract 0 4 == "LGI4".toUTF8
+#guard sampleBytes.get! 4 == 3
+#guard sample2Bytes.get! 4 == 4
+#guard (readU32LE (listOfByteArray sampleBytes) 0) == some magic
+#guard (readU32LE (listOfByteArray sample2Bytes) 0) == some magic2
+-- ... and never a retired one.
+#guard (retiredName? sampleBytes).isNone
+#guard (retiredName? sample2Bytes).isNone
+-- Nothing but the magic and the version byte changed, for ASCII text.
+#guard legacyLgi1.size == sampleBytes.size
+#guard legacyLgi2.size == sample2Bytes.size
+#guard withHeader legacyLgi1 magic version == sampleBytes
+#guard withHeader legacyLgi2 magic2 version2 == sample2Bytes
+-- An old file is a retired name, and neither decoder reads it.
+#guard retiredName? legacyLgi1 == some "LGI1"
+#guard retiredName? legacyLgi2 == some "LGI2"
+#guard (decode? legacyLgi1).isNone
+#guard (decode2? legacyLgi1).isNone
+#guard (decode? legacyLgi2).isNone
+#guard (decode2? legacyLgi2).isNone
+-- The refusal says why, and says what to do.
+#guard (refusal legacyLgi1).startsWith "literal index LGI1 was folded with the ASCII-only fold"
+#guard (refusal legacyLgi2).startsWith "literal index LGI2 was folded with the ASCII-only fold"
+#guard ((refusal legacyLgi1).splitOn "Re-pack the generation with the current packer.").length == 2
+-- A damaged current file is refused with the generic message, not a retired one.
+#guard refusal (corrupt sampleBytes) ==
+  "literal index sidecar is malformed, truncated, or fails its checksum"
+#guard refusal ByteArray.empty ==
+  "literal index sidecar is malformed, truncated, or fails its checksum"
+-- The new magic with the OLD version byte is refused, and so is the reverse:
+-- the version byte names the layout as the magic does.
+#guard (decode? (withHeader sampleBytes magic 1)).isNone
+#guard (decode? (withHeader sampleBytes magic 4)).isNone
+#guard (decode2? (withHeader sample2Bytes magic2 2)).isNone
+-- LGI3 bytes are not LGI4 and the reverse.
+#guard (decode? (withHeader sampleBytes magic2 version2)).isNone
+#guard (decode2? (withHeader sample2Bytes magic version)).isNone
+
+/-! A non-ASCII needle through the index. `École Normale` carries the grams
+`éco` and `nor` under the Unicode fold; under the ASCII-only fold it carried
+`Éco`, and the needle `école` carried `éco`, so the filter dropped a row the
+scan keeps. The index is built, written, read back, and asked. -/
+
+private def uniDict : Array Term :=
+  #[lit "École Normale", lit "\u212AELVIN", lit "plain", .iri ex, lit "Straße"]
+private def uniArtifact : Artifact :=
+  { targetIBKSha256 := ByteArray.mk (Array.replicate 32 9), index := build uniDict }
+private def uniBytes : ByteArray := (encode? uniArtifact).getD ByteArray.empty
+private def uniBytes2 : ByteArray :=
+  (encode2? { uniArtifact with index := { uniArtifact.index with opaqueIds := [3] } }).getD
+    ByteArray.empty
+
+#guard uniBytes.extract 0 4 == "LGI3".toUTF8
+#guard uniBytes2.extract 0 4 == "LGI4".toUTF8
+-- Round trip.
+#guard decode? uniBytes == some uniArtifact
+#guard (decode2? uniBytes2).map (·.index.opaqueIds) == some [3]
+-- The needle `école` reaches `École Normale` (position 0), and only it.
+#guard ((decode? uniBytes).map (fun a => candidates? a.index "école")) == some (some [0])
+#guard ((decode2? uniBytes2).map (fun a => candidatesOpaque? a.index "école")) == some (some [0, 3])
+-- KELVIN SIGN lower-cases to `k`: the needle `kelvin` reaches it.
+#guard ((decode? uniBytes).map (fun a => candidates? a.index "kelvin")) == some (some [1])
+-- `ß` is its own lowercase: `straße` reaches `Straße`.
+#guard ((decode? uniBytes).map (fun a => candidates? a.index "straße")) == some (some [4])
+-- The decoded index answers as the specification does.
+#guard ((decode? uniBytes).map (fun a => candidates? a.index "école")) ==
+  some (candidatesSpec uniDict "école")
+-- A needle that is in no literal reaches nothing.
+#guard ((decode? uniBytes).map (fun a => candidates? a.index "ecole")) == some (some [])
+
+#print axioms magics_distinct
+#print axioms decode?_not_retired
+#print axioms decode2?_not_retired
+#print axioms retired_refused
 #print axioms decodeLeb128_encodeLeb128
 #print axioms parsePostings2_encodePostings2
 #print axioms parsePostings2_postingRunBytes2

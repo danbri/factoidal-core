@@ -88,7 +88,7 @@ inductive BlockLayout where
   | ibk3
   | ibk4
   /-- SBM10's block codec: the IBK4 layout over a PTD2 dictionary of version-2
-      terms. Kind byte 2. Required under the `quad-ibk5-ptd2-lgi2-gbi1-merkle-v0`
+      terms. Kind byte 2. Required under the `quad-ibk5-ptd2-lgi4-gbi1-merkle-v0`
       label and refused under every earlier one. -/
   | ibk5
   deriving DecidableEq
@@ -132,15 +132,18 @@ structure Entry where
   /-- Present and mandatory for SBM6. This independently committed OLI2
       object maps this artifact's local object IDs to source-row offsets. -/
   objectIndex : Option ArtifactRef := none
-  /-- Present and mandatory for SBM8. This independently committed LGI1
+  /-- Present and mandatory for SBM8. This independently committed LGI3
       object holds the character 3-grams of the case-folded lexical form of
       every literal in this IBK4 artifact's dictionary, with the local term
-      IDs that carry each gram. It is a CANDIDATE FILTER: a planner that uses
+      IDs that carry each gram. The fold is `Text.CaseMap.searchFold`. A
+      generation packed before 2026-10-10 names LGI1 here and was folded with
+      the ASCII-only fold; the layout label refuses it
+      (`retiredLiteralIndexLayout`). It is a CANDIDATE FILTER: a planner that uses
       it re-evaluates the original SPARQL expression on the candidates, so
       the rows are the scan's rows. Design record:
       `docs/designissues/2026-09-04-literal-token-index.md`.
 
-      A block whose dictionary holds no literal carries an LGI1 with no gram
+      A block whose dictionary holds no literal carries an LGI3 with no gram
       rather than no sidecar, so an SBM8 reader never asks whether the role is
       present; it asks whether the manifest is SBM8. -/
   literalIndex : Option ArtifactRef := none
@@ -230,10 +233,32 @@ def contiguousOrdinals : List Entry → Nat → Bool
   | [], _ => true
   | entry :: rest, expected => entry.ordinal == expected && contiguousOrdinals rest (expected + 1)
 
+/-- The layout labels that name the literal search index under the ASCII-only
+    fold: LGI1 at SBM8 and SBM9, LGI2 at SBM10. Until 2026-10-10 these were the
+    labels of the three index-bearing versions. The index fold changed to
+    `Text.CaseMap.searchFold` (https://github.com/danbri/factoidal/issues/706),
+    and a generation written under the old fold is not a superset of the rows
+    the Unicode `LCASE` keeps. Each label was replaced by one that names LGI3 or
+    LGI4, and none of these is admitted at any version.
+
+    The version numbers 8, 9 and 10 keep their meaning (the field sets are
+    unchanged); the label is the name of the sidecar contract, and it is the
+    label that changed. See `docs/designissues/2026-10-10-literal-index-lgi3.md`
+    for the reason the versions were not renumbered. -/
+def retiredLiteralIndexLayouts : List String :=
+  [ "quad-ibk4-ptd1-lgi1-merkle-v0"
+  , "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+  , "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0" ]
+
+def retiredLiteralIndexLayout (layout : String) : Bool :=
+  retiredLiteralIndexLayouts.contains layout
+
 /-- The manifest wire version owns the sidecar contract; layout names must not
     silently select a weaker reader.  Versions zero through two predate the
-    IBK3 sidecars and deliberately remain layout-extensible. -/
+    IBK3 sidecars and deliberately remain layout-extensible, EXCEPT for a
+    retired literal-index label, which no version admits. -/
 def layoutConsistent (version : Nat) (layout : String) : Bool :=
+  !retiredLiteralIndexLayout layout &&
   match version with
   | 3 => layout == "predicate-ibk3-ptd1-sri1-merkle-v0" ||
       layout == "predicate-ibk3-ptd1-sri1-merkle-v0-compacted-default-dlog-v1"
@@ -249,44 +274,44 @@ def layoutConsistent (version : Nat) (layout : String) : Bool :=
      either; the compactor does not build IBK4 generations, and admitting a
      label nothing writes would be an untested reader path. -/
   | 7 => layout == "quad-ibk4-ptd1-merkle-v0"
-  /- SBM8 is SBM7 plus the LGI1 literal search index in a fourth sidecar
+  /- SBM8 is SBM7 plus the LGI3 literal search index in a fourth sidecar
      role. The label changes because the sidecar contract changed, and a
      reader must not select a weaker reader by name. -/
-  | 8 => layout == "quad-ibk4-ptd1-lgi1-merkle-v0"
+  | 8 => layout == "quad-ibk4-ptd1-lgi3-merkle-v0"
   /- SBM9 is SBM8 plus the GBI1 geometry bounding-box index in a fifth
      sidecar role. The label changes for the reason SBM8's did: a reader must
      not select a weaker reader by name. -/
-  | 9 => layout == "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+  | 9 => layout == "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
   /- SBM10 keeps SBM9's five sidecar roles and changes three things at once:
-     the block codec is IBK5, the literal index is LGI2, and the manifest
+     the block codec is IBK5, the literal index is LGI4, and the manifest
      carries a blob table and per-entry zone maps. The label changes for the
      reason every earlier one did: a reader must not select a weaker reader by
      name. -/
-  | 10 => layout == "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
+  | 10 => layout == "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0"
   | _ => true
 
 /-- The block codec every entry of a generation must use, from its
     manifest-level layout label. `none` for the labels that predate the
     per-entry field. -/
 def layoutBlockKind (layout : String) : Option BlockLayout :=
-  if layout == "quad-ibk4-ptd1-merkle-v0" || layout == "quad-ibk4-ptd1-lgi1-merkle-v0" ||
-      layout == "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0" then
+  if layout == "quad-ibk4-ptd1-merkle-v0" || layout == "quad-ibk4-ptd1-lgi3-merkle-v0" ||
+      layout == "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0" then
     some .ibk4
-  else if layout == "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0" then some .ibk5 else none
+  else if layout == "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0" then some .ibk5 else none
 
 /-- The layout labels naming a generation of IBK4 quad blocks: SBM7's, SBM8's,
-    which adds the LGI1 literal search index sidecar, and SBM9's, which adds
+    which adds the LGI3 literal search index sidecar, and SBM9's, which adds
     the GBI1 geometry bounding-box index beside it. -/
 def isIbk4Layout (layout : String) : Bool :=
-  layout == "quad-ibk4-ptd1-merkle-v0" || layout == "quad-ibk4-ptd1-lgi1-merkle-v0" ||
-  layout == "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+  layout == "quad-ibk4-ptd1-merkle-v0" || layout == "quad-ibk4-ptd1-lgi3-merkle-v0" ||
+  layout == "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
 
 /-- The layout label naming a generation of IBK5 quad blocks. It is deliberately
     NOT a member of `isIbk4Layout`: an IBK4 reader over IBK5 bytes misreads
     terms rather than failing, so a reader selects its block codec by name and a
     reader that does not implement IBK5 refuses the generation. -/
 def isIbk5Layout (layout : String) : Bool :=
-  layout == "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
+  layout == "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0"
 
 /-- Every layout label naming a generation of IBK3 blocks, base or compacted.
 
@@ -1771,7 +1796,7 @@ def encodeEntry (version : Nat) (entry : Entry) : List UInt8 :=
           encodeCommon entry ++ encodeChunkedRef chunked ++
             encodeQuadTail kind entry.blankNodeScope entry.graphSet
       | none => []
-  /- SBM8 writes the LGI1 sidecar where SBM6 writes its object index, before
+  /- SBM8 writes the LGI3 sidecar where SBM6 writes its object index, before
      the quad tail, so the decoder reads one field sequence rather than a
      version-dependent reordering. -/
   | 8, some chunked =>
@@ -1781,7 +1806,7 @@ def encodeEntry (version : Nat) (entry : Entry) : List UInt8 :=
             encodeQuadTail kind entry.blankNodeScope entry.graphSet
       | _, _ => []
   /- SBM9 is SBM8 plus the GBI1 geometry bounding-box index, written
-     immediately after the LGI1 sidecar and before the quad tail, so the
+     immediately after the LGI3 sidecar and before the quad tail, so the
      decoder reads one field sequence rather than a version-dependent
      reordering. -/
   | 9, some chunked =>
@@ -1972,6 +1997,41 @@ def decode? (bytes : ByteArray) : Option Manifest := do
                     termRegistryVersion, layout, blankNodeProfile, entries, blobs }
   if rest.isEmpty && valid manifest then some manifest else none
 
+/-- The layout label of a manifest, read from the header alone: the magic, the
+    version byte, the source identity, the term registry version and then the
+    label. Nothing is admitted. This exists so that a reader which `decode?`
+    refused can say WHY, and for no other use: no decision about a generation is
+    taken from a label read here. -/
+def headerLayout? (bytes : ByteArray) : Option String := do
+  let allBytes := listOfByteArray bytes
+  let foundMagic ← readU32LE allBytes 0
+  if foundMagic != magic then none else do
+  let (_, afterVersion) ← parseU8 (allBytes.drop 4)
+  let sourceLength ← readU32LE afterVersion 0
+  let (_, afterSource) ← takeExact sourceLength.toNat (afterVersion.drop 4)
+  let (_, afterRegistry) ← decodeString afterSource
+  let (layout, _) ← decodeString afterRegistry
+  some layout
+
+/-- The reason `decode?` refused these bytes, when the reason is that the
+    layout label names a retired literal index (LGI1 or LGI2, folded with the
+    ASCII-only fold). The sentence gives the cause and the remedy. `none` for
+    every other refusal, which keeps the caller's general message. -/
+def retiredLayoutNote? (bytes : ByteArray) : Option String :=
+  match headerLayout? bytes with
+  | some layout =>
+      if retiredLiteralIndexLayout layout then
+        some (s!"manifest layout '{layout}' names a literal index that was folded with the ASCII-only fold. " ++
+          "That index does not hold all the rows that the Unicode LCASE keeps. " ++
+          "Re-pack the generation with the current packer. " ++
+          "The packer writes LGI3 or LGI4.")
+      else none
+  | none => none
+
+/-- A sentence a host can show for bytes `decode?` refused. -/
+def refusalNote (bytes : ByteArray) : String :=
+  (retiredLayoutNote? bytes).getD "bytes do not decode as an admitted manifest"
+
 private def samplePredicate : WfIri := ⟨"https://example.test/p", by decide⟩
 
 private def sampleOtherPredicate : WfIri := ⟨"https://example.test/q", by decide⟩
@@ -2139,17 +2199,17 @@ private def sampleManifestV6WithQuadFields : Manifest :=
 #guard decode? (encode? sampleManifestV6 |>.getD ByteArray.empty) == some sampleManifestV6
 /-! ## SBM8 samples
 
-SBM7 plus the LGI1 literal search index, which is mandatory at 8 and refused
+SBM7 plus the LGI3 literal search index, which is mandatory at 8 and refused
 before it. -/
 
 private def sampleLiteralIndex : ArtifactRef :=
-  { key := { value := "blocks/p.lgi1" }, bytes := sampleBlockBytes.size,
+  { key := { value := "blocks/p.lgi3" }, bytes := sampleBlockBytes.size,
     sha256 := sampleDigest, chunked := some sampleChunked }
 
 private def sampleManifestV8 : Manifest :=
   { sampleManifestV7 with
     version := 8,
-    layout := "quad-ibk4-ptd1-lgi1-merkle-v0",
+    layout := "quad-ibk4-ptd1-lgi3-merkle-v0",
     entries := sampleManifestV7.entries.map fun entry =>
       { entry with literalIndex := some sampleLiteralIndex } }
 
@@ -2176,7 +2236,7 @@ private def sampleGeoIndex : ArtifactRef :=
 private def sampleManifestV9 : Manifest :=
   { sampleManifestV8 with
     version := 9,
-    layout := "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0",
+    layout := "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0",
     entries := sampleManifestV8.entries.map fun entry =>
       { entry with geoIndex := some sampleGeoIndex } }
 
@@ -2189,13 +2249,13 @@ private def sampleManifestV9MissingLiteralIndex : Manifest :=
     { entry with literalIndex := none } }
 
 private def sampleManifestV9OldLabel : Manifest :=
-  { sampleManifestV9 with layout := "quad-ibk4-ptd1-lgi1-merkle-v0" }
+  { sampleManifestV9 with layout := "quad-ibk4-ptd1-lgi3-merkle-v0" }
 
 private def sampleManifestV9AliasedKey : Manifest :=
   { sampleManifestV9 with entries := sampleManifestV9.entries.map fun entry =>
     { entry with geoIndex := some { sampleGeoIndex with key := entry.artifact.key } } }
 
-/-- The GBI1 sidecar may not reuse the LGI1 sidecar's key: `uniqueArtifactKeys`
+/-- The GBI1 sidecar may not reuse the LGI3 sidecar's key: `uniqueArtifactKeys`
     refuses it, so a host can never fetch one artifact for two roles. -/
 private def sampleManifestV9AliasedLiteralKey : Manifest :=
   { sampleManifestV9 with entries := sampleManifestV9.entries.map fun entry =>
@@ -2380,12 +2440,12 @@ Parliament "work packages current" count query. -/
 
 /-! ## SBM10 samples
 
-SBM9 plus the IBK5 block kind, the LGI2 literal index, a manifest blob table,
+SBM9 plus the IBK5 block kind, the LGI4 literal index, a manifest blob table,
 per-entry blob references and the two zone maps. Every one of those is
 mandatory at 10 and refused before it. -/
 
 private def sampleLiteralIndexV2 : ArtifactRef :=
-  { key := { value := "blocks/p.lgi2" }, bytes := sampleBlockBytes.size,
+  { key := { value := "blocks/p.lgi4" }, bytes := sampleBlockBytes.size,
     sha256 := sampleDigest, chunked := some sampleChunked }
 
 private def sampleBlob : ArtifactRef :=
@@ -2398,7 +2458,7 @@ private def sampleObjectZone : List UInt8 × List UInt8 := ([2], [2, 255])
 private def sampleManifestV10 : Manifest :=
   { sampleManifestV9 with
     version := 10,
-    layout := "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0",
+    layout := "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0",
     blobs := [sampleBlob],
     entries := sampleManifestV9.entries.map fun entry =>
       { entry with
@@ -2413,7 +2473,7 @@ private def sampleManifestV10Ibk4Entry : Manifest :=
     { entry with blockLayout := some .ibk4 } }
 
 private def sampleManifestV10OldLabel : Manifest :=
-  { sampleManifestV10 with layout := "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0" }
+  { sampleManifestV10 with layout := "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0" }
 
 /-- A blob index past the end of the blob table. -/
 private def sampleManifestV10BlobIndexOutOfRange : Manifest :=
@@ -2478,6 +2538,91 @@ private def sampleManifestV9WithBlobTable : Manifest :=
 #guard !(valid sampleManifestV10WrongBlobKey) && (encode? sampleManifestV10WrongBlobKey).isNone
 #guard !(valid sampleManifestV10UncommittedBlob) &&
   (encode? sampleManifestV10UncommittedBlob).isNone
+
+/-! ## The rename of 2026-10-10: retired literal-index labels
+
+A generation packed before the literal index fold changed names LGI1 or LGI2 in
+its layout label. The label of each index-bearing version is now the one that
+names LGI3 or LGI4, and a manifest carrying a retired label is refused on both
+sides, at every version. -/
+
+private def retiredBytes (m : Manifest) (retired : String) : ByteArray :=
+  -- The bytes a pre-rename packer wrote: the same manifest, the retired label.
+  (encode? { m with layout := retired }).getD ByteArray.empty
+
+-- The retired labels are refused at the versions that used them ...
+#guard !(valid { sampleManifestV8 with layout := "quad-ibk4-ptd1-lgi1-merkle-v0" })
+#guard !(valid { sampleManifestV9 with layout := "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0" })
+#guard !(valid { sampleManifestV10 with layout := "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0" })
+#guard (encode? { sampleManifestV8 with layout := "quad-ibk4-ptd1-lgi1-merkle-v0" }).isNone
+#guard (encode? { sampleManifestV9 with layout := "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0" }).isNone
+#guard (encode? { sampleManifestV10 with layout := "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0" }).isNone
+-- ... and at every other version, including the layout-extensible ones.
+#guard retiredLiteralIndexLayouts.all fun retired =>
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].all fun v => !(layoutConsistent v retired)
+-- The current labels are admitted at their own version and no other.
+#guard layoutConsistent 8 "quad-ibk4-ptd1-lgi3-merkle-v0"
+#guard layoutConsistent 9 "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
+#guard layoutConsistent 10 "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0"
+#guard !(layoutConsistent 8 "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0")
+#guard !(layoutConsistent 9 "quad-ibk4-ptd1-lgi3-merkle-v0")
+#guard !(layoutConsistent 10 "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0")
+#guard !(retiredLiteralIndexLayout "quad-ibk4-ptd1-lgi3-merkle-v0")
+#guard !(retiredLiteralIndexLayout "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0")
+#guard !(retiredLiteralIndexLayout "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0")
+#guard !(retiredLiteralIndexLayout "quad-ibk4-ptd1-merkle-v0")
+-- The block codec is chosen by the label; a retired label selects none.
+#guard layoutBlockKind "quad-ibk4-ptd1-lgi1-merkle-v0" == none
+#guard layoutBlockKind "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0" == none
+#guard layoutBlockKind "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0" == none
+#guard !(isIbk4Layout "quad-ibk4-ptd1-lgi1-merkle-v0")
+#guard !(isIbk4Layout "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0")
+#guard !(isIbk5Layout "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0")
+-- The refusal note: a retired label gets the cause and the remedy, built from
+-- the bytes of an otherwise valid manifest whose label was swapped (same
+-- length, so the framing is unchanged).
+private def swapLabelGo (f t : List UInt8) : Nat → List UInt8 → List UInt8
+  | 0, xs => xs
+  | _ + 1, [] => []
+  | fuel + 1, b :: rest =>
+      if (b :: rest).take f.length == f then t ++ swapLabelGo f t fuel (rest.drop (f.length - 1))
+      else b :: swapLabelGo f t fuel rest
+
+private def swapLabel (bytes : ByteArray) (from_ to_ : String) : ByteArray :=
+  let xs := bytes.data.toList
+  ByteArray.mk (swapLabelGo from_.toUTF8.data.toList to_.toUTF8.data.toList xs.length xs).toArray
+
+private def sampleV9Bytes : ByteArray := (encode? sampleManifestV9).getD ByteArray.empty
+private def sampleV8Bytes : ByteArray := (encode? sampleManifestV8).getD ByteArray.empty
+private def sampleV10Bytes : ByteArray := (encode? sampleManifestV10).getD ByteArray.empty
+private def oldV9Bytes : ByteArray :=
+  swapLabel sampleV9Bytes "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0" "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+private def oldV8Bytes : ByteArray :=
+  swapLabel sampleV8Bytes "quad-ibk4-ptd1-lgi3-merkle-v0" "quad-ibk4-ptd1-lgi1-merkle-v0"
+private def oldV10Bytes : ByteArray :=
+  swapLabel sampleV10Bytes "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0" "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
+
+#guard sampleV9Bytes.size == oldV9Bytes.size
+#guard sampleV8Bytes.size == oldV8Bytes.size
+#guard sampleV10Bytes.size == oldV10Bytes.size
+#guard oldV9Bytes != sampleV9Bytes
+#guard (decode? oldV8Bytes).isNone
+#guard (decode? oldV9Bytes).isNone
+#guard (decode? oldV10Bytes).isNone
+#guard (decode? sampleV8Bytes).isSome
+#guard (decode? sampleV9Bytes).isSome
+#guard (decode? sampleV10Bytes).isSome
+#guard headerLayout? oldV9Bytes == some "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
+#guard headerLayout? sampleV9Bytes == some "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0"
+#guard headerLayout? ByteArray.empty == none
+#guard (refusalNote oldV8Bytes).startsWith "manifest layout 'quad-ibk4-ptd1-lgi1-merkle-v0' names a literal index"
+#guard (refusalNote oldV9Bytes).startsWith "manifest layout 'quad-ibk4-ptd1-lgi1-gbi1-merkle-v0' names a literal index"
+#guard (refusalNote oldV10Bytes).startsWith "manifest layout 'quad-ibk5-ptd2-lgi2-gbi1-merkle-v0' names a literal index"
+#guard ((refusalNote oldV9Bytes).splitOn "Re-pack the generation with the current packer.").length == 2
+-- Any other refusal keeps the general sentence.
+#guard refusalNote ByteArray.empty == "bytes do not decode as an admitted manifest"
+#guard refusalNote (ByteArray.mk #[0, 1, 2, 3]) == "bytes do not decode as an admitted manifest"
+#guard refusalNote sampleV9Bytes == "bytes do not decode as an admitted manifest"
 #guard !(valid sampleManifestV9WithZone) && (encode? sampleManifestV9WithZone).isNone
 #guard !(valid sampleManifestV9WithBlobRefs) && (encode? sampleManifestV9WithBlobRefs).isNone
 #guard !(valid sampleManifestV9WithBlobTable) && (encode? sampleManifestV9WithBlobTable).isNone

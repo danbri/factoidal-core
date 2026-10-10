@@ -1,5 +1,5 @@
 /-
-L4Factoidal.Storage.LiteralIndexPlan — which SPARQL queries the LGI1 literal
+L4Factoidal.Storage.LiteralIndexPlan — which SPARQL queries the LGI3 and LGI4 literal
 search index may serve, and what a planner may do with its candidates.
 
 Design record: `docs/designissues/2026-09-04-literal-token-index.md`, section
@@ -31,7 +31,7 @@ load-bearing.
 ## The `STR` trap
 
 `CONTAINS(STR(?o), "water")` is TRUE for an IRI whose text contains "water",
-and LGI1 indexes literals only — `LiteralGramIndex.foldedOfTerm` gives a
+and the literal index indexes literals only — `LiteralGramIndex.foldedOfTerm` gives a
 non-literal no gram. Restricting to candidates alone would therefore DROP
 those rows. `Plan.keepNonLiterals` is that fact: a shape which applies `STR`
 keeps every row whose object is not a literal, and a shape which does not

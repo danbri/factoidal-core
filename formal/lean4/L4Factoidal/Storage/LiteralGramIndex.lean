@@ -1,6 +1,6 @@
 /-
-L4Factoidal.Storage.LiteralGramIndex — the meaning of the LGI1 literal search
-index.
+L4Factoidal.Storage.LiteralGramIndex — the meaning of the LGI3 and LGI4 literal
+search index.
 
 Design record: `docs/designissues/2026-09-04-literal-token-index.md`.
 
@@ -311,7 +311,7 @@ def withIds : Nat → List Term → List (Nat × List (List Char))
   | i, t :: rest => (i, gramsOfTerm t) :: withIds (i + 1) rest
 
 /-- The local IDs whose term carries a gram. This is the specification of one
-LGI1 posting list. -/
+LGI3 posting list. -/
 def idsWithGram (dict : Array Term) (gram : List Char) : List Nat :=
   (withIds 0 dict.toList).filterMap
     (fun p => if gram ∈ p.2 then some p.1 else none)
@@ -431,7 +431,7 @@ structure Index where
   /-- How many dictionary terms are literals. Informational. -/
   literalCount : Nat
   postings : Array Posting
-  /-- LGI2 only: the dictionary positions of the literals the index did NOT
+  /-- LGI4 only: the dictionary positions of the literals the index did NOT
   gram, ascending and distinct. They are the out-of-line (tag 4) literals of
   the version-2 term codec: the block dictionary names the digest and the byte
   length of such a literal, not its lexical form, so no gram of it can be
@@ -440,7 +440,7 @@ structure Index where
   caller re-evaluates the original SPARQL expression on the candidates, which
   for an opaque literal means fetching its blob.
 
-  Empty in LGI1, whose encoder refuses a non-empty list because its bytes have
+  Empty in LGI3, whose encoder refuses a non-empty list because its bytes have
   nowhere to carry it. -/
   opaqueIds : List Nat := []
   deriving DecidableEq, Repr
@@ -529,10 +529,10 @@ def candidates? (idx : Index) (needle : String) : Option (List Nat) :=
 def agreesWithSpec (dict : Array Term) (needle : String) : Bool :=
   candidates? (build dict) needle == candidatesSpec dict needle
 
-/-! ## 7. Opaque literals: the LGI2 candidate set
+/-! ## 7. Opaque literals: the LGI4 candidate set
 
 An out-of-line literal has no lexical form in the block, so it has no gram and
-no posting list can hold it. LGI2 stores the list of such positions and the
+no posting list can hold it. LGI4 stores the list of such positions and the
 candidate set is the union of the gram intersection and that list.
 
 `mem_candidatesOpaque_of_match` and `mem_candidatesOpaque_of_opaque` are the
@@ -544,7 +544,7 @@ can serve. -/
 def withOpaque (ids opaqueList : List Nat) : List Nat :=
   ids ++ opaqueList.filter (fun i => !ids.contains i)
 
-/-- The specification form of the LGI2 candidate set. `none` still means the
+/-- The specification form of the LGI4 candidate set. `none` still means the
 index cannot serve this needle and the caller must scan: a needle that folds to
 fewer than `gramLength` characters names no gram, and an opaque literal is not
 a reason to answer a needle the gram index cannot answer. -/
@@ -556,7 +556,7 @@ def candidatesSpecOpaque (dict : Array Term) (opaqueList : List Nat) (needle : S
 def candidatesOpaque? (idx : Index) (needle : String) : Option (List Nat) :=
   (candidates? idx needle).map (fun ids => withOpaque ids idx.opaqueIds)
 
-/-- The contract between the two, the LGI2 form of `agreesWithSpec`. -/
+/-- The contract between the two, the LGI4 form of `agreesWithSpec`. -/
 def agreesWithSpecOpaque (dict : Array Term) (opaqueList : List Nat) (needle : String) : Bool :=
   candidatesOpaque? { build dict with opaqueIds := opaqueList } needle ==
     candidatesSpecOpaque dict opaqueList needle
@@ -573,7 +573,7 @@ theorem mem_withOpaque_right {i : Nat} {ids opaqueList : List Nat} (h : i ∈ op
     exact ⟨h, by simpa using hin⟩
 
 /-- **The soundness gate, part one.** A grammed dictionary term whose folded
-lexical form contains the folded needle is still in the LGI2 candidate list. -/
+lexical form contains the folded needle is still in the LGI4 candidate list. -/
 theorem mem_candidatesOpaque_of_match (dict : Array Term) (opaqueList : List Nat)
     (needle : String) (i : Nat) (t : Term) (ids : List Nat)
     (hget : dict.toList[i]? = some t)
@@ -626,7 +626,7 @@ private def sampleDict : Array Term :=
 #guard (build sampleDict).literalCount == 4
 #guard (build sampleDict).opaqueIds == []
 
-/-! LGI2: position 3 is an IRI in this fixture, so treating it as opaque is
+/-! LGI4: position 3 is an IRI in this fixture, so treating it as opaque is
 artificial, but it pins the union. An opaque position is a candidate for every
 needle the index serves, and is not a candidate for a needle it refuses. -/
 #guard candidatesSpecOpaque sampleDict [3] "water" == some [0, 1, 4, 3]

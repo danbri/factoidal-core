@@ -321,7 +321,7 @@ extern_lib libl4exthost pkg := do
 -- can be packed again under a changed format and the two compared.
 @[default_target] lean_exe «l4block-quad-dump» where root := `Harness.QuadDump
 
--- The row-identity gate for the LGI1 literal search index, driven through
+-- The row-identity gate for the LGI3 and LGI4 literal search index, driven through
 -- `storeHandleQuery` — the operation a host calls. It opens one handle with
 -- the sidecars and one without, and compares the two answer envelopes.
 @[default_target] lean_exe «l4block-literal-gate» where

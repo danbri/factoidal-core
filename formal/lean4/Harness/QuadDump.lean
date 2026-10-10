@@ -55,7 +55,9 @@ def run (args : List String) : IO UInt32 := do
           throw (IO.userError "this generation carries a delta log; compact it before dumping")
         let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
         match decode? manifestBytes with
-        | none => throw (IO.userError "manifest.sbm2 is malformed or unsupported")
+        | none =>
+            throw (IO.userError
+              ((retiredLayoutNote? manifestBytes).getD "manifest.sbm2 is malformed or unsupported"))
         | some manifest => do
             let ibk5 := isIbk5Layout manifest.layout
             if !isIbk4Layout manifest.layout && !ibk5 then

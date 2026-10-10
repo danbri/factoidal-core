@@ -1,5 +1,5 @@
 /-
-Harness.LiteralGramProbe — measure the LGI1 candidate filter against a real
+Harness.LiteralGramProbe — measure the LGI3 candidate filter against a real
 IBK4 block, and gate its rows against the scan.
 
     l4block-literal-gram <block.ibk4> <needle> [<needle> ...]
@@ -13,6 +13,13 @@ taking the LGI candidate local IDs, reaching their rows through the object
 index, and evaluating the SAME filter on those rows. It prints both timings
 and whether the two ROW LISTS are equal (anti-pattern 34: rows, not counts).
 
+The filter is the engine's own `LCASE` (`Fn.String.lowerCase`, Unicode case
+mapping since 2026-10-10) followed by a case-sensitive substring test, so a
+fold in the index that disagrees with `LCASE` shows here as a row the scan keeps
+and the index path misses. Until 2026-10-10 the filter was the index's own fold,
+which made the two paths agree by construction and the probe unable to see a
+fold that had drifted from `LCASE`.
+
 The object index built here is the OLI2 role — object local ID to row
 positions — and its build time is reported separately, because in the shipped
 form it is a sidecar the packer writes, not work a query pays for.
@@ -20,6 +27,7 @@ form it is a sidecar the packer writes, not work a query pays for.
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.IndexedBlockWireV4
+import L4Factoidal.Fn.String
 import L4Factoidal.Storage.LiteralGramIndex
 import L4Factoidal.Storage.LiteralGramIndexWire
 
@@ -30,16 +38,18 @@ open L4Factoidal.Storage.LiteralGramIndex
 
 namespace Harness.LiteralGramProbe
 
-/-- The value the filter tests: `LCASE(STR(?o))` of a literal, as characters.
-A non-literal object has no `STR` a `CONTAINS` can match here. -/
-def objectFolded (dict : Array Term) (o : Nat) : List Char :=
+/-- The value the filter tests: `LCASE(STR(?o))` of a literal, as characters,
+computed by the engine's own `LCASE`. A non-literal object has no `STR` a
+`CONTAINS` can match here. -/
+def objectLowered (dict : Array Term) (o : Nat) : List Char :=
   match dict[o]? with
-  | some t => foldedOfTerm t
-  | none => []
+  | some (.literal l) => (L4Factoidal.Fn.String.lowerCase l.val.lexicalForm).toList
+  | _ => []
 
-/-- The filter itself, evaluated exactly as `Expr` evaluates it. -/
+/-- The filter itself, evaluated as `Expr` evaluates `CONTAINS(LCASE(STR(?o)), needle)`:
+the needle is used as written. -/
 def rowMatches (dict : Array Term) (needle : List Char) (o : Nat) : Bool :=
-  listContainsSublist needle (objectFolded dict o)
+  listContainsSublist needle (objectLowered dict o)
 
 /-- The scan: every row, in row order. -/
 def scanRows (block : IndexedBlockWireV4.QuadBlock) (needle : List Char) :
@@ -76,7 +86,7 @@ def indexRows (block : IndexedBlockWireV4.QuadBlock) (oli : Array (Array Nat))
 def postingCount (idx : Index) : Nat :=
   idx.postings.foldl (fun total posting => total + posting.ids.length) 0
 
-/-- The LGI1 encoded size of this index, computed from the layout in
+/-- The LGI3 encoded size of this index, computed from the layout in
 `docs/designissues/2026-09-04-literal-token-index.md` section 3. -/
 def encodedBytes (idx : Index) : Nat :=
   let directory := idx.postings.foldl
@@ -137,8 +147,8 @@ def run (args : List String) : IO UInt32 := do
             match LiteralGramIndexWire.encode? wireArtifact,
                   LiteralGramIndexWire.encode2? wireArtifact with
             | some one, some two =>
-                IO.println s!"lgi1 wire bytes {one.size} ({one.size * 100 / bytes.size}% of the block)"
-                IO.println s!"lgi2 wire bytes {two.size} ({two.size * 100 / bytes.size}% of the block)"
+                IO.println s!"lgi3 wire bytes {one.size} ({one.size * 100 / bytes.size}% of the block)"
+                IO.println s!"lgi4 wire bytes {two.size} ({two.size * 100 / bytes.size}% of the block)"
             | _, _ => IO.println "lgi wire encode refused"
             IO.println s!"object index build {t2 - t1} ms"
             let mut failures := 0
@@ -146,7 +156,7 @@ def run (args : List String) : IO UInt32 := do
                reading measures the load as much as the code. -/
             let repeats := 5
             for needle in needles do
-              let folded := foldString needle
+              let folded := needle.toList
               let mut scanBest : Nat := 0
               let mut indexBest : Nat := 0
               let mut scanned : Array Nat := #[]
