@@ -3,8 +3,8 @@
 ## Unreleased
 
 - **`@factoidal/core/core`: the core engine** ([issue 713](https://github.com/danbri/factoidal/issues/713),
-  stage 4). `l4factoidal-core.wasm` (5.66 MB, 1.07 MB with gzip; the full
-  engine is 10.52 MB, 2.07 MB) serves parse and serialize (Turtle, TriG,
+  stage 4). `l4factoidal-core.wasm` (5.68 MB, 1.07 MB with gzip; the full
+  engine is 10.54 MB, 2.07 MB) serves parse and serialize (Turtle, TriG,
   N-Triples, N-Quads, RDF/XML, lenient), SPARQL 1.1 and 1.2 query and update
   over text and dataset handles, canonicalization, the RDFS and OWL 2 RL
   closures and SHACL. The entry has the same exports as `.`; a function
@@ -12,6 +12,13 @@
   `capabilities().profile` is `'core'` (`'full'` on the other entries).
   Files: `core.mjs`, `core.js`, `core-browser.js`, `core.d.ts`,
   `core-browser.d.ts`, `l4-assets/l4factoidal-core.{js,mjs,wasm}`.
+- A SELECT of more than about 11,000 solutions, and `canonicalize()` of more
+  than about 20,000 blank-node quads, no longer fail under Node's default
+  stack with "Maximum call stack size exceeded". Four functions of the Lean
+  library recursed once per row or per quad (`SPARQL.numberRows`,
+  `SPARQL.rowsJoined`, `RDF.Canonical.collapseKeyedQQuads`, `dedupAdj`);
+  each now compiles to an accumulator form proved equal to it. The Results
+  JSON writer had also copied the rest of the document once per row.
 - `Dataset` (`./rdfjs`) adds and looks up a quad in constant time. It
   scanned every quad it held, so `parse()` of 12,000 quads spent 3.1 s
   building the result; it now takes 0.35 s.

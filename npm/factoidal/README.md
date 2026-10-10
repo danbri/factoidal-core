@@ -188,8 +188,8 @@ Sizes (version 0.9.0 tree of 2026-10-10; gzip is `gzip -9`, brotli quality 11):
 
 | Module | Raw | gzip | brotli |
 |---|---:|---:|---:|
-| `l4factoidal.wasm` (full, `@factoidal/core`) | 10.52 MB | 2.07 MB | 1.29 MB |
-| `l4factoidal-core.wasm` (core, `@factoidal/core/core`) | 5.66 MB | 1.07 MB | 0.69 MB |
+| `l4factoidal.wasm` (full, `@factoidal/core`) | 10.54 MB | 2.07 MB | 1.29 MB |
+| `l4factoidal-core.wasm` (core, `@factoidal/core/core`) | 5.68 MB | 1.07 MB | 0.69 MB |
 | the F\* engine bundle of 0.8.0 (`factoidal-npm-entry.js`), for comparison | 1.19 MB | 0.35 MB | 0.28 MB |
 
 Each entry also loads about 68 KB (gzip) of JavaScript. The browser default

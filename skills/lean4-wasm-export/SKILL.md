@@ -520,7 +520,7 @@ list and exports, `l4-core.d.ts`).
 `l4factoidal-core.wasm` exists because one dispatch table reaching the whole
 library leaves the linker nothing to drop (10.5 MB, 2.07 MB with gzip). The
 core table imports only the op modules of its subset, and the core link
-drops the rest (5.66 MB, 1.07 MB with gzip). Record, with the per-namespace
+drops the rest (5.68 MB, 1.07 MB with gzip). Record, with the per-namespace
 table: `docs/designissues/2026-10-10-npm-lean-only.md` § 9.
 
 Rules that keep it small:

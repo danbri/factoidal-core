@@ -10,7 +10,9 @@
 //     Lean time <= 2 x the time of the faster F* bundle.
 //
 // It also runs the Lean engine alone for each MEMORY_XFAIL key and compares
-// the wasm module's linear memory high-water mark with the key's bound.
+// the wasm module's linear memory high-water mark with the key's bound, and
+// for each SCALING_XFAIL row compares its large size (4 times the input)
+// with its middle size.
 //
 // A row that does not meet the bound today is in XFAIL with the open issue
 // that tracks it: the gate reports it as an expected failure while it
@@ -42,13 +44,11 @@ const BOUND = 2.0;
  * coordinator replaces the placeholder URLs with the issues it opens.
  */
 export const XFAIL = {
-  // The stateless query() sends the dataset as N-Quads text and the Lean
-  // engine parses and indexes it on every call; at 3,000 triples that is
-  // most of the time (group-by: 127 ms stateless, 10.7 ms on a dataset
-  // handle; F* wasm 77 ms). Measured 2026-10-10: order-by 2.17, group-by
-  // 2.03 times the faster F* bundle (load average 6.5 to 7.7).
-  'order-by@small': 'https://github.com/danbri/factoidal/issues/NEW-1',
-  'group-by@small': 'https://github.com/danbri/factoidal/issues/NEW-1',
+  // Empty since 2026-10-10. The first matrix run measured order-by and
+  // group-by at 3,000 triples at 2.17 and 2.03 times the faster F* bundle; after
+  // the rowsJoined repair (SPARQL/ResultsJson.lean: the Results JSON writer
+  // copied the rest of the document once per row) and at a lower load the same
+  // rows are 1.27 and 1.43 (design record § 10).
 };
 
 /**
@@ -59,8 +59,22 @@ export const XFAIL = {
 export const MEMORY_XFAIL = {
   // parse() of 48,000 triples: 641 MB after one call, 1,227 MB after six
   // (2026-10-10); the native build peaks at 388 MB resident for the same op.
-  'parse-turtle@large': { boundMB: 256, issue: 'https://github.com/danbri/factoidal/issues/NEW-2' },
+  'parse-turtle@large': { boundMB: 256, issue: 'https://github.com/danbri/factoidal/issues/NEW-1' },
 };
+
+/**
+ * Scaling bounds, Lean engine only: time at the large size (4 times the
+ * input) at most 9 times the time at the middle size
+ * (skills/danbri-function-precrime-checkers, the n/4n assertion). Each is an
+ * expected failure naming its issue while the bound is not met.
+ */
+export const SCALING_XFAIL = {
+  // canonicalize of 24,000 blank-node quads: 16.9 s; of 6,000: 0.76 s (22
+  // times for 4 times the input, 2026-10-10). Both F* bundles fail the
+  // 24,000-quad input (stack overflow), so there is no F* time to compare.
+  canonicalize: 'https://github.com/danbri/factoidal/issues/NEW-2',
+};
+const SCALING_BOUND = 9.0;
 
 const SIZE_NAMES = ['small', 'middle', 'large'];
 
@@ -107,6 +121,25 @@ let failed = 0;
 let xfailed = 0;
 let passed = 0;
 const lines = [];
+
+// Scaling: the Lean engine alone, middle and large sizes.
+for (const [row, issue] of Object.entries(SCALING_XFAIL)) {
+  if (!rows.includes(row)) continue;
+  const rs = runMatrix({ rows: [row], engines: ['l4'], sizesFor: (x) => [ROWS[x][1], ROWS[x][2]],
+    log: (x) => console.log(JSON.stringify(x)) });
+  const [m, l] = rs;
+  const ok = m && l && m.ms !== undefined && l.ms !== undefined &&
+    l.ms <= SCALING_BOUND * Math.max(m.ms, 50);
+  const what = `scaling ${row}: Lean ${m && m.ms} ms at ${m && m.triples} triples, ` +
+    `${l && l.ms} ms at ${l && l.triples} triples, bound ${SCALING_BOUND} times`;
+  if (ok) {
+    failed += 1;
+    lines.push(`FAIL  unexpected pass: ${what}; move the row out of SCALING_XFAIL and close ${issue}`);
+  } else {
+    xfailed += 1;
+    lines.push(`xfail ${what} (${issue})`);
+  }
+}
 
 // Memory: the Lean engine alone, at the size each key names.
 for (const [key, { boundMB, issue }] of Object.entries(MEMORY_XFAIL)) {
@@ -170,7 +203,8 @@ for (const [row, si] of cases) {
 }
 console.log('');
 for (const l of lines) console.log(l);
-const memoryCases = Object.keys(MEMORY_XFAIL).filter((k) => rows.includes(k.split('@')[0])).length;
+const memoryCases = Object.keys(MEMORY_XFAIL).filter((k) => rows.includes(k.split('@')[0])).length +
+  Object.keys(SCALING_XFAIL).filter((k) => rows.includes(k)).length;
 console.log(`npm_speed_gate: ${passed} pass, ${failed} fail, ${xfailed} expected failures ` +
   `(out of ${cases.length + memoryCases}); bound: Lean <= ${BOUND} x the faster F* bundle; ` +
   `load average ${loadavg()[0].toFixed(2)} on ${cpus().length} CPUs (a load above the CPU count ` +
