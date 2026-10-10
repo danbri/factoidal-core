@@ -20,6 +20,8 @@ import L4Factoidal.RDF.StoreCapabilitiesCottas
 import L4Factoidal.RDF.StoreDeltaMerge
 import L4Factoidal.RDF.StoreCapabilitiesDelta
 import L4Factoidal.RDF.StoreCombine
+import L4Factoidal.RDF.LangTag
+import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.RDF.IsomorphismTheorems
 import L4Factoidal.RDF.IsomorphismTests
@@ -273,9 +275,13 @@ import L4Factoidal.RML.JsonPath
 import L4Factoidal.RML.Sources
 import L4Factoidal.RML.Value
 import L4Factoidal.RML.Model
+import L4Factoidal.RML.Error
 import L4Factoidal.RML.FromGraph
+import L4Factoidal.RML.Validate
 import L4Factoidal.RML.Eval
+import L4Factoidal.RML.Run
 import L4Factoidal.RML.EvalTests
+import L4Factoidal.RML.ValidateTests
 import L4Factoidal.RML.VirtualSource
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps

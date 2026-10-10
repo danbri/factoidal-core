@@ -26,7 +26,7 @@ structure LogicalSource where
   iterator       : Option String := none
   /-- `rml:referenceFormulation`, as an IRI. -/
   refFormulation : String := ""
-deriving Repr, Inhabited
+deriving Repr, Inhabited, BEq
 
 /-- `rml:joinCondition` — one `rml:child` / `rml:parent` pair.
 

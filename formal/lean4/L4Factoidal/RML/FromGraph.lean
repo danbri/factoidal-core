@@ -122,16 +122,27 @@ def sourceAt (g : Graph) (n : String) : LogicalSource :=
     iterator       := strOf g n (rmlNs ++ "iterator")
     refFormulation := (strOf g n (rmlNs ++ "referenceFormulation")).getD "" }
 
-/-- Every `rml:TriplesMap` in the graph. A map with NO subject map is
-    dropped: it can generate nothing, and keeping it would put an
-    entry in the mapping that produces no triples for a reason the
-    caller cannot see. -/
-def mappingOf (g : Graph) : Mapping :=
-  let tmNodes := (g.filter (fun t =>
+/-- The classes whose instances are triples maps. RML-star adds the
+    asserted and non-asserted subclasses. -/
+def triplesMapClasses : List String :=
+  [rmlNs ++ "TriplesMap", rmlNs ++ "AssertedTriplesMap", rmlNs ++ "NonAssertedTriplesMap"]
+
+/-- Every triples map node in the graph, once, in graph order. -/
+def triplesMapNodes (g : Graph) : List String :=
+  ((g.filter (fun t =>
       t.p.val == rdfTypeStr &&
       (match t.o with
-       | .iri i => i.val == rmlNs ++ "TriplesMap"
-       | _      => false))).map (fun t => subjKey t.s)
+       | .iri i => triplesMapClasses.contains i.val
+       | _      => false))).map (fun t => subjKey t.s)).foldl
+    (fun acc n => if acc.contains n then acc else acc ++ [n]) []
+
+/-- Every triples map in the graph. A map with NO subject map is
+    dropped: it can generate nothing, and keeping it would put an
+    entry in the mapping that produces no triples for a reason the
+    caller cannot see. `RML.Validate` reports that case as an error;
+    this reader stays total. -/
+def mappingOf (g : Graph) : Mapping :=
+  let tmNodes := triplesMapNodes g
   tmNodes.filterMap (fun n =>
     -- The SUBJECT map, either as a map or as the `rml:subject`
     -- shortcut. Everything else about the triples map is the same

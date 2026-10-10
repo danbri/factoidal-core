@@ -9,7 +9,11 @@ A term map produces terms from a data record three ways: a CONSTANT,
 a REFERENCE to a field, or a TEMPLATE with `{field}` placeholders.
 -/
 import L4Factoidal.RDF.Core
+import L4Factoidal.RDF.LangTag
+import L4Factoidal.RDF.IriSyntax
+import L4Factoidal.XSD.Datatypes
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RML.Error
 
 namespace L4Factoidal.RML
 
@@ -75,6 +79,43 @@ def parseTemplate (raw : String) : List TemplateSegment :=
         else go (c :: cur) acc inBrace false rest
   go [] [] false false raw.toList
 
+/-- A STRICT parse of a string template: the syntax rules of RML-Core,
+"Generating values with expressions", string templates.
+
+* a pair of unescaped curly braces encloses a reference expression;
+* a curly brace that does not enclose one MUST be escaped by `\`, and
+  that includes a brace INSIDE a reference expression;
+* a backslash MUST be escaped by another backslash, inside a reference
+  expression as well.
+
+`parseTemplate` above is the lenient reader the evaluator uses, and it
+accepts every one of these mistakes (a lone `}` is literal text, `\a` is
+`a`). The validator calls this one, so that a template the specification
+calls invalid is rejected before any record is read. -/
+def parseTemplateStrict (raw : String) : Except String (List TemplateSegment) :=
+  let rec go (cur : List Char) (acc : List TemplateSegment) (inBrace : Bool)
+      : List Char → Except String (List TemplateSegment)
+    | [] =>
+        if inBrace then .error "unterminated '{' in template"
+        else if cur.isEmpty then .ok acc
+        else .ok (acc ++ [.literal (String.ofList cur.reverse)])
+    | '\\' :: c :: rest =>
+        if c == '\\' || c == '{' || c == '}' then go (c :: cur) acc inBrace rest
+        else .error s!"backslash must be escaped by a backslash (found '\\{c}')"
+    | ['\\'] => .error "template ends with an unescaped backslash"
+    | '{' :: rest =>
+        if inBrace then .error "unescaped '{' inside a reference expression"
+        else
+          let acc := if cur.isEmpty then acc
+                     else acc ++ [.literal (String.ofList cur.reverse)]
+          go [] acc true rest
+    | '}' :: rest =>
+        if !inBrace then .error "unescaped '}' outside a reference expression"
+        else if cur.isEmpty then .error "empty reference expression '{}'"
+        else go [] (acc ++ [.reference (String.ofList cur.reverse)]) false rest
+    | c :: rest => go (c :: cur) acc inBrace rest
+  go [] [] false raw.toList
+
 private def isUnreservedAscii (c : Char) : Bool :=
   ('A' ≤ c && c ≤ 'Z') || ('a' ≤ c && c ≤ 'z') || ('0' ≤ c && c ≤ '9') ||
   c == '-' || c == '.' || c == '_' || c == '~'
@@ -118,33 +159,81 @@ def expandTemplate (segs : List TemplateSegment) (tt : TermType)
 
 /-! ## Term generation -/
 
+/-- The rule a data error cites. -/
+private def termGenerationRules : String :=
+  "RML-Core, Generated RDF Term of a Term Map: term generation rules"
+
 /-- Build an IRI term, resolving a RELATIVE result against the base
-    IRI when one is in force.
+    IRI when one is in force, and checking the result.
 
     `rml:baseIRI` is a property of the TRIPLES MAP, and a template
     like `"{$.fname}"` produces a relative reference that means
     nothing without it. Without resolution the term is not an IRI at
     all and the map produces no triple, which is how `RMLTC0026b`
-    through `RMLTC0026d` came out empty. -/
-private def mkIri? (base : Option String) (s : String) : Option Term :=
-  let abs := match base with
-    | none   => s
-    | some b => if isIri s then s else L4Factoidal.Syntax.resolveIri b s
-  if h : isIri abs then some (.iri ⟨abs, h⟩) else none
+    through `RMLTC0026d` came out empty.
 
-/-- Build a literal, honouring datatype then language. A language tag
-    wins, since RDF 1.1 types every tagged literal `rdf:langString`. -/
-private def mkLiteral (tm : TermMap) (lex : String) : Term :=
+    The check is RML-Core's term generation rule 2 and 3: the value, or
+    the value resolved against the base IRI, must be a valid ABSOLUTE
+    IRI (`rml:IRI`) or URI (`rml:URI`); otherwise the result is a DATA
+    ERROR and not a missing term. `rml:UnsafeIRI` exists to produce an
+    IRI that is not percent-encoded, so it keeps the weak test the RDF
+    term constructor needs (a scheme and nothing else); the
+    specification's own example for it is
+    `<http://data.example.com/author/Zoë Krüger>`, which no IRI
+    grammar accepts. An EMPTY value is no term, not an error: RML-Core
+    calls a null, empty or missing value `Empty`. -/
+private def mkIriE (tt : TermType) (base : Option String) (s : String)
+    : Except RmlError (Option Term) :=
+  if s.isEmpty then .ok none
+  else
+    let valid : String → Bool := match tt with
+      | .uri       => isAbsoluteUri
+      | .unsafeIri => isIri
+      | _          => isAbsoluteIri
+    let abs :=
+      if valid s then s
+      else match base with
+        | none   => s
+        | some b => L4Factoidal.Syntax.resolveIri b s
+    if h : isIri abs then
+      if valid abs then .ok (some (.iri ⟨abs, h⟩))
+      else .error (RmlError.data "" termGenerationRules
+        s!"'{s}' is not a valid absolute {if tt == .uri then "URI" else "IRI"}, with or without the base IRI")
+    else .error (RmlError.data "" termGenerationRules
+        s!"'{s}' is not a valid absolute {if tt == .uri then "URI" else "IRI"}, with or without the base IRI")
+
+/-- Build a literal, honouring language then datatype. A language tag
+    wins, since RDF 1.1 types every tagged literal `rdf:langString`.
+
+    Two data errors live here, both from rule 5 of the term generation
+    rules: a language tag that is not well-formed BCP 47, and a datatype
+    override whose lexical form is outside the datatype's lexical space
+    ("ill-typed", RML-Core, Datatype-override mapping of source values). -/
+private def mkLiteralE (tm : TermMap) (lex : String) : Except RmlError Term :=
   match tm.language with
-  | some tag => .literal (Literal.langString lex tag)
+  | some tag =>
+      if isWellFormedLangTag tag then .ok (.literal (Literal.langString lex tag))
+      else .error (RmlError.data "" termGenerationRules
+        s!"'{tag}' is not a well-formed BCP 47 language tag")
   | none =>
-      match tm.datatype.bind (fun d => if h : isIri d then some (⟨d, h⟩ : WfIri) else none) with
-      | some dt =>
-          if h : (dt != rdfLangString && dt != rdfDirLangString) = true then
-            .literal ⟨{ lexicalForm := lex, datatype := dt, langTag := none,
-                        direction := none }, by simpa [literalWf] using h⟩
-          else .literal (Literal.string lex)
-      | none => .literal (Literal.string lex)
+      match tm.datatype with
+      | none => .ok (.literal (Literal.string lex))
+      | some d =>
+          if h : isIri d then
+            let dt : WfIri := ⟨d, h⟩
+            let illTyped :=
+              match L4Factoidal.XSD.builtinOfIri? d with
+              | some b => (L4Factoidal.XSD.lexicalMapWs b lex).isNone
+              | none   => false
+            if illTyped then
+              .error (RmlError.data "" "RML-Core, Datatype conversions: ill-typed literal"
+                s!"'{lex}' is not in the lexical space of <{d}>")
+            else if h2 : (dt != rdfLangString && dt != rdfDirLangString) = true then
+              .ok (.literal ⟨{ lexicalForm := lex, datatype := dt, langTag := none,
+                               direction := none }, by simpa [literalWf] using h2⟩)
+            else .ok (.literal (Literal.string lex))
+          else .error (RmlError.data "" termGenerationRules
+            s!"'{d}' is not an IRI, so it cannot be a datatype")
 
 /-- The default term type when a map does not state one: a template
     or constant IRI position defaults to `iri`, a reference to
@@ -153,32 +242,43 @@ def defaultTermType : TermMapForm → TermType
   | .reference _ => .literal
   | _            => .iri
 
-/-- Generate the term a map produces from one record. `none` means
-    NO TERM — an unresolved reference, or a value that is not a valid
-    IRI where one is required. -/
-def generateTerm (base : Option String) (tm : TermMap) (lookup : String → Option String)
-    : Option Term :=
+/-- Generate the term a map produces from one record.
+
+    * `.ok none`     — NO TERM: an unresolved reference, or an empty value;
+    * `.ok (some t)` — the term;
+    * `.error e`     — a DATA ERROR: a value from which no valid term can
+      be built. The error's `site` is empty; the caller knows the
+      triples map and fills it in. -/
+def generateTermE (base : Option String) (tm : TermMap) (lookup : String → Option String)
+    : Except RmlError (Option Term) :=
   let tt := tm.termType.getD (defaultTermType tm.form)
+  let fromValue (v : String) : Except RmlError (Option Term) :=
+    match tt with
+    | .literal   => (mkLiteralE tm v).map some
+    | .blankNode => if v.isEmpty then .ok none else .ok (some (.bnode v))
+    | .uri       => mkIriE tt base v
+    | .unsafeIri => mkIriE tt base v
+    | .iri       => mkIriE tt base v
   match tm.form with
-  | .constant t => some t
-  | .unknown    => none
+  | .constant t => .ok (some t)
+  | .unknown    => .ok none
   | .reference f =>
       match lookup f with
-      | none   => none
-      | some v =>
-          match tt with
-          | .literal   => some (mkLiteral tm v)
-          | .blankNode => some (.bnode v)
-          | .uri       => mkIri? base (encodeUriSafe v)
-          | .unsafeIri => mkIri? base v
-          | .iri       => mkIri? base v
+      | none   => .ok none
+      | some v => fromValue (if tt == .uri then encodeUriSafe v else v)
   | .template raw =>
       match expandTemplate (parseTemplate raw) tt lookup with
-      | none   => none
-      | some v =>
-          match tt with
-          | .literal   => some (mkLiteral tm v)
-          | .blankNode => some (.bnode v)
-          | _          => mkIri? base v
+      | none   => .ok none
+      | some v => fromValue v
+
+/-- `generateTermE` with a data error read as NO TERM. This is the
+    reading the evaluator had before data errors existed; it stays for
+    callers that only want the terms, and `generateTermE` is the one to
+    use when a rejected value must be reported. -/
+def generateTerm (base : Option String) (tm : TermMap) (lookup : String → Option String)
+    : Option Term :=
+  match generateTermE base tm lookup with
+  | .ok t    => t
+  | .error _ => none
 
 end L4Factoidal.RML

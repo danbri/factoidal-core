@@ -22,6 +22,7 @@ explicit inputs is the purity doctrine this port follows everywhere.
 import L4Factoidal.RML.FromGraph
 import L4Factoidal.RML.JsonPath
 import L4Factoidal.RML.Value
+import L4Factoidal.RML.Error
 import L4Factoidal.JSON.Parser
 
 namespace L4Factoidal.RML
@@ -36,11 +37,32 @@ def recordsOf (src : LogicalSource) (doc : Json) : List Json :=
   | none     => [doc]
   | some itr => evalPath itr doc
 
-/-- Look a reference up in one record. A reference selecting SEVERAL
-    values is not an error — RML says a term map generates one term
-    per value — so the caller gets the list and decides. -/
-def refValues (rec' : Json) (r : String) : List RVal :=
-  (evalPath r rec').filterMap rvalOf
+/-- Fill in the site of an error that does not have one yet. -/
+def RmlError.withSite (site : String) (e : RmlError) : RmlError :=
+  if e.site.isEmpty then { e with site := site } else e
+
+/-- Look a reference up in one record, with the errors met on the way.
+
+    A reference selecting SEVERAL values is not an error: RML says a term
+    map generates one term per value. A reference that selects a JSON
+    ARRAY or OBJECT is: it denotes no value, and RML-Core's term
+    generation rules need a value to build a term from. The corpus has
+    this case (`RMLTC0025b`: `$.amounts` where `$.amounts[*]` was meant)
+    and expects the mapping to be rejected. `null` selects nothing, as
+    RML-Core's "Empty" does (`RMLTC0013a`). -/
+def refValuesE (rec' : Json) (r : String) : List RVal × List RmlError :=
+  (evalPath r rec').foldl (fun (acc : List RVal × List RmlError) j =>
+    match j with
+    | .array _ | .object _ =>
+        (acc.1, acc.2 ++ [RmlError.data "" "RML-Core, Generated RDF Term of a Term Map: reference value"
+          s!"reference '{r}' selects a JSON array or object, not a value"])
+    | _ =>
+        match rvalOf j with
+        | some v => (acc.1 ++ [v], acc.2)
+        | none   => acc) ([], [])
+
+/-- The values of a reference, with a data error read as no value. -/
+def refValues (rec' : Json) (r : String) : List RVal := (refValuesE rec' r).1
 
 /-- The single-value lookup `generateTerm` takes. The FIRST value
     wins; `termsOf` below is what handles the multi-valued case, and
@@ -49,20 +71,29 @@ def refValues (rec' : Json) (r : String) : List RVal :=
 def lookup1 (rec' : Json) : String → Option String := fun r =>
   (refValues rec' r).head?.map (·.lexical)
 
-/-- Every term a map generates from one record.
+/-- Collect the terms and errors of a list of generation results. -/
+def collectGen (rs : List (Except RmlError (Option Term))) : List Term × List RmlError :=
+  rs.foldl (fun (acc : List Term × List RmlError) r =>
+    match r with
+    | .ok (some t) => (acc.1 ++ [t], acc.2)
+    | .ok none     => acc
+    | .error e     => (acc.1, acc.2 ++ [e])) ([], [])
+
+/-- Every term a map generates from one record, and the data errors met
+    while generating them.
 
     A REFERENCE map is multi-valued: `$.amounts[*]` selects three
     values and generates three terms, and taking only the first loses
-    two triples that the corpus expects. A TEMPLATE map is
-    single-valued here, which is the corpus's own shape — a template
-    over a multi-valued reference is a cross product this slice does
-    not build, and it says so rather than producing one arm of it. -/
-def termsOf (base : Option String) (tm : TermMap) (rec' : Json) (naturalTypes : Bool)
-    : List Term :=
+    two triples that the corpus expects. A TEMPLATE map is the cross
+    product of its references' values (RML-Core, "Template": the n-ary
+    Cartesian product). -/
+def termsOfE (base : Option String) (tm : TermMap) (rec' : Json) (naturalTypes : Bool)
+    : List Term × List RmlError :=
   match tm.form with
   | .reference r =>
       let tt := tm.termType.getD (defaultTermType tm.form)
-      (refValues rec' r).filterMap (fun v =>
+      let (vals, errs) := refValuesE rec' r
+      let (ts, es) := collectGen (vals.map (fun v =>
         match tt with
         | .literal =>
             -- The SOURCE's datatype applies only when the map states
@@ -70,8 +101,9 @@ def termsOf (base : Option String) (tm : TermMap) (rec' : Json) (naturalTypes : 
             -- `rml:language` both override it.
             let tm' := if naturalTypes && tm.datatype.isNone && tm.language.isNone
                        then { tm with datatype := v.natural } else tm
-            generateTerm base tm' (fun f => if f == r then some v.lexical else none)
-        | _ => generateTerm base tm (fun f => if f == r then some v.lexical else none))
+            generateTermE base tm' (fun f => if f == r then some v.lexical else none)
+        | _ => generateTermE base tm (fun f => if f == r then some v.lexical else none)))
+      (ts, errs ++ es)
   | .template raw =>
       -- A TEMPLATE over a multi-valued reference produces one term
       -- per COMBINATION. `$.Student[*].Name` selecting two names in
@@ -84,21 +116,34 @@ def termsOf (base : Option String) (tm : TermMap) (rec' : Json) (naturalTypes : 
       let names := segs.foldl (fun acc seg => match seg with
         | .reference f => if acc.contains f then acc else acc ++ [f]
         | _            => acc) ([] : List String)
-      let valueLists := names.map (fun f => (refValues rec' f).map (·.lexical))
+      let looked := names.map (fun f => refValuesE rec' f)
+      let valueLists := looked.map (fun p => p.1.map (·.lexical))
+      let refErrs := looked.flatMap (·.2)
       let combos := valueLists.foldl (fun acc vs =>
         acc.flatMap (fun a => vs.map (fun v => a ++ [v]))) [([] : List String)]
-      combos.filterMap (fun combo =>
-        generateTerm base tm (fun f =>
-          ((names.zip combo).find? (fun (n, _) => n == f)).map (·.2)))
-  | _ => (generateTerm base tm (lookup1 rec')).toList
+      let (ts, es) := collectGen (combos.map (fun combo =>
+        generateTermE base tm (fun f =>
+          ((names.zip combo).find? (fun (n, _) => n == f)).map (·.2))))
+      (ts, refErrs ++ es)
+  | _ => collectGen [generateTermE base tm (lookup1 rec')]
+
+/-- The terms of `termsOfE`, with data errors read as missing terms. -/
+def termsOf (base : Option String) (tm : TermMap) (rec' : Json) (naturalTypes : Bool)
+    : List Term :=
+  (termsOfE base tm rec' naturalTypes).1
 
 /-- A term map whose value is a DATATYPE or a LANGUAGE: the lexical
-    form of the first term it generates. -/
-def stringOf (base : Option String) (tm : TermMap) (rec' : Json) : Option String :=
-  (termsOf base tm rec' false).head?.bind (fun t => match t with
+    form of the first term it generates, and the errors met. -/
+def stringOfE (base : Option String) (tm : TermMap) (rec' : Json)
+    : Option String × List RmlError :=
+  let (ts, es) := termsOfE base tm rec' false
+  (ts.head?.bind (fun t => match t with
     | .literal l => some l.val.lexicalForm
     | .iri i     => some i.val
-    | _          => none)
+    | _          => none), es)
+
+def stringOf (base : Option String) (tm : TermMap) (rec' : Json) : Option String :=
+  (stringOfE base tm rec').1
 
 /-- One quad, before the dataset is assembled. -/
 structure QuadOut where
@@ -147,25 +192,35 @@ def asLiteral (tm : TermMap) : TermMap :=
 def anonLabel (id : String) (i : Nat) : String :=
   String.ofList (id.toList.filter (fun c => c.isAlphanum)) ++ "r" ++ toString i
 
-/-- The subjects one triples map generates from one record. `i` is the
-    record's position, which an ANONYMOUS blank-node subject needs.
+/-- The subjects one triples map generates from one record, and the data
+    errors met. `i` is the record's position, which an ANONYMOUS
+    blank-node subject needs.
 
     `rml:subjectMap [ rml:termType rml:BlankNode ]` states a term type
     and no form at all, and means "a fresh blank node for each
     record". `generateTerm` has no form to work from and returns
     nothing, so `RMLTC0012e` produced an empty graph from a mapping
     that describes four triples. -/
-def subjectsOf (tm : TriplesMap) (rec' : Json) (i : Nat) : List Subject :=
+def subjectsOfE (tm : TriplesMap) (rec' : Json) (i : Nat) : List Subject × List RmlError :=
   match tm.subject.form, tm.subject.termType with
-  | .unknown, some .blankNode => [.bnode (anonLabel tm.id i)]
-  | _, _ => (termsOf tm.base (asIri tm.subject) rec' false).filterMap toSubject?
+  | .unknown, some .blankNode => ([.bnode (anonLabel tm.id i)], [])
+  | _, _ =>
+      let (ts, es) := termsOfE tm.base (asIri tm.subject) rec' false
+      (ts.filterMap toSubject?, es)
+
+def subjectsOf (tm : TriplesMap) (rec' : Json) (i : Nat) : List Subject :=
+  (subjectsOfE tm rec' i).1
 
 /-- The graph terms a list of graph maps produces. An EMPTY list is
     not "the default graph" -- it is "this level states no graph", and
     the caller unions the levels before deciding. -/
-def graphTermsOf (base : Option String) (gs : List TermMap) (rec' : Json)
-    : List Term :=
-  gs.flatMap (fun gm => termsOf base (asIri gm) rec' false)
+def graphTermsOfE (base : Option String) (gs : List TermMap) (rec' : Json)
+    : List Term × List RmlError :=
+  let rs := gs.map (fun gm => termsOfE base (asIri gm) rec' false)
+  (rs.flatMap (·.1), rs.flatMap (·.2))
+
+def graphTermsOf (base : Option String) (gs : List TermMap) (rec' : Json) : List Term :=
+  (graphTermsOfE base gs rec').1
 
 /-- The graphs one triple goes into: the UNION of the subject map's
     graph maps and the predicate-object map's, and the default graph
@@ -202,8 +257,79 @@ def joinHolds (js : List JoinCondition) (child parent : Json) : Bool :=
     let ps := joinValues j.parent parent
     cs.any (fun c => ps.contains c))
 
+/-- The terms an OBJECT map generates from one record, and the errors
+    met. A term map's datatype map and language map are evaluated first
+    and become the datatype and language of the literals it makes. A
+    referencing object map yields the SUBJECTS of the parent triples map
+    for the parent records the joins select. -/
+def objectTermsE (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
+    (om : ObjectMap) (rec' : Json) : List Term × List RmlError :=
+  match om with
+  | .term base dtm lm =>
+      let dtRes : Option String × List RmlError :=
+        match dtm with
+        | some m => stringOfE tm.base (asIri m) rec'
+        | none   => (none, [])
+      let lmRes : Option String × List RmlError :=
+        match lm with
+        | some m => stringOfE tm.base (asLiteral m) rec'
+        | none   => (none, [])
+      let base1 := match dtRes.1 with
+        | some d => { base with datatype := some d }
+        | none   => base
+      let base2 := match lmRes.1 with
+        | some l => { base1 with language := some l }
+        | none   => base1
+      let r := termsOfE tm.base base2 rec' true
+      (r.1, dtRes.2 ++ lmRes.2 ++ r.2)
+  | .ref parentId joins =>
+      match all.find? (fun p => p.id == parentId) with
+      | none => ([], [])
+      | some parentMap =>
+          match docFor parentMap.source.path with
+          | none => ([], [RmlError.source parentMap.id
+                      "RML-Core, Joins: parent logical source"
+                      s!"the source '{parentMap.source.path}' of the parent triples map cannot be read"])
+          | some pdoc =>
+              let matched := ((recordsOf parentMap.source pdoc).zipIdx).filter
+                        (fun (prec, _) => joinHolds joins rec' prec)
+              let rs : List (List Term × List RmlError) := matched.map (fun (prec, pi) =>
+                let r := subjectsOfE parentMap prec pi
+                (r.1.map Subject.toTerm, r.2))
+              (rs.flatMap (·.1), rs.flatMap (·.2))
+
+/-- The quads one predicate-object map generates for one subject. -/
+def pomQuadsE (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
+    (sgraphs : List Term) (rec' : Json) (s : Subject) (pom : PredicateObjectMap)
+    : List QuadOut × List RmlError :=
+  let predRes : List (List Term × List RmlError) :=
+    pom.predicates.map (fun pm => termsOfE tm.base (asIri pm) rec' false)
+  let preds : List WfIri := predRes.flatMap (fun r => r.1.filterMap toPred?)
+  let pgRes := graphTermsOfE tm.base pom.graphs rec'
+  let graphs := graphsFor sgraphs pgRes.1
+  let objRes : List (List Term × List RmlError) :=
+    pom.objects.map (fun om => objectTermsE all docFor tm om rec')
+  let objs : List Term := objRes.flatMap (·.1)
+  let quads : List QuadOut := preds.flatMap (fun p => objs.flatMap (fun o =>
+    graphs.map (fun g => ({ s := s, p := p, o := o, g := g } : QuadOut))))
+  (quads, pgRes.2 ++ predRes.flatMap (·.2) ++ objRes.flatMap (·.2))
+
+/-- The quads one triples map generates for one subject of one record:
+    the `rml:class` triples, then each predicate-object map's. -/
+def subjectQuadsE (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
+    (sgraphs : List Term) (rec' : Json) (s : Subject) : List QuadOut × List RmlError :=
+  let typeQuads : List QuadOut :=
+    tm.classes.flatMap (fun c =>
+      match (if h : isIri c then some (⟨c, h⟩ : WfIri) else none) with
+      | none    => []
+      | some ci => (graphsFor sgraphs []).map (fun g =>
+          ({ s := s, p := rdfTypeIri, o := .iri ci, g := g } : QuadOut)))
+  let perPom : List (List QuadOut × List RmlError) :=
+    tm.poms.map (pomQuadsE all docFor tm sgraphs rec' s)
+  (typeQuads ++ perPom.flatMap (·.1), perPom.flatMap (·.2))
+
 /-- The quads one triples map generates from an ALREADY-INDEXED record
-    list.
+    list, and the errors met.
 
     The index travels WITH each record rather than being its position
     in this list, and that is the point: a caller that narrows the list
@@ -212,72 +338,67 @@ def joinHolds (js : List JoinCondition) (child parent : Json) : Bool :=
     label. Renumbering after a filter moves every blank node the row
     generates, which is
     <https://github.com/danbri/factoidal/issues/558>. -/
+def quadsOfRecordsE (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
+    (recs : List (Json × Nat)) : List QuadOut × List RmlError :=
+  let per : List (List QuadOut × List RmlError) := recs.map (fun (rec', i) =>
+    let sr := subjectsOfE tm rec' i
+    let gr := graphTermsOfE tm.base tm.graphs rec'
+    let perSubj : List (List QuadOut × List RmlError) :=
+      sr.1.map (subjectQuadsE all docFor tm gr.1 rec')
+    (perSubj.flatMap (·.1), sr.2 ++ gr.2 ++ perSubj.flatMap (·.2)))
+  (per.flatMap (·.1), (per.flatMap (·.2)).map (RmlError.withSite tm.id))
+
+/-- The quads of `quadsOfRecordsE`, with data errors dropped. -/
 def quadsOfRecords (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
     (recs : List (Json × Nat)) : List QuadOut :=
-      recs.flatMap (fun (rec', i) =>
-        let subjs := subjectsOf tm rec' i
-        let sgraphs := graphTermsOf tm.base tm.graphs rec'
-        subjs.flatMap (fun s =>
-          let typeQuads : List QuadOut :=
-            tm.classes.flatMap (fun c =>
-              match (if h : isIri c then some (⟨c, h⟩ : WfIri) else none) with
-              | none    => []
-              | some ci => (graphsFor sgraphs []).map (fun g =>
-                  ({ s := s, p := rdfTypeIri, o := .iri ci, g := g } : QuadOut)))
-          let pomQuads : List QuadOut :=
-            tm.poms.flatMap (fun pom =>
-              let preds := pom.predicates.flatMap (fun pm =>
-                (termsOf tm.base (asIri pm) rec' false).filterMap toPred?)
-              let graphs := graphsFor sgraphs (graphTermsOf tm.base pom.graphs rec')
-              let objs : List Term := pom.objects.flatMap (fun om =>
-                match om with
-                | .term base dtm lm =>
-                    let base := match dtm.bind (fun m => stringOf tm.base (asIri m) rec') with
-                      | some d => { base with datatype := some d }
-                      | none   => base
-                    let base := match lm.bind (fun m => stringOf tm.base (asLiteral m) rec') with
-                      | some l => { base with language := some l }
-                      | none   => base
-                    termsOf tm.base base rec' true
-                | .ref parentId joins =>
-                    match all.find? (fun p => p.id == parentId) with
-                    | none => []
-                    | some parentMap =>
-                        match docFor parentMap.source.path with
-                        | none => []
-                        | some pdoc =>
-                            (((recordsOf parentMap.source pdoc).zipIdx).filter
-                               (fun (prec, _) => joinHolds joins rec' prec)).flatMap
-                              (fun (prec, pi) =>
-                                (subjectsOf parentMap prec pi).map Subject.toTerm))
-              preds.flatMap (fun p => objs.flatMap (fun o =>
-                graphs.map (fun g => ({ s := s, p := p, o := o, g := g } : QuadOut)))))
-          typeQuads ++ pomQuads))
+  (quadsOfRecordsE all docFor tm recs).1
 
-/-- The quads one triples map generates. `docFor` supplies a source
-    document by path, and `all` the other triples maps a
-    `rml:parentTriplesMap` can name. -/
+/-- The quads one triples map generates, and the errors. `docFor`
+    supplies a source document by path, and `all` the other triples maps
+    a `rml:parentTriplesMap` can name. A source that cannot be read is a
+    SOURCE error: the file named by `rml:path` does not exist
+    (`RMLTC0002e`), which is not the same as a source with no rows. -/
+def quadsOfMapE (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
+    : List QuadOut × List RmlError :=
+  match docFor tm.source.path with
+  | none => ([], [RmlError.source tm.id
+              "RML-Core, Defining Iterables and Logical Sources: data source"
+              s!"the source '{tm.source.path}' cannot be read"])
+  | some doc => quadsOfRecordsE all docFor tm ((recordsOf tm.source doc).zipIdx)
+
 def quadsOfMap (all : Mapping) (docFor : String → Option Json) (tm : TriplesMap)
     : List QuadOut :=
-  match docFor tm.source.path with
-  | none => []
-  | some doc => quadsOfRecords all docFor tm ((recordsOf tm.source doc).zipIdx)
+  (quadsOfMapE all docFor tm).1
 
 /-- `rml:defaultGraph` names the default graph, so a graph map that
     produces it is the same as producing none. -/
 def defaultGraphIri : String := rmlNs ++ "defaultGraph"
+
+/-- The outcome of running a mapping: the quads, and every reason the
+    run is to be rejected. A caller that accepts a run with errors has
+    chosen to read an RML-Core data error as a missing term. -/
+structure EvalResult where
+  quads  : List QuadOut
+  errors : List RmlError
 
 /-- Run a whole mapping. `defaultBase` is the base IRI in force where
     a triples map states none — the test corpus gives one per case
     (`rml:defaultBaseIRI`, `base_iri` in its own metadata), and
     without it a template that produces `Carlos` yields no term at all
     instead of `http://example.com/Carlos` (`RMLTC0019a`). -/
+def evalMappingE (defaultBase : Option String) (m : Mapping)
+    (docFor : String → Option Json) : EvalResult :=
+  let m := m.map (fun t => { t with base := t.base.orElse (fun _ => defaultBase) })
+  let rs := m.map (quadsOfMapE m docFor)
+  { quads := (rs.flatMap (·.1)).map (fun q =>
+      match q.g with
+      | some (.iri i) => if i.val == defaultGraphIri then { q with g := none } else q
+      | _             => q)
+    errors := rs.flatMap (·.2) }
+
+/-- The quads of a run, ignoring its errors. -/
 def evalMapping (defaultBase : Option String) (m : Mapping)
     (docFor : String → Option Json) : List QuadOut :=
-  let m := m.map (fun t => { t with base := t.base.orElse (fun _ => defaultBase) })
-  (m.flatMap (quadsOfMap m docFor)).map (fun q =>
-    match q.g with
-    | some (.iri i) => if i.val == defaultGraphIri then { q with g := none } else q
-    | _             => q)
+  (evalMappingE defaultBase m docFor).quads
 
 end L4Factoidal.RML
