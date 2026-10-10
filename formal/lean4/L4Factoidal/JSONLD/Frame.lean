@@ -268,19 +268,19 @@ def validateFrame (frame : Json) : Res Json :=
 /-- The node maps of every graph: `"@default"`, each named graph, and
 `"@merged"` when the merged graph is framed. -/
 structure Env where
-  graphs : List (String × NmGraph)
+  graphs : Std.TreeMap String NmGraph
   rootGraph : String
   opts : FrameOptions
   mode10 : Bool
 
-def Env.nodes (env : Env) (g : String) : NmGraph := (flLookup env.graphs g).getD []
+def Env.nodes (env : Env) (g : String) : NmGraph := (env.graphs.get? g).getD Std.TreeMap.empty
 
-def Env.node (env : Env) (g id : String) : Option NmNode := flLookup (env.nodes g) id
+def Env.node (env : Env) (g id : String) : Option NmNode := (env.nodes g).get? id
 
 /-- The values of a key in a node, as a list. -/
 def nodeValues (n : NmNode) (k : String) : List Json :=
-  match flLookup n k with
-  | some x => asArray x
+  match n.find? k with
+  | some x => x.items
   | none => []
 
 /-! ## Matching (§4.2, §4.3) -/
@@ -603,7 +603,7 @@ def addOutputM (parent : Nat) (property : Option String) (item : OVal) : FM Unit
 /-! ## The Framing Algorithm (§4.1) -/
 
 /-- The node ids of a graph, in code-point order. -/
-def Env.subjectsOf (env : Env) (g : String) : List String := sortedKeys (env.nodes g)
+def Env.subjectsOf (env : Env) (g : String) : List String := (env.nodes g).keys
 
 /-- The `@id` of the node a `{"@id": ...}` reference names. -/
 def refTarget (o : Json) : Option String :=
@@ -698,7 +698,7 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
       | none => pure ()
       | some node => do
         -- the node is also the name of a graph
-        if (flLookup env.graphs id).isSome then
+        if env.graphs.contains id then
           let (recurse, subframe) : Bool × Json :=
             if !objHas fr "@graph" then (graph != "@merged", Json.object [])
             else
@@ -713,7 +713,7 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
         | some inc => frameRec env graph false subjects inc out (some "@included") fuel
         | none => pure ()
         -- the node's own properties
-        frameProps env graph fr fl out (flSortByKey node) fuel
+        frameProps env graph fr fl out node.toSortedFields fuel
         -- defaults for the frame's properties the output lacks
         frameDefaults env fr out (flSortByKey (objFields fr)) fuel
         -- @reverse
@@ -977,18 +977,17 @@ def singletonBnodes (st : FState) : List String :=
 
 /-- Merge Node Maps (API §7.3, used by Framing §5.1): every node of every
 graph, merged by identifier. Keywords other than `@type` are copied; the
-values of all other entries are added unless already present. -/
-def mergeNodeMaps (graphs : List (String × NmGraph)) : NmGraph :=
-  let names := sortedKeys graphs
-  names.foldl (fun merged name =>
-    (flSortByKey ((flLookup graphs name).getD [])).foldl (fun acc entry =>
-      let id := entry.1
-      let node := entry.2
-      let base : NmNode := (flLookup acc id).getD [("@id", .string id)]
-      let merged' := (flSortByKey node).foldl (fun n kv =>
-        if isKeyword kv.1 && kv.1 != "@type" then flUpd n kv.1 kv.2
+values of all other entries are added unless already present. Graphs are
+visited in code-point order of their names, and the nodes of each in
+code-point order of their identifiers. -/
+def mergeNodeMaps (graphs : Std.TreeMap String NmGraph) : NmGraph :=
+  graphs.foldl (fun merged _ gr =>
+    gr.foldl (fun acc id node =>
+      let base : NmNode := (acc.get? id).getD (NmNode.fresh id)
+      let merged' := node.toSortedFields.foldl (fun n kv =>
+        if isKeyword kv.1 && kv.1 != "@type" then n.upsert kv.1 (.one kv.2)
         else (asArray kv.2).foldl (fun n' item => nodeAppendProp n' kv.1 item true) n) base
-      flUpd acc id merged') merged) []
+      acc.insert id merged') merged) Std.TreeMap.empty
 
 /-- Does the frame document have a top-level entry that expands to
 `@graph`? Then the default graph is framed, not the merged graph. -/
@@ -1026,7 +1025,7 @@ def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOpti
           match generateNodeMap expanded with
           | .error e => .error e
           | .ok nst =>
-            let graphs := if merged then nst.graphs ++ [("@merged", mergeNodeMaps nst.graphs)]
+            let graphs := if merged then nst.graphs.insert "@merged" (mergeNodeMaps nst.graphs)
                           else nst.graphs
             let root := if merged then "@merged" else "@default"
             let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }

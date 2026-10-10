@@ -46,6 +46,21 @@ open L4Factoidal.JSONLD
 
 namespace JsonLdScale
 
+/-- Differential-testing hook. When the environment variable
+`L4_JSONLD_DUMP` names a file, append one line per call: `tag`, a tab, and
+the output rendered with `Json.toStringCompact` (object member order
+included, which the suites' JCS comparison ignores) or `ERROR code`.
+Running the same suites with two builds and comparing the two files shows
+whether a change altered any output byte. -/
+def rawDump (tag : String) (r : Res Json) : IO Unit := do
+  match ← IO.getEnv "L4_JSONLD_DUMP" with
+  | none => pure ()
+  | some path =>
+    let line := match r with
+                | .ok j => toStringCompact j
+                | .error e => "ERROR " ++ e.code
+    IO.FS.withFile path .append (fun h => h.putStrLn (tag ++ "\t" ++ line))
+
 def ex (s : String) : String := "http://example.org/" ++ s
 
 def q (s : String) : String := "\"" ++ s ++ "\""
@@ -210,8 +225,23 @@ def run (base reps : Nat) (bound : Nat) (floorMs : Nat) : IO UInt32 := do
   IO.println s!"scaling: {pass} pass, {fail} fail (out of {pass + fail}) size pairs; checksum {rows.foldl (fun a r => a + r.sum) 0}"
   return (if fail == 0 then 0 else 1)
 
+/-- `--dump-shapes`: write the raw output of the flatten and frame
+algorithms for every shape at a few small sizes through `rawDump`, for a
+byte-level comparison of two builds. -/
+def dumpShapes : IO UInt32 := do
+  let loader : Loader := fun _ => none
+  for sh in shapes do
+    for n in [1, 2, 5, 40, 150] do
+      let doc := sh.doc n
+      rawDump s!"shape {sh.name} {n} flatten" (flattenDocument loader doc none none none true none)
+      rawDump s!"shape {sh.name} {n} flatten+ctx"
+        (flattenDocument loader doc (some ctxText) none none true none)
+      rawDump s!"shape {sh.name} {n} frame" (frameDocument loader doc (sh.frame n) none none)
+  return 0
+
 /-- Entry: `args` follow `--scale`: optional base size, optional repetitions. -/
 def main (args : List String) : IO UInt32 := do
+  if args.head? == some "--dump-shapes" then return (← dumpShapes)
   let base := (args[0]?.bind String.toNat?).getD 250
   let reps := (args[1]?.bind String.toNat?).getD 3
   run base reps 90 20

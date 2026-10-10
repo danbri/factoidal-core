@@ -19,6 +19,7 @@ equality. Member order is insignificant, array order IS significant, and
 there is no blank-node relabelling — the fixtures pin the exact labels.
 -/
 import L4Factoidal.JSONLD.Frame
+import Harness.JsonLdScale
 
 open L4Factoidal.JSON
 open L4Factoidal.JSONLD
@@ -155,6 +156,7 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
     let got := frameDocumentWith loader inputTxt frameTxt
       { e.frameOpts with base := base, processingMode := e.processingMode,
                          omitGraph := e.omitGraph }
+    JsonLdScale.rawDump ("frame " ++ e.id) got
     match e.kind with
     | .unknown => return .unsupported "unreachable"
     | .negative =>

@@ -151,8 +151,8 @@ def plainTerm : TermDef :=
 
 -- §7.2: the issuer relabels in first-issue order, starting at `_:b0`,
 -- and an already-issued label maps to the SAME identifier a second time.
-#guard (issueKeyed { graphs := [], idmap := [], ctr := 0 } "_:x").1 == "_:b0"
-#guard (let st0 : NmState := { graphs := [], idmap := [], ctr := 0 }
+#guard (issueKeyed { graphs := ∅, idmap := ∅, ctr := 0 } "_:x").1 == "_:b0"
+#guard (let st0 : NmState := { graphs := ∅, idmap := ∅, ctr := 0 }
         let (a, st1) := issueKeyed st0 "_:x"
         let (b, _)   := issueKeyed st1 "_:x"
         a == b && a == "_:b0")
