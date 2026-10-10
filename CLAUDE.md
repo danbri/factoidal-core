@@ -363,6 +363,20 @@ Where a property holds of both trees, state it once over an abstraction
 (a typeclass or parameterised structure in Lean) and instantiate it,
 rather than proving it twice. Lean first; F\* optional.
 
+### The npm package is Lean 4 only (owner, 2026-10-10)
+
+> "I understand our NPM module Factoidal/core is currently a mix of components
+> derrived from the F\* and/or Lean4 trees here. This looks potentially bloated
+> and bug-prone. We should make the main module Lean4-based. Private builds
+> might compare this with F\* (or indeed different wasms from different
+> toolchains)."
+
+The published `@factoidal/core` carries one engine, the Lean 4 build. F\*
+bundles and builds from other toolchains are for private comparison builds
+(factoidal-builds artifacts, `l4diff`), not for the package. Plan and gaps:
+`docs/designissues/2026-10-10-npm-lean-only.md`,
+https://github.com/danbri/factoidal/issues/713.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where

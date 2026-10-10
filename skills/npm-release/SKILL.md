@@ -14,7 +14,15 @@ Two packages exist. Only one is current.
 
 `@factoidal/core` carries the F\* engine's JavaScript bundle AND the Lean
 engine's WebAssembly module (under `l4-assets/`), so one `npm install`
-gives a consumer both. Do not publish `@factoidal/lean` unless the owner
+gives a consumer both.
+
+⚠️ **This is changing (owner, 2026-10-10):** "We should make the main module
+Lean4-based. Private builds might compare this with F\*". The published
+package becomes Lean-only; the F\* bundles stay as factoidal-builds artifacts
+for private comparison builds. State, gaps and stages:
+`docs/designissues/2026-10-10-npm-lean-only.md`,
+https://github.com/danbri/factoidal/issues/713. Do not add a new F\*-engine
+function to the package's main entry. Do not publish `@factoidal/lean` unless the owner
 asks for the override channel by name; its workflow refuses to run
 without a typed confirmation phrase.
 
