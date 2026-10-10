@@ -38,7 +38,11 @@ Theorems (`NQuadsLenientTheorems.lean`):
   * the indexed accumulator (`addQuadFast`) and the reference one (`addQuad`)
     give the same lenient result;
   * `parseNTriplesLenient`, `parseNQuadsLenient`, `parseNQuadsFastLenient`:
-    `parseX s = .ok d → parseXLenient s = (d, [])`.
+    `parseX s = .ok d → parseXLenient s = (d, [])`;
+  * the converse, `parseNTriples_ok_of_lenient_quiet` and
+    `parseNQuads_ok_of_lenient_quiet`: a lenient parse that reports no
+    diagnostic means the strict parser accepts. So a document the strict
+    parser refuses always gets at least one diagnostic.
 
 Streaming (`LenientStream`): the chunked execution cuts each buffer after its
 last line feed (`NQuadsStreaming.splitCompleteLines`, whose three theorems

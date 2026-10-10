@@ -335,6 +335,266 @@ theorem parseNQuadsFastLenient_eq (s : String) (mode : Mode) (opts : LenientOpti
   obtain ⟨⟨_, hacc⟩, hd, _, _, _⟩ := hrel
   simp only [parseNQuadsFastLenient, parseNQuadsLenient, lenientLines, hacc, hd]
 
+/-! ## 5. The converse: a walk that reports nothing had nothing to report
+
+With the list consumer `pushDiag`, every error the walk meets adds one
+diagnostic, so a walk that ends with the diagnostic list it started with met
+no error, and the strict walk accepts the same input. Together with section
+1 this makes "a document the strict parser refuses gets at least one
+diagnostic" a theorem; the W3C negative syntax tests check it on real files
+(`l4w3c --lenient`). -/
+
+private theorem recordError_pushes {α : Type} (opts : LenientOptions)
+    (run : LenientRun α (List Diagnostic)) (pos : Nat) (cs : List Char) (e : ParseError) :
+    ∃ d, (run.recordError opts pushDiag pos cs e).1.diags = d :: run.diags := by
+  unfold LenientRun.recordError
+  split
+  · exact ⟨_, rfl⟩
+  · exact ⟨_, rfl⟩
+
+private theorem append_cons_ne {γ : Type} (l : List γ) (d : γ) (xs : List γ) :
+    l ++ d :: xs ≠ xs := by
+  intro h
+  have := congrArg List.length h
+  simp at this
+  omega
+
+/-- The diagnostic list only grows, at the front. -/
+theorem foldLinesLenient_diags_grow (reader : LineReader) {α : Type}
+    (consume : α → Triple → Option Subject → α) (opts : LenientOptions) :
+    ∀ (f pos : Nat) (cs : List Char) (run : LenientRun α (List Diagnostic)),
+      ∃ l, (foldLinesLenient reader consume pushDiag opts f pos cs run).diags = l ++ run.diags
+  | 0, pos, cs, run => by
+      obtain ⟨d, hd⟩ := recordError_pushes opts run pos cs
+        ⟨"internal error: parser fuel exhausted (should be unreachable)", pos⟩
+      exact ⟨[d], by simp only [foldLinesLenient]; rw [hd]; rfl⟩
+  | f + 1, pos, cs, run => by
+      cases hw : skipWs pos cs with
+      | mk pos1 cs1 =>
+        cases hc1 : cs1 with
+        | nil =>
+            rw [hc1] at hw
+            exact ⟨[], by simp only [foldLinesLenient, hw]; rfl⟩
+        | cons c t =>
+          rw [hc1] at hw
+          by_cases hh : c = '#'
+          · subst hh
+            simp only [foldLinesLenient, hw]
+            exact foldLinesLenient_diags_grow reader consume opts f _ _ _
+          · by_cases hn : c = '\n'
+            · subst hn
+              simp only [foldLinesLenient, hw]
+              exact foldLinesLenient_diags_grow reader consume opts f _ _ _
+            · by_cases hr : c = '\r'
+              · subst hr
+                simp only [foldLinesLenient, hw]
+                exact foldLinesLenient_diags_grow reader consume opts f _ _ _
+              · rw [lenient_default_branch reader consume pushDiag opts f pos pos1 cs t c run
+                      hw hh hn hr]
+                cases hs : reader pos1 (c :: t) with
+                | error e =>
+                    simp only
+                    obtain ⟨d, hd⟩ := recordError_pushes opts run pos1 (c :: t) e
+                    revert hd
+                    cases (run.recordError opts pushDiag pos1 (c :: t) e) with
+                    | mk r' k =>
+                      intro hd
+                      simp only at hd
+                      cases k with
+                      | false => exact ⟨[d], by simp only; rw [hd]; rfl⟩
+                      | true =>
+                          simp only
+                          have hg := foldLinesLenient_diags_grow reader consume opts f
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).1
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).2
+                            { r' with linePos := (r'.linePos.advance (skipToEol pos1 (c :: t)).1
+                                ((skipEol (skipToEol pos1 (c :: t)).1
+                                    (skipToEol pos1 (c :: t)).2).1
+                                  - (skipToEol pos1 (c :: t)).1) (skipToEol pos1 (c :: t)).2) }
+                          obtain ⟨l, hl⟩ := hg
+                          refine ⟨l ++ [d], ?_⟩
+                          rw [hl]
+                          simp [hd]
+                | ok v =>
+                    obtain ⟨tr, gg, p2, c2⟩ := v
+                    simp only
+                    exact foldLinesLenient_diags_grow reader consume opts f _ _ _
+
+/-- **N-Quads, converse.** A lenient walk that reports nothing: the strict
+walk accepts. -/
+theorem foldLinesLenient_quad_ok_of_quiet (mode : Mode) {α : Type}
+    (consume : α → Triple → Option Subject → α) (opts : LenientOptions) :
+    ∀ (f pos : Nat) (cs : List Char) (run : LenientRun α (List Diagnostic)),
+      (foldLinesLenient (quadReader mode) consume pushDiag opts f pos cs run).diags = run.diags →
+      ∃ r, foldQuadLinesAcc mode consume f pos cs run.acc = .ok r
+  | 0, pos, cs, run, h => by
+      obtain ⟨d, hd⟩ := recordError_pushes opts run pos cs
+        ⟨"internal error: parser fuel exhausted (should be unreachable)", pos⟩
+      simp only [foldLinesLenient] at h
+      rw [hd] at h
+      exact absurd h (append_cons_ne [] d run.diags)
+  | f + 1, pos, cs, run, h => by
+      cases hw : skipWs pos cs with
+      | mk pos1 cs1 =>
+        cases hc1 : cs1 with
+        | nil =>
+            rw [hc1] at hw
+            exact ⟨run.acc, by simp only [foldQuadLinesAcc, hw]⟩
+        | cons c t =>
+          rw [hc1] at hw
+          by_cases hh : c = '#'
+          · subst hh
+            simp only [foldLinesLenient, hw] at h
+            simp only [foldQuadLinesAcc, hw]
+            have ih := foldLinesLenient_quad_ok_of_quiet mode consume opts f _ _ _ h
+            exact ih
+          · by_cases hn : c = '\n'
+            · subst hn
+              simp only [foldLinesLenient, hw] at h
+              simp only [foldQuadLinesAcc, hw]
+              have ih := foldLinesLenient_quad_ok_of_quiet mode consume opts f _ _ _ h
+              exact ih
+            · by_cases hr : c = '\r'
+              · subst hr
+                simp only [foldLinesLenient, hw] at h
+                simp only [foldQuadLinesAcc, hw]
+                have ih := foldLinesLenient_quad_ok_of_quiet mode consume opts f _ _ _ h
+                exact ih
+              · rw [lenient_default_branch (quadReader mode) consume pushDiag opts f pos pos1 cs t c
+                      run hw hh hn hr] at h
+                rw [strictQuad_default_branch mode consume f pos pos1 cs t c run.acc hw hh hn hr]
+                cases hs : quadReader mode pos1 (c :: t) with
+                | error e =>
+                    exfalso
+                    rw [hs] at h
+                    simp only at h
+                    obtain ⟨d, hd⟩ := recordError_pushes opts run pos1 (c :: t) e
+                    revert h hd
+                    cases (run.recordError opts pushDiag pos1 (c :: t) e) with
+                    | mk r' k =>
+                      intro h hd
+                      simp only at hd
+                      cases k with
+                      | false =>
+                          simp only at h
+                          rw [hd] at h
+                          exact append_cons_ne [] d run.diags h
+                      | true =>
+                          simp only at h
+                          have hg := foldLinesLenient_diags_grow (quadReader mode) consume opts f
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).1
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).2
+                            { r' with linePos := (r'.linePos.advance (skipToEol pos1 (c :: t)).1
+                                ((skipEol (skipToEol pos1 (c :: t)).1
+                                    (skipToEol pos1 (c :: t)).2).1
+                                  - (skipToEol pos1 (c :: t)).1) (skipToEol pos1 (c :: t)).2) }
+                          obtain ⟨l, hl⟩ := hg
+                          rw [hl] at h
+                          simp only [hd] at h
+                          exact append_cons_ne l d run.diags h
+                | ok v =>
+                    obtain ⟨tr, gg, p2, c2⟩ := v
+                    rw [hs] at h
+                    have ih := foldLinesLenient_quad_ok_of_quiet mode consume opts f _ _ _ h
+                    exact ih
+
+/-- **N-Triples, converse.** A lenient walk that reports nothing: the strict
+walk accepts. -/
+theorem foldLinesLenient_triple_ok_of_quiet (mode : Mode) (opts : LenientOptions) :
+    ∀ (f pos : Nat) (cs : List Char) (run : LenientRun (List Triple) (List Diagnostic)),
+      (foldLinesLenient (tripleReader mode) (fun acc t _ => t :: acc) pushDiag opts f pos cs
+          run).diags = run.diags →
+      ∃ r, parseLinesAcc mode f pos cs run.acc = .ok r
+  | 0, pos, cs, run, h => by
+      obtain ⟨d, hd⟩ := recordError_pushes opts run pos cs
+        ⟨"internal error: parser fuel exhausted (should be unreachable)", pos⟩
+      simp only [foldLinesLenient] at h
+      rw [hd] at h
+      exact absurd h (append_cons_ne [] d run.diags)
+  | f + 1, pos, cs, run, h => by
+      cases hw : skipWs pos cs with
+      | mk pos1 cs1 =>
+        cases hc1 : cs1 with
+        | nil =>
+            rw [hc1] at hw
+            exact ⟨run.acc.reverse, by simp only [parseLinesAcc, hw]⟩
+        | cons c t =>
+          rw [hc1] at hw
+          by_cases hh : c = '#'
+          · subst hh
+            simp only [foldLinesLenient, hw] at h
+            simp only [parseLinesAcc, hw]
+            have ih := foldLinesLenient_triple_ok_of_quiet mode opts f _ _ _ h
+            exact ih
+          · by_cases hn : c = '\n'
+            · subst hn
+              simp only [foldLinesLenient, hw] at h
+              simp only [parseLinesAcc, hw]
+              have ih := foldLinesLenient_triple_ok_of_quiet mode opts f _ _ _ h
+              exact ih
+            · by_cases hr : c = '\r'
+              · subst hr
+                simp only [foldLinesLenient, hw] at h
+                simp only [parseLinesAcc, hw]
+                have ih := foldLinesLenient_triple_ok_of_quiet mode opts f _ _ _ h
+                exact ih
+              · rw [lenient_default_branch (tripleReader mode) _ pushDiag opts f pos pos1 cs t c
+                      run hw hh hn hr] at h
+                rw [strictTriple_default_branch mode f pos pos1 cs t c run.acc hw hh hn hr]
+                cases hs : tripleReader mode pos1 (c :: t) with
+                | error e =>
+                    exfalso
+                    rw [hs] at h
+                    simp only at h
+                    obtain ⟨d, hd⟩ := recordError_pushes opts run pos1 (c :: t) e
+                    revert h hd
+                    cases (run.recordError opts pushDiag pos1 (c :: t) e) with
+                    | mk r' k =>
+                      intro h hd
+                      simp only at hd
+                      cases k with
+                      | false =>
+                          simp only at h
+                          rw [hd] at h
+                          exact append_cons_ne [] d run.diags h
+                      | true =>
+                          simp only at h
+                          have hg := foldLinesLenient_diags_grow (tripleReader mode) (fun (acc : List Triple) t _ => t :: acc) opts f
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).1
+                            (skipEol (skipToEol pos1 (c :: t)).1 (skipToEol pos1 (c :: t)).2).2
+                            { r' with linePos := (r'.linePos.advance (skipToEol pos1 (c :: t)).1
+                                ((skipEol (skipToEol pos1 (c :: t)).1
+                                    (skipToEol pos1 (c :: t)).2).1
+                                  - (skipToEol pos1 (c :: t)).1) (skipToEol pos1 (c :: t)).2) }
+                          obtain ⟨l, hl⟩ := hg
+                          rw [hl] at h
+                          simp only [hd] at h
+                          exact append_cons_ne l d run.diags h
+                | ok v =>
+                    obtain ⟨tr, gg, p2, c2⟩ := v
+                    rw [hs] at h
+                    have ih := foldLinesLenient_triple_ok_of_quiet mode opts f _ _ _ h
+                    exact ih
+
+/-- **N-Triples.** A lenient parse with no diagnostic: `parseNTriples`
+accepts the same text. -/
+theorem parseNTriples_ok_of_lenient_quiet (s : String) (mode : Mode) (opts : LenientOptions)
+    (h : (parseNTriplesLenient s mode opts).2 = []) : ∃ g, parseNTriples s mode = .ok g := by
+  simp only [parseNTriplesLenient, List.reverse_eq_nil_iff] at h
+  simp only [parseNTriples]
+  exact foldLinesLenient_triple_ok_of_quiet mode opts
+    (s.toList.length + 1) 0 s.toList { acc := [], diags := [] } h
+
+/-- **N-Quads.** A lenient parse with no diagnostic: `parseNQuads` accepts
+the same text. With `parseNQuadsLenient_of_ok`, the lenient parse reports
+nothing exactly when the strict parser accepts. -/
+theorem parseNQuads_ok_of_lenient_quiet (s : String) (mode : Mode) (opts : LenientOptions)
+    (h : (parseNQuadsLenient s mode opts).2 = []) : ∃ d, parseNQuads s mode = .ok d := by
+  simp only [parseNQuadsLenient, List.reverse_eq_nil_iff] at h
+  simp only [parseNQuads, parseQuadLinesAcc_eq_fold]
+  exact foldLinesLenient_quad_ok_of_quiet mode (fun ds t gopt => addQuad ds t gopt) opts
+    (s.toList.length + 1) 0 s.toList { acc := Dataset.empty, diags := [] } h
+
 /-! ## Axiom audit -/
 
 #print axioms foldLinesLenient_quad_of_ok
@@ -344,5 +604,10 @@ theorem parseNQuadsFastLenient_eq (s : String) (mode : Mode) (opts : LenientOpti
 #print axioms parseNQuadsLenient_of_ok
 #print axioms parseNQuadsFastLenient_of_ok
 #print axioms parseNQuadsFastLenient_eq
+#print axioms foldLinesLenient_diags_grow
+#print axioms foldLinesLenient_quad_ok_of_quiet
+#print axioms parseNQuads_ok_of_lenient_quiet
+#print axioms foldLinesLenient_triple_ok_of_quiet
+#print axioms parseNTriples_ok_of_lenient_quiet
 
 end L4Factoidal.Syntax

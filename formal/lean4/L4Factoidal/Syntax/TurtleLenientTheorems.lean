@@ -11,6 +11,9 @@ result and report nothing (https://github.com/danbri/factoidal/issues/716).
 3. Entry points: `parseTurtleLenient_of_ok`,
    `parseTurtleLenientWithPrefixes_of_ok`, `parseTriGLenient_of_ok`,
    `parseTriGLenientWithPrefixes_of_ok`.
+4. The converse for Turtle, `parseTurtle_ok_of_lenient_quiet`: a lenient
+   parse that reports no diagnostic means `parseTurtle` accepts. (For TriG
+   the converse is not proved; the W3C negative syntax tests check it.)
 
 No hypothesis mentions a lenient walk (anti-pattern 29).
 
@@ -183,6 +186,129 @@ theorem parseTriGLenientWithPrefixes_of_ok (text : String) (base : Option String
       rw [hlp]
       simp [TurtleLenientRun.init, hd, hps]
 
+/-! ## 3. The converse for Turtle: a walk that reports nothing had nothing to report
+
+With the list consumer `pushDiag`, every error adds one diagnostic, so a walk
+that ends with the list it started with met no error and the strict fold
+accepts. With `parseTurtleLenient_of_ok`, the lenient parse reports nothing
+exactly when `parseTurtle` accepts. -/
+
+private theorem trecordError_pushes {α : Type} (opts : LenientOptions)
+    (run : TurtleLenientRun α (List Diagnostic)) (pos : Nat) (cs : List Char) (e : ParseError)
+    (r' : TurtleLenientRun α (List Diagnostic)) (k : Bool)
+    (h : run.recordError opts pushDiag pos cs e = (r', k)) : ∃ d, r'.diags = d :: run.diags := by
+  unfold TurtleLenientRun.recordError at h
+  split at h
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    exact ⟨_, rfl⟩
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    exact ⟨_, rfl⟩
+
+/-- The diagnostic list only grows, at the front: any suffix of the list the
+walk starts with is a suffix of the list it ends with. -/
+theorem parseStatementsLenient_diags_grow {α : Type} (step : α → List Triple → α)
+    (opts : LenientOptions) :
+    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun α (List Diagnostic))
+      (ys : List Diagnostic), (∃ l1, run.diags = l1 ++ ys) →
+      ∃ l, (parseStatementsLenient step pushDiag opts fuel pos cs run).diags = l ++ ys := by
+  intro fuel
+  induction fuel with
+  | zero => intro pos cs run ys h; exact h
+  | succ fuel ih =>
+      intro pos cs run ys h
+      simp only [parseStatementsLenient]
+      cases hr : (tws pos cs).2 with
+      | nil => exact h
+      | cons c rest =>
+          cases hs : readStatement fuel run.turtle (tws pos cs).1 (c :: rest) with
+          | error e =>
+              simp only [hs]
+              split
+              · rename_i r' heq
+                obtain ⟨d, hd⟩ := trecordError_pushes opts _ _ _ _ _ _ heq
+                obtain ⟨l1, hl1⟩ := h
+                exact ⟨d :: l1, by rw [hd]; simp [hl1]⟩
+              · rename_i r' heq
+                obtain ⟨d, hd⟩ := trecordError_pushes opts _ _ _ _ _ _ heq
+                obtain ⟨l1, hl1⟩ := h
+                exact ih _ _ _ ys ⟨d :: l1, by simp only; rw [hd]; simp [hl1]⟩
+          | ok v =>
+              obtain ⟨ts, st2, p2, r2⟩ := v
+              simp only [hs]
+              by_cases hp : p2 ≤ (tws pos cs).1
+              · simp only [hp, if_true]
+                exact h
+              · simp only [hp, if_false]
+                exact ih _ _ _ ys h
+
+private theorem parseStatementsLenient_diags_ne {α : Type} (step : α → List Triple → α)
+    (opts : LenientOptions) (fuel pos : Nat) (cs : List Char)
+    (run : TurtleLenientRun α (List Diagnostic)) (xs : List Diagnostic) (d : Diagnostic)
+    (h : run.diags = d :: xs) :
+    (parseStatementsLenient step pushDiag opts fuel pos cs run).diags ≠ xs := by
+  obtain ⟨l, hl⟩ := parseStatementsLenient_diags_grow step opts fuel pos cs run (d :: xs)
+    ⟨[], by simp [h]⟩
+  rw [hl]
+  intro hc
+  have := congrArg List.length hc
+  simp at this
+  omega
+
+theorem parseStatementsFold_ok_of_quiet {α : Type} (step : α → List Triple → α)
+    (opts : LenientOptions) :
+    ∀ (fuel pos : Nat) (cs : List Char) (run : TurtleLenientRun α (List Diagnostic)),
+      (parseStatementsLenient step pushDiag opts fuel pos cs run).diags = run.diags →
+      ∃ r st', parseStatementsFold step fuel run.turtle pos cs run.acc = .ok (r, st') := by
+  intro fuel
+  induction fuel with
+  | zero => intro pos cs run _; exact ⟨run.acc, run.turtle, rfl⟩
+  | succ fuel ih =>
+      intro pos cs run h
+      simp only [parseStatementsLenient] at h
+      simp only [parseStatementsFold]
+      cases hr : (tws pos cs).2 with
+      | nil => simp only [hr]; exact ⟨_, _, rfl⟩
+      | cons c rest =>
+          simp only [hr] at h ⊢
+          cases hs : readStatement fuel run.turtle (tws pos cs).1 (c :: rest) with
+          | error e =>
+              exfalso
+              simp only [hs] at h
+              split at h
+              · rename_i r' heq
+                obtain ⟨d, hd⟩ := trecordError_pushes opts _ _ _ _ _ _ heq
+                rw [hd] at h
+                have := congrArg List.length h
+                simp at this
+              · rename_i r' heq
+                obtain ⟨d, hd⟩ := trecordError_pushes opts _ _ _ _ _ _ heq
+                exact absurd h (parseStatementsLenient_diags_ne step opts _ _ _ _ run.diags d
+                  (by simp only; rw [hd]))
+          | ok v =>
+              obtain ⟨ts, st2, p2, r2⟩ := v
+              simp only [hs] at h ⊢
+              by_cases hp : p2 ≤ (tws pos cs).1
+              · simp only [hp, if_true]
+                exact ⟨_, _, rfl⟩
+              · simp only [hp, if_false] at h ⊢
+                have hi := ih p2 r2 _ h
+                exact hi
+
+/-- **Turtle.** A lenient parse with no diagnostic: `parseTurtle` accepts the
+same text. -/
+theorem parseTurtle_ok_of_lenient_quiet (text : String) (base : Option String) (mode : Mode)
+    (opts : LenientOptions) (h : (parseTurtleLenient text base mode opts).2 = []) :
+    ∃ g, parseTurtle text base mode = .ok g := by
+  simp only [parseTurtleLenient, parseTurtleLenientWithPrefixes, List.reverse_eq_nil_iff] at h
+  obtain ⟨r, st', hf⟩ := parseStatementsFold_ok_of_quiet prependReverse opts
+    (text.toList.length + 2) 0 text.toList
+    (TurtleLenientRun.init [] [] (TurtleState.initChars text.toList base mode)) h
+  have hf' : parseStatementsFold prependReverse (text.toList.length + 2)
+      (TurtleState.initChars text.toList base mode) 0 text.toList [] = .ok (r, st') := hf
+  exact ⟨r.reverse, by rw [parseTurtle_eq_fold]; simp [parseTurtleFold, hf', Except.map]⟩
+
 /-! ## Axiom audit -/
 
 #print axioms parseStatementsLenient_of_ok
@@ -191,5 +317,8 @@ theorem parseTriGLenientWithPrefixes_of_ok (text : String) (base : Option String
 #print axioms parseTriGStatementsLenient_of_ok
 #print axioms parseTriGLenient_of_ok
 #print axioms parseTriGLenientWithPrefixes_of_ok
+#print axioms parseStatementsLenient_diags_grow
+#print axioms parseStatementsFold_ok_of_quiet
+#print axioms parseTurtle_ok_of_lenient_quiet
 
 end L4Factoidal.Syntax
