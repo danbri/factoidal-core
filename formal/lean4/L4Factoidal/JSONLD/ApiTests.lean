@@ -95,10 +95,11 @@ theorem validateFrame_empty : validateFrame (.array []) = .error .invalidFrame :
 
 /-- Adding an output to an array container appends it, and leaves the
 container where it is in the arena (the property `@embed: @last` relies
-on when it later replaces an element in place). -/
+on when it later replaces an element in place). An `arr` stores its items
+newest first, so appending is a `cons`; `matCont` reverses at the end. -/
 theorem addOutput_array (st : FState) (i : Nat) (p : Option String) (xs : List OVal)
     (item : OVal) (hi : i < st.arena.size) (h : st.get i = .arr xs) :
-    (st.addOutput i p item).get i = .arr (xs ++ [item]) := by
+    (st.addOutput i p item).get i = .arr (item :: xs) := by
   unfold FState.addOutput
   rw [h]
   simp [FState.get, FState.put, hi]

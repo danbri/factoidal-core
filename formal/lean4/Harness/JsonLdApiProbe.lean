@@ -540,7 +540,7 @@ def main (args : List String) : IO UInt32 := do
   -- Harness/JsonLdScale.lean instead of the manifests.
   if args.head? == some "--scale" then
     return (← JsonLdScale.main args.tail)
-  if args.head? == some "--dump-shapes" then
+  if args.head? == some "--dump-shapes" || args.head? == some "--once" then
     return (← JsonLdScale.main args)
   let dir : System.FilePath := match args with
     | d :: _ => d

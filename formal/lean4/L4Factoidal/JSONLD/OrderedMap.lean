@@ -51,6 +51,12 @@ def upsert (m : OMap α) (k : String) (v : α) : OMap α :=
   if m.tab.contains k then { m with tab := m.tab.insert k v }
   else { rev := k :: m.rev, tab := m.tab.insert k v }
 
+/-- Remove `k` (a later insertion of `k` appends it again). Linear in the
+number of keys; used only where removal is rare. -/
+def erase (m : OMap α) (k : String) : OMap α :=
+  if m.tab.contains k then { rev := m.rev.filter (fun j => j != k), tab := m.tab.erase k }
+  else m
+
 /-- The entries in order of first insertion. -/
 def toList (m : OMap α) : List (String × α) :=
   m.rev.reverse.filterMap (fun k => (m.tab.get? k).map (fun v => (k, v)))

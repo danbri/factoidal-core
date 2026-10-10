@@ -239,9 +239,33 @@ def dumpShapes : IO UInt32 := do
       rawDump s!"shape {sh.name} {n} frame" (frameDocument loader doc (sh.frame n) none none)
   return 0
 
+/-- `--once SHAPE PHASE N`: run one phase on one document once and print
+its size, for use under a profiler (`valgrind --tool=callgrind`). -/
+def runOnce (shapeName phase : String) (n : Nat) : IO UInt32 := do
+  match shapes.find? (fun sh => sh.name == shapeName) with
+  | none => IO.eprintln s!"unknown shape {shapeName}"; return 2
+  | some sh =>
+    let loader : Loader := fun _ => none
+    let doc := sh.doc n
+    let r : Nat :=
+      match phase with
+      | "expand" => resSize (expandDocument loader doc none none none)
+      | "flatten" =>
+        (match expandDocument loader doc none none none with
+         | .ok j => (match flattenExpanded j with | .ok xs => xs.length | .error _ => 0)
+         | .error _ => 0)
+      | "flatten+ctx" => resSize (flattenDocument loader doc (some ctxText) none none true none)
+      | _ => resSize (frameDocument loader doc (sh.frame n) none none)
+    IO.println s!"{shapeName} {phase} {n}: result size {r}"
+    return 0
+
 /-- Entry: `args` follow `--scale`: optional base size, optional repetitions. -/
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--dump-shapes" then return (← dumpShapes)
+  if args.head? == some "--once" then
+    match args with
+    | [_, sh, ph, n] => return (← runOnce sh ph (n.toNat?.getD 100))
+    | _ => IO.eprintln "usage: --once SHAPE PHASE N"; return 2
   let base := (args[0]?.bind String.toNat?).getD 250
   let reps := (args[1]?.bind String.toNat?).getD 3
   run base reps 90 20

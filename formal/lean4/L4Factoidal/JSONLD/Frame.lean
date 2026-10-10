@@ -465,7 +465,9 @@ inductive OVal where
   | ref : Nat → OVal
 
 /-- An output container: a JSON array, or a JSON object whose members are
-values or other containers. -/
+values or other containers. The items of an `arr` are stored NEWEST FIRST,
+so adding an item is a `cons`; `matCont` reverses once when it builds the
+JSON value. -/
 inductive OCont where
   | arr : List OVal → OCont
   | obj : List (String × OVal) → OCont
@@ -477,9 +479,9 @@ structure FState where
   stack : List (String × String)
   /-- The unique embeds map of §4.1: per graph, per node id, the parent
   container and the property under which the node was last embedded. -/
-  embeds : List (String × List (String × (Nat × Option String)))
+  embeds : Std.TreeMap String (OMap (Nat × Option String))
   /-- How many output nodes carry each blank node identifier. -/
-  bnodes : List (String × Nat)
+  bnodes : Std.TreeMap String Nat
 
 abbrev FM := StateT FState Res
 
@@ -493,25 +495,26 @@ def FState.get (st : FState) (i : Nat) : OCont := st.arena[i]?.getD (.arr [])
 def FState.put (st : FState) (i : Nat) (c : OCont) : FState :=
   { st with arena := st.arena.set! i c }
 
-def FState.embedsOf (st : FState) (g : String) : List (String × (Nat × Option String)) :=
-  (flLookup st.embeds g).getD []
+def FState.embedsOf (st : FState) (g : String) : OMap (Nat × Option String) :=
+  (st.embeds.get? g).getD OMap.empty
 
-def FState.hasEmbed (st : FState) (g id : String) : Bool := (flLookup (st.embedsOf g) id).isSome
+def FState.hasEmbed (st : FState) (g id : String) : Bool := (st.embedsOf g).contains id
 
 def FState.onStack (st : FState) (g id : String) : Bool :=
   st.stack.any (fun e => e.1 == g && e.2 == id)
 
 def FState.setEmbed (st : FState) (g id : String) (parent : Nat) (prop : Option String)
     : FState :=
-  { st with embeds := flUpd st.embeds g (flUpd (st.embedsOf g) id (parent, prop)) }
+  { st with embeds := st.embeds.insert g ((st.embedsOf g).upsert id (parent, prop)) }
 
 def FState.bumpBnode (st : FState) (id : String) : FState :=
-  { st with bnodes := flUpd st.bnodes id (((flLookup st.bnodes id).getD 0) + 1) }
+  { st with bnodes := st.bnodes.insert id (((st.bnodes.get? id).getD 0) + 1) }
 
-def allocM (c : OCont) : FM Nat := do
-  let st ← StateT.get
-  StateT.set { st with arena := st.arena.push c }
-  pure st.arena.size
+/-- Add a container to the arena and return its index. One `modifyGet`, so
+the state is used once and the arena is extended in place: a `get` followed
+by a `set` keeps the old state alive and copies the whole arena. -/
+def allocM (c : OCont) : FM Nat :=
+  modifyGet (fun st => (st.arena.size, { st with arena := st.arena.push c }))
 
 /-- The object member of a container, if it is an object. -/
 def FState.member (st : FState) (i : Nat) (k : String) : Option OVal :=
@@ -541,7 +544,7 @@ appended to the array held under `property` (created on first use). -/
 def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (item : OVal)
     : FState :=
   match st.get parent with
-  | .arr xs => st.put parent (.arr (xs ++ [item]))
+  | .arr xs => st.put parent (.arr (item :: xs))
   | .obj es =>
     match property with
     | none => st
@@ -549,7 +552,7 @@ def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (it
       match flLookup es p with
       | some (.ref k) =>
         (match st.get k with
-         | .arr xs => st.put k (.arr (xs ++ [item]))
+         | .arr xs => st.put k (.arr (item :: xs))
          | .obj _ => st)
       | _ =>
         let k := st.arena.size
@@ -560,17 +563,18 @@ def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (it
 embeds that depended on it. Mirrors the legacy `@last` handling: the
 reference to a replaced property value moves to the end of its array. -/
 def FState.removeEmbed (st : FState) (g id : String) : FState :=
-  match flLookup (st.embedsOf g) id with
+  match (st.embedsOf g).find? id with
   | none => st
   | some (parent, prop) =>
     let reference : OVal := .lit (.object [("@id", .string id)])
     let st1 :=
       match st.get parent with
-      | .arr xs =>
+      | .arr xsRev =>
         let rec replaceFirst : List OVal → List OVal
           | [] => []
           | x :: rest => if st.idOf x == some id then reference :: rest else x :: replaceFirst rest
-        st.put parent (.arr (replaceFirst xs))
+        -- the items are stored newest first; "first" is the oldest match
+        st.put parent (.arr (replaceFirst xsRev.reverse).reverse)
       | .obj es =>
         match prop with
         | none => st
@@ -578,8 +582,8 @@ def FState.removeEmbed (st : FState) (g id : String) : FState :=
           match flLookup es p with
           | some (.ref k) =>
             (match st.get k with
-             | .arr xs =>
-               st.put k (.arr (xs.filter (fun x => st.idOf x != some id) ++ [reference]))
+             | .arr xsRev =>
+               st.put k (.arr (reference :: xsRev.filter (fun x => st.idOf x != some id)))
              | .obj _ => st)
           | _ => st
     -- drop the embeds whose parent is a node with this identifier,
@@ -588,12 +592,12 @@ def FState.removeEmbed (st : FState) (g id : String) : FState :=
       match fuel with
       | 0 => cur
       | fuel + 1 =>
-        let ids := (cur.embedsOf g).filter (fun e =>
+        let ids := (cur.embedsOf g).toList.filter (fun e =>
           match cur.member e.2.1 "@id" with
           | some (.lit (.string pid)) => pid == target
           | _ => false)
         ids.foldl (fun acc e =>
-          let acc1 := { acc with embeds := flUpd acc.embeds g (flRemove (acc.embedsOf g) e.1) }
+          let acc1 := { acc with embeds := acc.embeds.insert g ((acc.embedsOf g).erase e.1) }
           dropDependents acc1 e.1 fuel) cur
     dropDependents st1 id (st1.arena.size + 4)
 
@@ -675,9 +679,9 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
   | fuel + 1 => do
     -- Each top-level match starts with an empty unique embeds map.
     modify (fun st =>
-      if property.isNone then { st with embeds := [(graph, [])] }
-      else if (flLookup st.embeds graph).isSome then st
-      else { st with embeds := st.embeds ++ [(graph, [])] })
+      if property.isNone then { st with embeds := Std.TreeMap.empty.insert graph OMap.empty }
+      else if st.embeds.contains graph then st
+      else { st with embeds := st.embeds.insert graph OMap.empty })
     let out ← allocM (.obj [("@id", .lit (.string id))])
     if isBnodeId id then modify (fun st => st.bumpBnode id)
     let st ← StateT.get
@@ -880,7 +884,7 @@ def matCont (arena : Array OCont) (i : Nat) (fuel : Nat) : Json :=
   | 0 => .null
   | fuel + 1 =>
     match arena[i]? with
-    | some (.arr vs) => .array (matVals arena vs fuel)
+    | some (.arr vsRev) => .array (matVals arena vsRev.reverse fuel)
     | some (.obj es) => .object (matEntries arena es fuel)
     | none => .null
 
@@ -918,7 +922,7 @@ def FState.materialize (st : FState) (root : Nat) : Json :=
 /-- Replace every `@preserve` wrapper by the first value it holds, and
 drop the `@id` of each blank node that `clear` lists. A value object is
 left alone; a list object has its items cleaned. -/
-def cleanupPreserve (clear : List String) (j : Json) (fuel : Nat) : Json :=
+def cleanupPreserve (clear : Std.TreeSet String) (j : Json) (fuel : Nat) : Json :=
   match fuel with
   | 0 => j
   | fuel + 1 =>
@@ -970,8 +974,8 @@ def lowerLanguages (j : Json) (fuel : Nat) : Json :=
     | other => other
 
 /-- The blank node identifiers that occur exactly once. -/
-def singletonBnodes (st : FState) : List String :=
-  (st.bnodes.filter (fun kv => kv.2 == 1)).map Prod.fst
+def singletonBnodes (st : FState) : Std.TreeSet String :=
+  st.bnodes.foldl (fun acc id n => if n == 1 then acc.insert id else acc) Std.TreeSet.empty
 
 /-! ## The entry point -/
 
@@ -1030,12 +1034,14 @@ def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOpti
             let root := if merged then "@merged" else "@default"
             let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }
             let fuel := 64 * (Json.size expanded + Json.size expandedFrame) + 4096
-            let init : FState := { arena := #[.arr []], stack := [], embeds := [], bnodes := [] }
+            let init : FState :=
+              { arena := #[.arr []], stack := [], embeds := Std.TreeMap.empty,
+                bnodes := Std.TreeMap.empty }
             match (frameRec env root false (env.subjectsOf root) expandedFrame 0 none fuel).run init with
             | .error e => .error e
             | .ok ((), st) =>
               let prune := opts.pruneBlankNodeIdentifiers.getD (!mode10)
-              let clear := if prune then singletonBnodes st else []
+              let clear := if prune then singletonBnodes st else Std.TreeSet.empty
               let tree := st.materialize 0
               let results := cleanupPreserve clear tree (Json.size tree + 8)
               let co : CmpOpts := { arrays := opts.compactArrays, rel := true }
