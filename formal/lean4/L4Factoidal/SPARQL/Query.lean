@@ -1827,8 +1827,9 @@ therefore unbound, and the template triple that mentions it is skipped
 (§16.2). -/
 
 /-- Do a GROUP BY and a HAVING clause, given as the parser reads them,
-group the WHERE solutions? This is the test for the forms without a SELECT clause; a
-SELECT also groups on an aggregate in its projection (`selectPost`).
+group the WHERE solutions? This is the test for the forms without a
+SELECT clause; a SELECT also groups on an aggregate in its projection
+(`selectPost`).
 
 Reading of §11.2 and §18.2.4.1, not a rule the specification states in
 these words: HAVING filters groups, so a query with a HAVING clause and
@@ -1881,8 +1882,9 @@ def formSolutions (env : EvalEnv) (active : Graph) (q : Query)
 
 /-- Is the solution sequence of an ASK query non-empty? (§18.2.4,
 §18.2.5.) ORDER BY is not run: it permutes the sequence, Slice and the
-emptiness test read only its length, and
-`formSolutions_isEmpty_eq` proves the two answers equal. -/
+emptiness test read only its length, and `formHasSolution_eq`
+(`QueryTheorems.lean`) proves the answer equals the one read off
+`formSolutions`. -/
 def formHasSolution (env : EvalEnv) (active : Graph) (q : Query)
     (omega0 : SolutionSeq) : Bool :=
   !(sliceSolutions q.modifier.offset q.modifier.limit
