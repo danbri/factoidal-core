@@ -88,7 +88,7 @@ definition in a visible module counts as a reference. It never
 under-approximates an explicit use. A use through an SMT pattern is not
 visible to it; see PAT below.
 
-RELEVANCE RULE (also in docs/fstar-theorem-classification.md)
+RELEVANCE RULE (also in docs/theorem-registry.md, "F* theorem classification")
 -------------------------------------------------------------
 Applied to the STATEMENT and the reference sets only. The lemma's own name
 is never read; a name resemblance never decides relevance (anti-pattern 31).
