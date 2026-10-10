@@ -1,33 +1,30 @@
-// factoidal — public API layer, shared by index.js (js_of_ocaml) and
-// wasm.js (wasm_of_ocaml).
+// factoidal — the typed public API, over the Lean 4 engine's dispatch ABI.
 //
-// Two ways to reach the engine, tried in order:
+// buildApi(driver) wraps an ENTRY OBJECT: one method per dispatch op of
+// the Lean wasm module (formal/lean4/Wasm/Dispatch.lean), each taking
+// string arguments and answering one JSON envelope string,
+// {"ok":true,...} or {"ok":false,"error":...}. lib/lean-entry.mjs builds
+// that object from a loaded engine handle; index.mjs (Node), browser.js
+// and api.mjs (an engine the caller loaded) all pass it in here, so the
+// three entry points share this one file.
 //
-//   1. The npm-entry ABI bundle (factoidal-npm-entry.js /
-//      factoidal-npm-entry.wasm.js — built from bin/npm-entry/
-//      entry_jsoo.ml). A persistent, function-call ABI: strings in,
-//      JSON out. Supports everything including CONSTRUCT, UPDATE and
-//      RDFC-1.0 canonicalization.
+// All semantic work happens inside the Lean engine. This layer shapes
+// arguments (RDF/JS Datasets to N-Quads text, options to JSON) and
+// results (envelopes to Datasets, SPARQL results JSON to Bindings). An
+// operation whose op the loaded wasm does not have rejects with an
+// Error that names the op (missingOpError below).
 //
-//   2. The single-shot CLI bundle (factoidal.js / factoidal.wasm.js),
-//      driven argv-style via lib/engine-js.js / lib/engine-wasm.js.
-//      Covers parse / SELECT / ASK / serialize today; CONSTRUCT and
-//      UPDATE are not reachable through the CLI surface, and
-//      canonicalize requires a bundle built after the `factoidal
-//      canonicalize` subcommand landed.
+// ES module (0.9.0): no Node built-ins, so the browser loads this file
+// as it is.
 //
-// Operations that need the npm-entry bundle throw an Error whose
-// message contains "pending npm-entry build" when only the CLI bundle
-// is available. All semantic work happens inside the F*-extracted
-// engine either way; this layer only shapes arguments and results.
+// The op names and envelopes are those of the F* npm entry
+// (bin/npm-entry/entry_jsoo.ml) that served this API before 0.9.0; a
+// JSDoc note "entry_jsoo.ml's X" below names that lineage. The Lean op of
+// the same name serves X now (formal/lean4/Wasm/Dispatch.lean lists them).
 
-'use strict';
-
-const {
-  Dataset,
-  dataFactory,
-  termFromSrj,
-} = require('../rdfjs.js');
+import { Dataset, dataFactory, termFromSrj } from '../rdfjs.mjs';
+import { version as packageVersion } from './version.mjs';
+import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 
 const DATA_FORMAT_EXT = {
   turtle:    'ttl',
@@ -42,12 +39,10 @@ const DATA_FORMAT_EXT = {
   rdf:       'rdf',
   jsonld:    'jsonld',
   'json-ld': 'jsonld',
-  // RDF 1.2 opt-in: these select the engine's Mode_12 parsers (triple
+  // RDF 1.2 opt-in: these select the engine's RDF 1.2 parsers (triple
   // terms <<( s p o )>>, ~ reifiers, {| |} annotations, VERSION,
-  // directional literals "x"@lang--dir). Only reachable via the
-  // npm-entry bundle (the entry ABI routes the *12 tag to
-  // Parser_*.*_mode Mode_12); the plain names above stay Mode_11 so 1.1
-  // output is byte-identical.
+  // directional literals "x"@lang--dir; Wasm/Ops/Parse.lean's
+  // `Mode.rdf12`); the plain names above stay RDF 1.1.
   turtle12:   'ttl12',
   ttl12:      'ttl12',
   ntriples12: 'nt12',
@@ -57,10 +52,8 @@ const DATA_FORMAT_EXT = {
   trig12:     'trig12',
 };
 
-// Canonical format tag for the npm-entry ABI. The plain tags are what
-// RDF_Format.format_of_string accepts directly; the *12 tags are
-// intercepted by entry_jsoo's parse_text_to_dataset (before
-// format_of_string) to select Mode_12.
+// Canonical format tag for the engine's parse ops (parseToDatasetJson,
+// datasetOpen); the *12 tags select the RDF 1.2 mode.
 const DATA_FORMAT_TAG = {
   ttl: 'turtle', nt: 'ntriples', nq: 'nquads', trig: 'trig', rdf: 'rdfxml',
   jsonld: 'jsonld',
@@ -68,6 +61,14 @@ const DATA_FORMAT_TAG = {
 };
 
 const ENTAIL_VALUES = new Set(['none', 'RDFS', 'OWL-RL', 'x-rdfscore', 'x-rdfsplus']);
+
+// queryRaw's options (op queryRaw, Wasm/Ops/QueryExtras.lean).
+const RAW_OUTPUT_FORMATS = new Set(['json', 'csv', 'tsv', 'xml', 'table', 'ntriples']);
+const RAW_DATA_FORMATS = {
+  turtle: 'turtle', ttl: 'turtle', ntriples: 'ntriples', nt: 'ntriples',
+  nquads: 'nquads', nq: 'nquads', trig: 'trig', rdfxml: 'rdfxml',
+  'rdf-xml': 'rdfxml', rdf: 'rdfxml',
+};
 
 function extForFormat(fmt) {
   const key = String(fmt || 'turtle').toLowerCase();
@@ -94,35 +95,14 @@ function optionsOf(fn, options) {
     `${fn}: options must be an object or a format string, got ${typeof options}`);
 }
 
-function engineError(prefix, res) {
-  const msg = (res.stderr || res.stdout ||
-    `factoidal exited with code ${res.exitCode}`).trim();
-  const err = new Error(`${prefix}: ${msg}`);
-  err.exitCode = res.exitCode;
-  err.stderr = res.stderr;
-  err.stdout = res.stdout;
-  return err;
-}
-
-function pendingError(what) {
+// The loaded wasm has no op for this operation (a build older than this
+// package, or a dispatch table that does not serve it).
+function missingOpError(what) {
   return new Error(
-    `${what} needs the factoidal-npm-entry bundle, which is not present ` +
-    '— pending npm-entry build (formal/fstar/build-ocaml.sh js + npm ' +
-    'with bin/npm-entry/entry_jsoo.ml wired in; see bin/npm-entry/README.md).'
-  );
-}
-
-// Extract the JSON object from CLI stdout defensively (a stray line
-// must not break the parse).
-function jsonFromStdout(stdout, what) {
-  const first = stdout.indexOf('{');
-  const last = stdout.lastIndexOf('}');
-  if (first < 0 || last < first) {
-    const err = new Error(`${what}: engine did not produce JSON: ${stdout}`);
-    err.stdout = stdout;
-    throw err;
-  }
-  return JSON.parse(stdout.slice(first, last + 1));
+    `${what}: the loaded Lean wasm module has no dispatch op for this ` +
+    'operation. The module is older than this package; rebuild it with ' +
+    'formal/lean4/Wasm/build-wasm.sh, or point FACTOIDAL_L4_ASSETS at a ' +
+    'current build.');
 }
 
 // Detect the query form for result-shape dispatch. IRIs and comments
@@ -137,32 +117,8 @@ function sniffQueryForm(sparql) {
   return m ? m[1].toLowerCase() : 'select';
 }
 
-// Pack raw bytes into the one-char-per-byte string js_of_ocaml's fake
-// filesystem (runCli's `files` argument) expects for BINARY content --
-// the same convention browser.js's HDT/COTTAS example cells built by
-// hand before queryHdt() existed (String.fromCharCode per byte).
-// Distinct from bytesToHex below (the npm-entry ABI's string-only wire
-// format for openCottas/toCottas): this is for the CLI's file-based
-// backends (--data-hdt), which read from the CLI bundle's fake
-// filesystem, not the ABI.
-function bytesToLatin1(bytesLike, who) {
-  if (typeof bytesLike === 'string') return bytesLike; // already packed
-  let u8;
-  if (bytesLike instanceof Uint8Array) u8 = bytesLike;
-  else if (bytesLike instanceof ArrayBuffer) u8 = new Uint8Array(bytesLike);
-  else {
-    throw new TypeError(
-      `${who}: expected a Uint8Array, Buffer, ArrayBuffer, or an already-packed string`);
-  }
-  let out = '';
-  for (let i = 0; i < u8.length; i += 0x4000) {
-    out += String.fromCharCode.apply(null, u8.subarray(i, Math.min(u8.length, i + 0x4000)));
-  }
-  return out;
-}
-
-// The same inputs bytesToLatin1 takes, as a Uint8Array, for an engine
-// that takes bytes as bytes (a string is the packed one-char-per-byte form).
+// Bytes for an op that reads the byte region (queryHdt, storeOpen): a
+// Uint8Array, an ArrayBuffer, or a string packed one char per byte.
 function bytesToUint8Array(bytesLike, who) {
   if (bytesLike instanceof Uint8Array) return bytesLike;
   if (bytesLike instanceof ArrayBuffer) return new Uint8Array(bytesLike);
@@ -185,16 +141,22 @@ function bindingsFromSrj(srj) {
 
 // ---------------------------------------------------------------------
 // Strict parsing (issue #344) -- ParseError, and the shared envelope
-// unwrapper every engine call (F* and Lean 4) routes through.
+// unwrapper every engine call routes through.
 // ---------------------------------------------------------------------
 
 /**
- * A parse (or ABI-level) failure that carries a position: `line`/
- * `column`/`offset` when the failing engine call reported one (a
- * parseToDatasetJson/parseDocument/datasetOpen error over Turtle,
- * TriG, N-Triples or N-Quads), else `undefined`. RDF/XML and JSON-LD
- * failures, and any non-parse engine error, stay plain Error --
- * entryResult() below is what decides which one to throw.
+ * A parse failure that carries a position: `line`/`column`/`offset`
+ * when the failing engine call reported one (a parseToDatasetJson or
+ * datasetOpen error over Turtle, TriG, N-Triples or N-Quads), else
+ * `undefined`. RDF/XML and JSON-LD failures, and any non-parse engine
+ * error, stay plain Error -- entryResult() below decides which one to
+ * throw.
+ *
+ * Units: `line` and `column` are 1-based; `column` counts Unicode scalar
+ * values, as the engine reports it. `offset` is a UTF-16 code-unit index
+ * into the input JavaScript string, so `text.slice(err.offset)` starts
+ * at the error. The engine counts Unicode scalar values;
+ * utf16OffsetOf() below converts.
  */
 class ParseError extends Error {
   constructor(message, info) {
@@ -211,7 +173,7 @@ class ParseError extends Error {
   }
 }
 
-// Unwrap one npm-entry ABI JSON envelope ({"ok":true,...} |
+// Unwrap one dispatch-op JSON envelope ({"ok":true,...} |
 // {"ok":false,"error":...}). A `line` or `offset` member on the error
 // envelope means the failing call was a parse (Turtle/TriG/N-Triples/
 // N-Quads carry a position; RDF/XML and JSON-LD carry a message only)
@@ -232,13 +194,49 @@ function entryResult(jsonText, what) {
   return r;
 }
 
+// The Lean engine reports a parse error's `offset` as a count of Unicode
+// scalar values from the start of the input. A JavaScript string is
+// indexed in UTF-16 code units, where a character outside the Basic
+// Multilingual Plane (U+10000 and above) takes two. This converts the
+// engine's count into the UTF-16 index of the same position. A count past
+// the end of the text gives text.length. Iterating a string with for..of
+// yields one element per code point (a lone surrogate is one element, and
+// the engine reads it as one replacement character), so both sides count
+// the same units.
+function utf16OffsetOf(text, scalarOffset) {
+  if (typeof text !== 'string' || !Number.isInteger(scalarOffset) || scalarOffset < 0) {
+    return scalarOffset;
+  }
+  let units = 0;
+  let scalars = 0;
+  for (const ch of text) {
+    if (scalars >= scalarOffset) break;
+    units += ch.length;
+    scalars += 1;
+  }
+  return units;
+}
+
+// entryResult() for an op that parsed `text`: a positioned ParseError gets
+// its offset converted to a UTF-16 index into `text`.
+function parseResult(jsonText, what, text) {
+  try {
+    return entryResult(jsonText, what);
+  } catch (err) {
+    if (err instanceof ParseError && typeof err.offset === 'number') {
+      err.offset = utf16OffsetOf(text, err.offset);
+    }
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------------
 // Dataset handles (issue #680) -- parse once via openDataset(), then
 // query()/update()/serialize() many times against the engine's own
 // cached, indexed copy instead of re-parsing N-Quads text and
 // rebuilding the SPARQL index on every call (mirrors
 // formal/lean4/Wasm/Ops/Handles.lean's op names/envelopes on the Lean
-// side; entry_jsoo.ml's header comment has the full ABI contract).
+// side, the op names and envelopes).
 //
 // Module-level (like ParseError above), not defined inside buildApi():
 // every method here needs only `entryResult`/`bindingsFromSrj`/
@@ -291,9 +289,7 @@ class DatasetHandle {
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     const fn = sparql12 ? this._e.datasetQuery12 : this._e.datasetQuery;
     if (typeof fn !== 'function') {
-      throw new Error(
-        'DatasetHandle.query: this npm-entry bundle lacks ' +
-        `datasetQuery${sparql12 ? '12' : ''} — rebuild build-ocaml.sh js + npm.`);
+      throw missingOpError(`DatasetHandle.query (datasetQuery${sparql12 ? '12' : ''})`);
     }
     const run = () => entryResult(fn(this._handle, sparql), 'query');
     const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
@@ -316,7 +312,7 @@ class DatasetHandle {
       throw new TypeError('DatasetHandle.update: updateText must be a string');
     }
     if (typeof this._e.datasetUpdate !== 'function') {
-      throw pendingError('DatasetHandle.update');
+      throw missingOpError('DatasetHandle.update');
     }
     const r = entryResult(this._e.datasetUpdate(this._handle, updateText), 'update');
     this._size = r.count;
@@ -347,7 +343,7 @@ class DatasetHandle {
         opts.literalShorthand !== undefined;
       if (needsWith) {
         if (typeof this._e.datasetSerializeWith !== 'function') {
-          throw pendingError('DatasetHandle.serialize (prefixes/literalShorthand)');
+          throw missingOpError('DatasetHandle.serialize (prefixes/literalShorthand)');
         }
         const optionsJson = JSON.stringify({
           prefixes: mergedPrefixes,
@@ -357,7 +353,7 @@ class DatasetHandle {
           this._e.datasetSerializeWith(this._handle, 'turtle', optionsJson), 'serialize').turtle;
       }
     }
-    if (typeof this._e.datasetSerialize !== 'function') throw pendingError('DatasetHandle.serialize');
+    if (typeof this._e.datasetSerialize !== 'function') throw missingOpError('DatasetHandle.serialize');
     const r = entryResult(this._e.datasetSerialize(this._handle, outFormat), 'serialize');
     return outFormat === 'turtle' ? r.turtle : r.nquads;
   }
@@ -376,7 +372,7 @@ class DatasetHandle {
     this._assertOpen('canonicalize');
     const nq = await this.serialize({ format: 'nquads' });
     if (typeof this._e.canonicalizeToNQuads !== 'function') {
-      throw pendingError('DatasetHandle.canonicalize');
+      throw missingOpError('DatasetHandle.canonicalize');
     }
     return entryResult(this._e.canonicalizeToNQuads(nq), 'canonicalize').nquads;
   }
@@ -390,33 +386,113 @@ class DatasetHandle {
   }
 }
 
+// ---------------------------------------------------------------------
+// The Lean persisted store (Shardborough generations: IBK3, IBK4, IBK5
+// blocks with their index sidecars; skills/shardborough-storage). A
+// Store is a store HANDLE inside the engine (op storeOpen,
+// Wasm/Ops/StoreHandles.lean): every artifact it read was checked against
+// the SHA-256 its manifest commits, once, and every query answers from
+// the decoded, indexed blocks the handle retains. The engine refuses a
+// query whose plan needs a block the handle does not retain, so an answer
+// is never one of a partial generation.
+// ---------------------------------------------------------------------
+class Store {
+  constructor(e, env, gen, manifestHex, freshBnodePrefix, withExtensionRounds) {
+    this._e = e;
+    this._env = env;
+    this._gen = gen;
+    this._manifestHex = manifestHex;
+    this._closed = false;
+    this._freshBnodePrefix = freshBnodePrefix;
+    this._withExtensionRounds = withExtensionRounds;
+  }
+  /** The engine's handle id. */
+  get handle() { return this._env.handle; }
+  /** The generation directory name the store was opened from. */
+  get generation() { return this._gen.generation; }
+  /** True when the generation was opened through CURRENT. */
+  get activated() { return this._gen.activated; }
+  /** The generation's identity, as the engine reports it. */
+  get identity() { return this._env.identity; }
+  /** The manifest layout label, e.g. 'predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0'. */
+  get layout() { return this._env.layout; }
+  /** The manifest wire version. */
+  get wireVersion() { return this._env.wireVersion; }
+  /** How many artifacts the handle read and verified. */
+  get artifacts() { return this._env.artifacts; }
+  /** How many artifact bytes the handle read. */
+  get bytes() { return this._env.bytes; }
+  /** How many rows the handle retains. */
+  get rows() { return this._env.rows; }
+  /** True once close() has run; every other method rejects after. */
+  get closed() { return this._closed; }
+
+  _assertOpen(who) {
+    if (this._closed) throw new Error(`Store.${who}: store handle '${this.handle}' is closed`);
+  }
+
+  /**
+   * One SPARQL 1.1 query against the retained blocks.
+   * @param {string} sparql
+   * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
+   */
+  async query(sparql) {
+    this._assertOpen('query');
+    if (typeof sparql !== 'string') throw new TypeError('Store.query: sparql must be a string');
+    const run = () => entryResult(this._e.storeHandleQuery(this.handle, sparql), 'Store.query');
+    const r = this._withExtensionRounds ? await this._withExtensionRounds(run) : run();
+    if (r.kind === 'ask') return r.boolean;
+    if (r.kind === 'construct' || r.kind === 'describe') {
+      return Dataset.fromNQuads(r.nquads, { blankNodePrefix: this._freshBnodePrefix() });
+    }
+    return bindingsFromSrj(r.srj);
+  }
+
+  /** The manifest, decoded by the engine (op storeManifestInspect). */
+  async inspect() {
+    const r = entryResult(this._e.storeManifestInspect(this._manifestHex), 'Store.inspect');
+    const { ok: _ok, ...rest } = r;
+    return rest;
+  }
+
+  /** Release the handle and the blocks it retains. Idempotent. */
+  async close() {
+    if (this._closed) return;
+    this._closed = true;
+    entryResult(this._e.storeHandleClose(this.handle), 'Store.close');
+  }
+}
+
 /**
  * Build the public API around a driver.
  *
  * @param {object} driver
- * @param {(args: string[], files: Array<{name,content}>) =>
- *         ({stdout,stderr,exitCode}|Promise)} driver.runCli
- * @param {() => (object|null|Promise<object|null>)} driver.loadEntry
- *        Returns the npm-entry ABI object (factoidalNpmEntry) or null.
- * @param {string} driver.engineName  'js' | 'wasm' (error messages).
+ * @param {() => (object|Promise<object>)} driver.loadEntry
+ *        Returns the entry object (lib/lean-entry.mjs, entryFromEngine).
+ *        A rejection is reported by every operation that needs it.
+ * @param {string} driver.engineName  reported as `engine`.
+ * @param {(root: string) => ((path: string) => any)} [driver.storeReaderFor]
+ *        Turns a collection root path into a store reader (Node: the file
+ *        system). Without it, openStore() takes a reader function only.
  */
 function buildApi(driver) {
   let parseCounter = 0;
-  let entryCache; // undefined = not tried; null = unavailable
+  let entryPromise; // memoized; a failed load is retried on the next call
 
+  // The entry object. A failure to load the engine (assets missing, a
+  // wasm that does not instantiate) rejects every operation with that
+  // failure's own message; there is no other engine to fall back to.
   async function entry() {
-    if (entryCache === undefined) {
-      try {
-        entryCache = (await driver.loadEntry()) || null;
-      } catch (_) {
-        entryCache = null;
-      }
+    if (!entryPromise) {
+      entryPromise = Promise.resolve()
+        .then(() => driver.loadEntry())
+        .then((e) => {
+          if (!e) throw new Error('factoidal: the engine loader returned no entry object');
+          return e;
+        })
+        .catch((err) => { entryPromise = undefined; throw err; });
     }
-    return entryCache;
-  }
-
-  async function run(args, files) {
-    return driver.runCli(args, files);
+    return entryPromise;
   }
 
   // entryResult() is now module-level (see above ParseError) -- pure,
@@ -435,15 +511,15 @@ function buildApi(driver) {
   // spec-required error (in expression position: the row's value
   // errors — unbound in SELECT/BIND, row dropped in FILTER).
   //
-  // The F*-extracted evaluator is synchronous, so async functions are
+  // The engine's evaluator is synchronous, so async functions are
   // bridged with a bounded re-evaluation trampoline: each engine call
   // reaches extBridge synchronously; a cache miss on an async function
   // records the promise, returns a pending marker (an engine-side
   // error in THAT pass), and after the pass every pending promise is
   // awaited into the cache and the query re-runs. The per-(iri, args)
-  // memoisation is also what honors the F* purity assumption on the
-  // extension_function_call hook — within one evaluation every call
-  // with the same arguments sees one stable answer.
+  // memoisation is also what honours the engine's purity assumption on
+  // the extension-function call — within one evaluation every call with
+  // the same arguments sees one stable answer.
   //
   // The user function receives an array of SRJ-style term objects
   // ({type:'uri'|'literal'|'bnode', value, datatype?, 'xml:lang'?};
@@ -485,11 +561,8 @@ function buildApi(driver) {
 
   async function extEnsureInstalled(what) {
     const e = await entry();
-    if (!e) return null;
     if (typeof e.registerExtensionFunction !== 'function') {
-      throw new Error(
-        `${what}: this npm-entry bundle predates extension functions ` +
-        '(issue #463) — rebuild build-ocaml.sh js + npm.');
+      throw missingOpError(`${what} (extRegister)`);
     }
     for (const iri of extFunctions.keys()) {
       if (!extInstalled.has(iri)) {
@@ -555,10 +628,8 @@ function buildApi(driver) {
         'registerServiceEndpoint: iri must be an absolute IRI string');
     }
     const e = await entry();
-    if (!e || typeof e.registerServiceEndpoint !== 'function') {
-      throw new Error(
-        'registerServiceEndpoint: this npm-entry bundle predates SERVICE ' +
-        'endpoint registration — rebuild build-ocaml.sh js + npm.');
+    if (typeof e.registerServiceEndpoint !== 'function') {
+      throw missingOpError('registerServiceEndpoint');
     }
     const docs = toDocs(data, options);
     const nq = docsToEntryNQuads(e, docs, 'registerServiceEndpoint');
@@ -605,8 +676,9 @@ function buildApi(driver) {
   // canonicalize into engine inputs. Accepts a Dataset, a raw string
   // (with options.format, default turtle), or an array of those —
   // each element is loaded as its own document so blank-node labels
-  // stay document-scoped (the per-document renaming is F*'s
-  // RDF.Dataset.Merge.rename_dataset_bnodes, applied at engine load).
+  // stay document-scoped (the engine's IO entry gives every parsed
+  // document its own blank-node scope, Wasm/Dispatch.lean's
+  // parseToDatasetJsonScoped).
   function toDocs(data, options) {
     const opts = optionsOf('data', options);
     const items = Array.isArray(data) ? data : [data];
@@ -644,32 +716,19 @@ function buildApi(driver) {
     return out;
   }
 
-  function docsToCliFiles(docs) {
-    const files = [];
-    const flags = [];
-    docs.forEach((d, i) => {
-      const name = `/static/data${i}.${d.ext}`;
-      files.push({ name, content: d.content });
-      flags.push('-d', name);
-    });
-    return { files, flags };
-  }
-
-  // Normalize toDocs() output into one concatenated N-Quads "dataset
-  // handle" string via the entry ABI -- the same per-document
-  // parseToDatasetJson-then-concatenate shape query()/update()/
-  // canonicalize() each already inline. Needs the entry bundle (the
-  // caller must have already checked `e` is non-null); factored out
-  // here for the SHACL/ShEx/OWL-closure/RML wrappers below, which all
-  // hand the engine a dataset-handle N-Quads string rather than raw
-  // Turtle (consistent with every other entry ABI call).
+  // Normalize toDocs() output into one concatenated N-Quads string: each
+  // non-N-Quads document goes through parseToDatasetJson (its own
+  // blank-node scope), N-Quads text is passed on as it is. Every
+  // operation that takes `data` hands the engine this string. A parse
+  // failure rejects with a ParseError whose offset indexes that
+  // document's own text.
   function docsToEntryNQuads(e, docs, what) {
     let nq = '';
     for (const d of docs) {
       if (d.ext === 'nq') { nq += d.content; continue; }
-      const r = entryResult(
+      const r = parseResult(
         e.parseToDatasetJson(d.content, DATA_FORMAT_TAG[d.ext], ''),
-        `${what}(parse)`);
+        `${what}(parse)`, d.content);
       nq += r.nquads;
     }
     return nq;
@@ -689,8 +748,8 @@ function buildApi(driver) {
     throw new TypeError(`${who}: expected a string or an RDF/JS term`);
   }
 
-  // Everything below is async so both drivers (sync jsoo, async wasm)
-  // and both paths (entry, CLI) share one shape.
+  // Everything below is async: the engine loads asynchronously, and an
+  // extension function may answer with a Promise.
 
   /**
    * Parse one RDF document into a Dataset. Strict by default (issue
@@ -698,10 +757,9 @@ function buildApi(driver) {
    * relative IRI (no baseIRI in effect) rejects with a ParseError
    * (`line`/`column`/`offset` present for Turtle/TriG/N-Triples/
    * N-Quads; RDF/XML and JSON-LD failures carry a message only).
-   * `{lenient:true}` (needs the npm-entry bundle's parseDocument;
-   * rejects naming the missing ABI function otherwise) returns
-   * whatever the parser recovered instead, with `dataset.diagnostics`
-   * describing what was skipped.
+   * `{lenient:true}` needs the engine op parseDocument, which the Lean
+   * engine does not have yet (https://github.com/danbri/factoidal/issues/716);
+   * it rejects naming the op.
    * @param {string} text
    * @param {{format?: string, baseIRI?: string, lenient?: boolean}} [options]
    * @returns {Promise<Dataset>}
@@ -716,48 +774,36 @@ function buildApi(driver) {
     const bnodePrefix = freshBnodePrefix();
 
     const e = await entry();
-    if (e) {
-      if (opts.lenient) {
-        if (typeof e.parseDocument !== 'function') {
-          throw new Error(
-            "parse: {lenient:true} requires parseDocument, which this " +
-            'npm-entry bundle predates — rebuild build-ocaml.sh js + npm.');
-        }
-        const r = entryResult(
-          e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify({ lenient: true })),
-          'parse');
-        return Dataset.fromNQuads(r.nquads, {
-          blankNodePrefix: bnodePrefix,
-          prefixes: r.prefixes,
-          diagnostics: r.diagnostics,
-        });
+    if (opts.lenient) {
+      if (typeof e.parseDocument !== 'function') {
+        throw missingOpError('parse {lenient:true} (parseDocument)');
       }
-      const r = entryResult(
-        e.parseToDatasetJson(text, DATA_FORMAT_TAG[ext], baseIRI), 'parse');
+      const r = parseResult(
+        e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify({ lenient: true })),
+        'parse', text);
       return Dataset.fromNQuads(r.nquads, {
         blankNodePrefix: bnodePrefix,
         prefixes: r.prefixes,
+        diagnostics: r.diagnostics,
       });
     }
-
-    // CLI fallback path is unchanged -- no npm-entry bundle, so no
-    // parseDocument/diagnostics/prefixes; `lenient` is not consulted.
-    const name = `/static/data.${ext}`;
-    const args = ['--dump-nq', '-d', name];
-    if (baseIRI) args.push('-b', baseIRI);
-    const res = await run(args, [{ name, content: text }]);
-    if (res.exitCode !== 0) throw engineError('parse failed', res);
-    return Dataset.fromNQuads(res.stdout, { blankNodePrefix: bnodePrefix });
+    const r = parseResult(
+      e.parseToDatasetJson(text, DATA_FORMAT_TAG[ext], baseIRI), 'parse', text);
+    return Dataset.fromNQuads(r.nquads, {
+      blankNodePrefix: bnodePrefix,
+      prefixes: r.prefixes,
+    });
   }
 
   /**
    * Run a SPARQL 1.1 query.
    * @param {Dataset|string|Array} data
    * @param {string} sparql
-   * @param {{format?: string, entail?: 'none'|'RDFS'|'OWL-RL'|'x-rdfscore'|'x-rdfsplus'}} [options]
+   * @param {{format?: string, entail?: 'none'|'RDFS'|'OWL-RL'|'x-rdfscore'|'x-rdfsplus',
+   *   sparql12?: boolean, version?: string}} [options]
    * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
    *   SELECT -> Bindings[] (Map of variable name -> RDF/JS Term),
-   *   ASK -> boolean, CONSTRUCT -> Dataset.
+   *   ASK -> boolean, CONSTRUCT and DESCRIBE -> Dataset.
    */
   async function query(data, sparql, options) {
     if (typeof sparql !== 'string') {
@@ -806,71 +852,62 @@ function buildApi(driver) {
 
     const form = sniffQueryForm(sparql);
     const docs = toDocs(data, opts);
+    const e = await entry();
+    const nq = docsToEntryNQuads(e, docs, 'query');
+    // SPARQL 1.2 opt-in: {sparql12:true} or {version:'1.2'} routes to the
+    // op queryDataset12 (the Lean SPARQL parser's 1.2 mode: triple-term
+    // patterns, reified triples, annotations, TRIPLE/isTRIPLE/SUBJECT/
+    // PREDICATE/OBJECT). The default stays SPARQL 1.1.
+    const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
 
-    // The npm-entry ABI covers all query forms but has no entailment
-    // parameter; entailment closure stays on the CLI path.
-    const e = entail === 'none' ? await entry() : null;
-    if (e) {
-      // The ABI's dataset handle is N-Quads: normalize non-N-Quads
-      // documents through parseToDatasetJson first (each document
-      // separately, preserving per-document blank-node scoping in F*).
-      let nq = '';
-      for (const d of docs) {
-        if (d.ext === 'nq') { nq += d.content; continue; }
-        const r = entryResult(
-          e.parseToDatasetJson(d.content, DATA_FORMAT_TAG[d.ext], ''),
-          'query(parse)');
-        nq += r.nquads;
+    if (entail !== 'none') {
+      // An entailment regime: the engine closes the DEFAULT graph under the
+      // regime, then evaluates the query (one op, queryRaw, in
+      // Wasm/Ops/QueryExtras.lean). Extension functions and SERVICE
+      // registrations are not in scope on this path.
+      if (sparql12) {
+        throw new TypeError(
+          "query: entail and SPARQL 1.2 cannot be combined; the entailment path reads SPARQL 1.1");
       }
-      // SPARQL 1.2 opt-in: {sparql12:true} or {version:'1.2'} routes to
-      // the entry's queryDataset12 (tokenize_12 parser: triple-term
-      // patterns, TRIPLE/isTRIPLE/SUBJECT/PREDICATE/OBJECT, VERSION,
-      // lang-dir builtins). Default stays SPARQL 1.1, byte-identical.
-      const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
-      if (sparql12 && typeof e.queryDataset12 !== 'function') {
-        throw new Error(
-          'SPARQL 1.2 requested but this npm-entry bundle predates ' +
-          'queryDataset12 — rebuild build-ocaml.sh js + npm.');
-      }
-      const r = await withExtensionRounds(() => entryResult(
-        (sparql12 ? e.queryDataset12 : e.queryDataset)(nq, sparql), 'query'));
-      if (r.kind === 'ask') return r.boolean;
-      if (r.kind === 'construct' || r.kind === 'describe') {
-        return Dataset.fromNQuads(r.nquads, {
+      requireEntryFn(e, 'queryRaw', `query {entail:'${entail}'}`);
+      const graphForm = form === 'construct' || form === 'describe';
+      const r = entryResult(e.queryRaw(nq, sparql, JSON.stringify({
+        dataFormat: 'nquads', entail, output: graphForm ? 'ntriples' : 'json',
+      })), 'query');
+      if (graphForm) {
+        return Dataset.fromNQuads(r.text, {
           blankNodePrefix: freshBnodePrefix(),
           prefixes: prefixesOfData(data),
         });
       }
-      return bindingsFromSrj(r.srj);
+      const srj = JSON.parse(r.text);
+      if (typeof srj.boolean === 'boolean') return srj.boolean;
+      return bindingsFromSrj(srj);
     }
 
-    if (form === 'construct' || form === 'describe') {
-      throw pendingError(`${form.toUpperCase()} queries`);
+    if (sparql12 && typeof e.queryDataset12 !== 'function') {
+      throw missingOpError('query {sparql12:true} (queryDataset12)');
     }
-
-    const { files, flags } = docsToCliFiles(docs);
-    const args = [...flags, '-e', sparql, '-o', 'json'];
-    if (entail !== 'none') args.push('--entail', entail);
-    const res = await run(args, files);
-    if (res.exitCode !== 0) throw engineError('query failed', res);
-    const srj = jsonFromStdout(res.stdout, 'query');
-    if (form === 'ask' || typeof srj.boolean === 'boolean') {
-      return !!srj.boolean;
+    const r = await withExtensionRounds(() => entryResult(
+      (sparql12 ? e.queryDataset12 : e.queryDataset)(nq, sparql), 'query'));
+    if (r.kind === 'ask') return r.boolean;
+    if (r.kind === 'construct' || r.kind === 'describe') {
+      return Dataset.fromNQuads(r.nquads, {
+        blankNodePrefix: freshBnodePrefix(),
+        prefixes: prefixesOfData(data),
+      });
     }
-    return bindingsFromSrj(srj);
+    return bindingsFromSrj(r.srj);
   }
 
   /**
    * Run a SPARQL 1.1 query against a read-only HDT (Header-Dictionary-
-   * Triples) artifact's raw bytes -- factoidal_cli.ml's `--data-hdt`
-   * backend (HDT.Triples.fst and the parser modules around it), driven
-   * through the same CLI bundle every other function in this file
-   * uses. No npm-entry bundle needed -- this is a CLI-only capability.
-   * Default graph only, SELECT/ASK only (no CONSTRUCT, no named graphs
-   * -- see factoidal_cli.ml's --data-hdt help text).
+   * Triples) file's raw bytes. The bytes travel to the engine as the
+   * dispatch ABI's byte region (op queryHdt, Wasm/Ops/QueryExtras.lean),
+   * with no text encoding. Default graph only (an HDT file holds one
+   * graph); SELECT and ASK only.
    * @param {Uint8Array|ArrayBuffer|Buffer|string} hdtBytes whole .hdt
-   *   file contents (a string is assumed already packed one-char-per-
-   *   byte, the fake-filesystem convention runCli's `files` expects)
+   *   file contents (a string is read as one char per byte)
    * @param {string} sparql a SELECT or ASK query
    * @returns {Promise<Array<Map<string, object>>|boolean>}
    */
@@ -881,32 +918,17 @@ function buildApi(driver) {
     const form = sniffQueryForm(sparql);
     if (form === 'construct' || form === 'describe') {
       throw new TypeError(
-        `queryHdt: ${form.toUpperCase()} is not supported over --data-hdt (SELECT/ASK only)`);
+        `queryHdt: ${form.toUpperCase()} is not supported over an HDT file (SELECT/ASK only)`);
     }
-    // An engine whose entry has a queryHdt op (the Lean wasm module: the
-    // HDT bytes travel as the dispatch ABI's byte region, no encoding)
-    // answers through it. The F* bundles have none; they use the CLI
-    // path below.
     const e = await entry();
-    if (e && typeof e.queryHdt === 'function') {
-      const r = entryResult(e.queryHdt(bytesToUint8Array(hdtBytes, 'queryHdt'), sparql), 'queryHdt');
-      if (r.kind === 'ask') return r.boolean;
-      return bindingsFromSrj(r.srj);
-    }
-    const content = bytesToLatin1(hdtBytes, 'queryHdt');
-    const name = `/static/hdt${parseCounter++}.hdt`;
-    const res = await run(['--data-hdt', name, '-e', sparql, '-o', 'json'], [{ name, content }]);
-    if (res.exitCode !== 0) throw engineError('queryHdt failed', res);
-    const srj = jsonFromStdout(res.stdout, 'queryHdt');
-    if (form === 'ask' || typeof srj.boolean === 'boolean') {
-      return !!srj.boolean;
-    }
-    return bindingsFromSrj(srj);
+    requireEntryFn(e, 'queryHdt', 'queryHdt');
+    const r = entryResult(e.queryHdt(bytesToUint8Array(hdtBytes, 'queryHdt'), sparql), 'queryHdt');
+    if (r.kind === 'ask') return r.boolean;
+    return bindingsFromSrj(r.srj);
   }
 
   /**
    * Apply a SPARQL 1.1 Update to a dataset, returning the new Dataset.
-   * Needs the npm-entry bundle.
    * @param {Dataset|string|Array} data
    * @param {string} updateText
    * @param {{format?: string}} [options]
@@ -923,22 +945,11 @@ function buildApi(driver) {
         'update() mutates the handle in place and returns the handle.');
     }
     const e = await entry();
-    if (!e) throw pendingError('SPARQL UPDATE');
     const opts = optionsOf('update', options);
-    const docs = toDocs(data, opts);
-    let nq = '';
-    for (const d of docs) {
-      if (d.ext === 'nq') { nq += d.content; continue; }
-      const r = entryResult(
-        e.parseToDatasetJson(d.content, DATA_FORMAT_TAG[d.ext], ''),
-        'update(parse)');
-      nq += r.nquads;
-    }
+    const nq = docsToEntryNQuads(e, toDocs(data, opts), 'update');
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     if (sparql12 && typeof e.updateDataset12 !== 'function') {
-      throw new Error(
-        'SPARQL 1.2 UPDATE requested but this npm-entry bundle predates ' +
-        'updateDataset12 — rebuild build-ocaml.sh js + npm.');
+      throw missingOpError('update {sparql12:true} (updateDataset12)');
     }
     const r = entryResult(
       (sparql12 ? e.updateDataset12 : e.updateDataset)(nq, updateText), 'update');
@@ -953,7 +964,7 @@ function buildApi(driver) {
    * many query()/update()/serialize() calls against the engine's own
    * cached, indexed copy -- no re-parse, no SPARQL-index rebuild per
    * call (see the tests/perf/npm_handle_vs_stateless.mjs numbers for
-   * the measured difference). Needs the npm-entry bundle.
+   * the measured difference).
    * @param {Dataset|string|Array|{text,format}} data a Dataset (opened
    *   as N-Quads, keeping the Dataset's own `.prefixes` on the handle
    *   for Turtle output), a string (`options.format`/`baseIRI` apply),
@@ -966,7 +977,6 @@ function buildApi(driver) {
    */
   async function openDataset(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('openDataset (dataset handles)');
     requireEntryFn(e, 'datasetOpen', 'openDataset');
     const opts = optionsOf('openDataset', options);
 
@@ -977,8 +987,8 @@ function buildApi(driver) {
     if (typeof data === 'string') {
       const ext = extForFormat(opts.format);
       const baseIRI = opts.baseIRI || '';
-      const r = entryResult(
-        e.datasetOpen(data, DATA_FORMAT_TAG[ext], baseIRI), 'openDataset');
+      const r = parseResult(
+        e.datasetOpen(data, DATA_FORMAT_TAG[ext], baseIRI), 'openDataset', data);
       return new DatasetHandle(e, r.handle, r.count, r.prefixes, freshBnodePrefix, withExtensionRounds);
     }
     const docs = toDocs(data, opts);
@@ -991,14 +1001,15 @@ function buildApi(driver) {
    * Serialize a dataset (engine-produced bytes, sorted N-Quads order).
    * @param {Dataset|string|Array|DatasetHandle} data a DatasetHandle
    *   routes to `data.serialize(options)`.
+   *   'nquads' and 'ntriples' answer the engine's N-Quads text in sorted
+   *   line order; 'ntriples' refuses data with a named graph.
    * @param {{format?: 'nquads'|'ntriples'|'turtle', inputFormat?: string,
    *   prefixes?: object, literalShorthand?: boolean}} [options]
    *   `prefixes`/`literalShorthand` apply to 'turtle' only.
    * @returns {Promise<string>}
-   *   'turtle' (prefix-compacted, subject-grouped — entry_jsoo.ml's
-   *   serializeTurtle/serializeTurtleWith ->
-   *   RDF_Turtle_Serialize.turtle_of_graph_auto) needs the npm-entry
-   *   bundle and flattens every named graph into the default graph
+   *   'turtle' (prefix-compacted, subject-grouped; the ops
+   *   serializeTurtle/serializeTurtleWith, Syntax/TurtleSerialize.lean)
+   *   flattens every named graph into the default graph
    *   (Turtle has no named-graph notion); use 'nquads' when graph
    *   names must survive. `prefixes` is used, and unused caller
    *   namespaces are dropped, when given or when `data` is a Dataset
@@ -1020,9 +1031,8 @@ function buildApi(driver) {
     }
     const docs = toDocs(data, { format: opts.inputFormat });
 
+    const e = await entry();
     if (outFormat === 'turtle') {
-      const e = await entry();
-      if (!e) throw pendingError('Turtle serialization');
       const nq = docsToEntryNQuads(e, docs, 'serialize(turtle)');
       const dataPrefixes = (data instanceof Dataset) ? data.prefixes : null;
       const hasOptions = opts.prefixes !== undefined || opts.literalShorthand !== undefined;
@@ -1040,24 +1050,24 @@ function buildApi(driver) {
       return entryResult(e.serializeTurtle(nq), 'serialize').turtle;
     }
 
-    if (outFormat === 'nquads') {
-      const e = await entry();
-      if (e) {
-        // Non-N-Quads documents normalize through parseToDatasetJson
-        // (docsToEntryNQuads), same as the turtle branch above — so
-        // entry-only drivers (e.g. l4-core.js) serve this path too.
-        const nq = docs.every((d) => d.ext === 'nq')
-          ? docs.map((d) => d.content).join('')
-          : docsToEntryNQuads(e, docs, 'serialize(nquads)');
-        return entryResult(e.serializeNQuads(nq), 'serialize').nquads;
+    // N-Quads, sorted (the engine's canonical N-Quads line order).
+    // 'ntriples' is the same text when every quad is in the default
+    // graph; N-Triples has no graph term, so data with a named graph is
+    // refused for that format rather than flattened.
+    const nq = docs.every((d) => d.ext === 'nq')
+      ? docs.map((d) => d.content).join('')
+      : docsToEntryNQuads(e, docs, `serialize(${outFormat})`);
+    const out = entryResult(e.serializeNQuads(nq), 'serialize').nquads;
+    if (outFormat === 'ntriples') {
+      for (const q of Dataset.fromNQuads(out)) {
+        if (q.graph.termType !== 'DefaultGraph') {
+          throw new TypeError(
+            "serialize: format 'ntriples' holds one graph and the data has a " +
+            "named graph; use format 'nquads'");
+        }
       }
     }
-
-    const { files, flags } = docsToCliFiles(docs);
-    const mode = outFormat === 'nquads' ? '--dump-nq' : '--dump';
-    const res = await run([mode, ...flags], files);
-    if (res.exitCode !== 0) throw engineError('serialize failed', res);
-    return res.stdout;
+    return out;
   }
 
   /**
@@ -1072,32 +1082,9 @@ function buildApi(driver) {
       return data.canonicalize();
     }
     const docs = toDocs(data, optionsOf('canonicalize', options));
-
     const e = await entry();
-    if (e) {
-      let nq = '';
-      for (const d of docs) {
-        if (d.ext === 'nq') { nq += d.content; continue; }
-        const r = entryResult(
-          e.parseToDatasetJson(d.content, DATA_FORMAT_TAG[d.ext], ''),
-          'canonicalize(parse)');
-        nq += r.nquads;
-      }
-      return entryResult(e.canonicalizeToNQuads(nq), 'canonicalize').nquads;
-    }
-
-    const { files, flags } = docsToCliFiles(docs);
-    const res = await run(['--canonicalize', ...flags], files);
-    if (res.exitCode !== 0) {
-      if (/unknown option/.test(res.stderr || '')) {
-        throw new Error(
-          'canonicalize: this engine bundle predates the --canonicalize ' +
-          'flag — pending npm-entry build (rebuild via ' +
-          'formal/fstar/build-ocaml.sh js + npm).');
-      }
-      throw engineError('canonicalize failed', res);
-    }
-    return res.stdout;
+    const nq = docsToEntryNQuads(e, docs, 'canonicalize');
+    return entryResult(e.canonicalizeToNQuads(nq), 'canonicalize').nquads;
   }
 
   /**
@@ -1107,7 +1094,7 @@ function buildApi(driver) {
    * section 1.3): DatasetCore.match(null,null,null,graphNode) already
    * gives per-graph read access, but match() alone cannot answer "what
    * graph names exist" -- this is exactly that enumeration, and only
-   * that: it walks quads already produced by the F*-verified parser, so
+   * that: it walks quads already produced by the engine's parser, so
    * it needs no engine round-trip (no new RDF/SPARQL semantics, rule
    * #11 stays satisfied trivially).
    *
@@ -1157,30 +1144,28 @@ function buildApi(driver) {
     return canonicalize(asDefaultGraph.toNQuads(), { format: 'nquads' });
   }
 
-  // Some loaded entry bundles predate one of these exports (e.g. an
-  // older/stale wasm-target build) -- `e` itself is truthy (loadEntry
-  // succeeded), but `e[fnName]` is undefined, which would otherwise
-  // surface as a confusing "e.shaclValidate is not a function". Fail
-  // with the same pendingError() shape callers already expect from a
-  // missing bundle.
+  // A wasm module older than this package can lack an op: `e[fnName]` is
+  // then undefined, which would otherwise surface as "e.x is not a
+  // function". Fail with missingOpError(), which names the op.
   function requireEntryFn(e, fnName, what) {
-    if (typeof e[fnName] !== 'function') throw pendingError(what);
+    if (typeof e[fnName] !== 'function') throw missingOpError(what);
   }
 
   /**
-   * SHACL Core validation. Needs the npm-entry bundle (SHACL_Validation
-   * is only linked into the entry/CLI bundles, not exposed on the
-   * argv-driven CLI surface today).
+   * SHACL validation (op shaclValidate, Wasm/Ops/Validate.lean): SHACL
+   * Core, SHACL-SPARQL constraints and SHACL 1.2 node expressions, over
+   * the default graph of each argument. A shapes graph with a feature
+   * the validator does not read (the SPARQL-based target of SHACL-AF)
+   * and a validation failure (SHACL 5.3.2) reject.
    * @param {Dataset|string|Array} data
    * @param {Dataset|string|Array} shapes
    * @param {{format?: string}} [options] applies to both data and shapes
    * @returns {Promise<{conforms: boolean, report: Dataset}>}
-   *   report is SHACL_Validation.validation_report_to_graph's graph
-   *   (sh:conforms + one sh:ValidationResult per violation).
+   *   report is the validation report graph (one sh:ValidationReport
+   *   with sh:conforms, and one sh:result per validation result).
    */
   async function shaclValidate(data, shapes, options) {
     const e = await entry();
-    if (!e) throw pendingError('SHACL validation');
     requireEntryFn(e, 'shaclValidate', 'SHACL validation');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'shaclValidate(data)');
     const shapesNq = docsToEntryNQuads(e, toDocs(shapes, options), 'shaclValidate(shapes)');
@@ -1195,11 +1180,12 @@ function buildApi(driver) {
 
   /**
    * ShEx (Shape Expressions) validation of one focus node against one
-   * shape. Needs the npm-entry bundle.
+   * shape (op shexValidate, Wasm/Ops/Validate.lean), over the default
+   * graph of `data`.
    * @param {Dataset|string|Array} data
    * @param {string} schemaJson the schema, as text -- either ShExJ (a
    *   JSON Schema document) or ShExC (the compact human-readable
-   *   syntax; formal/fstar/Parser.ShExC.fst). Dispatch rule: the schema
+   *   syntax; L4Factoidal/ShEx/Compact.lean). Dispatch rule: the schema
    *   text's first non-whitespace character decides the format -- '{'
    *   means ShExJ, anything else is parsed as ShExC. No separate flag
    *   or file-extension hint is needed; a schema whose ShExC text
@@ -1211,13 +1197,12 @@ function buildApi(driver) {
    * @param {string|{termType,value}|null} [shape] a shape label (same
    *   shapes as focus); omit/null to validate against the schema's own `start`
    * @param {{format?: string}} [options]
-   * @returns {Promise<boolean|null>} null means "deferred" -- outside
-   *   this engine's decidable ShEx fragment, never a guessed answer
-   *   (see formal/fstar/ShEx.Validation.fst's file header).
+   * @returns {Promise<boolean>} the verdict. (The type allows null for
+   *   an engine that defers a schema; the Lean validator decides every
+   *   schema it reads.)
    */
   async function shexValidate(data, schemaJson, focus, shape, options) {
     const e = await entry();
-    if (!e) throw pendingError('ShEx validation');
     requireEntryFn(e, 'shexValidate', 'ShEx validation');
     if (typeof schemaJson !== 'string') {
       throw new TypeError('shexValidate: schemaJson must be a string');
@@ -1243,9 +1228,8 @@ function buildApi(driver) {
 
   /**
    * RDFS or OWL-RL entailment closure, materialized as a new Dataset
-   * (input triples + derived triples). Needs the npm-entry bundle.
-   * Scope cut: only the default graph is closed over (same cut
-   * fn.js's entail() documents for its own CLI-path implementation).
+   * (input triples + derived triples). Only the default graph is
+   * closed over.
    * @param {Dataset|string|Array} data
    * @param {'RDFS'|'OWL-RL'} mode
    * @param {{format?: string}} [options]
@@ -1253,7 +1237,6 @@ function buildApi(driver) {
    */
   async function owlClosure(data, mode, options) {
     const e = await entry();
-    if (!e) throw pendingError('OWL/RDFS closure');
     requireEntryFn(e, 'owlClosure', 'OWL/RDFS closure');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'owlClosure(data)');
     const r = entryResult(
@@ -1262,9 +1245,8 @@ function buildApi(driver) {
   }
 
   /**
-   * The CERTIFIED core-RDFS closure (RDF.Entailment.RDFS.
-   * RhoDFClosure.fst's `rho_df_closure`): rdfs2/3/5/7/9/11 only, with
-   * the machine-checked decides-iff (docs/theorem-registry.md).
+   * The core-RDFS closure (L4Factoidal/RDFS/Closure.lean, `closureFix`):
+   * rdfs2/3/5/7/9/11 only.
    * "corerdfs" is this project's API name for the fragment the
    * literature calls ρdf — subPropertyOf/subClassOf/type/domain/range,
    * per Muñoz, Pérez & Gutierrez, "Simple and Efficient Minimal
@@ -1278,7 +1260,6 @@ function buildApi(driver) {
    */
   async function coreRdfsClosure(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('certified core-RDFS closure');
     requireEntryFn(e, 'rhoDfClosure', 'certified core-RDFS closure');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'coreRdfsClosure(data)');
     return entryResult(e.rhoDfClosure(dataNq), 'coreRdfsClosure');
@@ -1297,7 +1278,6 @@ function buildApi(driver) {
    */
   async function coreRdfsCheck(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('core-RDFS fragment check');
     requireEntryFn(e, 'rhoDfFragmentCheck', 'core-RDFS fragment check');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'coreRdfsCheck(data)');
     return entryResult(e.rhoDfFragmentCheck(dataNq), 'coreRdfsCheck');
@@ -1324,7 +1304,6 @@ function buildApi(driver) {
    */
   async function rdfsPlusClosure(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('RDFS-Plus closure');
     requireEntryFn(e, 'rdfsPlusClosure', 'RDFS-Plus closure');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'rdfsPlusClosure(data)');
     return entryResult(e.rdfsPlusClosure(dataNq), 'rdfsPlusClosure');
@@ -1338,7 +1317,7 @@ function buildApi(driver) {
    * unionOf / intersectionOf, and the named class an equivalentClass
    * restriction defines). This is the same F* function the SPARQL 1.1
    * entailment-regime suite runs under the DL regime. Needs the
-   * npm-entry bundle. Default graph only (same scope cut as owlClosure).
+   * Default graph only (same scope cut as owlClosure).
    * @param {Dataset|string|Array} data
    * @param {{format?: string}} [options]
    * @returns {Promise<{dataset: Dataset, addedCount: number, budgetHit?: boolean}>}
@@ -1348,7 +1327,6 @@ function buildApi(driver) {
    */
   async function tableauMaterialise(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('OWL tableau materialisation');
     requireEntryFn(e, 'tableauMaterialise', 'OWL tableau materialisation');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'tableauMaterialise(data)');
     const r = entryResult(e.tableauMaterialise(dataNq), 'tableauMaterialise');
@@ -1362,20 +1340,19 @@ function buildApi(driver) {
   }
 
   /**
-   * OWL DL inconsistency verdict. Replays bin/owl-runner's DL pipeline
-   * (OWL-RL closure -> Tableau.tableau_materialise -> OWL-RL closure ->
-   * is_inconsistent). `rlAlone` is the plain OWL-RL verdict on the same
+   * OWL DL inconsistency verdict: OWL RL closure, one class-expression
+   * materialisation pass, OWL RL closure again, then the clash decision
+   * (Wasm/Ops/Reasoning.lean). `rlAlone` is the plain OWL-RL verdict on the same
    * input, so a caller can see the DL>=RL cases the tableau adds: a
    * disjointness clash reached only after the tableau materialises a
-   * restriction membership the Datalog closure never derives. Needs the
-   * npm-entry bundle. Default graph only.
+   * restriction membership the Datalog closure never derives. Default
+   * graph only.
    * @param {Dataset|string|Array} data
    * @param {{format?: string}} [options]
    * @returns {Promise<{inconsistent: boolean, rlAlone: boolean}>}
    */
   async function tableauDlInconsistent(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('OWL tableau DL inconsistency check');
     requireEntryFn(e, 'tableauDlInconsistent', 'OWL tableau DL inconsistency check');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'tableauDlInconsistent(data)');
     const r = entryResult(e.tableauDlInconsistent(dataNq), 'tableauDlInconsistent');
@@ -1383,14 +1360,12 @@ function buildApi(driver) {
   }
 
   /**
-   * OWL DL consistency verdict via the verified clash-detecting tableau
-   * (formal/fstar/Tableau.Refute.fst's `tableau_consistent` over the
-   * OWL-RL closure -- the same pure verified chain bin/owl-runner runs
-   * under `--regime dl`, minus its native-only z3 counting oracle, which
-   * the JS bundle cannot spawn). Needs the npm-entry bundle. Default
-   * graph only (same scope cut as tableauDlInconsistent).
+   * OWL DL consistency verdict via the clash-detecting tableau
+   * (L4Factoidal/OWL/Refute.lean, `tableauConsistent`) over the OWL RL
+   * closure. Default graph only (same scope cut as
+   * tableauDlInconsistent).
    *
-   * Three-valued and honest: `consistent` is `false` (a clash on every
+   * Three-valued: `consistent` is `false` (a clash on every
    * tableau branch), `true` (a model was constructed with no clash), or
    * `null` -- the refuter ran out of budget before deciding, with
    * `reason` naming the fuel cap. `null` is never collapsed to `false`.
@@ -1403,7 +1378,6 @@ function buildApi(driver) {
    */
   async function owlIsConsistent(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('OWL DL consistency check');
     requireEntryFn(e, 'owlIsConsistent', 'OWL DL consistency check');
     const opts = options || {};
     const dataNq = docsToEntryNQuads(e, toDocs(data, opts), 'owlIsConsistent(data)');
@@ -1416,12 +1390,11 @@ function buildApi(driver) {
 
   /**
    * OWL entailment check: does `premise` entail `conclusion`? Two
-   * verified paths, mirroring bin/owl-runner's PositiveEntailment
-   * dispatch: `via: "closure"` when every conclusion triple is in the
-   * OWL-RL closure of the premise; `via: "refutation"` when the negated
-   * conclusion (Tableau.Refute's `negation_goals`) is refuted on every
-   * goal by the clash-detecting tableau. Needs the npm-entry bundle.
-   * Default graph only. Verified-only chain (no z3).
+   * paths (Wasm/Ops/Reason.lean): `via: "closure"` when every conclusion
+   * triple is in the OWL-RL closure of the premise; `via: "refutation"`
+   * when the negated conclusion (L4Factoidal/OWL/NegationGoals.lean) is
+   * refuted on every goal by the clash-detecting tableau. Default graph
+   * only.
    *
    * Three-valued: `entailed` is `true`, `false`, or `null` (a refutation
    * goal exhausted its fuel budget -- indeterminate, never a silent
@@ -1436,7 +1409,6 @@ function buildApi(driver) {
    */
   async function owlEntails(premise, conclusion, options) {
     const e = await entry();
-    if (!e) throw pendingError('OWL entailment check');
     requireEntryFn(e, 'owlEntails', 'OWL entailment check');
     const opts = options || {};
     const premiseNq = docsToEntryNQuads(e, toDocs(premise, opts), 'owlEntails(premise)');
@@ -1450,12 +1422,11 @@ function buildApi(driver) {
 
   /**
    * Evaluate an RML mapping graph against one logical source's raw
-   * data, returning the generated triples as a Dataset. Needs the
-   * npm-entry bundle. Scope cut (documented, not silent): every
-   * triples map in `mapping` reads the SAME `sourceData` -- joins
-   * across two DIFFERENT logical sources are not reachable through
-   * this one-source entry point (see bin/rml-runner/rml_runner.ml for
-   * the full multi-source join driver).
+   * data, returning the generated triples as a Dataset. Every triples
+   * map in `mapping` reads the SAME `sourceData`, so a join across two
+   * different logical sources is not reachable through this one-source
+   * function. The iteration format is the mapping's
+   * `rml:referenceFormulation` (RML Core); `sourceKind` is checked.
    * @param {Dataset|string|Array} mapping the RML mapping graph (Turtle by default)
    * @param {string} sourceData raw JSON or CSV text (not RDF)
    * @param {'json'|'csv'} sourceKind
@@ -1464,7 +1435,6 @@ function buildApi(driver) {
    */
   async function rmlMap(mapping, sourceData, sourceKind, options) {
     const e = await entry();
-    if (!e) throw pendingError('RML mapping evaluation');
     requireEntryFn(e, 'rmlMap', 'RML mapping evaluation');
     if (typeof sourceData !== 'string') {
       throw new TypeError('rmlMap: sourceData must be a string');
@@ -1480,14 +1450,10 @@ function buildApi(driver) {
 
   /**
    * CSVW csv2rdf conversion (w3.org/TR/csv2rdf): convert tabular data
-   * plus an optional CSVW metadata document into a Dataset. Needs the
-   * npm-entry bundle. Scope cut (documented, not silent -- mirrors
-   * rmlMap's one-source cut): every table in a multi-table `tables`
-   * group reads the SAME `csvText`. Datatype `format` facets,
-   * list-valued (`separator`) cells, and full inherited-property
-   * propagation are not yet implemented -- see
-   * docs/designissues/2026-07-05-csvw-program-plan.md for measured
-   * coverage.
+   * plus an optional CSVW metadata document into a Dataset (op
+   * csvwToRdf, L4Factoidal/CSVW). Every table in a multi-table `tables`
+   * group reads the SAME `csvText`; a `tableSchema` given as a URL is not
+   * fetched.
    * @param {string} csvText raw RFC 4180 tabular data (not RDF)
    * @param {string} [metadataJson] CSVW metadata document (JSON text);
    *   '' / omitted infers the schema from the CSV's own header row
@@ -1509,7 +1475,6 @@ function buildApi(driver) {
       throw new TypeError('csvwToRdf: metadataJson must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('CSVW csv2rdf conversion');
     requireEntryFn(e, 'csvwToRdf', 'CSVW csv2rdf conversion');
     const opts = options || {};
     const optionsJson = JSON.stringify({
@@ -1523,11 +1488,10 @@ function buildApi(driver) {
 
   /**
    * Parse a JSON-LD document into a Dataset, with JSON-LD-specific
-   * options `parse()` has no room for. Needs the npm-entry bundle
-   * (plain `parse(text, {format:'jsonld'})` also works now -- see
-   * bin/npm-entry/entry_jsoo.ml's parseToDatasetJson JSON-LD fix --
-   * this exists for callers that need rdfDirection/expandContext/
-   * processingMode).
+   * options `parse()` has no room for (plain `parse(text,
+   * {format:'jsonld'})` also works; this exists for callers that need
+   * rdfDirection/expandContext/processingMode). A remote `@context` is
+   * not fetched (no network access through the engine).
    * @param {string} jsonldText
    * @param {{base?: string, rdfDirection?: string, expandContext?: string,
    *   processingMode?: string}} [options]
@@ -1538,7 +1502,6 @@ function buildApi(driver) {
       throw new TypeError('jsonldToRdf: jsonldText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('jsonldToRdf');
     requireEntryFn(e, 'jsonldToRdf', 'jsonldToRdf');
     const opts = options || {};
     const optionsJson = JSON.stringify({
@@ -1554,7 +1517,7 @@ function buildApi(driver) {
   /**
    * RIF Core forward-chaining saturation, materialized as a new
    * Dataset (input triples + derived triples, default graph only --
-   * RIF Core has no named-graph notion). Needs the npm-entry bundle.
+   * RIF Core has no named-graph notion).
    * @param {Dataset|string|Array} data the premise graph
    * @param {string} rifRulesXml a RIF Core XML rule document
    * @param {{format?: string}} [options] applies to `data`
@@ -1562,7 +1525,6 @@ function buildApi(driver) {
    */
   async function rifEval(data, rifRulesXml, options) {
     const e = await entry();
-    if (!e) throw pendingError('RIF Core evaluation');
     requireEntryFn(e, 'rifEval', 'RIF Core evaluation');
     if (typeof rifRulesXml !== 'string') {
       throw new TypeError('rifEval: rifRulesXml must be a string');
@@ -1578,14 +1540,13 @@ function buildApi(driver) {
    * Serialize an RDF dataset as an expanded-form JSON-LD document --
    * the reverse of jsonldToRdf (entry_jsoo.ml's jsonldFromRdf export ->
    * the verified JSONLD.FromRdf.from_rdf). Returns the parsed JSON-LD
-   * value (an array of node objects). Needs the npm-entry bundle.
+   * value (an array of node objects).
    * @param {Dataset|string|Array} data
    * @param {{useNativeTypes?:boolean,useRdfType?:boolean,format?:string}} [options]
    * @returns {Promise<any>} the JSON-LD document (JCS-canonical, parsed)
    */
   async function jsonldFromRdf(data, options) {
     const e = await entry();
-    if (!e) throw pendingError('jsonldFromRdf');
     requireEntryFn(e, 'jsonldFromRdf', 'jsonldFromRdf');
     const dataNq = docsToEntryNQuads(e, toDocs(data, options), 'jsonldFromRdf(data)');
     const opts = options || {};
@@ -1600,8 +1561,7 @@ function buildApi(driver) {
   /**
    * did:key resolution (entry_jsoo.ml's didKeyResolve export -> the
    * verified DID_Key.did_key_document). Resolves a did:key:z6Mk...
-   * (Ed25519) to its DID Document, returned as a Dataset. Needs the
-   * npm-entry bundle.
+   * (Ed25519) to its DID Document, returned as a Dataset.
    * @param {string} didString a did:key URI
    * @returns {Promise<Dataset>} the DID Document as RDF
    */
@@ -1610,7 +1570,6 @@ function buildApi(driver) {
       throw new TypeError('didKeyResolve: didString must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('didKeyResolve');
     requireEntryFn(e, 'didKeyResolve', 'did:key resolution');
     const r = entryResult(e.didKeyResolve(didString), 'didKeyResolve');
     return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
@@ -1620,9 +1579,8 @@ function buildApi(driver) {
    * Test whether an XML document is well-formed (entry_jsoo.ml's
    * xmlWellformed export -> Parser_XML.parse_xml_document, the
    * accept/reject signal bin/xml-runner drives against W3C xmlconf).
-   * The byte-oriented parser has no DOCTYPE/DTD production, so a
-   * document containing a DOCTYPE reports false. Needs the npm-entry
-   * bundle.
+   * A DOCTYPE with an internal subset is read (XML 1.0 section 2.8);
+   * an external DTD is not fetched.
    * @param {string} xmlText
    * @returns {Promise<boolean>}
    */
@@ -1631,7 +1589,6 @@ function buildApi(driver) {
       throw new TypeError('xmlWellformed: xmlText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('xmlWellformed');
     requireEntryFn(e, 'xmlWellformed', 'XML well-formedness');
     const r = entryResult(e.xmlWellformed(xmlText), 'xmlWellformed');
     return !!r.wellformed;
@@ -1642,7 +1599,7 @@ function buildApi(driver) {
    * xpathEval export -> XPath_Eval.eval_xpath_from_root). Returns the
    * result envelope: `resultType` ('nodeset'|'string'|'number'|'boolean')
    * plus, for a node-set, `count`/`stringValue`/`nodes`, else a scalar
-   * `value`. Needs the npm-entry bundle.
+   * `value`.
    * @param {string} xmlText
    * @param {string} xpathExpr
    * @returns {Promise<object>}
@@ -1652,7 +1609,6 @@ function buildApi(driver) {
       throw new TypeError('xpathEval: xmlText and xpathExpr must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('xpathEval');
     requireEntryFn(e, 'xpathEval', 'XPath evaluation');
     return entryResult(e.xpathEval(xmlText, xpathExpr), 'xpathEval');
   }
@@ -1680,7 +1636,6 @@ function buildApi(driver) {
       throw new TypeError('clParse: clifText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('clParse');
     requireEntryFn(e, 'clParse', 'Common Logic / IKL parse');
     return entryResult(e.clParse(clifText), 'clParse');
   }
@@ -1707,7 +1662,6 @@ function buildApi(driver) {
       throw new TypeError('clSerialize: clifText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('clSerialize');
     requireEntryFn(e, 'clSerialize', 'Common Logic / IKL serialize');
     return entryResult(e.clSerialize(clifText), 'clSerialize');
   }
@@ -1732,7 +1686,6 @@ function buildApi(driver) {
       throw new TypeError('clAlphaNorm: clifText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('clAlphaNorm');
     requireEntryFn(e, 'clAlphaNorm', 'Common Logic / IKL alpha-normalise');
     return entryResult(e.clAlphaNorm(clifText), 'clAlphaNorm');
   }
@@ -1768,7 +1721,6 @@ function buildApi(driver) {
       throw new TypeError('clNormalize: clifText must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('clNormalize');
     requireEntryFn(e, 'clNormalize', 'Common Logic / IKL normalize');
     return entryResult(e.clNormalize(clifText), 'clNormalize');
   }
@@ -1784,49 +1736,23 @@ function buildApi(driver) {
   // ...)`), which needs no shape commitment on this layer.
 
   // -----------------------------------------------------------------
-  // VC Data Integrity crypto (eddsa-rdfc-2022) — HACL* wasm backend.
-  // entry_jsoo.ml's vc* exports realise VC_DataIntegrity's four crypto
-  // assume vals via HACL*'s OWN official WebAssembly build. The wasm
-  // backend MUST be initialised before the first primitive runs, or
-  // the assume-val stub throws and `guarded` returns {ok:false} — a
-  // verify NEVER silently succeeds uninitialised (#286, the
-  // throw-on-uninit contract, which entryResult() preserves by
-  // throwing on {ok:false}).
-  //
-  // Init story (Node js + wasm engines): these wrappers AUTO-AWAIT
-  // initHacl() on the first VC call, via the optional driver.initCrypto
-  // hook (idempotent + memoized) — a caller never has to remember the
-  // init step. If the driver supplies no initCrypto hook (or init
-  // rejects), the primitive's own honest {ok:false} error surfaces
-  // rather than a false "valid". Browsers can't auto-init (the
-  // hacl-wasm URL is page-specific) — browser.js documents explicit
-  // init there. See skills/node-crypto-haclstar-vc-wasm-build.
+  // VC Data Integrity crypto (eddsa-rdfc-2022), ops of
+  // Wasm/Ops/Vc.lean. Ed25519 is the HACL* C code compiled into the wasm
+  // module (L4Factoidal/Crypto/Ed25519.lean's @[extern] binding);
+  // SHA-256 is the Lean hash. There is no separate crypto module and no
+  // initialisation step.
   // -----------------------------------------------------------------
-
-  let cryptoInitPromise;
-  async function ensureCrypto() {
-    if (typeof driver.initCrypto !== 'function') return;
-    if (!cryptoInitPromise) {
-      cryptoInitPromise = Promise.resolve()
-        .then(() => driver.initCrypto())
-        .catch((err) => { cryptoInitPromise = undefined; throw err; });
-    }
-    await cryptoInitPromise;
-  }
 
   async function vcEntry(fnName, what) {
     const e = await entry();
-    if (!e) throw pendingError(what);
     requireEntryFn(e, fnName, what);
-    await ensureCrypto();
     return e;
   }
 
   /**
    * SHA-256 of a message string's bytes, as a lowercase hex digest
    * (entry_jsoo.ml's vcSha256Hex -> VC_DataIntegrity.hash_sha256_hex,
-   * HACL* SHA-2). Needs the npm-entry bundle + the HACL* wasm backend
-   * (auto-initialised).
+   * the Lean SHA-256).
    * @param {string} message the message whose bytes are hashed
    * @returns {Promise<string>} 64-char hex digest
    */
@@ -1940,10 +1866,9 @@ function buildApi(driver) {
    * VC Data Model 2.0 structural conformance check (entry_jsoo.ml's
    * vcCheckCredential -> VC_Credential.vc_check_from_string, 117 pass,
    * 0 fail on the offline vc_stage1 fixture suite). Pure structural
-   * validation — no crypto, so this does NOT go through vcEntry/
-   * ensureCrypto. `v2ctxJson` is the vendored VCDM v2 base context
+   * validation, no crypto. `v2ctxJson` is the vendored VCDM v2 base context
    * document's raw JSON text (third_party/contexts/credentials-v2.jsonld,
-   * `@context` value included — the F* side parses the whole document
+   * `@context` value included — the engine parses the whole document
    * and only reads its own @context field) and `credentialJson` is the
    * raw JSON text of the VC/VP document under test.
    * @param {string} v2ctxJson vendored credentials-v2.jsonld text
@@ -1955,7 +1880,6 @@ function buildApi(driver) {
       throw new TypeError('vcCheckCredential: v2ctxJson and credentialJson must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('vcCheckCredential');
     requireEntryFn(e, 'vcCheckCredential', 'VC Data Model 2.0 structural check');
     const r = entryResult(e.vcCheckCredential(v2ctxJson, credentialJson), 'vcCheckCredential');
     return r.valid ? { valid: true } : { valid: false, reason: r.reason };
@@ -1982,7 +1906,6 @@ function buildApi(driver) {
       throw new TypeError('vcCheckCredentialSubject: credentialJson must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('vcCheckCredentialSubject');
     requireEntryFn(e, 'vcCheckCredentialSubject', 'credentialSubject presence check');
     const r = entryResult(e.vcCheckCredentialSubject(credentialJson), 'vcCheckCredentialSubject');
     return r.valid ? { valid: true } : { valid: false, reason: r.reason };
@@ -2010,7 +1933,6 @@ function buildApi(driver) {
       throw new TypeError('vcCheckNoDataLoss: credentialJson must be a string');
     }
     const e = await entry();
-    if (!e) throw pendingError('vcCheckNoDataLoss');
     requireEntryFn(e, 'vcCheckNoDataLoss', 'DATA_LOSS_DETECTION_ERROR check');
     const r = entryResult(e.vcCheckNoDataLoss(credentialJson), 'vcCheckNoDataLoss');
     return r.valid ? { valid: true } : { valid: false, reason: r.reason };
@@ -2029,7 +1951,7 @@ function buildApi(driver) {
    * spec's digest-mismatch error); an id absent from the registry, or a
    * digest algorithm the registry contract doesn't cover (anything
    * outside sha256/sha384), is unverifiable offline and passes. All
-   * decode/match semantics are F*-verified (VC.Credential.fst).
+   * decode/match semantics are L4Factoidal/VC/Credential.lean's.
    * @param {string} registryJson the digest registry's raw JSON text
    * @param {string} credentialJson the VC/VP document's raw JSON text
    * @returns {Promise<{valid: boolean, reason?: string}>}
@@ -2039,7 +1961,6 @@ function buildApi(driver) {
       throw new TypeError('vcCheckRelatedResourceDigests: registryJson and credentialJson must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('vcCheckRelatedResourceDigests');
     requireEntryFn(e, 'vcCheckRelatedResourceDigests', 'relatedResource digest check');
     const r = entryResult(e.vcCheckRelatedResourceDigests(registryJson, credentialJson), 'vcCheckRelatedResourceDigests');
     return r.valid ? { valid: true } : { valid: false, reason: r.reason };
@@ -2047,16 +1968,14 @@ function buildApi(driver) {
 
   // -----------------------------------------------------------------
   // Typed "engine" functions (#74 npm FP surface). Each is a pure,
-  // string/JSON-in, JSON-out wrapper over one F*-extracted engine
-  // exposed by entry_jsoo.ml. No logic lives on the JS side — the
-  // transform/eval/validate/CAS math is all verified F*; these bind
-  // the entry ABI to a typed Promise. All need the npm-entry bundle.
+  // string/JSON-in, JSON-out wrapper over one dispatch op. No logic
+  // lives on the JS side; these bind the op to a typed Promise.
   // -----------------------------------------------------------------
 
   /**
    * XSLT 1.0 transform (entry_jsoo.ml's xsltTransform export ->
    * XSLT.Transform.transform). Applies `stylesheetXml` to `sourceXml`
-   * and returns the serialized result tree. Needs the npm-entry bundle.
+   * and returns the serialized result tree.
    * @param {string} stylesheetXml an XSLT stylesheet document
    * @param {string} sourceXml the source XML document
    * @returns {Promise<string>} the transform output (serialized XML/text)
@@ -2066,7 +1985,6 @@ function buildApi(driver) {
       throw new TypeError('xsltTransform: stylesheetXml and sourceXml must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('xsltTransform');
     requireEntryFn(e, 'xsltTransform', 'XSLT transform');
     const r = entryResult(e.xsltTransform(stylesheetXml, sourceXml), 'xsltTransform');
     return r.output;
@@ -2077,8 +1995,7 @@ function buildApi(driver) {
    * export -> MathML.Content.eval_doc_env). `bindings` maps
    * ci-variable names to value strings; pass {} for a closed
    * expression. Returns the exact numeric/boolean value or an
-   * `undef` reason (division-by-zero, type error, ...). Needs the
-   * npm-entry bundle.
+   * `undef` reason (division-by-zero, type error, ...).
    * @param {string} contentMathmlXml
    * @param {Record<string,string>} [bindings]
    * @returns {Promise<{kind:'rat',num:number,den:number}|{kind:'bool',value:boolean}|{kind:'undef',reason:string}>}
@@ -2092,7 +2009,6 @@ function buildApi(driver) {
       throw new TypeError('mathmlEval: bindings must be an object');
     }
     const e = await entry();
-    if (!e) throw pendingError('mathmlEval');
     requireEntryFn(e, 'mathmlEval', 'MathML evaluation');
     const r = entryResult(
       e.mathmlEval(contentMathmlXml, JSON.stringify(b)), 'mathmlEval');
@@ -2104,7 +2020,7 @@ function buildApi(driver) {
    * XForms.Bind.recalculate). Applies the model binds (calculate,
    * constraint, relevant, required, readonly, type MIPs) to the
    * instance and returns the recomputed instance plus a validity
-   * report per bound node. Needs the npm-entry bundle.
+   * report per bound node.
    * @param {string} instanceXml the XForms instance document
    * @param {Array<{id?:string,target:string,calculate?:string,constraint?:string,relevant?:string,required?:string,readonly?:string,type?:string}>} binds
    * @returns {Promise<{instance:string,validity:Array<object>}>}
@@ -2117,7 +2033,6 @@ function buildApi(driver) {
       throw new TypeError('xformsRecalc: binds must be an array');
     }
     const e = await entry();
-    if (!e) throw pendingError('xformsRecalc');
     requireEntryFn(e, 'xformsRecalc', 'XForms recalculate');
     const r = entryResult(
       e.xformsRecalc(instanceXml, JSON.stringify(binds)), 'xformsRecalc');
@@ -2129,8 +2044,7 @@ function buildApi(driver) {
    * jsonSchemaValidate export -> JSONSchema.Validate.validate).
    * Returns the verdict — the verified validator gives a definite
    * pass/fail/unsupported, not a per-keyword error list, so `errors`
-   * carries a single reason string when not a definite pass. Needs
-   * the npm-entry bundle.
+   * carries a single reason string when not a definite pass.
    * @param {string} schemaJson the schema document (JSON text)
    * @param {string} instanceJson the instance document (JSON text)
    * @returns {Promise<{valid:boolean,result:'pass'|'fail'|'unsupported',errors:string[]}>}
@@ -2140,7 +2054,6 @@ function buildApi(driver) {
       throw new TypeError('jsonSchemaValidate: schemaJson and instanceJson must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('jsonSchemaValidate');
     requireEntryFn(e, 'jsonSchemaValidate', 'JSON Schema validation');
     const r = entryResult(
       e.jsonSchemaValidate(schemaJson, instanceJson), 'jsonSchemaValidate');
@@ -2151,7 +2064,7 @@ function buildApi(driver) {
    * Schematron validation (entry_jsoo.ml's schematronValidate export
    * -> Schematron.Validate.validate). Returns every finding (failed
    * assert, fired report, indeterminate) in pattern-then-document
-   * order. Needs the npm-entry bundle.
+   * order.
    * @param {string} schematronXml the Schematron schema document
    * @param {string} instanceXml the instance document to check
    * @returns {Promise<{findings:Array<{type:string,context:string,test:string,message:string,path:string,reason?:string}>}>}
@@ -2161,7 +2074,6 @@ function buildApi(driver) {
       throw new TypeError('schematronValidate: schematronXml and instanceXml must be strings');
     }
     const e = await entry();
-    if (!e) throw pendingError('schematronValidate');
     requireEntryFn(e, 'schematronValidate', 'Schematron validation');
     const r = entryResult(
       e.schematronValidate(schematronXml, instanceXml), 'schematronValidate');
@@ -2174,7 +2086,6 @@ function buildApi(driver) {
   // and receive Content MathML for the result (via MathML.Present).
   async function toanCall(fnName, what, ...args) {
     const e = await entry();
-    if (!e) throw pendingError(fnName);
     requireEntryFn(e, fnName, what);
     const r = entryResult(e[fnName](...args), fnName);
     return r.mathml;
@@ -2183,7 +2094,7 @@ function buildApi(driver) {
   /**
    * Symbolic finite summation (entry_jsoo.ml's toanSummation ->
    * Math.Series.summation): sum of `body[idx:=lo..hi]`, simplified,
-   * as Content MathML. Needs the npm-entry bundle.
+   * as Content MathML.
    * @param {object} bodyExpr the summand, in the expr JSON codec
    * @param {string} idx the summation index symbol
    * @param {number} lo inclusive lower bound
@@ -2253,7 +2164,6 @@ function buildApi(driver) {
   // Math.Matrix.mres_to_string ("undef" carries a `reason`).
   async function matrixCall(fnName, what, ...jsonArgs) {
     const e = await entry();
-    if (!e) throw pendingError(fnName);
     requireEntryFn(e, fnName, what);
     const r = entryResult(e[fnName](...jsonArgs.map((a) => JSON.stringify(a))), fnName);
     return { result: r.result, reason: r.reason || '' };
@@ -2331,7 +2241,6 @@ function buildApi(driver) {
       throw new TypeError('sigmoidPoints: params must be an object');
     }
     const e = await entry();
-    if (!e) throw pendingError('sigmoid points');
     requireEntryFn(e, 'sigmoidPoints', 'sigmoid points');
     const wire = {
       k: String(params.k), x0: String(params.x0), l: String(params.l),
@@ -2350,170 +2259,128 @@ function buildApi(driver) {
    */
   async function sigmoidFormulaMathml() {
     const e = await entry();
-    if (!e) throw pendingError('sigmoid formula MathML');
     requireEntryFn(e, 'sigmoidFormulaMathml', 'sigmoid formula MathML');
     const r = entryResult(e.sigmoidFormulaMathml(), 'sigmoid formula MathML');
     return r.mathml;
   }
 
   // -----------------------------------------------------------------
-  // In-memory COTTAS bytes store (docs/designissues/2026-07-06-
-  // inmemory-bytes-store.md, stage 5). Needs the npm-entry bundle
-  // (bin/npm-entry/entry_jsoo.ml's openCottas/queryCottas/closeCottas/
-  // toCottas exports). Unlike every other operation in this file, the
-  // "dataset" here is NOT an in-heap Dataset: openCottas() returns an
-  // opaque handle string naming an entry the F*-verified COTTAS/Parquet
-  // reader decodes lazily, row-group by row-group, as queryCottas()
-  // touches it -- the whole point of the design (heap-store parity
-  // would defeat the memory win the design doc measures). See
-  // queryCottas's doc comment for the query-shape/entailment/write
-  // divergences from query() this implies.
+  // The Lean persisted store (see the Store class above).
   // -----------------------------------------------------------------
 
-  // Accept a hex string, a Uint8Array/Buffer, or a plain ArrayBuffer;
-  // normalize to the lowercase hex string the entry ABI's string-only
-  // wire contract requires (same "strings in, JSON out" ABI every
-  // other entry export uses -- see entry_jsoo.ml's file header).
-  function bytesToHex(bytesLike, who) {
-    if (typeof bytesLike === 'string') {
-      if (!/^[0-9a-fA-F]*$/.test(bytesLike) || bytesLike.length % 2 !== 0) {
-        throw new TypeError(`${who}: string input must be an even-length hex string`);
+  function storeReader(source, who) {
+    if (typeof source === 'function') return source;
+    if (typeof source === 'string') {
+      if (typeof driver.storeReaderFor !== 'function') {
+        throw new TypeError(
+          `${who}: a path needs a file system; here, pass a reader function ` +
+          '(path) => bytes, for example one over fetch()');
       }
-      return bytesLike.toLowerCase();
+      return driver.storeReaderFor(source);
     }
-    let u8;
-    if (bytesLike instanceof Uint8Array) u8 = bytesLike;
-    else if (bytesLike instanceof ArrayBuffer) u8 = new Uint8Array(bytesLike);
-    else {
-      throw new TypeError(
-        `${who}: expected a hex string, Uint8Array, Buffer, or ArrayBuffer`);
-    }
-    // Buffer's native hex codec when available (Node); a per-byte
-    // string-concat loop allocates millions of intermediate strings on
-    // a corpus-scale artifact (it measurably dominated the bytes-store
-    // path's RSS at 50,000 quads before this branch existed).
-    if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
-      return Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength).toString('hex');
-    }
-    const HEX = '0123456789abcdef';
-    const parts = new Array(u8.length);
-    for (let i = 0; i < u8.length; i++) {
-      parts[i] = HEX[u8[i] >> 4] + HEX[u8[i] & 15];
-    }
-    return parts.join('');
-  }
-
-  function hexToBytes(hex) {
-    const out = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < out.length; i++) {
-      out[i] = parseInt(hex.substr(i * 2, 2), 16);
-    }
-    return out;
+    throw new TypeError(`${who}: expected a collection root path or a reader function`);
   }
 
   /**
-   * Open a COTTAS/Parquet artifact's raw bytes as a queryable,
-   * read-only store -- the in-memory-bytes-store design's browser call
-   * site. Needs the npm-entry bundle. The store is NOT materialized
-   * into a heap Dataset: rows are decoded lazily by queryCottas() as a
-   * query actually touches them (measured 64-161 B/quad in the design
-   * doc's native numbers, vs. ~877 B/quad for a fully-parsed heap
-   * Dataset of the same data).
-   *
-   * @param {string|Uint8Array|ArrayBuffer} bytes whole `.cottas` file contents
-   * @returns {Promise<string>} an opaque handle for queryCottas()/closeCottas()
+   * Open a store: read the generation CURRENT names (or `generation`),
+   * read the artifacts the engine names, and open a store handle over
+   * them (op storeOpen). With no `sparql` and no `keys`, every artifact
+   * the manifest declares is read, so every query the generation can
+   * answer works. With `sparql`, only the artifacts that query's plan
+   * names (op storeQueryPlan) are read. With `keys`, exactly those.
+   * @param {string|((path: string) => any)} source a collection root path
+   *   (Node), or a reader from a root-relative path to the file's bytes
+   * @param {{generation?: string, sparql?: string, keys?: string[]}} [options]
+   * @returns {Promise<Store>}
    */
-  async function openCottas(bytes) {
+  async function openStore(source, options) {
+    const opts = options || {};
+    const reader = storeReader(source, 'openStore');
     const e = await entry();
-    if (!e) throw pendingError('openCottas (in-memory COTTAS bytes store)');
-    requireEntryFn(e, 'openCottas', 'openCottas');
-    const hex = bytesToHex(bytes, 'openCottas');
-    const r = entryResult(e.openCottas(hex), 'openCottas');
-    return r.handle;
+    requireEntryFn(e, 'storeOpen', 'openStore (storeOpen)');
+    const gen = await openGeneration(reader, opts.generation);
+    const manifestHex = hexOfBytes(gen.manifest);
+    let keys;
+    if (Array.isArray(opts.keys)) {
+      keys = opts.keys.map(String);
+    } else if (typeof opts.sparql === 'string') {
+      const plan = entryResult(e.storeQueryPlan(manifestHex, opts.sparql), 'openStore(plan)');
+      keys = plan.keys.concat(plan.sidecarKeys || [], plan.blobKeys || []);
+    } else {
+      keys = manifestKeys(entryResult(e.storeManifestInspect(manifestHex), 'openStore(inspect)'));
+    }
+    const { blob, artifacts } = await readRegion(reader, gen.generation, keys);
+    const env = entryResult(e.storeOpen(manifestHex, JSON.stringify(artifacts), blob), 'openStore');
+    return new Store(e, env, gen, manifestHex, freshBnodePrefix, withExtensionRounds);
   }
 
   /**
-   * Run a SPARQL 1.1 query against a store opened by openCottas().
-   * Needs the npm-entry bundle.
-   *
-   * Divergences from query() (documented, not silent):
-   *  - No `entail` option -- bare COTTAS bytes carry no closure step.
-   *  - No write/--delta-log overlay -- read-only (design doc §2.4's
-   *    write-overlay story composes at the native store_caps layer;
-   *    it is not wired into this browser ABI).
-   *  - A query SHAPE the backend executor can't push down (rare; the
-   *    same honest-failure posture the native `--data-cottas` CLI path
-   *    has for run_select_query_backend_dataset/run_ask_query_backend_
-   *    dataset returning None) rejects with an Error rather than
-   *    silently falling back to a full materialize -- that fallback
-   *    would defeat the store's whole memory argument.
-   *  - DESCRIBE is not supported (same cut queryDataset's ABI has).
-   *
-   * @param {string} handle from openCottas()
+   * One query against a store: open it with the artifacts the query's
+   * plan names, query, close.
+   * @param {string|((path: string) => any)} source
    * @param {string} sparql
+   * @param {{generation?: string}} [options]
    * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
-   *   SELECT -> Bindings[], ASK -> boolean, CONSTRUCT -> Dataset
-   *   (materialized once, via SPARQL11_Store.materialize_dataset_backend
-   *   -- see entry_jsoo.ml's queryCottas doc comment for why CONSTRUCT
-   *   alone pays that cost).
    */
-  async function queryCottas(handle, sparql) {
-    if (typeof handle !== 'string') {
-      throw new TypeError('queryCottas: handle must be the string openCottas() returned');
+  async function queryStore(source, sparql, options) {
+    if (typeof sparql !== 'string') throw new TypeError('queryStore: sparql must be a string');
+    const store = await openStore(source, { generation: (options || {}).generation, sparql });
+    try {
+      return await store.query(sparql);
+    } finally {
+      await store.close();
     }
-    if (typeof sparql !== 'string') {
-      throw new TypeError('queryCottas: sparql must be a string');
-    }
+  }
+
+  /** The store handles this engine instance holds open (op storeHandleList). */
+  async function listStores() {
     const e = await entry();
-    if (!e) throw pendingError('queryCottas');
-    requireEntryFn(e, 'queryCottas', 'queryCottas');
-    const r = entryResult(e.queryCottas(handle, sparql), 'queryCottas');
-    if (r.kind === 'ask') return r.boolean;
-    if (r.kind === 'construct' || r.kind === 'describe') {
-      return Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() });
-    }
-    return bindingsFromSrj(r.srj);
+    requireEntryFn(e, 'storeHandleList', 'listStores');
+    const { ok: _ok, ...rest } = entryResult(e.storeHandleList(), 'listStores');
+    return rest;
   }
 
   /**
-   * Release a store opened by openCottas(). Drops the handle from this
-   * process's registry only -- it does NOT evict the underlying byte
-   * cache the entry bundle keeps for the process's lifetime (design
-   * doc "Open decisions" item 1: no eviction API exists yet). A page
-   * that opens many short-lived stores still grows that cache for the
-   * tab's lifetime; this is a documented limitation, not a silent leak.
-   * @param {string} handle
-   * @returns {Promise<void>}
+   * One call, serialised answer (op queryRaw): parse `dataString`, close
+   * the default graph under `entail`, run the query, and write the answer
+   * in `output`: 'json' (default; parsed SPARQL results JSON), or 'csv',
+   * 'tsv', 'xml', 'table', 'ntriples' (text). A CONSTRUCT or DESCRIBE
+   * answer is a graph: 'ntriples' or 'table' only.
+   * @param {string} dataString
+   * @param {string} queryString
+   * @param {{dataFormat?: string, entail?: string, output?: string}} [options]
+   * @returns {Promise<object|string>}
    */
-  async function closeCottas(handle) {
-    if (typeof handle !== 'string') {
-      throw new TypeError('closeCottas: handle must be the string openCottas() returned');
+  async function queryRaw(dataString, queryString, options) {
+    if (typeof dataString !== 'string') {
+      throw new TypeError('queryRaw: dataString must be a string');
+    }
+    if (typeof queryString !== 'string') {
+      throw new TypeError('queryRaw: queryString must be a string');
+    }
+    const opts = options || {};
+    const dataFormat = String(opts.dataFormat || 'turtle').toLowerCase();
+    const entail = opts.entail || 'none';
+    const output = opts.output || 'json';
+    if (!(dataFormat in RAW_DATA_FORMATS)) {
+      throw new TypeError(`queryRaw: unknown dataFormat '${opts.dataFormat}'`);
+    }
+    if (!ENTAIL_VALUES.has(entail)) {
+      throw new TypeError(`queryRaw: entail must be one of ${[...ENTAIL_VALUES].join(', ')}`);
+    }
+    if (!RAW_OUTPUT_FORMATS.has(output)) {
+      throw new TypeError(`queryRaw: output must be one of ${[...RAW_OUTPUT_FORMATS].join(', ')}`);
     }
     const e = await entry();
-    if (!e) throw pendingError('closeCottas');
-    requireEntryFn(e, 'closeCottas', 'closeCottas');
-    entryResult(e.closeCottas(handle), 'closeCottas');
-  }
-
-  /**
-   * Serialize a dataset to COTTAS/Parquet bytes via the native writer
-   * (RDF.CottasStore.BaseWriter.serialize_cottas_v2 -- the SAME pure
-   * `Tot` F* function `factoidal compact --native-writer` uses), for a
-   * caller to persist (IndexedDB/OPFS) or offer as a download. Needs
-   * the npm-entry bundle. Round-trips through openCottas(): the bytes
-   * this returns are valid input to openCottas() and to the native
-   * `--data-cottas`/`--data-cottas-mem` CLI flags, byte-for-byte.
-   * @param {Dataset|string|Array} data
-   * @param {{format?: string}} [options]
-   * @returns {Promise<Uint8Array>}
-   */
-  async function toCottas(data, options) {
-    const e = await entry();
-    if (!e) throw pendingError('toCottas (native COTTAS serialization)');
-    requireEntryFn(e, 'toCottas', 'toCottas');
-    const nq = docsToEntryNQuads(e, toDocs(data, options), 'toCottas');
-    const r = entryResult(e.toCottas(nq), 'toCottas');
-    return hexToBytes(r.cottasHex);
+    requireEntryFn(e, 'queryRaw', 'queryRaw');
+    const r = JSON.parse(e.queryRaw(dataString, queryString,
+      JSON.stringify({ dataFormat: RAW_DATA_FORMATS[dataFormat], entail, output })));
+    if (!r.ok) {
+      const err = new Error('SPARQL query failed: ' + r.error);
+      err.stderr = String(r.error);
+      throw err;
+    }
+    return output === 'json' ? JSON.parse(r.text) : r.text;
   }
 
   /**
@@ -2533,80 +2400,45 @@ function buildApi(driver) {
 
   async function capabilitiesUncached() {
     const e = await entry();
-    if (e) {
-      return {
-        entry: true, construct: true, update: true, canonicalize: true,
-        graphs: true, canonicalHash: true,
-        // Per-function probes, not a blanket `true` -- an older/stale
-        // loaded bundle (e.g. a wasm-target build that predates one of
-        // these exports) reports its ACTUAL surface rather than
-        // over-promising (see requireEntryFn's doc comment above).
-        shacl: typeof e.shaclValidate === 'function',
-        shex: typeof e.shexValidate === 'function',
-        owlClosure: typeof e.owlClosure === 'function',
-        tableau: typeof e.tableauMaterialise === 'function' &&
-          typeof e.tableauDlInconsistent === 'function',
-        rml: typeof e.rmlMap === 'function',
-        csvw: typeof e.csvwToRdf === 'function',
-        jsonld: typeof e.jsonldToRdf === 'function',
-        jsonldFromRdf: typeof e.jsonldFromRdf === 'function',
-        didKey: typeof e.didKeyResolve === 'function',
-        xml: typeof e.xmlWellformed === 'function',
-        xpath: typeof e.xpathEval === 'function',
-        rif: typeof e.rifEval === 'function',
-        xslt: typeof e.xsltTransform === 'function',
-        mathml: typeof e.mathmlEval === 'function',
-        xforms: typeof e.xformsRecalc === 'function',
-        jsonSchema: typeof e.jsonSchemaValidate === 'function',
-        schematron: typeof e.schematronValidate === 'function',
-        toan: typeof e.toanSummation === 'function',
-        matrix: typeof e.matrixDeterminant === 'function',
-        sigmoid: typeof e.sigmoidPoints === 'function' &&
-          typeof e.sigmoidFormulaMathml === 'function',
-        cottasBytesStore: typeof e.openCottas === 'function' &&
-          typeof e.queryCottas === 'function' && typeof e.toCottas === 'function',
-        // VC Data Integrity crypto surface (probed, not blanket-true --
-        // an older bundle predates the vc* exports). The HACL* wasm
-        // backend still has to be initialised at call time; this flag
-        // only reports that the ABI exports exist.
-        vcCrypto: typeof e.vcEd25519Verify === 'function' &&
-          typeof e.vcEddsaVerifyFromCanonical === 'function',
-        // Bundle identity (issue #684) and the typed-API surface added
-        // by issues #344/#680/#681 -- probed the same way as every
-        // flag above, never assumed from bundle age.
-        profile: e.profile || 'full',
-        abiVersion: e.abiVersion,
-        datasetHandles: typeof e.datasetOpen === 'function' &&
-          typeof e.datasetQuery === 'function' &&
-          typeof e.datasetUpdate === 'function' &&
-          typeof e.datasetSerialize === 'function' &&
-          typeof e.datasetClose === 'function',
-        parseDiagnostics: typeof e.parseDocument === 'function',
-        turtlePrefixes: typeof e.serializeTurtleWith === 'function',
-      };
-    }
-    // Probe --canonicalize support on the CLI bundle with a 1-quad doc.
-    // canonicalHash rides the same engine support as canonicalize (it is
-    // canonicalize() applied to one graph's triples); graphs() is pure
-    // JS enumeration and needs no engine at all.
-    let canon = false;
-    try {
-      const res = await run(
-        ['--canonicalize', '-d', '/static/cap.nq'],
-        [{ name: '/static/cap.nq',
-           content: '<http://x/s> <http://x/p> "o" .\n' }]);
-      canon = res.exitCode === 0;
-    } catch (_) { canon = false; }
+    const has = (name) => typeof e[name] === 'function';
     return {
-      entry: false, construct: false, update: false, canonicalize: canon,
-      graphs: true, canonicalHash: canon,
-      shacl: false, shex: false, owlClosure: false, tableau: false, rml: false,
-      csvw: false, jsonld: false, jsonldFromRdf: false, didKey: false,
-      xml: false, xpath: false, rif: false, cottasBytesStore: false,
-      xslt: false, mathml: false, xforms: false, jsonSchema: false,
-      schematron: false, toan: false, matrix: false, sigmoid: false, vcCrypto: false,
-      profile: 'full', abiVersion: undefined,
-      datasetHandles: false, parseDiagnostics: false, turtlePrefixes: false,
+      entry: true, construct: true, update: true, canonicalize: true,
+      graphs: true, canonicalHash: true,
+      // Per-op probes: a wasm module older than this package reports the
+      // ops it actually has.
+      shacl: has('shaclValidate'),
+      shex: has('shexValidate'),
+      owlClosure: has('owlClosure'),
+      entailment: has('queryRaw'),
+      tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
+      rml: has('rmlMap'),
+      csvw: has('csvwToRdf'),
+      jsonld: has('jsonldToRdf'),
+      jsonldFromRdf: has('jsonldFromRdf'),
+      didKey: has('didKeyResolve'),
+      xml: has('xmlWellformed'),
+      xpath: has('xpathEval'),
+      rif: has('rifEval'),
+      xslt: has('xsltTransform'),
+      mathml: has('mathmlEval'),
+      xforms: has('xformsRecalc'),
+      jsonSchema: has('jsonSchemaValidate'),
+      schematron: has('schematronValidate'),
+      toan: has('toanSummation'),
+      matrix: has('matrixDeterminant'),
+      sigmoid: has('sigmoidPoints') && has('sigmoidFormulaMathml'),
+      hdt: has('queryHdt'),
+      // VC Data Integrity: Ed25519 is HACL* compiled into the wasm module,
+      // SHA-256 is the Lean hash; no separate crypto module or init step.
+      vcCrypto: has('vcEd25519Verify') && has('vcEddsaVerifyFromCanonical'),
+      profile: e.profile || 'full',
+      abiVersion: e.abiVersion,
+      datasetHandles: has('datasetOpen') && has('datasetQuery') &&
+        has('datasetUpdate') && has('datasetSerialize') && has('datasetClose'),
+      sparql12: has('queryDataset12') && has('datasetQuery12'),
+      parseDiagnostics: has('parseDocument'),
+      turtlePrefixes: has('serializeTurtleWith'),
+      store: has('storeOpen') && has('storeHandleQuery'),
     };
   }
 
@@ -2675,22 +2507,26 @@ function buildApi(driver) {
     vcCheckCredentialSubject,
     vcCheckNoDataLoss,
     vcCheckRelatedResourceDigests,
-    openCottas,
-    queryCottas,
-    closeCottas,
-    toCottas,
     capabilities,
+    openStore,
+    queryStore,
+    listStores,
+    queryRaw,
     Dataset,
     DatasetHandle,
+    Store,
     ParseError,
     dataFactory,
     // Metadata (issue #682): the same two fields on every driver's
     // typed surface, so a caller can log/report which package version
     // and which engine (js/wasm/entry/l4) answered a call without a
     // separate require('../package.json').
-    version: require('../package.json').version,
+    version: packageVersion,
     engine: driver.engineName,
   };
 }
 
-module.exports = { buildApi, sniffQueryForm, bindingsFromSrj, ParseError, DatasetHandle };
+export {
+  buildApi, sniffQueryForm, bindingsFromSrj, entryResult, parseResult,
+  utf16OffsetOf, missingOpError, ParseError, DatasetHandle, Store,
+};

@@ -51,13 +51,28 @@ let modulePromise = null;
 // staleness this fixes can actually happen.
 const isNodeLike = !!(globalThis.process && globalThis.process.versions && globalThis.process.versions.node);
 
+/** The content-hash version of the wasm this loader was built with. */
+export const wasmVersion = WASM_VERSION;
+
 /**
  * Instantiate the Lean engine (once per module instance; repeated calls
- * return the same promise). Resolves to the API object.
+ * return the same promise, and options after the first call are ignored).
+ * Resolves to the API object.
+ *
+ * `options.instantiateWasm(imports)` replaces the glue's own fetch and
+ * compile: it receives the import object and answers a Promise of
+ * `{instance, module}`, the value of `WebAssembly.instantiateStreaming`.
+ * A page that serves the wasm from its own URL uses it:
+ *
+ *   loadL4({ instantiateWasm: (imports) =>
+ *     WebAssembly.instantiateStreaming(fetch(url), imports) });
+ *
+ * A rejection of that Promise rejects loadL4().
  */
-export function loadL4() {
+export function loadL4(options) {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
+    const opts = options || {};
     const moduleArg = isNodeLike ? {} : {
       // Called by the Emscripten glue only to resolve the sibling
       // .wasm (see l4factoidal.mjs's findWasmBinary); appending the
@@ -69,7 +84,22 @@ export function loadL4() {
           : scriptDirectory + path;
       },
     };
-    const Module = await createModule(moduleArg);
+    // The glue calls Module.instantiateWasm(imports, receive) and waits for
+    // receive(); it has no failure path, so a failure is raced in here.
+    let instantiateFailed = null;
+    if (typeof opts.instantiateWasm === 'function') {
+      let fail;
+      instantiateFailed = new Promise((_resolve, reject) => { fail = reject; });
+      moduleArg.instantiateWasm = (imports, receive) => {
+        Promise.resolve()
+          .then(() => opts.instantiateWasm(imports))
+          .then((r) => receive(r.instance, r.module), fail);
+        return {};
+      };
+    }
+    const Module = instantiateFailed
+      ? await Promise.race([createModule(moduleArg), instantiateFailed])
+      : await createModule(moduleArg);
 
     const cVersion = Module.cwrap('l4_version_c', 'number', []);
     const cFree = Module.cwrap('l4_free_result', null, ['number']);
