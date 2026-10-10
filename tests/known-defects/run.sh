@@ -71,70 +71,15 @@ fi
 }
 
 # ---------------------------------------------------------------------
-# SR-1 (#336) — SELECT DISTINCT returns duplicate rows.
-# distinct_solutions compares solution mappings position-by-position via
-# sm_equal; SPARQL 1.1 s18.3 makes a solution mapping a partial function,
-# in which binding ORDER carries no meaning. Two UNION arms that build
-# the list in different orders therefore survive DISTINCT.
+# SR-1 (https://github.com/danbri/factoidal/issues/336, closed 2026-08-04)
+# and SR-2 (https://github.com/danbri/factoidal/issues/337, closed
+# 2026-08-04) are RETIRED, not removed silently. Both read XPASS on native
+# build 5dca271e756e and the issues are closed as completed.
+#   SR-1  SELECT DISTINCT returned duplicate rows when two UNION arms
+#         built the same solution mapping with bindings in a different order.
+#   SR-2  OPTIONAL missed a match the same BGP found, for literals that
+#         differ only in language-tag case ("x"@en and "x"@EN).
 # ---------------------------------------------------------------------
-# Both arms must be able to yield the SAME {?x,?y} pair, or nothing can
-# duplicate and the probe measures nothing. :s :p :o fires arm 1 with
-# x=:s,y=:o; :o :q :s fires arm 2 with the same pair, built in the other
-# order. (A first draft of this probe omitted the :q triple and reported
-# a false XPASS -- the suite caught its own bug, which is the point.)
-cat > "${WORKDIR}/sr1.ttl" <<'EOF'
-@prefix : <http://ex.org/> .
-:s :p :o .
-:o :q :s .
-EOF
-cat > "${WORKDIR}/sr1.rq" <<'EOF'
-PREFIX : <http://ex.org/>
-SELECT DISTINCT * WHERE { { ?x :p ?y } UNION { ?y :q ?x } }
-EOF
-SR1_N=$("$BIN" query --data "${WORKDIR}/sr1.ttl" --query "${WORKDIR}/sr1.rq" 2>/dev/null \
-        | grep -c 'http://ex.org/o')
-if [ "${SR1_N:-0}" -gt 1 ]; then
-  record SR-1 336 "SELECT DISTINCT returns duplicate rows" XFAIL \
-    "same row returned ${SR1_N} times under DISTINCT"
-elif [ "${SR1_N:-0}" = "1" ]; then
-  record SR-1 336 "SELECT DISTINCT returns duplicate rows" XPASS \
-    "DISTINCT now returns 1 row — defect appears FIXED"
-else
-  record SR-1 336 "SELECT DISTINCT returns duplicate rows" ERROR \
-    "probe produced no rows at all; query or binary changed"
-fi
-
-# ---------------------------------------------------------------------
-# SR-2 (#337) — the hash-join key is FINER than the compatibility test it
-# narrows, so left_join's candidate set is not a superset of the matching
-# pairs. Decisive form: the SAME two patterns joined as a BGP match, and
-# as an OPTIONAL do not. The engine contradicts itself on one graph.
-# ---------------------------------------------------------------------
-cat > "${WORKDIR}/sr2.ttl" <<'EOF'
-@prefix : <http://ex.org/> .
-:a :p "x"@en .
-:b :q "x"@EN .
-EOF
-cat > "${WORKDIR}/sr2-bgp.rq" <<'EOF'
-PREFIX : <http://ex.org/>
-SELECT * WHERE { ?s :p ?v . ?t :q ?v }
-EOF
-cat > "${WORKDIR}/sr2-opt.rq" <<'EOF'
-PREFIX : <http://ex.org/>
-SELECT * WHERE { ?s :p ?v OPTIONAL { ?t :q ?v } }
-EOF
-SR2_BGP=$("$BIN" query --data "${WORKDIR}/sr2.ttl" --query "${WORKDIR}/sr2-bgp.rq" 2>/dev/null | grep -c 'ex.org/b')
-SR2_OPT=$("$BIN" query --data "${WORKDIR}/sr2.ttl" --query "${WORKDIR}/sr2-opt.rq" 2>/dev/null | grep -c 'ex.org/b')
-if [ "${SR2_BGP:-0}" -ge 1 ] && [ "${SR2_OPT:-0}" = "0" ]; then
-  record SR-2 337 "OPTIONAL misses a match the BGP finds (lang-tag case)" XFAIL \
-    "BGP binds ?t, OPTIONAL leaves it unbound — engine self-contradiction"
-elif [ "${SR2_BGP:-0}" -ge 1 ] && [ "${SR2_OPT:-0}" -ge 1 ]; then
-  record SR-2 337 "OPTIONAL misses a match the BGP finds (lang-tag case)" XPASS \
-    "BGP and OPTIONAL now agree — defect appears FIXED"
-else
-  record SR-2 337 "OPTIONAL misses a match the BGP finds (lang-tag case)" ERROR \
-    "BGP itself did not match (bgp=${SR2_BGP} opt=${SR2_OPT}); probe invalid"
-fi
 
 # ---------------------------------------------------------------------
 # SE-1 (#324) -- rdf_term_eq case-folds language tags where the spec says
@@ -185,27 +130,12 @@ fi
 # ---------------------------------------------------------------------
 
 # ---------------------------------------------------------------------
-# #334 — Turtle silently DROPS statements using an undeclared prefix
-# instead of rejecting the document. Silent data loss beats a parse error
-# only if you never find out.
+# TTL-PFX (https://github.com/danbri/factoidal/issues/334, closed
+# 2026-08-18) is RETIRED, not removed silently. It read XPASS on native
+# build 5dca271e756e and the issue is closed as completed. It recorded that
+# Turtle silently dropped a statement that used an undeclared prefix and
+# exited 0; the document is now rejected.
 # ---------------------------------------------------------------------
-cat > "${WORKDIR}/undeclared.ttl" <<'EOF'
-@prefix known: <http://ex.org/> .
-known:s known:p known:o .
-missing:s missing:p missing:o .
-EOF
-U_OUT=$("$BIN" dump "${WORKDIR}/undeclared.ttl" 2>&1); U_RC=$?
-U_N=$(printf '%s' "$U_OUT" | grep -c '^<' || true)
-if [ "$U_RC" -eq 0 ] && [ "${U_N:-0}" = "1" ]; then
-  record TTL-PFX 334 "Turtle drops undeclared-prefix statements silently" XFAIL \
-    "parsed 1 of 2 statements, exit 0, no diagnostic"
-elif [ "$U_RC" -ne 0 ]; then
-  record TTL-PFX 334 "Turtle drops undeclared-prefix statements silently" XPASS \
-    "document now rejected (exit ${U_RC}) — defect appears FIXED"
-else
-  record TTL-PFX 334 "Turtle drops undeclared-prefix statements silently" ERROR \
-    "unexpected: exit 0 with ${U_N} statements"
-fi
 
 # ---------------------------------------------------------------------
 # JSONLD-MSG — one disjunctive error string covers BOTH a JSON syntax

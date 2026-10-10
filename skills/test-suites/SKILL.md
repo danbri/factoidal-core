@@ -570,9 +570,9 @@ record. Conventions, by test kind:
   a probe that sees nothing reads as ERROR and not as XPASS. RDF/XML premises
   need `xmlns="http://example.org/"` for bare property elements: without it
   the properties are dropped, the premise is empty and the case reads as
-  consistent. Cases today: SR-1, SR-2, SE-1, TTL-PFX, JSONLD-MSG (the first
-  two and TTL-PFX read XPASS: their issues are closed and the cases are due
-  for deletion), OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
+  consistent. A case whose issue is closed is deleted, and a comment block in
+  `run.sh` records its id, issue URL and closing date (SR-1, SR-2, TTL-PFX, deleted
+  2026-10-10). Cases today: SE-1, JSONLD-MSG, OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
   https://github.com/danbri/factoidal/issues/719 and
   https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
   serializer stack overflow,
