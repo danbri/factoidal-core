@@ -1,0 +1,21 @@
+{
+  "test_id": "ibm-1-1-valid-P03-ibm03v09.xml",
+  "suite": "xmlconf",
+  "issue": "https://github.com/danbri/factoidal/issues/704",
+  "dispute_kind": "fixture-contradicts-spec",
+  "upstream_expectation": "TYPE=\"valid\" (XML 1.1): the document is accepted and valid. Its external entity ibm/xml-1.1/valid/P03/ibm03v09.ent is `<?xml version=\"1.1\"` followed by U+2028 and `?>`: a text declaration with no encoding declaration and a line separator inside it.",
+  "our_expectation": "the document is rejected with a fatal error: the text declaration is not well formed",
+  "rationale": "XML 1.1 production [77] is `TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'`. The encoding declaration is mandatory in a text declaration, and this entity has none. XML 1.1 section 2.11 states: \"it is a fatal error to use [NEL, #x2028] within the XML declaration or text declaration\". The entity breaks both rules, and U+2028 is not white space (production [3] S) in a text declaration. The suite's own description of the case says \"(This test is questionable)\". Accepting the document would mean accepting what the Recommendation forbids. The test runs; the runner counts it as local-override on the XML 1.1 line and on the validating line, and reports a STALE override (a failure) if it starts to pass.",
+  "analysis_refs": [
+    "formal/lean4/L4Factoidal/XML/Parser.lean (textDeclIsWellFormed)",
+    "formal/lean4/Harness/XmlConfRun.lean",
+    "docs/designissues/2026-10-10-xml-profile-widened.md"
+  ],
+  "upstream_provenance": [
+    "https://www.w3.org/XML/Test/xmlconf-20130923.html",
+    "third_party/testing/xml/xmlconf/ibm/xml-1.1/ibm_valid.xml (ID ibm-1-1-valid-P03-ibm03v09.xml, URI valid/P03/ibm03v09.xml)",
+    "https://www.w3.org/TR/xml11/#NT-TextDecl",
+    "https://www.w3.org/TR/xml11/#sec-line-ends"
+  ],
+  "date": "2026-10-10"
+}

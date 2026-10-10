@@ -646,10 +646,13 @@ parse_xmlconf() {
   while IFS= read -r n; do sum=$((sum + ${n%% *})); done <<EOF
 $oop
 EOF
+  # The line is "N pass, M fail, K local-override (out of T in profile)": K is
+  # the count of disputed cases (tests/local-overrides) that the line counts
+  # apart from pass and fail.
   set -- $nums
-  total=$(($1 + $2 + sum))
-  emit_ok "$CUR_AREA" "" "$1" "$2" "$sum" "$total" \
-    "total derived: scored $(($1 + $2)) (the runner's 'out of $4 in profile') + $sum out-of-profile cases the runner reports but does not score" "$line"
+  total=$(($1 + $2 + $3 + sum))
+  emit_ok "$CUR_AREA" "" "$1" "$2" "$(($3 + sum))" "$total" \
+    "total derived: scored $(($1 + $2 + $3)) (the runner's 'out of $4 in profile'; $3 of them local-override) + $sum out-of-profile cases the runner reports but does not score" "$line"
 }
 
 parse_xmlconf_probe() {
