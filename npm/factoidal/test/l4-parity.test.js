@@ -827,6 +827,47 @@ test('SERVICE without SILENT to an unreachable endpoint fails the query (issue 7
   assert.equal([...silent[0].keys()].length, 0);
 });
 
+// Expected failures (skills/test-suites § Expected failures), both naming
+// issue 735: Federated Query §2.3 and §3.2.
+const SERVICE_FOLLOWUP_ISSUE = 'https://github.com/danbri/factoidal/issues/735';
+test(`xfail: SERVICE without SILENT inside FILTER EXISTS fails the query (${SERVICE_FOLLOWUP_ISSUE})`, async (t) => {
+  if (await skipUnlessOps(t, 'clearServiceEndpoints')) return;
+  await lean.clearServiceEndpoints();
+  let failed = false;
+  try {
+    await assert.rejects(() => lean.query('<http://e/x> <http://e/q> <http://e/y> .',
+      'SELECT * WHERE { ?s ?p ?o FILTER EXISTS { SERVICE <http://unregistered.example/sparql> { ?a ?b ?c } } }',
+      { format: 'ntriples' }));
+  } catch (error) {
+    failed = true;
+    t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`);
+  }
+  assert.ok(failed,
+    `unexpected pass: SERVICE inside EXISTS now fails the query — flip this xfail to an assertion (${SERVICE_FOLLOWUP_ISSUE})`);
+});
+
+test(`xfail: an outer SERVICE SILENT covers a failed nested SERVICE (${SERVICE_FOLLOWUP_ISSUE})`, async (t) => {
+  if (await skipUnlessOps(t, 'registerServiceEndpoint', 'clearServiceEndpoints')) return;
+  const OUTER = 'http://example.org/outer-sparql';
+  await lean.clearServiceEndpoints();
+  let failed = false;
+  try {
+    await lean.registerServiceEndpoint(OUTER, '<http://e/a> <http://e/p> "v" .', { format: 'ntriples' });
+    const rows = await lean.query('<http://e/x> <http://e/q> <http://e/y> .',
+      `SELECT * WHERE { SERVICE SILENT <${OUTER}> { SERVICE <http://unregistered.example/sparql> { ?a ?b ?c } } }`,
+      { format: 'ntriples' });
+    assert.equal(rows.length, 1);
+    assert.equal([...rows[0].keys()].length, 0);
+  } catch (error) {
+    failed = true;
+    t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`);
+  } finally {
+    await lean.clearServiceEndpoints();
+  }
+  assert.ok(failed,
+    `unexpected pass: the outer SILENT now covers the nested failure — flip this xfail to an assertion (${SERVICE_FOLLOWUP_ISSUE})`);
+});
+
 test('registerServiceEndpoint: argument checks', async (t) => {
   if (await skipUnlessOps(t, 'registerServiceEndpoint')) return;
   await assert.rejects(() => lean.registerServiceEndpoint('nope', '<a:b> <a:c> <a:d> .',
