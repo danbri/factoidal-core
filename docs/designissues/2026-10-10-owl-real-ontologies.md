@@ -111,11 +111,66 @@ HERMIT-PLACEHOLDER
 
 ## 5. What did not finish, and the issues
 
-FAILURES-PLACEHOLDER
+Every row below is a step that did not finish under the caps, with its open
+issue and its expected-failure row in `tests/stack/owl_real_gate.py`
+(`tests/stack/owl_real_gate.sh`).
+
+| What | Measured | Issue | Gate row |
+|---|---|---|---|
+| Lean `owl-consistent`, Cell Ontology (78,833 triples) | TIMEOUT at 600 s. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
+| Lean `owl-consistent`, RO (11,703 triples) | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `cl-basic-consistent` covers the cause |
+| Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure` |
+| Lean `owl-consistent` and `owl-entails`, QUDT, under `prlimit --as=6000000000` | OOM at 27 s with 1.25 GB resident. The Lean runtime's mimalloc reserves 1 GiB arenas and two 1 GiB thread stacks; with `MIMALLOC_ARENA_RESERVE=64MiB` the same command finishes under the same cap (41 s, 1,378 MB) | https://github.com/danbri/factoidal/issues/759 | `qudt-consistent` |
+| Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound) |
+| F\* `entail --regime OWL-RL` on wine and food (2,709 triples), RO, schema.org, the Cell Ontology and QUDT | TIMEOUT at 300 s on all five; Lean on the first four: 5.8 s, 8.0 s, 4.6 s, 26.7 s | https://github.com/danbri/factoidal/issues/765 | `wine-closure-fstar` (skipped when the F\* binary is absent) |
+| Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
+
+QUDT under the resident-set watchdog (`--rss-cap-mb 6000`, no address-space
+cap, `--pairs 5`, Lean only; `OUT/results.jsonl` of that run):
+
+| Step | Status | Wall | CPU | Peak resident set |
+|---|---|---:|---:|---:|
+| parse (Lean) | 130,404 triples | 4.4 s | 1.2 s | 256 MB |
+| species | Full, 7,334 violations | 323 s | 253 s | 648 MB |
+| closure | RSS_CAP (killed at the 6,000 MB watchdog) | 61 s | — | 6,038 MB sampled |
+| consistent | `false` | 72 s | 43 s | 1,346 MB |
+| entails, 5 stated pairs | 5 `true` | median 50 s, max 60 s | — | 1,372 MB |
+| entails, 5 unrelated pairs | 5 `true` | (included above) | — | (included above) |
+
+`owl-consistent` answers `false`: QUDT 3.4.0 is inconsistent. HermiT 1.3.8 also
+reports it inconsistent (`InconsistentOntologyException`), so the verdict agrees
+with an independent reasoner. The clash was not located. In an inconsistent
+ontology every subclass axiom is entailed, so every entailment check must
+answer `true`.
 
 ## 6. Other findings
 
-OTHER-PLACEHOLDER
+- **The Lean RDF/XML parser gives an `xml:lang` to the next sibling property
+  element.** `<ex:p xml:lang="en">x</ex:p><ex:r>y</ex:r>` gives `"y"@en`. RO and
+  the Cell Ontology lose 2 triples each against rdflib 7.6.0 (11,703 against
+  11,705; 78,833 against 78,835), where a plain literal becomes equal to an
+  existing tagged one. The F\* parser has the same defect. Recorded on
+  https://github.com/danbri/factoidal/issues/329 (comment of 2026-10-10); gate
+  row `ro-parse` (expected failure).
+- **`factoidal count` (F\*) counts statements as read**, so a repeated triple
+  counts again: wine 2,012 and food 900 against 1,839 and 870 distinct triples.
+  The Lean `parse` count is the graph size. `l4factoidal parse --out nquads`
+  writes one line per statement read (2,012 lines for wine, 1,839 distinct);
+  the harness removes duplicate lines when it writes `merged.nt`.
+- **The two OWL RL closures are different sets.** The closure of the empty graph
+  is 68 triples in Lean and 319 in F\*; on Pizza Lean adds 10,869 triples and
+  F\* 7,774. The difference was not analysed here.
+- **Species.** Four of the ten are OWL 2 DL for the Lean checker (SKOS, BFO,
+  Pizza, wine with food). FOAF, PROV-O, RO, the Cell Ontology and QUDT are Full.
+  The most common reason in the OBO and PROV-O files is
+  `reserved-vocabulary-subject`: the files declare `rdfs:label`,
+  `rdfs:comment` or `rdfs:seeAlso` as `owl:AnnotationProperty` (the OWL API
+  writes these declarations). Whether OWL 2 DL admits those declarations was
+  not checked against a second checker. RO carries SWRL rules (`untyped-class`
+  223, `untyped-predicate` 296).
+- **The resident set of the `closure` verb.** Wine: 421 MB for `closure`
+  against 80 MB for `owl-consistent` on the same input; the Cell Ontology:
+  1,956 MB. The same output-path cost as https://github.com/danbri/factoidal/issues/758.
 
 ## 7. What this method cannot see
 
