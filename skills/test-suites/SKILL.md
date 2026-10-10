@@ -557,6 +557,26 @@ record. Conventions, by test kind:
   the run exit 1. The three graph-store-protocol files are the model.
   Record of the 2026-10-10 landing (manifest shapes, classification, scores):
   `docs/designissues/2026-10-10-fstar-w3c-ec2ba15.md`.
+- **F\* defects found outside a W3C manifest** (`tests/known-defects/run.sh`,
+  `bin/linux-x86_64/factoidal` and its sibling binaries): one case per open
+  issue, with the case id in the JSON row and the issue number in the table.
+  XFAIL = the defect reproduces; XPASS and ERROR fail the suite. When the
+  correct answer is known, the case runs the Lean engine on the same input
+  as oracle and reports ERROR if Lean does not give that answer. The F\* OWL
+  tableau has no `factoidal` verb: the OWL cases wrap an RDF/XML ontology
+  (`tests/known-defects/fixtures/`) as the premise of a one-test
+  ConsistencyTest catalog and run `owl_runner --regime dl`. Those cases share
+  a sensitivity control (an ontology both engines must call inconsistent), so
+  a probe that sees nothing reads as ERROR and not as XPASS. RDF/XML premises
+  need `xmlns="http://example.org/"` for bare property elements: without it
+  the properties are dropped, the premise is empty and the case reads as
+  consistent. Cases today: SR-1, SR-2, SE-1, TTL-PFX, JSONLD-MSG (the first
+  two and TTL-PFX read XPASS: their issues are closed and the cases are due
+  for deletion), OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
+  https://github.com/danbri/factoidal/issues/719 and
+  https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
+  serializer stack overflow,
+  https://github.com/danbri/factoidal/issues/725).
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.

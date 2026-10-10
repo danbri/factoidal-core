@@ -26,6 +26,13 @@ set -uo pipefail   # NOT -e: a failing probe is data, not a crash.
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="${FACTOIDAL_BIN:-${ROOT}/bin/linux-x86_64/factoidal}"
+# The OWL cases below drive the F* owl_runner (the only F* command line that
+# reaches Tableau_Refute.tableau_consistent) and use the Lean CLI as the
+# oracle that states the correct answer. Both ship in the same directory as
+# `factoidal` (tools/fetch-builds.sh --set native).
+OWL_BIN="${OWL_RUNNER_BIN:-$(dirname "$BIN")/owl_runner}"
+L4_BIN="${L4FACTOIDAL_BIN:-$(dirname "$BIN")/l4factoidal}"
+FIXTURES="${ROOT}/tests/known-defects/fixtures"
 JSON_OUT="${ROOT}/docs/test-results/by-suite/known-defects.json"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/factoidal-known-defects-XXXXXX")"
 trap 'rm -rf "${WORKDIR}"' EXIT
@@ -280,6 +287,182 @@ fi
 # discipline #443's pin established. This file is for defects that
 # still reproduce; a fixed one belongs in a regression pin, not here.
 # ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
+# F* OWL tableau and Turtle serializer defects found by the Lean tree
+# (issues 719, 720, 725; opened 2026-10-10 from the Lean repairs).
+#
+# Each case states the CORRECT answer by running the Lean engine on the same
+# input, so a case documents what the answer should be as well as what the
+# F* binary does. The case is XFAIL when F* gives the wrong answer and Lean
+# the right one. Lean not giving the right answer is an ERROR: the case
+# would then be recording a wrong expectation.
+#
+# OWL verdict path for F*: `owl_runner --regime dl CATALOG.rdf`, which runs
+# the premise as an OWL 2 ConsistencyTest through the RL closure and then
+# Tableau_Refute.tableau_consistent. It prints one line per test:
+#   "  PASS  <id>"                          no clash found (consistent)
+#   "  FAIL/unexpected-inconsistency  <id>" the refuter closed every branch
+# Any other result (unsupported, parse failure, timeout) is an ERROR.
+# Lean verdict path: `l4factoidal owl-consistent FILE --format rdfxml`,
+# which prints true, false or unknown on stdout.
+# ---------------------------------------------------------------------
+
+# fstar_owl_verdict FILE -> CONSISTENT | INCONSISTENT | OTHER:<what was seen>
+# Wraps the RDF/XML ontology FILE as the premise of a one-test catalog.
+fstar_owl_verdict () {
+  local file="$1" catalog out rc
+  catalog="${WORKDIR}/catalog-$(basename "$file")"
+  {
+    # The premise text must start at the first byte after the opening tag
+    # (its XML declaration is only legal there), so the head has no final
+    # newline: command substitution strips it.
+    printf '%s' "$(cat <<'CATALOG_HEAD'
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:test="http://www.w3.org/2007/OWL/testOntology#">
+  <owl:Ontology/>
+  <test:TestCase rdf:about="http://owl.semanticweb.org/id/Known-2Ddefect">
+    <rdf:type rdf:resource="http://www.w3.org/2007/OWL/testOntology#ConsistencyTest"/>
+    <test:identifier rdf:datatype="http://www.w3.org/2001/XMLSchema#string">known-defect</test:identifier>
+    <test:normativeSyntax rdf:resource="http://www.w3.org/2007/OWL/testOntology#RDFXML"/>
+    <test:status rdf:resource="http://www.w3.org/2007/OWL/testOntology#Approved"/>
+    <test:semantics rdf:resource="http://www.w3.org/2007/OWL/testOntology#DIRECT"/>
+    <test:species rdf:resource="http://www.w3.org/2007/OWL/testOntology#DL"/>
+    <test:rdfXmlPremiseOntology rdf:datatype="http://www.w3.org/2001/XMLSchema#string">
+CATALOG_HEAD
+)"
+    sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' "$file"
+    cat <<'CATALOG_TAIL'
+</test:rdfXmlPremiseOntology>
+  </test:TestCase>
+</rdf:RDF>
+CATALOG_TAIL
+  } > "$catalog"
+  out=$(timeout 120 "$OWL_BIN" --regime dl "$catalog" 2>/dev/null); rc=$?
+  if printf '%s\n' "$out" | grep -q '^  PASS  known-defect$'; then
+    echo CONSISTENT
+  elif printf '%s\n' "$out" | grep -q '^  FAIL/unexpected-inconsistency  known-defect$'; then
+    echo INCONSISTENT
+  else
+    echo "OTHER:exit ${rc}, $(printf '%s\n' "$out" | grep -E '^  (PASS|FAIL|SKIP|UNSUPPORTED)' | sed -n '1p')"
+  fi
+}
+
+# lean_owl_verdict FILE -> true | false | unknown | OTHER:<exit code>
+lean_owl_verdict () {
+  local out rc
+  out=$(timeout 120 "$L4_BIN" owl-consistent "$1" --format rdfxml 2>/dev/null); rc=$?
+  case "$out" in
+    true|false|unknown) echo "$out" ;;
+    *) echo "OTHER:exit ${rc}" ;;
+  esac
+}
+
+OWL_PROBE_ERR=""
+[ -x "$OWL_BIN" ] || OWL_PROBE_ERR="no owl_runner at ${OWL_BIN} (tools/fetch-builds.sh --set native)"
+[ -x "$L4_BIN" ]  || OWL_PROBE_ERR="no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+
+# Sensitivity control. An OWL case reads XPASS when the F* probe reports
+# "consistent", and that is also what a probe reports when it sees nothing at
+# all (an empty premise, a runner that stopped consulting the tableau). The
+# control is an ontology both engines must call INCONSISTENT; if the F* probe
+# does not, every OWL case below is an ERROR, not an XPASS.
+if [ -z "$OWL_PROBE_ERR" ]; then
+  CTL_F=$(fstar_owl_verdict "${FIXTURES}/owl-control-inconsistent.rdf")
+  CTL_L=$(lean_owl_verdict "${FIXTURES}/owl-control-inconsistent.rdf")
+  if [ "$CTL_F" != "INCONSISTENT" ] || [ "$CTL_L" != "false" ]; then
+    OWL_PROBE_ERR="sensitivity control owl-control-inconsistent.rdf: F* probe ${CTL_F}, Lean ${CTL_L} (both must report inconsistent)"
+  fi
+fi
+
+# owl_case ID ISSUE TITLE FILE
+# FILE is an ontology that is CONSISTENT under the OWL 2 Direct Semantics.
+owl_case () {
+  local id="$1" issue="$2" title="$3" file="${FIXTURES}/$4" fv lv
+  if [ -n "$OWL_PROBE_ERR" ]; then
+    record "$id" "$issue" "$title" ERROR "$OWL_PROBE_ERR"
+    return 0
+  fi
+  fv=$(fstar_owl_verdict "$file")
+  lv=$(lean_owl_verdict "$file")
+  if [ "$lv" != "true" ]; then
+    record "$id" "$issue" "$title" ERROR \
+      "Lean oracle answered ${lv}, not true; the expectation 'consistent' is unconfirmed"
+  elif [ "$fv" = "INCONSISTENT" ]; then
+    record "$id" "$issue" "$title" XFAIL \
+      "F* reports inconsistent; Lean reports consistent (correct)"
+  elif [ "$fv" = "CONSISTENT" ]; then
+    record "$id" "$issue" "$title" XPASS \
+      "F* now reports consistent, as Lean does -- defect appears FIXED"
+  else
+    record "$id" "$issue" "$title" ERROR "F* probe: ${fv}"
+  fi
+}
+
+# 719: the filler of a qualified cardinality restriction is read from
+# owl:onClass only, so owl:onDataRange is ignored.
+owl_case OWL-719 719 "F* ignores owl:onDataRange in qualified cardinality" \
+  owl-719-data-max-qualified.rdf
+
+# 720: the <=-rule branches only over pairs of anonymous witnesses, so it
+# offers too few merges and refutes a consistent ontology. Two shapes.
+owl_case OWL-720-DATA 720 "F* <=-rule offers no merge with asserted data values" \
+  owl-720-data-leq2.rdf
+owl_case OWL-720-NAMED 720 "F* <=-rule offers no merge with named individuals" \
+  owl-720-named-leq2.rdf
+
+# 725: RDF_Turtle_Serialize.count_runs recurses once per IRI occurrence and is
+# not tail recursive, so Turtle output of a large graph overflows the stack.
+# Input: the header and 40000 paragraphs of the Wikidata life-science gene.ttl,
+# every fifth paragraph from the start (deterministic; no blank nodes, so the
+# N-Triples of the input and of a correct re-serialisation are the same set).
+# The stack limit is pinned at 8192 KB so the result does not depend on the
+# caller's shell. Correct answer: Lean serialises the same input to Turtle that
+# parses back to the same triples.
+GENE_SRC="${ROOT}/examples/wikidata/subsets/lifesci-kgx/data/gene.ttl"
+TS_ID=TTL-SER-725; TS_ISSUE=725; TS_TITLE="F* Turtle serializer overflows the stack at 40k paragraphs"
+if [ ! -r "$GENE_SRC" ]; then
+  record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR "no input file ${GENE_SRC#"$ROOT"/}"
+elif [ ! -x "$L4_BIN" ]; then
+  record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+else
+  TS_IN="${WORKDIR}/gene-40000.ttl"
+  awk -v want=40000 'BEGIN { RS = ""; ORS = "\n\n" }
+       NR == 1 { print; next }
+       { if ((NR - 2) % 5 == 0 && picked < want) { picked++; print } }' \
+      "$GENE_SRC" > "$TS_IN"
+  TS_PARAS=$(awk 'BEGIN { RS = "" } END { print NR - 1 }' "$TS_IN")
+  ( ulimit -s 8192 && timeout 300 "$BIN" dump-turtle "$TS_IN" > "${WORKDIR}/ts-fstar.ttl" 2> "${WORKDIR}/ts-fstar.err" )
+  TS_RC=$?
+  TS_LEAN_RC=0
+  timeout 300 "$L4_BIN" parse "$TS_IN" --format turtle --out turtle \
+      > "${WORKDIR}/ts-lean.ttl" 2> "${WORKDIR}/ts-lean.err" || TS_LEAN_RC=$?
+  TS_SAME=no
+  if [ "$TS_LEAN_RC" -eq 0 ]; then
+    LC_ALL=C "$BIN" dump "$TS_IN" 2>/dev/null | LC_ALL=C sort -u > "${WORKDIR}/ts-in.nt"
+    LC_ALL=C "$BIN" dump "${WORKDIR}/ts-lean.ttl" 2>/dev/null | LC_ALL=C sort -u > "${WORKDIR}/ts-lean.nt"
+    if [ -s "${WORKDIR}/ts-in.nt" ] && cmp -s "${WORKDIR}/ts-in.nt" "${WORKDIR}/ts-lean.nt"; then TS_SAME=yes; fi
+  fi
+  if [ "$TS_PARAS" != "40000" ]; then
+    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
+      "input slice has ${TS_PARAS} paragraphs, expected 40000; gene.ttl changed"
+  elif [ "$TS_LEAN_RC" -ne 0 ] || [ "$TS_SAME" != "yes" ]; then
+    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
+      "Lean oracle failed (exit ${TS_LEAN_RC}, same triples: ${TS_SAME}); the expectation is unconfirmed"
+  elif [ "$TS_RC" -ne 0 ] && grep -q 'Stack overflow' "${WORKDIR}/ts-fstar.err"; then
+    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XFAIL \
+      "F* exit ${TS_RC} with Stack overflow in count_runs; Lean serialises the same input correctly"
+  elif [ "$TS_RC" -eq 0 ] && [ -s "${WORKDIR}/ts-fstar.ttl" ]; then
+    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" XPASS \
+      "F* now serialises 40000 paragraphs -- defect appears FIXED"
+  else
+    record "$TS_ID" "$TS_ISSUE" "$TS_TITLE" ERROR \
+      "F* exit ${TS_RC} without Stack overflow (or empty output): $(tr "\n" " " < "${WORKDIR}/ts-fstar.err" | cut -c1-120)"
+  fi
+fi
 
 # ---------------------------------------------------------------------
 # Summary + JSON
