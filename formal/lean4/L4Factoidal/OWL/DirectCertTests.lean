@@ -156,10 +156,33 @@ private def minSumAbox : List Assertion :=
 #guard checkCert { same := [("b", "a")], abox := [.inst "a" cC, .inst "b" (.neg cC)] } .close
 #guard !checkCert { same := [("b", "c")], abox := [.inst "a" cC, .inst "b" (.neg cC)] } .close
 
+/-! ### The model notion is not vacuous
+
+A consistent ontology has a `DirectModel` (one element, every atom true,
+no role edges), so `checkCert_sound`'s conclusion is not true of every
+ontology; the guards above show `checkCert` is not true of every
+certificate. -/
+example : ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ),
+    DirectModel I ν { tbox := [(cA, cB)], abox := [.inst "a" cA] } := by
+  refine ⟨Unit, ⟨fun _ _ => True, fun _ _ _ => False⟩, fun _ => (), ?_, ?_, ?_, ?_, ?_⟩
+  · exact respects_empty _
+  · intro ax hax x _
+    simp only [List.mem_singleton] at hax
+    subst hax
+    exact trivial
+  · intro q hq; cases hq
+  · intro q hq; cases hq
+  · intro φ hφ
+    simp only [List.mem_singleton] at hφ
+    subst hφ
+    exact trivial
+
 /-! ### Axiom audit -/
 /-- info: 'L4Factoidal.OWL.checkCert_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms checkCert_sound
 /-- info: 'L4Factoidal.OWL.sem_nnfP' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms sem_nnfP
+/-- info: 'L4Factoidal.OWL.checkCert_not_consistent' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms checkCert_not_consistent
 
 end L4Factoidal.OWL
