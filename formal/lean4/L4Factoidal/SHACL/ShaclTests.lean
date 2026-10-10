@@ -394,6 +394,26 @@ def memberShapeDoc : String :=
          (fun d => constraintComponentIri d.constraint) == [shNodeKindCC]
 #guard (reportToGraph (run memberShapeDoc)).any fun t => t.p == shDetail
 
+/-! ### SHACL 1.2 §SubsetOfConstraintComponent and §SomeValueConstraintComponent -/
+
+def subsetOfDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b ; " ++
+  "sh:property [ sh:path ex:fav ; sh:subsetOf ex:child ] . " ++
+  "ex:a ex:fav ex:x ; ex:child ex:x, ex:y . ex:b ex:fav ex:x, ex:z ; ex:child ex:x ."
+
+#guard (run subsetOfDoc).results.map (·.value) == [some (.iri (exIri "z"))]
+#guard components (run subsetOfDoc) == [shSubsetOfCC]
+
+def someValueDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:alice, ex:bob, ex:carol ; " ++
+  "sh:property [ sh:path ex:tends ; sh:someValue [ sh:class ex:Duck ] ] . " ++
+  "ex:d a ex:Duck . ex:c a ex:Cow . ex:alice ex:tends ex:c . ex:bob ex:tends ex:c, ex:d ."
+
+-- ex:alice tends no duck; ex:carol tends nothing; ex:bob conforms.
+#guard (run someValueDoc).results.map (·.focus) == [.iri (exIri "alice"), .iri (exIri "carol")]
+#guard (run someValueDoc).results.map (·.value) == [none, none]
+#guard components (run someValueDoc) == [shSomeValueCC, shSomeValueCC]
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

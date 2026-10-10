@@ -555,6 +555,14 @@ theorem evalAggregateNonRec_eq_nil_iff (g : Graph) (sg : List Shape) (focus : Te
     · intro h v hv
       have := h v hv
       simp [termMem_iff, this]
+  | subsetOf p =>
+    simp only [evalAggregateNonRec, Spec.FocusSatisfies, List.filterMap_eq_nil_iff]
+    constructor
+    · intro h v hv
+      have := h v hv
+      simpa [termMem_iff] using this
+    · intro h v hv
+      simp [termMem_iff, h v hv]
   | lessThan p =>
     simp only [evalAggregateNonRec, Spec.FocusSatisfies, List.flatMap_eq_nil_iff,
       List.filterMap_eq_nil_iff]
@@ -655,6 +663,12 @@ theorem evalAggregateNonRec_severity (g : Graph) (sg : List Shape) (focus : Term
     split at ht
     · cases ht; rfl
     · cases ht
+  | subsetOf p =>
+    simp only [evalAggregateNonRec] at hx
+    obtain ⟨_, _, ht⟩ := List.mem_filterMap.mp hx
+    split at ht
+    · cases ht
+    · cases ht; rfl
   | lessThan p | lessThanOrEquals p =>
     simp only [evalAggregateNonRec] at hx
     obtain ⟨_, _, hx⟩ := List.mem_flatMap.mp hx
@@ -682,8 +696,16 @@ theorem evalAggregate_eq_nil_iff (env : ValidationEnv) (g : Graph) (sg : List Sh
   cases fuel with
   | zero => simp [evalAggregate, Spec.AggConforms]
   | succ n =>
-    cases cc <;> simp only [evalAggregate, Spec.AggConforms]
-    all_goals first | simp | (split <;> simp_all)
+    cases cc with
+    | someValue r =>
+      simp only [evalAggregate, Spec.AggConforms]
+      cases hl : lookupShape r sg with
+      | none => simp
+      | some rs =>
+        simp only [Option.some.injEq, forall_eq']
+        split <;> simp_all
+    | _ =>
+      simp only [evalAggregate, Spec.AggConforms] <;> first | simp | (split <;> simp_all)
 
 theorem ite_eq_left_iff_nil {β : Type} (c : Prop) [Decidable c] (v : β) :
     (if c then ([] : List β) else [v]) = [] ↔ c := by
@@ -827,6 +849,15 @@ theorem collectShapeViolations_eq_nil_conforms (env : ValidationEnv) (g : Graph)
     Spec.Conforms env g sg node s fuel :=
   (collectShapeViolations_conforms_iff env g sg node s fuel).mp (by rw [h]; rfl)
 
+/-- SHACL 1.2 §SomeValueConstraintComponent, declaratively: the
+engine-named clause of `Spec.AggConforms` for sh:someValue is "some
+value node conforms to the shape" in the sense of `Spec.Conforms`. -/
+theorem someValue_aggConforms_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (s : Shape) (values : List Term) (r : ShapeRef) (fuel : Nat) :
+    Spec.AggConforms env g sg s values (.someValue r) (fuel + 1) ↔
+      ∀ rs, lookupShape r sg = some rs → ∃ v ∈ values, Spec.Conforms env g sg v rs fuel := by
+  simp only [Spec.AggConforms, collectShapeViolations_conforms_iff]
+
 /-- §3.1 / SHACL 1.2 §conformance-definition: the report conforms iff
 every focus node of every targeted shape conforms. -/
 theorem validate_conforms_iff (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig) :
@@ -858,6 +889,7 @@ theorem validate_sound (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig)
 #print axioms collectShapeViolations_conforms_iff
 #print axioms collectShapeViolations_eq_nil_conforms
 #print axioms conforms_uniform
+#print axioms someValue_aggConforms_iff
 #print axioms validate_conforms_iff
 #print axioms validate_sound
 

@@ -48,6 +48,8 @@ def constraintComponentIri : Constraint → WfIri
   | .minListLength _ => shMinListLengthCC
   | .maxListLength _ => shMaxListLengthCC
   | .uniqueMembers _ => shUniqueMembersCC
+  | .subsetOf _ => shSubsetOfCC
+  | .someValue _ => shSomeValueCC
   | .notOf _ => shNotCC
   | .andOf _ => shAndCC
   | .orOf _ => shOrCC

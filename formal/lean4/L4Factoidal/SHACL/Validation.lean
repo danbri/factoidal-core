@@ -717,6 +717,12 @@ def evalAggregateNonRec (data : Graph) (sg : List Shape) (focus : Term) (s : Sha
     let others := evalPath data focus p
     values.flatMap fun v => others.filterMap fun w =>
       if termLe v w then none else some (valueViolation focus s cc v)
+  -- SHACL 1.2 §SubsetOfConstraintComponent: "For each value node that
+  -- does not exist in $otherNodes, there is a validation result with the
+  -- value node as sh:value."
+  | .subsetOf p =>
+    let others := evalPath data focus p
+    values.filterMap fun v => if termMem v others then none else some (valueViolation focus s cc v)
   | _ => []
 
 /-! ## §3 validation — the fuel-bounded mutual group
@@ -838,6 +844,14 @@ mutual
       | .qualifiedMaxCount qref qmax qdisjoint =>
         if qualifyingCount env data sg s values qref qdisjoint fuel ≤ qmax then []
         else [focusViolation focus s cc]
+      -- SHACL 1.2 §SomeValueConstraintComponent: "if none of the value
+      -- nodes conforms to $someValue, there is a validation result".
+      | .someValue r =>
+        match lookupShape r sg with
+        | none => []
+        | some rs =>
+          if values.any (fun v => env.conforms (collectShapeViolations env data sg v rs fuel))
+          then [] else [focusViolation focus s cc]
       | _ => []
 
   /-- §4.7.2: the number of value nodes conforming to the qualified
@@ -971,6 +985,7 @@ def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
   | .disjoint p => ∀ v ∈ values, ¬ ∃ u ∈ evalPath g focus p, Term.eqb u v = true
   | .lessThan p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLt v w = true
   | .lessThanOrEquals p => ∀ v ∈ values, ∀ w ∈ evalPath g focus p, termLe v w = true
+  | .subsetOf p => ∀ v ∈ values, ∃ u ∈ evalPath g focus p, Term.eqb u v = true
   | .closed ignored => ∀ subj, focus.toSubject? = some subj →
       ∀ t ∈ g, t.s = subj → t.p ∈ pathPredicatesOfShape sg s ++ ignored
   | _ => True
@@ -1024,6 +1039,8 @@ mutual
       match cc with
       | .qualifiedMinCount qref n d => n ≤ qualifyingCount env g sg s values qref d fuel
       | .qualifiedMaxCount qref n d => qualifyingCount env g sg s values qref d fuel ≤ n
+      | .someValue r => ∀ rs, lookupShape r sg = some rs →
+          ∃ v ∈ values, env.conforms (collectShapeViolations env g sg v rs fuel) = true
       | _ => True
 end
 

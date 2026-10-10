@@ -162,6 +162,12 @@ inductive Constraint where
   | disjoint (p : Path)
   | lessThan (p : Path)
   | lessThanOrEquals (p : Path)
+  -- SHACL 1.2 §SubsetOfConstraintComponent: every value node is also a
+  -- value of the focus node for the given path.
+  | subsetOf (p : Path)
+  -- SHACL 1.2 §SomeValueConstraintComponent: at least one value node
+  -- conforms to the shape.
+  | someValue (r : ShapeRef)
   -- SHACL 1.2 §SingleLineConstraintComponent: with `true`, a literal
   -- value node whose lexical form contains a line break violates.
   | singleLine (b : Bool)
@@ -523,6 +529,9 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
   let lessThan := (objectsOf g s shLessThan).map fun t => Constraint.lessThan (decodePath g t fuel)
   let lessThanOrEquals := (objectsOf g s shLessThanOrEquals).map fun t =>
     Constraint.lessThanOrEquals (decodePath g t fuel)
+  let subsetOf := (objectsOf g s shSubsetOf).map fun t => Constraint.subsetOf (decodePath g t fuel)
+  let someValue := (objectsOf g s shSomeValue).filterMap fun t =>
+    (termToShapeRef t).map Constraint.someValue
   let closed :=
     let ignored := match objectsOf g s shIgnoredProperties with
       | head :: _ => (rdfListTerms g head fuel).filterMap fun t =>
@@ -536,7 +545,7 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
   inSet ++ hasValue ++ pattern ++
   minLength ++ maxLength ++ languageIn ++ uniqueLang ++ minInc ++ maxInc ++ minExc ++ maxExc ++
   nots ++ ands ++ ors ++ xones ++ nodes ++ qualified ++ equals ++ disjoint ++ lessThan ++
-  lessThanOrEquals ++ closed
+  lessThanOrEquals ++ subsetOf ++ someValue ++ closed
 
 /-! ## SHACL-SPARQL §5.2 prefix declarations
 
