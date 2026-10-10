@@ -308,6 +308,34 @@ the mechanism is live, not decorative. -/
 #guard permutationCap == 6
 #guard (permutationsOf (["a","b","c","d","e","f","g"].take permutationCap)).length == 720
 
+/-! ## `strLe` through the native string order
+
+`Canonical.lean` registers `strLe = strLeFast` as `csimp`, so `strLe` compiles to
+Lean's native string order. `charsLe` on the character lists is not rewritten,
+so these guards compare the two engines. The samples cover the empty string,
+equal strings, a proper prefix, a shared prefix, ASCII, a two-byte character, a
+character from the Basic Multilingual Plane above the surrogate range, and one
+from a supplementary plane (whose first UTF-8 byte is larger than any of the
+others, which is the order RDFC-1.0 section 3 asks for). -/
+
+private def strSamples : List String :=
+  [ "", "a", "ab", "abc", "b", "B", "z", "_:b0", "http://e/a", "http://e/b",
+    "http://e/a#x", "é", "éa", "zé", (String.singleton (Char.ofNat 0xFFFF)),
+    (String.singleton (Char.ofNat 0x10000)),
+    "a" ++ (String.singleton (Char.ofNat 0x10000)), "a" ++ (String.singleton (Char.ofNat 0xFFFF)) ]
+
+#guard strSamples.all fun a => strSamples.all fun b => strLe a b == charsLe a.toList b.toList
+-- Teeth: the comparison is not constant, not reversed, reflexive, and a prefix
+-- sorts before its extension.
+#guard strLe "a" "b" && !strLe "b" "a"
+#guard strLe "a" "a"
+#guard strLe "a" "ab" && !strLe "ab" "a"
+#guard strLe "" "a" && !strLe "a" ""
+#guard strLe (String.singleton (Char.ofNat 0xFFFF)) (String.singleton (Char.ofNat 0x10000))
+#guard !strLe (String.singleton (Char.ofNat 0x10000)) (String.singleton (Char.ofNat 0xFFFF))
+#guard (strSamples.filter fun a => strSamples.any fun b => !strLe a b).length > 5
+#guard (strSamples.filter fun a => strSamples.any fun b => strLe a b && !strLe b a).length > 5
+
 /-! ## Axiom audit — the whole point of the Lean port -/
 
 #print axioms L4Factoidal.RDF.Canonical.canonicalize

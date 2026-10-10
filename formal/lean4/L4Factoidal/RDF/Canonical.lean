@@ -108,6 +108,70 @@ def charsLe : List Char → List Char → Bool
 /-- Code-point ≤ over strings (RDFC-1.0 §3, "code point order"). -/
 def strLe (a b : String) : Bool := charsLe a.toList b.toList
 
+/-! ### The comparison the compiler emits
+
+`strLe` builds two character lists for every comparison. On a graph of 2,000
+IRIs without blank nodes that conversion (`lean_string_data`) and the list walk
+are 57 percent of the instructions of `canonicalize`, after the sorts were
+changed to merge sorts (survey of 2026-10-10,
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`). Lean's order on
+`String` is the same lexicographic order on code points, and its decision
+procedure is native code. `strLe_eq_not_lt` proves the equality; the `csimp`
+theorem makes every function compiled after this point call `strLeFast`. The
+definition of `strLe` and every theorem about it do not change. -/
+
+private theorem char_lt_iff (x y : Char) : x < y ↔ x.val.toNat < y.val.toNat :=
+  UInt32.lt_iff_toNat_lt
+
+private theorem char_eq_of_not_lt {x y : Char} (h1 : ¬ x.val < y.val)
+    (h2 : ¬ y.val < x.val) : x = y := by
+  apply Char.ext
+  exact UInt32.le_antisymm (UInt32.not_lt.1 h2) (UInt32.not_lt.1 h1)
+
+/-- `charsLe` is the negation of Lean's list order read backwards. -/
+theorem charsLe_eq_not_lt : ∀ (as bs : List Char), charsLe as bs = !decide (bs < as)
+  | [], bs => by
+      cases bs with
+      | nil => simp [charsLe]
+      | cons b bs => simp [charsLe, List.not_lt_nil]
+  | a :: as, [] => by simp [charsLe, List.nil_lt_cons]
+  | a :: as, b :: bs => by
+      have ih := charsLe_eq_not_lt as bs
+      have key : (b :: bs < a :: as) ↔ (b < a ∨ b = a ∧ bs < as) := List.cons_lt_cons_iff
+      simp only [charsLe]
+      by_cases h1 : a.val < b.val
+      · have h1' := (UInt32.lt_iff_toNat_lt).1 h1
+        have hn : ¬ (b :: bs < a :: as) := by
+          rw [key]
+          rintro (h | ⟨h, _⟩)
+          · have := (char_lt_iff b a).1 h; omega
+          · subst h; omega
+        simp [h1, hn]
+      · by_cases h2 : b.val < a.val
+        · have hp : (b :: bs < a :: as) := key.2 (Or.inl h2)
+          simp [h1, h2, hp]
+        · have heq : b = a := (char_eq_of_not_lt h2 h1)
+          have hiff : (b :: bs < a :: as) ↔ bs < as := by
+            rw [key]
+            constructor
+            · rintro (h | ⟨_, h⟩)
+              · exact absurd h h2
+              · exact h
+            · intro h; exact Or.inr ⟨heq, h⟩
+          simp [h1, h2, ih, hiff]
+
+theorem strLe_eq_not_lt (a b : String) : strLe a b = !decide (b < a) := by
+  unfold strLe
+  rw [charsLe_eq_not_lt]
+  rfl
+
+/-- `strLe` through Lean's native string order. -/
+def strLeFast (a b : String) : Bool := !decide (b < a)
+
+/-- The compiler calls `strLeFast` wherever the source says `strLe`. -/
+@[csimp] theorem strLe_eq_strLeFast : @strLe = @strLeFast :=
+  funext fun a => funext fun b => strLe_eq_not_lt a b
+
 /-! ## Stable insertion sort
 
 Stability matters: RDFC-1.0 §4.4 step 5.3 orders exploration results

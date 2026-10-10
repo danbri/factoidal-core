@@ -245,7 +245,7 @@ theorem foldl_insert_pairwise {α : Type _} (le : α → α → Bool)
     (total : ∀ a b, le a b = true ∨ le b a = true) :
     ∀ (xs acc : List α), acc.Pairwise (fun a b => le a b = true) →
       (xs.foldl (fun a x => insertSortedBy le x a) acc).Pairwise (fun a b => le a b = true)
-  | [], acc, h => h
+  | [], _, h => h
   | x :: xs, acc, h =>
       foldl_insert_pairwise le trans total xs _ (insertSortedBy_pairwise le trans total x acc h)
 
