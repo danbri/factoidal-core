@@ -24,13 +24,14 @@ below cite it.
     is by Unicode code point, which is the order of `String.lt`.
 
 Character references and entity references are already replaced, and
-line ends already normalised, by the parser.
+line ends already normalised, by the parser. So are DTD defaults: the
+parser supplies the default of an attribute a start tag leaves out (XML
+1.0 §3.3.2, §5.1), and Canonical XML §2.3 writes it like a specified
+attribute ("the attribute nodes of the element, including defaulted
+ones": the node set is that of the XPath data model, which has them).
 
 ## What it does not do
 
-  * DTD attribute defaulting: the parser does not supply defaulted
-    attributes, so a document whose DTD defaults an attribute
-    canonicalises without it. No caller here depends on a DTD default.
   * Document subsets and the exclusive variant. Exclusive XML
     Canonicalization is `L4Factoidal.RDF.XmlCanon`, which the RDF
     XMLLiteral value space requires; it drops namespace declarations
@@ -203,9 +204,8 @@ def canonicalFragment? (s : String) : Option String :=
 /-! ## Checks
 
 The first is the Recommendation's own example §3.3 ("Start and End
-Tags"), with its document type declaration and the attribute it
-defaults (`attr="default"` on `e9`) removed, because the parser does not
-apply DTD defaults (see the module header). -/
+Tags"), without its document type declaration; the second is the same
+example with it, which defaults `attr="default"` on `e9`. -/
 
 #guard canonicalFragment?
     ("<doc>\n   <e1   />\n   <e2   ></e2>\n" ++
@@ -231,6 +231,40 @@ apply DTD defaults (see the module header). -/
      "         <e8 xmlns=\"\">\n" ++
      "            <e9 xmlns:a=\"http://www.ietf.org\"></e9>\n" ++
      "         </e8>\n      </e7>\n   </e6>\n</doc></fragment>")
+
+-- The same example with its document type declaration: the attribute the
+-- DTD defaults on `e9` is in the canonical form (Canonical XML §3.3).
+#guard (match parseXML
+    ("<!DOCTYPE doc [<!ATTLIST e9 attr CDATA \"default\">]>\n" ++
+     "<doc>\n   <e1   />\n   <e2   ></e2>\n" ++
+     "   <e3   name = \"elem3\"   id=\"elem3\"   />\n" ++
+     "   <e4   name=\"elem4\"   id=\"elem4\"   ></e4>\n" ++
+     "   <e5 a:attr=\"out\" b:attr=\"sorted\" attr2=\"all\" attr=\"I'm\"\n" ++
+     "      xmlns:b=\"http://www.ietf.org\"\n" ++
+     "      xmlns:a=\"http://www.w3.org\"\n" ++
+     "      xmlns=\"http://example.org\"/>\n" ++
+     "   <e6 xmlns=\"\" xmlns:a=\"http://www.w3.org\">\n" ++
+     "      <e7 xmlns=\"http://www.ietf.org\">\n" ++
+     "         <e8 xmlns=\"\" xmlns:a=\"http://www.w3.org\">\n" ++
+     "            <e9 xmlns=\"\" xmlns:a=\"http://www.ietf.org\"/>\n" ++
+     "         </e8>\n      </e7>\n   </e6>\n</doc>") with
+  | .ok d => some (canonDocument d)
+  | .error _ => none)
+  == some ("<doc>\n   <e1></e1>\n   <e2></e2>\n" ++
+     "   <e3 id=\"elem3\" name=\"elem3\"></e3>\n" ++
+     "   <e4 id=\"elem4\" name=\"elem4\"></e4>\n" ++
+     "   <e5 xmlns=\"http://example.org\" xmlns:a=\"http://www.w3.org\" " ++
+     "xmlns:b=\"http://www.ietf.org\" attr=\"I'm\" attr2=\"all\" " ++
+     "b:attr=\"sorted\" a:attr=\"out\"></e5>\n" ++
+     "   <e6 xmlns:a=\"http://www.w3.org\">\n" ++
+     "      <e7 xmlns=\"http://www.ietf.org\">\n" ++
+     "         <e8 xmlns=\"\">\n" ++
+     "            <e9 xmlns:a=\"http://www.ietf.org\" attr=\"default\"></e9>\n" ++
+     "         </e8>\n      </e7>\n   </e6>\n</doc>")
+-- ...and without the declaration it is not there.
+#guard (match parseXML "<doc><e9 xmlns:a=\"http://www.ietf.org\"/></doc>" with
+  | .ok d => some (canonDocument d)
+  | .error _ => none) == some "<doc><e9 xmlns:a=\"http://www.ietf.org\"></e9></doc>"
 
 -- Attribute order and declaration order are not significant.
 #guard canonicalFragment? "<a y=\"1\" x=\"2\"/>" == canonicalFragment? "<a x=\"2\" y=\"1\"/>"

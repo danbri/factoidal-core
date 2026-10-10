@@ -1024,6 +1024,51 @@ def normalizeAttrsByType (atts : List AttDecl) (tag : String)
     | some d => if d.type == AttType.CDATA then a else { a with value := collapseSpaces a.value }
     | none   => a
 
+/-! ### Attribute defaults — XML 1.0 §3.3.2 and §5.1
+
+"If the declaration is of a default value, the processor supplies the
+default when the attribute is not specified" (§3.3.2), and a
+non-validating processor that has read the declaration MUST do so (§5.1:
+"they must use the information in those declarations to ... supply default
+attribute values"). -/
+
+/-- The value an `[10] AttValue` literal denotes, with the document's
+entities: literal white space to spaces, references replaced (§3.3.3).
+`none` when the literal cannot be read as an attribute value. -/
+def literalValue (ents : EntityTable) (lit : String) : Option String :=
+  let q : Char := if lit.toList.contains '"' then '\'' else '"'
+  let arr : Chars := (lit.toList ++ [q]).toArray
+  match parseAttrValueBody ents q arr 0 [] (arr.size + 1) with
+  | .ok v _ => some v
+  | .err _ _ => none
+
+/-- The default value of a declaration as an attribute value would be
+normalised (§3.3.3), or `none` for `#REQUIRED` / `#IMPLIED`. A `#FIXED`
+declaration supplies its value as a default too (§3.3.2). -/
+def defaultValue (ents : EntityTable) (d : AttDecl) : Option String :=
+  match d.defaultDecl with
+  | .required | .implied => none
+  | .fixed lit | .value lit =>
+      (literalValue ents lit).map fun v =>
+        if d.type == AttType.CDATA then v else collapseSpaces v
+
+/-- The attributes to add to a start tag of element `tag` that specified
+`specified`: one for each attribute the element type declares with a
+default (or `#FIXED`) value and the tag leaves out, in the order of the
+declarations. The first declaration of an attribute is binding (§3.3).
+`atts` is in REVERSE order of declaration. -/
+def defaultedAttrs (ents : EntityTable) (atts : List AttDecl) (tag : String)
+    (specified : List Attribute) : List Attribute :=
+  let rec go : List AttDecl → List String → List Attribute
+    | [], _ => []
+    | d :: rest, seen =>
+        if seen.contains d.name then go rest seen
+        else if specified.any (fun a => a.name == d.name) then go rest (d.name :: seen)
+        else match defaultValue ents d with
+          | some v => { name := d.name, value := v } :: go rest (d.name :: seen)
+          | none   => go rest (d.name :: seen)
+  if atts.isEmpty then [] else go (atts.reverse.filter (fun d => d.element == tag)) []
+
 /-! ## Notes for the validity layer
 
 The parse tree holds no node for a reference: `&e;` is replaced by its
@@ -1053,6 +1098,9 @@ def RefFlags.merge (a b : RefFlags) : RefFlags :=
 structure ElemNote where
   /-- Attributes whose value §3.3.3's type-dependent step changed. -/
   normalized : List String := []
+  /-- Attributes the start tag did not specify and the parser supplied from
+  an `[52] AttlistDecl` default (§3.3.2, §5.1), in the order supplied. -/
+  defaulted : List String := []
   entityRef : Bool := false
   wsCharRef : Bool := false
 deriving Repr, Inhabited
@@ -1276,15 +1324,21 @@ def parseElement (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : N
         | .err m p => .err m p
         | .ok attrs0 pos3 =>
           -- §3.3.3: a declared non-CDATA type collapses the value.
-          let attrs := normalizeAttrsByType atts tag attrs0
+          let attrs1 := normalizeAttrsByType atts tag attrs0
+          -- §3.3.2, §5.1: the declared defaults of the attributes the
+          -- tag does not specify.
+          let defaulted := defaultedAttrs ents atts tag attrs1
+          let attrs := attrs1 ++ defaulted
           let (_, undeclAttr) := scanRefs ents s pos2 pos3 (pos3 - pos2 + 1)
           let notes0 := if undeclAttr then { notes with undeclared := true } else notes
-          let normalized := changedAttrs attrs0 attrs
+          let normalized := changedAttrs attrs0 attrs1
+          let defaultedNames := defaulted.map (·.name)
           let pos4 := skipSpace s pos3
           if peekLit "/>" s pos4 then
             -- [44] EmptyElemTag
             .ok (.element tag attrs [],
-                 { notes0 with elems := { normalized := normalized } :: notes0.elems }) (pos4 + 2)
+                 { notes0 with elems :=
+                     { normalized := normalized, defaulted := defaultedNames } :: notes0.elems }) (pos4 + 2)
           else
             match pchar '>' s pos4 with
             | .err m p => .err m p
@@ -1306,7 +1360,8 @@ def parseElement (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : N
                       | .ok _ pos10 =>
                           .ok (.element tag attrs children,
                                { notes1 with elems :=
-                                   { normalized := normalized, entityRef := cflags.entityRef,
+                                   { normalized := normalized, defaulted := defaultedNames,
+                                     entityRef := cflags.entityRef,
                                      wsCharRef := cflags.wsCharRef } :: notes1.elems }) pos10
 
 end
@@ -2157,156 +2212,6 @@ def skipIgnoreSect (s : Chars) (pos depth : Nat) : Nat → PResult Unit
       if depth ≤ 1 then .ok () (pos + 3) else skipIgnoreSect s (pos + 3) (depth - 1) f
     else skipIgnoreSect s (pos + 1) depth f
 
-/-- `[28] intSubset`, `[30] extSubset` and `[62]` includeSect share one
-    loop: the declarations they admit are the same set, and only the
-    terminator and whether `[61] conditionalSect` is allowed differ.
-
-    `pes` is the PARAMETER-entity table, kept apart from `ents`
-    because the two namespaces are disjoint (§4.1): `%foo;` and
-    `&foo;` may name different things. A `%name;` reference is
-    INCLUDED — its replacement text is parsed as declarations right
-    there — which is how an external subset held in a parameter entity
-    reaches the parser at all. -/
-def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
-    (s : Chars) (pos : Nat) (ents : EntityTable) (pes : EntityTable)
-    (dtd : DtdAcc) :
-    Nat → PResult (EntityTable × EntityTable × DtdAcc)
-  | 0 => .err "declaration subset too long" pos
-  | fuel + 1 =>
-    if pos ≥ s.size then
-      if endKind == .eof then .ok (ents, pes, dtd) pos
-      else .err "unterminated declaration subset" pos
-    else
-      let ch := charAt s pos
-      if ch == ']' then
-        match endKind with
-        | .bracket   => .ok (ents, pes, dtd) (pos + 1)
-        | .condClose =>
-            if peekLit "]]>" s pos then .ok (ents, pes, dtd) (pos + 3)
-            else .err "expected ']]>' at the end of an INCLUDE section" pos
-        | .eof       => .err "unexpected ']' in an external subset" pos
-      else if isXmlSpace ch then parseSubset resolve endKind ext s (pos + 1) ents pes dtd fuel
-      else if ch == '%' then
-        -- `[69] PEReference ::= '%' Name ';'`. Scanning to the next
-        -- `;` accepted `% pe;`, which has a space where the Name must
-        -- start (`o-p69fail2`), and `%;`, which has no Name at all.
-        (match parseName s (pos + 1) with
-         | .err m p => .err m p
-         | .ok name p1 =>
-             if p1 ≥ s.size || charAt s p1 != ';' then
-               .err "expected ';' after a parameter-entity reference ([69])" p1
-             else
-               -- INCLUDED: the replacement text is parsed as
-               -- declarations here. An UNDECLARED parameter entity is
-               -- skipped rather than rejected — in a document with an
-               -- external subset this parser has not read, `%name;`
-               -- may well be declared there, and rejecting would call
-               -- a well-formed document malformed.
-               -- Section 4.1 WFC Entity Declared turns on whether a
-               -- `[69] PEReference` was RECOGNISED, declared or not,
-               -- so the table records it here and not at the
-               -- declaration.
-               let pes := { pes with sawPe := true }
-               let extPe := ((lookupEntityDef name pes).map (·.external)).getD false
-               match lookupEntity name pes with
-               | none =>
-                   -- A parameter entity that was read and is not a
-                   -- well-formed external entity is a fatal error at
-                   -- its reference (XML 1.0 section 2.1).
-                   match (lookupEntityDef name pes).bind (·.unreadable) with
-                   | some m => .err m pos
-                   | none =>
-                   parseSubset resolve endKind ext s (p1 + 1) ents pes
-                     { dtd with incomplete := true } fuel
-               | some text =>
-                   let arr : Chars := text.toList.toArray
-                   match parseSubset resolve .eof (ext || extPe) arr 0 ents pes dtd fuel with
-                   | .err m p => .err m p
-                   | .ok (ents', pes', dtd') _ =>
-                       parseSubset resolve endKind ext s (p1 + 1) ents' pes' dtd' fuel)
-      else if ch == '<' then
-        if peekLit "<!--" s pos then
-          match parseComment ents.version s pos with
-          | .err m p => .err m p
-          | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
-        else if peekLit "<!ENTITY" s pos then
-          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
-          | .err m p => .err m p
-          | .ok (ents', pes', name, ndata) pos' =>
-              parseSubset resolve endKind ext s pos' ents' pes'
-                { dtd with
-                    names := { dtd.names with entities := name :: dtd.names.entities },
-                    unparsed := match ndata with
-                      | some nt => (name, nt) :: dtd.unparsed
-                      | none => dtd.unparsed } fuel
-        else if peekLit "<?" s pos then
-          match parsePi ents.version s pos with
-          | .err m p => .err m p
-          | .ok node pos' =>
-              let target := match node with | .pi t _ => [t] | _ => []
-              parseSubset resolve endKind ext s pos' ents pes
-                { dtd with names := { dtd.names with piTargets := target ++ dtd.names.piTargets } } fuel
-        else if peekLit "<!ELEMENT" s pos then
-          match parseElementDecl s pos with
-          | .err m p => .err m p
-          | .ok ed pos' =>
-              parseSubset resolve endKind ext s pos' ents pes
-                { dtd with elems := { ed with external := ext } :: dtd.elems } fuel
-        else if peekLit "<!ATTLIST" s pos then
-          match parseAttlistDecl (endKind == .bracket) ents s pos with
-          | .err m p => .err m p
-          | .ok decls pos' =>
-            parseSubset resolve endKind ext s pos' ents pes
-              { dtd with atts := (decls.map fun d => { d with external := ext }).reverse ++ dtd.atts } fuel
-        else if peekLit "<!NOTATION" s pos then
-          match parseNotationDecl s pos with
-          | .err m p => .err m p
-          | .ok name pos' =>
-              parseSubset resolve endKind ext s pos' ents pes
-                { dtd with names := { dtd.names with notations := name :: dtd.names.notations } } fuel
-        else if peekLit "<![" s pos then
-          -- `[61] conditionalSect` is an EXTERNAL-subset production.
-          -- An `<![INCLUDE[` or `<![IGNORE[` in the internal subset is
-          -- a well-formedness error (not-wf-sa-063).
-          if endKind == .bracket then
-            .err "a conditional section is not allowed in the internal subset" pos
-          else
-            let p1 := skipSpace s (pos + 3)
-            if peekLit "INCLUDE" s p1 then
-              let p2 := skipSpace s (p1 + 7)
-              if p2 < s.size && charAt s p2 == '[' then
-                match parseSubset resolve .condClose ext s (p2 + 1) ents pes dtd fuel with
-                | .err m p => .err m p
-                | .ok (ents', pes', dtd') pos' =>
-                    parseSubset resolve endKind ext s pos' ents' pes' dtd' fuel
-              else .err "expected '[' after INCLUDE ([62] includeSect)" p2
-            else if peekLit "IGNORE" s p1 then
-              let p2 := skipSpace s (p1 + 6)
-              if p2 < s.size && charAt s p2 == '[' then
-                match skipIgnoreSect s (p2 + 1) 1 (s.size + 1) with
-                | .err m p => .err m p
-                | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
-              else .err "expected '[' after IGNORE ([63] ignoreSect)" p2
-            else .err "expected INCLUDE or IGNORE ([61] conditionalSect)" p1
-        else .err "malformed declaration" pos
-      else .err "unexpected character in a declaration subset" pos
-
-/-- Scan (respecting quoted literals) up to the next top-level `[` or
-`>` without consuming it — used to step over the DOCTYPE's optional
-`[75] ExternalID`. Port of F* `skip_to_subset_or_gt`. -/
-def skipToSubsetOrGt (s : Chars) (pos : Nat) : Nat → PResult Unit
-  | 0 => .err "unterminated DOCTYPE" pos
-  | fuel + 1 =>
-    if pos ≥ s.size then .err "unterminated DOCTYPE" pos
-    else
-      let ch := charAt s pos
-      if ch == '[' || ch == '>' then .ok () pos
-      else if ch == '"' || ch == '\'' then
-        match skipQuotedLiteral s (pos + 1) ch fuel with
-        | .err m p => .err m p
-        | .ok _ pos' => skipToSubsetOrGt s pos' fuel
-      else skipToSubsetOrGt s (pos + 1) fuel
-
 /-- Where a scan of the external subset stands, for `peScan`.
 
     §4.4.8 admits a parameter-entity reference in the DTD in two very
@@ -2496,6 +2401,179 @@ def peScan (resolve : Resolver) (s : Chars) (pos : Nat) (pes : EntityTable)
             peScan resolve s (pos + 2) pes vs ("<!" :: acc) .decl depth fuel'
           else peScan resolve s (pos + 1) pes vs (String.singleton ch :: acc) .top depth fuel'
 termination_by (depth, fuel)
+
+/-- `[28] intSubset`, `[30] extSubset` and `[62]` includeSect share one
+    loop: the declarations they admit are the same set, and only the
+    terminator and whether `[61] conditionalSect` is allowed differ.
+
+    `pes` is the PARAMETER-entity table, kept apart from `ents`
+    because the two namespaces are disjoint (§4.1): `%foo;` and
+    `&foo;` may name different things. A `%name;` reference is
+    INCLUDED — its replacement text is parsed as declarations right
+    there — which is how an external subset held in a parameter entity
+    reaches the parser at all. -/
+def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
+    (s : Chars) (pos : Nat) (ents : EntityTable) (pes : EntityTable)
+    (dtd : DtdAcc) :
+    Nat → PResult (EntityTable × EntityTable × DtdAcc)
+  | 0 => .err "declaration subset too long" pos
+  | fuel + 1 =>
+    if pos ≥ s.size then
+      if endKind == .eof then .ok (ents, pes, dtd) pos
+      else .err "unterminated declaration subset" pos
+    else
+      let ch := charAt s pos
+      if ch == ']' then
+        match endKind with
+        | .bracket   => .ok (ents, pes, dtd) (pos + 1)
+        | .condClose =>
+            if peekLit "]]>" s pos then .ok (ents, pes, dtd) (pos + 3)
+            else .err "expected ']]>' at the end of an INCLUDE section" pos
+        | .eof       => .err "unexpected ']' in an external subset" pos
+      else if isXmlSpace ch then parseSubset resolve endKind ext s (pos + 1) ents pes dtd fuel
+      else if ch == '%' then
+        -- `[69] PEReference ::= '%' Name ';'`. Scanning to the next
+        -- `;` accepted `% pe;`, which has a space where the Name must
+        -- start (`o-p69fail2`), and `%;`, which has no Name at all.
+        (match parseName s (pos + 1) with
+         | .err m p => .err m p
+         | .ok name p1 =>
+             if p1 ≥ s.size || charAt s p1 != ';' then
+               .err "expected ';' after a parameter-entity reference ([69])" p1
+             else
+               -- INCLUDED: the replacement text is parsed as
+               -- declarations here. An UNDECLARED parameter entity is
+               -- skipped rather than rejected — in a document with an
+               -- external subset this parser has not read, `%name;`
+               -- may well be declared there, and rejecting would call
+               -- a well-formed document malformed.
+               -- Section 4.1 WFC Entity Declared turns on whether a
+               -- `[69] PEReference` was RECOGNISED, declared or not,
+               -- so the table records it here and not at the
+               -- declaration.
+               let pes := { pes with sawPe := true }
+               let extPe := ((lookupEntityDef name pes).map (·.external)).getD false
+               match lookupEntity name pes with
+               | none =>
+                   -- A parameter entity that was read and is not a
+                   -- well-formed external entity is a fatal error at
+                   -- its reference (XML 1.0 section 2.1).
+                   match (lookupEntityDef name pes).bind (·.unreadable) with
+                   | some m => .err m pos
+                   | none =>
+                   parseSubset resolve endKind ext s (p1 + 1) ents pes
+                     { dtd with incomplete := true } fuel
+               | some text =>
+                   let raw : Chars := text.toList.toArray
+                   -- Section 2.8, WFC PEs in Internal Subset: "In the
+                   -- internal DTD subset, parameter-entity references
+                   -- MUST NOT occur within markup declarations ... (This
+                   -- does not apply to references that occur in external
+                   -- parameter entities or to the external subset.)"
+                   -- So the text of an EXTERNAL context -- the external
+                   -- subset, an external parameter entity wherever it is
+                   -- referenced from, and the text of an entity that
+                   -- such a context includes -- may hold references
+                   -- INSIDE its markup declarations. They are included
+                   -- as the external subset's are, and the validity
+                   -- constraints on their nesting (sections 2.8, 3.2.1,
+                   -- 3.4) are read from the text they stand in.
+                   let inExternal := ext || extPe
+                   let (arr, nest) :=
+                     if inExternal then
+                       let (scanned, nest) :=
+                         peScan resolve raw 0 pes [] [] .top (raw.size + 1) (raw.size + 1)
+                       (scanned.toList.toArray, nest)
+                     else (raw, [])
+                   match parseSubset resolve .eof inExternal arr 0 ents pes
+                           { dtd with nesting := dtd.nesting ++ nest } fuel with
+                   | .err m p => .err m p
+                   | .ok (ents', pes', dtd') _ =>
+                       parseSubset resolve endKind ext s (p1 + 1) ents' pes' dtd' fuel)
+      else if ch == '<' then
+        if peekLit "<!--" s pos then
+          match parseComment ents.version s pos with
+          | .err m p => .err m p
+          | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
+        else if peekLit "<!ENTITY" s pos then
+          match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
+          | .err m p => .err m p
+          | .ok (ents', pes', name, ndata) pos' =>
+              parseSubset resolve endKind ext s pos' ents' pes'
+                { dtd with
+                    names := { dtd.names with entities := name :: dtd.names.entities },
+                    unparsed := match ndata with
+                      | some nt => (name, nt) :: dtd.unparsed
+                      | none => dtd.unparsed } fuel
+        else if peekLit "<?" s pos then
+          match parsePi ents.version s pos with
+          | .err m p => .err m p
+          | .ok node pos' =>
+              let target := match node with | .pi t _ => [t] | _ => []
+              parseSubset resolve endKind ext s pos' ents pes
+                { dtd with names := { dtd.names with piTargets := target ++ dtd.names.piTargets } } fuel
+        else if peekLit "<!ELEMENT" s pos then
+          match parseElementDecl s pos with
+          | .err m p => .err m p
+          | .ok ed pos' =>
+              parseSubset resolve endKind ext s pos' ents pes
+                { dtd with elems := { ed with external := ext } :: dtd.elems } fuel
+        else if peekLit "<!ATTLIST" s pos then
+          match parseAttlistDecl (endKind == .bracket) ents s pos with
+          | .err m p => .err m p
+          | .ok decls pos' =>
+            parseSubset resolve endKind ext s pos' ents pes
+              { dtd with atts := (decls.map fun d =>
+                    { d with external := ext, afterUnreadPe := dtd.incomplete }).reverse ++ dtd.atts } fuel
+        else if peekLit "<!NOTATION" s pos then
+          match parseNotationDecl s pos with
+          | .err m p => .err m p
+          | .ok name pos' =>
+              parseSubset resolve endKind ext s pos' ents pes
+                { dtd with names := { dtd.names with notations := name :: dtd.names.notations } } fuel
+        else if peekLit "<![" s pos then
+          -- `[61] conditionalSect` is an EXTERNAL-subset production.
+          -- An `<![INCLUDE[` or `<![IGNORE[` in the internal subset is
+          -- a well-formedness error (not-wf-sa-063).
+          if endKind == .bracket then
+            .err "a conditional section is not allowed in the internal subset" pos
+          else
+            let p1 := skipSpace s (pos + 3)
+            if peekLit "INCLUDE" s p1 then
+              let p2 := skipSpace s (p1 + 7)
+              if p2 < s.size && charAt s p2 == '[' then
+                match parseSubset resolve .condClose ext s (p2 + 1) ents pes dtd fuel with
+                | .err m p => .err m p
+                | .ok (ents', pes', dtd') pos' =>
+                    parseSubset resolve endKind ext s pos' ents' pes' dtd' fuel
+              else .err "expected '[' after INCLUDE ([62] includeSect)" p2
+            else if peekLit "IGNORE" s p1 then
+              let p2 := skipSpace s (p1 + 6)
+              if p2 < s.size && charAt s p2 == '[' then
+                match skipIgnoreSect s (p2 + 1) 1 (s.size + 1) with
+                | .err m p => .err m p
+                | .ok _ pos' => parseSubset resolve endKind ext s pos' ents pes dtd fuel
+              else .err "expected '[' after IGNORE ([63] ignoreSect)" p2
+            else .err "expected INCLUDE or IGNORE ([61] conditionalSect)" p1
+        else .err "malformed declaration" pos
+      else .err "unexpected character in a declaration subset" pos
+
+/-- Scan (respecting quoted literals) up to the next top-level `[` or
+`>` without consuming it — used to step over the DOCTYPE's optional
+`[75] ExternalID`. Port of F* `skip_to_subset_or_gt`. -/
+def skipToSubsetOrGt (s : Chars) (pos : Nat) : Nat → PResult Unit
+  | 0 => .err "unterminated DOCTYPE" pos
+  | fuel + 1 =>
+    if pos ≥ s.size then .err "unterminated DOCTYPE" pos
+    else
+      let ch := charAt s pos
+      if ch == '[' || ch == '>' then .ok () pos
+      else if ch == '"' || ch == '\'' then
+        match skipQuotedLiteral s (pos + 1) ch fuel with
+        | .err m p => .err m p
+        | .ok _ pos' => skipToSubsetOrGt s pos' fuel
+      else skipToSubsetOrGt s (pos + 1) fuel
+
 
 /-- `[28] doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S?
 ('[' intSubset ']' S?)? '>'`. The external subset is recognised and
@@ -2763,7 +2841,12 @@ def parseXMLNotes (resolve : Resolver) (decoded : Bool) (input : String) :
     match collectMisc ver s posDt [] fuel with
     | .err m p => .error { message := m, position := p }
     | .ok pre2 pos3 =>
-      match parseElement ents ((doctype.map (·.attDecls)).getD []) s pos3 {} fuel with
+      -- XML 1.0 §5.1: except when `standalone="yes"`, a non-validating
+      -- processor does not process an attribute-list declaration that
+      -- follows a reference to a parameter entity it did not read.
+      let usable := ((doctype.map (·.attDecls)).getD []).filter
+        (fun d => standalone || !d.afterUnreadPe)
+      match parseElement ents usable s pos3 {} fuel with
       | .err m p => .error { message := m, position := p }
       | .ok (root, notes) pos4 =>
         match collectMisc ver s pos4 [] fuel with

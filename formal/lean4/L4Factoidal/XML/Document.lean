@@ -438,6 +438,12 @@ structure AttDecl where
   entity (XML 1.0 §2.9: such a declaration may not affect a document
   that says `standalone="yes"`). -/
   external : Bool := false
+  /-- Declared after a reference to a parameter entity that the
+  processor did not read. XML 1.0 §5.1: except when `standalone="yes"`, a
+  non-validating processor must not process an attribute-list
+  declaration found after such a reference, "since the entity may have
+  contained overriding declarations". -/
+  afterUnreadPe : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[45] elementdecl`, with its `[46] contentspec` kept as the text the

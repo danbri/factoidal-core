@@ -120,6 +120,7 @@ import L4Factoidal.XML.Document
 import L4Factoidal.XML.Parser
 import L4Factoidal.XML.Canonical
 import L4Factoidal.XML.Namespaces
+import L4Factoidal.XML.XmlAttributes
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Validity
 import L4Factoidal.XML.Wellformedness

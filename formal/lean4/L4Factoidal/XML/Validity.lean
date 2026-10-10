@@ -314,27 +314,6 @@ def lexicallyLegal (t : AttType) (v : String) : Bool :=
   | .NOTATION names => names.contains v
   | .Enumeration toks => toks.contains v
 
-/-! ## The default value of an attribute -/
-
-/-- The value an `AttValue` literal denotes, with the document's entities:
-literal white space to spaces, references replaced (§3.3.3). `none` when
-the literal cannot be read as an attribute value. -/
-def literalValue (ents : EntityTable) (lit : String) : Option String :=
-  let q : Char := if lit.toList.contains '"' then '\'' else '"'
-  let arr : Chars := (lit.toList ++ [q]).toArray
-  match parseAttrValueBody ents q arr 0 [] (arr.size + 1) with
-  | .ok v _ => some v
-  | .err _ _ => none
-
-/-- The default value of a declaration as an attribute value would be
-normalised, or `none` for `#REQUIRED` / `#IMPLIED`. -/
-def defaultValue (ents : EntityTable) (d : AttDecl) : Option String :=
-  match d.defaultDecl with
-  | .required | .implied => none
-  | .fixed lit | .value lit =>
-      (literalValue ents lit).map fun v =>
-        if d.type == AttType.CDATA then v else collapseSpaces v
-
 /-! ## The checks -/
 
 /-- Content is white space only, in the sense of `[3] S`. -/
@@ -534,20 +513,17 @@ def checkAttributes (dt : Doctype) (tag : String) (attrs : List Attribute) :
 document that says `standalone="yes"`: no declaration read from outside
 the document may have decided anything about this element. -/
 def checkStandalone (dt : Doctype) (tag : String) (note : ElemNote)
-    (attrs : List Attribute) (children : List Node) : List Violation :=
-  -- attributes with a default value that the element leaves out
-  let defaults :=
-    (((dt.attDecls.filter (fun a => a.element == tag)).map (·.name)).eraseDups).filterMap fun n =>
-      match attDeclOf dt.attDecls tag n with
-      | some d =>
-          if d.external && !attrs.any (·.name == n) then
-            match d.defaultDecl with
-            | .fixed _ | .value _ =>
-                some { vc := "Standalone Document Declaration",
-                       message := s!"{tag} lacks {n}, whose default is declared outside the document" }
-            | _ => none
-          else none
-      | none => none
+    (children : List Node) : List Violation :=
+  -- attributes the parser supplied from a default declared outside the
+  -- document: the start tag left them out (§3.3.2)
+  let defaults := note.defaulted.filterMap fun n =>
+    match attDeclOf dt.attDecls tag n with
+    | some d =>
+        if d.external then
+          some { vc := "Standalone Document Declaration",
+                 message := s!"{tag} lacks {n}, whose default is declared outside the document" }
+        else none
+    | none => none
   -- tokenized attributes whose value normalisation changed
   let normalised := note.normalized.filterMap fun n =>
     match attDeclOf dt.attDecls tag n with
@@ -587,7 +563,7 @@ def validateElement (dt : Doctype) (standalone : Bool) (ns : List ElemNote) : No
       let note := ns'.headD {}
       let here := checkContent dt tag note children
       let (av, ids, refs) := checkAttributes dt tag attrs
-      let sa := if standalone then checkStandalone dt tag note attrs children else []
+      let sa := if standalone then checkStandalone dt tag note children else []
       (here ++ av ++ sa ++ cv, ids ++ cids, refs ++ crefs, ns'.drop 1)
   | _ => ([], [], [], ns)
 
