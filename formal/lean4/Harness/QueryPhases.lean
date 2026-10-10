@@ -27,6 +27,7 @@ finished phase released. `hwm_kb` is the peak so far.
 import Wasm.Ops.Parse
 import Wasm.Ops.ParseJsonLd
 import Wasm.Ops.Query
+import Wasm.Ops.Clock
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.TurtleChunkFold
@@ -128,15 +129,18 @@ def main (args : List String) : IO UInt32 := do
         if stop == "normalize" then return 0
         -- `--no-index` (diagnostic): the reference evaluator, no backend.
         let dsb := indexedDatasetBackend nds
+        -- NOW() (SPARQL 1.1 §17.4.5.1): the clock is read once per execution,
+        -- as `l4factoidal query` does (https://github.com/danbri/factoidal/issues/748).
+        let now ← L4Wasm.Ops.nowDateTime
         if rest.contains "--no-index" then
-          let out := L4Wasm.Ops.queryParsedDatasetWith nds none sparql
+          let out := L4Wasm.Ops.queryParsedDatasetWith nds none sparql (now := some now)
           report "eval-no-index" out.utf8ByteSize
           return 0
         report "index" (match dsb.default with
           | .indexed ix => ix.all.size
           | _ => 0)
         if stop == "index" then return 0
-        let out := L4Wasm.Ops.queryParsedDatasetWith nds (some dsb) sparql
+        let out := L4Wasm.Ops.queryParsedDatasetWith nds (some dsb) sparql (now := some now)
         report "eval" out.utf8ByteSize
         if stop == "eval" then return 0
         IO.println out
