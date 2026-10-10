@@ -2256,17 +2256,48 @@ if [[ "$STEP" == "all" || "$STEP" == "test" ]]; then
   _W3C_LOG_ABS="$(pwd)/$OUTDIR/w3c_results.log"
   ( cd ../.. && "$_RUNNER_ABS" --all ) 2>&1 | tee "$_W3C_LOG_ABS" || W3C_RC=$?
   echo "  Full results: $OUTDIR/w3c_results.log ($(wc -l < "$OUTDIR/w3c_results.log") lines)"
+  # generate-report.sh reads one log per runner mode (sparql_results.log and
+  # rdf_results.log). `--all` writes both into the one log above, so cut it at
+  # the RDF banner. Without this step a fresh checkout has no such logs and
+  # generate-report.sh exits 1 with "No cached test logs" on every run, green
+  # or red; before the core/builds split these logs were committed, which hid it.
+  awk '/^=== W3C RDF 1\.1 Test Runner ===/ { rdf = 1 } !rdf' "$_W3C_LOG_ABS" > "$OUTDIR/sparql_results.log"
+  awk '/^=== W3C RDF 1\.1 Test Runner ===/ { rdf = 1 } rdf'  "$_W3C_LOG_ABS" > "$OUTDIR/rdf_results.log"
   # Refresh the human-readable test-results page (docs/test-results/index.html
   # + latest.{csv,json} + history snapshot). generate-report.sh used to be a
   # separate manual step, which is how the published page got 24h-stale on
   # 2026-04-29: builds were green, w3c_results.log was current, but no one
   # had remembered to regenerate the HTML. Now wired in unconditionally
   # because the cost is fast and the value is the public-facing dashboard.
+  # Its exit status is captured, not piped through `tail`: a pipe would hide it
+  # (or, under pipefail, abort the script before the verdict below is printed).
+  REPORT_RC=0
   if [[ -x ./generate-report.sh ]]; then
-    ./generate-report.sh 2>&1 | tail -10
+    _REPORT_LOG_ABS="$(pwd)/$OUTDIR/generate_report.log"
+    ./generate-report.sh > "$_REPORT_LOG_ABS" 2>&1 || REPORT_RC=$?
+    tail -n 10 "$_REPORT_LOG_ABS"
   fi
   record_phase_timing "test" "$PHASE_START_TEST" "$EXTRACT_COUNT"
   echo ""
+  # EXIT STATUS OF THIS STEP. It is the first non-zero of:
+  #   1. the runner's status. `w3c_runner --all` exits 0 when no suite has a
+  #      FAIL and no local-override is stale; 1 when a test fails or an
+  #      override went stale (the test now passes; delete the override file);
+  #      2 when the run is untrustworthy (a suite found no manifest or no
+  #      tests, or nothing was discovered). Honoured local overrides
+  #      (tests/local-overrides/) are counted apart and do not fail the run.
+  #   2. generate-report.sh's status, when the runner passed.
+  # Until 2026-10-10 this step discarded W3C_RC, so the exit status said
+  # nothing about the tests.
+  if [[ "$W3C_RC" -ne 0 ]]; then
+    echo "TEST_STATUS=FAIL (w3c_runner --all exited $W3C_RC; 1 = a test failed or an override is stale, 2 = nothing or a whole suite was not discovered)" >&2
+    exit "$W3C_RC"
+  fi
+  if [[ "$REPORT_RC" -ne 0 ]]; then
+    echo "TEST_STATUS=FAIL (generate-report.sh exited $REPORT_RC; see $OUTDIR/generate_report.log)" >&2
+    exit "$REPORT_RC"
+  fi
+  echo "TEST_STATUS=OK"
 fi
 
 # Step 4: Build JavaScript via js_of_ocaml

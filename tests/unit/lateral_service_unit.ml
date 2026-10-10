@@ -69,7 +69,8 @@ let mk_query
     q_dataset = []; q_pattern = pattern;
     q_group_by = FStar_Pervasives_Native.None;
     q_having = FStar_Pervasives_Native.None;
-    q_modifier = modifier; q_values = FStar_Pervasives_Native.None }
+    q_modifier = modifier; q_values = FStar_Pervasives_Native.None;
+    q_post_values = FStar_Pervasives_Native.None }
 
 let ex n = "http://example.org/" ^ n
 let t s p o : triple = { s; p; o }

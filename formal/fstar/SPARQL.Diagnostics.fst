@@ -74,5 +74,6 @@ let _test_query_form_ask =
     q_group_by = None;
     q_having   = None;
     q_modifier = modifier;
-    q_values   = None } in
+    q_values   = None;
+    q_post_values = None } in
   query_form_string q = "ASK"

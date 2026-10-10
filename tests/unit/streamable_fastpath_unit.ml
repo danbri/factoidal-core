@@ -67,6 +67,7 @@ let mk_query
     q_having   = having;
     q_modifier = modifier;
     q_values   = values;
+    q_post_values = FStar_Pervasives_Native.None;
   }
 
 let count_star_select (alias : string) : select_clause =

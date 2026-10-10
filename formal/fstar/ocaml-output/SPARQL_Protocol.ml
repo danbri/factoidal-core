@@ -499,7 +499,15 @@ let decode_request (http_method : Prims.string) (url_path : Prims.string)
              then PR_Query (body, [], [])
              else
                if ct = "application/sparql-update"
-               then PR_Update (body, [], [])
+               then
+                 (let kvs = parse_query_string effective_qs in
+                  if
+                    (kvs_have_using_param kvs) &&
+                      (update_has_dataset_clause body)
+                  then
+                    PR_Bad
+                      "using-graph-uri/using-named-graph-uri query parameters conflict with USING/WITH in update text (Protocol 2.2.4)"
+                  else PR_Update (body, [], []))
                else
                  if ct = "application/x-www-form-urlencoded"
                  then

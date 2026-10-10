@@ -102,9 +102,7 @@ let dt_value_leq (inside_tt : Prims.bool) (l1 : RDF_Term.literal)
                      (XSD_Datatypes.literal_to_scaled l2))
              with
              | (FStar_Pervasives_Native.Some s1, FStar_Pervasives_Native.Some
-                s2) ->
-                 (l1.RDF_Term.datatype = l2.RDF_Term.datatype) &&
-                   ((XSD_Datatypes.scaled_cmp s1 s2) = Prims.int_zero)
+                s2) -> (XSD_Datatypes.scaled_cmp s1 s2) = Prims.int_zero
              | (uu___4, uu___5) -> RDF_Term.literal_eq l1 l2)
           else RDF_Term.literal_eq l1 l2
 let bnd_rdf (t : RDF_Term.rdf_term) : Prims.bool=

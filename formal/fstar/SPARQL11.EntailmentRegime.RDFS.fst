@@ -789,7 +789,8 @@ let theorem_rdfs_regime_ask_pattern_sound g base q ds fuel =
 
 /// The syntactic bridge from `eval_ask_query` (the record-shaped
 /// SHIPPING query evaluator) down to `ask_pattern`: for the bare-BGP,
-/// no-dataset-clause, no-post-VALUES ASK shape, `eval_ask_query`
+/// no-dataset-clause, no-post-VALUES, no GROUP BY, no HAVING,
+/// no OFFSET, no LIMIT ASK shape, `eval_ask_query`
 /// literally computes `ask_pattern`. `apply_query_dataset [] h ds`
 /// is `(h, ds)` by its own first match arm; `q.q_values == None`
 /// takes `eval_ask_query`'s inner match to its `None` arm; and the
@@ -797,7 +798,9 @@ let theorem_rdfs_regime_ask_pattern_sound g base q ds fuel =
 let lemma_eval_ask_query_bgp_shape
       (q : query) (bgp_q : bgp) (h : rdf_graph) (ds : rdf_dataset)
   : Lemma (requires q.q_form == QF_Ask /\ q.q_pattern == GP_BGP bgp_q /\
-                    q.q_dataset == [] /\ q.q_values == None)
+                    q.q_dataset == [] /\ q.q_values == None /\ q.q_post_values == None /\
+               q.q_group_by == None /\ q.q_having == None /\
+               q.q_modifier.sm_offset == None /\ q.q_modifier.sm_limit == None)
           (ensures  eval_ask_query q h ds == ask_pattern q.q_base bgp_q h ds) =
   assert (apply_query_dataset q.q_dataset h ds == (h, ds))
 
@@ -816,7 +819,9 @@ val theorem_rdfs_regime_ask_query_sound
   : Lemma
     (requires (let c = RC.rho_df_closure g fuel in
                q.q_form == QF_Ask /\ q.q_pattern == GP_BGP bgp_q /\
-               q.q_dataset == [] /\ q.q_values == None /\
+               q.q_dataset == [] /\ q.q_values == None /\ q.q_post_values == None /\
+               q.q_group_by == None /\ q.q_having == None /\
+               q.q_modifier.sm_offset == None /\ q.q_modifier.sm_limit == None /\
                eval_ask_query q c ds == true /\
                BR.bgp_frag bgp_q /\ BR.graph_frag c /\
                rho_df_decides_hyps g fuel))
@@ -875,7 +880,9 @@ val theorem_rdfs_regime_ask_query_complete_conditional
   : Lemma
     (requires (let c = RC.rho_df_closure g fuel in
                q.q_form == QF_Ask /\ q.q_pattern == GP_BGP bgp_q /\
-               q.q_dataset == [] /\ q.q_values == None /\
+               q.q_dataset == [] /\ q.q_values == None /\ q.q_post_values == None /\
+               q.q_group_by == None /\ q.q_having == None /\
+               q.q_modifier.sm_offset == None /\ q.q_modifier.sm_limit == None /\
                CP.rho_df_entails g (instantiate_bgp bgp_q mu) /\
                graph_ground (instantiate_bgp bgp_q mu) /\
                rho_df_decides_hyps g fuel /\
@@ -1092,7 +1099,9 @@ val theorem_rdfs_regime_ask_query_complete
   : Lemma
     (requires (let c = RC.rho_df_closure g fuel in
                q.q_form == QF_Ask /\ q.q_pattern == GP_BGP bgp_q /\
-               q.q_dataset == [] /\ q.q_values == None /\
+               q.q_dataset == [] /\ q.q_values == None /\ q.q_post_values == None /\
+               q.q_group_by == None /\ q.q_having == None /\
+               q.q_modifier.sm_offset == None /\ q.q_modifier.sm_limit == None /\
                CP.rho_df_entails g (instantiate_bgp bgp_q mu) /\
                graph_ground (instantiate_bgp bgp_q mu) /\
                rho_df_decides_hyps g fuel /\

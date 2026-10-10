@@ -508,56 +508,147 @@ let rec is_all_text (children : Parser_XML.xml_node Prims.list) : Prims.bool=
        | Parser_XML.XComment uu___ -> is_all_text rest
        | Parser_XML.XPI (uu___, uu___1) -> is_all_text rest
        | Parser_XML.XElement (uu___, uu___1, uu___2) -> false)
-let is_seeded_default_ns (uri : Prims.string) : Prims.bool=
-  (((uri = rdfs_ns) || (uri = xml_ns)) || (uri = xmlns_ns)) || (uri = xsd_ns)
+let seeded_namespace_count : Prims.nat=
+  FStar_List_Tot_Base.length (initial_state "").namespaces
+let rec take_first : 'a . Prims.nat -> 'a Prims.list -> 'a Prims.list =
+  fun n xs ->
+    match xs with
+    | [] -> []
+    | x::rest ->
+        if n = Prims.int_zero
+        then []
+        else x :: (take_first (n - Prims.int_one) rest)
+let author_namespaces (ambient : (Prims.string * Prims.string) Prims.list) :
+  (Prims.string * Prims.string) Prims.list=
+  let n = FStar_List_Tot_Base.length ambient in
+  if n >= seeded_namespace_count
+  then take_first (n - seeded_namespace_count) ambient
+  else ambient
 let rec string_in_list (s : Prims.string) (xs : Prims.string Prims.list) :
   Prims.bool=
   match xs with
   | [] -> false
   | x::rest -> if x = s then true else string_in_list s rest
-let rec dedup_ns (ns : (Prims.string * Prims.string) Prims.list)
-  (seen : Prims.string Prims.list) :
-  (Prims.string * Prims.string) Prims.list=
-  match ns with
+let rec dedup_strings (xs : Prims.string Prims.list)
+  (seen : Prims.string Prims.list) : Prims.string Prims.list=
+  match xs with
   | [] -> []
-  | (p, u)::rest ->
-      if string_in_list p seen
-      then dedup_ns rest seen
-      else (p, u) :: (dedup_ns rest (p :: seen))
-let rec filter_c14n_ns (ns : (Prims.string * Prims.string) Prims.list) :
+  | x::rest ->
+      if string_in_list x seen
+      then dedup_strings rest seen
+      else x :: (dedup_strings rest (x :: seen))
+let is_xmlns_declaration (name : Prims.string) : Prims.bool=
+  (name = "xmlns") ||
+    (let uu___ = split_qname name in
+     match uu___ with | (p, uu___1) -> p = "xmlns")
+let name_prefix (name : Prims.string) : Prims.string=
+  match find_colon_pos name with
+  | FStar_Pervasives_Native.None -> ""
+  | FStar_Pervasives_Native.Some uu___ ->
+      FStar_Pervasives_Native.fst (split_qname name)
+let utilized_prefixes (tag : Prims.string)
+  (attrs : Parser_XML.xml_attribute Prims.list) : Prims.string Prims.list=
+  let attr_prefixes =
+    FStar_List_Tot_Base.concatMap
+      (fun a ->
+         if is_xmlns_declaration a.Parser_XML.attr_name
+         then []
+         else
+           (let p = name_prefix a.Parser_XML.attr_name in
+            if (p = "") || (p = "xml") then [] else [p])) attrs in
+  dedup_strings ((name_prefix tag) :: attr_prefixes) []
+let declaration_to_write (p : Prims.string)
+  (in_scope : (Prims.string * Prims.string) Prims.list)
+  (rendered : (Prims.string * Prims.string) Prims.list) :
+  (Prims.string * Prims.string) FStar_Pervasives_Native.option=
+  match ((lookup_ns p in_scope), (lookup_ns p rendered)) with
+  | (FStar_Pervasives_Native.Some u, FStar_Pervasives_Native.Some r) ->
+      if u = r
+      then FStar_Pervasives_Native.None
+      else FStar_Pervasives_Native.Some (p, u)
+  | (FStar_Pervasives_Native.Some u, FStar_Pervasives_Native.None) ->
+      if (p = "") && (u = "")
+      then FStar_Pervasives_Native.None
+      else FStar_Pervasives_Native.Some (p, u)
+  | (FStar_Pervasives_Native.None, FStar_Pervasives_Native.Some r) ->
+      if (p = "") && (r <> "")
+      then FStar_Pervasives_Native.Some (p, "")
+      else FStar_Pervasives_Native.None
+  | (FStar_Pervasives_Native.None, FStar_Pervasives_Native.None) ->
+      FStar_Pervasives_Native.None
+let rec insert_decl (d : (Prims.string * Prims.string))
+  (ds : (Prims.string * Prims.string) Prims.list) :
   (Prims.string * Prims.string) Prims.list=
-  match ns with
+  match ds with
+  | [] -> [d]
+  | d'::rest ->
+      if
+        (FStar_String.compare (FStar_Pervasives_Native.fst d)
+           (FStar_Pervasives_Native.fst d'))
+          <= Prims.int_zero
+      then d :: ds
+      else d' :: (insert_decl d rest)
+let rec sort_decls (ds : (Prims.string * Prims.string) Prims.list) :
+  (Prims.string * Prims.string) Prims.list=
+  match ds with | [] -> [] | d::rest -> insert_decl d (sort_decls rest)
+let attr_sort_key (in_scope : (Prims.string * Prims.string) Prims.list)
+  (a : Parser_XML.xml_attribute) : (Prims.string * Prims.string)=
+  let p = name_prefix a.Parser_XML.attr_name in
+  let uu___ = split_qname a.Parser_XML.attr_name in
+  match uu___ with
+  | (uu___1, local) ->
+      let uri =
+        if p = ""
+        then ""
+        else
+          (match lookup_ns p in_scope with
+           | FStar_Pervasives_Native.Some u -> u
+           | FStar_Pervasives_Native.None -> FStar_String.concat "" ["!"; p]) in
+      (uri, local)
+let attr_before (in_scope : (Prims.string * Prims.string) Prims.list)
+  (a : Parser_XML.xml_attribute) (b : Parser_XML.xml_attribute) : Prims.bool=
+  let uu___ = attr_sort_key in_scope a in
+  match uu___ with
+  | (ua, la) ->
+      let uu___1 = attr_sort_key in_scope b in
+      (match uu___1 with
+       | (ub, lb) ->
+           let c = FStar_String.compare ua ub in
+           if c <> Prims.int_zero
+           then c < Prims.int_zero
+           else (FStar_String.compare la lb) <= Prims.int_zero)
+let rec insert_attr (in_scope : (Prims.string * Prims.string) Prims.list)
+  (a : Parser_XML.xml_attribute)
+  (rest_attrs : Parser_XML.xml_attribute Prims.list) :
+  Parser_XML.xml_attribute Prims.list=
+  match rest_attrs with
+  | [] -> [a]
+  | a'::rest ->
+      if attr_before in_scope a a'
+      then a :: rest_attrs
+      else a' :: (insert_attr in_scope a rest)
+let rec sort_attrs (in_scope : (Prims.string * Prims.string) Prims.list)
+  (all_attrs : Parser_XML.xml_attribute Prims.list) :
+  Parser_XML.xml_attribute Prims.list=
+  match all_attrs with
   | [] -> []
-  | (p, u)::rest ->
-      if (p = "xml") || (p = "xmlns")
-      then filter_c14n_ns rest
-      else
-        if is_seeded_default_ns u
-        then filter_c14n_ns rest
-        else (p, u) :: (filter_c14n_ns rest)
-let rec reverse_list : 'a . 'a Prims.list -> 'a Prims.list =
-  fun xs ->
-    match xs with
-    | [] -> []
-    | x::rest -> FStar_List_Tot_Base.append (reverse_list rest) [x]
-let render_ns_decls (ns : (Prims.string * Prims.string) Prims.list) :
+  | a::rest -> insert_attr in_scope a (sort_attrs in_scope rest)
+let render_decl (d : (Prims.string * Prims.string)) : Prims.string=
+  let uu___ = d in
+  match uu___ with
+  | (p, u) ->
+      if p = ""
+      then FStar_String.concat "" [" xmlns=\""; u; "\""]
+      else FStar_String.concat "" [" xmlns:"; p; "=\""; u; "\""]
+let rec concat_decl_strings (ds : (Prims.string * Prims.string) Prims.list) :
   Prims.string=
-  let deduped = dedup_ns ns [] in
-  let filtered = filter_c14n_ns deduped in
-  let in_source_order = reverse_list filtered in
-  let parts =
-    FStar_List_Tot_Base.map
-      (fun pu ->
-         let uu___ = pu in
-         match uu___ with
-         | (p, u) ->
-             if p = ""
-             then FStar_String.concat "" [" xmlns=\""; u; "\""]
-             else FStar_String.concat "" [" xmlns:"; p; "=\""; u; "\""])
-      in_source_order in
-  FStar_String.concat "" parts
+  match ds with
+  | [] -> ""
+  | d::rest ->
+      FStar_String.concat "" [render_decl d; concat_decl_strings rest]
 let rec serialize_xml_node_c14n (node : Parser_XML.xml_node)
-  (ns_decls : Prims.string) (is_root : Prims.bool) (fuel : Prims.nat) :
+  (in_scope : (Prims.string * Prims.string) Prims.list)
+  (rendered : (Prims.string * Prims.string) Prims.list) (fuel : Prims.nat) :
   Prims.string=
   if fuel = Prims.int_zero
   then ""
@@ -569,6 +660,22 @@ let rec serialize_xml_node_c14n (node : Parser_XML.xml_node)
      | Parser_XML.XPI (tg, d) ->
          FStar_String.concat "" ["<?"; tg; " "; d; "?>"]
      | Parser_XML.XElement (tag, attrs, children) ->
+         let in_scope' =
+           FStar_List_Tot_Base.append (extract_namespaces attrs []) in_scope in
+         let to_write =
+           sort_decls
+             (FStar_List_Tot_Base.concatMap
+                (fun p ->
+                   match declaration_to_write p in_scope' rendered with
+                   | FStar_Pervasives_Native.Some d -> [d]
+                   | FStar_Pervasives_Native.None -> [])
+                (utilized_prefixes tag attrs)) in
+         let rendered' = FStar_List_Tot_Base.append to_write rendered in
+         let plain_attrs =
+           FStar_List_Tot_Base.filter
+             (fun a ->
+                Prims.op_Negation
+                  (is_xmlns_declaration a.Parser_XML.attr_name)) attrs in
          let attr_strs =
            FStar_List_Tot_Base.map
              (fun a ->
@@ -577,23 +684,28 @@ let rec serialize_xml_node_c14n (node : Parser_XML.xml_node)
                   a.Parser_XML.attr_name;
                   "=\"";
                   a.Parser_XML.attr_value;
-                  "\""]) attrs in
-         let attr_str = FStar_String.concat "" attr_strs in
-         let root_ns = if is_root then ns_decls else "" in
+                  "\""]) (sort_attrs in_scope' plain_attrs) in
          let child_strs =
            FStar_List_Tot_Base.map
              (fun c ->
-                serialize_xml_node_c14n c ns_decls false
+                serialize_xml_node_c14n c in_scope' rendered'
                   (fuel - Prims.int_one)) children in
-         let children_str = FStar_String.concat "" child_strs in
          FStar_String.concat ""
-           ["<"; tag; root_ns; attr_str; ">"; children_str; "</"; tag; ">"])
+           ["<";
+           tag;
+           concat_decl_strings to_write;
+           FStar_String.concat "" attr_strs;
+           ">";
+           FStar_String.concat "" child_strs;
+           "</";
+           tag;
+           ">"])
 let serialize_children_xml (children : Parser_XML.xml_node Prims.list)
   (ambient_ns : (Prims.string * Prims.string) Prims.list) : Prims.string=
-  let ns_decls = render_ns_decls ambient_ns in
+  let in_scope = author_namespaces ambient_ns in
   let strs =
     FStar_List_Tot_Base.map
-      (fun c -> serialize_xml_node_c14n c ns_decls true (Prims.of_int (100)))
+      (fun c -> serialize_xml_node_c14n c in_scope [] (Prims.of_int (100)))
       children in
   FStar_String.concat "" strs
 let rec serialize_xml_node (node : Parser_XML.xml_node) (fuel : Prims.nat) :

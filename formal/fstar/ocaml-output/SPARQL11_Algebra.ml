@@ -627,6 +627,10 @@ and query =
   q_values:
     (var_name * RDF_Term.rdf_term) Prims.list Prims.list
       FStar_Pervasives_Native.option
+    ;
+  q_post_values:
+    (var_name * RDF_Term.rdf_term) Prims.list Prims.list
+      FStar_Pervasives_Native.option
     }
 let uu___is_E_Var (projectee : expr) : Prims.bool=
   match projectee with | E_Var _0 -> true | uu___ -> false
@@ -1212,47 +1216,53 @@ let __proj__Mkquery__item__q_base (projectee : query) :
   RDF_Term.wf_iri FStar_Pervasives_Native.option=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_base
+      q_modifier; q_values; q_post_values;_} -> q_base
 let __proj__Mkquery__item__q_prefixes (projectee : query) :
   (Prims.string * RDF_Term.wf_iri) Prims.list=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_prefixes
+      q_modifier; q_values; q_post_values;_} -> q_prefixes
 let __proj__Mkquery__item__q_form (projectee : query) : query_form=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_form
+      q_modifier; q_values; q_post_values;_} -> q_form
 let __proj__Mkquery__item__q_dataset (projectee : query) :
   dataset_clause Prims.list=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_dataset
+      q_modifier; q_values; q_post_values;_} -> q_dataset
 let __proj__Mkquery__item__q_pattern (projectee : query) :
   group_graph_pattern=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_pattern
+      q_modifier; q_values; q_post_values;_} -> q_pattern
 let __proj__Mkquery__item__q_group_by (projectee : query) :
   group_condition Prims.list FStar_Pervasives_Native.option=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_group_by
+      q_modifier; q_values; q_post_values;_} -> q_group_by
 let __proj__Mkquery__item__q_having (projectee : query) :
   expr Prims.list FStar_Pervasives_Native.option=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_having
+      q_modifier; q_values; q_post_values;_} -> q_having
 let __proj__Mkquery__item__q_modifier (projectee : query) :
   solution_modifier=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_modifier
+      q_modifier; q_values; q_post_values;_} -> q_modifier
 let __proj__Mkquery__item__q_values (projectee : query) :
   (var_name * RDF_Term.rdf_term) Prims.list Prims.list
     FStar_Pervasives_Native.option=
   match projectee with
   | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
-      q_modifier; q_values;_} -> q_values
+      q_modifier; q_values; q_post_values;_} -> q_values
+let __proj__Mkquery__item__q_post_values (projectee : query) :
+  (var_name * RDF_Term.rdf_term) Prims.list Prims.list
+    FStar_Pervasives_Native.option=
+  match projectee with
+  | { q_base; q_prefixes; q_form; q_dataset; q_pattern; q_group_by; q_having;
+      q_modifier; q_values; q_post_values;_} -> q_post_values
 type having_condition = expr
 let query_with_prebound_values (q : query)
   (vals : (var_name * RDF_Term.rdf_term) Prims.list Prims.list) : query=
@@ -1265,7 +1275,8 @@ let query_with_prebound_values (q : query)
     q_group_by = (q.q_group_by);
     q_having = (q.q_having);
     q_modifier = (q.q_modifier);
-    q_values = (FStar_Pervasives_Native.Some vals)
+    q_values = (FStar_Pervasives_Native.Some vals);
+    q_post_values = (q.q_post_values)
   }
 let query_form_of (q : query) : query_form= q.q_form
 let query_pattern_of (q : query) : group_graph_pattern= q.q_pattern
@@ -1283,7 +1294,8 @@ let query_with_pattern (q : query) (p : group_graph_pattern) : query=
     q_group_by = (q.q_group_by);
     q_having = (q.q_having);
     q_modifier = (q.q_modifier);
-    q_values = (q.q_values)
+    q_values = (q.q_values);
+    q_post_values = (q.q_post_values)
   }
 type graph_ref =
   | GR_Default 
@@ -3365,7 +3377,7 @@ let value_compare (v1 : eval_result) (v2 : eval_result) (op : comp_op) :
   | (ER_Term (RDF_Term.T_Literal l1), ER_Term (RDF_Term.T_Literal l2)) ->
       if (lit_datatype l1) = (lit_datatype l2)
       then
-        (if (lit_lang l1) = (lit_lang l2)
+        (if RDF_Term.lang_tag_option_eq (lit_lang l1) (lit_lang l2)
          then
            FStar_Pervasives_Native.Some
              (apply_comp_op
@@ -4097,7 +4109,8 @@ let rec lateral_substitute (mu : RDF_Graph_Executable.solution_mapping)
           q_group_by = (q.q_group_by);
           q_having = (q.q_having);
           q_modifier = (q.q_modifier);
-          q_values = (q.q_values)
+          q_values = (q.q_values);
+          q_post_values = (q.q_post_values)
         }
   | GP_PropertyPath (ps, pp, pt) ->
       GP_PropertyPath
@@ -4123,7 +4136,8 @@ let lateral_wrap_as_query (p : group_graph_pattern) : query=
         sm_offset = FStar_Pervasives_Native.None;
         sm_limit = FStar_Pervasives_Native.None
       };
-    q_values = FStar_Pervasives_Native.None
+    q_values = FStar_Pervasives_Native.None;
+    q_post_values = FStar_Pervasives_Native.None
   }
 let rec pattern_has_binding_source (p : group_graph_pattern) : Prims.bool=
   match p with
@@ -4421,9 +4435,15 @@ and query_all_vars (q : query) : var_name Prims.list=
                  | FStar_Pervasives_Native.None -> []
                  | FStar_Pervasives_Native.Some ocs ->
                      order_conditions_vars ocs)
-                (match q.q_values with
-                 | FStar_Pervasives_Native.None -> []
-                 | FStar_Pervasives_Native.Some rows -> values_rows_vars rows)))))
+                (FStar_List_Tot_Base.op_At
+                   (match q.q_values with
+                    | FStar_Pervasives_Native.None -> []
+                    | FStar_Pervasives_Native.Some rows ->
+                        values_rows_vars rows)
+                   (match q.q_post_values with
+                    | FStar_Pervasives_Native.None -> []
+                    | FStar_Pervasives_Native.Some rows ->
+                        values_rows_vars rows))))))
 and query_form_all_vars (qf : query_form) : var_name Prims.list=
   match qf with
   | QF_Select sc -> select_clause_vars sc
@@ -6943,7 +6963,8 @@ let rec rewrite_query_bnodes_pattern (p : group_graph_pattern) :
           q_group_by = (q.q_group_by);
           q_having = (q.q_having);
           q_modifier = (q.q_modifier);
-          q_values = (q.q_values)
+          q_values = (q.q_values);
+          q_post_values = (q.q_post_values)
         }
   | GP_PropertyPath (s, pp, o) ->
       GP_PropertyPath
@@ -6961,6 +6982,163 @@ let strip_synthetic_bnode_vars_mu
 let strip_synthetic_bnode_vars (omega : solution_sequence) :
   solution_sequence=
   FStar_List_Tot_Base.map strip_synthetic_bnode_vars_mu omega
+let rec group_key_var_names (conds : group_condition Prims.list) :
+  var_name Prims.list=
+  match conds with
+  | [] -> []
+  | (GC_Var v)::rest -> v :: (group_key_var_names rest)
+  | (GC_Expr (uu___, FStar_Pervasives_Native.Some v))::rest -> v ::
+      (group_key_var_names rest)
+  | uu___::rest -> group_key_var_names rest
+let group_key_names_of
+  (gb : group_condition Prims.list FStar_Pervasives_Native.option) :
+  var_name Prims.list=
+  match gb with
+  | FStar_Pervasives_Native.None -> []
+  | FStar_Pervasives_Native.Some conds -> group_key_var_names conds
+let group_key_binding (keys : var_name Prims.list) (g : group) :
+  RDF_Graph_Executable.solution_mapping=
+  match g.g_solutions with
+  | mu::uu___ ->
+      FStar_List_Tot_Base.filter
+        (fun b ->
+           FStar_List_Tot_Base.mem (FStar_Pervasives_Native.fst b) keys) mu
+  | [] -> []
+let group_values_overlays (keys : var_name Prims.list)
+  (pv :
+    RDF_Graph_Executable.solution_mapping Prims.list
+      FStar_Pervasives_Native.option)
+  (g : group) : RDF_Graph_Executable.solution_mapping Prims.list=
+  match pv with
+  | FStar_Pervasives_Native.None -> [sm_empty]
+  | FStar_Pervasives_Native.Some vals ->
+      let kb = group_key_binding keys g in
+      FStar_List_Tot_Base.filter (fun mv -> sm_compatible kb mv) vals
+let group_overlay_pairs (keys : var_name Prims.list)
+  (pv :
+    RDF_Graph_Executable.solution_mapping Prims.list
+      FStar_Pervasives_Native.option)
+  (groups : group Prims.list) :
+  (group * RDF_Graph_Executable.solution_mapping) Prims.list=
+  RDF_List_Helpers.concatMap_tr
+    (fun g ->
+       FStar_List_Tot_Base.map (fun ov -> (g, ov))
+         (group_values_overlays keys pv g)) groups
+let grouped_and_filtered
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option) (q : query)
+  (omega : solution_sequence) : group Prims.list=
+  let groups =
+    match q.q_group_by with
+    | FStar_Pervasives_Native.Some conds -> group_by base conds omega
+    | FStar_Pervasives_Native.None -> implicit_group omega in
+  match q.q_having with
+  | FStar_Pervasives_Native.Some conditions ->
+      having_filter base conditions groups
+  | FStar_Pervasives_Native.None -> groups
+let group_row_base (g : group) (ov : RDF_Graph_Executable.solution_mapping) :
+  RDF_Graph_Executable.solution_mapping=
+  let rep = match g.g_solutions with | mu::uu___ -> mu | [] -> sm_empty in
+  sm_merge ov rep
+let eval_select_item_group_row
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
+  (item : select_item) (g : group)
+  (row : RDF_Graph_Executable.solution_mapping) :
+  (var_name * RDF_Term.rdf_term) FStar_Pervasives_Native.option=
+  match item with
+  | SI_Var v ->
+      (match sm_lookup v row with
+       | FStar_Pervasives_Native.Some t ->
+           FStar_Pervasives_Native.Some (v, t)
+       | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None)
+  | SI_Expr (e, v) ->
+      (match er_to_term
+               (eval_expr_with_base base (rewrite_aggregates base e g) row)
+       with
+       | FStar_Pervasives_Native.Some t ->
+           FStar_Pervasives_Native.Some (v, t)
+       | FStar_Pervasives_Native.None -> FStar_Pervasives_Native.None)
+let grouped_select_row
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
+  (items : select_item Prims.list) (g : group)
+  (ov : RDF_Graph_Executable.solution_mapping) :
+  RDF_Graph_Executable.solution_mapping=
+  let row = group_row_base g ov in
+  let own =
+    list_filter_map (fun item -> eval_select_item_group_row base item g row)
+      items in
+  let item_vars = select_item_vars items in
+  FStar_List_Tot_Base.append own
+    (FStar_List_Tot_Base.filter
+       (fun b ->
+          Prims.op_Negation
+            (FStar_List_Tot_Base.mem (FStar_Pervasives_Native.fst b)
+               item_vars)) row)
+let eval_grouped_select
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option) (q : query)
+  (sel : select_clause) (omega : solution_sequence) : solution_sequence=
+  let filtered = grouped_and_filtered base q omega in
+  let keys = group_key_names_of q.q_group_by in
+  let pairs = group_overlay_pairs keys q.q_post_values filtered in
+  let rows =
+    match sel with
+    | Select_Vars items ->
+        RDF_List_Helpers.concatMap_tr
+          (fun p ->
+             [grouped_select_row base items (FStar_Pervasives_Native.fst p)
+                (FStar_Pervasives_Native.snd p)]) pairs
+    | Select_All ->
+        strip_synthetic_bnode_vars
+          (RDF_List_Helpers.concatMap_tr
+             (fun p ->
+                [group_row_base (FStar_Pervasives_Native.fst p)
+                   (FStar_Pervasives_Native.snd p)]) pairs) in
+  let ordered =
+    match (q.q_modifier).sm_order_by with
+    | FStar_Pervasives_Native.None -> rows
+    | FStar_Pervasives_Native.Some o -> sort_solutions base o rows in
+  let projected =
+    match sel with
+    | Select_Vars items -> project_solutions (select_item_vars items) ordered
+    | Select_All -> ordered in
+  let deduped =
+    if (q.q_modifier).sm_distinct
+    then distinct_solutions projected
+    else
+      if (q.q_modifier).sm_reduced
+      then reduced_solutions projected
+      else projected in
+  slice_solutions (q.q_modifier).sm_offset (q.q_modifier).sm_limit deduped
+let form_groups_solutions (q : query) : Prims.bool=
+  (FStar_Pervasives_Native.uu___is_Some q.q_group_by) ||
+    (FStar_Pervasives_Native.uu___is_Some q.q_having)
+let form_rows (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
+  (q : query) (omega : solution_sequence) : solution_sequence=
+  if form_groups_solutions q
+  then
+    let filtered = grouped_and_filtered base q omega in
+    let keys = group_key_names_of q.q_group_by in
+    RDF_List_Helpers.concatMap_tr
+      (fun p ->
+         [sm_merge (FStar_Pervasives_Native.snd p)
+            (group_key_binding keys (FStar_Pervasives_Native.fst p))])
+      (group_overlay_pairs keys q.q_post_values filtered)
+  else
+    (match q.q_post_values with
+     | FStar_Pervasives_Native.None -> omega
+     | FStar_Pervasives_Native.Some vals -> join omega vals)
+let ask_solutions (base : RDF_Term.wf_iri FStar_Pervasives_Native.option)
+  (q : query) (omega : solution_sequence) : solution_sequence=
+  slice_solutions (q.q_modifier).sm_offset (q.q_modifier).sm_limit
+    (form_rows base q omega)
+let construct_solutions
+  (base : RDF_Term.wf_iri FStar_Pervasives_Native.option) (q : query)
+  (omega : solution_sequence) : solution_sequence=
+  let rows = form_rows base q omega in
+  let ordered =
+    match (q.q_modifier).sm_order_by with
+    | FStar_Pervasives_Native.None -> rows
+    | FStar_Pervasives_Native.Some o -> sort_solutions base o rows in
+  slice_solutions (q.q_modifier).sm_offset (q.q_modifier).sm_limit ordered
 let rec q_dataset_default_iris (dcs : dataset_clause Prims.list) :
   RDF_Term.wf_iri Prims.list=
   match dcs with
@@ -7426,7 +7604,8 @@ and eval_select_query (q : query) (g : RDF_Graph.rdf_graph)
           q_group_by = (q.q_group_by);
           q_having = (q.q_having);
           q_modifier = (q.q_modifier);
-          q_values = (q.q_values)
+          q_values = (q.q_values);
+          q_post_values = (q.q_post_values)
         } in
       let base = q1.q_base in
       (match q1.q_form with
@@ -7444,48 +7623,16 @@ and eval_select_query (q : query) (g : RDF_Graph.rdf_graph)
              | FStar_Pervasives_Native.Some uu___1 -> true
              | FStar_Pervasives_Native.None -> select_has_aggregates sel in
            if needs_grouping
-           then
-             let groups =
-               match q1.q_group_by with
-               | FStar_Pervasives_Native.Some conds ->
-                   group_by base conds omega
-               | FStar_Pervasives_Native.None -> implicit_group omega in
-             let filtered_groups =
-               match q1.q_having with
-               | FStar_Pervasives_Native.Some conditions ->
-                   having_filter base conditions groups
-               | FStar_Pervasives_Native.None -> groups in
-             let omega' =
-               match sel with
-               | Select_Vars items ->
-                   aggregate_groups base items filtered_groups
-               | Select_All ->
-                   let reps =
-                     FStar_List_Tot_Base.map
-                       (fun grp ->
-                          match grp.g_solutions with
-                          | mu::uu___1 -> mu
-                          | [] -> sm_empty) filtered_groups in
-                   strip_synthetic_bnode_vars reps in
-             let ordered =
-               match (q1.q_modifier).sm_order_by with
-               | FStar_Pervasives_Native.None -> omega'
-               | FStar_Pervasives_Native.Some o ->
-                   sort_solutions base o omega' in
-             let deduped =
-               if (q1.q_modifier).sm_distinct
-               then distinct_solutions ordered
-               else
-                 if (q1.q_modifier).sm_reduced
-                 then reduced_solutions ordered
-                 else ordered in
-             slice_solutions (q1.q_modifier).sm_offset
-               (q1.q_modifier).sm_limit deduped
+           then eval_grouped_select base q1 sel omega
            else
-             (let omega' =
+             (let omega1 =
+                match q1.q_post_values with
+                | FStar_Pervasives_Native.None -> omega
+                | FStar_Pervasives_Native.Some vals -> join omega vals in
+              let omega' =
                 match sel with
-                | Select_Vars items -> eval_select_items base items omega g1
-                | Select_All -> omega in
+                | Select_Vars items -> eval_select_items base items omega1 g1
+                | Select_All -> omega1 in
               let ordered =
                 match (q1.q_modifier).sm_order_by with
                 | FStar_Pervasives_Native.None -> omega'
@@ -7560,7 +7707,9 @@ let eval_ask_query (q : query) (g : RDF_Graph.rdf_graph)
              match q.q_values with
              | FStar_Pervasives_Native.None -> omega0
              | FStar_Pervasives_Native.Some vals -> join omega0 vals in
-           (match omega with | [] -> false | uu___1 -> true)
+           (match ask_solutions base q omega with
+            | [] -> false
+            | uu___1 -> true)
        | uu___1 -> false)
 let fresh_bnode_for (sol_ix : Prims.nat) (template_label : Prims.string) :
   RDF_Term.bnode_id=
@@ -7672,7 +7821,8 @@ let eval_construct_query (q : query) (g : RDF_Graph.rdf_graph)
           q_group_by = (q.q_group_by);
           q_having = (q.q_having);
           q_modifier = (q.q_modifier);
-          q_values = (q.q_values)
+          q_values = (q.q_values);
+          q_post_values = (q.q_post_values)
         } in
       let base = q1.q_base in
       (match q1.q_form with
@@ -7682,9 +7832,7 @@ let eval_construct_query (q : query) (g : RDF_Graph.rdf_graph)
              match q1.q_values with
              | FStar_Pervasives_Native.None -> omega0
              | FStar_Pervasives_Native.Some vals -> join omega0 vals in
-           let limited =
-             slice_solutions (q1.q_modifier).sm_offset
-               (q1.q_modifier).sm_limit omega in
+           let limited = construct_solutions base q1 omega in
            dedup_triples
              (instantiate_solutions template limited Prims.int_zero)
        | uu___1 -> [])

@@ -38,7 +38,7 @@ tests/local-overrides/<suite>/<TestName>.override
 | `category`      | the upstream test category (e.g. `PositiveEntailmentTest`)    |
 | `upstream-result` | what the fixture manifest expects                            |
 | `our-result`    | what our pipeline actually computes                            |
-| `kind`          | why they differ (e.g. `corpus-data-defect`)                    |
+| `kind`          | why they differ: `corpus-data-defect` (the fixture is wrong), `version-dispute`, or `engine-gap` (the fixture is right and our engine does not meet it yet; see below) |
 | `disposition`   | must be `local-override` for a runner to honour the file       |
 | `date`          | when the override was authored                                 |
 | `provenance`    | where the defect was confirmed upstream                        |
@@ -76,6 +76,25 @@ A runner that honours overrides MUST:
 Because an override is a standing disagreement with a published test,
 each file must carry enough provenance for a reviewer to confirm the
 defect independently.
+
+## Overrides of kind `engine-gap`
+
+An `engine-gap` override records a shortfall of OUR engine, not a defect of
+the fixture. It is the "failing test annotated to show the expected failure,
+with an open GitHub issue" that CLAUDE.md requires for any stated shortfall
+("A stated shortfall is a failing test plus an open issue", owner,
+2026-09-07). The `issue` field is mandatory and holds the full URL of the
+open issue. The rationale body says which feature is missing and where.
+
+The F* runner `bin/w3c-runner/w3c_runner.ml` honours these files for every
+suite it runs, from `tests/local-overrides/<suite>/*.override` (the suite
+name is the directory name printed in the score table). It prints an
+`OVERRIDE:` line with the observed failure message, counts the test in a
+`local-override` column apart from pass and fail, and prints the count in
+the `TOTAL:` line. When an overridden test passes, the runner prints
+`STALE local-override`, counts a plain pass, and exits 1 until the file is
+removed: the case that starts to pass cannot go unnoticed, and the issue
+can be closed.
 
 ## Periodic upstream re-check
 

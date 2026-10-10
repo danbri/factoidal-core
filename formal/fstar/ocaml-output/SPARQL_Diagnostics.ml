@@ -52,6 +52,7 @@ let _test_query_form_ask : Prims.bool=
       SPARQL11_Algebra.q_group_by = FStar_Pervasives_Native.None;
       SPARQL11_Algebra.q_having = FStar_Pervasives_Native.None;
       SPARQL11_Algebra.q_modifier = modifier;
-      SPARQL11_Algebra.q_values = FStar_Pervasives_Native.None
+      SPARQL11_Algebra.q_values = FStar_Pervasives_Native.None;
+      SPARQL11_Algebra.q_post_values = FStar_Pervasives_Native.None
     } in
   (query_form_string q) = "ASK"
