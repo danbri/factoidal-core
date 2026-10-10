@@ -39,7 +39,9 @@ F\* steps, `prlimit --as=6000000000` for both.
   the Lean and F\* RDF/XML parsers give an `xml:lang` to the next sibling
   element (https://github.com/danbri/factoidal/issues/329).
 - ✅ Every failure above has an open issue and an expected-failure row in
-  `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 7 expected-fail (out of 12).
+  `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 7 expected-fail (out of
+  12), exit 0 (11 rows in one run at 16:07 UTC, load average 1.8; the
+  `cl-basic-parse-memory` row, added after it, run on its own).
 - No Lean library code changed. New: `l4owl-species` (a harness executable),
   `tools/owl-real-bench.py`, `tools/owl-real-hermit.py`, the gate, and six
   vendored ontologies.
