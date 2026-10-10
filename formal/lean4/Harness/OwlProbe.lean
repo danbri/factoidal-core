@@ -167,7 +167,9 @@ import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.OwlXml
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
+import L4Factoidal.JSON.Parser
 import Harness.Common
+import Harness.Fixtures
 
 open L4Factoidal.XML
 open L4Factoidal.RDF
@@ -776,6 +778,38 @@ def altGraph (fs owl : Option String) : Option Graph :=
 def isFunctionalUnread (c : Case) : Bool :=
   isFunctionalOnly c && (fsGraph c.fsPremiseText).isNone
 
+/-- The functional-syntax premise, when the case names the functional
+syntax as normative (`test:normativeSyntax FUNCTIONAL`) and the reader
+accepts the document. -/
+def normativeFsPremise? (c : Case) : Option Graph :=
+  if c.normSyntax.contains "FUNCTIONAL" then fsGraph c.fsPremiseText else none
+
+/-- The RDF/XML premise does not parse, and a normative functional-syntax
+premise exists: the parse error, which is a defect of the RDF/XML fixture.
+The case is then judged from the functional-syntax premise
+(`premiseGraph`, `speciesDocs`), and the run prints a `FIXTURE-DEFECT`
+line with this text.
+
+This is a COORDINATOR DEFAULT, recorded in
+https://github.com/danbri/factoidal/issues/721 (2026-10-10), not an owner
+ruling. The case it was written for is `FS2RDF-literals-ar`: its RDF/XML
+premise puts element content inside a property element that carries
+`rdf:datatype`, and RDF 1.1 XML Syntax §7.2.16 allows only text there, so
+the parser rejects it correctly. -/
+def rdfXmlPremiseDefect? (c : Case) : Option String :=
+  match c.premise with
+  | none => none
+  | some ptxt =>
+    match parseDoc "premise" c.iri ptxt with
+    | .ok _ => none
+    | .error e => if (normativeFsPremise? c).isSome then some e else none
+
+/-- The log line for `rdfXmlPremiseDefect?`. -/
+def fixtureDefectLine (c : Case) (e : String) : String :=
+  s!"FIXTURE-DEFECT {c.id}: the RDF/XML premise does not parse ({e}); \
+judged from the normative functional-syntax premise \
+(coordinator default, https://github.com/danbri/factoidal/issues/721)"
+
 /-- Parse the premise and merge its imports: the graph the closure
 runs on. -/
 def premiseGraph (cat : Catalog) (c : Case) : Except Harness.Outcome Graph :=
@@ -792,14 +826,19 @@ def premiseGraph (cat : Catalog) (c : Case) : Except Harness.Outcome Graph :=
          | some g => .ok g
          | none   => .error (.fail "harness: no RDF/XML premise"))
   | some ptxt =>
-    match parseDoc "premise" c.iri ptxt with
-    | .error e => .error (.fail e)
-    | .ok gp0 =>
-      let allowed := c.imports.filterMap (fun w =>
-        (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+    let allowed := c.imports.filterMap (fun w =>
+      (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+    let withImports := fun (gp0 : Graph) =>
       match loadImports cat.imports allowed gp0 [] (allowed.length + 1) with
-      | .error e => .error (.fail e)
+      | .error e => Except.error (Harness.Outcome.fail e)
       | .ok gp => .ok gp
+    match parseDoc "premise" c.iri ptxt with
+    | .error e =>
+        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
+        match normativeFsPremise? c with
+        | some g => withImports g
+        | none => .error (.fail e)
+    | .ok gp0 => withImports gp0
 
 /-- Parse the premise, merge imports, run the closure. Shared by the
 four judges. Returns the closure result or a fail outcome, plus the
@@ -1374,6 +1413,8 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
   let t0 ← IO.monoMsNow
   let mut r : CatalogResult := {}
   for c in cat.cases do
+    if c.types.any testTypes.contains then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
     for ty in testTypes do
       if c.types.contains ty then
         let tu0 ← IO.monoMsNow
@@ -1504,6 +1545,19 @@ def conclusionDoc (c : Case) : Except String (Option Graph) :=
           | some g => .ok (some g)
           | none => .error "unsupported: functional-syntax or OWL/XML conclusion outside the grammar the reader accepts"
 
+/-- The species documents of a case read from a functional-syntax
+premise `pDoc` (and the functional-syntax or OWL/XML conclusion). -/
+def speciesDocsFunctional (c : Case) (pDoc : Graph) : Except String SpeciesDocs :=
+  match conclusionDoc c with
+  | .error e => .error e
+  | .ok none =>
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := false, cDoc := [], uMerged := pDoc }
+  | .ok (some g0) =>
+      let cDoc := g0.prefixBnodes "c_"
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
+
 /-- Gather the documents of a case for the species verdict. -/
 def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
   let allowed := c.imports.filterMap (fun w =>
@@ -1511,7 +1565,13 @@ def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
   match c.premise <|> c.inputOntology with
   | some ptxt =>
     match parseDoc "premise" c.iri ptxt with
-    | .error e => .error e
+    | .error e =>
+        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
+        -- The functional-syntax premise is read with the body checks,
+        -- as for a case that has no RDF/XML premise.
+        match normativeFsPremise? c with
+        | some g => speciesDocsFunctional c g
+        | none => .error e
     | .ok pDoc =>
       match loadImports cat.imports allowed pDoc [] (allowed.length + 1) with
       | .error e => .error e
@@ -1537,16 +1597,7 @@ def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
     match alt with
     | none => .error "harness: the case has no premise document in any syntax"
     | some none => .error "unsupported: functional-syntax or OWL/XML premise outside the grammar the reader accepts"
-    | some (some pDoc) =>
-        match conclusionDoc c with
-        | .error e => .error e
-        | .ok none =>
-            .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
-                  hasConclusion := false, cDoc := [], uMerged := pDoc }
-        | .ok (some g0) =>
-            let cDoc := g0.prefixBnodes "c_"
-            .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
-                  hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
+    | some (some pDoc) => speciesDocsFunctional c pDoc
 
 /-- The species verdict of a case against its annotation. -/
 def judgeSpecies (cat : Catalog) (c : Case) : Harness.Outcome × List String :=
@@ -1597,31 +1648,97 @@ def judgeSpeciesFs (c : Case) : Option (Harness.Outcome × List String) :=
         else some (.fail s!"species[fs]: verdict {label isDl}, annotation {label expectDl}",
                    viols.take 5)
 
+/-! ### Local overrides of the species verdict
+
+`tests/local-overrides/*.json` whose `suite` is `owl-species` name a case
+by `test_id` and the open issue that records the dispute (`issue`), the
+same files and keys `Harness/XmlConfRun.lean` and
+`Harness/JsonLdFrameRun.lean` read (`tests/local-overrides/README.md`,
+"Runner contract"). A case named by an override whose verdict FAILS is
+counted in a `local-override` bucket, apart from pass and fail. One whose
+verdict PASSES is a STALE override: it is counted as a pass, the run
+prints a `FAILURE` line naming the file to delete, and the process exits
+1. An override that names no scored case also fails the run. The
+override never changes the verdict the run computes.
+
+First entry: `WebOnt-I5.5-005`, https://github.com/danbri/factoidal/issues/711
+(owner, 2026-10-10, verbatim: "711 accept your recommendation"). -/
+
+/-- `(test_id, issue)` of every override file whose `suite` is `suite`.
+The directory is resolved from the repository root or from
+`formal/lean4`; an absent directory means no overrides. -/
+def loadLocalOverrides (suite : String) : IO (List (String × String)) := do
+  let dir : System.FilePath := ← Harness.resolveFixtureOr "tests/local-overrides"
+  let entries ← try dir.readDir catch _ => pure #[]
+  let mut out : List (String × String) := []
+  for f in entries do
+    if !f.fileName.endsWith ".json" then continue
+    let txt ← try IO.FS.readFile (dir / f.fileName) catch _ => pure ""
+    match L4Factoidal.JSON.parseJson txt with
+    | .error _ => pure ()
+    | .ok j =>
+      if (j.getString? "suite").getD "" == suite then
+        match j.getString? "test_id" with
+        | some i => out := out ++ [(i, (j.getString? "issue").getD "(no issue named)")]
+        | none   => pure ()
+  pure out
+
+/-- A score with the `local-override` bucket. The overridden units are
+in the denominator and in no other bucket. -/
+structure OvScore where
+  score      : Harness.Score := {}
+  overridden : Nat := 0
+
+def OvScore.line (label : String) (s : OvScore) : String :=
+  s!"{label}: {s.score.pass} pass, {s.score.fail} fail, {s.score.skip} skip, \
+{s.score.unsupported} unsupported, {s.overridden} local-override \
+(out of {s.score.total + s.overridden})"
+
 structure SpeciesResult where
-  score     : Harness.Score := {}
-  expectDl  : Harness.Score := {}
-  expectFull : Harness.Score := {}
+  score     : OvScore := {}
+  expectDl  : OvScore := {}
+  expectFull : OvScore := {}
   /-- The same verdict computed from the functional-syntax documents
   alone, over the cases that have them. -/
   fsScore   : Harness.Score := {}
   fails     : List String := []
   units     : Nat := 0
+  /-- Override ids that took effect (the verdict failed). -/
+  applied   : List String := []
+  /-- Override ids whose case now passes: each fails the run. -/
+  stale     : List String := []
 
-def runSpecies (name : String) (cat : Catalog) (verbose : Bool) : IO SpeciesResult := do
+/-- Count one verdict, through an override when `ov` is set. -/
+def bumpOv (s : OvScore) (o : Harness.Outcome) (ov : Bool) : OvScore :=
+  if ov && o.isFail then { s with overridden := s.overridden + 1 }
+  else { s with score := s.score.bump o }
+
+def runSpecies (name : String) (cat : Catalog) (verbose : Bool)
+    (overrides : List (String × String) := []) : IO SpeciesResult := do
   let mut r : SpeciesResult := {}
   for c in cat.cases do
     if !c.species.isEmpty then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
       let (o, viols) := judgeSpecies cat c
       let label := s!"{c.id} [species]"
-      match o with
-      | .pass => if verbose then IO.println (o.line label)
-      | _ => IO.println (o.line label)
+      let ov := overrides.find? (fun kv => kv.1 == c.id)
+      match ov, o with
+      | some (_, issue), .fail reason =>
+          IO.println s!"OVERRIDE {label}: {reason} (local override, {issue})"
+          r := { r with applied := r.applied ++ [c.id] }
+      | some (_, issue), .pass =>
+          IO.println s!"STALE {label}: the case passes; delete its file in \
+tests/local-overrides/ and close {issue}"
+          r := { r with stale := r.stale ++ [c.id] }
+      | _, .pass => if verbose then IO.println (o.line label)
+      | _, _ => IO.println (o.line label)
       for v in viols do IO.println s!"      violation: {v}"
-      if o.isFail then r := { r with fails := r.fails ++ [c.id] }
+      if o.isFail && ov.isNone then r := { r with fails := r.fails ++ [c.id] }
       let dl := c.species.contains "DL"
-      r := { r with score := r.score.bump o,
-                    expectDl := if dl then r.expectDl.bump o else r.expectDl,
-                    expectFull := if dl then r.expectFull else r.expectFull.bump o,
+      let isOv := ov.isSome
+      r := { r with score := bumpOv r.score o isOv,
+                    expectDl := if dl then bumpOv r.expectDl o isOv else r.expectDl,
+                    expectFull := if dl then r.expectFull else bumpOv r.expectFull o isOv,
                     units := r.units + 1 }
       match judgeSpeciesFs c with
       | none => pure ()
@@ -1630,10 +1747,10 @@ def runSpecies (name : String) (cat : Catalog) (verbose : Bool) : IO SpeciesResu
             IO.println (fo.line s!"{c.id} [species, functional-syntax documents]")
             for v in fviols do IO.println s!"      violation: {v}"
           r := { r with fsScore := r.fsScore.bump fo }
-  IO.println (Harness.Score.line s!"{name} species [expected DL]" r.expectDl)
-  IO.println (Harness.Score.line s!"{name} species [expected FULL]" r.expectFull)
+  IO.println (OvScore.line s!"{name} species [expected DL]" r.expectDl)
+  IO.println (OvScore.line s!"{name} species [expected FULL]" r.expectFull)
   IO.println (Harness.Score.line s!"{name} species [functional-syntax documents]" r.fsScore)
-  IO.println (Harness.Score.line s!"{name} species" r.score)
+  IO.println (OvScore.line s!"{name} species" r.score)
   if !r.fails.isEmpty then
     IO.println s!"  FAIL-GROUP {name} species: {r.fails.length} - {String.intercalate ", " r.fails}"
   return r
@@ -2261,6 +2378,9 @@ def speciesMain (o : Opts) : IO UInt32 := do
   let names := if o.only.isEmpty then ["all.rdf"] else o.only
   let mut total : Harness.Score := {}
   let mut notRead : List String := []
+  let overrides ← loadLocalOverrides "owl-species"
+  let mut applied : List String := []
+  let mut stale : List String := []
   for name in names do
     let p := dir / name
     if !(← p.pathExists) then
@@ -2272,14 +2392,31 @@ def speciesMain (o : Opts) : IO UInt32 := do
       | some cat0 =>
         let cat := if o.cases.isEmpty then cat0
           else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
-        let r ← runSpecies name cat o.verbose
-        total := total.add r.score
+        let r ← runSpecies name cat o.verbose overrides
+        total := total.add r.score.score
+        applied := applied ++ r.applied
+        stale := stale ++ r.stale
         IO.println ""
         let _ ← runAgreement name cat o.verbose
         IO.println ""
   for f in notRead do
     IO.println s!"  catalog not read: {f}"
-  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 then 0 else 1)
+  if !overrides.isEmpty then
+    IO.println "LOCAL OVERRIDES (tests/local-overrides, suite owl-species): a disputed case"
+    IO.println "is counted in the local-override bucket, never as a pass."
+    for (i, issue) in overrides do
+      IO.println s!"  {i}: {issue}"
+  for i in stale do
+    IO.println s!"FAILURE: STALE local override {i}: the species verdict now passes"
+  -- An override that took effect nowhere names no scored case (a
+  -- `--case` filter that leaves it out is not such a run).
+  let unmatched := overrides.filter (fun kv =>
+    !(applied.contains kv.1) && !(stale.contains kv.1) &&
+    (o.cases.isEmpty || o.cases.contains kv.1))
+  for (i, issue) in unmatched do
+    IO.println s!"FAILURE: local override {i} ({issue}) matches no scored case"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 &&
+             stale.isEmpty && unmatched.isEmpty then 0 else 1)
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
