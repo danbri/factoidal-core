@@ -102,7 +102,27 @@ def checkTitles (v : Json) : List Finding :=
     built-in name is a WARNING, not an error — the suite classifies
     both the non-builtin case and the absolute-URL case as
     `WarningValidationTest`. So this list drives a warning, never a
-    rejection. -/
+    rejection.
+
+    The rule is Metadata Vocabulary §5.7 (`datatype`: "If the value of
+    this property is a string, it MUST be the name of one of the
+    built-in datatypes"), and the consequence of breaking it is §4:
+    "If a property has a value that is not permitted by this
+    specification, then if a default value is provided for that
+    property, compliant applications MUST generate a warning and use
+    that default value. If no default value is provided for that
+    property, compliant applications MUST generate a warning and behave
+    as if the property had not been specified." The approved tests
+    agree: test150 (`"foo"`) and test238 (`"http://example.org/datatype"`)
+    are `WarningValidationTest`s that must conform.
+
+    `manifest-validation#test308` (`"http://example.org/bad/datatype"`)
+    is a `NegativeValidationTest` and FAILS here, as it does in the F*
+    engine. It is the only `rdft:Proposed` entry of the 282; it was
+    added on 2016-01-05, after the Recommendation, and never approved.
+    An error for it is also an error for test238, whose value differs
+    only in the URL path, so no rule passes both. Tracked in
+    https://github.com/danbri/factoidal/issues/698 (residues). -/
 def knownDatatype (n : String) : Bool :=
   ["anyAtomicType", "anyURI", "base64Binary", "boolean", "date", "dateTime",
    "dateTimeStamp", "decimal", "integer", "long", "int", "short", "byte",
