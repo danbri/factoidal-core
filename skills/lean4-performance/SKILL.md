@@ -136,6 +136,24 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   phase before ranking a parser. `query`, `canonicalize`, `update` and `closure`
   still read their input through `readAsNQuads` (parse, write N-Quads text,
   parse the text again): 75 percent of the instructions of a COUNT query.
+- **A graph read per focus node needs an index carried by the caller.**
+  SHACL `objectsOf` filtered the data graph once per focus node and shape:
+  74.6 percent of the instructions of `l4shacl` on 500 persons, 27.8 s at
+  4,000 persons (F*: 7.5 s). A `csimp` cannot repair this, because the
+  function gets only the graph. `SHACL/DataIndex.lean` builds the index once in
+  `ValidationConfig.envFor`, `ValidationEnv.dataIx` carries it, and indexed
+  twins are proved equal under `DataIndex.Coherent`; theorems that quantify
+  over every environment take the coherence as a hypothesis, which
+  `envFor_dataIx_coherent` discharges for `validate` (0.24 s at 4,000).
+  After the index, two list folds with `acc ++ [x]` (`distinctSubjects`,
+  `dedupTerms`) were 80 percent of what was left: profile again after each
+  repair (https://github.com/danbri/factoidal/issues/723).
+- **The command line's N-Quads round trip is not the identity.** Do not
+  replace `readAsNQuads` by the parsed dataset without a proof: the canonical
+  form lowers language tags and the N-Quads reader keeps each quad once, so on
+  a Turtle file with a repeated triple `parse` prints 3 and `query`
+  `COUNT(*)` prints 2 (https://github.com/danbri/factoidal/issues/724,
+  section 8.3 of the survey record).
 - **`csimp` makes a guard compare a function with itself.** After
   `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
   closure g n` in a later module runs the same code on both sides. Restate the

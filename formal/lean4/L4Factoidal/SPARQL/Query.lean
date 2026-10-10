@@ -811,6 +811,94 @@ def dedupErAcc : List EvalResult → List EvalResult → List EvalResult
 
 def dedupEr (vals : List EvalResult) : List EvalResult := dedupErAcc vals []
 
+/-! ### Indexed duplicate removal for aggregates with DISTINCT (2026-10-10)
+
+`dedupErAcc` compares each value with every value kept so far: O(values x
+distinct values) calls of `sparqlOrder`. Measured with callgrind on
+`SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE { ?s ?p ?o }` over 625 paragraphs of
+`examples/wikidata/subsets/lifesci-kgx/data/gene.ttl`: `dedupErAcc` was 89.1
+percent of 3.70 billion instructions, and the command took 1.4 s at 1,250
+paragraphs and 22.8 s at 5,000 (https://github.com/danbri/factoidal/issues/722).
+
+`dedupErFastGo` keeps, beside the kept values, a hash index from the
+`erBucket` key to the kept values of that key, newest first. A value is
+compared only with the kept values of its own bucket. `erEqual_erBucket` says
+that an order-equal value is always in that bucket, so the answer of the test
+is the answer of the scan (`dedupErBucketAny_eq`), and the two functions return
+the same list (`dedupErFastGo_eq`). The `csimp` theorem below makes every
+caller of `dedupEr` that is compiled after it run `dedupErFast`; the
+definition of `dedupEr` does not change. -/
+
+/-- Tail-recursive worker of `dedupErFast`. `acc` holds the values kept so
+far, newest first; `buckets` maps each `erBucket` key to the kept values with
+that key, newest first. -/
+def dedupErFastGo : List EvalResult → Std.HashMap (Nat × String) (List EvalResult) →
+    List EvalResult → List EvalResult
+  | [],        _,       acc => acc.reverse
+  | v :: rest, buckets, acc =>
+      let k := erBucket v
+      let bucket := buckets.getD k []
+      if bucket.any (fun x => erEqual v x) then dedupErFastGo rest buckets acc
+      else dedupErFastGo rest (buckets.insert k (v :: bucket)) (v :: acc)
+
+/-- `dedupEr` with a hash index on `erBucket`; the same list (`dedupEr_eq_dedupErFast`). -/
+def dedupErFast (vals : List EvalResult) : List EvalResult :=
+  dedupErFastGo vals (∅ : Std.HashMap (Nat × String) (List EvalResult)) []
+
+/-- The index holds, under each key, exactly the kept values with that key, in
+kept order. -/
+def DedupErBucketWf (buckets : Std.HashMap (Nat × String) (List EvalResult))
+    (acc : List EvalResult) : Prop :=
+  ∀ k, buckets.getD k [] = acc.filter (fun x => erBucket x == k)
+
+/-- Scanning the kept values of the bucket of `v` answers the same as scanning
+every kept value: an order-equal kept value has the bucket of `v`. -/
+theorem dedupErBucketAny_eq (v : EvalResult) : ∀ acc : List EvalResult,
+    (acc.filter (fun x => erBucket x == erBucket v)).any (fun x => erEqual v x) =
+      acc.any (fun x => erEqual v x)
+  | [] => rfl
+  | x :: rest => by
+      have ih := dedupErBucketAny_eq v rest
+      by_cases hx : erEqual v x = true
+      · have hk : (erBucket x == erBucket v) = true := by
+          simp [erEqual_erBucket hx]
+        simp [hx, hk]
+      · by_cases hk : (erBucket x == erBucket v) = true
+        · simp [hx, hk, ih]
+        · simp [hx, hk, ih]
+
+/-- `dedupErFastGo` returns what `dedupErAcc` returns, from any kept list whose
+index is well formed. -/
+theorem dedupErFastGo_eq : ∀ (vals : List EvalResult)
+    (buckets : Std.HashMap (Nat × String) (List EvalResult)) (acc : List EvalResult),
+    DedupErBucketWf buckets acc →
+    dedupErFastGo vals buckets acc = dedupErAcc vals acc
+  | [], _, _, _ => by simp [dedupErFastGo, dedupErAcc]
+  | v :: rest, buckets, acc, hwf => by
+      have hany : (buckets.getD (erBucket v) []).any (fun x => erEqual v x) =
+          acc.any (fun x => erEqual v x) := by
+        rw [hwf (erBucket v)]
+        exact dedupErBucketAny_eq v acc
+      simp only [dedupErFastGo, dedupErAcc, hany]
+      split
+      · exact dedupErFastGo_eq rest buckets acc hwf
+      · apply dedupErFastGo_eq rest
+        intro k
+        rw [Std.HashMap.getD_insert]
+        by_cases hk : erBucket v = k
+        · subst hk
+          simp [hwf (erBucket v)]
+        · have hb : (erBucket v == k) = false := by simpa using hk
+          simp [hb, hwf k]
+
+theorem dedupEr_eq_dedupErFast_apply (vals : List EvalResult) :
+    dedupEr vals = dedupErFast vals :=
+  (dedupErFastGo_eq vals ∅ [] (fun k => by simp [Std.HashMap.getD_empty])).symm
+
+/-- The compiler runs `dedupErFast` wherever the source says `dedupEr`. -/
+@[csimp] theorem dedupEr_eq_dedupErFast : @dedupEr = @dedupErFast :=
+  funext dedupEr_eq_dedupErFast_apply
+
 /-- Running sum over the numeric values, carrying the promoted type
 and the count of numeric operands (port of `sum_numeric_acc`). -/
 def sumNumericAcc : List EvalResult → Scaled → NumKind → Nat →
@@ -869,14 +957,20 @@ same two spellings the F* source accepts. `COUNT(DISTINCT *)` counts
 DISTINCT ROWS: the F* source builds a string key per row, this port
 uses `distinctSolutions`, which is the §18.3 row equality — the same
 count whenever the two agree, and the row equality is the one DISTINCT
-itself uses. -/
+itself uses. The code calls `distinctSolutionsFast`, the hash-bucketed
+form that the DISTINCT modifier runs; `distinctSolutionsFast_eq`
+(`QueryTheorems.lean`) proves it returns the list `distinctSolutions`
+returns, and `evalAggregate_countDistinctStar` restates this arm with
+`distinctSolutions`. The scan cost 74.8 percent of the instructions of
+`COUNT(DISTINCT *)` over 625 paragraphs of `gene.ttl`
+(https://github.com/danbri/factoidal/issues/722). -/
 def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
     (e : Expr) (g : SolutionGroup) : EvalResult :=
   match fn with
   | .count =>
       match e with
       | .var "*" | .boolLit true =>
-          if distinct then .num (Int.ofNat (distinctSolutions g.solutions).length)
+          if distinct then .num (Int.ofNat (distinctSolutionsFast g.solutions).length)
           else .num (Int.ofNat g.solutions.length)
       | _ =>
           let vals := filterNonError (evalOverGroup env e g)

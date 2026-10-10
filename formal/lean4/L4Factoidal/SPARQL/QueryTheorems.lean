@@ -398,6 +398,14 @@ theorem distinctSolutionsFast_eq (omega : SolutionSeq) :
     (DistinctBucketWf.empty (distinctVariables omega)) (by simp [NoLaterDup])]
   simp
 
+/-- `COUNT(DISTINCT *)` counts the rows of the §18.4 reference DISTINCT. The
+code of `evalAggregate` calls the hash-bucketed `distinctSolutionsFast`
+(https://github.com/danbri/factoidal/issues/722); this is the same value. -/
+theorem evalAggregate_countDistinctStar (env : EvalEnv) (g : SolutionGroup) :
+    evalAggregate env .count true (.var "*") g =
+      .num (Int.ofNat (distinctSolutions g.solutions).length) := by
+  simp [evalAggregate, distinctSolutionsFast_eq]
+
 /-- DISTINCT is IDEMPOTENT (§18.4: `Distinct(Distinct(Ω)) =
 Distinct(Ω)` — deduplicating a deduplicated sequence changes
 nothing). -/
@@ -709,6 +717,8 @@ open L4Factoidal.SPARQL
 #print axioms DistinctBucketWf.bucketAnyEq
 #print axioms distinctSolutionsFastGo_eq
 #print axioms distinctSolutionsFast_eq
+#print axioms evalAggregate_countDistinctStar
+#print axioms dedupEr_eq_dedupErFast
 #print axioms evalDescribe_subset
 #print axioms evalDescribe_of_not_describe
 #print axioms evalDescribe_mem_of_iri
