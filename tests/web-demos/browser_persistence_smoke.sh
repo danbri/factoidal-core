@@ -71,7 +71,7 @@ echo "Using npm-entry bundle: $FOUND_ENTRY"
 
 SERVE_ROOT="$WORKDIR/serve-root"
 mkdir -p "$SERVE_ROOT"
-cp npm/factoidal/browser.js "$SERVE_ROOT/browser.js"
+cp docs/fstar-extracted/browser.js "$SERVE_ROOT/browser.js"
 cp "$FOUND_ENTRY" "$SERVE_ROOT/factoidal-npm-entry.js"
 cp tests/web-demos/browser-persistence-test.html "$SERVE_ROOT/index.html"
 
