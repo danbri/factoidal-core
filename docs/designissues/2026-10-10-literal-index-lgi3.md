@@ -171,7 +171,31 @@ evaluates.
 
 ## 6. Results
 
-See the commit message of the landing. Suites gated: `lake build` (all targets),
-`Wasm/native-smoke.sh`, `l4block-literal-gate` on the Unicode corpus in both
-formats, `tools/blockengine-ibk4-quad-smoke.sh`,
-`tools/blockengine-ibk5-quad-smoke.sh`, `tools/w3c-persisted-census.sh`.
+Measured 2026-10-10 on this branch. The "before" column was measured with the
+binaries of the neighbouring checkout at commit 39861602 (it has the Unicode
+fold and not the rename); the suites that do not read the index do not move.
+
+| Gate | Before | After |
+| --- | --- | --- |
+| `lake build`, all targets | exit 0 | exit 0 (1285 jobs) |
+| `Wasm/native-smoke.sh` | 143 pass, 0 fail (out of 143) | 152 pass, 0 fail (out of 152); the 9 added cases are in section 5 |
+| `l4block-literal-gate` on `tests/local/data/unicode_label_sample.trig`, IBK4 | not run: no Unicode corpus existed, and the gate could not tell an index path from a scan | 8 pass, 0 fail (out of 8) needles; every needle but `unmatched` returns 1 row |
+| the same, IBK5 | not run | 8 pass, 0 fail (out of 8) |
+| `tools/blockengine-ibk4-quad-smoke.sh`, `tools/blockengine-ibk5-quad-smoke.sh` | pass | pass |
+| `tools/blockengine-ibk4-w3c-trig-smoke.sh`, `tools/blockengine-ibk5-w3c-trig-smoke.sh` | 242 pass, 0 fail (out of 242) each | 242 pass, 0 fail (out of 242) each |
+| `tools/w3c-persisted-census.sh`, default graph (IBK3) | 551 executed, 551 matched, 0 differed (out of 555 eligible) | the same |
+| the same, named graphs (IBK4) | 34 executed, 34 matched, 0 differed (out of 54 eligible) | the same |
+
+Sabotage runs (a defect put in, the gate must fail, the defect taken out):
+
+| Defect | What failed |
+| --- | --- |
+| the packer drops every gram that holds a non-ASCII character, in both formats (an index that lacks the grams the Unicode fold needs) | `l4block-literal-gate`: 5 pass, 3 fail (out of 8) on IBK4 and on IBK5 (`école`, `οδυσσευς`, `straße` differ; exit 1). `native-smoke`: 150 pass, 2 fail (out of 152), the two Unicode-fold cases |
+| `storeOpen` ignores the literal sidecar bytes (every handle scans) | `l4block-literal-gate`: "retained 0 literal indexes for 1 blocks", exit 1, before any comparison |
+| an encoder writes the magic of LGI1 | four `#guard`s in `LiteralGramIndexWire.lean`; the build fails |
+| a decoder admits the magic and version of LGI1 | two `#guard`s; the build fails |
+| `retiredName?` names LGI1 as another format | two `#guard`s; the build fails |
+| the message of the `storeOpen` refusal loses its remedy | two `#guard`s in `StoreHandles.lean`; the build fails |
+
+The census is not a conformance result: it compares the persisted path with the
+in-memory engine over the same file.

@@ -923,7 +923,7 @@ theorem decodeEntry_encodeEntry_quad (entry : Entry) (rest : List UInt8)
     entry.predicate.property
 
 
-/-- SBM8 is SBM7 plus the LGI1 literal search index, written where SBM6 writes
+/-- SBM8 is SBM7 plus the LGI3 literal search index, written where SBM6 writes
     its object index. -/
 theorem decodeEntry_encodeEntry_quadLiteral (entry : Entry) (rest : List UInt8)
     (hv : entryValid 8 entry) (he : encodableEntry 8 entry) :
@@ -993,7 +993,7 @@ theorem decodeEntry_encodeEntry_quadLiteral (entry : Entry) (rest : List UInt8)
     entry.predicate.property
 
 /-- SBM9 is SBM8 plus the GBI1 geometry bounding-box index, written
-    immediately after the LGI1 sidecar and before the quad tail. -/
+    immediately after the LGI3 sidecar and before the quad tail. -/
 theorem decodeEntry_encodeEntry_quadGeo (entry : Entry) (rest : List UInt8)
     (hv : entryValid 9 entry) (he : encodableEntry 9 entry) :
     decodeEntry 9 (encodeEntry 9 entry ++ rest) = some (entry, rest) := by

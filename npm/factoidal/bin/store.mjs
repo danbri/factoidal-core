@@ -282,7 +282,7 @@ export function turtleOfNQuads (engine, nquads) {
  * The artifact keys a manifest declares, in manifest order: every block, and
  * every index sidecar the entry names. The KEYS come from the engine; this
  * function chooses none of them. A sidecar is what lets a literal search skip
- * the scan (SBM8's LGI1) or a geometry FILTER skip the WKT parse (SBM9's
+ * the scan (SBM8's LGI3) or a geometry FILTER skip the WKT parse (SBM9's
  * GBI1); a generation that declares none is unaffected. New sidecar roles
  * need no change here: the engine names them under `entry.sidecars`.
  */
