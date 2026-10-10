@@ -17,6 +17,7 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   rdfs-closure-*   RDFS closure of a wide, a dense and a tree-shaped schema
   trig-parse       TriG parse, many small graph blocks
   trig-big-graph   TriG parse, one graph block with all the triples
+  turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes, 1 when a pair fails, 2 when the binary is missing.
@@ -40,6 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 import bench_closure as bc  # noqa: E402  (closure shape generators)
+import bench_lean_vs_fstar as bl  # noqa: E402  (real-data slices)
 
 BOUND = 9.0
 FLOOR = 0.05
@@ -97,6 +99,10 @@ ROWS = {
         2500,
         lambda n: fixture(f"trig-one-{n}.trig", lambda: trig_one_graph(n)),
         lambda p: [str(BIN), "parse", str(p), "--format", "trig"]),
+    "turtle-serialize": (
+        1250,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "parse", str(p), "--format", "turtle", "--out", "turtle"]),
 }
 
 
