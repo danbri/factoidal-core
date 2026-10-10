@@ -532,6 +532,23 @@ pass, from the functional-syntax premise fallback (§ 9).
 | syntax-dl, `--dl`, all units | 421 pass, 2 fail, 1 skip (out of 424) | 422 pass, 1 fail, 1 skip (out of 424) |
 | type-negative-entailment, `--dl` | 46 pass, 0 fail (out of 46), `ne_refuter_checked=11` | unchanged |
 
+Re-measured after the clash rows and rules of § 4.5 (2026-10-10,
+binary of commit 2898f7ba, `tools/lean-scoreboard.sh --only
+l4owl-probe`): every line of the "after" column above is unchanged
+(species 488 pass, 0 fail, 1 local-override (out of 489); default run
+TOTAL 1234 pass, 221 fail, 2 skip (out of 1457); type-negative-entailment,
+syntax-dl, semantics-direct 909 pass, 269 fail, 2 skip (out of 1180);
+fs-input 84 pass, 19 fail (out of 103) on both inputs; `--dl`
+type-inconsistency 126 pass, 1 fail, 1 skip (out of 128),
+type-positive-entailment 400 pass, 12 fail (out of 412), type-consistency
+571 pass, 12 fail (out of 583), syntax-dl 422 pass, 1 fail, 1 skip (out
+of 424), type-negative-entailment 46 pass, 0 fail (out of 46) with
+`ne_refuter_checked=11`). The FAIL lines of the default, extra, `--dl`
+inconsistency and `--dl` positive-entailment runs are identical, unit by
+unit, to a run of the same jobs earlier the same day. These modes do not
+call the RDF-Based modules. `Wasm/native-smoke.sh`: 310 pass, 0 fail
+(out of 310).
+
 ## 7. Left failing, with the reason
 
 PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
