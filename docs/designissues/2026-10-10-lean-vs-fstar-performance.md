@@ -939,7 +939,8 @@ else needed a repair.
     `COUNT(*)` answers 2 on that file.
   * `tests/stack/lean_scaling.sh`, row `query-vs-parse` (5,000 paragraphs):
     5.7 times the CPU time and 3.7 times the peak memory of `parse` before,
-    1.6 and 1.0 after; the row is now an assertion.
+    1.1 to 1.6 (two runs, load 2 and 4) and 1.0 after; the row is now an
+    assertion.
 
 ### 9.3 Survey rows, before and after
 
