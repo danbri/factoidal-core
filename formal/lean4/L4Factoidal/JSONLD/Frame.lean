@@ -251,11 +251,16 @@ def frameIriEntryOk : Json → Bool
   | _ => false
 
 /-- §4.1 step 1: a frame is a single object; its `@id` and `@type`
-entries are IRIs, the wildcard, or (for `@type`) default objects. -/
+entries are IRIs, the wildcard, or (for `@type`) default objects.
+
+A value pattern (a frame object with `@value`, §4.3) is a frame too, but
+its `@type` is a datatype IRI or the keyword `@json`, so the IRI test of
+`@id` and `@type` entries is for node patterns only. -/
 def validateFrame (frame : Json) : Res Json :=
   match frame with
-  | .array [fr@(.object _)] =>
-    if (getValues fr "@id").all frameIriEntryOk && (getValues fr "@type").all frameIriEntryOk
+  | .array [fr@(.object fs)] =>
+    if hasField "@value" fs then .ok fr
+    else if (getValues fr "@id").all frameIriEntryOk && (getValues fr "@type").all frameIriEntryOk
     then .ok fr
     else .error .invalidFrame
   | _ => .error .invalidFrame
