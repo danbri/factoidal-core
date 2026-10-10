@@ -261,6 +261,27 @@ and the build after it wrote 932 lines (63 flatten, 92 frame, 250 compact,
 identical. The comparison was repeated after each of the three steps (node
 map, framing state, `strLt`).
 
+**What "byte-identical" covers, and what it does not** (owner note,
+2026-10-10: "be aware that the @context syntax can bring out of band state
+into a test, making results depend on more than testcase formal inputs").
+A JSON-LD result is a function of more than the test's input and frame
+files. Through `@context` (a remote context IRI, `@import`, a scoped
+context), the result also depends on what the document loader returns for
+each IRI, on the base IRI, and on the processing options the manifest
+states (`base`, `processingMode`, `specVersion`, `expandContext`,
+`omitGraph`, ...). Both builds ran with the same out-of-band state:
+- the document loader built by the runners (`buildLoader`): the vendored
+  test tree under its manifest `baseIri`, then
+  `third_party/jsonld-context-cache` (index.json sha256
+  `7d921676d913c3fe1cfeb198ef344c8d525a4bf7d361d7f937488803faecf3a5`, last
+  changed in commit 9e3ad4a3); no network; an IRI in neither fails the case;
+- the options each manifest entry states, and no others.
+So the 932 identical lines show that the new code gives the same bytes as
+the old code for the same documents AND the same loaded contexts. They do
+not show that a result depends only on the test files: a different cache
+snapshot, a live loader, or a different base IRI can change the output of
+both builds. A result quoted from this harness names the cache digest above.
+
 `ApiTests.lean` has `#guard` cases, each with a negative case beside it, for
 the new structures and for node map generation end to end: insertion order
 and replacement in place, canonical-form duplicates, list order, value
