@@ -170,10 +170,19 @@ export function entryFromEngine(eng) {
   if (ops.includes('extRegister')) installExtensionBridge(eng, entry);
   // The byte-region ops. `bytes` is a Uint8Array; it crosses into the wasm
   // heap with no encoding.
-  if (typeof eng.callBlob === 'function' && ops.includes('queryHdt')) {
+  // queryHdt goes through the IO form of the blob entry when the engine has it:
+  // that entry reads the system clock once for the query, so NOW() (SPARQL 1.1
+  // section 17.4.5.1) is bound. The pure `callBlob` has no clock. An engine
+  // without `callBlobIO` serves the op through `callBlob`, as before
+  // (https://github.com/danbri/factoidal/issues/743).
+  if ((typeof eng.callBlobIO === 'function' || typeof eng.callBlob === 'function') &&
+      ops.includes('queryHdt')) {
     entry.queryHdt = (bytes, sparql) => {
       try {
-        return JSON.stringify(eng.callBlob('queryHdt', [String(sparql)], bytes));
+        const args = [String(sparql)];
+        return JSON.stringify(typeof eng.callBlobIO === 'function'
+          ? eng.callBlobIO('queryHdt', args, bytes).envelope
+          : eng.callBlob('queryHdt', args, bytes));
       } catch (err) {
         return failEnvelope(err);
       }

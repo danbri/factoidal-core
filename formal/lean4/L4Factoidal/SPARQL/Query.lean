@@ -2209,9 +2209,29 @@ solutions. A template triple is emitted only when all three positions
 resolve to terms of a legal kind (subject IRI or blank node,
 predicate IRI); ill-formed instantiations are skipped, not errors. -/
 
-/-- Port of `fresh_bnode_for`. -/
+/-- The part of a fresh label that comes from the template label. The parser
+names a blank node it makes for `[ ]`, a collection `( … )` or a reifier
+`_:bnode_<n>`, with the `_:` INSIDE the name (`freshBnodeId`,
+`Parser.lean`): a label the query wrote never has a `:`, so the two kinds of
+name cannot be the same. RDF 1.1 N-Triples [141s] BLANK_NODE_LABEL has no
+`:` either, so the generated name cannot be copied into an output label
+(https://github.com/danbri/factoidal/issues/742; the F* `fresh_bnode_for`
+copied it, issue 740). A generated name `_:X` becomes `g_X`; a written label
+`L` becomes `_L`. The first character tells the two kinds apart, so the map
+is injective. -/
+def templateLabelPart (templateLabel : String) : String :=
+  if "_:".isPrefixOf templateLabel then "g_" ++ String.ofList (templateLabel.toList.drop 2)
+  else "_" ++ templateLabel
+
+/-- Port of `fresh_bnode_for`, with `templateLabelPart` in place of the
+template label. §16.2: one label per (solution index, template label) — the
+solution index ends at the first non-digit, and `templateLabelPart` is
+injective, so two different pairs never get the same label. Every label is
+`tpl_<n>_L` or `tpl_<n>g_X` with `L` a SPARQL BLANK_NODE_LABEL body (the same
+production as N-Triples [141s]) and `X` = `bnode_<n>`, so it is an N-Triples
+BLANK_NODE_LABEL (`ConstructLabelTests.lean`). -/
 def freshBnodeFor (solIx : Nat) (templateLabel : String) : BNodeId :=
-  "tpl_" ++ toString solIx ++ "_" ++ templateLabel
+  "tpl_" ++ toString solIx ++ templateLabelPart templateLabel
 
 def constructSubject (ps : PatternSubject) (mu : Binding) (solIx : Nat) :
     Option Subject :=

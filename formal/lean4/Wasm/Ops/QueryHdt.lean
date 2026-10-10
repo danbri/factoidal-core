@@ -34,7 +34,7 @@ open L4Factoidal.JSON
 /-! ## queryHdt -/
 
 /-- `queryHdt(sparql)` over the HDT file in `hdt`. -/
-def queryHdt (sparql : String) (hdt : ByteArray) : String :=
+def queryHdt (sparql : String) (hdt : ByteArray) (now : Option String := none) : String :=
   if hdt.isEmpty then
     errJson "queryHdt: no HDT bytes were passed (this op reads the blob region; use l4_call_blob)"
   else
@@ -48,7 +48,14 @@ def queryHdt (sparql : String) (hdt : ByteArray) : String :=
         { graphName := none, artifactPath := "", summary := none,
           bytes := hdt, inventory := inv, triples := tri }
       let g := L4Factoidal.HDT.searchTriples gs none none none
-      queryParsedDataset { default := g, named := [] } sparql
+      queryParsedDataset { default := g, named := [] } sparql none now
+
+/-- `queryHdt` through the IO dispatch entry (`callBlobIO`): the same envelope,
+with `NOW()` the instant read once here (SPARQL 1.1 §17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). -/
+def queryHdtIO (sparql : String) (hdt : ByteArray) : IO String := do
+  let now ← nowDateTime
+  pure (queryHdt sparql hdt (some now))
 
 /-! ## Build-time checks (negative; the positive case is the npm test
 `test/hdt.test.js` over a real HDT file) -/

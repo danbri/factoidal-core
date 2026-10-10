@@ -31,6 +31,7 @@ output, row order included, is unchanged.
 import Wasm.Abi
 import Wasm.Dispatch
 import L4Factoidal.Syntax.LenientFeed
+import L4Factoidal.Syntax.FileIri
 
 namespace L4Wasm.Cli
 
@@ -131,6 +132,24 @@ def resolveTextArg (verb fileFlag strFlag what : String) (s : Scanned) :
   | none, none =>
       IO.eprintln s!"l4factoidal {verb}: need {fileFlag} FILE or {strFlag} {what}"
       pure (.error 2)
+
+/-- The base IRI of the query or update text that `--foo FILE` /
+`--foo-string TEXT` names (SPARQL 1.1 §4.1.1.2 resolves a relative IRI in it
+with RFC 3986 §5.1; https://github.com/danbri/factoidal/issues/741). A text
+read from FILE has the file's IRI (§5.1.3, the retrieval URI;
+`fileIriOfPath` of the real path). A text given on the command line, or read
+from stdin (`-`), has `--base` (an empty value means no base). A `BASE` in the
+text comes before either (§5.1.1); the parser applies it. -/
+def textBaseArg (fileFlag : String) (s : Scanned) : IO (Except String (Option String)) := do
+  let cliBase := (s.value? "--base").bind fun b => if b.isEmpty then none else some b
+  match s.value? fileFlag with
+  | none | some "-" => pure (.ok cliBase)
+  | some f =>
+      try
+        let abs ← IO.FS.realPath f
+        pure (.ok (some (fileIriOfPath abs.toString)))
+      catch e =>
+        pure (.error s!"{f}: {e}")
 
 /-! ## JSON envelope decoding
 
@@ -502,12 +521,19 @@ def queryCmd (args : List String) : IO UInt32 := do
     match ← resolveTextArg "query" "--query" "--query-string" "SPARQL" s with
     | .error code => pure code
     | .ok sparql =>
+    match ← textBaseArg "--query" s with
+    | .error e => IO.eprintln e; pure 1
+    | .ok queryBase =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
       match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
       | .ok ds =>
-        match ← parseEnvelope (Ops.queryDatasetOf ds sparql) with
+        -- SPARQL 1.1 §17.4.5.1: `NOW()` is one instant for the whole query
+        -- execution. The clock is read here, at the edge, once, and passed to
+        -- the pure op (https://github.com/danbri/factoidal/issues/743).
+        let now ← Ops.nowDateTime
+        match ← parseEnvelope (Ops.queryDatasetOf ds sparql queryBase (some now)) with
         | none => pure 1
         | some j => printQueryResult j (s.hasBool "--table")
 
@@ -518,12 +544,19 @@ def updateCmd (args : List String) : IO UInt32 := do
     match ← resolveTextArg "update" "--update" "--update-string" "SPARQL-UPDATE" s with
     | .error code => pure code
     | .ok upd =>
+    match ← textBaseArg "--update" s with
+    | .error e => IO.eprintln e; pure 1
+    | .ok updateBase =>
       let format := (s.value? "--format").getD "turtle"
       let base := (s.value? "--base").getD ""
       match ← readDataset s.positional[0]? format base with
       | .error e => IO.eprintln e; pure 1
       | .ok ds =>
-        match ← parseEnvelope (Ops.updateDatasetOf ds upd) with
+        -- One clock read per request: `NOW()` in a WHERE clause is the same
+        -- instant in every operation of the request (SPARQL 1.1 §17.4.5.1,
+        -- https://github.com/danbri/factoidal/issues/743).
+        let now ← Ops.nowDateTime
+        match ← parseEnvelope (Ops.updateDatasetOf ds upd updateBase (some now)) with
         | none => pure 1
         | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 
@@ -690,13 +723,17 @@ def usageLines : List String :=
   , "      whole). Prints the quad count, or with --out nquads the kept"
   , "      quads as they are read. Exit 1 when any diagnostic was written."
   , "  query [FILE] (--query FILE.rq | --query-string SPARQL)"
-  , "        [--format FMT] [--table]"
+  , "        [--format FMT] [--base IRI] [--table]"
   , "      Run a SPARQL query. SELECT prints SPARQL Results JSON (or a"
   , "      tab-separated table with --table); ASK prints true/false,"
-  , "      exit 0 for true and 1 for false; CONSTRUCT prints N-Quads."
+  , "      exit 0 for true and 1 for false; CONSTRUCT prints N-Triples."
+  , "      --base IRI is the base of the data FILE and of a --query-string"
+  , "      text; a --query FILE.rq resolves its relative IRIs against the"
+  , "      file's own IRI (file:///...), and a BASE in the query comes first."
   , "  update [FILE] (--update FILE.ru | --update-string SPARQL-UPDATE)"
-  , "        [--format FMT]"
-  , "      Apply a SPARQL Update and print the resulting N-Quads."
+  , "        [--format FMT] [--base IRI]"
+  , "      Apply a SPARQL Update and print the resulting N-Quads. The base"
+  , "      of the update text is chosen as for query."
   , "  canonicalize [FILE] [--format FMT]"
   , "      RDFC-1.0 canonical N-Quads (default input format: nquads)."
   , "  closure [FILE] --regime rdfs|rho-df|rdfs-plus|owl-rl [--format FMT]"

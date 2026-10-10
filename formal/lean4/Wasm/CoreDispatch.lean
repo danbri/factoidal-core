@@ -142,6 +142,25 @@ def arity3 (op : String) (f : String → String → String → String) :
   | [a, b, c] => f a b c
   | args => errJson s!"{op} expects 3 arguments, got {args.length}"
 
+/-- The query and update ops take an optional last argument, the base IRI of
+the query or update TEXT (SPARQL 1.1 §4.1.1.2, RFC 3986 §5.1,
+https://github.com/danbri/factoidal/issues/741). An empty string, or no
+argument, means no base: a relative IRI in the text is then a parse error, as
+before. Every host written against the two-argument contract keeps working. -/
+def baseArg (s : String) : Option String := if s.isEmpty then none else some s
+
+def arity2Base (op : String) (f : String → String → Option String → String) :
+    List String → String
+  | [a, b] => f a b none
+  | [a, b, c] => f a b (baseArg c)
+  | args => errJson s!"{op} expects 2 or 3 arguments, got {args.length}"
+
+def arityIO2Base (op : String) (f : String → String → Option String → IO String) :
+    List String → IO String
+  | [a, b] => f a b none
+  | [a, b, c] => f a b (baseArg c)
+  | args => pure (errJson s!"{op} expects 2 or 3 arguments, got {args.length}")
+
 def arityIO0 (op : String) (f : IO String) : List String → IO String
   | [] => f
   | args => pure (errJson s!"{op} expects 0 arguments, got {args.length}")
@@ -167,8 +186,8 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
     Option String :=
   match op with
   | "parseToDatasetJson"   => some (arity3 op (parseToDatasetJsonBy extra) args)
-  | "queryDataset"         => some (arity2 op queryDataset args)
-  | "updateDataset"        => some (arity2 op updateDataset args)
+  | "queryDataset"         => some (arity2Base op (fun a b c => queryDataset a b c) args)
+  | "updateDataset"        => some (arity2Base op (fun a b c => updateDataset a b c) args)
   | "serializeNQuads"      => some (arity1 op serializeNQuads args)
   | "serializeTurtle"      => some (arity1 op serializeTurtle args)
   | "canonicalizeToNQuads" => some (arity1 op canonicalizeToNQuads args)
@@ -195,12 +214,20 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "extUnregister"    => some (arityIO1 op Ops.extUnregister args)
   | "extClear"         => some (arityIO0 op Ops.extClear args)
   | "extList"          => some (arityIO0 op Ops.extList args)
-  | "queryDataset"     => some (arityIO2 op Ops.queryDatasetIO args)
-  | "queryDataset12"   => some (arityIO2 op Ops.queryDataset12IO args)
+  -- The query and update ops take an optional third argument, the base IRI
+  -- of the query or update text (`baseArg`).
+  | "queryDataset"     => some (arityIO2Base op (fun a b c => Ops.queryDatasetIO a b c) args)
+  | "queryDataset12"   => some (arityIO2Base op (fun a b c => Ops.queryDataset12IO a b c) args)
+  -- The update and `queryRaw` ops are pure in the table above; their IO forms read
+  -- the clock once per request, so `NOW()` in a WHERE clause or a query is the
+  -- instant of the call (SPARQL 1.1 §17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
+  | "updateDataset"    => some (arityIO2Base op (fun a b c => Ops.updateDatasetIO a b c) args)
+  | "queryRaw"         => some (arityIO3 op (Ops.queryRawIOBy extra) args)
   | "datasetOpen"      => some (arityIO3 op (Ops.datasetOpenBy extra) args)
-  | "datasetQuery"     => some (arityIO2 op Ops.datasetQuery args)
-  | "datasetQuery12"   => some (arityIO2 op Ops.datasetQuery12 args)
-  | "datasetUpdate"    => some (arityIO2 op Ops.datasetUpdate args)
+  | "datasetQuery"     => some (arityIO2Base op (fun a b c => Ops.datasetQuery a b c) args)
+  | "datasetQuery12"   => some (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c) args)
+  | "datasetUpdate"    => some (arityIO2Base op (fun a b c => Ops.datasetUpdate a b c) args)
   | "datasetSerialize" => some (arityIO2 op Ops.datasetSerialize args)
   | "datasetSerializeWith" => some (arityIO3 op Ops.datasetSerializeWith args)
   | "datasetClose"     => some (arityIO1 op Ops.datasetClose args)

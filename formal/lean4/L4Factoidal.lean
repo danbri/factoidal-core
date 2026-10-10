@@ -83,6 +83,7 @@ import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
 import L4Factoidal.SPARQL.QueryTests
+import L4Factoidal.SPARQL.ConstructLabelTests
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.Diagnostics
 import L4Factoidal.Syntax.Locality
@@ -105,9 +106,14 @@ import L4Factoidal.Syntax.NQuadsLenient
 import L4Factoidal.Syntax.NQuadsLenientTheorems
 import L4Factoidal.Syntax.LexShift
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.Syntax.FileIri
+import L4Factoidal.Syntax.BlankNodeLabel
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.TurtleFuelTheorems
 import L4Factoidal.Syntax.TurtleStatementScanTheorems
+import L4Factoidal.Syntax.TurtleStatementScanTests
+import L4Factoidal.Syntax.TurtleChunkFoldTests
+import L4Factoidal.Syntax.Utf8StreamTests
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TurtleLenient
@@ -463,6 +469,7 @@ import L4Factoidal.RDF.Format
 import L4Factoidal.SPARQL.JsonEscape
 import L4Factoidal.SPARQL.EvalLimits
 import L4Factoidal.SPARQL.TimeBudget
+import L4Factoidal.SPARQL.Now
 import L4Factoidal.OWL.DirectMappingFilter
 import L4Factoidal.RDFS.RDFSPlus
 import L4Factoidal.RDF.Pretty

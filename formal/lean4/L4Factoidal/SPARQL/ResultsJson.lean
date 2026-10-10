@@ -171,7 +171,12 @@ after the recursive call, so it takes one stack frame per row and copies the
 rest of the document once per row (`rowJson r ++ "," ++ rest`). In the wasm
 module under Node's default stack a SELECT of about 11,000 rows ran out of
 stack here ("Maximum call stack size exceeded";
-https://github.com/danbri/factoidal/issues/713 stage 5). This form appends
+https://github.com/danbri/factoidal/issues/713 stage 5). The same copy made
+`l4factoidal query` with `SELECT *` quadratic: 0.42, 1.84 and 9.79 s of CPU
+time over 1,250, 2,500 and 5,000 paragraphs of `gene.ttl`, 61 percent of the
+instructions under `rowsJoined` (https://github.com/danbri/factoidal/issues/729,
+found independently with a second accumulator form, which the merge of the
+two branches dropped in favour of this one). This form appends
 each row to one accumulator, in one frame. The `csimp` theorem below makes
 the compiler emit it for every call of `rowsJoined`, which stays the
 specification `ResultsTheorems.lean` reasons about. -/

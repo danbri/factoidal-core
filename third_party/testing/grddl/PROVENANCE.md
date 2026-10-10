@@ -189,3 +189,90 @@ were removed.
   outputs predate. Other namespace and profile documents outside the two
   suite trees (the RDF and SVG namespaces, `http://www.example.org/...`)
   are not vendored either; the runner names them per case.
+
+## 2026-10-10: language content negotiation (`langconneg2`, `langconneg3`)
+
+Issue: <https://github.com/danbri/factoidal/issues/668>. `td/conneg.html`
+is a resource the W3C server negotiates over language. The test cases
+`langconneg1` (English), `langconneg2` (German) and `langconneg3` (both,
+merged) read different representations of the same IRI. The 2026-07-09
+copy held only the English one. The German one is added; the licence is
+the W3C Document Licence and the W3C Software and Document Notice and
+Licence (links above), as for the rest of this tree.
+
+### Document added (retrieved 2026-10-10)
+
+Fetched once with
+`curl -sS -H 'Accept-Language: de' -D headers -o conneg.html.de https://www.w3.org/2001/sw/grddl-wg/td/conneg.html`
+through the session proxy.
+
+| Field | Value |
+|---|---|
+| Requested IRI | <https://www.w3.org/2001/sw/grddl-wg/td/conneg.html> |
+| Request header | `Accept-Language: de` |
+| Response status | 200 |
+| `Content-Location` | `conneg.html.de` |
+| `Content-Language` | `de` |
+| `Content-Type` | `text/html; charset=utf-8` |
+| `Vary` | `negotiate,accept-language,Accept-Encoding` |
+| `TCN` | `choice` (RFC 2295 transparent content negotiation) |
+| `Last-Modified` | Fri, 13 Apr 2007 11:59:03 GMT |
+| Size | 1207 bytes |
+| SHA-256 | `ce6080bc4eb1fe00db09f6a56fb24d84fcbbea86638de1dd3fa776cf61ca3be4` |
+| Stored as | `docroot/td/conneg.html.de` (the `Content-Location` name), byte-identical to the response body |
+
+The `Set-Cookie` header of the response is not recorded. The body is
+well-formed XML (checked with `xmllint --noout`); its title is "Hast Du
+Erfahrung? ".
+
+### English representation: compared, not replaced
+
+The same request with `Accept-Language: en`, and with no
+`Accept-Language`, answers 200 with `Content-Location: conneg.html.en`,
+`Content-Language: en`, `Last-Modified` Fri, 13 Apr 2007 11:59:03 GMT, and
+a body of 1143 bytes with SHA-256
+`e286708d2b15acaaa4d028fd39838c74cfb264c2eeea6eb9f64b1c8f166ad0ba`. This is
+byte-identical to the vendored `docroot/td/conneg.html`, which stays as it
+is. It is the English variant and the server's default variant.
+
+### How the server chooses (measured 2026-10-10)
+
+Requests to the same IRI with other `Accept-Language` values:
+
+| `Accept-Language` | `Content-Location` of the answer |
+|---|---|
+| (none) | `conneg.html.en` |
+| `en` | `conneg.html.en` |
+| `*` | `conneg.html.en` |
+| `fr` | `conneg.html.en` |
+| `de;q=0, en;q=0` | `conneg.html.en` |
+| `de` | `conneg.html.de` |
+| `de-AT` | `conneg.html.de` |
+| `fr;q=1.0, de;q=0.5` | `conneg.html.de` |
+
+A range that matches no variant receives the English variant (a default
+answer, which RFC 9110 section 12.5.4 allows, instead of 406).
+
+### Recorded as data: `docroot/variants.tsv`
+
+`docroot/variants.tsv` lists the representations of the negotiated
+resource: IRI, `Content-Language`, file under `docroot/`. The first row of
+a resource is the server's default variant. The runner (`l4grddl`) reads it
+the way it reads `docroot/redirects.tsv`: the agent's language range is
+matched by RFC 4647 section 3.4 (Lookup), and a range with no match gets the
+default variant. The retrieval URI of the answer is the requested IRI (RFC
+3986 section 5.1.3); the `Content-Location` of the variant is not used as a
+base, and the suite's relative references (`glean_title.xsl`) resolve the
+same from either.
+
+### The scheme difference that remains
+
+Both variants carry `<link rel="alternate"
+href="https://musicbrainz.org/...">` (https). `glean_title.xsl` takes the
+subject of its result from that link. The expected outputs
+(`conneg-en.rdf`, `conneg-de.rdf`, `conneg-output`) use
+`http://musicbrainz.org/...`. After this addition `langconneg2` and
+`langconneg3` produce the expected graphs except for that scheme, the same
+post-2007 W3C edit as the cases in
+<https://github.com/danbri/factoidal/issues/730>. The vendored
+representations are not edited.

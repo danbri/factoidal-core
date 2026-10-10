@@ -200,7 +200,7 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_lib l4wasm where
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
-             `Wasm.ExtHost, `Wasm.Ops.ExtFns,
+             `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
              `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
@@ -281,6 +281,14 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4factoidal» where
   srcDir := "."
   root := `Wasm.Cli
+
+-- `l4query-phases` — the phases of `l4factoidal query` (read, parse,
+-- normalize, index, eval, output), each followed by the resident memory of
+-- the process, with `--stop-after PHASE` (Harness/QueryPhases.lean,
+-- https://github.com/danbri/factoidal/issues/729).
+@[default_target] lean_exe «l4query-phases» where
+  srcDir := "."
+  root := `Harness.QueryPhases
 
 -- Native executable for the first RDF block MVP. It exercises the total
 -- `Storage.BlockMvp.scan` path over a small in-memory graph; it does not claim

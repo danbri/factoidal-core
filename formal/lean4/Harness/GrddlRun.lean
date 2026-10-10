@@ -14,7 +14,10 @@ triples are not part of what a GRDDL result means.
 
 The suite's documents live under two URL trees which
 `third_party/testing/grddl/docroot/` mirrors; `docroot/redirects.tsv`
-records the five redirections the base-URI tests depend on.
+records the five redirections the base-URI tests depend on, and
+`docroot/variants.tsv` records the one resource the W3C server
+negotiates over language (`td/conneg.html`, English and German), which
+the language cases `langconneg1` to `langconneg3` read.
 `iriToLocal` maps an absolute suite IRI to a file there. A document
 inside those trees that is not mirrored makes the case UNAVAILABLE with
 the IRI named. Documents outside them (the XHTML, RDF and SVG namespace
@@ -198,12 +201,141 @@ def followRedirects (redirects : List (String × String)) : Nat → String → S
       | some (_, loc) => followRedirects redirects n loc
       | none => iri
 
+/-! ### Language content negotiation
+
+A resource the server negotiates has several representations. The
+docroot records them as data in `variants.tsv`: resource IRI,
+`Content-Language`, file. The agent sends one language range
+(`Accept-Language`, RFC 9110 section 12.5.4). The server's choice is
+reproduced as follows.
+
+  * The range is matched against the variants' languages by RFC 4647
+    section 3.4 (Lookup): the range itself, then the range with its last
+    subtag removed, and so on, a trailing single-character subtag
+    removed with it. `de-AT` therefore reaches `de`; the range `*` is
+    ignored by Lookup. Measured 2026-10-10 against www.w3.org: `de` and
+    `de-AT` receive the `de` variant.
+  * With no range, or a range that matches no variant, the server sends
+    its default variant, which is the FIRST row of the resource in
+    `variants.tsv` (measured: no header, `*`, `fr` and `de;q=0, en;q=0`
+    receive the `en` variant). RFC 9110 section 12.5.4 allows this: a
+    server may disregard `Accept-Language` instead of answering 406.
+
+The representation reports the IRI the agent requested (after any
+redirection) as `retrievedFrom`, the retrieval URI of RFC 3986 section
+5.1.3, not the `Content-Location` of the variant: the
+`Content-Location` names the variant, and the suite's documents
+resolve their relative references (`glean_title.xsl`) the same way
+from either. -/
+
+/-- One representation of a negotiated resource. -/
+structure Variant where
+  iri : String
+  language : String
+  /-- Path of the representation under the docroot. -/
+  file : String
+deriving Repr, BEq
+
+/-- Rows of `variants.tsv`: `iri TAB language TAB file`. -/
+def parseVariants (text : String) : List Variant :=
+  (text.splitOn "\n").filterMap (fun l =>
+    if l.startsWith "#" then none else
+    match l.splitOn "\t" with
+    | [iri, lang, file] =>
+        some { iri, language := lang.trimAscii.toString,
+               file := file.trimAscii.toString }
+    | _ => none)
+
+def readVariants (docroot : String) : IO (List Variant) := do
+  let path := docroot ++ "/variants.tsv"
+  if !(← System.FilePath.pathExists path) then return []
+  return parseVariants (← IO.FS.readFile path)
+
+/-- RFC 4647 section 3.4: the tags a range is tried as, longest first.
+A candidate whose last subtag is a single character is skipped, which is
+the "remove the single-character subtag together with the subtag before
+it" step; `*` is a single character, so Lookup never tries it. -/
+def languageCandidates (range : String) : List String :=
+  let subtags := range.toLower.splitOn "-"
+  ((List.range subtags.length).map (fun i => subtags.take (subtags.length - i))).filterMap
+    (fun prefixTags =>
+      match prefixTags.getLast? with
+      | some last => if last.length > 1 then some (String.intercalate "-" prefixTags) else none
+      | none => none)
+
+/-- The variants of the resource `iri`. Both schemes of a suite IRI name
+one resource (`iriToLocal`). -/
+def variantsOf (variants : List Variant) (iri : String) : List Variant :=
+  let here := iriToLocal "" iri
+  variants.filter (fun v => here.isSome && iriToLocal "" v.iri == here)
+
+/-- The variant a server sends for `range`; `none` when the resource has
+no variants. -/
+def chooseVariant (vs : List Variant) (range : Option String) : Option Variant :=
+  match vs with
+  | [] => none
+  | default :: _ =>
+      match range with
+      | none => some default
+      | some r =>
+          some (((languageCandidates r).findSome?
+                  (fun c => vs.find? (fun v => v.language.toLower == c))).getD default)
+
+/-! Pins for the selection, over the rows of `variants.tsv`. Each has a
+positive case and a case built so that a server which ignores the
+language, or matches it by string equality only, answers wrongly. -/
+
+def conneg : String := "http://www.w3.org/2001/sw/grddl-wg/td/conneg.html"
+
+def connegRows : List Variant :=
+  parseVariants
+    ("# a comment row\n" ++ conneg ++ "\ten\ttd/conneg.html\n" ++
+     conneg ++ "\tde\ttd/conneg.html.de\n" ++
+     "http://www.w3.org/2001/sw/grddl-wg/td/other\tfr\ttd/other.fr\n")
+
+-- Rows: comments skipped, columns read, nothing else invented.
+#guard connegRows.length == 3
+#guard (connegRows.map (·.language)) == ["en", "de", "fr"]
+#guard (parseVariants "only two\tcolumns\n").isEmpty
+-- RFC 4647 section 3.4: truncate from the end; `*` and the empty range are never tried.
+#guard languageCandidates "de-AT" == ["de-at", "de"]
+#guard languageCandidates "zh-Hant-CN-x-private1" == ["zh-hant-cn-x-private1", "zh-hant-cn", "zh-hant", "zh"]
+#guard languageCandidates "*" == []
+#guard languageCandidates "" == []
+-- The variants of a resource: its own rows only, under either scheme.
+#guard (variantsOf connegRows conneg).map (·.language) == ["en", "de"]
+#guard (variantsOf connegRows "https://www.w3.org/2001/sw/grddl-wg/td/conneg.html").map (·.language) == ["en", "de"]
+#guard (variantsOf connegRows "http://www.w3.org/2001/sw/grddl-wg/td/glean_title.xsl").isEmpty
+#guard (variantsOf connegRows "http://example.org/conneg.html").isEmpty
+-- Selection: the language asked for.
+#guard (chooseVariant (variantsOf connegRows conneg) (some "de")).map (·.file) == some "td/conneg.html.de"
+#guard (chooseVariant (variantsOf connegRows conneg) (some "en")).map (·.file) == some "td/conneg.html"
+#guard (chooseVariant (variantsOf connegRows conneg) (some "DE")).map (·.file) == some "td/conneg.html.de"
+#guard (chooseVariant (variantsOf connegRows conneg) (some "de-AT")).map (·.file) == some "td/conneg.html.de"
+-- Selection: no range, or no match, receives the first row (the server's default).
+#guard (chooseVariant (variantsOf connegRows conneg) none).map (·.file) == some "td/conneg.html"
+#guard (chooseVariant (variantsOf connegRows conneg) (some "fr")).map (·.file) == some "td/conneg.html"
+#guard (chooseVariant (variantsOf connegRows conneg) (some "*")).map (·.file) == some "td/conneg.html"
+-- Negative: "d" is not a prefix match for "de", and a resource without rows has no variant.
+#guard (chooseVariant (variantsOf connegRows conneg) (some "d")).map (·.file) == some "td/conneg.html"
+#guard (chooseVariant (variantsOf connegRows "http://example.org/x") (some "de")) == none
+
+/-- Answer a retrieval request from the vendored files, as an agent whose
+language range is `range` would be answered. -/
 def vendoredFetch (docroot : String) (redirects : List (String × String))
+    (variants : List Variant) (range : Option String)
     (iri0 : String) : IO (Option Representation) := do
   let iri := followRedirects redirects 5 (stripFragment iri0)
-  match ← readIri docroot iri with
-  | some text => return some { retrievedFrom := iri, text }
-  | none      => return none
+  match chooseVariant (variantsOf variants iri) range with
+  | some v =>
+      let path := docroot ++ "/" ++ v.file
+      if ← System.FilePath.pathExists path then
+        return some { retrievedFrom := iri, text := ← IO.FS.readFile path }
+      else return none
+  | none =>
+      match ← readIri docroot iri with
+      | some text => return some { retrievedFrom := iri, text }
+      | none      => return none
 
 /-- Is this IRI inside the two trees the docroot mirrors? A document
     outside them (the XHTML, RDF and SVG namespace documents,
@@ -212,12 +344,90 @@ def vendoredFetch (docroot : String) (redirects : List (String × String))
 def inSuiteTrees (iri : String) : Bool :=
   (iriToLocal "" iri).isSome
 
-def runTest (docroot : String) (redirects : List (String × String)) (t : GTest) :
+/-! ## The agent's language
+
+The manifest does not say which language a case's agent asks for; the
+GRDDL Test Cases document does, in the text of the three language
+cases (section "Testing for Multiple Representations", and the entries
+for the cases themselves):
+
+  * `langconneg1`, "Content Negotiation with GRDDL (1 of 2)": "This
+    result follows from retrieving a English version of the HTML
+    representation".
+  * `langconneg2`, "(2 of 2)": "This result follows from retrieving a
+    German version of the HTML representation".
+  * `langconneg3`, "(3 of 3)": "A GRDDL aware agent may retrieve both
+    representations, for example, by using transparent content
+    negotiation. This GRDDL result is the merge of the previous two."
+
+Every other case runs with the language `en`: the server's default, so
+for a resource without variants the choice changes nothing. -/
+
+inductive AgentLanguage where
+  /-- The agent sends this one language range. -/
+  | prefers (range : String)
+  /-- The agent retrieves every variant of the input resource and
+      merges their GRDDL results (GRDDL section 2). -/
+  | everyVariant
+
+/-- The manifest fragment of a test IRI: `langconneg2` for
+`.../grddl-tests#langconneg2`. -/
+def shortName (subject : String) : String :=
+  match (subject.splitOn "#").getLast? with
+  | some s => s
+  | none   => subject
+
+/-- The language of the agent that runs the case `short` (the manifest
+fragment). -/
+def agentLanguage (short : String) : AgentLanguage :=
+  match short with
+  | "langconneg2" => .prefers "de"
+  | "langconneg3" => .everyVariant
+  | _             => .prefers "en"
+
+/-- The GRDDL result of an agent that retrieved several representations
+of one resource: the merge of the graphs, blank nodes renamed apart
+(`mergeApart`, as `glean` merges several transformations' outputs), and
+the reports of all of them together. -/
+def combineGleaned (g0 : Gleaned) (rest : List Gleaned) : Gleaned :=
+  if rest.isEmpty then g0 else
+  let all := g0 :: rest
+  { graph := mergeApart (all.map (·.graph) |>.filter (!·.isEmpty))
+    transformations := (all.flatMap (·.transformations)).eraseDups
+    base := g0.base
+    isRdfXml := all.any (·.isRdfXml)
+    unretrieved := (all.flatMap (·.unretrieved)).eraseDups
+    notXml := (all.flatMap (·.notXml)).eraseDups
+    refusals := (all.flatMap (·.refusals)).eraseDups
+    converged := all.all (·.converged) }
+
+/-- The GRDDL result for an agent with language `lang`. -/
+def gleanAs (docroot : String) (redirects : List (String × String))
+    (variants : List Variant) (lang : AgentLanguage) (iri : String) :
+    IO (Except String Gleaned) := do
+  let ranges : List (Option String) := match lang with
+    | .prefers r => [some r]
+    | .everyVariant =>
+        match (variantsOf variants (followRedirects redirects 5 (stripFragment iri))).map
+                (·.language) with
+        | []   => [none]
+        | langs => langs.map some
+  let mut results : List Gleaned := []
+  for range in ranges do
+    match ← glean (vendoredFetch docroot redirects variants range) iri with
+    | .error why => return .error why
+    | .ok g      => results := results ++ [g]
+  match results with
+  | []          => return .error s!"{iri}: no representation retrieved"
+  | g0 :: rest  => return .ok (combineGleaned g0 rest)
+
+def runTest (docroot : String) (redirects : List (String × String))
+    (variants : List Variant) (t : GTest) :
     IO Verdict := do
   match t.input, t.output with
   | none, _ | _, none => return .fail "the manifest entry names no input or output document"
   | some inIri, some outIri =>
-    match ← glean (vendoredFetch docroot redirects) inIri with
+    match ← gleanAs docroot redirects variants (agentLanguage (shortName t.subject)) inIri with
     | .error why =>
         if (iriToLocal docroot inIri).isNone ||
            (why.splitOn "not retrieved").length > 1 then return .unavailable inIri
@@ -358,17 +568,16 @@ def main (args : List String) : IO UInt32 := do
   | .ok mg =>
     let tests := testsOf mg
     let redirects ← readRedirects docroot
+    let variants ← readVariants docroot
     let mut verdicts : List (GTest × Verdict) := []
     for gt in tests do
-      verdicts := verdicts ++ [(gt, ← runTest docroot redirects gt)]
+      verdicts := verdicts ++ [(gt, ← runTest docroot redirects variants gt)]
     let passed := verdicts.filterMap (fun (gt, v) =>
       match v with | .pass => some gt.subject | _ => none)
     let overrides ← loadLocalOverrides "grddl"
     let mut t : Tally := {}
     for (gt, v) in verdicts do
-      let short := match (gt.subject.splitOn "#").getLast? with
-        | some s => s
-        | none   => gt.subject
+      let short := shortName gt.subject
       if overrides.contains short then
         match v with
         | .pass =>

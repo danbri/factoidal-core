@@ -303,6 +303,18 @@ is part of the label, exactly as in the F*; `isLabeledBnodeId` below
 uses that to tell a generated label from a user-written one. -/
 def freshBnodeId (ts : TStream) : String := "_:bnode_" ++ toString ts.length
 
+/-- The name of the blank node `[ … ]` or `[]` makes, where `ts` starts at the
+`[`: `freshBnodeId` of the stream after the `[`. SPARQL 1.1 §4.1.4: each `[ ]`
+and each collection cell is a new blank node. A collection cell takes
+`freshBnodeId` of the position where its element starts (`pCollection`), which
+is the position of the `[` when the element is `[ … ]`, so the `[` must not
+use that position too. The token after `[` is `]` or a verb, which never
+starts a collection element or another `[`, so no other generated name uses
+its position. (The F* `SPARQL11.Parser.fst` uses the `[` position, and gives
+the cell and the element one name; found 2026-10-10 by the CONSTRUCT label
+guards of https://github.com/danbri/factoidal/issues/742.) -/
+def bracketBnodeId (ts : TStream) : String := freshBnodeId (advTok ts)
+
 /-- `is_labeled_bnode_id`: true for a label the QUERY wrote, false for
 one this parser generated for `[]` or a collection. -/
 def isLabeledBnodeId (b : String) : Bool := !("_:bnode_".isPrefixOf b)
@@ -1962,8 +1974,12 @@ def pObjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
       .ok ((pt, .empty), ts1)
     | .a => .ok ((.iri rdfTypeIri, .empty), advTok ts)
     | .lbracket =>
-      -- [99] BlankNodePropertyList / [138] ANON.
-      let bid := freshBnodeId ts
+      -- [99] BlankNodePropertyList / [138] ANON. The name comes from the
+      -- token AFTER `[` (`bracketBnodeId`), never from the `[` itself: a
+      -- collection names its cell from the position where the element
+      -- starts (`pCollection`), so `( [ … ] )` gave the cell and the element
+      -- one name, and so one node.
+      let bid := bracketBnodeId ts
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty), advTok ts1)
@@ -2350,7 +2366,7 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
        | none    => pErr "unresolved prefix" ts)
     | .bnode b => .ok ((.bnode b, .empty, false), advTok ts)
     | .lbracket =>
-      let bid := freshBnodeId ts
+      let bid := bracketBnodeId ts
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty, false), advTok ts1)

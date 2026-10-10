@@ -19,6 +19,13 @@
   `SPARQL.rowsJoined`, `RDF.Canonical.collapseKeyedQQuads`, `dedupAdj`);
   each now compiles to an accumulator form proved equal to it. The Results
   JSON writer had also copied the rest of the document once per row.
+- `NOW()` is bound ([issue 743](https://github.com/danbri/factoidal/issues/743)).
+  Through `query()`, `update()`, dataset handles, the entailment path,
+  `queryHdt()` and the store queries, SPARQL `NOW()` answered an error and left
+  its variable unbound (W3C `functions/now01.rq` answered `false`). The engine
+  now reads the system clock once per query or update and gives every `NOW()` of
+  that execution the same `xsd:dateTime` value in UTC (SPARQL 1.1 §17.4.5.1).
+  The wasm modules grow by about 82 KB (full) and 89 KB (core).
 - `Dataset` (`./rdfjs`) adds and looks up a quad in constant time. It
   scanned every quad it held, so `parse()` of 12,000 quads spent 3.1 s
   building the result; it now takes 0.35 s.

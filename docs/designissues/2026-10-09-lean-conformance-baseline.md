@@ -368,3 +368,60 @@ them: "moving some tests from rdf12 to rdf11", "remove all "control" tests",
 manifest went from 47 `mf:name` entries to 29. Check:
 `git -C third_party/testing/w3c diff --stat 35c503a6 ec2ba15 -- rdf/rdf12/rdf-semantics`
 (30 files changed, 2058 lines deleted).
+
+## GRDDL, re-measured 2026-10-10 (language content negotiation)
+
+The GRDDL rows above (19 pass, 22 fail, 27 other, out of 68) are the
+2026-10-09 record. Current `l4grddl` (`lake build l4grddl`, run from the
+repository root): 47 pass, 2 fail (out of 49 decided); 0 no transformation;
+5 unavailable; 0 refused; 3 related test passed; 11 local override (out of
+68). Issue: https://github.com/danbri/factoidal/issues/668.
+
+What changed for the language cases. `td/conneg.html` is a resource that the
+W3C server negotiates over language. The test cases `langconneg1`,
+`langconneg2` and `langconneg3` need different representations of it
+(GRDDL Test Cases, "Content Negotiation with GRDDL": English; German; "may
+retrieve both representations ... This GRDDL result is the merge of the
+previous two"). Before: only the English one was vendored, so `langconneg2`
+produced the English title and `langconneg3` produced one of its two
+triples (2 fail). Now:
+
+- The German representation is vendored as `docroot/td/conneg.html.de`. The
+  English representation from the server is byte-identical to the vendored
+  `docroot/td/conneg.html`. Provenance: `third_party/testing/grddl/PROVENANCE.md`.
+- `docroot/variants.tsv` records the representations as data (resource IRI,
+  `Content-Language`, file). The first row is the server's default variant.
+- `Harness/GrddlRun.lean` gives `GRDDL.Agent.glean` a retrieval function
+  that takes the agent's language range. It chooses by RFC 4647 section 3.4
+  (Lookup) and, with no match, answers the default variant (RFC 9110 section
+  12.5.4 allows this). The server behaves the same way (measured 2026-10-10,
+  table in PROVENANCE.md). `GRDDL/Agent.lean` is unchanged: retrieval is a
+  parameter, and `GRDDL/AgentTests.lean` now pins that.
+- The language of each case is a table in `Harness/GrddlRun.lean`, because
+  the manifest does not carry it: `langconneg2` asks for `de`; `langconneg3`
+  retrieves every variant and merges the results (GRDDL section 2, blank
+  nodes renamed apart); every other case asks for `en`.
+
+Cause of each remaining failure. Both produce the expected graph except
+for the scheme of the subject. `glean_title.xsl` takes the subject from the
+`<link rel="alternate">` of the document. Both representations carry
+`https://musicbrainz.org/...`; the expected files use `http://musicbrainz.org/...`.
+The produced graphs (`GRDDL_DEBUG=conneg.html`):
+
+| Case | Produced | Expected |
+|---|---|---|
+| `langconneg2` | `<https://musicbrainz.org/mm-2.1/album/6b050dcf-7ab1-456d-9e1b-c3c41c18eed2> dc:title "Hast Du Erfahrung? "` | the same triple with `http://musicbrainz.org/...` |
+| `langconneg3` | the same subject (https) with `dc:title "Are You Experienced?"` and `dc:title "Hast Du Erfahrung? "` | the same two triples with `http://musicbrainz.org/...` |
+
+The runner counts both in "of those failures, 2 differ ONLY by the
+http/https scheme" (before: 0). This is the same post-2007 edit of a W3C
+document as the 7 cases of https://github.com/danbri/factoidal/issues/730.
+`langconneg1` is one of those 7 already (a local override). Whether
+`langconneg2` and `langconneg3` join them is a decision for the owner; they
+are not overridden, and the vendored representations are not edited.
+
+The other buckets are unchanged: the 5 unavailable cases need server-side
+stylesheets (`*.sxsl?...`, `layering-namespace?`, `layering-profile?`) that
+now answer 303 to a W3C login; the 3 related-test cases pass by
+`g:alternative` or `g:subsumes` (counted apart); the 11 local overrides are
+the 7 edited networked inputs and the 4 `loopx` cases of issue 730.

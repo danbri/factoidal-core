@@ -1,0 +1,13 @@
+# Resources the W3C server negotiates over language, recorded 2026-10-10
+# with `curl -sS -D headers -H 'Accept-Language: <tag>' <IRI>` (see
+# PROVENANCE.md, "Language content negotiation").
+# Columns: resource IRI, Content-Language of the variant, the variant's
+# file under this directory.
+# The first row of a resource is the variant the server sends when the
+# request names no language or none that matches (measured: no header,
+# `*`, `fr` and `de;q=0, en;q=0` all received the `en` variant).
+# The runner reads the agent's language range against these rows by
+# RFC 4647 section 3.4 (Lookup), then follows RFC 9110 section 12.5.4:
+# with no match the server sends its default variant, not an error.
+http://www.w3.org/2001/sw/grddl-wg/td/conneg.html	en	td/conneg.html
+http://www.w3.org/2001/sw/grddl-wg/td/conneg.html	de	td/conneg.html.de

@@ -537,6 +537,38 @@ table:
 `docs/designissues/2026-10-10-lean-vs-fstar-differential.md`
 (https://github.com/danbri/factoidal/issues/718).
 
+Correction, 2026-10-10 (iron rule 14). The same day the coordinator reported
+on issue 718 that the Lean answer was the W3C expected answer on all 24
+`l4diff` items. That was true for the Lean LIBRARY only. `l4diff` (default
+mode) and `l4w3c` run `parseSparql` with the query file's IRI as base and
+compare the evaluated rows or graph in memory; neither runs `l4factoidal`, so
+neither can see a defect of the Lean command line's own code: reading the
+query file and its base IRI, the ops path (`Wasm/Ops/Query.lean`), and the
+printed answer. Six of the 24 items were also Lean command-line defects:
+https://github.com/danbri/factoidal/issues/741 (no base IRI for the query
+text) and https://github.com/danbri/factoidal/issues/742 (CONSTRUCT labels
+with `:`). Cost: the known-defect cases for 739 and 740 had to use other
+oracles, and two Lean issues were opened after the "no Lean change was
+necessary" report. Rules:
+
+- Name the surface a verdict covers: library (`l4w3c`, `l4diff`), command
+  line (`l4factoidal`, `l4diff --lean-cli PATH`), or wasm/npm. Do not carry a
+  verdict to a surface that was not run.
+- `l4diff --lean-cli PATH` runs the Lean side through `l4factoidal query`
+  with the query FILE the F\* side gets and compares the PRINTED answer. Run
+  it next to the default mode. On 2026-10-10 (manifest-all, F\* build
+  f7aa1a33b94f): default 234 agree, 18 disagree, 0 tie-order, 6 fstar-error,
+  0 lean-error, 392 skipped (out of 650); `--lean-cli` with the fixed
+  command line 233 agree, 19 disagree, 0 tie-order, 6 fstar-error,
+  0 lean-error, 392 skipped (out of 650); with the released command line from
+  before the fixes, 6 of those items are `lean-error` (items 19 to 24). The
+  19th disagreement is `NOW()`, a third command-line defect
+  (https://github.com/danbri/factoidal/issues/743); after the repair (the IO
+  entries read the clock once per execution) `--lean-cli` gives 234 agree,
+  18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of
+  650), the same as the default mode, and `l4diff --verbose` prints
+  `AGREE NOW()`.
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a
@@ -557,6 +589,10 @@ record. Conventions, by test kind:
 - **`l4xmlconf`** (`tests/xml-local/xml-local.xml`): an `XFAIL="<issue URL>"`
   attribute on a `TEST`; the `xml-local` line prints the `expected-fail` count
   and the run fails if such a case passes.
+- **`formal/lean4/Wasm/cli-smoke.sh`**: `verdict LABEL ISSUE OK`. With ISSUE
+  set, a failed check prints `xfail LABEL (<issue URL>)`, and a check that
+  holds FAILS the run as an XPASS; the score line is "N pass, M fail, K xfail
+  (out of T)". Flip the case by setting ISSUE to "" in the fixing commit.
 - **`#guard`**: cannot express an expected failure; use the probe bucket or
   a Node case instead, and say so beside the header prose.
 - **F\* runners**: the `tests/local-overrides/` reason string carries the

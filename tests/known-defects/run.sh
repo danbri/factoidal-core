@@ -32,7 +32,6 @@ BIN="${FACTOIDAL_BIN:-${ROOT}/bin/linux-x86_64/factoidal}"
 # `factoidal` (tools/fetch-builds.sh --set native).
 OWL_BIN="${OWL_RUNNER_BIN:-$(dirname "$BIN")/owl_runner}"
 L4_BIN="${L4FACTOIDAL_BIN:-$(dirname "$BIN")/l4factoidal}"
-L4W3C_BIN="${L4W3C_BIN:-$(dirname "$BIN")/l4w3c}"
 FIXTURES="${ROOT}/tests/known-defects/fixtures"
 JSON_OUT="${ROOT}/docs/test-results/by-suite/known-defects.json"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/factoidal-known-defects-XXXXXX")"
@@ -397,7 +396,7 @@ fi
 
 # ---------------------------------------------------------------------
 # F* command-line SPARQL defects found by the Lean vs F* differential
-# (issues 736, 738, 739, 740; opened 2026-10-10; record:
+# (issues 736, 738, 739, 740, 747; opened 2026-10-10; record:
 # docs/designissues/2026-10-10-lean-vs-fstar-differential.md). Every query
 # and expected-result file is a real W3C test file from
 # third_party/testing/w3c.
@@ -414,12 +413,14 @@ fi
 #   XFAIL  the F* answer contains the recorded wrong row, and the expected
 #          result does not
 #
-# Two cases cannot use the Lean CLI as the oracle, because the Lean CLI has
-# the same defect. 739: `l4factoidal query` also parses the query with no base
-# IRI, so the Lean answer comes from `l4w3c`, which passes the query file's
-# IRI as base. 740: `l4factoidal query` prints the same invalid blank node
-# labels, so the expectation is the W3C N-Triples syntax (checked with the
-# Lean N-Triples parser and two controls). Both are explained at the cases.
+# The cases 739 and 740 also use the Lean CLI as the oracle. Until 2026-10-10
+# they used `l4w3c` and the Lean N-Triples parser instead, because the Lean CLI
+# had the same two defects (https://github.com/danbri/factoidal/issues/741 and
+# https://github.com/danbri/factoidal/issues/742, fixed in the Lean tree on
+# 2026-10-10). A Lean CLI built before those fixes makes these two cases ERROR,
+# which is the ERROR-on-wrong-Lean rule; run with L4FACTOIDAL_BIN set to a
+# newer build (formal/lean4/.lake/build/bin/l4factoidal) until a release built
+# from the fix is fetched.
 # ---------------------------------------------------------------------
 W3C_SPARQL="${ROOT}/third_party/testing/w3c/sparql/sparql11"
 W3C_NT="${ROOT}/third_party/testing/w3c/rdf/rdf11/rdf-n-triples"
@@ -430,8 +431,6 @@ XSD_BOOL="http://www.w3.org/2001/XMLSchema#boolean"
 SPARQL_PROBE_ERR=""
 if [ ! -x "$L4_BIN" ]; then
   SPARQL_PROBE_ERR="no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
-elif [ ! -x "$L4W3C_BIN" ]; then
-  SPARQL_PROBE_ERR="no l4w3c at ${L4W3C_BIN} (tools/fetch-builds.sh --set native)"
 elif ! command -v python3 > /dev/null 2>&1; then
   SPARQL_PROBE_ERR="no python3 (sparql_rows.py reads the result sets)"
 elif [ ! -r "${W3C_SPARQL}/manifest-all.ttl" ] || [ ! -r "${W3C_NT}/manifest.ttl" ]; then
@@ -552,36 +551,80 @@ fi
 # in a query is a parse error. SPARQL 1.1 4.1.1.2 resolves it against the base
 # IRI (RFC 3986 5.1.3: the retrieval IRI of the query document). The five W3C
 # tests of the issue, one entry per test:
-#   MANIFEST-DIR | QUERY | DATA | F* OUTPUT | NAME l4w3c prints for the test
-# Oracle: `l4w3c` on the W3C manifest must print PASS for the test. The Lean
-# CLI is not the oracle: `l4factoidal query` also gives "invalid IRI" for these
-# queries (Wasm/Cli.lean queryCmd passes no base), so it has the same defect.
-# The case is XFAIL while at least one F* query still gives "invalid IRI", and
-# the detail names each query.
+#   DIR | QUERY | qt:data (or -) | qt:graphData files | F* -d FILE | F* -o | EXPECTED
+# Oracle: the Lean CLI (`l4factoidal query --query FILE`, which takes the base
+# of the query from the file's IRI) on the test's dataset must give the W3C
+# expected result; otherwise the case is an ERROR. The CLI reads one dataset,
+# so the qt:data and qt:graphData files are written as one N-Quads file, each
+# qt:graphData graph named by its file's IRI, as the manifest names it. The
+# expected result is compared by kind: an .srx by its rows (sparql_rows.py), a
+# Turtle result set (rs:ResultSet) by the rows the Lean CLI reads out of it, a
+# graph by its RDFC-1.0 canonical N-Quads. The case is XFAIL while at least one
+# F* query still gives "invalid IRI", and the detail names each query.
+fileiri () { printf 'file://%s' "$(realpath "$1")"; }
+# nq_of FILE [GRAPH]: FILE (Turtle, base = its IRI) as N-Quads lines.
+nq_of () {
+  timeout 60 "$L4_BIN" parse "$1" --format turtle --base "$(fileiri "$1")" --out nquads < /dev/null |
+    if [ -n "${2:-}" ]; then sed -e '/^$/d' -e "s| \.\$| <$2> .|"; else sed '/^$/d'; fi
+}
+# rs_rows TTL VARS...: the rows of a Turtle rs:ResultSet whose solutions bind
+# every variable in VARS, as SPARQL Results JSON, read by the Lean CLI.
+rs_rows () {
+  local ttl="$1" sel="" pat="" i=0; shift
+  for v in "$@"; do
+    i=$((i+1)); sel="${sel} ?${v}"
+    pat="${pat} ?sol rs:binding ?b${i} . ?b${i} rs:variable \"${v}\" ; rs:value ?${v} ."
+  done
+  timeout 60 "$L4_BIN" query "$ttl" --format turtle --base "$(fileiri "$ttl")" \
+    --query-string "PREFIX rs: <http://www.w3.org/2001/sw/DataAccess/tests/result-set#> SELECT${sel} WHERE { ?set rs:solution ?sol .${pat} }" < /dev/null
+}
 S739_TITLE="F* parses a query with no base IRI (relative IRI is an error)"
 if [ -n "$SPARQL_PROBE_ERR" ]; then
   record SPARQL-739-QUERY-BASE 739 "$S739_TITLE" ERROR "$SPARQL_PROBE_ERR"
 else
   agg_reset
   for entry in \
-    "bindings|graph.rq|data01.ttl|json|VALUES inside GRAPH binding the same variable as the graph name" \
-    "construct|constructwhere04.rq|data.ttl|ntriples|constructwhere04 - CONSTRUCT WHERE" \
-    "exists|exists03.rq|exists01.ttl|json|Exists within graph pattern" \
-    "property-path|path-ng-01.rq|ng-01.ttl|json|(pp34) Named Graph 1" \
-    "property-path|path-ng-02.rq|ng-01.ttl|json|(pp35) Named Graph 2"
+    "bindings|graph.rq|empty.ttl|data01.ttl data02.ttl|data01.ttl|json|graph.ttl" \
+    "construct|constructwhere04.rq|-|data.ttl|data.ttl|ntriples|constructwhere04result.ttl" \
+    "exists|exists03.rq|exists01.ttl|exists02.ttl|exists01.ttl|json|exists03.srx" \
+    "property-path|path-ng-01.rq|-|ng-01.ttl ng-02.ttl ng-03.ttl|ng-01.ttl|json|path-ng-01.srx" \
+    "property-path|path-ng-02.rq|-|ng-01.ttl ng-02.ttl ng-03.ttl|ng-01.ttl|json|path-ng-01.srx"
   do
-    IFS='|' read -r qdir qfile qdata qout qname <<< "$entry"
-    l4w3c_out="${WORKDIR}/l4w3c-${qdir}.out"
-    [ -f "$l4w3c_out" ] || timeout 300 "$L4W3C_BIN" "${W3C_SPARQL}/${qdir}/manifest.ttl" \
-        < /dev/null > "$l4w3c_out" 2> /dev/null
-    fout=$(timeout 60 "$BIN" query --data "${W3C_SPARQL}/${qdir}/${qdata}" \
-             --query "${W3C_SPARQL}/${qdir}/${qfile}" -o "$qout" < /dev/null 2>&1); frc=$?
-    if ! grep -Fxq -- "PASS ${qname}" "$l4w3c_out"; then
+    IFS='|' read -r qdir qfile qdefault qnamed qdata qout qexpected <<< "$entry"
+    dir="${W3C_SPARQL}/${qdir}"; d="${WORKDIR}/q739-${qfile%.rq}"; mkdir -p "$d"
+    : > "$d/dataset.nq"
+    [ "$qdefault" = "-" ] || nq_of "${dir}/${qdefault}" >> "$d/dataset.nq"
+    for g in $qnamed; do nq_of "${dir}/${g}" "$(fileiri "${dir}/${g}")" >> "$d/dataset.nq"; done
+    timeout 120 "$L4_BIN" query "$d/dataset.nq" --format nquads --query "${dir}/${qfile}" \
+        < /dev/null > "$d/lean.out" 2> "$d/lean.err"; lrc=$?
+    lean_ok=0
+    if [ "$lrc" -eq 0 ]; then
+      case "$qexpected" in
+        *.srx)
+          python3 -I "$ROWS_PY" < "${dir}/${qexpected}" > "$d/want.rows" 2> /dev/null \
+            && python3 -I "$ROWS_PY" < "$d/lean.out" > "$d/got.rows" 2> /dev/null \
+            && [ -s "$d/want.rows" ] && cmp -s "$d/got.rows" "$d/want.rows" && lean_ok=1 ;;
+        graph.ttl)
+          rs_rows "${dir}/${qexpected}" g t > "$d/want.json" 2> /dev/null \
+            && python3 -I "$ROWS_PY" < "$d/want.json" > "$d/want.rows" 2> /dev/null \
+            && python3 -I "$ROWS_PY" < "$d/lean.out" > "$d/got.rows" 2> /dev/null \
+            && [ -s "$d/want.rows" ] && cmp -s "$d/got.rows" "$d/want.rows" && lean_ok=1 ;;
+        *)
+          timeout 60 "$L4_BIN" canonicalize "${dir}/${qexpected}" --format turtle \
+              --base "$(fileiri "${dir}/${qexpected}")" < /dev/null > "$d/want.nq" 2> /dev/null \
+            && timeout 60 "$L4_BIN" canonicalize "$d/lean.out" --format ntriples \
+              < /dev/null > "$d/got.nq" 2> /dev/null \
+            && [ -s "$d/want.nq" ] && cmp -s "$d/got.nq" "$d/want.nq" && lean_ok=1 ;;
+      esac
+    fi
+    fout=$(timeout 60 "$BIN" query --data "${dir}/${qdata}" \
+             --query "${dir}/${qfile}" -o "$qout" < /dev/null 2>&1); frc=$?
+    if [ "$lean_ok" -ne 1 ]; then
       SEL_STATE=ERROR
-      SEL_DETAIL="l4w3c does not print PASS for '${qname}'; the expectation is unconfirmed"
+      SEL_DETAIL="the Lean CLI (exit ${lrc}) did not give the W3C expected result ${qexpected}; the expectation is unconfirmed: $(tr "\n" " " < "$d/lean.err" | cut -c1-80)"
     elif printf '%s\n' "$fout" | grep -q '^SPARQL parse error: invalid IRI'; then
       SEL_STATE=XFAIL
-      SEL_DETAIL="F* says invalid IRI; l4w3c passes it"
+      SEL_DETAIL="F* says invalid IRI; the Lean CLI gives the expected result"
     elif [ "$frc" -eq 0 ] && [ -n "$fout" ] && ! printf '%s\n' "$fout" | grep -qi 'parse error'; then
       SEL_STATE=XPASS
       SEL_DETAIL="F* now parses it"
@@ -591,7 +634,7 @@ else
     fi
     agg_add "$qfile"
   done
-  agg_record SPARQL-739-QUERY-BASE 739 "$S739_TITLE" "F* says invalid IRI, l4w3c passes (W3C queries)"
+  agg_record SPARQL-739-QUERY-BASE 739 "$S739_TITLE" "F* says invalid IRI, the Lean CLI gives the W3C result"
 fi
 
 # 740: the F* SPARQL parser names a blank node made for collection syntax
@@ -601,14 +644,15 @@ fi
 # rdf-n-triples nt-syntax-bad-bnode-02 is "Colon in bnode label not allowed".
 # Query: construct/constructlist.rq (CONSTRUCT { (?s ?o) :prop ?p }).
 # The checker is the Lean N-Triples parser (`l4factoidal parse --format
-# ntriples`, which passes nt-syntax-bad-bnode-01 and -02 in l4w3c). The Lean
-# CLI is NOT an oracle for the output: `l4factoidal query` prints the same
-# invalid labels for this query (the Lean SPARQL parser makes the same names),
-# and l4w3c passes the test only because it compares graphs in memory. Two
-# controls keep the checker honest; failing either makes the case an ERROR:
+# ntriples`, which passes nt-syntax-bad-bnode-01 and -02 in l4w3c). The oracle
+# is the Lean CLI: `l4factoidal query` on the same files must print N-Triples
+# that the checker reads, with the RDFC-1.0 canonical form of the W3C expected
+# graph constructlistresult.ttl (so the graphs are isomorphic). Three controls;
+# failing any makes the case an ERROR:
 #   1. the F* output with the colon in each label replaced by an underscore
 #      parses, with the same number of triples as the F* output has lines;
-#   2. the W3C file nt-syntax-bad-bnode-02.nt is rejected.
+#   2. the W3C file nt-syntax-bad-bnode-02.nt is rejected;
+#   3. the Lean CLI output is the expected graph (the oracle).
 S740_TITLE="F* CONSTRUCT prints blank node labels that are not N-Triples"
 if [ -n "$SPARQL_PROBE_ERR" ]; then
   record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR "$SPARQL_PROBE_ERR"
@@ -617,6 +661,11 @@ else
   CL="${W3C_SPARQL}/construct"
   timeout 60 "$BIN" query --data "${CL}/data.ttl" --query "${CL}/constructlist.rq" -o ntriples \
       < /dev/null > "$d/fstar.nt" 2> "$d/fstar.err"; frc=$?
+  timeout 60 "$L4_BIN" query "${CL}/data.ttl" --format turtle --query "${CL}/constructlist.rq" \
+      < /dev/null > "$d/lean.nt" 2> "$d/lean.err"; lrc=$?
+  timeout 60 "$L4_BIN" canonicalize "$d/lean.nt" --format ntriples < /dev/null > "$d/lean.c14n" 2> /dev/null; lcrc=$?
+  timeout 60 "$L4_BIN" canonicalize "${CL}/constructlistresult.ttl" --format turtle \
+      --base "$(fileiri "${CL}/constructlistresult.ttl")" < /dev/null > "$d/want.c14n" 2> /dev/null; wcrc=$?
   sed 's/__:bnode_/__bnode_/g' "$d/fstar.nt" > "$d/control-ok.nt"
   nlines=$(grep -c . "$d/fstar.nt")
   ok_count=$(timeout 60 "$L4_BIN" parse "$d/control-ok.nt" --format ntriples < /dev/null 2> /dev/null)
@@ -624,7 +673,11 @@ else
   timeout 60 "$L4_BIN" parse "${W3C_NT}/nt-syntax-bad-bnode-02.nt" --format ntriples \
       < /dev/null > /dev/null 2> /dev/null; bad_rc=$?
   timeout 60 "$L4_BIN" parse "$d/fstar.nt" --format ntriples < /dev/null > /dev/null 2> "$d/lean-parse.err"; out_rc=$?
-  if [ "$frc" -ne 0 ] || [ "$nlines" -eq 0 ]; then
+  if [ "$lrc" -ne 0 ] || [ "$lcrc" -ne 0 ] || [ "$wcrc" -ne 0 ] || [ ! -s "$d/want.c14n" ] \
+     || ! cmp -s "$d/lean.c14n" "$d/want.c14n"; then
+    record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
+      "control 3 failed: the Lean CLI output (exit ${lrc}, canonicalize exit ${lcrc}) is not the W3C expected graph constructlistresult.ttl; the expectation is unconfirmed: $(head -n 1 "$d/lean.err")"
+  elif [ "$frc" -ne 0 ] || [ "$nlines" -eq 0 ]; then
     record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
       "F* run gave exit ${frc} and ${nlines} lines: $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
   elif [ "$ok_rc" -ne 0 ] || [ "$ok_count" != "$nlines" ]; then
@@ -638,10 +691,65 @@ else
       "F* output now parses as N-Triples (${nlines} lines) -- defect appears FIXED"
   elif grep -q '_:[A-Za-z0-9_]*:' "$d/fstar.nt"; then
     record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" XFAIL \
-      "F* output has a colon in a blank node label and is rejected: $(head -n 1 "$d/lean-parse.err")"
+      "F* output has a colon in a blank node label and is rejected: $(head -n 1 "$d/lean-parse.err"); the Lean CLI output is the expected graph"
   else
     record SPARQL-740-CONSTRUCT-BNODE 740 "$S740_TITLE" ERROR \
       "F* output is rejected but has no colon in a label (answer drifted): $(head -n 1 "$d/lean-parse.err")"
+  fi
+fi
+
+# 747: the F* SPARQL parser gives a [ ] node that is an item of a collection
+# the same blank node as the collection cell that holds it, so the cell is its
+# own rdf:first (SPARQL 1.1 4.1.4). Query: the W3C file
+# sparql10/syntax-sparql1/syntax-forms-01.rq,
+#   SELECT * WHERE { ( [ ?x ?y ] ) :p ( [ ?pa ?b ] 57 ) }
+# Data: fixtures/sparql-747-collection-bnode.ttl, the 9-triple graph of that
+# shape. Expected: one row, EXPECT747 below. Controls; failing any makes the
+# case an ERROR:
+#   1. both command lines read the data as 9 triples (so the defect is in the
+#      query, not the data);
+#   2. the Lean CLI answers exactly the expected row (the oracle; the Lean
+#      parser had the same defect until 2026-10-10, issue 742).
+# XFAIL: F* answers no row. XPASS: F* answers the expected row.
+S747_TITLE="F* gives [ ] in a collection the cell's blank node"
+EXPECT747="?b=<http://example.org/ns#b1> ?pa=<http://example.org/ns#pa1> ?x=<http://example.org/ns#x1> ?y=<http://example.org/ns#y1>"
+if [ -n "$SPARQL_PROBE_ERR" ]; then
+  record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR "$SPARQL_PROBE_ERR"
+else
+  d="${WORKDIR}/q747"; mkdir -p "$d"
+  data747="${ROOT}/tests/known-defects/fixtures/sparql-747-collection-bnode.ttl"
+  q747="${ROOT}/third_party/testing/w3c/sparql/sparql10/syntax-sparql1/syntax-forms-01.rq"
+  printf '%s\n' "$EXPECT747" > "$d/expected.rows"
+  fcount=$(timeout 60 "$BIN" count "$data747" < /dev/null 2> /dev/null | sed -n 's/.*: \([0-9]*\) triples$/\1/p')
+  lcount=$(timeout 60 "$L4_BIN" parse "$data747" --format turtle < /dev/null 2> /dev/null | tail -n 1)
+  frc=0; lrc=0
+  timeout 120 "$BIN" query --data "$data747" --query "$q747" -o json \
+      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err" || frc=$?
+  timeout 120 "$L4_BIN" query "$data747" --format turtle --query "$q747" \
+      < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
+  if [ ! -r "$q747" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR "no W3C query file ${q747#"$ROOT"/}"
+  elif [ "$fcount" != "9" ] || [ "$lcount" != "9" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "data control: F* reads ${fcount:-?} triples, Lean ${lcount:-?}; expected 9 each"
+  elif [ "$lrc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr" \
+     || ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "Lean oracle (exit ${lrc}) did not answer exactly the expected row; the expectation is unconfirmed"
+  elif [ "$frc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XPASS \
+      "F* now answers the expected row -- defect appears FIXED"
+  elif [ ! -s "$d/fstar.rows" ]; then
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" XFAIL \
+      "F* answers no row for syntax-forms-01.rq on a graph of its shape; the Lean CLI answers the expected row"
+  else
+    record SPARQL-747-COLLECTION-BNODE 747 "$S747_TITLE" ERROR \
+      "F* answers rows that are neither none nor the expected row (answer drifted): $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
   fi
 fi
 

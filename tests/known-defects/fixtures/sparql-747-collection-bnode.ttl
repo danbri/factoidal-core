@@ -1,0 +1,9 @@
+# Data for known-defects case SPARQL-747-COLLECTION-BNODE
+# (https://github.com/danbri/factoidal/issues/747). The query is the W3C file
+# sparql10/syntax-sparql1/syntax-forms-01.rq:
+#   SELECT * WHERE { ( [ ?x ?y ] ) :p ( [ ?pa ?b ] 57 ) }
+# This graph has that shape: each collection cell and the [ ] node in it are
+# different blank nodes (SPARQL 1.1 4.1.4, Turtle 1.1 2.8). 9 triples.
+# The one solution: ?x=:x1 ?y=:y1 ?pa=:pa1 ?b=:b1.
+@prefix : <http://example.org/ns#> .
+( [ :x1 :y1 ] ) :p ( [ :pa1 :b1 ] 57 ) .

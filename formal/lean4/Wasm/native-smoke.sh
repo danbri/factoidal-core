@@ -270,6 +270,68 @@ args "$TMP/update.json" "$DATA" \
 check "updateDataset" updateDataset "$TMP/update.json" \
   'r["ok"] is True and "<http://e/x>" in r["nquads"] and "<http://e/a>" in r["nquads"]'
 
+# --- NOW() (https://github.com/danbri/factoidal/issues/743) ------------
+# SPARQL 1.1 section 17.4.5.1: NOW() is one xsd:dateTime for the whole query
+# execution. The pure ops take it as an argument; every IO op reads the system
+# clock once and passes it. `l4wasm-cli call` serves the IO table, as the wasm
+# shim does. NOWOK holds a Python predicate: the lexical form is a UTC
+# xsd:dateTime within 300 seconds of the system clock, so a constant, a fixed
+# test clock, or an unbound NOW() all fail.
+NOWOK='(lambda v: v.endswith("Z") and abs((__import__("datetime").datetime.now(__import__("datetime").timezone.utc) - __import__("datetime").datetime.strptime(v[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=__import__("datetime").timezone.utc)).total_seconds()) < 300)'
+XSDDT='http://www.w3.org/2001/XMLSchema#dateTime'
+DATA3='<http://e/a> <http://e/p> <http://e/b> .
+<http://e/a> <http://e/p> <http://e/c> .
+<http://e/a> <http://e/p> <http://e/d> .
+'
+# W3C functions/now01.rq
+args "$TMP/now-ask.json" "$DATA" \
+  'ASK { BIND(NOW() AS ?n) FILTER(DATATYPE(?n) = <http://www.w3.org/2001/XMLSchema#dateTime>) }'
+check "queryDataset NOW() is an xsd:dateTime (W3C functions/now01.rq) -> true" queryDataset "$TMP/now-ask.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+args "$TMP/now-select.json" "$DATA3" 'SELECT ?o ?n WHERE { ?s ?p ?o BIND(NOW() AS ?n) }'
+check "queryDataset NOW() is the system clock, one value for every row" queryDataset "$TMP/now-select.json" \
+  'r["ok"] is True and len(r["srj"]["results"]["bindings"]) == 3
+   and len({b["n"]["value"] for b in r["srj"]["results"]["bindings"]}) == 1
+   and r["srj"]["results"]["bindings"][0]["n"]["datatype"] == "'"$XSDDT"'"
+   and '"$NOWOK"'(r["srj"]["results"]["bindings"][0]["n"]["value"])'
+args "$TMP/now-select12.json" "$DATA3" 'SELECT ?n WHERE { BIND(NOW() AS ?n) }'
+check "queryDataset12 NOW() is the system clock" queryDataset12 "$TMP/now-select12.json" \
+  'r["ok"] is True and '"$NOWOK"'(r["srj"]["results"]["bindings"][0]["n"]["value"])'
+args "$TMP/now-update.json" "$DATA" \
+  'INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }'
+check "updateDataset INSERT ... WHERE BIND(NOW()) inserts the system clock" updateDataset "$TMP/now-update.json" \
+  'r["ok"] is True and '"$NOWOK"'(__import__("re").search(r"<http://e/at> \"([^\"]*)\"\^\^<'"$XSDDT"'>", r["nquads"]).group(1))'
+args "$TMP/now-raw.json" "$DATA3" 'SELECT ?n WHERE { BIND(NOW() AS ?n) }' \
+  '{"dataFormat":"ntriples","output":"csv"}'
+check "queryRaw NOW() is the system clock" queryRaw "$TMP/now-raw.json" \
+  'r["ok"] is True and '"$NOWOK"'(r["text"].split("\r\n")[1])'
+python3 - "$TMP/now-handles.json" <<'EOF'
+import json, sys
+TTL = '@prefix ex: <http://e/> . ex:a ex:p ex:b .'
+NOWQ = "SELECT ?n WHERE { BIND(NOW() AS ?n) }"
+seq = [
+  ["datasetOpen",    [TTL, "turtle", ""]],
+  ["datasetQuery",   ["h1", NOWQ]],
+  ["datasetQuery12", ["h1", NOWQ]],
+  ["datasetUpdate",  ["h1", "INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }"]],
+  ["datasetQuery",   ["h1", "SELECT ?v WHERE { <http://e/a> <http://e/at> ?v }"]],
+  ["datasetClose",   ["h1"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "dataset handle NOW(): datasetQuery, datasetQuery12 and datasetUpdate read the clock" "$TMP/now-handles.json" \
+  'rs[1]["ok"] is True and '"$NOWOK"'(rs[1]["srj"]["results"]["bindings"][0]["n"]["value"])
+   and rs[2]["ok"] is True and '"$NOWOK"'(rs[2]["srj"]["results"]["bindings"][0]["n"]["value"])
+   and rs[3]["ok"] is True and rs[3]["count"] == 2
+   and rs[4]["ok"] is True and rs[4]["srj"]["results"]["bindings"][0]["v"]["datatype"] == "'"$XSDDT"'"
+   and '"$NOWOK"'(rs[4]["srj"]["results"]["bindings"][0]["v"]["value"])'
+# Negative: a different call is a different instant, not a stored one. Two
+# queries in two executions need not agree; the one-execution rule is checked
+# above (three rows, one value). Here the unknown handle still answers its error.
+args "$TMP/now-unknown.json" "h999" 'SELECT ?n WHERE { BIND(NOW() AS ?n) }'
+check "datasetQuery NOW() on an unknown handle -> error, no clock value" datasetQuery "$TMP/now-unknown.json" \
+  'r["ok"] is False and "srj" not in r'
+
 # --- Stateless block-worker family ----------------------------------
 # Generate the fixture with the same Lean publisher used by native stores;
 # the test therefore crosses the dispatch boundary with a real current-format
@@ -535,6 +597,34 @@ hexargs "$TMP/store-query-hex.json" "$TMP/store-ibk3/manifest.sbm2" \
 check "storeQuery hexadecimal diagnostic path answers the same rows" storeQuery "$TMP/store-query-hex.json" \
   'r["ok"] is True and r["kind"] == "select" and r["shards"] == 1
    and len(r["srj"]["results"]["bindings"]) == 2'
+
+# NOW() through the IO store entries (https://github.com/danbri/factoidal/issues/743):
+# `storeQuery` (served by `storeQueryIO` on the IO table, the one `call` reaches)
+# and `storeHandleQuery` read the clock once per query.
+hexargs "$TMP/store-query-now.json" "$TMP/store-ibk3/manifest.sbm2" \
+  'SELECT ?s ?o ?n WHERE { ?s <http://e/p> ?o BIND(NOW() AS ?n) }' "$TMP/store-ibk3" predicate-0.ibk3
+check "storeQuery NOW() is the system clock, one value for every row" storeQuery "$TMP/store-query-now.json" \
+  'r["ok"] is True and len(r["srj"]["results"]["bindings"]) == 2
+   and len({b["n"]["value"] for b in r["srj"]["results"]["bindings"]}) == 1
+   and '"$NOWOK"'(r["srj"]["results"]["bindings"][0]["n"]["value"])'
+python3 - "$TMP/store-handle-now.json" "$TMP/store-ibk3/manifest.sbm2" "$TMP/store-ibk3" <<'EOF'
+import json, pathlib, sys
+out, manifest, directory = sys.argv[1:4]
+manifest_hex = pathlib.Path(manifest).read_bytes().hex()
+payload = json.dumps([{"key": key,
+                       "bytes": (pathlib.Path(directory) / key).read_bytes().hex()}
+                      for key in ["predicate-0.ibk3"]])
+seq = [
+  ["storeOpen",        [manifest_hex, payload]],
+  ["storeHandleQuery", ["s1", "SELECT ?s ?o ?n WHERE { ?s <http://e/p> ?o BIND(NOW() AS ?n) }"]],
+  ["storeHandleClose", ["s1"]],
+]
+json.dump(seq, open(out, "w"))
+EOF
+checkseq "storeHandleQuery NOW() is the system clock, one value for every row" "$TMP/store-handle-now.json" \
+  'rs[1]["ok"] is True and len(rs[1]["srj"]["results"]["bindings"]) == 2
+   and len({b["n"]["value"] for b in rs[1]["srj"]["results"]["bindings"]}) == 1
+   and '"$NOWOK"'(rs[1]["srj"]["results"]["bindings"][0]["n"]["value"])'
 
 # A window that runs past the end of the region the call carried is an
 # ordinary refusal, not a memory fault: Lean never receives a host pointer.
@@ -2581,6 +2671,14 @@ corecheck "core: parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json"
 args "$TMP/core-q.json" "<http://e/a> <http://e/p> \"v\" ." "SELECT ?o WHERE { ?s ?p ?o }"
 corecheck "core: queryDataset SELECT" queryDataset "$TMP/core-q.json" \
   'r["ok"] is True and "\"v\"" in json.dumps(r)'
+# NOW() in the core table (https://github.com/danbri/factoidal/issues/743): the
+# IO forms of queryDataset, updateDataset and queryRaw read the clock.
+corecheck "core: queryDataset NOW() is the system clock" queryDataset "$TMP/now-select12.json" \
+  'r["ok"] is True and '"$NOWOK"'(r["srj"]["results"]["bindings"][0]["n"]["value"])'
+corecheck "core: updateDataset INSERT ... WHERE BIND(NOW()) inserts the system clock" updateDataset "$TMP/now-update.json" \
+  'r["ok"] is True and '"$NOWOK"'(__import__("re").search(r"<http://e/at> \"([^\"]*)\"\^\^<'"$XSDDT"'>", r["nquads"]).group(1))'
+corecheck "core: queryRaw NOW() is the system clock" queryRaw "$TMP/now-raw.json" \
+  'r["ok"] is True and '"$NOWOK"'(r["text"].split("\r\n")[1])'
 args "$TMP/core-x.json" "<a/>" "/a"
 corecheck "core: a full-only op is refused naming the full engine" xpathEval "$TMP/core-x.json" \
   'r["ok"] is False and r["servedBy"] == "full" and "l4factoidal.wasm" in r["error"]'

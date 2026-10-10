@@ -83,4 +83,109 @@ therefore deferred past the comment's dots too. -/
 #guard allSplitsMatch "PREFIX ex: <http://example.org/>\nex:s ex:p ex:o . # ends with a dot.\nex:s ex:q ex:o .\n"
 #guard allSplitsMatch "PREFIX ex: <http://example.org/>\nex:s ex:p ex:o ; # mid-statement comment.\n  ex:q ex:o .\n"
 
+/-! ## `parseTurtleText` against `parseTurtle` (https://github.com/danbri/factoidal/issues/729)
+
+`parseTurtleText` is what `l4factoidal` and the wasm `parse` ops read Turtle
+with. Each guard compares the whole result, error message and offset
+included. `walkMatches` checks the scanner walk ALONE (no fallback) on a
+document `parseTurtle` accepts, so the guards cannot pass by falling back to
+`parseTurtle` everywhere. -/
+
+def sameParse : Except ParseError Graph → Except ParseError Graph → Bool
+  | .ok a, .ok b => a == b
+  | .error a, .error b => a == b
+  | _, _ => false
+
+def textMatches (source : String) (mode : Mode := .rdf11) (base : Option String := none) : Bool :=
+  sameParse (parseTurtleText source base mode) (parseTurtle source base mode)
+
+/-- The walk alone gives `parseTurtle`'s graph, and that graph is not an error. -/
+def walkMatches (source : String) (mode : Mode := .rdf11) (base : Option String := none) : Bool :=
+  match parseTurtleWalk source base mode, parseTurtle source base mode with
+  | .ok a, .ok b => a == b
+  | _, _ => false
+
+/-- The walk fails where `parseTurtle` succeeds: `parseTurtleText` needs its fallback. -/
+def walkNeedsFallback (source : String) (mode : Mode := .rdf11) : Bool :=
+  match parseTurtleWalk source none mode, parseTurtle source none mode with
+  | .error _, .ok _ => true
+  | _, _ => false
+
+private def acceptedSources : List String := [
+  basic, lexical, dotted,
+  "# leading comment\nPREFIX ex: <http://example.org/>\nex:s ex:p ex:o .\n",
+  "PREFIX ex: <http://example.org/>\n# note\nPREFIX ex2: <http://example.org/2/>\nex:s ex:p ex2:o .\n",
+  "# PREFIX not: <http://nope/>\nPREFIX ex: <http://example.org/>\nex:s ex:p ex:o .\n",
+  "PREFIX ex: <http://example.org/>\nex:s ex:p ex:o . # trailing\nBASE <http://base.example/>\n<rel> ex:p ex:o .\n",
+  "PREFIX ex: <http://example.org/>\nex:s ex:p \"\"\"line one\nPREFIX fake: <http://x/>\nline three\"\"\" .\n",
+  "PREFIX ex: <http://example.org/>\nex:s ex:p <http://example.org/doc#PREFIX> .\n",
+  "<http://example.org/s> <http://example.org/p> <http://example.org/o> .\nPREFIX ex: <http://example.org/>",
+  "PREFIX ex: <http://example.org/> ex:s ex:p ex:o .\n",
+  "# c\r\nPREFIX ex: <http://example.org/>\r\nex:s ex:p ex:o .\r\n",
+  "PREFIX ex: <http://example.org/>\nex:s ex:p ex:o ; # mid-statement comment.\n  ex:q ex:o .\n",
+  -- blank nodes, property lists, collections; a document label that is a
+  -- prefix of the generated ones
+  "@prefix ex: <http://example.org/> .\n_:anon_x ex:p [ ex:q ( 1 2.5 -3e2 ) ; ex:r [] ] .\n[] ex:p _:b1 .\n",
+  -- literals: decimals, a dot after an integer, language tags, datatypes,
+  -- long strings holding dots, quotes and line breaks
+  "@prefix ex: <http://example.org/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\nex:s ex:p 1.5, 2 , \"x\"@en-GB, \"7\"^^xsd:int, '''a. \"b\".\nc''', \"q\\\". \" .\n",
+  -- an integer directly before the statement's dot
+  "@prefix ex: <http://example.org/> .\nex:s ex:p 2.\nex:s ex:q 3.0 .\n",
+  -- no final line break; a final dot with no whitespace after it
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .# end",
+  -- empty and comment-only documents
+  "", "  \n\t\n", "# only a comment",
+  -- relative IRIs against a changing base
+  "BASE <http://a.example/x/>\n<s> <p> <o> .\n@base <../y/> .\n<s> <p> <#o> .\n",
+  -- prefixed names with dots inside
+  "@prefix ex: <http://example.org/> .\nex:a.b ex:p.q ex:c.d .\nex:e ex:f ex:g.\n" ]
+
+#guard acceptedSources.all (fun s => walkMatches s)
+#guard acceptedSources.all (fun s => textMatches s)
+#guard acceptedSources.all (fun s => walkMatches s .rdf12)
+#guard textMatches "<s> <p> <o> .\n" .rdf11 (some "http://base.example/dir/")
+#guard walkMatches "<s> <p> <o> .\n" .rdf11 (some "http://base.example/dir/")
+
+-- Documents `parseTurtle` refuses: `parseTurtleText` reports the same error,
+-- message and offset (`parseTurtleText_error` proves it for every error).
+private def refusedSources : List String := [
+  "ex:s ex:p ex:o .\n",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o\n",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p \"open .\n",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o . ex:t ex:p .\n",
+  "@prefix ex: <http://example.org/> .\nex:s ex:p [ ex:q ex:o . ] .\n",
+  "PREFIX ex:\n",
+  -- `2.` ends the statement, so the `,` after it starts nothing
+  "@prefix ex: <http://example.org/> .\nex:s ex:p 1.5, 2., ex:o .\n" ]
+#guard refusedSources.all (fun s => textMatches s)
+#guard refusedSources.all (fun s => match parseTurtle s with | .error _ => true | .ok _ => false)
+
+-- Documents the walk alone refuses where `parseTurtle` succeeds: a
+-- SPARQL-style directive split over two lines, and a statement whose subject
+-- starts with `base:` and goes on to the next line (the scanner cuts both at
+-- the line end). `parseTurtleText` falls back and agrees.
+private def splitDirective : String := "PREFIX ex:\n  <http://example.org/>\nex:s ex:p ex:o .\n"
+private def baseLike : String := "@prefix base: <http://b.example/> .\nbase:s base:p\n  base:o .\n"
+#guard walkNeedsFallback splitDirective
+#guard walkNeedsFallback baseLike
+#guard textMatches splitDirective
+#guard textMatches baseLike
+
+-- RDF 1.2 triple terms: `hasDoubleLt` sends the document to `parseTurtle`.
+private def tripleTerm : String :=
+  "@prefix ex: <http://example.org/> .\nex:s ex:p <<( ex:a ex:b \"x>y. z\" )>> .\n<< ex:a ex:b ex:c >> ex:q ex:o .\n"
+#guard hasDoubleLt tripleTerm
+#guard !hasDoubleLt "@prefix ex: <http://example.org/> .\nex:s ex:p \"a < b\" , <http://x/> .\n"
+#guard !hasDoubleLt "< <"
+#guard hasDoubleLt "x<<"
+#guard textMatches tripleTerm .rdf12
+#guard (match parseTurtle tripleTerm none .rdf12 with | .ok g => g.length == 3 | .error _ => false)
+
+-- The generated blank-node prefix read from the `String` is the one read from
+-- its characters (`freshBnodePrefixText_eq`): one more underscore than the
+-- longest run in the document.
+#guard freshBnodePrefixText "_:a__b" == "anon___"
+#guard freshBnodePrefixText "" == "anon_"
+
 end L4Factoidal.Syntax

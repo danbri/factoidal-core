@@ -774,7 +774,11 @@ handle answers the whole plan or it answers nothing. -/
 def storeHandleQuery (h sparql : String) : IO String := do
   -- The caller-registered extension functions (SPARQL 1.1 section 17.6),
   -- read ONCE per query so the evaluator stays a function of its inputs.
+  -- The clock is read once too: `NOW()` is the instant of this query
+  -- (SPARQL 1.1 section 17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
   let extIris ← extSnapshot
+  let now ← nowDateTime
   match (← storeHandleTable.get)[h]? with
   | none => pure (unknownStoreHandle h)
   | some store =>
@@ -809,14 +813,17 @@ def storeHandleQuery (h sparql : String) : IO String := do
              else none) with
       | some quads =>
           let ds := datasetOfQuads quads
-          pure (queryParsedDatasetWith ds (backendOfRetained true ds) sparql extra extIris)
+          pure (queryParsedDatasetWith ds (backendOfRetained true ds) sparql extra extIris
+                  [] .v11 none (some now))
       | none =>
         if planKeys.length == store.artifacts.length then
-          pure (queryParsedDatasetWith store.ds store.backend sparql extra extIris)
+          pure (queryParsedDatasetWith store.ds store.backend sparql extra extIris
+                  [] .v11 none (some now))
         else
           let quads := store.codec != .ibk3
           let ds := datasetOfRetained quads planned
-          pure (queryParsedDatasetWith ds (backendOfRetained quads ds) sparql extra extIris)
+          pure (queryParsedDatasetWith ds (backendOfRetained quads ds) sparql extra extIris
+                  [] .v11 none (some now))
     match outcome with
     | .error e => pure (errJson e)
     | .ok envelope => pure envelope
