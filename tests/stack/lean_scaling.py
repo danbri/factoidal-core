@@ -35,6 +35,15 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    (https://github.com/danbri/factoidal/issues/724; 5.7 and 3.7
                    times before the command line stopped re-parsing N-Quads
                    text, 1.6 and 1.0 after)
+  query-memory     peak resident memory of `query` COUNT(*) per input byte, from
+                   x to 4x paragraphs of gene.ttl: at most 32 bytes
+                   (https://github.com/danbri/factoidal/issues/729; 36.6 before
+                   the Turtle reader stopped building the whole document as a
+                   character list, 27 after)
+  query-memory-fstar  the same slope against 3 times the F* engine's (2.0 bytes
+                   per input byte on the same files): at most 6 bytes. Expected
+                   failure naming issue 729 until the index and the solution
+                   sequence stop growing with the data
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -91,6 +100,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
+    "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -252,6 +262,47 @@ def parse_ratio_row(rid, runs):
                 f"{q['rss_kb'] / max(r['rss_kb'], 1):.1f}; bound {PARSE_RATIO})")
 
 
+# Rows that bound the peak resident memory of a verb PER INPUT BYTE
+# (https://github.com/danbri/factoidal/issues/729). The measure is the slope
+#
+#     (peak RSS at 4x - peak RSS at x) / (input bytes at 4x - input bytes at x)
+#
+# so the fixed memory of a started process (about 12 MB) does not enter it,
+# and a ratio to the input is not read as a trend (the error recorded in
+# docs/designissues/2026-09-05-shard-pack-profile-and-memory.md section 3).
+# Peak RSS does not move with load, so one run per size is enough.
+#
+# query-memory: 32 bytes. The whole document as a Lean `List Char` costs 34
+# bytes of peak RSS per input byte on its own (`l4query-phases --stop-after
+# chars`), so any path that builds it again fails the row. Measured 36.6
+# before the repair (parseTurtle's `text.toList`), 27 after
+# (`Syntax.parseTurtleText`), 10,000 to 40,000 paragraphs.
+# query-memory-fstar: 6 bytes, 3 times the F* engine's slope on the same
+# files (2.0: 16 MB at 10,000 and 42 MB at 160,000 paragraphs). This is the
+# survey's memory rule (section 2 of the design record) as a gate row.
+MEMORY_ROWS = {
+    "query-memory": (10000, "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }", 32.0),
+    "query-memory-fstar": (10000, "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }", 6.0),
+}
+
+
+def memory_row(rid):
+    x, sparql, bound = MEMORY_ROWS[rid]
+    pts = []
+    for n in (x, 4 * x):
+        p = bl.gene_slice(n)
+        t = bl.run_once([str(BIN), "query", str(p), "--format", "turtle",
+                         "--query-string", sparql], CAP)
+        if t["status"] != "ok":
+            return False, f"n={n}: exit status {t['status']}"
+        pts.append((n, p.stat().st_size, t["rss_kb"]))
+    (n1, b1, r1), (n4, b4, r4) = pts
+    slope = (r4 - r1) * 1024 / max(b4 - b1, 1)
+    ok = slope <= bound
+    return ok, (f"n={n1} {r1 / 1024:.0f} MB ({b1} bytes) -> n={n4} {r4 / 1024:.0f} MB "
+                f"({b4} bytes): {slope:.1f} bytes of peak RSS per input byte (bound {bound})")
+
+
 def startup_row():
     """Minimum CPU time (user + system) of `l4factoidal version`."""
     best = None
@@ -276,6 +327,8 @@ def main() -> int:
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
         [] if names else list(PARSE_RATIO_ROWS))
+    memory_rows = [r for r in names if r in MEMORY_ROWS] or (
+        [] if names else list(MEMORY_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -308,6 +361,20 @@ def main() -> int:
     for rid in ratio_rows:
         issue = XFAIL.get(rid)
         ok, detail = parse_ratio_row(rid, args.runs)
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in memory_rows:
+        issue = XFAIL.get(rid)
+        ok, detail = memory_row(rid)
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")

@@ -88,7 +88,12 @@ def main (args : List String) : IO UInt32 := do
       | .ok nds =>
         report "normalize" (L4Wasm.Ops.datasetQuadCount nds)
         if stop == "normalize" then return 0
+        -- `--no-index` (diagnostic): the reference evaluator, no backend.
         let dsb := indexedDatasetBackend nds
+        if rest.contains "--no-index" then
+          let out := L4Wasm.Ops.queryParsedDatasetWith nds none sparql
+          report "eval-no-index" out.utf8ByteSize
+          return 0
         report "index" (match dsb.default with
           | .indexed ix => ix.all.size
           | _ => 0)
