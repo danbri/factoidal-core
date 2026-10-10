@@ -126,7 +126,12 @@ def serve (env : EvalEnv) (store : Dataset) (serviceIri : String)
       | some cls =>
         let q := withProtocolDataset cls q
         let env := { env with base := q.base.orElse (fun _ => some serviceIri) }
-        (store, { status := 200, payload := evalQuery env store q })
+        -- Federated Query §2.3: a failed SERVICE call without SILENT
+        -- stops the query; Protocol §2.1.7 answers a query the service
+        -- fails to execute with 500.
+        match q.serviceFailure env store with
+        | some f => (store, { status := 500, message := s!"query failed: {f.message}" })
+        | none => (store, { status := 200, payload := evalQuery env store q })
   | .update text usingDefault usingNamed =>
     match parseSparqlUpdate text (some serviceIri) with
     | .error e => (store, { status := 400, message := s!"update parse error: {e.msg} (offset {e.pos})" })
@@ -190,6 +195,14 @@ private def askOf (r : Dataset × Response) : Option Bool :=
   let (s1, _) := serve {} Dataset.empty "http://e/sparql/" "POST" "/sparql/" ""
     "application/sparql-update" "INSERT DATA { <http://example.org/s> <http://example.org/p> <t> }"
   s1.default == [⟨.iri iriS, iriP, .iri ⟨"http://e/sparql/t", rfl⟩⟩]
+-- §2.1.7 ("500 if the service fails to execute the query") with Federated
+-- Query §2.3: a SERVICE call without SILENT to an
+-- endpoint the service cannot reach fails the query, a 500; with SILENT
+-- the query answers (https://github.com/danbri/factoidal/issues/717).
+#guard (serve {} storeG1 "http://e/sparql" "POST" "/sparql" "" "application/sparql-query"
+  "ASK { SERVICE <http://example.org/nowhere> { ?s ?p ?o } }").2.status == 500
+#guard askOf (serve {} storeG1 "http://e/sparql" "POST" "/sparql" "" "application/sparql-query"
+  "ASK { SERVICE SILENT <http://example.org/nowhere> { ?s ?p ?o } }") == some true
 -- §2.2.4: an update that cannot be executed is a 500.
 #guard (serve {} Dataset.empty "http://e/sparql" "POST" "/sparql" ""
   "application/sparql-update" "CLEAR GRAPH <http://example.org/absent>").2.status == 500

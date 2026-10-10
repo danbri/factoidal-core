@@ -502,6 +502,12 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   -- install the query's dataset in the environment themselves.
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   let ordered := q.modifier.orderBy.isSome
+  -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
+  -- query fail, and a QueryEvaluationTest names a result, so the test
+  -- fails with the library's error (`Query.serviceFailure`).
+  match q.serviceFailure env ds with
+  | some f => return .ofOutcome (.fail s!"query failed: {f.message}")
+  | none =>
   match q.form, expected with
   | .select _, .rows erows csv =>
       let arows := if owlRegime then

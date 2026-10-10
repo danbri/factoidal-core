@@ -627,15 +627,19 @@ theorem length_evalValues (vars : List VarName) (rows : List (List (Option Term)
 
 /-- SERVICE SILENT against an unreachable endpoint yields the empty
 solution mapping, so a surrounding join keeps its rows (Federated
-Query §2). -/
+Query §2.3, §3.2 Ω0). -/
 @[simp] theorem evalIn_service_silent_miss (ds : Dataset) (active : Graph)
-    (p : GraphPattern) :
-    (GraphPattern.service none true p).evalIn ds active = [Binding.empty] := rfl
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none true p).evalIn ds active = [Binding.empty] := rfl
 
-/-- Without SILENT the same miss yields no rows. -/
+/-- Without SILENT the same miss gives no rows from `evalIn`. The query
+does not answer these rows: §3.2 makes the invocation an error, which
+`GraphPattern.serviceFailure` reports
+(`GraphPattern.serviceFailure_service_miss`) and every query evaluator
+answers in their place (`Query.serviceFailure`). -/
 @[simp] theorem evalIn_service_miss (ds : Dataset) (active : Graph)
-    (p : GraphPattern) :
-    (GraphPattern.service none false p).evalIn ds active = [] := rfl
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none false p).evalIn ds active = [] := rfl
 
 
 /-! ## §16.4 — DESCRIBE

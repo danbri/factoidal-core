@@ -126,6 +126,11 @@ def showGraph (g : Graph) : String :=
 def compareOutputs (queryText : String) (env : EvalEnv) (ds : Dataset) (q : Query)
     (fstarOut : String) : DiffOutcome :=
   let tag := s!"query: {queryText.replace "\n" " "}"
+  -- Federated Query §2.3: the Lean answer is the error when a SERVICE
+  -- call without SILENT fails (`Query.serviceFailure`).
+  match q.serviceFailure env ds with
+  | some f => .leanError s!"{f.message}; {tag}"
+  | none =>
   match q.form with
   | .describe _ => .skipped "DESCRIBE (the F* tree answers it with the empty graph)"
   | .ask =>

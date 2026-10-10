@@ -105,6 +105,11 @@ private def evalRaw (ds : Dataset) (sparql : String) : Except String RawAnswer :
   | .error e => .error s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
     let env : EvalEnv := { base := q.base, ext := extFnsWith [], dataset := some ds }
+    -- Federated Query §2.3: a failed SERVICE call without SILENT is the
+    -- answer (`Query.serviceFailure`, issue 717).
+    match q.serviceFailure env ds with
+    | some f => .error f.message
+    | none =>
     match q.form with
     | .ask => .ok (.result (.boolean (evalAsk env ds q)))
     | .select _ =>

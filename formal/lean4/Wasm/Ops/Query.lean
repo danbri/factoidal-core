@@ -101,6 +101,14 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     -- none, every SERVICE endpoint is unreachable, as before.
     let env : EvalEnv := { base := q.base, ext := extFnsWith extIris,
                            dataset := some ds, services := services }
+    -- SPARQL 1.1 Federated Query §2.3: a SERVICE call without SILENT that
+    -- fails stops the query, and the error is the answer
+    -- (`Query.serviceFailure`, https://github.com/danbri/factoidal/issues/717).
+    -- Checked before either evaluator runs, so the backend path and the
+    -- reference path answer the same error.
+    match q.serviceFailure env ds with
+    | some f => errJson f.message
+    | none =>
     let backendEligible := q.dataset.isEmpty
     match q.form with
     | .ask =>
@@ -268,9 +276,32 @@ private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
   "SELECT ?who WHERE { ?who <http://e/says> ?x FILTER(isTRIPLE(?x)) }") "http://e/b"
 -- Negative: the 1.1 grammar refuses the triple-term pattern.
 #guard (tt12Run true .v11 tt12Select).startsWith "{\"ok\":false"
+
 -- Negative: a pattern no triple term matches answers no binding.
 #guard !tt12HasSub (tt12Run true .v12
   "SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/other> )>> }")
   "\"value\""
+
+-- SPARQL 1.1 Federated Query §2.3
+-- (https://github.com/danbri/factoidal/issues/717): with no endpoint
+-- registered, a SERVICE call without SILENT is an error envelope, and
+-- the same call with SILENT is one solution with no bindings.
+private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
+#guard (queryDataset svcData
+  "SELECT * WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
+  "{\"ok\":false,\"error\":\"SERVICE <http://u.example/sparql> failed"
+#guard (queryDataset svcData
+  "ASK { ?a ?b ?c SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith "{\"ok\":false"
+#guard (queryDataset svcData
+  "CONSTRUCT { ?s ?p ?o } WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
+  "{\"ok\":false"
+#guard (queryDataset svcData
+  "SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
+  "{\"ok\":true,\"kind\":\"select\",\"srj\":" ++
+    QueryResult.toSrj (.bindings [] [Binding.empty]) ++ "}"
+#guard (queryDataset svcData
+  "ASK { ?a ?b ?c SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
+  "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"
+
 
 end L4Wasm.Ops
