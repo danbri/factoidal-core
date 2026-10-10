@@ -30,6 +30,8 @@ next to the OWL 2 RL/RDF clash rows of `detectClashPlusI`.
 |---|---|---|
 | `thingEnum` | `c owl:oneOf (a)` or `c owl:oneOf ()`, where `c` is `owl:Thing` or `rdfs:Resource` or `owl:Thing rdfs:subClassOf c` | Tables 5.2, 5.5, 5.8 |
 | `svfAvfDt` | `x rdf:type r1`, `r1 owl:someValuesFrom d1`, `r1 owl:onProperty p`, `x rdf:type r2`, `r2 owl:allValuesFrom d2`, `r2 owl:onProperty p`, the datatypes `d1`, `d2` with disjoint value spaces | Table 5.6, the datatype map (§ 4.1) |
+| `litSucc` | the `p`-successor `x`'s `owl:someValuesFrom` restriction asks for is a member of its filler and of each `AllSucc` class; one of them is an enumeration of literals, each excluded (`LitOut`) by one of them | Tables 5.4, 5.5, 5.6, 5.7, 5.8, § 4.2 |
+| `intSucc` | the same successor; one class is an integer datatype restriction, another excludes every integer within its bounds (`IntOut`) | Tables 5.6, 5.7, 5.8, § 4.2 |
 
 `thingEnum` (issue 733, `WebOnt-Thing-005`): Table 5.5 makes
 `ICEXT(I(c)) = {I(a)}`, and Table 5.2 (`ICEXT(I(owl:Thing)) = IR`) with

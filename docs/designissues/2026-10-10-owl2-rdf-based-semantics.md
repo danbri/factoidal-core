@@ -16,17 +16,23 @@ numbers below are that document's unless another document is named.
   12 PositiveEntailmentTests of issue 721 (DIRECT, species FULL only)
   are among them.
 * Scores and the per-unit comparison with the other OWL lines: § 6.
-* Lean: `L4Factoidal/OWL/RdfBased/Spec.lean` (27 interpretation
+* Lean: `L4Factoidal/OWL/RdfBased/Spec.lean` (33 interpretation
   conditions, entailment, a satisfiability witness), `Rules.lean` (16
   rule constructors, each proved sound), `Witness.lean` (existential
   successors for `owl:someValuesFrom`, proved sound over an extended
   blank-node assignment), `Engine.lean` (executable rules, each output
-  proved to be a rule application), `Tests.lean` (73 `#guard` cases,
-  positive and negative per rule). No `sorry`, no `axiom`, no
+  proved to be a rule application), `Clash.lean` (4 clash rows, each
+  proved: no interpretation that meets the conditions satisfies a graph
+  the row fires on; § 4.5), `Tests.lean` (124 `#guard` cases, positive
+  and negative per rule and per clash row). No `sorry`, no `axiom`, no
   `native_decide`, no `partial`.
 * PositiveEntailmentTest: 147 pass, 54 fail (out of 201). The 12 cases
   of issue 721: 7 pass, 5 fail. The two soundness cells
   (NegativeEntailmentTest and ConsistencyTest `fail`) are 0.
+* InconsistencyTest: 51 pass, 77 fail (out of 128). The clash rows of
+  § 4.5 moved 7 units from fail to pass (44 pass before them), among
+  them `WebOnt-Thing-005` of
+  https://github.com/danbri/factoidal/issues/733.
 * One method the task brief proposed, "the DL refuter's entailments
   carry over" under the correspondence theorem, does not follow from
   the text of Theorem 7.1 and is not used. § 4.2 gives the text and
@@ -267,14 +273,93 @@ axiomatic triples, with their cyclic `rdfs:subClassOf` lattice, into
 every closure; `measuring-inference` § 10 records that cost. The other
 rules read the closure alone, one pass with at most two nested lookups.
 
+### 4.5 Clash rows (`Clash.lean`)
+
+The regime's inconsistency check is the OWL 2 RL/RDF clash rows
+(`detectClashPlusI`) OR the rows below (`RdfBased.rbClashAny`). Each row
+is a constructor of `RdfBased.RbClash`; `rbClash_sound` proves that no
+blank-node assignment makes the graph true in an interpretation that
+meets `RdfBasedConditions`, so the graph is OWL 2 RDF-Based
+inconsistent (Definition 4.4). `rbClashAny_spec` proves that the
+executable check answers `true` only on a graph `RbClash` holds of. The
+harness prints `CLASH-BY-RDF-BASED-ROWS <id>` when one of these rows,
+and no RL row, decided a unit.
+
+| row | premise | conditions read |
+|---|---|---|
+| `thingEnum` | `c owl:oneOf (a)` or `c owl:oneOf ()`, with `c` = `owl:Thing`, `rdfs:Resource`, or `owl:Thing rdfs:subClassOf c` | 5.1, 5.2, 5.5, 5.8 |
+| `svfAvfDt` | `x rdf:type r1`, `r1 owl:someValuesFrom d1`, `x rdf:type r2`, `r2 owl:allValuesFrom d2`, both on one property, `d1` and `d2` datatypes with disjoint value spaces | 5.6, the datatype map |
+| `litSucc` | the successor that `x`'s `owl:someValuesFrom` restriction asks for is a member of the filler and of every `owl:allValuesFrom` filler and range on that property; one of those classes is an enumeration of literals; each listed literal is excluded by one of those classes | 5.4, 5.5, 5.6, 5.7, 5.8, § 4.2 |
+| `intSucc` | the same successor, where one class is an integer datatype restriction and another class excludes every integer within its bounds | 5.6, 5.7, 5.8, § 4.2 |
+
+A literal is excluded from a class (`LitOut`) when the class is a
+datatype whose value space does not hold the literal's value, an
+enumeration whose literals all have other values, an integer
+restriction whose bounds exclude the value, or the datatype complement
+(Table 5.4, `owl:datatypeComplementOf`) of an enumeration that lists the
+value.
+
+**Issue 733, checked against the text.** The argument in the issue is
+correct. Table 5.5: `(z, s) ∈ IEXT(I(owl:oneOf))` iff `z ∈ IC` and
+`ICEXT(z) = {a1, …, an}`; Table 5.2: `ICEXT(I(owl:Thing)) = IR`,
+`ICEXT(I(owl:Nothing)) = ∅`. With `owl:Thing owl:oneOf ( s )`, IR =
+`{I(s)}`, so `I(owl:Thing) = I(owl:Nothing) = I(s)`, and `I(s)` is in
+`ICEXT(I(owl:Thing))` and not in `ICEXT(I(owl:Nothing))`: a
+contradiction. One correction to the wording: the issue cites "RDF 1.1
+Semantics § 4" for IR ≠ ∅; the RDF-Based Semantics refers to the 2004
+RDF Semantics and states the condition itself (§ 4.2, "a nonempty set";
+Table 5.1, "IR: S ≠ ∅"). The contradiction above does not need it; the
+row's `owl:oneOf ()` case does.
+
+**Six conditions added to the bundle.** Each is true in every OWL 2
+RDF-Based interpretation; the witness of § 5 meets each one.
+
+* `CondLitOutsideDt` (§ 4.2 with the RDF Semantics' general conditions
+  for datatypes): a literal whose value is outside the value space of a
+  datatype `e`, or that is ill-typed (IL not in LV), is not in
+  `ICEXT(I(e))`. `litOutsideDt` decides it for the 13 integer datatypes
+  of § 3.3 (value against the bounds of XSD 1.1 Part 2 § 3.4) and across
+  the value-space families of `RL.xsdValueSpacesDisjoint`.
+* `CondOneOfLitExcl` (Table 5.5 with § 4.2): a literal whose value
+  differs from that of every literal of an enumeration is not a member.
+* `CondLitSame` (§ 4.2): two literals with one value denote one element
+  (equal integers of two integer datatypes are one value; OWL 2
+  Structural Specification § 4.2).
+* `CondDatatypeComplementSub` (Table 5.4): a member of the datatype
+  complement of `d` is not a member of `d`.
+* `CondIntRestrMembers` and `CondIntRestrExcl` (Table 5.7 with XSD 1.1
+  Part 2 § 4.3.7 – § 4.3.10): the members of an integer datatype
+  restriction are integers within the bounds `intRestrBounds` computes
+  from the facet pairs (`xsd:minInclusive`, `minExclusive`,
+  `maxInclusive`, `maxExclusive` with integer values; any other pair
+  leaves the bounds as they are, so the bounds contain the value space).
+
+Two readings these conditions do not take. Distinctness of two literals
+(`litDistinct`) is claimed only for well-typed integers and for
+`xsd:string` lexical forms in the `xsd:string` lexical space: an
+ill-typed literal denotes an element outside LV, and nothing says which.
+Table 5.7 reads "(z1, v1) ∈ IEXT(f1), …, (zn, vn) ∈ IEXT(fn)", one pair
+per member of the facet list; the conditions apply only when every
+member of the list carries at least one pair that the graph states, so
+every pair read is part of such a choice.
+
+The witness interpretation changed in one place: `owl:datatypeComplementOf`
+relates `x` to `y` only when no element is in both extensions (before,
+it related every pair, which `CondDatatypeComplementSub` excludes). The
+other five conditions hold in the witness as it was: literals denote one
+element outside every datatype extension, and the witness has no
+sequence other than `rdf:nil`, so the enumeration and restriction
+premises are never met.
+
 ## 5. The Lean files
 
-* `L4Factoidal/OWL/RdfBased/Spec.lean`. `RdfBasedConditions`, 27
+* `L4Factoidal/OWL/RdfBased/Spec.lean`. `RdfBasedConditions`, 33
   fields, each a transcription of a table row or of § 4.2 (or, where a
-  rule reads one half of an "iff", that half). The bundle admits every
+  rule reads one half of an "iff", that half; § 4.5 lists the six that
+  combine a table row with § 4.2). The bundle admits every
   OWL 2 RDF-Based interpretation, so `RbEntails` (entailment over the
   bundle) implies Definition 4.5 entailment. `witness_conditions`: an
-  interpretation that meets all 27; `rbEntails_not_everything`:
+  interpretation that meets all 33; `rbEntails_not_everything`:
   `RbEntails [] [owl:Thing rdfs:subClassOf owl:Nothing]` is false. The
   witness exists because a bundle no interpretation meets would make
   every entailment statement true (`measuring-inference` § 4).
@@ -290,8 +375,16 @@ rules read the closure alone, one pass with at most two nested lookups.
 * `Engine.lean`. The executable rules, `rbConclusions_derives` (every
   output is an `RbDerives` application), `rbConclusions_entailed`,
   `withoutCompWitness`, `rbRound` (rules, then witnesses), `rbSaturate`.
-* `Tests.lean`. 73 `#guard` cases: for each rule a positive and a
-  negative case, and end-to-end cases on the shapes of
+* `Clash.lean`. `RbClash` (4 rows), `rbClash_sound`, `rbClash_unsat`,
+  `rbClash_entails`, the executable `rbClashAny` and `rbClashAny_spec`.
+  Anti-pattern 29 check: no row premise states that a class is empty or
+  that an element is outside a class; each contradiction is reached
+  through conditions of the bundle (`hc.nothing`, `hc.disjointDatatypes`,
+  `hc.litOutsideDt`, `hc.oneOfLitExcl`, `hc.intRestrExcl`,
+  `hc.datatypeComplementSub`).
+* `Tests.lean`. 124 `#guard` cases: for each rule and each clash row a
+  positive and a negative case, the literal-value functions, and
+  end-to-end cases on the shapes of
   `WebOnt-Class-003`, `WebOnt-imports-010`, `WebOnt-I5.3-015` and
   `WebOnt-someValuesFrom-003` (a two-step witness chain).
 
@@ -307,14 +400,33 @@ agents on the same four CPUs: 114 s and 126 s wall clock in two runs, `cap_hits=
 | PositiveEntailmentTest | 147 | 54 | 0 | 201 |
 | NegativeEntailmentTest | 0 | 0 | 23 | 23 |
 | ConsistencyTest | 0 | 0 | 347 | 347 |
-| InconsistencyTest | 44 | 84 | 0 | 128 |
-| all units | 191 | 138 | 370 | 699 |
+| InconsistencyTest | 51 | 77 | 0 | 128 |
+| all units | 198 | 131 | 370 | 699 |
 
 Score lines: PositiveEntailmentTest 147 pass, 54 fail (out of 201);
-InconsistencyTest 44 pass, 84 fail (out of 128); NegativeEntailmentTest
+InconsistencyTest 51 pass, 77 fail (out of 128); NegativeEntailmentTest
 0 pass, 0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 pass, 0
-fail, 347 not-refuted (out of 347); all units 191 pass, 138 fail, 370
+fail, 347 not-refuted (out of 347); all units 198 pass, 131 fail, 370
 not-refuted, 0 unsupported (out of 699).
+
+The clash rows of § 4.5 (measured 2026-10-10 on the same command; 129 s
+wall clock with a load average of 7 on four shared CPUs, `cap_hits=0`):
+before them, InconsistencyTest 44 pass, 84 fail (out of 128) and all
+units 191 pass, 138 fail, 370 not-refuted (out of 699). Units moved from
+fail to pass, with the row (`CLASH-BY-RDF-BASED-ROWS` lines):
+
+* `WebOnt-Thing-005` — `thingEnum`;
+* `inconsistent_datatypes` — `svfAvfDt` (`xsd:integer` and `xsd:string`);
+* `Inconsistent Byte Filler` — `litSucc`, `6542145` outside `xsd:byte`;
+* `Contradicting datatype Restrictions` — `litSucc`, the enumeration
+  `{2, 3}` against the restriction `xsd:integer ≥ 4`;
+* `Different types in Datatype Restrictions and Complement` and
+  `Inconsistent Data Complement with the Restrictions` — `litSucc`,
+  `3` against the complement of `{3}`, `4` against `{2, 3}`;
+* `datatype-restriction-min-max-inconsistency` — `intSucc`, `≥ 18`
+  against `≤ 10`.
+
+No unit went from pass to fail; the two soundness cells stay 0.
 
 * The two soundness cells (NegativeEntailmentTest `fail`,
   ConsistencyTest `fail`) are 0.
@@ -407,24 +519,41 @@ PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
    2012 semantics; they are OWL 1 era expectations. 🧭 Owner question
    in § 8.
 
-InconsistencyTest, 84 units: no RL clash row fires on the closure. 83
-need reasoning the DL regime does with the refuter (datatype restriction
-facets, unions, cardinality counting, nominals): the 60
-`WebOnt-description-logic-*` cases, the eleven datatype cases
-(`Contradicting datatype Restrictions`, `Contradicting-dateTime-restrictions`,
-`Datatype-Float-Discrete-001`, `datatype-restriction-min-max-inconsistency`,
-`Different types in Datatype Restrictions and Complement`,
-`Inconsistent Byte Filler`, `Inconsistent Data Complement with the
-Restrictions`, `Inconsistent Disjoint Dataproperties`, `Inconsistent
-String Pattern with Disjoint Dataproperties`, `inconsistent_datatypes`,
-`Minus Infinity is not in owl:real`), `New-Feature-Keys-002`,
-`-Rational-002`, `-TopObjectProperty-001`, `one=two`, `WebOnt-I5.5-003`,
-`-I5.5-004`, `-I5.8-001`, `-I5.8-003`, `-disjointWith-010`,
-`-maxCardinality-001`, `-miscellaneous-203`, `-miscellaneous-204`. The
-84th, `WebOnt-Thing-005` (RDF-BASED only), is `owl:Thing owl:oneOf (s)`:
-IR has one element, so `I(owl:Thing) = I(owl:Nothing)`, whose
-extensions Table 5.2 makes different. No rule here reads it (§ 8,
-gap C).
+InconsistencyTest, 77 units: no RL clash row and no row of § 4.5 fires
+on the closure (84 before § 4.5; § 6 lists the 7 that moved).
+
+1. **Counting** (4): `one=two` (a 1:1 and a 2:1 correspondence between
+   the members of a three-element enumeration), `WebOnt-maxCardinality-001`
+   (three pairwise `owl:differentFrom` successors against
+   `owl:maxCardinality 2`), `WebOnt-I5.8-001` (`owl:cardinality 257`
+   against the 256 values of `xsd:byte`), `WebOnt-I5.8-003`
+   (`owl:cardinality 129` against the 128 values of `xsd:byte ∩
+   xsd:unsignedInt`). Each needs the number of elements of a set; no
+   row here counts.
+2. **Deterministic, not yet a row** (3). Each needs a condition the
+   witness interpretation does not meet as it stands (the property
+   relates every pair in the witness), so the witness changes first:
+   `WebOnt-disjointWith-010` (Table 5.6 `owl:minCardinality 1`, the ⊇
+   half: a subject with a successor is a member; then the RL row for
+   `n owl:disjointWith n`); `Inconsistent Disjoint Dataproperties`
+   (Table 5.7: `xsd:integer [10, 10]` has the one member 10; Table 5.9
+   `owl:propertyDisjointWith` with the asserted value 10);
+   `Minus Infinity is not in owl:real` (OWL 2 Structural Specification
+   § 4.2: the `xsd:float` value space is disjoint from `owl:real`; Table
+   5.15, `owl:NegativePropertyAssertion`, excludes the value 0).
+3. **Value spaces not modelled** (3): `Datatype-Float-Discrete-001`
+   (no `xsd:float` value lies strictly between 0 and the smallest
+   positive subnormal; needs the float lexical mapping),
+   `Inconsistent String Pattern with Disjoint Dataproperties` (the
+   language of the `xsd:pattern` `a(b|c)` is `{ab, ac}`),
+   `Contradicting-dateTime-restrictions` (the order of `xsd:dateTime`
+   values with time zones).
+4. **Not analysed for this regime** (67): the 60
+   `WebOnt-description-logic-*` cases, `New-Feature-Keys-002`,
+   `-Rational-002`, `-TopObjectProperty-001`, `WebOnt-I5.5-003`,
+   `-I5.5-004`, `-miscellaneous-203`, `-miscellaneous-204`. The DL
+   regime decides most of them with the tableau refuter (unions,
+   nominals, cardinalities); § 4.2 says why that is not used here.
 
 ## 8. Gaps, with issue-ready text
 
@@ -459,14 +588,9 @@ Direct Semantics and § 7.3's sketch is checked for the constructs the
 refuter reads. Units it would address: most of § 7 group 2 and the 83
 InconsistencyTest units that need the refuter.
 
-**C. Title: OWL RDF-Based regime: `owl:Thing owl:oneOf (s)` is
-inconsistent.** Body: Table 5.5 makes `ICEXT(I(owl:Thing)) = {I(s)}`, so
-IR has one element. Table 5.2 gives `ICEXT(I(owl:Thing)) = IR` and
-`ICEXT(I(owl:Nothing)) = ∅`. With one element in IR, `I(owl:Thing) =
-I(owl:Nothing)`, so IR = ∅, which RDF 1.1 Semantics § 4 forbids (IR is
-non-empty). Add a clash row for a one-element `owl:oneOf` on
-`owl:Thing` (or on a class with `owl:Thing` as a subclass), proved
-against the bundle. Unit: `WebOnt-Thing-005` [InconsistencyTest].
+**C. Filed as https://github.com/danbri/factoidal/issues/733; closed by
+the `thingEnum` row of § 4.5.** `WebOnt-Thing-005` [InconsistencyTest]
+passes. § 4.5 records the one correction to the issue's wording.
 
 Closed during this work, so not filed: existential witnesses (§ 4.4),
 literal denotations through a datatype IRI alias (`literalValue`), and
