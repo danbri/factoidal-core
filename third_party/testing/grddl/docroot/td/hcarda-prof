@@ -1,0 +1,11 @@
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:dataview="http://www.w3.org/2003/g/data-view#">
+ <rdf:Description
+    rdf:about="">
+   <dataview:profileTransformation
+       rdf:resource="http://www.w3.org/2003/g/glean-profile"/>
+   <dataview:profileTransformation
+       rdf:resource="grokXMDP.xsl"/>
+ </rdf:Description>
+</rdf:RDF>

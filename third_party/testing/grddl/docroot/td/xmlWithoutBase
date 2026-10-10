@@ -1,5 +1,0 @@
-
-<foo xmlns="http://www.example.org"
-xmlns:g="http://www.w3.org/2003/g/data-view#"
-g:transformation="whichdir.xsl"
-/>
