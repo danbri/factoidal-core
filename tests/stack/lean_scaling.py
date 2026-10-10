@@ -18,6 +18,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   trig-parse       TriG parse, many small graph blocks
   trig-big-graph   TriG parse, one graph block with all the triples
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
+  rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
+  rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes, 1 when a pair fails, 2 when the binary is missing.
@@ -103,6 +105,14 @@ ROWS = {
         1250,
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "parse", str(p), "--format", "turtle", "--out", "turtle"]),
+    "rdfc-iri": (
+        1000,
+        lambda n: bl.gen_canon("iri", n),
+        lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
+    "rdfc-person": (
+        125,
+        lambda n: bl.gen_canon("person", n),
+        lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
 }
 
 

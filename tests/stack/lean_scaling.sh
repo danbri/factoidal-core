@@ -2,7 +2,7 @@
 #
 # tests/stack/lean_scaling.sh -- the Lean command line scales as n log n on the
 # paths that the 2026-10-10 survey found quadratic and that were repaired:
-# RDFS closure, TriG parsing, Turtle serialisation.
+# RDFS closure, TriG parsing, Turtle serialisation, RDFC-1.0 canonicalisation.
 #
 # Runs tests/stack/lean_scaling.py from the repository root against
 # formal/lean4/.lake/build/bin/l4factoidal (override with L4_BIN). For each row

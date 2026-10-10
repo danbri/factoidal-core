@@ -249,6 +249,24 @@ suite's test060 expected output relies on this. -/
 #guard strLe "<" "_"          -- U+003C before U+005F: IRI subjects sort first
 #guard sortStrings ["c", "a", "b"] == ["a", "b", "c"]
 #guard dedupAdj ["a", "a", "b"] == ["a", "b"]
+
+/-! The sort the algorithm runs is a STABLE merge sort (`sortByFast`): records
+whose keys compare equal keep their input order, which `groupByHfdq` relies on
+("members in ascending label order -- a stable sort keeps it"). The insertion
+sort it replaced is `sortBy`; the two agree on these inputs
+(`CanonicalTheorems.sortBy_eq_mergeSort` proves they agree on all). -/
+private def tiedPairs : List (String × Nat) :=
+  [("b", 1), ("a", 2), ("b", 0), ("c", 9), ("a", 3), ("b", 7)]
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  == [("a", 2), ("a", 3), ("b", 1), ("b", 0), ("b", 7), ("c", 9)]
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  == sortBy (fun x y => strLe x.1 y.1) tiedPairs
+-- It is not the identity and not a reversal: both would fail one of the guards above.
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs != tiedPairs
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  != (sortByFast (fun x y => strLe x.1 y.1) tiedPairs).reverse
+#guard sortStrings ["b", "", "a", "ab", "b", "é", "a"]
+  == ["", "a", "a", "ab", "b", "b", "é"]
 /-! The output is a LIST of lines that the document concatenates, and
 each adjacent pair is in code-point order (proved in general in
 `CanonicalTheorems.canonicalLines_sorted`; checked concretely here). -/

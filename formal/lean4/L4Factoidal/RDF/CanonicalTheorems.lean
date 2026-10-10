@@ -145,8 +145,215 @@ theorem sortedB_sortBy (le : α → α → Bool)
     sortedB le (sortBy le xs) = true :=
   sortedB_foldl_insert le htot xs [] rfl
 
-theorem sortedB_sortStrings (xs : List String) : sortedB strLe (sortStrings xs) = true :=
-  sortedB_sortBy strLe strLe_total xs
+/-! ### The merge sort the algorithm runs returns what the insertion sort returns
+
+`sortByFast` is `List.mergeSort`. The proof below shows `sortBy` and `mergeSort` agree on
+every list for every transitive, total comparator, so each of the five sorts of
+`RDF/Canonical.lean` that grows with the dataset returns the list it returned before
+it was changed. -/
+
+private theorem uint32_lt_iff (a b : UInt32) : a < b ↔ a.toNat < b.toNat := UInt32.lt_iff_toNat_lt
+
+private theorem charsLe_cons (x y : Char) (xs ys : List Char) :
+    charsLe (x :: xs) (y :: ys)
+      = (if x.val.toNat < y.val.toNat then true
+         else if y.val.toNat < x.val.toNat then false else charsLe xs ys) := by
+  simp only [charsLe, uint32_lt_iff]
+
+/-- `charsLe` is transitive. -/
+theorem charsLe_trans : ∀ (a b c : List Char), charsLe a b = true → charsLe b c = true →
+    charsLe a c = true
+  | [], _, _, _, _ => rfl
+  | _ :: _, [], _, h, _ => by simp [charsLe] at h
+  | _ :: _, _ :: _, [], _, h => by simp [charsLe] at h
+  | x :: xs, y :: ys, z :: zs, h1, h2 => by
+      rw [charsLe_cons] at h1 h2 ⊢
+      by_cases hxy : x.val.toNat < y.val.toNat
+      · by_cases hyz : y.val.toNat < z.val.toNat
+        · rw [if_pos (Nat.lt_trans hxy hyz)]
+        · by_cases hzy : z.val.toNat < y.val.toNat
+          · rw [if_neg hyz, if_pos hzy] at h2; exact absurd h2 (by decide)
+          · rw [if_pos (show x.val.toNat < z.val.toNat by omega)]
+      · by_cases hyx : y.val.toNat < x.val.toNat
+        · rw [if_neg hxy, if_pos hyx] at h1; exact absurd h1 (by decide)
+        · by_cases hyz : y.val.toNat < z.val.toNat
+          · rw [if_pos (show x.val.toNat < z.val.toNat by omega)]
+          · by_cases hzy : z.val.toNat < y.val.toNat
+            · rw [if_neg hyz, if_pos hzy] at h2; exact absurd h2 (by decide)
+            · rw [if_neg hxy, if_neg hyx] at h1
+              rw [if_neg hyz, if_neg hzy] at h2
+              rw [if_neg (show ¬ x.val.toNat < z.val.toNat by omega),
+                  if_neg (show ¬ z.val.toNat < x.val.toNat by omega)]
+              exact charsLe_trans xs ys zs h1 h2
+
+theorem strLe_trans (a b c : String) : strLe a b = true → strLe b c = true → strLe a c = true :=
+  charsLe_trans a.toList b.toList c.toList
+
+
+/-- Inserting keeps the elements. -/
+theorem insertSortedBy_perm {α : Type _} (le : α → α → Bool) (x : α) :
+    ∀ l : List α, List.Perm (insertSortedBy le x l) (x :: l)
+  | [] => List.Perm.refl _
+  | y :: ys => by
+      unfold insertSortedBy
+      split
+      · exact ((insertSortedBy_perm le x ys).cons y).trans (List.Perm.swap x y ys)
+      · exact List.Perm.refl _
+
+/-- Folding insertion keeps the elements. -/
+theorem foldl_insert_perm {α : Type _} (le : α → α → Bool) :
+    ∀ (xs acc : List α),
+      List.Perm (xs.foldl (fun a x => insertSortedBy le x a) acc) (xs ++ acc)
+  | [], acc => by simp
+  | x :: xs, acc => by
+      simp only [List.foldl_cons, List.cons_append]
+      exact ((foldl_insert_perm le xs _).trans
+        (List.Perm.append_left xs (insertSortedBy_perm le x acc))).trans List.perm_middle
+
+/-- Inserting into a list sorted by a total preorder gives a sorted list (`Pairwise`
+form; `sortedB` above is the adjacent-pairs form). -/
+theorem insertSortedBy_pairwise {α : Type _} (le : α → α → Bool)
+    (trans : ∀ a b c, le a b = true → le b c = true → le a c = true)
+    (total : ∀ a b, le a b = true ∨ le b a = true) (x : α) :
+    ∀ l : List α, l.Pairwise (fun a b => le a b = true) →
+      (insertSortedBy le x l).Pairwise (fun a b => le a b = true)
+  | [], _ => by simp [insertSortedBy]
+  | y :: ys, h => by
+      unfold insertSortedBy
+      split
+      · rename_i hyx
+        rw [List.pairwise_cons] at h ⊢
+        refine ⟨?_, insertSortedBy_pairwise le trans total x ys h.2⟩
+        intro b hb
+        have hb' : b ∈ x :: ys := (insertSortedBy_perm le x ys).mem_iff.mp hb
+        rcases List.mem_cons.mp hb' with rfl | hb'
+        · exact hyx
+        · exact h.1 b hb'
+      · rename_i hyx
+        have hxy : le x y = true := (total y x).resolve_left hyx
+        have h0 := h
+        rw [List.pairwise_cons] at h
+        rw [List.pairwise_cons]
+        refine ⟨?_, h0⟩
+        intro b hb
+        rcases List.mem_cons.mp hb with rfl | hb
+        · exact hxy
+        · exact trans x y b hxy (h.1 b hb)
+
+theorem foldl_insert_pairwise {α : Type _} (le : α → α → Bool)
+    (trans : ∀ a b c, le a b = true → le b c = true → le a c = true)
+    (total : ∀ a b, le a b = true ∨ le b a = true) :
+    ∀ (xs acc : List α), acc.Pairwise (fun a b => le a b = true) →
+      (xs.foldl (fun a x => insertSortedBy le x a) acc).Pairwise (fun a b => le a b = true)
+  | [], acc, h => h
+  | x :: xs, acc, h =>
+      foldl_insert_pairwise le trans total xs _ (insertSortedBy_pairwise le trans total x acc h)
+
+/-- `sortBy` returns a permutation of its input. -/
+theorem sortBy_perm {α : Type _} (le : α → α → Bool) (xs : List α) :
+    List.Perm (sortBy le xs) xs := by
+  have := foldl_insert_perm le xs []
+  simpa [sortBy] using this
+
+/-- `sortBy` returns a list sorted by a total preorder. -/
+theorem sortBy_pairwise {α : Type _} (le : α → α → Bool)
+    (trans : ∀ a b c, le a b = true → le b c = true → le a c = true)
+    (total : ∀ a b, le a b = true ∨ le b a = true) (xs : List α) :
+    (sortBy le xs).Pairwise (fun a b => le a b = true) :=
+  foldl_insert_pairwise le trans total xs [] (by simp)
+
+/-- Inserting an element that carries the newest index, under the index-tie-breaking
+comparator `List.zipIdxLE`, is inserting the element under `le`. -/
+theorem insertSortedBy_zip_fst {α : Type _} (le : α → α → Bool) (x : α) (k : Nat) :
+    ∀ acc : List (α × Nat), (∀ p ∈ acc, p.2 < k) →
+      (insertSortedBy (List.zipIdxLE le) (x, k) acc).map (·.1)
+        = insertSortedBy le x (acc.map (·.1))
+  | [], _ => by simp [insertSortedBy]
+  | (y, j) :: acc', h => by
+      have hj : j < k := h (y, j) List.mem_cons_self
+      have key : List.zipIdxLE le (y, j) (x, k) = le y x := by
+        simp only [List.zipIdxLE]
+        by_cases h1 : le y x = true
+        · by_cases h2 : le x y = true
+          · simp [h1, h2]; omega
+          · simp [h1, h2]
+        · simp [h1]
+      have hacc : ∀ p ∈ acc', p.2 < k := fun p hp => h p (List.mem_cons_of_mem _ hp)
+      simp only [insertSortedBy, key, List.map_cons]
+      split
+      · simp only [List.map_cons]
+        rw [insertSortedBy_zip_fst le x k acc' hacc]
+      · simp
+
+/-- The same, folded over a list paired with ascending indices. -/
+theorem foldl_zip_fst {α : Type _} (le : α → α → Bool) :
+    ∀ (l : List α) (k : Nat) (acc : List (α × Nat)), (∀ p ∈ acc, p.2 < k) →
+      ((l.zipIdx k).foldl (fun a p => insertSortedBy (List.zipIdxLE le) p a) acc).map (·.1)
+        = l.foldl (fun a x => insertSortedBy le x a) (acc.map (·.1))
+  | [], k, acc, _ => by simp
+  | x :: l, k, acc, h => by
+      rw [List.zipIdx_cons, List.foldl_cons, List.foldl_cons]
+      rw [foldl_zip_fst le l (k + 1) _ ?_, insertSortedBy_zip_fst le x k acc h]
+      intro p hp
+      have := (insertSortedBy_perm (List.zipIdxLE le) (x, k) acc).mem_iff.mp hp
+      rcases List.mem_cons.mp this with rfl | hp
+      · simp
+      · have := h p hp; omega
+
+/-- **The stable insertion sort is the stable merge sort**, for every total preorder,
+ties included. Both are the unique list that is a permutation of the input and sorted
+under `List.zipIdxLE le`, the comparator that breaks ties by input position (`List.zipIdxLE`,
+`List.mergeSort_zipIdx` in core). So `sortByFast` returns what `sortBy` returns. -/
+theorem sortBy_eq_mergeSort {α : Type _} (le : α → α → Bool)
+    (trans : ∀ a b c, le a b = true → le b c = true → le a c = true)
+    (total : ∀ a b, le a b = true ∨ le b a = true) (xs : List α) :
+    sortBy le xs = xs.mergeSort le := by
+  have e1 : ((sortBy (List.zipIdxLE le) xs.zipIdx).map (·.1)) = sortBy le xs := by
+    have := foldl_zip_fst le xs 0 [] (by simp)
+    simpa [sortBy] using this
+  have ztrans : ∀ a b c, List.zipIdxLE le a b = true → List.zipIdxLE le b c = true →
+      List.zipIdxLE le a c = true := fun a b c hab hbc => List.zipIdxLE_trans trans a b c hab hbc
+  have ztotal : ∀ a b, List.zipIdxLE le a b = true ∨ List.zipIdxLE le b a = true := by
+    intro a b
+    have := List.zipIdxLE_total (le := le) (fun p q => by
+      rcases total p q with h | h <;> simp [h]) a b
+    simpa using this
+  have e2 : sortBy (List.zipIdxLE le) xs.zipIdx = (xs.zipIdx).mergeSort (List.zipIdxLE le) := by
+    apply List.Perm.eq_of_pairwise (le := fun a b => List.zipIdxLE le a b = true)
+    · intro a b ha hb hab hba
+      have ha' := (sortBy_perm (List.zipIdxLE le) xs.zipIdx).mem_iff.mp ha
+      have hb' := (List.mergeSort_perm xs.zipIdx (List.zipIdxLE le)).mem_iff.mp hb
+      rw [List.mem_zipIdx_iff_getElem?] at ha' hb'
+      simp only [List.zipIdxLE] at hab hba
+      have hi : a.2 = b.2 := by
+        by_cases h1 : le a.1 b.1 = true <;> by_cases h2 : le b.1 a.1 = true <;>
+          simp_all <;> omega
+      have : a.1 = b.1 := by
+        rw [hi] at ha'
+        rw [ha'] at hb'
+        exact Option.some.inj hb'
+      exact Prod.ext this hi
+    · exact sortBy_pairwise (List.zipIdxLE le) ztrans ztotal _
+    · exact List.pairwise_mergeSort (fun a b c hab hbc => ztrans a b c hab hbc)
+        (fun a b => by simpa using ztotal a b) _
+    · exact (sortBy_perm _ _).trans (List.mergeSort_perm _ _).symm
+  rw [← e1, e2, List.mergeSort_zipIdx]
+
+
+/-- `sortStrings` returns what the insertion sort returned. -/
+theorem sortStrings_eq (xs : List String) : sortStrings xs = sortBy strLe xs :=
+  (sortBy_eq_mergeSort strLe strLe_trans strLe_total xs).symm
+
+/-- `sortByFast` returns what `sortBy` returns, for every transitive, total comparator. -/
+theorem sortByFast_eq_sortBy (le : α → α → Bool)
+    (trans : ∀ a b c, le a b = true → le b c = true → le a c = true)
+    (total : ∀ a b, le a b = true ∨ le b a = true) (xs : List α) :
+    sortByFast le xs = sortBy le xs :=
+  (sortBy_eq_mergeSort le trans total xs).symm
+
+theorem sortedB_sortStrings (xs : List String) : sortedB strLe (sortStrings xs) = true := by
+  rw [sortStrings_eq]
+  exact sortedB_sortBy strLe strLe_total xs
 
 /-- Dropping adjacent duplicates does not move the head. -/
 theorem dedupAdj_head? (x : String) (xs : List String) :

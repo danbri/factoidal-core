@@ -58,10 +58,16 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      explicit (`canonicalizeExceedsBudget`), so a poison input is a
      reported abort rather than a wrong answer.
   4. Sorting. F* uses a merge sort (its inputs reach 100k+ lines).
-     Here sorting is a STABLE INSERTION SORT: the same total preorder,
+     `sortBy` here is a STABLE INSERTION SORT: the same total preorder,
      the same stable tie-breaking, and short enough to prove sorted
-     (`RDF/CanonicalTheorems.lean`). The whole W3C corpus is under 50
-     lines per file.
+     (`RDF/CanonicalTheorems.lean`). It is the specification of the
+     sort and costs O(n^2): 4,000 quads took 25 s (2026-10-10). The
+     algorithm runs `sortByFast`, `List.mergeSort`, at the five places
+     where the input grows with the dataset, and
+     `CanonicalTheorems.sortBy_eq_mergeSort` proves the two return the
+     same list for every total preorder, ties included. The whole W3C
+     corpus is under 50 lines per file, so the suites cannot see the
+     difference; `tests/stack/lean_scaling.sh` can.
   5. Not ported: the F* module's Section 6b/6c "bounded neighbour
      hash" ladder (`compute_all_nbr1`/`nbr2`/`nbr3`, `bn_full_key`,
      `sort_full_keys`). Those are dead code in the F* tree — an
@@ -119,8 +125,14 @@ def insertSortedBy (le : α → α → Bool) (x : α) : List α → List α
 def sortBy (le : α → α → Bool) (xs : List α) : List α :=
   xs.foldl (fun acc x => insertSortedBy le x acc) []
 
+/-- The sort the algorithm runs: `List.mergeSort`, O(n log n) and stable.
+`CanonicalTheorems.sortBy_eq_mergeSort` proves it returns exactly what
+`sortBy` returns whenever `le` is transitive and total, and every
+comparator passed to it below is `strLe` on a projection. -/
+def sortByFast (le : α → α → Bool) (xs : List α) : List α := xs.mergeSort le
+
 /-- Sort strings into code-point order (RDFC-1.0 §3). -/
-def sortStrings (xs : List String) : List String := sortBy strLe xs
+def sortStrings (xs : List String) : List String := sortByFast strLe xs
 
 /-- Drop adjacent duplicates from a sorted list — RDF set semantics
 (RDF 1.1 Concepts §4: a dataset's quads form a set). The F* source
@@ -249,7 +261,7 @@ def collapseKeyedQQuads : List (String × QQuad) → List QQuad
       else q1 :: collapseKeyedQQuads ((k2, q2) :: rest)
 
 def dedupQQuads (qs : List QQuad) : List QQuad :=
-  collapseKeyedQQuads (sortBy (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
+  collapseKeyedQQuads (sortByFast (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
 
 /-! ## Blank-node enumeration -/
 
@@ -635,7 +647,7 @@ def groupSortedHfdq : List (BNodeId × String) → String → List BNodeId → L
       else groupSortedHfdq rest h [b] ((curH, curMembers.reverse) :: acc)
 
 def groupByHfdq (table : List (BNodeId × String)) : List Bucket :=
-  match sortBy (fun a b => strLe a.2 b.2) table with
+  match sortByFast (fun a b => strLe a.2 b.2) table with
   | []               => []
   | (b0, h0) :: rest => groupSortedHfdq rest h0 [b0] []
 
@@ -684,7 +696,7 @@ def processCollisionMembers (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
     (hfdqTable : List (BNodeId × String)) (st : IssuerState) (members : List BNodeId)
     (hb : HndqBudget) : IssuerState × HndqBudget :=
   let (results, hb1) := exploreMembers alg fuel qs hfdqTable st members hb
-  (replayAll st (sortBy (fun a b => strLe a.1 b.1) results), hb1)
+  (replayAll st (sortByFast (fun a b => strLe a.1 b.1) results), hb1)
 
 /-- §4.4 step 5: the collision groups, in hash order. -/
 def processCollisionGroups (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
@@ -811,7 +823,7 @@ def canonicalize (ds : Dataset) (alg : HashAlgorithm := .sha256) : CanonResult :
   | none => { nquads := joinStrings (canonicalLinesOf ds), issued := [], aborted := true }
   | some m =>
       { nquads  := joinStrings (canonicalLinesOf (relabelDataset m ds)),
-        issued  := sortBy (fun a b => strLe a.1 b.1) m,
+        issued  := sortByFast (fun a b => strLe a.1 b.1) m,
         aborted := false }
 
 /-- The canonical N-Quads document of a dataset. -/
