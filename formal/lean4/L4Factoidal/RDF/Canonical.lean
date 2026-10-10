@@ -185,6 +185,25 @@ def insertSortedBy (le : α → α → Bool) (x : α) : List α → List α
   | []      => [x]
   | y :: ys => if le y x then y :: insertSortedBy le x ys else x :: y :: ys
 
+/-- `insertSortedBy` with the passed prefix on a reverse accumulator: a tail
+call per element. `sortBy` runs on the blank nodes left unissued after a
+budget is exhausted, as many as the dataset has (https://github.com/danbri/factoidal/issues/746). -/
+def insertSortedByTR (le : α → α → Bool) (x : α) (ys : List α) : List α := go ys []
+where
+  go : List α → List α → List α
+    | [], acc => (x :: acc).reverse
+    | y :: ys, acc => if le y x then go ys (y :: acc) else acc.reverse ++ x :: y :: ys
+
+theorem insertSortedByTR_go_eq (le : α → α → Bool) (x : α) :
+    ∀ (ys acc : List α), insertSortedByTR.go le x ys acc = acc.reverse ++ insertSortedBy le x ys
+  | [], acc => by simp [insertSortedByTR.go, insertSortedBy]
+  | y :: ys, acc => by
+      simp only [insertSortedByTR.go, insertSortedBy]
+      split <;> rename_i h <;> simp [h, insertSortedByTR_go_eq le x ys]
+
+@[csimp] theorem insertSortedBy_eq_TR : @insertSortedBy = @insertSortedByTR := by
+  funext α le x ys; simp [insertSortedByTR, insertSortedByTR_go_eq]
+
 /-- Stable insertion sort under the total preorder `le`. -/
 def sortBy (le : α → α → Bool) (xs : List α) : List α :=
   xs.foldl (fun acc x => insertSortedBy le x acc) []

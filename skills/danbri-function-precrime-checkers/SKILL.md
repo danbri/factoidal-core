@@ -162,3 +162,39 @@ to 27.3 MB.
   gate and not a silent skip** (https://github.com/danbri/factoidal/issues/678, turtle-collection): the case passes the
   suite WHILE it overflows and turns the suite red if it ever stops, so the fix
   flips the marker and closes the issue.
+
+## Two findings paid for on 2026-10-10 (https://github.com/danbri/factoidal/issues/746)
+
+- **On Linux the native canary knob is `LEAN_STACK_SIZE_KB`, not `ulimit -s`
+  and not `LEAN_STACK_SIZE`.** A Lean executable runs `main` on a thread
+  whose stack the runtime sizes itself; the binary reads
+  `LEAN_STACK_SIZE_KB` (the string is in every Lean executable). Measured on
+  linux-x86_64 with toolchain 4.33.1: a verbatim copy of the old
+  `OwlXml.readAxioms` ran 2,000,000 elements deep under `ulimit -s 1024` and
+  overflowed only at 20,000,000 on the default stack, so `ulimit -s` did not
+  reach it; under `LEAN_STACK_SIZE_KB=1024` the same copy aborted ("Stack
+  overflow detected. Aborting.", exit 134) at about 18,500 elements.
+  `tests/stack/run.sh --canary` sets `ulimit -s` and `LEAN_STACK_SIZE` (bytes),
+  so its native canary measures nothing on Linux either; use
+  `LEAN_STACK_SIZE_KB`.
+- **The canary numbers for six repairs of that day** (200,000 elements, the
+  replaced definition copied verbatim into a scratch executable, because a
+  `csimp` theorem rewrites every call of the library's own copy):
+
+  | function | old form under `LEAN_STACK_SIZE_KB=1024` | largest n that ran (1024 KB) | new form, 200,000 at 1024 KB | new form, 2,000,000 at 256 KB |
+  |---|---|---|---|---|
+  | `OwlXml.readAxioms` | Stack overflow | about 18,100 | ran, 110 ms | ran, 1,359 ms |
+  | `OwlXml.elsOf` | Stack overflow | about 24,300 | ran, 24 ms | ran, 603 ms |
+  | `XML.Canonical.canonNodes` | Stack overflow | about 24,300 | ran, 21 ms | ran, 219 ms |
+  | `OWL.Comp.compListCells` | Stack overflow | about 11,900 | ran, 321 ms | ran, 3,420 ms |
+  | `OWL.Struct.mapSeq` | Stack overflow | about 10,300 | ran, 53 ms | ran, 549 ms |
+  | `RML.decodeUtf16?` | Stack overflow | about 14,600 | ran, 19 ms | ran, 416 ms |
+
+  On the default native stack the old forms all ran at 200,000; only the
+  reduced stack shows the defect. Run the canary with the reduced stack.
+- **The audit cannot see a symbol that ends in `___redArg`.** The compiler
+  emits a reduced-arity copy `f___redArg` for many definitions; the audit
+  does not strip that suffix, cannot map the symbol to its Lean declaration,
+  and classifies it `unknown`, outside the gate. `OwlXml.readList` was one
+  (repaired in the same landing). Treat the `unknown` class as unaudited,
+  not as clean.

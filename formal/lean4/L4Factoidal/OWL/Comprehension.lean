@@ -149,6 +149,62 @@ def compListCells (pre : String) : List Term → Term × List Triple
         ⟨cs, rdfFirst, e⟩,
         ⟨cs, rdfRest, tailTerm⟩ ] ++ tailTs)
 
+/-- The cell label of element `e` under `pre`. -/
+def compCell (pre : String) (e : Term) : BNodeId := pre ++ "__cell__" ++ termKey e
+
+/-- `compListCells` without recursion depth: the cells are written front to
+back onto a reverse accumulator, each cell's `rdf:rest` naming the next
+element's cell (labels depend only on `(pre, element)`). `compListCells`
+builds the tail first, one stack frame per member; a clique of
+`owl:differentFrom` individuals is as long as the data makes it
+(https://github.com/danbri/factoidal/issues/746). The `csimp` theorem makes
+the compiler emit this form. -/
+def compListCellsTR (pre : String) : List Term → Term × List Triple
+  | [] => (Term.iri rdfNil, [])
+  | e :: rest => (Term.bnode (compCell pre e), go e rest [])
+where
+  /-- `e` is the current element; `acc` holds the triples of the cells
+  before it, newest first. -/
+  go (e : Term) : List Term → List Triple → List Triple
+    | [], acc =>
+        let cs : Subject := .bnode (compCell pre e)
+        (⟨cs, rdfRest, Term.iri rdfNil⟩ :: ⟨cs, rdfFirst, e⟩ ::
+          ⟨cs, rdfType, Term.iri L4Factoidal.RDFS.rdfList⟩ :: acc).reverse
+    | n :: rest, acc =>
+        let cs : Subject := .bnode (compCell pre e)
+        go n rest (⟨cs, rdfRest, Term.bnode (compCell pre n)⟩ :: ⟨cs, rdfFirst, e⟩ ::
+          ⟨cs, rdfType, Term.iri L4Factoidal.RDFS.rdfList⟩ :: acc)
+
+theorem compListCells_fst (pre : String) (e : Term) (rest : List Term) :
+    (compListCells pre (e :: rest)).1 = Term.bnode (compCell pre e) := by
+  simp only [compListCells]; rfl
+
+theorem compListCells_cons (pre : String) (e : Term) (rest : List Term) :
+    (compListCells pre (e :: rest)).2 =
+      [ ⟨.bnode (compCell pre e), rdfType, Term.iri L4Factoidal.RDFS.rdfList⟩,
+        ⟨.bnode (compCell pre e), rdfFirst, e⟩,
+        ⟨.bnode (compCell pre e), rdfRest, (compListCells pre rest).1⟩ ] ++
+        (compListCells pre rest).2 := by
+  simp only [compListCells]; rfl
+
+theorem compListCellsTR_go_eq (pre : String) :
+    ∀ (rest : List Term) (e : Term) (acc : List Triple),
+      compListCellsTR.go pre e rest acc = acc.reverse ++ (compListCells pre (e :: rest)).2
+  | [], e, acc => by
+      rw [compListCells_cons]; simp [compListCellsTR.go, compListCells]
+  | n :: rest, e, acc => by
+      rw [compListCells_cons, compListCells_fst]
+      simp [compListCellsTR.go, compListCellsTR_go_eq pre rest n]
+
+@[csimp] theorem compListCells_eq_compListCellsTR : @compListCells = @compListCellsTR := by
+  funext pre es
+  cases es with
+  | nil => rfl
+  | cons e rest =>
+      apply Prod.ext
+      · rw [compListCells_fst]; rfl
+      · simp [compListCellsTR, compListCellsTR_go_eq]
+
 /-! ## Row 1 — `comp-uni1`, the singleton union class (§ 8.2)
 
 For every NAMED class `C` in the closure the class expression
@@ -273,6 +329,27 @@ def dedupAcc (seen : List WfIri) : List WfIri → List WfIri
   | x :: xs => if seen.contains x then dedupAcc seen xs
                else x :: dedupAcc (x :: seen) xs
 
+/-- `dedupAcc` with a reverse accumulator for the survivors: a tail call
+per element. `dedupAcc` conses after its recursive call, one frame per
+member of a `owl:differentFrom` clique. The `csimp` theorem makes the
+compiler emit this form. -/
+def dedupAccTR (seen : List WfIri) (xs : List WfIri) : List WfIri := go seen xs []
+where
+  go (seen : List WfIri) : List WfIri → List WfIri → List WfIri
+    | [], acc => acc.reverse
+    | x :: xs, acc => if seen.contains x then go seen xs acc else go (x :: seen) xs (x :: acc)
+
+theorem dedupAccTR_go_eq :
+    ∀ (xs seen acc : List WfIri), dedupAccTR.go seen xs acc = acc.reverse ++ dedupAcc seen xs
+  | [], seen, acc => by simp [dedupAccTR.go, dedupAcc]
+  | x :: xs, seen, acc => by
+      by_cases h : x ∈ seen
+      · simp [dedupAccTR.go, dedupAcc, h, dedupAccTR_go_eq xs seen acc]
+      · simp [dedupAccTR.go, dedupAcc, h, dedupAccTR_go_eq xs (x :: seen) (x :: acc)]
+
+@[csimp] theorem dedupAcc_eq_dedupAccTR : @dedupAcc = @dedupAccTR := by
+  funext seen xs; simp [dedupAccTR, dedupAccTR_go_eq]
+
 def dedupIris (l : List WfIri) : List WfIri := dedupAcc [] l
 
 /-- Insertion sort on the IRI string, so the emitted member list has a
@@ -284,6 +361,102 @@ def insIri (x : WfIri) : List WfIri → List WfIri
 def sortIris : List WfIri → List WfIri
   | [] => []
   | x :: xs => insIri x (sortIris xs)
+
+/-- `insIri` with the passed prefix on a reverse accumulator: a tail call
+per element. -/
+def insIriTR (x : WfIri) (ys : List WfIri) : List WfIri := go ys []
+where
+  go : List WfIri → List WfIri → List WfIri
+    | [], acc => (x :: acc).reverse
+    | y :: ys, acc => if x.val < y.val then acc.reverse ++ x :: y :: ys else go ys (y :: acc)
+
+theorem insIriTR_go_eq (x : WfIri) :
+    ∀ (ys acc : List WfIri), insIriTR.go x ys acc = acc.reverse ++ insIri x ys
+  | [], acc => by simp [insIriTR.go, insIri]
+  | y :: ys, acc => by
+      by_cases h : x.val < y.val
+      · simp [insIriTR.go, insIri, h]
+      · simp [insIriTR.go, insIri, h, insIriTR_go_eq x ys (y :: acc)]
+
+@[csimp] theorem insIri_eq_insIriTR : @insIri = @insIriTR := by
+  funext x ys; simp [insIriTR, insIriTR_go_eq]
+
+/-- The sort the row runs: merge sort on the IRI string, O(n log n) and
+without recursion depth. `sortIris` (insertion sort, one frame per member
+and quadratic) stays the specification; `sortIris_eq_sortIrisTR` proves
+the two equal, since both are sorted permutations of the input and two
+`WfIri`s with one string are one `WfIri`. -/
+def sortIrisTR (xs : List WfIri) : List WfIri :=
+  xs.mergeSort (fun a b => decide (a.val ≤ b.val))
+
+theorem insIri_perm (x : WfIri) : ∀ ys : List WfIri, List.Perm (insIri x ys) (x :: ys)
+  | [] => List.Perm.refl _
+  | y :: ys => by
+      unfold insIri
+      split
+      · exact List.Perm.refl _
+      · exact ((insIri_perm x ys).cons y).trans (List.Perm.swap x y ys)
+
+theorem insIri_pairwise (x : WfIri) :
+    ∀ ys : List WfIri, ys.Pairwise (fun a b => decide (a.val ≤ b.val) = true) →
+      (insIri x ys).Pairwise (fun a b => decide (a.val ≤ b.val) = true)
+  | [], _ => by simp [insIri]
+  | y :: ys, h => by
+      unfold insIri
+      split
+      · rename_i hxy
+        have h0 := h
+        rw [List.pairwise_cons] at h ⊢
+        refine ⟨?_, h0⟩
+        intro b hb
+        rcases List.mem_cons.mp hb with rfl | hb
+        · simpa using Std.le_of_lt hxy
+        · have := h.1 b hb
+          have hyb : y.val ≤ b.val := by simpa using this
+          simpa using Std.le_trans (Std.le_of_lt hxy) hyb
+      · rename_i hxy
+        rw [List.pairwise_cons] at h ⊢
+        refine ⟨?_, insIri_pairwise x ys h.2⟩
+        intro b hb
+        have hb' : b ∈ x :: ys := (insIri_perm x ys).mem_iff.mp hb
+        rcases List.mem_cons.mp hb' with rfl | hb'
+        · have : y.val ≤ b.val := Std.not_lt.mp hxy
+          simpa using this
+        · simpa using h.1 b hb'
+
+theorem sortIris_perm : ∀ xs : List WfIri, List.Perm (sortIris xs) xs
+  | [] => List.Perm.refl _
+  | x :: xs => by
+      unfold sortIris
+      exact (insIri_perm x _).trans ((sortIris_perm xs).cons x)
+
+theorem sortIris_pairwise : ∀ xs : List WfIri,
+    (sortIris xs).Pairwise (fun a b => decide (a.val ≤ b.val) = true)
+  | [] => by simp [sortIris]
+  | x :: xs => by
+      unfold sortIris
+      exact insIri_pairwise x _ (sortIris_pairwise xs)
+
+theorem sortIris_eq_sortIrisTR' (xs : List WfIri) : sortIrisTR xs = sortIris xs := by
+  unfold sortIrisTR
+  have hp : (xs.mergeSort (fun a b => decide (a.val ≤ b.val))).Pairwise
+      (fun a b => decide (a.val ≤ b.val) = true) :=
+    List.pairwise_mergeSort
+      (fun a b c hab hbc => by
+        simp only [decide_eq_true_eq] at hab hbc ⊢
+        exact Std.le_trans hab hbc)
+      (fun a b => by
+        simp only [Bool.or_eq_true, decide_eq_true_eq]
+        exact (Std.le_total : a.val ≤ b.val ∨ b.val ≤ a.val)) xs
+  refine List.Perm.eq_of_pairwise (le := fun a b => decide (a.val ≤ b.val) = true) ?_ hp
+    (sortIris_pairwise xs) ?_
+  · intro a b _ _ hab hba
+    simp only [decide_eq_true_eq] at hab hba
+    exact Subtype.ext (Std.le_antisymm hab hba)
+  · exact (List.mergeSort_perm xs _).trans (sortIris_perm xs).symm
+
+@[csimp] theorem sortIris_eq_sortIrisTR : @sortIris = @sortIrisTR := by
+  funext xs; exact (sortIris_eq_sortIrisTR' xs).symm
 
 /-- Everything the row emits for a member set: every permutation up to
 `permCap`, the sorted order alone above it. `owl:members` is a

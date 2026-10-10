@@ -72,6 +72,27 @@ def chunks : Nat → List α → List (List α)
   | _ + 1, [] => []
   | fuel + 1, xs => xs.take pageTerms :: chunks fuel (xs.drop pageTerms)
 
+/-- `chunks` with the pages on a reverse accumulator: a tail call per page.
+The fuel is the entry count, so `chunks` took one frame per page of a
+large index (https://github.com/danbri/factoidal/issues/746). -/
+def chunksTR (fuel : Nat) (xs : List α) : List (List α) := go fuel xs []
+where
+  go : Nat → List α → List (List α) → List (List α)
+    | 0, _, acc => acc.reverse
+    | _ + 1, [], acc => acc.reverse
+    | fuel + 1, x :: xs, acc =>
+        go fuel ((x :: xs).drop pageTerms) ((x :: xs).take pageTerms :: acc)
+
+theorem chunksTR_go_eq :
+    ∀ (fuel : Nat) (xs : List α) (acc : List (List α)),
+      chunksTR.go fuel xs acc = acc.reverse ++ chunks fuel xs
+  | 0, _, acc => by simp [chunksTR.go, chunks]
+  | _ + 1, [], acc => by simp [chunksTR.go, chunks]
+  | fuel + 1, x :: xs, acc => by simp [chunksTR.go, chunks, chunksTR_go_eq fuel]
+
+@[csimp] theorem chunks_eq_chunksTR : @chunks = @chunksTR := by
+  funext α fuel xs; simp [chunksTR, chunksTR_go_eq]
+
 def pageBytes (entries : List Entry) : List (List UInt8) :=
   (chunks entries.length entries).map (fun page => page.flatMap encodeEntry)
 

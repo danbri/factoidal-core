@@ -39,6 +39,25 @@ private def units (le : Bool) : List UInt8 → List Nat
       (if le then a.toNat + 256 * b.toNat else 256 * a.toNat + b.toNat) :: units le rest
   | _ => []
 
+/-- `units` onto a reverse accumulator: a tail call per code unit. The
+input is a whole UTF-16 source file; `units` conses after its recursive
+call, one frame per code unit (https://github.com/danbri/factoidal/issues/746). -/
+private def unitsTR (le : Bool) (bs : List UInt8) : List Nat := go bs []
+where
+  go : List UInt8 → List Nat → List Nat
+    | a :: b :: rest, acc =>
+        go rest ((if le then a.toNat + 256 * b.toNat else 256 * a.toNat + b.toNat) :: acc)
+    | _, acc => acc.reverse
+
+private theorem unitsTR_go_eq (le : Bool) :
+    ∀ (bs : List UInt8) (acc : List Nat), unitsTR.go le bs acc = acc.reverse ++ units le bs
+  | a :: b :: rest, acc => by simp [unitsTR.go, units, unitsTR_go_eq le rest]
+  | [_], acc => by simp [unitsTR.go, units]
+  | [], acc => by simp [unitsTR.go, units]
+
+@[csimp] private theorem units_eq_unitsTR : @units = @unitsTR := by
+  funext le bs; simp [unitsTR, unitsTR_go_eq]
+
 /-- Decode UTF-16 code units to characters, joining surrogate pairs. -/
 private def charsOfUnits : List Nat → Option (List Char)
   | [] => some []
@@ -55,6 +74,52 @@ private def charsOfUnits : List Nat → Option (List Char)
         | [] => none
       else none
 termination_by us => us.length
+
+/-- `charsOfUnits` onto a reverse accumulator: a tail call per character
+of the decoded file (https://github.com/danbri/factoidal/issues/746). -/
+private def charsOfUnitsTR (us : List Nat) : Option (List Char) := go us []
+where
+  go : List Nat → List Char → Option (List Char)
+    | [], acc => some acc.reverse
+    | u :: rest, acc =>
+        if u < 0xD800 || u > 0xDFFF then go rest (Char.ofNat u :: acc)
+        else if u ≤ 0xDBFF then
+          match rest with
+          | v :: rest' =>
+              if 0xDC00 ≤ v && v ≤ 0xDFFF then
+                go rest' (Char.ofNat (0x10000 + ((u - 0xD800) * 0x400) + (v - 0xDC00)) :: acc)
+              else none
+          | [] => none
+        else none
+  termination_by us => us.length
+
+private theorem charsOfUnitsTR_go_eq :
+    ∀ (us : List Nat) (acc : List Char),
+      charsOfUnitsTR.go us acc = (charsOfUnits us).map (acc.reverse ++ ·)
+  | [], acc => by simp [charsOfUnitsTR.go, charsOfUnits]
+  | u :: rest, acc => by
+      unfold charsOfUnitsTR.go charsOfUnits
+      by_cases h1 : (u < 0xD800 || u > 0xDFFF) = true
+      · simp only [h1, if_true]
+        rw [charsOfUnitsTR_go_eq rest]
+        cases charsOfUnits rest <;> simp
+      · simp only [h1]
+        by_cases h2 : u ≤ 0xDBFF
+        · simp only [h2, if_true]
+          match rest with
+          | v :: rest' =>
+              simp only
+              by_cases h3 : (0xDC00 ≤ v && v ≤ 0xDFFF) = true
+              · simp only [h3, if_true]
+                rw [charsOfUnitsTR_go_eq rest']
+                cases charsOfUnits rest' <;> simp
+              · simp [h3]
+          | [] => simp
+        · simp [h2]
+termination_by us => us.length
+
+@[csimp] private theorem charsOfUnits_eq_charsOfUnitsTR : @charsOfUnits = @charsOfUnitsTR := by
+  funext us; simp [charsOfUnitsTR, charsOfUnitsTR_go_eq]
 
 /-- Decode UTF-16 bytes, honouring a byte order mark. -/
 def decodeUtf16? (b : ByteArray) : Option String :=

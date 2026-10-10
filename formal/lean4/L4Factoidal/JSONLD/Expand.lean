@@ -49,6 +49,7 @@ parameter derived from `Json.size`, exactly as the F* source does; every
 recursive call decrements it, so every function is total.
 -/
 import L4Factoidal.JSONLD.Context
+import L4Factoidal.ListTR
 
 namespace L4Factoidal.JSONLD
 
@@ -255,6 +256,26 @@ def lowerPatternLanguages : List Json → List Json
   | .string s :: rest => .string (String.ofList (s.toList.map Char.toLower)) :: lowerPatternLanguages rest
   | other :: rest => other :: lowerPatternLanguages rest
 
+/-- One entry of a language pattern, lower-cased if it is a string. -/
+def lowerPatternLanguage : Json → Json
+  | .string s => .string (String.ofList (s.toList.map Char.toLower))
+  | other => other
+
+/-- `lowerPatternLanguages` as `List.map` (a loop; the readable form conses
+after its recursive call, one frame per entry). -/
+def lowerPatternLanguagesTR (js : List Json) : List Json := js.map lowerPatternLanguage
+
+theorem lowerPatternLanguages_eq_map :
+    ∀ js : List Json, lowerPatternLanguages js = js.map lowerPatternLanguage
+  | [] => rfl
+  | j :: rest => by
+      cases j <;>
+        simp [lowerPatternLanguages, lowerPatternLanguage, lowerPatternLanguages_eq_map rest]
+
+@[csimp] theorem lowerPatternLanguages_eq_TR :
+    @lowerPatternLanguages = @lowerPatternLanguagesTR := by
+  funext js; exact lowerPatternLanguages_eq_map js
+
 /-- IRI-expand the string entries of a `@type` pattern; `none` when one
 cannot be expanded or is a blank node identifier. -/
 def expandPatternTypes (ac : ActiveContext) : List Json → Option (List Json)
@@ -269,6 +290,52 @@ def expandPatternTypes (ac : ActiveContext) : List Json → Option (List Json)
         if stringHasSpace iri then none
         else (expandPatternTypes ac rest).map (fun r => .string iri :: r)
   | _ => none
+
+/-- One entry of a `@type` pattern (see `expandPatternTypes`). -/
+def expandPatternType (ac : ActiveContext) : Json → Option Json
+  | .object [] => some (.object [])
+  | .string t =>
+    if isBnodeShaped t then none
+    else
+      match expandIri ac t true with
+      | none => none
+      | some iri => if stringHasSpace iri then none else some (.string iri)
+  | _ => none
+
+/-- `expandPatternTypes` as `List.mapM` in `Option` (a loop). -/
+def expandPatternTypesTR (ac : ActiveContext) (js : List Json) : Option (List Json) :=
+  js.mapM (expandPatternType ac)
+
+theorem expandPatternTypes_cons (ac : ActiveContext) (j : Json) (rest : List Json) :
+    expandPatternTypes ac (j :: rest) =
+      (expandPatternType ac j).bind (fun a => (expandPatternTypes ac rest).map (a :: ·)) := by
+  cases j with
+  | string t =>
+      simp only [expandPatternTypes, expandPatternType]
+      by_cases hb : isBnodeShaped t = true
+      · simp [hb]
+      · simp only [hb]
+        cases expandIri ac t true with
+        | none => rfl
+        | some iri =>
+            by_cases hs : stringHasSpace iri = true
+            · simp [hs]
+            · simp [hs]
+  | object fs =>
+      cases fs with
+      | nil => simp [expandPatternTypes, expandPatternType]
+      | cons f fs => rfl
+  | _ => rfl
+
+theorem expandPatternTypes_eq_mapM (ac : ActiveContext) :
+    ∀ js : List Json, expandPatternTypes ac js = js.mapM (expandPatternType ac)
+  | [] => rfl
+  | j :: rest => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, expandPatternTypes_cons,
+        expandPatternTypes_eq_mapM ac rest]
+
+@[csimp] theorem expandPatternTypes_eq_TR : @expandPatternTypes = @expandPatternTypesTR := by
+  funext ac js; exact expandPatternTypes_eq_mapM ac js
 
 /-- A value object written in a frame is a VALUE PATTERN (Framing §4.3). -/
 def expandValuePattern (ac : ActiveContext) (fields : List (String × Json)) (v : Json)

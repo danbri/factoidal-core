@@ -89,6 +89,28 @@ def pagesOf (pageTerms : Nat) : Nat → List τ → List (List τ)
   | _ + 1, [] => []
   | fuel + 1, terms => terms.take pageTerms :: pagesOf pageTerms fuel (terms.drop pageTerms)
 
+/-- `pagesOf` with the pages on a reverse accumulator: a tail call per page
+of a dictionary (https://github.com/danbri/factoidal/issues/746). -/
+def pagesOfTR (pageTerms : Nat) (fuel : Nat) (terms : List τ) : List (List τ) :=
+  go fuel terms []
+where
+  go : Nat → List τ → List (List τ) → List (List τ)
+    | 0, _, acc => acc.reverse
+    | _ + 1, [], acc => acc.reverse
+    | fuel + 1, t :: ts, acc =>
+        go fuel ((t :: ts).drop pageTerms) ((t :: ts).take pageTerms :: acc)
+
+theorem pagesOfTR_go_eq (pageTerms : Nat) :
+    ∀ (fuel : Nat) (terms : List τ) (acc : List (List τ)),
+      pagesOfTR.go pageTerms fuel terms acc = acc.reverse ++ pagesOf pageTerms fuel terms
+  | 0, _, acc => by simp [pagesOfTR.go, pagesOf]
+  | _ + 1, [], acc => by simp [pagesOfTR.go, pagesOf]
+  | fuel + 1, t :: ts, acc => by
+      simp [pagesOfTR.go, pagesOf, pagesOfTR_go_eq pageTerms fuel]
+
+@[csimp] theorem pagesOf_eq_pagesOfTR : @pagesOf = @pagesOfTR := by
+  funext τ pageTerms fuel terms; simp [pagesOfTR, pagesOfTR_go_eq]
+
 def encodePages (terms : List τ) : List (List UInt8) :=
   (pagesOf defaultPageTerms terms.length terms).map (fun page => page.flatMap F.codec.encode)
 

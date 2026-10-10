@@ -204,6 +204,14 @@ theorem rowsJoinedTR_go_eq :
   | acc, r :: rest => by
       simp [rowsJoinedTR.go, rowsJoinedTail, rowsJoinedTR_go_eq _ rest, String.append_assoc]
 
+/-- `rowsJoinedTail` by the accumulator walk of `rowsJoinedTR`: the
+specification helper is not called at run time, and this `csimp` makes any
+call of it a loop as well (https://github.com/danbri/factoidal/issues/746). -/
+def rowsJoinedTailTR (rows : SolutionSeq) : String := rowsJoinedTR.go "" rows
+
+@[csimp] theorem rowsJoinedTail_eq_TR : @rowsJoinedTail = @rowsJoinedTailTR := by
+  funext rows; simp [rowsJoinedTailTR, rowsJoinedTR_go_eq, String.empty_append]
+
 @[csimp] theorem rowsJoined_eq_rowsJoinedTR : @rowsJoined = @rowsJoinedTR := by
   funext rows
   cases rows with

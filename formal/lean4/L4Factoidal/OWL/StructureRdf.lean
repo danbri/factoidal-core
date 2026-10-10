@@ -129,6 +129,27 @@ def mapOPEs : List ObjPropExpr → MS → List Subject × MS
       let (rest, st) := mapOPEs os st
       (a :: rest, st)
 
+/-- `mapOPEs` with the results on a reverse accumulator: a tail call per
+property expression (https://github.com/danbri/factoidal/issues/746). -/
+def mapOPEsTR (os : List ObjPropExpr) (st : MS) : List Subject × MS := go os st []
+where
+  go : List ObjPropExpr → MS → List Subject → List Subject × MS
+    | [], st, acc => (acc.reverse, st)
+    | o :: os, st, acc =>
+        let (a, st) := mapOPE o st
+        go os st (a :: acc)
+
+theorem mapOPEsTR_go_eq : ∀ (os : List ObjPropExpr) (st : MS) (acc : List Subject),
+    mapOPEsTR.go os st acc = ((acc.reverse ++ (mapOPEs os st).1), (mapOPEs os st).2)
+  | [], st, acc => by simp [mapOPEsTR.go, mapOPEs]
+  | o :: os, st, acc => by
+      simp only [mapOPEsTR.go, mapOPEs]
+      rw [mapOPEsTR_go_eq os]
+      simp
+
+@[csimp] theorem mapOPEs_eq_TR : @mapOPEs = @mapOPEsTR := by
+  funext os st; simp [mapOPEsTR, mapOPEsTR_go_eq]
+
 /-- `T(SEQ y1 ... yn)`, Table 1: the list cells are allocated head
 first in the family `tag`. -/
 def mapSeq (tag : String) : List Term → MS → Term × MS
@@ -138,6 +159,77 @@ def mapSeq (tag : String) : List Term → MS → Term × MS
       let (rest, st) := mapSeq tag ys st
       (subjTerm x, st.addAll [⟨x, rdfI "first", y⟩, ⟨x, rdfI "rest", rest⟩])
 
+/-- `mapSeq` in two loops: allocate the cells head first (`mapSeqAlloc`,
+newest first onto `acc`), then write their triples last cell first
+(`mapSeqEmit`), which is the order `mapSeq` writes them in. `mapSeq`
+recurses once per element, and an `ObjectOneOf` or `DifferentIndividuals`
+sequence is as long as the ontology makes it (https://github.com/danbri/factoidal/issues/746). -/
+def mapSeqAlloc (tag : String) : List Term → MS → List (Subject × Term) →
+    List (Subject × Term) × MS
+  | [], st, acc => (acc, st)
+  | y :: ys, st, acc =>
+      let (x, st) := st.fresh tag
+      mapSeqAlloc tag ys st ((x, y) :: acc)
+
+/-- Write the cells of `ps` (last cell first); `rest` is the term the
+first of them points at. -/
+def mapSeqEmit : List (Subject × Term) → Term → MS → Term × MS
+  | [], rest, st => (rest, st)
+  | (x, y) :: ps, rest, st =>
+      mapSeqEmit ps (subjTerm x) (st.addAll [⟨x, rdfI "first", y⟩, ⟨x, rdfI "rest", rest⟩])
+
+def mapSeqTR (tag : String) (ys : List Term) (st : MS) : Term × MS :=
+  let (ps, st) := mapSeqAlloc tag ys st []
+  mapSeqEmit ps (.iri (rdfI "nil")) st
+
+theorem mapSeqAlloc_emit (tag : String) : ∀ (ys : List Term) (st : MS) (acc : List (Subject × Term)),
+    mapSeqEmit (mapSeqAlloc tag ys st acc).1 (.iri (rdfI "nil")) (mapSeqAlloc tag ys st acc).2 =
+      mapSeqEmit acc (mapSeq tag ys st).1 (mapSeq tag ys st).2
+  | [], st, acc => by simp [mapSeqAlloc, mapSeq]
+  | y :: ys, st, acc => by
+      simp only [mapSeqAlloc, mapSeq]
+      rw [mapSeqAlloc_emit tag ys]
+      simp [mapSeqEmit]
+
+@[csimp] theorem mapSeq_eq_TR : @mapSeq = @mapSeqTR := by
+  funext tag ys st
+  have h := mapSeqAlloc_emit tag ys st []
+  simp only [mapSeqEmit] at h
+  simp only [mapSeqTR]
+  rw [h]
+
+/-- Each `(facet, value)` pair of a datatype restriction gets its own node
+`_:yi Fi lti` (Table 1). -/
+def mapFacets : List (WfIri × WfLiteral) → MS → List Subject × MS
+  | [], st => ([], st)
+  | (f, v) :: fs, st =>
+      let (y, st) := st.fresh "owlfs_facet"
+      let st := st.add ⟨y, f, .literal (mapLiteral v)⟩
+      let (rest, st) := mapFacets fs st
+      (y :: rest, st)
+
+/-- `mapFacets` with the nodes on a reverse accumulator: a tail call per
+facet (https://github.com/danbri/factoidal/issues/746). -/
+def mapFacetsTR (fs : List (WfIri × WfLiteral)) (st : MS) : List Subject × MS := go fs st []
+where
+  go : List (WfIri × WfLiteral) → MS → List Subject → List Subject × MS
+    | [], st, acc => (acc.reverse, st)
+    | (f, v) :: fs, st, acc =>
+        let (y, st) := st.fresh "owlfs_facet"
+        let st := st.add ⟨y, f, .literal (mapLiteral v)⟩
+        go fs st (y :: acc)
+
+theorem mapFacetsTR_go_eq : ∀ (fs : List (WfIri × WfLiteral)) (st : MS) (acc : List Subject),
+    mapFacetsTR.go fs st acc = (acc.reverse ++ (mapFacets fs st).1, (mapFacets fs st).2)
+  | [], st, acc => by simp [mapFacetsTR.go, mapFacets]
+  | (f, v) :: fs, st, acc => by
+      simp only [mapFacetsTR.go, mapFacets]
+      rw [mapFacetsTR_go_eq fs]
+      simp
+
+@[csimp] theorem mapFacets_eq_TR : @mapFacets = @mapFacetsTR := by
+  funext fs st; simp [mapFacetsTR, mapFacetsTR_go_eq]
+
 /-! ## Data ranges and class expressions — Table 1 -/
 
 mutual
@@ -145,13 +237,13 @@ mutual
 def mapDR : DataRange → MS → Subject × MS
   | .datatype dt, st => (.iri dt, st)
   | .intersection drs, st =>
-      let (items, st) := mapDRs drs st
+      let (items, st) := mapDRsAcc drs st []
       let (x, st) := st.fresh "owlfs_dtint"
       let (l, st) := mapSeq "owlfs_lst" (items.map subjTerm) st
       (x, st.addAll [⟨x, rdfI "type", .iri (rdfsI "Datatype")⟩,
                      ⟨x, owlI "intersectionOf", l⟩])
   | .union drs, st =>
-      let (items, st) := mapDRs drs st
+      let (items, st) := mapDRsAcc drs st []
       let (x, st) := st.fresh "owlfs_dtuni"
       let (l, st) := mapSeq "owlfs_lst" (items.map subjTerm) st
       (x, st.addAll [⟨x, rdfI "type", .iri (rdfsI "Datatype")⟩,
@@ -173,22 +265,33 @@ def mapDR : DataRange → MS → Subject × MS
       (x, st.addAll [⟨x, rdfI "type", .iri (rdfsI "Datatype")⟩,
                      ⟨x, owlI "onDatatype", .iri dt⟩, ⟨x, owlI "withRestrictions", l⟩])
 
-def mapDRs : List DataRange → MS → List Subject × MS
-  | [], st => ([], st)
-  | d :: ds, st =>
+/-- The operands of a data range, the results after `acc` (newest
+first): a tail call per operand (https://github.com/danbri/factoidal/issues/746). -/
+def mapDRsAcc : List DataRange → MS → List Subject → List Subject × MS
+  | [], st, acc => (acc.reverse, st)
+  | d :: ds, st, acc =>
       let (a, st) := mapDR d st
-      let (rest, st) := mapDRs ds st
-      (a :: rest, st)
-
-def mapFacets : List (WfIri × WfLiteral) → MS → List Subject × MS
-  | [], st => ([], st)
-  | (f, v) :: fs, st =>
-      let (y, st) := st.fresh "owlfs_facet"
-      let st := st.add ⟨y, f, .literal (mapLiteral v)⟩
-      let (rest, st) := mapFacets fs st
-      (y :: rest, st)
+      mapDRsAcc ds st (a :: acc)
 
 end
+
+/-- The operands of a data range, in order, the state threaded through. -/
+def mapDRs (ds : List DataRange) (st : MS) : List Subject × MS := mapDRsAcc ds st []
+
+theorem mapDRsAcc_eq : ∀ (ds : List DataRange) (st : MS) (acc : List Subject),
+    mapDRsAcc ds st acc = (acc.reverse ++ (mapDRs ds st).1, (mapDRs ds st).2)
+  | [], st, acc => by simp [mapDRsAcc, mapDRs]
+  | d :: ds, st, acc => by
+      simp only [mapDRs, mapDRsAcc]
+      rw [mapDRsAcc_eq ds, mapDRsAcc_eq ds _ [(mapDR d st).1]]
+      simp [mapDRs]
+
+theorem mapDRs_cons (d : DataRange) (ds : List DataRange) (st : MS) :
+    mapDRs (d :: ds) st =
+      let (a, st) := mapDR d st
+      let (rest, st) := mapDRs ds st
+      (a :: rest, st) := by
+  simp only [mapDRs, mapDRsAcc]; rw [mapDRsAcc_eq]; simp [mapDRs]
 
 /-- A restriction node: `_:x rdf:type owl:Restriction` plus `body x`. -/
 def restriction (body : Subject → List Triple) (st : MS) : Subject × MS :=
@@ -235,12 +338,12 @@ mutual
 def mapCE : ClassExpr → MS → Subject × MS
   | .cls c, st => (.iri c, st)
   | .intersection ces, st =>
-      let (items, st) := mapCEs ces st
+      let (items, st) := mapCEsAcc ces st []
       let (x, st) := st.fresh "owlfs_cls"
       let (l, st) := mapSeq "owlfs_lst" (items.map subjTerm) st
       (x, st.addAll [⟨x, rdfI "type", .iri (owlI "Class")⟩, ⟨x, owlI "intersectionOf", l⟩])
   | .union ces, st =>
-      let (items, st) := mapCEs ces st
+      let (items, st) := mapCEsAcc ces st []
       let (x, st) := st.fresh "owlfs_cls"
       let (l, st) := mapSeq "owlfs_lst" (items.map subjTerm) st
       (x, st.addAll [⟨x, rdfI "type", .iri (owlI "Class")⟩, ⟨x, owlI "unionOf", l⟩])
@@ -312,14 +415,34 @@ def mapCE : ClassExpr → MS → Subject × MS
       let (d, st) := mapDR dr st
       dataCardinality (owlI "cardinality") (owlI "qualifiedCardinality") n dp (some d) st
 
-def mapCEs : List ClassExpr → MS → List Subject × MS
-  | [], st => ([], st)
-  | c :: cs, st =>
+/-- The operands of a class expression, the results after `acc` (newest
+first): a tail call per operand (https://github.com/danbri/factoidal/issues/746). -/
+def mapCEsAcc : List ClassExpr → MS → List Subject → List Subject × MS
+  | [], st, acc => (acc.reverse, st)
+  | c :: cs, st, acc =>
       let (a, st) := mapCE c st
-      let (rest, st) := mapCEs cs st
-      (a :: rest, st)
+      mapCEsAcc cs st (a :: acc)
 
 end
+
+/-- The operands of a class expression or axiom, in order, the state
+threaded through. -/
+def mapCEs (cs : List ClassExpr) (st : MS) : List Subject × MS := mapCEsAcc cs st []
+
+theorem mapCEsAcc_eq : ∀ (cs : List ClassExpr) (st : MS) (acc : List Subject),
+    mapCEsAcc cs st acc = (acc.reverse ++ (mapCEs cs st).1, (mapCEs cs st).2)
+  | [], st, acc => by simp [mapCEsAcc, mapCEs]
+  | c :: cs, st, acc => by
+      simp only [mapCEs, mapCEsAcc]
+      rw [mapCEsAcc_eq cs, mapCEsAcc_eq cs _ [(mapCE c st).1]]
+      simp [mapCEs]
+
+theorem mapCEs_cons (c : ClassExpr) (cs : List ClassExpr) (st : MS) :
+    mapCEs (c :: cs) st =
+      let (a, st) := mapCE c st
+      let (rest, st) := mapCEs cs st
+      (a :: rest, st) := by
+  simp only [mapCEs, mapCEsAcc]; rw [mapCEsAcc_eq]; simp [mapCEs]
 
 
 /-! ## Annotations — Table 2 -/
