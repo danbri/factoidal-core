@@ -81,47 +81,118 @@ def foldDisj : List Concept → Concept
   | [c]     => c
   | c :: cs => .disj c (foldDisj cs)
 
+/-- Which properties the reader treats as object properties and which
+    as data properties. -/
+structure Sig where
+  obj  : WfIri → Bool
+  data : WfIri → Bool := fun _ => false
+
+/-- The data properties the graph declares (`owl:DatatypeProperty`), less
+    any also declared object or annotation properties. -/
+def dataPropertiesOf (st : Store) (objs : List WfIri) : List WfIri :=
+  ((st.withPredObj rdfType (.iri owlDatatypeProperty)).filterMap (fun t => match t.s with
+    | .iri p => if isReservedIri p || objs.contains p then none else some p
+    | .bnode _ => none)).eraseDups
+
+/-- `DataMinCardinality(n DP)` and `DataMaxCardinality(n DP)` (Table 4)
+    read as class NAMES. `Concept` has one sort, so a data property
+    cannot be a role of it; an unqualified data cardinality restriction
+    is a class all the same, and naming it keeps the reading inside the
+    object domain. The names are in a `urn:` namespace no corpus
+    ontology uses. The arithmetic between them is given back by the
+    bridge axioms of `dataBridgeAxioms`. -/
+def dataMinAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-min:{n}:{p}"
+def dataMaxAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-max:{n}:{p}"
+
 mutual
 
 /-- A parsed class expression in the `Concept` fragment, or `none`.
     Every role must be a declared object property and every named class
     a non-reserved IRI (or `owl:Thing` / `owl:Nothing`). -/
-def toConcept (isObj : WfIri → Bool) : ClassExpr → Option Concept
+def toConcept (sig : Sig) : ClassExpr → Option Concept
   | .named c =>
       if c == owlThing then some .top
       else if c == owlNothing then some .bot
       else if isReservedIri c then none
       else some (.atom c.val)
-  | .someOf p c => if isObj p then (toConcept isObj c).map (.ex p.val) else none
-  | .allOf p c => if isObj p then (toConcept isObj c).map (.all p.val) else none
-  | .intersection cs => (toConceptList isObj cs).map foldConj
-  | .union cs => (toConceptList isObj cs).map foldDisj
-  | .complement c => (toConcept isObj c).map .neg
-  | .minCard n p => if isObj p then some (.atLeast n p.val) else none
-  | .maxCard n p => if isObj p then some (.atMost n p.val) else none
+  | .someOf p c => if sig.obj p then (toConcept sig c).map (.ex p.val) else none
+  | .allOf p c => if sig.obj p then (toConcept sig c).map (.all p.val) else none
+  | .intersection cs => (toConceptList sig cs).map foldConj
+  | .union cs => (toConceptList sig cs).map foldDisj
+  | .complement c => (toConcept sig c).map .neg
+  | .minCard n p =>
+      if sig.obj p then some (.atLeast n p.val)
+      else if sig.data p then some (if n == 0 then .top else .atom (dataMinAtom n p.val))
+      else none
+  | .maxCard n p =>
+      if sig.obj p then some (.atMost n p.val)
+      else if sig.data p then some (.atom (dataMaxAtom n p.val))
+      else none
   | .exactCard n p =>
-      if !isObj p then none
-      else if n == 0 then some (.atMost 0 p.val)
-      else some (.conj (.atLeast n p.val) (.atMost n p.val))
+      if sig.obj p then
+        if n == 0 then some (.atMost 0 p.val)
+        else some (.conj (.atLeast n p.val) (.atMost n p.val))
+      else if sig.data p then
+        if n == 0 then some (.atom (dataMaxAtom 0 p.val))
+        else some (.conj (.atom (dataMinAtom n p.val)) (.atom (dataMaxAtom n p.val)))
+      else none
   | .minQualCard n p c =>
-      if isObj p then (toConcept isObj c).map (.atLeastQ n p.val) else none
+      if sig.obj p then (toConcept sig c).map (.atLeastQ n p.val) else none
   | .maxQualCard n p c =>
-      if isObj p then (toConcept isObj c).map (.atMostQ n p.val) else none
+      if sig.obj p then (toConcept sig c).map (.atMostQ n p.val) else none
   | .exactQualCard n p c =>
-      if !isObj p then none
-      else (toConcept isObj c).map (fun d =>
+      if !sig.obj p then none
+      else (toConcept sig c).map (fun d =>
         if n == 0 then .atMostQ 0 p.val d
         else .conj (.atLeastQ n p.val d) (.atMostQ n p.val d))
   | _ => none
 
-def toConceptList (isObj : WfIri → Bool) : List ClassExpr → Option (List Concept)
+def toConceptList (sig : Sig) : List ClassExpr → Option (List Concept)
   | [] => some []
   | c :: cs =>
-      match toConcept isObj c, toConceptList isObj cs with
+      match toConcept sig c, toConceptList sig cs with
       | some d, some ds => some (d :: ds)
       | _, _ => none
 
 end
+
+/-- The atom names of a concept. -/
+def conceptAtoms : Concept → List String
+  | .atom a => [a]
+  | .neg c => conceptAtoms c
+  | .conj c d | .disj c d => conceptAtoms c ++ conceptAtoms d
+  | .all _ c | .ex _ c | .atLeastQ _ _ c | .atMostQ _ _ c => conceptAtoms c
+  | _ => []
+
+/-- The arithmetic between the data cardinality names of `dataMinAtom`
+    and `dataMaxAtom`, for every name the ontology uses. Each axiom holds
+    in every interpretation, because a set has at least `n` elements or
+    at most `n - 1`, and not both:
+    `¬(≥ n P) ⊑ ≤ n-1 P`, `¬(≤ m P) ⊑ ≥ m+1 P`, and `≥ n P ⊑ ¬(≤ m P)`
+    for `m < n`. -/
+def dataBridgeAxioms (names : List String) : List (Concept × Concept) :=
+  let minPre := "urn:factoidal:owl-cert:data-min:"
+  let maxPre := "urn:factoidal:owl-cert:data-max:"
+  let parse (pre : String) (a : String) : Option (Nat × String) :=
+    if a.startsWith pre then
+      match (String.mk (a.toList.drop pre.length)).splitOn ":" with
+      | n :: rest => n.toNat?.map (fun k => (k, String.intercalate ":" rest))
+      | [] => none
+    else none
+  let mins0 : List (Nat × String) := names.filterMap (parse minPre)
+  let maxs0 : List (Nat × String) := names.filterMap (parse maxPre)
+  let mins : List (Nat × String) :=
+    (mins0 ++ maxs0.map (fun (q : Nat × String) => (q.1 + 1, q.2))).eraseDups
+  let maxs : List (Nat × String) :=
+    (maxs0 ++ (mins0.filter (fun (q : Nat × String) => q.1 ≥ 1)).map
+      (fun (q : Nat × String) => (q.1 - 1, q.2))).eraseDups
+  (mins.filter (fun (q : Nat × String) => q.1 ≥ 1)).map (fun (q : Nat × String) =>
+      (Concept.neg (.atom (dataMinAtom q.1 q.2)), Concept.atom (dataMaxAtom (q.1 - 1) q.2))) ++
+  maxs.map (fun (q : Nat × String) =>
+      (Concept.neg (.atom (dataMaxAtom q.1 q.2)), Concept.atom (dataMinAtom (q.1 + 1) q.2))) ++
+  mins.flatMap (fun (q : Nat × String) =>
+    (maxs.filter (fun (r : Nat × String) => r.2 == q.2 && r.1 < q.1)).map (fun (r : Nat × String) =>
+      (Concept.atom (dataMinAtom q.1 q.2), Concept.neg (.atom (dataMaxAtom r.1 r.2)))))
 
 /-! ## The reader -/
 
@@ -136,9 +207,11 @@ def readOntology (g : Graph) : DlOntology := Id.run do
   let st := Store.ofIndex (Index.ofGraph g)
   let objs := objectPropertiesOf st
   let isObj (p : WfIri) : Bool := objs.contains p
+  let datas := dataPropertiesOf st objs
+  let sig : Sig := { obj := isObj, data := fun p => datas.contains p }
   let fuel := g.length + 8
-  let ce (t : Term) : Option Concept := toConcept isObj (parseClassExpr st t fuel)
-  let ceS (s : Subject) : Option Concept := toConcept isObj (parseCeOfSubjectFuel st fuel s)
+  let ce (t : Term) : Option Concept := toConcept sig (parseClassExpr st t fuel)
+  let ceS (s : Subject) : Option Concept := toConcept sig (parseCeOfSubjectFuel st fuel s)
   let both (a b : Option Concept) : List (Concept × Concept) :=
     match a, b with
     | some x, some y => [(x, y)]
@@ -197,7 +270,9 @@ def readOntology (g : Graph) : DlOntology := Id.run do
             | .bnode _ => pure ()
           else if c == owlFunctionalProperty then
             match t.s with
-            | .iri p => if isObj p then tbox := (.top, .atMost 1 p.val) :: tbox
+            | .iri p =>
+                if isObj p then tbox := (.top, .atMost 1 p.val) :: tbox
+                else if datas.contains p then tbox := (.top, .atom (dataMaxAtom 1 p.val)) :: tbox
             | .bnode _ => pure ()
           else if c == owlAllDifferent then
             let members := (match firstObject st t.s owlMembers with
@@ -250,7 +325,12 @@ def readOntology (g : Graph) : DlOntology := Id.run do
       match t.s with
       | .iri p => if isObj p then some p.val else none
       | .bnode _ => none)).eraseDups
-  return { tbox := dedupHash tbox.reverse, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
+  let names := (tbox.flatMap (fun ax => conceptAtoms ax.1 ++ conceptAtoms ax.2) ++
+    abox.flatMap (fun φ => match φ with
+      | .inst _ k => conceptAtoms k
+      | _ => [])).eraseDups
+  tbox := tbox.reverse ++ dataBridgeAxioms names
+  return { tbox := dedupHash tbox, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
            abox := dedupHash abox.reverse, inv := dedupHash inv.reverse }
 
 /-! ## The emitter -/
@@ -283,13 +363,15 @@ def witnessFiller (st : RState) (e : REdge) : Option ClassExpr :=
 /-- The `exWit` steps for the witnesses of `st` not yet introduced, in
     creation order, and the introduced list after them. `none` when a
     witness's filler is outside the fragment. -/
-def witnessSteps (isObj : WfIri → Bool) (ren : List (Ind × Ind)) (intro : List Ind)
+def witnessSteps (isObj : Sig) (ren : List (Ind × Ind)) (intro : List Ind)
     (st : RState) : Option (List (Ind × Role × Concept × Ind) × List Ind) :=
   st.extra.toList.foldl (fun acc e =>
     match acc with
     | none => none
     | some (steps, seen) =>
-      if !isWitnessEdge e then some (steps, seen)
+      -- A witness on a property outside the object properties (a data
+      -- property's successor) is no individual of the fragment: skipped.
+      if !isWitnessEdge e || !isObj.obj e.p then some (steps, seen)
       else
         match indOfTerm e.o with
         | none => none
@@ -320,15 +402,21 @@ def mergeSite (g : Graph) (st : RState) : Option (Subject × Nat × WfIri × Lis
           else some (n.id, k, p, successorsOf g st n.id p false)
       | _ => none))
 
-/-- For a forced identification of `t` with `u` on `before`: a group
-    leader with a `≤ 1 p` label that has both as `p`-successors. -/
-def forcedSite (g : Graph) (st : RState) (t u : Term) : Option (Subject × WfIri) :=
+/-- For a forced identification of `t` on `before`: a group leader with
+    a `≤ 1 p` (or `≤ 1 p.C`) label that has `t` and a second successor
+    `s` the merges so far already identify with `t`'s representative
+    (`same s`). Returns the node, the property and `s`. -/
+def forcedSite (g : Graph) (st : RState) (t : Term) (same : Term → Bool)
+    : Option (Subject × WfIri × Term) :=
   (groupLeaders st).findSome? (fun n =>
     (labelsOf st n.id).findSome? (fun l =>
+      let pick (p : WfIri) (ss : List Term) : Option (Subject × WfIri × Term) :=
+        if ss.contains t then
+          (ss.find? (fun s => s != t && same s)).map (fun s => (n.id, p, s))
+        else none
       match l with
-      | .maxCard 1 p =>
-          let ss := successorsOf g st n.id p false
-          if ss.contains t && ss.contains u then some (n.id, p) else none
+      | .maxCard 1 p => pick p (successorsOf g st n.id p false)
+      | .maxQualCard 1 p c => pick p (successorsInFiller st c (successorsOf g st n.id p false))
       | _ => none))
 
 /-- The terms `after` identifies that `before` did not, each with its
@@ -345,13 +433,21 @@ def forcedSteps (g : Graph) (before after : RState) (ren : List (Ind × Ind))
     match acc with
     | none => none
     | some (steps, ren') =>
-      match forcedSite g before q.1 q.2, indOfTerm q.1, indOfTerm q.2 with
-      | some (n, p), some tb, some ub =>
-          let x := applyRen ren' tb
-          let y := applyRen ren' ub
-          if x == y then some (steps, ren')
-          else some (steps ++ [(applyRen ren' (indOfSubject n), p.val, x, y)], ren' ++ [(x, y)])
-      | _, _, _ => none) (some ([], ren))
+      match indOfTerm q.1, indOfTerm q.2 with
+      | some tb, some ub =>
+        let x := applyRen ren' tb
+        let y := applyRen ren' ub
+        if x == y then some (steps, ren')
+        else
+          -- A successor already merged into `u`'s class, or `u` itself.
+          let same (s : Term) : Bool := match indOfTerm s with
+            | some sb => applyRen ren' sb == y
+            | none => false
+          match forcedSite g before q.1 same with
+          | some (n, p, _) =>
+              some (steps ++ [(applyRen ren' (indOfSubject n), p.val, x, y)], ren' ++ [(x, y)])
+          | none => none
+      | _, _ => none) (some ([], ren))
 
 /-- One single-case `merge` per forced identification, outermost first. -/
 def wrapMerges (steps : List (Ind × Role × Ind × Ind)) (k : Cert) : Cert :=
@@ -379,9 +475,9 @@ def countingSite (st : RState) : Option (Subject × Nat × WfIri × List ClassEx
 /-- The certificate for a counting clash: one fresh witness per
     filler, then the ≤-rule over the witnesses, every merge closed by
     the disjointness of the two fillers it puts on one individual. -/
-def countingCert (isObj : WfIri → Bool) (ren : List (Ind × Ind)) (st : RState) : Option Cert := do
+def countingCert (isObj : Sig) (ren : List (Ind × Ind)) (st : RState) : Option Cert := do
   let (n, k, p, cs) ← countingSite st
-  if !isObj p then none else
+  if !isObj.obj p then none else
   let ds ← toConceptList isObj cs
   let a := applyRen ren (indOfSubject n)
   let xs := (List.range ds.length).map (fun i => s!"_:_:cert_cc_{i}__{a}")
@@ -393,7 +489,7 @@ mutual
 
 /-- The certificate for a trace. `ren` holds the merges made so far,
     `intro` the witnesses introduced on this branch. -/
-def emitCert (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
+def emitCert (isObj : Sig) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
     : SearchTrace → Option Cert
   | .none => none
   | .leaf st => do
@@ -426,7 +522,7 @@ def emitCert (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (int
         (.merge (applyRen ren (indOfSubject n)) k p.val renamed (appendCases cases closers)))
 
 /-- Nested `split`s for a union's disjuncts, one sub-trace each. -/
-def emitUnion (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
+def emitUnion (isObj : Sig) (g : Graph) (ren : List (Ind × Ind)) (intro : List Ind)
     (a : Ind) (ds : List Concept) : List SearchTrace → Option Cert
   | [] => none
   | [t] =>
@@ -442,7 +538,7 @@ def emitUnion (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (in
       | _ => none
 
 /-- The merge cases, one per branch pair, in the refuter's order. -/
-def emitMergeCases (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind))
+def emitMergeCases (isObj : Sig) (g : Graph) (ren : List (Ind × Ind))
     (intro : List Ind) : List (Term × Term) → List SearchTrace → Option MergeCases
   | [], _ => some .nil
   | _, [] => none
@@ -474,6 +570,13 @@ def CertOutcome.isProved : CertOutcome → Bool
   | .proved => true
   | _ => false
 
+/-- The property signature `readOntology` uses, for the emitter. -/
+def sigOf (g : Graph) : Sig :=
+  let st := Store.ofIndex (Index.ofGraph g)
+  let objs := objectPropertiesOf st
+  let datas := dataPropertiesOf st objs
+  { obj := fun p => objs.contains p, data := fun p => datas.contains p }
+
 /-- The ontology `certify` checks a certificate against. -/
 def certOntology (g : Graph) : DlOntology := readOntology g
 
@@ -486,8 +589,7 @@ def certify (g : Graph) (budget : Nat) : CertOutcome :=
   | (some false, .counting) => .unchecked "counting rung (countingRefutes) emits no certificate"
   | (some false, .search _ trace) =>
       let O := certOntology g
-      let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
-      match emitCert (fun p => objs.contains p) g [] [] trace with
+      match emitCert (sigOf g) g [] [] trace with
       | none => .unchecked "the trace uses a construct the certificate cannot express"
       | some c =>
           if checkCert O c then .proved
@@ -630,7 +732,41 @@ def firstLeafFacts (O : DlOntology) : Cert → List Assertion → Option (List A
       firstLeafFacts O l (.inst a c :: saturate (Ctx.ofOntology O) certFuel F)
   | .exWit a r c x k, F =>
       firstLeafFacts O k (.rel r a x :: .inst x c :: saturate (Ctx.ofOntology O) certFuel F)
-  | .merge _ _ _ _ _, _ => none
+  | .merge _ _ _ _ (.cons b c k _), F =>
+      firstLeafFacts O k (mergeInds b c (saturate (Ctx.ofOntology O) certFuel F))
+  | .merge _ _ _ _ .nil, _ => none
+
+/-- Why `emitCert` gave no certificate: the first failing step on the
+    first path of the trace. -/
+def whyNoCert (isObj : Sig) (g : Graph) : SearchTrace → String
+  | .none => "empty trace"
+  | .leaf st =>
+      match witnessSteps isObj [] [] st with
+      | none =>
+        let bad := st.extra.toList.filter (fun e => isWitnessEdge e &&
+          (match witnessFiller st e with
+           | none => true
+           | some c => (toConcept isObj c).isNone))
+        s!"leaf: witness filler outside the fragment: {bad.map (fun e => (indOfSubject e.s, e.p.val, (witnessFiller st e).map (fun c => (repr c).pretty 1000)))}"
+      | some _ => "leaf: ok"
+  | .forced before after _ =>
+      match witnessSteps isObj [] [] before with
+      | none => "forced: witness filler outside the fragment"
+      | some _ =>
+        match forcedSteps g before after [] with
+        | none => s!"forced: no ≤ 1 site for identifications {(repr (newIdentifications before after)).pretty 1000}"
+        | some _ => "forced: ok"
+  | .union st _ cs _ =>
+      match witnessSteps isObj [] [] st, toConceptList isObj cs with
+      | none, _ => "union: witness filler outside the fragment"
+      | _, none => "union: a disjunct outside the fragment"
+      | _, _ => "union: ok"
+  | .merge st nominal _ _ =>
+      if nominal then "nominal choice" else
+      match witnessSteps isObj [] [] st, mergeSite g st with
+      | none, _ => "merge: witness filler outside the fragment"
+      | _, none => "merge: no unqualified ≤ k site"
+      | _, _ => "merge: ok"
 
 /-- The refuter's clash at a leaf state, as (node, label). -/
 def leafClashSite (g : Graph) (st : RState) : Option (Subject × ClassExpr) :=
@@ -651,10 +787,10 @@ def certifyDebug (g : Graph) (budget : Nat) : String :=
   | (some false, .search _ trace) =>
       let O := certOntology g
       let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
-      let isObj := fun (p : WfIri) => objs.contains p
+      let isObj := sigOf g
       let certS := match emitCert isObj g [] [] trace with
         | some c => (repr c).pretty 100000
-        | none => "no certificate"
+        | none => "no certificate: " ++ whyNoCert isObj g trace
       let site := match firstLeafState trace with
         | none => "no leaf"
         | some st =>

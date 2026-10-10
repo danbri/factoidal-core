@@ -918,9 +918,58 @@ def exAvailable (S : List Assertion) (a : Ind) (r : Role) (c : Concept) : Bool :
     | .inst a' (.atLeast n r') => a' == a && r' == r && c == .top && decide (1 ≤ n)
     | _ => false)
 
+/-- The bound a `merge` uses: `a : ≤ n r`, or `a : ≤ n r.C` with every
+    member of `l` known to be in `C`. -/
+def boundAt (S : List Assertion) (a : Ind) (n : Nat) (r : Role) (l : List Ind) : Bool :=
+  S.contains (.inst a (.atMost n r)) ||
+  S.any (fun ψ => match ψ with
+    | .inst a' (.atMostQ n' r' c) =>
+        a' == a && n' == n && r' == r && l.all (fun b => S.contains (.inst b c))
+    | _ => false)
+
+theorem boundAt_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : List Assertion}
+    (hS : SatAll I ν S) {a : Ind} {n : Nat} {r : Role} {l : List Ind}
+    (h : boundAt S a n r l = true) (hrel : ∀ b ∈ l, Assertion.rel r a b ∈ S)
+    (hpw : (l.map ν).Pairwise (· ≠ ·)) (hlen : l.length = n + 1) : False := by
+  simp only [boundAt, Bool.or_eq_true, List.contains_iff_mem] at h
+  rcases h with hmax | hq
+  · apply hS _ hmax
+    refine ⟨l.map ν, by simp [hlen], hpw, ?_⟩
+    intro y hy
+    have ⟨b, hb, hfb⟩ := List.mem_map.mp hy
+    subst hfb
+    exact hS _ (hrel b hb)
+  · have ⟨ψ, hψ, hm⟩ := List.any_eq_true.mp hq
+    cases ψ with
+    | inst a' k =>
+        cases k with
+        | atMostQ n' r' c =>
+            simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true,
+              List.contains_iff_mem] at hm
+            obtain ⟨⟨⟨rfl, rfl⟩, rfl⟩, hin⟩ := hm
+            apply hS _ hψ
+            refine ⟨l.map ν, by simp [hlen], hpw, ?_⟩
+            intro y hy
+            have ⟨b, hb, hfb⟩ := List.mem_map.mp hy
+            subst hfb
+            exact ⟨hS _ (hrel b hb), hS _ (hin b hb)⟩
+        | atom _ => simp at hm
+        | top => simp at hm
+        | bot => simp at hm
+        | neg _ => simp at hm
+        | conj _ _ => simp at hm
+        | disj _ _ => simp at hm
+        | all _ _ => simp at hm
+        | ex _ _ => simp at hm
+        | atLeast _ _ => simp at hm
+        | atMost _ _ => simp at hm
+        | atLeastQ _ _ _ => simp at hm
+    | rel _ _ _ => simp at hm
+    | diff _ _ => simp at hm
+
 /-- `merge`'s side conditions on the saturated facts. -/
 def mergeReady (S : List Assertion) (a : Ind) (n : Nat) (r : Role) (l : List Ind) : Bool :=
-  S.contains (.inst a (.atMost n r)) && l.length == n + 1 && decide l.Nodup &&
+  boundAt S a n r l && l.length == n + 1 && decide l.Nodup &&
   l.all (fun b => S.contains (.rel r a b))
 
 mutual
@@ -1088,23 +1137,20 @@ theorem checkF_sound {δ : Type} {I : Interp δ} {C : Ctx} (hC : CtxValid I C)
       simp only [checkF, Bool.and_eq_true, List.all_eq_true] at h
       obtain ⟨hready, hpairs⟩ := h
       simp only [mergeReady, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq,
-        List.contains_iff_mem, List.all_eq_true] at hready
-      obtain ⟨⟨⟨hmax, hlen⟩, hnd⟩, hrel⟩ := hready
+        List.all_eq_true] at hready
+      obtain ⟨⟨⟨hmax, hlen⟩, hnd⟩, hrel0⟩ := hready
+      have hrel : ∀ b ∈ l, Assertion.rel r a b ∈ saturate C fuel F :=
+        fun b hb => List.contains_iff_mem.mp (hrel0 b hb)
       have hS := saturate_sound hC fuel hF
       by_cases hcoll : ∃ b ∈ l, ∃ c ∈ l, b ≠ c ∧ ν b = ν c
       · have ⟨b, hb, c, hc, hbc, hval⟩ := hcoll
         rcases mem_pairsOf_of hb hc hbc with hp | hp
         · exact checkCases_sound hC fuel cases _ b c ν (Or.inl hval) (hpairs _ hp) hS
         · exact checkCases_sound hC fuel cases _ c b ν (Or.inr hval) (hpairs _ hp) hS
-      · apply hS _ hmax
-        refine ⟨l.map ν, by simp [hlen], ?_, ?_⟩
-        · refine pairwise_map_ne_of_injOn hnd ?_
-          intro b hb c hc hbc hEq
-          exact hcoll ⟨b, hb, c, hc, hbc, hEq⟩
-        · intro y hy
-          have ⟨b, hb, hfb⟩ := List.mem_map.mp hy
-          subst hfb
-          exact hS _ (hrel b hb)
+      · refine boundAt_sound hS hmax hrel ?_ hlen
+        refine pairwise_map_ne_of_injOn hnd ?_
+        intro b hb c hc hbc hEq
+        exact hcoll ⟨b, hb, c, hc, hbc, hEq⟩
 
 theorem checkCases_sound {δ : Type} {I : Interp δ} {C : Ctx} (hC : CtxValid I C)
     (fuel : Nat) : ∀ (cases : MergeCases) (S : List Assertion) (b c : Ind) (ν : Ind → δ),

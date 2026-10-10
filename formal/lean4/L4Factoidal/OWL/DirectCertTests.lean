@@ -106,6 +106,13 @@ private def cC : Concept := .atom "C"
 #guard !checkCert { tbox := [(.top, .atMost 1 "r")],
                     abox := [.rel "r" "a" "b", .rel "r" "a" "c", .inst "b" cC] }
   (.merge "a" 1 "r" ["b", "c"] (.cons "b" "c" .close .nil))
+-- A qualified bound `≤ 1 r.C` licenses the merge of two successors in `C`.
+#guard checkCert { abox := [.inst "a" (.atMostQ 1 "r" cB), .rel "r" "a" "b", .rel "r" "a" "c",
+                            .inst "b" cB, .inst "c" cB, .inst "b" cC, .inst "c" (.neg cC)] }
+  (.merge "a" 1 "r" ["b", "c"] (.cons "b" "c" .close .nil))
+#guard !checkCert { abox := [.inst "a" (.atMostQ 1 "r" cB), .rel "r" "a" "b", .rel "r" "a" "c",
+                             .inst "b" cB, .inst "b" cC, .inst "c" (.neg cC)] }
+  (.merge "a" 1 "r" ["b", "c"] (.cons "b" "c" .close .nil))
 -- Without the bound the merge is not licensed.
 #guard !checkCert { abox := [.rel "r" "a" "b", .rel "r" "a" "c", .inst "b" cC, .inst "c" (.neg cC)] }
   (.merge "a" 1 "r" ["b", "c"] (.cons "b" "c" .close .nil))
