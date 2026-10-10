@@ -103,7 +103,11 @@ are in
 `tests/stack/lean_scaling.sh` is the regression gate for the repaired paths:
 it asserts time(4x) <= 9.0 x max(time(x), 50 ms) for each (the OWL RL chain
 row uses the bound 20.0, because the closure of n axioms has n(n-1)/2 triples),
-and that `l4factoidal version` takes at most 20 ms of CPU time.
+and that `l4factoidal version` takes at most 20 ms of CPU time. A known cost
+with an open issue is a row in its `XFAIL` table (expected-fail while it
+fails, a failure when it passes), and a constant-factor cost that the 4x ratio
+cannot see is a row that compares a verb with `parse` of the same file
+(`query-vs-parse`: at most 2.0 times the CPU time and the peak memory).
 
 Five traps from that survey, each of which cost a re-run or a wrong ranking:
 
