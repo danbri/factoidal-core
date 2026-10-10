@@ -33,6 +33,7 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.Update
 import Wasm.Ops.ExtFns
+import Wasm.Ops.ServiceReg
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.NQuadsFast
 
@@ -68,7 +69,8 @@ op can add its own fields (shard count, open mode) to the shared envelope
 without introducing a second envelope shape. -/
 def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     (sparql : String) (extra : List (String × Json) := [])
-    (extIris : List String := []) : String :=
+    (extIris : List String := [])
+    (services : List (String × Graph) := []) : String :=
   match parseSparql sparql with
   | .error e => errJson s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
@@ -92,7 +94,11 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     -- dispatch entry took once for this query, so the evaluator stays a
     -- function of its explicit inputs.  With no registration the table is
     -- exactly `Geo.extFns`, as it was before.
-    let env : EvalEnv := { base := q.base, ext := extFnsWith extIris, dataset := some ds }
+    -- §18.2.2.7 SERVICE: `services` is the snapshot of the endpoint
+    -- snapshots the caller registered (`Wasm/Ops/ServiceReg.lean`); with
+    -- none, every SERVICE endpoint is unreachable, as before.
+    let env : EvalEnv := { base := q.base, ext := extFnsWith extIris,
+                           dataset := some ds, services := services }
     let backendEligible := q.dataset.isEmpty
     match q.form with
     | .ask =>
@@ -153,10 +159,12 @@ is read ONCE here, before evaluation starts, so every call the query
 makes runs against the same registration set. -/
 def queryDatasetIO (nq sparql : String) : IO String := do
   let extIris ← extSnapshot
+  let services ← serviceSnapshot
   match parseNQuadsFast nq .rdf12 with
   | .error e => pure (errJson (fmtParseError e))
   | .ok ds   =>
-      pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql [] extIris)
+      pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
+              extIris services)
 
 /-- Parse and apply a SPARQL Update to an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetUpdate`

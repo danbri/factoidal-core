@@ -549,6 +549,21 @@ Same call shape as the main API — `parse`, `query`, `update`,
 Common Logic / IKL operations that exist only here, because the F\* tree
 has no CL parser.
 
+Since [issue 713](https://github.com/danbri/factoidal/issues/713) stage 1
+it also answers these functions of the main entry, with the same
+signatures and result shapes as the F\* engine (`index.d.ts`):
+`jsonldToRdf`, `jsonldFromRdf`, `rmlMap`, `csvwToRdf`, `xmlWellformed`,
+`xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`,
+`mathmlEval`, `xformsRecalc`, `rifEval`, `queryHdt`, `tableauMaterialise`,
+`tableauDlInconsistent`, `queryRaw`, `registerExtensionFunction`,
+`unregisterExtensionFunction`, `clearExtensionFunctions`,
+`registerServiceEndpoint`, `clearServiceEndpoints`, `toanSummation`,
+`toanProduct`, `toanSimplify`, `toanDiff` and `toanSubst`. Still missing
+here, so `capabilities()` reports them false: SHACL, ShEx, `didKeyResolve`,
+the `matrix*` and `sigmoid*` helpers, the `vc*` functions and COTTAS.
+Differences from the F\* engine are listed in
+[`docs/designissues/2026-10-10-npm-lean-only.md`](../../docs/designissues/2026-10-10-npm-lean-only.md).
+
 | Function | In → out | What the answer is worth |
 |---|---|---|
 | `clParse(clifText)` | CLIF text → shape report | sentence count, CL-vs-IKL dialect, canonical re-serialisation. Reads CLIF; never produces RDF |

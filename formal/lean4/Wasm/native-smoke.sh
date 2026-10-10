@@ -122,8 +122,12 @@ args "$TMP/parse-bad.json" 'this is not turtle @@@' "turtle" ""
 check "parseToDatasetJson bad turtle -> error" parseToDatasetJson "$TMP/parse-bad.json" \
   'r["ok"] is False and isinstance(r["error"], str) and len(r["error"]) > 0'
 
-args "$TMP/parse-jsonld.json" '{}' "jsonld" ""
-check "parseToDatasetJson jsonld -> named gap" parseToDatasetJson "$TMP/parse-jsonld.json" \
+args "$TMP/parse-jsonld.json" '{"@context":{"name":"http://xmlns.com/foaf/0.1/name"},"@id":"http://example.org/alice","name":"Alice"}' "jsonld" ""
+check "parseToDatasetJson jsonld" parseToDatasetJson "$TMP/parse-jsonld.json" \
+  'r["ok"] is True and r["count"] == 1 and "foaf/0.1/name" in r["nquads"] and "Alice" in r["nquads"]'
+
+args "$TMP/parse-jsonld-bad.json" '{' "jsonld" ""
+check "parseToDatasetJson jsonld, not JSON -> error" parseToDatasetJson "$TMP/parse-jsonld-bad.json" \
   'r["ok"] is False and "JSON-LD" in r["error"]'
 
 NQ='<http://e/a> <http://e/p> <http://e/b> .
@@ -1706,6 +1710,290 @@ check "hpkeSeal refuses a 1-byte ephemeral key" \
   hpkeSeal "$TMP/hpke-shortkey.json" \
   'r["ok"] is False and "32 bytes" in r["error"]'
 
+# --- Formats, transforms, reasoning (issue 713, stage 1) ---------------
+# One positive and one negative case per op. The envelope members are the
+# ones bin/npm-entry/entry_extras.ml pins and lib/api.js reads.
+
+# JSON-LD
+args "$TMP/jl-to.json" \
+  '{"@context":{"foaf":"http://xmlns.com/foaf/0.1/","name":"foaf:name"},"@id":"alice","name":"Alice"}' \
+  '{"base":"http://example.org/"}'
+check "jsonldToRdf resolves @id against the base option" jsonldToRdf "$TMP/jl-to.json" \
+  'r["ok"] is True and r["nquads"] == "<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> \"Alice\" .\n"'
+args "$TMP/jl-to-remote.json" '{"@context":"http://example.org/ctx","@id":"http://e/a"}' ''
+check "jsonldToRdf remote @context, no loader -> error" jsonldToRdf "$TMP/jl-to-remote.json" \
+  'r["ok"] is False and "remote context" in r["error"]'
+args "$TMP/jl-from.json" '<http://ex/s> <http://ex/p> "5"^^<http://www.w3.org/2001/XMLSchema#integer> .' '{"useNativeTypes":true}'
+check "jsonldFromRdf useNativeTypes -> JSON number" jsonldFromRdf "$TMP/jl-from.json" \
+  'r["ok"] is True and r["jsonld"] == "[{\"@id\":\"http://ex/s\",\"http://ex/p\":[{\"@value\":5}]}]"'
+args "$TMP/jl-from-bad.json" 'this is not n-quads' ''
+check "jsonldFromRdf bad N-Quads -> error" jsonldFromRdf "$TMP/jl-from-bad.json" \
+  'r["ok"] is False and "jsonldFromRdf" in r["error"]'
+
+# RML (one logical source; the data text is the second argument)
+RML_TTL='@prefix rml: <http://w3id.org/rml/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix ex: <http://example.org/> .
+ex:TM a rml:TriplesMap ;
+  rml:logicalSource [ a rml:LogicalSource ; rml:iterator "$.people[*]" ;
+    rml:referenceFormulation rml:JSONPath ;
+    rml:source [ a rml:RelativePathSource ; rml:root rml:MappingDirectory ; rml:path "x" ] ] ;
+  rml:subjectMap [ rml:template "http://example.org/person/{$.id}" ] ;
+  rml:predicateObjectMap [ rml:predicate foaf:name ; rml:objectMap [ rml:reference "$.name" ] ] .'
+args "$TMP/rml-parse.json" "$RML_TTL" turtle ""
+RML_NQ="$("$CLI" call parseToDatasetJson "$TMP/rml-parse.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["nquads"], end="")')"
+args "$TMP/rml.json" "$RML_NQ" '{"people":[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}]}' json
+check "rmlMap JSON source" rmlMap "$TMP/rml.json" \
+  'r["ok"] is True and r["nquads"].count(" .") == 2 and "person/1> <http://xmlns.com/foaf/0.1/name> \"Alice\"" in r["nquads"]'
+args "$TMP/rml-badkind.json" "$RML_NQ" '{}' xml
+check "rmlMap unknown sourceKind -> error" rmlMap "$TMP/rml-badkind.json" \
+  'r["ok"] is False and "sourceKind" in r["error"]'
+args "$TMP/rml-baddata.json" "$RML_NQ" 'not json' json
+check "rmlMap source that is not JSON -> error" rmlMap "$TMP/rml-baddata.json" \
+  'r["ok"] is False and "rmlMap" in r["error"]'
+
+# CSVW
+CSV='GID,on_street
+1,ADDISON AV
+2,ELM ST
+'
+args "$TMP/csvw.json" "$CSV" "" '{"base":"http://example.org/","url":"t.csv"}'
+check "csvwToRdf standard mode, header-inferred table" csvwToRdf "$TMP/csvw.json" \
+  'r["ok"] is True and "csvw#TableGroup" in r["nquads"] and r["nquads"].count("csvw#rownum") == 2 and "ADDISON AV" in r["nquads"]'
+args "$TMP/csvw-min.json" "$CSV" "" '{"mode":"minimal","base":"http://example.org/","url":"t.csv"}'
+check "csvwToRdf minimal mode has no table-group wrapper" csvwToRdf "$TMP/csvw-min.json" \
+  'r["ok"] is True and "TableGroup" not in r["nquads"] and r["nquads"].count(" .") == 4'
+args "$TMP/csvw-badmeta.json" "$CSV" "not json" ""
+check "csvwToRdf undecodable metadata -> error" csvwToRdf "$TMP/csvw-badmeta.json" \
+  'r["ok"] is False and "metadata" in r["error"]'
+args "$TMP/csvw-badmode.json" "$CSV" "" '{"mode":"weird"}'
+check "csvwToRdf unknown mode -> error" csvwToRdf "$TMP/csvw-badmode.json" \
+  'r["ok"] is False and "mode" in r["error"]'
+
+# XML, XPath, XSLT
+args "$TMP/xml-ok.json" '<a><b/></a>'
+check "xmlWellformed accepts" xmlWellformed "$TMP/xml-ok.json" \
+  'r["ok"] is True and r["wellformed"] is True'
+args "$TMP/xml-bad.json" '<a><b></a>'
+check "xmlWellformed rejects" xmlWellformed "$TMP/xml-bad.json" \
+  'r["ok"] is True and r["wellformed"] is False'
+args "$TMP/xp-num.json" '<r><a>1</a><a>2</a></r>' 'count(/r/a)'
+check "xpathEval number" xpathEval "$TMP/xp-num.json" \
+  'r["ok"] is True and r["resultType"] == "number" and float(r["value"]) == 2'
+args "$TMP/xp-nodes.json" '<r><a>1</a><a>2</a></r>' '/r/a'
+check "xpathEval node-set" xpathEval "$TMP/xp-nodes.json" \
+  'r["ok"] is True and r["resultType"] == "nodeset" and r["count"] == 2 and r["nodes"][1] == {"kind":"element","name":"a","value":"2"}'
+args "$TMP/xp-bad.json" '<r/>' 'count('
+check "xpathEval unparsable expression -> error" xpathEval "$TMP/xp-bad.json" \
+  'r["ok"] is False and "XPath" in r["error"]'
+args "$TMP/xp-badxml.json" '<r>' '/r'
+check "xpathEval XML that is not well-formed -> error" xpathEval "$TMP/xp-badxml.json" \
+  'r["ok"] is False and "well-formed" in r["error"]'
+XSL='<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><greeting><xsl:value-of select="/doc/name"/></greeting></xsl:template></xsl:stylesheet>'
+args "$TMP/xslt.json" "$XSL" '<doc><name>World</name></doc>'
+check "xsltTransform value-of" xsltTransform "$TMP/xslt.json" \
+  'r["ok"] is True and r["output"] == "<greeting>World</greeting>"'
+args "$TMP/xslt-bad.json" '<not well formed' '<doc/>'
+check "xsltTransform malformed stylesheet -> error" xsltTransform "$TMP/xslt-bad.json" \
+  'r["ok"] is False and "stylesheet" in r["error"]'
+
+# Schematron, JSON Schema
+SCH='<schema xmlns="http://purl.oclc.org/dsdl/schematron"><pattern><rule context="doc"><assert test="@ok">doc must carry an ok attribute</assert></rule></pattern></schema>'
+args "$TMP/sch-fail.json" "$SCH" '<doc/>'
+check "schematronValidate failing assert" schematronValidate "$TMP/sch-fail.json" \
+  'r["ok"] is True and len(r["findings"]) == 1 and r["findings"][0]["type"] == "assert-fail" and "ok attribute" in r["findings"][0]["message"]'
+args "$TMP/sch-pass.json" "$SCH" '<doc ok="yes"/>'
+check "schematronValidate satisfied assert -> no finding" schematronValidate "$TMP/sch-pass.json" \
+  'r["ok"] is True and r["findings"] == []'
+args "$TMP/sch-bad.json" '<notschematron/>' '<doc/>'
+check "schematronValidate not a schema -> error" schematronValidate "$TMP/sch-bad.json" \
+  'r["ok"] is False and "schema" in r["error"]'
+args "$TMP/js-pass.json" '{"type":"integer"}' '5'
+check "jsonSchemaValidate pass" jsonSchemaValidate "$TMP/js-pass.json" \
+  'r["ok"] is True and r["valid"] is True and r["result"] == "pass" and r["errors"] == []'
+args "$TMP/js-fail.json" '{"type":"integer"}' '"hello"'
+check "jsonSchemaValidate fail" jsonSchemaValidate "$TMP/js-fail.json" \
+  'r["ok"] is True and r["valid"] is False and r["result"] == "fail" and len(r["errors"]) == 1'
+args "$TMP/js-bad.json" '{"type":' '5'
+check "jsonSchemaValidate invalid schema JSON -> error" jsonSchemaValidate "$TMP/js-bad.json" \
+  'r["ok"] is False and "invalid JSON" in r["error"]'
+
+# MathML, XForms
+MML='<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><plus/><cn>2</cn><cn>3</cn></apply></math>'
+args "$TMP/mml.json" "$MML" '{}'
+check "mathmlEval 2+3 = 5/1" mathmlEval "$TMP/mml.json" \
+  'r["ok"] is True and r["value"] == {"kind":"rat","num":5,"den":1}'
+args "$TMP/mml-div0.json" '<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><divide/><cn>1</cn><cn>0</cn></apply></math>' '{}'
+check "mathmlEval division by zero is undef" mathmlEval "$TMP/mml-div0.json" \
+  'r["ok"] is True and r["value"]["kind"] == "undef" and isinstance(r["value"]["reason"], str)'
+args "$TMP/mml-env.json" '<math xmlns="http://www.w3.org/1998/Math/MathML"><apply><times/><ci>x</ci><cn>2</cn></apply></math>' '{"x":"3"}'
+check "mathmlEval ci binding" mathmlEval "$TMP/mml-env.json" \
+  'r["ok"] is True and r["value"] == {"kind":"rat","num":6,"den":1}'
+args "$TMP/mml-bad.json" "$MML" '[1]'
+check "mathmlEval bindings that are not an object -> error" mathmlEval "$TMP/mml-bad.json" \
+  'r["ok"] is False and "bindings" in r["error"]'
+args "$TMP/xf.json" '<data><x>5</x><y>0</y></data>' '[{"target":"y","calculate":"7"}]'
+check "xformsRecalc calculate writes the leaf" xformsRecalc "$TMP/xf.json" \
+  'r["ok"] is True and "<y>7</y>" in r["instance"] and r["validity"][0]["target"] == "y" and r["validity"][0]["value"] == "7"'
+args "$TMP/xf-bad.json" '<data><y>0</y></data>' '[{"calculate":"7"}]'
+check "xformsRecalc bind without a target -> error" xformsRecalc "$TMP/xf-bad.json" \
+  'r["ok"] is False and "target" in r["error"]'
+
+# RIF Core
+RIF_SYM='<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="http://www.w3.org/2007/rif#"><payload><Group><sentence><Forall>
+<declare><Var>x</Var></declare><declare><Var>y</Var></declare>
+<formula><Implies>
+<if><Frame><object><Var>x</Var></object><slot ordered="yes"><Const type="http://www.w3.org/2007/rif#iri">http://xmlns.com/foaf/0.1/knows</Const><Var>y</Var></slot></Frame></if>
+<then><Frame><object><Var>y</Var></object><slot ordered="yes"><Const type="http://www.w3.org/2007/rif#iri">http://xmlns.com/foaf/0.1/knows</Const><Var>x</Var></slot></Frame></then>
+</Implies></formula></Forall></sentence></Group></payload></Document>'
+args "$TMP/rif.json" "$RIF_SYM" '<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .'
+check "rifEval symmetric rule derives the inverse triple" rifEval "$TMP/rif.json" \
+  'r["ok"] is True and r["inputCount"] == 1 and r["derivedCount"] == 1 and "<http://example.org/bob> <http://xmlns.com/foaf/0.1/knows> <http://example.org/alice>" in r["saturatedNquads"]'
+args "$TMP/rif-bad.json" '<not rif' '<http://e/a> <http://e/p> <http://e/b> .'
+check "rifEval rules that do not parse -> error" rifEval "$TMP/rif-bad.json" \
+  'r["ok"] is False and "RIF-XML" in r["error"]'
+
+# OWL tableau
+OWL_NS='http://www.w3.org/2002/07/owl#'
+RDF_TYPE='http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+TAB_HV="<http://e/c> <${OWL_NS}equivalentClass> _:r .
+_:r <${RDF_TYPE}> <${OWL_NS}Restriction> .
+_:r <${OWL_NS}onProperty> <http://e/p> .
+_:r <${OWL_NS}hasValue> <http://e/v> .
+<http://e/i> <http://e/p> <http://e/v> .
+"
+args "$TMP/tab-mat.json" "$TAB_HV"
+check "tableauMaterialise adds the restriction membership" tableauMaterialise "$TMP/tab-mat.json" \
+  'r["ok"] is True and r["addedCount"] == 1 and r["budgetHit"] is False and "<http://e/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> _:" in r["nquads"]'
+args "$TMP/tab-mat-none.json" "<http://e/a> <${RDF_TYPE}> <http://e/C> .
+"
+check "tableauMaterialise with nothing to add -> addedCount 0" tableauMaterialise "$TMP/tab-mat-none.json" \
+  'r["ok"] is True and r["addedCount"] == 0'
+args "$TMP/tab-mat-bad.json" 'garbage'
+check "tableauMaterialise bad N-Quads -> error" tableauMaterialise "$TMP/tab-mat-bad.json" \
+  'r["ok"] is False'
+TAB_DL="<http://e/K> <${OWL_NS}equivalentClass> _:r .
+_:r <${RDF_TYPE}> <${OWL_NS}Restriction> .
+_:r <${OWL_NS}onProperty> <http://e/p> .
+_:r <${OWL_NS}minCardinality> \"1\"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> .
+<http://e/K> <${OWL_NS}disjointWith> <http://e/D> .
+<http://e/i> <http://e/p> <http://e/v> .
+<http://e/i> <${RDF_TYPE}> <http://e/D> .
+"
+args "$TMP/tab-dl.json" "$TAB_DL"
+check "tableauDlInconsistent: clash only after materialisation (rlAlone false)" tableauDlInconsistent "$TMP/tab-dl.json" \
+  'r["ok"] is True and r["inconsistent"] is True and r["rlAlone"] is False'
+args "$TMP/tab-dl-rl.json" "<http://e/C> <${OWL_NS}disjointWith> <http://e/D> .
+<http://e/a> <${RDF_TYPE}> <http://e/C> .
+<http://e/a> <${RDF_TYPE}> <http://e/D> .
+"
+check "tableauDlInconsistent: RL clash is a DL clash" tableauDlInconsistent "$TMP/tab-dl-rl.json" \
+  'r["ok"] is True and r["inconsistent"] is True and r["rlAlone"] is True'
+args "$TMP/tab-dl-ok.json" "<http://e/a> <${RDF_TYPE}> <http://e/C> .
+"
+check "tableauDlInconsistent: consistent graph" tableauDlInconsistent "$TMP/tab-dl-ok.json" \
+  'r["ok"] is True and r["inconsistent"] is False and r["rlAlone"] is False'
+
+# queryRaw: every output format, ASK, CONSTRUCT, entailment, errors
+RAW_DATA='@prefix ex: <http://example.org/> . ex:alice ex:name "Alice" . ex:bob ex:name "Bob" .'
+RAW_Q='PREFIX ex: <http://example.org/> SELECT ?n WHERE { ?p ex:name ?n } ORDER BY ?n'
+args "$TMP/raw-json.json" "$RAW_DATA" "$RAW_Q" ''
+check "queryRaw default output is SPARQL results JSON" queryRaw "$TMP/raw-json.json" \
+  'r["ok"] is True and json.loads(r["text"])["results"]["bindings"][1]["n"]["value"] == "Bob"'
+args "$TMP/raw-csv.json" "$RAW_DATA" "$RAW_Q" '{"output":"csv"}'
+check "queryRaw csv" queryRaw "$TMP/raw-csv.json" \
+  'r["ok"] is True and r["text"] == "n\r\nAlice\r\nBob\r\n"'
+args "$TMP/raw-tsv.json" "$RAW_DATA" "$RAW_Q" '{"output":"tsv"}'
+check "queryRaw tsv" queryRaw "$TMP/raw-tsv.json" \
+  'r["ok"] is True and r["text"] == "?n\n\"Alice\"\n\"Bob\"\n"'
+args "$TMP/raw-xml.json" "$RAW_DATA" "$RAW_Q" '{"output":"xml"}'
+check "queryRaw xml" queryRaw "$TMP/raw-xml.json" \
+  'r["ok"] is True and "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\">" in r["text"] and "<literal>Alice</literal>" in r["text"]'
+args "$TMP/raw-table.json" "$RAW_DATA" "$RAW_Q" '{"output":"table"}'
+check "queryRaw table" queryRaw "$TMP/raw-table.json" \
+  'r["ok"] is True and "| ?n" in r["text"] and "2 result(s)" in r["text"]'
+args "$TMP/raw-ask.json" "$RAW_DATA" 'PREFIX ex: <http://example.org/> ASK { ex:alice ex:name "Alice" }' ''
+check "queryRaw ASK in JSON" queryRaw "$TMP/raw-ask.json" \
+  'r["ok"] is True and json.loads(r["text"])["boolean"] is True'
+args "$TMP/raw-ask-csv.json" "$RAW_DATA" 'PREFIX ex: <http://example.org/> ASK { ex:alice ex:name "Alice" }' '{"output":"csv"}'
+check "queryRaw ASK has no CSV encoding -> error" queryRaw "$TMP/raw-ask-csv.json" \
+  'r["ok"] is False and "ASK" in r["error"]'
+args "$TMP/raw-con.json" "$RAW_DATA" 'PREFIX ex: <http://example.org/> CONSTRUCT { ?p ex:label ?n } WHERE { ?p ex:name ?n }' '{"output":"ntriples"}'
+check "queryRaw CONSTRUCT as N-Triples" queryRaw "$TMP/raw-con.json" \
+  'r["ok"] is True and r["text"].count(" .") == 2 and "<http://example.org/label> \"Alice\"" in r["text"]'
+args "$TMP/raw-con-json.json" "$RAW_DATA" 'PREFIX ex: <http://example.org/> CONSTRUCT { ?p ex:label ?n } WHERE { ?p ex:name ?n }' '{"output":"json"}'
+check "queryRaw CONSTRUCT has no JSON results format -> error" queryRaw "$TMP/raw-con-json.json" \
+  'r["ok"] is False and "CONSTRUCT" in r["error"]'
+RAW_RDFS='@prefix schema: <http://schema.org/> . @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> . @prefix ex: <http://example.org/> . schema:Hotel rdfs:subClassOf schema:Place . ex:motel6 a schema:Hotel .'
+RAW_PLACE='PREFIX schema: <http://schema.org/> SELECT ?s WHERE { ?s a schema:Place }'
+args "$TMP/raw-rdfs.json" "$RAW_RDFS" "$RAW_PLACE" '{"entail":"RDFS"}'
+check "queryRaw entail RDFS sees the subclass instance" queryRaw "$TMP/raw-rdfs.json" \
+  'r["ok"] is True and len(json.loads(r["text"])["results"]["bindings"]) == 1'
+args "$TMP/raw-norfds.json" "$RAW_RDFS" "$RAW_PLACE" ''
+check "queryRaw without entailment sees none" queryRaw "$TMP/raw-norfds.json" \
+  'r["ok"] is True and len(json.loads(r["text"])["results"]["bindings"]) == 0'
+args "$TMP/raw-badq.json" "$RAW_DATA" 'SELECT WITHOUT' ''
+check "queryRaw bad SPARQL -> error" queryRaw "$TMP/raw-badq.json" \
+  'r["ok"] is False and "SPARQL" in r["error"]'
+args "$TMP/raw-badout.json" "$RAW_DATA" "$RAW_Q" '{"output":"yaml"}'
+check "queryRaw unknown output -> error" queryRaw "$TMP/raw-badout.json" \
+  'r["ok"] is False and "output" in r["error"]'
+
+# queryHdt: the vendored hdt-cpp 1.3.3 fixture is the blob region
+HDT_FIXTURE="$LEAN_DIR/../../third_party/testing/hdt/rdf-mt-test002.hdt"
+if [ -f "$HDT_FIXTURE" ]; then
+  args "$TMP/hdt-sel.json" 'SELECT ?s ?o WHERE { ?s <http://example.org/bar> ?o }'
+  checkblob "queryHdt SELECT over an HDT file" queryHdt "$TMP/hdt-sel.json" "$HDT_FIXTURE" \
+    'r["ok"] is True and r["kind"] == "select" and r["srj"]["results"]["bindings"][0]["o"]["value"] == "flargh"'
+  args "$TMP/hdt-ask.json" 'ASK { <http://example.org/foo> <http://example.org/bar> ?o }'
+  checkblob "queryHdt ASK over an HDT file" queryHdt "$TMP/hdt-ask.json" "$HDT_FIXTURE" \
+    'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+  args "$TMP/hdt-ask-no.json" 'ASK { <http://example.org/foo> <http://example.org/nothere> ?o }'
+  checkblob "queryHdt ASK for an absent triple is false" queryHdt "$TMP/hdt-ask-no.json" "$HDT_FIXTURE" \
+    'r["ok"] is True and r["boolean"] is False'
+else
+  echo "SKIP queryHdt: $HDT_FIXTURE is absent (run tools/ensure-test-env.sh)"
+fi
+printf 'this is not an HDT file' > "$TMP/not-hdt.bin"
+args "$TMP/hdt-junk.json" 'ASK { ?s ?p ?o }'
+checkblob "queryHdt bytes that are not HDT -> error" queryHdt "$TMP/hdt-junk.json" "$TMP/not-hdt.bin" \
+  'r["ok"] is False and "HDT" in r["error"]'
+check "queryHdt through the plain call has no bytes -> error" queryHdt "$TMP/hdt-junk.json" \
+  'r["ok"] is False and "blob" in r["error"]'
+
+# SERVICE endpoint registry (callIO only; the registry lives in the process)
+python3 - "$TMP/svc-seq.json" <<'EOF'
+import json, sys
+SVC = "SELECT ?s ?o WHERE { SERVICE <http://example.org/sparql> { ?s <http://e/p> ?o } }"
+DATA = "<http://e/x> <http://e/q> <http://e/y> ."
+seq = [
+  ["queryDataset", [DATA, SVC]],
+  ["registerServiceEndpoint", ["http://example.org/sparql", "<http://e/a> <http://e/p> \"v\" ."]],
+  ["queryDataset", [DATA, SVC]],
+  ["datasetOpen", [DATA, "nquads", ""]],
+  ["datasetQuery", ["h1", SVC]],
+  ["registerServiceEndpoint", ["http://example.org/sparql", "<http://e/a> <http://e/p> \"w\" ."]],
+  ["queryDataset", [DATA, SVC]],
+  ["registerServiceEndpoint", ["", "<http://e/a> <http://e/p> \"v\" ."]],
+  ["registerServiceEndpoint", ["http://example.org/sparql", "garbage"]],
+  ["clearServiceEndpoints", []],
+  ["queryDataset", [DATA, SVC]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "SERVICE endpoint registry: register, replace, clear, errors" "$TMP/svc-seq.json" \
+  'len(rs) == 11
+   and rs[0]["srj"]["results"]["bindings"] == []
+   and rs[1] == {"ok": True, "count": 1}
+   and [b["o"]["value"] for b in rs[2]["srj"]["results"]["bindings"]] == ["v"]
+   and [b["o"]["value"] for b in rs[4]["srj"]["results"]["bindings"]] == ["v"]
+   and [b["o"]["value"] for b in rs[6]["srj"]["results"]["bindings"]] == ["w"]
+   and rs[7]["ok"] is False and "empty" in rs[7]["error"]
+   and rs[8]["ok"] is False and "registerServiceEndpoint" in rs[8]["error"]
+   and rs[9] == {"ok": True}
+   and rs[10]["srj"]["results"]["bindings"] == []'
+
 # --- Envelope parity, https://github.com/danbri/factoidal/issues/685 ----
 # Positioned parse errors, prefixes, per-document blank-node scope,
 # serializeTurtleWith / datasetSerializeWith and bare literals.
@@ -2118,8 +2406,15 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "lwsOpen","lwsStep","lwsClose",
             "solidOpen","solidStep","solidClose",
             "solidClientRequest","solidClientResponse",
-            "aeadSeal","aeadOpen","hpkeSeal","hpkeOpen"]) <= set(r["ops"])
-   and r["blobOps"] == ["storeQuery","activateVerify"]
+            "aeadSeal","aeadOpen","hpkeSeal","hpkeOpen",
+            "jsonldToRdf","jsonldFromRdf","rmlMap","csvwToRdf",
+            "xmlWellformed","xpathEval","xsltTransform",
+            "schematronValidate","jsonSchemaValidate","mathmlEval",
+            "xformsRecalc","rifEval","tableauMaterialise",
+            "tableauDlInconsistent","queryRaw","queryHdt",
+            "registerServiceEndpoint","clearServiceEndpoints",
+            "extRegister","extUnregister","extClear","extList"]) <= set(r["ops"])
+   and r["blobOps"] == ["storeQuery","activateVerify","queryHdt"]
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext"]'
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \

@@ -50,6 +50,10 @@ import Wasm.Ops.Solid
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.Crypto
+import Wasm.Ops.Formats
+import Wasm.Ops.Reasoning
+import Wasm.Ops.QueryExtras
+import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
 
@@ -120,7 +124,7 @@ region the host wrote directly into the wasm heap, and the op's JSON argument
 describes windows into it (`Wasm/Ops/Store.lean`). Through the plain `call`
 these ops still answer — with an empty region, so a descriptor naming blob
 bytes is refused by name rather than silently reading nothing. -/
-def blobOpNames : List String := [ "storeQuery", "activateVerify" ]
+def blobOpNames : List String := [ "storeQuery", "activateVerify", "queryHdt" ]
 
 /-- The op names that also RETURN a contiguous byte region, served by
 `callBlobIO` below (the `l4_call_blob_io` C export, wired to
@@ -262,6 +266,37 @@ def lwsSolidOpNames : List String :=
   , "solidClientRequest"
   , "solidClientResponse" ]
 
+/-- The format, transform and reasoning op names of
+`Wasm/Ops/Formats.lean`, `Wasm/Ops/Reasoning.lean` and
+`Wasm/Ops/QueryExtras.lean`: the operations of the F* npm entry that the
+table did not serve before https://github.com/danbri/factoidal/issues/713
+stage 1. All are pure and served by both `call` and `callIO`; `queryHdt`
+also reads a byte region (it is in `blobOpNames`). -/
+def formatOpNames : List String :=
+  [ "jsonldToRdf"
+  , "jsonldFromRdf"
+  , "rmlMap"
+  , "csvwToRdf"
+  , "xmlWellformed"
+  , "xpathEval"
+  , "xsltTransform"
+  , "schematronValidate"
+  , "jsonSchemaValidate"
+  , "mathmlEval"
+  , "xformsRecalc"
+  , "rifEval"
+  , "tableauMaterialise"
+  , "tableauDlInconsistent"
+  , "queryRaw"
+  , "queryHdt" ]
+
+/-- The SPARQL SERVICE endpoint registry op names
+(`Wasm/Ops/ServiceReg.lean`), served ONLY by `callIO` and `callBlobIO` —
+the registry is an `IO.Ref` the pure `call` cannot reach. -/
+def serviceOpNames : List String :=
+  [ "registerServiceEndpoint"
+  , "clearServiceEndpoints" ]
+
 /-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
 sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
 They are stateless, so `call` serves them and `callIO` reaches them through its
@@ -290,7 +325,7 @@ private def opsReflectionFor (names : List String) : String :=
     , ("blobOps", .array (blobOpNames.map Json.string))
     , ("blobIoOps", .array (blobIoOpNames.map Json.string)) ]).toString
 
-private def opsReflection : String := opsReflectionFor opNames
+private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames)
 
 /-- The dispatch entry the `l4_call` C export serves. -/
 def call (op : String) (argsJson : String) : String :=
@@ -339,6 +374,23 @@ def call (op : String) (argsJson : String) : String :=
     | "hpkeSeal"             => arity1 op hpkeSeal args
     | "hpkeOpen"             => arity1 op hpkeOpen args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
+    -- Format, transform and reasoning ops (`formatOpNames`).
+    | "jsonldToRdf"          => arity2 op jsonldToRdf args
+    | "jsonldFromRdf"        => arity2 op jsonldFromRdf args
+    | "rmlMap"               => arity3 op rmlMap args
+    | "csvwToRdf"            => arity3 op csvwToRdf args
+    | "xmlWellformed"        => arity1 op xmlWellformed args
+    | "xpathEval"            => arity2 op xpathEval args
+    | "xsltTransform"        => arity2 op xsltTransform args
+    | "schematronValidate"   => arity2 op schematronValidate args
+    | "jsonSchemaValidate"   => arity2 op jsonSchemaValidate args
+    | "mathmlEval"           => arity2 op mathmlEval args
+    | "xformsRecalc"         => arity2 op xformsRecalc args
+    | "rifEval"              => arity2 op rifEval args
+    | "tableauMaterialise"   => arity1 op tableauMaterialise args
+    | "tableauDlInconsistent" => arity1 op tableauDlInconsistent args
+    | "queryRaw"             => arity3 op queryRaw args
+    | "queryHdt"             => arity1 op (fun a => queryHdt a ByteArray.empty) args
     | "ops"                  => opsReflection
     | _                      => callStage2 op args
 
@@ -357,6 +409,11 @@ def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
       | .error e => errJson e
       | .ok [a, b] => activateVerify a b blob
       | .ok args => errJson s!"activateVerify expects 2 arguments, got {args.length}"
+  | "queryHdt" =>
+      match decodeArgs argsJson with
+      | .error e => errJson e
+      | .ok [a] => queryHdt a blob
+      | .ok args => errJson s!"queryHdt expects 1 argument, got {args.length}"
   | _ => call op argsJson
 
 private def arityIO1 (op : String) (f : String → IO String) :
@@ -453,6 +510,13 @@ def callIO (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.solidClientResponse a b)
         | args => pure (errJson s!"solidClientResponse expects 2 arguments, got {args.length}"))
+  -- SPARQL SERVICE endpoint snapshots (`Wasm/Ops/ServiceReg.lean`).
+  | "registerServiceEndpoint" => withArgs (arityIO2 op Ops.registerServiceEndpoint)
+  | "clearServiceEndpoints" =>
+      withArgs (fun args =>
+        match args with
+        | [] => Ops.clearServiceEndpoints
+        | args => pure (errJson s!"clearServiceEndpoints expects 0 arguments, got {args.length}"))
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with
@@ -460,7 +524,8 @@ def callIO (op : String) (argsJson : String) : IO String :=
         | args => pure (errJson s!"storeHandleList expects 0 arguments, got {args.length}"))
   | "ops"              => pure (opsReflectionFor
                                  (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
-                                    ++ extOpNames ++ lwsSolidOpNames))
+                                    ++ extOpNames ++ lwsSolidOpNames
+                                    ++ formatOpNames ++ serviceOpNames))
   | _                  => pure (call op argsJson)
 
 /-- The dispatch entry the `l4_call_blob_io` C export serves: the string

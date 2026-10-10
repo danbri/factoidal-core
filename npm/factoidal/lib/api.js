@@ -161,6 +161,16 @@ function bytesToLatin1(bytesLike, who) {
   return out;
 }
 
+// The same inputs bytesToLatin1 takes, as a Uint8Array, for an engine
+// that takes bytes as bytes (a string is the packed one-char-per-byte form).
+function bytesToUint8Array(bytesLike, who) {
+  if (bytesLike instanceof Uint8Array) return bytesLike;
+  if (bytesLike instanceof ArrayBuffer) return new Uint8Array(bytesLike);
+  if (typeof bytesLike === 'string') return Uint8Array.from(bytesLike, (c) => c.charCodeAt(0) & 0xff);
+  throw new TypeError(
+    `${who}: expected a Uint8Array, Buffer, ArrayBuffer, or an already-packed string`);
+}
+
 // SRJ bindings -> Array<Map<string, Term>>
 function bindingsFromSrj(srj) {
   const rows = (srj && srj.results && srj.results.bindings) || [];
@@ -873,6 +883,16 @@ function buildApi(driver) {
       throw new TypeError(
         `queryHdt: ${form.toUpperCase()} is not supported over --data-hdt (SELECT/ASK only)`);
     }
+    // An engine whose entry has a queryHdt op (the Lean wasm module: the
+    // HDT bytes travel as the dispatch ABI's byte region, no encoding)
+    // answers through it. The F* bundles have none; they use the CLI
+    // path below.
+    const e = await entry();
+    if (e && typeof e.queryHdt === 'function') {
+      const r = entryResult(e.queryHdt(bytesToUint8Array(hdtBytes, 'queryHdt'), sparql), 'queryHdt');
+      if (r.kind === 'ask') return r.boolean;
+      return bindingsFromSrj(r.srj);
+    }
     const content = bytesToLatin1(hdtBytes, 'queryHdt');
     const name = `/static/hdt${parseCounter++}.hdt`;
     const res = await run(['--data-hdt', name, '-e', sparql, '-o', 'json'], [{ name, content }]);
@@ -1321,9 +1341,10 @@ function buildApi(driver) {
    * npm-entry bundle. Default graph only (same scope cut as owlClosure).
    * @param {Dataset|string|Array} data
    * @param {{format?: string}} [options]
-   * @returns {Promise<{dataset: Dataset, addedCount: number}>}
+   * @returns {Promise<{dataset: Dataset, addedCount: number, budgetHit?: boolean}>}
    *   dataset is input + tableau-derived triples; addedCount is how many
-   *   the tableau added.
+   *   the tableau added; budgetHit (Lean engine only) is true when the
+   *   materialisation work budget ran out.
    */
   async function tableauMaterialise(data, options) {
     const e = await entry();
@@ -1334,6 +1355,9 @@ function buildApi(driver) {
     return {
       dataset: Dataset.fromNQuads(r.nquads, { blankNodePrefix: freshBnodePrefix() }),
       addedCount: r.addedCount,
+      // Only the Lean engine reports it: true when the materialisation
+      // work budget ran out, so an absent membership is a cap, not a proof.
+      ...(r.budgetHit !== undefined ? { budgetHit: r.budgetHit } : {}),
     };
   }
 

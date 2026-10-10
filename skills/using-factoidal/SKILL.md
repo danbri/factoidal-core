@@ -213,34 +213,34 @@ for this file and/or the labelled score in the next table.
 | Spec area | F\* CLI | F\* npm | Lean wasm | Lean native |
 |---|---|---|---|---|
 | N-Triples / N-Quads / Turtle / TriG / RDF-XML (RDF 1.1 + 1.2 modes) | yes | yes | yes | yes |
-| JSON-LD 1.1 (toRdf, expand, compact, flatten, fromRdf, HTML extraction) | toRdf only (`jsonld` verb, inline contexts) | yes (inline contexts) | no — named gap, errors | yes (probes) |
+| JSON-LD 1.1 (toRdf, expand, compact, flatten, fromRdf, HTML extraction) | toRdf only (`jsonld` verb, inline contexts) | yes (inline contexts) | toRdf and fromRdf (`jsonldToRdf`, `jsonldFromRdf`, `parse` with `format: 'jsonld'`; no document loader, so no remote `@context`) | yes (probes) |
 | RDFC-1.0 canonicalization | yes | yes | yes | yes |
 | SPARQL 1.1 query + update | yes | yes | yes | yes |
 | SPARQL 1.1 Protocol + Graph Store Protocol (HTTP server) | yes (`serve`) | no server; in-process only | no server | in-harness only |
-| SPARQL SERVICE (federation; resolves against an in-process endpoint registry on every surface — live HTTP dispatch not verified) | suite-verified | yes (probed under `LATERAL`) | no | yes (suite) |
+| SPARQL SERVICE (federation; resolves against an in-process endpoint registry on every surface — live HTTP dispatch not verified) | suite-verified | yes (probed under `LATERAL`) | yes (`registerServiceEndpoint`, in-process registry) | yes (suite) |
 | SPARQL 1.2 | yes | same extraction, measured on native runner | yes | yes |
-| SPARQL extension functions (§17.6, sync + async JS) | no | yes | no | no |
+| SPARQL extension functions (§17.6, sync + async JS) | no | yes | yes (`registerExtensionFunction` on `l4-core`) | no |
 | Entailment regimes in `query()` (`RDFS`, `OWL-RL`, `x-rdfscore`, `x-rdfsplus`) | `entail` verb (RDFS / OWL-RL) | yes, all four | no `entail` option | closures via ops |
 | RDF/S closure (rdfs-core, RDFS-Plus) | yes | yes | yes | yes |
 | OWL 2 RL closure | yes | yes | yes | yes |
-| OWL 2 consistency / entailment verdicts (tableau, three-valued) | suite-runner only (`owl_runner`) | yes | yes | yes (scores trail F\* — see table) |
+| OWL 2 consistency / entailment verdicts (tableau, three-valued) | suite-runner only (`owl_runner`) | yes | yes (also `tableauMaterialise`, `tableauDlInconsistent`) | yes (scores trail F\* — see table) |
 | SHACL Core + SHACL-SPARQL + SHACL 1.2 | yes (`shacl`, Core) | yes | no | yes |
 | ShEx (ShExJ + ShExC) | yes (`shex`) | yes | no | partial (fails remain) |
-| RIF Core | yes (`rif`) | yes | no | partial |
-| RML (kg-construct RML Core, `http://w3id.org/rml/`) | yes (`rml`) | yes | no | yes |
+| RIF Core | yes (`rif`) | yes | yes (`rifEval`) | partial |
+| RML (kg-construct RML Core, `http://w3id.org/rml/`) | yes (`rml`) | yes | yes (`rmlMap`, one logical source) | yes |
 | Classic R2RML (`rr:` vocabulary) | not supported (probed: `rr:`-only mapping yields no triples) | same | no | not verified |
-| CSVW (csv2rdf, csv2json, validation) | yes (`csvw`) | yes (csv2rdf) | no | yes |
-| XML parsing (well-formedness, namespaces) | suite-runner only | yes | no | yes |
-| XPath 1.0 | suite-runner only | yes | no | yes (unit suite) |
-| XSLT 1.0 | suite-runner only | yes | no | partial |
-| Schematron | suite-runner only | yes | no | yes |
-| MathML (Content MathML evaluation) | suite-runner only | yes | no | yes |
-| XForms (recalculate + binds subset) | no | yes | no | module exists, no published score — not verified |
-| JSON Schema draft-07 validation | suite-runner only | yes | no | yes |
+| CSVW (csv2rdf, csv2json, validation) | yes (`csvw`) | yes (csv2rdf) | csv2rdf (`csvwToRdf`) | yes |
+| XML parsing (well-formedness, namespaces) | suite-runner only | yes | yes (`xmlWellformed`) | yes |
+| XPath 1.0 | suite-runner only | yes | yes (`xpathEval`) | yes (unit suite) |
+| XSLT 1.0 | suite-runner only | yes | yes (`xsltTransform`) | partial |
+| Schematron | suite-runner only | yes | yes (`schematronValidate`) | yes |
+| MathML (Content MathML evaluation) | suite-runner only | yes | yes (`mathmlEval`) | yes |
+| XForms (recalculate + binds subset) | no | yes | yes (`xformsRecalc`) | module exists, no published score — not verified |
+| JSON Schema draft-07 validation | suite-runner only | yes | yes (`jsonSchemaValidate`) | yes |
 | Common Logic / IKL (CLIF parse + serialise, alpha-normal form, Hayes IKL-to-CL normalization, finite satisfiability) | no | `clParse` via `l4-core`; the other four through a raw `call()` on the module | yes | yes |
 | COTTAS storage (Parquet-based; import, query, compact, serve) | yes | yes (in-memory bytes store) | no | modules exist, not exposed — not verified |
-| HDT (read-only query of `.hdt` bytes) | yes (`--data-hdt`) | yes (`queryHdt`) | no | probe exists — not verified |
-| VC Data Integrity (eddsa-rdfc-2022) + did:key | suite-runners (`vc_runner`, `did_runner`) | yes | no | yes |
+| HDT (read-only query of `.hdt` bytes) | yes (`--data-hdt`) | yes (`queryHdt`) | yes (`queryHdt`, the file as the byte region) | probe exists — not verified |
+| VC Data Integrity (eddsa-rdfc-2022) + did:key | suite-runners (`vc_runner`, `did_runner`) | yes | yes (stage 2 of issue 713: `vc*`, `didKeyResolve`) | yes |
 | GeoSPARQL | suite-runner only | not verified | no | not verified |
 | GRDDL | suite-runner only, partial | not verified | no | partial |
 
