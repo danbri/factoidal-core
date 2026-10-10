@@ -60,7 +60,16 @@ factoidal solid-serve DIR [--port N] [--host ADDRESS] [--base IRI] [--owner WEBI
 ```
 
 `--port 0` takes an ephemeral port and the command prints the origin it
-got on stdout, which is what the interop scripts read. `--base` sets
+got on stdout, which is what the interop scripts read.
+
+A third server has the same host contract: `factoidal serve STORE [--port N]
+[--host ADDRESS]` serves SPARQL 1.1 Protocol, the Graph Store HTTP Protocol
+and the Service Description over an activated Shardborough collection. Its
+host (`npm/factoidal/bin/serve.mjs`) carries raw TCP bytes to the
+`storeServe*` ops and is in both groups of `tools/host-purity-lint.sh`.
+Operating manual, scores and measurements:
+[`skills/shardborough-storage/SKILL.md`](../shardborough-storage/SKILL.md)
+§ Serving. `--base` sets
 `baseIri`, defaulting to the bound origin.
 
 `DIR` names the storage directory and **is not read or written yet**: the

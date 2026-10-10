@@ -7,7 +7,8 @@
 //   * the time to the first answer (open: read, verify, decode, index);
 //   * per-request latency of a bound-subject SELECT over SUBJECT-IRI, REQUESTS
 //     times (default 1000), sequentially on one keep-alive connection;
-//   * per-request latency of a full scan, `SELECT (COUNT(*) AS ?n)`, 20 times;
+//   * per-request latency of a full scan, `SELECT (COUNT(*) AS ?n)`, 20 times,
+//     and of a scan that evaluates a FILTER on every row, 5 times;
 //   * the server process's resident set (VmRSS) after the first 100 bound
 //     requests and after all of them. The gate is growth of at most 10%.
 //
@@ -88,11 +89,13 @@ const firstAnswerMs = Number(process.hrtime.bigint() - started) / 1e6
 const rows = JSON.parse(first.text).results.bindings.length
 const boundTimes = []
 let rss100 = null
+const rssSeries = []
 for (let i = 0; i < requests; i += 1) {
   const r = await query(bound)
   if (r.status !== 200) throw new Error(`bound query answered ${r.status}: ${r.text}`)
   boundTimes.push(r.ms)
   if (i === 99) rss100 = rssOf(child.pid)
+  if ((i + 1) % 250 === 0) rssSeries.push([i + 1, rssOf(child.pid)])
 }
 const rssAfter = rssOf(child.pid)
 const scanTimes = []
@@ -102,6 +105,16 @@ for (let i = 0; i < 20; i += 1) {
   if (r.status !== 200) throw new Error(`scan answered ${r.status}: ${r.text}`)
   scanTimes.push(r.ms)
   scanCount = JSON.parse(r.text).results.bindings[0].n.value
+}
+// A scan that must evaluate an expression on every row: no count shortcut.
+const filterScan = 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o FILTER(isIRI(?o)) }'
+const filterTimes = []
+let filterCount = null
+for (let i = 0; i < 5; i += 1) {
+  const r = await query(filterScan)
+  if (r.status !== 200) throw new Error(`filtered scan answered ${r.status}: ${r.text}`)
+  filterTimes.push(r.ms)
+  filterCount = JSON.parse(r.text).results.bindings[0].n.value
 }
 const rssEnd = rssOf(child.pid)
 child.kill('SIGTERM')
@@ -114,10 +127,12 @@ console.log(JSON.stringify({
   serverStartToFirstAnswerMs: Number(firstAnswerMs.toFixed(0)),
   boundSubject: { query: bound, rows, ...summary(boundTimes) },
   fullScan: { query: 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }', count: scanCount, ...summary(scanTimes) },
+  filteredScan: { query: filterScan, count: filterCount, ...summary(filterTimes) },
   rssAfter100Bytes: rss100,
   rssAfterAllBoundBytes: rssAfter,
   rssAfterScansBytes: rssEnd,
   rssGrowthAfter100: growth === null ? null : Number(growth.toFixed(4)),
+  rssSeries,
   gateGrowthAtMost10Percent: growth !== null && growth <= 0.10
 }, null, 2))
 process.exitCode = growth !== null && growth <= 0.10 ? 0 : 1
