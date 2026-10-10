@@ -311,4 +311,78 @@ private def gSvfAvf (d2 : WfIri) (p2 : WfIri) : Graph :=
     ⟨B "r2", owlAllValuesFrom, O xsdString⟩, ⟨B "r2", owlOnProperty, O pP⟩,
     ⟨S iA, rdfType, O cB⟩ ] [] 8 1)
 
+-- Data successors. A one- or two-member list of literals at label `n`.
+private def lits1 (n : String) (a : Term) : Graph :=
+  [⟨B n, rdfFirst, a⟩, ⟨B n, rdfRest, O rdfNil⟩]
+private def lits2 (n : String) (a b : Term) : Graph :=
+  [⟨B n, rdfFirst, a⟩, ⟨B n, rdfRest, Bt (n ++ "'")⟩,
+   ⟨B (n ++ "'"), rdfFirst, b⟩, ⟨B (n ++ "'"), rdfRest, O rdfNil⟩]
+/-- `iA` is in `∃pP.sv` and in `∀pP.d` for each `d` of `avfs`. -/
+private def succG (sv : Term) (avfs : List Term) : Graph :=
+  [⟨S iA, rdfType, Bt "rs"⟩, ⟨B "rs", owlSomeValuesFrom, sv⟩, ⟨B "rs", owlOnProperty, O pP⟩] ++
+  (avfs.zip (List.range avfs.length)).flatMap (fun (d, n) =>
+    [⟨S iA, rdfType, Bt s!"ra{n}"⟩, ⟨B s!"ra{n}", owlAllValuesFrom, d⟩,
+     ⟨B s!"ra{n}", owlOnProperty, O pP⟩])
+/-- An integer restriction at label `n` with one facet. -/
+private def restr1 (n : String) (e : WfIri) (f : WfIri) (v : Term) : Graph :=
+  [⟨B n, owlOnDatatype, O e⟩, ⟨B n, owlWithRestrictions, Bt (n ++ "l")⟩,
+   ⟨B (n ++ "l"), rdfFirst, Bt (n ++ "f")⟩, ⟨B (n ++ "l"), rdfRest, O rdfNil⟩,
+   ⟨B (n ++ "f"), f, v⟩]
+
+-- litSucc, exclusion by a datatype. Inconsistent Byte Filler shape.
+#guard clashes (succG (Bt "e") [O xsdByte] ++ lits1 "el" (lit "6542145" xsdInteger) ++
+  [⟨B "e", owlOneOf, Bt "el"⟩])
+#guard !clashes (succG (Bt "e") [O xsdByte] ++ lits1 "el" (lit "100" xsdInteger) ++
+  [⟨B "e", owlOneOf, Bt "el"⟩])
+-- the range of the property excludes it as well
+#guard clashes (succG (Bt "e") [] ++ lits1 "el" (lit "6542145" xsdInteger) ++
+  [⟨B "e", owlOneOf, Bt "el"⟩, ⟨S pP, rdfsRange, O xsdByte⟩])
+#guard !clashes (succG (Bt "e") [] ++ lits1 "el" (lit "6542145" xsdInteger) ++
+  [⟨B "e", owlOneOf, Bt "el"⟩, ⟨S pQ, rdfsRange, O xsdByte⟩])
+-- litSucc, exclusion by an integer restriction and an enumeration.
+-- Contradicting datatype Restrictions shape: ∃p.integer[≥ 4], ∀p.{3, 4}, ∀p.{2, 3}.
+private def gContra (second : Term) : Graph :=
+  succG (Bt "d0") [Bt "e1", Bt "e2"] ++ restr1 "d0" xsdInteger xsdFacetMinInclusive (lit "4" xsdInteger) ++
+  lits2 "l1" (lit "3" xsdInteger) (lit "4" xsdInteger) ++ lits2 "l2" (lit "2" xsdInteger) second ++
+  [⟨B "e1", owlOneOf, Bt "l1"⟩, ⟨B "e2", owlOneOf, Bt "l2"⟩]
+#guard clashes (gContra (lit "3" xsdInteger))
+-- {2, 4} in place of {2, 3}: 4 is in all three classes
+#guard !clashes (gContra (lit "4" xsdInteger))
+-- the same value written with another integer datatype is the same value
+#guard !clashes (gContra (lit "4" xsdShort))
+-- litSucc, exclusion by a datatype complement.
+-- Inconsistent Data Complement shape: ∀p.{3, 4}, ∀p.{2, 3}, ∃p.(complement of {3}).
+private def gCompl (excluded : Term) : Graph :=
+  succG (Bt "c") [Bt "e1", Bt "e2"] ++ lits2 "l1" (lit "3" xsdInteger) (lit "4" xsdIntIri) ++
+  lits2 "l2" (lit "2" xsdShort) (lit "3" xsdInteger) ++ lits1 "l3" excluded ++
+  [⟨B "e1", owlOneOf, Bt "l1"⟩, ⟨B "e2", owlOneOf, Bt "l2"⟩,
+   ⟨B "c", owlDatatypeComplementOf, Bt "e3"⟩, ⟨B "e3", owlOneOf, Bt "l3"⟩]
+#guard clashes (gCompl (lit "3" xsdInteger))
+#guard clashes (gCompl (lit "03" xsdByte))
+#guard !clashes (gCompl (lit "5" xsdInteger))
+-- intSucc. datatype-restriction-min-max-inconsistency shape:
+-- ∃p.integer[≥ 18], ∀p.integer[≤ 10].
+private def gMinMax (hi : String) : Graph :=
+  succG (Bt "d0") [Bt "d1"] ++
+  restr1 "d0" xsdInteger xsdFacetMinInclusive (lit "18" xsdInteger) ++
+  restr1 "d1" xsdInteger xsdFacetMaxInclusive (lit hi xsdInteger)
+#guard clashes (gMinMax "10")
+#guard clashes (gMinMax "17")
+#guard !clashes (gMinMax "18")
+-- an exclusive bound: integer[< 18] and integer[≥ 18]
+#guard clashes (succG (Bt "d0") [Bt "d1"] ++
+  restr1 "d0" xsdInteger xsdFacetMinInclusive (lit "18" xsdInteger) ++
+  restr1 "d1" xsdInteger xsdFacetMaxExclusive (lit "18" xsdInteger))
+-- intSucc against a datatype's bounds: byte[≥ 200] is empty, byte holds 100
+#guard clashes (succG (Bt "d0") [O xsdByte] ++
+  restr1 "d0" xsdInteger xsdFacetMinInclusive (lit "200" xsdInteger))
+#guard !clashes (succG (Bt "d0") [O xsdByte] ++
+  restr1 "d0" xsdInteger xsdFacetMinInclusive (lit "100" xsdInteger))
+-- the restriction is on xsd:decimal, which this row does not read
+#guard !clashes (succG (Bt "d0") [Bt "d1"] ++
+  restr1 "d0" xsdDecimal xsdFacetMinInclusive (lit "18" xsdInteger) ++
+  restr1 "d1" xsdInteger xsdFacetMaxInclusive (lit "10" xsdInteger))
+-- no existential restriction: no successor is asked for
+#guard !clashes ((gMinMax "10").filter (fun t => t.p != owlSomeValuesFrom))
+
 end L4Factoidal.OWL.RdfBased.Tests
