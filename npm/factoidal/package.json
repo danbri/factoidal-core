@@ -156,6 +156,7 @@
   "scripts": {
     "build": "bash ../../formal/lean4/Wasm/build-wasm.sh",
     "test": "node --test 'test/*.test.js' 'test/*.test.mjs'",
+    "test:speed": "node ../../tests/perf/npm_speed_gate.mjs",
     "prepublishOnly": "npm test"
   },
   "devDependencies": {

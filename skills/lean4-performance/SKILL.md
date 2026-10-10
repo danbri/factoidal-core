@@ -160,6 +160,19 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   specification under another name in the test module and prove the two equal
   (`RLTests.closureScan_eq`), so the guard still compares two programs. The
   guards on `strLe` compare with `charsLe a.toList b.toList` for the same reason.
+- **A csimp replacement needs its import.** The compiler applies a `@[csimp]`
+  theorem only while compiling a module that imports the module stating it.
+  `Wasm/Ops/Reason.lean` called `OWL.RL.closureFix` and got the indexed closure
+  through an import of `OWL.Refute` it did not need for that call. On
+  2026-10-10 the OWL DL ops moved to `ReasonDl.lean` (issue 713 stage 4, the
+  core wasm), the import went with them, and `owlClosure` silently compiled to
+  the scanning closure: the build, every guard and native-smoke stayed green.
+  The wasm size table found it, because the scanning rules of
+  `OWL/RLClosure.lean` were linked in again (113,186 bytes). Rule: a module
+  that calls a function with a `csimp` twin imports the module of the `csimp`
+  theorem explicitly, with a comment that says why; after moving imports,
+  compare the size table (`tools/wasm-size-profile.py`) of the module before
+  and after, and treat growth in a specification module as a lost `csimp`.
 
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 

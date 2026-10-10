@@ -35,6 +35,7 @@
 // - engine load is timed apart (`loadMs`, one one-triple parse);
 // - the row's time is the median of 5 runs after 1 warmup (`ms`), with all
 //   runs listed (`runsMs`) and the CPU time of the whole child (`cpuMs`);
+//   a row whose warmup takes more than 5 s is measured once;
 // - memory: `wasmMemoryBytes` is the Lean module's linear memory at the end
 //   of the child. Linear memory only grows, so it is the high-water mark of
 //   the engine's heap. `maxRssMB` is the peak resident set of the child
@@ -209,9 +210,15 @@ export async function runChild(engine, row, k) {
     throw new Error(`unknown row '${row}'`);
   }
 
+  const tw = now();
   await op(); // warmup, and the answer check
+  out.warmupMs = +(now() - tw).toFixed(1);
+  // A run of more than 5 s is measured once: the F* bundles are quadratic
+  // on the larger inputs, and five runs of a minute each would hold the
+  // matrix for hours. `runsMs` lists what was measured.
+  const runs = out.warmupMs > 5000 ? 1 : 5;
   const times = [];
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < runs; i += 1) {
     const t = now();
     await op();
     times.push(now() - t);
@@ -229,14 +236,31 @@ export async function runChild(engine, row, k) {
   return out;
 }
 
+/** One run longer than this at one size skips the engine at the next size. */
+export const SKIP_AFTER_MS = 10000;
+
 /** Run every (row, size, engine) in its own child; answer the results. */
 export function runMatrix({ rows = Object.keys(ROWS), engines = ENGINES, scale = 1,
-  sizesFor = (row) => ROWS[row], timeoutMs = 300000, log = () => {} } = {}) {
+  sizesFor = (row) => ROWS[row], timeoutMs = 600000, log = () => {} } = {}) {
   const results = [];
   for (const row of rows) {
+    const slow = new Map(); // engine -> the result whose warmup passed SKIP_AFTER_MS
     for (const k0 of sizesFor(row)) {
       const k = Math.max(1, Math.round(k0 * scale));
       for (const engine of engines) {
+        // An engine whose previous size of this row took more than
+        // SKIP_AFTER_MS for one run is not run at the next size (4 times
+        // the input): the F* wasm_of_ocaml bundle is quadratic in parse(),
+        // 12 s at 12,000 triples, and its larger runs would hold the matrix
+        // for an hour. The row records why.
+        if (slow.has(engine)) {
+          const prev = slow.get(engine);
+          const res = { engine, row, people: k, triples: 3 * k,
+            skipped: `not run: ${prev.warmupMs} ms for one run at ${prev.triples} triples` };
+          results.push(res);
+          log(res);
+          continue;
+        }
         const r = spawnSync(process.execPath, [SELF, '--child', engine, row, String(k)],
           { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
         let res;
@@ -250,6 +274,7 @@ export function runMatrix({ rows = Object.keys(ROWS), engines = ENGINES, scale =
         }
         results.push(res);
         log(res);
+        if (res.warmupMs > SKIP_AFTER_MS) slow.set(engine, res);
       }
     }
   }
@@ -264,7 +289,8 @@ export function reportTable(results) {
     if (!by.has(key(r))) by.set(key(r), { row: r.row, people: r.people, triples: r.triples });
     by.get(key(r))[r.engine] = r;
   }
-  const ms = (r) => (r && r.ms !== undefined ? r.ms.toFixed(1) : (r ? 'error' : '-'));
+  const ms = (r) => (r && r.ms !== undefined ? r.ms.toFixed(1)
+    : (r && r.skipped ? 'not run' : (r ? 'error' : '-')));
   const lines = [
     '| Row | Triples | Lean ms | F* wasm ms | F* js ms | Lean / best F* | Lean wasm memory MB | Lean max RSS MB | F* wasm max RSS MB |',
     '|---|---:|---:|---:|---:|---:|---:|---:|---:|',

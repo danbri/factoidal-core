@@ -46,7 +46,7 @@ module.exports = function(eleventyConfig) {
   // mirror is no longer read, and a directory there would write the same
   // output paths as these entries.
   for (const rel of [
-    "browser.js", "api.mjs", "rdfjs.mjs", "sample-store.mjs",
+    "browser.js", "core-browser.js", "api.mjs", "rdfjs.mjs", "sample-store.mjs",
     "lib", "l4-assets", "store-host", "store-http",
   ]) {
     eleventyConfig.addPassthroughCopy({ [`../npm/factoidal/${rel}`]: `npm/factoidal/${rel}` });
@@ -339,6 +339,7 @@ module.exports = function(eleventyConfig) {
       "npm/factoidal/rdfjs.mjs",
       "npm/factoidal/lib/api.mjs",
       "npm/factoidal/lib/lean-entry.mjs",
+      "npm/factoidal/lib/browser-engine.mjs",
       "npm/factoidal/lib/store.mjs",
       "npm/factoidal/lib/version.mjs",
       "npm/factoidal/store-host/paths.mjs",

@@ -157,7 +157,46 @@ JavaScript source. `bundler` users: the
 
 `tests/web-demos/npm_browser_smoke.sh` runs a parse, a SELECT, a
 canonicalization, an XPath evaluation and a store query from a static page
-in headless Chromium.
+in headless Chromium, and a second page over the core entry.
+
+### The core engine: `@factoidal/core/core`
+
+The full engine (`l4factoidal.wasm`) serves every function of this package.
+`@factoidal/core/core` loads the core engine (`l4factoidal-core.wasm`): the
+same Lean library with a dispatch table that reaches a subset of it, so the
+linker drops the rest. It has the same exports and types as `@factoidal/core`
+(in Node, `core.mjs`; in a browser or a bundler, its `browser` condition,
+`core-browser.js`).
+
+The core engine serves: `parse` and `serialize` for Turtle, TriG, N-Triples
+and N-Quads (RDF 1.1 and 1.2) and RDF/XML, with `{lenient: true}`; `query`,
+`update`, `openDataset` and `queryRaw` (SPARQL 1.1 and 1.2, extension
+functions, SERVICE endpoints, the entailment regimes); `canonicalize`,
+`graphs` and `canonicalHash`; `owlClosure`, `coreRdfsClosure`,
+`rdfsPlusClosure` and the core-RDFS checks; `shaclValidate`. Every other
+function (JSON-LD, the XML family, CSVW, RML, ShEx, the OWL DL refuter and
+tableau, RIF, HDT, the store, VC and DID, the maths, Common Logic) rejects
+with an error that names `@factoidal/core`, and `capabilities()` reports
+`profile: 'core'` and `false` for it.
+
+```js
+import { parse, query, capabilities } from "@factoidal/core/core";
+(await capabilities()).profile; // 'core'
+```
+
+Sizes (version 0.9.0 tree of 2026-10-10; gzip is `gzip -9`, brotli quality 11):
+
+| Module | Raw | gzip | brotli |
+|---|---:|---:|---:|
+| `l4factoidal.wasm` (full, `@factoidal/core`) | 10.52 MB | 2.07 MB | 1.29 MB |
+| `l4factoidal-core.wasm` (core, `@factoidal/core/core`) | 5.66 MB | 1.07 MB | 0.69 MB |
+| the F\* engine bundle of 0.8.0 (`factoidal-npm-entry.js`), for comparison | 1.19 MB | 0.35 MB | 0.28 MB |
+
+Each entry also loads about 68 KB (gzip) of JavaScript. The browser default
+(`@factoidal/core`, `browser.js`) stays the full engine, so a page gets every
+function unless it chooses the core entry. What each module is made of, by
+Lean namespace: `docs/designissues/2026-10-10-npm-lean-only.md` § 9 in the
+source repository.
 
 ### Bundlers and Content Security Policy
 

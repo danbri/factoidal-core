@@ -14,7 +14,10 @@ Design decision (owner-approved 2026-08-22):
 | Path | Role |
 |---|---|
 | `formal/lean4/Wasm/Abi.lean` | JSON string-in / string-out ABI + a phase-1 JSON reader/writer shim |
-| `formal/lean4/Wasm/Exports.lean` | the `@[export]` declarations (the C symbol names) |
+| `formal/lean4/Wasm/Exports.lean` | the `@[export]` declarations (the C symbol names) of the full module |
+| `formal/lean4/Wasm/CoreDispatch.lean`, `Wasm/CoreExports.lean` | the core module (`l4factoidal-core.wasm`, issue 713 stage 4): the dispatch table of the core subset and the same C symbols over it |
+| `formal/lean4/Wasm/CoreDispatchTests.lean` | build-time check that the core and full tables name the same ops and answer core ops alike |
+| `tools/wasm-size-profile.py` | bytes of code and data per Lean module or namespace, from the link map |
 | `formal/lean4/Wasm/Main.lean` | a NATIVE driver over the same ABI (`lake exe l4wasm-cli`) |
 | `formal/lean4/Wasm/l4_shim.c` | the C boundary: init, `char *` ↔ Lean string, ownership |
 | `formal/lean4/Wasm/l4_stubs.c` | one stub (`initialize_libuv`) — see "the purity evidence" below |
@@ -22,6 +25,7 @@ Design decision (owner-approved 2026-08-22):
 | `docs/web/hub/assets/l4/l4factoidal.wasm` | the module; a build product, not committed since 2026-10-09 (in `.gitignore`; the `web` release set of `danbri/factoidal-builds` carries it) |
 | `docs/web/hub/assets/l4/l4factoidal.mjs` | Emscripten's generated glue; a build product, not committed since 2026-10-09 |
 | `docs/web/hub/assets/l4/l4factoidal.js` | our ES-module loader (`loadL4()`); source, committed |
+| `docs/web/hub/assets/l4/l4factoidal-core.{wasm,mjs,js}` | the core module, its glue, and its loader, which step 8 generates from `l4factoidal.js`; build products |
 | `tests/hub/post36_test.mjs` | the gate: cells of hub post 36 + the error paths |
 
 Measured on the first working build (2026-08-22, macOS arm64,
@@ -190,9 +194,15 @@ Prerequisites and how much they cost:
 4. Compile that C to wasm objects.
 5. Compile Lean's runtime `.cpp` to wasm objects (24 of the 34 files)
    plus mimalloc's `static.c`.
-6. Compile our library's C (EXCEPT `Wasm/Main.c`), `l4_shim.c` and
-   `l4_stubs.c`.
-7. `em++` link.
+6. Compile our library's C (EXCEPT `Wasm/Main.c`), `l4_shim.c` (twice: once
+   per module initialiser, `-DL4_INIT_MODULE`) and `l4_stubs.c`. Since
+   2026-10-10 this step is incremental (an object is recompiled when its
+   `.c` is newer) and parallel (`L4_WASM_JOBS`, default 4); it deleted and
+   recompiled all ~650 objects one at a time before, about seven minutes.
+7. `em++` link, twice: `l4factoidal.wasm` from `Wasm_Exports.o` and
+   `l4factoidal-core.wasm` from `Wasm_CoreExports.o` (the two define the same
+   C symbols, so each link leaves the other out), each with `--Map` and the
+   size tables `$WORK/<module>.size.md` and `.size-modules.md`.
 
 ## The flags, and why each one is load-bearing
 
@@ -505,6 +515,34 @@ which reads the HDT file as the byte region and is therefore in
 included), and the JavaScript side (`npm/factoidal/l4-core.js`'s `OPS`
 list and exports, `l4-core.d.ts`).
 
+## The core module and the size table (2026-10-10)
+
+`l4factoidal-core.wasm` exists because one dispatch table reaching the whole
+library leaves the linker nothing to drop (10.5 MB, 2.07 MB with gzip). The
+core table imports only the op modules of its subset, and the core link
+drops the rest (5.66 MB, 1.07 MB with gzip). Record, with the per-namespace
+table: `docs/designissues/2026-10-10-npm-lean-only.md` § 9.
+
+Rules that keep it small:
+- `Wasm/CoreDispatch.lean` must not import `Wasm/Dispatch.lean` or any op
+  module of the full table. An op module that mixes core and full ops is
+  split (as `Reason`/`ReasonDl`, `Validate`/`ShExValidate`,
+  `QueryExtras`/`QueryHdt`); a library the core reads only for one syntax
+  becomes a parameter (`ExtraReader` for JSON-LD in `Wasm/Ops/Parse.lean`).
+- A new op goes either into the core table (`Core.callArgsBy` or
+  `Core.callIOArgsBy`; the full table delegates to them) or into the full
+  table and `Core.fullOnlyOpNames`. `Wasm/CoreDispatchTests.lean` fails the
+  build when it is in neither list.
+- After any change of imports, read `$WORK/l4factoidal-core.size.md` against
+  the previous build. A namespace that appears or grows is a reference the
+  core closure did not have. The size table is also how a lost `csimp`
+  import was found (`skills/lean4-performance`, "A csimp replacement needs
+  its import").
+
+`tools/wasm-size-profile.py MAP --wasm FILE [--by module]` prints the table.
+The bytes are those wasm-ld kept, before `wasm-opt -O3`; it prints the final
+code and data sections too.
+
 ## Adding a new export
 
 **First check whether you need one at all.** Most new functionality
@@ -665,7 +703,8 @@ against the old core library.
    checkouts.) The copies are
    `docs/web/hub/assets/l4/`, `npm/factoidal/l4-assets/`,
    `npm/factoidal-lean/` and `docs/npm/lean/`; they must be
-   byte-identical, because the loader stamps ONE `WASM_VERSION` (the
+   byte-identical (the core module has two copies, in the first two
+   directories, checked the same way), because the loader stamps ONE `WASM_VERSION` (the
    wasm's own sha256 prefix) into the `?v=` cache-busting query, so a
    copy that differs is served under a hash that is not its own.
    Until 2026-08-26 step 9 synced only three: `npm/factoidal/l4-assets/`
