@@ -15,6 +15,8 @@ for the paths that the survey of 2026-10-10 found quadratic and that were
 repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
 
   rdfs-closure-*   RDFS closure of a wide, a dense and a tree-shaped schema
+  trig-parse       TriG parse, many small graph blocks
+  trig-big-graph   TriG parse, one graph block with all the triples
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes, 1 when a pair fails, 2 when the binary is missing.
@@ -55,6 +57,24 @@ def fixture(name: str, text_fn) -> Path:
     return p
 
 
+def trig_blocks(n: int) -> str:
+    per = 50
+    out = [f"@prefix ex: <{EX}> ."]
+    for j in range((n + per - 1) // per):
+        out.append(f"ex:g{j} {{")
+        for i in range(per):
+            k = j * per + i
+            if k < n:
+                out.append(f"  ex:s{k} ex:p ex:o{k} .")
+        out.append("}")
+    return "\n".join(out) + "\n"
+
+
+def trig_one_graph(n: int) -> str:
+    body = "\n".join(f"  ex:s{i} ex:p ex:o{i} ." for i in range(n))
+    return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
+
+
 # row id -> (small size, make input path, command builder)
 ROWS = {
     "rdfs-closure-wideflat": (
@@ -69,6 +89,14 @@ ROWS = {
         256,
         lambda n: fixture(f"clo-tree-{n}.ttl", lambda: bc.GENERATORS["tree"](n)),
         lambda p: [str(BIN), "closure", str(p), "--regime", "rdfs", "--format", "turtle"]),
+    "trig-parse": (
+        2500,
+        lambda n: fixture(f"trig-blocks-{n}.trig", lambda: trig_blocks(n)),
+        lambda p: [str(BIN), "parse", str(p), "--format", "trig"]),
+    "trig-big-graph": (
+        2500,
+        lambda n: fixture(f"trig-one-{n}.trig", lambda: trig_one_graph(n)),
+        lambda p: [str(BIN), "parse", str(p), "--format", "trig"]),
 }
 
 
