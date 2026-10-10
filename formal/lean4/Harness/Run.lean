@@ -211,7 +211,7 @@ inductive Expected where
   | graph   (g : Graph)
 
 /-- Decode the expected file by extension (the `.srx/.srj/.tsv/.csv`
-and `.ttl` branches of `run_query_eval_test`). -/
+and `.ttl` branches of `run_query_eval_test`, plus `.nt`). -/
 def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Expected :=
   let ofResult (label : String) (csv : Bool) (r : Except ResultsError QueryResult) :
       Except String Expected :=
@@ -232,6 +232,12 @@ def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Exp
         | some (_, rows) => .ok (.rows rows false)
         | none           => .error "rs:ResultSet typed but no result-set subject"
       else .ok (.graph g)
+  else if rf.endsWith ".nt" then
+    -- A CONSTRUCT result given as N-Triples (W3C sparql12
+    -- `codepoint-esc-08.nt`).
+    match parseNTriples text mode with
+    | .error e => .error s!"N-Triples: {fmtParseError e}"
+    | .ok g    => .ok (.graph g)
   else .error s!"unknown result format: {basename rf}"
 
 /-- The FAIL text for a SELECT mismatch: counts plus the expected rows

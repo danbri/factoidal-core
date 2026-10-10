@@ -1314,3 +1314,77 @@ witness holds — a semantics-only break).
 * the RDF 1.2 entailment regimes themselves (`RDFS-Plus` has no
   counterpart in `RDF/Entailment.lean`);
 * `sparql12`, which the F\* runner already has a `--sparql12` mode for.
+
+## Status 2026-10-10 — fixtures at w3c/rdf-tests `ec2ba15`: the structured protocol form
+
+Branch `claude/wt-w3c-fixtures`, tracking issue
+https://github.com/danbri/factoidal/issues/698. `third_party/testing/w3c`
+moved from `35c503a` to `ec2ba15` (2026-10-08). Upstream changed the
+SPARQL 1.1 Protocol and Graph Store manifests from Markdown in
+`rdfs:comment` to RDF that uses the W3C HTTP Vocabulary in RDF (`ht:`),
+Representing Content in RDF (`cnt:`) and the `hts:` status terms
+(`c7817c2`, `c7b1bca`, `02f98ff`, `f231402`), and `manifest-all.ttl` now
+includes the new `graph-store-protocol` suite (4 direct + 9 indirect
+entries) in place of the deprecated `http-rdf-update` suite (19 entries,
+now 18 after `263e50c`).
+
+### How a structured protocol entry is run
+
+`Harness/Manifest.lean` reads `mf:action` as an `ht:Connection`:
+`ht:connectionAuthority`, and the `ht:requests` RDF list of `ht:Request`
+nodes (`ht:methodName`, `ht:absolutePath`, `ht:headers` list of
+`ht:fieldName`/`ht:fieldValue`, `ht:body [ cnt:chars ]`, `ht:resp`). From
+`ht:resp` it reads `mf:expectedStatus` (any of the listed `hts:` terms),
+`mf:expectedFormat`, `mf:expectedBoolean`, `mf:expectedLocation`, and an
+`ht:headers` + `ht:body` pair for expected RDF content. It also reads the
+entry's `ut:graphData` and `mf:requires`.
+
+`Harness/ProtocolRun.lean` runs the requests IN ORDER against one store and
+checks every response. It only reads and compares. The requests are
+executed by the library:
+
+- `SPARQL/ProtocolService.lean` (`serve`): decode (`SPARQL/Protocol.lean`
+  `decodeRequest`), parse with the service IRI as BASE, apply the
+  protocol dataset (Protocol §2.1.4: it replaces FROM / FROM NAMED; §2.2.3:
+  each `using-graph-uri=g` is `USING <g>` on every DELETE/INSERT), evaluate
+  against the Graph Store, answer 200 / 400 / 500 (§2.1.7, §2.2.4). The
+  store starts with the entry's `ut:graphData` graphs as named graphs.
+- `SPARQL/GraphStoreService.lean` (`serve`): §4.1 direct and §4.2 indirect
+  graph identification relative to the endpoint path `/gsp` (the manifest
+  says every `ht:absolutePath` starts with it), Turtle / N-Triples /
+  `multipart/form-data` payloads (`HTTP/Multipart.lean`), blank nodes kept
+  apart on merge, §5 status codes, `Location` on graph creation, GET bodies
+  in Turtle or N-Triples by `Accept`. The store is empty at the start of
+  each entry: the indirect suite PUTs `person/1.ttl` in several entries and
+  expects `201 Created` each time.
+
+The runner compares a response body with the expected `ht:body` by graph
+isomorphism, and binds `$LOCATION$` (`mf:expectedLocation`) to the
+`Location` value for the later requests of the same connection.
+
+The old verdict (first request only, status class only, evaluation over an
+empty dataset) is kept for manifests still in the Markdown form.
+
+Library changes the structured form exposed, each with a `#guard`:
+`decodeRequest` dropped the `default-graph-uri` / `named-graph-uri` URL
+parameters of a direct-POST query (§2.1.3) and the `using-graph-uri` /
+`using-named-graph-uri` parameters of every update (it used
+`default-graph-uri` for updates), and did not apply the §2.2.3 conflict
+rule to a direct-POST update. The earlier guard that pinned
+`.update "CLEAR ALL" [] []` for a direct POST with `using-graph-uri` in
+the URL was corrected.
+
+Sabotage, 2026-10-10: inverting the `mf:expectedBoolean` comparison, the
+body isomorphism test, and rejecting status 404 in `checkStatus` turned
+the 47 entries to 22 pass, 25 fail (out of 47), every failure at the
+check that was inverted.
+
+### Measured score lines, verbatim
+
+```
+protocol: 34 pass, 0 fail, 0 skip, 0 unsupported (out of 34)
+graph-store-protocol: 4 pass, 0 fail, 0 skip, 0 unsupported (out of 4)
+graph-store-protocol: 9 pass, 0 fail, 0 skip, 0 unsupported (out of 9)
+TOTAL: 650 pass, 0 fail, 0 skip, 0 unsupported (out of 650)   (sparql11/manifest-all.ttl)
+TOTAL: 18 pass, 0 fail, 0 skip, 0 unsupported (out of 18)     (sparql11/http-rdf-update, deprecated, Markdown form)
+```

@@ -188,6 +188,8 @@ import L4Factoidal.Regex.RegexTests
 import L4Factoidal.Regex.RegexTheorems
 import L4Factoidal.SPARQL.Protocol
 import L4Factoidal.SPARQL.GraphStore
+import L4Factoidal.SPARQL.ProtocolService
+import L4Factoidal.SPARQL.GraphStoreService
 import L4Factoidal.SPARQL.ServiceDescription
 import L4Factoidal.SPARQL.ProtocolTests
 import L4Factoidal.SPARQL.ProtocolTheorems
@@ -293,6 +295,7 @@ import L4Factoidal.XPath.Expr
 import L4Factoidal.XPath.Eval
 import L4Factoidal.XPath.ExprTests
 import L4Factoidal.HTTP.Server
+import L4Factoidal.HTTP.Multipart
 import L4Factoidal.HTTP.Tests
 import L4Factoidal.Storage.Bytes
 import L4Factoidal.Storage.Tests

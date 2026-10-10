@@ -138,59 +138,32 @@ def SimpleEntails (g h : Graph) : Prop :=
 
 RDF 1.2's triple terms are TRANSPARENT (Concepts §3.3): the terms
 inside `<<( s p o )>>` denote what they denote when asserted, which is
-why `<<( )>>` replaced RDF-star's opaque `<< >>`. The rdf12
-`rdf-semantics` manifest agrees for IRIs (`opaque-iri`, positive:
-`owl:sameAs` substitutes inside a triple term) and for language-tagged
-strings (`opaque-language-string`, positive: `"hello"@en-us` inside a
-triple term matches `"hello"@en-US`) — and then makes ONE exception:
+why `<<( )>>` replaced RDF-star's opaque `<< >>`. A literal inside a
+triple term is therefore compared by the same `leq` as an asserted one.
+The rdf12 `rdf-semantics` manifest agrees, for IRIs (`opaque-iri`:
+`owl:sameAs` substitutes inside a triple term), for language-tagged
+strings (`opaque-language-string`: `"hello"@en-us` matches
+`"hello"@en-US`) and, since w3c/rdf-tests `38bc6d9` (2026-02-19), for
+directional ones (`opaque-dir-language-string`, now a
+`PositiveEntailmentTest`: "Literals within reifying terms (including
+directional language strings) are transparent").
 
-| test | polarity | interior literal pair |
-| --- | --- | --- |
-| `opaque-language-string` | Positive | `"hello"@en-us` vs `"hello"@en-US` |
-| `opaque-dir-language-string` | **Negative** | `"hello"@en-us--ltr` vs `"hello"@en-US--ltr` |
-
-Both are `mf:entailmentRegime "simple"` with `mf:recognizedDatatypes ()`,
-and the fixtures are identical but for the `--ltr`. So the suite asserts
-that a language tag inside a triple term matches without regard to ASCII
-case, and a language tag CARRYING A BASE DIRECTION does not.
-
-That is a divergence from RDF 1.2 Concepts §3.3, which gives the value
-space of `rdf:dirLangString` as triples whose language-tag component is
-compared case-insensitively, with no clause about position. Both
-fixtures are `rdft:approval rdft:NotClassified`. The suite is
-implemented here and the divergence is recorded, with both readings and
-the reasons for this choice, in
-`docs/designissues/2026-09-07-rdf12-sparql12-semantics.md` § 3. The F\*
-tree carries the same clause in `RDF.Entailment.Regime.fst`'s
-`dt_value_leq`.
-
-The choice is the CONSERVATIVE one: it makes entailment strictly less
-permissive inside a triple term, so it cannot manufacture an
-entailment. -/
-
-/-- `leq`, tightened for use INSIDE a triple term: two
-`rdf:dirLangString` literals must additionally agree on their language
-tag exactly, not up to ASCII case. On every other literal pair this is
-`leq` unchanged, so `stricterInTripleTerm leq a b = true → leq a b =
-true` — which is what keeps `termMatch_eq_of_implies_eq` going through
-the triple-term arm. -/
-def stricterInTripleTerm (leq : Literal → Literal → Bool)
-    (a b : Literal) : Bool :=
-  leq a b &&
-  (if a.datatype == rdfDirLangString && b.datatype == rdfDirLangString
-   then a.langTag == b.langTag
-   else true)
+Until that fixture move the suite had `opaque-dir-language-string` as
+a NEGATIVE test, and the comparator was tightened inside a triple term
+(`stricterInTripleTerm`, removed in the same landing as the fixture
+move); the record is `docs/designissues/2026-09-07-rdf12-sparql12-semantics.md`
+§ 3. -/
 
 /-- Term matching: IRIs and blank nodes by identity, literals by `leq`,
 triple terms componentwise. `u` is the candidate from the premise
-graph, `t` the (instantiated) conclusion term. Descending into a triple
-term's object tightens the comparator — see the section above. -/
+graph, `t` the (instantiated) conclusion term. A triple term's object
+is compared with the same `leq` — see the section above. -/
 def termMatch : (Literal → Literal → Bool) → Term → Term → Bool
   | _,   .iri i,     .iri j     => i == j
   | _,   .bnode a,   .bnode b   => a == b
   | leq, .literal l, .literal m => leq l.val m.val
   | leq, .tripleTerm s1 p1 o1, .tripleTerm s2 p2 o2 =>
-      s1 == s2 && p1 == p2 && termMatch (stricterInTripleTerm leq) o1 o2
+      s1 == s2 && p1 == p2 && termMatch leq o1 o2
   | _,   _, _ => false
 
 /-- Triple matching: subject and predicate exact, object via `termMatch`. -/
@@ -262,11 +235,11 @@ def matchObject : (Literal → Literal → Bool) → (Term → Bool) →
   | leq, bindable, m, .tripleTerm ps pp po, .tripleTerm gs gp go =>
       if pp == gp then
         match matchSubject m ps gs with
-        -- The comparator tightens on the way in, exactly as `termMatch`
-        -- tightens: the search and the check must agree about the
-        -- triple-term interior or the certificate `searchInstance`
-        -- returns will not satisfy `instanceCert`.
-        | some m1 => matchObject (stricterInTripleTerm leq) bindable m1 po go
+        -- The same comparator as `termMatch` uses inside a triple term:
+        -- the search and the check must agree about the interior or the
+        -- certificate `searchInstance` returns will not satisfy
+        -- `instanceCert`.
+        | some m1 => matchObject leq bindable m1 po go
         | none    => none
       else none
   | leq, _, m, ho, go => if termMatch leq go ho then some m else none

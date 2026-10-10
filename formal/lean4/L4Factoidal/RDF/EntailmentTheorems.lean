@@ -22,24 +22,10 @@ import L4Factoidal.RDF.Entailment
 
 namespace L4Factoidal.RDF
 
-/-- A comparator that only ever matches equal literals stays one when
-`termMatch` tightens it at a triple-term boundary
-(`stricterInTripleTerm` is `leq` conjoined with an extra test, so it
-matches no more pairs than `leq` does). This is what lets the term
-induction below carry its hypothesis through the `tripleTerm` arm,
-where the comparator is no longer the one it started with. -/
-theorem implies_eq_stricterInTripleTerm {leq : Literal → Literal → Bool}
-    (h : ∀ a b, leq a b = true → a = b) :
-    ∀ a b, stricterInTripleTerm leq a b = true → a = b := by
-  intro a b hab
-  simp only [stricterInTripleTerm, Bool.and_eq_true] at hab
-  exact h a b hab.1
-
 /-- Under ANY literal comparison that implies literal equality, a term
 match is equality. Stated for a general `leq` rather than for
-`literalStrictEq` alone because `termMatch` swaps the comparator when
-it descends into a triple term, so the induction hypothesis is about a
-different comparator than the goal. -/
+`literalStrictEq` alone, so every regime comparator that implies
+equality inherits it. -/
 theorem termMatch_eq_of_implies_eq : ∀ {u t : Term}
     {leq : Literal → Literal → Bool},
     (∀ a b, leq a b = true → a = b) → termMatch leq u t = true → u = t := by
@@ -57,7 +43,7 @@ theorem termMatch_eq_of_implies_eq : ∀ {u t : Term}
     intro t leq hleq h
     cases t <;> simp only [termMatch, Bool.and_eq_true, beq_iff_eq] at h <;> try simp at h
     obtain ⟨⟨hs, hp⟩, ho⟩ := h
-    rw [hs, hp, ih (implies_eq_stricterInTripleTerm hleq) ho]
+    rw [hs, hp, ih hleq ho]
 
 /-- Under strict literal identity, a term match is equality. -/
 theorem termMatch_strict_eq {u t : Term}

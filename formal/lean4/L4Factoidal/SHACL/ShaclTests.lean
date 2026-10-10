@@ -769,4 +769,26 @@ def badSelectDoc : String :=
 #guard (runFull badSelectDoc).failure.isSome
 #guard (runFull selectTargetDoc).failure.isNone
 
+/-! ## Pre-binding is visible to GROUP BY and HAVING
+
+`queryWithPrebinding` joins the pre-binding row with the WHERE pattern.
+SPARQL 1.1 §18.2.4.3 joins a trailing VALUES clause after GROUP BY and
+HAVING, so a pre-binding carried that way would be unbound in a HAVING
+condition that reads `$this`. -/
+
+private def pbFocus : Term := .iri ⟨"http://ex/f", rfl⟩
+private def pbData : Graph := [⟨.iri ⟨"http://ex/f", rfl⟩, ⟨"http://ex/p", rfl⟩, .iri ⟨"http://ex/o", rfl⟩⟩]
+
+private def pbRows (queryText : String) : Option Nat :=
+  match preboundQuery queryText none [("this", pbFocus)] with
+  | .ok q    => some (SPARQL.evalSelect {} { default := pbData, named := [] } q).2.length
+  | .error _ => none
+
+#guard pbRows "SELECT $this WHERE { $this ?p ?o } GROUP BY $this HAVING ($this = <http://ex/f>)" == some 1
+#guard pbRows "SELECT $this WHERE { $this ?p ?o } GROUP BY $this HAVING ($this = <http://ex/g>)" == some 0
+-- The projection still carries the pre-bound value.
+#guard (match preboundQuery "SELECT $this WHERE { $this ?p ?o }" none [("this", pbFocus)] with
+        | .ok q => (SPARQL.evalSelect {} { default := pbData, named := [] } q).2.map (·.lookup "this")
+        | .error _ => []) == [some pbFocus]
+
 end L4Factoidal.SHACL.Tests

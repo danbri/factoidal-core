@@ -131,20 +131,7 @@ Two hypotheses stand in for the F* source's `leq_reflexive` and
 and the bindability test accepts every term. Simple entailment supplies
 both. -/
 
-/-- Reflexivity survives the tightening `termMatch` applies inside a
-triple term: the extra conjunct is an exact language-tag comparison,
-and a literal's tag equals itself. -/
-theorem refl_stricterInTripleTerm {leq : Literal → Literal → Bool}
-    (hleq : ∀ l, leq l l = true) :
-    ∀ l, stricterInTripleTerm leq l l = true := by
-  intro l
-  simp only [stricterInTripleTerm, hleq, Bool.true_and]
-  split <;> simp
-
-/-- A term matches itself when the literal comparison is reflexive.
-Generalised over `leq` because `termMatch` swaps the comparator at a
-triple-term boundary, so the induction hypothesis is about a different
-comparator than the goal. -/
+/-- A term matches itself when the literal comparison is reflexive. -/
 theorem termMatch_refl : ∀ (t : Term) {leq : Literal → Literal → Bool},
     (∀ l, leq l l = true) → termMatch leq t t = true := by
   intro t
@@ -154,7 +141,7 @@ theorem termMatch_refl : ∀ (t : Term) {leq : Literal → Literal → Bool},
   | literal l => intro leq hleq; simp [termMatch, hleq]
   | tripleTerm s p o ih =>
       intro leq hleq
-      simp [termMatch, ih (refl_stricterInTripleTerm hleq)]
+      simp [termMatch, ih hleq]
 
 /-- A term that a subject-position substitution accepts is that
 subject, read as a term. -/
@@ -191,10 +178,6 @@ theorem matchObject_complete {leq : Literal → Literal → Bool}
       ∃ m1, matchObject leq bindable m ho go = some m1 ∧
             Compat σ m1 ∧ Extends m1 m := by
   intro ho
-  -- `leq` is generalised because `matchObject` (like `termMatch`)
-  -- tightens the comparator when it descends into a triple term, so
-  -- the induction hypothesis is about `stricterInTripleTerm leq`, not
-  -- about the `leq` the goal mentions.
   induction ho generalizing leq with
   | iri i =>
       intro go m σ hc h
@@ -231,7 +214,7 @@ theorem matchObject_complete {leq : Literal → Literal → Bool}
           simp only [Option.some.injEq] at h
           subst h
           obtain ⟨m1, hm1, hc1, he1⟩ := matchSubject_complete hc hs
-          obtain ⟨m2, hm2, hc2, he2⟩ := ih (refl_stricterInTripleTerm hleq) po' m1 σ hc1 ho'
+          obtain ⟨m2, hm2, hc2, he2⟩ := ih hleq po' m1 σ hc1 ho'
           exact ⟨m2, by simp [matchObject, hm1, hm2], hc2, he2.trans he1⟩
 
 
@@ -419,7 +402,7 @@ theorem matchObject_sound {leq : Literal → Literal → Bool}
             | some ma =>
                 simp only [hs] at h
                 obtain ⟨hea, hsa⟩ := matchSubject_sound hs
-                obtain ⟨heb, hsb⟩ := ih (refl_stricterInTripleTerm hleq) go1 ma m1 h
+                obtain ⟨heb, hsb⟩ := ih hleq go1 ma m1 h
                 refine ⟨heb.trans hea, fun m' he => ?_⟩
                 obtain ⟨go', hgo, hmt⟩ := hsb m' he
                 refine ⟨.tripleTerm gs pp go', ?_, ?_⟩

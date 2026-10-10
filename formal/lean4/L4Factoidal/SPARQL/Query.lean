@@ -785,6 +785,42 @@ EXISTS positions are already booleans. -/
 def evalExprInGroup (env : EvalEnv) (g : SolutionGroup) (e : Expr) : EvalResult :=
   Expr.evalIn env g.representative (rewriteAggregates env g e)
 
+/-- The solution mapping a group contributes after grouping: the named
+GROUP BY variables (`GROUP BY ?v`, `GROUP BY (e AS ?v)`) with the value
+the group's rows share. §18.3.1 makes exactly these in scope after
+GROUP BY; `GROUP BY (e)` without `AS` binds nothing, and a key that
+evaluated to an error leaves its variable unbound. -/
+def groupKeyBinding (gb : Option (List GroupCondition)) (g : SolutionGroup) : Binding :=
+  match gb with
+  | none => []
+  | some conds =>
+      conds.filterMap (fun gc =>
+        let named := match gc with
+          | .var v           => some v
+          | .expr _ (some v) => some v
+          | .expr _ none     => none
+        match named with
+        | none   => none
+        | some v => (g.representative.lookup v).map (fun t => (v, t)))
+
+/-- §18.2.4.3 (SPARQL 1.2 §18.3.4.3) at a grouping level: "P :=
+Join(P, ToMultiset(data))" where P is the grouped solution sequence.
+Each surviving group is paired with every VALUES row compatible with
+its `groupKeyBinding`; the row a SELECT item reads is the VALUES row
+merged over the group's representative row, so a VALUES variable is
+visible to the projection even when the WHERE pattern never binds it.
+With no VALUES clause each group is paired with its representative. -/
+def groupedRowsWithValues (gb : Option (List GroupCondition))
+    (pv : Option (List Binding)) (groups : List SolutionGroup) :
+    List (SolutionGroup × Binding) :=
+  match pv with
+  | none      => groups.map (fun g => (g, g.representative))
+  | some vals =>
+      groups.flatMap (fun g =>
+        let key := groupKeyBinding gb g
+        vals.filterMap (fun mv =>
+          if key.compatible mv then some (g, mv.merge g.representative) else none))
+
 /-- Does this expression contain an aggregate anywhere? An aggregate
 in the SELECT clause triggers grouping even with no GROUP BY
 (§18.2.4.1). Port of `expr_has_aggregate`. -/
@@ -1521,24 +1557,32 @@ def havingSatisfies (env : EvalEnv) (active : Graph) :
       && havingSatisfies env active rest g
 
 /-- One SELECT item's value for one group (port of
-`eval_select_item_group`). -/
+`eval_select_item_group`). `row` is the solution mapping the item's
+variables are read from: the group's representative row, overlaid with
+the trailing-VALUES row joined onto the group (§18.2.4.3) and with the
+items already evaluated. Aggregates are computed over the group `g`. -/
 def evalSelectItemGroup (env : EvalEnv) (active : Graph) (item : SelectItem)
-    (g : SolutionGroup) : Option (VarName × Term) :=
+    (g : SolutionGroup) (row : Binding) : Option (VarName × Term) :=
   match item with
-  | .var v => (g.representative.lookup v).map (fun t => (v, t))
+  | .var v => (row.lookup v).map (fun t => (v, t))
   | .expr e v =>
-      ((evalExprInGroup env g
-        (substituteExistentials env active g.representative e)).toTerm?).map
+      ((Expr.evalIn env row
+        (rewriteAggregates env g (substituteExistentials env active row e))).toTerm?).map
           (fun t => (v, t))
 
-/-- One group's row: every SELECT item that produced a value. -/
+/-- One group's row: every SELECT item that produced a value. Each item
+sees the bindings of the items before it, because §11.4 lets a SELECT
+expression use "a variable introduced by an earlier SELECT expression
+in the same SELECT clause" (W3C sparql12 grouping test
+`select-variable-reuse`: `(COUNT(?v) AS ?count) (?count + 1 AS
+?countPlusOne)`). -/
 def evalSelectItemsGroup (env : EvalEnv) (active : Graph) :
-    List SelectItem → SolutionGroup → Binding
-  | [],         _ => []
-  | it :: rest, g =>
-      match evalSelectItemGroup env active it g with
-      | some b => b :: evalSelectItemsGroup env active rest g
-      | none   => evalSelectItemsGroup env active rest g
+    List SelectItem → SolutionGroup → Binding → Binding
+  | [],         _, _   => []
+  | it :: rest, g, row =>
+      match evalSelectItemGroup env active it g row with
+      | some b => b :: evalSelectItemsGroup env active rest g (b :: row)
+      | none   => evalSelectItemsGroup env active rest g row
 
 /-- Evaluate the `(expr AS ?v)` items of a non-aggregating SELECT over
 one row; each item sees the bindings the earlier items added (port of
@@ -1565,10 +1609,6 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
     (omega0 : SolutionSeq) : SolutionSeq :=
   match q with
   | .mk form _dcs _pattern gb hv md pv _base =>
-    -- 1b. Post-query VALUES joins onto the WHERE result (§10.2).
-    let omega := match pv with
-      | none      => omega0
-      | some vals => join omega0 vals
     match md with
     | { orderBy := ob, distinct := dd, reduced := rr, offset := oo, limit := ll } =>
     match form with
@@ -1579,32 +1619,55 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
           -- evaluated by `Expr.evalIn` alone, so an EXISTS there stays
           -- the expression-layer error; that position is not covered.
           let groups := match gb with
-            | some conds => groupSolutions env conds omega
-            | none       => implicitGroup omega
+            | some conds => groupSolutions env conds omega0
+            | none       => implicitGroup omega0
           -- 3. HAVING (§18.5.4 and §18.6). `having_filter`, inlined:
           -- the condition list has to reach `havingSatisfies` as a
           -- strict subterm of `q` for the recursion to stay structural.
           let filtered := if hv.isEmpty then groups
                           else groups.filter (fun g => havingSatisfies env active hv g)
-          -- 4. Aggregation: one row per surviving group
-          -- (`aggregate_groups`, inlined for the same reason).
+          -- 3b. The trailing VALUES clause, joined AFTER grouping and
+          -- HAVING and BEFORE the SELECT expressions (§18.2.4.3; SPARQL
+          -- 1.2 §18.3.4.3). Compatibility is decided on the grouped
+          -- solution, which binds the named GROUP BY variables only
+          -- (§18.3.1); the VALUES row then overlays the representative.
+          let rows := groupedRowsWithValues gb pv filtered
+          -- 4. Aggregation and SELECT expressions: one row per surviving
+          -- (group, VALUES row) pair (`aggregate_groups`, inlined for
+          -- the same reason). The row keeps the other variables ORDER BY
+          -- may name (a non-grouped one reads as its SAMPLE, the
+          -- representative's value, per the §18.2.4.1 rewrite); a
+          -- projected name is taken from the items only, so an item
+          -- whose expression errs stays unbound. Projection follows the
+          -- ordering.
           let omega' := match sel with
-            | .vars items => filtered.map (fun g => evalSelectItemsGroup env active items g)
-            | .all        =>
-                stripSyntheticBnodeVars (filtered.map (fun g => g.solutions.headD Binding.empty))
+            | .vars items =>
+                rows.map (fun gr =>
+                  evalSelectItemsGroup env active items gr.1 gr.2 ++
+                    gr.2.filter (fun p => !(selectItemVars items).contains p.1))
+            | .all        => stripSyntheticBnodeVars (rows.map Prod.snd)
           -- 6. ORDER BY.
           let ordered := match ob with
             | none   => omega'
             | some o => sortSolutionsFast
                           (fun mu1 mu2 => compareOnConditions env active o mu1 mu2) omega'
+          -- 7. Projection.
+          let projected := match sel with
+            | .vars items => projectSolutions (selectItemVars items) ordered
+            | .all        => ordered
           -- 8. DISTINCT / REDUCED.
           let deduped :=
-            if dd then distinctSolutionsFast ordered
-            else if rr then reducedSolutions ordered
-            else ordered
+            if dd then distinctSolutionsFast projected
+            else if rr then reducedSolutions projected
+            else projected
           -- 9. OFFSET / LIMIT.
           sliceSolutions oo ll deduped
         else
+          -- 1b. With no grouping, no step sits between the WHERE
+          -- pattern and the trailing VALUES join (§18.2.4.3).
+          let omega := match pv with
+            | none      => omega0
+            | some vals => join omega0 vals
           -- 5. SELECT expressions (`eval_select_items`, inlined for
           -- the same reason).
           let omega' := match sel with
@@ -1826,7 +1889,11 @@ sequence, as in Jena / RDF4J.
 Found by the differential harness (2026-08-22, generated seeds 169 and
 324): this function sliced the UNORDERED sequence, and so does the F*
 `eval_construct_query` — the two trees disagreed only because their
-unordered evaluation orders differ. -/
+unordered evaluation orders differ.
+
+GROUP BY and HAVING are NOT applied here: the template is instantiated
+over the ungrouped solutions. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def evalConstruct (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }

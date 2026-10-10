@@ -52,10 +52,12 @@ BGP positions, inside GRAPH and EXISTS alike. `Expr.bound v` for a
 pre-bound `v` therefore becomes `Expr.boolLit true`
 (`shapesGraph-001`'s `FILTER bound($shapesGraph)`).
 
-A one-row `postValues` binding is joined on TOP of the substitution,
-for the projection only: `SELECT $this WHERE { … }` must still carry
+A one-row `VALUES` block is joined on TOP of the substituted pattern,
+for the projection: `SELECT $this WHERE { … }` must still carry
 `$this` in its result rows after every occurrence inside the pattern
-has been replaced by a term.
+has been replaced by a term. It is joined with the pattern rather than
+installed as the trailing `VALUES` clause, which SPARQL 1.1 §18.2.4.3
+joins after GROUP BY and HAVING.
 
 Substitution and pre-binding agree exactly BECAUSE of the §5.3.2
 restrictions, which is why an ill-formed query is a failure rather
@@ -352,16 +354,18 @@ def queryPrebindingUnsupported (q : Query) : Option String :=
   if q.postValues.isSome then some "VALUES is not supported with pre-bound variables"
   else prebindingUnsupported q.pattern
 
-/-- Replace a query's pattern and install a one-row pre-binding as the
-trailing `VALUES` block, so a `SELECT $this` projection keeps the
-binding after every in-pattern occurrence has been substituted away.
-Blank-node and triple-term values have no `VALUES` form in the row and
-are dropped from it (the in-pattern substitution already handled
-them). -/
+/-- Replace a query's pattern and join a one-row pre-binding onto it,
+so a `SELECT $this` projection keeps the binding after every
+in-pattern occurrence has been substituted away. The row is joined
+with the WHERE pattern, not installed as the trailing `VALUES` clause:
+SPARQL 1.1 §18.2.4.3 joins the trailing clause AFTER GROUP BY and
+HAVING, while a pre-bound variable must already be bound when a
+`GROUP BY $this` groups and when a HAVING condition reads it. -/
 def queryWithPrebinding (q : Query) (binds : List (VarName × Term)) : Query :=
-  let row : Binding := binds
-  .mk q.form q.dataset (substVarsPattern binds q.pattern)
-     q.groupBy q.having q.modifier (some [row]) q.base
+  .mk q.form q.dataset
+     (.join (substVarsPattern binds q.pattern)
+            (.values (binds.map Prod.fst) [binds.map (fun b => some b.2)]))
+     q.groupBy q.having q.modifier q.postValues q.base
 
 /-! ## §5.3.1 `$PATH`
 
