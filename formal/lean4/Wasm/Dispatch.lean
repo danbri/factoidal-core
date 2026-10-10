@@ -363,7 +363,16 @@ def opsReflectionIO : String :=
 
 /-- The dispatch entry the `l4_call` C export serves. The core ops are
 served by `Core.callArgsBy` with the JSON-LD reader; the arms here are the
-ops of the full table only. -/
+ops of the full table only.
+
+This entry is pure and has no clock. A `NOW()` in a query (SPARQL 1.1
+§17.4.5.1) is bound only when the caller passes the instant: `queryDataset`,
+`updateDataset`, `queryRaw`, `storeQuery` and `queryHdt` take an optional last
+argument `now`, an `xsd:dateTime` lexical form (after the base IRI where an op
+has one), and an empty string means none. A text that is not a dateTime lexical
+form is an error envelope (`Core.nowArg`,
+https://github.com/danbri/factoidal/issues/748). `callIO` reads the clock once
+per execution instead (https://github.com/danbri/factoidal/issues/743). -/
 def call (op : String) (argsJson : String) : String :=
   match decodeArgs argsJson with
   | .error e => errJson e
@@ -377,7 +386,7 @@ def call (op : String) (argsJson : String) : String :=
     | "queryIBK3BlockSetPreview"    => arity3 op queryIBK3BlockSetPreview args
     | "storeManifestInspect" => arity1 op storeManifestInspect args
     | "storeQueryPlan"       => arity2 op storeQueryPlan args
-    | "storeQuery"           => arity3 op (fun a b c => storeQuery a b c ByteArray.empty) args
+    | "storeQuery"           => Core.arity3Now op (fun a b c n => storeQuery a b c ByteArray.empty [] n) args
     | "activateVerify"       => arity2 op (fun a b => activateVerify a b ByteArray.empty) args
     | "owlIsConsistent"      => arity2 op owlIsConsistent args
     | "owlEntails"           => arity3 op owlEntails args
@@ -418,7 +427,7 @@ def call (op : String) (argsJson : String) : String :=
     | "rifEval"              => arity2 op rifEval args
     | "tableauMaterialise"   => arity1 op tableauMaterialise args
     | "tableauDlInconsistent" => arity1 op tableauDlInconsistent args
-    | "queryHdt"             => arity1 op (fun a => queryHdt a ByteArray.empty) args
+    | "queryHdt"             => Core.arity1Now op (fun a n => queryHdt a ByteArray.empty n) args
     | "shexValidate"         => arity4 op shexValidate args
     | "ops"                  => opsReflection
     | _                      => callStage2 op args
@@ -426,17 +435,19 @@ def call (op : String) (argsJson : String) : String :=
 /-- The dispatch entry the `l4_call_blob` C export serves: the string
 arguments of `call`, plus one byte region. Every other op delegates to `call`,
 envelope for envelope, so a host may route everything through this entry.
-This entry is pure and has no clock: a `NOW()` in a `storeQuery` or `queryHdt`
-query is an error here (SPARQL 1.1 §17.4.5.1). The IO entry `callBlobIO` reads
-the clock once per query and serves both ops with it
+This entry is pure and has no clock. A `NOW()` in a `storeQuery` or `queryHdt`
+query (SPARQL 1.1 §17.4.5.1) is bound only when the caller passes the instant:
+both ops take an optional last argument `now`, an `xsd:dateTime` lexical form,
+after their other arguments (`storeQuery` fourth, `queryHdt` second), and an
+empty string means none (https://github.com/danbri/factoidal/issues/748). The
+IO entry `callBlobIO` reads the clock once per query and serves both ops with it
 (https://github.com/danbri/factoidal/issues/743). -/
 def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
   match op with
   | "storeQuery" =>
       match decodeArgs argsJson with
       | .error e => errJson e
-      | .ok [a, b, c] => storeQuery a b c blob
-      | .ok args => errJson s!"storeQuery expects 3 arguments, got {args.length}"
+      | .ok args => Core.arity3Now op (fun a b c n => storeQuery a b c blob [] n) args
   | "activateVerify" =>
       match decodeArgs argsJson with
       | .error e => errJson e
@@ -445,8 +456,7 @@ def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
   | "queryHdt" =>
       match decodeArgs argsJson with
       | .error e => errJson e
-      | .ok [a] => queryHdt a blob
-      | .ok args => errJson s!"queryHdt expects 1 argument, got {args.length}"
+      | .ok args => Core.arity1Now op (fun a n => queryHdt a blob n) args
   | _ => call op argsJson
 
 private def arityIO1 (op : String) (f : String → IO String) :
@@ -470,7 +480,13 @@ via `call`, envelope for envelope. The core ops that need `IO` (dataset
 handles, the §17.6 and SERVICE registries, the IO forms of `queryDataset`,
 `queryDataset12`, `parseToDatasetJson` and `parseDocument`) are served by
 `Core.callIOArgsBy` with the JSON-LD reader; the arms here are the ops of the
-full table only. -/
+full table only.
+
+The ops that evaluate a query or an update read the system clock once per
+execution, so `NOW()` is bound (SPARQL 1.1 §17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). They take no `now` argument:
+the instant is an argument of the pure entries `call` and `callBlob` only
+(https://github.com/danbri/factoidal/issues/748). -/
 def callIO (op : String) (argsJson : String) : IO String :=
   let withArgs (k : List String → IO String) : IO String :=
     match decodeArgs argsJson with
@@ -638,7 +654,115 @@ private def dispatchHas (hay needle : String) : Bool := (hay.splitOn needle).len
 #guard dispatchHas
   (call "updateDataset" "[\"\",\"INSERT DATA { <s> <p> <o> }\",\"http://e/b/\"]")
   "<http://e/b/s> <http://e/b/p> <http://e/b/o> ."
-#guard dispatchHas (call "queryDataset" "[\"\",\"ASK {}\",\"\",\"x\"]") "expects 2 or 3 arguments"
-#guard dispatchHas (call "queryDataset" "[\"\"]") "expects 2 or 3 arguments"
+-- A fifth argument, or one argument, is an arity error. (Until issue 748 the
+-- fourth argument was one too; it is now the optional instant `now`, below.)
+#guard dispatchHas (call "queryDataset" "[\"\",\"ASK {}\",\"\",\"\",\"x\"]") "expects 2, 3 or 4 arguments"
+#guard dispatchHas (call "queryDataset" "[\"\"]") "expects 2, 3 or 4 arguments"
+#guard dispatchHas (call "updateDataset" "[\"\"]") "expects 2, 3 or 4 arguments"
+
+/-! ### The optional `now` argument of the pure query ops (issue 748)
+
+SPARQL 1.1 §17.4.5.1: `NOW()` is an `xsd:dateTime` for the query execution. The
+pure entries `call` and `callBlob` read no clock, so a host that wants `NOW()`
+bound passes the instant as the LAST argument: `queryDataset` and
+`updateDataset` fourth (after the base IRI), `queryRaw` and `storeQuery` fourth,
+`queryHdt` second. An empty string means none, and two- and three-argument hosts
+do not change. A text that is not an `xsd:dateTime` lexical form is an error
+envelope, never a silent "none". -/
+
+private def pureArgs (xs : List String) : String :=
+  (Json.array (xs.map Json.string)).toString
+
+private def nowFixed : String := "2026-10-10T12:34:56.789Z"
+
+-- W3C functions/now01.rq
+private def nowAskQ : String :=
+  "ASK { BIND(NOW() AS ?n) FILTER(DATATYPE(?n) = <http://www.w3.org/2001/XMLSchema#dateTime>) }"
+
+private def nowSelectQ : String := "SELECT ?n WHERE { BIND(NOW() AS ?n) }"
+
+private def nowInsertQ : String :=
+  "INSERT { <http://e/s> <http://e/p> ?n } WHERE { BIND(NOW() AS ?n) }"
+
+private def nowRawData : String := "<http://e/a> <http://e/p> <http://e/b> .\n"
+
+private def nowRawOpts : String := "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}"
+
+-- Positive: given the instant, NOW() is bound to it, as an xsd:dateTime.
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, "", nowFixed])) "\"boolean\":true"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", nowFixed]))
+  "\"value\":\"2026-10-10T12:34:56.789Z\""
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", nowFixed]))
+  "\"datatype\":\"http://www.w3.org/2001/XMLSchema#dateTime\""
+-- Positive: the base IRI in the third place still works beside the instant.
+#guard dispatchHas (call "queryDataset" (pureArgs
+    ["", "SELECT ?x ?n WHERE { BIND(<rel> AS ?x) BIND(NOW() AS ?n) }", "http://e/b/", nowFixed]))
+  "\"value\":\"http://e/b/rel\""
+#guard dispatchHas (call "queryDataset" (pureArgs
+    ["", "SELECT ?x ?n WHERE { BIND(<rel> AS ?x) BIND(NOW() AS ?n) }", "http://e/b/", nowFixed]))
+  "\"value\":\"2026-10-10T12:34:56.789Z\""
+-- Positive: update, queryRaw, and the blob entry (which delegates to `call`).
+#guard dispatchHas (call "updateDataset" (pureArgs ["", nowInsertQ, "", nowFixed]))
+  "\\\"2026-10-10T12:34:56.789Z\\\"^^<http://www.w3.org/2001/XMLSchema#dateTime>"
+#guard dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, nowFixed]))
+  "2026-10-10T12:34:56.789Z"
+#guard dispatchHas (callBlob "queryDataset" (pureArgs ["", nowAskQ, "", nowFixed]) ByteArray.empty)
+  "\"boolean\":true"
+-- Positive: the dispatch of the blob ops takes the instant. With the instant
+-- given and no HDT bytes, the answer is the missing-bytes error, not an arity
+-- or `now` error; likewise a `storeQuery` with a bad manifest names the manifest.
+#guard dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed]) ByteArray.empty) "no HDT bytes"
+#guard !dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed]) ByteArray.empty) "expects"
+#guard !dispatchHas (call "storeQuery" (pureArgs ["00", "ASK {}", "[]", nowFixed])) "expects"
+#guard !dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}", "[]", nowFixed]) ByteArray.empty)
+  "expects"
+
+-- Negative: with no instant, or an empty one, NOW() is an error (no clock):
+-- ASK answers false. A two- or three-argument host sees what it saw before.
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ])) "\"boolean\":false"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, ""])) "\"boolean\":false"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, "", ""])) "\"boolean\":false"
+#guard !dispatchHas (call "updateDataset" (pureArgs ["", nowInsertQ, "", ""])) "dateTime"
+#guard !dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts]))
+  "2026-10-10"
+-- Negative: the value comes from the argument. A different instant gives a
+-- different answer, so a constant or a hard-coded clock fails.
+#guard !dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", "2000-01-01T00:00:00Z"]))
+  "2026-10-10"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", "2000-01-01T00:00:00Z"]))
+  "\"value\":\"2000-01-01T00:00:00Z\""
+-- Negative: an instant that is not an xsd:dateTime lexical form is an error
+-- envelope on every op, and no result member appears.
+private def badNowAnswers (bad : String) : List String :=
+  [ call "queryDataset" (pureArgs ["", nowAskQ, "", bad])
+  , call "updateDataset" (pureArgs ["", nowInsertQ, "", bad])
+  , call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, bad])
+  , call "storeQuery" (pureArgs ["00", "ASK {}", "[]", bad])
+  , callBlob "storeQuery" (pureArgs ["00", "ASK {}", "[]", bad]) ByteArray.empty
+  , callBlob "queryHdt" (pureArgs ["ASK {}", bad]) ByteArray.empty ]
+
+private def refusesNow (bad : String) : Bool :=
+  (badNowAnswers bad).all (fun r =>
+    r.startsWith "{\"ok\":false" && dispatchHas r "not an xsd:dateTime lexical form"
+      && !dispatchHas r "\"boolean\"" && !dispatchHas r "\"nquads\"")
+
+#guard refusesNow "x"
+#guard refusesNow "now"
+#guard refusesNow "yesterday"
+#guard refusesNow "2026-10-10"
+#guard refusesNow "2026-02-30T00:00:00Z"
+#guard refusesNow "2026-13-10T00:00:00Z"
+#guard refusesNow " 2026-10-10T12:34:56Z"
+#guard refusesNow "2026-10-10T12:34:56Z "
+-- Negative: a refusal differs from "no instant": the same text without the
+-- bad argument answers.
+#guard !(call "queryDataset" (pureArgs ["", nowAskQ])).startsWith "{\"ok\":false"
+-- Negative: too many arguments are still an arity error.
+#guard dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, nowFixed, "x"]))
+  "expects 3 or 4 arguments"
+#guard dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed, "x"]) ByteArray.empty)
+  "expects 1 or 2 arguments"
+#guard dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}"]) ByteArray.empty)
+  "expects 3 or 4 arguments"
 
 end L4Wasm

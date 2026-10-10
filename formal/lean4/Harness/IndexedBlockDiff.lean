@@ -10,6 +10,7 @@ import L4Factoidal.Storage.IndexedBlockWireV1
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.IndexedBlockDiff
 
@@ -27,12 +28,13 @@ private def indexedDataset (block : Block) : DatasetBackend :=
   { default := .hdt (readOps block), named := [] }
 
 private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e =>
       IO.eprintln s!"l4block-id-diff query parse error at {e.pos}: {e.msg}"
       return 1
   | .ok q =>
-      let expected := runSelectQueryBackendDataset emptyEnv q (listDataset graph)
+      let expected := runSelectQueryBackendDataset clockEnv q (listDataset graph)
       let sourceBlock := fromGraph graph
       match encode? sourceBlock with
       | none =>
@@ -44,7 +46,7 @@ private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
               IO.eprintln "l4block-id-diff failed: V1 did not decode its own bytes"
               return 1
           | some decoded =>
-              let actual := runSelectQueryBackendDataset emptyEnv q (indexedDataset decoded)
+              let actual := runSelectQueryBackendDataset clockEnv q (indexedDataset decoded)
               if expected == actual then
                 IO.println s!"l4block-id-diff pass path={path} triples={graph.length} bytes={bytes.size} rows={(actual.getD []).length}"
                 IO.println s!"l4block-id-diff sse={q.toSse}"

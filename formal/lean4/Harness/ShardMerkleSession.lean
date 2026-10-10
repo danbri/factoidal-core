@@ -6,6 +6,7 @@ import Harness.ShardMerkleProfile
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.ShardMerkleSession
 
@@ -74,6 +75,7 @@ private def readEntries (directory : System.FilePath) (cache : IO.Ref (List Cach
 
 private def execute (directory : System.FilePath) (manifest : Manifest)
     (cache : IO.Ref (List CachedArtifact)) (queryNumber : Nat) (queryText : String) : IO Bool := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e =>
       IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} parse-error at {e.pos}: {e.msg}"
@@ -92,7 +94,7 @@ private def execute (directory : System.FilePath) (manifest : Manifest)
           | some loaded =>
               let dataset : DatasetBackend := { default := .hdt (readOpsOf loaded.triples), named := [] }
               let evalStart ← IO.monoMsNow
-              match runSelectQueryBackendDataset emptyEnv query dataset with
+              match runSelectQueryBackendDataset clockEnv query dataset with
               | none =>
                   IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} failed: query was not evaluated as SELECT"
                   pure false

@@ -26,6 +26,15 @@
   now reads the system clock once per query or update and gives every `NOW()` of
   that execution the same `xsd:dateTime` value in UTC (SPARQL 1.1 §17.4.5.1).
   The wasm modules grow by about 82 KB (full) and 89 KB (core).
+- The pure dispatch entries take the instant of `NOW()` as an optional last
+  argument ([issue 748](https://github.com/danbri/factoidal/issues/748)).
+  `call` and `callBlob` read no clock, so a host that uses them got an error
+  for `NOW()`. `queryDataset` and `updateDataset` (fourth, after the base IRI),
+  `queryRaw` and `storeQuery` (fourth) and `queryHdt` (second) now accept an
+  `xsd:dateTime` lexical form such as `2026-10-10T12:34:56Z`; an empty string
+  means none, and a text that is not a dateTime lexical form is an error. Hosts
+  that pass fewer arguments do not change. `callIO` and `callBlobIO` still read
+  the clock themselves.
 - `Dataset` (`./rdfjs`) adds and looks up a quad in constant time. It
   scanned every quad it held, so `parse()` of 12,000 quads spent 3.1 s
   building the result; it now takes 0.35 s.

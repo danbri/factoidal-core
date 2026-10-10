@@ -20,6 +20,13 @@ function as XQuery and XPath Functions and Operators §15.3
 `fn:current-dateTime` would use for its value: the dynamic context
 supplies the instant, and the lexical form is a pure function of it.
 
+A caller that supplies `now` itself (the pure dispatch entries, which read no
+clock, take it as an optional last argument,
+https://github.com/danbri/factoidal/issues/748) is checked with
+`isDateTimeLexical`: the strict XSD parser must read the text as a dateTime
+lexical form. A text it does not read is an error for the caller to report; it
+is never replaced by "no clock".
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Fn.DateTime
@@ -49,6 +56,15 @@ def dateTimeOfUnixMillis (ms : Int) : String :=
       -- `msOfMinute × 10^-3`. `canonicalSeconds` normalises the scale.
       second := some ⟨((msOfDay % 60000 : Nat) : Int), 3⟩,
       tz := some 0 }
+
+/-- `s` is a lexical form of `xsd:dateTime` (XML Schema 1.1 Part 2 §3.3.7),
+as the strict parser `XSD.parseDateTimeLex` reads it: the digits are fixed
+width, the month and day are in range for the year, the hour, minute and
+second are in range (24:00:00 is the end of the day), and a time zone, when
+present, is `Z` or an offset of at most 14:00. No leading or trailing
+character is skipped. The empty text is not a lexical form. -/
+def isDateTimeLexical (s : String) : Bool :=
+  (parseDateTimeLex .dateTime s).isSome
 
 /-! ## Checks
 
@@ -117,5 +133,48 @@ private def readsBack (ms : Int) : Bool :=
 -- Negative: the check detects a wrong day. 2000-02-29 is not 2000-03-01.
 #guard secondsOfValue ((parseDateTimeLex .dateTime "2000-02-29T00:00:00Z").getD default) !=
   secondsOfValue ((parseDateTimeLex .dateTime "2000-03-01T00:00:00Z").getD default)
+
+/-! ### The lexical check on a caller's `now`
+
+Positive: forms of §3.3.7, with and without a fraction and a time zone. -/
+#guard isDateTimeLexical "2026-10-10T12:34:56Z"
+#guard isDateTimeLexical "2026-10-10T12:34:56.789Z"
+#guard isDateTimeLexical "2026-10-10T12:34:56+01:00"
+#guard isDateTimeLexical "2026-10-10T12:34:56-14:00"
+#guard isDateTimeLexical "2026-10-10T12:34:56"
+#guard isDateTimeLexical "2024-02-29T00:00:00Z"
+#guard isDateTimeLexical "2026-10-10T24:00:00Z"
+-- Positive: every instant `dateTimeOfUnixMillis` writes is a lexical form.
+#guard [0, 1, 999, 1000, 86400000, 951782400000, 1709210096789, 2147483648000,
+        4107542400000, 253402300799999, (-1), (-86400001), (-2208988800000),
+        (-62135596800000)].all (fun ms => isDateTimeLexical (dateTimeOfUnixMillis ms))
+-- Negative: not a dateTime at all, or a different datatype's lexical form.
+#guard !isDateTimeLexical ""
+#guard !isDateTimeLexical "now"
+#guard !isDateTimeLexical "yesterday"
+#guard !isDateTimeLexical "2026-10-10"
+#guard !isDateTimeLexical "12:34:56Z"
+#guard !isDateTimeLexical "1760099696789"
+-- Negative: a field out of range.
+#guard !isDateTimeLexical "2026-13-10T00:00:00Z"
+#guard !isDateTimeLexical "2026-00-10T00:00:00Z"
+#guard !isDateTimeLexical "2026-02-30T00:00:00Z"
+#guard !isDateTimeLexical "2026-02-29T00:00:00Z"
+#guard !isDateTimeLexical "2100-02-29T00:00:00Z"
+#guard !isDateTimeLexical "2026-10-10T25:00:00Z"
+#guard !isDateTimeLexical "2026-10-10T12:60:00Z"
+#guard !isDateTimeLexical "2026-10-10T12:34:60Z"
+#guard !isDateTimeLexical "2026-10-10T12:34:56+14:01"
+-- Negative: the right characters in the wrong shape.
+#guard !isDateTimeLexical "2026-10-10 12:34:56Z"
+#guard !isDateTimeLexical " 2026-10-10T12:34:56Z"
+#guard !isDateTimeLexical "2026-10-10T12:34:56Z "
+#guard !isDateTimeLexical "2026-10-10T12:34:56Zjunk"
+#guard !isDateTimeLexical "26-10-10T12:34:56Z"
+#guard !isDateTimeLexical "2026-1-1T1:2:3Z"
+-- Negative: 2000 is a leap year, so 29 February is valid there and the day
+-- after it is 1 March; a check that rejects every 29 February fails this pair.
+#guard isDateTimeLexical "2000-02-29T00:00:00Z"
+#guard !isDateTimeLexical "2000-02-30T00:00:00Z"
 
 end L4Factoidal.SPARQL

@@ -9,6 +9,7 @@ second query evaluator.
 import L4Factoidal.Storage.BlockWireV0
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.BlockMvp
 
@@ -55,7 +56,8 @@ private def renderRows (rows : SolutionSeq) : String :=
   String.intercalate "\n" (rows.map (fun row => toString (repr row)))
 
 private def runSelect (expectedRows : Option Nat) (q : Query) : IO UInt32 := do
-  match runSelectQueryBackendDataset emptyEnv q blockDataset with
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  match runSelectQueryBackendDataset clockEnv q blockDataset with
   | none =>
       IO.eprintln "l4block-mvp failed: query is not a SELECT query"
       return 1

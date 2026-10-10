@@ -149,11 +149,52 @@ argument, means no base: a relative IRI in the text is then a parse error, as
 before. Every host written against the two-argument contract keeps working. -/
 def baseArg (s : String) : Option String := if s.isEmpty then none else some s
 
-def arity2Base (op : String) (f : String → String → Option String → String) :
+/-- The pure query and update ops take a second optional last argument, the
+instant `NOW()` returns (SPARQL 1.1 §17.4.5.1) as an `xsd:dateTime` lexical
+form (XML Schema 1.1 Part 2 §3.3.7). The pure entries (`l4_call`,
+`l4_call_blob`) read no clock, so a host that wants `NOW()` bound passes the
+instant (https://github.com/danbri/factoidal/issues/748). An empty string, or
+no argument, means no instant: `NOW()` is then an error, as before. Any other
+text must be a dateTime lexical form (`L4Factoidal.SPARQL.isDateTimeLexical`,
+the strict XSD parser); a text it does not read is an error, never a silent
+"no instant". -/
+def nowArg (s : String) : Except String (Option String) :=
+  if s.isEmpty then .ok none
+  else if L4Factoidal.SPARQL.isDateTimeLexical s then .ok (some s)
+  else .error s!"now '{s}' is not an xsd:dateTime lexical form (XML Schema 1.1 Part 2 section 3.3.7)"
+
+/-- Run `k` with the instant of `nowArg s`, or answer the error envelope. -/
+def withNow (op : String) (s : String) (k : Option String → String) : String :=
+  match nowArg s with
+  | .ok now => k now
+  | .error e => errJson s!"{op}: {e}"
+
+/-- Two required arguments, then the optional base IRI, then the optional
+instant `now` (`nowArg`). The two- and three-argument forms are the contract
+of issue 741 (the base IRI); a host written against them does not change. -/
+def arity2BaseNow (op : String)
+    (f : String → String → Option String → Option String → String) :
     List String → String
-  | [a, b] => f a b none
-  | [a, b, c] => f a b (baseArg c)
-  | args => errJson s!"{op} expects 2 or 3 arguments, got {args.length}"
+  | [a, b] => f a b none none
+  | [a, b, c] => f a b (baseArg c) none
+  | [a, b, c, d] => withNow op d (f a b (baseArg c))
+  | args => errJson s!"{op} expects 2, 3 or 4 arguments, got {args.length}"
+
+/-- Three required arguments, then the optional instant `now`. -/
+def arity3Now (op : String)
+    (f : String → String → String → Option String → String) :
+    List String → String
+  | [a, b, c] => f a b c none
+  | [a, b, c, d] => withNow op d (f a b c)
+  | args => errJson s!"{op} expects 3 or 4 arguments, got {args.length}"
+
+/-- One required argument, then the optional instant `now`. -/
+def arity1Now (op : String)
+    (f : String → Option String → String) :
+    List String → String
+  | [a] => f a none
+  | [a, b] => withNow op b (f a)
+  | args => errJson s!"{op} expects 1 or 2 arguments, got {args.length}"
 
 def arityIO2Base (op : String) (f : String → String → Option String → IO String) :
     List String → IO String
@@ -186,8 +227,10 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
     Option String :=
   match op with
   | "parseToDatasetJson"   => some (arity3 op (parseToDatasetJsonBy extra) args)
-  | "queryDataset"         => some (arity2Base op (fun a b c => queryDataset a b c) args)
-  | "updateDataset"        => some (arity2Base op (fun a b c => updateDataset a b c) args)
+  -- The pure form of the query and update ops reads no clock; the optional last
+  -- argument is the instant of `NOW()` (`nowArg`, issue 748).
+  | "queryDataset"         => some (arity2BaseNow op (fun a b c n => queryDataset a b c n) args)
+  | "updateDataset"        => some (arity2BaseNow op (fun a b c n => updateDataset a b c n) args)
   | "serializeNQuads"      => some (arity1 op serializeNQuads args)
   | "serializeTurtle"      => some (arity1 op serializeTurtle args)
   | "canonicalizeToNQuads" => some (arity1 op canonicalizeToNQuads args)
@@ -195,7 +238,7 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "rhoDfClosure"         => some (arity1 op rhoDfClosure args)
   | "rhoDfFragmentCheck"   => some (arity1 op rhoDfFragmentCheck args)
   | "rdfsPlusClosure"      => some (arity1 op rdfsPlusClosure args)
-  | "queryRaw"             => some (arity3 op (queryRawBy extra) args)
+  | "queryRaw"             => some (arity3Now op (fun a b c n => queryRawBy extra a b c n) args)
   | "shaclValidate"        => some (arity2 op shaclValidate args)
   | _ =>
       match callParity op args with

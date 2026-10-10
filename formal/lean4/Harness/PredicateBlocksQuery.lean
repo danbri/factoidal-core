@@ -3,6 +3,7 @@ import L4Factoidal.Storage.PredicateBlocks
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.PredicateBlocksQuery
 
@@ -12,6 +13,7 @@ open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.Storage.PredicateBlocks
 
 private def run (input queryText : String) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   try
     let text ← IO.FS.readFile input
     match parseTurtle text (some ("file://" ++ input)), parseSparql queryText with
@@ -22,7 +24,7 @@ private def run (input queryText : String) : IO UInt32 := do
     | .ok graph, .ok query =>
         let store := fromGraph graph
         let dataset : DatasetBackend := { default := .hdt (readOps store), named := [] }
-        match runSelectQueryBackendDataset emptyEnv query dataset with
+        match runSelectQueryBackendDataset clockEnv query dataset with
         | none => IO.eprintln "l4block-predicate-query failed: query was not SELECT"; return 1
         | some rows =>
             IO.println s!"l4block-predicate-query input={input} triples={graph.length} predicate-blocks={store.blocks.length}"

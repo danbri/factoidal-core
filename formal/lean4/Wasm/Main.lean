@@ -10,6 +10,7 @@ one another. The wasm build and this executable call exactly the same
   lake exe l4wasm-cli version
   lake exe l4wasm-cli bgp <data.json> <bgp.json>
   lake exe l4wasm-cli call <op> <argsJsonFile>
+  lake exe l4wasm-cli callpure <op> <argsJsonFile>
   lake exe l4wasm-cli callblob <op> <argsJsonFile> <blobFile>
   lake exe l4wasm-cli callseq <seqJsonFile>
   lake exe l4wasm-cli corecall <op> <argsJsonFile>
@@ -22,6 +23,11 @@ dataset-handle ops answer their envelopes here too — but handle state
 dies with the process, so a DEPENDENT sequence (open → query → close)
 needs `callseq`: `<seqJsonFile>` holds a JSON array of `[op, [arg, …]]`
 pairs, run in order in this one process, one envelope printed per line.
+
+`callpure` is `call` through the PURE entry, `L4Wasm.call` (the `l4_call` C
+export), which reads no clock and holds no state. A host that cannot use the IO
+entry meets this one, so the smoke script drives it too
+(https://github.com/danbri/factoidal/issues/748).
 
 `corecall` is `call` through the CORE dispatch (`Wasm/CoreDispatch.lean`,
 `L4Wasm.Core.callIO`), the table `l4factoidal-core.wasm` links
@@ -146,6 +152,10 @@ def main (args : List String) : IO UInt32 := do
       let argsJson ← IO.FS.readFile argsFile
       IO.println (← L4Wasm.callIO op argsJson)
       return 0
+  | ["callpure", op, argsFile] =>
+      let argsJson ← IO.FS.readFile argsFile
+      IO.println (L4Wasm.call op argsJson)
+      return 0
   | ["corecall", op, argsFile] =>
       let argsJson ← IO.FS.readFile argsFile
       IO.println (← L4Wasm.Core.callIO op argsJson)
@@ -169,5 +179,5 @@ def main (args : List String) : IO UInt32 := do
             IO.println (← L4Wasm.callIO op argsJson)
           return 0
   | _ =>
-      IO.eprintln "usage: l4wasm-cli (version | bgp <data.json> <bgp.json> | call <op> <argsJsonFile> | corecall <op> <argsJsonFile> | callblob <op> <argsJsonFile> <blobFile> | callseq <seqJsonFile> | pack <input> <outputDir> <syntaxTag> <layoutTag>)"
+      IO.eprintln "usage: l4wasm-cli (version | bgp <data.json> <bgp.json> | call <op> <argsJsonFile> | callpure <op> <argsJsonFile> | corecall <op> <argsJsonFile> | callblob <op> <argsJsonFile> <blobFile> | callseq <seqJsonFile> | pack <input> <outputDir> <syntaxTag> <layoutTag>)"
       return 1

@@ -153,6 +153,26 @@ quad_query 'ASK WHERE { GRAPH <http://example.org/g9> { } }' >"$run_dir/q-absent
 cat "$run_dir/q-absent.txt"
 grep -q '^l4block-quad-query boolean=false' "$run_dir/q-absent.txt"
 
+# NOW() (SPARQL 1.1 section 17.4.5.1, https://github.com/danbri/factoidal/issues/748):
+# W3C functions/now01.rq asks whether NOW() is an xsd:dateTime, and the W3C
+# expected result (now01.srx) is true. The tool read no clock, so NOW() was an
+# error and the query answered false; it now reads the clock once per query.
+now01_rq="$repo_root/third_party/testing/w3c/sparql/sparql11/functions/now01.rq"
+test -r "$now01_rq" || { echo "missing $now01_rq (run tools/ensure-test-env.sh)"; exit 1; }
+quad_query "$(cat "$now01_rq")" >"$run_dir/q-now01.txt"
+cat "$run_dir/q-now01.txt"
+grep -q '^l4block-quad-query boolean=true' "$run_dir/q-now01.txt"
+
+# Every NOW() of one query is the same instant, and it is a UTC dateTime close
+# to the system clock.
+quad_query 'SELECT ?a ?b WHERE { ?s <http://example.org/knows> ?o BIND(NOW() AS ?a) BIND(NOW() AS ?b) FILTER(?a = ?b) }' \
+  >"$run_dir/q-now-select.txt"
+cat "$run_dir/q-now-select.txt"
+grep -q '^l4block-quad-query rows=1 ' "$run_dir/q-now-select.txt"
+grep -q 'XMLSchema#dateTime' "$run_dir/q-now-select.txt"
+now_year=$(date -u +%Y)
+grep -q "\"$now_year-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]" "$run_dir/q-now-select.txt"
+
 # A manifest graph-set summary that the block header does not have is refused.
 # The block bytes, their digests and their Merkle roots are untouched: only the
 # manifest's copy of the graph name changes.

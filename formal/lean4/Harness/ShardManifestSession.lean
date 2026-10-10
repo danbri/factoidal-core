@@ -7,6 +7,7 @@
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.ShardManifestSession
 
@@ -61,6 +62,7 @@ private def readEntries (directory : System.FilePath) (cache : IO.Ref (List Cach
 
 private def execute (directory : System.FilePath) (manifest : Manifest)
     (cache : IO.Ref (List CachedBlock)) (queryNumber : Nat) (queryText : String) : IO Bool := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e =>
       IO.eprintln s!"l4block-shard-session query={queryNumber} parse-error at {e.pos}: {e.msg}"
@@ -80,7 +82,7 @@ private def execute (directory : System.FilePath) (manifest : Manifest)
       | some loaded =>
           let store : OpenStore := { manifest, blocks := loaded.blocks }
           let dataset : DatasetBackend := { default := .hdt (readOps store), named := [] }
-          match runSelectQueryBackendDataset emptyEnv query dataset with
+          match runSelectQueryBackendDataset clockEnv query dataset with
           | none =>
               IO.eprintln s!"l4block-shard-session query={queryNumber} failed: query was not evaluated as SELECT"
               pure false

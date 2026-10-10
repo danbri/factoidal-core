@@ -10,6 +10,7 @@ import L4Factoidal.Storage.BlockWireV0
 import L4Factoidal.Storage.IndexedBlock
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.BlockFileQuery
 
@@ -20,6 +21,7 @@ open L4Factoidal.Storage.IndexedBlock
 open L4Factoidal.SPARQL.StoreDataset
 
 private def run (path queryText : String) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   try
     let bytes ← IO.FS.readBinFile path
     match decode bytes with
@@ -34,7 +36,7 @@ private def run (path queryText : String) : IO UInt32 := do
             IO.eprintln s!"l4block-file-query query parse error at {e.pos}: {e.msg}"
             return 1
         | .ok q =>
-            match runSelectQueryBackendDataset emptyEnv q dataset with
+            match runSelectQueryBackendDataset clockEnv q dataset with
             | none =>
                 IO.eprintln "l4block-file-query failed: query was not evaluated as SELECT"
                 return 1

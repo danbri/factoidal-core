@@ -31,6 +31,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 PASS=0
 FAIL=0
+XFAIL=0
 
 # args <file> <arg>... — write a JSON array-of-strings args file.
 args() {
@@ -332,6 +333,166 @@ args "$TMP/now-unknown.json" "h999" 'SELECT ?n WHERE { BIND(NOW() AS ?n) }'
 check "datasetQuery NOW() on an unknown handle -> error, no clock value" datasetQuery "$TMP/now-unknown.json" \
   'r["ok"] is False and "srj" not in r'
 
+# --- NOW() on the PURE entries (https://github.com/danbri/factoidal/issues/748)
+# `l4wasm-cli call` serves the IO table. `callpure` serves `L4Wasm.call`, the
+# pure `l4_call` entry, which reads no clock; `callblob` serves `L4Wasm.callBlob`,
+# the pure `l4_call_blob` entry. A host that meets one of these has no clock, so
+# the op takes the instant as an optional last argument `now`.
+#
+# xverdict LABEL ISSUE OK [OUTPUT]
+# OK is 1 when the check held. ISSUE empty: a plain assertion. ISSUE set: an
+# expected failure for that open issue (CLAUDE.md, "A stated shortfall is a
+# failing test plus an open issue"): a failed check counts as xfail and keeps
+# the run green; a check that holds is an XPASS and FAILS the run, so the case
+# is changed to a plain assertion and the issue closed in the same commit.
+xverdict() {
+  local label="$1" issue="$2" ok="$3" out="${4:-}"
+  if [ -z "$issue" ]; then
+    if [ "$ok" = 1 ]; then
+      echo "ok   $label"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL $label"
+      printf '     output: %s\n' "$out"
+      FAIL=$((FAIL + 1))
+    fi
+  elif [ "$ok" = 1 ]; then
+    echo "FAIL $label"
+    echo "     XPASS: expected to fail until https://github.com/danbri/factoidal/issues/$issue is fixed, and it passes"
+    echo "     make it a plain assertion (ISSUE empty) and close the issue"
+    FAIL=$((FAIL + 1))
+  else
+    echo "xfail $label (https://github.com/danbri/factoidal/issues/$issue)"
+    printf '     output: %s\n' "$out"
+    XFAIL=$((XFAIL + 1))
+  fi
+}
+
+# checkpure <label> <issue> <op> <argsfile> <python-assert-expr>
+# Like `check`, through the PURE entry `L4Wasm.call`.
+checkpure() {
+  local label="$1" issue="$2" op="$3" argsfile="$4" expr="$5"
+  local out ok=0
+  out="$("$CLI" callpure "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+" 2>/dev/null; then ok=1; fi
+  xverdict "$label" "$issue" "$ok" "$out"
+}
+
+# W3C functions/now01.rq on W3C functions/data.ttl, through the pure entry.
+# The data is Turtle; the op reads N-Quads, so the parse op converts it. The
+# arguments are the data, the query, an empty base IRI and the instant `now`.
+W3C_FUNCTIONS="$LEAN_DIR/../../third_party/testing/w3c/sparql/sparql11/functions"
+if [ -r "$W3C_FUNCTIONS/now01.rq" ] && [ -r "$W3C_FUNCTIONS/data.ttl" ]; then
+  python3 - "$TMP/w3c-fn-parse.json" "$W3C_FUNCTIONS/data.ttl" <<'PYEOF'
+import json, sys
+with open(sys.argv[2], encoding="utf-8") as f:
+    ttl = f.read()
+with open(sys.argv[1], "w") as f:
+    json.dump([ttl, "turtle", ""], f)
+PYEOF
+  "$CLI" call parseToDatasetJson "$TMP/w3c-fn-parse.json" >"$TMP/w3c-fn-nq.json"
+  python3 - "$TMP/w3c-fn-nq.json" "$W3C_FUNCTIONS/now01.rq" "$TMP/w3c-now01.json" <<'PYEOF'
+import json, sys
+nq = json.load(open(sys.argv[1]))
+assert nq["ok"] is True, nq
+with open(sys.argv[2], encoding="utf-8") as f:
+    rq = f.read()
+with open(sys.argv[3], "w") as f:
+    json.dump([nq["nquads"], rq, "", "2026-10-10T12:34:56.789Z"], f)
+PYEOF
+  checkpure "pure call queryDataset, W3C functions/now01.rq with the now argument -> true" "" \
+    queryDataset "$TMP/w3c-now01.json" \
+    'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+else
+  echo "FAIL W3C functions/now01.rq and data.ttl are missing under third_party/testing/w3c (run tools/ensure-test-env.sh)"
+  FAIL=$((FAIL + 1))
+fi
+
+# The `l4block-*` query tools read the clock once per query through
+# `L4Wasm.Ops.emptyEnvNow`. Method: a regular-expression scan of the Harness
+# sources for `emptyEnv`, the environment with no clock (a tool that evaluates a
+# user query with it answers NOW() as an error). The scan cannot see an
+# environment built another way, such as `{}`; tools/blockengine-ibk4-quad-smoke.sh
+# runs W3C functions/now01.rq through one tool for that reason.
+# grep exits 1 when nothing matches (the expected result) and 2 on an error.
+EMPTYENV_RC=0
+EMPTYENV_USES="$(grep -n '\bemptyEnv\b' "$LEAN_DIR"/Harness/*.lean)" || EMPTYENV_RC=$?
+xverdict "no Harness query tool builds emptyEnv (every one reads the clock through emptyEnvNow)" "" \
+  "$( [ "$EMPTYENV_RC" -eq 1 ] && [ -z "$EMPTYENV_USES" ] && echo 1 || echo 0 )" "grep exit=$EMPTYENV_RC $EMPTYENV_USES"
+
+# argsappend <argsfile> <value> — append one string to a JSON args file.
+argsappend() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+a = json.load(open(sys.argv[1]))
+a.append(sys.argv[2])
+json.dump(a, open(sys.argv[1], "w"))
+PYEOF
+}
+
+# The instant is a plain argument of the pure entry, so the answers are exact.
+# Positive: NOW() is the instant given, an xsd:dateTime. Negative: no instant, or
+# an empty one, leaves NOW() an error; another instant gives another answer; an
+# instant that is not an xsd:dateTime lexical form is an error, never "none".
+NOWFIXED='2026-10-10T12:34:56.789Z'
+NOWASK='ASK { BIND(NOW() AS ?n) FILTER(DATATYPE(?n) = <http://www.w3.org/2001/XMLSchema#dateTime>) }'
+NOWSEL='SELECT ?n WHERE { BIND(NOW() AS ?n) }'
+args "$TMP/pure-now-sel.json" "$DATA" "$NOWSEL" "" "$NOWFIXED"
+checkpure "pure call queryDataset binds NOW() to the instant it is given" "" queryDataset "$TMP/pure-now-sel.json" \
+  'r["ok"] is True and r["srj"]["results"]["bindings"][0]["n"]["value"] == "'"$NOWFIXED"'"
+   and r["srj"]["results"]["bindings"][0]["n"]["datatype"] == "'"$XSDDT"'"'
+args "$TMP/pure-now-other.json" "$DATA" "$NOWSEL" "" "2000-01-01T00:00:00Z"
+checkpure "pure call queryDataset: another instant gives another answer" "" queryDataset "$TMP/pure-now-other.json" \
+  'r["ok"] is True and r["srj"]["results"]["bindings"][0]["n"]["value"] == "2000-01-01T00:00:00Z"'
+args "$TMP/pure-now-base.json" "$DATA" 'SELECT ?x ?n WHERE { BIND(<rel> AS ?x) BIND(NOW() AS ?n) }' "http://e/b/" "$NOWFIXED"
+checkpure "pure call queryDataset takes the base IRI and the instant together" "" queryDataset "$TMP/pure-now-base.json" \
+  'r["ok"] is True and r["srj"]["results"]["bindings"][0]["x"]["value"] == "http://e/b/rel"
+   and r["srj"]["results"]["bindings"][0]["n"]["value"] == "'"$NOWFIXED"'"'
+args "$TMP/pure-now-none.json" "$DATA" "$NOWASK"
+checkpure "pure call queryDataset with no instant: NOW() is an error, ASK is false" "" queryDataset "$TMP/pure-now-none.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+args "$TMP/pure-now-empty.json" "$DATA" "$NOWASK" "" ""
+checkpure "pure call queryDataset with an empty instant means none: ASK is false" "" queryDataset "$TMP/pure-now-empty.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+for BADNOW in yesterday 2026-10-10 2026-02-30T00:00:00Z ' 2026-10-10T12:34:56Z'; do
+  args "$TMP/pure-now-bad.json" "$DATA" "$NOWASK" "" "$BADNOW"
+  checkpure "pure call queryDataset with the instant '$BADNOW' -> error, no answer" "" queryDataset "$TMP/pure-now-bad.json" \
+    'r["ok"] is False and "not an xsd:dateTime lexical form" in r["error"] and "boolean" not in r'
+done
+args "$TMP/pure-now-arity.json" "$DATA" "$NOWASK" "" "$NOWFIXED" "extra"
+checkpure "pure call queryDataset with five arguments -> arity error" "" queryDataset "$TMP/pure-now-arity.json" \
+  'r["ok"] is False and "expects 2, 3 or 4 arguments" in r["error"]'
+args "$TMP/pure-now-upd.json" "$DATA" \
+  'INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }' "" "$NOWFIXED"
+checkpure "pure call updateDataset inserts the instant it is given" "" updateDataset "$TMP/pure-now-upd.json" \
+  'r["ok"] is True and "<http://e/a> <http://e/at> \"'"$NOWFIXED"'\"^^<'"$XSDDT"'> ." in r["nquads"]'
+args "$TMP/pure-now-upd-none.json" "$DATA" \
+  'INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }'
+checkpure "pure call updateDataset with no instant inserts nothing" "" updateDataset "$TMP/pure-now-upd-none.json" \
+  'r["ok"] is True and "<http://e/at>" not in r["nquads"]'
+args "$TMP/pure-now-upd-bad.json" "$DATA" \
+  'INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }' "" "soon"
+checkpure "pure call updateDataset with a bad instant -> error, no dataset" "" updateDataset "$TMP/pure-now-upd-bad.json" \
+  'r["ok"] is False and "not an xsd:dateTime lexical form" in r["error"] and "nquads" not in r'
+args "$TMP/pure-now-raw.json" "$DATA3" "$NOWSEL" '{"dataFormat":"ntriples","output":"csv"}' "$NOWFIXED"
+checkpure "pure call queryRaw binds NOW() to the instant it is given" "" queryRaw "$TMP/pure-now-raw.json" \
+  'r["ok"] is True and r["text"].split("\r\n")[1] == "'"$NOWFIXED"'"'
+args "$TMP/pure-now-raw-none.json" "$DATA3" "$NOWSEL" '{"dataFormat":"ntriples","output":"csv"}'
+checkpure "pure call queryRaw with no instant leaves the NOW() column empty" "" queryRaw "$TMP/pure-now-raw-none.json" \
+  'r["ok"] is True and r["text"].split("\r\n")[1] == ""'
+args "$TMP/pure-now-raw-bad.json" "$DATA3" "$NOWSEL" '{"dataFormat":"ntriples","output":"csv"}' "soon"
+checkpure "pure call queryRaw with a bad instant -> error" "" queryRaw "$TMP/pure-now-raw-bad.json" \
+  'r["ok"] is False and "not an xsd:dateTime lexical form" in r["error"]'
+# The pure byte-region entry delegates the other ops to the pure call.
+: > "$TMP/empty.blob"
+checkblob "pure callBlob queryDataset binds NOW() to the instant it is given" queryDataset \
+  "$TMP/pure-now-sel.json" "$TMP/empty.blob" \
+  'r["ok"] is True and r["srj"]["results"]["bindings"][0]["n"]["value"] == "'"$NOWFIXED"'"'
+
 # --- Stateless block-worker family ----------------------------------
 # Generate the fixture with the same Lean publisher used by native stores;
 # the test therefore crosses the dispatch boundary with a real current-format
@@ -607,6 +768,27 @@ check "storeQuery NOW() is the system clock, one value for every row" storeQuery
   'r["ok"] is True and len(r["srj"]["results"]["bindings"]) == 2
    and len({b["n"]["value"] for b in r["srj"]["results"]["bindings"]}) == 1
    and '"$NOWOK"'(r["srj"]["results"]["bindings"][0]["n"]["value"])'
+# The pure byte-region entry (`callblob`) has no clock; `storeQuery` takes the
+# instant as a fourth argument (https://github.com/danbri/factoidal/issues/748).
+blobargs "$TMP/store-query-now-pure.json" "$TMP/store-query-now-pure.blob" \
+  "$TMP/store-ibk3/manifest.sbm2" \
+  'SELECT ?s ?o ?n WHERE { ?s <http://e/p> ?o BIND(NOW() AS ?n) }' "$TMP/store-ibk3" predicate-0.ibk3
+cp "$TMP/store-query-now-pure.json" "$TMP/store-query-now-pure-none.json"
+argsappend "$TMP/store-query-now-pure.json" "$NOWFIXED"
+checkblob "storeQuery through the pure callBlob binds NOW() to the instant it is given" storeQuery \
+  "$TMP/store-query-now-pure.json" "$TMP/store-query-now-pure.blob" \
+  'r["ok"] is True and len(r["srj"]["results"]["bindings"]) == 2
+   and all(b["n"]["value"] == "'"$NOWFIXED"'" and b["n"]["datatype"] == "'"$XSDDT"'"
+           for b in r["srj"]["results"]["bindings"])'
+checkblob "storeQuery through the pure callBlob with no instant leaves NOW() unbound" storeQuery \
+  "$TMP/store-query-now-pure-none.json" "$TMP/store-query-now-pure.blob" \
+  'r["ok"] is True and len(r["srj"]["results"]["bindings"]) == 2
+   and all("n" not in b for b in r["srj"]["results"]["bindings"])'
+cp "$TMP/store-query-now-pure-none.json" "$TMP/store-query-now-pure-bad.json"
+argsappend "$TMP/store-query-now-pure-bad.json" "tomorrow"
+checkblob "storeQuery through the pure callBlob with a bad instant -> error, no rows" storeQuery \
+  "$TMP/store-query-now-pure-bad.json" "$TMP/store-query-now-pure.blob" \
+  'r["ok"] is False and "not an xsd:dateTime lexical form" in r["error"] and "srj" not in r'
 python3 - "$TMP/store-handle-now.json" "$TMP/store-ibk3/manifest.sbm2" "$TMP/store-ibk3" <<'EOF'
 import json, pathlib, sys
 out, manifest, directory = sys.argv[1:4]
@@ -2079,6 +2261,17 @@ if [ -f "$HDT_FIXTURE" ]; then
   args "$TMP/hdt-ask-no.json" 'ASK { <http://example.org/foo> <http://example.org/nothere> ?o }'
   checkblob "queryHdt ASK for an absent triple is false" queryHdt "$TMP/hdt-ask-no.json" "$HDT_FIXTURE" \
     'r["ok"] is True and r["boolean"] is False'
+
+  # The pure byte-region entry takes the instant as a second argument (issue 748).
+  args "$TMP/hdt-now.json" "$NOWASK" "$NOWFIXED"
+  checkblob "queryHdt through the pure callBlob binds NOW() to the instant it is given" queryHdt "$TMP/hdt-now.json" "$HDT_FIXTURE" \
+    'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+  args "$TMP/hdt-now-none.json" "$NOWASK"
+  checkblob "queryHdt through the pure callBlob with no instant: NOW() is an error, ASK is false" queryHdt "$TMP/hdt-now-none.json" "$HDT_FIXTURE" \
+    'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+  args "$TMP/hdt-now-bad.json" "$NOWASK" "tomorrow"
+  checkblob "queryHdt through the pure callBlob with a bad instant -> error" queryHdt "$TMP/hdt-now-bad.json" "$HDT_FIXTURE" \
+    'r["ok"] is False and "not an xsd:dateTime lexical form" in r["error"]'
 else
   echo "SKIP queryHdt: $HDT_FIXTURE is absent (run tools/ensure-test-env.sh)"
 fi
@@ -2690,5 +2883,5 @@ corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
   'r["ok"] is True and r["engine"] == "full"'
 
-echo "=== native-smoke: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
+echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

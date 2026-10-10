@@ -32,6 +32,7 @@ import L4Factoidal.Storage.IndexedBlockWireV4
 import L4Factoidal.Storage.IndexedBlockWireV5
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.ShardManifest
+import Wasm.Ops.Clock
 
 namespace Harness.QuadQuery
 
@@ -192,6 +193,7 @@ private def header (entries : List Entry) (mode : String) (graphs : Nat)
 
 private def finish (query : Query) (entries : List Entry) (codec : String) (ds : Dataset)
     (bytes : Nat) (zoneExcluded : Nat) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   let (applied, _) := applyDataset query.dataset ds ds.default
   let stripped := stripDatasetClauses query
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
@@ -202,7 +204,7 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   -- a `geof:sf*` FILTER is evaluated here rather than being a type error.
   -- `Geo.extFns` refuses every IRI outside the `geof:` namespace, which is
   -- what §17.6 requires of an unregistered IRI.
-  let env : EvalEnv := { emptyEnv with dataset := some applied, ext := L4Factoidal.Geo.extFns }
+  let env : EvalEnv := { clockEnv with dataset := some applied, ext := L4Factoidal.Geo.extFns }
   let indexed := namesAreIris applied
   let mode := if indexed then codec ++ "-full-manifest" else codec ++ "-full-manifest-reference"
   let graphs := applied.named.length
