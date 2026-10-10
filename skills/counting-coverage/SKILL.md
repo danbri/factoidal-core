@@ -313,6 +313,18 @@ So: 1031 pass, 0 fail (out of 1031) is the conformance number.
 including entries the Recommendation's own suite withdrew. Both are
 true; only the labels were missing.
 
+## Rule 10 — the theorem-level count has its own tools
+
+The F\* exit criterion (owner, 2026-10-10; issue
+https://github.com/danbri/factoidal/issues/757) is a THEOREM-level
+classification, R/S/F/A/U per relevant F\* lemma, and a module alias in
+`tools/lean-port-gap.py` says nothing about it. Count it with
+`tools/fstar-theorem-inventory.py` (walks `formal/fstar`, relevance by a
+written rule, never by name) and `tools/check-fstar-theorem-classification.py`
+(statement hashes reopen a changed row; Lean names checked by `lake env lean`,
+not by grep). Method, rule and counts: `docs/theorem-registry.md`,
+"F\* theorem classification".
+
 ## The checklist before you publish a number
 
 1. Did the tool walk the tree this run?
