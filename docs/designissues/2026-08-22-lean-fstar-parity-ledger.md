@@ -633,3 +633,48 @@ through a `partial def`" holds for the theorem half and not for
 `#guard` here.
 
 It would cost a THEOREM, and no theorem is claimed about any of it.
+
+# Addendum 7, 2026-10-10 — RIF Core OWL-Direct imports; ShEx reject fixtures
+
+Tracking: <https://github.com/danbri/factoidal/issues/698> (RIF residue
+earlier <https://github.com/danbri/factoidal/issues/622>). Branch
+`claude/wt-rif-shex` of `danbri/factoidal-core`.
+
+| Suite | Lean, 2026-10-10 | Lean before | Command |
+|---|---|---|---|
+| RIF Core (Core_v1.22/Approved) | 45 pass, 0 fail (out of 45 decided); 0 undecided; 1 local override (of 46) | 43 pass, 0 fail; 2 undecided; 1 local override (of 46) | `formal/lean4/.lake/build/bin/l4rif` |
+| ShEx negative syntax | 100 pass, 0 fail (out of 100) | not read (78 of 100 rejected when first measured) | `formal/lean4/.lake/build/bin/l4shexc` |
+| ShEx negative structure | 15 pass, 0 fail (out of 15) | not read | same |
+| ShEx 5.7 check on validation schemas | 345 pass, 0 fail (out of 345 parsed) | — | same |
+| ShExC differential | 442 match, 0 mismatch (out of 442) | unchanged | same |
+| ShEx validation | 1182 pass, 0 fail (out of 1182) | unchanged | `formal/lean4/.lake/build/bin/l4shex` |
+
+**Why the RIF denominators differ.** The F\* `rif_runner` reports 46
+pass, 0 fail, 1 local-override, 3 skip (out of 50), measured
+2026-10-10. Its 50 are two parts: the 4 SPARQL 1.1 entailment-manifest
+cases `rif01`/`rif03`/`rif04`/`rif06` (4 pass), and the same 46-case
+Core_v1.22/Approved corpus `l4rif` reads (42 pass, 1 override, 3 skip:
+`Builtins_List`, `NestedListsAreNotFlatLists`, `Builtins_Time`). The
+Lean tree runs the 4 SPARQL cases in `l4w3c`, under the RIF entailment
+regime, not in `l4rif`.
+
+**RIF OWL-Direct.** `L4Factoidal/RIF/OwlDirect.lean` decides a
+combination whose imports all name the OWL Direct profile by the
+reduction of RIF RDF and OWL Compatibility §9.2: the imported graph is
+read as an OWL 2 DL ontology, its named-entity OWL 2 RL axioms are
+written as RIF Core rules over frames (`trO`), and ROWL-Direct(V,R)
+is added. A `holds` verdict is sound from any subset of the axioms; a
+`doesNotHold` is given only when every logical axiom was embedded. The
+F\* runner closes the imported RDF triples under OWL 2 RL instead, so
+the two trees reach the same verdicts on this corpus by different
+readings of the import. `Non-Annotation_Entailment` is decided because
+annotations and declarations carry no Direct-Semantics content;
+`Modeling_Brain_Anatomy` because `Gyrus SubClassOf
+MaterialAnatomicalEntity` is embedded, while its `ObjectUnionOf` range
+is outside the subset and only withholds `doesNotHold`.
+
+**ShEx.** `ShEx/Compact.lean` now applies the Appendix A terminals and
+productions that 22 fixtures broke; `ShEx/Structure.lean` checks the
+§5.7 requirements. The F\* tree made the same grammar fixes on
+2026-07-10 (`docs/claude-rules/w3c-completeness-ledger.md`, ShEx row)
+and does not score `negativeStructure/`.
