@@ -143,16 +143,17 @@ symmetric join cannot express at all.
 ## When the endpoint is missing: SILENT vs not
 
 SPARQL's answer to a failing endpoint is two-valued. A plain `SERVICE`
-to an unreachable endpoint is an error — under this engine's total
-evaluator, the per-row right side yields nothing and the row drops. A
-`SERVICE SILENT` yields one *empty* solution instead: the outer row
-survives, unextended (its `?label` stays unbound):
+to an unreachable endpoint is an error, and the query stops with it
+(SPARQL 1.1 Federated Query §2.3: "If the SILENT keyword is not present,
+the query will stop and return the error"). A `SERVICE SILENT` yields one
+*empty* solution instead: the outer row survives, unextended (its
+`?label` stays unbound):
 
 ```observable-js
 endpoints;
 const q = (silent) => `
   # Every local person, with a label looked up on an endpoint that does
-  # not exist; SILENT (when set) keeps the row instead of dropping it.
+  # not exist; SILENT (when set) keeps the row; without it the query fails.
   PREFIX : <https://example.org/>
   PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
   SELECT ?s ?label WHERE {
@@ -162,17 +163,20 @@ const q = (silent) => `
     LATERAL { SERVICE ${silent ? "SILENT " : ""}<https://nowhere.example/sparql> { ?s :label ?label } }
   }`;
 const silentRows = await fn.query(dataset, q(true));
-const loudRows   = await fn.query(dataset, q(false));
+// Without SILENT the query itself fails: the promise rejects.
+let loudError = null;
+try { await fn.query(dataset, q(false)); } catch (e) { loudError = String(e.message ?? e); }
 return {
   silentRowCount: silentRows.length,
   silentLabelsBound: silentRows.filter((r) => r.get("label") !== undefined).length,
-  loudRowCount: loudRows.length,
+  loudFails: loudError !== null && loudError.includes("SERVICE <https://nowhere.example/sparql> failed"),
 };
 ```
 
-`silentRowCount` is `2` with `silentLabelsBound` `0`; `loudRowCount`
-is `0`. Same missing endpoint, opposite row fates — `SILENT` is the
-difference between "annotate what you can" and "fail the join".
+`silentRowCount` is `2` with `silentLabelsBound` `0`; `loudFails` is
+`true`: the same query without `SILENT` answers no rows at all, only the
+error. `SILENT` keeps the rows and leaves the label unbound; without it
+the whole query fails.
 
 ## Related
 

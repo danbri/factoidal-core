@@ -66,12 +66,13 @@ test('post33 cell "SERVICE ?endpoint": each row dispatched to ITS OWN endpoint',
   ]);
 });
 
-test('post33 cell "SILENT vs not": silent keeps 2 unextended rows, loud keeps none', async () => {
+test('post33 cell "SILENT vs not": silent keeps 2 unextended rows, without SILENT the query fails', async () => {
+  // SPARQL 1.1 Federated Query 2.3 (https://github.com/danbri/factoidal/issues/717).
   const post = runReactivePost(cells, { fn: factoidal, pretty });
   const counts = await post.value('cell2');
   assert.deepEqual(counts, {
     silentRowCount: 2,
     silentLabelsBound: 0,
-    loudRowCount: 0,
+    loudFails: true,
   });
 });
