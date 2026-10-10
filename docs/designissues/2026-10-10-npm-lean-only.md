@@ -27,15 +27,17 @@ private comparison builds, not for the published package.
 
 Package `@factoidal/core` 0.8.0, `npm/factoidal/`.
 
-Which engine each entry point loads:
+Which engine each entry point loads, before stage 3 (0.8.0) and after it
+(0.9.0):
 
-| Entry | Engine |
-|---|---|
-| `.` (`index.js`, `index.mjs`), `./api`, `./fn`, `./lite`, `./wasm`, `./browser`, `./browser-wasm` | F\* (js_of_ocaml / wasm_of_ocaml bundles; `hacl-wasm/` for VC crypto) |
-| `./l4`, `./l4-core` | Lean 4 (wasm, dispatch ABI) |
-| `./select` | both |
-| `bin/factoidal.mjs`, `lws/`, `solid/` (Node hosts) | Lean 4 |
-| `./rdfjs`, `store-host`, `sample-store`, `xmpp` | engine-neutral wrappers |
+| Entry | 0.8.0 | 0.9.0 (stage 3) |
+|---|---|---|
+| `.` (`index.js`, `index.mjs`), `./api`, `./fn`, `./browser` | F\* (js_of_ocaml / wasm_of_ocaml bundles; `hacl-wasm/` for VC crypto) | Lean 4 |
+| `./lite`, `./wasm`, `./browser-wasm` | F\* | removed |
+| `./l4`, `./l4-core` | Lean 4 (wasm, dispatch ABI) | Lean 4 (aliases of `.`; go in 0.10.0) |
+| `./select` | both | removed |
+| `bin/factoidal.mjs`, `lws/`, `solid/` (Node hosts) | Lean 4 | Lean 4 |
+| `./rdfjs`, `store-host`, `sample-store`, `xmpp` | engine-neutral wrappers | engine-neutral wrappers |
 
 The main entry exports 72 names; `l4-core` exports 30. 42 main-entry names
 have no Lean path in the package:
@@ -128,11 +130,12 @@ the F\* COTTAS functions in favour of the Lean store.
 2. Maths, VC and DID (issue 578 items 2-4), and the envelope parity of
    issue 685 and blank-node salting. **Done 2026-10-10** (branch
    `claude/wt-npm-lean-2`); the record is § 5.
-3. Switch: `.`, `./api`, `./fn`, `./browser` load the Lean engine; the F\*
+3. [x] Switch: `.`, `./api`, `./fn`, `./browser` load the Lean engine; the F\*
    bundles, `hacl-wasm/`, `./wasm`, `./browser-wasm` and `./lite` leave the
    package. The F\* bundles stay as factoidal-builds artifacts for private
    comparison builds (and the differential harness `l4diff`). The COTTAS
    functions are replaced by the Lean store functions. Version 0.9.0.
+   **Done 2026-10-10** (branch `claude/wt-npm-lean-3`); the record is § 7.
 4. Size profile: a smaller Lean wasm for the browser, from a dispatch table
    that reaches a subset of the library (the role `./lite` had), measured
    against the F\* lite bundle.

@@ -1,6 +1,6 @@
 ---
 name: npm-release
-description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships, how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four wasm copies disagree.
+description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships (since 0.9.0 the Lean 4 wasm engine only), how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four wasm copies disagree.
 ---
 
 # Releasing the Factoidal npm packages
@@ -9,22 +9,22 @@ Two packages exist. Only one is current.
 
 | Package | Directory | Status |
 | --- | --- | --- |
-| `@factoidal/core` | `npm/factoidal/` | current; carries both engines |
+| `@factoidal/core` | `npm/factoidal/` | current; carries one engine, the Lean 4 wasm (since 0.9.0) |
 | `@factoidal/lean` | `npm/factoidal-lean/` | superseded by https://github.com/danbri/factoidal/issues/618; never published; a frozen manual-override copy |
 
-`@factoidal/core` carries the F\* engine's JavaScript bundle AND the Lean
-engine's WebAssembly module (under `l4-assets/`), so one `npm install`
-gives a consumer both.
-
-⚠️ **This is changing (owner, 2026-10-10):** "We should make the main module
-Lean4-based. Private builds might compare this with F\*". The published
-package becomes Lean-only; the F\* bundles stay as factoidal-builds artifacts
-for private comparison builds. State, gaps and stages:
+`@factoidal/core` carries ONE engine since 0.9.0: the Lean 4 library
+`L4Factoidal` compiled to WebAssembly, under `l4-assets/`. Owner,
+2026-10-10: "We should make the main module Lean4-based. Private builds
+might compare this with F\* (or indeed different wasms from different
+toolchains)." The F\* bundles (`factoidal.js`, `factoidal-npm-entry*.js`,
+their wasm builds, `hacl-wasm/`) are `danbri/factoidal-builds` artifacts
+only, used by the private comparison harness
+`tests/engine-compare/run.sh PATH/TO/factoidal-npm-entry.js`. Do not put an
+F\* bundle back into `files`. Record:
 `docs/designissues/2026-10-10-npm-lean-only.md`,
-https://github.com/danbri/factoidal/issues/713. Do not add a new F\*-engine
-function to the package's main entry. Do not publish `@factoidal/lean` unless the owner
-asks for the override channel by name; its workflow refuses to run
-without a typed confirmation phrase.
+https://github.com/danbri/factoidal/issues/713. Do not publish
+`@factoidal/lean` unless the owner asks for the override channel by name;
+its workflow refuses to run without a typed confirmation phrase.
 
 ## What builds what
 
@@ -52,15 +52,11 @@ installs **four byte-identical copies**:
 | 3 | `npm/factoidal-lean/` | the superseded companion package |
 | 4 | `docs/npm/lean/` | the Pages mirror of that companion |
 
-**Gap found 2026-10-09 (not resolved here):** the directory
-`npm/factoidal/l4-assets/` does not exist in `danbri/factoidal-core`. The
-split's path rule excluded the whole directory, including the
-`package.json` and `version.json` described below. `build-wasm.sh` only
-fills copy 2 when the directory exists; otherwise it prints
-"npm/factoidal/l4-assets absent — in-package step skipped". A core
-checkout therefore does not produce copy 2, and the `files` entry
-`l4-assets/` of the package has nothing to ship until the directory is
-restored.
+**Gap found 2026-10-09, closed the same day (commit 15b4940d):** the core split had left out
+`npm/factoidal/l4-assets/`, so `build-wasm.sh` printed "npm/factoidal/l4-assets
+absent — in-package step skipped" and copy 2 was never produced. The
+directory is in git again with its `package.json` and `version.json` (the
+wasm and the loaders stay out, by `.gitignore`), and step 9 fills it.
 
 `npm/factoidal/l4-assets/` also holds a four-line `package.json` that
 says `{"type": "module"}`. The parent package sets no `"type"`, so `.js`
@@ -83,37 +79,42 @@ value in the `?v=` query of its wasm fetch. The Pages service worker
 (`docs/sw.js`) caches by pathname, so without that stamp a fresh loader
 can pair with a stale wasm for one page load after a deploy.
 
-### The F\* engine (JavaScript bundle)
+### The F\* engine bundles: comparison builds only
+
+`formal/fstar/build-ocaml.sh js` builds the js_of_ocaml bundles (and its
+`npm` step still copies them into `npm/factoidal/`, where `files` ignores
+them). They are not part of the package since 0.9.0. The comparison harness
+takes the npm-entry bundle by path:
 
 ```bash
-eval $(opam env --switch=fstar)               # iron rule 12, every shell
-cd formal/fstar
-./build-ocaml.sh js                           # build the js_of_ocaml bundles
-./build-ocaml.sh npm                          # copy them into npm/factoidal/
+tools/fetch-builds.sh --set web           # docs/fstar-extracted/factoidal-npm-entry.js
+tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js
 ```
 
-`npm run build` inside `npm/factoidal/` is `build-ocaml.sh npm`. That
-step copies only; it never re-extracts or recompiles, and it never calls
-`fstar.exe`. If `factoidal.js` is missing it tells you to run the `js`
-step first.
-
-An incremental `js` build SKIPS the npm entry bundle. A landing that
-adds a hub cell calling a new F\* feature is therefore not documentation
-work: force the npm-entry rebuild, or the published bundle answers with
-the old surface (anti-pattern 32).
+`npm run build` inside `npm/factoidal/` is
+`bash ../../formal/lean4/Wasm/build-wasm.sh`.
 
 ## What each package ships
 
-`files` in `npm/factoidal/package.json` is the list. Today it is the two
-engines plus the command:
+`files` in `npm/factoidal/package.json` is the list. Since 0.9.0:
 
-- F\* engine: `factoidal.js`, `factoidal.wasm.js`,
-  `factoidal.wasm.assets/`, `factoidal-npm-entry.*`, `index.*`,
-  `wasm.*`, `rdfjs.js`, `fn.*`, `select.*`, `browser*.js`, `lib/`
-- Lean engine: `l4.js`, `l4-core.js`, `l4-assets/`
-- Crypto: `hacl-init.js`, `hacl-wasm/`
-- Store host and command: `store-host/`, `bin/`
-- Metadata: `version.json`, `README.md`, `CHANGELOG.md`, `LICENSE`
+- Entries: `index.js` + `index.mjs` (Node; `index.js` hands the ES module
+  to `require()`, so `engines.node` is `>=22.12`), `browser.js`,
+  `api.js` + `api.mjs` (`createApi(engine)`), `fn.js`, `rdfjs.js` +
+  `rdfjs.mjs`, the 0.9.x aliases `l4.js` and `l4-core.js`, and a `.d.ts`
+  beside each.
+- The typed layer: `lib/` (`api.mjs`, `lean-entry.mjs`, `store.mjs`,
+  `version.mjs`). ES modules with no Node built-ins: the browser imports
+  them as they are.
+- The engine: `l4-assets/` (`l4factoidal.js`, `.mjs`, `.wasm`,
+  `version.json`, `package.json`).
+- Store, command and protocol hosts: `store-host/`, `bin/`, `lws/`,
+  `solid/`, `xmpp/`, `sample-store/` + `sample-store.mjs`.
+- Metadata: `README.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`.
+
+The wasm is not in git (iron rule 9). A tarball packed from a checkout
+without `l4-assets/l4factoidal.wasm` has no engine;
+`test/pack-integrity.test.js` fails then.
 
 `bin` maps the command `factoidal` to `./bin/factoidal.mjs`. A consumer
 gets it on PATH from a global install and in `node_modules/.bin` from a
@@ -135,11 +136,12 @@ working tree holds.
 
 ## How the version and the digests are stamped
 
-Three `version.json` files, three writers. Do not merge them.
+Two `version.json` files, two writers. (Until 0.9.0 a third,
+`npm/factoidal/version.json`, carried the F\* engine's claims; it left the
+package and git with the F\* engine.)
 
 | File | Written by | Carries |
 | --- | --- | --- |
-| `npm/factoidal/version.json` | `build-ocaml.sh npm` | the F\* engine's package version, git SHA, build time, and a hand-authored `claims` block that the step preserves across rebuilds |
 | `npm/factoidal/l4-assets/version.json` | `build-wasm.sh` step 9 | the Lean engine's provenance, refreshed in place so its `engine` and `note` members survive |
 | `npm/factoidal-lean/version.json` | `build-wasm.sh` step 9 | the same provenance for the superseded companion |
 
@@ -148,13 +150,17 @@ The Lean provenance members are `version`, `gitSha`, `builtAt`,
 and `claims`. `factoidal version` prints them, which is the quickest way
 to see which engine an install actually holds.
 
-The `claims` block in `npm/factoidal/version.json` is edited by hand and
-cites `docs/theorem-registry.md` sections. Editing it is a deliberate act
-with the registry open; the build only carries it forward.
+`l4-assets/version.json` is tracked in git with its `engine` and `note`
+members; step 9 rewrites the provenance members in place on every build.
+Commit only a deliberate edit of `engine`, `note` or `claims`, never the
+stamped members (the same holds for the `WASM_VERSION` line the build
+stamps into `docs/web/hub/assets/l4/l4factoidal.js`).
 
 Bumping the package version is a manual edit of `version` in
-`npm/factoidal/package.json`, plus a `CHANGELOG.md` entry, plus a
-rebuild so the stamped `version.json` files agree with it.
+`npm/factoidal/package.json`, `package-lock.json` (two places) and
+`npm/factoidal/lib/version.mjs` (the browser cannot import JSON;
+`test/dts-drift.test.js` checks the two agree), plus a `CHANGELOG.md`
+entry.
 
 ## How publishing works
 

@@ -1,11 +1,6 @@
-// Unit tests for the typed public API (js_of_ocaml engine).
-//
-// Tests that only need the existing CLI bundle run unconditionally.
-// Tests that need the npm-entry ABI bundle (CONSTRUCT, UPDATE) or a
-// CLI bundle built after `factoidal canonicalize` landed
-// (canonicalization) probe capabilities() and skip with reason
-// "pending npm-entry build" until the main build cycle produces the
-// new artifacts.
+// Unit tests for the typed public API of the main entry (the Lean 4
+// engine, l4-assets/). A function the package's own wasm does not serve
+// FAILS here: capabilities() is asserted, never used to skip.
 
 'use strict';
 
@@ -21,7 +16,6 @@ const { parse, query, update, serialize, canonicalize, graphs,
   xpathEval, rifEval, capabilities, Dataset,
   dataFactory: df } = factoidal;
 
-const PENDING = 'pending npm-entry build';
 
 const TTL = `
   @prefix ex:   <http://example.org/> .
@@ -225,10 +219,7 @@ test('serialize: ntriples output', async () => {
 test('canonicalize: isomorphic datasets get identical canonical N-Quads',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     // Same graph, different blank-node labels (bnode-rename stability).
     const docA = '_:x <http://x/p> _:y .\n_:y <http://x/p> "leaf" .\n';
     const docB = '_:n1 <http://x/p> _:n2 .\n_:n2 <http://x/p> "leaf" .\n';
@@ -264,10 +255,7 @@ test('graphs: enumerates named graphs from a parsed TriG document', async () => 
 test('canonicalHash: isomorphic graphs get identical hash under bnode relabeling',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalHash) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalHash, 'the package wasm serves caps.canonicalHash');
     const dsA = await parse(
       '@prefix ex: <http://x/> . ' +
       'ex:g { _:x ex:p _:y . _:y ex:p "leaf" . }',
@@ -286,10 +274,7 @@ test('canonicalHash: isomorphic graphs get identical hash under bnode relabeling
 
 test('query: CONSTRUCT returns a Dataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.construct) {
-    t.skip(PENDING);
-    return;
-  }
+  assert.ok(caps.construct, 'the package wasm serves caps.construct');
   const out = await query(TTL, `
     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
     CONSTRUCT { ?p <http://x/hasName> ?n } WHERE { ?p foaf:name ?n }
@@ -303,10 +288,7 @@ test('query: CONSTRUCT returns a Dataset', async (t) => {
 
 test('update: INSERT DATA adds quads', async (t) => {
   const caps = await capabilities();
-  if (!caps.update) {
-    t.skip(PENDING);
-    return;
-  }
+  assert.ok(caps.update, 'the package wasm serves caps.update');
   const ds = await parse('<http://x/a> <http://x/p> "v" .', {
     format: 'ntriples' });
   const out = await update(ds,
@@ -315,27 +297,10 @@ test('update: INSERT DATA adds quads', async (t) => {
   assert.equal(out.size, 2);
 });
 
-test('update: without npm-entry bundle rejects with pending message',
-  async (t) => {
-    const caps = await capabilities();
-    if (caps.update) {
-      t.skip('npm-entry bundle present — pending-message path not reachable');
-      return;
-    }
-    await assert.rejects(
-      () => update('<http://x/a> <http://x/p> "v" .',
-        'INSERT DATA { <http://x/b> <http://x/p> "w" }',
-        { format: 'ntriples' }),
-      (e) => e.message.includes(PENDING));
-  });
-
 test('parse: jsonld (expanded/inline-context form) via the npm-entry ABI',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.entry) {
-      t.skip(`${PENDING} (parseToDatasetJson's JSON-LD dispatch needs the entry bundle)`);
-      return;
-    }
+    assert.ok(caps.entry, 'the package wasm serves caps.entry');
     const jsonld = JSON.stringify({
       '@context': { foaf: 'http://xmlns.com/foaf/0.1/', name: 'foaf:name' },
       '@id': 'http://example.org/alice',
