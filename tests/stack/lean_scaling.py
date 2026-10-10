@@ -23,6 +23,16 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
   rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
+  rdfc-bnode-unique  RDFC-1.0 canonicalisation of n persons, each a blank node with an
+                   rdf:type, a name and an age (3n quads, every first-degree hash
+                   unique): the input of the npm speed gate's canonicalize row
+                   (https://github.com/danbri/factoidal/issues/745; 0.54 s to 9.49 s
+                   for 4x input before the blank node to quads map, 0.18 s to 1.19 s
+                   after)
+  rdfc-bnode-collide  RDFC-1.0 canonicalisation of n blank nodes that share one
+                   first-degree hash, so Hash N-Degree Quads runs for each.
+                   Expected failure naming issue 751: 0.16 s to 2.37 s CPU for 4x
+                   input (each Hash N-Degree Quads call filters every quad)
   group-by-few     SPARQL GROUP BY with 6 groups over many rows
   group-by-many    SPARQL GROUP BY with one group per subject
   count-distinct   SPARQL COUNT(DISTINCT ?s): the aggregate's DISTINCT
@@ -106,6 +116,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
+    "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "select-star": "https://github.com/danbri/factoidal/issues/729",
 }
@@ -120,6 +131,25 @@ def fixture(name: str, text_fn) -> Path:
     if not p.exists():
         p.write_text(text_fn(), encoding="utf-8")
     return p
+
+
+def rdfc_persons(n: int) -> str:
+    """n blank-node persons, as tests/perf/l4_vs_fstar_wasm_bench.mjs writes
+    them for its canonicalize row: every first-degree hash is unique."""
+    rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    xsd_int = "http://www.w3.org/2001/XMLSchema#integer"
+    out = []
+    for i in range(n):
+        out.append(f"_:p{i} <{rdf_type}> <{EX}Person> .")
+        out.append(f'_:p{i} <{EX}name> "Person {i}" .')
+        out.append(f'_:p{i} <{EX}age> "{18 + i % 60}"^^<{xsd_int}> .')
+    return "\n".join(out) + "\n"
+
+
+def rdfc_collide(n: int) -> str:
+    """n blank nodes with one quad each and the same first-degree hash."""
+    rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    return "".join(f"_:p{i} <{rdf_type}> <{EX}Person> .\n" for i in range(n))
 
 
 def trig_blocks(n: int) -> str:
@@ -177,6 +207,14 @@ ROWS = {
     "rdfc-person": (
         125,
         lambda n: bl.gen_canon("person", n),
+        lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
+    "rdfc-bnode-unique": (
+        2000,
+        lambda n: fixture(f"rdfc-bnode-unique-{n}.nq", lambda: rdfc_persons(n)),
+        lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
+    "rdfc-bnode-collide": (
+        2000,
+        lambda n: fixture(f"rdfc-bnode-collide-{n}.nq", lambda: rdfc_collide(n)),
         lambda p: [str(BIN), "canonicalize", str(p), "--format", "nquads"]),
     "group-by-few": (
         2500,
