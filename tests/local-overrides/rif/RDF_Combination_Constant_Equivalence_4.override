@@ -8,6 +8,7 @@ our-result: entailed=false
 kind: corpus-data-defect
 disposition: local-override
 date: 2026-07-17
+issue: https://github.com/danbri/factoidal/issues/622
 provenance: W3C RIF Core test suite Core_v1.22 (Approved), and the archived authoritative wiki source https://www.w3.org/2005/rules/wiki/RDF_Combination_Constant_Equivalence_4 (read-only archive, re-checked 2026-07-17)
 ---
 DISAGREEMENT WITH THE FIXTURE — the fixture's data is malformed, so
@@ -80,3 +81,18 @@ malformed fixture data cannot be corrected upstream by anyone. This
 override is permanent by construction. Contrast the ShEx
 start2RefS2 override, retired 2026-07-29 when its upstream corpus was
 actively maintained and reconciled the defect.
+
+RE-CHECK 2026-10-10 — still required, re-read against RIF RDF and OWL
+Compatibility §3.2.1.3. Condition 6 of a common-RIF-RDF-interpretation
+(IL((s, d)) = IC("s"^^d)) applies to WELL-TYPED literals only, and a
+literal is well-typed only when its datatype IRI is in the datatype map
+or is a RIF symbol space (§3.1.3). Neither
+<file:///C:/.../www.w3.org/2001/XMLSchema#string> (the normative RDF/XML)
+nor the relative <www.w3.org/2001/XMLSchema#string> (the Turtle twin;
+resolved against the import location it stays under
+http://www.w3.org/2005/rules/...) is either, so no condition ties the
+imported literal to the conclusion's "this is a string"^^xs:string and a
+model can keep them apart. The Lean `l4rif` and the F* `rif_runner` both
+compute entailed=false. Tracking: the RIF Core residue issue
+https://github.com/danbri/factoidal/issues/622 (this override has no
+issue of its own).

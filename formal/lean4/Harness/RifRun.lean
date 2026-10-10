@@ -21,6 +21,16 @@ kinds of case, one directory each:
     "does not entail" off it would be a guess. RIF-DTB defines 197
     built-ins; naming which are decided is what keeps this honest.
 
+## Imports under the OWL Direct profile
+
+When every `Import` names `…/entailment/OWL-Direct`, the imported graph
+is read as an OWL 2 DL ontology and the verdict is
+`L4Factoidal.RIF.OwlDirect.entailsOwlDirect`'s (RIF-RDF-OWL §4.2.2,
+decided through the §9.2 embedding). The graph's triples are NOT facts
+under that profile: a declaration or an annotation has no
+Direct-Semantics content. An import published only as RDF/XML
+(`Modeling_Brain_Anatomy`) is read with `Syntax.RdfXml`.
+
 ## The conclusion's prefixes
 
 A conclusion file is a BARE FORMULA with no prologue —
@@ -34,6 +44,8 @@ Usage: `lake exe l4rif [suite-dir]`
 -/
 import L4Factoidal.RIF.Engine
 import L4Factoidal.RIF.Conformance
+import L4Factoidal.RIF.OwlDirect
+import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.XML.Parser
 import L4Factoidal.RIF.Ps
 import L4Factoidal.Syntax.Turtle
@@ -305,6 +317,17 @@ def main (args : List String) : IO UInt32 := do
                     match parseTurtle tsrc none with
                     | .ok g    => imported := imported ++ g
                     | .error _ => pure ()
+                  -- An RDF/XML import with no Turtle twin. The corpus
+                  -- publishes most imports in both syntaxes and
+                  -- `Modeling_Brain_Anatomy` in RDF/XML (and OWL
+                  -- Functional Syntax) only. Reading both twins would
+                  -- merge two copies of every blank node.
+                  else if f.endsWith ".rdf" &&
+                      !(files.contains (importStem f ++ ".ttl")) then
+                    let xsrc ← IO.FS.readFile (cdir ++ "/" ++ f)
+                    match L4Factoidal.Syntax.RdfXml.parseRdfXml xsrc none with
+                    | .ok g    => imported := imported ++ g
+                    | .error _ => pure ()
                 match parseDocument psrc with
                 | .error e =>
                     t := { t with notRead := t.notRead + 1 }
@@ -336,20 +359,29 @@ def main (args : List String) : IO UInt32 := do
                         t := { t with notRead := t.notRead + 1 }
                         IO.println s!"NOT READ {kind}/{name}: conclusion — {e}"
                     | .ok goal =>
-                        -- An `Import` naming the RDFS entailment
-                        -- regime means the imported graph is
-                        -- RDFS-CLOSED before it becomes facts.
-                        -- An IMPORT names an entailment regime, and
-                        -- this port implements Simple, RDF and RDFS.
-                        -- A case that imports under OWL-Direct or
-                        -- OWL-RDF-Based asks a question about a
-                        -- semantics that is not here, and the honest
-                        -- answer is UNDECIDED: reading the imported
-                        -- graph as plain RDF made
+                        -- An IMPORT names an entailment regime. An
+                        -- `Import` naming RDFS means the imported
+                        -- graph is RDFS-CLOSED before it becomes facts.
+                        -- OWL-Direct is NOT a closure of the graph: the
+                        -- graph is read as an OWL 2 DL ontology and its
+                        -- axioms become rules (RIF-RDF-OWL §9.2), which
+                        -- `L4Factoidal.RIF.OwlDirect` does. Reading the
+                        -- graph as plain RDF triples made
                         -- `Non-Annotation_Entailment` entail a triple
                         -- that OWL puts inside an annotation.
+                        -- OWL-RDF-Based is not implemented and stays
+                        -- UNDECIDED.
                         let profiles := doc.imports.filterMap (·.2)
-                        let unsupportedRegime := profiles.any (fun p =>
+                        -- OWL-Direct is decided by
+                        -- `RIF.OwlDirect.entailsOwlDirect` when EVERY
+                        -- import names it. Mixed with Simple, RDF or
+                        -- RDFS there is no single highest profile and
+                        -- RIF-RDF-OWL §5.2 rejects the document; mixed
+                        -- with OWL-RDF-Based the highest is a profile
+                        -- this port does not implement.
+                        let owlDirectOnly := !profiles.isEmpty &&
+                          profiles.all (· == L4Factoidal.RIF.Conformance.owlDirectProfile)
+                        let unsupportedRegime := !owlDirectOnly && profiles.any (fun p =>
                           (p.splitOn "OWL").length > 1 || (p.splitOn "entailment/RIF").length > 1)
                         let wantsRdfs := profiles.any (fun p =>
                           (p.splitOn "RDFS").length > 1)
@@ -365,19 +397,20 @@ def main (args : List String) : IO UInt32 := do
                         let goal := qualifyFormula "conclusion" goal
                         -- An OWL-Direct combination that violates the
                         -- individual/data-value VOCABULARY SEPARATION
-                        -- is INCONSISTENT, and an inconsistent
-                        -- combination entails everything — including a
-                        -- conclusion the rules never derive. Checked
-                        -- before the regime is declared unsupported,
-                        -- because it is a verdict the port can reach
-                        -- without an OWL-Direct closure.
-                        let separationInconsistent :=
-                          L4Factoidal.RIF.Conformance.owlDirectSeparationInconsistent
-                            doc.rules imported
-                        match (if separationInconsistent then Verdict.holds
-                               else if unsupportedRegime
+                        -- is INCONSISTENT and entails everything. That
+                        -- verdict is part of `entailsOwlDirect`
+                        -- (ROWL-Direct rows (ii)-(vii), RIF-RDF-OWL
+                        -- §9.2.2.2). The narrower
+                        -- `Conformance.owlDirectSeparationInconsistent`
+                        -- used to be called here for EVERY profile,
+                        -- which would have made a Simple import
+                        -- inconsistent for a fact a Simple combination
+                        -- allows.
+                        match (if unsupportedRegime
                                then Verdict.undecided
                                  "the case imports under an entailment regime this port does not implement"
+                               else if owlDirectOnly
+                               then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
                                else entails rules facts goal rounds) with
                         | .holds =>
                             if want then
@@ -418,7 +451,8 @@ def main (args : List String) : IO UInt32 := do
   IO.println ""
   IO.println s!"rif-core DECIDED: {t.pass} pass, {t.fail} fail (out of {decided} decided)"
   IO.println s!"UNDECIDED: {t.undecided} cases — a built-in outside this port's slice"
-  IO.println s!"  blocked a rule, or the chain reached its round bound"
+  IO.println s!"  blocked a rule, the chain reached its round bound, or an import's"
+  IO.println s!"  regime or ontology is outside what this port decides"
   IO.println s!"NOT READ: {t.notRead} cases"
   if t.overridden > 0 then
     IO.println s!"LOCAL OVERRIDE: {t.overridden} cases — a documented disagreement with a"

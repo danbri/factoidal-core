@@ -36,7 +36,10 @@ condition they are named after, and the F\* module says so for each:
   recognisable as an OWL 2 DL ontology.
 * `owlDirectSeparationInconsistent` is not an OWL 2 DL consistency
   checker. It detects the two vocabulary-separation violations the
-  Approved corpus exercises.
+  Approved corpus exercises. Since 2026-10-10 the RIF Core runner
+  decides OWL-Direct combinations, these violations included, with
+  `RIF/OwlDirect.lean` (the RIF-RDF-OWL §9.2 embedding) and no longer
+  calls this check.
 * `noFreeVariables` compares the used and declared variable sets
   GLOBALLY over a document, not per-`Forall`-scope. That is enough for
   the fixture that exercises it and avoids a nested-scoping analysis

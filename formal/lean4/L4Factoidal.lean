@@ -262,6 +262,8 @@ import L4Factoidal.ShEx.FromJson
 import L4Factoidal.ShEx.SchemaEq
 import L4Factoidal.ShEx.Compact
 import L4Factoidal.ShEx.CompactTests
+import L4Factoidal.ShEx.Structure
+import L4Factoidal.ShEx.StructureTests
 import L4Factoidal.RML.Mapping
 import L4Factoidal.RML.Tests
 import L4Factoidal.RML.JsonPath
@@ -280,6 +282,8 @@ import L4Factoidal.RIF.EngineTests
 import L4Factoidal.RIF.EngineTheorems
 import L4Factoidal.RIF.Translation
 import L4Factoidal.RIF.Conformance
+import L4Factoidal.RIF.OwlDirect
+import L4Factoidal.RIF.OwlDirectTests
 import L4Factoidal.RIF.Xml
 import L4Factoidal.JSONSchema.Validate
 import L4Factoidal.JSONSchema.Tests

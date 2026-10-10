@@ -46,9 +46,13 @@ is refused, and no declined column is needed.
 **The assumption is the GREATEST fixpoint reading**, and it is sound
 only for a schema whose recursion does not pass through `ShapeNot`
 (negation stratification, ShEx 2.1 §5.9). This module does not check
-that condition. A schema that violates it gets the greatest-fixpoint
-answer, which may differ from the least-fixpoint one; the corpus
-contains no such schema.
+that condition; `ShEx/Structure.lean`'s `structureErrors` does (the
+§5.7.4 negation requirement), and a caller must reject a schema it
+flags before asking this module anything. A schema that violates it
+gets the greatest-fixpoint answer here, which may differ from the
+least-fixpoint one. `l4shexc` runs the check over every schema the
+validation manifest names, with its imports: 345 pass, 0 fail (out of
+345 parsed; 2026-10-10).
 -/
 import L4Factoidal.ShEx.Shapes
 

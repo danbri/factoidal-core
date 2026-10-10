@@ -14001,3 +14001,12 @@ old statement false):
 - New: `closedViolations_eq_nil_iff`, `uvfClash_eq_false_iff`,
   `someValue_aggConforms_iff`, the per-constraint severity lemmas.
 
+
+### RIF OWL-Direct imports and ShEx reject fixtures (2026-10-10)
+
+| F\* | Lean | Note |
+|---|---|---|
+| `RIF.Core.Tests.fst` `materialise_import_graph` (OWL-Direct: OWL 2 RL closure of the imported TRIPLES) | `RIF/OwlDirect.lean` `entailsOwlDirect` | NOT a transcription. The Lean side reads the import as an OWL 2 DL ontology and embeds its OWL 2 RL axioms as RIF rules plus ROWL-Direct(V,R), RIF-RDF-OWL §9.2. A declaration or an annotation is not a fact under the Direct Semantics, which is what `Non-Annotation_Entailment` tests. `holds` sound from any subset; `doesNotHold` only when every logical axiom was embedded |
+| `RIF.Core.Conformance.fst` `owl_direct_separation_inconsistent` | `RIF/Conformance.lean` (kept), superseded in the runner by `RIF/OwlDirect.lean` ROWL-Direct (ii)-(vii) | the runner called the narrow check for every profile |
+| `Parser.ShExC.fst` grammar fixes of 2026-07-10 | `ShEx/Compact.lean` (IRIREF, PN_LOCAL, REGEXP, LANGTAG, codeDecl, exclusions, facets, litNodeConstraint) | `l4shexc` negative-syntax 100 pass, 0 fail (out of 100) |
+| none (F\* does not score `negativeStructure/`) | `ShEx/Structure.lean` `structureErrors`, ShEx 2.1 §5.7 | `l4shexc` negative-structure 15 pass, 0 fail (out of 15) |
