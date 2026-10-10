@@ -45,15 +45,17 @@ The pipeline follows the `frame()` method of Framing §5.1:
     replacement, `omitGraph`, and the frame errors `invalid frame` and
     `invalid @embed value`.
 
-## What this does not cover
+## Where the specification leaves room
 
-  * The legacy `@link` embed value is not accepted: it needs an output
-    graph that shares nodes between parents, which the output arena
-    below does not build.
-  * `ordered` is accepted and has no effect: the algorithm always visits
-    subjects and properties in code-point order. §4.1 makes that order
-    mandatory only when `ordered` is true and leaves the order open
-    otherwise, so the fixed order satisfies both settings.
+  * `@embed` takes `@always`, `@once` or `@never` (§5.3.2) and the boolean
+    forms. `@first` and `@last`, which the earlier drafts defined, are
+    accepted only under `json-ld-1.0` processing, because fixture `#t0059`
+    needs `@last`. `@link` of the earlier drafts is not a value of
+    `JsonLdEmbed` and is an `invalid @embed value`.
+  * The traversal order is fixed: subjects and properties are visited in
+    code-point order. §4.1 makes that order mandatory when `ordered` is
+    true and leaves it open when `ordered` is false, so the fixed order
+    satisfies both settings and the `ordered` option has no effect.
 
 ## State, and why it is an arena
 
@@ -136,10 +138,6 @@ def isSubjectObj : Json → Bool
     !(hasField "@value" fs || hasField "@set" fs || hasField "@list" fs)
       && (fs.length > 1 || !hasField "@id" fs)
   | _ => false
-
-def firstString : List Json → Option String
-  | .string s :: _ => some s
-  | _ => none
 
 /-- The keys of an association list, in code-point order. -/
 def sortedKeys {α : Type} (xs : List (String × α)) : List String :=
@@ -278,8 +276,6 @@ structure Env where
 def Env.nodes (env : Env) (g : String) : NmGraph := (flLookup env.graphs g).getD []
 
 def Env.node (env : Env) (g id : String) : Option NmNode := flLookup (env.nodes g) id
-
-def nodeJson (n : NmNode) : Json := .object n
 
 /-- The values of a key in a node, as a list. -/
 def nodeValues (n : NmNode) (k : String) : List Json :=

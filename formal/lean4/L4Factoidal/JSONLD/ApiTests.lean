@@ -17,6 +17,7 @@ json-ld-api manifests; these guards are a fast tripwire, not the score.
 import L4Factoidal.JSONLD.FromRdf
 import L4Factoidal.JSONLD.Flatten
 import L4Factoidal.JSONLD.Html
+import L4Factoidal.JSONLD.Frame
 
 namespace L4Factoidal.JSONLD.ApiTests
 
@@ -25,7 +26,7 @@ open L4Factoidal.JSONLD
 
 /-! ## Theorems
 
-Three small statements, each about a step the manifests cannot isolate.
+Small statements, each about a step the manifests cannot isolate.
 Nothing more is claimed: these are NOT a proof that the algorithms are
 correct — the conformance evidence is the manifest score. -/
 
@@ -65,6 +66,42 @@ theorem nmg_empty_array (st : NmState) (agraph : String) (asubj : Option Json)
     nmg st (.array []) agraph asubj aprop acc (fuel + 2) = .ok (st, acc) := by
   unfold nmg
   simp [nmgItems]
+
+/-! ## Theorems — Framing (JSON-LD Framing 1.1) -/
+
+/-- The empty value pattern `{}` matches every value object (Framing §4.3:
+a pattern with no `@value`, `@type` and `@language` constrains nothing).
+The guards in `Tests.lean` pin the other direction: a pattern with a
+component rejects a value that lacks it. -/
+theorem valueMatch_emptyPattern (v : Json) : valueMatch (.object []) v = true := by
+  simp [valueMatch, patternList, objGet, objFields]
+
+/-- A frame without an `@embed` entry takes the default embed flag
+(Framing §4.1: the flags are initialised from the options "overriding from
+any property values" in the frame). -/
+theorem frameEmbed_default (fr : Json) (d : String) (m : Bool)
+    (h : objGet fr "@embed" = none) : frameEmbed fr d m = .ok d := by
+  simp [frameEmbed, frameEntry, h]
+
+/-- Only a one-element array holding an object is a frame (Framing §4.1
+step 1): anything else is `invalid frame`. -/
+theorem validateFrame_notArray (j : Json) (h : ∀ xs, j ≠ .array xs) :
+    validateFrame j = .error .invalidFrame := by
+  cases j with
+  | array xs => exact absurd rfl (h xs)
+  | _ => rfl
+
+theorem validateFrame_empty : validateFrame (.array []) = .error .invalidFrame := rfl
+
+/-- Adding an output to an array container appends it, and leaves the
+container where it is in the arena (the property `@embed: @last` relies
+on when it later replaces an element in place). -/
+theorem addOutput_array (st : FState) (i : Nat) (p : Option String) (xs : List OVal)
+    (item : OVal) (hi : i < st.arena.size) (h : st.get i = .arr xs) :
+    (st.addOutput i p item).get i = .arr (xs ++ [item]) := by
+  unfold FState.addOutput
+  rw [h]
+  simp [FState.get, FState.put, hi]
 
 /-! ## Guards — Compaction (API §6) -/
 
@@ -198,5 +235,10 @@ Every theorem above must rest on Lean's standard foundations only —
 #print axioms cmpTermLess_length_le
 #print axioms compactElem_empty_array
 #print axioms nmg_empty_array
+#print axioms valueMatch_emptyPattern
+#print axioms frameEmbed_default
+#print axioms validateFrame_notArray
+#print axioms validateFrame_empty
+#print axioms addOutput_array
 
 end L4Factoidal.JSONLD.ApiTests

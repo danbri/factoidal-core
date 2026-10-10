@@ -386,6 +386,11 @@ private def twiceReferenced : String :=
        == r#"{"@context":{"@vocab":"http://e.org/"},"@graph":[{"@id":"http://e.org/o","@type":"T","e1":{"@id":"http://e.org/m"},"e2":{"@id":"http://e.org/m","nm":"M"}}]}"#
 #guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@last"}"#)
        == "ERR invalid @embed value"
+-- `@link` of the earlier drafts is not an `@embed` value, in either mode.
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@link"}"#) (some "json-ld-1.0")
+       == "ERR invalid @embed value"
+#guard framed twiceReferenced ("{" ++ vocabCtx ++ r#","@type":"T","@embed":"@link"}"#)
+       == "ERR invalid @embed value"
 -- A cycle is cut by a node reference, even under `@always`.
 private def cyclic : String :=
   "{" ++ vocabCtx ++ r#","@graph":[

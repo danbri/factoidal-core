@@ -9457,8 +9457,9 @@ at each call, as the other JSON-LD modules do.
   (`pruneBlankNodeIdentifiers`, true unless the processing mode is
   `json-ld-1.0`).
 - *`@embed`.* `true` is `@once`, `false` is `@never`; `@first` and `@last`
-  are accepted in `json-ld-1.0` mode only; `@link` is not accepted
-  (it needs shared nodes in the output, which the arena does not build).
+  of the earlier drafts are accepted in `json-ld-1.0` mode only (fixture
+  `#t0059` needs `@last`); `@link` is not a value of `JsonLdEmbed` in
+  Framing 1.1 §5.3.2 and is an `invalid @embed value`.
 - *Value patterns.* A pattern component that is empty accepts only a value
   that lacks the component; `{}` accepts any value that has it. A frame
   object with `@value` is validated as a pattern, so `@type: @json` is
