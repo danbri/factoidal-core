@@ -63,6 +63,7 @@ ROWS: dict[str, tuple] = {
     "wine-consistent": ("wine", "consistent", "decided", None),
     "ro-closure": ("ro", "closure", "done", None),
     "cl-basic-closure": ("cl-basic", "closure", "done", None),
+    "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
     "qudt-closure": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
 }
@@ -78,6 +79,9 @@ XFAIL: dict[str, str] = {
     # Fits in 1.4 GB resident, but mimalloc's 1 GiB arena reservations exhaust
     # the 6,000,000,000-byte address-space cap first.
     "qudt-consistent": "https://github.com/danbri/factoidal/issues/759",
+    # The tableau refuter grows about 5 times per doubling of the input;
+    # killed at 600 s (HermiT: 6.1 s).
+    "cl-basic-consistent": "https://github.com/danbri/factoidal/issues/760",
 }
 
 
