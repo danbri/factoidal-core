@@ -522,8 +522,16 @@ def evalSelectBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) 
       some (sliceSolutions q.modifier.offset q.modifier.limit ordered)
   | none => evalSelectBackendOnGraph env q dsb.default dsb
 
+/-- SELECT through the backend evaluator, or `none` when the query holds a
+`text:query` pattern (`QueryPattern.mentionsFulltext`). The backend
+evaluator and its fast paths read a BGP as triple patterns matched
+against stored triples, and a `text:query` pattern is not one: matched
+that way it answers no rows. `none` sends the query to the reference
+evaluator, whose lowering (`lowerBgp`) evaluates it. Every caller already
+falls back to `evalSelect` on `none`. -/
 def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) :
     Option SolutionSeq :=
+  if q.pattern.mentionsFulltext then none else
   evalSelectBackendDataset env
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb
@@ -563,6 +571,8 @@ source records why it cannot live inside the evaluator: replacing the
 pattern breaks the recursion's termination metric. -/
 def runAskQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) :
     Option Bool :=
+  -- `text:query`: the reference evaluator answers, as for SELECT above.
+  if q.pattern.mentionsFulltext then none else
   evalAskBackend env
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb

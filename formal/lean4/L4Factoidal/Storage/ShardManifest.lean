@@ -972,7 +972,10 @@ def constantPathPredicates? : PropertyPath → Option (List WfIri)
     restricted to the collected predicates gives the same solution sequence as
     evaluating it over the whole dataset. -/
 def nativeConstantPredicates? : QueryPattern → Option (List WfIri)
+  -- A `text:query` pattern reads every triple of its field, or every triple
+  -- (`SPARQL/FullText.lean`); its own predicate IRI names no stored triple.
   | .bgp patterns =>
+      if SPARQL.bgpHasFulltext patterns then none else
       patterns.foldr (fun pattern rest => do
         let predicates ← rest
         match pattern.p with

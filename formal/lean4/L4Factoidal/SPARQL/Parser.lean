@@ -816,6 +816,12 @@ def pReifierId (st : PState) (ts : TStream) : Except ParseError (PatternSubject 
   | .bnode b => .ok (.bnode b, advTok ts)
   | _ => .ok (.bnode (freshBnodeId ts), ts)
 
+/-- Is this predicate the jena-text `text:query` IRI
+(`SPARQL/FullText.lean`'s `fulltextQueryPred`)? -/
+def isFulltextPredicate : PatternTerm → Bool
+  | .iri p => p == fulltextQueryPred
+  | _      => false
+
 /-! ## The grammar — one mutual block, structural on `fuel`
 
 Every function takes `fuel` FIRST and every recursive call passes the
@@ -2296,12 +2302,22 @@ def pPathOneInSetList (fuel : Nat) (st : PState) (ts : TStream) : Except ParseEr
       .ok (p :: ps, ts2)
     | _ => .ok ([p], ts1)
 
-/-- [79] ObjectList for a simple (non-path) predicate. -/
+/-- [79] ObjectList for a simple (non-path) predicate.
+
+A `text:query` predicate takes the jena-text object argument instead
+(`pFulltextObject`), before any collection desugaring could turn its
+argument list into an `rdf:first` / `rdf:rest` chain — port of the F\*
+`parse_object_list_simple`'s `is_fulltext_query` arm. Like the F\* arm, it
+reads exactly one object: no `,` list and no annotation follow it. -/
 def pObjectListSimple (fuel : Nat) (st : PState) (subj : PatternSubject)
     (pred : PatternTerm) (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
-  | f + 1 => do
+  | f + 1 =>
+    if isFulltextPredicate pred then do
+      let (args, ts1) ← pFulltextObject f st ts
+      .ok (ggpAddTriple acc { s := subj, p := pred, o := .literal args }, ts1)
+    else do
     let (obj, ts1) ← pObjectWithExtras f st ts
     let acc1 := ggpAddTriple acc { s := subj, p := pred, o := obj.1 }
     let acc2 := ggpJoin acc1 obj.2
@@ -2313,6 +2329,53 @@ def pObjectListSimple (fuel : Nat) (st : PState) (subj : PatternSubject)
     match peekTok ts2 with
     | .comma => pObjectListSimple f st subj pred acc3 (advTok ts2)
     | _      => .ok (acc3, ts2)
+
+/-- The jena-text `text:query` object argument — port of the F\*
+`parse_fulltext_query_object`, with its grammar and its messages:
+
+    "term"                   field none, limit none
+    ( field "term" )         field restriction
+    ( field "term" limit )   field restriction and a limit
+
+`field` is read by `pVerb`, so a prefixed name, an IRI and `a` are
+accepted, and a property path or a variable is refused, as in the F\*.
+There is no `( "term" limit )` form, because the F\* grammar has none.
+The resolved query is encoded into one marker-typed literal
+(`encodeFulltextLiteral`; `SPARQL/FullText.lean` explains why). -/
+def pFulltextObject (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError (WfLiteral × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 =>
+    match peekTok ts with
+    | .str term =>
+      .ok (encodeFulltextLiteral { field := none, terms := term, limit := none }, advTok ts)
+    | .lparen => do
+      let (verb, ts2) ← pVerb f st (advTok ts)
+      match verb with
+      | .inr _ => pErr "text:query field must be a plain IRI, not a property path" ts2
+      | .inl (.iri fieldIri) =>
+        match peekTok ts2 with
+        | .str term =>
+          let ts3 := advTok ts2
+          match peekTok ts3 with
+          | .rparen =>
+            .ok (encodeFulltextLiteral { field := some fieldIri, terms := term, limit := none },
+                 advTok ts3)
+          | .integer n =>
+            let ts4 := advTok ts3
+            match expectTok .rparen ts4 with
+            | .error e => .error e
+            | .ok (_, ts5) =>
+              match n.toNat? with
+              | some lim =>
+                .ok (encodeFulltextLiteral { field := some fieldIri, terms := term,
+                                             limit := some lim }, ts5)
+              | none => pErr "invalid text:query limit" ts3
+          | _ => pErr "expected limit or ')' after text:query field/term" ts3
+        | _ => pErr "expected string term in text:query argument list" ts2
+      | .inl _ => pErr "text:query field must be an IRI" ts2
+    | _ => pErr "expected string or '(' after text:query" ts
 
 /-- [86] ObjectListPath for a property-path predicate. -/
 def pObjectListPath (fuel : Nat) (st : PState) (subj : PatternSubject)
