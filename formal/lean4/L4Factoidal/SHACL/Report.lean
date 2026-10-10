@@ -42,6 +42,14 @@ def constraintComponentIri : Constraint → WfIri
   | .disjoint _ => shDisjointCC
   | .lessThan _ => shLessThanCC
   | .lessThanOrEquals _ => shLessThanOrEqualsCC
+  | .singleLine _ => shSingleLineCC
+  | .rootClass _ => shRootClassCC
+  | .memberShape _ => shMemberShapeCC
+  | .minListLength _ => shMinListLengthCC
+  | .maxListLength _ => shMaxListLengthCC
+  | .uniqueMembers _ => shUniqueMembersCC
+  | .subsetOf _ => shSubsetOfCC
+  | .someValue _ => shSomeValueCC
   | .notOf _ => shNotCC
   | .andOf _ => shAndCC
   | .orOf _ => shOrCC
@@ -50,8 +58,12 @@ def constraintComponentIri : Constraint → WfIri
   | .qualifiedMinCount _ _ _ => shQualifiedMinCountCC
   | .qualifiedMaxCount _ _ _ => shQualifiedMaxCountCC
   | .closed _ => shClosedCC
+  | .closedByTypes _ _ => shClosedCC
   | .hasValue _ => shHasValueCC
   | .inSet _ => shInCC
+  | .uniqueValuesFor _ => shUniqueValuesForCC
+  | .nodeByExpression _ => shNodeByExpressionCC
+  | .reifierShape _ _ => shReifierShapeCC
   -- SHACL-SPARQL: §5.1 results name sh:SPARQLConstraintComponent; §6
   -- results name the component itself.
   | .sparql _ _ _ _ => shSPARQLConstraintComponent
@@ -65,6 +77,8 @@ def sourceConstraintOf : Constraint → Option Term
   | _ => none
 
 def severityToIri : Severity → WfIri
+  | .trace => shTrace
+  | .debug => shDebug
   | .info => shInfo
   | .warning => shWarning
   | .violation => shViolation
@@ -113,43 +127,51 @@ mutual
        ctr3)
 end
 
-/-- §3.6.2: one validation result's triples, linked from the report. -/
-def resultToTriples (report : Subject) (v : Violation) (ctr : Nat) : List Triple × Nat :=
-  let (bid, ctr1) := freshBnode "_shacl_result" ctr
-  let rsubj : Subject := .bnode bid
-  let base : List Triple :=
-    [ { s := rsubj, p := rdfType, o := .iri shValidationResult },
-      { s := report, p := shResult, o := .bnode bid },
-      { s := rsubj, p := shFocusNode, o := v.focus },
-      { s := rsubj, p := shResultSeverity, o := .iri (severityToIri v.severity) },
-      { s := rsubj, p := shSourceConstraintComponent, o := .iri (constraintComponentIri v.constraint) },
-      { s := rsubj, p := shSourceShape, o := shapeRefToTerm v.sourceShape } ]
-  let (pathTs, ctr2) : List Triple × Nat :=
-    match v.path with
-    | none => ([], ctr1)
-    | some p =>
-      let (pterm, pts, ctr2') := pathToRdf p ctr1
-      (({ s := rsubj, p := shResultPath, o := pterm } : Triple) :: pts, ctr2')
-  let valueTs : List Triple :=
-    match v.value with
-    | some vv => [{ s := rsubj, p := shValue, o := vv }]
-    | none => []
-  let msgTs : List Triple :=
-    match v.message with
-    | some m => [{ s := rsubj, p := shResultMessage, o := .literal m }]
-    | none => []
-  let scTs : List Triple :=
-    match sourceConstraintOf v.constraint with
-    | some sc => [{ s := rsubj, p := shSourceConstraint, o := sc }]
-    | none => []
-  (base ++ pathTs ++ valueTs ++ msgTs ++ scTs, ctr2)
+mutual
+  /-- §3.6.2: one validation result's triples, linked from `parent` by
+  `link` (sh:result from the report, §3.6.2.7 sh:detail from a parent
+  result), followed by the triples of its own sh:detail results. -/
+  def resultToTriples (parent : Subject) (link : WfIri) : Violation → Nat → List Triple × Nat
+    | ⟨focus, path, value, sourceShape, constraint, severity, message, details, srcConstraint⟩,
+      ctr =>
+      let (bid, ctr1) := freshBnode "_shacl_result" ctr
+      let rsubj : Subject := .bnode bid
+      let base : List Triple :=
+        [ { s := rsubj, p := rdfType, o := .iri shValidationResult },
+          { s := parent, p := link, o := .bnode bid },
+          { s := rsubj, p := shFocusNode, o := focus },
+          { s := rsubj, p := shResultSeverity, o := .iri (severityToIri severity) },
+          { s := rsubj, p := shSourceConstraintComponent,
+            o := .iri (constraintComponentIri constraint) },
+          { s := rsubj, p := shSourceShape, o := shapeRefToTerm sourceShape } ]
+      let (pathTs, ctr2) : List Triple × Nat :=
+        match path with
+        | none => ([], ctr1)
+        | some p =>
+          let (pterm, pts, ctr2') := pathToRdf p ctr1
+          (({ s := rsubj, p := shResultPath, o := pterm } : Triple) :: pts, ctr2')
+      let valueTs : List Triple :=
+        match value with
+        | some vv => [{ s := rsubj, p := shValue, o := vv }]
+        | none => []
+      let msgTs : List Triple :=
+        match message with
+        | some m => [{ s := rsubj, p := shResultMessage, o := .literal m }]
+        | none => []
+      let scTs : List Triple :=
+        match srcConstraint, sourceConstraintOf constraint with
+        | some sc, _ | none, some sc => [{ s := rsubj, p := shSourceConstraint, o := sc }]
+        | none, none => []
+      let (detailTs, ctr3) := resultsToTriples rsubj shDetail details ctr2
+      (base ++ pathTs ++ valueTs ++ msgTs ++ scTs ++ detailTs, ctr3)
 
-def resultsToTriples (report : Subject) : List Violation → Nat → List Triple × Nat
-  | [], ctr => ([], ctr)
-  | v :: rest, ctr =>
-    let (ts, ctr1) := resultToTriples report v ctr
-    let (restTs, ctr2) := resultsToTriples report rest ctr1
-    (ts ++ restTs, ctr2)
+  def resultsToTriples (parent : Subject) (link : WfIri) : List Violation → Nat → List Triple × Nat
+    | [], ctr => ([], ctr)
+    | v :: rest, ctr =>
+      let (ts, ctr1) := resultToTriples parent link v ctr
+      let (restTs, ctr2) := resultsToTriples parent link rest ctr1
+      (ts ++ restTs, ctr2)
+end
 
 /-- `"true"^^xsd:boolean` / `"false"^^xsd:boolean`. -/
 def boolLiteral (b : Bool) : WfLiteral :=
@@ -157,12 +179,21 @@ def boolLiteral (b : Bool) : WfLiteral :=
      langTag := none, direction := none }, rfl⟩
 
 /-- §3.6.1: the report graph — one `sh:ValidationReport` blank node
-with `sh:conforms`, one `sh:result` per validation result. -/
+with `sh:conforms`, one `sh:result` per validation result, and (SHACL
+1.2 §conformanceDisallows) one `sh:conformanceDisallows` per severity
+of an explicitly chosen conformance-disallow set. The default set is
+not stated: "If no values are present ... then a default set MUST be
+used". -/
 def reportToGraph (r : ValidationReport) : Graph :=
   let report : Subject := .bnode "_shacl_report0"
   let header : List Triple :=
     [ { s := report, p := rdfType, o := .iri shValidationReport },
       { s := report, p := shConforms, o := .literal (boolLiteral r.conforms) } ]
-  header ++ (resultsToTriples report r.results 0).1
+  let disallows : List Triple :=
+    match r.disallowed with
+    | some sevs => sevs.map fun sev =>
+        { s := report, p := shConformanceDisallows, o := .iri (severityToIri sev) }
+    | none => []
+  header ++ disallows ++ (resultsToTriples report shResult r.results 0).1
 
 end L4Factoidal.SHACL

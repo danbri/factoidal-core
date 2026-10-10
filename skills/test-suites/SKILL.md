@@ -462,6 +462,21 @@ or entailment regime, and read
 [`skills/measuring-inference/SKILL.md`](../measuring-inference/SKILL.md)
 for why a score alone cannot tell you whether the rules fired.
 
+## ⚠️ A test file the runner cannot parse must stay in the denominator
+
+A runner that skips a file it cannot read reports a smaller denominator,
+and the score line gives no sign of it. 2026-10-10: `l4shacl` parsed
+every SHACL test file as RDF 1.1 Turtle. Five SHACL 1.2 core files write
+constraint reifiers with the RDF 1.2 annotation syntax `{| … |}`; their
+parse failed, the runner printed "cannot read" to stderr only, and the
+Lean row read "out of 133" from the first 1.2 run while the F\* runner read "out of
+138". Rules: parse a suite in the syntax version the suite is written
+for (RDF 1.2 Turtle for the SHACL 1.2, SPARQL 1.2 and RDF 1.2 suites);
+count an unreadable file as a failing entry; and when two trees report
+different denominators for the same manifest, find the cause before
+quoting either number
+(https://github.com/danbri/factoidal/issues/698).
+
 ## ⚠️ A suite score certifies only the evaluated path
 
 Learned 2026-08-02, the hard way. The engine has more than one
