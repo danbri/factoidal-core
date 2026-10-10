@@ -17,4 +17,7 @@
 # 2026-09-04: 172. Harness/PredicateShardPack.lean's three host read
 # loops (pre-pass, IBK2/IBK3 ingest, IBK4 N-Quads ingest) became one
 # `foldHandle` taking the per-pass `feed`.
+# 2026-10-10: 171. OWL/Refute.lean's `repOf` and `existsDistinctSubset`
+# became total (two fewer); Harness/OwlProbe.lean gained `showCe`, a
+# trace printer over ClassExpr (one more).
 171
