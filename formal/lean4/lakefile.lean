@@ -191,7 +191,7 @@ extern_lib libl4exthost pkg := do
   #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
-    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale]
+    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
