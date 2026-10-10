@@ -814,4 +814,269 @@ theorem ttDepth_lt_lineFuel (t : Term) (ys : List Char) (h : termSafe .rdf12 t =
   have h2 := ttDepth_le_length t
   omega
 
+/-! ## One line -/
+
+/-- The characters of one quad's canonical line. -/
+def quadLine (q : Triple × Option Subject) : List Char :=
+  match q.2 with
+  | none => (Triple.toCanonicalNTriples q.1).toList
+  | some g => (canonNamedLine g q.1).toList
+
+theorem quadLine_none (t : Triple) :
+    quadLine (t, none) = subjChars t.s ++ ' ' :: '<' :: (t.p.val.toList ++ '>' :: ' ' ::
+      (termChars t.o ++ [' ', '.', '\n'])) := by
+  simp [quadLine, Triple.toCanonicalNTriples, subjChars, termChars]
+
+theorem quadLine_some (t : Triple) (g : Subject) :
+    quadLine (t, some g) = subjChars t.s ++ ' ' :: '<' :: (t.p.val.toList ++ '>' :: ' ' ::
+      (termChars t.o ++ ' ' :: (subjChars g ++ [' ', '.', '\n']))) := by
+  simp [quadLine, canonNamedLine, subjChars, termChars]
+
+theorem subjChars_head' (s : Subject) :
+    ∃ x xs, subjChars s = x :: xs ∧ objFollow x = true ∧ isNtWs x = false := by
+  cases s with
+  | iri i => exact ⟨_, _, subjChars_iri i, by decide, by decide⟩
+  | bnode b => exact ⟨_, _, subjChars_bnode b, by decide, by decide⟩
+
+theorem readOptGraphLabel_some (pos : Nat) (g : Subject) (rest : List Char)
+    (h : subjectSafe g = true) :
+    ∃ p', readOptGraphLabel pos (' ' :: (subjChars g ++ ' ' :: rest)) = .ok (some g, p', ' ' :: rest) := by
+  obtain ⟨p', hp⟩ := readGraphLabel_safe (pos + 1) g rest h
+  refine ⟨p', ?_⟩
+  cases g with
+  | iri i =>
+      rw [subjChars_iri] at hp ⊢
+      simp only [List.cons_append, List.append_assoc] at hp ⊢
+      simp only [readOptGraphLabel, skipWs_space _ (show isNtWs '<' = false by decide), hp]
+  | bnode b =>
+      rw [subjChars_bnode] at hp ⊢
+      simp only [List.cons_append] at hp ⊢
+      simp only [readOptGraphLabel, skipWs_space _ (show isNtWs '_' = false by decide), hp]
+
+theorem readNQuad12_line (pos : Nat) (q : Triple × Option Subject) (rest : List Char)
+    (hq : quadSafe .rdf12 q = true) :
+    ∃ p', readNQuad12 pos (quadLine q ++ rest) = .ok (q.1.lowerTags, q.2, p', '\n' :: rest) := by
+  obtain ⟨⟨s, p, o⟩, g⟩ := q
+  simp only [quadSafe, tripleSafe, Bool.and_eq_true] at hq
+  obtain ⟨⟨⟨hs, hp⟩, ho⟩, hg⟩ := hq
+  obtain ⟨sx, sxs, hsx, hsxw⟩ := subjChars_head s
+  obtain ⟨ox, oxs, hox, hoxw⟩ := termChars_head o
+  cases g with
+  | none =>
+      obtain ⟨p2, hp2⟩ := readSubject_safe pos s
+        ('<' :: (p.val.toList ++ '>' :: ' ' :: (termChars o ++ ' ' :: '.' :: '\n' :: rest))) hs
+      obtain ⟨p4, hp4⟩ := readPredicate_safe (p2 + 1) p (termChars o ++ ' ' :: '.' :: '\n' :: rest) hp
+      have hfuel := ttDepth_lt_lineFuel o (' ' :: '.' :: '\n' :: rest) ho
+      obtain ⟨p6, hp6⟩ := readObject12_safe o (lineFuel (termChars o ++ ' ' :: '.' :: '\n' :: rest))
+        (p4 + 1) '.' ('\n' :: rest) hfuel (by decide) ho
+      refine ⟨p6 + 1 + 1, ?_⟩
+      rw [quadLine_none]
+      rw [hsx] at hp2 ⊢
+      rw [hox] at hp2 hp4 hp6 ⊢
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hp2 hp4 hp6 ⊢
+      simp only [readNQuad12, skipWs_nonWs' _ hsxw, hp2,
+        skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6,
+        skipWs_space _ (show isNtWs '.' = false by decide), readOptGraphLabel,
+        skipWs_nonWs' _ (show isNtWs '.' = false by decide)]
+      rfl
+  | some gr =>
+      simp only [Option.all_some] at hg
+      obtain ⟨gx, gxs, hgx, hgxf, hgxw⟩ := subjChars_head' gr
+      obtain ⟨p2, hp2⟩ := readSubject_safe pos s
+        ('<' :: (p.val.toList ++ '>' :: ' ' :: (termChars o ++ ' ' ::
+          (subjChars gr ++ ' ' :: '.' :: '\n' :: rest)))) hs
+      obtain ⟨p4, hp4⟩ := readPredicate_safe (p2 + 1) p
+        (termChars o ++ ' ' :: (subjChars gr ++ ' ' :: '.' :: '\n' :: rest)) hp
+      have hfuel := ttDepth_lt_lineFuel o (' ' :: (subjChars gr ++ ' ' :: '.' :: '\n' :: rest)) ho
+      rw [hgx] at hfuel
+      obtain ⟨p6, hp6⟩ := readObject12_safe o
+        (lineFuel (termChars o ++ ' ' :: (gx :: gxs ++ ' ' :: '.' :: '\n' :: rest)))
+        (p4 + 1) gx (gxs ++ ' ' :: '.' :: '\n' :: rest) hfuel hgxf ho
+      obtain ⟨p7, hp7⟩ := readOptGraphLabel_some p6 gr ('.' :: '\n' :: rest) hg
+      refine ⟨p7 + 1 + 1, ?_⟩
+      rw [quadLine_some]
+      rw [hsx] at hp2 ⊢
+      rw [hgx] at hp2 hp4 hp7 ⊢
+      rw [hox] at hp2 hp4 hp6 ⊢
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hp2 hp4 hp6 hp7 ⊢
+      simp only [readNQuad12, skipWs_nonWs' _ hsxw, hp2,
+        skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6, hp7,
+        skipWs_space _ (show isNtWs '.' = false by decide)]
+      rfl
+
+theorem readNQuad11_line (pos : Nat) (q : Triple × Option Subject) (rest : List Char)
+    (hq : quadSafe .rdf11 q = true) :
+    ∃ p', readNQuad11 pos (quadLine q ++ rest) = .ok (q.1.lowerTags, q.2, p', '\n' :: rest) := by
+  obtain ⟨⟨s, p, o⟩, g⟩ := q
+  simp only [quadSafe, tripleSafe, Bool.and_eq_true] at hq
+  obtain ⟨⟨⟨hs, hp⟩, ho⟩, hg⟩ := hq
+  obtain ⟨sx, sxs, hsx, hsxw⟩ := subjChars_head s
+  obtain ⟨ox, oxs, hox, hoxw⟩ := termChars_head o
+  cases g with
+  | none =>
+      obtain ⟨p2, hp2⟩ := readSubject_safe pos s
+        ('<' :: (p.val.toList ++ '>' :: ' ' :: (termChars o ++ ' ' :: '.' :: '\n' :: rest))) hs
+      obtain ⟨p4, hp4⟩ := readPredicate_safe (p2 + 1) p (termChars o ++ ' ' :: '.' :: '\n' :: rest) hp
+      obtain ⟨p6, hp6⟩ := readObject11_safe (p4 + 1) o '.' ('\n' :: rest) (by decide) ho
+      refine ⟨p6 + 1 + 1, ?_⟩
+      rw [quadLine_none]
+      rw [hsx] at hp2 ⊢
+      rw [hox] at hp2 hp4 hp6 ⊢
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hp2 hp4 hp6 ⊢
+      simp only [readNQuad11, skipWs_nonWs' _ hsxw, hp2,
+        skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6,
+        skipWs_space _ (show isNtWs '.' = false by decide), readOptGraphLabel,
+        skipWs_nonWs' _ (show isNtWs '.' = false by decide)]
+      rfl
+  | some gr =>
+      simp only [Option.all_some] at hg
+      obtain ⟨gx, gxs, hgx, hgxf, hgxw⟩ := subjChars_head' gr
+      obtain ⟨p2, hp2⟩ := readSubject_safe pos s
+        ('<' :: (p.val.toList ++ '>' :: ' ' :: (termChars o ++ ' ' ::
+          (subjChars gr ++ ' ' :: '.' :: '\n' :: rest)))) hs
+      obtain ⟨p4, hp4⟩ := readPredicate_safe (p2 + 1) p
+        (termChars o ++ ' ' :: (subjChars gr ++ ' ' :: '.' :: '\n' :: rest)) hp
+      obtain ⟨p6, hp6⟩ := readObject11_safe (p4 + 1) o gx (gxs ++ ' ' :: '.' :: '\n' :: rest) hgxf ho
+      obtain ⟨p7, hp7⟩ := readOptGraphLabel_some p6 gr ('.' :: '\n' :: rest) hg
+      refine ⟨p7 + 1 + 1, ?_⟩
+      rw [quadLine_some]
+      rw [hsx] at hp2 ⊢
+      rw [hgx] at hp2 hp4 hp7 ⊢
+      rw [hox] at hp2 hp4 hp6 ⊢
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hp2 hp4 hp6 hp7 ⊢
+      simp only [readNQuad11, skipWs_nonWs' _ hsxw, hp2,
+        skipWs_space _ (show isNtWs '<' = false by decide), hp4, skipWs_space _ hoxw, hp6, hp7,
+        skipWs_space _ (show isNtWs '.' = false by decide)]
+      rfl
+
+/-! ## The document -/
+
+theorem quadLine_head (q : Triple × Option Subject) :
+    ∃ x xs, quadLine q = x :: xs ∧ (x = '<' ∨ x = '_') := by
+  obtain ⟨⟨s, p, o⟩, g⟩ := q
+  have hs : ∃ x xs, subjChars s = x :: xs ∧ (x = '<' ∨ x = '_') := by
+    cases s with
+    | iri i => exact ⟨_, _, subjChars_iri i, Or.inl rfl⟩
+    | bnode b => exact ⟨_, _, subjChars_bnode b, Or.inr rfl⟩
+  obtain ⟨x, xs, hx, hxx⟩ := hs
+  cases g with
+  | none => exact ⟨x, _, by rw [quadLine_none, hx, List.cons_append], hxx⟩
+  | some gr => exact ⟨x, _, by rw [quadLine_some, hx, List.cons_append], hxx⟩
+
+/-- One statement step of the fold, at a line that starts with a character
+that is neither whitespace nor a comment nor a line break. -/
+theorem foldQuadLinesAcc_stmt {α : Type} (consume : α → Triple → Option Subject → α)
+    (mode : Mode) (f pos : Nat) (x : Char) (xs : List Char) (acc : α)
+    (t : Triple) (g : Option Subject) (p' : Nat) (rest : List Char)
+    (hx1 : isNtWs x = false) (hx2 : x ≠ '#') (hx3 : x ≠ '\n') (hx4 : x ≠ '\r')
+    (hstep : (match mode with
+      | .rdf11 => readNQuad11 pos (x :: xs)
+      | .rdf12 => readNQuad12 pos (x :: xs)) = .ok (t, g, p', '\n' :: rest)) :
+    foldQuadLinesAcc mode consume (f + 1) pos (x :: xs) acc
+      = foldQuadLinesAcc mode consume f (p' + 1) rest (consume acc t g) := by
+  cases mode with
+  | rdf11 =>
+      simp only at hstep
+      simp only [foldQuadLinesAcc, skipWs_nonWs' _ hx1]
+      split
+      next h => simp at h
+      next h => exact absurd (List.cons.inj h).1 hx2
+      next h => exact absurd (List.cons.inj h).1 hx3
+      next h => exact absurd (List.cons.inj h).1 hx4
+      next =>
+        simp only [hstep, skipWs_nonWs' _ (show isNtWs '\n' = false by decide)]
+        rfl
+  | rdf12 =>
+      simp only at hstep
+      simp only [foldQuadLinesAcc, skipWs_nonWs' _ hx1]
+      split
+      next h => simp at h
+      next h => exact absurd (List.cons.inj h).1 hx2
+      next h => exact absurd (List.cons.inj h).1 hx3
+      next h => exact absurd (List.cons.inj h).1 hx4
+      next =>
+        simp only [hstep, skipWs_nonWs' _ (show isNtWs '\n' = false by decide)]
+        rfl
+
+/-- One line of the fold: the canonical line of a safe quad hands the
+normalised quad to the consumer and the fold goes on with the next line. -/
+theorem foldQuadLinesAcc_line (mode : Mode) {α : Type} (consume : α → Triple → Option Subject → α)
+    (f pos : Nat) (q : Triple × Option Subject) (rest : List Char) (acc : α)
+    (hq : quadSafe mode q = true) :
+    ∃ p', foldQuadLinesAcc mode consume (f + 1) pos (quadLine q ++ rest) acc
+      = foldQuadLinesAcc mode consume f p' rest (consume acc q.1.lowerTags q.2) := by
+  have hstep : ∃ p', (match mode with
+      | .rdf11 => readNQuad11 pos (quadLine q ++ rest)
+      | .rdf12 => readNQuad12 pos (quadLine q ++ rest))
+        = .ok (q.1.lowerTags, q.2, p', '\n' :: rest) := by
+    cases mode
+    · exact readNQuad11_line pos q rest hq
+    · exact readNQuad12_line pos q rest hq
+  obtain ⟨p', hp'⟩ := hstep
+  obtain ⟨x, xs, hx, hxx⟩ := quadLine_head q
+  rw [hx, List.cons_append] at hp'
+  rw [hx, List.cons_append]
+  refine ⟨p' + 1, ?_⟩
+  rcases hxx with rfl | rfl
+  · exact foldQuadLinesAcc_stmt consume mode f pos _ _ acc _ _ p' rest
+      (by decide) (by decide) (by decide) (by decide) hp'
+  · exact foldQuadLinesAcc_stmt consume mode f pos _ _ acc _ _ p' rest
+      (by decide) (by decide) (by decide) (by decide) hp'
+
+theorem foldQuadLinesAcc_doc (mode : Mode) {α : Type} (consume : α → Triple → Option Subject → α) :
+    ∀ (qs : List (Triple × Option Subject)) (f pos : Nat) (acc : α),
+      qs.length ≤ f → qs.all (quadSafe mode) = true →
+      foldQuadLinesAcc mode consume (f + 1) pos (qs.flatMap quadLine) acc
+        = .ok (qs.foldl (fun a q => consume a q.1.lowerTags q.2) acc)
+  | [], f, pos, acc, _, _ => by
+      simp [foldQuadLinesAcc, skipWs, List.span, List.span.loop]
+  | _ :: _, 0, _, _, hlen, _ => by simp at hlen
+  | q :: qs, f + 1, pos, acc, hlen, hall => by
+      simp only [List.all_cons, Bool.and_eq_true] at hall
+      obtain ⟨p', hp'⟩ := foldQuadLinesAcc_line mode consume (f + 1) pos q (qs.flatMap quadLine) acc hall.1
+      rw [List.flatMap_cons, hp']
+      exact foldQuadLinesAcc_doc mode consume qs f p' _ (by simp at hlen; omega) hall.2
+
+theorem length_le_flatMap_quadLine : ∀ (qs : List (Triple × Option Subject)),
+    qs.length ≤ (qs.flatMap quadLine).length
+  | [] => by simp
+  | q :: qs => by
+      obtain ⟨x, xs, hx, -⟩ := quadLine_head q
+      have := length_le_flatMap_quadLine qs
+      simp only [List.flatMap_cons, hx, List.length_append, List.length_cons]
+      omega
+
+theorem toCanonicalNQuads_toList (ds : Dataset) :
+    (Dataset.toCanonicalNQuads ds).toList = ds.quadList.flatMap quadLine := by
+  simp [Dataset.toCanonicalNQuads, Graph.toCanonicalNTriples, Dataset.quadList, quadLine,
+    String.toList_join, List.flatMap_append, List.flatMap_map, List.flatMap_assoc]
+
+/-! ## The theorem -/
+
+/-- **The canonical N-Quads round trip is `normalizeDataset`**, for every
+dataset whose terms pass `roundTripSafe`. -/
+theorem parseNQuadsFast_toCanonicalNQuads (ds : Dataset) (mode : Mode)
+    (h : roundTripSafe mode ds = true) :
+    parseNQuadsFast (Dataset.toCanonicalNQuads ds) mode = .ok (normalizeDataset ds) := by
+  unfold parseNQuadsFast normalizeDataset
+  simp only [toCanonicalNQuads_toList]
+  rw [foldQuadLinesAcc_doc mode addQuadFast ds.quadList _ 0 {}
+    (length_le_flatMap_quadLine _) h]
+  rfl
+
+/-- What the command line hands to `query`, `update`, `canonicalize` and
+`closure`: the normalised dataset when the check passes, the text round trip
+otherwise. -/
+def datasetForOps (mode : Mode) (ds : Dataset) : Except ParseError Dataset :=
+  if roundTripSafe mode ds then .ok (normalizeDataset ds)
+  else parseNQuadsFast (Dataset.toCanonicalNQuads ds) mode
+
+/-- `datasetForOps` IS the text round trip, for every dataset. -/
+theorem datasetForOps_eq (mode : Mode) (ds : Dataset) :
+    datasetForOps mode ds = parseNQuadsFast (Dataset.toCanonicalNQuads ds) mode := by
+  unfold datasetForOps
+  split
+  · rename_i h; rw [parseNQuadsFast_toCanonicalNQuads ds mode h]
+  · rfl
+
 end L4Factoidal.RDF
