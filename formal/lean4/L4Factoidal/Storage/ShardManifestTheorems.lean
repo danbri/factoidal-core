@@ -1377,6 +1377,43 @@ theorem decode?_encode? (manifest : Manifest) (bytes : ByteArray)
         ← hprofEmpty, ← hblobsEmpty]
       simp only [hvalid, if_true]
 
+/-! ## Retired literal-index labels (2026-10-10)
+
+`ShardManifest.retiredLiteralIndexLayouts` lists the three labels that named
+LGI1 or LGI2 (the literal index folded with the ASCII-only fold). `valid`
+refuses each of them at every wire version, so `encode?` never writes one, and
+the round trip above holds for every manifest `encode?` accepts without a case
+for them. The decoder side is `valid` too (`decode?` ends in a `valid` test);
+its refusal of the three labels, at the three versions that used them, is
+pinned by the `#guard`s on `oldV8Bytes`, `oldV9Bytes` and `oldV10Bytes` in
+`ShardManifest.lean`, which feed it the bytes of an otherwise valid manifest
+with the retired label. -/
+
+/-- A valid manifest does not carry a retired literal-index label. -/
+theorem valid_layout_not_retired (manifest : Manifest) (h : valid manifest = true) :
+    retiredLiteralIndexLayout manifest.layout = false := by
+  have hbase := andL h
+  have hlc : layoutConsistent manifest.version manifest.layout = true :=
+    andR (andL (andL (andL (andL (andL (andL hbase))))))
+  unfold layoutConsistent at hlc
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at hlc
+  exact hlc.1
+
+/-- The encoder never writes a retired literal-index label. -/
+theorem encode?_layout_not_retired (manifest : Manifest) (bytes : ByteArray)
+    (h : encode? manifest = some bytes) :
+    retiredLiteralIndexLayout manifest.layout = false := by
+  by_cases hgate : (valid manifest && encodable manifest) = true
+  case neg => rw [encode?, if_neg hgate] at h; simp at h
+  exact valid_layout_not_retired manifest (andL hgate)
+
+/-- A manifest the encoder writes and the decoder reads back keeps a label that
+is not retired: the round trip and the label rule together. -/
+theorem decode?_encode?_layout_not_retired (manifest : Manifest) (bytes : ByteArray)
+    (h : encode? manifest = some bytes) :
+    ∃ decoded, decode? bytes = some decoded ∧ retiredLiteralIndexLayout decoded.layout = false :=
+  ⟨manifest, decode?_encode? manifest bytes h, encode?_layout_not_retired manifest bytes h⟩
+
 #print axioms decodeString_encodeString
 #print axioms decodeGraphNames_flatMap
 #print axioms decodeEntry_encodeEntry
@@ -1385,6 +1422,9 @@ theorem decode?_encode? (manifest : Manifest) (bytes : ByteArray)
 #print axioms zoneMap_sound
 #print axioms decodeBlobTable_encodeBlobTable
 #print axioms decode?_encode?
+#print axioms valid_layout_not_retired
+#print axioms encode?_layout_not_retired
+#print axioms decode?_encode?_layout_not_retired
 
 end L4Factoidal.Storage.ShardManifest
 
