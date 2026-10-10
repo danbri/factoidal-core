@@ -164,6 +164,7 @@ import L4Factoidal.OWL.NegationGoals
 import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
+import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
 import Harness.Common
 
@@ -1499,10 +1500,43 @@ def judgeSpecies (cat : Catalog) (c : Case) : Harness.Outcome × List String :=
       if isDl == expectDl then (.pass, [])
       else (.fail s!"species: verdict {label isDl}, annotation {label expectDl}", viols.take 5)
 
+/-- The species verdict from the functional-syntax documents ALONE, for
+a case that has them: the body checks over the mapped graph of the
+premise (and of the conclusion, when there is one). `none` when the case
+has no functional-syntax premise. This is a second, independent input to
+`SyntaxDL` for every case that has two syntaxes. -/
+def judgeSpeciesFs (c : Case) : Option (Harness.Outcome × List String) :=
+  match c.fsPremiseText with
+  | none => none
+  | some ftxt =>
+    let expectDl := c.species.contains "DL"
+    match L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt with
+    | none => some (.unsupported "functional-syntax premise outside the grammar", [])
+    | some pDoc =>
+      let cTxt := c.fsConclusionText <|> c.fsNonConclusionText
+      let cParsed : Option (Option Graph) := cTxt.map L4Factoidal.OWL.FS.parseFunctionalSyntax
+      match cParsed with
+      | some none => some (.unsupported "functional-syntax conclusion outside the grammar", [])
+      | _ =>
+        let cDoc : Option Graph :=
+          match cParsed with
+          | some (some g) => some (Graph.prefixBnodes "c_" g)
+          | _ => none
+        let u := pDoc ++ cDoc.getD []
+        let viols := L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional pDoc cDoc.isSome u
+        let isDl := viols.isEmpty
+        let label := fun (b : Bool) => if b then "DL" else "FULL"
+        if isDl == expectDl then some (.pass, [])
+        else some (.fail s!"species[fs]: verdict {label isDl}, annotation {label expectDl}",
+                   viols.take 5)
+
 structure SpeciesResult where
   score     : Harness.Score := {}
   expectDl  : Harness.Score := {}
   expectFull : Harness.Score := {}
+  /-- The same verdict computed from the functional-syntax documents
+  alone, over the cases that have them. -/
+  fsScore   : Harness.Score := {}
   fails     : List String := []
   units     : Nat := 0
 
@@ -1522,8 +1556,16 @@ def runSpecies (name : String) (cat : Catalog) (verbose : Bool) : IO SpeciesResu
                     expectDl := if dl then r.expectDl.bump o else r.expectDl,
                     expectFull := if dl then r.expectFull else r.expectFull.bump o,
                     units := r.units + 1 }
+      match judgeSpeciesFs c with
+      | none => pure ()
+      | some (fo, fviols) =>
+          if fo != .pass then
+            IO.println (fo.line s!"{c.id} [species, functional-syntax documents]")
+            for v in fviols do IO.println s!"      violation: {v}"
+          r := { r with fsScore := r.fsScore.bump fo }
   IO.println (Harness.Score.line s!"{name} species [expected DL]" r.expectDl)
   IO.println (Harness.Score.line s!"{name} species [expected FULL]" r.expectFull)
+  IO.println (Harness.Score.line s!"{name} species [functional-syntax documents]" r.fsScore)
   IO.println (Harness.Score.line s!"{name} species" r.score)
   if !r.fails.isEmpty then
     IO.println s!"  FAIL-GROUP {name} species: {r.fails.length} - {String.intercalate ", " r.fails}"
@@ -1998,6 +2040,70 @@ def traceMain (o : Opts) : IO UInt32 := do
             traceCase name cat c o.capMs o.regime o.refuteBudget o.rounds
   return 0
 
+/-! ## Cross-syntax agreement (`--species`, second block)
+
+OWL 2 Conformance section 2 and the test-case format: when a test case
+gives an ontology in two syntaxes, the two documents express the same
+ontology. The functional-style document, mapped to RDF by OWL 2 Mapping
+to RDF Graphs section 2, is therefore a graph isomorphic to the graph of
+the RDF/XML document (RDF 1.1 Concepts section 3.6, blank-node
+isomorphism). The comparison is made on the premise documents, and
+separately on the conclusion (or non-conclusion) documents, of every case
+that has both syntaxes. -/
+
+/-- A few triples of `a` with no blank node that `b` lacks: the part of
+a difference a reader can act on. -/
+def groundDifference (a b : Graph) : List String :=
+  (a.filter (fun t => t.bnodes.isEmpty && !b.mem t)).take 3 |>.map showTriple
+
+/-- Compare one RDF/XML document with one functional-style document. -/
+def agreeOne (base : String) (rdfTxt fsTxt : String) : Harness.Outcome × List String :=
+  match parseDoc "rdf/xml" base rdfTxt with
+  | .error e => (.fail e, [])
+  | .ok a =>
+    match L4Factoidal.OWL.FS.parseFunctionalSyntax fsTxt with
+    | none => (.unsupported "functional-syntax document outside the grammar", [])
+    | some b =>
+      match Graph.isomorphicOutcome a b with
+      | .equal => (.pass, [])
+      | .budgetExceeded => (.skip "isomorphism work budget exceeded", [])
+      | .notEqual =>
+          (.fail s!"fs-rdfxml: graphs differ ({a.length} triples from RDF/XML, \
+{b.length} from the functional-syntax mapping)",
+           (groundDifference a b).map (fun t => s!"only in RDF/XML: {t}") ++
+           (groundDifference b a).map (fun t => s!"only in functional syntax: {t}"))
+
+structure AgreeResult where
+  premise    : Harness.Score := {}
+  conclusion : Harness.Score := {}
+
+def runAgreement (name : String) (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
+  let mut r : AgreeResult := {}
+  for c in cat.cases do
+    match c.premise, c.fsPremiseText with
+    | some rx, some fs =>
+        let (o, notes) := agreeOne c.iri rx fs
+        let label := s!"{c.id} [fs-rdfxml, premise]"
+        match o with
+        | .pass => if verbose then IO.println (o.line label)
+        | _ => IO.println (o.line label)
+        for n in notes do IO.println s!"      {n}"
+        r := { r with premise := r.premise.bump o }
+    | _, _ => pure ()
+    match c.conclusion <|> c.nonConclusion, c.fsConclusionText <|> c.fsNonConclusionText with
+    | some rx, some fs =>
+        let (o, notes) := agreeOne c.iri rx fs
+        let label := s!"{c.id} [fs-rdfxml, conclusion]"
+        match o with
+        | .pass => if verbose then IO.println (o.line label)
+        | _ => IO.println (o.line label)
+        for n in notes do IO.println s!"      {n}"
+        r := { r with conclusion := r.conclusion.bump o }
+    | _, _ => pure ()
+  IO.println (Harness.Score.line s!"{name} fs-rdfxml agreement" r.premise)
+  IO.println (Harness.Score.line s!"{name} fs-rdfxml agreement [conclusion]" r.conclusion)
+  return r
+
 /-- `--species`: read each catalog, score the species facet of every
 case that carries one. The default catalog is `all.rdf`, the union of
 the others. -/
@@ -2019,6 +2125,8 @@ def speciesMain (o : Opts) : IO UInt32 := do
           else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         let r ← runSpecies name cat o.verbose
         total := total.add r.score
+        IO.println ""
+        let _ ← runAgreement name cat o.verbose
         IO.println ""
   for f in notRead do
     IO.println s!"  catalog not read: {f}"

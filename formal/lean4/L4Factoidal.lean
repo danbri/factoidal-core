@@ -343,6 +343,8 @@ import L4Factoidal.XSLT.Transform
 import L4Factoidal.XSLT.TransformTests
 import L4Factoidal.OWL.ClassExpr
 import L4Factoidal.OWL.CountingOracle
+import L4Factoidal.OWL.Structure
+import L4Factoidal.OWL.StructureRdf
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.FunctionalSyntaxTests
