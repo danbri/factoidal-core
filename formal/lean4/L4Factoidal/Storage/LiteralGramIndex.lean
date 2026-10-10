@@ -18,10 +18,21 @@ Two decisions are stated here and nothing downstream may restate them.
 **The unit is a character.** `SPARQL.Expr.strContains` compares `List Char`,
 so a byte n-gram index would be a second, disagreeing notion of substring.
 
-**The fold is the engine's own `LCASE`.** `foldChars` maps `Char.toLower`
-across the characters, which is exactly what `Expr.evalIn` computes for
-`LCASE` through `String.toLower`. The two cannot drift because there is one
-function.
+**The fold agrees with the engine's own `LCASE`.** `foldChars` maps each
+character to `Text.CaseMap.searchFoldImage`: the context-free full lowercase
+of Unicode default case mapping, with capital sigma and final sigma both
+folded to `σ`. `LCASE` itself (`Text.CaseMap.lowerCase`) is not a character
+map, because `İ` lower-cases to two characters and `Σ` depends on its
+neighbours. The two outputs of `lowerCase` that depend on context, `σ` and
+`ς`, fold to the same image, so folding the result of `LCASE` gives the same
+characters as folding its argument (pinned below by `#guard`s and, over every
+case-affected code point, in `Text/CaseMapTests`).
+A row that `CONTAINS(LCASE(?x), "needle")` keeps therefore carries every gram
+of the folded needle. Before 2026-10-10 `LCASE` was the ASCII-only
+`String.toLower` and this fold was `Char.toLower`, which agreed with it; an
+index built then folds only the ASCII letters and is not a superset for the
+non-ASCII lexical forms the Unicode `LCASE` matches. Re-pack it
+(`docs/designissues/2026-10-10-unicode-case-mapping.md`).
 
 ## The superset theorem
 
@@ -36,6 +47,7 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import Std.Data.HashMap
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.Text.CaseMap
 
 namespace L4Factoidal.Storage.LiteralGramIndex
 
@@ -48,9 +60,11 @@ open L4Factoidal.SPARQL
 falls back to the scan. -/
 def gramLength : Nat := 3
 
-/-- The case fold, character by character. This is `String.toLower`'s
-character map, which is what `LCASE` evaluates to. -/
-def foldChars (cs : List Char) : List Char := cs.map Char.toLower
+/-- The case fold: each character becomes the characters of its fold image
+(`Text.CaseMap.searchFoldImage`), so a contiguous part of the input folds to a
+contiguous part of the result. `LCASE` evaluates to the same characters up to
+this fold. -/
+def foldChars (cs : List Char) : List Char := Text.CaseMap.searchFold cs
 
 /-- The folded characters of a string. -/
 def foldString (s : String) : List Char := foldChars s.toList
@@ -121,9 +135,15 @@ def gramsOfNeedle (needle : String) : List (List Char) :=
 
 /-! ## 2. Folding preserves the substring relation -/
 
-theorem listIsPrefix_map (f : Char → Char) :
+theorem listIsPrefix_append_left (l a b : List Char) :
+    listIsPrefix (l ++ a) (l ++ b) = listIsPrefix a b := by
+  induction l with
+  | nil => simp
+  | cons x xs ih => simp [listIsPrefix, ih]
+
+theorem listIsPrefix_flatMap (f : Char → List Char) :
     ∀ (a b : List Char), listIsPrefix a b = true →
-      listIsPrefix (a.map f) (b.map f) = true := by
+      listIsPrefix (a.flatMap f) (b.flatMap f) = true := by
   intro a
   induction a with
   | nil => intro b _; simp [listIsPrefix]
@@ -135,12 +155,24 @@ theorem listIsPrefix_map (f : Char → Char) :
           simp only [listIsPrefix, Bool.and_eq_true, beq_iff_eq] at h
           obtain ⟨hxy, hrest⟩ := h
           subst hxy
-          simp only [List.map_cons, listIsPrefix, Bool.and_eq_true, beq_iff_eq]
-          exact ⟨trivial, ih ys hrest⟩
+          simp only [List.flatMap_cons]
+          rw [listIsPrefix_append_left]
+          exact ih ys hrest
 
-theorem listContainsSublist_map (f : Char → Char) :
+theorem listContainsSublist_append_left (n : List Char) :
+    ∀ (l t : List Char), listContainsSublist n t = true →
+      listContainsSublist n (l ++ t) = true := by
+  intro l
+  induction l with
+  | nil => intro t h; simpa using h
+  | cons x xs ih =>
+      intro t h
+      simp only [List.cons_append, listContainsSublist, Bool.or_eq_true]
+      exact Or.inr (ih t h)
+
+theorem listContainsSublist_flatMap (f : Char → List Char) :
     ∀ (needle hay : List Char), listContainsSublist needle hay = true →
-      listContainsSublist (needle.map f) (hay.map f) = true := by
+      listContainsSublist (needle.flatMap f) (hay.flatMap f) = true := by
   intro needle hay
   induction hay with
   | nil =>
@@ -151,10 +183,23 @@ theorem listContainsSublist_map (f : Char → Char) :
   | cons y ys ih =>
       intro h
       simp only [listContainsSublist, Bool.or_eq_true] at h
-      simp only [List.map_cons, listContainsSublist, Bool.or_eq_true]
+      simp only [List.flatMap_cons]
       cases h with
-      | inl hp => exact Or.inl (by simpa using listIsPrefix_map f needle (y :: ys) hp)
-      | inr hr => exact Or.inr (ih hr)
+      | inl hp =>
+          have hpf := listIsPrefix_flatMap f needle (y :: ys) hp
+          simp only [List.flatMap_cons] at hpf
+          cases hs : f y ++ ys.flatMap f with
+          | nil =>
+              rw [hs] at hpf
+              cases hn : needle.flatMap f with
+              | nil => simp [listContainsSublist]
+              | cons _ _ => rw [hn] at hpf; simp [listIsPrefix] at hpf
+          | cons z zs =>
+              rw [hs] at hpf
+              simp only [listContainsSublist, Bool.or_eq_true]
+              exact Or.inl hpf
+      | inr hr =>
+          exact listContainsSublist_append_left _ (f y) _ (ih hr)
 
 /-- Folding both sides preserves the substring relation, so a case-sensitive
 `CONTAINS` match implies a match of the folded needle in the folded lexical
@@ -162,7 +207,7 @@ form. -/
 theorem foldChars_containsSublist (needle hay : List Char)
     (h : listContainsSublist needle hay = true) :
     listContainsSublist (foldChars needle) (foldChars hay) = true :=
-  listContainsSublist_map Char.toLower needle hay h
+  listContainsSublist_flatMap Text.CaseMap.searchFoldImage needle hay h
 
 /-! ## 3. A window of a contiguous sublist is a window of the whole -/
 

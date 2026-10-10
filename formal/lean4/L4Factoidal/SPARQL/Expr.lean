@@ -1784,11 +1784,11 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
         (Expr.evalOpt env mu lenOpt)
   | .uCase e1 =>
       match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve s.toUpper tg dt
+      | some (s, tg, dt) => erStringPreserve (Fn.String.upperCase s) tg dt
       | none => .error
   | .lCase e1 =>
       match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve s.toLower tg dt
+      | some (s, tg, dt) => erStringPreserve (Fn.String.lowerCase s) tg dt
       | none => .error
   | .strStarts e1 e2 =>
       match (Expr.evalIn env mu e1).toString?, (Expr.evalIn env mu e2).toString? with

@@ -15,6 +15,8 @@ disagreements are listed in
 theorems in `L4Factoidal/Fn/Theorems.lean`.
 -/
 
+import L4Factoidal.Text.CaseMap
+
 namespace L4Factoidal.Fn.String
 
 /-! ## §5.4.5-5.4.7 — the three URI escapers
@@ -149,8 +151,15 @@ def endsWith (hay needle : String) : Bool := hay.endsWith needle
 /-- §5.3.2 `fn:string-length`, in CODEPOINTS. -/
 def stringLength (s : String) : Nat := s.toList.length
 
-def upperCase (s : String) : String := s.toUpper
-def lowerCase (s : String) : String := s.toLower
+/-- §5.4.7 `fn:upper-case`, which SPARQL 1.1 §17.4.3.8 `UCASE` and RIF-DTB
+    `func:upper-case` cite. Unicode full case mapping, language-independent
+    (`L4Factoidal.Text.CaseMap`): `ß` gives `SS`. -/
+def upperCase (s : String) : String := Text.CaseMap.upperCase s
+
+/-- §5.4.8 `fn:lower-case`, which SPARQL 1.1 §17.4.3.9 `LCASE` and RIF-DTB
+    `func:lower-case` cite. Unicode full case mapping with the Final_Sigma
+    rule, language-independent (`L4Factoidal.Text.CaseMap`). -/
+def lowerCase (s : String) : String := Text.CaseMap.lowerCase s
 
 /-! ## RFC 4647 language-range matching
 
