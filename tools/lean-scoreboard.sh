@@ -568,10 +568,52 @@ parse_rdfc_probe() {
   row_nofd "RDFC-1.0" "probe: negative eval (excessive-calls abort)" '^negative eval \(excessive-calls abort\): [0-9]+ of [0-9]+' last
 }
 
+# owl_scope_rows AREA ERE -- one "Approved, in scope" row for every line
+# matching ERE ("IN-SCOPE <catalog> [<tag>] <scope>: N pass, ..."), the
+# conformance number of the regime on that catalog. The probe prints the line
+# for the regime's own score, and the row is added after the rows of the same
+# run that carry the whole-catalog counts. A unit that is out of scope stays
+# counted in those rows; this row only adds a view (issue 721). A catalog with
+# no unit in scope gets a row of zeros, because the probe printed the line for
+# a run that did walk the catalog's units.
+owl_scope_rows() {
+  local area="$1" re="$2" line catalog tag nums note found=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    found=1
+    catalog="$(printf '%s\n' "$line" | sed -nE 's/^IN-SCOPE ([^ ]+) .*$/\1/p')"
+    tag="$(printf '%s\n' "$line" | sed -nE 's/^IN-SCOPE [^ ]+ \[([^]]*)\].*$/\1/p')"
+    case "$tag" in
+      rl-closure)
+        note="* in = status Approved and case annotated test:profile RL; out = Proposed, Extracredit and other statuses, and cases outside the RL profile (the closure is incomplete there by design); the units out stay counted in the rows above" ;;
+      dl|rl-refute)
+        note="* in = status Approved, species DL, semantics DIRECT; out = Proposed, Extracredit and other statuses, and FULL-only cases (judged in the RDF-Based regime, issue 721); the units out stay counted in the rows above" ;;
+      rdf-based)
+        note="* in = status Approved; out = Proposed, Extracredit and other statuses; other = not-refuted, unsupported and local-override units (a not-refuted unit is never a pass); the units out stay counted in the rows above" ;;
+      *)
+        note="* scope as printed in the log line" ;;
+    esac
+    if [ -z "$catalog" ] || ! nums="$(scoreline_nums "$line")"; then
+      emit_status unparsed "$area" "Approved, in scope" "IN-SCOPE line does not follow 'N pass, M fail (out of T)'" "$line"
+      continue
+    fi
+    set -- $nums
+    if [ "$4" -eq 0 ]; then
+      add_row ok "$area" "$catalog Approved, in scope" 0 0 0 0 true "$note; no unit of this catalog is in scope" "$line" ""
+    else
+      emit_ok "$area" "$catalog Approved, in scope" "$1" "$2" "$3" "$4" "$note" "$line"
+    fi
+  done < <(grep -E -- "$re" "$CUR_LOG")
+  if [ "$found" -eq 0 ]; then
+    emit_status unparsed "$area" "Approved, in scope" "no line matching /$re/ in the log"
+  fi
+}
+
 parse_owl() {
   # Catalog rows overlap (type-consistency.rdf contains the positive-entailment
   # units too), so no TOTAL row is emitted.
   block_rows "$CUR_AREA" '^(profile|type|syntax|semantics)-[A-Za-z-]+\.rdf( [A-Za-z]+Test)?: [0-9]+ pass, [0-9]+ fail.*\(out of [0-9]+\)$'
+  owl_scope_rows "$CUR_AREA" '^IN-SCOPE (profile|type|syntax|semantics)-[A-Za-z-]+\.rdf \['
 }
 
 parse_owl_species() {
@@ -600,6 +642,7 @@ parse_owl_rdf_based() {
     "other = not-refuted (no clash derived; not a pass); fail = a clash row fired"
   row_sl "$CUR_AREA" "InconsistencyTest" '^all\.rdf InconsistencyTest \[rdf-based\]: [0-9]+ pass' last \
     "pass = inconsistency proved (a clash row fired); fail = not proved"
+  owl_scope_rows "$CUR_AREA" '^IN-SCOPE all\.rdf \[rdf-based\]'
 }
 
 parse_owl_fs_input() {
