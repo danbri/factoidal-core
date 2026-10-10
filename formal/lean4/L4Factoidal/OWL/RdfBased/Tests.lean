@@ -156,6 +156,11 @@ private def listAB : Graph :=
   ⟨S cA, rdfsSubClassOf, O cB⟩
 #guard !has (listAB ++ oneA ++ [⟨S cA, owlUnionOf, Bt "m1"⟩, ⟨S cB, owlUnionOf, Bt "k1"⟩]) []
   ⟨S cB, rdfsSubClassOf, O cA⟩
+-- an empty union or intersection is not read (Table 5.4 for n ≥ 1 only)
+#guard !has (listAB ++ [⟨S cA, owlUnionOf, O rdfNil⟩, ⟨S cB, owlUnionOf, Bt "k1"⟩]) []
+  ⟨S cA, rdfsSubClassOf, O cB⟩
+#guard !has (listAB ++ [⟨S cA, owlIntersectionOf, Bt "k1"⟩, ⟨S cB, owlIntersectionOf, O rdfNil⟩]) []
+  ⟨S cA, rdfsSubClassOf, O cB⟩
 -- intersection: the direction is reversed
 #guard has (listAB ++ oneA ++ [⟨S cA, owlIntersectionOf, Bt "m1"⟩,
             ⟨S cB, owlIntersectionOf, Bt "k1"⟩]) [] ⟨S cB, rdfsSubClassOf, O cA⟩

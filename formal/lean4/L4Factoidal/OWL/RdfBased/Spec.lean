@@ -304,15 +304,19 @@ def CondOneOf : Prop :=
 
 /-- Table 5.4, `owl:unionOf`: "if s sequence of c1, …, cn ∈ IR then
 (z, s) ∈ IEXT(I(owl:unionOf)) iff z, c1, …, cn ∈ IC, ICEXT(z) = ICEXT(c1)
-∪ … ∪ ICEXT(cn)" — the left-to-right half. -/
+∪ … ∪ ICEXT(cn)" — the left-to-right half, for n ≥ 1 only. A sequence
+may have n = 0 (§ 5, "Sequence expressions"), and what the table's
+formula means then is not stated; the condition is not read there. -/
 def CondUnionOfOnly : Prop :=
-  ∀ (z s : i.idom) (cs : List i.idom), SeqIs i s cs → i.iext (i.iIri owlUnionOf) z s →
+  ∀ (z s : i.idom) (cs : List i.idom), cs ≠ [] → SeqIs i s cs →
+    i.iext (i.iIri owlUnionOf) z s →
     IC i z ∧ ∀ x, icext i x z ↔ ∃ c ∈ cs, icext i x c
 
-/-- Table 5.4, `owl:intersectionOf`, the left-to-right half:
+/-- Table 5.4, `owl:intersectionOf`, the left-to-right half, for n ≥ 1
+only (the empty intersection is the same open question as above):
 `ICEXT(z) = ICEXT(c1) ∩ … ∩ ICEXT(cn)`. -/
 def CondIntersectionOfOnly : Prop :=
-  ∀ (z s : i.idom) (cs : List i.idom), SeqIs i s cs →
+  ∀ (z s : i.idom) (cs : List i.idom), cs ≠ [] → SeqIs i s cs →
     i.iext (i.iIri owlIntersectionOf) z s →
     IC i z ∧ ∀ x, icext i x z ↔ ∀ c ∈ cs, icext i x c
 
@@ -818,17 +822,11 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     · intro h _ w hw
       exact List.not_mem_nil ((h.2 w).mp ((w_ic _ _).mpr hw))
   unionOfOnly := by
-    intro z s cs hs hu
-    obtain ⟨rfl, rfl⟩ := w_seq_nil hs
-    have h := (wBase_union _ _).mp ((w_iext (by decide) (by decide) _ _).mp hu) rfl
-    refine ⟨w_IC z, fun x => ⟨fun hx => absurd ((w_ic _ _).mp hx) (h x), ?_⟩⟩
-    rintro ⟨c, hc, _⟩; exact absurd hc List.not_mem_nil
+    intro z s cs hne hs _
+    exact absurd (w_seq_nil hs).1 hne
   intersectionOfOnly := by
-    intro z s cs hs hi
-    obtain ⟨rfl, rfl⟩ := w_seq_nil hs
-    have h := (wBase_inter _ _).mp ((w_iext (by decide) (by decide) _ _).mp hi) rfl
-    exact ⟨w_IC z, fun x => ⟨fun _ c hc => absurd hc List.not_mem_nil,
-      fun _ => (w_ic _ _).mpr (h x)⟩⟩
+    intro z s cs hne hs _
+    exact absurd (w_seq_nil hs).1 hne
   allDifferent := by
     intro mp _ z s as hs _ _ j k aj ak _ hj _
     obtain ⟨rfl, _⟩ := w_seq_nil hs

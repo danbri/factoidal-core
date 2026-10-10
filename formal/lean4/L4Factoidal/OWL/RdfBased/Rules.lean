@@ -140,12 +140,14 @@ inductive RbDerives (g : Graph) : Triple → Prop where
   | unionSub {c1 c2 : Subject} {l1 l2 : Term} {es1 es2 : List Term}
       (h1 : (⟨c1, owlUnionOf, l1⟩ : Triple) ∈ g) (h2 : (⟨c2, owlUnionOf, l2⟩ : Triple) ∈ g)
       (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
+      (hne1 : es1 ≠ []) (hne2 : es2 ≠ [])
       (hsub : ∀ e ∈ es1, e ∈ es2) :
       RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
   | interSub {c1 c2 : Subject} {l1 l2 : Term} {es1 es2 : List Term}
       (h1 : (⟨c1, owlIntersectionOf, l1⟩ : Triple) ∈ g)
       (h2 : (⟨c2, owlIntersectionOf, l2⟩ : Triple) ∈ g)
       (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
+      (hne1 : es1 ≠ []) (hne2 : es2 ≠ [])
       (hsub : ∀ e ∈ es2, e ∈ es1) :
       RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
   | literalValue {s : Subject} {p : WfIri} {l1 l2 : WfLiteral}
@@ -336,22 +338,24 @@ theorem rbDerives_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll 
       refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩
       obtain ⟨e, he, rfl⟩ := List.mem_map.mp ((he1 x).mp hx)
       exact List.mem_map.mpr ⟨e, hsub e he, rfl⟩
-  | unionSub h1 h2 hl1 hl2 hsub =>
+  | unionSub h1 h2 hl1 hl2 hne1 hne2 hsub =>
       rename_i c1 c2 l1 l2 es1 es2
-      obtain ⟨hc1, he1⟩ := hc.unionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
-      obtain ⟨hc2, he2⟩ := hc.unionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
+      obtain ⟨hc1, he1⟩ := hc.unionOfOnly _ _ _ (by simpa using hne1)
+        (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
+      obtain ⟨hc2, he2⟩ := hc.unionOfOnly _ _ _ (by simpa using hne2)
+        (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
       show i.iext (i.iIri rdfsSubClassOf) (denotSubject i A c1) (denotTerm i A c2.toTerm)
       rw [denot_toTerm]
       refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩
       obtain ⟨c, hcm, hxc⟩ := (he1 x).mp hx
       obtain ⟨e, he, rfl⟩ := List.mem_map.mp hcm
       exact ⟨_, List.mem_map.mpr ⟨e, hsub e he, rfl⟩, hxc⟩
-  | interSub h1 h2 hl1 hl2 hsub =>
+  | interSub h1 h2 hl1 hl2 hne1 hne2 hsub =>
       rename_i c1 c2 l1 l2 es1 es2
-      obtain ⟨hc1, he1⟩ :=
-        hc.intersectionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
-      obtain ⟨hc2, he2⟩ :=
-        hc.intersectionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
+      obtain ⟨hc1, he1⟩ := hc.intersectionOfOnly _ _ _ (by simpa using hne1)
+        (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
+      obtain ⟨hc2, he2⟩ := hc.intersectionOfOnly _ _ _ (by simpa using hne2)
+        (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
       show i.iext (i.iIri rdfsSubClassOf) (denotSubject i A c1) (denotTerm i A c2.toTerm)
       rw [denot_toTerm]
       refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩

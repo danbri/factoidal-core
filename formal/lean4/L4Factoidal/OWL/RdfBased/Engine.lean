@@ -218,6 +218,10 @@ def literalValueFor (g goal : Graph) : List Triple :=
 /-- Every member of `a` is a member of `b`. -/
 def allIn (a b : List Term) : Bool := a.all (fun e => decide (e ∈ b))
 
+/-- `allIn`, for two non-empty lists (the union and intersection rules
+read Table 5.4 for n ≥ 1 only). -/
+def allInNonEmpty (a b : List Term) : Bool := !a.isEmpty && !b.isEmpty && allIn a b
+
 /-- Everything the rules derive from `g` in one pass, with the
 premise-free families restricted to what `goal` names. -/
 def rbConclusions (g goal : Graph) : List Triple :=
@@ -225,8 +229,8 @@ def rbConclusions (g goal : Graph) : List Triple :=
   allDiffAll g ++ singletonAll g rdfsRange owlFunctionalProperty ++
   singletonAll g rdfsDomain owlInverseFunctionalProperty ++ typeDomainSubAll g ++
   avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g ++
-  listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allIn ++
-  listSubAll g owlIntersectionOf (fun es1 es2 => allIn es2 es1) ++ hvEqPropAll g ++
+  listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allInNonEmpty ++
+  listSubAll g owlIntersectionOf (fun es1 es2 => allInNonEmpty es2 es1) ++ hvEqPropAll g ++
   literalValueFor g goal
 
 /-! ## Every executable conclusion is a rule application -/
@@ -440,6 +444,12 @@ theorem allIn_spec {a b : List Term} (h : allIn a b = true) : ∀ e ∈ a, e ∈
   have := List.all_eq_true.mp h e he
   simpa using this
 
+theorem allInNonEmpty_spec {a b : List Term} (h : allInNonEmpty a b = true) :
+    a ≠ [] ∧ b ≠ [] ∧ ∀ e ∈ a, e ∈ b := by
+  simp only [allInNonEmpty, Bool.and_eq_true, Bool.not_eq_true',
+    List.isEmpty_eq_false_iff] at h
+  exact ⟨h.1.1, h.1.2, allIn_spec h.2⟩
+
 theorem hvEqPropAll_derives {g : Graph} {t : Triple} (h : t ∈ hvEqPropAll g) :
     RbDerives g t := by
   simp only [hvEqPropAll, List.mem_flatMap, List.mem_filter, Bool.and_eq_true, beq_iff_eq] at h
@@ -517,9 +527,11 @@ theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclus
   · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
     exact RbDerives.oneOfSub h1 h2 hl1 hl2 (allIn_spec hok)
   · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
-    exact RbDerives.unionSub h1 h2 hl1 hl2 (allIn_spec hok)
+    obtain ⟨ha, hb, hin⟩ := allInNonEmpty_spec hok
+    exact RbDerives.unionSub h1 h2 hl1 hl2 ha hb hin
   · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
-    exact RbDerives.interSub h1 h2 hl1 hl2 (allIn_spec hok)
+    obtain ⟨ha, hb, hin⟩ := allInNonEmpty_spec hok
+    exact RbDerives.interSub h1 h2 hl1 hl2 hb ha hin
   · exact hvEqPropAll_derives h
   · exact literalValueFor_derives h
 
