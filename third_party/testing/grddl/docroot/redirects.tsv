@@ -1,0 +1,12 @@
+# HTTP redirections the W3C server answers for suite IRIs, recorded
+# 2026-10-10 with `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}'`
+# (no -L) against https://www.w3.org/2001/sw/grddl-wg/td/<name>.
+# Columns: requested IRI, status, Location as served.
+# The runner follows these before it maps an IRI to a file, so the
+# retrieval URI (RFC 3986 section 5.1.3) is the Location. The site-wide
+# 301 from http to https that www.w3.org added after 2007 is not recorded.
+http://www.w3.org/2001/sw/grddl-wg/td/grddlProfileWithBaseElement	307	http://www.w3.org/2001/sw/grddl-wg/td/base/grddlProfileWithBaseElement
+http://www.w3.org/2001/sw/grddl-wg/td/xhtmlWithBaseElement	303	http://www.w3.org/2001/sw/grddl-wg/td/base/xhtmlWithBaseElement
+http://www.w3.org/2001/sw/grddl-wg/td/xhtmlWithoutBaseElement	303	http://www.w3.org/2001/sw/grddl-wg/td/base/xhtmlWithoutBaseElement
+http://www.w3.org/2001/sw/grddl-wg/td/xmlWithBase	302	http://www.w3.org/2001/sw/grddl-wg/td/base/xmlWithBase
+http://www.w3.org/2001/sw/grddl-wg/td/xmlWithoutBase	301	http://www.w3.org/2001/sw/grddl-wg/td/base/xmlWithoutBase

@@ -289,7 +289,7 @@ marked "—".
 | JSON Schema draft-07 | 770 pass, 0 fail (out of 770) | 770 pass, 0 fail (out of 770 decided) |
 | VC / DID (stage1; di-eddsa; vc20 api; did:key) | 117; 31; 59; 8 — all 0 fail | 58 pass, 0 fail (out of 58) |
 | GeoSPARQL | 37 pass, 0 fail (out of 37) | not verified |
-| GRDDL | 18 pass, 50 fail (out of 68) — partial | not verified |
+| GRDDL | 18 pass, 50 fail (out of 68) — partial | `l4grddl` 2026-10-10: 47 pass, 12 fail, 9 other (out of 68); other = 1 no transformation, 5 documents not vendorable (W3C login now), 3 related test passed (g:alternative / g:subsumes) |
 | HDT on-disk parity | 0 pass, 6 fail (out of 6) — FAILING; treat the HDT path as experimental | not verified |
 
 ## Worked examples — F\* CLI

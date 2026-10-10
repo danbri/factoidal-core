@@ -1,0 +1,18 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head profile="http://www.w3.org/2003/g/data-view">
+    <title>
+     Embedded RDF HTML Profile
+    </title>
+   
+     <link rel="transformation" href="https://www.w3.org/2003/g/glean-profile" />
+
+  </head>
+  <body>
+  <p>This following link provides the statement : <a
+        rel="profileTransformation"
+        href="extract-rdf.xsl">extract-rdf.xsl</a>.
+   </p>
+  </body>
+</html>

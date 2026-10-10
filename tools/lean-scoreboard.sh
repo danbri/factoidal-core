@@ -805,18 +805,19 @@ parse_hdt()  { row_sl "$CUR_AREA" "" '^HDT container: [0-9]+ pass' last "one uni
 parse_toan() { row_sl "$CUR_AREA" "" '^TOAN \(Lean\): [0-9]+ pass' last "* parity battery, not a W3C suite"; }
 
 parse_grddl() {
-  local line nums nt un rf tot
+  local line nums nt un rf rl tot
   line="$(pick_line '^grddl DECIDED: [0-9]+ pass' last)"
   if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'grddl DECIDED:' line in the log"; return; fi
   if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
   nt="$(line_int '^NO TRANSFORMATION FOUND: [0-9]+ cases')" || nt=""
   un="$(line_int '^UNAVAILABLE: [0-9]+ cases')" || un=0
   rf="$(line_int '^REFUSED: [0-9]+ cases')" || rf=0
+  rl="$(line_int '^RELATED TEST PASSED: [0-9]+ cases')" || rl=0
   tot="$(grep -E '^[[:space:]]+\(out of [0-9]+ tests in the manifest\)' "$CUR_LOG" | sed -nE 's/^[[:space:]]+\(out of ([0-9]+) tests in the manifest\).*$/\1/p' | sed -n '$p')"
   if [ -z "$nt" ] || [ -z "$tot" ]; then emit_status unparsed "$CUR_AREA" "" "NO TRANSFORMATION count or manifest total is missing" "$line"; return; fi
   set -- $nums
-  emit_ok "$CUR_AREA" "" "$1" "$2" $((nt + un + rf)) "$tot" \
-    "other = no transformation found ($nt) + document not in the vendored docroot ($un) + refused ($rf)" "$line"
+  emit_ok "$CUR_AREA" "" "$1" "$2" $((nt + un + rf + rl)) "$tot" \
+    "other = no transformation found ($nt) + document not in the vendored docroot ($un) + refused ($rf) + related test passed, g:alternative or g:subsumes ($rl)" "$line"
 }
 
 # LWS and Solid: two kinds of line. The executed checks, and the registry of

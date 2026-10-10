@@ -1,0 +1,9 @@
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:dataview="http://www.w3.org/2003/g/data-view#">
+ <rdf:Description
+    rdf:about="http://www.w3.org/2001/sw/grddl-wg/td/sq2ns#">
+   <dataview:namespaceTransformation
+       rdf:resource="sq1t.xsl"/>
+ </rdf:Description>
+</rdf:RDF>
