@@ -50,6 +50,7 @@ Usage (from the repository root, paths resolve from the CWD):
 
 import L4Factoidal.SHACL.Report
 import L4Factoidal.SHACL.Sparql
+import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDF.Canonical
 import Harness.Common
@@ -303,9 +304,10 @@ def runTest (opts : Options) (tc : TestCase) : Outcome × Bool :=
     else
       -- The raw shapes graph is threaded in as well as the decoded one:
       -- SHACL §5.3.1's `$shapesGraph` pre-binding needs the shapes
-      -- graph's own triples as a named graph, which the decoded AST
-      -- cannot supply.
-      let report := validateWithSparql data shapesG sg { disallowed := tc.disallowed }
+      -- graph's own triples as a named graph, and SHACL 1.2 node
+      -- expressions are read from the shapes graph, which the decoded
+      -- AST cannot supply.
+      let report := validateFull data shapesG sg { disallowed := tc.disallowed }
       -- SHACL §5.3.2 / the suite's `mf:result sht:Failure`: a query
       -- that cannot be pre-bound must be rejected with a failure, and
       -- a failed validation produces no report to compare.

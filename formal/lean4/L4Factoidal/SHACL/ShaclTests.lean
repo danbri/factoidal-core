@@ -10,6 +10,7 @@ are the unit-level checks that fail the BUILD when a clause regresses
 -/
 import L4Factoidal.SHACL.Report
 import L4Factoidal.SHACL.Sparql
+import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDF.Isomorphism
 
@@ -662,5 +663,58 @@ def askComponentDoc : String :=
           match v.value with
           | some (.literal l) => l.val.lexicalForm
           | _ => "") == ["20"]
+
+/-! ### SHACL-SPARQL 1.2 node expressions in validation
+
+§SelectExpression and §SPARQLExprExpression, reached through sh:values
+and sh:targetNode by `validateFull` (`NodeExpr.lean`). -/
+
+def runFull (body : String) : ValidationReport :=
+  let g := ttl body
+  validateFull g g (decodeShapesGraph g)
+
+-- "http://example.org/abc" has 22 characters.
+def sparqlExprDoc (n : Nat) : String :=
+  "ex:S a sh:PropertyShape ; sh:targetNode ex:abc ; sh:path ex:len ; " ++
+  "sh:values [ sh:sparqlExpr \"STRLEN(STR($this))\" ] ; sh:datatype xsd:integer ; " ++
+  s!"sh:hasValue {n} ."
+
+#guard (runFull (sparqlExprDoc 22)).conforms == true
+#guard (runFull (sparqlExprDoc 23)).conforms == false
+#guard components (runFull (sparqlExprDoc 23)) == [shHasValueCC]
+-- With the Core evaluator the blank node is a constant value, not 22.
+#guard (run (sparqlExprDoc 22)).conforms == false
+
+def selectTargetDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode [ sh:select " ++
+  "\"SELECT ?x WHERE { ?x <http://example.org/age> ?a FILTER (?a < 18) }\" ] ; " ++
+  "sh:class ex:Adult . ex:kid ex:age 10 . ex:old ex:age 40 ."
+
+#guard (runFull selectTargetDoc).results.map (·.focus) == [.iri (exIri "kid")]
+
+/-- `$this` is pre-bound to the focus node in a select expression. -/
+def selectThisDoc : String :=
+  "ex:e ex:expr [ sh:select \"SELECT ?o WHERE { $this <http://example.org/p> ?o }\" ] . " ++
+  "ex:f ex:p 7 . ex:g ex:p 8 ."
+
+def selectThisExpr : Term :=
+  (((ttl selectThisDoc).find? fun t => t.p == exIri "expr").map (·.o)).getD (.bnode "none")
+
+#guard evalSparqlNodeExpr (ttl selectThisDoc) (ttl selectThisDoc) selectThisExpr
+         (some (.iri (exIri "f"))) [] ==
+       some [.literal (L4Factoidal.SPARQL.mkTypedLiteral "7" xsdInteger)]
+-- "A failure is produced when one of the scope variables is called this."
+#guard evalSparqlNodeExpr (ttl selectThisDoc) (ttl selectThisDoc) selectThisExpr
+         (some (.iri (exIri "f"))) [("this", .iri (exIri "g"))] == some []
+-- An IRI is no SPARQL node expression.
+#guard (evalSparqlNodeExpr (ttl selectThisDoc) [] (.iri (exIri "e")) none []).isNone
+
+-- An ill-formed SPARQL node expression is a validation failure.
+def badSelectDoc : String :=
+  "ex:S a sh:PropertyShape ; sh:targetNode ex:n ; sh:path ex:p ; " ++
+  "sh:values [ sh:select \"SELECT ?x ?y WHERE { }\" ] ."
+
+#guard (runFull badSelectDoc).failure.isSome
+#guard (runFull selectTargetDoc).failure.isNone
 
 end L4Factoidal.SHACL.Tests

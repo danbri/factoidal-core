@@ -53,12 +53,13 @@ them, so the comment is stale there. Every form the F\* code handles is
 handled here.
 -/
 import L4Factoidal.SHACL.Validation
+import L4Factoidal.SHACL.Sparql
 import L4Factoidal.SPARQL.Expr
 
 namespace L4Factoidal.SHACL
 
 open L4Factoidal.RDF
-open L4Factoidal.SPARQL
+open L4Factoidal.SPARQL hiding xsdInteger xsdDecimal xsdDouble xsdBoolean
 
 /-! ## The `shnex` vocabulary -/
 
@@ -117,18 +118,21 @@ def instancesOf (g : Graph) (c : WfIri) : List Term :=
   dedupTerms (((distinctSubjects g).map Subject.toTerm).filter
     (fun t => isShaclInstance g t c))
 
-/-- Does `v` conform to the shape `shapeTerm` names? An unresolvable
-    reference conforms vacuously, as in F\*. -/
-def nodeConforms (g : Graph) (shapeTerm : Term) (v : Term) : Bool :=
+/-- Does `v` conform to the shape `shapeTerm` names (shapes from the
+    shapes graph `sg`, data from the focus graph `fg`, nested node
+    expressions by `evalE`)? An unresolvable reference conforms
+    vacuously, as in F\*. -/
+def nodeConforms (sg fg : Graph) (evalE : Term → Option Term → List Term)
+    (shapeTerm : Term) (v : Term) : Bool :=
   match termToShapeRef shapeTerm with
   | none => true
   | some r =>
-      let sg := decodeShapesGraph g
-      match lookupShape r sg.shapes with
+      let shapes := decodeShapesGraph sg
+      match lookupShape r shapes.shapes with
       | none => true
       | some s =>
-          let env := ({} : ValidationConfig).envFor g sg.shapes
-          env.conforms (collectShapeViolations env g sg.shapes v s (validateFuel sg.shapes))
+          let env := ({ evalExpr := evalE } : ValidationConfig).envFor fg shapes.shapes
+          env.conforms (collectShapeViolations env fg shapes.shapes v s (validateFuel shapes.shapes))
 
 /-! ## Numeric aggregates
 
@@ -456,20 +460,31 @@ def intersectAll : List (List Term) → List Term
   | [m] => m
   | m :: rest => let tl := intersectAll rest; m.filter (fun x => termMem x tl)
 
-def evalNe (g : Graph) (focus : Option Term) (scope : List (String × Term))
+def evalNe (sg fg : Graph) (focus : Option Term) (scope : List (String × Term))
     (expr : Term) (fuel : Nat) : List Term :=
   match fuel with
   | 0 => []
   | f + 1 =>
+    -- Nested conformance checks evaluate node expressions with this
+    -- evaluator at the smaller fuel (IRIs and literals are constants).
+    let evalSub : Term → Option Term → List Term := fun e foc =>
+      match e with
+      | .bnode _ => evalNe sg fg foc [] e f
+      | _ => [e]
     match expr.toSubject? with
     | none => [expr]                                  -- a literal is a constant
     | some es =>
+    -- SHACL-SPARQL 1.2 §SelectExpression / §SPARQLExprExpression
+    -- (`Sparql.lean`): a blank node with sh:select / sh:sparqlExpr.
+    match evalSparqlNodeExpr sg fg expr focus scope with
+    | some out => out
+    | none =>
       let startNodes : List Term :=
-        match objectsOf g es shnexFocusNode with
-        | fe :: _ => evalNe g focus scope fe f
+        match objectsOf sg es shnexFocusNode with
+        | fe :: _ => evalNe sg fg focus scope fe f
         | [] => match focus with | some x => [x] | none => []
       let base : List Term :=
-        match objectsOf g es shnexVar with
+        match objectsOf sg es shnexVar with
         | .literal l :: _ =>
             if l.val.lexicalForm == "focusNode" then
               match focus with | some x => [x] | none => []
@@ -478,114 +493,159 @@ def evalNe (g : Graph) (focus : Option Term) (scope : List (String × Term))
               | some (_, t) => [t]
               | none => []
         | _ =>
-        match objectsOf g es shnexPathValues with
-        | p :: _ => startNodes.flatMap (fun st => evalPath g st (decodePath g p f))
+        match objectsOf sg es shnexPathValues with
+        | p :: _ => startNodes.flatMap (fun st => evalPath fg st (decodePath sg p f))
         | [] =>
-        match objectsOf g es shnexNodes with
-        | l :: _ => evalNe g focus scope l f
+        match objectsOf sg es shnexNodes with
+        | l :: _ => evalNe sg fg focus scope l f
         | [] =>
-        match objectsOf g es shnexConcat with
-        | l :: _ => (rdfListTerms g l f).flatMap (fun e => evalNe g focus scope e f)
+        match objectsOf sg es shnexConcat with
+        | l :: _ => (rdfListTerms sg l f).flatMap (fun e => evalNe sg fg focus scope e f)
         | [] =>
-        match objectsOf g es shnexDistinct with
-        | e :: _ => dedupTerms (evalNe g focus scope e f)
+        match objectsOf sg es shnexDistinct with
+        | e :: _ => dedupTerms (evalNe sg fg focus scope e f)
         | [] =>
-        match objectsOf g es shnexCount with
-        | e :: _ => [mkIntLit (evalNe g focus scope e f).length]
+        match objectsOf sg es shnexCount with
+        | e :: _ => [mkIntLit (evalNe sg fg focus scope e f).length]
         | [] =>
-        match objectsOf g es shnexExists with
-        | e :: _ => [mkBoolLit !(evalNe g focus scope e f).isEmpty]
+        match objectsOf sg es shnexExists with
+        | e :: _ => [mkBoolLit !(evalNe sg fg focus scope e f).isEmpty]
         | [] =>
-        match objectsOf g es shnexIf with
+        match objectsOf sg es shnexIf with
         | c :: _ =>
-            if neEbv (evalNe g focus scope c f) then
-              match objectsOf g es shnexThen with
-              | t :: _ => evalNe g focus scope t f
+            if neEbv (evalNe sg fg focus scope c f) then
+              match objectsOf sg es shnexThen with
+              | t :: _ => evalNe sg fg focus scope t f
               | [] => []
             else
-              match objectsOf g es shnexElse with
-              | e :: _ => evalNe g focus scope e f
+              match objectsOf sg es shnexElse with
+              | e :: _ => evalNe sg fg focus scope e f
               | [] => []
         | [] =>
-        match objectsOf g es shnexSum with
-        | e :: _ => sumExpr (evalNe g focus scope e f)
+        match objectsOf sg es shnexSum with
+        | e :: _ => sumExpr (evalNe sg fg focus scope e f)
         | [] =>
-        match objectsOf g es shnexMin with
-        | e :: _ => minExpr (evalNe g focus scope e f)
+        match objectsOf sg es shnexMin with
+        | e :: _ => minExpr (evalNe sg fg focus scope e f)
         | [] =>
-        match objectsOf g es shnexMax with
-        | e :: _ => maxExpr (evalNe g focus scope e f)
+        match objectsOf sg es shnexMax with
+        | e :: _ => maxExpr (evalNe sg fg focus scope e f)
         | [] =>
-        match objectsOf g es shnexIntersection with
+        match objectsOf sg es shnexIntersection with
         | l :: _ =>
-            dedupTerms (intersectAll ((rdfListTerms g l f).map (fun m => evalNe g focus scope m f)))
+            dedupTerms (intersectAll ((rdfListTerms sg l f).map (fun m => evalNe sg fg focus scope m f)))
         | [] =>
-        match objectsOf g es shnexNodesMatching with
+        match objectsOf sg es shnexNodesMatching with
         | s :: _ =>
-            dedupTerms (((distinctSubjects g).map Subject.toTerm).filter
-              (fun v => nodeConforms g s v))
+            dedupTerms (((distinctSubjects fg).map Subject.toTerm).filter
+              (fun v => nodeConforms sg fg evalSub s v))
         | [] =>
-        match sparqlCallOf g es with
+        match sparqlCallOf sg es with
         | some (ln, arglist) =>
-            sparqlApply ln ((rdfListTerms g arglist f).flatMap
-              (fun a => (evalNe g focus scope a f).take 1))
+            sparqlApply ln ((rdfListTerms sg arglist f).flatMap
+              (fun a => (evalNe sg fg focus scope a f).take 1))
         | none =>
-        match objectsOf g es shnexInstancesOf with
-        | .iri c :: _ => instancesOf g c
+        match objectsOf sg es shnexInstancesOf with
+        | .iri c :: _ => instancesOf fg c
         | _ =>
             -- No shnex predicate. A blank node may still be a bare
             -- rdf:List expression, or an empty `[]`. An IRI or literal
             -- is a constant.
-            match objectsOf g es rdfFirst with
-            | _ :: _ => (rdfListTerms g expr f).flatMap (fun e => evalNe g focus scope e f)
+            match objectsOf sg es rdfFirst with
+            | _ :: _ => (rdfListTerms sg expr f).flatMap (fun e => evalNe sg fg focus scope e f)
             | [] => match expr with | .bnode _ => [] | _ => [expr]
       let afterFlatMap :=
-        match objectsOf g es shnexFlatMap with
-        | m :: _ => base.flatMap (fun el => evalNe g (some el) scope m f)
+        match objectsOf sg es shnexFlatMap with
+        | m :: _ => base.flatMap (fun el => evalNe sg fg (some el) scope m f)
         | [] => base
       let afterRemove :=
-        match objectsOf g es shnexRemove with
+        match objectsOf sg es shnexRemove with
         | r :: _ =>
-            let rm := evalNe g focus scope r f
+            let rm := evalNe sg fg focus scope r f
             afterFlatMap.filter (fun x => !termMem x rm)
         | [] => afterFlatMap
       let afterOrderBy :=
-        match objectsOf g es shnexOrderBy with
+        match objectsOf sg es shnexOrderBy with
         | k :: _ =>
-            let desc := (firstBool (objectsOf g es shnexDesc)).getD false
+            let desc := (firstBool (objectsOf sg es shnexDesc)).getD false
             let keyed := afterRemove.map (fun el =>
-              (el, match evalNe g (some el) scope k f with
+              (el, match evalNe sg fg (some el) scope k f with
                    | kk :: _ => kk
                    | [] => .literal (mkTypedLiteral "" xsdString)))
             let ordered := (sortByKeyTerm keyed).map (·.1)
             if desc then ordered.reverse else ordered
         | [] => afterRemove
       let afterFilter :=
-        match objectsOf g es shnexFilterShape with
-        | s :: _ => afterOrderBy.filter (fun v => nodeConforms g s v)
+        match objectsOf sg es shnexFilterShape with
+        | s :: _ => afterOrderBy.filter (fun v => nodeConforms sg fg evalSub s v)
         | [] => afterOrderBy
       let afterMatchAll :=
-        match objectsOf g es shnexMatchAll with
-        | s :: _ => [mkBoolLit (afterFilter.all (fun v => nodeConforms g s v))]
+        match objectsOf sg es shnexMatchAll with
+        | s :: _ => [mkBoolLit (afterFilter.all (fun v => nodeConforms sg fg evalSub s v))]
         | [] => afterFilter
       let afterFindFirst :=
-        match objectsOf g es shnexFindFirst with
-        | s :: _ => match afterMatchAll.find? (fun v => nodeConforms g s v) with
+        match objectsOf sg es shnexFindFirst with
+        | s :: _ => match afterMatchAll.find? (fun v => nodeConforms sg fg evalSub s v) with
                     | some v => [v]
                     | none => []
         | [] => afterMatchAll
       let afterOffset :=
-        match firstInt (objectsOf g es shnexOffset) with
+        match firstInt (objectsOf sg es shnexOffset) with
         | some n => afterFindFirst.drop n
         | none => afterFindFirst
-      match firstInt (objectsOf g es shnexLimit) with
+      match firstInt (objectsOf sg es shnexLimit) with
       | some n => afterOffset.take n
       | none => afterOffset
 termination_by fuel
 
-/-- The runner's entry point. -/
+/-- The runner's entry point: the expression and the data in one graph
+(the node-expr suite's leaf files). -/
 def evalNodeExprTop (g : Graph) (focus : Option Term)
     (scope : List (String × Term)) (expr : Term) : List Term :=
-  evalNe g focus scope expr (g.length + 100)
+  evalNe g g focus scope expr (g.length + 100)
+
+/-! ## Node expressions in validation
+
+SHACL 1.2 Core §node-expressions: "evalExpr(expr, focusGraph, focusNode,
+scope)", where "the engine can access triples related to expr in the
+shapes graph" and the focus graph is "the default query graph". The
+evaluator below reads expressions from the shapes graph and data from
+the data graph: an IRI or a literal is its own output (§IRIExpression,
+§LiteralExpression), a blank node is evaluated by `evalNe` (the shnex
+library and the SHACL-SPARQL functions). -/
+
+def nodeExprEvaluator (shapes data : Graph) (expr : Term) (focus : Option Term) : List Term :=
+  match expr with
+  | .bnode _ => evalNe shapes data focus [] expr (shapes.length + data.length + 100)
+  | _ => [expr]
+
+/-- The node expressions a shapes graph states directly — the values of
+sh:values, sh:defaultValue, sh:targetNode and sh:nodeByExpression. -/
+def statedNodeExprs (shapes : Graph) : List Term :=
+  shapes.filterMap fun t =>
+    if t.p == shValues || t.p == shDefaultValue || t.p == shTargetNode ||
+       t.p == shNodeByExpression then some t.o else none
+
+/-- SHACL-SPARQL 1.2: the first ill-formed SPARQL node expression among
+those stated, as a failure message (§SelectExpression: the query "is a
+valid SPARQL 1.2 SELECT query" that "projects exactly one variable"; the
+§5.3.2 pre-binding restrictions apply as to every SHACL-SPARQL query). -/
+def sparqlNodeExprFailure (shapes : Graph) : Option String :=
+  (statedNodeExprs shapes).findSome? fun e =>
+    (sparqlNodeExprProblem shapes e).map fun why => "SPARQL node expression: " ++ why
+
+/-- SHACL 1.2 validation with every evaluator this library has: SHACL
+Core, SHACL-SPARQL constraints and constraint components
+(`validateWithSparql`), and node expressions (`nodeExprEvaluator`) for
+sh:targetNode, sh:values, sh:defaultValue and sh:nodeByExpression. An
+ill-formed SPARQL node expression is the report's failure, as in
+SHACL-SPARQL §5.3.2. -/
+def validateFull (data shapesRaw : Graph) (sg : ShapesGraph) (cfg : ValidationConfig := {}) :
+    ValidationReport :=
+  match sparqlNodeExprFailure shapesRaw with
+  | some why => { conforms := false, results := [], failure := some why,
+                  disallowed := cfg.disallowed }
+  | none => validateWithSparql data shapesRaw sg
+              { cfg with evalExpr := nodeExprEvaluator shapesRaw data }
 
 end L4Factoidal.SHACL

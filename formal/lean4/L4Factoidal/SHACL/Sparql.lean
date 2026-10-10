@@ -451,6 +451,86 @@ def withPreboundQuery (queryText : String) (path : Option Path)
   | .error e => { results := [], failure := some (what ++ " " ++ e) }
   | .ok q => k q
 
+/-! ## SHACL-SPARQL 1.2 node expressions
+
+SHACL-SPARQL 1.2 §SelectExpression: "A node expression that has a value
+for sh:select is called a select expression ... The output nodes of a
+select expression are the list resultNodes consisting of exactly the
+bindings of the (only) variable that is projected from the SELECT
+clause when the query is evaluated against the focus graph. The value
+of focusNode is pre-bound as the value of the SPARQL variable this. The
+value of each scope variable is pre-bound as a SPARQL variable with the
+same name and value. A failure is produced when one of the scope
+variables is called this."
+
+§SPARQLExprExpression: a node with sh:sparqlExpr denotes the query
+`$PREFIXES$ SELECT ($EXPR$ AS ?result) WHERE {}`, evaluated the same
+way. Both take their `PREFIX` header from sh:prefixes (§5.2,
+`prefixHeaderFor`) and are pre-bound exactly as the §5.3 constraint
+queries are (`preboundQuery`), with the same §5.3.2 restrictions. -/
+
+/-- The query text of a select expression or a SPARQL expr expression
+(prefix header included); `none` when `expr` is neither — "a blank node
+that has exactly one value for the predicate sh:select" (or
+sh:sparqlExpr) "and this value is a literal". -/
+def sparqlNodeExprText (shapes : Graph) (expr : Term) : Option String :=
+  match expr with
+  | .bnode b =>
+    match objectsOfTerm shapes expr shSelect with
+    | [.literal l] => some (prefixHeaderFor shapes (.bnode b) ++ l.val.lexicalForm)
+    | _ =>
+      match objectsOfTerm shapes expr shSparqlExpr with
+      | [.literal l] =>
+        some (prefixHeaderFor shapes (.bnode b) ++ "SELECT (" ++ l.val.lexicalForm ++
+          " AS ?result) WHERE {}")
+      | _ => none
+  | _ => none
+
+/-- "The SPARQL query derived from the value of sh:select projects
+exactly one variable in the SELECT clause": that variable. -/
+def singleProjectedVar (q : Query) : Option VarName :=
+  match q.form with
+  | .select (.vars [.var v]) => some v
+  | .select (.vars [.expr _ v]) => some v
+  | _ => none
+
+/-- Why a SPARQL node expression is ill-formed (a parse error, a §5.3.2
+pre-binding restriction, or not exactly one projected variable), or
+`none` — also `none` for a term that is no SPARQL node expression. The
+check does not depend on the pre-bound values. -/
+def sparqlNodeExprProblem (shapes : Graph) (expr : Term) : Option String :=
+  match sparqlNodeExprText shapes expr with
+  | none => none
+  | some text =>
+    match preboundQuery text none [] with
+    | .error e => some e
+    | .ok q =>
+      match singleProjectedVar q with
+      | some _ => none
+      | none => some "a SPARQL node expression must project exactly one variable"
+
+/-- Evaluate a SPARQL node expression against the focus graph `data`:
+`some outputNodes`, or `none` when `expr` is no SPARQL node expression.
+An ill-formed expression, or a scope variable named `this`, yields no
+output node here; `sparqlNodeExprProblem` is the failure channel. -/
+def evalSparqlNodeExpr (shapes data : Graph) (expr : Term) (focus : Option Term)
+    (scope : List (String × Term)) : Option (List Term) :=
+  match sparqlNodeExprText shapes expr with
+  | none => none
+  | some text =>
+    if scope.any (fun p => p.1 == "this") then some []
+    else
+      let binds : List (VarName × Term) :=
+        (match focus with | some f => [("this", f)] | none => []) ++ scope
+      match preboundQuery text none binds with
+      | .error _ => some []
+      | .ok q =>
+        match singleProjectedVar q with
+        | none => some []
+        | some v =>
+          some ((evalSelect emptyEnv { default := data, named := [] } q).2.filterMap
+            (·.lookup v))
+
 /-! ## §5.1 `sh:sparql` constraints
 
 Every SELECT solution IS a validation result. The suite's own fixtures
