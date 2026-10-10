@@ -393,6 +393,19 @@ https://github.com/danbri/factoidal/issues/713.
   with species FULL only, and the catalog's 482 RDF-BASED cases, are judged
   there. They are not moved to an "unsupported" or "not applicable" bucket.
 
+### GRDDL is not a valid test currently (owner, 2026-10-10)
+
+> "Grddl - postpone for now, i am making enquiries. So just mark it as not a
+> valid test currently."
+
+- GRDDL work is postponed while the owner makes enquiries about the test
+  suite (fixture drift at w3.org, https://github.com/danbri/factoidal/issues/730).
+- `tools/lean-scoreboard.sh` still runs `l4grddl` and prints its numbers, on a
+  row labelled `GRDDL [not a valid test currently]`; its failures do not count
+  in the failing-row total or the exit code (`SUSPENDED_AREA_RE`).
+- Do not start GRDDL work and do not count GRDDL in conformance claims until
+  the owner lifts this.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
