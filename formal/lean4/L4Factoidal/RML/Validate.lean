@@ -362,10 +362,62 @@ def checkGather (c : Ctx) (pos : Position) (n : String) : List RmlError :=
           else checkTermMapNoDt c pos k)
     kindErrs ++ stratErrs ++ emptyErrs ++ listErrs ++ memberErrs
 
-/-- The checks for a term map, its datatype map and language map, and its
-    gather properties. -/
+/-- The triples maps a triples map quotes: the `rml:quotedTriplesMap` of
+    its subject map and of its object maps. -/
+def quotedTargets (g : Graph) (tm : String) : List String :=
+  let sms := nodesOf g tm (rmlIri "subjectMap")
+  let oms := (nodesOf g tm (rmlIri "predicateObjectMap")).flatMap
+    (fun p => nodesOf g p (rmlIri "objectMap"))
+  (sms ++ oms).flatMap (fun n => nodesOf g n (rmlIri "quotedTriplesMap"))
+
+/-- Does a triples map quote itself, directly or through the maps it
+    quotes? A quoted triple would then contain itself. The search stops
+    after as many steps as there are triples maps. -/
+def quotesItself (g : Graph) (count : Nat) (start : String) : Bool :=
+  let rec go : Nat → List String → Bool
+    | 0, _ => false
+    | f + 1, frontier =>
+        let next := (frontier.flatMap (quotedTargets g)).eraseDups
+        next.contains start || (!next.isEmpty && go f next)
+  go (count + 1) [start]
+
+/-- The checks for the star map properties of a term map (RML-star,
+    "Generating quoted triples with RML-star" and "Generating quoted
+    triples from multiple sources"): `rml:quotedTriplesMap` belongs to a
+    subject map or an object map, names a triples map, and, when that map
+    has a logical source that is not effectively equal to the one of the
+    map that quotes it, comes with at least one join condition. -/
+def checkStar (c : Ctx) (pos : Position) (n : String) : List RmlError :=
+  let g := c.g
+  let site := c.site pos n
+  let err (msg : String) : List RmlError :=
+    [RmlError.mapping site "RML-star, Generating quoted triples with RML-star" msg]
+  match nodesOf g n (rmlIri "quotedTriplesMap") with
+  | [] => []
+  | qs =>
+      let position :=
+        if pos == .subject || pos == .object then []
+        else err "rml:quotedTriplesMap is the property of a star map, which is a subject map or an object map"
+      let joins := nodesOf g n (rmlIri "joinCondition")
+      let perTarget := qs.flatMap (fun q =>
+        if !c.tmNodes.contains q then
+          err s!"rml:quotedTriplesMap {q} is not a triples map"
+        else
+          let parentCtx : Ctx :=
+            { g := g, tm := q, formulation := formulationAt g ((logicalSourceNode g q).getD "")
+              tmNodes := c.tmNodes }
+          (if joins.isEmpty &&
+              !effectivelyEqual (logicalSourceOf g c.tm) (logicalSourceOf g q) then
+             [RmlError.mapping site "RML-star, Generating quoted triples from multiple sources"
+               "the logical sources are not effectively equal, so the star map needs a join condition"]
+           else []) ++
+          joins.flatMap (checkJoin c parentCtx site))
+      position ++ perTarget
+
+/-- The checks for a term map, its datatype map and language map, its
+    gather properties and its star map properties. -/
 def checkTermMap (c : Ctx) (pos : Position) (n : String) : List RmlError :=
-  checkTermMapBase c pos n ++ checkGather c pos n
+  checkTermMapBase c pos n ++ checkGather c pos n ++ checkStar c pos n
 
 def checkPredicateObjectMap (c : Ctx) (tmNodes : List String) (pom : String) : List RmlError :=
   let g := c.g
@@ -388,7 +440,16 @@ def checkPredicateObjectMap (c : Ctx) (tmNodes : List String) (pom : String) : L
   let objShort := (objectsOf g pom (rmlIri "object")).flatMap (checkConstant c .object pom)
   let graphs := (nodesOf g pom (rmlIri "graphMap")).flatMap (checkTermMap c .graph)
   let graphShort := (objectsOf g pom (rmlIri "graph")).flatMap (checkConstant c .graph pom)
-  shape ++ preds ++ predShort ++ objs ++ objShort ++ graphs ++ graphShort
+  -- RML-star: a quoted triples map is named by a star map, which sits in a
+  -- subject map or an object map; the predicate-object map itself is not
+  -- one, and a predicate-object map without an object map is not valid
+  -- for that reason either way.
+  let onPom : List RmlError :=
+    if countOf g pom "quotedTriplesMap" > 0 then
+      [RmlError.mapping site "RML-star, Generating quoted triples with RML-star"
+        "rml:quotedTriplesMap is the property of a star map; a predicate-object map has it in an object map"]
+    else []
+  shape ++ onPom ++ preds ++ predShort ++ objs ++ objShort ++ graphs ++ graphShort
 
 /-- Check the logical source of a triples map: the iterator must be a
     valid expression in the reference formulation. -/
@@ -437,9 +498,32 @@ def checkTriplesMap (g : Graph) (tmNodes : List String) (tm : String) : List Rml
     (nodesOf g sm (rmlIri "graphMap")).flatMap (checkTermMap c .graph) ++
     (objectsOf g sm (rmlIri "graph")).flatMap (checkConstant c .graph sm))
   let subjShort := (objectsOf g tm (rmlIri "subject")).flatMap (checkConstant c .subject tm)
+  -- RML-star: the classes are subclasses of rml:TriplesMap, and the shapes of the
+  -- specification (shapes/star.ttl) allow one of them, not both.
+  let typed := fun (cls : String) => (objectsOf g tm rdfTypeStr).any (fun t => match t with
+    | .iri i => i.val == rmlIri cls | _ => false)
+  let bothClasses :=
+    if typed "AssertedTriplesMap" && typed "NonAssertedTriplesMap" then
+      [RmlError.mapping site "RML-star, Generating quoted triples with RML-star: shapes"
+        "a triples map is an rml:AssertedTriplesMap or an rml:NonAssertedTriplesMap, not both"]
+    else []
+  -- RML-star: "rml:NonAssertedTriplesMap must always be called with
+  -- rml:quotedTriplesMap": a non-asserted map that nothing quotes generates nothing.
+  let neverQuoted :=
+    if typed "NonAssertedTriplesMap" &&
+       !(tmNodes.any (fun other => (quotedTargets g other).contains tm)) then
+      [RmlError.mapping site "RML-star, Generating quoted triples with RML-star"
+        "an rml:NonAssertedTriplesMap must be named by an rml:quotedTriplesMap"]
+    else []
+  let cyclic :=
+    if quotesItself g tmNodes.length tm then
+      [RmlError.mapping site "RML-star, Generating deeply nested quoted triples"
+        "a triples map cannot quote itself, directly or through the maps it quotes"]
+    else []
   let poms := (nodesOf g tm (rmlIri "predicateObjectMap")).flatMap
     (checkPredicateObjectMap c tmNodes)
-  subjShape ++ lsShape ++ checkLogicalSource c ++ subjMaps ++ subjShort ++ poms
+  subjShape ++ lsShape ++ bothClasses ++ neverQuoted ++ cyclic ++ checkLogicalSource c ++
+    subjMaps ++ subjShort ++ poms
 
 /-- Every violation of an RML-Core MUST clause in the mapping graph. An
     empty list means the mapping is valid as far as it can be judged

@@ -92,6 +92,13 @@ def joinsAt (g : Graph) (n : String) : List JoinCondition :=
     | some c, some p => some { child := c, parent := p }
     | _, _           => none)
 
+/-- The star map facts of a term map at `n` (RML-star): the quoted
+    triples map and the join conditions between its logical source and
+    the star map's own. -/
+def quotedAt (g : Graph) (n : String) : Option QuotedSpec :=
+  (nodesOf g n (rmlNs ++ "quotedTriplesMap")).head?.map
+    (fun q => { parent := q, joins := joinsAt g n })
+
 def rdfFirstStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
 def rdfRestStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
 def rdfNilStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
@@ -138,7 +145,7 @@ mutual
 /-- A term map at `n`, with the gather map it carries, to a depth. -/
 def termMapAtF : Nat → Graph → String → TermMap
   | 0, g, n => baseTermMapAt g n
-  | f + 1, g, n => { baseTermMapAt g n with gather := gatherAt f g n }
+  | f + 1, g, n => { baseTermMapAt g n with gather := gatherAt f g n, quoted := quotedAt g n }
 
 /-- The gather map at `n`: its members (term maps, or referencing
     members), `rml:gatherAs`, `rml:strategy` and
@@ -300,10 +307,17 @@ def mappingOf (g : Graph) : Mapping :=
     let subject : Option TermMap := match smNode with
       | some sm => some (termMapAt g sm)
       | none    => (objectsOf g n (rmlNs ++ "subject")).head?.map constantMap
+    -- RML-star: a map typed `rml:NonAssertedTriplesMap` only quotes; one
+    -- typed `rml:AssertedTriplesMap` as well asserts (the shapes forbid
+    -- both, and `RML.Validate` reports it).
+    let types := objectsOf g n rdfTypeStr
+    let isType := fun (c : String) => types.any (fun t => match t with | .iri i => i.val == c | _ => false)
+    let asserted := !isType (rmlNs ++ "NonAssertedTriplesMap") || isType (rmlNs ++ "AssertedTriplesMap")
     match subject with
     | none    => none
     | some sm =>
         some { id      := n
+               asserted := asserted
                base    := strOf g n (rmlNs ++ "baseIRI")
                source  := sourceAt g ((nodesOf g n (rmlNs ++ "logicalSource")).head?.getD "")
                subject := sm

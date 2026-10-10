@@ -282,7 +282,7 @@ defjob l4diff l4diff parse_diff diff \
 # Areas with no Lean runner. Each claim was checked against
 # formal/lean4/Harness/*.lean and lakefile.lean when this script was written.
 NONE_ROWS="XForms (Bind, recalculate)|Lean library L4Factoidal/XForms/Bind.lean has build-time #guard checks only; no Harness runner
-RML-FNML, RML-star test cases|l4rml reads rml-core, rml-io and rml-cc test-cases only (rml-star, rml-fnml: in progress)
+RML-FNML test cases|l4rml reads rml-core, rml-io, rml-cc and rml-star test-cases only (rml-fnml: in progress)
 EECC interop (vc-verifier-rules, webuild-attestations)|no Lean module or runner
 QUDT|no Lean module or runner"
 

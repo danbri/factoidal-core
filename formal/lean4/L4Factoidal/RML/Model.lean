@@ -89,6 +89,11 @@ structure TriplesMap where
       every triple the map generates, not only to the type triples. -/
   graphs   : List TermMap := []
   poms     : List PredicateObjectMap := []
+  /-- RML-star: an `rml:AssertedTriplesMap` (or a plain `rml:TriplesMap`)
+      puts the triples it generates in the output graph; an
+      `rml:NonAssertedTriplesMap` generates them only as quoted triples,
+      for the star maps that name it. -/
+  asserted : Bool := true
 deriving Repr
 
 abbrev Mapping := List TriplesMap

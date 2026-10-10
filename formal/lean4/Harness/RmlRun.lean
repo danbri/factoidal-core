@@ -46,6 +46,7 @@ import L4Factoidal.RML.Eval
 import L4Factoidal.RML.Run
 import L4Factoidal.RML.Open
 import L4Factoidal.RML.Targets
+import L4Factoidal.RML.Star
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
@@ -185,7 +186,8 @@ structure Module where
 def modules : List Module :=
   [ { name := "rml-core" }
   , { name := "rml-io" }
-  , { name := "rml-cc", defaultBase := some "http://example.com/base/" } ]
+  , { name := "rml-cc", defaultBase := some "http://example.com/base/" }
+  , { name := "rml-star" } ]
 
 /-- How one case came out. -/
 inductive Outcome where
@@ -208,6 +210,13 @@ def sameGraph (a b : Graph) : Outcome :=
   | .budgetExceeded => .gaveUp "the isomorphism search hit its budget"
   | .notEqual => .fail s!"produced {a.length}, expected {b.length}"
 
+/-- A quoted triple has one reifier, whichever way the document names it
+    (RML.Star): the reifiers of the same triple term are merged in every
+    graph of a dataset before two datasets are compared. -/
+def mergeDatasetReifiers (ds : Dataset) : Dataset :=
+  { default := mergeReifiers ds.default
+    named := ds.named.map (fun ng => { ng with graph := mergeReifiers ng.graph }) }
+
 /-- Compare a produced dataset with an expected one. A mismatch that
     disappears when every datatype is erased means the EXPECTED file lost
     the datatypes the natural mapping gives (`RMLTTC0004c` expects
@@ -215,8 +224,8 @@ def sameGraph (a b : Graph) : Outcome :=
     N-Quads dump expects `"33"^^xsd:integer`): the fixtures disagree with
     each other, and the case is a fixture defect. -/
 def compareDatasets (got want : Dataset) : Outcome :=
-  let g := flattenDataset got
-  let w := flattenDataset want
+  let g := flattenDataset (mergeDatasetReifiers got)
+  let w := flattenDataset (mergeDatasetReifiers want)
   match sameGraph g w with
   | .fail msg =>
       match sameGraph (eraseDatatypes g) (eraseDatatypes w) with
@@ -231,6 +240,67 @@ def firstUnsupported (es : List RmlError) : Option RmlError :=
   es.find? (fun e => e.kind == .unsupported)
 
 def datasetOfQuadsOut (qs : List QuadOut) : Dataset := datasetOfQuads qs
+
+/-- The expected output of a case. A file that quotes triples with `<< >>`
+    is read as Turtle in RDF 1.2 mode, of which N-Triples-star is a subset;
+    any other is read as N-Quads. -/
+def parseExpected (src : String) : Except String Dataset :=
+  if (src.splitOn "<<").length > 1 then
+    match parseTurtle src none .rdf12 with
+    | .ok g => .ok { default := g, named := [] }
+    | .error e => .error e.msg
+  else
+    match parseNQuads src with
+    | .ok d => .ok d
+    | .error e => .error e.msg
+
+/-- A CSV file whose first line is `**…**`, the label the test generator
+    wrote above the data of its second input, with that line removed. -/
+def withoutLabelLine (name : String) (b : ByteArray) : Option ByteArray :=
+  if !name.endsWith ".csv" then none
+  else
+    match String.fromUTF8? b with
+    | none => none
+    | some s =>
+        let first := (String.ofList (s.toList.takeWhile (· != '\n'))).trim
+        if first.length ≥ 4 && first.startsWith "**" && first.endsWith "**" then
+          some (String.ofList ((s.toList.dropWhile (· != '\n')).drop 1)).toUTF8
+        else none
+
+/-- The files of a case with every such label line removed, or `none` when
+    no file has one. -/
+def withoutLabelLines (files : List (String × ByteArray)) : Option (List (String × ByteArray)) :=
+  let cleaned := files.map (fun (n, b) => (n, withoutLabelLine n b))
+  if cleaned.any (fun (_, c) => c.isSome) then
+    some (cleaned.map (fun (n, c) => (n, c.getD ((files.find? (fun (m, _) => m == n)).map (·.2) |>.getD ByteArray.empty))))
+  else none
+
+/-- Run a positive case on the given files and compare the result with the
+    expected dataset: the default target first, then each logical target's
+    file. -/
+def judge (mg : Graph) (baseOf : Option String) (files : List (String × ByteArray))
+    (want : Dataset) : Outcome × EvalResult :=
+  let r := runMappingGraphFiles mg baseOf (fileAccessOf files)
+  match firstUnsupported r.errors with
+  | some u => (.bucket u.bucket u.message, r)
+  | none =>
+    if r.rejected then (.fail s!"a valid mapping was rejected\n{renderErrors r.errors}", r)
+    else
+      let first := compareDatasets (datasetOfQuads (quadsFor none r.quads)) want
+      let outcome := (logicalTargetsOf mg).foldl (fun (o : Outcome) lt =>
+        match o with
+        | .pass =>
+            let fname := baseName lt.path
+            match files.find? (fun (n, _) => n == fname) with
+            | none => .fail s!"the expected file '{fname}' of target {lt.id} is missing"
+            | some (_, bytes) =>
+                match readTarget lt bytes, ourDump lt (quadsFor (some lt.id) r.quads) with
+                | .error (.unsupported b why), _ | _, .error (.unsupported b why) => .bucket b why
+                | .error (.failed m), _ => .fail s!"the expected file '{fname}' cannot be read: {m}"
+                | _, .error (.failed m) => .fail s!"our dump for '{fname}' cannot be made: {m}"
+                | .ok wantDs, .ok gotDs => compareDatasets gotDs wantDs
+        | o => o) first
+      (outcome, r)
 
 /-- Run one case of a module. -/
 def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
@@ -288,7 +358,7 @@ def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
     IO.println s!"no expected output and the metadata does not call it an error: {name}"
     return t
   let osrc ← IO.FS.readFile op
-  match parseTurtle msrc none, parseNQuads osrc with
+  match parseTurtle msrc none, parseExpected osrc with
   | .error e, _ =>
       t := t.addBucket "not read" "the mapping did not parse" name
       IO.println s!"NOT READ {name}: the mapping did not parse ({e.msg})"
@@ -298,7 +368,7 @@ def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
         "RMLTC0027b's output.nq writes <http://example.com/Person/Emily Smith>, " ++
         "and an IRIREF may not contain a space.")
   | .ok mg, .ok want =>
-      let r := runMappingGraphFiles mg baseOf (fileAccessOf files)
+      let (outcome0, r) := judge mg baseOf files want
       if dump == some name then
         let got := flattenQuads r.quads
         let wantG := flattenDataset want
@@ -308,45 +378,31 @@ def runCase (md : Module) (dir : String) (m? : Option CaseMeta) (name : String)
         IO.println s!"--- {name} EXPECTED {wantG.length} ---"
         for l in ((wantG.map (fun x => (Graph.toNTriples [x]).toOption.getD "")).mergeSort (· ≤ ·)) do
           IO.println l.trim
-      match firstUnsupported r.errors with
-      | some u =>
-          t := t.addBucket u.bucket u.message name
-          IO.println s!"UNATTEMPTED {name} ({u.bucket}): {u.message}"
-      | none =>
-      if r.rejected then
-        t := { t with fail := t.fail + 1 }
-        IO.println s!"FAIL {name}: a valid mapping was rejected\n{renderErrors r.errors}"
-      else
-        -- The default target first, then each logical target's file.
-        let mut outcome : Outcome :=
-          compareDatasets (datasetOfQuads (quadsFor none r.quads)) want
-        for lt in logicalTargetsOf mg do
-          match outcome with
-          | .pass =>
-              let fname := baseName lt.path
-              match files.find? (fun (n, _) => n == fname) with
-              | none => outcome := .fail s!"the expected file '{fname}' of target {lt.id} is missing"
-              | some (_, bytes) =>
-                  match readTarget lt bytes, ourDump lt (quadsFor (some lt.id) r.quads) with
-                  | .error (.unsupported b why), _ | _, .error (.unsupported b why) =>
-                      outcome := .bucket b why
-                  | .error (.failed m), _ =>
-                      outcome := .fail s!"the expected file '{fname}' cannot be read: {m}"
-                  | _, .error (.failed m) =>
-                      outcome := .fail s!"our dump for '{fname}' cannot be made: {m}"
-                  | .ok wantDs, .ok gotDs => outcome := compareDatasets gotDs wantDs
-          | _ => pure ()
-        match outcome with
-        | .pass => t := { t with pass := t.pass + 1 }
-        | .gaveUp why =>
-            t := { t with gaveUp := t.gaveUp + 1 }
-            IO.println s!"GAVE UP {name}: {why}"
-        | .bucket b why =>
-            t := t.addBucket b why name
-            IO.println s!"UNATTEMPTED {name} ({b}): {why}"
-        | .fail msg =>
-            t := { t with fail := t.fail + 1 }
-            IO.println s!"FAIL {name}: {msg}"
+      -- A case that fails may fail because its data file starts with the
+      -- generator's label line. It is a fixture defect when the case passes
+      -- with that line removed, and a failure when it still does not.
+      let outcome : Outcome :=
+        match outcome0 with
+        | .fail _ =>
+            match withoutLabelLines files with
+            | none => outcome0
+            | some files' =>
+                match (judge mg baseOf files' want).1 with
+                | .pass => .bucket "fixture defect"
+                    "a data file starts with the line **Input N**, the label of the test generator, which is not CSV data"
+                | _ => outcome0
+        | o => o
+      match outcome with
+      | .pass => t := { t with pass := t.pass + 1 }
+      | .gaveUp why =>
+          t := { t with gaveUp := t.gaveUp + 1 }
+          IO.println s!"GAVE UP {name}: {why}"
+      | .bucket b why =>
+          t := t.addBucket b why name
+          IO.println s!"UNATTEMPTED {name} ({b}): {why}"
+      | .fail msg =>
+          t := { t with fail := t.fail + 1 }
+          IO.println s!"FAIL {name}: {msg}"
   return t
 
 /-- Run one module of the corpus. -/

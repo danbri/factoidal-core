@@ -25,6 +25,7 @@ import L4Factoidal.RML.Value
 import L4Factoidal.RML.Error
 import L4Factoidal.RML.Record
 import L4Factoidal.RML.Open
+import L4Factoidal.RML.Star
 import L4Factoidal.JSON.Parser
 
 namespace L4Factoidal.RML
@@ -435,32 +436,6 @@ structure Env where
   all : Mapping
   src : SourceTable
 
-/-- The subjects of the parent triples map for the parent records a
-    referencing object map (or a gather member) selects.
-
-    With join conditions, a parent record is selected when every join
-    holds. With NONE, the two logical sources must be effectively equal
-    (`RML.Validate` checks it), and the parent iteration is the SAME
-    iteration as the child's (RML-Core, Joins: the example with the
-    thumbnail); pairing every child with every parent record would be a
-    cross product that no mapping asks for. -/
-def refTermsE (env : Env) (tm : TriplesMap) (i : Nat) (rec' : Record)
-    (parentId : String) (joins : List JoinCondition) : List Term × List RmlError :=
-  match env.all.find? (fun p => p.id == parentId) with
-  | none => ([], [])
-  | some parentMap =>
-      match env.src.get parentMap.source with
-      | .error e => ([], [e.withSite parentMap.id])
-      | .ok precs =>
-          let matched :=
-            if joins.isEmpty && parentMap.source == tm.source then
-              precs.zipIdx.filter (fun (_, pi) => pi == i)
-            else precs.zipIdx.filter (fun (prec, _) => joinHolds joins rec' prec)
-          let rs : List (List Term × List RmlError) := matched.map (fun (prec, pi) =>
-            let r := subjectsOfE parentMap prec pi
-            (r.1.map Subject.toTerm, r.2))
-          (rs.flatMap (·.1), rs.flatMap (·.2))
-
 /-! ## Term maps, evaluated
 
 `gensOfE` is the one place a term map becomes terms. A plain map
@@ -469,7 +444,7 @@ builds collections. Evaluation is by FUEL, because a gather map's members
 are term maps and the nesting is read from a graph that could be cyclic:
 `fuel` bounds the depth and an exhausted fuel generates nothing. -/
 
-def gatherFuel : Nat := 8
+def gatherFuel : Nat := 48
 
 /-- The head of a collection when the mapping names none: a fresh blank
     node, distinct for every triples map, record, position in the mapping
@@ -485,7 +460,44 @@ def collectionsOf (gs : GatherSpec) (lists : List (List Gen)) : List (List Gen) 
   | .append => let all := lists.flatMap id; if all.isEmpty then [] else [all]
   | .cartesianProduct => if lists.any (·.isEmpty) then [] else cartesian lists
 
+/-- A quoted triple (RML-star): the reifier of the triple term, and the
+    `rdf:reifies` triple that gives the reifier its meaning, with whatever
+    the triple's own terms need (a nested quoted triple's reifier, a
+    collection). -/
+def quotedGen (s : Subject) (p : WfIri) (o : Term) (extras : List Extra) : Gen :=
+  let tt := Term.tripleTerm s p o
+  { term := reifierOf tt, extras := .triple (reifiesTriple tt) :: extras }
+
 mutual
+
+/-- The subjects of the parent triples map for the parent records a
+    referencing object map (or a gather member) selects.
+
+    With join conditions, a parent record is selected when every join
+    holds. With NONE, the two logical sources must be effectively equal
+    (`RML.Validate` checks it), and the parent iteration is the SAME
+    iteration as the child's (RML-Core, Joins: the example with the
+    thumbnail); pairing every child with every parent record would be a
+    cross product that no mapping asks for. -/
+def refGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (i : Nat) (rec' : Record)
+    (parentId : String) (joins : List JoinCondition) : List Gen × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match env.all.find? (fun p => p.id == parentId) with
+    | none => ([], [])
+    | some parentMap =>
+        match env.src.get parentMap.source with
+        | .error e => ([], [e.withSite parentMap.id])
+        | .ok precs =>
+            let matched :=
+              if joins.isEmpty && parentMap.source == tm.source then
+                precs.zipIdx.filter (fun (_, pi) => pi == i)
+              else precs.zipIdx.filter (fun (prec, _) => joinHolds joins rec' prec)
+            let rs : List (List Gen × List RmlError) := matched.map (fun (prec, pi) =>
+              let r := subjectGensE fuel env parentMap prec pi
+              (r.1.map (fun (s, ex) => ({ term := s.toTerm, extras := ex } : Gen)), r.2))
+            (rs.flatMap (·.1), rs.flatMap (·.2))
 
 /-- The members of a gather map, evaluated: the terms of each member map,
     or of a referencing member. -/
@@ -497,9 +509,7 @@ def memberGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (path : String) (i : 
     gs.members.zipIdx.map (fun (m, k) =>
       match m with
       | .term mm => gensOfE fuel env tm (path ++ s!".m{k}") i mm rec' true
-      | .ref parentId joins =>
-          let r := refTermsE env tm i rec' parentId joins
-          (r.1.map (fun t => { term := t }), r.2))
+      | .ref parentId joins => refGensE fuel env tm i rec' parentId joins)
 
 /-- All the terms a term map generates from one record, with what they
     need alongside. -/
@@ -510,8 +520,11 @@ def gensOfE (fuel : Nat) (env : Env) (tm : TriplesMap) (path : String) (i : Nat)
   | fuel + 1 =>
     match m.gather with
     | none =>
-        let r := termsOfE tm.base m rec' naturalTypes
-        (r.1.map (fun t => { term := t }), r.2)
+        match m.quoted with
+        | some q => quotedGensE fuel env tm i q rec'
+        | none =>
+            let r := termsOfE tm.base m rec' naturalTypes
+            (r.1.map (fun t => { term := t }), r.2)
     | some gs =>
         let memberRes := memberGensE fuel env tm path i gs rec'
         let collections := collectionsOf gs (memberRes.map (·.1))
@@ -538,17 +551,66 @@ def gensOfE (fuel : Nat) (env : Env) (tm : TriplesMap) (path : String) (i : Nat)
               (if named then headRes.1 else [freshHead tm.id path i k]).map (one c k))
         (gens, (memberRes.flatMap (·.2)) ++ headRes.2)
 
-end
+/-- A star map (RML-star): the reifiers of the triples its quoted triples
+    map generates. Without join conditions, and over the same logical
+    source, the quoted triples are those the quoted map generates for the
+    SAME iteration; with join conditions, for every parent iteration the
+    joins select (RML-star, "Generating quoted triples from multiple
+    sources"). -/
+def quotedGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (i : Nat) (q : QuotedSpec)
+    (rec' : Record) : List Gen × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match env.all.find? (fun p => p.id == q.parent) with
+    | none => ([], [])
+    | some qm =>
+        match env.src.get qm.source with
+        | .error e => ([], [e.withSite qm.id])
+        | .ok precs =>
+            let matched : List (Record × Nat) :=
+              if q.joins.isEmpty && qm.source == tm.source then
+                precs.zipIdx.filter (fun (_, pi) => pi == i)
+              else precs.zipIdx.filter (fun (prec, _) => joinHolds q.joins rec' prec)
+            let rs := matched.map (fun (prec, pi) => quotedTriplesOfE fuel env qm pi prec)
+            (rs.flatMap (·.1), rs.flatMap (·.2))
+
+/-- The triples a triples map generates from one record, each as a quoted
+    triple: the class triples of the subject map, then those of every
+    predicate-object map. Graph maps do not matter: a quoted triple is a
+    triple, not a quad. -/
+def quotedTriplesOfE (fuel : Nat) (env : Env) (qm : TriplesMap) (pi : Nat) (prec : Record)
+    : List Gen × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    let sg := subjectGensE fuel env qm prec pi
+    let perSubject : List (List Gen × List RmlError) := sg.1.map (fun (s, sx) =>
+      let classGens : List Gen := qm.classes.filterMap (fun c =>
+        if h : isIri c then some (quotedGen s rdfTypeIri (.iri ⟨c, h⟩) sx) else none)
+      let pomRes : List (List Gen × List RmlError) := qm.poms.zipIdx.map (fun (pom, pk) =>
+        let predRes := pom.predicates.map (fun pm => termsOfE qm.base (asIri pm) prec false)
+        let preds := predRes.flatMap (fun r => r.1.filterMap toPred?)
+        let objRes := pom.objects.zipIdx.map (fun (om, oi) =>
+          objectGensE fuel env qm pk oi om prec pi)
+        let objs := objRes.flatMap (·.1)
+        (preds.flatMap (fun p => objs.map (fun o => quotedGen s p o.term (sx ++ o.extras))),
+         predRes.flatMap (·.2) ++ objRes.flatMap (·.2)))
+      (classGens ++ pomRes.flatMap (·.1), pomRes.flatMap (·.2)))
+    (perSubject.flatMap (·.1), sg.2 ++ perSubject.flatMap (·.2))
 
 /-- The Gens of a subject map for one record: a gather map builds a
-    collection; a plain map yields subjects as `subjectsOfE` does. -/
-def subjectGensE (env : Env) (tm : TriplesMap) (rec' : Record) (i : Nat)
+    collection, a star map quotes triples; a plain map yields subjects as
+    `subjectsOfE` does. -/
+def subjectGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (rec' : Record) (i : Nat)
     : List (Subject × List Extra) × List RmlError :=
-  match tm.subject.gather with
-  | some _ =>
-      let r := gensOfE gatherFuel env tm "s" i (asIri tm.subject) rec' false
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    if tm.subject.gather.isSome || tm.subject.quoted.isSome then
+      let r := gensOfE fuel env tm "s" i (asIri tm.subject) rec' false
       (r.1.filterMap (fun g => (toSubject? g.term).map (fun s => (s, g.extras))), r.2)
-  | none =>
+    else
       let r := subjectsOfE tm rec' i
       (r.1.map (fun s => (s, [])), r.2)
 
@@ -557,29 +619,32 @@ def subjectGensE (env : Env) (tm : TriplesMap) (rec' : Record) (i : Nat)
     and become the datatype and language of the literals it makes. A
     referencing object map yields the SUBJECTS of the parent triples map
     for the parent records the joins select. -/
-def objectGensE (env : Env) (tm : TriplesMap) (pi oi : Nat) (om : ObjectMap) (rec' : Record)
-    (i : Nat) : List Gen × List RmlError :=
-  match om with
-  | .term base dtm lm =>
-      let dtRes : Option String × List RmlError :=
-        match dtm with
-        | some m => stringOfE tm.base (asIri m) rec'
-        | none   => (none, [])
-      let lmRes : Option String × List RmlError :=
-        match lm with
-        | some m => stringOfE tm.base (asLiteral m) rec'
-        | none   => (none, [])
-      let base1 := match dtRes.1 with
-        | some d => { base with datatype := some d }
-        | none   => base
-      let base2 := match lmRes.1 with
-        | some l => { base1 with language := some l }
-        | none   => base1
-      let r := gensOfE gatherFuel env tm s!"p{pi}.o{oi}" i base2 rec' true
-      (r.1, dtRes.2 ++ lmRes.2 ++ r.2)
-  | .ref parentId joins =>
-      let r := refTermsE env tm i rec' parentId joins
-      (r.1.map (fun t => { term := t }), r.2)
+def objectGensE (fuel : Nat) (env : Env) (tm : TriplesMap) (pi oi : Nat) (om : ObjectMap)
+    (rec' : Record) (i : Nat) : List Gen × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match om with
+    | .term base dtm lm =>
+        let dtRes : Option String × List RmlError :=
+          match dtm with
+          | some m => stringOfE tm.base (asIri m) rec'
+          | none   => (none, [])
+        let lmRes : Option String × List RmlError :=
+          match lm with
+          | some m => stringOfE tm.base (asLiteral m) rec'
+          | none   => (none, [])
+        let base1 := match dtRes.1 with
+          | some d => { base with datatype := some d }
+          | none   => base
+        let base2 := match lmRes.1 with
+          | some l => { base1 with language := some l }
+          | none   => base1
+        let r := gensOfE fuel env tm s!"p{pi}.o{oi}" i base2 rec' true
+        (r.1, dtRes.2 ++ lmRes.2 ++ r.2)
+    | .ref parentId joins => refGensE fuel env tm i rec' parentId joins
+
+end
 
 /-- The logical targets of an object map: those of its term map and of
     its datatype and language maps. -/
@@ -604,7 +669,7 @@ def pomQuadsE (env : Env) (tm : TriplesMap) (pi : Nat) (sgraphs : List (Term × 
   let graphTargetsOf := targetsOfGraph (sgraphs ++ pgRes.1)
   let objRes : List (List Gen × List String × List RmlError) :=
     pom.objects.zipIdx.map (fun (om, oi) =>
-      let r := objectGensE env tm pi oi om rec' i
+      let r := objectGensE gatherFuel env tm pi oi om rec' i
       (r.1, om.targets, r.2))
   let outs : List Out := predRes.flatMap (fun (ps, pt, _) =>
     ps.flatMap (fun p => objRes.flatMap (fun (os, ot, _) =>
@@ -645,7 +710,7 @@ def subjectQuadsE (env : Env) (tm : TriplesMap) (sgraphs : List (Term × List St
     <https://github.com/danbri/factoidal/issues/558>. -/
 def outOfRecords (env : Env) (tm : TriplesMap) (recs : List (Record × Nat)) : Out :=
   let per : List Out := recs.map (fun (rec', i) =>
-    let sr := subjectGensE env tm rec' i
+    let sr := subjectGensE gatherFuel env tm rec' i
     let gr := graphTermsWithTargetsE tm.base tm.graphs rec'
     Out.join (sr.1.map (fun (s, ex) => subjectQuadsE env tm gr.1 rec' i s ex)) ++
       { errs := sr.2 ++ gr.2 })
@@ -660,6 +725,8 @@ def quadsOfRecords (env : Env) (tm : TriplesMap) (recs : List (Record × Nat)) :
     SOURCE error: the file named by `rml:path` does not exist
     (`RMLTC0002e`), which is not the same as a source with no rows. -/
 def outOfMap (env : Env) (tm : TriplesMap) : Out :=
+  if !tm.asserted then {}
+  else
   match env.src.get tm.source with
   | .error e => { errs := [e.withSite tm.id] }
   | .ok recs => outOfRecords env tm recs.zipIdx
