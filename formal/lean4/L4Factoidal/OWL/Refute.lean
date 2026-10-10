@@ -937,6 +937,63 @@ def existsMaxQualLt (k : Nat) (p : WfIri) (c : ClassExpr) (ls : List ClassExpr)
                    | .maxQualCard k' p' c' => p' == p && k' < k && ClassExpr.beq c c'
                    | _                     => false)
 
+/-- Fold one class expression into the value space its fillers must
+    lie in. Every shape the datatype layer does not recognise leaves
+    the accumulator untouched, so this rule is inert on the ordinary
+    class-expression corpus by construction. -/
+partial def foldDatatypeConstraint (acc : ValueSet) : ClassExpr → ValueSet
+  | .dataRestriction dt facets =>
+      if isIntegerFamilyDatatype dt then
+        valueSetIntersect acc (.interval (facetsToInterval dt facets fullInterval))
+      else if isDateTimeDatatype dt then
+        valueSetIntersect acc (.dateInterval (dateTimeFacetsToInterval facets fullInterval))
+      -- A restriction over `xsd:float` is DISCRETE: an open interval
+      -- whose endpoints are adjacent representable floats is EMPTY
+      -- though the same real interval is not.
+      else if isFloatDatatype dt then
+        (if floatRestrictionProvablyEmpty dt facets then .empty else acc)
+      -- A DENSE base folds to a rational-endpoint interval on the
+      -- owl:real line, where adjacency never empties anything.
+      else if isDenseNumericDatatype dt then
+        valueSetIntersect acc (.dense (denseFacetsToQInterval facets fullQInterval))
+      else acc
+  | .oneOf members =>
+      if !members.isEmpty && members.all (fun t => match t with
+                                                   | .literal _ => true
+                                                   | _          => false)
+      then valueSetIntersect acc (.enum members) else acc
+  | .named dt =>
+      if isDateTimeDatatype dt then valueSetIntersect acc (.dateInterval fullInterval)
+      else if isDenseNumericDatatype dt then
+        valueSetIntersect acc (.dense fullQInterval)
+      else
+        (match classifyFamily dt with
+         | some .numeric => valueSetIntersect acc (.interval (baseIntervalFor dt))
+         -- WITHHELD deliberately for the two floating-point families.
+         -- The RDFS closure derives `xsd:byte rdfs:subClassOf
+         -- xsd:double`, and range propagation turns one asserted
+         -- `p rdfs:range xsd:byte` into a DERIVED `p rdfs:range
+         -- xsd:double`. Reading that derived range as a disjointness
+         -- constraint would empty the value space of a CONSISTENT
+         -- premise. The float/real disjointness is still used where
+         -- it is read off an asserted literal's OWN datatype, never
+         -- off a derived range triple.
+         | some .float  => acc
+         | some .double => acc
+         | some f       => valueSetIntersect acc (.family f)
+         | none         => acc)
+  | .complement inner =>
+      valueSetSubtract acc (foldDatatypeConstraint .unconstrained inner)
+  | _ => acc
+
+/-- A literal successor PROVABLY in the data range `c`: its value lies
+    in the value space `foldDatatypeConstraint` reads off `c`
+    (`termProvablyInValueSet`). A filler the datatype layer does not
+    read folds to `unconstrained`, and no literal is provably in that,
+    so the answer is `false` there. -/
+def literalProvablyInRange (c : ClassExpr) (t : Term) : Bool :=
+  termProvablyInValueSet (foldDatatypeConstraint .unconstrained c) t
+
 /-- Successors PROVABLY in the filler: the successor's own node
     carries the filler as a label. Labels are entailed memberships, so
     this under-counts, which is the direction that keeps a `≤ k`
@@ -1045,7 +1102,8 @@ def clashForLabel (g : Graph) (st : RState) (i : Subject)
        else existsDistinctSubsetBy (distinctIn g st) succs (k + 1))
       || minSumClash st lsAll k p
   | .maxQualCard k p c =>
-      let succs := successorsInFiller st c (successorsOf g st i p true)
+      let all := successorsOf g st i p true
+      let succs := successorsInFiller st c all ++ all.filter (literalProvablyInRange c)
       if k == 0 then !succs.isEmpty
       else existsDistinctSubsetBy (distinctIn g st) succs (k + 1)
   | _ => false
@@ -1075,55 +1133,6 @@ never the reverse: an over-count only withholds a clash. A dense
 range answers `none` and makes the rule inert there, which is right —
 a min-cardinality on `xsd:decimal` is satisfiable.
 -/
-
-/-- Fold one class expression into the value space its fillers must
-    lie in. Every shape the datatype layer does not recognise leaves
-    the accumulator untouched, so this rule is inert on the ordinary
-    class-expression corpus by construction. -/
-partial def foldDatatypeConstraint (acc : ValueSet) : ClassExpr → ValueSet
-  | .dataRestriction dt facets =>
-      if isIntegerFamilyDatatype dt then
-        valueSetIntersect acc (.interval (facetsToInterval dt facets fullInterval))
-      else if isDateTimeDatatype dt then
-        valueSetIntersect acc (.dateInterval (dateTimeFacetsToInterval facets fullInterval))
-      -- A restriction over `xsd:float` is DISCRETE: an open interval
-      -- whose endpoints are adjacent representable floats is EMPTY
-      -- though the same real interval is not.
-      else if isFloatDatatype dt then
-        (if floatRestrictionProvablyEmpty dt facets then .empty else acc)
-      -- A DENSE base folds to a rational-endpoint interval on the
-      -- owl:real line, where adjacency never empties anything.
-      else if isDenseNumericDatatype dt then
-        valueSetIntersect acc (.dense (denseFacetsToQInterval facets fullQInterval))
-      else acc
-  | .oneOf members =>
-      if !members.isEmpty && members.all (fun t => match t with
-                                                   | .literal _ => true
-                                                   | _          => false)
-      then valueSetIntersect acc (.enum members) else acc
-  | .named dt =>
-      if isDateTimeDatatype dt then valueSetIntersect acc (.dateInterval fullInterval)
-      else if isDenseNumericDatatype dt then
-        valueSetIntersect acc (.dense fullQInterval)
-      else
-        (match classifyFamily dt with
-         | some .numeric => valueSetIntersect acc (.interval (baseIntervalFor dt))
-         -- WITHHELD deliberately for the two floating-point families.
-         -- The RDFS closure derives `xsd:byte rdfs:subClassOf
-         -- xsd:double`, and range propagation turns one asserted
-         -- `p rdfs:range xsd:byte` into a DERIVED `p rdfs:range
-         -- xsd:double`. Reading that derived range as a disjointness
-         -- constraint would empty the value space of a CONSISTENT
-         -- premise. The float/real disjointness is still used where
-         -- it is read off an asserted literal's OWN datatype, never
-         -- off a derived range triple.
-         | some .float  => acc
-         | some .double => acc
-         | some f       => valueSetIntersect acc (.family f)
-         | none         => acc)
-  | .complement inner =>
-      valueSetSubtract acc (foldDatatypeConstraint .unconstrained inner)
-  | _ => acc
 
 /-- The intersection of every `∀q.D` label whose `q` constrains `p`'s
     fillers — `p ⊑* q`, so every `p`-filler is a `q`-filler. -/
@@ -1299,11 +1308,31 @@ def datatypeRangeClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassE
   (collectDtProperties ls).any (fun p =>
     existsUnsatisfiableWitness p ls (fillerValueSet st p ls) (excludedValues g st i p))
 
-def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri) :=
+/-- Every label that demands `k` pairwise different `p`-fillers:
+    `(k, p, none)` for `≥ k p` and `= k p`, `(k, p, some D)` for the
+    QUALIFIED forms `≥ k p.D` and `= k p.D`.
+
+    OWL 2 Direct Semantics §2.2.3 (class expressions):
+    `DataMinCardinality(n DPE DR)` is
+    `{x | #{y | ⟨x,y⟩ ∈ (DPE)ᴰᴾ ∧ y ∈ (DR)ᴰᵀ} ≥ n}`. The `n` values
+    lie in `(DR)ᴰᵀ` AND in every space a filler of `DPE` is confined
+    to, so the qualified form meets the filler space with `DR`. A
+    filler the datatype layer does not read (an object class
+    expression, a datatype outside the map) leaves the space as it is,
+    which over-counts and withholds the clash.
+
+    Until 2026-10-10 the qualified forms were not collected, so
+    `DataExactCardinality(2 dp xsd:boolean)` beside
+    `NegativeDataPropertyAssertion(dp a "true"^^xsd:boolean)` was not
+    refuted (`Qualified-cardinality-boolean`,
+    https://github.com/danbri/factoidal/issues/709). -/
+def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri × Option ClassExpr) :=
   ls.filterMap (fun l => match l with
-    | .minCard k p   => some (k, p)
-    | .exactCard k p => some (k, p)
-    | _              => none)
+    | .minCard k p         => some (k, p, none)
+    | .exactCard k p       => some (k, p, none)
+    | .minQualCard k p d   => some (k, p, some d)
+    | .exactQualCard k p d => some (k, p, some d)
+    | _                    => none)
 
 /-- An upper bound on the values left in `vs` once `ex` is removed.
     For a finite integer interval it is the count less the excluded
@@ -1319,13 +1348,22 @@ def valueSetMaxSizeExcluding (vs : ValueSet) (ex : List Term) : Option Nat :=
           some (k - inside.length)
       | none => none
   | .enum _ => valueSetMaxSize (valueSetMinusValues vs ex)
+  -- `xsd:boolean` has the value space `{true, false}` (XSD 1.1 Part 2
+  -- §3.3.2); an excluded boolean value, read through its lexical
+  -- mapping (`"1"` and `"true"` are one value), removes one of them.
+  | .family .boolean =>
+      some (2 - (ex.filterMap termBoolOpt).eraseDups.length)
   | _ => valueSetMaxSize vs
 
 def datatypeCardinalityClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
     : Bool :=
-  (collectCardProps ls).any (fun (k, p) =>
+  (collectCardProps ls).any (fun (k, p, d?) =>
     k ≥ 1 &&
-    (match valueSetMaxSizeExcluding (fillerValueSet st p ls) (excludedValues g st i p) with
+    (let vs := fillerValueSet st p ls
+     let vs := match d? with
+       | some d => foldDatatypeConstraint vs d
+       | none   => vs
+     match valueSetMaxSizeExcluding vs (excludedValues g st i p) with
      | some m => k > m
      | none   => false))
 
@@ -2952,12 +2990,32 @@ def unorderedPairs : List Term → List (Term × Term)
   | []      => []
   | a :: tl => tl.map (fun b => (a, b)) ++ unorderedPairs tl
 
+/-- The pairs the ≤-rule branches on: every pair of successors not
+    provably different, since in every model of `≤ k p` with more than
+    `k` successors SOME such pair denotes one element. The rule closes
+    the node only when EVERY branch closes, so the list must hold every
+    pair a model may identify.
+
+    A literal is not a node and cannot be merged into one, so a pair
+    with a literal member cannot be a branch. Such a pair is not
+    dropped from the list: the rule offers NO branch at all when one
+    exists, and the search reads that as "no choice forced", which
+    withholds the refutation.
+
+    Until 2026-10-10 the literals were filtered out first and the
+    remaining pairs offered. `a : ≤ 2 dp`, `a dp 1`, `a dp "x"`,
+    `a : ∃dp.xsd:integer`, `a : ∃dp.¬xsd:integer` minted two
+    witnesses, offered only the witness pair, merged it into one node
+    labelled `xsd:integer` and `¬xsd:integer`, and refuted the graph.
+    It has a model: the witnesses are `1` and `"x"`. -/
 private def witnessPairs (g : Graph) (st : RState) (succs : List Term) (k : Nat)
     : List (Term × Term) :=
   if succs.length ≤ k then []
   else
-    (unorderedPairs (succs.filter isMergeableTerm)).filter (fun (a, b) =>
+    let pairs := (unorderedPairs succs).filter (fun (a, b) =>
       a != b && !(distinctIn g st a b))
+    if pairs.any (fun (a, b) => !isMergeableTerm a || !isMergeableTerm b) then []
+    else pairs
 
 /-- The witness pairs a `≤ k p` label could be forced to identify.
 

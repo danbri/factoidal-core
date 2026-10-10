@@ -789,6 +789,41 @@ def valueSetSubtract : ValueSet → ValueSet → ValueSet
       enumOr (filterEnumBy (fun t => !(ys.any (termProvablyEqual t))) xs)
   | acc, _ => acc
 
+/-! ## Is a literal provably IN a value set?
+
+The other direction from `provablyOutside…`: `true` only when the
+literal's value lies in the set in every interpretation, so a caller
+may count it as a member. Every shape this module cannot decide answers
+`false`, which under-counts members; an under-count only withholds a
+clash that counts members against an upper bound.
+
+* a family: the literal's own datatype is in that family and its
+  lexical form is in the lexical space where the family has a parser
+  (`xsd:string` admits every lexical form; boolean, integer and the
+  exact real datatypes are parsed). `xsd:float` and `xsd:double`
+  answer `false`.
+* an integer interval: the literal has an integer value inside it;
+* a dense stretch of the `owl:real` line: the literal has an exact
+  rational value inside it;
+* an enumeration: the literal is provably equal to a member.
+-/
+def termProvablyInValueSet (vs : ValueSet) (t : Term) : Bool :=
+  match t with
+  | .literal _ =>
+    match vs with
+    | .family .string  => termFamily t == some Family.string
+    | .family .boolean => (termBoolOpt t).isSome
+    | .family .numeric => (termExactRat t).isSome
+    | .interval iv     => match termIntOpt t with
+                          | some n => valueInInterval n iv
+                          | none   => false
+    | .dense qi        => match termExactRat t with
+                          | some q => ratInQInterval q qi
+                          | none   => false
+    | .enum xs         => xs.any (termProvablyEqual t)
+    | _                => false
+  | _ => false
+
 /-! ## How many values can this space hold?
 
 A SOUND UPPER bound. The direction matters: the answer `M` must be at
@@ -830,6 +865,9 @@ def valueSetMaxSize : ValueSet → Option Nat
   -- values, so no finite bound.
   | .dense qi        => if qIntervalEmpty qi then some 0 else none
   | .unconstrained   => none
+  -- XSD 1.1 Part 2 §3.3.2.1: the value space of `xsd:boolean` is
+  -- `{true, false}`. Every other family is infinite.
+  | .family .boolean => some 2
   | .family _        => none
 
 end L4Factoidal.XSD

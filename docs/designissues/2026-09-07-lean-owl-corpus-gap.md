@@ -1134,3 +1134,95 @@ is named.
   `-003`, `-004` (arithmetic): F\* fails all five.
 * PE, `WebOnt-equivalentProperty-005`: a restriction node with two
   `owl:onProperty` values, which only the RDF-Based Semantics reads.
+
+## 15. Status — 2026-10-10, the DL regime's last library gaps and two soundness repairs
+
+Branch `claude/wt-owl-dl`. Every DL line was measured first, with one
+binary per state, `--dl --refute-ms 3000`, one catalog per process.
+
+### 15.1 What failed, by class
+
+| class | units | evidence |
+|---|---|---|
+| unsound, found by probe (no corpus unit showed it) | 2 rules | below, § 15.2 |
+| incomplete, in the library | `Qualified-cardinality-boolean`, `Qualified-cardinality-restricted-int` (https://github.com/danbri/factoidal/issues/709) | the cardinality clash read no qualified data restriction; the boolean value space had no size |
+| fixture: the Direct Semantics applied to OWL 2 Full inputs | 12 PositiveEntailmentTests (§ 14.7 list, less the two above) | each is `test:semantics DIRECT` with `test:species FULL` and not `DL`; OWL 2 Conformance §2.2.1 defines Direct Semantics entailment over ontology structures that satisfy the OWL 2 Syntax §3 restrictions |
+| fixture: the RDF/XML premise is not RDF/XML | `FS2RDF-literals-ar` [ConsistencyTest] | `rdf:datatype` on a property element with element content; RDF 1.1 XML Syntax §7.2.16 requires `text()`; the case also carries a normative functional-syntax premise |
+| disputed fixture | `WebOnt-description-logic-909` [InconsistencyTest] | https://github.com/danbri/factoidal/issues/299 |
+| time | none | no `REFUTER-WALLCLOCK` line in any DL log |
+
+### 15.2 Soundness repairs
+
+1. **`owl:onDataRange` was not read.** `parseCeMarkers` took the filler
+   of a qualified cardinality from `owl:onClass` only, so
+   `DataMaxCardinality(1 dp xsd:string)` parsed as `≤ 1 dp` and
+   `a dp 1`, `a dp 2` refuted a consistent graph. `qualifiedFiller`
+   reads `owl:onClass`, then `owl:onDataRange` (OWL 2 Mapping to RDF
+   Graphs, Table 1). The F\* parser has the same defect
+   (`Tableau.fst` lines 343-358).
+2. **The ≤-rule branched on an incomplete list.** `witnessPairs`
+   dropped pairs with a literal member and branched on the rest. A
+   refutation needs every branch to close, so a shorter list refutes
+   more. `a : ≤ 2 dp`, `a dp 1`, `a dp "x"`, `a : ∃dp.xsd:integer`,
+   `a : ∃dp.¬xsd:integer` was refuted though `1` and `"x"` meet both
+   existentials. The rule now offers no branch when a pair not provably
+   different has a member it cannot merge. F\*'s
+   `excess_pairs_for_label` admits witness subjects only (no named
+   individuals, no literals) and its comment calls that "never
+   unsound"; the same argument makes it unsound.
+
+`New-Feature-DataQCR-001` had passed through repair 1's defect: the
+conclusion `≥ 2 hasName.xsd:string` was read as `≥ 2 hasName`. It
+passes again because the qualified `≤` clash now counts literal
+successors provably in the data range (`literalProvablyInRange`,
+`XSD.termProvablyInValueSet`). They are counted in that clash rule
+only; the merge rule and the witness discharge still read
+`successorsInFiller`, which holds nodes only.
+
+### 15.3 The negative-entailment judge now asks the refuter
+
+Under `--dl` a PositiveEntailmentTest passes on containment OR on
+refutation of every negation goal. The NegativeEntailmentTest judge
+used containment only, so nothing in the corpus could catch the
+refuter claiming an entailment. It now asks the same refutation where
+the catalog says the Direct Semantics applies to DL inputs (DIRECT and
+`test:species DL`), and prints `ne_refuter_checked`. Without that
+restriction it fired on `WebOnt-Class-005`, `WebOnt-Restriction-005`
+(RDF-Based only; their `-direct` alternatives are
+PositiveEntailmentTests) and `WebOnt-Ontology-003` (OWL 2 Full only;
+its non-conclusion differs from the premise's consequences by an
+`owl:Ontology` triple, which is no axiom). Each is an entailment under
+the Direct Semantics.
+
+### 15.4 Scores
+
+| line | before | after |
+|---|---|---|
+| type-inconsistency, `--dl` | 126 pass, 1 fail, 1 skip (out of 128) | unchanged |
+| type-positive-entailment, `--dl`, all units | 398 pass, 14 fail (out of 412) | 400 pass, 12 fail (out of 412) |
+| type-positive-entailment, PositiveEntailmentTest, `--dl` | 192 pass, 14 fail (out of 206) | 194 pass, 12 fail (out of 206) |
+| type-consistency, `--dl`, all units | 568 pass, 15 fail (out of 583) | 570 pass, 13 fail (out of 583) |
+| type-consistency, ConsistencyTest, `--dl` | 353 pass, 1 fail (out of 354) | unchanged; `refuter_flips_to_fail=0` |
+| syntax-dl, `--dl`, all units | 419 pass, 4 fail, 1 skip (out of 424) | 421 pass, 2 fail, 1 skip (out of 424); PositiveEntailmentTest 90 pass, 0 fail (out of 90) |
+| type-negative-entailment, `--dl` (new scoreboard job) | 46 pass, 0 fail (out of 46), refuter not asked | 46 pass, 0 fail (out of 46), `ne_refuter_checked=11` |
+| default run TOTAL, RL regime | 1233 pass, 222 fail, 2 skip (out of 1457) | unchanged, no unit changed |
+| species, `all.rdf` | 487 pass, 2 fail (out of 489) | unchanged |
+
+No unit went from pass to fail on any line (per-unit comparison of the
+FAIL lines, before against after).
+
+Wall clock after the change, one catalog per process, other agents on
+the same four CPUs: type-inconsistency 2 s, type-positive-entailment
+158 s (161 s before), type-consistency 216 s (232 s before), syntax-dl
+266 s (244 s before), type-negative-entailment 2 s.
+
+### 15.5 Left failing
+
+* The 12 OWL 2 Full-only PositiveEntailmentTests: an owner or
+  coordinator decision between leaving them failing, scoring a DIRECT
+  unit whose species lacks DL as unsupported, and an RDF-Based
+  Semantics regime.
+* `FS2RDF-literals-ar`: a reading choice in the runner (judge the
+  normative functional-syntax premise when the RDF/XML one does not
+  parse).
+* `WebOnt-description-logic-909`: https://github.com/danbri/factoidal/issues/299.
