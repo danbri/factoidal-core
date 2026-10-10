@@ -65,7 +65,11 @@ nothing is evidence about the audit's reach before the code (anti-pattern 28).
 Run the existing corpora once with a deliberately small stack, so anything
 input-proportional fails early WITH A NAME instead of on a giant input later:
 
-- native probes: `ulimit -s 512` before the run;
+- native probes: `LEAN_STACK_SIZE_KB=512` in the environment of the run, never
+  `ulimit -s` (the Lean runtime sizes the stack of the thread that runs `main`
+  itself; see "The canary measured nothing" below), and never without a
+  control that shows the budget reached the process
+  (`tests/stack/run.sh --canary` carries one);
 - wasm: build the diagnostic module with `-sSTACK_SIZE=262144
   -sSTACK_OVERFLOW_CHECK=2` (emscripten then names the overflowing function
   instead of dying silently); the shipping module never carries these;
@@ -146,9 +150,11 @@ to 27.3 MB.
   bounds that on macOS and Linux alike (measured: the 40k-entry manifest case
   throws under `--stack-size=512` before the fix, passes after). What is NOT
   controllable on macOS is a native Lean binary's main-thread stack (`ulimit
-  -s` and `LEAN_STACK_SIZE` do not reach it), which is a DIFFERENT stack. So the
-  standing canary runs the wasm cases in Node under a small `--stack-size`
-  (`tests/stack/run.sh --canary`), not the native ulimit route. The wasm
+  -s` and `LEAN_STACK_SIZE` do not reach it), which is a DIFFERENT stack.
+  (Superseded 2026-10-10: the native stack IS controllable, with
+  `LEAN_STACK_SIZE_KB`; neither name measured on 2026-09-07 is read by the
+  runtime. `tests/stack/run.sh --canary` now runs both routes.) The wasm
+  canary runs the wasm cases in Node under a small `--stack-size`. The wasm
   shadow-stack flag `-sSTACK_SIZE` bounds yet another stack and is not what a
   tab overflow needs. This class hid behind the native canary once (https://github.com/danbri/factoidal/issues/678 and
   the manifest-inspect JSON overflow) — always run the wasm/JS canary.
@@ -174,9 +180,10 @@ to 27.3 MB.
   overflowed only at 20,000,000 on the default stack, so `ulimit -s` did not
   reach it; under `LEAN_STACK_SIZE_KB=1024` the same copy aborted ("Stack
   overflow detected. Aborting.", exit 134) at about 18,500 elements.
-  `tests/stack/run.sh --canary` sets `ulimit -s` and `LEAN_STACK_SIZE` (bytes),
-  so its native canary measures nothing on Linux either; use
-  `LEAN_STACK_SIZE_KB`.
+  Until the repair of https://github.com/danbri/factoidal/issues/749 the
+  native canary of `tests/stack/run.sh --canary` set `ulimit -s` and
+  `LEAN_STACK_SIZE` (bytes) and so measured nothing on Linux either; it now
+  sets `LEAN_STACK_SIZE_KB` and carries a control (next section).
 - **The canary numbers for six repairs of that day** (200,000 elements, the
   replaced definition copied verbatim into a scratch executable, because a
   `csimp` theorem rewrites every call of the library's own copy):
@@ -198,3 +205,83 @@ to 27.3 MB.
   and classifies it `unknown`, outside the gate. `OwlXml.readList` was one
   (repaired in the same landing). Treat the `unknown` class as unaudited,
   not as clean.
+
+## The canary measured nothing for a month (https://github.com/danbri/factoidal/issues/749, 2026-10-10)
+
+The native canary of `tests/stack/run.sh --canary` was written on 2026-09-07
+and set two things the Lean runtime does not read. Its own probe (`turtle-collection`
+under the two old names) ran to completion, so the mode reported "UNSUPPORTED",
+exited 0, and no native canary case ever ran. The 2026-09-07 note that `ulimit -s`
+and `LEAN_STACK_SIZE` "do not reach a Lean binary's main thread on macOS" was
+true of those two names and was read as a statement about the platform; the
+header added "Linux honours `ulimit -s` for the main thread; run the canary in
+CI", which the measurement of 2026-10-10 contradicts (a verbatim old
+`OwlXml.readAxioms` ran 2,000,000 deep under `ulimit -s 1024`). Cost: 33 days
+(2026-09-07 to 2026-10-10) with no native canary, and a wasm canary that scored
+cases which had not run (below). The repair:
+
+- **The knob, with its source.** `src/runtime/thread.cpp` of leanprover/lean4
+  tag v4.33.1 (the elan toolchain ships no runtime sources, only the string in
+  `libleanrt.a`): line 171 `const char * stack_size_env =
+  std::getenv("LEAN_STACK_SIZE_KB");`, line 174 `sz = sz / 4 * 4 * 1024; // as
+  in `Shell``, and line 193 `set_thread_stack_size_from_env();` in
+  `lean_run_main`, which then runs `main` on a NEW thread of that size. The
+  value is kilobytes, rounded down to a multiple of 4. The default thread
+  stack is 1 GB on 64-bit (line 27; 8 MB for wasm), not the host's 8 MB.
+  `LEAN_MAIN_USE_THREAD=0` runs `main` on the process main thread, where
+  `ulimit -s` applies; the canary unsets it.
+- **The control.** `tests/stack/StackControl.lean` holds `foldNonTail`, a
+  non-tail fold over a list (one native frame per element) that imports
+  nothing from `L4Factoidal`, so no library repair can change what it
+  measures. `run.sh` compiles it with `lean -c` and `leanc` through `lake env`
+  in `formal/lean4` (about 2 s) and runs it three times: 100 elements under the
+  canary budget must run; N = max(200000, 400 x KB) elements under the canary
+  budget must abort with "Stack overflow detected" (exit 134); the same N
+  elements at the default budget must print the sum. If any run differs, or
+  the control cannot be compiled, the native canary records one failing case
+  named `control`, scores none of the canary cases, and prints
+  `native canary: NOT SCORED (...)`. `tests/stack/canary_control.sh` shows the
+  control can fail: with `STACK_CANARY_VAR=LEAN_STACK_SIZE` (the old name) the
+  control must refuse (2 pass, 0 fail, out of 2). `run.sh --control-only`
+  runs the control alone.
+- **Measured 2026-10-10, linux x86_64, Lean 4.33.1, control program.** Largest
+  n that ran under `LEAN_STACK_SIZE_KB` = 256: 12,142; 512: 20,334; 1024:
+  36,718; 2048: 69,486; 4096: 135,022 (about 32 bytes per element). With no
+  variable (1 GB), 20,000,000 elements ran in 3.6 s. At the 512 KB canary the
+  control (204,800 elements) aborts in 15 ms.
+  The 512 KB canary on the repository cases: `turtle-collection` (100,000
+  items) aborts, tracked in https://github.com/danbri/factoidal/issues/678;
+  `xml-entities` (10,000 sequential entity references) aborts, found by this
+  run (below); the other five cases run.
+- **The wasm canary passed a module that did not exist.** It decided "threw"
+  by grepping the output for `call stack|RangeError|overflow`, so when
+  `docs/web/hub/assets/l4/l4factoidal.mjs` was missing (the module is a build
+  product, gitignored since the 2026-10-09 split and installed by
+  `tools/fetch-builds.sh --set web`, so a fresh worktree lacks it) the
+  case printed `ok:false, Cannot find module` and the canary scored "wasm ok
+  under --stack-size=512" for six cases that never ran. The scoring now takes
+  the case's own JSON line: `ok:true` is a run, `Maximum call stack size
+  exceeded` is an overflow, everything else is an error, and a missing module
+  records one failure and scores nothing. Rule: score a pass only from a
+  positive answer of the thing measured (here `ok:true`); never from the
+  absence of an error message.
+- **A cause found by gdb, not by the audit.** `xml-entities` under
+  `LEAN_STACK_SIZE_KB=512` aborts; `gdb -batch -ex run -ex 'bt 12' --args
+  l4wasm-cli call parseToDatasetJson args-xml.json` names the repeating frame:
+  `L4Factoidal.XML.scanRefs` (`XML/Parser.lean:1173`), one frame per entity
+  reference, because the recursive call is followed by the combination of its
+  result. The tail-recursion audit's report on this tree does not list it. The
+  case is an expected failure naming the open issue
+  https://github.com/danbri/factoidal/issues/673 in the native canary, the wasm
+  canary and the wasm route; it turns the suite red when it starts to pass.
+- **Result after the repair.** `tests/stack/run.sh --canary` on 2026-10-10:
+  29 pass, 0 fail (out of 29), of which six rows are expected failures
+  (`xml-entities` and `turtle-collection`, each in the native canary, the wasm
+  canary and the wasm route). Before the repair the suite could not start
+  (the generator raised `RecursionError`, exit 2).
+- **The case generator.** `tests/stack/gen_cases.py` built the 5,000-deep
+  JSON-LD case as a nested dict and called `json.dumps`, which raises
+  `RecursionError` at that depth on Python 3.13, so the suite could not start.
+  It writes the nesting as text now (byte-identical to the old output at
+  depths 0, 1, 2, 3 and 10).
+

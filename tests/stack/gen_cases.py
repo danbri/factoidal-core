@@ -82,12 +82,21 @@ write("sparql-nested.rq",
       "SELECT ?s WHERE %s{ ?s ?p ?o }%s\n" % ("{ " * N_NEST, " }" * N_NEST))
 
 # -------------------------------------------------------------- JSON-LD
+# The nesting is written as text. json.dumps recurses once per nesting level
+# and raises RecursionError at 5000 levels on Python 3.13 (issue 749), so no
+# nested dict is built and no recursion limit is raised. The text is
+# byte-identical to what json.dumps produced for the same nested dict
+# (separators ", " and ": "; "@context" is the last key of the outermost
+# object); compared at depths 0, 1, 2, 3 and 10 on 2026-10-10.
 N_JSONLD = int(os.environ.get("STACK_JSONLD", "5000"))
-doc = {"@id": "http://example.org/leaf"}
-for _ in range(N_JSONLD):
-    doc = {"http://example.org/p": [doc]}
-doc["@context"] = {}
-write("jsonld-nested.jsonld", json.dumps(doc))
+JSONLD_LEAF = '{"@id": "http://example.org/leaf"}'
+JSONLD_ARM = '{"http://example.org/p": ['
+if N_JSONLD == 0:
+    jsonld_text = JSONLD_LEAF[:-1] + ', "@context": {}}'
+else:
+    jsonld_text = (JSONLD_ARM * N_JSONLD + JSONLD_LEAF + "]}" * (N_JSONLD - 1)
+                   + '], "@context": {}}')
+write("jsonld-nested.jsonld", jsonld_text)
 
 # ---------------------------------------------------------------- SHACL
 N_SHAPES = int(os.environ.get("STACK_SHAPES", "5000"))
