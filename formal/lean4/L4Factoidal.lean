@@ -110,6 +110,9 @@ import L4Factoidal.Syntax.BlankNodeLabel
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.TurtleFuelTheorems
 import L4Factoidal.Syntax.TurtleStatementScanTheorems
+import L4Factoidal.Syntax.TurtleStatementScanTests
+import L4Factoidal.Syntax.TurtleChunkFoldTests
+import L4Factoidal.Syntax.Utf8StreamTests
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TurtleLenient

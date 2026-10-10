@@ -470,9 +470,38 @@ function nquadsToQuads(text, options) {
 // Dataset — a minimal RDF/JS DatasetCore over an in-memory quad array.
 // ---------------------------------------------------------------------
 
+// A string that two terms share exactly when equals() holds between them
+// (the fields each equals() above compares). JSON arrays are
+// self-delimiting, so the key of a quad, four term keys in a row, is
+// injective too. The Dataset keeps the keys of its quads in a Set: add()
+// and has() are then one lookup each. Until 2026-10-10 both scanned the
+// quad array, so building a Dataset of n quads cost n^2/2 equals() calls:
+// 12,000 quads took 3.1 s in parse() (issue 713 stage 5).
+function termKey(t) {
+  if (!t) return 'null';
+  switch (t.termType) {
+    case 'Literal':
+      return JSON.stringify(['Literal', t.value, t.language, t.datatype ? t.datatype.value : null]);
+    case 'DefaultGraph':
+      return '["DefaultGraph"]';
+    case 'Quad':
+      return '["Quad",' + termKey(t.subject) + ',' + termKey(t.predicate) + ',' +
+        termKey(t.object) + ',' + termKey(t.graph) + ']';
+    default:
+      return JSON.stringify([t.termType, t.value]);
+  }
+}
+
+function quadKey(q) {
+  return termKey(q.subject) + termKey(q.predicate) + termKey(q.object) +
+    termKey(q.graph || DEFAULT_GRAPH);
+}
+
 class Dataset {
   constructor(quads, options) {
     this._quads = [];
+    // The quadKey() of every quad in _quads, for set semantics in O(1).
+    this._keys = new Set();
     if (quads) for (const q of quads) this.add(q);
     const opts = options || {};
     // Own, non-enumerable properties (issue #680/#681): a frozen
@@ -493,16 +522,22 @@ class Dataset {
     return this._quads.length;
   }
   add(quad) {
-    if (!this.has(quad)) this._quads.push(quad);
+    const key = quadKey(quad);
+    if (!this._keys.has(key)) {
+      this._keys.add(key);
+      this._quads.push(quad);
+    }
     return this;
   }
   delete(quad) {
-    const ix = this._quads.findIndex((q) => q.equals(quad));
-    if (ix >= 0) this._quads.splice(ix, 1);
+    if (this._keys.delete(quadKey(quad))) {
+      const ix = this._quads.findIndex((q) => q.equals(quad));
+      if (ix >= 0) this._quads.splice(ix, 1);
+    }
     return this;
   }
   has(quad) {
-    return this._quads.some((q) => q.equals(quad));
+    return this._keys.has(quadKey(quad));
   }
   match(subject, predicate, object, graph) {
     const out = new Dataset();
@@ -512,6 +547,7 @@ class Dataset {
       if (object    && !object.equals(q.object))       continue;
       if (graph     && !graph.equals(q.graph))         continue;
       out._quads.push(q);
+      out._keys.add(quadKey(q));
     }
     return out;
   }

@@ -1,0 +1,14 @@
+{
+  "test_id": "loopx",
+  "suite": "grddl",
+  "issue": "https://github.com/danbri/factoidal/issues/730",
+  "dispute_kind": "fixture-contradiction",
+  "upstream_expectation": "loopx-output / loopx-output3 name the transformation result object as one.xsl",
+  "our_expectation": "the merge of all GRDDL results with the served loopy.xsl, which writes .../td/one (GRDDL Test Cases: the result is the merge of all possible GRDDL results)",
+  "rationale": "Owner, 2026-10-10, verbatim: \"Grddl - postpone for now, i am making enquiries. So just mark it as not a valid test currently.\" and, correcting the scope: \"Grddl should not be postponed, only that test\". Marked not a valid test while the owner makes enquiries: the served stylesheet and the expected outputs contradict each other. The runner counts the case as local-override and reports a STALE override (a failure) if it starts to pass.",
+  "analysis_refs": [
+    "formal/lean4/Harness/GrddlRun.lean",
+    "formal/lean4/L4Factoidal/GRDDL/Agent.lean"
+  ],
+  "date": "2026-10-10"
+}

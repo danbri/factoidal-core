@@ -15,6 +15,10 @@
 // fetched bytes instead). setAssetsUrl() names another directory holding
 // l4factoidal.js, l4factoidal.mjs and l4factoidal.wasm.
 //
+// core-browser.js is the same entry over the core engine
+// (l4factoidal-core.wasm, '@factoidal/core/core'), a smaller module that
+// serves a subset of the functions (issue 713 stage 4).
+//
 // The exports and their types are index.mjs's (index.d.ts), except
 // sampleStorePath, and openStore() takes a reader function, (path) =>
 // bytes, because a page has no file system:
@@ -25,9 +29,9 @@
 
 import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
+import { browserEngine } from './lib/browser-engine.mjs';
 
-let assetsUrl = new URL('./l4-assets/', import.meta.url).href;
-let enginePromise = null;
+const l4Engine = browserEngine('l4factoidal', new URL('./l4-assets/', import.meta.url).href);
 
 /**
  * The directory the engine's three files are loaded from. Call before the
@@ -35,32 +39,12 @@ let enginePromise = null;
  * @param {string|URL} url a directory URL (a trailing '/' is added)
  */
 export function setAssetsUrl(url) {
-  if (enginePromise) {
-    throw new Error('setAssetsUrl: the engine is already loaded from ' + assetsUrl);
-  }
-  const text = String(url);
-  assetsUrl = new URL(text.endsWith('/') ? text : text + '/', globalThis.location?.href).href;
+  l4Engine.setAssetsUrl(url);
 }
 
 /** The directory the engine's files are loaded from. */
 export function getAssetsUrl() {
-  return assetsUrl;
-}
-
-async function instantiate(url, imports) {
-  try {
-    return await WebAssembly.instantiateStreaming(fetch(url), imports);
-  } catch (err) {
-    // instantiateStreaming refuses a response without the application/wasm
-    // media type with a TypeError; compile from the bytes then. Any other
-    // failure (network, a corrupt module) is the caller's.
-    if (!(err instanceof TypeError)) throw err;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`factoidal: fetching ${url} failed: ${response.status} ${response.statusText}`);
-    }
-    return WebAssembly.instantiate(await response.arrayBuffer(), imports);
-  }
+  return l4Engine.getAssetsUrl();
 }
 
 /**
@@ -69,17 +53,7 @@ async function instantiate(url, imports) {
  * @returns {Promise<object>}
  */
 export function loadEngine() {
-  if (enginePromise) return enginePromise;
-  enginePromise = (async () => {
-    const loader = await import(new URL('l4factoidal.js', assetsUrl).href);
-    // The content-hash version keeps a cached wasm from pairing with a
-    // newer loader (the loader's own locateFile does the same).
-    const version = loader.wasmVersion ? `?v=${loader.wasmVersion}` : '';
-    const wasmUrl = new URL('l4factoidal.wasm', assetsUrl).href + version;
-    return loader.loadL4({ instantiateWasm: (imports) => instantiate(wasmUrl, imports) });
-  })();
-  enginePromise.catch(() => { enginePromise = null; });
-  return enginePromise;
+  return l4Engine.loadEngine();
 }
 
 const api = buildApi({

@@ -76,9 +76,10 @@ def diagnosticJson (d : Diagnostic) : Json :=
     , ("class", .string d.cls.tag) ]
 
 /-- The lenient parse of `text` under `formatTag`: the outcome and the
-diagnostics. RDF/XML, JSON-LD and unknown tags are the strict
-`parseDocumentOutcome`. -/
-def lenientDocumentOutcome (text formatTag baseIRI : String) (opts : LenientOptions) :
+diagnostics. RDF/XML, the syntaxes `extra` reads (JSON-LD in the full
+dispatch) and unknown tags are the strict `parseDocumentOutcomeBy`. -/
+def lenientDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String)
+    (opts : LenientOptions) :
     Except ParseFailure (ParseOutcome × List Diagnostic) :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
@@ -95,16 +96,16 @@ def lenientDocumentOutcome (text formatTag baseIRI : String) (opts : LenientOpti
   | "trig" =>
       let (d, ds, ps) := parseTriGLenientWithPrefixes text base mode opts
       .ok ({ ds := d, prefixes := declarationOrderPrefixes ps }, ds)
-  | _ => (parseDocumentOutcome text formatTag baseIRI).map fun o => (o, [])
+  | _ => (parseDocumentOutcomeBy extra text formatTag baseIRI).map fun o => (o, [])
 
 /-- `parseDocument`, with `scope` the blank-node label prefix (`none`: keep
 labels as written). -/
-def parseDocumentWith (scope : Option String) (text formatTag baseIRI optionsJson : String) :
-    String :=
+def parseDocumentWithBy (extra : ExtraReader) (scope : Option String)
+    (text formatTag baseIRI optionsJson : String) : String :=
   let o := parseDocumentOptionsOfJson optionsJson
-  if !o.lenient then parseToDatasetJsonWith scope text formatTag baseIRI
+  if !o.lenient then parseToDatasetJsonWithBy extra scope text formatTag baseIRI
   else
-    match lenientDocumentOutcome text formatTag baseIRI { maxErrors := o.maxErrors } with
+    match lenientDocumentOutcomeBy extra text formatTag baseIRI { maxErrors := o.maxErrors } with
     | .error f => parseFailureEnvelope formatTag f
     | .ok (out, diags) =>
         let ds := match scope with
@@ -116,29 +117,33 @@ def parseDocumentWith (scope : Option String) (text formatTag baseIRI optionsJso
                 ("diagnostics", .array (diags.map diagnosticJson))]
 
 /-- `parseDocument` through the pure `call`: labels as written. -/
-def parseDocument (text formatTag baseIRI optionsJson : String) : String :=
-  parseDocumentWith none text formatTag baseIRI optionsJson
+def parseDocumentBy (extra : ExtraReader) (text formatTag baseIRI optionsJson : String) :
+    String :=
+  parseDocumentWithBy extra none text formatTag baseIRI optionsJson
 
 /-- `parseDocument` through `callIO`: a fresh blank-node scope per document. -/
-def parseDocumentScoped (text formatTag baseIRI optionsJson : String) : IO String := do
+def parseDocumentScopedBy (extra : ExtraReader)
+    (text formatTag baseIRI optionsJson : String) : IO String := do
   let scope ← nextDocumentScope
-  pure (parseDocumentWith (some scope) text formatTag baseIRI optionsJson)
+  pure (parseDocumentWithBy extra (some scope) text formatTag baseIRI optionsJson)
 
 /-- The op names this module adds to the dispatch. -/
 def lenientOpNames : List String := [ "parseDocument" ]
 
 /-- Serve one of `lenientOpNames` through the pure `call`, or `none`. -/
-def callLenient (op : String) (args : List String) : Option String :=
+def callLenientBy (extra : ExtraReader) (op : String) (args : List String) :
+    Option String :=
   match op, args with
-  | "parseDocument", [a, b, c, d] => some (parseDocument a b c d)
+  | "parseDocument", [a, b, c, d] => some (parseDocumentBy extra a b c d)
   | "parseDocument", _ =>
       some (errJson s!"parseDocument expects 4 arguments, got {args.length}")
   | _, _ => none
 
 /-- Serve one of `lenientOpNames` through `callIO`, or `none`. -/
-def callLenientIO (op : String) (args : List String) : Option (IO String) :=
+def callLenientIOBy (extra : ExtraReader) (op : String) (args : List String) :
+    Option (IO String) :=
   match op, args with
-  | "parseDocument", [a, b, c, d] => some (parseDocumentScoped a b c d)
+  | "parseDocument", [a, b, c, d] => some (parseDocumentScopedBy extra a b c d)
   | "parseDocument", _ =>
       some (pure (errJson s!"parseDocument expects 4 arguments, got {args.length}"))
   | _, _ => none
@@ -167,7 +172,7 @@ private def ttlDoc : String :=
   "<http://x/a> <http://x/p> \"1\" .\n<http://x/b> <http://x/p> .\n<http://x/c> <http://x/p> \"3\" .\n"
 
 -- The l4-core xfail document of issue 716: two triples kept, one diagnostic on line 2.
-#guard (match parseJson (parseDocument ttlDoc "turtle" "" "{\"lenient\":true}") with
+#guard (match parseJson (parseDocumentBy noExtraReader ttlDoc "turtle" "" "{\"lenient\":true}") with
         | .ok j =>
             numberLexeme? j "count" == some "2" &&
             (match j.field? "diagnostics" with
@@ -176,22 +181,22 @@ private def ttlDoc : String :=
              | _ => false)
         | .error _ => false)
 -- Not lenient: the strict error envelope.
-#guard (match parseJson (parseDocument ttlDoc "turtle" "" "") with
+#guard (match parseJson (parseDocumentBy noExtraReader ttlDoc "turtle" "" "") with
         | .ok j => j.getBool? "ok" == some false && numberLexeme? j "line" == some "2"
         | .error _ => false)
 -- A good document: diagnostics [] and the strict count, in every format.
-#guard (match parseJson (parseDocument "<http://x/a> <http://x/p> <http://x/g> <http://x/g> .\n"
+#guard (match parseJson (parseDocumentBy noExtraReader "<http://x/a> <http://x/p> <http://x/g> <http://x/g> .\n"
           "nquads" "" "{\"lenient\":true}") with
         | .ok j => numberLexeme? j "count" == some "1" &&
                    emptyArray? j "diagnostics"
         | .error _ => false)
 -- RDF/XML is strict even when lenient is asked for: success has no diagnostics.
-#guard (match parseJson (parseDocument
+#guard (match parseJson (parseDocumentBy noExtraReader
           "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"/>" "rdfxml" "" "{\"lenient\":true}") with
         | .ok j => j.getBool? "ok" == some true && emptyArray? j "diagnostics"
         | .error _ => false)
 -- maxErrors.
-#guard (match parseJson (parseDocument (ttlDoc ++ ttlDoc) "turtle" "" "{\"lenient\":true,\"maxErrors\":1}") with
+#guard (match parseJson (parseDocumentBy noExtraReader (ttlDoc ++ ttlDoc) "turtle" "" "{\"lenient\":true,\"maxErrors\":1}") with
         | .ok j => (match j.field? "diagnostics" with
                     | some (.array [_, d]) => d.getString? "class" == some "too-many-errors"
                     | _ => false)

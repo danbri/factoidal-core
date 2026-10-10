@@ -41,6 +41,7 @@ Usage: `lake exe l4grddl [tests-dir]`
 -/
 import L4Factoidal.GRDDL.Agent
 import L4Factoidal.Syntax.NTriples
+import L4Factoidal.JSON.Parser
 
 open L4Factoidal.RDF
 open L4Factoidal.XML
@@ -163,6 +164,10 @@ structure Tally where
   /-- Not passed, but a related test (`g:alternative`, `g:subsumes`)
       passed: the case `testft.py` counts as passed. Apart from `pass`. -/
   related : Nat := 0
+  /-- Cases a file in `tests/local-overrides` marks not a valid test
+      (each file names its issue). Counted apart; a case that passes while
+      overridden is a STALE override and counts as a failure. -/
+  override : Nat := 0
 deriving Inhabited
 
 /-! ## Retrieval
@@ -313,6 +318,29 @@ def relatedTests (mg : Graph) (t : String) : List String :=
   let side := reach (alts ++ alts.map (fun (a, b) => (b, a))) n [t]
   ((down ++ up ++ side).filter (· != t)).eraseDups
 
+/-- Read `tests/local-overrides/*.json` (relative to the repository root)
+and return the `test_id`s whose `suite` is `suite`. The same file format the
+JSON-LD runners read; each file names the issue that tracks the dispute. An
+absent directory means no overrides. -/
+def loadLocalOverrides (suite : String) : IO (List String) := do
+  let dir : System.FilePath := "tests" / "local-overrides"
+  let entries ← try dir.readDir catch _ => pure #[]
+  let mut ids : List String := []
+  for f in entries do
+    if !f.fileName.endsWith ".json" then continue
+    let txt? ← try pure (some (← IO.FS.readFile (dir / f.fileName))) catch _ => pure none
+    match txt? with
+    | none => pure ()
+    | some txt =>
+      match L4Factoidal.JSON.parseJson txt with
+      | .error _ => pure ()
+      | .ok j =>
+        if (j.getString? "suite").getD "" == suite then
+          match j.getString? "test_id" with
+          | some i => ids := i :: ids
+          | none   => pure ()
+  pure ids
+
 def main (args : List String) : IO UInt32 := do
   let dir := args.head? |>.getD "third_party/testing/grddl"
   let manifestPath := dir ++ "/grddl-tests-normative.rdf"
@@ -335,11 +363,21 @@ def main (args : List String) : IO UInt32 := do
       verdicts := verdicts ++ [(gt, ← runTest docroot redirects gt)]
     let passed := verdicts.filterMap (fun (gt, v) =>
       match v with | .pass => some gt.subject | _ => none)
+    let overrides ← loadLocalOverrides "grddl"
     let mut t : Tally := {}
     for (gt, v) in verdicts do
       let short := match (gt.subject.splitOn "#").getLast? with
         | some s => s
         | none   => gt.subject
+      if overrides.contains short then
+        match v with
+        | .pass =>
+            t := { t with fail := t.fail + 1 }
+            IO.println s!"FAIL {short}: STALE local override (the test now passes; delete its file in tests/local-overrides/ and close its issue)"
+        | _ =>
+            t := { t with override := t.override + 1 }
+            IO.println s!"LOCAL-OVERRIDE {short}: marked not a valid test (tests/local-overrides/grddl__{short}.json)"
+        continue
       let proxy := (relatedTests mg gt.subject).find? passed.contains
       match v, proxy with
       | .pass, _ => t := { t with pass := t.pass + 1 }
@@ -377,6 +415,7 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"UNAVAILABLE: {t.unavail} cases need a document the vendored docroot does not carry"
     IO.println s!"REFUSED: {t.refused} cases the engine declined"
     IO.println s!"RELATED TEST PASSED: {t.related} cases did not pass, but a test related by g:alternative or g:subsumes did (testft.py counts these as passed; counted apart here)"
+    IO.println s!"LOCAL OVERRIDE: {t.override} cases marked not a valid test (tests/local-overrides, each file names its issue; a passing one is reported STALE as a failure)"
     IO.println s!"  (out of {tests.length} tests in the manifest)"
     IO.println ""
     IO.println "Comparison is by graph ISOMORPHISM: blank-node labels are not"

@@ -12,6 +12,7 @@ one another. The wasm build and this executable call exactly the same
   lake exe l4wasm-cli call <op> <argsJsonFile>
   lake exe l4wasm-cli callblob <op> <argsJsonFile> <blobFile>
   lake exe l4wasm-cli callseq <seqJsonFile>
+  lake exe l4wasm-cli corecall <op> <argsJsonFile>
 
 `call` drives the dispatch ABI (`Wasm/Dispatch.lean`): `<op>` is the
 method name and `<argsJsonFile>` holds a JSON array of strings — the
@@ -21,6 +22,10 @@ dataset-handle ops answer their envelopes here too — but handle state
 dies with the process, so a DEPENDENT sequence (open → query → close)
 needs `callseq`: `<seqJsonFile>` holds a JSON array of `[op, [arg, …]]`
 pairs, run in order in this one process, one envelope printed per line.
+
+`corecall` is `call` through the CORE dispatch (`Wasm/CoreDispatch.lean`,
+`L4Wasm.Core.callIO`), the table `l4factoidal-core.wasm` links
+(https://github.com/danbri/factoidal/issues/713 stage 4).
 
 `callblob` is the native form of the wasm module's `l4_call_blob_c`: the
 same op name and args document, plus ONE contiguous byte region, read here
@@ -46,6 +51,7 @@ Every loop here is fuel-bounded rather than `partial`: a source above the
 fuel is an error naming it, never a silent stop.
 -/
 import Wasm.Exports
+import Wasm.CoreDispatch
 
 open L4Factoidal.JSON
 
@@ -140,6 +146,10 @@ def main (args : List String) : IO UInt32 := do
       let argsJson ← IO.FS.readFile argsFile
       IO.println (← L4Wasm.callIO op argsJson)
       return 0
+  | ["corecall", op, argsFile] =>
+      let argsJson ← IO.FS.readFile argsFile
+      IO.println (← L4Wasm.Core.callIO op argsJson)
+      return 0
   | ["callblob", op, argsFile, blobFile] =>
       let argsJson ← IO.FS.readFile argsFile
       let blob ← IO.FS.readBinFile blobFile
@@ -159,5 +169,5 @@ def main (args : List String) : IO UInt32 := do
             IO.println (← L4Wasm.callIO op argsJson)
           return 0
   | _ =>
-      IO.eprintln "usage: l4wasm-cli (version | bgp <data.json> <bgp.json> | call <op> <argsJsonFile> | callblob <op> <argsJsonFile> <blobFile> | callseq <seqJsonFile> | pack <input> <outputDir> <syntaxTag> <layoutTag>)"
+      IO.eprintln "usage: l4wasm-cli (version | bgp <data.json> <bgp.json> | call <op> <argsJsonFile> | corecall <op> <argsJsonFile> | callblob <op> <argsJsonFile> <blobFile> | callseq <seqJsonFile> | pack <input> <outputDir> <syntaxTag> <layoutTag>)"
       return 1

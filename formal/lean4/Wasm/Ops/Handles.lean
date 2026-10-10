@@ -27,7 +27,7 @@ store so later calls carry only a handle string and the query:
 Any op naming a handle that is not in the store (never opened, or
 closed) answers {"ok":false,"error":"unknown dataset handle: …"}.
 
-The ops are thin wrappers: parsing is `parseTextToDataset`
+The ops are thin wrappers: parsing is `parseDocumentOutcomeBy`
 (Wasm/Ops/Parse.lean), query/update are `queryParsedDataset` /
 `applyUpdateText` (Wasm/Ops/Query.lean), serialisation is the same
 `Dataset.toCanonicalNQuads` / `turtleOfGraphAuto` the stateless ops
@@ -89,9 +89,11 @@ private def withHandle (h : String) (f : OpenDataset → IO String) : IO String 
 
 /-- `datasetOpen(text, formatTag, baseIri)` — parse once, index once,
 store, and answer the new handle plus the quad count. A parse failure
-stores nothing and issues no handle. -/
-def datasetOpen (text formatTag baseIri : String) : IO String := do
-  match parseDocumentOutcome text formatTag baseIri with
+stores nothing and issues no handle. `extra` reads the syntaxes outside
+`Wasm/Ops/Parse.lean`'s table: the full dispatch passes `jsonLdReader`, the
+core dispatch a reader without JSON-LD (issue 713 stage 4). -/
+def datasetOpenBy (extra : ExtraReader) (text formatTag baseIri : String) : IO String := do
+  match parseDocumentOutcomeBy extra text formatTag baseIri with
   | .error f => pure (parseFailureEnvelope formatTag f)
   | .ok o =>
       -- The document gets its own blank-node scope, as `parseToDatasetJsonScoped`.

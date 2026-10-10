@@ -26,6 +26,15 @@ The op tables below are the whole v1 surface plus a reflection op:
 (through `callIO` the list includes the handle ops; through the pure
 `call` it does not, because that entry cannot serve them).
 
+The arms of the ops the core engine also serves are in
+`Wasm/CoreDispatch.lean` (`Core.callArgsBy` and `Core.callIOArgsBy`); `call`
+and `callIO` below try those first, with `jsonLdReader` as the reader of the
+syntaxes outside `Wasm/Ops/Parse.lean`'s table, so each op has one arm and the
+two engines answer a core op with the same envelope
+(https://github.com/danbri/factoidal/issues/713 stage 4). The name lists below
+are the whole full table, core ops included; `Wasm/CoreDispatchTests.lean`
+checks them against the core table at build time.
+
 This module owns the tables; the op bodies live in `Wasm/Ops/*.lean`
 (split-ready: each imports only the `L4Factoidal.*` modules it needs —
 never the umbrella, whose initializer dies under wasm32; see
@@ -33,9 +42,12 @@ never the umbrella, whose initializer dies under wasm32; see
 exports in `Wasm/Abi.lean` are a separate, pinned surface (hub post
 36) and are not routed through this dispatch.
 -/
+import Wasm.CoreDispatch
+import Wasm.Ops.ParseJsonLd
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Reason
+import Wasm.Ops.ReasonDl
 import Wasm.Ops.Canon
 import Wasm.Ops.Block
 import Wasm.Ops.Store
@@ -58,6 +70,8 @@ import Wasm.Ops.Maths
 import Wasm.Ops.Vc
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
+import Wasm.Ops.ShExValidate
+import Wasm.Ops.QueryHdt
 
 namespace L4Wasm
 
@@ -194,19 +208,6 @@ private def arity2 (op : String) (f : String → String → String) :
   | [a, b] => f a b
   | args => errJson s!"{op} expects 2 arguments, got {args.length}"
 
-/-- The query and update ops take an optional last argument, the base IRI of
-the query or update TEXT (SPARQL 1.1 §4.1.1.2, RFC 3986 §5.1,
-https://github.com/danbri/factoidal/issues/741). An empty string, or no
-argument, means no base: a relative IRI in the text is then a parse error, as
-before. Every host written against the two-argument contract keeps working. -/
-def baseArg (s : String) : Option String := if s.isEmpty then none else some s
-
-private def arity2Base (op : String) (f : String → String → Option String → String) :
-    List String → String
-  | [a, b] => f a b none
-  | [a, b, c] => f a b (baseArg c)
-  | args => errJson s!"{op} expects 2 or 3 arguments, got {args.length}"
-
 private def arity3 (op : String) (f : String → String → String → String) :
     List String → String
   | [a, b, c] => f a b c
@@ -328,46 +329,49 @@ fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String := mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames
 
-/-- Serve a stage 2 op, or answer the unknown-op error. -/
+/-- Serve a stage 2 op of the full table, or answer the unknown-op error.
+`serializeTurtleWith` and `parseDocument` (the lenient parse,
+https://github.com/danbri/factoidal/issues/716) are core ops and are served
+before this by `Core.callArgsBy`. -/
 private def callStage2 (op : String) (args : List String) : String :=
   match callMaths op args with
   | some r => r
   | none =>
     match callVc op args with
     | some r => r
-    | none =>
-      match callParity op args with
-      | some r => r
-      | none =>
-        -- `parseDocument`, the lenient parse (`Wasm/Ops/Lenient.lean`,
-        -- https://github.com/danbri/factoidal/issues/716).
-        match callLenient op args with
-        | some r => r
-        | none => errJson s!"unknown op '{op}'"
+    | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
   (Json.object
     [ ("ok", .bool true)
     , ("abiVersion", .string dispatchAbiVersion)
+    , ("engine", .string "full")
     , ("ops", .array ((names ++ stage2OpNames).map Json.string))
     , ("blobOps", .array (blobOpNames.map Json.string))
     , ("blobIoOps", .array (blobIoOpNames.map Json.string)) ]).toString
 
 private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames)
 
-/-- The dispatch entry the `l4_call` C export serves. -/
+/-- The `ops` reflection of `callIO`: every op of the full table. -/
+def opsReflectionIO : String :=
+  opsReflectionFor
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
+       ++ extOpNames ++ lwsSolidOpNames
+       ++ formatOpNames ++ serviceOpNames
+       ++ query12OpNames)
+
+/-- The dispatch entry the `l4_call` C export serves. The core ops are
+served by `Core.callArgsBy` with the JSON-LD reader; the arms here are the
+ops of the full table only. -/
 def call (op : String) (argsJson : String) : String :=
   match decodeArgs argsJson with
   | .error e => errJson e
   | .ok args =>
+    match (if op == "ops" then none else Core.callArgsBy jsonLdReader op args) with
+    | some r => r
+    | none =>
     match op with
-    | "parseToDatasetJson"   => arity3 op parseToDatasetJson args
-    | "queryDataset"         => arity2Base op (fun a b c => queryDataset a b c) args
-    | "updateDataset"        => arity2Base op (fun a b c => updateDataset a b c) args
-    | "serializeNQuads"      => arity1 op serializeNQuads args
-    | "serializeTurtle"      => arity1 op serializeTurtle args
-    | "canonicalizeToNQuads" => arity1 op canonicalizeToNQuads args
     | "scanIBK2Predicate"    => arity2 op scanIBK2Predicate args
     | "scanIBK3Predicate"    => arity3 op scanIBK3Predicate args
     | "queryIBK3BlockSetPreview"    => arity3 op queryIBK3BlockSetPreview args
@@ -375,12 +379,8 @@ def call (op : String) (argsJson : String) : String :=
     | "storeQueryPlan"       => arity2 op storeQueryPlan args
     | "storeQuery"           => arity3 op (fun a b c => storeQuery a b c ByteArray.empty) args
     | "activateVerify"       => arity2 op (fun a b => activateVerify a b ByteArray.empty) args
-    | "owlClosure"           => arity2 op owlClosure args
     | "owlIsConsistent"      => arity2 op owlIsConsistent args
     | "owlEntails"           => arity3 op owlEntails args
-    | "rhoDfClosure"         => arity1 op rhoDfClosure args
-    | "rhoDfFragmentCheck"   => arity1 op rhoDfFragmentCheck args
-    | "rdfsPlusClosure"      => arity1 op rdfsPlusClosure args
     | "clParse"              => arity1 op clParse args
     | "clSerialize"          => arity1 op clSerialize args
     | "clAlphaNorm"          => arity1 op clAlphaNorm args
@@ -418,9 +418,7 @@ def call (op : String) (argsJson : String) : String :=
     | "rifEval"              => arity2 op rifEval args
     | "tableauMaterialise"   => arity1 op tableauMaterialise args
     | "tableauDlInconsistent" => arity1 op tableauDlInconsistent args
-    | "queryRaw"             => arity3 op queryRaw args
     | "queryHdt"             => arity1 op (fun a => queryHdt a ByteArray.empty) args
-    | "shaclValidate"        => arity2 op shaclValidate args
     | "shexValidate"         => arity4 op shexValidate args
     | "ops"                  => opsReflection
     | _                      => callStage2 op args
@@ -457,60 +455,35 @@ private def arityIO2 (op : String) (f : String → String → IO String) :
   | [a, b] => f a b
   | args => pure (errJson s!"{op} expects 2 arguments, got {args.length}")
 
-private def arityIO2Base (op : String) (f : String → String → Option String → IO String) :
-    List String → IO String
-  | [a, b] => f a b none
-  | [a, b, c] => f a b (baseArg c)
-  | args => pure (errJson s!"{op} expects 2 or 3 arguments, got {args.length}")
-
 private def arityIO3 (op : String) (f : String → String → String → IO String) :
     List String → IO String
   | [a, b, c] => f a b c
   | args => pure (errJson s!"{op} expects 3 arguments, got {args.length}")
 
 /-- The dispatch entry the wire (`l4_call_c` via the `l4_call_io` C
-export) and the native CLI serve: the dataset-handle ops, plus every
-stateless op via `call`, envelope for envelope. -/
+export) and the native CLI serve: the stateful ops, plus every stateless op
+via `call`, envelope for envelope. The core ops that need `IO` (dataset
+handles, the §17.6 and SERVICE registries, the IO forms of `queryDataset`,
+`queryDataset12`, `parseToDatasetJson` and `parseDocument`) are served by
+`Core.callIOArgsBy` with the JSON-LD reader; the arms here are the ops of the
+full table only. -/
 def callIO (op : String) (argsJson : String) : IO String :=
   let withArgs (k : List String → IO String) : IO String :=
     match decodeArgs argsJson with
     | .error e  => pure (errJson e)
     | .ok args  => k args
+  let core : Option (IO String) :=
+    match decodeArgs argsJson with
+    | .ok args => if op == "ops" then none else Core.callIOArgsBy jsonLdReader op args
+    | .error _ => none
+  match core with
+  | some r => r
+  | none =>
   match op with
-  -- §17.6 extension functions. `queryDataset` and `storeQuery` are
-  -- overridden here (rather than delegating to the pure `call`) so a
-  -- caller registration reaches the stateless query ops too; every other
-  -- stateless op still falls through to `call` unchanged.
-  | "extRegister"      => withArgs (arityIO1 op Ops.extRegister)
-  | "extUnregister"    => withArgs (arityIO1 op Ops.extUnregister)
-  | "extClear" =>
-      withArgs (fun args =>
-        match args with
-        | [] => Ops.extClear
-        | args => pure (errJson s!"extClear expects 0 arguments, got {args.length}"))
-  | "extList" =>
-      withArgs (fun args =>
-        match args with
-        | [] => Ops.extList
-        | args => pure (errJson s!"extList expects 0 arguments, got {args.length}"))
-  -- The query and update ops take an optional third argument, the base IRI
-  -- of the query or update text (`baseArg`).
-  | "queryDataset"     => withArgs (arityIO2Base op (fun a b c => Ops.queryDatasetIO a b c))
-  | "queryDataset12"   => withArgs (arityIO2Base op (fun a b c => Ops.queryDataset12IO a b c))
+  -- `storeQuery` is served here (rather than by the pure `call`) so a §17.6
+  -- registration reaches it, as `Core.callIOArgsBy` does for `queryDataset`.
   | "storeQuery"       => withArgs (arityIO3 op
                             (fun a b c => Ops.storeQueryIO a b c ByteArray.empty))
-  | "datasetOpen"      => withArgs (arityIO3 op Ops.datasetOpen)
-  | "datasetQuery"     => withArgs (arityIO2Base op (fun a b c => Ops.datasetQuery a b c))
-  | "datasetQuery12"   => withArgs (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c))
-  | "datasetUpdate"    => withArgs (arityIO2Base op (fun a b c => Ops.datasetUpdate a b c))
-  | "datasetSerialize" => withArgs (arityIO2 op Ops.datasetSerialize)
-  | "datasetSerializeWith" => withArgs (arityIO3 op Ops.datasetSerializeWith)
-  -- Each document parsed through the IO entry gets its own blank-node scope
-  -- (`d<N>_`), so concatenated N-Quads of two documents stay disjoint
-  -- (https://github.com/danbri/factoidal/issues/685). The pure `call` keeps
-  -- the labels as written.
-  | "parseToDatasetJson" => withArgs (arityIO3 op Ops.parseToDatasetJsonScoped)
-  | "datasetClose"     => withArgs (arityIO1 op Ops.datasetClose)
   -- packBegin takes an optional third argument, the base IRI, and an
   -- optional fourth, the publication batch in source bytes. Fewer arguments
   -- means no base and the default batch, which keeps every host written
@@ -551,32 +524,13 @@ def callIO (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.solidClientResponse a b)
         | args => pure (errJson s!"solidClientResponse expects 2 arguments, got {args.length}"))
-  -- SPARQL SERVICE endpoint snapshots (`Wasm/Ops/ServiceReg.lean`).
-  | "registerServiceEndpoint" => withArgs (arityIO2 op Ops.registerServiceEndpoint)
-  | "clearServiceEndpoints" =>
-      withArgs (fun args =>
-        match args with
-        | [] => Ops.clearServiceEndpoints
-        | args => pure (errJson s!"clearServiceEndpoints expects 0 arguments, got {args.length}"))
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with
         | [] => Ops.storeHandleList
         | args => pure (errJson s!"storeHandleList expects 0 arguments, got {args.length}"))
-  | "ops"              => pure (opsReflectionFor
-                                 (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
-                                    ++ extOpNames ++ lwsSolidOpNames
-                                    ++ formatOpNames ++ serviceOpNames
-                                    ++ query12OpNames))
-  | _                  =>
-      -- `parseDocument` with a blank-node scope per document, as
-      -- `parseToDatasetJson` above (`Wasm/Ops/Lenient.lean`, issue 716).
-      match decodeArgs argsJson with
-      | .ok args =>
-          match callLenientIO op args with
-          | some r => r
-          | none => pure (call op argsJson)
-      | .error _ => pure (call op argsJson)
+  | "ops"              => pure opsReflectionIO
+  | _                  => pure (call op argsJson)
 
 /-- The dispatch entry the `l4_call_blob_io` C export serves: the string
 arguments of `callIO`, ONE byte region in, and ONE byte region out.

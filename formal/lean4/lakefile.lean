@@ -218,7 +218,13 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
-             `Wasm.Ops.Lenient, `Wasm.Ops.Validate]
+             `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
+             -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
+             -- the op modules the split moved out of the core closure, and the
+             -- build-time agreement checks of the two tables.
+             `Wasm.CoreDispatch, `Wasm.CoreExports, `Wasm.CoreDispatchTests,
+             `Wasm.Ops.ParseJsonLd, `Wasm.Ops.ReasonDl, `Wasm.Ops.ShExValidate,
+             `Wasm.Ops.QueryHdt]
 
 -- Runs the XML parser over real W3C XML Conformance Test Suite files:
 -- reads paths from stdin, prints WF / NWF per file. See
@@ -275,6 +281,14 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4factoidal» where
   srcDir := "."
   root := `Wasm.Cli
+
+-- `l4query-phases` — the phases of `l4factoidal query` (read, parse,
+-- normalize, index, eval, output), each followed by the resident memory of
+-- the process, with `--stop-after PHASE` (Harness/QueryPhases.lean,
+-- https://github.com/danbri/factoidal/issues/729).
+@[default_target] lean_exe «l4query-phases» where
+  srcDir := "."
+  root := `Harness.QueryPhases
 
 -- Native executable for the first RDF block MVP. It exercises the total
 -- `Storage.BlockMvp.scan` path over a small in-memory graph; it does not claim

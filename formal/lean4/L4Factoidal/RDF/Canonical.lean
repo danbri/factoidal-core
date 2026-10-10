@@ -208,6 +208,37 @@ def dedupAdj : List String → List String
   | x :: y :: rest =>
       if x == y then dedupAdj (y :: rest) else x :: dedupAdj (y :: rest)
 
+/-- `dedupAdj` with an accumulator. `dedupAdj` conses after its recursive
+call: one stack frame per line. In the wasm module under Node's default
+stack, `canonicalize` of 24,000 quads ran out of stack here after
+`collapseKeyedQQuads` was repaired
+(https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp`
+theorem below makes the compiler emit this form for every call. -/
+def dedupAdjTR : List String → List String
+  | []        => []
+  | x :: rest => go x rest []
+where
+  /-- `x` is the last survivor so far; `acc` holds the earlier ones, newest
+  first. -/
+  go (x : String) : List String → List String → List String
+    | [],        acc => (x :: acc).reverse
+    | y :: rest, acc => if x == y then go y rest acc else go y rest (x :: acc)
+
+theorem dedupAdjTR_go_eq :
+    ∀ (rest : List String) (x : String) (acc : List String),
+      dedupAdjTR.go x rest acc = acc.reverse ++ dedupAdj (x :: rest)
+  | [], x, acc => by simp [dedupAdjTR.go, dedupAdj]
+  | y :: rest, x, acc => by
+      by_cases h : (x == y) = true
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y acc]
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y (x :: acc)]
+
+@[csimp] theorem dedupAdj_eq_dedupAdjTR : @dedupAdj = @dedupAdjTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons x rest => simp [dedupAdjTR, dedupAdjTR_go_eq]
+
 /-- Concatenate a list of strings. -/
 def joinStrings (xs : List String) : String := xs.foldl (· ++ ·) ""
 
@@ -323,6 +354,43 @@ def collapseKeyedQQuads : List (String × QQuad) → List QQuad
   | (k1, q1) :: (k2, q2) :: rest =>
       if k1 == k2 then collapseKeyedQQuads ((k2, q2) :: rest)
       else q1 :: collapseKeyedQQuads ((k2, q2) :: rest)
+
+/-- `collapseKeyedQQuads` with an accumulator. `collapseKeyedQQuads` conses
+after its recursive call: one stack frame per quad. In the wasm module under
+Node's default stack, `canonicalize` of 24,000 quads ran out of stack here
+("Maximum call stack size exceeded";
+https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp` theorem
+below makes the compiler emit this form for every call. -/
+def collapseKeyedQQuadsTR : List (String × QQuad) → List QQuad
+  | []             => []
+  | (k, q) :: rest => go k q rest []
+where
+  /-- `q`, keyed `k`, is the last survivor so far; `acc` holds the earlier
+  survivors, newest first. -/
+  go (k : String) (q : QQuad) : List (String × QQuad) → List QQuad → List QQuad
+    | [],                acc => (q :: acc).reverse
+    | (k2, q2) :: rest,  acc =>
+        if k == k2 then go k2 q2 rest acc else go k2 q2 rest (q :: acc)
+
+theorem collapseKeyedQQuadsTR_go_eq :
+    ∀ (rest : List (String × QQuad)) (k : String) (q : QQuad) (acc : List QQuad),
+      collapseKeyedQQuadsTR.go k q rest acc =
+        acc.reverse ++ collapseKeyedQQuads ((k, q) :: rest)
+  | [], k, q, acc => by simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads]
+  | (k2, q2) :: rest, k, q, acc => by
+      by_cases h : (k == k2) = true
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 acc]
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 (q :: acc)]
+
+@[csimp] theorem collapseKeyedQQuads_eq_TR : @collapseKeyedQQuads = @collapseKeyedQQuadsTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons p rest =>
+      obtain ⟨k, q⟩ := p
+      simp [collapseKeyedQQuadsTR, collapseKeyedQQuadsTR_go_eq]
 
 def dedupQQuads (qs : List QQuad) : List QQuad :=
   collapseKeyedQQuads (sortByFast (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))

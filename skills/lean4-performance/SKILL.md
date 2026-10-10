@@ -116,6 +116,12 @@ these shapes first in any module that is slow on a large input.
 - **A list of groups searched and appended to per row.** `SPARQL/Query.lean`
   `addToGroups`. Repair: array of groups plus a hash index on a bucket key that
   is constant on order-equal values (`erEqual_erBucket`).
+- **A string built by prepending.** `SPARQL.rowsJoined` was
+  `rowJson r ++ "," ++ rowsJoined rest`: each row's text is copied in front of
+  the text of all later rows, so the whole result document is copied once per
+  row (`SELECT *` over 5,000 paragraphs of `gene.ttl`: 9.8 s, F* 1.4 s).
+  Append at the end of a string the function owns (`rowsJoinedTR` in
+  `SPARQL/ResultsJson.lean`, proved and registered with `csimp`); Lean extends a unique string in place.
 - **A comparison that converts to lists.** `Canonical.strLe` built two
   character lists per call: 57 percent of the instructions of `canonicalize`
   after the sorts were repaired. Lean's native `String` order is the same order
@@ -175,12 +181,50 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   (`String.all_bool_eq`); a `csimp` for `iriPrintSafe` took the check to 21
   percent and the query from 335 to 272 million instructions. Profile the
   repaired path again before recording its number.
+- **Memory is a resource of its own; rank it and measure it by phase.** The
+  first three survey rounds ranked by time only, and a COUNT query that held 9
+  times the F* engine's resident memory did not rank
+  (https://github.com/danbri/factoidal/issues/729). `l4query-phases FILE
+  --stop-after PHASE` (`Harness/QueryPhases.lean`) runs the phases of
+  `l4factoidal query` and prints `VmRSS`/`VmHWM`; run it under `/usr/bin/time
+  -v` once per phase over a ladder that spans at least 16 times, and divide
+  the difference of the peaks by the difference of the input sizes. The peak
+  was `parseTurtle`'s `text.toList`: a `List Char` costs 35 bytes of peak
+  resident memory per input byte, and nothing after it raised the peak
+  (`--stop-after chars` reproduces it alone). Read a `String` that is already
+  in memory with `String.foldl` or `String.all`, never with `toList`, on a
+  whole-document path (`Syntax.parseTurtleText`). A change that removes a
+  transient structure can leave the peak where it was: `normalizeDataset`
+  without its quad list was proved equal and changed nothing at the peak, and
+  interning IRIs after the parse (proved equal) took 9 MB off 188 MB for 8
+  percent more CPU time; neither was landed. The gate rows are `query-memory` and
+  `query-memory-fstar` in `tests/stack/lean_scaling.py`.
+- **A test module that nothing imports never runs.** `lake build` builds the
+  modules the umbrella `L4Factoidal.lean` reaches. Until 2026-10-10
+  `TurtleChunkFoldTests.lean`, `TurtleStatementScanTests.lean` and
+  `Utf8StreamTests.lean` were reached by nothing, and a design record cited
+  the chunk-split guards of the first as evidence. After adding a `*Tests.lean`
+  module, check that `.lake/build/lib/lean/.../<Module>Tests.olean` exists
+  after `lake build`.
 - **`csimp` makes a guard compare a function with itself.** After
   `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
   closure g n` in a later module runs the same code on both sides. Restate the
   specification under another name in the test module and prove the two equal
   (`RLTests.closureScan_eq`), so the guard still compares two programs. The
   guards on `strLe` compare with `charsLe a.toList b.toList` for the same reason.
+- **A csimp replacement needs its import.** The compiler applies a `@[csimp]`
+  theorem only while compiling a module that imports the module stating it.
+  `Wasm/Ops/Reason.lean` called `OWL.RL.closureFix` and got the indexed closure
+  through an import of `OWL.Refute` it did not need for that call. On
+  2026-10-10 the OWL DL ops moved to `ReasonDl.lean` (issue 713 stage 4, the
+  core wasm), the import went with them, and `owlClosure` silently compiled to
+  the scanning closure: the build, every guard and native-smoke stayed green.
+  The wasm size table found it, because the scanning rules of
+  `OWL/RLClosure.lean` were linked in again (113,186 bytes). Rule: a module
+  that calls a function with a `csimp` twin imports the module of the `csimp`
+  theorem explicitly, with a comment that says why; after moving imports,
+  compare the size table (`tools/wasm-size-profile.py`) of the module before
+  and after, and treat growth in a specification module as a lost `csimp`.
 
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
@@ -213,6 +257,22 @@ The first measurement, 2026-09-07: 833 self-recursions without a loop, 268
 mutual cycles; 598 input-length, 42 input-depth. Per area (length): JSON-LD 71,
 Shardborough 66, SPARQL 65, SHACL/ShEx 36, OWL 33, RDF parsers 18, XPath/XSLT
 18, XML 11.
+
+**The audit lists candidates; Node finds the ones that break first.** On
+2026-10-10 (issue 713 stage 5) the npm bench ran the wasm module under Node,
+whose default stack is about 1 MB and whose wasm frames are larger than native
+ones. A SELECT of 16,000 rows and a canonicalization of 24,000 blank-node
+quads failed with `RangeError: Maximum call stack size exceeded`, while the
+native build answered the same SELECT with a 512 KB stack. All four
+functions were already on the audit's allow-list: `SPARQL.numberRows`,
+`SPARQL.rowsJoined` (which also copied the rest of the Results JSON document
+once per row), `RDF.Canonical.collapseKeyedQQuads` and `dedupAdj`. To name
+the function of a wasm overflow, link the module once more with
+`--profiling-funcs` (same objects, about 4 minutes; `Wasm/build-wasm.sh`'s
+link line plus that flag) and print the `RangeError`'s stack in Node: the
+repeated frame is the recursion. Repair one, rebuild, run again: the next
+one appears only after the first is gone. `npm/factoidal/test/large-inputs.test.mjs`
+is the regression test.
 
 ### The repair: `csimp`, not a rewrite of the specification
 
