@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a (#PCDATA)>
+<!ENTITY e "x">
+<!ENTITY % unread SYSTEM "not-on-disk.ent">
+%unread;
+]>
+<a>&e;</a>

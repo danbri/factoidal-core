@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Repository-local XML fixtures, in the format of the W3C XML Conformance
+    Test Suite (xmlconf/testcases.dtd): TESTCASES, TEST, TYPE, ID, URI, SECTIONS.
+    Read by Harness/XmlConfRun.lean (lake exe l4xmlconf), scored on its own line
+    "xml-local". The documents are ours: they test behaviour the W3C suite does not
+    exercise (https://github.com/danbri/factoidal/issues/705).
+
+    TYPE is scored as the validating line of l4xmlconf scores it: not-wf must be
+    rejected by the parser; valid must be accepted and break no validity constraint;
+    invalid must be accepted and break at least one. Attributes after SECTIONS are
+    extensions; a case passes when TYPE and every extension it carries hold:
+
+    C14N        file holding the Canonical XML 1.0 form, comments omitted, of the
+                document the parser reports (so, with its DTD defaults supplied).
+                Compared byte for byte.
+    VIOLATIONS  the validity constraints the document breaks, separated by "|",
+                compared as a set. Without it TYPE=invalid asks only for one.
+    ISSUES      the findings of Document.xmlAttributeIssues, as kind:element in
+                document order, separated by spaces. An empty value means none.
+    NSWF        yes or no: Document.namespaceWellFormed.
+    XFAIL       URL of an open issue: the case is an expected failure. It is counted
+                apart; if it passes, the line fails and says to remove XFAIL.
+
+    External entities and external subsets are read from the files in the
+    directory of the document, by the last segment of the system identifier.
+-->
+<TESTCASES PROFILE="Factoidal repository-local XML tests">
+
+<TEST TYPE="valid" ID="xml-local-defaults-supplied" URI="defaults/default-supplied.xml" SECTIONS="3.3.2 5.1" C14N="defaults/default-supplied.c14n">
+    The declared default of an attribute the start tag leaves out is supplied.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-specified-wins" URI="defaults/specified-wins.xml" SECTIONS="3.3.2" C14N="defaults/specified-wins.c14n">
+    A specified value is kept; only the attribute that is left out is defaulted.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-fixed" URI="defaults/fixed-supplied.xml" SECTIONS="3.3.2" C14N="defaults/fixed-supplied.c14n">
+    A #FIXED declaration supplies its value when the attribute is left out.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-implied-not-supplied" URI="defaults/implied-not-supplied.xml" SECTIONS="3.3.2" C14N="defaults/implied-not-supplied.c14n">
+    #IMPLIED supplies nothing; the default of another attribute is still supplied.</TEST>
+<TEST TYPE="invalid" ID="xml-local-defaults-required-missing" URI="defaults/required-missing.xml" SECTIONS="3.3.2" C14N="defaults/required-missing.c14n" VIOLATIONS="Required Attribute">
+    #REQUIRED supplies nothing; the missing attribute breaks the Required Attribute constraint.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-other-element-type" URI="defaults/other-element-type.xml" SECTIONS="3.3.2" C14N="defaults/other-element-type.c14n">
+    A default is supplied to the element type that declares it and to no other.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-normalised" URI="defaults/normalised.xml" SECTIONS="3.3.3" C14N="defaults/normalised.c14n">
+    A default is normalised as a specified value is: references replaced, literal white space to a space, a character reference to a tab kept, a NMTOKENS value collapsed.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-nested-and-entity" URI="defaults/nested-and-entity.xml" SECTIONS="3.3.2 4.4.2" C14N="defaults/nested-and-entity.c14n">
+    Nested elements, and elements that arrive in an entity replacement text, are defaulted.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-first-declaration-binds" URI="defaults/first-declaration-binds.xml" SECTIONS="3.3" C14N="defaults/first-declaration-binds.c14n">
+    The first declaration of an attribute is binding, so its default is the one supplied.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-external-subset" URI="defaults/external-subset.xml" SECTIONS="5.1" C14N="defaults/external-subset.c14n">
+    The default of an ATTLIST in an external subset that the processor reads is supplied.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-unread-pe-then-attlist" URI="defaults/unread-pe-then-attlist.xml" SECTIONS="5.1" C14N="defaults/unread-pe-then-attlist.c14n">
+    An ATTLIST that follows a reference to a parameter entity that was not read is not processed, so no default is supplied.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-unread-pe-standalone" URI="defaults/unread-pe-standalone.xml" SECTIONS="5.1 2.9" C14N="defaults/unread-pe-standalone.c14n">
+    The same ATTLIST in a standalone document is processed.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-attlist-before-unread-pe" URI="defaults/attlist-before-unread-pe.xml" SECTIONS="5.1" C14N="defaults/attlist-before-unread-pe.c14n">
+    An ATTLIST that precedes the unread parameter-entity reference is processed.</TEST>
+<TEST TYPE="invalid" ID="xml-local-defaults-standalone-external" URI="defaults/standalone-external-default.xml" SECTIONS="2.9" C14N="defaults/standalone-external-default.c14n" VIOLATIONS="Standalone Document Declaration">
+    standalone=&quot;yes&quot; and a default declared in the external subset: the supplied attribute breaks the Standalone Document Declaration constraint.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-standalone-internal" URI="defaults/standalone-internal-default.xml" SECTIONS="2.9" C14N="defaults/standalone-internal-default.c14n">
+    standalone=&quot;yes&quot; and a default declared in the internal subset: valid.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-xmlns" URI="defaults/xmlns-default.xml" SECTIONS="3.3.2 Namespaces-3" C14N="defaults/xmlns-default.c14n" NSWF="yes">
+    A defaulted xmlns:p declares the prefix, so the document is namespace-well-formed.</TEST>
+<TEST TYPE="valid" ID="xml-local-defaults-prefix-unbound" URI="defaults/xmlns-prefix-unbound.xml" SECTIONS="3.3.2 Namespaces-3" NSWF="no">
+    The same document with an ordinary default leaves the prefix unbound.</TEST>
+<TEST TYPE="invalid" ID="xml-local-defaults-idref" URI="defaults/idref-default.xml" SECTIONS="3.3.2 3.3.1" C14N="defaults/idref-default.c14n" VIOLATIONS="IDREF">
+    A supplied IDREF value is checked as a specified one is: it names no ID.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-lang-empty" URI="xml-attributes/lang-empty-string.xml" SECTIONS="2.12" ISSUES="">
+    xml:lang=&quot;&quot; and a language tag are values.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-lang-tags" URI="xml-attributes/lang-tags.xml" SECTIONS="2.12" ISSUES="">
+    Well-formed BCP 47 tags: language-region, variant, script, private use, grandfathered.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-lang-underscore" URI="xml-attributes/lang-underscore.xml" SECTIONS="2.12" ISSUES="lang:p">
+    en_GB is not a language tag.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-lang-digit-first" URI="xml-attributes/lang-digit-first.xml" SECTIONS="2.12" ISSUES="lang:p">
+    A language subtag is letters.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-lang-trailing-hyphen" URI="xml-attributes/lang-trailing-hyphen.xml" SECTIONS="2.12" ISSUES="lang:p">
+    A tag does not end in a hyphen.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-id-valid" URI="xml-attributes/id-valid.xml" SECTIONS="xml:id-4" ISSUES="">
+    Distinct NCName values.</TEST>
+<TEST TYPE="invalid" ID="xml-local-xmlattr-id-without-declaration" URI="xml-attributes/id-without-declaration.xml" SECTIONS="xml:id-4" VIOLATIONS="Attribute Value Type" ISSUES="">
+    xml:id needs no declaration to be an ID (a value is normalised first); the DTD-validity constraint on undeclared attributes still applies.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-id-not-ncname" URI="xml-attributes/id-not-ncname.xml" SECTIONS="xml:id-4" ISSUES="id:p">
+    q:r is a Name and not an NCName.</TEST>
+<TEST TYPE="invalid" ID="xml-local-xmlattr-id-leading-digit" URI="xml-attributes/id-leading-digit.xml" SECTIONS="xml:id-4" VIOLATIONS="ID" ISSUES="id:p">
+    1a is not a Name: an xml:id error, and a violation of the ID constraint.</TEST>
+<TEST TYPE="invalid" ID="xml-local-xmlattr-id-duplicate" URI="xml-attributes/id-duplicate.xml" SECTIONS="xml:id-4" VIOLATIONS="ID" ISSUES="id:p id:p">
+    The same xml:id value twice: an error on each.</TEST>
+<TEST TYPE="invalid" ID="xml-local-xmlattr-id-duplicate-undeclared" URI="xml-attributes/id-duplicate-undeclared.xml" SECTIONS="xml:id-4" VIOLATIONS="Attribute Value Type" ISSUES="id:p id:p">
+    Duplicates after normalisation, with no declaration.</TEST>
+<TEST TYPE="invalid" ID="xml-local-xmlattr-id-clashes-with-dtd-id" URI="xml-attributes/id-clashes-with-dtd-id.xml" SECTIONS="xml:id-4" VIOLATIONS="ID" ISSUES="id:p">
+    An xml:id value equal to the value of an attribute the DTD declares as ID.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-id-declared-cdata" URI="xml-attributes/id-declared-cdata.xml" SECTIONS="xml:id-4" ISSUES="id:p">
+    xml:id declared with a type other than ID.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-base-valid" URI="xml-attributes/base-valid.xml" SECTIONS="XML-Base-3" ISSUES="">
+    LEIRI references: absolute, relative with a space, a non-ASCII letter, a percent escape, a query and a fragment.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-base-bad-escape" URI="xml-attributes/base-bad-escape.xml" SECTIONS="XML-Base-3" ISSUES="base:p">
+    A percent sign that does not start two hexadecimal digits.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-base-bad-scheme" URI="xml-attributes/base-bad-scheme.xml" SECTIONS="XML-Base-3" ISSUES="base:p">
+    A colon in the first segment ends a scheme, and 1x is not one.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-other-prefix" URI="xml-attributes/other-prefix-not-read.xml" SECTIONS="Namespaces-3" ISSUES="" NSWF="yes">
+    lang, id and base with a prefix other than xml are ordinary attributes.</TEST>
+<TEST TYPE="valid" ID="xml-local-xmlattr-bad-values-parse" URI="xml-attributes/bad-values-still-parse.xml" SECTIONS="2.12 xml:id-6" ISSUES="lang:doc id:doc base:doc">
+    Bad values of all three are reported and the parser still accepts the document.</TEST>
+<TEST TYPE="valid" ID="xml-local-pe-internal-ext-pe-in-decl" URI="pe-nesting/internal-ext-pe-in-decl.xml" SECTIONS="2.8">
+    A parameter-entity reference inside a markup declaration of an external parameter entity that the internal subset references: allowed (WFC PEs in Internal Subset does not apply).</TEST>
+<TEST TYPE="invalid" ID="xml-local-pe-internal-ext-pe-decl-nesting" URI="pe-nesting/internal-ext-pe-decl-nesting.xml" SECTIONS="2.8" VIOLATIONS="Proper Declaration/PE Nesting">
+    The replacement text of a reference inside such a declaration ends the declaration.</TEST>
+<TEST TYPE="invalid" ID="xml-local-pe-internal-ext-pe-group-nesting" URI="pe-nesting/internal-ext-pe-group-nesting.xml" SECTIONS="3.2.1 3.2.2" VIOLATIONS="Proper Group/PE Nesting">
+    The replacement text holds the opening parenthesis of a group and not the closing one.</TEST>
+<TEST TYPE="invalid" ID="xml-local-pe-internal-ext-pe-conditional-nesting" URI="pe-nesting/internal-ext-pe-conditional-nesting.xml" SECTIONS="3.4" VIOLATIONS="Proper Conditional Section/PE Nesting">
+    The replacement text holds the inner bracket of a conditional section and not its other delimiters.</TEST>
+<TEST TYPE="valid" ID="xml-local-pe-internal-ext-pe-conditional-ok" URI="pe-nesting/internal-ext-pe-conditional-ok.xml" SECTIONS="3.4">
+    A conditional section whose keyword comes from a parameter entity, in an external parameter entity.</TEST>
+<TEST TYPE="not-wf" ID="xml-local-pe-internal-subset-pe-in-decl" URI="pe-nesting/internal-subset-pe-in-decl.xml" SECTIONS="2.8">
+    WFC PEs in Internal Subset: a reference inside a markup declaration of the internal subset.</TEST>
+<TEST TYPE="not-wf" ID="xml-local-pe-internal-subset-pe-partial-decl" URI="pe-nesting/internal-subset-pe-partial-decl.xml" SECTIONS="2.8">
+    WFC PE Between Declarations: the replacement text of a reference between declarations is not whole declarations.</TEST>
+<TEST TYPE="valid" ID="xml-local-pe-internal-subset-pe-whole-decl" URI="pe-nesting/internal-subset-pe-whole-decl.xml" SECTIONS="2.8">
+    A reference between declarations whose replacement text is one whole declaration.</TEST>
+<TEST TYPE="not-wf" ID="xml-local-pe-internal-subset-char-ref-percent" URI="pe-nesting/internal-subset-char-ref-percent.xml" SECTIONS="2.8 4.5">
+    A reference written as a character reference in an entity value reaches the internal subset inside a markup declaration of the replacement text: WFC PEs in Internal Subset.</TEST>
+<TEST TYPE="invalid" ID="xml-local-pe-extsubset-ext-pe-decl-nesting" URI="pe-nesting/extsubset-ext-pe-decl-nesting.xml" SECTIONS="2.8" VIOLATIONS="Proper Declaration/PE Nesting">
+    The same nesting violation, in an external parameter entity that the external subset references.</TEST>
+<TEST TYPE="valid" ID="xml-local-pe-extsubset-char-ref-percent" URI="pe-nesting/extsubset-char-ref-percent.xml" SECTIONS="2.8 4.5">
+    In the external subset the reference that the character reference makes is allowed inside the declaration.</TEST>
+
+<TEST TYPE="not-wf" ID="xml-local-defaults-unreadable-default" URI="defaults/unreadable-default.xml" SECTIONS="3.3.2 3.1">
+    A default in the external subset that is not an AttValue (it holds a &lt;), for an attribute the tag leaves out.</TEST>
+<TEST TYPE="not-wf" ID="xml-local-defaults-unreadable-default-unused" URI="defaults/unreadable-default-unused.xml" SECTIONS="3.3.2 3.1 2.8" XFAIL="https://github.com/danbri/factoidal/issues/705">
+    The same default, for a tag that specifies the attribute. The well-formedness constraints on an attribute value apply to the declaration whether or not a tag uses it; the parser reads the default when it supplies it, so this document is accepted.</TEST>
+<TEST TYPE="invalid" ID="xml-local-entities-after-unread-pe" URI="entities/entity-after-unread-pe.xml" SECTIONS="5.1" C14N="entities/entity-after-unread-pe.c14n" VIOLATIONS="Entity Declared">
+    An entity declared after a reference to a parameter entity that was not read is not processed (standalone is not yes), so the reference to it is not replaced.</TEST>
+<TEST TYPE="valid" ID="xml-local-entities-before-unread-pe" URI="entities/entity-before-unread-pe.xml" SECTIONS="5.1" C14N="entities/entity-before-unread-pe.c14n">
+    The same entity declared before the reference is processed.</TEST>
+<TEST TYPE="valid" ID="xml-local-entities-after-unread-pe-standalone" URI="entities/entity-after-unread-pe-standalone.xml" SECTIONS="5.1 2.9" C14N="entities/entity-after-unread-pe-standalone.c14n">
+    With standalone="yes" the declaration after the unread reference is processed.</TEST>
+
+</TESTCASES>

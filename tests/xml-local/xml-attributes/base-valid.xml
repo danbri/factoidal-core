@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc (p)>
+<!ELEMENT p EMPTY>
+<!ATTLIST doc xml:base CDATA #IMPLIED>
+<!ATTLIST p xml:base CDATA #IMPLIED>
+]>
+<doc xml:base="http://example.org/wine/"><p xml:base="rosé wine/%41?q#f"/></doc>

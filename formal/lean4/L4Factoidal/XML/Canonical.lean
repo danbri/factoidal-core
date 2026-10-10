@@ -189,6 +189,28 @@ def canonDocument (d : Document) : String :=
     ++ canonNode rootScope d.root
     ++ String.join (d.epilog.map (fun n => "\n" ++ canonNode rootScope n))
 
+mutual
+
+/-- A node with every comment below it removed. -/
+def dropComments : Node → Node
+  | .element t attrs kids => .element t attrs (dropCommentsList kids)
+  | n => n
+
+def dropCommentsList : List Node → List Node
+  | [] => []
+  | .comment _ :: rest => dropCommentsList rest
+  | n :: rest => dropComments n :: dropCommentsList rest
+
+end
+
+/-- Canonical XML 1.0 WITHOUT comments, the form the Recommendation names
+    "Canonical XML (omits comments)": the document with every comment
+    removed, canonicalised. -/
+def canonDocumentNoComments (d : Document) : String :=
+  canonDocument
+    { d with prolog := dropCommentsList d.prolog, root := dropComments d.root,
+             epilog := dropCommentsList d.epilog }
+
 /-- Canonicalise a FRAGMENT: a string that may hold several top-level
     nodes, or text, and so need not be a well-formed document. It is
     wrapped in one element and the wrapper is canonicalised with it,
@@ -265,6 +287,16 @@ example with it, which defaults `attr="default"` on `e9`. -/
 #guard (match parseXML "<doc><e9 xmlns:a=\"http://www.ietf.org\"/></doc>" with
   | .ok d => some (canonDocument d)
   | .error _ => none) == some "<doc><e9 xmlns:a=\"http://www.ietf.org\"></e9></doc>"
+
+-- Canonical XML WITHOUT comments drops every comment, keeps processing
+-- instructions, and puts nothing in a comment's place.
+#guard (match parseXML "<!--c1--><?p d?><a><!--c2-->x<!--c3--><b><!--c4--></b></a><!--c5-->" with
+  | .ok d => some (canonDocumentNoComments d)
+  | .error _ => none) == some "<?p d?>\n<a>x<b></b></a>"
+-- ...and the form WITH comments keeps them.
+#guard (match parseXML "<!--c1--><a><!--c2--></a>" with
+  | .ok d => some (canonDocument d)
+  | .error _ => none) == some "<!--c1-->\n<a><!--c2--></a>"
 
 -- Attribute order and declaration order are not significant.
 #guard canonicalFragment? "<a y=\"1\" x=\"2\"/>" == canonicalFragment? "<a x=\"2\" y=\"1\"/>"

@@ -41,12 +41,11 @@ Lean counterpart** — the invalid-UTF-8 rejection the F* performs is
 discharged by Lean's type, not by a check. Every rule stated over
 CODEPOINTS is ported in full; see PORT_NOTES.md.
 
-Deliberately NOT ported (out of the F* modules' own scope):
-  * validity constraints — content models, ATTLIST enforcement,
-    ID/IDREF uniqueness (`[28] doctypedecl` is recognised, never
-    enforced: the F* is an explicitly non-validating processor);
-  * the external DTD subset, conditional sections, and general
-    parameter-entity expansion.
+Kept out of this module and the parser:
+  * validity constraints — content models, ID/IDREF uniqueness, required
+    attributes (`[28] doctypedecl` is read, and its declarations are
+    recorded here, but the parser does not enforce them; the checks are
+    `L4Factoidal.XML.Validity`).
 -/
 
 namespace L4Factoidal.XML
@@ -370,6 +369,10 @@ structure EntityDef where
   not where it is declared. An entity that no reference names is not
   read (section 4.4.1, 4.4.3). -/
   unreadable : Option String := none
+  /-- Declared after a reference to a parameter entity that the processor
+  did not read. XML 1.0 §5.1: except when `standalone="yes"`, a
+  non-validating processor must not process such a declaration. -/
+  afterUnreadPe : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
 /-- The declared general entities, or (kept apart, section 4.1) the
@@ -394,6 +397,10 @@ structure EntityTable where
   §4.3.4: the version declared in the document entity decides the rules
   for the whole document, including the external entities it invokes. -/
   version : XmlVersion := .v10
+  /-- The document says `standalone="yes"`: a declaration that follows a
+  reference to a parameter entity that was not read is processed all the
+  same (§5.1). -/
+  standalone : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[54] AttType` — the declared type of an attribute (XML 1.0 §3.3.1).
@@ -478,12 +485,12 @@ Recorded: the root Name, the general internal entity declarations
 (`[71] GEDecl` with an `[9] EntityValue`, first declaration wins per
 §4.2), every `[53] AttDef` read from the internal subset and from the
 external subset when the caller could supply it (so XPath's `id()` can
-find the ID-typed attributes, and so attribute values can be normalised
-by declared type), and the names of the declarations.
+find the ID-typed attributes, so attribute values can be normalised
+by declared type, and so a default can be supplied), every `[45] elementdecl`,
+the unparsed entities, and the names of the declarations.
 
-NOT recorded and NOT acted on: `[45] elementdecl`, `[82] NotationDecl`
-bodies, and conditional sections' ignored text. They are checked for
-shape and skipped. -/
+Checked for shape and left out of the record: `[82] NotationDecl` bodies
+and the text of ignored conditional sections. -/
 structure Doctype where
   /-- The document type name — `[28]`'s `Name`. -/
   rootName : String

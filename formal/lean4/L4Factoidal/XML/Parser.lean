@@ -101,21 +101,33 @@ Prolog:
      type is not CDATA has its value space-collapsed (§5.1: a
      processor that reads the declaration must use it). The first
      declaration of an attribute is binding (§3.3).
+ 22. §3.3.2 attribute defaults — an attribute that a start tag leaves out,
+     and that the element type declares with a default value or `#FIXED`,
+     is added after the specified attributes, in the order of the
+     declarations, with its value normalised as §3.3.3 asks.
 
-## Deliberately NOT enforced — the F* module's own scope cuts
+## Where the other layers are
 
-  * **Validity constraints.** This is a NON-VALIDATING processor.
-    Content models, ATTLIST defaulting/enforcement, and ID/IDREF
-    uniqueness are recognised but never checked.
-  * **The external DTD subset** is never loaded — no external resource
-    is read at all — and neither are conditional sections or general
-    parameter-entity expansion.
+  * **Validity constraints** are checked by `L4Factoidal.XML.Validity`
+    over the tree and the notes this parser records (`parseXMLNotes`).
+    This parser is NON-VALIDATING: it accepts a document that breaks any
+    of them, whatever its DTD says.
+  * **What a non-validating processor does with the DTD it reads** (XML 1.0
+    §5.1): it normalises attribute values by declared type (item 21), it
+    supplies the declared default of an attribute a start tag leaves out
+    (§3.3.2: `defaultedAttrs`; `ElemNote.defaulted` names them), and it
+    expands internal entities. An external subset, and the external
+    parameter entities it or the internal subset references, are read
+    through the `Resolver` the caller passes; with none, they are not read.
+    An attribute-list declaration that follows a reference to a parameter
+    entity that was not read is not processed, unless `standalone="yes"`
+    (§5.1).
   * **Namespaces in XML.** Plain XML 1.0 allows `:` anywhere in a Name,
     and `xmltest/` exercises that on purpose. The namespace layer is
-    separate: `L4Factoidal.XML.Namespaces`.
-  * **XML 1.1.** The declared version is recorded, never acted on
-    (beyond handing it to the namespace layer, whose undeclaring rule
-    differs between 1.0 and 1.1).
+    separate: `L4Factoidal.XML.Namespaces`. The values of `xml:lang`,
+    `xml:id` and `xml:base` are checked in `L4Factoidal.XML.XmlAttributes`.
+  * **XML 1.1.** The version in the declaration picks the rules for the
+    whole document (`XmlVersion`, `normalizeLineEndings11`).
   * **The RDF/XML-specific checks** of `XML.Wellformedness.fst` live in
     `L4Factoidal.XML.Wellformedness`, not here.
 
@@ -421,7 +433,7 @@ def codepointToString (cp : Nat) : String := String.singleton (Char.ofNat cp)
 `XML/Document.lean` carries `EntityTable` and `EntityDef`, because
 `Doctype` holds one. -/
 def lookupEntityDef (name : String) (ents : EntityTable) : Option EntityDef :=
-  (ents.defs.find? (fun p => p.1 == name)).map (·.2)
+  (ents.defs.find? (fun p => p.1 == name && (ents.standalone || !p.2.afterUnreadPe))).map (·.2)
 
 /-- Look a declared general entity's replacement text up by name.
 Port of F* `lookup_entity`. -/
@@ -1058,16 +1070,24 @@ default (or `#FIXED`) value and the tag leaves out, in the order of the
 declarations. The first declaration of an attribute is binding (§3.3).
 `atts` is in REVERSE order of declaration. -/
 def defaultedAttrs (ents : EntityTable) (atts : List AttDecl) (tag : String)
-    (specified : List Attribute) : List Attribute :=
-  let rec go : List AttDecl → List String → List Attribute
-    | [], _ => []
+    (specified : List Attribute) : Except String (List Attribute) :=
+  let rec go : List AttDecl → List String → Except String (List Attribute)
+    | [], _ => .ok []
     | d :: rest, seen =>
         if seen.contains d.name then go rest seen
         else if specified.any (fun a => a.name == d.name) then go rest (d.name :: seen)
-        else match defaultValue ents d with
-          | some v => { name := d.name, value := v } :: go rest (d.name :: seen)
-          | none   => go rest (d.name :: seen)
-  if atts.isEmpty then [] else go (atts.reverse.filter (fun d => d.element == tag)) []
+        else match d.defaultDecl with
+          | .required | .implied => go rest (d.name :: seen)
+          | _ =>
+            -- A default is an `[10] AttValue`. A literal that is not one
+            -- (a `<`, a recursive or external entity reference, a
+            -- character outside `[2] Char`) breaks the well-formedness
+            -- constraints on attribute values, wherever it was declared.
+            match defaultValue ents d with
+            | some v => (go rest (d.name :: seen)).map (fun l => { name := d.name, value := v } :: l)
+            | none =>
+                .error s!"the default value of attribute {d.name} of {tag} is not a well-formed attribute value ([10] AttValue, section 3.3.2)"
+  if atts.isEmpty then .ok [] else go (atts.reverse.filter (fun d => d.element == tag)) []
 
 /-! ## Notes for the validity layer
 
@@ -1327,7 +1347,9 @@ def parseElement (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : N
           let attrs1 := normalizeAttrsByType atts tag attrs0
           -- §3.3.2, §5.1: the declared defaults of the attributes the
           -- tag does not specify.
-          let defaulted := defaultedAttrs ents atts tag attrs1
+          match defaultedAttrs ents atts tag attrs1 with
+          | .error m => .err m pos2
+          | .ok defaulted =>
           let attrs := attrs1 ++ defaulted
           let (_, undeclAttr) := scanRefs ents s pos2 pos3 (pos3 - pos2 + 1)
           let notes0 := if undeclAttr then { notes with undeclared := true } else notes
@@ -2498,7 +2520,20 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd) (ext : Bool)
         else if peekLit "<!ENTITY" s pos then
           match parseEntityDecl resolve (endKind == .bracket) s pos ents pes with
           | .err m p => .err m p
-          | .ok (ents', pes', name, ndata) pos' =>
+          | .ok (ents1, pes1, name, ndata) pos' =>
+              -- XML 1.0 §5.1: except when `standalone="yes"`, a
+              -- non-validating processor must not process an entity
+              -- declaration that follows a reference to a parameter
+              -- entity it did not read. The declaration is kept, marked,
+              -- and the table does not offer it (`lookupEntityDef`).
+              let mark (old new : EntityTable) : EntityTable :=
+                if new.defs.length > old.defs.length then
+                  { new with defs := match new.defs with
+                      | (n, d) :: rest => (n, { d with afterUnreadPe := dtd.incomplete }) :: rest
+                      | [] => [] }
+                else new
+              let ents' := mark ents ents1
+              let pes' := mark pes pes1
               parseSubset resolve endKind ext s pos' ents' pes'
                 { dtd with
                     names := { dtd.names with entities := name :: dtd.names.entities },
@@ -2610,10 +2645,10 @@ def parseDoctype (resolve : Resolver) (ver : XmlVersion) (standalone : Bool)
           -- over a later one of the same name (§4.2).
           let p4 := skipSpace s p3'
           match (if p4 < s.size && charAt s p4 == '[' then
-                   match parseSubset resolve .bracket false s (p4 + 1) { version := ver } { version := ver } {} (s.size + 1) with
+                   match parseSubset resolve .bracket false s (p4 + 1) { version := ver, standalone := standalone } { version := ver, standalone := standalone } {} (s.size + 1) with
                    | .err m p => PResult.err m p
                    | .ok r p5 => PResult.ok r p5
-                 else PResult.ok ((({ version := ver }, { version := ver }, {}) :
+                 else PResult.ok ((({ version := ver, standalone := standalone }, { version := ver, standalone := standalone }, {}) :
                         EntityTable × EntityTable × DtdAcc)) p4) with
           | .err m p => .err m p
           | .ok (ents, pes, dtd) p5 =>

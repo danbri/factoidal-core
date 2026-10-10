@@ -44,6 +44,19 @@ tests/local-overrides/<suite>/<TestName>.override
 | `provenance`    | where the defect was confirmed upstream                        |
 | `issue`         | the open GitHub issue that tracks the disagreement (full URL)  |
 
+## Before adding an override
+
+Run the case alone (`--verbose` on the runner) and read the document and the
+reason it fails. An override says that the fixture, and not the engine, is
+wrong, so check that the engine's verdict is the one the specification gives
+for THIS document, not for a document that looks like it. On 2026-10-10 the
+xmlconf case `ibm-1-1-valid-P03-ibm03v09.xml` was recorded as a fixture that
+contradicts XML 1.1 (its external entity has a bad text declaration), an
+override was added, and the runner reported it STALE the moment the real cause
+was fixed: the document never references the entity, and the parser had read it
+anyway (XML 1.0 section 2.1 asks for the entities a document references).
+Cost: an issue, a task order and two commits for a dispute that did not exist.
+
 ## Runner contract
 
 A runner that honours overrides MUST:

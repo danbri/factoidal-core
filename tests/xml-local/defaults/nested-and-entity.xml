@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a (b|c)*>
+<!ELEMENT b (c)>
+<!ELEMENT c EMPTY>
+<!ENTITY e "<c/>">
+<!ATTLIST c x CDATA "dx">
+]>
+<a><b><c/></b>&e;<c x="given"/></a>

@@ -1288,4 +1288,35 @@ def definedNames (src : String) : Option (List (List String)) :=
 #guard vcsWith noFiles "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x CDATA #FIXED \"d\">]><a x=\"e\"/>"
        == some ["Fixed Attribute Default"]
 
+-- A default that is not an `[10] AttValue` breaks the well-formedness
+-- constraints on attribute values; in the external subset it is met when it
+-- is supplied. (In the internal subset it is refused where it is declared,
+-- see "An attribute DEFAULT is an AttValue" above.)
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"<\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == none
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"&e;\"><!ENTITY e \"<b/>\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == none
+#guard rootAttrsWith (files [("x.dtd", "<!ENTITY e \"v\"><!ATTLIST a x CDATA \"&e;\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>" == some [("x", "v")]
+-- ...and a tag that specifies the attribute never meets it.
+#guard rootAttrsWith (files [("x.dtd", "<!ATTLIST a x CDATA \"<\">")]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"s\"/>" == some [("x", "s")]
+
+/-! ## Entity declarations after an unread parameter entity — XML 1.0 §5.1
+
+"Except when standalone="yes", they must not process entity declarations or
+attribute-list declarations encountered after a reference to a parameter
+entity that is not read." -/
+
+def entText (src : String) : Option String := rootText src
+-- A general entity declared after the reference is not processed; the
+-- reference to it is not replaced (§4.1: the constraint is then a validity
+-- one, and a non-validating processor does not report it).
+#guard entText "<!DOCTYPE a [<!ENTITY % u SYSTEM \"gone.ent\">%u;<!ENTITY e \"x\">]><a>&e;</a>" == some ""
+-- Declared before it, it is processed.
+#guard entText "<!DOCTYPE a [<!ENTITY e \"x\"><!ENTITY % u SYSTEM \"gone.ent\">%u;]><a>&e;</a>" == some "x"
+-- standalone="yes": processed either way.
+#guard entText "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [<!ENTITY % u SYSTEM \"gone.ent\">%u;<!ENTITY e \"x\">]><a>&e;</a>" == some "x"
+-- A parameter entity that is read lets the declarations after it stand.
+#guard (match parseXMLWith (files [("u.ent", "<!ENTITY f \"y\">")])
+            "<!DOCTYPE a [<!ENTITY % u SYSTEM \"u.ent\">%u;<!ENTITY e \"x\">]><a>&e;&f;</a>" with
+        | .ok d => some d.root.textContent
+        | .error _ => none) == some "xy"
+
 end L4Factoidal.XML.Tests

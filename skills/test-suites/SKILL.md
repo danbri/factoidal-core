@@ -217,6 +217,20 @@ when 1.1 exists (Iron Rule #5).
   without it, 6 of its 7 checks fail on environment, not on code;
   `check_pages_links.sh` needs a fresh Eleventy build at `docs/_site`
   first.
+- `tests/xml-local/` — repository-local XML fixtures in the format of the
+  W3C XML Conformance Test Suite (`xml-local.xml`, with the attributes it
+  adds explained in its header): attribute defaults (XML 1.0 3.3.2, 5.1),
+  the value syntax of `xml:lang`, `xml:id` and `xml:base`, and the nesting of
+  parameter entities in external parameter entities (2.8, 3.2, 3.4). The Lean
+  runner scores it on its own line, `xml-local: N pass, M fail, K
+  expected-fail (out of T)`, from the repository root:
+  `formal/lean4/.lake/build/bin/l4xmlconf`. A case with an `XFAIL`
+  attribute names an open issue, is counted in `expected-fail`, and fails the
+  run when it passes. The same run reads `tests/local-overrides/*.json` with
+  `"suite": "xmlconf"` (a case named by its manifest `ID`), counts an
+  overridden case in a `local-override` bucket on every line it belongs to,
+  fails when an overridden case passes, and exits 1 on any failure.
+  Record: [`docs/designissues/2026-10-10-xml-profile-widened.md`](../../docs/designissues/2026-10-10-xml-profile-widened.md).
 - `tests/beyond-w3c/` — cross-runtime parity: every demo-page query in
   `tests/beyond-w3c/fixtures/index.json` runs on native and
   js-of-ocaml-under-Node via `tests/beyond-w3c/bin/run-parity.py`. Any non-zero exit is an engine crash unless the
@@ -528,6 +542,9 @@ record. Conventions, by test kind:
   ("N pass, M fail, K expected-fail (out of T)") with the issue URL printed
   per case, and the probe exits non-zero when an expected-fail case passes.
   Local override files carry the issue URL in their reason field.
+- **`l4xmlconf`** (`tests/xml-local/xml-local.xml`): an `XFAIL="<issue URL>"`
+  attribute on a `TEST`; the `xml-local` line prints the `expected-fail` count
+  and the run fails if such a case passes.
 - **`#guard`**: cannot express an expected failure; use the probe bucket or
   a Node case instead, and say so beside the header prose.
 - **F\* runners**: the `tests/local-overrides/` reason string carries the

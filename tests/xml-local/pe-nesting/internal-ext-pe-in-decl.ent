@@ -1,0 +1,2 @@
+<!ENTITY % content "EMPTY">
+<!ELEMENT a %content;>
