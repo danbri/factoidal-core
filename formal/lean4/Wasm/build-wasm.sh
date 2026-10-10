@@ -364,7 +364,8 @@ em++ -O3 -DNDEBUG -fwasm-exceptions \
   -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB \
   -sSTACK_SIZE=8MB \
   -sENVIRONMENT=web,worker,node \
-  -sASSERTIONS=0
+  -sASSERTIONS=0 \
+  -Wl,--Map="$WORK/l4factoidal.map"
 
 # ---------------------------------------------------------------------
 say "step 8 — install artifacts"

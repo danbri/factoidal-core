@@ -1,11 +1,14 @@
 /-
-Wasm.Ops.QueryExtras — the two query entries of the npm package that
-are not `queryDataset`:
+Wasm.Ops.QueryExtras — `queryRaw`, the query entry of the npm package
+that answers serialised text:
 
   queryRaw(data, sparql, optsJson)
     -> {"ok":true,"text":"…"}
-  queryHdt(sparql) + the bytes of one .hdt file in the blob region
-    -> the `queryDataset` envelope family (`kind` select | ask)
+
+`queryHdt`, the other entry this module held until 2026-10-10, is in
+`Wasm/Ops/QueryHdt.lean`, so that the core dispatch (`Wasm/CoreDispatch.lean`,
+https://github.com/danbri/factoidal/issues/713 stage 4) serves `queryRaw`
+without linking the HDT reader.
 
 `queryRaw` is the "one call, serialised answer" entry that
 `npm/factoidal/index.js` has as a legacy export. The F* build answers it
@@ -13,7 +16,9 @@ through its command-line driver; here it is a dispatch operation.
 `optsJson` is `""` or an object with the members
 
   dataFormat  turtle (default) | ttl | ntriples | nt | nquads | nq |
-              trig | rdfxml | rdf        — how `data` is read
+              trig | rdfxml | rdf        — how `data` is read (with the
+              tags of the `ExtraReader` the caller passes: JSON-LD in the
+              full dispatch)
   entail      none (default) | RDFS | OWL-RL | x-rdfscore | x-rdfsplus
               — closure of the DEFAULT graph before the query: the
                 `owlClosure` closures of `Wasm/Ops/Reason.lean` for RDFS
@@ -31,16 +36,6 @@ N-Triples text, with any other output it is an error. `table` and
 the same signature: `table` draws the SELECT rows with N-Triples term
 syntax, and `ntriples` of a SELECT lists `?var = term` per row.
 
-`queryHdt` reads a HDT file (the whole file is the blob region) through
-the HDT reader (`HDT/Container`, `Dictionary`, `Triples`, `Store`),
-decodes every triple into the default graph of a dataset and evaluates
-the query over it. The result is the same envelope `queryDataset`
-answers. An HDT file holds one graph, so there are no named graphs.
-SELECT and ASK are the forms the F* entry accepted; the Lean evaluator
-also evaluates CONSTRUCT and DESCRIBE, and `npm/factoidal/lib/api.js`
-rejects those two forms for `queryHdt` before the call, to keep one
-contract on both engines.
-
 Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note).
 -/
@@ -57,7 +52,6 @@ import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.OWL.RLClosure
-import L4Factoidal.HDT.Store
 import L4Factoidal.RDFS.Closure
 import L4Factoidal.RDFS.RDFSPlus
 
@@ -164,8 +158,9 @@ private def renderRaw (output : String) (a : RawAnswer) : Except String String :
     | "ntriples", .bindings vars rows => .ok (varEqualsText vars rows)
     | other, _ => .error s!"queryRaw: unknown output format '{other}'"
 
-/-- `queryRaw(data, sparql, optsJson)`. -/
-def queryRaw (data sparql optsJson : String) : String :=
+/-- `queryRaw(data, sparql, optsJson)`; `extra` reads the syntaxes outside
+`Wasm/Ops/Parse.lean`'s table. -/
+def queryRawBy (extra : ExtraReader) (data sparql optsJson : String) : String :=
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String :=
     match opts.bind (fun j => j.getString? k) with
@@ -175,7 +170,7 @@ def queryRaw (data sparql optsJson : String) : String :=
   if !(["json", "csv", "tsv", "xml", "table", "ntriples"].contains output) then
     errJson s!"queryRaw: output must be json, csv, tsv, xml, table or ntriples (got '{output}')"
   else
-  match parseTextToDataset data (field "dataFormat" "turtle") "" with
+  match parseTextToDatasetBy extra data (field "dataFormat" "turtle") "" with
   | .error e => errJson s!"queryRaw: {e}"
   | .ok ds0 =>
     match closeDefaultGraph (field "entail" "none") ds0 with
@@ -188,36 +183,17 @@ def queryRaw (data sparql optsJson : String) : String :=
         | .error e => errJson e
         | .ok text => okWith [("text", .string text)]
 
-/-! ## queryHdt -/
-
-/-- `queryHdt(sparql)` over the HDT file in `hdt`. -/
-def queryHdt (sparql : String) (hdt : ByteArray) : String :=
-  if hdt.isEmpty then
-    errJson "queryHdt: no HDT bytes were passed (this op reads the blob region; use l4_call_blob)"
-  else
-  match L4Factoidal.HDT.parseInventory hdt with
-  | none => errJson "queryHdt: the bytes are not a readable HDT container"
-  | some inv =>
-    match L4Factoidal.HDT.readTriples hdt inv with
-    | none => errJson "queryHdt: the HDT triples section is not readable"
-    | some tri =>
-      let gs : L4Factoidal.HDT.GraphStore :=
-        { graphName := none, artifactPath := "", summary := none,
-          bytes := hdt, inventory := inv, triples := tri }
-      let g := L4Factoidal.HDT.searchTriples gs none none none
-      queryParsedDataset { default := g, named := [] } sparql
-
 /-! ## Build-time checks (positive and negative) -/
 
 private def rawData : String :=
   "<http://e/a> <http://e/name> \"Alice\" .\n<http://e/b> <http://e/name> \"Bob\" .\n"
 private def rawQuery : String := "SELECT ?n WHERE { ?p <http://e/name> ?n } ORDER BY ?n"
 
-#guard queryRaw rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}"
+#guard queryRawBy noExtraReader rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}"
          == "{\"ok\":true,\"text\":\"n\\r\\nAlice\\r\\nBob\\r\\n\"}"
-#guard (queryRaw rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"yaml\"}").startsWith
+#guard (queryRawBy noExtraReader rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"yaml\"}").startsWith
          "{\"ok\":false"
-#guard (queryRaw rawData "SELECT WITHOUT" "{\"dataFormat\":\"ntriples\"}").startsWith
+#guard (queryRawBy noExtraReader rawData "SELECT WITHOUT" "{\"dataFormat\":\"ntriples\"}").startsWith
          "{\"ok\":false"
 -- The entailment regimes: a subclass membership is entailed under RDFS,
 -- x-rdfscore and x-rdfsplus and not under none; an owl:inverseOf statement
@@ -232,7 +208,7 @@ private def askD : String :=
   "ASK { <http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> }"
 private def askInv : String := "ASK { <http://e/b> <http://e/q> <http://e/a> }"
 private def rawEntail (regime q : String) : String :=
-  queryRaw entailData q ("{\"dataFormat\":\"ntriples\",\"entail\":\"" ++ regime ++ "\"}")
+  queryRawBy noExtraReader entailData q ("{\"dataFormat\":\"ntriples\",\"entail\":\"" ++ regime ++ "\"}")
 #guard ((rawEntail "x-rdfscore" askD).splitOn "boolean\\\":true").length > 1
 #guard ((rawEntail "x-rdfsplus" askD).splitOn "boolean\\\":true").length > 1
 #guard ((rawEntail "RDFS" askD).splitOn "boolean\\\":true").length > 1
@@ -241,7 +217,5 @@ private def rawEntail (regime q : String) : String :=
 #guard ((rawEntail "x-rdfscore" askInv).splitOn "boolean\\\":false").length > 1
 #guard (rawEntail "x-unknown" askD).startsWith "{\"ok\":false"
 
-#guard (queryHdt "ASK { ?s ?p ?o }" ByteArray.empty).startsWith "{\"ok\":false"
-#guard (queryHdt "ASK { ?s ?p ?o }" "not an hdt file".toUTF8).startsWith "{\"ok\":false"
 
 end L4Wasm.Ops

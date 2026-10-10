@@ -72,9 +72,16 @@ extern lean_object *l4_call_blob(lean_object *op, lean_object *args_json,
 extern lean_object *l4_call_blob_io(lean_object *op, lean_object *args_json,
                                     lean_object *blob);
 
-/* Module initialiser for Wasm.Exports; it chains through every import,
-   Init included. Name pattern: initialize_<package>_<Module_Path>. */
-extern lean_object *initialize_l4factoidal_Wasm_Exports(uint8_t builtin);
+/* Module initialiser of the exports module; it chains through every
+   import, Init included. Name pattern: initialize_<package>_<Module_Path>.
+   The full module (l4factoidal.wasm) links Wasm.Exports; the core module
+   (l4factoidal-core.wasm, issue 713 stage 4) links Wasm.CoreExports, which
+   defines the same C symbols over the core dispatch. build-wasm.sh compiles
+   this file once per module, with -DL4_INIT_MODULE naming the initialiser. */
+#ifndef L4_INIT_MODULE
+#define L4_INIT_MODULE initialize_l4factoidal_Wasm_Exports
+#endif
+extern lean_object *L4_INIT_MODULE(uint8_t builtin);
 
 static int g_l4_initialized = 0;
 
@@ -82,7 +89,7 @@ static int g_l4_initialized = 0;
 static int l4_ensure_init(void) {
     if (g_l4_initialized) return 1;
     lean_initialize_runtime_module();
-    lean_object *res = initialize_l4factoidal_Wasm_Exports(1 /* builtin */);
+    lean_object *res = L4_INIT_MODULE(1 /* builtin */);
     if (!lean_io_result_is_ok(res)) {
         lean_io_result_show_error(res);
         lean_dec(res);
