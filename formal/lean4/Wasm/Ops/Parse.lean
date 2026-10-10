@@ -14,7 +14,8 @@ The dataset handle IS the returned N-Quads string, exactly as in the F*
 entry. Format tags follow `RDF.Format.fst`'s `format_of_string` table
 for the formats the Lean engine parses; a `*12` tag routes to the RDF
 1.2 (`Mode.rdf12`) entry points, mirroring `entry_jsoo.ml`'s
-consumer-side dispatch. `jsonld` is a named gap, not a silent one.
+consumer-side dispatch. `jsonld` reads JSON-LD 1.1 through
+`JSONLD.parseJsonLd` with no document loader.
 
 Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note: the umbrella initializer dies under
@@ -28,6 +29,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.JSONLD.ToRdf
 
 namespace L4Wasm.Ops
 
@@ -69,7 +71,13 @@ def parseTextToDataset (text formatTag baseIRI : String) :
   | "rdfxml" | "rdf/xml" | "rdf" | "xml" =>
       wrapGraph (RdfXml.parseRdfXml text base)
   | "jsonld" | "json-ld" | "application/ld+json" =>
-      .error "JSON-LD is not in the Lean engine's v1 surface"
+      -- JSON-LD 1.1 API, "Deserialize JSON-LD to RDF". No document loader
+      -- is installed (the F* entry has none either), so a remote `@context`
+      -- is the JSON-LD error `loading remote context failed`.
+      match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base
+              none none none with
+      | .ok ds    => .ok ds
+      | .error e  => .error s!"invalid or unsupported JSON-LD ({e.code})"
   | _ => .error s!"unknown format tag '{formatTag}'"
 
 /-- `parseToDatasetJson(text, formatTag, baseIRI)`. -/

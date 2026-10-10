@@ -94,8 +94,9 @@ over the stored dataset and its cached indexed backend, without the
 per-call N-Quads round trip. -/
 def datasetQuery (h sparql : String) : IO String := do
   let extIris ← extSnapshot
+  let services ← serviceSnapshot
   withHandle h fun od =>
-    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris)
+    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services)
 
 /-- `datasetUpdate(handle, sparqlUpdate)` — apply the update and
 REPLACE the stored dataset (and rebuild its index); answers the new quad
