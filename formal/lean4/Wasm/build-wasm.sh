@@ -51,6 +51,11 @@ LEAN_TAG="$(tr -d ' \n' < "$LEAN_DIR/lean-toolchain" | sed 's|.*:||')"   # e.g. 
 # toolchain). Getting this wrong silently resolves to ~/.elan and the
 # build fails 40 lines later complaining about missing core sources.
 TOOLCHAIN="$(cd "$LEAN_DIR" && lean --print-prefix)"
+# Every `lean` call below resolves its toolchain from the working directory
+# (elan reads lean-toolchain there). Run from the repository root with no
+# `elan default`, step 3 printed GEN-FAIL for all 838 core modules (2026-10-10).
+WORK="$(mkdir -p "$WORK" && cd "$WORK" && pwd)"   # absolute, before the cd below
+cd "$LEAN_DIR"
 
 say() { printf '\n=== %s\n' "$*"; }
 

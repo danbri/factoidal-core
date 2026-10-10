@@ -76,9 +76,9 @@ test('capabilities: the stage-1 families are reported true', async (t) => {
     'tableau']) {
     assert.equal(caps[key], true, `capabilities().${key}`);
   }
-  // Not in this stage: still false, so a caller sees the truth.
-  for (const key of ['shacl', 'shex', 'matrix', 'sigmoid', 'cottasBytesStore',
-    'vcCrypto', 'didKey']) {
+  // Not served by the Lean dispatch table: still false, so a caller sees
+  // the truth. (Stage 2 serves matrix, sigmoid, vcCrypto and didKey.)
+  for (const key of ['shacl', 'shex', 'cottasBytesStore']) {
     assert.equal(caps[key], false, `capabilities().${key}`);
   }
 });

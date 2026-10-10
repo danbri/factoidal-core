@@ -555,15 +555,15 @@ repository root, with no `elan default` set, every one of the 838 core
 modules printed `GEN-FAIL ... no default toolchain configured` (the
 message is hidden: the call is `>/dev/null 2>&1`), the script did not
 stop, and the build then ran on for a while before it could fail. Cost:
-about ten minutes of a shared 4-CPU container. Run it as
-
-```bash
-cd formal/lean4 && bash Wasm/build-wasm.sh [work-dir]
-```
-
-or set `elan default leanprover/lean4:v4.33.1` once. When several
-agents build at once, give each its own work directory (the argument);
-the default `/tmp/l4wasm-build` is shared.
+about ten minutes of a shared 4-CPU container. The script now changes
+into `formal/lean4` itself (and makes the work directory absolute first),
+so it runs from any directory. A copy of the script from before
+2026-10-10 needs `cd formal/lean4 && bash Wasm/build-wasm.sh [work-dir]`,
+or `elan default leanprover/lean4:v4.33.1` set once. When several agents
+build at once, give each its own work directory (the argument); the
+default `/tmp/l4wasm-build` is shared. Step 5 also needs `uv.h`
+(`apt-get install libuv1-dev`); without it the script stops there, after
+the long steps 3 and 4 have cached their output.
 
 ## Rebuilding after a Lean change
 
