@@ -783,6 +783,101 @@ checkseq "storeOpen refuses an IBK5 generation whose blobs were not supplied" \
   'rs[0]["ok"] is False and "no bytes were supplied for artifact" in rs[0]["error"]
    and ".lit" in rs[0]["error"]'
 
+# --- The literal index under the Unicode fold (LGI3 and LGI4, 2026-10-10) ---
+#
+# `CONTAINS(LCASE(STR(?o)), "école")` keeps `École Normale`, because LCASE is
+# the Unicode case mapping. The index must list that row as a candidate, so it
+# folds with `Text.CaseMap.searchFold` and not with the ASCII-only
+# `String.toLower`. Each case opens ONE handle with the literal and geometry
+# sidecars and ONE without them, asks the same query of both, and compares the
+# whole answer envelopes. The assertion also reads `literalIndexes` from the two
+# open envelopes: a sidecar that failed to decode would fall back to the scan,
+# and two scans always agree. The expected rows are written out, so an index
+# that is wrong in the same way as the scan fails too.
+for UNI_FORMAT in ibk4 ibk5; do
+  "$PACK" "$REPO_ROOT/tests/local/data/unicode_label_sample.trig" "$TMP/store-uni-$UNI_FORMAT" "$UNI_FORMAT" >/dev/null
+  python3 - "$TMP/store-uni-$UNI_FORMAT" "$TMP/store-uni-$UNI_FORMAT-seq.json" "$UNI_FORMAT" <<'EOF'
+import json, pathlib, sys
+directory = pathlib.Path(sys.argv[1])
+fmt = sys.argv[3]
+block = "predicate-0." + fmt
+names = sorted(p.name for p in directory.iterdir()
+               if not p.name.startswith('manifest.') and not p.name.endswith('.merkle'))
+def payload(keys):
+    return json.dumps([{"key": key, "bytes": (directory / key).read_bytes().hex()}
+                       for key in keys])
+manifest = (directory / 'manifest.sbm2').read_bytes().hex()
+needles = ["école", "ecole", "kelvin", "stanbul", "οδυσσευς",
+           "straße", "plain", "unmatched"]
+def query(needle):
+    return ('SELECT ?s ?o WHERE { GRAPH ?g { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?o '
+            'FILTER(CONTAINS(LCASE(STR(?o)), "' + needle + '")) } } ORDER BY ?s ?o')
+seq = [["storeOpen", [manifest, payload(names)]],
+       ["storeOpen", [manifest, payload([block])]]]
+for needle in needles:
+    seq.append(["storeHandleQuery", ["s1", query(needle)]])
+    seq.append(["storeHandleQuery", ["s2", query(needle)]])
+json.dump(seq, open(sys.argv[2], "w"))
+EOF
+  checkseq "literal index under the Unicode fold: $UNI_FORMAT, index handle answers as the scan handle" \
+    "$TMP/store-uni-$UNI_FORMAT-seq.json" \
+    'rs[0]["ok"] is True and rs[0]["literalIndexes"] == 1
+     and rs[1]["ok"] is True and rs[1]["literalIndexes"] == 0
+     and all(rs[2 + 2 * i]["ok"] is True and rs[2 + 2 * i] == rs[3 + 2 * i] for i in range(8))
+     and [[b["s"]["value"] for b in rs[2 + 2 * i]["srj"]["results"]["bindings"]]
+          for i in range(8)]
+       == [["http://example.org/s1"], ["http://example.org/s7"], ["http://example.org/s2"],
+           ["http://example.org/s3"], ["http://example.org/s4"], ["http://example.org/s5"],
+           ["http://example.org/s6"], []]'
+done
+
+# The sidecars carry the new names. Their first four bytes are the magic.
+LGI3_MAGIC=$(head -c 4 "$TMP/store-uni-ibk4/predicate-0.ibk4.lgi3")
+LGI4_MAGIC=$(head -c 4 "$TMP/store-uni-ibk5/predicate-0.ibk5.lgi4")
+if [ "$LGI3_MAGIC" = "LGI3" ] && [ "$LGI4_MAGIC" = "LGI4" ]; then
+  echo "ok   the packer writes LGI3 for wire version 9 and LGI4 for wire version 10"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL the packer writes LGI3 for wire version 9 and LGI4 for wire version 10"
+  printf '     magic %s and %s\n' "$LGI3_MAGIC" "$LGI4_MAGIC"
+  FAIL=$((FAIL + 1))
+fi
+
+# A manifest packed under the ASCII-only fold names LGI1 or LGI2 in its layout
+# label. The label is the only byte of the manifest this test changes (the new
+# and the retired spellings have the same length), so every length and
+# digest in the manifest still agrees and the label is the only cause. Each
+# operation that reads a manifest must refuse it with the cause and the remedy.
+python3 - "$TMP" <<'EOF'
+import json, pathlib, sys
+tmp = pathlib.Path(sys.argv[1])
+cases = [("ibk4", "quad-ibk4-ptd1-lgi3-gbi1-merkle-v0", "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"),
+         ("ibk5", "quad-ibk5-ptd2-lgi4-gbi1-merkle-v0", "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0")]
+for fmt, new, old in cases:
+    manifest = (tmp / ("store-uni-" + fmt) / "manifest.sbm2").read_bytes()
+    assert manifest.count(new.encode()) == 1, (fmt, manifest.count(new.encode()))
+    assert len(new) == len(old)
+    retired = manifest.replace(new.encode(), old.encode())
+    assert retired != manifest and len(retired) == len(manifest)
+    hexed = retired.hex()
+    q = "SELECT * WHERE { ?s ?p ?o }"
+    (tmp / ("retired-" + fmt + "-inspect.json")).write_text(json.dumps([hexed]))
+    (tmp / ("retired-" + fmt + "-plan.json")).write_text(json.dumps([hexed, q]))
+    (tmp / ("retired-" + fmt + "-open.json")).write_text(json.dumps([["storeOpen", [hexed, "[]"]]]))
+EOF
+for RETIRED_FORMAT in ibk4 ibk5; do
+  check "storeManifestInspect refuses a $RETIRED_FORMAT manifest whose layout names a retired literal index" \
+    storeManifestInspect "$TMP/retired-$RETIRED_FORMAT-inspect.json" \
+    'r["ok"] is False and "ASCII-only fold" in r["error"] and "Re-pack" in r["error"]
+     and "do not decode" not in r["error"]'
+  check "storeQueryPlan refuses a $RETIRED_FORMAT manifest whose layout names a retired literal index" \
+    storeQueryPlan "$TMP/retired-$RETIRED_FORMAT-plan.json" \
+    'r["ok"] is False and "ASCII-only fold" in r["error"] and "Re-pack" in r["error"]'
+  checkseq "storeOpen refuses a $RETIRED_FORMAT manifest whose layout names a retired literal index" \
+    "$TMP/retired-$RETIRED_FORMAT-open.json" \
+    'rs[0]["ok"] is False and "ASCII-only fold" in rs[0]["error"] and "Re-pack" in rs[0]["error"]'
+done
+
 args "$TMP/store-arity.json" "00"
 check "storeQuery wrong arity -> error" storeQuery "$TMP/store-arity.json" \
   'r["ok"] is False and "expects 3 arguments" in r["error"]'
