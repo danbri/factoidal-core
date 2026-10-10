@@ -1319,4 +1319,68 @@ def entText (src : String) : Option String := rootText src
         | .ok d => some d.root.textContent
         | .error _ => none) == some "xy"
 
+
+/-! ## Sequential references in constant stack (issue 673)
+
+`scanRefs` read each reference after its recursive call returned, so a run
+of N sequential references cost N native frames: 10,000 overflowed a 512 KB
+native stack and Node's stack in wasm
+(https://github.com/danbri/factoidal/issues/673). The compiler now runs
+`scanRefsLoop` in its place (`scanRefs_eq_scanRefsFast`, `@[csimp]`). These
+guards run the parser over runs of 10,000 references in content and in an
+attribute value and check the text and the notes the scan produces. They run
+in the elaborator, whose stack is large, so they check the RESULT; the stack
+is checked by the `xml-entities` case of `tests/stack/run.sh --canary`. -/
+
+/-- `n` sequential references to the entities `e0` to `e7`. -/
+def refRun (n : Nat) : String :=
+  String.join ((List.range n).map fun i => s!"&e{i % 8};")
+
+/-- A document whose internal subset declares `e0` to `e7`, each "x",
+and then holds `post`, with `body` as its element. -/
+def refRunDoc (post body : String) : String :=
+  let decls := String.join ((List.range 8).map fun i => s!"<!ENTITY e{i} \"x\">")
+  s!"<!DOCTYPE a [{decls}{post}]>{body}"
+
+/-- The notes of a one-element document: whether its content held an entity
+reference, whether it held a character reference to white space, and
+whether a reference named an undeclared entity. -/
+def refRunNotes (src : String) : Option (Bool × Bool × Bool) :=
+  match parseXMLNotes noFiles false src with
+  | .ok (_, n) =>
+      match n.elems with
+      | [e] => some (e.entityRef, e.wsCharRef, n.undeclared)
+      | _ => none
+  | .error _ => none
+
+/-- `n` copies of the character `c`. -/
+def copiesOf (n : Nat) (c : Char) : String := String.ofList (List.replicate n c)
+
+-- Content: 10,000 general entity references, each replaced by its text.
+#guard rootText (refRunDoc "" s!"<a>{refRun 10000}</a>") == some (copiesOf 10000 'x')
+#guard refRunNotes (refRunDoc "" s!"<a>{refRun 10000}</a>") == some (true, false, false)
+-- A character reference to white space after 10,000 references is seen ...
+#guard refRunNotes (refRunDoc "" s!"<a>{refRun 10000}&#32;</a>") == some (true, true, false)
+-- ... and so is one before them.
+#guard refRunNotes (refRunDoc "" s!"<a>&#x9;{refRun 10000}</a>") == some (true, true, false)
+-- An undeclared entity after 10,000 references is noted (a parameter entity
+-- was not read, so §4.1 makes it a validity error) ...
+#guard refRunNotes (refRunDoc "%unread;" s!"<a>{refRun 10000}&zz;</a>") == some (true, false, true)
+-- ... and a declared one is not.
+#guard refRunNotes (refRunDoc "%unread;" s!"<a>{refRun 10000}&e1;</a>") == some (true, false, false)
+-- 10,000 character references and no entity reference.
+#guard refRunNotes (refRunDoc "" s!"<a>{String.join (List.replicate 10000 "&#120;")}</a>") == some (false, false, false)
+#guard rootText (refRunDoc "" s!"<a>{String.join (List.replicate 10000 "&#x78;")}</a>") == some (copiesOf 10000 'x')
+-- 10,000 predefined entity references.
+#guard rootText (refRunDoc "" s!"<a>{String.join (List.replicate 10000 "&amp;")}</a>") == some (copiesOf 10000 '&')
+-- An attribute value: 10,000 references, each replaced.
+#guard rootAttrs (refRunDoc "" s!"<a x=\"{refRun 10000}\"/>") == some [("x", copiesOf 10000 'x')]
+-- An undeclared entity at the end of the value: noted only when the DTD was
+-- not read in full, and a well-formedness error otherwise.
+#guard (match parseXMLNotes noFiles false (refRunDoc "%unread;" s!"<a x=\"{refRun 10000}&zz;\"/>") with
+        | .ok (_, n) => n.undeclared
+        | .error _ => false)
+#guard !isWellFormed (refRunDoc "" s!"<a x=\"{refRun 10000}&zz;\"/>")
+#guard !isWellFormed (refRunDoc "" s!"<a>{refRun 10000}&zz;</a>")
+
 end L4Factoidal.XML.Tests
