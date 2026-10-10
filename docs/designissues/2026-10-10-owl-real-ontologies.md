@@ -5,7 +5,42 @@ Issue: https://github.com/danbri/factoidal/issues/651, plan item 4 of the
 ontologies; record time and memory; open issues for what does not scale".
 Branch `claude/wt-owl-real` of `danbri/factoidal-core`, base commit `eab58d16`.
 
-RESULT-PLACEHOLDER
+## 0. Result
+
+Ten real ontologies, 252 to 130,404 triples, were run through the Lean
+command line (`l4factoidal`) and, where the F\* command line has the verb,
+through F\* (`factoidal`). Caps: 600 s wall clock for Lean steps, 300 s for
+F\* steps, `prlimit --as=6000000000` for both.
+
+- 📊 **Lean OWL RL closure:** finished on 9 of 10 (0.06 s to 26.7 s; peak
+  resident set 35 MB to 1,956 MB). QUDT did not finish: OOM under the
+  address-space cap (https://github.com/danbri/factoidal/issues/759), and more
+  than 6 GB resident when the cap is a resident-set watchdog instead
+  (https://github.com/danbri/factoidal/issues/758).
+- 📊 **Lean DL consistency:** decided on 7 of 10, all `true` (SKOS, FOAF,
+  PROV-O, BFO, Pizza, wine with food, schema.org; 0.06 s to 44 s). RO and the
+  Cell Ontology: TIMEOUT at 600 s (https://github.com/danbri/factoidal/issues/760;
+  HermiT: 29.8 s and 6.1 s). QUDT: OOM under the address-space cap; without it,
+  `false` in 72 s with 1.35 GB, and HermiT also finds QUDT 3.4.0 inconsistent.
+- 📊 **Lean DL entailment, 354 checks planned:** stated pairs 150 `true`
+  (out of 150 run); unrelated pairs 124 decided (4 `true`, 120 `false`); 2
+  TIMEOUT (the first unrelated pair of RO and of the Cell Ontology), 1 OOM (the
+  first QUDT check), 77 NOT_RUN after those. HermiT agrees with all 284 Lean
+  verdicts it could be compared with (section 4); no Lean `true` is a HermiT
+  `false`, and no Lean `false` is a HermiT `true`.
+- 📊 **F\* OWL RL closure:** finished on 5 of 10 (up to 1,944 triples, up to
+  10.3 s); TIMEOUT at 300 s on the other 5, the smallest of them wine and food
+  with 2,709 triples (https://github.com/danbri/factoidal/issues/765). The F\*
+  command line has no consistency or entailment verb.
+- ⚠️ Other defects found: the Lean OWL 2 species check takes 253 s of CPU time
+  on QUDT (https://github.com/danbri/factoidal/issues/766); the Lean and F\*
+  RDF/XML parsers give an `xml:lang` to the next sibling element
+  (https://github.com/danbri/factoidal/issues/329).
+- ✅ Every failure above has an open issue and an expected-failure row in
+  `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 6 expected-fail (out of 11).
+- No Lean library code changed. New: `l4owl-species` (a harness executable),
+  `tools/owl-real-bench.py`, `tools/owl-real-hermit.py`, the gate, and six
+  vendored ontologies.
 
 ## 1. What was measured
 
@@ -16,7 +51,7 @@ counts from three parsers, species). Four were already vendored for the
 closure benchmark (`third_party/vocabularies/PROVENANCE.md`,
 `third_party/qudt/PROVENANCE.md`). The Gene Ontology is too large to vendor
 (118 MB); the harness fetches a dated release at run time with `--optional`
-and checks its SHA-256.
+and checks its SHA-256. The optional GO row was not run on 2026-10-10.
 
 | Name | Source | Licence | Source bytes | Expressivity in the file |
 |---|---|---|---:|---|
@@ -92,11 +127,47 @@ survey), F\* `factoidal` from release `build-ae3bb5df6f02-linux-x86_64`
 
 ## 2. Results
 
-TABLE-PLACEHOLDER
+The main run was two processes of `tools/owl-real-bench.py` started 10
+minutes apart on the same binaries: one for the first eight ontologies, one
+for the Cell Ontology and QUDT. Every row of both, the QUDT watchdog run of
+section 5 and the HermiT rows of section 4 are in
+[`2026-10-10-owl-real-ontologies.results.jsonl`](2026-10-10-owl-real-ontologies.results.jsonl)
+(446 lines; field `run` says which; field `cmd` is the command of the row,
+with `OUT` for the output directory).
+
+Steps per ontology, from `OUT/table.md` of the run. A cell is: count; wall time (CPU time), peak resident set. "added" is the closure size minus the input size; the first row is the closure of the empty graph (the axiomatic triples each engine adds).
+
+| Ontology | Input triples | Species (Lean) | Parse, Lean | Parse, F* | OWL RL closure, Lean | OWL RL closure, F* | Consistent, Lean |
+|---|---:|---|---|---|---|---|---|
+| (empty graph) | — | — | — | — | 68 added; 0.05 s (0.03 CPU), 23 MB | 319 added; 0.03 s (0.02 CPU), 15 MB | — |
+| skos | 252 | DL (0 violations) | 252; 0.03 s (0.02 CPU), 23 MB | 254; 0.02 s (0.01 CPU), 15 MB | 663 added; 0.06 s (0.05 CPU), 35 MB | 1204 added; 0.13 s (0.12 CPU), 18 MB | true; 0.06 s (0.05 CPU), 24 MB |
+| foaf | 631 | FULL (1 violations) | 631; 0.03 s (0.02 CPU), 23 MB | 635; 0.02 s (0.01 CPU), 15 MB | 1241 added; 0.11 s (0.10 CPU), 43 MB | 1796 added; 0.34 s (0.34 CPU), 21 MB | true; 0.14 s (0.12 CPU), 26 MB |
+| prov-o | 1146 | FULL (13 violations) | 1146; 0.02 s (0.01 CPU), 23 MB | 1146; 0.03 s (0.02 CPU), 15 MB | 2120 added; 0.28 s (0.26 CPU), 59 MB | 6075 added; 10.35 s (9.40 CPU), 35 MB | true; 1.33 s (0.70 CPU), 28 MB |
+| bfo | 1015 | DL (0 violations) | 1015; 0.10 s (0.04 CPU), 25 MB | 1015; 0.13 s (0.04 CPU), 15 MB | 2822 added; 0.52 s (0.30 CPU), 63 MB | 3310 added; 1.05 s (0.71 CPU), 25 MB | true; 2.38 s (1.65 CPU), 33 MB |
+| pizza | 1944 | DL (0 violations) | 1944; 0.05 s (0.03 CPU), 27 MB | 1944; 0.05 s (0.04 CPU), 16 MB | 10869 added; 0.98 s (0.90 CPU), 161 MB | 7774 added; 1.99 s (1.89 CPU), 42 MB | true; 0.78 s (0.60 CPU), 43 MB |
+| wine | 2709 | DL (0 violations) | 2709; 0.07 s (0.05 CPU), 23 MB | 2912; 0.16 s (0.05 CPU), 15 MB | 26149 added; 5.83 s (5.37 CPU), 421 MB | TIMEOUT at 300 s, memory not recorded | true; 21.92 s (18.01 CPU), 80 MB |
+| ro | 11703 | FULL (523 violations) | 11703; 0.38 s (0.35 CPU), 69 MB | 11705; 0.33 s (0.30 CPU), 22 MB | 31033 added; 7.96 s (7.73 CPU), 511 MB | TIMEOUT at 300 s, memory not recorded | TIMEOUT at 600 s, memory not recorded |
+| schema.org | 17949 | FULL (10554 violations) | 17949; 0.20 s (0.18 CPU), 30 MB | 17949; 0.35 s (0.33 CPU), 17 MB | 42821 added; 4.60 s (4.46 CPU), 697 MB | TIMEOUT at 300 s, memory not recorded | true; 44.28 s (43.11 CPU), 104 MB |
+| cl-basic | 78833 | FULL (7 violations) | 78833; 3.95 s (2.72 CPU), 479 MB | 78835; 3.61 s (2.63 CPU), 73 MB | 84611 added; 26.68 s (19.80 CPU), 1956 MB | TIMEOUT at 300 s, 947 MB sampled | TIMEOUT at 600 s, 446 MB sampled |
+| qudt | 130404 | FULL (7334 violations) | 130404; 2.11 s (1.27 CPU), 257 MB | 130404; 3.18 s (2.00 CPU), 28 MB | OOM at 27 s, 1219 MB | TIMEOUT at 300 s, 661 MB sampled | OOM at 34 s, 1219 MB |
 
 ## 3. Entailment checks
 
-ENTAILS-TABLE-PLACEHOLDER
+ENTAILS-Steps per ontology, from `OUT/table.md` of the run. A cell is: count; wall time (CPU time), peak resident set. "added" is the closure size minus the input size; the first row is the closure of the empty graph (the axiomatic triples each engine adds).
+
+| Ontology | Input triples | Species (Lean) | Parse, Lean | Parse, F* | OWL RL closure, Lean | OWL RL closure, F* | Consistent, Lean |
+|---|---:|---|---|---|---|---|---|
+| (empty graph) | — | — | — | — | 68 added; 0.05 s (0.03 CPU), 23 MB | 319 added; 0.03 s (0.02 CPU), 15 MB | — |
+| skos | 252 | DL (0 violations) | 252; 0.03 s (0.02 CPU), 23 MB | 254; 0.02 s (0.01 CPU), 15 MB | 663 added; 0.06 s (0.05 CPU), 35 MB | 1204 added; 0.13 s (0.12 CPU), 18 MB | true; 0.06 s (0.05 CPU), 24 MB |
+| foaf | 631 | FULL (1 violations) | 631; 0.03 s (0.02 CPU), 23 MB | 635; 0.02 s (0.01 CPU), 15 MB | 1241 added; 0.11 s (0.10 CPU), 43 MB | 1796 added; 0.34 s (0.34 CPU), 21 MB | true; 0.14 s (0.12 CPU), 26 MB |
+| prov-o | 1146 | FULL (13 violations) | 1146; 0.02 s (0.01 CPU), 23 MB | 1146; 0.03 s (0.02 CPU), 15 MB | 2120 added; 0.28 s (0.26 CPU), 59 MB | 6075 added; 10.35 s (9.40 CPU), 35 MB | true; 1.33 s (0.70 CPU), 28 MB |
+| bfo | 1015 | DL (0 violations) | 1015; 0.10 s (0.04 CPU), 25 MB | 1015; 0.13 s (0.04 CPU), 15 MB | 2822 added; 0.52 s (0.30 CPU), 63 MB | 3310 added; 1.05 s (0.71 CPU), 25 MB | true; 2.38 s (1.65 CPU), 33 MB |
+| pizza | 1944 | DL (0 violations) | 1944; 0.05 s (0.03 CPU), 27 MB | 1944; 0.05 s (0.04 CPU), 16 MB | 10869 added; 0.98 s (0.90 CPU), 161 MB | 7774 added; 1.99 s (1.89 CPU), 42 MB | true; 0.78 s (0.60 CPU), 43 MB |
+| wine | 2709 | DL (0 violations) | 2709; 0.07 s (0.05 CPU), 23 MB | 2912; 0.16 s (0.05 CPU), 15 MB | 26149 added; 5.83 s (5.37 CPU), 421 MB | TIMEOUT at 300 s, memory not recorded | true; 21.92 s (18.01 CPU), 80 MB |
+| ro | 11703 | FULL (523 violations) | 11703; 0.38 s (0.35 CPU), 69 MB | 11705; 0.33 s (0.30 CPU), 22 MB | 31033 added; 7.96 s (7.73 CPU), 511 MB | TIMEOUT at 300 s, memory not recorded | TIMEOUT at 600 s, memory not recorded |
+| schema.org | 17949 | FULL (10554 violations) | 17949; 0.20 s (0.18 CPU), 30 MB | 17949; 0.35 s (0.33 CPU), 17 MB | 42821 added; 4.60 s (4.46 CPU), 697 MB | TIMEOUT at 300 s, memory not recorded | true; 44.28 s (43.11 CPU), 104 MB |
+| cl-basic | 78833 | FULL (7 violations) | 78833; 3.95 s (2.72 CPU), 479 MB | 78835; 3.61 s (2.63 CPU), 73 MB | 84611 added; 26.68 s (19.80 CPU), 1956 MB | TIMEOUT at 300 s, 947 MB sampled | TIMEOUT at 600 s, 446 MB sampled |
+| qudt | 130404 | FULL (7334 violations) | 130404; 2.11 s (1.27 CPU), 257 MB | 130404; 3.18 s (2.00 CPU), 28 MB | OOM at 27 s, 1219 MB | TIMEOUT at 300 s, 661 MB sampled | OOM at 34 s, 1219 MB |
 
 A stated pair is in the premise, so `owl-entails` answers it from the closure
 (`via: closure`) without the tableau. Those 20 rows measure the cost of one
@@ -107,7 +178,32 @@ closure does not contain the conclusion.
 
 ## 4. The verdicts against HermiT
 
-HERMIT-PLACEHOLDER
+`tools/owl-real-hermit.py` ran HermiT 1.3.8 (as shipped in owlready2 0.51,
+OpenJDK 21) on the same `merged.nt` of each ontology, without its
+`owl:imports` triples: `-k` for consistency, then `-c` for the class hierarchy,
+from which it decides each pair.
+
+| Ontology | HermiT consistent | Lean consistent | Pairs | Agree | Lean `true`, HermiT `false` | Lean `false`, HermiT `true` | Lean not decided |
+|---|---|---|---:|---:|---:|---:|---:|
+| skos | yes | true | 5 | 5 | 0 | 0 | 0 |
+| foaf | yes | true | 29 | 29 | 0 | 0 | 0 |
+| prov-o | yes | true | 40 | 40 | 0 | 0 | 0 |
+| bfo | yes | true | 40 | 40 | 0 | 0 | 0 |
+| pizza | yes | true | 40 | 40 | 0 | 0 | 0 |
+| wine | yes | true | 40 | 40 | 0 | 0 | 0 |
+| ro | yes | TIMEOUT | 40 | 20 | 0 | 0 | 20 |
+| schema.org | yes | true | 40 | 40 | 0 | 0 | 0 |
+| cl-basic | yes | TIMEOUT | 40 | 20 | 0 | 0 | 20 |
+| qudt | **no** | OOM | 40 | 0 | 0 | 0 | 40 |
+| qudt, run under the resident-set watchdog, 10 pairs | **no** | false | 10 | 10 | 0 | 0 | 0 |
+
+284 Lean verdicts were compared (274 of the main run, plus the 10 of the
+watchdog run); all 284 agree. The 4 unrelated pairs that the Lean engine answers `true` are
+subsumptions HermiT also derives: in BFO, site under independent continuant
+and relational quality under entity; in Pizza, sundried tomato topping under
+food, and `American` under `NonVegetarianPizza`. The last one needs the
+complement in the definition of `NonVegetarianPizza`, so the tableau decides
+it, not the RL closure.
 
 ## 5. What did not finish, and the issues
 
