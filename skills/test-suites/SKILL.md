@@ -588,6 +588,28 @@ record. Conventions, by test kind:
   https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
   serializer stack overflow,
   https://github.com/danbri/factoidal/issues/725).
+  The SPARQL command-line cases read real W3C files from
+  `third_party/testing/w3c` (run `git submodule update --init --depth 1
+  third_party/testing/w3c` first; without it they read ERROR). They are
+  SPARQL-736-IF and SPARQL-736-CAST
+  (https://github.com/danbri/factoidal/issues/736, W3C `functions/if02` and
+  `cast/cast-int`), SPARQL-738-FROM-NAMED
+  (https://github.com/danbri/factoidal/issues/738, the three
+  `bindings/graph-from-named` tests; the UUID, SERVICE SILENT and sub-SELECT
+  items of that issue have no case yet), SPARQL-739-QUERY-BASE
+  (https://github.com/danbri/factoidal/issues/739, five queries with a
+  relative IRI) and SPARQL-740-CONSTRUCT-BNODE
+  (https://github.com/danbri/factoidal/issues/740, `construct/constructlist`).
+  The SELECT cases compare canonical rows (`tests/known-defects/sparql_rows.py`)
+  of the W3C `.srx`, the Lean CLI answer and the F\* answer, with equal
+  domains required; XFAIL needs the exact wrong row recorded in `run.sh`, XPASS
+  needs the expected result, and any other F\* answer reads ERROR. Two cases
+  cannot use the Lean CLI as oracle, because the Lean CLI has the same defect:
+  `l4factoidal query` also parses a query with no base IRI (the oracle for 739
+  is the `PASS` line of `l4w3c` for each test), and it prints the same invalid
+  blank node labels for 740 (the oracle is the Lean N-Triples parser, with a
+  control that accepts the colon-free copy and a control that rejects W3C
+  `nt-syntax-bad-bnode-02`).
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.
