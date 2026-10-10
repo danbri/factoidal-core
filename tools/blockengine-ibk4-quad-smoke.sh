@@ -83,6 +83,23 @@ quad_query() {
   "$bin/l4block-quad-query" "$run_dir/store" --query "$1"
 }
 
+# xfail_until ISSUE LABEL OK
+# An expected failure for an open issue (CLAUDE.md, "A stated shortfall is a
+# failing test plus an open issue"). OK is 1 when the check held. A check that
+# fails prints "xfail" and the run goes on; a check that holds is an XPASS and
+# stops the run with exit 1, so the case is changed to a plain assertion and
+# the issue closed in the same commit.
+xfail_until() {
+  local issue="$1" label="$2" ok="$3"
+  if [ "$ok" = 1 ]; then
+    echo "XPASS $label" >&2
+    echo "  expected to fail until https://github.com/danbri/factoidal/issues/$issue is fixed, and it passes" >&2
+    echo "  make it a plain assertion and close the issue" >&2
+    exit 1
+  fi
+  echo "xfail $label (https://github.com/danbri/factoidal/issues/$issue)"
+}
+
 # GRAPH <g1>: two rows, and only the `name` block carries g1, so one shard.
 quad_query 'SELECT * WHERE { GRAPH <http://example.org/g1> { ?s ?p ?o } }' \
   >"$run_dir/q-graph-g1.txt"
@@ -152,6 +169,18 @@ grep -q '^l4block-quad-query rows=0 ' "$run_dir/q-not-exists.txt"
 quad_query 'ASK WHERE { GRAPH <http://example.org/g9> { } }' >"$run_dir/q-absent.txt"
 cat "$run_dir/q-absent.txt"
 grep -q '^l4block-quad-query boolean=false' "$run_dir/q-absent.txt"
+
+# NOW() (SPARQL 1.1 section 17.4.5.1, https://github.com/danbri/factoidal/issues/748):
+# W3C functions/now01.rq asks whether NOW() is an xsd:dateTime, and the W3C
+# expected result (now01.srx) is true. The tool built its evaluation environment
+# with no clock, so NOW() was an error and the query answered false.
+now01_rq="$repo_root/third_party/testing/w3c/sparql/sparql11/functions/now01.rq"
+test -r "$now01_rq" || { echo "missing $now01_rq (run tools/ensure-test-env.sh)"; exit 1; }
+quad_query "$(cat "$now01_rq")" >"$run_dir/q-now01.txt"
+cat "$run_dir/q-now01.txt"
+now01_ok=0
+if grep -q '^l4block-quad-query boolean=true' "$run_dir/q-now01.txt"; then now01_ok=1; fi
+xfail_until 748 'l4block-quad-query answers W3C functions/now01.rq true' "$now01_ok"
 
 # A manifest graph-set summary that the block header does not have is refused.
 # The block bytes, their digests and their Merkle roots are untouched: only the

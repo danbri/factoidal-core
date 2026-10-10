@@ -31,6 +31,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 PASS=0
 FAIL=0
+XFAIL=0
 
 # args <file> <arg>... — write a JSON array-of-strings args file.
 args() {
@@ -331,6 +332,85 @@ checkseq "dataset handle NOW(): datasetQuery, datasetQuery12 and datasetUpdate r
 args "$TMP/now-unknown.json" "h999" 'SELECT ?n WHERE { BIND(NOW() AS ?n) }'
 check "datasetQuery NOW() on an unknown handle -> error, no clock value" datasetQuery "$TMP/now-unknown.json" \
   'r["ok"] is False and "srj" not in r'
+
+# --- NOW() on the PURE entries (https://github.com/danbri/factoidal/issues/748)
+# `l4wasm-cli call` serves the IO table. `callpure` serves `L4Wasm.call`, the
+# pure `l4_call` entry, which reads no clock; `callblob` serves `L4Wasm.callBlob`,
+# the pure `l4_call_blob` entry. A host that meets one of these has no clock, so
+# the op takes the instant as an optional last argument `now`.
+#
+# xverdict LABEL ISSUE OK [OUTPUT]
+# OK is 1 when the check held. ISSUE empty: a plain assertion. ISSUE set: an
+# expected failure for that open issue (CLAUDE.md, "A stated shortfall is a
+# failing test plus an open issue"): a failed check counts as xfail and keeps
+# the run green; a check that holds is an XPASS and FAILS the run, so the case
+# is changed to a plain assertion and the issue closed in the same commit.
+xverdict() {
+  local label="$1" issue="$2" ok="$3" out="${4:-}"
+  if [ -z "$issue" ]; then
+    if [ "$ok" = 1 ]; then
+      echo "ok   $label"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL $label"
+      printf '     output: %s\n' "$out"
+      FAIL=$((FAIL + 1))
+    fi
+  elif [ "$ok" = 1 ]; then
+    echo "FAIL $label"
+    echo "     XPASS: expected to fail until https://github.com/danbri/factoidal/issues/$issue is fixed, and it passes"
+    echo "     make it a plain assertion (ISSUE empty) and close the issue"
+    FAIL=$((FAIL + 1))
+  else
+    echo "xfail $label (https://github.com/danbri/factoidal/issues/$issue)"
+    printf '     output: %s\n' "$out"
+    XFAIL=$((XFAIL + 1))
+  fi
+}
+
+# checkpure <label> <issue> <op> <argsfile> <python-assert-expr>
+# Like `check`, through the PURE entry `L4Wasm.call`.
+checkpure() {
+  local label="$1" issue="$2" op="$3" argsfile="$4" expr="$5"
+  local out ok=0
+  out="$("$CLI" callpure "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+" 2>/dev/null; then ok=1; fi
+  xverdict "$label" "$issue" "$ok" "$out"
+}
+
+# W3C functions/now01.rq on W3C functions/data.ttl, through the pure entry.
+# The data is Turtle; the op reads N-Quads, so the parse op converts it. The
+# arguments are the data, the query, an empty base IRI and the instant `now`.
+W3C_FUNCTIONS="$LEAN_DIR/../../third_party/testing/w3c/sparql/sparql11/functions"
+if [ -r "$W3C_FUNCTIONS/now01.rq" ] && [ -r "$W3C_FUNCTIONS/data.ttl" ]; then
+  python3 - "$TMP/w3c-fn-parse.json" "$W3C_FUNCTIONS/data.ttl" <<'PYEOF'
+import json, sys
+with open(sys.argv[2], encoding="utf-8") as f:
+    ttl = f.read()
+with open(sys.argv[1], "w") as f:
+    json.dump([ttl, "turtle", ""], f)
+PYEOF
+  "$CLI" call parseToDatasetJson "$TMP/w3c-fn-parse.json" >"$TMP/w3c-fn-nq.json"
+  python3 - "$TMP/w3c-fn-nq.json" "$W3C_FUNCTIONS/now01.rq" "$TMP/w3c-now01.json" <<'PYEOF'
+import json, sys
+nq = json.load(open(sys.argv[1]))
+assert nq["ok"] is True, nq
+with open(sys.argv[2], encoding="utf-8") as f:
+    rq = f.read()
+with open(sys.argv[3], "w") as f:
+    json.dump([nq["nquads"], rq, "", "2026-10-10T12:34:56.789Z"], f)
+PYEOF
+  checkpure "pure call queryDataset, W3C functions/now01.rq with the now argument -> true" 748 \
+    queryDataset "$TMP/w3c-now01.json" \
+    'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+else
+  echo "FAIL W3C functions/now01.rq and data.ttl are missing under third_party/testing/w3c (run tools/ensure-test-env.sh)"
+  FAIL=$((FAIL + 1))
+fi
 
 # --- Stateless block-worker family ----------------------------------
 # Generate the fixture with the same Lean publisher used by native stores;
@@ -2690,5 +2770,5 @@ corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
   'r["ok"] is True and r["engine"] == "full"'
 
-echo "=== native-smoke: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
+echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]
