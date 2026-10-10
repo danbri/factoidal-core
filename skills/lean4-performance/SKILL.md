@@ -116,6 +116,12 @@ these shapes first in any module that is slow on a large input.
 - **A list of groups searched and appended to per row.** `SPARQL/Query.lean`
   `addToGroups`. Repair: array of groups plus a hash index on a bucket key that
   is constant on order-equal values (`erEqual_erBucket`).
+- **A string built by prepending.** `SPARQL.rowsJoined` was
+  `rowJson r ++ "," ++ rowsJoined rest`: each row's text is copied in front of
+  the text of all later rows, so the whole result document is copied once per
+  row (`SELECT *` over 5,000 paragraphs of `gene.ttl`: 9.8 s, F* 1.4 s).
+  Append at the end of a string the function owns (`rowsJoinedAcc`, proved
+  and registered with `csimp`); Lean extends a unique string in place.
 - **A comparison that converts to lists.** `Canonical.strLe` built two
   character lists per call: 57 percent of the instructions of `canonicalize`
   after the sorts were repaired. Lean's native `String` order is the same order

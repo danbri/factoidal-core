@@ -160,6 +160,38 @@ def rowsJoined : SolutionSeq → String
   | [r] => rowJson r
   | r :: rest => rowJson r ++ "," ++ rowsJoined rest
 
+/-- `rowsJoined` with the document built so far as an accumulator. `rowsJoined`
+appends each row's text IN FRONT of the text of all later rows, so it copies
+the tail of the document once per row: `l4factoidal query` with `SELECT *`
+over 1,250, 2,500 and 5,000 paragraphs of `gene.ttl` took 0.42, 1.84 and
+9.79 s of CPU time and 221 MB at 5,000 (F*: 1.43 s, 26 MB); callgrind put
+61 percent of the instructions under `rowsJoined`, 54 percent in `memcpy`
+(https://github.com/danbri/factoidal/issues/729). Here each row is appended
+at the END of a string the function owns, which Lean does in place. -/
+def rowsJoinedAcc (acc : String) : SolutionSeq → String
+  | [] => acc
+  | [r] => acc ++ rowJson r
+  | r :: rest => rowsJoinedAcc (acc ++ rowJson r ++ ",") rest
+
+theorem rowsJoinedAcc_eq (acc : String) (rows : SolutionSeq) :
+    rowsJoinedAcc acc rows = acc ++ rowsJoined rows := by
+  induction rows generalizing acc with
+  | nil => simp [rowsJoinedAcc, rowsJoined]
+  | cons r rest ih =>
+    cases rest with
+    | nil => simp [rowsJoinedAcc, rowsJoined]
+    | cons r2 rest2 =>
+      simp only [rowsJoinedAcc, rowsJoined]
+      rw [ih]
+      simp only [rowsJoined, String.append_assoc]
+
+def rowsJoinedFast (rows : SolutionSeq) : String := rowsJoinedAcc "" rows
+
+/-- The compiler runs `rowsJoinedFast` wherever the source says `rowsJoined`. -/
+@[csimp] theorem rowsJoined_eq_rowsJoinedFast : @rowsJoined = @rowsJoinedFast := by
+  funext rows
+  simp [rowsJoinedFast, rowsJoinedAcc_eq]
+
 /-- `r.toSrj` — the complete SRJ document. Port of
 `serialise_response_json`/`serialise_response_boolean_json`. -/
 def QueryResult.toSrj : QueryResult → String

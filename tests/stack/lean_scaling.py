@@ -44,6 +44,12 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    per input byte on the same files): at most 6 bytes. Expected
                    failure naming issue 729 until the index and the solution
                    sequence stop growing with the data
+  select-star      `query` SELECT * over 1,250 and 5,000 paragraphs of gene.ttl:
+                   every row is printed. Expected failure naming issue 729:
+                   0.34 s to 5.78 s CPU and 66 MB to 220 MB (F*: 1.43 s and
+                   26 MB at 5,000). The command line parses the JSON envelope
+                   the op returns (`JSON.parseItems` appends each item with
+                   `acc ++ [v]`, in a mutual block) and pretty-prints it
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -101,6 +107,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
+    "select-star": "https://github.com/danbri/factoidal/issues/729",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -191,6 +198,11 @@ ROWS = {
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
                    "SELECT (COUNT(DISTINCT *) AS ?c) WHERE { ?s ?p ?o }"]),
+    "select-star": (
+        1250,
+        lambda n: bl.gene_slice(n),
+        lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
+                   "SELECT * WHERE { ?s ?p ?o }"]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),

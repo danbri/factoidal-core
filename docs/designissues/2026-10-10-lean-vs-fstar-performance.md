@@ -1253,6 +1253,38 @@ table:
    aggregate counts them; the reference evaluator without the index peaks at
    190 MB at 80,000 paragraphs (`--no-index`).
 
+### 10.5a Found while comparing: `SELECT *` is quadratic in the command line
+
+The byte comparison of 10.3 ran `SELECT * WHERE { ?s ?p ?o }` on `gene.ttl`
+slices, and a run on 20,000 paragraphs took over 100 s. Measured with the
+binary of 10.3: 1,250, 2,500 and 5,000 paragraphs took 0.42, 1.84 and 9.79 s
+of CPU time (growth 4.4 and 5.3 per doubling) and 63, 104 and 216 MB (F* at
+5,000: 1.43 s, 26 MB). Callgrind, 1,250 paragraphs: 4.47 billion
+instructions, of which `QueryResult.toSrj` 61 percent, all in `rowsJoined`
+(`rowJson r ++ "," ++ rowsJoined rest` copies the text of all later rows once
+per row; `memcpy` 54 percent).
+
+* **Repaired:** `rowsJoinedAcc` appends each row at the end of a string it
+  owns; `rowsJoinedAcc_eq` and `@[csimp] rowsJoined_eq_rowsJoinedFast`
+  (`SPARQL/ResultsJson.lean`), so `toSrj` and every theorem about it are
+  unchanged and the output is the same string. Callgrind, 1,250 paragraphs:
+  2.11 billion instructions after; `toSrj` 0.44 billion (2.75 before),
+  `memcpy` 0.11 billion (2.39 before). The wasm `queryDataset` envelope is
+  built by the same function.
+* **Open:** the command line then parses the envelope as JSON
+  (`parseEnvelope`, 36 percent after) and pretty-prints it (26 percent).
+  `JSON.parseItems` and `parseMembers` append each item with `acc ++ [v]`,
+  inside a `mutual` block, where a `csimp` does not reach (the trap recorded
+  in `skills/danbri-function-precrime-checkers`), and `JSON.Chars` holds the
+  whole envelope as an `Array Char`. Measured in one run, load 7: before
+  0.44, 2.04 and 11.56 s and 64, 107 and 210 MB; after 0.47, 1.54 and 7.88 s
+  and 65, 105 and 215 MB; F* 0.34, 0.86 and 1.61 s and 16, 19 and 25 MB
+  (1,250, 2,500 and 5,000 paragraphs). The row `select-star` of
+  `tests/stack/lean_scaling.py` (1,250 to 5,000 paragraphs, time at most 9
+  times) is an expected failure naming issue 729. The repair is the one
+  section 4.8 made for `parse`: print the result without the JSON envelope
+  round trip.
+
 ### 10.6 The memory rule and the gate rows
 
 * Section 2 now ranks a row when its Lean peak resident set at the largest
@@ -1269,6 +1301,7 @@ table:
 * Row `query-memory-fstar`: the same slope, at most 6.0, which is 3 times the
   F* engine's 2.1. It is an expected failure naming issue 729 (27.2 after):
   the open part of the issue as a test that fails today.
+* Row `select-star` (10.5a): expected failure naming issue 729.
 
 ### 10.7 Gates after the last commit of this round
 
@@ -1305,6 +1338,12 @@ open:
 > sequence of COUNT. Gate rows: `query-memory` (at most 32 bytes per input
 > byte, passes) and `query-memory-fstar` (at most 6, expected failure naming
 > this issue).
+> Also found: `SELECT *` through the command line is quadratic (5,000
+> paragraphs: 9.8 s and 216 MB; F* 1.4 s and 26 MB). `rowsJoined` copied the
+> document once per row; repaired (`rowsJoinedAcc`, proved, `csimp`). Still
+> open: the command line parses the JSON envelope (`JSON.parseItems` appends
+> with `acc ++ [v]` in a mutual block) and pretty-prints it. Row
+> `select-star`: expected failure naming this issue.
 
 ## 7. How to repeat
 
