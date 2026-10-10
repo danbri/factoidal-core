@@ -526,6 +526,17 @@ Consequences for practice:
 War story in full: issue #343; hazard #20 in
 `skills/workflow-gotchas-debugging/SKILL.md`.
 
+Measured again 2026-10-10 with `l4diff` (Lean against the F\* command line on
+SPARQL 1.1 `manifest-all.ttl`): six command-line answers come from the store
+backend and differ from the F\* reference evaluator (`FROM NAMED`, `UUID()`,
+`SERVICE SILENT`, a sub-SELECT inside `GRAPH ?g`). Twelve more are F\*
+evaluator errors that the F\* W3C runner scores as PASS, because its row
+matcher (`binding_row_matches_with`) accepts an actual row with EXTRA
+bindings. The Lean comparator requires equal domains. Record and per-item
+table:
+`docs/designissues/2026-10-10-lean-vs-fstar-differential.md`
+(https://github.com/danbri/factoidal/issues/718).
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a
