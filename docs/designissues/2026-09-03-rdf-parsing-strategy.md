@@ -67,6 +67,54 @@ theorems gate the other executions.
   - Every Turtle reader gets the loop, because all of them reach collections
     only through `readStatement`: `parseTurtle`, `parseTurtleText` and its
     walk, the chunk fold, TriG, and the lenient readers.
+- Object lists ([8] `objectList`) and predicate-object lists ([7]
+  `predicateObjectList`), since 2026-10-10
+  (https://github.com/danbri/factoidal/issues/754). Before, `readObjectList`
+  (F* `parse_object_list_rev`) appended each object's triples to its
+  accumulator with `acc ++ ...`, so one object list of n objects took time in
+  proportion to n²; and `readPredicateObjectList` (F*
+  `parse_predicate_object_list_rev`, with `parse_trailing_semicolons_rev` as
+  `readPredicateObjectListMore`) made one recursive call per `;` group, so
+  one statement of n predicates took n stack frames. Now, in the same mutual
+  block:
+  - `readObjectListRev` pushes each object's triples (its side triples, the
+    statement triple, its RDF 1.2 annotation triples) onto a list that holds
+    every triple read so far newest first (`List.reverseAux`, time in
+    proportion to that object's own triples), and reads the next object by a
+    tail call. It returns the list still reversed.
+  - `readPredicateObjectList` is one function for the whole list. Its
+    argument `more` says where the input stands: `false` at a verb (the old
+    `readPredicateObjectList`), `true` at a run of `;` (the old
+    `readPredicateObjectListMore`, which at fuel 0 accepts and reads
+    nothing; the flag keeps that behaviour for every fuel). It passes its
+    `accRev` to `readObjectListRev`, so every triple of the statement goes
+    onto ONE reversed list, and reads the next group by a tail call. Every
+    exit reverses the list once. Callers use the defaults `accRev := []`,
+    `more := false`, so `readStatement`, `readObject`, `readAnnotations`,
+    `readSubjectTurtle` and TriG did not change.
+  - Both compile to `goto _start` loops in the emitted C (`readObjectListRev`
+    one, `readPredicateObjectList` four), with no self-call left. The F*
+    forms stay as the readable `readObjectList`,
+    `readPredicateObjectListSpec` and `readPredicateObjectListMoreSpec`; 2.3
+    has the theorems.
+  - Measured 2026-10-10, native: one object list of 25,000 objects 10.33 s
+    before, 0.12 s after; 100,000 objects no result in 120 s before, 0.29 s
+    after. One statement of 10,000 `;` groups: stack overflow before under
+    `LEAN_STACK_SIZE_KB=512`, in Node under `--stack-size=512` and in Node
+    with its default stack; runs in all three after.
+  - Bound that stays: NESTING. `[ ... ]` inside an object costs three frames
+    per level (`readObject`, `readPredicateObjectList`, `readObjectListRev`):
+    `ex:s ex:p [ ex:p [ ex:p ... 1 ] ] .` ran at 1,501 levels and overflowed
+    at 1,507 under `LEAN_STACK_SIZE_KB=512`, before and after. Nested
+    collections ran at 2,890 levels before and 2,695 after (overflow at 2,902
+    and 2,707). The cause is the frame of `readObject`, 16 bytes larger
+    (`sub $0x38,%rsp` before, `sub $0x48,%rsp` after): the call to
+    `readPredicateObjectList` now has seven arguments, and on x86-64 the
+    seventh goes on the stack.
+  - All Turtle readers reach the two lists only through `readStatement` or
+    (TriG) through `readPredicateObjectList` itself, so every reader gets
+    the loops: `parseTurtle`, `parseTurtleText` and its walk, the chunk fold,
+    TriG, and the lenient readers.
 
 ### 2.2 Streaming execution for the shard packer
 
@@ -176,6 +224,23 @@ Modules, in data order:
   and triple order for nested collections; those in `TurtleChunkFoldTests.lean`
   run a 500-element collection through the scanner walk, `parseTurtleText`
   and a 97-character chunking.
+- `Turtle.lean` (2026-10-10, object and predicate-object lists, 2.1):
+  `readObjectList_acc` (starting the readable object list with `acc` puts
+  `acc` in front of its result); `readObjectListRev_eq`, the loop returns,
+  newest first, its `accRev` behind what `readObjectList` reads;
+  `readPredicateObjectList_eq`, the loop started at a verb reads what
+  `readPredicateObjectListSpec` reads and started at a `;` run what
+  `readPredicateObjectListMoreSpec` reads, with the triples of `accRev` in
+  front; and `readPredicateObjectList_eq_spec` at the defaults. All hold for
+  every fuel, errors and positions included, and the state is the same, so
+  the blank-node labels are the same. Three `@[csimp]` theorems
+  (`readObjectList_eq_TR`, `readPredicateObjectListSpec_eq_TR`,
+  `readPredicateObjectListMoreSpec_eq_TR`) make a call of a readable form
+  compile to the loop. The guards in `TurtleTests.lean` pin labels, order,
+  error messages and error offsets taken from the binary built before the
+  change (Turtle, RDF 1.2 annotations, TriG); those in
+  `TurtleChunkFoldTests.lean` run 500 objects and 500 groups through the
+  scanner walk, `parseTurtleText` and a 97-character chunking.
 - Still not proved: the CHUNK-BOUNDARY half — that the streaming execution
   (2.2) reaches the same accumulator whatever the chunking, and so equals
   `parseTurtle` on the same text. It rests on `TurtleStatementScan` never
@@ -202,6 +267,7 @@ Modules, in data order:
 | 2026-04 | stack overflow on large Turtle | non-tail recursion | `docs/2026-04-21-large-turtle-stack-overflow-fix-sketch.md` |
 | 2026-09-02 | quadratic `parseTurtle` | per-token `cs.length + 1` fuel in two literal readers | constant `literalFuel` + proofs |
 | 2026-10-10 | a Turtle collection of 100,000 elements overflowed a 512 KB native stack and a browser tab's stack; the largest that ran at 512 KB had about 4,500 elements (4,531 overflowed) | `readCollectionRest` (F* `parse_collection_rest`) made one recursive call per element | `readCollectionCells`, a tail call per element, and `linkCollectionCells` at the `)`, proved equal (2.1, 2.3). 100,000 elements run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before (https://github.com/danbri/factoidal/issues/678) |
+| 2026-10-10 | one Turtle object list of 25,000 objects took 10.33 s, and 100,000 gave no result in 120 s; one statement of 10,000 predicates overflowed a 512 KB native stack, a Node `--stack-size=512` stack and Node's default stack | `readObjectList` (F* `parse_object_list_rev`) built its result with `acc ++ ...`; `readPredicateObjectList` (F* `parse_predicate_object_list_rev`) made one recursive call per `;` group | `readObjectListRev`, a reversed list and a tail call per object, and `readPredicateObjectList` as one loop over the groups, proved equal to the readable forms (2.1, 2.3). 25,000 objects 0.12 s, 100,000 objects 0.29 s; 10,000 groups run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before; and the 239 RDF 1.2 files again in the 1.2 mode (`--format turtle12`, `trig12`), 478 of 478 byte-identical. With `turtle` and `trig` the CLI reads the RDF 1.2 files in the 1.1 mode, where 51 of the 239 parse and annotations are refused; in the 1.2 mode 193 parse (https://github.com/danbri/factoidal/issues/754) |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
 | 2026-10-10 | `l4factoidal query` and `parse` peak at 35 bytes of resident memory per input byte (256 MB for 6.76 MB of `gene.ttl`; F*: 28 MB) | `parseTurtle`'s whole-document `text.toList` | `parseTurtleText`: the scanner walk over the `String` (2.2, item 5). Query peak 257.7 to 192.7 MB at 80,000 paragraphs, 37.0 to 26.0 bytes per input byte. Byte identity MEASURED, not proved |

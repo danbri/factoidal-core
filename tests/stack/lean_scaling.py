@@ -22,10 +22,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   trig-big-graph   TriG parse, one graph block with all the triples
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
   turtle-object-list  Turtle parse of one statement whose object list has n
-                   objects (`ex:s ex:p 0, 1, ... .`), 25,000 against 100,000.
-                   Expected failure naming issue 754: the object list is
-                   built with `acc ++ ...` (0.56 s at 6,250 and 10.33 s at
-                   25,000; 100,000 did not finish in 300 s)
+                   objects (`ex:s ex:p 0, 1, ... .`), 25,000 against 100,000
+                   (https://github.com/danbri/factoidal/issues/754; the object
+                   list was built with `acc ++ ...`: 10.33 s at 25,000 and no
+                   result in 120 s at 100,000 before the repair, 0.12 s and
+                   0.29 s after)
   rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
   rdfc-bnode-unique  RDFC-1.0 canonicalisation of n persons, each a blank node with an
@@ -121,7 +122,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    "turtle-object-list": "https://github.com/danbri/factoidal/issues/754",
     "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "select-star": "https://github.com/danbri/factoidal/issues/729",

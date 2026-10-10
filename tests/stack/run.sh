@@ -262,13 +262,13 @@ fi
 # for https://github.com/danbri/factoidal/issues/678 until 2026-10-10, when
 # the Turtle collection reader became a loop; it runs in all three routes.
 # `xml-entities` was listed for https://github.com/danbri/factoidal/issues/673
-# until the same day, when the XML reference scan became a loop.)
+# until the same day, when the XML reference scan became a loop.
+# `turtle-predicates` was listed for
+# https://github.com/danbri/factoidal/issues/754 until the same day, when the
+# Turtle predicate-object list reader became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
-    # One statement with 10,000 `;` groups: readPredicateObjectList makes
-    # one recursive call per group. Overflows the native canary (512 KB),
-    # the wasm canary and the wasm route (measured 2026-10-10).
-    turtle-predicates) echo "https://github.com/danbri/factoidal/issues/754" ;;
+    # No case is listed today.
   esac
 }
 
