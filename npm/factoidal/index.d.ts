@@ -1,4 +1,8 @@
-// TypeScript declarations for factoidal.
+// TypeScript declarations for @factoidal/core 0.9: one engine, the Lean 4
+// library L4Factoidal compiled to WebAssembly (formal/lean4). Every
+// function below is a dispatch op of that module (Wasm/Dispatch.lean)
+// behind a typed wrapper (lib/api.mjs). The same declarations describe
+// browser.js (browser.d.ts re-exports them).
 //
 // Self-contained: the RDF/JS interfaces below are structurally
 // compatible with @rdfjs/types (same names and shapes) but declared
@@ -80,16 +84,25 @@ export interface DataFactory {
 export const dataFactory: DataFactory;
 
 /**
- * A parse (or dataset-handle ABI) failure that carries a position
- * (issue #344): `line`/`column`/`offset` are set when the failing
- * engine call reported one (Turtle, TriG, N-Triples, N-Quads);
- * `undefined` for an RDF/XML or JSON-LD failure, or any non-parse
- * engine error, which stay a plain `Error`. `name` is `'ParseError'`.
+ * A parse failure that carries a position (issue #344): `line`/
+ * `column`/`offset` are set when the failing engine call reported one
+ * (Turtle, TriG, N-Triples, N-Quads); `undefined` for an RDF/XML or
+ * JSON-LD failure, or any non-parse engine error, which stay a plain
+ * `Error`. `name` is `'ParseError'`.
  */
 export class ParseError extends Error {
   readonly name: 'ParseError';
+  /** 1-based line of the error. */
   readonly line?: number;
+  /** 1-based column of the error, counted in Unicode scalar values. */
   readonly column?: number;
+  /**
+   * The position of the error as a UTF-16 code-unit index into the input
+   * JavaScript string: `text.slice(err.offset)` starts at the error. A
+   * character outside the Basic Multilingual Plane (U+10000 and above)
+   * counts 2, as in every JavaScript string index. (The engine reports a
+   * count of Unicode scalar values; the wrapper converts.)
+   */
   readonly offset?: number;
   readonly format?: string;
 }
@@ -199,9 +212,10 @@ export interface ParseOptions {
   /**
    * Recover instead of rejecting on the first syntax error (issue
    * #344): the returned Dataset holds whatever the parser recovered,
-   * and `dataset.diagnostics` lists what was skipped. Needs the
-   * npm-entry engine bundle's `parseDocument` export -- rejects
-   * naming it when absent. Default: false (strict; a syntax error,
+   * and `dataset.diagnostics` lists what was skipped. Needs the engine
+   * op `parseDocument`, which the Lean engine does not have yet
+   * (https://github.com/danbri/factoidal/issues/716): the call rejects
+   * naming the op. Default: false (strict; a syntax error,
    * an undeclared prefix, or an unresolvable relative IRI rejects the
    * whole parse with a ParseError).
    */
@@ -211,8 +225,19 @@ export interface ParseOptions {
 export interface QueryOptions {
   /** Format tag for string data inputs. Default: 'turtle'. */
   format?: DataFormat;
-  /** Default: 'none'. */
+  /**
+   * Default: 'none'. Any other regime closes the DEFAULT graph under it
+   * before the query (op queryRaw); extension functions and SERVICE
+   * registrations are not in scope on that path.
+   */
   entail?: EntailRegime;
+  /**
+   * Read the query with the SPARQL 1.2 grammar (triple-term patterns
+   * `<<( s p o )>>`, reified triples, annotations, TRIPLE / isTRIPLE /
+   * SUBJECT / PREDICATE / OBJECT). Same as `version: '1.2'`.
+   */
+  sparql12?: boolean;
+  version?: '1.1' | '1.2';
 }
 
 /**
@@ -228,11 +253,13 @@ export interface QueryOptions {
 export function parse(text: string, options?: ParseOptions | DataFormat): Promise<Dataset>;
 
 /**
- * Run a SPARQL 1.1 query.
+ * Run a SPARQL 1.1 query (or 1.2, with `sparql12`).
  * SELECT resolves to Bindings[]; ASK resolves to a boolean;
- * CONSTRUCT resolves to a Dataset (needs the npm-entry engine bundle
- * — rejects with an Error mentioning "pending npm-entry build" when
- * only the CLI bundle is available). `data` may be a DatasetHandle
+ * CONSTRUCT and DESCRIBE resolve to a Dataset (DESCRIBE answers the
+ * Concise Bounded Description of each resource named). A `SERVICE <iri>`
+ * whose IRI no registerServiceEndpoint() call named answers no
+ * solutions even without SILENT
+ * (https://github.com/danbri/factoidal/issues/717). `data` may be a DatasetHandle
  * from openDataset(), in which case this routes to `data.query()` and
  * `options.entail` must be 'none' or omitted (a handle carries no
  * entailment-closure step).
@@ -245,9 +272,8 @@ export function query(
 
 /**
  * Run a SPARQL 1.1 query against a read-only HDT (Header-Dictionary-
- * Triples) artifact's raw bytes (factoidal_cli.ml's `--data-hdt`
- * backend). No npm-entry engine bundle needed -- CLI-only. Default
- * graph only, SELECT/ASK only (no CONSTRUCT, no named graphs).
+ * Triples) file's raw bytes (op queryHdt; the bytes cross into the
+ * engine with no encoding). Default graph only, SELECT/ASK only.
  * @param hdtBytes whole .hdt file contents
  */
 export function queryHdt(
@@ -311,7 +337,7 @@ export function clearServiceEndpoints(): Promise<void>;
  * Dataset, whereas a handle's own `handle.update()` mutates the
  * handle in place and returns it; passing a handle here rejects with
  * a TypeError naming `handle.update()`.
- * Needs the npm-entry engine bundle.
+ *
  */
 export function update(
   data: DataInput,
@@ -323,7 +349,7 @@ export function update(
  * Open a dataset handle (issue #680): parse `data` once, then run
  * many query()/update()/serialize() calls against the engine's own
  * cached, indexed copy -- no re-parse, no SPARQL-index rebuild per
- * call. Needs the npm-entry engine bundle.
+ * call.
  * @param data a Dataset (opened as N-Quads, keeping the Dataset's own
  *   `.prefixes` on the handle for Turtle output), a string
  *   (`options.format`/`baseIRI` apply), or an array of those (each
@@ -378,8 +404,10 @@ export class DatasetHandle {
 export interface SerializeOptions {
   /**
    * Output format. Default: 'nquads'. A bare string in place of the
-   * options object names the format: serialize(ds, 'turtle'). 'turtle' (prefix-compacted,
-   * subject-grouped) needs the npm-entry bundle and flattens every
+   * options object names the format: serialize(ds, 'turtle'). 'nquads'
+   * is the engine's N-Quads text, lines in sorted order (not document
+   * order); 'ntriples' is the same text and refuses data with a named
+   * graph. 'turtle' (prefix-compacted, subject-grouped) flattens every
    * named graph into the default graph — use 'nquads' when graph names
    * must survive.
    */
@@ -445,12 +473,16 @@ export function canonicalHash(datasetOrGraph: Dataset): Promise<string>;
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
   conforms: boolean;
-  /** SHACL_Validation.validation_report_to_graph's graph as a Dataset. */
+  /** The validation report graph: one sh:ValidationReport with
+   *  sh:conforms, and one sh:result per validation result. */
   report: Dataset;
 }
 
 /**
- * SHACL Core validation. Needs the npm-entry engine bundle.
+ * SHACL validation (SHACL Core, SHACL-SPARQL constraints, SHACL 1.2 node
+ * expressions) of the data graph's default graph. A shapes graph that
+ * uses the SPARQL-based target of SHACL-AF, and a validation failure in
+ * the sense of SHACL 5.3.2, reject.
  * @param data the data graph
  * @param shapes the shapes graph
  */
@@ -462,10 +494,12 @@ export function shaclValidate(
 
 /**
  * ShEx (Shape Expressions) validation of one focus node against one
- * shape. Needs the npm-entry engine bundle. `null` means "deferred" --
- * outside this engine's decidable ShEx fragment, never a guessed
- * answer.
- * @param schemaJson ShExJ (JSON Schema form), as text
+ * shape, over the default graph of `data`. The Lean validator decides
+ * every schema it reads, so the answer is a boolean (the type keeps
+ * `null`, which an engine that defers a schema would answer). An
+ * `IMPORT` in the schema is not followed.
+ * @param schemaJson the schema as text: ShExJ when its first
+ *   non-whitespace character is '{', ShExC otherwise
  * @param focus an IRI, "_:label", or an RDF/JS NamedNode/BlankNode term
  * @param shape a shape label (same shapes as focus); omit/null for the
  *   schema's own `start`
@@ -480,8 +514,7 @@ export function shexValidate(
 
 /**
  * RDFS or OWL-RL entailment closure, materialized as a new Dataset
- * (input triples + derived triples). Needs the npm-entry engine
- * bundle. Default graph only.
+ * (input triples + derived triples). Default graph only.
  */
 export function owlClosure(
   data: DataInput,
@@ -507,9 +540,8 @@ export function coreRdfsClosure(
 ): Promise<{ ok: boolean; ntriples: string }>;
 
 /**
- * Decidable core-RDFS fragment check (`is_rho_df_frag`, with its F*
- * lemma tying it to the prop the regime theorems quantify over): does
- * the certified path's guarantee apply to this data?
+ * Decidable core-RDFS fragment check (L4Factoidal/RDFS, `isRhoDfFrag`):
+ * is the data in the core-RDFS fragment coreRdfsClosure is defined for?
  */
 export function coreRdfsCheck(
   data: DataInput,
@@ -542,26 +574,26 @@ export function rdfsPlusClosure(
 ): Promise<{ ok: boolean; ntriples: string; rounds: number }>;
 
 /**
- * OWL tableau materialisation (formal/fstar/Tableau.fst's
- * `tableau_materialise`): add `i rdf:type <ClassExpression>` for every
+ * OWL tableau materialisation (L4Factoidal/OWL/Materialise.lean,
+ * `materialiseWithBudget`): add `i rdf:type <ClassExpression>` for every
  * individual the model-construction reasoner proves is a member of an
  * OWL class expression (someValuesFrom / hasValue / unionOf /
  * intersectionOf, and the named class an equivalentClass restriction
- * defines). Needs the npm-entry engine bundle. Default graph only.
+ * defines). Default graph only.
  * `dataset` is input + tableau-derived triples; `addedCount` is how
- * many triples the tableau added.
+ * many triples the tableau added; `budgetHit` is true when the work
+ * budget ran out, so an absent membership is then a cap, not a proof.
  */
 export function tableauMaterialise(
   data: DataInput,
   options?: { format?: DataFormat }
-): Promise<{ dataset: Dataset; addedCount: number }>;
+): Promise<{ dataset: Dataset; addedCount: number; budgetHit?: boolean }>;
 
 /**
- * OWL DL inconsistency verdict (bin/owl-runner's DL pipeline: OWL-RL
- * closure -> tableau materialise -> OWL-RL closure -> is_inconsistent).
+ * OWL DL inconsistency verdict: OWL RL closure, one class-expression
+ * materialisation pass, OWL RL closure again, then the clash decision.
  * `rlAlone` is the plain OWL-RL verdict on the same input, so a caller
- * can see the cases the tableau adds. Needs the npm-entry engine
- * bundle. Default graph only.
+ * can see the cases the tableau adds. Default graph only.
  */
 export function tableauDlInconsistent(
   data: DataInput,
@@ -569,10 +601,8 @@ export function tableauDlInconsistent(
 ): Promise<{ inconsistent: boolean; rlAlone: boolean }>;
 
 /**
- * OWL DL consistency verdict via the verified clash-detecting tableau
- * (Tableau.Refute.tableau_consistent over the OWL-RL closure -- the
- * pure verified chain bin/owl-runner runs under `--regime dl`, minus
- * its native-only z3 oracle). Needs the npm-entry engine bundle.
+ * OWL DL consistency verdict via the clash-detecting tableau
+ * (L4Factoidal/OWL/Refute.lean) over the OWL RL closure.
  * Default graph only. `consistent` is three-valued: `false` (a clash on
  * every branch), `true` (a model built), or `null` -- a budget-out, with
  * `reason` naming the fuel cap (never a silent false).
@@ -583,11 +613,9 @@ export function owlIsConsistent(
 ): Promise<{ consistent: boolean | null; reason?: string }>;
 
 /**
- * OWL entailment check: does `premise` entail `conclusion`? Verified
- * two-path dispatch: `via: "closure"` (the conclusion is in the OWL-RL
+ * OWL entailment check: does `premise` entail `conclusion`? Two paths: `via: "closure"` (the conclusion is in the OWL-RL
  * closure of the premise) or `via: "refutation"` (the negated
- * conclusion is refuted on every goal). Needs the npm-entry engine
- * bundle. Default graph only. `entailed` is `true`, `false`, or `null`
+ * conclusion is refuted on every goal). Default graph only. `entailed` is `true`, `false`, or `null`
  * (a refutation budget-out, with `reason` naming the cap).
  */
 export function owlEntails(
@@ -598,8 +626,7 @@ export function owlEntails(
 
 /**
  * Evaluate an RML mapping graph against one logical source's raw data,
- * returning the generated triples as a Dataset. Needs the npm-entry
- * engine bundle. Every triples map in `mapping` reads the SAME
+ * returning the generated triples as a Dataset. Every triples map in `mapping` reads the SAME
  * `sourceData` -- joins across two different logical sources are out
  * of scope for this entry point.
  * @param mapping the RML mapping graph (Turtle by default)
@@ -629,7 +656,7 @@ export interface CsvwOptions {
  * CSVW csv2rdf conversion (w3.org/TR/csv2rdf): convert raw tabular
  * data plus an optional CSVW metadata document (JSON text -- '' or
  * omitted infers the schema from the CSV's own header row) into a
- * Dataset. Needs the npm-entry engine bundle. Every table in a
+ * Dataset. Every table in a
  * multi-table `tables` group reads the SAME `csvText`.
  */
 export function csvwToRdf(
@@ -647,9 +674,9 @@ export interface JsonLdOptions {
 
 /**
  * Parse a JSON-LD document into a Dataset, with JSON-LD-specific
- * options `parse()` has no room for. Needs the npm-entry engine
- * bundle (plain `parse(text, {format:'jsonld'})` also works for the
- * common case).
+ * options `parse()` has no room for (plain `parse(text,
+ * {format:'jsonld'})` also works for the common case). A remote
+ * `@context` is not fetched.
  */
 export function jsonldToRdf(
   jsonldText: string,
@@ -665,8 +692,7 @@ export interface JsonLdFromRdfOptions {
 /**
  * Serialize an RDF dataset as an expanded-form JSON-LD document -- the
  * reverse of jsonldToRdf (the verified JSONLD.FromRdf.from_rdf).
- * Returns the parsed JSON-LD value (an array of node objects). Needs
- * the npm-entry engine bundle.
+ * Returns the parsed JSON-LD value (an array of node objects).
  */
 export function jsonldFromRdf(
   data: DataInput,
@@ -676,14 +702,14 @@ export function jsonldFromRdf(
 /**
  * did:key resolution: resolve a `did:key:z6Mk...` (Ed25519) to its DID
  * Document, returned as a Dataset (the verified DID_Key.did_key_document).
- * Needs the npm-entry engine bundle.
+ *
  */
 export function didKeyResolve(didString: string): Promise<Dataset>;
 
 /**
- * Test whether an XML document is well-formed (Parser_XML). The
- * byte-oriented parser has no DOCTYPE/DTD production, so a document
- * containing a DOCTYPE reports false. Needs the npm-entry engine bundle.
+ * Test whether an XML document is well-formed (XML 1.0). A DOCTYPE with
+ * an internal subset is read (XML 1.0 section 2.8); an external DTD is
+ * not fetched.
  */
 export function xmlWellformed(xmlText: string): Promise<boolean>;
 
@@ -692,13 +718,16 @@ export interface XPathResult {
   resultType: 'nodeset' | 'string' | 'number' | 'boolean';
   count?: number;
   stringValue?: string;
+  /** `kind` includes 'root' and 'namespace' as well as 'element',
+   *  'attribute', 'text', 'comment' and 'processing-instruction'. */
   nodes?: Array<{ kind: string; name: string; value: string }>;
   value?: string | number | boolean;
 }
 
 /**
- * Evaluate an XPath 1.0 expression over an XML document
- * (XPath_Eval.eval_xpath_from_root). Needs the npm-entry engine bundle.
+ * Evaluate an XPath 1.0 expression over an XML document (the full
+ * XPath 1.0 function library). A number result is its XPath string form
+ * when it is not finite ('Infinity', 'NaN').
  */
 export function xpathEval(
   xmlText: string,
@@ -707,8 +736,7 @@ export function xpathEval(
 
 /**
  * RIF Core forward-chaining saturation, materialized as a new Dataset
- * (input triples + derived triples, default graph only). Needs the
- * npm-entry engine bundle.
+ * (input triples + derived triples, default graph only).
  * @param data the premise graph
  * @param rifRulesXml a RIF Core XML rule document
  */
@@ -719,41 +747,168 @@ export function rifEval(
 ): Promise<Dataset>;
 
 // ---------------------------------------------------------------------
-// In-memory COTTAS bytes store (docs/designissues/2026-07-06-inmemory-
-// bytes-store.md). openCottas()'s handle is NOT a Dataset: rows decode
-// lazily as queryCottas() touches them, never materializing the whole
-// corpus onto the heap. Needs the npm-entry engine bundle.
+// The persisted store: Shardborough generations (IBK3, IBK4 and IBK5
+// blocks with their index sidecars) that `factoidal pack` or the native
+// l4block-shard-pack wrote. skills/shardborough-storage describes the
+// format. A Store is a store handle inside the engine: every artifact it
+// read was checked against the SHA-256 its manifest commits, once, and
+// every query answers from the decoded, indexed blocks it retains.
 // ---------------------------------------------------------------------
 
-/** Open a COTTAS/Parquet artifact's raw bytes as a queryable, read-only store. */
-export function openCottas(bytes: Uint8Array | ArrayBuffer | string): Promise<string>;
+/**
+ * Reads one file of a store: `path` is relative to the collection root
+ * ('CURRENT', 'gen-1/manifest.sbm2', 'gen-1/predicate-0.ibk3', ...). In a
+ * browser, a reader over fetch():
+ * `(p) => fetch(base + p).then((r) => r.arrayBuffer())`.
+ */
+export type StoreReader =
+  (path: string) => Uint8Array | ArrayBuffer | Promise<Uint8Array | ArrayBuffer>;
+
+export interface OpenStoreOptions {
+  /** Open this generation directory instead of the one CURRENT names. */
+  generation?: string;
+  /** Read only the artifacts this query's plan names. */
+  sparql?: string;
+  /** Read exactly these artifact keys. */
+  keys?: string[];
+}
+
+/** An open store handle (op storeOpen). */
+export class Store {
+  readonly handle: string;
+  readonly generation: string;
+  /** True when the generation was opened through CURRENT. */
+  readonly activated: boolean;
+  readonly identity: string;
+  /** The manifest layout label, e.g. 'predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0'. */
+  readonly layout: string;
+  readonly wireVersion: number;
+  /** Artifacts read and verified. */
+  readonly artifacts: number;
+  /** Artifact bytes read. */
+  readonly bytes: number;
+  /** Rows the handle retains. */
+  readonly rows: number;
+  readonly closed: boolean;
+  /** One SPARQL 1.1 query against the retained blocks. The engine refuses
+   *  a query whose plan needs a block the handle did not read. */
+  query(sparql: string): Promise<Bindings[] | boolean | Dataset>;
+  /** The manifest, decoded by the engine (op storeManifestInspect). */
+  inspect(): Promise<Record<string, unknown>>;
+  /** Release the handle. Idempotent. */
+  close(): Promise<void>;
+}
 
 /**
- * Run a SPARQL 1.1 query against a store opened by openCottas(). No
- * `entail` option and no write overlay (read-only) -- see
- * npm/factoidal/lib/api.js's queryCottas doc comment for the full
- * divergence list from query().
- * @param handle from openCottas()
+ * Open a store. `source` is a collection root path (Node; the directory
+ * holding CURRENT) or a StoreReader (any runtime). With no options every
+ * artifact the manifest declares is read. Large collections need a
+ * deeper call stack than Node's default: see
+ * `@factoidal/core/store-worker` (README "The persisted store").
  */
-export function queryCottas(
-  handle: string,
-  sparql: string
+export function openStore(source: string | StoreReader, options?: OpenStoreOptions): Promise<Store>;
+
+/** One query against a store: open with the query's plan, query, close. */
+export function queryStore(
+  source: string | StoreReader,
+  sparql: string,
+  options?: { generation?: string }
 ): Promise<Bindings[] | boolean | Dataset>;
 
-/** Release a store opened by openCottas(). */
-export function closeCottas(handle: string): Promise<void>;
+/** The store handles this engine instance holds open, with the residency caps (op storeHandleList). */
+export function listStores(): Promise<Record<string, unknown>>;
 
-/**
- * Serialize a dataset to COTTAS/Parquet bytes via the native writer
- * (RDF.CottasStore.BaseWriter.serialize_cottas_v2). Round-trips into
- * openCottas().
- */
-export function toCottas(data: DataInput): Promise<Uint8Array>;
+/** The collection root of the sample store this package carries (Node only). */
+export function sampleStorePath(): string;
+
+/** What the sample store holds, as recorded when it was packed. */
+export const sampleStoreFacts: Readonly<{
+  triples: number;
+  blocks: number;
+  layout: string;
+  wireVersion: number;
+  source: string;
+  licence: string;
+  licenceUrl: string;
+  publisher: string;
+}>;
+
+// ---------------------------------------------------------------------
+// Common Logic (ISO/IEC 24707:2018) and IKL
+// ---------------------------------------------------------------------
+
+// Reads Common Logic Interchange Format
+// text (ISO/IEC 24707:2018), with the IKL `that`-operator extension,
+// and reports its shape -- it never produces RDF. `pureCL` is a
+// DIALECT flag, not a validity or quality signal: true while the text
+// stays inside ISO/IEC 24707 Common Logic, false once it uses IKL's
+// `that` operator. A CLIF text that fails to parse rejects instead of
+// returning either value.
+export function clParse(clifText: string): Promise<{
+  ok: boolean;
+  sentences: number;
+  pureCL: boolean;
+  normalized: string;
+}>;
+
+// Reads CLIF text and writes it
+// back out in canonical spacing. `roundTripProved` is ALWAYS `false`:
+// `clif_roundTrip` (CL/ClifAdequacy.lean) is an OPEN lemma -- the
+// fragment boundary `marksLexable` is MEASURED, not proved. The field
+// is surfaced, not dropped or defaulted away, so a caller does not
+// have to go find that out.
+export function clSerialize(clifText: string): Promise<{
+  ok: boolean;
+  clif: string;
+  sentences: number;
+  roundTripProved: false;
+}>;
+
+// Alpha-normalises CLIF text: the
+// canonical representative of each sentence's bound-variable-renaming
+// equivalence class -- IKL GUIDE Appendix B condition (1), renaming a
+// bound variable does not change the proposition expressed. Two
+// sentences that differ only in bound-variable names produce
+// byte-identical `clif` output.
+export function clAlphaNorm(clifText: string): Promise<{
+  ok: boolean;
+  clif: string;
+  sentences: number;
+}>;
+
+// Hayes's reduction of IKL to
+// Common Logic (danbri/factoidal#625), over a whole text.
+//
+// `preserves: "satisfiability"` -- the reduction preserves
+// satisfiability, NOT equivalence. It suits entailment and consistency
+// testing; it is not a transformation to apply to data you intend to
+// keep.
+//
+// `noIntrusion` IS the proof hypothesis `CL.noIntrSs [] []` decides,
+// not a paraphrase of it. The transformation runs and returns output
+// either way; when `noIntrusion` is `false`, `tails_satisfiable` /
+// `normalize_preserves` do not cover that output.
+export function clNormalize(clifText: string): Promise<{
+  ok: boolean;
+  head: string[];
+  tail: string[];
+  clif: string;
+  sentences: number;
+  thatCount: number;
+  noIntrusion: boolean;
+  preserves: 'satisfiability';
+  provedUnder: string;
+}>;
+
+// clFiniteSat is DEFERRED from this typed surface (owner decision,
+// 2026-08-26), not excluded: it takes a caller-supplied finite-
+// interpretation JSON encoding that has no user yet. Reachable only
+// through the raw dispatch ABI (`(await loadEngine()).call('clFiniteSat',
+// [interpJson, clifText])`), which needs no typed shape commitment here.
 
 // ---------------------------------------------------------------------
 // Typed engine functions (#74 npm FP surface). Each is a pure,
-// value-in / value-out wrapper over one F*-extracted engine; all need
-// the npm-entry bundle.
+// value-in / value-out wrapper over one engine op.
 // ---------------------------------------------------------------------
 
 /**
@@ -969,23 +1124,14 @@ export function sigmoidPoints(
 export function sigmoidFormulaMathml(): Promise<string>;
 
 // ---------------------------------------------------------------------
-// VC Data Integrity crypto (eddsa-rdfc-2022) — the F*-extracted
-// VC_DataIntegrity pipeline, its four crypto assume vals realised by
-// HACL*'s OWN official WebAssembly build (hacl-wasm). All need the
-// npm-entry bundle AND the HACL* wasm backend.
-//
-// Init story: on the Node entries (index.js/index.mjs and the /wasm
-// entry) these typed wrappers AUTO-AWAIT initHacl() on the first VC
-// call — a caller never has to remember the init step. In the browser
-// (browser.js) the page must initialise HACL* itself first (the
-// hacl-wasm URL is page-specific); see browser.js's VC section. Either
-// way, an uninitialised backend makes verify THROW, never silently
-// return true (#286, the throw-on-uninit contract).
+// VC Data Integrity crypto (eddsa-rdfc-2022), the ops of
+// formal/lean4/Wasm/Ops/Vc.lean. Ed25519 is HACL*'s C code compiled into
+// the wasm module; SHA-256 is the Lean hash. No initialisation step.
 // ---------------------------------------------------------------------
 
 /**
  * SHA-256 of a message string's bytes, as a lowercase hex digest
- * (VC_DataIntegrity.hash_sha256_hex, HACL* SHA-2).
+ * (the Lean SHA-256).
  */
 export function vcSha256Hex(message: string): Promise<string>;
 
@@ -1034,7 +1180,7 @@ export function vcEddsaVerifyFromCanonical(
 
 /**
  * VC Data Model 2.0 structural conformance check (VC.Credential.fst's
- * vc_check_from_string, F*-verified — 117 pass, 0 fail on the offline
+ * vc_check_from_string, ported to L4Factoidal/VC/Credential.lean — 117 pass, 0 fail on the offline
  * vc_stage1 fixture suite). Pure structural validation, no crypto.
  * `v2ctxJson` is the vendored VCDM v2 base context document's raw JSON
  * text (third_party/contexts/credentials-v2.jsonld); `credentialJson`
@@ -1077,7 +1223,11 @@ export function vcCheckRelatedResourceDigests(
   credentialJson: string
 ): Promise<{ valid: boolean; reason?: string }>;
 
-/** Feature probe for the currently available engine bundles. */
+/**
+ * Feature probe: which ops the loaded wasm module serves. A module older
+ * than this package can lack some; an operation whose op is missing
+ * rejects naming it.
+ */
 export function capabilities(): Promise<{
   entry: boolean;
   construct: boolean;
@@ -1106,18 +1256,20 @@ export function capabilities(): Promise<{
   matrix: boolean;
   /** The sigmoid (Math.Sigmoid) ABI exports are present. */
   sigmoid: boolean;
-  /**
-   * The VC Data Integrity crypto ABI exports are present. Note: the
-   * HACL* wasm backend is still initialised at call time — this flag
-   * reports export availability, not that init has run.
-   */
+  /** The VC Data Integrity crypto ops are present. */
   vcCrypto: boolean;
-  /** The in-memory COTTAS bytes store exports are present. */
-  cottasBytesStore: boolean;
-  /** Bundle identity (issue #684): 'full' or 'lite'; 'full' when no entry is loaded. */
-  profile: 'full' | 'lite' | string;
-  /** The loaded entry bundle's ABI version string (e.g. "2"), or undefined with no entry. */
-  abiVersion: string | undefined;
+  /** query()'s `entail` regimes (op queryRaw) are served. */
+  entailment: boolean;
+  /** queryHdt() (op queryHdt) is served. */
+  hdt: boolean;
+  /** query()'s `sparql12` and DatasetHandle.query's (queryDataset12, datasetQuery12). */
+  sparql12: boolean;
+  /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
+  store: boolean;
+  /** 'full': the whole library is in the wasm module. */
+  profile: 'full' | string;
+  /** The dispatch ABI version string of the loaded wasm module. */
+  abiVersion: string;
   /** openDataset()/DatasetHandle (datasetOpen/Query/Update/Serialize/Close) are present. */
   datasetHandles: boolean;
   /** parse()'s `{lenient:true}` (parseDocument) is present. */
@@ -1127,7 +1279,7 @@ export function capabilities(): Promise<{
 }>;
 
 // ---------------------------------------------------------------------
-// Legacy raw surface (single-shot CLI shapes)
+// One call, serialised answer (op queryRaw)
 // ---------------------------------------------------------------------
 
 /** SPARQL Results JSON term (https://www.w3.org/TR/sparql11-results-json/). */
@@ -1148,8 +1300,13 @@ export type OutputFormat =
   | 'json' | 'csv' | 'tsv' | 'xml' | 'table' | 'ntriples';
 
 /**
- * Legacy single-shot API: returns parsed SPARQL Results JSON when
- * output is 'json' (default), the raw output string otherwise.
+ * One call, serialised answer: parse `dataString`, close the default
+ * graph under `entail`, run the query. Resolves to parsed SPARQL Results
+ * JSON when output is 'json' (default), the text otherwise. 'csv', 'tsv'
+ * and 'xml' are the W3C SPARQL results formats (CSV and TSV have no ASK
+ * encoding, so an ASK with those rejects); 'table' and 'ntriples' are
+ * display formats. A CONSTRUCT or DESCRIBE answer is a graph and takes
+ * 'ntriples' or 'table' only.
  */
 export function queryRaw(
   dataString: string,
@@ -1161,13 +1318,24 @@ export function queryRaw(
   }
 ): Promise<SparqlResultsJson | string>;
 
-/** Package version string, e.g. '0.1.0-alpha.0'. */
+/** Package version string, e.g. '0.9.0'. */
 export const version: string;
 
-/** Which driver answered this typed surface: 'js' here, 'wasm' from
- * 'factoidal/wasm', 'entry' from createApi() in 'factoidal/api', or
- * 'lean4-wasm' from 'factoidal/l4-core'. */
+/** The engine: 'lean4-wasm'. */
 export const engine: string;
+
+/**
+ * The loaded Lean engine handle, for the dispatch ops this package does
+ * not wrap: `call(op, args)` answers the parsed envelope and throws on
+ * {"ok":false}; `call('ops', [])` lists the op names. Node: index.mjs;
+ * browser: browser.js.
+ */
+export function loadEngine(): Promise<{
+  version(): string;
+  call(op: string, args: string[]): any;
+  callBlob(op: string, args: string[], bytes: Uint8Array | ArrayBuffer): any;
+  callBlobIO(op: string, args: string[], bytes?: Uint8Array | ArrayBuffer): { envelope: any; bytes: Uint8Array };
+}>;
 
 declare const _default: {
   parse: typeof parse;
@@ -1194,10 +1362,13 @@ declare const _default: {
   xmlWellformed: typeof xmlWellformed;
   xpathEval: typeof xpathEval;
   rifEval: typeof rifEval;
-  openCottas: typeof openCottas;
-  queryCottas: typeof queryCottas;
-  closeCottas: typeof closeCottas;
-  toCottas: typeof toCottas;
+  clParse: typeof clParse;
+  clSerialize: typeof clSerialize;
+  clAlphaNorm: typeof clAlphaNorm;
+  clNormalize: typeof clNormalize;
+  openStore: typeof openStore;
+  queryStore: typeof queryStore;
+  listStores: typeof listStores;
   xsltTransform: typeof xsltTransform;
   mathmlEval: typeof mathmlEval;
   xformsRecalc: typeof xformsRecalc;
@@ -1227,6 +1398,7 @@ declare const _default: {
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
   DatasetHandle: typeof DatasetHandle;
+  Store: typeof Store;
   ParseError: typeof ParseError;
   dataFactory: DataFactory;
   queryRaw: typeof queryRaw;

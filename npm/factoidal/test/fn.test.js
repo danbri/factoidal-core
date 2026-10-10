@@ -345,7 +345,7 @@ test('interop: entail() accepts lowercase regime aliases', async () => {
 
 test('validate: SHACL Core validation returns conforms + a report FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.shacl) { t.skip(PENDING); return; }
+  assert.ok(caps.shacl, 'the package wasm serves caps.shacl');
 
   const data = await parse(TTL); // ex:alice/ex:bob, both foaf:name'd
   const shapes = await parse(`
@@ -377,7 +377,7 @@ test('validate: SHACL Core validation returns conforms + a report FnDataset', as
 
 test('shex: ShEx validation of one focus node against one shape', async (t) => {
   const caps = await capabilities();
-  if (!caps.shex) { t.skip(PENDING); return; }
+  assert.ok(caps.shex, 'the package wasm serves caps.shex');
 
   const data = await parse(TTL);
   const schema = JSON.stringify({
@@ -405,7 +405,7 @@ test('shex: ShEx validation of one focus node against one shape', async (t) => {
 
 test('fromMapping: evaluates an RML mapping graph against JSON source data', async (t) => {
   const caps = await capabilities();
-  if (!caps.rml) { t.skip(PENDING); return; }
+  assert.ok(caps.rml, 'the package wasm serves caps.rml');
 
   const mapping = await parse(`
     @prefix rml: <http://w3id.org/rml/> .
@@ -432,7 +432,7 @@ test('fromMapping: evaluates an RML mapping graph against JSON source data', asy
 
 test('fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.csvw) { t.skip(PENDING); return; }
+  assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
   // Real vendored fixtures from the W3C CSVW test suite (test027's
   // metadata + the shared tree-ops.csv table) — same pair as
@@ -458,7 +458,7 @@ test('fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset', async (
 
 test('rif: RIF Core saturation materializes derived triples as an FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.rif) { t.skip(PENDING); return; }
+  assert.ok(caps.rif, 'the package wasm serves caps.rif');
 
   const ds = await parse(
     '@prefix foaf: <http://xmlns.com/foaf/0.1/> . ' +

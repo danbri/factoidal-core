@@ -14,7 +14,7 @@ const M = 'http://www.w3.org/1998/Math/MathML';
 
 test('mathmlEval: 2 + 3 = 5/1 (exact rational)', async (t) => {
   const caps = await capabilities();
-  if (!caps.mathml) { t.skip(PENDING); return; }
+  assert.ok(caps.mathml, 'the package wasm serves caps.mathml');
   const xml = `<math xmlns="${M}">
     <apply><plus/><cn>2</cn><cn>3</cn></apply>
   </math>`;
@@ -26,7 +26,7 @@ test('mathmlEval: 2 + 3 = 5/1 (exact rational)', async (t) => {
 
 test('mathmlEval: division by zero is undef, not a bogus number', async (t) => {
   const caps = await capabilities();
-  if (!caps.mathml) { t.skip(PENDING); return; }
+  assert.ok(caps.mathml, 'the package wasm serves caps.mathml');
   const xml = `<math xmlns="${M}">
     <apply><divide/><cn>1</cn><cn>0</cn></apply>
   </math>`;

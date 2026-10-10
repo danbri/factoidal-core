@@ -351,7 +351,7 @@ test('parse: jsonld (expanded/inline-context form) via the npm-entry ABI',
 
 test('jsonldToRdf: parses JSON-LD with an explicit base option', async (t) => {
   const caps = await capabilities();
-  if (!caps.jsonld) { t.skip(PENDING); return; }
+  assert.ok(caps.jsonld, 'the package wasm serves caps.jsonld');
 
   const jsonld = JSON.stringify({
     '@context': { foaf: 'http://xmlns.com/foaf/0.1/', name: 'foaf:name' },
@@ -366,7 +366,7 @@ test('jsonldToRdf: parses JSON-LD with an explicit base option', async (t) => {
 test('shaclValidate: SHACL Core validation returns conforms + a report Dataset',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.shacl) { t.skip(PENDING); return; }
+    assert.ok(caps.shacl, 'the package wasm serves caps.shacl');
 
     const shapes = `
       @prefix sh:   <http://www.w3.org/ns/shacl#> .
@@ -392,7 +392,7 @@ test('shaclValidate: SHACL Core validation returns conforms + a report Dataset',
 test('shexValidate: ShEx validation of one focus node against one shape',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.shex) { t.skip(PENDING); return; }
+    assert.ok(caps.shex, 'the package wasm serves caps.shex');
 
     const schema = JSON.stringify({
       type: 'Schema',
@@ -422,7 +422,7 @@ test('shexValidate: ShEx validation of one focus node against one shape',
 test('owlClosure: RDFS closure materializes rdfs:subClassOf inference',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.owlClosure) { t.skip(PENDING); return; }
+    assert.ok(caps.owlClosure, 'the package wasm serves caps.owlClosure');
 
     const data = `
       @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -444,7 +444,7 @@ test('owlClosure: RDFS closure materializes rdfs:subClassOf inference',
 test('rmlMap: evaluates an RML mapping graph against JSON source data',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.rml) { t.skip(PENDING); return; }
+    assert.ok(caps.rml, 'the package wasm serves caps.rml');
 
     const mapping = `
       @prefix rml: <http://w3id.org/rml/> .
@@ -473,7 +473,7 @@ test('rmlMap: evaluates an RML mapping graph against JSON source data',
 test('csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.csvw) { t.skip(PENDING); return; }
+    assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
     // Real vendored fixtures from the W3C CSVW test suite (test027's
     // metadata + the shared tree-ops.csv table it describes) — not a
@@ -504,7 +504,7 @@ test('csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)',
 test('csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.csvw) { t.skip(PENDING); return; }
+    assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
     const fs = require('node:fs');
     const path = require('node:path');
@@ -529,7 +529,7 @@ test('csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata in
 test('rifEval: RIF Core saturation materializes derived triples',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.rif) { t.skip(PENDING); return; }
+    assert.ok(caps.rif, 'the package wasm serves caps.rif');
 
     const data = '@prefix foaf: <http://xmlns.com/foaf/0.1/> . ' +
       '@prefix ex: <http://example.org/> . ex:alice foaf:knows ex:bob .';

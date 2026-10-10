@@ -13,7 +13,7 @@ const PENDING = 'pending npm-entry build';
 
 test('jsonSchemaValidate: {type:"integer"} accepts an integer', async (t) => {
   const caps = await capabilities();
-  if (!caps.jsonSchema) { t.skip(PENDING); return; }
+  assert.ok(caps.jsonSchema, 'the package wasm serves caps.jsonSchema');
   const r = await jsonSchemaValidate('{"type":"integer"}', '5');
   assert.equal(r.valid, true);
   assert.equal(r.result, 'pass');
@@ -22,7 +22,7 @@ test('jsonSchemaValidate: {type:"integer"} accepts an integer', async (t) => {
 
 test('jsonSchemaValidate: {type:"integer"} rejects a string', async (t) => {
   const caps = await capabilities();
-  if (!caps.jsonSchema) { t.skip(PENDING); return; }
+  assert.ok(caps.jsonSchema, 'the package wasm serves caps.jsonSchema');
   const r = await jsonSchemaValidate('{"type":"integer"}', '"hello"');
   assert.equal(r.valid, false);
   assert.notEqual(r.result, 'pass');

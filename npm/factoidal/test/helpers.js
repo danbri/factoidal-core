@@ -1,32 +1,40 @@
-// Shared test setup: pin the engine bundles to the build of record.
+// Shared test helpers.
 //
-// In the repo tree the package-local factoidal.js may be stale (it is
-// refreshed by `build-ocaml.sh npm` at packaging time — and is itself
-// always a copy of docs/fstar-extracted/), while docs/fstar-extracted/
-// holds the latest `build-ocaml.sh js` output. Prefer the docs copy
-// whenever it exists; in a published tarball it doesn't and the
-// package-local copy is used. (Mtime comparison is useless here: a
-// fresh clone stamps every file with the same checkout time.)
+// The package carries one engine, the Lean wasm in ../l4-assets/ (or the
+// directory $FACTOIDAL_L4_ASSETS names, or the checkout's
+// docs/web/hub/assets/l4/). These tests need it: a missing wasm is a
+// failure of every test that loads the engine, never a skip.
 
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
+const test = require('node:test');
+const assert = require('node:assert/strict');
 
-const PKG_ROOT = path.resolve(__dirname, '..');
-const DOCS = path.resolve(PKG_ROOT, '..', '..', 'docs', 'fstar-extracted');
-
-function preferFresh(envName, filename) {
-  if (process.env[envName]) return;
-  const docsCopy = path.join(DOCS, filename);
-  if (fs.existsSync(docsCopy)) process.env[envName] = docsCopy;
+/**
+ * Expected failure (skills/test-suites/SKILL.md § Expected failures, owner
+ * rule 2026-09-07): a stated shortfall is a failing test plus an open
+ * issue. `fn` runs; if it throws, the case passes as `xfail: <name>
+ * (<issue>)` with the failure quoted in a diagnostic; if it PASSES, the
+ * case FAILS, so the flip to a real assertion and the issue closure cannot
+ * be forgotten.
+ */
+function xfail(name, issueUrl, fn) {
+  test(`xfail: ${name} (${issueUrl})`, async (t) => {
+    let failed = false;
+    try {
+      await fn(t);
+    } catch (error) {
+      failed = true;
+      t.diagnostic(`expected failure: ${String((error && error.message) || error).slice(0, 200)}`);
+    }
+    assert.ok(failed,
+      `unexpected pass: ${name} now works — flip this xfail to an assertion and close ${issueUrl}`);
+  });
 }
 
-preferFresh('FACTOIDAL_JS_BUNDLE', 'factoidal.js');
-preferFresh('FACTOIDAL_WASM_BUNDLE', 'factoidal.wasm.js');
-preferFresh('FACTOIDAL_NPM_ENTRY', 'factoidal-npm-entry.js');
-preferFresh('FACTOIDAL_NPM_ENTRY_WASM', 'factoidal-npm-entry.wasm.js');
+/** Lenient parse is not served by the Lean engine yet. */
+const LENIENT_ISSUE = 'https://github.com/danbri/factoidal/issues/716';
+/** SERVICE without SILENT to an unregistered endpoint answers no rows. */
+const SERVICE_ERROR_ISSUE = 'https://github.com/danbri/factoidal/issues/717';
 
-const PENDING = 'pending npm-entry build';
-
-module.exports = { PENDING };
+module.exports = { xfail, LENIENT_ISSUE, SERVICE_ERROR_ISSUE };

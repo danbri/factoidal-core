@@ -137,3 +137,5 @@ export const engine = api.engine;
 // The sample store this package carries (sample-store/, IPTC NewsCodes,
 // CC BY 4.0): openStore(sampleStorePath()) answers with no download.
 export { sampleStorePath, sampleStoreFacts } from './sample-store.mjs';
+
+export default api;

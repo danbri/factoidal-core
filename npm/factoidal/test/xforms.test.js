@@ -14,7 +14,7 @@ const INSTANCE = '<data><x>5</x><y>0</y></data>';
 
 test('xformsRecalc: constant calculate writes the leaf', async (t) => {
   const caps = await capabilities();
-  if (!caps.xforms) { t.skip(PENDING); return; }
+  assert.ok(caps.xforms, 'the package wasm serves caps.xforms');
   const r = await xformsRecalc(INSTANCE, [{ target: 'y', calculate: '7' }]);
   assert.equal(typeof r.instance, 'string');
   assert.ok(Array.isArray(r.validity));
@@ -27,7 +27,7 @@ test('xformsRecalc: constant calculate writes the leaf', async (t) => {
 
 test('xformsRecalc: no binds leaves the instance well-formed', async (t) => {
   const caps = await capabilities();
-  if (!caps.xforms) { t.skip(PENDING); return; }
+  assert.ok(caps.xforms, 'the package wasm serves caps.xforms');
   const r = await xformsRecalc(INSTANCE, []);
   assert.equal(typeof r.instance, 'string');
   assert.deepEqual(r.validity, []);

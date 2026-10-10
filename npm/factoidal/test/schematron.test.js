@@ -21,7 +21,7 @@ const SCHEMA = `<schema xmlns="http://purl.oclc.org/dsdl/schematron">
 
 test('schematronValidate: failing assert produces a finding', async (t) => {
   const caps = await capabilities();
-  if (!caps.schematron) { t.skip(PENDING); return; }
+  assert.ok(caps.schematron, 'the package wasm serves caps.schematron');
   const r = await schematronValidate(SCHEMA, '<doc/>');
   assert.ok(Array.isArray(r.findings));
   assert.ok(r.findings.length >= 1);
@@ -32,7 +32,7 @@ test('schematronValidate: failing assert produces a finding', async (t) => {
 
 test('schematronValidate: satisfied assert produces no assert-fail', async (t) => {
   const caps = await capabilities();
-  if (!caps.schematron) { t.skip(PENDING); return; }
+  assert.ok(caps.schematron, 'the package wasm serves caps.schematron');
   const r = await schematronValidate(SCHEMA, '<doc ok="yes"/>');
   assert.equal(r.findings.filter((x) => x.type === 'assert-fail').length, 0);
 });
