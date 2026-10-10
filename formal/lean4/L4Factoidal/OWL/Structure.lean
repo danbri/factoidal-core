@@ -14,10 +14,10 @@ RDF Graphs section 2) consumes it. An OWL/XML reader (OWL 2 XML
 Serialization) would produce the same type, so the two syntaxes are
 compared as structures and as RDF graphs from one definition.
 
-What is NOT checked here: the typing constraints of Structural
-Specification section 5.8.1 (an IRI used as both a class and a datatype)
-and the global restrictions of section 11. Those are conditions on a
-structure, decided over the RDF graph by `L4Factoidal.OWL.SyntaxDL`.
+The type carries no side conditions. The typing constraints of
+Structural Specification section 5.8.1 (an IRI used as both a class and
+a datatype) and the global restrictions of section 11 are decided over
+the RDF graph of a structure by `L4Factoidal.OWL.SyntaxDL`.
 -/
 import L4Factoidal.RDF.Core
 

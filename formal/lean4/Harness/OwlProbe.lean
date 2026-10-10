@@ -164,6 +164,7 @@ import L4Factoidal.OWL.NegationGoals
 import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
+import L4Factoidal.OWL.OwlXml
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
 import Harness.Common
@@ -233,6 +234,13 @@ structure Case where
       case that has no premise (`WebOnt-imports-004` and its siblings),
       the way an import wrapper node carries the imported document. -/
   inputOntology : Option String := none
+  /-- OWL 2 XML Serialization documents (`test:owlXmlPremiseOntology`,
+      `test:owlXmlConclusionOntology`, `test:owlXmlNonConclusionOntology`).
+      The vendored catalogs carry none; the readers are exercised by
+      `L4Factoidal/OWL/OwlXmlTests.lean`. -/
+  owlXmlPremise       : Option String := none
+  owlXmlConclusion    : Option String := none
+  owlXmlNonConclusion : Option String := none
 deriving Inhabited
 
 /-- An import wrapper node: the ontology IRI the premise's `owl:imports`
@@ -266,6 +274,9 @@ def readCase (attrs : List Attribute) (kids : List Node) : Case := Id.run do
       | "importedOntology"            => c := { c with imports := c.imports ++ [res] }
       | "species"                     => c := { c with species := c.species ++ [fragmentOf res] }
       | "rdfXmlInputOntology"         => c := { c with inputOntology := some (directText k) }
+      | "owlXmlPremiseOntology"       => c := { c with owlXmlPremise := some (directText k) }
+      | "owlXmlConclusionOntology"    => c := { c with owlXmlConclusion := some (directText k) }
+      | "owlXmlNonConclusionOntology" => c := { c with owlXmlNonConclusion := some (directText k) }
       | _ => pure ()
     | _ => pure ()
   return c
@@ -748,6 +759,12 @@ def isRdfBasedOnly (c : Case) : Bool :=
 def fsGraph (txt? : Option String) : Option Graph :=
   txt?.bind L4Factoidal.OWL.FS.parseFunctionalSyntax
 
+/-- The functional-style graph of a document, else the OWL/XML graph. -/
+def altGraph (fs owl : Option String) : Option Graph :=
+  match fsGraph fs with
+  | some g => some g
+  | none => owl.bind L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+
 /-- Is the case functional-syntax-only AND outside the subset the
     parser reads? Only then is it `unsupported`. -/
 def isFunctionalUnread (c : Case) : Bool :=
@@ -763,7 +780,11 @@ def premiseGraph (cat : Catalog) (c : Case) : Except Harness.Outcome Graph :=
       -- same triples an RDF/XML premise would have carried.
       (match fsGraph c.fsPremiseText with
        | some g => .ok g
-       | none   => .error (.fail "harness: no RDF/XML premise"))
+       | none   =>
+         -- OWL 2 XML Serialization, the third syntax.
+         match c.owlXmlPremise.bind L4Factoidal.OWL.OwlXml.parseOwlXmlGraph with
+         | some g => .ok g
+         | none   => .error (.fail "harness: no RDF/XML premise"))
   | some ptxt =>
     match parseDoc "premise" c.iri ptxt with
     | .error e => .error (.fail e)
@@ -1088,7 +1109,7 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
   match (match c.conclusion with
          | some ctxt => parseDoc "conclusion" c.iri ctxt
-         | none => match fsGraph c.fsConclusionText with
+         | none => match altGraph c.fsConclusionText c.owlXmlConclusion with
              | some g => .ok g
              | none   => .error "harness: no RDF/XML conclusion") with
     | .error e => return Verdict.same (.fail e) { parseFailures := 1 }
@@ -1177,7 +1198,7 @@ def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
   match (match c.nonConclusion with
          | some ctxt => parseDoc "non-conclusion" c.iri ctxt
-         | none => match fsGraph c.fsNonConclusionText with
+         | none => match altGraph c.fsNonConclusionText c.owlXmlNonConclusion with
              | some g => .ok g
              | none   => .error "harness: no RDF/XML non-conclusion") with
     | .error e => return Verdict.same (.fail e) { parseFailures := 1 }
@@ -1432,12 +1453,14 @@ def conclusionDoc (c : Case) : Except String (Option Graph) :=
       | .ok g => .ok (some g)
       | .error e => .error e
   | none =>
-      match c.fsConclusionText <|> c.fsNonConclusionText with
-      | some t =>
-          match L4Factoidal.OWL.FS.parseFunctionalSyntax t with
+      let fs := c.fsConclusionText <|> c.fsNonConclusionText
+      let ox := c.owlXmlConclusion <|> c.owlXmlNonConclusion
+      match fs, ox with
+      | none, none => .ok none
+      | _, _ =>
+          match altGraph fs ox with
           | some g => .ok (some g)
-          | none => .error "unsupported: functional-syntax conclusion outside the grammar the parser reads"
-      | none => .ok none
+          | none => .error "unsupported: functional-syntax or OWL/XML conclusion outside the grammar the reader accepts"
 
 /-- Gather the documents of a case for the species verdict. -/
 def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
@@ -1465,12 +1488,14 @@ def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
                       pMerged := pMerged, hasConclusion := true, cDoc := cDoc,
                       uMerged := uMerged }
   | none =>
-    match c.fsPremiseText with
+    let alt : Option (Option Graph) :=
+      match c.fsPremiseText with
+      | some ftxt => some (L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt)
+      | none => c.owlXmlPremise.map L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+    match alt with
     | none => .error "harness: the case has no premise document in any syntax"
-    | some ftxt =>
-      match L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt with
-      | none => .error "unsupported: functional-syntax premise outside the grammar the parser reads"
-      | some pDoc =>
+    | some none => .error "unsupported: functional-syntax or OWL/XML premise outside the grammar the reader accepts"
+    | some (some pDoc) =>
         match conclusionDoc c with
         | .error e => .error e
         | .ok none =>
@@ -1657,6 +1682,10 @@ structure Opts where
   /-- `--species`: score the `test:species` facet (OWL 2 DL against
   FULL) instead of entailment and consistency. -/
   species : Bool := false
+  /-- `--fs-input`: judge the cases that have a functional-style premise
+  from their functional-style documents, and again from their RDF/XML
+  documents, and report both. -/
+  fsInput : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | [], o => o
@@ -1666,6 +1695,8 @@ def parseArgs : List String → Opts → Opts
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--trace" :: rest, o => parseArgs rest { o with trace := true }
   | "--species" :: rest, o => parseArgs rest { o with species := true }
+  | "--syntax" :: rest, o => parseArgs rest { o with species := true }
+  | "--fs-input" :: rest, o => parseArgs rest { o with fsInput := true }
   | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
@@ -2056,53 +2087,129 @@ a difference a reader can act on. -/
 def groundDifference (a b : Graph) : List String :=
   (a.filter (fun t => t.bnodes.isEmpty && !b.mem t)).take 3 |>.map showTriple
 
-/-- Compare one RDF/XML document with one functional-style document. -/
-def agreeOne (base : String) (rdfTxt fsTxt : String) : Harness.Outcome × List String :=
+/-- Compare one RDF/XML document with a document in another syntax; `read`
+is that syntax's reader (mapped to RDF). -/
+def agreeOne (read : String → Option Graph) (what : String)
+    (base : String) (rdfTxt otherTxt : String) : Harness.Outcome × List String :=
   match parseDoc "rdf/xml" base rdfTxt with
   | .error e => (.fail e, [])
   | .ok a =>
-    match L4Factoidal.OWL.FS.parseFunctionalSyntax fsTxt with
-    | none => (.unsupported "functional-syntax document outside the grammar", [])
+    match read otherTxt with
+    | none => (.unsupported s!"{what} document outside the grammar", [])
     | some b =>
       match Graph.isomorphicOutcome a b with
       | .equal => (.pass, [])
       | .budgetExceeded => (.skip "isomorphism work budget exceeded", [])
       | .notEqual =>
-          (.fail s!"fs-rdfxml: graphs differ ({a.length} triples from RDF/XML, \
-{b.length} from the functional-syntax mapping)",
+          (.fail s!"{what}-rdfxml: graphs differ ({a.length} triples from RDF/XML, \
+{b.length} from the {what} mapping)",
            (groundDifference a b).map (fun t => s!"only in RDF/XML: {t}") ++
-           (groundDifference b a).map (fun t => s!"only in functional syntax: {t}"))
+           (groundDifference b a).map (fun t => s!"only in {what}: {t}"))
 
 structure AgreeResult where
   premise    : Harness.Score := {}
   conclusion : Harness.Score := {}
 
-def runAgreement (name : String) (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
+/-- One agreement block: for every case with an RDF/XML document and a
+document of the other syntax, in the premise position and in the
+conclusion position. `kind` names the pair in the output. -/
+def runAgreementWith (name kind : String) (read : String → Option Graph) (what : String)
+    (otherPremise : Case → Option String) (otherConclusion : Case → Option String)
+    (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
   let mut r : AgreeResult := {}
   for c in cat.cases do
-    match c.premise, c.fsPremiseText with
-    | some rx, some fs =>
-        let (o, notes) := agreeOne c.iri rx fs
-        let label := s!"{c.id} [fs-rdfxml, premise]"
+    match c.premise, otherPremise c with
+    | some rx, some other =>
+        let (o, notes) := agreeOne read what c.iri rx other
+        let label := s!"{c.id} [{kind}, premise]"
         match o with
         | .pass => if verbose then IO.println (o.line label)
         | _ => IO.println (o.line label)
         for n in notes do IO.println s!"      {n}"
         r := { r with premise := r.premise.bump o }
     | _, _ => pure ()
-    match c.conclusion <|> c.nonConclusion, c.fsConclusionText <|> c.fsNonConclusionText with
-    | some rx, some fs =>
-        let (o, notes) := agreeOne c.iri rx fs
-        let label := s!"{c.id} [fs-rdfxml, conclusion]"
+    match c.conclusion <|> c.nonConclusion, otherConclusion c with
+    | some rx, some other =>
+        let (o, notes) := agreeOne read what c.iri rx other
+        let label := s!"{c.id} [{kind}, conclusion]"
         match o with
         | .pass => if verbose then IO.println (o.line label)
         | _ => IO.println (o.line label)
         for n in notes do IO.println s!"      {n}"
         r := { r with conclusion := r.conclusion.bump o }
     | _, _ => pure ()
-  IO.println (Harness.Score.line s!"{name} fs-rdfxml agreement" r.premise)
-  IO.println (Harness.Score.line s!"{name} fs-rdfxml agreement [conclusion]" r.conclusion)
+  IO.println (Harness.Score.line s!"{name} {kind} agreement" r.premise)
+  IO.println (Harness.Score.line s!"{name} {kind} agreement [conclusion]" r.conclusion)
   return r
+
+def runAgreement (name : String) (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
+  let r ← runAgreementWith name "fs-rdfxml" L4Factoidal.OWL.FS.parseFunctionalSyntax
+    "functional-syntax" (·.fsPremiseText) (fun c => c.fsConclusionText <|> c.fsNonConclusionText)
+    cat verbose
+  let x ← runAgreementWith name "owlxml-rdfxml" L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+    "owl-xml" (·.owlXmlPremise) (fun c => c.owlXmlConclusion <|> c.owlXmlNonConclusion)
+    cat verbose
+  if x.premise.total + x.conclusion.total == 0 then
+    IO.println s!"NOT MEASURED {name} owlxml-rdfxml agreement: the catalog has no \
+test:owlXmlPremiseOntology or test:owlXmlConclusionOntology element, so no case \
+carries an OWL/XML document to compare"
+  return r
+
+/-! ## Functional-style input (`--fs-input`)
+
+A case that carries a functional-style premise is judged twice: once with
+the functional-style documents (`premise`, `conclusion` and
+`nonConclusion` blanked wherever a functional-style twin exists, so the
+judges take the `OWL.FS` path) and once with the RDF/XML documents. The
+verdict of a test case must not depend on the syntax its ontology is
+written in (OWL 2 Conformance section 2), so a unit the two disagree on
+is a defect in a reader, in the mapping, or in the fixture. -/
+
+/-- Use the functional-style documents of a case wherever it has them. -/
+def fsInputCase (c : Case) : Case :=
+  { c with premise := none,
+           conclusion := if c.fsConclusionText.isSome then none else c.conclusion,
+           nonConclusion := if c.fsNonConclusionText.isSome then none else c.nonConclusion }
+
+def fsInputMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  let mut notRead : List String := []
+  let mut totalFs : Harness.Score := {}
+  let mut totalRx : Harness.Score := {}
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let withFs := cat0.cases.filter (·.fsPremiseText.isSome)
+        let withFs := if o.cases.isEmpty then withFs
+          else withFs.filter (fun c => o.cases.contains c.id)
+        IO.println s!"{name}: {withFs.length} test cases carry a functional-style premise"
+        let catFs := { cat0 with cases := withFs.map fsInputCase }
+        let catRx := { cat0 with cases := withFs }
+        IO.println "-- judged from the functional-style documents"
+        let rFs ← runCatalog s!"{name} [fs-input]" catFs o.capMs o.regime o.refuteBudget
+                    o.refuteMs o.strictMatch o.verbose o.slowMs
+        IO.println "-- judged from the RDF/XML documents (same cases)"
+        let rRx ← runCatalog s!"{name} [rdfxml-input]" catRx o.capMs o.regime o.refuteBudget
+                    o.refuteMs o.strictMatch o.verbose o.slowMs
+        let fsFail := rFs.fails.map (·.2.1)
+        let rxFail := rRx.fails.map (·.2.1)
+        IO.println s!"FS-INPUT-ONLY-FAILS {name}: {String.intercalate ", " (fsFail.filter (fun i => !rxFail.contains i))}"
+        IO.println s!"RDFXML-INPUT-ONLY-FAILS {name}: {String.intercalate ", " (rxFail.filter (fun i => !fsFail.contains i))}"
+        totalFs := totalFs.add rFs.score
+        totalRx := totalRx.add rRx.score
+        IO.println ""
+  IO.println (Harness.Score.line "fs-input TOTAL" totalFs)
+  IO.println (Harness.Score.line "rdfxml-input TOTAL (same cases)" totalRx)
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  return (if notRead.isEmpty then 0 else 1)
 
 /-- `--species`: read each catalog, score the species facet of every
 case that carries one. The default catalog is `all.rdf`, the union of
@@ -2168,6 +2275,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   if o.profile then return (← profileMain o)
   if o.trace then return (← traceMain o)
   if o.species then return (← speciesMain o)
+  if o.fsInput then return (← fsInputMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}

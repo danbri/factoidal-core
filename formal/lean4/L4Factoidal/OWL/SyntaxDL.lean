@@ -520,33 +520,352 @@ def punningViolationsKeys (d : DeclIndex) : List String → List String
 def punningViolations (d : DeclIndex) : List String :=
   punningViolationsKeys d (dedupStrs (d.cls ++ d.objProp ++ d.dataProp))
 
-/-- Global restriction §11: a non-simple property — transitive or
-    chain-defined — under a cardinality restriction. -/
-def nonsimpleCardinalityViolations (g : Graph) (nonsimple : List String) :
-    List String → List String
-  | [] => []
-  | r :: rest =>
-      let here :=
-        if cardinalityPreds.any (fun cp => hasTripleSp g r cp) then
-          match findObjectSp g r owlOnPropertyP with
-          | some o =>
-              match termKeyDl o with
-              | some k => if nonsimple.contains k
-                          then ["non-simple-property-in-cardinality: " ++ k] else []
-              | none => []
-          | none => []
-        else []
-      here ++ nonsimpleCardinalityViolations g nonsimple rest
+/-! ## Structural Specification §11: the global restrictions
+
+Read off the RDF graph, over the axioms of the whole closure (the caller
+passes the merged graph). The clauses, in the order of §11.2:
+
+* the restriction on `owl:topDataProperty`;
+* the restrictions on datatypes: a built-in datatype is not redefined, a
+  datatype has at most one definition, and definitions are acyclic;
+* the restriction on simple roles (§11.1 defines "simple");
+* the restriction on the property hierarchy (regularity);
+* the restrictions on anonymous individuals.
+
+Object property expressions are `Ope`: a property key and whether it is
+inverted. A node `_:x owl:inverseOf P` denotes `ObjectInverseOf( P )`
+(Mapping to RDF Graphs Table 1); `P owl:inverseOf Q` with an IRI subject is
+the axiom `InverseObjectProperties( P Q )`. -/
+
+structure Ope where
+  key : String
+  inv : Bool
+deriving DecidableEq
+
+def Ope.flip (o : Ope) : Ope := { o with inv := !o.inv }
+
+def owlSameAsP          : String := nsOwl ++ "sameAs"
+def owlDifferentFromP   : String := nsOwl ++ "differentFrom"
+def owlHasSelfP         : String := nsOwl ++ "hasSelf"
+def owlHasValueP        : String := nsOwl ++ "hasValue"
+def owlEquivPropP       : String := nsOwl ++ "equivalentProperty"
+def owlPropDisjointP    : String := nsOwl ++ "propertyDisjointWith"
+def owlMembersP         : String := nsOwl ++ "members"
+def owlDistinctMembersP : String := nsOwl ++ "distinctMembers"
+def owlSourceIndP       : String := nsOwl ++ "sourceIndividual"
+def owlTargetIndP       : String := nsOwl ++ "targetIndividual"
+def owlOnDatatypeP'     : String := nsOwl ++ "onDatatype"
+def owlDtComplementP    : String := nsOwl ++ "datatypeComplementOf"
+def rdfsSubPropertyOfP  : String := nsRdfs ++ "subPropertyOf"
+def owlTopObjectP       : String := nsOwl ++ "topObjectProperty"
+def owlBottomObjectP    : String := nsOwl ++ "bottomObjectProperty"
+def owlTopDataP         : String := nsOwl ++ "topDataProperty"
+def owlAssertionPropP   : String := nsOwl ++ "assertionProperty"
+
+/-- The expression a term denotes in object-property position. -/
+def opeOfTerm (g : Graph) (t : Term) : Option Ope :=
+  match t with
+  | .iri i => some ⟨"I" ++ i.val, false⟩
+  | .bnode b =>
+      match findObjectSp g ("B" ++ b) owlInverseOfP with
+      | some (.iri p) => some ⟨"I" ++ p.val, true⟩
+      | _ => none
+  | _ => none
+
+def subjTermDl : Subject → Term
+  | .iri i => .iri i
+  | .bnode b => .bnode b
+
+def opeOfSubject (g : Graph) (s : Subject) : Option Ope := opeOfTerm g (subjTermDl s)
+
+/-- The relation → of §11.1: sub-property, equivalence, inverse and
+symmetry axioms, closed under taking inverses ("if OPE1 → OPE2 holds,
+then INV(OPE1) → INV(OPE2) holds as well"). -/
+def hierarchyEdges (g : Graph) : List (Ope × Ope) :=
+  let direct : List (Ope × Ope) := g.flatMap (fun t =>
+    if t.p.val == rdfsSubPropertyOfP then
+      match opeOfSubject g t.s, opeOfTerm g t.o with
+      | some a, some b => [(a, b)]
+      | _, _ => []
+    else if t.p.val == owlEquivPropP then
+      match opeOfSubject g t.s, opeOfTerm g t.o with
+      | some a, some b => [(a, b), (b, a)]
+      | _, _ => []
+    else if t.p.val == owlInverseOfP then
+      match t.s, t.o with
+      | .iri p, .iri q =>
+          [(⟨"I" ++ p.val, false⟩, ⟨"I" ++ q.val, true⟩),
+           (⟨"I" ++ q.val, true⟩, ⟨"I" ++ p.val, false⟩)]
+      | _, _ => []
+    else [])
+  let symmetric : List (Ope × Ope) :=
+    (subjectsTyped g (nsOwl ++ "SymmetricProperty")).filterMap (fun k =>
+      if k.startsWith "I" then some (⟨k, false⟩, ⟨k, true⟩) else none)
+  let base := direct ++ symmetric
+  base ++ base.map (fun (a, b) => (a.flip, b.flip))
+
+/-- The forward closure of `start` under `edges`: every `OPE'` with
+`start →* OPE'`. -/
+def forwardClosure (edges : List (Ope × Ope)) (start : List Ope) : Nat → List Ope
+  | 0 => start
+  | f + 1 =>
+      let added := (edges.filterMap (fun (a, b) =>
+        if start.contains a && !(start.contains b) then some b else none)).eraseDups
+      if added.isEmpty then start else forwardClosure edges (start ++ added) f
+
+/-- Composite object property expressions (§11.1): the top and bottom
+object properties, the targets of a chain axiom with n > 1, and the
+transitive ones; each together with its inverse. -/
+def compositeOpes (g : Graph) : List Ope :=
+  let top : List Ope := [⟨"I" ++ owlTopObjectP, false⟩, ⟨"I" ++ owlBottomObjectP, false⟩]
+  let trans : List Ope := (subjectsTyped g (nsOwl ++ "TransitiveProperty")).filterMap (fun k =>
+    if k.startsWith "I" then some ⟨k, false⟩ else none)
+  let chains : List Ope := g.filterMap (fun t =>
+    if t.p.val == owlChainP && (collectionMembers g t.o g.length).length ≥ 2
+    then opeOfSubject g t.s else none)
+  let seeds := top ++ trans ++ chains
+  seeds ++ seeds.map Ope.flip
+
+/-- The keys of the non-simple object properties: those reachable by →*
+from a composite expression. -/
+def nonsimpleKeys (g : Graph) : List String :=
+  let edges := hierarchyEdges g
+  let ns := forwardClosure edges (compositeOpes g) (edges.length + 1)
+  (ns.map (·.key)).eraseDups
+
+/-- Restriction on simple roles (§11.2): cardinality restrictions,
+`ObjectHasSelf`, and the functional, inverse-functional, irreflexive,
+asymmetric and disjointness axioms contain only simple object
+properties. -/
+def simpleRoleViolations (g : Graph) (ns : List String) : List String :=
+  let keyOfTerm := fun (t : Term) => (opeOfTerm g t).map (·.key)
+  let restrictions := (dedupStrs (subjectsOfP g owlOnPropertyP)).flatMap (fun r =>
+    if cardinalityPreds.any (fun cp => hasTripleSp g r cp) || hasTripleSp g r owlHasSelfP then
+      match (findObjectSp g r owlOnPropertyP).bind keyOfTerm with
+      | some k => if ns.contains k then ["non-simple-property-in-restriction: " ++ k] else []
+      | none => []
+    else [])
+  let characteristics :=
+    [nsOwl ++ "FunctionalProperty", nsOwl ++ "InverseFunctionalProperty",
+     nsOwl ++ "IrreflexiveProperty", nsOwl ++ "AsymmetricProperty"].flatMap (fun ty =>
+      (subjectsTyped g ty).flatMap (fun k =>
+        if ns.contains k then ["non-simple-property-in-characteristic: " ++ k] else []))
+  let disjoint := g.flatMap (fun t =>
+    if t.p.val == owlPropDisjointP then
+      [opeOfSubject g t.s, opeOfTerm g t.o].flatMap (fun o? =>
+        match o? with
+        | some o => if ns.contains o.key then ["non-simple-property-in-disjointness: " ++ o.key] else []
+        | none => [])
+    else [])
+  let allDisjoint := (subjectsTyped g (nsOwl ++ "AllDisjointProperties")).flatMap (fun n =>
+    match findObjectSp g n owlMembersP with
+    | some l =>
+        (collectionMembers g l g.length).flatMap (fun m =>
+          match keyOfTerm m with
+          | some k => if ns.contains k then ["non-simple-property-in-disjointness: " ++ k] else []
+          | none => [])
+    | none => [])
+  restrictions ++ characteristics ++ disjoint ++ allDisjoint
+
+/-- The strict-order constraints `A < B` a chain axiom imposes (§11.2,
+Restriction on the Property Hierarchy). The five forms: the target is the
+top object property; `R o R ⊑ R`; every operand below the target; the
+first operand is the target and the rest are below it; the last operand
+is the target and the rest are below it. The order is on properties, with
+a property and its inverse identified. -/
+def chainConstraints (sup : Ope) (opes : List Ope) : List (String × String) :=
+  if sup.key == "I" ++ owlTopObjectP then []
+  else if opes == [sup, sup] then []
+  else if opes.head? == some sup then (opes.drop 1).map (fun o => (o.key, sup.key))
+  else if opes.getLast? == some sup then (opes.dropLast).map (fun o => (o.key, sup.key))
+  else opes.map (fun o => (o.key, sup.key))
+
+def chainAxioms (g : Graph) : List (Ope × List Ope) :=
+  g.filterMap (fun t =>
+    if t.p.val == owlChainP then
+      match opeOfSubject g t.s with
+      | none => none
+      | some sup =>
+          let ms := collectionMembers g t.o g.length
+          let opes := ms.filterMap (opeOfTerm g)
+          if ms.length ≥ 2 && opes.length == ms.length then some (sup, opes) else none
+    else none)
+
+/-- Transitive closure of a list of pairs, fuel-bounded by the number of
+rounds. -/
+def closePairs (ps : List (String × String)) : Nat → List (String × String)
+  | 0 => ps
+  | f + 1 =>
+      let new := ps.flatMap (fun (a, b) =>
+        ps.filterMap (fun (c, d) => if b == c then some (a, d) else none))
+      let ps' := (ps ++ new).eraseDups
+      if ps'.length == ps.length then ps else closePairs ps' f
+
+/-- A strict partial order satisfying the constraints exists exactly when
+the transitive closure of the required pairs is irreflexive and contains no
+pair `A < B` with `B →* A`. -/
+def regularityViolations (g : Graph) : List String :=
+  let required := ((chainAxioms g).flatMap (fun (sup, opes) => chainConstraints sup opes)).eraseDups
+  if required.isEmpty then [] else
+  let edges := hierarchyEdges g
+  let closed := closePairs required (required.length + 1)
+  closed.flatMap (fun (a, b) =>
+    if a == b then ["irregular-property-hierarchy: " ++ a ++ " < " ++ a]
+    else if (forwardClosure edges [⟨b, false⟩] (edges.length + 1)).any (fun o => o.key == a)
+    then ["irregular-property-hierarchy: " ++ a ++ " < " ++ b] else [])
+
+/-- Restriction on owl:topDataProperty: it occurs only as the super
+property of a `SubDataPropertyOf` axiom. -/
+def topDataViolations (g : Graph) : List String :=
+  g.filterMap (fun t =>
+    let isTopS := match t.s with | .iri i => i.val == owlTopDataP | _ => false
+    let isTopO := match t.o with | .iri i => i.val == owlTopDataP | _ => false
+    let mentions := isTopS || t.p.val == owlTopDataP || isTopO
+    let allowed := t.p.val == rdfsSubPropertyOfP && isTopO && !isTopS
+    if mentions && !allowed then some "top-data-property-misused" else none)
+
+/-- The datatypes occurring in a data range term. -/
+def drDatatypes (g : Graph) : Nat → Term → List String
+  | 0, _ => []
+  | f + 1, .iri i => [i.val]
+  | f + 1, .bnode b =>
+      let k := "B" ++ b
+      (match findObjectSp g k owlOnDatatypeP' with
+       | some t => drDatatypes g f t | none => []) ++
+      (match findObjectSp g k owlDtComplementP with
+       | some t => drDatatypes g f t | none => []) ++
+      [owlIntersectionOfP, owlUnionOfP].flatMap (fun p =>
+        match findObjectSp g k p with
+        | some l => (collectionMembers g l g.length).flatMap (drDatatypes g f)
+        | none => [])
+  | _, _ => []
+
+/-- Restrictions on datatypes (§11.2): no built-in datatype is redefined,
+a datatype has at most one `DatatypeDefinition`, and the definitions are
+acyclic. -/
+def datatypeDefinitionViolations (g : Graph) (d : DeclIndex) : List String :=
+  -- the object of a datatype definition is a data range
+  let isDataRange := fun (t : Term) =>
+    match t with
+    | .bnode b => d.datatype.contains ("B" ++ b)
+    | .iri i => d.datatype.contains ("I" ++ i.val) || builtinDatatypes.contains i.val
+    | _ => false
+  let defs : List (String × Term) := g.filterMap (fun t =>
+    if t.p.val == owlEquivClassP then
+      match t.s with
+      | .iri i =>
+          if d.datatype.contains ("I" ++ i.val) ||
+             (builtinDatatypes.contains i.val && isDataRange t.o)
+          then some (i.val, t.o) else none
+      | _ => none
+    else none)
+  let names := defs.map (·.1)
+  let uses : List (String × List String) :=
+    defs.map (fun (n, o) => (n, drDatatypes g (g.length + 2) o))
+  let reach := fun (n : String) =>
+    let step := uses.filterMap (fun (m, us) => if m == n then some us else none) |>.flatten
+    -- forward closure over the definition graph
+    let rec go (seen : List String) (fuel : Nat) : List String :=
+      match fuel with
+      | 0 => seen
+      | f + 1 =>
+          let more := (seen.flatMap (fun x =>
+            uses.filterMap (fun (m, us) => if m == x then some us else none) |>.flatten)).eraseDups
+            |>.filter (fun x => !(seen.contains x))
+          if more.isEmpty then seen else go (seen ++ more) f
+    go step.eraseDups (uses.length + 2)
+  (names.eraseDups.flatMap (fun n =>
+    (if builtinDatatypes.contains n then ["builtin-datatype-redefined: " ++ n] else []) ++
+    (if (names.filter (· == n)).length > 1 then ["datatype-defined-twice: " ++ n] else []) ++
+    (if (reach n).contains n then ["cyclic-datatype-definition: " ++ n] else [])))
+
+def isBnodeTerm : Term → Bool
+  | .bnode _ => true
+  | _ => false
+
+def isBnodeSubject : Subject → Bool
+  | .bnode _ => true
+  | _ => false
+
+/-- Components of an undirected graph by incremental merging; `none` when an
+edge joins two vertices already connected (a cycle, a parallel edge or a
+loop). -/
+def addEdge (comps : List (List String)) (a b : String) : Option (List (List String)) :=
+  let ca := comps.find? (fun c => c.contains a)
+  let cb := comps.find? (fun c => c.contains b)
+  match ca, cb with
+  | some x, some y =>
+      if x == y then none
+      else some ((x ++ y) :: comps.filter (fun c => c != x && c != y))
+  | some x, none => some ((b :: x) :: comps.filter (fun c => c != x))
+  | none, some y => some ((a :: y) :: comps.filter (fun c => c != y))
+  | none, none => some ([a, b] :: comps)
+
+def componentsOf (edges : List (String × String)) : Option (List (List String)) :=
+  edges.foldlM (fun comps (a, b) => addEdge comps a b) []
+
+/-- Restrictions on the usage of anonymous individuals (§11.2). -/
+def anonymousIndividualViolations (g : Graph) (d : DeclIndex) : List String :=
+  let sameDiff := g.filterMap (fun t =>
+    if (t.p.val == owlSameAsP || t.p.val == owlDifferentFromP) &&
+       (isBnodeSubject t.s || isBnodeTerm t.o)
+    then some "anonymous-individual-in-sameAs-or-differentFrom" else none)
+  let allDifferent := (subjectsTyped g (nsOwl ++ "AllDifferent")).flatMap (fun n =>
+    [owlMembersP, owlDistinctMembersP].flatMap (fun p =>
+      match findObjectSp g n p with
+      | some l =>
+          if (collectionMembers g l g.length).any isBnodeTerm
+          then ["anonymous-individual-in-AllDifferent"] else []
+      | none => []))
+  let negative := (subjectsTyped g (nsOwl ++ "NegativePropertyAssertion")).flatMap (fun n =>
+    [owlSourceIndP, owlTargetIndP].flatMap (fun p =>
+      match findObjectSp g n p with
+      | some (.bnode _) => ["anonymous-individual-in-negative-assertion"]
+      | _ => []))
+  let oneOf := g.filterMap (fun t =>
+    if t.p.val == owlOneOfP && !(d.datatype.contains (subjKey t.s)) &&
+       (collectionMembers g t.o g.length).any isBnodeTerm
+    then some "anonymous-individual-in-ObjectOneOf" else none)
+  let hasValue := g.filterMap (fun t =>
+    if t.p.val == owlHasValueP && isBnodeTerm t.o
+    then some "anonymous-individual-in-ObjectHasValue" else none)
+  -- the anonymous individual graph F
+  let assertion := fun (t : Triple) => d.objProp.contains ("I" ++ t.p.val)
+  let edges : List (String × String) := g.filterMap (fun t =>
+    match t.s, t.o with
+    | .bnode a, .bnode b => if assertion t then some ("B" ++ a, "B" ++ b) else none
+    | _, _ => none)
+  let namedLinks := fun (k : String) => (g.filter (fun t =>
+    assertion t &&
+    ((subjKey t.s == k && (match t.o with | .iri _ => true | _ => false)) ||
+     (termKeyDl t.o == some k && (match t.s with | .iri _ => true | _ => false))))).length
+  let verts : List String := dedupStrs (g.flatMap (fun t =>
+    if assertion t then
+      (match t.s with | .bnode b => ["B" ++ b] | _ => []) ++
+      (match t.o with | .bnode b => ["B" ++ b] | _ => [])
+    else []))
+  let forest :=
+    match componentsOf edges with
+    | none => ["anonymous-individuals-not-a-forest"]
+    | some comps =>
+        let isolated := verts.filter (fun v => !(comps.any (fun c => c.contains v)))
+        (comps ++ isolated.map (fun v => [v])).filterMap (fun c =>
+          if c.any (fun v => namedLinks v ≤ 1) then none
+          else some "anonymous-individual-tree-without-leaf")
+  sameDiff ++ allDifferent ++ negative ++ oneOf ++ hasValue ++ forest
+
+/-- All of §11.2 over one graph. -/
+def globalRestrictionViolations (g : Graph) (d : DeclIndex) : List String :=
+  let ns := nonsimpleKeys g
+  topDataViolations g ++ datatypeDefinitionViolations g d ++
+  simpleRoleViolations g ns ++ regularityViolations g ++
+  anonymousIndividualViolations g d
 
 def graphBodyViolations (g0 : Graph) : List String :=
   let g := dropTable5Redundant g0
   let d := buildDeclIndex g
   let perTriple := g.flatMap (tripleViolations g d)
-  let nonsimple := dedupStrs (subjectsTyped g (nsOwl ++ "TransitiveProperty")
-                              ++ subjectsOfP g owlChainP)
-  let restrs := dedupStrs (subjectsOfP g owlOnPropertyP)
-  perTriple ++ punningViolations d ++
-  nonsimpleCardinalityViolations g nonsimple restrs
+  perTriple ++ punningViolations d ++ globalRestrictionViolations g d
 
 /-! ## The species verdict -/
 
@@ -772,6 +1091,202 @@ private def nestedImport : Graph :=
 #guard rootOntologyKeys nestedImport == ["Ihttp://example.org/o"]
 #guard !speciesIsDl nestedImport nestedImport false [] [] (some [])
 #guard speciesIsDl nestedImport nestedImport false [] [] (some [ex "n"])
+
+/-! ### Structural Specification §11: the global restrictions
+
+Each clause has a pair: a graph that breaks it and the nearest graph that
+does not. `okGraph` declares the object property `p`. -/
+
+private def exI (s : String) : Term := ti (ex s)
+
+/-- Declared object properties. -/
+private def objProps (ns : List String) : Graph :=
+  ns.map (fun n => tr (ex n) rdfTypeP owlObjPropC)
+
+/-- `T(SEQ y1 ... yn)`: the list cells carry the label prefix `pfx`. -/
+private def listTriples (pfx : String) : List Term → Term × Graph
+  | [] => (ti rdfNilI, [])
+  | x :: xs =>
+      let (rest, g) := listTriples pfx xs
+      let lbl := pfx ++ toString xs.length
+      (.bnode lbl, ⟨.bnode lbl, i rdfFirstP, x⟩ :: ⟨.bnode lbl, i rdfRestP, rest⟩ :: g)
+
+/-- `sup owl:propertyChainAxiom (x1 ... xn)`. -/
+private def chainAx (sup : String) (xs : List Term) : Graph :=
+  let (h, g) := listTriples ("ch" ++ sup) xs
+  ⟨si (ex sup), i owlChainP, h⟩ :: g
+
+/-- A restriction `r` on `prop` with one extra triple. -/
+private def restr (r prop pred : String) (o : Term) : Graph :=
+  [⟨.bnode r, i rdfTypeP, ti owlRestrictionC⟩, ⟨.bnode r, i owlOnPropertyP, exI prop⟩,
+   ⟨.bnode r, i pred, o⟩]
+
+private def two : Term := litT "2" (nsXsd ++ "nonNegativeInteger")
+
+private def hasV (g : Graph) (prefix_ : String) : Bool :=
+  (graphBodyViolations g).any (fun v => v.startsWith prefix_)
+
+private def trans (n : String) : Triple := tr (ex n) rdfTypeP (nsOwl ++ "TransitiveProperty")
+
+/-! #### Simple roles -/
+
+private def nsSimple : Graph := okGraph ++ objProps ["q", "s"]
+
+-- a transitive property is not simple, so a cardinality restriction on it breaks §11.2 ...
+#guard hasV (nsSimple ++ [trans "q"] ++ restr "r1" "q" (nsOwl ++ "minCardinality") two)
+  "non-simple-property-in-restriction"
+-- ... the same restriction on a simple property does not ...
+#guard !(hasV (nsSimple ++ [trans "q"] ++ restr "r1" "p" (nsOwl ++ "minCardinality") two)
+  "non-simple-property-in-restriction")
+-- ... and a transitive property under no restriction is fine
+#guard (graphBodyViolations (nsSimple ++ [trans "q"])).isEmpty
+-- non-simplicity propagates UP the hierarchy: q is transitive, q is a sub-property of s
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") (nsRdfs ++ "subPropertyOf") (ex "s")] ++
+  restr "r1" "s" (nsOwl ++ "maxCardinality") two) "non-simple-property-in-restriction"
+-- ... and not down: s is a sub-property of the transitive q, s stays simple
+#guard !(hasV (nsSimple ++ [trans "q", tr (ex "s") (nsRdfs ++ "subPropertyOf") (ex "q")] ++
+  restr "r1" "s" (nsOwl ++ "maxCardinality") two) "non-simple-property-in-restriction")
+-- equivalence propagates both ways
+#guard hasV (nsSimple ++ [trans "q", tr (ex "s") (nsOwl ++ "equivalentProperty") (ex "q")] ++
+  restr "r1" "s" (nsOwl ++ "cardinality") two) "non-simple-property-in-restriction"
+-- the inverse of a non-simple property is non-simple
+#guard hasV (nsSimple ++ [trans "q", tr (ex "s") owlInverseOfP (ex "q")] ++
+  restr "r1" "s" (nsOwl ++ "minCardinality") two) "non-simple-property-in-restriction"
+-- a restriction on an ObjectInverseOf( q ) expression counts as one on q
+#guard hasV (nsSimple ++ [trans "q", ⟨.bnode "iq", i owlInverseOfP, exI "q"⟩] ++
+  [⟨.bnode "r1", i rdfTypeP, ti owlRestrictionC⟩, ⟨.bnode "r1", i owlOnPropertyP, .bnode "iq"⟩,
+   ⟨.bnode "r1", i (nsOwl ++ "minCardinality"), two⟩]) "non-simple-property-in-restriction"
+-- a chain-defined property is not simple; its operands are
+#guard hasV (nsSimple ++ chainAx "q" [exI "p", exI "s"] ++
+  restr "r1" "q" (nsOwl ++ "minCardinality") two) "non-simple-property-in-restriction"
+#guard !(hasV (nsSimple ++ chainAx "q" [exI "p", exI "s"] ++
+  restr "r1" "p" (nsOwl ++ "minCardinality") two) "non-simple-property-in-restriction")
+-- owl:topObjectProperty is composite
+#guard hasV (nsSimple ++
+  [⟨.bnode "r1", i rdfTypeP, ti owlRestrictionC⟩,
+   ⟨.bnode "r1", i owlOnPropertyP, ti (nsOwl ++ "topObjectProperty")⟩,
+   ⟨.bnode "r1", i (nsOwl ++ "minCardinality"), two⟩]) "non-simple-property-in-restriction"
+-- ObjectHasSelf
+#guard hasV (nsSimple ++ [trans "q"] ++ restr "r1" "q" owlHasSelfP (litT "true" (nsXsd ++ "boolean")))
+  "non-simple-property-in-restriction"
+#guard !(hasV (nsSimple ++ restr "r1" "q" owlHasSelfP (litT "true" (nsXsd ++ "boolean")))
+  "non-simple-property-in-restriction")
+-- the characteristics of the second list of §11.2
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "FunctionalProperty")])
+  "non-simple-property-in-characteristic"
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "InverseFunctionalProperty")])
+  "non-simple-property-in-characteristic"
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "IrreflexiveProperty")])
+  "non-simple-property-in-characteristic"
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "AsymmetricProperty")])
+  "non-simple-property-in-characteristic"
+-- reflexive and symmetric are not in the list
+#guard !(hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "ReflexiveProperty")])
+  "non-simple-property")
+-- a simple property may carry them
+#guard !(hasV (nsSimple ++ [tr (ex "s") rdfTypeP (nsOwl ++ "FunctionalProperty")])
+  "non-simple-property")
+-- disjointness
+#guard hasV (nsSimple ++ [trans "q", tr (ex "p") (nsOwl ++ "propertyDisjointWith") (ex "q")])
+  "non-simple-property-in-disjointness"
+#guard !(hasV (nsSimple ++ [trans "q", tr (ex "p") (nsOwl ++ "propertyDisjointWith") (ex "s")])
+  "non-simple-property-in-disjointness")
+-- symmetry links a property to its inverse, which is composite when it is transitive
+#guard hasV (nsSimple ++ [trans "q", tr (ex "q") rdfTypeP (nsOwl ++ "SymmetricProperty")] ++
+  restr "r1" "q" (nsOwl ++ "minCardinality") two) "non-simple-property-in-restriction"
+
+/-! #### Regularity of the property hierarchy -/
+
+private def regV (g : Graph) : Bool := hasV g "irregular-property-hierarchy"
+
+private def hier : Graph := okGraph ++ objProps ["hasFather", "hasBrother", "hasUncle",
+  "hasChild", "hasWife", "hasAuntInLaw", "c", "s", "t"]
+
+-- the acyclic example of §11.2
+#guard !(regV (hier ++ chainAx "hasUncle" [exI "hasFather", exI "hasBrother"]
+                    ++ chainAx "hasAuntInLaw" [exI "hasUncle", exI "hasWife"]))
+-- the cyclic example of §11.2
+#guard regV (hier ++ chainAx "hasUncle" [exI "hasFather", exI "hasBrother"]
+                  ++ chainAx "hasBrother" [exI "hasChild", exI "hasUncle"])
+-- the three allowed self-referential forms: R o R, R o S, S o R
+#guard !(regV (hier ++ chainAx "c" [exI "c", exI "c"]))
+#guard !(regV (hier ++ chainAx "c" [exI "c", exI "s"]))
+#guard !(regV (hier ++ chainAx "c" [exI "s", exI "c"]))
+-- the target in the middle, or at both ends of a longer chain, is cyclic
+#guard regV (hier ++ chainAx "c" [exI "s", exI "c", exI "t"])
+#guard regV (hier ++ chainAx "c" [exI "c", exI "s", exI "c"])
+-- a chain whose first operand is the INVERSE of the target is not the form R o S
+#guard regV (hier ++ [⟨.bnode "ic", i owlInverseOfP, exI "c"⟩] ++
+  chainAx "c" [.bnode "ic", exI "s"])
+-- a chain may target owl:topObjectProperty whatever its operands
+#guard !(regV (hier ++ chainAx (nsOwl ++ "topObjectProperty") [exI "c", exI "c", exI "s"]))
+-- a sub-property axiom that closes the cycle: c o s ⊑ t, t ⊑ c needs c < t but t →* c
+#guard regV (hier ++ chainAx "t" [exI "c", exI "s"] ++ [tr (ex "t") (nsRdfs ++ "subPropertyOf") (ex "c")])
+-- the other direction is regular
+#guard !(regV (hier ++ chainAx "t" [exI "c", exI "s"] ++ [tr (ex "c") (nsRdfs ++ "subPropertyOf") (ex "t")]))
+
+/-! #### owl:topDataProperty and datatype definitions -/
+
+private def dataG : Graph := okGraph ++
+  [tr (ex "d") rdfTypeP owlDataPropC, tr (ex "D1") rdfTypeP (nsRdfs ++ "Datatype"),
+   tr (ex "D2") rdfTypeP (nsRdfs ++ "Datatype")]
+
+#guard !(hasV (dataG ++ [tr (ex "d") (nsRdfs ++ "subPropertyOf") (nsOwl ++ "topDataProperty")])
+  "top-data-property-misused")
+#guard hasV (dataG ++ [tr (nsOwl ++ "topDataProperty") (nsRdfs ++ "subPropertyOf") (ex "d")])
+  "top-data-property-misused"
+#guard hasV (dataG ++ [tr (ex "a") (nsOwl ++ "topDataProperty") (ex "b")])
+  "top-data-property-misused"
+
+/-- `dt owl:equivalentClass _:r` with `_:r` the complement of `used`. -/
+private def defines (dt r used : String) : Graph :=
+  [⟨si dt, i (nsOwl ++ "equivalentClass"), .bnode r⟩,
+   ⟨.bnode r, i rdfTypeP, ti (nsRdfs ++ "Datatype")⟩,
+   ⟨.bnode r, i (nsOwl ++ "datatypeComplementOf"), ti used⟩]
+
+#guard !(hasV (dataG ++ defines (ex "D1") "r1" (ex "D2") ++ defines (ex "D2") "r2" (nsXsd ++ "string"))
+  "cyclic-datatype-definition")
+#guard hasV (dataG ++ defines (ex "D1") "r1" (ex "D2") ++ defines (ex "D2") "r2" (ex "D1"))
+  "cyclic-datatype-definition"
+#guard hasV (dataG ++ defines (ex "D1") "r1" (ex "D1")) "cyclic-datatype-definition"
+#guard hasV (dataG ++ defines (ex "D1") "r1" (nsXsd ++ "string") ++ defines (ex "D1") "r2" (nsXsd ++ "integer"))
+  "datatype-defined-twice"
+#guard !(hasV (dataG ++ defines (ex "D1") "r1" (nsXsd ++ "string")) "datatype-defined-twice")
+#guard hasV (dataG ++ defines (nsXsd ++ "integer") "r1" (nsXsd ++ "string"))
+  "builtin-datatype-redefined"
+
+/-! #### Anonymous individuals -/
+
+private def anonG : Graph := okGraph ++ [tr (ex "x1") rdfTypeP owlClassC]
+
+private def anonV (g : Graph) (prefix_ : String) : Bool := hasV g prefix_
+
+#guard anonV (anonG ++ [⟨.bnode "n", i (nsOwl ++ "sameAs"), exI "a"⟩])
+  "anonymous-individual-in-sameAs-or-differentFrom"
+#guard anonV (anonG ++ [⟨si (ex "a"), i (nsOwl ++ "differentFrom"), .bnode "n"⟩])
+  "anonymous-individual-in-sameAs-or-differentFrom"
+#guard !(anonV (anonG ++ [tr (ex "a") (nsOwl ++ "sameAs") (ex "b")]) "anonymous-individual")
+#guard anonV (anonG ++ restr "r1" "p" owlHasValueP (.bnode "n")) "anonymous-individual-in-ObjectHasValue"
+#guard !(anonV (anonG ++ restr "r1" "p" owlHasValueP (exI "a")) "anonymous-individual")
+#guard anonV (anonG ++ [⟨.bnode "c", i rdfTypeP, ti owlClassC⟩] ++
+  (let (h, g) := listTriples "ol" [.bnode "n"]; ⟨.bnode "c", i owlOneOfP, h⟩ :: g))
+  "anonymous-individual-in-ObjectOneOf"
+#guard !(anonV (anonG ++ [⟨.bnode "c", i rdfTypeP, ti owlClassC⟩] ++
+  (let (h, g) := listTriples "ol" [exI "a"]; ⟨.bnode "c", i owlOneOfP, h⟩ :: g))
+  "anonymous-individual")
+#guard anonV (anonG ++ [⟨.bnode "npa", i rdfTypeP, ti (nsOwl ++ "NegativePropertyAssertion")⟩,
+  ⟨.bnode "npa", i owlSourceIndP, .bnode "n"⟩, ⟨.bnode "npa", i owlAssertionPropP, exI "p"⟩,
+  ⟨.bnode "npa", i owlTargetIndP, exI "b"⟩]) "anonymous-individual-in-negative-assertion"
+-- the anonymous individual graph is a forest ...
+#guard !(anonV (anonG ++ [⟨.bnode "x", i (ex "p"), .bnode "y"⟩]) "anonymous-individual")
+#guard anonV (anonG ++ [⟨.bnode "x", i (ex "p"), .bnode "y"⟩, ⟨.bnode "y", i (ex "p"), .bnode "x"⟩])
+  "anonymous-individuals-not-a-forest"
+-- ... and each tree has a vertex with at most one link to a named individual
+#guard anonV (anonG ++ [⟨.bnode "x", i (ex "p"), exI "a"⟩, ⟨.bnode "x", i (ex "p"), exI "b"⟩])
+  "anonymous-individual-tree-without-leaf"
+#guard !(anonV (anonG ++ [⟨.bnode "x", i (ex "p"), exI "a"⟩]) "anonymous-individual")
+#guard !(anonV (anonG ++ [⟨.bnode "x", i (ex "p"), exI "a"⟩, ⟨.bnode "x", i (ex "p"), .bnode "y"⟩,
+  ⟨.bnode "y", i (ex "p"), exI "b"⟩]) "anonymous-individual")
 
 /-! ### The functional-syntax variant skips the header check only -/
 

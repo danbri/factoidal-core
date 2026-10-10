@@ -348,6 +348,8 @@ import L4Factoidal.OWL.StructureRdf
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.FunctionalSyntaxTests
+import L4Factoidal.OWL.OwlXml
+import L4Factoidal.OWL.OwlXmlTests
 import L4Factoidal.OWL.ClassExprTests
 import L4Factoidal.OWL.Materialise
 import L4Factoidal.OWL.MaterialiseTests
