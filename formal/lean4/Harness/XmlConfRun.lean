@@ -15,25 +15,35 @@ reader would be a second implementation of the syntax under test.
 
 ## The parser's PROFILE decides what can be scored
 
-`Parser.lean` implements XML 1.0, NON-VALIDATING; `Namespaces.lean` adds
-the Namespaces-in-XML check on top of it; `Encoding.lean` turns the BYTES
-of a document or entity into text (UTF-8, UTF-16, ISO-8859-1, US-ASCII). A test outside that profile is not a failure; it is
-not a test of this parser. Each is counted in its own bucket and
-named:
+`Parser.lean` implements XML 1.0 (Fifth Edition) and XML 1.1,
+NON-VALIDATING, the version chosen by the document's own XML
+declaration; `Namespaces.lean` adds the Namespaces-in-XML check on top
+of it; `Encoding.lean` turns the BYTES of a document or entity into text
+(UTF-8, UTF-16, ISO-8859-1, US-ASCII). A test outside that profile is not
+a failure; it is not a test of this parser. Each is counted in its own
+bucket and named. A case belongs to the first line below that fits it:
 
-  * `not-wf`  — the document must be REJECTED. Scored.
-  * `valid` / `invalid` — both must be ACCEPTED by a NON-VALIDATING
-    parser: `invalid` means "violates the DTD", which a non-validating
-    parser is not asked to notice. Scored.
+  * `EDITION` without `5` — the case is about an earlier edition of
+    XML 1.0 (its name classes were the Appendix B tables). Not scored.
   * `error`   — the specification leaves the behaviour optional, so a
-    verdict either way is conformant. NOT scored, and reported.
+    verdict either way is conformant. NOT scored, and reported (apart
+    for the XML suites, the Namespaces suites and the XML 1.1 suites).
   * `eduni/namespaces/*` — scored separately: XML parse AND namespace
     well-formedness (`Document.namespaceWellFormed`).
-  * `VERSION="1.1"` — XML 1.1 is a different language. Out of profile.
+  * `VERSION="1.1"` — XML 1.1, scored separately. The suites mark which
+    cases are about 1.1; the document's own declaration (`<?xml
+    version="1.1"?>`, or none) decides which rules the parser applies, so
+    a case that carries a 1.0 document is read as 1.0.
   * bytes that are not plain UTF-8 — decoded by `decodeXmlBytesE`
     (XML 1.0 section 4.3.3, Appendix F) and scored on a line of their
     own. An encoding the decoder does not implement is out of profile,
     and its name is printed.
+  * everything else: `not-wf` must be REJECTED; `valid` and `invalid`
+    must both be ACCEPTED by a NON-VALIDATING parser (`invalid` means
+    "violates the DTD", which it is not asked to notice).
+
+The XML 1.1 line also covers the IBM XML 1.1 manifests under
+`ibm/xml-1.1/`, which the master manifest includes.
 
 Reporting these as failures would understate the parser; folding them
 into passes would overstate it. Both numbers are printed.
@@ -67,7 +77,9 @@ structure Counts where
   pass        : Nat := 0
   fail        : Nat := 0
   optional    : Nat := 0   -- TYPE="error": behaviour is optional
-  xml11       : Nat := 0   -- a different language
+  x11Pass     : Nat := 0   -- XML 1.1 cases, read by the XML 1.1 rules
+  x11Fail     : Nat := 0
+  x11Optional : Nat := 0   -- XML 1.1 cases of TYPE="error"
   encPass     : Nat := 0   -- the document or a named entity is not plain UTF-8: decoded, then scored
   encFail     : Nat := 0
   encUnsupported : List String := []  -- ... or in an encoding the decoder does not implement (names)
@@ -80,7 +92,9 @@ deriving Repr, Inhabited
 
 def Counts.add (a b : Counts) : Counts :=
   { scored := a.scored + b.scored, pass := a.pass + b.pass, fail := a.fail + b.fail,
-    optional := a.optional + b.optional, xml11 := a.xml11 + b.xml11,
+    optional := a.optional + b.optional,
+    x11Pass := a.x11Pass + b.x11Pass, x11Fail := a.x11Fail + b.x11Fail,
+    x11Optional := a.x11Optional + b.x11Optional,
     encPass := a.encPass + b.encPass, encFail := a.encFail + b.encFail,
     encUnsupported := a.encUnsupported ++ b.encUnsupported, otherEdition := a.otherEdition + b.otherEdition,
     nsPass := a.nsPass + b.nsPass, nsFail := a.nsFail + b.nsFail,
@@ -98,7 +112,9 @@ def subManifests : List String :=
     "eduni/errata-3e/errata3e.xml", "eduni/errata-4e/errata4e.xml",
     "eduni/namespaces/1.0/rmt-ns10.xml", "eduni/namespaces/1.1/rmt-ns11.xml",
     "eduni/namespaces/errata-1e/errata1e.xml", "eduni/xml-1.1/xml11.xml",
-    "eduni/misc/ht-bh.xml" ]
+    "eduni/misc/ht-bh.xml",
+    "ibm/xml-1.1/ibm_invalid.xml", "ibm/xml-1.1/ibm_not-wf.xml",
+    "ibm/xml-1.1/ibm_valid.xml" ]
 
 /-- Is this sub-manifest the NAMESPACES suite? Those cases test
     Namespaces in XML on top of XML 1.0: `rmt-ns10-004` is
@@ -161,11 +177,14 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
           | none    => true
           | some es => (es.splitOn " ").contains "5"
         let nsAware := isNamespaceSuite rel
+        -- The suite marks the XML 1.1 cases; the document's OWN
+        -- declaration decides which rules the parser applies to it.
+        let is11 := ver == "1.1" && !nsAware
         if uri == "" then pure ()
         else if !appliesHere then c := Counts.add c { otherEdition := 1 }
-        else if ver == "1.1" && !nsAware then c := Counts.add c { xml11 := 1 }
         else if ty == "error" then
-          c := Counts.add c (if nsAware then { nsOptional := 1 } else { optional := 1 })
+          c := Counts.add c (if nsAware then { nsOptional := 1 }
+                             else if is11 then { x11Optional := 1 } else { optional := 1 })
         else
           let fp := base ++ uri
           if !(← System.FilePath.pathExists fp) then
@@ -304,10 +323,13 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                 let ok := accepted == want
                 c := Counts.add c
                   (if nsAware then (if ok then { nsPass := 1 } else { nsFail := 1 })
+                   else if is11 then (if ok then { x11Pass := 1 } else { x11Fail := 1 })
                    else if plainCase then
                      (if ok then { scored := 1, pass := 1 } else { scored := 1, fail := 1 })
                    else (if ok then { encPass := 1 } else { encFail := 1 }))
-                if verbose && !plainCase && !nsAware then
+                if verbose && is11 && ty == "not-wf" then
+                  IO.println s!"X11 {id} (not-wf): rejected -- {why}"
+                if verbose && !plainCase && !nsAware && !is11 then
                   IO.println s!"ENC {id} ({ty}): {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
                 if !ok && verbose then
                   IO.println s!"FAIL {id} ({ty}): {uri} was {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
@@ -332,22 +354,23 @@ def main (args : List String) : IO UInt32 := do
   for m in subManifests do
     let c ← runManifest dir m verbose
     if verbose then
-      IO.println s!"manifest {m}: {c.scored + c.encPass + c.encFail + c.nsPass + c.nsFail} scored"
+      IO.println s!"manifest {m}: {c.scored + c.encPass + c.encFail + c.nsPass + c.nsFail + c.x11Pass + c.x11Fail} scored"
       (← IO.getStdout).flush
     total := Counts.add total c
   IO.println ""
   IO.println s!"xml conformance SCORED: {total.pass} pass, {total.fail} fail (out of {total.scored} in profile)"
   IO.println s!"namespaces SCORED: {total.nsPass} pass, {total.nsFail} fail (out of {total.nsPass + total.nsFail} Namespaces-in-XML cases; XML parse + namespace well-formedness)"
   IO.println s!"encodings SCORED: {total.encPass} pass, {total.encFail} fail (out of {total.encPass + total.encFail} cases whose document or entity is not plain UTF-8; decoded by decodeXmlBytes)"
+  IO.println s!"xml 1.1 SCORED: {total.x11Pass} pass, {total.x11Fail} fail (out of {total.x11Pass + total.x11Fail} XML 1.1 cases; the document's declaration selects the rules)"
   IO.println s!"OUT OF PROFILE, reported not scored: {total.optional} optional-behaviour (TYPE=error),"
   IO.println s!"  {total.nsOptional} optional-behaviour in the Namespaces suites (TYPE=error),"
-  IO.println s!"  {total.xml11} XML 1.1,"
+  IO.println s!"  {total.x11Optional} optional-behaviour in the XML 1.1 suites (TYPE=error),"
   IO.println s!"  {total.encUnsupported.length} in an encoding the decoder does not implement{encodingNames total.encUnsupported},"
   IO.println s!"  {total.otherEdition} for editions 1-4 only (this parser follows the Fifth Edition),"
   if total.fileMissing > 0 then
     IO.println s!"  {total.fileMissing} referenced files not on disk"
   IO.println ""
-  IO.println "Profile: XML 1.0 (Fifth Edition), NON-VALIDATING. Bytes are decoded as"
+  IO.println "Profile: XML 1.0 (Fifth Edition) and XML 1.1, NON-VALIDATING. Bytes are decoded as"
   IO.println "UTF-8, UTF-16, ISO-8859-1 or US-ASCII (XML 1.0 section 4.3.3, Appendix F)."
   IO.println "The XML suites are read as plain XML, where ':' is an ordinary name"
   IO.println "character. The Namespaces suites (eduni/namespaces) are read with the"

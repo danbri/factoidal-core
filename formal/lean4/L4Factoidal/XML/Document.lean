@@ -69,6 +69,57 @@ def isXmlCharCode (cp : Nat) : Bool :=
 /-- `[2] Char` as a predicate on a Lean `Char`. -/
 def isXmlChar (c : Char) : Bool := isXmlCharCode c.toNat
 
+/-- The version of XML a document is written in
+(https://www.w3.org/TR/xml11/#sec-prolog-dtd, §2.8): `1.1` when its
+XML declaration says so, `1.0` otherwise, including when it has no
+declaration. XML 1.0 Fifth Edition and XML 1.1 differ in `[2] Char`,
+in what a character reference may name, and in end-of-line handling
+(XML 1.1 §2.2, §4.1, §2.11); the names of §2.3 are the same in both. -/
+inductive XmlVersion where
+  | v10
+  | v11
+deriving DecidableEq, Repr, Inhabited
+
+/-- The version a declared `VersionNum` selects. `1.1` selects XML 1.1;
+any other `1.` number is read by the XML 1.0 rules, as XML 1.0 Fifth
+Edition §2.8 asks of a processor. -/
+def XmlVersion.ofDeclared (versionNum : String) : XmlVersion :=
+  if versionNum == "1.1" then .v11 else .v10
+
+/-- XML 1.1 `[2] Char ::= [#x1-#xD7FF] | [#xE000-#xFFFD] |
+[#x10000-#x10FFFF]` — every Unicode character except NUL, the
+surrogate blocks, #xFFFE and #xFFFF. -/
+def isXml11CharCode (cp : Nat) : Bool :=
+  (0x1 ≤ cp && cp ≤ 0xD7FF) ||
+  (0xE000 ≤ cp && cp ≤ 0xFFFD) ||
+  (0x10000 ≤ cp && cp ≤ 0x10FFFF)
+
+/-- XML 1.1 `[2a] RestrictedChar ::= [#x1-#x8] | [#xB-#xC] | [#xE-#x1F] |
+[#x7F-#x84] | [#x86-#x9F]`. These are `Char`s, but a document may carry
+them only through a character reference: `[1] document` excludes
+`Char* RestrictedChar Char*`. -/
+def isRestrictedCharCode (cp : Nat) : Bool :=
+  (0x1 ≤ cp && cp ≤ 0x8) || (0xB ≤ cp && cp ≤ 0xC) || (0xE ≤ cp && cp ≤ 0x1F) ||
+  (0x7F ≤ cp && cp ≤ 0x84) || (0x86 ≤ cp && cp ≤ 0x9F)
+
+/-- `[2] Char` for the given version. -/
+def XmlVersion.isCharCode : XmlVersion → Nat → Bool
+  | .v10, cp => isXmlCharCode cp
+  | .v11, cp => isXml11CharCode cp
+
+/-- `[2] Char` for the given version, on a Lean `Char`. -/
+def XmlVersion.isChar (ver : XmlVersion) (c : Char) : Bool := ver.isCharCode c.toNat
+
+/-- Whether a character may appear LITERALLY in a document of this
+version. In XML 1.0 that is `[2] Char`. In XML 1.1 it is `[2] Char`
+minus `[2a] RestrictedChar` (the production `[1] document` excludes
+them). #x85 is a restricted character that a literal document never
+holds: §2.11 turns it into #xA before parsing. -/
+def XmlVersion.isLiteralChar (ver : XmlVersion) (c : Char) : Bool :=
+  match ver with
+  | .v10 => isXmlCharCode c.toNat
+  | .v11 => isXml11CharCode c.toNat && !isRestrictedCharCode c.toNat
+
 /-- `[3] S ::= (#x20 | #x9 | #xD | #xA)+` — the whitespace class (this
 predicate is the single character; the `+` is applied by the parser).
 Port of F* `is_xml_space`. -/
@@ -331,6 +382,10 @@ structure EntityTable where
   defs  : List (String × EntityDef) := []
   sawPe : Bool := false
   lax   : Bool := false
+  /-- The XML version of the document the table belongs to. XML 1.1
+  §4.3.4: the version declared in the document entity decides the rules
+  for the whole document, including the external entities it invokes. -/
+  version : XmlVersion := .v10
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[54] AttType` — the declared type of an attribute (XML 1.0 §3.3.1).

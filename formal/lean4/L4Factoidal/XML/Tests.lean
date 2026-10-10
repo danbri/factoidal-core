@@ -504,6 +504,161 @@ def decodeFails (bs : ByteArray) : Bool := (decodeXmlBytesE bs).toOption.isNone
 #guard (parseXMLBytes (u8 "<?xml version='1.0' encoding='ISO-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isSome
 #guard (parseXMLBytes (u8 "<?xml version='1.0'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isNone
 
+/-! ## XML 1.1 — https://www.w3.org/TR/xml11/
+
+The version comes from the XML declaration: `1.1` selects XML 1.1, anything
+else (or no declaration) the XML 1.0 rules. XML 1.1 differs in `[2] Char`
+(NUL is the only C0 control left out), in `[2a] RestrictedChar` (a
+document may hold those controls only through a character reference), in
+what a character reference may name (section 4.1), and in end-of-line
+handling (section 2.11: NEL and LS join CR and LF). -/
+
+def v11 (body : String) : String := "<?xml version=\"1.1\"?>" ++ body
+def v10 (body : String) : String := "<?xml version=\"1.0\"?>" ++ body
+
+/-- The text content of the root, or `none` when the document is refused. -/
+def rootText (doc : String) : Option String :=
+  match parseXML doc with
+  | .ok d => some d.root.textContent
+  | .error _ => none
+
+-- Section 2.11: NEL, LS, CR NEL and a lone CR each become one LF in 1.1.
+#guard rootText (v11 "<a>x\u0085y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\r\u0085y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\ry</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\r\ny</a>") == some "x\ny"
+-- ...CR LS is NOT combined: a CR becomes LF, then the LS becomes LF.
+#guard rootText (v11 "<a>x\r y</a>") == some "x\n\ny"
+-- In an XML 1.0 document NEL and LS are ordinary characters, left alone.
+#guard rootText (v10 "<a>x\u0085y</a>") == some "x\u0085y"
+#guard rootText (v10 "<a>x y</a>") == some "x y"
+#guard rootText "<a>x\u0085y</a>" == some "x\u0085y"
+#guard rootText (v10 "<a>x\r\u0085y</a>") == some "x\n\u0085y"
+-- A version other than 1.1 is read by the 1.0 rules.
+#guard rootText "<?xml version=\"1.2\"?><a>x\u0085y</a>" == some "x\u0085y"
+-- NEL in an attribute value is a line end, hence a space, in 1.1.
+#guard (match parseXML (v11 "<a x=\"p\u0085q\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "p q"
+#guard (match parseXML (v10 "<a x=\"p\u0085q\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "p\u0085q"
+
+-- Section 2.2: literal controls. #x7F-#x9F (other than NEL) and
+-- #x1-#x1F (other than tab, LF, CR) are restricted in 1.1...
+#guard rootText (v11 "<a>\u007F</a>") == none
+#guard rootText (v11 "<a>\u0090</a>") == none
+#guard rootText (v11 "<a>\u009F</a>") == none
+#guard rootText (v11 "<a>\u0001</a>") == none
+#guard rootText (v11 "<a>\u000C</a>") == none
+-- ...in every construct, since `[1] document` excludes them wholesale.
+#guard rootText (v11 "<a><!--\u0090--></a>") == none
+#guard rootText (v11 "<a><?p \u0090?></a>") == none
+#guard rootText (v11 "<a><![CDATA[\u0090]]></a>") == none
+#guard rootText (v11 "<a x=\"\u0090\"/>") == none
+#guard rootText (v11 "<!DOCTYPE a [<!-- \u0090 -->]><a/>") == none
+-- XML 1.0 admits #x7F-#x9F literally and rejects #x1-#x1F.
+#guard rootText (v10 "<a>\u007F</a>") == some "\u007F"
+#guard rootText (v10 "<a>\u0090</a>") == some "\u0090"
+#guard rootText (v10 "<a>\u0001</a>") == none
+#guard rootText (v10 "<a>\u000C</a>") == none
+-- NUL, the non-characters and the surrogate range are out in both.
+#guard rootText (v11 "<a>\u0000</a>") == none
+#guard rootText (v11 "<a>￾</a>") == none
+#guard rootText (v10 "<a>￾</a>") == none
+-- Section 4.1: a character reference may name any 1.1 `Char`, the
+-- restricted controls included...
+#guard rootText (v11 "<a>&#1;&#xC;&#x7F;&#x85;&#x9F;</a>") == some "\u0001\u000C\u007F\u0085\u009F"
+-- ...which XML 1.0 refuses for #x1-#x8, #xB, #xC and #xE-#x1F,
+#guard rootText (v10 "<a>&#1;</a>") == none
+#guard rootText (v10 "<a>&#xC;</a>") == none
+#guard rootText (v10 "<a>&#x1F;</a>") == none
+-- ...and accepts for the rest.
+#guard rootText (v10 "<a>&#x7F;&#x85;&#x9F;</a>") == some "\u007F\u0085\u009F"
+-- Both refuse NUL and the non-characters.
+#guard rootText (v11 "<a>&#0;</a>") == none
+#guard rootText (v11 "<a>&#xFFFE;</a>") == none
+#guard rootText (v11 "<a>&#xD800;</a>") == none
+-- A character reference keeps NEL as NEL; the line-end rule is for
+-- literal characters only.
+#guard rootText (v11 "<a>x&#x85;y</a>") == some "x\u0085y"
+-- A reference to a restricted control inside an ENTITY VALUE is legal
+-- when declared, and again when the entity is used in content
+-- (xmlconf rmt-054).
+#guard rootText (v11 "<!DOCTYPE a [<!ENTITY e \"&#12;\">]><a>&e;</a>") == some "\u000C"
+#guard rootText (v10 "<!DOCTYPE a [<!ENTITY e \"&#12;\">]><a>&e;</a>") == none
+-- ...and in an attribute value.
+#guard (match parseXML (v11 "<a x=\"&#1;\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "\u0001"
+
+-- Section 4.3.4: an entity may be 1.0 or 1.1, and the DOCUMENT's version
+-- rules apply to all of it. A 1.1 document may invoke a 1.0 entity;
+-- a 1.0 document may not invoke a 1.1 one.
+def entRes (text : String) : Resolver := fun id => if id == "e.ent" then some text else none
+def withEnt (decl : String) (ent : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.isSome
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+-- An entity text with no declaration is read by the document's rules.
+#guard withEnt "<?xml version=\"1.1\"?>" "x"
+-- The text declaration is checked as the grammar writes it: each
+-- pseudo-attribute follows whitespace, and NEL is not whitespace.
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"\u0085encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\" ?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+-- XML 1.1 §2.11 applies to external entities, and §2.2 to their text.
+#guard (match parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0085y") 
+          (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>") with
+        | .ok d => some d.root.textContent
+        | .error _ => none) == some "x\ny"
+#guard (parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0090y")
+          (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.isNone
+#guard (parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\r\ny")
+          (v10 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.map
+          (·.root.textContent) == some "x\ny"
+
+-- The declaration's version is recorded, and it picks the rules for
+-- NEL inside the DECLARATION itself: not whitespace, so refused.
+#guard (match parseXML (v11 "<a/>") with | .ok d => d.version == .v11 | .error _ => false)
+#guard (match parseXML (v10 "<a/>") with | .ok d => d.version == .v10 | .error _ => false)
+#guard (match parseXML "<a/>" with | .ok d => d.version == .v10 | .error _ => false)
+#guard !isWellFormed "<?xml version=\"1.1\"\u0085?><a/>"
+#guard !isWellFormed "<?xml version=\"1.1\" ?><a/>"
+
+-- Names (section 2.3) are the same set in 1.1 as in the Fifth Edition
+-- of 1.0: the ranges #xC0-... and #x10000-#xEFFFF, and not #xF0000.
+#guard isWellFormed (v11 "<ſ/>")
+#guard isWellFormed (v10 "<ſ/>")
+#guard isWellFormed (v11 "<a�/>")
+#guard !isWellFormed (v11 ("<a" ++ String.singleton (Char.ofNat 0xF0000) ++ "/>"))
+#guard isWellFormed (v11 ("<a" ++ String.singleton (Char.ofNat 0xEFFFF) ++ "/>"))
+#guard !isWellFormed (v11 "<×/>")
+
+-- The serialiser writes the characters that would not survive a re-parse
+-- as character references, so a 1.1 document round-trips.
+#guard roundTripsFrom (v11 "<a>&#1;&#xC;&#x85;&#x2028;&#13;x</a>")
+#guard roundTripsFrom (v11 "<a x=\"&#1;&#x85;&#x2028;&#13;&#9;\"/>")
+#guard roundTripsFrom (v10 "<a>&#x7F;&#x85;&#13;x</a>")
+#guard (Document.toString (match parseXML (v11 "<a>&#1;</a>") with | .ok d => d | .error _ => default))
+       == v11 "<a>&#x1;</a>"
+-- The tree checker is version-aware: the same tree is a well-formed 1.1
+-- document and not a 1.0 one.
+#guard (match parseXML (v11 "<a>&#1;</a>") with | .ok d => d.wellFormed | .error _ => false)
+#guard (match parseXML (v11 "<a>&#1;</a>") with
+        | .ok d => Node.wellFormed .v10 d.root | .error _ => true) == false
+#guard reflexiveOn (v11 "<a x=\"&#2;\">&#3;<!-- c --></a>")
+-- The namespace layer reads the version from the same declaration.
+#guard isNamespaceWellFormedDoc (v11 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
+#guard !isNamespaceWellFormedDoc (v10 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
+
 /-! ## RDF/XML checks — `XML.Wellformedness.fst`'s other half -/
 
 #guard isForbiddenNodeElementName "http://www.w3.org/1999/02/22-rdf-syntax-ns#li"

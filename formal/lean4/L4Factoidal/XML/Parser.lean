@@ -228,16 +228,124 @@ def skipSpace1 (s : Chars) (pos : Nat) : PResult Unit :=
 /-- True when every character in `[start, stop)` satisfies `[2] Char`.
 Port of F* `scan_chars_valid` (whose UTF-8 decoding half is discharged
 by Lean's `Char` type). -/
-def charsValid (s : Chars) (start stop : Nat) : Nat → Bool
+def charsValid (ver : XmlVersion) (s : Chars) (start stop : Nat) : Nat → Bool
   | 0 => true
   | fuel + 1 =>
     if start ≥ stop || start ≥ s.size then true
-    else if isXmlChar (charAt s start) then charsValid s (start + 1) stop fuel
+    else if ver.isChar (charAt s start) then charsValid ver s (start + 1) stop fuel
     else false
 
 /-- `[2] Char` over a whole half-open range. -/
-def rangeCharsValid (s : Chars) (start stop : Nat) : Bool :=
-  charsValid s start stop (stop - start)
+def rangeCharsValid (ver : XmlVersion) (s : Chars) (start stop : Nat) : Bool :=
+  charsValid ver s start stop (stop - start)
+
+/-- §2.11 line-ending normalisation: every `#xD #xA` pair and every lone
+`#xD` becomes a single `#xA`. Unconditional — every processor, every
+input, before any other parsing step. Structurally recursive on the
+character list (the F* needs a fuel here because it walks byte offsets).
+Port of F* `normalize_line_endings`. -/
+def normalizeLineEndings : List Char → List Char
+  | '\r' :: '\n' :: rest => '\n' :: normalizeLineEndings rest
+  | '\r' :: rest => '\n' :: normalizeLineEndings rest
+  | c :: rest => c :: normalizeLineEndings rest
+  | [] => []
+
+/-- The COMPILED form of `normalizeLineEndings`: one accumulator, so the
+pre-pass costs no C stack.
+
+This pre-pass runs over the WHOLE document before any parsing, so its
+depth is the document's character count.  In the shipped wasm module
+that put the RDF/XML parser's ceiling at about 7,000 characters of
+input, whatever the input contained -- not at 2,000 entity references,
+which is how <https://github.com/danbri/factoidal/issues/673> reads the
+symptom.  A document of 500 plain sibling elements and a document of
+12,000 characters of ordinary text both die here, and neither has an
+entity in it.
+
+`normalizeLineEndings` stays the specification; `@[csimp]` below is what
+the code generator uses. -/
+def normalizeLineEndingsTR : List Char → List Char → List Char
+  | '\r' :: '\n' :: rest, acc => normalizeLineEndingsTR rest ('\n' :: acc)
+  | '\r' :: rest, acc => normalizeLineEndingsTR rest ('\n' :: acc)
+  | c :: rest, acc => normalizeLineEndingsTR rest (c :: acc)
+  | [], acc => acc.reverse
+
+theorem normalizeLineEndingsTR_eq (cs : List Char) : ∀ (acc : List Char),
+    normalizeLineEndingsTR cs acc = acc.reverse ++ normalizeLineEndings cs := by
+  fun_induction normalizeLineEndings cs with
+  | case1 rest ih => intro acc; simp [normalizeLineEndingsTR, ih]
+  | case2 rest h ih => intro acc; simp [normalizeLineEndingsTR, ih]
+  | case3 c rest h1 h2 ih => intro acc; simp [normalizeLineEndingsTR, ih]
+  | case4 => intro acc; simp [normalizeLineEndingsTR]
+
+def normalizeLineEndingsImpl (cs : List Char) : List Char :=
+  normalizeLineEndingsTR cs []
+
+@[csimp] theorem normalizeLineEndings_eq_normalizeLineEndingsImpl :
+    @normalizeLineEndings = @normalizeLineEndingsImpl := by
+  funext cs
+  show _ = normalizeLineEndingsTR cs []
+  simp [normalizeLineEndingsTR_eq]
+
+/-- XML 1.1 §2.11 line-end handling: `#xD #xA`, `#xD #x85`, a lone
+`#x85`, a lone `#x2028` and a `#xD` followed by neither `#xA` nor `#x85`
+each become a single `#xA`. (`#xD #x2028` is a `#xA` for the `#xD` and a
+second `#xA` for the `#x2028`: they are not combined.) Applies to every
+external parsed entity, the document entity included, before parsing. -/
+def normalizeLineEndings11 : List Char → List Char
+  | '\r' :: '\n' :: rest => '\n' :: normalizeLineEndings11 rest
+  | '\r' :: '\u0085' :: rest => '\n' :: normalizeLineEndings11 rest
+  | '\r' :: rest => '\n' :: normalizeLineEndings11 rest
+  | '\u0085' :: rest => '\n' :: normalizeLineEndings11 rest
+  | '\u2028' :: rest => '\n' :: normalizeLineEndings11 rest
+  | c :: rest => c :: normalizeLineEndings11 rest
+  | [] => []
+
+/-- The compiled form of `normalizeLineEndings11`; see
+`normalizeLineEndingsTR`. -/
+def normalizeLineEndings11TR : List Char → List Char → List Char
+  | '\r' :: '\n' :: rest, acc => normalizeLineEndings11TR rest ('\n' :: acc)
+  | '\r' :: '\u0085' :: rest, acc => normalizeLineEndings11TR rest ('\n' :: acc)
+  | '\r' :: rest, acc => normalizeLineEndings11TR rest ('\n' :: acc)
+  | '\u0085' :: rest, acc => normalizeLineEndings11TR rest ('\n' :: acc)
+  | '\u2028' :: rest, acc => normalizeLineEndings11TR rest ('\n' :: acc)
+  | c :: rest, acc => normalizeLineEndings11TR rest (c :: acc)
+  | [], acc => acc.reverse
+
+theorem normalizeLineEndings11TR_eq (cs : List Char) : ∀ (acc : List Char),
+    normalizeLineEndings11TR cs acc = acc.reverse ++ normalizeLineEndings11 cs := by
+  fun_induction normalizeLineEndings11 cs with
+  | case1 rest ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case2 rest ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case3 rest h1 h2 ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case4 rest ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case5 rest ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case6 c rest h1 h2 h3 h4 h5 ih => intro acc; simp [normalizeLineEndings11TR, ih]
+  | case7 => intro acc; simp [normalizeLineEndings11TR]
+
+def normalizeLineEndings11Impl (cs : List Char) : List Char :=
+  normalizeLineEndings11TR cs []
+
+@[csimp] theorem normalizeLineEndings11_eq_normalizeLineEndings11Impl :
+    @normalizeLineEndings11 = @normalizeLineEndings11Impl := by
+  funext cs
+  show _ = normalizeLineEndings11TR cs []
+  simp [normalizeLineEndings11TR_eq]
+
+/-- §2.11 for the given version. -/
+def normalizeLineEndingsFor : XmlVersion → List Char → List Char
+  | .v10, cs => normalizeLineEndings cs
+  | .v11, cs => normalizeLineEndings11 cs
+
+/-- The text of an EXTERNAL parsed entity, ready to be parsed in a
+document of this version: line ends normalised (§2.11 applies to every
+external parsed entity, and §4.3.4 applies the document's version rules
+to the entities it invokes) and, in XML 1.1, no literal restricted
+character (`[78] extParsedEnt` excludes `Char* RestrictedChar Char*`). -/
+def prepareEntityText (ver : XmlVersion) (text : String) : Except String String :=
+  let cs := normalizeLineEndingsFor ver text.toList
+  if cs.all ver.isLiteralChar then .ok (String.ofList cs)
+  else .error "an external entity contains a character that is not allowed literally ([2] Char; in XML 1.1 also [2a] RestrictedChar)"
 
 /-! ## `[5] Name` -/
 
@@ -378,7 +486,7 @@ def expandEntityValue (inAttr : Bool) (ents : EntityTable) (visited : List Strin
             | .err m p => .err m p
             | .ok digits pos' =>
               let cp := hexValue digits
-              if isXmlCharCode cp then
+              if ents.version.isCharCode cp then
                 expandEntityValue inAttr ents visited s pos' depth budget'
                   (codepointToString cp :: acc)
               else .err "character reference to a non-Char codepoint" pos'
@@ -387,7 +495,7 @@ def expandEntityValue (inAttr : Bool) (ents : EntityTable) (visited : List Strin
             | .err m p => .err m p
             | .ok digits pos' =>
               let cp := decValue digits
-              if isXmlCharCode cp then
+              if ents.version.isCharCode cp then
                 expandEntityValue inAttr ents visited s pos' depth budget'
                   (codepointToString cp :: acc)
               else .err "character reference to a non-Char codepoint" pos'
@@ -455,14 +563,14 @@ def parseReference (inAttr : Bool) (ents : EntityTable) (s : Chars) (pos : Nat) 
       | .err m p => .err m p
       | .ok digits pos' =>
         let cp := hexValue digits
-        if isXmlCharCode cp then .ok (codepointToString cp) pos'
+        if ents.version.isCharCode cp then .ok (codepointToString cp) pos'
         else .err "character reference to a non-Char codepoint" pos'
     else
       match parseRefDigits isDecDigit s (pos + 1) [] (s.size + 1) with
       | .err m p => .err m p
       | .ok digits pos' =>
         let cp := decValue digits
-        if isXmlCharCode cp then .ok (codepointToString cp) pos'
+        if ents.version.isCharCode cp then .ok (codepointToString cp) pos'
         else .err "character reference to a non-Char codepoint" pos'
   else
     match parseName s pos with
@@ -531,7 +639,7 @@ def parseAttrValueBody (ents : EntityTable) (qch : Char) (s : Chars) (pos : Nat)
       else
         let stop := scanWhile (fun c => c != qch && c != '&' && c != '<') s pos (s.size - pos)
         if stop > pos then
-          if !rangeCharsValid s pos stop then
+          if !rangeCharsValid ents.version s pos stop then
             .err "invalid character in attribute value" pos
           else
             parseAttrValueBody ents qch s stop (normalizeAttrLiteralWs (sub s pos stop) :: acc) fuel
@@ -660,7 +768,7 @@ def parseTextContent (ents : EntityTable) (s : Chars) (pos : Nat)
       else
         let stop := scanWhile (fun c => c != '<' && c != '&') s pos (s.size - pos)
         if stop > pos then
-          if !rangeCharsValid s pos stop then
+          if !rangeCharsValid ents.version s pos stop then
             .err "invalid character in text content" pos
           else if hasCdataClose s pos stop (stop - pos) then
             .err "text may not contain a literal ']]>' sequence" pos
@@ -687,26 +795,26 @@ def hasDoubleDash (str : String) : Bool :=
 
 /-- The body of a comment, from `start`, up to its `-->`.
 Port of F* `parse_comment_body`. -/
-def parseCommentBody (s : Chars) (start pos : Nat) : Nat → PResult String
+def parseCommentBody (ver : XmlVersion) (s : Chars) (start pos : Nat) : Nat → PResult String
   | 0 => .err "unterminated comment" pos
   | fuel + 1 =>
     if pos + 2 < s.size &&
        charAt s pos == '-' && charAt s (pos + 1) == '-' && charAt s (pos + 2) == '>' then
       .ok (sub s start pos) (pos + 3)
     else if pos < s.size then
-      if !isXmlChar (charAt s pos) then .err "invalid character in comment" pos
-      else parseCommentBody s start (pos + 1) fuel
+      if !ver.isChar (charAt s pos) then .err "invalid character in comment" pos
+      else parseCommentBody ver s start (pos + 1) fuel
     else .err "unterminated comment" pos
 
 /-- `[15] Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'`
 — so `--` may not occur in the body, and the body may not end in `-`
 (that would make the closing delimiter need a third dash).
 Port of F* `parse_xml_comment`. -/
-def parseComment (s : Chars) (pos : Nat) : PResult Node :=
+def parseComment (ver : XmlVersion) (s : Chars) (pos : Nat) : PResult Node :=
   match pstring "<!--" s pos with
   | .err m p => .err m p
   | .ok _ pos1 =>
-    match parseCommentBody s pos1 pos1 (s.size + 1) with
+    match parseCommentBody ver s pos1 pos1 (s.size + 1) with
     | .err m p => .err m p
     | .ok text pos2 =>
       if hasDoubleDash text || text.toList.getLast? == some '-' then
@@ -717,23 +825,23 @@ def parseComment (s : Chars) (pos : Nat) : PResult Node :=
 
 /-- The content of a CDATA section, up to its `]]>`.
 Port of F* `parse_cdata_body`. -/
-def parseCdataBody (s : Chars) (start pos : Nat) : Nat → PResult String
+def parseCdataBody (ver : XmlVersion) (s : Chars) (start pos : Nat) : Nat → PResult String
   | 0 => .err "unterminated CDATA section" pos
   | fuel + 1 =>
     if pos + 2 < s.size &&
        charAt s pos == ']' && charAt s (pos + 1) == ']' && charAt s (pos + 2) == '>' then
       .ok (sub s start pos) (pos + 3)
     else if pos < s.size then
-      if !isXmlChar (charAt s pos) then .err "invalid character in CDATA section" pos
-      else parseCdataBody s start (pos + 1) fuel
+      if !ver.isChar (charAt s pos) then .err "invalid character in CDATA section" pos
+      else parseCdataBody ver s start (pos + 1) fuel
     else .err "unterminated CDATA section" pos
 
 /-- `[18] CDSect ::= CDStart CData CDEnd`. Port of F* `parse_xml_cdata`. -/
-def parseCdata (s : Chars) (pos : Nat) : PResult Node :=
+def parseCdata (ver : XmlVersion) (s : Chars) (pos : Nat) : PResult Node :=
   match pstring "<![CDATA[" s pos with
   | .err m p => .err m p
   | .ok _ pos1 =>
-    match parseCdataBody s pos1 pos1 (s.size + 1) with
+    match parseCdataBody ver s pos1 pos1 (s.size + 1) with
     | .err m p => .err m p
     | .ok text pos2 => .ok (.cdata text) pos2
 
@@ -741,15 +849,15 @@ def parseCdata (s : Chars) (pos : Nat) : PResult Node :=
 
 /-- The data of a processing instruction, up to its `?>`.
 Port of F* `collect_pi_body`. -/
-def parsePiBody (s : Chars) (start pos : Nat) : Nat → PResult String
+def parsePiBody (ver : XmlVersion) (s : Chars) (start pos : Nat) : Nat → PResult String
   | 0 => .err "unterminated processing instruction" pos
   | fuel + 1 =>
     if pos + 1 < s.size && charAt s pos == '?' && charAt s (pos + 1) == '>' then
       .ok (sub s start pos) (pos + 2)
     else if pos + 1 < s.size then
-      if !isXmlChar (charAt s pos) then
+      if !ver.isChar (charAt s pos) then
         .err "invalid character in processing instruction" pos
-      else parsePiBody s start (pos + 1) fuel
+      else parsePiBody ver s start (pos + 1) fuel
     else .err "unterminated processing instruction" pos
 
 /-- `[16] PI ::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'`.
@@ -762,7 +870,7 @@ the document. `S` is required between the target and the data unless
 `?>` follows the target immediately; the data excludes that separating
 whitespace, per the DOM/XPath string-value convention.
 Port of F* `parse_xml_pi`. -/
-def parsePi (s : Chars) (pos : Nat) : PResult Node :=
+def parsePi (ver : XmlVersion) (s : Chars) (pos : Nat) : PResult Node :=
   match pstring "<?" s pos with
   | .err m p => .err m p
   | .ok _ pos1 =>
@@ -777,7 +885,7 @@ def parsePi (s : Chars) (pos : Nat) : PResult Node :=
         match skipSpace1 s pos2 with
         | .err _ _ => .err "S after PITarget is required" pos2
         | .ok _ posData =>
-          match parsePiBody s posData posData (s.size + 1) with
+          match parsePiBody ver s posData posData (s.size + 1) with
           | .err m p => .err m p
           | .ok data pos3 => .ok (.pi target data) pos3
 
@@ -929,15 +1037,15 @@ def parseChildren (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : 
           -- picking the message by which delimiter is actually present
           -- changes the MESSAGE only, never the accept/reject verdict.
           if peekLit "<!--" s pos then
-            match parseComment s pos with
+            match parseComment ents.version s pos with
             | .err m p => .err m p
             | .ok node pos' => parseChildren ents atts s pos' (node :: acc) fuel
           else
-            match parseCdata s pos with
+            match parseCdata ents.version s pos with
             | .err m p => .err m p
             | .ok node pos' => parseChildren ents atts s pos' (node :: acc) fuel
         else if ch2 == '?' then
-          match parsePi s pos with
+          match parsePi ents.version s pos with
           | .err m p => .err m p
           | .ok node pos' => parseChildren ents atts s pos' (node :: acc) fuel
         else
@@ -1532,6 +1640,31 @@ def textDeclAttrs (cs : List Char) : List (String × String) :=
         else go f rest
   go (cs.length + 1) cs
 
+/-- `[77] TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'` read
+strictly from the start of `s`: every pseudo-attribute is introduced by
+`[3] S`, `version` is a `[26] VersionNum`, `encoding` is an `[81] EncName`,
+and nothing else stands before `?>`. The scan in `readTextDecl` collects
+pseudo-attribute NAMES and accepts a stray character between two of
+them; this is the check that it did not make. In particular, `S` is
+`#x20 | #x9 | #xD | #xA`: a NEL or a line separator in front of
+`encoding` is not whitespace, whatever the version (XML 1.1 §2.11 makes
+them line ends only after the declaration has been read). -/
+def textDeclIsWellFormed (s : Chars) : Bool :=
+  match pstring "<?xml" s 0 with
+  | .err _ _ => false
+  | .ok _ p0 =>
+    let (p1, versionOk) :=
+      match tryPseudoAttr "version" s p0 with
+      | some (v, p) => (p, isVersionNum v)
+      | none => (p0, true)
+    versionOk &&
+    (match tryPseudoAttr "encoding" s p1 with
+     | none => false
+     | some (e, p2) =>
+         isEncName e && (match pstring "?>" s (skipSpace s p2) with
+                         | .ok _ _ => true
+                         | .err _ _ => false))
+
 /-- `[77] TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'`,
     XML 1.0 §4.3.1.
 
@@ -1551,7 +1684,7 @@ def textDeclAttrs (cs : List Char) : List (String × String) :=
     A `?>` is looked for only BEFORE the first `<`: an unterminated
     declaration must not be closed by a `?>` belonging to a processing
     instruction further down the entity. -/
-def readTextDecl (t : String) : Except String String :=
+def readTextDecl (ver : XmlVersion) (t : String) : Except String String :=
   let cs := t.toList
   -- `<?xml` is only a text declaration when a space follows it;
   -- `<?xmlfoo ...?>` is a processing instruction with its own target.
@@ -1582,14 +1715,16 @@ def readTextDecl (t : String) : Except String String :=
             .error "a text declaration must carry 'encoding' ([77] TextDecl, EncodingDecl is not optional)"
           else if names != ["encoding"] && names != ["version", "encoding"] then
             .error "a text declaration is 'version'? then 'encoding', in that order and nothing else ([77] TextDecl)"
-          -- XML 1.0 section 4.3.4 (Version Information in Entities):
-          -- an XML 1.0 document may not contain an entity that
-          -- declares version 1.1. This parser's scored profile is XML
-          -- 1.0 (an XML 1.1 document is out of profile and is never
-          -- scored), so every document reaching here is 1.0 and no
-          -- document version has to be threaded in.
-          else if version? == some "1.1" then
-            .error "an XML 1.0 document may not contain an entity whose text declaration says version 1.1 (XML 1.0 section 4.3.4)"
+          -- XML 1.1 section 4.3.4 (Version Information in Entities):
+          -- each entity can be declared 1.0 or 1.1, an entity with no
+          -- version is 1.0, and the rules of the DOCUMENT's version
+          -- apply to the whole document. An XML 1.1 document may invoke
+          -- 1.0 entities; an XML 1.0 document may not invoke an entity
+          -- that declares version 1.1.
+          else if !(textDeclIsWellFormed cs.toArray) then
+            .error "a text declaration is '<?xml' VersionInfo? EncodingDecl S? '?>' with each pseudo-attribute preceded by whitespace ([77] TextDecl)"
+          else if version? == some "1.1" && ver == .v10 then
+            .error "an XML 1.0 document may not contain an entity whose text declaration says version 1.1 (XML 1.1 section 4.3.4)"
           else
             -- Drop through the terminator, which the check above
             -- proved is present in the head.
@@ -1623,7 +1758,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
     if pos ≥ s.size then .ok (String.join acc.reverse) pos
     else
       let ch := charAt s pos
-      if !isXmlChar ch then
+      if !pes.version.isChar ch then
         -- `[9] EntityValue` is built from `[2] Char`s, so a codepoint
         -- outside that class is a well-formedness error rather than a
         -- character to copy (`not-wf-sa-175`).
@@ -1672,7 +1807,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
             | .err m p => .err m p
             | .ok digits pos' =>
                 let cp := hexValue digits
-                if isXmlCharCode cp then
+                if pes.version.isCharCode cp then
                   normalizeEntityValue internal pes s pos' (codepointToString cp :: acc) fuel
                 else .err "character reference to a non-Char codepoint" pos'
           else
@@ -1680,7 +1815,7 @@ def normalizeEntityValue (internal : Bool) (pes : EntityTable)
             | .err m p => .err m p
             | .ok digits pos' =>
                 let cp := decValue digits
-                if isXmlCharCode cp then
+                if pes.version.isCharCode cp then
                   normalizeEntityValue internal pes s pos' (codepointToString cp :: acc) fuel
                 else .err "character reference to a non-Char codepoint" pos'
         else
@@ -1811,12 +1946,18 @@ def parseEntityDecl (resolve : Resolver) (internal : Bool) (s : Chars) (pos : Na
                         if isPE then .ok (ents, declareEntity name ed pes, name) p'
                         else .ok (declareEntity name ed ents, pes, name) p'
                     | some raw  =>
-                      match readTextDecl raw with
+                      match readTextDecl ents.version raw with
                       -- A malformed `[77] TextDecl` in the entity is
                       -- a fatal error in the DOCUMENT that declares
                       -- the entity, not a reason to leave it
                       -- undeclared.
                       | .error m   => .err m p'
+                      | .ok body =>
+                      -- Section 2.11 applies to every external parsed
+                      -- entity, and section 4.3.4 applies the
+                      -- document's version to the entities it invokes.
+                      match prepareEntityText ents.version body with
+                      | .error m => .err m p'
                       | .ok text =>
                         let ed : EntityDef := { value := text, external := true }
                         if isPE then .ok (ents, declareEntity name ed pes, name) p'
@@ -1911,7 +2052,7 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
                        parseSubset resolve endKind s (p1 + 1) ents' pes' dtd' fuel)
       else if ch == '<' then
         if peekLit "<!--" s pos then
-          match parseComment s pos with
+          match parseComment ents.version s pos with
           | .err m p => .err m p
           | .ok _ pos' => parseSubset resolve endKind s pos' ents pes dtd fuel
         else if peekLit "<!ENTITY" s pos then
@@ -1921,7 +2062,7 @@ def parseSubset (resolve : Resolver) (endKind : SubsetEnd)
               parseSubset resolve endKind s pos' ents' pes'
                 { dtd with names := { dtd.names with entities := name :: dtd.names.entities } } fuel
         else if peekLit "<?" s pos then
-          match parsePi s pos with
+          match parsePi ents.version s pos with
           | .err m p => .err m p
           | .ok node pos' =>
               let target := match node with | .pi t _ => [t] | _ => []
@@ -2099,7 +2240,7 @@ def peScan (resolve : Resolver) (s : Chars) (pos : Nat) (pes : EntityTable)
           else if peekLit "<?" s pos then
             peScan resolve s (pos + 2) pes ("<?" :: acc) .pi depth fuel'
           else if peekLit "<!ENTITY" s pos then
-            match parseEntityDecl resolve false s pos {} pes with
+            match parseEntityDecl resolve false s pos { version := pes.version } pes with
             | .err _ _ =>
                 -- Not a declaration this parser can read as it stands
                 -- — it may hold a parameter-entity reference that has
@@ -2120,7 +2261,7 @@ termination_by (depth, fuel)
 STEPPED OVER, never loaded — no external resource is read.
 Port of F* `parse_doctype` (which discards the root Name; it is
 recorded here). -/
-def parseDoctype (resolve : Resolver) (standalone : Bool)
+def parseDoctype (resolve : Resolver) (ver : XmlVersion) (standalone : Bool)
     (s : Chars) (pos : Nat) : PResult Doctype :=
   match pstring "<!DOCTYPE" s pos with
   | .err m p => .err m p
@@ -2150,10 +2291,10 @@ def parseDoctype (resolve : Resolver) (standalone : Bool)
           -- over a later one of the same name (§4.2).
           let p4 := skipSpace s p3'
           match (if p4 < s.size && charAt s p4 == '[' then
-                   match parseSubset resolve .bracket s (p4 + 1) {} {} {} (s.size + 1) with
+                   match parseSubset resolve .bracket s (p4 + 1) { version := ver } { version := ver } {} (s.size + 1) with
                    | .err m p => PResult.err m p
                    | .ok r p5 => PResult.ok r p5
-                 else PResult.ok ((({}, {}, {}) :
+                 else PResult.ok ((({ version := ver }, { version := ver }, {}) :
                         EntityTable × EntityTable × DtdAcc)) p4) with
           | .err m p => .err m p
           | .ok (ents, pes, dtd) p5 =>
@@ -2168,7 +2309,10 @@ def parseDoctype (resolve : Resolver) (standalone : Bool)
                        -- `[30] extSubset ::= TextDecl? extSubsetDecl`
                        -- carries the same `[77]` constraint as an
                        -- external entity does.
-                       match readTextDecl text with
+                       match readTextDecl ver text with
+                       | .error m => PResult.err ("in the external subset: " ++ m) p5
+                       | .ok body0 =>
+                       match prepareEntityText ver body0 with
                        | .error m => PResult.err ("in the external subset: " ++ m) p5
                        | .ok body =>
                        let raw : Chars := body.toList.toArray
@@ -2219,70 +2363,22 @@ the document — which is what the "XML declaration may not follow
 content" cases require. Port of F* `collect_misc` /
 `collect_epilog_misc` (identical to `skip_misc` / `skip_epilog_misc`
 except that the nodes are remembered). -/
-def collectMisc (s : Chars) (pos : Nat) (acc : List Node) :
+def collectMisc (ver : XmlVersion) (s : Chars) (pos : Nat) (acc : List Node) :
     Nat → PResult (List Node)
   | 0 => .ok acc.reverse pos
   | fuel + 1 =>
     let pos1 := skipSpace s pos
     if peekLit "<!--" s pos1 then
-      match parseComment s pos1 with
+      match parseComment ver s pos1 with
       | .err _ _ => .ok acc.reverse pos1
-      | .ok node pos2 => collectMisc s pos2 (node :: acc) fuel
+      | .ok node pos2 => collectMisc ver s pos2 (node :: acc) fuel
     else if peekLit "<?" s pos1 then
-      match parsePi s pos1 with
+      match parsePi ver s pos1 with
       | .err _ _ => .ok acc.reverse pos1
-      | .ok node pos2 => collectMisc s pos2 (node :: acc) fuel
+      | .ok node pos2 => collectMisc ver s pos2 (node :: acc) fuel
     else .ok acc.reverse pos1
 
 /-! ## Document-level pre-passes -/
-
-/-- §2.11 line-ending normalisation: every `#xD #xA` pair and every lone
-`#xD` becomes a single `#xA`. Unconditional — every processor, every
-input, before any other parsing step. Structurally recursive on the
-character list (the F* needs a fuel here because it walks byte offsets).
-Port of F* `normalize_line_endings`. -/
-def normalizeLineEndings : List Char → List Char
-  | '\r' :: '\n' :: rest => '\n' :: normalizeLineEndings rest
-  | '\r' :: rest => '\n' :: normalizeLineEndings rest
-  | c :: rest => c :: normalizeLineEndings rest
-  | [] => []
-
-/-- The COMPILED form of `normalizeLineEndings`: one accumulator, so the
-pre-pass costs no C stack.
-
-This pre-pass runs over the WHOLE document before any parsing, so its
-depth is the document's character count.  In the shipped wasm module
-that put the RDF/XML parser's ceiling at about 7,000 characters of
-input, whatever the input contained -- not at 2,000 entity references,
-which is how <https://github.com/danbri/factoidal/issues/673> reads the
-symptom.  A document of 500 plain sibling elements and a document of
-12,000 characters of ordinary text both die here, and neither has an
-entity in it.
-
-`normalizeLineEndings` stays the specification; `@[csimp]` below is what
-the code generator uses. -/
-def normalizeLineEndingsTR : List Char → List Char → List Char
-  | '\r' :: '\n' :: rest, acc => normalizeLineEndingsTR rest ('\n' :: acc)
-  | '\r' :: rest, acc => normalizeLineEndingsTR rest ('\n' :: acc)
-  | c :: rest, acc => normalizeLineEndingsTR rest (c :: acc)
-  | [], acc => acc.reverse
-
-theorem normalizeLineEndingsTR_eq (cs : List Char) : ∀ (acc : List Char),
-    normalizeLineEndingsTR cs acc = acc.reverse ++ normalizeLineEndings cs := by
-  fun_induction normalizeLineEndings cs with
-  | case1 rest ih => intro acc; simp [normalizeLineEndingsTR, ih]
-  | case2 rest h ih => intro acc; simp [normalizeLineEndingsTR, ih]
-  | case3 c rest h1 h2 ih => intro acc; simp [normalizeLineEndingsTR, ih]
-  | case4 => intro acc; simp [normalizeLineEndingsTR]
-
-def normalizeLineEndingsImpl (cs : List Char) : List Char :=
-  normalizeLineEndingsTR cs []
-
-@[csimp] theorem normalizeLineEndings_eq_normalizeLineEndingsImpl :
-    @normalizeLineEndings = @normalizeLineEndingsImpl := by
-  funext cs
-  show _ = normalizeLineEndingsTR cs []
-  simp [normalizeLineEndingsTR_eq]
 
 /-- §4.3.3 / Appendix F: a UTF-8 entity may begin with a byte-order
 mark, which is not part of the document's markup or character data and
@@ -2365,7 +2461,18 @@ def parseXMLCore (resolve : Resolver) (decoded : Bool) (input : String) :
   let hadBom := !decoded && (match raw with
     | c :: _ => c.toNat == 0xFEFF
     | []     => false)
-  let chars := normalizeLineEndings (if decoded then raw else skipBom raw)
+  let body := if decoded then raw else skipBom raw
+  -- The VERSION is read from the declaration BEFORE line ends are
+  -- normalised, because which characters are line ends depends on it:
+  -- XML 1.1 section 2.11 adds #x85 and #x2028 to #xD and #xA. `[3] S`
+  -- contains #xD, so the declaration parses the same on the raw text.
+  -- A document with no declaration, or one that does not parse, is
+  -- read by the XML 1.0 rules (section 2.8).
+  let ver : XmlVersion :=
+    match parseXmlDecl body.toArray 0 with
+    | .ok d _ => XmlVersion.ofDeclared d.version
+    | .err _ _ => .v10
+  let chars := normalizeLineEndingsFor ver body
   let s : Chars := chars.toArray
   let fuel := s.size + 1
   -- The declaration, if present, must be the very first thing: no
@@ -2378,7 +2485,18 @@ def parseXMLCore (resolve : Resolver) (decoded : Bool) (input : String) :
   match (if decoded then none else encodingConflict hadBom (decl.bind (·.encoding))) with
   | some m => .error { message := m, position := 0 }
   | none   =>
-  match collectMisc s pos1 [] fuel with
+  -- XML 1.1 `[1] document` is `(prolog element Misc*) - (Char*
+  -- RestrictedChar Char*)`: a restricted character (and NUL, and the
+  -- non-characters) may reach the document only through a character
+  -- reference, never literally, anywhere in it. The check is made once,
+  -- over the normalised text, so a restricted character inside a
+  -- comment, a processing instruction, a CDATA section or the DTD is
+  -- refused as well. In XML 1.0 the per-production `[2] Char` checks
+  -- below are the whole story.
+  match (if ver == .v11 then s.findIdx? (fun c => !ver.isLiteralChar c) else none) with
+  | some i => .error { message := "a character that is not allowed literally in an XML 1.1 document ([1] document excludes [2a] RestrictedChar; section 2.2)", position := i }
+  | none   =>
+  match collectMisc ver s pos1 [] fuel with
   | .err m p => .error { message := m, position := p }
   | .ok pre1 pos2 =>
     -- A DOCTYPE that IS present and malformed reports ITS OWN error.
@@ -2390,20 +2508,20 @@ def parseXMLCore (resolve : Resolver) (decoded : Bool) (input : String) :
     -- `<!DOCTYPE` text it was handed — but the reason was not.
     let standalone := (decl.bind (·.standalone)) == some "yes"
     match (if peekLit "<!DOCTYPE" s pos2 then
-             match parseDoctype resolve standalone s pos2 with
+             match parseDoctype resolve ver standalone s pos2 with
              | .ok d p  => PResult.ok (some d) p
              | .err m p => PResult.err m p
            else PResult.ok none pos2) with
     | .err m p => .error { message := m, position := p }
     | .ok doctype posDt =>
-    let ents := (doctype.map (·.entities)).getD {}
-    match collectMisc s posDt [] fuel with
+    let ents := (doctype.map (·.entities)).getD { version := ver }
+    match collectMisc ver s posDt [] fuel with
     | .err m p => .error { message := m, position := p }
     | .ok pre2 pos3 =>
       match parseElement ents ((doctype.map (·.attDecls)).getD []) s pos3 fuel with
       | .err m p => .error { message := m, position := p }
       | .ok root pos4 =>
-        match collectMisc s pos4 [] fuel with
+        match collectMisc ver s pos4 [] fuel with
         | .err m p => .error { message := m, position := p }
         | .ok post pos5 =>
           if pos5 < s.size then

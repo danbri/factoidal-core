@@ -77,11 +77,12 @@ CDATA section, `--` inside a comment, `?>` inside PI data — because
 those constructs have no escape mechanism at all. -/
 
 /-- An attribute of the infoset: its name is a `[5] Name`, and its
-value holds only `[2] Char` characters. The value may contain `<`,
-`&` and `"` — a reference put them there, and the serialiser escapes
-them on the way out. -/
-def Attribute.wellFormed (a : Attribute) : Bool :=
-  isName a.name && a.value.toList.all isXmlChar
+value holds only `[2] Char` characters of the document's version
+(XML 1.1's `Char` includes the control characters a character reference
+may name). The value may contain `<`, `&` and `"` — a reference put them
+there, and the serialiser escapes them on the way out. -/
+def Attribute.wellFormed (ver : XmlVersion) (a : Attribute) : Bool :=
+  isName a.name && a.value.toList.all ver.isChar
 
 /-- **WFC: Unique Att Spec** — no two attributes of one element share a
 name. -/
@@ -91,68 +92,76 @@ def attrsUnique (attrs : List Attribute) : Bool :=
 
 mutual
 
-/-- The parser's constraints, re-stated on the tree it produced. -/
-def Node.wellFormed : Node → Bool
+/-- The parser's constraints, re-stated on the tree it produced, for a
+document of the given version. -/
+def Node.wellFormed (ver : XmlVersion) : Node → Bool
   -- [14] CharData: only the character range constrains the infoset.
-  | .text t => t.toList.all isXmlChar
+  | .text t => t.toList.all ver.isChar
   -- [18] CDSect: a CDATA section has no escape mechanism, so its
   -- content cannot contain its own closing delimiter.
-  | .cdata t => t.toList.all isXmlChar && !strHasSub "]]>" t
+  | .cdata t => t.toList.all ver.isChar && !strHasSub "]]>" t
   -- [15] Comment: no `--` anywhere, and no trailing `-`.
   | .comment b =>
-      b.toList.all isXmlChar && !hasDoubleDash b && b.toList.getLast? != some '-'
+      b.toList.all ver.isChar && !hasDoubleDash b && b.toList.getLast? != some '-'
   -- [16] PI: the target is a [5] Name and is not the reserved `xml`;
   -- the data cannot contain the closing delimiter.
   | .pi target data =>
       isName target && !isXmlTargetNameCI target &&
-      data.toList.all isXmlChar && !strHasSub "?>" data
+      data.toList.all ver.isChar && !strHasSub "?>" data
   -- [39] element: the tag is a [5] Name, the attributes are unique and
   -- each well-formed, and so is every child. There is NO tag-matching
   -- clause: see `Node.serialize_element_tags_match`.
   | .element tag attrs children =>
-      isName tag && attrs.all Attribute.wellFormed && attrsUnique attrs &&
-      Node.wellFormedList children
+      isName tag && attrs.all (Attribute.wellFormed ver) && attrsUnique attrs &&
+      Node.wellFormedList ver children
 
 /-- `Node.wellFormed` over a child list. -/
-def Node.wellFormedList : List Node → Bool
+def Node.wellFormedList (ver : XmlVersion) : List Node → Bool
   | [] => true
-  | n :: rest => Node.wellFormed n && Node.wellFormedList rest
+  | n :: rest => Node.wellFormed ver n && Node.wellFormedList ver rest
 
 end
+
+/-- The version a document's declaration selects (1.0 without one). -/
+def Document.version (d : Document) : XmlVersion :=
+  match d.decl with
+  | some x => XmlVersion.ofDeclared x.version
+  | none => .v10
 
 /-- A whole document: `[1] document ::= prolog element Misc*` — the
 root must be an element, and every prolog / epilog Misc node must be
 well-formed. -/
 def Document.wellFormed (d : Document) : Bool :=
   d.root.elementTag.isSome &&
-  Node.wellFormed d.root &&
-  d.prolog.all Node.wellFormed &&
-  d.epilog.all Node.wellFormed
+  Node.wellFormed d.version d.root &&
+  d.prolog.all (Node.wellFormed d.version) &&
+  d.epilog.all (Node.wellFormed d.version)
 
 /-! ### Proved: the induction the general theorem needs -/
 
 /-- `Node.wellFormedList` is `List.all Node.wellFormed`. Proved by
 structural induction on the list — this is the step that lets a
 reflexivity proof descend into an element's children. -/
-theorem Node.wellFormedList_eq_all :
-    ∀ l : List Node, Node.wellFormedList l = l.all Node.wellFormed
+theorem Node.wellFormedList_eq_all (ver : XmlVersion) :
+    ∀ l : List Node, Node.wellFormedList ver l = l.all (Node.wellFormed ver)
   | [] => rfl
   | n :: rest => by
-      simp [Node.wellFormedList, List.all_cons, Node.wellFormedList_eq_all rest]
+      simp [Node.wellFormedList, List.all_cons, Node.wellFormedList_eq_all ver rest]
 
 /-- A well-formed element has well-formed children. The other half of
 the descent step. -/
-theorem Node.wellFormed_children (tag : String) (attrs : List Attribute)
-    (children : List Node) (h : Node.wellFormed (.element tag attrs children) = true) :
-    Node.wellFormedList children = true := by
+theorem Node.wellFormed_children (ver : XmlVersion) (tag : String) (attrs : List Attribute)
+    (children : List Node) (h : Node.wellFormed ver (.element tag attrs children) = true) :
+    Node.wellFormedList ver children = true := by
   simp only [Node.wellFormed, Bool.and_eq_true] at h
   exact h.2
 
 /-- Every child of a well-formed element is itself well-formed. -/
-theorem Node.wellFormed_of_mem_children (tag : String) (attrs : List Attribute)
-    (children : List Node) (h : Node.wellFormed (.element tag attrs children) = true)
-    (c : Node) (hc : c ∈ children) : Node.wellFormed c = true := by
-  have hl := Node.wellFormed_children tag attrs children h
+theorem Node.wellFormed_of_mem_children (ver : XmlVersion) (tag : String)
+    (attrs : List Attribute)
+    (children : List Node) (h : Node.wellFormed ver (.element tag attrs children) = true)
+    (c : Node) (hc : c ∈ children) : Node.wellFormed ver c = true := by
+  have hl := Node.wellFormed_children ver tag attrs children h
   rw [Node.wellFormedList_eq_all] at hl
   exact List.all_eq_true.mp hl c hc
 
@@ -164,6 +173,21 @@ characters: in particular tab / LF / CR inside an attribute value are
 written as character references, because §3.3.3 would otherwise
 normalise a literal one to a space. -/
 
+/-- Characters that must be written as character references so that
+re-parsing recovers them: a carriage return (§2.11 turns a literal one
+into #xA), the XML 1.1 line ends #x85 and #x2028 (the same, in an XML 1.1
+document), and the control characters of XML 1.1's `[2a] RestrictedChar`
+(an XML 1.1 document may not hold them literally). A character reference
+to any of these is legal in a document of either version, except the
+control characters #x1-#x8, #xB, #xC and #xE-#x1F, which an XML 1.0 tree
+cannot contain. -/
+def needsCharRef (c : Char) : Bool :=
+  c == '\r' || c == '\u0085' || c == '\u2028' || isRestrictedCharCode c.toNat
+
+/-- `&#xHEX;` for a character. -/
+def charRef (c : Char) : String :=
+  "&#x" ++ String.ofList (Nat.toDigits 16 c.toNat) ++ ";"
+
 /-- Escape `[14] CharData`: `&`, `<` and `>` become references. `>` is
 escaped unconditionally, which is what keeps a `]]>` in the infoset
 from becoming a literal `]]>` in the output (where `[14]` forbids it). -/
@@ -172,6 +196,7 @@ def escapeText (str : String) : String :=
     if c == '&' then "&amp;"
     else if c == '<' then "&lt;"
     else if c == '>' then "&gt;"
+    else if needsCharRef c then charRef c
     else String.singleton c)
 
 /-- Escape a `[10] AttValue`. `<`, `&` and `"` must go; tab, LF and CR
@@ -184,7 +209,7 @@ def escapeAttrValue (str : String) : String :=
     else if c == '"' then "&quot;"
     else if c == '\t' then "&#9;"
     else if c == '\n' then "&#10;"
-    else if c == '\r' then "&#13;"
+    else if needsCharRef c then charRef c
     else String.singleton c)
 
 /-- `[41] Attribute`, with its leading `[3] S`. -/
