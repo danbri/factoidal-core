@@ -107,6 +107,10 @@ end
 
 instance : BEq Path := ⟨Path.beq⟩
 
+/-- A shape is referenced by the string of its IRI, or `"_:" ++ label`
+for a blank-node shape (F* `shape_ref`). -/
+abbrev ShapeRef := String
+
 /-! ## §2.1 targets -/
 
 /-- The target declarations of §2.1.1–§2.1.4, plus the implicit class
@@ -115,17 +119,19 @@ targets (SHACL-SPARQL §5) are not a constructor: the decoder names them
 in `ShapesGraph.unsupported`. -/
 inductive Target where
   | cls (c : WfIri)
+  /-- SHACL 1.2 §targetNode: the value is a node expression; an IRI or
+  a literal is its own output, a blank node is evaluated by the
+  validation's node-expression evaluator. -/
   | node (t : Term)
   | subjectsOf (p : WfIri)
   | objectsOf (p : WfIri)
   | implicitClass (c : WfIri)
+  /-- SHACL 1.2 §targetWhere: the nodes of the data graph that conform
+  to the shape. -/
+  | whereShape (r : ShapeRef)
   deriving DecidableEq, Repr
 
 instance : Inhabited Target := ⟨.node (.bnode "")⟩
-
-/-- A shape is referenced by the string of its IRI, or `"_:" ++ label`
-for a blank-node shape (F* `shape_ref`). -/
-abbrev ShapeRef := String
 
 /-! ## §4 the Core constraint components -/
 
@@ -202,6 +208,12 @@ inductive Constraint where
   | closedByTypes (table : List (WfIri × List WfIri)) (ignored : List WfIri)
   | hasValue (t : Term)
   | inSet (items : List Term)
+  -- SHACL 1.2 §UniqueValuesForConstraintComponent: no two target nodes of
+  -- the shape have the same values for all of these properties.
+  | uniqueValuesFor (props : List WfIri)
+  -- SHACL 1.2 Node Expressions §NodeByExpressionConstraintComponent: each
+  -- value node conforms to every shape the node expression yields.
+  | nodeByExpression (expr : Term)
   -- SHACL-SPARQL Part 2 §5.1: a sh:sparql constraint. `node` is the
   -- constraint node (reported as sh:sourceConstraint, distinct from the
   -- owning shape's sh:sourceShape); `query` is the sh:select text with
@@ -240,6 +252,12 @@ structure Shape where
   /-- The shapes named by sh:property (§2.2 "property shapes of a
   shape"), by reference. -/
   propertyRefs : List ShapeRef
+  /-- SHACL 1.2 §property-shapes / §value-nodes-property-shapes: the
+  node expression of sh:values, whose output nodes are value nodes. -/
+  valuesExpr   : Option Term := none
+  /-- The node expression of sh:defaultValue, used when there is no
+  other value node. -/
+  defaultValue : Option Term := none
   deriving Repr, Inhabited
 
 /-- §2.2 "the property shape must have exactly one value for sh:path"
@@ -417,6 +435,20 @@ def isShaclInstance (g : Graph) (n : Term) (c : WfIri) : Bool :=
       | .iri ti => (superClasses g ti).contains c
       | _ => false
 
+/-- "SHACL instance of rdfs:Class in the shapes graph". `sh:ShapeClass`
+counts (§implicit-targetClass: "The class sh:ShapeClass is an
+rdfs:subClassOf of both sh:NodeShape and rdfs:Class", a vocabulary
+triple the shapes graph need not repeat), and so does `owl:Class`, as
+for the implicit class target below. -/
+def isClassInShapes (g : Graph) (n : Term) : Bool :=
+  isShaclInstance g n rdfsClass || isShaclInstance g n owlClass ||
+  isShaclInstance g n shShapeClass
+
+/-- "SHACL instance of sh:NodeShape in the shapes graph" (sh:ShapeClass
+is a subclass of sh:NodeShape). -/
+def isNodeShapeInShapes (g : Graph) (n : Term) : Bool :=
+  isShaclInstance g n shNodeShape || isShaclInstance g n shShapeClass
+
 /-! ## §2.3.1 path decoding
 
 The seven forms: a predicate path is an IRI; the others are blank
@@ -477,15 +509,20 @@ def decodeTargets (g : Graph) (s : Subject) : List Target :=
     match t with | .iri i => some (Target.subjectsOf i) | _ => none
   let viaObjOf := (objectsOf g s shTargetObjectsOf).filterMap fun t =>
     match t with | .iri i => some (Target.objectsOf i) | _ => none
+  -- SHACL 1.2 §implicit-targetClass: "If s is a SHACL instance of
+  -- sh:NodeShape or sh:PropertyShape in a shapes graph SG and s is also a
+  -- SHACL instance of rdfs:Class in SG"; sh:ShapeClass is a subclass of
+  -- both sh:NodeShape and rdfs:Class, so its instances qualify. A blank
+  -- node is "an ill-formed shape" here and gets no implicit target.
   let implicit :=
     match s with
     | .iri i =>
-      let types := objectsOf g s rdfType
-      let isClass := types.any (fun t => t == .iri rdfsClass || t == .iri owlClass)
-      let isNodeShape := types.any (fun t => t == .iri shNodeShape)
-      if isClass && isNodeShape then [Target.implicitClass i] else []
+      let isShape := isNodeShapeInShapes g s.toTerm || isShaclInstance g s.toTerm shPropertyShape
+      if isShape && isClassInShapes g s.toTerm then [Target.implicitClass i] else []
     | .bnode _ => []
-  viaClass ++ viaNode ++ viaSubjOf ++ viaObjOf ++ implicit
+  let viaWhere := (objectsOf g s shTargetWhere).filterMap fun t =>
+    (termToShapeRef t).map Target.whereShape
+  viaClass ++ viaNode ++ viaSubjOf ++ viaObjOf ++ implicit ++ viaWhere
 
 /-! ## §4 constraint decoding -/
 
@@ -526,20 +563,6 @@ preventing it from visiting the same `S` twice": a work list with a
 visited list. The fuel bounds the number of work-list pops; every node
 pushed is the object or subject of a distinct triple, so `2 * |g| + 2`
 pops always empty the list. -/
-
-/-- "SHACL instance of rdfs:Class in the shapes graph". `sh:ShapeClass`
-counts (§implicit-targetClass: "The class sh:ShapeClass is an
-rdfs:subClassOf of both sh:NodeShape and rdfs:Class", a vocabulary
-triple the shapes graph need not repeat), and so does `owl:Class`, as
-for the implicit class target below. -/
-def isClassInShapes (g : Graph) (n : Term) : Bool :=
-  isShaclInstance g n rdfsClass || isShaclInstance g n owlClass ||
-  isShaclInstance g n shShapeClass
-
-/-- "SHACL instance of sh:NodeShape in the shapes graph" (sh:ShapeClass
-is a subclass of sh:NodeShape). -/
-def isNodeShapeInShapes (g : Graph) (n : Term) : Bool :=
-  isShaclInstance g n shNodeShape || isShaclInstance g n shShapeClass
 
 /-- The IRI properties reachable from `n` via `sh:property/sh:path`. -/
 def propertyPathIris (g : Graph) (n : Term) : List WfIri :=
@@ -607,6 +630,9 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
     (iriOrIriList g t fuel).map Constraint.rootClass
   let singleLine := match firstBool (objectsOf g s shSingleLine) with
     | some b => [Constraint.singleLine b] | none => []
+  let uniqueValuesFor := (objectsOf g s shUniqueValuesFor).filterMap fun t =>
+    (iriOrIriList g t fuel).map Constraint.uniqueValuesFor
+  let nodeByExpression := (objectsOf g s shNodeByExpression).map Constraint.nodeByExpression
   let memberShape := (objectsOf g s shMemberShape).filterMap fun t =>
     (termToShapeRef t).map Constraint.memberShape
   let minListLength := match firstNat (objectsOf g s shMinListLength) with
@@ -669,7 +695,8 @@ def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
       | some true => [Constraint.closed ignored]
       | _ => []
   minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ rootClass ++ singleLine ++
-  memberShape ++ minListLength ++ maxListLength ++ uniqueMembers ++
+  memberShape ++ minListLength ++ maxListLength ++ uniqueMembers ++ uniqueValuesFor ++
+  nodeByExpression ++
   inSet ++ hasValue ++ pattern ++
   minLength ++ maxLength ++ languageIn ++ uniqueLang ++ minInc ++ maxInc ++ minExc ++ maxExc ++
   nots ++ ands ++ ors ++ xones ++ nodes ++ qualified ++ equals ++ disjoint ++ lessThan ++
@@ -850,7 +877,8 @@ sh:property / sh:node / sh:not / sh:and / sh:or / sh:xone alike, each
 of which carries at least one sh: triple of its own. -/
 def isShapeTriggerTriple (t : Triple) : Bool :=
   t.p.val.startsWith shNs ||
-  (t.p == rdfType && (t.o == .iri shNodeShape || t.o == .iri shPropertyShape))
+  (t.p == rdfType &&
+    (t.o == .iri shNodeShape || t.o == .iri shPropertyShape || t.o == .iri shShapeClass))
 
 /-- §3.6.1: `sh:deactivated true` switches a shape off. -/
 def isDeactivated (g : Graph) (s : Subject) : Bool :=
@@ -879,7 +907,9 @@ def decodeShape (g : Graph) (s : Subject) : Shape :=
     message := message,
     constraints := decodeConstraints g s ++ decodeSparqlConstraints g s ++
                    decodeCustomConstraints g s (!pathObjs.isEmpty),
-    propertyRefs := (objectsOf g s shProperty).filterMap termToShapeRef }
+    propertyRefs := (objectsOf g s shProperty).filterMap termToShapeRef,
+    valuesExpr := (objectsOf g s shValues).head?,
+    defaultValue := (objectsOf g s shDefaultValue).head? }
 
 /-- The unsupported SHACL-SPARQL feature names a graph uses (predicates
 only; today only the SPARQL-based target). -/

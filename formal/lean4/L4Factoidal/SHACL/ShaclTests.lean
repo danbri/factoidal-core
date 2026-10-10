@@ -443,6 +443,79 @@ def someValueDoc : String :=
 #guard (run someValueDoc).results.map (·.value) == [none, none]
 #guard components (run someValueDoc) == [shSomeValueCC, shSomeValueCC]
 
+/-! ### SHACL 1.2 targets: sh:targetWhere, sh:shape, sh:ShapeClass -/
+
+def targetWhereDoc : String :=
+  "ex:Adult a sh:NodeShape ; sh:targetWhere [ sh:class ex:Person ; " ++
+  "sh:property [ sh:path ex:age ; sh:minInclusive 18 ; sh:minCount 1 ] ] ; " ++
+  "sh:property [ sh:path ex:voted ; sh:minCount 1 ] . " ++
+  "ex:a a ex:Person ; ex:age 20 . ex:b a ex:Person ; ex:age 10 . ex:c a ex:Person ; ex:age 30 ; ex:voted 1 ."
+
+-- ex:a and ex:c are targets (adults); only ex:a lacks ex:voted; ex:b is no target.
+#guard (run targetWhereDoc).results.map (·.focus) == [.iri (exIri "a")]
+#guard components (run targetWhereDoc) == [shMinCountCC]
+
+def shapeLinkDoc : String :=
+  "ex:S a sh:NodeShape ; sh:property [ sh:path ex:p ; sh:maxCount 0 ] . " ++
+  "ex:n sh:shape ex:S ; ex:p 1 . ex:m ex:p 2 ."
+
+-- ex:n is linked to ex:S in the data graph; ex:m is not.
+#guard (run shapeLinkDoc).results.map (·.focus) == [.iri (exIri "n")]
+
+def shapeClassDoc : String :=
+  "ex:Super a sh:ShapeClass ; sh:in ( ex:ok ) . ex:Sub rdfs:subClassOf ex:Super . " ++
+  "ex:ok a ex:Sub . ex:bad a ex:Sub ."
+
+#guard (run shapeClassDoc).results.map (·.focus) == [.iri (exIri "bad")]
+#guard components (run shapeClassDoc) == [shInCC]
+
+/-! ### SHACL 1.2 §UniqueValuesForConstraintComponent -/
+
+def uniqueValuesForDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetClass ex:R ; sh:uniqueValuesFor ( ex:id ex:scheme ) . " ++
+  "ex:r1 a ex:R ; ex:id 1 ; ex:scheme ex:A . ex:r2 a ex:R ; ex:id 1 ; ex:scheme ex:A . " ++
+  "ex:r3 a ex:R ; ex:id 1 ; ex:scheme ex:B . ex:r4 a ex:R ; ex:id 2 . ex:r5 a ex:R ; ex:id 2 . " ++
+  "ex:other ex:id 1 ; ex:scheme ex:B ."
+
+-- ex:r1 and ex:r2 share the full key; ex:r3 shares it only with ex:other,
+-- which is no target; ex:r4 and ex:r5 have no ex:scheme, so no key.
+#guard (run uniqueValuesForDoc).results.map (·.focus) == [.iri (exIri "r1"), .iri (exIri "r2")]
+#guard (run uniqueValuesForDoc).results.map (·.value) == [none, none]
+#guard components (run uniqueValuesForDoc) == [shUniqueValuesForCC, shUniqueValuesForCC]
+
+/-! ### SHACL 1.2 Node Expressions §NodeByExpressionConstraintComponent -/
+
+def nodeByExpressionDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b ; sh:nodeByExpression ex:T . " ++
+  "ex:T a sh:NodeShape ; sh:class ex:C . ex:a a ex:C ."
+
+#guard (run nodeByExpressionDoc).results.map (·.focus) == [.iri (exIri "b")]
+#guard components (run nodeByExpressionDoc) == [shNodeByExpressionCC]
+#guard (run nodeByExpressionDoc).results.map (·.sourceConstraint) == [some (.iri (exIri "T"))]
+#guard (reportToGraph (run nodeByExpressionDoc)).any fun t =>
+         t.p == shSourceConstraint && t.o == .iri (exIri "T")
+
+/-! ### SHACL 1.2 sh:values and the node-expression evaluator
+
+With the Core evaluator an IRI node expression is its own output
+(§IRIExpression). A caller-supplied evaluator decides blank-node
+expressions — here one that maps every blank node to `ex:a`, standing
+in for a SHACL-SPARQL select expression. -/
+
+def valuesDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; " ++
+  "sh:property [ sh:path ex:p ; sh:values ex:v ; sh:minCount 2 ] . ex:n ex:p ex:w ."
+
+#guard (run valuesDoc).conforms == true   -- ex:w (path) and ex:v (sh:values)
+
+def bnodeTargetDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode [ ex:anything 1 ] ; sh:class ex:C ."
+
+def toA (e : Term) (_ : Option Term) : List Term :=
+  match e with | .bnode _ => [.iri (exIri "a")] | _ => [e]
+
+#guard (runWith bnodeTargetDoc { evalExpr := toA }).results.map (·.focus) == [.iri (exIri "a")]
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

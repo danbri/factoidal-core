@@ -73,11 +73,16 @@ structure Violation where
   1.2 asks for them for sh:memberShape (one per non-conforming member's
   results) and sh:uniqueMembers (one per duplicated member). -/
   details     : List Violation := []
+  /-- §3.6.2.6 sh:sourceConstraint, when the result names one beyond
+  what its constraint determines: SHACL 1.2 sh:nodeByExpression results
+  carry the shape the node expression yielded. -/
+  sourceConstraint : Option Term := none
   deriving Repr
 
 instance : Inhabited Violation :=
   ⟨{ focus := .bnode "", path := none, value := none, sourceShape := "",
-     constraint := default, severity := default, message := none, details := [] }⟩
+     constraint := default, severity := default, message := none, details := [],
+     sourceConstraint := none }⟩
 
 /-- §3.6.1: `conforms` is true iff there are no validation results.
 `failure` is the SHACL-SPARQL failure channel (Part 2 §5.3.2: a query
@@ -119,10 +124,23 @@ conformance checking". -/
 /-- §conformanceDisallows: the default conformance-disallow set. -/
 def defaultDisallowed : List Severity := [.violation, .warning, .info]
 
+/-- SHACL 1.2 §node-expressions: "Core only supports constant IRIs and
+literals as node expressions" (§IRIExpression, §LiteralExpression: the
+output is the expression itself). The Core evaluator answers every term
+with itself, so a blank-node sh:targetNode keeps its SHACL 1.0 reading
+(a constant); an evaluator for richer node expressions (SHACL-SPARQL,
+the shnex library) is passed in through `ValidationConfig.evalExpr`. -/
+def constantNodeExpr (expr : Term) (_focus : Option Term) : List Term := [expr]
+
 /-- What validation reads beyond the data graph and the shapes: the
-conformance-disallow set. -/
+conformance-disallow set; the node-expression evaluator
+`evalExpr(expr, data graph, focusNode, {})` (§node-expressions); and the
+target nodes of each shape that carries sh:uniqueValuesFor
+(§UniqueValuesForConstraintComponent, "$targetNodes"). -/
 structure ValidationEnv where
   disallowed : List Severity := defaultDisallowed
+  evalExpr : Term → Option Term → List Term := constantNodeExpr
+  targetsOf : ShapeRef → List Term := fun _ => []
   deriving Inhabited
 
 /-- Does a result at severity `sev` count against conformance? -/
@@ -140,10 +158,11 @@ validation engine MAY provide mechanisms to customize this set");
 `none` selects the default set. -/
 structure ValidationConfig where
   disallowed : Option (List Severity) := none
+  evalExpr : Term → Option Term → List Term := constantNodeExpr
   deriving Inhabited
 
 def ValidationConfig.toEnv (cfg : ValidationConfig) : ValidationEnv :=
-  { disallowed := cfg.disallowed.getD defaultDisallowed }
+  { disallowed := cfg.disallowed.getD defaultDisallowed, evalExpr := cfg.evalExpr }
 
 /-! ## XSD lexical spaces (port of `XSD.Datatypes.literal_ill_formed`)
 
@@ -362,23 +381,6 @@ def duplicatedLangTags (values : List Term) : List String :=
       else distinctDups (x :: seen) rest
   distinctDups [] langs
 
-/-! ## §2.1 targets -/
-
-/-- §2.1.1–§2.1.4 and §2.1.3.1. `allSubjects` are the candidate focus
-nodes for class targets (every subject of the data graph). -/
-def evalTarget (data : Graph) (allSubjects : List Subject) : Target → List Term
-  | .cls c => allSubjects.filterMap fun s =>
-      if isShaclInstance data s.toTerm c then some s.toTerm else none
-  | .implicitClass c => allSubjects.filterMap fun s =>
-      if isShaclInstance data s.toTerm c then some s.toTerm else none
-  | .node n => [n]
-  | .subjectsOf p => dedupTerms ((data.filter (fun t => t.p == p)).map (·.s.toTerm))
-  | .objectsOf p => dedupTerms ((data.filter (fun t => t.p == p)).map (·.o))
-
-/-- §2.1: the focus nodes of a shape — the union of its targets. -/
-def shapeFocusNodes (data : Graph) (allSubjects : List Subject) (s : Shape) : List Term :=
-  dedupTerms (s.targets.flatMap (evalTarget data allSubjects))
-
 /-! ## §2.3.1 property-path evaluation
 
 Value-node SET semantics: order-insensitive, deduplicated after every
@@ -444,13 +446,26 @@ end
 def evalPath (g : Graph) (start : Term) (p : Path) : List Term :=
   evalPathFuel g start p (g.length + 50)
 
-/-- §2.3: the value nodes of a focus node for a shape — the focus node
-itself for a node shape, the path's values for a property shape. -/
-def valueNodes (data : Graph) (node : Term) (s : Shape) : List Term :=
+/-- §2.3 / SHACL 1.2 §value-nodes-property-shapes: the value nodes of a
+focus node for a shape — the focus node itself for a node shape; for a
+property shape, "all nodes in the data graph that can be reached from
+the focus node with the path mapping of p", plus the output nodes of
+sh:values, and, "If the set is still empty", the output nodes of
+sh:defaultValue. -/
+def valueNodes (env : ValidationEnv) (data : Graph) (node : Term) (s : Shape) : List Term :=
   if s.isProperty then
-    match s.path with
-    | some p => evalPath data node p
-    | none => []
+    let viaPath := match s.path with
+      | some p => evalPath data node p
+      | none => []
+    let viaValues := match s.valuesExpr with
+      | some e => env.evalExpr e (some node)
+      | none => []
+    let combined := dedupTerms (viaPath ++ viaValues)
+    if combined.isEmpty then
+      match s.defaultValue with
+      | some d => dedupTerms (env.evalExpr d (some node))
+      | none => []
+    else combined
   else [node]
 
 /-! ## §4 the non-recursive components -/
@@ -663,6 +678,38 @@ def byTypesAllowed (data : Graph) (table : List (WfIri × List WfIri)) (ignored 
       | none => []
     | _ => []
 
+/-- SHACL 1.2 §UniqueValuesForConstraintComponent: a node's values for
+the key properties, one value set per property, or `none` when some
+property has no value — such a node shares its key with no other node
+("No result is produced if V has no values for any of the properties";
+see `uvfKey`'s use below for the reading taken). -/
+def uvfKey (data : Graph) (n : Term) : List WfIri → Option (List (List Term))
+  | [] => some []
+  | p :: rest =>
+    match dedupTerms (objectsOfTerm data n p) with
+    | [] => none
+    | vs => (uvfKey data n rest).map (vs :: ·)
+
+/-- Two value sets are equal (under `Term.eqb`). -/
+def termSetEq (a b : List Term) : Bool :=
+  a.all (fun x => termMem x b) && b.all (fun x => termMem x a)
+
+/-- Two keys are equal: the same value set for every key property. -/
+def keyEq : List (List Term) → List (List Term) → Bool
+  | [], [] => true
+  | x :: xs, y :: ys => termSetEq x y && keyEq xs ys
+  | _, _ => false
+
+/-- "there exists another node in $targetNodes that has exactly the same
+values for all properties in $properties as V". -/
+def uvfClash (data : Graph) (targets : List Term) (props : List WfIri) (v : Term) : Bool :=
+  match uvfKey data v props with
+  | none => false
+  | some k => targets.any fun t =>
+      !t.eqb v && match uvfKey data t props with
+        | some k2 => keyEq k k2
+        | none => false
+
 /-- The per-FOCUS-NODE check of the non-recursive aggregate
 components, given the value nodes: §4.2 cardinality, §4.4.5
 uniqueLang, §4.5 property pairs, §4.8.1 closed, §4.8.2 hasValue. The
@@ -670,9 +717,19 @@ result multiplicity follows each component's textual definition (one
 result per missing value for sh:equals, per pair for sh:lessThan, per
 offending triple for sh:closed, …) because the suite compares reports
 up to isomorphism. -/
-def evalAggregateNonRec (data : Graph) (sg : List Shape) (focus : Term) (s : Shape)
-    (values : List Term) (cc : Constraint) : List Violation :=
+def evalAggregateNonRec (env : ValidationEnv) (data : Graph) (sg : List Shape) (focus : Term)
+    (s : Shape) (values : List Term) (cc : Constraint) : List Violation :=
   match cc with
+  -- SHACL 1.2 §UniqueValuesForConstraintComponent: "For each value node V
+  -- for which there exists another node in $targetNodes that has exactly
+  -- the same values for all properties in $properties as V there is a
+  -- validation result." The text names no sh:value, and the suite's
+  -- expected results (core/node/uniqueValuesFor-001) carry none. A node
+  -- missing a value for some key property has no key (`uvfKey`), the
+  -- reading under which a partial key never clashes.
+  | .uniqueValuesFor props =>
+    values.filterMap fun v =>
+      if uvfClash data (env.targetsOf s.id) props v then some (focusViolation focus s cc) else none
   | .minCount n => if values.length < n then [focusViolation focus s cc] else []
   | .maxCount n => if n < values.length then [focusViolation focus s cc] else []
   | .hasValue t => if termMem t values then [] else [focusViolation focus s cc]
@@ -734,10 +791,10 @@ mutual
       (node : Term) (s : Shape) : Nat → List Violation
     | 0 => []
     | fuel + 1 =>
-      let values := valueNodes data node s
+      let values := valueNodes env data node s
       let perValue := values.flatMap fun v =>
         s.constraints.flatMap fun cc => evalOneConstraint env data sg node s v cc fuel
-      let agg := s.constraints.flatMap fun cc => evalAggregateNonRec data sg node s values cc
+      let agg := s.constraints.flatMap fun cc => evalAggregateNonRec env data sg node s values cc
       let qualified := s.constraints.flatMap fun cc =>
         evalAggregate env data sg node s values cc fuel
       -- §2.2: the property shapes of a shape are validated against its
@@ -786,6 +843,23 @@ mutual
         match lookupShape r sg with
         | none => []
         | some s2 => if env.conforms (collectShapeViolations env data sg v s2 fuel) then [] else viol
+      -- SHACL 1.2 Node Expressions §NodeByExpressionConstraintComponent:
+      -- "For each value node v: perform a conformance check of v against
+      -- each output node of evalExpr(expr, data graph, v, {}) s ... if v
+      -- does not conform to s, there is a validation result with v as
+      -- sh:value and a deep copy of s as sh:sourceConstraint." An output
+      -- node that names no shape imposes nothing (as for sh:node). The
+      -- deep copy of an IRI shape is the IRI.
+      | .nodeByExpression expr =>
+        (env.evalExpr expr (some v)).filterMap fun st =>
+          match termToShapeRef st with
+          | none => none
+          | some r =>
+            match lookupShape r sg with
+            | none => none
+            | some s2 =>
+              if env.conforms (collectShapeViolations env data sg v s2 fuel) then none
+              else some { valueViolation focus s cc v with sourceConstraint := some st }
       -- SHACL 1.2 §MemberShapeConstraintComponent: a value node that is
       -- not a SHACL list is a result; otherwise a result iff some
       -- member does not conform, with the non-conforming members'
@@ -864,20 +938,86 @@ two units, and a shapes graph of `n` shapes cannot nest deeper than
 `n` without repeating. -/
 def validateFuel (sg : List Shape) : Nat := sg.length * 4 + 50
 
-/-- §3.1: validate a data graph against a shapes graph. The shapes
-with targets (§2.1) are validated against their focus nodes; every
-other shape is reached only by reference. SHACL 1.2
+/-! ## §2.1 targets
+
+Defined after the mutual group because SHACL 1.2 §targetWhere asks
+conformance checking of candidate nodes. -/
+
+/-- The nodes of a graph: its subjects and objects (RDF 1.1 Concepts
+§3.1, "The set of nodes of an RDF graph is the set of subjects and
+objects of triples in the graph"), deduplicated. -/
+def graphNodes (data : Graph) : List Term :=
+  dedupTerms (data.flatMap fun t => [t.s.toTerm, t.o])
+
+/-- §2.1.1–§2.1.4, §2.1.3.1, SHACL 1.2 §targetNode (a node expression,
+evaluated with the shape as focus node: "evalExpr(expr, data graph, s,
+{})") and §targetWhere ("the set of nodes in a data graph DG that
+conform to w"). `allSubjects` are the candidate focus nodes for class
+targets (every subject of the data graph). -/
+def evalTarget (env : ValidationEnv) (data : Graph) (sg : List Shape)
+    (allSubjects : List Subject) (s : Shape) : Target → List Term
+  | .cls c => allSubjects.filterMap fun n =>
+      if isShaclInstance data n.toTerm c then some n.toTerm else none
+  | .implicitClass c => allSubjects.filterMap fun n =>
+      if isShaclInstance data n.toTerm c then some n.toTerm else none
+  | .node n =>
+    match n with
+    | .bnode _ => env.evalExpr n (some (shapeRefToTerm s.id))
+    | _ => [n]
+  | .subjectsOf p => dedupTerms ((data.filter (fun t => t.p == p)).map (·.s.toTerm))
+  | .objectsOf p => dedupTerms ((data.filter (fun t => t.p == p)).map (·.o))
+  | .whereShape r =>
+    match lookupShape r sg with
+    | none => []
+    | some ws => (graphNodes data).filter fun n =>
+        env.conforms (collectShapeViolations env data sg n ws (validateFuel sg))
+
+/-- SHACL 1.2 §explicit-shape-target: "If n has value s for sh:shape in
+the data graph, then n is a target for s" — for every shape, declared
+or not. -/
+def explicitShapeTargets (data : Graph) (s : Shape) : List Term :=
+  (data.filter fun t => t.p == shShape && t.o == shapeRefToTerm s.id).map (·.s.toTerm)
+
+/-- §2.1: the focus nodes of a shape — the union of its targets. -/
+def shapeFocusNodes (env : ValidationEnv) (data : Graph) (sg : List Shape)
+    (allSubjects : List Subject) (s : Shape) : List Term :=
+  dedupTerms (s.targets.flatMap (evalTarget env data sg allSubjects s) ++
+    explicitShapeTargets data s)
+
+def hasUniqueValuesFor (s : Shape) : Bool :=
+  s.constraints.any fun c => match c with | .uniqueValuesFor _ => true | _ => false
+
+/-- The validation environment of one run: the caller's choices plus,
+for every shape with sh:uniqueValuesFor, its target nodes. Those target
+nodes are computed under the caller's environment, whose `targetsOf` is
+empty: a sh:targetWhere shape that itself carries sh:uniqueValuesFor
+would make targets and conformance depend on each other, a case of the
+recursion SHACL leaves undefined (§shapes-recursion). -/
+def ValidationConfig.envFor (cfg : ValidationConfig) (data : Graph) (shapes : List Shape) :
+    ValidationEnv :=
+  let env0 := cfg.toEnv
+  let allSubjects := distinctSubjects data
+  let table := (shapes.filter hasUniqueValuesFor).map fun s =>
+    (s.id, shapeFocusNodes env0 data shapes allSubjects s)
+  { env0 with targetsOf := fun r => match table.find? (fun e => e.1 == r) with
+      | some e => e.2
+      | none => [] }
+
+/-- §3.1: validate a data graph against a shapes graph. "the validation
+results are the union of results of the validation of the data graph
+against all shapes in the shapes graph": every shape is validated
+against its focus nodes (a shape with no target and no sh:shape link
+has none and is reached only by reference). SHACL 1.2
 §conformance-definition: `conforms` iff no result has a disallowed
 severity. -/
 def validate (data : Graph) (sg : ShapesGraph) (cfg : ValidationConfig := {}) :
     ValidationReport :=
-  let env := cfg.toEnv
   let shapes := sg.shapes
+  let env := cfg.envFor data shapes
   let allSubjects := distinctSubjects data
   let fuel := validateFuel shapes
-  let roots := shapes.filter fun s => !s.targets.isEmpty
-  let results := roots.flatMap fun s =>
-    (shapeFocusNodes data allSubjects s).flatMap fun fn =>
+  let results := shapes.flatMap fun s =>
+    (shapeFocusNodes env data shapes allSubjects s).flatMap fun fn =>
       collectShapeViolations env data shapes fn s fuel
   { conforms := env.conforms results, results := results, disallowed := cfg.disallowed }
 
@@ -957,9 +1097,12 @@ def ClosedOk (g : Graph) (values : List Term) (allowed : Subject → List WfIri)
 
 /-- The per-focus-node components over the value nodes, declaratively.
 `True` for the components handled elsewhere. -/
-def FocusSatisfies (g : Graph) (sg : List Shape) (focus : Term) (s : Shape)
-    (cc : Constraint) (values : List Term) : Prop :=
+def FocusSatisfies (env : ValidationEnv) (g : Graph) (sg : List Shape) (focus : Term)
+    (s : Shape) (cc : Constraint) (values : List Term) : Prop :=
   match cc with
+  | .uniqueValuesFor props => ∀ v ∈ values, ∀ k, uvfKey g v props = some k →
+      ∀ t ∈ env.targetsOf s.id, Term.eqb t v = false →
+        ∀ k2, uvfKey g t props = some k2 → keyEq k k2 = false
   | .minCount n => n ≤ values.length
   | .maxCount n => values.length ≤ n
   | .hasValue t => ∃ u ∈ values, Term.eqb u t = true
@@ -989,10 +1132,10 @@ mutual
       Nat → Prop
     | 0 => True
     | fuel + 1 =>
-      let values := valueNodes g node s
+      let values := valueNodes env g node s
       (env.blocks s.severity = true →
         (∀ v ∈ values, ∀ cc ∈ s.constraints, ValueConforms env g sg v cc fuel) ∧
-        (∀ cc ∈ s.constraints, FocusSatisfies g sg node s cc values) ∧
+        (∀ cc ∈ s.constraints, FocusSatisfies env g sg node s cc values) ∧
         (∀ cc ∈ s.constraints, AggConforms env g sg s values cc fuel)) ∧
       (∀ v ∈ values, ∀ r ∈ s.propertyRefs, ∀ ps, lookupShape r sg = some ps →
         Conforms env g sg v ps fuel)
@@ -1012,6 +1155,9 @@ mutual
           | none => false
           | some s2 => env.conforms (collectShapeViolations env g sg v s2 fuel)).length = 1
       | .nodeOf r => ∀ s2, lookupShape r sg = some s2 → Conforms env g sg v s2 fuel
+      | .nodeByExpression expr => ∀ st ∈ env.evalExpr expr (some v), ∀ r,
+          termToShapeRef st = some r → ∀ s2, lookupShape r sg = some s2 →
+            Conforms env g sg v s2 fuel
       | .memberShape r => ∃ members, shaclListMembers g v = some members ∧
           ∀ s2, lookupShape r sg = some s2 → ∀ m ∈ members, Conforms env g sg m s2 fuel
       | _ => ValueSatisfies g cc v
@@ -1030,12 +1176,11 @@ mutual
 end
 
 /-- §3.1 / SHACL 1.2 §conformance-definition: a data graph conforms to
-a shapes graph iff every focus node of every targeted shape conforms,
-at the engine's budget. -/
+a shapes graph iff every focus node of every shape conforms, at the
+engine's budget. -/
 def GraphConforms (env : ValidationEnv) (g : Graph) (sg : ShapesGraph) : Prop :=
-  ∀ s ∈ sg.shapes, s.targets ≠ [] →
-    ∀ fn ∈ shapeFocusNodes g (distinctSubjects g) s,
-      Conforms env g sg.shapes fn s (validateFuel sg.shapes)
+  ∀ s ∈ sg.shapes, ∀ fn ∈ shapeFocusNodes env g sg.shapes (distinctSubjects g) s,
+    Conforms env g sg.shapes fn s (validateFuel sg.shapes)
 
 end Spec
 

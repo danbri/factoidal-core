@@ -178,7 +178,7 @@ theorem evalCustomComponent_eq_nil_iff (data : Graph) (focus : Term) (s : Shape)
   | .minLength _ | .maxLength _ | .pattern _ _ | .languageIn _ | .uniqueLang _
   | .equals _ | .disjoint _ | .lessThan _ | .lessThanOrEquals _
   | .singleLine _ | .rootClass _ | .memberShape _ | .minListLength _ | .maxListLength _
-  | .uniqueMembers _ | .subsetOf _ | .someValue _
+  | .uniqueMembers _ | .subsetOf _ | .someValue _ | .uniqueValuesFor _ | .nodeByExpression _
   | .notOf _ | .andOf _ | .orOf _ | .xoneOf _ | .nodeOf _
   | .qualifiedMinCount _ _ _ | .qualifiedMaxCount _ _ _
   | .closed _ | .closedByTypes _ _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>
@@ -194,22 +194,24 @@ covered" list is exactly the step from the two pass conjuncts to
 theorem validateWithSparql_conforms_iff (data shapesRaw : Graph) (sg : ShapesGraph)
     (cfg : ValidationConfig) :
     (validateWithSparql data shapesRaw sg cfg).conforms = true ↔
-      Spec.GraphConforms cfg.toEnv data sg ∧
-      (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         cfg.toEnv.conforms
-           (sparqlViolationsForShape data shapesRaw (distinctSubjects data) s).results = true) ∧
-      (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         cfg.toEnv.conforms (customViolationsForShape data (distinctSubjects data) sg.shapes s
-            (validateFuel sg.shapes)).results = true) := by
-  have hcore : cfg.toEnv.conforms (validate data sg cfg).results = true ↔
-      Spec.GraphConforms cfg.toEnv data sg := by
+      Spec.GraphConforms (cfg.envFor data sg.shapes) data sg ∧
+      (∀ s ∈ sg.shapes,
+         (cfg.envFor data sg.shapes).conforms
+           (sparqlViolationsForShape (cfg.envFor data sg.shapes) data shapesRaw sg.shapes
+              (distinctSubjects data) s).results = true) ∧
+      (∀ s ∈ sg.shapes,
+         (cfg.envFor data sg.shapes).conforms
+           (customViolationsForShape (cfg.envFor data sg.shapes) data (distinctSubjects data)
+              sg.shapes s (validateFuel sg.shapes)).results = true) := by
+  have hcore : (cfg.envFor data sg.shapes).conforms (validate data sg cfg).results = true ↔
+      Spec.GraphConforms (cfg.envFor data sg.shapes) data sg := by
     rw [← validate_conforms_iff data sg cfg]
     simp [validate]
   simp only [validateWithSparql, SparqlOutcome.append, conforms_append, Bool.and_eq_true,
     hcore]
   have hcat : ∀ (os : List SparqlOutcome),
-      cfg.toEnv.conforms (SparqlOutcome.concat os).results = true ↔
-        ∀ o ∈ os, cfg.toEnv.conforms o.results = true := by
+      (cfg.envFor data sg.shapes).conforms (SparqlOutcome.concat os).results = true ↔
+        ∀ o ∈ os, (cfg.envFor data sg.shapes).conforms o.results = true := by
     intro os
     induction os with
     | nil => simp [SparqlOutcome.concat, SparqlOutcome.empty, conforms_nil]
@@ -222,7 +224,7 @@ conformance. -/
 theorem validateWithSparql_sound_core (data shapesRaw : Graph) (sg : ShapesGraph)
     (cfg : ValidationConfig)
     (h : (validateWithSparql data shapesRaw sg cfg).conforms = true) :
-    Spec.GraphConforms cfg.toEnv data sg :=
+    Spec.GraphConforms (cfg.envFor data sg.shapes) data sg :=
   ((validateWithSparql_conforms_iff data shapesRaw sg cfg).mp h).1
 
 /-! ## Axiom audit -/

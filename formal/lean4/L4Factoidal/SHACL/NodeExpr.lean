@@ -34,9 +34,11 @@ collector exposed and no closure materialiser: it has `validate` over a
 `ShapesGraph`, and `isShaclInstance`, which already walks
 `rdfs:subClassOf`. So:
 
-* `nodeConforms` re-targets the named shape at the single value node,
-  clears every other shape's targets, and asks `validate` whether the
-  result conforms. That is the same judgment by a different route.
+* `nodeConforms` asks SHACL 1.2 conformance checking
+  (`ValidationEnv.conforms` of `collectShapeViolations`) of the single
+  value node against the named shape — the judgment `validate` makes
+  for one focus node, without the targets of the other shapes (SHACL
+  1.2 sh:shape links in the graph would otherwise add focus nodes).
 * `instancesOf` filters the graph's subjects by `isShaclInstance`,
   which gives the `rdfs:subClassOf` closure without materialising
   triples.
@@ -124,11 +126,9 @@ def nodeConforms (g : Graph) (shapeTerm : Term) (v : Term) : Bool :=
       let sg := decodeShapesGraph g
       match lookupShape r sg.shapes with
       | none => true
-      | some _ =>
-          let shapes := sg.shapes.map (fun s =>
-            if s.id == r then { s with targets := [Target.node v] }
-            else { s with targets := ([] : List Target) })
-          (validate g { sg with shapes := shapes }).conforms
+      | some s =>
+          let env := ({} : ValidationConfig).envFor g sg.shapes
+          env.conforms (collectShapeViolations env g sg.shapes v s (validateFuel sg.shapes))
 
 /-! ## Numeric aggregates
 

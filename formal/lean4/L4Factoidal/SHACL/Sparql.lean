@@ -499,11 +499,12 @@ def sparqlViolationsForFocus (data shapesRaw : Graph) (focus : Term) (s : Shape)
                             | none => s.message } }
 
 /-- Every `sh:sparql` constraint of a shape, over every focus node.
-`sh:sparql` is dispatched for shapes WITH targets only; a nested
+`sh:sparql` is dispatched at a shape's own focus nodes (its targets
+and SHACL 1.2 sh:shape links) only; a nested
 property shape's `sh:sparql` is not reached (the same slice the F\*
 takes — the vendored suite has no fixture for it). -/
-def sparqlViolationsForShape (data shapesRaw : Graph) (allSubjects : List Subject)
-    (s : Shape) : SparqlOutcome :=
+def sparqlViolationsForShape (env : ValidationEnv) (data shapesRaw : Graph) (shapes : List Shape)
+    (allSubjects : List Subject) (s : Shape) : SparqlOutcome :=
   let ccs := s.constraints.filterMap fun c =>
     match c with
     | .sparql cref q m sev => some (cref, q, m, sev.getD s.severity)
@@ -511,7 +512,7 @@ def sparqlViolationsForShape (data shapesRaw : Graph) (allSubjects : List Subjec
   if ccs.isEmpty then .empty
   else
     SparqlOutcome.concat <|
-      (shapeFocusNodes data allSubjects s).flatMap fun fn =>
+      (shapeFocusNodes env data shapes allSubjects s).flatMap fun fn =>
         ccs.map fun (cref, q, m, sev) =>
           sparqlViolationsForFocus data shapesRaw fn s cref q m sev
 
@@ -622,11 +623,11 @@ same over the shape's `sh:property` shapes at their value nodes.
 Unlike `sh:sparql`, a constraint component IS reached through
 `sh:property` — `component/propertyValidator-select-001` and
 `pre-binding/unsupported-sparql-006` both need it. -/
-def customViolationsForOccurrence (data : Graph) (sg : List Shape) (node : Term)
-    (s : Shape) : Nat → SparqlOutcome
+def customViolationsForOccurrence (env : ValidationEnv) (data : Graph) (sg : List Shape)
+    (node : Term) (s : Shape) : Nat → SparqlOutcome
   | 0 => .empty
   | fuel + 1 =>
-    let values := valueNodes data node s
+    let values := valueNodes env data node s
     let customs := s.constraints.filter fun c =>
       match c with | .custom _ _ _ _ _ => true | _ => false
     let own := SparqlOutcome.concat <|
@@ -636,14 +637,14 @@ def customViolationsForOccurrence (data : Graph) (sg : List Shape) (node : Term)
         s.propertyRefs.filterMap fun r =>
           match lookupShape r sg with
           | none => none
-          | some ps => some (customViolationsForOccurrence data sg v ps fuel)
+          | some ps => some (customViolationsForOccurrence env data sg v ps fuel)
     own.append nested
 
-def customViolationsForShape (data : Graph) (allSubjects : List Subject)
+def customViolationsForShape (env : ValidationEnv) (data : Graph) (allSubjects : List Subject)
     (sg : List Shape) (s : Shape) (fuel : Nat) : SparqlOutcome :=
   SparqlOutcome.concat <|
-    (shapeFocusNodes data allSubjects s).map fun fn =>
-      customViolationsForOccurrence data sg fn s fuel
+    (shapeFocusNodes env data sg allSubjects s).map fun fn =>
+      customViolationsForOccurrence env data sg fn s fuel
 
 /-! ## §3.1 validation with SHACL-SPARQL
 
@@ -656,16 +657,15 @@ validation). -/
 
 def validateWithSparql (data shapesRaw : Graph) (sgraph : ShapesGraph)
     (cfg : ValidationConfig := {}) : ValidationReport :=
-  let env := cfg.toEnv
   let core := validate data sgraph cfg
   let shapes := sgraph.shapes
+  let env := cfg.envFor data shapes
   let allSubjects := distinctSubjects data
   let fuel := validateFuel shapes
-  let roots := shapes.filter fun s => !s.targets.isEmpty
   let sparqlOut := SparqlOutcome.concat <|
-    roots.map fun s => sparqlViolationsForShape data shapesRaw allSubjects s
+    shapes.map fun s => sparqlViolationsForShape env data shapesRaw shapes allSubjects s
   let customOut := SparqlOutcome.concat <|
-    roots.map fun s => customViolationsForShape data allSubjects shapes s fuel
+    shapes.map fun s => customViolationsForShape env data allSubjects shapes s fuel
   let out := sparqlOut.append customOut
   let results := core.results ++ out.results
   { conforms := env.conforms results, results := results, failure := out.failure,
@@ -725,34 +725,32 @@ def CustomSatisfies (data : Graph) (focus : Term) (s : Shape) (values : List Ter
 /-- §6 through `sh:property`: a constraint component is reached at the
 focus node's own occurrence and at every occurrence of every property
 shape, down to the nesting budget. -/
-def CustomOccurrenceConforms (data : Graph) (sg : List Shape) (node : Term) (s : Shape) :
-    Nat → Prop
+def CustomOccurrenceConforms (env : ValidationEnv) (data : Graph) (sg : List Shape) (node : Term)
+    (s : Shape) : Nat → Prop
   | 0 => True
   | fuel + 1 =>
-    let values := valueNodes data node s
+    let values := valueNodes env data node s
     (∀ cc ∈ s.constraints, CustomSatisfies data node s values cc) ∧
     (∀ v ∈ values, ∀ r ∈ s.propertyRefs, ∀ ps, lookupShape r sg = some ps →
-      CustomOccurrenceConforms data sg v ps fuel)
+      CustomOccurrenceConforms env data sg v ps fuel)
 
 /-- §5.1 at shape level: every `sh:sparql` constraint of a targeted
 shape, at every focus node. -/
-def SparqlShapeConforms (data shapesRaw : Graph) (allSubjects : List Subject) (s : Shape) :
-    Prop :=
-  ∀ fn ∈ shapeFocusNodes data allSubjects s,
+def SparqlShapeConforms (env : ValidationEnv) (data shapesRaw : Graph) (shapes : List Shape)
+    (allSubjects : List Subject) (s : Shape) : Prop :=
+  ∀ fn ∈ shapeFocusNodes env data shapes allSubjects s,
     ∀ cc ∈ s.constraints, ∀ cref q m sev, cc = .sparql cref q m sev →
       SparqlSatisfies data shapesRaw fn s q
 
 /-- §3.1 with SHACL Part 2: SHACL Core conformance, plus every
-`sh:sparql` constraint and every constraint component of every
-targeted shape. -/
+`sh:sparql` constraint and every constraint component of every shape at
+its focus nodes. -/
 def GraphConformsWithSparql (env : ValidationEnv) (data shapesRaw : Graph) (sg : ShapesGraph) :
     Prop :=
   GraphConforms env data sg ∧
-  (∀ s ∈ sg.shapes, s.targets ≠ [] →
-     SparqlShapeConforms data shapesRaw (distinctSubjects data) s) ∧
-  (∀ s ∈ sg.shapes, s.targets ≠ [] →
-     ∀ fn ∈ shapeFocusNodes data (distinctSubjects data) s,
-       CustomOccurrenceConforms data sg.shapes fn s (validateFuel sg.shapes))
+  (∀ s ∈ sg.shapes, SparqlShapeConforms env data shapesRaw sg.shapes (distinctSubjects data) s) ∧
+  (∀ s ∈ sg.shapes, ∀ fn ∈ shapeFocusNodes env data sg.shapes (distinctSubjects data) s,
+     CustomOccurrenceConforms env data sg.shapes fn s (validateFuel sg.shapes))
 
 end Spec
 

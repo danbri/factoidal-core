@@ -61,6 +61,8 @@ def constraintComponentIri : Constraint → WfIri
   | .closedByTypes _ _ => shClosedCC
   | .hasValue _ => shHasValueCC
   | .inSet _ => shInCC
+  | .uniqueValuesFor _ => shUniqueValuesForCC
+  | .nodeByExpression _ => shNodeByExpressionCC
   -- SHACL-SPARQL: §5.1 results name sh:SPARQLConstraintComponent; §6
   -- results name the component itself.
   | .sparql _ _ _ _ => shSPARQLConstraintComponent
@@ -129,7 +131,8 @@ mutual
   `link` (sh:result from the report, §3.6.2.7 sh:detail from a parent
   result), followed by the triples of its own sh:detail results. -/
   def resultToTriples (parent : Subject) (link : WfIri) : Violation → Nat → List Triple × Nat
-    | ⟨focus, path, value, sourceShape, constraint, severity, message, details⟩, ctr =>
+    | ⟨focus, path, value, sourceShape, constraint, severity, message, details, srcConstraint⟩,
+      ctr =>
       let (bid, ctr1) := freshBnode "_shacl_result" ctr
       let rsubj : Subject := .bnode bid
       let base : List Triple :=
@@ -155,9 +158,9 @@ mutual
         | some m => [{ s := rsubj, p := shResultMessage, o := .literal m }]
         | none => []
       let scTs : List Triple :=
-        match sourceConstraintOf constraint with
-        | some sc => [{ s := rsubj, p := shSourceConstraint, o := sc }]
-        | none => []
+        match srcConstraint, sourceConstraintOf constraint with
+        | some sc, _ | none, some sc => [{ s := rsubj, p := shSourceConstraint, o := sc }]
+        | none, none => []
       let (detailTs, ctr3) := resultsToTriples rsubj shDetail details ctr2
       (base ++ pathTs ++ valueTs ++ msgTs ++ scTs ++ detailTs, ctr3)
 
