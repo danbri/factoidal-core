@@ -1548,4 +1548,37 @@ theorem detectClashI_closureI (g : Graph) (fuel : Nat) :
     detectClashI (closureI (Index.ofGraph g) fuel) = inconsistent g fuel :=
   detectClashI_eq (Index.Wf.closure fuel (Index.Wf.ofGraph g))
 
+/-! ## Section 10 — the indexed loop is what the compiler emits
+
+`closure` and `closureFix` (`RLClosure.lean`) are the specification: each round
+reads its premises by scanning the graph and adds its conclusions with a list
+scan (`memB`). Run on a chain of 80 subclass axioms, the command line spent
+83 percent of its instructions in that scan, and the time grew 18 to 20 times for
+each doubling of the chain (survey of 2026-10-10,
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`). `indexedClosure`
+returns the same list at every fuel (`indexedClosure_eq`). The two `csimp`
+theorems below make every function compiled after this module call the indexed
+loop in place of the scanning one. The definitions of `closure` and
+`closureFix`, and every theorem stated about them, do not change.
+
+`closureFix` is defined in `RLClosure.lean`, before this module, so its own
+body keeps calling `closure`. `closureFixIndexed` is the function the compiler
+substitutes for it in the modules that import this one. -/
+
+/-- `closureFix` through the indexed loop. -/
+def closureFixIndexed (g : Graph) : Graph :=
+  indexedClosure g (closureFuelBound g)
+
+theorem closureFix_eq_closureFixIndexed (g : Graph) :
+    closureFix g = closureFixIndexed g :=
+  (indexedClosure_eq g (closureFuelBound g)).symm
+
+/-- The compiler calls `indexedClosure` wherever the source says `closure`. -/
+@[csimp] theorem closure_eq_indexedClosure : @closure = @indexedClosure :=
+  funext fun g => funext fun fuel => (indexedClosure_eq g fuel).symm
+
+/-- The compiler calls `closureFixIndexed` wherever the source says `closureFix`. -/
+@[csimp] theorem closureFix_eq_indexed : @closureFix = @closureFixIndexed :=
+  funext closureFix_eq_closureFixIndexed
+
 end L4Factoidal.OWL.RL

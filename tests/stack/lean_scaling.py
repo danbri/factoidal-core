@@ -15,6 +15,9 @@ for the paths that the survey of 2026-10-10 found quadratic and that were
 repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
 
   rdfs-closure-*   RDFS closure of a wide, a dense and a tree-shaped schema
+  owlrl-closure-chain  OWL RL closure of a chain of subclass axioms. The closure
+                   of n axioms has n(n-1)/2 triples, so 4x input is 16x output
+                   and the row uses the bound 20.0 (ROW_BOUND)
   trig-parse       TriG parse, many small graph blocks
   trig-big-graph   TriG parse, one graph block with all the triples
   turtle-serialize Turtle pretty-printer over slices of a real life-sciences file
@@ -58,6 +61,8 @@ BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4facto
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
+# Rows whose OUTPUT grows faster than their input use a larger bound.
+ROW_BOUND = {"owlrl-closure-chain": 20.0}
 
 
 def fixture(name: str, text_fn) -> Path:
@@ -100,6 +105,10 @@ ROWS = {
         256,
         lambda n: fixture(f"clo-tree-{n}.ttl", lambda: bc.GENERATORS["tree"](n)),
         lambda p: [str(BIN), "closure", str(p), "--regime", "rdfs", "--format", "turtle"]),
+    "owlrl-closure-chain": (
+        20,
+        lambda n: fixture(f"clo-chain-{n}.ttl", lambda: bc.GENERATORS["chain"](n)),
+        lambda p: [str(BIN), "closure", str(p), "--regime", "owl-rl", "--format", "turtle"]),
     "trig-parse": (
         2500,
         lambda n: fixture(f"trig-blocks-{n}.trig", lambda: trig_blocks(n)),
@@ -176,7 +185,8 @@ def main() -> int:
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = 0
-    print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s); "
+    print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
+          f"(rows in ROW_BOUND use their own bound); "
           f"minimum of {args.runs} runs; load average {os.getloadavg()[0]:.2f}")
     for rid in rows:
         x, make, cmd = ROWS[rid]
@@ -186,7 +196,8 @@ def main() -> int:
             failed += 1
             print(f"  FAIL {rid}: n={x} -> n={4 * x}: {e1 or e4}")
             continue
-        ok = t4 <= BOUND * max(t1, FLOOR)
+        bound = ROW_BOUND.get(rid, BOUND)
+        ok = t4 <= bound * max(t1, FLOOR)
         passed += ok
         failed += (not ok)
         print(f"  {'PASS' if ok else 'FAIL'} {rid}: n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
