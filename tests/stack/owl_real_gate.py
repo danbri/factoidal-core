@@ -64,6 +64,7 @@ ROWS: dict[str, tuple] = {
     "ro-closure": ("ro", "closure", "done", None),
     "cl-basic-closure": ("cl-basic", "closure", "done", None),
     "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
+    "wine-closure-fstar": ("wine", "closure", "done", None),
     "qudt-closure": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
 }
@@ -82,6 +83,8 @@ XFAIL: dict[str, str] = {
     # The tableau refuter grows about 5 times per doubling of the input;
     # killed at 600 s (HermiT: 6.1 s).
     "cl-basic-consistent": "https://github.com/danbri/factoidal/issues/760",
+    # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
+    "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
 }
 
 
