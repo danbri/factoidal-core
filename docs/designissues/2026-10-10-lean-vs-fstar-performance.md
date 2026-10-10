@@ -835,17 +835,18 @@ paragraphs of `gene.ttl`.
   `List.cons_lt_cons_iff`), `strCompare_eq_fast`,
   `strCompare_eq_strCompareFast`. The definition of `strCompare` and every
   theorem about it are unchanged.
-* **Evidence.** Output identical on the query set of 9.3. Guards: the native
+* **Evidence.** Output identical: ORDER BY on 1,250 paragraphs, the 151
+  command-line comparisons of 9.2, and the SPARQL runner logs of 9.4. Guards: the native
   order against `listCharCompare` on all pairs of 18 strings (the list form is
   not rewritten, so the guard compares two programs), and 8 `sparqlOrder` /
   `erEqual` cases.
 
 | query (1,250 paragraphs) | before | after 9.1 | after 9.1 and 9.2 |
 |---|---:|---:|---:|
-| `ORDER BY ?s ?p LIMIT 20` | 1,716,385,516 | 800,708,680 | TBD_CG_ORDERBY |
-| `COUNT(DISTINCT ?s)` | 778,899,813 | 721,044,169 | TBD_CG_CD |
-| `GROUP BY ?p` (q5) | 805,789,131 | 725,867,375 | TBD_CG_GB |
-| `MIN(?o) MAX(?o) ... GROUP BY ?p` | 962,084,714 | 733,651,811 | TBD_CG_MM |
+| `ORDER BY ?s ?p LIMIT 20` | 1,716,385,516 | 800,708,680 | 366,846,454 |
+| `COUNT(DISTINCT ?s)` | 778,899,813 | 721,044,169 | 286,573,651 |
+| `GROUP BY ?p` (q5) | 805,789,131 | 725,867,375 | 291,628,516 |
+| `MIN(?o) MAX(?o) ... GROUP BY ?p` | 962,084,714 | 733,651,811 | 299,423,335 |
 
 Instructions executed (callgrind). After 9.1 the sort comparator of ORDER BY
 fell from 984 to 68 million instructions. Other character-list comparisons on
@@ -906,16 +907,23 @@ else needed a repair.
   * Callgrind, `query` `COUNT(*)`: 705,734,080 instructions before,
     271,560,893 after (`parseNQuadsFast` was 70 percent before; after, the
     Turtle parse is 46 percent and the check 21). `parse --out turtle`:
-    TBD_CG_SER_BASE before, TBD_CG_SER_NEW after. `canonicalize` of the same
-    file: TBD_CG_CANON_BASE before, TBD_CG_CANON_NEW after.
+    2,023,194,174 before, 887,506,064 after. `canonicalize` of the same
+    file: 1,321,391,256 before, 868,571,357 after.
   * Byte comparison, standard output, standard error and exit status, binary
     before against binary after: every `.ttl`, `.nt`, `.nq`, `.trig` and `.rdf`
     file under `third_party/testing/w3c/rdf/rdf11` and `rdf12` (2,087 files):
     `query` (all quads, no ORDER BY) 2,087 of 2,087 identical, `canonicalize`
-    2,087 of 2,087 identical, TBD_OUT_W3C. `parse`: 2,081 identical, 6 differ,
+    2,087 of 2,087 identical, `parse --out nquads`, `--out turtle` and `--out bogus` 2,090 of 2,090 identical each (the 2,087 files, two `gene.ttl` slices and the three-line file). `parse`: 2,081 identical, 6 differ,
     each by the number of repeated triples in the file (five EARL reports and
     `turtle12-eval-annotation-07.ttl`, which states `:s :p :o` twice).
-    TBD_CMP_QUERIES
+    On 1,250 and 5,000 paragraphs of `gene.ttl`: the six survey queries, DISTINCT,
+    COUNT(DISTINCT ?s) and COUNT(DISTINCT *), two ORDER BY forms, GROUP BY ?s,
+    MIN and MAX, `SELECT *` with and without LIMIT and OFFSET, a join without
+    ORDER BY, FILTER EXISTS, FILTER NOT EXISTS, MINUS, OPTIONAL with FILTER, a
+    sub-SELECT, CONSTRUCT, DESCRIBE, ASK, GRAPH and a string FILTER, each with
+    and without `--table`; two updates; `canonicalize`; the four closure
+    regimes; five closure shapes with `owl-consistent`; generated RDFC-1.0
+    inputs; the vocabularies: 151 of 151 identical.
   * Guards (`RDF/DatasetNormalizeTests.lean`): the check accepts repeated
     triples, upper-case tags, escapes, blank nodes, named graphs of one name
     and nested triple terms with a base direction, and refuses an IRI with a
