@@ -345,6 +345,16 @@ else
   verdict "W3C construct/constructlist.rq output parses as N-Triples ($WANT_CL triples)" "" \
     "$( [ "$CL_RC" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$OUT" = "$WANT_CL" ] && [ "$OUT" = 20 ] && echo 1 || echo 0 )" \
     "query exit=$CL_RC parse exit=$RC parse stdout=$OUT parse stderr=$ERR" "query stdout=$(printf '%s' "$CL_OUT" | head -n 2)"
+
+  # --- NOW() (https://github.com/danbri/factoidal/issues/743): SPARQL 1.1
+  # §17.4.5.1 gives an xsd:dateTime for the query execution. The ops path has
+  # no clock in its EvalEnv, so W3C functions/now01.rq answers false; the W3C
+  # expected result now01.srx is true. Found by `l4diff --lean-cli`.
+  F="$W3C_SPARQL/functions"
+  run_cmd "$CLI" query "$F/data.ttl" --format turtle --query "$F/now01.rq"
+  verdict "W3C functions/now01.rq (NOW() is an xsd:dateTime) -> true" 743 \
+    "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && grep -q '<boolean>true</boolean>' "$F/now01.srx" && echo 1 || echo 0 )" \
+    "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 fi
 
 # --- canonicalize ------------------------------------------------------

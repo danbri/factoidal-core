@@ -5,6 +5,10 @@ https://github.com/danbri/factoidal/issues/698).
 
 ## Result
 
+> **Correction, 2026-10-10.** The next paragraph is true for the Lean
+> LIBRARY, and false for the Lean command line on 6 of the 24 items. See
+> [Correction](#correction-2026-10-10-the-lean-side-was-the-library-not-the-command-line).
+
 `l4diff` found 18 disagreements and 6 F\* command-line errors on the SPARQL
 1.1 `manifest-all.ttl`. For all 24 items the Lean answer is the W3C expected
 answer, and the F\* answer is not. No item is a defect of `l4diff`. No Lean
@@ -170,3 +174,84 @@ Since this landing, the Lean side answers an error for a failed SERVICE call
 without SILENT (https://github.com/danbri/factoidal/issues/717), and
 `l4diff` counts such a case as `lean-error` with the message. No W3C test in
 `manifest-all.ttl` has one: `service7` uses SILENT.
+
+## Correction (2026-10-10): the Lean side was the library, not the command line
+
+**Wrong claim.** The Result section above says that for all 24 items "the
+Lean answer is the W3C expected answer" and that "No Lean change was
+necessary". On 2026-10-10 the coordinator reported the same on
+https://github.com/danbri/factoidal/issues/718. That held for the Lean
+LIBRARY path. It did not hold for the Lean command line, `l4factoidal`: six of
+the 24 items, the two causes F4 and F5, were Lean command-line defects too.
+
+| Items | F\* defect | The same defect in the Lean command line |
+| --- | --- | --- |
+| 19, 20, 22, 23, 24 (cause F4) | https://github.com/danbri/factoidal/issues/739 | https://github.com/danbri/factoidal/issues/741: `l4factoidal query` parsed the query with no base IRI, so a relative IRI was a parse error |
+| 21 (cause F5) | https://github.com/danbri/factoidal/issues/740 | https://github.com/danbri/factoidal/issues/742: `l4factoidal query` printed `_:tpl_0__:bnode_13`, which is not N-Triples |
+
+**Why `l4diff` could not see it.** `l4diff` compares the F\* COMMAND LINE with
+the Lean LIBRARY. Its Lean side is `parseSparql` with the query file's IRI as
+the base, then `evalSelect` / `evalAsk` / `evalConstruct`, and it compares
+the graph in memory (`l4w3c` does the same). No part of that path is the
+command line's own code: reading the query file and choosing its base IRI
+(`Wasm/Cli.lean`), the ops path (`Wasm/Ops/Query.lean`, which sends SELECT
+and ASK to the backend physical-plan runners), and the printed form of the
+answer (SPARQL Results JSON, N-Triples). A verdict "Lean is right" from that
+comparison is a verdict on the library only. A comparison of path A of one
+tree with path B of another tree attributes a difference to a tree only for
+the code the two paths share.
+
+**Cost.** The agent that added the known-defect cases for issues 739 and 740
+(branch `claude/wt-fstar-xfail2`) found both Lean defects when it tried to
+use the Lean command line as the oracle. Those two cases then had to use
+`l4w3c` and the Lean N-Triples parser as the oracle, and two Lean issues
+(741, 742) were opened the same day. The statement "no Lean change was
+necessary" stood on issue 718 until this correction.
+
+**Repair.** 2026-10-10, branch `claude/wt-lean-cli` of
+`danbri/factoidal-core`:
+
+- Issue 741: the query and update ops take the base IRI of the text; the
+  command line gives a `--query FILE` text the file's IRI (RFC 3986 §5.1.3)
+  and a `--query-string` text the `--base` value.
+- Issue 742: CONSTRUCT template labels are N-Triples BLANK_NODE_LABELs. The
+  guards written for it found one more defect, in the parser of BOTH trees:
+  in `( [ :r ?o ] )` the collection cell and the `[ ]` node had one name,
+  so the cell was its own `rdf:first` (SPARQL 1.1 §4.1.4). Fixed in the
+  Lean parser (`bracketBnodeId`); the F\* parser still has it.
+- `tests/known-defects/run.sh`: the cases 739 and 740 use the Lean command
+  line as the oracle.
+- `l4diff --lean-cli PATH`: the Lean side runs through `l4factoidal query`
+  with the query FILE the F\* side gets, and the printed answer is read back
+  and compared. A test with one `qt:data` file and no `qt:graphData` gives
+  the command line that file; another test gives it the test's dataset as
+  one N-Quads file (the command line reads one dataset). The Lean command
+  line runs even when the F\* run fails, and its failure counts first, so a
+  defect the two command lines share is a `lean-error`, not hidden behind an
+  `fstar-error`.
+
+**Measurements** (SPARQL 1.1 `manifest-all.ttl`, F\* binary
+`build-f7aa1a33b94f-linux-x86_64` from `tools/fetch-builds.sh --set native`):
+
+| `l4diff` mode | TOTAL |
+| --- | --- |
+| default (Lean library) | 234 agree, 18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of 650) |
+| `--lean-cli`, the released `l4factoidal` of the same build (before the fixes) | 233 agree, 19 disagree, 0 tie-order, 0 fstar-error, 6 lean-error, 392 skipped (out of 650) |
+| `--lean-cli`, `l4factoidal` with the fixes | 233 agree, 19 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of 650) |
+
+With the released command line the six `lean-error` items are items 19 to 24,
+the defects of issues 741 and 742. In both `--lean-cli` runs the one extra
+disagreement is `NOW()` (W3C `functions/now01`): the Lean command line
+answers `false`, the W3C expected answer is `true`. This is a third Lean
+command-line defect that the library comparison could not see: the ops path
+builds its evaluation environment with no clock, so `NOW()` is an error
+(SPARQL 1.1 §17.4.5.1). It is open as
+https://github.com/danbri/factoidal/issues/743, with an expected-failure case
+in `Wasm/cli-smoke.sh`.
+
+**Rule.** When a differential, a known-defect oracle or a status report says
+that a tree is right, it names the surface it ran: the library (`l4w3c`,
+`l4diff`), the command line (`l4factoidal`, `l4diff --lean-cli`), or the
+wasm/npm package, and does not carry the verdict to a surface it did not
+run. The same rule is in `skills/test-suites/SKILL.md`, at the `l4diff` paragraph.
+
