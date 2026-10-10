@@ -53,6 +53,7 @@ component declaratively over the same data, and `Spec.Conforms` is
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.SHACL.Shapes
+import L4Factoidal.SHACL.DataIndex
 import L4Factoidal.SPARQL.Expr
 import L4Factoidal.Regex.XPath
 import L4Factoidal.NatBounds
@@ -149,6 +150,11 @@ structure ValidationEnv where
   disallowed : List Severity := defaultDisallowed
   evalExpr : Term → Option Term → List Term := constantNodeExpr
   targetsOf : ShapeRef → List Term := fun _ => []
+  /-- The (subject, predicate) index of the data graph (`DataIndex.lean`),
+  built once by `ValidationConfig.envFor`; `DataIndex.none` reads the graph.
+  The engine's answers are the same under any index coherent with the data
+  graph (`DataIndex.Coherent`; https://github.com/danbri/factoidal/issues/723). -/
+  dataIx : DataIndex := DataIndex.none
   deriving Inhabited
 
 /-- Does a result at severity `sev` count against conformance? -/
@@ -461,6 +467,83 @@ end
 def evalPath (g : Graph) (start : Term) (p : Path) : List Term :=
   evalPathFuel g start p (g.length + 50)
 
+/-! ### Path evaluation through the data index
+
+The same recursion as `evalPathFuel`, with a predicate step read from the
+index (`objectsOfTermIx`) and the fuel's graph length read from the index.
+`evalPathFuelIx_eq` and `evalPathIx_eq`: the same list under a coherent
+index. -/
+
+mutual
+  def evalPathFuelIx (ix : DataIndex) (g : Graph) (start : Term) : Path → Nat → List Term
+    | _, 0 => []
+    | p, fuel + 1 =>
+      match p with
+      | .pred pr => objectsOfTermIx ix g start pr
+      | .inverse (.pred pr) => subjectsOf g pr start
+      | .inverse p' => evalPathFuelIx ix g start p'.invert fuel
+      | .seq ps => evalSeqFuelIx ix g [start] ps fuel
+      | .alt ps => evalAltFuelIx ix g start ps fuel
+      | .zeroOrMore p' =>
+        dedupTerms (start :: evalPlusFuelIx ix g (evalPathFuelIx ix g start p' fuel) p' fuel)
+      | .oneOrMore p' =>
+        dedupTerms (evalPlusFuelIx ix g (evalPathFuelIx ix g start p' fuel) p' fuel)
+      | .zeroOrOne p' => dedupTerms (start :: evalPathFuelIx ix g start p' fuel)
+
+  def evalSeqFuelIx (ix : DataIndex) (g : Graph) (starts : List Term) : List Path → Nat → List Term
+    | _, 0 => []
+    | [], _ + 1 => dedupTerms starts
+    | p :: rest, fuel + 1 =>
+      let nexts := dedupTerms (starts.flatMap fun s => evalPathFuelIx ix g s p fuel)
+      evalSeqFuelIx ix g nexts rest fuel
+
+  def evalAltFuelIx (ix : DataIndex) (g : Graph) (start : Term) : List Path → Nat → List Term
+    | _, 0 => []
+    | ps, fuel + 1 => dedupTerms (ps.flatMap fun p => evalPathFuelIx ix g start p fuel)
+
+  def evalPlusFuelIx (ix : DataIndex) (g : Graph) (frontier : List Term) (p : Path) : Nat → List Term
+    | 0 => dedupTerms frontier
+    | fuel + 1 =>
+      let nexts := dedupTerms (frontier.flatMap fun s => evalPathFuelIx ix g s p fuel)
+      let combined := dedupTerms (frontier ++ nexts)
+      if combined.length ≤ frontier.length then frontier
+      else evalPlusFuelIx ix g combined p fuel
+end
+
+def evalPathIx (ix : DataIndex) (g : Graph) (start : Term) (p : Path) : List Term :=
+  evalPathFuelIx ix g start p (ix.length g + 50)
+
+theorem evalPathFuelIx_eq {ix : DataIndex} {g : Graph} (h : ix.Coherent g) : ∀ fuel : Nat,
+    (∀ start p, evalPathFuelIx ix g start p fuel = evalPathFuel g start p fuel) ∧
+    (∀ starts ps, evalSeqFuelIx ix g starts ps fuel = evalSeqFuel g starts ps fuel) ∧
+    (∀ start ps, evalAltFuelIx ix g start ps fuel = evalAltFuel g start ps fuel) ∧
+    (∀ frontier p, evalPlusFuelIx ix g frontier p fuel = evalPlusFuel g frontier p fuel)
+  | 0 => by
+      refine ⟨fun _ _ => ?_, fun _ ps => ?_, fun _ _ => ?_, fun _ _ => ?_⟩
+      · simp [evalPathFuelIx, evalPathFuel]
+      · cases ps <;> simp [evalSeqFuelIx, evalSeqFuel]
+      · simp [evalAltFuelIx, evalAltFuel]
+      · simp [evalPlusFuelIx, evalPlusFuel]
+  | fuel + 1 => by
+      obtain ⟨ih1, ih2, ih3, ih4⟩ := evalPathFuelIx_eq h fuel
+      refine ⟨fun start p => ?_, fun starts ps => ?_, fun start ps => ?_, fun frontier p => ?_⟩
+      · cases p with
+        | pred pr => simp [evalPathFuelIx, evalPathFuel, objectsOfTermIx_eq h]
+        | inverse p' =>
+            cases p' <;> simp [evalPathFuelIx, evalPathFuel, ih1]
+        | seq ps => simp [evalPathFuelIx, evalPathFuel, ih2]
+        | alt ps => simp [evalPathFuelIx, evalPathFuel, ih3]
+        | zeroOrMore p' => simp [evalPathFuelIx, evalPathFuel, ih1, ih4]
+        | oneOrMore p' => simp [evalPathFuelIx, evalPathFuel, ih1, ih4]
+        | zeroOrOne p' => simp [evalPathFuelIx, evalPathFuel, ih1]
+      · cases ps <;> simp [evalSeqFuelIx, evalSeqFuel, ih1, ih2]
+      · simp [evalAltFuelIx, evalAltFuel, ih1]
+      · simp [evalPlusFuelIx, evalPlusFuel, ih1, ih4]
+
+theorem evalPathIx_eq {ix : DataIndex} {g : Graph} (h : ix.Coherent g) (start : Term) (p : Path) :
+    evalPathIx ix g start p = evalPath g start p := by
+  simp [evalPathIx, evalPath, DataIndex.length_eq h, (evalPathFuelIx_eq h _).1]
+
 /-- §2.3 / SHACL 1.2 §value-nodes-property-shapes: the value nodes of a
 focus node for a shape — the focus node itself for a node shape; for a
 property shape, "all nodes in the data graph that can be reached from
@@ -470,7 +553,7 @@ sh:defaultValue. -/
 def valueNodes (env : ValidationEnv) (data : Graph) (node : Term) (s : Shape) : List Term :=
   if s.isProperty then
     let viaPath := match s.path with
-      | some p => evalPath data node p
+      | some p => evalPathIx env.dataIx data node p
       | none => []
     let viaValues := match s.valuesExpr with
       | some e => env.evalExpr e (some node)
@@ -628,6 +711,22 @@ def simpleValueCheck (data : Graph) (cc : Constraint) (v : Term) : Option Bool :
       | .literal lv, .literal lt => numericCmpLt lv.val lt.val == some true
       | _, _ => false)
   | _ => none
+
+
+/-- `simpleValueCheck` with the `sh:class` test read through the data index;
+every other component is `simpleValueCheck` itself (`simpleValueCheckIx_eq`). -/
+def simpleValueCheckIx (ix : DataIndex) (data : Graph) (cc : Constraint) (v : Term) :
+    Option Bool :=
+  match cc with
+  | .cls cs => some (cs.any (isShaclInstanceIx ix data v))
+  | _ => simpleValueCheck data cc v
+
+theorem simpleValueCheckIx_eq {ix : DataIndex} {data : Graph} (h : ix.Coherent data)
+    (cc : Constraint) (v : Term) :
+    simpleValueCheckIx ix data cc v = simpleValueCheck data cc v := by
+  have hi : isShaclInstanceIx ix data v = isShaclInstance data v :=
+    funext (isShaclInstanceIx_eq h v)
+  cases cc <;> simp [simpleValueCheckIx, simpleValueCheck, hi]
 
 /-- A result with sh:value (§3.6.2). -/
 def valueViolation (focus : Term) (s : Shape) (cc : Constraint) (v : Term) : Violation :=
@@ -922,7 +1021,7 @@ mutual
             else [{ valueViolation focus s cc v with
                     details := bad.flatMap fun m => collectShapeViolations env data sg m ms fuel }]
       | _ =>
-        match simpleValueCheck data cc v with
+        match simpleValueCheckIx env.dataIx data cc v with
         | some true => []
         | some false => [{ valueViolation focus s cc v with
                            details := valueDetails data focus s cc v }]
@@ -1001,9 +1100,9 @@ targets (every subject of the data graph). -/
 def evalTarget (env : ValidationEnv) (data : Graph) (sg : List Shape)
     (allSubjects : List Subject) (s : Shape) : Target → List Term
   | .cls c => allSubjects.filterMap fun n =>
-      if isShaclInstance data n.toTerm c then some n.toTerm else none
+      if isShaclInstanceIx env.dataIx data n.toTerm c then some n.toTerm else none
   | .implicitClass c => allSubjects.filterMap fun n =>
-      if isShaclInstance data n.toTerm c then some n.toTerm else none
+      if isShaclInstanceIx env.dataIx data n.toTerm c then some n.toTerm else none
   | .node n =>
     match n with
     | .bnode _ => env.evalExpr n (some (shapeRefToTerm s.id))
@@ -1039,7 +1138,7 @@ would make targets and conformance depend on each other, a case of the
 recursion SHACL leaves undefined (§shapes-recursion). -/
 def ValidationConfig.envFor (cfg : ValidationConfig) (data : Graph) (shapes : List Shape) :
     ValidationEnv :=
-  let env0 := cfg.toEnv
+  let env0 := { cfg.toEnv with dataIx := DataIndex.ofGraph data }
   let allSubjects := distinctSubjects data
   let table := (shapes.filter hasUniqueValuesFor).map fun s =>
     (s.id, shapeFocusNodes env0 data shapes allSubjects s)

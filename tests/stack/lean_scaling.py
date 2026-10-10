@@ -32,7 +32,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    aggregate (issue 722; 0.43 s to 11.7 s before, 0.11 s to 0.60 s after)
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
-                   (https://github.com/danbri/factoidal/issues/723)
+                   (https://github.com/danbri/factoidal/issues/723; 0.31 s to
+                   3.82 s for 4x input before the data index, 0.043 s to 0.139 s after)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -85,7 +86,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    "shacl-person": "https://github.com/danbri/factoidal/issues/723",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

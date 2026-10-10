@@ -41,6 +41,8 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.SHACL.Vocabulary
 import L4Factoidal.RDF.Graph
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace L4Factoidal.SHACL
 
@@ -347,6 +349,107 @@ def dedupTerms (l : List Term) : List Term :=
 
 /-- Does `t` occur in `l` under `Term.eqb`? -/
 def termMem (t : Term) (l : List Term) : Bool := l.any (fun u => u.eqb t)
+
+/-! ### Hash-indexed forms of `distinctSubjects` and `dedupTerms` (2026-10-10)
+
+Both folds test membership by scanning the kept list and append with
+`acc ++ [x]`: quadratic in the number of kept values. Validation runs
+`distinctSubjects` on the data graph three times per run and `dedupTerms` on
+every focus-node and value-node list. Callgrind on `l4shacl`, 2,000
+`ex:Person` nodes, after the data index of `DataIndex.lean`:
+`distinctSubjects` 61.8 percent and `dedupTerms` 17.9 percent of 3.37 billion
+instructions (https://github.com/danbri/factoidal/issues/723).
+
+The fast forms keep the kept values newest first and a hash set (subjects) or
+hash buckets keyed by `Term.joinKey` (terms; `Term.joinKey_eq_of_eqb` puts
+every `Term.eqb`-equal term in one bucket, and `Term.eqb` decides inside the
+bucket). Each is proved to return the same list, and `csimp` makes the
+compiler use it. -/
+
+/-- Tail-recursive worker of `distinctSubjectsFast`: `acc` holds the kept
+subjects newest first, `seen` the same subjects as a set. -/
+def distinctSubjectsGo : List Triple → Std.HashSet Subject → List Subject → List Subject
+  | [], _, acc => acc.reverse
+  | t :: rest, seen, acc =>
+      if seen.contains t.s then distinctSubjectsGo rest seen acc
+      else distinctSubjectsGo rest (seen.insert t.s) (t.s :: acc)
+
+def distinctSubjectsFast (g : Graph) : List Subject := distinctSubjectsGo g ∅ []
+
+theorem distinctSubjectsGo_eq : ∀ (l : List Triple) (seen : Std.HashSet Subject)
+    (acc : List Subject), (∀ x, seen.contains x = acc.contains x) →
+    distinctSubjectsGo l seen acc =
+      l.foldl (fun acc t => if acc.contains t.s then acc else acc ++ [t.s]) acc.reverse
+  | [], _, _, _ => by simp [distinctSubjectsGo]
+  | t :: rest, seen, acc, h => by
+      have hc : acc.reverse.contains t.s = seen.contains t.s := by
+        rw [h t.s]; simp
+      simp only [distinctSubjectsGo, List.foldl_cons, hc]
+      split
+      · exact distinctSubjectsGo_eq rest seen acc h
+      · rw [distinctSubjectsGo_eq rest (seen.insert t.s) (t.s :: acc) (fun x => by
+          rw [Std.HashSet.contains_insert, h x]
+          simp only [List.contains_cons]
+          cases hx : (x == t.s) <;> cases hy : (t.s == x) <;> simp_all [beq_iff_eq] <;>
+            first | (subst_vars; simp_all) | skip)]
+        simp
+
+@[csimp] theorem distinctSubjects_eq_fast : @distinctSubjects = @distinctSubjectsFast := by
+  funext g
+  unfold distinctSubjects distinctSubjectsFast
+  rw [distinctSubjectsGo_eq g ∅ [] (fun x => by simp)]
+  rfl
+
+/-- Tail-recursive worker of `dedupTermsFast`: `acc` holds the kept terms
+newest first, `b` maps each `Term.joinKey` to the kept terms with that key. -/
+def dedupTermsGo : List Term → Std.HashMap Term (List Term) → List Term → List Term
+  | [], _, acc => acc.reverse
+  | t :: rest, b, acc =>
+      let bucket := b.getD t.joinKey []
+      if bucket.any (fun u => u.eqb t) then dedupTermsGo rest b acc
+      else dedupTermsGo rest (b.insert t.joinKey (t :: bucket)) (t :: acc)
+
+def dedupTermsFast (l : List Term) : List Term := dedupTermsGo l ∅ []
+
+private theorem dedupTerms_bucket_any (t : Term) : ∀ acc : List Term,
+    (acc.filter (fun u => u.joinKey == t.joinKey)).any (fun u => u.eqb t) =
+      acc.any (fun u => u.eqb t)
+  | [] => rfl
+  | u :: rest => by
+      have ih := dedupTerms_bucket_any t rest
+      by_cases hu : u.eqb t = true
+      · have hk : (u.joinKey == t.joinKey) = true := by
+          simp [Term.joinKey_eq_of_eqb hu]
+        simp [hu, hk]
+      · by_cases hk : (u.joinKey == t.joinKey) = true
+        · simp [hu, hk, ih]
+        · simp [hu, hk, ih]
+
+theorem dedupTermsGo_eq : ∀ (l : List Term) (b : Std.HashMap Term (List Term))
+    (acc : List Term), (∀ k, b.getD k [] = acc.filter (fun u => u.joinKey == k)) →
+    dedupTermsGo l b acc =
+      l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) acc.reverse
+  | [], _, _, _ => by simp [dedupTermsGo]
+  | t :: rest, b, acc, h => by
+      have hany : (b.getD t.joinKey []).any (fun u => u.eqb t) =
+          acc.reverse.any (fun u => u.eqb t) := by
+        rw [h t.joinKey, dedupTerms_bucket_any, List.any_reverse]
+      simp only [dedupTermsGo, List.foldl_cons, hany]
+      split
+      · exact dedupTermsGo_eq rest b acc h
+      · rw [dedupTermsGo_eq rest _ (t :: acc) (fun k => by
+          rw [Std.HashMap.getD_insert]
+          by_cases hk : t.joinKey = k
+          · subst hk; simp [h t.joinKey]
+          · have hb : (t.joinKey == k) = false := by simpa using hk
+            simp [hb, h k])]
+        simp
+
+@[csimp] theorem dedupTerms_eq_fast : @dedupTerms = @dedupTermsFast := by
+  funext l
+  unfold dedupTerms dedupTermsFast
+  rw [dedupTermsGo_eq l ∅ [] (fun k => by simp [Std.HashMap.getD_empty])]
+  rfl
 
 /-- Walk an RDF collection (rdf:first / rdf:rest chain ending in
 rdf:nil) from `head`. Fuel-bounded by the graph size (F*
