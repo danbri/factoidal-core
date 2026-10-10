@@ -161,6 +161,7 @@ import L4Factoidal.OWL.Materialise
 import L4Factoidal.OWL.Comprehension
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.Syntax.RdfXml
 import Harness.Common
@@ -1657,7 +1658,7 @@ def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Reg
   | .error o => IO.println (o.line c.id)
   | .ok r =>
     let g := r.graph
-    IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g}"
+    IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g} inCountingFragment={L4Factoidal.OWL.CountingOracle.inCountingFragment g} classSizeUnsat={L4Factoidal.OWL.CountingOracle.classSizeUnsat g}"
     let tb := L4Factoidal.OWL.Refute.collectAxioms g
     IO.println s!"  tbox axioms={tb.length}"
     for (a, d) in tb do

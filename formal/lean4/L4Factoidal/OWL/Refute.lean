@@ -83,18 +83,22 @@ ones — so this port is sound with respect to the `some false`
 contract while answering `none`/`some true` where the F* engine
 answers `Some false`:
 
-* named-individual identification (the ≤-rule below merges WITNESS
-  blank nodes only);
-* nominal (`owl:oneOf`) branching beyond the two size rules below;
-* the counting oracle and the analytic min-sum counting clash
-  (`OWL/CountingOracle.lean` exists, with a proved Farkas validator,
-  but is not yet consulted from this search);
-* the disjoint-data-property pattern collision;
-* DPLL-style branch-ordering heuristics.
+* nominal (`owl:oneOf`) BRANCHING: the choice of member is decided
+  instead by the identity clash (`nominalClash`, a clause search over
+  "these two terms denote one element"), and a node with a singleton
+  nominal is identified with its member (`forcedIdentifications`);
+* DPLL-style branch ordering for unions: the propositional clash
+  (`propositionalClash`) decides a node's disjunction labels and TBox
+  clauses by unit propagation instead.
 
-(The ≤-rule itself and the datatype facet/cardinality clashes were
-on this list until 2026-08-23; they are ported — see the ≤-rule and
-"Datatype value spaces" sections below.)
+Landed 2026-10-10 (`docs/designissues/2026-09-07-lean-owl-corpus-gap.md`
+§ 14): the `≥ k` generating rule with pairwise-different witnesses,
+`∃p.{a}` as a counted edge to `a`, deterministic identification under
+`≤ 1` bounds, the propositional and nominal clashes, the
+disjoint-data-property and negative-assertion value exclusions with the
+`xsd:pattern` language check, and the class-size counting rung
+(`countingRefutes`). (The ≤-rule itself and the datatype
+facet/cardinality clashes were on this list until 2026-08-23.)
 
 ## Every label is in negation normal form
 
@@ -108,6 +112,7 @@ import L4Factoidal.OWL.ClassExpr
 import L4Factoidal.XSD.Facets
 import L4Factoidal.Regex.XSDPattern
 import L4Factoidal.Regex.Exec
+import L4Factoidal.OWL.CountingOracle
 
 namespace L4Factoidal.OWL.Refute
 
@@ -2470,6 +2475,40 @@ def initState (g : Graph) : RState :=
   g.foldl (fun st t =>
     if t.p == rdfType then (addLabel st t.s (parseNnfWith us store t.o)).1 else st) st0
 
+/-- The class-size counting rung (`OWL/CountingOracle.lean`), the
+    Lean counterpart of the F* owl-runner's `class_size_refutes`.
+
+    `classSizeUnsat g` builds a linear system over the sizes of named
+    classes and answers `true` only with a Farkas certificate the
+    validator accepts, so "no integer assignment satisfies the system"
+    is proved (`classSizeUnsat_sound`). That the system's rows hold in
+    every model of `g` is argued per row:
+
+    * FIBER `|D| = k·|X|`: `p` functional with domain `D`,
+      `D ⊑ ∃p.X` and `X ⊑ (= k inv(p))`. Every element of `D` has
+      exactly one `p`-successor, in `X`, and every element of `X` has
+      exactly `k` `p`-predecessors, all in `D`; so `D` is the disjoint
+      union of `|X|` fibres of size `k`.
+    * BIJECTION `|D| = |Y|`: `p` functional and inverse-functional,
+      `D ⊑ ∃p.Y` and `Y ⊑ ∃inv(p).D`; `p` restricted to `D` is then a
+      bijection onto `Y`.
+    * DISJOINT UNION `|Z| = |m₁| + |m₂|`: `Z ≡ m₁ ⊔ m₂` with `m₁`
+      disjoint from `m₂`.
+    * BOUNDS `|C| ≥ 1` for a class enumerated by a non-empty `owl:oneOf`
+      (its members are elements of it) and for a FINITE class with an
+      asserted member.
+
+    A size is an integer only for a class that is finite in every
+    model, and the bounds are emitted only for classes the module
+    proves finite (an enumeration, and the fibre, bijection and union
+    rows propagate finiteness both ways); every equation is homogeneous,
+    so a component with no finite class has the all-zero solution and
+    cannot make the system unsatisfiable. The row arguments are prose,
+    in both trees; the arithmetic is proved. `WebOnt-description-logic-910`
+    (`20 · 30 ≠ 601`) and `one=two` are decided here; `-909` is not, and
+    the module header says why. -/
+def countingRefutes (g : Graph) : Bool := L4Factoidal.OWL.CountingOracle.classSizeUnsat g
+
 /-- The three-valued satisfiability verdict — the Lean counterpart of
     F* `Tableau_Refute.tableau_consistent`, meaning for meaning:
 
@@ -2483,7 +2522,7 @@ def initState (g : Graph) : RState :=
     branch search (see `search`), so cost is close to linear in it
     and running out is reported, never silently absorbed. -/
 def tableauConsistent (g : Graph) (budget : Nat) : Option Bool :=
-  if immediateInconsistency g then some false
+  if immediateInconsistency g || countingRefutes g then some false
   else
     let tb := collectAxioms g
     match (search tb g { initState g with tbox := tb } budget).1 with

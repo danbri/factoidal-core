@@ -961,4 +961,43 @@ private def gTwoVarSat (all4 : Bool) : Graph :=
 #guard refuted (gTwoVarSat true)
 #guard !(refuted (gTwoVarSat false))
 
+
+/-! ## The class-size counting rung
+
+`WebOnt-description-logic-910` in miniature. `p` and `q` are
+functional with domain `D`, every `D` has a `p`- and a `q`-successor in
+`O = {o}`, and `o` has exactly two `p`-predecessors and exactly `k`
+`q`-predecessors. The fibre rows give `|D| = 2·|O|` and
+`|D| = k·|O|` with `|O| ≥ 1`: no integer solution for `k = 3`, and the
+two-element model for `k = 2`. -/
+
+private def kD : WfIri := ⟨"http://e/D", rfl⟩
+private def kO : WfIri := ⟨"http://e/O", rfl⟩
+private def iO : WfIri := ⟨"http://e/o", rfl⟩
+private def pIp : WfIri := ⟨"http://e/ip", rfl⟩
+private def pIq : WfIri := ⟨"http://e/iq", rfl⟩
+
+private def gFibres (k : String) : Graph :=
+  [ ⟨.iri exP, rdfType, .iri owlFunctionalProperty⟩,
+    ⟨.iri exP, owlInverseOf, .iri pIp⟩,
+    ⟨.iri exP, rdfsDomain, .iri kD⟩,
+    ⟨.iri exQ, rdfType, .iri owlFunctionalProperty⟩,
+    ⟨.iri exQ, owlInverseOf, .iri pIq⟩,
+    ⟨.iri exQ, rdfsDomain, .iri kD⟩,
+    ⟨.iri kD, rdfsSubClassOf, bnT "s1"⟩,
+    ⟨bn "s1", owlOnProperty, .iri exP⟩, ⟨bn "s1", owlSomeValuesFrom, .iri kO⟩,
+    ⟨.iri kD, rdfsSubClassOf, bnT "s2"⟩,
+    ⟨bn "s2", owlOnProperty, .iri exQ⟩, ⟨bn "s2", owlSomeValuesFrom, .iri kO⟩,
+    ⟨.iri kO, owlOneOf, bnT "ol"⟩,
+    ⟨bn "ol", rdfFirst, .iri iO⟩, ⟨bn "ol", rdfRest, .iri rdfNil⟩,
+    ⟨.iri kO, rdfsSubClassOf, bnT "c1"⟩,
+    ⟨bn "c1", owlOnProperty, .iri pIp⟩, ⟨bn "c1", owlCardinality, cardLit "2"⟩,
+    ⟨.iri kO, rdfsSubClassOf, bnT "c2"⟩,
+    ⟨bn "c2", owlOnProperty, .iri pIq⟩, ⟨bn "c2", owlCardinality, cardLit k⟩ ]
+
+#guard countingRefutes (gFibres "3")
+#guard !countingRefutes (gFibres "2")
+#guard refuted (gFibres "3")
+#guard !(refuted (gFibres "2"))
+
 end L4Factoidal.OWL.Refute
