@@ -74,16 +74,18 @@ structure JoinCondition where
 deriving Repr
 
 /-- One input of a function execution: the parameter it binds, and the
-    term map that supplies the value. -/
+    term map that supplies the value. The parameter is a term map because
+    RML-FNML makes it a Parameter Map, a term map that generates a named
+    node; the shortcut `rml:parameter` is a constant one. -/
 structure FnInput where
-  parameter : String
+  parameter : TermMap
   value     : TermMap
 deriving Repr
 
-/-- `rml:functionExecution` (RML-FNML): the function's IRI and its
-    inputs. -/
+/-- `rml:functionExecution` (RML-FNML): the function (a Function Map, a
+    term map that generates a named node) and its inputs. -/
 structure FnExec where
-  function : String
+  function : TermMap
   inputs   : List FnInput
 deriving Repr
 
@@ -124,8 +126,10 @@ structure TermMap where
   gather   : Option GatherSpec := none
   /-- `rml:quotedTriplesMap`: this map quotes triples. -/
   quoted   : Option QuotedSpec := none
-  /-- `rml:return`: which output of the function this map takes. -/
-  fnReturn : Option String := none
+  /-- `rml:return` or `rml:returnMap`: which output of the function this
+      map takes; a Return Map is a term map that generates a named node.
+      Absent means the first return of the function. -/
+  fnReturn : Option TermMap := none
   /-- `rml:condition` (RML-FNML): a boolean function map; when false the
       term map generates nothing. -/
   condition : Option TermMap := none
@@ -338,6 +342,9 @@ private def mkLiteralE (tm : TermMap) (lex : String) : Except RmlError Term :=
     `literal`. -/
 def defaultTermType : TermMapForm → TermType
   | .reference _ => .literal
+  -- RML-FNML: the value a function returns is a literal unless the map
+  -- says otherwise (RMLFNMLTC0001 expects "ABC" in object position).
+  | .function _  => .literal
   | _            => .iri
 
 /-- Generate the term a map produces from one record.

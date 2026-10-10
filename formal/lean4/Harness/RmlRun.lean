@@ -47,6 +47,7 @@ import L4Factoidal.RML.Run
 import L4Factoidal.RML.Open
 import L4Factoidal.RML.Targets
 import L4Factoidal.RML.Star
+import L4Factoidal.RML.Functions
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
@@ -187,7 +188,8 @@ def modules : List Module :=
   [ { name := "rml-core" }
   , { name := "rml-io" }
   , { name := "rml-cc", defaultBase := some "http://example.com/base/" }
-  , { name := "rml-star" } ]
+  , { name := "rml-star" }
+  , { name := "rml-fnml" } ]
 
 /-- How one case came out. -/
 inductive Outcome where
@@ -422,6 +424,33 @@ def runModule (md : Module) (dir : String) (dump : Option String) (verbose : Boo
       t ← runCase md dir (metaRows.find? (fun c => c.id == name)) name t dump verbose
   return t
 
+/-- The FnO descriptions of a module's `functions.ttl` against the
+    library's registry: every function the file describes is implemented,
+    with the parameters (and their `fno:required` flags) and the returns
+    the file gives it. A mismatch is a failure of the library, not of one
+    case, so it is reported apart from the case scores. -/
+def checkFunctionDescriptions (dir : String) : IO Bool := do
+  let path := dir ++ "/functions.ttl"
+  if !(← System.FilePath.pathExists path) then return true
+  let src ← IO.FS.readFile path
+  match parseTurtle src none with
+  | .error e =>
+      IO.println s!"{path}: does not parse ({e.msg})"
+      return false
+  | .ok g =>
+      let described := describedFunctions g
+      let mut bad : List String := []
+      for iri in described do
+        match lookupFn iri with
+        | none => bad := bad ++ [s!"<{iri}> has no implementation"]
+        | some f =>
+            if !f.agreesWith g then
+              bad := bad ++ [s!"<{iri}> has other parameters or returns than the registry"]
+      IO.println (s!"{path}: {described.length} functions described, " ++
+        s!"{described.length - bad.length} implemented with the same parameters and returns")
+      for b in bad do IO.println s!"  {b}"
+      return bad.isEmpty
+
 /-- The score line the scoreboard reads: counts, then `(out of T)`. -/
 def scoreLine (dir : String) (t : Tally) : String :=
   let total := t.pass + t.fail + t.gaveUp + t.unattempted
@@ -478,6 +507,8 @@ def main (args : List String) : IO UInt32 := do
           IO.println s!"      reason: {r}"
         IO.println s!"    issue: {issueFor b.bucket}"
       if t.fail > 0 then anyFail := true
+      if md.name == "rml-fnml" then
+        if !(← checkFunctionDescriptions dir) then anyFail := true
   if ran == 0 then
     IO.println "rml runner: no module ran"
     return 1

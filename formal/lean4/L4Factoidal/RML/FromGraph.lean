@@ -140,12 +140,49 @@ def gatherStrategyOf (iri : String) : Option GatherStrategy :=
     mapping graph could be cyclic). -/
 def readFuel : Nat := 8
 
+/-- A Function Map, Parameter Map or Return Map at `n`: the shortcut
+    property (`rml:function`, `rml:parameter`, `rml:return`) holds the
+    named node itself, the map property (`rml:functionMap`,
+    `rml:parameterMap`, `rml:returnMap`) holds a term map that generates
+    it (RML-FNML, "Definitions"). -/
+def fnSlotAt (g : Graph) (n : String) (shortcut mapProp : String) : Option TermMap :=
+  match (objectsOf g n (rmlNs ++ shortcut)).head? with
+  | some t => some (constantMap t)
+  | none => (nodesOf g n (rmlNs ++ mapProp)).head?.map (baseTermMapAt g)
+
 mutual
 
-/-- A term map at `n`, with the gather map it carries, to a depth. -/
+/-- A term map at `n`, with the gather map, the star map, the function
+    execution and the condition it carries, to a depth. -/
 def termMapAtF : Nat → Graph → String → TermMap
   | 0, g, n => baseTermMapAt g n
-  | f + 1, g, n => { baseTermMapAt g n with gather := gatherAt f g n, quoted := quotedAt g n }
+  | f + 1, g, n =>
+      let base := baseTermMapAt g n
+      let fx := (nodesOf g n (rmlNs ++ "functionExecution")).head?.bind (execAt f g)
+      { base with
+        gather := gatherAt f g n
+        quoted := quotedAt g n
+        form := (match fx with | some fe => .function fe | none => base.form)
+        fnReturn := fnSlotAt g n "return" "returnMap"
+        condition := (nodesOf g n (rmlNs ++ "condition")).head?.map (termMapAtF f g) }
+
+/-- The function execution at `x` (RML-FNML): the Function Map and the
+    inputs, each a Parameter Map with the term map that supplies its
+    value (`rml:inputValueMap`, or the constant `rml:inputValue`). -/
+def execAt : Nat → Graph → String → Option FnExec
+  | 0, _, _ => none
+  | f + 1, g, x =>
+      (fnSlotAt g x "function" "functionMap").map (fun fm =>
+        { function := fm
+          inputs := (nodesOf g x (rmlNs ++ "input")).filterMap (fun i =>
+            match fnSlotAt g i "parameter" "parameterMap" with
+            | none => none
+            | some pm =>
+                let value : Option TermMap :=
+                  match (objectsOf g i (rmlNs ++ "inputValue")).head? with
+                  | some t => some (constantMap t)
+                  | none => (nodesOf g i (rmlNs ++ "inputValueMap")).head?.map (termMapAtF f g)
+                value.map (fun v => { parameter := pm, value := v })) })
 
 /-- The gather map at `n`: its members (term maps, or referencing
     members), `rml:gatherAs`, `rml:strategy` and
@@ -281,13 +318,22 @@ def logicalTargetsOf (g : Graph) : List LogicalTarget :=
 def triplesMapClasses : List String :=
   [rmlNs ++ "TriplesMap", rmlNs ++ "AssertedTriplesMap", rmlNs ++ "NonAssertedTriplesMap"]
 
-/-- Every triples map node in the graph, once, in graph order. -/
+/-- The properties only a triples map has. A resource that states one is a
+    triples map whether or not it is typed (the RML-FNML test cases leave
+    their triples maps untyped; R2RML makes the type optional too). -/
+def triplesMapProperties : List String :=
+  [rmlNs ++ "logicalSource", rmlNs ++ "subjectMap", rmlNs ++ "subject",
+   rmlNs ++ "predicateObjectMap"]
+
+/-- Every triples map node in the graph, once, in graph order: a node typed
+    as a triples map, and a node that has a property only a triples map has. -/
 def triplesMapNodes (g : Graph) : List String :=
   ((g.filter (fun t =>
-      t.p.val == rdfTypeStr &&
-      (match t.o with
-       | .iri i => triplesMapClasses.contains i.val
-       | _      => false))).map (fun t => subjKey t.s)).foldl
+      (t.p.val == rdfTypeStr &&
+       (match t.o with
+        | .iri i => triplesMapClasses.contains i.val
+        | _      => false)) ||
+      triplesMapProperties.contains t.p.val)).map (fun t => subjKey t.s)).foldl
     (fun acc n => if acc.contains n then acc else acc ++ [n]) []
 
 /-- Every triples map in the graph. A map with NO subject map is

@@ -37,14 +37,19 @@ open L4Factoidal.XPath.Full
 
 inductive Record where
   | json  (j : Json)
-  | table (cells : List (String × RVal))
+  | table (cells : List (String × RVal)) (columns : List String)
   | xml   (doc : Doc) (item : Item) (ns : List (String × String))
 
 instance : Inhabited Record := ⟨.json .null⟩
 
-/-- A table row from plain string cells. -/
+/-- A table row from plain string cells; the columns are the cells' names. -/
 def Record.ofCells (cells : List (String × String)) : Record :=
-  .table (cells.map (fun (k, v) => (k, ({ lexical := v } : RVal))))
+  .table (cells.map (fun (k, v) => (k, ({ lexical := v } : RVal)))) (cells.map (·.1))
+
+/-- A table row whose columns are named apart from its cells, because a
+    NULL value leaves a column without a cell. -/
+def Record.ofColumns (columns : List String) (cells : List (String × String)) : Record :=
+  .table (cells.map (fun (k, v) => (k, ({ lexical := v } : RVal)))) columns
 
 private def dataErr (clause msg : String) : RmlError := RmlError.data "" clause msg
 
@@ -87,8 +92,17 @@ def xmlValuesE (doc : Doc) (item : Item) (ns : List (String × String)) (expr : 
 def Record.values (r : Record) (expr : String) : List RVal × List RmlError :=
   match r with
   | .json j => jsonValuesE j expr
-  | .table cells =>
-      (((cells.find? (fun c => c.1 == expr)).map (fun c => [c.2])).getD [], [])
+  | .table cells columns =>
+      -- A column the source does not have is not a reference expression of
+      -- that source (RML-FNML, Definitions, Input: references "must be
+      -- references to records that exist in the Triples Map's logical
+      -- source"); a column whose value is NULL has no cell and selects
+      -- nothing.
+      if !columns.contains expr then
+        ([], [dataErr "RML-FNML, Definitions: Input"
+               s!"'{expr}' is not a column of the logical source"])
+      else
+        (((cells.find? (fun c => c.1 == expr)).map (fun c => [c.2])).getD [], [])
   | .xml doc item ns => xmlValuesE doc item ns expr
 
 /-! ## Build-time checks -/
@@ -111,6 +125,11 @@ private def person : Json :=
 -- A row: a present column, an absent one, the first of two equal names.
 #guard ((Record.ofCells [("id", "1"), ("name", "A")]).values "name").1 == [{ lexical := "A" }]
 #guard ((Record.ofCells [("id", "1")]).values "name").1.isEmpty
+-- A column the source does not have is an error; a column with a NULL
+-- value is not.
+#guard ((Record.ofCells [("id", "1")]).values "name").2.length == 1
+#guard ((Record.ofColumns ["id", "name"] [("id", "1")]).values "name").2.isEmpty
+#guard ((Record.ofColumns ["id", "name"] [("id", "1")]).values "name").1.isEmpty
 #guard ((Record.ofCells [("id", "1"), ("id", "2")]).values "id").1 == [{ lexical := "1" }]
 
 end L4Factoidal.RML

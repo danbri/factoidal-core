@@ -296,6 +296,8 @@ import L4Factoidal.RML.SourceTests
 import L4Factoidal.RML.CollectionTests
 import L4Factoidal.RML.Star
 import L4Factoidal.RML.StarTests
+import L4Factoidal.RML.Functions
+import L4Factoidal.RML.FunctionTests
 import L4Factoidal.RML.VirtualSource
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps

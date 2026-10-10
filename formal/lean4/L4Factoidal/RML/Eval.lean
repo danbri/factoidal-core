@@ -26,6 +26,7 @@ import L4Factoidal.RML.Error
 import L4Factoidal.RML.Record
 import L4Factoidal.RML.Open
 import L4Factoidal.RML.Star
+import L4Factoidal.RML.Functions
 import L4Factoidal.JSON.Parser
 
 namespace L4Factoidal.RML
@@ -67,30 +68,66 @@ def collectGen (rs : List (Except RmlError (Option Term))) : List Term × List R
     | .ok none     => acc
     | .error e     => (acc.1, acc.2 ++ [e])) ([], [])
 
-/-- Every term a map generates from one record, and the data errors met
-    while generating them.
+/-- A term map in an IRI POSITION — a subject, a predicate, a graph.
+    The default term type there is `iri`, not `literal`:
+    `defaultTermType` reads only the FORM, and a subject map written
+    `rml:subjectMap [ rml:reference "$.FirstName" ]` is a reference,
+    so it defaulted to a literal and produced no subject at all
+    (`RMLTC0019a`). Position decides this, and only the caller knows
+    the position. -/
+def asIri (tm : TermMap) : TermMap :=
+  match tm.termType with
+  | some _ => tm
+  | none   => { tm with termType := some .iri }
+
+/-- A term map whose value is a plain STRING — a `rml:languageMap`.
+    A language tag is not an IRI, and `defaultTermType` sends a
+    template to `iri`, so `rml:languageMap [ rml:template
+    "{$.language}-{$.region}" ]` produced the IRI
+    `http://example.com/en-GB` where the tag `en-GB` was meant
+    (`RMLTC0031c`). A `rml:datatypeMap` is the opposite case and keeps
+    `asIri`: a datatype IS an IRI. -/
+def asLiteral (tm : TermMap) : TermMap :=
+  match tm.termType with
+  | some _ => tm
+  | none   => { tm with termType := some .literal }
+
+/-- The cartesian product of a list of lists, in lexicographic order of
+    the lists' own order. -/
+def cartesian {α : Type} : List (List α) → List (List α)
+  | [] => [[]]
+  | xs :: rest => xs.flatMap (fun x => (cartesian rest).map (fun r => x :: r))
+
+/-- The terms a list of source values become under a term map: one term
+    per value. The SOURCE's datatype applies only when the map states
+    neither a datatype nor a language (`rml:datatype` and `rml:language`
+    both override it). -/
+def termsFromValues (base : Option String) (tm : TermMap) (vals : List RVal)
+    (naturalTypes : Bool) : List Term × List RmlError :=
+  let tt := tm.termType.getD (defaultTermType tm.form)
+  let ref : TermMap := { tm with form := .reference "", termType := some tt }
+  collectGen (vals.map (fun v =>
+    match tt with
+    | .literal =>
+        let tm' := if naturalTypes && tm.datatype.isNone && tm.language.isNone
+                   then { ref with datatype := v.natural } else ref
+        generateTermE base tm' (fun _ => some v.lexical)
+    | _ => generateTermE base ref (fun _ => some v.lexical)))
+
+/-- Every term a map without a function generates from one record, and
+    the data errors met.
 
     A REFERENCE map is multi-valued: `$.amounts[*]` selects three
     values and generates three terms, and taking only the first loses
     two triples that the corpus expects. A TEMPLATE map is the cross
     product of its references' values (RML-Core, "Template": the n-ary
     Cartesian product). -/
-def termsOfE (base : Option String) (tm : TermMap) (rec' : Record) (naturalTypes : Bool)
+def plainTermsOfE (base : Option String) (tm : TermMap) (rec' : Record) (naturalTypes : Bool)
     : List Term × List RmlError :=
   match tm.form with
   | .reference r =>
-      let tt := tm.termType.getD (defaultTermType tm.form)
       let (vals, errs) := refValuesE rec' r
-      let (ts, es) := collectGen (vals.map (fun v =>
-        match tt with
-        | .literal =>
-            -- The SOURCE's datatype applies only when the map states
-            -- neither a datatype nor a language: `rml:datatype` and
-            -- `rml:language` both override it.
-            let tm' := if naturalTypes && tm.datatype.isNone && tm.language.isNone
-                       then { tm with datatype := v.natural } else tm
-            generateTermE base tm' (fun f => if f == r then some v.lexical else none)
-        | _ => generateTermE base tm (fun f => if f == r then some v.lexical else none)))
+      let (ts, es) := termsFromValues base tm vals naturalTypes
       (ts, errs ++ es)
   | .template raw =>
       -- A TEMPLATE over a multi-valued reference produces one term
@@ -114,6 +151,134 @@ def termsOfE (base : Option String) (tm : TermMap) (rec' : Record) (naturalTypes
           ((names.zip combo).find? (fun (n, _) => n == f)).map (·.2))))
       (ts, refErrs ++ es)
   | _ => collectGen [generateTermE base tm (lookup1 rec')]
+
+/-- A constant as a source value: a literal keeps the datatype it states
+    (a plain string and a language-tagged string have none). -/
+def constantRVal : Term → Option RVal
+  | .literal l =>
+      some { lexical := l.val.lexicalForm
+             natural := if l.val.langTag.isSome || l.val.datatype.val == xsdNs ++ "string"
+                        then none else some l.val.datatype.val }
+  | .iri i => some { lexical := i.val }
+  | .bnode b => some { lexical := b }
+  | _ => none
+
+/-- How deep function executions nest before evaluation stops (a mapping
+    graph could be cyclic). -/
+def fnFuel : Nat := 16
+
+/-! ## Functions (RML-FNML)
+
+A function-valued map yields VALUES, not terms: the values the function
+returns for the inputs. Each input is a term map evaluated on the same
+record, but read as a source value, so a template input is the text it
+expands to (`"Name: {Name}"` is the string `Name: Venus`, not an IRI
+reference). A multi-valued input is applied value by value, and several
+multi-valued inputs combine as a cartesian product ("Multivalue
+processing"). An input that selects no value leaves its parameter without
+an argument, and a function with a required parameter without an
+argument returns NULL. -/
+
+mutual
+
+/-- The values a function-valued term map yields on a record, and the
+    errors met: an unknown function, a parameter or a return the function
+    does not have, and the errors of the function itself. -/
+def fnValuesF (fuel : Nat) (base : Option String) (tm : TermMap) (rec' : Record)
+    : List RVal × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match tm.form with
+    | .function fe =>
+        let clause := "RML-FNML, Definitions: Function Execution"
+        let named (m : TermMap) : List String × List RmlError :=
+          let r := plainTermsOfE base (asIri m) rec' false
+          (r.1.filterMap (fun t => match t with | .iri i => some i.val | _ => none), r.2)
+        let fnRes := named fe.function
+        let retRes : Option String × List RmlError :=
+          match tm.fnReturn with
+          | none => (none, [])
+          | some rm => let r := named rm; (r.1.head?, r.2)
+        let results : List (List RVal × List RmlError) := fnRes.1.map (fun fi =>
+          match lookupFn fi with
+          | none => ([], [RmlError.mapping "" clause
+                       s!"no implementation of the function <{fi}> is available"])
+          | some impl =>
+              let ins : List (String × List RVal × List RmlError) := fe.inputs.map (fun inp =>
+                let pn := named inp.parameter
+                let vs := inputValuesF fuel base inp.value rec'
+                let pi := pn.1.headD ""
+                let bad : List RmlError :=
+                  if !(impl.params.any (·.iri == pi)) then
+                    [RmlError.mapping "" clause s!"<{pi}> is not a parameter of the function <{fi}>"]
+                  else []
+                (pi, vs.1, pn.2 ++ vs.2 ++ bad))
+              let alts : List (List (Option (String × RVal))) := ins.map (fun (pi, vs, _) =>
+                if vs.isEmpty then [none] else vs.map (fun v => some (pi, v)))
+              let outs := (cartesian alts).map (fun combo => impl.call (combo.filterMap id) retRes.1)
+              (outs.filterMap (fun o => match o with | .ok (some v) => some v | _ => none),
+               ins.flatMap (·.2.2) ++ outs.filterMap (fun o => match o with
+                 | .error m => some (RmlError.data "" clause m) | _ => none)))
+        (results.flatMap (·.1), fnRes.2 ++ retRes.2 ++ results.flatMap (·.2))
+    | _ => ([], [])
+
+/-- The values an input value map yields on a record. -/
+def inputValuesF (fuel : Nat) (base : Option String) (m : TermMap) (rec' : Record)
+    : List RVal × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match m.form with
+    | .constant t => ((constantRVal t).toList, [])
+    | .reference r => refValuesE rec' r
+    | .template raw =>
+        let segs := parseTemplate raw
+        let names := segs.foldl (fun acc seg => match seg with
+          | .reference f => if acc.contains f then acc else acc ++ [f]
+          | _            => acc) ([] : List String)
+        let looked := names.map (fun f => refValuesE rec' f)
+        let combos := (looked.map (fun p => p.1.map (·.lexical))).foldl (fun acc vs =>
+          acc.flatMap (fun a => vs.map (fun v => a ++ [v]))) [([] : List String)]
+        -- unsafeIri leaves the values as they are: no IRI escaping
+        (combos.filterMap (fun combo =>
+          (expandTemplate segs .unsafeIri (fun f =>
+            ((names.zip combo).find? (fun (n, _) => n == f)).map (·.2))).map
+              (fun lex => ({ lexical := lex } : RVal))),
+         looked.flatMap (·.2))
+    | .function _ => fnValuesF fuel base m rec'
+    | .unknown => ([], [])
+
+/-- The terms a term map generates from one record, and the errors met:
+    the plain forms, a function-valued map, and a map with a condition,
+    which generates its terms only when the condition's function returns
+    `true` (RML-FNML, "Conditions"). -/
+def termsOfF (fuel : Nat) (base : Option String) (tm : TermMap) (rec' : Record)
+    (naturalTypes : Bool) : List Term × List RmlError :=
+  match fuel with
+  | 0 => ([], [])
+  | fuel + 1 =>
+    match tm.condition with
+    | some c =>
+        let (vs, es) := fnValuesF fuel base c rec'
+        if vs.any (fun v => v.lexical == "true") then
+          let r := termsOfF fuel base { tm with condition := none } rec' naturalTypes
+          (r.1, es ++ r.2)
+        else ([], es)
+    | none =>
+        match tm.form with
+        | .function _ =>
+            let (vals, es) := fnValuesF fuel base tm rec'
+            let (ts, es2) := termsFromValues base tm vals naturalTypes
+            (ts, es ++ es2)
+        | _ => plainTermsOfE base tm rec' naturalTypes
+
+end
+
+/-- Every term a map generates from one record, and the data errors met. -/
+def termsOfE (base : Option String) (tm : TermMap) (rec' : Record) (naturalTypes : Bool)
+    : List Term × List RmlError :=
+  termsOfF fnFuel base tm rec' naturalTypes
 
 /-- The terms of `termsOfE`, with data errors read as missing terms. -/
 def termsOf (base : Option String) (tm : TermMap) (rec' : Record) (naturalTypes : Bool)
@@ -153,30 +318,6 @@ private def toSubject? (t : Term) : Option Subject :=
 
 private def toPred? (t : Term) : Option WfIri :=
   match t with | .iri i => some i | _ => none
-
-/-- A term map in an IRI POSITION — a subject, a predicate, a graph.
-    The default term type there is `iri`, not `literal`:
-    `defaultTermType` reads only the FORM, and a subject map written
-    `rml:subjectMap [ rml:reference "$.FirstName" ]` is a reference,
-    so it defaulted to a literal and produced no subject at all
-    (`RMLTC0019a`). Position decides this, and only the caller knows
-    the position. -/
-def asIri (tm : TermMap) : TermMap :=
-  match tm.termType with
-  | some _ => tm
-  | none   => { tm with termType := some .iri }
-
-/-- A term map whose value is a plain STRING — a `rml:languageMap`.
-    A language tag is not an IRI, and `defaultTermType` sends a
-    template to `iri`, so `rml:languageMap [ rml:template
-    "{$.language}-{$.region}" ]` produced the IRI
-    `http://example.com/en-GB` where the tag `en-GB` was meant
-    (`RMLTC0031c`). A `rml:datatypeMap` is the opposite case and keeps
-    `asIri`: a datatype IS an IRI. -/
-def asLiteral (tm : TermMap) : TermMap :=
-  match tm.termType with
-  | some _ => tm
-  | none   => { tm with termType := some .literal }
 
 /-- A blank-node label built from a triples map's id and a record's
     position. Non-name characters are dropped: an id is an IRI, and
@@ -247,12 +388,6 @@ def placeExtras (es : List Extra) (g : Option Term) (targets : List String) : Ou
 
 def nubStrings (xs : List String) : List String :=
   xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
-
-/-- The cartesian product of a list of lists, in lexicographic order of
-    the lists' own order. -/
-def cartesian {α : Type} : List (List α) → List (List α)
-  | [] => [[]]
-  | xs :: rest => xs.flatMap (fun x => (cartesian rest).map (fun r => x :: r))
 
 private def rdfIri (n : String) : WfIri :=
   if h : isIri ("http://www.w3.org/1999/02/22-rdf-syntax-ns#" ++ n)

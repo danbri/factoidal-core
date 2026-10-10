@@ -29,6 +29,7 @@ A term map's rules depend on where it sits. `Position` carries that, and
 the same node is checked once per position it occupies.
 -/
 import L4Factoidal.RML.FromGraph
+import L4Factoidal.RML.Functions
 import L4Factoidal.RML.JsonPath
 import L4Factoidal.RML.Error
 import L4Factoidal.RDF.LangTag
@@ -525,11 +526,67 @@ def checkTriplesMap (g : Graph) (tmNodes : List String) (tm : String) : List Rml
   subjShape ++ lsShape ++ bothClasses ++ neverQuoted ++ cyclic ++ checkLogicalSource c ++
     subjMaps ++ subjShort ++ poms
 
+/-- The IRI a Function Map, Parameter Map or Return Map states as a
+    constant, when it states one (the shortcut property or a constant
+    map). A map that is not a constant is checked when it is evaluated. -/
+def fnConstantAt (g : Graph) (n : String) (shortcut mapProp : String) : List (Option String) :=
+  (objectsOf g n (rmlIri shortcut)).map (fun t => match t with | .iri i => some i.val | _ => none) ++
+  (nodesOf g n (rmlIri mapProp)).map (fun m =>
+    match objectsOf g m (rmlIri "constant") with
+    | [.iri i] => some i.val
+    | _ => none)
+
+/-- The checks for one function execution `x` used by the term map `n`
+    (RML-FNML, "Definitions"): exactly one Function Map; a function the
+    processor implements; every input with exactly one Parameter Map and
+    one value; each constant parameter a parameter of the function; every
+    required parameter bound; and a constant return a return of the
+    function. -/
+def checkExecution (g : Graph) (n x : String) : List RmlError :=
+  let site := s!"function execution {x} of {n}"
+  let clause := "RML-FNML, Definitions: Function Execution"
+  let err (msg : String) : List RmlError := [RmlError.mapping site clause msg]
+  let fns := fnConstantAt g x "function" "functionMap"
+  let inputs := nodesOf g x (rmlIri "input")
+  let rets := fnConstantAt g n "return" "returnMap"
+  let shape :=
+    (if fns.length != 1 then err "a function execution has exactly one function (rml:function or rml:functionMap)" else []) ++
+    (if rets.length > 1 then err "a function-valued map has at most one rml:return or rml:returnMap" else []) ++
+    inputs.flatMap (fun i =>
+      (if countOf g i "parameter" + countOf g i "parameterMap" != 1 then
+         err s!"input {i} has exactly one rml:parameter or rml:parameterMap" else []) ++
+      (if countOf g i "inputValue" + countOf g i "inputValueMap" != 1 then
+         err s!"input {i} has exactly one rml:inputValue or rml:inputValueMap" else []))
+  let semantic :=
+    match fns with
+    | [some fi] =>
+        match lookupFn fi with
+        | none => err s!"no implementation of the function <{fi}> is available"
+        | some impl =>
+            let bound := inputs.flatMap (fun i => (fnConstantAt g i "parameter" "parameterMap").filterMap id)
+            let unknown := bound.filter (fun q => !(impl.params.any (·.iri == q)))
+            let missing := impl.params.filter (fun q => q.required && !(bound.contains q.iri))
+            let badRet := (rets.filterMap id).filter (fun r => !(impl.returns.contains r))
+            (unknown.flatMap (fun q => err s!"<{q}> is not a parameter of the function <{fi}>")) ++
+            (missing.flatMap (fun q => err s!"the required parameter <{q.iri}> of the function <{fi}> has no input")) ++
+            (badRet.flatMap (fun r => err s!"<{r}> is not a return of the function <{fi}>"))
+    | _ => []
+  shape ++ semantic
+
+/-- Every function execution of the mapping graph, wherever it is used:
+    in a term map, in an input of another execution, in a condition. -/
+def checkFunctions (g : Graph) : List RmlError :=
+  (g.filter (fun t => t.p.val == rmlIri "functionExecution")).flatMap (fun t =>
+    match nodeKey t.o with
+    | some x => checkExecution g (subjKey t.s) x
+    | none => [RmlError.mapping (subjKey t.s) "RML-FNML, Definitions: Function Execution"
+                "rml:functionExecution names a function execution, which is a resource"])
+
 /-- Every violation of an RML-Core MUST clause in the mapping graph. An
     empty list means the mapping is valid as far as it can be judged
     without a record. -/
 def validateMapping (g : Graph) : List RmlError :=
   let nodes := triplesMapNodes g
-  nodes.flatMap (checkTriplesMap g nodes)
+  nodes.flatMap (checkTriplesMap g nodes) ++ checkFunctions g
 
 end L4Factoidal.RML

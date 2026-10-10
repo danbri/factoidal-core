@@ -68,7 +68,7 @@ def csvRecords (text : String) (nulls : List String) : Except String (List Recor
         .error "a CSV row has a different number of fields than the header"
       else
         .ok (rows.map (fun r =>
-          Record.ofCells ((header.zip r).filter (fun p => !nulls.contains p.2))))
+          Record.ofColumns header ((header.zip r).filter (fun p => !nulls.contains p.2))))
 
 /-- The iterations of a JSON document: what the iterator selects, or the
     document itself when the source states none. -/
