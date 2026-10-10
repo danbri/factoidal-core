@@ -246,4 +246,120 @@ theorem readStringLiteralBody_safe : ∀ (cs : List Char) (pos : Nat) (tail : Li
       apply String.ext
       simp [Char.toString]
 
+/-! ## Language tags -/
+
+theorem splitOnDoubleHyphen_none : ∀ (cs acc : List Char), noDoubleHyphen cs = true →
+    splitOnDoubleHyphen cs acc = (acc.reverse ++ cs, none)
+  | [], acc, _ => by simp [splitOnDoubleHyphen]
+  | [c], acc, _ => by simp [splitOnDoubleHyphen]
+  | c1 :: c2 :: rest, acc, h => by
+      simp only [noDoubleHyphen, Bool.and_eq_true, Bool.not_eq_true', Bool.and_eq_false_iff,
+        beq_eq_false_iff_ne, ne_eq] at h
+      have ih := splitOnDoubleHyphen_none (c2 :: rest) (c1 :: acc) h.2
+      have hc : ¬ (c1 = '-' ∧ c2 = '-') := by
+        rintro ⟨h1, h2⟩; rcases h.1 with h' | h' <;> contradiction
+      simp only [splitOnDoubleHyphen]
+      rw [if_neg (by simpa using hc), ih]
+      simp
+
+theorem splitOnDoubleHyphen_dir : ∀ (cs acc d : List Char), noDoubleHyphen cs = true →
+    cs.getLast? ≠ some '-' →
+    splitOnDoubleHyphen (cs ++ '-' :: '-' :: d) acc = (acc.reverse ++ cs, some d)
+  | [], acc, d, _, _ => by simp [splitOnDoubleHyphen]
+  | [c], acc, d, _, hl => by
+      have hc : c ≠ '-' := fun h => hl (by simp [h])
+      simp [splitOnDoubleHyphen, hc]
+  | c1 :: c2 :: rest, acc, d, h, hl => by
+      simp only [noDoubleHyphen, Bool.and_eq_true, Bool.not_eq_true', Bool.and_eq_false_iff,
+        beq_eq_false_iff_ne, ne_eq] at h
+      have hl' : (c2 :: rest).getLast? ≠ some '-' := by
+        intro h'; apply hl; rw [List.getLast?_cons_cons]; exact h'
+      have ih := splitOnDoubleHyphen_dir (c2 :: rest) (c1 :: acc) d h.2 hl'
+      have hc : ¬ (c1 = '-' ∧ c2 = '-') := by
+        rintro ⟨h1, h2⟩; rcases h.1 with h' | h' <;> contradiction
+      simp only [List.cons_append, splitOnDoubleHyphen]
+      rw [if_neg (by simpa using hc)]
+      rw [List.cons_append] at ih
+      rw [ih]
+      simp
+
+/-- The lower-cased tag the canonical form writes. -/
+def lowerTagChars (tag : String) : List Char := tag.toList.map Char.toLower
+
+theorem ofList_lowerTagChars (tag : String) : String.ofList (lowerTagChars tag) = tag.toLower := by
+  unfold lowerTagChars
+  rw [← String.toList_map, String.ofList_toList]
+  rfl
+
+theorem langTagSafe_parts {tag : String} (h : langTagSafe tag = true) :
+    ∃ c cs, lowerTagChars tag = c :: cs ∧ isLangStart c = true ∧
+      (c :: cs).all isLangChar = true ∧ noDoubleHyphen (c :: cs) = true ∧
+      (c :: cs).getLast? ≠ some '-' ∧ validLangSubtags (c :: cs) 0 = true := by
+  unfold langTagSafe at h
+  unfold lowerTagChars
+  revert h
+  cases (tag.toList.map Char.toLower) with
+  | nil => simp
+  | cons c cs =>
+      intro h
+      simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
+      exact ⟨c, cs, rfl, h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2, h.2⟩
+
+/-- RDF 1.1 LANGTAG reader on a safe tag followed by a space. -/
+theorem readLangTag_safe (pos : Nat) (tag : String) (rest : List Char)
+    (h : langTagSafe tag = true) :
+    ∃ p', readLangTag pos ('@' :: (lowerTagChars tag ++ ' ' :: rest))
+      = .ok (tag.toLower, p', ' ' :: rest) := by
+  obtain ⟨c, cs, hlt, hstart, hall, -, -, -⟩ := langTagSafe_parts h
+  have hsp := span_prefix isLangChar (c :: cs) ' ' rest hall (by decide)
+  rw [← ofList_lowerTagChars, hlt]
+  apply Exists.intro
+  rw [List.cons_append]
+  simp only [readLangTag, hstart, Bool.not_true, Bool.false_eq_true, if_false, readLangTagRun]
+  rw [← List.cons_append, hsp]
+
+/-- RDF 1.2 LANGTAG reader, no direction. -/
+theorem readLangDir12_safe_none (pos : Nat) (tag : String) (rest : List Char)
+    (h : langTagSafe tag = true) :
+    ∃ p', readLangDir12 pos ('@' :: (lowerTagChars tag ++ ' ' :: rest))
+      = .ok ((tag.toLower, none), p', ' ' :: rest) := by
+  obtain ⟨c, cs, hlt, hstart, hall, hnd, -, hvalid⟩ := langTagSafe_parts h
+  have hsp := span_prefix isLangChar (c :: cs) ' ' rest hall (by decide)
+  have hsplit := splitOnDoubleHyphen_none (c :: cs) [] hnd
+  rw [← ofList_lowerTagChars, hlt]
+  apply Exists.intro
+  rw [List.cons_append]
+  simp only [readLangDir12, hstart, Bool.not_true, Bool.false_eq_true, if_false, readLangTagRun]
+  rw [← List.cons_append]
+  simp only [hsp]
+  simp only [String.toList_ofList, hsplit, List.reverse_nil, List.nil_append, hvalid,
+    Bool.not_true, Bool.false_eq_true, if_false]
+  rfl
+
+/-- The direction word after `--`. -/
+def dirWord : TextDirection → List Char
+  | .ltr => ['l', 't', 'r']
+  | .rtl => ['r', 't', 'l']
+
+/-- The Boolean `readLangDir12` returns for a direction. -/
+def dirFlag : TextDirection → Bool
+  | .ltr => false
+  | .rtl => true
+
+/-- RDF 1.2 LANGTAG reader with a base direction. -/
+theorem readLangDir12_safe_dir (pos : Nat) (tag : String) (d : TextDirection) (rest : List Char)
+    (h : langTagSafe tag = true) :
+    ∃ p', readLangDir12 pos ('@' :: (lowerTagChars tag ++ ('-' :: '-' :: dirWord d ++ ' ' :: rest)))
+      = .ok ((tag.toLower, some (dirFlag d)), p', ' ' :: rest) := by
+  obtain ⟨c, cs, hlt, hstart, hall, hnd, hlast, hvalid⟩ := langTagSafe_parts h
+  rw [← ofList_lowerTagChars, hlt]
+  refine ⟨pos + 1 + (cs.length + 5 + 1), ?_⟩
+  have hsp := span_prefix isLangChar ((c :: cs) ++ ('-' :: '-' :: dirWord d)) ' ' rest
+    (by cases d <;> (simp only [List.all_append, hall, dirWord]; decide)) (by decide)
+  have hsplit := splitOnDoubleHyphen_dir (c :: cs) [] (dirWord d) hnd hlast
+  simp only [List.cons_append, List.append_assoc] at hsp hsplit ⊢
+  simp only [readLangDir12, hstart, Bool.not_true, Bool.false_eq_true, if_false, readLangTagRun,
+    hsp, String.toList_ofList, hsplit, List.reverse_nil, List.nil_append]
+  cases d <;> simp [hvalid, dirWord, dirFlag]
+
 end L4Factoidal.RDF
