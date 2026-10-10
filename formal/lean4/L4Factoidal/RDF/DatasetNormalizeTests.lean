@@ -150,6 +150,21 @@ private def dsBadTag : Dataset :=
 -- And on the accepted shapes `datasetForOps` is the normalisation.
 #guard (datasetForOps .rdf12 dsRepeat).toOption == some (normalizeDataset dsRepeat)
 
+/-! ### `iriPrintSafe` through `String.all`
+
+`DatasetNormalize.lean` registers `iriPrintSafe = iriPrintSafeFast` as
+`csimp`; the list form below is not rewritten, so these guards compare two
+programs. -/
+
+private def iriSamples : List String :=
+  [ "", "http://e/a", "http://e/a b", "http://e/<x>", "http://e/\\", "http://é/ü",
+    "urn:x" ++ String.singleton (Char.ofNat 0x10000), "a" ++ String.singleton (Char.ofNat 0x1F),
+    "x{y}", "x|y", "x^y", "x`y", "x\"y" ]
+
+#guard iriSamples.all fun s => NTriplesRoundTrip.iriPrintSafe s == s.toList.all NTriplesRoundTrip.IriSafeChar
+#guard (iriSamples.filter NTriplesRoundTrip.iriPrintSafe).length == 4
+#guard (iriSamples.filter (fun s => !NTriplesRoundTrip.iriPrintSafe s)).length == 9
+
 /-! ### Axiom audit -/
 
 #print axioms parseNQuadsFast_toCanonicalNQuads

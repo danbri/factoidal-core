@@ -94,6 +94,19 @@ def normalizeDataset (ds : Dataset) : Dataset :=
 
 /-! ## The check -/
 
+/-- `iriPrintSafe` without building the character list: `String.all` walks
+the UTF-8 bytes. The check runs over every IRI of the dataset, and through
+`String.toList` it cost as much as parsing the Turtle input (callgrind,
+`query` COUNT(*), 1,250 paragraphs of `gene.ttl`: `iriPrintSafe` 36.2 percent
+of the instructions, the Turtle parse 37.3). -/
+def iriPrintSafeFast (s : String) : Bool := s.all IriSafeChar
+
+/-- The compiler calls `iriPrintSafeFast` wherever the source says
+`iriPrintSafe`. -/
+@[csimp] theorem iriPrintSafe_eq_iriPrintSafeFast : @iriPrintSafe = @iriPrintSafeFast := by
+  funext s
+  simp [iriPrintSafe, iriPrintSafeFast, String.all_bool_eq]
+
 /-- BLANK_NODE_LABEL: a start character, then label characters, not ending
 on `.`. -/
 def bnodeLabelSafe (b : String) : Bool :=
@@ -128,7 +141,7 @@ def langTagSafe (tag : String) : Bool :=
         cs.getLast? != some '-' && validLangSubtags cs 0
 
 def literalSafe (mode : Mode) (l : Literal) : Bool :=
-  l.lexicalForm.toList.all lexCharSafe &&
+  l.lexicalForm.all lexCharSafe &&
   match l.langTag with
   | some tag => langTagSafe tag && (mode == .rdf12 || l.direction.isNone)
   | none => decide (l.datatype = xsdString) || iriPrintSafe l.datatype.val
@@ -411,7 +424,7 @@ theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (
       = .ok (wl.lowerTag, p', ' ' :: c :: rest) := by
   obtain ⟨hcws, hcat, hccaret⟩ := objFollow_facts hc
   rcases wl with ⟨⟨lex, dt, tag, dir⟩, hwf⟩
-  simp only [literalSafe, Bool.and_eq_true] at h
+  simp only [literalSafe, Bool.and_eq_true, String.all_bool_eq] at h
   obtain ⟨hlex, hrest⟩ := h
   obtain ⟨p1, hp1⟩ := readStringLiteralBody_safe lex.toList (pos + 1)
     (litSuffix ⟨lex, dt, tag, dir⟩ ++ ' ' :: c :: rest) hlex
@@ -724,7 +737,7 @@ theorem noNl_escOf (c : Char) (h : lexCharSafe c = true) : noNl (escOf c).toList
 theorem noNl_lit (wl : WfLiteral) (h : literalSafe .rdf12 wl.val = true) :
     noNl (termChars (.literal wl)) = true := by
   rcases wl with ⟨⟨lex, dt, tag, dir⟩, hwf⟩
-  simp only [literalSafe, Bool.and_eq_true] at h
+  simp only [literalSafe, Bool.and_eq_true, String.all_bool_eq] at h
   obtain ⟨hlex, hrest⟩ := h
   have hesc : noNl (escChars lex) = true := by
     unfold escChars noNl
