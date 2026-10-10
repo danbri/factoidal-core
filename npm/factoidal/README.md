@@ -903,10 +903,31 @@ Each has an open issue and an expected-failure test in `test/`:
 - A `SERVICE <iri>` without `SILENT` whose endpoint is not registered
   answers no solutions; SPARQL 1.1 Federated Query makes it an error
   ([issue 717](https://github.com/danbri/factoidal/issues/717)).
+- Turtle output with literal shorthand on keeps an `@prefix xsd:` line when
+  no printed term uses it
+  ([issue 691](https://github.com/danbri/factoidal/issues/691)).
+- `xmpp` `parseJid` does not apply the PRECIS profiles of RFC 8265 to a
+  localpart: it accepts a disallowed code point and does not normalize to
+  NFC ([issue 676](https://github.com/danbri/factoidal/issues/676)).
 
 ## Sizes
 
-{{SIZES}}
+Measured on 2026-10-10 for 0.9.0 (the wasm that `Wasm/build-wasm.sh` built
+from danbri/factoidal-core; `gzip -9` of each file):
+
+| File | Raw | gzip -9 |
+|---|---|---|
+| `l4-assets/l4factoidal.wasm` (the whole Lean library) | 10,402,990 bytes | 2,042,240 bytes |
+| `l4-assets/l4factoidal.mjs` (Emscripten glue) | 64,391 bytes | 18,307 bytes |
+| `l4-assets/l4factoidal.js` (loader) | 13,460 bytes | 4,853 bytes |
+| `lib/api.mjs` (the wrappers) | 111,315 bytes | 29,842 bytes |
+| every JavaScript file `browser.js` loads, together | 229,777 bytes | 67,248 bytes |
+| the tarball (`npm pack`, 161 files) | 12,040,930 bytes unpacked | 2,410,213 bytes |
+
+A browser page that loads `browser.js` transfers about 2.1 MB with gzip, of
+which 2.04 MB is the wasm. One dispatch table reaches the whole library, so
+the linker removes no Lean module; a smaller wasm for the browser is stage 4
+of [issue 713](https://github.com/danbri/factoidal/issues/713).
 
 ## Testing
 

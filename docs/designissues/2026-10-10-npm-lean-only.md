@@ -80,6 +80,11 @@ so the stage 3 switch does not hide them:
   and `capabilities().parseDiagnostics` stay unserved on the Lean engine;
 - `datasetQuery12` (SPARQL 1.2 over a handle) is unserved on the Lean engine.
 
+State after stage 3 (§ 7): the wrapper converts `offset` to a UTF-16
+code-unit index, so `text.slice(err.offset)` starts at the error;
+`datasetQuery12` is served; `{lenient: true}` is still unserved (issue 716,
+expected-failure cases in `npm/factoidal/test/`).
+
 Size, measured on the 2026-09-08 Lean wasm (6,359,842 bytes) and the F\*
 bundles of factoidal-builds run 11:
 
@@ -92,6 +97,10 @@ bundles of factoidal-builds run 11:
 The Lean module is about 3.4 times the F\* full bundle after compression,
 because one dispatch table reaches the whole library, so the linker can drop
 nothing.
+
+After stage 3 (§ 7) the wasm of 0.9.0 is 10,402,990 bytes raw and 2,042,240
+bytes with gzip -9; every JavaScript file `browser.js` loads is 67,248 bytes
+with gzip -9 together.
 
 Speed: the 2026-08-22 benchmark (issue 476) measured the Lean query path as
 quadratic (2,891 ms against 205 ms for F\* wasm at 8,000 triples). The Lean
@@ -142,6 +151,147 @@ the F\* COTTAS functions in favour of the Lean store.
 5. Speed: the npm benchmark (`tests/perf/l4_vs_fstar_wasm_bench.mjs`) re-run;
    any row where the Lean engine is more than 2 times slower becomes an
    issue before the switch is published.
+
+## 7. Stage 3: what landed (2026-10-10)
+
+Everything below is in `danbri/factoidal-core`, branch `claude/wt-npm-lean-3`,
+merged with `claude/core-split` at c8dbe2ab (the OWL DL merge and the
+performance merge). Package version 0.9.0.
+
+### Entry points
+
+`.` (`index.js`, `index.mjs`), `./api`, `./fn` and `./browser` load the Lean
+wasm. `./l4` and `./l4-core` are aliases of `.` for 0.9.x and go in 0.10.0
+(`CHANGELOG.md`). These files left the package and git: `wasm.js`,
+`wasm.d.ts`, `lite.js`, `lite.mjs`, `lite.d.ts`, `browser-wasm.js`,
+`hacl-init.js`, `hacl-wasm/`, `parquet_zstd_stubs.js`, `vendor/fzstd.umd.js`,
+`select.js`, `select.d.ts`, `lib/engine-js.js`, `lib/engine-wasm.js` and the
+F\* `version.json`. The F\* bundles are no longer copied into the package.
+
+The JavaScript is one ES module core with CommonJS shims:
+
+| File | Role |
+|---|---|
+| `lib/api.mjs` | the typed wrappers (`buildApi`): argument shaping, envelope decoding, RDF/JS conversion, `ParseError`, `DatasetHandle`, `Store`. No RDF or SPARQL semantics |
+| `lib/lean-entry.mjs` | one method per op, built from the engine's `ops` reflection; the byte-region adapters (`queryHdt`, `storeOpen`) and the extension-function call-out |
+| `lib/store.mjs` | the store reader plumbing: read `CURRENT`, a manifest and the artifact files the engine names |
+| `index.mjs` | Node: loads `bin/engine.mjs`, reads a store from the file system |
+| `browser.js` | browser: fetches `l4-assets/l4factoidal.wasm` and compiles it with `WebAssembly.instantiateStreaming` (falls back to `WebAssembly.instantiate` over the bytes when the server sends another media type); `setAssetsUrl` moves the assets |
+| `api.mjs` | `createApi(engine)` over an engine handle the caller loaded |
+| `index.js`, `api.js`, `rdfjs.js`, `l4.js`, `l4-core.js` | CommonJS: `module.exports = require('./….mjs')` (Node `require(esm)`, so `engines.node` is `>=22.12`) |
+
+`capabilities()` is computed from the ops the loaded wasm lists, so an older
+wasm reports what it serves. A function the wasm does not serve rejects with
+the capability error; there is no command-line fallback.
+
+### Lean operations added
+
+| Op | Module | What it does |
+|---|---|---|
+| `queryDataset12` (`callIO`) | `Wasm/Ops/Query.lean` | `queryDataset` with the SPARQL 1.2 grammar (`SparqlVersion.v12`), so a triple term pattern parses |
+| `datasetQuery12` (`callIO`) | `Wasm/Ops/Handles.lean` | the same over a dataset handle; `DatasetHandle.query(q, {sparql12: true})` |
+| `shaclValidate` (`call`) | `Wasm/Ops/Validate.lean` | `SHACL.decodeShapesGraph`, `SHACL.validateFull`, report as N-Triples of `SHACL.reportToGraph`. A shapes graph with a feature the decoder does not read, and a validation failure (SHACL § 5.3.2), are refusals |
+| `shexValidate` (`call`) | `Wasm/Ops/Validate.lean` | ShExJ when the schema text starts with `{`, ShExC otherwise; `ShEx.validateStart` for an empty shape, `ShEx.validateNode` otherwise. `verdict` is always a boolean (the F\* function answered `null` outside its fragment) |
+| `queryRaw` entailment `x-rdfscore`, `x-rdfsplus` | `Wasm/Ops/QueryExtras.lean` | `RDFS.closureFix` and `RDFS.rdfsPlusClosureFix` before the query, beside the existing `none`, `RDFS` and `OWL-RL` |
+
+Each has positive and negative `#guard` cases in its module and cases in
+`Wasm/native-smoke.sh`.
+
+### The store
+
+The COTTAS functions (`openCottas`, `queryCottas`, `closeCottas`, `toCottas`)
+are removed; the issue 566 ruling replaces them with the Lean store.
+`openStore(source, {generation, sparql, keys})` takes a collection root path
+(Node) or a reader function `path => bytes` (any host) and answers a `Store`
+(`query`, `inspect`, `close`, and `generation`, `activated`, `identity`,
+`layout`, `wireVersion`, `artifacts`, `bytes`, `rows`). `queryStore(source,
+sparql)` opens, queries and closes. `listStores()` lists the open handles. The
+manifest is checked, the artifacts are chosen and their digests are verified
+by the ops `storeManifestInspect`, `storeQueryPlan` and `storeOpen`; the
+JavaScript reads the files they name. With `{sparql}`, only the artifacts that
+query's plan needs are read, and the handle refuses a query that needs more.
+`sampleStorePath` and `sampleStoreFacts` are exported from `.` for tests and
+examples. Cases: `npm/factoidal/test/store.test.js`.
+
+### `ParseError.offset`
+
+`offset` is a UTF-16 code-unit index into the input string
+(`text.slice(err.offset)` starts at the error); `column` stays a count of
+Unicode scalar values, as the engine reports it. The engine counts Unicode
+scalar values; `utf16OffsetOf` in `lib/api.mjs` converts. The F\* engine
+counted UTF-8 bytes. This unit is a coordinator default for issue 713 stage 3,
+not an owner decision. Cases with U+1F600 in `test/parse-errors.test.js`.
+
+### Tests
+
+All tests that load `.`, `./api`, `./fn` or `./browser` run on the Lean
+engine. Tests that only checked the F\* engine, or a removed entry point, are
+deleted (`lite`, `select`, `wasm-parity`, `vc-crypto`, `browser-wasm-cottas`,
+`cottas-bytes-store`, `cottas-bytes-store-wasm`, `delta-log`,
+`delta-log-typed`, `delta-log-wasm`, `smoke-wasm.mjs`, `smoke.js`). Assertions
+of F\*-specific output (blank-node labels, statement order) became the
+spec-level property (graph isomorphism, RDF 1.1 Concepts § 3.6; equal
+statement sets). A capability probe that skipped a test is now an assertion,
+so a function the wasm does not serve fails the suite. The F\* cross-checks
+moved to `tests/engine-compare/` (`run.sh PATH/TO/factoidal-npm-entry.js`,
+exit 2 when the bundle is absent).
+
+Expected failures in `npm test`, each with an open issue:
+- issue 716, `{lenient: true}` parse: 2 cases;
+- issue 717, `SERVICE` without `SILENT` to an unregistered endpoint: 1 case;
+- issue 691, unused `@prefix xsd:` in Turtle output with literal shorthand: 1
+  case (the Lean writer has the defect the issue names for F\*);
+- issue 676, PRECIS for XMPP JIDs: 2 cases.
+
+### The hub
+
+`docs/web/hub/hub.njk` and three demos imported `npm/factoidal/browser.js`,
+which was the F\* API. That driver is kept at
+`docs/fstar-extracted/browser.js`, beside the F\* bundles that
+`tools/fetch-builds.sh` installs, and the hub template, the demos, the
+service-worker precache list and the hub browser checks point at it. The hub
+node harness (`tests/hub/`) binds `npm/factoidal`, which is now the Lean
+engine, so the node harness and the hub pages test different engines.
+On the stage 3 tree with no F\* bundle installed, the hub node suite is 346
+pass, 41 fail (out of 387); the same container before stage 3 gave 203 pass,
+184 fail (out of 387), because the harness then bound the F\* bundles, which
+were not installed. The 41 failures are of four kinds:
+- Lean output that differs from the F\* output the post pins: `SELECT *`
+  variable order (post19, post31), the parse-error column (post31), the
+  members of the OWL-RL closure (post03: no `rdfs:Resource` and `owl:Thing`
+  types), the MathML `undef` reason (post28), the Schematron location
+  `/person[1]` (post27), the `via` member of `owlEntails` (post30);
+- functions the Lean package does not have: COTTAS (post42), `text:query`
+  (post20), the GeoSPARQL functions (post21), the F\* command-line driver
+  (post24, post37);
+- files that need the F\* npm-entry bundle (`FACTOIDAL_NPM_ENTRY`: post07,
+  post10, post13, post18, post23, post25);
+- checks of the F\* browser adapter (the fn-surface parity check, post32)
+  and of the dashboard snapshot (post17), post54.
+
+Which engine the hub uses, and so which engine its node harness binds, is
+open: https://github.com/danbri/factoidal/issues/NEW-1.
+
+### Gates
+
+Measured on the merge with `claude/core-split` c8dbe2ab, with the wasm that
+`Wasm/build-wasm.sh` built from that tree (10,402,990 bytes; 10,375,811 before
+the merge; 9,622,969 after stages 1 and 2). No F\* bundle is in
+`npm/factoidal/` or `docs/npm/` for these runs.
+
+| Gate | Result |
+|---|---|
+| `lake build` (in `formal/lean4`) | exit 0 (1314 jobs) |
+| `formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); 282 before stage 3 |
+| `cd npm/factoidal && npm test` | 370 pass, 0 fail, 0 skipped (out of 370), 6 of them the expected-failure cases above. Before stage 3, with no F\* bundle: 227 pass, 98 fail, 108 skipped (out of 433) |
+| `tests/lws/server.mjs`, `tests/solid/server/protocol.mjs`, `tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
+| `tests/store-host/conformance.mjs`, `tests/store-host/cli.mjs` | 34 and 33 pass, 0 fail |
+| `tests/web-demos/npm_browser_smoke.sh` (headless Chromium, static page, local Node HTTP server) | PASS: parse, SELECT, `canonicalize`, `xpathEval`, `openStore` over `fetch`; `instantiateStreaming` called once; wasm served as `application/wasm`; 1226 ms to settle |
+| `tests/web-demos/bundler_csp_smoke.sh` | PASS (esbuild bundle under `script-src 'self' 'wasm-unsafe-eval'`) |
+| `tests/engine-compare/run.sh` with the F\* bundle of factoidal-builds `build-dba1bdb1d320-web` | 7 pass, 0 fail (out of 7), one of them the issue 702 expected failure; exit 2 with no bundle |
+| `npm pack --dry-run` | 161 files, 2,410,213 bytes packed, 12,040,930 unpacked; no F\* bundle, no `hacl-wasm/` |
+
+The Lean changes add no `sorry`, `axiom`, `native_decide` or `partial def`.
 
 ## 5. Stage 2: what landed (2026-10-10)
 

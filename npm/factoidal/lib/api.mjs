@@ -539,7 +539,7 @@ function buildApi(driver) {
     // Called SYNCHRONOUSLY from inside the engine.
     const iri = String(iriJs);
     const argsJson = String(argsJsonJs);
-    const key = iri + ' ' + argsJson;
+    const key = iri + '\u0000' + argsJson;
     if (extCache.has(key)) return extCache.get(key);
     const fn = extFunctions.get(iri);
     if (!fn) return null;
@@ -1921,9 +1921,8 @@ function buildApi(driver) {
    * "Securing Data Losslessly"). `credentialJson` MUST already have
    * any remote @context IRI the caller recognizes inlined to the real
    * context object — this engine build has no remote-context loader
-   * registered, so a still-remote IRI string in "@context" fails
-   * context processing honestly rather than silently skipping the
-   * check.
+   * registered, so a still-remote IRI string in "@context" makes
+   * context processing fail with an error; the check is not skipped.
    * @param {string} credentialJson the VC/VP document's raw JSON text,
    *   @context already inlined
    * @returns {Promise<{valid: boolean, reason?: string}>}

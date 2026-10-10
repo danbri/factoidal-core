@@ -230,19 +230,19 @@ to overwrite. Gates that read `docs/fstar-extracted/*.js`, `npm/factoidal/`
 bundles or the Lean wasm need those files installed first
 (`tools/fetch-builds.sh`) or built locally.
 
-| Gate | Command | Expected, measured 2026-09-16 (0.8.0) |
+| Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) |
 | --- | --- | --- |
-| hub notebooks | `node --test tests/hub/*_test.mjs` | 436 pass, 4 fail, 1 skipped (out of 441); the 4 are post17/post18 commit-citation checks that failed only on a shallow clone of `danbri/factoidal` (0 fail on a full clone). In `danbri/factoidal-core` they fail on every clone: the commit ids they cite (868a20b, 1f27320, 5e8399a, 8ff60eb, bd9e5be, 4f8fc95, e8085da) are absent from the rewritten history (checked 2026-10-09, 7 of 7 absent) |
-| package suite | `cd npm/factoidal && npm test` | 340 pass, 0 fail, 2 skipped (out of 342) |
-| npm-entry smoke | `node bin/npm-entry/smoke.mjs docs/fstar-extracted/factoidal-npm-entry.js` and the same with `factoidal-npm-entry-lite.js` | 33 pass, 0 fail (out of 33) for each bundle |
-| store host | `node tests/store-host/conformance.mjs` | 24 pass, 0 fail, 10 skipped (out of 34) under Node; Deno was not installed in the 2026-09-16 container, so its run is unmeasured there (2026-09-03: 29 pass, 0 fail (out of 29) under both) |
-| the command | `node tests/store-host/cli.mjs` | 7 pass, 0 fail, 1 skipped (out of 8) under Node; Deno as above (2026-09-03: 13 pass, 0 fail (out of 13) under both) |
-| tarball | `cd npm/factoidal && npm pack --dry-run` | the `files` list above, 193 files (62 on 2026-09-03, before the lite profile, the `api` entry and the mirror of the wasm assets) |
+| package suite | `cd npm/factoidal && npm test` | 370 pass, 0 fail, 0 skipped (out of 370). 6 of the 370 are expected-failure cases, each naming its open issue: 716 (2, `{lenient:true}`), 717 (1, `SERVICE` without `SILENT`), 691 (1, unused `@prefix xsd:`), 676 (2, PRECIS). A function the wasm does not serve FAILS; no test skips on a capability probe. (0.8.0: 340 pass, 0 fail, 2 skipped (out of 342), on the F\* bundles) |
+| store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node |
+| the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node |
+| LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
+| tarball | `cd npm/factoidal && npm pack --dry-run` | the `files` list above: 161 files, 2,410,213 bytes packed, 12,040,930 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
-| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | see the script's own report; needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`), absent from the 2026-09-16 container |
-| browser surface | `tests/web-demos/hub_browser_all.sh` | 54 pass, 0 fail (out of 54 posts); the node harness cannot see browser-only gaps; run this too |
-| bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 |
-| extraction drift | the `Check F\* Extraction` workflow (still in core) on the release commit, or `./build-ocaml.sh extract --force-full` followed by `git diff --stat -- 'formal/fstar/ocaml-output/*.ml'` | no diff. The publish workflow runs this same check and refuses to publish on drift; it was red on `claude/main` from 2026-09-07 to the 0.8.0 preparation (two OWL modules, re-extracted in commit 93f012e) |
+| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
+| browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` over `fetch`, with one `instantiateStreaming` call and the wasm served as `application/wasm` |
+| bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 (esbuild bundle of the package under `script-src 'self' 'wasm-unsafe-eval'`) |
+| engine comparison (private build, not a release gate) | `tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js` after `tools/fetch-builds.sh --set web` | 7 pass, 0 fail (out of 7) against the F\* bundle of build-dba1bdb1d320-web; exit 2 when the bundle is absent |
+| hub notebooks | `node --test tests/hub/*_test.mjs` | not a package gate since 0.9.0: the node harness binds this package (Lean) and the hub pages load the F\* driver `docs/fstar-extracted/browser.js`. 346 pass, 41 fail (out of 387) on 2026-10-10 with no F\* bundle installed; the failures are Lean/F\* output differences and F\*-only functions (COTTAS, `text:query`, GeoSPARQL) |
 
 The package suite runs again inside `npm publish` through
 `prepublishOnly`, so a failure there aborts the publish after the

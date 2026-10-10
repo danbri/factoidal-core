@@ -113,8 +113,10 @@ test('serialize turtle: parse-then-serialize keeps the source prefixes', async (
 // Expected failure (owner rule 2026-09-07: a stated shortfall is a failing
 // test plus an open issue). The writer collects the xsd: prefix from the
 // datatype IRIs before literal shorthand removes them from the printed
-// text, so the declaration survives with no reference. Flip to a real
-// assertion and close the issue when the F* writer is fixed.
+// text, so the declaration survives with no reference. The Lean writer
+// (formal/lean4/L4Factoidal/Syntax/TurtleSerialize.lean) has the same
+// defect as the F* writer the issue names. Flip to a real assertion and
+// close the issue when the Lean writer is fixed.
 const ISSUE_691 = 'https://github.com/danbri/factoidal/issues/691';
 test(`xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (${ISSUE_691})`, async (t) => {
   assert.ok(await entryAvailable());
