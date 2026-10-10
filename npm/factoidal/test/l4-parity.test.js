@@ -62,7 +62,7 @@ test('capabilities: the stage-1, stage-2 and stage-3 families are reported true'
     'xmlWellformed', 'xpathEval', 'xsltTransform', 'schematronValidate',
     'jsonSchemaValidate', 'mathmlEval', 'xformsRecalc', 'tableauMaterialise',
     'tableauDlInconsistent', 'toanSummation', 'shaclValidate', 'shexValidate',
-    'queryDataset12', 'datasetQuery12', 'storeOpen')) return;
+    'queryDataset12', 'datasetQuery12', 'storeOpen', 'parseDocument')) return;
   const caps = await lean.capabilities();
   for (const key of ['jsonld', 'jsonldFromRdf', 'rml', 'csvw', 'rif', 'xml',
     'xpath', 'xslt', 'mathml', 'xforms', 'jsonSchema', 'schematron', 'toan',
@@ -70,13 +70,14 @@ test('capabilities: the stage-1, stage-2 and stage-3 families are reported true'
     assert.equal(caps[key], true, `capabilities().${key}`);
   }
   // Stage 3 serves SHACL and ShEx (Wasm/Ops/Validate.lean); COTTAS left
-  // the package, so its flag is gone; lenient parse is not served yet
-  // (https://github.com/danbri/factoidal/issues/716).
+  // the package, so its flag is gone; lenient parse is served by the op
+  // parseDocument (Wasm/Ops/Lenient.lean,
+  // https://github.com/danbri/factoidal/issues/716).
   for (const key of ['shacl', 'shex', 'matrix', 'sigmoid', 'vcCrypto', 'didKey',
-    'entailment', 'hdt', 'sparql12', 'store', 'datasetHandles', 'turtlePrefixes']) {
+    'entailment', 'hdt', 'sparql12', 'store', 'datasetHandles', 'turtlePrefixes',
+    'parseDiagnostics']) {
     assert.equal(caps[key], true, `capabilities().${key}`);
   }
-  assert.equal(caps.parseDiagnostics, false, 'capabilities().parseDiagnostics');
   assert.equal('cottasBytesStore' in caps, false, 'no COTTAS flag');
 });
 

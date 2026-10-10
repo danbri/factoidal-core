@@ -82,8 +82,14 @@ so the stage 3 switch does not hide them:
 
 State after stage 3 (§ 7): the wrapper converts `offset` to a UTF-16
 code-unit index, so `text.slice(err.offset)` starts at the error;
-`datasetQuery12` is served; `{lenient: true}` is still unserved (issue 716,
-expected-failure cases in `npm/factoidal/test/`).
+`datasetQuery12` is served. `{lenient: true}` was still unserved at the
+stage 3 merge (issue 716); the issue-716 merge serves it (op `parseDocument`,
+`formal/lean4/Wasm/Ops/Lenient.lean`), its two expected-failure cases are now
+assertions, and diagnostic offsets get the same UTF-16 conversion as
+`ParseError.offset`. One difference from the F\* engine remains, by the
+issue's specification: Turtle recovery resumes at the next statement boundary
+(a `.` in normal mode followed by white space or `#`), where the F\* engine
+resumed at the next line.
 
 Size, measured on the 2026-09-08 Lean wasm (6,359,842 bytes) and the F\*
 bundles of factoidal-builds run 11:
@@ -247,8 +253,8 @@ so a function the wasm does not serve fails the suite. The F\* cross-checks
 moved to `tests/engine-compare/` (`run.sh PATH/TO/factoidal-npm-entry.js`,
 exit 2 when the bundle is absent).
 
-Expected failures in `npm test`, each with an open issue:
-- issue 716, `{lenient: true}` parse: 2 cases;
+Expected failures in `npm test`, each with an open issue (the issue-716
+merge turned its 2 cases, `{lenient: true}` parse, into assertions):
 - issue 717, `SERVICE` without `SILENT` to an unregistered endpoint: 1 case;
 - issue 691, unused `@prefix xsd:` in Turtle output with literal shorthand: 1
   case (the Lean writer has the defect the issue names for F\*);

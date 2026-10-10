@@ -14,7 +14,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { xfail, LENIENT_ISSUE } = require('./helpers.js');
 const factoidal = require('../index.js');
 
 function assertParseError(err, who) {
@@ -87,21 +86,34 @@ test('RDF/XML syntax errors reject (a message only, no position -- issue #344)',
     });
 });
 
-xfail('{lenient:true} returns the recoverable statements and one diagnostic', LENIENT_ISSUE, async () => {
+// Lenient parse (https://github.com/danbri/factoidal/issues/716). A Turtle
+// statement is not delimited by a line end: recovery resumes at the next
+// statement boundary as the Turtle statement scanner defines it (a `.` in
+// normal mode followed by white space or `#`). So 'BOGUS' with no `.` runs
+// on to the end of 'ex:b ex:p ex:o2 .' and that statement is skipped with
+// it; 'BOGUS .' ends at its own `.` and the next statement recovers. (The
+// F* engine resumed at the next line and kept ex:b in the first case.)
+test('{lenient:true} returns the recoverable statements and one diagnostic', async () => {
   const text =
     '@prefix ex: <http://example.org/> .\n' +
     'ex:a ex:p ex:o .\n' +
     'BOGUS\n' +
     'ex:b ex:p ex:o2 .\n';
   const ds = await factoidal.parse(text, { format: 'turtle', lenient: true });
-  assert.equal(ds.size, 2, 'both statements around the bad line recover');
+  assert.equal(ds.size, 1, 'the statement before the error recovers');
   assert.equal(ds.diagnostics.length, 1);
-  assert.equal(typeof ds.diagnostics[0].message, 'string');
-  assert.equal(typeof ds.diagnostics[0].line, 'number');
-  assert.equal(typeof ds.diagnostics[0].column, 'number');
-  assert.equal(typeof ds.diagnostics[0].offset, 'number');
+  const d = ds.diagnostics[0];
+  assert.equal(typeof d.message, 'string');
+  assert.deepEqual([d.line, d.column, d.class], [3, 6, 'bad-prefixed-name']);
+  assert.equal(text.slice(d.offset), '\nex:b ex:p ex:o2 .\n');
   // Strict parsing of the SAME text rejects outright.
   await assert.rejects(factoidal.parse(text, { format: 'turtle' }));
+
+  const ended = text.replace('BOGUS\n', 'BOGUS .\n');
+  const ds2 = await factoidal.parse(ended, { format: 'turtle', lenient: true });
+  assert.equal(ds2.size, 2, 'both statements around the bad statement recover');
+  assert.equal(ds2.diagnostics.length, 1);
+  assert.equal(ds2.diagnostics[0].line, 3);
 });
 
 test("query('bad text', sparql) rejects the same way", async () => {

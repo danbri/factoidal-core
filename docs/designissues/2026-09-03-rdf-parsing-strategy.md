@@ -1,6 +1,7 @@
 # RDF parsing strategy in the Lean tree: layers, entry points, proofs, costs
 
-Status: record of the design as it stands on 2026-09-03, written because the
+Status: record of the design as it stands on 2026-09-03 (section 3a, the
+lenient mode, added 2026-10-10), written because the
 owner asked for it to live somewhere findable (2026-09-03: "this and similar
 ought to be recorded properly somewhere I can find it. Ephemeral coding logs
 aren't that place"). Update this file when a layer, an entry point or a
@@ -168,26 +169,211 @@ table the Turtle `decodeEscape` mirrors), `IriResolve.lean` (RFC 3986),
 `IriScan.lean`, the `Locality*.lean` family (chunk-locality lemmas used by
 the N-Quads streaming proofs).
 
-## 3a. Recovery (lenient) mode: planned
+## 3a. Recovery (lenient) mode
 
 Issue: https://github.com/danbri/factoidal/issues/716. Owner, 2026-10-10,
 verbatim: "#716 is important for building validators and for streaming huge
 datasets through a parser".
 
-State on 2026-10-10: every Lean parser in sections 2 and 3 stops at the
-first error. The F\* npm entry's `parseDocument` recovers per statement.
+Landed 2026-10-10 on `claude/wt-lenient-parse`. Before it, every Lean parser
+in sections 2 and 3 stopped at the first error; the F\* npm entry's
+`parseDocument` recovered per statement but reported only the first error.
 
-Requirements, from the two uses the owner named:
-- validators need every error, each with line, column, offset and a stable
-  error class;
-- huge datasets need recovery in the streaming executions (section 2.2,
-  `NQuadsFold`), memory bounded by the chunk plus the longest statement,
-  diagnostics emitted as they occur, and a maximum error count.
+### 3a.1 The diagnostic
 
-Synchronisation points: the end of the line for N-Triples and N-Quads; the
-`TurtleStatementScan` candidate boundary for Turtle and TriG. Agreement
-obligations (rule 1 below): lenient equals strict on input with no errors;
-streaming lenient gives the same diagnostics as reference lenient.
+`Syntax/Diagnostics.lean`. A `Diagnostic` has a class, the grammar's
+message, an `offset` (0-based, Unicode scalar values from the start of the
+document: the strict `ParseError.pos`), a `line` (1-based; a line ends at
+LINE FEED, so CR LF is one line end and a lone CR is not one) and a `column`
+(1-based, Unicode scalar values). The line convention is the one of the
+strict error envelope (`Wasm/Ops/Parse.lean`, `lineColumnOfOffset`) and of
+the F\* entry, so the first diagnostic of a lenient parse names the line and
+column a strict parse names.
+
+`DiagnosticClass` has 16 constructors; `tag` gives the stable JSON name:
+`undefined-prefix`, `relative-iri`, `bad-iri`, `bad-escape`,
+`unterminated-string`, `bad-literal`, `bad-blank-node`, `bad-prefixed-name`,
+`bad-directive`, `bad-graph-name`, `rdf12-syntax`, `unclosed-group`,
+`nesting-limit`, `unexpected-token`, `internal`, `too-many-errors`. The class
+is decided from the grammar's message (`classifyParseMessage`), so the strict
+parsers, their messages and their theorems are unchanged; a `#guard` pins the
+class of every message literal in `Lexing`, `NTriples`, `NQuads`, `Turtle`
+and `TriG`. "expected prefixed name" is `unexpected-token`: the Turtle readers
+fall back to a prefixed name for any token they cannot read otherwise, so the
+message reports a missing term.
+
+`LenientOptions.maxErrors = some m`: the error after the `m`-th is reported
+as one `too-many-errors` diagnostic (its position, the next error's message)
+and the parse stops.
+
+### 3a.2 Executions and synchronisation
+
+| Syntax | Reference lenient | Streaming lenient | Synchronisation |
+| --- | --- | --- | --- |
+| N-Triples, N-Quads | `NQuadsLenient.lean`: `foldLinesLenient` (one walk, statement reader as a parameter), `parseNTriplesLenient`, `parseNQuadsLenient`, `parseNQuadsFastLenient` | `LenientStream` (cuts after the last line feed with `splitCompleteLines`, as `feedChunkC`) | the end of the line on which the failing statement started (`skipToEol`, `skipEol`) |
+| Turtle | `TurtleLenient.lean`: `parseStatementsLenient`, `parseTurtleLenient(WithPrefixes)` | `TurtleChunkLenientState` (the `TurtleChunkFold` walk; each scanner candidate is walked by `parseStatementsLenient`) | the first `TurtleStatementScan` cut at or after the error offset, found by a fresh scanner run from the start of the failing statement (`turtleResync`) |
+| TriG | `parseTriGStatementsLenient` (the `FastDataset` accumulator of the strict walk), `parseTriGLenient(WithPrefixes)` | none (as for strict TriG, section 3) | strict `readTriGStatement` first; a failing graph block is read again by `readTriGBlockRecover`, which resumes inside the body at a scanner cut or a normal-mode `}` at or after the error; any other failure resumes as Turtle |
+
+Each lenient walk has the strict walk's branches and differs only in the
+error arm. The `TurtleState` after a failing statement is the one before it,
+so a prefix whose `@prefix` failed stays undefined and each later use of it
+gets its own `undefined-prefix` diagnostic. A statement that starts with a
+directive keyword is reported with the directive reader's own error
+(`directiveError`; `readStatement` swallows it and reports "expected
+subject"). `VERSION` in an RDF 1.1 document is `rdf12-syntax`.
+
+Line state (`LinePos`) changes only at a line feed. The N-Triples and N-Quads
+walks advance it only over the characters `skipEol` consumes (no token,
+white space run or comment of those grammars holds a raw line break), so line
+tracking costs a constant per line; the Turtle walks advance it over each
+statement. Diagnostics go to a caller-supplied consumer (`report`); the
+streaming states hand each chunk's diagnostics out with `takeDiags`, so
+nothing accumulates them across chunks.
+
+`LenientFeed.lean` is the byte-chunk driver the CLI runs: UTF-8 decoding
+across reads (`Utf8Stream`), the streaming walk, and for Turtle the
+generated blank-node prefix from a first pass (`LenientPrepass`), as the
+shard packer does.
+
+### 3a.3 Theorems
+
+All proved, axioms `propext`, `Classical.choice`, `Quot.sound` only:
+
+- `NQuadsLenientTheorems.lean`: `foldLinesLenient_quad_of_ok` and
+  `_triple_of_ok` (strict success ⇒ the lenient walk gives the strict result
+  and reports nothing, for every triple consumer and every diagnostic
+  consumer); `foldLinesLenient_rel` (a step-wise consumer relation is
+  preserved); `parseNTriplesLenient_of_ok`, `parseNQuadsLenient_of_ok`,
+  `parseNQuadsFastLenient_of_ok` (`parseX s = .ok d → parseXLenient s =
+  (d, [])`); `parseNQuadsFastLenient_eq` (indexed accumulator = reference
+  accumulator, lenient mode); the converse
+  `parseNTriples_ok_of_lenient_quiet` and `parseNQuads_ok_of_lenient_quiet`
+  (no diagnostic ⇒ the strict parser accepts).
+- `TurtleLenientTheorems.lean`: `parseStatementsLenient_of_ok`,
+  `parseTriGStatementsLenient_of_ok`, `parseTurtleLenient_of_ok`,
+  `parseTurtleLenientWithPrefixes_of_ok`, `parseTriGLenient_of_ok`,
+  `parseTriGLenientWithPrefixes_of_ok`; the converse
+  `parseTurtle_ok_of_lenient_quiet` and `parseTriG_ok_of_lenient_quiet`
+  (through `TurtleLenientRun.Grew`: a recovered TriG graph block that changed
+  the error count or the stop flag added a diagnostic).
+
+So for all four syntaxes the lenient parse reports nothing exactly when the
+strict parser accepts, and then returns the strict result; every document
+the strict parser refuses gets at least one diagnostic. None of the
+hypotheses mentions a lenient walk (anti-pattern 29).
+
+Not proved: streaming lenient = reference lenient. The differential checks
+are (1) `#guard`s at every two-way split and with one-character chunks
+(`NQuadsLenient.lean`: 5 documents; `TurtleLenient.lean`: 7 documents;
+`LenientFeed.lean`: every byte-chunk size from 1 to 12 over documents with
+two-byte characters), comparing triples and diagnostics whole, and (2) the
+W3C gate below, which runs the streaming walk over 5-character chunks on every
+Turtle, N-Triples and N-Quads test file. The strict Turtle streaming walk has
+no chunk-boundary theorem either (2.3). One case where the two can differ: a
+candidate that the scanner cuts at a `PREFIX`/`BASE` line end while the
+grammar reads past it (the same case where strict streaming and strict
+reference differ).
+
+### 3a.4 Gates
+
+`lake exe l4w3c --lenient <manifests>` (`Harness/LenientRun.lean`): a positive
+syntax or evaluation test passes when the lenient parse reports no
+diagnostic and returns the strict result; a negative syntax test passes when
+it reports at least one diagnostic; for Turtle, N-Triples and N-Quads the
+streaming walk over 5-character chunks must agree with the reference walk.
+2026-10-10, `l4w3c --quiet --lenient`: RDF 1.1 Turtle 313 pass, 0 fail (out
+of 313); N-Triples 70 pass, 0 fail (out of 70); N-Quads 87 pass, 0 fail (out
+of 87); TriG 357 pass, 0 fail (out of 357); RDF 1.2 Turtle syntax 74 pass, 0
+fail (out of 74) and eval 32 pass, 0 fail (out of 32); N-Triples syntax 29
+pass, 0 fail (out of 29); N-Quads syntax 27 pass, 0 fail (out of 27); TriG
+syntax 35 pass, 0 fail (out of 35) and eval 26 pass, 0 fail (out of 26).
+TOTAL 1050 pass, 0 fail (out of 1050), of which 358 are negative syntax
+tests. (With the two RDF 1.2 c14n manifests added to the same run, their 82
+tests are `skip`: they are not syntax tests.) The same after the merge with
+`c8dbe2ab`.
+
+The strict suites (`l4w3c --quiet`, the same manifests plus the RDF 1.2
+N-Triples and N-Quads c14n manifests) are unchanged: 1132 pass, 0 fail (out
+of 1132) before and after, line for line. `Wasm/native-smoke.sh`: 288 pass,
+0 fail (out of 288), six of them new `parseDocument` checks (282 pass, 0 fail
+(out of 282) at the branch point). After the merge with `c8dbe2ab`, the same
+numbers, and `tests/stack/lean_scaling.sh` 12 pass, 0 fail (out of 12).
+
+### 3a.5 Surfaces
+
+- Dispatch op `parseDocument(text, formatTag, baseIRI, optionsJson)`
+  (`Wasm/Ops/Lenient.lean`), `{"lenient":true,"maxErrors":n}`: the F\*
+  entry's envelope plus `diagnostics: [{message, offset, line, column,
+  class}]`; not lenient = `parseToDatasetJson`. RDF/XML and JSON-LD parse
+  strictly, as in the F\* entry.
+- npm: `l4-core.js` wires `parseDocument`, so `capabilities().parseDiagnostics`
+  is `true` and `parse(text, {lenient: true, maxErrors})` returns a Dataset
+  with `diagnostics`.
+- CLI: `l4factoidal parse --lenient FILE [--format F] [--base IRI]
+  [--max-errors N] [--out nquads]` streams the file in 65,536-byte chunks and
+  writes each diagnostic as one JSON line to stderr before reading the next
+  chunk; exit status 1 when any diagnostic was written. TriG and stdin are
+  read whole.
+
+### 3a.6 Scaling and the strict path's speed
+
+`tests/stack/lenient_scaling.sh 250000 1000 "nquads turtle"` (2026-10-10, this
+branch merged with `c8dbe2ab`, on a shared 4-CPU host; CPU time is user +
+system seconds, memory is the peak resident set from `/usr/bin/time -v`). One
+malformed statement every 1,000, five kinds in rotation; every run reported
+exactly one diagnostic per malformed statement and kept every other
+statement. Streaming path: `l4factoidal parse --lenient FILE`.
+
+| Syntax | Statements | Bytes | CPU s | Peak RSS KiB | Diagnostics |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| N-Quads | 250,000 | 25,111,204 | 3.87 | 27,196 | 250 |
+| N-Quads | 500,000 | 50,412,081 | 7.78 | 26,880 | 500 |
+| N-Quads | 1,000,000 | 101,292,441 | 13.98 | 27,172 | 1,000 |
+| N-Quads | 2,000,000 | 204,219,345 | 28.56 | 27,308 | 2,000 |
+| Turtle | 250,000 | 21,186,597 | 4.88 | 23,196 | 250 |
+| Turtle | 500,000 | 42,562,799 | 10.29 | 23,284 | 500 |
+| Turtle | 1,000,000 | 85,593,803 | 19.85 | 23,092 | 1,000 |
+| Turtle | 2,000,000 | 172,821,992 | 45.29 | 21,616 | 2,000 |
+
+Time doubles with the input (ratios N-Quads 2.01, 1.80, 2.04; Turtle 2.11,
+1.93, 2.28) and peak memory does not move (N-Quads 26.9 to 27.3 MB from 25 MB
+to 204 MB; Turtle 21.6 to 23.3 MB from 21 MB to 173 MB). The script checks
+the counts, time(2x) at most 2.6 times max(time(x), 1 s), and peak(8n) at
+most 1.25 times peak(n) plus 64 MiB: 16 pass, 0 fail (out of 16). A run of
+the same script before the merge (pre-merge binary, more load on the host)
+gave N-Quads 3.21, 6.46, 13.26 and 27.54 s at 41.5 to 41.8 MB and Turtle
+5.10, 9.47, 18.82 and 37.67 s at 35.6 to 37.7 MB, also 16 pass, 0 fail (out
+of 16). The Turtle times include the blank-node pre-pass, a first read of
+the whole file.
+For comparison, the strict reference parse of 101,331,473 bytes of N-Quads
+through `l4factoidal parse` (which builds the whole `List Char`, the whole
+dataset and its canonical N-Quads) used 8,278,248 KiB.
+
+The strict parsers are not changed by this work (the lenient walks are new
+functions beside them). Measured anyway, `l4factoidal parse FILE --format F`
+under `/usr/bin/time -v`, runs interleaved, user CPU seconds:
+
+| Input | Before | After | Change |
+| --- | --- | --- | --- |
+| N-Quads, 101,331,473 bytes (1,000,000 quads), branch point `fefe9088` vs this branch before the merge | 28.47, 28.40 | 28.58, 29.01 | +1.3 % |
+| the same, `core-split` `c8dbe2ab` vs this branch merged with it | 14.82, 15.35 | 14.20, 15.05 | -3.0 % |
+| Turtle, 103,052,745 bytes (1,800,000 triples), `c8dbe2ab` vs merged | 17.78, 17.69 | 16.94, 17.41 | -3.2 % |
+
+Peak memory is the same before and after in each pair (8.28 GB, 3.89 GB and
+3.95 GB; the drop between the first and second pair is `c8dbe2ab`'s change to
+`parse`, which no longer writes the dataset as N-Quads text). The differences
+are within the run-to-run spread on a host shared with other builds. The
+`c8dbe2ab` binary was built in another worktree at `cd56fe9a`, which
+differs from `c8dbe2ab` only in `CLAUDE.md`.
+
+TriG has no streaming execution; `l4factoidal parse --lenient` reads a TriG
+file whole and runs the reference walk, whose memory grows with the input.
+After the 2026-10-10 repair of the strict TriG reader (linear; it was
+quadratic, `docs/designissues/2026-10-10-lean-vs-fstar-performance.md`) the
+lenient TriG walk, which runs that reader, is linear too: 25,000, 50,000,
+100,000 and 200,000 statements (10 per graph block, one bad in 500;
+1,681,242 to 13,822,892 bytes) took 0.72, 1.32, 2.77 and 5.43 s of CPU and
+141, 265, 513 and 987 MB peak.
 
 ## 4. Rules that follow
 

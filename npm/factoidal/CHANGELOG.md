@@ -60,6 +60,17 @@ New:
 - `browser.js` loads the wasm with `fetch` and
   `WebAssembly.instantiateStreaming`; `setAssetsUrl()` names another
   directory for the engine's three files.
+- `parse(text, {lenient: true})` (op `parseDocument`,
+  [issue 716](https://github.com/danbri/factoidal/issues/716)): the Turtle,
+  TriG, N-Triples and N-Quads parsers skip each bad statement, keep the good
+  ones and list one diagnostic per skipped statement in
+  `dataset.diagnostics`: `message`, `line`, `column`, `offset` (a UTF-16
+  index, as `ParseError.offset`) and a stable `class` (for example
+  `undefined-prefix`, `bad-escape`, `unexpected-token`). The new option
+  `maxErrors` stops the parse after that many diagnostics with one
+  `too-many-errors` diagnostic. `capabilities().parseDiagnostics` is `true`.
+  A document with no error gives the strict result and no diagnostics (a
+  theorem in the Lean source). RDF/XML and JSON-LD parse strictly.
 
 Changed:
 
@@ -93,8 +104,6 @@ Changed:
 
 Open, each with an expected-failure test:
 
-- `parse(text, {lenient: true})`: the Lean parser has no recovery mode
-  ([issue 716](https://github.com/danbri/factoidal/issues/716)).
 - A `SERVICE <iri>` without `SILENT` whose endpoint is not registered answers
   no solutions instead of an error
   ([issue 717](https://github.com/danbri/factoidal/issues/717)).

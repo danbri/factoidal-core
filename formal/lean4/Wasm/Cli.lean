@@ -21,6 +21,7 @@ SPARQL, OWL or CL semantics live here.
 -/
 import Wasm.Abi
 import Wasm.Dispatch
+import L4Factoidal.Syntax.LenientFeed
 
 namespace L4Wasm.Cli
 
@@ -231,6 +232,141 @@ def opsCmd : IO UInt32 := do
   | .error _ => IO.println raw
   pure 0
 
+/-! ## `parse --lenient`: streaming recovery mode (issue 716)
+
+The library does the parsing (`Syntax/LenientFeed.lean`); this section reads
+the file in 65,536-byte chunks, writes each chunk's diagnostics to stderr as
+JSON lines (`Ops.diagnosticJson`, the `parseDocument` shape) and its kept
+quads to stdout (with `--out nquads`) before reading the next chunk. -/
+
+def lenientChunkBytes : USize := 65536
+
+/-- Read `h` chunk by chunk, at most `fuel` chunks, stopping early when
+`stop` holds. The `Bool` is `true` when the end of the file was reached (or
+`stop` held). Structural recursion on `fuel`. -/
+def forChunks {α : Type} (h : IO.FS.Handle) (stop : α → Bool)
+    (f : α → ByteArray → IO (Except String α)) : Nat → α → IO (Except String (α × Bool))
+  | 0, a => pure (.ok (a, false))
+  | n + 1, a => do
+      if stop a then return .ok (a, true)
+      let bytes ← h.read lenientChunkBytes
+      if bytes.isEmpty then return .ok (a, true)
+      match ← f a bytes with
+      | .error e => pure (.error e)
+      | .ok a' => forChunks h stop f n a'
+
+def printDiagnostics (ds : List Diagnostic) : IO Unit := do
+  let err ← IO.getStderr
+  for d in ds do err.putStrLn (Ops.diagnosticJson d).toString
+  err.flush
+
+def printLines (ls : List String) : IO Unit := do
+  let out ← IO.getStdout
+  for l in ls do out.putStr l
+  out.flush
+
+/-- `parse --lenient`, streaming a FILE. `none` when the format has no
+streaming execution (TriG) — the caller then reads the file whole. -/
+def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : Bool)
+    (opts : LenientOptions) : IO (Option (Except String (Nat × Nat))) := do
+  let size := (← System.FilePath.metadata path).byteSize.toNat
+  let fuel := size / lenientChunkBytes.toNat + 2
+  let baseOpt : Option String := if base == "" then none else some base
+  let feed? : Option (IO (Except String LenientFeed)) :=
+    match tag with
+    | "ntriples" | "nt" | "n-triples" =>
+        some (pure (.ok (LenientFeed.initLines mode true emit opts)))
+    | "nquads" | "nq" | "n-quads" =>
+        some (pure (.ok (LenientFeed.initLines mode false emit opts)))
+    | "" | "turtle" | "ttl" =>
+        some (do
+          let pre ← IO.FS.withFile path .read fun h =>
+            forChunks h (fun (_ : LenientPrepass) => false)
+              (fun (p : LenientPrepass) b => pure (p.feed b)) fuel ({} : LenientPrepass)
+          match pre with
+          | .error e => pure (.error e)
+          | .ok (_, false) => pure (.error "the file grew while it was read")
+          | .ok (p, true) =>
+              pure ((LenientPrepass.finish p).map fun pfx =>
+                LenientFeed.initTurtle pfx baseOpt mode emit opts))
+    | _ => none
+  match feed? with
+  | none => pure none
+  | some mk =>
+    match ← mk with
+    | .error e => pure (some (.error e))
+    | .ok feed0 =>
+      let walked ← IO.FS.withFile path .read fun h =>
+        forChunks h (fun (fd : LenientFeed × Nat) => fd.1.stopped)
+          (fun (fd : LenientFeed × Nat) bytes => do
+            match fd.1.feed bytes with
+            | .error e => pure (.error e)
+            | .ok (f', out) =>
+                printDiagnostics out.diags
+                printLines out.lines
+                pure (.ok (f', fd.2 + out.diags.length)))
+          fuel (feed0, 0)
+      match walked with
+      | .error e => pure (some (.error e))
+      | .ok (_, false) => pure (some (.error "the file grew while it was read"))
+      | .ok ((f, n), true) =>
+          match f.finish with
+          | .error e => pure (some (.error e))
+          | .ok (out, count, _) =>
+              printDiagnostics out.diags
+              printLines out.lines
+              pure (some (.ok (count, n + out.diags.length)))
+
+/-- `parse --lenient`. Exit 1 when any diagnostic was written. -/
+def parseLenientCmd (s : Scanned) : IO UInt32 := do
+  let format := (s.value? "--format").getD "turtle"
+  let base := (s.value? "--base").getD ""
+  let emit ← match s.value? "--out" with
+    | none => pure (some false)
+    | some "nquads" => pure (some true)
+    | some other =>
+        IO.eprintln s!"l4factoidal parse --lenient: --out '{other}' is not available (nquads)"
+        pure none
+  match emit with
+  | none => pure 2
+  | some emit =>
+  let maxErrors ← match s.value? "--max-errors" with
+    | none => pure (some none)
+    | some n => match n.toNat? with
+      | some m => pure (some (some m))
+      | none => IO.eprintln s!"l4factoidal parse: --max-errors '{n}' is not a number"; pure none
+  match maxErrors with
+  | none => pure 2
+  | some maxErrors =>
+  let opts : LenientOptions := { maxErrors }
+  let (mode, tag) := Ops.resolveModeAndTag format
+  if !["", "turtle", "ttl", "ntriples", "nt", "n-triples", "nquads", "nq", "n-quads", "trig"].contains tag then
+    IO.eprintln s!"l4factoidal parse --lenient: format '{format}' has no lenient mode (turtle | trig | ntriples | nquads)"
+    return 2
+  let streamed ← match s.positional[0]? with
+    | none | some "-" => pure none
+    | some path =>
+        try streamLenientFile path mode tag base emit opts
+        catch e => pure (some (.error s!"{path}: {e}"))
+  let result ← match streamed with
+    | some r => pure r
+    | none => do
+        -- stdin, or TriG: the whole text through the reference walk.
+        match ← readInput s.positional[0]? with
+        | .error e => pure (.error e)
+        | .ok text =>
+            match Ops.lenientDocumentOutcome text format base opts with
+            | .error f => pure (.error f.message)
+            | .ok (o, ds) =>
+                printDiagnostics ds
+                if emit then printLines [Dataset.toCanonicalNQuads o.ds]
+                pure (.ok (Ops.datasetQuadCount o.ds, ds.length))
+  match result with
+  | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 1
+  | .ok (count, nDiags) =>
+      if !emit then IO.println (toString count)
+      pure (if nDiags > 0 then 1 else 0)
+
 /-- The text `parse` prints when `--out` is absent: the quad count, or the
 parser's error text. -/
 def parseCountOutput (text format base : String) : Except String String :=
@@ -279,9 +415,10 @@ private def sampleTtl : String :=
 #guard !sameOutput (.ok "2") (.error "2")
 
 def parseCmd (args : List String) : IO UInt32 := do
-  match scanArgs ["--format", "--base", "--out"] [] args with
+  match scanArgs ["--format", "--base", "--out", "--max-errors"] ["--lenient"] args with
   | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 2
   | .ok s =>
+    if s.hasBool "--lenient" then parseLenientCmd s else
     let format := (s.value? "--format").getD "turtle"
     let base := (s.value? "--base").getD ""
     match ← readInput s.positional[0]? with
@@ -501,6 +638,14 @@ def usageLines : List String :=
   , "      Parse RDF and print the quad count, or (with --out) N-Quads"
   , "      or Turtle. FILE omitted or \"-\" reads stdin. FMT: turtle |"
   , "      ntriples | nquads | trig | rdfxml (default turtle)."
+  , "  parse --lenient [FILE] [--format FMT] [--base IRI] [--max-errors N]"
+  , "        [--out nquads]"
+  , "      Recovery mode (turtle | trig | ntriples | nquads): skip each bad"
+  , "      statement, write one JSON diagnostic per line to stderr"
+  , "      ({message, offset, line, column, class}), keep the good ones."
+  , "      A FILE is streamed in 64 KiB chunks (TriG and stdin are read"
+  , "      whole). Prints the quad count, or with --out nquads the kept"
+  , "      quads as they are read. Exit 1 when any diagnostic was written."
   , "  query [FILE] (--query FILE.rq | --query-string SPARQL)"
   , "        [--format FMT] [--table]"
   , "      Run a SPARQL query. SELECT prints SPARQL Results JSON (or a"

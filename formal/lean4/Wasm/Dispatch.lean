@@ -56,6 +56,7 @@ import Wasm.Ops.QueryExtras
 import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
+import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 
 namespace L4Wasm
@@ -312,7 +313,7 @@ sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
 They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
-def stage2OpNames : List String := mathsOpNames ++ vcOpNames ++ parityOpNames
+def stage2OpNames : List String := mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames
 
 /-- Serve a stage 2 op, or answer the unknown-op error. -/
 private def callStage2 (op : String) (args : List String) : String :=
@@ -324,7 +325,12 @@ private def callStage2 (op : String) (args : List String) : String :=
     | none =>
       match callParity op args with
       | some r => r
-      | none => errJson s!"unknown op '{op}'"
+      | none =>
+        -- `parseDocument`, the lenient parse (`Wasm/Ops/Lenient.lean`,
+        -- https://github.com/danbri/factoidal/issues/716).
+        match callLenient op args with
+        | some r => r
+        | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
@@ -541,7 +547,15 @@ def callIO (op : String) (argsJson : String) : IO String :=
                                     ++ extOpNames ++ lwsSolidOpNames
                                     ++ formatOpNames ++ serviceOpNames
                                     ++ query12OpNames))
-  | _                  => pure (call op argsJson)
+  | _                  =>
+      -- `parseDocument` with a blank-node scope per document, as
+      -- `parseToDatasetJson` above (`Wasm/Ops/Lenient.lean`, issue 716).
+      match decodeArgs argsJson with
+      | .ok args =>
+          match callLenientIO op args with
+          | some r => r
+          | none => pure (call op argsJson)
+      | .error _ => pure (call op argsJson)
 
 /-- The dispatch entry the `l4_call_blob_io` C export serves: the string
 arguments of `callIO`, ONE byte region in, and ONE byte region out.

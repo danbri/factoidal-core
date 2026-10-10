@@ -100,9 +100,36 @@ the Basic Multilingual Plane precedes it. RDF/XML and JSON-LD failures carry
 a message only. Pass `{ baseIRI: "https://example.org/doc" }` to resolve
 relative IRIs.
 
-`{ lenient: true }` (recover and report what was skipped) is not served by
-the Lean engine yet: it rejects naming the missing op `parseDocument`
-([issue 716](https://github.com/danbri/factoidal/issues/716)).
+### Lenient parsing
+
+`{ lenient: true }` recovers instead of rejecting
+([issue 716](https://github.com/danbri/factoidal/issues/716)). The Turtle,
+TriG, N-Triples and N-Quads parsers skip each bad statement and keep every
+good one. `dataset.diagnostics` has one entry per skipped statement, in
+document order:
+
+```js
+const text = '<http://x/a> <http://x/p> "1" .\n<http://x/b> <http://x/p> .\n' +
+  '<http://x/c> <http://x/p> "3" .\n';
+const ds = await parse(text, { format: "turtle", lenient: true });
+console.log(ds.size);                 // 2
+const [d] = ds.diagnostics;
+console.log(d.line, d.column, d.class); // 2 27 unexpected-token
+console.log(text.slice(d.offset));    // " .\n<http://x/c> ...": the error is here
+```
+
+Each diagnostic has `message`, `line`, `column` and `offset` (the same
+conventions as `ParseError`) and a stable `class`: `undefined-prefix`,
+`relative-iri`, `bad-iri`, `bad-escape`, `unterminated-string`,
+`bad-literal`, `bad-blank-node`, `bad-prefixed-name`, `bad-directive`,
+`bad-graph-name`, `rdf12-syntax`, `unclosed-group`, `nesting-limit`,
+`unexpected-token`, `internal` or `too-many-errors`. In N-Triples and
+N-Quads the parser resumes at the next line; in Turtle and TriG it resumes
+after the end of the bad statement. A bad `@prefix` leaves that prefix
+undefined. `{ lenient: true, maxErrors: n }` stops after `n` diagnostics and
+adds one `too-many-errors` diagnostic. A document with no error gives the
+strict result and no diagnostics (a theorem in the Lean source). RDF/XML and
+JSON-LD parse strictly with `lenient`.
 
 ## In the browser
 
@@ -898,8 +925,6 @@ either engine; where one engine did less, the row says so.
 
 Each has an open issue and an expected-failure test in `test/`:
 
-- `parse(text, {lenient: true})` is not served
-  ([issue 716](https://github.com/danbri/factoidal/issues/716)).
 - A `SERVICE <iri>` without `SILENT` whose endpoint is not registered
   answers no solutions; SPARQL 1.1 Federated Query makes it an error
   ([issue 717](https://github.com/danbri/factoidal/issues/717)).

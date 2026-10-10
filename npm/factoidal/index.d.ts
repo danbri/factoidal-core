@@ -110,9 +110,25 @@ export class ParseError extends Error {
 /** One recoverable-parse diagnostic from a `{lenient:true}` parse() call. */
 export interface ParseDiagnostic {
   message: string;
+  /**
+   * The position of the error as a UTF-16 code-unit index into the input
+   * JavaScript string, as ParseError.offset: `text.slice(d.offset)` starts
+   * at the error.
+   */
   offset: number;
+  /** 1-based; a line ends at each LINE FEED (CR LF is one line end). */
   line: number;
+  /** 1-based, counted in Unicode scalar values from the start of the line. */
   column: number;
+  /**
+   * The stable error class (https://github.com/danbri/factoidal/issues/716):
+   * 'undefined-prefix', 'relative-iri', 'bad-iri', 'bad-escape',
+   * 'unterminated-string', 'bad-literal', 'bad-blank-node',
+   * 'bad-prefixed-name', 'bad-directive', 'bad-graph-name', 'rdf12-syntax',
+   * 'unclosed-group', 'nesting-limit', 'unexpected-token', 'internal' or
+   * 'too-many-errors'.
+   */
+  class: string;
 }
 
 /**
@@ -212,16 +228,21 @@ export interface ParseOptions {
   /** Base IRI for resolving relative IRIs (Turtle/TriG/RDF-XML). */
   baseIRI?: string;
   /**
-   * Recover instead of rejecting on the first syntax error (issue
-   * #344): the returned Dataset holds whatever the parser recovered,
-   * and `dataset.diagnostics` lists what was skipped. Needs the engine
-   * op `parseDocument`, which the Lean engine does not have yet
-   * (https://github.com/danbri/factoidal/issues/716): the call rejects
-   * naming the op. Default: false (strict; a syntax error,
-   * an undeclared prefix, or an unresolvable relative IRI rejects the
-   * whole parse with a ParseError).
+   * Recover instead of rejecting on the first syntax error
+   * (https://github.com/danbri/factoidal/issues/716, engine op
+   * `parseDocument`): Turtle, TriG, N-Triples and N-Quads skip each bad
+   * statement and keep every good one; `dataset.diagnostics` has one
+   * entry per skipped statement. RDF/XML and JSON-LD parse strictly. A
+   * document with no error gives the strict result and no diagnostics.
+   * Default: false (strict; a syntax error, an undeclared prefix, or an
+   * unresolvable relative IRI rejects the whole parse with a ParseError).
    */
   lenient?: boolean;
+  /**
+   * With `lenient`: stop after this many diagnostics; the parse then ends
+   * with one diagnostic of class 'too-many-errors'. Default: no limit.
+   */
+  maxErrors?: number;
 }
 
 export interface QueryOptions {

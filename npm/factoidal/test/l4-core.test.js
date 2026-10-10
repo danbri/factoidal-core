@@ -18,7 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { xfail, LENIENT_ISSUE } = require('./helpers.js');
+const { LENIENT_ISSUE } = require('./helpers.js');
 
 const l4core = require('../l4-core.js');
 
@@ -469,17 +469,56 @@ test('l4-core capabilities: entry, shacl, tableau true (issue 713 stage 3)', asy
   assert.equal(caps.canonicalize, true);
 });
 
-// Expected failure (skills/test-suites § Expected failures): the Lean
-// parsers have no recovery mode, so parse(..., {lenient:true}) cannot skip
-// a bad statement and report it.
-xfail('l4-core parse({lenient:true}) keeps good statements and reports the bad one', LENIENT_ISSUE, async () => {
+// Lenient parse (https://github.com/danbri/factoidal/issues/716): this was an
+// expected failure until the Lean parsers gained a recovery mode
+// (formal/lean4/L4Factoidal/Syntax/TurtleLenient.lean, NQuadsLenient.lean;
+// the parseDocument op in Wasm/Ops/Lenient.lean).
+test(`l4-core parse({lenient:true}) keeps good statements and reports the bad one (${LENIENT_ISSUE})`, async (t) => {
+  if (await skipUnlessOps(t, 'parseDocument')) return;
   const ttl = `<${X}a> <${X}p> "1" .\n<${X}b> <${X}p> .\n<${X}c> <${X}p> "3" .\n`;
   const caps = await l4core.capabilities();
   assert.equal(caps.parseDiagnostics, true);
   const ds = await l4core.parse(ttl, { format: 'turtle', lenient: true });
   assert.equal(ds.size, 2);
   assert.equal(ds.diagnostics.length, 1);
-  assert.equal(ds.diagnostics[0].line, 2);
+  const d = ds.diagnostics[0];
+  assert.equal(d.line, 2);
+  assert.equal(d.column, 27);
+  assert.equal(d.offset, ttl.indexOf(' .\n<' + X + 'c>') + 1);
+  assert.equal(d.class, 'unexpected-token');
+  assert.equal(typeof d.message, 'string');
+});
+
+test('l4-core parse({lenient:true}) in N-Quads and TriG, and maxErrors', async (t) => {
+  if (await skipUnlessOps(t, 'parseDocument')) return;
+  const nq = `<${X}a> <${X}p> <${X}o> <${X}g> .\n<${X}a> <${X}p> "x" "g" .\n` +
+    `<${X}a> <${X}p> "bad \\q" .\n<${X}b> <${X}p> <${X}o> .\n`;
+  const dsq = await l4core.parse(nq, { format: 'nquads', lenient: true });
+  assert.equal(dsq.size, 2);
+  assert.deepEqual(dsq.diagnostics.map((d) => [d.line, d.class]),
+    [[2, 'bad-graph-name'], [3, 'bad-escape']]);
+  const trig = `<${X}g> {\n<${X}a> <${X}p> <${X}o> .\n<${X}b> <${X}p> .\n<${X}c> <${X}p> <${X}o> }\n`;
+  const dst = await l4core.parse(trig, { format: 'trig', lenient: true });
+  assert.equal(dst.size, 2);
+  assert.deepEqual(dst.diagnostics.map((d) => d.line), [3]);
+  const capped = await l4core.parse(nq, { format: 'nquads', lenient: true, maxErrors: 1 });
+  assert.deepEqual(capped.diagnostics.map((d) => d.class), ['bad-graph-name', 'too-many-errors']);
+  // A document with no error: the strict result and no diagnostics.
+  const good = `<${X}a> <${X}p> "1" .\n`;
+  const strict = await l4core.parse(good, { format: 'turtle' });
+  const lenient = await l4core.parse(good, { format: 'turtle', lenient: true });
+  assert.equal(lenient.toNQuads(), strict.toNQuads());
+  assert.deepEqual(lenient.diagnostics, []);
+  // The offset is a UTF-16 index, as ParseError.offset: a character outside
+  // the Basic Multilingual Plane before the error counts 2.
+  // The same document with a BMP character in its place is the reference.
+  const astral = `<${X}a> <${X}p> "\u{1F600}" .\n<${X}b> <${X}p> .\n`;
+  const bmp = `<${X}a> <${X}p> "\u00E9" .\n<${X}b> <${X}p> .\n`;
+  const [da] = (await l4core.parse(astral, { format: 'ntriples', lenient: true })).diagnostics;
+  const [db] = (await l4core.parse(bmp, { format: 'ntriples', lenient: true })).diagnostics;
+  assert.equal(da.offset, db.offset + 1);
+  assert.equal(astral.slice(da.offset), bmp.slice(db.offset));
+  assert.deepEqual([da.line, da.column], [db.line, db.column]);
 });
 
 // ---------------------------------------------------------------------
@@ -505,10 +544,23 @@ test("l4-core query({entail:'RDFS'}) answers over the RDFS closure", async () =>
 });
 
 test('l4-core missing op: an operation the wasm lacks rejects naming the op', async () => {
-  // parseDocument ({lenient:true}) is not in this wasm's op table.
+  // The wasm serves parseDocument ({lenient:true}) since issue 716, so this
+  // case removes it from the engine's ops reflection: an older module lists
+  // only the ops it has, and the entry object follows that list.
+  const real = await require('../index.js').loadEngine();
+  const older = {
+    call(op, args) {
+      const r = real.call(op, args);
+      return op === 'ops' ? { ...r, ops: r.ops.filter((o) => o !== 'parseDocument') } : r;
+    },
+  };
+  const api = require('../api.js').createApi(older);
   await assert.rejects(
-    () => l4core.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true }),
+    () => api.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true }),
     /parseDocument.*no dispatch op/);
+  // The same call on the full module succeeds.
+  const ds = await l4core.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true });
+  assert.equal(ds.size, 1);
 });
 
 // ---------------------------------------------------------------------

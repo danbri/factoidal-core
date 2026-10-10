@@ -225,6 +225,35 @@ function utf16OffsetOf(text, scalarOffset) {
   return units;
 }
 
+// The lenient parse's diagnostics (https://github.com/danbri/factoidal/issues/716)
+// with each `offset` converted as utf16OffsetOf() converts a ParseError's, so
+// `text.slice(d.offset)` starts at the error. `line` and `column` are kept as
+// the engine reports them. One pass over `text` for all diagnostics: the
+// offsets are visited in increasing order, whatever order the list has.
+function utf16Diagnostics(text, diagnostics) {
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return [];
+  if (typeof text !== 'string') return diagnostics;
+  const order = diagnostics
+    .map((d, i) => [d && Number.isInteger(d.offset) && d.offset >= 0 ? d.offset : -1, i])
+    .filter(([off]) => off >= 0)
+    .sort((a, b) => a[0] - b[0]);
+  const units = new Map();
+  let k = 0;
+  let unitsSoFar = 0;
+  let scalars = 0;
+  for (const ch of text) {
+    while (k < order.length && order[k][0] <= scalars) {
+      units.set(order[k][1], unitsSoFar);
+      k += 1;
+    }
+    if (k >= order.length) break;
+    unitsSoFar += ch.length;
+    scalars += 1;
+  }
+  for (; k < order.length; k += 1) units.set(order[k][1], unitsSoFar);
+  return diagnostics.map((d, i) => (units.has(i) ? { ...d, offset: units.get(i) } : d));
+}
+
 // entryResult() for an op that parsed `text`: a positioned ParseError gets
 // its offset converted to a UTF-16 index into `text`.
 function parseResult(jsonText, what, text) {
@@ -765,11 +794,16 @@ function buildApi(driver) {
    * relative IRI (no baseIRI in effect) rejects with a ParseError
    * (`line`/`column`/`offset` present for Turtle/TriG/N-Triples/
    * N-Quads; RDF/XML and JSON-LD failures carry a message only).
-   * `{lenient:true}` needs the engine op parseDocument, which the Lean
-   * engine does not have yet (https://github.com/danbri/factoidal/issues/716);
-   * it rejects naming the op.
+   * `{lenient:true}` uses the engine op parseDocument
+   * (https://github.com/danbri/factoidal/issues/716): Turtle, TriG,
+   * N-Triples and N-Quads skip each bad statement, keep the good ones and
+   * list one diagnostic per skipped statement in `dataset.diagnostics`
+   * (`message`, `offset`, `line`, `column`, `class`). `maxErrors: n` stops
+   * after n diagnostics with one `too-many-errors` diagnostic. RDF/XML and
+   * JSON-LD parse strictly. A wasm without the op rejects naming it.
    * @param {string} text
-   * @param {{format?: string, baseIRI?: string, lenient?: boolean}} [options]
+   * @param {{format?: string, baseIRI?: string, lenient?: boolean,
+   *   maxErrors?: number}} [options]
    * @returns {Promise<Dataset>}
    */
   async function parse(text, options) {
@@ -787,12 +821,15 @@ function buildApi(driver) {
         throw missingOpError('parse {lenient:true} (parseDocument)');
       }
       const r = parseResult(
-        e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify({ lenient: true })),
+        e.parseDocument(text, DATA_FORMAT_TAG[ext], baseIRI, JSON.stringify(
+          Number.isInteger(opts.maxErrors) && opts.maxErrors >= 0
+            ? { lenient: true, maxErrors: opts.maxErrors }
+            : { lenient: true })),
         'parse', text);
       return Dataset.fromNQuads(r.nquads, {
         blankNodePrefix: bnodePrefix,
         prefixes: r.prefixes,
-        diagnostics: r.diagnostics,
+        diagnostics: utf16Diagnostics(text, r.diagnostics),
       });
     }
     const r = parseResult(

@@ -191,7 +191,7 @@ extern_lib libl4exthost pkg := do
   #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
-    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale]
+    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -218,7 +218,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
-             `Wasm.Ops.Validate]
+             `Wasm.Ops.Lenient, `Wasm.Ops.Validate]
 
 -- Runs the XML parser over real W3C XML Conformance Test Suite files:
 -- reads paths from stdin, prints WF / NWF per file. See

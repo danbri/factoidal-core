@@ -98,6 +98,15 @@ the 2026-10-10 repair of the JSON-LD node map, 11 of the 30 size pairs of
 the node map and flatten phases failed (base 100, five shapes); after it, 0
 of the 45 pairs of the node map, flatten and frame core phases fail.
 
+A worked example that checks memory as well as time is
+`tests/stack/lenient_scaling.sh` (the lenient parse of
+https://github.com/danbri/factoidal/issues/716 through its streaming path):
+n, 2n, 4n and 8n statements with errors spread through the input, under
+`/usr/bin/time -v`; it fails when time(2x) exceeds 2.6 times max(time(x),
+1 s) or when the peak resident set at 8n exceeds 1.25 times the one at n
+plus 64 MiB. On 2026-10-10, 25 MB to 204 MB of N-Quads kept a peak of 26.9
+to 27.3 MB.
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is
