@@ -16,7 +16,7 @@ documents themselves are judged by `l4owl-probe --rdf-based`.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.OWL.RdfBased.Engine
+import L4Factoidal.OWL.RdfBased.Clash
 
 namespace L4Factoidal.OWL.RdfBased.Tests
 
@@ -262,5 +262,53 @@ private def chain2 (g : Graph) : Bool :=
 #guard !sat [⟨S pP, rdfType, O rdfProperty⟩, ⟨S pP, rdfsRange, O xsdInteger⟩,
              ⟨S pQ, rdfType, O rdfProperty⟩]
   [⟨S pP, rdfsSubPropertyOf, O pQ⟩] ⟨S pP, rdfsSubPropertyOf, O pQ⟩
+
+/-! ## Clash rows (`Clash.lean`)
+
+Each row has a POSITIVE case (a graph the row's soundness proof reads
+as inconsistent) and NEGATIVE cases that change the premise the proof
+reads; a clash check that fired on every graph fails the negative half. -/
+
+private def clashes (g : Graph) : Bool := rbClashAny g
+
+-- thingEnum. WebOnt-Thing-005 shape: owl:Thing owl:oneOf ( s ).
+#guard clashes (oneA ++ [⟨S owlThing, owlOneOf, Bt "m1"⟩])
+#guard clashes (oneA ++ [⟨S rdfsResource, owlOneOf, Bt "m1"⟩])
+#guard clashes [⟨S owlThing, owlOneOf, O rdfNil⟩]
+-- a class owl:Thing is a subclass of
+#guard clashes (oneA ++ [⟨S cA, owlOneOf, Bt "m1"⟩, ⟨S owlThing, rdfsSubClassOf, O cA⟩])
+-- two members: IR may have two elements, so no clash from this row
+#guard !clashes (oneAB ++ [⟨S owlThing, owlOneOf, Bt "m1"⟩])
+-- one member, but of a class owl:Thing is not stated to be under
+#guard !clashes (oneA ++ [⟨S cA, owlOneOf, Bt "m1"⟩])
+#guard !clashes (oneA ++ [⟨S cA, owlOneOf, Bt "m1"⟩, ⟨S cA, rdfsSubClassOf, O owlThing⟩])
+-- end to end: the RL closure and the rules, then the row
+#guard clashes (rbSaturate (oneA ++ [⟨S owlThing, owlOneOf, Bt "m1"⟩]) [] 8 1)
+#guard !clashes (rbSaturate (oneAB ++ [⟨S owlThing, owlOneOf, Bt "m1"⟩]) [] 8 1)
+
+-- svfAvfDt. inconsistent_datatypes shape: ∃p.integer and ∀p.string on one subject.
+private def gSvfAvf (d2 : WfIri) (p2 : WfIri) : Graph :=
+  [ ⟨S iA, rdfType, Bt "r1"⟩, ⟨B "r1", owlSomeValuesFrom, O xsdInteger⟩,
+    ⟨B "r1", owlOnProperty, O pP⟩, ⟨S iA, rdfType, Bt "r2"⟩,
+    ⟨B "r2", owlAllValuesFrom, O d2⟩, ⟨B "r2", owlOnProperty, O p2⟩ ]
+#guard clashes (gSvfAvf xsdString pP)
+#guard clashes (gSvfAvf xsdBoolean pP)
+-- xsd:decimal contains the integers: no clash
+#guard !clashes (gSvfAvf xsdDecimal pP)
+-- the universal restriction is on another property
+#guard !clashes (gSvfAvf xsdString pQ)
+-- the subject is not a member of the existential restriction
+#guard !clashes ((gSvfAvf xsdString pP).filter (fun t => t != ⟨S iA, rdfType, Bt "r1"⟩))
+-- end to end: class A under both restrictions, a in A
+#guard clashes (rbSaturate
+  [ ⟨S cA, rdfsSubClassOf, Bt "r1"⟩, ⟨B "r1", owlSomeValuesFrom, O xsdInteger⟩,
+    ⟨B "r1", owlOnProperty, O pP⟩, ⟨S cA, rdfsSubClassOf, Bt "r2"⟩,
+    ⟨B "r2", owlAllValuesFrom, O xsdString⟩, ⟨B "r2", owlOnProperty, O pP⟩,
+    ⟨S iA, rdfType, O cA⟩ ] [] 8 1)
+#guard !clashes (rbSaturate
+  [ ⟨S cA, rdfsSubClassOf, Bt "r1"⟩, ⟨B "r1", owlSomeValuesFrom, O xsdInteger⟩,
+    ⟨B "r1", owlOnProperty, O pP⟩, ⟨S cA, rdfsSubClassOf, Bt "r2"⟩,
+    ⟨B "r2", owlAllValuesFrom, O xsdString⟩, ⟨B "r2", owlOnProperty, O pP⟩,
+    ⟨S iA, rdfType, O cB⟩ ] [] 8 1)
 
 end L4Factoidal.OWL.RdfBased.Tests

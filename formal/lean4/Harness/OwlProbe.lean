@@ -165,7 +165,7 @@ import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.OwlXml
-import L4Factoidal.OWL.RdfBased.Engine
+import L4Factoidal.OWL.RdfBased.Clash
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.JSON.Parser
@@ -1503,6 +1503,8 @@ vendored catalogs they carry RDF-BASED as well).
 
 Engine: the OWL 2 RL/RDF closure of the premise, then up to
 `rbRounds` rounds of (`RdfBased.rbConclusions`, the RL closure again).
+Clash check: the OWL 2 RL/RDF clash rows (`detectClashPlusI`) and the
+RDF-Based clash rows (`RdfBased.rbClashAny`, `RdfBased/Clash.lean`).
 No comprehension layer, no class-expression materialisation, no
 tableau refuter: none of them is proved sound for this semantics.
 Triples that mention a comprehension witness of the RL closure are
@@ -1675,7 +1677,14 @@ def rbJudgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (inc : Bool)
   | .ok gp =>
     let r ← rbClosureIO gp [] capMs
     let m := rbMeasureOf r
-    let clash := detectClashPlusI (Index.ofGraph r.graph)
+    let rlClash := detectClashPlusI (Index.ofGraph r.graph)
+    -- The clash rows of `RdfBased/Clash.lean`, each proved against
+    -- `RdfBasedConditions` (`rbClashAny_unsat`). Read only when no RL
+    -- row fired, so the line below names the units they decide.
+    let rbClash := !rlClash && L4Factoidal.OWL.RdfBased.rbClashAny r.graph
+    if rbClash then
+      IO.println s!"CLASH-BY-RDF-BASED-ROWS {c.id} [{if inc then "InconsistencyTest" else "ConsistencyTest"}]"
+    let clash := rlClash || rbClash
     if inc then
       if clash then return (.proved, m)
       else
