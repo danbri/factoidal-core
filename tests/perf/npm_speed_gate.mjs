@@ -11,8 +11,8 @@
 //
 // It also runs the Lean engine alone for each MEMORY_XFAIL key and compares
 // the wasm module's linear memory high-water mark with the key's bound, and
-// for each SCALING_XFAIL row compares its large size (4 times the input)
-// with its middle size.
+// for each SCALING and SCALING_XFAIL row compares its large size (4 times the
+// input) with its middle size.
 //
 // A row that does not meet the bound today is in XFAIL with the open issue
 // that tracks it: the gate reports it as an expected failure while it
@@ -65,15 +65,22 @@ export const MEMORY_XFAIL = {
 /**
  * Scaling bounds, Lean engine only: time at the large size (4 times the
  * input) at most 9 times the time at the middle size
- * (skills/danbri-function-precrime-checkers, the n/4n assertion). Each is an
- * expected failure naming its issue while the bound is not met.
+ * (skills/danbri-function-precrime-checkers, the n/4n assertion). A row in
+ * SCALING is asserted: it fails when it is above the bound. A row in
+ * SCALING_XFAIL is an expected failure naming its issue while the bound is not
+ * met, and fails when it passes.
  */
-export const SCALING_XFAIL = {
-  // canonicalize of 24,000 blank-node quads: 16.9 s; of 6,000: 0.76 s (22
-  // times for 4 times the input, 2026-10-10). Both F* bundles fail the
+export const SCALING = [
+  // canonicalize of 24,000 blank-node quads took 16.9 s and of 6,000 0.76 s
+  // (22 times for 4 times the input, 2026-10-10): the first-degree hash of
+  // every blank node filtered every quad
+  // (https://github.com/danbri/factoidal/issues/745). After the blank node to
+  // quads map of RDFC-1.0 section 4.4 step 2 (RDF/Canonical.lean,
+  // bnodeQuadIndex) the row is asserted here. Both F* bundles fail the
   // 24,000-quad input (stack overflow), so there is no F* time to compare.
-  canonicalize: 'https://github.com/danbri/factoidal/issues/745',
-};
+  'canonicalize',
+];
+export const SCALING_XFAIL = {};
 const SCALING_BOUND = 9.0;
 
 const SIZE_NAMES = ['small', 'middle', 'large'];
@@ -123,7 +130,8 @@ let passed = 0;
 const lines = [];
 
 // Scaling: the Lean engine alone, middle and large sizes.
-for (const [row, issue] of Object.entries(SCALING_XFAIL)) {
+const scalingRows = [...SCALING.map((r) => [r, undefined]), ...Object.entries(SCALING_XFAIL)];
+for (const [row, issue] of scalingRows) {
   if (!rows.includes(row)) continue;
   const rs = runMatrix({ rows: [row], engines: ['l4'], sizesFor: (x) => [ROWS[x][1], ROWS[x][2]],
     log: (x) => console.log(JSON.stringify(x)) });
@@ -132,7 +140,15 @@ for (const [row, issue] of Object.entries(SCALING_XFAIL)) {
     l.ms <= SCALING_BOUND * Math.max(m.ms, 50);
   const what = `scaling ${row}: Lean ${m && m.ms} ms at ${m && m.triples} triples, ` +
     `${l && l.ms} ms at ${l && l.triples} triples, bound ${SCALING_BOUND} times`;
-  if (ok) {
+  if (issue === undefined) {
+    if (ok) {
+      passed += 1;
+      lines.push(`ok    ${what}`);
+    } else {
+      failed += 1;
+      lines.push(`FAIL  ${what}; above the bound`);
+    }
+  } else if (ok) {
     failed += 1;
     lines.push(`FAIL  unexpected pass: ${what}; move the row out of SCALING_XFAIL and close ${issue}`);
   } else {
@@ -204,7 +220,7 @@ for (const [row, si] of cases) {
 console.log('');
 for (const l of lines) console.log(l);
 const memoryCases = Object.keys(MEMORY_XFAIL).filter((k) => rows.includes(k.split('@')[0])).length +
-  Object.keys(SCALING_XFAIL).filter((k) => rows.includes(k)).length;
+  scalingRows.filter(([k]) => rows.includes(k)).length;
 console.log(`npm_speed_gate: ${passed} pass, ${failed} fail, ${xfailed} expected failures ` +
   `(out of ${cases.length + memoryCases}); bound: Lean <= ${BOUND} x the faster F* bundle; ` +
   `load average ${loadavg()[0].toFixed(2)} on ${cpus().length} CPUs (a load above the CPU count ` +
