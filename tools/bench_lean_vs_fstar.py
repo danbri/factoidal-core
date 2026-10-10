@@ -658,8 +658,13 @@ def report(path):
     by = {}
     for r in recs:
         by.setdefault(r["row"], {}).setdefault(r["n"], {})[r["engine"]] = r
-    print("| row | n | unit | Lean | F* | Lean / F* | load | Lean x per doubling |")
-    print("|---|---:|---|---:|---:|---:|---:|---:|")
+    # The memory columns carry the survey's memory rule
+    # (docs/designissues/2026-10-10-lean-vs-fstar-performance.md, section 2):
+    # a row ranks when the Lean peak resident set at its largest size is more
+    # than 3 times the F* one (https://github.com/danbri/factoidal/issues/729).
+    print("| row | n | unit | Lean | F* | Lean / F* | load | Lean x per doubling "
+          "| Lean MB | F* MB | Lean MB / F* MB |")
+    print("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for rid, ns in by.items():
         sizes = sorted(ns)
         prev = None
@@ -677,7 +682,11 @@ def report(path):
                     growths.append(gv)
                     g = f"{gv:.2f}"
             load = max((x.get("load1", 0) for x in (le, fs) if x and "load1" in x), default=0)
-            print(f"| {rid} | {n} | {(le or fs or {}).get('unit', '')} | {fmt_t(le)} | {fmt_t(fs)} | {ratio} | {load:.1f} | {g} |")
+            lmb = le["rss_kb"] / 1024 if le and le["status"] == "ok" and le.get("rss_kb") else None
+            fmb = fs["rss_kb"] / 1024 if fs and fs["status"] == "ok" and fs.get("rss_kb") else None
+            mratio = f"{lmb / fmb:.1f}" if lmb and fmb else "-"
+            print(f"| {rid} | {n} | {(le or fs or {}).get('unit', '')} | {fmt_t(le)} | {fmt_t(fs)} | {ratio} | {load:.1f} | {g} "
+                  f"| {f'{lmb:.0f}' if lmb else '-'} | {f'{fmb:.0f}' if fmb else '-'} | {mratio} |")
             prev = (n, le)
     return 0
 

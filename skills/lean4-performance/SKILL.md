@@ -116,6 +116,12 @@ these shapes first in any module that is slow on a large input.
 - **A list of groups searched and appended to per row.** `SPARQL/Query.lean`
   `addToGroups`. Repair: array of groups plus a hash index on a bucket key that
   is constant on order-equal values (`erEqual_erBucket`).
+- **A string built by prepending.** `SPARQL.rowsJoined` was
+  `rowJson r ++ "," ++ rowsJoined rest`: each row's text is copied in front of
+  the text of all later rows, so the whole result document is copied once per
+  row (`SELECT *` over 5,000 paragraphs of `gene.ttl`: 9.8 s, F* 1.4 s).
+  Append at the end of a string the function owns (`rowsJoinedTR` in
+  `SPARQL/ResultsJson.lean`, proved and registered with `csimp`); Lean extends a unique string in place.
 - **A comparison that converts to lists.** `Canonical.strLe` built two
   character lists per call: 57 percent of the instructions of `canonicalize`
   after the sorts were repaired. Lean's native `String` order is the same order
@@ -175,6 +181,31 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   (`String.all_bool_eq`); a `csimp` for `iriPrintSafe` took the check to 21
   percent and the query from 335 to 272 million instructions. Profile the
   repaired path again before recording its number.
+- **Memory is a resource of its own; rank it and measure it by phase.** The
+  first three survey rounds ranked by time only, and a COUNT query that held 9
+  times the F* engine's resident memory did not rank
+  (https://github.com/danbri/factoidal/issues/729). `l4query-phases FILE
+  --stop-after PHASE` (`Harness/QueryPhases.lean`) runs the phases of
+  `l4factoidal query` and prints `VmRSS`/`VmHWM`; run it under `/usr/bin/time
+  -v` once per phase over a ladder that spans at least 16 times, and divide
+  the difference of the peaks by the difference of the input sizes. The peak
+  was `parseTurtle`'s `text.toList`: a `List Char` costs 35 bytes of peak
+  resident memory per input byte, and nothing after it raised the peak
+  (`--stop-after chars` reproduces it alone). Read a `String` that is already
+  in memory with `String.foldl` or `String.all`, never with `toList`, on a
+  whole-document path (`Syntax.parseTurtleText`). A change that removes a
+  transient structure can leave the peak where it was: `normalizeDataset`
+  without its quad list was proved equal and changed nothing at the peak, and
+  interning IRIs after the parse (proved equal) took 9 MB off 188 MB for 8
+  percent more CPU time; neither was landed. The gate rows are `query-memory` and
+  `query-memory-fstar` in `tests/stack/lean_scaling.py`.
+- **A test module that nothing imports never runs.** `lake build` builds the
+  modules the umbrella `L4Factoidal.lean` reaches. Until 2026-10-10
+  `TurtleChunkFoldTests.lean`, `TurtleStatementScanTests.lean` and
+  `Utf8StreamTests.lean` were reached by nothing, and a design record cited
+  the chunk-split guards of the first as evidence. After adding a `*Tests.lean`
+  module, check that `.lake/build/lib/lean/.../<Module>Tests.olean` exists
+  after `lake build`.
 - **`csimp` makes a guard compare a function with itself.** After
   `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
   closure g n` in a later module runs the same code on both sides. Restate the

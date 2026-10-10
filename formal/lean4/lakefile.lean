@@ -282,6 +282,14 @@ extern_lib libl4exthost pkg := do
   srcDir := "."
   root := `Wasm.Cli
 
+-- `l4query-phases` — the phases of `l4factoidal query` (read, parse,
+-- normalize, index, eval, output), each followed by the resident memory of
+-- the process, with `--stop-after PHASE` (Harness/QueryPhases.lean,
+-- https://github.com/danbri/factoidal/issues/729).
+@[default_target] lean_exe «l4query-phases» where
+  srcDir := "."
+  root := `Harness.QueryPhases
+
 -- Native executable for the first RDF block MVP. It exercises the total
 -- `Storage.BlockMvp.scan` path over a small in-memory graph; it does not claim
 -- protocol, persistence, or W3C conformance coverage.

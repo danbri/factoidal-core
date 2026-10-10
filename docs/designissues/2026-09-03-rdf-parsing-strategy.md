@@ -29,10 +29,12 @@ theorems gate the other executions.
   W3C Turtle grammar (productions numbered in comments, `[16]
   NumericLiteral`, `[17] String`, `[26] UCHAR`, ...). RDF 1.1 and 1.2 modes
   (triple terms, reifiers, annotations, `VERSION`, base direction).
-- Consumers: `l4factoidal parse` (`Harness/Run.lean`), the W3C runner
-  (`Harness/Manifest.lean`), the WASM `parse` and `datasetOpen` Turtle path
-  (`Wasm/Ops/Parse.lean`), and every probe and pack tool other than the
-  shard packer.
+- Consumers: the W3C runner (`Harness/Manifest.lean`), and every probe and
+  pack tool other than the shard packer. Since 2026-10-10 the command line
+  and the WASM `parse`, `datasetOpen` and `queryDataset` Turtle path
+  (`Wasm/Ops/Parse.lean`, `parseTextToDataset`) read Turtle with
+  `parseTurtleText` (2.2), which calls `parseTurtle` for a document that
+  contains `<<` and for every document the scanner walk refuses.
 - Fuel: each bounded loop takes a fuel argument as the F\* source does. The
   statement-level fuel is `cs.length + 2` computed ONCE per document. The
   literal loops (`readShortStringBody`, `readLongStringBody`, `collectNum`)
@@ -106,8 +108,18 @@ Modules, in data order:
    gets several blocks (the 309 blocks over 232 predicates of the UK
    Parliament dump).
 
-The scanner is used only by the shard packer; the WASM mirrors do not
-contain it.
+5. `TurtleChunkFold.parseTurtleText` (2026-10-10,
+   https://github.com/danbri/factoidal/issues/729): the same walk over a
+   `String` already in memory, one character at a time through
+   `String.foldl`, for the command line and the WASM parse ops. `parseTurtle`
+   starts with `text.toList`, and that list was the whole peak memory of
+   `l4factoidal query` (35 bytes of peak resident set per input byte; 256 MB
+   for 6.76 MB of `gene.ttl`). A document that contains `<<` goes to
+   `parseTurtle` (the scanner reads `<` as an IRIREF up to the first `>`, so
+   inside a triple term its mode can differ from the grammar's), and so does
+   every document the walk refuses, so every error is the reference parser's
+   (`parseTurtleText_error`). Record:
+   `2026-10-10-lean-vs-fstar-performance.md` section 10.
 
 ### 2.3 Proofs
 
@@ -129,6 +141,9 @@ contain it.
   agreement, the counterpart of instantiating
   `NQuadsFold.streamConsume11_eq_batch` at the accumulator the batch parser
   uses.
+- `TurtleChunkFold.lean` (2026-10-10): `freshBnodePrefixText_eq`,
+  `parseTurtleText_error` and `parseTurtleText_eq_of_walk` (section 2.2,
+  item 5).
 - Still not proved: the CHUNK-BOUNDARY half — that the streaming execution
   (2.2) reaches the same accumulator whatever the chunking, and so equals
   `parseTurtle` on the same text. It rests on `TurtleStatementScan` never
@@ -137,7 +152,14 @@ contain it.
   across scanner changes (378 artifacts on a 370,355-triple slice,
   2026-09-03; 261 identical, 0 differed out of 262 inputs including a
   104,179,872-byte Turtle source, 2026-09-05) and the five committed hub
-  blocks under `docs/web/hub/assets/blocks/lifesci-crossgraph/`. The
+  blocks under `docs/web/hub/assets/blocks/lifesci-crossgraph/`. For
+  `parseTurtleText`, 2026-10-10: the guards of `TurtleChunkFoldTests.lean`
+  and byte identity of the command line on the 1,130 `.ttl` and `.nt` files
+  of the W3C RDF 1.1 and 1.2 suites (13,560 of 13,560 outputs; 13,572 of
+  13,572 with 10,000 paragraphs of `gene.ttl` added). Until
+  2026-10-10 `TurtleChunkFoldTests.lean`, `TurtleStatementScanTests.lean` and
+  `Utf8StreamTests.lean` were imported by no module, so `lake build` did not
+  run their guards; the umbrella imports them now. The
   N-Quads tree has the theorem this one still needs
   (`NQuadsStreaming.lean`, section 3).
 
@@ -149,6 +171,7 @@ contain it.
 | 2026-09-02 | quadratic `parseTurtle` | per-token `cs.length + 1` fuel in two literal readers | constant `literalFuel` + proofs |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
+| 2026-10-10 | `l4factoidal query` and `parse` peak at 35 bytes of resident memory per input byte (256 MB for 6.76 MB of `gene.ttl`; F*: 28 MB) | `parseTurtle`'s whole-document `text.toList` | `parseTurtleText`: the scanner walk over the `String` (2.2, item 5). Query peak 257.7 to 192.7 MB at 80,000 paragraphs, 37.0 to 26.0 bytes per input byte. Byte identity MEASURED, not proved |
 | 2026-09-04 | named-graph IBK4 pack quadratic; 553 MB over 194 graphs killed by the operating system after 1 h 57 min | `NQuadsFast.addQuadFast` read the graph with `getElem?` and inserted it back, so `Std.HashMap.insert` copied the whole bucket map of that graph per quad | `Std.HashMap.modify`, which consumes the map; proofs restated through `getElem?_modify`. 104 MB over 50 graphs: 268.73 s to 103.12 s (`2026-09-04-ibk4-named-graph-packing-scale.md`) |
 | 2026-09-04 | IBK4 pack held a whole-file `String.toList` | `quadArtifacts` took the source as one `String` | `PackStream.quadIngestFeed` streams the N-Quads grammar in 65,536-byte chunks; byte identity by `NQuadsFold.streamConsume11_eq_batch`. 104 MB over 50 graphs: peak memory 2,531,999,744 to 1,127,907,328 bytes |
 | 2026-09-05 | the same whole-file `String.toList` for a TURTLE source into IBK4 | nothing called `TurtleChunkFold`; the quad route needs a `Dataset` and the fold hands back statements | `PackStream.QuadStream` carries the Turtle chunk fold beside the N-Quads stream, `quadStreamDataset` closes either. 104,179,872-byte Turtle source: peak resident set 2,788,786,176 to 1,253,408,768 bytes (26.8 to 12.0 bytes per source byte), generation byte-identical. Byte identity MEASURED, not proved — see 2.3 |
