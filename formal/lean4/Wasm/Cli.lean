@@ -333,18 +333,23 @@ def parseCmd (args : List String) : IO UInt32 := do
           | .error msg => IO.eprintln msg; pure 1
           | .ok n => IO.println n; pure 0
       | some out =>
-        match ← parseEnvelope (Ops.parseToDatasetJson text format base) with
-        | none => pure 1
-        | some j =>
+        -- The text is printed as the op computes it, without the JSON
+        -- envelope `parseToDatasetJson` / `serializeTurtle` wrap it in and
+        -- this verb used to decode again (issue 724). `--out nquads` is the
+        -- envelope's `nquads` member, `Dataset.toCanonicalNQuads`;
+        -- `--out turtle` is `serializeTurtle` on that text
+        -- (`Ops.serializeTurtleTextOf_eq`).
+        match Ops.parseTextToDataset text format base with
+        | .error msg => IO.eprintln msg; pure 1
+        | .ok ds =>
           match out with
           | "nquads" =>
-              IO.println ((j.getString? "nquads").getD "")
+              IO.println (Dataset.toCanonicalNQuads ds)
               pure 0
           | "turtle" =>
-              let nq := (j.getString? "nquads").getD ""
-              match ← parseEnvelope (Ops.serializeTurtle nq) with
-              | none => pure 1
-              | some jt => IO.println ((jt.getString? "turtle").getD ""); pure 0
+              match Ops.serializeTurtleTextOf ds with
+              | .error e => IO.eprintln e; pure 1
+              | .ok t => IO.println t; pure 0
           | other =>
               IO.eprintln s!"l4factoidal parse: unknown --out '{other}' (nquads | turtle)"
               pure 2

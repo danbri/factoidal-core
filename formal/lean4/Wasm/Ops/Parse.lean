@@ -54,6 +54,7 @@ import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.JSONLD.ToRdf
 import L4Factoidal.RDF.DatasetMerge
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -132,6 +133,26 @@ def serializeTurtle (nq : String) : String :=
   | .ok ds =>
       let g := ds.default ++ ds.named.flatMap (·.graph)
       okWith [("turtle", .string (turtleOfGraphAuto g))]
+
+/-- The Turtle text `serializeTurtle` would put in its envelope for the
+canonical N-Quads of `ds`, or the envelope's error text, computed from the
+parsed dataset (`datasetForOps`, issue 724). The command line prints it
+without the JSON envelope. -/
+def serializeTurtleTextOf (ds : Dataset) : Except String String :=
+  match datasetForOps .rdf11 ds with
+  | .error e => .error (fmtParseError e)
+  | .ok d => .ok (turtleOfGraphAuto (d.default ++ d.named.flatMap (·.graph)))
+
+/-- `serializeTurtleTextOf` carries exactly the text and the error of the
+`serializeTurtle` envelope on the dataset's canonical N-Quads. -/
+theorem serializeTurtleTextOf_eq (ds : Dataset) :
+    serializeTurtle (Dataset.toCanonicalNQuads ds) =
+      match serializeTurtleTextOf ds with
+      | .error e => errJson e
+      | .ok t => okWith [("turtle", .string t)] := by
+  unfold serializeTurtle serializeTurtleTextOf
+  rw [datasetForOps_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
 
 /-! ## Positions, prefixes and blank-node scope (issue 685) -/
 
