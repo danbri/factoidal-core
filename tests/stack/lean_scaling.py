@@ -30,6 +30,9 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    22.8 s for 4x input before the repair, 0.12 s to 0.65 s after)
   count-distinct-star  SPARQL COUNT(DISTINCT *): DISTINCT rows inside an
                    aggregate (issue 722; 0.43 s to 11.7 s before, 0.11 s to 0.60 s after)
+  query-vs-parse   `query` COUNT(*) against `parse` of the same 5,000 paragraphs of
+                   gene.ttl: at most 2.0 times the CPU time and the peak memory
+                   (https://github.com/danbri/factoidal/issues/724)
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -203,6 +206,48 @@ def best_of(cmd, runs):
 
 STARTUP_BUDGET = 0.020
 
+# Rows that compare a verb with `parse` of the SAME input (gene.ttl, 4x the
+# base size): the verb may take at most RATIO times the CPU time and RATIO
+# times the peak resident memory of the parse. A COUNT(*) query reads the
+# file once and counts; its cost above the parse is the evaluation. The
+# command line used to write the parsed dataset as N-Quads text and parse the
+# text again (https://github.com/danbri/factoidal/issues/724).
+PARSE_RATIO = 2.0
+PARSE_RATIO_ROWS = {
+    "query-vs-parse": (1250, "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"),
+}
+XFAIL["query-vs-parse"] = "https://github.com/danbri/factoidal/issues/724"
+
+
+def best_cpu_rss(cmd, runs):
+    """Minimum CPU time of `runs` runs and the peak RSS (KB) of that run."""
+    best = None
+    for _ in range(runs):
+        t = bl.run_once(cmd, CAP)
+        if t["status"] != "ok":
+            return None, f"exit status {t['status']}"
+        if best is None or t["cpu"] < best["cpu"]:
+            best = t
+        if t["wall"] > REPEAT_LIMIT:
+            break
+    return best, None
+
+
+def parse_ratio_row(rid, runs):
+    x, sparql = PARSE_RATIO_ROWS[rid]
+    p = bl.gene_slice(4 * x)
+    q, e1 = best_cpu_rss([str(BIN), "query", str(p), "--format", "turtle",
+                          "--query-string", sparql], runs)
+    r, e2 = best_cpu_rss([str(BIN), "parse", str(p), "--format", "turtle"], runs)
+    if e1 or e2:
+        return False, f"n={4 * x}: {e1 or e2}"
+    ok = (q["cpu"] <= PARSE_RATIO * max(r["cpu"], FLOOR)
+          and q["rss_kb"] <= PARSE_RATIO * r["rss_kb"])
+    return ok, (f"n={4 * x}: query {q['cpu']:.3f} s CPU {q['rss_kb'] / 1024:.0f} MB, "
+                f"parse {r['cpu']:.3f} s CPU {r['rss_kb'] / 1024:.0f} MB "
+                f"(ratios {q['cpu'] / max(r['cpu'], 1e-9):.1f} and "
+                f"{q['rss_kb'] / max(r['rss_kb'], 1):.1f}; bound {PARSE_RATIO})")
+
 
 def startup_row():
     """Minimum CPU time (user + system) of `l4factoidal version`."""
@@ -226,6 +271,8 @@ def main() -> int:
         return 2
     names = [r for r in args.only.split(",") if r]
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
+    ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
+        [] if names else list(PARSE_RATIO_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -244,6 +291,20 @@ def main() -> int:
             ok = t4 <= bound * max(t1, FLOOR)
             detail = (f"n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
                       f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in ratio_rows:
+        issue = XFAIL.get(rid)
+        ok, detail = parse_ratio_row(rid, args.runs)
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")
