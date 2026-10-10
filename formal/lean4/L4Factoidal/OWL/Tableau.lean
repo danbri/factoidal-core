@@ -11,7 +11,9 @@ invariants involved are a poor fit for SMT-driven F* automation).
 
 `Interp.sem` is the OWL 2 Direct Semantics class-expression
 interpretation function
-(https://www.w3.org/TR/owl2-direct-semantics/ Table 5), restricted to:
+(https://www.w3.org/TR/owl2-direct-semantics/ Table 4, "Interpreting
+Class Expressions"; until 2026-10-10 this header cited Table 5, which
+is the satisfaction of class expression AXIOMS), restricted to:
 class names, Boolean connectives, value restrictions
 (ObjectAllValuesFrom / ObjectSomeValuesFrom), and cardinality bounds
 (ObjectMinCardinality / ObjectMaxCardinality) in BOTH the unqualified
@@ -40,8 +42,10 @@ Two layers, mirroring how the F* engine's verdicts decompose:
 * `Refuted R A` — the clash calculus (the analogue of
   `Tableau.Refute.fst`'s `tableau_consistent = Some false`). One
   constructor per clash rule; `disjSplit` is the branching rule. A
-  `Refuted` derivation tree IS a clash certificate — the object the
-  certificate-checker rung will serialize and check.
+  `Refuted` derivation tree IS a clash certificate. The checker for
+  the refuter's certificates is `OWL/DirectCert.lean` (2026-10-10):
+  the same `Concept`/`Interp`, extended with a TBox, inverse and
+  `SameIndividual` pairs, and proved sound by `checkCert_sound`.
 
 Proofs live in `TableauTheorems.lean`; example derivations and the
 axiom audit in `TableauTests.lean`.
@@ -86,7 +90,7 @@ def Interp.succWitness {δ : Type} (I : Interp δ) (r : Role) (x : δ)
     (n : Nat) (l : List δ) : Prop :=
   l.length = n ∧ l.Pairwise (· ≠ ·) ∧ ∀ y ∈ l, I.role r x y
 
-/-- Class-expression semantics — OWL 2 Direct Semantics Table 5,
+/-- Class-expression semantics — OWL 2 Direct Semantics Table 4,
     restricted to the fragment. -/
 def Interp.sem {δ : Type} (I : Interp δ) : Concept → δ → Prop
   | .atom a,      x => I.concept a x

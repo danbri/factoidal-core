@@ -68,12 +68,18 @@ fragment, weaker only through its caps (witness depth ≤ 3, ≤ 6
 generated witnesses, the threaded budget) — caps withhold
 refutations, never invent them. `RefuteTests.lean` keeps an
 instance-level paired witness: one input refuted here by `#guard`
-and refuted in the calculus by an explicit `Refuted` derivation. The
-general linkage — an abstraction from a clash trace to a serialisable
-`Refuted` derivation, `refute g b = some false → Refuted R A` on the
-shared fragment — is the certificate-checker rung
-`OWL/Tableau.lean`'s header names; tracked as follow-up 6 on
-https://github.com/danbri/factoidal/issues/586 .
+and refuted in the calculus by an explicit `Refuted` derivation.
+
+Since 2026-10-10 the general linkage is certificate checking:
+`search` returns a `SearchTrace` beside its verdict,
+`OWL/RefuteCert.lean` turns it into a `Cert`, and
+`OWL/DirectCert.lean`'s total `checkCert` accepts or rejects it, with
+`checkCert_sound`: an accepted certificate means the ontology read from
+the graph has no model under the OWL 2 Direct Semantics. Design record
+`docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`;
+follow-up 6 of https://github.com/danbri/factoidal/issues/586 ; the
+refutations not yet certified are
+https://github.com/danbri/factoidal/issues/764 .
 
 ## What is NOT here, named
 
