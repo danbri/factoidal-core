@@ -393,18 +393,22 @@ https://github.com/danbri/factoidal/issues/713.
   with species FULL only, and the catalog's 482 RDF-BASED cases, are judged
   there. They are not moved to an "unsupported" or "not applicable" bucket.
 
-### GRDDL is not a valid test currently (owner, 2026-10-10)
+### GRDDL: 11 disputed cases are not valid tests currently (owner, 2026-10-10)
 
 > "Grddl - postpone for now, i am making enquiries. So just mark it as not a
 > valid test currently."
+> "Grddl should not be postponed, only that test"
 
-- GRDDL work is postponed while the owner makes enquiries about the test
-  suite (fixture drift at w3.org, https://github.com/danbri/factoidal/issues/730).
-- `tools/lean-scoreboard.sh` still runs `l4grddl` and prints its numbers, on a
-  row labelled `GRDDL [not a valid test currently]`; its failures do not count
-  in the failing-row total or the exit code (`SUSPENDED_AREA_RE`).
-- Do not start GRDDL work and do not count GRDDL in conformance claims until
-  the owner lifts this.
+- GRDDL work continues. Only the cases under the owner's enquiries are marked
+  not valid: the 7 cases whose networked inputs the W3C edited after 2007 and
+  the 4 `loopx` cases whose served stylesheet contradicts the expected outputs
+  (https://github.com/danbri/factoidal/issues/730). They are files
+  `tests/local-overrides/grddl__*.json`; `l4grddl` counts them apart and
+  reports a STALE override (a failure) if one starts to pass.
+- Coordinator error, recorded per rule 6: the first message was read as
+  "postpone the GRDDL suite", and for about 30 minutes the whole suite was
+  labelled not valid in `tools/lean-scoreboard.sh` with its failures
+  uncounted. The owner corrected the scope; the suite-level label is removed.
 
 ### There are no users. Prefer the right structure to the compatible one
 
