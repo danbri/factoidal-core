@@ -11,6 +11,8 @@ store so later calls carry only a handle string and the query:
      | the positioned parse-error envelope of Wasm/Ops/Parse.lean
   datasetQuery(handle, sparql)
     -> the queryDataset envelope family verbatim (Wasm/Ops/Query.lean)
+  datasetQuery12(handle, sparql)
+    -> the same, with the query read by the SPARQL 1.2 grammar
   datasetUpdate(handle, sparqlUpdate)
     -> {"ok":true,"count":N}   — the stored dataset is REPLACED
   datasetSerialize(handle, formatTag)   — nquads | turtle
@@ -109,6 +111,16 @@ def datasetQuery (h sparql : String) : IO String := do
   let services ← serviceSnapshot
   withHandle h fun od =>
     pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services)
+
+/-- `datasetQuery12(handle, sparql)` — `datasetQuery` with the query read by
+the SPARQL 1.2 grammar (`queryDataset12IO` in `Wasm/Ops/Query.lean`). The
+envelope family is the same; a SPARQL 1.2 term in a 1.1 query is a parse
+error of `datasetQuery`, and it is accepted here. -/
+def datasetQuery12 (h sparql : String) : IO String := do
+  let extIris ← extSnapshot
+  let services ← serviceSnapshot
+  withHandle h fun od =>
+    pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v12)
 
 /-- `datasetUpdate(handle, sparqlUpdate)` — apply the update and
 REPLACE the stored dataset (and rebuild its index); answers the new quad

@@ -12,12 +12,10 @@ const assert = require('node:assert/strict');
 const factoidal = require('../index.js');
 const { Dataset } = require('../rdfjs.js');
 
+// The engine is the package's own wasm: a load failure is a test failure,
+// so capabilities() is not wrapped in a try.
 async function entryAvailable() {
-  try {
-    return !!(await factoidal.capabilities()).entry;
-  } catch (_) {
-    return false;
-  }
+  return !!(await factoidal.capabilities()).entry;
 }
 
 const TTL =
@@ -38,10 +36,7 @@ function normRows(rows) {
 }
 
 test('dataset handle: open, query several times, update, serialize both formats, toDataset, close', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
 
   const handle = await factoidal.openDataset(TTL, { format: 'turtle' });
   assert.equal(typeof handle.handle, 'string');
@@ -108,10 +103,7 @@ test('dataset handle: open, query several times, update, serialize both formats,
 });
 
 test('query(handle, sparql) and serialize(handle, options) route through the handle', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const handle = await factoidal.openDataset(TTL, { format: 'turtle' });
   const rows = await factoidal.query(handle, JOIN_Q);
   assert.equal(rows.length, 2);
@@ -123,10 +115,7 @@ test('query(handle, sparql) and serialize(handle, options) route through the han
 });
 
 test('update(handle, ...) rejects with a TypeError naming handle.update()', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const handle = await factoidal.openDataset(TTL, { format: 'turtle' });
   await assert.rejects(
     () => factoidal.update(handle, 'PREFIX ex: <http://example.org/> INSERT DATA { ex:z ex:p 1 }'),
@@ -139,10 +128,7 @@ test('update(handle, ...) rejects with a TypeError naming handle.update()', asyn
 });
 
 test('query(handle, sparql, {entail: "RDFS"}) rejects -- a handle carries no closure step', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const handle = await factoidal.openDataset(TTL, { format: 'turtle' });
   await assert.rejects(
     () => factoidal.query(handle, JOIN_Q, { entail: 'RDFS' }),
@@ -151,10 +137,7 @@ test('query(handle, sparql, {entail: "RDFS"}) rejects -- a handle carries no clo
 });
 
 test('opening from a Dataset with prefixes keeps them for Turtle output', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const parsed = await factoidal.parse(TTL, { format: 'turtle' });
   assert.ok(Object.keys(parsed.prefixes).length > 0, 'parse() records prefixes');
 
@@ -168,28 +151,18 @@ test('opening from a Dataset with prefixes keeps them for Turtle output', async 
 });
 
 test('an unknown/closed handle rejects with a message naming the handle id', async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const handle = await factoidal.openDataset(TTL, { format: 'turtle' });
   const id = handle.handle;
   await handle.close();
   await assert.rejects(() => handle.query(JOIN_Q), new RegExp(id));
 });
 
-test('openDataset() needs the npm-entry bundle -- rejects with the pending-entry shape without it', async () => {
-  // This assertion only has bite when the bundle IS present (the
-  // common case in this repo); when it is absent, entryAvailable()
-  // above already skips the other cases, and this one is a no-op
-  // sanity check that the function exists and is callable either way.
-  if (!(await entryAvailable())) {
-    await assert.rejects(
-      () => factoidal.openDataset(TTL, { format: 'turtle' }),
-      /npm-entry bundle/);
-  } else {
-    assert.equal(typeof factoidal.openDataset, 'function');
-  }
+test('openDataset() is served by the package engine (capabilities().datasetHandles)', async () => {
+  assert.equal((await factoidal.capabilities()).datasetHandles, true);
+  const h = await factoidal.openDataset(TTL, { format: 'turtle' });
+  assert.ok(h instanceof factoidal.DatasetHandle);
+  await h.close();
 });
 
 
@@ -198,7 +171,7 @@ test('openDataset() needs the npm-entry bundle -- rejects with the pending-entry
 // document's labels (https://github.com/danbri/factoidal/issues/681).
 test('update() and CONSTRUCT results inherit the input Dataset\'s prefixes', async (t) => {
   const caps = await factoidal.capabilities();
-  if (!caps.entry) { t.skip('pending npm-entry build'); return; }
+  assert.ok(caps.entry);
   const ds = await factoidal.parse(
     '@prefix ex: <http://example.org/> .\nex:a ex:p 1.5 .\n');
   assert.deepEqual(ds.prefixes, { ex: 'http://example.org/' });

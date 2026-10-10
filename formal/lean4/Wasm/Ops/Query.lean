@@ -70,8 +70,9 @@ without introducing a second envelope shape. -/
 def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     (sparql : String) (extra : List (String × Json) := [])
     (extIris : List String := [])
-    (services : List (String × Graph) := []) : String :=
-  match parseSparql sparql with
+    (services : List (String × Graph) := [])
+    (version : SparqlVersion := .v11) : String :=
+  match parseSparql sparql none version with
   | .error e => errJson s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
     -- The query-facing WASM entry installs the same explicit GeoSPARQL
@@ -166,6 +167,22 @@ def queryDatasetIO (nq sparql : String) : IO String := do
       pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
               extIris services)
 
+/-- `queryDataset12(nquads, sparql)`: the `queryDataset` envelope family, with
+the query read by the SPARQL 1.2 grammar (`SparqlVersion.v12`: triple-term
+patterns `<<( s p o )>>`, reified triples `<< s p o >>`, annotations, and the
+`TRIPLE` / `isTRIPLE` / `SUBJECT` / `PREDICATE` / `OBJECT` builtins). The
+F\* entry has the op of the same name (`entry_jsoo.ml`). Served through the
+IO entry, so the caller's extension and SERVICE registrations are in scope,
+as for `queryDatasetIO`. -/
+def queryDataset12IO (nq sparql : String) : IO String := do
+  let extIris ← extSnapshot
+  let services ← serviceSnapshot
+  match parseNQuadsFast nq .rdf12 with
+  | .error e => pure (errJson (fmtParseError e))
+  | .ok ds   =>
+      pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql []
+              extIris services .v12)
+
 /-- Parse and apply a SPARQL Update to an ALREADY-PARSED dataset —
 shared by the stateless op below and the handle op `datasetUpdate`
 (`Wasm/Ops/Handles.lean`). The error strings are the envelope error
@@ -189,5 +206,44 @@ def updateDataset (nq updateText : String) : String :=
   match applyUpdateText ds updateText with
   | .error e  => errJson e
   | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
+
+/-! ### SPARQL 1.2 query mode (`queryDataset12`, `datasetQuery12`)
+
+A triple-term pattern is SPARQL 1.2 syntax. The 1.2 grammar reads it and the
+evaluator matches it against an RDF 1.2 triple term; the 1.1 grammar refuses
+the same text. Both the backend path and the reference path are checked. -/
+
+private def tt12Data : String :=
+  "<http://e/a> <http://e/says> <<( <http://e/s> <http://e/p> <http://e/o> )>> .\n" ++
+  "<http://e/b> <http://e/says> \"plain\" .\n"
+
+private def tt12Select : String :=
+  "SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/o> )>> }"
+
+private def tt12Run (useBackend : Bool) (version : SparqlVersion) (q : String) : String :=
+  match parseNQuadsFast tt12Data .rdf12 with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds =>
+      queryParsedDatasetWith ds
+        (if useBackend then some (indexedDatasetBackend ds) else none)
+        q [] [] [] version
+
+private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
+
+-- Positive: the 1.2 grammar answers the one binding, on both paths.
+#guard tt12HasSub (tt12Run true .v12 tt12Select) "\"value\":\"http://e/s\""
+#guard tt12HasSub (tt12Run false .v12 tt12Select) "\"value\":\"http://e/s\""
+#guard (tt12Run true .v12 tt12Select).startsWith "{\"ok\":true,\"kind\":\"select\""
+-- Positive: isTRIPLE selects the triple-term object only.
+#guard tt12HasSub (tt12Run true .v12
+  "SELECT ?who WHERE { ?who <http://e/says> ?x FILTER(isTRIPLE(?x)) }") "http://e/a"
+#guard !tt12HasSub (tt12Run true .v12
+  "SELECT ?who WHERE { ?who <http://e/says> ?x FILTER(isTRIPLE(?x)) }") "http://e/b"
+-- Negative: the 1.1 grammar refuses the triple-term pattern.
+#guard (tt12Run true .v11 tt12Select).startsWith "{\"ok\":false"
+-- Negative: a pattern no triple term matches answers no binding.
+#guard !tt12HasSub (tt12Run true .v12
+  "SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/other> )>> }")
+  "\"value\""
 
 end L4Wasm.Ops

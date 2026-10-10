@@ -11,15 +11,14 @@
 //                    bare Turtle literals
 //   4. blank-node scope per document when documents are merged
 //
-// Every case runs through require('../l4-core.js'). Two kinds of cross-check
-// keep the Lean answers from agreeing only with themselves:
-//   * node:crypto (an independent SHA-256 and Ed25519) for the VC primitives,
-//     and Math.exp for the sigmoid;
-//   * the F* engine (require('../index.js')) for the maths and the VC checks,
-//     when its bundle is present. That cross-check skips when it is not.
+// Every case runs through require('../l4-core.js'), which is the main entry
+// since 0.9.0. An independent cross-check keeps the Lean answers from
+// agreeing only with themselves: node:crypto (SHA-256 and Ed25519) for the
+// VC primitives, and Math.exp for the sigmoid. The cross-checks against the
+// F* engine moved to tests/engine-compare/ (a private comparison build).
 //
-// Skips wholesale when the Lean wasm assets are not resolvable; a case for an
-// op that an older resolved wasm lacks skips with the op's name.
+// The package's own wasm must serve every op used here: a missing op FAILS
+// the case, naming the op.
 
 'use strict';
 
@@ -29,48 +28,30 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const AVAILABLE = require('../l4.js').available();
 const l4core = require('../l4-core.js');
 
 const REPO = path.join(__dirname, '..', '..', '..');
 
-function skipUnlessAvailable(t) {
-  if (AVAILABLE) return false;
-  t.skip('Lean wasm assets not resolvable (l4.js available() is false)');
-  return true;
-}
-
+// The ops the loaded wasm serves (its `ops` reflection). Since 0.9.0 the
+// wasm in l4-assets/ is the package's only engine, so it must serve every op
+// a case uses: a missing op FAILS the case, naming the op (it is not a skip).
 let leanOpsPromise = null;
 function leanOps() {
   if (!leanOpsPromise) {
-    leanOpsPromise = require('../l4.js')
-      .loadL4()
-      .then((eng) => (typeof eng.call === 'function' ? eng.call('ops', []).ops : []))
-      .catch(() => []);
+    leanOpsPromise = require('../index.js').loadEngine().then((eng) => eng.call('ops', []).ops);
   }
   return leanOpsPromise;
 }
 
-async function skipUnlessOps(t, ...ops) {
-  if (skipUnlessAvailable(t)) return true;
-  const have = await leanOps();
-  const missing = ops.filter((op) => !have.includes(op));
-  if (missing.length > 0) {
-    t.skip(`resolved Lean wasm lacks ${missing.join(', ')} (ops reflection); rebuild formal/lean4/Wasm/build-wasm.sh`);
-    return true;
-  }
+function skipUnlessAvailable(_t) {
   return false;
 }
 
-// The F* engine, when its bundle is present.
-async function fstarWith(capability) {
-  try {
-    const fstar = require('../index.js');
-    const caps = await fstar.capabilities();
-    return caps[capability] ? fstar : null;
-  } catch (_) {
-    return null;
-  }
+async function skipUnlessOps(_t, ...ops) {
+  const have = await leanOps();
+  const missing = ops.filter((op) => !have.includes(op));
+  assert.deepEqual(missing, [], `the loaded Lean wasm lacks ${missing.join(', ')} (ops reflection)`);
+  return false;
 }
 
 // ---------------------------------------------------------------------
@@ -140,26 +121,6 @@ test('l4-core matrix: a cell that is not an integer or a [num,den] pair rejects'
   await assert.rejects(() => l4core.matrixScalarProduct([[1, 2, 3]], [1]), /each cell/);
 });
 
-test('l4-core matrix vs F* engine: same results on the same inputs', async (t) => {
-  if (await skipUnlessOps(t, ...MATRIX_OPS)) return;
-  const fstar = await fstarWith('matrix');
-  if (!fstar) { t.skip('F* npm-entry bundle not present'); return; }
-  const matrices = [[[1, 2], [3, 4]], [[1, 2, 3], [4, 5, 6]], [[[1, 2], 0], [0, [1, 2]]],
-    [[2, 0, 1], [1, 3, 2], [1, 1, 1]], [[1, [1, 0]], [3, 4]], [[1, 2], [3]], []];
-  for (const m of matrices) {
-    assert.deepEqual(await l4core.matrixDeterminant(m), await fstar.matrixDeterminant(m),
-      `matrixDeterminant ${JSON.stringify(m)}`);
-  }
-  const pairs = [[[1, 2, 3], [4, 5, 6]], [[1, 0, 0], [0, 1, 0]], [[1, 2], [3, 4]], [[1, 2, 3], [4, 5]],
-    [[[1, 2], 1], [2, [1, 3]]], [[1, [1, 0]], [2, 3]]];
-  for (const [a, b] of pairs) {
-    for (const fn of ['matrixScalarProduct', 'matrixVectorProduct', 'matrixOuterProduct']) {
-      assert.deepEqual(await l4core[fn](a, b), await fstar[fn](a, b),
-        `${fn} ${JSON.stringify([a, b])}`);
-    }
-  }
-});
-
 const SIGMOID_OPS = ['sigmoidPoints', 'sigmoidFormulaMathml'];
 
 test('l4-core sigmoidPoints: n+1 samples, exact midpoint, monotone, close to Math.exp', async (t) => {
@@ -212,21 +173,6 @@ test('l4-core sigmoidPoints: parameters, n = 0, and refusals', async (t) => {
   // The wrapper sends every parameter as text, so an absent one reaches the engine as "undefined".
   await assert.rejects(() => l4core.sigmoidPoints({ k: 1 }), /not a decimal literal: undefined/);
   await assert.rejects(() => l4core.sigmoidPoints(null), TypeError);
-});
-
-test('l4-core sigmoidPoints vs F* engine: identical digits', async (t) => {
-  if (await skipUnlessOps(t, ...SIGMOID_OPS)) return;
-  const fstar = await fstarWith('sigmoid');
-  if (!fstar) { t.skip('F* npm-entry bundle not present'); return; }
-  for (const params of [
-    { k: '1', x0: '0', l: '1', xmin: '-6', xmax: '6', n: 24 },
-    { k: '2.5', x0: '-1.25', l: '3', xmin: '-4', xmax: '4', n: 16 },
-    { k: '0.5', x0: '3', l: '1', xmin: '0', xmax: '10', n: 10 },
-  ]) {
-    assert.deepEqual(await l4core.sigmoidPoints(params), await fstar.sigmoidPoints(params),
-      JSON.stringify(params));
-  }
-  assert.equal(await l4core.sigmoidFormulaMathml(), await fstar.sigmoidFormulaMathml());
 });
 
 test('l4-core sigmoidFormulaMathml: Presentation MathML of L / (1 + e^(-k(x - x0)))', async (t) => {
@@ -494,23 +440,6 @@ test('l4-core vcCheckCredential over the vendored VCDM 2.0 fixtures: 117 pass, 0
   }
   assert.deepEqual(failures, []);
   assert.equal(pass, 117, `${pass} pass, ${failures.length} fail (out of 117)`);
-});
-
-test('l4-core vcCheckCredential vs F* engine: the same verdict on every fixture', async (t) => {
-  if (await skipUnlessOps(t, 'vcCheckCredential')) return;
-  const fstar = await fstarWith('entry');
-  if (!fstar || typeof fstar.vcCheckCredential !== 'function') { t.skip('F* npm-entry bundle not present'); return; }
-  if (!fs.existsSync(VC_FIXTURES) || !fs.existsSync(V2_CONTEXT_PATH)) { t.skip('fixtures not present'); return; }
-  const v2ctx = fs.readFileSync(V2_CONTEXT_PATH, 'utf8');
-  const disagreements = [];
-  for (const file of fixtureFiles(VC_FIXTURES)) {
-    const text = fs.readFileSync(file, 'utf8')
-      .replace(/PAST DATE/g, '2020-01-01T00:00:00Z').replace(/FUTURE DATE/g, '2099-01-01T00:00:00Z');
-    const a = await l4core.vcCheckCredential(v2ctx, text);
-    const b = await fstar.vcCheckCredential(v2ctx, text);
-    if (a.valid !== b.valid) disagreements.push(`${path.basename(file)}: Lean ${a.valid}, F* ${b.valid}`);
-  }
-  assert.deepEqual(disagreements, []);
 });
 
 const V2 = '"@context":["https://www.w3.org/ns/credentials/v2"]';

@@ -324,8 +324,8 @@ module.exports = function(eleventyConfig) {
       "vendor/observable/plot.esm.js",
       "vendor/observable/stdlib.esm.js",
       "vendor/hub/reactive-cells.mjs",
-      "npm/factoidal/browser.js",
-      "npm/factoidal/factoidal.js",
+      "fstar-extracted/browser.js", // the hub's F* driver (hub.njk)
+      "fstar-extracted/factoidal.js",
     ];
 
     const precacheUrls = candidates

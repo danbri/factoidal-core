@@ -1,42 +1,33 @@
 // Fixture bundled by test/bundler-esbuild.test.mjs and by
-// tests/web-demos/bundler_csp_smoke.sh (issue #682). Imports ONLY
-// through the bundler-friendly, statically-importable subpaths -- no
-// fetch, no `new Function(src)` eval anywhere in this file or in what
-// it imports -- so the esbuild output runs under a page whose
-// Content-Security-Policy has no `unsafe-eval`.
+// tests/web-demos/bundler_csp_smoke.sh (issue #682). It imports the typed
+// API (`@factoidal/core/api`) and the Lean engine's loader
+// (`@factoidal/core/l4-assets/l4factoidal.js`), both static imports, and
+// hands the loader an instantiateWasm hook, so the page decides where the
+// wasm comes from:
 //
-// Both callers bundle this exact file with esbuild
-// (bundle: true, platform: 'browser', format: 'esm') and then run the
-// output: the Node test captures stdout for the `ROW_COUNT:N` line
-// this prints; the browser CSP smoke script reads `document.title`
-// (set below when `document` exists) since a plain
-// `<script type="module">` page has no module consumer to read an
-// export from.
+//   - globalThis.__FACTOIDAL_WASM_BYTES__ (the Node test sets it): the
+//     bytes, compiled with WebAssembly.instantiate;
+//   - otherwise fetch() of globalThis.__FACTOIDAL_WASM_URL__, or of
+//     './l4factoidal.wasm' next to the page, compiled with
+//     WebAssembly.instantiateStreaming.
+//
+// No `new Function`, no eval: a page with
+// `Content-Security-Policy: script-src 'self' 'wasm-unsafe-eval'` runs it.
+// Both callers bundle this file with esbuild (bundle: true, platform:
+// 'browser', format: 'esm') and run the output: the Node test reads the
+// `ROW_COUNT:N` line; the browser script reads `document.title`.
 
 import { createApi } from '@factoidal/core/api';
-import * as entryMod from '@factoidal/core/factoidal-npm-entry.js';
+import { loadL4 } from '@factoidal/core/l4-assets/l4factoidal.js';
 
-// factoidal-npm-entry.js is js_of_ocaml-generated CommonJS (no
-// import/export syntax of its own): esbuild detects that and wraps it
-// with its CJS-interop machinery, so the exact shape `import * as`
-// produces depends on that interop layer's namespace-vs-default
-// handling. Try the two shapes esbuild's `format: 'esm'` output is
-// known to produce (the namespace object itself, and its `.default`)
-// before falling back to the classic-script registration
-// (globalThis.factoidalNpmEntry) documented in browser.js.
-const abi = entryMod.factoidalNpmEntry
-  ?? entryMod.default?.factoidalNpmEntry
-  ?? globalThis.factoidalNpmEntry;
-
-if (!abi) {
-  throw new Error(
-    'bundler-app fixture: could not find factoidalNpmEntry on the ' +
-    'bundled factoidal-npm-entry.js import (checked entryMod, ' +
-    'entryMod.default, globalThis) -- esbuild CJS-interop shape ' +
-    'changed; see this file\'s comment.');
+function instantiateWasm(imports) {
+  const bytes = globalThis.__FACTOIDAL_WASM_BYTES__;
+  if (bytes) return WebAssembly.instantiate(bytes, imports);
+  const url = globalThis.__FACTOIDAL_WASM_URL__ || new URL('./l4factoidal.wasm', document.baseURI).href;
+  return WebAssembly.instantiateStreaming(fetch(url), imports);
 }
 
-const factoidal = createApi(abi);
+const factoidal = createApi(() => loadL4({ instantiateWasm }));
 
 const TTL = `
   @prefix ex:   <http://example.org/> .

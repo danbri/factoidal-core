@@ -4,10 +4,26 @@
 // rather than only by totals.
 //
 // Usage:  ls <dir>/*.xml | node xmlconf-fstar-crosscheck.mjs
+//         (FACTOIDAL_FSTAR_ENTRY names the F* npm-entry bundle; default
+//         docs/fstar-extracted/factoidal-npm-entry.js, which
+//         tools/fetch-builds.sh --set web installs)
 // Output: one `WF <path>` / `NWF <path>` line per file, matching the
 // Lean probe's verdict column.
+//
+// Since @factoidal/core 0.9.0 the package's main entry is the Lean engine,
+// so the F* bundle is loaded by path and driven through the package's
+// typed layer (npm/factoidal/lib/api.mjs), as tests/engine-compare/ does.
 import { readFileSync } from "node:fs";
-import { xmlWellformed } from "../../npm/factoidal/index.mjs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { buildApi } from "../../npm/factoidal/lib/api.mjs";
+
+const require = createRequire(import.meta.url);
+const entryPath = process.env.FACTOIDAL_FSTAR_ENTRY ??
+  fileURLToPath(new URL("../../docs/fstar-extracted/factoidal-npm-entry.js", import.meta.url));
+const entryModule = require(entryPath);
+const abi = entryModule.factoidalNpmEntry ?? globalThis.factoidalNpmEntry;
+const { xmlWellformed } = buildApi({ engineName: "fstar-npm-entry", loadEntry: () => abi });
 
 const paths = readFileSync(0, "utf8")
   .split("\n")

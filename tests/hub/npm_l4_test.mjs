@@ -1,10 +1,10 @@
-// Pins the `factoidal/l4` npm subpath (npm/factoidal/l4.js): the Lean 4
-// engine resolvable through the package namespace without being bundled
-// into @factoidal/core. In this repository checkout the resolver's
-// third source (docs/web/hub/assets/l4/) is what makes it available;
-// the test also pins the not-found error text so a user without the
-// assets gets an actionable message, and cross-checks one join against
-// the F* engine (the differential habit: two engines, same rows).
+// Pins the `factoidal/l4` npm subpath (npm/factoidal/l4.js). Since 0.9.0
+// @factoidal/core carries one engine, the Lean 4 wasm, and `./l4` is an
+// alias of the main entry for 0.9.x (it goes in 0.10.0). The low-level
+// engine handle it used to export is `loadEngine()`. The test pins the
+// alias, the engine handle's version, bgpQuery and IBK3 scan, one join
+// through the low-level bgpQuery and the typed query(), and the
+// missing-assets error text of the resolver (npm/factoidal/bin/engine.mjs).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,18 +28,18 @@ const TRIPLES = [
   { subject: uri(EX + 'bob'), predicate: uri(EX + 'age'), object: lit('24', 'http://www.w3.org/2001/XMLSchema#integer') },
 ];
 
-test('factoidal/l4: assets resolvable in a repo checkout', () => {
-  assert.equal(l4.available(), true);
+test('factoidal/l4: an alias of the main entry, the Lean engine', () => {
   assert.equal(l4.engine, 'lean4-wasm');
+  assert.equal(l4.parse, factoidal.parse);
 });
 
 test('factoidal/l4: version identifies the Lean engine', async () => {
-  const ver = await l4.version();
+  const ver = (await l4.loadEngine()).version();
   assert.match(ver, /l4factoidal/);
 });
 
-test('factoidal/l4: two-pattern join agrees with the F* engine', async () => {
-  const doc = await l4.bgpQuery(TRIPLES, [
+test('factoidal/l4: the low-level bgpQuery agrees with the typed query()', async () => {
+  const doc = (await l4.loadEngine()).bgpQuery(TRIPLES, [
     { subject: v('s'), predicate: uri(EX + 'name'), object: v('n') },
     { subject: v('s'), predicate: uri(EX + 'age'), object: v('a') },
   ]);
@@ -56,7 +56,7 @@ test('factoidal/l4: two-pattern join agrees with the F* engine', async () => {
   const rows = await factoidal.query(dataset,
     `PREFIX : <${EX}> SELECT ?s ?n ?a WHERE { ?s :name ?n ; :age ?a }`);
   const bindings = Array.isArray(rows) ? rows : rows.results.bindings;
-  const fstarRows = bindings
+  const typedRows = bindings
     .map((b) => {
       const g = (k) => (b[k]?.value ?? b.get?.(k)?.value ?? String(b[k]));
       return `${g('s')}|${g('n')}|${g('a')}`;
@@ -64,16 +64,16 @@ test('factoidal/l4: two-pattern join agrees with the F* engine', async () => {
     .sort();
 
   assert.equal(leanRows.length, 2);
-  assert.deepEqual(leanRows, fstarRows);
+  assert.deepEqual(leanRows, typedRows);
 });
 
-test('factoidal/l4: current IBK3 worker is available through the typed package subpath', async () => {
+test('factoidal/l4: the IBK3 predicate scan through the engine handle', async () => {
   const bytes = readFileSync(new URL('../../docs/web/hub/assets/blocks/shardborough-three-way/type.ibk3', import.meta.url));
-  const result = await l4.scanIBK3Predicate(
+  const result = (await l4.loadEngine()).call('scanIBK3Predicate', [
     bytes.toString('hex'),
     'http://example.org/type',
     'source:npm-l4-test',
-  );
+  ]);
   assert.equal(result.format, 'IBK3');
   assert.equal(result.blankNodeScope, 'source:npm-l4-test');
   assert.equal(result.rows, 4);
@@ -83,7 +83,7 @@ test('factoidal/l4: missing-assets error names the remedies', async () => {
   // Force every resolver source to miss by asking from a copy whose
   // repo-relative path cannot exist. Simplest faithful probe: check the
   // error text constant in the module source.
-  const src = readFileSync(new URL('../../npm/factoidal/l4.js', import.meta.url), 'utf8');
-  assert.match(src, /@factoidal\/lean/);
+  const src = readFileSync(new URL('../../npm/factoidal/bin/engine.mjs', import.meta.url), 'utf8');
+  assert.match(src, /l4-assets/);
   assert.match(src, /FACTOIDAL_L4_ASSETS/);
 });

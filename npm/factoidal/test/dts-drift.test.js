@@ -2,9 +2,8 @@
 // exist on the module it types, and (the direction that bit us) every
 // runtime export of the .js should be typed in its .d.ts. This is a
 // regex-level structural check — not a real tsc typecheck — but it is
-// enough to have caught the fn.d.ts/fn.js divergence (openCottas/
-// toCottas exported from fn.js but undeclared in fn.d.ts) this test
-// pins closed.
+// enough to have caught an fn.d.ts/fn.js divergence (names exported from
+// fn.js but undeclared in fn.d.ts) in 0.8.
 
 'use strict';
 
@@ -26,9 +25,11 @@ const TYPE_ONLY = new Set([
   'CsvwOptions', 'JsonLdOptions', 'JsonLdFromRdfOptions', 'XPathResult',
   'MathValue', 'XFormsBind', 'XFormsNodeValidity', 'SchematronFinding',
   'ToanExpr', 'MatrixCell', 'MatrixResult', 'SrjTerm', 'SparqlResultsJson',
-  'OutputFormat',
+  'OutputFormat', 'QueryInput', 'StoreReader', 'OpenStoreOptions',
   // fn.d.ts type-level declarations
-  'FnDataset', 'Builder', 'ValidateResult', 'Cell', 'Derived', 'CottasStore',
+  'FnDataset', 'Builder', 'ValidateResult', 'Cell', 'Derived',
+  // api.d.ts type-level declarations
+  'EngineSource', 'CreateApiOptions',
 ]);
 
 // Parse `export function NAME` / `export const NAME` / `export class NAME`
@@ -44,8 +45,10 @@ function declaredValueNames(dtsPath) {
   return names;
 }
 
+// `__esModule` is the interop marker require() adds when it loads an ES
+// module (index.js, api.js hand index.mjs, api.mjs to require()).
 function runtimeNames(mod) {
-  return new Set(Object.keys(mod).filter((k) => k !== 'default'));
+  return new Set(Object.keys(mod).filter((k) => k !== 'default' && k !== '__esModule'));
 }
 
 test('fn.d.ts declares nothing fn.js does not implement', () => {
@@ -66,30 +69,6 @@ test('fn.js implements nothing that fn.d.ts leaves untyped', () => {
     `fn.js exports names undeclared in fn.d.ts: ${untyped.join(', ')}`);
 });
 
-test('l4-core.d.ts declares nothing l4-core.js does not implement', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'l4-core.d.ts'));
-  const runtime = runtimeNames(require('../l4-core.js'));
-  const missing = [...declared].filter((n) => !runtime.has(n));
-  assert.deepEqual(missing, [],
-    `l4-core.d.ts declares names absent from l4-core.js: ${missing.join(', ')}`);
-});
-
-test('l4-core.js implements nothing that l4-core.d.ts leaves untyped', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'l4-core.d.ts'));
-  const runtime = runtimeNames(require('../l4-core.js'));
-  // Dataset/DatasetHandle/ParseError are exported as values (classes)
-  // by l4-core.js but typed via the `export { Dataset, DatasetHandle,
-  // ParseError, ... }` re-export from './index' in l4-core.d.ts, which
-  // declaredValueNames's regex cannot see (same situation as
-  // fn.d.ts's FnDataset); treat them as typed here without widening
-  // TYPE_ONLY for the index.d.ts checks.
-  const REEXPORTED_CLASSES = new Set(['Dataset', 'DatasetHandle', 'ParseError']);
-  const untyped = [...runtime].filter(
-    (n) => !declared.has(n) && !TYPE_ONLY.has(n) && !REEXPORTED_CLASSES.has(n));
-  assert.deepEqual(untyped, [],
-    `l4-core.js exports names undeclared in l4-core.d.ts: ${untyped.join(', ')}`);
-});
-
 test('index.d.ts declares nothing index.js does not implement', () => {
   const declared = declaredValueNames(path.join(__dirname, '..', 'index.d.ts'));
   const runtime = runtimeNames(require('../index.js'));
@@ -104,22 +83,6 @@ test('index.js implements nothing that index.d.ts leaves untyped', () => {
   const untyped = [...runtime].filter((n) => !declared.has(n) && !TYPE_ONLY.has(n));
   assert.deepEqual(untyped, [],
     `index.js exports names undeclared in index.d.ts: ${untyped.join(', ')}`);
-});
-
-test('select.d.ts declares nothing select.js does not implement', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'select.d.ts'));
-  const runtime = runtimeNames(require('../select.js'));
-  const missing = [...declared].filter((n) => !runtime.has(n));
-  assert.deepEqual(missing, [],
-    `select.d.ts declares names absent from select.js: ${missing.join(', ')}`);
-});
-
-test('select.js implements nothing that select.d.ts leaves untyped', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'select.d.ts'));
-  const runtime = runtimeNames(require('../select.js'));
-  const untyped = [...runtime].filter((n) => !declared.has(n) && !TYPE_ONLY.has(n));
-  assert.deepEqual(untyped, [],
-    `select.js exports names undeclared in select.d.ts: ${untyped.join(', ')}`);
 });
 
 test('api.d.ts declares nothing api.js does not implement', () => {
@@ -138,28 +101,6 @@ test('api.js implements nothing that api.d.ts leaves untyped', () => {
     `api.js exports names undeclared in api.d.ts: ${untyped.join(', ')}`);
 });
 
-test('lite.d.ts declares nothing lite.js does not implement', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'lite.d.ts'));
-  const runtime = runtimeNames(require('../lite.js'));
-  const missing = [...declared].filter((n) => !runtime.has(n));
-  assert.deepEqual(missing, [],
-    `lite.d.ts declares names absent from lite.js: ${missing.join(', ')}`);
-});
-
-test('lite.js implements nothing that lite.d.ts leaves untyped', () => {
-  const declared = declaredValueNames(path.join(__dirname, '..', 'lite.d.ts'));
-  const runtime = runtimeNames(require('../lite.js'));
-  // Dataset/DatasetHandle/ParseError are re-exported via `export {
-  // ... } from './index'`, same situation as l4-core.d.ts (see that
-  // test's comment) -- declaredValueNames's regex cannot see a
-  // re-export.
-  const REEXPORTED_CLASSES = new Set(['Dataset', 'DatasetHandle', 'ParseError']);
-  const untyped = [...runtime].filter(
-    (n) => !declared.has(n) && !TYPE_ONLY.has(n) && !REEXPORTED_CLASSES.has(n));
-  assert.deepEqual(untyped, [],
-    `lite.js exports names undeclared in lite.d.ts: ${untyped.join(', ')}`);
-});
-
 test('the VC crypto surface is typed on both index.d.ts and fn.d.ts', () => {
   const vc = [
     'vcSha256Hex', 'vcEd25519SecretToPublic', 'vcEd25519Sign',
@@ -171,4 +112,46 @@ test('the VC crypto surface is typed on both index.d.ts and fn.d.ts', () => {
     assert.ok(indexDecl.has(name), `index.d.ts declares ${name}`);
     assert.ok(fnDecl.has(name), `fn.d.ts declares ${name}`);
   }
+});
+
+// browser.d.ts re-exports the main entry's declarations by name
+// (`export { ... } from './index'`) and declares its own two functions.
+function browserDeclaredNames() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'browser.d.ts'), 'utf8');
+  const names = declaredValueNames(path.join(__dirname, '..', 'browser.d.ts'));
+  const m = /export \{([^}]*)\} from '\.\/index';/m.exec(src.replace(/export type \{[^}]*\} from '\.\/index';/m, ''));
+  for (const n of m[1].split(',').map((x) => x.trim()).filter(Boolean)) names.add(n);
+  return names;
+}
+
+test('browser.d.ts and browser.js declare and export the same names', async () => {
+  const declared = browserDeclaredNames();
+  const runtime = runtimeNames(await import('../browser.js'));
+  const missing = [...declared].filter((n) => !runtime.has(n));
+  const untyped = [...runtime].filter((n) => !declared.has(n));
+  assert.deepEqual(missing, [], `browser.d.ts declares names absent from browser.js: ${missing.join(', ')}`);
+  assert.deepEqual(untyped, [], `browser.js exports names undeclared in browser.d.ts: ${untyped.join(', ')}`);
+});
+
+test('browser.js exports the main entry minus the Node-only names, plus setAssetsUrl/getAssetsUrl', async () => {
+  const browser = runtimeNames(await import('../browser.js'));
+  const main = runtimeNames(require('../index.js'));
+  const nodeOnly = new Set(['sampleStorePath', 'sampleStoreFacts']);
+  const browserOnly = new Set(['setAssetsUrl', 'getAssetsUrl']);
+  assert.deepEqual([...main].filter((n) => !nodeOnly.has(n) && !browser.has(n)), []);
+  assert.deepEqual([...browser].filter((n) => !browserOnly.has(n) && !main.has(n)), []);
+});
+
+test('l4.d.ts and l4-core.d.ts re-export index.d.ts, and the modules are the main entry', () => {
+  for (const f of ['l4.d.ts', 'l4-core.d.ts']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.match(src, /^export \* from '\.\/index';$/m, f);
+  }
+  assert.equal(require('../l4.js'), require('../index.js'));
+  assert.equal(require('../l4-core.js'), require('../index.js'));
+});
+
+test('lib/version.mjs carries package.json version', async () => {
+  const { version } = await import('../lib/version.mjs');
+  assert.equal(version, require('../package.json').version);
 });

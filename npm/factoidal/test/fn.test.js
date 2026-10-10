@@ -1,10 +1,7 @@
 // Unit tests for factoidal/fn — the strictly functional dataset API.
 //
-// Style mirrors test/api.test.js: tests needing the npm-entry ABI
-// bundle (canonicalize/hash/entail/query-CONSTRUCT) probe
-// capabilities() and skip with the "pending npm-entry build" reason
-// when only the CLI bundle is available, exactly like the mutable API
-// suite already does.
+// Style mirrors test/api.test.js: capabilities() is asserted, never used
+// to skip; the package's own wasm serves every function used here.
 
 'use strict';
 
@@ -24,7 +21,6 @@ const {
 
 const { Dataset, dataFactory: df } = require('../rdfjs.js');
 
-const PENDING = 'pending npm-entry build';
 
 const TTL = `
   @prefix ex:   <http://example.org/> .
@@ -117,10 +113,7 @@ test('EMPTY is a genuinely empty, reusable constant', () => {
 test('hash: stable under blank-node relabeling; changes when content changes',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     const dsA = await parse(
       '_:x <http://x/p> _:y .\n_:y <http://x/p> "leaf" .\n', { format: 'nquads' });
     const dsB = await parse(
@@ -138,10 +131,7 @@ test('hash: stable under blank-node relabeling; changes when content changes',
 test('hash: memoized (repeated calls on the same FnDataset return the same value fast)',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(PENDING);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     const ds = await parse(TTL);
     const h1 = await hash(ds);
     const h2 = await hash(ds);
@@ -165,10 +155,7 @@ test('equals: ground (blank-node-free) data uses cheap exact quad-set comparison
 test('equals: blank-node datasets fall back to canonical-hash equality',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(PENDING);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     const a = await parse('_:x <http://x/p> "v" .', { format: 'ntriples' });
     const b = await parse('_:y <http://x/p> "v" .', { format: 'ntriples' });
     // Different source labels -> exact quad-token match fails, but the
@@ -183,10 +170,7 @@ test('equals: blank-node datasets fall back to canonical-hash equality',
 test('derive: skips recompute when input hash is unchanged, recomputes when it changes',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(PENDING);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     let calls = 0;
     const input = cell(await parse('<http://x/a> <http://x/p> "v" .', { format: 'ntriples' }));
     const derived = derive(async (ds) => { calls++; return ds.size; }, input);
@@ -299,10 +283,7 @@ test('interop: query() accepts an FnDataset and returns Bindings[]', async () =>
 
 test('interop: query() CONSTRUCT returns an FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.construct) {
-    t.skip(PENDING);
-    return;
-  }
+  assert.ok(caps.construct, 'the package wasm serves caps.construct');
   const ds = await parse(TTL);
   const out = await query(ds, `
     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
@@ -345,7 +326,7 @@ test('interop: entail() accepts lowercase regime aliases', async () => {
 
 test('validate: SHACL Core validation returns conforms + a report FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.shacl) { t.skip(PENDING); return; }
+  assert.ok(caps.shacl, 'the package wasm serves caps.shacl');
 
   const data = await parse(TTL); // ex:alice/ex:bob, both foaf:name'd
   const shapes = await parse(`
@@ -377,7 +358,7 @@ test('validate: SHACL Core validation returns conforms + a report FnDataset', as
 
 test('shex: ShEx validation of one focus node against one shape', async (t) => {
   const caps = await capabilities();
-  if (!caps.shex) { t.skip(PENDING); return; }
+  assert.ok(caps.shex, 'the package wasm serves caps.shex');
 
   const data = await parse(TTL);
   const schema = JSON.stringify({
@@ -405,7 +386,7 @@ test('shex: ShEx validation of one focus node against one shape', async (t) => {
 
 test('fromMapping: evaluates an RML mapping graph against JSON source data', async (t) => {
   const caps = await capabilities();
-  if (!caps.rml) { t.skip(PENDING); return; }
+  assert.ok(caps.rml, 'the package wasm serves caps.rml');
 
   const mapping = await parse(`
     @prefix rml: <http://w3id.org/rml/> .
@@ -432,7 +413,7 @@ test('fromMapping: evaluates an RML mapping graph against JSON source data', asy
 
 test('fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.csvw) { t.skip(PENDING); return; }
+  assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
   // Real vendored fixtures from the W3C CSVW test suite (test027's
   // metadata + the shared tree-ops.csv table) — same pair as
@@ -458,7 +439,7 @@ test('fromCsvw: converts a vendored W3C CSVW fixture into an FnDataset', async (
 
 test('rif: RIF Core saturation materializes derived triples as an FnDataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.rif) { t.skip(PENDING); return; }
+  assert.ok(caps.rif, 'the package wasm serves caps.rif');
 
   const ds = await parse(
     '@prefix foaf: <http://xmlns.com/foaf/0.1/> . ' +
@@ -532,10 +513,7 @@ test('interop: graphs() enumerates named graphs as FnDatasets', async () => {
 test('canonicalize: two blank-node relabelings of the same graph canonicalize identically',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     const a = await parse('_:x <http://x/p> _:y .\n_:y <http://x/p> "leaf" .\n',
       { format: 'nquads' });
     const b = await parse('_:n1 <http://x/p> _:n2 .\n_:n2 <http://x/p> "leaf" .\n',

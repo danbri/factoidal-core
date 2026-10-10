@@ -20,24 +20,18 @@ import {
   parseStanza
 } from '../xmpp/index.mjs'
 
+// The engine is the package's own wasm (l4-assets/): a load failure or a
+// missing XMPP op FAILS the case, it is not a skip.
 let enginePromise = null
 function engine () {
-  if (!enginePromise) enginePromise = loadXmppEngine().catch(() => null)
+  if (!enginePromise) enginePromise = loadXmppEngine()
   return enginePromise
 }
 
-async function skipUnlessAvailable (t) {
+async function skipUnlessAvailable (_t) {
   const eng = await engine()
-  if (eng === null) {
-    t.skip('Lean wasm assets not resolvable')
-    return true
-  }
   const { available, missing } = await xmppOpsAvailable({ engine: eng })
-  if (!available) {
-    t.skip(`resolved Lean wasm predates XMPP ops: ${missing.join(', ')} ` +
-      '(rebuild formal/lean4/Wasm/build-wasm.sh to unskip)')
-    return true
-  }
+  assert.ok(available, `the loaded Lean wasm lacks XMPP ops: ${missing.join(', ')}`)
   return false
 }
 

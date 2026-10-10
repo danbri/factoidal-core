@@ -74,7 +74,7 @@ else
   PLAYWRIGHT_IMPORT_SPEC="playwright"
 fi
 
-for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js docs/npm/factoidal/browser.js docs/npm/factoidal/factoidal-npm-entry.js; do
+for f in third_party/eleventy/npm-cache third_party/observable/dist/runtime.esm.js docs/fstar-extracted/browser.js docs/fstar-extracted/factoidal-npm-entry.js; do
   [ -e "$f" ] || { echo "Missing $f -- run the vendoring steps first." >&2; exit 2; }
 done
 

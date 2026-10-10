@@ -1,7 +1,7 @@
 // factoidal/fn — a strictly functional dataset API.
 //
-// Every extracted engine operation is a value-to-value function (F*
-// has no mutation to expose); RDF/JS DatasetCore's add/delete is
+// Every engine operation is a value-to-value function (the Lean
+// library has no mutation to expose); RDF/JS DatasetCore's add/delete is
 // wrapper-side skeuomorphism on top of that. This module makes the JS
 // contract match the verified one: FnDataset is a frozen snapshot, all
 // operations are free functions that return new values, and content
@@ -291,9 +291,8 @@ function mapQuads(ds, f) {
 
 /**
  * Run a SPARQL 1.1 query. SELECT -> Bindings[]; ASK -> boolean;
- * CONSTRUCT -> FnDataset. Delegates entirely to index.js's query() —
- * same capability gating (CONSTRUCT needs the npm-entry bundle; its
- * absence throws the existing "pending npm-entry build" Error).
+ * CONSTRUCT and DESCRIBE -> FnDataset. Delegates entirely to index.js's
+ * query().
  */
 async function query(ds, sparql, options) {
   assertFnDataset(ds, 'query');
@@ -304,18 +303,10 @@ async function query(ds, sparql, options) {
 /**
  * Materialize an entailment closure as a new FnDataset.
  *
- * Reuses query()'s existing entailment support rather than adding new
- * engine plumbing — but *not* via CONSTRUCT: the npm-entry ABI's
- * queryDataset has no entailment parameter (entailment closure stays
- * on the CLI path, per lib/api.js), and the CLI path does not support
- * CONSTRUCT at all, so "CONSTRUCT ... WHERE ... { entail }" is not
- * reachable through the existing API today. Instead this runs
- * `SELECT ?s ?p ?o WHERE { ?s ?p ?o }` with the entailment option
- * (exactly the combination test/api.test.js's "query: entail RDFS
- * infers subclass instances" already exercises) and repackages each
- * solution row as a quad — pure JS reshaping of already-materialized
- * bindings, not new RDF/SPARQL semantics, so it works with the CLI
- * bundle alone (no npm-entry bundle required).
+ * Reuses query()'s entailment support: it runs
+ * `SELECT ?s ?p ?o WHERE { ?s ?p ?o }` with the entailment option (the
+ * engine closes the default graph under the regime, then answers the
+ * query; op queryRaw) and repackages each solution row as a quad.
  *
  * Scope limitation (documented, not silent): like a bare
  * `WHERE { ?s ?p ?o }` in SPARQL generally, this closes over the
@@ -326,10 +317,10 @@ async function query(ds, sparql, options) {
  */
 // Case-insensitive regime aliases ('rdfs', 'owl-rl', 'owlrl', 'owl_rl')
 // normalized to the engine's exact-case ENTAIL_VALUES spelling ('RDFS',
-// 'OWL-RL'); anything else (including already-correct casing, or a
-// genuinely invalid value) passes through unchanged so engineApi.query's
-// own validation reports the honest error rather than this function
-// guessing at what the caller meant.
+// 'OWL-RL'); anything else (including already-correct casing, or a value
+// that names no regime) passes through unchanged, so engineApi.query's own
+// validation reports the error and this function does not guess what the
+// caller meant.
 const ENTAIL_REGIME_ALIASES = {
   none: 'none', rdfs: 'RDFS', 'owl-rl': 'OWL-RL', owlrl: 'OWL-RL', owl_rl: 'OWL-RL',
 };
@@ -388,7 +379,7 @@ async function entail(ds, regime) {
 }
 
 /**
- * SHACL Core validation. Needs the npm-entry engine bundle. Neither
+ * SHACL Core validation. Neither
  * argument is mutated or consumed -- both stay valid FnDatasets after
  * the call, same as every other op in this module.
  *
@@ -407,7 +398,7 @@ async function validate(ds, shapes) {
 
 /**
  * ShEx (Shape Expressions) validation of one focus node against one
- * shape. Needs the npm-entry engine bundle.
+ * shape.
  *
  * @param {FnDataset} ds the data graph
  * @param {string} schema ShExJ (JSON Schema form), as text
@@ -425,9 +416,8 @@ async function shex(ds, schema, focus, shape) {
 
 /**
  * Evaluate an RML mapping graph against one logical source's raw
- * data, materializing the generated triples as a new FnDataset. Needs
- * the npm-entry engine bundle. Scope cut (documented, not silent):
- * every triples map in `mapping` reads the SAME `source` -- joins
+ * data, materializing the generated triples as a new FnDataset. Every
+ * triples map in `mapping` reads the SAME `source` -- joins
  * across two different logical sources are not reachable through this
  * one-source entry point (see engineApi.rmlMap's doc comment).
  *
@@ -444,7 +434,7 @@ async function fromMapping(mapping, source, kind) {
 /**
  * CSVW csv2rdf conversion (w3.org/TR/csv2rdf): convert raw tabular
  * data plus an optional CSVW metadata document into a new FnDataset.
- * Needs the npm-entry engine bundle. Unlike fromMapping there is no
+ * Unlike fromMapping there is no
  * FnDataset input -- both arguments are raw text (CSVW's metadata
  * format is JSON, not RDF). Scope cut (documented, not silent --
  * mirrors fromMapping's one-source cut): every table in a multi-table
@@ -467,8 +457,7 @@ async function fromCsvw(csv, metadata, options) {
 /**
  * RIF Core forward-chaining saturation, materialized as a new
  * FnDataset (input triples + derived triples, default graph only --
- * RIF Core has no named-graph notion). Needs the npm-entry engine
- * bundle.
+ * RIF Core has no named-graph notion).
  *
  * @param {FnDataset} ds the premise graph
  * @param {string} rules a RIF Core XML rule document
@@ -489,8 +478,7 @@ async function rif(ds, rules) {
  * Gutierrez, "Simple and Efficient Minimal RDFS", J. Web Semantics
  * 7(3), 2009). Mirrors engineApi.coreRdfsClosure's `{ok, ntriples}`
  * result, with `ntriples` parsed into an FnDataset via
- * Dataset.fromNQuads — pure JS, no extra engine round-trip. Needs the
- * npm-entry engine bundle. `rhoDfClosure` is kept below as a
+ * Dataset.fromNQuads — pure JS, no extra engine round-trip. `rhoDfClosure` is kept below as a
  * literature-name alias.
  * @param {FnDataset} ds
  * @param {{format?: string}} [options]
@@ -505,10 +493,8 @@ async function coreRdfsClosure(ds, options) {
 const rhoDfClosure = coreRdfsClosure;
 
 /**
- * Decidable core-RDFS fragment check (`is_rho_df_frag`, tied by an F*
- * lemma to the prop the regime theorems quantify over): does the
- * certified coreRdfsClosure guarantee apply to `ds`? Needs the
- * npm-entry engine bundle. `rhoDfFragmentCheck` is kept below as a
+ * Decidable core-RDFS fragment check (L4Factoidal/RDFS, `isRhoDfFrag`):
+ * is `ds` in the core-RDFS fragment coreRdfsClosure is defined for? `rhoDfFragmentCheck` is kept below as a
  * literature-name alias.
  * @param {FnDataset} ds
  * @param {{format?: string}} [options]
@@ -529,8 +515,7 @@ const rhoDfFragmentCheck = coreRdfsCheck;
  * Allemang & Hendler 2008; "RDFS++", AllegroGraph). Every OWL row
  * carries a proved licensing + truth lemma; no chain-level
  * completeness claim (theorem registry) — weaker than
- * coreRdfsClosure's decides-iff guarantee. Needs the npm-entry engine
- * bundle.
+ * coreRdfsClosure's decides-iff guarantee.
  * @param {FnDataset} ds
  * @param {{format?: string}} [options]
  * @returns {Promise<{ok: boolean, dataset: FnDataset, rounds: number}>}
@@ -551,7 +536,7 @@ async function rdfsPlusClosure(ds, options) {
  * individual the model-construction reasoner proves is a member of an
  * OWL class expression (someValuesFrom / hasValue / unionOf /
  * intersectionOf, and the named class an equivalentClass restriction
- * defines). Needs the npm-entry engine bundle. Default graph only.
+ * defines). Default graph only.
  *
  * @param {FnDataset} ds the ontology + ABox graph
  * @returns {Promise<{dataset: FnDataset, addedCount: number}>} dataset
@@ -568,8 +553,7 @@ async function tableauMaterialise(ds) {
  * OWL DL inconsistency verdict (bin/owl-runner's DL pipeline: OWL-RL
  * closure -> tableau materialise -> OWL-RL closure -> is_inconsistent).
  * `rlAlone` is the plain OWL-RL verdict on the same input, so a caller
- * can see the cases the tableau adds. Needs the npm-entry engine
- * bundle. Default graph only.
+ * can see the cases the tableau adds. Default graph only.
  *
  * @param {FnDataset} ds the ontology + ABox graph
  * @returns {Promise<{inconsistent: boolean, rlAlone: boolean}>}
@@ -583,8 +567,7 @@ async function tableauDlInconsistent(ds) {
  * OWL DL consistency verdict via the verified clash-detecting tableau
  * (formal/fstar/Tableau.Refute.fst's `tableau_consistent` over the
  * OWL-RL closure -- the pure verified chain bin/owl-runner runs under
- * `--regime dl`, minus its native-only z3 oracle). Needs the npm-entry
- * bundle. Default graph only.
+ * `--regime dl`, minus its native-only z3 oracle). Default graph only.
  *
  * `consistent` is three-valued: `false` (a clash on every tableau
  * branch), `true` (a model was constructed), or `null` -- the refuter
@@ -605,7 +588,7 @@ async function owlIsConsistent(ontology, options) {
  * OWL entailment check: does `premise` entail `conclusion`? Verified
  * two-path dispatch (`via: "closure"` for the OWL-RL closure path,
  * `via: "refutation"` for negate-and-refute), mirroring bin/owl-runner.
- * Needs the npm-entry bundle. Default graph only. `entailed` is
+ * Default graph only. `entailed` is
  * three-valued (`true` / `false` / `null` budget-out, `reason` names the
  * cap).
  *
@@ -621,8 +604,8 @@ async function owlEntails(premise, conclusion, options) {
 }
 
 /**
- * RDFC-1.0 canonicalization: canonical N-Quads text. Needs the
- * npm-entry bundle (same gating as index.js's canonicalize()).
+ * RDFC-1.0 canonicalization: canonical N-Quads text (index.js's
+ * canonicalize()).
  */
 async function canonicalize(ds) {
   assertFnDataset(ds, 'canonicalize');
@@ -720,60 +703,6 @@ async function equals(a, b) {
 }
 
 /**
- * Open a COTTAS/Parquet artifact's raw bytes as a queryable, read-only
- * store (docs/designissues/2026-07-06-inmemory-bytes-store.md, browser
- * call site). Needs the npm-entry engine bundle. Unlike every other
- * constructor in this module, the returned object is NOT an FnDataset:
- * the whole point of the design is that rows decode lazily as a query
- * touches them, never materializing the corpus into heap FnDataset
- * quads (measured 64-161 B/quad vs. an FnDataset/heap Dataset's
- * ~877 B/quad for the same data, in the design doc's native numbers).
- *
- * @param {string|Uint8Array|ArrayBuffer} bytes whole `.cottas` file contents
- * @returns {Promise<{handle: string,
- *   query: (sparql: string) => Promise<Array<Map<string,object>>|boolean|FnDataset>,
- *   close: () => Promise<void>}>}
- *   query() divergences from fn.query() (documented, not silent): no
- *   entail option, no write/--delta-log overlay (read-only), and a
- *   query shape the backend executor can't push down rejects instead
- *   of silently falling back to a full materialize (see
- *   engineApi.queryCottas's doc comment). CONSTRUCT still returns an
- *   FnDataset (materialized once for that query only).
- */
-async function openCottas(bytes) {
-  const handle = await engineApi.openCottas(bytes);
-  let closed = false;
-  return {
-    handle,
-    async query(sparql) {
-      if (closed) throw new Error('openCottas store: query() called after close()');
-      const result = await engineApi.queryCottas(handle, sparql);
-      return result instanceof Dataset ? fromDataset(result) : result;
-    },
-    async close() {
-      if (closed) return;
-      closed = true;
-      await engineApi.closeCottas(handle);
-    },
-  };
-}
-
-/**
- * Serialize an FnDataset to COTTAS/Parquet bytes via the native writer
- * (the same pure `Tot` F* function `factoidal compact --native-writer`
- * uses). Needs the npm-entry engine bundle. Round-trips through
- * openCottas(): feeding the result straight back into openCottas()
- * reproduces the same queryable store.
- *
- * @param {FnDataset} ds
- * @returns {Promise<Uint8Array>}
- */
-async function toCottas(ds) {
-  assertFnDataset(ds, 'toCottas');
-  return engineApi.toCottas(toDataset(ds));
-}
-
-/**
  * Enumerate named graphs (default graph excluded), first-seen order.
  * Reuses index.js's graphs() enumeration; wraps each per-graph
  * Dataset back into an FnDataset.
@@ -860,7 +789,7 @@ function pipe(...fns) {
 // -----------------------------------------------------------------
 // Typed engine functions (#74). Re-exported unchanged from the JS
 // engine api — each is already a pure, value-in / value-out function
-// over one F*-extracted engine (XSLT, MathML, XForms, JSON Schema,
+// over one engine op (XSLT, MathML, XForms, JSON Schema,
 // Schematron, TOAN CAS, matrix algebra), so they belong in the
 // functional surface as-is. See index.d.ts / fn.d.ts for signatures.
 // -----------------------------------------------------------------
@@ -921,8 +850,6 @@ module.exports = {
   canonicalize,
   hash,
   equals,
-  openCottas,
-  toCottas,
   graphs,
   cell,
   derive,

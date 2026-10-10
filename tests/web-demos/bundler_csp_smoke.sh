@@ -6,11 +6,12 @@
 # npm/factoidal/test/fixtures/bundler-app.mjs with esbuild (same
 # fixture and same external-modules handling as
 # npm/factoidal/test/bundler-esbuild.test.mjs -- see that file's
-# header for why 'node:fs'/'node:tty' are marked external and why
-# that's inert in a real browser), serves the output from a page whose
-# every HTTP response carries
-#   Content-Security-Policy: script-src 'self'
-# (no `unsafe-eval`, no `unsafe-inline`), and drives headless Chromium
+# header for why 'node:module' is marked external and why that is
+# inert in a real browser), serves the output and the Lean engine's
+# l4factoidal.wasm from a page whose every HTTP response carries
+#   Content-Security-Policy: script-src 'self' 'wasm-unsafe-eval'
+# (no `unsafe-eval`, no `unsafe-inline`; 'wasm-unsafe-eval' is the
+# directive WebAssembly compilation needs), and drives headless Chromium
 # (Playwright) over it. The fixture writes its SELECT row count into
 # `document.title`; this script asserts it reads "3" and that no
 # `pageerror` or console error fired -- a `new Function(src)` eval
@@ -27,7 +28,7 @@
 #   tests/web-demos/bundler_csp_smoke.sh
 #   BUNDLER_CSP_SMOKE_PORT=8935 tests/web-demos/bundler_csp_smoke.sh
 #
-# Requirements: node >= 20, esbuild resolvable from npm/factoidal
+# Requirements: node >= 22.12, esbuild resolvable from npm/factoidal
 # (devDependency -- `npm install` there if missing), the `playwright`
 # package with Chromium provisioned (do NOT run `playwright install`;
 # see hub_browser_all.sh's header for the resolution order this one
@@ -66,7 +67,7 @@ fi
 
 for f in \
   "$PKG_DIR/api.js" "$PKG_DIR/api.mjs" \
-  "$PKG_DIR/factoidal-npm-entry.js" \
+  "$PKG_DIR/l4-assets/l4factoidal.js" "$PKG_DIR/l4-assets/l4factoidal.wasm" \
   "$PKG_DIR/test/fixtures/bundler-app.mjs"
 do
   [ -f "$f" ] || { echo "Missing $f" >&2; exit 2; }
@@ -104,7 +105,7 @@ cat >"$DRIVER_PATH" <<'DRIVER_EOF'
 // Configuration comes from environment variables the shell script
 // sets, so nothing here depends on shell string interpolation.
 import { createRequire } from 'node:module';
-import { readFileSync, mkdirSync, rmSync, existsSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
+import { readFileSync, mkdirSync, rmSync, existsSync, lstatSync, realpathSync, symlinkSync, copyFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 
@@ -175,10 +176,13 @@ try {
   await esbuild.build({ ...baseOptions, external: externalList });
 }
 console.log(`bundler_csp_smoke: esbuild bundle ${Date.now() - t0}ms, external=[${externalList.join(', ')}]`);
+// The fixture fetches ./l4factoidal.wasm next to the page.
+copyFileSync(path.join(PKG_DIR, 'l4-assets', 'l4factoidal.wasm'), path.join(SERVE_ROOT, 'l4factoidal.wasm'));
 
 // --- 2. serve SERVE_ROOT with a strict CSP on every response --------
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm' };
+const CSP = "script-src 'self' 'wasm-unsafe-eval'";
 
 const server = createServer((req, res) => {
   const urlPath = (req.url === '/' ? '/index.html' : req.url).split('?')[0];
@@ -191,16 +195,16 @@ const server = createServer((req, res) => {
   try {
     body = readFileSync(filePath);
   } catch (_e) {
-    res.writeHead(404, { 'Content-Security-Policy': "script-src 'self'" }).end('not found');
+    res.writeHead(404, { 'Content-Security-Policy': CSP }).end('not found');
     return;
   }
   const ext = path.extname(filePath);
   res.writeHead(200, {
-    'Content-Type': (MIME[ext] || 'application/octet-stream') + '; charset=utf-8',
+    'Content-Type': ext === '.wasm' ? MIME[ext] : (MIME[ext] || 'application/octet-stream') + '; charset=utf-8',
     // The whole point of this harness: no 'unsafe-eval', no
     // 'unsafe-inline' -- a fetch()+new Function(src) eval anywhere on
     // the page's script path is refused by exactly this header.
-    'Content-Security-Policy': "script-src 'self'",
+    'Content-Security-Policy': CSP,
   });
   res.end(body);
 });
@@ -209,7 +213,7 @@ await new Promise((resolve, reject) => {
   server.on('error', reject);
   server.listen(PORT, '127.0.0.1', resolve);
 });
-console.log(`bundler_csp_smoke: serving ${SERVE_ROOT} on http://127.0.0.1:${PORT}/ with CSP script-src 'self'`);
+console.log(`bundler_csp_smoke: serving ${SERVE_ROOT} on http://127.0.0.1:${PORT}/ with CSP ${CSP}`);
 
 // --- 3. drive headless Chromium --------------------------------------
 
@@ -244,8 +248,8 @@ try {
     timeout: 20000,
   });
   const csp = resp && resp.headers()['content-security-policy'];
-  if (csp !== "script-src 'self'") {
-    failReason = `served page's Content-Security-Policy header was ${JSON.stringify(csp)}, expected "script-src 'self'"`;
+  if (csp !== CSP) {
+    failReason = `served page's Content-Security-Policy header was ${JSON.stringify(csp)}, expected ${JSON.stringify(CSP)}`;
   }
 
   if (!failReason) {
@@ -286,7 +290,7 @@ if (failReason) {
   process.exit(1);
 }
 
-console.log('PASS bundler_csp_smoke: document.title === "3" under Content-Security-Policy: script-src \'self\', no pageerror, no console error');
+console.log(`PASS bundler_csp_smoke: document.title === "3" under Content-Security-Policy: ${CSP}, no pageerror, no console error`);
 process.exit(0);
 DRIVER_EOF
 
