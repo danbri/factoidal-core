@@ -544,10 +544,23 @@ test("l4-core query({entail:'RDFS'}) answers over the RDFS closure", async () =>
 });
 
 test('l4-core missing op: an operation the wasm lacks rejects naming the op', async () => {
-  // parseDocument ({lenient:true}) is not in this wasm's op table.
+  // The wasm serves parseDocument ({lenient:true}) since issue 716, so this
+  // case removes it from the engine's ops reflection: an older module lists
+  // only the ops it has, and the entry object follows that list.
+  const real = await require('../index.js').loadEngine();
+  const older = {
+    call(op, args) {
+      const r = real.call(op, args);
+      return op === 'ops' ? { ...r, ops: r.ops.filter((o) => o !== 'parseDocument') } : r;
+    },
+  };
+  const api = require('../api.js').createApi(older);
   await assert.rejects(
-    () => l4core.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true }),
+    () => api.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true }),
     /parseDocument.*no dispatch op/);
+  // The same call on the full module succeeds.
+  const ds = await l4core.parse(`<${X}s> <${X}p> "c" .`, { format: 'ntriples', lenient: true });
+  assert.equal(ds.size, 1);
 });
 
 // ---------------------------------------------------------------------
