@@ -185,6 +185,12 @@ defjob l4owl-probe-dl-consistency l4owl-probe parse_owl owl \
 defjob l4owl-probe-dl-syntax l4owl-probe parse_owl owl \
   "OWL 2, DL regime (RL closure + tableau refuter)" "" \
   "--dir $OWLDIR --dl --refute-ms 3000 syntax-dl.rdf"
+defjob l4owl-probe-species l4owl-probe parse_owl_species owl \
+  "OWL 2 syntax / DL species (test:species, all documents of each case)" "" \
+  "--species --dir $OWLDIR all.rdf"
+defjob l4owl-probe-fs-input l4owl-probe parse_owl_fs_input owl \
+  "OWL 2 functional-style documents judged by the RL regime (cases with a functional-style premise)" "" \
+  "--fs-input --dir $OWLDIR all.rdf"
 # --- SHACL -------------------------------------------------------------------
 defjob l4shacl-core10 l4shacl parse_shacl shacl \
   "SHACL Core (1.0 suite)" "" \
@@ -555,6 +561,29 @@ parse_owl() {
   # Catalog rows overlap (type-consistency.rdf contains the positive-entailment
   # units too), so no TOTAL row is emitted.
   block_rows "$CUR_AREA" '^(profile|type|syntax|semantics)-[A-Za-z-]+\.rdf( [A-Za-z]+Test)?: [0-9]+ pass, [0-9]+ fail.*\(out of [0-9]+\)$'
+}
+
+parse_owl_species() {
+  # One run of `l4owl-probe --species` prints the species facet and the
+  # cross-syntax agreement; the counts below are labelled as the runner
+  # labels them.
+  row_sl "$CUR_AREA" "species verdict, all cases" '^all\.rdf species: [0-9]+ pass' last \
+    "pass = the DL or FULL verdict of OWL/SyntaxDL equals test:species"
+  row_sl "$CUR_AREA" "species, cases annotated DL" '^all\.rdf species \[expected DL\]: [0-9]+ pass' last
+  row_sl "$CUR_AREA" "species, cases annotated FULL only" '^all\.rdf species \[expected FULL\]: [0-9]+ pass' last
+  row_sl "$CUR_AREA" "species from the functional-style documents alone" \
+    '^all\.rdf species \[functional-syntax documents\]: [0-9]+ pass' last \
+    "the body checks of SyntaxDL over the mapped functional-style graph; every such case is annotated DL"
+  row_sl "$CUR_AREA" "fs-rdfxml agreement, premise documents" '^all\.rdf fs-rdfxml agreement: [0-9]+ pass' last \
+    "pass = the functional-style premise, mapped to RDF, is isomorphic to the RDF/XML premise; fails are fixture defects listed in the log"
+  row_sl "$CUR_AREA" "fs-rdfxml agreement, conclusion documents" \
+    '^all\.rdf fs-rdfxml agreement \[conclusion\]: [0-9]+ pass' last
+}
+
+parse_owl_fs_input() {
+  row_sl "$CUR_AREA" "judged from the functional-style documents" '^all\.rdf \[fs-input\]: [0-9]+ pass' last \
+    "units = test types of the cases that have a functional-style premise"
+  row_sl "$CUR_AREA" "same cases judged from the RDF/XML documents" '^all\.rdf \[rdfxml-input\]: [0-9]+ pass' last
 }
 
 parse_shacl() {

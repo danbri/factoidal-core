@@ -8993,11 +8993,35 @@ header-less graph with a clean body is rejected by `speciesIsDl` and
 accepted by `speciesIsDlFunctional`, because a successful
 functional-syntax parse proves the `Ontology(…)` header.
 
-**Not yet measured against the corpus.** The F\* module's 489-case
-validation is not re-run here — that needs the OWL test-case manifest
-reader, which the Lean tree does not have. The `#guard`s check the
-checks; they do not reproduce the corpus number, and this note says so
-rather than letting the F\* figure read as the Lean one's.
+**Measured against the corpus (2026-10-10).** `l4owl-probe --species`
+reads the catalogs and scores every case that carries `test:species`
+over all its documents (premise, conclusion or non-conclusion, imports
+resolved against the catalog wrapper nodes). On `third_party/testing/owl/all.rdf`:
+487 pass, 2 fail (out of 489); the 323 cases annotated DL give 321 pass,
+2 fail, and the 166 FULL-only cases 166 pass. The F\* runner reports 319
+pass, 2 fail, 2 skip (out of 323) on `syntax-dl.rdf`. Three library
+changes came out of the first run (5 wrong verdicts):
+
+* Mapping to RDF Graphs 3.1.2 Table 5: `rdfs:Class`, `rdf:Property` and
+  `rdf:List` typings are dropped only when redundant; a lone one is a
+  triple no pattern of 3.2 consumes (3.2.5: "G MUST be empty"). They were
+  whitelisted unconditionally before (`WebOnt-imports-004`).
+* Structural Specification 3.6, CP 2.1: an `owl:imports` target that the
+  catalog does not provide makes canonical parsing fail
+  (`WebOnt-imports-012`, `-014`). A document is retrievable at its root
+  ontology IRI (3.2).
+* Structural Specification 11 completed on the graph: non-simple
+  properties propagate up the property hierarchy, the simple-role
+  restrictions, regularity of the property hierarchy, `owl:topDataProperty`,
+  the datatype definition restrictions and the anonymous individual
+  restrictions. The corpus does not discriminate on these (no verdict
+  moved); the `#guard`s do.
+
+Two verdicts stay wrong and are documented, not fitted: `WebOnt-I5.5-005`
+is annotated DL but its conclusion has no ontology header (3.1.2, Table 4:
+exactly one header pattern must match), and the RDF/XML premise of
+`FS2RDF-literals-ar` is not valid RDF/XML (rdf:datatype on a property
+element with element content, RDF/XML 7.2.16).
 
 ## SPARQL.Plan.AccessPath → `L4Factoidal/Cottas/AccessPath.lean`
 
