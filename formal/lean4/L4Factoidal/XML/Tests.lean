@@ -273,6 +273,88 @@ comment on `parseChildren`. -/
 #guard splitQName "p:" == .malformed
 #guard !isNamespaceWellFormedDoc "<a:b:c/>"
 
+-- Namespaces in XML 1.0 section 6 (erratum NE08): no colon in a
+-- processing instruction target, an entity name or a notation name.
+-- Each is well-formed PLAIN XML, so the namespace layer alone rejects it.
+#guard isWellFormed "<?a:b x?><r/>"
+#guard !isNamespaceWellFormedDoc "<?a:b x?><r/>"
+#guard isNamespaceWellFormedDoc "<?ab x?><r/>"
+#guard !isNamespaceWellFormedDoc "<r><?a:b x?></r>"
+#guard isNamespaceWellFormedDoc "<r><?ab x?></r>"
+#guard isWellFormed "<!DOCTYPE r [<!ENTITY a:b \"v\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY a:b \"v\">]><r/>"
+#guard isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY ab \"v\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY % a:b \"v\">]><r/>"
+#guard isWellFormed "<!DOCTYPE r [<!NOTATION a:b SYSTEM \"n\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!NOTATION a:b SYSTEM \"n\">]><r/>"
+#guard isNamespaceWellFormedDoc "<!DOCTYPE r [<!NOTATION ab SYSTEM \"n\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<?a:b x?>]><r/>"
+-- The declared names are recorded in reverse order of declaration.
+#guard (match parseXML "<!DOCTYPE r [<!ENTITY e \"1\"><!NOTATION n SYSTEM \"x\"><!ENTITY f \"2\">]><r/>" with
+        | .ok d => d.doctype.map (·.declared)
+        | .error _ => none)
+       == some { entities := ["f", "e"], notations := ["n"], piTargets := [] }
+
+/-! ## §3.3.3 attribute-value normalisation by declared type
+
+A processor that reads an ATTLIST must use the declared type (section
+5.1). The value of an attribute whose type is not CDATA has its leading
+and trailing spaces discarded and each run of spaces collapsed. -/
+
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a NMTOKENS #IMPLIED>]><r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "x y"
+-- CDATA, declared or by default, is not collapsed.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED>]><r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "  x   y  "
+#guard (match parseXML "<r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "  x   y  "
+-- A reference to a space is a space once expanded, so it is collapsed too.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a ID #IMPLIED>]><r a=\"&#32;x&#32;\"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "x"
+-- The declaration is per ELEMENT: another element's attribute of the
+-- same name is untouched.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a NMTOKEN #IMPLIED>]><r><s a=\" v \"/></r>" with
+        | .ok d => ((d.root.childElements "s").head?).bind (fun s => findAttr "a" s.elementAttrs)
+        | .error _ => none) == some " v "
+-- Section 3.3: the FIRST declaration of an attribute is binding.
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED>" ++
+          "<!ATTLIST r a NMTOKEN #IMPLIED>]><r a=\" v \"/>") with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some " v "
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a NMTOKEN #IMPLIED>" ++
+          "<!ATTLIST r a CDATA #IMPLIED>]><r a=\" v \"/>") with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "v"
+-- The normalisation can make two namespace declarations equal
+-- (xmlconf rmt-ns10-012): the attributes then collide after expansion.
+#guard !isNamespaceWellFormedDoc
+  ("<!DOCTYPE r [<!ATTLIST r xmlns:a CDATA #IMPLIED xmlns:b NMTOKEN #IMPLIED>]>" ++
+   "<r xmlns:a=\"urn:x\" xmlns:b=\" urn:x \"><c a:k=\"1\" b:k=\"2\"/></r>")
+-- ...and with both declared CDATA the two names differ, so it passes.
+#guard isNamespaceWellFormedDoc
+  ("<!DOCTYPE r [<!ATTLIST r xmlns:a CDATA #IMPLIED xmlns:b CDATA #IMPLIED>]>" ++
+   "<r xmlns:a=\"urn:x\" xmlns:b=\" urn:x \"><c a:k=\"1\" b:k=\"2\"/></r>")
+-- Every attribute type is recorded.
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED b ID #REQUIRED " ++
+          "c IDREF #IMPLIED d IDREFS #IMPLIED e ENTITY #IMPLIED f ENTITIES #IMPLIED " ++
+          "g NMTOKEN #IMPLIED h NMTOKENS #IMPLIED i NOTATION (n) #IMPLIED " ++
+          "j (x|y) \"x\" k CDATA #FIXED \"z\">]><r b=\"b\"/>") with
+        | .ok d => (d.doctype.map (fun dt => dt.attDecls.reverse.map (fun a => (a.name, a.type, a.defaultDecl)))).getD []
+        | .error _ => []) ==
+       [("a", .CDATA, .implied), ("b", .ID, .required), ("c", .IDREF, .implied),
+        ("d", .IDREFS, .implied), ("e", .ENTITY, .implied), ("f", .ENTITIES, .implied),
+        ("g", .NMTOKEN, .implied), ("h", .NMTOKENS, .implied), ("i", .NOTATION, .implied),
+        ("j", .Enumeration, .value "x"), ("k", .CDATA, .fixed "z")]
+-- ...and re-parse unchanged after serialisation.
+#guard roundTripsFrom ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED b ID #REQUIRED " ++
+          "c IDREF #IMPLIED d IDREFS #IMPLIED e ENTITY #IMPLIED f ENTITIES #IMPLIED " ++
+          "g NMTOKEN #IMPLIED h NMTOKENS #IMPLIED i NOTATION (n) #IMPLIED " ++
+          "j (x|y) \"x\" k CDATA #FIXED \"z\">]><r b=\"b\"/>")
+
 /-! ## `[4] NCName` — Namespaces in XML §3 -/
 
 #guard isValidNCName "abc"

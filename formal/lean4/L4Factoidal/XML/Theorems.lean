@@ -226,22 +226,54 @@ def XmlDecl.serialize (d : XmlDecl) : String :=
   (match d.standalone with | none => "" | some s => " standalone=\"" ++ s ++ "\"") ++
   "?>"
 
+/-- `[54] AttType` back to its keyword. The names of a `NOTATION` list
+and the tokens of an enumeration are not kept by the parser, so one
+placeholder name is written; it re-parses to the same `AttType`. -/
+def AttType.serialize : AttType → String
+  | .CDATA => "CDATA"
+  | .ID => "ID"
+  | .IDREF => "IDREF"
+  | .IDREFS => "IDREFS"
+  | .ENTITY => "ENTITY"
+  | .ENTITIES => "ENTITIES"
+  | .NMTOKEN => "NMTOKEN"
+  | .NMTOKENS => "NMTOKENS"
+  | .NOTATION => "NOTATION (n)"
+  | .Enumeration => "(n)"
+
+/-- A literal in the quote it does not contain. -/
+def quoteLiteral (lit : String) : String :=
+  if lit.toList.contains '"' then "'" ++ lit ++ "'" else "\"" ++ lit ++ "\""
+
+/-- `[60] DefaultDecl` back to source. -/
+def AttDefault.serialize : AttDefault → String
+  | .required => "#REQUIRED"
+  | .implied => "#IMPLIED"
+  | .fixed lit => "#FIXED " ++ quoteLiteral lit
+  | .value lit => quoteLiteral lit
+
+/-- `[52] AttlistDecl` carrying one `[53] AttDef`. -/
+def AttDecl.serialize (a : AttDecl) : String :=
+  "<!ATTLIST " ++ a.element ++ " " ++ a.name ++ " " ++ a.type.serialize ++ " " ++
+    a.defaultDecl.serialize ++ ">"
+
 /-- `[28] doctypedecl`, carrying back the internal subset the parser
 read out of it.
 
 The declaration lists are emitted REVERSED. Both are built by
 prepending as the internal subset is scanned, so the stored order is
 the reverse of the document order; reversing on the way out is what
-makes the re-parse rebuild the identical lists. -/
+makes the re-parse rebuild the identical lists. The names in
+`declared` beyond the entity names that `entities` already carries are
+not re-emitted. -/
 def Doctype.serialize (dt : Doctype) : String :=
-  if dt.entities.defs.isEmpty && dt.idAttrs.isEmpty then
+  if dt.entities.defs.isEmpty && dt.attDecls.isEmpty then
     "<!DOCTYPE " ++ dt.rootName ++ ">"
   else
     "<!DOCTYPE " ++ dt.rootName ++ " [" ++
     String.join (dt.entities.defs.reverse.map fun e =>
       "<!ENTITY " ++ e.1 ++ " \"" ++ e.2.value ++ "\">") ++
-    String.join (dt.idAttrs.reverse.map fun p =>
-      "<!ATTLIST " ++ p.1 ++ " " ++ p.2 ++ " ID #IMPLIED>") ++
+    String.join (dt.attDecls.reverse.map AttDecl.serialize) ++
     "]>"
 
 /-- Serialise a whole document: `[23] XMLDecl`, the prolog `[27] Misc`,

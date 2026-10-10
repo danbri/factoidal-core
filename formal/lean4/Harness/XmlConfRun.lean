@@ -15,8 +15,8 @@ reader would be a second implementation of the syntax under test.
 
 ## The parser's PROFILE decides what can be scored
 
-`Parser.lean` implements XML 1.0, NON-VALIDATING, NON-NAMESPACE, and
-reads UTF-8 only. A test outside that profile is not a failure; it is
+`Parser.lean` implements XML 1.0, NON-VALIDATING, and reads UTF-8 only;
+`Namespaces.lean` adds the Namespaces-in-XML check on top of it. A test outside that profile is not a failure; it is
 not a test of this parser. Each is counted in its own bucket and
 named:
 
@@ -26,6 +26,8 @@ named:
     parser is not asked to notice. Scored.
   * `error`   — the specification leaves the behaviour optional, so a
     verdict either way is conformant. NOT scored, and reported.
+  * `eduni/namespaces/*` — scored separately: XML parse AND namespace
+    well-formedness (`Document.namespaceWellFormed`).
   * `VERSION="1.1"` — XML 1.1 is a different language. Out of profile.
   * non-UTF-8 bytes — the parser does not transcode. Out of profile.
 
@@ -35,6 +37,7 @@ into passes would overstate it. Both numbers are printed.
 Usage: `lake exe l4xmlconf [xmlconf-dir]`
 -/
 import L4Factoidal.XML.Parser
+import L4Factoidal.XML.Namespaces
 
 open L4Factoidal.XML
 
@@ -62,7 +65,9 @@ structure Counts where
   xml11       : Nat := 0   -- a different language
   notUtf8     : Nat := 0   -- the parser does not transcode
   otherEdition : Nat := 0  -- EDITION says the case is not about 1.0 5e
-  namespaces  : Nat := 0   -- a Namespaces-in-XML case, not an XML 1.0 one
+  nsPass      : Nat := 0   -- Namespaces-in-XML cases, scored with the namespace check
+  nsFail      : Nat := 0
+  nsOptional  : Nat := 0   -- Namespaces-in-XML cases of TYPE="error"
   fileMissing : Nat := 0
 deriving Repr, Inhabited
 
@@ -70,7 +75,8 @@ def Counts.add (a b : Counts) : Counts :=
   { scored := a.scored + b.scored, pass := a.pass + b.pass, fail := a.fail + b.fail,
     optional := a.optional + b.optional, xml11 := a.xml11 + b.xml11,
     notUtf8 := a.notUtf8 + b.notUtf8, otherEdition := a.otherEdition + b.otherEdition,
-    namespaces := a.namespaces + b.namespaces,
+    nsPass := a.nsPass + b.nsPass, nsFail := a.nsFail + b.nsFail,
+    nsOptional := a.nsOptional + b.nsOptional,
     fileMissing := a.fileMissing + b.fileMissing }
 
 /-- The sub-manifests, relative to the suite root. Listed rather than
@@ -87,17 +93,14 @@ def subManifests : List String :=
     "eduni/misc/ht-bh.xml" ]
 
 /-- Is this sub-manifest the NAMESPACES suite? Those cases test
-    Namespaces in XML, not XML 1.0: `rmt-ns10-004` is
+    Namespaces in XML on top of XML 1.0: `rmt-ns10-004` is
     `<a:foo xmlns:a="…"/>` with an undeclared prefix, which is
-    namespace-ill-formed and XML-well-formed. This parser is
-    NON-NAMESPACE by design and its header says so, so it accepts them
-    correctly and the runner scored 23 of them as failures.
-
-    They are not passes either — the parser is not being asked the
-    question — so they go in a bucket of their own, the same treatment
-    XML 1.1 and non-UTF-8 already get. Scoring a non-namespace parser
-    against a namespace suite measures a layer that is deliberately
-    somewhere else (`XML/Namespaces.lean`). -/
+    namespace-ill-formed and XML-well-formed. A case here passes when
+    the parse AND `Document.namespaceWellFormed` agree with the
+    manifest's TYPE; every other suite is read as plain XML, where a
+    colon is an ordinary name character (`xmltest/` depends on that).
+    They are counted in their own line so the plain-XML line keeps its
+    meaning. -/
 def isNamespaceSuite (rel : String) : Bool :=
   rel.startsWith "eduni/namespaces/"
 
@@ -149,11 +152,12 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
         let appliesHere := match edition with
           | none    => true
           | some es => (es.splitOn " ").contains "5"
+        let nsAware := isNamespaceSuite rel
         if uri == "" then pure ()
-        else if isNamespaceSuite rel then c := Counts.add c { namespaces := 1 }
         else if !appliesHere then c := Counts.add c { otherEdition := 1 }
-        else if ver == "1.1" then c := Counts.add c { xml11 := 1 }
-        else if ty == "error" then c := Counts.add c { optional := 1 }
+        else if ver == "1.1" && !nsAware then c := Counts.add c { xml11 := 1 }
+        else if ty == "error" then
+          c := Counts.add c (if nsAware then { nsOptional := 1 } else { optional := 1 })
         else
           let fp := base ++ uri
           if !(← System.FilePath.pathExists fp) then
@@ -245,18 +249,27 @@ def runManifest (root : String) (rel : String) (verbose : Bool) : IO Counts := d
                   c := Counts.add c { notUtf8 := 1 }
                 else
                 let outcome := parseXMLWith resolve text
-                let accepted := outcome.toOption.isSome
+                -- A Namespaces-in-XML case asks for namespace
+                -- well-formedness ON TOP OF XML well-formedness
+                -- (Namespaces in XML 1.0 section 1: a document is
+                -- namespace-well-formed when it is well-formed XML and
+                -- obeys the namespace constraints). Every other case
+                -- is read as plain, non-namespace XML.
+                let nsOk := match outcome with
+                  | .ok d    => !nsAware || d.namespaceWellFormed
+                  | .error _ => false
+                let accepted := outcome.toOption.isSome && nsOk
                 let why := match outcome with
-                  | .ok _    => ""
+                  | .ok _    => if nsOk then "" else "namespace-ill-formed"
                   | .error e => e.message
                 -- A NON-VALIDATING parser accepts `valid` AND
                 -- `invalid`: the second violates the DTD, which this
                 -- parser is not asked to check.
                 let want := ty != "not-wf"
                 if accepted == want then
-                  c := Counts.add c { scored := 1, pass := 1 }
+                  c := Counts.add c (if nsAware then { nsPass := 1 } else { scored := 1, pass := 1 })
                 else
-                  c := Counts.add c { scored := 1, fail := 1 }
+                  c := Counts.add c (if nsAware then { nsFail := 1 } else { scored := 1, fail := 1 })
                   if verbose then
                     IO.println s!"FAIL {id} ({ty}): {uri} was {if accepted then "accepted" else "rejected"}{if why == "" then "" else " -- " ++ why}"
       return c
@@ -275,17 +288,20 @@ def main (args : List String) : IO UInt32 := do
     total := Counts.add total c
   IO.println ""
   IO.println s!"xml conformance SCORED: {total.pass} pass, {total.fail} fail (out of {total.scored} in profile)"
+  IO.println s!"namespaces SCORED: {total.nsPass} pass, {total.nsFail} fail (out of {total.nsPass + total.nsFail} Namespaces-in-XML cases; XML parse + namespace well-formedness)"
   IO.println s!"OUT OF PROFILE, reported not scored: {total.optional} optional-behaviour (TYPE=error),"
+  IO.println s!"  {total.nsOptional} optional-behaviour in the Namespaces suites (TYPE=error),"
   IO.println s!"  {total.xml11} XML 1.1, {total.notUtf8} not UTF-8 (this parser does not transcode),"
   IO.println s!"  {total.otherEdition} for editions 1-4 only (this parser follows the Fifth Edition),"
-  IO.println s!"  {total.namespaces} Namespaces-in-XML cases (this parser is non-namespace)"
   if total.fileMissing > 0 then
     IO.println s!"  {total.fileMissing} referenced files not on disk"
   IO.println ""
-  IO.println "The parser's profile is XML 1.0, NON-VALIDATING, NON-NAMESPACE,"
-  IO.println "UTF-8 only. A `valid` and an `invalid` case must BOTH be accepted:"
-  IO.println "`invalid` means it violates the DTD, which a non-validating parser"
-  IO.println "is not asked to notice. Counting those as failures would understate"
-  IO.println "the parser; counting the out-of-profile cases as passes would"
-  IO.println "overstate it."
+  IO.println "Profile: XML 1.0 (Fifth Edition), NON-VALIDATING, UTF-8 only."
+  IO.println "The XML suites are read as plain XML, where ':' is an ordinary name"
+  IO.println "character. The Namespaces suites (eduni/namespaces) are read with the"
+  IO.println "Namespaces-in-XML well-formedness check on top of the XML parse."
+  IO.println "A `valid` and an `invalid` case must BOTH be accepted: `invalid` means"
+  IO.println "it violates the DTD, which a non-validating parser is not asked to"
+  IO.println "notice. Counting those as failures would understate the parser;"
+  IO.println "counting the out-of-profile cases as passes would overstate it."
   return 0

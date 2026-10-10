@@ -333,19 +333,71 @@ structure EntityTable where
   lax   : Bool := false
 deriving DecidableEq, Repr, Inhabited
 
+/-- `[54] AttType` — the declared type of an attribute (XML 1.0 §3.3.1).
+
+Recorded because a processor that reads an `[52] AttlistDecl` MUST use
+it in two ways even when it does not validate (§5.1): to normalise
+attribute values (§3.3.3: every type except `CDATA` has its value
+space-collapsed) and to supply default values (§3.3.2). The same record
+is what a validating layer checks values against. -/
+inductive AttType where
+  | CDATA
+  | ID
+  | IDREF
+  | IDREFS
+  | ENTITY
+  | ENTITIES
+  | NMTOKEN
+  | NMTOKENS
+  /-- `NOTATION (n1 | n2 …)` — the names are not kept. -/
+  | NOTATION
+  /-- `(v1 | v2 …)` — the tokens are not kept. -/
+  | Enumeration
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[60] DefaultDecl ::= '#REQUIRED' | '#IMPLIED' | (('#FIXED' S)?
+AttValue)`. The literal is kept as written (references unexpanded). -/
+inductive AttDefault where
+  | required
+  | implied
+  | fixed (literal : String)
+  | value (literal : String)
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[53] AttDef`, with the element name of the `[52] AttlistDecl` it
+sits in. -/
+structure AttDecl where
+  element : String
+  name : String
+  type : AttType
+  defaultDecl : AttDefault
+deriving DecidableEq, Repr, Inhabited
+
+/-- The names a DTD declares, kept because Namespaces in XML 1.0 §6
+(and its erratum NE08) forbids a colon in an entity name, a processing
+instruction target and a notation name. `entities` holds every
+`<!ENTITY` name: general, parameter and unparsed. Each list is in
+reverse order of declaration. -/
+structure DeclaredNames where
+  entities  : List String := []
+  notations : List String := []
+  piTargets : List String := []
+deriving DecidableEq, Repr, Inhabited
+
 /-- `[28] doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S?
 ('[' intSubset ']' S?)? '>'`, as far as a NON-VALIDATING processor
-reads it — which is exactly as far as the F* `parse_doctype` reads it.
+reads it.
 
 Recorded: the root Name, the general internal entity declarations
 (`[71] GEDecl` with an `[9] EntityValue`, first declaration wins per
-§4.2), and the `(element, attribute)` pairs whose `[54] AttType` is
-exactly `ID` (the substrate for XPath's `id()`).
+§4.2), every `[53] AttDef` read from the internal subset and from the
+external subset when the caller could supply it (so XPath's `id()` can
+find the ID-typed attributes, and so attribute values can be normalised
+by declared type), and the names of the declarations.
 
-NOT recorded and NOT acted on: the external subset (never loaded — no
-external resource is read), `[45] elementdecl`, `[52] AttlistDecl`
-enforcement, `[82] NotationDecl`, parameter entities, and conditional
-sections. They are skipped structurally. -/
+NOT recorded and NOT acted on: `[45] elementdecl`, `[82] NotationDecl`
+bodies, and conditional sections' ignored text. They are checked for
+shape and skipped. -/
 structure Doctype where
   /-- The document type name — `[28]`'s `Name`. -/
   rootName : String
@@ -353,15 +405,23 @@ structure Doctype where
   text, un-expanded (references inside are resolved lazily at the
   reference site). -/
   entities : EntityTable
-  /-- `(element name, attribute name)` pairs declared `[54] AttType`
-  = `ID` in the internal subset. -/
-  idAttrs : List (String × String)
+  /-- Every `[53] AttDef`, in REVERSE order of declaration (the list is
+  built by prepending as the subset is read). -/
+  attDecls : List AttDecl
   /-- The SYSTEM identifier of the `[75] ExternalID`, when the DOCTYPE
   has one. Recorded, not fetched: whether an external subset is read
   is the caller's decision, and reading it needs I/O this module does
   not do. -/
   systemId : Option String := none
+  /-- The names the DTD declares. -/
+  declared : DeclaredNames := {}
 deriving DecidableEq, Repr, Inhabited
+
+/-- `(element name, attribute name)` pairs declared `[54] AttType` =
+`ID`, in reverse order of declaration — the substrate for XPath's
+`id()`. -/
+def Doctype.idAttrs (d : Doctype) : List (String × String) :=
+  (d.attDecls.filter (fun a => a.type == AttType.ID)).map (fun a => (a.element, a.name))
 
 /-- `[1] document ::= prolog element Misc*`.
 
