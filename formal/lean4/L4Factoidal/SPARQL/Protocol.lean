@@ -66,10 +66,10 @@ namespace L4Factoidal.SPARQL.Protocol
 /-- A decoded SPARQL protocol request (F* `sparql_request`).
 
 `query` / `update` carry the operation text plus the two
-protocol-level dataset lists — `default-graph-uri` values and
+protocol-level dataset lists — `default-graph-uri` and
 `named-graph-uri` values for a query (§2.1.4), `using-graph-uri` and
-`using-named-graph-uri` are read separately for an update (§2.2.3) —
-and `bad` carries the reason a 4xx-class rejection was chosen. -/
+`using-named-graph-uri` values for an update (§2.2.3) — and `bad`
+carries the reason a 4xx-class rejection was chosen. -/
 inductive SparqlRequest where
   | query  (text : String) (defaultGraphUris namedGraphUris : List String)
   | update (text : String) (defaultGraphUris namedGraphUris : List String)
@@ -374,6 +374,19 @@ parameters? -/
 def kvsHaveUsingParam (kvs : List (String × String)) : Bool :=
   (firstValue "using-graph-uri" kvs).isSome || (firstValue "using-named-graph-uri" kvs).isSome
 
+/-- An update request with its §2.2.3 dataset parameters:
+`using-graph-uri` and `using-named-graph-uri`, which act "as if a
+USING <g> clause were included for every operation" (Protocol §2.2.3).
+Supplying either together with a USING, USING NAMED or WITH clause in
+the update text is an error (§2.2.3: "It is an error to supply the
+using-graph-uri or using-named-graph-uri parameters when using this
+protocol to convey a SPARQL 1.1 Update request that contains an
+operation that uses the USING, USING NAMED, or WITH clause"). -/
+def updateWithDataset (u : String) (kvs : List (String × String)) : SparqlRequest :=
+  if kvsHaveUsingParam kvs && updateHasDatasetClause u then
+    .bad "using-graph-uri/using-named-graph-uri form params conflict with USING/WITH in update text (Protocol 2.2.4)"
+  else .update u (collectValues "using-graph-uri" kvs) (collectValues "using-named-graph-uri" kvs)
+
 /-- Build the request from the parameter bag of a GET query string or
 a form-encoded POST body. The form key (`query=` vs `update=`) is
 authoritative (§2.1.2 / §2.2.2); `isGet` rejects `update=` outright
@@ -397,11 +410,7 @@ def buildFromKvs (isGet isUpdatePath : Bool) (kvs : List (String × String)) : S
     else .query q dflt named
   | none, some u =>
     if isGet then .bad "UPDATE invoked via GET (Protocol 2.2.2)"
-    -- §2.2.4: using-graph-uri / using-named-graph-uri form params must
-    -- not coexist with USING / WITH inside the update text.
-    else if kvsHaveUsingParam kvs && updateHasDatasetClause u then
-      .bad "using-graph-uri/using-named-graph-uri form params conflict with USING/WITH in update text (Protocol 2.2.4)"
-    else .update u dflt named
+    else updateWithDataset u kvs
 
 /-- The clean path and the query string that applies: an explicit
 `urlQuery` wins; otherwise one embedded in the path after `?`. -/
@@ -425,8 +434,12 @@ def decodeRequest (httpMethod urlPath urlQuery contentType body : String) : Spar
     let ct := contentTypeBase contentType
     if !(charsetIsUtf8OrAbsent contentType) then
       .bad "non-UTF-8 charset rejected per Protocol 2.1.6"
-    else if ct == "application/sparql-query" then .query body [] []
-    else if ct == "application/sparql-update" then .update body [] []
+    -- §2.1.3 / §2.2.2 "via POST directly": the body is the operation,
+    -- and the dataset parameters are URL query parameters.
+    else if ct == "application/sparql-query" then
+      let kvs := parseQueryString qs
+      .query body (collectValues "default-graph-uri" kvs) (collectValues "named-graph-uri" kvs)
+    else if ct == "application/sparql-update" then updateWithDataset body (parseQueryString qs)
     else if ct == "application/x-www-form-urlencoded" then
       buildFromKvs false isUpdate (parseQueryString body)
     else if ct.isEmpty then .bad "POST request missing Content-Type"

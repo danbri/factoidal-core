@@ -2766,6 +2766,10 @@ runner clauses that drive them.
 | — | `Method`, `handle` | new: the state machine as one total function; PATCH → 405 |
 | `SPARQL.ServiceDescription.fst` (`sd_*`, `build_sd`, `has_endpoint_triple`, `has_service_type`, `has_supported_language`, `conforms_to_schema`, `returns_rdf`) | `SPARQL/ServiceDescription.lean`, same names camelCase | `datasetIriOf` / `defaultGraphIriOf` keep the F\* fallback to the endpoint |
 | `run_protocol_test`, `run_gsp_test`, `run_service_description_test`, `_gsp_canonical_key`, `_gsp_should_seed`, `_gsp_is_mismatched_payload_test`, `_gsp_status_matches` | `Harness/ProtocolRun.lean` `protocolVerdict` / `runProtocolTest`, `gspStep` / `runGspTest`, `serviceDescriptionVerdict`, `gspCanonicalKey`, `gspShouldSeed`, `gspIsMismatchedPayload`, `gspStatusMatches` | the cross-test store is an `IO.Ref` per manifest (`Harness.Main`), reset at `PUT - Initial state` |
+| — | `SPARQL/ProtocolService.lean` `serve`, `datasetClauses`, `withProtocolDataset`, `withUsing`, `evalQuery` | new 2026-10-10: executes a decoded request against a Graph Store (Protocol §2.1.4 dataset precedence, §2.2.3 USING per operation, §2.1.7 / §2.2.4 status codes) |
+| — | `SPARQL/GraphStoreService.lean` `serve`, `resolve`, `payloadGraph`, `mergeInto`, `freshGraphIri`, `graphResponse` | new 2026-10-10: the Graph Store service over the store model — §4.1 / §4.2 identification against an endpoint, Turtle / N-Triples / multipart payloads, `Location` on creation, GET by `Accept` |
+| — | `HTTP/Multipart.lean` `boundaryOf`, `parseMultipart` | new 2026-10-10: RFC 7578 / RFC 2046 §5.1.1 |
+| — | `Harness/ProtocolRun.lean` `runProtocolExchanges`, `runGspExchanges`, `checkStatus`, `statusTermAdmits`, `statusCodeOfTerm` | new 2026-10-10: the structured `ht:` manifest form; see `docs/designissues/2026-08-22-lean4-w3c-harness.md` § Status 2026-10-10 |
 
 Not ported: Accept-header negotiation (F\* Part 6) and the response
 serialisers (Parts 8–12) — the tests assert on status class, and the
