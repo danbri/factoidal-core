@@ -247,6 +247,22 @@ let rdf_nil = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"
    Manifest reader — extracts test cases from W3C manifest.ttl files
    ============================================================================ *)
 
+(* One ht:Request of an ht:Connection with the ht:Response it expects.
+   Header names are lowercased. Statuses are the local names of the
+   hts: terms (`StatusCode2xx`, `Created`, ...), as written. *)
+type http_exchange = {
+  hx_method : string;                      (* ht:methodName *)
+  hx_path : string;                        (* ht:absolutePath, query string included *)
+  hx_headers : (string * string) list;     (* ht:headers *)
+  hx_body : string option;                 (* ht:body / cnt:chars *)
+  hx_statuses : string list;               (* mf:expectedStatus *)
+  hx_format : string option;               (* mf:expectedFormat *)
+  hx_boolean : bool option;                (* mf:expectedBoolean *)
+  hx_location_var : string option;         (* mf:expectedLocation *)
+  hx_resp_headers : (string * string) list;
+  hx_resp_body : string option;
+}
+
 type test_case = {
   name : string;
   test_type : string;   (* "QueryEvaluationTest", "PositiveSyntaxTest11", etc. *)
@@ -271,12 +287,21 @@ type test_case = {
   (* Phase 0 of Protocol/GSP plan (see
      docs/designissues/2026-04-25-protocol-runner-phase0.md): the
      SPARQL Protocol and Graph Store HTTP Protocol manifests do not
-     ship `qt:query` / `qt:data` files. Instead each test entry carries
-     a Markdown `rdfs:comment` describing the HTTP request and the
-     expected HTTP response. The runner captures it here so the
-     Protocol/GSP dispatchers can parse it. None for non-protocol
-     tests. *)
-  protocol_comment : string option;
+     ship `qt:query` / `qt:data` files. The MARKDOWN FORM (the
+     deprecated http-rdf-update suite) carries a Markdown `rdfs:comment`
+     describing the HTTP request and the expected HTTP response. The
+     runner captures every `rdfs:comment` literal of the entry here, in
+     document order: since w3c/rdf-tests 02f98ff an entry has two (a
+     deprecation note, then the request block), and the dispatchers pick
+     the one that holds a request. Empty for entries without comments. *)
+  protocol_comments : string list;
+  (* The STRUCTURED FORM (w3c/rdf-tests c7817c2 for the Protocol suite,
+     02f98ff for the Graph Store suite): `mf:action` is an `ht:Connection`
+     whose `ht:requests` list is replayed in order. Empty list for every
+     entry that has no `ht:requests`. *)
+  http_authority : string option;       (* ht:connectionAuthority *)
+  http_exchanges : http_exchange list;
+  http_requires : string list;          (* mf:requires, local names *)
   (* rdf-mt PositiveEntailmentTest/NegativeEntailmentTest only:
      mf:recognizedDatatypes, the list of datatype IRIs the test
      configures the implementation to recognize (issue #333). Empty
@@ -382,6 +407,86 @@ let rec collect_list graph node =
     let first = match first_objs with x :: _ -> [x] | [] -> [] in
     let rest = match rest_objs with r :: _ -> collect_list graph r | [] -> [] in
     first @ rest
+
+(* ---------------------------------------------------------------------
+   The structured Protocol / Graph Store manifest vocabulary: an entry's
+   mf:action is an ht:Connection (W3C HTTP Vocabulary in RDF) with an
+   ordered ht:requests list; each ht:Request carries ht:methodName,
+   ht:absolutePath, ht:headers, ht:body and an ht:resp. Manifest reading
+   only: the verdicts come from the F* decoder and store model. *)
+let ht_ns = "http://www.w3.org/2011/http#"
+let cnt_ns = "http://www.w3.org/2011/content#"
+
+let subject_of_term = function
+  | T_IRI i -> S_IRI i
+  | T_BNode b -> S_BNode b
+  | t -> S_IRI (term_to_str t)
+
+(* Local name of a vocabulary IRI: the text after the last '#' or '/'. *)
+let iri_local_name s =
+  let cut c = match String.rindex_opt s c with
+    | Some i -> Some (String.sub s (i + 1) (String.length s - i - 1))
+    | None -> None in
+  match cut '#' with
+  | Some l -> l
+  | None -> (match cut '/' with Some l -> l | None -> s)
+
+let literal_objects graph subj pred =
+  List.filter_map (function T_Literal l -> Some l.lexical_form | _ -> None)
+    (find_objects graph subj pred)
+
+(* ht:headers ( [ ht:fieldName "n" ; ht:fieldValue "v" ] ... ) *)
+let read_http_headers graph subj =
+  match find_objects graph subj (ht_ns ^ "headers") with
+  | head :: _ ->
+    List.filter_map (fun item ->
+      let i = subject_of_term item in
+      match literal_objects graph i (ht_ns ^ "fieldName"),
+            literal_objects graph i (ht_ns ^ "fieldValue") with
+      | n :: _, v :: _ -> Some (String.lowercase_ascii n, v)
+      | _ -> None
+    ) (collect_list graph (term_to_str head))
+  | [] -> []
+
+(* ht:body [ cnt:chars "text" ] *)
+let read_http_body graph subj =
+  match find_objects graph subj (ht_ns ^ "body") with
+  | b :: _ ->
+    (match literal_objects graph (subject_of_term b) (cnt_ns ^ "chars") with
+     | c :: _ -> Some c
+     | [] -> None)
+  | [] -> None
+
+let read_http_exchange graph req : http_exchange option =
+  let r = subject_of_term req in
+  match literal_objects graph r (ht_ns ^ "methodName"),
+        literal_objects graph r (ht_ns ^ "absolutePath") with
+  | m :: _, p :: _ ->
+    let resp = match find_objects graph r (ht_ns ^ "resp") with
+      | x :: _ -> Some (subject_of_term x)
+      | [] -> None in
+    let on_resp f default = match resp with Some rs -> f rs | None -> default in
+    Some {
+      hx_method = m;
+      hx_path = p;
+      hx_headers = read_http_headers graph r;
+      hx_body = read_http_body graph r;
+      hx_statuses = on_resp (fun rs ->
+        List.map (fun t -> iri_local_name (term_to_str t))
+          (find_objects graph rs (mf_ns ^ "expectedStatus"))) [];
+      hx_format = on_resp (fun rs ->
+        match literal_objects graph rs (mf_ns ^ "expectedFormat") with
+        | f :: _ -> Some f | [] -> None) None;
+      hx_boolean = on_resp (fun rs ->
+        match literal_objects graph rs (mf_ns ^ "expectedBoolean") with
+        | b :: _ -> Some (b = "true" || b = "1") | [] -> None) None;
+      hx_location_var = on_resp (fun rs ->
+        match literal_objects graph rs (mf_ns ^ "expectedLocation") with
+        | v :: _ -> Some v | [] -> None) None;
+      hx_resp_headers = on_resp (fun rs -> read_http_headers graph rs) [];
+      hx_resp_body = on_resp (fun rs -> read_http_body graph rs) None;
+    }
+  | _ -> None
 
 let extract_test_cases manifest_dir graph =
   (* Find entries list *)
@@ -582,9 +687,24 @@ let extract_test_cases manifest_dir graph =
        one. Only used by the Protocol/GSP dispatchers; harmless for
        all other test types. *)
     let comment_objs = find_objects graph entry_subj (rdfs_ns ^ "comment") in
-    let protocol_comment = match comment_objs with
-      | T_Literal l :: _ when l.lexical_form <> "" -> Some l.lexical_form
-      | _ -> None in
+    let protocol_comments = List.filter_map (function
+      | T_Literal l when l.lexical_form <> "" -> Some l.lexical_form
+      | _ -> None) comment_objs in
+
+    (* Structured form: the mf:action is an ht:Connection. *)
+    let http_authority, http_exchanges = match action_objs with
+      | action :: _ ->
+        let a = subject_of_term action in
+        let authority = match literal_objects graph a (ht_ns ^ "connectionAuthority") with
+          | x :: _ -> Some x | [] -> None in
+        let reqs = match find_objects graph a (ht_ns ^ "requests") with
+          | head :: _ -> collect_list graph (term_to_str head)
+          | [] -> [] in
+        (authority, List.filter_map (read_http_exchange graph) reqs)
+      | [] -> (None, []) in
+    let http_requires =
+      List.map (fun t -> iri_local_name (term_to_str t))
+        (find_objects graph entry_subj (mf_ns ^ "requires")) in
 
     let recognized_datatypes = extract_iri_list graph entry_subj (mf_ns ^ "recognizedDatatypes") in
 
@@ -596,7 +716,8 @@ let extract_test_cases manifest_dir graph =
     Some { name; test_type; test_type_detail; query_file;
            data_files; named_data_files; result_file; manifest_dir;
            update_result_default_files; update_result_named_files;
-           service_data; protocol_comment; recognized_datatypes;
+           service_data; protocol_comments; http_authority;
+           http_exchanges; http_requires; recognized_datatypes;
            result_false }
   ) entry_nodes
 
@@ -611,7 +732,20 @@ let extract_assumed_test_base graph =
 (* Verbose mode: show detailed mismatch info *)
 let verbose_mode = ref false
 
-let read_manifest manifest_path =
+(* The sub-manifests an umbrella manifest names with mf:include, as local
+   paths in list order. *)
+let extract_includes manifest_dir graph =
+  List.concat_map (fun t ->
+    if t.p = mf_ns ^ "include" then
+      List.map (fun i -> iri_to_local_path manifest_dir (term_to_str i))
+        (collect_list graph (term_to_str t.o))
+    else []
+  ) graph
+
+let has_entries graph =
+  List.exists (fun t -> t.p = mf_ns ^ "entries") graph
+
+let rec read_manifest ?(depth = 0) manifest_path =
   let manifest_dir = Filename.dirname manifest_path in
   let input = try
     let ic = open_in manifest_path in
@@ -662,7 +796,23 @@ let read_manifest manifest_path =
       if !verbose_mode then
         Printf.eprintf "  DEBUG: manifest %s -> %d triples\n" manifest_path (List.length graph);
       let assumed_base = extract_assumed_test_base graph in
-      (extract_test_cases manifest_dir graph, assumed_base)
+      (* An UMBRELLA manifest (mf:include, no mf:entries of its own) takes
+         its tests from the included manifests, in order. w3c/rdf-tests
+         02f98ff split sparql11/graph-store-protocol/manifest.ttl this way
+         (manifest-direct.ttl, manifest-indirect.ttl); read as a leaf it
+         discovered zero tests. A manifest with BOTH mf:entries and
+         mf:include is read as a leaf, as before: rdf12/rdf-semantics
+         includes the RDF 1.1 rdf-mt manifest, and following that include
+         would change the --rdf12entail score. Depth is capped so a cyclic
+         include cannot loop. *)
+      let own = extract_test_cases manifest_dir graph in
+      let included =
+        if has_entries graph || depth >= 4 then []
+        else
+          List.concat_map (fun sub ->
+            fst (read_manifest ~depth:(depth + 1) sub)
+          ) (extract_includes manifest_dir graph) in
+      (own @ included, assumed_base)
     with e ->
       Printf.eprintf "Manifest parse error in %s: %s\n" manifest_path (Printexc.to_string e);
       ([], None)
@@ -807,6 +957,8 @@ type harness_diag = {
   mutable hd_gsp_seed      : int;  (* GSP pre-state seeding branch fired      *)
   mutable hd_no_manifest   : int;  (* suite dir carries no manifest.ttl       *)
   mutable hd_zero_tests    : int;  (* manifest read, zero tests discovered    *)
+  mutable hd_overrides     : int;  (* FAILs reclassified by a local override  *)
+  mutable hd_stale         : int;  (* override on a test that now PASSES      *)
 }
 
 let diag_table : (string * harness_diag) list ref = ref []
@@ -822,7 +974,8 @@ let diag_for (suite : string) : harness_diag =
   | Some d -> d
   | None ->
     let d = { hd_budget_escape = 0; hd_gsp_seed = 0;
-              hd_no_manifest = 0; hd_zero_tests = 0 } in
+              hd_no_manifest = 0; hd_zero_tests = 0;
+              hd_overrides = 0; hd_stale = 0 } in
     diag_table := !diag_table @ [(suite, d)];
     d
 
@@ -1723,16 +1876,7 @@ let _proto_header hdrs key = SPARQL_Protocol.proto_header hdrs key
 (* Phase 1 dispatcher. Replaces Phase 0's name-list shortcut with a
    real call into SPARQL_Protocol.decode_request. The runner stays in
    process — no socket, no factoidal-http subprocess. *)
-let run_protocol_test tc =
-  match tc.protocol_comment with
-  | None | Some "" ->
-    Fail "Protocol test has no rdfs:comment (manifest-shape regression)"
-  | Some comment ->
-    match _proto_extract_request comment with
-    | None ->
-      Fail "Protocol test: could not extract request block from rdfs:comment"
-    | Some req ->
-      let expected = _proto_extract_status_class comment in
+let _protocol_verdict (req : _proto_request) (expected : _proto_status_class) =
       let ct = _proto_header req.pr_headers "content-type" in
       (* Hand the request to F*-extracted decoder. This is the F*-first
          decision boundary: methods, content-types, form-encoded body
@@ -1832,6 +1976,110 @@ let run_protocol_test tc =
           | _ ->
             if expected = S_2or3 then Pass
             else Fail "Update evaluation raised unexpectedly"))
+
+(* ---------- Manifest-shape glue: the entry's request(s) ----------
+
+   Two manifest shapes carry a Protocol or Graph Store test:
+
+   * STRUCTURED (w3c/rdf-tests c7817c2 and 02f98ff onward): `mf:action` is
+     an `ht:Connection`; its `ht:requests` list is replayed in order and
+     each request has an `ht:resp` with `mf:expectedStatus` (hts: terms).
+   * MARKDOWN (the deprecated http-rdf-update suite): a Markdown
+     `rdfs:comment` with a request block and a response block. Since
+     02f98ff such an entry has TWO `rdfs:comment` literals, a deprecation
+     note first; the one that holds a request block is used.
+
+   The verdict for each request is unchanged and comes from the F*
+   decoder (SPARQL_Protocol.decode_request) and the F* parsers. *)
+
+(* The Markdown comment that holds a request block, else the first. *)
+let _protocol_comment_of tc =
+  match List.find_opt (fun c -> _proto_extract_request c <> None)
+          tc.protocol_comments with
+  | Some c -> Some c
+  | None -> (match tc.protocol_comments with c :: _ -> Some c | [] -> None)
+
+(* Status code an hts: term stands for (W3C HTTP Vocabulary in RDF; RFC
+   2616 section 10 reason phrases), or the first code of a class term.
+   None for a term not listed: a manifest the runner cannot read must not
+   score as a pass. *)
+let _hts_code = function
+  | "StatusCode1xx" -> Some 100 | "StatusCode2xx" -> Some 200
+  | "StatusCode3xx" -> Some 300 | "StatusCode4xx" -> Some 400
+  | "StatusCode5xx" -> Some 500
+  | "OK" -> Some 200 | "Created" -> Some 201 | "Accepted" -> Some 202
+  | "NoContent" -> Some 204 | "ResetContent" -> Some 205
+  | "PartialContent" -> Some 206
+  | "MultipleChoices" -> Some 300 | "MovedPermanently" -> Some 301
+  | "Found" -> Some 302 | "SeeOther" -> Some 303 | "NotModified" -> Some 304
+  | "TemporaryRedirect" -> Some 307
+  | "BadRequest" -> Some 400 | "Unauthorized" -> Some 401
+  | "Forbidden" -> Some 403 | "NotFound" -> Some 404
+  | "MethodNotAllowed" -> Some 405 | "NotAcceptable" -> Some 406
+  | "Conflict" -> Some 409 | "Gone" -> Some 410
+  | "PreconditionFailed" -> Some 412 | "UnsupportedMediaType" -> Some 415
+  | "InternalServerError" -> Some 500 | "NotImplemented" -> Some 501
+  | "ServiceUnavailable" -> Some 503
+  | _ -> None
+
+(* The status class a list of mf:expectedStatus terms asks for: 2xx/3xx,
+   4xx or 5xx when every term falls in that range, else unknown. *)
+let _proto_class_of_statuses (terms : string list) : _proto_status_class =
+  let codes = List.map _hts_code terms in
+  let all_in lo hi =
+    codes <> [] && List.for_all (function
+      | Some c -> c >= lo && c < hi | None -> false) codes in
+  if all_in 200 400 then S_2or3
+  else if all_in 400 500 then S_4xx
+  else if all_in 500 600 then S_5xx
+  else S_Unknown
+
+(* The F* decoder's request record from one ht:Request. The request has no
+   Host header in this form: the ht:Connection's authority stands in for it
+   (Protocol section 6.1 lets the service IRI be the BASE, see
+   _protocol_verdict). *)
+let _proto_request_of_exchange authority (hx : http_exchange) : _proto_request =
+  let (path, qs) = SPARQL_Protocol.split_path_qs hx.hx_path in
+  let headers =
+    if List.mem_assoc "host" hx.hx_headers then hx.hx_headers
+    else match authority with
+      | Some a -> ("host", a) :: hx.hx_headers
+      | None -> hx.hx_headers in
+  { pr_method = hx.hx_method; pr_path = path; pr_qs = qs;
+    pr_headers = headers;
+    pr_body = (match hx.hx_body with Some b -> b | None -> "") }
+
+(* Replay a structured Connection. Every request is decoded and judged on
+   its own against its own expected status class, in order; the first
+   request that fails ends the test. The evaluation of earlier requests
+   does not carry state into later ones (each runs over the empty
+   dataset), as in the Markdown form. *)
+let _protocol_run_exchanges tc =
+  let n = List.length tc.http_exchanges in
+  let rec go i = function
+    | [] -> Pass
+    | hx :: rest ->
+      let req = _proto_request_of_exchange tc.http_authority hx in
+      (match _protocol_verdict req (_proto_class_of_statuses hx.hx_statuses) with
+       | Pass -> go (i + 1) rest
+       | Fail m ->
+         Fail (Printf.sprintf "request %d of %d (%s %s): %s"
+                 i n hx.hx_method hx.hx_path m)
+       | other -> other) in
+  go 1 tc.http_exchanges
+
+let run_protocol_test tc =
+  if tc.http_exchanges <> [] then _protocol_run_exchanges tc
+  else
+    match _protocol_comment_of tc with
+    | None ->
+      Fail "Protocol test has neither ht:requests nor an rdfs:comment (manifest-shape regression)"
+    | Some comment ->
+      match _proto_extract_request comment with
+      | None ->
+        Fail "Protocol test: could not extract request block from rdfs:comment"
+      | Some req ->
+        _protocol_verdict req (_proto_extract_status_class comment)
 
 (* GSP-specific status-code extractor (Waw, Phase 0+).
 
@@ -2103,10 +2351,178 @@ let _gsp_status_matches expected actual =
 let _gsp_suite_store : SPARQL_GraphStore.graph_store ref =
   ref SPARQL_GraphStore.empty_store
 
+(* ---------- Structured Graph Store Protocol (ht:Connection) ----------
+
+   w3c/rdf-tests 02f98ff models each Graph Store test as an ht:Connection:
+   an ordered ht:requests list, each with an ht:resp (mf:expectedStatus, a
+   content-type header, an RDF body, mf:expectedLocation). One store serves
+   the whole entry; the store starts empty.
+
+   This is dispatch glue over F* functions, no RDF semantics:
+     * the store and the status of each method: SPARQL_GraphStore
+       (gsp_get, gsp_head, gsp_put, gsp_post, gsp_delete and the status functions);
+     * request-target decoding: SPARQL_Protocol.split_path_qs and
+       parse_query_string (percent-decoding the query ONCE);
+     * request and response bodies: the F* Turtle parser, and
+       RDF_Turtle_Serialize for the response body, read back with the same
+       parser;
+     * the response media type: SPARQL_Protocol.pick_response_format over
+       the Accept header;
+     * graph comparison: RDF.GraphIsomorphism through graphs_equal_strict.
+   What the F* modules do not offer fails the request with a message that
+   names it: POST to the endpoint with no graph parameter (graph creation
+   with a Location header) and multipart/form-data bodies. *)
+
+(* Does an hts: term admit the status code? A class term admits its class. *)
+let _hts_admits term code =
+  match term with
+  | "StatusCode1xx" -> code >= 100 && code < 200
+  | "StatusCode2xx" -> code >= 200 && code < 300
+  | "StatusCode3xx" -> code >= 300 && code < 400
+  | "StatusCode4xx" -> code >= 400 && code < 500
+  | "StatusCode5xx" -> code >= 500 && code < 600
+  | t -> (match _hts_code t with Some c -> c = code | None -> false)
+
+(* Replace every bound template variable (mf:expectedLocation) in a string. *)
+let _gsp_substitute vars str =
+  List.fold_left (fun acc (var, value) ->
+    Str.global_substitute (Str.regexp_string var) (fun _ -> value) acc) str vars
+
+exception Gsp_exchange_failure of string
+
+let _gsp_parse_rdf media_type base text =
+  match media_type with
+  | "" | "text/turtle" | "application/x-turtle" ->
+    (match parse_turtle_strict text (Some base) with
+     | FStar_Pervasives_Native.Some g -> g
+     | FStar_Pervasives_Native.None ->
+       raise (Gsp_exchange_failure "RDF body does not parse as Turtle"))
+  | "application/n-triples" ->
+    (match parse_ntriples_strict text with
+     | FStar_Pervasives_Native.Some g -> g
+     | FStar_Pervasives_Native.None ->
+       raise (Gsp_exchange_failure "RDF body does not parse as N-Triples"))
+  | other ->
+    raise (Gsp_exchange_failure
+             (Printf.sprintf "media type %s is not offered by SPARQL_GraphStore" other))
+
+let _gsp_run_exchanges tc =
+  let authority = match tc.http_authority with Some a -> a | None -> "www.example" in
+  let endpoint_path = "/gsp" in
+  let n = List.length tc.http_exchanges in
+  let store = ref SPARQL_GraphStore.empty_store in
+  let vars = ref [] in
+  let one i hx =
+    let path_qs = _gsp_substitute !vars hx.hx_path in
+    let body = _gsp_substitute !vars (match hx.hx_body with Some b -> b | None -> "") in
+    let (path, qs) = SPARQL_Protocol.split_path_qs path_qs in
+    let kvs = SPARQL_Protocol.parse_query_string qs in
+    let request_iri = "http://" ^ authority ^ path_qs in
+    (* GSP section 4: ?default is the default graph, ?graph=IRI an indirectly
+       identified graph, any other path under the endpoint a directly
+       identified graph (the request IRI is the graph IRI). *)
+    let target =
+      if List.mem_assoc "default" kvs then Some SPARQL_GraphStore.GT_Default
+      else match SPARQL_Protocol.first_value "graph" kvs with
+        | FStar_Pervasives_Native.Some iri -> Some (SPARQL_GraphStore.GT_Named iri)
+        | FStar_Pervasives_Native.None ->
+          if path <> endpoint_path && path <> endpoint_path ^ "/" then
+            Some (SPARQL_GraphStore.GT_Named ("http://" ^ authority ^ path))
+          else None in
+    let ct = _proto_header hx.hx_headers "content-type" in
+    let body_graph () =
+      _gsp_parse_rdf (SPARQL_Protocol.content_type_base ct) request_iri body in
+    let st = !store in
+    let (code, response_graph) =
+      match hx.hx_method, target with
+      | "POST", None ->
+        raise (Gsp_exchange_failure
+                 "POST to the endpoint creates a graph and answers a Location \
+                  header; SPARQL_GraphStore has no graph creation")
+      | m, None ->
+        raise (Gsp_exchange_failure
+                 (Printf.sprintf "%s without a graph identification" m))
+      | "GET", Some t ->
+        (match SPARQL_GraphStore.gsp_get t st with
+         | FStar_Pervasives_Native.Some g -> (200, Some g)
+         | FStar_Pervasives_Native.None -> (404, None))
+      | "HEAD", Some t ->
+        ((if SPARQL_GraphStore.gsp_head t st then 200 else 404), None)
+      | "DELETE", Some t ->
+        let (st', existed) = SPARQL_GraphStore.gsp_delete t st in
+        store := st';
+        (Z.to_int (SPARQL_GraphStore.status_delete existed), None)
+      | "PUT", Some t ->
+        let (st', replaced) = SPARQL_GraphStore.gsp_put t (body_graph ()) st in
+        store := st';
+        (Z.to_int (SPARQL_GraphStore.status_put replaced), None)
+      | "POST", Some t ->
+        let (st', existed) = SPARQL_GraphStore.gsp_post t (body_graph ()) st in
+        store := st';
+        (Z.to_int (SPARQL_GraphStore.status_post existed), None)
+      | m, Some _ ->
+        raise (Gsp_exchange_failure (Printf.sprintf "unrecognised HTTP method '%s'" m)) in
+    if hx.hx_statuses <> []
+       && not (List.exists (fun t -> _hts_admits t code) hx.hx_statuses) then
+      raise (Gsp_exchange_failure
+               (Printf.sprintf "expected status %s, got %d"
+                  (String.concat " or " hx.hx_statuses) code));
+    (* The response media type is the one the Accept header selects among the
+       RDF formats SPARQL_Protocol knows; Turtle is the default. *)
+    let negotiated =
+      SPARQL_Protocol.content_type_for
+        (SPARQL_Protocol.pick_response_format
+           (SPARQL_Protocol.parse_accept_header (_proto_header hx.hx_headers "accept"))
+           SPARQL_Protocol.RF_Turtle) in
+    (match List.assoc_opt "content-type" hx.hx_resp_headers with
+     | Some expected when code = 200 ->
+       let want = SPARQL_Protocol.content_type_base expected in
+       if want <> negotiated then
+         raise (Gsp_exchange_failure
+                  (Printf.sprintf "expected response media type %s, negotiated %s"
+                     want negotiated))
+     | _ -> ());
+    (match hx.hx_resp_body with
+     | None -> ()
+     | Some expected_text ->
+       (match response_graph with
+        | None ->
+          raise (Gsp_exchange_failure "the response has no RDF body to compare")
+        | Some g ->
+          let expected_mt = match List.assoc_opt "content-type" hx.hx_resp_headers with
+            | Some ct -> SPARQL_Protocol.content_type_base ct
+            | None -> "text/turtle" in
+          let expected = _gsp_parse_rdf expected_mt request_iri expected_text in
+          if negotiated <> "text/turtle" then
+            raise (Gsp_exchange_failure
+                     (Printf.sprintf "response media type %s is not serialised here"
+                        negotiated));
+          let actual =
+            _gsp_parse_rdf "text/turtle" request_iri
+              (RDF_Turtle_Serialize.turtle_of_graph_auto g) in
+          if not (graphs_equal_strict tc.name expected actual) then
+            raise (Gsp_exchange_failure
+                     (Printf.sprintf
+                        "response graph (%d triples) is not isomorphic to the expected graph (%d triples)"
+                        (List.length actual) (List.length expected)))));
+    ignore i in
+  try
+    List.iteri (fun i hx ->
+      try one (i + 1) hx
+      with Gsp_exchange_failure m ->
+        raise (Gsp_exchange_failure
+                 (Printf.sprintf "request %d of %d (%s %s): %s"
+                    (i + 1) n hx.hx_method hx.hx_path m)))
+      tc.http_exchanges;
+    Pass
+  with Gsp_exchange_failure m -> Fail m
+
 let run_gsp_test tc =
-  match tc.protocol_comment with
-  | None | Some "" ->
-    Fail "GSP test has no rdfs:comment (manifest-shape regression)"
+  if tc.http_exchanges <> [] then _gsp_run_exchanges tc
+  else
+  match _protocol_comment_of tc with
+  | None ->
+    Fail "GSP test has neither ht:requests nor an rdfs:comment (manifest-shape regression)"
   | Some comment ->
     let req_opt = _proto_extract_request comment in
     let expected_code = _gsp_extract_response_status comment in
@@ -2653,6 +3069,29 @@ let make_turtle_base assumed_base filepath =
   | Some base -> base ^ Filename.basename filepath
   | None -> "file://" ^ normalise_path abs_fp
 
+(* The F*-extracted entailment relation for a regime that RDF.Entailment.Regime
+   models (simple, RDF, RDFS, RDFS-Plus), or None. This is the relation the RDF 1.2
+   suites use. It is value-aware for the recognized datatypes the manifest
+   names, including xsd:float and xsd:double (IEEE-754 rounding, signed zero,
+   overflow to infinity) and "literals denote instances of their datatype",
+   which the closure-plus-homomorphism path below does not model: it failed
+   the nine rdf-mt entries that w3c/rdf-tests added (literal-type and the
+   float and double entries). *)
+let regime_entails_fn regime =
+  match regime with
+  | "simple" | "RDF" -> Some RDF_Entailment_Regime.entails_rdf
+  | "RDFS"           -> Some RDF_Entailment_Regime.entails_rdfs
+  | "RDFS-Plus"      -> Some RDF_Entailment_Regime.entails_rdfs_plus
+  | _                -> None
+
+(* Does the action graph entail the result graph under the regime? *)
+let regime_entails regime action_triples expected_triples =
+  match regime_entails_fn regime with
+  | Some efn -> efn action_triples expected_triples
+  | None ->
+    simple_entails_regime regime
+      (apply_entailment_regime regime action_triples) expected_triples
+
 let run_rdf_test assumed_base tc =
   match tc.test_type with
   (* N-Triples positive syntax: must parse on the STRICT entry point (the
@@ -2899,12 +3338,10 @@ let run_rdf_test assumed_base tc =
             (match read_file rf with Some c -> c | None -> "") in
           (* Get entailment regime from test metadata *)
           let regime = tc.test_type_detail in
-          let closed_action = apply_entailment_regime regime action_triples in
-          (* Check: does the closure of action entail expected? *)
-          if simple_entails_regime regime closed_action expected_triples then Pass
+          if regime_entails regime action_triples expected_triples then Pass
           else
-            Fail (Printf.sprintf "Entailment failed: action has %d triples (after closure), expected %d"
-                    (List.length closed_action) (List.length expected_triples))
+            Fail (Printf.sprintf "Entailment failed: action has %d triples, expected %d"
+                    (List.length action_triples) (List.length expected_triples))
         with e ->
           Fail (Printf.sprintf "Error: %s" (Printexc.to_string e))))
 
@@ -2940,8 +3377,7 @@ let run_rdf_test assumed_base tc =
                 let action_triples = load_triples_from_content tc.query_file action_content in
                 let expected_triples = load_triples_from_content rf result_content in
                 let regime = tc.test_type_detail in
-                let closed_action = apply_entailment_regime regime action_triples in
-                if simple_entails_regime regime closed_action expected_triples then
+                if regime_entails regime action_triples expected_triples then
                   Fail "Should NOT entail but does"
                 else Pass
               with e ->
@@ -3049,6 +3485,60 @@ let discover_rdf_suites () =
     Printf.eprintf "Warning: RDF test directory not found: %s\n" rdf_tests_base;
     []
 
+(* ---------- Local overrides (tests/local-overrides/<suite>/) ----------
+
+   A local override is a disposition, not a semantic change (see
+   tests/local-overrides/README.md): the test still runs and still reports
+   its real outcome. An override reclassifies one named FAIL into its own
+   bucket, counted apart from pass and from fail, and printed with the
+   observed message and the issue that tracks the disagreement.
+
+   Contract from that README, kept here:
+   * An override applies only to a real FAIL. When the overridden test
+     PASSES, the override is STALE: the test counts as a plain pass, the
+     line is marked STALE, and the run exits non-zero until the override
+     file is removed. An override never masks a success, and a case that
+     starts passing cannot go unnoticed.
+   * Honoured overrides are excluded from the fail count and printed on
+     their own `local-override` line per suite.
+   Consumer bookkeeping only (iron rule 11): no RDF or SPARQL logic. *)
+
+let override_root = "tests/local-overrides"
+
+(* "key: value" header line of an override file, trimmed. *)
+let override_header body key =
+  let pfx = key ^ ":" in
+  let plen = String.length pfx in
+  List.find_map (fun line ->
+    let line = String.trim line in
+    if String.length line >= plen && String.sub line 0 plen = pfx
+    then Some (String.trim (String.sub line plen (String.length line - plen)))
+    else None)
+    (String.split_on_char '\n' body)
+
+(* Test name -> (file, issue) for every override of this suite. *)
+let load_suite_overrides suite =
+  let dir = Filename.concat override_root suite in
+  let tbl = Hashtbl.create 8 in
+  (try
+     Array.iter (fun fname ->
+       if Filename.check_suffix fname ".override" then
+         let path = Filename.concat dir fname in
+         match read_file path with
+         | None -> ()
+         | Some body ->
+           (match override_header body "test", override_header body "disposition" with
+            | Some t, Some "local-override" ->
+              let issue = match override_header body "issue" with Some i -> i | None -> "(no issue field)" in
+              Hashtbl.replace tbl t (path, issue)
+            | _ -> ()))
+       (Sys.readdir dir)
+   with Sys_error _ -> ());
+  tbl
+
+(* Set when an override is stale: `main` exits 1. *)
+let stale_override_seen = ref false
+
 let run_suite_generic base_dir runner suite_name =
   let suite_dir = Filename.concat base_dir suite_name in
   let manifest = Filename.concat suite_dir "manifest.ttl" in
@@ -3073,6 +3563,8 @@ let run_suite_generic base_dir runner suite_name =
       diag.hd_zero_tests <- diag.hd_zero_tests + 1
     end;
     let n = ref 0 in
+    let overrides = load_suite_overrides suite_name in
+    let overridden = ref 0 in
     List.iter (fun tc ->
       incr n;
       (* Per-test progress line on stderr: "  [N/M] suite/test_name"
@@ -3105,6 +3597,21 @@ let run_suite_generic base_dir runner suite_name =
         | Skip _ -> "skip"
         | Unsupported_feature _ -> "unsup" in
       Printf.eprintf " %s%s\n%!" status_tag time_str;
+      let override = Hashtbl.find_opt overrides tc.name in
+      (match result, override with
+       | Fail msg, Some (path, issue) ->
+         incr overridden;
+         diag.hd_overrides <- diag.hd_overrides + 1;
+         Printf.printf "  OVERRIDE: %s — observed: %s [local-override %s; %s]%s\n"
+           tc.name msg path issue time_str
+       | Pass, Some (path, _) ->
+         stale_override_seen := true;
+         diag.hd_stale <- diag.hd_stale + 1;
+         incr pass;
+         Printf.printf
+           "  PASS: %s — STALE local-override %s: the test now passes, remove the override%s\n"
+           tc.name path time_str
+       | _ ->
       (match result with
        | Pass ->
          incr pass;
@@ -3118,8 +3625,11 @@ let run_suite_generic base_dir runner suite_name =
            Printf.printf "  skip: %s — %s\n" tc.name msg
        | Unsupported_feature msg ->
          incr unsup;
-         Printf.printf "  unsup: %s — %s\n" tc.name msg)
+         Printf.printf "  unsup: %s — %s\n" tc.name msg))
     ) tests;
+    if !overridden > 0 then
+      Printf.printf "  [local-override: %d in %s, counted apart from pass and fail]\n"
+        !overridden suite_name;
     (!pass, !fail, !skip, !unsup)
   end
 
@@ -3464,10 +3974,11 @@ let print_harness_diag suite_results =
     match List.assoc_opt name !diag_table with
     | Some d -> d
     | None -> { hd_budget_escape = 0; hd_gsp_seed = 0;
-                hd_no_manifest = 0; hd_zero_tests = 0 } in
+                hd_no_manifest = 0; hd_zero_tests = 0;
+              hd_overrides = 0; hd_stale = 0 } in
   let t_budget = ref 0 and t_seed = ref 0 and t_nomf = ref 0
   and t_zero = ref 0 and t_skip = ref 0 and t_unsup = ref 0
-  and t_disc = ref 0 in
+  and t_disc = ref 0 and t_over = ref 0 and t_stale = ref 0 in
   Printf.printf "\nHarness Diagnostics (escape branches, #316):\n";
   List.iter (fun (name, p, f, s, u) ->
     let d = g name in
@@ -3477,17 +3988,20 @@ let print_harness_diag suite_results =
     t_zero   := !t_zero   + d.hd_zero_tests;
     t_skip   := !t_skip   + s;
     t_unsup  := !t_unsup  + u;
-    t_disc   := !t_disc   + p + f + s + u;
+    t_disc   := !t_disc   + p + f + s + u + d.hd_overrides;
+    t_over   := !t_over   + d.hd_overrides;
+    t_stale  := !t_stale  + d.hd_stale;
     Printf.printf
       "HARNESS-DIAG %-30s budget_exceeded:%d gsp_seed:%d no_manifest:%d \
-       zero_tests:%d skip:%d unsupported:%d\n"
+       zero_tests:%d skip:%d unsupported:%d local_overrides:%d stale_overrides:%d\n"
       name d.hd_budget_escape d.hd_gsp_seed d.hd_no_manifest
-      d.hd_zero_tests s u
+      d.hd_zero_tests s u d.hd_overrides d.hd_stale
   ) suite_results;
   Printf.printf
     "HARNESS-DIAG-TOTAL budget_exceeded:%d gsp_seed:%d no_manifest:%d \
-     zero_tests:%d skip:%d unsupported:%d discovered_tests:%d\n"
-    !t_budget !t_seed !t_nomf !t_zero !t_skip !t_unsup !t_disc;
+     zero_tests:%d skip:%d unsupported:%d discovered_tests:%d \
+     local_overrides:%d stale_overrides:%d\n"
+    !t_budget !t_seed !t_nomf !t_zero !t_skip !t_unsup !t_disc !t_over !t_stale;
   (* Return the two conditions `main` treats as fatal. *)
   (!t_disc, !t_nomf + !t_zero)
 
@@ -3512,12 +4026,15 @@ let run_and_tally runner suites banner base_dir =
   let suite_results = List.rev !suite_results in
   Printf.printf "\n========================================\n";
   Printf.printf "Suite Results:\n";
+  let overrides_of name = (diag_for name).hd_overrides in
   List.iter (fun (name, p, f, s, u) ->
-    Printf.printf "  %-35s pass:%d fail:%d skip:%d unsupported:%d\n" name p f s u
+    Printf.printf "  %-35s pass:%d fail:%d skip:%d unsupported:%d local-override:%d\n"
+      name p f s u (overrides_of name)
   ) suite_results;
   Printf.printf "========================================\n";
-  Printf.printf "TOTAL: %d pass, %d fail, %d skip, %d unsupported\n"
-    !total_pass !total_fail !total_skip !total_unsup;
+  Printf.printf "TOTAL: %d pass, %d fail, %d skip, %d unsupported, %d local-override\n"
+    !total_pass !total_fail !total_skip !total_unsup
+    (List.fold_left (fun a (n, _, _, _, _) -> a + overrides_of n) 0 suite_results);
   Printf.printf "========================================\n";
   let (discovered, discovery_faults) = print_harness_diag suite_results in
   (* #316 (b): a run that discovers nothing must not exit green. Nor may
@@ -3653,4 +4170,4 @@ let () =
      failed; exit 0 = clean. The fatal case is checked FIRST so it cannot
      be masked by a coincidentally-green tally. *)
   if !harness_fatal then exit 2
-  else if !any_fail then exit 1 else exit 0
+  else if !any_fail || !stale_override_seen then exit 1 else exit 0
