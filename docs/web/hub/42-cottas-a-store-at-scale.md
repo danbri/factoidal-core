@@ -130,8 +130,13 @@ store = {
   const t1 = performance.now();
   const opened = await fn.openStore(reader, { generation: "gen-1" });
   const openMs = performance.now() - t1;
+  // The cell keeps the Store's two methods, not the Store itself: the
+  // Store holds the engine, and this page's table view would try to
+  // print the engine's whole memory.
   return {
-    reader, handle: opened, packMs, openMs,
+    query: (sparql) => opened.query(sparql),
+    close: () => opened.close(),
+    reader, generation: opened.generation, rows: opened.rows, packMs, openMs,
     artifacts: files.size,
     storeBytes: [...files.values()].reduce((n, b) => n + b.length, 0),
     textBytes: fixture.textBytes,
@@ -200,7 +205,7 @@ storeTimings = {
     let rows;
     for (let i = 0; i < 3; i++) {
       const t0 = performance.now();
-      rows = await store.handle.query(sparql);
+      rows = await store.query(sparql);
       times.push(performance.now() - t0);
     }
     out.push({
@@ -212,7 +217,7 @@ storeTimings = {
 }
 ```
 
-`storeTimings` above — median of 3, your browser, `store.handle.query`
+`storeTimings` above — median of 3, your browser, `store.query`
 against `store.handle`.
 
 ```observable-js

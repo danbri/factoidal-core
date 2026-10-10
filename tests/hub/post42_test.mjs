@@ -84,8 +84,10 @@ test('post42: store cell (pack in memory + openStore) produces a non-empty gener
   assert.ok(store.storeBytes > 0, 'the packed generation should be non-empty');
   assert.ok(store.artifacts > 1, 'a manifest and at least one block');
   assert.ok(store.textBytes > 0);
-  assert.equal(store.handle.generation, 'gen-1');
-  assert.equal(store.handle.rows, Corpus.TOTAL_TRIPLES);
+  assert.equal(store.generation, 'gen-1');
+  assert.equal(store.rows, Corpus.TOTAL_TRIPLES);
+  // The cell's value must print: the page's table view stringifies it.
+  assert.ok(JSON.stringify(store).length < 1e6, 'the store cell value stringifies to a small document');
   assert.ok(store.packMs >= 0);
   assert.ok(store.openMs >= 0);
 });
@@ -141,7 +143,7 @@ test('post42: point lookup -- store and memory return the pinned name, not just 
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await store.handle.query(queries.point);
+  const storeRows = await store.query(queries.point);
   const memoryRows = await factoidal.query(parsed.dataset, queries.point);
 
   assert.equal(storeRows.length, 1);
@@ -156,7 +158,7 @@ test('post42: star join -- store and memory return the pinned 5-predicate set fo
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await store.handle.query(queries.star);
+  const storeRows = await store.query(queries.star);
   const memoryRows = await factoidal.query(parsed.dataset, queries.star);
   assert.equal(storeRows.length, 5);
   assert.equal(memoryRows.length, 5);
@@ -184,7 +186,7 @@ test('post42: cross-graph GRAPH join -- store and memory both resolve person -> 
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await store.handle.query(queries.crossGraph);
+  const storeRows = await store.query(queries.crossGraph);
   const memoryRows = await factoidal.query(parsed.dataset, queries.crossGraph);
   assert.equal(storeRows.length, 1);
   assert.equal(memoryRows.length, 1);
