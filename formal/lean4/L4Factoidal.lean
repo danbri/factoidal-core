@@ -97,6 +97,8 @@ import L4Factoidal.Syntax.NQuadsHomomorphism
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.NQuadsFast
 import L4Factoidal.Syntax.NQuadsFastTheorems
+import L4Factoidal.Syntax.NQuadsLenient
+import L4Factoidal.Syntax.NQuadsLenientTheorems
 import L4Factoidal.Syntax.LexShift
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.Syntax.Turtle

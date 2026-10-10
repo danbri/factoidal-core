@@ -131,8 +131,7 @@ def classifyParseMessage (msg : String) : DiagnosticClass :=
       has "unescaped newline" || has "unescaped carriage return" ||
       has "string literal too long" then .unterminatedString
   else if has "escape" || has "backslash at end" then .badEscape
-  else if has "unterminated IRIREF" || has "character in IRIREF" ||
-      msg.startsWith "expected '<' (IRIREF)" then .badIri
+  else if has "unterminated IRIREF" || has "character in IRIREF" then .badIri
   else if has "VERSION directive" || has "after @prefix" || has "after @base" ||
       has "after @version" || has "directives are not allowed" ||
       msg.startsWith "not a prefix directive" || msg.startsWith "not a base directive" ||
@@ -242,7 +241,8 @@ def LenientOptions.allows (o : LenientOptions) (n : Nat) : Bool :=
 #guard classifyParseMessage "surrogate or out-of-range codepoint U+D800 in escape" == .badEscape
 #guard classifyParseMessage "unterminated IRIREF (expected '>')" == .badIri
 #guard classifyParseMessage "invalid character in IRIREF" == .badIri
-#guard classifyParseMessage "expected '<' (IRIREF)" == .badIri
+-- A missing IRIREF is a token the grammar did not expect, not a bad IRI.
+#guard classifyParseMessage "expected '<' (IRIREF)" == .unexpectedToken
 #guard classifyParseMessage "unterminated string literal" == .unterminatedString
 #guard classifyParseMessage "unterminated string literal (expected '\"')" == .unterminatedString
 #guard classifyParseMessage "unterminated long string" == .unterminatedString
