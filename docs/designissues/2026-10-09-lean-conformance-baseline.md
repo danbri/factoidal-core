@@ -345,3 +345,26 @@ First 10 failing test ids, from the saved logs:
     langconneg3
     langconneg1
 ```
+
+## Re-measurement 2026-10-10 and two totals that changed
+
+CI run 18 of danbri/factoidal-builds (core dba1bdb1) ran the scoreboard. Its
+output is the `lean-scoreboard.txt` asset of the release
+`build-dba1bdb1d320-web`:
+https://github.com/danbri/factoidal-builds/releases/tag/build-dba1bdb1d320-web
+
+Two totals changed between this record and that run. Both changes come from
+the test suite, not from the runners:
+
+- RDF 1.2 rdf-semantics: 47 cases here, 29 in run 18 (29 pass, 0 fail).
+- RDF 1.1 syntaxes plus rdf-mt: 1031 here, 1041 in run 18.
+
+Cause: this record was measured with `third_party/testing/w3c` at 35c503a6
+(the pin in danbri/factoidal). factoidal-core pins ec2ba15. Between the two,
+upstream rdf-tests made 13 commits to `rdf/rdf12/rdf-semantics`. Among
+them: "moving some tests from rdf12 to rdf11", "remove all "control" tests",
+"removing three tests involving ill-typed literals", "do not include
+#opaque-iri test", "fix tests #annotation and #annotation-unfolded". The
+manifest went from 47 `mf:name` entries to 29. Check:
+`git -C third_party/testing/w3c diff --stat 35c503a6 ec2ba15 -- rdf/rdf12/rdf-semantics`
+(30 files changed, 2058 lines deleted).
