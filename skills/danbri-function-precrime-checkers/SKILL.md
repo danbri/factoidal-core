@@ -47,8 +47,12 @@ direct tail self-call into `goto _start`, so any self-call surviving as a real
 C call is one stack frame per step. It lists every such function and every
 mutual-recursion cycle, maps each back to its Lean declaration, and classifies
 what bounds the depth: input length, input tree depth, a counter, or a fixed
-structure. `--gate` fails the build on a NEW input-length recursion against
-`tools/lean-tail-recursion-allow.txt`; `--fstar` runs the coarser scan over
+structure. `--gate` fails the build when a recursive declaration of class
+length, depth, counter or unknown has no line in
+`tools/lean-tail-recursion-allow.txt` (since 2026-10-10 a declaration is
+recursive when it is on a cycle of its module's C call graph, mutual cycles
+included; `tools/test_lean_tail_recursion_audit.py` is the tool's self-test);
+`--fstar` runs the coarser scan over
 `formal/fstar/ocaml-output/*.ml` (OCaml compiles only direct tail calls to
 jumps too, so the same defect exists there — issue 674, the SHACL segfault).
 
@@ -284,4 +288,47 @@ cases which had not run (below). The repair:
   `RecursionError` at that depth on Python 3.13, so the suite could not start.
   It writes the nesting as text now (byte-identical to the old output at
   depths 0, 1, 2, 3 and 10).
+
+## The audit passed while two recursions overflowed (https://github.com/danbri/factoidal/issues/750, 2026-10-10)
+
+On core 4b5892b0 `--gate` passed, and the 512 KB canary overflowed in two
+functions it did not report. Causes, found in the generated C and the tool:
+
+- `XML.scanRefs` (`lp_l4factoidal_L4Factoidal_XML_scanRefs`, two surviving
+  self-calls) was mapped, but classed `counter`: its input is `s : Chars`,
+  and `Chars` is `abbrev Chars := Array Char`. The classifier knew only the
+  words `List`, `Array`, `String`. The gate did not check `counter`, although
+  issue 750 itself said it did.
+- `Syntax.readCollectionRest` was classed `unknown`, which the gate did not
+  check: a doc-comment line of `readPnameNs` starts with "namespace token, ..."
+  (Syntax/Turtle.lean:447), the indexer read it as a `namespace` command, and
+  every later declaration of the file got the wrong name. Its seven-function
+  mutual cycle was printed and never gated.
+- The same audit of the audit found: `section X ... end X` popped a namespace;
+  the closure suffix `___lam__N` was not stripped (the tool stripped
+  `_lambda_N`, which Lean 4.33 does not emit); a recursive `inductive` was seen
+  only with `->`, not `→`; `where` helpers, `let rec` and derived instances
+  were not indexed; and the `@[csimp]` mark by short name hid
+  `Syntax.readAnnotations` and four more namesakes.
+
+The repair (same landing): comments and string literals are blanked before
+indexing; type aliases of list, array and string types count as length
+inputs; `counter` and `unknown` are gated; every member of a strongly
+connected component of a module's call graph is a gated row; `@[csimp]`
+names resolve against the enclosing and opened namespaces. Before: 935
+self-recursive C functions, 138 `unknown`, 333 cycles ungated. After: 2,273
+recursive C functions (940 with a self-call, 1,333 only through a cycle), 0
+`unknown`; 776 declarations were new to the gate. 126 of them are triaged on
+the allow list (28 as `(a) PENDING`, listed in
+https://github.com/danbri/factoidal/issues/752 and issues 673 and 678), 138
+derived `Repr` instances are one pattern line, and 512 cycle members are
+marked `UNTRIAGED` (https://github.com/danbri/factoidal/issues/753). Rules:
+
+- Gate every class except those whose bound the tool states (`bounded`,
+  `replaced`). Both misses were in an ungated class.
+- An indexer that reads source text must skip comments and strings. Without
+  that, a prose line that starts with `namespace`, `section` or `end` is read
+  as that command.
+- Each miss gets a fixture in the tool's self-test that fails on the version
+  that missed it (the self-test runs against an older copy with `--tool`).
 
