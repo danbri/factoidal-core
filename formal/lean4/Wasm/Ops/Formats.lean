@@ -460,4 +460,39 @@ def rifEval (rifXml nq : String) : String :=
                   ("fuel", .number (toString L4Factoidal.RIF.Saturate.defaultRounds))]
       | .error e, _ | _, .error e => errJson s!"rifEval: serialisation: {e}"
 
+/-! ## Build-time checks
+
+Positive and negative, so an implementation that answers yes for every
+input fails the build. The native-smoke cases in `Wasm/native-smoke.sh`
+cover the rest of the surface through the real dispatch entry. -/
+
+#guard xmlWellformed "<a><b/></a>" == "{\"ok\":true,\"wellformed\":true}"
+#guard xmlWellformed "<a><b></a>" == "{\"ok\":true,\"wellformed\":false}"
+
+#guard xpathEval "<r><a>1</a><a>2</a></r>" "count(/r/a)"
+         == "{\"ok\":true,\"resultType\":\"number\",\"value\":\"2\"}"
+#guard (xpathEval "<r/>" "count(").startsWith "{\"ok\":false"
+#guard (xpathEval "<r>" "/r").startsWith "{\"ok\":false"
+
+#guard jsonSchemaValidate "{\"type\":\"integer\"}" "5"
+         == "{\"ok\":true,\"valid\":true,\"result\":\"pass\",\"errors\":[]}"
+#guard jsonSchemaValidate "{\"type\":\"integer\"}" "\"x\""
+         == "{\"ok\":true,\"valid\":false,\"result\":\"fail\",\"errors\":[\"instance does not satisfy the schema\"]}"
+#guard (jsonSchemaValidate "{\"type\":" "5").startsWith "{\"ok\":false"
+
+private def mathmlTwoPlusThree : String :=
+  "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><plus/><cn>2</cn><cn>3</cn></apply></math>"
+private def mathmlOneOverZero : String :=
+  "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><divide/><cn>1</cn><cn>0</cn></apply></math>"
+
+#guard mathmlEval mathmlTwoPlusThree "{}"
+         == "{\"ok\":true,\"value\":{\"kind\":\"rat\",\"num\":5,\"den\":1}}"
+#guard (mathmlEval mathmlOneOverZero "{}").startsWith
+         "{\"ok\":true,\"value\":{\"kind\":\"undef\""
+#guard (mathmlEval mathmlTwoPlusThree "[]").startsWith "{\"ok\":false"
+
+#guard (xformsRecalc "<data><x>5</x><y>0</y></data>" "[{\"target\":\"y\",\"calculate\":\"7\"}]").startsWith
+         "{\"ok\":true,\"instance\":\"<data><x>5</x><y>7</y></data>\""
+#guard (xformsRecalc "<data/>" "[{\"calculate\":\"7\"}]").startsWith "{\"ok\":false"
+
 end L4Wasm.Ops

@@ -72,4 +72,20 @@ def tableauDlInconsistent (nq : String) : String :=
     okWith [("inconsistent", .bool (L4Factoidal.OWL.RL.detectClashPlus gDl)),
             ("rlAlone", .bool (L4Factoidal.OWL.RL.detectClashPlus gRl))]
 
+/-! ## Build-time checks (positive and negative) -/
+
+private def rdfTypeNq : String := "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"
+
+#guard tableauDlInconsistent s!"<http://e/a> {rdfTypeNq} <http://e/C> .\n"
+         == "{\"ok\":true,\"inconsistent\":false,\"rlAlone\":false}"
+#guard tableauDlInconsistent
+         ("<http://e/C> <http://www.w3.org/2002/07/owl#disjointWith> <http://e/D> .\n"
+          ++ s!"<http://e/a> {rdfTypeNq} <http://e/C> .\n"
+          ++ s!"<http://e/a> {rdfTypeNq} <http://e/D> .\n")
+         == "{\"ok\":true,\"inconsistent\":true,\"rlAlone\":true}"
+#guard (tableauDlInconsistent "garbage").startsWith "{\"ok\":false"
+#guard ((tableauMaterialise s!"<http://e/a> {rdfTypeNq} <http://e/C> .\n").splitOn
+         "\"addedCount\":0").length == 2
+#guard (tableauMaterialise "garbage").startsWith "{\"ok\":false"
+
 end L4Wasm.Ops

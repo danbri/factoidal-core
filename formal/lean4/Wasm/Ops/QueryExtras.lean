@@ -194,4 +194,19 @@ def queryHdt (sparql : String) (hdt : ByteArray) : String :=
       let g := L4Factoidal.HDT.searchTriples gs none none none
       queryParsedDataset { default := g, named := [] } sparql
 
+/-! ## Build-time checks (positive and negative) -/
+
+private def rawData : String :=
+  "<http://e/a> <http://e/name> \"Alice\" .\n<http://e/b> <http://e/name> \"Bob\" .\n"
+private def rawQuery : String := "SELECT ?n WHERE { ?p <http://e/name> ?n } ORDER BY ?n"
+
+#guard queryRaw rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}"
+         == "{\"ok\":true,\"text\":\"n\\r\\nAlice\\r\\nBob\\r\\n\"}"
+#guard (queryRaw rawData rawQuery "{\"dataFormat\":\"ntriples\",\"output\":\"yaml\"}").startsWith
+         "{\"ok\":false"
+#guard (queryRaw rawData "SELECT WITHOUT" "{\"dataFormat\":\"ntriples\"}").startsWith
+         "{\"ok\":false"
+#guard (queryHdt "ASK { ?s ?p ?o }" ByteArray.empty).startsWith "{\"ok\":false"
+#guard (queryHdt "ASK { ?s ?p ?o }" "not an hdt file".toUTF8).startsWith "{\"ok\":false"
+
 end L4Wasm.Ops

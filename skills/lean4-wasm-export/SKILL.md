@@ -473,6 +473,23 @@ the other and every runtime fails with `ENOENT` / a failed fetch. An
 earlier version of the loader read the bytes itself and passed
 `wasmBinary` — that silently did nothing.
 
+## Adding a dispatch op: where the 2026-10-10 ops live
+
+The format, transform and reasoning ops of
+https://github.com/danbri/factoidal/issues/713 stage 1 were added the
+way this section says to add them: a `def` in a new `Wasm/Ops/*.lean`
+file, a name in a list in `Wasm/Dispatch.lean`, an arity-checked arm in
+`call`. They are `Formats.lean` (JSON-LD, RML, CSVW, XML, XPath, XSLT,
+Schematron, JSON Schema, Content MathML, XForms, RIF), `Reasoning.lean`
+(the two tableau ops), `QueryExtras.lean` (`queryRaw`, and `queryHdt`,
+which reads the HDT file as the byte region and is therefore in
+`blobOpNames`) and `ServiceReg.lean` (the SPARQL SERVICE registry,
+`callIO` only). Each op needs three things in the same landing: the
+`lakefile.lean` root for its module, a positive and a negative case in
+`Wasm/native-smoke.sh` (which also pins the `ops` reflection, `blobOps`
+included), and the JavaScript side (`npm/factoidal/l4-core.js`'s `OPS`
+list and exports, `l4-core.d.ts`).
+
 ## Adding a new export
 
 **First check whether you need one at all.** Most new functionality
@@ -513,6 +530,25 @@ BYTES, not text" above.
    rule 9), and the `web` set of `danbri/factoidal-builds` builds them
    from the pushed core commit. Before 2026-10-09 this step said to
    commit the `.wasm`.
+
+## Running the script from the wrong directory (2026-10-10)
+
+`build-wasm.sh` computes its own paths from `BASH_SOURCE`, but step 3
+calls `lean` with the shell's working directory, and elan picks the
+toolchain from the `lean-toolchain` file of that directory. Run from the
+repository root, with no `elan default` set, every one of the 838 core
+modules printed `GEN-FAIL ... no default toolchain configured` (the
+message is hidden: the call is `>/dev/null 2>&1`), the script did not
+stop, and the build then ran on for a while before it could fail. Cost:
+about ten minutes of a shared 4-CPU container. Run it as
+
+```bash
+cd formal/lean4 && bash Wasm/build-wasm.sh [work-dir]
+```
+
+or set `elan default leanprover/lean4:v4.33.1` once. When several
+agents build at once, give each its own work directory (the argument);
+the default `/tmp/l4wasm-build` is shared.
 
 ## Rebuilding after a Lean change
 

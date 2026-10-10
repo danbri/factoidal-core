@@ -40,14 +40,23 @@ Which engine each entry point loads:
 The main entry exports 72 names; `l4-core` exports 30. 42 main-entry names
 have no Lean path in the package:
 
-| Group | Names | Lean library | Lean wasm dispatch op |
+| Group | Names | Lean library | Lean wasm dispatch op and `l4-core` wrapper |
 |---|---|---|---|
-| Formats and transforms | `jsonldToRdf`, `jsonldFromRdf`, `rmlMap`, `csvwToRdf`, `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `mathmlEval`, `xformsRecalc`, `rifEval` | yes (W3C suites pass, see issue 698) | no |
-| Stores | `queryHdt`; `openCottas`, `queryCottas`, `closeCottas`, `toCottas` | HDT: yes. COTTAS: no; the owner ruled F\* COTTAS essentially unused (issue 566); the Lean store (IBK3 generations, `storeOpen`/`storeQuery` ops) is the replacement, with a different format | HDT: no; store: yes |
-| Reasoning | `tableauMaterialise`, `tableauDlInconsistent` | yes (OWL refuter / tableau) | no |
-| Query plumbing | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions`, `registerServiceEndpoint`, `clearServiceEndpoints`, `queryRaw` | yes | extension functions: yes (`extRegister` ...); SERVICE endpoints and raw results: no |
-| Maths | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst`, `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | yes (`L4Factoidal/Math`) | ToaN: yes; matrix, sigmoid: no |
+| Formats and transforms | `jsonldToRdf`, `jsonldFromRdf`, `rmlMap`, `csvwToRdf`, `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `mathmlEval`, `xformsRecalc`, `rifEval` | yes (W3C suites pass, see issue 698) | **yes since stage 1**: `Wasm/Ops/Formats.lean`; wrapped in `l4-core.js` |
+| Stores | `queryHdt`; `openCottas`, `queryCottas`, `closeCottas`, `toCottas` | HDT: yes. COTTAS: no; the owner ruled F\* COTTAS essentially unused (issue 566); the Lean store (IBK3 generations, `storeOpen`/`storeQuery` ops) is the replacement, with a different format | HDT: **yes since stage 1** (`queryHdt` in `Wasm/Ops/QueryExtras.lean`; the file travels as the ABI's byte region). COTTAS: no, by the ruling; store: yes |
+| Reasoning | `tableauMaterialise`, `tableauDlInconsistent` | yes (OWL refuter / tableau) | **yes since stage 1**: `Wasm/Ops/Reasoning.lean` |
+| Query plumbing | `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions`, `registerServiceEndpoint`, `clearServiceEndpoints`, `queryRaw` | yes | **yes since stage 1**: extension functions (`extRegister` ... already existed; `l4-core.js` now wraps them and installs the JavaScript call-out), SERVICE endpoints (`Wasm/Ops/ServiceReg.lean`), `queryRaw` (`Wasm/Ops/QueryExtras.lean`) |
+| Maths | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst`, `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | yes (`L4Factoidal/Math`) | ToaN: **wrapped in `l4-core.js` since stage 1** (the ops existed); matrix, sigmoid: no |
 | VC and DID | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | yes except `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests` (issue 578 gap 3) | no (issue 578 gap 1) |
+
+**After stage 1** (measured in danbri/factoidal-core, 2026-10-10):
+`l4-core` exports 56 names (30 before). Of the main entry's 72 names, 21
+have no `l4-core` function: `didKeyResolve`, the 4 `matrix*`, the 2
+`sigmoid*`, the 10 `vc*`, and the 4 COTTAS functions. Stage 2 takes the
+first 17 of them (the COTTAS four are replaced, see issue 566); stage 3
+is the switch. `shaclValidate` and `shexValidate` are exported by `l4-core`
+as functions that reject with the engine-capability error; the Lean
+library has SHACL and ShEx and the dispatch table does not serve them yet.
 
 Behaviour differences of the Lean engine through the npm wrapper, already
 recorded:
@@ -96,10 +105,14 @@ the F\* COTTAS functions in favour of the Lean store.
 
 ## 4. Plan (one commit-sized stage each)
 
-1. Formats, transforms, stores, reasoning, query plumbing: dispatch ops and
+1. [x] Formats, transforms, stores, reasoning, query plumbing: dispatch ops and
    `l4-core` wrappers for the first four groups of the table, each tested by
    running the existing F\*-engine npm tests for that function against the
-   Lean engine (same inputs, same expected results).
+   Lean engine (same inputs, same expected results). Landed on the branch
+   `claude/wt-npm-lean-1` of danbri/factoidal-core (2026-10-10):
+   `npm/factoidal/test/l4-parity.test.js`, and a case pair per op in
+   `formal/lean4/Wasm/native-smoke.sh`. Differences from the F\* engine that
+   the parity run found are in section 5.
 2. Maths, VC and DID (issue 578 items 2-4), and the envelope parity of
    issue 685 and blank-node salting.
 3. Switch: `.`, `./api`, `./fn`, `./browser` load the Lean engine; the F\*

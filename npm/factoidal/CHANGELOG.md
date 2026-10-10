@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+**Lean engine (`factoidal/l4-core`): 26 more functions of the main
+entry** ([issue 713](https://github.com/danbri/factoidal/issues/713),
+stage 1 of making the package Lean-only). `jsonldToRdf`,
+`jsonldFromRdf`, `rmlMap`, `csvwToRdf`, `xmlWellformed`, `xpathEval`,
+`xsltTransform`, `schematronValidate`, `jsonSchemaValidate`,
+`mathmlEval`, `xformsRecalc`, `rifEval`, `queryHdt`,
+`tableauMaterialise`, `tableauDlInconsistent`, `queryRaw`, the three
+extension-function and two SERVICE-endpoint registry functions, and the
+five `toan*` functions now run over the Lean wasm. Signatures and
+result shapes are the F\* engine's. `parse(text, {format: 'jsonld'})`
+now works on this engine. `tableauMaterialise` also returns `budgetHit`
+on the Lean engine. The main entry (`index.js`) is unchanged.
+
 ## 0.8.0 — 2026-09-16
 
 **Behaviour change: parsing is strict by default.** `parse()` (and
