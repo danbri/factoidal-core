@@ -71,6 +71,17 @@ ROWS: dict[str, tuple] = {
     "qudt-consistent": ("qudt", "consistent", "decided", None),
 }
 
+# Rows with their own wall-clock bound, below the --cap-s default. A bound at
+# the cap makes the row depend on the machine's load: on 2026-10-10
+# cl-basic-consistent ran out of the 600 s cap at load 6 to 8 and finished in
+# 598 s at load 3.5 (skills/measuring-inference, section 8). 120 s is twenty
+# times the time HermiT needs for the same check (6.1 s), and a fifth of the
+# measured time, so the row says "does not scale" on any load.
+ROW_CAP: dict[str, int] = {
+    "cl-basic-consistent": 120,
+    "wine-closure-fstar": 120,
+}
+
 # Rows that fail today, each with the open issue that tracks it. A row leaves
 # this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
@@ -167,7 +178,7 @@ def main() -> int:
             skipped += 1
             print(f"  SKIP {rid}: {FSTAR_BIN} not installed (tools/fetch-builds.sh --set native)")
             continue
-        ok, detail = run_row(rid, a.cap_s)
+        ok, detail = run_row(rid, min(a.cap_s, ROW_CAP.get(rid, a.cap_s)))
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")

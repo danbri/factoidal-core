@@ -175,6 +175,16 @@ passing.
 > be exhausted must be reported in the result; until it is, treat every
 > capped suite as load-sensitive.
 
+> 🔴 **2026-10-10 (an expected failure at the cap).** The first version
+> of `tests/stack/owl_real_gate.py` marked "the Cell Ontology
+> consistency check finishes in 600 s" as an expected failure, because
+> the benchmark had killed it at 600 s (load 6 to 8). In the gate run at
+> load 3.5 it finished in 598 s, and the row read UNEXPECTED PASS while
+> nothing had been repaired. Rule: the bound of an expected-failure row
+> sits far from the measured time (that row now uses 120 s, against
+> about 600 s measured and 6.1 s for HermiT), so the row fails or passes
+> because of the code, not the load.
+
 ## 9. A timer around a pure `let` in Lean measures nothing
 
 **Force the value between the two clock reads with an I/O action that
