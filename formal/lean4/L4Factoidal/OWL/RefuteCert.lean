@@ -886,7 +886,7 @@ def certifyDebug (g : Graph) (budget : Nat) : String :=
                   | .rel _ a b => a == indOfSubject n || b == indOfSubject n
                   | .diff a b => a == indOfSubject n || b == indOfSubject n)).take 40
               | none => []
-            s!"site node={indOfSubject n} label={(repr l).pretty 100000} concept={(repr lC).pretty 100000} \
+            s!"extra_edges={st.extra.size} witness_edges={(st.extra.toList.filter isWitnessEdge).map (fun (e : REdge) => (indOfSubject e.s, e.p.val, (repr e.o).pretty 200, e.counts))} site node={indOfSubject n} label={(repr l).pretty 100000} concept={(repr lC).pretty 100000} \
 in_facts={has lC} inner={(repr inner).pretty 100000} inner_in_facts={has inner} \
 facts_about_node={(repr about).pretty 100000}"
       s!"objprops={objs.map (·.val)} tbox={O.tbox.length} abox={O.abox.length} \
