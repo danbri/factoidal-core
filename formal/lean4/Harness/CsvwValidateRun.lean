@@ -248,6 +248,15 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       let findings := structural ++ dataFindings
       return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
 
+/-- Cases that fail today for a recorded reason, each with the open issue
+that tracks it. Counted as `expected-fail`; one that passes fails the run.
+
+* test308 (`rdft:Proposed`) expects an ERROR for an unknown absolute datatype
+  IRI. Metadata Vocabulary §5.7 with §4 makes it a WARNING, as the approved
+  tests 150 and 238 require: https://github.com/danbri/factoidal/issues/700 -/
+def expectedFailures : List (String × String) :=
+  [("manifest-validation#test308", "https://github.com/danbri/factoidal/issues/700")]
+
 def main (args : List String) : IO UInt32 := do
   let argDir := (args.filter (fun a => !a.startsWith "--")).head?
   let dir ← Harness.fixtureArgOr argDir "third_party/testing/csvw/tests"
@@ -270,6 +279,8 @@ def main (args : List String) : IO UInt32 := do
         IO.println "csvw-validation: manifest parsed but named no entries"
         IO.println (Harness.Diag.line "csvw-validation" { zeroTests := 1 })
         return 1
+      let mut xfail : Nat := 0
+      let mut xpass : List String := []
       let mut posScore : Harness.Score := {}
       let mut warnScore : Harness.Score := {}
       let mut negScore : Harness.Score := {}
@@ -286,7 +297,16 @@ def main (args : List String) : IO UInt32 := do
             let ok := match e.kind with
               | .negative => !conforms
               | _         => conforms
-            if ok then
+            let xf := expectedFailures.find? (·.1 == e.id)
+            if ok && xf.isSome then
+              -- An expected failure that passes is a failure of the run:
+              -- flip the entry to an assertion and close the issue.
+              IO.println s!"FAIL {e.id} ({bucket}): unexpected pass: remove it from expectedFailures and close {(xf.map (·.2)).getD ""}"
+              xpass := e.id :: xpass
+            else if !ok && xf.isSome then
+              IO.println s!"XFAIL {e.id} ({bucket}): expected failure, {(xf.map (·.2)).getD ""}"
+              xfail := xfail + 1
+            else if ok then
               IO.println s!"PASS {e.id} ({bucket})"
               match e.kind with
               | .positive => posScore := posScore.bump .pass
@@ -306,10 +326,14 @@ def main (args : List String) : IO UInt32 := do
       IO.println (Harness.Score.line "csvw-validation positive" posScore)
       IO.println (Harness.Score.line "csvw-validation warning" warnScore)
       IO.println (Harness.Score.line "csvw-validation negative" negScore)
-      IO.println (Harness.Score.line "csvw-validation" total3)
+      -- Expected failures are counted apart: never as passes, never in
+      -- `fail`. Skill test-suites, section "Expected failures".
+      IO.println (s!"csvw-validation: {total3.pass} pass, {total3.fail + xpass.length} fail, " ++
+        s!"{xfail} expected-fail, {total3.skip} skip, {total3.unsupported} unsupported " ++
+        s!"(out of {total3.total + xfail + xpass.length})")
       IO.println (Harness.Diag.line "csvw-validation" ({} : Harness.Diag))
       IO.println ""
       IO.println "A PositiveValidationTest / WarningValidationTest passes iff the"
       IO.println "document CONFORMS (a warning does not fail it); a"
       IO.println "NegativeValidationTest passes iff it does NOT."
-      return if total3.fail > 0 then 1 else 0
+      return if total3.fail + xpass.length > 0 then 1 else 0
