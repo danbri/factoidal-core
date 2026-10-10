@@ -121,6 +121,19 @@ if [ "$STDIN_COUNT" = "1" ]; then pass "parse stdin (no file arg)"; else
   fail "parse stdin (no file arg)" "got '$STDIN_COUNT'"
 fi
 
+# Issue 724: `parse` counts the graph as a set (RDF 1.1 Concepts §3) and a
+# COUNT(*) query over the same file agrees with it (before: 3 and 2).
+printf '@prefix e: <http://e/> .\ne:a e:p e:b .\ne:a e:p e:b .\ne:a e:q "x"@EN .\n' > "$TMP/repeat.ttl"
+REP_PARSE="$("$CLI" parse "$TMP/repeat.ttl" --format turtle)"
+REP_QUERY="$("$CLI" query "$TMP/repeat.ttl" --format turtle \
+  --query-string 'SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }' --table | sed -n 2p)"
+if [ "$REP_PARSE" = "2" ] && [ "$REP_QUERY" = "2" ]; then
+  pass "parse and query COUNT(*) agree on a repeated triple (issue 724)"
+else
+  fail "parse and query COUNT(*) agree on a repeated triple (issue 724)" \
+    "parse='$REP_PARSE' query='$REP_QUERY'"
+fi
+
 # --- query ---------------------------------------------------------------
 printf '<http://e/a> <http://e/p> <http://e/b> .\n' > "$TMP/d.nt"
 
@@ -173,6 +186,16 @@ fi
 assert_text "query bad SPARQL (DESCRIBE with no target) -> error" 1 err "SPARQL parse error" \
   "$CLI" query "$TMP/d.nt" --format ntriples --query-string 'DESCRIBE WHERE { ?s ?p ?o }'
 
+# SPARQL 1.1 Federated Query 2.3: a SERVICE call without SILENT that
+# fails stops the query (exit 1, the error on stderr); with SILENT it is
+# one solution with no bindings (https://github.com/danbri/factoidal/issues/717).
+assert_text "query SERVICE without SILENT, no endpoint -> error" 1 err "SERVICE <http://u.example/sparql> failed" \
+  "$CLI" query "$TMP/d.nt" --format ntriples \
+    --query-string 'SELECT * WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }'
+assert_json "query SERVICE SILENT, no endpoint -> one empty solution" 0 \
+  'r["results"]["bindings"] == [{}]' \
+  "$CLI" query "$TMP/d.nt" --format ntriples \
+    --query-string 'SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }'
 assert_text "query missing --query/--query-string -> usage error" 2 err "need --query" \
   "$CLI" query "$TMP/d.nt" --format ntriples
 assert_text "query both --query and --query-string -> usage error" 2 err "pass only one" \

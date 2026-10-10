@@ -15,6 +15,8 @@ import L4Factoidal.RDF.XmlCanon
 import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.FastGraph
+import L4Factoidal.RDF.DatasetNormalize
+import L4Factoidal.RDF.DatasetNormalizeTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
@@ -156,6 +158,11 @@ import L4Factoidal.OWL.RLHerbrand
 import L4Factoidal.OWL.RLTheorems
 import L4Factoidal.OWL.RLTests
 import L4Factoidal.OWL.Semantics
+import L4Factoidal.OWL.RdfBased.Spec
+import L4Factoidal.OWL.RdfBased.Rules
+import L4Factoidal.OWL.RdfBased.Witness
+import L4Factoidal.OWL.RdfBased.Engine
+import L4Factoidal.OWL.RdfBased.Tests
 import L4Factoidal.RDF.EntailmentRdfsModelTheory
 import L4Factoidal.RDF.SemanticsHypothesisWitness
 import L4Factoidal.RDF.EntailmentSimpleBoundary
@@ -418,6 +425,8 @@ import L4Factoidal.Math.Sigmoid
 import L4Factoidal.Math.SigmoidTests
 import L4Factoidal.XForms.BindTests
 import L4Factoidal.GRDDL.Discovery
+import L4Factoidal.GRDDL.Agent
+import L4Factoidal.GRDDL.AgentTests
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.TermCodecTheorems
 import L4Factoidal.Storage.PagedTermDictionaryCore

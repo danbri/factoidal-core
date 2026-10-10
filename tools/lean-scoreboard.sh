@@ -196,6 +196,12 @@ defjob l4owl-probe-species l4owl-probe parse_owl_species owl \
 defjob l4owl-probe-fs-input l4owl-probe parse_owl_fs_input owl \
   "OWL 2 functional-style documents judged by the RL regime (cases with a functional-style premise)" "" \
   "--fs-input --dir $OWLDIR all.rdf"
+# OWL 2 RDF-Based Semantics (issue 721): every RDF-BASED case of all.rdf.
+# pass = entailment or inconsistency PROVED; "not-refuted" (counted as
+# other) = non-entailment or consistency NOT REFUTED, never a pass.
+defjob l4owl-probe-rdf-based l4owl-probe parse_owl_rdf_based owl \
+  "OWL 2, RDF-Based Semantics regime (RL closure + proved RDF-Based rules)" "" \
+  "--rdf-based --dir $OWLDIR all.rdf"
 # --- SHACL -------------------------------------------------------------------
 defjob l4shacl-core10 l4shacl parse_shacl shacl \
   "SHACL Core (1.0 suite)" "" \
@@ -271,7 +277,7 @@ defjob l4crypto-probe l4crypto-probe parse_block_rows bracket \
 defjob l4geo l4geo parse_geo geo \
   "GeoSPARQL (v0 unit pin; not the OGC suite)" "" ""
 defjob l4grddl l4grddl parse_grddl grddl \
-  "GRDDL" "" ""
+  "GRDDL [not a valid test currently]" "" ""
 defjob l4hdt l4hdt parse_hdt hdt \
   "HDT container" "" ""
 # --- LWS / Solid -------------------------------------------------------------------
@@ -585,6 +591,17 @@ parse_owl_species() {
     '^all\.rdf fs-rdfxml agreement \[conclusion\]: [0-9]+ pass' last
 }
 
+parse_owl_rdf_based() {
+  row_sl "$CUR_AREA" "PositiveEntailmentTest" '^all\.rdf PositiveEntailmentTest \[rdf-based\]: [0-9]+ pass' last \
+    "pass = entailment proved; fail = not proved"
+  row_sl "$CUR_AREA" "NegativeEntailmentTest" '^all\.rdf NegativeEntailmentTest \[rdf-based\]: [0-9]+ pass' last \
+    "other = not-refuted (no entailment derived; not a pass); fail = the non-conclusion was derived"
+  row_sl "$CUR_AREA" "ConsistencyTest" '^all\.rdf ConsistencyTest \[rdf-based\]: [0-9]+ pass' last \
+    "other = not-refuted (no clash derived; not a pass); fail = a clash row fired"
+  row_sl "$CUR_AREA" "InconsistencyTest" '^all\.rdf InconsistencyTest \[rdf-based\]: [0-9]+ pass' last \
+    "pass = inconsistency proved (a clash row fired); fail = not proved"
+}
+
 parse_owl_fs_input() {
   row_sl "$CUR_AREA" "judged from the functional-style documents" '^all\.rdf \[fs-input\]: [0-9]+ pass' last \
     "units = test types of the cases that have a functional-style premise"
@@ -805,18 +822,19 @@ parse_hdt()  { row_sl "$CUR_AREA" "" '^HDT container: [0-9]+ pass' last "one uni
 parse_toan() { row_sl "$CUR_AREA" "" '^TOAN \(Lean\): [0-9]+ pass' last "* parity battery, not a W3C suite"; }
 
 parse_grddl() {
-  local line nums nt un rf tot
+  local line nums nt un rf rl tot
   line="$(pick_line '^grddl DECIDED: [0-9]+ pass' last)"
   if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'grddl DECIDED:' line in the log"; return; fi
   if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
   nt="$(line_int '^NO TRANSFORMATION FOUND: [0-9]+ cases')" || nt=""
   un="$(line_int '^UNAVAILABLE: [0-9]+ cases')" || un=0
   rf="$(line_int '^REFUSED: [0-9]+ cases')" || rf=0
+  rl="$(line_int '^RELATED TEST PASSED: [0-9]+ cases')" || rl=0
   tot="$(grep -E '^[[:space:]]+\(out of [0-9]+ tests in the manifest\)' "$CUR_LOG" | sed -nE 's/^[[:space:]]+\(out of ([0-9]+) tests in the manifest\).*$/\1/p' | sed -n '$p')"
   if [ -z "$nt" ] || [ -z "$tot" ]; then emit_status unparsed "$CUR_AREA" "" "NO TRANSFORMATION count or manifest total is missing" "$line"; return; fi
   set -- $nums
-  emit_ok "$CUR_AREA" "" "$1" "$2" $((nt + un + rf)) "$tot" \
-    "other = no transformation found ($nt) + document not in the vendored docroot ($un) + refused ($rf)" "$line"
+  emit_ok "$CUR_AREA" "" "$1" "$2" $((nt + un + rf + rl)) "$tot" \
+    "not a valid test currently (owner, 2026-10-10, https://github.com/danbri/factoidal/issues/730): its failures are not counted; other = no transformation found ($nt) + document not in the vendored docroot ($un) + refused ($rf) + related test passed, g:alternative or g:subsumes ($rl)" "$line"
 }
 
 # LWS and Solid: two kinds of line. The executed checks, and the registry of
@@ -1195,21 +1213,30 @@ echo "Lean scoreboard, $(date -u +%Y-%m-%dT%H:%M:%SZ), git $(git rev-parse --sho
 echo
 print_table
 
+# Areas whose suite the owner has ruled not a valid test for now. Their rows
+# keep their numbers and are labelled, but their failures do not count in
+# n_fail or the exit code. GRDDL: owner, 2026-10-10, verbatim: "Grddl -
+# postpone for now, i am making enquiries. So just mark it as not a valid
+# test currently." (https://github.com/danbri/factoidal/issues/730)
+SUSPENDED_AREA_RE='^GRDDL \[not a valid test currently\]'
+
 # Row counts by status, and the failing ids.
-n_ok=0; n_err=0; n_fail=0; i=0
+n_ok=0; n_err=0; n_fail=0; n_susp=0; i=0
 while [ "$i" -lt "$ROW_N" ]; do
   IFS="$US" read -r area runner label status p f o t parse note cmd log secs rc raw detail id <<EOF
 ${ROWS[$i]}
 EOF
   case "$status" in
-    ok)      n_ok=$((n_ok + 1)); [ "${f:-0}" -gt 0 ] && n_fail=$((n_fail + 1)) ;;
+    ok)      n_ok=$((n_ok + 1))
+             if [[ "$area" =~ $SUSPENDED_AREA_RE ]]; then n_susp=$((n_susp + 1))
+             elif [ "${f:-0}" -gt 0 ]; then n_fail=$((n_fail + 1)); fi ;;
     census|none) : ;;
     *)       n_err=$((n_err + 1)) ;;
   esac
   i=$((i + 1))
 done
 echo
-echo "Rows with numbers: $n_ok (of which $n_fail have failures). Rows that are ERROR, TIMEOUT or UNPARSED: $n_err. JSON: $JSON_OUT. Logs: $LOGDIR/"
+echo "Rows with numbers: $n_ok (of which $n_fail have failures; $n_susp in a suite marked not a valid test currently, not counted). Rows that are ERROR, TIMEOUT or UNPARSED: $n_err. JSON: $JSON_OUT. Logs: $LOGDIR/"
 
 printed_header=0
 for i in "${SELECTED[@]}"; do

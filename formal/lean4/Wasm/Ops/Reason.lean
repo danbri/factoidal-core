@@ -44,6 +44,7 @@ import L4Factoidal.OWL.RLClosure
 -- Keep the import explicit.
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.Syntax.NQuadsFast
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -66,11 +67,8 @@ private def ntriplesEnvelope (key : String) (g : Graph)
   | .error e  => errJson s!"closure serialisation: {e}"
   | .ok lines => okWith (((key, Json.string lines)) :: extra)
 
-/-- `owlClosure(nquads, mode)`. -/
-def owlClosure (nq mode : String) : String :=
-  match parseNQuadsFast nq with
-  | .error e => errJson (fmtParseError e)
-  | .ok ds =>
+/-- The `owlClosure` envelope over an ALREADY-PARSED dataset. -/
+def owlClosureParsed (ds : Dataset) (mode : String) : String :=
     let g := ds.default
     match mode with
     | "RDFS" | "rdfs" =>
@@ -81,17 +79,26 @@ def owlClosure (nq mode : String) : String :=
     | _ =>
         errJson s!"owlClosure: unknown mode '{mode}' (expected 'RDFS' or 'OWL-RL')"
 
-/-- `rhoDfClosure(nquads)`. -/
-def rhoDfClosure (nq : String) : String :=
+/-- `owlClosure(nquads, mode)`. -/
+def owlClosure (nq mode : String) : String :=
   match parseNQuadsFast nq with
   | .error e => errJson (fmtParseError e)
-  | .ok ds =>
+  | .ok ds => owlClosureParsed ds mode
+
+/-- The `rhoDfClosure` envelope over an ALREADY-PARSED dataset. -/
+def rhoDfClosureParsed (ds : Dataset) : String :=
     let g := ds.default
     let closed := L4Factoidal.RDFS.closureFix g
     let rounds :=
       roundsToFixpoint L4Factoidal.RDFS.step
         (L4Factoidal.RDFS.closureFuelBound g) g
     ntriplesEnvelope "ntriples" closed [("rounds", .number (toString rounds))]
+
+/-- `rhoDfClosure(nquads)`. -/
+def rhoDfClosure (nq : String) : String :=
+  match parseNQuadsFast nq with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds => rhoDfClosureParsed ds
 
 /-- `rhoDfFragmentCheck(nquads)`. -/
 def rhoDfFragmentCheck (nq : String) : String :=
@@ -100,16 +107,51 @@ def rhoDfFragmentCheck (nq : String) : String :=
   | .ok ds =>
       okWith [("fragment", .bool (L4Factoidal.RDFS.isRhoDfFrag ds.default))]
 
-/-- `rdfsPlusClosure(nquads)`. -/
-def rdfsPlusClosure (nq : String) : String :=
-  match parseNQuadsFast nq with
-  | .error e => errJson (fmtParseError e)
-  | .ok ds =>
+/-- The `rdfsPlusClosure` envelope over an ALREADY-PARSED dataset. -/
+def rdfsPlusClosureParsed (ds : Dataset) : String :=
     let g := ds.default
     let closed := L4Factoidal.RDFS.rdfsPlusClosureFix g
     let rounds :=
       roundsToFixpoint L4Factoidal.RDFS.rdfsPlusStep
         (L4Factoidal.RDFS.closureFuelBound g) g
     ntriplesEnvelope "ntriples" closed [("rounds", .number (toString rounds))]
+
+/-- `rdfsPlusClosure(nquads)`. -/
+def rdfsPlusClosure (nq : String) : String :=
+  match parseNQuadsFast nq with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds => rdfsPlusClosureParsed ds
+
+/-! ### The same ops over datasets the caller parsed (`FromDataset.lean`)
+
+The command line's entries (issue 724). Each answers the envelope the text op
+answers on the canonical N-Quads of its datasets, for every dataset. -/
+
+def owlClosureOf (ds : Dataset) (mode : String) : String :=
+  withOpsDataset .rdf11 ds (fun d => owlClosureParsed d mode)
+
+theorem owlClosureOf_eq (ds : Dataset) (mode : String) :
+    owlClosureOf ds mode = owlClosure (Dataset.toCanonicalNQuads ds) mode := by
+  unfold owlClosureOf owlClosure
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+
+def rhoDfClosureOf (ds : Dataset) : String :=
+  withOpsDataset .rdf11 ds rhoDfClosureParsed
+
+theorem rhoDfClosureOf_eq (ds : Dataset) :
+    rhoDfClosureOf ds = rhoDfClosure (Dataset.toCanonicalNQuads ds) := by
+  unfold rhoDfClosureOf rhoDfClosure
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+
+def rdfsPlusClosureOf (ds : Dataset) : String :=
+  withOpsDataset .rdf11 ds rdfsPlusClosureParsed
+
+theorem rdfsPlusClosureOf_eq (ds : Dataset) :
+    rdfsPlusClosureOf ds = rdfsPlusClosure (Dataset.toCanonicalNQuads ds) := by
+  unfold rdfsPlusClosureOf rdfsPlusClosure
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
 
 end L4Wasm.Ops

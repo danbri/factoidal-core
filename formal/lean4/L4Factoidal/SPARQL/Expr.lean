@@ -969,6 +969,76 @@ def listCharCompare : List Char → List Char → Int
 
 def strCompare (a b : String) : Int := listCharCompare a.toList b.toList
 
+/-! ### The comparison the compiler emits
+
+`strCompare` builds two character lists for every comparison. On
+`ORDER BY ?s ?p` over 1,250 paragraphs of `gene.ttl` it is 53.6 percent of
+the instructions (`lean_string_data` 36.2, `utf8_decode` 23.6; survey record
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`, section 8.5).
+Every ordering on the query path reaches it: ORDER BY (`sparqlOrder`), the
+GROUP BY and DISTINCT-aggregate keys (`erEqual`), MIN and MAX, and the
+relational operators on IRIs and literals (`valueCompare`). Lean's order on
+`String` is the lexicographic order on code points, the order
+`listCharCompare` computes, and its decision procedure is native code
+(`String.decidableLT`, `String.decEq`). `listCharCompare_eq_lt` proves the
+three-way result equal to the one read off `<` and `=`; the `csimp` theorem
+makes every function compiled after this point call `strCompareFast`. The
+definition of `strCompare` and every theorem about it do not change. The
+same repair was made for RDFC-1.0's `strLe` (`RDF/Canonical.lean`,
+`strLe_eq_strLeFast`). -/
+
+/-- `listCharCompare` is the three-way form of Lean's list order. -/
+theorem listCharCompare_eq_lt : ∀ (as bs : List Char),
+    listCharCompare as bs = if as < bs then -1 else if as = bs then 0 else 1
+  | [], [] => by simp [listCharCompare]
+  | [], b :: bs => by simp [listCharCompare, List.nil_lt_cons]
+  | a :: as, [] => by simp [listCharCompare, List.not_lt_nil]
+  | a :: as, b :: bs => by
+      have ih := listCharCompare_eq_lt as bs
+      have key : (a :: as < b :: bs) ↔ (a < b ∨ a = b ∧ as < bs) := List.cons_lt_cons_iff
+      simp only [listCharCompare, intCompare]
+      by_cases h1 : a.toNat < b.toNat
+      · have hlt : a < b := (UInt32.lt_iff_toNat_lt).2 h1
+        have hp : (a :: as < b :: bs) := key.2 (Or.inl hlt)
+        have hi : ((a.toNat : Int) < (b.toNat : Int)) := by omega
+        simp [hi, hp]
+      · by_cases h2 : a = b
+        · subst h2
+          have hiff : (a :: as < a :: bs) ↔ as < bs := by
+            rw [key]; constructor
+            · rintro (h | ⟨_, h⟩)
+              · exact absurd h (Char.lt_irrefl a)
+              · exact h
+            · intro h; exact Or.inr ⟨rfl, h⟩
+          have hc : ¬ ((a.toNat : Int) < (a.toNat : Int)) := Int.lt_irrefl _
+          simp only [hc, if_false, if_true, beq_self_eq_true, hiff, List.cons.injEq, true_and]
+          rw [ih]
+        · have hgt : b.toNat < a.toNat := by
+            have : a.toNat ≠ b.toNat := fun h => h2 (Char.toNat_inj.1 h)
+            omega
+          have hn : ¬ (a :: as < b :: bs) := by
+            rw [key]; rintro (h | ⟨h, _⟩)
+            · have : a.toNat < b.toNat := (UInt32.lt_iff_toNat_lt).1 h; omega
+            · exact h2 h
+          have hi1 : ¬ ((a.toNat : Int) < (b.toNat : Int)) := by omega
+          have hi2 : ¬ ((a.toNat : Int) = (b.toNat : Int)) := by omega
+          simp [hi1, hi2, hn, h2]
+
+/-- `strCompare` through Lean's native string order and equality. -/
+def strCompareFast (a b : String) : Int :=
+  if a < b then -1 else if a = b then 0 else 1
+
+theorem strCompare_eq_fast (a b : String) : strCompare a b = strCompareFast a b := by
+  unfold strCompare strCompareFast
+  rw [listCharCompare_eq_lt]
+  have h1 : (a.toList < b.toList) ↔ a < b := Iff.rfl
+  have h2 : (a.toList = b.toList) ↔ a = b := String.toList_inj
+  simp only [h1, h2]
+
+/-- The compiler calls `strCompareFast` wherever the source says `strCompare`. -/
+@[csimp] theorem strCompare_eq_strCompareFast : @strCompare = @strCompareFast :=
+  funext fun a => funext fun b => strCompare_eq_fast a b
+
 /-- §17.4.1.7 operator mapping for `= != < > <= >=`, with §17.1's
 cross-type numeric promotion. `none` is a type error. Reading the arms
 in order: any two numerics compare by value; two booleans compare

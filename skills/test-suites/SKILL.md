@@ -526,6 +526,17 @@ Consequences for practice:
 War story in full: issue #343; hazard #20 in
 `skills/workflow-gotchas-debugging/SKILL.md`.
 
+Measured again 2026-10-10 with `l4diff` (Lean against the F\* command line on
+SPARQL 1.1 `manifest-all.ttl`): six command-line answers come from the store
+backend and differ from the F\* reference evaluator (`FROM NAMED`, `UUID()`,
+`SERVICE SILENT`, a sub-SELECT inside `GRAPH ?g`). Twelve more are F\*
+evaluator errors that the F\* W3C runner scores as PASS, because its row
+matcher (`binding_row_matches_with`) accepts an actual row with EXTRA
+bindings. The Lean comparator requires equal domains. Record and per-item
+table:
+`docs/designissues/2026-10-10-lean-vs-fstar-differential.md`
+(https://github.com/danbri/factoidal/issues/718).
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a
@@ -557,6 +568,26 @@ record. Conventions, by test kind:
   the run exit 1. The three graph-store-protocol files are the model.
   Record of the 2026-10-10 landing (manifest shapes, classification, scores):
   `docs/designissues/2026-10-10-fstar-w3c-ec2ba15.md`.
+- **F\* defects found outside a W3C manifest** (`tests/known-defects/run.sh`,
+  `bin/linux-x86_64/factoidal` and its sibling binaries): one case per open
+  issue, with the case id in the JSON row and the issue number in the table.
+  XFAIL = the defect reproduces; XPASS and ERROR fail the suite. When the
+  correct answer is known, the case runs the Lean engine on the same input
+  as oracle and reports ERROR if Lean does not give that answer. The F\* OWL
+  tableau has no `factoidal` verb: the OWL cases wrap an RDF/XML ontology
+  (`tests/known-defects/fixtures/`) as the premise of a one-test
+  ConsistencyTest catalog and run `owl_runner --regime dl`. Those cases share
+  a sensitivity control (an ontology both engines must call inconsistent), so
+  a probe that sees nothing reads as ERROR and not as XPASS. RDF/XML premises
+  need `xmlns="http://example.org/"` for bare property elements: without it
+  the properties are dropped, the premise is empty and the case reads as
+  consistent. A case whose issue is closed is deleted, and a comment block in
+  `run.sh` records its id, issue URL and closing date (SR-1, SR-2, TTL-PFX, deleted
+  2026-10-10). Cases today: SE-1, JSONLD-MSG, OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
+  https://github.com/danbri/factoidal/issues/719 and
+  https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
+  serializer stack overflow,
+  https://github.com/danbri/factoidal/issues/725).
 
 Every score line that includes expected failures prints them separately;
 they never count as passes.

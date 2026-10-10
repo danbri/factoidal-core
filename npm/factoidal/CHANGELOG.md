@@ -120,9 +120,11 @@ Changed:
 
 Open, each with an expected-failure test:
 
-- A `SERVICE <iri>` without `SILENT` whose endpoint is not registered answers
-  no solutions instead of an error
-  ([issue 717](https://github.com/danbri/factoidal/issues/717)).
+- A failed `SERVICE` call without `SILENT` inside `EXISTS`, and a failed
+  nested `SERVICE` under an outer `SILENT`
+  ([issue 735](https://github.com/danbri/factoidal/issues/735)). A failed
+  `SERVICE` call without `SILENT` elsewhere now fails the query
+  ([issue 717](https://github.com/danbri/factoidal/issues/717), fixed).
 
 Deprecated: `./l4` and `./l4-core` are aliases of `.` in 0.9.x and go in
 0.10.0. (`./l4` was the low-level loader; `loadEngine()` replaces it.)

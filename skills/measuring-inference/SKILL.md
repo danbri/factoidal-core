@@ -318,6 +318,35 @@ and the search answers "not refuted").
 > `refuter_flips_to_fail=0` throughout. Record:
 > `docs/designissues/2026-09-07-lean-owl-corpus-gap.md` § 15.
 
+## 14. A theorem cited as a licence licenses only what its conclusion states
+
+**Before a cited theorem becomes a work order, read its conclusion and
+its hypotheses in the specification text, and write the quote next to
+the method that relies on it.**
+
+> 🔴 **2026-10-10 (OWL 2 RDF-Based Semantics regime, issue 721).** The
+> task brief said "the OWL 2 RL/RDF rules are sound for the RDF-Based
+> Semantics (OWL 2 Profiles, Theorem PR1)" and "for premise and
+> conclusion that are OWL 2 DL and satisfy the correspondence theorem's
+> conditions, the DL refuter's entailments carry over". Neither citation
+> says that. PR1 is a completeness result for OWL 2 RL ontologies under
+> the DIRECT Semantics; RL soundness for the RDF-Based Semantics is
+> Profiles § 4.3, "a partial axiomatization of the OWL 2 RDF-Based
+> Semantics". Theorem 7.1 concludes that SUBSTITUTE graphs `G1`, `G2`
+> exist for which Direct entailment carries over; § 7.1 works an
+> example where the input pair is Direct-entailed and not
+> RDF-Based-entailed. Carrying the refuter's verdicts over would have
+> counted non-entailments as proved. Caught by reading § 7.2 before
+> writing code; cost, none. Record:
+> `docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 4.
+>
+> The same reading found that this tree's OWL 2 RL closure contains
+> three `[ext]` rows that read the informative § 8 comprehension
+> conditions (`caxDwToComplement`, `clsMaxqc1ToComplement`,
+> `minCard1Comprehension`). A closure "sound for OWL 2 RL" is not
+> thereby sound for a semantics whose normative conditions exclude
+> those rows; the RDF-Based regime removes their witness triples.
+
 ## The standing discipline
 
 1. State the acceptance criterion **as a number**, before the work.

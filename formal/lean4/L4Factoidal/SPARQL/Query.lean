@@ -1630,14 +1630,14 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
         (QueryPattern.lowerWith env mu q)
   | .values vars rows => .values vars rows
   | .service i silent q =>
-      .service (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
+      .service i.val (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
   | .serviceVar v silent q =>
       -- A row that already binds the endpoint variable to an IRI
       -- resolves it here (the F* `lateral_substitute` GP_ServiceVar
       -- arm); otherwise the algebra resolves it per row inside a join.
       (match mu.lookup v with
        | some (.iri i) =>
-           .service (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
+           .service i.val (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
        | _ =>
            .serviceVar v env.resolveService silent (QueryPattern.lowerWith env mu q))
   | .subSelect q =>
@@ -2387,5 +2387,82 @@ def evalDescribe (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
         else []
       Graph.cbd active (describeRoots targets solutions)
   | _ => []
+
+/-! ## A failed SERVICE call fails the query — Federated Query §2.3, §3.2
+
+"If the SILENT keyword is not present, the query will stop and return
+the error" (SPARQL 1.1 Federated Query §2.3;
+https://github.com/danbri/factoidal/issues/717). `evalSelect`, `evalAsk`,
+`evalConstruct` and `evalDescribe` return the rows; `Query.serviceFailure`
+returns the error, and an entry point that answers a query (the dispatch
+op, the CLI, the W3C runner) checks it first and answers the error in
+place of the rows. The `*Checked` forms below do both. -/
+
+/-- Does the pattern hold a SERVICE clause at all? A sub-SELECT counts
+as yes without a look inside, so the answer is `false` only when no
+SERVICE can be reached. This is a cheap pre-check: when it is `false`,
+`Query.serviceFailure` does no evaluation. -/
+def QueryPattern.mentionsService : QueryPattern → Bool
+  | .bgp _              => false
+  | .join l r           => l.mentionsService || r.mentionsService
+  | .leftJoin l r _     => l.mentionsService || r.mentionsService
+  | .filter _ p         => p.mentionsService
+  | .union l r          => l.mentionsService || r.mentionsService
+  | .minus l r          => l.mentionsService || r.mentionsService
+  | .graph _ p          => p.mentionsService
+  | .lateral l r        => l.mentionsService || r.mentionsService
+  | .bind _ _ p         => p.mentionsService
+  | .values _ _         => false
+  | .service _ _ _      => true
+  | .serviceVar _ _ _   => true
+  | .subSelect _        => true
+  | .propertyPath _ _ _ => false
+  | .empty              => false
+
+/-- The failed SERVICE invocation without SILENT that evaluating the
+query's WHERE clause makes, if any (§2.3, §3.2), under the same dataset
+(FROM / FROM NAMED applied) and environment the query evaluators use.
+A DESCRIBE that names only IRIs does not evaluate its WHERE clause
+(`describeNeedsSolutions`), so it invokes nothing. -/
+def Query.serviceFailure (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Option ServiceFailure :=
+  if !q.pattern.mentionsService then none
+  else
+    let (ds', active) := applyDataset q.dataset ds ds.default
+    let env := { env with dataset := some ds' }
+    let evaluatesWhere := match q.form with
+      | .describe targets => describeNeedsSolutions targets
+      | _                 => true
+    if evaluatesWhere then
+      (q.pattern.rewriteBnodes.lower env).serviceFailure ds' active
+    else none
+
+/-- `evalSelect`, or the §2.3 error. -/
+def evalSelectChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure (List VarName × SolutionSeq) :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalSelect env ds q)
+
+/-- `evalAsk`, or the §2.3 error. -/
+def evalAskChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Bool :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalAsk env ds q)
+
+/-- `evalConstruct`, or the §2.3 error. -/
+def evalConstructChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Graph :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalConstruct env ds q)
+
+/-- `evalDescribe`, or the §2.3 error. -/
+def evalDescribeChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Graph :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalDescribe env ds q)
 
 end L4Factoidal.SPARQL

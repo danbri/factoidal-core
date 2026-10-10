@@ -36,6 +36,7 @@ import Wasm.Ops.ExtFns
 import Wasm.Ops.ServiceReg
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.NQuadsFast
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -100,6 +101,14 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option DatasetBackend)
     -- none, every SERVICE endpoint is unreachable, as before.
     let env : EvalEnv := { base := q.base, ext := extFnsWith extIris,
                            dataset := some ds, services := services }
+    -- SPARQL 1.1 Federated Query §2.3: a SERVICE call without SILENT that
+    -- fails stops the query, and the error is the answer
+    -- (`Query.serviceFailure`, https://github.com/danbri/factoidal/issues/717).
+    -- Checked before either evaluator runs, so the backend path and the
+    -- reference path answer the same error.
+    match q.serviceFailure env ds with
+    | some f => errJson f.message
+    | none =>
     let backendEligible := q.dataset.isEmpty
     match q.form with
     | .ask =>
@@ -196,16 +205,42 @@ def applyUpdateText (ds : Dataset) (updateText : String) :
   | .error e  => .error (toString e)
   | .ok ds'   => .ok ds'
 
+/-- The `updateDataset` envelope over an ALREADY-PARSED dataset. -/
+def updateParsedDataset (ds : Dataset) (updateText : String) : String :=
+  match applyUpdateText ds updateText with
+  | .error e  => errJson e
+  | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
+
 /-- `updateDataset(nquads, sparqlUpdate)`. RDF 1.2 read mode for the
 same reason as `queryDataset` above: the stateless pair must accept
 its own canonical N-Quads output. -/
 def updateDataset (nq updateText : String) : String :=
   match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds =>
-  match applyUpdateText ds updateText with
-  | .error e  => errJson e
-  | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
+  | .ok ds => updateParsedDataset ds updateText
+
+/-! ### The same ops over a dataset the caller parsed (`FromDataset.lean`)
+
+The command line's entries (issue 724). Each answers the envelope the text op
+answers on the dataset's canonical N-Quads, for every dataset. -/
+
+def queryDatasetOf (ds : Dataset) (sparql : String) : String :=
+  withOpsDataset .rdf12 ds (fun d => queryParsedDataset d sparql)
+
+theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) :
+    queryDatasetOf ds sparql = queryDataset (Dataset.toCanonicalNQuads ds) sparql := by
+  unfold queryDatasetOf queryDataset
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
+
+def updateDatasetOf (ds : Dataset) (updateText : String) : String :=
+  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText)
+
+theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) :
+    updateDatasetOf ds updateText = updateDataset (Dataset.toCanonicalNQuads ds) updateText := by
+  unfold updateDatasetOf updateDataset
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### SPARQL 1.2 query mode (`queryDataset12`, `datasetQuery12`)
 
@@ -241,9 +276,32 @@ private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
   "SELECT ?who WHERE { ?who <http://e/says> ?x FILTER(isTRIPLE(?x)) }") "http://e/b"
 -- Negative: the 1.1 grammar refuses the triple-term pattern.
 #guard (tt12Run true .v11 tt12Select).startsWith "{\"ok\":false"
+
 -- Negative: a pattern no triple term matches answers no binding.
 #guard !tt12HasSub (tt12Run true .v12
   "SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/other> )>> }")
   "\"value\""
+
+-- SPARQL 1.1 Federated Query §2.3
+-- (https://github.com/danbri/factoidal/issues/717): with no endpoint
+-- registered, a SERVICE call without SILENT is an error envelope, and
+-- the same call with SILENT is one solution with no bindings.
+private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
+#guard (queryDataset svcData
+  "SELECT * WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
+  "{\"ok\":false,\"error\":\"SERVICE <http://u.example/sparql> failed"
+#guard (queryDataset svcData
+  "ASK { ?a ?b ?c SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith "{\"ok\":false"
+#guard (queryDataset svcData
+  "CONSTRUCT { ?s ?p ?o } WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
+  "{\"ok\":false"
+#guard (queryDataset svcData
+  "SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
+  "{\"ok\":true,\"kind\":\"select\",\"srj\":" ++
+    QueryResult.toSrj (.bindings [] [Binding.empty]) ++ "}"
+#guard (queryDataset svcData
+  "ASK { ?a ?b ?c SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
+  "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"
+
 
 end L4Wasm.Ops

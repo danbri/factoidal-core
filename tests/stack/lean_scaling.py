@@ -32,7 +32,9 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    aggregate (issue 722; 0.43 s to 11.7 s before, 0.11 s to 0.60 s after)
   query-vs-parse   `query` COUNT(*) against `parse` of the same 5,000 paragraphs of
                    gene.ttl: at most 2.0 times the CPU time and the peak memory
-                   (https://github.com/danbri/factoidal/issues/724)
+                   (https://github.com/danbri/factoidal/issues/724; 5.7 and 3.7
+                   times before the command line stopped re-parsing N-Quads
+                   text, 1.6 and 1.0 after)
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -211,12 +213,13 @@ STARTUP_BUDGET = 0.020
 # times the peak resident memory of the parse. A COUNT(*) query reads the
 # file once and counts; its cost above the parse is the evaluation. The
 # command line used to write the parsed dataset as N-Quads text and parse the
-# text again (https://github.com/danbri/factoidal/issues/724).
+# text again (https://github.com/danbri/factoidal/issues/724): 5.7 times the
+# CPU time and 3.7 times the memory of `parse` before the repair, 1.6 and 1.0
+# after (RDF/DatasetNormalize.lean, Wasm/Ops/FromDataset.lean).
 PARSE_RATIO = 2.0
 PARSE_RATIO_ROWS = {
     "query-vs-parse": (1250, "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"),
 }
-XFAIL["query-vs-parse"] = "https://github.com/danbri/factoidal/issues/724"
 
 
 def best_cpu_rss(cmd, runs):

@@ -34,7 +34,4 @@ function xfail(name, issueUrl, fn) {
 
 /** Lenient parse (op parseDocument, Wasm/Ops/Lenient.lean). */
 const LENIENT_ISSUE = 'https://github.com/danbri/factoidal/issues/716';
-/** SERVICE without SILENT to an unregistered endpoint answers no rows. */
-const SERVICE_ERROR_ISSUE = 'https://github.com/danbri/factoidal/issues/717';
-
-module.exports = { xfail, LENIENT_ISSUE, SERVICE_ERROR_ISSUE };
+module.exports = { xfail, LENIENT_ISSUE };

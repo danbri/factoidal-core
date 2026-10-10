@@ -629,4 +629,34 @@ def muRow (row occ : String) : Binding := Binding.withFreshnessCtx row occ []
 -- The reserved context keys never reach an expression's variables.
 #guard (Expr.bound fxKeyRow).eval [] == .bool false
 
+
+/-! ### `strCompare` through the native string order
+
+`Expr.lean` registers `strCompare = strCompareFast` as `csimp`, so
+`strCompare` compiles to Lean's native string order. `listCharCompare` on the
+character lists is not rewritten, so these guards compare two programs. The
+samples cover the empty string, equal strings, a proper prefix, a shared
+prefix, upper and lower case ASCII, a two-byte character, U+FFFF and a
+supplementary-plane character (whose first UTF-8 byte is larger than any
+other, so a byte order and the code point order agree on it). -/
+
+private def strCmpSamples : List String :=
+  [ "", "a", "ab", "abc", "b", "B", "z", "_:b0", "http://e/a", "http://e/b",
+    "http://e/a#x", "é", "éa", "zé", (String.singleton (Char.ofNat 0xFFFF)),
+    (String.singleton (Char.ofNat 0x10000)),
+    "a" ++ (String.singleton (Char.ofNat 0x10000)), "a" ++ (String.singleton (Char.ofNat 0xFFFF)) ]
+
+#guard strCmpSamples.all fun a => strCmpSamples.all fun b =>
+  strCompare a b == listCharCompare a.toList b.toList
+-- Teeth: three-way, not constant, not reversed, antisymmetric, and a prefix
+-- sorts before its extension.
+#guard strCompare "a" "b" == -1 && strCompare "b" "a" == 1 && strCompare "a" "a" == 0
+#guard strCompare "a" "ab" == -1 && strCompare "ab" "a" == 1
+#guard strCompare "" "a" == -1 && strCompare "a" "" == 1 && strCompare "" "" == 0
+#guard strCompare "B" "a" == -1
+#guard strCompare (String.singleton (Char.ofNat 0xFFFF)) (String.singleton (Char.ofNat 0x10000)) == -1
+#guard strCmpSamples.all fun a => strCmpSamples.all fun b => strCompare a b == - strCompare b a
+#guard (strCmpSamples.filter fun a => strCmpSamples.any fun b => strCompare a b == -1).length > 5
+#guard (strCmpSamples.filter fun a => strCmpSamples.any fun b => strCompare a b == 1).length > 5
+
 end L4Factoidal.SPARQL.ExprTests

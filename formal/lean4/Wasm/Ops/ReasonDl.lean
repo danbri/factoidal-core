@@ -27,6 +27,7 @@ import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -68,10 +69,7 @@ def owlRefuteFuelOfOpts (optsJson : String) : Nat :=
 /-- `owlIsConsistent(nquads, optsJson)`. `reason` is a plumbing-level
 description of the verdict source (there is no clash-trace string in
 the refuter); present on the false/null verdicts, omitted on true. -/
-def owlIsConsistent (nq optsJson : String) : String :=
-  match parseNQuadsFast nq with
-  | .error e => errJson (fmtParseError e)
-  | .ok ds =>
+def owlIsConsistentParsed (ds : Dataset) (optsJson : String) : String :=
     let closure := L4Factoidal.OWL.RL.closureFix ds.default
     let fuel := owlRefuteFuelOfOpts optsJson
     match L4Factoidal.OWL.Refute.tableauConsistent closure fuel with
@@ -88,6 +86,12 @@ def owlIsConsistent (nq optsJson : String) : String :=
                    ++ "before every branch closed (indeterminate, not "
                    ++ "inconsistent); raise it via opts.fuel"))]
 
+/-- `owlIsConsistent(nquads, optsJson)`. -/
+def owlIsConsistent (nq optsJson : String) : String :=
+  match parseNQuadsFast nq with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds => owlIsConsistentParsed ds optsJson
+
 /-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. The two
 verified paths of the F* entry: `via:"closure"` when every conclusion
 triple is exactly (engine triple equality) in the OWL-RL closure of
@@ -95,13 +99,7 @@ the premise; `via:"refutation"` when the negated conclusion
 (`negationGoals`) is refuted on every goal. A satisfiable goal is a
 countermodel (`entailed:false`); an indeterminate goal with no
 countermodel is `null`. -/
-def owlEntails (premiseNq conclusionNq optsJson : String) : String :=
-  match parseNQuadsFast premiseNq with
-  | .error e => errJson (fmtParseError e)
-  | .ok dsP =>
-    match parseNQuadsFast conclusionNq with
-    | .error e => errJson (fmtParseError e)
-    | .ok dsC =>
+def owlEntailsParsed (dsP dsC : Dataset) (optsJson : String) : String :=
       let gc := dsC.default
       let closure := L4Factoidal.OWL.RL.closureFix dsP.default
       let fuel := owlRefuteFuelOfOpts optsJson
@@ -131,5 +129,42 @@ def owlEntails (premiseNq conclusionNq optsJson : String) : String :=
                       (s!"budget-out: a refutation goal exhausted fuel {fuel} "
                        ++ "before closing (indeterminate); raise it via "
                        ++ "opts.fuel"))]
+
+/-- `owlEntails(premiseNquads, conclusionNquads, optsJson)`. -/
+def owlEntails (premiseNq conclusionNq optsJson : String) : String :=
+  match parseNQuadsFast premiseNq with
+  | .error e => errJson (fmtParseError e)
+  | .ok dsP =>
+    match parseNQuadsFast conclusionNq with
+    | .error e => errJson (fmtParseError e)
+    | .ok dsC => owlEntailsParsed dsP dsC optsJson
+
+/-! ### The same ops over datasets the caller parsed (`FromDataset.lean`)
+
+The command line's entries (issue 724). Each answers the envelope the text op
+answers on the canonical N-Quads of its datasets, for every dataset. -/
+
+def owlIsConsistentOf (ds : Dataset) (optsJson : String) : String :=
+  withOpsDataset .rdf11 ds (fun d => owlIsConsistentParsed d optsJson)
+
+theorem owlIsConsistentOf_eq (ds : Dataset) (optsJson : String) :
+    owlIsConsistentOf ds optsJson = owlIsConsistent (Dataset.toCanonicalNQuads ds) optsJson := by
+  unfold owlIsConsistentOf owlIsConsistent
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf11 <;> rfl
+
+def owlEntailsOf (dsP dsC : Dataset) (optsJson : String) : String :=
+  withOpsDataset .rdf11 dsP (fun p => withOpsDataset .rdf11 dsC (fun c => owlEntailsParsed p c optsJson))
+
+theorem owlEntailsOf_eq (dsP dsC : Dataset) (optsJson : String) :
+    owlEntailsOf dsP dsC optsJson =
+      owlEntails (Dataset.toCanonicalNQuads dsP) (Dataset.toCanonicalNQuads dsC) optsJson := by
+  unfold owlEntailsOf owlEntails
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads dsP) .rdf11 with
+  | error e => rfl
+  | ok p =>
+      simp only [withOpsDataset_eq]
+      cases parseNQuadsFast (Dataset.toCanonicalNQuads dsC) .rdf11 <;> rfl
 
 end L4Wasm.Ops

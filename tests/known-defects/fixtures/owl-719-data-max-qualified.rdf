@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!--
+  https://github.com/danbri/factoidal/issues/719
+  Individual a is an instance of DataMaxCardinality(1 dp xsd:string),
+  written with owl:onDataRange (OWL 2 Mapping to RDF Graphs, Table 1).
+  a has dp-values 1 and 2, both xsd:integer.
+  Neither value is in xsd:string, so the filler count is 0 and the
+  restriction holds. The ontology is CONSISTENT (OWL 2 Direct Semantics).
+  An engine that drops owl:onDataRange reads the restriction as
+  "at most 1 dp" and reports an inconsistency.
+-->
+<rdf:RDF xml:base="http://example.org/" xmlns="http://example.org/"
+         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+  <owl:Ontology rdf:about="http://example.org/o719"/>
+  <owl:DatatypeProperty rdf:about="dp"/>
+  <rdf:Description rdf:about="a">
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="dp"/>
+        <owl:maxQualifiedCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#nonNegativeInteger">1</owl:maxQualifiedCardinality>
+        <owl:onDataRange rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+      </owl:Restriction>
+    </rdf:type>
+    <dp rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</dp>
+    <dp rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">2</dp>
+  </rdf:Description>
+</rdf:RDF>

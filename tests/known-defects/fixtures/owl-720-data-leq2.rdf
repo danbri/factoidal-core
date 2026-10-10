@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!--
+  https://github.com/danbri/factoidal/issues/720 (data property shape)
+  Individual a is an instance of
+    DataMaxCardinality(2 dp), DataSomeValuesFrom(dp xsd:integer) and
+    DataSomeValuesFrom(dp DataComplementOf(xsd:integer)).
+  a has dp-values 1 (xsd:integer) and "x" (xsd:string).
+  The ontology is CONSISTENT: the asserted value 1 is the integer witness
+  and the asserted value "x" is the non-integer witness, so a has two
+  dp-values. A refuter that merges only the two anonymous witnesses
+  closes its only branch and reports an inconsistency.
+-->
+<rdf:RDF xml:base="http://example.org/" xmlns="http://example.org/"
+         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+  <owl:Ontology rdf:about="http://example.org/o720-data"/>
+  <owl:DatatypeProperty rdf:about="dp"/>
+  <rdf:Description rdf:about="a">
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="dp"/>
+        <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#nonNegativeInteger">2</owl:maxCardinality>
+      </owl:Restriction>
+    </rdf:type>
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="dp"/>
+        <owl:someValuesFrom rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+      </owl:Restriction>
+    </rdf:type>
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="dp"/>
+        <owl:someValuesFrom>
+          <rdfs:Datatype>
+            <owl:datatypeComplementOf rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+          </rdfs:Datatype>
+        </owl:someValuesFrom>
+      </owl:Restriction>
+    </rdf:type>
+    <dp rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</dp>
+    <dp rdf:datatype="http://www.w3.org/2001/XMLSchema#string">x</dp>
+  </rdf:Description>
+</rdf:RDF>

@@ -119,7 +119,11 @@ these shapes first in any module that is slow on a large input.
 - **A comparison that converts to lists.** `Canonical.strLe` built two
   character lists per call: 57 percent of the instructions of `canonicalize`
   after the sorts were repaired. Lean's native `String` order is the same order
-  (`charsLe_eq_not_lt`); a `csimp` theorem makes the compiler use it.
+  (`charsLe_eq_not_lt`); a `csimp` theorem makes the compiler use it. SPARQL's
+  `strCompare` had the same shape (53.6 percent of an ORDER BY): the three-way
+  form is `listCharCompare_eq_lt`, and `strCompare_eq_strCompareFast` reaches
+  every ordering on the query path (ORDER BY, GROUP BY and DISTINCT-aggregate
+  keys, MIN, MAX, `<` on IRIs and literals).
 
 Two more costs are not in an algorithm, and one hazard follows from the repairs:
 
@@ -134,8 +138,9 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   read one number: half the instructions of `parse`, and 3,659 MB of resident
   memory for a 6.8 MB Turtle file (256 MB after the repair). Profile a verb by
   phase before ranking a parser. `query`, `canonicalize`, `update` and `closure`
-  still read their input through `readAsNQuads` (parse, write N-Quads text,
-  parse the text again): 75 percent of the instructions of a COUNT query.
+  read their input through `readAsNQuads` (parse, write N-Quads text, parse the
+  text again) until 2026-10-10: 75 percent of the instructions of a COUNT
+  query. They now take the parsed dataset (next item).
 - **A graph read per focus node needs an index carried by the caller.**
   SHACL `objectsOf` filtered the data graph once per focus node and shape:
   74.6 percent of the instructions of `l4shacl` on 500 persons, 27.8 s at
@@ -148,12 +153,28 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   After the index, two list folds with `acc ++ [x]` (`distinctSubjects`,
   `dedupTerms`) were 80 percent of what was left: profile again after each
   repair (https://github.com/danbri/factoidal/issues/723).
-- **The command line's N-Quads round trip is not the identity.** Do not
-  replace `readAsNQuads` by the parsed dataset without a proof: the canonical
-  form lowers language tags and the N-Quads reader keeps each quad once, so on
-  a Turtle file with a repeated triple `parse` prints 3 and `query`
-  `COUNT(*)` prints 2 (https://github.com/danbri/factoidal/issues/724,
-  section 8.3 of the survey record).
+- **A text round trip that a caller depends on is a function: name it and
+  prove it.** The command line's canonical N-Quads round trip is not the
+  identity: it lowers language tags and keeps each quad of a graph once (RDF
+  1.1 Concepts §3.3 and §3), so on a Turtle file with a repeated triple
+  `parse` printed 3 and `query` `COUNT(*)` printed 2
+  (https://github.com/danbri/factoidal/issues/724). The repair
+  (`RDF/DatasetNormalize.lean`) is `normalizeDataset`, the two steps as a
+  function on `Dataset`, and `parseNQuadsFast_toCanonicalNQuads`: the round
+  trip equals it for every dataset that `roundTripSafe` accepts (print-safe
+  IRIs, BLANK_NODE_LABEL labels, LANGTAG tags, no `\u`-escaped character). The
+  check is decidable, so `datasetForOps` tests it at run time and falls back
+  to the text otherwise, and `datasetForOps_eq` holds for EVERY dataset with no
+  hypothesis: the command line's output did not change, row order included.
+  A theorem with a decidable hypothesis plus a run-time fallback is how to
+  replace a slow path whose general equality is false or out of reach.
+- **The check that guards a fast path is itself on the hot path.** The first
+  `roundTripSafe` walked each IRI with `String.toList`: 36 percent of the
+  instructions of the COUNT query it was meant to speed up, as much as the
+  Turtle parse. `String.all` walks the UTF-8 bytes without a list
+  (`String.all_bool_eq`); a `csimp` for `iriPrintSafe` took the check to 21
+  percent and the query from 335 to 272 million instructions. Profile the
+  repaired path again before recording its number.
 - **`csimp` makes a guard compare a function with itself.** After
   `closure = indexedClosure` is registered, a guard `indexedClosure g n ==
   closure g n` in a later module runs the same code on both sides. Restate the

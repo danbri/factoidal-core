@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!--
+  https://github.com/danbri/factoidal/issues/720 (named individual shape)
+  Individual a is an instance of
+    ObjectMaxCardinality(2 p), ObjectSomeValuesFrom(p K) and
+    ObjectSomeValuesFrom(p ObjectComplementOf(K)).
+  a has p-successors b and c.
+  The ontology is CONSISTENT. OWL has no unique name assumption, so b may
+  be the K-witness and c the non-K-witness. A refuter that never offers a
+  merge of a named individual with a witness closes every offered branch
+  and reports an inconsistency.
+-->
+<rdf:RDF xml:base="http://example.org/" xmlns="http://example.org/"
+         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+  <owl:Ontology rdf:about="http://example.org/o720-named"/>
+  <owl:ObjectProperty rdf:about="p"/>
+  <owl:Class rdf:about="K"/>
+  <rdf:Description rdf:about="a">
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="p"/>
+        <owl:maxCardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#nonNegativeInteger">2</owl:maxCardinality>
+      </owl:Restriction>
+    </rdf:type>
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="p"/>
+        <owl:someValuesFrom rdf:resource="K"/>
+      </owl:Restriction>
+    </rdf:type>
+    <rdf:type>
+      <owl:Restriction>
+        <owl:onProperty rdf:resource="p"/>
+        <owl:someValuesFrom>
+          <owl:Class><owl:complementOf rdf:resource="K"/></owl:Class>
+        </owl:someValuesFrom>
+      </owl:Restriction>
+    </rdf:type>
+    <p rdf:resource="b"/>
+    <p rdf:resource="c"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="b"/>
+  <rdf:Description rdf:about="c"/>
+</rdf:RDF>
