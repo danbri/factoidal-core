@@ -39,8 +39,9 @@
 # this script set those two and so measured nothing (issue 749; measured on
 # linux-x86_64: turtle-collection, 100,000 items, returned 200,001 quads
 # under `ulimit -s 512` with LEAN_STACK_SIZE=524288 and aborted under
-# LEAN_STACK_SIZE_KB=512). The toolchain installed by elan ships no runtime
-# sources, only the string; the sources are the leanprover/lean4 tag
+# LEAN_STACK_SIZE_KB=512, before the collection reader of issue 678 became a
+# loop). The toolchain installed by elan ships no runtime sources, only the
+# string; the sources are the leanprover/lean4 tag
 # v4.33.1. LEAN_MAIN_USE_THREAD=0 would run main on the process's main
 # thread, where the knob does not apply; the canary unsets it.
 #
@@ -257,10 +258,11 @@ fi
 # and closes the issue. A listed case that fails in any other way is a
 # failure. The table applies to the three routes that have a small stack: the
 # native canary, the wasm canary and the wasm route. The native route runs on
-# the 1 GB default stack and has no entries.
+# the 1 GB default stack and has no entries. (`turtle-collection` was listed
+# for https://github.com/danbri/factoidal/issues/678 until 2026-10-10, when
+# the Turtle collection reader became a loop; it runs in all three routes.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
-    turtle-collection) echo "https://github.com/danbri/factoidal/issues/678" ;;
     xml-entities)      echo "https://github.com/danbri/factoidal/issues/673" ;;
   esac
 }
