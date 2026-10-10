@@ -136,6 +136,32 @@ private def oneAB : Graph :=
 #guard !has [⟨S pP, rdfsRange, O xsdInteger⟩, ⟨S pP, rdfsRange, O xsdDecimal⟩,
              ⟨S pQ, rdfType, O rdfProperty⟩] [] ⟨S pP, rdfsSubPropertyOf, O pQ⟩
 
+/-! ## oneOfSub, unionSub, interSub (Tables 5.4, 5.5, 5.8) -/
+
+private def listBA : Graph :=
+  [ ⟨B "n1", rdfFirst, O iB⟩, ⟨B "n1", rdfRest, Bt "n2"⟩,
+    ⟨B "n2", rdfFirst, O iA⟩, ⟨B "n2", rdfRest, O rdfNil⟩ ]
+private def listAB : Graph :=
+  [ ⟨B "k1", rdfFirst, O iA⟩, ⟨B "k1", rdfRest, Bt "k2"⟩,
+    ⟨B "k2", rdfFirst, O iB⟩, ⟨B "k2", rdfRest, O rdfNil⟩ ]
+-- the same members in another order: subclass both ways
+#guard has (listAB ++ listBA ++ [⟨S cA, owlOneOf, Bt "k1"⟩, ⟨S cB, owlOneOf, Bt "n1"⟩]) []
+  ⟨S cA, rdfsSubClassOf, O cB⟩
+#guard has (listAB ++ oneA ++ [⟨S cA, owlOneOf, Bt "m1"⟩, ⟨S cB, owlOneOf, Bt "k1"⟩]) []
+  ⟨S cA, rdfsSubClassOf, O cB⟩
+-- a larger enumeration is not a subclass of a smaller one
+#guard !has (listAB ++ oneA ++ [⟨S cA, owlOneOf, Bt "m1"⟩, ⟨S cB, owlOneOf, Bt "k1"⟩]) []
+  ⟨S cB, rdfsSubClassOf, O cA⟩
+#guard has (listAB ++ oneA ++ [⟨S cA, owlUnionOf, Bt "m1"⟩, ⟨S cB, owlUnionOf, Bt "k1"⟩]) []
+  ⟨S cA, rdfsSubClassOf, O cB⟩
+#guard !has (listAB ++ oneA ++ [⟨S cA, owlUnionOf, Bt "m1"⟩, ⟨S cB, owlUnionOf, Bt "k1"⟩]) []
+  ⟨S cB, rdfsSubClassOf, O cA⟩
+-- intersection: the direction is reversed
+#guard has (listAB ++ oneA ++ [⟨S cA, owlIntersectionOf, Bt "m1"⟩,
+            ⟨S cB, owlIntersectionOf, Bt "k1"⟩]) [] ⟨S cB, rdfsSubClassOf, O cA⟩
+#guard !has (listAB ++ oneA ++ [⟨S cA, owlIntersectionOf, Bt "m1"⟩,
+             ⟨S cB, owlIntersectionOf, Bt "k1"⟩]) [] ⟨S cA, rdfsSubClassOf, O cB⟩
+
 /-! ## End to end: RL closure and the rules, alternating -/
 
 private def sat (g goal : Graph) (t : Triple) : Bool := memB (rbSaturate g goal 8 2) t

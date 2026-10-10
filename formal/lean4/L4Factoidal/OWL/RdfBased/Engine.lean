@@ -142,13 +142,46 @@ def emptySubPropAll (g : Graph) : List Triple :=
             else [])))
     else [])
 
+/-- Every `(subject, member list)` reading of the triples of `g` with
+predicate `pr` whose object is a well-formed collection. -/
+def listReadings (g : Graph) (pr : WfIri) : List (Subject × List Term) :=
+  (g.filter (fun t => t.p == pr)).flatMap (fun t =>
+    (listSeqs g t.o (listFuel g)).map (fun es => (t.s, es)))
+
+theorem listReadings_spec {g : Graph} {pr : WfIri} {a : Subject × List Term}
+    (h : a ∈ listReadings g pr) :
+    ∃ l : Term, (⟨a.1, pr, l⟩ : Triple) ∈ g ∧ ListDenotes g l a.2 := by
+  simp only [listReadings, List.mem_flatMap, List.mem_filter, List.mem_map] at h
+  obtain ⟨t, ⟨ht, hp⟩, es, hes, rfl⟩ := h
+  have hp' : t.p = pr := Subtype.ext (by simpa using hp)
+  exact ⟨t.o, mem_of_parts ht rfl hp' rfl, listSeqs_sound g _ _ hes⟩
+
+/-- `c1 rdfs:subClassOf c2` for two collection-valued class
+constructors with predicate `pr` whose member lists are in the
+relation `ok` (`List.all` membership, read in the direction the rule
+needs). -/
+def listSubAll (g : Graph) (pr : WfIri) (ok : List Term → List Term → Bool) : List Triple :=
+  -- Each collection is read ONCE (`listReadings`), then compared
+  -- pairwise. Reading it inside the pair loop cost a list walk per pair
+  -- and put the wine ontology (`WebOnt-miscellaneous-001`, `-002`,
+  -- `-011`) past the 30-second unit cap; measured 2026-10-10.
+  let rs := listReadings g pr
+  rs.flatMap (fun a =>
+    rs.flatMap (fun b =>
+      if ok a.2 b.2 then [(⟨a.1, rdfsSubClassOf, b.1.toTerm⟩ : Triple)] else []))
+
+/-- Every member of `a` is a member of `b`. -/
+def allIn (a b : List Term) : Bool := a.all (fun e => decide (e ∈ b))
+
 /-- Everything the rules derive from `g` in one pass, with the
 premise-free families restricted to what `goal` names. -/
 def rbConclusions (g goal : Graph) : List Triple :=
   axiomsFor goal ++ vocabTypeAll g ++ universalFor g goal ++ compSymAll g ++
   allDiffAll g ++ singletonAll g rdfsRange owlFunctionalProperty ++
   singletonAll g rdfsDomain owlInverseFunctionalProperty ++ typeDomainSubAll g ++
-  avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g
+  avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g ++
+  listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allIn ++
+  listSubAll g owlIntersectionOf (fun es1 es2 => allIn es2 es1)
 
 /-! ## Every executable conclusion is a rule application -/
 
@@ -340,10 +373,31 @@ theorem emptySubPropAll_derives {g : Graph} {t : Triple} (h : t ∈ emptySubProp
     · simp at h
   · simp at h
 
+theorem listSubAll_spec {g : Graph} {pr : WfIri} {ok : List Term → List Term → Bool}
+    {t : Triple} (h : t ∈ listSubAll g pr ok) :
+    ∃ (c1 c2 : Subject) (l1 l2 : Term) (es1 es2 : List Term),
+      (⟨c1, pr, l1⟩ : Triple) ∈ g ∧ (⟨c2, pr, l2⟩ : Triple) ∈ g ∧
+      ListDenotes g l1 es1 ∧ ListDenotes g l2 es2 ∧ ok es1 es2 = true ∧
+      t = ⟨c1, rdfsSubClassOf, c2.toTerm⟩ := by
+  simp only [listSubAll, List.mem_flatMap] at h
+  obtain ⟨a, ha, b, hb, h⟩ := h
+  split at h
+  · rename_i hok
+    simp only [List.mem_singleton] at h
+    obtain ⟨l1, h1, hl1⟩ := listReadings_spec ha
+    obtain ⟨l2, h2, hl2⟩ := listReadings_spec hb
+    exact ⟨a.1, b.1, l1, l2, a.2, b.2, h1, h2, hl1, hl2, hok, h⟩
+  · simp at h
+
+theorem allIn_spec {a b : List Term} (h : allIn a b = true) : ∀ e ∈ a, e ∈ b := by
+  intro e he
+  have := List.all_eq_true.mp h e he
+  simpa using this
+
 theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :
     RbDerives g t := by
   simp only [rbConclusions, List.mem_append] at h
-  rcases h with ((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
+  rcases h with (((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
   · exact axiomsFor_derives h
   · exact vocabTypeAll_derives h
   · exact universalFor_derives h
@@ -355,6 +409,12 @@ theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclus
   · exact avfRangeAll_derives h
   · exact svfDomainAll_derives h
   · exact emptySubPropAll_derives h
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    exact RbDerives.oneOfSub h1 h2 hl1 hl2 (allIn_spec hok)
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    exact RbDerives.unionSub h1 h2 hl1 hl2 (allIn_spec hok)
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    exact RbDerives.interSub h1 h2 hl1 hl2 (allIn_spec hok)
 
 /-- Every triple `rbConclusions` lists is OWL 2 RDF-Based entailed by `g`. -/
 theorem rbConclusions_entailed {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :

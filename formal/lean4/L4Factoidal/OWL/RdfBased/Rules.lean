@@ -36,6 +36,9 @@ Comprehension Conditions [DEV]").
 | `avfRange` | `p rdfs:range c` from `owl:Thing rdfs:subClassOf ∀p.c` | Tables 5.2, 5.3, 5.6, 5.8 |
 | `svfDomain` | `p rdfs:domain c` from `∃p.owl:Thing rdfs:subClassOf c` | Tables 5.2, 5.3, 5.6, 5.8 |
 | `emptySubProp` | `p rdfs:subPropertyOf q` when two ranges of `p` are disjoint datatypes | Table 5.8, the datatype map |
+| `oneOfSub` | `c1 rdfs:subClassOf c2` when every member of `c1`'s enumeration is a member of `c2`'s | Tables 5.5, 5.8 |
+| `unionSub` | `c1 rdfs:subClassOf c2` when every operand of `c1`'s union is an operand of `c2`'s | Tables 5.4, 5.8 |
+| `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s intersection is an operand of `c1`'s | Tables 5.4, 5.8 |
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -127,6 +130,22 @@ inductive RbDerives (g : Graph) : Triple → Prop where
       (hd : xsdValueSpacesDisjoint d1 d2 = true)
       (hq : (⟨q, rdfType, .iri rdfProperty⟩ : Triple) ∈ g) :
       RbDerives g ⟨p, rdfsSubPropertyOf, q.toTerm⟩
+  | oneOfSub {c1 c2 : Subject} {l1 l2 : Term} {es1 es2 : List Term}
+      (h1 : (⟨c1, owlOneOf, l1⟩ : Triple) ∈ g) (h2 : (⟨c2, owlOneOf, l2⟩ : Triple) ∈ g)
+      (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
+      (hsub : ∀ e ∈ es1, e ∈ es2) :
+      RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
+  | unionSub {c1 c2 : Subject} {l1 l2 : Term} {es1 es2 : List Term}
+      (h1 : (⟨c1, owlUnionOf, l1⟩ : Triple) ∈ g) (h2 : (⟨c2, owlUnionOf, l2⟩ : Triple) ∈ g)
+      (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
+      (hsub : ∀ e ∈ es1, e ∈ es2) :
+      RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
+  | interSub {c1 c2 : Subject} {l1 l2 : Term} {es1 es2 : List Term}
+      (h1 : (⟨c1, owlIntersectionOf, l1⟩ : Triple) ∈ g)
+      (h2 : (⟨c2, owlIntersectionOf, l2⟩ : Triple) ∈ g)
+      (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
+      (hsub : ∀ e ∈ es2, e ∈ es1) :
+      RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
 
 /-! ## Table facts, checked by evaluation -/
 
@@ -287,6 +306,37 @@ theorem rbDerives_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll 
       rw [denot_toTerm]
       refine hc.subPropertyOfIf _ _ hpP hqP (fun x y hxy => ?_)
       exact absurd ⟨hr1 x y hxy, hr2 x y hxy⟩ (hc.disjointDatatypes d1 d2 hd y)
+  | oneOfSub h1 h2 hl1 hl2 hsub =>
+      rename_i c1 c2 l1 l2 es1 es2
+      obtain ⟨hc1, he1⟩ := (hc.oneOf _ _ _ (holds_seqIs (fun u hu => hA u hu) hl1)).mp (hA _ h1)
+      obtain ⟨hc2, he2⟩ := (hc.oneOf _ _ _ (holds_seqIs (fun u hu => hA u hu) hl2)).mp (hA _ h2)
+      show i.iext (i.iIri rdfsSubClassOf) (denotSubject i A c1) (denotTerm i A c2.toTerm)
+      rw [denot_toTerm]
+      refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩
+      obtain ⟨e, he, rfl⟩ := List.mem_map.mp ((he1 x).mp hx)
+      exact List.mem_map.mpr ⟨e, hsub e he, rfl⟩
+  | unionSub h1 h2 hl1 hl2 hsub =>
+      rename_i c1 c2 l1 l2 es1 es2
+      obtain ⟨hc1, he1⟩ := hc.unionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
+      obtain ⟨hc2, he2⟩ := hc.unionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
+      show i.iext (i.iIri rdfsSubClassOf) (denotSubject i A c1) (denotTerm i A c2.toTerm)
+      rw [denot_toTerm]
+      refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩
+      obtain ⟨c, hcm, hxc⟩ := (he1 x).mp hx
+      obtain ⟨e, he, rfl⟩ := List.mem_map.mp hcm
+      exact ⟨_, List.mem_map.mpr ⟨e, hsub e he, rfl⟩, hxc⟩
+  | interSub h1 h2 hl1 hl2 hsub =>
+      rename_i c1 c2 l1 l2 es1 es2
+      obtain ⟨hc1, he1⟩ :=
+        hc.intersectionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl1) (hA _ h1)
+      obtain ⟨hc2, he2⟩ :=
+        hc.intersectionOfOnly _ _ _ (holds_seqIs (fun u hu => hA u hu) hl2) (hA _ h2)
+      show i.iext (i.iIri rdfsSubClassOf) (denotSubject i A c1) (denotTerm i A c2.toTerm)
+      rw [denot_toTerm]
+      refine (hc.subClassOf _ _).mpr ⟨hc1, hc2, fun x hx => (he2 x).mpr ?_⟩
+      intro c hcm
+      obtain ⟨e, he, rfl⟩ := List.mem_map.mp hcm
+      exact (he1 x).mp hx _ (List.mem_map.mpr ⟨e, hsub e he, rfl⟩)
 
 end Soundness
 

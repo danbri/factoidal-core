@@ -264,6 +264,20 @@ def CondOneOf : Prop :=
   ∀ (z s : i.idom) (as : List i.idom), SeqIs i s as →
     (i.iext (i.iIri owlOneOf) z s ↔ (IC i z ∧ ∀ x, icext i x z ↔ x ∈ as))
 
+/-- Table 5.4, `owl:unionOf`: "if s sequence of c1, …, cn ∈ IR then
+(z, s) ∈ IEXT(I(owl:unionOf)) iff z, c1, …, cn ∈ IC, ICEXT(z) = ICEXT(c1)
+∪ … ∪ ICEXT(cn)" — the left-to-right half. -/
+def CondUnionOfOnly : Prop :=
+  ∀ (z s : i.idom) (cs : List i.idom), SeqIs i s cs → i.iext (i.iIri owlUnionOf) z s →
+    IC i z ∧ ∀ x, icext i x z ↔ ∃ c ∈ cs, icext i x c
+
+/-- Table 5.4, `owl:intersectionOf`, the left-to-right half:
+`ICEXT(z) = ICEXT(c1) ∩ … ∩ ICEXT(cn)`. -/
+def CondIntersectionOfOnly : Prop :=
+  ∀ (z s : i.idom) (cs : List i.idom), SeqIs i s cs →
+    i.iext (i.iIri owlIntersectionOf) z s →
+    IC i z ∧ ∀ x, icext i x z ↔ ∀ c ∈ cs, icext i x c
+
 /-- Table 5.10, `owl:AllDifferent` with `owl:members` and with
 `owl:distinctMembers`: the two left-to-right conditions. -/
 def CondAllDifferent : Prop :=
@@ -326,6 +340,8 @@ structure RdfBasedConditions (i : Interp) : Prop where
   differentFromIf : CondDifferentFromIf i
   complementOf : CondComplementOf i
   oneOf : CondOneOf i
+  unionOfOnly : CondUnionOfOnly i
+  intersectionOfOnly : CondIntersectionOfOnly i
   allDifferent : CondAllDifferent i
   functionalIf : CondFunctionalIf i
   inverseFunctionalIf : CondInverseFunctionalIf i
@@ -370,6 +386,8 @@ def wBase (p x y : WDom) : Prop :=
   else if p = wI owlComplementOf then ∀ z, wExt z x ↔ ¬ wExt z y
   else if p = wI owlDifferentFrom then x ≠ y
   else if p = wI owlOneOf then (y = wI rdfNil → ∀ z, ¬ wExt z x)
+  else if p = wI owlUnionOf then (y = wI rdfNil → ∀ z, ¬ wExt z x)
+  else if p = wI owlIntersectionOf then (y = wI rdfNil → ∀ z, wExt z x)
   else if p = wI rdfFirst then False
   else if p = wI rdfRest then y = wI rdfNil
   else if p = wI owlAllValuesFrom then (∀ z, ¬ wExt z x) ∨ (∀ z, wExt z y)
@@ -446,12 +464,12 @@ theorem w_iext {p : WfIri} (h1 : p ≠ rdfsDomain) (h2 : p ≠ rdfsRange)
 
 theorem wBase_default {p : WfIri}
     (h : (p != rdfType && p != rdfsSubClassOf && p != owlComplementOf && p != owlDifferentFrom &&
-          p != owlOneOf && p != rdfFirst && p != rdfRest && p != owlAllValuesFrom &&
-          p != owlSomeValuesFrom) = true)
+          p != owlOneOf && p != owlUnionOf && p != owlIntersectionOf && p != rdfFirst &&
+          p != rdfRest && p != owlAllValuesFrom && p != owlSomeValuesFrom) = true)
     (x y : WDom) : wBase (wI p) x y := by
   simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩ := h
-  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, if_false]
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩, h11⟩ := h
+  simp only [wBase, wI_inj, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, if_false]
 
 theorem wBase_sub (x y : WDom) :
     wBase (wI rdfsSubClassOf) x y ↔ ∀ z, wExt z x → wExt z y := by
@@ -466,6 +484,14 @@ theorem wBase_diff (x y : WDom) : wBase (wI owlDifferentFrom) x y ↔ x ≠ y :=
 
 theorem wBase_oneOf (x y : WDom) :
     wBase (wI owlOneOf) x y ↔ (y = wI rdfNil → ∀ z, ¬ wExt z x) := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
+theorem wBase_union (x y : WDom) :
+    wBase (wI owlUnionOf) x y ↔ (y = wI rdfNil → ∀ z, ¬ wExt z x) := by
+  simp (config := { decide := true }) only [wBase, if_true, if_false]
+
+theorem wBase_inter (x y : WDom) :
+    wBase (wI owlIntersectionOf) x y ↔ (y = wI rdfNil → ∀ z, wExt z x) := by
   simp (config := { decide := true }) only [wBase, if_true, if_false]
 
 theorem wBase_first (x y : WDom) : ¬ wBase (wI rdfFirst) x y := by
@@ -615,6 +641,18 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
       exact ⟨fun hx => absurd hx (h rfl x), fun hx => absurd hx (List.not_mem_nil)⟩
     · intro h _ w hw
       exact List.not_mem_nil ((h.2 w).mp ((w_ic _ _).mpr hw))
+  unionOfOnly := by
+    intro z s cs hs hu
+    obtain ⟨rfl, rfl⟩ := w_seq_nil hs
+    have h := (wBase_union _ _).mp ((w_iext (by decide) (by decide) _ _).mp hu) rfl
+    refine ⟨w_IC z, fun x => ⟨fun hx => absurd ((w_ic _ _).mp hx) (h x), ?_⟩⟩
+    rintro ⟨c, hc, _⟩; exact absurd hc List.not_mem_nil
+  intersectionOfOnly := by
+    intro z s cs hs hi
+    obtain ⟨rfl, rfl⟩ := w_seq_nil hs
+    have h := (wBase_inter _ _).mp ((w_iext (by decide) (by decide) _ _).mp hi) rfl
+    exact ⟨w_IC z, fun x => ⟨fun _ c hc => absurd hc List.not_mem_nil,
+      fun _ => (w_ic _ _).mpr (h x)⟩⟩
   allDifferent := by
     intro mp _ z s as hs _ _ j k aj ak _ hj _
     obtain ⟨rfl, _⟩ := w_seq_nil hs
