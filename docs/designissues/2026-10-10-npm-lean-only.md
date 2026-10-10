@@ -137,7 +137,7 @@ implementation:
    the repairs of § 10, the Lean engine is within 1.72 times the faster F\*
    bundle on every row and size measured, and faster on parse, SHACL and
    canonicalization at 6,000 triples and above; its wasm memory at 48,000
-   triples is 1.2 GB, issue NEW-1.)
+   triples is 1.2 GB, https://github.com/danbri/factoidal/issues/744.)
 
 COTTAS is not a reason: the owner's ruling on issue 566 lets the package drop
 the F\* COTTAS functions in favour of the Lean store.
@@ -773,7 +773,7 @@ After the two `RDF.Canonical` repairs the Lean module canonicalizes 24,000
 blank-node quads on Node's default stack, which neither F\* bundle does. It is
 slow there: 16.9 s in the bench (one run) and 10.3 s in a gate run, against
 0.76 s and 1.03 s at 6,000 quads, 22 and 9.9 times the time for 4 times the
-input. That is issue NEW-2, held by the gate as `SCALING_XFAIL['canonicalize']`
+input. That is https://github.com/danbri/factoidal/issues/745, held by the gate as `SCALING_XFAIL['canonicalize']`
 (bound: 9 times). Where the time goes is not measured here.
 
 The Lean module after the repairs (Lean only, same sizes and inputs; load
@@ -816,10 +816,10 @@ size is at most 1.72 (COUNT(DISTINCT) at 3,000 triples). So no row is more
 than 2 times slower and no speed issue is opened. A caller that queries one
 dataset repeatedly gets the parse-once path from `openDataset()`.
 
-Two defects that are not speed rows are recorded as issues (NEW-2 is the
+Two defects that are not speed rows are recorded as issues (https://github.com/danbri/factoidal/issues/745 is the
 canonicalization scaling above):
 
-- **NEW-1, linear memory.** `parse()` of 48,000 triples raises the Lean
+- **https://github.com/danbri/factoidal/issues/744, linear memory.** `parse()` of 48,000 triples raises the Lean
   module's linear memory to 641 MB after one call and to 1,227 MB after six;
   the native build of the same op peaks at 388 MB resident, and the F\* js
   bundle's child process at 304 MB. Linear memory never shrinks and wasm32
@@ -836,11 +836,11 @@ engines, plus the sizes its expected-failure keys name, and requires the Lean
 time to be at most 2 times the faster F\* bundle. `XFAIL` holds
 no row (it held `order-by@small` and `group-by@small` until the repairs
 above). `MEMORY_XFAIL` holds `parse-turtle@large` with a bound of 256 MB of
-linear memory (issue NEW-1). `SCALING_XFAIL` holds `canonicalize`: the Lean
-time at 24,000 quads at most 9 times the time at 6,000 (issue NEW-2). Each
+linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` holds `canonicalize`: the Lean
+time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745). Each
 expected failure turns the gate red when it passes. Without the F\* bundles
 the gate exits 2. The placeholder issue URLs
-`https://github.com/danbri/factoidal/issues/NEW-1` and `…/NEW-2` are for the
+`https://github.com/danbri/factoidal/issues/744` and `…/https://github.com/danbri/factoidal/issues/745` are for the
 coordinator to replace with the issues it opens.
 
 Final run on the branch after its merge with core-split (b2ee79fb), load

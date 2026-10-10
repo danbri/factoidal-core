@@ -59,7 +59,7 @@ export const XFAIL = {
 export const MEMORY_XFAIL = {
   // parse() of 48,000 triples: 641 MB after one call, 1,227 MB after six
   // (2026-10-10); the native build peaks at 388 MB resident for the same op.
-  'parse-turtle@large': { boundMB: 256, issue: 'https://github.com/danbri/factoidal/issues/NEW-1' },
+  'parse-turtle@large': { boundMB: 256, issue: 'https://github.com/danbri/factoidal/issues/744' },
 };
 
 /**
@@ -72,7 +72,7 @@ export const SCALING_XFAIL = {
   // canonicalize of 24,000 blank-node quads: 16.9 s; of 6,000: 0.76 s (22
   // times for 4 times the input, 2026-10-10). Both F* bundles fail the
   // 24,000-quad input (stack overflow), so there is no F* time to compare.
-  canonicalize: 'https://github.com/danbri/factoidal/issues/NEW-2',
+  canonicalize: 'https://github.com/danbri/factoidal/issues/745',
 };
 const SCALING_BOUND = 9.0;
 
