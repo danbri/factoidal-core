@@ -236,6 +236,23 @@ inside one `.fsti` file):
   g)`) — consistency alone is met by the all-true relation, which leaves
   the entailment relation possibly equal to everything. Full write-up:
   [`docs/designissues/2026-07-30-hypothesis-satisfiability.md`](../../docs/designissues/2026-07-30-hypothesis-satisfiability.md).
+- **A query that passes near its resource limit is not verified on
+  every platform.** z3 4.13.3 on macOS arm64 searches in a different
+  order from Linux x86_64, so a proof that uses most of its `rlimit`
+  passes on one and fails on the other. It happened 2026-10-10: the
+  factoidal-builds macOS job failed `RDF.Store.Columnar.DeltaLog
+  .lemma_delta_entry_roundtrip` (Error 19, could not prove
+  post-condition) while Linux passed it. Measured with `--quake 8/8
+  --query_stats`: at the default rlimit 5 it used 4.90-4.97 units when it
+  succeeded and failed for 5 of 8 seeds. A scoped `#push-options
+  "--z3rlimit 40"` with a comment that gives those numbers fixed it (8 of
+  8 seeds, about 7 units used). Check a new or changed proof with
+  `fstar.exe --z3version 4.13.3 --admit_except '<Module.name>' --quake
+  8/8 --query_stats <Module>.fst` (diagnosis only; `--admit_except` is
+  never committed), and give a proof that uses more than about 80% of its
+  budget a scoped limit with the measurement in a comment. A larger
+  budget changes no statement, so it is not an escape hatch under Iron
+  Rule #10.
 - For interactive proof/diagnosis, use the F\* MCP server
   (`fstar-mcp` skill) instead of batch `fstar.exe` reruns.
 - Every `assume val` is an acknowledged gap: stub patch in
