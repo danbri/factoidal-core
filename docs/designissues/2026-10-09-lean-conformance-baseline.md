@@ -36,6 +36,12 @@ landing commit.
 | XForms | no Lean runner (build-time guards only) | 2 pass, 0 fail (out of 2) |
 | Differential vs F\* (`l4diff`) | not run: needs `bin/linux-x86_64/factoidal` (install with `tools/fetch-builds.sh`) | — |
 
+The F\* figures in the two OWL rows above (EL profile, DL type-inconsistency)
+are fixed text that `l4owl-probe` printed on every run until 2026-10-10. They
+were copied from an old `docs/test-results/latest.json` on 2026-08-22. No F\*
+run on this tree measured them. See the section "OWL reporting lines,
+2026-10-10" at the end of this record.
+
 ## Full table
 
 ```
@@ -430,3 +436,132 @@ now answer 303 to a W3C login; the 3 related-test cases pass by
 `g:alternative` or `g:subsumes` (counted apart); the 13 local overrides are
 the 7 edited networked inputs, the 4 `loopx` cases and the 2 language cases
 of issue 730.
+
+## OWL reporting lines, 2026-10-10
+
+Source of the numbers: `tools/lean-scoreboard.sh --only l4owl-probe` on
+branch `claude/wt-owl-report` (factoidal-core `db3f045f` plus the reporting
+change), Lean 4.33.1, run in two parts because the DL jobs need more address
+space (`prlimit --as=4000000000` for the RL, species, fs-input and RDF-Based
+jobs; `prlimit --as=16000000000` for the five DL jobs, which abort with
+"failed to create thread" at 4 GB). The change touches reporting only.
+Checks: the logs of all 10 jobs, before and after, differ in no existing line
+(the `wall_ms` field and the removed 13-line block of fixed F\* text excepted); the 61
+existing scoreboard rows are unchanged, and 15 rows are new (76 in all).
+
+What was wrong with the report:
+
+1. The probe printed a 13-line block with four fixed F\* figures
+   (`owl_rl_positive_entailment`, `owl2_profile_ql`, `owl2_profile_el`,
+   `owl2_dl_inconsistency`) on every run. They read as measurements and were
+   not. The block is removed. An F\* comparison has to come from a measured
+   F\* run.
+2. The DL lines did not split by test status or species. The 12 failing
+   positive-entailment units were all species FULL-only with status Proposed,
+   and the one failing inconsistency unit was status Extracredit. A reader
+   could not see that.
+3. The RL closure run over the whole catalog (1234 pass, 221 fail, 2 skip,
+   out of 1457) was not labelled as incomplete by design on tests outside the
+   RL profile.
+
+Rule for all new lines (OWL 2 Conformance, https://www.w3.org/TR/owl2-conformance/):
+no unit leaves any existing count. A unit that a regime does not claim is
+named as out of scope and stays counted where it was
+(https://github.com/danbri/factoidal/issues/721).
+
+### The lines
+
+After the existing lines of each catalog, and once more for the TOTAL (the
+TOTAL adds catalogs that overlap), the probe prints:
+
+| Line | Meaning |
+|---|---|
+| `BY-STATUS <catalog> [<tag>] Approved\|Proposed\|Extracredit\|other` | the catalog's units split by `test:status` (3.2.8, section 4). "other" = Rejected or no status; all.rdf has 29 cases with none |
+| `BY-SPECIES <catalog> [<tag>] DL\|FULL-only` | split by `test:species` (3.2.5). A case that names DL counts as DL; FULL-only names FULL without DL |
+| `BY-PROFILE <catalog> [rl-closure] RL\|not-RL` | RL closure regime only: split by `test:profile` (3.2.6) |
+| `IN-SCOPE <catalog> [<tag>] <condition>` | the units inside the regime's conformance claim |
+| `FAILING-UNITS` and `FAILING-UNIT` | every failing unit with its status, species and "in scope yes/no" |
+| `SCOPE [<tag>]` | the sentences that define IN-SCOPE for the regime, once per run |
+
+`<tag>` and the IN-SCOPE condition:
+
+| Tag | Run | In scope | Why (OWL 2 Conformance) |
+|---|---|---|---|
+| `rl-closure` | default | status Approved and `test:profile RL` | the RL checker is complete for RL ontologies only (2.2.1) |
+| `dl` | `--dl` | status Approved, species DL, semantics DIRECT | the DL checker takes DL documents under the Direct Semantics (2.2.1, 3.2.4, 3.2.5) |
+| `rdf-based` | `--rdf-based` | status Approved | every case is an OWL 2 Full document |
+
+The scoreboard has one new row per catalog and job, labelled
+`<catalog> Approved, in scope`, after the existing rows of the job, with a
+note that says what is in and what is out. It is the conformance number of the
+regime on that catalog.
+
+### Numbers (all counts are units, not cases)
+
+RL closure regime (`l4owl-probe-rl`, `l4owl-probe-rl-extra`):
+
+| Catalog | All units | In scope |
+|---|---|---|
+| profile-RL.rdf | 126 pass, 0 fail (out of 126) | 102 pass, 0 fail (out of 102) |
+| profile-EL.rdf | 118 pass, 2 fail, 1 skip (out of 121) | 66 pass, 0 fail (out of 66) |
+| profile-QL.rdf | 87 pass, 0 fail (out of 87) | 53 pass, 0 fail (out of 53) |
+| type-positive-entailment.rdf | 344 pass, 68 fail (out of 412) | 56 pass, 0 fail (out of 56) |
+| type-inconsistency.rdf | 44 pass, 83 fail, 1 skip (out of 128) | 14 pass, 0 fail (out of 14) |
+| type-consistency.rdf | 515 pass, 68 fail (out of 583) | 88 pass, 0 fail (out of 88) |
+| type-negative-entailment.rdf | 46 pass, 0 fail (out of 46) | 8 pass, 0 fail (out of 8) |
+| syntax-dl.rdf | 305 pass, 118 fail, 1 skip (out of 424) | 102 pass, 0 fail (out of 102) |
+| semantics-direct.rdf | 558 pass, 151 fail, 1 skip (out of 710) | 102 pass, 0 fail (out of 102) |
+| TOTAL of the six default catalogs | 1234 pass, 221 fail, 2 skip (out of 1457) | 379 pass, 0 fail (out of 379) |
+
+The TOTAL splits by profile: units of cases annotated RL are 471 pass, 0 fail
+(out of 471); the others are 763 pass, 221 fail, 2 skip (out of 986). Every
+failure of the RL closure is in a case outside the RL profile. By status the
+TOTAL is Approved 915 pass, 143 fail (out of 1058); Proposed 212 pass,
+66 fail, 2 skip (out of 280); Extracredit 39 pass, 12 fail (out of 51);
+other 68 pass (out of 68). Over all of these the RL conformance number is the
+profile-RL.rdf pair: 102 pass, 0 fail (out of 102) in scope (status Approved),
+126 pass, 0 fail (out of 126) for all statuses.
+
+DL regime (`--dl --refute-ms 3000`, the five `l4owl-probe-dl-*` jobs):
+
+| Catalog | All units | In scope | Failing units |
+|---|---|---|---|
+| type-inconsistency.rdf | 126 pass, 1 fail, 1 skip (out of 128) | 97 pass, 0 fail (out of 97) | `WebOnt-description-logic-909`: Extracredit, DL |
+| type-positive-entailment.rdf | 400 pass, 12 fail (out of 412) | 150 pass, 0 fail (out of 150) | 12 units, all Proposed and FULL-only |
+| type-consistency.rdf | 571 pass, 12 fail (out of 583) | 253 pass, 0 fail (out of 253) | the same 12 units |
+| syntax-dl.rdf | 422 pass, 1 fail, 1 skip (out of 424) | 350 pass, 0 fail (out of 350) | `WebOnt-description-logic-909`: Extracredit, DL |
+| type-negative-entailment.rdf | 46 pass, 0 fail (out of 46) | 18 pass, 0 fail (out of 18) | none |
+
+The 12 units are `WebOnt-Class-001`, `WebOnt-Class-003`, `WebOnt-I5.3-015`,
+`WebOnt-I5.5-001`, `WebOnt-I5.5-002`, `WebOnt-I5.8-017`, `WebOnt-Nothing-002`,
+`WebOnt-equivalentProperty-005`, `WebOnt-extra-credit-002`,
+`WebOnt-extra-credit-003`, `WebOnt-extra-credit-004`, `WebOnt-imports-010`
+(`PositiveEntailmentTest`). They are the cases of
+https://github.com/danbri/factoidal/issues/721. They stay failing in the DL
+numbers and are judged by the RDF-Based regime too. (`WebOnt-I5.5-001` and
+`-002` are the disputed fixtures of
+https://github.com/danbri/factoidal/issues/734.)
+
+RDF-Based regime (`--rdf-based`, all.rdf):
+
+| Split | Units |
+|---|---|
+| In scope (status Approved) | 155 pass, 103 fail, 242 not-refuted, 0 unsupported, 0 local-override (out of 500) |
+| Proposed | 40 pass, 14 fail, 91 not-refuted, 0 unsupported, 2 local-override (out of 147) |
+| Extracredit | 6 pass, 8 fail, 17 not-refuted, 0 unsupported, 0 local-override (out of 31) |
+| other | 1 pass, 0 fail, 20 not-refuted, 0 unsupported, 0 local-override (out of 21) |
+| DL | 76 pass, 113 fail, 224 not-refuted, 0 unsupported, 0 local-override (out of 413) |
+| FULL-only | 126 pass, 12 fail, 146 not-refuted, 0 unsupported, 2 local-override (out of 286) |
+| All units | 202 pass, 125 fail, 370 not-refuted, 0 unsupported, 2 local-override (out of 699) |
+
+A `not-refuted` unit is never a pass: the regime proves entailments and
+inconsistencies and never proves their absence. The 2 local-override units are
+the disputed fixtures `WebOnt-I5.5-001` and `-002`.
+
+How to read these results: every unit that is in scope passes in the RL
+closure and DL regimes. The failing units are outside the claim of their
+regime (cases outside the RL profile; Proposed, Extracredit and FULL-only
+cases in the DL regime). They stay counted and named. In the RDF-Based regime
+103 in-scope units fail and 242 are not refuted. The failing units are named
+in the log. The reasons are in section 7 of
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md`.

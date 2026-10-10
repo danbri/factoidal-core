@@ -149,6 +149,23 @@ the same input, and checks the two rounds produced the same list.
 FAIL lines carry a cause tag (`parser:`, `closure-gap:`, `clash:`,
 `cap:`, `harness:`) and are grouped by tag at the end of each catalog.
 
+After the FAIL-GROUP lines of each catalog (and after the per-catalog
+lines of `--rdf-based`), and once more for the TOTAL, the probe prints
+BREAKDOWN lines (added 2026-10-10, reporting only; see
+`breakdownLines`). `<tag>` is `rl-closure`, `dl`, `rl-refute` or
+`rdf-based`; the counts use the grammar of the regime's own score line:
+
+    BY-STATUS <catalog> [<tag>] Approved|Proposed|Extracredit|other: N pass, ...
+    BY-SPECIES <catalog> [<tag>] DL|FULL-only: N pass, ...
+    BY-PROFILE <catalog> [rl-closure] RL|not-RL: N pass, ...
+    IN-SCOPE <catalog> [<tag>] <scope>: N pass, ...
+    FAILING-UNITS <catalog> [<tag>]: N (out of T)
+      FAILING-UNIT <catalog> [<tag>] <id> [<TestType>]: status S, species P, in scope yes|no
+    SCOPE [<tag>]: <what IN-SCOPE counts>
+
+The lines of one facet add up to the catalog line they split. No F*
+number is printed: an F* comparison has to come from a measured F* run.
+
 NOT part of the verified library: this file does file I/O, reads the
 clock, and prints scores.
 -/
@@ -233,6 +250,13 @@ structure Case where
   /-- Fragments of `test:species` (`DL` / `FULL`). A case annotated with
       both is within OWL 2 DL: every DL ontology is also a Full one. -/
   species       : List String := []
+  /-- Fragments of `test:status` (`Approved`, `Proposed`, `Extracredit`,
+      `Rejected`; OWL 2 Conformance 3.2.8). Read for REPORTING only: no
+      verdict depends on it. -/
+  status        : List String := []
+  /-- Fragments of `test:profile` (`EL`, `QL`, `RL`; OWL 2 Conformance
+      3.2.6). Read for REPORTING only: no verdict depends on it. -/
+  profiles      : List String := []
   /-- `test:rdfXmlInputOntology` on the case itself: the document of a
       case that has no premise (`WebOnt-imports-004` and its siblings),
       the way an import wrapper node carries the imported document. -/
@@ -276,6 +300,8 @@ def readCase (attrs : List Attribute) (kids : List Node) : Case := Id.run do
           c := { c with fsNonConclusionText := some (directText k) }
       | "importedOntology"            => c := { c with imports := c.imports ++ [res] }
       | "species"                     => c := { c with species := c.species ++ [fragmentOf res] }
+      | "status"                      => c := { c with status := c.status ++ [fragmentOf res] }
+      | "profile"                     => c := { c with profiles := c.profiles ++ [fragmentOf res] }
       | "rdfXmlInputOntology"         => c := { c with inputOntology := some (directText k) }
       | "owlXmlPremiseOntology"       => c := { c with owlXmlPremise := some (directText k) }
       | "owlXmlConclusionOntology"    => c := { c with owlXmlConclusion := some (directText k) }
@@ -1378,6 +1404,240 @@ def causeOf (reason : String) : String :=
   | c :: _ :: _ => c
   | _           => "other"
 
+/-! ## Breakdown reporting (added 2026-10-10; REPORTING ONLY)
+
+No verdict, no count and no existing summary line depends on this
+section. It prints extra lines that SPLIT the units of a regime and a
+catalog by what the catalog says about each case, so that one score is
+readable per facet. Every line uses the score-line grammar of the line
+it splits ("N pass, M fail, ... (out of T)"), and the lines of one
+facet add up to the catalog line.
+
+* `BY-STATUS`: `test:status` of the case (OWL 2 Conformance 3.2.8 and
+  section 4). Approved cases are the official test repository. A
+  Proposed case is a case the Working Group did not decide. An
+  Extracredit case is approved, and "there is no expectation that any
+  implementation will successfully run" it (section 4).
+* `BY-SPECIES`: DL when `test:species` names DL; FULL-only when it names
+  FULL and not DL (OWL 2 Conformance 3.2.5).
+* `BY-PROFILE` (RL closure regime only): the case is annotated
+  `test:profile RL`, or not (OWL 2 Conformance 3.2.6).
+* `IN-SCOPE`: the units inside the conformance claim of the regime
+  (`Scope`, below). A unit outside the claim stays counted in the
+  existing lines; the new line only adds a view (issue 721: the FULL-only
+  units are counted where they were).
+* `FAILING-UNITS` and `FAILING-UNIT`: every failing unit, with its
+  status and species, so that no failure is hidden by a split.
+
+The facts are read from the catalog by `readCase`, in the same pass as
+every other field of `Case`. -/
+
+/-- The facts about one unit's case that the breakdown reads. -/
+structure UnitFacts where
+  caseId    : String
+  ty        : String
+  /-- Approved, Proposed, Extracredit, or other (Rejected or absent). -/
+  status    : String
+  /-- DL, FULL-only, or none (no `test:species`). -/
+  species   : String
+  /-- `test:profile` names RL. -/
+  rlProfile : Bool
+  /-- `test:semantics` names DIRECT. -/
+  direct    : Bool
+deriving Repr
+
+/-- The status buckets, in print order. -/
+def statusBuckets : List String := ["Approved", "Proposed", "Extracredit", "other"]
+
+def statusOf (c : Case) : String :=
+  match ["Approved", "Proposed", "Extracredit"].find? (fun b => c.status.contains b) with
+  | some b => b
+  | none   => "other"
+
+def speciesOf (c : Case) : String :=
+  if c.species.contains "DL" then "DL"
+  else if c.species.contains "FULL" then "FULL-only"
+  else "none"
+
+def UnitFacts.ofCase (c : Case) (ty : String) : UnitFacts :=
+  { caseId := c.id, ty := ty, status := statusOf c, species := speciesOf c,
+    rlProfile := c.profiles.contains "RL", direct := c.semantics.contains "DIRECT" }
+
+/-- The conformance claim a regime makes, as a predicate on a unit. -/
+inductive Scope where
+  /-- RL closure alone. The OWL 2 RL entailment checker is complete for
+  OWL 2 RL ontologies (OWL 2 Conformance 2.2.1); the cases annotated
+  `test:profile RL` are those (3.2.6). -/
+  | rlProfile
+  /-- A regime with the refuter: the OWL 2 DL entailment checker under
+  the Direct Semantics. It takes OWL 2 DL documents (2.2.1, 3.2.5), and
+  a test applies to it when it names DIRECT (3.2.4). -/
+  | directDl
+  /-- The RDF-Based Semantics regime (issue 721): it judges OWL 2 Full
+  documents, which is every case, so only the status selects. -/
+  | rdfBased
+deriving DecidableEq
+
+def Scope.inScope : Scope → UnitFacts → Bool
+  | .rlProfile, f => f.status == "Approved" && f.rlProfile
+  | .directDl,  f => f.status == "Approved" && f.species == "DL" && f.direct
+  | .rdfBased,  f => f.status == "Approved"
+
+def Scope.describe : Scope → String
+  | .rlProfile => "status Approved, case annotated test:profile RL"
+  | .directDl  => "status Approved, species DL, semantics DIRECT"
+  | .rdfBased  => "status Approved"
+
+/-- The claim of a `runCatalog` regime: the refuter makes it the DL
+claim; the closure alone makes it the RL claim. -/
+def scopeOfRegime (r : Regime) : Scope := if r.refuter then .directDl else .rlProfile
+
+/-- The tag in square brackets on the new lines. -/
+def regimeTag (r : Regime) : String :=
+  if r.refuter && r.materialise then "dl"
+  else if r.refuter then "rl-refute"
+  else "rl-closure"
+
+/-- The breakdown lines of one catalog under one regime. `units` pairs
+the facts of every unit with its outcome `ω`; `bump` adds one outcome to
+a tally `σ`; `line` prints a tally in the grammar of the regime's own
+score line. -/
+def breakdownLines {ω σ : Type} (name tag : String) (scope : Scope)
+    (units : List (UnitFacts × ω)) (empty : σ) (bump : σ → ω → σ)
+    (line : String → σ → String) : List String :=
+  let tally (keep : UnitFacts → Bool) : σ :=
+    units.foldl (fun s p => if keep p.1 then bump s p.2 else s) empty
+  let byStatus := statusBuckets.map fun b =>
+    line s!"BY-STATUS {name} [{tag}] {b}" (tally (fun f => f.status == b))
+  let speciesKeys := ["DL", "FULL-only"] ++
+    (if units.any (fun p => p.1.species == "none") then ["none"] else [])
+  let bySpecies := speciesKeys.map fun k =>
+    line s!"BY-SPECIES {name} [{tag}] {k}" (tally (fun f => f.species == k))
+  let byProfile :=
+    if scope == .rlProfile then
+      [line s!"BY-PROFILE {name} [{tag}] RL" (tally (fun f => f.rlProfile)),
+       line s!"BY-PROFILE {name} [{tag}] not-RL" (tally (fun f => !f.rlProfile))]
+    else []
+  let inScope :=
+    [line s!"IN-SCOPE {name} [{tag}] {scope.describe}" (tally scope.inScope)]
+  byStatus ++ bySpecies ++ byProfile ++ inScope
+
+/-- The block that names every failing unit. `failing` pairs the facts of
+a failing unit with a note (empty, or the local override that counts it
+apart). The header is printed when there is no failing unit too, so an
+absence is visible. -/
+def failingLines (name tag : String) (scope : Scope) (total : Nat)
+    (failing : List (UnitFacts × String)) : List String :=
+  s!"FAILING-UNITS {name} [{tag}]: {failing.length} (out of {total})" ::
+  failing.map fun (f, note) =>
+    s!"  FAILING-UNIT {name} [{tag}] {f.caseId} [{f.ty}]: status {f.status}, \
+species {f.species}, in scope {if scope.inScope f then "yes" else "no"}{note}"
+
+/-- The sentences that say what the `IN-SCOPE` lines of a regime count.
+Printed once per run, after the totals. -/
+def scopeLines (tag : String) : Scope → List String
+  | .rlProfile =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units of cases with status Approved that \
+are annotated test:profile RL. Only those units are inside the claim of this regime.",
+       s!"SCOPE [{tag}]: the OWL 2 RL closure is complete for OWL 2 RL ontologies only \
+(OWL 2 Conformance 2.2.1, 3.2.6). A unit outside the claim can fail by design, and its failure \
+is not a defect of the closure. Every unit stays counted in the other lines.",
+       s!"SCOPE [{tag}]: a TOTAL line adds catalogs that overlap, and it includes units outside the \
+claim. For the RL conformance number, read the profile-RL.rdf lines: the IN-SCOPE line for the \
+Approved units, and the line without a split for all units."]
+  | .directDl =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units of cases with status Approved, species DL \
+and semantics DIRECT. The OWL 2 DL entailment checker takes OWL 2 DL documents \
+(OWL 2 Conformance 2.2.1, 3.2.4, 3.2.5).",
+       s!"SCOPE [{tag}]: a unit of a FULL-only case is judged in the RDF-Based regime \
+(https://github.com/danbri/factoidal/issues/721). It stays counted in the other lines of this run. \
+A Proposed or Extracredit unit is not inside the claim (OWL 2 Conformance 3.2.8, section 4).",
+       s!"SCOPE [{tag}]: a TOTAL line adds catalogs that overlap."]
+  | .rdfBased =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units with status Approved. Every case is an \
+OWL 2 Full document. A pass is a proved entailment or a proved inconsistency; a not-refuted unit \
+is never a pass."]
+
+/-! ### Guards for the reporting functions
+
+Positive and negative: a `Scope.inScope` that answers yes for every
+unit, a status or species bucket that is mis-assigned, or a split that
+drops or repeats a unit, fails the build. The six cases cover every
+branch: an Approved DL case that is RL, a Proposed FULL-only case, an
+Extracredit DL case, a case without status, an Approved FULL-only case,
+and an Approved DL case that is not DIRECT. -/
+
+private def gCase (id : String) (st sp sem pr : List String) : Case :=
+  { id := id, status := st, species := sp, semantics := sem, profiles := pr }
+
+private def gA : Case := gCase "a" ["Approved"] ["FULL", "DL"] ["DIRECT", "RDF-BASED"] ["RL"]
+private def gB : Case := gCase "b" ["Proposed"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gC : Case := gCase "c" ["Extracredit"] ["FULL", "DL"] ["DIRECT"] []
+private def gD : Case := gCase "d" [] ["FULL"] [] []
+private def gE : Case := gCase "e" ["Approved"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gF : Case := gCase "f" ["Approved"] ["FULL", "DL"] ["RDF-BASED"] []
+
+private def gUnits : List (UnitFacts × Harness.Outcome) :=
+  [(UnitFacts.ofCase gA "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gB "PositiveEntailmentTest", .fail "x"),
+   (UnitFacts.ofCase gC "InconsistencyTest", .fail "y"),
+   (UnitFacts.ofCase gD "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gE "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gF "ConsistencyTest", .fail "z")]
+
+private def gLines (sc : Scope) (tag : String) : List String :=
+  breakdownLines "g.rdf" tag sc gUnits ({} : Harness.Score) (fun s o => s.bump o)
+    Harness.Score.line
+
+#guard [gA, gB, gC, gD].map statusOf == ["Approved", "Proposed", "Extracredit", "other"]
+#guard [gA, gB, gD].map speciesOf == ["DL", "FULL-only", "FULL-only"]
+#guard speciesOf (gCase "z" [] [] [] []) == "none"
+-- Direct Semantics claim: Approved, DL and DIRECT. Each of the five other
+-- cases fails one condition.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.directDl.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RL claim: Approved and annotated profile RL.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rlProfile.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RDF-Based claim: status Approved only.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rdfBased.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, true, true]
+#guard gLines .directDl "dl" ==
+  ["BY-STATUS g.rdf [dl] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [dl] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [dl] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [dl] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "IN-SCOPE g.rdf [dl] status Approved, species DL, semantics DIRECT: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+#guard gLines .rlProfile "rl-closure" ==
+  ["BY-STATUS g.rdf [rl-closure] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [rl-closure] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [rl-closure] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [rl-closure] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-PROFILE g.rdf [rl-closure] RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-PROFILE g.rdf [rl-closure] not-RL: 2 pass, 3 fail, 0 skip, 0 unsupported (out of 5)",
+   "IN-SCOPE g.rdf [rl-closure] status Approved, case annotated test:profile RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+-- The lines of one facet add up to the catalog: 6 units in each split.
+#guard (["Approved", "Proposed", "Extracredit", "other"].map fun b =>
+    (gUnits.filter (fun p => p.1.status == b)).length).foldl (· + ·) 0 == gUnits.length
+#guard (["DL", "FULL-only", "none"].map fun k =>
+    (gUnits.filter (fun p => p.1.species == k)).length).foldl (· + ·) 0 == gUnits.length
+-- The failing block names each failing unit with its status, species and scope.
+#guard failingLines "g.rdf" "dl" .directDl 6
+    ((gUnits.filter (fun p => p.2.isFail)).map (fun p => (p.1, ""))) ==
+  ["FAILING-UNITS g.rdf [dl]: 3 (out of 6)",
+   "  FAILING-UNIT g.rdf [dl] b [PositiveEntailmentTest]: status Proposed, species FULL-only, in scope no",
+   "  FAILING-UNIT g.rdf [dl] c [InconsistencyTest]: status Extracredit, species DL, in scope no",
+   "  FAILING-UNIT g.rdf [dl] f [ConsistencyTest]: status Approved, species DL, in scope no"]
+#guard failingLines "g.rdf" "dl" .directDl 1 [(UnitFacts.ofCase gA "ConsistencyTest", "")] ==
+  ["FAILING-UNITS g.rdf [dl]: 1 (out of 1)",
+   "  FAILING-UNIT g.rdf [dl] a [ConsistencyTest]: status Approved, species DL, in scope yes"]
+-- No failing unit: the header is printed, with 0.
+#guard failingLines "g.rdf" "dl" .directDl 6 [] == ["FAILING-UNITS g.rdf [dl]: 0 (out of 6)"]
+
 /-! ## Per-catalog run -/
 
 structure CatalogResult where
@@ -1401,6 +1661,9 @@ structure CatalogResult where
   refuterFlips  : Nat := 0
   units    : Nat := 0
   wallMs   : Nat := 0
+  /-- The facts and the regime's outcome of every unit, for the
+  breakdown lines (`breakdownLines`). Reporting only. -/
+  unitFacts : List (UnitFacts × Harness.Outcome) := []
 
 def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Outcome)
     : List (String × Harness.Score) :=
@@ -1455,7 +1718,8 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
         r := { r with score := r.score.bump o, perType := bumpType r.perType ty o,
                       closureScore := r.closureScore.bump v.closure,
                       perTypeClosure := bumpType r.perTypeClosure ty v.closure,
-                      measure := r.measure.add m, units := r.units + 1 }
+                      measure := r.measure.add m, units := r.units + 1,
+                      unitFacts := r.unitFacts ++ [(UnitFacts.ofCase c ty, o)] }
   let t1 ← IO.monoMsNow
   r := { r with wallMs := t1 - t0 }
   -- Score lines. With the refuter off the two are the same run and
@@ -1488,6 +1752,16 @@ ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
   for cause in causes do
     let these := r.fails.filter (fun f => f.1 == cause)
     IO.println s!"  FAIL-GROUP {name} {cause}: {these.length} — {String.intercalate ", " (these.map (·.2.1))}"
+  -- Breakdown by status and species, then every failing unit with its
+  -- status and species (reporting only; see `breakdownLines`).
+  let tag := regimeTag rg
+  let scope := scopeOfRegime rg
+  for l in breakdownLines name tag scope r.unitFacts ({} : Harness.Score)
+      (fun s o => s.bump o) Harness.Score.line do
+    IO.println l
+  for l in failingLines name tag scope r.units
+      ((r.unitFacts.filter (fun p => p.2.isFail)).map (fun p => (p.1, ""))) do
+    IO.println l
   return r
 
 /-! ## The OWL 2 RDF-Based Semantics regime (`--rdf-based`)
@@ -1726,6 +2000,10 @@ structure RbCatalogResult where
   applied : List String := []
   /-- Override ids with a unit that now passes: each fails the run. -/
   stale : List String := []
+  /-- The facts of every unit with its outcome, and the issue of the
+  local override that counts it apart (a failing unit only), for the
+  breakdown lines (`breakdownLines`). Reporting only. -/
+  unitFacts : List (UnitFacts × (RbOutcome × Option String)) := []
 
 /-- `overrides`: `(test_id, issue)` of the local overrides of suite
 `owl-rdf-based` (`loadLocalOverrides`, below). A FAILING unit of a named
@@ -1772,8 +2050,10 @@ tests/local-overrides/ and close {issue}"
         let pt := match r.perType.find? (fun p => p.1 == ty) with
           | some _ => r.perType.map (fun p => if p.1 == ty then (p.1, bumpU p.2) else p)
           | none => r.perType ++ [(ty, bumpU {})]
+        let ovIssue : Option String := if isFail then ov.map (·.2) else none
         r := { r with score := bumpU r.score, perType := pt, measure := r.measure.add m,
-                      units := r.units + 1 }
+                      units := r.units + 1,
+                      unitFacts := r.unitFacts ++ [(UnitFacts.ofCase c ty, (o, ovIssue))] }
   let t1 ← IO.monoMsNow
   r := { r with wallMs := t1 - t0 }
   for ty in testTypes do
@@ -1785,6 +2065,21 @@ tests/local-overrides/ and close {issue}"
 cap_hits={r.measure.capHits} parse_failures={r.measure.parseFailures} \
 rule_triples={r.measure.ruleTriples} proved_by_rules={r.measure.provedByRules} \
 closures_with_comprehension_witness={r.measure.witnessClosures} wall_ms={r.wallMs}"
+  -- Breakdown by status and species, then every failing unit with its
+  -- status and species (reporting only; see `breakdownLines`).
+  for l in breakdownLines name "rdf-based" Scope.rdfBased r.unitFacts ({} : RbScore)
+      (fun s p => match p.2 with
+        | some _ => { s with overridden := s.overridden + 1 }
+        | none   => s.bump p.1)
+      RbScore.line do
+    IO.println l
+  let rbFailing := r.unitFacts.filterMap fun (f, o, ov) =>
+    match o with
+    | .notProved _ | .refuted _ =>
+        some (f, match ov with | some i => s!" (local override, {i})" | none => "")
+    | _ => none
+  for l in failingLines name "rdf-based" Scope.rdfBased r.units rbFailing do
+    IO.println l
   return r
 
 /-! ## Species (`--species`)
@@ -2704,6 +2999,7 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
         applied := applied ++ r.applied
         stale := stale ++ r.stale
         IO.println ""
+  for l in scopeLines "rdf-based" Scope.rdfBased do IO.println l
   for f in notRead do
     IO.println s!"  catalog not read: {f}"
   if !overrides.isEmpty then
@@ -2814,6 +3110,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   let mut totalRefFlip := 0
   let mut totalM : Measure := {}
   let mut totalCases := 0
+  let mut allUnits : List (UnitFacts × Harness.Outcome) := []
   let mut notRead : List String := []
   for name in names do
     let p := dir / name
@@ -2837,6 +3134,7 @@ unrelated triple absent = {!unrelatedAbsent}"
         totalRefFlip := totalRefFlip + r.refuterFlips
         totalM := totalM.add r.measure
         totalCases := totalCases + cat.cases.length
+        allUnits := allUnits ++ r.unitFacts
         IO.println ""
   if o.regime.refuter then
     IO.println (Harness.Score.line "TOTAL [closure alone]" totalClosure)
@@ -2856,19 +3154,16 @@ NO negation goal at all (`negationGoals` does not negate that conclusion shape, 
 refuter could not state the question), {totalM.peBudget} exhausted the tableau budget, \
 {totalM.peCountermodel} were answered with a countermodel."
 
-  IO.println "F* owl_runner comparison (docs/test-results/latest.json, RL regime"
-  IO.println "  unless stated). Each F* number is the SUM of that catalog's"
-  IO.println "  per-test-type runs (PE + NE + Consistency + Inconsistency), the"
-  IO.println "  same unit this probe scores; functional-syntax skips are outside"
-  IO.println "  the F* denominator but INSIDE this probe's (as unsupported):"
-  IO.println "  owl_rl_positive_entailment 30 pass, 0 fail (out of 30)"
-  IO.println "     = profile-RL.rdf, PositiveEntailmentTest line only"
-  IO.println "  owl2_profile_ql 87 pass, 0 fail (out of 87)     = profile-QL.rdf, four types"
-  IO.println "  owl2_profile_el 119 pass, 1 fail (out of 120)   = profile-EL.rdf, four types"
-  IO.println "  owl2_dl_inconsistency 126 pass, 1 fail (out of 127)"
-  IO.println "     = type-inconsistency.rdf, DL regime (RL closure + tableau refuter)"
-  IO.println "  (type-positive-entailment.rdf and type-consistency.rdf have no"
-  IO.println "   published F* line in latest.json.)"
+  -- Breakdown of the TOTAL by status and species, and what the
+  -- IN-SCOPE lines count (reporting only; see `breakdownLines`). The
+  -- catalogs overlap, so these lines add the same units more than once,
+  -- exactly as the TOTAL line does.
+  let totalScope := scopeOfRegime o.regime
+  let totalTag := regimeTag o.regime
+  for l in breakdownLines "TOTAL" totalTag totalScope allUnits ({} : Harness.Score)
+      (fun s o => s.bump o) Harness.Score.line do
+    IO.println l
+  for l in scopeLines totalTag totalScope do IO.println l
   for f in notRead do
     IO.println s!"  catalog not read: {f}"
   return (if notRead.isEmpty && scoOk && total.fail == 0 then 0 else 1)
