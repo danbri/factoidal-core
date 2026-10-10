@@ -15,6 +15,8 @@ disagreements are listed in
 theorems in `L4Factoidal/Fn/Theorems.lean`.
 -/
 
+import L4Factoidal.Text.CaseMap
+
 namespace L4Factoidal.Fn.String
 
 /-! ## §5.4.5-5.4.7 — the three URI escapers
@@ -149,8 +151,15 @@ def endsWith (hay needle : String) : Bool := hay.endsWith needle
 /-- §5.3.2 `fn:string-length`, in CODEPOINTS. -/
 def stringLength (s : String) : Nat := s.toList.length
 
-def upperCase (s : String) : String := s.toUpper
-def lowerCase (s : String) : String := s.toLower
+/-- §5.4.7 `fn:upper-case`, which SPARQL 1.1 §17.4.3.8 `UCASE` and RIF-DTB
+    `func:upper-case` cite. Unicode full case mapping, language-independent
+    (`L4Factoidal.Text.CaseMap`): `ß` gives `SS`. -/
+def upperCase (s : String) : String := Text.CaseMap.upperCase s
+
+/-- §5.4.8 `fn:lower-case`, which SPARQL 1.1 §17.4.3.9 `LCASE` and RIF-DTB
+    `func:lower-case` cite. Unicode full case mapping with the Final_Sigma
+    rule, language-independent (`L4Factoidal.Text.CaseMap`). -/
+def lowerCase (s : String) : String := Text.CaseMap.lowerCase s
 
 /-! ## RFC 4647 language-range matching
 
@@ -217,5 +226,20 @@ def langMatchesBasic (tag range : String) : Bool :=
 #guard matchesLanguageRange "en-GB" "de-*" = false
 #guard langMatchesBasic "de-Latn-DE" "de-*-DE" = false
 #guard langMatchesBasic "de-DE-1996" "de-DE" = true
+
+-- F&O 5.4.7 and 5.4.8, the examples the specification lists, and the cases
+-- that need Unicode default case mapping (Text.CaseMap; issue
+-- https://github.com/danbri/factoidal/issues/706).
+#guard upperCase "abCd0" = "ABCD0"
+#guard lowerCase "ABc!D" = "abc!d"
+#guard upperCase "école" = "ÉCOLE"
+#guard lowerCase "ÉCOLE" = "école"
+#guard upperCase "straße" = "STRASSE"
+#guard lowerCase "straße" = "straße"
+#guard lowerCase "ΑΣ" = "ας"
+#guard upperCase "ÉCOLE" = "ÉCOLE"
+#guard upperCase "123 !?" = "123 !?"
+#guard upperCase "é" != "é"
+#guard lowerCase "É" != "É"
 
 end L4Factoidal.Fn.String

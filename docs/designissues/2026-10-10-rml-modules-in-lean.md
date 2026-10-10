@@ -142,5 +142,9 @@ issues are not yet filed; the coordinator files them and replaces the markers.
 | Shortfall | Test that fails when fixed | Issue |
 |---|---|---|
 | Database source (`rml:SQL2008Table`, D2RQ database): `RMLSTC0006a` | the case is in the bucket `database source` of the `rml-io` score line | https://github.com/danbri/factoidal/issues/707 |
-| Case mapping is ASCII only: Lean `String.toUpper`, shared with SPARQL `UCASE` and XPath `fn:upper-case` | `FunctionTests`/`Functions.lean` guard on `grel:toUpperCase` of `é` | https://github.com/danbri/factoidal/issues/706 |
 | `grel:escape` mode `html` escapes `& < > "` and writes no named entity for a non-ASCII character | `Functions.lean` guard on `grelEscape "é" "html"` | https://github.com/danbri/factoidal/issues/708 |
+
+The case-mapping shortfall that stood in this table (`grel:toUpperCase` of `é`,
+https://github.com/danbri/factoidal/issues/706) is closed: GREL case functions
+call `Fn.String.upperCase` and `lowerCase`, which are Unicode default case
+mapping. Record: `docs/designissues/2026-10-10-unicode-case-mapping.md`.

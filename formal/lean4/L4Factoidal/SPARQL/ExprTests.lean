@@ -232,6 +232,29 @@ def litDir : WfLiteral := mkDirLangLiteral "مرحبا" "ar" .rtl
 #guard (Expr.uCase (.lit (litLang "chat" "fr"))).eval []
   == .term (.literal (litLang "CHAT" "fr"))
 
+-- §17.4.3.8-9: UCASE and LCASE are fn:upper-case and fn:lower-case, which
+-- follow Unicode default case mapping (https://github.com/danbri/factoidal/issues/706).
+#guard (Expr.uCase (.lit (litStr "é"))).eval [] == .term (.literal (litStr "É"))
+#guard (Expr.uCase (.lit (litStr "straße"))).eval [] == .term (.literal (litStr "STRASSE"))
+#guard (Expr.lCase (.lit (litStr "ÉCOLE"))).eval [] == .term (.literal (litStr "école"))
+#guard (Expr.lCase (.lit (litStr "ΑΣ"))).eval [] == .term (.literal (litStr "ας"))
+#guard (Expr.lCase (.lit (litStr "ß"))).eval [] == .term (.literal (litStr "ß"))
+#guard (Expr.lCase (.lit (litStr "ΑΣΑ"))).eval [] == .term (.literal (litStr "ασα"))
+-- the result can be longer than the argument, so STRLEN sees it
+#guard (Expr.strLen (.uCase (.lit (litStr "ß")))).eval [] == .num 2
+-- both keep the language tag
+#guard (Expr.uCase (.lit (litLang "straße" "de"))).eval []
+  == .term (.literal (litLang "STRASSE" "de"))
+#guard (Expr.lCase (.lit (litLang "ÉCOLE" "fr"))).eval []
+  == .term (.literal (litLang "école" "fr"))
+-- negative: ASCII-only case mapping answers these differently
+#guard (Expr.uCase (.lit (litStr "é"))).eval [] != .term (.literal (litStr "é"))
+#guard (Expr.lCase (.lit (litStr "ÉCOLE"))).eval [] != .term (.literal (litStr "École"))
+#guard (Expr.lCase (.lit (litStr "ΑΣ"))).eval [] != .term (.literal (litStr "ασ"))
+-- characters without case, and strings already in the target case, are unchanged
+#guard (Expr.uCase (.lit (litStr "ÉCOLE 123"))).eval [] == .term (.literal (litStr "ÉCOLE 123"))
+#guard (Expr.lCase (.lit (litStr "日本語 !?"))).eval [] == .term (.literal (litStr "日本語 !?"))
+
 #guard (Expr.strStarts (.lit (litStr "foobar")) (.lit (litStr "foo"))).eval [] == .bool true
 #guard (Expr.strEnds (.lit (litStr "foobar")) (.lit (litStr "bar"))).eval [] == .bool true
 #guard (Expr.contains (.lit (litStr "foobar")) (.lit (litStr "oob"))).eval [] == .bool true

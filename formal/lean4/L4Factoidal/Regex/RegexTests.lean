@@ -298,6 +298,70 @@ def dataQ : List String :=
 #guard rm "a.c" "m" "a\nc" == false
 #guard rm "a.*c" "sm" "a\nb\nc" == true
 
+/-! ### Flag `i`: Unicode case-variants (F&O 3.1 section 5.6.1.1)
+
+A character C2 is a case-variant of C1 when `fn:lower-case(C1) eq
+fn:lower-case(C2)` or `fn:upper-case(C1) eq fn:upper-case(C2)`.
+https://github.com/danbri/factoidal/issues/706 -/
+
+-- U+212A KELVIN SIGN has fn:lower-case "k" (the example in the specification)
+#guard rm "K" "i" "\u212A" == true
+#guard rm "k" "i" "\u212A" == true
+#guard rm "[A-Z]" "i" "\u212A" == true
+#guard rm "K" "i" "k" == true
+#guard rm "K" "" "\u212A" == false          -- no flag: no case-variants
+#guard rm "K" "" "k" == false
+#guard rm "j" "i" "\u212A" == false         -- another letter is no case-variant of it
+-- accented letters
+#guard rm "^É$" "i" "é" == true
+#guard rm "^é$" "i" "É" == true
+#guard rm "^[à-ö]+$" "i" "ÀÉÖ" == true
+#guard rm "^É$" "" "é" == false
+#guard rm "^e$" "i" "é" == false             -- é is not a case-variant of e
+-- Greek: σ and ς have the same fn:upper-case, Σ is the lower-case source of both
+#guard rm "^σ$" "i" "ς" == true
+#guard rm "^Σ$" "i" "ς" == true
+#guard rm "^σ$" "i" "ρ" == false
+-- dotless i: fn:upper-case("ı") is "I", so it is a case-variant of "i" and "I".
+-- CaseFolding.txt has no common or simple folding for it; the F&O rule decides.
+#guard rm "^i$" "i" "ı" == true
+#guard rm "^I$" "i" "ı" == true
+-- İ: fn:lower-case is two characters, so no single-character variant of "i"
+#guard rm "^i$" "i" "İ" == false
+-- sharp s: U+1E9E lower-cases to ß; the two-character "SS" is not a variant
+#guard rm "^ß$" "i" "ẞ" == true
+#guard rm "^ß$" "i" "SS" == false
+-- Cherokee and Deseret (astral)
+#guard rm "^Ꭰ$" "i" "ꭰ" == true
+#guard rm "^ꭰ$" "i" "Ꭰ" == true
+#guard rm "^𐐀$" "i" "𐐨" == true
+#guard rm "^𐐀$" "" "𐐨" == false
+-- digits and punctuation have no case-variants
+#guard rm "^1$" "i" "2" == false
+#guard rm "^a1-b$" "i" "A1-B" == true
+-- negated classes: [^q] rejects Q and q, because the expansion precedes the complement
+#guard rm "^[^q]$" "i" "Q" == false
+#guard rm "^[^q]$" "i" "q" == false
+#guard rm "^[^q]$" "i" "r" == true
+#guard rm "^[^q]$" "" "Q" == true
+#guard rm "^[^A-Z]$" "i" "k" == false
+#guard rm "^[^A-Z]$" "i" "\u212A" == false
+#guard rm "^[^A-Z]$" "i" "1" == true
+-- multi-character escapes and "." are unaffected by "i"
+#guard rm "^\\W$" "i" "k" == false
+#guard rm "^\\W$" "i" "-" == true
+#guard rm "^\\w$" "i" "K" == true
+#guard rm "^.$" "i" "\u212A" == true
+-- the flag "q" applies the same variants to a literal pattern
+#guard rm "É" "iq" "ecole" == false
+#guard rm "É" "iq" "xéy" == true
+#guard rm "É" "q" "xéy" == false
+-- fn:replace uses the same relation
+#guard rr "É" "i" "café É" "e" == some "cafe e"
+#guard rr "É" "" "café É" "e" == some "café e"
+#guard rr "(k)(a)" "i" "\u212Aa" "$2$1" == some "a\u212A"
+#guard rr "[^q]" "i" "QqQ" "-" == some "QqQ"
+
 /-! ### 3. The public API's error channel -/
 
 #guard (compile "a(b" "").isOk == false

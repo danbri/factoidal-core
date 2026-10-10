@@ -29,7 +29,7 @@ front ends carry their own copy of the string and numeric semantics:
 | percent-encoding (`fn:encode-for-uri`) | `RIF/Builtins.lean` `encodeForUri`, `pctEncodeWith`, `utf8Bytes`, `pctByte` | `SPARQL/Expr.lean` `strEncodeUri`, `encodeUriChars`, `percentEncodeChar`, `percentEncodeByte`, `nibbleToHex` | absent |
 | substring | `substring2`, `substring3` | `substrSpec` | `substrChars` (double-valued, XPath 1.0 §4.2) |
 | substring-before/after | `evalFunc "substring-before"` | `strBefore`/`strAfter` | `substring-before` in the function table |
-| upper/lower case | `evalFunc` | `.ucase`/`.lcase` | absent (XPath 1.0 has neither) |
+| upper/lower case | `evalFunc` | `.ucase`/`.lcase` (both call `Fn.String.upperCase`/`lowerCase`, Unicode default case mapping since 2026-10-10: `Text/CaseMap.lean`) | absent (XPath 1.0 has neither) |
 | string length | `evalFunc` | `.strlen` | `string-length` |
 | decimal arithmetic | `decParts`, `decRender`, `addDec`, `subDec`, `mulDec`, `divDec` | `Scaled` | `Num` (XPath 1.0 doubles — a different specification, not a duplicate) |
 | `daysFromCivil` | private copy | — | — |

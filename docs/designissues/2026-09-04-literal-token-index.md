@@ -52,11 +52,17 @@ the block dictionary.**
 * The unit is a CHARACTER (Unicode codepoint), not a byte, because
   `Expr.strContains` compares `List Char`. A byte n-gram index would be a
   second, disagreeing notion of substring.
-* The fold is `String.toLower`, the SAME function `Expr` evaluates for
-  `LCASE`. It is reused, not restated, so the index fold and the query fold
-  cannot drift apart. In the current toolchain `Char.toLower` maps `A`-`Z`
-  and nothing else; that fact is not relied on, only the identity of the two
-  functions is.
+* The fold agrees with the function `Expr` evaluates for `LCASE`. Until
+  2026-10-10 both were `String.toLower`, which maps `A`-`Z` only, and the
+  agreement was an identity. `LCASE` is now Unicode default case mapping
+  (`Text.CaseMap.lowerCase`), which is not a character map, so the index fold
+  is `Text.CaseMap.searchFold`: each character becomes its context-free full
+  lowercase, with capital and final sigma both folded to `σ`. The index
+  contains a lexical form's grams under that fold; `searchFold (lowerCase s) =
+  searchFold s`, so a row `CONTAINS(LCASE(?x), "k")` keeps is a candidate.
+  An index packed before 2026-10-10 folded the ASCII letters only and must be
+  re-packed. Record: `docs/designissues/2026-10-10-unicode-case-mapping.md`
+  section 6.
 * `n = 3`. A needle of fewer than 3 characters falls back to the scan.
 * Every literal in the block dictionary is indexed. Coverage is therefore
   total for the block: if the sidecar is present and its
@@ -75,7 +81,8 @@ every row the filter accepts.
 
 The superset property is the theorem, in `Storage/LiteralGramIndex.lean`:
 
-    fold is applied per character, so
+    fold is a concatenation of per-character images (one character can give
+    several: `İ` gives `i` and U+0307), so
       strContains s k  ->  strContains (fold s) (fold k)
     and a contiguous window of a contiguous sublist is a contiguous window
     of the whole, so

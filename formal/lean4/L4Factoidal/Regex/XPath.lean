@@ -29,9 +29,17 @@ wrapping are applied HERE, exactly as the F* does:
     real-character run + the END sentinel on the right, or nothing
     (when `P'` itself consumed a sentinel).
 
-Flag coverage, as in the F*:
-  `i` ASCII case-folding of literal ranges (`foldCi`) — non-ASCII case
-      folding is NOT applied (documented gap, both trees);
+Flag coverage, as in the F* except where stated:
+  `i` Unicode case-variants, as defined by F&O 3.1 section 5.6.1.1: a
+      case-variant has the same `fn:lower-case` or the same `fn:upper-case`
+      (`Text.CaseMap.caseVariants`). The parser takes the flag
+      (`XSDPattern.parseCpsWith`): a literal character, a character range
+      and a single-character escape accept their case-variants, a negated
+      class takes its complement after that expansion (`[^Q]` rejects `Q`
+      and `q`), and `.`, `\d`, `\w`, `\W` and the other multi-character
+      escapes are unaffected. `[A-Z]` matches U+212A KELVIN SIGN. The F* tree
+      folds the ASCII letters after parsing (`rx_fold_ci`), so on non-ASCII
+      input, and on a negated class, the two trees differ here;
   `s` `.` also matches #xA / #xD (`dotAll`);
   `x` unescaped, out-of-class whitespace elided before parsing
       (`stripWs`);
@@ -87,6 +95,7 @@ confined to the error channel the F* functions do not have):
 -/
 import L4Factoidal.Regex.Exec
 import L4Factoidal.Regex.XSDPattern
+import L4Factoidal.Text.CaseMap
 
 namespace L4Factoidal.Regex
 
@@ -180,40 +189,12 @@ def wrapMultiline (cps : List Nat) : List Nat :=
   beginSentinel :: (cps.flatMap fun c => if c = 0x0A then [endSentinel, 0x0A, beginSentinel] else [c]) ++ [endSentinel]
 
 /-- `q` flag: the pattern as a literal codepoint sequence
-(F* `rx_literal_regex`). -/
-def literalRegex : List Nat → Re
+(F* `rx_literal_regex`). With the flag `i` each character also accepts its
+case-variants. -/
+def literalRegex (ci : Bool := false) : List Nat → Re
   | [] => .eps
-  | [c] => .ranges [(c, c)]
-  | c :: t => .cat (.ranges [(c, c)]) (literalRegex t)
-
-/-! ## `i` flag: ASCII case folding of literal ranges -/
-
-/-- The extra intervals a range also accepts under `i`: for the A–Z
-overlap add the a–z image (+0x20), for the a–z overlap the A–Z image
-(F* `rx_ci_extra`). -/
-def ciExtra (lo hi : Nat) : List (Nat × Nat) :=
-  let upLo := if lo > 0x41 then lo else 0x41
-  let upHi := if hi < 0x5A then hi else 0x5A
-  let imgLower := if upLo ≤ upHi then [(upLo + 0x20, upHi + 0x20)] else []
-  let loLo := if lo > 0x61 then lo else 0x61
-  let loHi := if hi < 0x7A then hi else 0x7A
-  let imgUpper := if loLo ≤ loHi then [(loLo - 0x20, loHi - 0x20)] else []
-  imgLower ++ imgUpper
-
-def ciRanges : List (Nat × Nat) → List (Nat × Nat)
-  | [] => []
-  | (lo, hi) :: t => (lo, hi) :: (ciExtra lo hi ++ ciRanges t)
-
-/-- F* `rx_fold_ci`. -/
-def foldCi : Re → Re
-  | .empty => .empty
-  | .eps => .eps
-  | .ranges rs => .ranges (ciRanges rs)
-  | .cat a b => .cat (foldCi a) (foldCi b)
-  | .alt a b => .alt (foldCi a) (foldCi b)
-  | .inter a b => .inter (foldCi a) (foldCi b)
-  | .compl a => .compl (foldCi a)
-  | .star a => .star (foldCi a)
+  | [c] => XSDPattern.singleCi ci c
+  | c :: t => .cat (XSDPattern.singleCi ci c) (literalRegex ci t)
 
 /-- `s` flag: rewrite the parser's `.` leaf (which excludes #xA / #xD) to
 accept every codepoint (F* `rx_dotall`). -/
@@ -240,17 +221,15 @@ def regexMatch (text pattern : String) (flags : String) : Bool :=
   let inputCps := cpsOfString text
   let patCps0 := cpsOfString pattern
   if hasQ then
-    let core0 := literalRegex patCps0
-    let core := if hasI then foldCi core0 else core0
+    let core := literalRegex hasI patCps0
     Exec.acceptsNorm (.cat Exec.dotStar (.cat core Exec.dotStar)) inputCps
   else
     let patCps1 := if hasX then stripWs patCps0 false else patCps0
     let patCps := replaceAnchors patCps1 false
-    match XSDPattern.parseCps patCps with
+    match XSDPattern.parseCpsWith hasI patCps with
     | none => false
     | some r0 =>
-      let r1 := if hasS then dotAll r0 else r0
-      let r2 := if hasI then foldCi r1 else r1
+      let r2 := if hasS then dotAll r0 else r0
       let m := Re.cat gapLeft (.cat r2 gapRight)
       let wrapped := beginSentinel :: (inputCps ++ [endSentinel])
       Exec.acceptsNorm m wrapped
@@ -307,15 +286,6 @@ def size : CRe → Nat
   | .alt a b => 1 + size a + size b
   | .star a => 1 + size a
   | .group _ a => 1 + size a
-
-/-- Flag rewrites lifted to the leaves (F* `rx_cre_fold_ci`). -/
-def foldCi : CRe → CRe
-  | .leaf x => .leaf (Regex.foldCi x)
-  | .eps => .eps
-  | .cat a b => .cat (foldCi a) (foldCi b)
-  | .alt a b => .alt (foldCi a) (foldCi b)
-  | .star a => .star (foldCi a)
-  | .group n a => .group n (foldCi a)
 
 /-- F* `rx_cre_dotall`. -/
 def dotAll : CRe → CRe
@@ -386,22 +356,22 @@ next group number `g`; `(...)` takes the current `g` and parses its body
 with `g + 1` (outer groups number lower than nested); `(?:...)` is
 non-capturing (F* `rx_cparse_*`). -/
 mutual
-  def cparseAlt : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseAlt (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
-      match cparseSeq fuel input g with
+      match cparseSeq ci fuel input g with
       | none => none
       | some (r1, rest, g1) =>
         match rest with
         | c :: t =>
           if c = cpPipe then
-            match cparseAlt fuel t g1 with
+            match cparseAlt ci fuel t g1 with
             | none => none
             | some (r2, rest2, g2) => some (.alt r1 r2, rest2, g2)
           else some (r1, c :: t, g1)
         | [] => some (r1, [], g1)
 
-  def cparseSeq : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseSeq (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
       match input with
@@ -409,7 +379,7 @@ mutual
       | h :: _ =>
         if h = cpPipe || h = cpRparen then some (.eps, input, g)
         else
-          match cparseRep fuel input g with
+          match cparseRep ci fuel input g with
           | none => none
           | some (r1, rest, g1) =>
             match rest with
@@ -417,29 +387,29 @@ mutual
             | h2 :: _ =>
               if h2 = cpPipe || h2 = cpRparen then some (r1, rest, g1)
               else
-                match cparseSeq fuel rest g1 with
+                match cparseSeq ci fuel rest g1 with
                 | none => none
                 | some (r2, rest2, g2) => some (.cat r1 r2, rest2, g2)
 
-  def cparseRep : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseRep (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
-      match cparseAtom fuel input g with
+      match cparseAtom ci fuel input g with
       | none => none
       | some (r, rest, g1) =>
         match cparseQuant r rest with
         | none => none
         | some (r', rest') => some (r', rest', g1)
 
-  def cparseAtom : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseAtom (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
       match input with
       | [] => none
       | h :: t =>
-        if h = cpLparen then cparseGroup fuel t g
+        if h = cpLparen then cparseGroup ci fuel t g
         else if h = cpLbracket then
-          match parseClass t with
+          match parseClass ci t with
           | none => none
           | some (r, rest) => some (.leaf r, rest, g)
         else if h = cpDot then some (.leaf dotRegex, t, g)
@@ -449,39 +419,39 @@ mutual
           match t with
           | [] => none
           | letter :: t2 =>
-            match parseEscapeAtom letter t2 with
+            match parseEscapeAtom ci letter t2 with
             | none => none
             | some (r, rest) => some (.leaf r, rest, g)
         else if isAtomMeta h then none
-        else some (.leaf (single h), t, g)
+        else some (.leaf (singleCi ci h), t, g)
 
-  def cparseGroup : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseGroup (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
       match t with
       | q :: c :: t2 =>
-        if q = cpQuestion && c = cpColon then cparseNoncap fuel t2 g
+        if q = cpQuestion && c = cpColon then cparseNoncap ci fuel t2 g
         else if q = cpQuestion then none
-        else cparseCap fuel t g
+        else cparseCap ci fuel t g
       | q :: _ =>
         if q = cpQuestion then none
-        else cparseCap fuel t g
+        else cparseCap ci fuel t g
       | [] => none
 
-  def cparseCap : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseCap (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
-      match cparseAlt fuel t (g + 1) with
+      match cparseAlt ci fuel t (g + 1) with
       | none => none
       | some (r, rest, g') =>
         match rest with
         | c :: t2 => if c = cpRparen then some (.group g r, t2, g') else none
         | [] => none
 
-  def cparseNoncap : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseNoncap (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
-      match cparseAlt fuel t g with
+      match cparseAlt ci fuel t g with
       | none => none
       | some (r, rest, g') =>
         match rest with
@@ -492,9 +462,9 @@ end
 end CapturingParser
 
 /-- F* `rx_parse_capturing`: groups numbered from 1. -/
-def parseCapturing (cps : List Nat) : Option CRe :=
+def parseCapturing (ci : Bool) (cps : List Nat) : Option CRe :=
   let fuel := 16 * (cps.length + 4)
-  match cparseAlt fuel cps 1 with
+  match cparseAlt ci fuel cps 1 with
   | some (r, [], _) => some r
   | _ => none
 
@@ -639,23 +609,19 @@ def regexReplace (text pattern replacement : String) (flags : String) : String :
   let patCps0 := cpsOfString pattern
   let fuel := inputCps.length + 1
   if hasQ then
-    let core0 := literalRegex patCps0
-    let pr := if hasI then foldCi core0 else core0
+    let pr := literalRegex hasI patCps0
     stringOfCps (replaceLoop pr none repCps inputCps fuel inputCps 0)
   else
     let patCps1 := if hasX then stripWs patCps0 false else patCps0
-    match XSDPattern.parseCps patCps1 with
+    match XSDPattern.parseCpsWith hasI patCps1 with
     | none => text
     | some r0 =>
-      let r1 := if hasS then dotAll r0 else r0
-      let pr := if hasI then foldCi r1 else r1
+      let pr := if hasS then dotAll r0 else r0
       let creOpt :=
         if templateHasGroup repCps then
-          match parseCapturing patCps1 with
+          match parseCapturing hasI patCps1 with
           | none => none
-          | some cre0 =>
-            let cre1 := if hasS then cre0.dotAll else cre0
-            some (if hasI then cre1.foldCi else cre1)
+          | some cre0 => some (if hasS then cre0.dotAll else cre0)
         else none
       stringOfCps (replaceLoop pr creOpt repCps inputCps fuel inputCps 0)
 
@@ -706,23 +672,19 @@ def compile (pattern : String) (flags : String) : Except RegexError Compiled :=
       if hasM then .cat sigmaAllStar (.cat (absorbMarkers p) sigmaAllStar)
       else .cat gapLeft (.cat p gapRight)
     if hasQ then
-      let core0 := literalRegex patCps0
-      let core := if hasI then foldCi core0 else core0
+      let core := literalRegex hasI patCps0
       .ok { matchRe := wrap core, replaceRe := core, capt := none, multiline := hasM }
     else
       let patCps1 := if hasX then stripWs patCps0 false else patCps0
-      match XSDPattern.parseCps (replaceAnchors patCps1 false), XSDPattern.parseCps patCps1 with
+      match XSDPattern.parseCpsWith hasI (replaceAnchors patCps1 false),
+            XSDPattern.parseCpsWith hasI patCps1 with
       | some m0, some r0 =>
-        let m1 := if hasS then dotAll m0 else m0
-        let m2 := if hasI then foldCi m1 else m1
-        let r1 := if hasS then dotAll r0 else r0
-        let r2 := if hasI then foldCi r1 else r1
+        let m2 := if hasS then dotAll m0 else m0
+        let r2 := if hasS then dotAll r0 else r0
         let capt :=
-          match parseCapturing patCps1 with
+          match parseCapturing hasI patCps1 with
           | none => none
-          | some cre0 =>
-            let cre1 := if hasS then cre0.dotAll else cre0
-            some (if hasI then cre1.foldCi else cre1)
+          | some cre0 => some (if hasS then cre0.dotAll else cre0)
         .ok { matchRe := wrap m2, replaceRe := r2, capt := capt, multiline := hasM }
       | _, _ => .error (.invalidPattern pattern)
 

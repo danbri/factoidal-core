@@ -79,8 +79,13 @@ private def lexOf (arg : String → Option RVal) (p : String) : Option String :=
 
 /-! ## String operations
 
-Case mapping is `String.toUpper` / `String.toLower` of Lean core through
-the shared function library (`Fn.String`); they map the ASCII letters. -/
+Case mapping is Unicode default case mapping through the shared function
+library (`Fn.String.upperCase`, `Fn.String.lowerCase`, implemented in
+`Text.CaseMap`): GREL `toUpperCase` and `toLowerCase` are Java
+`String.toUpperCase` and `toLowerCase`, which map by UnicodeData.txt and the
+unconditional rules of SpecialCasing.txt, so `ß` gives `SS` and a final capital
+sigma lower-cases to `ς`. The mapping is language-independent (Java's root
+locale). -/
 
 /-- Replace every occurrence of a non-empty `find` by `repl`; an empty
     `find` leaves the string as it is. -/
@@ -416,12 +421,17 @@ private def gstr : String := grelNs ++ "stringOut"
 #guard (registry.map (·.iri)).eraseDups.length == registry.length
 #guard registry.all (fun f => !f.returns.isEmpty)
 
--- KNOWN SHORTFALL: case mapping is ASCII only, so an accented letter is
--- not upper-cased (Java's String.toUpperCase maps it). This guard asserts
--- the present behaviour; it fails when case mapping becomes Unicode, and
--- must then be replaced by the correct expectation "É" and its issue closed.
--- Issue: https://github.com/danbri/factoidal/issues/706
-#guard run1 (grelNs ++ "toUpperCase") [(gv, "é")] == ok (some "é")
+-- Unicode case mapping (https://github.com/danbri/factoidal/issues/706):
+-- Java's String.toUpperCase / toLowerCase with the root locale.
+#guard run1 (grelNs ++ "toUpperCase") [(gv, "é")] == ok (some "É")
+#guard run1 (grelNs ++ "toUpperCase") [(gv, "straße")] == ok (some "STRASSE")
+#guard run1 (grelNs ++ "toLowerCase") [(gv, "ÉCOLE")] == ok (some "école")
+#guard run1 (grelNs ++ "toLowerCase") [(gv, "ΑΣ")] == ok (some "ας")
+#guard run1 (grelNs ++ "toLowerCase") [(gv, "ß")] == ok (some "ß")
+-- negative: a string with no cased letter, and one already in the target case
+#guard run1 (grelNs ++ "toUpperCase") [(gv, "123 !?")] == ok (some "123 !?")
+#guard run1 (grelNs ++ "toUpperCase") [(gv, "É")] == ok (some "É")
+#guard run1 (grelNs ++ "toUpperCase") [(gv, "é")] != ok (some "é")
 
 -- KNOWN SHORTFALL: html mode escapes the five markup characters only;
 -- GREL's escapeHtml4 also writes a named entity for a non-ASCII character
