@@ -505,6 +505,15 @@ for qid in ("q1_count_star", "q2_bound_predicate_count", "q3_subject_point_looku
                                        gene_queries()[qid]])(qid),
             unit="paragraphs"))
 
+add(Row("query-groupby-subject", "sparql",
+        "SPARQL GROUP BY ?s (one group per subject) over gene.ttl slices",
+        [1250, 2500, 5000, 10000, 20000], gene_slice,
+        lambda p, n: [S(LEAN), "query", S(p), "--format", "turtle", "--query-string",
+                      "SELECT ?s (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s"],
+        lambda p, n: [S(FSTAR), "query", "--data", S(p), "-e",
+                      "SELECT ?s (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s"],
+        unit="paragraphs"))
+
 # c) closure
 CLOSURE_SIZES = {
     "chain": [10, 20, 40, 80],

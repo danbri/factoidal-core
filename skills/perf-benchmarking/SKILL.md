@@ -89,6 +89,33 @@ bench by hand before and after a change that can move query latency. If
 your change legitimately shifts the baseline, update the baseline JSON in
 the same PR and say why.
 
+### Lean engine against F* engine — `tools/bench_lean_vs_fstar.py`
+
+Runs the Lean command line (`l4factoidal`, `l4shacl`, `l4jsonld-api`) and the
+F* command line (`bin/linux-x86_64/factoidal`) on the SAME generated or real
+file, at n, 2n, 4n and 8n, and writes one JSON line per measurement (minimum
+wall time of up to three runs, CPU time and peak resident set size of that run,
+the 1-minute load average, a fingerprint of standard output). `--report FILE`
+prints the table: Lean time, F* time, ratio, Lean growth per doubling. The
+result of the first survey, the five repairs it led to and the rows left open
+are in
+[`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`](../../docs/designissues/2026-10-10-lean-vs-fstar-performance.md).
+`tests/stack/lean_scaling.sh` is the regression gate for the repaired paths:
+it asserts time(4x) <= 9.0 x max(time(x), 50 ms) for each.
+
+Three traps from that survey, each of which cost a re-run:
+
+- **Freeze the binaries a survey measures.** A `lake build` in the middle of a
+  survey replaces `.lake/build/bin/*`; later rows then measure a different
+  program. Copy the binaries once and point `BENCH_LEAN_BIN_DIR` at the copy.
+- **Do not rename or edit a script that a background loop still calls.** The
+  survey loop called `tools/bench-lean-vs-fstar.py`; a `git mv` to
+  `tools/bench_lean_vs_fstar.py` made four groups of rows exit with status 2
+  and measure nothing. The log said so; only reading the log showed it.
+- **Process start is a row.** `l4factoidal version` takes 37 ms of CPU time and
+  the F* binary 6 ms. A ratio of two small runs is mostly this difference.
+  Subtract it, or give the row an input large enough to hide it.
+
 ### Other tools
 
 - `tools/backend_benchmark.py` — backend comparisons.

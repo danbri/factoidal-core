@@ -82,6 +82,41 @@ Rules from that repair:
   holds all the references) cost 3.9 s, so a ladder over the hub shape alone
   would have under-reported the cost 14-fold.
 
+## The 2026-10-10 survey: the shapes that were quadratic
+
+The survey in
+[`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`](../../docs/designissues/2026-10-10-lean-vs-fstar-performance.md)
+found six quadratic costs in the Lean tree, all of one of four shapes. Look for
+these shapes first in any module that is slow on a large input.
+
+- **A specification that scans, used as the implementation.** `RDFS.step` read
+  premises with `g.filter` once per triple, and added conclusions with
+  `Graph.add` (a scan). Repair: keep the scanning definition, add an indexed
+  twin that returns the same LIST, prove the equality, and register
+  `@[csimp]` so every caller gets the fast one (`RDFS/Closure.lean`,
+  `RDFS/FullClosure.lean`). 100 to 500 times faster; 1.2 to 1.6 times slower
+  than F* at the same size.
+- **`List.length` of the remaining input in a loop.** The TriG reader did
+  `r1.length` per statement. `Syntax.Turtle.parseStatements` already declined a
+  fuel counter and compared positions; `Syntax/TriG.lean` had not been changed
+  with it. Grep for `.length` inside every recursive reader.
+- **An insertion sort in the algorithm.** `RDF/Canonical.lean`
+  (`sortBy`) and `Syntax/TurtleSerialize.lean` (`sortStrs`). Repair:
+  `List.mergeSort`. For a total preorder with ties, the equality with a stable
+  insertion sort has a general proof by way of `List.zipIdxLE`
+  (`CanonicalTheorems.sortBy_eq_mergeSort`); for strings, where equal means
+  identical, antisymmetry is enough (`TurtleSerialize.sortStrs_eq`).
+- **A list of groups searched and appended to per row.** `SPARQL/Query.lean`
+  `addToGroups`. Repair: array of groups plus a hash index on a bucket key that
+  is constant on order-equal values (`erEqual_erBucket`).
+
+One more cost is not quadratic and is not in an algorithm: **top-level
+constants are evaluated when the module is initialised**, in every executable
+that links the module. Five storage modules held 70,000-byte test fixtures
+hashed with SHA-256 as `private def`s next to their `#guard`s; together they
+cost 250 million instructions at process start (37 ms). Keep fixtures that need
+real computation in a `*Tests.lean` module that no executable imports.
+
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
 A function that recurses once per element of an input the CALLER sizes -- a

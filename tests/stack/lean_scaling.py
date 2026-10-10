@@ -22,6 +22,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
   group-by-few     SPARQL GROUP BY with 6 groups over many rows
   group-by-many    SPARQL GROUP BY with one group per subject
+  startup          process start: `l4factoidal version` must take at most
+                   STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
+                   (305 million instructions and 43 ms before the fixtures were
+                   moved out of the executable's modules; 25 million and 7 ms
+                   after)
 
 The script measures; it does not compare with the F* engine. Exit status 0
 when every pair passes, 1 when a pair fails, 2 when the binary is missing.
@@ -144,6 +149,20 @@ def best_of(cmd, runs):
     return best, None
 
 
+STARTUP_BUDGET = 0.020
+
+
+def startup_row():
+    """Minimum CPU time (user + system) of `l4factoidal version`."""
+    best = None
+    for _ in range(15):
+        t = bl.run_once([str(BIN), "version"], CAP)
+        if t["status"] != "ok":
+            return None, f"exit status {t['status']}"
+        best = t["cpu"] if best is None else min(best, t["cpu"])
+    return best, None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
@@ -153,7 +172,9 @@ def main() -> int:
         print(f"lean_scaling: {BIN} not built (cd formal/lean4 && lake build l4factoidal)",
               file=sys.stderr)
         return 2
-    rows = [r for r in args.only.split(",") if r] or list(ROWS)
+    names = [r for r in args.only.split(",") if r]
+    rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
+    run_startup = (not names) or ("startup" in names)
     passed = failed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s); "
           f"minimum of {args.runs} runs; load average {os.getloadavg()[0]:.2f}")
@@ -170,6 +191,17 @@ def main() -> int:
         failed += (not ok)
         print(f"  {'PASS' if ok else 'FAIL'} {rid}: n={x} {t1:.3f} s -> n={4 * x} {t4:.3f} s "
               f"(ratio {t4 / max(t1, 1e-9):.1f} for 4x input)")
+    if run_startup:
+        cpu, err = startup_row()
+        if err:
+            failed += 1
+            print(f"  FAIL startup: {err}")
+        else:
+            ok = cpu <= STARTUP_BUDGET
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} startup: l4factoidal version {cpu * 1000:.1f} ms CPU "
+                  f"(budget {STARTUP_BUDGET * 1000:.0f} ms)")
     print(f"scaling: {passed} pass, {failed} fail (out of {passed + failed})")
     return 0 if failed == 0 else 1
 
