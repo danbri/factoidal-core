@@ -268,19 +268,19 @@ def validateFrame (frame : Json) : Res Json :=
 /-- The node maps of every graph: `"@default"`, each named graph, and
 `"@merged"` when the merged graph is framed. -/
 structure Env where
-  graphs : List (String × NmGraph)
+  graphs : Std.TreeMap String NmGraph
   rootGraph : String
   opts : FrameOptions
   mode10 : Bool
 
-def Env.nodes (env : Env) (g : String) : NmGraph := (flLookup env.graphs g).getD []
+def Env.nodes (env : Env) (g : String) : NmGraph := (env.graphs.get? g).getD Std.TreeMap.empty
 
-def Env.node (env : Env) (g id : String) : Option NmNode := flLookup (env.nodes g) id
+def Env.node (env : Env) (g id : String) : Option NmNode := (env.nodes g).get? id
 
 /-- The values of a key in a node, as a list. -/
 def nodeValues (n : NmNode) (k : String) : List Json :=
-  match flLookup n k with
-  | some x => asArray x
+  match n.find? k with
+  | some x => x.items
   | none => []
 
 /-! ## Matching (§4.2, §4.3) -/
@@ -465,10 +465,13 @@ inductive OVal where
   | ref : Nat → OVal
 
 /-- An output container: a JSON array, or a JSON object whose members are
-values or other containers. -/
+values or other containers. The items of an `arr` are stored NEWEST FIRST,
+so adding an item is a `cons`; `matCont` reverses once when it builds the
+JSON value. The members of an `obj` are an insertion-ordered map, so
+setting a member does not scan the members already present. -/
 inductive OCont where
   | arr : List OVal → OCont
-  | obj : List (String × OVal) → OCont
+  | obj : OMap OVal → OCont
 
 structure FState where
   arena : Array OCont
@@ -477,9 +480,9 @@ structure FState where
   stack : List (String × String)
   /-- The unique embeds map of §4.1: per graph, per node id, the parent
   container and the property under which the node was last embedded. -/
-  embeds : List (String × List (String × (Nat × Option String)))
+  embeds : Std.TreeMap String (OMap (Nat × Option String))
   /-- How many output nodes carry each blank node identifier. -/
-  bnodes : List (String × Nat)
+  bnodes : Std.TreeMap String Nat
 
 abbrev FM := StateT FState Res
 
@@ -493,35 +496,36 @@ def FState.get (st : FState) (i : Nat) : OCont := st.arena[i]?.getD (.arr [])
 def FState.put (st : FState) (i : Nat) (c : OCont) : FState :=
   { st with arena := st.arena.set! i c }
 
-def FState.embedsOf (st : FState) (g : String) : List (String × (Nat × Option String)) :=
-  (flLookup st.embeds g).getD []
+def FState.embedsOf (st : FState) (g : String) : OMap (Nat × Option String) :=
+  (st.embeds.get? g).getD OMap.empty
 
-def FState.hasEmbed (st : FState) (g id : String) : Bool := (flLookup (st.embedsOf g) id).isSome
+def FState.hasEmbed (st : FState) (g id : String) : Bool := (st.embedsOf g).contains id
 
 def FState.onStack (st : FState) (g id : String) : Bool :=
   st.stack.any (fun e => e.1 == g && e.2 == id)
 
 def FState.setEmbed (st : FState) (g id : String) (parent : Nat) (prop : Option String)
     : FState :=
-  { st with embeds := flUpd st.embeds g (flUpd (st.embedsOf g) id (parent, prop)) }
+  { st with embeds := st.embeds.insert g ((st.embedsOf g).upsert id (parent, prop)) }
 
 def FState.bumpBnode (st : FState) (id : String) : FState :=
-  { st with bnodes := flUpd st.bnodes id (((flLookup st.bnodes id).getD 0) + 1) }
+  { st with bnodes := st.bnodes.insert id (((st.bnodes.get? id).getD 0) + 1) }
 
-def allocM (c : OCont) : FM Nat := do
-  let st ← StateT.get
-  StateT.set { st with arena := st.arena.push c }
-  pure st.arena.size
+/-- Add a container to the arena and return its index. One `modifyGet`, so
+the state is used once and the arena is extended in place: a `get` followed
+by a `set` keeps the old state alive and copies the whole arena. -/
+def allocM (c : OCont) : FM Nat :=
+  modifyGet (fun st => (st.arena.size, { st with arena := st.arena.push c }))
 
 /-- The object member of a container, if it is an object. -/
 def FState.member (st : FState) (i : Nat) (k : String) : Option OVal :=
   match st.get i with
-  | .obj es => flLookup es k
+  | .obj es => es.find? k
   | .arr _ => none
 
 def FState.setMember (st : FState) (i : Nat) (k : String) (v : OVal) : FState :=
   match st.get i with
-  | .obj es => st.put i (.obj (flUpd es k v))
+  | .obj es => st.put i (.obj (es.upsert k v))
   | .arr _ => st
 
 /-- The `@id` of an output value, if it is a node or a node reference. -/
@@ -541,45 +545,46 @@ appended to the array held under `property` (created on first use). -/
 def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (item : OVal)
     : FState :=
   match st.get parent with
-  | .arr xs => st.put parent (.arr (xs ++ [item]))
+  | .arr xs => st.put parent (.arr (item :: xs))
   | .obj es =>
     match property with
     | none => st
     | some p =>
-      match flLookup es p with
+      match es.find? p with
       | some (.ref k) =>
         (match st.get k with
-         | .arr xs => st.put k (.arr (xs ++ [item]))
+         | .arr xs => st.put k (.arr (item :: xs))
          | .obj _ => st)
       | _ =>
         let k := st.arena.size
         let st1 := { st with arena := st.arena.push (.arr [item]) }
-        st1.put parent (.obj (flUpd es p (.ref k)))
+        st1.put parent (.obj (es.upsert p (.ref k)))
 
 /-- §4.1: replace the embedded node `id` by a node reference, drop the
 embeds that depended on it. Mirrors the legacy `@last` handling: the
 reference to a replaced property value moves to the end of its array. -/
 def FState.removeEmbed (st : FState) (g id : String) : FState :=
-  match flLookup (st.embedsOf g) id with
+  match (st.embedsOf g).find? id with
   | none => st
   | some (parent, prop) =>
     let reference : OVal := .lit (.object [("@id", .string id)])
     let st1 :=
       match st.get parent with
-      | .arr xs =>
+      | .arr xsRev =>
         let rec replaceFirst : List OVal → List OVal
           | [] => []
           | x :: rest => if st.idOf x == some id then reference :: rest else x :: replaceFirst rest
-        st.put parent (.arr (replaceFirst xs))
+        -- the items are stored newest first; "first" is the oldest match
+        st.put parent (.arr (replaceFirst xsRev.reverse).reverse)
       | .obj es =>
         match prop with
         | none => st
         | some p =>
-          match flLookup es p with
+          match es.find? p with
           | some (.ref k) =>
             (match st.get k with
-             | .arr xs =>
-               st.put k (.arr (xs.filter (fun x => st.idOf x != some id) ++ [reference]))
+             | .arr xsRev =>
+               st.put k (.arr (reference :: xsRev.filter (fun x => st.idOf x != some id)))
              | .obj _ => st)
           | _ => st
     -- drop the embeds whose parent is a node with this identifier,
@@ -588,12 +593,12 @@ def FState.removeEmbed (st : FState) (g id : String) : FState :=
       match fuel with
       | 0 => cur
       | fuel + 1 =>
-        let ids := (cur.embedsOf g).filter (fun e =>
+        let ids := (cur.embedsOf g).toList.filter (fun e =>
           match cur.member e.2.1 "@id" with
           | some (.lit (.string pid)) => pid == target
           | _ => false)
         ids.foldl (fun acc e =>
-          let acc1 := { acc with embeds := flUpd acc.embeds g (flRemove (acc.embedsOf g) e.1) }
+          let acc1 := { acc with embeds := acc.embeds.insert g ((acc.embedsOf g).erase e.1) }
           dropDependents acc1 e.1 fuel) cur
     dropDependents st1 id (st1.arena.size + 4)
 
@@ -603,7 +608,7 @@ def addOutputM (parent : Nat) (property : Option String) (item : OVal) : FM Unit
 /-! ## The Framing Algorithm (§4.1) -/
 
 /-- The node ids of a graph, in code-point order. -/
-def Env.subjectsOf (env : Env) (g : String) : List String := sortedKeys (env.nodes g)
+def Env.subjectsOf (env : Env) (g : String) : List String := (env.nodes g).keys
 
 /-- The `@id` of the node a `{"@id": ...}` reference names. -/
 def refTarget (o : Json) : Option String :=
@@ -623,7 +628,7 @@ def ensureObjMember (parent : Nat) (k : String) : FM Nat := do
   match st.member parent k with
   | some (.ref a) => pure a
   | _ =>
-    let a ← allocM (.obj [])
+    let a ← allocM (.obj OMap.empty)
     modify (fun s => s.setMember parent k (.ref a))
     pure a
 
@@ -675,10 +680,10 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
   | fuel + 1 => do
     -- Each top-level match starts with an empty unique embeds map.
     modify (fun st =>
-      if property.isNone then { st with embeds := [(graph, [])] }
-      else if (flLookup st.embeds graph).isSome then st
-      else { st with embeds := st.embeds ++ [(graph, [])] })
-    let out ← allocM (.obj [("@id", .lit (.string id))])
+      if property.isNone then { st with embeds := Std.TreeMap.empty.insert graph OMap.empty }
+      else if st.embeds.contains graph then st
+      else { st with embeds := st.embeds.insert graph OMap.empty })
+    let out ← allocM (.obj (OMap.empty.upsert "@id" (.lit (.string id))))
     if isBnodeId id then modify (fun st => st.bumpBnode id)
     let st ← StateT.get
     if !embedded && st.hasEmbed graph id then
@@ -698,7 +703,7 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
       | none => pure ()
       | some node => do
         -- the node is also the name of a graph
-        if (flLookup env.graphs id).isSome then
+        if env.graphs.contains id then
           let (recurse, subframe) : Bool × Json :=
             if !objHas fr "@graph" then (graph != "@merged", Json.object [])
             else
@@ -713,7 +718,7 @@ def frameOne (env : Env) (graph : String) (embedded : Bool) (subjects : List Str
         | some inc => frameRec env graph false subjects inc out (some "@included") fuel
         | none => pure ()
         -- the node's own properties
-        frameProps env graph fr fl out (flSortByKey node) fuel
+        frameProps env graph fr fl out node.toSortedFields fuel
         -- defaults for the frame's properties the output lacks
         frameDefaults env fr out (flSortByKey (objFields fr)) fuel
         -- @reverse
@@ -767,7 +772,7 @@ def frameValues (env : Env) (graph : String) (fr : Json) (fl : Flags) (out : Nat
              | none => implicitFrame fl)
           | none => implicitFrame fl
         let arrIdx ← allocM (.arr [])
-        let lst ← allocM (.obj [("@list", .ref arrIdx)])
+        let lst ← allocM (.obj (OMap.empty.upsert "@list" (.ref arrIdx)))
         addOutputM out (some prop) (.ref lst)
         frameListItems env graph lsub lst (getValues o "@list") fuel
       else if isSubjectRef o then
@@ -880,8 +885,8 @@ def matCont (arena : Array OCont) (i : Nat) (fuel : Nat) : Json :=
   | 0 => .null
   | fuel + 1 =>
     match arena[i]? with
-    | some (.arr vs) => .array (matVals arena vs fuel)
-    | some (.obj es) => .object (matEntries arena es fuel)
+    | some (.arr vsRev) => .array (matVals arena vsRev.reverse fuel)
+    | some (.obj es) => .object (matEntries arena es.toList fuel)
     | none => .null
 
 def matVals (arena : Array OCont) (vs : List OVal) (fuel : Nat) : List Json :=
@@ -907,7 +912,7 @@ end
 
 def OCont.weight : OCont → Nat
   | .arr vs => 1 + vs.length
-  | .obj es => 1 + es.length
+  | .obj es => 1 + es.size
 
 /-- The JSON tree of the whole arena, rooted at container `root`. -/
 def FState.materialize (st : FState) (root : Nat) : Json :=
@@ -918,7 +923,7 @@ def FState.materialize (st : FState) (root : Nat) : Json :=
 /-- Replace every `@preserve` wrapper by the first value it holds, and
 drop the `@id` of each blank node that `clear` lists. A value object is
 left alone; a list object has its items cleaned. -/
-def cleanupPreserve (clear : List String) (j : Json) (fuel : Nat) : Json :=
+def cleanupPreserve (clear : Std.TreeSet String) (j : Json) (fuel : Nat) : Json :=
   match fuel with
   | 0 => j
   | fuel + 1 =>
@@ -970,30 +975,57 @@ def lowerLanguages (j : Json) (fuel : Nat) : Json :=
     | other => other
 
 /-- The blank node identifiers that occur exactly once. -/
-def singletonBnodes (st : FState) : List String :=
-  (st.bnodes.filter (fun kv => kv.2 == 1)).map Prod.fst
+def singletonBnodes (st : FState) : Std.TreeSet String :=
+  st.bnodes.foldl (fun acc id n => if n == 1 then acc.insert id else acc) Std.TreeSet.empty
 
 /-! ## The entry point -/
 
 /-- Merge Node Maps (API §7.3, used by Framing §5.1): every node of every
 graph, merged by identifier. Keywords other than `@type` are copied; the
-values of all other entries are added unless already present. -/
-def mergeNodeMaps (graphs : List (String × NmGraph)) : NmGraph :=
-  let names := sortedKeys graphs
-  names.foldl (fun merged name =>
-    (flSortByKey ((flLookup graphs name).getD [])).foldl (fun acc entry =>
-      let id := entry.1
-      let node := entry.2
-      let base : NmNode := (flLookup acc id).getD [("@id", .string id)]
-      let merged' := (flSortByKey node).foldl (fun n kv =>
-        if isKeyword kv.1 && kv.1 != "@type" then flUpd n kv.1 kv.2
+values of all other entries are added unless already present. Graphs are
+visited in code-point order of their names, and the nodes of each in
+code-point order of their identifiers. -/
+def mergeNodeMaps (graphs : Std.TreeMap String NmGraph) : NmGraph :=
+  graphs.foldl (fun merged _ gr =>
+    gr.foldl (fun acc id node =>
+      let base : NmNode := (acc.get? id).getD (NmNode.fresh id)
+      let merged' := node.toSortedFields.foldl (fun n kv =>
+        if isKeyword kv.1 && kv.1 != "@type" then n.upsert kv.1 (.one kv.2)
         else (asArray kv.2).foldl (fun n' item => nodeAppendProp n' kv.1 item true) n) base
-      flUpd acc id merged') merged) []
+      acc.insert id merged') merged) Std.TreeMap.empty
 
 /-- Does the frame document have a top-level entry that expands to
 `@graph`? Then the default graph is framed, not the merged graph. -/
 def frameNamesGraph (ac : ActiveContext) (frameRoot : Json) : Bool :=
   (objFields frameRoot).any (fun kv => kv.1 != "@context" && expandIri ac kv.1 true == some "@graph")
+
+/-- The framing algorithm proper (Framing §5.1 steps 4 to 8): node map
+generation on the expanded input, the Framing Algorithm of §4.1 over it,
+and the removal of `@preserve` wrappers and singleton blank node
+identifiers. The result is the framed array BEFORE compaction.
+`merged` selects the merged graph as the graph to frame (the frame has no
+top-level `@graph`). -/
+def frameResults (opts : FrameOptions) (mode10 merged : Bool) (expandedRaw expandedFrame : Json)
+    : Res Json :=
+  let expanded := lowerLanguages expandedRaw (Json.size expandedRaw + 8)
+  match generateNodeMap expanded with
+  | .error e => .error e
+  | .ok nst =>
+    let graphs := if merged then nst.graphs.insert "@merged" (mergeNodeMaps nst.graphs)
+                  else nst.graphs
+    let root := if merged then "@merged" else "@default"
+    let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }
+    let fuel := 64 * (Json.size expanded + Json.size expandedFrame) + 4096
+    let init : FState :=
+      { arena := #[.arr []], stack := [], embeds := Std.TreeMap.empty,
+        bnodes := Std.TreeMap.empty }
+    match (frameRec env root false (env.subjectsOf root) expandedFrame 0 none fuel).run init with
+    | .error e => .error e
+    | .ok ((), st) =>
+      let prune := opts.pruneBlankNodeIdentifiers.getD (!mode10)
+      let clear := if prune then singletonBnodes st else Std.TreeSet.empty
+      let tree := st.materialize 0
+      .ok (cleanupPreserve clear tree (Json.size tree + 8))
 
 /-- Frame `input` according to `frame` (Framing §5.1, `frame()`). -/
 def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOptions) : Res Json :=
@@ -1021,26 +1053,10 @@ def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOpti
                | none => .ok acSeed) with
         | .error e => .error e
         | .ok ac =>
-          let expanded := lowerLanguages expandedRaw (Json.size expandedRaw + 8)
           let merged := !frameNamesGraph ac frameRoot
-          let nmFuel := 16 * Json.size expanded + 128
-          let st0 : NmState := { graphs := [("@default", [])], idmap := [], ctr := 0 }
-          match nmg st0 expanded "@default" none none none nmFuel with
+          match frameResults opts mode10 merged expandedRaw expandedFrame with
           | .error e => .error e
-          | .ok (nst, _) =>
-            let graphs := if merged then nst.graphs ++ [("@merged", mergeNodeMaps nst.graphs)]
-                          else nst.graphs
-            let root := if merged then "@merged" else "@default"
-            let env : Env := { graphs := graphs, rootGraph := root, opts := opts, mode10 := mode10 }
-            let fuel := 64 * (Json.size expanded + Json.size expandedFrame) + 4096
-            let init : FState := { arena := #[.arr []], stack := [], embeds := [], bnodes := [] }
-            match (frameRec env root false (env.subjectsOf root) expandedFrame 0 none fuel).run init with
-            | .error e => .error e
-            | .ok ((), st) =>
-              let prune := opts.pruneBlankNodeIdentifiers.getD (!mode10)
-              let clear := if prune then singletonBnodes st else []
-              let tree := st.materialize 0
-              let results := cleanupPreserve clear tree (Json.size tree + 8)
+          | .ok results =>
               let co : CmpOpts := { arrays := opts.compactArrays, rel := true }
               match compactElem loader ac none results co (16 * Json.size results + 128) with
               | .error e => .error e
