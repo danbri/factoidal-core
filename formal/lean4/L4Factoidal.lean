@@ -80,6 +80,7 @@ import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
 import L4Factoidal.SPARQL.QueryTests
 import L4Factoidal.Syntax.Lexing
+import L4Factoidal.Syntax.Diagnostics
 import L4Factoidal.Syntax.Locality
 import L4Factoidal.Syntax.LocalityLiteral
 import L4Factoidal.Syntax.LocalityLine
