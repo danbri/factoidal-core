@@ -8,6 +8,7 @@ import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.SPARQL.StoreFastPath
+import Wasm.Ops.Clock
 
 namespace Harness.ShardMerkleQuery
 
@@ -73,6 +74,7 @@ private def materializeProfiled (directory : System.FilePath) : List Entry →
     `--explain`, this opens the selected artifacts and reports observed scan
     and evaluator measurements in the same S-expression node family. -/
 private def explainAnalyze (asJson : Bool) (directory : System.FilePath) (queryText : String) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   try
     let directory ← resolveStoreDirectory directory
     let (manifestPath, manifestBytes) ← readManifest directory
@@ -97,7 +99,7 @@ private def explainAnalyze (asJson : Bool) (directory : System.FilePath) (queryT
                 let triples := nodes.flatMap fun node => node.materialized.triples
                 let dataset : DatasetBackend := { default := .hdt (readOpsOf triples), named := [] }
                 let t0 ← IO.monoMsNow
-                match runSelectQueryBackendDataset emptyEnv query dataset with
+                match runSelectQueryBackendDataset clockEnv query dataset with
                 | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                 | some rows =>
                     let t1 ← IO.monoMsNow
@@ -109,6 +111,7 @@ private def explainAnalyze (asJson : Bool) (directory : System.FilePath) (queryT
   catch e => IO.eprintln s!"l4block-shard-merkle-query explain-analyze failure: {e}"; return 1
 
 private def run (directory : System.FilePath) (queryText : String) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   try
     let directory ← resolveStoreDirectory directory
     let (manifestPath, manifestBytes) ← readManifest directory
@@ -149,7 +152,7 @@ private def run (directory : System.FilePath) (queryText : String) : IO UInt32 :
                     return 1
                 | some materialized =>
                     let dataset : DatasetBackend := { default := .hdt (readOpsOfDelta materialized.triples delta), named := [] }
-                    match runSelectQueryBackendDataset emptyEnv query dataset with
+                    match runSelectQueryBackendDataset clockEnv query dataset with
                     | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                     | some rows =>
                         let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
@@ -164,7 +167,7 @@ private def run (directory : System.FilePath) (queryText : String) : IO UInt32 :
                     return 1
                 | some (triples, logicalBytes) =>
                     let dataset : DatasetBackend := { default := .hdt (readOpsOfDelta triples delta), named := [] }
-                    match runSelectQueryBackendDataset emptyEnv query dataset with
+                    match runSelectQueryBackendDataset clockEnv query dataset with
                     | none => IO.eprintln "l4block-shard-merkle-query failed: query was not evaluated as SELECT"; return 1
                     | some rows =>
                         let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"

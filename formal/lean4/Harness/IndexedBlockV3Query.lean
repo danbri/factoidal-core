@@ -9,6 +9,7 @@ import L4Factoidal.SPARQL.SharedSubjectTriple
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.Storage.ShardManifest
+import Wasm.Ops.Clock
 
 namespace Harness.IndexedBlockV3Query
 
@@ -87,6 +88,7 @@ private def countAllPredicates (directory : System.FilePath) (manifest : Manifes
 private def finish (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved)
     (mode : String := "ibk3-paged-merkle") : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   let backend := backendFor triples delta
   let dataset : DatasetBackend := { default := backend, named := [] }
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
@@ -94,7 +96,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
   -- sets it itself.  The dataset is the same base-plus-delta graph the
   -- backend answers from (the CONSTRUCT arm below already reads it this
   -- way), so an EXISTS sub-pattern sees exactly the materialised fragment.
-  let env : EvalEnv := { emptyEnv with
+  let env : EvalEnv := { clockEnv with
     dataset := some { default := backendSearch backend patternBoundAll, named := [] } }
   let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
   match query.form with
@@ -107,7 +109,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
           IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
           return 0
   | .ask =>
-      match runAskQueryBackendDataset emptyEnv query dataset with
+      match runAskQueryBackendDataset clockEnv query dataset with
       | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
       | some answer =>
           IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
@@ -115,7 +117,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
           IO.println s!"l4block-id-v3-query boolean={answer}"
           return 0
   | .construct _ =>
-      let graph : Graph := evalConstruct emptyEnv
+      let graph : Graph := evalConstruct clockEnv
         { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
       IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
       IO.println s!"l4block-id-v3-query sse={query.toSse}"
@@ -127,7 +129,7 @@ private def finish (query : Query) (entries : List Entry) (predicates : List WfI
       -- selective path and the predicate collector for it, so `triples` is
       -- the whole generation here (mode `ibk3-paged-merkle-full-manifest`),
       -- and the delta is applied by `backendFor` as for CONSTRUCT.
-      let graph : Graph := evalDescribe emptyEnv
+      let graph : Graph := evalDescribe clockEnv
         { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
       IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
       IO.println s!"l4block-id-v3-query sse={query.toSse}"
@@ -187,13 +189,14 @@ private def objectSubjectDistinctSolutions (subjectVar : VarName)
 private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar objectVar : VarName)
     (drivers targets : List Triple) (counters : Counters) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   let (executionQuery, inputRows, mode) :=
     match distinctSubjectOrderQuery? query subjectVar with
     | some q => (q, objectSubjectDistinctSolutions subjectVar targets,
         "ibk3-sri2-tli1-oli2-object-subject-direct-select-distinct-subject")
     | none => (query, objectSubjectSolutions subjectVar objectVar drivers targets,
         "ibk3-sri2-tli1-oli2-object-subject-direct-select")
-  let rows := selectPost emptyEnv emptyEnv.activeGraph executionQuery inputRows
+  let rows := selectPost clockEnv clockEnv.activeGraph executionQuery inputRows
   IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
   IO.println s!"l4block-id-v3-query sse={query.toSse}"
   IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
@@ -207,7 +210,8 @@ private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
 private def finishSubjectTripleSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar driverVar leftVar rightVar : VarName)
     (drivers lefts rights : List Triple) (counters : Counters) : IO UInt32 := do
-  let rows := selectPost emptyEnv emptyEnv.activeGraph query
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let rows := selectPost clockEnv clockEnv.activeGraph query
     (subjectTripleSolutions subjectVar driverVar leftVar rightVar drivers lefts rights)
   IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-sri2-tli1-subject-triple-direct-select({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
   IO.println s!"l4block-id-v3-query sse={query.toSse}"
@@ -224,8 +228,9 @@ private def finishCount (query : Query) (entries : List Entry)
 
 private def finishAsk (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   let dataset : DatasetBackend := { default := backendFor triples delta, named := [] }
-  match runAskQueryBackendDataset emptyEnv query dataset with
+  match runAskQueryBackendDataset clockEnv query dataset with
   | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
   | some answer =>
       let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
@@ -243,6 +248,7 @@ private def finishAskCount (query : Query) (entries : List Entry) (count : Nat)
 
 private def finishPredicateGroup (query : Query) (entries : List Entry) (predicates : List WfIri)
     (predicateVar countAlias : VarName) (counts : List (WfIri × Nat)) (counters : Counters) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   let backend : GraphBackend := .hdt
     { search := fun _ => []
       estimate := fun bound =>
@@ -253,7 +259,7 @@ private def finishPredicateGroup (query : Query) (entries : List Entry) (predica
   let grouped := predicateGroupBySolutions predicateVar countAlias backend predicates
   let ordered := match query.modifier.orderBy with
     | none => grouped
-    | some order => sortSolutions (compareOnConditions emptyEnv emptyEnv.activeGraph order) grouped
+    | some order => sortSolutions (compareOnConditions clockEnv clockEnv.activeGraph order) grouped
   let rows := sliceSolutions query.modifier.offset query.modifier.limit ordered
   IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-predicate-group-count({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
   IO.println s!"l4block-id-v3-query sse={query.toSse}"

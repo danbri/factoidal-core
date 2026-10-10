@@ -3,6 +3,7 @@ import L4Factoidal.Storage.IndexedBlockWireV2
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
 
 namespace Harness.IndexedBlockV2Diff
 
@@ -14,10 +15,11 @@ private def listDataset (graph : Graph) : DatasetBackend := { default := .list g
 private def indexedDataset (block : Block) : DatasetBackend := { default := .hdt (readOps block), named := [] }
 
 private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e => IO.eprintln s!"l4block-id-v2-diff query parse error at {e.pos}: {e.msg}"; return 1
   | .ok q =>
-      let expected := runSelectQueryBackendDataset emptyEnv q (listDataset graph)
+      let expected := runSelectQueryBackendDataset clockEnv q (listDataset graph)
       let source := fromGraph graph
       match encode? source with
       | none => IO.eprintln "l4block-id-v2-diff refused: unsupported RDF term or ID"; return 1
@@ -25,7 +27,7 @@ private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
           match decode bytes with
           | none => IO.eprintln "l4block-id-v2-diff failed: IBK2 did not decode its own bytes"; return 1
           | some decoded =>
-              let actual := runSelectQueryBackendDataset emptyEnv q (indexedDataset decoded)
+              let actual := runSelectQueryBackendDataset clockEnv q (indexedDataset decoded)
               if expected == actual then
                 IO.println s!"l4block-id-v2-diff pass path={path} triples={graph.length} bytes={bytes.size} segments={source.byPredicate.toList.length} rows={(actual.getD []).length}"
                 IO.println s!"l4block-id-v2-diff sse={q.toSse}"
