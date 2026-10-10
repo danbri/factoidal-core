@@ -48,9 +48,17 @@ denotes nothing, so no blank node can be it — §7).
 
 * `simple`: no closure, strict literal identity, any term bindable.
 * `d`     : no closure, D-value literal equality.
-* `rdf`   : `RDFS.rdfClosure` (§8.2 axioms + rdfD2), D-value equality.
-* `rdfs`  : `RDFS.fullClosure` (§8 + §9 rules and axioms), D-value
-            equality.
+* `rdf`   : rdfD1 towards E (`Regime.generalize`), then
+            `RDFS.rdfClosure` (§8.2 axioms + rdfD2), D-value equality.
+* `rdfs`  : rdfD1, rdfs14 and rdfs14a towards E, then
+            `RDFS.fullClosure` (§8 + §9 rules and axioms, with the
+            four RDF 1.2 axiomatic triples), D-value equality.
+
+The axiom tables are RDF 1.2 Semantics' (RDF 1.1's plus `rdf:reifies`
+and `rdfs:Proposition` rows), and rdfD1 has its RDF 1.2 "appears in"
+reading, which reaches into triple terms; on an RDF 1.1 graph both
+agree with RDF 1.1 Semantics except for triples that name `rdf:reifies`
+or `rdfs:Proposition`.
 
 `regimeEntails r D g h` is `inconsistent ∨ instance-found`: an
 inconsistent graph entails everything (§5.1, "an inconsistent graph
@@ -77,9 +85,10 @@ decides in the F\* tree:
       be in the range (§7).
 
 Not decided: XMLLiteral IS decided here (the XML parser is in the
-tree), which the F\* module leaves as `Unsupported`. Anything needing
-rdfD1's surrogate blank nodes is not, and is documented in
-`RDFS/FullClosure.lean`.
+tree), which the F\* module leaves as `Unsupported`. A clash between
+two datatype classes asserted of one node (`_:x rdf:type xsd:boolean .
+_:x rdf:type xsd:integer .`, §8.1.1) is not decided, including when
+the node is an rdfD1 surrogate.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -804,8 +813,10 @@ def Regime.literalEq (r : Regime) (D : List WfIri) : Literal → Literal → Boo
 
 /-- What a blank node may range over under a regime: anything, except
 (under D) an ill-formed recognised literal (§7: such a literal denotes
-nothing, so no blank node can denote it — the
-`malformed-literal-bnode-neg` polarity). A triple term is bindable at
+nothing, so no blank node can denote it). The rdf12 test
+`malformed-literal-bnode-neg` was written for this polarity; under RDF
+1.2 its action is D-inconsistent and entails everything, and upstream
+withdrew it (w3c/rdf-tests `5d82be0`). A triple term is bindable at
 its own level even when its INTERIOR mentions an ill-formed literal:
 any premise graph exhibiting such a term is already D-inconsistent
 (`hasIllFormedLiteral` on `mentionedLiterals`, WD §5 + §7.1) and

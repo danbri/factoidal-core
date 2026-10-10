@@ -19,15 +19,19 @@ full closure computes is derivable (`fullClosure_sound`).
 RDF 1.1 Semantics §8.1, RDF entailment rules:
 
   * rdfD2  `xxx aaa yyy .`  ⊢  `aaa rdf:type rdf:Property .`
-  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢  `_:nnn rdf:type ddd .`
-    NOT a row here: it mints a fresh blank node per literal. Its only
-    observable consequences on a non-generalised conclusion graph are
-    (a) `_:b rdf:type ddd` answered by a blank node that can ALSO map
-    to the literal itself under simple entailment, which the instance
-    search in `RDF/Entailment.lean` permits, and (b) D-inconsistency
-    of ill-formed literals, which `Entailment.dInconsistent` decides.
-    The F\* tree makes the same cut (`RDFS.Closure.fsti` banner:
-    "rdfD1 ... mint fresh blank nodes — a scoped gap").
+  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢
+           `xxx aaa _:nnn . _:nnn rdf:type ddd .`
+    NOT a row here: it mints a fresh blank node per literal, and this
+    closure must mint none (the SPARQL entailment regimes answer over
+    it; see `RDF.Regime.closure`). The graph-entailment procedure
+    applies it, with RDF 1.2's rdfs14 and rdfs14a, BEFORE this closure
+    runs (`RDF.Regime.generalize`, `RDF/Entailment.lean`). Until
+    2026-10-09 this note claimed the conclusion `_:b rdf:type ddd` was
+    answered by mapping `_:b` to the literal itself; that is false —
+    `_:b` is in SUBJECT position there, where a literal cannot go — and
+    the rdf12 `literal-type` test failed for it. The F\* tree still
+    makes the cut (`RDFS.Closure.fsti` banner: "rdfD1 ... mint fresh
+    blank nodes — a scoped gap").
 
 RDF 1.1 Semantics §9.2, RDFS entailment rules (quoted from the table):
 

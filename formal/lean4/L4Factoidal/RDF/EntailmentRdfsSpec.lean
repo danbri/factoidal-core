@@ -6,7 +6,10 @@ Port of `formal/fstar/RDF.Entailment.RDFS.Spec.fst` (418 lines).
 
 Rung three of the entailment ladder. Baseline: RDF 1.1 Semantics §9 —
 the thirteen-row rule table, the axiomatic triples, and the two
-condition-level consequences that are NOT rows.
+condition-level consequences that are NOT rows. RDF 1.2 Semantics §9
+adds three axiomatic triples (in `RDF.VocabularyAxioms` since
+2026-10-09) and two rows about propositions, rdfs14 and rdfs14a
+(below).
 
 Like the two rungs below it, this module computes nothing about the
 engine and calls no engine function in its definitions. The theorems at

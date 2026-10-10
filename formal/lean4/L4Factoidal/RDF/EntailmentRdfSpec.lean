@@ -9,7 +9,9 @@ Rung two of the entailment ladder: above simple entailment
 
 Baseline: RDF 1.1 Semantics §8, "RDF Interpretations" — the semantic
 conditions, the RDF axiomatic triples, and the two-row entailment rule
-table. Cross-checked against Hayes, RDF Semantics (2004) §3, the
+table. Since 2026-10-09 the axiomatic triples are RDF 1.2 Semantics §8's
+(one added row, `rdf:reifies rdf:type rdf:Property .`) and rdfD1 is
+stated in its RDF 1.2 form. Cross-checked against Hayes, RDF Semantics (2004) §3, the
 baseline the normative OWL 2 specifications build on.
 
 Like the simple-entailment transcription, this module computes nothing
