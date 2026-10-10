@@ -27,9 +27,12 @@ scalar value by construction, so a resolved codepoint escape is one
     offset. Every rejection still names a position; the number differs.
   * A `\uD800`-`\uDFFF` escape inside an IRIREF, which the F* encodes
     as three bytes, is not representable as a Lean `Char`. This port
-    DROPS such an escape (the F* itself drops an out-of-Unicode-range
-    escape, returning `""` from `utf8_of_codepoint`); inside a STRING
-    the F* already rejects surrogates outright and so does this port
+    leaves such an escape in the lexeme verbatim, and the parser's
+    `firstInvalidToken` rejects an IRI token holding a backslash
+    (SPARQL 1.2 §19.2: a
+    numeric escape "MUST NOT produce a code point value in the range
+    U+D800 to U+DFFF"); see `processIriEscapesRec`. Inside a STRING the
+    F* already rejects surrogates outright and so does this port
     (`decodeStringEscape`).
 
 KEYWORD CASE. §19.8 note: "Keywords are matched in a case-insensitive
@@ -43,8 +46,9 @@ lexer flag: it adds `<<(` / `)>>` triple terms, bare `<<` / `>>`
 reified triples, `~`, `{|` / `|}`, the `TRIPLE`/`SUBJECT`/`PREDICATE`/
 `OBJECT`/`isTRIPLE` and `VERSION` and lang-direction keywords, the
 `@lang--ltr` directional language tags, strict ECHAR-follower
-rejection, and the whole-text codepoint-escape preprocessing pass
-(`tokenize12`). In `.v11` every one of those is off and the token
+rejection, and per-token escape decoding (`tokenize12`; the F*
+decodes escapes over the whole text first, which SPARQL 1.2 §19.2
+no longer allows). In `.v11` every one of those is off and the token
 stream is the F* 1.1 stream.
 
 TERMINATION. `tokenize` is fuel-bounded exactly as the F*
@@ -264,9 +268,14 @@ def charOfCodepoint? (cp : Nat) : Option Char :=
 
 /-- `process_iri_escapes_rec`: expand `\uXXXX` / `\UXXXXXXXX` in an
 IRIREF lexeme. Total, never fails: an escape that cannot parse leaves
-its backslash verbatim (the F*'s stated fallback), and a codepoint no
-`Char` can hold is dropped (the F*'s `utf8_of_codepoint` returns `""`
-for one out of Unicode range — see the module header on surrogates).
+its backslash verbatim (the F*'s stated fallback), and so does an
+escape whose code point no `Char` can hold — a surrogate (U+D800 to
+U+DFFF) or a value above U+10FFFF. SPARQL 1.2 §19.2: "A numeric escape
+sequence MUST NOT produce a code point value in the range U+D800 to
+U+DFFF". The parser's `firstInvalidToken` rejects an IRI token that
+still holds a backslash, so the query is rejected (W3C sparql12
+`surrogate-esc-05-bad`). The F* drops such an escape
+(`utf8_of_codepoint` returns `""`), which accepted the query.
 Fuel-bounded so it stays structural; the fuel is the input length,
 and every round consumes at least one character. -/
 def processIriEscapesRec : Nat → List Char → List Char → List Char
@@ -281,14 +290,14 @@ def processIriEscapesRec : Nat → List Char → List Char → List Char
           | some (cp, after) =>
             match charOfCodepoint? cp with
             | some ch => processIriEscapesRec f after (ch :: acc)
-            | none    => processIriEscapesRec f after acc
+            | none    => processIriEscapesRec f r1 (c1 :: acc)
           | none => processIriEscapesRec f r1 (c1 :: acc)
         else if c2 == 'U' then
           match readHexDigits 8 r2 0 with
           | some (cp, after) =>
             match charOfCodepoint? cp with
             | some ch => processIriEscapesRec f after (ch :: acc)
-            | none    => processIriEscapesRec f after acc
+            | none    => processIriEscapesRec f r1 (c1 :: acc)
           | none => processIriEscapesRec f r1 (c1 :: acc)
         else processIriEscapesRec f r1 (c1 :: acc)
       | [] => processIriEscapesRec f [] (c1 :: acc)
@@ -297,14 +306,6 @@ def processIriEscapesRec : Nat → List Char → List Char → List Char
 /-- `process_iri_escapes`. -/
 def processIriEscapes (cs : List Char) : List Char :=
   processIriEscapesRec (cs.length + 1) cs []
-
-/-- `process_codepoint_escapes` — the SPARQL 1.2 whole-text
-preprocessing pass. Identical transformation to `processIriEscapes`;
-a separate name because the CALL SITE is what carries the meaning
-(§19.8's codepoint-escape note lets an escape stand for any character
-anywhere in the query, keyword and quote delimiters included, so the
-decode cannot be scoped to one token's lexeme). -/
-def processCodepointEscapes (cs : List Char) : List Char := processIriEscapes cs
 
 /-- `decode_string_escape`: one ECHAR ([160]) or codepoint escape,
 positioned just past the backslash. `strict` (SPARQL 1.2 only) rejects
@@ -864,12 +865,20 @@ def tokenizeLoop (v12 : Bool) : Nat → Nat → List Char → List PosToken →
 def tokenize (s : String) : List PosToken :=
   tokenizeLoop false (s.toList.length + 1) 0 s.toList []
 
-/-- SPARQL 1.2 tokenizer — port of `tokenize_12`. Decodes codepoint
-escapes over the WHOLE text first (§19.8's codepoint-escape note),
-then lexes in 1.2 mode. -/
+/-- SPARQL 1.2 tokenizer. Escapes are decoded per token, never over
+the whole text: SPARQL 1.2 §19.2 allows numeric escapes in IRIs and
+strings only ("Escape sequences may be used in the following places"),
+and processes them "by taking the sequence of Unicode code points
+matching the relevant grammar production" and scanning it once, left
+to right. So `\u0022` inside a string is a quotation mark in the value
+and does not close the string (W3C sparql12 `codepoint-esc-08`), an
+escaped backslash does not start a second escape (`codepoint-esc-09`),
+a query spelled with escapes is not a query (`codepoint-esc-01-bad`),
+and an escape in a local name is an error (`codepoint-esc-03-bad`).
+The F* `tokenize_12` decoded the whole text first, as SPARQL 1.1
+§19.2 did. -/
 def tokenize12 (s : String) : List PosToken :=
-  let decoded := processCodepointEscapes s.toList
-  tokenizeLoop true (decoded.length + 1) 0 decoded []
+  tokenizeLoop true (s.toList.length + 1) 0 s.toList []
 
 /-- Tokenize at the requested version. -/
 def tokenizeAt : SparqlVersion → String → List PosToken

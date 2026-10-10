@@ -445,4 +445,87 @@ Each of these is a real bug this port shipped and the
 #guard errMsg "SELECT (1 AS ?X) { SELECT (2 AS ?X) {} }" ==
   "SELECT expression aliases variable already in scope"
 
+/-! ## The trailing VALUES clause and projection scope (W3C rdf-tests ec2ba15)
+
+SPARQL 1.1 [2] Query and [8] SubSelect end in a ValuesClause after any
+query form. §18.2.4.3 joins it after GROUP BY and HAVING and before the
+SELECT expressions, so its variables are in scope for §11.4 and
+§18.2.4.4. -/
+
+-- [2]: every query form takes a trailing VALUES clause.
+#guard parses "ASK { ?s ?p ?o } VALUES ?o { 42 }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } GROUP BY ?s VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } ORDER BY ?s LIMIT 1 VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "DESCRIBE ?s WHERE { ?s ?p ?o } VALUES ?s { <http://e/a> }"
+-- Only one trailing clause, and a malformed one is reported as such.
+#guard !parses "ASK { } VALUES ?x { 1 } VALUES ?y { 2 }"
+#guard errMsg "ASK { } VALUES (?x ?y) { (1) }" == "VALUES row has wrong number of terms"
+#guard errMsg "SELECT * { } VALUES (?x ?y) { (1) }" == "VALUES row has wrong number of terms"
+
+-- §11.4 at a grouping level: a VALUES variable is in scope for the
+-- projection; a non-grouped WHERE variable is not.
+#guard parses "SELECT ?s ?v { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }"
+#guard parses "SELECT ?s (STR(?v) AS ?w) { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }"
+#guard errMsg "SELECT ?s ?o { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }" ==
+  "SELECT projects ungrouped variable"
+#guard errMsg "SELECT ?s ?v { ?s ?p ?o } GROUP BY ?s" == "SELECT projects ungrouped variable"
+-- An earlier SELECT expression's variable is in scope; a later one's
+-- is not.
+#guard parses "SELECT (COUNT(?v) AS ?c) (?c + 1 AS ?d) { VALUES ?v { 1 2 } }"
+#guard errMsg "SELECT (?c + 1 AS ?d) (COUNT(?v) AS ?c) { VALUES ?v { 1 2 } }" ==
+  "SELECT projects ungrouped variable"
+-- §18.2.4.4: the alias of `(expr AS ?v)` must not be in scope. At a
+-- grouping level the scope is the named GROUP BY variables and the
+-- VALUES variables (W3C sparql12 `group-by-scope-*`, sparql11
+-- `syn-group-by-values-scope-03`).
+#guard parses "SELECT (123 AS ?z) { ?s <http://e/p> ?z } GROUP BY ?s"
+#guard errMsg "SELECT (123 AS ?z) { } GROUP BY ?z" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT (123 AS ?z) { } GROUP BY (1 AS ?z)" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s VALUES ?c { 0 1 }" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT (1 AS ?x) { } VALUES ?x { 2 }" ==
+  "SELECT expression aliases variable already in scope"
+
+-- Placement: at a grouping level the rows travel in `postValues`; at
+-- any other level they are joined with the WHERE pattern.
+#guard ((parseSparql "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "SELECT ?s { ?s ?p ?o } VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some false
+
+-- [24] OrderCondition: any [121] BuiltInCall, aggregates included.
+#guard parses "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s ORDER BY LCASE(?s)"
+#guard parses "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s ORDER BY COUNT(?o)"
+-- An aggregate does not start a [19] GroupCondition.
+#guard !parses "SELECT (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY COUNT(?o)"
+
+/-! ## SPARQL 1.2 §19.2 escape sequences
+
+Numeric escapes are decoded per token, in IRIs and strings only, in one
+left-to-right pass, and a surrogate code point is an error (W3C
+sparql12 `codepoint-escapes`). -/
+
+-- `\u0022` in a string is a quotation mark in the value; it does not
+-- close the string.
+#guard parses "SELECT * { ?s ?p \"a\\u0022b\" }" .v12
+#guard tokensOf (tokenize12 "\"a\\u0022b\"") == [Token.str "a\"b", Token.eof]
+-- An escaped backslash does not start a second escape.
+#guard tokensOf (tokenize12 "\"\\u005Cn\"") == [Token.str "\\n", Token.eof]
+-- A query spelled with escapes is not a query; an escape in a local
+-- name is an error.
+#guard !parses "\\u0041SK {}" .v12
+#guard !parses "PREFIX ns: <http://e/> SELECT * { ?x ns:a\\u0062c ?o }" .v12
+-- Surrogates are errors in strings and in IRIs.
+#guard !parses "SELECT * { ?s ?p \"\\uD83C\\uDCA1\" }" .v12
+#guard errMsg "SELECT * { ?s ?p <http://e/\\uD83C\\uDCA1> }" .v12 ==
+  "invalid IRI escape (surrogate or malformed)"
+#guard errMsg "SELECT * { ?s ?p <http://e/\\uD83C> }" ==
+  "invalid IRI escape (surrogate or malformed)"
+-- A non-surrogate escape in an IRI decodes.
+#guard parses "SELECT * { ?s ?p <http://e/\\u0061\\U0001F47E> }" .v12
+#guard parses "SELECT * { ?s ?p <http://e/\\u0061> }"
+
 end L4Factoidal.SPARQL

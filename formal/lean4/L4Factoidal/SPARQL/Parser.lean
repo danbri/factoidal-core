@@ -447,6 +447,66 @@ def exprHasUngroupedVar (isGrp : VarName → Bool) : Expr → Bool
       exprHasUngroupedVar isGrp c
   | _ => false
 
+/-! ## Projection scope — SPARQL 1.1 §11.4 and §18.2.4, SPARQL 1.2 §18.3.1 and §18.3.4
+
+The trailing VALUES clause ([2] Query, [8] SubSelect) is joined AFTER
+GROUP BY and HAVING and BEFORE the SELECT expressions (§18.2.4.3 in 1.1,
+§18.3.4.3 in 1.2: "If the query has a trailing VALUES clause: P :=
+Join(P, ToMultiset(data))"). Its variables are therefore in scope for
+the projection checks below, at a grouping level as well as at any
+other. -/
+
+/-- The named GROUP BY variables: `GROUP BY ?v` and `GROUP BY (e AS ?v)`.
+The §18.3.1 in-scope table lists both forms; `GROUP BY (e)` without
+`AS` names nothing. -/
+def groupNamedVars (gcs : List GroupCondition) : List VarName :=
+  gcs.filterMap (fun gc =>
+    match gc with
+    | .var v           => some v
+    | .expr _ (some v) => some v
+    | .expr _ none     => none)
+
+/-- §11.4 Aggregate Projection Restrictions, checked left to right over
+the SELECT clause of a grouping query level. Every variable that a
+projection item uses outside an aggregate must be a named GROUP BY
+variable or "introduced by an earlier SELECT expression in the same
+SELECT clause"; a variable of the trailing VALUES clause is also in
+scope (see the section header). `inScope` starts as the GROUP BY names
+plus the VALUES variables, and each `(expr AS ?v)` adds `?v` for the
+items after it. `true` means some item violates the rule. -/
+def projectionHasUngrouped (inScope : List VarName) : List SelectItem → Bool
+  | []                => false
+  | .var v :: rest    => !inScope.contains v || projectionHasUngrouped inScope rest
+  | .expr e v :: rest =>
+      exprHasUngroupedVar (fun x => inScope.contains x) e ||
+      projectionHasUngrouped (v :: inScope) rest
+
+/-- §18.2.4.4 (1.1) / §18.3.4.4 (1.2), Select expressions: for each
+`(expr AS var)`, "var must not appear in VS' nor in PV; if it does then
+generate a syntax error". `inVS` decides membership of VS', the
+variables visible at the projection; `pv` collects the projection
+variables of the items already read. `true` means a clash. -/
+def projectionAliasClash (inVS : VarName → Bool) (pv : List VarName) :
+    List SelectItem → Bool
+  | []                => false
+  | .var v :: rest    => projectionAliasClash inVS (v :: pv) rest
+  | .expr _ v :: rest =>
+      inVS v || pv.contains v || projectionAliasClash inVS (v :: pv) rest
+
+/-- Place a parsed trailing VALUES clause (§18.2.4.3 in 1.1, §18.3.4.3
+in 1.2). At a grouping level the join comes after GROUP BY and HAVING,
+so the rows travel in `postValues` and the evaluator joins them there.
+At any other level no step sits between the WHERE pattern and the join,
+so Join(P, data) is the join of the WHERE pattern with the VALUES
+pattern, and that is what is built. -/
+def attachValues (grouping : Bool) (pattern : QueryPattern) :
+    Option QueryPattern → QueryPattern × Option (List Binding)
+  | some (.values vs rows) =>
+    if grouping then (pattern, some (evalValues vs rows))
+    else (ggpJoin pattern (.values vs rows), none)
+  | some g => (ggpJoin pattern g, none)
+  | none   => (pattern, none)
+
 /-! ## Variables and blank nodes in a pattern
 
 `ggpHasVar` (`SPARQL11.Algebra.fst` line 7387), `lateralAssignableVars`
@@ -619,6 +679,19 @@ def firstInvalidToken : TStream → Option ParseError
   | pt :: rest =>
     match pt.tok with
     | .invalid m => some ⟨m, pt.pos⟩
+    -- [139] IRIREF admits no backslash except as the start of a UCHAR
+    -- escape (SPARQL 1.2 §19.7; in 1.1 the escapes are decoded before
+    -- the grammar applies and the production excludes `\` outright).
+    -- `processIriEscapesRec` leaves an escape it cannot decode in the
+    -- lexeme verbatim — malformed, a surrogate code point (SPARQL 1.2
+    -- §19.2: "MUST NOT produce a code point value in the range U+D800
+    -- to U+DFFF"), or above U+10FFFF — so a backslash still in the
+    -- lexeme marks a lexical error. `isIri` checks only for a colon and
+    -- would accept it.
+    | .iri s =>
+      if s.toList.contains '\\' then
+        some ⟨"invalid IRI escape (surrogate or malformed)", pt.pos⟩
+      else firstInvalidToken rest
     | _          => firstInvalidToken rest
 
 /-- `tokens_only_eof`: nothing but padding left. -/
@@ -668,14 +741,32 @@ def startsGroupCondition : Token → Bool
   | .isLiteral | .isNumeric | .sameTerm | .coalesce | .iri _ | .pname _ => true
   | _ => false
 
-/-- The tokens `parse_order_by_list` accepts as the start of a
-[24] OrderCondition. -/
-def startsOrderCondition : Token → Bool
-  | .asc | .desc | .var _ | .lparen | .iri _ | .pname _
-  | .strKw | .langKw | .langMatches | .datatype | .bound
-  | .ifKw | .iriKw | .uriKw | .concat | .isIri | .isBlank
-  | .isLiteral | .isNumeric | .sameTerm | .coalesce => true
+/-- The [127] Aggregate keywords. [121] BuiltInCall includes Aggregate,
+so an aggregate can start a [24] OrderCondition or a [22]
+HavingCondition (SPARQL 1.2 §19.7 note: "Aggregate functions may only
+be used in SELECT, HAVING and ORDER BY clauses"). -/
+def startsAggregate : Token → Bool
+  | .count | .sum | .minKw | .maxKw | .avg | .groupConcat | .sample => true
   | _ => false
+
+/-- The SPARQL 1.2 [121] BuiltInCall keywords. The tokenizer emits
+them only in 1.2 mode, so in 1.1 mode this set is never met. -/
+def startsBuiltinCall12 : Token → Bool
+  | .tripleKw | .subjectKw | .predicateKw | .objectKw | .isTripleKw
+  | .hasLangKw | .hasLangDirKw | .langDirKw | .strLangDirKw => true
+  | _ => false
+
+/-- The tokens that can start a [24] OrderCondition ::= ( ( 'ASC' |
+'DESC' ) BrackettedExpression ) | ( Constraint | Var ), where [69]
+Constraint ::= BrackettedExpression | BuiltInCall | FunctionCall.
+The F* `parse_order_by_list` lookahead lists only some [121]
+BuiltInCall keywords, so `ORDER BY LCASE(?name)` (W3C sparql11
+bindings test `values-group-order-by`) ended the ORDER BY list before
+its first condition. This set admits every BuiltInCall keyword,
+aggregates included. -/
+def startsOrderCondition : Token → Bool
+  | .asc | .desc | .var _ | .lparen | .iri _ | .pname _ => true
+  | t => startsBuiltinCall t || startsAggregate t || startsBuiltinCall12 t
 
 /-- The tokens `parse_having_list` accepts as a bare [22]
 HavingCondition. -/
@@ -1761,6 +1852,20 @@ def pValuesClause (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError 
       else pErr "VALUES row has wrong number of terms" ts4
     | _ => pErr "expected variable or '(' after VALUES" ts
 
+/-- [28] ValuesClause ::= ( 'VALUES' DataBlock )?, the trailing clause
+of [2] Query and [8] SubSelect. Absent clause: `none`. A malformed
+clause is an error, not an absent clause. -/
+def pTrailingValues (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError (Option QueryPattern × TStream) :=
+  match fuel with
+  | 0     => .ok (none, ts)
+  | f + 1 =>
+    match peekTok ts with
+    | .values => do
+      let (g, t) ← pValuesClause f st (advTok ts)
+      .ok (some g, t)
+    | _ => .ok (none, ts)
+
 -- ### Triples — [75]-[87]
 
 /-- [129] RDFLiteral in TERM position. -/
@@ -2592,8 +2697,21 @@ where
        | _ => (none, ts1))
     | _ => (none, ts)
 
-/-- [7]-[9] SelectQuery. All four SELECT-level well-formedness
-rejections live here — see the module header's table. -/
+/-- [7]-[9] SelectQuery, with the [2] / [8] trailing ValuesClause. All
+four SELECT-level well-formedness rejections live here — see the module
+header's table.
+
+Scope (§11.4, §18.2.4.4; SPARQL 1.2 §18.3.1, §18.3.4.4). The VALUES
+clause is read BEFORE the checks, because its variables are in scope
+for the projection. At a grouping level (GROUP BY, or an aggregate in
+the projection) the variables visible to the projection are the named
+GROUP BY variables and the VALUES variables; the WHERE pattern's other
+variables are not visible, so `SELECT (123 AS ?z) { ?s :p ?z } GROUP BY
+?s` is legal and `SELECT (123 AS ?z) {} GROUP BY ?z` is not (W3C
+sparql12 syntax tests `group-by-scope-*`). At any other level they are
+the WHERE pattern's in-scope variables and the VALUES variables.
+
+The VALUES join is placed by `attachValues`. -/
 def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -2609,74 +2727,49 @@ def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Q
     let ts5 := if peekTok ts4 == Token.whereKw then advTok ts4 else ts4
     let (pattern, ts6) ← pGroupGraphPattern f st ts5
     let (sm, ts7) ← pSolutionModifier f st ts6
+    let (vals, ts8) ← pTrailingValues f st ts7
     let md := sm.1
     let gb := sm.2.1
     let hv := sm.2.2
+    let valuesVars : List VarName :=
+      match vals with
+      | some (.values vs _) => vs
+      | _                   => []
+    -- The same test `selectPost` uses to decide whether to group.
+    let grouping : Bool := gb.isSome || selectHasAggregates sel
+    let named : List VarName :=
+      match gb with
+      | some gcs => groupNamedVars gcs
+      | none     => []
     -- §18.2.4.1: SELECT * cannot be combined with GROUP BY.
     if (match sel with | .all => true | _ => false) && gb.isSome then
       pErr "SELECT * not allowed with GROUP BY" ts6
+    -- §11.4: at a grouping level every projected variable outside an
+    -- aggregate is grouped, from VALUES, or an earlier alias. With no
+    -- GROUP BY a BARE projected variable beside an aggregate is
+    -- ungrouped (agg10.rq: `SELECT ?P (COUNT(?O) AS ?C) WHERE { ?S ?P
+    -- ?O }`), as in the F*'s `not (for_all p items)`.
+    else if grouping && (match sel with
+                         | .vars items => projectionHasUngrouped (named ++ valuesVars) items
+                         | .all        => false) then
+      pErr "SELECT projects ungrouped variable" ts6
+    else if (match sel with
+             | .vars items =>
+               projectionAliasClash
+                 (fun v => valuesVars.contains v ||
+                           (if grouping then named.contains v else ggpHasVar v pattern))
+                 [] items
+             | .all => false) then
+      pErr "SELECT expression aliases variable already in scope" ts6
     else
-      let ungroupedWithGroupBy : Bool :=
-        match gb with
-        | none => false
-        | some gcs =>
-          let isGrouped := fun (v : VarName) =>
-            gcs.any (fun gc => match gc with
-                               | .var gv        => gv == v
-                               | .expr _ (some gv) => gv == v
-                               | _              => false)
-          match sel with
-          | .vars items =>
-            !items.all (fun i => match i with
-                                 | .var v    => isGrouped v
-                                 | .expr e _ => !exprHasUngroupedVar isGrouped e)
-          | _ => false
-      -- §18.2.4.1: with an aggregate in the projection and no GROUP BY,
-      -- every other projected expression must itself be aggregated.
-      let ungroupedImplicit : Bool :=
-        match gb with
-        | some _ => false
-        | none =>
-          match sel with
-          | .vars items =>
-            let hasAgg := items.any (fun i => match i with
-                                              | .expr (.aggregate _ _ _) _ => true
-                                              | _ => false)
-            -- The F* writes this as `not (for_all p items)` with
-            -- `p (SI_Var _) = false`, so a BARE PROJECTED VARIABLE
-            -- alongside an aggregate is itself ungrouped (agg10.rq:
-            -- `SELECT ?P (COUNT(?O) AS ?C) WHERE { ?S ?P ?O }`). The
-            -- negation has to be pushed through both arms.
-            let hasUngrouped :=
-              items.any (fun i => match i with
-                                  | .var _    => true
-                                  | .expr e _ => exprHasUngroupedVar (fun _ => false) e)
-            hasAgg && hasUngrouped
-          | _ => false
-      if ungroupedWithGroupBy || ungroupedImplicit then
-        pErr "SELECT projects ungrouped variable" ts6
-      else if (match sel with
-               | .vars items =>
-                 !items.all (fun i => match i with
-                                      | .expr _ v => !ggpHasVar v pattern
-                                      | _         => true)
-               | _ => false) then
-        pErr "SELECT expression aliases variable already in scope" ts6
-      else do
-        -- [28] the trailing VALUES clause, joined onto the WHERE result.
-        let (vals, ts8) :=
-          match peekTok ts7 with
-          | .values => (match pValuesClause f st (advTok ts7) with
-                        | .ok (g, t) => (some g, t)
-                        | .error _   => (none, ts7))
-          | _ => (none, ts7)
-        let pat := match vals with
-                   | some g => ggpJoin pattern g
-                   | none   => pattern
-        .ok (Query.mk (.select sel) ds pat gb hv
-               { md with distinct := dist, reduced := red } none st.base, ts8)
+      let (pat, pv) := attachValues grouping pattern vals
+      .ok (Query.mk (.select sel) ds pat gb hv
+             { md with distinct := dist, reduced := red } pv st.base, ts8)
 
-/-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier. -/
+/-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier,
+followed by the [2] trailing ValuesClause. The SolutionModifier is NOT
+read: `evalAsk` applies none, so an ASK with GROUP BY, HAVING, ORDER BY,
+LIMIT or OFFSET is rejected rather than answered without its modifier. -/
 def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -2685,7 +2778,9 @@ def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Quer
     let (ds, ts2) ← pDatasetClauses f st ts1
     let ts3 := if peekTok ts2 == Token.whereKw then advTok ts2 else ts2
     let (pattern, ts4) ← pGroupGraphPattern f st ts3
-    .ok (Query.mk .ask ds pattern none [] {} none st.base, ts4)
+    let (vals, ts5) ← pTrailingValues f st ts4
+    let (pat, pv) := attachValues false pattern vals
+    .ok (Query.mk .ask ds pat none [] {} pv st.base, ts5)
 
 /-- [10] ConstructQuery — the full form and the `CONSTRUCT WHERE`
 short form, whose WHERE pattern must be a basic graph pattern. -/
@@ -2703,16 +2798,20 @@ def pConstructBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError
         pErr "CONSTRUCT WHERE short form only allows basic graph patterns" ts3
       else do
         let (r, ts5) ← pSolutionModifier f st ts4
-        .ok (Query.mk (.construct (collectTemplateTriples pattern)) ds pattern
-               r.2.1 r.2.2 r.1 none st.base, ts5)
+        let (vals, ts6) ← pTrailingValues f st ts5
+        let (pat, pv) := attachValues r.2.1.isSome pattern vals
+        .ok (Query.mk (.construct (collectTemplateTriples pattern)) ds pat
+               r.2.1 r.2.2 r.1 pv st.base, ts6)
     | .lbrace => do
       let (tmpl, ts2)    ← pGroupGraphPattern f st ts1
       let (ds, ts3)      ← pDatasetClauses f st ts2
       let ts4 := if peekTok ts3 == Token.whereKw then advTok ts3 else ts3
       let (pattern, ts5) ← pGroupGraphPattern f st ts4
       let (r, ts6)       ← pSolutionModifier f st ts5
-      .ok (Query.mk (.construct (collectTemplateTriples tmpl)) ds pattern
-             r.2.1 r.2.2 r.1 none st.base, ts6)
+      let (vals, ts7)    ← pTrailingValues f st ts6
+      let (pat, pv) := attachValues r.2.1.isSome pattern vals
+      .ok (Query.mk (.construct (collectTemplateTriples tmpl)) ds pat
+             r.2.1 r.2.2 r.1 pv st.base, ts7)
     | _ => pErr "expected WHERE or '{' after CONSTRUCT" ts1
 
 /-- [11] DescribeQuery's `VarOrIri+` list. -/
@@ -2759,10 +2858,14 @@ def pDescribeAfterTargets (fuel : Nat) (st : PState) (targets : List PatternTerm
       let ts2 := if peekTok ts1 == Token.whereKw then advTok ts1 else ts1
       let (pattern, ts3) ← pGroupGraphPattern f st ts2
       let (r, ts4)       ← pSolutionModifier f st ts3
-      .ok (Query.mk (.describe targets) ds pattern r.2.1 r.2.2 r.1 none st.base, ts4)
+      let (vals, ts5)    ← pTrailingValues f st ts4
+      let (pat, pv) := attachValues r.2.1.isSome pattern vals
+      .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts5)
     | _ => do
       let (r, ts2) ← pSolutionModifier f st ts1
-      .ok (Query.mk (.describe targets) ds .empty r.2.1 r.2.2 r.1 none st.base, ts2)
+      let (vals, ts3) ← pTrailingValues f st ts2
+      let (pat, pv) := attachValues r.2.1.isSome .empty vals
+      .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts3)
 
 end
 

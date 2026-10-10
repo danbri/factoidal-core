@@ -500,6 +500,70 @@ def qHaving (h : List Expr) : Query :=
     (qHaving [.compare .gt (.aggregate .count false (.var "*")) (.numericLit 99)]) == []
 #guard (rows dsNums (qHaving [.boolLit true])).length == 2
 
+/-! ## §18.2.4.3 the trailing VALUES clause at a grouping level
+
+SPARQL 1.1 §18.2.4.3 (1.2 §18.3.4.3): the VALUES rows join AFTER
+GROUP BY and HAVING and BEFORE the SELECT expressions. The grouped
+solution binds the named GROUP BY variables only, so compatibility is
+decided on those. W3C sparql11 `bindings/values-group-by-*`. -/
+
+def qGroupValues (items : List SelectItem) (vals : List Binding)
+    (md : SolutionModifier := {}) : Query :=
+  mkQuery (.select (.vars items)) (.bgp [tpv "s" pVal (.var "v")])
+    (groupBy := some [.var "s"]) (modifier := md) (postValues := some vals)
+
+def countItem : SelectItem := .expr (.aggregate .count false (.var "*")) "c"
+
+-- A VALUES variable the WHERE pattern never binds reaches the
+-- projection of every group.
+#guard colS "w" (rows dsNums (qGroupValues [.var "s", .var "w"] [[("w", nLit "7")]]))
+    == ["7", "7"]
+#guard colS "x" (rows dsNums (qGroupValues [.var "s", .expr (.str (.var "w")) "x"]
+    [[("w", nLit "7")]])) == ["7", "7"]
+-- The join is on the grouping variable: only alice's group survives.
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice)], [("s", .iri iZed)]])) == ["alice"]
+#guard colS "c" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice)], [("s", .iri iZed)]])) == ["2"]
+-- `?v` is not in scope after GROUP BY ?s, so a VALUES row binding it
+-- does not filter any group, and every count stays whole. Joining the
+-- VALUES rows BEFORE grouping would keep only bob's row (`?v = 3`).
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem] [[("v", nLit "3")]]))
+    == ["alice", "bob"]
+#guard colS "c" (rows dsNums (qGroupValues [.var "s", countItem] [[("v", nLit "3")]]))
+    == ["2", "1"]
+-- ORDER BY may name a VALUES variable that is not projected.
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "b")], [("s", .iri iBob), ("k", sLit "a")]]
+    { orderBy := some [.asc (.var "k")] })) == ["bob", "alice"]
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "a")], [("s", .iri iBob), ("k", sLit "b")]]
+    { orderBy := some [.asc (.var "k")] })) == ["alice", "bob"]
+-- The ORDER BY key is not projected.
+#guard (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "b")]] { orderBy := some [.asc (.var "k")] })).all
+    (fun mu => (mu.lookup "k").isNone)
+
+/-! ## §11.4 a SELECT expression reads the earlier ones
+
+"the variable is introduced by an earlier SELECT expression in the same
+SELECT clause" (W3C sparql12 `grouping/select-variable-reuse`). -/
+
+#guard colS "d" (rows dsNums
+    (mkQuery (.select (.vars [.expr (.aggregate .count false (.var "v")) "c",
+                              .expr (.arith .add (.var "c") (.numericLit 1)) "d"]))
+      (.bgp [tpv "s" pVal (.var "v")]))) == ["4"]
+-- A LATER item is not visible: `?c` is unbound when `?d` is computed.
+#guard colS "d" (rows dsNums
+    (mkQuery (.select (.vars [.expr (.arith .add (.var "c") (.numericLit 1)) "d",
+                              .expr (.aggregate .count false (.var "v")) "c"]))
+      (.bgp [tpv "s" pVal (.var "v")]))) == [""]
+-- An item whose expression errs stays unbound, even when a non-grouped
+-- WHERE variable of the same name is bound in the group's rows.
+#guard colS "v" (rows dsNums
+    (mkQuery (.select (.vars [.var "s", .expr (.var "unbound") "v"]))
+      (.bgp [tpv "s" pVal (.var "v")]) (groupBy := some [.var "s"]))) == ["", ""]
+
 /-! ## §18.2.4 ASK -/
 
 #guard evalAsk emptyEnv dsMain (mkQuery .ask pLabels) == true
