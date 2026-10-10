@@ -558,6 +558,10 @@ proved" and names the byte comparison and the guards that stand in for it.
 
 ## 5. Rows that remain ranked
 
+Later rounds: COUNT(DISTINCT) and shacl-person were repaired in section 8;
+query-q1 to q6, ORDER BY and ser-ttl-gene in section 9 (9.3 has the numbers
+after). The table below is the state after the first round.
+
 Ranked by the rule in section 2, after all repairs, from the survey with the
 binaries of the last commit. The coordinator opens one issue per row; the links
 are missing because this branch has no issue numbers yet. Each open row also
@@ -880,9 +884,9 @@ else needed a repair.
   of the terms: IRIs print-safe (`iriPrintSafe`; `RDF.isIri` admits a space,
   IRIREF does not), blank-node labels in BLANK_NODE_LABEL, language tags (lower
   case) in LANGTAG with subtags of 1 to 8 characters, no lexical-form
-  character that the canonical form writes as a `\u` escape (the proof covers
-  the seven ECHAR escapes), and in RDF 1.1 mode no triple term and no base
-  direction. It mentions neither the parser nor the serialiser (anti-pattern
+  character that the canonical form writes as a `\u` escape (the proof reads
+  back the seven ECHAR escapes; a dataset with such a character takes the
+  text path), and in RDF 1.1 mode no triple term and no base direction. It mentions neither the parser nor the serialiser (anti-pattern
   29: the conclusion is not among the premises). `datasetForOps` returns
   `normalizeDataset ds` when the check passes and the text round trip
   otherwise; `datasetForOps_eq` proves it equal to the text round trip for
@@ -923,7 +927,8 @@ else needed a repair.
     sub-SELECT, CONSTRUCT, DESCRIBE, ASK, GRAPH and a string FILTER, each with
     and without `--table`; two updates; `canonicalize`; the four closure
     regimes; five closure shapes with `owl-consistent`; generated RDFC-1.0
-    inputs; the vocabularies: 151 of 151 identical.
+    inputs; the vocabularies: 151 of 151 identical. `owl-entails` on nine
+    premise and conclusion pairs: 9 of 9 identical.
   * Guards (`RDF/DatasetNormalizeTests.lean`): the check accepts repeated
     triples, upper-case tags, escapes, blank nodes, named graphs of one name
     and nested triple terms with a base direction, and refuses an IRI with a
@@ -938,11 +943,97 @@ else needed a repair.
 
 ### 9.3 Survey rows, before and after
 
-TBD_SURVEY
+`tools/bench_lean_vs_fstar.py --rows query-q1,...,query-q6,query-orderby,query-count-distinct,ser-ttl-gene --runs 3 --cap 120 --single-over 15`,
+once with the binary before (`BENCH_LEAN_BIN_DIR` holding copies built from
+`0c834393`) and once with the binary after; the F* binary measured in both
+runs. Wall time in seconds, the minimum of up to three runs; peak resident set
+size in MB of that run (`wait4`). `F* s` and `F* MB` are from the run with the
+binary after; `Lean/F* before` divides by the F* time of the run before. Load
+average 3 to 10. "rc2": F* exits with status 2 (stack overflow in
+`count_runs`, section 6.4).
+
+| row | n | Lean s before | Lean MB before | Lean s after | Lean MB after | F* s | F* MB | Lean/F* before | Lean/F* after | load |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| query-q1 | 5000 | 0.562 | 126 | 0.140 | 35 | 0.191 | 16 | 2.6 | 0.7 | 4 |
+| query-q1 | 10000 | 1.216 | 228 | 0.341 | 51 | 0.376 | 16 | 2.7 | 0.9 | 4 |
+| query-q1 | 20000 | 2.151 | 439 | 0.758 | 81 | 0.753 | 18 | 2.5 | 1.0 | 4 |
+| query-q1 | 40000 | 4.911 | 857 | 1.650 | 141 | 1.486 | 22 | 2.7 | 1.1 | 4 |
+| query-q1 | 80000 | 16.2 | 1694 | 3.568 | 259 | 2.952 | 28 | 5.1 | 1.2 | 4 |
+| query-q2 | 5000 | 0.461 | 127 | 0.147 | 35 | 0.197 | 16 | 2.2 | 0.7 | 4 |
+| query-q2 | 10000 | 0.935 | 228 | 0.402 | 51 | 0.387 | 16 | 2.5 | 1.0 | 4 |
+| query-q2 | 20000 | 2.201 | 439 | 0.771 | 81 | 0.751 | 18 | 2.7 | 1.0 | 4 |
+| query-q2 | 40000 | 4.598 | 857 | 1.779 | 141 | 1.442 | 22 | 3.0 | 1.2 | 4 |
+| query-q2 | 80000 | 15.4 | 1694 | 3.832 | 259 | 3.010 | 28 | 4.7 | 1.3 | 3 |
+| query-q3 | 5000 | 0.465 | 127 | 0.152 | 35 | 0.214 | 23 | 2.0 | 0.7 | 3 |
+| query-q3 | 10000 | 1.033 | 228 | 0.286 | 51 | 0.429 | 31 | 2.0 | 0.7 | 3 |
+| query-q3 | 20000 | 2.062 | 439 | 0.792 | 81 | 0.844 | 51 | 2.4 | 0.9 | 3 |
+| query-q3 | 40000 | 4.496 | 857 | 1.604 | 141 | 1.741 | 89 | 2.2 | 0.9 | 3 |
+| query-q3 | 80000 | 15.2 | 1694 | 3.982 | 259 | 3.872 | 167 | 4.3 | 1.0 | 4 |
+| query-q4 | 5000 | 0.480 | 127 | 0.221 | 35 | 0.225 | 30 | 2.0 | 1.0 | 5 |
+| query-q4 | 10000 | 1.047 | 228 | 0.303 | 51 | 0.533 | 40 | 2.2 | 0.6 | 6 |
+| query-q4 | 20000 | 2.053 | 439 | 0.854 | 81 | 1.026 | 72 | 2.1 | 0.8 | 6 |
+| query-q4 | 40000 | 4.974 | 857 | 1.694 | 141 | 2.060 | 124 | 2.4 | 0.8 | 6 |
+| query-q4 | 80000 | 11.6 | 1694 | 3.886 | 259 | 4.449 | 233 | 2.1 | 0.9 | 6 |
+| query-q5 | 5000 | 0.754 | 127 | 0.221 | 39 | 0.205 | 26 | 2.4 | 1.1 | 7 |
+| query-q5 | 10000 | 1.336 | 228 | 0.362 | 54 | 0.443 | 34 | 2.8 | 0.8 | 7 |
+| query-q5 | 20000 | 2.556 | 439 | 0.992 | 89 | 1.129 | 56 | 2.7 | 0.9 | 7 |
+| query-q5 | 40000 | 8.194 | 857 | 2.205 | 154 | 2.151 | 96 | 3.8 | 1.0 | 7 |
+| query-q5 | 80000 | 19.0 | 1694 | 6.118 | 281 | 4.437 | 174 | 4.4 | 1.4 | 8 |
+| query-q6 | 5000 | 0.577 | 126 | 0.201 | 35 | 0.255 | 30 | 2.1 | 0.8 | 10 |
+| query-q6 | 10000 | 1.545 | 228 | 0.530 | 51 | 0.530 | 40 | 2.9 | 1.0 | 10 |
+| query-q6 | 20000 | 2.823 | 439 | 0.791 | 81 | 1.066 | 72 | 2.4 | 0.7 | 10 |
+| query-q6 | 40000 | 6.779 | 857 | 1.941 | 141 | 2.173 | 124 | 2.6 | 0.9 | 9 |
+| query-q6 | 80000 | 16.6 | 1694 | 5.109 | 259 | 4.866 | 233 | 3.6 | 1.1 | 8 |
+| query-orderby | 1250 | 0.226 | 43 | 0.050 | 26 | 0.078 | 21 | 4.2 | 0.6 | 6 |
+| query-orderby | 2500 | 0.537 | 69 | 0.107 | 30 | 0.147 | 21 | 4.2 | 0.7 | 6 |
+| query-orderby | 5000 | 0.976 | 127 | 0.220 | 41 | 0.353 | 26 | 3.3 | 0.6 | 6 |
+| query-orderby | 10000 | 2.086 | 228 | 0.548 | 56 | 0.638 | 44 | 3.5 | 0.9 | 6 |
+| query-orderby | 20000 | 4.332 | 439 | 1.302 | 90 | 1.287 | 68 | 3.6 | 1.0 | 6 |
+| query-count-distinct | 1250 | 0.108 | 43 | 0.045 | 25 | 0.092 | 21 | 1.2 | 0.5 | 5 |
+| query-count-distinct | 2500 | 0.242 | 69 | 0.083 | 31 | 0.245 | 21 | 0.9 | 0.3 | 5 |
+| query-count-distinct | 5000 | 0.558 | 127 | 0.178 | 39 | 0.733 | 26 | 0.8 | 0.2 | 5 |
+| query-count-distinct | 10000 | 1.052 | 228 | 0.433 | 55 | 2.650 | 35 | 0.4 | 0.2 | 5 |
+| query-count-distinct | 20000 | 2.865 | 439 | 0.990 | 89 | 9.355 | 57 | 0.3 | 0.1 | 5 |
+| ser-ttl-gene | 5000 | 1.312 | 276 | 0.441 | 40 | 0.449 | 34 | 2.9 | 1.0 | 5 |
+| ser-ttl-gene | 10000 | 3.718 | 532 | 0.971 | 59 | 0.903 | 51 | 4.1 | 1.1 | 5 |
+| ser-ttl-gene | 20000 | 7.049 | 1101 | 1.898 | 99 | rc2 | - | - | - | 5 |
+| ser-ttl-gene | 40000 | 18.9 | 2139 | 4.191 | 175 | rc2 | - | - | - | 5 |
+
+At the largest sizes, Lean time over F* time before and after: q1 5.1 to 1.2,
+q2 4.7 to 1.3, q3 4.3 to 1.0, q4 2.1 to 0.9, q5 4.4 to 1.4, q6 3.6 to 1.1 (80,000
+paragraphs), ORDER BY 3.6 to 1.0 (20,000), COUNT(DISTINCT) 0.3 to 0.1 (20,000),
+ser-ttl-gene 4.1 to 1.1 (10,000; F* fails above). Peak memory of a query at
+80,000 paragraphs: 1,694 MB before, 259 to 281 MB after. By time ratio none of
+the nine rows is ranked by the rule of section 2 any more (largest 1.4). By
+growth per doubling, from 40,000 to 80,000 paragraphs and by CPU time (the
+wall times of q5 and q6 were measured at load 8): q1 2.2, q2 2.2, q3 2.5, q4
+2.3, q5 2.2, q6 2.6 (F* 2.2). q6 (OPTIONAL with FILTER) is above 2.5 and so
+stays ranked by growth only, at 1.1 times the F* time; it was 2.4 before,
+when the round trip hid it. Not profiled in this round.
+
+Not repaired, and recorded here: memory. At 80,000 paragraphs a Lean query
+takes 259 MB against 28 MB for F* on q1 and q2 (233 MB for both engines on q4
+and q6, whose answers are large). The Lean dataset is a list of `Triple`
+values built by the Turtle reader, plus the index of `indexedDatasetBackend`;
+the parse alone (`parse`, 5,000 paragraphs) takes 35 MB, the same as the
+query. The ranking rule of section 2 does not cover memory.
 
 ### 9.4 Gates after the last commit of this round
 
-TBD_GATES
+Each equal to the run with the binaries before 9.1, and each runner log
+byte-identical: SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650); SPARQL
+1.2 271 pass, 0 fail (out of 271); RDF 1.1 1041 pass, 0 fail (out of 1041); RDF
+1.2 1358 pass, 0 fail (out of 1358); RDFC-1.0 86 pass, 0 fail (out of 86);
+SHACL Core 1.0 98, SHACL-SPARQL 1.0 22, SHACL 1.2 core 138, SHACL 1.2 sparql
+25 pass, 0 fail (out of the same); SHACL 1.2 rules 88 pass (out of 88); SHACL
+1.2 node expressions 140 pass, 0 fail, 2 unsupported (out of 142).
+`Wasm/cli-smoke.sh` 53 pass, 0 fail (out of 53) before, 54 pass, 0 fail (out
+of 54) after (one new case: `parse` and `query` `COUNT(*)` print 2 on issue
+724's file); `Wasm/native-smoke.sh` 297 pass, 0 fail (out of 297) before and
+after. `tests/stack/lean_scaling.sh` 16 pass, 0 fail, 0 expected-fail (out of
+16); `query-vs-parse` is an assertion. Full `lake build` exits 0 (1323 jobs).
+Lean hygiene audit: 0 sorry, 0 axiom, 0 native_decide, 0 unsafe, 0
+implemented_by, 166 partial def (unchanged).
 
 ## 7. How to repeat
 

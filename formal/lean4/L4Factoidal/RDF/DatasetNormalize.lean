@@ -37,7 +37,8 @@ decidable syntactic check of the terms; it does not mention the parser:
   characters (the check `readLangDir12` makes);
 * no lexical form contains a character the canonical form writes as a
   `\u` escape (C0 controls other than the six ECHAR ones, DEL, U+FFFE and
-  U+FFFF; this module proves the ECHAR escapes, not the hexadecimal ones);
+  U+FFFF). The proof reads back the seven two-character ECHAR escapes; a
+  dataset with a `\u`-escaped character takes the text path below;
 * in RDF 1.1 mode, no triple term and no base direction (the 1.1 grammar
   refuses both).
 
