@@ -1551,7 +1551,8 @@ def rbClosureIO (g goal : Graph) (capMs : Nat) : IO RbClosure := do
   let mut added := 0
   for _ in [0:rbRounds] do
     if r.capped then break
-    let cand := L4Factoidal.OWL.RdfBased.rbConclusions r.graph goal
+    let cand := L4Factoidal.OWL.RdfBased.rbConclusions r.graph goal ++
+      L4Factoidal.OWL.RdfBased.svfWitTriples r.graph goal
     let new := (cand.filter (fun t => !r.index.memB t)).eraseDups
     if new.isEmpty then break
     added := added + new.length

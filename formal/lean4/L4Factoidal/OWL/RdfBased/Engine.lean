@@ -21,7 +21,7 @@ the rules and the RL closure alternately for a stated number of rounds.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.OWL.RdfBased.Rules
+import L4Factoidal.OWL.RdfBased.Witness
 
 namespace L4Factoidal.OWL.RdfBased
 
@@ -571,14 +571,15 @@ theorem withoutCompWitness_sub {g : Graph} {t : Triple} (h : t ∈ withoutCompWi
 /-! ## The regime, as a pure function
 
 `rbSaturate g goal fuel n`: `n` rounds of (OWL 2 RL/RDF closure at
-`fuel`, then `rbConclusions` over it), then a last closure. The harness
+`fuel`, then `rbConclusions` and the existential witnesses of
+`Witness.lean` over it), then a last closure. The harness
 runs the same alternation in `IO` with the indexed closure and a wall
 clock (`Harness/OwlProbe.lean`, `rbClosureIO`); this definition is what
 the `#guard` cases of `RdfBased/Tests.lean` run. -/
 
 def rbRound (g goal : Graph) (fuel : Nat) : Graph :=
   let c := closure g fuel
-  addAll c (rbConclusions c goal)
+  addAll c (rbConclusions c goal ++ svfWitTriples c goal)
 
 def rbSaturate (g goal : Graph) (fuel : Nat) : Nat → Graph
   | 0     => closure g fuel

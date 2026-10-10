@@ -209,6 +209,26 @@ private def lit (s : String) (d : WfIri) : Term :=
 #guard !has [⟨S iX, pP, lit "02" bar⟩, ⟨S bar, owlSameAs, O xsdDecimal⟩]
   [⟨S iX, pP, lit "1" xsdDecimal⟩] ⟨S iX, pP, lit "1" xsdDecimal⟩
 
+/-! ## Existential witnesses (Table 5.6, `Witness.lean`) -/
+
+private def gSvf : Graph :=
+  [⟨S iA, rdfType, Bt "r"⟩, ⟨B "r", owlSomeValuesFrom, O cA⟩, ⟨B "r", owlOnProperty, O pP⟩]
+private def witHas (g goal : Graph) (s : Subject) (p : WfIri) : Bool :=
+  (svfWitTriples g goal).any (fun t => t.s == s && t.p == p)
+-- the goal asks for a p-successor of a
+#guard witHas gSvf [⟨S iA, pP, Bt "w"⟩] (S iA) pP
+#guard (svfWitTriples gSvf [⟨S iA, pP, Bt "w"⟩]).length == 2
+-- not asked for: no witness
+#guard !witHas gSvf [⟨S iA, pQ, Bt "w"⟩] (S iA) pP
+-- a is not typed with the restriction: no witness
+#guard (svfWitTriples [⟨B "r", owlSomeValuesFrom, O cA⟩, ⟨B "r", owlOnProperty, O pP⟩]
+  [⟨S iA, pP, Bt "w"⟩]).isEmpty
+-- a label already used in the graph is not fresh: no witness
+#guard (svfWitTriples (gSvf ++ [⟨B (svfWitLabel (S iA) (B "r")), rdfType, O cA⟩])
+  [⟨S iA, pP, Bt "w"⟩]).isEmpty
+-- two classes behind one label: the label does not name one witness, so none is added
+#guard (svfWitTriples (gSvf ++ [⟨B "r", owlSomeValuesFrom, O cB⟩]) [⟨S iA, pP, Bt "w"⟩]).isEmpty
+
 /-! ## End to end: RL closure and the rules, alternating -/
 
 private def sat (g goal : Graph) (t : Triple) : Bool := memB (rbSaturate g goal 8 2) t
@@ -222,6 +242,19 @@ private def sat (g goal : Graph) (t : Triple) : Bool := memB (rbSaturate g goal 
 #guard sat [] goalImports ⟨S owlImports, rdfType, O rdfProperty⟩
 #guard sat [] goalImports ⟨S owlImports, rdfsRange, O owlOntology⟩
 #guard !sat [] goalImports ⟨S owlImports, rdfsRange, O owlClass⟩
+-- WebOnt-someValuesFrom-003 shape: two successors deep, through the RL closure
+private def gPerson : Graph :=
+  [ ⟨S cA, owlEquivalentClass, Bt "r"⟩, ⟨B "r", owlOnProperty, O pP⟩,
+    ⟨B "r", owlSomeValuesFrom, O cA⟩, ⟨S iA, rdfType, O cA⟩ ]
+private def chain2 (g : Graph) : Bool :=
+  let c := rbSaturate g [⟨S iA, pP, Bt "u"⟩, ⟨B "u", pP, Bt "v"⟩] 8 3
+  c.any (fun t1 => t1.s == S iA && t1.p == pP &&
+    (match t1.o.toSubject? with
+     | some m => c.any (fun t2 => t2.s == m && t2.p == pP)
+     | none => false))
+#guard chain2 gPerson
+#guard !chain2 [⟨S cA, owlEquivalentClass, Bt "r"⟩, ⟨B "r", owlOnProperty, O pP⟩,
+                ⟨B "r", owlSomeValuesFrom, O cA⟩]
 -- WebOnt-I5.3-015 shape
 #guard sat [⟨S pP, rdfType, O rdfProperty⟩, ⟨S pP, rdfsRange, O xsdInteger⟩,
             ⟨S pP, rdfsRange, O xsdString⟩, ⟨S pQ, rdfType, O rdfProperty⟩]

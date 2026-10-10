@@ -152,6 +152,7 @@ import L4Factoidal.OWL.RLTests
 import L4Factoidal.OWL.Semantics
 import L4Factoidal.OWL.RdfBased.Spec
 import L4Factoidal.OWL.RdfBased.Rules
+import L4Factoidal.OWL.RdfBased.Witness
 import L4Factoidal.OWL.RdfBased.Engine
 import L4Factoidal.OWL.RdfBased.Tests
 import L4Factoidal.RDF.EntailmentRdfsModelTheory
