@@ -405,18 +405,224 @@ def negateContentList (base : Graph) : List Triple → Option (List Graph)
       | none      => none
       | some rest => some (gs ++ rest)
 
+/-! ## Conclusions with blank-node individuals: rolling up
+
+A blank node in a conclusion graph is existentially quantified (RDF
+1.1 Semantics §5.1: `G ⊨ E` iff some mapping of `E`'s blank nodes
+satisfies it). `fred parent _:a . _:a parent _:b` claims
+`∃a, b. parent(fred, a) ∧ parent(a, b)`, which is the class membership
+`fred : ∃parent.∃parent.⊤`. Reading `_:a` as a fixed individual and
+negating `parent(fred, _:a)` asks for `∀a. parent(fred, a)`, a
+different and much stronger claim.
+
+When the blank-node part of the conclusion is a FOREST whose trees
+each hang off at most one named individual by one edge, every tree
+ROLLS UP into one class expression (Horrocks and Tessaris, "A
+conjunctive query language for description logic ABoxes", AAAI 2000,
+§4): a blank node `x` becomes
+
+    C(x) = ⊓ {D | x rdf:type D} ⊓ ⊓ {∃p.C(y) | x p y, y a blank node}
+           ⊓ ⊓ {∋p.v | x p v, v named or a literal}
+
+The tree's claim is then `c : ∃p.C(x)` when a named `c` has the edge
+`c p x` to its root `x`, and `∃x. C(x)` when nothing named points
+into it. The negations are `c : ¬∃p.C(x)` and `owl:Thing ⊑ ¬C(x)`;
+each tree is one goal, and the goals are a conjunction like every
+other (each tree is a conjunct of the conclusion; a tree shares no
+blank node with another).
+
+The shapes this does not read — a cycle, a blank node with two
+parents, two named individuals pointing into one tree, an edge from a
+blank node to a named individual's tree root in the other direction,
+`owl:sameAs` on a blank node — need inverse roles or are not tree
+shaped; they answer `none`, which leaves the closure verdict. -/
+
+def peRollBNode (k : Nat) : BNodeId := s!"__factoidal_pe_roll_{k}"
+
+/-- The blank nodes that stand for INDIVIDUALS of a conclusion: those
+    in subject position of a content triple, or in object position of
+    a content triple whose predicate is not `rdf:type` or axiom
+    vocabulary, and that build no class expression. -/
+def conclusionVariables (gC : Graph) (cs : List Triple) : List BNodeId :=
+  let builds (b : BNodeId) : Bool := gC.any (fun t =>
+    t.s == .bnode b && isStructuralTriple t && t.p != rdfType)
+  let subj := cs.filterMap (fun t => match t.s with
+    | .bnode b => some b
+    | .iri _   => none)
+  let obj := cs.filterMap (fun t =>
+    if t.p == rdfType || isAxiomOrSpecialPredicate t.p then none
+    else match t.o with
+      | .bnode b => some b
+      | _        => none)
+  ((subj ++ obj).eraseDups).filter (fun b => !builds b)
+
+def mentionsVariable (vs : List BNodeId) (t : Triple) : Bool :=
+  (match t.s with | .bnode b => vs.contains b | .iri _ => false) ||
+  (match t.o with | .bnode b => vs.contains b | _ => false)
+
+/-- The triples writing one rolled-up class expression for the
+    variable `x`, with fresh blank nodes numbered from `k`. Returns
+    the term naming the expression, the triples, and the next free
+    number. Fuel bounds the depth (a tree's depth is at most its size).
+    `none` on an atom the roll-up does not read. -/
+def rollUp (cs : List Triple) (vs : List BNodeId) : Nat → BNodeId → Nat →
+    Option (Term × List Triple × Nat)
+  | 0, _, _ => none
+  | fuel + 1, x, k =>
+    let mine := cs.filter (fun t => t.s == .bnode x)
+    -- Conjuncts: the types, then one per out-edge.
+    let step (acc : Option (List Term × List Triple × Nat)) (t : Triple)
+        : Option (List Term × List Triple × Nat) :=
+      match acc with
+      | none => none
+      | some (cjs, ts, k0) =>
+        if t.p == rdfType then
+          match t.o with
+          | .literal _ => none
+          | o          => some (cjs ++ [o], ts, k0)
+        else if isAxiomOrSpecialPredicate t.p then none
+        else
+          match t.o with
+          | .bnode y =>
+            if vs.contains y then
+              match rollUp cs vs fuel y (k0 + 1) with
+              | none => none
+              | some (cy, tsy, k1) =>
+                let r : Subject := .bnode (peRollBNode k0)
+                some (cjs ++ [.bnode (peRollBNode k0)],
+                      ts ++ tsy ++ [⟨r, owlOnProperty, .iri t.p⟩,
+                                    ⟨r, owlSomeValuesFrom, cy⟩], k1)
+            else none
+          | v =>
+            let r : Subject := .bnode (peRollBNode k0)
+            some (cjs ++ [.bnode (peRollBNode k0)],
+                  ts ++ [⟨r, owlOnProperty, .iri t.p⟩, ⟨r, owlHasValue, v⟩], k0 + 1)
+    match mine.foldl step (some ([], [], k)) with
+    | none => none
+    | some ([], ts, k1)  => some (.iri owlThing, ts, k1)
+    | some ([c], ts, k1) => some (c, ts, k1)
+    | some (cjs, ts, k1) =>
+      -- `owl:intersectionOf` over an RDF list of the conjuncts.
+      let n := cjs.length
+      let cells := (List.range n).map (fun j => peRollBNode (k1 + 1 + j))
+      let listTs := (List.range n).flatMap (fun j =>
+        let cell : Subject := .bnode (peRollBNode (k1 + 1 + j))
+        let next : Term := if j + 1 < n then .bnode (peRollBNode (k1 + 2 + j)) else .iri rdfNil
+        [⟨cell, rdfFirst, cjs.getD j (.iri owlThing)⟩, ⟨cell, rdfRest, next⟩])
+      let headT : Term := match cells.head? with
+        | some c => .bnode c
+        | none   => .iri rdfNil
+      some (.bnode (peRollBNode k1),
+            ts ++ [⟨.bnode (peRollBNode k1), owlIntersectionOf, headT⟩] ++ listTs,
+            k1 + 1 + n)
+
+/-- The variables with an edge INTO them from another variable. -/
+def varParents (cs : List Triple) (vs : List BNodeId) (y : BNodeId) : List Triple :=
+  cs.filter (fun t => t.o == .bnode y && t.p != rdfType &&
+    (match t.s with | .bnode b => vs.contains b | .iri _ => false))
+
+/-- The variables reachable from `frontier` along variable-to-variable
+    edges, `seen` included. Fuel bounds the walk by the variable count. -/
+def reachableVars (cs : List Triple) (vs : List BNodeId)
+    : Nat → List BNodeId → List BNodeId → List BNodeId
+  | 0,     _,        seen => seen
+  | n + 1, frontier, seen =>
+    let next := (frontier.flatMap (fun x => cs.filterMap (fun t =>
+      if t.s == .bnode x && t.p != rdfType then
+        match t.o with
+        | .bnode y => if vs.contains y && !seen.contains y then some y else none
+        | _        => none
+      else none))).eraseDups
+    if next.isEmpty then seen else reachableVars cs vs n next (seen ++ next)
+
+/-- Every triple that mentions a variable is one the roll-up reads:
+    a type or an edge with a variable subject, or an edge from a named
+    individual into a variable. Anything else (a variable as the
+    object of `rdf:type`, `owl:sameAs` on a variable, an axiom
+    predicate) is not read, and DROPPING it would claim the rest of the
+    conclusion for the whole. -/
+def rollableTriple (vs : List BNodeId) (t : Triple) : Bool :=
+  match t.s with
+  | .bnode b => vs.contains b && (t.p == rdfType || !isAxiomOrSpecialPredicate t.p)
+  | .iri _ =>
+      t.p != rdfType && !isAxiomOrSpecialPredicate t.p &&
+      (match t.o with | .bnode b => vs.contains b | _ => false)
+
+/-- The rolled-up refutation goals for the content triples that
+    mention a conclusion variable, or `none` when they are not a
+    forest of the readable shape (section header). -/
+def rolledUpGoals (base : Graph) (cs : List Triple) (vs : List BNodeId)
+    : Option (List Graph) :=
+  if vs.isEmpty then some []
+  else if !cs.all (rollableTriple vs) then none
+  else
+    -- Every edge between a named subject and a variable object.
+    let fromNamed := cs.filter (fun t => t.p != rdfType &&
+      (match t.s with | .iri _ => true | .bnode _ => false) &&
+      (match t.o with | .bnode b => vs.contains b | _ => false))
+    -- Tree shape: at most one parent for every variable, counting
+    -- both variable and named parents.
+    let parents (y : BNodeId) : Nat :=
+      (varParents cs vs y).length + (fromNamed.filter (·.o == .bnode y)).length
+    if vs.any (fun y => parents y > 1) then none
+    else
+      -- An edge into a NAMED individual from a variable is read as
+      -- `∋p.c` (handled in `rollUp`); every other triple mentioning a
+      -- variable must be a type or an edge.
+      let roots := vs.filter (fun y => (varParents cs vs y).isEmpty)
+      -- Every variable must be reachable from a root (no cycle):
+      -- a forest on `n` variables with `r` roots has `n - r` edges.
+      let varEdges := cs.filter (fun t => t.p != rdfType &&
+        (match t.s, t.o with
+         | .bnode a, .bnode b => vs.contains a && vs.contains b
+         | _, _ => false))
+      -- A cycle has no root, so its variables are unreachable from
+      -- the roots; every variable must be reached.
+      if varEdges.length + roots.length != vs.length then none
+      else if (reachableVars cs vs (vs.length + 1) roots roots).eraseDups.length
+              != vs.length then none
+      else
+        let fuel := vs.length + 1
+        roots.foldl (fun (acc : Option (List Graph)) x =>
+          match acc with
+          | none => none
+          | some gs =>
+            match rollUp cs vs fuel x 0 with
+            | none => none
+            | some (cx, ts, k) =>
+              let neg : Subject := .bnode (peRollBNode k)
+              match fromNamed.find? (·.o == .bnode x) with
+              | some e =>
+                -- `c : ¬∃p.C(x)`.
+                let r : Subject := .bnode (peRollBNode (k + 1))
+                some (gs ++ [ts ++ [⟨r, owlOnProperty, .iri e.p⟩,
+                                    ⟨r, owlSomeValuesFrom, cx⟩,
+                                    ⟨neg, owlComplementOf, r.toTerm⟩,
+                                    ⟨e.s, rdfType, neg.toTerm⟩] ++ base])
+              | none =>
+                -- `owl:Thing ⊑ ¬C(x)`.
+                some (gs ++ [ts ++ [⟨neg, owlComplementOf, cx⟩,
+                                    ⟨.iri owlThing, rdfsSubClassOf, neg.toTerm⟩] ++ base]))
+          (some [])
+
 /-- The conjunction of refutation goals for a conclusion graph, or
     `none` when any content assertion is an unsupported shape
     (conservative: the caller keeps its closure verdict). The caller
     ANDs the refuter over the returned list — the entailment is
-    proven iff EVERY goal refutes. Port of `negation_goals`. -/
+    proven iff EVERY goal refutes. Port of `negation_goals`, with the
+    blank-node conclusions rolled up (section above). -/
 def negationGoals (gC : Graph) : Option (List Graph) :=
   match contentTriples gC with
   | []  => none
   | cs  =>
-    match negateContentList (structuralTriples gC) cs with
-    | none          => none
-    | some []       => none
-    | some (g :: t) => some (g :: t)
+    let vs := conclusionVariables gC cs
+    let (withVars, plain) := cs.partition (mentionsVariable vs)
+    let base := structuralTriples gC
+    match negateContentList base plain, rolledUpGoals base withVars vs with
+    | some gs1, some gs2 =>
+      match gs1 ++ gs2 with
+      | []     => none
+      | g :: t => some (g :: t)
+    | _, _ => none
 
 end L4Factoidal.OWL.Refute

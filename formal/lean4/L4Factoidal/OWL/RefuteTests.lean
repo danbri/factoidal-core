@@ -732,4 +732,233 @@ private def gNominalIdent (negate : Bool) : Graph :=
 #guard !(refuted (gNominalIdent false))
 
 
+
+/-! ## The propositional clash on one node
+
+Four clauses over `A` and `B` that no assignment satisfies, as four
+disjunction labels on one node: a clash. Any three of them have a
+model. `owl:Nothing` in a disjunct is a literal that is never true,
+and `owl:Thing` one that always is. -/
+
+private def lA : ClassExpr := .named exC
+private def lB : ClassExpr := .named exD
+private def nA : ClassExpr := .complement (.named exC)
+private def nB : ClassExpr := .complement (.named exD)
+
+#guard propositionalClashLabels []
+  [.union [lA, lB], .union [lA, nB], .union [nA, lB], .union [nA, nB]]
+#guard !propositionalClashLabels []
+  [.union [lA, lB], .union [lA, nB], .union [nA, lB]]
+#guard propositionalClashLabels []
+  [.union [.named owlNothing, lA], .union [.named owlNothing, nA]]
+#guard !propositionalClashLabels []
+  [.union [.named owlThing, lA], .union [.named owlNothing, nA], .union [lB, nA]]
+
+/-! Axioms enter as clauses about the same element. `P` with
+`P ⊑ ¬M` (a disjointness), `M ⊔ N` and `M ⊔ O` force `N` and `O`;
+`N ⊑ ¬O` then closes. Without that last axiom there is a model. -/
+
+private def cP : ClassExpr := .named ⟨"http://e/P1", rfl⟩
+private def cM : ClassExpr := .named ⟨"http://e/M1", rfl⟩
+private def cN : ClassExpr := .named ⟨"http://e/N1", rfl⟩
+private def cO : ClassExpr := .named ⟨"http://e/O1", rfl⟩
+
+private def tbPM : List (ClassExpr × ClassExpr) :=
+  [(cP, .complement cM), (cM, .complement cP)]
+
+#guard propositionalClashLabels (tbPM ++ [(cN, .complement cO)])
+  [cP, .union [cM, cN], .union [cM, cO]]
+#guard !propositionalClashLabels tbPM
+  [cP, .union [cM, cN], .union [cM, cO]]
+
+/-! The same shape through the whole refuter: one individual, the
+four clauses as `rdf:type` unions. -/
+
+private def unionOf2 (tag : String) (a b : Term) : Graph :=
+  [ ⟨bn s!"u{tag}", owlUnionOf, bnT s!"ul{tag}"⟩,
+    ⟨bn s!"ul{tag}", rdfFirst, a⟩, ⟨bn s!"ul{tag}", rdfRest, bnT s!"ul{tag}b"⟩,
+    ⟨bn s!"ul{tag}b", rdfFirst, b⟩, ⟨bn s!"ul{tag}b", rdfRest, .iri rdfNil⟩,
+    ⟨indI, rdfType, bnT s!"u{tag}"⟩ ]
+
+private def gFourClauses (all4 : Bool) : Graph :=
+  [ ⟨bn "notC", owlComplementOf, .iri exC⟩, ⟨bn "notD", owlComplementOf, .iri exD⟩ ] ++
+  unionOf2 "1" (.iri exC) (.iri exD) ++ unionOf2 "2" (.iri exC) (bnT "notD") ++
+  unionOf2 "3" (bnT "notC") (.iri exD) ++
+  (if all4 then unionOf2 "4" (bnT "notC") (bnT "notD") else [])
+
+#guard refuted (gFourClauses true)
+#guard !(refuted (gFourClauses false))
+
+
+/-! ## Values a node cannot have on a property
+
+Three shapes from `type-inconsistency.rdf`, each with a sibling that
+has a model.
+
+* `Inconsistent Disjoint Dataproperties`: `a dp1 10`, `dp1` disjoint
+  from `dp2`, and `a : ∃dp2.xsd:integer[≥ 10, ≤ 10]`. The only
+  `dp2`-value `a` may have is `10`, which the disjointness forbids.
+  With `a dp1 11` the value `10` is free.
+* `Inconsistent String Pattern with Disjoint Dataproperties`: the
+  pattern `a(b|c)` admits `"ab"` and `"ac"`, and `a` has both on the
+  disjoint property. With only `"ab"` there, `"ac"` is free.
+* `Minus Infinity is not in owl:real`: `∃dp.{"-INF"^^xsd:float,
+  "-0"^^xsd:integer}` with `∀dp.owl:real` leaves `0`, and the negative
+  assertion `¬dp(a, "0"^^xsd:unsignedInt)` takes it. Without the
+  negative assertion `0` is a model. -/
+
+private def intT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := xsdInteger, langTag := none, direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff, xsdInteger]⟩
+private def strT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := xsdString, langTag := none, direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff, xsdString]⟩
+private def floatT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := XSD.xsdFloat, langTag := none, direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff, XSD.xsdFloat]⟩
+private def uintT (lex : String) : Term :=
+  .literal ⟨{ lexicalForm := lex, datatype := XSD.xsdUnsignedInt, langTag := none,
+              direction := none },
+            by simp [literalWf, rdfLangString, rdfDirLangString, Subtype.ext_iff,
+                     XSD.xsdUnsignedInt]⟩
+
+private def exDp1 : WfIri := ⟨"http://e/dp1", rfl⟩
+private def exDp2 : WfIri := ⟨"http://e/dp2", rfl⟩
+
+private def gDisjointDataInt (v : String) : Graph :=
+  [ ⟨.iri exDp1, owlPropertyDisjointWith, .iri exDp2⟩,
+    ⟨indI, exDp1, intT v⟩,
+    ⟨indI, rdfType, bnT "s"⟩,
+    ⟨bn "s", owlOnProperty, .iri exDp2⟩,
+    ⟨bn "s", owlSomeValuesFrom, bnT "dr"⟩,
+    ⟨bn "dr", owlOnDatatype, .iri xsdInteger⟩,
+    ⟨bn "dr", owlWithRestrictions, bnT "f1"⟩,
+    ⟨bn "f1", rdfFirst, bnT "fa"⟩, ⟨bn "f1", rdfRest, bnT "f2"⟩,
+    ⟨bn "f2", rdfFirst, bnT "fb"⟩, ⟨bn "f2", rdfRest, .iri rdfNil⟩,
+    ⟨bn "fa", facetMinInclusive, intT "10"⟩,
+    ⟨bn "fb", facetMaxInclusive, intT "10"⟩ ]
+
+#guard refuted (gDisjointDataInt "10")
+#guard !(refuted (gDisjointDataInt "11"))
+
+private def gDisjointDataPattern (both : Bool) : Graph :=
+  [ ⟨.iri exDp1, owlPropertyDisjointWith, .iri exDp2⟩,
+    ⟨indI, exDp1, strT "ab"⟩,
+    ⟨indI, rdfType, bnT "s"⟩,
+    ⟨bn "s", owlOnProperty, .iri exDp2⟩,
+    ⟨bn "s", owlSomeValuesFrom, bnT "dr"⟩,
+    ⟨bn "dr", owlOnDatatype, .iri xsdString⟩,
+    ⟨bn "dr", owlWithRestrictions, bnT "f1"⟩,
+    ⟨bn "f1", rdfFirst, bnT "fa"⟩, ⟨bn "f1", rdfRest, .iri rdfNil⟩,
+    ⟨bn "fa", facetPatternIri, strT "a(b|c)"⟩ ] ++
+  (if both then [⟨indI, exDp1, strT "ac"⟩] else [])
+
+#guard refuted (gDisjointDataPattern true)
+#guard !(refuted (gDisjointDataPattern false))
+
+/-! The pattern facet is part of the parse, so two restrictions that
+differ only in their pattern are two expressions. -/
+#guard (match parseClassExpr (Store.ofGraph (gDisjointDataPattern false)) (bnT "dr") 8 with
+        | .dataRestriction dt fs => dt == xsdString && fs.any (·.1 == facetPatternIri)
+        | _ => false)
+
+private def gMinusInf (negative : Bool) : Graph :=
+  [ ⟨indI, rdfType, bnT "av"⟩,
+    ⟨bn "av", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "av", owlAllValuesFrom, .iri XSD.owlReal⟩,
+    ⟨indI, rdfType, bnT "sv"⟩,
+    ⟨bn "sv", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "sv", owlSomeValuesFrom, bnT "one"⟩,
+    ⟨bn "one", owlOneOf, bnT "l1"⟩,
+    ⟨bn "l1", rdfFirst, floatT "-INF"⟩, ⟨bn "l1", rdfRest, bnT "l2"⟩,
+    ⟨bn "l2", rdfFirst, intT "-0"⟩, ⟨bn "l2", rdfRest, .iri rdfNil⟩ ] ++
+  (if negative then
+    [ ⟨bn "npa", owlSourceIndividual, .iri exI⟩,
+      ⟨bn "npa", owlAssertionProperty, .iri exDp1⟩,
+      ⟨bn "npa", owlTargetValue, uintT "0"⟩ ]
+  else [])
+
+#guard refuted (gMinusInf true)
+#guard !(refuted (gMinusInf false))
+
+
+/-! ## A conclusion with blank-node individuals is rolled up
+
+`WebOnt-someValuesFrom-003`: `person ≡ ∃parent.person` and
+`fred : person` entail `fred parent _:a . _:a parent _:b`, read as
+`fred : ∃parent.∃parent.⊤`. The goal is `fred : ¬∃parent.∃parent.⊤`,
+and the tableau refutes it. With only `person ⊑ ∃parent.⊤` the
+premise gives `fred` a parent and nothing gives that parent one, so
+the same goal has a model and must not be refuted. A cycle of blank
+nodes is not a tree and gets no goal. -/
+
+private def exParent : WfIri := ⟨"http://e/parent", rfl⟩
+private def exPerson : WfIri := ⟨"http://e/person", rfl⟩
+private def exFred : WfIri := ⟨"http://e/fred", rfl⟩
+
+private def gPersonLoop (recursive : Bool) : Graph :=
+  [ ⟨.iri exPerson, owlEquivalentClass, bnT "pr"⟩,
+    ⟨bn "pr", owlOnProperty, .iri exParent⟩,
+    ⟨bn "pr", owlSomeValuesFrom, .iri (if recursive then exPerson else owlThing)⟩,
+    ⟨.iri exFred, rdfType, .iri exPerson⟩ ]
+
+private def cTwoParents : Graph :=
+  [ ⟨.iri exFred, exParent, bnT "ca"⟩,
+    ⟨bn "ca", exParent, bnT "cb"⟩,
+    ⟨bn "ca", rdfType, .iri owlThing⟩ ]
+
+private def entailedByRefutation (prem concl : Graph) : Bool :=
+  match negationGoals concl with
+  | none => false
+  | some gs => gs.all (fun goal => tableauConsistent (prem ++ goal) fuel == some false)
+
+#guard (negationGoals cTwoParents).isSome
+#guard entailedByRefutation (gPersonLoop true) cTwoParents
+#guard !entailedByRefutation (gPersonLoop false) cTwoParents
+/-! One level is entailed by both premises. -/
+#guard entailedByRefutation (gPersonLoop false) [⟨.iri exFred, exParent, bnT "ca"⟩]
+
+#guard (negationGoals [⟨bn "ca", exParent, bnT "cb"⟩, ⟨bn "cb", exParent, bnT "ca"⟩]).isNone
+/-! A blank node with two parents is not a tree either. -/
+#guard (negationGoals [⟨.iri exFred, exParent, bnT "ca"⟩,
+                       ⟨.iri exI, exParent, bnT "ca"⟩]).isNone
+
+
+/-! ## Identity reasoning over nominals
+
+`WebOnt-description-logic-502` in two variables. `TorF` is `{T, F}`,
+`{p1, m1}` and `{p2, m2}` at once, and `T ≠ F`, so `p1`/`m1` and
+`p2`/`m2` are the two truth values of two variables, and a label
+`T : {a, b}` is the clause "`a` is true or `b` is true". All four
+clauses over the two variables have no model; any three have one. -/
+
+private def nT : WfIri := ⟨"http://e/T", rfl⟩
+private def nF : WfIri := ⟨"http://e/F", rfl⟩
+private def nP1 : WfIri := ⟨"http://e/p1", rfl⟩
+private def nM1 : WfIri := ⟨"http://e/m1", rfl⟩
+private def nP2 : WfIri := ⟨"http://e/p2", rfl⟩
+private def nM2 : WfIri := ⟨"http://e/m2", rfl⟩
+private def nTorF : WfIri := ⟨"http://e/TorF", rfl⟩
+
+/-- `subj owl:oneOf (a b)` with list cells tagged `tag`. -/
+private def oneOf2 (tag : String) (subj : Subject) (a b : WfIri) : Graph :=
+  [ ⟨subj, owlOneOf, bnT s!"o{tag}"⟩,
+    ⟨bn s!"o{tag}", rdfFirst, .iri a⟩, ⟨bn s!"o{tag}", rdfRest, bnT s!"o{tag}b"⟩,
+    ⟨bn s!"o{tag}b", rdfFirst, .iri b⟩, ⟨bn s!"o{tag}b", rdfRest, .iri rdfNil⟩ ]
+
+/-- `T rdf:type {a, b}`. -/
+private def clause (tag : String) (a b : WfIri) : Graph :=
+  ⟨.iri nT, rdfType, bnT s!"k{tag}"⟩ :: oneOf2 s!"k{tag}" (bn s!"k{tag}") a b
+
+private def gTwoVarSat (all4 : Bool) : Graph :=
+  oneOf2 "t" (.iri nTorF) nT nF ++ oneOf2 "1" (.iri nTorF) nP1 nM1 ++
+  oneOf2 "2" (.iri nTorF) nP2 nM2 ++
+  [ ⟨.iri nT, owlDifferentFrom, .iri nF⟩,
+    ⟨.iri nT, rdfType, .iri nTorF⟩, ⟨.iri nF, rdfType, .iri nTorF⟩ ] ++
+  clause "a" nP1 nP2 ++ clause "b" nM1 nP2 ++ clause "c" nP1 nM2 ++
+  (if all4 then clause "d" nM1 nM2 else [])
+
+#guard refuted (gTwoVarSat true)
+#guard !(refuted (gTwoVarSat false))
+
 end L4Factoidal.OWL.Refute

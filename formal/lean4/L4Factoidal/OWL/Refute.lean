@@ -106,6 +106,8 @@ only lose clashes, never invent them.
 -/
 import L4Factoidal.OWL.ClassExpr
 import L4Factoidal.XSD.Facets
+import L4Factoidal.Regex.XSDPattern
+import L4Factoidal.Regex.Exec
 
 namespace L4Factoidal.OWL.Refute
 
@@ -874,18 +876,127 @@ def collectDtProperties (ls : List ClassExpr) : List WfIri :=
     | .hasValue p _ => some p
     | _             => none)
 
+/-! ### Values a node cannot have on a property
+
+Two kinds of assertion forbid a data value to `i` on `p`:
+
+* a NEGATIVE property assertion (OWL 2 Syntax §9.6.8,
+  `NegativeDataPropertyAssertion(q i v)`, read from its RDF form
+  `owl:sourceIndividual` / `owl:assertionProperty` / `owl:targetValue`)
+  says `⟨i, v⟩ ∉ (q)ᴰ`; for `p ⊑* q` then `⟨i, v⟩ ∉ (p)ᴰ` too;
+* a DISJOINTNESS (OWL 2 Syntax §9.2.3, `DisjointDataProperties`, as
+  `owl:propertyDisjointWith` or an `owl:AllDisjointProperties` group)
+  between `q` and some `p' ⊒ p` with `⟨i, v⟩ ∈ (q)ᴰ` asserted: the
+  pair cannot also be in `(p')ᴰ ⊇ (p)ᴰ`.
+
+The values are literals the branch holds in every model (graph edges,
+or counted expansion edges through `successorsOf … true`), so every
+value collected here is excluded in every model of the branch. -/
+
+/-- The members of every `owl:AllDisjointProperties` list, read
+    through the store's index. -/
+def allDisjointGroupsS (s : Store) : List (List WfIri) :=
+  (s.withPredObj rdfType (.iri owlAllDisjointProperties)).filterMap (fun t =>
+    match firstObject s t.s owlMembers with
+    | some head => some ((walkRdfList s head 64).filterMap (fun x =>
+        match x with
+        | .iri i => some i
+        | _      => none))
+    | none => none)
+
+/-- The properties declared disjoint from `p`. -/
+def disjointPartners (st : RState) (p : WfIri) : List WfIri :=
+  let pairs := (st.store.withPred owlPropertyDisjointWith).filterMap (fun t =>
+    match t.s, t.o with
+    | .iri a, .iri b => if a == p then some b else if b == p then some a else none
+    | _, _           => none)
+  let groups := (allDisjointGroupsS st.store).flatMap (fun grp =>
+    if grp.contains p then grp.filter (· != p) else [])
+  (pairs ++ groups).eraseDups
+
+/-- The literal values `i` is forced NOT to have on `p`. -/
+def excludedValues (g : Graph) (st : RState) (i : Subject) (p : WfIri) : List Term :=
+  let sups := supsOf st p
+  let selves := identifiedWith st i.toTerm
+  let negated := selves.flatMap (fun j =>
+    (st.store.withPredObj owlSourceIndividual j).filterMap (fun t =>
+      match firstObject st.store t.s owlAssertionProperty,
+            firstObject st.store t.s owlTargetValue with
+      | some (.iri q), some (.literal l) =>
+          if sups.contains q then some (Term.literal l) else none
+      | _, _ => none))
+  let viaDisjoint := sups.flatMap (fun p' =>
+    (disjointPartners st p').flatMap (fun q =>
+      (successorsOf g st i q true).filter (fun v => match v with
+        | .literal _ => true
+        | _          => false)))
+  (negated ++ viaDisjoint).eraseDups
+
+/-- `vs` with the values `ex` removed. Exact on a literal enumeration
+    and on a finite integer interval that `ex` covers entirely; a sound
+    no-op on every other shape. A value is removed only when PROVABLY
+    equal to an excluded one. -/
+def valueSetMinusValues (vs : ValueSet) (ex : List Term) : ValueSet :=
+  if ex.isEmpty then vs
+  else match vs with
+    | .enum xs =>
+        let rest := xs.filter (fun t => !(ex.any (termProvablyEqual t)))
+        if rest.isEmpty then .empty else .enum rest
+    | .interval iv =>
+        let inside := (ex.filterMap termIntOpt).eraseDups.filter (valueInInterval · iv)
+        match intervalCount iv with
+        | some k => if inside.length ≥ k then .empty else vs
+        | none   => vs
+    | _ => vs
+
+
+/-- The `xsd:pattern` facets of a string restriction. -/
+def stringPatterns (dt : WfIri) (facets : List (WfIri × Term)) : List String :=
+  if dt != xsdString then []
+  else facets.filterMap (fun (f, v) =>
+    if f == facetPatternIri then
+      match v with
+      | .literal l => some l.val.lexicalForm
+      | _          => none
+    else none)
+
+/-- Is every string a pattern admits among `ex`? `L(P) ⊆ E` with `E`
+    the finite set of excluded `xsd:string` values, decided as the
+    emptiness of `L(P) ∩ ¬E` on the verified derivative engine. The
+    engine answers "not empty" when its fuel runs out, which withholds
+    the clash. Other facets of the restriction are not read; they can
+    only shrink the set, so ignoring them can only withhold. -/
+def patternCoveredBy (pat : String) (ex : List Term) : Bool :=
+  let strs := ex.filterMap (fun t => match t with
+    | .literal l => if l.val.datatype == xsdString then some l.val.lexicalForm else none
+    | _          => none)
+  match L4Factoidal.Regex.XSDPattern.parseXsdPattern pat with
+  | none   => false
+  | some r =>
+    let word (w : String) : L4Factoidal.Regex.Re :=
+      (L4Factoidal.Regex.cpsOfString w).foldr
+        (fun c acc => .cat (.ranges [(c, c)]) acc) .eps
+    let exRe := strs.foldl (fun acc w => .alt acc (word w)) L4Factoidal.Regex.Re.empty
+    L4Factoidal.Regex.Exec.isEmpty (.inter r (.compl exRe))
+
 /-- Is some existence obligation on `p` unsatisfiable against the
-    shared `∀`-intersection? Each obligation is checked ALONE against
-    that intersection, never against another obligation. -/
+    shared `∀`-intersection, less the values `ex` the node is forced
+    not to have on `p`? Each obligation is checked ALONE against that
+    set, never against another obligation. -/
 def existsUnsatisfiableWitness (p : WfIri) (ls : List ClassExpr) (universal : ValueSet)
-    : Bool :=
+    (ex : List Term := []) : Bool :=
   ls.any (fun l => match l with
     | .someOf q d =>
-        q == p && valueSetIsEmpty (foldDatatypeConstraint universal d)
+        q == p &&
+        (valueSetIsEmpty (valueSetMinusValues (foldDatatypeConstraint universal d) ex) ||
+         (match d with
+          | .dataRestriction dt facets =>
+              (stringPatterns dt facets).any (patternCoveredBy · ex)
+          | _ => false))
     | .hasValue q v =>
         q == p && (match v with
-                   | .literal _ => valueSetIsEmpty
-                                     (valueSetIntersect universal (.enum [v]))
+                   | .literal _ => valueSetIsEmpty (valueSetMinusValues
+                                     (valueSetIntersect universal (.enum [v])) ex)
                    | _          => false)
     | _ => false)
 
@@ -911,9 +1022,10 @@ def fillerValueSet (st : RState) (p : WfIri) (ls : List ClassExpr) : ValueSet :=
   valueSetIntersect (universalForProperty st p ls .unconstrained)
                     (rangeValueSet st st.ranges p .unconstrained)
 
-def datatypeRangeClash (st : RState) (ls : List ClassExpr) : Bool :=
+def datatypeRangeClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
+    : Bool :=
   (collectDtProperties ls).any (fun p =>
-    existsUnsatisfiableWitness p ls (fillerValueSet st p ls))
+    existsUnsatisfiableWitness p ls (fillerValueSet st p ls) (excludedValues g st i p))
 
 def collectCardProps (ls : List ClassExpr) : List (Nat × WfIri) :=
   ls.filterMap (fun l => match l with
@@ -1025,11 +1137,270 @@ def countingClash (st : RState) (ls : List ClassExpr) : Bool :=
         cs.length > k && (disjointClique st.tbox cs).length > k
     | _ => false)
 
+/-! ## The propositional clash on one node
+
+A node's labels are memberships its element has in every model of the
+branch. Read as propositions about that one element, they are
+clauses: a label `C₁ ⊔ … ⊔ Cₙ` says the element is in some `Cᵢ`, and
+any other label is a unit clause. A TBox axiom `A ⊑ D` holds of EVERY
+element, so it is the clause `¬A ∨ D` about this one too.
+
+If no truth assignment to the class expressions satisfies all the
+clauses, no element can carry all the labels: for any model `I` and
+the element `x`, the assignment `v(C) = [x ∈ Cᴵ]` would satisfy every
+clause, because each clause is a membership `x` has in `I`, and it
+respects complement because `x ∈ (¬C)ᴵ ↔ x ∉ Cᴵ`. So an unsatisfiable
+clause set is a clash. This is the propositional half of the
+union rule, decided without spending a branch of the search on each
+disjunct.
+
+`WebOnt-description-logic-040` is the shape it exists for: one node
+carries 32 independent `Aᵢ ⊔ Bᵢ` unions, and a witness carries the
+four clauses `A ∨ B`, `A ∨ ¬B`, `¬A ∨ B`, `¬A ∨ ¬B`. Branching in node
+order explores `2³²` assignments of the first node before it reaches
+the second; the clause set of the second is unsatisfiable on its own.
+`WebOnt-description-logic-504` is a 3-SAT instance written as
+`rdfs:subClassOf` unions on one individual, with `owl:disjointWith`
+pairs; its axioms enter as clauses.
+
+Every approximation withholds a clash rather than invents one. A
+class expression that is not a literal is an ATOM the assignment may
+set freely, and two atoms are the same variable only when they are
+structurally equal (`ceEq`), so equal classes written differently
+become two variables, which can only make a set satisfiable. An
+axiom whose sides are not of the shapes below contributes no clause.
+The search is fuel-bounded and a run out of fuel answers
+"satisfiable". -/
+
+/-- A literal: an atom and its polarity. `¬C` is `C` with polarity
+    `false`; `owl:Nothing` is `¬owl:Thing`. -/
+structure PLit where
+  atom : ClassExpr
+  pos  : Bool
+
+def litOf : ClassExpr → PLit
+  | .complement c => ⟨c, false⟩
+  | .named x =>
+      if x == owlNothing then ⟨.named owlThing, false⟩ else ⟨.named x, true⟩
+  | c => ⟨c, true⟩
+
+/-- The literal's negation. -/
+def PLit.neg (l : PLit) : PLit := ⟨l.atom, !l.pos⟩
+
+/-- The literals of a disjunction label, or of any other label as a
+    one-literal clause. -/
+def clauseOfLabel : ClassExpr → List PLit
+  | .union cs => cs.map litOf
+  | c         => [litOf c]
+
+/-- The clauses an axiom `a ⊑ d` contributes. `a` must be a literal,
+    a union of them (one clause per disjunct) or an intersection of
+    them (one clause negating all conjuncts); `d` a literal, a union of
+    literals, or an intersection (one clause per conjunct). -/
+def axiomClauses (a d : ClassExpr) : List (List PLit) :=
+  let rhs : List (List PLit) := match d with
+    | .intersection ds => ds.map clauseOfLabel
+    | _                => [clauseOfLabel d]
+  let lhs : List (List PLit) := match a with
+    | .union as         => as.map (fun x => [(litOf x).neg])
+    | .intersection as  => [as.map (fun x => (litOf x).neg)]
+    | _                 => [[(litOf a).neg]]
+  lhs.flatMap (fun l => rhs.map (fun r => l ++ r))
+
+/-- The atoms an axiom's left-hand side mentions. -/
+def axiomLhsAtoms : ClassExpr → List ClassExpr
+  | .union as        => as.map (fun x => (litOf x).atom)
+  | .intersection as => as.map (fun x => (litOf x).atom)
+  | a                => [(litOf a).atom]
+
+/-- The atoms a clause set mentions. -/
+def clauseAtoms (cs : List (List PLit)) : List ClassExpr :=
+  cs.foldl (fun acc c => c.foldl (fun a2 l =>
+    if a2.any (fun x => ClassExpr.beq x l.atom) then a2 else a2 ++ [l.atom]) acc) []
+
+/-- A literal over an interned atom: the atom's index and polarity. -/
+structure ILit where
+  v   : Nat
+  pos : Bool
+
+/-- Intern the atoms of a clause set. Each clause becomes `none` when
+    it holds of every element (it contains `owl:Thing` positively), and
+    otherwise loses its `¬owl:Thing` literals, which hold of none.
+    Atoms are one variable when `ceEq` says so; an indefinite atom
+    gets a variable of its own at every occurrence. -/
+def internClauses (cs : List (List PLit)) : List (List ILit) × Nat :=
+  let isTop (c : ClassExpr) : Bool := match c with
+    | .named x => x == owlThing
+    | .intersection [] => true
+    | _ => false
+  let (out, atoms) := cs.foldl (fun (acc : List (List ILit) × Array ClassExpr) c =>
+    let (outs, atoms0) := acc
+    let r := c.foldl (fun (a2 : Option (List ILit) × Array ClassExpr) l =>
+      match a2 with
+      | (none, ats) => (none, ats)
+      | (some ls, ats) =>
+        if isTop l.atom then
+          (if l.pos then (none, ats) else (some ls, ats))
+        else
+          match ats.findIdx? (fun x => ceEq x l.atom) with
+          | some i => (some (ls ++ [⟨i, l.pos⟩]), ats)
+          | none   => (some (ls ++ [⟨ats.size, l.pos⟩]), ats.push l.atom))
+      (some [], atoms0)
+    match r with
+    | (some ls, ats) => (outs ++ [ls], ats)
+    | (none, ats)    => (outs, ats)) ([], #[])
+  (out, atoms.size)
+
+def ilitValue (asg : Array (Option Bool)) (l : ILit) : Option Bool :=
+  (asg.getD l.v none).map (fun b => if l.pos then b else !b)
+
+/-- DPLL with unit propagation, fuel threaded. `some true`: an
+    assignment satisfies every clause; `some false`: none does;
+    `none`: out of fuel. -/
+def dpll (fuel : Nat) (cs : List (List ILit)) (asg : Array (Option Bool))
+    : Option Bool × Nat :=
+  match fuel with
+  | 0     => (none, 0)
+  | n + 1 =>
+    -- Reduce each clause under the assignment.
+    let open_ : List (List ILit) := cs.filterMap (fun c =>
+      if c.any (fun l => ilitValue asg l == some true) then none
+      else some (c.filter (fun l => ilitValue asg l == none)))
+    if open_.any (·.isEmpty) then (some false, n)
+    else match open_.find? (fun c => c.length == 1) with
+      | some [u] => dpll n cs (asg.set! u.v (some u.pos))
+      | _ =>
+        match open_.head? with
+        | none   => (some true, n)
+        | some c =>
+          match c.head? with
+          | none   => (some false, n)
+          | some l =>
+            match dpll n cs (asg.set! l.v (some l.pos)) with
+            | (some true, n')  => (some true, n')
+            | (some false, n') => dpll (min n' n) cs (asg.set! l.v (some !l.pos))
+            | (none, n')       => (none, n')
+termination_by fuel
+decreasing_by all_goals omega
+
+/-- Satisfiability of a clause set, by `dpll` over interned atoms. -/
+def clausesSatisfiable (fuel : Nat) (cs : List (List PLit)) : Option Bool :=
+  let (ics, n) := internClauses cs
+  (dpll fuel ics (Array.replicate n none)).1
+
+def propFuel : Nat := 4000
+
+/-- The clause set of one label set: the labels, and the axioms whose
+    left-hand side mentions an atom the set already mentions, pulled in
+    to a fixpoint of `rounds` steps. -/
+def nodeClauses (tb : List (ClassExpr × ClassExpr)) (ls : List ClassExpr)
+    (rounds : Nat) : List (List PLit) :=
+  let base := ls.map clauseOfLabel
+  let rec grow : Nat → List (List PLit) → List (ClassExpr × ClassExpr) → List (List PLit)
+    | 0,     cs, _      => cs
+    | k + 1, cs, remain =>
+      let atoms := clauseAtoms cs
+      let (take, keep) := remain.partition (fun (a, _) =>
+        (axiomLhsAtoms a).any (fun x => atoms.any (ceEq x)))
+      if take.isEmpty then cs
+      else grow k (cs ++ take.flatMap (fun (a, d) => axiomClauses a d)) keep
+  grow rounds base tb
+
+/-- Is one node's label set propositionally unsatisfiable? Asked only
+    of a node with at least two disjunction labels: with one, the
+    union rule's own branches find the clash as cheaply. -/
+def propositionalClashLabels (tb : List (ClassExpr × ClassExpr)) (ls : List ClassExpr)
+    : Bool :=
+  let unions := ls.filter (fun l => match l with | .union _ => true | _ => false)
+  if unions.length < 2 then false
+  else clausesSatisfiable propFuel (nodeClauses tb ls 3) == some false
+
+def propositionalClash (st : RState) : Bool :=
+  (groupLeaders st).any (fun n => propositionalClashLabels st.tbox (labelsOf st n.id))
+
+/-! ## The identity clash over nominals
+
+`i : {m₁ … mₖ}` says `iᴵ` is one of `m₁ᴵ … mₖᴵ`. Over the terms these
+labels mention, read the atom `E(a, b)` as "`a` and `b` denote one
+element". Every model satisfies:
+
+* for each nominal label on `i`: `E(i, m₁) ∨ … ∨ E(i, mₖ)`;
+* `¬E(a, b)` for every pair the branch proves different (`distinctIn`)
+  and every pair whose labels contain a complement pair (`cesClash`);
+* `E(a, b)` for every pair the branch has identified;
+* transitivity: `E(a, b) ∧ E(b, c) → E(a, c)`.
+
+So if the clause set has no satisfying assignment, the branch has no
+model. This decides by unit propagation what the nominal choice rule
+would decide by branching once per member of each label: on
+`WebOnt-description-logic-502`, a 3-SAT instance whose variables are
+the identities of `T` with `plus₁ … plus₉` and `minus₁ … minus₉`, the
+branching search runs out of budget long before the clause search
+does.
+
+Capped at `nominalUniverseCap` terms (the transitivity clauses are
+cubic in it); above the cap no clause set is built and nothing is
+decided. Out-of-fuel answers "satisfiable". -/
+
+def nominalUniverseCap : Nat := 30
+
+/-- An IRI or a blank node: a term that denotes an individual. A
+    literal denotes a data value, which no individual equals. -/
+def isResourceTerm : Term → Bool
+  | .bnode _ => true
+  | .iri _   => true
+  | _        => false
+
+def nominalClash (g : Graph) (st : RState) : Bool :=
+  let labelled : List (Subject × List (List Term)) := (groupLeaders st).filterMap (fun n =>
+    -- Only a nominal of individuals. A label whose members include a
+    -- literal sits on a DATA witness (the existential of a data
+    -- property mints one), which denotes a data value, not an
+    -- individual; it is not an identity question and is not encoded.
+    let os := (labelsOf st n.id).filterMap (fun l => match l with
+      | .oneOf ms => if ms.length ≥ 2 && ms.all isResourceTerm then some ms else none
+      | _         => none)
+    if os.isEmpty then none else some (n.id, os))
+  if labelled.isEmpty then false
+  else
+    let u : List Term := ((labelled.map (fun q => repOf st q.1.toTerm)) ++
+      (labelled.flatMap (fun q => q.2.flatten.filter isResourceTerm)).map (repOf st)).eraseDups
+    let n := u.length
+    if n > nominalUniverseCap then false
+    else
+      let ix (t : Term) : Option Nat := u.findIdx? (· == repOf st t)
+      let e (a b : Nat) (pos : Bool) : ILit :=
+        ⟨(min a b) * n + (max a b), pos⟩
+      let oneOfClauses : List (List ILit) := labelled.flatMap (fun (i, os) =>
+        match ix i.toTerm with
+        | none => []
+        | some a => os.filterMap (fun ms =>
+            -- A member identified with `i` already satisfies the label.
+            if ms.any (fun m => isResourceTerm m && ix m == some a) then none
+            else some (ms.filterMap (fun m =>
+              if isResourceTerm m then (ix m).map (fun b => e a b true) else none))))
+      let pairs := (List.range n).flatMap (fun a =>
+        (List.range n).filterMap (fun b => if a < b then some (a, b) else none))
+      let labelsOfT (t : Term) : List ClassExpr := match termAsSubject t with
+        | some j => labelsOf st j
+        | none   => []
+      let apart : List (List ILit) := pairs.filterMap (fun (a, b) =>
+        let ta := u.getD a (.iri owlThing)
+        let tb := u.getD b (.iri owlThing)
+        if distinctIn g st ta tb || cesClash (labelsOfT ta ++ labelsOfT tb)
+        then some [e a b false] else none)
+      let trans : List (List ILit) := pairs.flatMap (fun (a, c) =>
+        (List.range n).filterMap (fun b =>
+          if b == a || b == c then none
+          else some [e a b false, e b c false, e a c true]))
+      let cs := oneOfClauses ++ apart ++ trans
+      (dpll propFuel cs (Array.replicate (n * n) none)).1 == some false
+
 def clashNodes (g : Graph) (st : RState) : Bool :=
   (groupLeaders st).any (fun n =>
     let ls := labelsOf st n.id
     ls.any (clashForLabel g st n.id ls)
-    || datatypeRangeClash st ls
+    || datatypeRangeClash g st n.id ls
     || datatypeCardinalityClash st ls
     || countingClash st ls)
 
@@ -1395,6 +1766,23 @@ def namedRestrictionAxioms (us : List WfIri) (st : Store)
     | .named d => if d == c then [] else [(.named c, .named d), (.named d, .named c)]
     | ce       => [(.named c, ce), (ce, .named c)])
 
+/-- A NAMED class that carries `owl:oneOf` itself.
+
+    OWL 2 RDF-Based Semantics §5.6 (and the OWL 1 RDF mapping the
+    WebOnt fixtures are written in): `c owl:oneOf (a₁ … aₙ)` makes the
+    class extension of `c` exactly `{a₁ … aₙ}`. A class may carry
+    several such lists (`WebOnt-description-logic-502` gives `TorF`
+    ten), and each one is an equality, so each gives both inclusions
+    between `c` and its nominal. -/
+def namedOneOfAxioms (st : Store) : List (ClassExpr × ClassExpr) :=
+  (st.withPred owlOneOf).flatMap (fun t =>
+    match t.s with
+    | .bnode _ => []
+    | .iri c   =>
+      match walkRdfList st t.o 64 with
+      | []      => []
+      | members => [(.named c, .oneOf members), (.oneOf members, .named c)])
+
 /-- Store-parameterised: the graph it reads is `st.graph`.
 
     Every lookup below runs through `st`, so the store decides the
@@ -1404,7 +1792,7 @@ def namedRestrictionAxioms (us : List WfIri) (st : Store)
     two agree. -/
 def collectAxiomsS (st : Store) : List (ClassExpr × ClassExpr) :=
   let us := unsatNamedClassesS st
-  namedRestrictionAxioms us st ++
+  namedRestrictionAxioms us st ++ namedOneOfAxioms st ++
   st.graph.flatMap (fun t =>
     if t.p == rdfsSubClassOf then
       [(parseNnfSubjectWith us st t.s, parseNnfWith us st t.o)]
@@ -2023,6 +2411,7 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
         -- Identifications every model makes come before any choice.
         let (stF, forced) := forcedIdentifications g st'
         if forced then search tb g stF n
+        else if propositionalClash st' || nominalClash g st' then (.clash, n)
         else
         match pendingUnion st' with
         | some (i, cs) =>
