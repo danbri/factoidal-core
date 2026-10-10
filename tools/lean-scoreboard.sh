@@ -185,6 +185,11 @@ defjob l4owl-probe-dl-consistency l4owl-probe parse_owl owl \
 defjob l4owl-probe-dl-syntax l4owl-probe parse_owl owl \
   "OWL 2, DL regime (RL closure + tableau refuter)" "" \
   "--dir $OWLDIR --dl --refute-ms 3000 syntax-dl.rdf"
+# The refuter is asked about every NegativeEntailmentTest it may decide
+# (DIRECT, DL); a refutation of every negation goal there is a FAIL.
+defjob l4owl-probe-dl-negative-entailment l4owl-probe parse_owl owl \
+  "OWL 2, DL regime (RL closure + tableau refuter)" "" \
+  "--dir $OWLDIR --dl --refute-ms 3000 type-negative-entailment.rdf"
 defjob l4owl-probe-species l4owl-probe parse_owl_species owl \
   "OWL 2 syntax / DL species (test:species, all documents of each case)" "" \
   "--species --dir $OWLDIR all.rdf"
