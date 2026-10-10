@@ -66,6 +66,14 @@ a column that fails to decode contributes zero rows silently, so
 downstream, and ASK would turn a read failure into a wrong answer with
 a clean exit.
 
+ASK applies its SolutionModifier (grammar rule [12];
+https://github.com/danbri/factoidal/issues/699). With only LIMIT and
+ORDER BY, rows lost to a decode failure can change an answer only from
+`true` to `false`, so a `true` answer stands. GROUP BY, HAVING and OFFSET
+depend on counts and positions, so for those `evalAskBackend` answers
+`none` on any decode failure, whether the partial answer is `true` or
+`false` (`askNeedsCompleteRead`).
+
 No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.StoreFastPath
@@ -520,23 +528,34 @@ def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBacke
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb
 
-/-- ASK. An empty answer is `some false` only when every backend
-decoded cleanly; otherwise it is `none`, because a column that failed
-to decode contributes zero rows silently and ASK would report a read
-failure as the answer `false`. -/
+/-- Does the answer of this ASK query change when the read drops rows?
+With no GROUP BY, no HAVING and no OFFSET the answer can only go from
+true to false when rows are lost: LIMIT and ORDER BY keep a non-empty
+sequence non-empty. GROUP BY and HAVING make the answer depend on counts
+(`HAVING (COUNT(*) < 2)` can turn from false to true when a row is
+lost), and OFFSET on the length of the sequence. -/
+def askNeedsCompleteRead (q : Query) : Bool :=
+  q.groupsSolutions || q.modifier.offset.isSome
+
+/-- ASK, with its SolutionModifier applied (§18.2.4, §18.2.5; grammar rule
+[12]) through the same steps as `evalAsk` (`formHasSolution`).
+
+An empty answer is `some false` only when every backend decoded cleanly;
+otherwise it is `none`, because a column that failed to decode
+contributes zero rows silently and ASK would report a read failure as the
+answer `false`. A `true` answer is kept when a read failed only if the
+modifiers cannot turn a shorter sequence into a true answer
+(`askNeedsCompleteRead`); a query that groups, filters groups or skips
+rows answers `none` on any decode failure, in both directions. -/
 def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
   match q.form with
   | .ask =>
       let omega0 := evalPatternBackend env dsb q.pattern dsb.default
-      let omega := match q.postValues with
-        | none => omega0
-        | some vals => SPARQL.join omega0 vals
-      match omega with
-      | [] =>
-          if backendDecodeFailure dsb.default
-             || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
-          then none else some false
-      | _ => some true
+      let answer := formHasSolution env env.activeGraph q omega0
+      let readFailed := backendDecodeFailure dsb.default
+        || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
+      if readFailed && (!answer || askNeedsCompleteRead q) then none
+      else some answer
   | _ => none
 
 /-- The blank-node rewrite happens once, at the entry point. The F*
@@ -681,13 +700,22 @@ theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
 theorem evalAskBackend_none_on_decode_failure (env : EvalEnv) (q : Query)
     (dsb : DatasetBackend) (hform : q.form = .ask)
     (hfail : backendDecodeFailure dsb.default = true)
-    (hempty : (match q.postValues with
-               | none => evalPatternBackend env dsb q.pattern dsb.default
-               | some vals =>
-                   SPARQL.join (evalPatternBackend env dsb q.pattern dsb.default) vals)
-              = []) :
+    (hempty : formHasSolution env env.activeGraph q
+                (evalPatternBackend env dsb q.pattern dsb.default) = false) :
     evalAskBackend env q dsb = none := by
-  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, if_true]
+  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, Bool.not_false,
+    Bool.true_and, if_true]
+
+/-- A query that groups, filters groups or skips rows has no answer to
+give from a read that dropped rows, whichever way the partial answer
+came out. -/
+theorem evalAskBackend_none_on_decode_failure_non_monotone (env : EvalEnv)
+    (q : Query) (dsb : DatasetBackend) (hform : q.form = .ask)
+    (hfail : backendDecodeFailure dsb.default = true)
+    (hmod : askNeedsCompleteRead q = true) :
+    evalAskBackend env q dsb = none := by
+  simp only [evalAskBackend, hform, hmod, hfail, Bool.true_or, Bool.or_true,
+    Bool.true_and, if_true]
 
 /-! ## Build-time checks -/
 
@@ -751,6 +779,73 @@ not. -/
 #guard runAskQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsb1 == some true
 #guard runAskQueryBackendDataset {}
         (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsb1 == some false
+
+/-! ASK applies its SolutionModifier on the backend path too (§18.2.4,
+§18.2.5; issue 699), through the same `formHasSolution` as `evalAsk`.
+`dsb1` holds one default triple, so one solution and, grouped by `?s`,
+one group. -/
+private def countGtB (n : Nat) : Expr :=
+  .compare .gt (.aggregate .count false (.var "*")) (.numericLit n)
+private def askMod (groupBy : Option (List GroupCondition) := none)
+    (having : List Expr := []) (md : SolutionModifier := {}) : Query :=
+  mkQuery .ask (.bgp [tpAll]) (groupBy := groupBy) (having := having) (modifier := md)
+
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 1 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 1])) dsb1 == some false
+-- The backend answer is the reference answer over the materialised dataset.
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1
+    == some (evalAsk {} (materialiseDatasetBackend dsb1)
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])))
+
+/-! A read that reports a decode failure. The ops serve `gDefault` and
+flag the failure, as a COTTAS column that cannot be decoded does. -/
+private def failingOps : L4Factoidal.RDF.CottasCaps.CottasReadOps :=
+  { searchTok := fun _ b => tripleMatchesBound b gDefault
+  , searchLimitedTok := fun _ b n => capsTakeN n (tripleMatchesBound b gDefault)
+  , estimateTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , countExactTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , predicatePresent := fun _ => true
+  , hasDecodeFailure := fun _ => true
+  , distinctPredicates := fun _ => none
+  , searchTokSelective := fun _ b _ => tripleMatchesBound b gDefault }
+private def dsbFailing : DatasetBackend :=
+  { default := .cottasOnDisk failingOps L4Factoidal.RDF.CottasCaps.CottasScope.defaultGraph
+  , named := [] }
+
+#guard backendDecodeFailure dsbFailing.default == true
+-- With no modifier, or only LIMIT or ORDER BY, a non-empty answer stands:
+-- rows that failed to decode could only add solutions.
+#guard runAskQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsbFailing == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsbFailing == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (md := { orderBy := some [.asc (.var "s")], limit := some 1 })) dsbFailing
+    == some true
+-- An empty answer from a failed read is not `false`.
+#guard runAskQueryBackendDataset {}
+        (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsbFailing == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- GROUP BY, HAVING and OFFSET make the answer depend on rows the read
+-- may have lost, so even a `true` answer is withheld.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- The same queries on a clean read are answered.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
 
 /-! A SELECT is not an ASK, so the ASK entry point declines it. -/
 #guard runAskQueryBackendDataset {} (mkQuery (.select .all) (.bgp [tpAll])) dsb1
@@ -1160,6 +1255,7 @@ plus the default. -/
 #print axioms evalBgpBackend_allVars_list
 #print axioms countGroupByGraph_length
 #print axioms evalAskBackend_none_on_decode_failure
+#print axioms evalAskBackend_none_on_decode_failure_non_monotone
 #print axioms limitGraphVarAcc_bounded
 
 end L4Factoidal.SPARQL.StoreDataset

@@ -806,20 +806,44 @@ def groupKeyBinding (gb : Option (List GroupCondition)) (g : SolutionGroup) : Bi
 /-- §18.2.4.3 (SPARQL 1.2 §18.3.4.3) at a grouping level: "P :=
 Join(P, ToMultiset(data))" where P is the grouped solution sequence.
 Each surviving group is paired with every VALUES row compatible with
-its `groupKeyBinding`; the row a SELECT item reads is the VALUES row
-merged over the group's representative row, so a VALUES variable is
-visible to the projection even when the WHERE pattern never binds it.
-With no VALUES clause each group is paired with its representative. -/
-def groupedRowsWithValues (gb : Option (List GroupCondition))
+its `groupKeyBinding`; the row that results is the VALUES row merged
+over `base g`. With no VALUES clause each group is paired with `base g`.
+
+`base` is the one place the query forms differ. A SELECT passes the
+group's representative row (`groupedRowsWithValues`), so a VALUES
+variable is visible to the projection even when the WHERE pattern never
+binds it, and ORDER BY can still read a non-grouped variable as its
+SAMPLE. A form with no SELECT clause (ASK, CONSTRUCT, DESCRIBE) passes
+`groupKeyBinding gb`, because after grouping only the named GROUP BY
+variables are in scope (`formGroupedRows`). -/
+def groupedRowsWithValuesOn (base : SolutionGroup → Binding)
+    (gb : Option (List GroupCondition))
     (pv : Option (List Binding)) (groups : List SolutionGroup) :
     List (SolutionGroup × Binding) :=
   match pv with
-  | none      => groups.map (fun g => (g, g.representative))
+  | none      => groups.map (fun g => (g, base g))
   | some vals =>
       groups.flatMap (fun g =>
         let key := groupKeyBinding gb g
         vals.filterMap (fun mv =>
-          if key.compatible mv then some (g, mv.merge g.representative) else none))
+          if key.compatible mv then some (g, mv.merge (base g)) else none))
+
+/-- `groupedRowsWithValuesOn` for a SELECT: the row a group contributes
+starts as its representative. -/
+def groupedRowsWithValues (gb : Option (List GroupCondition))
+    (pv : Option (List Binding)) (groups : List SolutionGroup) :
+    List (SolutionGroup × Binding) :=
+  groupedRowsWithValuesOn SolutionGroup.representative gb pv groups
+
+/-- §18.5.1 Group(exprlist, Ω), or, with no GROUP BY clause, the whole
+sequence as one group (`implicitGroup`). The one grouping step every
+query form runs: `selectPost` for SELECT and `formGroupedRows` for the
+forms without a SELECT clause both call it. -/
+def groupWhere (env : EvalEnv) (gb : Option (List GroupCondition))
+    (omega : SolutionSeq) : List SolutionGroup :=
+  match gb with
+  | some conds => groupSolutions env conds omega
+  | none       => implicitGroup omega
 
 /-- Does this expression contain an aggregate anywhere? An aggregate
 in the SELECT clause triggers grouping even with no GROUP BY
@@ -1618,9 +1642,7 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
           -- 2. GROUP BY (§18.5.1). A GROUP BY key expression is still
           -- evaluated by `Expr.evalIn` alone, so an EXISTS there stays
           -- the expression-layer error; that position is not covered.
-          let groups := match gb with
-            | some conds => groupSolutions env conds omega0
-            | none       => implicitGroup omega0
+          let groups := groupWhere env gb omega0
           -- 3. HAVING (§18.5.4 and §18.6). `having_filter`, inlined:
           -- the condition list has to reach `havingSatisfies` as a
           -- strict subterm of `q` for the recursion to stay structural.
@@ -1780,18 +1802,109 @@ def evalSelect (env : EvalEnv) (ds : Dataset) (q : Query) :
       (vars, rows)
   | _ => ([], [])
 
-/-- Evaluate an ASK query — §18.2.4: true exactly when the pattern has
-at least one solution (port of `eval_ask_query`). -/
+/-! ### The post-WHERE pipeline of the forms without a SELECT clause
+
+SPARQL 1.1 §18.2.4 builds the same modifier steps for every query form:
+GROUP BY and HAVING (§18.2.4.1), the trailing VALUES join (§18.2.4.3),
+ORDER BY, and Slice for OFFSET and LIMIT. ASK ([12]), CONSTRUCT ([10])
+and DESCRIBE ([11]) each take a SolutionModifier, and the answer is read
+off the solution sequence that results: §16.2 instantiates the CONSTRUCT
+template over it, and ASK is true when it is non-empty.
+
+`selectPost` is this pipeline for SELECT. The functions below are the
+same pipeline for the other forms, and they call the SELECT path's own
+steps (`groupWhere`, `havingSatisfies`, `groupedRowsWithValuesOn`,
+`sortSolutionsFast`, `sliceSolutions`) instead of repeating them.
+
+The one difference is the row a group contributes. A SELECT row starts
+as the group's representative, because SELECT expressions and ORDER BY
+read the representative's other variables (`evalSelectItemsGroup`).
+These forms have no SELECT expressions, so no aggregate alias is added,
+and after grouping only the named GROUP BY variables are in scope
+(`GROUP BY ?v`, `GROUP BY (e AS ?v)`; §18.2.4.1, SPARQL 1.2 §18.3.1).
+A CONSTRUCT template variable that is not a GROUP BY variable is
+therefore unbound, and the template triple that mentions it is skipped
+(§16.2). -/
+
+/-- Do a GROUP BY and a HAVING clause, given as the parser reads them,
+group the WHERE solutions? This is the test for the forms without a
+SELECT clause; a SELECT also groups on an aggregate in its projection
+(`selectPost`).
+
+Reading of §11.2 and §18.2.4.1, not a rule the specification states in
+these words: HAVING filters groups, so a query with a HAVING clause and
+no GROUP BY has the whole solution sequence as its one group
+(`implicitGroup`). `ASK { ?s ?p ?o } HAVING (COUNT(*) > 100)` is then
+false on a graph of fewer than 101 triples. -/
+def groupsSolutionsOf (gb : Option (List GroupCondition)) (hv : List Expr) : Bool :=
+  gb.isSome || !hv.isEmpty
+
+/-- `groupsSolutionsOf` for a whole query. -/
+def Query.groupsSolutions (q : Query) : Bool :=
+  groupsSolutionsOf q.groupBy q.having
+
+/-- GROUP BY, HAVING and the trailing VALUES join for a form without a
+SELECT clause (§18.2.4.1, §18.2.4.3): one solution per group that passes
+every HAVING condition, binding the named GROUP BY variables, with the
+trailing VALUES rows joined onto it AFTER grouping and HAVING.
+
+`active` is the graph an EXISTS in a HAVING condition evaluates
+against (§18.6), as in `selectPost`. -/
+def formGroupedRows (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  let filtered := (groupWhere env q.groupBy omega0).filter
+    (fun g => havingSatisfies env active q.having g)
+  (groupedRowsWithValuesOn (groupKeyBinding q.groupBy) q.groupBy q.postValues
+    filtered).map Prod.snd
+
+/-- The solution sequence before ORDER BY and Slice, for a form without
+a SELECT clause. A query that does not group joins its trailing VALUES
+rows directly onto the WHERE solutions: no step sits between the two
+(§18.2.4.3), and `attachValues` has already placed the rows in the
+pattern for a parsed query, so `postValues` is `none` there. -/
+def formRows (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  if q.groupsSolutions then formGroupedRows env active q omega0
+  else
+    match q.postValues with
+    | none      => omega0
+    | some vals => join omega0 vals
+
+/-- The solution sequence a form without a SELECT clause reads its
+answer from: `Slice(OrderBy(formRows))`. -/
+def formSolutions (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  let rows := formRows env active q omega0
+  let ordered := match q.modifier.orderBy with
+    | none   => rows
+    | some o => sortSolutionsFast (compareOnConditions env active o) rows
+  sliceSolutions q.modifier.offset q.modifier.limit ordered
+
+/-- Is the solution sequence of an ASK query non-empty? (§18.2.4,
+§18.2.5.) ORDER BY is not run: it permutes the sequence, Slice and the
+emptiness test read only its length, and `formHasSolution_eq`
+(`QueryTheorems.lean`) proves the answer equals the one read off
+`formSolutions`. -/
+def formHasSolution (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Bool :=
+  !(sliceSolutions q.modifier.offset q.modifier.limit
+      (formRows env active q omega0)).isEmpty
+
+/-- Evaluate an ASK query — §18.2.4, §18.2.5: true exactly when the
+solution sequence after GROUP BY, HAVING, the trailing VALUES join,
+ORDER BY, OFFSET and LIMIT has at least one solution (port of
+`eval_ask_query`, extended with the SolutionModifier of grammar rule
+[12]). `ASK { ?s ?p ?o } LIMIT 0` is false, and
+`ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 100)` is false on a
+graph of fewer than 101 triples. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def evalAsk (env : EvalEnv) (ds : Dataset) (q : Query) : Bool :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }
   match q.form with
   | .ask =>
-      let omega0 := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
-      let omega := match q.postValues with
-        | none      => omega0
-        | some vals => join omega0 vals
-      !omega.isEmpty
+      formHasSolution env active q
+        ((q.pattern.rewriteBnodes.lower env).evalIn ds' active)
   | _ => false
 
 /-! ### CONSTRUCT — §16.2
@@ -1891,23 +2004,22 @@ Found by the differential harness (2026-08-22, generated seeds 169 and
 `eval_construct_query` — the two trees disagreed only because their
 unordered evaluation orders differ.
 
-GROUP BY and HAVING are NOT applied here: the template is instantiated
-over the ungrouped solutions. Tracked at
-https://github.com/danbri/factoidal/issues/699. -/
+GROUP BY and HAVING apply to the solution sequence too (§18.2.4.1
+applies to every query form), through the same steps SELECT uses
+(`formSolutions`). After grouping the solutions bind the named GROUP BY
+variables and the trailing VALUES variables only, so a template triple
+that mentions any other variable is skipped:
+`CONSTRUCT { ?s :p ?o } WHERE { ?s :p ?o } GROUP BY ?s` is empty, and
+`CONSTRUCT { ?s :p 1 } WHERE { ?s :p ?o } GROUP BY ?s` makes one triple
+per group. Tracked at https://github.com/danbri/factoidal/issues/699. -/
 def evalConstruct (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }
   match q.form with
   | .construct template =>
       let omega0 := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
-      let omega := match q.postValues with
-        | none      => omega0
-        | some vals => join omega0 vals
-      let ordered := match q.modifier.orderBy with
-        | none   => omega
-        | some o => sortSolutionsFast (compareOnConditions env active o) omega
-      let limited := sliceSolutions q.modifier.offset q.modifier.limit ordered
-      (instantiateSolutions template limited 0).foldl (fun g t => g.add t) Graph.empty
+      let solutions := formSolutions env active q omega0
+      (instantiateSolutions template solutions 0).foldl (fun g t => g.add t) Graph.empty
   | _ => []
 
 end L4Factoidal.SPARQL

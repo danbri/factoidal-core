@@ -150,6 +150,21 @@ args "$TMP/q-ask.json" "$DATA" 'ASK { <http://e/a> <http://e/p> <http://e/b> }'
 check "queryDataset ask" queryDataset "$TMP/q-ask.json" \
   'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
 
+# ASK applies its SolutionModifier (grammar rule [12]; issue 699). The data
+# holds one triple: one solution, one group of one row.
+args "$TMP/q-ask-limit0.json" "$DATA" 'ASK { ?s ?p ?o } LIMIT 0'
+check "queryDataset ask LIMIT 0 -> false" queryDataset "$TMP/q-ask-limit0.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+args "$TMP/q-ask-offset.json" "$DATA" 'ASK { ?s ?p ?o } OFFSET 1'
+check "queryDataset ask OFFSET past the end -> false" queryDataset "$TMP/q-ask-offset.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+args "$TMP/q-ask-having-no.json" "$DATA" 'ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 1)'
+check "queryDataset ask GROUP BY HAVING fails -> false" queryDataset "$TMP/q-ask-having-no.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is False'
+args "$TMP/q-ask-having-yes.json" "$DATA" 'ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 0)'
+check "queryDataset ask GROUP BY HAVING holds -> true" queryDataset "$TMP/q-ask-having-yes.json" \
+  'r["ok"] is True and r["kind"] == "ask" and r["boolean"] is True'
+
 # §18.6 EXISTS / NOT EXISTS through the backend path: the data holds a p b
 # only, so NOT EXISTS of the reversed pattern keeps the row and EXISTS drops
 # it. Regression pin (2026-09-02): the backend environment carried no
