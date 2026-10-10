@@ -319,7 +319,26 @@ partial def readOne (ctx : List (String × String)) (excl : List String)
           -- namespace, which is a DIFFERENT element name (namespace-4501).
           let decls := c2.filter (fun (p, u) =>
             u != xsltNS && p != "xml" && !(excl2.contains p))
-          [.lre t avts decls (readBody c2 excl2 kids)]
+          -- §7.1.1: exclusion applies to the namespace NODES copied to
+          -- the result. It does not change the element's own expanded
+          -- name, nor its attributes' names; the result tree must
+          -- still say which namespace each of them is in. So the
+          -- binding of the element's own prefix, and of each prefixed
+          -- attribute, is kept even when excluded. Dropping it put
+          -- `<out>` from a stylesheet whose default namespace is
+          -- `http://bubba.com/` into NO namespace when `#default` was
+          -- excluded (namespace-4801). An unprefixed element in no
+          -- namespace binds `""` to `""`, which the serialiser writes
+          -- as `xmlns=""` only under a parent that has a default
+          -- namespace.
+          let used := (prefixOf t :: avts.filterMap (fun (n, _) =>
+            let p := prefixOf n
+            if p == "" then none else some p)).eraseDups
+          let fixup := used.filterMap (fun p =>
+            if p == "xml" || decls.any (fun (q, _) => q == p) then none
+            else if p == "" then some ("", uriOfPrefix c2 "")
+            else (c2.find? (fun (q, _) => q == p)))
+          [.lre t avts (decls ++ fixup) (readBody c2 excl2 kids)]
       | some "text" =>
           [.textN (String.join ((kidsOf n).map (fun c =>
             match c with | .text s => s | .cdata s => s | _ => "")))]
@@ -540,15 +559,20 @@ def patternExpr (alt : String) : Option Expr := do
   | .path false st steps => some (.path false st steps)
   | other => some other
 
-/-- The set of node ADDRESSES a pattern alternative matches, computed
-    once per document. -/
-def patternLocs (d : Doc) (nsctx : List (String × String)) (alt : String)
-    : Option (List Loc) := do
+/-- The set of node ADDRESSES a pattern alternative matches in the
+    document whose root is `c.item`. -/
+def patternLocsIn (c : Ctx) (alt : String) : Option (List Loc) := do
   let e ← patternExpr alt
-  let v ← evalExpr { doc := d, item := .doc d, nsctx := nsctx } e
+  let v ← evalExpr c e
   match v with
   | .nodes ns => some (ns.map (·.loc))
   | _         => none
+
+/-- The set of node ADDRESSES a pattern alternative matches in the
+    principal document, computed once per transform. -/
+def patternLocs (d : Doc) (nsctx : List (String × String)) (alt : String)
+    : Option (List Loc) :=
+  patternLocsIn { doc := d, item := .doc d, nsctx := nsctx } alt
 
 /-! ## Serialising the result tree -/
 
@@ -587,7 +611,10 @@ partial def serializeNode (inScope : List (String × String)) : RNode → String
       -- copy-3701, whose expected files keep declaration order with
       -- the default namespace NOT first. The suite's expected files
       -- are not consistent about this, so the rule that matches the
-      -- most of them is the one the stylesheet itself states.
+      -- most of them is the one the stylesheet itself states. Since
+      -- 2026-10-10 the runner compares Canonical XML forms, which is
+      -- how the suite defines `assert-xml`, so this order no longer
+      -- decides any test.
       let newDecls := decls.filter (fun (p, u) =>
         ((inScope.find? (fun (q, _) => q == p)).map (·.2)).getD "" != u)
       let plain := attrs.filter (fun a => !isNsDecl a)
@@ -629,7 +656,7 @@ def copyItem (d : Doc) (it : Item) : List RNode :=
   match it with
   | .attr _ a  => [.attr a.name a.value]
   | .ns _ _ _  => []
-  | .doc kids  => kids.map copyNode
+  | .doc kids _ => kids.map copyNode
   | .tree _ n  =>
       match n with
       | .element t a ks =>
@@ -661,6 +688,10 @@ structure Rt where
   docs    : List (String × Doc) := []
 deriving Inhabited
 
+/-- The document an item belongs to, by its document number — the
+    same numbering `XPath.Eval.Ctx.docById` reads. -/
+def Rt.docOf (rt : Rt) (it : Item) : Doc := docTable rt.doc rt.self? rt.docs it.loc.doc
+
 def tmplOf (i : Nat) (t : Tmpl) : Template :=
   { matchPattern := t.pat, name := t.name, mode := t.mode,
     priority := t.priority, importPrec := t.importPrec, docOrder := i }
@@ -668,11 +699,22 @@ def tmplOf (i : Nat) (t : Tmpl) : Template :=
 /-- §5.5 selection: among the templates whose pattern matches this
     node in this mode, the one `Templates.better` prefers. -/
 def selectTemplate (rt : Rt) (mode : String) (it : Item) : Option Tmpl :=
+  -- `rt.locs` holds the matches in the PRINCIPAL document. A node of
+  -- another document (`document('')`, `document(uri)`) is matched
+  -- against its own document's tree, computed when such a node is
+  -- reached; most transforms never reach one.
+  let matchesIn (t : Tmpl) (i : Nat) : Bool :=
+    if it.loc.doc == 0 then
+      match rt.locs[i]? with
+      | some (some ls) => ls.contains it.loc
+      | _              => false
+    else
+      match patternLocsIn { doc := rt.doc, self? := rt.self?, docs := rt.docs,
+                            item := .doc (rt.docOf it) it.loc.doc, nsctx := t.nsctx } t.pat with
+      | some ls => ls.contains it.loc
+      | none    => false
   let cands := (rt.st.templates.zipIdx).filter (fun (t, i) =>
-    t.mode == mode && t.pat != "" &&
-    (match rt.locs[i]? with
-     | some (some ls) => ls.contains it.loc
-     | _              => false))
+    t.mode == mode && t.pat != "" && matchesIn t i)
   (cands.foldl (fun acc (t, i) =>
     match acc with
     | none          => some (t, i)
@@ -824,7 +866,7 @@ partial def instOne (rt : Rt) (fuel : Nat) (vars : List (String × Value))
   | .copyOf sel dropNs => do
       let v ← evalIn rt vars nsctx it pos size sel
       let out ← match v with
-        | .nodes ns => some ((normalize ns).flatMap (copyItem rt.doc))
+        | .nodes ns => some ((normalize ns).flatMap (fun x => copyItem (rt.docOf x) x))
         | .frag ns  => some (ns.map copyNode)
         | other     => some [RNode.text other.toStr]
       some (if dropNs then out.map stripNsDecls else out)
@@ -891,13 +933,16 @@ partial def instOne (rt : Rt) (fuel : Nat) (vars : List (String × Value))
       match it with
       | .attr _ a => some [.attr a.name a.value]
       | .ns _ _ _ => some []
-      | .doc _    => inst rt fuel vars nsctx it pos size body
+      | .doc _ _  => inst rt fuel vars nsctx it pos size body
       | .tree _ n =>
           match n with
           | .element t _ _ => do
               let kids ← inst rt fuel vars nsctx it pos size body
               let (extra, ks) := splitContent kids
-              let inherited := (namespacesOf rt.doc it).filterMap (fun x =>
+              -- The in-scope namespaces of the node being copied, read
+              -- from ITS document: a node of `document('')` has the
+              -- stylesheet's bindings (namespace-4801).
+              let inherited := (namespacesOf (rt.docOf it) it).filterMap (fun x =>
                 match x with
                 | .ns _ p u =>
                     if p == "xml" then none

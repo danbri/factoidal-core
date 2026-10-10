@@ -127,6 +127,52 @@ private def ss (body : String) : String :=
 #guard run (ss "<xsl:template match=\"doc\"><xsl:element name=\"outer\" namespace=\"http://x.example/\"><xsl:element name=\"inner\"/></xsl:element></xsl:template>")
            "<doc/>" == "<outer xmlns=\"http://x.example/\"><inner xmlns=\"\"/></outer>"
 
+-- Exclusion removes namespace NODES; it never moves the element itself
+-- out of its namespace. With `#default` excluded, `out` is still in
+-- `http://b.example/` and must say so; `in` inherits it from `out`
+-- (namespace-4801).
+#guard run ("<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" xmlns=\"http://b.example/\" version=\"1.0\" exclude-result-prefixes=\"#default\">"
+            ++ "<xsl:template match=\"doc\"><out><in/></out></xsl:template></xsl:stylesheet>")
+           "<doc/>" == "<out xmlns=\"http://b.example/\"><in/></out>"
+-- The same for an excluded PREFIX that the element and an attribute use.
+#guard run ("<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" xmlns:p=\"http://p.example/\" version=\"1.0\" exclude-result-prefixes=\"p\">"
+            ++ "<xsl:template match=\"doc\"><p:out p:a=\"1\"/></xsl:template></xsl:stylesheet>")
+           "<doc/>" == "<p:out xmlns:p=\"http://p.example/\" p:a=\"1\"/>"
+-- A literal result element in NO namespace, inside a result element
+-- that has a default namespace, undeclares it.
+#guard run (ss "<xsl:template match=\"doc\"><xsl:element name=\"outer\" namespace=\"http://x.example/\"><plain/></xsl:element></xsl:template>")
+           "<doc/>" == "<outer xmlns=\"http://x.example/\"><plain xmlns=\"\"/></outer>"
+
+/-! ## Nodes of another document (§12.1 `document()`)
+
+A node's identity includes its DOCUMENT. Before it did, a node of
+`document('')` was looked up at the same child-index path in the
+SOURCE document: its namespaces, its parent and `/` all came from the
+wrong tree, and a union with a source node at the same path counted
+one node. -/
+
+-- `xsl:copy` copies the namespaces in scope on the node in ITS document
+-- (the stylesheet: `p` and `xsl`), not those of the source element at
+-- the same path (`q`) (namespace-4801).
+#guard run ("<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" xmlns:p=\"http://p.example/\" version=\"1.0\" exclude-result-prefixes=\"p\">"
+            ++ "<xsl:template match=\"doc\"><out><xsl:for-each select=\"document('')//p:item\"><xsl:copy/></xsl:for-each></out></xsl:template>"
+            ++ "<p:item/></xsl:stylesheet>")
+           "<doc xmlns:q=\"http://q.example/\"><a/><b/></doc>"
+  == "<out><p:item xmlns:p=\"http://p.example/\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"/></out>"
+-- Two documents' document elements are two nodes.
+#guard run (ss "<xsl:template match=\"doc\"><out n=\"{count(/doc | document('')/*)}\"/></xsl:template>")
+           "<doc/>" == "<out n=\"2\"/>"
+-- `/` and `..` from a stylesheet node stay in the stylesheet.
+#guard run (ss "<xsl:template match=\"doc\"><out><xsl:for-each select=\"document('')/*/*[1]\"><xsl:value-of select=\"name(/*)\"/>,<xsl:value-of select=\"name(..)\"/></xsl:for-each></out></xsl:template>")
+           "<doc/>" == "<out>xsl:stylesheet,xsl:stylesheet</out>"
+-- A template is matched against the node's own document: `p:item` is
+-- the first child of the stylesheet element, at the same path as the
+-- source's `x`, and the `x` template must not fire for it.
+#guard run ("<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" xmlns:p=\"http://p.example/\" version=\"1.0\"><p:item/>"
+            ++ "<xsl:template match=\"/\"><out><xsl:apply-templates select=\"document('')//p:item\"/></out></xsl:template>"
+            ++ "<xsl:template match=\"x\">X</xsl:template><xsl:template match=\"p:item\">I</xsl:template></xsl:stylesheet>")
+           "<doc><x/></doc>" == "<out xmlns:p=\"http://p.example/\">I</out>"
+
 /-! ## Whitespace (§3.4) -/
 
 -- A comment between two runs of character data in the stylesheet is

@@ -6568,22 +6568,50 @@ never as a pass, never as a failure. One case remains:
   document is a refusal rather than an empty tree the stylesheet
   would quietly transform into nothing.
 
-### The three residual failures, named
+### The three residual failures, closed (2026-10-10)
 
-- `copy-3102` — namespace declarations in a different ORDER. The
-  suite's expected files are not self-consistent about this: sorting
-  by prefix (what C14N does) fixes this case and breaks
-  `conflict-resolution-1301` and `copy-3701`, whose expected files
-  keep declaration order with the default namespace NOT first.
-  Declaration order matches the most of them.
-- `node-1601` — the order of the `namespace::` axis, which XPath 1.0
-  leaves implementation-defined. The expected file's order is neither
-  declaration order, nor its reverse, nor alphabetical.
-- `namespace-4801` — `xsl:copy` of a node from the stylesheet's OWN
-  document. Defect 12 fixed the path evaluation; the copy still reads
-  its namespace context from the primary document, because `Rt` holds
-  one document. Fixing it means threading the document through
-  `Item`.
+Measured before: 84 pass, 3 fail (out of 87 decided), 1 refused.
+After: 87 pass, 0 fail (out of 87 decided), 1 refused (out of 88).
+
+- `copy-3102` (namespace declarations in a different ORDER) and
+  `node-1601` (the order of the `namespace::` axis, which XPath 1.0
+  §5.4 leaves implementation-defined) were RUNNER defects. The
+  xslt30-test catalog defines `assert-xml` as a comparison of
+  CANONICAL forms ("the result of parsing and canonicalizing the XML
+  given in the body of the assert-xml element is the same
+  (byte-for-byte) as the result of canonicalizing the XML result of
+  the query"). Canonical XML 1.0 sorts attributes and namespace
+  declarations, so neither order is part of what the test checks. The
+  runner compared text. It now canonicalises both sides with the new
+  library module `XML/Canonical.lean` (Canonical XML 1.0, inclusive,
+  with comments; the Recommendation's own §3.3 example is a `#guard`)
+  and reports exact, canonical and whitespace-only passes apart. The
+  F* runner handles `node-1601` with a local override file; the Lean
+  runner needs none.
+- `namespace-4801` was two ENGINE defects. (1) `exclude-result-prefixes`
+  removed the binding of a literal result element's OWN prefix, so
+  `<out>` in the stylesheet's default namespace came out in no
+  namespace; §7.1.1 excludes namespace nodes, never the element's
+  expanded name. The LRE now keeps the binding of its own prefix and
+  of each prefixed attribute. (2) A node of `document('')` had no
+  document in its address, so `xsl:copy` read its in-scope namespaces
+  from the SOURCE document at the same path. `XPath.Data.Loc` now
+  carries a document number (`Item.doc` too); `XPath.Eval.Ctx.docById`
+  maps 0 to the source, 1 to the stylesheet and `k + 2` to the `k`-th
+  supplied document; every axis reads the tree of the node it starts
+  from, `/` is the root of the context node's document, a union of
+  nodes from two documents keeps both, and a template is matched
+  against the node's own document.
+
+Xalan mirror (`--base third_party/testing/xslt1-xalan`), same day:
+1135 pass, 285 fail, 259 refused (out of 1690) before; 1220 pass,
+202 fail, 257 refused after (1201 of the passes canonical or exact).
+No case that passed before fails now.
+
+`select-5901` stays REFUSED: `document('select-59.xml')` names a file
+the vendored corpus does not carry (the vendoring renamed each source
+file). The F* runner passes it only because F* `document()` returns an
+empty node-set for every non-empty URI.
 
 ### A comparison artifact worth writing down
 
