@@ -18,6 +18,8 @@ vendored corpus files from disk.
 -/
 import L4Factoidal.XML.Theorems
 import L4Factoidal.XML.Wellformedness
+import L4Factoidal.XML.Encoding
+import L4Factoidal.XML.Validity
 
 namespace L4Factoidal.XML.Tests
 
@@ -273,6 +275,88 @@ comment on `parseChildren`. -/
 #guard splitQName "p:" == .malformed
 #guard !isNamespaceWellFormedDoc "<a:b:c/>"
 
+-- Namespaces in XML 1.0 section 6 (erratum NE08): no colon in a
+-- processing instruction target, an entity name or a notation name.
+-- Each is well-formed PLAIN XML, so the namespace layer alone rejects it.
+#guard isWellFormed "<?a:b x?><r/>"
+#guard !isNamespaceWellFormedDoc "<?a:b x?><r/>"
+#guard isNamespaceWellFormedDoc "<?ab x?><r/>"
+#guard !isNamespaceWellFormedDoc "<r><?a:b x?></r>"
+#guard isNamespaceWellFormedDoc "<r><?ab x?></r>"
+#guard isWellFormed "<!DOCTYPE r [<!ENTITY a:b \"v\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY a:b \"v\">]><r/>"
+#guard isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY ab \"v\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!ENTITY % a:b \"v\">]><r/>"
+#guard isWellFormed "<!DOCTYPE r [<!NOTATION a:b SYSTEM \"n\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<!NOTATION a:b SYSTEM \"n\">]><r/>"
+#guard isNamespaceWellFormedDoc "<!DOCTYPE r [<!NOTATION ab SYSTEM \"n\">]><r/>"
+#guard !isNamespaceWellFormedDoc "<!DOCTYPE r [<?a:b x?>]><r/>"
+-- The declared names are recorded in reverse order of declaration.
+#guard (match parseXML "<!DOCTYPE r [<!ENTITY e \"1\"><!NOTATION n SYSTEM \"x\"><!ENTITY f \"2\">]><r/>" with
+        | .ok d => d.doctype.map (·.declared)
+        | .error _ => none)
+       == some { entities := ["f", "e"], notations := ["n"], piTargets := [] }
+
+/-! ## §3.3.3 attribute-value normalisation by declared type
+
+A processor that reads an ATTLIST must use the declared type (section
+5.1). The value of an attribute whose type is not CDATA has its leading
+and trailing spaces discarded and each run of spaces collapsed. -/
+
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a NMTOKENS #IMPLIED>]><r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "x y"
+-- CDATA, declared or by default, is not collapsed.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED>]><r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "  x   y  "
+#guard (match parseXML "<r a=\"  x   y  \"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "  x   y  "
+-- A reference to a space is a space once expanded, so it is collapsed too.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a ID #IMPLIED>]><r a=\"&#32;x&#32;\"/>" with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "x"
+-- The declaration is per ELEMENT: another element's attribute of the
+-- same name is untouched.
+#guard (match parseXML "<!DOCTYPE r [<!ATTLIST r a NMTOKEN #IMPLIED>]><r><s a=\" v \"/></r>" with
+        | .ok d => ((d.root.childElements "s").head?).bind (fun s => findAttr "a" s.elementAttrs)
+        | .error _ => none) == some " v "
+-- Section 3.3: the FIRST declaration of an attribute is binding.
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED>" ++
+          "<!ATTLIST r a NMTOKEN #IMPLIED>]><r a=\" v \"/>") with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some " v "
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a NMTOKEN #IMPLIED>" ++
+          "<!ATTLIST r a CDATA #IMPLIED>]><r a=\" v \"/>") with
+        | .ok d => findAttr "a" d.root.elementAttrs
+        | .error _ => none) == some "v"
+-- The normalisation can make two namespace declarations equal
+-- (xmlconf rmt-ns10-012): the attributes then collide after expansion.
+#guard !isNamespaceWellFormedDoc
+  ("<!DOCTYPE r [<!ATTLIST r xmlns:a CDATA #IMPLIED xmlns:b NMTOKEN #IMPLIED>]>" ++
+   "<r xmlns:a=\"urn:x\" xmlns:b=\" urn:x \"><c a:k=\"1\" b:k=\"2\"/></r>")
+-- ...and with both declared CDATA the two names differ, so it passes.
+#guard isNamespaceWellFormedDoc
+  ("<!DOCTYPE r [<!ATTLIST r xmlns:a CDATA #IMPLIED xmlns:b CDATA #IMPLIED>]>" ++
+   "<r xmlns:a=\"urn:x\" xmlns:b=\" urn:x \"><c a:k=\"1\" b:k=\"2\"/></r>")
+-- Every attribute type is recorded.
+#guard (match parseXML ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED b ID #REQUIRED " ++
+          "c IDREF #IMPLIED d IDREFS #IMPLIED e ENTITY #IMPLIED f ENTITIES #IMPLIED " ++
+          "g NMTOKEN #IMPLIED h NMTOKENS #IMPLIED i NOTATION (n) #IMPLIED " ++
+          "j (x|y) \"x\" k CDATA #FIXED \"z\">]><r b=\"b\"/>") with
+        | .ok d => (d.doctype.map (fun dt => dt.attDecls.reverse.map (fun a => (a.name, a.type, a.defaultDecl)))).getD []
+        | .error _ => []) ==
+       [("a", .CDATA, .implied), ("b", .ID, .required), ("c", .IDREF, .implied),
+        ("d", .IDREFS, .implied), ("e", .ENTITY, .implied), ("f", .ENTITIES, .implied),
+        ("g", .NMTOKEN, .implied), ("h", .NMTOKENS, .implied), ("i", .NOTATION ["n"], .implied),
+        ("j", .Enumeration ["x", "y"], .value "x"), ("k", .CDATA, .fixed "z")]
+-- ...and re-parse unchanged after serialisation.
+#guard roundTripsFrom ("<!DOCTYPE r [<!ATTLIST r a CDATA #IMPLIED b ID #REQUIRED " ++
+          "c IDREF #IMPLIED d IDREFS #IMPLIED e ENTITY #IMPLIED f ENTITIES #IMPLIED " ++
+          "g NMTOKEN #IMPLIED h NMTOKENS #IMPLIED i NOTATION (n) #IMPLIED " ++
+          "j (x|y) \"x\" k CDATA #FIXED \"z\">]><r b=\"b\"/>")
+
 /-! ## `[4] NCName` — Namespaces in XML §3 -/
 
 #guard isValidNCName "abc"
@@ -280,6 +364,533 @@ comment on `parseChildren`. -/
 #guard !isValidNCName "a:b"
 #guard !isValidNCName ""
 #guard !isValidNCName "1abc"
+
+/-! ## Character encodings — XML 1.0 section 4.3.3 and Appendix F
+
+`decodeXmlBytes` turns the BYTES of an entity into text. The fixtures are
+built from code units so that each one states exactly which bytes it
+tests. -/
+
+/-- UTF-16 bytes for `s`: surrogate pairs above U+FFFF, optionally a byte
+order mark first. -/
+def utf16Bytes (s : String) (order : Endian) (bom : Bool) : ByteArray :=
+  let units : List Nat := s.toList.flatMap fun c =>
+    let n := c.toNat
+    if n < 0x10000 then [n]
+    else [0xD800 + (n - 0x10000) / 0x400, 0xDC00 + (n - 0x10000) % 0x400]
+  let units := (if bom then [0xFEFF] else []) ++ units
+  ByteArray.mk ((units.flatMap fun u =>
+    match order with
+    | .big => [u / 256, u % 256]
+    | .little => [u % 256, u / 256]).map Nat.toUInt8).toArray
+
+/-- The bytes of a list of byte values. -/
+def rawBytes (bs : List Nat) : ByteArray := ByteArray.mk (bs.map Nat.toUInt8).toArray
+
+/-- A string's UTF-8 bytes. -/
+def u8 (s : String) : ByteArray := s.toUTF8
+
+def decoded (bs : ByteArray) : Option String := (decodeXmlBytes bs).toOption
+
+/-- The constructor of the decoding error, or `none` when it decodes. -/
+def decodeFails (bs : ByteArray) : Bool := (decodeXmlBytesE bs).toOption.isNone
+
+-- UTF-16, both orders, with a byte order mark, including a character
+-- above U+FFFF (a surrogate pair).
+#guard decoded (utf16Bytes "<a>é日本😀</a>" .little true) == some "<a>é日本😀</a>"
+#guard decoded (utf16Bytes "<a>é日本😀</a>" .big true) == some "<a>é日本😀</a>"
+-- The byte order mark is consumed, not left as a character.
+#guard (decoded (utf16Bytes "<a/>" .big true)).map (·.toList.head?) == some (some '<')
+-- With a declaration, the mark and `UTF-16` agree.
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>" .little true)
+       == some "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"
+-- UTF-16 with NO byte order mark is legal only when a declaration names
+-- the byte order (Appendix F.1: `3C 00 3F 00` and `00 3C 00 3F`).
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>" .little false)
+       == some "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>"
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"utf-16be\"?><a/>" .big false)
+       == some "<?xml version=\"1.0\" encoding=\"utf-16be\"?><a/>"
+-- ...and `UTF-16` with no mark is the fatal error of section 4.3.3.
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>" .little false)
+-- ...as is no declaration at all (an entity with neither a mark nor a
+-- declaration must be UTF-8, and these bytes are not).
+#guard decodeFails (utf16Bytes "<?pi x?><a/>" .big false)
+-- ...and a declaration naming the OTHER byte order.
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16BE\"?><a/>" .little false)
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16BE\"?><a/>" .little true)
+#guard decoded (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16LE\"?><a/>" .little true) != none
+-- The declaration must agree with the detected family (hst-lhs-008).
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"utf-8\"?><a/>" .big true)
+#guard decodeFails (utf16Bytes "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a/>" .little true)
+-- Illegal UTF-16: a lone surrogate of either kind, a pair in the wrong
+-- order, an odd number of bytes.
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x00, 0xD8])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x00, 0xDC, 0x3E, 0x00])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x00, 0xD8, 0x3C, 0x00])
+#guard decodeFails (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x3E])
+-- UTF-8: a leading byte order mark is consumed.
+#guard decoded (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<a/>") == some "<a/>"
+#guard decoded (u8 "<a>é</a>") == some "<a>é</a>"
+-- A UTF-8 byte order mark with a declaration of anything else is an
+-- error (hst-lhs-007); with UTF-8 it is not.
+#guard decodeFails (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<?xml version='1.0' encoding='iso-8859-1'?><x/>")
+#guard decoded (rawBytes [0xEF, 0xBB, 0xBF] ++ u8 "<?xml version='1.0' encoding='UTF-8'?><x/>")
+       == some "<?xml version='1.0' encoding='UTF-8'?><x/>"
+-- Illegal UTF-8: encoded surrogates, an overlong form, a code point
+-- above U+10FFFF, a truncated sequence, a stray continuation byte.
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xED, 0xA0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xED, 0xB0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xC0, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xF7, 0x80, 0x80, 0x80] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0xE2, 0x82] ++ u8 "</a>")
+#guard decodeFails (u8 "<a>" ++ rawBytes [0x80] ++ u8 "</a>")
+-- A declaration of UTF-16 on an entity whose bytes are 8-bit.
+#guard decodeFails (u8 "<?xml version='1.0' encoding='UTF-16'?><x/>")
+#guard decodeFails (u8 "<?xml version='1.0' encoding='utf-16le'?><x/>")
+-- ISO-8859-1: byte 0xE9 is U+00E9, every byte is legal.
+#guard decoded (u8 "<?xml version='1.0' encoding='ISO-8859-1'?><x>" ++ rawBytes [0xE9, 0xFF, 0x80] ++ u8 "</x>")
+       == some "<?xml version='1.0' encoding='ISO-8859-1'?><x>éÿ\u0080</x>"
+-- The same bytes with no declaration are not UTF-8.
+#guard decodeFails (u8 "<x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+#guard decoded (u8 "<?xml version='1.0' encoding='latin1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+       == some "<?xml version='1.0' encoding='latin1'?><x>é</x>"
+-- US-ASCII: bytes above 127 are illegal.
+#guard decoded (u8 "<?xml version='1.0' encoding='US-ASCII'?><x>abc</x>")
+       == some "<?xml version='1.0' encoding='US-ASCII'?><x>abc</x>"
+#guard decodeFails (u8 "<?xml version='1.0' encoding='us-ascii'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")
+-- Encoding names are case-insensitive.
+#guard (decoded (u8 "<?xml version='1.0' encoding='iso-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).map
+         (·.toList.contains '\u00E9') == some true
+#guard (decoded (u8 "<?xml version='1.0' encoding='Iso-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).map
+         (·.toList.contains '\u00E9') == some true
+-- An encoding the decoder does not implement is reported by NAME, and
+-- is neither an error of the bytes nor a verdict on the document.
+#guard (decodeXmlBytesE (u8 "<?xml version='1.0' encoding='euc-jp'?><x/>")) matches .error (.unsupported "euc-jp")
+#guard (decodeXmlBytesE (u8 "<?xml version='1.0' encoding='Shift_JIS'?><x/>")) matches .error (.unsupported "Shift_JIS")
+#guard (decodeXmlBytesE (rawBytes [0x00, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x3F])) matches .error (.unsupported _)
+#guard (decodeXmlBytesE (rawBytes [0x4C, 0x6F, 0xA7, 0x94])) matches .error (.unsupported "EBCDIC")
+-- A conflict and a malformed byte sequence are NOT "unsupported".
+#guard !((decodeXmlBytesE (u8 "<?xml version='1.0' encoding='UTF-16'?><x/>")) matches .error (.unsupported _))
+-- An encoding name that is not an `[81] EncName` is the parser's to
+-- reject, not the decoder's: the bytes decode as UTF-8.
+#guard decoded (u8 "<?xml version='1.0' encoding='a/b'?><x/>") == some "<?xml version='1.0' encoding='a/b'?><x/>"
+-- Autodetection (Appendix F.1).
+#guard detectFamily (rawBytes [0xEF, 0xBB, 0xBF, 0x3C]) == .utf8Bom
+#guard detectFamily (rawBytes [0xFE, 0xFF, 0x00, 0x3C]) == .utf16Bom .big
+#guard detectFamily (rawBytes [0xFF, 0xFE, 0x3C, 0x00]) == .utf16Bom .little
+#guard detectFamily (rawBytes [0x00, 0x3C, 0x00, 0x3F]) == .utf16Bare .big
+#guard detectFamily (rawBytes [0x3C, 0x00, 0x3F, 0x00]) == .utf16Bare .little
+#guard detectFamily (rawBytes [0x3C, 0x3F, 0x78, 0x6D]) == .asciiCompatible
+#guard detectFamily (rawBytes [0x4C, 0x6F, 0xA7, 0x94]) == .ebcdic
+-- `FF FE 00 00` is UCS-4, not UTF-16 followed by U+0000.
+#guard (match detectFamily (rawBytes [0xFF, 0xFE, 0x00, 0x00]) with | .ucs4 _ => true | _ => false)
+#guard detectFamily (rawBytes []) == .asciiCompatible
+-- The empty entity decodes (to nothing); the parser rejects it.
+#guard decoded (rawBytes []) == some ""
+#guard (parseXMLBytes (rawBytes [])).toOption.isNone
+-- End to end: a UTF-16 document with `encoding="UTF-16"` parses from
+-- bytes. The same TEXT given to the String-level `parseXML` is refused,
+-- because a String is taken to have been UTF-8 and UTF-16 is the
+-- section 4.3.3 contradiction there.
+#guard (parseXMLBytes (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a x=\"é\">日本</a>" .little true)).toOption.isSome
+#guard (match parseXMLBytes (utf16Bytes "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a x=\"é\">日本</a>" .big true) with
+        | .ok d => (findAttr "x" d.root.elementAttrs, d.root.textContent)
+        | .error _ => (none, "")) == (some "é", "日本")
+#guard !isWellFormed "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"
+-- A document that does not decode is rejected, with the decoder's reason.
+#guard (match parseXMLBytes (rawBytes [0xFF, 0xFE, 0x3C, 0x00, 0x3E]) with
+        | .error e => e.message.startsWith "UTF-16"
+        | .ok _ => false)
+-- ISO-8859-1 end to end.
+#guard (parseXMLBytes (u8 "<?xml version='1.0' encoding='ISO-8859-1'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isSome
+#guard (parseXMLBytes (u8 "<?xml version='1.0'?><x>" ++ rawBytes [0xE9] ++ u8 "</x>")).toOption.isNone
+
+/-! ## XML 1.1 — https://www.w3.org/TR/xml11/
+
+The version comes from the XML declaration: `1.1` selects XML 1.1, anything
+else (or no declaration) the XML 1.0 rules. XML 1.1 differs in `[2] Char`
+(NUL is the only C0 control left out), in `[2a] RestrictedChar` (a
+document may hold those controls only through a character reference), in
+what a character reference may name (section 4.1), and in end-of-line
+handling (section 2.11: NEL and LS join CR and LF). -/
+
+def v11 (body : String) : String := "<?xml version=\"1.1\"?>" ++ body
+def v10 (body : String) : String := "<?xml version=\"1.0\"?>" ++ body
+
+/-- The text content of the root, or `none` when the document is refused. -/
+def rootText (doc : String) : Option String :=
+  match parseXML doc with
+  | .ok d => some d.root.textContent
+  | .error _ => none
+
+-- Section 2.11: NEL, LS, CR NEL and a lone CR each become one LF in 1.1.
+#guard rootText (v11 "<a>x\u0085y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\r\u0085y</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\ry</a>") == some "x\ny"
+#guard rootText (v11 "<a>x\r\ny</a>") == some "x\ny"
+-- ...CR LS is NOT combined: a CR becomes LF, then the LS becomes LF.
+#guard rootText (v11 "<a>x\r y</a>") == some "x\n\ny"
+-- In an XML 1.0 document NEL and LS are ordinary characters, left alone.
+#guard rootText (v10 "<a>x\u0085y</a>") == some "x\u0085y"
+#guard rootText (v10 "<a>x y</a>") == some "x y"
+#guard rootText "<a>x\u0085y</a>" == some "x\u0085y"
+#guard rootText (v10 "<a>x\r\u0085y</a>") == some "x\n\u0085y"
+-- A version other than 1.1 is read by the 1.0 rules.
+#guard rootText "<?xml version=\"1.2\"?><a>x\u0085y</a>" == some "x\u0085y"
+-- NEL in an attribute value is a line end, hence a space, in 1.1.
+#guard (match parseXML (v11 "<a x=\"p\u0085q\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "p q"
+#guard (match parseXML (v10 "<a x=\"p\u0085q\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "p\u0085q"
+
+-- Section 2.2: literal controls. #x7F-#x9F (other than NEL) and
+-- #x1-#x1F (other than tab, LF, CR) are restricted in 1.1...
+#guard rootText (v11 "<a>\u007F</a>") == none
+#guard rootText (v11 "<a>\u0090</a>") == none
+#guard rootText (v11 "<a>\u009F</a>") == none
+#guard rootText (v11 "<a>\u0001</a>") == none
+#guard rootText (v11 "<a>\u000C</a>") == none
+-- ...in every construct, since `[1] document` excludes them wholesale.
+#guard rootText (v11 "<a><!--\u0090--></a>") == none
+#guard rootText (v11 "<a><?p \u0090?></a>") == none
+#guard rootText (v11 "<a><![CDATA[\u0090]]></a>") == none
+#guard rootText (v11 "<a x=\"\u0090\"/>") == none
+#guard rootText (v11 "<!DOCTYPE a [<!-- \u0090 -->]><a/>") == none
+-- XML 1.0 admits #x7F-#x9F literally and rejects #x1-#x1F.
+#guard rootText (v10 "<a>\u007F</a>") == some "\u007F"
+#guard rootText (v10 "<a>\u0090</a>") == some "\u0090"
+#guard rootText (v10 "<a>\u0001</a>") == none
+#guard rootText (v10 "<a>\u000C</a>") == none
+-- NUL, the non-characters and the surrogate range are out in both.
+#guard rootText (v11 "<a>\u0000</a>") == none
+#guard rootText (v11 "<a>￾</a>") == none
+#guard rootText (v10 "<a>￾</a>") == none
+-- Section 4.1: a character reference may name any 1.1 `Char`, the
+-- restricted controls included...
+#guard rootText (v11 "<a>&#1;&#xC;&#x7F;&#x85;&#x9F;</a>") == some "\u0001\u000C\u007F\u0085\u009F"
+-- ...which XML 1.0 refuses for #x1-#x8, #xB, #xC and #xE-#x1F,
+#guard rootText (v10 "<a>&#1;</a>") == none
+#guard rootText (v10 "<a>&#xC;</a>") == none
+#guard rootText (v10 "<a>&#x1F;</a>") == none
+-- ...and accepts for the rest.
+#guard rootText (v10 "<a>&#x7F;&#x85;&#x9F;</a>") == some "\u007F\u0085\u009F"
+-- Both refuse NUL and the non-characters.
+#guard rootText (v11 "<a>&#0;</a>") == none
+#guard rootText (v11 "<a>&#xFFFE;</a>") == none
+#guard rootText (v11 "<a>&#xD800;</a>") == none
+-- A character reference keeps NEL as NEL; the line-end rule is for
+-- literal characters only.
+#guard rootText (v11 "<a>x&#x85;y</a>") == some "x\u0085y"
+-- A reference to a restricted control inside an ENTITY VALUE is legal
+-- when declared, and again when the entity is used in content
+-- (xmlconf rmt-054).
+#guard rootText (v11 "<!DOCTYPE a [<!ENTITY e \"&#12;\">]><a>&e;</a>") == some "\u000C"
+#guard rootText (v10 "<!DOCTYPE a [<!ENTITY e \"&#12;\">]><a>&e;</a>") == none
+-- ...and in an attribute value.
+#guard (match parseXML (v11 "<a x=\"&#1;\"/>") with
+        | .ok d => findAttr "x" d.root.elementAttrs
+        | .error _ => none) == some "\u0001"
+
+-- Section 4.3.4: an entity may be 1.0 or 1.1, and the DOCUMENT's version
+-- rules apply to all of it. A 1.1 document may invoke a 1.0 entity;
+-- a 1.0 document may not invoke a 1.1 one.
+def entRes (text : String) : Resolver := fun id => if id == "e.ent" then some text else none
+def withEnt (decl : String) (ent : String) : Bool :=
+  (parseXMLWith (entRes ent) (decl ++ "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.isSome
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.0\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard !withEnt "" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+-- An entity text with no declaration is read by the document's rules.
+#guard withEnt "<?xml version=\"1.1\"?>" "x"
+-- The text declaration is checked as the grammar writes it: each
+-- pseudo-attribute follows whitespace, and NEL is not whitespace.
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"\u0085encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\"?>x"
+#guard withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\" encoding=\"UTF-8\" ?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"encoding=\"UTF-8\"?>x"
+#guard !withEnt "<?xml version=\"1.1\"?>" "<?xml version=\"1.1\"?>x"
+-- XML 1.1 §2.11 applies to external entities, and §2.2 to their text.
+#guard (match parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0085y") 
+          (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>") with
+        | .ok d => some d.root.textContent
+        | .error _ => none) == some "x\ny"
+#guard (parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\u0090y")
+          (v11 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.isNone
+#guard (parseXMLWith (entRes "<?xml encoding=\"UTF-8\"?>x\r\ny")
+          (v10 "<!DOCTYPE a [<!ENTITY e SYSTEM \"e.ent\">]><a>&e;</a>")).toOption.map
+          (·.root.textContent) == some "x\ny"
+
+-- The declaration's version is recorded, and it picks the rules for
+-- NEL inside the DECLARATION itself: not whitespace, so refused.
+#guard (match parseXML (v11 "<a/>") with | .ok d => d.version == .v11 | .error _ => false)
+#guard (match parseXML (v10 "<a/>") with | .ok d => d.version == .v10 | .error _ => false)
+#guard (match parseXML "<a/>" with | .ok d => d.version == .v10 | .error _ => false)
+#guard !isWellFormed "<?xml version=\"1.1\"\u0085?><a/>"
+#guard !isWellFormed "<?xml version=\"1.1\" ?><a/>"
+
+-- Names (section 2.3) are the same set in 1.1 as in the Fifth Edition
+-- of 1.0: the ranges #xC0-... and #x10000-#xEFFFF, and not #xF0000.
+#guard isWellFormed (v11 "<ſ/>")
+#guard isWellFormed (v10 "<ſ/>")
+#guard isWellFormed (v11 "<a�/>")
+#guard !isWellFormed (v11 ("<a" ++ String.singleton (Char.ofNat 0xF0000) ++ "/>"))
+#guard isWellFormed (v11 ("<a" ++ String.singleton (Char.ofNat 0xEFFFF) ++ "/>"))
+#guard !isWellFormed (v11 "<×/>")
+
+-- The serialiser writes the characters that would not survive a re-parse
+-- as character references, so a 1.1 document round-trips.
+#guard roundTripsFrom (v11 "<a>&#1;&#xC;&#x85;&#x2028;&#13;x</a>")
+#guard roundTripsFrom (v11 "<a x=\"&#1;&#x85;&#x2028;&#13;&#9;\"/>")
+#guard roundTripsFrom (v10 "<a>&#x7F;&#x85;&#13;x</a>")
+#guard (Document.toString (match parseXML (v11 "<a>&#1;</a>") with | .ok d => d | .error _ => default))
+       == v11 "<a>&#x1;</a>"
+-- The tree checker is version-aware: the same tree is a well-formed 1.1
+-- document and not a 1.0 one.
+#guard (match parseXML (v11 "<a>&#1;</a>") with | .ok d => d.wellFormed | .error _ => false)
+#guard (match parseXML (v11 "<a>&#1;</a>") with
+        | .ok d => Node.wellFormed .v10 d.root | .error _ => true) == false
+#guard reflexiveOn (v11 "<a x=\"&#2;\">&#3;<!-- c --></a>")
+-- The namespace layer reads the version from the same declaration.
+#guard isNamespaceWellFormedDoc (v11 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
+#guard !isNamespaceWellFormedDoc (v10 "<r xmlns:p=\"http://e/\"><s xmlns:p=\"\"/></r>")
+
+/-! ## Validity — XML 1.0 section 3 and the validity constraints elsewhere
+
+`validateXML` parses, then checks the constraints. `vcs` is the set of
+constraint names a document violates (`none` when it is not
+well-formed); `valid` is "well-formed and no violation".
+
+Each constraint has a document that breaks it and one that does not, so a
+checker that answers "valid" for everything, or "invalid" for everything,
+fails the build. -/
+
+def noFiles : Resolver := fun _ => none
+def files (fs : List (String × String)) : Resolver :=
+  fun id => (fs.find? (fun f => f.1 == id)).map (·.2)
+
+def vcsWith (r : Resolver) (doc : String) : Option (List String) :=
+  match validateXML r doc with
+  | .ok vs => some ((vs.map (·.vc)).eraseDups)
+  | .error _ => none
+def vcs (doc : String) : Option (List String) := vcsWith noFiles doc
+def valid (doc : String) : Bool := vcs doc == some []
+def breaks (vc : String) (doc : String) : Bool :=
+  match vcs doc with
+  | some l => l.contains vc
+  | none => false
+
+-- A document with no document type declaration is not valid (section 2.8).
+#guard !valid "<a/>"
+#guard breaks "Valid Document" "<a/>"
+-- ...and a minimal valid one.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>"
+-- Root Element Type.
+#guard breaks "Root Element Type" "<!DOCTYPE b [<!ELEMENT a EMPTY>]><a/>"
+#guard !breaks "Root Element Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a/>"
+
+-- Element Valid: EMPTY means no content at all.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a> </a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a><!-- c --></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a><?p x?></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a>&amp;</a>"
+-- ...not even a reference to an entity whose text is empty.
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ENTITY e \"\">]><a>&e;</a>"
+-- ANY: every child element must be declared.
+#guard valid "<!DOCTYPE a [<!ELEMENT a ANY><!ELEMENT b EMPTY>]><a>t<b/>t<!-- c --></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a ANY>]><a><b/></a>"
+-- An element with no declaration at all.
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a ANY>]><a><z/></a>"
+-- Mixed content: text and only the named children.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA|b)*><!ELEMENT b EMPTY>]><a>t<b/>u<b/></a>"
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA)>]><a>text</a>"
+#guard valid "<!DOCTYPE a [<!ELEMENT a (#PCDATA)*>]><a>text</a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|b)*><!ELEMENT b EMPTY><!ELEMENT c EMPTY>]><a><c/></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (#PCDATA)><!ELEMENT b EMPTY>]><a><b/></a>"
+-- Element content: the sequence of children matches the model.
+def seqDoc (model body : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a " ++ model ++ "><!ELEMENT b EMPTY><!ELEMENT c EMPTY><!ELEMENT d EMPTY>]><a>" ++ body ++ "</a>"
+#guard valid (seqDoc "(b,c)" "<b/><c/>")
+#guard !valid (seqDoc "(b,c)" "<b/>")
+#guard !valid (seqDoc "(b,c)" "<c/><b/>")
+#guard !valid (seqDoc "(b,c)" "<b/><c/><c/>")
+#guard !valid (seqDoc "(b,c)" "")
+#guard valid (seqDoc "(b|c)" "<c/>")
+#guard !valid (seqDoc "(b|c)" "<b/><c/>")
+#guard !valid (seqDoc "(b|c)" "<d/>")
+#guard valid (seqDoc "(b?,c)" "<c/>")
+#guard valid (seqDoc "(b?,c)" "<b/><c/>")
+#guard !valid (seqDoc "(b?,c)" "<b/><b/><c/>")
+#guard !valid (seqDoc "(b?,c)" "")
+#guard valid (seqDoc "(b?,c?)" "")
+#guard valid (seqDoc "(b|c*)" "")
+#guard !valid (seqDoc "(b|c)" "")
+#guard valid (seqDoc "(b*)" "")
+#guard valid (seqDoc "(b*)" "<b/><b/><b/>")
+#guard !valid (seqDoc "(b+)" "")
+#guard valid (seqDoc "(b+)" "<b/><b/>")
+#guard valid (seqDoc "(b,(c|d)*,b?)" "<b/><c/><d/><c/>")
+#guard valid (seqDoc "(b,(c|d)*,b?)" "<b/><c/><b/>")
+#guard !valid (seqDoc "(b,(c|d)*,b?)" "<b/><b/><b/>")
+#guard valid (seqDoc "((b,c)|d)+" "<b/><c/><d/><b/><c/>")
+#guard !valid (seqDoc "((b,c)|d)+" "<b/><d/>")
+#guard valid (seqDoc "(b*,b)" "<b/><b/>")
+#guard valid (seqDoc "( b , c )" "<b/><c/>")
+#guard valid (seqDoc "(b)" "<b/>")
+-- White space between children is allowed; character data, a CDATA
+-- section (even an empty one) and a character reference to white space
+-- are not. Comments and processing instructions are.
+#guard valid (seqDoc "(b,c)" " <b/>\n<c/> ")
+#guard valid (seqDoc "(b,c)" "<b/><!-- c --><?p x?><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/>x<c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/><![CDATA[ ]]><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/><![CDATA[]]><c/>")
+#guard breaks "Element Valid" (seqDoc "(b,c)" "<b/>&#32;<c/>")
+-- ...but a literal white space inside an entity's replacement text is.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (b)><!ELEMENT b EMPTY><!ENTITY sp \" \">]><a>&sp;<b/></a>"
+#guard breaks "Element Valid" "<!DOCTYPE a [<!ELEMENT a (b)><!ELEMENT b EMPTY><!ENTITY sp \"&#38;#32;\">]><a>&sp;<b/></a>"
+-- A parsed model reads back as written.
+#guard (match parseContentSpecText "(b, (c | d)*, e?)" with
+        | some (.children cp) => cp.matches ["b", "c", "d", "c"] && !cp.matches ["c"]
+        | _ => false)
+#guard (match parseContentSpecText "(#PCDATA | b | c)*" with | some (.mixed ns) => ns == ["b", "c"] | _ => false)
+#guard (match parseContentSpecText "EMPTY" with | some .empty => true | _ => false)
+#guard (match parseContentSpecText "ANY" with | some .any => true | _ => false)
+
+-- Declarations. Unique Element Type Declaration; No Duplicate Types.
+#guard breaks "Unique Element Type Declaration" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ELEMENT a EMPTY>]><a/>"
+#guard breaks "No Duplicate Types" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|a|a)*>]><a/>"
+#guard !breaks "No Duplicate Types" "<!DOCTYPE a [<!ELEMENT a (#PCDATA|a)*>]><a/>"
+
+-- Attributes. Required Attribute, Attribute Value Type (declared), Fixed.
+def attDoc (decl attrs : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a " ++ decl ++ ">]><a " ++ attrs ++ "/>"
+#guard valid (attDoc "x CDATA #REQUIRED" "x=\"1\"")
+#guard breaks "Required Attribute" (attDoc "x CDATA #REQUIRED" "")
+#guard valid (attDoc "x CDATA #IMPLIED" "")
+#guard breaks "Attribute Value Type" (attDoc "x CDATA #IMPLIED" "y=\"1\"")
+#guard valid (attDoc "x CDATA #FIXED \"v\"" "x=\"v\"")
+#guard valid (attDoc "x CDATA #FIXED \"v\"" "")
+#guard breaks "Fixed Attribute Default" (attDoc "x CDATA #FIXED \"v\"" "x=\"w\"")
+-- Types: ID, IDREF(S), ENTITY/ENTITIES, NMTOKEN(S), enumerations, notations.
+#guard valid (attDoc "x ID #IMPLIED" "x=\"n1\"")
+#guard breaks "ID" (attDoc "x ID #IMPLIED" "x=\"1n\"")
+#guard breaks "ID" (attDoc "x ID #IMPLIED y ID #IMPLIED" "x=\"n\" y=\"n\"")
+#guard breaks "One ID per Element Type" (attDoc "x ID #IMPLIED y ID #IMPLIED" "")
+#guard breaks "ID Attribute Default" (attDoc "x ID \"d\"" "")
+#guard breaks "ID Attribute Default" (attDoc "x ID #FIXED \"d\"" "")
+#guard valid (attDoc "x ID #REQUIRED" "x=\"n\"")
+#guard valid (attDoc "x ID #IMPLIED y IDREF #IMPLIED" "x=\"n\" y=\"n\"")
+#guard breaks "IDREF" (attDoc "x ID #IMPLIED y IDREF #IMPLIED" "x=\"n\" y=\"m\"")
+#guard breaks "IDREF" (attDoc "y IDREF #IMPLIED" "y=\"1x\"")
+#guard valid (attDoc "x ID #IMPLIED y IDREFS #IMPLIED" "x=\"n\" y=\"n n\"")
+#guard breaks "IDREF" (attDoc "x ID #IMPLIED y IDREFS #IMPLIED" "x=\"n\" y=\"n m\"")
+#guard breaks "IDREFS" (attDoc "y IDREFS #IMPLIED" "y=\"\"")
+#guard valid (attDoc "x NMTOKEN #IMPLIED" "x=\"1a-b\"")
+#guard breaks "Name Token" (attDoc "x NMTOKEN #IMPLIED" "x=\"a b\"")
+#guard valid (attDoc "x NMTOKENS #IMPLIED" "x=\"1a b2\"")
+#guard breaks "Name Token" (attDoc "x NMTOKENS #IMPLIED" "x=\"a @\"")
+#guard valid (attDoc "x (p|q) #IMPLIED" "x=\"p\"")
+#guard breaks "Enumeration" (attDoc "x (p|q) #IMPLIED" "x=\"r\"")
+#guard breaks "No Duplicate Tokens" (attDoc "x (p|p) #IMPLIED" "")
+-- An enumerated value is compared after the type's normalisation.
+#guard valid (attDoc "x (p|q) #IMPLIED" "x=\" p \"")
+-- The value of a tokenized attribute is normalised before it is checked.
+#guard valid (attDoc "x NMTOKENS #IMPLIED" "x=\"  a   b  \"")
+-- Attribute Default Legal.
+#guard breaks "Attribute Default Legal" (attDoc "x NMTOKEN \"a b\"" "")
+#guard valid (attDoc "x NMTOKEN \"ab\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x (p|q) \"r\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x IDREF \"1\"" "")
+#guard breaks "Attribute Default Legal" (attDoc "x IDREFS \"a 1\"" "")
+#guard valid (attDoc "x IDREFS \"a b\"" "")
+-- ENTITY attributes name unparsed entities, whose notations are declared.
+def entDoc (decls attrs : String) : String :=
+  "<!DOCTYPE a [<!ELEMENT a ANY><!NOTATION n SYSTEM \"x\"><!ENTITY u SYSTEM \"x\" NDATA n>" ++ decls ++ "]><a " ++ attrs ++ "/>"
+#guard valid (entDoc "<!ATTLIST a e ENTITY #IMPLIED>" "e=\"u\"")
+#guard breaks "Entity Name" (entDoc "<!ATTLIST a e ENTITY #IMPLIED>" "e=\"v\"")
+#guard breaks "Entity Name" (entDoc "<!ENTITY p \"text\"><!ATTLIST a e ENTITY #IMPLIED>" "e=\"p\"")
+#guard valid (entDoc "<!ATTLIST a e ENTITIES #IMPLIED>" "e=\"u u\"")
+#guard breaks "Entity Name" (entDoc "<!ATTLIST a e ENTITIES #IMPLIED>" "e=\"u v\"")
+#guard breaks "Notation Declared" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ENTITY u SYSTEM \"x\" NDATA zz>]><a/>"
+#guard valid (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED>" "nt=\"n\"")
+#guard breaks "Notation Attributes" (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED>" "nt=\"m\"")
+#guard breaks "Notation Attributes" (entDoc "<!ATTLIST a nt NOTATION (zz) #IMPLIED>" "")
+#guard breaks "One Notation Per Element Type"
+  (entDoc "<!ATTLIST a nt NOTATION (n) #IMPLIED nu NOTATION (n) #IMPLIED>" "")
+#guard breaks "No Notation on Empty Element"
+  "<!DOCTYPE a [<!ELEMENT a EMPTY><!NOTATION n SYSTEM \"x\"><!ATTLIST a nt NOTATION (n) #IMPLIED>]><a/>"
+-- xml:space, when used, must be declared as an enumeration offering one of
+-- its two values (section 2.10); xml:lang must be declared like any other.
+#guard valid "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a xml:space (default|preserve) #IMPLIED>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a xml:space CDATA #IMPLIED>]><a xml:space=\"preserve\"/>"
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xml:lang=\"en\"/>"
+-- An attribute that is only a namespace declaration is an attribute too.
+#guard breaks "Attribute Value Type" "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a xmlns:p=\"http://e/\"/>"
+-- ID values are unique across the document.
+#guard valid "<!DOCTYPE a [<!ELEMENT a (b,b)><!ELEMENT b EMPTY><!ATTLIST b i ID #REQUIRED>]><a><b i=\"x\"/><b i=\"y\"/></a>"
+#guard breaks "ID" "<!DOCTYPE a [<!ELEMENT a (b,b)><!ELEMENT b EMPTY><!ATTLIST b i ID #REQUIRED>]><a><b i=\"x\"/><b i=\"x\"/></a>"
+
+-- The first declaration of an attribute is binding (section 3.3).
+#guard valid (attDoc "x CDATA #IMPLIED x ID #IMPLIED" "x=\"1 \"")
+#guard breaks "ID" "<!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x ID #IMPLIED x CDATA #IMPLIED>]><a x=\"1 \"/>"
+
+-- Entity Declared (4.1): with a parameter-entity reference in the DTD an
+-- undeclared general entity is a validity error, not a well-formedness one.
+#guard breaks "Entity Declared"
+  "<!DOCTYPE a [<!ENTITY % pe \"<!ENTITY e 't'>\">%pe;<!ELEMENT a ANY>]><a>&z;</a>"
+#guard valid
+  "<!DOCTYPE a [<!ENTITY % pe \"<!ENTITY e 't'>\">%pe;<!ELEMENT a ANY>]><a>&e;</a>"
+
+-- Parameter-entity nesting (sections 2.8, 3.2.1, 3.4), in an external
+-- subset.
+def extDoc (dtd : String) : Option (List String) :=
+  vcsWith (files [("x.dtd", dtd)]) "<!DOCTYPE a SYSTEM \"x.dtd\"><a/>"
+#guard extDoc "<!ELEMENT a EMPTY>" == some []
+#guard extDoc "<!ENTITY % e \"(#PCDATA\"><!ELEMENT a %e;)>" == some ["Proper Group/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"(b,c)?\"><!ELEMENT b EMPTY><!ELEMENT c EMPTY><!ELEMENT a %e;>" == some []
+#guard extDoc "<!ENTITY % e \">\"><!ELEMENT a (#PCDATA) %e;" == some ["Proper Declaration/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"EMPTY\"><!ELEMENT a %e;>" == some []
+#guard extDoc "<!ENTITY % e \"INCLUDE[\"><!ELEMENT a EMPTY><![ %e; <!ATTLIST a x CDATA \"v\"> ]]>"
+       == some ["Proper Conditional Section/PE Nesting"]
+#guard extDoc "<!ENTITY % e \"INCLUDE\"><!ELEMENT a EMPTY><![ %e; [ <!ATTLIST a x CDATA \"v\"> ]]>" == some []
+
+-- Standalone Document Declaration (2.9): nothing read from outside the
+-- document may decide the content of a document that says standalone=yes.
+def saDoc (standalone dtd body : String) : Option (List String) :=
+  vcsWith (files [("x.dtd", dtd)])
+    ("<?xml version=\"1.0\" standalone=\"" ++ standalone ++ "\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a>" ++ body ++ "</a>")
+-- an externally declared default the element leaves out
+#guard saDoc "yes" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">" "" == some ["Standalone Document Declaration"]
+#guard saDoc "no" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">" "" == some []
+#guard saDoc "yes" "<!ELEMENT a EMPTY><!ATTLIST a x CDATA #IMPLIED>" "" == some []
+-- ...but not when the element gives the value itself
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x CDATA \"d\">")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"v\"/>" == some []
+-- white space directly inside an externally declared element-content type
+#guard saDoc "yes" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" " <b/>" == some ["Standalone Document Declaration"]
+#guard saDoc "yes" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" "<b/>" == some []
+#guard saDoc "no" "<!ELEMENT a (b)><!ELEMENT b EMPTY>" " <b/>" == some []
+-- a tokenized attribute whose value normalisation would change
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\" p  q \"/>"
+  == some ["Standalone Document Declaration"]
+#guard vcsWith (files [("x.dtd", "<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>")])
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a SYSTEM \"x.dtd\"><a x=\"p q\"/>" == some []
+-- declared in the INTERNAL subset, the same document is standalone
+#guard vcsWith noFiles
+  "<?xml version=\"1.0\" standalone=\"yes\"?><!DOCTYPE a [<!ELEMENT a EMPTY><!ATTLIST a x NMTOKENS #IMPLIED>]><a x=\" p  q \"/>"
+  == some []
+
+-- A document the parser refuses has no verdict.
+#guard vcs "<!DOCTYPE a [<!ELEMENT a EMPTY>]><a></b>" == none
 
 /-! ## RDF/XML checks — `XML.Wellformedness.fst`'s other half -/
 
@@ -342,6 +953,8 @@ Lean's standard foundations; no `sorry`, no user `axiom`, no
 #print axioms Node.wellFormedList_eq_all
 #print axioms Node.wellFormed_of_mem_children
 #print axioms Node.serializeList_cons
+#print axioms normalizeLineEndings11TR_eq
+#print axioms normalizeLineEndings11_eq_normalizeLineEndings11Impl
 #print axioms parseXML
 #print axioms isNamespaceWellFormed
 

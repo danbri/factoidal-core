@@ -205,6 +205,19 @@ def attrsUniqueExpanded (scope : NsScope) (attrs : List Attribute) : Bool :=
   let keys := attrs.filterMap (expandAttrKey scope)
   keys.length == keys.eraseDups.length
 
+/-- Namespaces in XML 1.0 §6 (erratum NE08): an entity name, a
+processing instruction target and a notation name contain no colon,
+because those names are not QNames and the namespace layer does not
+interpret a colon in them. -/
+def noColon (name : String) : Bool := !(name.toList.contains ':')
+
+/-- The DTD half of that constraint: no declared entity name (general,
+parameter or unparsed), no notation name and no processing instruction
+target inside the DTD contains a colon. -/
+def Doctype.namesColonFree (dt : Doctype) : Bool :=
+  dt.declared.entities.all noColon && dt.declared.notations.all noColon &&
+  dt.declared.piTargets.all noColon
+
 mutual
 
 /-- Check one node and, for an element, everything under it. A
@@ -225,6 +238,8 @@ def checkElement (version : String) (scope : NsScope) : Node → Bool
         attrsPrefixesBound newScope attrs &&
         attrsUniqueExpanded newScope attrs &&
         checkChildren version newScope children
+  -- §6 (NE08): a processing instruction target contains no colon.
+  | .pi target _ => noColon target
   | _ => true
 
 /-- `checkElement` over a child list. Port of F* `check_children`. -/
@@ -248,9 +263,15 @@ def isNamespaceWellFormed (version : String) (root : Node) : Bool :=
 /-- The namespace check applied to a parsed `Document`, reading the
 declared version out of its `[23] XMLDecl` and defaulting to `"1.0"`
 when there is none — the `version` argument the F* entry point requires
-the caller to supply. -/
+the caller to supply.
+
+It covers the whole document, not only the element tree: a processing
+instruction in the prolog or epilog, and the names the DTD declares
+(§6, erratum NE08). -/
 def Document.namespaceWellFormed (d : Document) : Bool :=
-  isNamespaceWellFormed ((d.decl.map (·.version)).getD "1.0") d.root
+  isNamespaceWellFormed ((d.decl.map (·.version)).getD "1.0") d.root &&
+  (d.prolog ++ d.epilog).all (fun n => match n with | .pi t _ => noColon t | _ => true) &&
+  (d.doctype.map Doctype.namesColonFree).getD true
 
 /-- Parse `input` and then decide namespace well-formedness on top of
 plain XML 1.0 well-formedness. `false` when the document is not

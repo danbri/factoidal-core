@@ -14070,3 +14070,23 @@ planner open the complete store) and the list of surfaces:
 <https://github.com/danbri/factoidal/issues/698>. The F* tree still answers
 DESCRIBE with the empty graph: <https://github.com/danbri/factoidal/issues/702>,
 expected-failure case in `npm/factoidal/test/describe.test.js`.
+
+## XML: namespaces, encodings, XML 1.1 and validity in the conformance run (2026-10-10)
+
+`l4xmlconf` scores five lines now: plain XML 1861 pass, 0 fail (out of
+1861); namespaces 56 pass, 0 fail (out of 56); encodings 65 pass, 0 fail
+(out of 65); XML 1.1 257 pass, 1 fail (out of 258); validating 2183 pass,
+1 fail (out of 2184). New library code: `XML/Encoding.lean`
+(`decodeXmlBytes`), `XML/Validity.lean`, XML 1.1 in `XML/Parser.lean`
+(`XmlVersion`, `normalizeLineEndings11`, RestrictedChar), the DTD model in
+`Doctype` (`attDecls`, `elementDecls`, `unparsedEntities`, `declared`,
+`peNesting`), type-dependent attribute normalisation (section 3.3.3),
+`Notes` from `parseXMLNotes`. Theorem changes: `Node.wellFormed`,
+`Attribute.wellFormed`, `Document.wellFormed` take the document version;
+`Node.wellFormedList_eq_all`, `Node.wellFormed_children` and
+`Node.wellFormed_of_mem_children` gain a version argument (same proofs).
+`Doctype.idAttrs` is a function of `attDecls` and no longer a field. One
+case fails: `ibm-1-1-valid-P03-ibm03v09` (the test contradicts XML 1.1
+`[77] TextDecl` and section 2.11). Record, spec clauses, defects found and
+the list of unchecked constraints:
+[`docs/designissues/2026-10-10-xml-profile-widened.md`](../../docs/designissues/2026-10-10-xml-profile-widened.md).

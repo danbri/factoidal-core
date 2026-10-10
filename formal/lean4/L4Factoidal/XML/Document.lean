@@ -69,6 +69,57 @@ def isXmlCharCode (cp : Nat) : Bool :=
 /-- `[2] Char` as a predicate on a Lean `Char`. -/
 def isXmlChar (c : Char) : Bool := isXmlCharCode c.toNat
 
+/-- The version of XML a document is written in
+(https://www.w3.org/TR/xml11/#sec-prolog-dtd, §2.8): `1.1` when its
+XML declaration says so, `1.0` otherwise, including when it has no
+declaration. XML 1.0 Fifth Edition and XML 1.1 differ in `[2] Char`,
+in what a character reference may name, and in end-of-line handling
+(XML 1.1 §2.2, §4.1, §2.11); the names of §2.3 are the same in both. -/
+inductive XmlVersion where
+  | v10
+  | v11
+deriving DecidableEq, Repr, Inhabited
+
+/-- The version a declared `VersionNum` selects. `1.1` selects XML 1.1;
+any other `1.` number is read by the XML 1.0 rules, as XML 1.0 Fifth
+Edition §2.8 asks of a processor. -/
+def XmlVersion.ofDeclared (versionNum : String) : XmlVersion :=
+  if versionNum == "1.1" then .v11 else .v10
+
+/-- XML 1.1 `[2] Char ::= [#x1-#xD7FF] | [#xE000-#xFFFD] |
+[#x10000-#x10FFFF]` — every Unicode character except NUL, the
+surrogate blocks, #xFFFE and #xFFFF. -/
+def isXml11CharCode (cp : Nat) : Bool :=
+  (0x1 ≤ cp && cp ≤ 0xD7FF) ||
+  (0xE000 ≤ cp && cp ≤ 0xFFFD) ||
+  (0x10000 ≤ cp && cp ≤ 0x10FFFF)
+
+/-- XML 1.1 `[2a] RestrictedChar ::= [#x1-#x8] | [#xB-#xC] | [#xE-#x1F] |
+[#x7F-#x84] | [#x86-#x9F]`. These are `Char`s, but a document may carry
+them only through a character reference: `[1] document` excludes
+`Char* RestrictedChar Char*`. -/
+def isRestrictedCharCode (cp : Nat) : Bool :=
+  (0x1 ≤ cp && cp ≤ 0x8) || (0xB ≤ cp && cp ≤ 0xC) || (0xE ≤ cp && cp ≤ 0x1F) ||
+  (0x7F ≤ cp && cp ≤ 0x84) || (0x86 ≤ cp && cp ≤ 0x9F)
+
+/-- `[2] Char` for the given version. -/
+def XmlVersion.isCharCode : XmlVersion → Nat → Bool
+  | .v10, cp => isXmlCharCode cp
+  | .v11, cp => isXml11CharCode cp
+
+/-- `[2] Char` for the given version, on a Lean `Char`. -/
+def XmlVersion.isChar (ver : XmlVersion) (c : Char) : Bool := ver.isCharCode c.toNat
+
+/-- Whether a character may appear LITERALLY in a document of this
+version. In XML 1.0 that is `[2] Char`. In XML 1.1 it is `[2] Char`
+minus `[2a] RestrictedChar` (the production `[1] document` excludes
+them). #x85 is a restricted character that a literal document never
+holds: §2.11 turns it into #xA before parsing. -/
+def XmlVersion.isLiteralChar (ver : XmlVersion) (c : Char) : Bool :=
+  match ver with
+  | .v10 => isXmlCharCode c.toNat
+  | .v11 => isXml11CharCode c.toNat && !isRestrictedCharCode c.toNat
+
 /-- `[3] S ::= (#x20 | #x9 | #xD | #xA)+` — the whitespace class (this
 predicate is the single character; the `+` is applied by the parser).
 Port of F* `is_xml_space`. -/
@@ -331,21 +382,94 @@ structure EntityTable where
   defs  : List (String × EntityDef) := []
   sawPe : Bool := false
   lax   : Bool := false
+  /-- The XML version of the document the table belongs to. XML 1.1
+  §4.3.4: the version declared in the document entity decides the rules
+  for the whole document, including the external entities it invokes. -/
+  version : XmlVersion := .v10
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[54] AttType` — the declared type of an attribute (XML 1.0 §3.3.1).
+
+Recorded because a processor that reads an `[52] AttlistDecl` MUST use
+it in two ways even when it does not validate (§5.1): to normalise
+attribute values (§3.3.3: every type except `CDATA` has its value
+space-collapsed) and to supply default values (§3.3.2). The same record
+is what a validating layer checks values against. -/
+inductive AttType where
+  | CDATA
+  | ID
+  | IDREF
+  | IDREFS
+  | ENTITY
+  | ENTITIES
+  | NMTOKEN
+  | NMTOKENS
+  /-- `NOTATION (n1 | n2 …)` — the notation names, in order. -/
+  | NOTATION (names : List String)
+  /-- `(v1 | v2 …)` — the enumerated tokens, in order. -/
+  | Enumeration (tokens : List String)
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[60] DefaultDecl ::= '#REQUIRED' | '#IMPLIED' | (('#FIXED' S)?
+AttValue)`. The literal is kept as written (references unexpanded). -/
+inductive AttDefault where
+  | required
+  | implied
+  | fixed (literal : String)
+  | value (literal : String)
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[53] AttDef`, with the element name of the `[52] AttlistDecl` it
+sits in. -/
+structure AttDecl where
+  element : String
+  name : String
+  type : AttType
+  defaultDecl : AttDefault
+  /-- Declared in the external subset or in an external parameter
+  entity (XML 1.0 §2.9: such a declaration may not affect a document
+  that says `standalone="yes"`). -/
+  external : Bool := false
+deriving DecidableEq, Repr, Inhabited
+
+/-- `[45] elementdecl`, with its `[46] contentspec` kept as the text the
+declaration gave (`EMPTY`, `ANY`, a `[51] Mixed` or a `[47] children`
+group), after any parameter-entity references in it were replaced. The
+content model is read out of the text by the validity layer; the parser
+checks only its shape. -/
+structure ElementDecl where
+  name : String
+  spec : String
+  /-- Declared in the external subset or in an external parameter
+  entity. -/
+  external : Bool := false
+deriving DecidableEq, Repr, Inhabited
+
+/-- The names a DTD declares, kept because Namespaces in XML 1.0 §6
+(and its erratum NE08) forbids a colon in an entity name, a processing
+instruction target and a notation name. `entities` holds every
+`<!ENTITY` name: general, parameter and unparsed. Each list is in
+reverse order of declaration. -/
+structure DeclaredNames where
+  entities  : List String := []
+  notations : List String := []
+  piTargets : List String := []
 deriving DecidableEq, Repr, Inhabited
 
 /-- `[28] doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S?
 ('[' intSubset ']' S?)? '>'`, as far as a NON-VALIDATING processor
-reads it — which is exactly as far as the F* `parse_doctype` reads it.
+reads it.
 
 Recorded: the root Name, the general internal entity declarations
 (`[71] GEDecl` with an `[9] EntityValue`, first declaration wins per
-§4.2), and the `(element, attribute)` pairs whose `[54] AttType` is
-exactly `ID` (the substrate for XPath's `id()`).
+§4.2), every `[53] AttDef` read from the internal subset and from the
+external subset when the caller could supply it (so XPath's `id()` can
+find the ID-typed attributes, and so attribute values can be normalised
+by declared type), and the names of the declarations.
 
-NOT recorded and NOT acted on: the external subset (never loaded — no
-external resource is read), `[45] elementdecl`, `[52] AttlistDecl`
-enforcement, `[82] NotationDecl`, parameter entities, and conditional
-sections. They are skipped structurally. -/
+NOT recorded and NOT acted on: `[45] elementdecl`, `[82] NotationDecl`
+bodies, and conditional sections' ignored text. They are checked for
+shape and skipped. -/
 structure Doctype where
   /-- The document type name — `[28]`'s `Name`. -/
   rootName : String
@@ -353,15 +477,38 @@ structure Doctype where
   text, un-expanded (references inside are resolved lazily at the
   reference site). -/
   entities : EntityTable
-  /-- `(element name, attribute name)` pairs declared `[54] AttType`
-  = `ID` in the internal subset. -/
-  idAttrs : List (String × String)
+  /-- Every `[53] AttDef`, in REVERSE order of declaration (the list is
+  built by prepending as the subset is read). -/
+  attDecls : List AttDecl
   /-- The SYSTEM identifier of the `[75] ExternalID`, when the DOCTYPE
   has one. Recorded, not fetched: whether an external subset is read
   is the caller's decision, and reading it needs I/O this module does
   not do. -/
   systemId : Option String := none
+  /-- The names the DTD declares. -/
+  declared : DeclaredNames := {}
+  /-- Every `[45] elementdecl`, in REVERSE order of declaration. -/
+  elementDecls : List ElementDecl := []
+  /-- The unparsed entities (`[76] NDataDecl`): entity name and notation
+  name, in reverse order of declaration. A general entity with an
+  `NDATA` part is never included by a reference, so it is in no
+  `EntityTable`. -/
+  unparsedEntities : List (String × String) := []
+  /-- Some part of the DTD was named but could not be read: an external
+  subset or an external parameter entity the caller could not supply. A
+  validity check over an incomplete DTD can only say what it saw. -/
+  incomplete : Bool := false
+  /-- Validity constraints on the nesting of parameter-entity replacement
+  text that the DTD's text broke: (constraint name, message). A
+  non-validating processor reads such a DTD without complaint (E14). -/
+  peNesting : List (String × String) := []
 deriving DecidableEq, Repr, Inhabited
+
+/-- `(element name, attribute name)` pairs declared `[54] AttType` =
+`ID`, in reverse order of declaration — the substrate for XPath's
+`id()`. -/
+def Doctype.idAttrs (d : Doctype) : List (String × String) :=
+  (d.attDecls.filter (fun a => a.type == AttType.ID)).map (fun a => (a.element, a.name))
 
 /-- `[1] document ::= prolog element Misc*`.
 
