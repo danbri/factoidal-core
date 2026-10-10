@@ -3,7 +3,9 @@ Wasm.Cli — `l4factoidal`, a real command-line interface to the Lean 4
 engine, so a person or a script can use it without knowing the
 dispatch ABI (`Wasm/Dispatch.lean`).
 
-This module is thin argument parsing and JSON-envelope decoding ONLY.
+This module is thin argument parsing and JSON-envelope decoding ONLY
+(`parse` without `--out` asks `Ops.parseTextToDataset` for the count directly,
+see `parseCountOutput`).
 Every verb below calls one of the `Wasm/Ops/*.lean` functions the wasm
 build and `l4wasm-cli` also call — the same `parseToDatasetJson`,
 `queryDataset`, `owlClosure`, `clParse`, … — and prints the field a
@@ -229,6 +231,53 @@ def opsCmd : IO UInt32 := do
   | .error _ => IO.println raw
   pure 0
 
+/-- The text `parse` prints when `--out` is absent: the quad count, or the
+parser's error text. -/
+def parseCountOutput (text format base : String) : Except String String :=
+  match Ops.parseTextToDataset text format base with
+  | .error msg => .error msg
+  | .ok ds => .ok (toString (Ops.datasetQuadCount ds))
+
+/-- The same text read back out of the envelope: what `parse` printed before
+2026-10-10, kept so the guards below can compare the two. -/
+private def parseCountViaEnvelope (text format base : String) : Except String String :=
+  match parseJson (Ops.parseToDatasetJson text format base) with
+  | .error e => .error s!"internal: op result was not JSON ({toString e})"
+  | .ok j =>
+      if j.getBool? "ok" == some true then .ok ((numberField? j "count").getD "0")
+      else .error ((j.getString? "error").getD "unknown error")
+
+private def sameOutput : Except String String → Except String String → Bool
+  | .ok a,    .ok b    => a == b
+  | .error a, .error b => a == b
+  | _,        _        => false
+
+private def sampleNt : String :=
+  "<http://e/a> <http://e/p> <http://e/b> .\n<http://e/a> <http://e/p> \"x\"@en .\n"
+private def sampleTtl : String :=
+  "@prefix e: <http://e/> . e:a e:p e:b, e:c ; e:q [ e:r 1 ] ."
+
+-- The direct count is the count in the envelope, for each format and for errors.
+#guard sameOutput (parseCountOutput sampleNt "ntriples" "") (parseCountViaEnvelope sampleNt "ntriples" "")
+#guard sameOutput (parseCountOutput sampleTtl "turtle" "") (parseCountViaEnvelope sampleTtl "turtle" "")
+#guard sameOutput (parseCountOutput "<http://e/g> { <http://e/a> <http://e/p> <http://e/b> }" "trig" "")
+  (parseCountViaEnvelope "<http://e/g> { <http://e/a> <http://e/p> <http://e/b> }" "trig" "")
+#guard sameOutput (parseCountOutput "<http://e/a> <http://e/p> <http://e/b> <http://e/g> ." "nquads" "")
+  (parseCountViaEnvelope "<http://e/a> <http://e/p> <http://e/b> <http://e/g> ." "nquads" "")
+#guard sameOutput (parseCountOutput "" "ntriples" "") (parseCountViaEnvelope "" "ntriples" "")
+#guard sameOutput (parseCountOutput "<http://e/a> <http://e/p>" "ntriples" "")
+  (parseCountViaEnvelope "<http://e/a> <http://e/p>" "ntriples" "")
+#guard sameOutput (parseCountOutput sampleNt "bogus" "") (parseCountViaEnvelope sampleNt "bogus" "")
+-- Teeth: the values are the expected ones, so two functions that both returned
+-- "0", or both failed, would not pass.
+#guard parseCountOutput sampleNt "ntriples" "" matches .ok "2"
+#guard parseCountOutput sampleTtl "turtle" "" matches .ok "4"
+#guard parseCountOutput "" "ntriples" "" matches .ok "0"
+#guard parseCountOutput "<http://e/a> <http://e/p>" "ntriples" "" matches .error _
+#guard parseCountOutput sampleNt "bogus" "" matches .error _
+#guard !sameOutput (.ok "2") (.ok "3")
+#guard !sameOutput (.ok "2") (.error "2")
+
 def parseCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--out"] [] args with
   | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 2
@@ -238,22 +287,33 @@ def parseCmd (args : List String) : IO UInt32 := do
     match ← readInput s.positional[0]? with
     | .error e => IO.eprintln e; pure 1
     | .ok text =>
-      match ← parseEnvelope (Ops.parseToDatasetJson text format base) with
-      | none => pure 1
-      | some j =>
-        match s.value? "--out" with
-        | none => IO.println ((numberField? j "count").getD "0"); pure 0
-        | some "nquads" =>
-            IO.println ((j.getString? "nquads").getD "")
-            pure 0
-        | some "turtle" =>
-            let nq := (j.getString? "nquads").getD ""
-            match ← parseEnvelope (Ops.serializeTurtle nq) with
-            | none => pure 1
-            | some jt => IO.println ((jt.getString? "turtle").getD ""); pure 0
-        | some other =>
-            IO.eprintln s!"l4factoidal parse: unknown --out '{other}' (nquads | turtle)"
-            pure 2
+      match s.value? "--out" with
+      | none =>
+          -- Count only. `parseToDatasetJson` also writes the whole dataset as
+          -- N-Quads text inside a JSON string, and this verb would then parse
+          -- that JSON again to read one number: about half of the instructions
+          -- of `parse` on a 20,000-triple N-Triples file (survey of 2026-10-10,
+          -- docs/designissues/2026-10-10-lean-vs-fstar-performance.md). The
+          -- printed number and the error text are the ones the envelope carried.
+          match parseCountOutput text format base with
+          | .error msg => IO.eprintln msg; pure 1
+          | .ok n => IO.println n; pure 0
+      | some out =>
+        match ← parseEnvelope (Ops.parseToDatasetJson text format base) with
+        | none => pure 1
+        | some j =>
+          match out with
+          | "nquads" =>
+              IO.println ((j.getString? "nquads").getD "")
+              pure 0
+          | "turtle" =>
+              let nq := (j.getString? "nquads").getD ""
+              match ← parseEnvelope (Ops.serializeTurtle nq) with
+              | none => pure 1
+              | some jt => IO.println ((jt.getString? "turtle").getD ""); pure 0
+          | other =>
+              IO.eprintln s!"l4factoidal parse: unknown --out '{other}' (nquads | turtle)"
+              pure 2
 
 def queryCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--query", "--query-string"] ["--table"] args with
