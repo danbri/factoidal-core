@@ -274,6 +274,8 @@ structure Ctx where
   R : RoleAxioms
   L : List Concept
   inv : List (Role × Role) := []
+  /-- The conjunctions and disjunctions `introGen` may build. -/
+  B : List Concept := []
 
 /-- `conjE`: `a : C ⊓ D` gives `a : C` and `a : D`. -/
 def conjGen : Assertion → List Assertion
@@ -335,10 +337,21 @@ def invGen (P : List (Role × Role)) : Assertion → List Assertion
       (if q.2 = r then [Assertion.rel q.1 b a] else []))
   | _ => []
 
+/-- `conjI` and `disjI`: `a : C` and `a : D` give `a : C ⊓ D`; `a : C`
+    gives `a : C ⊔ D` and `a : D ⊔ C`. Only the conjunctions and
+    disjunctions in `B` are built (the Boolean subterms of the TBox
+    left-hand sides), so the rule adds finitely many facts. -/
+def introGen (B : List Concept) (F : List Assertion) : Assertion → List Assertion
+  | .inst a c => B.filterMap (fun e => match e with
+      | .conj c' d => if c' = c ∧ Assertion.inst a d ∈ F then some (.inst a e) else none
+      | .disj c' d => if c' = c ∨ d = c then some (.inst a e) else none
+      | _ => none)
+  | _ => []
+
 /-- All forward rules on one fact. -/
 def stepGen (C : Ctx) (F : List Assertion) (φ : Assertion) : List Assertion :=
   conjGen φ ++ allGen C.R F φ ++ subRoleGen C.R φ ++ transGen C.R F φ ++
-  tboxGen C.T φ ++ topGen φ ++ exGen C.L F φ ++ invGen C.inv φ
+  tboxGen C.T φ ++ topGen φ ++ exGen C.L F φ ++ invGen C.inv φ ++ introGen C.B F φ
 
 /-- The facts of `news` not already in `F` (nor earlier in `news`),
     appended to `F`. The hash set only decides what is kept; soundness
@@ -389,7 +402,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
     {φ : Assertion} (hφ : φ ∈ F) {ψ : Assertion} (hψ : ψ ∈ stepGen C F φ) :
     Satisfies I ν ψ := by
   simp only [stepGen, List.mem_append] at hψ
-  rcases hψ with (((((((h | h) | h) | h) | h) | h) | h) | h)
+  rcases hψ with ((((((((h | h) | h) | h) | h) | h) | h) | h) | h)
   · -- conjE
     cases φ with
     | inst a c =>
@@ -560,6 +573,42 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
           · cases hin
     | inst _ _ => simp [invGen] at h
     | diff _ _ => simp [invGen] at h
+  · -- conjI / disjI
+    cases φ with
+    | inst a c =>
+        have hs : I.sem c (ν a) := hF _ hφ
+        simp only [introGen] at h
+        have ⟨e, _, he⟩ := List.mem_filterMap.mp h
+        cases e with
+        | conj c' d =>
+            simp only at he
+            split at he
+            · rename_i hc
+              obtain ⟨rfl, hd⟩ := hc
+              cases he
+              exact ⟨hs, hF _ hd⟩
+            · cases he
+        | disj c' d =>
+            simp only at he
+            split at he
+            · rename_i hc
+              cases he
+              rcases hc with rfl | rfl
+              · exact Or.inl hs
+              · exact Or.inr hs
+            · cases he
+        | atom _ => simp at he
+        | top => simp at he
+        | bot => simp at he
+        | neg _ => simp at he
+        | all _ _ => simp at he
+        | ex _ _ => simp at he
+        | atLeast _ _ => simp at he
+        | atMost _ _ => simp at he
+        | atLeastQ _ _ _ => simp at he
+        | atMostQ _ _ _ => simp at he
+    | rel _ _ _ => simp [introGen] at h
+    | diff _ _ => simp [introGen] at h
 
 /-- Every element `addNew` returns is from `F` or from `news`. -/
 theorem mem_addNew {F news : List Assertion} {ψ : Assertion}
@@ -914,8 +963,10 @@ def pairsOf : List Ind → List (Ind × Ind)
 def exAvailable (S : List Assertion) (a : Ind) (r : Role) (c : Concept) : Bool :=
   S.contains (.inst a (.ex r c)) ||
   S.any (fun ψ => match ψ with
-    | .inst a' (.atLeastQ n r' c') => a' == a && r' == r && c' == c && decide (1 ≤ n)
+    | .inst a' (.atLeastQ n r' c') =>
+        a' == a && r' == r && (c' == c || c == .top) && decide (1 ≤ n)
     | .inst a' (.atLeast n r') => a' == a && r' == r && c == .top && decide (1 ≤ n)
+    | .inst a' (.ex r' _) => a' == a && r' == r && c == .top
     | _ => false)
 
 /-- The bound a `merge` uses: `a : ≤ n r`, or `a : ≤ n r.C` with every
@@ -1045,11 +1096,14 @@ theorem exAvailable_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : Lis
     | inst a' k =>
         cases k with
         | atLeastQ n r' c' =>
-            simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hm
-            obtain ⟨⟨⟨rfl, rfl⟩, rfl⟩, hn⟩ := hm
+            simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hm
+            obtain ⟨⟨⟨rfl, rfl⟩, hc⟩, hn⟩ := hm
             have ⟨l, hlen, _, hall⟩ := hS _ hψ
             match l, hlen with
-            | y :: _, _ => exact ⟨y, hall y (List.Mem.head _)⟩
+            | y :: _, _ =>
+                rcases hc with rfl | rfl
+                · exact ⟨y, hall y (List.Mem.head _)⟩
+                · exact ⟨y, (hall y (List.Mem.head _)).1, trivial⟩
             | [], hlen => simp at hlen; omega
         | atLeast n r' =>
             simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hm
@@ -1065,7 +1119,11 @@ theorem exAvailable_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {S : Lis
         | conj _ _ => simp at hm
         | disj _ _ => simp at hm
         | all _ _ => simp at hm
-        | ex _ _ => simp at hm
+        | ex r' c' =>
+            simp only [Bool.and_eq_true, beq_iff_eq] at hm
+            obtain ⟨⟨rfl, rfl⟩, rfl⟩ := hm
+            have ⟨y, hr, _⟩ := hS _ hψ
+            exact ⟨y, hr, trivial⟩
         | atMost _ _ => simp at hm
         | atMostQ _ _ _ => simp at hm
     | rel _ _ _ => simp at hm
@@ -1182,9 +1240,19 @@ def edgeLhs (T : List (Concept × Concept)) : List Concept :=
     | .atLeastQ 1 r c => some (Concept.atLeastQ 1 r c)
     | _ => none)).eraseDups
 
+/-- The Boolean subterms of a concept, through the fillers of `∃` and
+    `≥ n r.C` (the shapes `exGen` proves from an edge). -/
+def boolSubterms : Concept → List Concept
+  | .conj c d => .conj c d :: (boolSubterms c ++ boolSubterms d)
+  | .disj c d => .disj c d :: (boolSubterms c ++ boolSubterms d)
+  | .ex _ c => boolSubterms c
+  | .atLeastQ _ _ c => boolSubterms c
+  | _ => []
+
 def Ctx.ofOntology (O : DlOntology) : Ctx :=
   let T := normTBox O.tbox
-  { T := T, R := O.rbox, L := edgeLhs T, inv := O.inv }
+  { T := T, R := O.rbox, L := edgeLhs T, inv := O.inv,
+    B := (T.flatMap (fun ax => boolSubterms ax.1)).eraseDups }
 
 /-- The saturation round bound. The rounds stop earlier at a fixpoint;
     a bound that is too small makes a certificate fail to check, never

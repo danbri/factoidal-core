@@ -39,6 +39,17 @@ private def cC : Concept := .atom "C"
 #guard !checkCert { tbox := [(cA, .neg (.disj cB cC))],
                     abox := [.inst "a" cC] } .close
 
+/-! ### `conjI`: `A ⊓ B ⊑ C`, `a : A`, `a : B`, `a : ¬C` -/
+#guard checkCert { tbox := [(.conj cA cB, cC)], abox := [.inst "a" cA, .inst "a" cB, .inst "a" (.neg cC)] }
+  .close
+#guard !checkCert { tbox := [(.conj cA cB, cC)], abox := [.inst "a" cA, .inst "a" (.neg cC)] }
+  .close
+
+/-! ### `disjI`: `A ⊔ B ⊑ C`, `a : B`, `a : ¬C` -/
+#guard checkCert { tbox := [(.disj cA cB, cC)], abox := [.inst "a" cB, .inst "a" (.neg cC)] } .close
+#guard !checkCert { tbox := [(.disj cA cB, cC)], abox := [.inst "a" (.neg cB), .inst "a" (.neg cC)] }
+  .close
+
 /-! ### `split`: `a : C ⊔ D`, `a : ¬C`, `a : ¬D` -/
 #guard checkCert { abox := [.inst "a" (.disj cC cB), .inst "a" (.neg cC), .inst "a" (.neg cB)] }
   (.split "a" cC cB .close .close)

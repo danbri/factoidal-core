@@ -104,6 +104,17 @@ def dataPropertiesOf (st : Store) (objs : List WfIri) : List WfIri :=
 def dataMinAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-min:{n}:{p}"
 def dataMaxAtom (n : Nat) (p : String) : String := s!"urn:factoidal:owl-cert:data-max:{n}:{p}"
 
+/-- `ObjectOneOf(a₁ … aₙ)` (Table 4) read as a class NAME `N`, with the
+    assertions `aᵢ : N` added by the reader (`nominalAssertions`). The
+    reading is a weakening: from any model of the ontology with the
+    nominal, setting `(N)^C := {(a₁)^I … (aₙ)^I}` gives a model of the
+    ontology with the name, so an ontology with the name that has no
+    model is one whose original had none. `Concept` has no nominal
+    constructor; this keeps every certificate inside it. -/
+def nominalPrefix : String := "urn:factoidal:owl-cert:one-of:"
+
+def nominalAtom (ms : List Ind) : String := nominalPrefix ++ " ".intercalate ms
+
 mutual
 
 /-- A parsed class expression in the `Concept` fragment, or `none`.
@@ -140,6 +151,13 @@ def toConcept (sig : Sig) : ClassExpr → Option Concept
       if sig.obj p then (toConcept sig c).map (.atLeastQ n p.val) else none
   | .maxQualCard n p c =>
       if sig.obj p then (toConcept sig c).map (.atMostQ n p.val) else none
+  | .oneOf ms =>
+      match ms.mapM indOfTerm with
+      | some (m :: rest) => some (.atom (nominalAtom (m :: rest)))
+      | _ => none
+  | .hasValue p v =>
+      if sig.obj p then (indOfTerm v).map (fun a => .ex p.val (.atom (nominalAtom [a])))
+      else none
   | .exactQualCard n p c =>
       if !sig.obj p then none
       else (toConcept sig c).map (fun d =>
@@ -307,6 +325,22 @@ def readOntology (g : Graph) : DlOntology := Id.run do
       match indOfTerm t.o with
       | some b => abox := .rel t.p.val (indOfSubject t.s) b :: abox
       | none => pure ()
+  -- DisjointUnion(C C₁ … Cₙ) (Table 5): C ≡ C₁ ⊔ … ⊔ Cₙ, the Cᵢ pairwise
+  -- disjoint.
+  for t in g do
+    if t.p == owlDisjointUnionOf then
+      match t.s with
+      | .iri c =>
+          if !isReservedIri c then
+            let parts := (walkRdfList st t.o 64).map ce
+            if !parts.isEmpty && parts.all Option.isSome then
+              let ps := parts.filterMap id
+              let u := foldDisj ps
+              tbox := (.atom c.val, u) :: (u, .atom c.val) :: tbox
+              for x in ps do
+                for y in ps do
+                  if x != y then tbox := (x, .neg y) :: tbox
+      | .bnode _ => pure ()
   -- A named class carrying a Boolean marker IS that expression
   -- (EquivalentClasses(C CE)): both inclusions.
   let markerSubs := ((g.filter (fun t =>
@@ -330,6 +364,11 @@ def readOntology (g : Graph) : DlOntology := Id.run do
       | .inst _ k => conceptAtoms k
       | _ => [])).eraseDups
   tbox := tbox.reverse ++ dataBridgeAxioms names
+  -- Every member of a nominal read as a name is in that name.
+  for a in names do
+    if a.startsWith nominalPrefix then
+      for m in (String.mk (a.toList.drop nominalPrefix.length)).splitOn " " do
+        abox := .inst m (.atom a) :: abox
   return { tbox := dedupHash tbox, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
            abox := dedupHash abox.reverse, inv := dedupHash inv.reverse }
 
@@ -353,12 +392,21 @@ def witnessFiller (st : RState) (e : REdge) : Option ClassExpr :=
   let wl := match e.o with
     | .bnode b => labelsOf st (.bnode b)
     | _ => []
-  (labelsOf st e.s).findSome? (fun l =>
-    match l with
-    | .someOf p c => if p == e.p && memCe c wl then some c else none
-    | .minQualCard k p c => if p == e.p && k ≥ 1 && memCe c wl then some c else none
-    | .minCard k p => if p == e.p && k ≥ 1 then some (.named owlThing) else none
-    | _ => none)
+  let ls := labelsOf st e.s
+  -- An existential whose filler the witness carries comes first; an
+  -- unqualified `≥ k p` (filler `owl:Thing`) only when there is none.
+  match ls.findSome? (fun l =>
+      match l with
+      | .someOf p c => if p == e.p && memCe c wl then some c else none
+      | .minQualCard k p c => if p == e.p && k ≥ 1 && memCe c wl then some c else none
+      | _ => none) with
+  | some c => some c
+  | none =>
+    ls.findSome? (fun l =>
+      match l with
+      | .minCard k p => if p == e.p && k ≥ 1 then some (.named owlThing) else none
+      | .someOf p _ => if p == e.p then some (.named owlThing) else none
+      | _ => none)
 
 /-- The `exWit` steps for the witnesses of `st` not yet introduced, in
     creation order, and the introduced list after them. `none` when a
@@ -789,7 +837,11 @@ def certifyDebug (g : Graph) (budget : Nat) : String :=
       let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
       let isObj := sigOf g
       let certS := match emitCert isObj g [] [] trace with
-        | some c => (repr c).pretty 100000
+        | some c =>
+            let leafClash := match firstLeafFacts O c (O.abox.map normAssertion) with
+              | some F => toString (clashIn F)
+              | none => "n/a"
+            s!"[checkCert={checkCert O c} first_leaf_clash={leafClash}] " ++ (repr c).pretty 100000
         | none => "no certificate: " ++ whyNoCert isObj g trace
       let site := match firstLeafState trace with
         | none => "no leaf"

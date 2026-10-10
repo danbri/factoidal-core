@@ -1210,7 +1210,10 @@ def certifyEntailsBounded (ms : Nat) (closure gc : Graph) (rb : Nat)
       | .proved =>
           match ← certifyBounded ms gg rb with
           | .proved => pure ()
-          | .unchecked r => out := .unchecked s!"goal {k} of {goals.length}: {r}"
+          | .unchecked r =>
+              out := .unchecked s!"goal {k} of {goals.length}: {r}"
+              if (← IO.getEnv "OWL_CERT_DEBUG").isSome then
+                IO.println s!"CERT-DEBUG goal {k}: {L4Factoidal.OWL.Refute.certifyDebug gg rb}"
           | .notRefuted => out := .unchecked s!"goal {k} of {goals.length}: not refuted on the certificate run"
       | _ => pure ()
     pure (out, String.intercalate "; " profs)
