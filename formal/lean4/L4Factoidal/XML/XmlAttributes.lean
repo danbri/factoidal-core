@@ -110,6 +110,32 @@ def dropExtensionSubtags : List String → Nat × List String
         (n + 1, r)
       else (0, t :: rest)
 
+/-- `dropExtensionSubtags` with the count so far as an accumulator: a tail
+call per subtag. An `xml:lang` value is attribute text of the document, so
+its subtag count is the author's (https://github.com/danbri/factoidal/issues/746). -/
+def dropExtensionSubtagsTR (ts : List String) : Nat × List String := go 0 ts
+where
+  go (n : Nat) : List String → Nat × List String
+    | [] => (n, [])
+    | t :: rest =>
+        if 2 ≤ t.length && t.length ≤ 8 && allC isAlnumC t then go (n + 1) rest
+        else (n, t :: rest)
+
+theorem dropExtensionSubtagsTR_go_eq :
+    ∀ (ts : List String) (n : Nat),
+      dropExtensionSubtagsTR.go n ts =
+        (n + (dropExtensionSubtags ts).1, (dropExtensionSubtags ts).2)
+  | [], n => by simp [dropExtensionSubtagsTR.go, dropExtensionSubtags]
+  | t :: rest, n => by
+      by_cases h : (2 ≤ t.length && t.length ≤ 8 && allC isAlnumC t) = true
+      · simp only [dropExtensionSubtagsTR.go, dropExtensionSubtags, h, if_true]
+        rw [dropExtensionSubtagsTR_go_eq rest (n + 1)]
+        simp [Nat.add_assoc, Nat.add_comm 1]
+      · simp [dropExtensionSubtagsTR.go, dropExtensionSubtags, h]
+
+@[csimp] theorem dropExtensionSubtags_eq_TR : @dropExtensionSubtags = @dropExtensionSubtagsTR := by
+  funext ts; simp [dropExtensionSubtagsTR, dropExtensionSubtagsTR_go_eq]
+
 /-- `*("-" extension)`, `extension = singleton 1*("-" (2*8alphanum))`,
 `singleton` being a digit or a letter other than `x`. `none` when a
 singleton has no subtag after it. -/
