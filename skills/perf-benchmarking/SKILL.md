@@ -97,13 +97,15 @@ file, at n, 2n, 4n and 8n, and writes one JSON line per measurement (minimum
 wall time of up to three runs, CPU time and peak resident set size of that run,
 the 1-minute load average, a fingerprint of standard output). `--report FILE`
 prints the table: Lean time, F* time, ratio, Lean growth per doubling. The
-result of the first survey, the five repairs it led to and the rows left open
+result of the first survey, the nine repairs it led to and the rows left open
 are in
 [`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`](../../docs/designissues/2026-10-10-lean-vs-fstar-performance.md).
 `tests/stack/lean_scaling.sh` is the regression gate for the repaired paths:
-it asserts time(4x) <= 9.0 x max(time(x), 50 ms) for each.
+it asserts time(4x) <= 9.0 x max(time(x), 50 ms) for each (the OWL RL chain
+row uses the bound 20.0, because the closure of n axioms has n(n-1)/2 triples),
+and that `l4factoidal version` takes at most 20 ms of CPU time.
 
-Three traps from that survey, each of which cost a re-run:
+Five traps from that survey, each of which cost a re-run or a wrong ranking:
 
 - **Freeze the binaries a survey measures.** A `lake build` in the middle of a
   survey replaces `.lake/build/bin/*`; later rows then measure a different
@@ -112,9 +114,21 @@ Three traps from that survey, each of which cost a re-run:
   survey loop called `tools/bench-lean-vs-fstar.py`; a `git mv` to
   `tools/bench_lean_vs_fstar.py` made four groups of rows exit with status 2
   and measure nothing. The log said so; only reading the log showed it.
-- **Process start is a row.** `l4factoidal version` takes 37 ms of CPU time and
-  the F* binary 6 ms. A ratio of two small runs is mostly this difference.
-  Subtract it, or give the row an input large enough to hide it.
+- **Process start is a row.** `l4factoidal version` took 43 ms of CPU time and
+  the F* binary 6 ms; five modules evaluated test fixtures at start. After the
+  fixtures moved to `*Tests.lean` modules it takes 7 ms. A ratio of two small
+  runs is mostly this difference. Subtract it, or give the row an input large
+  enough to hide it. `tests/stack/lean_scaling.sh` fails above 20 ms.
+- **A row measures the command line, not the component its name gives.** The
+  `parse-*` rows ranked Lean's Turtle parser 5.7 times slower than F* with
+  3,659 MB of resident memory. Callgrind showed the parser was 39 percent of the
+  instructions; the rest was the command line writing the dataset as N-Quads in
+  a JSON string and parsing that JSON to print a count. With that removed the
+  same parser is 0.4 times the F* time. Run callgrind on the smallest input of a
+  ranked row and read the phases before attributing the ratio to a component.
+- **The load average moves wall time more than it moves CPU time.** The GROUP BY
+  rows measured before the repair at load 6 and after it at load 34 to 45.
+  Record both, and compare CPU time when the loads differ.
 
 ### Other tools
 

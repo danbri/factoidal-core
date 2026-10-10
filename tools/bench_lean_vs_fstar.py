@@ -514,6 +514,22 @@ add(Row("query-groupby-subject", "sparql",
                       "SELECT ?s (COUNT(*) AS ?c) WHERE { ?s ?p ?o } GROUP BY ?s"],
         unit="paragraphs"))
 
+# b2) SPARQL shapes outside the six corpus queries: DISTINCT, aggregate DISTINCT,
+# ORDER BY. The UK Parliament endpoint is not in the checkout, so these run on
+# gene.ttl slices; they exist to look for further quadratic evaluator costs.
+for rid, desc, sparql in (
+        ("query-distinct", "SPARQL SELECT DISTINCT ?s ?p over gene.ttl slices",
+         "SELECT DISTINCT ?s ?p WHERE { ?s ?p ?o }"),
+        ("query-count-distinct", "SPARQL COUNT(DISTINCT ?s) over gene.ttl slices",
+         "SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE { ?s ?p ?o }"),
+        ("query-orderby", "SPARQL ORDER BY ?s ?p with LIMIT 20 over gene.ttl slices",
+         "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p LIMIT 20")):
+    add(Row(rid, "sparql", desc, [1250, 2500, 5000, 10000, 20000], gene_slice,
+            (lambda sparql: lambda p, n: [S(LEAN), "query", S(p), "--format", "turtle",
+                                          "--query-string", sparql])(sparql),
+            (lambda sparql: lambda p, n: [S(FSTAR), "query", "--data", S(p), "-e", sparql])(sparql),
+            unit="paragraphs"))
+
 # c) closure
 CLOSURE_SIZES = {
     "chain": [10, 20, 40, 80],
