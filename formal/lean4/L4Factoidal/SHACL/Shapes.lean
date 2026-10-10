@@ -214,6 +214,10 @@ inductive Constraint where
   -- SHACL 1.2 Node Expressions §NodeByExpressionConstraintComponent: each
   -- value node conforms to every shape the node expression yields.
   | nodeByExpression (expr : Term)
+  -- SHACL 1.2 §ReifierShapeConstraintComponent: every reifier of the
+  -- triple (focus node, path, value node) conforms to the shape; with
+  -- `required` (sh:reificationRequired true) there is at least one.
+  | reifierShape (r : ShapeRef) (required : Bool)
   -- SHACL-SPARQL Part 2 §5.1: a sh:sparql constraint. `node` is the
   -- constraint node (reported as sh:sourceConstraint, distinct from the
   -- owning shape's sh:sourceShape); `query` is the sh:select text with
@@ -235,6 +239,14 @@ inductive Constraint where
   -- the validator's sh:message with `{?x}` / `{$x}` placeholders (§6.3).
   | custom (component : WfIri) (isAsk : Bool) (query : String)
            (params : List (String × Term)) (msgTemplate : Option String)
+  deriving Repr, Inhabited, BEq
+
+/-- SHACL 1.2 §severity / §message: a constraint's own sh:severity and
+sh:message, read from the reifiers of the triples that represent it
+(`none`: the shape's). -/
+structure ConstraintMeta where
+  severity : Option Severity := none
+  message  : Option WfLiteral := none
   deriving Repr, Inhabited
 
 /-- §2.2: one record covers node shapes and property shapes; a
@@ -258,6 +270,9 @@ structure Shape where
   /-- The node expression of sh:defaultValue, used when there is no
   other value node. -/
   defaultValue : Option Term := none
+  /-- SHACL 1.2 §severity / §message: the constraints whose triples carry
+  their own sh:severity or sh:message on a reifier. -/
+  constraintMeta : List (Constraint × ConstraintMeta) := []
   deriving Repr, Inhabited
 
 /-- §2.2 "the property shape must have exactly one value for sh:path"
@@ -275,6 +290,22 @@ structure ShapesGraph where
   deriving Repr, Inhabited
 
 def ShapesGraph.empty : ShapesGraph := { shapes := [] }
+
+/-- The meta a shape records for one of its constraints. -/
+def Shape.metaOf (s : Shape) (cc : Constraint) : ConstraintMeta :=
+  match s.constraintMeta.find? (fun e => e.1 == cc) with
+  | some e => e.2
+  | none => {}
+
+/-- The severity of a constraint's results: its reifier's sh:severity,
+else the shape's (SHACL 1.2 §severity). -/
+def Shape.severityOf (s : Shape) (cc : Constraint) : Severity :=
+  (s.metaOf cc).severity.getD s.severity
+
+/-- The message of a constraint's results: its reifier's sh:message,
+else the shape's (SHACL 1.2 §message). -/
+def Shape.messageOf (s : Shape) (cc : Constraint) : Option WfLiteral :=
+  (s.metaOf cc).message.orElse fun _ => s.message
 
 /-- Look a shape up by reference (F* `lookup_shape`). -/
 def lookupShape (r : ShapeRef) : List Shape → Option Shape
@@ -610,97 +641,159 @@ def decodeQualified (g : Graph) (s : Subject) : List Constraint :=
     | none => []
   | [] => []
 
+/-! ## SHACL 1.2 constraint reifiers
+
+SHACL 1.2 §severity: "the property sh:severity can also be used on a
+reifier for a triple where the shape is the subject and one of the
+parameters of the constraint is the predicate"; §message says the same
+of sh:message, and §deactivated of sh:deactivated ("the constraints that
+use the triple are called deactivated constraints"). A reifier of the
+triple `(s, p, o)` is a subject `r` of `r rdf:reifies <<( s p o )>>`
+(RDF 1.2 Concepts; the Turtle annotation `s p o {| … |}` writes one). -/
+
+/-- The reifiers of the triple `(s, p, o)` in `g`. -/
+def reifiersOf (g : Graph) (s : Subject) (p : WfIri) (o : Term) : List Term :=
+  (g.filter fun t => t.p == rdfReifies && t.o.eqb (.tripleTerm s p o)).map (·.s.toTerm)
+
+/-- The first of two metas that sets each field. -/
+def ConstraintMeta.orElse (a b : ConstraintMeta) : ConstraintMeta :=
+  { severity := a.severity.orElse fun _ => b.severity,
+    message := a.message.orElse fun _ => b.message }
+
+/-- The sh:severity / sh:message of the reifiers of `(s, p, o)`. -/
+def tripleMeta (g : Graph) (s : Subject) (p : WfIri) (o : Term) : ConstraintMeta :=
+  let rs := reifiersOf g s p o
+  { severity := rs.findSome? fun r =>
+      match objectsOfTerm g r shSeverity with | .iri i :: _ => some (severityOfIri i) | _ => none,
+    message := rs.findSome? fun r =>
+      match objectsOfTerm g r shMessage with | .literal l :: _ => some l | _ => none }
+
+/-- §deactivated: is the triple `t` reified with `sh:deactivated true`?
+"In SHACL Core, the only valid values for sh:deactivated are the
+constant literal node expressions true and false." -/
+def tripleDeactivated (g : Graph) (t : Triple) : Bool :=
+  (reifiersOf g t.s t.p t.o).any fun r => firstBool (objectsOfTerm g r shDeactivated) == some true
+
+/-- The shapes graph seen by shape `s`: without the triples of `s` that
+a reifier deactivates. Every constraint (and sh:property link) built
+from such a triple is thereby deactivated. -/
+def withoutDeactivated (g : Graph) (s : Subject) : Graph :=
+  if g.any (·.p == rdfReifies) then g.filter fun t => !(t.s == s && tripleDeactivated g t)
+  else g
+
+/-- The constraint built from the first value of parameter `p`, if `f`
+accepts it, with that triple's meta. -/
+def firstParam (g : Graph) (s : Subject) (p : WfIri) (f : Term → Option Constraint) :
+    List (Constraint × ConstraintMeta) :=
+  match objectsOf g s p with
+  | t :: _ => match f t with
+    | some cc => [(cc, tripleMeta g s p t)]
+    | none => []
+  | [] => []
+
+/-- One constraint per value of parameter `p` that `f` accepts. -/
+def eachParam (g : Graph) (s : Subject) (p : WfIri) (f : Term → Option Constraint) :
+    List (Constraint × ConstraintMeta) :=
+  (objectsOf g s p).filterMap fun t => (f t).map fun cc => (cc, tripleMeta g s p t)
+
+/-- The meta of the first value of a secondary parameter (sh:flags,
+sh:ignoredProperties, the qualified counts), for multi-parameter
+constraints. -/
+def firstMeta (g : Graph) (s : Subject) (p : WfIri) : ConstraintMeta :=
+  match objectsOf g s p with
+  | t :: _ => tripleMeta g s p t
+  | [] => {}
+
 /-- Every Core constraint component whose parameters occur on the
-shape node `s` (F* `build_constraints`, restricted to Core). The
-order is the F* order, which the report comparison does not observe
-(reports compare up to isomorphism). -/
-def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
+shape node `s` (F* `build_constraints`, restricted to Core), each with
+the meta of the triples that represent it. The order is the F* order,
+which the report comparison does not observe (reports compare up to
+isomorphism). -/
+def decodeConstraintsMeta (g : Graph) (s : Subject) : List (Constraint × ConstraintMeta) :=
   let fuel := g.length + 1
-  let minCount := match firstNat (objectsOf g s shMinCount) with
-    | some n => [Constraint.minCount n] | none => []
-  let maxCount := match firstNat (objectsOf g s shMaxCount) with
-    | some n => [Constraint.maxCount n] | none => []
-  let datatype := (objectsOf g s shDatatype).filterMap fun t =>
-    (iriOrIriList g t fuel).map Constraint.datatype
-  let nodeKind := (objectsOf g s shNodeKind).filterMap fun t =>
+  let natLit (mk : Nat → Constraint) (t : Term) : Option Constraint := (firstNat [t]).map mk
+  let boolLit (mk : Bool → Constraint) (t : Term) : Option Constraint := (firstBool [t]).map mk
+  let minCount := firstParam g s shMinCount (natLit .minCount)
+  let maxCount := firstParam g s shMaxCount (natLit .maxCount)
+  let datatype := eachParam g s shDatatype fun t => (iriOrIriList g t fuel).map Constraint.datatype
+  let nodeKind := eachParam g s shNodeKind fun t =>
     (iriOrIriList g t fuel).map fun is => Constraint.nodeKind (is.filterMap nodeKindOfIri)
-  let cls := (objectsOf g s shClass).filterMap fun t =>
-    (iriOrIriList g t fuel).map Constraint.cls
-  let rootClass := (objectsOf g s shRootClass).filterMap fun t =>
+  let cls := eachParam g s shClass fun t => (iriOrIriList g t fuel).map Constraint.cls
+  let rootClass := eachParam g s shRootClass fun t =>
     (iriOrIriList g t fuel).map Constraint.rootClass
-  let singleLine := match firstBool (objectsOf g s shSingleLine) with
-    | some b => [Constraint.singleLine b] | none => []
-  let uniqueValuesFor := (objectsOf g s shUniqueValuesFor).filterMap fun t =>
+  let singleLine := firstParam g s shSingleLine (boolLit .singleLine)
+  let uniqueValuesFor := eachParam g s shUniqueValuesFor fun t =>
     (iriOrIriList g t fuel).map Constraint.uniqueValuesFor
-  let nodeByExpression := (objectsOf g s shNodeByExpression).map Constraint.nodeByExpression
-  let memberShape := (objectsOf g s shMemberShape).filterMap fun t =>
+  let nodeByExpression := eachParam g s shNodeByExpression fun t =>
+    some (Constraint.nodeByExpression t)
+  let memberShape := eachParam g s shMemberShape fun t =>
     (termToShapeRef t).map Constraint.memberShape
-  let minListLength := match firstNat (objectsOf g s shMinListLength) with
-    | some n => [Constraint.minListLength n] | none => []
-  let maxListLength := match firstNat (objectsOf g s shMaxListLength) with
-    | some n => [Constraint.maxListLength n] | none => []
-  let uniqueMembers := match firstBool (objectsOf g s shUniqueMembers) with
-    | some b => [Constraint.uniqueMembers b] | none => []
-  let inSet := match objectsOf g s shIn with
-    | head :: _ => [Constraint.inSet (rdfListTerms g head fuel)] | [] => []
-  let hasValue := (objectsOf g s shHasValue).map Constraint.hasValue
-  let pattern := match objectsOf g s shPattern with
-    | .literal l :: _ =>
-      let flags := match objectsOf g s shFlags with
-        | .literal fl :: _ => fl.val.lexicalForm | _ => ""
-      [Constraint.pattern l.val.lexicalForm flags]
-    | _ => []
-  let minLength := match firstNat (objectsOf g s shMinLength) with
-    | some n => [Constraint.minLength n] | none => []
-  let maxLength := match firstNat (objectsOf g s shMaxLength) with
-    | some n => [Constraint.maxLength n] | none => []
-  let languageIn := match objectsOf g s shLanguageIn with
-    | head :: _ =>
-      [Constraint.languageIn ((rdfListTerms g head fuel).filterMap fun t =>
-        match t with | .literal l => some l.val.lexicalForm | _ => none)]
-    | [] => []
-  let uniqueLang := match firstBool (objectsOf g s shUniqueLang) with
-    | some b => [Constraint.uniqueLang b] | none => []
-  let minInc := (objectsOf g s shMinInclusive).map Constraint.minInclusive
-  let maxInc := (objectsOf g s shMaxInclusive).map Constraint.maxInclusive
-  let minExc := (objectsOf g s shMinExclusive).map Constraint.minExclusive
-  let maxExc := (objectsOf g s shMaxExclusive).map Constraint.maxExclusive
-  let nots := (objectsOf g s shNot).filterMap fun t => (termToShapeRef t).map Constraint.notOf
-  let ands := match objectsOf g s shAnd with
-    | head :: _ => [Constraint.andOf (shapeRefList g head fuel)] | [] => []
-  let ors := match objectsOf g s shOr with
-    | head :: _ => [Constraint.orOf (shapeRefList g head fuel)] | [] => []
-  let xones := match objectsOf g s shXone with
-    | head :: _ => [Constraint.xoneOf (shapeRefList g head fuel)] | [] => []
-  let nodes := (objectsOf g s shNode).filterMap fun t => (termToShapeRef t).map Constraint.nodeOf
-  let qualified := decodeQualified g s
-  let equals := (objectsOf g s shEquals).map fun t => Constraint.equals (decodePath g t fuel)
-  let disjoint := (objectsOf g s shDisjoint).map fun t => Constraint.disjoint (decodePath g t fuel)
-  let lessThan := (objectsOf g s shLessThan).map fun t => Constraint.lessThan (decodePath g t fuel)
-  let lessThanOrEquals := (objectsOf g s shLessThanOrEquals).map fun t =>
-    Constraint.lessThanOrEquals (decodePath g t fuel)
-  let subsetOf := (objectsOf g s shSubsetOf).map fun t => Constraint.subsetOf (decodePath g t fuel)
-  let someValue := (objectsOf g s shSomeValue).filterMap fun t =>
-    (termToShapeRef t).map Constraint.someValue
+  let minListLength := firstParam g s shMinListLength (natLit .minListLength)
+  let maxListLength := firstParam g s shMaxListLength (natLit .maxListLength)
+  let uniqueMembers := firstParam g s shUniqueMembers (boolLit .uniqueMembers)
+  -- SHACL 1.2 §ReifierShapeConstraintComponent; sh:reificationRequired
+  -- is its optional second parameter.
+  let reifierShape := eachParam g s shReifierShape fun t =>
+    (termToShapeRef t).map fun r =>
+      Constraint.reifierShape r ((firstBool (objectsOf g s shReificationRequired)).getD false)
+  let inSet := firstParam g s shIn fun head => some (Constraint.inSet (rdfListTerms g head fuel))
+  let hasValue := eachParam g s shHasValue fun t => some (Constraint.hasValue t)
+  let pattern := (firstParam g s shPattern fun t =>
+      match t with
+      | .literal l =>
+        let flags := match objectsOf g s shFlags with
+          | .literal fl :: _ => fl.val.lexicalForm | _ => ""
+        some (Constraint.pattern l.val.lexicalForm flags)
+      | _ => none).map fun (cc, m) => (cc, m.orElse (firstMeta g s shFlags))
+  let minLength := firstParam g s shMinLength (natLit .minLength)
+  let maxLength := firstParam g s shMaxLength (natLit .maxLength)
+  let languageIn := firstParam g s shLanguageIn fun head =>
+    some (Constraint.languageIn ((rdfListTerms g head fuel).filterMap fun t =>
+      match t with | .literal l => some l.val.lexicalForm | _ => none))
+  let uniqueLang := firstParam g s shUniqueLang (boolLit .uniqueLang)
+  let minInc := eachParam g s shMinInclusive fun t => some (Constraint.minInclusive t)
+  let maxInc := eachParam g s shMaxInclusive fun t => some (Constraint.maxInclusive t)
+  let minExc := eachParam g s shMinExclusive fun t => some (Constraint.minExclusive t)
+  let maxExc := eachParam g s shMaxExclusive fun t => some (Constraint.maxExclusive t)
+  let nots := eachParam g s shNot fun t => (termToShapeRef t).map Constraint.notOf
+  let ands := firstParam g s shAnd fun head => some (Constraint.andOf (shapeRefList g head fuel))
+  let ors := firstParam g s shOr fun head => some (Constraint.orOf (shapeRefList g head fuel))
+  let xones := firstParam g s shXone fun head => some (Constraint.xoneOf (shapeRefList g head fuel))
+  let nodes := eachParam g s shNode fun t => (termToShapeRef t).map Constraint.nodeOf
+  let qualifiedMeta := (firstMeta g s shQualifiedValueShape).orElse
+    ((firstMeta g s shQualifiedMinCount).orElse (firstMeta g s shQualifiedMaxCount))
+  let qualified := (decodeQualified g s).map fun cc => (cc, qualifiedMeta)
+  let pathParam (mk : Path → Constraint) (t : Term) : Option Constraint :=
+    some (mk (decodePath g t fuel))
+  let equals := eachParam g s shEquals (pathParam .equals)
+  let disjoint := eachParam g s shDisjoint (pathParam .disjoint)
+  let lessThan := eachParam g s shLessThan (pathParam .lessThan)
+  let lessThanOrEquals := eachParam g s shLessThanOrEquals (pathParam .lessThanOrEquals)
+  let subsetOf := eachParam g s shSubsetOf (pathParam .subsetOf)
+  let someValue := eachParam g s shSomeValue fun t => (termToShapeRef t).map Constraint.someValue
   let closed :=
     let ignored := match objectsOf g s shIgnoredProperties with
       | head :: _ => (rdfListTerms g head fuel).filterMap fun t =>
           match t with | .iri i => some i | _ => none
       | [] => []
-    match objectsOf g s shClosed with
-    | .iri i :: _ =>
-      if i == shByTypes then [Constraint.closedByTypes (closedByTypesTable g) ignored] else []
-    | vals =>
-      match firstBool vals with
-      | some true => [Constraint.closed ignored]
-      | _ => []
+    (firstParam g s shClosed fun t =>
+      match t with
+      | .iri i => if i == shByTypes then some (Constraint.closedByTypes (closedByTypesTable g) ignored)
+                  else none
+      | _ => match firstBool [t] with
+        | some true => some (Constraint.closed ignored)
+        | _ => none).map fun (cc, m) => (cc, m.orElse (firstMeta g s shIgnoredProperties))
   minCount ++ maxCount ++ datatype ++ nodeKind ++ cls ++ rootClass ++ singleLine ++
   memberShape ++ minListLength ++ maxListLength ++ uniqueMembers ++ uniqueValuesFor ++
-  nodeByExpression ++
+  nodeByExpression ++ reifierShape ++
   inSet ++ hasValue ++ pattern ++
   minLength ++ maxLength ++ languageIn ++ uniqueLang ++ minInc ++ maxInc ++ minExc ++ maxExc ++
   nots ++ ands ++ ors ++ xones ++ nodes ++ qualified ++ equals ++ disjoint ++ lessThan ++
   lessThanOrEquals ++ subsetOf ++ someValue ++ closed
+
+/-- The constraints of `decodeConstraintsMeta`, without their metas. -/
+def decodeConstraints (g : Graph) (s : Subject) : List Constraint :=
+  (decodeConstraintsMeta g s).map (·.1)
 
 /-! ## SHACL-SPARQL §5.2 prefix declarations
 
@@ -888,7 +981,10 @@ def isShapeEstablishing (g : Graph) (s : Subject) : Bool :=
   g.any (fun t => t.s == s && isShapeTriggerTriple t) && !isDeactivated g s
 
 /-- Decode one shape node (F* `build_shape`). -/
-def decodeShape (g : Graph) (s : Subject) : Shape :=
+def decodeShape (g0 : Graph) (s : Subject) : Shape :=
+  -- SHACL 1.2 §deactivated: reifier-deactivated triples of `s` are dropped.
+  let g := withoutDeactivated g0 s
+  let cm := decodeConstraintsMeta g s
   let pathObjs := objectsOf g s shPath
   let path := match pathObjs with
     | head :: _ => some (decodePath g head (g.length + 1))
@@ -905,11 +1001,12 @@ def decodeShape (g : Graph) (s : Subject) : Shape :=
     targets := decodeTargets g s,
     severity := severity,
     message := message,
-    constraints := decodeConstraints g s ++ decodeSparqlConstraints g s ++
+    constraints := cm.map (·.1) ++ decodeSparqlConstraints g s ++
                    decodeCustomConstraints g s (!pathObjs.isEmpty),
     propertyRefs := (objectsOf g s shProperty).filterMap termToShapeRef,
     valuesExpr := (objectsOf g s shValues).head?,
-    defaultValue := (objectsOf g s shDefaultValue).head? }
+    defaultValue := (objectsOf g s shDefaultValue).head?,
+    constraintMeta := cm.filter fun e => e.2.severity.isSome || e.2.message.isSome }
 
 /-- The unsupported SHACL-SPARQL feature names a graph uses (predicates
 only; today only the SPARQL-based target). -/

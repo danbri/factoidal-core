@@ -624,7 +624,7 @@ def simpleValueCheck (data : Graph) (cc : Constraint) (v : Term) : Option Bool :
 /-- A result with sh:value (§3.6.2). -/
 def valueViolation (focus : Term) (s : Shape) (cc : Constraint) (v : Term) : Violation :=
   { focus := focus, path := s.path, value := some v, sourceShape := s.id,
-    constraint := cc, severity := s.severity, message := s.message }
+    constraint := cc, severity := s.severityOf cc, message := s.messageOf cc }
 
 /-- The sh:detail results of a per-value result (§3.6.2.7). SHACL 1.2
 §UniqueMembersConstraintComponent: "Each duplicate member m of a list v
@@ -643,7 +643,7 @@ def valueDetails (data : Graph) (focus : Term) (s : Shape) (cc : Constraint) (v 
 /-- A result without sh:value. -/
 def focusViolation (focus : Term) (s : Shape) (cc : Constraint) : Violation :=
   { focus := focus, path := s.path, value := none, sourceShape := s.id,
-    constraint := cc, severity := s.severity, message := s.message }
+    constraint := cc, severity := s.severityOf cc, message := s.messageOf cc }
 
 /-- §4.8.1 sh:closed: the predicates a closed shape allows — the
 sh:path predicates of its property shapes plus sh:ignoredProperties. -/
@@ -668,7 +668,7 @@ def closedViolations (data : Graph) (focus : Term) (s : Shape) (cc : Constraint)
         if t.s == subj && !(allowed subj).contains t.p
         then some { focus := focus, path := some (.pred t.p), value := some t.o,
                     sourceShape := s.id, constraint := cc,
-                    severity := s.severity, message := s.message }
+                    severity := s.severityOf cc, message := s.messageOf cc }
         else none
 
 /-- SHACL 1.2 sh:closed sh:ByTypes: "P is the set of IRI properties that
@@ -769,6 +769,16 @@ def evalAggregateNonRec (env : ValidationEnv) (data : Graph) (sg : List Shape) (
     values.filterMap fun v => if termMem v others then none else some (valueViolation focus s cc v)
   | _ => []
 
+/-- SHACL 1.2 §ReifierShapeConstraintComponent: "Let t be the triple
+term (focus node, $path, value node)" — the subject and predicate of t,
+when the focus node can be a subject and the path is a predicate path
+("If a value for sh:reifierShape is given, sh:path values are
+constrained to IRIs"). -/
+def reifiedTripleOf (focus : Term) (s : Shape) : Option (Subject × WfIri) :=
+  match focus.toSubject?, s.path with
+  | some fs, some (.pred p) => some (fs, p)
+  | _, _ => none
+
 /-! ## §3 validation — the fuel-bounded mutual group
 
 §3.4: a focus node conforms to a shape iff validating it produces no
@@ -867,6 +877,25 @@ mutual
             | some s2 =>
               if env.conforms (collectShapeViolations env data sg v s2 fuel) then none
               else some { valueViolation focus s cc v with sourceConstraint := some st }
+      -- SHACL 1.2 §ReifierShapeConstraintComponent: "For each reifier t
+      -- that does not conform to $reifierShape, there is a validation
+      -- result"; sh:reificationRequired: "If $reificationRequired is set
+      -- to true and there is no reified statement for the triple term t in
+      -- the data graph, there is a validation result". The suite's
+      -- expected results (core/property/reifierShape-001, -002) carry the
+      -- value node as sh:value.
+      | .reifierShape r required =>
+        match reifiedTripleOf focus s with
+        | none => []
+        | some (fs, p) =>
+          let rs := reifiersOf data fs p v
+          let missing := if required && rs.isEmpty then viol else []
+          let bad := match lookupShape r sg with
+            | none => []
+            | some s2 => rs.filterMap fun x =>
+                if env.conforms (collectShapeViolations env data sg x s2 fuel) then none
+                else some (valueViolation focus s cc v)
+          missing ++ bad
       -- SHACL 1.2 §MemberShapeConstraintComponent: a value node that is
       -- not a SHACL list is a result; otherwise a result iff some
       -- member does not conform, with the non-conforming members'
@@ -1127,30 +1156,31 @@ def FocusSatisfies (env : ValidationEnv) (g : Graph) (sg : List Shape) (focus : 
 
 mutual
   /-- §3.4 conformance of a focus node to a shape at a nesting budget,
-  with SHACL 1.2 conformance checking: when the shape's own severity is
-  in the disallowed set, every value node satisfies every per-value
-  component, every aggregate component holds over the value nodes, and
+  with SHACL 1.2 conformance checking: for every constraint whose
+  severity (`Shape.severityOf`: its reifier's sh:severity, else the
+  shape's) is in the disallowed set, every value node satisfies it if it
+  is per-value, it holds over the value nodes if it is an aggregate, and
   the logical and shape-based components hold by recursion; whatever
-  the shape's severity, the focus node's value nodes conform to every
-  property shape (whose results carry the property shape's own
-  severity). At budget 0 the relation is vacuously true, matching the
-  engine's sound-by-omission fuel exhaustion. -/
+  the severities, the focus node's value nodes conform to every property
+  shape (whose results carry the property shape's own severities). At
+  budget 0 the relation is vacuously true, matching the engine's
+  sound-by-omission fuel exhaustion. -/
   def Conforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (node : Term) (s : Shape) :
       Nat → Prop
     | 0 => True
     | fuel + 1 =>
       let values := valueNodes env g node s
-      (env.blocks s.severity = true →
-        (∀ v ∈ values, ∀ cc ∈ s.constraints, ValueConforms env g sg v cc fuel) ∧
-        (∀ cc ∈ s.constraints, FocusSatisfies env g sg node s cc values) ∧
-        (∀ cc ∈ s.constraints, AggConforms env g sg s values cc fuel)) ∧
+      (∀ cc ∈ s.constraints, env.blocks (s.severityOf cc) = true →
+        (∀ v ∈ values, ValueConforms env g sg node s v cc fuel) ∧
+        FocusSatisfies env g sg node s cc values ∧
+        AggConforms env g sg s values cc fuel) ∧
       (∀ v ∈ values, ∀ r ∈ s.propertyRefs, ∀ ps, lookupShape r sg = some ps →
         Conforms env g sg v ps fuel)
 
   /-- A value node against one component, the recursive ones by
   `Conforms` at the smaller budget (§4.6, §4.7.1). -/
-  def ValueConforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (v : Term)
-      (cc : Constraint) : Nat → Prop
+  def ValueConforms (env : ValidationEnv) (g : Graph) (sg : List Shape) (focus : Term)
+      (s : Shape) (v : Term) (cc : Constraint) : Nat → Prop
     | 0 => True
     | fuel + 1 =>
       match cc with
@@ -1165,6 +1195,13 @@ mutual
       | .nodeByExpression expr => ∀ st ∈ env.evalExpr expr (some v), ∀ r,
           termToShapeRef st = some r → ∀ s2, lookupShape r sg = some s2 →
             Conforms env g sg v s2 fuel
+      | .reifierShape r required =>
+        match reifiedTripleOf focus s with
+        | none => True
+        | some (fs, p) =>
+          (required = true → reifiersOf g fs p v ≠ []) ∧
+          (∀ s2, lookupShape r sg = some s2 → ∀ x ∈ reifiersOf g fs p v,
+            Conforms env g sg x s2 fuel)
       | .memberShape r => ∃ members, shaclListMembers g v = some members ∧
           ∀ s2, lookupShape r sg = some s2 → ∀ m ∈ members, Conforms env g sg m s2 fuel
       | _ => ValueSatisfies g cc v

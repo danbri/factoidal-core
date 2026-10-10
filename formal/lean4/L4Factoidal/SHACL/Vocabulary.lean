@@ -196,6 +196,11 @@ def shShapeClass      : WfIri := ⟨"http://www.w3.org/ns/shacl#ShapeClass", rfl
 def shValues          : WfIri := ⟨"http://www.w3.org/ns/shacl#values", rfl⟩
 def shDefaultValue    : WfIri := ⟨"http://www.w3.org/ns/shacl#defaultValue", rfl⟩
 def shSparqlExpr      : WfIri := ⟨"http://www.w3.org/ns/shacl#sparqlExpr", rfl⟩
+def shReifierShape    : WfIri := ⟨"http://www.w3.org/ns/shacl#reifierShape", rfl⟩
+def shReificationRequired : WfIri := ⟨"http://www.w3.org/ns/shacl#reificationRequired", rfl⟩
+def shReifierShapeCC  : WfIri := ⟨"http://www.w3.org/ns/shacl#ReifierShapeConstraintComponent", rfl⟩
+/-- RDF 1.2 `rdf:reifies`, linking a reifier to the triple term it reifies. -/
+def rdfReifies        : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
 
 def shSingleLineCC      : WfIri := ⟨"http://www.w3.org/ns/shacl#SingleLineConstraintComponent", rfl⟩
 def shMemberShapeCC     : WfIri := ⟨"http://www.w3.org/ns/shacl#MemberShapeConstraintComponent", rfl⟩

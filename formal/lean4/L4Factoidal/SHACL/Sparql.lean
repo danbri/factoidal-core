@@ -666,7 +666,7 @@ def customAskViolation (data : Graph) (focus v : Term) (s : Shape)
     if evalAsk emptyEnv { default := data, named := [] } q then .empty
     else { results := [{ focus := focus, path := s.path, value := some v,
                          sourceShape := s.id, constraint := cc,
-                         severity := s.severity, message := s.message }] }
+                         severity := s.severityOf cc, message := s.messageOf cc }] }
 
 def customSelectViolations (data : Graph) (focus : Term) (s : Shape)
     (cc : Constraint) (queryText : String) (params : List (VarName × Term))
@@ -681,12 +681,12 @@ def customSelectViolations (data : Graph) (focus : Term) (s : Shape)
           value := some ((mu.lookup "value").getD focus),
           sourceShape := s.id,
           constraint := cc,
-          severity := s.severity,
+          severity := s.severityOf cc,
           message := match msgTemplate with
                      | some tmpl => some (fillMessageTemplate tmpl params mu)
                      | none => match mu.lookup "message" with
                                | some (.literal l) => some l
-                               | _ => s.message } }
+                               | _ => s.messageOf cc } }
 
 def evalCustomComponent (data : Graph) (focus : Term) (s : Shape)
     (values : List Term) (cc : Constraint) : SparqlOutcome :=

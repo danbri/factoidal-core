@@ -530,6 +530,45 @@ def toA (e : Term) (_ : Option Term) : List Term :=
 
 #guard (runWith bnodeTargetDoc { evalExpr := toA }).results.map (·.focus) == [.iri (exIri "a")]
 
+/-! ### SHACL 1.2 constraint reifiers: sh:severity, sh:message, sh:deactivated
+
+§severity / §message / §deactivated: a reifier of a triple whose subject
+is the shape and whose predicate is a parameter sets that constraint's
+severity or message, or deactivates it. RDF 1.2 annotation syntax. -/
+
+def reifiedSeverityDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; " ++
+  "sh:datatype xsd:integer {| sh:severity sh:Warning ; sh:message \"not an integer\" |} ; " ++
+  "sh:nodeKind sh:IRI ."
+
+-- sh:datatype at sh:Warning with its message; sh:nodeKind keeps sh:Violation.
+#guard (run12 reifiedSeverityDoc).results.map (fun v => (constraintComponentIri v.constraint, v.severity)) ==
+         [(shDatatypeCC, .warning), (shNodeKindCC, .violation)]
+#guard (run12 reifiedSeverityDoc).results.map (·.message.map (·.val.lexicalForm)) ==
+         [some "not an integer", none]
+
+def reifiedDeactivatedDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:datatype xsd:boolean {| sh:deactivated true |} ; " ++
+  "sh:property ex:P {| sh:deactivated true |} ; sh:nodeKind sh:Literal . " ++
+  "ex:P sh:path ex:p ; sh:minCount 1 ."
+
+-- Only sh:nodeKind remains active.
+#guard components (run12 reifiedDeactivatedDoc) == [shNodeKindCC]
+
+/-! ### SHACL 1.2 §ReifierShapeConstraintComponent -/
+
+def reifierShapeDoc (required : String) : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b, ex:c ; sh:property ex:SP . " ++
+  "ex:SP sh:path ex:p ; sh:reifierShape ex:R ; sh:reificationRequired " ++ required ++ " . " ++
+  "ex:R a sh:NodeShape ; sh:property [ sh:path ex:src ; sh:minCount 1 ] . " ++
+  "ex:a ex:p 1 {| ex:src ex:x |} . ex:b ex:p 2 {| ex:other 3 |} . ex:c ex:p 3 ."
+
+-- ex:b's reifier lacks ex:src; with sh:reificationRequired, ex:c has no reifier.
+#guard (run12 (reifierShapeDoc "false")).results.map (·.focus) == [.iri (exIri "b")]
+#guard (run12 (reifierShapeDoc "true")).results.map (·.focus) ==
+         [.iri (exIri "b"), .iri (exIri "c")]
+#guard components (run12 (reifierShapeDoc "true")) == [shReifierShapeCC, shReifierShapeCC]
+
 /-! ### §3.6.1 sh:deactivated -/
 
 def deactivatedDoc : String :=

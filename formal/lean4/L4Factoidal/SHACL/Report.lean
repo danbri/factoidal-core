@@ -63,6 +63,7 @@ def constraintComponentIri : Constraint → WfIri
   | .inSet _ => shInCC
   | .uniqueValuesFor _ => shUniqueValuesForCC
   | .nodeByExpression _ => shNodeByExpressionCC
+  | .reifierShape _ _ => shReifierShapeCC
   -- SHACL-SPARQL: §5.1 results name sh:SPARQLConstraintComponent; §6
   -- results name the component itself.
   | .sparql _ _ _ _ => shSPARQLConstraintComponent
