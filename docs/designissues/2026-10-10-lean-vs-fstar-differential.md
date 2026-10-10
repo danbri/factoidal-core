@@ -45,16 +45,18 @@ this landing does not edit the F\* tree.
 - The F\* W3C runner (`bin/linux-x86_64/w3c_runner cast functions bindings
   construct service subquery exists property-path`) scores 181 pass, 0 fail
   (out of 181) on the suites that hold these items. It evaluates through the
-  reference evaluator only, and its row comparison is lenient (cause F2), so
-  it does not see causes F1 to F3.
+  reference evaluator only, and its row comparison is lenient (cause F2). So
+  it does not see F1 (hidden by F2) or F3 (on a path the runner does not
+  take).
 - The Lean comparator (`Harness/Compare.lean`, `rowMatch`) requires equal
   domains, so a Lean pass of a test means the Lean rows are the expected rows.
 
 The 2026-08-22 run recorded most of these items
 (`docs/designissues/2026-08-22-lean4-w3c-harness.md`, "Findings, with
 attribution", items 4 to 9). The three `graph-from-named` tests are new since
-then, and so is the routing of command-line SELECT and ASK through the store
-backend, which makes four of the items backend differences.
+then. On 2026-08-22 the `UUID()` item failed on both command-line paths; now
+the reference path answers it correctly, and only the store backend path
+fails it.
 
 ## Per-item table
 
