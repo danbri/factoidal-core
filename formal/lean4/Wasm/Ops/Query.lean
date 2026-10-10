@@ -36,6 +36,7 @@ import Wasm.Ops.ExtFns
 import Wasm.Ops.ServiceReg
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.NQuadsFast
+import Wasm.Ops.FromDataset
 
 namespace L4Wasm.Ops
 
@@ -196,16 +197,42 @@ def applyUpdateText (ds : Dataset) (updateText : String) :
   | .error e  => .error (toString e)
   | .ok ds'   => .ok ds'
 
+/-- The `updateDataset` envelope over an ALREADY-PARSED dataset. -/
+def updateParsedDataset (ds : Dataset) (updateText : String) : String :=
+  match applyUpdateText ds updateText with
+  | .error e  => errJson e
+  | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
+
 /-- `updateDataset(nquads, sparqlUpdate)`. RDF 1.2 read mode for the
 same reason as `queryDataset` above: the stateless pair must accept
 its own canonical N-Quads output. -/
 def updateDataset (nq updateText : String) : String :=
   match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds =>
-  match applyUpdateText ds updateText with
-  | .error e  => errJson e
-  | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
+  | .ok ds => updateParsedDataset ds updateText
+
+/-! ### The same ops over a dataset the caller parsed (`FromDataset.lean`)
+
+The command line's entries (issue 724). Each answers the envelope the text op
+answers on the dataset's canonical N-Quads, for every dataset. -/
+
+def queryDatasetOf (ds : Dataset) (sparql : String) : String :=
+  withOpsDataset .rdf12 ds (fun d => queryParsedDataset d sparql)
+
+theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) :
+    queryDatasetOf ds sparql = queryDataset (Dataset.toCanonicalNQuads ds) sparql := by
+  unfold queryDatasetOf queryDataset
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
+
+def updateDatasetOf (ds : Dataset) (updateText : String) : String :=
+  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText)
+
+theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) :
+    updateDatasetOf ds updateText = updateDataset (Dataset.toCanonicalNQuads ds) updateText := by
+  unfold updateDatasetOf updateDataset
+  rw [withOpsDataset_eq]
+  cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 /-! ### SPARQL 1.2 query mode (`queryDataset12`, `datasetQuery12`)
 

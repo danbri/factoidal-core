@@ -201,7 +201,7 @@ extern_lib libl4exthost pkg := do
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
              `Wasm.ExtHost, `Wasm.Ops.ExtFns,
-             `Wasm.Ops.Support, `Wasm.Ops.Parse, `Wasm.Ops.Query,
+             `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
