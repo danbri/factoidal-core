@@ -275,12 +275,15 @@ excludes it:
 | `queryQuadConstantPredicates?` | the entry's predicate is not one the pattern names | a triple pattern or path step has a variable predicate; a `{}` or empty BGP under a `GRAPH` clause; a non-`backendLocal` FILTER / OPTIONAL / BIND expression; a sub-SELECT, SERVICE, LATERAL or VALUES |
 | `queryGraphNames?` | the entry's manifest `graphSet` meets none of the names the pattern reads | `GRAPH ?v`; the query carries `FROM` / `FROM NAMED`; the same expression and pattern forms as above |
 
-Both are refused outright unless `Query.expressionsOutsidePatternExistsFree`
-holds, because section 18.6 evaluates an `EXISTS` in the projection, a
-GROUP BY key, a HAVING condition or an ORDER BY condition against the ACTIVE
-GRAPH, and neither collector reads those positions (the same guard
-`l4block-id-v3-query` carries,
-[issue 638](https://github.com/danbri/factoidal/issues/638)).
+Both are refused outright unless `Query.patternBoundedReads` holds. It is
+`Query.expressionsOutsidePatternExistsFree` and not a DESCRIBE form. Section
+18.6 evaluates an `EXISTS` in the projection, a GROUP BY key, a HAVING
+condition or an ORDER BY condition against the ACTIVE GRAPH, and neither
+collector reads those positions (the same guard `l4block-id-v3-query`
+carries, [issue 638](https://github.com/danbri/factoidal/issues/638)). A
+DESCRIBE answers every statement about the resources it names, which no
+pattern selects, so it always reads the complete generation
+(`docs/designissues/2026-10-10-sparql-describe.md` section 4).
 
 Two rules that look small and are not:
 

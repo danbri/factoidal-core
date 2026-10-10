@@ -87,18 +87,40 @@ graph: statements by subject, and `rdf:reifies` entries by the subject of
 their triple term. A node is marked seen when it is queued, so each node is
 expanded once. The fuel is `roots.length + g.length`: a queued node that is
 not a starting node is the blank-node object of some statement or the
-reifier of some `rdf:reifies` statement, and these are two disjoint classes
-of statements of `g`. Total by structural recursion on the fuel; no
-`partial`.
+reifier of some `rdf:reifies` statement, so at most one node per statement
+of `g` is queued after the starting nodes. Total by structural recursion on
+the fuel; no `partial`.
 
-Proved (`cbd_subset`, `cbd_root_triples`, `cbd_nil`, `evalDescribe_subset`,
-`evalDescribe_of_not_describe`, `evalDescribe_mem_of_iri`): the answer is a
-subgraph of the active default graph; every statement about a starting node
-is in it; only a DESCRIBE query describes. Not proved: that the fuel
-suffices to reach the fixpoint. The `#guard` cases in
-`ConciseBoundedDescription.lean` cover a chain of 300 blank nodes, a cycle
-and a reifier of a reifier. That the closure is exactly clauses 2 and 3 is
-checked by the guards, not by a theorem.
+Proved, in `RDF/ConciseBoundedDescription.lean` and
+`RDF/ConciseBoundedDescriptionTheorems.lean`:
+
+- `cbd_subset`: the description is a subgraph of the source graph.
+- `cbd_root_triples`: every statement about a starting node is in it.
+- `cbd_nil`: no starting node, no description.
+- `cbd_closed_bnode` (clause 2): a statement in the description whose
+  object is a blank node brings in every statement about that blank node.
+- `cbd_closed_reifier` (clause 3, RDF 1.2 reading): a statement in the
+  description brings in every `rdf:reifies` statement whose triple term is
+  that statement.
+- `cbd_least`: any set of nodes that holds the starting nodes and is closed
+  under the two clauses holds the subject of every statement in the
+  description. The description holds nothing the clauses do not reach.
+
+The two closure theorems need the walk to finish within its fuel. The proof
+is a potential function: the queue length plus the number of possible
+candidate nodes not yet seen (`cbdUnseen`, over `cbdUniverse`, which is no
+longer than the graph) does not rise at any step, falls by at least one for
+the node expanded, and starts at no more than `roots.length + g.length`.
+
+And in `SPARQL/QueryTheorems.lean`: `evalDescribe_subset` (the answer is a
+subgraph of the active default graph), `evalDescribe_of_not_describe` (only a
+DESCRIBE query describes) and `evalDescribe_mem_of_iri` (an IRI named in the
+clause has all its statements in the answer, whatever the WHERE clause
+matches).
+
+The `#guard` cases cover the resource rules and the fixtures: a chain of 300
+blank nodes, a cycle, an IRI object that is not followed, a reifier of a
+reifier, FROM and FROM NAMED.
 
 ## 4. Planners must read the whole store for DESCRIBE
 

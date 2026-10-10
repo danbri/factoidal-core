@@ -45,15 +45,19 @@ clause 3. Every triple of the result is a triple of the source graph
 subject is in the result (`cbd_root_triples`), and the result is the
 union of the descriptions of the starting nodes one by one, because the
 closure of a union of starting sets is the union of the closures.
+`ConciseBoundedDescriptionTheorems.lean` proves that `N` IS that closure:
+it is closed under both clauses (`cbd_closed_bnode`, `cbd_closed_reifier`)
+and inside every set that holds the starting nodes and is closed under
+them (`cbd_least`).
 
 `N` is computed by a worklist over a subject index and a reifier index,
 both built once in one pass over `g`. A node enters `N` when it is first
 found, and only then is it queued, so each node is expanded once. The
 fuel is `roots.length + g.length`: a queued node other than a starting
 node is the blank-node object of some statement or the reifier of some
-`rdf:reifies` statement, and these are two disjoint classes of triples
-of `g`, so at most `g.length` nodes are queued after the starting
-nodes. Total by structural recursion on the fuel; no `partial`.
+`rdf:reifies` statement, so at most one node per statement of `g` is
+queued after the starting nodes. The theorems file proves that this fuel
+is enough. Total by structural recursion on the fuel; no `partial`.
 
 No `sorry`, no `axiom`, no `native_decide`.
 -/
@@ -78,16 +82,25 @@ structure CbdIndex where
   bySubject : Std.HashMap Subject (List Triple)
   reifiers  : Std.HashMap Subject (List (Subject × WfIri × Term))
 
+/-- Add one statement to the by-subject index. -/
+def cbdSubjectStep (m : Std.HashMap Subject (List Triple)) (t : Triple) :
+    Std.HashMap Subject (List Triple) :=
+  m.insert t.s (t :: m.getD t.s [])
+
+/-- Add one statement to the reifier index when it is an `rdf:reifies`
+statement whose object is a triple term. -/
+def cbdReifierStep (m : Std.HashMap Subject (List (Subject × WfIri × Term))) (t : Triple) :
+    Std.HashMap Subject (List (Subject × WfIri × Term)) :=
+  if t.p == L4Factoidal.RDFS.rdfReifies then
+    match t.o with
+    | .tripleTerm s p o => m.insert s ((t.s, p, o) :: m.getD s [])
+    | _                 => m
+  else m
+
 /-- Index a graph. -/
 def Graph.cbdIndex (g : Graph) : CbdIndex :=
-  { bySubject := g.foldl (fun m t => m.insert t.s (t :: m.getD t.s [])) ∅
-  , reifiers :=
-      g.foldl (fun m t =>
-        if t.p == L4Factoidal.RDFS.rdfReifies then
-          match t.o with
-          | .tripleTerm s p o => m.insert s ((t.s, p, o) :: m.getD s [])
-          | _                 => m
-        else m) ∅ }
+  { bySubject := g.foldl cbdSubjectStep ∅
+  , reifiers  := g.foldl cbdReifierStep ∅ }
 
 /-- The reifiers of a statement: the subjects `r` of the triples
 `r rdf:reifies <<( s p o )>>` in the indexed graph whose triple term is
@@ -96,14 +109,18 @@ def CbdIndex.reifiersOf (idx : CbdIndex) (t : Triple) : List Subject :=
   (idx.reifiers.getD t.s []).filterMap fun (r, p, o) =>
     if p == t.p && o.eqb t.o then some r else none
 
+/-- The blank node an object names, if it is one. A triple term, an IRI
+and a literal name none. -/
+def cbdBnodeObject? : Term → Option Subject
+  | .bnode b => some (.bnode b)
+  | _        => none
+
 /-- The nodes one expansion of `s` makes further starting nodes: the
 blank-node objects of the statements with subject `s` (clause 2), and the
 reifiers of those statements (clause 3). -/
 def CbdIndex.candidates (idx : CbdIndex) (s : Subject) : List Subject :=
   (idx.bySubject.getD s []).flatMap fun t =>
-    (match t.o with
-     | .bnode b => [Subject.bnode b]
-     | _        => []) ++ idx.reifiersOf t
+    (cbdBnodeObject? t.o).toList ++ idx.reifiersOf t
 
 /-! ## The walk -/
 
@@ -121,8 +138,8 @@ def cbdWalk (idx : CbdIndex) : Nat → List Subject → Std.HashSet Subject →
   | 0,        _,         seen => seen
   | _ + 1,    [],        seen => seen
   | fuel + 1, s :: work, seen =>
-      let (work', seen') := cbdQueue (idx.candidates s) work seen
-      cbdWalk idx fuel work' seen'
+      let queued := cbdQueue (idx.candidates s) work seen
+      cbdWalk idx fuel queued.1 queued.2
 
 /-- The starting nodes, each once, as a queue and as a seen set. -/
 def cbdStart (roots : List Subject) : List Subject × Std.HashSet Subject :=
