@@ -667,8 +667,8 @@ parse_xpath() {
 
 parse_xslt() {
   local line nums ref nu er tot
-  line="$(pick_line '^xslt EXACT-or-WHITESPACE: [0-9]+ pass' last)"
-  if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'xslt EXACT-or-WHITESPACE:' line in the log"; return; fi
+  line="$(pick_line '^xslt CANONICAL-or-WHITESPACE: [0-9]+ pass' last)"
+  if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'xslt CANONICAL-or-WHITESPACE:' line in the log"; return; fi
   if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
   ref="$(line_int '^REFUSED: [0-9]+ cases')" || ref=""
   nu="$(line_int '^NOT UTF-8 or missing: [0-9]+ cases')" || nu=0
@@ -677,7 +677,7 @@ parse_xslt() {
   if [ -z "$ref" ] || [ -z "$tot" ]; then emit_status unparsed "$CUR_AREA" "" "REFUSED count or manifest total is missing" "$line"; return; fi
   set -- $nums
   emit_ok "$CUR_AREA" "" "$1" "$2" $((ref + nu + er)) "$tot" \
-    "pass includes whitespace-only differences; other = refused ($ref) + not UTF-8 ($nu) + unreadable ($er)" "$line"
+    "pass = equal under Canonical XML 1.0 (the suite's assert-xml) or differing only by whitespace; other = refused ($ref) + not UTF-8 ($nu) + unreadable ($er)" "$line"
 }
 
 parse_schematron() {

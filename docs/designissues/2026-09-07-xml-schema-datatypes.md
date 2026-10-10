@@ -192,6 +192,29 @@ something outside the datatype, and one union group.
    classes). An unreadable pattern makes its group vacuous, so every
    `anyURI` pattern group answered valid. anyURI 230 -> 255 pass.
 
+## Status — 2026-10-10, the five residues
+
+**XSD datatype instance tests: 18955 pass, 0 fail (out of 18955
+scored).** Not scored: structures 7052, mixed 0, schema-invalid 1,
+version-1.0 8, unreadable 139, not-simple 8, assertion 33,
+unreadable-pattern 105, nilled 3, value-constraint 53.
+
+None of the five failures was a Part 2 datatype rule. Each was a Part 1
+rule that decides WHICH type the element is validated against, and the
+reader (`XSD/SchemaReader.lean`) had reduced it away. All three rules
+are now in the library; the runner reads files and compares.
+
+| test | Part 1 rule | what the reader did |
+|---|---|---|
+| `targetNS00101m1_p` | §3.3.4.3 clause 1: the declaration has the element's EXPANDED name | matched `{ElemDecl/targetNSa}number` to the `{ElemDecl/targetNS}number` declaration by local name. Now `elementDecl?` checks `targetNamespace`, and the runner reads the schema document the instance names in `xsi:schemaLocation` (a §4.3.2 hint) when the group's schema does not declare the element. |
+| `Negative` (`typeDef00901m1`), `ST_name00101m1_n`, `simple053.n01.xml` | §3.3.4.3 clause 4 and §3.3.4.2: `xsi:type` names the governing type when it resolves and is validly substitutable (§3.16.6.3 Type Derivation OK (Simple)); an unresolved `xsi:type` makes the element invalid (G.1.12) | ignored `xsi:type`. Now `governing` resolves it (§3.17.6.2) and checks derivation, including `block`/`blockDefault` and the facet-free union clause 2.2.4. |
+| `vc_003_2` | §4.2.2 conditional inclusion | kept the first of two `test` declarations, the one `vc:maxVersion="1.0"` removes for a 1.1 processor. Now `conditionalInclusion` applies all six `vc:` attributes before reading. The kept declaration has an `assertion` facet, so the test is now counted under assertion, not scored. |
+
+Bucket moves: `vc_003_2` from scored to assertion; `vc006.n1.xml`
+(saxon VC) from structures to unreadable — its whole schema is removed
+by `vc:maxVersion="0.9"` on `<schema>`, so it no longer counts as an
+`include` schema, and the instance's element then has no declaration.
+
 ## Theorems
 
 `L4Factoidal/XSD/DatatypesTheorems.lean`, each closed by
