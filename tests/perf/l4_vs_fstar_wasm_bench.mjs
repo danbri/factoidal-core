@@ -68,12 +68,12 @@ const XSD = 'http://www.w3.org/2001/XMLSchema#';
 
 /** The rows and their three sizes (K people; 3K triples). */
 export const ROWS = {
-  'parse-turtle': [2000, 8000, 32000],
-  'parse-nquads': [2000, 8000, 32000],
-  'select-join': [2000, 8000, 32000],
-  'order-by': [2000, 8000, 32000],
-  'group-by': [2000, 8000, 32000],
-  'count-distinct': [2000, 8000, 32000],
+  'parse-turtle': [1000, 4000, 16000],
+  'parse-nquads': [1000, 4000, 16000],
+  'select-join': [1000, 4000, 16000],
+  'order-by': [1000, 4000, 16000],
+  'group-by': [1000, 4000, 16000],
+  'count-distinct': [1000, 4000, 16000],
   canonicalize: [500, 2000, 8000],
   shacl: [500, 2000, 8000],
 };
@@ -138,6 +138,12 @@ async function loadApi(engine) {
     ? 'docs/fstar-extracted/factoidal-npm-entry.wasm.js'
     : 'docs/fstar-extracted/factoidal-npm-entry.js');
   if (!existsSync(bundle)) throw new Error(`${bundle} is absent: run tools/fetch-builds.sh --set web`);
+  // The wasm_of_ocaml bundle finds its code file as
+  // dirname(require.main.filename) + '/factoidal-npm-entry.wasm.assets/...'.
+  // Under an ES module main `require.main` is undefined and the load throws
+  // (TypeError: reading 'filename'), so name the bundle itself as the main
+  // module; its assets directory is beside it.
+  if (!process.mainModule) process.mainModule = { filename: bundle };
   return buildApi({
     engineName: engine,
     loadEntry: async () => {
@@ -193,9 +199,11 @@ export async function runChild(engine, row, k) {
   } else if (row === 'shacl') {
     const data = await api.parse(turtleOf(k), { format: 'turtle' });
     const shapes = await api.parse(SHAPES, { format: 'turtle' });
+    // Person i violates sh:maxInclusive 76 when i mod 60 = 59.
+    const conforms = k < 60;
     op = async () => {
       const r = await api.shaclValidate(data, shapes);
-      if (r.conforms !== false) throw new Error('shacl: expected conforms false');
+      if (r.conforms !== conforms) throw new Error(`shacl: conforms ${r.conforms}, expected ${conforms}`);
     };
   } else {
     throw new Error(`unknown row '${row}'`);
