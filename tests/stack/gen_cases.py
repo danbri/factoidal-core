@@ -38,7 +38,7 @@ def args(name, *values):
 
 
 # ---------------------------------------------------------------- RDF/XML
-# 10,000 sequential entity references in one attribute value.  Sequential,
+# 10,000 sequential entity references in one element's content.  Sequential,
 # not nested: the depth this can reach is set by the DOCUMENT, and the
 # XML declaration itself is legal.
 N_ENT = int(os.environ.get("STACK_ENTITIES", "10000"))
@@ -53,6 +53,30 @@ write("xml-entities.rdf",
       '    <ex:p>%s</ex:p>\n'
       '  </rdf:Description>\n'
       '</rdf:RDF>\n' % (ents, refs))
+
+# The same references in one attribute value (the scan of a start tag), and
+# in the literals of the DTD: an entity value of 10,000 character references
+# and an attribute default of 10,000 entity references.  Until 2026-10-10 the
+# attribute case overflowed where the content case did (issue 673); the DTD
+# case ran.
+write("xml-entities-attr.rdf",
+      '<?xml version="1.0"?>\n'
+      '<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+      '         xmlns:ex="http://example.org/">\n'
+      '  <rdf:Description rdf:about="http://example.org/s" ex:p="%s"/>\n'
+      '</rdf:RDF>\n' % (ents, refs))
+charrefs = "".join("&#%d;" % (120 + i % 3) for i in range(N_ENT))
+write("xml-entities-dtd.rdf",
+      '<?xml version="1.0"?>\n'
+      '<!DOCTYPE rdf:RDF [\n%s\n<!ENTITY big "%s">\n'
+      '<!ATTLIST rdf:Description ex:q CDATA "%s">\n]>\n'
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+      '         xmlns:ex="http://example.org/">\n'
+      '  <rdf:Description rdf:about="http://example.org/s">\n'
+      '    <ex:p>&big;</ex:p>\n'
+      '  </rdf:Description>\n'
+      '</rdf:RDF>\n' % (ents, charrefs, refs))
 
 # ------------------------------------------------------------------ Turtle
 # One literal of 1 MB on one line.
@@ -153,6 +177,10 @@ args("manifest-args.json", man.hex())
 
 # ------------------------------------------------------ dispatch arg files
 args("args-xml.json", open(os.path.join(OUT, "xml-entities.rdf")).read(),
+     "rdfxml", "http://example.org/")
+args("args-xml-attr.json", open(os.path.join(OUT, "xml-entities-attr.rdf")).read(),
+     "rdfxml", "http://example.org/")
+args("args-xml-dtd.json", open(os.path.join(OUT, "xml-entities-dtd.rdf")).read(),
      "rdfxml", "http://example.org/")
 args("args-turtle-literal.json",
      open(os.path.join(OUT, "turtle-literal.ttl")).read(), "turtle",

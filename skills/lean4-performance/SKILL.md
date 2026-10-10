@@ -340,6 +340,19 @@ take those. Use `csimp`.
   `normalizeLineEndings`, the section 2.11 line-ending pre-pass, which walks
   every character of the document before parsing starts. The wasm RDF/XML
   parser's ceiling was about 7,000 characters of any input.
+  That repair did not close the issue, and "not entity count" was only half
+  right: the first recursion hid a second one. `XML.scanRefs`, the scan of a
+  text run or a start tag for references, combined each reference's flags
+  after its recursive call returned, one native frame per reference. The
+  native canary of 2026-10-10 (`LEAN_STACK_SIZE_KB=512`) and `gdb` found it:
+  10,000 sequential references aborted natively at 512 KB, and 5,000 threw
+  under `node --stack-size=512`. The tail-recursion audit had it in class
+  `counter` (its `Chars` argument is an `abbrev` of `Array Char`, which the
+  textual classifier does not resolve), and `--gate` does not check that
+  class. Repaired the same day with an accumulator loop, `scanRefsLoop`, and a
+  `csimp` theorem (https://github.com/danbri/factoidal/issues/673). After a
+  repair of one recursion, run the bisection again: a second one can sit
+  below the first.
 * The 36,106-entry manifest took 322 s natively. That number did NOT come from
   the recursion: `/usr/bin/sample` put every sampled frame in
   `ShardManifest.valid` -> `uniqueArtifactKeys` -> `List.eraseDupsBy`, a

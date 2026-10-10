@@ -1198,6 +1198,111 @@ def scanRefs (ents : EntityTable) (s : Chars) (start stop : Nat) : Nat → RefFl
         | .err _ _ => scanRefs ents s (start + 1) stop fuel
     else scanRefs ents s (start + 1) stop fuel
 
+/-- `scanRefs` as a loop. The flags and the undeclared bit of the
+references already read are carried in `fl` and `u`, so every self-call
+is a tail call and a run of sequential references costs no stack.
+`scanRefs` above reads each reference AFTER its recursive call returns,
+one native frame per reference: 10,000 sequential references overflowed
+a 512 KB stack natively and Node's default stack in wasm
+(https://github.com/danbri/factoidal/issues/673).
+
+The flags are disjunctions, so reading them left to right into an
+accumulator gives the same result (`scanRefsLoop_eq`). A reference to a
+general entity still calls `entityHasWsCharRef`, whose own depth is the
+NESTING of entity declarations (an entity whose replacement text
+references another), bounded by its fuel `ents.defs.length + 1`: the
+number of declared entities, not the number of references. The same bound
+holds for the other recursions on this path, the nested dives of
+`expandEntityValue` and the markup re-parse in `parseChildren`: one frame
+per level of nesting, at most the number of declared entities (WFC: No
+Recursion rejects a cycle). Measured depths are in
+`skills/danbri-function-precrime-checkers/SKILL.md`. -/
+def scanRefsLoop (ents : EntityTable) (s : Chars) (start stop : Nat)
+    (fl : RefFlags) (u : Bool) : Nat → RefFlags × Bool
+  | 0 => (fl, u)
+  | fuel + 1 =>
+    if start ≥ stop || start ≥ s.size then (fl, u)
+    else if charAt s start == '&' then
+      let p := start + 1
+      if charAt s p == '#' then
+        let hex := charAt s (p + 1) == 'x'
+        match parseRefDigits (if hex then isHexDigit else isDecDigit) s
+                (if hex then p + 2 else p + 1) [] (s.size + 1) with
+        | .ok digits j =>
+            let cp := if hex then hexValue digits else decValue digits
+            scanRefsLoop ents s j stop
+              { fl with wsCharRef := fl.wsCharRef || (cp == 0x20 || cp == 0x9 || cp == 0xA || cp == 0xD) }
+              u fuel
+        | .err _ _ => scanRefsLoop ents s (start + 1) stop fl u fuel
+      else
+        match parseName s p with
+        | .ok n j =>
+            if j < s.size && charAt s j == ';' then
+              let undecl := !isPredefinedEntity n && (lookupEntityDef n ents).isNone
+              scanRefsLoop ents s (j + 1) stop
+                { entityRef := true,
+                  wsCharRef := fl.wsCharRef || (!isPredefinedEntity n && entityHasWsCharRef ents n (ents.defs.length + 1)) }
+                (u || undecl) fuel
+            else scanRefsLoop ents s (start + 1) stop fl u fuel
+        | .err _ _ => scanRefsLoop ents s (start + 1) stop fl u fuel
+    else scanRefsLoop ents s (start + 1) stop fl u fuel
+
+/-- The loop returns the flags it was given merged with what `scanRefs`
+reads from the same range. -/
+theorem scanRefsLoop_eq (ents : EntityTable) (s : Chars) (stop : Nat) :
+    ∀ (fuel start : Nat) (fl : RefFlags) (u : Bool),
+      scanRefsLoop ents s start stop fl u fuel =
+        (fl.merge (scanRefs ents s start stop fuel).1, u || (scanRefs ents s start stop fuel).2) := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro start fl u
+      cases fl
+      simp [scanRefsLoop, scanRefs, RefFlags.merge]
+  | succ fuel ih =>
+      intro start fl u
+      simp only [scanRefsLoop, scanRefs]
+      split
+      · cases fl; simp [RefFlags.merge]
+      · split
+        · split
+          · split
+            · rw [ih]
+              cases fl
+              simp only [RefFlags.merge]
+              cases (scanRefs ents s _ stop fuel).1
+              simp [Bool.or_assoc, Bool.or_comm, Bool.or_left_comm]
+            · rw [ih]
+          · split
+            · split
+              · rw [ih]
+                cases fl
+                simp only [RefFlags.merge]
+                cases (scanRefs ents s _ stop fuel).1
+                simp [Bool.or_assoc, Bool.or_comm, Bool.or_left_comm]
+              · rw [ih]
+            · rw [ih]
+        · rw [ih]
+
+/-- `scanRefs` through the loop, from no flags. -/
+def scanRefsFast (ents : EntityTable) (s : Chars) (start stop fuel : Nat) : RefFlags × Bool :=
+  scanRefsLoop ents s start stop {} false fuel
+
+/-- The compiler runs `scanRefsFast` wherever `scanRefs` is called; the
+two are the same function. The two call sites are in the `mutual` block
+below. A `csimp` theorem cannot replace a call from one member of a
+`mutual` block to another, because the block is compiled before the
+theorem can be stated; `scanRefs` is not a member, and this theorem comes
+before the block, so it applies: the emitted C of `parseChildren` and
+`parseElement` calls `scanRefsFast`, and `scanRefsLoop` has no self-call
+that is not a `goto _start` (checked 2026-10-10 in
+`.lake/build/ir/L4Factoidal/XML/Parser.c`). -/
+@[csimp] theorem scanRefs_eq_scanRefsFast : @scanRefs = @scanRefsFast := by
+  funext ents s start stop fuel
+  simp only [scanRefsFast, scanRefsLoop_eq]
+  rcases h : scanRefs ents s start stop fuel with ⟨⟨e, w⟩, b⟩
+  simp [RefFlags.merge]
+
 /-- The attributes whose value differs between the CDATA-normalised form
 and the form after §3.3.3's type-dependent step. -/
 def changedAttrs (before after : List Attribute) : List String :=

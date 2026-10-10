@@ -145,7 +145,8 @@ to 27.3 MB.
   `skills/fstar-module-style/SKILL.md` (extraction is not stack-safe; the
   OCaml scan).
 - War stories: issues 670 (manifest decode and the quadratic dedup), 673 (XML
-  line-ending pre-pass), 674 (F\* SHACL segfault), 658 (the wasm bignum leak).
+  line-ending pre-pass, then the reference scan `scanRefs`), 674 (F\* SHACL
+  segfault), 658 (the wasm bignum leak).
 
 ## Two corrections paid for on 2026-09-08
 
@@ -168,6 +169,14 @@ to 27.3 MB.
   are mutually recursive. The cure is accumulator functions with an equality
   theorem to the readable spec (`JSON/Serialize.lean` `toStringItemsAcc`), not
   csimp. Check the emitted C, never assume csimp took.
+  Precisely (measured 2026-10-10, issue 673): csimp cannot replace a call from
+  one MEMBER of a `mutual` block to another, because the block is compiled
+  before a theorem about its members can be stated. A function that is NOT a
+  member, defined and csimp-replaced BEFORE the block, is replaced at its
+  call sites inside the block: `XML.scanRefs` is called from the `mutual`
+  pair `parseChildren`/`parseElement`, and after
+  `@[csimp] scanRefs_eq_scanRefsFast` the emitted C of both calls
+  `scanRefsFast`.
 - **A still-broken shortfall is an expected-failure in the suite, not a red
   gate and not a silent skip** (https://github.com/danbri/factoidal/issues/678, turtle-collection): the case passes the
   suite WHILE it overflows and turns the suite red if it ever stops, so the fix
@@ -393,3 +402,71 @@ pattern for this shape:
   WebAssembly under that limit (it reserves the wasm memory's address space
   in advance); size a wasm probe from the native peak first
   (`/usr/bin/time -v`).
+
+## Sequential references read by a loop (https://github.com/danbri/factoidal/issues/673, 2026-10-10)
+
+The `xml-entities` case that the repaired canary found (above) is repaired.
+`XML.scanRefs` stays as the readable definition; `XML.scanRefsLoop` carries
+the flags of the references already read in its arguments, so every
+self-call is a `goto _start` in the emitted C (7 of them, no real
+self-call), and `@[csimp] scanRefs_eq_scanRefsFast` (proved through
+`scanRefsLoop_eq`) makes the compiler run it at both call sites, which are
+inside the `mutual` pair `parseChildren`/`parseElement` (see the csimp note
+above). Outputs are byte-identical: native `parseToDatasetJson` on 20
+reference documents (10 shapes at 1,000 and 10,000 references), and the
+scoreboard rows `l4xmlconf` 1861 pass, 0 fail (out of 1861 scored),
+`l4rdfxml-probe`, `l4xslt`, `l4mathml`, `l4schematron`, `l4xsd-datatypes`
+and `l4w3c` RDF 1.1, all 14 rows the same before and after.
+
+Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0
+(`tests/stack/run.sh --canary`, 512 KB):
+
+| run | native canary | wasm canary (`--stack-size=512`) | wasm (Node default) | suite |
+|---|---|---|---|---|
+| before (core 4b5892b0) | `xml-entities` overflows (expected failure, 673) | overflows (expected failure) | overflows (expected failure) | 29 pass, 0 fail (out of 29) |
+| after (scanRefsLoop) | `xml-entities` runs | runs, 89 ms | runs, 155 ms | 37 pass, 0 fail (out of 37) |
+
+The 37 include two new cases, `xml-entities-attr` (10,000 references in one
+attribute value) and `xml-entities-dtd` (an entity value of 10,000
+character references and an attribute default of 10,000 entity
+references), in each of the four routes, and the native control. The
+remaining expected failures are the three `turtle-collection` rows
+(https://github.com/danbri/factoidal/issues/678).
+
+Thresholds of the reference run, measured with ten document shapes (general,
+decimal, hexadecimal and `&amp;` references in content; general and decimal
+references in an attribute value; DTD entity values and an ATTLIST default):
+
+| shape | before, native 512 KB | before, wasm `--stack-size=512` | after, both |
+|---|---|---|---|
+| content and attribute value | 5,000 runs, 10,000 overflows | 1,000 runs, 5,000 overflows | 100,000 runs |
+| DTD entity value, ATTLIST default | 10,000 runs | 10,000 runs | 100,000 runs |
+
+Natively at `LEAN_STACK_SIZE_KB=256`, 400,000 references ran in 768 ms
+(content) and 815 ms (attribute value).
+
+What stays recursive, with its bound: the NESTED expansion of an entity
+whose replacement text references another entity (`expandEntityValue` for
+text and attribute values, the markup re-parse of `parseChildren`) costs
+one frame per level. The depth is at most the number of declared general
+entities, because WFC: No Recursion rejects a cycle (a self-referencing
+entity is rejected at 512 KB without overflow). Measured 2026-10-10 with a
+chain `e0` -> `e1` -> ... -> `eK`: natively at 512 KB, text and attribute
+chains of 3,000 run and 10,000 overflow; a markup chain (`<b>&eN;</b>`) of
+1,000 runs and 3,000 overflows. In wasm, a text chain of 3,000 runs under
+`--stack-size=512`; a markup chain of 1,000 overflows there and runs on the
+default Node stack, and 3,000 overflows on both.
+
+Two traps of the day:
+
+- **`prlimit --as` stops the wasm routes.** Under `prlimit --as=8000000000`
+  every wasm case failed with `WebAssembly.instantiate(): Out of memory:
+  Cannot allocate Wasm memory for new instance`: V8 reserves the wasm
+  memory's address range (with guard regions) up front, so an address-space
+  cap refuses it while the resident memory is small. Cap native runs with
+  `prlimit --as`; run the Node routes without it.
+- **The audit had the old shape in class `counter`**, which `--gate` does not
+  check: the signature names `Chars`, an `abbrev` of `Array Char`, which the
+  textual length match does not resolve, and the `Nat` fuel then decides the
+  class. The fuel was the length of the scanned range, so the depth was the
+  input length (https://github.com/danbri/factoidal/issues/750).

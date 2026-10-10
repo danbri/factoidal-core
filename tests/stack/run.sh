@@ -260,10 +260,12 @@ fi
 # native canary, the wasm canary and the wasm route. The native route runs on
 # the 1 GB default stack and has no entries. (`turtle-collection` was listed
 # for https://github.com/danbri/factoidal/issues/678 until 2026-10-10, when
-# the Turtle collection reader became a loop; it runs in all three routes.)
+# the Turtle collection reader became a loop; it runs in all three routes.
+# `xml-entities` was listed for https://github.com/danbri/factoidal/issues/673
+# until the same day, when the XML reference scan became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
-    xml-entities)      echo "https://github.com/danbri/factoidal/issues/673" ;;
+    # No case is listed today.
   esac
 }
 
@@ -347,6 +349,8 @@ wasm_missing() { # wasm_missing <route>
 
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
+  "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
+  "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"

@@ -261,19 +261,21 @@ test('adversarial: a huge run of unmatched "<" fails cleanly and promptly', asyn
   assert.equal(result.ok, false)
 })
 
-test('adversarial: 1,000 chained "&amp;" entities in a stanza body parse promptly', async (t) => {
+test('adversarial: 10,000 chained "&amp;" entities in a stanza body parse promptly', async (t) => {
   if (await skipUnlessAvailable(t)) return
   const eng = await engine()
-  // NOT a round number picked for looks: 1,000 is the last count confirmed
-  // to pass. Bisected 2026-09-07: 500 and 1,000 pass; 2,000 and 5,000 throw
-  // "Maximum call stack size exceeded" from the SHARED L4Factoidal.XML
-  // entity-expansion recursion (not code this package owns), which is
-  // apparently not tail-recursive over a run of sequential entity
-  // references. Real finding, not swept under the rug — see
-  // formal/lean4/L4Factoidal/XMPP/README.md's "known upstream limits" note.
-  const body = '&amp;'.repeat(1000)
+  // Until 2026-10-10 this case was pinned at 1,000: bisected 2026-09-07,
+  // 2,000 and 5,000 threw "Maximum call stack size exceeded" from the
+  // SHARED L4Factoidal.XML parser, whose reference scan (`scanRefs`) used
+  // one stack frame per reference
+  // (https://github.com/danbri/factoidal/issues/673). The scan is a loop
+  // now (`scanRefsLoop`, proved equal), so 10,000 references run in the
+  // default Node stack. The payload is rendered back to XML, so the 10,000
+  // decoded "&" characters come back escaped, one "&amp;" each.
+  const body = '&amp;'.repeat(10000)
   const result = await parseStanza(`<message><body>${body}</body></message>`, { engine: eng })
   assert.equal(result.ok, true)
+  assert.equal(result.value.payloadXml, `<body>${body}</body>`)
 })
 
 // Expected failures (owner rule, 2026-09-07): a stated shortfall is a

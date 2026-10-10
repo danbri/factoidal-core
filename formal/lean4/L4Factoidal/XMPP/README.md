@@ -380,14 +380,23 @@ them.
   `npm/factoidal/xmpp/README.md`. 24/24 unit tests pass
   (`npm/factoidal/test/xmpp.test.mjs`), run against the real rebuilt
   wasm, not mocked.
-- **Known upstream limit, found via the JS test suite**: `parseStanza`/
-  `parseStreamHeader` delegate to the shared `L4Factoidal.XML` parser
-  (correctly — see "XML" section above), whose entity-expansion
-  handling is not tail-recursive over a run of sequential entity
-  references: ~2,000+ consecutive entities in one text node overflows
-  the wasm call stack. Not this module's bug, not silently worked
-  around — see `npm/factoidal/xmpp/README.md`'s "Known upstream limit"
-  for the bisected threshold. Worth a `L4Factoidal.XML` issue; not filed
-  yet.
+- **Upstream limit found via the JS test suite, repaired 2026-10-10**:
+  `parseStanza`/`parseStreamHeader` delegate to the shared
+  `L4Factoidal.XML` parser (see "XML" section above). Its scan of a text
+  run or a start tag for references, `XML.scanRefs`, used one stack frame
+  per reference, so about 2,000 consecutive references in one text node
+  overflowed the wasm call stack (bisected 2026-09-07). Issue:
+  https://github.com/danbri/factoidal/issues/673. The scan is now a loop,
+  `XML.scanRefsLoop`, with a `csimp` theorem that it equals `scanRefs`.
+  Measured 2026-10-10 (linux x86_64, Lean 4.33.1, Node 22): 100,000
+  sequential references in content or in an attribute value parse under a
+  512 KB native stack (`LEAN_STACK_SIZE_KB=512`) and under
+  `node --stack-size=512` in wasm; before the repair 10,000 overflowed
+  natively and 5,000 in wasm. The adversarial case of
+  `npm/factoidal/test/xmpp.test.mjs` now parses a body of 10,000 `&amp;`
+  references and checks the payload. The nesting depth of entity
+  expansion (an entity whose replacement text references another) still
+  costs one frame per level; it is bounded by the number of declared
+  entities, because a cycle is rejected (WFC: No Recursion).
 - Committed to git in PR #661 (Jid/Wire/Core/Sasl/Gc3 landing) and this
   same-day wasm/JS follow-up.
