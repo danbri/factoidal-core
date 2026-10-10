@@ -451,6 +451,21 @@ termination_by fuel
 
 end
 
+/-- The empty node-map state: only the `"@default"` graph exists. -/
+def NmState.initial : NmState := { graphs := [("@default", [])], idmap := [], ctr := 0 }
+
+/-- How many nodes the state holds, summed over every graph. -/
+def NmState.nodeCount (st : NmState) : Nat :=
+  st.graphs.foldl (fun a g => a + g.2.length) 0
+
+/-- API §7.1 Node Map Generation for a whole EXPANDED document: the
+entry point the flattening and framing algorithms share. The fuel is
+derived from the document size, as in `flattenExpanded`. -/
+def generateNodeMap (expanded : Json) : Res NmState :=
+  match nmg NmState.initial expanded "@default" none none none (16 * Json.size expanded + 128) with
+  | .error e => .error e
+  | .ok (st, _) => .ok st
+
 /-! ## The Flattening Algorithm — API §6.1 -/
 
 /-- Emit a sorted graph's nodes, dropping any that consist only of `@id`
@@ -479,11 +494,9 @@ def flFoldNamed : NmGraph → List (String × NmGraph) → NmGraph
 the ordered node array the flatten suite's context-free fixtures
 expect. -/
 def flattenExpanded (expanded : Json) : Res (List Json) :=
-  let fuel := 16 * Json.size expanded + 128
-  let st0 : NmState := { graphs := [("@default", [])], idmap := [], ctr := 0 }
-  match nmg st0 expanded "@default" none none none fuel with
+  match generateNodeMap expanded with
   | .error e => .error e
-  | .ok (st, _) =>
+  | .ok st =>
     let dflt := stGraph st "@default"
     let named := flSortByKey (flFilterNamed st.graphs)
     let dflt1 := flFoldNamed dflt named

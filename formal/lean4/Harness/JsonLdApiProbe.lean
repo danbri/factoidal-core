@@ -56,6 +56,7 @@ import L4Factoidal.JSONLD.FromRdf
 import L4Factoidal.JSONLD.Compact
 import L4Factoidal.JSONLD.Flatten
 import L4Factoidal.JSONLD.Html
+import Harness.JsonLdScale
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.RDF.Canonical
@@ -534,6 +535,10 @@ def runManifest (dir cacheDir : System.FilePath) (root : System.FilePath)
 /-! ## Main -/
 
 def main (args : List String) : IO UInt32 := do
+  -- `--scale [base [reps]]`: the scaling measurement and assertion of
+  -- Harness/JsonLdScale.lean instead of the manifests.
+  if args.head? == some "--scale" then
+    return (← JsonLdScale.main args.tail)
   let dir : System.FilePath := match args with
     | d :: _ => d
     | []     => defaultTestsDir

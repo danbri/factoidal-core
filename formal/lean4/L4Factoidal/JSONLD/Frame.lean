@@ -1023,11 +1023,9 @@ def frameDocumentWith (loader : Loader) (input frame : String) (opts : FrameOpti
         | .ok ac =>
           let expanded := lowerLanguages expandedRaw (Json.size expandedRaw + 8)
           let merged := !frameNamesGraph ac frameRoot
-          let nmFuel := 16 * Json.size expanded + 128
-          let st0 : NmState := { graphs := [("@default", [])], idmap := [], ctr := 0 }
-          match nmg st0 expanded "@default" none none none nmFuel with
+          match generateNodeMap expanded with
           | .error e => .error e
-          | .ok (nst, _) =>
+          | .ok nst =>
             let graphs := if merged then nst.graphs ++ [("@merged", mergeNodeMaps nst.graphs)]
                           else nst.graphs
             let root := if merged then "@merged" else "@default"
