@@ -482,7 +482,7 @@ private def noLegacySubject : Entry → ArtifactRef → Id Bool := fun _ _ => pu
     An SBM10 generation goes through the SAME `GenerationVerify` functions the
     native activation calls, in the same order: `verifyFullEntries`,
     `verifyBlobArtifacts` over the manifest blob table,
-    `verifyIndexSidecars` (which leaves LGI2 and GBI1 to the entry check at
+    `verifyIndexSidecars` (which leaves LGI4 and GBI1 to the entry check at
     version 10, so the block is decoded once), and `verifyQuadV5Entries`,
     which recomputes each entry's zone maps, blob reference list and two index
     sidecars from one decode of its IBK5 block. The region must therefore
@@ -523,6 +523,13 @@ def activateVerify (manifestHex windowsJson : String) (blob : ByteArray) : Strin
         none
     match readable with
     | none =>
+        /- A literal-index sidecar that starts with the magic of LGI1 or LGI2
+           makes every quad check fail for one reason. Say it, as the native
+           activator does. -/
+        match Id.run (L4Factoidal.Storage.GenerationVerify.retiredLiteralSidecar? read
+            manifest.entries) with
+        | some name => throw (L4Factoidal.Storage.LiteralGramIndexWire.retiredMessage name)
+        | none => pure ()
         if isIbk5Layout manifest.layout then
           throw L4Factoidal.Storage.GenerationVerify.quadV5EntryFailure
         else if isIbk4Layout manifest.layout then throw L4Factoidal.Storage.GenerationVerify.quadEntryFailure

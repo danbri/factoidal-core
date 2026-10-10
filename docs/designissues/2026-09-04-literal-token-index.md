@@ -1,8 +1,17 @@
-# A literal search index for block storage (LGI1)
+# A literal search index for block storage (LGI1, now LGI3 and LGI4)
 
 Date: 2026-09-04.
 Owner steer, 2026-09-04, verbatim: "the OWL thing is important but scaling
 our database is much more important."
+
+> Naming note, 2026-10-10. The first layout is named LGI3 and the second
+> (LGI2 in the wire-version-10 record) is named LGI4 from this date. LGI1 and
+> LGI2 are retired: the gram fold changed from ASCII-only to Unicode, so a file
+> written under the old fold is not a superset of the rows the Unicode `LCASE`
+> keeps. The sections below describe the design as written on 2026-09-04 and
+> use its names (`.lgi1`, `LGI1`, the label `quad-ibk4-ptd1-lgi1-merkle-v0`);
+> read them as LGI3, `.lgi3` and `quad-ibk4-ptd1-lgi3-merkle-v0`. Record of the
+> rename: [LGI3 and LGI4](2026-10-10-literal-index-lgi3.md).
 
 ## 1. The problem, measured
 
@@ -130,7 +139,7 @@ Falls back to the scan, silently and correctly:
 | `!CONTAINS(...)` | the complement is not a superset of anything useful |
 | `CONTAINS(...)` under `\|\|` | one disjunct being false does not exclude the row |
 | a filter on a variable the pattern does not bind in object position | no posting list applies |
-| the block has no `.lgi1` sidecar | fall back, so old generations keep working |
+| the block has no `.lgi1` sidecar | fall back, so generations without the sidecar (SBM7 and IBK3) keep working. A sidecar named LGI1 or LGI2 is not "no sidecar": since 2026-10-10 it refuses the open |
 
 The fallback is always correct, exactly as `StoreFastPath`'s detectors are:
 matching a shape the index cannot serve is the only failure mode, so every

@@ -1,5 +1,10 @@
 # The store handle's cap is retained bytes, and where 128 MiB comes from
 
+> Naming note, 2026-10-10. The literal index is named LGI3 (the first layout)
+> and LGI4 (the second) from this date; LGI1 and LGI2 are retired because the
+> gram fold changed. The text below uses the names of the date it was written.
+> Record: [LGI3 and LGI4](2026-10-10-literal-index-lgi3.md).
+
 Issue: <https://github.com/danbri/factoidal/issues/657>.
 Caps as first recorded: <https://github.com/danbri/factoidal/issues/648>.
 Code: [`formal/lean4/Wasm/Ops/StoreHandles.lean`](../../formal/lean4/Wasm/Ops/StoreHandles.lean)

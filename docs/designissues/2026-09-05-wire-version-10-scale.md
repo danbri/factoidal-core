@@ -1,5 +1,10 @@
 # Wire version 10: the format that scales past the source
 
+> Naming note, 2026-10-10. The literal index is named LGI3 (the first layout)
+> and LGI4 (the second) from this date; LGI1 and LGI2 are retired because the
+> gram fold changed. The text below uses the names of the date it was written.
+> Record: [LGI3 and LGI4](2026-10-10-literal-index-lgi3.md).
+
 2026-09-05. Owner, 2026-09-05, verbatim: "we are developing the wire and
 file formats specifically to scale. It would be madness to freeze a
 database with zero users at a format that doesn't scale and nobody uses.

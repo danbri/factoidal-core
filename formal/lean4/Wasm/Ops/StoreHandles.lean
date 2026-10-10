@@ -370,7 +370,7 @@ the rows the Unicode `LCASE` keeps. The open says so and says to re-pack.
 A manifest packed under the retired fold is already refused at its layout label
 (`ShardManifest.retiredLiteralIndexLayouts`). This is the second line, for a
 manifest that names a current label over a retired sidecar. -/
-private def refuseRetiredLiteral (op : String) (ref? : Option ArtifactRef)
+def refuseRetiredLiteral (op : String) (ref? : Option ArtifactRef)
     (bytes? : Option ByteArray) : Except String Unit :=
   match ref?, bytes?.bind L4Factoidal.Storage.LiteralGramIndexWire.retiredName? with
   | some ref, some name =>
@@ -885,5 +885,65 @@ private def capEntry (bytes : Nat) : Entry :=
 -- second handle over the same set is not.
 #guard (checkHandleBytes 0 [capEntry 103341302]).toOption.isSome
 #guard (checkHandleBytes 103341302 [capEntry 103341302]).toOption.isNone
+
+/-! ## A retired literal index refuses the open (2026-10-10)
+
+`retiredCurrent` is the LGI3 file of a one-literal dictionary. `retiredBytes` is
+the same file with the magic and version byte of LGI1, which is what a packer
+that folded with the ASCII-only fold wrote. -/
+
+private def retiredCurrent : ByteArray :=
+  (L4Factoidal.Storage.LiteralGramIndexWire.encode?
+    { targetIBKSha256 := ByteArray.mk (Array.replicate 32 0)
+      index := L4Factoidal.Storage.LiteralGramIndex.build
+        #[.literal (Literal.string "\u00C9cole")] }).getD ByteArray.empty
+
+private def retiredBytes : ByteArray :=
+  ByteArray.mk (#[0x4C, 0x47, 0x49, 0x31, 1] ++ retiredCurrent.data.extract 5 retiredCurrent.size)
+
+private def retiredRef (bytes : ByteArray) : ArtifactRef :=
+  { key := { value := "predicate-0.ibk4.lgi3" }, bytes := bytes.size,
+    sha256 := L4Factoidal.Crypto.sha256 bytes }
+
+private def retiredEntry (bytes : ByteArray) : Entry :=
+  { predicate := ⟨"http://example.org/p", by decide⟩
+  , artifact := { key := ⟨"predicate-0.ibk4"⟩, bytes := 1, sha256 := ByteArray.empty,
+                  chunked := none }
+  , literalIndex := some (retiredRef bytes)
+  , rows := 1
+  , ordinal := 0 }
+
+private def retiredSources (bytes : ByteArray) : List (String × ArtifactSource) :=
+  [("predicate-0.ibk4.lgi3", .hex (hexOfBytes bytes))]
+
+-- The fixture is what it claims to be.
+#guard retiredCurrent.size > 5
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.retiredName? retiredCurrent).isNone
+#guard L4Factoidal.Storage.LiteralGramIndexWire.retiredName? retiredBytes == some "LGI1"
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.decode? retiredCurrent).isSome
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.decode? retiredBytes).isNone
+
+-- The retired sidecar refuses the open and names the cause, the key and the remedy.
+#guard match refuseRetiredLiteral "storeOpen" (some (retiredRef retiredBytes)) (some retiredBytes) with
+  | .error e => e.startsWith "storeOpen: artifact 'predicate-0.ibk4.lgi3': literal index LGI1"
+                && e.contains "ASCII-only fold" && e.contains "Re-pack"
+  | .ok _ => false
+-- The current sidecar, an absent sidecar and an undeclared sidecar do not.
+#guard (refuseRetiredLiteral "storeOpen" (some (retiredRef retiredCurrent)) (some retiredCurrent)).toOption.isSome
+#guard (refuseRetiredLiteral "storeOpen" (some (retiredRef retiredBytes)) none).toOption.isSome
+#guard (refuseRetiredLiteral "storeOpen" none (some retiredBytes)).toOption.isSome
+
+-- Through the function `readRetained` calls, with the host supplying the bytes
+-- and the manifest committing their SHA-256: the open is refused, not scanned.
+#guard match retainedIndexes? "storeOpen" (retiredEntry retiredBytes)
+    (retiredSources retiredBytes) ByteArray.empty [] ByteArray.empty with
+  | .error e => e.contains "ASCII-only fold" && e.contains "Re-pack"
+  | .ok _ => false
+-- The same entry with the current bytes is not refused (it falls back, because
+-- the block bytes here are empty, which is a different and quiet outcome).
+#guard (retainedIndexes? "storeOpen" (retiredEntry retiredCurrent)
+    (retiredSources retiredCurrent) ByteArray.empty [] ByteArray.empty).toOption.isSome
+-- A retired sidecar the host did NOT supply is not read at all.
+#guard (retainedIndexes? "storeOpen" (retiredEntry retiredBytes) [] ByteArray.empty [] ByteArray.empty).toOption.isSome
 
 end L4Wasm.Ops

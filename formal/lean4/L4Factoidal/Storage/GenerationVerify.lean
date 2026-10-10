@@ -544,4 +544,48 @@ def verifyIbk3Entries [Monad m] (read : Reader m) : List Entry → Nat → m (Op
       | none => pure none
       | some bytes => verifyIbk3Entries read rest (total + bytes)
 
+/-! ## A retired literal index fails activation with its cause (2026-10-10)
+
+The reader answers the sidecar key with an LGI1 file (the magic and version of
+the retired first layout over the bytes of the current one) and answers the
+block key with nothing, so `literalIndexAgrees` is false for a reason unrelated
+to the name. The refusal must still name LGI1 and say to re-pack, because the
+retired name is checked on the failure path. -/
+
+private def retiredCurrent : ByteArray :=
+  (L4Factoidal.Storage.LiteralGramIndexWire.encode?
+    { targetIBKSha256 := ByteArray.mk (Array.replicate 32 0)
+      index := L4Factoidal.Storage.LiteralGramIndex.build
+        #[.literal (Literal.string "\u00C9cole")] }).getD ByteArray.empty
+
+private def retiredBytes : ByteArray :=
+  ByteArray.mk (#[0x4C, 0x47, 0x49, 0x31, 1] ++ retiredCurrent.data.extract 5 retiredCurrent.size)
+
+private def fixtureRef : ArtifactRef :=
+  { key := { value := "predicate-0.ibk4.lgi3" }, bytes := 1, sha256 := ByteArray.empty }
+
+private def fixtureEntry : Entry :=
+  { predicate := ⟨"http://example.org/p", by decide⟩
+  , artifact := { key := { value := "predicate-0.ibk4" }, bytes := 1, sha256 := ByteArray.empty }
+  , literalIndex := some fixtureRef
+  , rows := 1
+  , ordinal := 0 }
+
+private def fixtureReader (sidecar : ByteArray) : Reader Id := fun name =>
+  if name == "predicate-0.ibk4.lgi3" then some sidecar else none
+
+#guard Id.run (retiredLiteralName? (fixtureReader retiredBytes) fixtureRef) == some "LGI1"
+#guard (Id.run (retiredLiteralName? (fixtureReader retiredCurrent) fixtureRef)).isNone
+#guard (Id.run (retiredLiteralName? (fun _ => pure none) fixtureRef)).isNone
+#guard Id.run (retiredLiteralSidecar? (fixtureReader retiredBytes) [fixtureEntry]) == some "LGI1"
+#guard (Id.run (retiredLiteralSidecar? (fixtureReader retiredCurrent) [fixtureEntry])).isNone
+#guard match Id.run (verifyEntryIndexes (fixtureReader retiredBytes) 9
+    (fun _ _ => pure false) fixtureEntry) with
+  | some failure => failure.startsWith "literal index LGI1 was folded with the ASCII-only fold"
+                    && failure.contains "Re-pack"
+  | none => false
+-- The same entry over the current bytes fails for the ordinary reason.
+#guard Id.run (verifyEntryIndexes (fixtureReader retiredCurrent) 9
+    (fun _ _ => pure false) fixtureEntry) == some literalIndexFailure
+
 end L4Factoidal.Storage.GenerationVerify
