@@ -27,6 +27,61 @@ shim is not a semantic replacement.
 - A recursive map over a small, bounded metadata list may be appropriate. Do
   not generalise that exception to data-sized lists, graph rows, or tokens.
 
+## Keyed collections: association lists, shared maps, appends at the end
+
+A collection keyed by a set the caller sizes (node identifiers, blank node
+labels, graph names, the values of one property) is a map, not a
+`List (String × _)`. Paid for 2026-10-10 in JSON-LD node map generation
+(`JSONLD/Flatten.lean`, record:
+[`docs/designissues/2026-10-10-jsonld-node-map-scaling.md`](../../docs/designissues/2026-10-10-jsonld-node-map-scaling.md)):
+the node map, each graph, the graph list and the blank node map were
+association lists, and a document with one node that holds 1,600 node
+references took 3.9 s to build its node map (4.7 s to flatten, 8.5 s to
+frame). After the repair the same input takes 8.2 ms, 7.6 ms and 91 ms.
+Rules from that repair:
+
+- **Use `Std.TreeMap` (or `Std.HashMap`) for a collection that grows with
+  the input.** Keep an association list only for the members of one input
+  object.
+- **Prefer a persistent map where a value can be referenced twice.** An
+  `Array` or a `Std.HashMap` updates in place only when the reference is
+  unique; through a second reference the update copies the bucket array,
+  and the code stays correct and becomes quadratic. `Std.TreeMap` copies a
+  path of `O(log n)` nodes whatever the reference count.
+- **`let st ← get; set { st with a := st.a.push x }` keeps the old state
+  alive, so it copies `a`.** `Frame.allocM` did this and copied the whole
+  output arena on every allocation. Use `modifyGet` or `modify`, which use
+  the state once.
+- **When insertion order is observable, use `OMap`** (`JSONLD/OrderedMap.lean`:
+  a `Std.TreeMap` plus the keys newest first). Lookup and update agree with
+  `flLookup` and `flUpd` on the entries in insertion order
+  (`OMap.find?_eq`, `OMap.toList_upsert`).
+- **Appending at the end is a reverse accumulation.** `xs ++ [v]` once per
+  value is quadratic in the number of values; cons onto the front and
+  reverse once at the boundary (`DedupArr.rev`, `OCont.arr`, the `@list`
+  accumulator of `nmg`).
+- **A "not already in the array" test over a growing array compares keys in
+  a set, not by scanning.** The scan called `expandedEqual` (two JCS
+  serialisations) on every item already present, which was most of the 3.9 s
+  above. `DedupArr` keeps the canonical form of each item in a
+  `Std.TreeSet`; `DedupArr.contains_iff` proves the set answers the scan's
+  question.
+- **Prove the new operations against the old definitions, and compare raw
+  output.** The old list definitions stay as `Spec.*` in
+  `JSONLD/NodeMapTheorems.lean`. For a change that must not alter output,
+  run both builds with `L4_JSONLD_DUMP=<file>` on every manifest and on
+  `l4jsonld-api --dump-shapes`, then `cmp` the files: the suites compare
+  with RFC 8785 canonical forms, which ignore member order, and the raw
+  dump does not.
+- **Measure first, with a ladder.** `l4jsonld-api --scale` prints the time
+  of each phase at n, 2n, 4n, 8n and 16n for five document shapes and
+  asserts time(4x) at most 9.0 times max(time(x), 20 ms) for the node map,
+  flatten and frame core phases (`tests/stack/jsonld_scaling.sh`). One
+  shape is not enough: at 1,600 nodes the hub shape (every node links to
+  one hub) cost 0.27 s to build its node map and the fan-out shape (one node
+  holds all the references) cost 3.9 s, so a ladder over the hub shape alone
+  would have under-reported the cost 14-fold.
+
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
 A function that recurses once per element of an input the CALLER sizes -- a

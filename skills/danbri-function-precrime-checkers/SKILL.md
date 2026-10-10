@@ -87,6 +87,17 @@ what turns "it worked on the test files" into "it scales", which is the
 property the suite was silently not testing. `tests/stack/` is the seed; the
 assertion is what makes it a gate.
 
+A worked example with a wall-clock bound is `l4jsonld-api --scale`
+(`formal/lean4/Harness/JsonLdScale.lean`, wrapper
+`tests/stack/jsonld_scaling.sh`). It builds five document shapes at n, 2n,
+4n, 8n and 16n, keeps the minimum of several runs per point, and fails when
+time(4x) exceeds 9.0 times max(time(x), 20 ms): a linear-times-log phase
+gives about 4.5, a quadratic phase about 16, and the 20 ms floor stops a
+sub-millisecond baseline from turning timer noise into a failure. Before
+the 2026-10-10 repair of the JSON-LD node map, 11 of the 30 size pairs of
+the node map and flatten phases failed (base 100, five shapes); after it, 0
+of the 45 pairs of the node map, flatten and frame core phases fail.
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is

@@ -145,8 +145,8 @@ structure NmState where
 /-! ## Association-list helpers
 
 These stay for the places that hold SMALL association lists: the members
-of one input JSON object, and the frame's output arena. They are also the
-specification the node-map operations are proved against. -/
+of one input JSON object or frame object. `NodeMapTheorems.lean` proves the
+node-map operations against them. -/
 
 def flLookup {α : Type} (xs : List (String × α)) (k : String) : Option α :=
   (xs.find? (fun kv => kv.1 == k)).map Prod.snd

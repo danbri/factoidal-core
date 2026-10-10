@@ -31,30 +31,6 @@ open L4Factoidal.JSON
 
 /-! ## The order of `String` keys -/
 
-theorem charListLt_iff : ∀ (xs ys : List Char), charListLt xs ys = true ↔ xs < ys := by
-  intro xs
-  induction xs with
-  | nil =>
-    intro ys
-    cases ys with
-    | nil => simp [charListLt]
-    | cons b bs => simp [charListLt]
-  | cons a as ih =>
-    intro ys
-    cases ys with
-    | nil => simp [charListLt]
-    | cons b bs =>
-      rw [List.cons_lt_cons_iff]
-      simp only [charListLt]
-      by_cases hab : a < b
-      · simp [hab]
-      · by_cases hba : b < a
-        · have : a ≠ b := fun h => by subst h; exact absurd hba (Char.lt_irrefl _)
-          simp [hab, hba, this]
-        · have heq : a = b := Char.le_antisymm (Char.not_lt.mp hba) (Char.not_lt.mp hab)
-          subst heq
-          simp [hab, ih]
-
 theorem strLt_iff_compare_lt (a b : String) : strLt a b = true ↔ compare a b = .lt := by
   unfold strLt
   rw [charListLt_iff]
