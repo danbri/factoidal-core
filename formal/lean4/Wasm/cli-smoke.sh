@@ -347,15 +347,65 @@ else
     "query exit=$CL_RC parse exit=$RC parse stdout=$OUT parse stderr=$ERR" "query stdout=$(printf '%s' "$CL_OUT" | head -n 2)"
 
   # --- NOW() (https://github.com/danbri/factoidal/issues/743): SPARQL 1.1
-  # §17.4.5.1 gives an xsd:dateTime for the query execution. The ops path has
-  # no clock in its EvalEnv, so W3C functions/now01.rq answers false; the W3C
-  # expected result now01.srx is true. Found by `l4diff --lean-cli`.
+  # §17.4.5.1 gives an xsd:dateTime for the query execution. Until 2026-10-10
+  # the ops path had no clock in its EvalEnv, so W3C functions/now01.rq answered
+  # false (found by `l4diff --lean-cli`); the command line now reads the clock
+  # once per query or update and passes it as `now`. The W3C expected result
+  # now01.srx is true.
   F="$W3C_SPARQL/functions"
   run_cmd "$CLI" query "$F/data.ttl" --format turtle --query "$F/now01.rq"
-  verdict "W3C functions/now01.rq (NOW() is an xsd:dateTime) -> true" 743 \
+  verdict "W3C functions/now01.rq (NOW() is an xsd:dateTime) -> true" "" \
     "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && grep -q '<boolean>true</boolean>' "$F/now01.srx" && echo 1 || echo 0 )" \
     "exit=$RC" "stdout=$OUT" "stderr=$ERR"
 fi
+
+# --- NOW(): the value is the system clock, once per execution ----------------
+# The value is read between two readings of `date`, so a constant or a fixed
+# test clock fails. The seconds are compared as text: yyyy-mm-ddThh:mm:ss.
+printf '<http://e/a> <http://e/p> <http://e/b> .\n<http://e/a> <http://e/p> <http://e/c> .\n<http://e/a> <http://e/p> <http://e/d> .\n' > "$TMP/now3.nt"
+T_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S)"
+run_cmd "$CLI" query "$TMP/now3.nt" --format ntriples \
+  --query-string 'SELECT ?o ?n WHERE { ?s ?p ?o BIND(NOW() AS ?n) }'
+T_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S)"
+NOW_ROWS="$OUT"
+verdict "query: NOW() is the system clock, an xsd:dateTime in UTC" "" \
+  "$(printf '%s' "$NOW_ROWS" | python3 -c "
+import json, sys, re
+r = json.load(sys.stdin)
+b = r['results']['bindings']
+v = b[0]['n']
+assert v['datatype'] == 'http://www.w3.org/2001/XMLSchema#dateTime', v
+assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z', v['value']), v
+assert '$T_BEFORE' <= v['value'][:19] <= '$T_AFTER', (v, '$T_BEFORE', '$T_AFTER')
+" 2>/dev/null && echo 1 || echo 0)" \
+  "before=$T_BEFORE after=$T_AFTER" "stdout=$NOW_ROWS" "stderr=$ERR"
+verdict "query: every NOW() of one execution is the same value (3 rows, 1 distinct)" "" \
+  "$(printf '%s' "$NOW_ROWS" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+b = r['results']['bindings']
+assert len(b) == 3, b
+assert len(set(x['n']['value'] for x in b)) == 1, b
+" 2>/dev/null && echo 1 || echo 0)" \
+  "stdout=$NOW_ROWS"
+run_cmd "$CLI" query "$TMP/now3.nt" --format ntriples \
+  --query-string 'ASK { BIND(NOW() AS ?a) BIND(NOW() AS ?b) FILTER(?a = ?b) }'
+verdict "query: two NOW() calls in one query are equal" "" \
+  "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+# Update: INSERT ... WHERE with NOW() in a BIND inserts the clock reading.
+T_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S)"
+run_cmd "$CLI" update "$TMP/now3.nt" --format ntriples \
+  --update-string 'INSERT { <http://e/a> <http://e/at> ?n } WHERE { BIND(NOW() AS ?n) }'
+T_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S)"
+NOW_UPD="$OUT"; NOW_UPD_RC="$RC"
+NOW_AT="$(printf '%s\n' "$NOW_UPD" | sed -n 's|^<http://e/a> <http://e/at> "\([^"]*\)"^^<http://www.w3.org/2001/XMLSchema#dateTime> \.$|\1|p')"
+verdict "update: INSERT ... WHERE BIND(NOW()) inserts an xsd:dateTime from the system clock" "" \
+  "$( [ "$NOW_UPD_RC" -eq 0 ] && python3 -c "
+import sys
+b, a, v = sys.argv[1:4]
+assert v != '' and b <= v[:19] <= a, (b, v, a)
+" "$T_BEFORE" "$T_AFTER" "$NOW_AT" 2>/dev/null && echo 1 || echo 0 )" \
+  "before=$T_BEFORE after=$T_AFTER" "inserted=$NOW_AT" "stdout=$NOW_UPD"
 
 # --- canonicalize ------------------------------------------------------
 assert_text "canonicalize" 0 out "_:c14n0" \

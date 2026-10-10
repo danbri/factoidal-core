@@ -214,7 +214,7 @@ each dissolve by parameterisation when their feature is ported:
 |---|---|
 | SHA/MD5 hash builtins (§17.4.4) | implement in pure Lean; provable against a spec |
 | Unicode case mapping | pure tables/functions: **done 2026-10-10**, `Text/CaseMap.lean` with tables generated from Unicode 15.1.0 (`tools/gen_casemap.py`), record `docs/designissues/2026-10-10-unicode-case-mapping.md` |
-| `NOW()` | timestamp passed as an argument; clock read once in `IO main` |
+| `NOW()` | timestamp passed as an argument (`EvalEnv.now`); **done 2026-10-10** (https://github.com/danbri/factoidal/issues/743): each IO entry of the ops layer reads the clock once per execution (`Wasm/Ops/Clock.lean`, `Std.Time.Timestamp.now`) and formats it with the pure `SPARQL/Now.lean` `dateTimeOfUnixMillis`; the pure ops keep `now` as a parameter, default `none` |
 | `extension_function_call` (§17.6) | a typed function argument to eval, not a global registry |
 | `service_endpoint_lookup` | an endpoint→graph map passed into evaluation |
 | `eval_property_path_fwd` | F\* file-ordering artifact; doesn't arise |
