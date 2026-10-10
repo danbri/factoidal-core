@@ -1387,3 +1387,10 @@ L4Factoidal_OWL_Refute_emitMergeCases  # (c) the pairs one merge point branched 
 L4Factoidal_OWL_Refute_traceProfile  # (c) depth of a refuter search trace, as emitCert
 L4Factoidal_OWL_Refute_traceProfileList  # (c) the branches of one trace node, as emitUnion and emitMergeCases
 L4Factoidal_OWL_Refute_minSumPick  # (b) the minimum-cardinality labels of one node, as Refute.minSumGo; the result is used only when it names at most 64 witnesses
+# --- Added 2026-10-10 by the coordinator at the owl-cert merge: the repaired audit
+# (issue 750, mutual cycles) sees these; the owl-cert branch was cut before it ---
+L4Factoidal_OWL_Concept_nnfP  # (b) class-expression nesting of one concept (one call per connective or restriction level)
+L4Factoidal_OWL_Refute_toConceptList  # (b) the cycle with toConcept recurses once per class-expression NESTING level; the operands of one expression are walked by toConceptListAcc's tail call
+L4Factoidal_OWL_Refute_toConceptListAcc  # (b) as toConceptList: nesting through toConcept; one tail call per operand
+L4Factoidal_OWL_checkCases  # (c) the cycle with checkF is certificate depth, bounded by the refuter budget (default 64) as checkF; the cases of one merge point are a tail call through ||, one per pair the merge point branched on (as Refute_emitMergeCases)
+L4Factoidal_OWL_instHashableConcept_hash  # (b) derived Hashable instance: class-expression nesting of one concept
