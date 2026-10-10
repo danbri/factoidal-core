@@ -39,22 +39,20 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`, no solver.
 
 ## What is NOT proved, named rather than hidden
 
-1. **Truth preservation (model theory) is not ported.** The F* tree
-   proves, in `OWL.Semantics.fst` / `OWL.Semantics.Soundness.fst`, that
-   each row PRESERVES TRUTH: for every OWL 2 RL interpretation `I` and
-   graph `g`, if `I` satisfies `g` then `I` satisfies each row's
-   conclusion. In Lean that statement would read
-
-       theorem row_true {I : Interp} {g : Graph}
-           (hI : Satisfies I g) {t : Triple} (h : Derives g t) :
-           SatisfiesTriple I t
-
-   and it needs the interpretation machinery (`OWL.Semantics.fst`'s
-   `owl_interp`, `satisfies`, the class/property extension functions)
-   ported first. Nothing here claims it. T2 is PROOF-THEORETIC: every
-   computed triple has a derivation in the rule relation, which is the
-   object a reviewer checks against the W3C table by eye. Do not read
-   T2 as the F* model-theoretic soundness theorem.
+1. **Truth preservation (model theory) is in `OWL/RLSemantics.lean`,
+   not here.** Stage 4 of https://github.com/danbri/factoidal/issues/598
+   added `RLSemantics.rl_derives_holds` on 2026-08-26: in every interpretation that meets
+   `RlConditions` (one rule-shaped condition per `Derives` row), every
+   triple that `Derives` derives from a reserved-free graph is true. One
+   induction over all the constructors. It covers every row; the F*
+   `OWL.Semantics.Soundness.fst` proves four pilot rules. T2 here stays
+   PROOF-THEORETIC: every computed triple has a derivation in the rule
+   relation. What is still open is the link from the OWL 2 RDF-Based
+   Semantics itself to `RlConditions` (a theorem `RdfBasedConditions i →
+   RlConditions i'`): https://github.com/danbri/factoidal/issues/731.
+   (Until 2026-10-10 this item still said "not ported". An outside
+   review of the F* to Lean migration read it that day and concluded
+   that the Lean tree lacks the OWL model theory.)
 
 2. **`closureFuelBound` is stated, not proved adequate.** What IS
    proved is `closure_saturated_or_underfueled`: the only alternative
