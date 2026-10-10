@@ -12,10 +12,11 @@ because they are premise-free and would otherwise add their whole
 table to every graph: the axiomatic triples (`axiomsFor`: only rows
 whose subject IRI the goal names) and the universal-class typings
 (`universalFor`: only when the goal asks for an `owl:Thing` or
-`rdfs:Resource` typing). The other rules read `g` alone. Each rule is
-one pass over `g` with at most two nested lookups, and mints no blank
-node, so the result is finite and its size is bounded by a polynomial
-in `|g|`. The regime (`Harness/OwlProbe.lean`, `--rdf-based`) applies
+`rdfs:Resource` typing). The other rules read `g` alone: one pass over
+`g` with at most two nested lookups, or, for the three collection rules,
+one read of each collection and a pairwise comparison. No rule mints a
+blank node, so the result is finite and its size is bounded by a
+polynomial in `|g|`. The regime (`Harness/OwlProbe.lean`, `--rdf-based`) applies
 the rules and the RL closure alternately for a stated number of rounds.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.

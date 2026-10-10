@@ -2946,6 +2946,23 @@ table, which is the standing of the F\* engine's own comprehension layer
 (`OWL.Closure.fsti` § 20b). It is recorded here rather than left to
 inference, per anti-pattern 29.
 
+## OWL 2 RDF-Based Semantics regime (Lean 4, 2026-10-10)
+
+`L4Factoidal/OWL/RdfBased/`, run by `l4owl-probe --rdf-based`. Design
+record:
+[`designissues/2026-10-10-owl2-rdf-based-semantics.md`](designissues/2026-10-10-owl2-rdf-based-semantics.md);
+issue <https://github.com/danbri/factoidal/issues/721>. No `sorry`, no
+`axiom`, no `native_decide`, no `partial`.
+
+| Theorem | Module | Engine anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `witness_conditions` — an interpretation meets all 21 fields of `RdfBasedConditions` | `OWL/RdfBased/Spec.lean` | — | ✅ PROVED | none |
+| `rbEntails_not_everything` — `RbEntails [] [owl:Thing rdfs:subClassOf owl:Nothing]` is false | same | — | ✅ PROVED | none |
+| `rbDerives_sound` — every `RbDerives g t` is true under every assignment making `g` true, in every interpretation meeting `RdfBasedConditions` (14 constructors, conditions cited per constructor in the module header) | `OWL/RdfBased/Rules.lean` | — | ✅ PROVED | none |
+| `rbDerives_entailed` — `RbDerives g t → RbEntails g [t]` | same | — | ✅ PROVED | none |
+| `rbConclusions_derives` — every triple the executable rules return is an `RbDerives` application | `OWL/RdfBased/Engine.lean` | `RdfBased.rbConclusions` | ✅ PROVED | none |
+| **The RL base under `RdfBasedConditions`** — `RdfBasedConditions i → RlConditions i'` for an `i'` agreeing with `i` off the reserved helper IRIs | — | `OWL.RL` closure | 🔴 NOT ATTEMPTED | the regime drops comprehension-witness triples (`withoutCompWitness`); design record § 8, gap A |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:
