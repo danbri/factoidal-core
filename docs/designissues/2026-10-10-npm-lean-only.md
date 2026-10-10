@@ -187,13 +187,23 @@ message is unchanged and whose `.envelope` is the whole `{"ok":false,...}`
 document. Without it `l4-core.js` could not pass `line` and `column` to
 `entryResult`.
 
-Measured on 2026-10-10:
+Measured on 2026-10-10 (Lean wasm built by `Wasm/build-wasm.sh`: 7,828,865 bytes,
+against 6,359,842 bytes on 2026-09-08; the growth has more causes than stage 2,
+and stage 4 measures the sizes):
 
 | Gate | Result |
 |---|---|
-| `lake build` | exit 0 |
+| `lake build` | exit 0 (1292 jobs) |
 | `formal/lean4/Wasm/native-smoke.sh` | 223 pass, 0 fail (out of 223); 152 before stage 2 |
 | `lake exe l4vc-probe` | 236 pass, 0 fail (out of 236); 119 before. The new section scores the 117 scorable VCDM 2.0 fixtures: 117 pass, 0 fail (out of 117), the F\* runner's score |
+| `node --test test/l4-parity-2.test.js test/l4-core.test.js` | 69 pass, 1 fail, 3 skipped (out of 73). The fail is the existing case "l4-core vs F* engine: same join", which needs the F\* bundle; the 3 skips are the new F\* cross-checks |
+| full `node --test` in `npm/factoidal`, base JS against the new wasm | 136 pass, 100 fail, 106 skipped (out of 342) |
+| full `node --test` in `npm/factoidal`, stage 2 | 171 pass, 98 fail, 108 skipped (out of 377). The failing names are the base set minus two expected-failure cases that now pass; all 98 need the F\* bundle, which this container does not have (no `web` release exists in `danbri/factoidal-builds`) |
+| `tests/lws/server.mjs`, `tests/solid/server/protocol.mjs`, `tests/solid/client/against-own-server.mjs`, `tests/store-host/conformance.mjs` | 8, 12, 7 and 34 pass, 0 fail |
+
+Not measured: the F\* cross-checks in `l4-parity-2.test.js` (matrix and sigmoid
+results, the 120 VC fixtures) because no F\* bundle was available. They run when
+the bundle is present.
 
 `npm/factoidal/test/l4-parity-2.test.js` holds the npm cases, including a
 cross-check of the Ed25519 and SHA-256 results against `node:crypto`, of the

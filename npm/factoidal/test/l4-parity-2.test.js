@@ -699,10 +699,17 @@ test('l4-core openDataset: prefixes at open, handle prefixes in Turtle output, o
     const quoted = await h.serialize({ format: 'turtle', literalShorthand: false });
     assert.equal(quoted.split('^^').length - 1, 4);
     assert.doesNotMatch(quoted, / 1 ,/);
-    const renamed = await h.serialize({ format: 'turtle', prefixes: { e: 'http://example.org/' } });
-    assert.match(renamed, /@prefix e: <http:\/\/example\.org\/> \./);
-    assert.match(renamed, /e:s e:p/);
-    assert.doesNotMatch(renamed, /ex:/);
+    // The handle's prefixes and the caller's are merged, handle first. A caller label
+    // for a namespace that is already named keeps the first label (the F* rule); a
+    // caller label for a new namespace is used.
+    const sameNs = await h.serialize({ format: 'turtle', prefixes: { e: 'http://example.org/' } });
+    assert.match(sameNs, /@prefix ex: <http:\/\/example\.org\/> \./);
+    assert.doesNotMatch(sameNs, /\be:/);
+    const extra = await h.serialize({ format: 'turtle', prefixes: { xs: 'http://www.w3.org/2001/XMLSchema#' } });
+    assert.match(extra, /@prefix ex: <http:\/\/example\.org\/> \./);
+    assert.match(extra, /@prefix xs: <http:\/\/www\.w3\.org\/2001\/XMLSchema#> \./);
+    assert.match(extra, /"5\."\^\^xs:decimal/);
+    assert.doesNotMatch(extra, /xsd:/);
   } finally {
     await h.close();
   }
