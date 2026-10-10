@@ -510,6 +510,38 @@ No unit went from pass to fail; the two soundness cells stay 0.
   expression, a list or an `owl:AllDifferent` node) that the
   comprehension layer mints; § 7, group 1.
 
+### 6.0 The in-scope line, and which failures a better method can reach (2026-10-10)
+
+Measured with the same command after the OWL report split (core 37c83b58):
+`IN-SCOPE all.rdf [rdf-based] status Approved: 155 pass, 103 fail, 242
+not-refuted, 0 unsupported, 0 local-override (out of 500)`. The failing-unit
+block of that run gives the 103 failures by test type and species:
+
+| test type | species DL | species FULL only |
+|---|---|---|
+| InconsistencyTest | 66 | 0 |
+| PositiveEntailmentTest | 36 | 1 |
+
+So 102 of the 103 are cases of species DL. The DL regime decides all of them
+(DL in scope: 0 fail on every catalog). OWL 2 RDF-Based Semantics Theorem 7.1
+carries a Direct Semantics entailment to the RDF-Based Semantics when the
+pair is balanced; an inconsistent premise entails an unsatisfiable
+conclusion, so an inconsistency is carried the same way. Two things are
+missing before such an answer counts as proved here: the § 7.3 balanced
+check and a checked DL answer (the refuter has no Direct Semantics soundness
+theorem; plan item 2 of https://github.com/danbri/factoidal/issues/651 adds
+refutation certificates). Until both land, the line of
+https://github.com/danbri/factoidal/issues/732 stays separate from the
+proved count.
+
+The 242 not-refuted units (ConsistencyTest and NegativeEntailmentTest) are a
+different case. Theorem 7.1 carries entailment in one direction only: a
+Direct Semantics non-entailment or consistency says nothing about the
+RDF-Based Semantics, which entails more. A pass needs an RDF-Based model of
+the premise, and no general procedure gives one, because OWL 2 Full
+entailment is undecidable. OWL 2 Conformance permits the answer Unknown for
+these (§ 2). This record does not plan work on them.
+
 ### 6.1 The other OWL lines, before and after this work
 
 One binary per state, one catalog per process, `--dl --refute-ms 3000`
