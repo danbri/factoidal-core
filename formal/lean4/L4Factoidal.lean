@@ -12,6 +12,7 @@ import L4Factoidal.RDF.ListHelpers
 import L4Factoidal.RDF.XmlCanon
 import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
+import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.StoreLoader
 import L4Factoidal.RDF.StoreCapabilities
 import L4Factoidal.RDF.StoreCapabilitiesCottas
@@ -173,6 +174,7 @@ import L4Factoidal.SPARQL.SkipWsLemmas
 import L4Factoidal.SPARQL.TokenRoundTrip
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.ParserTests
+import L4Factoidal.SPARQL.DescribeTests
 import L4Factoidal.SPARQL.ParserTheorems
 import L4Factoidal.SPARQL.Update
 import L4Factoidal.SPARQL.UpdateParser
