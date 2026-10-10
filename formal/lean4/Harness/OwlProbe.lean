@@ -1595,7 +1595,7 @@ def censusCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) : IO Uni
     let tb := L4Factoidal.OWL.Refute.collectAxioms g
     let tbd := (distinctAxioms tb).length
     let st := L4Factoidal.OWL.Refute.initState g
-    let nodes := st.nodes.length
+    let nodes := st.nodes.size
     let labels := st.nodes.foldl (fun a n => a + n.labels.length) 0
     let perPass := tb.length * (3 * nodes + labels)
     IO.println s!"TBOX-CENSUS {name} {c.id} closure={g.length} \
@@ -1663,26 +1663,121 @@ partial def showCe : L4Factoidal.OWL.ClassExpr → String
     pending choices, verdict. `axioms` prints the TBox. -/
 def traceGraph (g : Graph) (rb : Nat) (passes : Nat) (axioms : Bool) : IO Unit := do
     IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g} inCountingFragment={L4Factoidal.OWL.CountingOracle.inCountingFragment g} classSizeUnsat={L4Factoidal.OWL.CountingOracle.classSizeUnsat g}"
-    let tb := L4Factoidal.OWL.Refute.collectAxioms g
+    let tA ← IO.monoMsNow
+    let tb ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxioms g)
     IO.println s!"  tbox axioms={tb.length}"
+    let tB ← IO.monoMsNow
+    IO.println s!"  TIME collectAxioms {tB - tA} ms"
+    -- The parts of `collectAxioms`, each timed on its own.
+    let t0 ← IO.monoMsNow
+    let ix ← IO.lazyPure (fun _ => Index.ofGraph g)
+    IO.println s!"  TIME Index.ofGraph size={ix.all.size} {(← IO.monoMsNow) - t0} ms"
+    let sto ← IO.lazyPure (fun _ => Store.ofIndex ix)
+    let t1 ← IO.monoMsNow
+    let us ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.unsatNamedClassesS sto)
+    IO.println s!"  TIME unsatNamedClasses n={us.length} {(← IO.monoMsNow) - t1} ms"
+    let t2 ← IO.monoMsNow
+    let a1 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedRestrictionAxioms us sto)
+    IO.println s!"  TIME namedRestrictionAxioms n={a1.length} {(← IO.monoMsNow) - t2} ms"
+    let t3 ← IO.monoMsNow
+    let a2 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedBooleanAxioms us sto ++
+      L4Factoidal.OWL.Refute.namedOneOfAxioms sto ++
+      L4Factoidal.OWL.Refute.disjointUnionAxioms us sto)
+    IO.println s!"  TIME boolean/oneOf/disjointUnion n={a2.length} {(← IO.monoMsNow) - t3} ms"
+    let t4 ← IO.monoMsNow
+    let a3 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.domainRangeAxioms us sto)
+    IO.println s!"  TIME domainRangeAxioms n={a3.length} {(← IO.monoMsNow) - t4} ms"
+    let t5 ← IO.monoMsNow
+    let raw ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxiomsS sto)
+    IO.println s!"  TIME collectAxiomsS n={raw.length} {(← IO.monoMsNow) - t5} ms"
+    let t6 ← IO.monoMsNow
+    let sp ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.splitUnionAntecedents raw)
+    IO.println s!"  TIME splitUnionAntecedents n={sp.length} {(← IO.monoMsNow) - t6} ms"
+    let t7 ← IO.monoMsNow
+    let dd ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.dedupAxioms sp)
+    IO.println s!"  TIME dedupAxioms n={dd.length} {(← IO.monoMsNow) - t7} ms"
     if axioms then
       for (a, d) in tb do
         IO.println s!"    AX {showCe a} ⊑ {showCe d}"
     let mut st : L4Factoidal.OWL.Refute.RState :=
       { L4Factoidal.OWL.Refute.initState g with tbox := tb }
     let mut n := 0
+    IO.println s!"  initState nodes={st.nodes.size}"
     for _ in [0:passes] do
-      if L4Factoidal.OWL.Refute.clashNodes g st then break
+      let t0 ← IO.monoMsNow
+      let cl := L4Factoidal.OWL.Refute.clashNodes g st
+      IO.println s!"  TIME clashNodes {(← IO.monoMsNow) - t0} ms -> {cl}"
+      if cl then break
+      let t1 ← IO.monoMsNow
       let (st', ch) := L4Factoidal.OWL.Refute.onePass tb g st
+      IO.println s!"  TIME onePass {(← IO.monoMsNow) - t1} ms nodes={st'.nodes.size} changed={ch}"
       st := st'
       n := n + 1
       if !ch then break
-    IO.println s!"  passes={n} clash={L4Factoidal.OWL.Refute.clashNodes g st} nodes={st.nodes.length} extra_edges={st.extra.length} ident={st.ident.length} distinct_groups={st.distinctGroups.length}"
+    -- One round's rules timed apart, each over the saturated state (the
+    -- states are not threaded, so this apportions the work only).
+    let ix := L4Factoidal.OWL.Refute.TBoxIndex.build tb
+    let mut tRules := 0
+    let mut tAx := 0
+    let mut tEdges := 0
+    let mut tConj := 0
+    let mut nLabels := 0
+    let leaders := L4Factoidal.OWL.Refute.groupLeaders st
+    for nd in leaders do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      nLabels := nLabels + ls.length
+      let a0 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyLabelRules g st nd.id l).2)
+        if r then pure () else pure ()
+      let a1 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxioms
+          (ix.byKey.getD (L4Factoidal.OWL.Refute.ceIndexKey l) []) st nd.id l).2)
+        if r then pure () else pure ()
+      let a2 ← IO.monoNanosNow
+      let r2 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsEdges ix g st nd.id).2)
+      let a3 ← IO.monoNanosNow
+      let r3 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsConj ix st nd.id).2)
+      let a4 ← IO.monoNanosNow
+      if r2 || r3 then pure () else pure ()
+      tRules := tRules + (a1 - a0)
+      tAx := tAx + (a2 - a1)
+      tEdges := tEdges + (a3 - a2)
+      tConj := tConj + (a4 - a3)
+    IO.println s!"  ROUND leaders={leaders.length} labels={nLabels} labelRules={tRules / 1000000}ms axioms={tAx / 1000000}ms edges={tEdges / 1000000}ms conj={tConj / 1000000}ms edgeProps={ix.edgeProps.length}"
+    IO.println s!"  passes={n} clash={L4Factoidal.OWL.Refute.clashNodes g st} nodes={st.nodes.size} extra_edges={st.extra.size} ident={st.ident.length} distinct_groups={st.distinctGroups.length}"
+    let t2 ← IO.monoMsNow
     let (stF, forced) := L4Factoidal.OWL.Refute.forcedIdentifications g st
     IO.println s!"  forcedIdentifications changed={forced} ident_after={stF.ident.length}"
+    IO.println s!"  TIME forcedIdentifications {(← IO.monoMsNow) - t2} ms"
     for (a, b) in stF.ident do
       IO.println s!"    IDENT {shortTerm a} = {shortTerm b}"
-    IO.println s!"  propositionalClash={L4Factoidal.OWL.Refute.propositionalClash st} nominalClash={L4Factoidal.OWL.Refute.nominalClash g st}"
+    -- Per-node cost of the propositional clash: label sets with two or
+    -- more unions, their clause sets, and the slowest ones.
+    let pix := L4Factoidal.OWL.Refute.LhsAtomIndex.build st.tbox
+    let mut rows : Array (Nat × Nat × Nat × Nat × String) := #[]
+    for nd in L4Factoidal.OWL.Refute.groupLeaders st do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      let nu := (ls.filter (fun l => match l with | .union _ => true | _ => false)).length
+      if nu ≥ 2 then
+        let tq ← IO.monoMsNow
+        let cs ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.nodeClausesIx pix ls 3)
+        let tq2 ← IO.monoMsNow
+        let r ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.clausesSatisfiable L4Factoidal.OWL.Refute.propFuel cs)
+        let tq3 ← IO.monoMsNow
+        rows := rows.push (tq3 - tq2, tq2 - tq, cs.length, ls.length, s!"{shortSubject nd.id} {repr r}")
+    let sorted := rows.qsort (fun a b => a.1 > b.1)
+    IO.println s!"  PROP nodes_with_2_unions={rows.size} total_sat_ms={rows.foldl (fun a r => a + r.1) 0} total_clause_ms={rows.foldl (fun a r => a + r.2.1) 0}"
+    for r in sorted.toList.take 5 do
+      IO.println s!"    PROP sat={r.1}ms clauses_built={r.2.1}ms n_clauses={r.2.2.1} labels={r.2.2.2.1} {r.2.2.2.2}"
+    let t3 ← IO.monoMsNow
+    IO.println s!"  propositionalClash={L4Factoidal.OWL.Refute.propositionalClash st}"
+    let t4 ← IO.monoMsNow
+    IO.println s!"  nominalClash={L4Factoidal.OWL.Refute.nominalClash g st}"
+    let t5 ← IO.monoMsNow
+    IO.println s!"  TIME propositional {t4 - t3} ms nominal {t5 - t4} ms"
+    IO.println s!"  pendingNominal={(L4Factoidal.OWL.Refute.pendingNominal g st).map List.length}"
     for nd in st.nodes do
       IO.println s!"    NODE {shortSubject nd.id}: {String.intercalate ", " (nd.labels.map showCe)}"
     for e in st.extra do

@@ -327,11 +327,20 @@ end
     markers at all still falls back to `named` for an IRI, which is
     what it denotes, and to `unknown` for a blank node, which denotes
     nothing this reader can name. -/
-def parseCeOfSubject (st : Store) (s : Subject) : ClassExpr :=
-  match parseCeMarkers st s (st.graph.length + 8) with
+def parseCeOfSubjectFuel (st : Store) (fuel : Nat) (s : Subject) : ClassExpr :=
+  match parseCeMarkers st s fuel with
   | .unknown => (match s with
                  | .iri i   => .named i
                  | .bnode _ => .unknown)
   | ce       => ce
+
+/-- `parseCeOfSubjectFuel` with the fuel `st.graph.length + 8`.
+    Computing that length walks the whole graph list, so a caller that
+    parses many subjects of one store computes it ONCE and calls
+    `parseCeOfSubjectFuel`: per subject, it made the OWL refuter's TBox
+    read quadratic in the graph (11 seconds on the 82,168-triple goal
+    graphs of `WebOnt-miscellaneous-011`). -/
+def parseCeOfSubject (st : Store) (s : Subject) : ClassExpr :=
+  parseCeOfSubjectFuel st (st.graph.length + 8) s
 
 end L4Factoidal.OWL

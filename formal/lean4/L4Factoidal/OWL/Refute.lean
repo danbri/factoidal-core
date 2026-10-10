@@ -239,12 +239,151 @@ end
 
 def ceEq (a b : ClassExpr) : Bool := ceDefinite a && ClassExpr.beq a b
 
+/-- A shallow key: the constructor, with the property or class IRI it
+    carries. `ClassExpr.beq a b` implies `ceIndexKey a = ceIndexKey b`,
+    because the key reads only fields `beq` compares for equality, so
+    a label meets every antecedent it can equal in its own bucket. -/
+def ceIndexKey : ClassExpr → String
+  | .named c                => "N" ++ c.val
+  | .complement (.named c)  => "C" ++ c.val
+  | .complement _           => "C"
+  | .someOf p _             => "S" ++ p.val
+  | .allOf p _              => "A" ++ p.val
+  | .hasValue p _           => "H" ++ p.val
+  | .intersection _         => "I"
+  | .union _                => "U"
+  | .minCard _ p            => "m" ++ p.val
+  | .maxCard _ p            => "x" ++ p.val
+  | .exactCard _ p          => "e" ++ p.val
+  | .minQualCard _ p _      => "q" ++ p.val
+  | .maxQualCard _ p _      => "r" ++ p.val
+  | .exactQualCard _ p _    => "s" ++ p.val
+  | .oneOf _                => "O"
+  | .dataRestriction d _    => "D" ++ d.val
+  | .unknown                => "?"
+
+/-- The index property `applyAxioms` relies on: an antecedent equal
+    to a label under `ClassExpr.beq` is in the label's bucket. -/
+theorem ceIndexKey_of_beq (a b : ClassExpr) (h : ClassExpr.beq a b = true) :
+    ceIndexKey a = ceIndexKey b := by
+  cases a <;> cases b <;> simp_all [ClassExpr.beq, ceIndexKey]
+  rename_i a' b'
+  cases a' <;> cases b' <;> simp_all [ClassExpr.beq]
+
+
+mutual
+/-- A structural hash of a class expression, for the per-node label
+    index (`RNode.byHash`). It reads every field `ClassExpr.beq`
+    compares, so `beq`-equal expressions hash alike
+    (`ClassExpr.hashCe_of_beq`) and a label is always in the bucket of
+    its own hash. -/
+def ClassExpr.hashCe : ClassExpr → UInt64
+  | .named c              => mixHash 1 (hash c.val)
+  | .someOf p c           => mixHash (mixHash 2 (hash p.val)) (ClassExpr.hashCe c)
+  | .allOf p c            => mixHash (mixHash 3 (hash p.val)) (ClassExpr.hashCe c)
+  | .hasValue p v         => mixHash (mixHash 4 (hash p.val)) (hash v)
+  | .intersection cs      => mixHash 5 (ClassExpr.hashCeList cs)
+  | .union cs             => mixHash 6 (ClassExpr.hashCeList cs)
+  | .complement c         => mixHash 7 (ClassExpr.hashCe c)
+  | .minCard n p          => mixHash (mixHash 8 (hash n)) (hash p.val)
+  | .maxCard n p          => mixHash (mixHash 9 (hash n)) (hash p.val)
+  | .exactCard n p        => mixHash (mixHash 10 (hash n)) (hash p.val)
+  | .minQualCard n p c    => mixHash (mixHash (mixHash 11 (hash n)) (hash p.val)) (ClassExpr.hashCe c)
+  | .maxQualCard n p c    => mixHash (mixHash (mixHash 12 (hash n)) (hash p.val)) (ClassExpr.hashCe c)
+  | .exactQualCard n p c  => mixHash (mixHash (mixHash 13 (hash n)) (hash p.val)) (ClassExpr.hashCe c)
+  | .oneOf vs             => mixHash 14 (hash vs)
+  | .dataRestriction d f  => mixHash (mixHash 15 (hash d.val)) (hash f)
+  | .unknown              => 16
+
+def ClassExpr.hashCeList : List ClassExpr → UInt64
+  | []      => 17
+  | x :: xs => mixHash (ClassExpr.hashCe x) (ClassExpr.hashCeList xs)
+end
+
+mutual
+theorem ClassExpr.hashCe_of_beq : (a b : ClassExpr) → ClassExpr.beq a b = true →
+    ClassExpr.hashCe a = ClassExpr.hashCe b
+  | .someOf p a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.and_eq_true, Bool.false_eq_true] at h
+      rename_i q c
+      have ih := ClassExpr.hashCe_of_beq a c h.2
+      simp_all [ClassExpr.hashCe]
+  | .allOf p a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.and_eq_true, Bool.false_eq_true] at h
+      rename_i q c
+      have ih := ClassExpr.hashCe_of_beq a c h.2
+      simp_all [ClassExpr.hashCe]
+  | .complement a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.false_eq_true] at h
+      rename_i c
+      have ih := ClassExpr.hashCe_of_beq a c h
+      simp_all [ClassExpr.hashCe]
+  | .minQualCard n p a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.and_eq_true, Bool.false_eq_true] at h
+      rename_i m q c
+      have ih := ClassExpr.hashCe_of_beq a c h.2
+      simp_all [ClassExpr.hashCe]
+  | .maxQualCard n p a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.and_eq_true, Bool.false_eq_true] at h
+      rename_i m q c
+      have ih := ClassExpr.hashCe_of_beq a c h.2
+      simp_all [ClassExpr.hashCe]
+  | .exactQualCard n p a, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.and_eq_true, Bool.false_eq_true] at h
+      rename_i m q c
+      have ih := ClassExpr.hashCe_of_beq a c h.2
+      simp_all [ClassExpr.hashCe]
+  | .intersection as, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.false_eq_true] at h
+      rename_i bs
+      have ih := ClassExpr.hashCeList_of_beqList as bs h
+      simp_all [ClassExpr.hashCe]
+  | .union as, b, h => by
+      cases b <;> simp only [ClassExpr.beq, Bool.false_eq_true] at h
+      rename_i bs
+      have ih := ClassExpr.hashCeList_of_beqList as bs h
+      simp_all [ClassExpr.hashCe]
+  | .named _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .hasValue _ _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .oneOf _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .dataRestriction _ _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .minCard _ _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .maxCard _ _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .exactCard _ _, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+  | .unknown, b, h => by cases b <;> simp_all [ClassExpr.beq, ClassExpr.hashCe]
+
+theorem ClassExpr.hashCeList_of_beqList : (as bs : List ClassExpr) →
+    ClassExpr.beqList as bs = true → ClassExpr.hashCeList as = ClassExpr.hashCeList bs
+  | [], [], _ => rfl
+  | a :: as, b :: bs, h => by
+      simp only [ClassExpr.beqList, Bool.and_eq_true] at h
+      have ih1 := ClassExpr.hashCe_of_beq a b h.1
+      have ih2 := ClassExpr.hashCeList_of_beqList as bs h.2
+      simp [ClassExpr.hashCeList, ih1, ih2]
+  | [], _ :: _, h => by simp [ClassExpr.beqList] at h
+  | _ :: _, [], h => by simp [ClassExpr.beqList] at h
+end
+
 /-! ## The tableau state -/
 
 structure RNode where
   id     : Subject
   /-- Invariant: every label is in negation normal form. -/
   labels : List ClassExpr
+  /-- The labels by `ClassExpr.hashCe`. Invariant (kept by
+      `RNode.ofLabels` and `addLabel`): `byHash` holds exactly the
+      labels, each in the bucket of its hash. The duplicate test of
+      `addLabel` reads one bucket instead of the whole label list: a
+      node of the wine fixtures carries 150 labels, and the test ran
+      for every label every rule wrote, every round. -/
+  byHash : Std.HashMap UInt64 (List ClassExpr) := {}
+
+/-- A node with the given labels and their hash index. -/
+def RNode.ofLabels (i : Subject) (ls : List ClassExpr) : RNode :=
+  { id := i, labels := ls,
+    byHash := ls.foldl (fun m l =>
+      let h := ClassExpr.hashCe l
+      m.insert h (l :: m.getD h [])) {} }
 
 /-- An edge the expansion created. `counts` separates a
     `hasValue`-derived edge, which holds in EVERY model and may
@@ -260,14 +399,26 @@ structure REdge where
   counts : Bool
 
 structure RState where
-  nodes      : List RNode := []
-  extra      : List REdge := []
+  /-- The nodes in creation order. `pos` maps a node's subject to its
+      index here; `addLabel`, `addNode` and `initState` keep the two in
+      step, and nothing else adds a node. The list scans these replace
+      (`find?` per label read, `map` per label write) made every label
+      operation linear in the node count, which is what an expansion
+      round spends its time on. -/
+  nodes      : Array RNode := #[]
+  pos        : Std.HashMap Subject Nat := {}
+  /-- The expansion's edges in creation order, and the same edges by
+      subject and by object (`pushEdge` writes all three). The
+      successor and predecessor reads go through the two maps. -/
+  extra      : Array REdge := #[]
+  extraOut   : Std.HashMap Subject (Array REdge) := {}
+  extraIn    : Std.HashMap Term (Array REdge) := {}
   fresh      : Nat := 0
   /-- Witness depth per minted blank node. An ABox individual is at
       depth 0. The cap is what stops a cyclic TBox (`X ⊑ ∃p.X`) from
       growing an infinite `∃`-chain. Refusing a witness only
       withholds labels. -/
-  wdepth     : List (BNodeId × Nat) := []
+  wdepth     : Std.HashMap BNodeId Nat := {}
   inv        : List (WfIri × WfIri) := []
   subprop    : List (WfIri × WfIri) := []
   transProps : List WfIri := []
@@ -359,7 +510,7 @@ def identifiedWith (st : RState) (t : Term) : List Term :=
     individual (`WebOnt-description-logic-910`). The rules visit the
     leaders. -/
 def groupLeaders (st : RState) : List RNode :=
-  if st.ident.isEmpty then st.nodes
+  if st.ident.isEmpty then st.nodes.toList
   else
     (st.nodes.foldl (fun (acc : List RNode × List Term) n =>
       let r := repOf st n.id.toTerm
@@ -375,15 +526,28 @@ def groupLeaders (st : RState) : List RNode :=
     once two terms are identified, a clash entailed by the UNION of
     their labels has to be visible from either one. -/
 def labelsOf (st : RState) (i : Subject) : List ClassExpr :=
-  if st.ident.isEmpty then
-    match st.nodes.find? (fun n => n.id == i) with
-    | some n => n.labels
+  let own (j : Subject) : List ClassExpr :=
+    match st.pos.get? j with
+    | some k => (st.nodes[k]?.map (·.labels)).getD []
     | none   => []
-  else
-    ((identifiedWith st i.toTerm).filterMap termAsSubject).flatMap (fun j =>
-      match st.nodes.find? (fun n => n.id == j) with
-      | some n => n.labels
-      | none   => [])
+  if st.ident.isEmpty then own i
+  else ((identifiedWith st i.toTerm).filterMap termAsSubject).flatMap own
+
+/-- `(labelsOf st i).any (ClassExpr.beq c)`, read through the label
+    hash index of each node in `i`'s identification group: by
+    `ClassExpr.hashCe_of_beq` a label equal to `c` is in the bucket of
+    `c`'s hash. -/
+def hasLabel (st : RState) (i : Subject) (c : ClassExpr) : Bool :=
+  let h := ClassExpr.hashCe c
+  let own (j : Subject) : Bool :=
+    match st.pos.get? j with
+    | some k =>
+      match st.nodes[k]? with
+      | some n => (n.byHash.getD h []).any (ClassExpr.beq c)
+      | none   => false
+    | none => false
+  if st.ident.isEmpty then own i
+  else ((identifiedWith st i.toTerm).filterMap termAsSubject).any own
 
 /-- Add one label. `unknown` is never stored: it constrains nothing
     and would only make the label sets longer. The Boolean says
@@ -400,12 +564,22 @@ def addLabel (st : RState) (i : Subject) (c : ClassExpr) : RState × Bool :=
     -- pass, and the expansion reported a change forever until the
     -- budget ran out. Storing a label once is a bookkeeping question,
     -- not a semantic one.
-    if (labelsOf st i).any (ClassExpr.beq c) then (st, false)
-    else if st.nodes.any (fun n => n.id == i) then
-      ({ st with nodes := st.nodes.map (fun n =>
-           if n.id == i then { n with labels := n.labels ++ [c] } else n) }, true)
+    if hasLabel st i c then (st, false)
     else
-      ({ st with nodes := st.nodes ++ [{ id := i, labels := [c] }] }, true)
+      let h := ClassExpr.hashCe c
+      -- Take the array out of the state before changing it, so the
+      -- update is done in place when nothing else holds the array.
+      let nodes := st.nodes
+      let st := { st with nodes := #[] }
+      match st.pos.get? i with
+      | some k =>
+          ({ st with nodes := nodes.modify k (fun n =>
+               { n with labels := n.labels ++ [c],
+                        byHash := n.byHash.insert h (c :: n.byHash.getD h []) }) },
+           true)
+      | none =>
+          ({ st with nodes := nodes.push (RNode.ofLabels i [c]),
+                     pos := st.pos.insert i nodes.size }, true)
 
 /-! ## The role box
 
@@ -487,9 +661,9 @@ def successorsOf (_g : Graph) (st : RState) (i : Subject) (p : WfIri)
     roles.flatMap (fun r =>
       (inversesOf st.inv r).flatMap (fun r' =>
         (st.store.withPredObj r' j.toTerm).map (·.s.toTerm))))
-  let fromExtra := st.extra.filterMap (fun e =>
-    if selves.contains e.s && roles.contains e.p && (!counted || e.counts)
-    then some e.o else none)
+  let fromExtra := selves.flatMap (fun j =>
+    (st.extraOut.getD j #[]).toList.filterMap (fun e =>
+      if roles.contains e.p && (!counted || e.counts) then some e.o else none))
   -- The inverse direction of an EXPANSION edge. `viaInverse` above
   -- reads it off the input graph only, so a witness minted on `invR`
   -- was invisible when the witness's own `r`-successors were asked
@@ -498,10 +672,10 @@ def successorsOf (_g : Graph) (st : RState) (i : Subject) (p : WfIri)
   -- `Inv(r') = r` holds in every model, so the edge `(a, r', b)`
   -- entails `(b, r, a)` and reading it back is sound.
   let inverseRoles := roles.flatMap (fun r => inversesOf st.inv r)
-  let fromExtraInverse := st.extra.filterMap (fun e =>
-    if inverseRoles.contains e.p && selves.any (fun j => e.o == j.toTerm)
-       && (!counted || e.counts)
-    then some e.s.toTerm else none)
+  let fromExtraInverse := selves.flatMap (fun j =>
+    (st.extraIn.getD j.toTerm #[]).toList.filterMap (fun e =>
+      if inverseRoles.contains e.p && (!counted || e.counts)
+      then some e.s.toTerm else none))
   let raw := (fromGraph ++ viaInverse ++ fromExtra ++ fromExtraInverse).eraseDups
   -- Identified successors collapse to ONE term, which is what makes a
   -- merge REDUCE the count a `≤ k` bound is measured against.
@@ -669,6 +843,28 @@ def provablyDistinct (g : Graph) (a b : Term) : Bool :=
         literalValuesDistinct x.val y.val || differentFromAsserted g a b
     | _, _ => differentFromAsserted g a b
 
+/-- `differentFromAsserted` read through a store's membership test: the
+    graph holds `a owl:differentFrom b` or `b owl:differentFrom a`. Over
+    the index store each test is a hash lookup; `differentFromAsserted`
+    scans the whole graph, and the tableau asks it for every pair of
+    successors it compares. -/
+def differentFromAssertedS (st : Store) (a b : Term) : Bool :=
+  (match termAsSubject a with
+   | some sa => st.memB ⟨sa, owlDifferentFrom, b⟩
+   | none    => false) ||
+  (match termAsSubject b with
+   | some sb => st.memB ⟨sb, owlDifferentFrom, a⟩
+   | none    => false)
+
+/-- `provablyDistinct` with the asserted-difference test read through
+    a store (`differentFromAssertedS`). -/
+def provablyDistinctS (st : Store) (a b : Term) : Bool :=
+  if a == b then false
+  else match a, b with
+    | .literal x, .literal y =>
+        literalValuesDistinct x.val y.val || differentFromAssertedS st a b
+    | _, _ => differentFromAssertedS st a b
+
 /-- The search behind `existsDistinctSubsetBy`: `chosen` are the
     members taken so far, pairwise different; `need` more are wanted
     from `rest`. A member is taken only if `d` holds between every
@@ -709,7 +905,8 @@ def genDistinct (st : RState) (a b : Term) : Bool :=
     asked of the two identification GROUPS: if some member of `a`'s
     group is provably different from some member of `b`'s group, the
     two groups denote different elements. The reasons a pair of
-    members is different are the graph's (`provablyDistinct`) and the
+    members is different are the graph's (`provablyDistinct`, read
+    through the index store as `provablyDistinctS`) and the
     generating rule's (`genDistinct`). Two terms the branch has already
     identified are one element, so the answer for them is `false`.
 
@@ -717,12 +914,12 @@ def genDistinct (st : RState) (a b : Term) : Bool :=
     `provably_distinct_grouped`. Reading the members one by one, as
     `provablyDistinct` alone does, misses a difference that holds of a
     group through a member other than its representative. -/
-def distinctIn (g : Graph) (st : RState) (a b : Term) : Bool :=
+def distinctIn (_g : Graph) (st : RState) (a b : Term) : Bool :=
   if repOf st a == repOf st b then false
   else
     let as := identifiedWith st a
     let bs := identifiedWith st b
-    as.any (fun x => bs.any (fun y => provablyDistinct g x y || genDistinct st x y))
+    as.any (fun x => bs.any (fun y => provablyDistinctS st.store x y || genDistinct st x y))
 
 /-! ## Clash rules
 
@@ -1359,7 +1556,26 @@ def dpll (fuel : Nat) (cs : List (List ILit)) (asg : Array (Option Bool))
       if c.any (fun l => ilitValue asg l == some true) then none
       else some (c.filter (fun l => ilitValue asg l == none)))
     if open_.any (·.isEmpty) then (some false, n)
-    else match open_.find? (fun c => c.length == 1) with
+    else
+      -- Every unit clause forces its literal in any satisfying
+      -- extension of `asg`, so all of them are assigned in one step;
+      -- two units forcing one variable both ways leave no extension.
+      -- One unit per step cost one scan of the clause set per forced
+      -- literal: 22 seconds per call on the label sets of
+      -- `WebOnt-miscellaneous-011`.
+      let units := open_.filterMap (fun c => match c with | [u] => some u | _ => none)
+      let forced := units.foldl (fun (a : Option (Array (Option Bool))) u =>
+        match a with
+        | none    => none
+        | some a' =>
+          match a'.getD u.v none with
+          | some b => if b == u.pos then some a' else none
+          | none   => some (a'.set! u.v (some u.pos))) (some asg)
+      if !units.isEmpty then
+        match forced with
+        | none    => (some false, n)
+        | some a' => dpll n cs a'
+      else match open_.find? (fun c => c.length == 1) with
       | some [u] => dpll n cs (asg.set! u.v (some u.pos))
       | _ =>
         match open_.head? with
@@ -1398,6 +1614,72 @@ def nodeClauses (tb : List (ClassExpr × ClassExpr)) (ls : List ClassExpr)
       else grow k (cs ++ take.flatMap (fun (a, d) => axiomClauses a d)) keep
   grow rounds base tb
 
+/-- The TBox as an array, with the indices of the axioms whose
+    left-hand side mentions an atom, by the atom's `ceIndexKey`. -/
+structure LhsAtomIndex where
+  axs    : Array (ClassExpr × ClassExpr) := #[]
+  byAtom : Std.HashMap String (List Nat) := {}
+
+def LhsAtomIndex.build (tb : List (ClassExpr × ClassExpr)) : LhsAtomIndex :=
+  let axs := tb.toArray
+  let byAtom := (List.range axs.size).foldl (fun (m : Std.HashMap String (List Nat)) k =>
+    match axs[k]? with
+    | none => m
+    | some (a, _) =>
+      (axiomLhsAtoms a).foldl (fun m x =>
+        let key := ceIndexKey x
+        let ks := m.getD key []
+        -- An axiom whose antecedent repeats an atom key is listed once.
+        if ks.head? == some k then m else m.insert key (k :: ks)) m) {}
+  { axs := axs, byAtom := byAtom }
+
+/-- The clause set `propositionalClash` decides for a SATURATED label
+    set: the labels, and the axioms pulled in, to `rounds` steps, by an
+    atom that no single-literal label FIXES.
+
+    A round takes, in TBox order, every axiom not yet taken whose
+    left-hand side mentions such an atom. The index offers the axioms
+    that mention an atom with the same `ceIndexKey`, and `ceEq`
+    decides (`ceIndexKey_of_beq`: an axiom whose antecedent mentions
+    the atom is always offered).
+
+    **Why the fixed atoms pull nothing.** The expansion only asks this
+    of a node it has run to quiescence. An axiom whose antecedent is a
+    literal the node carries has FIRED (`applyAxioms`), so its
+    consequent is a label and its clause is already in the set; an
+    axiom whose antecedent literal is the negation of a label has a
+    clause the unit label satisfies. Neither changes the answer, and
+    with ~150 labels per node they were most of the TBox: 3,850
+    clauses per node on `WebOnt-miscellaneous-011`, 100 ms of clause
+    search each. Any subset of the clauses that has no model proves
+    the node has none, so a dropped clause can withhold a clash and
+    never invent one. -/
+def nodeClausesIx (ix : LhsAtomIndex) (ls : List ClassExpr) (rounds : Nat)
+    : List (List PLit) :=
+  let base := ls.map clauseOfLabel
+  let fixedAtoms := ls.filterMap (fun l => match l with
+    | .union _ => none
+    | _        => some (litOf l).atom)
+  let isFixed (x : ClassExpr) : Bool := fixedAtoms.any (ClassExpr.beq x)
+  let rec grow : Nat → List (List PLit) → Std.HashSet Nat → List (List PLit)
+    | 0,     cs, _     => cs
+    | k + 1, cs, taken =>
+      let atoms := (clauseAtoms cs).filter (fun x => !isFixed x)
+      let offered := atoms.foldl (fun (acc : Std.HashSet Nat) x =>
+        (ix.byAtom.getD (ceIndexKey x) []).foldl (fun acc i =>
+          if taken.contains i then acc else acc.insert i) acc) {}
+      let take := (offered.toList.mergeSort (· ≤ ·)).filter (fun i =>
+        match ix.axs[i]? with
+        | some (a, _) => (axiomLhsAtoms a).any (fun x => atoms.any (ceEq x))
+        | none        => false)
+      if take.isEmpty then cs
+      else
+        let news := take.flatMap (fun i => match ix.axs[i]? with
+          | some (a, d) => axiomClauses a d
+          | none        => [])
+        grow k (cs ++ news) (take.foldl (fun t i => t.insert i) taken)
+  grow rounds base {}
+
 /-- Is one node's label set propositionally unsatisfiable? Asked only
     of a node with at least two disjunction labels: with one, the
     union rule's own branches find the clash as cheaply. -/
@@ -1407,8 +1689,36 @@ def propositionalClashLabels (tb : List (ClassExpr × ClassExpr)) (ls : List Cla
   if unions.length < 2 then false
   else clausesSatisfiable propFuel (nodeClauses tb ls 3) == some false
 
+/-- `propositionalClashLabels` over a prebuilt index. -/
+def propositionalClashLabelsIx (ix : LhsAtomIndex) (ls : List ClassExpr) : Bool :=
+  let unions := ls.filter (fun l => match l with | .union _ => true | _ => false)
+  if unions.length < 2 then false
+  else clausesSatisfiable propFuel (nodeClausesIx ix ls 3) == some false
+
+/-- A key for a label SET: the sorted printed forms of its labels.
+    Two nodes with the same labels in another order get one key. -/
+def labelSetKey (ls : List ClassExpr) : String :=
+  String.intercalate "\n" ((ls.map (fun l => reprStr l)).mergeSort (· ≤ ·))
+
+/-- Some node's labels are propositionally unsatisfiable. The answer
+    depends on the label set and the TBox only, so it is computed once
+    per distinct label set: individuals of the same classes carry the
+    same set, and the clause search is the expensive part. -/
 def propositionalClash (st : RState) : Bool :=
-  (groupLeaders st).any (fun n => propositionalClashLabels st.tbox (labelsOf st n.id))
+  let ix := LhsAtomIndex.build st.tbox
+  ((groupLeaders st).foldl (fun (acc : Std.HashMap String Bool × Bool) n =>
+    if acc.2 then acc
+    else
+      let ls := labelsOf st n.id
+      if (ls.filter (fun l => match l with | .union _ => true | _ => false)).length < 2
+      then acc
+      else
+        let key := labelSetKey ls
+        match acc.1.get? key with
+        | some r => (acc.1, r)
+        | none   =>
+          let r := propositionalClashLabelsIx ix ls
+          (acc.1.insert key r, r)) ({}, false)).2
 
 /-! ## The identity clash over nominals
 
@@ -1516,12 +1826,14 @@ def predecessorsOf (st : RState) (j : Subject) (p : WfIri) : List Term :=
   let selves := identifiedWith st j.toTerm
   let fromGraph := selves.flatMap (fun t => roles.flatMap (fun r =>
     (st.store.withPredObj r t).map (·.s.toTerm)))
-  let fromExtra := st.extra.filterMap (fun e =>
-    if roles.contains e.p && selves.contains e.o then some e.s.toTerm else none)
+  let fromExtra := selves.flatMap (fun t =>
+    (st.extraIn.getD t #[]).toList.filterMap (fun e =>
+      if roles.contains e.p then some e.s.toTerm else none))
   let viaInverse := (selves.filterMap termAsSubject).flatMap (fun s => roles.flatMap (fun r =>
     (inversesOf st.inv r).flatMap (fun r' =>
       (st.store.withSubjPred s r').map (·.o) ++
-      st.extra.filterMap (fun e => if e.s == s && e.p == r' then some e.o else none))))
+      (st.extraOut.getD s #[]).toList.filterMap (fun e =>
+        if e.p == r' then some e.o else none))))
   (fromGraph ++ fromExtra ++ viaInverse).map (repOf st) |>.eraseDups
 
 /-- `owl:InverseFunctionalProperty p` with two provably different
@@ -1793,9 +2105,8 @@ happen — the pair is entailed of the class, and `k > j` has no
 model. -/
 
 def superclassCes (st : Store) (c : WfIri) : List ClassExpr :=
-  st.graph.filterMap (fun t =>
-    if (t.p == rdfsSubClassOf || t.p == owlEquivalentClass) && t.s == Subject.iri c
-    then some (parseClassExpr st t.o 8) else none)
+  (st.withSubjPred (.iri c) rdfsSubClassOf ++ st.withSubjPred (.iri c) owlEquivalentClass).map
+    (fun t => parseClassExpr st t.o 8)
 
 def cesMinMaxClash (ces : List ClassExpr) : Bool :=
   ces.any (fun ce => match ce with
@@ -1862,9 +2173,15 @@ def parseNnfWith (us : List WfIri) (st : Store) (t : Term) : ClassExpr :=
   if isScaffoldBNode t then .unknown
   else nnf (normalizeUnsat us (parseClassExpr st t 32))
 
-def parseNnfSubjectWith (us : List WfIri) (st : Store) (sub : Subject) : ClassExpr :=
+/-- `parseNnfSubjectWith` with the marker-walk fuel given
+    (`parseCeOfSubjectFuel`). -/
+def parseNnfSubjectWithFuel (us : List WfIri) (st : Store) (fuel : Nat) (sub : Subject)
+    : ClassExpr :=
   if isScaffoldBNode sub.toTerm then .unknown
-  else nnf (normalizeUnsat us (parseCeOfSubject st sub))
+  else nnf (normalizeUnsat us (parseCeOfSubjectFuel st fuel sub))
+
+def parseNnfSubjectWith (us : List WfIri) (st : Store) (sub : Subject) : ClassExpr :=
+  parseNnfSubjectWithFuel us st (st.graph.length + 8) sub
 
 def parseNnf (st : Store) (t : Term) : ClassExpr := nnf (parseClassExpr st t 32)
 
@@ -1900,8 +2217,9 @@ def namedRestrictionAxioms (us : List WfIri) (st : Store)
       | .iri c   => some c
       | .bnode _ => none
     else none)).eraseDups
+  let fuel := st.graph.length + 8
   subs.flatMap (fun c =>
-    match parseNnfSubjectWith us st (.iri c) with
+    match parseNnfSubjectWithFuel us st fuel (.iri c) with
     | .unknown => []
     | .named d => if d == c then [] else [(.named c, .named d), (.named d, .named c)]
     | ce       => [(.named c, ce), (ce, .named c)])
@@ -1943,8 +2261,9 @@ def namedBooleanAxioms (us : List WfIri) (st : Store) : List (ClassExpr × Class
     match t.s with
     | .iri c   => some c
     | .bnode _ => none)).eraseDups
+  let fuel := st.graph.length + 8
   subs.flatMap (fun c =>
-    match parseNnfSubjectWith us st (.iri c) with
+    match parseNnfSubjectWithFuel us st fuel (.iri c) with
     | .unknown => []
     | .named d => if d == c then [] else [(.named c, .named d), (.named d, .named c)]
     | ce       =>
@@ -2025,15 +2344,18 @@ def collectAxiomsS (st : Store) : List (ClassExpr × ClassExpr) :=
   let us := unsatNamedClassesS st
   namedRestrictionAxioms us st ++ namedOneOfAxioms st ++ domainRangeAxioms us st ++
   namedBooleanAxioms us st ++ disjointUnionAxioms us st ++
+  -- The subject-parse fuel is the graph's length plus 8, computed
+  -- once here and not per triple (`parseCeOfSubject`).
+  let fuel := st.graph.length + 8
   st.graph.flatMap (fun t =>
     if t.p == rdfsSubClassOf then
-      [(parseNnfSubjectWith us st t.s, parseNnfWith us st t.o)]
+      [(parseNnfSubjectWithFuel us st fuel t.s, parseNnfWith us st t.o)]
     else if t.p == owlEquivalentClass then
-      let a := parseNnfSubjectWith us st t.s
+      let a := parseNnfSubjectWithFuel us st fuel t.s
       let b := parseNnfWith us st t.o
       [(a, b), (b, a), (nnfNeg b, nnfNeg a), (nnfNeg a, nnfNeg b)]
     else if t.p == owlDisjointWith || t.p == owlComplementOf then
-      let a := parseNnfSubjectWith us st t.s
+      let a := parseNnfSubjectWithFuel us st fuel t.s
       let b := parseNnfWith us st t.o
       [(a, nnfNeg b), (b, nnfNeg a)]
     else [])
@@ -2064,7 +2386,20 @@ def axiomBeq (x y : ClassExpr × ClassExpr) : Bool :=
     A wrong deduplication loses conformance units, which the corpus
     score sees; it cannot invent an entailment. -/
 def dedupAxioms (tb : List (ClassExpr × ClassExpr)) : List (ClassExpr × ClassExpr) :=
-  (tb.foldl (fun acc a => if acc.any (axiomBeq a) then acc else a :: acc) []).reverse
+  -- An axiom is compared only with the kept axioms of its own
+  -- `ceIndexKey` pair: `axiomBeq` implies equal keys
+  -- (`ceIndexKey_of_beq`), so no duplicate is missed. The comparison
+  -- against EVERY kept axiom this replaces was quadratic in the TBox:
+  -- 12 seconds per refuter call on the goal graphs of
+  -- `WebOnt-miscellaneous-011`.
+  let step (acc : Array (ClassExpr × ClassExpr) ×
+                  Std.HashMap String (List (ClassExpr × ClassExpr)))
+      (a : ClassExpr × ClassExpr) :=
+    let k := ceIndexKey a.1 ++ " " ++ ceIndexKey a.2
+    let bucket := acc.2.getD k []
+    if bucket.any (axiomBeq a) then acc
+    else (acc.1.push a, acc.2.insert k (a :: bucket))
+  (tb.foldl step (#[], {})).1.toList
 
 /-- `C₁ ⊔ … ⊔ Cₙ ⊑ D` also gives `Cᵢ ⊑ D` for each `i`. An axiom
     fires when a node's label MATCHES its antecedent, and a node
@@ -2120,7 +2455,7 @@ def witnessId (i : Subject) (p : WfIri) (n : Nat) : BNodeId :=
 def depthOf1 (st : RState) (i : Subject) : Nat :=
   match i with
   | .iri _   => 0
-  | .bnode b => (st.wdepth.find? (fun q => q.1 == b)).map (·.2) |>.getD 0
+  | .bnode b => st.wdepth.getD b 0
 
 /-- The witness depth of `i`'s identification group: the least depth
     of a member. A witness identified with an ABox individual is that
@@ -2130,6 +2465,13 @@ def depthOf (st : RState) (i : Subject) : Nat :=
   else
     ((identifiedWith st i.toTerm).filterMap termAsSubject).foldl
       (fun d j => min d (depthOf1 st j)) (depthOf1 st i)
+
+/-- Record an expansion edge in `extra` and in the subject and object
+    maps. -/
+def pushEdge (st : RState) (e : REdge) : RState :=
+  { st with extra := st.extra.push e,
+            extraOut := st.extraOut.insert e.s ((st.extraOut.getD e.s #[]).push e),
+            extraIn := st.extraIn.insert e.o ((st.extraIn.getD e.o #[]).push e) }
 
 /-- Mint witnesses for `i` on `p` until it has `k` successors, up to
     the depth and count caps. The filler is put on each witness. -/
@@ -2156,11 +2498,10 @@ def ensureWitnesses (g : Graph) (st : RState) (i : Subject) (p : WfIri)
     (List.range want).foldl (fun (acc : RState × Bool) j =>
       let (s0, ch) := acc
       let b := witnessId i p (s0.fresh + j)
-      if s0.extra.any (fun e => e.o == Term.bnode b) then (s0, ch)
+      if s0.extraIn.contains (Term.bnode b) then (s0, ch)
       else
-        let s1 := { s0 with
-          extra := s0.extra ++ [{ s := i, p := p, o := .bnode b, counts := false }],
-          wdepth := s0.wdepth ++ [(b, d)] }
+        let s1 := { pushEdge s0 { s := i, p := p, o := .bnode b, counts := false } with
+          wdepth := s0.wdepth.insert b d }
         let (s2, _) := addLabel s1 (.bnode b) c
         (s2, true)) (st, false)
     |> (fun (s, ch) => ({ s with fresh := s.fresh + want }, ch))
@@ -2168,15 +2509,16 @@ def ensureWitnesses (g : Graph) (st : RState) (i : Subject) (p : WfIri)
 /-- Add `(i, p, v)` as an edge that holds in EVERY model, which is
     therefore COUNTED against cardinality bounds. -/
 def addCountedEdge (st : RState) (i : Subject) (p : WfIri) (v : Term) : RState × Bool :=
-  if st.extra.any (fun e => e.s == i && e.p == p && e.o == v) then (st, false)
-  else ({ st with extra := st.extra ++ [{ s := i, p := p, o := v, counts := true }] }, true)
+  if (st.extraOut.getD i #[]).any (fun e => e.p == p && e.o == v) then (st, false)
+  else (pushEdge st { s := i, p := p, o := v, counts := true }, true)
 
 /-- Register `b` as a node with no label. A node is what the global
     rules (`injectGlobalAxioms`, `injectFunctional`) and the clash
     rules visit, so a witness the TBox must reach has to be one. -/
 def addNode (st : RState) (b : Subject) : RState :=
-  if st.nodes.any (fun n => n.id == b) then st
-  else { st with nodes := st.nodes ++ [{ id := b, labels := [] }] }
+  if st.pos.contains b then st
+  else { st with nodes := st.nodes.push { id := b, labels := [] },
+                 pos := st.pos.insert b st.nodes.size }
 
 /-- The generating rule for `≥ k p` and `≥ k p.C` with `k ≥ 2`.
 
@@ -2213,9 +2555,8 @@ def ensureDistinctWitnesses (g : Graph) (st : RState) (i : Subject) (p : WfIri)
     let d := depthOf st i + 1
     let ids := (List.range want).map (fun j => witnessId i p (st.fresh + j))
     let st1 := ids.foldl (fun (s0 : RState) b =>
-      let s1 := addNode { s0 with
-        extra := s0.extra ++ [{ s := i, p := p, o := .bnode b, counts := true }],
-        wdepth := s0.wdepth ++ [(b, d)] } (.bnode b)
+      let s1 := addNode { pushEdge s0 { s := i, p := p, o := .bnode b, counts := true } with
+        wdepth := s0.wdepth.insert b d } (.bnode b)
       (addLabel s1 (.bnode b) c).1) st
     ({ st1 with fresh := st1.fresh + want,
                 distinctGroups := st1.distinctGroups ++ [ids.map Term.bnode] }, true)
@@ -2317,43 +2658,127 @@ Sound per shape, over COUNTED successors only:
 * `≥ k p.C` — as `≥ k p` over the `C`-labelled successors.
 
 Everything else is `false`. Withholding is sound. -/
-def edgeEntailsMembership (g : Graph) (st : RState) (i : Subject) (a : ClassExpr)
-    : Bool :=
+/-- The property an edge-provable antecedent is measured on: the
+    shapes `edgeEntailsMembership` can prove, and `none` for every
+    other shape (those it answers `false` for). -/
+def edgeAntecedentProp : ClassExpr → Option WfIri
+  | .minCard k p       => if k == 0 then none else some p
+  | .someOf p _        => some p
+  | .hasValue p _      => some p
+  | .minQualCard k p _ => if k == 0 then none else some p
+  | _                  => none
+
+/-- `edgeEntailsMembership` with the node's counted successors on the
+    antecedent's property already read (`succ`). The successors do not
+    depend on labels, so one read serves every axiom on that
+    property. -/
+def edgeEntailsMembershipWith (g : Graph) (st : RState) (a : ClassExpr)
+    (succ : List Term) : Bool :=
   match a with
-  | .minCard k p =>
+  | .minCard k _ =>
       if k == 0 then false
-      else if k == 1 then !(successorsOf g st i p true).isEmpty
-      else existsDistinctSubsetBy (distinctIn g st) (successorsOf g st i p true) k
-  | .someOf p c =>
+      else if k == 1 then !succ.isEmpty
+      else existsDistinctSubsetBy (distinctIn g st) succ k
+  | .someOf _ c =>
       ceDefinite c &&
-      (successorsOf g st i p true).any (fun o =>
+      succ.any (fun o =>
         match termAsSubject o with
         | some j => memCe c (labelsOf st j)
         | none   => false)
-  | .hasValue p v => (successorsOf g st i p true).any (· == v)
-  | .minQualCard k p c =>
+  | .hasValue _ v => succ.any (· == v)
+  | .minQualCard k _ c =>
       if k == 0 || !(ceDefinite c) then false
       else
-        let cs := successorsInFiller st c (successorsOf g st i p true)
+        let cs := successorsInFiller st c succ
         if k == 1 then !cs.isEmpty else existsDistinctSubsetBy (distinctIn g st) cs k
   | _ => false
 
+def edgeEntailsMembership (g : Graph) (st : RState) (i : Subject) (a : ClassExpr)
+    : Bool :=
+  match edgeAntecedentProp a with
+  | some p => edgeEntailsMembershipWith g st a (successorsOf g st i p true)
+  | none   => false
+
+/-! ### The TBox, indexed for one expansion round
+
+`onePass` asked EVERY axiom whether it fires at every node: once per
+label (`applyAxioms`), once for the node's edges
+(`applyAxiomsEdges`), once for its conjunctions (`applyAxiomsConj`)
+and once for the global axioms. That is `|TBox| * (3 * nodes +
+labels)` tests per round. On `WebOnt-miscellaneous-011` (3,281 axioms
+after the named-class axiom sources, 818 nodes) one round took 10.6
+to 13 seconds, and the search runs up to the budget's rounds per
+premise: the `type-consistency` gate exceeded its 1,500-second cap.
+
+An axiom can fire only when its antecedent matches, and most
+antecedents cannot match a given label or node at all. The index keeps
+the TBox split by the cheap part of the antecedent (`ceIndexKey`), by
+the property an edge-provable antecedent is measured on, and into the
+intersection and global (`owl:Thing`) antecedents. Each rule reads
+the subset that can fire. The axioms each rule fires are the ones it
+fired before; only the tests that could not succeed are gone. -/
+
+structure TBoxIndex where
+  /-- Axioms by `ceIndexKey` of the antecedent. -/
+  byKey      : Std.HashMap String (List (ClassExpr × ClassExpr)) := {}
+  /-- Axioms with an edge-provable antecedent, by its property. -/
+  edgeByProp : Std.HashMap String (List (ClassExpr × ClassExpr)) := {}
+  /-- The keys of `edgeByProp`, each once. -/
+  edgeProps  : List WfIri := []
+  /-- Axioms whose antecedent is a non-empty intersection, by the
+      `ceIndexKey` of its FIRST conjunct. Such an axiom fires only on a
+      node that carries every conjunct, the first one included, so a
+      node need read only the buckets of its own labels' keys. -/
+  conjByKey  : Std.HashMap String (List (ClassExpr × ClassExpr)) := {}
+  /-- Axioms whose antecedent is `owl:Thing` (`isTopAntecedent`). -/
+  top        : List (ClassExpr × ClassExpr) := []
+
+/-- Build the index. Every bucket keeps the TBox order. -/
+def TBoxIndex.build (tb : List (ClassExpr × ClassExpr)) : TBoxIndex :=
+  let ix := tb.reverse.foldl (fun (ix : TBoxIndex) (ax : ClassExpr × ClassExpr) =>
+    let k := ceIndexKey ax.1
+    let ix := { ix with byKey := ix.byKey.insert k (ax :: ix.byKey.getD k []) }
+    let ix := match edgeAntecedentProp ax.1 with
+      | some p =>
+          let isNew := !ix.edgeByProp.contains p.val
+          { ix with edgeByProp := ix.edgeByProp.insert p.val (ax :: ix.edgeByProp.getD p.val []),
+                    edgeProps := if isNew then p :: ix.edgeProps else ix.edgeProps }
+      | none => ix
+    let ix := match ax.1 with
+      | .intersection (c :: _) =>
+          let k := ceIndexKey c
+          { ix with conjByKey := ix.conjByKey.insert k (ax :: ix.conjByKey.getD k []) }
+      | _ => ix
+    match ax.1 with
+    | .named c         => if c == owlThing then { ix with top := ax :: ix.top } else ix
+    | .intersection [] => { ix with top := ax :: ix.top }
+    | _                => ix) {}
+  ix
+
 /-- Fire the axioms whose left-hand side the node's EDGES prove. The
     left-hand side is added as a label too, so the label-level clash
-    rules see it. -/
-def applyAxiomsEdges (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
+    rules see it. Only the properties some edge-provable antecedent
+    mentions are read, each once, and a property with no counted
+    successor skips its axioms: every shape `edgeEntailsMembership`
+    proves needs at least one successor. -/
+def applyAxiomsEdges (ix : TBoxIndex) (g : Graph) (st : RState)
     (i : Subject) : RState × Bool :=
   -- The node's label read is HOISTED and refreshed only when an axiom
   -- actually fires — the sole way the labels change in this loop.
   -- Reading them per AXIOM costs one node-list walk per axiom per
-  -- node per round.
-  let (st', ch, _) := tb.foldl (fun (acc : RState × Bool × List ClassExpr) (a, d) =>
-    let (s0, c0, ls) := acc
-    if !(memCe a ls) && edgeEntailsMembership g s0 i a then
-      let (s1, c1) := addLabel s0 i a
-      let (s2, c2) := addLabel s1 i d
-      (s2, c0 || c1 || c2, labelsOf s2 i)
-    else acc) (st, false, labelsOf st i)
+  -- node per round. Adding a label adds no edge, so the successors
+  -- read for a property stay valid through its bucket.
+  let (st', ch, _) := ix.edgeProps.foldl (fun (acc : RState × Bool × List ClassExpr) p =>
+    let succ := successorsOf g acc.1 i p true
+    if succ.isEmpty then acc
+    else
+      (ix.edgeByProp.getD p.val []).foldl (fun (acc : RState × Bool × List ClassExpr) (a, d) =>
+        let (s0, c0, ls) := acc
+        if !(memCe a ls) && edgeEntailsMembershipWith g s0 a succ then
+          let (s1, c1) := addLabel s0 i a
+          let (s2, c2) := addLabel s1 i d
+          (s2, c0 || c1 || c2, labelsOf s2 i)
+        else acc) acc) (st, false, labelsOf st i)
   (st', ch)
 
 /-- Fire an axiom whose left-hand side is an INTERSECTION when every
@@ -2363,21 +2788,30 @@ def applyAxiomsEdges (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RSta
     side, so `z ≡ C₁ ⊓ C₂` never fires on a node carrying `C₁` and
     `C₂` apart. Labels are entailed memberships, and being in each
     `Cᵢ` IS being in the intersection, so the node is entailed in the
-    left-hand side and hence in the right-hand side. -/
-def applyAxiomsConj (tb : List (ClassExpr × ClassExpr)) (st : RState) (i : Subject)
-    : RState × Bool :=
-  let (st', ch, _) := tb.foldl (fun (acc : RState × Bool × List ClassExpr) (a, d) =>
-    let (s0, c0, ls) := acc
-    match a with
-    | .intersection cs =>
-        if cs.isEmpty || memCe a ls then acc
-        else if cs.all (fun c => memCe c ls) then
-          let (s1, c1) := addLabel s0 i a
-          let (s2, c2) := addLabel s1 i d
-          (s2, c0 || c1 || c2, labelsOf s2 i)
-        else acc
-    | _ => acc) (st, false, labelsOf st i)
-  (st', ch)
+    left-hand side and hence in the right-hand side.
+
+    Only the axioms filed under the key of one of the node's labels
+    are read (`TBoxIndex.conjByKey`), and membership is read through
+    the label hash index (`hasLabel`). Reading all 1,447 intersection
+    axioms of `WebOnt-miscellaneous-011` at every node, each against
+    the node's label list, was 2 of the 2.1 seconds of one round. -/
+def applyAxiomsConj (ix : TBoxIndex) (st : RState) (i : Subject) : RState × Bool :=
+  let has (s : RState) (c : ClassExpr) : Bool := ceDefinite c && hasLabel s i c
+  let keys := ((labelsOf st i).map ceIndexKey).foldl
+    (fun (acc : List String × Std.HashSet String) k =>
+      if acc.2.contains k then acc else (k :: acc.1, acc.2.insert k)) ([], {})
+  keys.1.reverse.foldl (fun (acc : RState × Bool) k =>
+    (ix.conjByKey.getD k []).foldl (fun (acc : RState × Bool) (a, d) =>
+      let (s0, c0) := acc
+      match a with
+      | .intersection cs =>
+          if cs.isEmpty || has s0 a then acc
+          else if cs.all (has s0) then
+            let (s1, c1) := addLabel s0 i a
+            let (s2, c2) := addLabel s1 i d
+            (s2, c0 || c1 || c2)
+          else acc
+      | _ => acc) acc) (st, false)
 
 /-- A TBox axiom whose antecedent is `owl:Thing` is a GLOBAL
     constraint, not one keyed on a label. `owl:Thing` is interpreted
@@ -2422,16 +2856,17 @@ def injectFunctional (st : RState) : RState × Bool :=
 /-- One saturation pass over every node and every label it carries. -/
 def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
     : RState × Bool :=
+  let ix := TBoxIndex.build tb
   let (st0, ch0) := injectFunctional st
-  let (st1, chG) := injectGlobalAxioms tb st0
+  let (st1, chG) := injectGlobalAxioms ix.top st0
   let ch1 := ch0 || chG
   (groupLeaders st1).foldl (fun (acc : RState × Bool) n =>
     let byLabel := (labelsOf acc.1 n.id).foldl (fun (a2 : RState × Bool) l =>
       let (s1, c1) := applyLabelRules g a2.1 n.id l
-      let (s2, c2) := applyAxioms tb s1 n.id l
+      let (s2, c2) := applyAxioms (ix.byKey.getD (ceIndexKey l) []) s1 n.id l
       (s2, a2.2 || c1 || c2)) acc
-    let (s3, c3) := applyAxiomsEdges tb g byLabel.1 n.id
-    let (s4, c4) := applyAxiomsConj tb s3 n.id
+    let (s3, c3) := applyAxiomsEdges ix g byLabel.1 n.id
+    let (s4, c4) := applyAxiomsConj ix s3 n.id
     (s4, byLabel.2 || c3 || c4)) (st1, ch1)
 
 /-! ## The ≤-rule: merging witness successors
@@ -2703,10 +3138,10 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
                 let (sb, _) := addLabel { st' with
                   nodes := st'.nodes.map (fun m =>
                     if m.id == i then
-                      { m with labels := m.labels.filter (fun l =>
+                      RNode.ofLabels m.id (m.labels.filter (fun l =>
                           match l with
                           | .union es => !(ClassExpr.beqList es cs)
-                          | _         => true) }
+                          | _         => true))
                     else m) } i c
                 match search tb g sb b with
                 | (.clash, b') => tryAll tl b'
@@ -2759,26 +3194,49 @@ def initState (g : Graph) : RState :=
       subClosure := props.map (fun p => (p, subpropertiesOfRaw sp p)),
       supClosure := props.map (fun p => (p, superpropertiesOfRaw sp p)),
       store := Store.ofIndex (Index.ofGraph g) }
-  let store := Store.ofGraph g
-  let us := unsatNamedClasses g
-  let typed := g.foldl (fun st t =>
-    if t.p == rdfType then (addLabel st t.s (parseNnfWith us store t.o)).1 else st) st0
+  -- Built in ONE pass with a hash map and the index store. The fold
+  -- through `addLabel` this replaces scanned the node list per triple
+  -- and parsed every type through the LIST store, quadratic in the
+  -- graph: on the 30,968-triple closure of `WebOnt-miscellaneous-011`
+  -- it did not finish in 95 seconds. The nodes and their labels are
+  -- the same: one node per `rdf:type` subject whose type parses, then
+  -- one per resource at either end of a property assertion, in first
+  -- occurrence order, each label stored once.
+  let store := st0.store
+  let us := unsatNamedClassesS store
+  let addTerm (acc : Array Subject × Std.HashMap Subject (List ClassExpr)) (x : Subject)
+      : Array Subject × Std.HashMap Subject (List ClassExpr) :=
+    if acc.2.contains x then acc else (acc.1.push x, acc.2.insert x [])
+  let (order, labelMap) := g.foldl
+    (fun (acc : Array Subject × Std.HashMap Subject (List ClassExpr)) t =>
+      if t.p == rdfType then
+        match parseNnfWith us store t.o with
+        | .unknown => acc
+        | c =>
+          let (ord, m) := addTerm acc t.s
+          let ls := m.getD t.s []
+          if ls.any (ClassExpr.beq c) then (ord, m) else (ord, m.insert t.s (ls ++ [c]))
+      else acc) (#[], {})
   -- Both ends of a property assertion are individuals, typed or not,
   -- and the global rules (`injectGlobalAxioms`: `owl:Thing ⊑ C`, the
   -- range axioms) hold of them as of every element. A term only ever
   -- seen as the subject or object of an edge was no node, so none of
   -- them reached it: the fresh pair of a `owl:FunctionalProperty`
   -- refutation goal is exactly that shape.
-  g.foldl (fun st t =>
-    if isVocabularyPredicate t.p then st
-    else
-      let st1 := addNode st t.s
-      match t.o with
-      | .iri _ | .bnode _ =>
-          (match termAsSubject t.o with
-           | some o => addNode st1 o
-           | none   => st1)
-      | _ => st1) typed
+  let (order', labelMap') := g.foldl
+    (fun (acc : Array Subject × Std.HashMap Subject (List ClassExpr)) t =>
+      if isVocabularyPredicate t.p then acc
+      else
+        let acc1 := addTerm acc t.s
+        match termAsSubject t.o with
+        | some o => (match t.o with
+                     | .iri _ | .bnode _ => addTerm acc1 o
+                     | _ => acc1)
+        | none   => acc1) (order, labelMap)
+  { st0 with
+      nodes := order'.map (fun x => RNode.ofLabels x (labelMap'.getD x [])),
+      pos := (order'.foldl (fun (acc : Std.HashMap Subject Nat × Nat) x =>
+        (acc.1.insert x acc.2, acc.2 + 1)) ({}, 0)).1 }
 
 /-- The class-size counting rung (`OWL/CountingOracle.lean`), the
     Lean counterpart of the F* owl-runner's `class_size_refutes`.

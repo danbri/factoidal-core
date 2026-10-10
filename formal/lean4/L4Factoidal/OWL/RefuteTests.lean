@@ -773,6 +773,20 @@ private def tbPM : List (ClassExpr × ClassExpr) :=
 #guard !propositionalClashLabels tbPM
   [cP, .union [cM, cN], .union [cM, cO]]
 
+-- The indexed clause growth (`nodeClausesIx`, what `propositionalClash`
+-- runs) builds the same clause set and gives the same answers.
+#guard propositionalClashLabelsIx (LhsAtomIndex.build (tbPM ++ [(cN, .complement cO)]))
+  [cP, .union [cM, cN], .union [cM, cO]]
+#guard !propositionalClashLabelsIx (LhsAtomIndex.build tbPM)
+  [cP, .union [cM, cN], .union [cM, cO]]
+-- The axiom keyed on the label `P` (`P ⊑ ¬M`) is not pulled in: the
+-- label fixes `P`, and on a saturated node that axiom has fired. The
+-- other two axioms are keyed on `M` and `N`, which no label fixes.
+#guard (nodeClausesIx (LhsAtomIndex.build (tbPM ++ [(cN, .complement cO)]))
+          [cP, .union [cM, cN], .union [cM, cO]] 3).length == 5
+#guard (nodeClauses (tbPM ++ [(cN, .complement cO)])
+          [cP, .union [cM, cN], .union [cM, cO]] 3).length == 6
+
 /-! The same shape through the whole refuter: one individual, the
 four clauses as `rdf:type` unions. -/
 
@@ -1191,5 +1205,32 @@ private def gNominalChoice (bothC : Bool) : Graph :=
 
 #guard refuted (gNominalChoice true)
 #guard !(refuted (gNominalChoice false))
+
+/-! ## The TBox index keeps every axiom a rule can fire
+
+`onePass` reads the TBox through `TBoxIndex`. A label meets the
+axioms in its `ceIndexKey` bucket (`ceIndexKey_of_beq`), an
+edge-provable antecedent is filed under its property, and the
+intersection and `owl:Thing` antecedents have their own lists. -/
+
+private def ixSample : List (ClassExpr × ClassExpr) :=
+  [ (.named exA, .named exB),
+    (.someOf exP (.named exC), .named exD),
+    (.intersection [.named exA, .named exB], .named exC),
+    (.named owlThing, .named exD),
+    (.complement (.named exA), .named exC),
+    (.maxCard 1 exP, .named exB) ]
+
+#guard ((TBoxIndex.build ixSample).byKey.getD (ceIndexKey (.named exA)) []).length == 1
+#guard ((TBoxIndex.build ixSample).byKey.getD (ceIndexKey (.named exB)) []).isEmpty
+#guard ((TBoxIndex.build ixSample).byKey.getD (ceIndexKey (.complement (.named exA))) []).length == 1
+#guard ((TBoxIndex.build ixSample).byKey.getD (ceIndexKey (.complement (.named exB))) []).isEmpty
+#guard (TBoxIndex.build ixSample).edgeProps.length == 1
+#guard ((TBoxIndex.build ixSample).edgeByProp.getD exP.val []).length == 1
+#guard ((TBoxIndex.build ixSample).conjByKey.getD (ceIndexKey (.named exA)) []).length == 1
+#guard ((TBoxIndex.build ixSample).conjByKey.getD (ceIndexKey (.named exB)) []).isEmpty
+#guard (TBoxIndex.build ixSample).top.length == 1
+-- `≤ 1 p` is not edge-provable: no edge proves an upper bound.
+#guard ((TBoxIndex.build [(.maxCard 1 exP, .named exB)]).edgeProps).isEmpty
 
 end L4Factoidal.OWL.Refute
