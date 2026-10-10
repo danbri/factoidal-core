@@ -361,6 +361,34 @@ theorem rbConclusions_entailed {g goal : Graph} {t : Triple} (h : t ∈ rbConclu
     RbEntails g [t] :=
   rbDerives_entailed (rbConclusions_derives h)
 
+/-! ## The comprehension witnesses of the RL closure are not evidence here
+
+The OWL 2 RL/RDF closure of this tree has three `[ext]` rows that mint a
+blank node standing for a class expression (`caxDwToComplement`,
+`clsMaxqc1ToComplement`, `minCard1Comprehension`; labels
+`__rl_comp__…`, `__rl_minc1__…`, `RL.rlReservedBnode`). Their soundness
+(`RLSemantics.RlCondCompDw`, `RlCondCompMqc`, `RlCondMinc1`) rests on
+the comprehension conditions of RDF-Based Semantics §8, which are NOT
+part of the normative semantics (§9, "Correspondence Theorem and
+Comprehension Conditions [DEV]": combining them with §5 "would lead to
+formal inconsistency"). So the regime never uses a triple that mentions
+such a witness as evidence: `withoutCompWitness` removes them before a
+conclusion is matched and before the clash check. -/
+
+def tripleMentionsCompWitness (t : Triple) : Bool :=
+  (match t.s with | .bnode b => rlReservedBnode b | _ => false) ||
+  (match t.o with | .bnode b => rlReservedBnode b | _ => false)
+
+def withoutCompWitness (g : Graph) : Graph :=
+  g.filter (fun t => !tripleMentionsCompWitness t)
+
+theorem withoutCompWitness_sub {g : Graph} {t : Triple} (h : t ∈ withoutCompWitness g) :
+    t ∈ g := (List.mem_filter.mp h).1
+
+#guard (withoutCompWitness
+  [⟨.bnode "__rl_minc1__http://ex/p", rdfType, .iri owlRestriction⟩,
+   ⟨.iri ⟨"http://ex/a", rfl⟩, rdfType, .iri owlThing⟩]).length == 1
+
 /-! ## The regime, as a pure function
 
 `rbSaturate g goal fuel n`: `n` rounds of (OWL 2 RL/RDF closure at

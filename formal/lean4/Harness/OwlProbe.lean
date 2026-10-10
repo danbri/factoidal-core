@@ -165,6 +165,7 @@ import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.OwlXml
+import L4Factoidal.OWL.RdfBased.Engine
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.JSON.Parser
@@ -1489,6 +1490,259 @@ ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
     IO.println s!"  FAIL-GROUP {name} {cause}: {these.length} — {String.intercalate ", " (these.map (·.2.1))}"
   return r
 
+/-! ## The OWL 2 RDF-Based Semantics regime (`--rdf-based`)
+
+Owner, 2026-10-10, verbatim: "721 Add an OWL 2 RDF-Based Semantics"
+(https://github.com/danbri/factoidal/issues/721). Design record:
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md`.
+
+Which units: every (case, test type) of a case annotated
+`test:semantics RDF-BASED`, and every PositiveEntailmentTest annotated
+DIRECT whose species is not DL (the 12 cases of issue 721; in the
+vendored catalogs they carry RDF-BASED as well).
+
+Engine: the OWL 2 RL/RDF closure of the premise, then up to
+`rbRounds` rounds of (`RdfBased.rbConclusions`, the RL closure again).
+No comprehension layer, no class-expression materialisation, no
+tableau refuter: none of them is proved sound for this semantics.
+Triples that mention a comprehension witness of the RL closure are
+removed before any judgement (`RdfBased.withoutCompWitness`).
+
+Entailment under the RDF-Based Semantics is undecidable. The regime
+PROVES entailments and inconsistencies and never proves their absence.
+So the buckets are:
+
+* PositiveEntailmentTest — `pass` = entailment proved (one blank-node
+  mapping of the conclusion into the closure); `fail` = not proved.
+* InconsistencyTest — `pass` = a clash row fired; `fail` = not proved.
+* NegativeEntailmentTest, ConsistencyTest — never `pass`. `not-refuted`
+  = the engine derived neither the non-conclusion nor a clash; `fail` =
+  it derived one, which contradicts the catalog. A `not-refuted` unit
+  is NOT counted as proved. -/
+
+/-- Rounds of (rules, RL closure) after the first closure. -/
+def rbRounds : Nat := 3
+
+/-- Is the unit judged by the RDF-Based regime? -/
+def inRdfBasedRegime (c : Case) (ty : String) : Bool :=
+  c.semantics.contains "RDF-BASED" ||
+  (ty == "PositiveEntailmentTest" && c.semantics.contains "DIRECT" &&
+   !c.species.contains "DL")
+
+structure RbClosure where
+  /-- The graph judgements read: closure minus comprehension witnesses. -/
+  graph : Graph
+  /-- The same, after the FIRST closure only (no RDF-Based rule). -/
+  firstGraph : Graph
+  rounds : Nat
+  capped : Bool
+  /-- Triples the RDF-Based rules added (not already in the closure). -/
+  ruleTriples : Nat
+  /-- Did the RL closure mint a comprehension witness? -/
+  witnesses : Bool
+
+/-- The regime's closure of `g`, with the rules directed by `goal`. One
+wall-clock deadline for the whole unit. -/
+def rbClosureIO (g goal : Graph) (capMs : Nat) : IO RbClosure := do
+  let t0 ← IO.monoMsNow
+  let deadline := t0 + capMs
+  let r0 ← closureIO g closureFuel deadline
+  let mut r := r0
+  let mut added := 0
+  for _ in [0:rbRounds] do
+    if r.capped then break
+    let cand := L4Factoidal.OWL.RdfBased.rbConclusions r.graph goal
+    let new := (cand.filter (fun t => !r.index.memB t)).eraseDups
+    if new.isEmpty then break
+    added := added + new.length
+    let r' ← closureIO (r.graph ++ new) closureFuel deadline
+    r := { r' with rounds := r.rounds + r'.rounds, capped := r.capped || r'.capped }
+  return { graph := L4Factoidal.OWL.RdfBased.withoutCompWitness r.graph,
+           firstGraph := L4Factoidal.OWL.RdfBased.withoutCompWitness r0.graph,
+           rounds := r.rounds, capped := r.capped, ruleTriples := added,
+           witnesses := r.graph.any L4Factoidal.OWL.RdfBased.tripleMentionsCompWitness }
+
+/-- One verdict of the regime. -/
+inductive RbOutcome where
+  | proved
+  | notProved (reason : String)
+  | notRefuted
+  | refuted (reason : String)
+  | unsupported (reason : String)
+  deriving Repr, BEq
+
+structure RbScore where
+  pass : Nat := 0
+  fail : Nat := 0
+  notRefuted : Nat := 0
+  unsupported : Nat := 0
+
+def RbScore.total (s : RbScore) : Nat := s.pass + s.fail + s.notRefuted + s.unsupported
+
+def RbScore.bump (s : RbScore) : RbOutcome → RbScore
+  | .proved => { s with pass := s.pass + 1 }
+  | .notProved _ | .refuted _ => { s with fail := s.fail + 1 }
+  | .notRefuted => { s with notRefuted := s.notRefuted + 1 }
+  | .unsupported _ => { s with unsupported := s.unsupported + 1 }
+
+def RbScore.add (a b : RbScore) : RbScore :=
+  { pass := a.pass + b.pass, fail := a.fail + b.fail,
+    notRefuted := a.notRefuted + b.notRefuted, unsupported := a.unsupported + b.unsupported }
+
+def RbScore.line (label : String) (s : RbScore) : String :=
+  s!"{label}: {s.pass} pass, {s.fail} fail, {s.notRefuted} not-refuted, \
+{s.unsupported} unsupported (out of {s.total})"
+
+structure RbMeasure where
+  capHits : Nat := 0
+  parseFailures : Nat := 0
+  ruleTriples : Nat := 0
+  witnessClosures : Nat := 0
+  /-- Positive units proved only after the RDF-Based rules ran. -/
+  provedByRules : Nat := 0
+
+def RbMeasure.add (a b : RbMeasure) : RbMeasure :=
+  { capHits := a.capHits + b.capHits, parseFailures := a.parseFailures + b.parseFailures,
+    ruleTriples := a.ruleTriples + b.ruleTriples,
+    witnessClosures := a.witnessClosures + b.witnessClosures,
+    provedByRules := a.provedByRules + b.provedByRules }
+
+def rbMeasureOf (r : RbClosure) : RbMeasure :=
+  { capHits := if r.capped then 1 else 0, ruleTriples := r.ruleTriples,
+    witnessClosures := if r.witnesses then 1 else 0 }
+
+/-- The conclusion document (`nonConclusion = true`: the
+non-conclusion). -/
+def rbGoalDoc (c : Case) (nonConclusion : Bool) : Except String Graph :=
+  if nonConclusion then
+    match c.nonConclusion with
+    | some t => parseDoc "non-conclusion" c.iri t
+    | none => match altGraph c.fsNonConclusionText c.owlXmlNonConclusion with
+        | some g => .ok g
+        | none => .error "harness: no non-conclusion document"
+  else
+    match c.conclusion with
+    | some t => parseDoc "conclusion" c.iri t
+    | none => match altGraph c.fsConclusionText c.owlXmlConclusion with
+        | some g => .ok g
+        | none => .error "harness: no conclusion document"
+
+/-- PositiveEntailmentTest (`neg = false`) and NegativeEntailmentTest
+(`neg = true`). -/
+def rbJudgeEntailment (cat : Catalog) (c : Case) (capMs : Nat) (neg : Bool)
+    : IO (RbOutcome × RbMeasure) := do
+  if isFunctionalUnread c then return (.unsupported "functional-syntax", {})
+  match rbGoalDoc c neg with
+  | .error e => return (.notProved s!"parser: {e}", { parseFailures := 1 })
+  | .ok gc =>
+    if gc.isEmpty then
+      return (.notProved "parser: the conclusion parsed to zero triples", { parseFailures := 1 })
+    match premiseGraph cat c with
+    | .error o =>
+        let why := match o with | .fail r => r | _ => "harness: no premise"
+        return (.notProved why, { parseFailures := 1 })
+    | .ok gp =>
+      let r ← rbClosureIO gp gc capMs
+      let m := rbMeasureOf r
+      let found := graphInClosure? r.graph gc
+      if found == some true then
+        if neg then
+          return (.refuted s!"entailed: every non-conclusion triple was derived \
+({r.graph.length} triples, {r.rounds} rounds)", m)
+        else
+          let byRules := graphInClosure? r.firstGraph gc != some true
+          if byRules then IO.println s!"PROVED-BY-RDF-BASED-RULES {c.id} [PositiveEntailmentTest]"
+          return (.proved, { m with provedByRules := if byRules then 1 else 0 })
+      else if neg then return (.notRefuted, m)
+      else
+        let why :=
+          match gc.find? (fun t => !inClosure r.graph t) with
+          | some t => s!"missing {showTriple t}"
+          | none => if found == none then "match-budget: the single-mapping search ran out of steps"
+                    else "no single blank-node mapping serves every conclusion triple"
+        let capNote := if r.capped then "cap: " else "not-proved: "
+        return (.notProved s!"{capNote}{why} (closure {r.graph.length} triples, {r.rounds} rounds)", m)
+
+/-- ConsistencyTest (`inc = false`) and InconsistencyTest (`inc = true`). -/
+def rbJudgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (inc : Bool)
+    : IO (RbOutcome × RbMeasure) := do
+  if isFunctionalUnread c then return (.unsupported "functional-syntax", {})
+  match premiseGraph cat c with
+  | .error o =>
+      let why := match o with | .fail r => r | _ => "harness: no premise"
+      return (.notProved why, { parseFailures := 1 })
+  | .ok gp =>
+    let r ← rbClosureIO gp [] capMs
+    let m := rbMeasureOf r
+    let clash := detectClashPlusI (Index.ofGraph r.graph)
+    if inc then
+      if clash then return (.proved, m)
+      else
+        let capNote := if r.capped then "cap: " else "not-proved: "
+        return (.notProved s!"{capNote}no clash row fired ({r.graph.length} triples, {r.rounds} rounds)", m)
+    else
+      if clash then
+        return (.refuted s!"clash: a clash row fired on a premise asserted consistent ({r.graph.length} triples)", m)
+      else return (.notRefuted, m)
+
+def rbJudge (cat : Catalog) (c : Case) (capMs : Nat) : String → IO (RbOutcome × RbMeasure)
+  | "PositiveEntailmentTest" => rbJudgeEntailment cat c capMs false
+  | "NegativeEntailmentTest" => rbJudgeEntailment cat c capMs true
+  | "ConsistencyTest"        => rbJudgeConsistency cat c capMs false
+  | "InconsistencyTest"      => rbJudgeConsistency cat c capMs true
+  | ty                       => pure (.unsupported s!"test type {ty}", {})
+
+def RbOutcome.line (label : String) : RbOutcome → String
+  | .proved => s!"PASS {label}"
+  | .notProved r => s!"FAIL {label}: {r}"
+  | .refuted r => s!"FAIL {label}: {r}"
+  | .notRefuted => s!"NOT-REFUTED {label}"
+  | .unsupported r => s!"UNSUPPORTED {label}: {r}"
+
+structure RbCatalogResult where
+  score : RbScore := {}
+  perType : List (String × RbScore) := []
+  measure : RbMeasure := {}
+  fails : List String := []
+  units : Nat := 0
+  wallMs : Nat := 0
+
+def runRdfBased (name : String) (cat : Catalog) (capMs : Nat) (verbose : Bool)
+    : IO RbCatalogResult := do
+  let t0 ← IO.monoMsNow
+  let mut r : RbCatalogResult := {}
+  for c in cat.cases do
+    if testTypes.any (fun ty => c.types.contains ty && inRdfBasedRegime c ty) then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
+    for ty in testTypes do
+      if c.types.contains ty && inRdfBasedRegime c ty then
+        let (o, m) ← rbJudge cat c capMs ty
+        let label := s!"{c.id} [{ty}]"
+        match o with
+        | .proved | .notRefuted => if verbose then IO.println (o.line label)
+        | .notProved _ | .refuted _ =>
+            IO.println (o.line label)
+            r := { r with fails := r.fails ++ [label] }
+        | .unsupported _ => IO.println (o.line label)
+        if m.capHits > 0 then IO.println s!"CAP {label}: the closure budget ran out"
+        let pt := match r.perType.find? (fun p => p.1 == ty) with
+          | some _ => r.perType.map (fun p => if p.1 == ty then (p.1, p.2.bump o) else p)
+          | none => r.perType ++ [(ty, RbScore.bump {} o)]
+        r := { r with score := r.score.bump o, perType := pt, measure := r.measure.add m,
+                      units := r.units + 1 }
+  let t1 ← IO.monoMsNow
+  r := { r with wallMs := t1 - t0 }
+  for ty in testTypes do
+    match r.perType.find? (fun p => p.1 == ty) with
+    | some (_, s) => IO.println (RbScore.line s!"{name} {ty} [rdf-based]" s)
+    | none => pure ()
+  IO.println (RbScore.line s!"{name} [rdf-based]" r.score)
+  IO.println s!"HARNESS-DIAG-OWL-RDF-BASED {name}: units={r.units} \
+cap_hits={r.measure.capHits} parse_failures={r.measure.parseFailures} \
+rule_triples={r.measure.ruleTriples} proved_by_rules={r.measure.provedByRules} \
+closures_with_comprehension_witness={r.measure.witnessClosures} wall_ms={r.wallMs}"
+  return r
+
 /-! ## Species (`--species`)
 
 OWL 2 Conformance §2.2 (syntactic conformance) and the `test:species`
@@ -1845,6 +2099,8 @@ structure Opts where
   from their functional-style documents, and again from their RDF/XML
   documents, and report both. -/
   fsInput : Bool := false
+  /-- `--rdf-based`: the OWL 2 RDF-Based Semantics regime (issue 721). -/
+  rdfBased : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | [], o => o
@@ -1856,6 +2112,7 @@ def parseArgs : List String → Opts → Opts
   | "--species" :: rest, o => parseArgs rest { o with species := true }
   | "--syntax" :: rest, o => parseArgs rest { o with species := true }
   | "--fs-input" :: rest, o => parseArgs rest { o with fsInput := true }
+  | "--rdf-based" :: rest, o => parseArgs rest { o with rdfBased := true }
   | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
@@ -2370,6 +2627,38 @@ def fsInputMain (o : Opts) : IO UInt32 := do
     IO.println s!"  catalog not read: {f}"
   return (if notRead.isEmpty then 0 else 1)
 
+/-- `--rdf-based`: the OWL 2 RDF-Based Semantics regime over each
+catalog named (default `all.rdf`, the union of the others, so no unit
+is counted twice). Exit 0 when no unit FAILS; a `not-refuted` unit is
+not a failure and not a pass. -/
+def rdfBasedMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  IO.println "regime: OWL 2 RDF-Based Semantics (--rdf-based): RL closure + RDF-Based rules"
+  IO.println s!"  ({rbRounds} rounds); no comprehension layer, no materialisation, no refuter."
+  IO.println "  Buckets: pass = entailment or inconsistency PROVED; not-refuted ="
+  IO.println "  non-entailment or consistency NOT REFUTED (never counted as proved);"
+  IO.println "  fail = not proved (positive, inconsistency) or refuted (negative, consistency)."
+  let mut total : RbScore := {}
+  let mut notRead : List String := []
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
+        let r ← runRdfBased name cat o.capMs o.verbose
+        total := total.add r.score
+        IO.println ""
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 then 0 else 1)
+
 /-- `--species`: read each catalog, score the species facet of every
 case that carries one. The default catalog is `all.rdf`, the union of
 the others. -/
@@ -2455,6 +2744,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   if o.trace then return (← traceMain o)
   if o.species then return (← speciesMain o)
   if o.fsInput then return (← fsInputMain o)
+  if o.rdfBased then return (← rdfBasedMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}
