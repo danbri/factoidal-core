@@ -163,6 +163,7 @@ import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
 import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
+import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.Syntax.RdfXml
 import Harness.Common
 
@@ -224,6 +225,13 @@ structure Case where
   fsNonConclusionText : Option String := none
   /-- `test:importedOntology` wrapper-node IRIs. -/
   imports       : List String := []
+  /-- Fragments of `test:species` (`DL` / `FULL`). A case annotated with
+      both is within OWL 2 DL: every DL ontology is also a Full one. -/
+  species       : List String := []
+  /-- `test:rdfXmlInputOntology` on the case itself: the document of a
+      case that has no premise (`WebOnt-imports-004` and its siblings),
+      the way an import wrapper node carries the imported document. -/
+  inputOntology : Option String := none
 deriving Inhabited
 
 /-- An import wrapper node: the ontology IRI the premise's `owl:imports`
@@ -255,6 +263,8 @@ def readCase (attrs : List Attribute) (kids : List Node) : Case := Id.run do
       | "fsNonConclusionOntology"     =>
           c := { c with fsNonConclusionText := some (directText k) }
       | "importedOntology"            => c := { c with imports := c.imports ++ [res] }
+      | "species"                     => c := { c with species := c.species ++ [fragmentOf res] }
+      | "rdfXmlInputOntology"         => c := { c with inputOntology := some (directText k) }
       | _ => pure ()
     | _ => pure ()
   return c
@@ -1374,6 +1384,151 @@ pe_countermodel={r.measure.peCountermodel} wall_ms={r.wallMs}"
     IO.println s!"  FAIL-GROUP {name} {cause}: {these.length} — {String.intercalate ", " (these.map (·.2.1))}"
   return r
 
+/-! ## Species (`--species`)
+
+OWL 2 Conformance §2.2 (syntactic conformance) and the `test:species`
+annotation of each test case: a case annotated `test:DL` is within OWL 2
+DL; a case annotated only `test:FULL` is OWL 2 Full and not DL. The
+verdict is `L4Factoidal.OWL.SyntaxDL.speciesIsDl`, a syntax-directed
+check of the OWL 2 Mapping to RDF Graphs §3 (reverse mapping) and the
+Structural Specification §11 (global restrictions) over the RDF graphs
+of ALL the case's documents. The harness only reads documents and
+compares the verdict with the annotation.
+
+Which documents: the premise, and the conclusion or non-conclusion.
+Two cases with the same premise differ in species when only their
+conclusions differ (`WebOnt-I5.5-005` against `WebOnt-I5.5-006`), so the
+conclusion document is part of the input, as it is for the F* runner
+(`owl_runner.ml`, "Species mode").
+
+The premise comes from `test:rdfXmlPremiseOntology`; when a case has
+none, from `test:rdfXmlInputOntology` on the case itself (the import
+test cases); when it has neither, from the functional-syntax premise,
+read by `L4Factoidal.OWL.FS` and checked with the body checks only,
+because a successful parse of `Ontology(...)` is the header evidence.
+`owl:imports` is resolved against the import wrapper nodes the case
+links with `test:importedOntology`. -/
+
+/-- The input of one species verdict. -/
+structure SpeciesDocs where
+  functional    : Bool
+  /-- The IRIs of the documents the catalog provides for this case:
+  the `test:importedOntologyIRI` of each linked import wrapper. -/
+  available     : List String := []
+  pDoc          : Graph
+  pMerged       : Graph
+  hasConclusion : Bool
+  cDoc          : Graph
+  uMerged       : Graph
+
+/-- The conclusion document of a case: the RDF/XML conclusion, else the
+RDF/XML non-conclusion, else the functional-syntax ones. `none` when the
+case has no conclusion document. `Except` carries a parse failure. -/
+def conclusionDoc (c : Case) : Except String (Option Graph) :=
+  match c.conclusion <|> c.nonConclusion with
+  | some t =>
+      match parseDoc "conclusion" c.iri t with
+      | .ok g => .ok (some g)
+      | .error e => .error e
+  | none =>
+      match c.fsConclusionText <|> c.fsNonConclusionText with
+      | some t =>
+          match L4Factoidal.OWL.FS.parseFunctionalSyntax t with
+          | some g => .ok (some g)
+          | none => .error "unsupported: functional-syntax conclusion outside the grammar the parser reads"
+      | none => .ok none
+
+/-- Gather the documents of a case for the species verdict. -/
+def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
+  let allowed := c.imports.filterMap (fun w =>
+    (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+  match c.premise <|> c.inputOntology with
+  | some ptxt =>
+    match parseDoc "premise" c.iri ptxt with
+    | .error e => .error e
+    | .ok pDoc =>
+      match loadImports cat.imports allowed pDoc [] (allowed.length + 1) with
+      | .error e => .error e
+      | .ok pMerged =>
+        match conclusionDoc c with
+        | .error e => .error e
+        | .ok none =>
+            .ok { functional := false, available := allowed, pDoc := pDoc, pMerged := pMerged,
+                  hasConclusion := false, cDoc := [], uMerged := pMerged }
+        | .ok (some g0) =>
+            let cDoc := g0.prefixBnodes "c_"
+            match loadImports cat.imports allowed (pDoc ++ cDoc) [] (allowed.length + 1) with
+            | .error e => .error e
+            | .ok uMerged =>
+                .ok { functional := false, available := allowed, pDoc := pDoc,
+                      pMerged := pMerged, hasConclusion := true, cDoc := cDoc,
+                      uMerged := uMerged }
+  | none =>
+    match c.fsPremiseText with
+    | none => .error "harness: the case has no premise document in any syntax"
+    | some ftxt =>
+      match L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt with
+      | none => .error "unsupported: functional-syntax premise outside the grammar the parser reads"
+      | some pDoc =>
+        match conclusionDoc c with
+        | .error e => .error e
+        | .ok none =>
+            .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+                  hasConclusion := false, cDoc := [], uMerged := pDoc }
+        | .ok (some g0) =>
+            let cDoc := g0.prefixBnodes "c_"
+            .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+                  hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
+
+/-- The species verdict of a case against its annotation. -/
+def judgeSpecies (cat : Catalog) (c : Case) : Harness.Outcome × List String :=
+  let expectDl := c.species.contains "DL"
+  match speciesDocs cat c with
+  | .error e =>
+      if e.startsWith "unsupported:" then (.unsupported (e.drop 13).toString, [])
+      else (.fail e, [])
+  | .ok d =>
+      let viols :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc d.hasConclusion d.uMerged
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged d.hasConclusion d.cDoc
+            d.uMerged (some d.available)
+      let isDl := viols.isEmpty
+      let label := fun (b : Bool) => if b then "DL" else "FULL"
+      if isDl == expectDl then (.pass, [])
+      else (.fail s!"species: verdict {label isDl}, annotation {label expectDl}", viols.take 5)
+
+structure SpeciesResult where
+  score     : Harness.Score := {}
+  expectDl  : Harness.Score := {}
+  expectFull : Harness.Score := {}
+  fails     : List String := []
+  units     : Nat := 0
+
+def runSpecies (name : String) (cat : Catalog) (verbose : Bool) : IO SpeciesResult := do
+  let mut r : SpeciesResult := {}
+  for c in cat.cases do
+    if !c.species.isEmpty then
+      let (o, viols) := judgeSpecies cat c
+      let label := s!"{c.id} [species]"
+      match o with
+      | .pass => if verbose then IO.println (o.line label)
+      | _ => IO.println (o.line label)
+      for v in viols do IO.println s!"      violation: {v}"
+      if o.isFail then r := { r with fails := r.fails ++ [c.id] }
+      let dl := c.species.contains "DL"
+      r := { r with score := r.score.bump o,
+                    expectDl := if dl then r.expectDl.bump o else r.expectDl,
+                    expectFull := if dl then r.expectFull else r.expectFull.bump o,
+                    units := r.units + 1 }
+  IO.println (Harness.Score.line s!"{name} species [expected DL]" r.expectDl)
+  IO.println (Harness.Score.line s!"{name} species [expected FULL]" r.expectFull)
+  IO.println (Harness.Score.line s!"{name} species" r.score)
+  if !r.fails.isEmpty then
+    IO.println s!"  FAIL-GROUP {name} species: {r.fails.length} - {String.intercalate ", " r.fails}"
+  return r
+
 /-! ## Census (kept from the first version) -/
 
 def countTrue (f : Case → Bool) (cs : List Case) : Nat := (cs.filter f).length
@@ -1457,6 +1612,9 @@ structure Opts where
   kept only so the two numbers come from the same binary
   (`docs/designissues/2026-09-04-owl-conclusion-matching.md`). -/
   strictMatch : Bool := true
+  /-- `--species`: score the `test:species` facet (OWL 2 DL against
+  FULL) instead of entailment and consistency. -/
+  species : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | [], o => o
@@ -1465,6 +1623,7 @@ def parseArgs : List String → Opts → Opts
   | "--dir" :: d :: rest, o => parseArgs rest { o with dir := d }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--trace" :: rest, o => parseArgs rest { o with trace := true }
+  | "--species" :: rest, o => parseArgs rest { o with species := true }
   | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
@@ -1839,6 +1998,32 @@ def traceMain (o : Opts) : IO UInt32 := do
             traceCase name cat c o.capMs o.regime o.refuteBudget o.rounds
   return 0
 
+/-- `--species`: read each catalog, score the species facet of every
+case that carries one. The default catalog is `all.rdf`, the union of
+the others. -/
+def speciesMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  let mut total : Harness.Score := {}
+  let mut notRead : List String := []
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
+        let r ← runSpecies name cat o.verbose
+        total := total.add r.score
+        IO.println ""
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 then 0 else 1)
+
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
   let dir : System.FilePath := o.dir
@@ -1874,6 +2059,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   if o.tboxCensus then return (← censusMain o)
   if o.profile then return (← profileMain o)
   if o.trace then return (← traceMain o)
+  if o.species then return (← speciesMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}

@@ -147,17 +147,23 @@ def declarationTypes : List String :=
    nsOwl ++ "DeprecatedClass", nsOwl ++ "DeprecatedProperty",
    nsOwl ++ "OntologyProperty", nsOwl ++ "DataRange"]
 
-/-- Reserved IRIs a DL document may carry as an `rdf:type` object,
-    including the legacy typings (`rdfs:Class`, `rdf:List`,
-    `rdf:Property`) the corpus's species-DL cases use. -/
+/-- Reserved IRIs a DL document may carry as an `rdf:type` object.
+
+    The legacy typings `rdfs:Class`, `rdf:Property` and `rdf:List` are
+    NOT here. OWL 2 Mapping to RDF Graphs §3.1.2, Table 5, removes each
+    of them only when it is redundant (the node also carries the OWL 2
+    typing, or the list structure); a copy that is not redundant is a
+    triple no pattern of §3.2 consumes, and §3.2.5 ends "the graph G
+    MUST be empty". Until 2026-10-10 the three were whitelisted
+    unconditionally, which accepted `WebOnt-imports-004` (an imported
+    `rdfs:Class` with no `owl:Class` declaration; annotated FULL). -/
 def typeObjectWhitelist : List String :=
   declarationTypes ++ objCharacteristics ++ builtinDatatypes ++
   [owlFunctionalPropC, nsOwl ++ "Restriction",
    nsOwl ++ "Thing", nsOwl ++ "Nothing",
    nsOwl ++ "AllDifferent", nsOwl ++ "AllDisjointClasses",
    nsOwl ++ "AllDisjointProperties", nsOwl ++ "Axiom",
-   nsOwl ++ "Annotation", nsOwl ++ "NegativePropertyAssertion",
-   nsRdfs ++ "Class", nsRdf ++ "List", nsRdf ++ "Property"]
+   nsOwl ++ "Annotation", nsOwl ++ "NegativePropertyAssertion"]
 
 /-- Reserved IRIs acceptable as a triple SUBJECT: the built-in entities
     OWL 2 DL lets an ontology talk about. -/
@@ -327,6 +333,92 @@ def dropLastTerm : List Term → List Term
   | [_] => []
   | x :: rest => x :: dropLastTerm rest
 
+/-- Does `sk` carry the typing `sk rdf:type ty`? -/
+def hasTypeSp (g : Graph) (sk ty : String) : Bool :=
+  g.any (fun t => t.p.val == rdfTypeP && subjKey t.s == sk && termIsIri t.o ty)
+
+def rdfsClassC    : String := nsRdfs ++ "Class"
+def rdfPropertyC  : String := nsRdf ++ "Property"
+def rdfListC      : String := nsRdf ++ "List"
+
+/-- The property typings whose presence makes `x rdf:type rdf:Property`
+    redundant (Table 5, rows 7 to 13). -/
+def propertyTypings : List String :=
+  [owlObjPropC, owlFunctionalPropC, nsOwl ++ "InverseFunctionalProperty",
+   nsOwl ++ "TransitiveProperty", owlDataPropC, owlAnnPropC, owlOntPropC]
+
+/-- OWL 2 Mapping to RDF Graphs §3.1.2, Table 5: "Triples to be Removed
+    for Backwards Compatibility with OWL 1 DL". A triple of the right-
+    hand column is removed from G when the pattern of the left-hand
+    column is present:
+
+    * `x rdf:type rdfs:Class` when `x` is also typed `owl:Class`,
+      `rdfs:Datatype`, `owl:DataRange` or `owl:Restriction`;
+    * `x rdf:type owl:Class` when `x` is also typed `owl:Restriction`;
+    * `x rdf:type rdf:Property` when `x` is also typed with an OWL
+      property class;
+    * `x rdf:type rdf:List` when `x` has `rdf:first` and `rdf:rest`.
+
+    (The first row, `x rdf:type owl:Ontology`, is the header discipline
+    and is handled by `docHeaderViolations`.) -/
+def table5Redundant (g : Graph) (t : Triple) : Bool :=
+  if t.p.val != rdfTypeP then false
+  else match t.o with
+  | .iri o =>
+      let sk := subjKey t.s
+      if o.val == rdfsClassC then
+        hasTypeSp g sk owlClassC || hasTypeSp g sk rdfsDatatypeC ||
+        hasTypeSp g sk owlDataRangeC || hasTypeSp g sk owlRestrictionC
+      else if o.val == owlClassC then hasTypeSp g sk owlRestrictionC
+      else if o.val == rdfPropertyC then propertyTypings.any (hasTypeSp g sk)
+      else if o.val == rdfListC then
+        hasTripleSp g sk rdfFirstP && hasTripleSp g sk rdfRestP
+      else false
+  | _ => false
+
+/-- G after Table 5. -/
+def dropTable5Redundant (g : Graph) : Graph :=
+  g.filter (fun t => !table5Redundant g t)
+
+/-- The keys of the ROOT ontology headers of one document: typed
+    `owl:Ontology` and not the object of an `owl:imports` or
+    `owl:priorVersion` link from another node (the nested `<owl:Ontology rdf:about=...>` objects
+    of OWL 1 style documents are not roots), plus the `owl:versionIRI`
+    objects of those roots. -/
+def rootOntologyKeys (g : Graph) : List String :=
+  let headers := dedupStrs (subjectsTyped g owlOntologyC)
+  -- A header that imports itself is still a root: only a link from a
+  -- DIFFERENT header makes a node a non-root.
+  let nonroot := g.filterMap (fun t =>
+    if (t.p.val == owlImportsP || t.p.val == owlPriorVersionP) &&
+       termKeyDl t.o != some (subjKey t.s) then termKeyDl t.o else none)
+  let roots := headers.filter (fun h => !(nonroot.contains h))
+  roots ++ (g.filterMap (fun t =>
+    if t.p.val == nsOwl ++ "versionIRI" && roots.contains (subjKey t.s)
+    then termKeyDl t.o else none))
+
+/-- Canonical parsing step CP 2.1 (Structural Specification §3.6): "Retrieve
+    the ontology document DI from I". All steps of the process MUST be
+    completed, so an `owl:imports` target that cannot be retrieved makes
+    the document unparseable and therefore not an OWL 2 DL ontology
+    document (OWL 2 Conformance §2.1.1).
+
+    `available` holds the IRIs the caller can retrieve; `none` means the
+    caller cannot say, and no retrieval failure is asserted. A document
+    is also retrievable at its own ontology IRI and version IRI
+    (Structural Specification §3.2: "If O contains an ontology IRI OI but
+    no version IRI, then the ontology document of O SHOULD be accessible
+    via the IRI OI"), so `own` holds the root header keys of the
+    documents the check reads. -/
+def unresolvedImportViolations (available : Option (List String)) (own : List String)
+    (g : Graph) : List String :=
+  match available with
+  | none => []
+  | some av =>
+      (dedupStrs (objectKeysOf g owlImportsP)).filterMap (fun k =>
+        if k.startsWith "I" && !(av.contains (k.drop 1).toString) && !(own.contains k)
+        then some ("unresolved-import: " ++ (k.drop 1).toString) else none)
+
 def tripleViolations (g : Graph) (d : DeclIndex) (t : Triple) : List String :=
   let v1 :=                                   -- reserved-vocabulary subject
     match t.s with
@@ -446,7 +538,8 @@ def nonsimpleCardinalityViolations (g : Graph) (nonsimple : List String) :
         else []
       here ++ nonsimpleCardinalityViolations g nonsimple rest
 
-def graphBodyViolations (g : Graph) : List String :=
+def graphBodyViolations (g0 : Graph) : List String :=
+  let g := dropTable5Redundant g0
   let d := buildDeclIndex g
   let perTriple := g.flatMap (tripleViolations g d)
   let nonsimple := dedupStrs (subjectsTyped g (nsOwl ++ "TransitiveProperty")
@@ -465,17 +558,22 @@ def graphBodyViolations (g : Graph) : List String :=
     corpus convention lets a conclusion use premise vocabulary — while
     its header discipline is its own document's. -/
 def speciesViolations (pDoc pMerged : Graph) (hasConclusion : Bool)
-    (cDoc uMerged : Graph) : List String :=
+    (cDoc uMerged : Graph) (available : Option (List String) := none) : List String :=
   (docHeaderViolations pDoc).map (fun v => "premise: " ++ v) ++
   (graphBodyViolations pMerged).map (fun v => "premise: " ++ v) ++
+  (unresolvedImportViolations available (rootOntologyKeys pDoc) pMerged).map
+    (fun v => "premise: " ++ v) ++
   (if hasConclusion then
      (docHeaderViolations cDoc).map (fun v => "conclusion: " ++ v) ++
-     (graphBodyViolations uMerged).map (fun v => "conclusion: " ++ v)
+     (graphBodyViolations uMerged).map (fun v => "conclusion: " ++ v) ++
+     (unresolvedImportViolations available
+        (rootOntologyKeys pDoc ++ rootOntologyKeys cDoc) uMerged).map
+       (fun v => "conclusion: " ++ v)
    else [])
 
 def speciesIsDl (pDoc pMerged : Graph) (hasConclusion : Bool)
-    (cDoc uMerged : Graph) : Bool :=
-  (speciesViolations pDoc pMerged hasConclusion cDoc uMerged).isEmpty
+    (cDoc uMerged : Graph) (available : Option (List String) := none) : Bool :=
+  (speciesViolations pDoc pMerged hasConclusion cDoc uMerged available).isEmpty
 
 /-- For graphs obtained from OWL 2 Functional Syntax
     (`test:normativeSyntax FUNCTIONAL`): a successful parse proves the
@@ -619,6 +717,61 @@ private def listBad : Graph :=
 #guard docHeaderViolations
   [tr (ex "o1") rdfTypeP owlOntologyC, tr (ex "o2") rdfTypeP owlOntologyC,
    tr (ex "o1") owlImportsP (ex "o2")] == []
+
+/-! ### Table 5: legacy typings are dropped only when redundant
+
+OWL 2 Mapping to RDF Graphs §3.1.2, Table 5. `okGraph` declares `C` as
+`owl:Class` and `p` as `owl:ObjectProperty`. -/
+
+-- redundant: C is also an owl:Class
+#guard graphBodyViolations (okGraph ++ [tr (ex "C") rdfTypeP rdfsClassC]) == []
+-- not redundant: D carries only the legacy typing
+#guard (graphBodyViolations (okGraph ++ [tr (ex "D") rdfTypeP rdfsClassC])).any
+         (fun v => v.startsWith "reserved-vocabulary-as-class")
+-- redundant: p is also an owl:ObjectProperty
+#guard graphBodyViolations (okGraph ++ [tr (ex "p") rdfTypeP rdfPropertyC]) == []
+-- not redundant: q carries only the legacy typing
+#guard (graphBodyViolations (okGraph ++ [tr (ex "q") rdfTypeP rdfPropertyC])).any
+         (fun v => v.startsWith "reserved-vocabulary-as-class")
+-- redundant: the list node has rdf:first and rdf:rest
+#guard graphBodyViolations (okGraph ++
+         [tr (ex "L") rdfTypeP rdfListC, trb (ex "L") rdfFirstP "n1",
+          tr (ex "L") rdfRestP rdfNilI]) == []
+-- not redundant: no list structure on the node
+#guard (graphBodyViolations (okGraph ++ [tr (ex "L2") rdfTypeP rdfListC])).any
+         (fun v => v.startsWith "reserved-vocabulary-as-class")
+-- A restriction typed owl:Class is one class expression: the owl:Class
+-- copy is redundant.
+#guard (graphBodyViolations (okGraph ++
+          [⟨.bnode "r", i rdfTypeP, ti owlClassC⟩,
+           ⟨.bnode "r", i rdfTypeP, ti owlRestrictionC⟩,
+           ⟨.bnode "r", i owlOnPropertyP, ti (ex "p")⟩])).all
+         (fun v => !v.startsWith "reserved-vocabulary-as-class")
+
+/-! ### CP 2.1: every `owl:imports` target must be retrievable -/
+
+private def importing : Graph := okGraph ++ [tr (ex "o") owlImportsP (ex "i")]
+
+#guard unresolvedImportViolations none [] importing == []
+#guard unresolvedImportViolations (some []) [] importing
+         == ["unresolved-import: http://example.org/i"]
+#guard unresolvedImportViolations (some [ex "i"]) [] importing == []
+#guard speciesIsDl importing importing false [] [] none
+#guard !speciesIsDl importing importing false [] [] (some [])
+#guard speciesIsDl importing importing false [] [] (some [ex "i"])
+
+-- A document is retrievable at its own ontology IRI (§3.2), so an
+-- import that points back at the root header resolves (cyclic imports
+-- are allowed) ...
+private def selfImport : Graph := okGraph ++ [tr (ex "o") owlImportsP (ex "o")]
+#guard speciesIsDl selfImport selfImport false [] [] (some [])
+-- ... but a nested, typed import object is not a root header and does
+-- not make its own IRI retrievable.
+private def nestedImport : Graph :=
+  okGraph ++ [tr (ex "o") owlImportsP (ex "n"), tr (ex "n") rdfTypeP owlOntologyC]
+#guard rootOntologyKeys nestedImport == ["Ihttp://example.org/o"]
+#guard !speciesIsDl nestedImport nestedImport false [] [] (some [])
+#guard speciesIsDl nestedImport nestedImport false [] [] (some [ex "n"])
 
 /-! ### The functional-syntax variant skips the header check only -/
 
