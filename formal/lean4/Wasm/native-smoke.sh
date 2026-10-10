@@ -465,6 +465,28 @@ checkblob "storeQuery answers over a supplied IBK3 block region" storeQuery \
    and r["mode"] == "ibk3-paged-merkle(1)"
    and len(r["srj"]["results"]["bindings"]) == 2'
 
+# DESCRIBE over the same generation. The plan opens both shards, so both
+# artifacts must be supplied, and the description of a holds the q statement
+# that the pattern predicate alone would have left unread. Supplying only the
+# p artifact is a refusal, not a partial description.
+blobargs "$TMP/store-describe.json" "$TMP/store-describe.blob" \
+  "$TMP/store-ibk3/manifest.sbm2" 'DESCRIBE ?s WHERE { ?s <http://e/p> <http://e/b> }' \
+  "$TMP/store-ibk3" predicate-0.ibk3 predicate-1.ibk3
+checkblob "storeQuery DESCRIBE reads every shard, not the pattern predicate's" storeQuery \
+  "$TMP/store-describe.json" "$TMP/store-describe.blob" \
+  'r["ok"] is True and r["kind"] == "describe" and r["shards"] == 2
+   and r["mode"] == "ibk3-paged-merkle-full-manifest(2)"
+   and r["nquads"].count(" .") == 2
+   and "<http://e/a> <http://e/p> <http://e/b> ." in r["nquads"]
+   and "<http://e/a> <http://e/q> \"one\" ." in r["nquads"]
+   and "<http://e/c>" not in r["nquads"]'
+blobargs "$TMP/store-describe-short.json" "$TMP/store-describe-short.blob" \
+  "$TMP/store-ibk3/manifest.sbm2" 'DESCRIBE <http://e/a>' \
+  "$TMP/store-ibk3" predicate-0.ibk3
+checkblob "storeQuery DESCRIBE refuses a region that lacks a shard of the full manifest" storeQuery \
+  "$TMP/store-describe-short.json" "$TMP/store-describe-short.blob" \
+  'r["ok"] is False'
+
 # The diagnostic hexadecimal form must answer exactly the same envelope, so a
 # fixture written either way pins the same behaviour.
 hexargs "$TMP/store-query-hex.json" "$TMP/store-ibk3/manifest.sbm2" \
