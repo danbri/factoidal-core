@@ -844,7 +844,8 @@ theorem conforms_agg (env : ValidationEnv) (g : Graph) (sg : List Shape) (focus 
 the engine's results for a focus node and a shape pass SHACL 1.2
 conformance checking iff `Spec.Conforms` holds, and one per-value
 component produces no result iff `Spec.ValueConforms` holds. -/
-theorem conformance_iff (env : ValidationEnv) (g : Graph) (sg : List Shape) : ∀ fuel : Nat,
+theorem conformance_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (hcoh : env.dataIx.Coherent g) : ∀ fuel : Nat,
     (∀ node s, env.conforms (collectShapeViolations env g sg node s fuel) = true ↔
       Spec.Conforms env g sg node s fuel) ∧
     (∀ focus s v cc, evalOneConstraint env g sg focus s v cc fuel = [] ↔
@@ -969,39 +970,48 @@ theorem conformance_iff (env : ValidationEnv) (g : Graph) (sg : List Shape) : �
             exact ⟨fun h m hm' => (ihc m s2).mp (h m hm'), fun h m hm' => (ihc m s2).mpr (h m hm')⟩
       | _ =>
         simp only [evalOneConstraint, Spec.ValueConforms]
-        rw [← simpleValueCheck_iff' g _ v]
+        rw [← simpleValueCheck_iff' g _ v, simpleValueCheckIx_eq hcoh]
         split <;> simp_all
 
 /-- SHACL 1.2 conformance checking for one focus node and one shape:
 the engine's results pass iff `Spec.Conforms` holds, at every fuel. -/
 theorem collectShapeViolations_conforms_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
-    (node : Term) (s : Shape) (fuel : Nat) :
+    (hcoh : env.dataIx.Coherent g) (node : Term) (s : Shape) (fuel : Nat) :
     env.conforms (collectShapeViolations env g sg node s fuel) = true ↔
       Spec.Conforms env g sg node s fuel :=
-  (conformance_iff env g sg fuel).1 node s
+  (conformance_iff env g sg hcoh fuel).1 node s
 
 /-- No result at all is, in particular, conformance (whatever the
 disallowed set). -/
 theorem collectShapeViolations_eq_nil_conforms (env : ValidationEnv) (g : Graph)
-    (sg : List Shape) (node : Term) (s : Shape) (fuel : Nat)
+    (sg : List Shape) (hcoh : env.dataIx.Coherent g) (node : Term) (s : Shape) (fuel : Nat)
     (h : collectShapeViolations env g sg node s fuel = []) :
     Spec.Conforms env g sg node s fuel :=
-  (collectShapeViolations_conforms_iff env g sg node s fuel).mp (by rw [h]; rfl)
+  (collectShapeViolations_conforms_iff env g sg hcoh node s fuel).mp (by rw [h]; rfl)
 
 /-- SHACL 1.2 §SomeValueConstraintComponent, declaratively: the
 engine-named clause of `Spec.AggConforms` for sh:someValue is "some
 value node conforms to the shape" in the sense of `Spec.Conforms`. -/
 theorem someValue_aggConforms_iff (env : ValidationEnv) (g : Graph) (sg : List Shape)
+    (hcoh : env.dataIx.Coherent g)
     (s : Shape) (values : List Term) (r : ShapeRef) (fuel : Nat) :
     Spec.AggConforms env g sg s values (.someValue r) (fuel + 1) ↔
       ∀ rs, lookupShape r sg = some rs → ∃ v ∈ values, Spec.Conforms env g sg v rs fuel := by
-  simp only [Spec.AggConforms, collectShapeViolations_conforms_iff]
+  simp only [Spec.AggConforms, collectShapeViolations_conforms_iff env g sg hcoh]
+
+/-- The environment of a validation run carries an index coherent with the
+data graph, so the theorems above that assume coherence hold for `validate`
+without a hypothesis (https://github.com/danbri/factoidal/issues/723). -/
+theorem envFor_dataIx_coherent (cfg : ValidationConfig) (g : Graph) (shapes : List Shape) :
+    (cfg.envFor g shapes).dataIx.Coherent g :=
+  DataIndex.ofGraph_coherent g
 
 /-- §3.1 / SHACL 1.2 §conformance-definition: the report conforms iff
 every focus node of every targeted shape conforms. -/
 theorem validate_conforms_iff (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig) :
     (validate g sg cfg).conforms = true ↔ Spec.GraphConforms (cfg.envFor g sg.shapes) g sg := by
-  simp only [validate, Spec.GraphConforms, conforms_flatMap, collectShapeViolations_conforms_iff]
+  simp only [validate, Spec.GraphConforms, conforms_flatMap,
+    collectShapeViolations_conforms_iff _ g _ (envFor_dataIx_coherent cfg g sg.shapes)]
 
 /-- Soundness in the direction the name suggests: a conforming report
 is a certificate of §3.4 conformance for every targeted focus node. -/
@@ -1013,6 +1023,10 @@ theorem validate_sound (g : Graph) (sg : ShapesGraph) (cfg : ValidationConfig)
 /-! ## Axiom audit -/
 
 #print axioms validate_empty_conforms
+#print axioms envFor_dataIx_coherent
+#print axioms evalPathFuelIx_eq
+#print axioms isShaclInstanceIx_eq
+#print axioms simpleValueCheckIx_eq
 #print axioms validate_no_targets_conforms
 #print axioms minCount_zero_no_result
 #print axioms notOf_flips

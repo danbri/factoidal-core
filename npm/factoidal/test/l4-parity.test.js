@@ -25,36 +25,28 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const AVAILABLE = require('../l4.js').available();
 const lean = require('../l4-core.js');
 const { Dataset, dataFactory: df } = lean;
 
+// The ops the loaded wasm serves (its `ops` reflection). Since 0.9.0 the
+// wasm in l4-assets/ is the package's only engine, so it must serve every op
+// a case uses: a missing op FAILS the case, naming the op (it is not a skip).
 let leanOpsPromise = null;
 function leanOps() {
   if (!leanOpsPromise) {
-    leanOpsPromise = require('../l4.js')
-      .loadL4()
-      .then((eng) => (typeof eng.call === 'function'
-        ? eng.call('ops', []) : { ops: [], blobOps: [] }))
-      .catch(() => ({ ops: [], blobOps: [] }));
+    leanOpsPromise = require('../index.js').loadEngine().then((eng) => eng.call('ops', []).ops);
   }
   return leanOpsPromise;
 }
 
-// Skip unless the Lean wasm is resolvable and serves every named op.
-async function skipUnlessOps(t, ...ops) {
-  if (!AVAILABLE) {
-    t.skip('Lean wasm assets not resolvable (l4.js available() is false)');
-    return true;
-  }
-  const served = await leanOps();
-  const have = new Set([...served.ops, ...(served.blobOps || [])]);
-  const missing = ops.filter((op) => !have.has(op));
-  if (missing.length > 0) {
-    t.skip(`resolved Lean wasm predates the op(s) ${missing.join(', ')} ` +
-      '(ops reflection); rebuild formal/lean4/Wasm/build-wasm.sh to unskip');
-    return true;
-  }
+function skipUnlessAvailable(_t) {
+  return false;
+}
+
+async function skipUnlessOps(_t, ...ops) {
+  const have = await leanOps();
+  const missing = ops.filter((op) => !have.includes(op));
+  assert.deepEqual(missing, [], `the loaded Lean wasm lacks ${missing.join(', ')} (ops reflection)`);
   return false;
 }
 
@@ -65,22 +57,28 @@ const REPO = path.join(__dirname, '..', '..', '..');
 // loaded entry's real functions.
 // ---------------------------------------------------------------------
 
-test('capabilities: the stage-1 families are reported true', async (t) => {
+test('capabilities: the stage-1, stage-2 and stage-3 families are reported true', async (t) => {
   if (await skipUnlessOps(t, 'jsonldToRdf', 'rmlMap', 'csvwToRdf', 'rifEval',
     'xmlWellformed', 'xpathEval', 'xsltTransform', 'schematronValidate',
     'jsonSchemaValidate', 'mathmlEval', 'xformsRecalc', 'tableauMaterialise',
-    'tableauDlInconsistent', 'toanSummation')) return;
+    'tableauDlInconsistent', 'toanSummation', 'shaclValidate', 'shexValidate',
+    'queryDataset12', 'datasetQuery12', 'storeOpen', 'parseDocument')) return;
   const caps = await lean.capabilities();
   for (const key of ['jsonld', 'jsonldFromRdf', 'rml', 'csvw', 'rif', 'xml',
     'xpath', 'xslt', 'mathml', 'xforms', 'jsonSchema', 'schematron', 'toan',
     'tableau']) {
     assert.equal(caps[key], true, `capabilities().${key}`);
   }
-  // Not served by the Lean dispatch table: still false, so a caller sees
-  // the truth. (Stage 2 serves matrix, sigmoid, vcCrypto and didKey.)
-  for (const key of ['shacl', 'shex', 'cottasBytesStore']) {
-    assert.equal(caps[key], false, `capabilities().${key}`);
+  // Stage 3 serves SHACL and ShEx (Wasm/Ops/Validate.lean); COTTAS left
+  // the package, so its flag is gone; lenient parse is served by the op
+  // parseDocument (Wasm/Ops/Lenient.lean,
+  // https://github.com/danbri/factoidal/issues/716).
+  for (const key of ['shacl', 'shex', 'matrix', 'sigmoid', 'vcCrypto', 'didKey',
+    'entailment', 'hdt', 'sparql12', 'store', 'datasetHandles', 'turtlePrefixes',
+    'parseDiagnostics']) {
+    assert.equal(caps[key], true, `capabilities().${key}`);
   }
+  assert.equal('cottasBytesStore' in caps, false, 'no COTTAS flag');
 });
 
 // ---------------------------------------------------------------------

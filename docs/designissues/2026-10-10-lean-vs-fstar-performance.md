@@ -693,6 +693,125 @@ places:
   `RDF_Turtle_Serialize.count_runs` (non-tail recursion, 8,192 KB stack). The
   survey records the exit status 2. Nothing in `formal/fstar` was changed.
 
+## 8. Second round: issues 722, 723 and 724 (branch `claude/wt-perf-2`)
+
+The three ranked rows of section 5 with the largest cost, one issue each. For
+each, an expected-failure row was added to `tests/stack/lean_scaling.py` first
+(new `XFAIL` table: a listed row counts as expected-fail while it fails and as
+a failure when it passes), then the code was profiled, then repaired, then the
+row was made an assertion. Binaries before: built from `c8dbe2ab`; F*:
+`tools/fetch-builds.sh --set native` (`build-e7519f87314f`).
+
+### 8.1 Aggregates with DISTINCT (https://github.com/danbri/factoidal/issues/722)
+
+* **Cause.** `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` and `GROUP_CONCAT` with
+  DISTINCT removed duplicates with `dedupErAcc` (each value against every kept
+  value); `COUNT(DISTINCT *)` used `distinctSolutions` (each row against every
+  later row). The DISTINCT modifier already used the proved
+  `distinctSolutionsFast`; REDUCED keeps every row. Callgrind, 625 paragraphs:
+  `COUNT(DISTINCT ?s)` 3.70 billion instructions, `dedupErAcc` 89.1 percent
+  (`strCompare` 87.9 percent inside it); `COUNT(DISTINCT *)` 1.60 billion,
+  `distinctSolutions` 74.8 percent.
+* **Change.** `dedupErFast` (hash buckets on `erBucket`, `csimp`);
+  `COUNT(DISTINCT *)` calls `distinctSolutionsFast`.
+* **Proved.** `dedupErFastGo_eq`, `dedupEr_eq_dedupErFast`,
+  `evalAggregate_countDistinctStar`.
+* **Evidence.** 20 of 20 query outputs identical; SPARQL 1.1 650 of 650 and 1.2
+  271 of 271, logs identical.
+
+| paragraphs | Lean before s | Lean after s | F* s | Lean/F* after | peak RSS after (Lean / F*) |
+|---:|---:|---:|---:|---:|---:|
+| 1,250 | 1.469 | 0.101 | 0.083 | 1.2 | 42 MB / 17 MB |
+| 2,500 | 6.409 | 0.244 | 0.241 | 1.0 | 69 MB / 20 MB |
+| 5,000 | 22.46 | 0.554 | 0.700 | 0.79 | 126 MB / 26 MB |
+| 10,000 | >60 (cap) | 1.048 | 2.597 | 0.40 | 227 MB / 35 MB |
+| 20,000 | not run | 2.668 | 10.09 | 0.26 | 439 MB / 57 MB |
+
+Load 6 to 12. The memory column is issue 724 (8.3), not the aggregate.
+
+### 8.2 SHACL validation (https://github.com/danbri/factoidal/issues/723)
+
+* **Cause.** `objectsOf` filters the whole data graph; validation called it per
+  focus node and property shape (`valueNodes`), and `isShaclInstance` called it
+  per `sh:class` value node and per class-target subject, with `superClasses`
+  reading `g.length` and filtering per step. Callgrind, 500 persons: 2.10
+  billion instructions, the filter 74.6 percent. With the index alone, at 2,000
+  persons: `distinctSubjects` 61.8 percent and `dedupTerms` 17.9 percent of
+  3.37 billion (list scan plus `acc ++ [x]`).
+* **Change.** `SHACL/DataIndex.lean`: (subject, predicate) to objects in graph
+  order, and the graph length, built once by `ValidationConfig.envFor` and
+  carried in `ValidationEnv.dataIx`; indexed twins of the path evaluation, the
+  SHACL-instance test and the `sh:class` check. `distinctSubjects` and
+  `dedupTerms` get hash forms registered with `csimp`.
+* **Proved.** Every twin returns the same list under a coherent index
+  (`evalPathFuelIx_eq` over the four mutual functions, `isShaclInstanceIx_eq`,
+  `simpleValueCheckIx_eq`, ...), `DataIndex.ofGraph_coherent`, and the two
+  `csimp` equalities. `conformance_iff` and three theorems that use it now take
+  `env.dataIx.Coherent g`; `envFor_dataIx_coherent` discharges it, so
+  `validate_conforms_iff` is unchanged.
+* **Evidence.** SHACL Core 1.0, SHACL-SPARQL 1.0, 1.2 core, 1.2 sparql, node
+  expressions and rules: runner logs byte-identical to the binary before.
+
+| persons | Lean before s | Lean after s | F* s | Lean/F* after |
+|---:|---:|---:|---:|---:|
+| 500 | 0.263 | 0.029 | 0.169 | 0.17 |
+| 1,000 | 1.149 | 0.051 | 0.540 | 0.09 |
+| 2,000 | 4.123 | 0.111 | 1.879 | 0.06 |
+| 4,000 | 27.81 | 0.242 | 7.498 | 0.03 |
+
+Peak RSS at 4,000: 27 MB before and after (F*: 38 MB). Load 4 to 6.
+
+### 8.3 The command line's N-Quads round trip (https://github.com/danbri/factoidal/issues/724): open
+
+* **Measured.** Row `query-vs-parse` (new row kind: a verb against `parse` of
+  the same file, at most 2.0 times the CPU time and the peak memory). 5,000
+  paragraphs: `query` COUNT(*) 0.463 s and 125 MB, `parse` 0.081 s and 34 MB
+  (5.7 and 3.7 times). It is an expected failure naming the issue.
+* **Why not repaired here.** `Dataset.toCanonicalNQuads` followed by
+  `parseNQuadsFast` is not the identity on a parsed dataset: the canonical form
+  writes language tags in lower case, and the N-Quads reader keeps each quad of
+  a graph once, while the Turtle reader keeps a repeated triple (a `#guard` in
+  `SHACL/ShaclTests.lean` shows a Turtle graph with a repeated triple). Giving
+  the parsed dataset to the query directly can therefore change answers
+  (`COUNT(*)` over a file with a repeated triple; the case of a language tag in
+  a result). Measured on a three-line Turtle file with one triple written
+  twice and a tag `@EN`: `parse` prints 3, `parse --out nquads` prints the
+  repeated line twice with `@en`, and `query` `COUNT(*)` prints 2. The two
+  verbs disagree today; an RDF graph is a set, so 2 is the count RDF 1.1
+  Concepts gives. The repair needs a function on `Dataset` proved equal to the round
+  trip (lower-case language tags, one quad per graph, graphs of one name
+  merged), or a decision that the round trip's normalisation is not wanted.
+  Neither was done in the time.
+
+### 8.4 Gates after the last commit of this round
+
+Each equal to the run with the binaries before 8.1, and each runner log
+byte-identical: SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650);
+SPARQL 1.2 271 pass, 0 fail (out of 271); SHACL Core 1.0 98, SHACL-SPARQL 1.0
+22, SHACL 1.2 core 138, SHACL 1.2 sparql 25 pass, 0 fail (out of the same);
+SHACL 1.2 node expressions 140 pass, 0 fail, 2 unsupported (out of 142);
+SHACL 1.2 rules 88 pass (out of 88); RDF 1.1 1041 pass (out of 1041); RDF 1.2
+1358 pass (out of 1358); RDFC-1.0 86 pass (out of 86); RDF semantics 29 pass
+(out of 29); `l4rdfc-probe` 63 of 63, 1 of 1, 21 of 21, 1 of 1.
+`Wasm/cli-smoke.sh` 53 pass, 0 fail (out of 53); `Wasm/native-smoke.sh` 282
+pass, 0 fail (out of 282; not run before 8.1). Full `lake build` exits 0 (1314
+jobs). `tests/stack/lean_scaling.sh`: 15 pass, 0 fail, 1 expected-fail (out of
+16), the expected failure being `query-vs-parse` (issue 724). Lean hygiene
+audit: 0 sorry, 0 axiom, 0 native_decide, 0 unsafe, 0 implemented_by, 166
+partial def (unchanged).
+
+### 8.5 ORDER BY: profiled, recorded
+
+Callgrind, `ORDER BY ?s ?p LIMIT 20`, 1,250 paragraphs, binary after 8.2: 1.72
+billion instructions. `sortSolutionsFast` (Lean's merge sort, already n log n)
+57.8 percent, of which `sparqlOrder` 54.5 and `strCompare` 53.6 percent
+(`lean_string_data` 36.2, `utf8_decode` 23.6: `strCompare` converts both
+strings to character lists); the N-Quads round trip of 8.3 28.9 percent. The
+repair is a `csimp` from `strCompare` to Lean's native string order, proved as
+`charsLe_eq_not_lt` was for RDFC-1.0 (section 4.9); it rebuilds every SPARQL
+module and was not done in the time. It would also speed up `COUNT(DISTINCT)`,
+whose remaining cost after 8.1 is the same comparison.
+
 ## 7. How to repeat
 
 ```

@@ -14,9 +14,11 @@ through its command-line driver; here it is a dispatch operation.
 
   dataFormat  turtle (default) | ttl | ntriples | nt | nquads | nq |
               trig | rdfxml | rdf        — how `data` is read
-  entail      none (default) | RDFS | OWL-RL
-              — closure of the DEFAULT graph before the query, the
-                `owlClosure` closures of `Wasm/Ops/Reason.lean`
+  entail      none (default) | RDFS | OWL-RL | x-rdfscore | x-rdfsplus
+              — closure of the DEFAULT graph before the query: the
+                `owlClosure` closures of `Wasm/Ops/Reason.lean` for RDFS
+                and OWL-RL, its `rhoDfClosure` (core RDFS) and
+                `rdfsPlusClosure` (RDFS-Plus) closures for the other two
   output      json (default) | csv | tsv | xml | table | ntriples
 
 `text` is the answer in the requested format. `json`, `csv`, `tsv` and
@@ -56,6 +58,8 @@ import L4Factoidal.Syntax.NTriples
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.OWL.RLClosure
 import L4Factoidal.HDT.Store
+import L4Factoidal.RDFS.Closure
+import L4Factoidal.RDFS.RDFSPlus
 
 namespace L4Wasm.Ops
 
@@ -85,7 +89,16 @@ private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String D
         L4Factoidal.RDFS.fullClosure (withMinimalD []) (containerSlice g) g }
   | "OWL-RL" | "owl-rl" | "owl_rl" =>
       .ok { ds with default := L4Factoidal.OWL.RL.closureFix ds.default }
-  | other => .error s!"queryRaw: entail must be none, RDFS or OWL-RL (got '{other}')"
+  -- The core-RDFS (rho-df) closure of `rhoDfClosure` and the RDFS-Plus
+  -- closure of `rdfsPlusClosure` (`Wasm/Ops/Reason.lean`): the
+  -- `x-rdfscore` and `x-rdfsplus` regimes of the npm `query()` option
+  -- `entail`, which the F* command-line driver also accepted.
+  | "x-rdfscore" =>
+      .ok { ds with default := L4Factoidal.RDFS.closureFix ds.default }
+  | "x-rdfsplus" =>
+      .ok { ds with default := L4Factoidal.RDFS.rdfsPlusClosureFix ds.default }
+  | other => .error
+      s!"queryRaw: entail must be none, RDFS, OWL-RL, x-rdfscore or x-rdfsplus (got '{other}')"
 
 private def evalRaw (ds : Dataset) (sparql : String) : Except String RawAnswer :=
   match parseSparql sparql with
@@ -206,6 +219,28 @@ private def rawQuery : String := "SELECT ?n WHERE { ?p <http://e/name> ?n } ORDE
          "{\"ok\":false"
 #guard (queryRaw rawData "SELECT WITHOUT" "{\"dataFormat\":\"ntriples\"}").startsWith
          "{\"ok\":false"
+-- The entailment regimes: a subclass membership is entailed under RDFS,
+-- x-rdfscore and x-rdfsplus and not under none; an owl:inverseOf statement
+-- is entailed under x-rdfsplus and not under x-rdfscore; an unknown regime
+-- is refused.
+private def entailData : String :=
+  "<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> .\n" ++
+  "<http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .\n" ++
+  "<http://e/p> <http://www.w3.org/2002/07/owl#inverseOf> <http://e/q> .\n" ++
+  "<http://e/a> <http://e/p> <http://e/b> .\n"
+private def askD : String :=
+  "ASK { <http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> }"
+private def askInv : String := "ASK { <http://e/b> <http://e/q> <http://e/a> }"
+private def rawEntail (regime q : String) : String :=
+  queryRaw entailData q ("{\"dataFormat\":\"ntriples\",\"entail\":\"" ++ regime ++ "\"}")
+#guard ((rawEntail "x-rdfscore" askD).splitOn "boolean\\\":true").length > 1
+#guard ((rawEntail "x-rdfsplus" askD).splitOn "boolean\\\":true").length > 1
+#guard ((rawEntail "RDFS" askD).splitOn "boolean\\\":true").length > 1
+#guard ((rawEntail "none" askD).splitOn "boolean\\\":false").length > 1
+#guard ((rawEntail "x-rdfsplus" askInv).splitOn "boolean\\\":true").length > 1
+#guard ((rawEntail "x-rdfscore" askInv).splitOn "boolean\\\":false").length > 1
+#guard (rawEntail "x-unknown" askD).startsWith "{\"ok\":false"
+
 #guard (queryHdt "ASK { ?s ?p ?o }" ByteArray.empty).startsWith "{\"ok\":false"
 #guard (queryHdt "ASK { ?s ?p ?o }" "not an hdt file".toUTF8).startsWith "{\"ok\":false"
 

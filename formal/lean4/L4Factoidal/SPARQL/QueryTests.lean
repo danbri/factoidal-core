@@ -1041,6 +1041,47 @@ private def gkFast (rows : List (List EvalResult × Binding)) : List SolutionGro
 #guard keyBucket [gkLitEn] != keyBucket [gkLitFr]
 #guard keyBucket [gkLitI] != keyBucket [gkLitPl]
 
+/-! ### Aggregate DISTINCT: the indexed duplicate removal agrees with the scan
+
+`dedupEr` is registered with `csimp` to compile as `dedupErFast`
+(https://github.com/danbri/factoidal/issues/722), so a guard on `dedupEr` runs
+the indexed code. `dedupErAcc` is not rewritten: these guards compare the
+indexed code with the scan. The values are the first components of the group
+keys above, repeated, so order-equal values of three numeric types, error
+values, IRIs, blank nodes and literals that differ only in language tag or
+datatype all occur. -/
+
+private def dkVals (cycles : Nat) : List EvalResult :=
+  (List.range (cycles * gkeys.length)).filterMap (fun i => (gkeys[i % gkeys.length]!).head?)
+
+#guard dedupErFast [] == dedupErAcc [] []
+#guard dedupErFast (dkVals 1) == dedupErAcc (dkVals 1) []
+#guard dedupErFast (dkVals 5) == dedupErAcc (dkVals 5) []
+#guard dedupEr (dkVals 3) == dedupErAcc (dkVals 3) []
+-- The kept values are the expected ones: 1, 1.0 and 1.0E0 are one value and
+-- the first occurrence stays; language-tagged, plain and typed literals stay
+-- apart. A removal that kept everything, or merged everything, fails.
+#guard (dedupErFast (dkVals 4)).length == 12
+#guard dedupErFast [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2] == [gkNum1, gkNum2]
+#guard dedupErFast [gkDec1, gkNum1] == [gkDec1]
+#guard dedupErFast [gkLitEn, gkLitFr, gkLitPl, gkLitEn, gkLitI] == [gkLitEn, gkLitFr, gkLitPl, gkLitI]
+#guard dedupErFast [gkErr, gkErr, gkBn, gkBn, gkAlice] == [gkErr, gkBn, gkAlice]
+
+-- COUNT(DISTINCT *) counts distinct rows (the code runs `distinctSolutionsFast`,
+-- `evalAggregate_countDistinctStar` restates it with `distinctSolutions`), and
+-- COUNT(DISTINCT ?x) counts distinct bound values.
+private def cdGroup : SolutionGroup :=
+  { key := [], solutions :=
+      [[("x", .iri iAlice)], [("x", .iri iBob)], [("x", .iri iAlice)], [], [],
+       [("x", .iri iAlice), ("y", .iri iBob)], [("y", .iri iBob), ("x", .iri iAlice)]] }
+
+#guard evalAggregate emptyEnv .count true (.var "*") cdGroup == .num 4
+#guard evalAggregate emptyEnv .count true (.var "*") cdGroup ==
+  .num (Int.ofNat (distinctSolutions cdGroup.solutions).length)
+#guard evalAggregate emptyEnv .count false (.var "*") cdGroup == .num 7
+#guard evalAggregate emptyEnv .count true (.var "x") cdGroup == .num 2
+#guard evalAggregate emptyEnv .count false (.var "x") cdGroup == .num 5
+
 /-! ### Axiom audit — the whole pipeline is definition-only -/
 
 #print axioms GraphPattern.evalIn

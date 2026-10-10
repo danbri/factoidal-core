@@ -1,18 +1,15 @@
-// factoidal/api — the bundler-friendly, CSP-safe entry point (issue
-// https://github.com/danbri/factoidal/issues/682). createApi() wires
-// lib/api.js's typed surface around an ALREADY-LOADED npm-entry ABI
-// object: no fetch, no `new Function(src)` eval, so this is the route
-// a page under `Content-Security-Policy: script-src 'self'` (and a
-// bundler, which needs a statically importable module rather than a
-// file to fetch) can use. See api.js's header comment and
-// README.md's "Bundlers and Content Security Policy" section.
+// @factoidal/core/api — createApi(engine): the typed API over a Lean engine
+// handle the caller loaded (api.mjs). The route for a bundler build or a
+// page with its own asset layout: it fetches nothing and evaluates nothing
+// itself. See api.mjs's header comment and README.md's "Bundlers and
+// Content Security Policy" section.
 
 'use strict';
 
-require('./helpers.js');
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { createApi } = require('../api.js');
 const indexEngine = require('../index.js');
@@ -43,133 +40,68 @@ function normRows(rows) {
     .sort();
 }
 
-test('createApi(entryMod.factoidalNpmEntry): parse/SELECT/ASK match index.js', async () => {
-  const entryMod = require('../factoidal-npm-entry.js');
-  const factoidal = createApi(entryMod.factoidalNpmEntry);
+// The engine handle, loaded the way a bundler page would: import the loader
+// from l4-assets/ and call loadL4().
+async function loadHandle() {
+  const loader = path.join(__dirname, '..', 'l4-assets', 'l4factoidal.js');
+  const mod = await import(pathToFileURL(loader).href);
+  return mod.loadL4();
+}
 
+test('createApi(handle): parse/SELECT/ASK match index.js', async () => {
+  const factoidal = createApi(await loadHandle());
   const [entryDs, indexDs] = [await factoidal.parse(TTL), await indexEngine.parse(TTL)];
   assert.equal(entryDs.size, indexDs.size);
-  assert.equal(await factoidal.serialize(entryDs), await indexEngine.serialize(indexDs));
-
+  assert.equal(
+    await factoidal.canonicalize(entryDs), await indexEngine.canonicalize(indexDs));
   const [entryRows, indexRows] = [
     await factoidal.query(TTL, SELECT),
     await indexEngine.query(TTL, SELECT),
   ];
   assert.deepEqual(normRows(entryRows), normRows(indexRows));
   assert.ok(entryRows.length > 0, 'SELECT actually returned rows');
-
-  assert.equal(await factoidal.query(TTL, ASK), await indexEngine.query(TTL, ASK));
   assert.equal(await factoidal.query(TTL, ASK), true);
 });
 
-test('createApi accepts a Promise of the entry object', async () => {
-  const entryMod = require('../factoidal-npm-entry.js');
-  const factoidal = createApi(Promise.resolve(entryMod.factoidalNpmEntry));
-  const ds = await factoidal.parse(TTL);
-  assert.equal(ds.size, (await indexEngine.parse(TTL)).size);
+test('createApi accepts a Promise of the handle', async () => {
+  const factoidal = createApi(loadHandle());
+  assert.equal(await factoidal.query(TTL, ASK), true);
 });
 
-test('createApi accepts a zero-argument thunk returning the entry object', async () => {
-  const entryMod = require('../factoidal-npm-entry.js');
+test('createApi accepts a zero-argument thunk returning a Promise of the handle', async () => {
   let calls = 0;
-  const factoidal = createApi(() => {
-    calls++;
-    return entryMod.factoidalNpmEntry;
-  });
-  const ds = await factoidal.parse(TTL);
-  assert.equal(ds.size, (await indexEngine.parse(TTL)).size);
+  const factoidal = createApi(() => { calls += 1; return loadHandle(); });
+  assert.equal(calls, 0, 'the thunk runs on the first operation, not at createApi()');
   assert.equal(await factoidal.query(TTL, ASK), true);
-  // buildApi's entry() caches after the first successful resolution --
-  // the thunk should not be re-invoked on every call.
-  assert.equal(calls, 1);
+  assert.equal(await factoidal.query(TTL, ASK), true);
+  assert.equal(calls, 1, 'the thunk runs once');
 });
 
-test('createApi accepts a thunk returning a Promise of the entry object', async () => {
-  const entryMod = require('../factoidal-npm-entry.js');
-  const factoidal = createApi(() => Promise.resolve(entryMod.factoidalNpmEntry));
-  const ds = await factoidal.parse(TTL);
-  assert.equal(ds.size, (await indexEngine.parse(TTL)).size);
+test('createApi: an object without call() throws a TypeError', () => {
+  assert.throws(() => createApi({}), (err) => err instanceof TypeError && /call\(op, args\)/.test(err.message));
+  assert.throws(() => createApi(null), TypeError);
 });
 
-test('createApi: an object without queryDataset throws a TypeError naming factoidalNpmEntry', () => {
-  assert.throws(
-    () => createApi({ notAnAbi: true }),
-    (e) => e instanceof TypeError && /factoidalNpmEntry/.test(e.message));
+test('createApi: openStore takes a reader function only (no file system)', async () => {
+  const factoidal = createApi(await loadHandle());
+  await assert.rejects(() => factoidal.openStore('/some/path'), TypeError);
 });
 
-test('createApi: null/undefined also throw a TypeError naming factoidalNpmEntry', () => {
-  assert.throws(
-    () => createApi(null),
-    (e) => e instanceof TypeError && /factoidalNpmEntry/.test(e.message));
-  assert.throws(
-    () => createApi(undefined),
-    (e) => e instanceof TypeError && /factoidalNpmEntry/.test(e.message));
-});
-
-test('createApi: entailment-regime queries and queryHdt reject with a clear message (no CLI bundle loaded)', async () => {
-  const entryMod = require('../factoidal-npm-entry.js');
-  const factoidal = createApi(entryMod.factoidalNpmEntry);
-  await assert.rejects(
-    () => factoidal.query(TTL, SELECT, { entail: 'RDFS' }),
-    (e) => /CLI bundle .* not loaded/.test(e.message) &&
-      /entailment-regime queries and queryHdt/.test(e.message));
-  await assert.rejects(
-    () => factoidal.queryHdt('', 'SELECT * WHERE { ?s ?p ?o }'),
-    (e) => /CLI bundle .* not loaded/.test(e.message));
-});
-
-// --- version / engine on every driver's typed surface -----------------
-
-test('version matches package.json: index.js', () => {
+test('version matches package.json on every entry point', () => {
   assert.equal(indexEngine.version, pkgVersion);
+  assert.equal(require('../api.js').version, pkgVersion);
+  assert.equal(require('../l4-core.js').version, pkgVersion);
+  assert.equal(require('../l4.js').version, pkgVersion);
 });
 
-test('version matches package.json: api.js (createApi)', () => {
-  const entryMod = require('../factoidal-npm-entry.js');
-  const factoidal = createApi(entryMod.factoidalNpmEntry);
-  assert.equal(factoidal.version, pkgVersion);
-});
-
-test('version matches package.json: l4-core.js', () => {
-  const l4core = require('../l4-core.js');
-  assert.equal(l4core.version, pkgVersion);
-});
-
-test('version matches package.json: wasm.js', async (t) => {
-  const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
-  if (NODE_MAJOR < 22) {
-    t.skip(`Node ${process.versions.node} < 22 (WasmGC needed)`);
-    return;
-  }
-  const wasmEngine = require('../wasm.js');
-  if (!wasmEngine.wasmAvailable()) {
-    t.skip('factoidal.wasm.js / .wasm asset not present ' +
-      "(run 'build-ocaml.sh wasm-factoidal', then 'build-ocaml.sh npm')");
-    return;
-  }
-  assert.equal(wasmEngine.version, pkgVersion);
-});
-
-test('engine field identifies the driver on every entry point', async (t) => {
-  assert.equal(indexEngine.engine, 'js');
+test('engine field is lean4-wasm on every entry point', async () => {
+  assert.equal(indexEngine.engine, 'lean4-wasm');
   assert.equal(require('../l4-core.js').engine, 'lean4-wasm');
+  assert.equal(createApi(await loadHandle()).engine, 'lean4-wasm');
+});
 
-  const entryMod = require('../factoidal-npm-entry.js');
-  assert.equal(createApi(entryMod.factoidalNpmEntry).engine, 'entry');
-  assert.equal(
-    createApi(entryMod.factoidalNpmEntry, { engineName: 'entry-wasm' }).engine,
-    'entry-wasm');
-
-  const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
-  if (NODE_MAJOR < 22) {
-    t.skip(`Node ${process.versions.node} < 22 (WasmGC needed)`);
-    return;
-  }
-  const wasmEngine = require('../wasm.js');
-  if (!wasmEngine.wasmAvailable()) {
-    t.skip('factoidal.wasm.js / .wasm asset not present ' +
-      "(run 'build-ocaml.sh wasm-factoidal', then 'build-ocaml.sh npm')");
-    return;
-  }
-  assert.equal(wasmEngine.engine, 'wasm');
+test('./l4 and ./l4-core are the main entry (the same module instance)', () => {
+  assert.equal(require('../l4.js'), indexEngine);
+  assert.equal(require('../l4-core.js'), indexEngine);
+  assert.equal(require('../l4-core.js').Dataset, indexEngine.Dataset);
 });

@@ -152,7 +152,7 @@
 
 <footer>
   Built from <a href="https://github.com/danbri/factoidal">github.com/danbri/factoidal</a>.
-  Engine loaded from <code>../npm/factoidal/browser.js</code> (this site's mirror of the
+  Engine loaded from <code>./browser.js</code> (this site's mirror of the
   <code>factoidal</code> npm package — see its
   <a href="https://github.com/danbri/factoidal/blob/claude/main/npm/factoidal/README.md">README</a>
   for the jsDelivr CDN alternative). JSON-LD deserialization:
@@ -162,7 +162,7 @@
 </footer>
 
 <script type="module">
-import { runFactoidalCli } from '../npm/factoidal/browser.js';
+import { runFactoidalCli } from './browser.js';
 import {
   buildJsonLdPlayground, parseNQuadsToRows,
   SAMPLE_JSONLD, SAMPLE_JSONLD_REMOTE_CONTEXT,

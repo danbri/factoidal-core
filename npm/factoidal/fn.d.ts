@@ -118,8 +118,7 @@ export function mapQuads(ds: FnDataset, f: (quad: Quad) => Quad): FnDataset;
 
 /**
  * Run a SPARQL 1.1 query. SELECT -> Bindings[]; ASK -> boolean;
- * CONSTRUCT -> FnDataset (needs the npm-entry engine bundle — see
- * capabilities()).
+ * CONSTRUCT and DESCRIBE -> FnDataset.
  */
 export function query(
   ds: FnDataset,
@@ -131,7 +130,7 @@ export function query(
  * Materialize an entailment closure over ds's default graph as a new
  * FnDataset (a self-CONSTRUCT under the given regime — reuses
  * query()'s entailment support; named-graph triples are not
- * restated). Needs the npm-entry engine bundle.
+ * restated).
  */
 export function entail(ds: FnDataset, regime: EntailRegime): Promise<FnDataset>;
 
@@ -143,7 +142,7 @@ export interface ValidateResult {
 }
 
 /**
- * SHACL Core validation. Needs the npm-entry engine bundle. Neither
+ * SHACL Core validation. Neither
  * argument is mutated or consumed.
  * @param ds the data graph
  * @param shapes the shapes graph
@@ -152,10 +151,9 @@ export function validate(ds: FnDataset, shapes: FnDataset): Promise<ValidateResu
 
 /**
  * ShEx (Shape Expressions) validation of one focus node against one
- * shape. Needs the npm-entry engine bundle. `null` means "deferred" --
- * outside this engine's decidable ShEx fragment, never a guessed
- * answer.
- * @param schema ShExJ (JSON Schema form), as text
+ * shape. The Lean validator decides every schema it reads: the answer
+ * is a boolean.
+ * @param schema ShExJ (first non-whitespace character '{') or ShExC, as text
  * @param focus an IRI, "_:label", or an RDF/JS NamedNode/BlankNode term
  * @param shape a shape label (same shapes as focus); omit/null for the
  *   schema's own `start`
@@ -169,8 +167,7 @@ export function shex(
 
 /**
  * Evaluate an RML mapping graph against one logical source's raw data,
- * materializing the generated triples as a new FnDataset. Needs the
- * npm-entry engine bundle. Every triples map in `mapping` reads the
+ * materializing the generated triples as a new FnDataset. Every triples map in `mapping` reads the
  * SAME `source` -- joins across two different logical sources are out
  * of scope for this entry point.
  * @param mapping the RML mapping graph
@@ -183,8 +180,7 @@ export function fromMapping(
 ): Promise<FnDataset>;
 
 /**
- * CSVW csv2rdf conversion, materialized as a new FnDataset. Needs the
- * npm-entry engine bundle. Both arguments are raw text (CSVW's
+ * CSVW csv2rdf conversion, materialized as a new FnDataset. Both arguments are raw text (CSVW's
  * metadata format is JSON, not RDF); '' or omitted metadata infers
  * the schema from the CSV's own header row. Every table in a
  * multi-table `tables` group reads the SAME `csv` text.
@@ -204,7 +200,7 @@ export function fromCsvw(
 /**
  * RIF Core forward-chaining saturation, materialized as a new
  * FnDataset (input triples + derived triples, default graph only).
- * Needs the npm-entry engine bundle.
+ *
  * @param ds the premise graph
  * @param rules a RIF Core XML rule document
  */
@@ -216,7 +212,7 @@ export function rif(ds: FnDataset, rules: string): Promise<FnDataset>;
  * rdfs2/3/5/7/9/11 only, with the machine-checked decides-iff
  * (docs/theorem-registry.md). "corerdfs" is this project's API name
  * for the fragment the literature calls ρdf (subPropertyOf/
- * subClassOf/type/domain/range). Needs the npm-entry engine bundle.
+ * subClassOf/type/domain/range).
  */
 export function coreRdfsClosure(
   ds: FnDataset,
@@ -231,8 +227,7 @@ export function rhoDfClosure(
 
 /**
  * Decidable core-RDFS fragment check (`is_rho_df_frag`): does the
- * certified coreRdfsClosure guarantee apply to `ds`? Needs the
- * npm-entry engine bundle.
+ * certified coreRdfsClosure guarantee apply to `ds`?
  */
 export function coreRdfsCheck(
   ds: FnDataset,
@@ -251,8 +246,7 @@ export function rhoDfFragmentCheck(
  * owl:sameAs, owl:inverseOf, Symmetric/Transitive/Functional/
  * InverseFunctionalProperty, equivalentClass/Property. Every OWL row
  * carries a proved licensing + truth lemma; no chain-level
- * completeness claim (theorem registry). Needs the npm-entry engine
- * bundle.
+ * completeness claim (theorem registry).
  */
 export function rdfsPlusClosure(
   ds: FnDataset,
@@ -263,7 +257,7 @@ export function rdfsPlusClosure(
  * OWL tableau materialisation (formal/fstar/Tableau.fst's
  * `tableau_materialise`): add `i rdf:type <ClassExpression>` for every
  * individual the model-construction reasoner proves is a member of an
- * OWL class expression. Needs the npm-entry engine bundle. Default
+ * OWL class expression. Default
  * graph only. `dataset` is input + tableau-derived triples;
  * `addedCount` is how many triples the tableau added.
  */
@@ -274,8 +268,7 @@ export function tableauMaterialise(
 /**
  * OWL DL inconsistency verdict (bin/owl-runner's DL pipeline: OWL-RL
  * closure -> tableau materialise -> OWL-RL closure -> is_inconsistent).
- * `rlAlone` is the plain OWL-RL verdict on the same input. Needs the
- * npm-entry engine bundle. Default graph only.
+ * `rlAlone` is the plain OWL-RL verdict on the same input. Default graph only.
  */
 export function tableauDlInconsistent(
   ds: FnDataset
@@ -283,8 +276,7 @@ export function tableauDlInconsistent(
 
 /**
  * OWL DL consistency verdict via the verified clash-detecting tableau
- * (Tableau.Refute.tableau_consistent over the OWL-RL closure). Needs the
- * npm-entry engine bundle. Default graph only. `ontology` is an
+ * (Tableau.Refute.tableau_consistent over the OWL-RL closure). Default graph only. `ontology` is an
  * FnDataset or raw RDF text (Turtle by default). `consistent` is
  * `false`, `true`, or `null` (budget-out, `reason` names the fuel cap).
  */
@@ -295,8 +287,7 @@ export function owlIsConsistent(
 
 /**
  * OWL entailment check: does `premise` entail `conclusion`? Verified
- * two-path dispatch (`via: "closure"` / `via: "refutation"`). Needs the
- * npm-entry engine bundle. Default graph only. Each argument is an
+ * two-path dispatch (`via: "closure"` / `via: "refutation"`). Default graph only. Each argument is an
  * FnDataset or raw RDF text. `entailed` is `true`, `false`, or `null`
  * (refutation budget-out, `reason` names the cap).
  */
@@ -306,12 +297,12 @@ export function owlEntails(
   options?: { format?: string; fuel?: number | string }
 ): Promise<{ entailed: boolean | null; via: 'closure' | 'refutation'; reason?: string }>;
 
-/** RDFC-1.0 canonical N-Quads text. Needs the npm-entry engine bundle. */
+/** RDFC-1.0 canonical N-Quads text. */
 export function canonicalize(ds: FnDataset): Promise<string>;
 
 /**
  * sha256 hex digest of canonicalize(ds); memoized by FnDataset
- * identity. Needs the npm-entry engine bundle (canonicalize's cost).
+ * identity.
  */
 export function hash(ds: FnDataset): Promise<string>;
 
@@ -467,44 +458,9 @@ export function vcEddsaVerifyFromCanonical(
   proofValue: string
 ): Promise<boolean>;
 
-// ---------------------------------------------------------------------
-// In-memory COTTAS/Parquet bytes store. Unlike every other constructor
-// here, openCottas() does NOT return an FnDataset: rows decode lazily
-// as query() touches them (see fn.js's doc comment and
-// docs/designissues/2026-07-06-inmemory-bytes-store.md). Needs the
-// npm-entry engine bundle.
-// ---------------------------------------------------------------------
-
-/** A read-only, lazily-decoding COTTAS store handle (see openCottas). */
-export interface CottasStore {
-  /** The opaque handle string the underlying engine registry uses. */
-  readonly handle: string;
-  /**
-   * SPARQL over the store. SELECT -> Bindings[]; ASK -> boolean;
-   * CONSTRUCT -> FnDataset (materialized once). No `entail` option, no
-   * write overlay (read-only) — see fn.js's openCottas doc comment for
-   * the full divergence list from query(). Throws after close().
-   */
-  query(sparql: string): Promise<Bindings[] | boolean | FnDataset>;
-  /** Release the store. Idempotent. */
-  close(): Promise<void>;
-}
-
-/** Open a COTTAS/Parquet artifact's raw bytes as a read-only store. */
-export function openCottas(
-  bytes: Uint8Array | ArrayBuffer | string
-): Promise<CottasStore>;
-
 /**
- * Serialize an FnDataset to COTTAS/Parquet bytes via the native writer
- * (round-trips back into openCottas()). Needs the npm-entry bundle.
- */
-export function toCottas(ds: FnDataset): Promise<Uint8Array>;
-
-/**
- * Run a SPARQL 1.1 query against a read-only HDT artifact's raw bytes
- * (factoidal_cli.ml's `--data-hdt` backend). No npm-entry engine
- * bundle needed -- CLI-only. Default graph only, SELECT/ASK only.
+ * Run a SPARQL 1.1 query against a read-only HDT file's raw bytes (op
+ * queryHdt). Default graph only, SELECT/ASK only.
  */
 export function queryHdt(
   hdtBytes: Uint8Array | ArrayBuffer | string,

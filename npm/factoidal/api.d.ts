@@ -1,67 +1,53 @@
-// TypeScript declarations for 'factoidal/api' (issue #682) — the
-// bundler-friendly, CSP-safe entry point. See api.js's header comment
-// for the full picture (why this exists, what it does not cover).
+// TypeScript declarations for '@factoidal/core/api': the typed API over a
+// Lean engine the caller loaded (api.mjs).
 
 /**
- * An already-loaded npm-entry ABI object (the `factoidalNpmEntry`
- * value `factoidal-npm-entry.js` / `factoidal-npm-entry.wasm.js`
- * registers), a Promise of one, or a zero-argument function returning
- * either.
+ * A loaded Lean engine handle (the value `loadL4()` of
+ * `@factoidal/core/l4-assets/l4factoidal.js` resolves to: an object with
+ * `call(op, args)`), a Promise of one, or a zero-argument function
+ * answering either.
  */
-export type EntrySource =
+export type EngineSource =
   | object
   | Promise<object>
   | (() => object | Promise<object>);
 
 export interface CreateApiOptions {
-  /** Reported as the returned API's `engine` field. Default 'entry'. */
+  /** Reported as the returned API's `engine` field. Default 'lean4-wasm'. */
   engineName?: string;
-  /** VC Data Integrity crypto init hook; see index.d.ts's driver doc. */
-  initCrypto?: () => Promise<void>;
 }
 
 /**
- * Build a typed API (parse/query/serialize/... — the same surface
- * `factoidal` / `factoidal/wasm` export) around an already-loaded
- * npm-entry ABI object, without fetching or `eval`-ing anything.
- * Throws a TypeError (naming `factoidalNpmEntry`) if `entry` resolves
- * to something without a `queryDataset` function.
+ * The typed API (the functions `@factoidal/core` exports) over `engine`.
+ * Throws a TypeError when `engine` is a plain object with no `call`
+ * method. `openStore()` on the result takes a reader function only.
  */
 export function createApi(
-  entry: EntrySource,
+  engine: EngineSource,
   options?: CreateApiOptions
-): import('./index').default;
+): typeof import('./index').default;
 
 /**
- * Lower-level constructor `createApi()` is built on: wires a typed
- * surface around a driver `{engineName, runCli, loadEntry,
- * initCrypto?}`. Exposed for callers assembling their own driver
- * (e.g. a custom transport for the npm-entry ABI).
+ * The constructor createApi() is built on: a typed API over an ENTRY
+ * object (one method per dispatch op, string arguments, a JSON envelope
+ * string back), as entryFromEngine() builds it.
  */
 export function buildApi(driver: {
   engineName: string;
-  runCli: (
-    args: string[],
-    files: Array<{ name: string; content: string }>
-  ) => { stdout: string; stderr: string; exitCode: number } |
-    Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  loadEntry: () => (object | null) | Promise<object | null>;
-  initCrypto?: () => Promise<void>;
-}): import('./index').default;
+  loadEntry: () => object | Promise<object>;
+  storeReaderFor?: (root: string) => import('./index').StoreReader;
+}): typeof import('./index').default;
+
+/** The entry object over a loaded engine handle (lib/lean-entry.mjs). */
+export function entryFromEngine(engine: object): Record<string, unknown>;
 
 export const Dataset: typeof import('./index').Dataset;
+export const DatasetHandle: typeof import('./index').DatasetHandle;
+export const Store: typeof import('./index').Store;
 export const dataFactory: import('./index').DataFactory;
-/** Position-carrying parse failure (issue #344); see index.d.ts's ParseError doc comment. */
+/** Position-carrying parse failure; see index.d.ts's ParseError. */
 export const ParseError: typeof import('./index').ParseError;
-/** Package version string, e.g. '0.7.1'. */
+/** Package version string, e.g. '0.9.0'. */
 export const version: string;
 
-declare const _default: {
-  createApi: typeof createApi;
-  buildApi: typeof buildApi;
-  ParseError: typeof ParseError;
-  Dataset: typeof Dataset;
-  dataFactory: import('./index').DataFactory;
-  version: string;
-};
-export default _default;
+export default createApi;

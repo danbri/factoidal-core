@@ -57,6 +57,7 @@ import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
 import Wasm.Ops.Lenient
+import Wasm.Ops.Validate
 
 namespace L4Wasm
 
@@ -209,6 +210,7 @@ answers "unknown op" for these. -/
 def handleOpNames : List String :=
   [ "datasetOpen"
   , "datasetQuery"
+  , "datasetQuery12"
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"
@@ -271,7 +273,8 @@ def lwsSolidOpNames : List String :=
 `Wasm/Ops/Formats.lean`, `Wasm/Ops/Reasoning.lean` and
 `Wasm/Ops/QueryExtras.lean`: the operations of the F* npm entry that the
 table did not serve before https://github.com/danbri/factoidal/issues/713
-stage 1. All are pure and served by both `call` and `callIO`; `queryHdt`
+stage 1, and the SHACL and ShEx validation of `Wasm/Ops/Validate.lean`
+(stage 3). All are pure and served by both `call` and `callIO`; `queryHdt`
 also reads a byte region (it is in `blobOpNames`). -/
 def formatOpNames : List String :=
   [ "jsonldToRdf"
@@ -289,7 +292,14 @@ def formatOpNames : List String :=
   , "tableauMaterialise"
   , "tableauDlInconsistent"
   , "queryRaw"
-  , "queryHdt" ]
+  , "queryHdt"
+  , "shaclValidate"
+  , "shexValidate" ]
+
+/-- `queryDataset12`, the stateless SPARQL 1.2 query op (`Wasm/Ops/Query.lean`),
+served ONLY by `callIO` and `callBlobIO`, like `queryDataset`'s IO form: the
+caller's §17.6 extension and SERVICE registrations are in scope. -/
+def query12OpNames : List String := [ "queryDataset12" ]
 
 /-- The SPARQL SERVICE endpoint registry op names
 (`Wasm/Ops/ServiceReg.lean`), served ONLY by `callIO` and `callBlobIO` —
@@ -397,6 +407,8 @@ def call (op : String) (argsJson : String) : String :=
     | "tableauDlInconsistent" => arity1 op tableauDlInconsistent args
     | "queryRaw"             => arity3 op queryRaw args
     | "queryHdt"             => arity1 op (fun a => queryHdt a ByteArray.empty) args
+    | "shaclValidate"        => arity2 op shaclValidate args
+    | "shexValidate"         => arity4 op shexValidate args
     | "ops"                  => opsReflection
     | _                      => callStage2 op args
 
@@ -463,10 +475,12 @@ def callIO (op : String) (argsJson : String) : IO String :=
         | [] => Ops.extList
         | args => pure (errJson s!"extList expects 0 arguments, got {args.length}"))
   | "queryDataset"     => withArgs (arityIO2 op Ops.queryDatasetIO)
+  | "queryDataset12"   => withArgs (arityIO2 op Ops.queryDataset12IO)
   | "storeQuery"       => withArgs (arityIO3 op
                             (fun a b c => Ops.storeQueryIO a b c ByteArray.empty))
   | "datasetOpen"      => withArgs (arityIO3 op Ops.datasetOpen)
   | "datasetQuery"     => withArgs (arityIO2 op Ops.datasetQuery)
+  | "datasetQuery12"   => withArgs (arityIO2 op Ops.datasetQuery12)
   | "datasetUpdate"    => withArgs (arityIO2 op Ops.datasetUpdate)
   | "datasetSerialize" => withArgs (arityIO2 op Ops.datasetSerialize)
   | "datasetSerializeWith" => withArgs (arityIO3 op Ops.datasetSerializeWith)
@@ -531,7 +545,8 @@ def callIO (op : String) (argsJson : String) : IO String :=
   | "ops"              => pure (opsReflectionFor
                                  (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
                                     ++ extOpNames ++ lwsSolidOpNames
-                                    ++ formatOpNames ++ serviceOpNames))
+                                    ++ formatOpNames ++ serviceOpNames
+                                    ++ query12OpNames))
   | _                  =>
       -- `parseDocument` with a blank-node scope per document, as
       -- `parseToDatasetJson` above (`Wasm/Ops/Lenient.lean`, issue 716).

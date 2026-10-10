@@ -2420,6 +2420,94 @@ check "ops reflection lists the stage 2 ops" ops "$TMP/empty-stage2.json" \
         "vcCheckCredential","vcCheckCredentialSubject","vcCheckNoDataLoss",
         "vcCheckRelatedResourceDigests","didKeyResolve","parseDocument"]) <= set(r["ops"])'
 
+# --- Stage 3 of issue 713: SPARQL 1.2 query ops, validation, regimes ---
+TT12='<http://e/a> <http://e/says> <<( <http://e/s> <http://e/p> <http://e/o> )>> .
+<http://e/b> <http://e/says> "plain" .
+'
+Q12='SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/o> )>> }'
+args "$TMP/q12.json" "$TT12" "$Q12"
+check "queryDataset12 triple-term pattern" queryDataset12 "$TMP/q12.json" \
+  'r["ok"] is True and r["kind"] == "select"
+   and [b["s"]["value"] for b in r["srj"]["results"]["bindings"]] == ["http://e/s"]'
+check "queryDataset (1.1 grammar) refuses the triple-term pattern" queryDataset "$TMP/q12.json" \
+  'r["ok"] is False and "SPARQL parse error" in r["error"]'
+python3 - "$TMP/handles-12.json" "$TT12" "$Q12" <<'EOF'
+import json, sys
+seq = [
+  ["datasetOpen",    [sys.argv[2], "nquads12", ""]],
+  ["datasetQuery12", ["h1", sys.argv[3]]],
+  ["datasetQuery12", ["h1", "SELECT ?w WHERE { ?w <http://e/says> ?x FILTER(isTRIPLE(?x)) }"]],
+  ["datasetQuery",   ["h1", sys.argv[3]]],
+  ["datasetQuery12", ["h9", "ASK { ?s ?p ?o }"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "datasetQuery12 on a handle (triple term, isTRIPLE; 1.1 refuses; unknown handle)" "$TMP/handles-12.json" \
+  'rs[0]["ok"] is True and rs[0]["count"] == 2
+   and [b["s"]["value"] for b in rs[1]["srj"]["results"]["bindings"]] == ["http://e/s"]
+   and [b["w"]["value"] for b in rs[2]["srj"]["results"]["bindings"]] == ["http://e/a"]
+   and rs[3]["ok"] is False and "SPARQL parse error" in rs[3]["error"]
+   and rs[4]["ok"] is False and rs[4]["error"] == "unknown dataset handle: h9"'
+
+SHDATA='<http://e/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/Person> .
+<http://e/alice> <http://e/name> "Alice" .
+<http://e/dave> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/Person> .
+'
+SHAPES='<http://e/PS> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/shacl#NodeShape> .
+<http://e/PS> <http://www.w3.org/ns/shacl#targetClass> <http://e/Person> .
+<http://e/PS> <http://www.w3.org/ns/shacl#property> _:p .
+_:p <http://www.w3.org/ns/shacl#path> <http://e/name> .
+_:p <http://www.w3.org/ns/shacl#minCount> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .
+'
+args "$TMP/shacl.json" "$SHDATA" "$SHAPES"
+check "shaclValidate: dave has no name -> conforms false, report names dave" shaclValidate "$TMP/shacl.json" \
+  'r["ok"] is True and r["conforms"] is False and "http://e/dave" in r["reportNquads"]
+   and "http://www.w3.org/ns/shacl#ValidationReport" in r["reportNquads"]'
+args "$TMP/shacl-ok.json" "$(printf '%s' "$SHDATA" | head -2)
+" "$SHAPES"
+check "shaclValidate: alice alone conforms" shaclValidate "$TMP/shacl-ok.json" \
+  'r["ok"] is True and r["conforms"] is True'
+args "$TMP/shacl-bad.json" "not n-quads" "$SHAPES"
+check "shaclValidate: bad data -> error" shaclValidate "$TMP/shacl-bad.json" 'r["ok"] is False'
+
+SHEXC='PREFIX e: <http://e/>
+e:S { e:name LITERAL }
+'
+args "$TMP/shex-yes.json" "$SHDATA" "$SHEXC" "http://e/alice" "http://e/S"
+check "shexValidate ShExC: alice conforms" shexValidate "$TMP/shex-yes.json" \
+  'r == {"ok": True, "verdict": True}'
+args "$TMP/shex-no.json" "$SHDATA" "$SHEXC" "http://e/dave" "http://e/S"
+check "shexValidate ShExC: dave does not" shexValidate "$TMP/shex-no.json" \
+  'r == {"ok": True, "verdict": False}'
+SHEXJ='{"type":"Schema","shapes":[{"type":"ShapeDecl","id":"http://e/S","shapeExpr":{"type":"Shape","expression":{"type":"TripleConstraint","predicate":"http://e/name","valueExpr":{"type":"NodeConstraint","nodeKind":"literal"}}}}]}'
+args "$TMP/shexj.json" "$SHDATA" "$SHEXJ" "http://e/alice" "http://e/S"
+check "shexValidate ShExJ: alice conforms" shexValidate "$TMP/shexj.json" \
+  'r == {"ok": True, "verdict": True}'
+args "$TMP/shex-arity.json" "$SHDATA" "$SHEXC"
+check "shexValidate wrong arity -> error" shexValidate "$TMP/shex-arity.json" \
+  'r["ok"] is False and "expects 4 arguments" in r["error"]'
+
+ENT='<http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/C> .
+<http://e/C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://e/D> .
+<http://e/p> <http://www.w3.org/2002/07/owl#inverseOf> <http://e/q> .
+<http://e/a> <http://e/p> <http://e/b> .
+'
+for regime in x-rdfscore x-rdfsplus; do
+  args "$TMP/ent-$regime.json" "$ENT" 'ASK { <http://e/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/D> }' "{\"dataFormat\":\"ntriples\",\"entail\":\"$regime\"}"
+  check "queryRaw entail $regime: subclass membership entailed" queryRaw "$TMP/ent-$regime.json" \
+    'r["ok"] is True and json.loads(r["text"])["boolean"] is True'
+done
+args "$TMP/ent-inv.json" "$ENT" 'ASK { <http://e/b> <http://e/q> <http://e/a> }' '{"dataFormat":"ntriples","entail":"x-rdfscore"}'
+check "queryRaw entail x-rdfscore: owl:inverseOf not applied" queryRaw "$TMP/ent-inv.json" \
+  'r["ok"] is True and json.loads(r["text"])["boolean"] is False'
+args "$TMP/ent-bad.json" "$ENT" 'ASK { ?s ?p ?o }' '{"dataFormat":"ntriples","entail":"x-none-such"}'
+check "queryRaw unknown entail regime -> error" queryRaw "$TMP/ent-bad.json" \
+  'r["ok"] is False and "x-rdfsplus" in r["error"]'
+
+args "$TMP/empty-stage3.json"
+check "ops reflection lists the stage 3 ops" ops "$TMP/empty-stage3.json" \
+  'set(["queryDataset12","datasetQuery12","shaclValidate","shexValidate"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \

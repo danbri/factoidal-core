@@ -1,6 +1,6 @@
 {
   "engine": "lean4",
-  "note": "The Lean 4 (L4Factoidal) engine's own build provenance and claims -- distinct from ../version.json, which is the F* engine's. Do not merge the two: they come from different toolchains, different git SHAs in general, and carry different proof obligations (issue #618).",
+  "note": "The Lean 4 (L4Factoidal) engine build provenance and claims: the only engine of @factoidal/core since 0.9.0 (issue 713). formal/lean4/Wasm/build-wasm.sh step 9 refreshes the other members in place.",
   "version": "0.1.0",
   "gitSha": "a26edea7fe3687b6d218cd86e5f90b2d9d520ce3",
   "builtAt": "2026-09-08T06:42:33+00:00",

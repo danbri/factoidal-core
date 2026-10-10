@@ -1,6 +1,117 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-10-10
+
+**One engine: the Lean 4 build.** ([issue 713](https://github.com/danbri/factoidal/issues/713),
+stage 3.) Owner, 2026-10-10: "We should make the main module Lean4-based.
+Private builds might compare this with F\* (or indeed different wasms from
+different toolchains)." The main entry (`.`: `index.js`, `index.mjs`),
+`./api`, `./fn` and `./browser` now load the Lean 4 library `L4Factoidal`
+compiled to WebAssembly (`l4-assets/`). Every function is a dispatch op of
+that module behind the typed wrapper the F\* engine had, with the same
+signatures and result shapes except where the list below says otherwise.
+
+Removed, with no replacement shim (there are no users):
+
+- the F\* bundles (`factoidal.js`, `factoidal.wasm.js`,
+  `factoidal-npm-entry*.js` and their wasm assets) and the entry points
+  that loaded them: `./wasm`, `./lite`, `./browser-wasm`, `./select`, and the
+  `./factoidal*.js` subpaths. The F\* bundles stay build artifacts of
+  `danbri/factoidal-builds`, for private comparison builds:
+  `tests/engine-compare/run.sh PATH/TO/factoidal-npm-entry.js`.
+- `hacl-wasm/` and `hacl-init.js`: Ed25519 is HACL\*'s C code compiled into
+  the Lean wasm module, SHA-256 is the Lean hash, and there is no
+  initialisation step.
+- the COTTAS functions `openCottas`, `queryCottas`, `closeCottas` and
+  `toCottas` (on the main entry and on `./fn`), and the browser delta log
+  (`deltaLogOpen` ... `deltaLogDestroy`), which wrote COTTAS batches. The
+  owner ruled the F\* COTTAS store essentially unused
+  ([issue 566](https://github.com/danbri/factoidal/issues/566)). The
+  Lean persisted store replaces them (below); its update path in JavaScript
+  is [issue 641](https://github.com/danbri/factoidal/issues/641).
+- the F\* `version.json` with its claims block. `l4-assets/version.json` is
+  the engine's provenance.
+
+New:
+
+- **The persisted store on the main entry**: `openStore(source, options)`
+  answers a `Store` (a store handle inside the engine: every artifact
+  verified against its manifest's SHA-256 once, then queried from the
+  retained blocks), `queryStore(source, sparql)`, `listStores()`, and
+  `sampleStorePath()` / `sampleStoreFacts`. `source` is a collection root
+  path (Node) or a reader function `(path) => bytes`, which is how a page
+  reads a store over `fetch()`.
+- `shaclValidate` and `shexValidate` on the Lean engine (ops of
+  `formal/lean4/Wasm/Ops/Validate.lean`): SHACL Core, SHACL-SPARQL and SHACL
+  1.2 node expressions; ShExJ or ShExC schemas. `shexValidate` answers a
+  boolean (the F\* engine answered `null` outside its decidable fragment).
+- SPARQL 1.2 queries: `query(data, q, {sparql12: true})` and
+  `handle.query(q, {sparql12: true})` (ops `queryDataset12`,
+  `datasetQuery12`): triple-term patterns, reified triples, annotations,
+  `TRIPLE`/`isTRIPLE`/`SUBJECT`/`PREDICATE`/`OBJECT`.
+- `query(data, q, {entail})` with `RDFS`, `OWL-RL`, `x-rdfscore` or
+  `x-rdfsplus` runs in the engine (op `queryRaw`): the default graph is
+  closed under the regime, then the query is answered. SELECT, ASK,
+  CONSTRUCT and DESCRIBE.
+- `loadEngine()`: the low-level engine handle (`call(op, args)`), for the
+  dispatch ops the typed layer does not wrap.
+- Common Logic: `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` on the
+  main entry (they were on `./l4-core` only).
+- `browser.js` loads the wasm with `fetch` and
+  `WebAssembly.instantiateStreaming`; `setAssetsUrl()` names another
+  directory for the engine's three files.
+- `parse(text, {lenient: true})` (op `parseDocument`,
+  [issue 716](https://github.com/danbri/factoidal/issues/716)): the Turtle,
+  TriG, N-Triples and N-Quads parsers skip each bad statement, keep the good
+  ones and list one diagnostic per skipped statement in
+  `dataset.diagnostics`: `message`, `line`, `column`, `offset` (a UTF-16
+  index, as `ParseError.offset`) and a stable `class` (for example
+  `undefined-prefix`, `bad-escape`, `unexpected-token`). The new option
+  `maxErrors` stops the parse after that many diagnostics with one
+  `too-many-errors` diagnostic. `capabilities().parseDiagnostics` is `true`.
+  A document with no error gives the strict result and no diagnostics (a
+  theorem in the Lean source). RDF/XML and JSON-LD parse strictly.
+
+Changed:
+
+- **`ParseError.offset` is a UTF-16 code-unit index into the input string**,
+  so `text.slice(err.offset)` starts at the error. The F\* engine counted
+  UTF-8 bytes; the Lean engine counts Unicode scalar values and the wrapper
+  converts. (`line` is 1-based; `column` counts Unicode scalar values.) This
+  unit is a coordinator default, recorded in
+  `docs/designissues/2026-10-10-npm-lean-only.md`.
+- Each SELECT solution `Map` iterates in the order of the SELECT clause
+  (`head.vars`); it followed the member order of the engine's JSON binding
+  objects, which carries no meaning.
+- DESCRIBE answers the Concise Bounded Description of each named resource
+  (the F\* engine answered the empty graph,
+  [issue 702](https://github.com/danbri/factoidal/issues/702)).
+- `serialize(data, {format: 'ntriples'})` answers the engine's N-Quads text
+  and refuses data with a named graph (N-Triples has no graph term).
+- `xmlWellformed` reads a DOCTYPE with an internal subset (the F\* parser
+  answered `false` for any DOCTYPE); `xpathEval` is the full XPath 1.0
+  evaluator and its node kinds include `root` and `namespace`;
+  `mathmlEval` also evaluates `vector` and `matrix`; `rifEval`'s envelope
+  has no `rounds`/`engineMs`; `tableauMaterialise` adds `budgetHit`;
+  `rmlMap` reads the iteration format from the mapping's
+  `rml:referenceFormulation`. Record:
+  `docs/designissues/2026-10-10-npm-lean-only.md` section 6.
+- `capabilities()` reports what the loaded wasm serves: new members
+  `entailment`, `hdt`, `sparql12`, `store`; `cottasBytesStore` is gone.
+- `engines.node` is `>=22.12`: `index.js` hands the ES module `index.mjs`
+  to `require()`, so CommonJS and ES module callers share one engine and
+  one `Dataset` class. (Node 20 reached end of life on 2026-04-30.)
+
+Open, each with an expected-failure test:
+
+- A `SERVICE <iri>` without `SILENT` whose endpoint is not registered answers
+  no solutions instead of an error
+  ([issue 717](https://github.com/danbri/factoidal/issues/717)).
+
+Deprecated: `./l4` and `./l4-core` are aliases of `.` in 0.9.x and go in
+0.10.0. (`./l4` was the low-level loader; `loadEngine()` replaces it.)
+
+### Earlier in 0.9.0 (before the switch; `./l4-core` was the Lean entry then)
 
 **Lean engine (`factoidal/l4-core`): 26 more functions of the main
 entry** ([issue 713](https://github.com/danbri/factoidal/issues/713),
@@ -34,19 +145,8 @@ record the prefixes of a Turtle or TriG document; Turtle output accepts the
 `prefixes` and `literalShorthand` options and prints bare numeric and boolean
 literals by default; and each document that is parsed gets its own blank-node
 scope, so merging two documents that both write `_:b0` keeps two nodes. The
-Lean engine still has no SPARQL 1.2 handle query.
-
-**`factoidal/l4-core`: `parse(text, {lenient: true})`**
-([issue 716](https://github.com/danbri/factoidal/issues/716)). In Turtle, TriG,
-N-Triples and N-Quads the Lean engine skips each bad statement, keeps the good
-ones and lists one diagnostic per skipped statement in `dataset.diagnostics`:
-`message`, `offset`, `line`, `column` and a stable `class` (for example
-`undefined-prefix`, `bad-escape`, `unexpected-token`). The new option
-`maxErrors` stops the parse after that many diagnostics with one
-`too-many-errors` diagnostic. `capabilities().parseDiagnostics` is `true` on
-this engine. A document with no error gives the strict result and no
-diagnostics (a theorem in the Lean source). The F\* engine still reports at
-most one diagnostic and ignores `maxErrors`.
+Lean engine still has no `{lenient: true}` parse and no SPARQL 1.2 handle
+query.
 
 **Store format: the literal index is renamed LGI3 and LGI4; re-pack older
 generations.** The literal search index folds each lexical form before it takes

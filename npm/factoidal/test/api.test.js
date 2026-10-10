@@ -1,11 +1,6 @@
-// Unit tests for the typed public API (js_of_ocaml engine).
-//
-// Tests that only need the existing CLI bundle run unconditionally.
-// Tests that need the npm-entry ABI bundle (CONSTRUCT, UPDATE) or a
-// CLI bundle built after `factoidal canonicalize` landed
-// (canonicalization) probe capabilities() and skip with reason
-// "pending npm-entry build" until the main build cycle produces the
-// new artifacts.
+// Unit tests for the typed public API of the main entry (the Lean 4
+// engine, l4-assets/). A function the package's own wasm does not serve
+// FAILS here: capabilities() is asserted, never used to skip.
 
 'use strict';
 
@@ -21,7 +16,6 @@ const { parse, query, update, serialize, canonicalize, graphs,
   xpathEval, rifEval, capabilities, Dataset,
   dataFactory: df } = factoidal;
 
-const PENDING = 'pending npm-entry build';
 
 const TTL = `
   @prefix ex:   <http://example.org/> .
@@ -225,10 +219,7 @@ test('serialize: ntriples output', async () => {
 test('canonicalize: isomorphic datasets get identical canonical N-Quads',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalize) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalize, 'the package wasm serves caps.canonicalize');
     // Same graph, different blank-node labels (bnode-rename stability).
     const docA = '_:x <http://x/p> _:y .\n_:y <http://x/p> "leaf" .\n';
     const docB = '_:n1 <http://x/p> _:n2 .\n_:n2 <http://x/p> "leaf" .\n';
@@ -264,10 +255,7 @@ test('graphs: enumerates named graphs from a parsed TriG document', async () => 
 test('canonicalHash: isomorphic graphs get identical hash under bnode relabeling',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.canonicalHash) {
-      t.skip(`${PENDING} (or CLI bundle rebuild with --canonicalize)`);
-      return;
-    }
+    assert.ok(caps.canonicalHash, 'the package wasm serves caps.canonicalHash');
     const dsA = await parse(
       '@prefix ex: <http://x/> . ' +
       'ex:g { _:x ex:p _:y . _:y ex:p "leaf" . }',
@@ -286,10 +274,7 @@ test('canonicalHash: isomorphic graphs get identical hash under bnode relabeling
 
 test('query: CONSTRUCT returns a Dataset', async (t) => {
   const caps = await capabilities();
-  if (!caps.construct) {
-    t.skip(PENDING);
-    return;
-  }
+  assert.ok(caps.construct, 'the package wasm serves caps.construct');
   const out = await query(TTL, `
     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
     CONSTRUCT { ?p <http://x/hasName> ?n } WHERE { ?p foaf:name ?n }
@@ -303,10 +288,7 @@ test('query: CONSTRUCT returns a Dataset', async (t) => {
 
 test('update: INSERT DATA adds quads', async (t) => {
   const caps = await capabilities();
-  if (!caps.update) {
-    t.skip(PENDING);
-    return;
-  }
+  assert.ok(caps.update, 'the package wasm serves caps.update');
   const ds = await parse('<http://x/a> <http://x/p> "v" .', {
     format: 'ntriples' });
   const out = await update(ds,
@@ -315,27 +297,10 @@ test('update: INSERT DATA adds quads', async (t) => {
   assert.equal(out.size, 2);
 });
 
-test('update: without npm-entry bundle rejects with pending message',
-  async (t) => {
-    const caps = await capabilities();
-    if (caps.update) {
-      t.skip('npm-entry bundle present — pending-message path not reachable');
-      return;
-    }
-    await assert.rejects(
-      () => update('<http://x/a> <http://x/p> "v" .',
-        'INSERT DATA { <http://x/b> <http://x/p> "w" }',
-        { format: 'ntriples' }),
-      (e) => e.message.includes(PENDING));
-  });
-
 test('parse: jsonld (expanded/inline-context form) via the npm-entry ABI',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.entry) {
-      t.skip(`${PENDING} (parseToDatasetJson's JSON-LD dispatch needs the entry bundle)`);
-      return;
-    }
+    assert.ok(caps.entry, 'the package wasm serves caps.entry');
     const jsonld = JSON.stringify({
       '@context': { foaf: 'http://xmlns.com/foaf/0.1/', name: 'foaf:name' },
       '@id': 'http://example.org/alice',
@@ -351,7 +316,7 @@ test('parse: jsonld (expanded/inline-context form) via the npm-entry ABI',
 
 test('jsonldToRdf: parses JSON-LD with an explicit base option', async (t) => {
   const caps = await capabilities();
-  if (!caps.jsonld) { t.skip(PENDING); return; }
+  assert.ok(caps.jsonld, 'the package wasm serves caps.jsonld');
 
   const jsonld = JSON.stringify({
     '@context': { foaf: 'http://xmlns.com/foaf/0.1/', name: 'foaf:name' },
@@ -366,7 +331,7 @@ test('jsonldToRdf: parses JSON-LD with an explicit base option', async (t) => {
 test('shaclValidate: SHACL Core validation returns conforms + a report Dataset',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.shacl) { t.skip(PENDING); return; }
+    assert.ok(caps.shacl, 'the package wasm serves caps.shacl');
 
     const shapes = `
       @prefix sh:   <http://www.w3.org/ns/shacl#> .
@@ -392,7 +357,7 @@ test('shaclValidate: SHACL Core validation returns conforms + a report Dataset',
 test('shexValidate: ShEx validation of one focus node against one shape',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.shex) { t.skip(PENDING); return; }
+    assert.ok(caps.shex, 'the package wasm serves caps.shex');
 
     const schema = JSON.stringify({
       type: 'Schema',
@@ -422,7 +387,7 @@ test('shexValidate: ShEx validation of one focus node against one shape',
 test('owlClosure: RDFS closure materializes rdfs:subClassOf inference',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.owlClosure) { t.skip(PENDING); return; }
+    assert.ok(caps.owlClosure, 'the package wasm serves caps.owlClosure');
 
     const data = `
       @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -444,7 +409,7 @@ test('owlClosure: RDFS closure materializes rdfs:subClassOf inference',
 test('rmlMap: evaluates an RML mapping graph against JSON source data',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.rml) { t.skip(PENDING); return; }
+    assert.ok(caps.rml, 'the package wasm serves caps.rml');
 
     const mapping = `
       @prefix rml: <http://w3id.org/rml/> .
@@ -473,7 +438,7 @@ test('rmlMap: evaluates an RML mapping graph against JSON source data',
 test('csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.csvw) { t.skip(PENDING); return; }
+    assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
     // Real vendored fixtures from the W3C CSVW test suite (test027's
     // metadata + the shared tree-ops.csv table it describes) — not a
@@ -504,7 +469,7 @@ test('csvwToRdf: converts a vendored W3C CSVW fixture (minimal mode)',
 test('csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata infers from header',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.csvw) { t.skip(PENDING); return; }
+    assert.ok(caps.csvw, 'the package wasm serves caps.csvw');
 
     const fs = require('node:fs');
     const path = require('node:path');
@@ -529,7 +494,7 @@ test('csvwToRdf: standard mode emits the csvw:TableGroup wrapper; no metadata in
 test('rifEval: RIF Core saturation materializes derived triples',
   async (t) => {
     const caps = await capabilities();
-    if (!caps.rif) { t.skip(PENDING); return; }
+    assert.ok(caps.rif, 'the package wasm serves caps.rif');
 
     const data = '@prefix foaf: <http://xmlns.com/foaf/0.1/> . ' +
       '@prefix ex: <http://example.org/> . ex:alice foaf:knows ex:bob .';
@@ -653,4 +618,30 @@ test('entail none: baseline returns zero worksWith rows (both regimes really add
   const rows = await factoidal.query(REGIME_ORG_TTL,
     'PREFIX : <http://example.org/org#> SELECT * WHERE { ?x :worksWith ?y }');
   assert.equal(rows.length, 0);
+});
+
+// SPARQL 1.1 Query Results JSON Format section 3.1: `head.vars` gives the
+// projection order; the members of a binding object are unordered (RFC 8259
+// section 4). Each solution Map iterates in the SELECT order, here not
+// alphabetical, on the plain path and through a dataset handle.
+test('query: each solution Map iterates in the SELECT projection order', async () => {
+  const ds = await parse(TTL);
+  const q = 'PREFIX foaf: <http://xmlns.com/foaf/0.1/> ' +
+    'SELECT ?name ?age ?p WHERE { ?p foaf:name ?name ; foaf:age ?age }';
+  const rows = await query(ds, q);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([...rows[0].keys()], ['name', 'age', 'p']);
+  const reversed = await query(ds, q.replace('?name ?age ?p', '?p ?age ?name'));
+  assert.deepEqual([...reversed[0].keys()], ['p', 'age', 'name']);
+  const h = await factoidal.openDataset(TTL);
+  try {
+    const viaHandle = await h.query(q);
+    assert.deepEqual([...viaHandle[0].keys()], ['name', 'age', 'p']);
+  } finally {
+    await h.close();
+  }
+  // An unbound variable is absent from the Map; the bound ones keep the order.
+  const opt = await query(ds, 'PREFIX foaf: <http://xmlns.com/foaf/0.1/> ' +
+    'SELECT ?z ?name ?a WHERE { ?p foaf:name ?name OPTIONAL { ?p foaf:age ?a } }');
+  assert.deepEqual(opt.map((r) => [...r.keys()].join(' ')).sort(), ['name', 'name', 'name a']);
 });

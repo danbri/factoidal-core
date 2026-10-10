@@ -1,37 +1,40 @@
 # @factoidal/core
 
-> Release 0.3.0. The API surface is early and may
-> change before 1.0. This package was previously developed in-tree
-> under the placeholder names `factoidal` and `@danbri/foafos`; it was
-> never published under those names. See [CHANGELOG.md](CHANGELOG.md).
+> Release 0.9.0. The API surface is early and may change before 1.0. See
+> [CHANGELOG.md](CHANGELOG.md).
 
-A formally verified RDF/SPARQL engine for JavaScript and WebAssembly.
-The semantics live in [F\*](https://www.fstar-lang.org/) and are
-compiled via OCaml and js_of_ocaml / wasm_of_ocaml into the engine
-bundles shipped here. There is no hand-written SPARQL evaluator — the
-JavaScript you run was extracted from the same `.fst` specifications
-that verify under Z3 and pass the W3C suites.
+RDF and SPARQL for JavaScript, in Node and in the browser, from one
+WebAssembly module: the Lean 4 library `L4Factoidal`
+([`formal/lean4`](https://github.com/danbri/factoidal-core/tree/main/formal/lean4))
+compiled through C. The parsers, the SPARQL evaluator, the reasoners, the
+validators and the store decoder are Lean code; the JavaScript in this
+package shapes arguments and results and moves bytes. Since 0.9.0 the
+package carries this one engine
+([issue 713](https://github.com/danbri/factoidal/issues/713)); the F\*
+engine builds are comparison artifacts of
+[danbri/factoidal-builds](https://github.com/danbri/factoidal-builds).
 
-Verification status qualifier: parser and algebra spec verified in
-F\*; the on-disk backend has unverified OCaml-side optimization layers
-being migrated back to F\* (the npm build does not include the
-on-disk backend).
+The Lean library has no `sorry`, no user axioms and no `native_decide`, and
+its W3C behaviour is pinned by build-time `#guard` cases
+(`l4-assets/version.json`, `claims`). W3C suite scores, with dates and
+commits, are at
+[danbri.github.io/factoidal/test-results](https://danbri.github.io/factoidal/test-results/).
 
-## Why this instead of N3.js / rdflib.js / Comunica?
-
-- **Full SPARQL 1.1 client-side** — query and update evaluated in
-  your process by conformance-tested code (631 of 631 W3C SPARQL
-  tests, 1031 of 1031 RDF parsing tests on the native build of the
-  same source); no server, no endpoint.
-- **RDFC-1.0 canonicalization built in**: `canonicalize()` yields
-  standard canonical N-Quads (stable under blank-node renaming — for
-  content addressing, dataset diffing, cache keys) without a separate
-  library.
-- **RDFS / OWL-RL entailment** as a query option (`entail: "RDFS"`).
-- **RDF/JS data model** (`DataFactory`, terms with `.equals`,
-  `DatasetCore`) so it composes with the existing ecosystem.
-- Provenance: every release corresponds to a gates-green commit of
-  [danbri/factoidal](https://github.com/danbri/factoidal).
+- **SPARQL 1.1 query and update in your process**, plus SPARQL 1.2 queries
+  (triple terms, reified triples, annotations) with `{sparql12: true}`.
+- **Every RDF 1.1 syntax**: Turtle, TriG, N-Triples, N-Quads, RDF/XML,
+  JSON-LD; and the RDF 1.2 forms of the first four.
+- **RDFC-1.0 canonicalization**: `canonicalize()` gives canonical N-Quads,
+  stable under blank-node relabelling.
+- **Reasoning**: RDFS, OWL 2 RL, core RDFS (ρdf), RDFS-Plus closures; OWL DL
+  consistency and entailment by refutation; query-time entailment regimes.
+- **Validation and mapping**: SHACL (Core, SHACL-SPARQL, SHACL 1.2 node
+  expressions), ShEx (ShExJ and ShExC), RML, CSVW, RIF Core, XSLT 1.0,
+  XPath 1.0, Schematron, JSON Schema, XForms, Content MathML.
+- **A persisted store**: open a Shardborough generation (from disk, or over
+  `fetch()` in a page) and query it, every block verified against the
+  SHA-256 its manifest commits.
+- **RDF/JS data model** (`DataFactory`, terms with `.equals`, `DatasetCore`).
 
 ## Install
 
@@ -39,302 +42,145 @@ on-disk backend).
 npm install @factoidal/core
 ```
 
+Node 22.12 or later (`index.js` gives the ES module `index.mjs` to
+`require()`), Deno 2, or a browser with WebAssembly.
+
 ## Quickstart
 
-The API is **async throughout** — every engine call returns a Promise,
-so `await` each one (the engine bundle loads lazily on first use).
+Every engine call returns a Promise. The engine loads on the first call.
 
 ```js
-import { parse, query, serialize, canonicalize, dataFactory }
-  from "@factoidal/core";
+import { parse, query, serialize, canonicalize } from "@factoidal/core";
 
 // Parse any supported syntax into an RDF/JS DatasetCore.
-// If your data contains RELATIVE IRIs, pass { baseIRI: ... } —
-// see the note below this example.
 const ds = await parse(`
   @prefix foaf: <http://xmlns.com/foaf/0.1/> .
   _:a foaf:name "Alice" ; foaf:knows _:b .
   _:b foaf:name "Bob" .
 `, { format: "turtle" });
 
-// SELECT — bindings are Map<variableName, RDF/JS Term>.
+// SELECT: bindings are Map<variableName, RDF/JS Term>, in SELECT order.
 const rows = await query(ds, `
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   SELECT ?name WHERE { ?p foaf:name ?name } ORDER BY ?name
 `);
 for (const b of rows) console.log(b.get("name").value); // Alice, Bob
 
-// ASK — plain boolean.
-const yes = await query(ds, "ASK { ?s ?p ?o }");   // true
-
-// Canonical N-Quads (RDFC-1.0): identical output for isomorphic
-// inputs regardless of blank-node labels.
-const c14n = await canonicalize(ds);
-
-// Round-trip.
+const yes = await query(ds, "ASK { ?s ?p ?o }");        // true
+const c14n = await canonicalize(ds);                    // RDFC-1.0 N-Quads
 const nq = await serialize(ds, { format: "nquads" });
 ```
 
-> **Parsing is strict by default** (issue #344). A syntax error, an
-> undeclared prefix, or a relative IRI with no `baseIRI` in effect
-> rejects the WHOLE parse with a `ParseError` naming the line and
-> column — nothing is silently dropped:
->
-> ```js
-> import { parse, ParseError } from "@factoidal/core";
->
-> try {
->   await parse("<a> <b> <c> .", { format: "turtle" }); // no baseIRI given
-> } catch (err) {
->   if (err instanceof ParseError) {
->     console.log(err.line, err.column, err.message);
->     // 1 1 parse: resolved IRI invalid at line 1, column 1
->   }
-> }
-> ```
->
-> Pass `{ baseIRI: "https://example.org/doc" }` to resolve relative
-> IRIs, or `{ lenient: true }` to recover instead of rejecting: the
-> returned Dataset holds whatever the parser recovered (statements
-> before and after the error, for Turtle/TriG), and
-> `dataset.diagnostics` lists what was skipped. `lenient` needs the
-> npm-entry engine bundle. On the Lean engine (`factoidal/l4-core`) the
-> Turtle, TriG, N-Triples and N-Quads parsers skip each bad statement
-> and keep every good one; `dataset.diagnostics` has one entry per
-> skipped statement with `message`, `offset`, `line`, `column` and a
-> stable `class` (`undefined-prefix`, `bad-escape`, `unexpected-token`,
-> ...), and `{ lenient: true, maxErrors: n }` stops after `n` of them
-> ([issue 716](https://github.com/danbri/factoidal/issues/716)).
+CommonJS: `const factoidal = require("@factoidal/core")`. It is the same
+module instance as the ES import, so `instanceof Dataset` holds across both.
 
-CommonJS: `const factoidal = require("@factoidal/core")`.
+### Parsing is strict
 
-### WebAssembly entry
+A syntax error, an undeclared prefix, or a relative IRI with no `baseIRI`
+in effect rejects the whole parse with a `ParseError`:
 
 ```js
-import { parse, query } from "factoidal/wasm";
-// Same API over the wasm_of_ocaml bundle; needs a Wasm-GC engine
-// (Chrome >= 119, Node >= 22). The unit suite asserts byte-parity
-// between the JS and Wasm entries on parse/SELECT/ASK.
+import { parse, ParseError } from "@factoidal/core";
+
+const text = '<http://x/s> <http://x/p> "😀" .\nBOGUS .\n';
+try {
+  await parse(text);
+} catch (err) {
+  if (err instanceof ParseError) {
+    console.log(err.line, err.column);   // 2 6
+    console.log(text.slice(err.offset)); // " .\n": the error is here
+  }
+}
 ```
 
-### Load in the browser without npm
+`line` is 1-based; `column` is 1-based and counts Unicode scalar values;
+`offset` is a **UTF-16 code-unit index into the input string**, so
+`text.slice(err.offset)` starts at the error even when a character outside
+the Basic Multilingual Plane precedes it. RDF/XML and JSON-LD failures carry
+a message only. Pass `{ baseIRI: "https://example.org/doc" }` to resolve
+relative IRIs.
 
-You don't need `npm install` (or a bundler) to run this in a browser.
-Two options, in preference order. Both load `browser.js`, which
-fetches the engine bundle and runs it with `new Function(src)` the
-first time an operation needs it — this needs `unsafe-eval` in the
-page's `Content-Security-Policy`. A page that cannot grant that, or a
-bundler build, uses the route in "Bundlers and Content Security
-Policy" below instead.
+### Lenient parsing
 
-1. **This site's own mirror (recommended, same-origin, no build step
-   for you).** Every push regenerates `docs/npm/factoidal/` from this
-   package (`formal/fstar/build-ocaml.sh npm`'s Pages-mirror step), so
-   it's always in sync with what's published here:
-
-   ```html
-   <script type="module">
-     import { query } from 'https://danbri.github.io/factoidal/npm/factoidal/browser.js';
-     const r = await query(dataTtl, 'SELECT * WHERE { ?s ?p ?o }');
-     console.log(r.results.bindings);
-   </script>
-   ```
-
-   See [`demo-jsonld-playground.html`](../../docs/fstar-extracted/demo-jsonld-playground.html)
-   for a working page built exactly this way (loads `browser.js` from
-   `../npm/factoidal/browser.js`, a relative same-origin path).
-
-2. **jsDelivr's GitHub proxy** (serves the correct
-   `text/javascript` MIME type; no Pages dependency, works from any
-   branch/tag):
-
-   ```html
-   <script type="module">
-     import { query } from 'https://cdn.jsdelivr.net/gh/danbri/factoidal@claude/main/npm/factoidal/browser.js';
-   </script>
-   ```
-
-**Do not** link `browser.js` (or `factoidal.js`) via
-`raw.githubusercontent.com`. Raw GitHub serves every file as
-`text/plain`, and browsers refuse to execute a `text/plain` response
-as an ES module (`<script type="module">` fails with a MIME-type
-error) — this bites people who copy a "raw" link expecting it to just
-work. Use the Pages mirror or jsDelivr above instead.
-
-`browser.js` also exports `toRdf(text, options)` (parse to sorted
-N-Quads — `--dump-nq` under the hood) and `canonicalize(text,
-options)` (RDFC-1.0 — `--canonicalize`) alongside `query()`; both
-default `options.format` to `'jsonld'` since that's the playground's
-use case, but accept the same formats as `query()`'s `dataFormat`.
-
-For multi-file, multi-named-graph datasets (several documents, each
-loaded into its own named graph or the default graph) and a choice of
-extraction target, use `queryDataset(files, queryString, options)`:
+`{ lenient: true }` recovers instead of rejecting
+([issue 716](https://github.com/danbri/factoidal/issues/716)). The Turtle,
+TriG, N-Triples and N-Quads parsers skip each bad statement and keep every
+good one. `dataset.diagnostics` has one entry per skipped statement, in
+document order:
 
 ```js
-import { queryDataset } from 'https://danbri.github.io/factoidal/npm/factoidal/browser.js';
-
-const r = await queryDataset(
-  [
-    { content: defaultGraphTtl },
-    { content: peopleTtl, graph: 'urn:x:people' },
-  ],
-  'SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }',
-  { entail: 'RDFS', engine: 'js' }   // or engine: 'wasm'
-);
+const text = '<http://x/a> <http://x/p> "1" .\n<http://x/b> <http://x/p> .\n' +
+  '<http://x/c> <http://x/p> "3" .\n';
+const ds = await parse(text, { format: "turtle", lenient: true });
+console.log(ds.size);                 // 2
+const [d] = ds.diagnostics;
+console.log(d.line, d.column, d.class); // 2 27 unexpected-token
+console.log(text.slice(d.offset));    // " .\n<http://x/c> ...": the error is here
 ```
 
-On `engine: 'wasm'` it merges the named graphs into one TriG document
-(wasm_of_ocaml's `query()` only takes a single data string) via
-`browser-wasm.js`, loaded on demand. Both `query()` and `queryDataset()`
-attach a non-enumerable `engineMs` (bundle-eval wall-clock time) to the
-returned results object — invisible to `JSON.stringify()`/`Object.keys()`
-so it never perturbs a diff against a W3C `.srx`-derived fixture, but
-readable as `result.engineMs` for timing/observability UIs. This is
-what `docs/fstar-extracted/factoidal-sparql-client.js`'s web component
-is built on, rather than duplicating the engine-invocation logic itself.
+Each diagnostic has `message`, `line`, `column` and `offset` (the same
+conventions as `ParseError`) and a stable `class`: `undefined-prefix`,
+`relative-iri`, `bad-iri`, `bad-escape`, `unterminated-string`,
+`bad-literal`, `bad-blank-node`, `bad-prefixed-name`, `bad-directive`,
+`bad-graph-name`, `rdf12-syntax`, `unclosed-group`, `nesting-limit`,
+`unexpected-token`, `internal` or `too-many-errors`. In N-Triples and
+N-Quads the parser resumes at the next line; in Turtle and TriG it resumes
+after the end of the bad statement. A bad `@prefix` leaves that prefix
+undefined. `{ lenient: true, maxErrors: n }` stops after `n` diagnostics and
+adds one `too-many-errors` diagnostic. A document with no error gives the
+strict result and no diagnostics (a theorem in the Lean source). RDF/XML and
+JSON-LD parse strictly with `lenient`.
+
+## In the browser
+
+`browser.js` is an ES module with the same functions. On the first call it
+imports `l4-assets/l4factoidal.js` and compiles `l4-assets/l4factoidal.wasm`
+with `fetch()` and `WebAssembly.instantiateStreaming` (a server that does not
+send `Content-Type: application/wasm` gets `WebAssembly.instantiate` over the
+fetched bytes).
+
+```html
+<script type="module">
+  import { parse, query } from "https://cdn.jsdelivr.net/npm/@factoidal/core@0.9.0/browser.js";
+  const ds = await parse('<http://e/a> <http://e/p> "v" .', { format: "ntriples" });
+  console.log(await query(ds, "SELECT * WHERE { ?s ?p ?o }"));
+</script>
+```
+
+`setAssetsUrl(url)` names another directory holding the engine's three
+files (`l4factoidal.js`, `l4factoidal.mjs`, `l4factoidal.wasm`); call it
+before the first operation. A page under a Content-Security-Policy needs
+`'wasm-unsafe-eval'` in `script-src`; nothing in the package evaluates
+JavaScript source. `bundler` users: the
+[`package.json`](package.json) `"browser"` condition maps
+`@factoidal/core` to `browser.js`.
+
+`tests/web-demos/npm_browser_smoke.sh` runs a parse, a SELECT, a
+canonicalization, an XPath evaluation and a store query from a static page
+in headless Chromium.
 
 ### Bundlers and Content Security Policy
 
-`browser.js`'s `canonicalize()`, always, and `query()`/`toRdf()` only
-when the persistent npm-entry ABI bundle cannot be loaded, fetch the
-CLI bundle (`factoidal.js`) as text and run it with `new
-Function(src)`. A page whose `Content-Security-Policy` has no
-`unsafe-eval` (for example `script-src 'self'`) refuses that call, and
-a bundler (esbuild, webpack, Rollup, ...) has no file to fetch at all
-— it needs a statically importable module. `@factoidal/core/api` is
-that module (issue [682](https://github.com/danbri/factoidal/issues/682)).
-
-**(a) Bundler route.** Import `createApi` and the entry bundle as
-ordinary ES modules; your bundler resolves and includes both, and
-nothing in this path calls `eval` or `new Function`:
+`@factoidal/core/api` builds the typed API over an engine you load
+yourself, for a bundler build or a page with its own asset layout:
 
 ```js
-import { createApi } from '@factoidal/core/api';
-import entryMod from '@factoidal/core/factoidal-npm-entry.js';
+import { createApi } from "@factoidal/core/api";
+import { loadL4 } from "@factoidal/core/l4-assets/l4factoidal.js";
 
-const factoidal = createApi(entryMod.factoidalNpmEntry);
-const ds = await factoidal.parse('<a> <b> "c" .', { format: 'ntriples' });
-const rows = await factoidal.query(ds, 'SELECT * WHERE { ?s ?p ?o }');
+const factoidal = createApi(() => loadL4({
+  // You decide where the wasm comes from.
+  instantiateWasm: (imports) =>
+    WebAssembly.instantiateStreaming(fetch("/assets/l4factoidal.wasm"), imports),
+}));
+const rows = await factoidal.query(ttl, "SELECT * WHERE { ?s ?p ?o }");
 ```
 
-`factoidal-npm-entry.js` is js_of_ocaml output with no `import`/
-`export` syntax of its own; a bundler treats it as CommonJS, and its
-default export carries `.factoidalNpmEntry`. That file has four
-literal `require(nodeBuiltinName)` call sites, in code this
-parse/query path never reaches (real file I/O, `isatty()`, a
-`TextDecoder` fallback, Zstd decompression for COTTAS bytes). Two
-(`util`, `fzstd`) are behind a `typeof require === "function"` guard;
-esbuild bundling for the browser resolves that to `false` at build
-time and never tries to bundle them. The other two (`node:fs`,
-`node:tty`) are unconditional inside class methods this path never
-calls, and need to be added to your bundler's external/Node-builtin
-exclusion list. `npm/factoidal/test/bundler-esbuild.test.mjs` derives
-this list from esbuild's own unresolved-import errors (rather than
-hardcoding it) and runs the bundled output; `tests/web-demos/
-bundler_csp_smoke.sh` bundles the same fixture and drives it through
-headless Chromium under a real `Content-Security-Policy: script-src
-'self'` response header.
-
-**(b) Classic `<script>` route, no bundler, for `browser.js`'s
-ABI-routed operations.** `api.mjs` re-exports `api.js`, which — like
-`index.mjs`/`index.js` — is CommonJS underneath (`require`/
-`module.exports`); a real browser has no `require`, so loading it
-needs either Node or a bundler's CJS interop (route (a)). What a raw
-`<script type="module">` page CAN do with no bundler: load the entry
-bundle as a plain script first, so `browser.js`'s own `loadNpmEntry()`
-finds it on `globalThis` and skips fetch + eval entirely:
-
-```html
-<script src="factoidal-npm-entry.js"></script>
-<script type="module" src="./my-app.js"></script>
-```
-
-```js
-// my-app.js -- an external file: script-src 'self' with no
-// 'unsafe-inline' blocks an inline <script type="module"> block too,
-// same as it would on any other page under that policy.
-import { query, toRdf, openDataset, shaclValidate } from './browser.js';
-
-// SELECT/ASK, no entailment, output:'json' (the default and common
-// case) -- routes through the already-loaded ABI. No eval either way:
-// factoidal-npm-entry.js was already on globalThis when browser.js's
-// loadNpmEntry() looked.
-const results = await query(dataTtl, 'SELECT * WHERE { ?s ?p ?o }');
-
-// Parse-to-N-Quads -- same route, whenever the ABI is loaded.
-const nquads = await toRdf(jsonldText, { format: 'jsonld' });
-
-// A dataset handle (issue #680), over the same ABI.
-const handle = await openDataset(dataTtl, { format: 'turtle' });
-const rows = await handle.query('SELECT * WHERE { ?s ?p ?o }');
-await handle.close();
-
-// Every other npm-entry-ABI-routed operation works the same way --
-// ShEx, owlClosure, RML, CSVW, JSON-LD, didKeyResolve, XML/XPath, the
-// in-memory COTTAS store, VC crypto.
-const report = await shaclValidate(dataNQuads, shapesNQuads);
-```
-
-A syntax error rejects with a `ParseError` (`name`, `line`, `column`,
-`offset`) on this route too. `setNpmEntry(abi)` works the same way in
-place of the `<script src>` tag, for a page that obtains the ABI
-object some other way.
-
-**(c) What still needs fetch + evaluate, and why.** The CLI bundle
-(`factoidal.js` / `factoidal.wasm.js`) is a separate build target from
-the npm-entry ABI (`bin/npm-entry/entry_jsoo.ml`) and covers what the
-ABI does not: entailment-regime queries (`{entail: 'RDFS' |
-'OWL-RL'}`), `queryHdt()`, `query()` output formats other than `json`,
-and `canonicalize()` (always — it has no ABI route). `query()`/
-`toRdf()` fall back to the CLI bundle only when the npm-entry ABI
-itself cannot be reached (no `factoidal-npm-entry.js` already on the
-page and no reachable fetch of one); the common `entail: 'none'`,
-`output: 'json'` query path and every `toRdf()` call go through the
-already-loaded ABI first, with no eval, whenever it is available
-(issue [682](https://github.com/danbri/factoidal/issues/682), second
-half). A page under a strict CSP, or a bundler build, that needs one
-of the CLI-bundle-only operations above, or that has no way to reach
-an entry bundle at all, still needs `unsafe-eval` (or a server-side
-call using the CLI's real argv interface) for that specific operation.
-Parsing and SELECT/ASK/CONSTRUCT without entailment are served,
-CSP-safely, through route (a), or through route (b) whenever the entry
-bundle is reachable.
-
-### Durable browser persistence (delta log)
-
-`browser.js` also exports a small IndexedDB-backed durable-UPDATE log —
-see [`docs/designissues/2026-07-06-browser-persistence.md`](../../docs/designissues/2026-07-06-browser-persistence.md)
-for the full design (why IndexedDB and not OPFS for v1, the tab-close/
-crash guarantee mapping, and the quota/eviction honesty section). Every
-byte moved through these functions is produced/consumed by the same
-F\*-verified `RDF_Store_Columnar_DeltaLog`/`RDF_Store_Columnar_DeltaMerge`
-modules the native on-disk delta log uses (`factoidal serve --rw
---delta-log`); this is a browser-native persistence path, not a mock:
-
-```js
-import { deltaLogOpen, deltaLogAppend, deltaLogMerge } from
-  'https://danbri.github.io/factoidal/npm/factoidal/browser.js';
-
-const handle = await deltaLogOpen();               // opens/creates an IndexedDB database
-await deltaLogAppend(handle, 'INSERT DATA { <urn:x:a> <urn:x:p> "1" }');
-await deltaLogAppend(handle, 'INSERT DATA { <urn:x:b> <urn:x:p> "2" }');
-
-// ... reload the page, or close and reopen the browser ...
-
-const merged = await deltaLogMerge(handle, '');    // '' = empty base dataset
-console.log(merged);   // the two INSERT DATA ops, replayed from IndexedDB
-```
-
-Supported update ops: `INSERT DATA`, `DELETE DATA`, `CLEAR`, `DROP`,
-`CREATE` — the same subset the native `--rw` commit path accepts;
-anything else (`DELETE/INSERT WHERE`, `COPY`, `MOVE`, `ADD`) rejects
-with `ok:false` rather than silently no-op'ing. `deltaLogReadAllHex`,
-`deltaLogDestroy`, and the test-only `_deltaLogCorruptLastForTest` round
-out the surface (see `browser.js`'s own JSDoc for each). This is a
-prototype: no compaction and no `navigator.storage.persist()` wiring
-yet (both named as staged next steps in the design doc), and it does
-not yet back a hub demo page — that is separate, follow-on work.
+esbuild bundles this with `platform: 'browser'` when `node:module` is
+marked external: the Emscripten glue imports it only when it runs under
+Node. `test/bundler-esbuild.test.mjs` and
+`tests/web-demos/bundler_csp_smoke.sh` (headless Chromium, CSP
+`script-src 'self' 'wasm-unsafe-eval'`) are the checks.
 
 ### RDF/JS interop
 
@@ -353,56 +199,57 @@ const q = quad(blankNode("x"),
 
 (Issue [683](https://github.com/danbri/factoidal/issues/683).)
 
-`parse()`'s returned Dataset does not preserve the source document's
-statement order. The npm-entry ABI's `parseToDatasetJson` answers
-`RDF_Canonical.canonical_nquads` (`formal/fstar/RDF.Canonical.fst`),
-which sorts and deduplicates lines before `Dataset.fromNQuads` ever
-sees the text — by the time a caller has the Dataset, there is no
-as-written order left in it to read back. `toNQuads()`/`serialize()`
-reflect this same sorted order.
+- Each `parse()` call is one document. Each document's blank nodes get
+  their own scope, so the same label in two documents is two nodes, also
+  when `query([docA, docB], …)` merges them. On the Lean engine a label
+  reads `p<k>_d<n>_<label>` (an anonymous `[ … ]` is `anon_<i>`); the text
+  carries no meaning (RDF 1.1 Concepts §3.4) and may change between
+  releases.
+- A `Dataset`'s statement order, and the line order of `serialize()` and
+  `toNQuads()`, is the engine's, not the document's. It is not part of the
+  contract. Compare datasets with `canonicalize()` (isomorphism, RDF 1.1
+  Concepts §3.6), not by line.
 
-Blank-node labels, by contrast, DO trace parse order, though they
-still carry no RDF meaning (see below):
+`test/parse-order.test.js` checks the three properties RDF fixes: each
+`[ … ]` is its own node, the dataset is isomorphic to the labelled form of
+the same graph, and two parses never share a node.
 
-- An anonymous node (`[ ... ]`, or a collection `( ... )`'s cons
-  cells) gets a label `_anonN`, N counting from 0 in DOCUMENT order —
-  the order its `[]` was encountered while parsing top to bottom
-  (`formal/fstar/Parser.Turtle.fst`'s `fresh_bnode`, via
-  `turtle_state.bnode_counter`).
-- A labelled blank node (`_:foo`) keeps that label as written; it is
-  never renumbered.
-- Every label is then prefixed twice: `d<n>_` once per parsed document
-  (`RDF_Dataset_Merge.rename_dataset_bnodes`, invoked by
-  `bin/npm-entry/entry_jsoo.ml`'s `scope_dataset_bnodes` — one call to
-  `parseToDatasetJson` is one document, so one `n`), then `p<k>_` once
-  per npm `parse()`/`query()` call (`lib/api.js`'s
-  `freshBnodePrefix()`) — giving a final label such as `p7_d7__anon43`.
+## SPARQL 1.2 queries
 
-These labels are stable for a given document parsed against a given
-engine build (the same text, parsed at the same point in a process's
-lifetime, gets the same label), but per RDF 1.1 Concepts §3.4 a blank
-node identifies a resource without a global name — nothing may depend
-on the specific string, only on within-dataset identity (the same
-label appearing on more than one term in the same Dataset). Two
-different parses of the same document (two different calls, or two
-different engine builds) are not guaranteed to produce the same label
-text, only the same graph up to blank-node relabeling (RDF 1.1
-Concepts §3.6, "isomorphic").
+```js
+const rows = await query(data,
+  'SELECT ?s WHERE { ?who <http://e/says> <<( ?s <http://e/p> <http://e/o> )>> }',
+  { sparql12: true, format: 'nquads12' });
+```
 
-`test/parse-order.test.js` pins both facts: three `[]` nodes' label
-suffixes follow document order regardless of their subjects'
-alphabetical order, and `toNQuads()`'s six lines come back
-lexicographically sorted, not in document order.
+`{sparql12: true}` (or `{version: '1.2'}`) reads the query with the Lean
+SPARQL parser's 1.2 grammar (op `queryDataset12`; on a `DatasetHandle`,
+`handle.query(q, {sparql12: true})`, op `datasetQuery12`). The data formats
+`turtle12`, `ntriples12`, `nquads12` and `trig12` read RDF 1.2 terms.
+
+## Entailment regimes
+
+```js
+await query(ttl, 'ASK { <http://e/a> a <http://e/D> }', { entail: 'RDFS' });
+```
+
+`entail` is `'none'` (default), `'RDFS'`, `'OWL-RL'`, `'x-rdfscore'` (the
+core RDFS, ρdf, closure) or `'x-rdfsplus'` (RDFS-Plus: RDFS plus
+`owl:sameAs`, `owl:inverseOf`, symmetric, transitive, functional and
+inverse-functional properties, equivalent classes and properties). The
+engine closes the default graph under the regime, then answers the query
+(op `queryRaw`): SELECT, ASK, CONSTRUCT and DESCRIBE. Extension functions
+and SERVICE registrations are not in scope on this path. `x-ikl-*` names are
+refused ([issue 581](https://github.com/danbri/factoidal/issues/581)).
 
 ## Custom extension functions (SPARQL 1.1 §17.6)
 
 Register your own functions by IRI (the
 [Comunica model](https://comunica.dev/docs/query/advanced/extension_functions/));
-sync or async both work. The dispatch semantics are F\*-specified:
-built-in function families always win, and a call to an IRI with no
-registered function is the spec-required error (unbound in
-SELECT/BIND position, row dropped in FILTER position). Issue:
-[#463](https://github.com/danbri/factoidal/issues/463).
+sync or async both work. Built-in function families always win, and a call
+to an IRI with no registered function is the error the specification
+requires (unbound in SELECT/BIND position, row dropped in FILTER position).
+Issue: [#463](https://github.com/danbri/factoidal/issues/463).
 
 ```js
 import { query, registerExtensionFunction } from "@factoidal/core";
@@ -419,190 +266,96 @@ const rows = await query(ds, `
 ```
 
 Return a JS primitive (`boolean`/`number`/`string`), an SRJ-style term
-object (`{type:'uri'|'literal'|'bnode', value, datatype?, 'xml:lang'?}`),
-or a Promise of either; `null`/`undefined`/a thrown error is the §17.6
-error. Async functions run over the synchronous verified engine
-through a bounded, memoised re-evaluation loop — within one query
-every call with the same arguments sees one stable answer.
+object (`{type:'uri'|'literal'|'bnode', value, datatype?, 'xml:lang'?}`), or
+a Promise of either; `null`/`undefined`/a thrown error is the §17.6 error.
+Async functions run over the synchronous engine through a bounded,
+memoised re-evaluation loop: within one query every call with the same
+arguments sees one stable answer. The registry is the engine's, so a
+registered function also reaches dataset handles and store queries. Every
+call crosses into JavaScript, so a function in a FILTER runs once per row.
+Design: [`docs/designissues/2026-09-04-lean-extension-functions.md`](../../docs/designissues/2026-09-04-lean-extension-functions.md).
 
-### The same functions against the Lean engine and a persisted store
+## Dataset handles
 
-The registration above serves the F\* engine's in-memory `query()`. The
-Lean engine has its own registry, and it reaches every Lean query path,
-including a store handle — so a registered function can filter rows read
-off disk:
-
-```js
-import { loadEngine } from '@factoidal/core/bin/engine.mjs'
-import { openStore, openStoreHandle } from '@factoidal/core/bin/store.mjs'
-import { registerExtensionFunction, withExtensionFunctions }
-  from '@factoidal/core/bin/ext.mjs'
-
-const engine = await loadEngine()
-const handle = openStoreHandle(engine, openStore('/path/to/store'))
-
-registerExtensionFunction(engine, 'http://example.org/fn/endsWithZed',
-  ([label]) => label.value.endsWith('z'))
-
-const answer = handle.query(`
-  PREFIX ex:   <http://example.org/fn/>
-  PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-  SELECT ?c ?l WHERE { ?c skos:prefLabel ?l FILTER(ex:endsWithZed(?l)) }`)
-```
-
-The argument and result encoding, the §17.6 error rules and the
-async re-evaluation loop are the same as above, so one function serves
-both engines. Two differences to plan around:
-
-- **Registration is per engine instance**, not per handle or per query.
-  A server that answers for more than one caller uses
-  `withExtensionFunctions(engine, map, body)`, which registers, runs and
-  clears in a `finally`, or loads one engine per caller.
-- **Every call crosses into JavaScript**, so a function in a FILTER runs
-  once per row. Measure before putting one on a large scan.
-
-Design, with the determinism and scope rules in full:
-[`docs/designissues/2026-09-04-lean-extension-functions.md`](../../docs/designissues/2026-09-04-lean-extension-functions.md).
-
-## Functional API (fn)
-
-`@factoidal/core/fn` is a strictly functional variant of the API above:
-every extracted engine operation is already a value-to-value
-function — `FnDataset` makes the JS surface match that instead of
-papering over it with RDF/JS's mutable `add`/`delete`. Frozen
-snapshots, free functions instead of methods (so they compose), and
-RDFC-1.0 canonical hashes as a first-class, memoized identity — the
-piece that makes dataflow-style recompute-skipping possible. Full
-design rationale (cost model, backend/streaming extension points):
-[`docs/designissues/2026-07-05-functional-dataset-api.md`](../../docs/designissues/2026-07-05-functional-dataset-api.md).
+`openDataset()` parses once and keeps the dataset indexed in the engine,
+so repeated `query()`/`update()`/`serialize()` calls skip the re-parse and
+the index build:
 
 ```js
-const { parse, filter, hash, cell, derive } = require('@factoidal/core/fn');
+import { openDataset } from "@factoidal/core";
 
-const ds = await parse(`
-  @prefix foaf: <http://xmlns.com/foaf/0.1/> .
-  _:a foaf:name "Alice" ; a foaf:Person .
-  _:b foaf:name "Bob".
-`);
+const handle = await openDataset(`
+  @prefix ex: <http://example.org/> .
+  ex:alice ex:name "Alice" ; ex:knows ex:bob .
+`, { format: "turtle" });
 
-// Every op returns a new FnDataset; ds is never touched.
-const people = filter(ds, (q) => q.predicate.value.endsWith('/type'));
-
-// Dataflow: a derive() node recomputes only when its input's content
-// hash actually changes -- not when a new (but equal-content)
-// FnDataset object is set into the cell.
-const source = cell(ds);
-const derived = derive((d) => filter(d, (q) => q.predicate.value.endsWith('name')), source);
-await derived.get();          // computes
-source.set(await parse(sameTextAsBefore));
-await derived.get();          // memoized hit -- same content, new object
-
-await hash(ds);                // sha256 hex of RDFC-1.0 canonical N-Quads
+const rows = await handle.query("SELECT * WHERE { ?s ?p ?o }");
+await handle.update('PREFIX ex: <http://example.org/> INSERT DATA { ex:carol ex:name "Carol" }');
+const ttl = await handle.serialize({ format: "turtle" }); // uses the document's prefixes
+await handle.close(); // every method rejects after this
 ```
 
-`fromDataset(dataset)` / `toDataset(fnDataset)` convert to and from
-the mutable RDF/JS `Dataset` above, so the two styles compose freely.
-`union`/`difference`/`filter`/`mapQuads` give set algebra without
-methods; `query`/`entail`/`canonicalize`/`graphs` mirror the plain
-API's capability gating (`capabilities()`) exactly. `validate`/`shex`/
-`fromMapping`/`fromCsvw`/`rif` wrap the SHACL/ShEx/RML/CSVW/RIF
-surface below the same way — FnDataset in, FnDataset (or a plain
-verdict) out:
+`query`, `serialize` and `canonicalize` accept a handle for `data`;
+`update(handle, …)` rejects with a `TypeError`, because `update()` answers a
+fresh Dataset while `handle.update()` changes the handle.
+
+## The persisted store
+
+A **Shardborough** store is the on-disk format the Lean packer writes:
+predicate-local IBK3, IBK4 or IBK5 blocks with their index sidecars, a
+manifest that commits every artifact's SHA-256, and a `CURRENT` pointer to
+the activated generation
+([`skills/shardborough-storage`](../../skills/shardborough-storage/SKILL.md),
+[`docs/shardborough-storage-spec.md`](../../docs/shardborough-storage-spec.md)).
+The package carries one, the sample store (4,434 triples, IPTC NewsCodes,
+CC BY 4.0; see `NOTICE`).
 
 ```js
-const { parse, validate, shex, fromMapping, fromCsvw, rif } = require('@factoidal/core/fn');
+import { openStore, queryStore, sampleStorePath } from "@factoidal/core";
 
-const data = await parse(personTtl);
-const shapes = await parse(shapesTtl);
-const { conforms, report } = await validate(data, shapes); // SHACL
+const store = await openStore(sampleStorePath());   // reads CURRENT, verifies every block once
+const rows = await store.query(`
+  SELECT ?c ?l WHERE {
+    ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l
+    FILTER(CONTAINS(LCASE(STR(?l)), "video")) } LIMIT 5`);
+console.log(store.layout, store.rows);              // predicate-ibk3-…  4434
+await store.close();
 
-const ok = await shex(data, shexSchemaJson, 'http://example.org/alice'); // true|false|null
-
-const mapped = await fromMapping(await parse(rmlMappingTtl), csvOrJsonText, 'csv'); // RML
-
-const tabular = await fromCsvw(csvText, csvwMetadataJson, { mode: 'minimal' }); // CSVW csv2rdf
-
-const saturated = await rif(data, rifRulesXml); // RIF Core forward chaining
+// One query: open only the blocks this query's plan names, query, close.
+const n = await queryStore(sampleStorePath(), 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
 ```
 
-## Lean engine (new in 0.2.0)
-
-Two engines now ship in one package. `factoidal` and `factoidal/wasm`
-are the F\*-extracted engine, unchanged. The subpaths below are the
-Lean 4 engine (`L4Factoidal`, compiled to wasm).
-
-`factoidal/l4` also exposes two deliberately narrow physical helpers:
-`scanIBK2Predicate(ibk2Hex, predicateIri)` for the predecessor format and
-`scanIBK3Predicate(ibk3Hex, predicateIri, blankNodeScope)` for the current
-predicate-local format. They validate one canonical RDF block and scan its
-named predicate, returning N-Triples and a row count. The IBK3 source scope
-must be shared across blocks partitioned from one RDF import unit and differ
-across unrelated units; this preserves document-scoped blank-node identity
-when fragments are composed. The hexadecimal argument is a portable
-diagnostic ABI, not the intended high-throughput buffer interface.
+`source` is a collection root path (Node), or a reader function from a
+root-relative path to the file's bytes, which works in any runtime:
 
 ```js
-const l4 = require('factoidal/l4-core');       // Lean engine, same API shape
-const { select } = require('factoidal/select'); // choose an engine per call
+// In a page: the store's files served under /store/.
+const store = await openStore((path) => fetch("/store/" + path).then((r) => r.arrayBuffer()));
 ```
 
-### `factoidal/l4-core`
-
-Same call shape as the main API — `parse`, `query`, `update`,
-`serialize`, `canonicalize`, `graphs`, `canonicalHash`, `owlClosure`,
-`coreRdfsClosure`, `coreRdfsCheck`, `rhoDfClosure`,
-`rhoDfFragmentCheck`, `rdfsPlusClosure`, `owlIsConsistent` — plus four
-Common Logic / IKL operations that exist only here, because the F\* tree
-has no CL parser.
-
-Since [issue 713](https://github.com/danbri/factoidal/issues/713) stage 1
-it also answers these functions of the main entry, with the same
-signatures and result shapes as the F\* engine (`index.d.ts`):
-`jsonldToRdf`, `jsonldFromRdf`, `rmlMap`, `csvwToRdf`, `xmlWellformed`,
-`xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`,
-`mathmlEval`, `xformsRecalc`, `rifEval`, `queryHdt`, `tableauMaterialise`,
-`tableauDlInconsistent`, `queryRaw`, `registerExtensionFunction`,
-`unregisterExtensionFunction`, `clearExtensionFunctions`,
-`registerServiceEndpoint`, `clearServiceEndpoints`, `toanSummation`,
-`toanProduct`, `toanSimplify`, `toanDiff` and `toanSubst`. Still missing
-here, so `capabilities()` reports them false: SHACL, ShEx, `didKeyResolve`,
-the `matrix*` and `sigmoid*` helpers, the `vc*` functions and COTTAS.
-Differences from the F\* engine are listed in
-[`docs/designissues/2026-10-10-npm-lean-only.md`](../../docs/designissues/2026-10-10-npm-lean-only.md).
-
-| Function | In → out | What the answer is worth |
-|---|---|---|
-| `clParse(clifText)` | CLIF text → shape report | sentence count, CL-vs-IKL dialect, canonical re-serialisation. Reads CLIF; never produces RDF |
-| `clSerialize(clifText)` | CLIF → CLIF | canonical writer. Returns `roundTripProved: false` — `clif_roundTrip` is an open lemma and the fragment boundary is measured, not proved |
-| `clAlphaNorm(clifText)` | CLIF → CLIF | alpha-equivalence canonical form (IKL Appendix B condition 1) |
-| `clNormalize(clifText)` | CLIF → CLIF | Hayes's IKL-to-CL reduction. Returns `preserves: "satisfiability"` — **not** equivalence — and `noIntrusion`, the proof hypothesis decided rather than assumed |
-
-A fifth op, `clFiniteSat(interpJson, clifText)`, is reachable only
-through the raw dispatch ABI: `l4.call('clFiniteSat', [interpJson,
-clifText])`. It is not in the typed layer.
-
-### `factoidal/select`
-
-Per-instance backend choice with a per-call override.
-
-| Value | Behaviour |
+| `openStore(source, options)` option | effect |
 |---|---|
-| `lean` / `fstar` | that engine only; **throws** if it does not implement the function |
-| `lean1st` / `fstar1st` | prefer that engine, fall through to the other for unimplemented functions |
-| `slowcompareboth` | run both and **report** disagreement rather than throwing |
+| (none) | read every artifact the manifest declares |
+| `{ sparql }` | read only the artifacts that query's plan names |
+| `{ keys }` | read exactly these artifact keys |
+| `{ generation }` | open that generation, not the one `CURRENT` names |
 
-Every result names the engine that answered. `capabilityTable()`
-returns which functions each engine implements.
+A `Store` is a store handle inside the engine (op `storeOpen`): the engine
+decodes the manifest, chooses the blocks, checks each artifact's SHA-256
+and indexes the rows; the JavaScript only reads the files it names. The
+engine refuses a query whose plan needs a block the handle did not read, so
+an answer never comes from part of a generation. `store.inspect()` answers
+the decoded manifest; `listStores()` the open handles and the residency
+caps (8 handles, 128 MiB of retained artifact bytes). The wasm module is
+single-threaded: one query at a time.
 
-### What this surface is, honestly
+What is not there yet: packing, activating, updating and compacting a store
+from JavaScript ([issue 641](https://github.com/danbri/factoidal/issues/641));
+use the native `l4block-*` tools. Large collections need a deeper call
+stack than Node gives by default: see "A handle on a large store: the
+worker route" below.
 
-Four `String → String` operations plus one through raw dispatch. The
-Lean tree behind them is larger than that — the CL/IKL and unified
-model-theory modules run to about 22,000 lines — but only these reach
-JavaScript today. Everything else in the Lean tree is used through
-`parse`/`query`/`closure`, or not exposed at all.
-
-## The `factoidal` command: querying a persisted store
+## The `factoidal` command
 
 Installing this package puts a `factoidal` command on PATH. It reads a
 **Shardborough** store — the on-disk format the Lean `l4block-*` tools
@@ -611,10 +364,10 @@ bytes, and the Lean engine running as WebAssembly makes every format
 decision (parsing the manifest, choosing the blocks, verifying their
 SHA-256, evaluating the SPARQL).
 
-> This command is not the native F\* `factoidal` binary that the API
-> table below refers to. That one is `bin/<platform>/factoidal` in the
-> repository and takes subcommands such as `shex` and `compact`. This
-> one takes `version`, `sample-store`, `inspect` and `query`.
+> This command is not the native `factoidal` binary of the repository
+> (`bin/<platform>/factoidal`, which takes subcommands such as `shex` and
+> `compact`). This one takes `version`, `sample-store`, `inspect`,
+> `query`, `lws-serve`, `solid-serve` and `solid-client`.
 
 ### First query, with nothing else to download
 
@@ -722,9 +475,12 @@ store, `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`, whole process
 including start-up: 220 ms through this command, 33 ms through the
 native `l4block-id-v3-query`.
 
-### Holding a store open: verify once, answer many
+### Holding a store open from `bin/store.mjs`
 
-`queryStore` is stateless. Every call transfers the artifacts again, and
+`openStore()` on the main entry (above) is a store handle. The command's
+own module, `@factoidal/core/store` (`bin/store.mjs`), exposes the same
+operations synchronously over an engine you loaded, which is what the
+command and the worker route below use. Its `queryStore` is stateless. Every call transfers the artifacts again, and
 the engine hashes, decodes and indexes them again. A process that answers
 many questions against one generation — a chat bot, an MCP server, a
 SPARQL endpoint — pays all of that for every question, and none of it
@@ -899,266 +655,7 @@ stack, which needs `--allow-run` and `--allow-env`. `--no-worker` turns
 the retry off. See
 [issue 653](https://github.com/danbri/factoidal/issues/653).
 
-## Linked Web Storage 1.0 and the Solid Protocol
-
-Three new entry points serve two storage protocols over HTTP. Each is a
-socket and nothing more: every protocol decision — status codes, `Link`
-relations, `Last-Modified`, containment triples, the PATCH blank-node
-refusal, Web Access Control, CORS — is made by the Lean engine and
-reaches the host as a `{status, headers, body}` record.
-
-| entry point | what it serves |
-| --- | --- |
-| `@factoidal/core/lws` | [Linked Web Storage 1.0 core](https://w3c.github.io/lws-protocol/lws10-core/), a Node `http` server |
-| `@factoidal/core/solid/server` | [Solid Protocol v0.11.0](https://solidproject.org/TR/protocol) server conformance class |
-| `@factoidal/core/solid/client` | Solid Protocol client conformance class, over `fetch` |
-
-```js
-import { listen } from '@factoidal/core/solid/server'
-import { createSolidClient } from '@factoidal/core/solid/client'
-
-const running = await listen({ port: 3000 })
-const client = await createSolidClient({ baseIri: running.origin })
-await client.replace('/notes/one', '<#it> <#p> "v" .', 'text/turtle')
-const read = await client.read('/notes/one')
-await running.close()
-```
-
-From the command:
-
-```
-factoidal lws-serve   DIR [--port N] [--base IRI]
-factoidal solid-serve DIR [--port N] [--base IRI] [--owner WEBID]
-factoidal solid-client <get|put|post|delete|discover> URL [--file PATH]
-```
-
-**State today.** The protocol operations live in the Lean engine and
-reach this package through the WebAssembly dispatch ABI
-(`lwsOpen`/`lwsStep`/`lwsClose`, `solidOpen`/`solidStep`/`solidClose`,
-`solidClientRequest`/`solidClientResponse`). A module built before those
-operations landed answers `unknown op`; each entry point reports that
-through its `…OpsAvailable(engine)` probe and the commands exit 3 with
-the reason. `DIR` is the storage directory and is not read or written
-yet: the first slice keeps the resource tree in the engine handle.
-Solid-OIDC token verification is a host job that is not built, so the
-first slice serves public resources and unauthenticated writes.
-
-Details: `lws/README.md`, `solid/server/README.md`,
-`solid/client/README.md`, and the conformance ledger at
-[`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
-
-## API (draft)
-
-The `factoidal` CLI (`bin/factoidal-cli/factoidal_cli.ml`, built to
-`bin/<platform>/factoidal`) calls the exact same F\*-extracted
-functions as this npm surface — see `tests/local/cli_api_parity.sh`
-for the test that diffs CLI output against the npm API on shared
-fixtures.
-
-| Function | Signature (informal) | CLI equivalent | Notes |
-|---|---|---|---|
-| `parse` | `(text, {format?, baseIRI?, lenient?}) => Dataset` | `factoidal dump-nq -d FILE` (or `dump`/`dump-turtle`) | formats: `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`\* — auto-detected where possible. Each call is one document: blank-node labels are scoped per RDF 1.1. Strict by default (issue #344) — a syntax error rejects with `ParseError` (`line`/`column`/`offset`, RDF/XML and JSON-LD carry a message only); `lenient: true`\*\* recovers instead, with `dataset.diagnostics` listing what was skipped. `dataset.prefixes` carries the declared map (`{}` for N-Triples/N-Quads) |
-| `query` | `(Dataset \| string \| DatasetHandle, sparql, {entail?}) => Bindings[] \| boolean \| Dataset` | `factoidal query -d FILE -e 'SPARQL' [--entail RDFS\|OWL-RL]` | SELECT → array of `Map<var, Term>`; ASK → boolean; CONSTRUCT → Dataset\*\*; `entail: "RDFS" \| "OWL-RL"`; a `DatasetHandle` routes to `handle.query()` and requires `entail: "none"` |
-| `update` | `(Dataset, sparqlUpdate) => Dataset` | `factoidal update -d FILE -e 'SPARQL update'` | \*\* in-memory; no persistence. (Durable UPDATE against a COTTAS store is a separate path: `factoidal serve --rw --delta-log ...` / `factoidal compact`.) `data` must not be a `DatasetHandle` — call `handle.update()` directly (it mutates in place and returns the handle, rather than a fresh Dataset) |
-| `openDataset` | `(Dataset \| string \| Array, {format?, baseIRI?}) => DatasetHandle` | `factoidal query --data-cottas-mem FILE -e 'SPARQL'` (nearest CLI analogue) | \*\* parses once, then indexes are reused across many `query()`/`update()`/`serialize()` calls (issue #680) — see "Dataset handles" below |
-| `serialize` | `(Dataset \| DatasetHandle, {format, prefixes?, literalShorthand?}) => string` | `factoidal dump-nq FILE` (nquads) / `factoidal dump FILE` (ntriples) / `factoidal dump-turtle FILE` | `nquads`, `ntriples` (sorted); `turtle`\*\* (prefix-compacted, subject-grouped — needs the entry bundle, flattens named graphs into the default graph). `prefixes` (issue #681) is used, and unused caller namespaces dropped, when given or when `data` is a Dataset with non-empty `.prefixes`; `literalShorthand` (default `true`) controls whether `xsd:integer`/`decimal`/`double`/`boolean` literals print bare. A bare string as the options argument names the format (`serialize(ds, 'turtle')`); this holds for every function in this table that takes `{format}`, and any other non-object value throws a `TypeError` naming the function |
-| `canonicalize` | `(Dataset \| string \| DatasetHandle) => string` | `factoidal canonicalize FILE` | RDFC-1.0 canonical N-Quads\*\* |
-| `graphs` | `(Dataset) => Array<[iri, Dataset]>` | `factoidal graphs list FILE` | enumerate named graphs (default graph excluded); pure enumeration, no engine round-trip |
-| `canonicalHash` | `(Dataset) => string` | `factoidal graphs hash FILE IRI` | RDFC-1.0 canonical hash of one graph\*\*; graph-scoped sibling of `canonicalize` — typically called with one entry of `graphs()`'s output |
-| `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | `factoidal shacl --data FILE --shapes FILE [--json]` (alias: `factoidal validate --shapes FILE FILE`) | \*\* SHACL Core validation; `report` is the `sh:ValidationReport` graph; exit code 0 iff `sh:conforms` |
-| `shexValidate` | `(data, schemaText, focus, shape?) => boolean \| null` | `factoidal shex --data FILE --schema FILE.{json,shex} --node N [--shape S]` | \*\* ShEx (Shape Expressions) validation of one focus node; `schemaText` accepts ShExJ or ShExC — dispatched by the first non-whitespace character (`{` ⇒ ShExJ, else ShExC; the CLI additionally honors a `.shex` file extension); `null` = outside this engine's decidable ShEx fragment, never a guessed answer |
-| `owlClosure` | `(data, mode) => Dataset` | `factoidal entail --data FILE --regime RDFS\|OWL-RL` | \*\* materializes the entailment closure (input + derived triples), default graph only. (`query --entail` applies the same closure internally before evaluating a query, but does not dump it on its own.) |
-| `rmlMap` | `(mapping, sourceData, sourceKind) => Dataset` | `factoidal rml --mapping FILE --source FILE --kind json\|csv` | \*\* evaluates an RML mapping graph against one logical source (`sourceKind: "json" \| "csv"`); every triples map reads the SAME source — cross-source joins are out of scope for this entry point |
-| `csvwToRdf` | `(csvText, metadataJson?, {mode?, base?, url?}) => Dataset` | `factoidal csvw --csv FILE [--metadata FILE] [--minimal] [--base IRI] [--url URL]` | \*\* CSVW csv2rdf conversion; metadata omitted = schema inferred from the CSV header row; `mode: "standard" \| "minimal"` (default standard); every table in a multi-table group reads the SAME csvText |
-| `jsonldToRdf` | `(jsonldText, {base?, rdfDirection?, expandContext?, processingMode?}) => Dataset` | `factoidal jsonld --in FILE [--base IRI]` (or `factoidal dump-nq FILE.jsonld`, format auto-detected) | \*\* JSON-LD parsing with options `parse()` has no room for; plain `parse(text, {format:'jsonld'})` also works for the common case |
-| `jsonldFromRdf` | `(data, {useNativeTypes?, useRdfType?}) => JSON-LD` | `factoidal dump-nq` ← (reverse) | \*\* serializes an RDF dataset as expanded-form JSON-LD (the reverse of `jsonldToRdf`); returns the parsed JSON-LD document (array of node objects), JCS-canonical |
-| `didKeyResolve` | `(didString) => Dataset` | N/A (`did_runner`) | \*\* resolves a `did:key:z6Mk...` (Ed25519) to its DID Document as RDF; non-Ed25519 / malformed inputs reject rather than guess |
-| `xmlWellformed` | `(xmlText) => boolean` | N/A (`xml_runner`) | \*\* XML 1.0 well-formedness check (byte-oriented, no DOCTYPE/DTD production — a document with a DOCTYPE reports `false`) |
-| `xpathEval` | `(xmlText, xpathExpr) => {resultType, value \| nodes, ...}` | N/A | \*\* XPath 1.0 evaluation over an XML document; `resultType` is `'nodeset' \| 'string' \| 'number' \| 'boolean'` |
-| `rifEval` | `(data, rifRulesXml) => Dataset` | `factoidal rif --rules FILE --data FILE` | \*\* RIF Core forward-chaining saturation (materializes input + derived triples); accepts real vendored RIF-XML (`<!DOCTYPE>` + `&rif;`/`&xs;`/`&rdf;` entities) unmodified |
-| `toCottas` | `(data, {format?}) => Uint8Array` | `factoidal compact --native-writer` | \*\* serializes a dataset to COTTAS/Parquet bytes via the native writer; round-trips into `openCottas()` and into the native `--data-cottas`/`--data-cottas-mem` CLI flags byte-for-byte |
-| `openCottas` | `(bytes: string \| Uint8Array \| ArrayBuffer) => handle` | `factoidal query --data-cottas-mem FILE` | \*\* opens a whole `.cottas` artifact's bytes as a queryable, read-only, in-memory store; rows decode lazily as `queryCottas()` touches them (no heap `Dataset`, no full parse) |
-| `queryCottas` | `(handle, sparql) => Bindings[] \| boolean \| Dataset` | `factoidal query --data-cottas-mem FILE -e 'SPARQL'` | \*\* SPARQL over a store opened by `openCottas()`; no `entail` option, no write overlay (read-only), no DESCRIBE |
-| `closeCottas` | `(handle) => void` | N/A | releases a handle from this process's registry; does not evict the underlying byte cache |
-| `queryRaw` | `(input, sparql) => string` | `factoidal query -d FILE -e 'SPARQL' -o json` | SPARQL-Results-JSON string, for callers that want the wire form |
-| `capabilities` | `() => {construct, update, canonicalize, graphs, canonicalHash, shacl, shex, owlClosure, rml, csvw, jsonld, jsonldFromRdf, didKey, xml, xpath, rif, cottasBytesStore, profile, abiVersion, datasetHandles, parseDiagnostics, turtlePrefixes, ...}` | N/A | runtime feature probe; the CLI is one fixed native binary, not a runtime bundle whose feature set varies. `profile` is `'full'` or `'lite'` (see "Choosing a bundle" below); `datasetHandles`/`parseDiagnostics`/`turtlePrefixes` probe `openDataset`/`{lenient:true}`/the `serialize` prefix-and-shorthand options |
-| `dataFactory` | RDF/JS DataFactory | N/A | data-model class, not an engine operation |
-| `Dataset` | RDF/JS DatasetCore | N/A | returned by `parse`; accepted everywhere; `.prefixes`/`.diagnostics` carry what the parser reported (own, non-enumerable properties) |
-| `DatasetHandle` | class, from `openDataset()` | N/A | `.query(sparql, {sparql12?})`, `.update(updateText)` (mutates in place, returns the handle), `.serialize({format?, prefixes?, literalShorthand?})`, `.toDataset()`, `.canonicalize()`, `.close()`; `.handle`/`.size`/`.prefixes`/`.closed` getters |
-| `ParseError` | `class ParseError extends Error` | N/A | thrown by `parse`/`query`/`openDataset`/etc. on a syntax error; `.line`/`.column`/`.offset` (numbers, or `undefined` for RDF/XML and JSON-LD) and `.format` |
-| `createApi` (from `@factoidal/core/api`) | `(entry, {engineName?, initCrypto?}) => typed API` | N/A | builds this same typed surface around an already-loaded npm-entry ABI object, no fetch, no eval — see "Bundlers and Content Security Policy" above |
-| `version` | `string` | N/A | the package version (`package.json`'s), the same on every entry point |
-| `engine` | `string` | N/A | which driver answered this typed surface: `'js'`, `'wasm'`, `'entry'` (via `createApi()`), `'lean4-wasm'` |
-
-The `fn.js` functional layer's own combinators — `union`, `difference`,
-`filter`, `mapQuads`, `equals`, `hash`, `builder`/`fromChunks`,
-`cell`/`derive` — are pure client-side set algebra and dataflow
-plumbing over already-materialized `Dataset`s. They have no CLI
-equivalent by design: there is no engine operation to wrap, only JS
-composition on top of the operations already listed above.
-
-\* JSON-LD parsing (expanded form, inline `@context`, `@base`
-resolution, `@reverse`, container maps) works through both `parse()`
-and `jsonldToRdf()` when the npm-entry bundle is loaded. Remote
-`@context` URLs need a `documentLoader`, which this package's entries
-don't register (an honest failure, not a silent wrong answer) —
-tracked against the vendored W3C json-ld-api suite.
-\*\* CONSTRUCT, UPDATE, `canonicalize`, `canonicalHash`,
-`shaclValidate`, `shexValidate`, `owlClosure`, `rmlMap`, `csvwToRdf`,
-`jsonldToRdf`, `jsonldFromRdf`, `didKeyResolve`, `xmlWellformed`, `xpathEval`, `rifEval`, `toCottas`, `openCottas`, `queryCottas`,
-`closeCottas`, `openDataset`, `{lenient:true}`, and the `serialize`
-`prefixes`/`literalShorthand` options are probed via `capabilities()`:
-they activate automatically when the dedicated npm-entry engine bundle
-is present, and the package reports their absence honestly against
-older bundles instead of guessing.
-`canonicalHash` rides the same engine support as `canonicalize` (it
-computes `canonicalize()` over one graph's triples); `graphs` is pure
-JS enumeration and is always available.
-
-### Dataset handles (issue #680)
-
-`openDataset()` parses once and keeps the result indexed in the
-engine, so repeated `query()`/`update()`/`serialize()` calls skip both
-the re-parse and the SPARQL-index rebuild that a fresh `query(ds, ...)`
-call pays every time:
-
-```js
-import { openDataset } from "@factoidal/core";
-
-const handle = await openDataset(`
-  @prefix ex: <http://example.org/> .
-  ex:alice ex:name "Alice" ; ex:knows ex:bob .
-`, { format: "turtle" });
-
-const rows = await handle.query("SELECT * WHERE { ?s ?p ?o }");
-await handle.update("PREFIX ex: <http://example.org/> INSERT DATA { ex:carol ex:name \"Carol\" }");
-const ttl = await handle.serialize({ format: "turtle" });
-await handle.close(); // every method rejects after this
-```
-
-`query(data, sparql, options)`, `serialize(data, options)`, and
-`canonicalize(data)` also accept a `DatasetHandle` for `data` directly
-(routing to the handle's own method); `update(handle, ...)` rejects
-with a `TypeError`, since `update()` always returns a fresh Dataset
-while `handle.update()` mutates the handle in place. Opening from a
-Dataset keeps that Dataset's own `.prefixes` on the handle for Turtle
-output. Needs the npm-entry engine bundle (`capabilities().datasetHandles`).
-
-### The db API (openCottas/queryCottas/closeCottas/toCottas)
-
-The in-memory COTTAS/Parquet bytes store works identically on both
-engines: `require('@factoidal/core')` (js_of_ocaml) and
-`require('factoidal/wasm')` (wasm_of_ocaml, Node ≥ 22) expose the same
-`toCottas`/`openCottas`/`queryCottas`/`closeCottas` functions, backed
-by the same F\*-verified reader
-(`RDF.CottasStore`/`Parquet.Footer`/`SPARQL11_Store`). A store is
-read-only and holds no `entail` option — see the divergence list on
-`queryCottas`'s doc comment in `lib/api.js`. Zstd-compressed COTTAS
-pages are supported under js_of_ocaml (via the vendored `fzstd`
-decompressor baked into `factoidal.js`); under wasm_of_ocaml, Zstd
-decompression is still an identity-stubbed primitive (a documented
-gap, tracked separately) — write bytes with `toCottas()` (which never
-reaches for Zstd on small in-memory writes) rather than a
-Zstd-compressed on-disk fixture if you need a wasm-portable test case.
-The browser entries mirror this: `browser.js`'s `openCottas`/
-`queryCottas`/`closeCottas`/`toCottas` drive the js_of_ocaml npm-entry
-ABI over `fetch()`; `browser-wasm.js` exposes the same four functions
-against the wasm_of_ocaml npm-entry ABI (`factoidal-npm-entry.wasm.js`).
-
-## Capability matrix
-
-Every public function, where it runs, and what it needs. "Node" is the
-`require('@factoidal/core')` / `import '@factoidal/core'` entry (`index.js` /
-`index.mjs`); "Browser" is `import 'factoidal/browser'` (`browser.js`);
-"Wasm" is `require('factoidal/wasm')`. **Needs** legend: *CLI bundle* =
-the fresh-eval `factoidal.js` bundle (always present); *entry* = the
-persistent `factoidal-npm-entry.js` ABI bundle (probe with
-`capabilities()`); *HACL\* init* = the wasm crypto backend must be
-initialised (auto on Node, explicit in the browser — see below);
-*IndexedDB* = a browser storage layer.
-
-| Function(s) | Node | Browser | Wasm | Needs |
-|---|---|---|---|---|
-| `parse`, `query` (SELECT/ASK), `serialize` (nquads/ntriples), `canonicalize`, `graphs`, `canonicalHash`, `queryHdt`, `queryRaw` | ✓ | ✓\* | ✓ | CLI bundle |
-| `query` (CONSTRUCT), `update`, `serialize` (turtle) | ✓ | ✓\* | ✓ | entry |
-| `openDataset` / `DatasetHandle` (`.query`/`.update`/`.serialize`/`.toDataset`/`.canonicalize`/`.close`) | ✓ | ✓\* | ✓ | entry |
-| `shaclValidate`, `shexValidate`, `owlClosure`, `rmlMap`, `csvwToRdf`, `jsonldToRdf`, `jsonldFromRdf`, `didKeyResolve`, `xmlWellformed`, `xpathEval`, `rifEval` | ✓ | ✓ | partial† | entry |
-| `coreRdfsClosure`/`rhoDfClosure`, `coreRdfsCheck`/`rhoDfFragmentCheck`, `rdfsPlusClosure`, `tableauMaterialise`, `tableauDlInconsistent`, `owlIsConsistent`, `owlEntails` | ✓ | ✓ | wrapper only‡ | entry |
-| `xsltTransform`, `mathmlEval`, `xformsRecalc`, `jsonSchemaValidate`, `schematronValidate`, `toan*`, `matrix*` | ✓ | ✓ | partial† | entry |
-| `openCottas`, `queryCottas`, `closeCottas`, `toCottas` | ✓ | ✓ | ✓ | entry |
-| `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | ✓ | ✓ | ✓ | entry + HACL\* init |
-| `deltaLogOpen`/`Append`/`ReadAllHex`/`Merge`/`Destroy` | ✗ | ✓ | ✗ | entry + IndexedDB |
-| `dataFactory`, `Dataset`, `fn.*` combinators (`union`/`difference`/`filter`/`mapQuads`/`equals`/`hash`/`builder`/`cell`/`derive`/`pipe`) | ✓ | — | ✓ | none (pure JS) |
-| `capabilities` | ✓ | — | ✓ | none (probe) |
-
-\* In the browser the same capability is reached through `browser.js`'s
-own function names, which differ from the Node API: SELECT/ASK is
-`query(dataString, sparql, {output})` (returns SPARQL-Results JSON, not
-`Bindings[]`); parse-to-N-Quads is `toRdf()`; multi-graph queries use
-`queryDataset()`. CONSTRUCT/UPDATE/Turtle ride the same `entry` bundle,
-fetched over the network on first use.
-† Wasm (`require('factoidal/wasm')`) today re-exports the core +
-validation/inference/COTTAS set (`parse`/`query`/`update`/`serialize`/
-`canonicalize`/`shaclValidate`/`shexValidate`/`owlClosure`/`rmlMap`/
-`csvwToRdf`/`jsonldToRdf`/`rifEval`/`openCottas`…/`capabilities`); the
-typed-engine `#74` functions and the `vc*`/`did`/`xml`/`xpath` wrappers
-are exposed on the js and browser entries. The underlying wasm ABI
-carries them — the `/wasm` re-export surface is being brought to parity.
-‡ `coreRdfsClosure`/`rhoDfClosure`/`coreRdfsCheck`/`rhoDfFragmentCheck`/
-`rdfsPlusClosure`/`tableauMaterialise`/`tableauDlInconsistent`/
-`owlIsConsistent`/`owlEntails` are exported from `factoidal/wasm`
-(wrapper wiring — the same `buildApi()` `index.js` uses), but the
-committed `factoidal-npm-entry.wasm.js` ABI bundle predates these
-functions (built before they landed on the ABI) — calling them on the
-wasm engine throws the existing "pending npm-entry bundle" error until
-that bundle is rebuilt via a real `wasm_of_ocaml` build (not a copy).
-`capabilities()` on the wasm engine reports this honestly (`tableau:
-false` etc.) rather than guessing.
-
-**The `lite` entry** (`require('@factoidal/core/lite')` /
-`import ... from '@factoidal/core/lite'`, Node only) implements the
-core row and the `openDataset`/`DatasetHandle` row above (`parse`,
-`query`, `update`, `serialize`, `canonicalize`, `graphs`,
-`canonicalHash`, `openDataset`/`DatasetHandle`, the extension-function
-and SERVICE-endpoint registration functions, `capabilities`) and
-nothing else: no SHACL, ShEx, OWL closure, JSON-LD, RDF/XML, CSVW,
-RML, RIF, XML, XPath, VC crypto, or COTTAS, and no CLI bundle (no
-entailment regimes, no `queryHdt`). `capabilities().profile` reads
-`'lite'`. See "Choosing a bundle: full or lite" below.
-
-### VC crypto: the init story
-
-The `vc*` functions run the F\*-extracted VC Data Integrity pipeline
-over HACL\*'s official WebAssembly build, so the wasm backend has to be
-initialised before the first call (a verify against an uninitialised
-backend **throws** — it never silently returns `true`; issue #286).
-
-- **Node** (`index.js`/`index.mjs`, `/wasm`, `fn`): the typed wrappers
-  **auto-await `initHacl()` on first call** — a caller writes
-  `await vcEd25519Verify(pk, msg, sig)` and never touches init.
-- **Browser** (`browser.js`): **explicit init required** — the
-  `hacl-wasm` URL is page-specific. Serve `hacl-wasm/` next to the page
-  and `await initHacl({ apiUrl })` from `hacl-init.js` once, then call
-  the `vc*` wrappers. (Auto-init isn't possible without a URL to fetch.)
-
-### Native-CLI-only capabilities (not on the npm surface, by design)
-
-These live only in `bin/factoidal-cli` (the native `factoidal` binary),
-not in the JS package — they are I/O- or process-shaped, not pure
-value transforms:
-
-- **SPARQL endpoint / federation.** `factoidal serve` (HTTP endpoint),
-  `SERVICE` federation and `--data-cottas`/`--data-hdt` *file-path*
-  backends read the filesystem/network at query time. The npm
-  `queryHdt`/`openCottas` take *bytes* in-process instead.
-- **Durable UPDATE against on-disk COTTAS.** `factoidal serve --rw
-  --delta-log …` + `factoidal compact` — the npm `update()` is
-  in-memory only; the browser `deltaLog*` family is the closest
-  in-package durable path (IndexedDB, browser-only).
-- **Internal primitives.** `runFactoidalCli` / `loadNpmEntry` (browser)
-  are exported but are the low-level bundle drivers, not the intended
-  API; the `_*` functions (e.g. `_deltaLogCorruptLastForTest`) are
-  test-only and intentionally left untyped.
+## Searching a store
 
 ### GeoSPARQL — six topological functions
 
@@ -1276,91 +773,204 @@ depends on the source order: a subject-grouped or graph-grouped file
 gives disjoint ranges per block, a shuffled one gives overlapping ranges
 and a scan, which is correct and no worse than wire version 9.
 
-## Choosing a bundle: full or lite
 
-(Issue [684](https://github.com/danbri/factoidal/issues/684).)
+## Linked Web Storage 1.0 and the Solid Protocol
 
-Two npm-entry ABI bundles ship: `factoidal-npm-entry.js` (`profile:
-"full"`, the default — `require('@factoidal/core')`) and
-`factoidal-npm-entry-lite.js` (`profile: "lite"` —
-`require('@factoidal/core/lite')`), both registering the same global
-`factoidalNpmEntry` (`abiVersion: "2"`). The lite bundle is about half
-the size:
+Three new entry points serve two storage protocols over HTTP. Each is a
+socket and nothing more: every protocol decision — status codes, `Link`
+relations, `Last-Modified`, containment triples, the PATCH blank-node
+refusal, Web Access Control, CORS — is made by the Lean engine and
+reaches the host as a `{status, headers, body}` record.
 
-| | full (`.js`) | lite (`.js`) |
-|---|---:|---:|
-| Raw | 1151.7 KB | 581.4 KB |
-| gzip -9 | 338.8 KB | 169.2 KB |
+| entry point | what it serves |
+| --- | --- |
+| `@factoidal/core/lws` | [Linked Web Storage 1.0 core](https://w3c.github.io/lws-protocol/lws10-core/), a Node `http` server |
+| `@factoidal/core/solid/server` | [Solid Protocol v0.11.0](https://solidproject.org/TR/protocol) server conformance class |
+| `@factoidal/core/solid/client` | Solid Protocol client conformance class, over `fetch` |
 
-Pick `full` (the default) unless you specifically want the smaller
-download and only need the core surface. `lite` implements `parse`,
-`query`, `update`, `serialize`, `canonicalize`, `graphs`,
-`canonicalHash`, `openDataset`/`DatasetHandle`, the SPARQL 1.1 §17.6
-extension-function and SERVICE-endpoint registration functions, and
-`capabilities`. It does **not** implement SHACL, ShEx, OWL closure,
-JSON-LD, RDF/XML (`parseToDatasetJson(x, "rdfxml", ...)` answers a
-routing error naming the full bundle), CSVW, RML, RIF, XML, XPath, VC
-Data Integrity crypto, or COTTAS — and it ships no CLI bundle, so
-entailment-regime queries (`{entail: "RDFS" | "OWL-RL"}`) and
-`queryHdt()` are unavailable. `require('@factoidal/core/lite')`
-resolves `factoidal-npm-entry-lite.js` the same three-step way the
-full entry resolves its own bundle (env `FACTOIDAL_NPM_ENTRY_LITE`,
-then package-local, then `docs/fstar-extracted/`).
+```js
+import { listen } from '@factoidal/core/solid/server'
+import { createSolidClient } from '@factoidal/core/solid/client'
 
-## Bundle sizes
+const running = await listen({ port: 3000 })
+const client = await createSolidClient({ baseIri: running.origin })
+await client.replace('/notes/one', '<#it> <#p> "v" .', 'text/turtle')
+const read = await client.read('/notes/one')
+await running.close()
+```
 
-`tools/bundle-sizes.sh` measures raw and `gzip -9` byte sizes for the
-bundles this package ships and writes
-[`docs/test-results/bundle-sizes.json`](../../docs/test-results/bundle-sizes.json).
-Re-run it after a rebuild; the table below is that file's content as
-of the commit noted underneath it, not a live value.
+From the command:
 
-| Bundle | Raw | gzip -9 |
-|---|---:|---:|
-| `factoidal-npm-entry.js` (js_of_ocaml, npm-entry ABI, full) | 1151.7 KB | 338.8 KB |
-| `factoidal.js` (js_of_ocaml, CLI bundle) | 1129.2 KB | 373.0 KB |
-| `factoidal-npm-entry.wasm.js` (wasm_of_ocaml loader, npm-entry ABI, full) | 44.2 KB | 15.3 KB |
-| `factoidal-npm-entry.wasm.assets/*.wasm` (its code asset) | 1425.4 KB | 359.3 KB |
-| `factoidal.wasm.js` (wasm_of_ocaml loader, CLI bundle) | 41.8 KB | 14.2 KB |
-| `factoidal.wasm.assets/*.wasm` (its code asset) | 1334.0 KB | 324.5 KB |
-| `l4-assets/l4factoidal.wasm` (Lean 4 engine) | 6210.8 KB | 1174.6 KB |
-| `l4-assets/l4factoidal.mjs` (Lean 4 loader) | 62.9 KB | 17.9 KB |
-| `factoidal-npm-entry-lite.js` (js_of_ocaml, npm-entry ABI, lite) | 581.4 KB | 169.2 KB |
-| `factoidal-npm-entry-lite.wasm.js` (wasm_of_ocaml loader, npm-entry ABI, lite) | 42.2 KB | 14.5 KB |
-| `factoidal-npm-entry-lite.wasm.assets/*.wasm` (its code asset) | 665.3 KB | 170.0 KB |
+```
+factoidal lws-serve   DIR [--port N] [--base IRI]
+factoidal solid-serve DIR [--port N] [--base IRI] [--owner WEBID]
+factoidal solid-client <get|put|post|delete|discover> URL [--file PATH]
+```
 
-Measured 2026-09-16 at commit `ec389c42`.
+**State today.** The protocol operations live in the Lean engine and
+reach this package through the WebAssembly dispatch ABI
+(`lwsOpen`/`lwsStep`/`lwsClose`, `solidOpen`/`solidStep`/`solidClose`,
+`solidClientRequest`/`solidClientResponse`). A module built before those
+operations landed answers `unknown op`; each entry point reports that
+through its `…OpsAvailable(engine)` probe and the commands exit 3 with
+the reason. `DIR` is the storage directory and is not read or written
+yet: the first slice keeps the resource tree in the engine handle.
+Solid-OIDC token verification is a host job that is not built, so the
+first slice serves public resources and unauthenticated writes.
 
-## Limits (deliberate, documented)
+Details: `lws/README.md`, `solid/server/README.md`,
+`solid/client/README.md`, and the conformance ledger at
+[`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
-- **In-memory only.** ~1.2 KB RAM per quad (measured); 1M quads ≈
-  1.2 GB. No streaming parse yet — inputs are whole strings.
-- `parse()` is strict by default (issue #344): a syntax error rejects
-  with a `ParseError` naming the line and column. Pass
-  `{lenient: true}` to recover instead — see the Quickstart section.
-- No *write* persistence in the npm build (SPARQL Update stays
-  in-memory; durable UPDATE against a COTTAS store on disk is
-  native-only today). *Reading* a COTTAS artifact's bytes is available
-  in-process via `openCottas`/`queryCottas`/`closeCottas`/`toCottas`
-  (both engines, both npm and browser entries) — see "The db API"
-  above.
-- Bundle sizes (measured 2026-07-04): JS engine 554 KB, npm entry
-  461 KB, Wasm 43 KB loader + 1.3 MB assets. The Wasm entry trades
-  startup cost for throughput.
+
+## Functional API (fn)
+
+`@factoidal/core/fn` is a functional variant of the API above. `FnDataset`
+is a frozen snapshot; operations are free functions that return new values;
+RDFC-1.0 canonical hashes are a memoized identity, which is what lets a
+dataflow graph skip recomputation. Design:
+[`docs/designissues/2026-07-05-functional-dataset-api.md`](../../docs/designissues/2026-07-05-functional-dataset-api.md).
+
+```js
+const { parse, filter, hash, cell, derive, validate, shex } = require('@factoidal/core/fn');
+
+const ds = await parse(`
+  @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+  _:a foaf:name "Alice" ; a foaf:Person .
+  _:b foaf:name "Bob".
+`);
+const people = filter(ds, (q) => q.predicate.value.endsWith('/type'));
+const source = cell(ds);
+const names = derive((d) => filter(d, (q) => q.predicate.value.endsWith('name')), source);
+await names.get();             // computes; recomputes only when the content hash changes
+await hash(ds);                // sha256 hex of the RDFC-1.0 canonical N-Quads
+const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHACL
+```
+
+`fromDataset`/`toDataset` convert to and from the RDF/JS `Dataset`.
+`union`/`difference`/`filter`/`mapQuads` are set algebra;
+`query`/`entail`/`canonicalize`/`graphs`/`validate`/`shex`/`fromMapping`/
+`fromCsvw`/`rif` wrap the functions of the main entry.
+
+## API
+
+| Function | Signature (informal) | Notes |
+|---|---|---|
+| `parse` | `(text, {format?, baseIRI?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`. One call is one document. Strict: a syntax error rejects with `ParseError`. `dataset.prefixes` is the declared map |
+| `query` | `(data, sparql, {format?, entail?, sparql12?}) => Bindings[] \| boolean \| Dataset` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset. `data` is a Dataset, a string, `{text, format}`, an array of those, or a `DatasetHandle` |
+| `update` | `(data, sparqlUpdate) => Dataset` | in memory; answers a fresh Dataset |
+| `openDataset` | `(data, {format?, baseIRI?}) => DatasetHandle` | parse and index once (above) |
+| `serialize` | `(data, {format, prefixes?, literalShorthand?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle` (prefix-compacted, subject-grouped; named graphs flattened). `literalShorthand` (default `true`) prints numeric and boolean literals bare |
+| `canonicalize` | `(data) => string` | RDFC-1.0 canonical N-Quads |
+| `graphs` | `(Dataset) => Array<[iri, Dataset]>` | named graphs, default graph excluded; no engine call |
+| `canonicalHash` | `(Dataset) => string` | RDFC-1.0 canonical N-Quads of one graph |
+| `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
+| `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
+| `openStore`, `queryStore`, `listStores` | see "The persisted store" | `Store`: `.query`, `.inspect`, `.close`, `.handle`/`.layout`/`.wireVersion`/`.rows`/`.bytes`/`.artifacts`/`.generation`/`.activated`/`.closed` |
+| `sampleStorePath`, `sampleStoreFacts` | `() => string`, object | Node only |
+| `registerExtensionFunction`, `unregisterExtensionFunction`, `clearExtensionFunctions` | see above | SPARQL 1.1 §17.6 |
+| `registerServiceEndpoint`, `clearServiceEndpoints` | `(iri, data)` | `SERVICE <iri>` answers from this snapshot |
+| `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | SHACL Core, SHACL-SPARQL, SHACL 1.2 node expressions |
+| `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START |
+| `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
+| `coreRdfsClosure`/`rhoDfClosure`, `coreRdfsCheck`/`rhoDfFragmentCheck`, `rdfsPlusClosure` | `(data) => {ok, ntriples, …}` | ρdf closure, fragment check, RDFS-Plus closure |
+| `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |
+| `tableauDlInconsistent` | `(data) => {inconsistent, rlAlone}` | OWL DL clash after RL closure + materialisation |
+| `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | three-valued: `true`, `false`, `null` (budget out, with `reason`) |
+| `rmlMap` | `(mapping, sourceText, 'json' \| 'csv') => Dataset` | one logical source |
+| `csvwToRdf` | `(csvText, metadataJson?, {mode?, base?, url?}) => Dataset` | CSV on the Web csv2rdf |
+| `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched |
+| `rifEval` | `(data, rifXml) => Dataset` | RIF Core forward chaining |
+| `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
+| `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
+| `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
+| `matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`, `matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml` | | exact rational matrices; sigmoid samples |
+| `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
+| `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `capabilities` | `() => {…}` | which ops the loaded wasm serves |
+| `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
+| `Dataset`, `DatasetHandle`, `Store`, `ParseError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |
+
+`./l4` and `./l4-core` are aliases of the main entry in 0.9.x and go in
+0.10.0.
+
+## Behaviour that differs from 0.8 (the F\* engine)
+
+From the parity runs of issue 713
+([design record](../../docs/designissues/2026-10-10-npm-lean-only.md),
+section 6). No answer below was found wrong against a specification on
+either engine; where one engine did less, the row says so.
+
+- `ParseError.offset` is a UTF-16 index (0.8: UTF-8 bytes).
+- DESCRIBE answers the Concise Bounded Description (0.8: the empty graph,
+  [issue 702](https://github.com/danbri/factoidal/issues/702)).
+- `shexValidate` answers a boolean (0.8: `null` outside its decidable
+  fragment).
+- `xmlWellformed` reads a DOCTYPE with an internal subset (0.8: `false` for
+  any DOCTYPE).
+- `xpathEval` is the full XPath 1.0 evaluator; node kinds include `root` and
+  `namespace`; a non-finite number reads `Infinity` or `NaN`.
+- `mathmlEval` evaluates `vector` and `matrix` too; an `undef` result has one
+  fixed `reason` text.
+- `rmlMap` reads the iteration format from the mapping's
+  `rml:referenceFormulation` (RML Core); `sourceKind` is checked.
+- `rifEval` has no `rounds` or `engineMs` members.
+- `tableauMaterialise` adds `budgetHit`.
+- `queryRaw` writes `table` and `ntriples` with N-Triples term syntax; CSV
+  and TSV have no ASK encoding, so an ASK with those outputs is an error.
+- Blank-node label text and N-Quads line order differ (see "Blank nodes,
+  labels and statement order").
+
+## Open shortfalls
+
+Each has an open issue and an expected-failure test in `test/`:
+
+- A `SERVICE <iri>` without `SILENT` whose endpoint is not registered
+  answers no solutions; SPARQL 1.1 Federated Query makes it an error
+  ([issue 717](https://github.com/danbri/factoidal/issues/717)).
+- Turtle output with literal shorthand on keeps an `@prefix xsd:` line when
+  no printed term uses it
+  ([issue 691](https://github.com/danbri/factoidal/issues/691)).
+- `xmpp` `parseJid` does not apply the PRECIS profiles of RFC 8265 to a
+  localpart: it accepts a disallowed code point and does not normalize to
+  NFC ([issue 676](https://github.com/danbri/factoidal/issues/676)).
+
+## Sizes
+
+Measured on 2026-10-10 for 0.9.0 (the wasm that `Wasm/build-wasm.sh` built
+from danbri/factoidal-core; `gzip -9` of each file):
+
+| File | Raw | gzip -9 |
+|---|---|---|
+| `l4-assets/l4factoidal.wasm` (the whole Lean library) | 10,402,990 bytes | 2,042,240 bytes |
+| `l4-assets/l4factoidal.mjs` (Emscripten glue) | 64,391 bytes | 18,307 bytes |
+| `l4-assets/l4factoidal.js` (loader) | 13,460 bytes | 4,853 bytes |
+| `lib/api.mjs` (the wrappers) | 111,836 bytes | 30,042 bytes |
+| every JavaScript file `browser.js` loads, together | 230,293 bytes | 67,446 bytes |
+| the tarball (`npm pack`, 161 files) | 12,042,704 bytes unpacked | 2,410,574 bytes |
+
+A browser page that loads `browser.js` transfers about 2.1 MB with gzip, of
+which 2.04 MB is the wasm. One dispatch table reaches the whole library, so
+the linker removes no Lean module; a smaller wasm for the browser is stage 4
+of [issue 713](https://github.com/danbri/factoidal/issues/713).
 
 ## Testing
 
-`npm test` — unit suite covering the parse/query/serialize surface,
-the RDF/JS contract, canonicalization stability under blank-node
-renaming, and JS↔Wasm byte-parity. The engine underneath is gated on
-every landing by the full W3C suites, a cross-backend parity harness,
-and comparison probes against Apache Jena ARQ — live scores with
-dates and commit links at
-[danbri.github.io/factoidal/test-results](https://danbri.github.io/factoidal/test-results/).
+- `npm test`: the package suite, against the wasm in `l4-assets/`. A
+  function the wasm does not serve fails; it is not skipped.
+- `tests/web-demos/npm_browser_smoke.sh` and
+  `tests/web-demos/bundler_csp_smoke.sh`: `browser.js`, and an esbuild
+  bundle under a strict Content-Security-Policy, in headless Chromium.
+- `tests/engine-compare/run.sh PATH/TO/factoidal-npm-entry.js`: the same
+  inputs through this package and through an F\* engine build (a
+  factoidal-builds artifact). Exit 2 when the bundle is absent.
+- The Lean library is gated on every landing by `lake build` (its
+  `#guard` cases), `formal/lean4/Wasm/native-smoke.sh` and the W3C suites.
 
 ## Provenance & license
 
-Built from [danbri/factoidal](https://github.com/danbri/factoidal)
-(Apache-2.0). This package's JavaScript is a thin consumer layer (API
-shaping + RDF/JS conversion) containing no RDF/SPARQL semantics of
-its own — the semantics are F\*-extracted.
+Built from [danbri/factoidal-core](https://github.com/danbri/factoidal-core)
+(Apache-2.0). This package's JavaScript is a consumer layer (argument
+shaping, RDF/JS conversion, file reading for the store) with no RDF or
+SPARQL semantics of its own. `l4-assets/version.json` records the git
+commit, toolchain and wasm digest of the engine build.

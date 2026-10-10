@@ -1,36 +1,18 @@
-// The core deliverable this file exists to prove: a consumer who
-// `npm install`s factoidal gets the FULL db API (openCottas/
-// queryCottas/closeCottas/toCottas) working on BOTH engines (js_of_ocaml
-// and wasm_of_ocaml) straight out of the packed tarball -- not the
-// source tree.
+// A consumer who `npm install`s @factoidal/core gets a working engine
+// straight out of the packed tarball, not the source tree:
 //
-// Deliberately does NOT `require('./helpers.js')`: that file points
-// FACTOIDAL_JS_BUNDLE/FACTOIDAL_WASM_BUNDLE/FACTOIDAL_NPM_ENTRY(_WASM)
-// at the repo's docs/fstar-extracted/ copies when present, which would
-// silently make every require() below resolve engine bundles from the
-// SOURCE TREE instead of the extracted tarball -- defeating the point
-// of this test. `npm pack` + `tar xf` + `require()` from the extracted
-// directory is the only path exercised here.
-//
-// What this proves, concretely:
 //   1. `npm pack` on npm/factoidal produces a tarball.
-//   2. The tarball's file list includes factoidal.wasm.assets/*.wasm
-//      AND factoidal-npm-entry.wasm.assets/*.wasm (a pack that drops
-//      the wasm binary is the classic bug this guards against).
-//   3. From the EXTRACTED tarball: require the main entry (js engine),
-//      parse + query a small graph.
-//   4. From the EXTRACTED tarball: require('.../wasm.js') (wasm
-//      engine), same parse + query.
-//   5. openCottas() on a toCottas()-produced buffer, then a COUNT and
-//      a SELECT on BOTH engines -- asserting js and wasm agree with
-//      each other AND with the in-memory query() result (the ground
-//      truth: the same data queried without ever going through COTTAS
-//      bytes at all).
+//   2. Its file list holds the Lean engine (l4-assets/l4factoidal.wasm,
+//      .mjs, .js) and the sample store, and no F* bundle and no hacl-wasm
+//      (the package carries one engine since 0.9.0).
+//   3. From the EXTRACTED tarball: require() and import() of the main
+//      entry parse and query a graph.
+//   4. From the EXTRACTED tarball: openStore(sampleStorePath()) answers a
+//      COUNT equal to the sample store's recorded triple count.
 //
-// Skips (not fails) only the wasm-specific assertions when Node < 22
-// (WasmGC) or the packed tarball genuinely has no wasm bundle for this
-// platform build -- the js-engine and tarball-content assertions never
-// skip, since those need nothing but Node and npm.
+// The extracted package resolves its engine from its own l4-assets/. The
+// test sets FACTOIDAL_L4_ASSETS to an empty value for the child process so
+// no override can point it back at the source tree.
 
 'use strict';
 
@@ -42,155 +24,52 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
-const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
 
-const SAMPLE_TTL = `
-  @prefix ex:   <http://example.org/> .
-  @prefix foaf: <http://xmlns.com/foaf/0.1/> .
-  ex:alice a foaf:Person ; foaf:name "Alice" ; foaf:knows ex:bob .
-  ex:bob   a foaf:Person ; foaf:name "Bob" .
-  ex:carol a foaf:Person ; foaf:name "Carol"@en .
+const PROBE = `
+const assert = require('node:assert/strict');
+(async () => {
+  const f = require(process.argv[1]);
+  const ds = await f.parse('@prefix ex: <http://example.org/> . ex:a ex:p "x" , "y" .');
+  assert.equal(ds.size, 2);
+  const rows = await f.query(ds, 'SELECT ?o WHERE { ?s ?p ?o } ORDER BY ?o');
+  assert.deepEqual(rows.map((r) => r.get('o').value), ['x', 'y']);
+  const esm = await import(require('node:url').pathToFileURL(require('node:path').join(process.argv[1], 'index.mjs')).href);
+  assert.equal(esm.parse, f.parse, 'import() and require() give the same module');
+  const store = await f.openStore(f.sampleStorePath());
+  const n = await store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
+  assert.equal(Number(n[0].get('n').value), f.sampleStoreFacts.triples);
+  await store.close();
+  const engineMod = await import(require('node:url').pathToFileURL(require('node:path').join(process.argv[1], 'bin', 'engine.mjs')).href);
+  const loaded = engineMod.resolveEngine();
+  process.stdout.write(JSON.stringify({ ok: true, loaded }));
+})().catch((e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
 `;
 
-const SAMPLE_NQ =
-  '<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .\n' +
-  '<http://example.org/bob> <http://xmlns.com/foaf/0.1/name> "Bob" .\n' +
-  '<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .\n' +
-  '<http://example.org/alice> <http://xmlns.com/foaf/0.1/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> <http://example.org/g1> .\n';
-
-const COUNT_Q = 'SELECT (COUNT(*) AS ?c) WHERE { GRAPH ?g { ?s ?p ?o } }';
-const SELECT_Q = 'SELECT ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } }';
-
-function normalizeBindings(rows) {
-  // rows: Array<Map<string, Term>> -- normalize each row to a sorted,
-  // stringified form so js/wasm result-order differences don't matter.
-  return rows
-    .map((row) => {
-      const parts = [];
-      for (const [k, v] of row.entries()) parts.push(`${k}=${v.termType}:${v.value}`);
-      return parts.sort().join('|');
-    })
-    .sort();
-}
-
-test('pack integrity: npm pack + extract + db API on both engines', async (t) => {
-  let tmpDir = null;
+test('pack integrity: npm pack + extract + parse/query/openStore from the tarball', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'factoidal-pack-'));
   try {
-    // --- 1. npm pack to a temp dir. ---
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoidal-pack-'));
-    const packOut = execFileSync(
-      'npm', ['pack', '--pack-destination', tmpDir],
-      { cwd: PKG_ROOT, encoding: 'utf8' });
-    const lines = packOut.trim().split('\n').filter(Boolean);
-    const tarballName = lines[lines.length - 1].trim();
-    assert.ok(tarballName.endsWith('.tgz'), `unexpected npm pack output: ${packOut}`);
-    const tarballPath = path.join(tmpDir, tarballName);
-    assert.ok(fs.existsSync(tarballPath), `tarball not found at ${tarballPath}`);
-
-    // --- 2. Assert the tarball's own file list carries the wasm assets
-    //        BEFORE extracting -- catches a `files` misconfiguration
-    //        even if extraction itself would silently drop nothing. ---
-    const listing = execFileSync('tar', ['tf', tarballPath], { encoding: 'utf8' })
-      .split('\n').filter(Boolean);
-    const hasJsWasmAsset = listing.some(
-      (p) => p.startsWith('package/factoidal.wasm.assets/') && p.endsWith('.wasm'));
-    const hasEntryWasmAsset = listing.some(
-      (p) => p.startsWith('package/factoidal-npm-entry.wasm.assets/') && p.endsWith('.wasm'));
-    assert.ok(hasJsWasmAsset,
-      `tarball is missing factoidal.wasm.assets/*.wasm -- listing:\n${listing.join('\n')}`);
-    assert.ok(hasEntryWasmAsset,
-      `tarball is missing factoidal-npm-entry.wasm.assets/*.wasm -- listing:\n${listing.join('\n')}`);
-
-    // --- Extract. ---
-    execFileSync('tar', ['xf', tarballPath], { cwd: tmpDir });
-    const pkgDir = path.join(tmpDir, 'package');
-    assert.ok(fs.existsSync(pkgDir), 'extracted package/ directory not found');
-
-    // --- 3. require the main (js) entry from the EXTRACTED package,
-    //        parse + query a small graph. ---
-    const jsEngine = require(path.join(pkgDir, 'index.js'));
-    const jsDs = await jsEngine.parse(SAMPLE_TTL, { format: 'turtle' });
-    assert.equal(jsDs.size, 7, 'js engine: parsed triple count');
-    const jsGroundTruth = await jsEngine.query(jsDs,
-      'PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?name WHERE { ?p foaf:name ?name }');
-    assert.equal(jsGroundTruth.length, 3, 'js engine: query() returns 3 name bindings');
-
-    // --- 4. require('.../wasm.js') from the EXTRACTED package, same
-    //        parse + query. Node < 22 lacks WasmGC -- skip only the
-    //        wasm-dependent assertions, not the whole test. ---
-    let wasmEngine = null;
-    let wasmSkipReason = null;
-    if (NODE_MAJOR < 22) {
-      wasmSkipReason = `Node ${process.versions.node} < 22 (WasmGC needed)`;
-    } else {
-      wasmEngine = require(path.join(pkgDir, 'wasm.js'));
-      if (!wasmEngine.wasmAvailable || !wasmEngine.wasmAvailable()) {
-        wasmSkipReason = 'extracted package has no usable factoidal.wasm.js/.wasm asset';
-      }
+    const packJson = execFileSync('npm', ['pack', '--json', '--pack-destination', tmp], {
+      cwd: PKG_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const info = JSON.parse(packJson)[0];
+    const files = info.files.map((f) => f.path);
+    for (const required of ['l4-assets/l4factoidal.wasm', 'l4-assets/l4factoidal.mjs',
+      'l4-assets/l4factoidal.js', 'index.js', 'index.mjs', 'browser.js', 'lib/api.mjs',
+      'lib/lean-entry.mjs', 'rdfjs.mjs', 'sample-store/CURRENT']) {
+      assert.ok(files.includes(required), `tarball lacks ${required}`);
     }
+    const forbidden = files.filter((p) => /^(factoidal[-.].*\.js|hacl-wasm\/|wasm\.js|lite\.|select\.|browser-wasm\.js|hacl-init\.js|factoidal\.wasm\.assets\/|factoidal-npm-entry)/.test(p));
+    assert.deepEqual(forbidden, [], 'no F* bundle and no hacl-wasm in the tarball');
 
-    if (wasmSkipReason) {
-      t.diagnostic(`wasm engine assertions skipped: ${wasmSkipReason}`);
-    } else {
-      const wasmDs = await wasmEngine.parse(SAMPLE_TTL, { format: 'turtle' });
-      assert.equal(wasmDs.size, 7, 'wasm engine: parsed triple count');
-      const wasmGroundTruth = await wasmEngine.query(wasmDs,
-        'PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT ?name WHERE { ?p foaf:name ?name }');
-      assert.equal(wasmGroundTruth.length, 3, 'wasm engine: query() returns 3 name bindings');
-      assert.deepEqual(
-        normalizeBindings(wasmGroundTruth), normalizeBindings(jsGroundTruth),
-        'js vs wasm: plain query() bindings agree');
-    }
-
-    // --- 5. openCottas() on a toCottas()-produced buffer; COUNT + SELECT
-    //        on both engines, cross-checked against the in-memory ground
-    //        truth (query() on the same N-Quads, no COTTAS involved). ---
-    const capsJs = await jsEngine.capabilities();
-    if (!capsJs.entry || !capsJs.cottasBytesStore) {
-      t.skip('js npm-entry bundle unavailable or predates the COTTAS bytes store ABI');
-      return;
-    }
-
-    const cottasBytes = await jsEngine.toCottas(SAMPLE_NQ, { format: 'nquads' });
-    assert.ok(cottasBytes instanceof Uint8Array && cottasBytes.length > 0,
-      'toCottas produced non-empty bytes');
-
-    // In-memory ground truth: query the same N-Quads directly.
-    const groundTruthCount = await jsEngine.query(SAMPLE_NQ, COUNT_Q, { format: 'nquads' });
-    const groundTruthSelect = await jsEngine.query(SAMPLE_NQ, SELECT_Q, { format: 'nquads' });
-
-    const jsHandle = await jsEngine.openCottas(cottasBytes);
-    const jsCount = await jsEngine.queryCottas(jsHandle, COUNT_Q);
-    const jsSelect = await jsEngine.queryCottas(jsHandle, SELECT_Q);
-    await jsEngine.closeCottas(jsHandle);
-
-    assert.equal(jsCount[0].get('c').value, groundTruthCount[0].get('c').value,
-      'js: COUNT via COTTAS matches in-memory ground truth');
-    assert.deepEqual(normalizeBindings(jsSelect), normalizeBindings(groundTruthSelect),
-      'js: SELECT via COTTAS matches in-memory ground truth');
-
-    if (!wasmSkipReason) {
-      const capsWasm = await wasmEngine.capabilities();
-      if (!capsWasm.entry || !capsWasm.cottasBytesStore) {
-        t.diagnostic('wasm npm-entry bundle unavailable or predates the COTTAS bytes store ABI');
-      } else {
-        const wasmHandle = await wasmEngine.openCottas(cottasBytes);
-        const wasmCount = await wasmEngine.queryCottas(wasmHandle, COUNT_Q);
-        const wasmSelect = await wasmEngine.queryCottas(wasmHandle, SELECT_Q);
-        await wasmEngine.closeCottas(wasmHandle);
-
-        assert.equal(wasmCount[0].get('c').value, groundTruthCount[0].get('c').value,
-          'wasm: COUNT via COTTAS matches in-memory ground truth');
-        assert.deepEqual(normalizeBindings(wasmSelect), normalizeBindings(groundTruthSelect),
-          'wasm: SELECT via COTTAS matches in-memory ground truth');
-
-        assert.equal(jsCount[0].get('c').value, wasmCount[0].get('c').value,
-          'js vs wasm: COUNT-via-COTTAS agree');
-        assert.deepEqual(normalizeBindings(jsSelect), normalizeBindings(wasmSelect),
-          'js vs wasm: SELECT-via-COTTAS agree');
-      }
-    }
+    execFileSync('tar', ['xzf', path.join(tmp, info.filename), '-C', tmp]);
+    const pkgDir = path.join(tmp, 'package');
+    const out = execFileSync(process.execPath, ['-e', PROBE, pkgDir], {
+      encoding: 'utf8', env: { ...process.env, FACTOIDAL_L4_ASSETS: '' },
+    });
+    const r = JSON.parse(out);
+    assert.equal(r.ok, true);
+    assert.ok(r.loaded.startsWith(pkgDir), `the engine came from the tarball (${r.loaded})`);
   } finally {
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

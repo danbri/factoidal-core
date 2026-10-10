@@ -1,16 +1,7 @@
 // VC Data Integrity crypto through the TYPED npm surface (index.js's
-// vc* wrappers), NOT the raw ABI. This proves the two things
-// test/vc-crypto.test.js (which drives the raw abi.vc* directly) does
-// not:
-//
-//   1. The typed wrappers return parsed VALUES (hex string, boolean),
-//      not the raw {ok, ...} JSON envelope.
-//   2. The init story works: these wrappers AUTO-AWAIT initHacl() on
-//      the first call (index.js's driver.initCrypto hook), so the test
-//      NEVER calls initHacl() itself — yet sign/verify still succeed,
-//      and a verify NEVER silently returns true when it should be false
-//      (the #286 throw-on-uninit contract, preserved through the typed
-//      layer by entryResult() throwing on {ok:false}).
+// vc* wrappers): they return parsed VALUES (hex string, boolean), not the
+// raw {ok, ...} envelope. Ed25519 is HACL*'s C code compiled into the Lean
+// wasm module; there is no initialisation step (the test calls none).
 //
 // SECURITY: every negative case (wrong key, tampered signature/proof,
 // altered message/document) MUST resolve to false, never true.
@@ -36,27 +27,8 @@ const V1 = {
   pk: '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c',
 };
 
-// The typed VC surface needs the npm-entry engine bundle. Probe it the
-// same way capabilities() does, so this file no-op-skips (rather than
-// hard-fails) on a checkout without the built bundle.
-async function vcAvailable() {
-  try {
-    const caps = await factoidal.capabilities();
-    return !!caps.vcCrypto;
-  } catch (_) {
-    return false;
-  }
-}
-
-test('typed VC surface (index.js vc*): auto-init + round-trip + tamper', async (t) => {
-  const skip = !(await vcAvailable());
-  if (skip) {
-    t.skip('npm-entry bundle with vc* exports not present (run build-ocaml.sh js + npm)');
-    return;
-  }
-
-  // NB: no initHacl() call anywhere in this test — the typed wrappers
-  // auto-await it on first use.
+test('typed VC surface (index.js vc*): round-trip + tamper', async (t) => {
+  assert.equal((await factoidal.capabilities()).vcCrypto, true, 'the package wasm serves the vc* ops');
 
   await t.test('vcSha256Hex returns the hex digest string (FIPS 180-4 abc)', async () => {
     const digest = await factoidal.vcSha256Hex('abc');

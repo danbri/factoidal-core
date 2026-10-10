@@ -104,11 +104,12 @@ test('post32: BROWSER-SURFACE PARITY — every fn.* name the page calls exists i
   // two live-page breakages (fn.coreRdfsCheck, fn.owlClosure had
   // no browser/hub wrappers — found by the owner on the deployed
   // page, 2026-08-07). This text-level pin closes that class: every
-  // fn.<name>( reference in the page must appear as an export in
-  // npm/factoidal/browser.js and as a method in the hub.njk fn object.
+  // fn.<name>( reference in the page must appear as an export in the
+  // browser driver hub.njk imports (docs/fstar-extracted/browser.js) and
+  // as a method in the hub.njk fn object.
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../docs/web/hub/' + POST_FILE, import.meta.url), 'utf8');
-  const adapter = readFileSync(new URL('../../npm/factoidal/browser.js', import.meta.url), 'utf8');
+  const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
   const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
   const names = [...new Set([...page.matchAll(/\bfn\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)].map(m => m[1]))];
   assert.ok(names.length >= 4, `expected the page to call several fn.* functions, found ${names}`);
@@ -121,7 +122,7 @@ test('post32: BROWSER-SURFACE PARITY — every fn.* name the page calls exists i
     // toRdf etc., so same-name delegation is the only case checked).
     if (new RegExp(`Factoidal\\.${name}\\s*\\(`).test(hub)) {
       const inAdapter = new RegExp(`export\\s+(async\\s+)?function\\s+${name}\\b`).test(adapter);
-      assert.ok(inAdapter, `hub fn.${name} delegates to Factoidal.${name}, which npm/factoidal/browser.js does not export`);
+      assert.ok(inAdapter, `hub fn.${name} delegates to Factoidal.${name}, which docs/fstar-extracted/browser.js does not export`);
     }
   }
 });
@@ -145,7 +146,7 @@ test('post32: the rhoDf* literature-name aliases stay wired (node + browser adap
   const viaPrimary = await factoidal.coreRdfsCheck(ORG_TTL);
   assert.deepEqual(viaAlias, viaPrimary);
   const { readFileSync } = await import('node:fs');
-  const adapter = readFileSync(new URL('../../npm/factoidal/browser.js', import.meta.url), 'utf8');
+  const adapter = readFileSync(new URL('../../docs/fstar-extracted/browser.js', import.meta.url), 'utf8');
   const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
   for (const name of ['rhoDfClosure', 'rhoDfFragmentCheck', 'coreRdfsClosure', 'coreRdfsCheck']) {
     assert.ok(new RegExp(`export\\s+async\\s+function\\s+${name}\\b`).test(adapter), `browser.js lacks ${name}`);

@@ -1,8 +1,5 @@
-// serialize(data, {format:'turtle'}) — the newly-exposed Turtle output
-// path (entry_jsoo.ml's serializeTurtle export was shipped in the ABI
-// but the typed serialize() previously rejected 'turtle' as "pending").
-// This pins the wired path. Needs the npm-entry bundle; no-op-skips
-// otherwise.
+// serialize(data, {format:'turtle'}): the Turtle output path (ops
+// serializeTurtle and serializeTurtleWith).
 
 'use strict';
 
@@ -11,19 +8,14 @@ const assert = require('node:assert/strict');
 
 const factoidal = require('../index.js');
 
+// The engine is the package's own wasm: a load failure is a test failure,
+// so capabilities() is not wrapped in a try.
 async function entryAvailable() {
-  try {
-    return !!(await factoidal.capabilities()).entry;
-  } catch (_) {
-    return false;
-  }
+  return !!(await factoidal.capabilities()).entry;
 }
 
 test("serialize(..., {format:'turtle'}) emits prefix-compacted Turtle", async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (Turtle serialization needs it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const nt = '<http://ex/s> <http://ex/p> <http://ex/o> .\n';
   const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'ntriples' });
   assert.equal(typeof ttl, 'string');
@@ -49,7 +41,7 @@ const NT_TWO_S = '<http://ex/a> <http://ex/p> <http://ex/o> .\n' +
   '<http://ex/b> <http://ex/p> <http://ex/o> .\n';
 
 test('serialize turtle: caller prefixes appear as given', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const ttl = await factoidal.serialize(NT_TWO_S, {
     format: 'turtle', inputFormat: 'ntriples',
     prefixes: { ex: 'http://ex/' },
@@ -61,7 +53,7 @@ test('serialize turtle: caller prefixes appear as given', async (t) => {
 });
 
 test('serialize turtle: unused caller prefixes are not emitted', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const ttl = await factoidal.serialize(NT_TWO_S, {
     format: 'turtle', inputFormat: 'ntriples',
     prefixes: { ex: 'http://ex/', unused: 'http://unused.example/' },
@@ -71,7 +63,7 @@ test('serialize turtle: unused caller prefixes are not emitted', async (t) => {
 });
 
 test('serialize turtle: auto ns1: labels skip caller labels already in use', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   // A second, unprefixed namespace still needs an auto label; the
   // engine must not reuse 'ex' (the caller's own label) for it.
   const nt = '<http://ex/a> <http://other/p> <http://other/o> .\n';
@@ -85,7 +77,7 @@ test('serialize turtle: auto ns1: labels skip caller labels already in use', asy
 });
 
 test('serialize turtle: literal shorthand is on by default (220.0, true print bare)', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const nt = '<http://ex/s> <http://ex/p> "220.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n' +
     '<http://ex/s> <http://ex/p> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n';
   const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'ntriples' });
@@ -95,7 +87,7 @@ test('serialize turtle: literal shorthand is on by default (220.0, true print ba
 });
 
 test('serialize turtle: literalShorthand:false turns off the bare-literal printing', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const nt = '<http://ex/s> <http://ex/p> "220.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n' +
     '<http://ex/s> <http://ex/p> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n';
   const ttl = await factoidal.serialize(nt, {
@@ -106,7 +98,7 @@ test('serialize turtle: literalShorthand:false turns off the bare-literal printi
 });
 
 test('serialize turtle: parse-then-serialize keeps the source prefixes', async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const ds = await factoidal.parse(
     '@prefix ex: <http://ex/> .\n@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n' +
     'ex:s foaf:knows ex:o .\n', { format: 'turtle' });
@@ -121,11 +113,13 @@ test('serialize turtle: parse-then-serialize keeps the source prefixes', async (
 // Expected failure (owner rule 2026-09-07: a stated shortfall is a failing
 // test plus an open issue). The writer collects the xsd: prefix from the
 // datatype IRIs before literal shorthand removes them from the printed
-// text, so the declaration survives with no reference. Flip to a real
-// assertion and close the issue when the F* writer is fixed.
+// text, so the declaration survives with no reference. The Lean writer
+// (formal/lean4/L4Factoidal/Syntax/TurtleSerialize.lean) has the same
+// defect as the F* writer the issue names. Flip to a real assertion and
+// close the issue when the Lean writer is fixed.
 const ISSUE_691 = 'https://github.com/danbri/factoidal/issues/691';
 test(`xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (${ISSUE_691})`, async (t) => {
-  if (!(await entryAvailable())) { t.skip('npm-entry bundle not present'); return; }
+  assert.ok(await entryAvailable());
   const ds = await factoidal.parse(
     '@prefix ex: <http://ex/> .\nex:a ex:b 1.5, 42 .\n', { format: 'turtle' });
   const ttl = await factoidal.serialize(ds, { format: 'turtle' });

@@ -1,42 +1,25 @@
-// Proves the bundler route of issue #682 end to end: esbuild --bundle
-// over test/fixtures/bundler-app.mjs (which imports ONLY
-// '@factoidal/core/api' and '@factoidal/core/factoidal-npm-entry.js',
-// both statically importable, no fetch, no eval) produces output that
-// runs standalone under Node with `platform: 'browser'` — the same
-// constraint a real bundler-built web page runs under. The browser
-// CSP page itself (no `unsafe-eval`) is proved separately by
-// tests/web-demos/bundler_csp_smoke.sh, which bundles this same
-// fixture and drives it through headless Chromium.
+// Proves the bundler route of issue #682 end to end, on the Lean engine:
+// esbuild --bundle over test/fixtures/bundler-app.mjs (which imports only
+// '@factoidal/core/api' and the engine loader
+// '@factoidal/core/l4-assets/l4factoidal.js', both statically) produces
+// output that runs standalone, with the wasm handed in through the loader's
+// instantiateWasm hook. The browser page under a Content-Security-Policy
+// with no 'unsafe-eval' is proved separately by
+// tests/web-demos/bundler_csp_smoke.sh, which bundles the same fixture and
+// drives it through headless Chromium.
 //
-// Skips (does not fail) only when esbuild cannot be resolved --
-// `npm install` in npm/factoidal (esbuild is a devDependency) makes
-// it resolvable; every other failure here is a real regression.
+// Skips (does not fail) only when esbuild cannot be resolved -- `npm
+// install` in npm/factoidal (esbuild is a devDependency) makes it
+// resolvable; every other failure here is a regression.
 //
-// esbuild `external` list (issue #682): factoidal-npm-entry.js is
-// js_of_ocaml output, whose runtime has four literal
-// `require(moduleName)` call sites for Node built-ins: 'node:fs' and
-// 'node:tty' unconditionally inside class methods (file I/O,
-// `isatty()` — code paths this fixture's parse/SELECT flow never
-// calls), and 'util' and 'fzstd' behind `typeof require ===
-// "function"` guards (a TextDecoder fallback and zstd decompression
-// for COTTAS bytes). esbuild constant-folds `typeof require` to
-// `"undefined"` when bundling to `format: 'esm'` for `platform:
-// 'browser'` (no `require` global exists in that output, so the
-// guard is provably false) and dead-code-eliminates the guarded
-// branches — 'util' and 'fzstd' are never even seen. The two
-// UNGUARDED requires are still syntactically present in the bundle
-// graph (their containing methods are never CALLED by this fixture,
-// but esbuild does not do that depth of interprocedural analysis) and
-// must be marked `external` (esbuild then leaves the `require(...)`
-// call as-is instead of trying to bundle a module for it): 'node:fs',
-// 'node:tty'. Safe at runtime: with no `require` global, `typeof
-// require === "function"` used elsewhere is false, and the two
-// external `require(...)` calls only execute inside methods this
-// fixture's parse/SELECT path never reaches. This list is derived
-// empirically below (esbuild's own "Could not resolve" errors from an
-// externals-free build), not hardcoded, so a js_of_ocaml runtime
-// change that adds, removes, or unguards one is caught by this test
-// rather than by a silent stale allowlist.
+// esbuild `external` list: the Emscripten glue (l4-assets/l4factoidal.mjs)
+// has one dynamic `import("node:module")`, taken only when it runs under
+// Node (it builds a `require` from it to read the wasm file). A browser
+// bundle cannot resolve a `node:` specifier, so it must be external; in a
+// browser that branch never runs. Every other Node access in the glue goes
+// through that local `require`, which esbuild leaves alone. The list is
+// derived from esbuild's own "Could not resolve" errors, not hard-coded,
+// and the test asserts it is exactly ['node:module'].
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -127,41 +110,23 @@ test('esbuild --bundle over the CSP fixture runs under Node (platform: browser, 
     const bundleMs = Date.now() - t0;
     console.log(`  esbuild bundle: ${bundleMs}ms, external=[${externalList.join(', ')}]`);
 
-    // The empirically-derived external list must be exactly the two
-    // UNGUARDED js_of_ocaml Node-builtin requires documented in this
-    // file's header ('util'/'fzstd' are guarded by `typeof require`
-    // and esbuild dead-code-eliminates them for this platform/format
-    // combination before ever trying to resolve them) -- not a subset
-    // (a missing one means the build above would have failed) and not
-    // a superset (a stray extra name means something in the fixture
-    // itself started requiring a Node builtin, which this test should
-    // catch rather than silently externalize).
-    assert.deepEqual(
-      [...externalList].sort(),
-      ['node:fs', 'node:tty'],
-      'external list drifted from the documented js_of_ocaml runtime probes');
+    // The empirically-derived external list must be exactly the glue's one
+    // Node-only dynamic import (see the header): a stray extra name means
+    // something in the fixture's import graph started importing a Node
+    // built-in, which this test should catch rather than externalize.
+    assert.deepEqual([...externalList].sort(), ['node:module'],
+      'external list drifted from the documented Emscripten glue import');
 
     assert.ok(fs.existsSync(outfile), 'esbuild wrote the bundle output');
     const bundleSource = fs.readFileSync(outfile, 'utf8');
+    assert.ok(!/new Function\(/.test(bundleSource), 'no new Function( in the bundle');
 
-    // js_of_ocaml's runtime bootstraps a filesystem-device table at
-    // module load, unconditionally (not gated by anything this
-    // fixture's parse/SELECT path controls): it branches on
-    // `process.versions.node` to decide between a real-fs device
-    // (needs the externalized `require("node:fs")`, which throws
-    // under `format: 'esm'` output if actually called -- ESM has no
-    // dynamic require) and an in-memory one. In a real browser that
-    // branch is never taken (no `process` global at all), which is
-    // what this bundle is built for (`platform: 'browser'`); running
-    // the SAME output directly under Node, `process` is real, so the
-    // real-fs branch runs and hits the externalized require. Deleting
-    // `globalThis.process` before executing reproduces the browser
-    // condition this platform target assumes, without touching the
-    // bundle file esbuild wrote (only the copy fed to this child
-    // process) -- exactly what the actual browser CSP page in
-    // tests/web-demos/bundler_csp_smoke.sh gets for free simply by
-    // being a browser.
-    const runSource = 'delete globalThis.process;\n' + bundleSource;
+    // The page's part: hand the wasm bytes to the fixture's instantiateWasm.
+    const wasmPath = path.join(PKG_ROOT, 'l4-assets', 'l4factoidal.wasm');
+    const runSource =
+      `import { readFileSync as __readWasm } from 'node:fs';\n` +
+      `globalThis.__FACTOIDAL_WASM_BYTES__ = __readWasm(${JSON.stringify(wasmPath)});\n` +
+      bundleSource;
 
     let stdout;
     try {

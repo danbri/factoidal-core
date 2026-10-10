@@ -791,4 +791,71 @@ private def pbRows (queryText : String) : Option Nat :=
         | .ok q => (SPARQL.evalSelect {} { default := pbData, named := [] } q).2.map (·.lookup "this")
         | .error _ => []) == [some pbFocus]
 
+/-! ### The data index and the hash-indexed folds (https://github.com/danbri/factoidal/issues/723)
+
+`DataIndex.ofGraph` must answer `objectsOf` with the same list, in graph
+order, including repeated objects and pairs with no triple; an index built
+for another graph gives other answers, so these guards would fail if the
+indexed functions read the graph instead of the index. `dedupTerms` and
+`distinctSubjects` compile to their hash forms (`csimp`); the folds below are
+restated inline so the guards compare two programs. -/
+
+def ixDoc : String :=
+  "ex:a ex:p ex:o1 , ex:o2 . ex:b ex:p ex:o1 . ex:a ex:q \"x\" . ex:a ex:p ex:o3 . " ++
+  "ex:a ex:p ex:o2 . ex:Sub rdfs:subClassOf ex:Mid . ex:Mid rdfs:subClassOf ex:Super . " ++
+  "ex:x a ex:Sub . ex:y a ex:Other . _:n ex:p ex:o1 ."
+
+def ixG : Graph := ttl ixDoc
+def ixIx : DataIndex := DataIndex.ofGraph ixG
+def ixA : Subject := .iri (exIri "a")
+def ixP : WfIri := exIri "p"
+
+#guard ixIx.objectsOf ixG ixA ixP == objectsOf ixG ixA ixP
+#guard (ixIx.objectsOf ixG ixA ixP).length == 4
+#guard ixIx.objectsOf ixG ixA ixP ==
+  [.iri (exIri "o1"), .iri (exIri "o2"), .iri (exIri "o3"), .iri (exIri "o2")]
+#guard ixIx.objectsOf ixG (.iri (exIri "b")) ixP == objectsOf ixG (.iri (exIri "b")) ixP
+#guard ixIx.objectsOf ixG ixA (exIri "q") == objectsOf ixG ixA (exIri "q")
+#guard ixIx.objectsOf ixG (.iri (exIri "zz")) ixP == []
+#guard ixIx.length ixG == ixG.length && ixIx.length ixG == 11
+-- An index of the empty graph answers for the empty graph, not for `ixG`.
+#guard (DataIndex.ofGraph []).objectsOf ixG ixA ixP == []
+#guard DataIndex.none.objectsOf ixG ixA ixP == objectsOf ixG ixA ixP
+#guard [exIri "Super", exIri "Sub", exIri "Other"].all fun c =>
+  [Term.iri (exIri "x"), .iri (exIri "y"), .iri (exIri "a")].all fun n =>
+    isShaclInstanceIx ixIx ixG n c == isShaclInstance ixG n c
+#guard isShaclInstanceIx ixIx ixG (.iri (exIri "x")) (exIri "Super") == true
+#guard isShaclInstanceIx ixIx ixG (.iri (exIri "y")) (exIri "Super") == false
+#guard isShaclInstanceIx (DataIndex.ofGraph []) ixG (.iri (exIri "x")) (exIri "Super") == false
+#guard evalPathIx ixIx ixG (.iri (exIri "a")) (.oneOrMore (.pred ixP)) ==
+  evalPath ixG (.iri (exIri "a")) (.oneOrMore (.pred ixP))
+#guard evalPathIx ixIx ixG (.iri (exIri "x"))
+    (.seq [.pred (exIri "type" |> fun _ => rdfType), .zeroOrMore (.pred rdfsSubClassOf)]) ==
+  [.iri (exIri "Sub"), .iri (exIri "Mid"), .iri (exIri "Super")]
+
+private def dedupSpec (l : List Term) : List Term :=
+  l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) []
+
+private def ixTerms : List Term :=
+  [.iri (exIri "o1"), .literal (Literal.langString "chat" "en"), .iri (exIri "o2"),
+   .literal (Literal.langString "chat" "EN"), .bnode "b", .iri (exIri "o1"),
+   .literal (Literal.string "chat"), .bnode "b", .literal (Literal.langString "chat" "fr")]
+
+#guard dedupTerms ixTerms == dedupSpec ixTerms
+#guard dedupTerms (ixTerms ++ ixTerms.reverse ++ ixTerms) == dedupSpec (ixTerms ++ ixTerms.reverse ++ ixTerms)
+-- "chat"@en and "chat"@EN are one term (language tags compare without case);
+-- the first stays. Plain "chat" and "chat"@fr stay apart.
+#guard (dedupTerms ixTerms).length == 6
+#guard (dedupTerms ixTerms).take 2 == [.iri (exIri "o1"), .literal (Literal.langString "chat" "en")]
+#guard dedupTerms [] == []
+
+private def distinctSubjectsSpec (g : Graph) : List Subject :=
+  g.foldl (fun acc t => if acc.contains t.s then acc else acc ++ [t.s]) []
+
+#guard distinctSubjects ixG == distinctSubjectsSpec ixG
+#guard (distinctSubjects ixG).take 6 == [ixA, .iri (exIri "b"), .iri (exIri "Sub"), .iri (exIri "Mid"),
+  .iri (exIri "x"), .iri (exIri "y")]
+#guard (distinctSubjects ixG).length == 7
+#guard (distinctSubjects (ixG ++ ixG)).length == 7
+
 end L4Factoidal.SHACL.Tests

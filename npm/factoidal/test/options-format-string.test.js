@@ -11,12 +11,10 @@ const assert = require('node:assert/strict');
 
 const factoidal = require('../index.js');
 
+// The engine is the package's own wasm: a load failure is a test failure,
+// so capabilities() is not wrapped in a try.
 async function entryAvailable() {
-  try {
-    return !!(await factoidal.capabilities()).entry;
-  } catch (_) {
-    return false;
-  }
+  return !!(await factoidal.capabilities()).entry;
 }
 
 const NT = '<http://ex/s> <http://ex/p> "1.5"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n';
@@ -31,10 +29,7 @@ test("parse(text, 'ntriples') is parse(text, {format:'ntriples'})", async () => 
 });
 
 test("serialize(ds, 'turtle') is Turtle, not silent N-Quads", async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (Turtle serialization needs it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const ds = await factoidal.parse(NT, 'ntriples');
   const ttl = await factoidal.serialize(ds, 'turtle');
   assert.equal(ttl, await factoidal.serialize(ds, { format: 'turtle' }));
@@ -44,10 +39,7 @@ test("serialize(ds, 'turtle') is Turtle, not silent N-Quads", async (t) => {
 });
 
 test("openDataset(text, 'ntriples') and handle.serialize('turtle')", async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (dataset handles need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const h = await factoidal.openDataset(NT, 'ntriples');
   try {
     assert.equal(h.size, 1);
@@ -59,10 +51,7 @@ test("openDataset(text, 'ntriples') and handle.serialize('turtle')", async (t) =
 });
 
 test("update, canonicalize and query accept the bare format string", async (t) => {
-  if (!(await entryAvailable())) {
-    t.skip('npm-entry bundle not present (UPDATE, canonicalize and query need it)');
-    return;
-  }
+  assert.ok(await entryAvailable());
   const out = await factoidal.update(
     NT, 'INSERT DATA { <http://ex/s> <http://ex/q> <http://ex/o> }', 'ntriples');
   assert.equal(out.size, 2);
