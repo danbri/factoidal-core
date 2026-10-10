@@ -40,6 +40,29 @@ def takeCappedAux {α : Type} (c : RowCap) : List α → Nat → List α
       if c.isEnabled && taken ≥ c.maxRows then []
       else x :: takeCappedAux c rest (taken + 1)
 
+/-- `takeCappedAux` with the kept rows on a reverse accumulator: a tail
+call per row. `takeCappedAux` conses after its recursive call, one stack
+frame per solution row (https://github.com/danbri/factoidal/issues/746). -/
+def takeCappedAuxTR {α : Type} (c : RowCap) (xs : List α) (taken : Nat) : List α :=
+  go xs taken []
+where
+  go : List α → Nat → List α → List α
+    | [], _, acc => acc.reverse
+    | x :: rest, taken, acc =>
+        if c.isEnabled && taken ≥ c.maxRows then acc.reverse
+        else go rest (taken + 1) (x :: acc)
+
+theorem takeCappedAuxTR_go_eq {α : Type} (c : RowCap) :
+    ∀ (xs : List α) (taken : Nat) (acc : List α),
+      takeCappedAuxTR.go c xs taken acc = acc.reverse ++ takeCappedAux c xs taken
+  | [], _, acc => by simp [takeCappedAuxTR.go, takeCappedAux]
+  | x :: rest, taken, acc => by
+      simp only [takeCappedAuxTR.go, takeCappedAux]
+      split <;> rename_i h <;> simp [h, takeCappedAuxTR_go_eq c rest]
+
+@[csimp] theorem takeCappedAux_eq_TR : @takeCappedAux = @takeCappedAuxTR := by
+  funext α c xs taken; simp [takeCappedAuxTR, takeCappedAuxTR_go_eq]
+
 def takeCapped {α : Type} (c : RowCap) (rows : List α) : List α :=
   takeCappedAux c rows 0
 

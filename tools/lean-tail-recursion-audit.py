@@ -42,10 +42,18 @@ LIMITS OF THE METHOD (state these with any result)
     suspects; it does not prove a bound.
   * The scan sees only what was compiled.  A module absent from
     `.lake/build/ir` is not audited -- run `lake build` first.
-  * A symbol that ends in `___redArg` (the compiler's reduced-arity copy of
-    a definition) is not mapped back to its Lean declaration: it lands in
-    class `unknown`, which the gate does not check.  `OwlXml.readList` was
-    one on 2026-10-10 (https://github.com/danbri/factoidal/issues/746).
+  * Until 2026-10-10 a symbol that ends in `___redArg` (the compiler's
+    reduced-arity copy of a definition) was not mapped back to its Lean
+    declaration: it landed in class `unknown`, which the gate does not
+    check, and 24 input-proportional recursions were outside the gate
+    (https://github.com/danbri/factoidal/issues/746).  The suffix is now
+    stripped.  The class `unknown` still holds symbols the tool cannot map
+    (instance methods, `where` helpers with other names, core combinators
+    specialised at our call sites); it is unaudited, not clean.
+  * A `@[csimp]` theorem marks its left-hand side `replaced` by the LAST
+    component of the name only, so a csimp for `XSLT.insertBy` also marks
+    `XML.Canonical.insertBy` replaced.  Allow-list such a namesake with its
+    own bound rather than rely on the mark.
   * The scan reads every `.c` under `.lake/build/ir`, including those of
     modules that no longer exist when the `.lake` directory is restored from
     a cache: a stale file is audited as if it were built.
@@ -159,6 +167,9 @@ def strip_wrappers(sym):
             s = s[len(p):]
             break
     s = re.sub(r"___boxed$", "", s)
+    # the compiler's reduced-arity copy of a definition; without this the
+    # symbol maps to no declaration and escapes the gate as `unknown`
+    s = re.sub(r"___redArg$", "", s)
     s = re.sub(r"___closed__\d+(_value)?$", "", s)
     return s
 

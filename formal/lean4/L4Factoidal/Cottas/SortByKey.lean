@@ -39,6 +39,45 @@ def sortByKey (key : α → Nat) : List α → List α
   | []      => []
   | x :: xs => insertByKey key x (sortByKey key xs)
 
+/-- `insertByKey` with the passed prefix on a reverse accumulator: a tail
+call per element. The writers sort every subject or pair of a file with
+`sortByKey`, which took one frame per element in each insertion and in the
+outer recursion (https://github.com/danbri/factoidal/issues/746). The sort stays an insertion sort: quadratic
+time, constant stack. -/
+def insertByKeyTR (key : α → Nat) (x : α) (ys : List α) : List α := go ys []
+where
+  go : List α → List α → List α
+    | [], acc => (x :: acc).reverse
+    | y :: ys, acc =>
+        if key x == key y then acc.reverse ++ y :: ys
+        else if key x < key y then acc.reverse ++ x :: y :: ys
+        else go ys (y :: acc)
+
+theorem insertByKeyTR_go_eq (key : α → Nat) (x : α) :
+    ∀ (ys acc : List α), insertByKeyTR.go key x ys acc = acc.reverse ++ insertByKey key x ys
+  | [], acc => by simp [insertByKeyTR.go, insertByKey]
+  | y :: ys, acc => by
+      simp only [insertByKeyTR.go, insertByKey]
+      split
+      · simp
+      · split
+        · simp
+        · simp [insertByKeyTR_go_eq key x ys]
+
+@[csimp] theorem insertByKey_eq_insertByKeyTR : @insertByKey = @insertByKeyTR := by
+  funext α key x ys; simp [insertByKeyTR, insertByKeyTR_go_eq]
+
+/-- `sortByKey` as a right fold of `insertByKey` (both loops). -/
+def sortByKeyTR (key : α → Nat) (xs : List α) : List α := xs.foldr (insertByKey key) []
+
+theorem sortByKey_eq_foldr (key : α → Nat) :
+    ∀ xs : List α, sortByKey key xs = xs.foldr (insertByKey key) []
+  | [] => rfl
+  | x :: xs => by simp [sortByKey, sortByKey_eq_foldr key xs]
+
+@[csimp] theorem sortByKey_eq_sortByKeyTR : @sortByKey = @sortByKeyTR := by
+  funext α key xs; exact sortByKey_eq_foldr key xs
+
 theorem allKeysGt_weaken (key : α → Nat) (c d : Nat) (l : List α)
     (hcd : c < d) (h : allKeysGt key d l = true) : allKeysGt key c l = true := by
   induction l with

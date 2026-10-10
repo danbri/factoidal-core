@@ -56,6 +56,7 @@ budget so the difference is a nuisance rather than a semantic choice.
 -/
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.XML.Parser
+import L4Factoidal.ListTR
 
 namespace L4Factoidal.RIF.Xml
 
@@ -184,6 +185,20 @@ def listCollectSome {α : Type} : List (Option α) → Option (List α)
   | [] => some []
   | none :: _ => none
   | some x :: rest => (listCollectSome rest).map (x :: ·)
+
+/-- `listCollectSome` as `List.mapM id` in `Option` (a loop): one frame for
+any number of children (https://github.com/danbri/factoidal/issues/746). -/
+def listCollectSomeTR {α : Type} (xs : List (Option α)) : Option (List α) := xs.mapM id
+
+theorem listCollectSome_eq_mapM {α : Type} :
+    ∀ xs : List (Option α), listCollectSome xs = xs.mapM id
+  | [] => rfl
+  | none :: _ => by rw [L4Factoidal.ListTR.optionMapM_cons]; rfl
+  | some x :: rest => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, ← listCollectSome_eq_mapM rest]; rfl
+
+@[csimp] theorem listCollectSome_eq_TR : @listCollectSome = @listCollectSomeTR := by
+  funext α xs; exact listCollectSome_eq_mapM xs
 
 /-! ## Terms, including `External` in FUNCTION position
 

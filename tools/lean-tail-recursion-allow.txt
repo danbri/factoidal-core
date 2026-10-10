@@ -696,3 +696,18 @@ L4Factoidal_XSD_readSimpleType  # (b) simple-type derivation chain and nesting i
 L4Factoidal_XSD_unionMembers  # (b) restriction chain of one simple type; fuel-bounded
 L4Factoidal_XSD_derivedOk  # (b) derivation chain of one simple type; fuel-bounded
 L4Factoidal_XSD_unreadablePatternsOfFuel  # (b) list/union nesting of one simple type; fuel-bounded
+# --- Found when the audit learned to read `___redArg` symbols (same day) ---
+L4Factoidal_CL_denotTermFin  # (b) nesting of one Common Logic term in the text
+L4Factoidal_CL_denotSeqFin  # (b) arguments of one Common Logic term or atom (mutual with denotTermFin)
+L4Factoidal_CL_satFuel  # (b) nesting of one Common Logic sentence; fuel-bounded
+L4Factoidal_CL_pDenotSeq  # (b) arguments of one term; a Prop-valued model-theoretic definition
+L4Factoidal_Unified_pSeq  # (b) arguments of one term; a Prop-valued model-theoretic definition
+L4Factoidal_Cottas_replaceEntry  # (c) page-cache entries; length <= capacity (pcachePut_capacity_bound)
+L4Factoidal_Cottas_dropEntry  # (c) page-cache entries; length <= capacity (pcachePut_capacity_bound)
+L4Factoidal_JSONLD_flUpd  # (b) members of one node object (the node map itself is a TreeMap)
+L4Factoidal_JSONLD_flRemove  # (b) members of one node object
+L4Factoidal_JSONLD_flInsertByKey  # (b) called only by flSortByKey
+L4Factoidal_JSONLD_flSortByKey  # (b) members of one frame object or one node's reverse entries
+L4Factoidal_XML_Canonical_insertBy  # (b) attributes or namespace declarations of one element (listed here: the audit's csimp mark is by short name, and XSLT.insertBy shares it)
+L4Factoidal_Testing_interleave  # (c) test-case enumeration in the Testing library (partial def); inputs are generator lists
+L4Factoidal_Testing_removeFirstBy  # (c) property-test helper; inputs are generated test values
