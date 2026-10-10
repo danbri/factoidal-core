@@ -31,7 +31,11 @@ import * as Corpus from '../../docs/web/hub/assets/data/gen-cottas-corpus.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 
-const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
+const npmEntry = await import(NPM_FACTOIDAL_INDEX);
+const factoidal = npmEntry.default;
+// The page's fn.loadL4() is the package's loaded engine (hub.njk); the
+// Node entry exports the same loader.
+const fn = { ...factoidal, loadL4: npmEntry.loadEngine };
 const POST_FILE = '42-cottas-a-store-at-scale.md';
 const FIXTURE_PATH = path.join(HUB_POST_DIR, 'assets', 'data', 'cottas-corpus.trig');
 
@@ -54,7 +58,7 @@ after(() => {
   if (previousFetch === undefined) delete globalThis.fetch; else globalThis.fetch = previousFetch;
 });
 
-const run = runReactivePost(cells, { fn: factoidal, pretty });
+const run = runReactivePost(cells, { fn, pretty });
 
 const TEST_PERSON = 375; // 1..N_PEOPLE=500
 const EXPECTED_ORG = Corpus.orgIdForPerson(TEST_PERSON);
@@ -75,12 +79,14 @@ test('post42: parsed cell reports the labelled 4,000-triple count', async () => 
   assert.ok(parsed.parseMs >= 0);
 });
 
-test('post42: store cell (toCottas + openCottas) produces a non-empty store byte size and a handle', async () => {
+test('post42: store cell (pack in memory + openStore) produces a non-empty generation and an open Store', async () => {
   const store = await run.value('store');
-  assert.ok(store.storeBytes > 0, 'toCottas() bytes should be non-empty');
+  assert.ok(store.storeBytes > 0, 'the packed generation should be non-empty');
+  assert.ok(store.artifacts > 1, 'a manifest and at least one block');
   assert.ok(store.textBytes > 0);
-  assert.equal(typeof store.handle, 'string');
-  assert.ok(store.toCottasMs >= 0);
+  assert.equal(store.handle.generation, 'gen-1');
+  assert.equal(store.handle.rows, Corpus.TOTAL_TRIPLES);
+  assert.ok(store.packMs >= 0);
   assert.ok(store.openMs >= 0);
 });
 
@@ -124,7 +130,7 @@ test('post42: comparisonTable cell -- array of plain row objects (Table-toggle s
   assert.deepEqual(rendered.columns, Object.keys(comparisonTable[0]));
 });
 
-test('post42: reopened cell -- openCottas() on the same bytes answers over the full corpus again', async () => {
+test('post42: reopened cell -- openStore() on the same artifacts answers over the full corpus again', async () => {
   const reopened = await run.value('reopened');
   assert.equal(reopened.count, Corpus.TOTAL_TRIPLES);
   assert.ok(reopened.openMs >= 0);
@@ -135,7 +141,7 @@ test('post42: point lookup -- store and memory return the pinned name, not just 
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await factoidal.queryCottas(store.handle, queries.point);
+  const storeRows = await store.handle.query(queries.point);
   const memoryRows = await factoidal.query(parsed.dataset, queries.point);
 
   assert.equal(storeRows.length, 1);
@@ -150,7 +156,7 @@ test('post42: star join -- store and memory return the pinned 5-predicate set fo
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await factoidal.queryCottas(store.handle, queries.star);
+  const storeRows = await store.handle.query(queries.star);
   const memoryRows = await factoidal.query(parsed.dataset, queries.star);
   assert.equal(storeRows.length, 5);
   assert.equal(memoryRows.length, 5);
@@ -178,7 +184,7 @@ test('post42: cross-graph GRAPH join -- store and memory both resolve person -> 
   const queries = await run.value('queries');
   const parsed = await run.value('parsed');
 
-  const storeRows = await factoidal.queryCottas(store.handle, queries.crossGraph);
+  const storeRows = await store.handle.query(queries.crossGraph);
   const memoryRows = await factoidal.query(parsed.dataset, queries.crossGraph);
   assert.equal(storeRows.length, 1);
   assert.equal(memoryRows.length, 1);

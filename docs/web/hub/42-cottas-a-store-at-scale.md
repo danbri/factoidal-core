@@ -1,6 +1,6 @@
 ---
-title: "COTTAS: a store, not just a format"
-description: "A 4,000-triple, four-graph corpus loaded straight into the browser's in-memory COTTAS bytes store, then queried three ways and timed against the same queries over a plain parsed dataset."
+title: "A store, not just a format"
+description: "A 4,000-triple, four-graph corpus packed in the browser into a Shardborough store generation (the Lean store of @factoidal/core), then queried three ways and timed against the same queries over a plain parsed dataset."
 layout: hub.njk
 series: docs-hub
 series_order: 42
@@ -8,6 +8,17 @@ vocab: none
 status: published
 tests: tests/hub/post42_test.mjs
 ---
+
+> **On this site's engine.** Since `@factoidal/core` 0.9.0 the hub runs
+> the Lean 4 engine. The owner's ruling on
+> [issue 566](https://github.com/danbri/factoidal/issues/566) replaces
+> the F\* COTTAS store with the Lean persisted store (Shardborough), so
+> the cells below pack the corpus into one Shardborough generation in
+> memory (layout `ibk4`, the quad layout) with the engine's pack
+> operations, open it with `fn.openStore(reader, {generation})`, and
+> query the `Store` it answers. The prose about COTTAS bytes, `toCottas`
+> and `queryCottas` records the F\* store these cells used until 0.9.0
+> ([issue 726](https://github.com/danbri/factoidal/issues/726)).
 
 [Post 18](../18-the-durable-log-live/) named `toCottas`/`openCottas` as
 the browser's write half of the on-disk COTTAS store, but never called
@@ -80,15 +91,49 @@ the graph count):
 
 ```observable-js
 store = {
+  // Pack the corpus into one Shardborough generation, in memory. The
+  // engine's pack operations take the text in chunks and answer each
+  // artifact by name; this cell only keeps the bytes in a Map. Layout
+  // ibk4 is the quad layout (named graphs).
+  const engine = await fn.loadL4();
+  const source = new TextEncoder().encode(fixture.text);
+  const files = new Map();
   const t0 = performance.now();
-  const bytes = await fn.toCottas(parsed.dataset);
-  const toCottasMs = performance.now() - t0;
+  const { handle } = engine.call("packBegin", ["trig", "ibk4", "", ""]);
+  const drain = () => {
+    for (;;) {
+      const answer = engine.callBlobIO("packNext", [handle], new Uint8Array(0));
+      if (answer.envelope.done === true) return;
+      files.set("gen-1/" + answer.envelope.name, answer.bytes);
+    }
+  };
+  try {
+    for (let pass = 0; pass < 2; pass++) {
+      for (let offset = 0; offset < source.length; offset += 65536) {
+        engine.callBlobIO("packFeed", [handle], source.subarray(offset, offset + 65536));
+        drain();
+      }
+      engine.call("packEndPass", [handle]);
+      drain();
+    }
+    engine.call("packFinish", [handle]);
+    drain();
+  } finally {
+    try { engine.call("packClose", [handle]); } catch (_) { /* already closed */ }
+  }
+  const packMs = performance.now() - t0;
+  const reader = (path) => {
+    const bytes = files.get(path);
+    if (!bytes) throw new Error(`no artifact ${path}`);
+    return bytes;
+  };
   const t1 = performance.now();
-  const handle = await fn.openCottas(bytes);
+  const opened = await fn.openStore(reader, { generation: "gen-1" });
   const openMs = performance.now() - t1;
   return {
-    bytes, handle, toCottasMs, openMs,
-    storeBytes: bytes.length,
+    reader, handle: opened, packMs, openMs,
+    artifacts: files.size,
+    storeBytes: [...files.values()].reduce((n, b) => n + b.length, 0),
     textBytes: fixture.textBytes,
   };
 }
@@ -155,7 +200,7 @@ storeTimings = {
     let rows;
     for (let i = 0; i < 3; i++) {
       const t0 = performance.now();
-      rows = await fn.queryCottas(store.handle, sparql);
+      rows = await store.handle.query(sparql);
       times.push(performance.now() - t0);
     }
     out.push({
@@ -167,7 +212,7 @@ storeTimings = {
 }
 ```
 
-`storeTimings` above — median of 3, your browser, `fn.queryCottas`
+`storeTimings` above — median of 3, your browser, `store.handle.query`
 against `store.handle`.
 
 ```observable-js
@@ -222,11 +267,11 @@ artifact, not re-parsing the original 4,000 triples:
 ```observable-js
 reopened = {
   const t0 = performance.now();
-  const handle2 = await fn.openCottas(store.bytes);
+  const handle2 = await fn.openStore(store.reader, { generation: "gen-1" });
   const openMs = performance.now() - t0;
-  const rows = await fn.queryCottas(handle2, `# Count every triple across all named graphs in the reopened store.
+  const rows = await handle2.query(`# Count every triple across all named graphs in the reopened store.
     SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }`);
-  await fn.closeCottas(handle2);
+  await handle2.close();
   return { openMs, count: Number(rows[0].get("n").value) };
 }
 ```
