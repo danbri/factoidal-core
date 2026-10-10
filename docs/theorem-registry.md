@@ -2956,11 +2956,15 @@ issue <https://github.com/danbri/factoidal/issues/721>. No `sorry`, no
 
 | Theorem | Module | Engine anchor | Status | Fragment / hypotheses |
 |---|---|---|---|---|
-| `witness_conditions` — an interpretation meets all 21 fields of `RdfBasedConditions` | `OWL/RdfBased/Spec.lean` | — | ✅ PROVED | none |
+| `witness_conditions` — an interpretation meets all 27 fields of `RdfBasedConditions` | `OWL/RdfBased/Spec.lean` | — | ✅ PROVED | none |
 | `rbEntails_not_everything` — `RbEntails [] [owl:Thing rdfs:subClassOf owl:Nothing]` is false | same | — | ✅ PROVED | none |
-| `rbDerives_sound` — every `RbDerives g t` is true under every assignment making `g` true, in every interpretation meeting `RdfBasedConditions` (14 constructors, conditions cited per constructor in the module header) | `OWL/RdfBased/Rules.lean` | — | ✅ PROVED | none |
+| `rbDerives_sound` — every `RbDerives g t` is true under every assignment making `g` true, in every interpretation meeting `RdfBasedConditions` (16 constructors, conditions cited per constructor in the module header) | `OWL/RdfBased/Rules.lean` | — | ✅ PROVED | none |
 | `rbDerives_entailed` — `RbDerives g t → RbEntails g [t]` | same | — | ✅ PROVED | none |
+| `svfWits_sound` — for existential witnesses of Table 5.6 (`owl:someValuesFrom`) whose labels are fresh for `g` and name one witness each (`WitsOk`), every assignment making `g` true extends at those labels to one making `g` and every witness triple true | `OWL/RdfBased/Witness.lean` | — | ✅ PROVED | `WitsOk` states membership, freshness and naming only; the successor comes from the `someValuesFromSub` condition |
+| `svfWits_entailed` — `WitsOk g ws → RbEntails g (g ++ witness triples)` | same | — | ✅ PROVED | none |
+| `svfWitsFor_ok` — the executable witness list meets `WitsOk` | same | `RdfBased.svfWitsFor` | ✅ PROVED | none |
 | `rbConclusions_derives` — every triple the executable rules return is an `RbDerives` application | `OWL/RdfBased/Engine.lean` | `RdfBased.rbConclusions` | ✅ PROVED | none |
+| `rbConclusions_entailed` — every triple the executable rules return is entailed by `g` | same | `RdfBased.rbConclusions` | ✅ PROVED | none |
 | **The RL base under `RdfBasedConditions`** — `RdfBasedConditions i → RlConditions i'` for an `i'` agreeing with `i` off the reserved helper IRIs | — | `OWL.RL` closure | 🔴 NOT ATTEMPTED | the regime drops comprehension-witness triples (`withoutCompWitness`); design record § 8, gap A |
 
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree

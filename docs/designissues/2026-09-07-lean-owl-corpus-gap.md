@@ -1235,14 +1235,16 @@ Semantics". Full record:
 [`2026-10-10-owl2-rdf-based-semantics.md`](2026-10-10-owl2-rdf-based-semantics.md).
 
 * `l4owl-probe --rdf-based` (new line, `all.rdf`, the 482 RDF-BASED
-  cases): PositiveEntailmentTest 141 pass, 60 fail (out of 201);
+  cases): PositiveEntailmentTest 147 pass, 54 fail (out of 201);
   InconsistencyTest 44 pass, 84 fail (out of 128); NegativeEntailmentTest
-  0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 fail, 347
-  not-refuted (out of 347). `not-refuted` is never counted as proved.
+  0 pass, 0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 pass, 0
+  fail, 347 not-refuted (out of 347); all units 191 pass, 138 fail, 370
+  not-refuted (out of 699). `not-refuted` is never counted as proved.
 * The 12 PositiveEntailmentTests of § 15.5 (DIRECT, species FULL only)
-  are judged there: 5 pass (`WebOnt-Class-001`, `-Class-003`,
-  `-I5.3-015`, `-Nothing-002`, `-imports-010`), 7 fail, each with its
-  reason in the record's § 7. The DL lines keep them as fails; they are
+  are judged there: 7 pass (`WebOnt-Class-001`, `-Class-003`,
+  `-I5.3-015`, `-I5.8-017`, `-Nothing-002`, `-equivalentProperty-005`,
+  `-imports-010`), 5 fail (`WebOnt-extra-credit-002`, `-003`, `-004`,
+  `-I5.5-001`, `-I5.5-002`), each with its reason in the record's § 7. The DL lines keep them as fails; they are
   not moved to any "not applicable" bucket (CLAUDE.md, "OWL 2 test
   scoring").
 * `WebOnt-I5.5-005` [species] is a local override

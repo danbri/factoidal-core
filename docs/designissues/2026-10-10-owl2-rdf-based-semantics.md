@@ -16,12 +16,17 @@ numbers below are that document's unless another document is named.
   12 PositiveEntailmentTests of issue 721 (DIRECT, species FULL only)
   are among them.
 * Scores and the per-unit comparison with the other OWL lines: § 6.
-* Lean: `L4Factoidal/OWL/RdfBased/Spec.lean` (interpretation conditions,
-  entailment, a satisfiability witness), `Rules.lean` (fourteen rule
-  families, each proved sound), `Engine.lean` (executable rules, each
-  output proved to be a rule application), `Tests.lean` (`#guard`
-  cases, positive and negative per rule). No `sorry`, no `axiom`, no
+* Lean: `L4Factoidal/OWL/RdfBased/Spec.lean` (27 interpretation
+  conditions, entailment, a satisfiability witness), `Rules.lean` (16
+  rule constructors, each proved sound), `Witness.lean` (existential
+  successors for `owl:someValuesFrom`, proved sound over an extended
+  blank-node assignment), `Engine.lean` (executable rules, each output
+  proved to be a rule application), `Tests.lean` (73 `#guard` cases,
+  positive and negative per rule). No `sorry`, no `axiom`, no
   `native_decide`, no `partial`.
+* PositiveEntailmentTest: 147 pass, 54 fail (out of 201). The 12 cases
+  of issue 721: 7 pass, 5 fail. The two soundness cells
+  (NegativeEntailmentTest and ConsistencyTest `fail`) are 0.
 * One method the task brief proposed, "the DL refuter's entailments
   carry over" under the correspondence theorem, does not follow from
   the text of Theorem 7.1 and is not used. § 4.2 gives the text and
@@ -104,10 +109,17 @@ unsupported (out of T)`; `tools/lean-scoreboard.sh` counts
 
 The regime (`Harness/OwlProbe.lean`, `rbClosureIO`; pure counterpart
 `RdfBased.rbSaturate`) computes the OWL 2 RL/RDF closure of the
-premise, then up to three rounds of (the RDF-Based rules of § 4.3,
-the RL closure again), under one wall-clock cap per unit. Then the
-triples that mention a comprehension witness are removed (§ 4.1), and
-the conclusion is matched or the clash rows are checked.
+premise, then up to three rounds of (the RDF-Based rules of § 4.3 and
+the existential witnesses of § 4.4, the RL closure again), under one
+wall-clock cap per unit. The triples that mention a comprehension
+witness are removed (§ 4.1) from each closure before the next round
+reads it. Then the conclusion is matched or the clash rows are checked.
+
+Each step is an entailment: if some blank-node assignment makes the
+input graph true in an interpretation that meets the bundle, some
+assignment makes the output graph true in that interpretation. The
+steps compose, so a conclusion graph matched into the last graph is
+entailed by the premise.
 
 ### 4.1 The OWL 2 RL/RDF closure as a sound base
 
@@ -196,7 +208,8 @@ Issue-ready text for a separately labelled line, the way `--dl` prints
 Each rule is a constructor of `RdfBased.RbDerives`; `rbDerives_sound`
 proves its conclusion true in every interpretation that meets
 `RdfBasedConditions`, under the blank-node assignment that makes the
-premise graph true. No rule mints a blank node.
+premise graph true. No `RbDerives` rule mints a blank node; the
+existential witnesses of § 4.4 do, under their own theorem.
 
 | rule | derives | conditions read |
 |---|---|---|
@@ -212,8 +225,39 @@ premise graph true. No rule mints a blank node.
 | `svfDomain` | `p rdfs:domain c` from `r owl:someValuesFrom owl:Thing`, `r owl:onProperty p`, `r rdfs:subClassOf c` | 5.2, 5.3, 5.6, 5.8 |
 | `emptySubProp` | `p rdfs:subPropertyOf q` when two ranges of `p` are datatypes with disjoint value spaces and `q rdf:type rdf:Property` | 5.8; the datatype map (§ 4.1; RDF 1.1 Semantics § 9) |
 | `oneOfSub` | `c1 rdfs:subClassOf c2` when every member of `c1`'s `owl:oneOf` list is a member of `c2`'s | 5.5, 5.8 |
-| `unionSub` | `c1 rdfs:subClassOf c2` when every operand of `c1`'s `owl:unionOf` list is an operand of `c2`'s | 5.4, 5.8 |
-| `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s `owl:intersectionOf` list is an operand of `c1`'s | 5.4, 5.8 |
+| `unionSub` | `c1 rdfs:subClassOf c2` when every operand of `c1`'s `owl:unionOf` list is an operand of `c2`'s; both lists non-empty | 5.4, 5.8 |
+| `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s `owl:intersectionOf` list is an operand of `c1`'s; both lists non-empty | 5.4, 5.8 |
+| `literalValue` | `s p "s2"^^d` from `s p "s1"^^u` when `u` is `d` or `u owl:sameAs d`, `d` is `xsd:decimal` or `xsd:integer`, and `s1`, `s2` are lexical forms of `d` with one value | § 4.2 (`IL`), 5.9 (`owl:sameAs`), § 3.3 (datatype map) |
+| `hvEqProp` | `p owl:equivalentProperty q` from: `p` and `q` functional, both with domain `d`, `d rdfs:subClassOf r1`, `d rdfs:subClassOf r2`, `r1` (`r2`) an `owl:hasValue v` restriction on `p` (`q`) | 5.6, 5.8, 5.9, 5.13 |
+
+Table 5.4 does not say what `owl:unionOf ()` or `owl:intersectionOf ()`
+means; its conditions name `c1, ..., cn` with no case for n = 0. The
+bundle states the two conditions for non-empty lists only, and the two
+rules read only non-empty lists (`#guard` cases on `rdf:nil` operands in
+`Tests.lean`).
+
+### 4.4 Existential witnesses (Table 5.6, `owl:someValuesFrom`)
+
+Table 5.6: if `(z, c) ∈ IEXT(I(owl:someValuesFrom))` and
+`(z, p) ∈ IEXT(I(owl:onProperty))` then
+`ICEXT(z) = {x | ∃ y : (x, y) ∈ IEXT(p) and y ∈ ICEXT(c)}`. So
+`x rdf:type r`, `r owl:someValuesFrom c`, `r owl:onProperty p` entail
+`x p _:w`, `_:w rdf:type c`: the condition makes the successor exist,
+and a blank node asks only that some element be assigned to it (RDF 1.1
+Semantics § 5.2). This condition is normative, in § 5; it is different
+from the § 8 comprehension conditions, which make a CLASS EXPRESSION
+exist.
+
+`Witness.lean`, `svfWits_sound`: for a list of witnesses whose labels
+are fresh for the graph and name one (subject, property, class) each,
+every assignment that makes the graph true extends, at those labels
+only, to one that makes the graph and every witness triple true. The
+executable side (`svfWitsFor`) checks freshness and naming at run time
+and drops a candidate that fails; `svfWitsFor_ok` proves the output
+meets the theorem's premise. So the theorem needs no proof that the
+label encoding is injective. Witnesses are goal-directed: the regime
+adds them only for properties that the conclusion graph uses with a
+blank-node object. Three rounds bound the depth of witness chains.
 
 "Goal-directed": the two premise-free families add only what the
 conclusion graph names (`axiomsFor`: rows whose subject IRI the goal
@@ -225,12 +269,12 @@ rules read the closure alone, one pass with at most two nested lookups.
 
 ## 5. The Lean files
 
-* `L4Factoidal/OWL/RdfBased/Spec.lean`. `RdfBasedConditions`, 21
-  fields, each a transcription of a table row (or, where a rule reads
-  one half of an "iff", that half). The bundle admits every OWL 2
-  RDF-Based interpretation, so `RbEntails` (entailment over the bundle)
-  implies Definition 4.5 entailment. `witness_conditions`: an
-  interpretation that meets all 21; `rbEntails_not_everything`:
+* `L4Factoidal/OWL/RdfBased/Spec.lean`. `RdfBasedConditions`, 27
+  fields, each a transcription of a table row or of § 4.2 (or, where a
+  rule reads one half of an "iff", that half). The bundle admits every
+  OWL 2 RDF-Based interpretation, so `RbEntails` (entailment over the
+  bundle) implies Definition 4.5 entailment. `witness_conditions`: an
+  interpretation that meets all 27; `rbEntails_not_everything`:
   `RbEntails [] [owl:Thing rdfs:subClassOf owl:Nothing]` is false. The
   witness exists because a bundle no interpretation meets would make
   every entailment statement true (`measuring-inference` § 4).
@@ -238,50 +282,66 @@ rules read the closure alone, one pass with at most two nested lookups.
   Anti-pattern 29 check: no rule hypothesis contains its conclusion;
   each conclusion is reached through a condition of the bundle (the
   proof terms end in `hc.<field>`, never in a premise).
+* `Witness.lean`. `SvfWit`, `WitsOk`, `svfWits_sound`,
+  `svfWits_entailed`, the executable `svfWitsFor` and `svfWitsFor_ok`.
+  Anti-pattern 29 check: the premise `WitsOk` states membership,
+  freshness and naming; the successor comes from
+  `hc.someValuesFromSub`.
 * `Engine.lean`. The executable rules, `rbConclusions_derives` (every
-  output is an `RbDerives` application), `withoutCompWitness`,
-  `rbSaturate`.
-* `Tests.lean`. For each rule a positive and a negative `#guard` case,
-  and end-to-end cases on the shapes of `WebOnt-Class-003`,
-  `WebOnt-imports-010` and `WebOnt-I5.3-015`.
+  output is an `RbDerives` application), `rbConclusions_entailed`,
+  `withoutCompWitness`, `rbRound` (rules, then witnesses), `rbSaturate`.
+* `Tests.lean`. 73 `#guard` cases: for each rule a positive and a
+  negative case, and end-to-end cases on the shapes of
+  `WebOnt-Class-003`, `WebOnt-imports-010`, `WebOnt-I5.3-015` and
+  `WebOnt-someValuesFrom-003` (a two-step witness chain).
 
 ## 6. Scores
 
 Measured 2026-10-10 with `formal/lean4/.lake/build/bin/l4owl-probe
 --rdf-based --dir third_party/testing/owl all.rdf`, one process, other
-agents on the same four CPUs: 120 s wall clock, `cap_hits=0`,
-`parse_failures=0`.
+agents on the same four CPUs: 114 s and 126 s wall clock in two runs, `cap_hits=0`,
+`parse_failures=0`, `rule_triples=53360`.
 
 | test type | pass | fail | not-refuted | total |
 |---|---|---|---|---|
-| PositiveEntailmentTest | 141 | 60 | 0 | 201 |
+| PositiveEntailmentTest | 147 | 54 | 0 | 201 |
 | NegativeEntailmentTest | 0 | 0 | 23 | 23 |
 | ConsistencyTest | 0 | 0 | 347 | 347 |
 | InconsistencyTest | 44 | 84 | 0 | 128 |
-| all units | 185 | 144 | 370 | 699 |
+| all units | 191 | 138 | 370 | 699 |
+
+Score lines: PositiveEntailmentTest 147 pass, 54 fail (out of 201);
+InconsistencyTest 44 pass, 84 fail (out of 128); NegativeEntailmentTest
+0 pass, 0 fail, 23 not-refuted (out of 23); ConsistencyTest 0 pass, 0
+fail, 347 not-refuted (out of 347); all units 191 pass, 138 fail, 370
+not-refuted, 0 unsupported (out of 699).
 
 * The two soundness cells (NegativeEntailmentTest `fail`,
   ConsistencyTest `fail`) are 0.
-* `proved_by_rules=18`: PositiveEntailmentTest units the RL closure
-  alone does not prove and the § 4.3 rules do (`PROVED-BY-RDF-BASED-RULES`
-  lines): `New-Feature-Keys-001`, `WebOnt-AllDifferent-001`,
+* `proved_by_rules=24`: PositiveEntailmentTest units the RL closure
+  alone does not prove and the § 4.3 rules or § 4.4 witnesses do
+  (`PROVED-BY-RDF-BASED-RULES` lines): `New-Feature-Keys-001`,
+  `somevaluesfrom2bnode`, `WebOnt-AllDifferent-001`,
   `-AnnotationProperty-002`, `-Class-001`, `-Class-003`,
   `-FunctionalProperty-004`, `-I5.24-004`, `-I5.3-014`, `-I5.3-015`,
-  `-InverseFunctionalProperty-004`, `-Nothing-002`,
+  `-I5.8-017`, `-InverseFunctionalProperty-004`, `-Nothing-002`,
   `-SymmetricProperty-003`, `-complementOf-001`, `-differentFrom-002`,
-  `-distinctMembers-001`, `-imports-010`, `-oneOf-003`, `-unionOf-002`.
-* The 12 cases of issue 721: 5 pass (`WebOnt-Class-001`, `-Class-003`,
-  `-I5.3-015`, `-Nothing-002`, `-imports-010`), 7 fail (§ 7).
+  `-distinctMembers-001`, `-equivalentProperty-004`,
+  `-equivalentProperty-005`, `-imports-010`, `-oneOf-003`,
+  `-someValuesFrom-001`, `-someValuesFrom-003`, `-unionOf-002`.
+* The 12 cases of issue 721: 7 pass (`WebOnt-Class-001`, `-Class-003`,
+  `-I5.3-015`, `-I5.8-017`, `-Nothing-002`, `-equivalentProperty-005`,
+  `-imports-010`), 5 fail (`WebOnt-extra-credit-002`, `-003`, `-004`,
+  `-I5.5-001`, `-I5.5-002`; § 7).
 * Against the RL regime on the same 201 units (which uses the § 8
-  comprehension layer): 11 units the RL line passes are not proved here
+  comprehension layer): 10 units the RL line passes are not proved here
   (`bnode2somevaluesfrom`, `DisjointClasses-001`, `-003`,
   `New-Feature-DisjointDataProperties-002`,
   `-DisjointObjectProperties-002`, `-ObjectPropertyChain-BJP-002`,
-  `-ObjectQCR-002`, `-SelfRestriction-002`, `somevaluesfrom2bnode`,
-  `WebOnt-I5.26-010`, `WebOnt-I5.5-005`). Each conclusion asks for an
-  individual (a class expression, a list, an `owl:AllDifferent` node, or
-  an existential successor) that the comprehension layer mints; § 7,
-  groups 1 and 2.
+  `-ObjectQCR-002`, `-SelfRestriction-002`, `WebOnt-I5.26-010`,
+  `WebOnt-I5.5-005`). Each conclusion asks for an individual (a class
+  expression, a list or an `owl:AllDifferent` node) that the
+  comprehension layer mints; § 7, group 1.
 
 ### 6.1 The other OWL lines, before and after this work
 
@@ -305,29 +365,9 @@ pass, from the functional-syntax premise fallback (§ 9).
 | syntax-dl, `--dl`, all units | 421 pass, 2 fail, 1 skip (out of 424) | 422 pass, 1 fail, 1 skip (out of 424) |
 | type-negative-entailment, `--dl` | 46 pass, 0 fail (out of 46), `ne_refuter_checked=11` | unchanged |
 
-## 9. Two runner changes of item 0
-
-* **Species local overrides** (owner, 2026-10-10, verbatim: "711 accept
-  your recommendation"). `l4owl-probe --species` reads
-  `tests/local-overrides/*.json` with `"suite": "owl-species"` (keys
-  `test_id`, `issue`), the convention of the XML and JSON-LD runners. A
-  failing verdict on a named case goes to a `local-override` bucket; a
-  passing one is STALE and the run exits 1; an override that names no
-  scored case also exits 1. File:
-  `tests/local-overrides/owl-species__WebOnt-I5.5-005.json`,
-  https://github.com/danbri/factoidal/issues/711.
-* **Functional-syntax premise fallback** (coordinator default, issue 721).
-  When the RDF/XML premise does not parse and the case names the
-  functional syntax as normative (`test:normativeSyntax FUNCTIONAL`), the
-  case is judged from the functional-syntax premise (`premiseGraph`,
-  `speciesDocs`) and the run prints `FIXTURE-DEFECT <id>: the RDF/XML
-  premise does not parse (...)`. Case: `FS2RDF-literals-ar`
-  (`rdf:datatype` on a property element with element content; RDF 1.1
-  XML Syntax § 7.2.16 allows only text there).
-
 ## 7. Left failing, with the reason
 
-PositiveEntailmentTest, 60 units:
+PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
 
 1. **The conclusion asks for an individual that no § 5 condition makes
    exist** (30): `bnode2somevaluesfrom`, `DisjointClasses-001`, `-003`,
@@ -343,33 +383,21 @@ PositiveEntailmentTest, 60 units:
    above); only the informative § 8 comprehension conditions would
    supply it. Not proved here; whether each one is entailed under the
    normative semantics is not decided by this regime.
-2. **Existential successor** (3): `somevaluesfrom2bnode`,
-   `WebOnt-someValuesFrom-001`, `-003`. The conclusion `x p _:b` is
-   entailed by § 5.6 (`owl:someValuesFrom`: membership gives a
-   successor). A rule needs a soundness statement over an EXTENDED
-   blank-node assignment, which `RbDerives` does not have (§ 8, gap B).
-3. **Reasoning by cases, by counting, or over datatype value spaces**
-   (21): `Consistent-but-all-unsat`, `New-Feature-DisjointUnion-001`,
+2. **Reasoning by cases, by counting, or over datatype value spaces**
+   (19): `Consistent-but-all-unsat`, `New-Feature-DisjointUnion-001`,
    `Qualified-cardinality-boolean`, `Qualified-cardinality-restricted-int`,
    `rdfbased-sem-restrict-maxqcr-inst-obj-one`, `WebOnt-I5.2-002`,
    `-I5.2-004`, `-I5.21-002`, `-I5.8-004`, `-I5.8-010`,
    `-description-logic-201`, `-202`, `-205`, `-206`, `-208`,
-   `-equivalentClass-004`, `-equivalentProperty-004`,
-   `-equivalentProperty-005` (issue 721), `-oneOf-004`,
-   `-SymmetricProperty-002`, `-TransitiveProperty-002`. The DL regime
-   decides most of these with the tableau refuter under the Direct
-   Semantics; § 4.2 says why that is not used here.
-4. **Arithmetic over cardinalities** (3, all issue 721):
+   `-equivalentClass-004`, `-oneOf-004`, `-SymmetricProperty-002`,
+   `-TransitiveProperty-002`. The DL regime decides most of these with
+   the tableau refuter under the Direct Semantics; § 4.2 says why that
+   is not used here.
+3. **Arithmetic over cardinalities** (3, all issue 721):
    `WebOnt-extra-credit-002`, `-003`, `-004`. "This test shows a
    relationship between integer multiplication and OWL Full" (the
    catalog's description). No rule here counts.
-5. **A typed literal whose datatype IRI is an alias** (1, issue 721):
-   `WebOnt-I5.8-017` (`xsd:decimal owl:sameAs #bar`, `xx yy "01"^^#bar`
-   ⊢ `xx yy "1"^^xsd:decimal`). § 4.2 defines `IL("s"^^u) = L2V(d)(s)`
-   "provided that d is a datatype of D, IS(u) = d", so the alias makes
-   `"01"^^#bar` denote 1 and the case is entailed. The regime has no
-   condition on `IL` and no rule for literal denotations (§ 8, gap D).
-6. **The catalog's expectation has no § 5 condition behind it** (2,
+4. **The catalog's expectation has no § 5 condition behind it** (2,
    issue 721): `WebOnt-I5.5-001` ("rdf:first is a FunctionalProperty"),
    `-I5.5-002` (`rdf:rest`). § 5, "Sequence expressions": "there are no
    semantic constraints that enforce "well-formed" sequence structures.
@@ -395,7 +423,8 @@ String Pattern with Disjoint Dataproperties`, `inconsistent_datatypes`,
 `-maxCardinality-001`, `-miscellaneous-203`, `-miscellaneous-204`. The
 84th, `WebOnt-Thing-005` (RDF-BASED only), is `owl:Thing owl:oneOf (s)`:
 IR has one element, so `I(owl:Thing) = I(owl:Nothing)`, whose
-extensions Table 5.2 makes different. No rule here reads it.
+extensions Table 5.2 makes different. No rule here reads it (§ 8,
+gap C).
 
 ## 8. Gaps, with issue-ready text
 
@@ -417,17 +446,7 @@ not excluded. Repair: run the regime's closure without those three rows
 constructors), and prove the bridge. Design record:
 `docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 4.1.
 
-**B. Title: OWL RDF-Based regime: existential witnesses (§ 5.6) with an
-extended blank-node assignment.** Body: `x rdf:type r`,
-`r owl:someValuesFrom c`, `r owl:onProperty p` entail `x p _:w`,
-`_:w rdf:type c`. `RbDerives` states soundness under the premise
-assignment only. Needed: a witness relation with labels decoded back to
-their anchors and a theorem over `∃ A'` agreeing with `A` on the premise
-blank nodes (the `RLSemantics.rlExtend` shape), and the `⊆` half of the
-`owl:someValuesFrom` condition in the bundle. Units: `somevaluesfrom2bnode`,
-`WebOnt-someValuesFrom-001`, `-003`.
-
-**C. Title: OWL RDF-Based regime: a separately labelled line for Direct
+**B. Title: OWL RDF-Based regime: a separately labelled line for Direct
 Semantics refutations on balanced pairs (Theorem 7.1).** Body: Theorem
 7.1 carries a Direct Semantics entailment to the RDF-Based Semantics for
 the substitute pair it constructs, not for the input pair. For an input
@@ -437,26 +456,22 @@ reverse mapping and print a second line, `[rdf-based or balanced
 refutation]`, the way `--dl` prints `[closure or refutation]`. It cannot
 be counted as proved until the refuter has a soundness theorem for the
 Direct Semantics and § 7.3's sketch is checked for the constructs the
-refuter reads. Units it would address: most of § 7 group 3 and the 83
-InconsistencyTest units.
+refuter reads. Units it would address: most of § 7 group 2 and the 83
+InconsistencyTest units that need the refuter.
 
-**D. Title: OWL RDF-Based regime: literal denotations (§ 4.2 IL, datatype IRI
-aliases, value equality).** Body: § 4.2: `IL("s"^^u) = L2V(d)(s)`
-"provided that d is a datatype of D, IS(u) = d, and s is in the lexical
-space LS(d)". Add a bundle condition for literals of the datatype map
-(two well-formed literals with equal values denote one element; a
-datatype IRI `u` with `IS(u) = IS(d)` gives `"s"^^u` the value
-`L2V(d)(s)`), with a lexical-space check, and a goal-directed rule.
-Unit: `WebOnt-I5.8-017` (issue 721).
+**C. Title: OWL RDF-Based regime: `owl:Thing owl:oneOf (s)` is
+inconsistent.** Body: Table 5.5 makes `ICEXT(I(owl:Thing)) = {I(s)}`, so
+IR has one element. Table 5.2 gives `ICEXT(I(owl:Thing)) = IR` and
+`ICEXT(I(owl:Nothing)) = ∅`. With one element in IR, `I(owl:Thing) =
+I(owl:Nothing)`, so IR = ∅, which RDF 1.1 Semantics § 4 forbids (IR is
+non-empty). Add a clash row for a one-element `owl:oneOf` on
+`owl:Thing` (or on a class with `owl:Thing` as a subclass), proved
+against the bundle. Unit: `WebOnt-Thing-005` [InconsistencyTest].
 
-**E. Title: OWL RDF-Based regime: `owl:hasValue` with functional properties
-gives `owl:equivalentProperty`.** Body: `WebOnt-equivalentProperty-004`
-and `-005` (issue 721) need the `owl:hasValue` conditions of Table 5.6,
-the left-to-right half of the `owl:FunctionalProperty` condition of
-Table 5.13, and (for `-004`) the left-to-right half of
-`owl:equivalentClass`. The satisfiability witness of `Spec.lean` must
-then give `owl:FunctionalProperty` the extension of exactly the
-functional properties of the witness (`rdf:first`, `rdf:rest`).
+Closed during this work, so not filed: existential witnesses (§ 4.4),
+literal denotations through a datatype IRI alias (`literalValue`), and
+`owl:hasValue` with functional properties giving
+`owl:equivalentProperty` (`hvEqProp`).
 
 **🧭 Owner question. Title: OWL 2 catalog: `WebOnt-I5.5-001` and `-002`
 expect `rdf:first` / `rdf:rest` to be functional; § 5 of the RDF-Based
@@ -469,3 +484,23 @@ Options: (1) leave them failing (current); (2) record them as disputed
 fixtures (local overrides naming the issue, counted apart, stale if they
 ever pass), as for https://github.com/danbri/factoidal/issues/711.
 Recommendation: (2); the specification text is explicit.
+
+## 9. Two runner changes of item 0
+
+* **Species local overrides** (owner, 2026-10-10, verbatim: "711 accept
+  your recommendation"). `l4owl-probe --species` reads
+  `tests/local-overrides/*.json` with `"suite": "owl-species"` (keys
+  `test_id`, `issue`), the convention of the XML and JSON-LD runners. A
+  failing verdict on a named case goes to a `local-override` bucket; a
+  passing one is STALE and the run exits 1; an override that names no
+  scored case also exits 1. File:
+  `tests/local-overrides/owl-species__WebOnt-I5.5-005.json`,
+  https://github.com/danbri/factoidal/issues/711.
+* **Functional-syntax premise fallback** (coordinator default, issue 721).
+  When the RDF/XML premise does not parse and the case names the
+  functional syntax as normative (`test:normativeSyntax FUNCTIONAL`), the
+  case is judged from the functional-syntax premise (`premiseGraph`,
+  `speciesDocs`) and the run prints `FIXTURE-DEFECT <id>: the RDF/XML
+  premise does not parse (...)`. Case: `FS2RDF-literals-ar`
+  (`rdf:datatype` on a property element with element content; RDF 1.1
+  XML Syntax § 7.2.16 allows only text there).
