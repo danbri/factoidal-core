@@ -162,6 +162,21 @@ private def listAB : Graph :=
 #guard !has (listAB ++ oneA ++ [⟨S cA, owlIntersectionOf, Bt "m1"⟩,
              ⟨S cB, owlIntersectionOf, Bt "k1"⟩]) [] ⟨S cA, rdfsSubClassOf, O cB⟩
 
+/-! ## hvEqProp (Tables 5.6, 5.8, 5.9, 5.13) -/
+
+private def iV : WfIri := ⟨"http://ex/v", rfl⟩
+-- WebOnt-equivalentProperty-005 shape: one restriction with two onProperty values
+private def gHv (qFunctional : Bool) : Graph :=
+  [ ⟨S pP, rdfType, O owlFunctionalProperty⟩, ⟨S pP, rdfsDomain, Bt "d"⟩,
+    ⟨S pQ, rdfsDomain, Bt "d"⟩, ⟨B "d", rdfsSubClassOf, Bt "d"⟩,
+    ⟨B "d", owlOnProperty, O pP⟩, ⟨B "d", owlOnProperty, O pQ⟩,
+    ⟨B "d", owlHasValue, O iV⟩ ] ++
+  (if qFunctional then [⟨S pQ, rdfType, O owlFunctionalProperty⟩] else [])
+#guard has (gHv true) [] ⟨S pP, owlEquivalentProperty, O pQ⟩
+#guard has (gHv true) [] ⟨S pQ, owlEquivalentProperty, O pP⟩
+-- q not functional: no equivalence
+#guard !has (gHv false) [] ⟨S pP, owlEquivalentProperty, O pQ⟩
+
 /-! ## End to end: RL closure and the rules, alternating -/
 
 private def sat (g goal : Graph) (t : Triple) : Bool := memB (rbSaturate g goal 8 2) t

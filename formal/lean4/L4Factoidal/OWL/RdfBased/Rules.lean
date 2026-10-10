@@ -39,6 +39,7 @@ Comprehension Conditions [DEV]").
 | `oneOfSub` | `c1 rdfs:subClassOf c2` when every member of `c1`'s enumeration is a member of `c2`'s | Tables 5.5, 5.8 |
 | `unionSub` | `c1 rdfs:subClassOf c2` when every operand of `c1`'s union is an operand of `c2`'s | Tables 5.4, 5.8 |
 | `interSub` | `c1 rdfs:subClassOf c2` when every operand of `c2`'s intersection is an operand of `c1`'s | Tables 5.4, 5.8 |
+| `hvEqProp` | `p owl:equivalentProperty q` when `p`, `q` are functional with domain `d`, and `d` is a subclass of `∋ v` restrictions on `p` and on `q` with the same value | Tables 5.6, 5.8, 5.9, 5.13 |
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -146,6 +147,18 @@ inductive RbDerives (g : Graph) : Triple → Prop where
       (hl1 : ListDenotes g l1 es1) (hl2 : ListDenotes g l2 es2)
       (hsub : ∀ e ∈ es2, e ∈ es1) :
       RbDerives g ⟨c1, rdfsSubClassOf, c2.toTerm⟩
+  | hvEqProp {p q d r1 r2 : Subject} {v : Term}
+      (hdp : (⟨p, rdfsDomain, d.toTerm⟩ : Triple) ∈ g)
+      (hdq : (⟨q, rdfsDomain, d.toTerm⟩ : Triple) ∈ g)
+      (hs1 : (⟨d, rdfsSubClassOf, r1.toTerm⟩ : Triple) ∈ g)
+      (hs2 : (⟨d, rdfsSubClassOf, r2.toTerm⟩ : Triple) ∈ g)
+      (ho1 : (⟨r1, owlOnProperty, p.toTerm⟩ : Triple) ∈ g)
+      (hv1 : (⟨r1, owlHasValue, v⟩ : Triple) ∈ g)
+      (ho2 : (⟨r2, owlOnProperty, q.toTerm⟩ : Triple) ∈ g)
+      (hv2 : (⟨r2, owlHasValue, v⟩ : Triple) ∈ g)
+      (hfp : (⟨p, rdfType, .iri owlFunctionalProperty⟩ : Triple) ∈ g)
+      (hfq : (⟨q, rdfType, .iri owlFunctionalProperty⟩ : Triple) ∈ g) :
+      RbDerives g ⟨p, owlEquivalentProperty, q.toTerm⟩
 
 /-! ## Table facts, checked by evaluation -/
 
@@ -337,6 +350,36 @@ theorem rbDerives_sound {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll 
       intro c hcm
       obtain ⟨e, he, rfl⟩ := List.mem_map.mp hcm
       exact (he1 x).mp hx _ (List.mem_map.mpr ⟨e, hsub e he, rfl⟩)
+  | hvEqProp hdp hdq hs1 hs2 ho1 hv1 ho2 hv2 hfp hfq =>
+      rename_i p q d r1 r2 v
+      have tdp := hA _ hdp
+      have tdq := hA _ hdq
+      have ts1 := hA _ hs1
+      have ts2 := hA _ hs2
+      have to1 := hA _ ho1
+      have to2 := hA _ ho2
+      simp only [TripleHolds, denot_toTerm] at tdp tdq ts1 ts2 to1 to2
+      have tv1 : i.iext (i.iIri owlHasValue) (denotSubject i A r1) (denotTerm i A v) := hA _ hv1
+      have tv2 : i.iext (i.iIri owlHasValue) (denotSubject i A r2) (denotTerm i A v) := hA _ hv2
+      have tfp : icext i (denotSubject i A p) (i.iIri owlFunctionalProperty) := hA _ hfp
+      have tfq : icext i (denotSubject i A q) (i.iIri owlFunctionalProperty) := hA _ hfq
+      obtain ⟨hpP, _, hdomp⟩ := (hc.domain _ _).mp tdp
+      obtain ⟨hqP, _, hdomq⟩ := (hc.domain _ _).mp tdq
+      obtain ⟨_, _, hsub1⟩ := (hc.subClassOf _ _).mp ts1
+      obtain ⟨_, _, hsub2⟩ := (hc.subClassOf _ _).mp ts2
+      show i.iext (i.iIri owlEquivalentProperty) (denotSubject i A p) (denotTerm i A q.toTerm)
+      rw [denot_toTerm]
+      refine hc.equivalentPropertyIf _ _ hpP hqP (fun x y => ⟨fun hxy => ?_, fun hxy => ?_⟩)
+      · have hxd := hdomp x y hxy
+        have hpv := hc.hasValueSub _ _ _ x tv1 to1 (hsub1 x hxd)
+        have hqv := hc.hasValueSub _ _ _ x tv2 to2 (hsub2 x hxd)
+        rw [hc.functionalOnly _ x y _ tfp hxy hpv]
+        exact hqv
+      · have hxd := hdomq x y hxy
+        have hpv := hc.hasValueSub _ _ _ x tv1 to1 (hsub1 x hxd)
+        have hqv := hc.hasValueSub _ _ _ x tv2 to2 (hsub2 x hxd)
+        rw [hc.functionalOnly _ x y _ tfq hxy hqv]
+        exact hpv
 
 end Soundness
 
