@@ -265,8 +265,9 @@ Cases from the F* tree's `tests/unit/lateral_service_unit.ml`. -/
     (qAll (.service epNone true pLabels)) == [[]]
 #guard colS "s" (rowsIn envSvc dsMain
     (qAll (.join pPersons (.service epNone true pLabels)))) == ["alice", "bob"]
--- Non-SILENT to an unregistered endpoint yields NO rows (the error
--- sentinel a total evaluator can express).
+-- Non-SILENT to an unregistered endpoint: the rows of `evalSelect` are
+-- empty, and the query's answer is the §2.3 error (the
+-- `Query.serviceFailure` guards below).
 #guard rowsIn envSvc { default := [], named := [] }
     (qAll (.service epNone false pLabels)) == []
 #guard rowsIn envSvc dsMain (qAll (.join pPersons (.service epNone false pLabels))) == []
@@ -297,6 +298,99 @@ Cases from the F* tree's `tests/unit/lateral_service_unit.ml`. -/
 #guard rowsIn envSvc { default := [], named := [] }
     (qAll (.join (.values ["ep"] [[some (sLit "not-an-iri")]])
                  (.serviceVar "ep" false pLabels))) == []
+
+/-! ### A failed SERVICE call fails the query — Federated Query §2.3, §3.2
+
+https://github.com/danbri/factoidal/issues/717. `failIn` is the error
+the query answers; `none` means the query answers the rows above. Each
+error case is beside the same query with SILENT (no error) or with a
+registered endpoint (no error), so an evaluator that always fails, or
+never fails, breaks the build. -/
+
+def failIn (env : EvalEnv) (ds : Dataset) (q : Query) : Option ServiceFailure :=
+  q.serviceFailure env ds
+
+def dsEmpty : Dataset := { default := [], named := [] }
+
+-- Fixed endpoint, unregistered: error without SILENT, none with it.
+#guard failIn envSvc dsEmpty (qAll (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.service epNone true pLabels)) == none
+-- Registered endpoint: no error, with or without SILENT.
+#guard failIn envSvc dsEmpty (qAll (.service epOne false pLabels)) == none
+-- Joined with local rows: the error is the answer, the rows are not.
+#guard failIn envSvc dsMain (qAll (.join pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.join pPersons (.service epNone true pLabels))) == none
+-- Under OPTIONAL and UNION the call is still made, so it still fails.
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons (.service epNone false pLabels)
+    (.boolLit true))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.union pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+-- The first failure in evaluation order is the one reported.
+#guard failIn envSvc dsEmpty (qAll (.join (.service epNone false pLabels)
+    (.service (iriQ "https://example.org/other") false pLabels))) ==
+  some (.unreachable epNone.val)
+-- A nested SERVICE without SILENT inside a reachable endpoint's body is
+-- an invocation this engine makes: it fails the query.
+#guard failIn envSvc dsEmpty (qAll (.service epOne false
+    (.join pLabels (.service epNone false pLabels)))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.service epOne false
+    (.join pLabels (.service epNone true pLabels)))) == none
+-- GRAPH ?g evaluates its body once per named graph: with no named graph
+-- the SERVICE inside is never invoked, so nothing fails.
+#guard failIn envSvc dsEmpty (qAll (.graph (.var "g") (.service epNone false pLabels))) == none
+#guard failIn envSvc { default := [], named := [{ name := .iri gOne, graph := [] }] }
+    (qAll (.graph (.var "g") (.service epNone false pLabels))) == some (.unreachable epNone.val)
+-- SERVICE ?v (§4): one invocation per solution. Every endpoint
+-- registered: no error.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epTwo)]])
+                 (.serviceVar "ep" false pLabels))) == none
+-- One solution names an unregistered endpoint: error without SILENT,
+-- none with it.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epNone)]])
+                 (.serviceVar "ep" false pLabels))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epNone)]])
+                 (.serviceVar "ep" true pLabels))) == none
+-- No solution: no invocation, no error.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] []) (.serviceVar "ep" false pLabels))) == none
+-- `?v` bound to a literal, or unbound: no endpoint to invoke.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (sLit "not-an-iri")]])
+                 (.serviceVar "ep" false pLabels))) == some (.noEndpoint "ep")
+#guard failIn envSvc dsEmpty (qAll (.serviceVar "ep" false pLabels)) == some (.noEndpoint "ep")
+#guard failIn envSvc dsEmpty (qAll (.serviceVar "ep" true pLabels)) == none
+-- LATERAL: one invocation per left solution; none when there is none.
+#guard failIn envSvc dsMain (qAll (.lateral pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.lateral pPersons (.service epNone false pLabels))) == none
+-- Inside a sub-SELECT the call is made too.
+#guard failIn envSvc dsMain (qAll (.subSelect (qAll (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.subSelect (qAll (.service epNone true pLabels)))) == none
+-- No SERVICE: no error.
+#guard failIn envSvc dsMain (qAll pPersons) == none
+-- ASK and CONSTRUCT fail the same way; a DESCRIBE of IRIs alone does
+-- not evaluate its WHERE clause, so it invokes nothing.
+#guard failIn envSvc dsEmpty (mkQuery .ask (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (mkQuery (.describe [.iri epOne]) (.service epNone false pLabels)) == none
+#guard failIn envSvc dsEmpty (mkQuery (.describe [.var "s"]) (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+-- The checked evaluators answer the error, or exactly the rows.
+#guard (match evalSelectChecked envSvc dsEmpty (qAll (.service epNone false pLabels)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalSelectChecked envSvc dsEmpty (qAll (.service epOne false pLabels)) with
+        | .ok (_, r) => colS "label" r == ["aaa", "bbb"]
+        | _ => false)
+#guard (match evalAskChecked envSvc dsEmpty (mkQuery .ask (.service epNone true pLabels)) with
+        | .ok b => b
+        | _ => false)
 
 /-! ## §18.2.4 projection and SELECT expressions -/
 

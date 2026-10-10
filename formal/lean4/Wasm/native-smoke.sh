@@ -1999,10 +1999,14 @@ checkblob "queryHdt bytes that are not HDT -> error" queryHdt "$TMP/hdt-junk.jso
 check "queryHdt through the plain call has no bytes -> error" queryHdt "$TMP/hdt-junk.json" \
   'r["ok"] is False and "blob" in r["error"]'
 
-# SERVICE endpoint registry (callIO only; the registry lives in the process)
+# SERVICE endpoint registry (callIO only; the registry lives in the process).
+# With no endpoint registered, SERVICE without SILENT is an error envelope
+# and SERVICE SILENT is one solution with no bindings (SPARQL 1.1
+# Federated Query 2.3; https://github.com/danbri/factoidal/issues/717).
 python3 - "$TMP/svc-seq.json" <<'EOF'
 import json, sys
 SVC = "SELECT ?s ?o WHERE { SERVICE <http://example.org/sparql> { ?s <http://e/p> ?o } }"
+SVC_SILENT = "SELECT ?s ?o WHERE { SERVICE SILENT <http://example.org/sparql> { ?s <http://e/p> ?o } }"
 DATA = "<http://e/x> <http://e/q> <http://e/y> ."
 seq = [
   ["queryDataset", [DATA, SVC]],
@@ -2016,12 +2020,13 @@ seq = [
   ["registerServiceEndpoint", ["http://example.org/sparql", "garbage"]],
   ["clearServiceEndpoints", []],
   ["queryDataset", [DATA, SVC]],
+  ["queryDataset", [DATA, SVC_SILENT]],
 ]
 json.dump(seq, open(sys.argv[1], "w"))
 EOF
 checkseq "SERVICE endpoint registry: register, replace, clear, errors" "$TMP/svc-seq.json" \
-  'len(rs) == 11
-   and rs[0]["srj"]["results"]["bindings"] == []
+  'len(rs) == 12
+   and rs[0]["ok"] is False and "SERVICE <http://example.org/sparql> failed" in rs[0]["error"]
    and rs[1] == {"ok": True, "count": 1}
    and [b["o"]["value"] for b in rs[2]["srj"]["results"]["bindings"]] == ["v"]
    and [b["o"]["value"] for b in rs[4]["srj"]["results"]["bindings"]] == ["v"]
@@ -2029,7 +2034,8 @@ checkseq "SERVICE endpoint registry: register, replace, clear, errors" "$TMP/svc
    and rs[7]["ok"] is False and "empty" in rs[7]["error"]
    and rs[8]["ok"] is False and "registerServiceEndpoint" in rs[8]["error"]
    and rs[9] == {"ok": True}
-   and rs[10]["srj"]["results"]["bindings"] == []'
+   and rs[10]["ok"] is False and "SERVICE <http://example.org/sparql> failed" in rs[10]["error"]
+   and rs[11]["srj"]["results"]["bindings"] == [{}]'
 
 # --- Envelope parity, https://github.com/danbri/factoidal/issues/685 ----
 # Positioned parse errors, prefixes, per-document blank-node scope,

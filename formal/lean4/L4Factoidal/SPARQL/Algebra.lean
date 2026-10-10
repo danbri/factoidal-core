@@ -748,8 +748,10 @@ inductive GraphPattern where
   /-- `SERVICE [SILENT] <iri> { P }` — §18.6 / SPARQL 1.1 Federated
   Query §2. The endpoint is already RESOLVED to the graph it serves
   (`none` = unknown endpoint), because endpoint resolution is a host
-  service, not algebra. -/
-  | service  (remote : Option Graph) (silent : Bool) (p : GraphPattern)
+  service, not algebra. `endpoint` is the IRI as written: the error a
+  failed invocation without SILENT raises names it
+  (`GraphPattern.serviceFailure`). -/
+  | service  (endpoint : Iri) (remote : Option Graph) (silent : Bool) (p : GraphPattern)
   /-- `SERVICE [SILENT] ?v { P }` — the endpoint IRI comes from a
   binding, so resolution has to wait until a row supplies one. -/
   | serviceVar (v : VarName) (resolve : Iri → Option Graph) (silent : Bool)
@@ -884,8 +886,11 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
       bindRowsFresh binder active v (GraphPattern.evalIn ds active q) 0
   | .values vars rows => evalValues vars rows
   -- SERVICE with a fixed endpoint. On a miss, SILENT yields one empty
-  -- solution mapping and non-SILENT yields none — the F* arm exactly.
-  | .service remote silent q =>
+  -- solution mapping (Federated Query §3.2, Ω0). Without SILENT the
+  -- invocation is an error (§3.2); the rows here are `[]` — the F* arm
+  -- exactly — and `serviceFailure` below reports the error, which a
+  -- query evaluator answers instead of these rows.
+  | .service _ remote silent q =>
       match remote with
       | some g => GraphPattern.evalIn ds g q
       | none   => if silent then [Binding.empty] else []
@@ -909,5 +914,142 @@ def GraphPattern.eval (g : Graph) (p : GraphPattern) : SolutionSeq :=
 rather than assumed. -/
 theorem GraphPattern.eval_eq_evalIn (g : Graph) (p : GraphPattern) :
     p.eval g = p.evalIn { default := g, named := [] } g := rfl
+
+/-! ## A failed SERVICE invocation — SPARQL 1.1 Federated Query §2.3, §3.2
+
+§3.2 defines `eval(D(G), Service(IRI, P, SilentOp)) = Invocation(IRI, P,
+SilentOp)`, where `Invocation` is the solutions of the remote query "in
+case of a successful service invocation according to the SPARQL
+protocol, and otherwise Ω0 in case SilentOp is true, and otherwise
+error". §2.3 says what the error does: "If the SILENT keyword is not
+present, the query will stop and return the error."
+(https://www.w3.org/TR/sparql11-federated-query/; issue
+https://github.com/danbri/factoidal/issues/717.)
+
+`evalIn` above returns solution sequences only, and gives `[]` for a
+failed invocation without SILENT. `serviceFailure` is the error
+channel. It follows `evalIn` arm for arm, in the same evaluation order,
+and answers the first invocation without SILENT that failed. A query
+evaluator answers that error in place of the rows of `evalIn`
+(`Query.serviceFailure` in `Query.lean`). When `serviceFailure` is
+`none`, the rows of `evalIn` are the §18.5 / §3.2 answer, so every
+theorem about `evalIn` keeps its statement.
+
+An endpoint is a graph here (`EvalEnv.services`), and this engine
+evaluates the body of a SERVICE against that graph itself. A SERVICE
+nested in that body is therefore an invocation this engine makes, and
+its failure fails the query even when the enclosing SERVICE is SILENT:
+SILENT covers the access to its own endpoint (§2.3: "errors encountered
+while accessing a remote SPARQL endpoint").
+
+`SERVICE ?v` (§4, informative) is "a series of separate invocations"
+of the endpoints the solutions bind `?v` to. Each one is an invocation
+in the sense of §3.2, so a solution that binds `?v` to an IRI with no
+endpoint, or leaves `?v` without an IRI, is a failed invocation. -/
+
+/-- Why a SERVICE invocation failed. -/
+inductive ServiceFailure where
+  /-- No endpoint is known for this IRI (`EvalEnv.services` has no entry
+  for it). -/
+  | unreachable (endpoint : Iri)
+  /-- `SERVICE ?v` was invoked for a solution in which `?v` is not bound
+  to an IRI, so there is no endpoint to invoke. -/
+  | noEndpoint (v : VarName)
+  deriving DecidableEq, Repr
+
+/-- The error text a query evaluator answers for a failed invocation. -/
+def ServiceFailure.message : ServiceFailure → String
+  | .unreachable i =>
+      s!"SERVICE <{i}> failed: no endpoint is available for this IRI " ++
+      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+  | .noEndpoint v =>
+      s!"SERVICE ?{v} failed: ?{v} is not bound to an IRI " ++
+      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+
+/-- The first failed SERVICE invocation without SILENT that evaluating
+`p` against `active` (with `ds` for GRAPH) makes, in `evalIn`'s
+evaluation order; `none` when every invocation succeeds or is SILENT.
+
+The arms match `evalIn`'s arms one for one. Where `evalIn` evaluates a
+sub-pattern once per solution (LATERAL, and SERVICE ?v inside a join),
+this function reads the same solutions from `evalIn` and checks each
+invocation; where `evalIn` evaluates a sub-pattern once per named graph
+(GRAPH ?g), so does this function. A FILTER, OPTIONAL, BIND or
+sub-SELECT condition is an expression (`Graph → Binding → Bool` and
+friends), so a SERVICE inside an EXISTS in a condition is not one of
+the patterns this walk reaches. -/
+def GraphPattern.serviceFailure (ds : Dataset) (active : Graph) (p : GraphPattern) :
+    Option ServiceFailure :=
+  match p with
+  | .bgp _ => none
+  | .join p1 (.serviceVar v resolve silent inner) =>
+      (GraphPattern.serviceFailure ds active p1).or
+        ((GraphPattern.evalIn ds active p1).findSome? (fun mu =>
+          match mu.lookup v with
+          | some (.iri i) =>
+              match resolve i.val with
+              | some remote => GraphPattern.serviceFailure ds remote inner
+              | none => if silent then none else some (.unreachable i.val)
+          | _ => if silent then none else some (.noEndpoint v)))
+  | .join (.serviceVar v resolve silent inner) p2 =>
+      (GraphPattern.serviceFailure ds active p2).or
+        ((GraphPattern.evalIn ds active p2).findSome? (fun mu =>
+          match mu.lookup v with
+          | some (.iri i) =>
+              match resolve i.val with
+              | some remote => GraphPattern.serviceFailure ds remote inner
+              | none => if silent then none else some (.unreachable i.val)
+          | _ => if silent then none else some (.noEndpoint v)))
+  | .join l r =>
+      (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
+  | .leftJoin l r _ =>
+      (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
+  | .filter _ q => GraphPattern.serviceFailure ds active q
+  | .union l r =>
+      (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
+  | .minus l r =>
+      (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
+  | .graph name q =>
+      match name with
+      | .iri i =>
+          match ds.lookupNamedIri i.val with
+          | some g => GraphPattern.serviceFailure ds g q
+          | none   => none
+      | .var _ =>
+          ds.named.findSome? (fun ng => GraphPattern.serviceFailure ds ng.graph q)
+      | _ => GraphPattern.serviceFailure ds active q
+  | .lateral l r =>
+      (GraphPattern.serviceFailure ds active l).or
+        ((GraphPattern.evalIn ds active l).findSome? (fun mu1 =>
+          GraphPattern.serviceFailure ds active (r mu1)))
+  | .bind _ _ q => GraphPattern.serviceFailure ds active q
+  | .values _ _ => none
+  | .service endpoint remote silent q =>
+      match remote with
+      | some g => GraphPattern.serviceFailure ds g q
+      | none   => if silent then none else some (.unreachable endpoint)
+  | .serviceVar v _ silent _ => if silent then none else some (.noEndpoint v)
+  | .modified _ q => GraphPattern.serviceFailure ds active q
+  | .propertyPath _ _ _ => none
+  | .empty => none
+
+/-- §3.2, `SilentOp` false: an invocation with no endpoint is the error. -/
+theorem GraphPattern.serviceFailure_service_miss (ds : Dataset) (active : Graph)
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none false p).serviceFailure ds active =
+      some (.unreachable endpoint) := rfl
+
+/-- §3.2, `SilentOp` true: the same invocation is Ω0, not an error. -/
+theorem GraphPattern.serviceFailure_service_silent_miss (ds : Dataset) (active : Graph)
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none true p).serviceFailure ds active = none := rfl
+
+/-- A failed invocation fails the whole pattern it is joined into: the
+error is not absorbed by the other operand (§2.3, "the query will stop
+and return the error"). -/
+theorem GraphPattern.serviceFailure_join_service_miss (ds : Dataset) (active : Graph)
+    (b : Bgp) (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.join (.bgp b) (.service endpoint none false p)).serviceFailure ds active =
+      some (.unreachable endpoint) := rfl
 
 end L4Factoidal.SPARQL

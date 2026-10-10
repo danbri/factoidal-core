@@ -131,6 +131,12 @@ inductive UpdateError where
   /-- `CLEAR` / `DROP` / `COPY` / `MOVE` / `ADD` naming a graph the
   store does not hold (§3.1.5, §3.2.2–§3.2.5). -/
   | graphMissing (name : WfIri)
+  /-- `DELETE WHERE` / `DELETE … INSERT … WHERE` whose WHERE clause makes a
+  SERVICE call without SILENT that fails. The WHERE clause is a query
+  pattern (§3.1.3), and SPARQL 1.1 Federated Query §2.3 makes such a call
+  stop the evaluation with an error
+  (https://github.com/danbri/factoidal/issues/717). -/
+  | serviceFailed (failure : ServiceFailure)
   deriving Repr, DecidableEq
 
 instance : ToString UpdateError where
@@ -138,6 +144,7 @@ instance : ToString UpdateError where
     | .loadUnavailable i => s!"LOAD <{i.val}> cannot be performed (no document fetch)"
     | .graphExists i     => s!"graph <{i.val}> already exists"
     | .graphMissing i    => s!"graph <{i.val}> does not exist"
+    | .serviceFailed f   => f.message
 
 /-- `is_implemented_op` negated: does the request contain a `LOAD`
 without `SILENT`? Such a request cannot be evaluated by a pure
@@ -413,6 +420,15 @@ def evalWhere (env : EvalEnv) (ds : Dataset) (p : QueryPattern) : SolutionSeq :=
   let env := { env with dataset := some ds }
   (p.rewriteBnodes.lower env).evalIn ds ds.default
 
+/-- The failed SERVICE call without SILENT that `evalWhere env ds p`
+makes, if any (Federated Query §2.3, `GraphPattern.serviceFailure`). -/
+def whereServiceFailure (env : EvalEnv) (ds : Dataset) (p : QueryPattern) :
+    Option ServiceFailure :=
+  if !p.mentionsService then none
+  else
+    let env := { env with dataset := some ds }
+    (p.rewriteBnodes.lower env).serviceFailure ds ds.default
+
 /-- §3.1.3.3 DELETE WHERE: the pattern is both the WHERE clause and the
 DELETE template. Port of `apply_delete_where`. -/
 def applyDeleteWhere (env : EvalEnv) (ds : Dataset) (p : QueryPattern) : Dataset :=
@@ -579,8 +595,14 @@ def applyOp (env : EvalEnv) (pre : String) (opIx : Nat) (ds : Dataset) :
   | .copy silent src dst   => applyCopy ds silent src dst
   | .insertData q          => .ok (applyInsertData pre ds q)
   | .deleteData q          => .ok (applyDeleteData ds q)
-  | .deleteWhere p         => .ok (applyDeleteWhere env ds p)
-  | .modify w d i u p      => .ok (applyModify env pre opIx ds w d i u p)
+  | .deleteWhere p         =>
+      match whereServiceFailure env ds p with
+      | some f => .error (.serviceFailed f)
+      | none   => .ok (applyDeleteWhere env ds p)
+  | .modify w d i u p      =>
+      match whereServiceFailure env (whereDataset ds w u) p with
+      | some f => .error (.serviceFailed f)
+      | none   => .ok (applyModify env pre opIx ds w d i u p)
 
 /-- The operations in order; the first error stops the request
 (§3: "the operations of a request are performed in order … an error

@@ -777,9 +777,9 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
   const local = '<http://e/x> <http://e/q> <http://e/y> .';
   await lean.clearServiceEndpoints();
   try {
-    // SPARQL 1.1 Federated Query 2.4: with SILENT, a failed call is one
-    // solution with no bindings. Without SILENT the query must fail: the
-    // expected-failure case below (issue 717).
+    // SPARQL 1.1 Federated Query 2.3: with SILENT, a failed call is one
+    // solution with no bindings. Without SILENT the query fails: the
+    // case below (issue 717).
     const silent = await lean.query(local,
       `SELECT * WHERE { SERVICE SILENT <${ENDPOINT}> { ?s <http://e/p> ?o } }`,
       { format: 'ntriples' });
@@ -809,22 +809,22 @@ test('registerServiceEndpoint: SERVICE resolves against a registered snapshot un
   }
 });
 
-// Expected failure (skills/test-suites § Expected failures).
-const SERVICE_ERROR_ISSUE = 'https://github.com/danbri/factoidal/issues/717';
-test(`xfail: SERVICE without SILENT to an unreachable endpoint fails the query (${SERVICE_ERROR_ISSUE})`, async (t) => {
+// SPARQL 1.1 Federated Query 2.3: "If the SILENT keyword is not present,
+// the query will stop and return the error." Was an expected failure until
+// https://github.com/danbri/factoidal/issues/717 was fixed.
+test('SERVICE without SILENT to an unreachable endpoint fails the query (issue 717)', async (t) => {
   if (await skipUnlessOps(t, 'clearServiceEndpoints')) return;
   await lean.clearServiceEndpoints();
-  let failed = false;
-  try {
-    await assert.rejects(() => lean.query('<http://e/x> <http://e/q> <http://e/y> .',
-      'SELECT * WHERE { SERVICE <http://unregistered.example/sparql> { ?s ?p ?o } }',
-      { format: 'ntriples' }));
-  } catch (error) {
-    failed = true;
-    t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`);
-  }
-  assert.ok(failed,
-    `unexpected pass: SERVICE failure now raises an error — flip this xfail to an assertion and close ${SERVICE_ERROR_ISSUE}`);
+  await assert.rejects(() => lean.query('<http://e/x> <http://e/q> <http://e/y> .',
+    'SELECT * WHERE { SERVICE <http://unregistered.example/sparql> { ?s ?p ?o } }',
+    { format: 'ntriples' }),
+  /SERVICE <http:\/\/unregistered\.example\/sparql> failed/);
+  // the same call with SILENT answers one solution with no bindings
+  const silent = await lean.query('<http://e/x> <http://e/q> <http://e/y> .',
+    'SELECT * WHERE { SERVICE SILENT <http://unregistered.example/sparql> { ?s ?p ?o } }',
+    { format: 'ntriples' });
+  assert.equal(silent.length, 1);
+  assert.equal([...silent[0].keys()].length, 0);
 });
 
 test('registerServiceEndpoint: argument checks', async (t) => {
