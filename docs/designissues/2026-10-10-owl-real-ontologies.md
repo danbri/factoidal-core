@@ -33,11 +33,13 @@ F\* steps, `prlimit --as=6000000000` for both.
   with 2,709 triples (https://github.com/danbri/factoidal/issues/765). The F\*
   command line has no consistency or entailment verb.
 - ⚠️ Other defects found: the Lean OWL 2 species check takes 253 s of CPU time
-  on QUDT (https://github.com/danbri/factoidal/issues/766); the Lean and F\*
-  RDF/XML parsers give an `xml:lang` to the next sibling element
-  (https://github.com/danbri/factoidal/issues/329).
+  on QUDT (https://github.com/danbri/factoidal/issues/766); the Lean RDF/XML
+  parser holds 40 to 50 bytes of resident memory per document byte (GO basic,
+  118 MB: 4.9 GB, F\* 0.83 GB; https://github.com/danbri/factoidal/issues/771);
+  the Lean and F\* RDF/XML parsers give an `xml:lang` to the next sibling
+  element (https://github.com/danbri/factoidal/issues/329).
 - ✅ Every failure above has an open issue and an expected-failure row in
-  `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 6 expected-fail (out of 11).
+  `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 7 expected-fail (out of 12).
 - No Lean library code changed. New: `l4owl-species` (a harness executable),
   `tools/owl-real-bench.py`, `tools/owl-real-hermit.py`, the gate, and six
   vendored ontologies.
@@ -51,7 +53,8 @@ counts from three parsers, species). Four were already vendored for the
 closure benchmark (`third_party/vocabularies/PROVENANCE.md`,
 `third_party/qudt/PROVENANCE.md`). The Gene Ontology is too large to vendor
 (118 MB); the harness fetches a dated release at run time with `--optional`
-and checks its SHA-256. The optional GO row was not run on 2026-10-10.
+and checks its SHA-256. The full optional GO row was not run on 2026-10-10;
+its parse step was (section 5).
 
 | Name | Source | Licence | Source bytes | Expressivity in the file |
 |---|---|---|---:|---|
@@ -217,6 +220,7 @@ issue and its expected-failure row in `tests/stack/owl_real_gate.py`
 | Lean `owl-consistent`, RO (11,703 triples) | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `cl-basic-consistent` covers the cause |
 | Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure` |
 | Lean `owl-consistent` and `owl-entails`, QUDT, under `prlimit --as=6000000000` | OOM at 27 s with 1.25 GB resident. The Lean runtime's mimalloc reserves 1 GiB arenas and two 1 GiB thread stacks; with `MIMALLOC_ARENA_RESERVE=64MiB` the same command finishes under the same cap (41 s, 1,378 MB) | https://github.com/danbri/factoidal/issues/759 | `qudt-consistent` |
+| Lean `parse --format rdfxml`, GO basic 2026-08-05 (118,080,840 bytes; fetched at run time, not vendored) | under `prlimit --as`: `std::bad_alloc` after 0.57 s. With the 6 GB resident-set watchdog: 1,283,913 triples, 52 s (32 s CPU), 4,919 MB peak, 43.7 bytes per document byte; the Cell Ontology: 52.6. F\* `count`: 33.6 s, 831 MB | https://github.com/danbri/factoidal/issues/771 | `cl-basic-parse-memory` (15 bytes per byte) |
 | Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound) |
 | F\* `entail --regime OWL-RL` on wine and food (2,709 triples), RO, schema.org, the Cell Ontology and QUDT | TIMEOUT at 300 s on all five; Lean on the first four: 5.8 s, 8.0 s, 4.6 s, 26.7 s | https://github.com/danbri/factoidal/issues/765 | `wine-closure-fstar` (skipped when the F\* binary is absent) |
 | Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |

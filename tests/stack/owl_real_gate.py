@@ -13,6 +13,8 @@ with the stated result:
   true      the verdict is `true`
   done      the step exits 0 (closure)
   S         (species) l4owl-species finishes within S seconds
+  B         (parse-memory) the peak resident set of `l4factoidal parse` of the
+            first source file is at most B bytes per byte of that file
   N         (parse) the Lean parser reads N triples from the first source
             file; N is rdflib 7.6.0's count, recorded in the file's
             PROVENANCE.md
@@ -67,6 +69,7 @@ ROWS: dict[str, tuple] = {
     "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
     "wine-closure-fstar": ("wine", "closure", "done", None),
     "qudt-species": ("qudt", "species", 60, None),
+    "cl-basic-parse-memory": ("cl-basic", "parse-memory", 15, None),
     "qudt-closure": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
 }
@@ -100,6 +103,8 @@ XFAIL: dict[str, str] = {
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
     # 253 s of CPU time on 130,404 triples.
     "qudt-species": "https://github.com/danbri/factoidal/issues/766",
+    # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte).
+    "cl-basic-parse-memory": "https://github.com/danbri/factoidal/issues/771",
 }
 
 
@@ -110,6 +115,15 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
     wd = WORK / name
     wd.mkdir(parents=True, exist_ok=True)
     files = [str(ROOT / p) for p in onto["files"]]
+    if step == "parse-memory":
+        out = str(wd / "parse.out")
+        r = bench.run_step([lean, "parse", files[0], "--format", onto["format"]],
+                           cap_s, AS_BYTES, out, str(wd))
+        size = os.path.getsize(files[0])
+        per = r["peak_rss_mb"] * 1024 * 1024 / max(size, 1)
+        return (r["status"] == "ok" and per <= expect,
+                f"parse-memory: {r['status']}, peak RSS {r['peak_rss_mb']:.0f} MB for {size} bytes "
+                f"({per:.1f} bytes per byte, bound {expect})")
     if step == "parse":
         out = str(wd / "parse.out")
         r = bench.run_step([lean, "parse", files[0], "--format", onto["format"]],
