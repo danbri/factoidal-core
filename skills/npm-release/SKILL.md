@@ -42,8 +42,11 @@ bash formal/lean4/Wasm/build-wasm.sh          # about ten minutes
 ```
 
 It compiles `L4Factoidal` to `l4factoidal.wasm`, writes Emscripten's glue
-`l4factoidal.mjs` and the repository's own loader `l4factoidal.js`, then
-installs **four byte-identical copies**:
+`l4factoidal.mjs` and the repository's own loader `l4factoidal.js`, links the
+core module `l4factoidal-core.wasm` from the same objects (issue 713 stage 4;
+its glue `l4factoidal-core.mjs` and its loader `l4factoidal-core.js`, which
+step 8 generates from `l4factoidal.js`), then installs **four byte-identical
+copies** of the full module and two of the core module (copies 1 and 2):
 
 | Copy | Directory | Who reads it |
 | --- | --- | --- |
@@ -100,14 +103,18 @@ tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js
 
 - Entries: `index.js` + `index.mjs` (Node; `index.js` hands the ES module
   to `require()`, so `engines.node` is `>=22.12`), `browser.js`,
+  `core.mjs` + `core.js` + `core-browser.js` (the `./core` entry over the core
+  module, issue 713 stage 4; `core-browser.js` is its `browser` condition),
   `api.js` + `api.mjs` (`createApi(engine)`), `fn.js`, `rdfjs.js` +
   `rdfjs.mjs`, the 0.9.x aliases `l4.js` and `l4-core.js`, and a `.d.ts`
   beside each.
 - The typed layer: `lib/` (`api.mjs`, `lean-entry.mjs`, `store.mjs`,
   `version.mjs`). ES modules with no Node built-ins: the browser imports
   them as they are.
-- The engine: `l4-assets/` (`l4factoidal.js`, `.mjs`, `.wasm`,
-  `version.json`, `package.json`).
+- The engines: `l4-assets/` (`l4factoidal.js`, `.mjs`, `.wasm`, the same
+  three for `l4factoidal-core`, `version.json`, `package.json`). Step 9 adds
+  `coreWasmSha256` and `coreWasmBytes` to `version.json`; like the other
+  stamped members, do not commit them.
 - Store, command and protocol hosts: `store-host/`, `bin/`, `lws/`,
   `solid/`, `xmpp/`, `sample-store/` + `sample-store.mjs`.
 - Metadata: `README.md`, `CHANGELOG.md`, `LICENSE`, `NOTICE`.
@@ -239,7 +246,8 @@ bundles or the Lean wasm need those files installed first
 | tarball | `cd npm/factoidal && npm pack --dry-run` | the `files` list above: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
 | Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
-| browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` over `fetch`, with one `instantiateStreaming` call and the wasm served as `application/wasm` |
+| browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` over `fetch`; a second page runs `core-browser.js` (parse, SELECT, `canonicalize`, `shaclValidate`; `xpathEval` and `openStore` refused naming `@factoidal/core`); per page one `instantiateStreaming` call and only that entry's wasm served, as `application/wasm` |
+| speed (not a release gate yet) | `cd npm/factoidal && npm run test:speed` after `tools/fetch-builds.sh --set web` | the Lean engine within 2 times the faster F\* bundle per row of `tests/perf/l4_vs_fstar_wasm_bench.mjs`, or an expected failure naming its issue; exit 2 without the F\* bundles. Numbers: design record § 10 |
 | bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 (esbuild bundle of the package under `script-src 'self' 'wasm-unsafe-eval'`) |
 | engine comparison (private build, not a release gate) | `tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js` after `tools/fetch-builds.sh --set web` | 7 pass, 0 fail (out of 7) against the F\* bundle of build-dba1bdb1d320-web; exit 2 when the bundle is absent |
 | hub notebooks | `node --test tests/hub/*_test.mjs` and `tests/web-demos/hub_browser_all.sh` | the hub pages and the node harness both run this package (Lean) since issue 726: `hub.njk` imports `npm/factoidal/browser.js`, which `docs/.eleventy.js` passes through to `/npm/factoidal/`. A change to an exported name or a result shape can break a post; gate on both. Numbers: design record `docs/designissues/2026-10-10-npm-lean-only.md` § 8 |

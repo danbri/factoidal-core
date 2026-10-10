@@ -2545,5 +2545,46 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
 
+# --- The core dispatch (l4factoidal-core.wasm, issue 713 stage 4) ------
+# `l4wasm-cli corecall` drives Wasm/CoreDispatch.lean's `L4Wasm.Core.callIO`,
+# the table the core wasm links.
+corecheck() {
+  local label="$1" op="$2" argsfile="$3" expr="$4"
+  local out
+  out="$("$CLI" corecall "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+"; then
+    echo "ok   $label"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL $label"
+    printf '     output: %s\n' "$out"
+    FAIL=$((FAIL + 1))
+  fi
+}
+corecheck "core: ops reflection names the engine and the full-only ops" ops "$TMP/empty.json" \
+  'r["ok"] is True and r["engine"] == "core" and "datasetOpen" in r["ops"]
+   and "shaclValidate" in r["ops"] and "xpathEval" not in r["ops"]
+   and "xpathEval" in r["fullOnlyOps"] and r["blobOps"] == [] and r["blobIoOps"] == []
+   and r["fullOnlyFormats"] == ["jsonld", "json-ld", "application/ld+json"]'
+corecheck "core: parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json" \
+  'r["ok"] is True and r["count"] == 1 and "example.org/alice" in r["nquads"]'
+args "$TMP/core-q.json" "<http://e/a> <http://e/p> \"v\" ." "SELECT ?o WHERE { ?s ?p ?o }"
+corecheck "core: queryDataset SELECT" queryDataset "$TMP/core-q.json" \
+  'r["ok"] is True and "\"v\"" in json.dumps(r)'
+args "$TMP/core-x.json" "<a/>" "/a"
+corecheck "core: a full-only op is refused naming the full engine" xpathEval "$TMP/core-x.json" \
+  'r["ok"] is False and r["servedBy"] == "full" and "l4factoidal.wasm" in r["error"]'
+args "$TMP/core-jl.json" '{"@id":"http://e/a","http://e/p":"v"}' "jsonld" ""
+corecheck "core: JSON-LD is refused by name" parseToDatasetJson "$TMP/core-jl.json" \
+  'r["ok"] is False and "not in the core engine" in r["error"]'
+corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
+  'r["ok"] is False and "unknown op" in r["error"] and "servedBy" not in r'
+check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
+  'r["ok"] is True and r["engine"] == "full"'
+
 echo "=== native-smoke: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
 [ "$FAIL" -eq 0 ]
