@@ -18,6 +18,8 @@ const readArgs = (f) => JSON.parse(read(f));
 
 const CASES = {
   'xml-entities': () => ['parseToDatasetJson', readArgs('args-xml.json')],
+  'xml-entities-attr': () => ['parseToDatasetJson', readArgs('args-xml-attr.json')],
+  'xml-entities-dtd': () => ['parseToDatasetJson', readArgs('args-xml-dtd.json')],
   'turtle-literal': () => ['parseToDatasetJson', readArgs('args-turtle-literal.json')],
   'turtle-collection': () => ['parseToDatasetJson', readArgs('args-turtle-collection.json')],
   'nquads-one-subject': () => ['parseToDatasetJson', readArgs('args-nquads.json')],

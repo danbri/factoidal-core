@@ -141,7 +141,8 @@ to 27.3 MB.
   `skills/fstar-module-style/SKILL.md` (extraction is not stack-safe; the
   OCaml scan).
 - War stories: issues 670 (manifest decode and the quadratic dedup), 673 (XML
-  line-ending pre-pass), 674 (F\* SHACL segfault), 658 (the wasm bignum leak).
+  line-ending pre-pass, then the reference scan `scanRefs`), 674 (F\* SHACL
+  segfault), 658 (the wasm bignum leak).
 
 ## Two corrections paid for on 2026-09-08
 
@@ -164,6 +165,14 @@ to 27.3 MB.
   are mutually recursive. The cure is accumulator functions with an equality
   theorem to the readable spec (`JSON/Serialize.lean` `toStringItemsAcc`), not
   csimp. Check the emitted C, never assume csimp took.
+  Precisely (measured 2026-10-10, issue 673): csimp cannot replace a call from
+  one MEMBER of a `mutual` block to another, because the block is compiled
+  before a theorem about its members can be stated. A function that is NOT a
+  member, defined and csimp-replaced BEFORE the block, is replaced at its
+  call sites inside the block: `XML.scanRefs` is called from the `mutual`
+  pair `parseChildren`/`parseElement`, and after
+  `@[csimp] scanRefs_eq_scanRefsFast` the emitted C of both calls
+  `scanRefsFast`.
 - **A still-broken shortfall is an expected-failure in the suite, not a red
   gate and not a silent skip** (https://github.com/danbri/factoidal/issues/678, turtle-collection): the case passes the
   suite WHILE it overflows and turns the suite red if it ever stops, so the fix

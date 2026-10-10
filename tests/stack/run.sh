@@ -261,7 +261,6 @@ fi
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
     turtle-collection) echo "https://github.com/danbri/factoidal/issues/678" ;;
-    xml-entities)      echo "https://github.com/danbri/factoidal/issues/673" ;;
   esac
 }
 
@@ -345,6 +344,8 @@ wasm_missing() { # wasm_missing <route>
 
 CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
+  "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
+  "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
