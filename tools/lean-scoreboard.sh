@@ -739,7 +739,7 @@ parse_jsonld_api() {
 }
 
 parse_jsonld_frame() {
-  row_sl "$CUR_AREA" "" '^jsonld-frame: [0-9]+ pass' last "other = unsupported"
+  row_sl "$CUR_AREA" "" '^jsonld-frame: [0-9]+ pass' last "other = local-override + unsupported"
 }
 
 parse_rml() {

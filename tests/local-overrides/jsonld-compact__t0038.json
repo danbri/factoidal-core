@@ -1,6 +1,7 @@
 {
   "test_id": "#t0038",
   "suite": "jsonld-compact",
+  "issue": "https://github.com/danbri/factoidal/issues/703",
   "dispute_kind": "output",
   "upstream_expectation": "the JSON-LD 1.0 compaction of \"Index map round-tripping\" (option.specVersion=json-ld-1.0), in which every term — expanded-form term definitions included — is a compact-IRI prefix candidate, producing the body:/format-style prefix-compacted keys 0038-out.jsonld pins",
   "our_expectation": "the JSON-LD 1.1 compaction, which under processingMode=json-ld-1.0 does NOT use an expanded term definition as a compact-IRI prefix — the behavior this suite's OWN #tp001 (\"Compact IRI will not use an expanded term definition in 1.0\") explicitly pins",

@@ -1,6 +1,7 @@
 {
   "test_id": "#t0008",
   "suite": "jsonld-fromrdf",
+  "issue": "https://github.com/danbri/factoidal/issues/703",
   "dispute_kind": "output",
   "upstream_expectation": "the JSON-LD 1.0 \"List conversion\" output (option.specVersion=json-ld-1.0): 1.0 converted an RDF collection to @list node-by-node against triples that are only PARTIALLY ORDERED on purpose (see the manifest `purpose`), yielding the specific partially-collapsed shape 0008-out.jsonld pins",
   "our_expectation": "the JSON-LD 1.1 \"Serialize RDF as JSON-LD\" list conversion — a single order-independent referenced-once/list-shape pass — which fully collapses the same input and so does NOT reproduce the 1.0-only partial shape",
