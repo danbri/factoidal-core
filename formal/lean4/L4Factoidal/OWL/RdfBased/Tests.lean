@@ -385,4 +385,34 @@ private def gMinMax (hi : String) : Graph :=
 -- no existential restriction: no successor is asked for
 #guard !clashes ((gMinMax "10").filter (fun t => t.p != owlSomeValuesFrom))
 
+-- every facet node of the restriction must carry a facet pair (Table 5.7
+-- reads one pair per member of the list): a second, bare node blocks the row
+private def gBareFacet : Graph :=
+  (gMinMax "10").filter (fun t => t != (⟨B "d0l", rdfRest, O rdfNil⟩ : Triple)) ++
+  [⟨B "d0l", rdfRest, Bt "d0m"⟩, ⟨B "d0m", rdfFirst, Bt "bare"⟩, ⟨B "d0m", rdfRest, O rdfNil⟩]
+#guard !clashes gBareFacet
+-- the same list with the facet on the second node as well: the row fires
+#guard clashes (gBareFacet ++ [⟨B "bare", xsdFacetMinInclusive, lit "18" xsdInteger⟩])
+
+-- Literal values (§ 4.2, XSD 1.1 Part 2 § 3.3.1, § 3.4).
+private def wl (s : String) (d : WfIri) : WfLiteral :=
+  if h : literalWf ⟨s, d, none, none⟩ then ⟨_, h⟩ else ⟨⟨"", xsdString, none, none⟩, by decide⟩
+#guard intLitValue (wl "-0" xsdNonNegativeInteger) == some 0
+#guard intLitValue (wl "+007" xsdByte) == some 7
+-- outside the bounds of xsd:byte: ill-typed, no value
+#guard intLitValue (wl "300" xsdByte) == none
+#guard intLitValue (wl "0" xsdPositiveInteger) == none
+#guard intLitValue (wl "1.0" xsdInteger) == none
+#guard litSame (wl "-0" xsdInteger) (wl "0" xsdUnsignedInt)
+#guard !litSame (wl "300" xsdByte) (wl "300" xsdShort)
+#guard litDistinct (wl "4" xsdIntIri) (wl "3" xsdInteger)
+#guard !litDistinct (wl "4" xsdIntIri) (wl "04" xsdInteger)
+#guard litDistinct (wl "ab" xsdString) (wl "ac" xsdString)
+-- U+0000 is not in the lexical space of xsd:string: no value, so not distinct
+#guard !litDistinct (wl "a\x00" xsdString) (wl "ac" xsdString)
+#guard litOutsideDt (wl "6542145" xsdInteger) xsdByte
+#guard !litOutsideDt (wl "127" xsdInteger) xsdByte
+#guard litOutsideDt (wl "3" xsdInteger) xsdString
+#guard !litOutsideDt (wl "3" xsdInteger) xsdDecimal
+
 end L4Factoidal.OWL.RdfBased.Tests

@@ -70,7 +70,9 @@ def IntRestr (g : Graph) (d : Subject) (e : WfIri) (fv : List (WfIri × WfLitera
   (intDtBounds e).isSome = true ∧ (⟨d, owlOnDatatype, .iri e⟩ : Triple) ∈ g ∧
   ∃ (lst : Term) (fs : List Term), fs ≠ [] ∧
     (⟨d, owlWithRestrictions, lst⟩ : Triple) ∈ g ∧ ListDenotes g lst fs ∧
-    ∀ f ∈ fv, ∃ zs : Subject, zs.toTerm ∈ fs ∧ (⟨zs, f.1, .literal f.2⟩ : Triple) ∈ g
+    (∀ f ∈ fv, ∃ zs : Subject, zs.toTerm ∈ fs ∧ (⟨zs, f.1, .literal f.2⟩ : Triple) ∈ g) ∧
+    (∀ ft ∈ fs, ∃ f ∈ fv, ∃ zs : Subject, ft = zs.toTerm ∧
+      (⟨zs, f.1, .literal f.2⟩ : Triple) ∈ g)
 
 inductive LitOut (g : Graph) (l : WfLiteral) : Term → Prop where
   /-- `l` is outside the value space of the datatype `e`. -/
@@ -201,14 +203,20 @@ omit hc in
 theorem intRestr_holds {g : Graph} {A : BnodeAssignment i.idom} (hA : HoldsAll i A g)
     {d : Subject} {e : WfIri} {fv : List (WfIri × WfLiteral)} (h : IntRestr g d e fv) :
     RestrictionFacets i (denotSubject i A d) e fv := by
-  obtain ⟨he, hdt, lst, fs, hne, hw, hl, hf⟩ := h
+  obtain ⟨he, hdt, lst, fs, hne, hw, hl, hf, hall⟩ := h
   refine ⟨he, hA _ hdt, denotTerm i A lst, fs.map (denotTerm i A), ?_, hA _ hw,
-    holds_seqIs (fun u hu => hA u hu) hl, ?_⟩
+    holds_seqIs (fun u hu => hA u hu) hl, ?_, ?_⟩
   · intro hnil
     exact hne (List.map_eq_nil_iff.mp hnil)
   · intro f hfm
     obtain ⟨zs, hzs, ht⟩ := hf f hfm
     refine ⟨denotTerm i A zs.toTerm, List.mem_map_of_mem hzs, ?_⟩
+    rw [denot_toTerm]
+    exact hA _ ht
+  · intro zk hzk
+    obtain ⟨ft, hft, rfl⟩ := List.mem_map.mp hzk
+    obtain ⟨f, hfm, zs, rfl, ht⟩ := hall ft hft
+    refine ⟨f, hfm, ?_⟩
     rw [denot_toTerm]
     exact hA _ ht
 
@@ -386,7 +394,9 @@ def intRestrs (g : Graph) (d : Subject) : List (WfIri × List (WfIri × WfLitera
       if (intDtBounds e).isSome then
         (withSubjPred g d owlWithRestrictions).flatMap (fun wr =>
           (listSeqs g wr.o (listFuel g)).flatMap (fun fs =>
-            if fs.isEmpty then [] else [(e, facetPairs g fs)]))
+            if !fs.isEmpty && fs.all (fun ft => !(facetPairs g [ft]).isEmpty) then
+              [(e, facetPairs g fs)]
+            else []))
       else []))
 
 def distinctFromAll (l : WfLiteral) (es : List Term) : Bool :=
@@ -523,6 +533,12 @@ theorem facetPairs_spec {g : Graph} {fs : List Term} {f : WfIri × WfLiteral}
   rw [← mem_asSubject hzs]
   exact hft
 
+theorem facetPairs_single {g : Graph} {fs : List Term} {ft : Term} {f : WfIri × WfLiteral}
+    (hft : ft ∈ fs) (h : f ∈ facetPairs g [ft]) : f ∈ facetPairs g fs := by
+  simp only [facetPairs, List.mem_flatMap, List.mem_singleton] at h ⊢
+  obtain ⟨_, rfl, h⟩ := h
+  exact ⟨_, hft, h⟩
+
 theorem intRestrs_spec {g : Graph} {d : Subject} {r : WfIri × List (WfIri × WfLiteral)}
     (h : r ∈ intRestrs g d) : IntRestr g d r.1 r.2 := by
   simp only [intRestrs, List.mem_flatMap] at h
@@ -532,17 +548,25 @@ theorem intRestrs_spec {g : Graph} {d : Subject} {r : WfIri × List (WfIri × Wf
     simp only [List.mem_flatMap] at h
     obtain ⟨wr, hwr, fs, hfs, h⟩ := h
     split at h
-    · simp at h
-    · rename_i hne
+    · rename_i hok
+      simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff,
+        List.all_eq_true] at hok
+      obtain ⟨hne, hall⟩ := hok
       simp only [List.mem_singleton] at h
       subst h
       obtain ⟨hodg, hods, hodp⟩ := mem_withSubjPred hod
       obtain ⟨hwrg, hwrs, hwrp⟩ := mem_withSubjPred hwr
-      refine ⟨hb, mem_of_parts hodg hods hodp (mem_asIri he), wr.o, fs, ?_,
-        mem_of_parts hwrg hwrs hwrp rfl, listSeqs_sound g _ _ hfs, ?_⟩
-      · intro hnil; subst hnil; simp at hne
+      refine ⟨hb, mem_of_parts hodg hods hodp (mem_asIri he), wr.o, fs, hne,
+        mem_of_parts hwrg hwrs hwrp rfl, listSeqs_sound g _ _ hfs, ?_, ?_⟩
       · intro f hf
         exact facetPairs_spec hf
+      · intro ft hft
+        have hnz : facetPairs g [ft] ≠ [] := by simpa using hall ft hft
+        obtain ⟨f, hf⟩ := List.exists_mem_of_ne_nil _ hnz
+        obtain ⟨zs, hzs, ht⟩ := facetPairs_spec hf
+        simp only [List.mem_singleton] at hzs
+        exact ⟨f, facetPairs_single hft hf, zs, hzs.symm, ht⟩
+    · simp at h
   · simp at h
 
 theorem litOutB_spec {g : Graph} {l : WfLiteral} {d : Term} (h : litOutB g l d = true) :

@@ -280,15 +280,25 @@ def litOutsideDt (l : WfLiteral) (e : WfIri) : Bool :=
    | _, _ => false) ||
   xsdValueSpacesDisjoint l.val.datatype e
 
+/-- `s` is in the lexical space of `xsd:string` (XSD 1.1 Part 2 § 3.3.1:
+the sequences of characters that match the `Char` production of XML 1.0
+or XML 1.1; a Lean `Char` is never a surrogate, so the excluded code
+points are U+0000, U+FFFE and U+FFFF). -/
+def xsdStringLexOk (s : String) : Bool :=
+  s.toList.all (fun c => c.toNat != 0 && c.toNat != 0xFFFE && c.toNat != 0xFFFF)
+
 /-- The two literals provably denote different values: two integers that
-differ, or two `xsd:string` literals with different lexical forms
-(the lexical-to-value mapping of `xsd:string` is the identity). -/
+differ, or two `xsd:string` literals in the lexical space with different
+lexical forms (the lexical-to-value mapping of `xsd:string` is the
+identity). An ill-typed literal is never read here: its denotation is
+not in LV (§ 4.2) and nothing says which element it is. -/
 def litDistinct (l m : WfLiteral) : Bool :=
   (match intLitValue l, intLitValue m with
    | some a, some b => a != b
    | _, _ => false) ||
   (l.val.datatype == xsdString && m.val.datatype == xsdString &&
-   l.val.langTag.isNone && m.val.langTag.isNone && l.val.lexicalForm != m.val.lexicalForm)
+   xsdStringLexOk l.val.lexicalForm && xsdStringLexOk m.val.lexicalForm &&
+   l.val.lexicalForm != m.val.lexicalForm)
 
 /-- The two literals provably denote one value: the same literal, or two
 integers that are equal. -/
@@ -545,12 +555,16 @@ def CondDatatypeComplementSub : Prop :=
 
 /-- The premise of Table 5.7 for an integer datatype `e`: `(z, I(e)) ∈
 IEXT(I(owl:onDatatype))`, `(z, s) ∈ IEXT(I(owl:withRestrictions))`, `s`
-a sequence of `z1, …, zn` with n ≥ 1, and each pair `(F, v)` of `fv` a
-facet assertion `(zk, IL(v)) ∈ IEXT(I(F))` of one of the `zk`. -/
+a sequence of `z1, …, zn` with n ≥ 1, each pair `(F, v)` of `fv` an
+assertion `(zk, IL(v)) ∈ IEXT(I(F))` of one of the `zk`, and every `zk`
+the subject of at least one pair of `fv`. Table 5.7 reads "(z1, v1) ∈
+IEXT(f1), …, (zn, vn) ∈ IEXT(fn)" with one pair per `zk`; the last
+clause lets every pair of `fv` be part of such a choice. -/
 def RestrictionFacets (z : i.idom) (e : WfIri) (fv : List (WfIri × WfLiteral)) : Prop :=
   (intDtBounds e).isSome = true ∧ i.iext (i.iIri owlOnDatatype) z (i.iIri e) ∧
   ∃ (s : i.idom) (zs : List i.idom), zs ≠ [] ∧ i.iext (i.iIri owlWithRestrictions) z s ∧
-    SeqIs i s zs ∧ ∀ f ∈ fv, ∃ zk ∈ zs, i.iext (i.iIri f.1) zk (i.iLit f.2)
+    SeqIs i s zs ∧ (∀ f ∈ fv, ∃ zk ∈ zs, i.iext (i.iIri f.1) zk (i.iLit f.2)) ∧
+    (∀ zk ∈ zs, ∃ f ∈ fv, i.iext (i.iIri f.1) zk (i.iLit f.2))
 
 /-- Table 5.7: "ICEXT(z) = ICEXT(d) ∩ IF2V(d)((f1, v1)) ∩ … ∩
 IF2V(d)((fn, vn))", over an integer datatype (the bounds of § 3.4, the
@@ -1177,11 +1191,11 @@ theorem witness_conditions : RdfBasedConditions witnessInterp where
     exact h y ((w_ic _ _).mp hy) ((w_ic _ _).mp hd)
   intRestrMembers := by
     intro z e fv hr
-    obtain ⟨_, _, s, zs, hne, _, hs, _⟩ := hr
+    obtain ⟨_, _, s, zs, hne, _, hs, _, _⟩ := hr
     exact absurd (w_seq_nil hs).1 hne
   intRestrExcl := by
     intro z e fv l k hr
-    obtain ⟨_, _, s, zs, hne, _, hs, _⟩ := hr
+    obtain ⟨_, _, s, zs, hne, _, hs, _, _⟩ := hr
     exact absurd (w_seq_nil hs).1 hne
 
 /-- The one-triple graph `owl:Thing rdfs:subClassOf owl:Nothing`. -/
