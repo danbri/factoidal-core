@@ -841,7 +841,6 @@ L4Factoidal_Syntax_RdfXml_propertyAttrTriples  # (b) attributes of one RDF/XML e
 L4Factoidal_Syntax_RdfXml_renderAttrs  # (b) attributes of one XML element
 L4Factoidal_Syntax_RdfXml_serializeNodes  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per sibling node when an XMLLiteral is serialised (data); fuel-bounded
 L4Factoidal_Syntax_readAnnotations  # (b) annotation blocks on one Turtle triple; was hidden as `replaced` by the short-name csimp mark of OwlXml.readAnnotations
-L4Factoidal_Syntax_readCollectionRest  # (a) PENDING https://github.com/danbri/factoidal/issues/678 one frame per element of one Turtle collection (the canary's turtle-collection case: 100,000 items)
 L4Factoidal_Syntax_readPredicateObjectList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per `;`-separated predicate of one Turtle subject (confirm; mutual with readObject)
 L4Factoidal_Syntax_assignLabelsAvoiding  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Turtle serializer: one frame per blank-node label to assign (data)
 L4Factoidal_Syntax_tsUserUsed  # (c) prefixes of the serializer's prefix table
@@ -1374,3 +1373,4 @@ L4Wasm_Json_pValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 l
 L4Wasm_Json_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:106
 L4Wasm_decodeSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:331
 L4Wasm_termIriString  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:340
+L4Factoidal_Syntax_readCollectionCells  # (b) the readObject cycle recurses once per NESTING level of collections and [ ] (2,897 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements of one collection are a loop (goto _start), issue 678
