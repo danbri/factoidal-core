@@ -78,7 +78,12 @@
 # frame. That module is a diagnostic, never the shipped one.
 #
 # Usage:  tests/stack/run.sh [--route wasm|native|both] [--fixtures DIR]
-#                            [--canary [KB]]
+#                            [--canary [KB]] [--control-only]
+#
+# --control-only compiles and runs the canary control and nothing else.
+# tests/stack/canary_control.sh uses it to show that the control can FAIL:
+# with a wrong variable name (STACK_CANARY_VAR=LEAN_STACK_SIZE, the name this
+# suite used until 2026-10-10) the control must refuse to score.
 #
 # Scores are printed as "N pass, M fail (out of T)" per route.
 set -uo pipefail
@@ -90,6 +95,7 @@ CLI="$LEAN_DIR/.lake/build/bin/l4wasm-cli"
 
 ROUTE=both
 CANARY=0
+CONTROL_ONLY=0
 CANARY_KB=512
 FIXTURES="${STACK_FIXTURES:-${TMPDIR:-/tmp}/factoidal-stack-fixtures}"
 TIMEOUT="${STACK_TIMEOUT:-120}"
@@ -98,6 +104,7 @@ while [ $# -gt 0 ]; do
     --route) ROUTE="$2"; shift 2 ;;
     --fixtures) FIXTURES="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
+    --control-only) CONTROL_ONLY=1; CANARY=1; shift ;;
     --canary)
       CANARY=1
       case "${2:-}" in ''|-*) shift 1 ;; *) CANARY_KB="$2"; shift 2 ;; esac ;;
@@ -105,8 +112,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-echo "=== generating fixtures in $FIXTURES"
-python3 "$HERE/gen_cases.py" "$FIXTURES" || exit 2
+mkdir -p "$FIXTURES"
+if [ "$CONTROL_ONLY" != 1 ]; then
+  echo "=== generating fixtures in $FIXTURES"
+  python3 "$HERE/gen_cases.py" "$FIXTURES" || exit 2
+fi
 
 # A portable timeout: macOS ships no coreutils `timeout`.
 # The watchdog's own stdout MUST go to /dev/null. Command substitution
@@ -167,7 +177,10 @@ CONTROL_OK=0
 
 # An external command, not a function: run_capped kills the PID it starts, and
 # a backgrounded shell function would leave its child process running.
-CANARY_PREFIX=(env -u LEAN_MAIN_USE_THREAD "LEAN_STACK_SIZE_KB=$CANARY_KB")
+# STACK_CANARY_VAR exists so that tests/stack/canary_control.sh can set the
+# wrong name and see the control refuse to score.
+CANARY_VAR="${STACK_CANARY_VAR:-LEAN_STACK_SIZE_KB}"
+CANARY_PREFIX=(env -u LEAN_MAIN_USE_THREAD "$CANARY_VAR=$CANARY_KB")
 
 control_build() { # sets CONTROL_BIN, or CONTROL_WHY when it cannot compile
   local c="$FIXTURES/stack-control.c" bin="$FIXTURES/stack-control"
@@ -192,7 +205,7 @@ control_run() {
   if [ "$1" = canary ]; then
     CONTROL_OUT="$(run_capped "$TIMEOUT" "${CANARY_PREFIX[@]}" "$CONTROL_BIN" "$2" 2>&1)"; CONTROL_RC=$?
   else
-    CONTROL_OUT="$(run_capped "$TIMEOUT" env -u LEAN_MAIN_USE_THREAD -u LEAN_STACK_SIZE_KB "$CONTROL_BIN" "$2" 2>&1)"; CONTROL_RC=$?
+    CONTROL_OUT="$(run_capped "$TIMEOUT" env -u LEAN_MAIN_USE_THREAD -u LEAN_STACK_SIZE_KB -u "$CANARY_VAR" "$CONTROL_BIN" "$2" 2>&1)"; CONTROL_RC=$?
   fi
 }
 
@@ -206,17 +219,17 @@ canary_control() {
 
   control_run canary 100
   if [ "$CONTROL_RC" -ne 0 ] || [ "$(printf '%s' "$CONTROL_OUT" | tail -1)" != 4950 ]; then
-    CONTROL_WHY="the control with 100 elements did not run under LEAN_STACK_SIZE_KB=${CANARY_KB} (exit $CONTROL_RC): $(printf '%s' "$CONTROL_OUT" | head -c 160)"
+    CONTROL_WHY="the control with 100 elements did not run under ${CANARY_VAR}=${CANARY_KB} (exit $CONTROL_RC): $(printf '%s' "$CONTROL_OUT" | head -c 160)"
     return 1
   fi
 
   control_run canary "$n"
   if [ "$CONTROL_RC" -eq 0 ]; then
-    CONTROL_WHY="LEAN_STACK_SIZE_KB=${CANARY_KB} did not reach the process: the non-tail control with $n elements RAN (it must overflow). Check that this Lean runtime still reads LEAN_STACK_SIZE_KB, and that the budget is below about $((n * 32 / 1024)) KB"
+    CONTROL_WHY="${CANARY_VAR}=${CANARY_KB} did not reach the process: the non-tail control with $n elements RAN (it must overflow). Check that this Lean runtime reads ${CANARY_VAR} (it read LEAN_STACK_SIZE_KB in 4.33.1), and that the budget is below about $((n * 32 / 1024)) KB"
     return 1
   fi
   if ! printf '%s' "$CONTROL_OUT" | grep -q 'Stack overflow'; then
-    CONTROL_WHY="the control with $n elements failed under LEAN_STACK_SIZE_KB=${CANARY_KB}, but not with a stack overflow (exit $CONTROL_RC): $(printf '%s' "$CONTROL_OUT" | head -c 160)"
+    CONTROL_WHY="the control with $n elements failed under ${CANARY_VAR}=${CANARY_KB}, but not with a stack overflow (exit $CONTROL_RC): $(printf '%s' "$CONTROL_OUT" | head -c 160)"
     return 1
   fi
 
@@ -229,6 +242,14 @@ canary_control() {
   CONTROL_OK=1
   CONTROL_DETAIL="n=$n: 100 elements ran and $n elements overflowed under ${CANARY_KB}KB; $n elements ran at the default budget"
 }
+
+# --control-only: run the control and nothing else (used by canary_control.sh).
+if [ "$CONTROL_ONLY" = 1 ]; then
+  if canary_control; then
+    echo "ok   canary control: $CONTROL_DETAIL"; exit 0
+  fi
+  echo "FAIL canary control: native canary NOT SCORED: $CONTROL_WHY"; exit 1
+fi
 
 # Cases that overflow a reduced or a browser-sized stack today, each with the
 # open issue that tracks it. A listed case passes the suite while it overflows
@@ -347,7 +368,7 @@ fi
 NATIVE_CANARY="not run"
 if [ "$CANARY" = 1 ]; then
   echo
-  echo "=== canary route (native under LEAN_STACK_SIZE_KB=${CANARY_KB})"
+  echo "=== canary route (native under ${CANARY_VAR}=${CANARY_KB})"
   if [ ! -x "$CLI" ]; then
     record canary control 1 "native canary NOT SCORED: $CLI does not exist"
     NATIVE_CANARY="NOT SCORED (no l4wasm-cli)"
@@ -408,6 +429,6 @@ echo "    shacl-shapes    5000-shape SHACL graph: no SHACL op on the dispatch"
 echo "                    ABI. Fixture at \$FIXTURES/shacl-shapes.ttl for l4shacl."
 
 echo
-[ "$CANARY" = 1 ] && echo "native canary: $NATIVE_CANARY (LEAN_STACK_SIZE_KB=${CANARY_KB})"
+[ "$CANARY" = 1 ] && echo "native canary: $NATIVE_CANARY (${CANARY_VAR}=${CANARY_KB})"
 echo "stack stress: $PASS pass, $FAIL fail (out of $TOTAL)"
 [ "$FAIL" -eq 0 ]
