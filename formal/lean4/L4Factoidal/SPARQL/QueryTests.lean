@@ -575,6 +575,85 @@ SELECT clause" (W3C sparql12 `grouping/select-variable-reuse`). -/
 #guard evalAsk emptyEnv dsMain
     (mkQuery .ask pLabels (postValues := some [[("s", .iri iZed)]])) == false
 
+/-! ### ASK with a SolutionModifier — grammar rule [12], §18.2.4, §18.2.5
+
+ASK is true exactly when the solution sequence after GROUP BY, HAVING,
+the trailing VALUES join, ORDER BY, OFFSET and LIMIT is non-empty. The
+fixture is `dsNums`: `:alice :val 1, 2` and `:bob :val 3`, so three
+solutions in two groups. Issue 699. -/
+
+/-- `ASK { ?s :val ?v }` with the given clauses after the WHERE clause. -/
+def qAskVal (groupBy : Option (List GroupCondition) := none)
+    (having : List Expr := []) (md : SolutionModifier := {})
+    (vals : Option (List Binding) := none) : Query :=
+  mkQuery .ask (.bgp [tpv "s" pVal (.var "v")]) (groupBy := groupBy)
+    (having := having) (modifier := md) (postValues := vals)
+
+def askNums (q : Query) : Bool := evalAsk emptyEnv dsNums q
+
+/-- `COUNT(*) > n`. -/
+def countGt (n : Nat) : Expr :=
+  .compare .gt (.aggregate .count false (.var "*")) (.numericLit n)
+
+-- No modifier: three solutions.
+#guard askNums (qAskVal) == true
+-- LIMIT 0 keeps no solution, whatever the data holds.
+#guard askNums (qAskVal (md := { limit := some 0 })) == false
+#guard askNums (qAskVal (md := { limit := some 1 })) == true
+-- OFFSET skips solutions: two of three leaves one; three of three leaves none.
+#guard askNums (qAskVal (md := { offset := some 2 })) == true
+#guard askNums (qAskVal (md := { offset := some 3 })) == false
+#guard askNums (qAskVal (md := { offset := some 99 })) == false
+-- OFFSET is applied before LIMIT, so `OFFSET 2 LIMIT 0` is empty and
+-- `OFFSET 2 LIMIT 1` keeps the last solution.
+#guard askNums (qAskVal (md := { offset := some 2, limit := some 0 })) == false
+#guard askNums (qAskVal (md := { offset := some 2, limit := some 1 })) == true
+-- ORDER BY changes no length: the answers are those of the same query without it.
+#guard askNums (qAskVal (md := { orderBy := some [.desc (.var "v")], limit := some 0 })) == false
+#guard askNums (qAskVal (md := { orderBy := some [.desc (.var "v")], limit := some 1 })) == true
+-- GROUP BY ?s makes two groups (alice, bob).
+#guard askNums (qAskVal (groupBy := some [.var "s"])) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (md := { offset := some 1 })) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (md := { offset := some 2 })) == false
+-- HAVING filters groups: alice has two rows, bob one.
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 2])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 100])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [.boolLit true])) == true
+-- HAVING and LIMIT together: the group that passes HAVING survives LIMIT 1,
+-- and OFFSET 1 skips it.
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])
+    (md := { limit := some 1 })) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])
+    (md := { offset := some 1 })) == false
+-- HAVING with no GROUP BY: the whole sequence is one group of three rows.
+#guard askNums (qAskVal (having := [countGt 2])) == true
+#guard askNums (qAskVal (having := [countGt 3])) == false
+-- ... and that one group is one solution, so OFFSET 1 leaves nothing.
+#guard askNums (qAskVal (having := [countGt 2]) (md := { offset := some 1 })) == false
+-- An empty WHERE result still forms the one implicit group, whose count is 0.
+#guard evalAsk emptyEnv dsNums
+    (mkQuery .ask (.bgp [tpv "s" pLabel (.var "v")]) (having := [countGt 0])) == false
+#guard evalAsk emptyEnv dsNums
+    (mkQuery .ask (.bgp [tpv "s" pLabel (.var "v")])
+      (having := [.compare .eq (.aggregate .count false (.var "*")) (.numericLit 0)])) == true
+-- The trailing VALUES join comes AFTER grouping: a row for a subject with
+-- no group (`:zed`) leaves nothing; a row for `:alice` keeps her group.
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iZed)]])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iAlice)]])) == true
+-- `?v` is not in scope after GROUP BY ?s, so a VALUES row that binds it
+-- filters no group. Joining the rows BEFORE grouping would find no
+-- solution with `?v = 99` and answer false.
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("v", nLit "99")]])) == true
+-- The same VALUES row joined to the ungrouped solutions (no GROUP BY, no HAVING).
+#guard askNums (qAskVal (vals := some [[("v", nLit "99")]])) == false
+-- A CONSTRUCT is not an ASK: the ASK entry point answers false.
+#guard evalAsk emptyEnv dsNums
+    (mkQuery (.construct []) (.bgp [tpv "s" pVal (.var "v")])) == false
+
 /-! ## §16.2 CONSTRUCT -/
 
 /-- `CONSTRUCT { ?s :knows ?s } WHERE { ?s :label ?label }`. -/
@@ -623,6 +702,102 @@ def bnodeSubjects : List String :=
 #guard (evalConstruct emptyEnv dsMain
     (mkQuery (.construct [{ s := .iri iZed, p := .iri pType, o := .iri cPerson }])
       pLabels)).length == 1
+
+/-! ### CONSTRUCT with GROUP BY and HAVING — §18.2.4.1, §16.2
+
+§18.2.4.1 applies to every query form, and §16.2 instantiates the
+template over the resulting solution sequence. After grouping the
+solutions bind the named GROUP BY variables only. The fixture is
+`dsNums`: `:alice :val 1, 2` and `:bob :val 3`. Issue 699. -/
+
+def pValPat : QueryPattern := .bgp [tpv "s" pVal (.var "v")]
+
+/-- `CONSTRUCT { <template> } WHERE { ?s :val ?v }` with clauses. -/
+def qConstructVal (template : List TriplePattern)
+    (groupBy : Option (List GroupCondition) := none) (having : List Expr := [])
+    (md : SolutionModifier := {}) (vals : Option (List Binding) := none) : Query :=
+  mkQuery (.construct template) pValPat (groupBy := groupBy) (having := having)
+    (modifier := md) (postValues := vals)
+
+/-- `?s :age 1`: uses only the grouping variable. -/
+def tmplKey : TriplePattern := { s := .var "s", p := .iri pAge, o := .literal (Literal.string "k") }
+/-- `?s :age ?v`: uses a variable that GROUP BY ?s does not keep. -/
+def tmplNonKey : TriplePattern := { s := .var "s", p := .iri pAge, o := .var "v" }
+
+def constructNums (q : Query) : Graph := evalConstruct emptyEnv dsNums q
+
+def aliceKey : Triple := tr iAlice pAge (sLit "k")
+def bobKey : Triple := tr iBob pAge (sLit "k")
+
+-- Without GROUP BY every solution drives the template: `?v` gives three
+-- triples, and the constant object gives one per subject (a graph).
+#guard (constructNums (qConstructVal [tmplNonKey])).length == 3
+#guard (constructNums (qConstructVal [tmplKey])).length == 2
+-- A template variable that is a GROUP BY variable: one triple per group.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"]))
+    == [aliceKey, bobKey]
+-- A template variable that is NOT a GROUP BY variable is unbound after
+-- grouping, so the triple is not produced (§16.2). Ungrouped, the same
+-- template yields three triples.
+#guard constructNums (qConstructVal [tmplNonKey] (groupBy := some [.var "s"])) == []
+-- A template with one triple of each kind keeps only the first.
+#guard constructNums (qConstructVal [tmplKey, tmplNonKey] (groupBy := some [.var "s"]))
+    == [aliceKey, bobKey]
+-- GROUP BY (expr AS ?k) keeps ?k, and drops the variable it was computed from.
+#guard (constructNums (qConstructVal
+    [{ s := .var "k", p := .iri pAge, o := .literal (Literal.string "k") }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))) == []
+#guard (constructNums (qConstructVal
+    [{ s := .var "s", p := .iri pAge, o := .var "k" }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))) == []
+#guard (constructNums (qConstructVal
+    [{ s := .iri iZed, p := .iri pAge, o := .var "k" }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))).length == 2
+-- HAVING filters groups before the template is instantiated: only
+-- alice has more than one row.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (having := [countGt 1])) == [aliceKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (having := [countGt 99])) == []
+-- HAVING with no GROUP BY: the one implicit group of three rows. A
+-- ground template triple is produced once, or not at all.
+#guard constructNums (qConstructVal [{ s := .iri iZed, p := .iri pAge, o := .iri iZed }]
+    (having := [countGt 2])) == [tr iZed pAge (.iri iZed)]
+#guard constructNums (qConstructVal [{ s := .iri iZed, p := .iri pAge, o := .iri iZed }]
+    (having := [countGt 3])) == []
+-- ... and a variable is unbound in that group.
+#guard constructNums (qConstructVal [tmplKey] (having := [countGt 2])) == []
+-- A template blank node is fresh per SOLUTION: after grouping there are
+-- two solutions (groups), where the ungrouped sequence has three.
+def tmplBnode : TriplePattern :=
+  { s := .bnode "b", p := .iri pAge, o := .iri iZed }
+#guard (constructNums (qConstructVal [tmplBnode])).length == 3
+#guard (constructNums (qConstructVal [tmplBnode] (groupBy := some [.var "s"]))).length == 2
+-- ORDER BY, OFFSET and LIMIT act on the grouped solutions.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { orderBy := some [.desc (.var "s")], limit := some 1 })) == [bobKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { orderBy := some [.asc (.var "s")], limit := some 1 })) == [aliceKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { offset := some 1 })) == [bobKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { offset := some 2 })) == []
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { limit := some 0 })) == []
+-- The trailing VALUES rows join after grouping (W3C sparql11
+-- `bindings/values-construct-group-by`): a row for a subject with no
+-- group adds nothing, and a row's variables are visible to the template.
+#guard constructNums (qConstructVal
+    [{ s := .var "s", p := .iri pAge, o := .var "rank" }]
+    (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iAlice), ("rank", nLit "1")],
+                   [("s", .iri iBob), ("rank", nLit "2")],
+                   [("s", .iri iZed), ("rank", nLit "9")]]))
+    == [tr iAlice pAge (nLit "1"), tr iBob pAge (nLit "2")]
+-- `?v` is not a GROUP BY variable, so a VALUES row on it joins every
+-- group and the template still cannot read the WHERE pattern's `?v`.
+#guard constructNums (qConstructVal [tmplNonKey] (groupBy := some [.var "s"])
+    (vals := some [[("v", nLit "99")]])) == [tr iAlice pAge (nLit "99"), tr iBob pAge (nLit "99")]
 
 /-! ## §9 / §18.4 property paths -/
 

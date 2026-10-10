@@ -772,6 +772,73 @@ not. -/
 #guard runAskQueryBackendDataset {}
         (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsb1 == some false
 
+/-! ASK applies its SolutionModifier on the backend path too (§18.2.4,
+§18.2.5; issue 699), through the same `formHasSolution` as `evalAsk`.
+`dsb1` holds one default triple, so one solution and, grouped by `?s`,
+one group. -/
+private def countGtB (n : Nat) : Expr :=
+  .compare .gt (.aggregate .count false (.var "*")) (.numericLit n)
+private def askMod (groupBy : Option (List GroupCondition) := none)
+    (having : List Expr := []) (md : SolutionModifier := {}) : Query :=
+  mkQuery .ask (.bgp [tpAll]) (groupBy := groupBy) (having := having) (modifier := md)
+
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 1 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 1])) dsb1 == some false
+-- The backend answer is the reference answer over the materialised dataset.
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1
+    == some (evalAsk {} (materialiseDatasetBackend dsb1)
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])))
+
+/-! A read that reports a decode failure. The ops serve `gDefault` and
+flag the failure, as a COTTAS column that cannot be decoded does. -/
+private def failingOps : L4Factoidal.RDF.CottasCaps.CottasReadOps :=
+  { searchTok := fun _ b => tripleMatchesBound b gDefault
+  , searchLimitedTok := fun _ b n => capsTakeN n (tripleMatchesBound b gDefault)
+  , estimateTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , countExactTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , predicatePresent := fun _ => true
+  , hasDecodeFailure := fun _ => true
+  , distinctPredicates := fun _ => none
+  , searchTokSelective := fun _ b _ => tripleMatchesBound b gDefault }
+private def dsbFailing : DatasetBackend :=
+  { default := .cottasOnDisk failingOps L4Factoidal.RDF.CottasCaps.CottasScope.defaultGraph
+  , named := [] }
+
+#guard backendDecodeFailure dsbFailing.default == true
+-- With no modifier, or only LIMIT or ORDER BY, a non-empty answer stands:
+-- rows that failed to decode could only add solutions.
+#guard runAskQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsbFailing == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsbFailing == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (md := { orderBy := some [.asc (.var "s")], limit := some 1 })) dsbFailing
+    == some true
+-- An empty answer from a failed read is not `false`.
+#guard runAskQueryBackendDataset {}
+        (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsbFailing == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- GROUP BY, HAVING and OFFSET make the answer depend on rows the read
+-- may have lost, so even a `true` answer is withheld.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- The same queries on a clean read are answered.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
+
 /-! A SELECT is not an ASK, so the ASK entry point declines it. -/
 #guard runAskQueryBackendDataset {} (mkQuery (.select .all) (.bgp [tpAll])) dsb1
         == (none : Option Bool)

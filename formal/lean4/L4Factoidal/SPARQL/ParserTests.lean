@@ -502,6 +502,66 @@ SELECT expressions, so its variables are in scope for §11.4 and
 -- An aggregate does not start a [19] GroupCondition.
 #guard !parses "SELECT (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY COUNT(?o)"
 
+/-! ## [12] AskQuery takes a SolutionModifier (issue 699)
+
+`ASK` DatasetClause* WhereClause SolutionModifier. `pAskBody` used to
+stop after the WHERE clause, so each query below was refused with
+"unexpected tokens after query". The modifier now reaches the `Query`,
+where `evalAsk` applies it (`QueryTests.lean`). -/
+
+#guard parses "ASK { ?s ?p ?o } LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } LIMIT 0"
+#guard parses "ASK { ?s ?p ?o } OFFSET 3"
+#guard parses "ASK { ?s ?p ?o } LIMIT 1 OFFSET 3"
+#guard parses "ASK { ?s ?p ?o } OFFSET 3 LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } ORDER BY ?s"
+#guard parses "ASK { ?s ?p ?o } ORDER BY DESC(?s) LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 100)"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 1) ORDER BY ?s LIMIT 1 OFFSET 1"
+#guard parses "ASK { ?s ?p ?o } HAVING (COUNT(*) > 1)"
+#guard parses "ASK WHERE { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }"
+#guard parses "ASK FROM <http://e/g> { ?s ?p ?o } LIMIT 1"
+-- A malformed modifier is still refused: no integer after the keyword,
+-- a repeated LIMIT, clauses out of order, a keyword with no operand.
+#guard !parses "ASK { ?s ?p ?o } LIMIT"
+#guard !parses "ASK { ?s ?p ?o } LIMIT x"
+#guard !parses "ASK { ?s ?p ?o } LIMIT -1"
+#guard !parses "ASK { ?s ?p ?o } OFFSET"
+#guard !parses "ASK { ?s ?p ?o } LIMIT 1 LIMIT 2"
+#guard !parses "ASK { ?s ?p ?o } LIMIT 1 GROUP BY ?s"
+#guard !parses "ASK { ?s ?p ?o } ORDER BY ?s GROUP BY ?s"
+#guard !parses "ASK { ?s ?p ?o } GROUP BY"
+#guard !parses "ASK { ?s ?p ?o } HAVING"
+#guard !parses "ASK { ?s ?p ?o } ORDER BY"
+-- The same keywords without an operand are refused in the other forms.
+#guard !parses "SELECT * { ?s ?p ?o } LIMIT"
+#guard !parses "SELECT ?s { ?s ?p ?o } ORDER BY"
+#guard !parses "SELECT ?s { ?s ?p ?o } GROUP BY ?s HAVING"
+#guard !parses "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } OFFSET"
+-- The clauses land in the `Query`: GROUP BY, HAVING, the modifier, and a
+-- trailing VALUES clause that travels in `postValues` because the query groups.
+#guard ((parseSparql "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 1) ORDER BY ?s LIMIT 2 OFFSET 1").toOption.map
+          (fun q => (q.groupBy.isSome, q.having.length, q.modifier.orderBy.isSome,
+                     q.modifier.limit, q.modifier.offset)))
+        == some (true, 1, true, some 2, some 1)
+#guard ((parseSparql "ASK { ?s ?p ?o }").toOption.map
+          (fun q => (q.groupBy.isSome, q.having.length, q.modifier.orderBy.isSome,
+                     q.modifier.limit, q.modifier.offset)))
+        == some (false, 0, false, none, none)
+#guard ((parseSparql "ASK { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "ASK { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "ASK { ?s ?p ?o } LIMIT 1 VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some false
+-- CONSTRUCT and DESCRIBE place the VALUES rows the same way when only
+-- HAVING groups the query.
+#guard ((parseSparql "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?r { 1 }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "DESCRIBE ?s WHERE { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+
 /-! ## SPARQL 1.2 §19.2 escape sequences
 
 Numeric escapes are decoded per token, in IRIs and strings only, in one

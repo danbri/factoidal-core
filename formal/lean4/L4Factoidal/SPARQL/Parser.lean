@@ -2634,7 +2634,14 @@ LimitOffsetClauses?. Returns the modifier together with GROUP BY and
 HAVING, which live outside `SolutionModifier` in the AST.
 
 Per [25] LimitOffsetClauses either order of LIMIT and OFFSET parses:
-try LIMIT, then OFFSET, then LIMIT again if it was not already seen. -/
+try LIMIT, then OFFSET, then LIMIT again if it was not already seen.
+
+A keyword without its operand (`LIMIT` or `OFFSET` with no integer, an
+empty GROUP BY, HAVING or ORDER BY list) is not consumed, so the
+enclosing rule reports the stray token. Rules [21] and [24]-[27] need at
+least one operand; before 2026-10-10 the bare keyword was dropped
+silently, and ASK, which started reading this clause then, would have
+accepted `ASK { } LIMIT`. -/
 def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
     Except ParseError ((SolutionModifier × Option (List GroupCondition) × List Expr) × TStream) :=
   match fuel with
@@ -2646,14 +2653,14 @@ def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
         let ts1 := advTok ts
         (match peekTok ts1 with
          | .by => (match pGroupByList f st [] (advTok ts1) with
-                   | .ok (conds, ts2) => (some conds, ts2)
+                   | .ok (conds, ts2) => if conds.isEmpty then (none, ts) else (some conds, ts2)
                    | .error _         => (none, ts))
          | _ => (none, ts))
       | _ => (none, ts)
     let (hv, tsB) :=
       match peekTok tsA with
       | .having => (match pHavingList f st [] (advTok tsA) with
-                    | .ok (conds, ts1) => (conds, ts1)
+                    | .ok (conds, ts1) => if conds.isEmpty then ([], tsA) else (conds, ts1)
                     | .error _         => ([], tsA))
       | _ => ([], tsA)
     let (ob, tsC) :=
@@ -2662,7 +2669,7 @@ def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
         let ts1 := advTok tsB
         (match peekTok ts1 with
          | .by => (match pOrderByList f st [] (advTok ts1) with
-                   | .ok (conds, ts2) => (some conds, ts2)
+                   | .ok (conds, ts2) => if conds.isEmpty then (none, tsB) else (some conds, ts2)
                    | .error _         => (none, tsB))
          | _ => (none, tsB))
       | _ => (none, tsB)
@@ -2681,9 +2688,9 @@ where
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .integer n => (match parseIntStr n with
-                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts1)
-                        | none   => (none, ts1))
-       | _ => (none, ts1))
+                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts)
+                        | none   => (none, ts))
+       | _ => (none, ts))
     | _ => (none, ts)
   /-- [27] OffsetClause. -/
   takeOffset (ts : TStream) : Option Nat × TStream :=
@@ -2692,9 +2699,9 @@ where
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .integer n => (match parseIntStr n with
-                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts1)
-                        | none   => (none, ts1))
-       | _ => (none, ts1))
+                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts)
+                        | none   => (none, ts))
+       | _ => (none, ts))
     | _ => (none, ts)
 
 /-- [7]-[9] SelectQuery, with the [2] / [8] trailing ValuesClause. All

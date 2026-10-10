@@ -452,6 +452,44 @@ theorem length_sliceSolutions_le_input (offset limit : Option Nat)
   cases offset <;> cases limit <;>
     simp [List.length_take, List.length_drop] <;> omega
 
+/-- Slicing reads only the LENGTH of its input: two sequences of the same
+length have slices of the same length. -/
+theorem length_sliceSolutions_eq_of_length_eq (offset limit : Option Nat)
+    {omega omega' : SolutionSeq} (h : omega.length = omega'.length) :
+    (sliceSolutions offset limit omega).length
+      = (sliceSolutions offset limit omega').length := by
+  unfold sliceSolutions
+  cases offset <;> cases limit <;> simp [List.length_take, List.length_drop, h]
+
+/-- ORDER BY (the merge sort the evaluator runs) is a permutation, so it
+keeps the length. -/
+theorem length_sortSolutionsFast (cmp : Binding → Binding → Int)
+    (omega : SolutionSeq) : (sortSolutionsFast cmp omega).length = omega.length := by
+  unfold sortSolutionsFast
+  exact List.length_mergeSort omega
+
+/-- An ASK query reads only whether its solution sequence is empty
+(§18.2.5), and ORDER BY changes no length. So `evalAsk` may skip the
+sort: `formHasSolution` slices the unordered sequence and gives the same
+answer as the sequence `formSolutions` builds, which CONSTRUCT
+instantiates its template over. -/
+theorem formHasSolution_eq (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) :
+    formHasSolution env active q omega0
+      = !(formSolutions env active q omega0).isEmpty := by
+  have isEmpty_len : ∀ (l : SolutionSeq), l.isEmpty = decide (l.length = 0) := by
+    intro l
+    cases l <;> simp
+  unfold formHasSolution formSolutions
+  generalize formRows env active q omega0 = rows
+  cases hob : q.modifier.orderBy with
+  | none => rfl
+  | some o =>
+      have hs := length_sliceSolutions_eq_of_length_eq q.modifier.offset q.modifier.limit
+        (omega := sortSolutionsFast (compareOnConditions env active o) rows) (omega' := rows)
+        (length_sortSolutionsFast _ _)
+      simp only [isEmpty_len, hs]
+
 /-! ## §18.4 projection -/
 
 /-- Projection changes ROWS, never how many: one row in, one row out
@@ -607,6 +645,8 @@ open L4Factoidal.SPARQL
 #print axioms length_sliceSolutions_le
 #print axioms length_projectSolutions
 #print axioms sortSolutions_perm
+#print axioms length_sortSolutionsFast
+#print axioms formHasSolution_eq
 #print axioms evalIn_eq_eval_of_no_named
 #print axioms lateral_empty_rhs_per_row
 #print axioms Binding.equiv_trans
