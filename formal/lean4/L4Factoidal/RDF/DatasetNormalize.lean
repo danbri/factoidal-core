@@ -362,4 +362,143 @@ theorem readLangDir12_safe_dir (pos : Nat) (tag : String) (d : TextDirection) (r
     hsp, String.toList_ofList, hsplit, List.reverse_nil, List.nil_append]
   cases d <;> simp [hvalid, dirWord, dirFlag]
 
+/-! ## Literals -/
+
+/-- The canonical form of a lexical form, as characters. -/
+def escChars (s : String) : List Char := s.toList.flatMap (fun c => (escOf c).toList)
+
+/-- What the canonical form writes after the closing quote of a literal. -/
+def litSuffix (l : Literal) : List Char :=
+  match l.langTag with
+  | some tag => '@' :: (lowerTagChars tag ++
+      (match l.direction with
+       | some d => '-' :: '-' :: dirWord d
+       | none => []))
+  | none => if l.datatype = xsdString then [] else '^' :: '^' :: '<' :: (l.datatype.val.toList ++ ['>'])
+
+theorem litChars_eq (wl : WfLiteral) :
+    (Term.toCanonicalNTriples (.literal wl)).toList
+      = '"' :: (escChars wl.val.lexicalForm ++ '"' :: litSuffix wl.val) := by
+  rcases wl with ⟨⟨lex, dt, tag, dir⟩, hwf⟩
+  simp only [Term.toCanonicalNTriples, litSuffix, escChars, ← canonEscapeLiteral_toList]
+  cases tag with
+  | some t =>
+      cases dir with
+      | none => simp [lowerTagChars, String.toList_map]
+      | some d => cases d <;> simp [lowerTagChars, String.toList_map, dirWord]
+  | none =>
+      by_cases hdt : dt = xsdString
+      · simp [hdt]
+      · simp [hdt]
+
+/-- The characters that follow an object in a canonical line: a graph label,
+the terminating `.`, or the `)>>` of a triple term. -/
+def objFollow (c : Char) : Bool := c == '<' || c == '_' || c == '.' || c == ')'
+
+theorem objFollow_facts {c : Char} (h : objFollow c = true) :
+    isNtWs c = false ∧ c ≠ '@' ∧ c ≠ '^' := by
+  simp only [objFollow, Bool.or_eq_true, beq_iff_eq] at h
+  rcases h with ((h | h) | h) | h <;> subst h <;> decide
+
+theorem mkLiteral_ok (pos : Nat) (l : Literal) (h : literalWf l = true) :
+    mkLiteral pos l = .ok ⟨l, h⟩ := by
+  simp [mkLiteral, h]
+
+theorem readLiteral_safe (mode : Mode) (pos : Nat) (wl : WfLiteral) (c : Char) (rest : List Char)
+    (hc : objFollow c = true) (h : literalSafe mode wl.val = true) :
+    ∃ p', readLiteral mode pos
+        ('"' :: (escChars wl.val.lexicalForm ++ '"' :: (litSuffix wl.val ++ ' ' :: c :: rest)))
+      = .ok (wl.lowerTag, p', ' ' :: c :: rest) := by
+  obtain ⟨hcws, hcat, hccaret⟩ := objFollow_facts hc
+  rcases wl with ⟨⟨lex, dt, tag, dir⟩, hwf⟩
+  simp only [literalSafe, Bool.and_eq_true] at h
+  obtain ⟨hlex, hrest⟩ := h
+  obtain ⟨p1, hp1⟩ := readStringLiteralBody_safe lex.toList (pos + 1)
+    (litSuffix ⟨lex, dt, tag, dir⟩ ++ ' ' :: c :: rest) hlex
+  rw [String.ofList_toList] at hp1
+  have hq : ∀ X, readStringLiteralQuoted pos ('"' :: X) = readStringLiteralBody (pos + 1) X :=
+    fun _ => rfl
+  simp only [escChars] at hp1 ⊢
+  cases tag with
+  | none =>
+      cases dir with
+      | some d => simp [literalWf] at hwf
+      | none =>
+          by_cases hdt : dt = xsdString
+          · subst hdt
+            have hwf' : literalWf ⟨lex, xsdString, none, none⟩ = true := hwf
+            simp only [litSuffix, if_pos] at hp1 ⊢
+            simp only [List.nil_append] at hp1 ⊢
+            refine ⟨p1, ?_⟩
+            cases mode with
+            | rdf11 =>
+                simp only [readLiteral, hq, hp1, mkLiteral_ok _ _ hwf']
+                rfl
+            | rdf12 =>
+                simp only [objFollow, Bool.or_eq_true, beq_iff_eq] at hc
+                rcases hc with ((h | h) | h) | h <;> subst h <;>
+                  (simp only [readLiteral, hq, hp1, skipWs_space _ hcws,
+                    mkLiteral_ok _ _ hwf']; rfl)
+          · have hsafe : iriPrintSafe dt.val = true := by
+              simp only [hdt, decide_false, Bool.false_or] at hrest; exact hrest
+            have hwf' : literalWf ⟨lex, dt, none, none⟩ = true := hwf
+            simp only [litSuffix, hdt, if_false] at hp1 ⊢
+            simp only [List.cons_append, List.append_assoc, List.nil_append] at hp1 ⊢
+            have hiri := readIriRef_printSafe (pos := p1 + 2) dt (' ' :: c :: rest) hsafe
+            refine ⟨p1 + 2 + dt.val.length + 2, ?_⟩
+            cases mode with
+            | rdf11 =>
+                simp only [readLiteral, hq, hp1, readDatatype, hiri, mkIri_val,
+                  mkLiteral_ok _ _ hwf']
+                rfl
+            | rdf12 =>
+                simp only [readLiteral, hq, hp1, readDatatypeWs12,
+                  skipWs_nonWs' _ (show isNtWs '^' = false by decide),
+                  skipWs_nonWs' _ (show isNtWs '<' = false by decide), hiri, mkIri_val,
+                  mkLiteral_ok _ _ hwf']
+                rfl
+  | some t =>
+      simp only at hrest
+      simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hrest
+      obtain ⟨htag, hmode⟩ := hrest
+      cases dir with
+      | none =>
+          have hdt : dt = rdfLangString := Subtype.ext (by simpa [literalWf] using hwf)
+          subst hdt
+          have hwf' : literalWf ⟨lex, rdfLangString, some t.toLower, none⟩ = true := rfl
+          simp only [litSuffix, List.append_nil, List.cons_append] at hp1 ⊢
+          cases mode with
+          | rdf11 =>
+              obtain ⟨p2, hp2⟩ := readLangTag_safe p1 t (c :: rest) htag
+              refine ⟨p2, ?_⟩
+              simp only [readLiteral, hq, hp1, hp2, mkLiteral_ok _ _ hwf']
+              rfl
+          | rdf12 =>
+              obtain ⟨p2, hp2⟩ := readLangDir12_safe_none p1 t (c :: rest) htag
+              refine ⟨p2, ?_⟩
+              simp only [readLiteral, hq, hp1,
+                skipWs_nonWs' _ (show isNtWs '@' = false by decide), hp2,
+                Option.map_none, mkLiteral_ok _ _ hwf']
+              rfl
+      | some d =>
+          have hdt : dt = rdfDirLangString := Subtype.ext (by simpa [literalWf] using hwf)
+          subst hdt
+          have hm : mode = .rdf12 := by
+            rcases hmode with h | h
+            · exact h
+            · simp at h
+          subst hm
+          have hwf' : literalWf ⟨lex, rdfDirLangString, some t.toLower, some d⟩ = true := rfl
+          simp only [litSuffix, List.cons_append, List.append_assoc] at hp1 ⊢
+          obtain ⟨p2, hp2⟩ := readLangDir12_safe_dir p1 t d (c :: rest) htag
+          simp only [List.cons_append] at hp2
+          refine ⟨p2, ?_⟩
+          have hdir : (some (dirFlag d)).map
+              (fun b => if b then TextDirection.rtl else TextDirection.ltr) = some d := by
+            cases d <;> rfl
+          simp only [readLiteral, hq, hp1,
+            skipWs_nonWs' _ (show isNtWs '@' = false by decide), hp2, hdir,
+            mkLiteral_ok _ _ hwf']
+          rfl
+
 end L4Factoidal.RDF
