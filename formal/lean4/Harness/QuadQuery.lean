@@ -206,6 +206,12 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   let indexed := namesAreIris applied
   let mode := if indexed then codec ++ "-full-manifest" else codec ++ "-full-manifest-reference"
   let graphs := applied.named.length
+  -- Federated Query §2.3: a failed SERVICE call without SILENT stops the
+  -- query with an error (`Query.serviceFailure`, issue 717). This host
+  -- registers no endpoint.
+  match stripped.serviceFailure env applied with
+  | some f => IO.eprintln s!"l4block-quad-query failed: {f.message}"; return 1
+  | none =>
   match query.form with
   | .select _ =>
       let rows? :=
