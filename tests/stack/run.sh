@@ -298,7 +298,9 @@ canary_case() { # canary_case <case> <op> <argsfile>
 
 # ------------------------------------------------------------------ wasm
 # The wasm module is a build product (docs/web/hub/assets/l4/l4factoidal.wasm
-# and .mjs; formal/lean4/Wasm/build-wasm.sh). When it is missing, no wasm case
+# and .mjs; gitignored since the 2026-10-09 split; installed by
+# tools/fetch-builds.sh --set web or built by formal/lean4/Wasm/build-wasm.sh).
+# When it is missing, no wasm case
 # can run, and a case that did not run must not read as a case that passed:
 # the wasm routes record one failure and score nothing.
 WASM_DIR="$ROOT/docs/web/hub/assets/l4"
@@ -338,7 +340,7 @@ wasm_case() { # wasm_case <case>: the default Node stack
 }
 
 wasm_missing() { # wasm_missing <route>
-  record "$1" "wasm module" 1 "NOT SCORED: $WASM_DIR lacks l4factoidal.{js,mjs,wasm}; build it with formal/lean4/Wasm/build-wasm.sh"
+  record "$1" "wasm module" 1 "NOT SCORED: $WASM_DIR lacks l4factoidal.{js,mjs,wasm}; install it with tools/fetch-builds.sh --set web or build it with formal/lean4/Wasm/build-wasm.sh"
 }
 
 CASES=(
