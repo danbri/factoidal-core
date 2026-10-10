@@ -49,6 +49,7 @@ import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.VC.DidKey
 import L4Factoidal.VC.Credential
 import L4Factoidal.Syntax.NTriples
+import L4Factoidal.JSON.Parser
 
 namespace L4Wasm.Ops
 
@@ -118,12 +119,41 @@ def didKeyResolve (did : String) : String :=
       | .error e => errJson s!"didKeyResolve: {e}"
       | .ok nt => okWith [("did", .string did), ("nquads", .string nt)]
 
+/-! ## Credential checks
+
+The four judgments live in `L4Factoidal/VC/Credential.lean`, namespace `Doc`.
+This module only maps a `Verdict` onto the envelope. -/
+
+private def verdictEnvelope : L4Factoidal.VC.Verdict → String
+  | .pass => okWith [("valid", .bool true)]
+  | .fail reason => okWith [("valid", .bool false), ("reason", .string reason)]
+
+/-- `v2ctxJson` is the text of the vendored VCDM 2.0 base context
+(`third_party/contexts/credentials-v2.jsonld`); an unparseable one is an error
+envelope, as in the F* entry. -/
+def vcCheckCredential (v2ctxJson credentialJson : String) : String :=
+  match parseJson? v2ctxJson with
+  | none => errJson "vcCheckCredential (v2ctx): invalid JSON"
+  | some ctx => verdictEnvelope (L4Factoidal.VC.Doc.checkFromString ctx credentialJson)
+
+def vcCheckCredentialSubject (credentialJson : String) : String :=
+  verdictEnvelope (L4Factoidal.VC.Doc.checkCredentialSubjectFromString credentialJson)
+
+def vcCheckNoDataLoss (credentialJson : String) : String :=
+  verdictEnvelope (L4Factoidal.VC.Doc.checkNoDataLossFromString credentialJson)
+
+def vcCheckRelatedResourceDigests (registryJson credentialJson : String) : String :=
+  verdictEnvelope
+    (L4Factoidal.VC.Doc.checkRelatedResourceDigestsFromString registryJson credentialJson)
+
 /-! ## Dispatch -/
 
 /-- The op names this module serves. -/
 def vcOpNames : List String :=
   [ "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"
-  , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical", "didKeyResolve" ]
+  , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical"
+  , "vcCheckCredential", "vcCheckCredentialSubject", "vcCheckNoDataLoss"
+  , "vcCheckRelatedResourceDigests", "didKeyResolve" ]
 
 private def arityError (op : String) (n got : Nat) : String :=
   errJson s!"{op} expects {n} argument{if n == 1 then "" else "s"}, got {got}"
@@ -138,10 +168,16 @@ def callVc (op : String) (args : List String) : Option String :=
   | "vcEddsaCreateFromCanonical", [a, b, c] => some (vcEddsaCreateFromCanonical a b c)
   | "vcEddsaVerifyFromCanonical", [a, b, c, d] =>
       some (vcEddsaVerifyFromCanonical a b c d)
+  | "vcCheckCredential", [a, b]            => some (vcCheckCredential a b)
+  | "vcCheckCredentialSubject", [a]        => some (vcCheckCredentialSubject a)
+  | "vcCheckNoDataLoss", [a]               => some (vcCheckNoDataLoss a)
+  | "vcCheckRelatedResourceDigests", [a, b] => some (vcCheckRelatedResourceDigests a b)
   | "didKeyResolve", [a]                   => some (didKeyResolve a)
-  | "vcSha256Hex", _ | "vcEd25519SecretToPublic", _ | "didKeyResolve", _ =>
+  | "vcSha256Hex", _ | "vcEd25519SecretToPublic", _ | "didKeyResolve", _
+  | "vcCheckCredentialSubject", _ | "vcCheckNoDataLoss", _ =>
       some (arityError op 1 args.length)
-  | "vcEd25519Sign", _ => some (arityError op 2 args.length)
+  | "vcEd25519Sign", _ | "vcCheckCredential", _ | "vcCheckRelatedResourceDigests", _ =>
+      some (arityError op 2 args.length)
   | "vcEd25519Verify", _ | "vcEddsaCreateFromCanonical", _ =>
       some (arityError op 3 args.length)
   | "vcEddsaVerifyFromCanonical", _ => some (arityError op 4 args.length)
