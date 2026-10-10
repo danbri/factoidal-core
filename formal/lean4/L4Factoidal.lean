@@ -178,6 +178,8 @@ import L4Factoidal.RDF.EntailmentRdfsDatatypeClash
 import L4Factoidal.OWL.Tableau
 import L4Factoidal.OWL.TableauTheorems
 import L4Factoidal.OWL.TableauTests
+import L4Factoidal.OWL.DirectCert
+import L4Factoidal.OWL.DirectCertTests
 import L4Factoidal.SPARQL.Results
 import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.SPARQL.ResultsJson
@@ -399,6 +401,8 @@ import L4Factoidal.XSD.FacetsTests
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
 import L4Factoidal.OWL.RefuteTests
+import L4Factoidal.OWL.RefuteCert
+import L4Factoidal.OWL.RefuteCertTests
 import L4Factoidal.HTTP.Client
 import L4Factoidal.HTTP.ClientTests
 import L4Factoidal.HTTP.RunQuery
