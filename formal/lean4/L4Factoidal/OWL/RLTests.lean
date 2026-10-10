@@ -459,32 +459,64 @@ for every k — the length test in `closure` is what makes that hold, and
 closure g fuel` for every graph and fuel; these guards evaluate both
 engines on the fixtures above and compare the LISTS (order included),
 so a build also exercises the compiled `Std.HashMap` path the proof
-reasons about abstractly. The clash verdict is compared the same way. -/
+reasons about abstractly. The clash verdict is compared the same way.
 
-#guard indexedClosure gEq 4 == closure gEq 4
-#guard indexedClosure gTrp 4 == closure gTrp 4
-#guard indexedClosure gSymp 3 == closure gSymp 3
-#guard indexedClosure gInv 3 == closure gInv 3
-#guard indexedClosure gFp 3 == closure gFp 3
-#guard indexedClosure gIfp 3 == closure gIfp 3
-#guard indexedClosure gDomRng 3 == closure gDomRng 3
-#guard indexedClosure gSpo 3 == closure gSpo 3
-#guard indexedClosure gEqp 3 == closure gEqp 3
-#guard indexedClosure gInt 3 == closure gInt 3
-#guard indexedClosure gUni 3 == closure gUni 3
-#guard indexedClosure gSvf 3 == closure gSvf 3
-#guard indexedClosure gAvf 3 == closure gAvf 3
-#guard indexedClosure gHv 3 == closure gHv 3
-#guard indexedClosure gSco 4 == closure gSco 4
-#guard indexedClosure gEqc 3 == closure gEqc 3
-#guard indexedClosure gCls 3 == closure gCls 3
-#guard indexedClosure gDomProp 3 == closure gDomProp 3
-#guard indexedClosure gRngProp 3 == closure gRngProp 3
-#guard indexedClosure gDw 3 == closure gDw 3
-#guard indexedClosure [] 3 == closure [] 3
+Since 2026-10-10 `RLClosureIndexed` registers `closure` and `closureFix` as
+`csimp` replacements, so the compiler emits `indexedClosure` for the name
+`closure` in this module. The guards below therefore compare against
+`closureScan`, the scanning loop restated here (it differs from `closure` in
+its name only; `closureScan_eq` proves it), so that they keep comparing two
+different engines. -/
+
+/-- `closure` under another name, so that `csimp` does not rewrite it. -/
+private def closureScan (g : Graph) : Nat → Graph
+  | 0     => g
+  | n + 1 =>
+      let g' := step g
+      if g'.length = g.length then g else closureScan g' n
+
+private theorem closureScan_eq (fuel : Nat) : ∀ g : Graph, closureScan g fuel = closure g fuel := by
+  induction fuel with
+  | zero => intro g; rfl
+  | succ n ih =>
+      intro g
+      simp only [closureScan, closure]
+      split
+      · rfl
+      · exact ih _
+
+#guard indexedClosure gEq 4 == closureScan gEq 4
+#guard indexedClosure gTrp 4 == closureScan gTrp 4
+#guard indexedClosure gSymp 3 == closureScan gSymp 3
+#guard indexedClosure gInv 3 == closureScan gInv 3
+#guard indexedClosure gFp 3 == closureScan gFp 3
+#guard indexedClosure gIfp 3 == closureScan gIfp 3
+#guard indexedClosure gDomRng 3 == closureScan gDomRng 3
+#guard indexedClosure gSpo 3 == closureScan gSpo 3
+#guard indexedClosure gEqp 3 == closureScan gEqp 3
+#guard indexedClosure gInt 3 == closureScan gInt 3
+#guard indexedClosure gUni 3 == closureScan gUni 3
+#guard indexedClosure gSvf 3 == closureScan gSvf 3
+#guard indexedClosure gAvf 3 == closureScan gAvf 3
+#guard indexedClosure gHv 3 == closureScan gHv 3
+#guard indexedClosure gSco 4 == closureScan gSco 4
+#guard indexedClosure gEqc 3 == closureScan gEqc 3
+#guard indexedClosure gCls 3 == closureScan gCls 3
+#guard indexedClosure gDomProp 3 == closureScan gDomProp 3
+#guard indexedClosure gRngProp 3 == closureScan gRngProp 3
+#guard indexedClosure gDw 3 == closureScan gDw 3
+#guard indexedClosure [] 3 == closureScan [] 3
 -- A duplicate in the input survives in both (the index pictures the
 -- list, duplicates and all).
-#guard indexedClosure (gSco ++ gSco) 4 == closure (gSco ++ gSco) 4
+#guard indexedClosure (gSco ++ gSco) 4 == closureScan (gSco ++ gSco) 4
+-- Teeth: the two engines are compared on inputs the rows fire on, so an
+-- engine that returned its input, or one that returned the empty graph, fails.
+#guard (closureScan gSco 4).length > gSco.length
+#guard (indexedClosure gSco 4).length > gSco.length
+#guard indexedClosure gSco 4 != gSco
+#guard indexedClosure gEq 4 != gEq
+#guard (indexedClosure gSco 4).length == (closureScan gSco 4).length
+#guard indexedClosure gSco 4 != ([] : Graph)
 #guard detectClashI (closureI (Index.ofGraph gDw) 3) == inconsistent gDw 3
 #guard detectClashI (closureI (Index.ofGraph gSco) 3) == inconsistent gSco 3
 #guard detectClashI (Index.ofGraph

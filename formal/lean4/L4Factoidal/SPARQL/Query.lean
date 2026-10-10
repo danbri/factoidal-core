@@ -79,7 +79,9 @@ Readability contract: every definition cites the SPARQL 1.1 spec
 section it implements.
 -/
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.RDF.ConciseBoundedDescription
+import Std.Data.HashMap
 
 namespace L4Factoidal.SPARQL
 
@@ -638,6 +640,148 @@ def groupSolutions (env : EvalEnv) (conds : List GroupCondition)
     addToGroups (evalGroupKey env conds mu)
       (extendWithGroupAliases env conds mu) groups) []
 
+
+/-! ### Hash-indexed grouping (2026-10-10)
+
+`addToGroups` scans every group for each row and appends the row to a group's
+list with `++ [mu]`: O(rows x groups) for the scan and O(rows x group size) for
+the append. Measured on the Lean command line against the F\* engine, on
+slices of `examples/wikidata/subsets/lifesci-kgx/data/gene.ttl`
+(`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`): `GROUP BY ?p` with
+6 groups over 20,000 paragraphs took 45 s against 0.79 s, and `GROUP BY ?s`
+with about 5,000 groups over 5,000 paragraphs did not finish in 120 s against
+7 s.
+
+`groupSolutionsFast` keeps the groups in an array in creation order, each with
+its rows newest first (reversed once at the end), and a hash index from the
+key bucket to the groups in that bucket. A row is compared with `keysEqual`
+only against the groups in its own bucket, and is appended to every group
+that matches, exactly as `addToGroups` does; a row that matches none starts a
+new group at the end. The bucket never hides a match
+(`keysEqual_keyBucket`, from `erEqual_erBucket`). `groupSolutions` stays as
+the specification. The agreement of the two is checked by `#guard`s below on
+tied, interleaved, cross-type numeric, error-keyed and literal-keyed groups,
+by byte comparison of the SPARQL 1.1 suite, and by comparing query output with
+the specification build on real data; it is NOT proved. -/
+
+/-- A coarse key that is constant on the equivalence classes of `erEqual`: two
+evaluated values with different keys are never order-equal, so a group can only
+match a row whose key bucket is its own (`erEqual_erBucket`). Numerics share one
+bucket, because `sparqlOrderNumeric` compares across `xsd:integer`, `xsd:decimal`
+and `xsd:double`; literals are keyed by datatype, lexical form and language tag. -/
+def erBucket : EvalResult → Nat × String
+  | .error                    => (0, "")
+  | .term (.bnode x)          => (1, x)
+  | .term (.iri x)            => (2, x.val)
+  | .bool b                   => (3, if b then "1" else "0")
+  | .num _ | .dec _ | .dbl _  => (4, "")
+  | .term (.literal l)        =>
+      (7, l.val.datatype.val ++ "\x1f" ++ l.val.lexicalForm ++ "\x1f" ++ l.val.langTag.getD "")
+  | .term (.tripleTerm _ _ _) => (8, "")
+
+open L4Factoidal.SPARQL.ExprRefinement in
+/-- `literalOrder` is zero only for literals with equal datatype, lexical form and
+language tag (as the key sees it). -/
+theorem literalOrder_eq_zero {l1 l2 : Literal} (h : literalOrder l1 l2 = 0) :
+    l1.datatype.val = l2.datatype.val ∧ l1.lexicalForm = l2.lexicalForm ∧
+      l1.langTag.getD "" = l2.langTag.getD "" := by
+  unfold literalOrder at h
+  by_cases h1 : strCompare l1.datatype.val l2.datatype.val = 0
+  · by_cases h2 : strCompare l1.lexicalForm l2.lexicalForm = 0
+    · refine ⟨(strCompare_eq_zero_iff _ _).mp h1, (strCompare_eq_zero_iff _ _).mp h2, ?_⟩
+      simp only [h1, h2, ne_eq, not_true_eq_false, if_false] at h
+      cases ht1 : l1.langTag <;> cases ht2 : l2.langTag <;> rw [ht1, ht2] at h <;> simp_all [Option.getD]
+      exact (strCompare_eq_zero_iff _ _).mp h
+    · simp [h1, h2] at h
+  · simp [h1] at h
+
+open L4Factoidal.SPARQL.ExprRefinement in
+/-- Order-equal values share a bucket: the bucket never hides a match. -/
+theorem erEqual_erBucket {a b : EvalResult} (h : erEqual a b = true) :
+    erBucket a = erBucket b := by
+  unfold erEqual at h
+  simp only [beq_iff_eq] at h
+  have hr : erRank a = erRank b := by
+    refine Classical.byContradiction (fun hne => ?_)
+    unfold sparqlOrder at h
+    rcases Int.lt_or_gt_of_ne hne with hlt | hgt
+    · simp [hlt] at h
+    · simp [Int.not_lt.mpr (Int.le_of_lt hgt), hgt] at h
+  rcases a with (i1 | b1 | l1 | ⟨s1, p1, o1⟩) | x1 | n1 | d1 | s1 | _ <;>
+  rcases b with (i2 | b2 | l2 | ⟨s2, p2, o2⟩) | x2 | n2 | d2 | s2 | _ <;>
+  first | (exfalso; revert hr; simp [erRank]; done) | skip
+  all_goals (try rfl)
+  all_goals (try (simp only [erBucket]; done))
+  · -- iri, iri
+    have h' : strCompare i1.val i2.val = 0 := by simpa [sparqlOrder, erRank] using h
+    simp [erBucket, (strCompare_eq_zero_iff _ _).mp h']
+  · -- bnode, bnode
+    have h' : strCompare b1 b2 = 0 := by simpa [sparqlOrder, erRank] using h
+    simp [erBucket, (strCompare_eq_zero_iff _ _).mp h']
+  · -- literal, literal
+    have h' : literalOrder l1.val l2.val = 0 := by simpa [sparqlOrder, erRank] using h
+    obtain ⟨e1, e2, e3⟩ := literalOrder_eq_zero h'
+    simp [erBucket, e1, e2, e3]
+  · -- bool, bool
+    have h' : intCompare (if x1 then 1 else 0) (if x2 then 1 else 0) = 0 := by
+      simpa [sparqlOrder, erRank] using h
+    have := (intCompare_eq_zero_iff _ _).mp h'
+    cases x1 <;> cases x2 <;> simp_all [erBucket]
+
+
+/-- The bucket of a whole group key. -/
+def keyBucket (k : List EvalResult) : List (Nat × String) := k.map erBucket
+
+/-- Order-equal keys share a bucket, component by component. -/
+theorem keysEqual_keyBucket : ∀ {k1 k2 : List EvalResult},
+    keysEqual k1 k2 = true → keyBucket k1 = keyBucket k2
+  | [], [], _ => rfl
+  | a :: r1, b :: r2, h => by
+      simp only [keysEqual, Bool.and_eq_true] at h
+      simp only [keyBucket, List.map_cons, List.cons.injEq]
+      exact ⟨erEqual_erBucket h.1, keysEqual_keyBucket (k1 := r1) (k2 := r2) h.2⟩
+  | [], _ :: _, h => by simp [keysEqual] at h
+  | _ :: _, [], h => by simp [keysEqual] at h
+
+/-- One group under construction: its key and its rows, newest first. -/
+structure GroupRec where
+  key     : List EvalResult
+  solsRev : List Binding
+
+instance : Inhabited GroupRec := ⟨⟨[], []⟩⟩
+
+/-- Groups in creation order, and for each key bucket the positions of the
+groups in it. -/
+structure GroupAcc where
+  recs  : Array GroupRec := #[]
+  index : Std.HashMap (List (Nat × String)) (Array Nat) := ∅
+
+/-- Add a row: to every group of its bucket whose key is order-equal to the
+row's key, or as a new last group when there is none. -/
+def GroupAcc.add (acc : GroupAcc) (key : List EvalResult) (mu : Binding) : GroupAcc :=
+  let b := keyBucket key
+  let ids := acc.index.getD b #[]
+  let hits := ids.filter (fun i => keysEqual key (acc.recs[i]!).key)
+  if hits.isEmpty then
+    let n := acc.recs.size
+    let index' := acc.index.erase b
+    { recs := acc.recs.push ⟨key, [mu]⟩, index := index'.insert b (ids.push n) }
+  else
+    { acc with
+      recs := hits.foldl
+        (fun rs i => rs.modify i (fun g => { g with solsRev := mu :: g.solsRev })) acc.recs }
+
+def GroupAcc.groups (acc : GroupAcc) : List SolutionGroup :=
+  acc.recs.toList.map (fun g => ⟨g.key, g.solsRev.reverse⟩)
+
+/-- `Group(exprlist, Ω)` with the hash index; the same list of groups as
+`groupSolutions`, groups in first-appearance order, rows in input order. -/
+def groupSolutionsFast (env : EvalEnv) (conds : List GroupCondition)
+    (omega : SolutionSeq) : List SolutionGroup :=
+  (omega.foldl (fun acc mu =>
+      acc.add (evalGroupKey env conds mu) (extendWithGroupAliases env conds mu))
+    ({} : GroupAcc)).groups
+
 /-- With no GROUP BY, the whole sequence is one group (§18.5.1: an
 aggregate with no GROUP BY groups over everything). Port of
 `implicit_group`. -/
@@ -868,7 +1012,7 @@ forms without a SELECT clause both call it. -/
 def groupWhere (env : EvalEnv) (gb : Option (List GroupCondition))
     (omega : SolutionSeq) : List SolutionGroup :=
   match gb with
-  | some conds => groupSolutions env conds omega
+  | some conds => groupSolutionsFast env conds omega
   | none       => implicitGroup omega
 
 /-- Does this expression contain an aggregate anywhere? An aggregate

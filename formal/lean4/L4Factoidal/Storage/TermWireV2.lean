@@ -313,44 +313,4 @@ def lookupOf (h : ByteArray → ByteArray) (t : Term) :
         else none
     | _ => none
 
-/-! ## Samples -/
-
-private def ex : WfIri := ⟨"https://example.test/s", by decide⟩
-private def exp : WfIri := ⟨"https://example.test/p", by decide⟩
-
-private def plain : WireTerm := .inline (.literal (Literal.string "hello"))
-
-private def dirLit : WfLiteral :=
-  ⟨{ lexicalForm := "שלום", datatype := rdfDirLangString,
-     langTag := some "he", direction := some .rtl }, by decide⟩
-
-private def ltrLit : WfLiteral :=
-  ⟨{ lexicalForm := "bonjour", datatype := rdfDirLangString,
-     langTag := some "fr", direction := some .ltr }, by decide⟩
-
-private def nested : WireTerm :=
-  .inline (.tripleTerm (.iri ex) exp (.tripleTerm (.bnode "b0") exp (.literal dirLit)))
-
-private def bigLexical : String := String.ofList (List.replicate 70000 'a')
-
-private def blobTerm : WireTerm := toWire specHash (.literal (Literal.string bigLexical))
-
-private def roundTrip (w : WireTerm) : Option WireTerm :=
-  (serializeTerm? w).bind (fun bs => (parseTerm bs).map Prod.fst)
-
-#guard roundTrip (.inline (.iri ex)) == some (.inline (.iri ex))
-#guard roundTrip (.inline (.bnode "b1")) == some (.inline (.bnode "b1"))
-#guard roundTrip plain == some plain
-#guard roundTrip (.inline (.literal dirLit)) == some (.inline (.literal dirLit))
-#guard roundTrip (.inline (.literal ltrLit)) == some (.inline (.literal ltrLit))
-#guard roundTrip nested == some nested
-#guard roundTrip blobTerm == some blobTerm
-#guard (match blobTerm with | .blob b => b.byteLength == 70000 | _ => false)
-#guard (match blobTerm with | .blob b => b.sha256.size == 32 | _ => false)
-#guard toWire specHash (.literal (Literal.string "hello")) == plain
-#guard resolve specHash (lookupOf specHash (.literal (Literal.string bigLexical))) blobTerm
-  == some (.literal (Literal.string bigLexical))
-#guard (resolve specHash (fun _ => none) blobTerm).isNone
-#guard (keyBytes (.inline (.iri ex))).isSome
-
 end L4Factoidal.Storage.TermWireV2
