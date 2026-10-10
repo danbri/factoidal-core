@@ -9,8 +9,16 @@
 // Known engine differences accommodated (and ONLY these):
 //   - N-Quads line order from the Lean engine may differ from the F*
 //     engine's sorted order — content comparisons sort lines first.
-//   - Blank-node labels are NOT salted per document by the Lean engine
-//     yet: the one multi-document merge case is t.todo (see below).
+//   - A parse error's `offset` is a count of Unicode scalar values from the
+//     start of the text; the F* engine counts UTF-8 bytes. `line` and
+//     `column` agree (test/l4-parity-2.test.js).
+//
+// Blank-node labels are salted per document (`d<N>_`) by the Lean engine's
+// IO entry, as the F* engine does, and the four envelope features of
+// https://github.com/danbri/factoidal/issues/685 (parse-error position,
+// prefixes on a handle, serialize options, bare literals) are real
+// assertions below; the cases for the stage 2 functions (maths, VC, DID) and
+// the wider envelope checks are in test/l4-parity-2.test.js.
 
 'use strict';
 
@@ -516,21 +524,17 @@ test('l4-core vs F* engine: same join, same row multiset', async (t) => {
 });
 
 // ---------------------------------------------------------------------
-// multi-document blank-node scoping — known Lean engine gap
+// multi-document blank-node scoping
 // ---------------------------------------------------------------------
 
-// The Lean engine does not yet salt blank-node labels per document:
-// two documents each using _:b0 are conflated into ONE node at merge,
-// where the F* engine's per-document renaming
-// (RDF.Dataset.Merge.rename_dataset_bnodes) keeps them distinct.
-// Verified against the F* engine in this same fixture (2 distinct
-// subjects there, 1 from Lean).  Node 22 still counts a failing `todo` as a
-// failed test, so this is an explicit skip until the Lean side grows the
-// per-document bnode salt; the body stays here as the acceptance fixture.
-test.skip('l4-core multi-document merge keeps blank-node labels document-scoped',
-  'Lean engine is missing the per-document blank-node salt (F*: RDF.Dataset.Merge.rename_dataset_bnodes)',
+// Two documents each using _:b0 must stay two nodes at merge, as the F*
+// engine's per-document renaming (RDF.Dataset.Merge.rename_dataset_bnodes)
+// keeps them. The Lean engine's IO entry applies the same renaming to every
+// document it parses (Wasm/Ops/Parse.lean, parseToDatasetJsonScoped).
+test('l4-core multi-document merge keeps blank-node labels document-scoped',
   async (t) => {
     if (skipUnlessAvailable(t)) return;
+    if (await skipUnlessOp(t, 'parseToDatasetJson')) return;
     const d1 = `_:b0 <${X}p> "one" .`;
     const d2 = `_:b0 <${X}p> "two" .`;
     const rows = await l4core.query([d1, d2],
@@ -570,67 +574,58 @@ test('l4-core dataset handle: open, query, update, serialize, close', async (t) 
   await assert.rejects(() => h.query(JOIN_Q), /closed/);
 });
 
-// Owner rule, 2026-09-07 (CLAUDE.md "A stated shortfall is a failing
-// test plus an open issue"): each case below runs the Lean engine's
-// real dataset-handle ops and asserts the shortfall AWAY -- so it
-// fails today, naming the issue, and turns the suite red the day the
-// Lean side closes the gap (skips, rather than xfails, when the Lean
-// wasm assets are not resolvable at all -- that is not evidence about
-// the gap either way).
-const ISSUE_685 = 'https://github.com/danbri/factoidal/issues/685';
+// The four envelope features of https://github.com/danbri/factoidal/issues/685.
+// They were expected-failure cases until the Lean engine gained them
+// (Wasm/Ops/Parse.lean, Wasm/Ops/Handles.lean); each is now a real assertion,
+// and test/l4-parity-2.test.js holds the wider cases.
 
-function xfailOnLean(name, requiredOp, fn) {
-  test(`xfail: ${name} (${ISSUE_685})`, async (t) => {
-    if (skipUnlessAvailable(t)) return;
-    if (requiredOp && await skipUnlessOp(t, requiredOp)) return;
-    let failed = false;
-    try {
-      await fn(t);
-    } catch (error) {
-      failed = true;
-      t.diagnostic(`expected failure: ${String(error.message).slice(0, 200)}`);
-    }
-    assert.ok(failed,
-      `unexpected pass: ${name} now works on the Lean engine -- flip ` +
-      `this xfail to a real assertion and close ${ISSUE_685}`);
-  });
-}
-
-xfailOnLean('dataset-handle parse error carries a line/column position', 'datasetOpen', async () => {
+test('dataset-handle parse error carries a line/column position', async (t) => {
+  if (skipUnlessAvailable(t)) return;
+  if (await skipUnlessOp(t, 'datasetOpen')) return;
   await assert.rejects(
     () => l4core.openDataset('this is not turtle', { format: 'turtle' }),
     (err) => {
-      assert.ok(err.line !== undefined,
-        'expected a positioned error (a line member), same as the F* engine');
+      assert.equal(err.name, 'ParseError');
+      assert.equal(err.line, 1, 'a positioned error (a line member), same as the F* engine');
+      assert.equal(typeof err.column, 'number');
+      assert.equal(typeof err.offset, 'number');
+      assert.equal(err.format, 'turtle');
       return true;
     });
 });
 
-xfailOnLean('dataset handle records prefixes from a Turtle open()', 'datasetOpen', async () => {
+test('dataset handle records prefixes from a Turtle open()', async (t) => {
+  if (skipUnlessAvailable(t)) return;
+  if (await skipUnlessOp(t, 'datasetOpen')) return;
   const h = await l4core.openDataset(`@prefix ex: <${X}> .\nex:s ex:p ex:o .`, { format: 'turtle' });
   try {
-    assert.ok(Object.keys(h.prefixes).length > 0,
-      'expected non-empty prefixes on the handle, same as the F* engine');
+    assert.deepEqual({ ...h.prefixes }, { ex: X });
   } finally {
     await h.close();
   }
 });
 
-xfailOnLean('dataset handle serialize({format:"turtle", literalShorthand:false}) is supported', 'datasetOpen', async () => {
+test('dataset handle serialize({format:"turtle", literalShorthand:false}) is supported', async (t) => {
+  if (skipUnlessAvailable(t)) return;
+  if (await skipUnlessOp(t, 'datasetSerializeWith')) return;
   const h = await l4core.openDataset(`<${X}s> <${X}p> "1"^^<${XSD_INT}> .`, { format: 'ntriples' });
   try {
-    await h.serialize({ format: 'turtle', literalShorthand: false });
+    const ttl = await h.serialize({ format: 'turtle', literalShorthand: false });
+    assert.match(ttl, /"1"\^\^xsd:integer/, `expected the quoted form; got: ${ttl}`);
   } finally {
     await h.close();
   }
 });
 
-xfailOnLean('dataset handle Turtle output prints small integers bare (literal shorthand) by default', 'datasetOpen', async () => {
+test('dataset handle Turtle output prints small integers bare (literal shorthand) by default', async (t) => {
+  if (skipUnlessAvailable(t)) return;
+  if (await skipUnlessOp(t, 'datasetOpen')) return;
   const h = await l4core.openDataset(`<${X}s> <${X}p> "1"^^<${XSD_INT}> .`, { format: 'ntriples' });
   try {
     const ttl = await h.serialize({ format: 'turtle' });
     assert.ok(!ttl.includes('^^'),
       `expected the integer to print bare, same as the F* engine; got: ${ttl}`);
+    assert.match(ttl, / 1 \./);
   } finally {
     await h.close();
   }

@@ -458,6 +458,21 @@ l4.version();
 l4.bgpQuery(triples, bgp);   // -> SPARQL Query Results JSON
 ```
 
+`call`, `callBlob` and `callBlobIO` throw an `Error` for `{"ok":false,...}`. Its
+message is `l4factoidal: <error>`; since 2026-10-10 its `.envelope` property holds
+the whole envelope, because some refusals carry more than `error` (a parse
+failure's `line`, `column`, `offset` and `format`;
+https://github.com/danbri/factoidal/issues/685). `npm/factoidal/l4-core.js`
+re-encodes `.envelope` for `lib/api.js`'s `entryResult`, which is what turns a
+positioned failure into a `ParseError`. A new host that needs those members reads
+`err.envelope`, not the message text.
+
+The wire entry (`l4_call_c`) goes through `callIO`, so an op that needs state
+(a handle table, the document-scope counter behind `parseToDatasetJson`) is served
+from `callIO`'s match and the pure `call` keeps the stateless version. Two
+calls to `parseToDatasetJson` in one module instance get blank-node scopes
+`d0_`, `d1_`, ...; the pure `call` leaves labels as written.
+
 - **Browser** — the glue `fetch`es the sidecar `.wasm` from the same
   origin. No headers needed (no `SharedArrayBuffer`).
 - **Node** — the glue reads it with `node:fs`.

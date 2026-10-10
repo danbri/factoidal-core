@@ -650,23 +650,41 @@ delta log use.
 | [`SRI2`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2.lean) | pageable, target-bound local ID to row offsets | current generic postings codec used in the subject role |
 | [`TLI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermLocalIndexWire.lean) | canonical RDF-term bytes to one target IBK3 local ID | current cross-artifact term bridge |
 | `OLI2` | local object ID to row offsets | current SBM6 object role, encoded with the generic SRI2 postings codec |
-| [`LGI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | character 3-grams of the case-folded lexical form of every literal in a block dictionary, to the local term IDs carrying each gram | current SBM8 and SBM9 literal-search role; posting gaps are fixed-width u32 |
-| [`LGI2`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the same relation, plus the local IDs of the literals the index did NOT gram | current SBM10 literal-search role; posting gaps are unsigned LEB128 varints; packer and native readers landed 2026-09-05 |
+| [`LGI3`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | character 3-grams of the case-folded lexical form of every literal in a block dictionary, to the local term IDs carrying each gram. The fold is `Text.CaseMap.searchFold` (Unicode) | current SBM8 and SBM9 literal-search role; posting gaps are fixed-width u32. Named LGI1 until 2026-10-10 |
+| [`LGI4`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the same relation, plus the local IDs of the literals the index did NOT gram | current SBM10 literal-search role; posting gaps are unsigned LEB128 varints; packer and native readers landed 2026-09-05. Named LGI2 until 2026-10-10 |
+| `LGI1`, `LGI2` | the same relations under the ASCII-only fold (`String.toLower`) | RETIRED 2026-10-10. No encoder writes them and no decoder reads them; a reader that meets one says the file was folded with the ASCII-only fold and must be re-packed |
 | [`GBI1`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/GeoBBoxIndexWire.lean) | axis-aligned bounding box and CRS of every `geo:wktLiteral` term in a block dictionary | current SBM9 and SBM10 geometry role |
 
-LGI1 and LGI2 are CANDIDATE FILTERS, not answer sets: a planner that uses one
+LGI3 and LGI4 are CANDIDATE FILTERS, not answer sets: a planner that uses one
 re-evaluates the original SPARQL expression on the candidates, so its rows are
-the scan's rows. LGI2 differs from LGI1 in two ways. Its posting gaps are
+the scan's rows. LGI4 differs from LGI3 in two ways. Its posting gaps are
 unsigned LEB128 varints, which on the `skos:prefLabel` block of the skosdex
 corpus (5,571,302 bytes, 45,806 rows, 60,856 dictionary terms, 21,843 grams,
 641,709 postings) takes the sidecar from 3,018,141 bytes, 54% of the block, to
 1,282,519 bytes, 23%. And its prefix carries a count and then that many
 ascending distinct local IDs, the OPAQUE list: the dictionary positions of the
 out-of-line literals, whose lexical form is not in the block and which
-therefore have no gram. The LGI2 candidate set is the gram intersection joined
+therefore have no gram. The LGI4 candidate set is the gram intersection joined
 with that list, so an out-of-line literal is a candidate for every needle the
 index serves. `LiteralGramIndex.mem_candidatesOpaque_of_match` and
 `mem_candidatesOpaque_of_opaque` are the two halves of the superset property.
+
+**The fold, and why LGI1 and LGI2 were retired.** Until 2026-10-10 the index
+folded each lexical form with `String.toLower`, which changes `A` to `Z` only,
+and SPARQL `LCASE` was the same function. `LCASE` is now the Unicode default
+case mapping (F&O 3.1 section 5.4.8; design record
+[Unicode case mapping](designissues/2026-10-10-unicode-case-mapping.md)), and
+the index fold is `Text.CaseMap.searchFold`. For a non-ASCII literal the grams
+differ, so the bytes differ, and a file written under the old fold lacks grams
+that the Unicode `LCASE` keeps (`CONTAINS(LCASE(?x), "école")` keeps
+`École Normale`; the old index listed no candidate for it). A byte change is a
+new wire name (section 10), so LGI1 became LGI3 and LGI2 became LGI4, with the
+byte layouts and the version bytes' meaning unchanged: the magic is `LGI3` or
+`LGI4` and the version byte is 3 or 4. The manifest layout labels changed with
+them (`quad-ibk4-ptd1-lgi3-merkle-v0`, `quad-ibk4-ptd1-lgi3-gbi1-merkle-v0`,
+`quad-ibk5-ptd2-lgi4-gbi1-merkle-v0`); the three labels that named LGI1 and
+LGI2 are refused at every manifest version. Record:
+[LGI3 and LGI4](designissues/2026-10-10-literal-index-lgi3.md).
 
 The role of OLI2 is not inferred from its bytes. SBM6 places the artifact in
 the object-index field, and activation recomputes the canonical object-to-row
@@ -685,9 +703,9 @@ not a semantic role.
 | `SBM5` | pageable SRI2 replacing SRI1 |
 | `SBM6` | mandatory object-role OLI2 indexes |
 | `SBM7` | IBK4 quad blocks: a per-entry block kind, blank-node scope and graph-set summary, and a manifest-level blank-node publication profile |
-| `SBM8` | mandatory LGI1 literal-search index in a fourth sidecar role |
+| `SBM8` | mandatory LGI3 (LGI1 until 2026-10-10) literal-search index in a fourth sidecar role |
 | `SBM9` | mandatory GBI1 geometry bounding-box index in a fifth sidecar role |
-| `SBM10` | IBK5 quad blocks with an LGI2 literal index: per-entry subject and object zone maps, per-entry blob references, and a manifest-level blob table of out-of-line literals. Packer and native readers landed 2026-09-05; `l4block-shard-pack` writes it under the layout tag `ibk5` |
+| `SBM10` | IBK5 quad blocks with an LGI4 (LGI2 until 2026-10-10) literal index: per-entry subject and object zone maps, per-entry blob references, and a manifest-level blob table of out-of-line literals. Packer and native readers landed 2026-09-05; `l4block-shard-pack` writes it under the layout tag `ibk5` |
 
 The current manifest structure records a wire version, source identity,
 term-registry version, physical-layout label, and ordered predicate/artifact
@@ -804,7 +822,7 @@ changes the block kind and the literal-index role. Design record:
 section 6.
 
 **Layout label and block kind.** The one label admitted for SBM10 is
-`quad-ibk5-ptd2-lgi2-gbi1-merkle-v0`, and under it every entry must carry the
+`quad-ibk5-ptd2-lgi4-gbi1-merkle-v0`, and under it every entry must carry the
 block kind `IBK5`, whose kind byte is `2`. `IBK5` is not a member of the IBK4
 label set: an IBK4 reader refuses an IBK5 artifact at its magic, and a reader
 selects its block codec by the manifest's label and kind before it opens any
@@ -872,7 +890,7 @@ Those need the block bytes, so they are not part of manifest admission.
 
 **Admitted manifests.** Encoder admission equals decoder admission.
 
-1. Every SBM9 condition, with the LGI1 role now filled by an LGI2 artifact and
+1. Every SBM9 condition, with the LGI3 role now filled by an LGI4 artifact and
    the block kind now `IBK5`.
 2. Every entry's blob positions are ascending, distinct, and below the length
    of the blob table.
@@ -1217,8 +1235,8 @@ of the current family. Each depends only on the three standard Lean axioms.
 | Term codec v2 | `parseTerm_serializeTerm?`, `resolve_toWire` | [`Storage/TermWireV2Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermWireV2Theorems.lean) | none beyond `serializeTerm? w = some bytes`: the encoder's admission is the decoder's |
 | PTD1 and PTD2, generic | `decode?_encode?` over `PagedFormat`, once | [`Storage/PagedTermDictionaryCoreTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryCoreTheorems.lean) | none beyond `encode? terms = some bytes`; PTD1's own definitions are proved equal to the generic ones by `rfl` and its bytes are unchanged (hub blocks byte-identical, 2026-09-05) |
 | IBK5 | `decode_encode?`, `denotes_decode_encode?`, `resolveBlock_decode_encode?` | [`Storage/IndexedBlockWireV5Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV5Theorems.lean) | none beyond `encode? block = some bytes` |
-| SBM10 | `decode?_encode?` (versions 0 through 10), `zoneMap_sound` | [`Storage/ShardManifestTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/ShardManifestTheorems.lean) | none beyond `encode? manifest = some bytes` |
-| LGI2 | `decodeLeb128_encodeLeb128`, `parsePostings2_encodePostings2`, `mem_candidatesOpaque_of_match`, `mem_candidatesOpaque_of_opaque` | [`Storage/LiteralGramIndexWire.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the whole-artifact round trip is checked by `#guard`, not proved: `decode2?` reads through `ByteArray.extract` and a CRC over a slice, as LGI1 does |
+| SBM10 | `decode?_encode?` (versions 0 through 10), `zoneMap_sound`; and for the 2026-10-10 rename `valid_layout_not_retired`, `encode?_layout_not_retired`, `decode?_encode?_layout_not_retired` (no valid manifest carries a label that names LGI1 or LGI2) | [`Storage/ShardManifestTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/ShardManifestTheorems.lean) | none beyond `encode? manifest = some bytes` |
+| LGI3 and LGI4 | `decodeLeb128_encodeLeb128`, `parsePostings2_encodePostings2`, `mem_candidatesOpaque_of_match`, `mem_candidatesOpaque_of_opaque`; and for the 2026-10-10 rename `decode?_not_retired`, `decode2?_not_retired`, `retired_refused` (neither decoder accepts bytes that start with the magic of LGI1 or LGI2) | [`Storage/LiteralGramIndexWire.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/LiteralGramIndexWire.lean) | the whole-artifact round trip is checked by `#guard`, not proved: `decode2?` reads through `ByteArray.extract` and a CRC over a slice, as `decode?` does |
 | SRI2 (also the OLI2 object role) | `decode?_encode?` | [`Storage/SubjectRowIndexWireV2Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2Theorems.lean) | none beyond `encode? index = some bytes`: `supported` now runs `offsetsPermutation`, which the decoder re-runs |
 | TLI1 | `decode?_encode?` | [`Storage/TermLocalIndexWireTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermLocalIndexWireTheorems.lean) | none beyond `encode? index = some bytes`: `supported` now runs `localIdsPermutation`, `termSupported` and `termFitsU32b` |
 

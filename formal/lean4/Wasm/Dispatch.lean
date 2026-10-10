@@ -54,6 +54,8 @@ import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
 import Wasm.Ops.QueryExtras
 import Wasm.Ops.ServiceReg
+import Wasm.Ops.Maths
+import Wasm.Ops.Vc
 
 namespace L4Wasm
 
@@ -208,6 +210,7 @@ def handleOpNames : List String :=
   , "datasetQuery"
   , "datasetUpdate"
   , "datasetSerialize"
+  , "datasetSerializeWith"
   , "datasetClose" ]
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
@@ -294,12 +297,31 @@ def serviceOpNames : List String :=
   [ "registerServiceEndpoint"
   , "clearServiceEndpoints" ]
 
+/-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
+sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
+They are stateless, so `call` serves them and `callIO` reaches them through its
+fall-through to `call`. The names are appended to every `ops` reflection by
+`opsReflectionFor`; the arms are in the fall-through case of `call`. -/
+def stage2OpNames : List String := mathsOpNames ++ vcOpNames ++ parityOpNames
+
+/-- Serve a stage 2 op, or answer the unknown-op error. -/
+private def callStage2 (op : String) (args : List String) : String :=
+  match callMaths op args with
+  | some r => r
+  | none =>
+    match callVc op args with
+    | some r => r
+    | none =>
+      match callParity op args with
+      | some r => r
+      | none => errJson s!"unknown op '{op}'"
+
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
   (Json.object
     [ ("ok", .bool true)
     , ("abiVersion", .string dispatchAbiVersion)
-    , ("ops", .array (names.map Json.string))
+    , ("ops", .array ((names ++ stage2OpNames).map Json.string))
     , ("blobOps", .array (blobOpNames.map Json.string))
     , ("blobIoOps", .array (blobIoOpNames.map Json.string)) ]).toString
 
@@ -370,7 +392,7 @@ def call (op : String) (argsJson : String) : String :=
     | "queryRaw"             => arity3 op queryRaw args
     | "queryHdt"             => arity1 op (fun a => queryHdt a ByteArray.empty) args
     | "ops"                  => opsReflection
-    | _                      => errJson s!"unknown op '{op}'"
+    | _                      => callStage2 op args
 
 /-- The dispatch entry the `l4_call_blob` C export serves: the string
 arguments of `call`, plus one byte region. Every other op delegates to `call`,
@@ -441,6 +463,12 @@ def callIO (op : String) (argsJson : String) : IO String :=
   | "datasetQuery"     => withArgs (arityIO2 op Ops.datasetQuery)
   | "datasetUpdate"    => withArgs (arityIO2 op Ops.datasetUpdate)
   | "datasetSerialize" => withArgs (arityIO2 op Ops.datasetSerialize)
+  | "datasetSerializeWith" => withArgs (arityIO3 op Ops.datasetSerializeWith)
+  -- Each document parsed through the IO entry gets its own blank-node scope
+  -- (`d<N>_`), so concatenated N-Quads of two documents stay disjoint
+  -- (https://github.com/danbri/factoidal/issues/685). The pure `call` keeps
+  -- the labels as written.
+  | "parseToDatasetJson" => withArgs (arityIO3 op Ops.parseToDatasetJsonScoped)
   | "datasetClose"     => withArgs (arityIO1 op Ops.datasetClose)
   -- packBegin takes an optional third argument, the base IRI, and an
   -- optional fourth, the publication batch in source bytes. Fewer arguments

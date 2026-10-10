@@ -88,11 +88,11 @@ predicate-N.ibk3.sri2    subject -> row offsets (SRI2 postings codec)
 predicate-N.ibk3.oli2    object  -> row offsets (same codec, object role)
 predicate-N.ibk3.tli1    canonical term bytes -> local ID
 predicate-N.ibk4         a quad generation's block (wire version 7, 8 or 9)
-predicate-N.ibk4.lgi1    literal 3-gram index (SBM8, SBM9)
+predicate-N.ibk4.lgi3    literal 3-gram index, LGI3 (SBM8, SBM9)
 predicate-N.ibk4.gbi1    geometry bounding-box index (SBM9)
 predicate-N.ibk5         a wire-version-10 block: IBK4 layout over a PTD2
                          dictionary of version-2 terms
-predicate-N.ibk5.lgi2    literal 3-gram index plus the opaque-literal list
+predicate-N.ibk5.lgi4    literal 3-gram index plus the opaque-literal list, LGI4
 predicate-N.ibk5.gbi1    geometry bounding-box index, unchanged from SBM9
 blob-<sha256 hex>.lit    one out-of-line literal's UTF-8 lexical form; the
                          digest in the name is the artifact's own SHA-256, so
@@ -104,6 +104,26 @@ compacted.source.sha256  identity of the source generation compaction read
 ```
 
 Format registry with status and executable definitions: spec section 6.
+
+Retired names. A retired name is never written and never read; a reader that
+meets one refuses it and says why.
+
+| Retired | Replaced by | Date | Reason |
+| --- | --- | --- | --- |
+| `LGI1` (magic and version byte 1; sidecar `.lgi1`; layout labels `quad-ibk4-ptd1-lgi1-merkle-v0` and `quad-ibk4-ptd1-lgi1-gbi1-merkle-v0`) | `LGI3` (magic `LGI3`, version byte 3; `.lgi3`; labels with `lgi3`) | 2026-10-10 | the gram fold changed from ASCII-only `String.toLower` to Unicode `Text.CaseMap.searchFold` ([issue 706](https://github.com/danbri/factoidal/issues/706)); the bytes of a non-ASCII literal differ |
+| `LGI2` (magic and version byte 2; `.lgi2`; label `quad-ibk5-ptd2-lgi2-gbi1-merkle-v0`) | `LGI4` (magic `LGI4`, version byte 4; `.lgi4`; label with `lgi4`) | 2026-10-10 | same |
+
+The byte layouts did not change: LGI3 is the LGI1 layout and LGI4 is the LGI2
+layout. The manifest wire versions 8, 9 and 10 keep their numbers; their layout
+labels changed. Record: [`docs/designissues/2026-10-10-literal-index-lgi3.md`](../../docs/designissues/2026-10-10-literal-index-lgi3.md).
+
+A generation packed before 2026-10-10 is repacked, not migrated. The tools say
+so:
+
+```
+l4block-shard-activate failure: manifest layout 'quad-ibk4-ptd1-lgi1-gbi1-merkle-v0' names a literal index that was folded with the ASCII-only fold. That index does not hold all the rows that the Unicode LCASE keeps. Re-pack the generation with the current packer. The packer writes LGI3 or LGI4.
+```
+
 Round-trip theorem status per codec: spec section 10.1 (term codec, PTD1 and
 IBK3 proved 2026-09-02 with `encode? = some bytes` as the only hypothesis;
 SRI2/OLI2 and TLI1 in progress the same day; SBM6 and Merkle range admission
@@ -183,7 +203,7 @@ bound-subject query opens fewer blocks. `l4block-quad-query` reports that as
 
 ```bash
 l4block-shard-pack tests/local/data/rdf12_sample.trig /tmp/store10/gen-1 ibk5
-# format=quad-ibk5-ptd2-lgi2-gbi1-merkle-v0 syntax=trig quads=5 blocks=5
+# format=quad-ibk5-ptd2-lgi4-gbi1-merkle-v0 syntax=trig quads=5 blocks=5
 # graphs=2 manifest=manifest.sbm2 wire-version=10
 l4block-shard-activate /tmp/store10 gen-1
 l4block-quad-query /tmp/store10 --query \
@@ -417,3 +437,22 @@ instead, which needs `--allow-run` and `--allow-env`. Design record:
    bytes with the committed hub blocks under
    `docs/web/hub/assets/blocks/lifesci-crossgraph/` (a codec change that
    keeps the format must reproduce them byte for byte).
+5. A change to WHAT a derived index holds is a byte change, also when no codec
+   function changed. The literal gram index folds each lexical form before it
+   takes grams. On 2026-10-10 the fold changed from ASCII-only to Unicode
+   (merge 1107b396, [issue 706](https://github.com/danbri/factoidal/issues/706)),
+   the LGI1 and LGI2 files written before it stopped being supersets of the
+   rows the Unicode `LCASE` keeps, and the files carry no fold identifier, so
+   a reader could not tell. The merge left the names alone and recorded the
+   question as an owner decision. Between that merge and the rename (same day)
+   a reader that trusted such a file would have dropped rows without saying so.
+   When a function an index or sidecar is derived from changes (a fold, a
+   tokeniser, a key function, a bounding-box rule), rename the format in the
+   SAME landing, make the old name an error that says what to do, and gate the
+   change with an input that only the new function decides (for the literal
+   index, a non-ASCII needle: `tests/local/data/unicode_label_sample.trig` and
+   the `literal index under the Unicode fold` cases of `Wasm/native-smoke.sh`).
+6. A gate that compares an index path with a scan proves nothing when the
+   index path silently fell back to the scan. `l4block-literal-gate` reads
+   `literalIndexes` from the `storeOpen` envelope and fails when the handle
+   opened with sidecars retained fewer literal indexes than blocks.

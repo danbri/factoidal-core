@@ -788,7 +788,7 @@ caller that holds only the handle id.
 | ten queries, total | 13962 ms | 2277 ms |
 
 **What a handle buys.** It removes the per-query digest check, block
-decode and index build. With the LGI1 literal index (below) a search is
+decode and index build. With the LGI3 or LGI4 literal index (below) a search is
 also sub-linear rather than a scan, so a handle plus the index is what
 makes repeated search on a large store interactive.
 
@@ -1186,9 +1186,13 @@ converted to `geo:wktLiteral` before it is loaded.
 `CONTAINS`, `STRSTARTS`, `STRENDS` and `REGEX` (SPARQL 1.1 §17.4.3) are
 the way to search text. There is no `text:query`-style extension and you
 do not ask for the index: where the query shape allows it, the planner
-uses the **LGI1** literal index the packer writes beside each block.
+uses the **LGI3** or **LGI4** literal index the packer writes beside each block
+(LGI3 beside an IBK4 block, LGI4 beside an IBK5 block; they were named LGI1 and
+LGI2 until 2026-10-10).
 
-LGI1 holds character 3-grams of the case-folded lexical form, and it is a
+The index holds character 3-grams of the case-folded lexical form, folded with
+the Unicode case mapping that `LCASE` uses, so `CONTAINS(LCASE(?x), "école")`
+finds `École Normale` through the index. It is a
 CANDIDATE FILTER rather than a decider — it answers a superset and the
 engine re-evaluates your original `FILTER` on those rows, so the answer
 is exactly the answer a scan gives. Tokens would not do: `CONTAINS` is a
@@ -1211,7 +1215,10 @@ before the index and 1.8 ms after it.
 **It falls back to a scan**, silently and correctly, for: a needle under
 3 characters, a variable needle, `REGEX`, `UCASE`, `!CONTAINS`,
 `CONTAINS` under `||`, a filter on a variable not bound in object
-position, and any block whose generation has no `.lgi1` sidecar. The
+position, and any block whose generation has no literal-index sidecar. A
+generation packed before 2026-10-10 names LGI1 or LGI2, which were folded with
+the ASCII-only fold and miss rows the Unicode `LCASE` keeps: the engine refuses
+it, says so, and asks for a re-pack. The
 index costs about 55% of the block bytes.
 
 ### Geometry: the GBI1 bounding-box index

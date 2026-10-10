@@ -1,5 +1,10 @@
 # Configurable named-graph IRI patterns: a big graph made of millions of small ones
 
+> Naming note, 2026-10-10. The literal index is named LGI3 (the first layout)
+> and LGI4 (the second) from this date; LGI1 and LGI2 are retired because the
+> gram fold changed. The text below uses the names of the date it was written.
+> Record: [LGI3 and LGI4](2026-10-10-literal-index-lgi3.md).
+
 2026-09-07. Owner, verbatim:
 
 > "Think about some configurable named graph URL patterns where a big named

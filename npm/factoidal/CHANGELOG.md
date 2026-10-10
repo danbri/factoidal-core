@@ -15,6 +15,43 @@ result shapes are the F\* engine's. `parse(text, {format: 'jsonld'})`
 now works on this engine. `tableauMaterialise` also returns `budgetHit`
 on the Lean engine. The main entry (`index.js`) is unchanged.
 
+**`factoidal/l4-core` serves the maths, VC and DID functions, and matches the
+F\* engine's envelopes** (stage 2 of
+[issue 713](https://github.com/danbri/factoidal/issues/713)). New on the Lean
+engine, with the signatures and result shapes `index.d.ts` declares:
+`matrixDeterminant`, `matrixScalarProduct`, `matrixVectorProduct`,
+`matrixOuterProduct`, `sigmoidPoints`, `sigmoidFormulaMathml`, `vcSha256Hex`,
+`vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`,
+`vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical`, `vcCheckCredential`,
+`vcCheckCredentialSubject`, `vcCheckNoDataLoss`,
+`vcCheckRelatedResourceDigests` and `didKeyResolve`. The Ed25519 operations run
+HACL\* compiled into the wasm module; they need no `initHacl()` call. Envelope
+parity ([issue 685](https://github.com/danbri/factoidal/issues/685)): a Turtle,
+TriG, N-Triples or N-Quads syntax error rejects with a `ParseError` carrying
+`line`, `column`, `offset` and `format` (the Lean `offset` counts Unicode scalar
+values, the F\* `offset` counts UTF-8 bytes); `parse()` and `openDataset()`
+record the prefixes of a Turtle or TriG document; Turtle output accepts the
+`prefixes` and `literalShorthand` options and prints bare numeric and boolean
+literals by default; and each document that is parsed gets its own blank-node
+scope, so merging two documents that both write `_:b0` keeps two nodes. The
+Lean engine still has no `{lenient: true}` parse and no SPARQL 1.2 handle
+query.
+
+**Store format: the literal index is renamed LGI3 and LGI4; re-pack older
+generations.** The literal search index folds each lexical form before it takes
+character 3-grams. On 2026-10-10 the fold changed from ASCII-only to the Unicode
+case mapping that SPARQL `LCASE` uses
+([issue 706](https://github.com/danbri/factoidal/issues/706)), so the grams of a
+non-ASCII literal differ and an index written under the old fold lacks rows the
+Unicode `LCASE` keeps. The two layouts are now named LGI3 (was LGI1, sidecar
+`.lgi3`) and LGI4 (was LGI2, sidecar `.lgi4`), and the manifest layout labels
+changed with them. A generation packed earlier names LGI1 or LGI2; `storeOpen`,
+`storeManifestInspect`, `storeQueryPlan`, `storeQuery`, `l4block-shard-activate`
+and `l4block-quad-query` refuse it with the cause and ask for a re-pack.
+`storeOpen` and `storeHandleList` also report `literalIndexes` and
+`geoIndexes`, the number of retained blocks that hold a decoded index of each
+kind. Record: `docs/designissues/2026-10-10-literal-index-lgi3.md`.
+
 ## 0.8.0 — 2026-09-16
 
 **Behaviour change: parsing is strict by default.** `parse()` (and

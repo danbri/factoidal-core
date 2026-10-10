@@ -184,7 +184,7 @@ async function main () {
       'SELECT ?c ?l WHERE { GRAPH ?g { ?c skos:prefLabel ?l } ' +
       'FILTER(STRENDS(STR(?l), "z")) } ORDER BY ?c ?l LIMIT 8'
     // Scope the handle with the UNFILTERED pattern. The reference query's
-    // STRENDS can be served by the LGI1 literal index, which narrows the
+    // STRENDS can be served by the LGI3 literal index, which narrows the
     // plan; the extension-function query cannot use the index and needs
     // every prefLabel block. A handle scoped by the narrower plan does not
     // retain what the wider one asks for, and refuses by name.

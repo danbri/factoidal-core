@@ -11,9 +11,8 @@
 //   const ds = await factoidal.parse('<a> <b> "c" .', { format: 'ntriples' });
 //
 // Surface: the subset capabilities() reports. Operations the Lean
-// engine does not implement yet (SHACL, ShEx, COTTAS, VC crypto and
-// did:key, the matrix and sigmoid helpers, entailment-regime query
-// modes) reject with a clear engine-capability error rather than
+// engine does not implement yet (SHACL, ShEx, COTTAS, entailment-regime
+// query modes) reject with a clear engine-capability error rather than
 // silently falling back to the F* engine -- the point of this entry is
 // that everything it answers came through the Lean extraction. See
 // ./select.js (factoidal/select) for an explicit, observable
@@ -34,8 +33,9 @@
 // SERVICE-endpoint registries, and the five toan* functions. Their
 // signatures and result shapes are index.d.ts's; the Lean dispatch ops
 // behind them are formal/lean4/Wasm/Ops/Formats.lean, Reasoning.lean,
-// QueryExtras.lean and ServiceReg.lean. The export list mirrors
-// wasm.js so callers can swap engines by import path alone.
+// QueryExtras.lean and ServiceReg.lean. Stage 2 added the maths, VC and
+// DID functions (STAGE2_OPS below). The export list mirrors wasm.js so
+// callers can swap engines by import path alone.
 
 'use strict';
 
@@ -106,13 +106,13 @@ const NOT_SUPPORTED =
 //
 //   - dataset handles (`datasetOpen`/`datasetQuery`/`datasetUpdate`/
 //     `datasetSerialize`/`datasetClose`): ordinary RDF dataset
-//     handles, not part of the CL/IKL decision above. The Lean
-//     engine's strict-parse error envelope carries the offset only
-//     inside the message text (no line/column/offset members), never
-//     records `prefixes`, and has no `datasetSerializeWith`/
-//     `datasetQuery12` -- see the OPS list comment above and
-//     https://github.com/danbri/factoidal/issues/685 (xfail cases in
-//     test/l4-core.test.js).
+//     handles, not part of the CL/IKL decision above. Since
+//     https://github.com/danbri/factoidal/issues/685 (stage 2 of
+//     https://github.com/danbri/factoidal/issues/713) the Lean engine's
+//     strict-parse error envelope carries line/column/offset/format,
+//     `datasetOpen` records `prefixes`, and `datasetSerializeWith` is
+//     served (wired in STAGE2_OPS below). `datasetQuery12` stays
+//     unserved: the Lean side has no SPARQL 1.2 tokenizer yet.
 const OPS = [
   'parseToDatasetJson',
   'queryDataset',
@@ -131,12 +131,9 @@ const OPS = [
   'clAlphaNorm',
   'clNormalize',
   // Dataset handles (issue #680) -- wired now that lib/api.js has a
-  // typed wrapper shape (openDataset/DatasetHandle). Two of the
-  // Lean engine's own dataset ops stay unwired: datasetQuery12 (no
-  // SPARQL 1.2 tokenizer on this side yet) and datasetSerializeWith
-  // (no prefix/shorthand-aware Turtle serializer yet) -- see
-  // https://github.com/danbri/factoidal/issues/685, pinned as xfail
-  // cases in test/l4-core.test.js.
+  // typed wrapper shape (openDataset/DatasetHandle). datasetQuery12 stays
+  // unwired (no SPARQL 1.2 tokenizer on this side yet);
+  // datasetSerializeWith is in STAGE2_OPS below.
   'datasetOpen',
   'datasetQuery',
   'datasetUpdate',
@@ -171,6 +168,41 @@ const OPS = [
   'toanSubst',
 ];
 
+// ---------------------------------------------------------------------
+// Stage 2 of https://github.com/danbri/factoidal/issues/713: ops the F* entry
+// serves that the Lean dispatch ABI now serves too, under the same names and
+// the same envelope shapes. lib/api.js already holds the typed wrappers
+// (matrixDeterminant, vcEd25519Verify, didKeyResolve, ...) and calls them as
+// `entry[name](...)`, so listing the name here is the whole wiring.
+//   maths (Wasm/Ops/Maths.lean): matrix*, sigmoid*
+//   VC and DID (Wasm/Ops/Vc.lean): vc*, didKeyResolve
+//   envelope parity (Wasm/Ops/Parse.lean, Handles.lean, issue 685):
+//     serializeTurtleWith, datasetSerializeWith
+// An older wasm answers "unknown op" for a name it lacks, which api.js
+// surfaces as the entryResult error; capabilities() probes these names.
+const STAGE2_OPS = [
+  'matrixDeterminant',
+  'matrixScalarProduct',
+  'matrixVectorProduct',
+  'matrixOuterProduct',
+  'sigmoidPoints',
+  'sigmoidFormulaMathml',
+  'vcSha256Hex',
+  'vcEd25519SecretToPublic',
+  'vcEd25519Sign',
+  'vcEd25519Verify',
+  'vcEddsaCreateFromCanonical',
+  'vcEddsaVerifyFromCanonical',
+  'vcCheckCredential',
+  'vcCheckCredentialSubject',
+  'vcCheckNoDataLoss',
+  'vcCheckRelatedResourceDigests',
+  'didKeyResolve',
+  'serializeTurtleWith',
+  'datasetSerializeWith',
+];
+OPS.push(...STAGE2_OPS);
+
 async function loadLeanEntry() {
   const eng = await l4.loadL4();
   if (typeof eng.call !== 'function') {
@@ -190,6 +222,15 @@ async function loadLeanEntry() {
       try {
         return JSON.stringify(eng.call(op, args.map(String)));
       } catch (err) {
+        // The loader's Error carries the whole envelope (`.envelope`). Keep
+        // its other members -- a parse failure's line, column, offset and
+        // format -- so api.js's entryResult() can throw a positioned
+        // ParseError (https://github.com/danbri/factoidal/issues/685). The
+        // message stays the loader's own, "l4factoidal: <error>".
+        const env = err && err.envelope;
+        if (env && typeof env === 'object' && env.ok === false) {
+          return JSON.stringify({ ...env, error: String(err.message) });
+        }
         return JSON.stringify({
           ok: false,
           error: String((err && err.message) || err),
@@ -433,3 +474,26 @@ module.exports = {
   available: l4.available,
   version: pkg.version,
 };
+
+// Stage 2 of https://github.com/danbri/factoidal/issues/713: the typed
+// maths and VC/DID functions, served by the Lean dispatch ops listed in
+// STAGE2_OPS above, with the signatures and result shapes index.d.ts declares.
+Object.assign(module.exports, {
+  matrixDeterminant: api.matrixDeterminant,
+  matrixScalarProduct: api.matrixScalarProduct,
+  matrixVectorProduct: api.matrixVectorProduct,
+  matrixOuterProduct: api.matrixOuterProduct,
+  sigmoidPoints: api.sigmoidPoints,
+  sigmoidFormulaMathml: api.sigmoidFormulaMathml,
+  vcSha256Hex: api.vcSha256Hex,
+  vcEd25519SecretToPublic: api.vcEd25519SecretToPublic,
+  vcEd25519Sign: api.vcEd25519Sign,
+  vcEd25519Verify: api.vcEd25519Verify,
+  vcEddsaCreateFromCanonical: api.vcEddsaCreateFromCanonical,
+  vcEddsaVerifyFromCanonical: api.vcEddsaVerifyFromCanonical,
+  vcCheckCredential: api.vcCheckCredential,
+  vcCheckCredentialSubject: api.vcCheckCredentialSubject,
+  vcCheckNoDataLoss: api.vcCheckNoDataLoss,
+  vcCheckRelatedResourceDigests: api.vcCheckRelatedResourceDigests,
+  didKeyResolve: api.didKeyResolve,
+});

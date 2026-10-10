@@ -39,6 +39,17 @@ calls the HACL* externs, and prints. Five sections, each one score line:
      Merkle admission, so this equality is what makes that substitution
      sound; the probe exits non-zero when it breaks.
 
+  6. `vc-credential-structural` — the VCDM 2.0 data-model fixtures of
+     `third_party/testing/vc/tests/input` (w3c/vc-data-model-2.0-test-suite,
+     120 files), scored with `VC.Doc.checkFromString` exactly as
+     `bin/vc-runner/vc_runner.ml` scores `VC_Credential.vc_check_from_string`:
+     the `-ok` / `-fail` / `-fail-or-inject` file-name suffix is the expected
+     verdict, the two temporality fixtures get deterministic dates for their
+     `PAST DATE` / `FUTURE DATE` placeholders, and the three unsigned
+     `presentation-self-asserted-vc-*` fixtures (upstream withdrew their tests as
+     unsound, w3c/vc-data-model-2.0-test-suite@52b25a8) are excluded from the
+     scorable set. The F* runner scores 117 pass, 0 fail (out of 117).
+
 Usage: `lake exe l4vc-probe` from `formal/lean4`, or the built binary
 from anywhere — the repository root is found by walking up from the
 working directory to the directory holding `CLAUDE.md`, as the F*
@@ -52,6 +63,7 @@ import L4Factoidal.VC.Tests
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.JSON.Parser
+import L4Factoidal.VC.Credential
 
 open L4Factoidal.RDF
 open L4Factoidal.Crypto
@@ -519,6 +531,81 @@ def runSha256Native : IO Tally := do
         s!"pure {bytesToHex expected} vs HACL* stream {bytesToHex got}"
   t.get
 
+/-! ## 6. VCDM 2.0 data-model fixtures -/
+
+/-- The three unsuffixed fixtures upstream withdrew. -/
+def withdrawnFixtures : List String :=
+  [ "presentation-self-asserted-vc-no-holder.json",
+    "presentation-self-asserted-vc-holder-mismatch.json",
+    "presentation-self-asserted-vc-issuer-mismatch.json" ]
+
+/-- The `.json` files directly under `dir`, and one level down (the corpus is
+two levels deep: `tests/input` and `tests/input/names-and-descriptions`). -/
+def collectFixtureFiles (dir : System.FilePath) : IO (List System.FilePath) := do
+  let top ← try dir.readDir catch _ => pure #[]
+  let names := Canonical.sortStrings (top.toList.map (·.fileName))
+  let mut out : List System.FilePath := []
+  for name in names do
+    let path := dir / name
+    if ← path.isDir then
+      let sub ← try path.readDir catch _ => pure #[]
+      for n2 in Canonical.sortStrings (sub.toList.map (·.fileName)) do
+        if n2.endsWith ".json" then out := out ++ [path / n2]
+    else if name.endsWith ".json" then
+      out := out ++ [path]
+  pure out
+
+/-- The upstream harness's `testTemporality` placeholder substitution, with the
+deterministic dates `vc_runner.ml` uses. -/
+def substitutePlaceholders (s : String) : String :=
+  (s.replace "PAST DATE" "2020-01-01T00:00:00Z").replace "FUTURE DATE" "2099-01-01T00:00:00Z"
+
+/-- `some true` = expect pass, `some false` = expect fail, `none` = no verdict
+in the file name. `-fail-or-inject` ends in `-inject`, so it is handled first:
+a validator never injects, so it must reject. -/
+def expectedVerdict (fileName : String) : Option Bool :=
+  let base := (fileName.dropRight 5 : String)   -- ".json"
+  if base.endsWith "-ok" then some true
+  else if base.endsWith "-fail" || base.endsWith "-fail-or-inject" then some false
+  else none
+
+def runDataModel (root : System.FilePath) : IO Tally := do
+  IO.println "\n=== 6. VCDM 2.0 data-model fixtures (third_party/testing/vc/tests/input) ==="
+  let t ← IO.mkRef ({} : Tally)
+  let dir := root / "third_party" / "testing" / "vc" / "tests" / "input"
+  let files ← collectFixtureFiles dir
+  -- A wrong file count is a failure (a missing submodule must not read as a pass),
+  -- but a right one is not a scored case: the score line counts fixtures only.
+  if files.length != 120 then
+    check t "the fixture directory holds the 120 vendored files" false
+      s!"{files.length} file(s) under {dir}"
+  else
+    IO.println s!"  {files.length} fixture files under {dir}"
+  let v2ctx ← match ← readOpt (root / "third_party" / "contexts" / "credentials-v2.jsonld") with
+    | some txt => pure ((parseJson txt).toOption.getD .null)
+    | none => check t "vendored VCDM 2.0 context readable" false; pure .null
+  let mut withdrawn := 0
+  let mut unclassified := 0
+  for path in files do
+    let name := path.fileName.getD ""
+    if withdrawnFixtures.contains name then
+      withdrawn := withdrawn + 1
+    else
+      match expectedVerdict name with
+      | none =>
+        unclassified := unclassified + 1
+        IO.println s!"  [SKIP] {name}: no -ok / -fail suffix and no recorded disposition"
+      | some wantPass =>
+        match ← readOpt path with
+        | none => check t name false "could not read file"
+        | some raw =>
+          let verdict := L4Factoidal.VC.Doc.checkFromString v2ctx (substitutePlaceholders raw)
+          let reason := match verdict with | .pass => "" | .fail r => r
+          check t name (verdict.ok == wantPass)
+            (if wantPass then s!"expected pass, got fail: {reason}" else "expected a fail, got pass")
+  IO.println s!"  withdrawn upstream, excluded from the scorable set: {withdrawn}; unclassified: {unclassified}"
+  t.get
+
 /-! ## Main -/
 
 def main (_ : List String) : IO UInt32 := do
@@ -531,15 +618,17 @@ def main (_ : List String) : IO UInt32 := do
   let t3 ← runRoundtrip
   let t4 ← runSpecVectors root
   let t5 ← runSha256Native
+  let t6 ← runDataModel root
   IO.println "\n========================================"
   IO.println (scoreLine "ed25519-rfc8032" t1)
   IO.println (scoreLine "did:key" t2)
   IO.println (scoreLine "vc-dataintegrity-eddsa-rdfc-2022" t3)
   IO.println (scoreLine "vc-di-eddsa-spec-vectors" t4)
   IO.println (scoreLine "sha256 differential" t5)
-  let total := { pass := t1.pass + t2.pass + t3.pass + t4.pass + t5.pass,
-                 fail := t1.fail + t2.fail + t3.fail + t4.fail + t5.fail,
-                 failures := t1.failures ++ t2.failures ++ t3.failures ++ t4.failures ++ t5.failures : Tally }
+  IO.println (scoreLine "vc-credential-structural" t6)
+  let total := { pass := t1.pass + t2.pass + t3.pass + t4.pass + t5.pass + t6.pass,
+                 fail := t1.fail + t2.fail + t3.fail + t4.fail + t5.fail + t6.fail,
+                 failures := t1.failures ++ t2.failures ++ t3.failures ++ t4.failures ++ t5.failures ++ t6.failures : Tally }
   IO.println (scoreLine "TOTAL" total)
   IO.println "========================================"
   pure (if total.fail == 0 then 0 else 1)

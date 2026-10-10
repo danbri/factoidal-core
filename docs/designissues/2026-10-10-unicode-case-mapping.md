@@ -205,8 +205,14 @@ Two properties make it sound:
 For ASCII text the index bytes are unchanged. An index file packed before this
 change holds ASCII-folded grams for non-ASCII literals and is not a superset
 for the Unicode `LCASE`: re-pack it. The LGI1 and LGI2 headers carry no fold
-identifier. Whether to add one (a new wire version) is an owner decision;
-there are no users of old files (CLAUDE.md, "There are no users").
+identifier. Settled the same day by a new wire name: LGI1 became LGI3 and LGI2
+became LGI4, the old names are refused with the cause, and the manifest layout
+labels changed with them
+([LGI3 and LGI4](2026-10-10-literal-index-lgi3.md)). The task that landed this
+applied the standing rule "There are no users. Prefer the right structure to
+the compatible one" (owner, 2026-08-26, CLAUDE.md); no separate owner ruling on
+this point is recorded. Between the merge of this record and that rename, a
+file written under the old fold would have been trusted.
 
 ## 7. Tests
 

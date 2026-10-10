@@ -267,7 +267,12 @@ def decodeManifest? (op manifestHex : String) : Except String Manifest :=
   | none => .error s!"{op}: manifestHex must contain an even number of hexadecimal digits"
   | some bytes =>
       match decode? bytes with
-      | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
+      | none =>
+          /- A manifest whose layout names LGI1 or LGI2 was packed under the
+             ASCII-only literal-index fold. Say that, and say to re-pack. -/
+          match retiredLayoutNote? bytes with
+          | some note => .error s!"{op}: {note}"
+          | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
       | some manifest => .ok manifest
 
 /-- `storeManifestInspect(manifestHex)` — decode one Shardborough manifest and

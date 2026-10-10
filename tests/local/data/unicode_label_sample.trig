@@ -1,0 +1,33 @@
+@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Fixture for the literal search index under the Unicode fold
+# (docs/designissues/2026-10-10-literal-index-lgi3.md). Every label below is
+# matched by CONTAINS(LCASE(STR(?o)), needle) only if LCASE is the Unicode
+# case mapping, and only a Unicode fold in the index lists it as a candidate.
+#
+#   needle      rows    reason
+#   école       s1      É (U+00C9) lower-cases to é (U+00E9)
+#   ecole       s7      "École Normale" lower-cases to "école normale", which
+#                       does not contain "ecole"; only the ASCII label does
+#   kelvin      s2      KELVIN SIGN (U+212A, written as an escape below)
+#                       lower-cases to k
+#   stanbul     s3      İ (U+0130) lower-cases to i + U+0307
+#   οδυσσευς    s4      the final capital sigma lower-cases to ς, and the
+#                       index folds both sigma forms to σ
+#   straße      s5      ß is its own lower case
+#   plain       s6      plain ASCII
+#   unmatched   none    negative control: no label contains it
+#
+# The labels are in a NAMED graph, because `l4block-literal-gate` asks
+# `GRAPH ?g { ?s <P> ?o FILTER(...) }` first, and a generation whose quads are
+# all in the default graph answers that with no rows.
+ex:g {
+  ex:s1 rdfs:label "École Normale" .
+  ex:s2 rdfs:label "\u212AELVIN scale" .
+  ex:s3 rdfs:label "İstanbul" .
+  ex:s4 rdfs:label "ΟΔΥΣΣΕΥΣ" .
+  ex:s5 rdfs:label "Straße" .
+  ex:s6 rdfs:label "plain label" .
+  ex:s7 rdfs:label "Ecole without accent" .
+}

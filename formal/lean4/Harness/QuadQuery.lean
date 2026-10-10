@@ -261,7 +261,9 @@ private def run (directoryText queryText : String) : IO UInt32 := do
     let directory ← resolveStoreDirectory root
     let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
     match decode? manifestBytes with
-    | none => IO.eprintln "l4block-quad-query rejected: malformed SBM7 manifest"; return 1
+    | none =>
+        IO.eprintln s!"l4block-quad-query rejected: {(retiredLayoutNote? manifestBytes).getD "malformed SBM7 manifest"}"
+        return 1
     | some manifest =>
         let ibk5 := manifest.version == 10 && isIbk5Layout manifest.layout
         let ibk4 := (manifest.version == 7 || manifest.version == 8 || manifest.version == 9) &&

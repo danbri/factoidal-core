@@ -1,5 +1,10 @@
 # A geometry bounding-box index for block storage (GBI1)
 
+> Naming note, 2026-10-10. The literal index is named LGI3 (the first layout)
+> and LGI4 (the second) from this date; LGI1 and LGI2 are retired because the
+> gram fold changed. The text below uses the names of the date it was written.
+> Record: [LGI3 and LGI4](2026-10-10-literal-index-lgi3.md).
+
 Date: 2026-09-05.
 
 Companion record: `docs/designissues/2026-09-04-literal-token-index.md`. GBI1

@@ -87,6 +87,16 @@ export function loadL4() {
 
     const asJson = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
 
+    /**
+     * The Error thrown for an {"ok":false,...} envelope. The message is
+     * unchanged (`l4factoidal: <error>`); the WHOLE envelope rides along as
+     * `.envelope`, so a caller can read the members beyond `error` that some
+     * refusals carry (a parse failure's `line`, `column`, `offset` and
+     * `format`, https://github.com/danbri/factoidal/issues/685).
+     */
+    const refusal = (envelope) =>
+      Object.assign(new Error(`l4factoidal: ${envelope.error}`), { envelope });
+
     // Emscripten's cwrap `string` converter uses the WebAssembly stack.
     // Multi-megabyte RDF/block requests can therefore overflow STACK_SIZE
     // before Lean sees them. Allocate input UTF-8 on the wasm heap instead;
@@ -146,7 +156,7 @@ export function loadL4() {
         const resultPtr = callWithHeapStrings(Module._l4_call_c,
           [op, JSON.stringify(args)]);
         const parsed = JSON.parse(take(resultPtr));
-        if (parsed.ok === false) throw new Error(`l4factoidal: ${parsed.error}`);
+        if (parsed.ok === false) throw refusal(parsed);
         return parsed;
       },
 
@@ -180,7 +190,7 @@ export function loadL4() {
             (opPtr, argsPtr) => Module._l4_call_blob_c(opPtr, argsPtr, blobPtr, bytes.length),
             [op, JSON.stringify(args)]);
           const parsed = JSON.parse(take(resultPtr));
-          if (parsed.ok === false) throw new Error(`l4factoidal: ${parsed.error}`);
+          if (parsed.ok === false) throw refusal(parsed);
           return parsed;
         } finally {
           if (blobPtr) Module._free(blobPtr);
@@ -233,7 +243,7 @@ export function loadL4() {
           outPtr = Module.getValue(outCell, 'i32') >>> 0;
           const outLen = Module.getValue(outCell + 4, 'i32') >>> 0;
           const envelope = JSON.parse(take(resultPtr));
-          if (envelope.ok === false) throw new Error(`l4factoidal: ${envelope.error}`);
+          if (envelope.ok === false) throw refusal(envelope);
           // slice() copies; HEAPU8 is replaced wholesale when the
           // module's memory grows, so a view would not survive.
           const region = outPtr !== 0 && outLen > 0

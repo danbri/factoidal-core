@@ -215,7 +215,9 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.Crypto,
              `Wasm.Ops.Formats,
-             `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras]
+             `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
+             `Wasm.Ops.Maths,
+             `Wasm.Ops.Vc]
 
 -- Runs the XML parser over real W3C XML Conformance Test Suite files:
 -- reads paths from stdin, prints WF / NWF per file. See
@@ -323,7 +325,7 @@ extern_lib libl4exthost pkg := do
 -- can be packed again under a changed format and the two compared.
 @[default_target] lean_exe «l4block-quad-dump» where root := `Harness.QuadDump
 
--- The row-identity gate for the LGI1 literal search index, driven through
+-- The row-identity gate for the LGI3 and LGI4 literal search index, driven through
 -- `storeHandleQuery` — the operation a host calls. It opens one handle with
 -- the sidecars and one without, and compares the two answer envelopes.
 @[default_target] lean_exe «l4block-literal-gate» where
