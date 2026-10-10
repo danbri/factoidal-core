@@ -146,14 +146,20 @@ def readOntology (g : Graph) : DlOntology := Id.run do
   let mut tbox : List (Concept × Concept) := []
   let mut abox : List Assertion := []
   let mut subRole : List (Role × Role) := []
+  let mut inv : List (Role × Role) := []
   for t in g do
     if t.p == rdfsSubClassOf then
       tbox := both (ceS t.s) (ce t.o) ++ tbox
     else if t.p == owlEquivalentClass then
       tbox := both (ceS t.s) (ce t.o) ++ both (ce t.o) (ceS t.s) ++ tbox
     else if t.p == owlDisjointWith then
+      -- DisjointClasses(C D) (Table 5) as C ⊑ ¬D and D ⊑ ¬C.
       match ceS t.s, ce t.o with
-      | some x, some y => tbox := (.conj x y, .bot) :: tbox
+      | some x, some y => tbox := (x, .neg y) :: (y, .neg x) :: tbox
+      | _, _ => pure ()
+    else if t.p == owlInverseOf then
+      match t.s, t.o with
+      | .iri p, .iri q => if isObj p && isObj q then inv := (p.val, q.val) :: inv
       | _, _ => pure ()
     else if t.p == rdfsDomain then
       match t.s with
@@ -185,7 +191,11 @@ def readOntology (g : Graph) : DlOntology := Id.run do
     else if t.p == rdfType then
       match t.o with
       | .iri c =>
-          if c == owlFunctionalProperty then
+          if c == owlSymmetricProperty then
+            match t.s with
+            | .iri p => if isObj p then inv := (p.val, p.val) :: inv
+            | .bnode _ => pure ()
+          else if c == owlFunctionalProperty then
             match t.s with
             | .iri p => if isObj p then tbox := (.top, .atMost 1 p.val) :: tbox
             | .bnode _ => pure ()
@@ -208,7 +218,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
               let cs := members.filterMap id
               for x in cs do
                 for y in cs do
-                  if x != y then tbox := (.conj x y, .bot) :: tbox
+                  if x != y then tbox := (x, .neg y) :: tbox
           else
             match ce t.o with
             | some k => abox := .inst (indOfSubject t.s) k :: abox
@@ -241,7 +251,7 @@ def readOntology (g : Graph) : DlOntology := Id.run do
       | .iri p => if isObj p then some p.val else none
       | .bnode _ => none)).eraseDups
   return { tbox := dedupHash tbox.reverse, rbox := ⟨subRole.reverse.eraseDups, trans⟩,
-           abox := dedupHash abox.reverse }
+           abox := dedupHash abox.reverse, inv := dedupHash inv.reverse }
 
 /-! ## The emitter -/
 
@@ -352,6 +362,33 @@ def appendCases : MergeCases → MergeCases → MergeCases
   | .nil, ys => ys
   | .cons b c k rest, ys => .cons b c k (appendCases rest ys)
 
+/-- Where `countingClash` fires on a leaf state: the node, the bound
+    `≤ k p`, and `k + 1` pairwise-disjoint existential fillers on `p`
+    (the refuter's own `disjointClique`). -/
+def countingSite (st : RState) : Option (Subject × Nat × WfIri × List ClassExpr) :=
+  (groupLeaders st).findSome? (fun n =>
+    let ls := labelsOf st n.id
+    ls.findSome? (fun l =>
+      match l with
+      | .maxCard k p | .exactCard k p =>
+          let cs := existentialFillersOn p ls
+          let cl := disjointClique st.tbox cs
+          if cs.length > k && cl.length > k then some (n.id, k, p, cl.take (k + 1)) else none
+      | _ => none))
+
+/-- The certificate for a counting clash: one fresh witness per
+    filler, then the ≤-rule over the witnesses, every merge closed by
+    the disjointness of the two fillers it puts on one individual. -/
+def countingCert (isObj : WfIri → Bool) (ren : List (Ind × Ind)) (st : RState) : Option Cert := do
+  let (n, k, p, cs) ← countingSite st
+  if !isObj p then none else
+  let ds ← toConceptList isObj cs
+  let a := applyRen ren (indOfSubject n)
+  let xs := (List.range ds.length).map (fun i => s!"_:_:cert_cc_{i}__{a}")
+  let closers := (pairsOf xs).foldr (fun q acc => MergeCases.cons q.1 q.2 .close acc) .nil
+  let body : Cert := .merge a k p.val xs closers
+  pure ((ds.zip xs).foldr (fun dx acc => .exWit a p.val dx.1 dx.2 acc) body)
+
 mutual
 
 /-- The certificate for a trace. `ren` holds the merges made so far,
@@ -361,7 +398,9 @@ def emitCert (isObj : WfIri → Bool) (g : Graph) (ren : List (Ind × Ind)) (int
   | .none => none
   | .leaf st => do
       let (steps, _) ← witnessSteps isObj ren intro st
-      pure (wrapSteps steps .close)
+      match countingCert isObj ren st with
+      | some k => pure (wrapSteps steps k)
+      | none => pure (wrapSteps steps .close)
   | .forced before after sub => do
       let (steps, intro') ← witnessSteps isObj ren intro before
       let (merges, ren') ← forcedSteps g before after ren
@@ -566,5 +605,83 @@ def refutationProfileLine (g : Graph) (budget : Nat) : Option String :=
       some s!"search leaves={(p.leaves.eraseDups)} unions={p.unions} merges={p.merges} \
 nominal_choices={p.nominals} forced_identifications={p.forced} max_witnesses={p.witnesses}"
   | _ => none
+
+end L4Factoidal.OWL.Refute
+
+namespace L4Factoidal.OWL.Refute
+
+open L4Factoidal.RDF
+open L4Factoidal.OWL
+open L4Factoidal.OWL.RL
+
+/-! ## Diagnostics for a certificate that does not check
+
+Reporting only (the probe prints it when `OWL_CERT_DEBUG` is set). It
+follows the certificate's first path to its first `close`, and says
+whether the saturated facts there contain the labels of the refuter's
+clash. -/
+
+deriving instance Repr for L4Factoidal.OWL.Cert, L4Factoidal.OWL.MergeCases
+
+/-- The saturated facts at the first `close` of the first path. -/
+def firstLeafFacts (O : DlOntology) : Cert → List Assertion → Option (List Assertion)
+  | .close, F => some (saturate (Ctx.ofOntology O) certFuel F)
+  | .split a c _ l _, F =>
+      firstLeafFacts O l (.inst a c :: saturate (Ctx.ofOntology O) certFuel F)
+  | .exWit a r c x k, F =>
+      firstLeafFacts O k (.rel r a x :: .inst x c :: saturate (Ctx.ofOntology O) certFuel F)
+  | .merge _ _ _ _ _, _ => none
+
+/-- The refuter's clash at a leaf state, as (node, label). -/
+def leafClashSite (g : Graph) (st : RState) : Option (Subject × ClassExpr) :=
+  (groupLeaders st).findSome? (fun n =>
+    let ls := labelsOf st n.id
+    (ls.find? (clashForLabel g st n.id ls)).map (fun l => (n.id, l)))
+
+/-- The first leaf state of a trace. -/
+def firstLeafState : SearchTrace → Option RState
+  | .leaf st => some st
+  | .forced _ _ sub => firstLeafState sub
+  | .union _ _ _ (t :: _) => firstLeafState t
+  | .merge _ _ _ (t :: _) => firstLeafState t
+  | _ => none
+
+def certifyDebug (g : Graph) (budget : Nat) : String :=
+  match tableauConsistentTraced g budget with
+  | (some false, .search _ trace) =>
+      let O := certOntology g
+      let objs := objectPropertiesOf (Store.ofIndex (Index.ofGraph g))
+      let isObj := fun (p : WfIri) => objs.contains p
+      let certS := match emitCert isObj g [] [] trace with
+        | some c => (repr c).pretty 100000
+        | none => "no certificate"
+      let site := match firstLeafState trace with
+        | none => "no leaf"
+        | some st =>
+          match leafClashSite g st with
+          | none => "no label clash site"
+          | some (n, l) =>
+            let lC := toConcept isObj l
+            let inner := match l with
+              | .complement c => toConcept isObj c
+              | _ => none
+            let facts := match emitCert isObj g [] [] trace with
+              | some c => firstLeafFacts O c (O.abox.map normAssertion)
+              | none => none
+            let has (k : Option Concept) : String := match k, facts with
+              | some k', some F => toString (F.contains (.inst (indOfSubject n) k'))
+              | _, _ => "n/a"
+            let about := match facts with
+              | some F => (F.filter (fun (φ : Assertion) => match φ with
+                  | .inst a _ => a == indOfSubject n
+                  | .rel _ a b => a == indOfSubject n || b == indOfSubject n
+                  | .diff a b => a == indOfSubject n || b == indOfSubject n)).take 40
+              | none => []
+            s!"site node={indOfSubject n} label={(repr l).pretty 100000} concept={(repr lC).pretty 100000} \
+in_facts={has lC} inner={(repr inner).pretty 100000} inner_in_facts={has inner} \
+facts_about_node={(repr about).pretty 100000}"
+      s!"objprops={objs.map (·.val)} tbox={O.tbox.length} abox={O.abox.length} \
+rbox={(repr O.rbox).pretty 100000}\n  cert={certS}\n  {site}\n  tbox_sample={(repr (O.tbox.take 30)).pretty 100000}"
+  | _ => "not refuted by search"
 
 end L4Factoidal.OWL.Refute

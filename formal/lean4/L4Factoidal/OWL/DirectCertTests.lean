@@ -80,6 +80,13 @@ private def cC : Concept := .atom "C"
                     abox := [.rel "r" "a" "b", .rel "r" "b" "c",
                              .inst "a" (.all "r" (.neg cC)), .inst "c" cC] } .close
 
+/-! ### `invE`: `InverseObjectProperties(r s)`, `r(a, b)`, `b : ∀s.⊥` -/
+#guard checkCert { inv := [("r", "s")], abox := [.rel "r" "a" "b", .inst "b" (.all "s" .bot)] }
+  .close
+#guard !checkCert { abox := [.rel "r" "a" "b", .inst "b" (.all "s" .bot)] } .close
+#guard checkCert { inv := [("s", "r")], abox := [.rel "r" "a" "b", .inst "b" (.all "s" .bot)] }
+  .close
+
 /-! ### Cardinality bounds (leaf): `≥ 2 r` against `≤ 1 r`; `∃r.C` against `≤ 0 r.C` -/
 #guard checkCert { abox := [.inst "a" (.atLeast 2 "r"), .inst "a" (.atMost 1 "r")] } .close
 #guard !checkCert { abox := [.inst "a" (.atLeast 2 "r"), .inst "a" (.atMost 2 "r")] } .close

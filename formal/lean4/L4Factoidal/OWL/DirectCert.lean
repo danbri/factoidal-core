@@ -60,16 +60,24 @@ structure DlOntology where
   /-- `ClassAssertion`, `ObjectPropertyAssertion`, `DifferentIndividuals`
       (Table 10). -/
   abox : List Assertion := []
+  /-- `InverseObjectProperties(r s)` (Table 6), as pairs `(r, s)`;
+      `SymmetricObjectProperty(r)` is the pair `(r, r)`. -/
+  inv : List (Role × Role) := []
 deriving Repr
 
 /-- Every `SubClassOf(C D)` of the TBox holds: `(C)^C ⊆ (D)^C`. -/
 def RespectsTBox {δ : Type} (I : Interp δ) (T : List (Concept × Concept)) : Prop :=
   ∀ ax ∈ T, ∀ x, I.sem ax.1 x → I.sem ax.2 x
 
+/-- Every `InverseObjectProperties(r s)` holds:
+    `(r)^OP = {(x, y) | (y, x) ∈ (s)^OP}`. -/
+def RespectsInv {δ : Type} (I : Interp δ) (P : List (Role × Role)) : Prop :=
+  ∀ q ∈ P, ∀ x y, I.role q.1 x y ↔ I.role q.2 y x
+
 /-- `(I, ν)` satisfies the ontology (Direct Semantics § 2.3.7, with
     § 2.4's anonymous individuals folded into `ν`). -/
 def DirectModel {δ : Type} (I : Interp δ) (ν : Ind → δ) (O : DlOntology) : Prop :=
-  RespectsRBox I O.rbox ∧ RespectsTBox I O.tbox ∧ SatAll I ν O.abox
+  RespectsRBox I O.rbox ∧ RespectsTBox I O.tbox ∧ RespectsInv I O.inv ∧ SatAll I ν O.abox
 
 /-! ## Negation normal form
 
@@ -265,6 +273,7 @@ structure Ctx where
   T : List (Concept × Concept)
   R : RoleAxioms
   L : List Concept
+  inv : List (Role × Role) := []
 
 /-- `conjE`: `a : C ⊓ D` gives `a : C` and `a : D`. -/
 def conjGen : Assertion → List Assertion
@@ -318,10 +327,18 @@ def exGen (L : List Concept) (F : List Assertion) : Assertion → List Assertion
       | _ => none)
   | _ => []
 
+/-- `invE`: `r(a, b)` and `InverseObjectProperties(r s)` give `s(b, a)`,
+    in either position of the pair. -/
+def invGen (P : List (Role × Role)) : Assertion → List Assertion
+  | .rel r a b => P.flatMap (fun q =>
+      (if q.1 = r then [Assertion.rel q.2 b a] else []) ++
+      (if q.2 = r then [Assertion.rel q.1 b a] else []))
+  | _ => []
+
 /-- All forward rules on one fact. -/
 def stepGen (C : Ctx) (F : List Assertion) (φ : Assertion) : List Assertion :=
   conjGen φ ++ allGen C.R F φ ++ subRoleGen C.R φ ++ transGen C.R F φ ++
-  tboxGen C.T φ ++ topGen φ ++ exGen C.L F φ
+  tboxGen C.T φ ++ topGen φ ++ exGen C.L F φ ++ invGen C.inv φ
 
 /-- The facts of `news` not already in `F` (nor earlier in `news`),
     appended to `F`. The hash set only decides what is kept; soundness
@@ -347,8 +364,10 @@ def saturate (C : Ctx) : Nat → List Assertion → List Assertion
 
 /-- What every rule soundness lemma assumes: the interpretation respects
     the context's TBox and role box. -/
-def CtxValid {δ : Type} (I : Interp δ) (C : Ctx) : Prop :=
-  RespectsTBox I C.T ∧ RespectsRBox I C.R
+structure CtxValid {δ : Type} (I : Interp δ) (C : Ctx) : Prop where
+  tbox : RespectsTBox I C.T
+  rbox : RespectsRBox I C.R
+  inv  : RespectsInv I C.inv
 
 theorem mem_succFacts {F : List Assertion} {r : Role} {a : Ind} {k : Concept}
     {ψ : Assertion} (h : ψ ∈ succFacts F r a k) :
@@ -370,7 +389,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
     {φ : Assertion} (hφ : φ ∈ F) {ψ : Assertion} (hψ : ψ ∈ stepGen C F φ) :
     Satisfies I ν ψ := by
   simp only [stepGen, List.mem_append] at hψ
-  rcases hψ with ((((((h | h) | h) | h) | h) | h) | h)
+  rcases hψ with (((((((h | h) | h) | h) | h) | h) | h) | h)
   · -- conjE
     cases φ with
     | inst a c =>
@@ -400,7 +419,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
                 have ⟨b, hb, he⟩ := mem_succFacts h
                 subst he
                 intro z hz
-                exact hs _ (hC.2.2 r htr _ _ _ (hF _ hb) hz)
+                exact hs _ (hC.rbox.2 r htr _ _ _ (hF _ hb) hz)
               · cases h
         | _ => simp [allGen] at h
     | rel _ _ _ => simp [allGen] at h
@@ -414,7 +433,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
         split at he
         · rename_i hpr
           cases he
-          exact hC.2.1 p hp _ _ (hpr ▸ hs)
+          exact hC.rbox.1 p hp _ _ (hpr ▸ hs)
         · cases he
     | inst _ _ => simp [subRoleGen] at h
     | diff _ _ => simp [subRoleGen] at h
@@ -433,7 +452,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
               · rename_i hc
                 obtain ⟨rfl, rfl⟩ := hc
                 cases he
-                exact hC.2.2 s htr _ _ _ hs (hF _ hχ)
+                exact hC.rbox.2 s htr _ _ _ hs (hF _ hχ)
               · cases he
           | inst _ _ => simp at he
           | diff _ _ => simp at he
@@ -449,7 +468,7 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
         split at he
         · rename_i hc
           cases he
-          exact hC.1 ax hax _ (hc ▸ hs)
+          exact hC.tbox ax hax _ (hc ▸ hs)
         · cases he
     | rel _ _ _ => simp [tboxGen] at h
     | diff _ _ => simp [tboxGen] at h
@@ -519,6 +538,28 @@ theorem gen_sound {δ : Type} {I : Interp δ} {ν : Ind → δ} {C : Ctx}
         | atMostQ _ _ _ => simp at he
     | inst _ _ => simp [exGen] at h
     | diff _ _ => simp [exGen] at h
+  · -- invE
+    cases φ with
+    | rel r a b =>
+        have hs : I.role r (ν a) (ν b) := hF _ hφ
+        simp only [invGen] at h
+        have ⟨q, hq, hin⟩ := List.mem_flatMap.mp h
+        simp only [List.mem_append] at hin
+        rcases hin with hin | hin
+        · split at hin
+          · rename_i hr
+            simp only [List.mem_singleton] at hin
+            subst hin
+            exact (hC.inv q hq (ν a) (ν b)).mp (hr ▸ hs)
+          · cases hin
+        · split at hin
+          · rename_i hr
+            simp only [List.mem_singleton] at hin
+            subst hin
+            exact (hC.inv q hq (ν b) (ν a)).mpr (hr ▸ hs)
+          · cases hin
+    | inst _ _ => simp [invGen] at h
+    | diff _ _ => simp [invGen] at h
 
 /-- Every element `addNew` returns is from `F` or from `news`. -/
 theorem mem_addNew {F news : List Assertion} {ψ : Assertion}
@@ -1097,7 +1138,7 @@ def edgeLhs (T : List (Concept × Concept)) : List Concept :=
 
 def Ctx.ofOntology (O : DlOntology) : Ctx :=
   let T := normTBox O.tbox
-  { T := T, R := O.rbox, L := edgeLhs T }
+  { T := T, R := O.rbox, L := edgeLhs T, inv := O.inv }
 
 /-- The saturation round bound. The rounds stop earlier at a fixpoint;
     a bound that is too small makes a certificate fail to check, never
@@ -1113,8 +1154,8 @@ def checkCert (O : DlOntology) (c : Cert) : Bool :=
     the fragment of `Concept`). -/
 theorem checkCert_sound {O : DlOntology} {c : Cert} (h : checkCert O c = true) :
     ¬ ∃ (δ : Type) (I : Interp δ) (ν : Ind → δ), DirectModel I ν O := by
-  intro ⟨δ, I, ν, hR, hT, hA⟩
-  have hC : CtxValid I (Ctx.ofOntology O) := ⟨respects_normTBox hT, hR⟩
+  intro ⟨δ, I, ν, hR, hT, hInv, hA⟩
+  have hC : CtxValid I (Ctx.ofOntology O) := ⟨respects_normTBox hT, hR, hInv⟩
   refine checkF_sound hC certFuel c _ ν h ?_
   intro φ hφ
   have ⟨ψ, hψ, he⟩ := List.mem_map.mp hφ
@@ -1127,6 +1168,6 @@ theorem checkCert_sound {O : DlOntology} {c : Cert} (h : checkCert O c = true) :
 theorem checkCert_not_consistent {R : RoleAxioms} {A : List Assertion} {c : Cert}
     (h : checkCert { rbox := R, abox := A } c = true) : ¬ Consistent R A := by
   intro ⟨δ, I, ν, hR, hA⟩
-  exact checkCert_sound h ⟨δ, I, ν, hR, (fun _ hax => by cases hax), hA⟩
+  exact checkCert_sound h ⟨δ, I, ν, hR, (fun _ hax => by cases hax), (fun _ hq => by cases hq), hA⟩
 
 end L4Factoidal.OWL

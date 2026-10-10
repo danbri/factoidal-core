@@ -1427,6 +1427,8 @@ def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (r
 the tableau refuted the premise closure ({r.graph.length} triples)"
       let cert ← certifyBounded defaultCertMs r.graph rb
       let prof ← profileBounded defaultCertMs r.graph rb
+      if (← IO.getEnv "OWL_CERT_DEBUG").isSome && !cert.isProved then
+        IO.println s!"CERT-DEBUG {c.id}: {L4Factoidal.OWL.Refute.certifyDebug r.graph rb}"
       return { regime := .pass, closure := closureOutcome, measure := m,
                cert := some cert, profile := some prof }
     else return Verdict.same closureOutcome m
