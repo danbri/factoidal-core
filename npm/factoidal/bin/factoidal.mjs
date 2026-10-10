@@ -109,6 +109,8 @@ commands:
   activate STORE GENERATION   make one generation the activated generation
   update   STORE [UPDATE]     apply a SPARQL Update through the delta log
   compact  STORE GENERATION   fold the delta log into a new generation
+  serve    STORE              serve SPARQL 1.1 Protocol, Graph Store and
+                              Service Description over HTTP
   lws-serve DIR               serve Linked Web Storage 1.0 over HTTP
   solid-serve DIR             serve the Solid Protocol over HTTP
   solid-client OP URL         run one Solid client operation
@@ -284,6 +286,46 @@ options:
   --activate         activate the new generation when it verifies
   --json             emit one JSON object`,
 
+  serve: `factoidal serve - a SPARQL 1.1 endpoint over an activated store
+
+usage: factoidal serve STORE [--port N] [--host ADDRESS] [options]
+
+Serves the activated generation of STORE, with its delta log, over HTTP:
+
+  GET/POST /sparql   SPARQL 1.1 Protocol query and update
+                     (GET /sparql with no query string: the SPARQL 1.1
+                     Service Description of the endpoint)
+  /data, /data/...   SPARQL 1.1 Graph Store HTTP Protocol (?default,
+                     ?graph=IRI, or a path under /data naming the graph)
+
+options:
+  --port N           the port to bind; 0 takes an ephemeral one (default 3030)
+  --host ADDRESS     the address to bind (default 127.0.0.1)
+  --query-path PATH  the query and update endpoint (default /sparql)
+  --gsp-path PATH    the Graph Store endpoint (default /data)
+  --no-worker        serve on this thread instead of a worker thread with a
+                     raised call stack (large collections need the worker)
+  --quiet            print the origin only
+
+An update, or a Graph Store PUT, POST or DELETE, is appended to the
+activated generation's delta log as one batch before the response is sent,
+and is visible to the next request. An IBK3 (triples) generation accepts
+changes to the default graph only, because its delta log is replayed and
+compacted for that graph only; a change to a named graph answers 501. A
+quad generation (ibk4, ibk5) accepts every graph. Fold the log into a new
+generation with l4block-shard-compact, activate it, and restart the server.
+
+The server makes no protocol decision: the request framing, routing,
+status codes, content negotiation, evaluation and the delta-log batch are
+decided by formal/lean4/L4Factoidal/HTTP/Wire.lean and
+formal/lean4/L4Factoidal/SPARQL/StoreEndpoint.lean through the
+storeServe operations. A WebAssembly module built before those operations
+landed makes this command exit 3 and say so.
+
+Specifications: https://www.w3.org/TR/sparql11-protocol/
+https://www.w3.org/TR/sparql11-http-rdf-update/
+https://www.w3.org/TR/sparql11-service-description/`,
+
   'lws-serve': `factoidal lws-serve - serve Linked Web Storage 1.0 over HTTP
 
 usage: factoidal lws-serve DIR [--port N] [--host ADDRESS]
@@ -410,6 +452,7 @@ const VALUE_OPTIONS = {
   activate: new Set([]),
   update: new Set(['update', 'file']),
   compact: new Set([]),
+  serve: new Set(['port', 'host', 'query-path', 'gsp-path']),
   'lws-serve': new Set(['port', 'host', 'base']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
@@ -1024,6 +1067,43 @@ function untilInterrupted (running, quiet) {
   })
 }
 
+async function commandServe (positional, options) {
+  if (positional.length !== 1) throw new UsageError('serve needs one STORE')
+  const quiet = options.quiet === true
+  const { listen, listenOnWorker, ServeHostError } = await import('./serve.mjs')
+  const serveOptions = {
+    port: servePort(options, 3030),
+    host: serveHost(options),
+    ...(typeof options['query-path'] === 'string' ? { queryPath: options['query-path'] } : {}),
+    ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {})
+  }
+  const onWorker = options['no-worker'] !== true && workerRouteAvailable()
+  let running
+  try {
+    running = onWorker
+      ? await listenOnWorker(positional[0], serveOptions)
+      : await listen(positional[0], serveOptions)
+  } catch (error) {
+    if (error instanceof ServeHostError && error.unknownOp) {
+      return notWired('serve', error.message)
+    }
+    if (error instanceof Error && typeof error.message === 'string') {
+      err(`factoidal serve: ${error.message.replace(/^l4factoidal:\s*/, '')}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  const info = onWorker ? running.info : running.served.info
+  if (!quiet) {
+    err(`serve: listening on ${running.origin} for ${positional[0]} ` +
+      `(layout ${info.layout}, ${plural(info.rows, 'row')}, ` +
+      `delta batches replayed: ${info.deltaBatches}, write scope ${info.writeScope})`)
+    err(`serve: query ${running.origin}${info.queryPath}, graph store ${running.origin}${info.gspPath}`)
+  }
+  out(running.origin)
+  return untilInterrupted(running, quiet)
+}
+
 async function commandLwsServe (positional, options) {
   if (positional.length !== 1) throw new UsageError('lws-serve needs one DIR')
   const quiet = options.quiet === true
@@ -1136,6 +1216,7 @@ const COMMANDS = {
   activate: commandActivate,
   update: commandUpdate,
   compact: commandCompact,
+  serve: commandServe,
   'lws-serve': commandLwsServe,
   'solid-serve': commandSolidServe,
   'solid-client': commandSolidClient
