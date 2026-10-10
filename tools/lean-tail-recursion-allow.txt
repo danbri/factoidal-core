@@ -848,7 +848,6 @@ L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple 
 L4Factoidal_VC_Multibase_natToBytesBE  # (a) PENDING https://github.com/danbri/factoidal/issues/752 bytes of one big-endian number: one frame per byte of the value decoded from a multibase string
 L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
 L4Factoidal_XML_entityHasWsCharRef_go  # (b) nesting of entity references inside entity definitions of the DTD; fuel = entity count
-L4Factoidal_XML_scanRefs  # (a) PENDING https://github.com/danbri/factoidal/issues/673 one frame per entity or character reference in one text run or start tag (the canary's xml-entities case: 10,000 references overflow 512 KB)
 L4Factoidal_XML_validate_countList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 children of one element during DTD validation: one frame per child (data)
 L4Factoidal_XPath_Num_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of an xs:decimal value: one frame per digit
 L4Factoidal_XSD_natDigits_go  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
