@@ -3,33 +3,39 @@ Harness/GrddlRun — a GRDDL conformance runner over the vendored W3C
 GRDDL test suite.
 
 It parses `third_party/testing/grddl/grddl-tests-normative.rdf` with
-this project's own RDF/XML parser, walks each test's input document
-with `GRDDL.Discovery`, runs the discovered stylesheets through the
-Lean XSLT engine, reads each result back as RDF/XML, and compares the
-merged graph with the expected one BY ISOMORPHISM — blank-node labels
-are not part of what a GRDDL result means.
+this project's own RDF/XML parser, asks `GRDDL.Agent.glean` for the
+GRDDL result of each test's input document (all four discovery rules,
+namespace and profile documents to a fixpoint, stylesheets through the
+Lean XSLT engine), and compares it with the expected graph BY
+ISOMORPHISM over SETS of triples — blank-node labels and repeated
+triples are not part of what a GRDDL result means.
 
 ## No network, and that is visible in the score
 
 The suite's documents live under two URL trees which
-`third_party/testing/grddl/docroot/` mirrors. `iriToLocal` maps an
-absolute suite IRI to a file there. Anything not mirrored is
-UNAVAILABLE, and a test that needs it is counted apart with the IRI
-named — never as a pass, and never as a failure of the engine.
+`third_party/testing/grddl/docroot/` mirrors; `docroot/redirects.tsv`
+records the five redirections the base-URI tests depend on.
+`iriToLocal` maps an absolute suite IRI to a file there. A document
+inside those trees that is not mirrored makes the case UNAVAILABLE with
+the IRI named. Documents outside them (the XHTML, RDF and SVG namespace
+documents) are not vendored on purpose (PROVENANCE.md); a failing case
+names the ones it did not retrieve.
 
-## Five outcomes
+## Six outcomes
 
-  * **pass** — the merged graph is isomorphic to the expected one;
-  * **fail** — it is not. This is the number that means something is
-    broken;
-  * **no-transformation** — the source names no transformation this
-    stage can follow and is not itself RDF/XML, so there is nothing
-    to glean. Reported with the case name, because the reason is
-    usually a second document that is not mirrored;
-  * **unavailable** — a document the test needs is not in the
-    vendored docroot;
-  * **refused** — a stylesheet the engine declined to run, or output
-    that is not well-formed RDF/XML.
+  * **pass** — the result is isomorphic to the expected graph;
+  * **fail** — it is not. A failure that differs only by the http/https
+    scheme is also counted as vendoring drift (a sub-count, not a
+    bucket);
+  * **no-transformation** — the agent found no transformation and the
+    source is not RDF/XML;
+  * **unavailable** — a suite document the case needs is not vendored;
+  * **refused** — the XSLT engine declined a stylesheet, an output was
+    not RDF/XML, or the isomorphism search exceeded its budget;
+  * **related-pass** — not passed, but a test related by `g:alternative`
+    or `g:subsumes` passed, which the W3C driver `testft.py` counts as
+    passed (GRDDL Test Cases, "Tests with Multiple GRDDL Results").
+    Counted apart from pass.
 
 Usage: `lake exe l4grddl [tests-dir]`
 -/
