@@ -740,6 +740,38 @@ def sortStable (le : α → α → Bool) : List α → List α
   | []      => []
   | x :: xs => insertBy le x (sortStable le xs)
 
+/-- `insertBy` with the passed prefix on a reverse accumulator: a tail call
+per element. `xsl:sort` sorts a node-set the data sizes; the readable forms
+take one frame per node (https://github.com/danbri/factoidal/issues/746). -/
+def insertByTR (le : α → α → Bool) (x : α) (ys : List α) : List α := go ys []
+where
+  go : List α → List α → List α
+    | [], acc => (x :: acc).reverse
+    | y :: ys, acc =>
+        if le y x && !(le x y) then go ys (y :: acc) else acc.reverse ++ x :: y :: ys
+
+theorem insertByTR_go_eq (le : α → α → Bool) (x : α) :
+    ∀ (ys acc : List α), insertByTR.go le x ys acc = acc.reverse ++ insertBy le x ys
+  | [], acc => by simp [insertByTR.go, insertBy]
+  | y :: ys, acc => by
+      simp only [insertByTR.go, insertBy]
+      split <;> rename_i h <;> simp [h, insertByTR_go_eq le x ys]
+
+@[csimp] theorem insertBy_eq_insertByTR : @insertBy = @insertByTR := by
+  funext α le x ys; simp [insertByTR, insertByTR_go_eq]
+
+/-- `sortStable` as a right fold of `insertBy`; `List.foldr` and
+`insertBy` both compile to loops. -/
+def sortStableTR (le : α → α → Bool) (xs : List α) : List α := xs.foldr (insertBy le) []
+
+theorem sortStable_eq_foldr (le : α → α → Bool) :
+    ∀ xs : List α, sortStable le xs = xs.foldr (insertBy le) []
+  | [] => rfl
+  | x :: xs => by simp [sortStable, sortStable_eq_foldr le xs]
+
+@[csimp] theorem sortStable_eq_sortStableTR : @sortStable = @sortStableTR := by
+  funext α le xs; exact sortStable_eq_foldr le xs
+
 /-- The LANGUAGE collation, in the one shape the corpus exercises: a
     case-insensitive primary comparison, with `case-order` breaking a
     tie at the first position whose case differs.

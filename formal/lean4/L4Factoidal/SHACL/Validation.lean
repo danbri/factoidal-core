@@ -611,6 +611,75 @@ def shaclListMembersFuel (g : Graph) (visited : List Term) : Term → Nat → Op
         | _, _ => none
     | _ => none
 
+/-- `shaclListMembersFuel` with the members found so far on a reverse
+accumulator: a tail call per list cell. An `sh:in` list or a data list is
+as long as its author makes it; the readable form conses after its
+recursive call, one frame per cell (https://github.com/danbri/factoidal/issues/746). -/
+def shaclListMembersFuelTR (g : Graph) (visited : List Term) (t : Term) (fuel : Nat) :
+    Option (List Term) :=
+  go visited t fuel []
+where
+  go (visited : List Term) : Term → Nat → List Term → Option (List Term)
+    | _, 0, _ => none
+    | t, fuel + 1, acc =>
+      match t with
+      | .iri _ | .bnode _ =>
+        let firsts := dedupTerms (objectsOfTerm g t rdfFirst)
+        let rests := dedupTerms (objectsOfTerm g t rdfRest)
+        if t == .iri rdfNil then
+          if firsts.isEmpty && rests.isEmpty then some acc.reverse else none
+        else if visited.contains t then none
+        else
+          match firsts, rests with
+          | [f], [r] => go (t :: visited) r fuel (f :: acc)
+          | _, _ => none
+      | _ => none
+
+theorem shaclListMembersFuelTR_go_eq (g : Graph) :
+    ∀ (fuel : Nat) (visited : List Term) (t : Term) (acc : List Term),
+      shaclListMembersFuelTR.go g visited t fuel acc =
+        (shaclListMembersFuel g visited t fuel).map (acc.reverse ++ ·)
+  | 0, _, _, _ => rfl
+  | fuel + 1, visited, t, acc => by
+      have step : ∀ (t : Term), (t matches .iri _ ∨ t matches .bnode _) →
+          shaclListMembersFuelTR.go g visited t (fuel + 1) acc =
+            (shaclListMembersFuel g visited t (fuel + 1)).map (acc.reverse ++ ·) := by
+        intro t ht
+        unfold shaclListMembersFuelTR.go shaclListMembersFuel
+        cases t with
+        | literal l => simp at ht
+        | tripleTerm s p o => simp at ht
+        | iri i =>
+            simp only
+            split
+            · split <;> simp
+            · split
+              · rfl
+              · split
+                · rw [shaclListMembersFuelTR_go_eq g fuel]
+                  cases shaclListMembersFuel g _ _ fuel <;> simp
+                · rfl
+        | bnode b =>
+            simp only
+            split
+            · split <;> simp
+            · split
+              · rfl
+              · split
+                · rw [shaclListMembersFuelTR_go_eq g fuel]
+                  cases shaclListMembersFuel g _ _ fuel <;> simp
+                · rfl
+      cases t with
+      | iri i => exact step _ (by simp)
+      | bnode b => exact step _ (by simp)
+      | literal l => rfl
+      | tripleTerm s p o => rfl
+
+@[csimp] theorem shaclListMembersFuel_eq_TR : @shaclListMembersFuel = @shaclListMembersFuelTR := by
+  funext g visited t fuel
+  simp only [shaclListMembersFuelTR, shaclListMembersFuelTR_go_eq]
+  cases shaclListMembersFuel g visited t fuel <;> simp
+
 /-- The members of `t` when `t` is a SHACL list in `g`, else `none`. -/
 def shaclListMembers (g : Graph) (t : Term) : Option (List Term) :=
   shaclListMembersFuel g [] t (g.length + 2)

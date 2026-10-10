@@ -166,13 +166,37 @@ def canonNode (parent : Scope) : Node → String
   | .element t attrs kids =>
       let own := extendScope parent (nsDecls attrs)
       "<" ++ t ++ declText (renderedDecls parent own) ++ attrText own attrs ++ ">"
-        ++ canonNodes own kids ++ "</" ++ t ++ ">"
+        ++ canonNodesAcc own kids "" ++ "</" ++ t ++ ">"
 
-def canonNodes (sc : Scope) : List Node → String
-  | []      => ""
-  | n :: ns => canonNode sc n ++ canonNodes sc ns
+/-- The canonical forms of `ns` appended to `acc`, one sibling at a time:
+the self-call is a tail call, so the number of siblings costs no stack
+and each sibling is appended once (the readable form appended after its
+recursive call, one frame per sibling) (https://github.com/danbri/factoidal/issues/746). -/
+def canonNodesAcc (sc : Scope) : List Node → String → String
+  | [],      acc => acc
+  | n :: ns, acc => canonNodesAcc sc ns (acc ++ canonNode sc n)
 
 end
+
+/-- The canonical forms of a list of sibling nodes, concatenated. -/
+def canonNodes (sc : Scope) (ns : List Node) : String := canonNodesAcc sc ns ""
+
+theorem canonNodesAcc_eq (sc : Scope) (ns : List Node) :
+    ∀ acc : String, canonNodesAcc sc ns acc = acc ++ canonNodes sc ns := by
+  induction ns with
+  | nil => intro acc; simp [canonNodes, canonNodesAcc, String.append_empty]
+  | cons n ns ih =>
+      intro acc
+      simp only [canonNodes, canonNodesAcc]
+      rw [ih, ih ("" ++ canonNode sc n)]
+      simp [String.append_assoc, String.empty_append]
+
+theorem canonNodes_nil (sc : Scope) : canonNodes sc [] = "" := rfl
+
+theorem canonNodes_cons (sc : Scope) (n : Node) (ns : List Node) :
+    canonNodes sc (n :: ns) = canonNode sc n ++ canonNodes sc ns := by
+  simp only [canonNodes, canonNodesAcc]
+  rw [canonNodesAcc_eq]; simp [String.empty_append]; rfl
 
 /-- The bindings in force above the document element: only `xml`. -/
 def rootScope : Scope := [("xml", xmlNamespace)]
@@ -193,15 +217,45 @@ mutual
 
 /-- A node with every comment below it removed. -/
 def dropComments : Node → Node
-  | .element t attrs kids => .element t attrs (dropCommentsList kids)
+  | .element t attrs kids => .element t attrs (dropCommentsListAcc kids [])
   | n => n
 
-def dropCommentsList : List Node → List Node
-  | [] => []
-  | .comment _ :: rest => dropCommentsList rest
-  | n :: rest => dropComments n :: dropCommentsList rest
+/-- The non-comment nodes of a list with their comments removed, after
+`acc` (earlier ones, newest first): a tail call per sibling (https://github.com/danbri/factoidal/issues/746). -/
+def dropCommentsListAcc : List Node → List Node → List Node
+  | [], acc => acc.reverse
+  | n :: rest, acc =>
+      match n with
+      | .comment _ => dropCommentsListAcc rest acc
+      | n => dropCommentsListAcc rest (dropComments n :: acc)
 
 end
+
+/-- A list of sibling nodes without its comments, every comment below
+them removed too. -/
+def dropCommentsList (ns : List Node) : List Node := dropCommentsListAcc ns []
+
+theorem dropCommentsListAcc_eq (ns : List Node) :
+    ∀ acc : List Node, dropCommentsListAcc ns acc = acc.reverse ++ dropCommentsList ns := by
+  induction ns with
+  | nil => intro acc; simp [dropCommentsList, dropCommentsListAcc]
+  | cons n rest ih =>
+      intro acc
+      cases n <;> simp only [dropCommentsList, dropCommentsListAcc] <;> simp only [ih] <;> simp
+
+theorem dropCommentsList_nil : dropCommentsList [] = [] := rfl
+
+theorem dropCommentsList_comment (b : String) (rest : List Node) :
+    dropCommentsList (.comment b :: rest) = dropCommentsList rest := by
+  rfl
+
+theorem dropCommentsList_cons (n : Node) (rest : List Node) (h : ∀ b, n ≠ .comment b) :
+    dropCommentsList (n :: rest) = dropComments n :: dropCommentsList rest := by
+  cases n with
+  | comment b => exact absurd rfl (h b)
+  | _ =>
+      show dropCommentsListAcc rest [dropComments _] = _
+      rw [dropCommentsListAcc_eq]; rfl
 
 /-- Canonical XML 1.0 WITHOUT comments, the form the Recommendation names
     "Canonical XML (omits comments)": the document with every comment

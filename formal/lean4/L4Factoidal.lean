@@ -2,6 +2,7 @@
 -- See PORT_NOTES.md for scope, correspondences, and the assumption
 -- report against the F* originals.
 import L4Factoidal.NatBounds
+import L4Factoidal.ListTR
 import L4Factoidal.Text.CaseMap
 import L4Factoidal.Text.CaseMapTests
 import L4Factoidal.Crypto.SHA2

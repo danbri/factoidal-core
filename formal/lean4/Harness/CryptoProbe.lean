@@ -138,6 +138,40 @@ def hexToBytesAux : List Char → Option (List UInt8)
       | some x, some y => (hexToBytesAux rest).map (UInt8.ofNat (x * 16 + y) :: ·)
       | _, _ => none
 
+/-- `hexToBytesAux` onto a reverse accumulator: a tail call per byte. A
+test vector file can hold long messages; the readable form conses after its
+recursive call, one frame per byte
+(https://github.com/danbri/factoidal/issues/746). -/
+def hexToBytesAuxTR (cs : List Char) : Option (List UInt8) := go cs []
+where
+  go : List Char → List UInt8 → Option (List UInt8)
+    | [], acc => some acc.reverse
+    | [_], _ => none
+    | a :: b :: rest, acc =>
+        match hexDigit? a, hexDigit? b with
+        | some x, some y => go rest (UInt8.ofNat (x * 16 + y) :: acc)
+        | _, _ => none
+
+theorem hexToBytesAuxTR_go_eq :
+    ∀ (cs : List Char) (acc : List UInt8),
+      hexToBytesAuxTR.go cs acc = (hexToBytesAux cs).map (acc.reverse ++ ·)
+  | [], acc => by simp [hexToBytesAuxTR.go, hexToBytesAux]
+  | [_], acc => by simp [hexToBytesAuxTR.go, hexToBytesAux]
+  | a :: b :: rest, acc => by
+      simp only [hexToBytesAuxTR.go, hexToBytesAux]
+      cases hexDigit? a with
+      | none => cases hexDigit? b <;> rfl
+      | some x =>
+          cases hexDigit? b with
+          | none => rfl
+          | some y =>
+              simp only
+              rw [hexToBytesAuxTR_go_eq rest]
+              cases hexToBytesAux rest <;> simp
+
+@[csimp] theorem hexToBytesAux_eq_TR : @hexToBytesAux = @hexToBytesAuxTR := by
+  funext cs; simp only [hexToBytesAuxTR, hexToBytesAuxTR_go_eq]; cases hexToBytesAux cs <;> simp
+
 def hexToBytes? (s : String) : Option ByteArray :=
   (hexToBytesAux s.toList).map fun bs => ⟨bs.toArray⟩
 

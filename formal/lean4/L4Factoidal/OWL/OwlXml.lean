@@ -29,6 +29,7 @@ import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.XML.Parser
 import L4Factoidal.XML.Document
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.ListTR
 
 namespace L4Factoidal.OWL.OwlXml
 
@@ -54,22 +55,46 @@ def textOfNodes (ns : List Node) : String :=
     | .cdata t => some t
     | _ => none))
 
+/- The children of an element are read by an accumulator walk
+(`elsOfAcc`): the self-call is in tail position, so it compiles to a loop
+and the number of children (the axioms of an `Ontology` element) costs no
+stack. Only the nesting of elements (`elOf` → `elsOfAcc` → `elOf`) takes a
+frame per level. `elsOf_eq` states the result as `List.filterMap elOf`
+(https://github.com/danbri/factoidal/issues/746). -/
 mutual
 
 def elOf : Node → Option El
   | .element tag attrs children =>
       some (El.mk (localTag tag) (attrs.map (fun a => (a.name, a.value)))
-              (elsOf children) (textOfNodes children))
+              (elsOfAcc children []) (textOfNodes children))
   | _ => none
 
-def elsOf : List Node → List El
-  | [] => []
-  | n :: rest =>
+/-- The elements among `ns`, after `acc` (which holds earlier ones, newest
+first). -/
+def elsOfAcc : List Node → List El → List El
+  | [], acc => acc.reverse
+  | n :: rest, acc =>
       match elOf n with
-      | some e => e :: elsOf rest
-      | none   => elsOf rest
+      | some e => elsOfAcc rest (e :: acc)
+      | none   => elsOfAcc rest acc
 
 end
+
+/-- The element children of a node list, in document order. -/
+def elsOf (ns : List Node) : List El := elsOfAcc ns []
+
+theorem elsOfAcc_eq (ns : List Node) :
+    ∀ acc : List El, elsOfAcc ns acc = acc.reverse ++ ns.filterMap elOf := by
+  induction ns with
+  | nil => intro acc; simp [elsOfAcc]
+  | cons n rest ih =>
+      intro acc
+      cases h : elOf n with
+      | none => simp [elsOfAcc, h, ih]
+      | some e => simp [elsOfAcc, h, ih]
+
+theorem elsOf_eq (ns : List Node) : elsOf ns = ns.filterMap elOf := by
+  simp [elsOf, elsOfAcc_eq]
 
 def El.tag : El → String
   | .mk t _ _ _ => t
@@ -149,6 +174,77 @@ def readList {α : Type} (f : El → Option α) : List El → Option (List α)
       | none => none
       | some a => (readList f es).map (fun r => a :: r)
 
+/-- `readList` as `List.mapM` in `Option`, which compiles to a loop: one
+frame for any number of operands (`readList` conses after its recursive
+call). The `csimp` theorem makes the compiler emit this form. -/
+def readListTR {α : Type} (f : El → Option α) (es : List El) : Option (List α) :=
+  es.mapM f
+
+theorem readList_eq_mapM {α : Type} (f : El → Option α) :
+    ∀ es : List El, readList f es = es.mapM f
+  | [] => rfl
+  | e :: es => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, ← readList_eq_mapM f es]
+      simp only [readList]; cases f e <;> rfl
+
+@[csimp] theorem readList_eq_readListTR : @readList = @readListTR := by
+  funext α f es; exact readList_eq_mapM f es
+
+/-- One `FacetRestriction` element. -/
+def readFacet (env : Env) : El → Option (WfIri × WfLiteral)
+  | .mk "FacetRestriction" attrs [lit] _ =>
+      match attrs.find? (fun p => p.1 == "facet") with
+      | none => none
+      | some (_, f) =>
+        match env.resolve f, readLiteral env lit with
+        | some fi, some l => some (fi, l)
+        | _, _ => none
+  | _ => none
+
+def readFacets (env : Env) : List El → Option (List (WfIri × WfLiteral))
+  | [] => some []
+  | .mk "FacetRestriction" attrs [lit] _ :: rest =>
+      match attrs.find? (fun p => p.1 == "facet") with
+      | none => none
+      | some (_, f) =>
+        match env.resolve f, readLiteral env lit, readFacets env rest with
+        | some fi, some l, some r => some ((fi, l) :: r)
+        | _, _, _ => none
+  | _ => none
+
+/-- `readFacets` as `List.mapM readFacet` (a loop). -/
+def readFacetsTR (env : Env) (es : List El) : Option (List (WfIri × WfLiteral)) :=
+  es.mapM (readFacet env)
+
+theorem readFacets_cons (env : Env) (e : El) (es : List El) :
+    readFacets env (e :: es) =
+      (readFacet env e).bind (fun a => (readFacets env es).map (a :: ·)) := by
+  rcases e with ⟨t, attrs, kids, text⟩
+  by_cases ht : t = "FacetRestriction"
+  · subst ht
+    match kids with
+    | [lit] =>
+        simp only [readFacets, readFacet]
+        cases attrs.find? (fun p => p.1 == "facet") with
+        | none => rfl
+        | some p =>
+            obtain ⟨_, f⟩ := p
+            simp only
+            cases h1 : env.resolve f <;> cases h2 : readLiteral env lit <;>
+              cases h3 : readFacets env es <;> simp [h1, h2, h3]
+    | [] => simp [readFacets, readFacet]
+    | _ :: _ :: _ => simp [readFacets, readFacet]
+  · simp [readFacets, readFacet, ht]
+
+theorem readFacets_eq_mapM (env : Env) :
+    ∀ es : List El, readFacets env es = es.mapM (readFacet env)
+  | [] => rfl
+  | e :: es => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, readFacets_cons, readFacets_eq_mapM env es]
+
+@[csimp] theorem readFacets_eq_readFacetsTR : @readFacets = @readFacetsTR := by
+  funext env es; exact readFacets_eq_mapM env es
+
 /-- The value of an annotation: an `IRI`/`AbbreviatedIRI` element, an
 anonymous individual or a literal. -/
 def readAnnValue (env : Env) (e : El) : Option AnnValue :=
@@ -166,11 +262,11 @@ def readDR (env : Env) : El → Option DataRange
   | .mk "Datatype" attrs kids text =>
       (iriOfEl env (.mk "Datatype" attrs kids text)).map DataRange.datatype
   | .mk "DataIntersectionOf" _ kids _ =>
-      match readDRs env kids with
+      match readDRsAcc env kids [] with
       | some drs => if drs.length < 2 then none else some (.intersection drs)
       | none => none
   | .mk "DataUnionOf" _ kids _ =>
-      match readDRs env kids with
+      match readDRsAcc env kids [] with
       | some drs => if drs.length < 2 then none else some (.union drs)
       | none => none
   | .mk "DataComplementOf" _ [d] _ => (readDR env d).map DataRange.complement
@@ -184,33 +280,25 @@ def readDR (env : Env) : El → Option DataRange
       | _, _ => none
   | _ => none
 
-def readDRs (env : Env) : List El → Option (List DataRange)
-  | [] => some []
-  | e :: es =>
+/-- The operands of a data range, after `acc` (earlier ones, newest
+first). The self-call is a tail call: one frame for any number of
+operands. `readDRs_eq_mapM` states the result. -/
+def readDRsAcc (env : Env) : List El → List DataRange → Option (List DataRange)
+  | [], acc => some acc.reverse
+  | e :: es, acc =>
       match readDR env e with
       | none => none
-      | some d => (readDRs env es).map (fun r => d :: r)
-
-def readFacets (env : Env) : List El → Option (List (WfIri × WfLiteral))
-  | [] => some []
-  | .mk "FacetRestriction" attrs [lit] _ :: rest =>
-      match attrs.find? (fun p => p.1 == "facet") with
-      | none => none
-      | some (_, f) =>
-        match env.resolve f, readLiteral env lit, readFacets env rest with
-        | some fi, some l, some r => some ((fi, l) :: r)
-        | _, _, _ => none
-  | _ => none
+      | some d => readDRsAcc env es (d :: acc)
 
 def readCE (env : Env) : El → Option ClassExpr
   | .mk "Class" attrs kids text =>
       (iriOfEl env (.mk "Class" attrs kids text)).map ClassExpr.cls
   | .mk "ObjectIntersectionOf" _ kids _ =>
-      match readCEs env kids with
+      match readCEsAcc env kids [] with
       | some ces => if ces.length < 2 then none else some (.intersection ces)
       | none => none
   | .mk "ObjectUnionOf" _ kids _ =>
-      match readCEs env kids with
+      match readCEsAcc env kids [] with
       | some ces => if ces.length < 2 then none else some (.union ces)
       | none => none
   | .mk "ObjectComplementOf" _ [c] _ => (readCE env c).map ClassExpr.complement
@@ -251,12 +339,14 @@ def readCE (env : Env) : El → Option ClassExpr
   | .mk "DataExactCardinality" attrs kids _ => readDataCard env attrs kids ClassExpr.dataExactCard
   | _ => none
 
-def readCEs (env : Env) : List El → Option (List ClassExpr)
-  | [] => some []
-  | e :: es =>
+/-- The operands of a class expression, after `acc` (earlier ones, newest
+first); a tail call per operand. `readCEs_eq_mapM` states the result. -/
+def readCEsAcc (env : Env) : List El → List ClassExpr → Option (List ClassExpr)
+  | [], acc => some acc.reverse
+  | e :: es, acc =>
       match readCE env e with
       | none => none
-      | some c => (readCEs env es).map (fun r => c :: r)
+      | some c => readCEsAcc env es (c :: acc)
 
 /-- `ObjectMinCardinality cardinality="n"` and friends: the property, then
 an optional class expression. -/
@@ -318,6 +408,46 @@ def readAnnTail (env : Env) (acc : List Annotation) : List El → Option Annotat
       | _, _ => none
   | _ => none
 
+end
+
+/-- The operands of a data range, in document order. -/
+def readDRs (env : Env) (es : List El) : Option (List DataRange) := readDRsAcc env es []
+
+theorem readDRsAcc_eq (env : Env) (es : List El) :
+    ∀ acc : List DataRange,
+      readDRsAcc env es acc = (es.mapM (readDR env)).map (acc.reverse ++ ·) := by
+  induction es with
+  | nil => intro acc; simp [readDRsAcc]
+  | cons e es ih =>
+      intro acc
+      rw [L4Factoidal.ListTR.optionMapM_cons]
+      simp only [readDRsAcc]
+      cases readDR env e with
+      | none => rfl
+      | some d => simp only [Option.bind_some]; rw [ih]; cases es.mapM (readDR env) <;> simp
+
+theorem readDRs_eq_mapM (env : Env) (es : List El) : readDRs env es = es.mapM (readDR env) := by
+  simp [readDRs, readDRsAcc_eq]
+
+/-- The operands of a class expression or axiom, in document order. -/
+def readCEs (env : Env) (es : List El) : Option (List ClassExpr) := readCEsAcc env es []
+
+theorem readCEsAcc_eq (env : Env) (es : List El) :
+    ∀ acc : List ClassExpr,
+      readCEsAcc env es acc = (es.mapM (readCE env)).map (acc.reverse ++ ·) := by
+  induction es with
+  | nil => intro acc; simp [readCEsAcc]
+  | cons e es ih =>
+      intro acc
+      rw [L4Factoidal.ListTR.optionMapM_cons]
+      simp only [readCEsAcc]
+      cases readCE env e with
+      | none => rfl
+      | some c => simp only [Option.bind_some]; rw [ih]; cases es.mapM (readCE env) <;> simp
+
+theorem readCEs_eq_mapM (env : Env) (es : List El) : readCEs env es = es.mapM (readCE env) := by
+  simp [readCEs, readCEsAcc_eq]
+
 def readAnnotations (env : Env) : List El → Option (List Annotation)
   | [] => some []
   | e :: es =>
@@ -325,7 +455,20 @@ def readAnnotations (env : Env) : List El → Option (List Annotation)
       | none => none
       | some a => (readAnnotations env es).map (fun r => a :: r)
 
-end
+/-- `readAnnotations` as `List.mapM` (a loop). -/
+def readAnnotationsTR (env : Env) (es : List El) : Option (List Annotation) :=
+  es.mapM (readAnnotation env)
+
+theorem readAnnotations_eq_mapM (env : Env) :
+    ∀ es : List El, readAnnotations env es = es.mapM (readAnnotation env)
+  | [] => rfl
+  | e :: es => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, ← readAnnotations_eq_mapM env es]
+      simp only [readAnnotations]; cases readAnnotation env e <;> rfl
+
+@[csimp] theorem readAnnotations_eq_readAnnotationsTR :
+    @readAnnotations = @readAnnotationsTR := by
+  funext env es; exact readAnnotations_eq_mapM env es
 
 /-! ## Axioms -/
 
@@ -508,6 +651,22 @@ def readAxioms (env : Env) : List El → Option (List Axiom)
       | none => none
       | some a => (readAxioms env es).map (fun r => a :: r)
 
+/-- `readAxioms` as `List.mapM` (a loop): one frame for any number of
+axioms. `readAxioms` conses after its recursive call, one frame per axiom
+of the document. -/
+def readAxiomsTR (env : Env) (es : List El) : Option (List Axiom) :=
+  es.mapM (readAxiom env)
+
+theorem readAxioms_eq_mapM (env : Env) :
+    ∀ es : List El, readAxioms env es = es.mapM (readAxiom env)
+  | [] => rfl
+  | e :: es => by
+      rw [L4Factoidal.ListTR.optionMapM_cons, ← readAxioms_eq_mapM env es]
+      simp only [readAxioms]; cases readAxiom env e <;> rfl
+
+@[csimp] theorem readAxioms_eq_readAxiomsTR : @readAxioms = @readAxiomsTR := by
+  funext env es; exact readAxioms_eq_mapM env es
+
 /-! ## The ontology -/
 
 /-- `Prefix name="p" IRI="..."` children. -/
@@ -518,6 +677,31 @@ def readPrefixes : List El → List (String × String)
       | some (_, n), some (_, i) => (n, i) :: readPrefixes rest
       | _, _ => readPrefixes rest
   | _ :: rest => readPrefixes rest
+
+/-- One `Prefix` element. -/
+def readPrefix : El → Option (String × String)
+  | .mk "Prefix" attrs _ _ =>
+      match attrs.find? (fun p => p.1 == "name"), attrs.find? (fun p => p.1 == "IRI") with
+      | some (_, n), some (_, i) => some (n, i)
+      | _, _ => none
+  | _ => none
+
+/-- `readPrefixes` as `List.filterMap` (a loop). -/
+def readPrefixesTR (es : List El) : List (String × String) := es.filterMap readPrefix
+
+theorem readPrefixes_eq_filterMap : ∀ es : List El, readPrefixes es = es.filterMap readPrefix
+  | [] => rfl
+  | e :: es => by
+      rcases e with ⟨t, attrs, kids, text⟩
+      by_cases ht : t = "Prefix"
+      · subst ht
+        simp only [readPrefixes, readPrefix, List.filterMap_cons, readPrefixes_eq_filterMap es]
+        cases attrs.find? (fun p => p.1 == "name") <;>
+          cases attrs.find? (fun p => p.1 == "IRI") <;> rfl
+      · simp [readPrefixes, readPrefix, ht, readPrefixes_eq_filterMap es]
+
+@[csimp] theorem readPrefixes_eq_readPrefixesTR : @readPrefixes = @readPrefixesTR := by
+  funext es; exact readPrefixes_eq_filterMap es
 
 def readOntologyEl (e : El) : Option Ontology :=
   match e with

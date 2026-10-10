@@ -110,6 +110,32 @@ def dropExtensionSubtags : List String → Nat × List String
         (n + 1, r)
       else (0, t :: rest)
 
+/-- `dropExtensionSubtags` with the count so far as an accumulator: a tail
+call per subtag. An `xml:lang` value is attribute text of the document, so
+its subtag count is the author's (https://github.com/danbri/factoidal/issues/746). -/
+def dropExtensionSubtagsTR (ts : List String) : Nat × List String := go 0 ts
+where
+  go (n : Nat) : List String → Nat × List String
+    | [] => (n, [])
+    | t :: rest =>
+        if 2 ≤ t.length && t.length ≤ 8 && allC isAlnumC t then go (n + 1) rest
+        else (n, t :: rest)
+
+theorem dropExtensionSubtagsTR_go_eq :
+    ∀ (ts : List String) (n : Nat),
+      dropExtensionSubtagsTR.go n ts =
+        (n + (dropExtensionSubtags ts).1, (dropExtensionSubtags ts).2)
+  | [], n => by simp [dropExtensionSubtagsTR.go, dropExtensionSubtags]
+  | t :: rest, n => by
+      by_cases h : (2 ≤ t.length && t.length ≤ 8 && allC isAlnumC t) = true
+      · simp only [dropExtensionSubtagsTR.go, dropExtensionSubtags, h, if_true]
+        rw [dropExtensionSubtagsTR_go_eq rest (n + 1)]
+        simp [Nat.add_assoc, Nat.add_comm 1]
+      · simp [dropExtensionSubtagsTR.go, dropExtensionSubtags, h]
+
+@[csimp] theorem dropExtensionSubtags_eq_TR : @dropExtensionSubtags = @dropExtensionSubtagsTR := by
+  funext ts; simp [dropExtensionSubtagsTR, dropExtensionSubtagsTR_go_eq]
+
 /-- `*("-" extension)`, `extension = singleton 1*("-" (2*8alphanum))`,
 `singleton` being a digit or a letter other than `x`. `none` when a
 singleton has no subtag after it. -/
@@ -248,14 +274,38 @@ mutual
 /-- Every (element name, attribute) pair under a node, in document order. -/
 def Node.attributePairs : Node → List (String × Attribute)
   | .element tag attrs children =>
-      attrs.map (fun a => (tag, a)) ++ Node.attributePairsList children
+      attrs.map (fun a => (tag, a)) ++ Node.attributePairsListAcc children []
   | _ => []
 
-def Node.attributePairsList : List Node → List (String × Attribute)
-  | [] => []
-  | n :: rest => Node.attributePairs n ++ Node.attributePairsList rest
+/-- The pairs under `ns`, after `acc` (earlier pairs, newest first): a tail
+call per sibling, so the number of siblings costs no stack (https://github.com/danbri/factoidal/issues/746). -/
+def Node.attributePairsListAcc : List Node → List (String × Attribute) →
+    List (String × Attribute)
+  | [], acc => acc.reverse
+  | n :: rest, acc => Node.attributePairsListAcc rest ((Node.attributePairs n).reverse ++ acc)
 
 end
+
+/-- Every (element name, attribute) pair under a list of nodes. -/
+def Node.attributePairsList (ns : List Node) : List (String × Attribute) :=
+  Node.attributePairsListAcc ns []
+
+theorem Node.attributePairsListAcc_eq (ns : List Node) :
+    ∀ acc : List (String × Attribute),
+      Node.attributePairsListAcc ns acc = acc.reverse ++ Node.attributePairsList ns := by
+  induction ns with
+  | nil => intro acc; simp [Node.attributePairsList, Node.attributePairsListAcc]
+  | cons n rest ih =>
+      intro acc
+      simp only [Node.attributePairsList, Node.attributePairsListAcc]
+      rw [ih, ih]
+      simp
+
+theorem Node.attributePairsList_cons (n : Node) (rest : List Node) :
+    Node.attributePairsList (n :: rest) =
+      Node.attributePairs n ++ Node.attributePairsList rest := by
+  simp only [Node.attributePairsList, Node.attributePairsListAcc]
+  rw [Node.attributePairsListAcc_eq]; simp; rfl
 
 /-- Every problem with an `xml:lang`, `xml:id` or `xml:base` attribute of
 the document, in document order, then the declarations.
