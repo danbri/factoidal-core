@@ -44,6 +44,7 @@ def owlMinQualifiedCardinality : WfIri :=
 def owlQualifiedCardinality : WfIri :=
   ⟨"http://www.w3.org/2002/07/owl#qualifiedCardinality", rfl⟩
 def owlCardinality : WfIri := ⟨"http://www.w3.org/2002/07/owl#cardinality", rfl⟩
+def owlOnDataRange : WfIri := ⟨"http://www.w3.org/2002/07/owl#onDataRange", rfl⟩
 
 /-- The four ordering facets, then `pattern` and the three length
     facets. -/
@@ -210,6 +211,25 @@ def facetPairsOf (st : Store) (heads : List Term) : List (WfIri × Term) :=
     | some s => readFacets.filterMap (fun f =>
         (firstObject st s f).map (fun v => (f, v))))
 
+/-- The filler of a QUALIFIED cardinality restriction: `owl:onClass`
+    for an object property, `owl:onDataRange` for a data property.
+
+    OWL 2 Mapping to RDF Graphs, Table 1: `ObjectMinCardinality(n OPE
+    CE)` maps to `owl:minQualifiedCardinality` with `owl:onClass T(CE)`,
+    and `DataMinCardinality(n DPE DR)` maps to the same predicate with
+    `owl:onDataRange T(DR)`; the max and exact forms are the same.
+
+    Until 2026-10-10 only `owl:onClass` was read, and a restriction with
+    `owl:onDataRange` parsed as the UNQUALIFIED `≥ n p` / `≤ n p` /
+    `= n p`. For `≤` that is a stronger class than the one written:
+    `DataMaxCardinality(1 dp xsd:string)` read as `≤ 1 dp`, so an
+    individual with the two integer values `1` and `2` on `dp` was
+    refuted though it has a model. -/
+def qualifiedFiller (st : Store) (s : Subject) : Option Term :=
+  match firstObject st s owlOnClass with
+  | some c => some c
+  | none   => firstObject st s owlOnDataRange
+
 mutual
 
 /-- Read the class expression a term denotes.
@@ -280,19 +300,19 @@ def parseCeMarkers (st : Store) (s : Subject) (n : Nat) : ClassExpr :=
               | none =>
               match cardinalityValue st s owlMinQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .minQualCard k p (parseClassExpr st c n)
                    | none   => .minCard k p)
               | none =>
               match cardinalityValue st s owlMaxQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .maxQualCard k p (parseClassExpr st c n)
                    | none   => .maxCard k p)
               | none =>
               match cardinalityValue st s owlQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .exactQualCard k p (parseClassExpr st c n)
                    | none   => .exactCard k p)
               | none =>

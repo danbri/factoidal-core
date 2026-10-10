@@ -1233,4 +1233,43 @@ private def ixSample : List (ClassExpr × ClassExpr) :=
 -- `≤ 1 p` is not edge-provable: no edge proves an upper bound.
 #guard ((TBoxIndex.build [(.maxCard 1 exP, .named exB)]).edgeProps).isEmpty
 
+
+/-! ## Qualified cardinality over a data range (`owl:onDataRange`)
+
+OWL 2 Mapping to RDF Graphs, Table 1: `DataMaxCardinality(n DPE DR)`
+is a restriction with `owl:maxQualifiedCardinality` and
+`owl:onDataRange T(DR)`. Until 2026-10-10 the parser read only
+`owl:onClass`, so the restriction below parsed as the UNQUALIFIED
+`≤ 1 dp`, and an individual with the two integer values `1` and `2` on
+`dp` was refuted. It has a model: neither value is an `xsd:string`.
+
+The second pair puts the same bound beside `≥ 2 dp.xsd:string`, which
+contradicts it, and beside `≥ 2 dp.xsd:integer`, which does not. Read
+unqualified, both pairs were `≥ 2 dp ⊓ ≤ 1 dp` and both were refuted. -/
+
+private def gMaxQualData : Graph :=
+  [ ⟨indI, rdfType, bnT "mq"⟩,
+    ⟨bn "mq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "mq", owlMaxQualifiedCardinality, cardLit "1"⟩,
+    ⟨bn "mq", owlOnDataRange, .iri xsdString⟩,
+    ⟨indI, exDp1, intT "1"⟩, ⟨indI, exDp1, intT "2"⟩ ]
+
+#guard (match parseClassExpr (Store.ofGraph gMaxQualData) (bnT "mq") 8 with
+        | .maxQualCard 1 p (.named d) => p == exDp1 && d == xsdString
+        | _ => false)
+#guard !(refuted gMaxQualData)
+
+private def gMinMaxQualData (minFiller : WfIri) : Graph :=
+  [ ⟨indI, rdfType, bnT "mq"⟩,
+    ⟨bn "mq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "mq", owlMaxQualifiedCardinality, cardLit "1"⟩,
+    ⟨bn "mq", owlOnDataRange, .iri xsdString⟩,
+    ⟨indI, rdfType, bnT "nq"⟩,
+    ⟨bn "nq", owlOnProperty, .iri exDp1⟩,
+    ⟨bn "nq", owlMinQualifiedCardinality, cardLit "2"⟩,
+    ⟨bn "nq", owlOnDataRange, .iri minFiller⟩ ]
+
+#guard refuted (gMinMaxQualData xsdString)
+#guard !(refuted (gMinMaxQualData xsdInteger))
+
 end L4Factoidal.OWL.Refute
