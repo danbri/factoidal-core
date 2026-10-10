@@ -417,11 +417,16 @@ The runner counts both in "of those failures, 2 differ ONLY by the
 http/https scheme" (before: 0). This is the same post-2007 edit of a W3C
 document as the 7 cases of https://github.com/danbri/factoidal/issues/730.
 `langconneg1` is one of those 7 already (a local override). Whether
-`langconneg2` and `langconneg3` join them is a decision for the owner; they
-are not overridden, and the vendored representations are not edited.
+`langconneg2` and `langconneg3` join them was a decision for the owner. Owner,
+2026-10-10, verbatim: "730 - do langconneg2 and langconneg3 join h - yes".
+They are local overrides since then (`tests/local-overrides/grddl__langconneg2.json`,
+`grddl__langconneg3.json`); the vendored representations are not edited.
+`l4grddl` after that: 47 pass, 0 fail (out of 47 decided); 5 unavailable;
+3 related test passed; 13 local override (out of 68).
 
 The other buckets are unchanged: the 5 unavailable cases need server-side
 stylesheets (`*.sxsl?...`, `layering-namespace?`, `layering-profile?`) that
 now answer 303 to a W3C login; the 3 related-test cases pass by
-`g:alternative` or `g:subsumes` (counted apart); the 11 local overrides are
-the 7 edited networked inputs and the 4 `loopx` cases of issue 730.
+`g:alternative` or `g:subsumes` (counted apart); the 13 local overrides are
+the 7 edited networked inputs, the 4 `loopx` cases and the 2 language cases
+of issue 730.

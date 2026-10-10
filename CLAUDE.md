@@ -393,16 +393,20 @@ https://github.com/danbri/factoidal/issues/713.
   with species FULL only, and the catalog's 482 RDF-BASED cases, are judged
   there. They are not moved to an "unsupported" or "not applicable" bucket.
 
-### GRDDL: 11 disputed cases are not valid tests currently (owner, 2026-10-10)
+### GRDDL: 13 disputed cases are not valid tests currently (owner, 2026-10-10)
 
 > "Grddl - postpone for now, i am making enquiries. So just mark it as not a
 > valid test currently."
 > "Grddl should not be postponed, only that test"
+> "730 - do langconneg2 and langconneg3 join h - yes"
 
 - GRDDL work continues. Only the cases under the owner's enquiries are marked
   not valid: the 7 cases whose networked inputs the W3C edited after 2007 and
   the 4 `loopx` cases whose served stylesheet contradicts the expected outputs
-  (https://github.com/danbri/factoidal/issues/730). They are files
+  (https://github.com/danbri/factoidal/issues/730). The third quote adds
+  `langconneg2` and `langconneg3`: both served language representations of
+  `td/conneg.html` link to `https://musicbrainz.org/...` where the 2007
+  expected outputs say `http://`. They are files
   `tests/local-overrides/grddl__*.json`; `l4grddl` counts them apart and
   reports a STALE override (a failure) if one starts to pass.
 - Coordinator error, recorded per rule 6: the first message was read as
