@@ -130,6 +130,43 @@ args "$TMP/parse-jsonld-bad.json" '{' "jsonld" ""
 check "parseToDatasetJson jsonld, not JSON -> error" parseToDatasetJson "$TMP/parse-jsonld-bad.json" \
   'r["ok"] is False and "JSON-LD" in r["error"]'
 
+# --- parseDocument: lenient (recovery) parse, issue 716 ------------------
+# Wasm/Ops/Lenient.lean. One bad statement among good ones: the good ones
+# are kept, the bad one is one diagnostic with its line, column, offset and
+# class; without {"lenient":true} the op answers as parseToDatasetJson.
+LTTL='<http://x/a> <http://x/p> "1" .
+<http://x/b> <http://x/p> .
+<http://x/c> <http://x/p> "3" .
+'
+args "$TMP/pd-ttl.json" "$LTTL" "turtle" "" '{"lenient":true}'
+check "parseDocument lenient turtle keeps 2, reports line 2" parseDocument "$TMP/pd-ttl.json" \
+  'r["ok"] is True and r["count"] == 2 and len(r["diagnostics"]) == 1
+   and r["diagnostics"][0]["line"] == 2 and r["diagnostics"][0]["column"] == 27
+   and r["diagnostics"][0]["offset"] == 58
+   and r["diagnostics"][0]["class"] == "unexpected-token"
+   and r["prefixes"] == {}'
+args "$TMP/pd-strict.json" "$LTTL" "turtle" "" ""
+check "parseDocument without lenient -> the strict error envelope" parseDocument "$TMP/pd-strict.json" \
+  'r["ok"] is False and r["line"] == 2 and r["column"] == 27 and r["format"] == "turtle"'
+LNQ='<http://x/a> <http://x/p> <http://x/o> <http://x/g> .
+<http://x/a> <http://x/p> "x" "g" .
+<http://x/a> <http://x/p> "bad \q" .
+<http://x/b> <http://x/p> <http://x/o> .
+'
+args "$TMP/pd-nq.json" "$LNQ" "nquads" "" '{"lenient":true}'
+check "parseDocument lenient nquads: two classes, two kept" parseDocument "$TMP/pd-nq.json" \
+  'r["ok"] is True and r["count"] == 2
+   and [(d["line"], d["class"]) for d in r["diagnostics"]] == [(2, "bad-graph-name"), (3, "bad-escape")]'
+args "$TMP/pd-nq-max.json" "$LNQ" "nquads" "" '{"lenient":true,"maxErrors":1}'
+check "parseDocument maxErrors 1 stops with too-many-errors" parseDocument "$TMP/pd-nq-max.json" \
+  'r["ok"] is True and [d["class"] for d in r["diagnostics"]] == ["bad-graph-name", "too-many-errors"]'
+args "$TMP/pd-trig.json" '<http://x/g> { <http://x/a> <http://x/p> . <http://x/b> <http://x/p> <http://x/o> }' "trig" "" '{"lenient":true}'
+check "parseDocument lenient trig recovers inside the graph block" parseDocument "$TMP/pd-trig.json" \
+  'r["ok"] is True and r["count"] == 1 and "<http://x/g>" in r["nquads"] and len(r["diagnostics"]) == 1'
+args "$TMP/pd-arity.json" "$LTTL" "turtle"
+check "parseDocument with three arguments -> arity error" parseDocument "$TMP/pd-arity.json" \
+  'r["ok"] is False and "expects 4 arguments" in r["error"]'
+
 NQ='<http://e/a> <http://e/p> <http://e/b> .
 <http://e/a> <http://e/p> <http://e/c> <http://e/g> .
 '
@@ -2381,7 +2418,7 @@ check "ops reflection lists the stage 2 ops" ops "$TMP/empty-stage2.json" \
         "vcSha256Hex","vcEd25519SecretToPublic","vcEd25519Sign","vcEd25519Verify",
         "vcEddsaCreateFromCanonical","vcEddsaVerifyFromCanonical",
         "vcCheckCredential","vcCheckCredentialSubject","vcCheckNoDataLoss",
-        "vcCheckRelatedResourceDigests","didKeyResolve"]) <= set(r["ops"])'
+        "vcCheckRelatedResourceDigests","didKeyResolve","parseDocument"]) <= set(r["ops"])'
 
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
