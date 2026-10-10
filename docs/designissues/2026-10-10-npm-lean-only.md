@@ -409,6 +409,20 @@ bench-js-wasm.mjs` loads the F\* wasm npm-entry bundle by path;
 the F\* bundles as optional comparison rows; `tests/hub/post12_test.mjs`
 no longer requires `npm/factoidal/wasm.js`.
 
+### Gates (2026-10-10)
+
+No Lean source changed, so the wasm was not rebuilt: the runs use the
+module the issue-716 merge built from the same Lean tree (10,510,450
+bytes, sha256 `5da96d60…`), installed in `npm/factoidal/l4-assets/`. The
+newest factoidal-builds `web` release (`build-19c2f705e3e8-web`) predates
+stage 3 and lacks its operations. No F\* bundle or binary was installed.
+
+| Gate | Before | After |
+|---|---|---|
+| `node --test tests/hub/*_test.mjs` | 353 pass, 34 fail (out of 387) | 445 pass, 0 fail (out of 445), 18 of them expected failures: issue 727 (7), issue 728 (10), issue 690 (1, older) |
+| `tests/web-demos/hub_browser_all.sh` (headless Chromium) | not run on the Lean engine | 54 pass, 0 fail (out of 54 posts) |
+| `cd npm/factoidal && npm test` | 372 pass (coordinator) | 371 pass, 0 fail, 1 skipped (out of 372); the skip is the esbuild bundler case, esbuild not installed in this worktree; 4 expected failures |
+
 ### Not done
 
 The three F\* gallery demos under `docs/fstar-extracted/` (`demo-cottas`,
