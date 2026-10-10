@@ -293,7 +293,11 @@ structure RState where
       and the materialisation pass puts its own existential witnesses
       INTO the graph — so an edge-rewriting merge silently missed
       every successor that came from there, which is most of them on
-      the real path. Pooling at read time covers both. -/
+      the real path. Pooling at read time covers both.
+
+      Invariant (kept by `mergeInto`): the representative of every
+      pair is a ROOT, a term absorbed by no pair. So `repOf` is one
+      lookup and a group is read in one pass over the list. -/
   ident      : List (Term × Term) := []
   /-- The TBox `collectAxioms` read, as (antecedent, consequent)
       pairs. `search` carries it as an argument; the clash rules need
@@ -301,6 +305,14 @@ structure RState where
       threading it through `clashNodes`, so it is carried here as
       well. Written once, by `tableauConsistent`. -/
   tbox       : List (ClassExpr × ClassExpr) := []
+  /-- Groups of witnesses that ONE firing of the `≥ k p` generating
+      rule minted, `k ≥ 2`. OWL 2 Direct Semantics §2.2 interprets
+      `ObjectMinCardinality(k p)` at `x` as `#{y | ⟨x,y⟩ ∈ (p)ᴵ} ≥ k`:
+      in every model `x` has `k` PAIRWISE DIFFERENT `p`-successors. The
+      group's members stand for those `k` elements, so two members of
+      one group are provably different (`genDistinct`). Port of the F*
+      `rs_gendistinct` field (`Tableau.Refute.fst`). -/
+  distinctGroups : List (List Term) := []
 
 def maxWitnessDepth : Nat := 3
 def maxGeneratedWitnesses : Nat := 6
@@ -311,18 +323,36 @@ def memCe (c : ClassExpr) (ls : List ClassExpr) : Bool :=
   ls.any (fun l => ceEq c l)
 
 /-- The representative of a term under this branch's
-    identifications. -/
-partial def repOf (st : RState) (t : Term) : Term :=
+    identifications. One lookup, by the `RState.ident` invariant: the
+    representative stored in a pair is already a root. -/
+def repOf (st : RState) (t : Term) : Term :=
   match st.ident.find? (fun q => q.1 == t) with
-  | some (_, r) => if r == t then t else repOf st r
+  | some (_, r) => r
   | none        => t
 
+/-- Every term identified with `t`, `t` included: the root and every
+    term the root absorbed. -/
 def identifiedWith (st : RState) (t : Term) : List Term :=
   if st.ident.isEmpty then [t]
   else
     let r := repOf st t
-    (t :: r :: (st.ident.filterMap (fun q =>
-      if repOf st q.1 == r then some q.1 else none))).eraseDups
+    r :: st.ident.filterMap (fun q => if q.2 == r then some q.1 else none)
+
+/-- One node per identification group, the first in node order.
+
+    Every rule reads a node's labels and successors POOLED across its
+    group (`labelsOf`, `successorsOf`), so visiting a second member of
+    a group repeats the first member's work on the same pooled sets.
+    With a group of `n` members that is `n` times the work, and a
+    nominal can put dozens of witnesses in one group with a named
+    individual (`WebOnt-description-logic-910`). The rules visit the
+    leaders. -/
+def groupLeaders (st : RState) : List RNode :=
+  if st.ident.isEmpty then st.nodes
+  else
+    (st.nodes.foldl (fun (acc : List RNode × List Term) n =>
+      let r := repOf st n.id.toTerm
+      if acc.2.contains r then acc else (n :: acc.1, r :: acc.2)) ([], [])).1.reverse
 
 /-- `addLabel` keeps ONE entry per subject, so the unidentified case
     is a LOOKUP and not a gather. The `filter`-then-`flatMap` version
@@ -621,17 +651,60 @@ def provablyDistinct (g : Graph) (a b : Term) : Bool :=
         literalValuesDistinct x.val y.val || differentFromAsserted g a b
     | _, _ => differentFromAsserted g a b
 
+/-- The search behind `existsDistinctSubsetBy`: `chosen` are the
+    members taken so far, pairwise different; `need` more are wanted
+    from `rest`. A member is taken only if `d` holds between every
+    earlier choice and it. Structural on `rest`. -/
+def distinctSubsetGo (d : Term → Term → Bool) (chosen : List Term)
+    : List Term → Nat → Bool
+  | _,       0        => true
+  | [],      _ + 1    => false
+  | t :: tl, m + 1    =>
+      -- Fewer candidates left than members wanted: no subset exists.
+      -- Without this cut the search walks every pairwise-different
+      -- subset of the list before answering `false`.
+      if tl.length < m then false
+      else
+        (chosen.all (fun c => d c t) && distinctSubsetGo d (t :: chosen) tl m)
+        || distinctSubsetGo d chosen tl (m + 1)
+
 /-- Is there a subset of `ts` of size `n` whose members are PAIRWISE
-    provably distinct? Branch on the first element: taking it filters
-    the rest against it, so every chosen pair passed a filter and
-    pairwise distinctness of the whole chosen set follows. -/
-partial def existsDistinctSubset (g : Graph) (ts : List Term) (n : Nat) : Bool :=
-  if n == 0 then true
-  else match ts with
-    | []      => false
-    | t :: tl =>
-        existsDistinctSubset g (tl.filter (provablyDistinct g t ·)) (n - 1)
-        || existsDistinctSubset g tl n
+    different under the relation `d`? Every member is either taken
+    (when `d` holds between each earlier choice and it) or skipped, so
+    a `true` names a pairwise-different subset. -/
+def existsDistinctSubsetBy (d : Term → Term → Bool) (ts : List Term) (n : Nat) : Bool :=
+  distinctSubsetGo d [] ts n
+
+/-- `existsDistinctSubsetBy` over `provablyDistinct`: the graph-only
+    reading, with no branch state. -/
+def existsDistinctSubset (g : Graph) (ts : List Term) (n : Nat) : Bool :=
+  existsDistinctSubsetBy (provablyDistinct g) ts n
+
+/-- Two members of one generating-rule group (`RState.distinctGroups`)
+    denote different elements in every model. -/
+def genDistinct (st : RState) (a b : Term) : Bool :=
+  a != b && st.distinctGroups.any (fun grp => grp.contains a && grp.contains b)
+
+/-- Do `a` and `b` denote different elements under THIS BRANCH?
+
+    A branch identifies terms (`RState.ident`), so the question is
+    asked of the two identification GROUPS: if some member of `a`'s
+    group is provably different from some member of `b`'s group, the
+    two groups denote different elements. The reasons a pair of
+    members is different are the graph's (`provablyDistinct`) and the
+    generating rule's (`genDistinct`). Two terms the branch has already
+    identified are one element, so the answer for them is `false`.
+
+    This is the group-aware reading the F* tableau calls
+    `provably_distinct_grouped`. Reading the members one by one, as
+    `provablyDistinct` alone does, misses a difference that holds of a
+    group through a member other than its representative. -/
+def distinctIn (g : Graph) (st : RState) (a b : Term) : Bool :=
+  if repOf st a == repOf st b then false
+  else
+    let as := identifiedWith st a
+    let bs := identifiedWith st b
+    as.any (fun x => bs.any (fun y => provablyDistinct g x y || genDistinct st x y))
 
 /-! ## Clash rules
 
@@ -688,15 +761,19 @@ def clashForLabel (g : Graph) (st : RState) (i : Subject)
         | .oneOf ms => k > ms.length
         | _         => false))
   -- `i : {a₁ … aₘ}` forces `i` to BE one of the members. If `i` is
-  -- provably distinct from every member, no member can be `i`.
+  -- provably distinct from every member, no member can be `i`. The
+  -- test is group-aware: a branch that identified `i` with a term
+  -- forced apart from a member has excluded that member too.
   | .oneOf ms =>
-      !ms.isEmpty && ms.all (provablyDistinct g i.toTerm ·)
+      !ms.isEmpty && ms.all (distinctIn g st i.toTerm ·)
   | .maxCard k p =>
       let succs := successorsOf g st i p true
-      if k == 0 then !succs.isEmpty else existsDistinctSubset g succs (k + 1)
+      if k == 0 then !succs.isEmpty
+      else existsDistinctSubsetBy (distinctIn g st) succs (k + 1)
   | .maxQualCard k p c =>
       let succs := successorsInFiller st c (successorsOf g st i p true)
-      if k == 0 then !succs.isEmpty else existsDistinctSubset g succs (k + 1)
+      if k == 0 then !succs.isEmpty
+      else existsDistinctSubsetBy (distinctIn g st) succs (k + 1)
   | _ => false
 
 /-! ## Datatype value spaces
@@ -949,7 +1026,7 @@ def countingClash (st : RState) (ls : List ClassExpr) : Bool :=
     | _ => false)
 
 def clashNodes (g : Graph) (st : RState) : Bool :=
-  st.nodes.any (fun n =>
+  (groupLeaders st).any (fun n =>
     let ls := labelsOf st n.id
     ls.any (clashForLabel g st n.id ls)
     || datatypeRangeClash st ls
@@ -1410,10 +1487,19 @@ def witnessId (i : Subject) (p : WfIri) (n : Nat) : BNodeId :=
     | .bnode b => b
   "_:tw_" ++ iStr ++ "__" ++ p.val ++ "__" ++ toString n
 
-def depthOf (st : RState) (i : Subject) : Nat :=
+def depthOf1 (st : RState) (i : Subject) : Nat :=
   match i with
   | .iri _   => 0
   | .bnode b => (st.wdepth.find? (fun q => q.1 == b)).map (·.2) |>.getD 0
+
+/-- The witness depth of `i`'s identification group: the least depth
+    of a member. A witness identified with an ABox individual is that
+    individual, at depth 0. -/
+def depthOf (st : RState) (i : Subject) : Nat :=
+  if st.ident.isEmpty then depthOf1 st i
+  else
+    ((identifiedWith st i.toTerm).filterMap termAsSubject).foldl
+      (fun d j => min d (depthOf1 st j)) (depthOf1 st i)
 
 /-- Mint witnesses for `i` on `p` until it has `k` successors, up to
     the depth and count caps. The filler is put on each witness. -/
@@ -1448,6 +1534,61 @@ def ensureWitnesses (g : Graph) (st : RState) (i : Subject) (p : WfIri)
         let (s2, _) := addLabel s1 (.bnode b) c
         (s2, true)) (st, false)
     |> (fun (s, ch) => ({ s with fresh := s.fresh + want }, ch))
+
+/-- Add `(i, p, v)` as an edge that holds in EVERY model, which is
+    therefore COUNTED against cardinality bounds. -/
+def addCountedEdge (st : RState) (i : Subject) (p : WfIri) (v : Term) : RState × Bool :=
+  if st.extra.any (fun e => e.s == i && e.p == p && e.o == v) then (st, false)
+  else ({ st with extra := st.extra ++ [{ s := i, p := p, o := v, counts := true }] }, true)
+
+/-- Register `b` as a node with no label. A node is what the global
+    rules (`injectGlobalAxioms`, `injectFunctional`) and the clash
+    rules visit, so a witness the TBox must reach has to be one. -/
+def addNode (st : RState) (b : Subject) : RState :=
+  if st.nodes.any (fun n => n.id == b) then st
+  else { st with nodes := st.nodes ++ [{ id := b, labels := [] }] }
+
+/-- The generating rule for `≥ k p` and `≥ k p.C` with `k ≥ 2`.
+
+    OWL 2 Direct Semantics §2.2: `ObjectMinCardinality(k p C)` holds of
+    `x` exactly when `#{y | ⟨x,y⟩ ∈ (p)ᴵ ∧ y ∈ (C)ᴵ} ≥ k`. So in every
+    model `x` has `k` pairwise different `p`-successors in `C`. The rule
+    mints `k` witnesses for them, puts `C` on each, makes each a node,
+    and records the group in `RState.distinctGroups`, which is what
+    makes the members provably different (`genDistinct`). The edges are
+    COUNTED: the `k` successors exist in every model, and two of them
+    are counted as different only where the group says so.
+
+    The soundness argument is the standard one for the tableau's
+    `≥`-rule: a model of the branch maps the `k` witnesses onto the `k`
+    successors the model has, and every label the expansion later puts
+    on a witness is a consequence that holds of that successor.
+
+    Before minting, the rule asks whether `x` already has `k` successors
+    in `C` that are pairwise different; if so the obligation is met.
+    Capped at `maxGeneratedWitnesses` per firing and at
+    `maxWitnessDepth`: a cap mints fewer witnesses, which withholds
+    consequences and never invents one. Port of the F*
+    `ensure_min_witnesses`. -/
+def ensureDistinctWitnesses (g : Graph) (st : RState) (i : Subject) (p : WfIri)
+    (k : Nat) (c : ClassExpr) : RState × Bool :=
+  let want := min k maxGeneratedWitnesses
+  let succs := successorsOf g st i p false
+  let inFiller := match c with
+    | .unknown => succs
+    | _        => successorsInFiller st c succs
+  if existsDistinctSubsetBy (distinctIn g st) inFiller want then (st, false)
+  else if depthOf st i ≥ maxWitnessDepth then (st, false)
+  else
+    let d := depthOf st i + 1
+    let ids := (List.range want).map (fun j => witnessId i p (st.fresh + j))
+    let st1 := ids.foldl (fun (s0 : RState) b =>
+      let s1 := addNode { s0 with
+        extra := s0.extra ++ [{ s := i, p := p, o := .bnode b, counts := true }],
+        wdepth := s0.wdepth ++ [(b, d)] } (.bnode b)
+      (addLabel s1 (.bnode b) c).1) st
+    ({ st1 with fresh := st1.fresh + want,
+                distinctGroups := st1.distinctGroups ++ [ids.map Term.bnode] }, true)
 
 /-- The deterministic rules of one label. `union` is left alone — it
     is the branching rule and belongs to the search. -/
@@ -1487,18 +1628,32 @@ def applyLabelRules (g : Graph) (st : RState) (i : Subject) (l : ClassExpr)
   -- A witness on the bottom property is never minted: the clash rule
   -- fires on the label instead, and a minted successor over an empty
   -- property would be a fabricated edge.
-  | .someOf p c        => if isBottomProp p then (st, false)
-                          else ensureWitnesses g st i p 1 c
-  | .minQualCard k p c => if isBottomProp p then (st, false)
-                          else ensureWitnesses g st i p k c
-  | .minCard k p       => if isBottomProp p then (st, false)
-                          else ensureWitnesses g st i p k .unknown
-  | .hasValue p v =>
-      -- A `hasValue` edge holds in EVERY model, so it is COUNTED
-      -- against cardinality bounds, unlike a witness.
-      if st.extra.any (fun e => e.s == i && e.p == p && e.o == v) then (st, false)
-      else ({ st with extra := st.extra ++ [{ s := i, p := p, o := v, counts := true }] },
-            true)
+  --
+  -- `∃p.{a}` is `p` EXACTLY to `a`: `CEXT({a}) = {aᴵ}` (OWL 2 Direct
+  -- Semantics §2.2, `ObjectOneOf`), so `x ∈ ∃p.{a}` holds exactly when
+  -- `⟨x, aᴵ⟩ ∈ (p)ᴵ`. The edge to `a` itself is asserted, counted like
+  -- a `hasValue` edge, instead of an anonymous witness. That is what
+  -- lets a bound on `a` see the edge from its INVERSE side, the
+  -- "spy point" of `WebOnt-description-logic-035`. Port of the F*
+  -- `ensure_existential`.
+  | .someOf p c        =>
+      if isBottomProp p then (st, false)
+      else match c with
+        | .oneOf [a] => addCountedEdge st i p a
+        | _          => ensureWitnesses g st i p 1 c
+  | .minQualCard k p c =>
+      if isBottomProp p then (st, false)
+      else if k ≥ 2 then ensureDistinctWitnesses g st i p k c
+      else match c with
+        | .oneOf [a] => if k == 1 then addCountedEdge st i p a else (st, false)
+        | _          => ensureWitnesses g st i p k c
+  | .minCard k p       =>
+      if isBottomProp p then (st, false)
+      else if k ≥ 2 then ensureDistinctWitnesses g st i p k .unknown
+      else ensureWitnesses g st i p k .unknown
+  -- A `hasValue` edge holds in EVERY model, so it is COUNTED against
+  -- cardinality bounds, unlike an existential witness.
+  | .hasValue p v => addCountedEdge st i p v
   | _ => (st, false)
 
 /-- A label matching an axiom's left-hand side gains its right-hand
@@ -1538,7 +1693,7 @@ def edgeEntailsMembership (g : Graph) (st : RState) (i : Subject) (a : ClassExpr
   | .minCard k p =>
       if k == 0 then false
       else if k == 1 then !(successorsOf g st i p true).isEmpty
-      else existsDistinctSubset g (successorsOf g st i p true) k
+      else existsDistinctSubsetBy (distinctIn g st) (successorsOf g st i p true) k
   | .someOf p c =>
       ceDefinite c &&
       (successorsOf g st i p true).any (fun o =>
@@ -1550,7 +1705,7 @@ def edgeEntailsMembership (g : Graph) (st : RState) (i : Subject) (a : ClassExpr
       if k == 0 || !(ceDefinite c) then false
       else
         let cs := successorsInFiller st c (successorsOf g st i p true)
-        if k == 1 then !cs.isEmpty else existsDistinctSubset g cs k
+        if k == 1 then !cs.isEmpty else existsDistinctSubsetBy (distinctIn g st) cs k
   | _ => false
 
 /-- Fire the axioms whose left-hand side the node's EDGES prove. The
@@ -1618,7 +1773,7 @@ def isTopAntecedent : ClassExpr → Bool
 
 def injectGlobalAxioms (tb : List (ClassExpr × ClassExpr)) (st : RState)
     : RState × Bool :=
-  st.nodes.foldl (fun (acc : RState × Bool) n =>
+  (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
     tb.foldl (fun (a2 : RState × Bool) (a, d) =>
       if isTopAntecedent a then
         let (s, ch) := addLabel a2.1 n.id d
@@ -1629,7 +1784,7 @@ def injectGlobalAxioms (tb : List (ClassExpr × ClassExpr)) (st : RState)
     which folds the functionality constraint into the existing
     max-cardinality clash rule with no new machinery. -/
 def injectFunctional (st : RState) : RState × Bool :=
-  st.nodes.foldl (fun (acc : RState × Bool) n =>
+  (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
     st.funcProps.foldl (fun (a2 : RState × Bool) p =>
       let (s, ch) := addLabel a2.1 n.id (.maxCard 1 p)
       (s, a2.2 || ch)) acc) (st, false)
@@ -1640,7 +1795,7 @@ def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
   let (st0, ch0) := injectFunctional st
   let (st1, chG) := injectGlobalAxioms tb st0
   let ch1 := ch0 || chG
-  st1.nodes.foldl (fun (acc : RState × Bool) n =>
+  (groupLeaders st1).foldl (fun (acc : RState × Bool) n =>
     let byLabel := (labelsOf acc.1 n.id).foldl (fun (a2 : RState × Bool) l =>
       let (s1, c1) := applyLabelRules g a2.1 n.id l
       let (s2, c2) := applyAxioms tb s1 n.id l
@@ -1721,21 +1876,36 @@ def isMergeableTerm : Term → Bool
   | .iri _   => true
   | _        => false
 
-private def witnessPairs (g : Graph) (succs : List Term) (k : Nat)
+/-- Every unordered pair of a list, first member earlier in the list.
+
+    Identifying `a` with `b` and identifying `b` with `a` give one
+    branch: both add the same identification group, and every read of
+    the state (`labelsOf`, `successorsOf`, `distinctIn`) is over the
+    group. Offering both doubled the branching factor of the ≤-rule at
+    every level for no extra coverage. -/
+def unorderedPairs : List Term → List (Term × Term)
+  | []      => []
+  | a :: tl => tl.map (fun b => (a, b)) ++ unorderedPairs tl
+
+private def witnessPairs (g : Graph) (st : RState) (succs : List Term) (k : Nat)
     : List (Term × Term) :=
   if succs.length ≤ k then []
   else
-    let ws := succs.filter isMergeableTerm
-    ws.flatMap (fun a =>
-      ws.filterMap (fun b =>
-        if a != b && !(provablyDistinct g a b) then some (a, b) else none))
+    (unorderedPairs (succs.filter isMergeableTerm)).filter (fun (a, b) =>
+      a != b && !(distinctIn g st a b))
 
-/-- The witness pairs a `≤ k p` label could be forced to identify. -/
+/-- The witness pairs a `≤ k p` label could be forced to identify.
+
+    The qualified bound counts only the successors PROVABLY in its
+    filler, as the clash rule does. A successor not yet known to be in
+    the filler may lie outside it in a model, and then nothing forces
+    it to coincide with anything. -/
 def mergePairsForLabel (g : Graph) (st : RState) (i : Subject) (l : ClassExpr)
     : List (Term × Term) :=
   match l with
-  | .maxCard k p       => witnessPairs g (successorsOf g st i p false) k
-  | .maxQualCard k p _ => witnessPairs g (successorsOf g st i p false) k
+  | .maxCard k p       => witnessPairs g st (successorsOf g st i p false) k
+  | .maxQualCard k p c =>
+      witnessPairs g st (successorsInFiller st c (successorsOf g st i p false)) k
   | _                  => []
 
 /-- Identify `a` with `b`: ONE entry in the branch's identification
@@ -1749,13 +1919,57 @@ def mergePairsForLabel (g : Graph) (st : RState) (i : Subject) (l : ClassExpr)
     that came from there — which on the real path is most of
     them. -/
 def mergeInto (st : RState) (a b : Term) : RState :=
-  if repOf st a == repOf st b then st
-  else { st with ident := st.ident ++ [(repOf st a, repOf st b)] }
+  let ra := repOf st a
+  let rb := repOf st b
+  if ra == rb then st
+  -- Every term `ra` represented is redirected to `rb`, and `ra` joins
+  -- them: the `RState.ident` invariant (representatives are roots)
+  -- holds afterwards because `rb` is a root and `ra` no longer is one.
+  else { st with ident := (st.ident.map (fun q => if q.2 == ra then (q.1, rb) else q))
+                          ++ [(ra, rb)] }
+
+/-- The DETERMINISTIC identifications: the ones every model makes, so
+    no branch is needed.
+
+    * `≤ 1 p` on `x` (and `≤ 1 p.C`, over the successors provably in
+      `C`): `#{y | ⟨x,y⟩ ∈ (p)ᴵ} ≤ 1`, so every `p`-successor of `x`
+      denotes ONE element. For `k = 1` the ≤-rule has no choice to
+      make: all of the successors coincide. Branching over pairs there
+      (as the general ≤-rule does) costs a factorial search for a
+      conclusion that holds in every model. A `owl:FunctionalProperty`
+      reaches this rule through `injectFunctional`.
+    * `{a}` on `x`: `CEXT({a}) = {aᴵ}` (OWL 2 Direct Semantics §2.2,
+      `ObjectOneOf`), so `xᴵ = aᴵ`.
+
+    A pair that is `distinctIn` is NOT identified: the bound or the
+    nominal then has more different successors than it allows, and the
+    clash rules (`clashForLabel`'s `maxCard` and `oneOf` arms) report
+    it. Literals are never identified (`isMergeableTerm`). Port of the
+    effect of the F* `merge_branch`/`identify_branch` at `k = 1`, where
+    those branch over a choice that does not exist. -/
+def forcedIdentifications (g : Graph) (st : RState) : RState × Bool :=
+  (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
+    (labelsOf acc.1 n.id).foldl (fun (a2 : RState × Bool) l =>
+      let s := a2.1
+      let targets : List Term := match l with
+        | .maxCard 1 p =>
+            (successorsOf g s n.id p false).filter isMergeableTerm
+        | .maxQualCard 1 p c =>
+            (successorsInFiller s c (successorsOf g s n.id p false)).filter isMergeableTerm
+        | .oneOf [a] => if isMergeableTerm a then [n.id.toTerm, a] else []
+        | _ => []
+      match targets with
+      | []      => a2
+      | t0 :: rest =>
+        rest.foldl (fun (a3 : RState × Bool) t =>
+          let s3 := a3.1
+          if repOf s3 t == repOf s3 t0 || distinctIn g s3 t t0 then a3
+          else (mergeInto s3 t t0, true)) a2) acc) (st, false)
 
 /-- The first node whose `≤` label forces a merge, and the choices. -/
 def pendingMerge (g : Graph) (st : RState) : Option (List (Term × Term)) :=
-  st.nodes.findSome? (fun n =>
-    n.labels.findSome? (fun l =>
+  (groupLeaders st).findSome? (fun n =>
+    (labelsOf st n.id).findSome? (fun l =>
       match mergePairsForLabel g st n.id l with
       | []    => none
       | pairs => some pairs))
@@ -1776,7 +1990,7 @@ inductive Verdict where
     disjuncts is already a label of that node. A union with a disjunct
     already present is satisfied and needs no branch. -/
 def pendingUnion (st : RState) : Option (Subject × List ClassExpr) :=
-  (st.nodes.findSome? (fun n =>
+  ((groupLeaders st).findSome? (fun n =>
     (labelsOf st n.id).findSome? (fun l =>
       match l with
       | .union cs =>
@@ -1806,6 +2020,10 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
       if changed then search tb g st' n
       else if clashNodes g st' then (.clash, n)
       else
+        -- Identifications every model makes come before any choice.
+        let (stF, forced) := forcedIdentifications g st'
+        if forced then search tb g stF n
+        else
         match pendingUnion st' with
         | some (i, cs) =>
           -- EVERY disjunct must close for the union to refute the

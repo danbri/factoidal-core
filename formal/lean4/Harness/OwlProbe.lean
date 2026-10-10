@@ -1411,6 +1411,8 @@ structure Opts where
   verbose : Bool := false
   /-- `--profile`: per-row timing of the list engine on `--case` ids. -/
   profile : Bool := false
+  /-- `--case ID` (repeatable): the cases `--profile` and
+  `--tbox-census` read, and the cases a scored run is restricted to. -/
   cases   : List String := []
   rounds  : Nat := 3
   /-- `--indexed-only`: profile rounds of the indexed engine alone
@@ -1435,6 +1437,9 @@ structure Opts where
   initial tableau state, and the resulting axiom-test count of ONE
   `onePass`. A count is immune to machine load; a stopwatch is not. -/
   tboxCensus : Bool := false
+  /-- `--trace`: print the refuter's saturated state for the `--case`
+  ids instead of scoring (`traceMain`). -/
+  trace : Bool := false
   /-- Decide conclusion containment by ONE blank-node mapping over the
   whole conclusion graph (the RDF 1.1 Semantics interpolation lemma).
   This is the default since 2026-09-04. `--wildcard-match` restores the
@@ -1450,6 +1455,7 @@ def parseArgs : List String → Opts → Opts
   | "-v" :: rest, o => parseArgs rest { o with verbose := true }
   | "--dir" :: d :: rest, o => parseArgs rest { o with dir := d }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--trace" :: rest, o => parseArgs rest { o with trace := true }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
   | "--indexed-only" :: rest, o => parseArgs rest { o with indexedOnly := true }
@@ -1601,6 +1607,102 @@ def censusMain (o : Opts) : IO UInt32 := do
             censusCase name cat c o.capMs
   return 0
 
+/-! ## `--trace` — the refuter's saturated state, for one case
+
+`--trace --case ID [catalog.rdf]` runs the premise closure under the
+selected regime and then, instead of scoring, prints what the tableau
+refuter sees: the graph-level violation test, the TBox size, the node
+labels after deterministic saturation (`onePass` to quiescence, capped
+by `--rounds`), the pending union and merge choices, and the verdict
+of `tableauConsistent`. A diagnostic: it decides nothing. -/
+
+def shortIri (i : WfIri) : String :=
+  let s := i.val
+  let afterHash := Harness.lastAfter s "#"
+  if afterHash != s then afterHash else Harness.lastAfter s "/"
+
+def shortTerm : Term → String
+  | .iri i     => shortIri i
+  | .bnode b   => s!"_:{b}"
+  | .literal l => s!"\"{l.val.lexicalForm}\"^^{shortIri l.val.datatype}"
+  | t          => showTerm t
+
+def shortSubject (s : Subject) : String := shortTerm s.toTerm
+
+partial def showCe : L4Factoidal.OWL.ClassExpr → String
+  | .named c => shortIri c
+  | .someOf p c => s!"∃{shortIri p}.{showCe c}"
+  | .allOf p c => s!"∀{shortIri p}.{showCe c}"
+  | .hasValue p v => s!"∋{shortIri p}.{shortTerm v}"
+  | .intersection cs => "(" ++ String.intercalate " ⊓ " (cs.map showCe) ++ ")"
+  | .union cs => "(" ++ String.intercalate " ⊔ " (cs.map showCe) ++ ")"
+  | .complement c => s!"¬{showCe c}"
+  | .minCard n p => s!"≥{n}{shortIri p}"
+  | .maxCard n p => s!"≤{n}{shortIri p}"
+  | .exactCard n p => s!"={n}{shortIri p}"
+  | .minQualCard n p c => s!"≥{n}{shortIri p}.{showCe c}"
+  | .maxQualCard n p c => s!"≤{n}{shortIri p}.{showCe c}"
+  | .exactQualCard n p c => s!"={n}{shortIri p}.{showCe c}"
+  | .oneOf vs => "{" ++ String.intercalate "," (vs.map shortTerm) ++ "}"
+  | .dataRestriction dt fs =>
+      s!"{shortIri dt}[" ++ String.intercalate "," (fs.map (fun (f, v) =>
+        s!"{shortIri f} {shortTerm v}")) ++ "]"
+  | .unknown => "?"
+
+def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
+    (rb : Nat) (passes : Nat) : IO Unit := do
+  IO.println s!"TRACE {name} {c.id}"
+  let (res, _) ← premiseClosure cat c capMs rg
+  match res with
+  | .error o => IO.println (o.line c.id)
+  | .ok r =>
+    let g := r.graph
+    IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g}"
+    let tb := L4Factoidal.OWL.Refute.collectAxioms g
+    IO.println s!"  tbox axioms={tb.length}"
+    for (a, d) in tb do
+      IO.println s!"    AX {showCe a} ⊑ {showCe d}"
+    let mut st : L4Factoidal.OWL.Refute.RState :=
+      { L4Factoidal.OWL.Refute.initState g with tbox := tb }
+    let mut n := 0
+    for _ in [0:passes] do
+      if L4Factoidal.OWL.Refute.clashNodes g st then break
+      let (st', ch) := L4Factoidal.OWL.Refute.onePass tb g st
+      st := st'
+      n := n + 1
+      if !ch then break
+    IO.println s!"  passes={n} clash={L4Factoidal.OWL.Refute.clashNodes g st} nodes={st.nodes.length} extra_edges={st.extra.length} ident={st.ident.length} distinct_groups={st.distinctGroups.length}"
+    let (stF, forced) := L4Factoidal.OWL.Refute.forcedIdentifications g st
+    IO.println s!"  forcedIdentifications changed={forced} ident_after={stF.ident.length}"
+    for (a, b) in stF.ident do
+      IO.println s!"    IDENT {shortTerm a} = {shortTerm b}"
+    for nd in st.nodes do
+      IO.println s!"    NODE {shortSubject nd.id}: {String.intercalate ", " (nd.labels.map showCe)}"
+    for e in st.extra do
+      IO.println s!"    EDGE {shortSubject e.s} {shortIri e.p} {shortTerm e.o} counts={e.counts}"
+    match L4Factoidal.OWL.Refute.pendingUnion st with
+    | some (i, cs) => IO.println s!"  pendingUnion {shortSubject i}: {String.intercalate " | " (cs.map showCe)}"
+    | none => IO.println "  pendingUnion none"
+    match L4Factoidal.OWL.Refute.pendingMerge g st with
+    | some ps => IO.println s!"  pendingMerge {String.intercalate "; " (ps.map (fun (a, b) => s!"{shortTerm a}={shortTerm b}"))}"
+    | none => IO.println "  pendingMerge none"
+    IO.println s!"  tableauConsistent(budget {rb}) = {repr (L4Factoidal.OWL.Refute.tableauConsistent g rb)}"
+
+def traceMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then catalogs else o.only
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then IO.println s!"  MISSING {name}"
+    else
+      match ← readCatalog p with
+      | none => pure ()
+      | some cat =>
+        for c in cat.cases do
+          if o.cases.contains c.id then
+            traceCase name cat c o.capMs o.regime o.refuteBudget o.rounds
+  return 0
+
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
   let dir : System.FilePath := o.dir
@@ -1635,6 +1737,7 @@ def main (args : List String) : IO UInt32 := do
 unrelated triple absent = {!unrelatedAbsent}"
   if o.tboxCensus then return (← censusMain o)
   if o.profile then return (← profileMain o)
+  if o.trace then return (← traceMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}
@@ -1651,7 +1754,11 @@ unrelated triple absent = {!unrelatedAbsent}"
     else
       match ← readCatalog p with
       | none => notRead := notRead ++ [name]
-      | some cat =>
+      | some cat0 =>
+        -- `--case ID` (repeatable) restricts the scored run to the named
+        -- cases. A filtered run's score line covers those cases only.
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         printCensus name cat.cases
         let r ← runCatalog name cat o.capMs o.regime o.refuteBudget o.refuteMs
                   o.strictMatch o.verbose

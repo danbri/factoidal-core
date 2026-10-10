@@ -570,4 +570,166 @@ private def lit (lex : String) (dt : WfIri) : Literal :=
 #guard literalValuesDistinct (lit "\n<br></br>" rdfXMLLiteral)
                              (lit "<br></br>" rdfXMLLiteral)
 
+
+/-! ## Pairwise-different subsets, decided structurally
+
+`existsDistinctSubsetBy d ts n` answers whether `n` members of `ts`
+are pairwise related by `d`. The relation here is "different
+numbers"; the second list repeats a member, so it has only two. -/
+
+private def numDiff (a b : Term) : Bool := a != b
+
+#guard existsDistinctSubsetBy numDiff [.iri exC, .iri exD, .iri exY] 3
+#guard !existsDistinctSubsetBy numDiff [.iri exC, .iri exD, .iri exC] 3
+#guard existsDistinctSubsetBy numDiff [.iri exC, .iri exD, .iri exC] 2
+#guard existsDistinctSubsetBy numDiff [] 0
+#guard !existsDistinctSubsetBy numDiff [] 1
+
+/-! Every unordered pair once: three members give three pairs, not
+six. -/
+#guard (unorderedPairs [.iri exC, .iri exD, .iri exY]).length == 3
+
+/-! ## The spy point: `∃p.{a}` is an edge TO `a`
+
+`WebOnt-description-logic-035`'s shape. Every individual has a
+`p`-edge to `spy` (`owl:Thing ⊑ ∃p.{spy}`), so every individual is an
+`invP`-successor of `spy`. The `≥ 3 r` generating rule mints three
+pairwise different witnesses, each of them gets its edge to `spy`, and
+`spy`'s `≤ 2 invP` sees three different successors. With `≤ 3 invP`
+the same graph has a model (the domain `{w1, w2, w3}`, with `i` and
+`spy` among them), so it must not be refuted. -/
+
+private def exR : WfIri := ⟨"http://e/R", rfl⟩
+private def exInvP : WfIri := ⟨"http://e/invP", rfl⟩
+private def exSpy : WfIri := ⟨"http://e/spy", rfl⟩
+
+private def gSpy (bound : String) : Graph :=
+  [ ⟨.iri exP, owlInverseOf, .iri exInvP⟩,
+    ⟨.iri owlThing, rdfsSubClassOf, bnT "s"⟩,
+    ⟨bn "s", owlOnProperty, .iri exP⟩,
+    ⟨bn "s", owlSomeValuesFrom, bnT "o"⟩,
+    ⟨bn "o", owlOneOf, bnT "ol"⟩,
+    ⟨bn "ol", rdfFirst, .iri exSpy⟩, ⟨bn "ol", rdfRest, .iri rdfNil⟩,
+    ⟨.iri exSpy, rdfType, bnT "m"⟩,
+    ⟨bn "m", owlOnProperty, .iri exInvP⟩,
+    ⟨bn "m", owlMaxCardinality, cardLit bound⟩,
+    ⟨indI, rdfType, bnT "n"⟩,
+    ⟨bn "n", owlOnProperty, .iri exR⟩,
+    ⟨bn "n", owlMinCardinality, cardLit "3"⟩ ]
+
+#guard refuted (gSpy "2")
+#guard !(refuted (gSpy "3"))
+
+/-! ## The generating rule's witnesses are pairwise different
+
+`≥ 2 q` with `q ⊑ p` and `≤ 1 p`: the two `q`-successors are two
+different `p`-successors. With `≤ 2 p` there is a model. -/
+
+private def gGenDistinct (bound : String) : Graph :=
+  [ ⟨.iri exQ, rdfsSubPropertyOf, .iri exP⟩,
+    ⟨indI, rdfType, bnT "n"⟩,
+    ⟨bn "n", owlOnProperty, .iri exQ⟩,
+    ⟨bn "n", owlMinCardinality, cardLit "2"⟩,
+    ⟨indI, rdfType, bnT "m"⟩,
+    ⟨bn "m", owlOnProperty, .iri exP⟩,
+    ⟨bn "m", owlMaxCardinality, cardLit bound⟩ ]
+
+#guard refuted (gGenDistinct "1")
+#guard !(refuted (gGenDistinct "2"))
+
+/-! ## `≤ 1 p` identifies every `p`-successor, with no branching
+
+`WebOnt-description-logic-108`'s shape, two levels deep. `x` has
+`≤ 1 r` and three existentials on sub-roles of `r`; their witnesses
+are one element, which then has `≤ 1 t` and three existentials on
+sub-roles of `t` with pairwise disjoint fillers. Those witnesses are
+one element too, in three disjoint classes. Without the outer bound
+the three inner obligations sit on three different elements and the
+graph has a model. -/
+
+private def exT : WfIri := ⟨"http://e/T", rfl⟩
+private def exE : WfIri := ⟨"http://e/E", rfl⟩
+private def exR1 : WfIri := ⟨"http://e/r1", rfl⟩
+private def exR2 : WfIri := ⟨"http://e/r2", rfl⟩
+private def exR3 : WfIri := ⟨"http://e/r3", rfl⟩
+private def exT1 : WfIri := ⟨"http://e/t1", rfl⟩
+private def exT2 : WfIri := ⟨"http://e/t2", rfl⟩
+private def exT3 : WfIri := ⟨"http://e/t3", rfl⟩
+
+/-- `x : ∃rk.(≤ 1 t ⊓ ∃tk.filler)`, written with blank nodes tagged
+    by `k`. -/
+private def heinsohnLeg (k : String) (rk tk filler : WfIri) : Graph :=
+  [ ⟨indI, rdfType, bnT s!"e{k}"⟩,
+    ⟨bn s!"e{k}", owlOnProperty, .iri rk⟩,
+    ⟨bn s!"e{k}", owlSomeValuesFrom, bnT s!"c{k}"⟩,
+    ⟨bn s!"c{k}", owlIntersectionOf, bnT s!"l{k}"⟩,
+    ⟨bn s!"l{k}", rdfFirst, bnT s!"mx{k}"⟩, ⟨bn s!"l{k}", rdfRest, bnT s!"l{k}b"⟩,
+    ⟨bn s!"l{k}b", rdfFirst, bnT s!"ex{k}"⟩, ⟨bn s!"l{k}b", rdfRest, .iri rdfNil⟩,
+    ⟨bn s!"mx{k}", owlOnProperty, .iri exT⟩,
+    ⟨bn s!"mx{k}", owlMaxCardinality, cardLit "1"⟩,
+    ⟨bn s!"ex{k}", owlOnProperty, .iri tk⟩,
+    ⟨bn s!"ex{k}", owlSomeValuesFrom, .iri filler⟩,
+    ⟨.iri rk, rdfsSubPropertyOf, .iri exR⟩,
+    ⟨.iri tk, rdfsSubPropertyOf, .iri exT⟩ ]
+
+private def gHeinsohn (outer : Bool) : Graph :=
+  heinsohnLeg "1" exR1 exT1 exC ++ heinsohnLeg "2" exR2 exT2 exD ++
+  heinsohnLeg "3" exR3 exT3 exE ++
+  [ ⟨.iri exC, owlDisjointWith, .iri exD⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exE⟩,
+    ⟨.iri exD, owlDisjointWith, .iri exE⟩ ] ++
+  (if outer then
+    [ ⟨indI, rdfType, bnT "outer"⟩,
+      ⟨bn "outer", owlOnProperty, .iri exR⟩,
+      ⟨bn "outer", owlMaxCardinality, cardLit "1"⟩ ]
+  else [])
+
+#guard refuted (gHeinsohn true)
+#guard !(refuted (gHeinsohn false))
+
+/-! ## A qualified bound merges only successors PROVABLY in its filler
+
+`≤ 1 r.E` with `∃r.C` and `∃r.D`, `C` and `D` disjoint, and nothing
+putting either witness in `E`: a model gives `x` two different
+`r`-successors outside `E`. Offering the merge of the two witnesses
+(as the ≤-rule did over all successors until 2026-10-10) and finding
+that it clashes proved nothing, because no model has to make it. -/
+
+private def gQualOutsideFiller (inFiller : Bool) : Graph :=
+  [ ⟨indI, rdfType, bnT "a"⟩,
+    ⟨bn "a", owlOnProperty, .iri exR⟩,
+    ⟨bn "a", owlSomeValuesFrom, .iri exC⟩,
+    ⟨indI, rdfType, bnT "b"⟩,
+    ⟨bn "b", owlOnProperty, .iri exR⟩,
+    ⟨bn "b", owlSomeValuesFrom, .iri exD⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩,
+    ⟨indI, rdfType, bnT "q"⟩,
+    ⟨bn "q", owlOnProperty, .iri exR⟩,
+    ⟨bn "q", owlMaxQualifiedCardinality, cardLit "1"⟩,
+    ⟨bn "q", owlOnClass, .iri exE⟩ ] ++
+  (if inFiller then
+    [ ⟨.iri exC, rdfsSubClassOf, .iri exE⟩, ⟨.iri exD, rdfsSubClassOf, .iri exE⟩ ]
+  else [])
+
+#guard !(refuted (gQualOutsideFiller false))
+#guard refuted (gQualOutsideFiller true)
+
+/-! ## A singleton nominal identifies its node with the member
+
+`x : {a}` makes `x` and `a` one element, so `x : C` and `a : ¬C`
+contradict each other. -/
+
+private def gNominalIdent (negate : Bool) : Graph :=
+  [ ⟨indI, rdfType, bnT "o"⟩,
+    ⟨bn "o", owlOneOf, bnT "ol"⟩,
+    ⟨bn "ol", rdfFirst, .iri exY⟩, ⟨bn "ol", rdfRest, .iri rdfNil⟩,
+    ⟨indI, rdfType, .iri exC⟩ ] ++
+  (if negate then
+    [ ⟨.iri exY, rdfType, bnT "nc"⟩, ⟨bn "nc", owlComplementOf, .iri exC⟩ ]
+  else [ ⟨.iri exY, rdfType, .iri exD⟩ ])
+
+#guard refuted (gNominalIdent true)
+#guard !(refuted (gNominalIdent false))
+
+
 end L4Factoidal.OWL.Refute
