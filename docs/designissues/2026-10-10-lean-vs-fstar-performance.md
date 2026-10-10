@@ -781,7 +781,7 @@ Peak RSS at 4,000: 27 MB before and after (F*: 38 MB). Load 4 to 6.
   Concepts gives. The repair needs a function on `Dataset` proved equal to the round
   trip (lower-case language tags, one quad per graph, graphs of one name
   merged), or a decision that the round trip's normalisation is not wanted.
-  Neither was done in the time.
+  Neither was done in the time. Repaired in section 9.2.
 
 ### 8.4 Gates after the last commit of this round
 
@@ -810,7 +810,131 @@ strings to character lists); the N-Quads round trip of 8.3 28.9 percent. The
 repair is a `csimp` from `strCompare` to Lean's native string order, proved as
 `charsLe_eq_not_lt` was for RDFC-1.0 (section 4.9); it rebuilds every SPARQL
 module and was not done in the time. It would also speed up `COUNT(DISTINCT)`,
-whose remaining cost after 8.1 is the same comparison.
+whose remaining cost after 8.1 is the same comparison. Repaired in section 9.1.
+
+## 9. Third round: string order and the command line's round trip (branch `claude/wt-perf-3`)
+
+Two repairs, in this order: SPARQL string comparison (section 8.5) and the
+N-Quads round trip of the command line
+(https://github.com/danbri/factoidal/issues/724, section 8.3). Binaries
+before: built from `0c834393` and copied once. F*: `tools/fetch-builds.sh
+--set native` (`build-19c2f705e3e8`). Callgrind counts are from 1,250
+paragraphs of `gene.ttl`.
+
+### 9.1 SPARQL string order
+
+* **Cause.** `strCompare` built two character lists per comparison (section
+  8.5: 53.6 percent of an ORDER BY).
+* **Change.** `strCompareFast a b := if a < b then -1 else if a = b then 0
+  else 1` (`String.decidableLT` and `String.decEq`, native code), registered
+  with `@[csimp]` directly after `strCompare` in `SPARQL/Expr.lean`, so every
+  ordering compiled after it uses it: ORDER BY (`sparqlOrder`), the GROUP BY
+  and DISTINCT-aggregate keys (`erEqual`, `keysEqual`), MIN and MAX, and `<`
+  on IRIs and literals (`valueCompare`).
+* **Proved.** `listCharCompare_eq_lt` (induction with
+  `List.cons_lt_cons_iff`), `strCompare_eq_fast`,
+  `strCompare_eq_strCompareFast`. The definition of `strCompare` and every
+  theorem about it are unchanged.
+* **Evidence.** Output identical on the query set of 9.3. Guards: the native
+  order against `listCharCompare` on all pairs of 18 strings (the list form is
+  not rewritten, so the guard compares two programs), and 8 `sparqlOrder` /
+  `erEqual` cases.
+
+| query (1,250 paragraphs) | before | after 9.1 | after 9.1 and 9.2 |
+|---|---:|---:|---:|
+| `ORDER BY ?s ?p LIMIT 20` | 1,716,385,516 | 800,708,680 | TBD_CG_ORDERBY |
+| `COUNT(DISTINCT ?s)` | 778,899,813 | 721,044,169 | TBD_CG_CD |
+| `GROUP BY ?p` (q5) | 805,789,131 | 725,867,375 | TBD_CG_GB |
+| `MIN(?o) MAX(?o) ... GROUP BY ?p` | 962,084,714 | 733,651,811 | TBD_CG_MM |
+
+Instructions executed (callgrind). After 9.1 the sort comparator of ORDER BY
+fell from 984 to 68 million instructions. Other character-list comparisons on
+the query path: after 9.1, evaluation is 2.7 to 4.2 percent of the
+instructions of COUNT(DISTINCT), GROUP BY and MIN/MAX, and no comparison that
+builds a list is above 1 percent; the rest was the round trip of 9.2. Nothing
+else needed a repair.
+
+### 9.2 The command line's round trip (issue 724)
+
+* **Decision** (coordinator, on the issue, from the specification): RDF 1.1
+  Concepts §3, "An RDF graph is a set of RDF triples", and §3.3, "Lexical
+  representations of language tags MAY be converted to lower case." The round
+  trip's normalisation stays; it becomes a function on `Dataset`.
+* **Change.** `RDF/DatasetNormalize.lean`: `normalizeDataset` lower-cases
+  every language tag (inside triple terms too) and adds the quads, in the
+  order of the canonical document, to the accumulator `parseNQuadsFast` uses
+  (`addQuadFast`: one copy per graph by `Triple.eqb`, graphs of one name
+  merged). `Wasm/Ops/FromDataset.lean`: `withOpsDataset`. The ops gain `*Of`
+  forms over a parsed dataset (`queryDatasetOf`, `updateDatasetOf`,
+  `canonicalizeOf`, `owlClosureOf`, `rhoDfClosureOf`, `rdfsPlusClosureOf`,
+  `owlIsConsistentOf`, `owlEntailsOf`, `serializeTurtleTextOf`); the text ops
+  call the same `*Parsed` bodies, unchanged. `Wasm/Cli.lean`: `query`,
+  `update`, `canonicalize`, `closure`, `owl-consistent` and `owl-entails` call
+  the `*Of` forms; `parse` prints the size of `normalizeDataset`; `parse
+  --out nquads|turtle` print the op's text without the JSON envelope.
+* **Proved.**
+  `parseNQuadsFast (Dataset.toCanonicalNQuads ds) mode = .ok (normalizeDataset ds)`
+  for both modes, for every `ds` with `roundTripSafe mode ds`
+  (`parseNQuadsFast_toCanonicalNQuads`). The hypothesis is a decidable check
+  of the terms: IRIs print-safe (`iriPrintSafe`; `RDF.isIri` admits a space,
+  IRIREF does not), blank-node labels in BLANK_NODE_LABEL, language tags (lower
+  case) in LANGTAG with subtags of 1 to 8 characters, no lexical-form
+  character that the canonical form writes as a `\u` escape (the proof covers
+  the seven ECHAR escapes), and in RDF 1.1 mode no triple term and no base
+  direction. It mentions neither the parser nor the serialiser (anti-pattern
+  29: the conclusion is not among the premises). `datasetForOps` returns
+  `normalizeDataset ds` when the check passes and the text round trip
+  otherwise; `datasetForOps_eq` proves it equal to the text round trip for
+  EVERY dataset. From it: `queryDatasetOf_eq`, `updateDatasetOf_eq`,
+  `canonicalizeOf_eq`, `owlClosureOf_eq`, `rhoDfClosureOf_eq`,
+  `rdfsPlusClosureOf_eq`, `owlIsConsistentOf_eq`, `owlEntailsOf_eq` and
+  `serializeTurtleTextOf_eq`: each op on the parsed dataset answers the
+  envelope the text op answers on its canonical N-Quads, byte for byte. So the
+  answers of the command line, and the row order of a query without ORDER BY,
+  are unchanged. **Not proved:** that encoding a string into the JSON envelope
+  and decoding it gives the string back (`parse --out` and the error text);
+  the byte comparison below stands in for it.
+* **What changed on purpose.** `parse` counts the set: on issue 724's
+  three-line file (one triple written twice, a tag `@EN`) `parse` and `query`
+  `COUNT(*)` both print 2 (before: 3 and 2). `parse --out nquads` still prints
+  the parser's list, repeated line included.
+* **Cost of the check.** The first `roundTripSafe` read each IRI through
+  `String.toList`: 36.2 percent of the instructions of `query` `COUNT(*)`, as
+  much as the Turtle parse (37.3). `iriPrintSafeFast` (`String.all`, proved
+  equal by `String.all_bool_eq`, `csimp`) took it to 21.3 percent.
+* **Evidence.**
+  * Callgrind, `query` `COUNT(*)`: 705,734,080 instructions before,
+    271,560,893 after (`parseNQuadsFast` was 70 percent before; after, the
+    Turtle parse is 46 percent and the check 21). `parse --out turtle`:
+    TBD_CG_SER_BASE before, TBD_CG_SER_NEW after. `canonicalize` of the same
+    file: TBD_CG_CANON_BASE before, TBD_CG_CANON_NEW after.
+  * Byte comparison, standard output, standard error and exit status, binary
+    before against binary after: every `.ttl`, `.nt`, `.nq`, `.trig` and `.rdf`
+    file under `third_party/testing/w3c/rdf/rdf11` and `rdf12` (2,087 files):
+    `query` (all quads, no ORDER BY) 2,087 of 2,087 identical, `canonicalize`
+    2,087 of 2,087 identical, TBD_OUT_W3C. `parse`: 2,081 identical, 6 differ,
+    each by the number of repeated triples in the file (five EARL reports and
+    `turtle12-eval-annotation-07.ttl`, which states `:s :p :o` twice).
+    TBD_CMP_QUERIES
+  * Guards (`RDF/DatasetNormalizeTests.lean`): the check accepts repeated
+    triples, upper-case tags, escapes, blank nodes, named graphs of one name
+    and nested triple terms with a base direction, and refuses an IRI with a
+    space, a label ending on `.`, U+0001 in a lexical form, the tag `en--x`,
+    and RDF 1.2 terms in 1.1 mode; on all of them `datasetForOps` equals the
+    text round trip; `normalizeDataset` of the three-line file has 2 quads
+    and the tag `en`. `Wasm/Cli.lean`: `parse` prints 2 and `query`
+    `COUNT(*)` answers 2 on that file.
+  * `tests/stack/lean_scaling.sh`, row `query-vs-parse` (5,000 paragraphs):
+    5.7 times the CPU time and 3.7 times the peak memory of `parse` before,
+    1.6 and 1.0 after; the row is now an assertion.
+
+### 9.3 Survey rows, before and after
+
+TBD_SURVEY
+
+### 9.4 Gates after the last commit of this round
+
+TBD_GATES
 
 ## 7. How to repeat
 
