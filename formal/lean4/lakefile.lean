@@ -27,7 +27,9 @@ F*/Low*-verified HACL* extracted C under `third_party/hacl/`
 HACL* translation units are compiled UNMODIFIED, exactly as the F*
 tree's `build-ocaml.sh` compiles them (`-O2 -fPIC -I include`), and
 archived into `libl4hacl.a`, which Lake links into every executable of
-this package. -/
+this package. `Crypto/SHA2Native.lean` also exposes whole SHA-256 and raw
+block compression through the same shim. Differential smoke tests compare
+them with pure Lean; a universal native-equivalence proof is not supplied. -/
 
 /-- `third_party/hacl`, relative to this package (`formal/lean4`). -/
 def haclDir (pkg : Package) : FilePath :=
@@ -343,6 +345,12 @@ extern_lib libl4exthost pkg := do
 -- Write an IBK4 generation's quads back out as N-Quads, so the SAME corpus
 -- can be packed again under a changed format and the two compared.
 @[default_target] lean_exe «l4block-quad-dump» where root := `Harness.QuadDump
+-- Native differential smokes for the HACL* SHA-256 entry points and the
+-- POSIX range reader, and the prepared-snapshot session driver
+-- (`L4Factoidal/SPARQL/PreparedSnapshot.lean`).
+@[default_target] lean_exe «l4native-crypto-smoke» where root := `Harness.NativeCryptoSmoke
+@[default_target] lean_exe «l4native-range-smoke» where root := `Harness.NativeRangeSmoke
+@[default_target] lean_exe «l4block-snapshot-session» where root := `Harness.SnapshotSession
 
 -- The row-identity gate for the LGI3 and LGI4 literal search index, driven through
 -- `storeHandleQuery` — the operation a host calls. It opens one handle with

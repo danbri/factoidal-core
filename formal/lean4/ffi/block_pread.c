@@ -18,9 +18,17 @@ static lean_obj_res l4_empty_bytes(void) { return lean_alloc_sarray(1, 0, 0); }
 LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
                                         uint64_t length, lean_obj_arg world) {
   (void)world;
-  if (length > SIZE_MAX || offset > INT64_MAX) return lean_io_result_mk_ok(l4_empty_bytes());
+  if (length > SIZE_MAX || offset > INT64_MAX ||
+      length > (uint64_t)INT64_MAX - offset + 1)
+    return lean_io_result_mk_ok(l4_empty_bytes());
   int fd = open(lean_string_cstr(path), O_RDONLY);
   if (fd < 0) return lean_io_result_mk_ok(l4_empty_bytes());
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0 ||
+      offset > (uint64_t)st.st_size || length > (uint64_t)st.st_size - offset) {
+    close(fd);
+    return lean_io_result_mk_ok(l4_empty_bytes());
+  }
   lean_obj_res out = lean_alloc_sarray(1, (size_t)length, (size_t)length);
   size_t done = 0;
   while (done < (size_t)length) {

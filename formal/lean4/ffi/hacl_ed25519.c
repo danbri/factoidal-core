@@ -2,7 +2,7 @@
  * and SHA-256 primitives (third_party/hacl/, Apache-2.0, hacl-packages
  * commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 — see third_party/hacl/
  * PROVENANCE.md).  Realises the three `@[extern]` opaques of
- * L4Factoidal/Crypto/Ed25519.lean and the one of
+ * L4Factoidal/Crypto/Ed25519.lean and the two of
  * L4Factoidal/Crypto/SHA2Native.lean.
  *
  * Crypto sourcing policy: skills/crypto-policy/SKILL.md, "Lean 4 tree
@@ -11,7 +11,8 @@
  * in this file: every primitive is a call into the F-star/Low-star-verified
  * HACL* extracted C, which is vendored UNMODIFIED.  (Written "F-star"
  * because a star-slash pair would close this comment.)  The only logic here is
- * length checking around Lean's ByteArray (a `lean_sarray` of uint8).
+ * length checks, Lean ByteArray plumbing, and chaining-state byte order
+ * conversion around HACL* calls.
  *
  * Boundary contract (mirrors formal/fstar/experimental_ocaml_glue/
  * hacl_stubs.c, but over raw bytes instead of hex strings):

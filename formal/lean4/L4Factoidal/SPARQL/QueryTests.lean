@@ -402,11 +402,9 @@ def qAgeDouble : Query :=
 -- The projection drops ?a: it is neither in the header nor in a row.
 #guard hdr { default := gMain, named := [] } qAgeDouble == ["s", "d"]
 #guard colS "a" (rows { default := gMain, named := [] } qAgeDouble) == ["", ""]
--- `SELECT *` reports the variables the rows actually bind, in
--- first-seen order. BGP matching CONSES each new binding onto the
--- front of the row (`Binding.bind`, as in the F* `sm_bind`), so the
--- object variable is seen before the subject variable.
-#guard hdr dsMain (qAll pLabels) == ["label", "s"]
+-- SELECT * reports syntactically in-scope variables, including ones
+-- unbound in every result. We choose first occurrence in the query.
+#guard hdr dsMain (qAll pLabels) == ["s", "label"]
 -- An expression error leaves the alias unbound; the row survives.
 #guard colS "e" (rows dsMain
     (mkQuery (.select (.vars [.var "s", .expr (.var "nosuch") "e"])) pPersons)) == ["", ""]
@@ -1042,10 +1040,9 @@ the same query on 2026-08-26). -/
   == ["s", "s", "s", "t", "t"]
 
 -- `SELECT *` does not return the rewrite's variable (§18.2.4
--- OutScope): the header carries `?p` and `?s` only, in first-seen
--- order of the stripped rows.
+-- OutScope): the header carries `?s` and `?p` only, in query order.
 #guard hdr dsExists (qAll (.bgp [{ s := .var "s", p := .var "p", o := .bnode "b" }]))
-  == ["p", "s"]
+  == ["s", "p"]
 
 -- Inside an EXISTS body the same reading must hold: `<s> <p> _:b`
 -- after substitution asks whether the row's subject has ANY object,

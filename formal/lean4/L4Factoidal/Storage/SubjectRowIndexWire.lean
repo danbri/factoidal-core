@@ -78,12 +78,20 @@ private def decodePairsGo : Nat → List UInt8 → List (Nat × Nat) → Option 
 
 private def canonicalPairsGo : Nat → List (Nat × Nat) → Bool
   | _, [] => true
-  | _, [_] => true
+  | rows, [pair] => pair.2 < rows
   | rows, left :: right :: rest =>
       left.2 < rows && pairBefore left right && canonicalPairsGo rows (right :: rest)
 
+private def distinctOffsets : List (Nat × Nat) → Array Bool → Bool
+  | [], _ => true
+  | pair :: rest, seen =>
+      match seen[pair.2]? with
+      | some false => distinctOffsets rest (seen.set! pair.2 true)
+      | _ => false
+
 private def canonicalPairs (rows : Nat) (pairs : List (Nat × Nat)) : Bool :=
-  pairs.length == rows && canonicalPairsGo rows pairs
+  pairs.length == rows && canonicalPairsGo rows pairs &&
+    distinctOffsets pairs (Array.replicate rows false)
 
 /-- Decode a complete SRI1 object.  Unknown version, truncated fields,
     checksum mismatch, duplicate offsets, unordered postings, and out-of-row

@@ -19,13 +19,12 @@ the u32 length-prefixed field, over the little-endian field lemmas of
 `L4Factoidal.Storage.Bytes`. `parseTerm_serializeTerm?` then follows the
 tag dispatch of `parseTerm` case by case.
 
-The literal case carries a hypothesis. `serializeTerm?` writes a
-language tag but never a base direction, so a literal with
-`direction = some _` does not round-trip; `parseTerm` refuses it,
-because `literalWf` rejects a language tag with `rdf:dirLangString` and
-no direction. The admitted subset is
-`L4Factoidal.Storage.BlockWireV0.termSupported`, which is the predicate
-the block encoder already gates on.
+`serializeTerm?` refuses triple terms and literals with a base
+direction, because the v1 decoder cannot reconstruct them.
+`serializeTerm?_supported` proves that successful checked encoding
+implies `L4Factoidal.Storage.BlockWireV0.termSupported`, and
+`parseTerm_serializeTerm?_checked` gives the round trip without a
+separate support hypothesis.
 
 `termFitsU32` is the second admission condition: every length-prefixed
 string in the term has a byte length below the u32 field limit.
@@ -176,6 +175,7 @@ private theorem parseTerm_serializeTerm?_literal (l : WfLiteral) (bs rest : List
     (hd : l.val.direction = none) (h : serializeTerm? (.literal l) = some bs) :
     parseTerm (bs ++ rest) = some (.literal l, rest) := by
   rw [serializeTerm?] at h
+  simp only [hd, Option.isSome_none, Bool.false_eq_true, if_false] at h
   cases hlex : serializeLString? l.val.lexicalForm with
   | none => rw [hlex] at h; simp [bind, Option.bind] at h
   | some lexb =>
@@ -242,9 +242,8 @@ private theorem parseTerm_serializeTerm?_literal (l : WfLiteral) (bs rest : List
 the subset `BlockWireV0.termSupported` admits, and returns the trailing
 bytes unchanged.
 
-The support hypothesis is needed only for the literal case: a literal
-with a base direction serialises its language tag without the direction,
-and `parseTerm` then refuses the record. -/
+The support hypothesis is needed only for the literal case, where the
+v1 decoder reconstructs no base direction. -/
 theorem parseTerm_serializeTerm? (t : Term) (bs rest : List UInt8)
     (hsup : BlockWireV0.termSupported t = true)
     (h : serializeTerm? t = some bs) :
@@ -267,6 +266,28 @@ theorem parseTerm_serializeTerm? (t : Term) (bs rest : List UInt8)
   | tripleTerm s p o =>
       rw [serializeTerm?] at h
       exact absurd h (by simp)
+
+/-- Successful checked term encoding implies the v1 decoder's supported
+subset. -/
+theorem serializeTerm?_supported (t : Term) (bs : List UInt8)
+    (h : serializeTerm? t = some bs) :
+    BlockWireV0.termSupported t = true := by
+  cases t with
+  | iri _ => rfl
+  | bnode _ => rfl
+  | literal literal =>
+      cases hd : literal.val.direction with
+      | none => simp [BlockWireV0.termSupported, hd]
+      | some direction => simp [serializeTerm?, hd] at h
+  | tripleTerm subject predicate object =>
+      simp [serializeTerm?] at h
+
+/-- Every admitted checked term encoding decodes with its trailing bytes
+unchanged, without a separate support hypothesis. -/
+theorem parseTerm_serializeTerm?_checked (t : Term) (bs rest : List UInt8)
+    (h : serializeTerm? t = some bs) :
+    parseTerm (bs ++ rest) = some (t, rest) :=
+  parseTerm_serializeTerm? t bs rest (serializeTerm?_supported t bs h) h
 
 /-! ## The total encoder
 
@@ -326,7 +347,8 @@ theorem serializeLString?_eq_some (s : String) (h : stringFitsU32 s) :
 
 /-- On the supported, fitting subset the admission-preserving term
 encoder emits exactly the total encoder's bytes. -/
-theorem serializeTerm?_eq_some_of_fits (t : Term) (hfit : termFitsU32 t) :
+theorem serializeTerm?_eq_some_of_supported_of_fits (t : Term)
+    (hsup : BlockWireV0.termSupported t = true) (hfit : termFitsU32 t) :
     serializeTerm? t = some (serializeTerm t) := by
   cases t with
   | iri i =>
@@ -337,7 +359,10 @@ theorem serializeTerm?_eq_some_of_fits (t : Term) (hfit : termFitsU32 t) :
       rfl
   | literal l =>
       obtain ⟨hlex, hdt, htag⟩ := hfit
-      rw [serializeTerm?, serializeTerm, serializeLString?_eq_some _ hlex,
+      rw [BlockWireV0.termSupported, Option.isNone_iff_eq_none] at hsup
+      rw [serializeTerm?]
+      simp only [hsup, Option.isSome_none, Bool.false_eq_true, if_false]
+      rw [serializeTerm, serializeLString?_eq_some _ hlex,
         serializeLString?_eq_some _ hdt]
       simp only [bind, Option.bind]
       cases hlt : l.val.langTag with
@@ -353,15 +378,17 @@ theorem parseTerm_serializeTerm (t : Term) (rest : List UInt8)
     (hsup : BlockWireV0.termSupported t = true) (hfit : termFitsU32 t) :
     parseTerm (serializeTerm t ++ rest) = some (t, rest) :=
   parseTerm_serializeTerm? t (serializeTerm t) rest hsup
-    (serializeTerm?_eq_some_of_fits t hfit)
+    (serializeTerm?_eq_some_of_supported_of_fits t hsup hfit)
 
 #print axioms stringOfBytes?_bytesOfString
 #print axioms parseLString_serializeLString?
 #print axioms parseU8_cons
 #print axioms parseSubject_serializeSubject?
 #print axioms parseTerm_serializeTerm?
+#print axioms serializeTerm?_supported
+#print axioms parseTerm_serializeTerm?_checked
 #print axioms termFitsU32b_iff
-#print axioms serializeTerm?_eq_some_of_fits
+#print axioms serializeTerm?_eq_some_of_supported_of_fits
 #print axioms parseTerm_serializeTerm
 
 end L4Factoidal.Storage

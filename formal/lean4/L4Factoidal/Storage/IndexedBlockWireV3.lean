@@ -228,14 +228,22 @@ def predicateLocal (rows : Array IdTriple) : Bool :=
   | [] => false
   | row :: rest => rest.all fun later => later.p == row.p
 
-/-- Decode an exact row-aligned prefix supplied by a range host.  It does not
-    claim whole-block source-order validation; that is the full `decode`
-    admission boundary.  It is the intentional first step of a bounded scan:
-    row IDs determine which PTD1 term pages to obtain next. -/
-def decodeRowPrefix? (bytes : ByteArray) : Option (List IdTriple) := do
+/-- Decode a contiguous row range, checking each encoded position against
+    `rowStart`. The caller must authenticate the bytes and obtain `rowStart`
+    from the admitted block's row layout. -/
+def decodeRowRange? (rowStart : Nat) (bytes : ByteArray) : Option (List IdTriple) := do
   if bytes.size % rowBytes != 0 then none else do
   let rows ← decodeRows (bytes.size / rowBytes) bytes
-  some (rows.map PositionedIdTriple.row)
+  if rows.zipIdx.all (fun (entry, index) => entry.position == rowStart + index) then
+    some (rows.map PositionedIdTriple.row)
+  else none
+
+/-- Decode a row-aligned prefix whose encoded positions start at zero and
+    increase by one. The caller must authenticate the supplied range against
+    an admitted artifact; these structural checks do not establish identity
+    or whole-block validity. -/
+def decodeRowPrefix? (bytes : ByteArray) : Option (List IdTriple) :=
+  decodeRowRange? 0 bytes
 
 private def validatedRowPredicateGo : Nat → Nat → ByteArray → Nat → Option Nat → Option Nat
   | 0, _, _, _, first => first
@@ -262,16 +270,25 @@ def validatedRowPredicate? (termCount : Nat) (bytes : ByteArray) : Option Nat :=
 private def termIdsOfRows (rows : List IdTriple) : List Nat :=
   rows.flatMap fun row => [row.s, row.p, row.o]
 
+private def dictionaryLayout? (header : Prefix) (ptdPrefix ptdDirectory : ByteArray) :
+    Option (PagedTermDictionary.Prefix × List PagedTermDictionary.PageEntry) := do
+  let ptd ← PagedTermDictionary.decodePrefix ptdPrefix
+  if ptd.pageTerms != PagedTermDictionary.defaultPageTerms then none else do
+  let directory ← PagedTermDictionary.decodeDirectory? ptd ptdDirectory
+  let pageOffset := PagedTermDictionary.pageAreaOffset ptd
+  if header.dictionaryBytes < pageOffset + crcBytes then none else
+  if !PagedTermDictionary.directoryCovers directory (header.dictionaryBytes - pageOffset - crcBytes) then none
+  else some (ptd, directory)
+
 /-- Plan the distinct PTD1 pages needed to turn a previously fetched IBK3 row
     prefix into RDF terms.  The host supplies only the PTD1 prefix, its fixed
     directory, and the row bytes; all returned page offsets are absolute in
     the enclosing IBK3 artifact. -/
 def dictionaryPagesForRowPrefix? (header : Prefix) (ptdPrefix ptdDirectory rowPrefix : ByteArray) :
     Option (List ByteRange) := do
-  let ptd ← PagedTermDictionary.decodePrefix ptdPrefix
-  if ptd.pageTerms != PagedTermDictionary.defaultPageTerms then none else do
-  let directory ← PagedTermDictionary.decodeDirectory? ptd ptdDirectory
+  let (ptd, directory) ← dictionaryLayout? header ptdPrefix ptdDirectory
   let rows ← decodeRowPrefix? rowPrefix
+  let _ ← rowRange? header 0 rows.length
   let pages ← PagedTermDictionary.pageRangesForTerms? ptd directory (termIdsOfRows rows)
   if (pages.all fun page => page.offset + page.length <= header.dictionaryBytes) then
     some (pages.map fun page => { offset := (dictionaryRange header).offset + page.offset, length := page.length })
@@ -283,11 +300,9 @@ def dictionaryPagesForRowPrefix? (header : Prefix) (ptdPrefix ptdDirectory rowPr
     than trusting a host-provided byte slice. -/
 def dictionaryPagesForRowRange? (header : Prefix) (rowStart : Nat)
     (ptdPrefix ptdDirectory rowBytes : ByteArray) : Option (List ByteRange) := do
-  let rows ← decodeRowPrefix? rowBytes
+  let rows ← decodeRowRange? rowStart rowBytes
   let _ ← rowRange? header rowStart rows.length
-  let ptd ← PagedTermDictionary.decodePrefix ptdPrefix
-  if ptd.pageTerms != PagedTermDictionary.defaultPageTerms then none else do
-  let directory ← PagedTermDictionary.decodeDirectory? ptd ptdDirectory
+  let (ptd, directory) ← dictionaryLayout? header ptdPrefix ptdDirectory
   let pages ← PagedTermDictionary.pageRangesForTerms? ptd directory (termIdsOfRows rows)
   if (pages.all fun page => page.offset + page.length <= header.dictionaryBytes) then
     some (pages.map fun page => { offset := (dictionaryRange header).offset + page.offset, length := page.length })
@@ -331,14 +346,16 @@ private def tripleFromDecodedPages? (ptdHeader : PagedTermDictionary.Prefix)
     the PTD1 pages it references. Every supplied page is identified by its
     absolute canonical IBK3 range. An omitted, mismatched, or malformed page,
     malformed planning input, or overlong row prefix returns `none`: it is
-    never reported to a host as an empty query result. -/
+    never reported to a host as an empty query result. The caller must first
+    admit the complete artifact and authenticate each supplied range against
+    its trusted commitment. These structural checks do not authenticate bytes
+    or validate the rows and pages omitted from this scan. -/
 def scanRowPrefixPages (bound : PatternBound) (headerBytes rowPrefix ptdPrefix ptdDirectory : ByteArray)
     (pages : List (ByteRange × ByteArray)) : Option (List Triple) :=
-  if bound.p.isNone then none else match decodePrefix headerBytes, PagedTermDictionary.decodePrefix ptdPrefix with
-  | some header, some ptdHeader =>
-      if ptdHeader.pageTerms != PagedTermDictionary.defaultPageTerms then none else
-      match PagedTermDictionary.decodeDirectory? ptdHeader ptdDirectory, decodeRowPrefix? rowPrefix with
-      | some directory, some rows =>
+  if bound.p.isNone then none else match decodePrefix headerBytes with
+  | some header =>
+      match dictionaryLayout? header ptdPrefix ptdDirectory, decodeRowPrefix? rowPrefix with
+      | some (ptdHeader, directory), some rows =>
           if rowPrefix.size > (rowsRange header).length then none
           else
             let decodedPages := decodeSuppliedPages? header ptdHeader directory pages
@@ -346,20 +363,19 @@ def scanRowPrefixPages (bound : PatternBound) (headerBytes rowPrefix ptdPrefix p
               let triples := rows.mapM (tripleFromDecodedPages? ptdHeader decoded)
               triples.map (fun values => values.filter (boundMatches bound))
       | _, _ => none
-  | _, _ => none
+  | none => none
 
 /-- Execute a predicate-bound scan over one checked contiguous row range.
     This has the same dictionary-page and term checks as the prefix executor;
-    `rowStart` is an additional range-admission check, so a host cannot label
-    an arbitrary row byte sequence as an in-bounds cursor page. -/
+    the extent and encoded row positions must agree with `rowStart`. The same
+    admitted-artifact and authenticated-range requirements apply. -/
 def scanRowRangePages (bound : PatternBound) (headerBytes : ByteArray) (rowStart : Nat)
     (rowBytes ptdPrefix ptdDirectory : ByteArray)
     (pages : List (ByteRange × ByteArray)) : Option (List Triple) :=
-  if bound.p.isNone then none else match decodePrefix headerBytes, PagedTermDictionary.decodePrefix ptdPrefix with
-  | some header, some ptdHeader =>
-      if ptdHeader.pageTerms != PagedTermDictionary.defaultPageTerms then none else
-      match PagedTermDictionary.decodeDirectory? ptdHeader ptdDirectory, decodeRowPrefix? rowBytes with
-      | some directory, some rows =>
+  if bound.p.isNone then none else match decodePrefix headerBytes with
+  | some header =>
+      match dictionaryLayout? header ptdPrefix ptdDirectory, decodeRowRange? rowStart rowBytes with
+      | some (ptdHeader, directory), some rows =>
           match rowRange? header rowStart rows.length with
           | none => none
           | some _ =>
@@ -368,7 +384,7 @@ def scanRowRangePages (bound : PatternBound) (headerBytes : ByteArray) (rowStart
                 let triples := rows.mapM (tripleFromDecodedPages? ptdHeader decoded)
                 triples.map (fun values => values.filter (boundMatches bound))
       | _, _ => none
-  | _, _ => none
+  | none => none
 
 /-! ## The admission decoder
 

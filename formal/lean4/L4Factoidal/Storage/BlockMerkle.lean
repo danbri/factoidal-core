@@ -10,19 +10,15 @@
    Every tree operation takes a `Hasher` and is defined `…With h`. The
    SPECIFICATION instance is `pureHasher`, the pure Lean FIPS 180-4
    `Crypto.sha256`; the unsuffixed names (`leaf`, `node`, `root`, …) are
-   exactly those partial applications, so every `#guard` here and in
-   `ChunkedArtifact.lean` still evaluates the pure function in the Lean
-   interpreter, and every theorem about this tree is a theorem about
-   `pureHasher`.
+   exactly those partial applications, so every `#guard` here evaluates the
+   pure function in the Lean interpreter.
 
-   A HOST may pass a different instance for speed — `Harness/
-   NativeHasher.lean`'s `nativeHasher`, HACL*'s extracted C through
-   `Crypto.sha256Hacl`. That is sound only because the two agree on every
-   input, which `lake exe l4vc-probe`'s `sha256 differential` section measures on
-   the FIPS vectors, the block/padding boundaries and a 1 MiB buffer. The
-   parameter is deliberately explicit rather than an `@[implemented_by]` on
-   `sha256`: build-time `#guard`s run in the interpreter, which cannot call
-   an extern. -/
+   A HOST may pass a different instance for speed. Substitution preserves
+   the specification only if the functions agree on every input. No such
+   equivalence theorem or native host instance is included in this migration;
+   differential tests alone cannot establish universal agreement. The
+   parameter remains explicit rather than an `@[implemented_by]` on `sha256`:
+   build-time `#guard`s run in the interpreter, which cannot call an extern. -/
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.Storage.BlockMerkle

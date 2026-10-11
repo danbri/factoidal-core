@@ -26,6 +26,7 @@ import Harness.NativeHasher
 import L4Factoidal.RDF.DatasetGraphs
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Geo.Functions
 import L4Factoidal.Storage.ChunkedArtifact
 import L4Factoidal.Storage.IndexedBlockWireV4
@@ -192,8 +193,9 @@ private def header (entries : List Entry) (mode : String) (graphs : Nat)
   s!"l4block-quad-query shards={entries.length} open-mode={mode}({entries.length}) graphs={graphs} logical-read-bytes={bytes} fetched-bytes={bytes} zone-excluded={zoneExcluded}"
 
 private def finish (query : Query) (entries : List Entry) (codec : String) (ds : Dataset)
-    (bytes : Nat) (zoneExcluded : Nat) : IO UInt32 := do
+    (bytes : Nat) (zoneExcluded : Nat) (json : Bool) : IO UInt32 := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  let printDiagnostic := if json then IO.eprintln else IO.println
   let (applied, _) := applyDataset query.dataset ds ds.default
   let stripped := stripDatasetClauses query
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
@@ -222,9 +224,11 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
       match rows? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as SELECT"; return 1
       | some rows =>
-          IO.println (header entries mode graphs bytes zoneExcluded)
-          IO.println s!"l4block-quad-query sse={query.toSse}"
-          IO.println s!"l4block-quad-query rows={rows.length} preview={previewOf rows}"
+          printDiagnostic (header entries mode graphs bytes zoneExcluded)
+          printDiagnostic s!"l4block-quad-query sse={query.toSse}"
+          if json then
+            IO.println (QueryResult.bindings query.projectedVars rows).toSrjFast
+          else IO.println s!"l4block-quad-query rows={rows.length} preview={previewOf rows}"
           return 0
   | .ask =>
       let answer? :=
@@ -233,9 +237,10 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
       match answer? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as ASK"; return 1
       | some answer =>
-          IO.println (header entries mode graphs bytes zoneExcluded)
-          IO.println s!"l4block-quad-query sse={query.toSse}"
-          IO.println s!"l4block-quad-query boolean={answer}"
+          printDiagnostic (header entries mode graphs bytes zoneExcluded)
+          printDiagnostic s!"l4block-quad-query sse={query.toSse}"
+          if json then IO.println (QueryResult.boolean answer).toSrjFast
+          else IO.println s!"l4block-quad-query boolean={answer}"
           return 0
   | .construct _ =>
       let graph := evalConstruct env applied stripped
@@ -263,7 +268,7 @@ private def zoneTermKey (t : Term) : Option (List UInt8) :=
   L4Factoidal.Storage.TermWireV2.keyBytes
     (L4Factoidal.Storage.TermWireV2.toWire Harness.nativeHasher.digest t)
 
-private def run (directoryText queryText : String) : IO UInt32 := do
+private def run (directoryText queryText : String) (json : Bool := false) : IO UInt32 := do
   try
     let root := System.FilePath.mk directoryText
     let directory ← resolveStoreDirectory root
@@ -286,6 +291,10 @@ private def run (directoryText queryText : String) : IO UInt32 := do
             IO.eprintln s!"l4block-quad-query query parse error at {error.pos}: {error.msg}"
             return 1
         | .ok query =>
+        if json then
+          match query.form with
+          | .select _ | .ask => pure ()
+          | _ => IO.eprintln "l4block-quad-query --json supports SELECT and ASK only"; return 2
         if !ibk4 && !ibk5 then
           IO.eprintln "l4block-quad-query rejected: not an SBM7, SBM8, SBM9 or SBM10 generation of quad blocks; use l4block-id-v3-query for an IBK3 generation"
           return 1
@@ -309,7 +318,7 @@ private def run (directoryText queryText : String) : IO UInt32 := do
             return 1
         | some (quads, bytes) =>
             finish query entries (if ibk5 then "ibk5" else "ibk4") (datasetOfQuads quads)
-              bytes zoneExcluded
+              bytes zoneExcluded json
   catch error => IO.eprintln s!"l4block-quad-query failure: {error}"; return 1
 
 def main (args : List String) : IO UInt32 := do
@@ -317,7 +326,10 @@ def main (args : List String) : IO UInt32 := do
   | directory :: "--query" :: queryParts =>
       if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
       else run directory (String.intercalate " " queryParts)
-  | _ => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT --query SELECT..."; return 2
+  | directory :: "--json" :: "--query" :: queryParts =>
+      if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
+      else run directory (String.intercalate " " queryParts) true
+  | _ => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT [--json] --query SELECT..."; return 2
 
 end Harness.QuadQuery
 

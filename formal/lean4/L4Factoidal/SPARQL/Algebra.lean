@@ -17,7 +17,7 @@ What is deliberately NOT ported here (with why):
     SPECIFICATION-level evaluator is still here and still the spec:
     `evalTP` scans the graph list, the BGP evaluator takes patterns
     left-to-right, `join` is the nested-loop compatible-merge. The
-    keyed hash join and the per-pattern graph bucketing ARE ported
+    keyed hash join and the cached graph bucketing ARE ported
     (2026-08-25, the "Hash-indexed evaluation" section below), each
     proved list-equal to its spec twin in
     `SPARQL/IndexedEvalRefinement.lean`; `GraphPattern.evalIn` runs
@@ -401,9 +401,10 @@ The functions above (`join`, `leftJoin`, `evalBgp`) are the
 §18.5/§18.3 SPECIFICATION: nested-loop join and left join, per-row
 graph scans. The functions in this section are what
 `GraphPattern.evalIn` actually runs: a hash join and a hash left join
-keyed on the shared always-bound variables, and a BGP step that
-buckets the graph once per triple pattern instead of scanning it once
-per row. Each is proved EQUAL — as a list, order included — to its
+keyed on the shared always-bound variables, and a BGP evaluator that
+reuses graph buckets across patterns with the same bound positions.
+Singleton row sets reuse an existing bucket or scan without building
+an index. Each is proved EQUAL — as a list, order included — to its
 specification twin in `SPARQL/IndexedEvalRefinement.lean`
 (`hashJoin_eq_join`, `hashLeftJoin_eq_leftJoin`,
 `evalBgpIdx_eq_evalBgp`); that equality is what licenses the wiring.
@@ -550,6 +551,7 @@ structure TpMask where
   s : Bool
   p : Bool
   o : Bool
+  deriving DecidableEq
 
 /-- A data triple's key at the masked positions (canonicalised). -/
 def tripleKey (m : TpMask) (t : Triple) : List Term :=
@@ -607,10 +609,51 @@ def evalBgpRowsIdx (g : Graph) : Bgp → SolutionSeq → SolutionSeq
   | [], rows => rows
   | tp :: rest, rows => evalBgpRowsIdx g rest (evalBgpStepIdx tp g rows)
 
+abbrev BgpIndexCache := List (TpMask × Std.HashMap (List Term) Graph)
+
+def cachedTpIndex (g : Graph) (mask : TpMask) (cache : BgpIndexCache) :
+    Std.HashMap (List Term) Graph × BgpIndexCache :=
+  match cache.find? (fun entry => entry.1 == mask) with
+  | some (_, idx) => (idx, cache)
+  | none =>
+      let idx := groupByKey (tripleKey mask) g
+      (idx, (mask, idx) :: cache)
+
+def evalBgpStepCached (tp : TriplePattern) (g : Graph)
+    (rows : SolutionSeq) (cache : BgpIndexCache) :
+    SolutionSeq × BgpIndexCache :=
+  match rows with
+  | [] => ([], cache)
+  | [mu] =>
+      let mask : TpMask :=
+        { s := (tp.s.resolveKey mu).isSome
+        , p := (tp.p.resolveKey mu).isSome
+        , o := (tp.o.resolveKey mu).isSome }
+      match cache.find? (fun entry => entry.1 == mask) with
+      | some (_, idx) => (evalTPIdx mask idx g tp mu, cache)
+      | none => (evalTP tp g mu, cache)
+  | mu0 :: _ :: _ =>
+      let mask : TpMask :=
+        { s := (tp.s.resolveKey mu0).isSome
+        , p := (tp.p.resolveKey mu0).isSome
+        , o := (tp.o.resolveKey mu0).isSome }
+      if mask.s || mask.p || mask.o then
+        let (idx, nextCache) := cachedTpIndex g mask cache
+        (rows.flatMap (evalTPIdx mask idx g tp), nextCache)
+      else
+        (rows.flatMap (evalTP tp g), cache)
+
+def evalBgpRowsCached (g : Graph) : Bgp → SolutionSeq → BgpIndexCache → SolutionSeq
+  | [], rows, _ => rows
+  | _ :: _, [], _ => []
+  | tp :: rest, rows, cache =>
+      let (nextRows, nextCache) := evalBgpStepCached tp g rows cache
+      evalBgpRowsCached g rest nextRows nextCache
+
 /-- eval(BGP) by index — `evalBgpIdx_eq_evalBgp`: the same list
 `evalBgp` returns. -/
 def evalBgpIdx (b : Bgp) (g : Graph) : SolutionSeq :=
-  evalBgpRowsIdx g b [Binding.empty]
+  evalBgpRowsCached g b [Binding.empty] []
 
 /-! ## VALUES — SPARQL 1.1 §10.2 / §18.6
 

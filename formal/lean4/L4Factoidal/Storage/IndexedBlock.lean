@@ -3,8 +3,8 @@ L4Factoidal.Storage.IndexedBlock — dictionary-backed RDF block execution.
 
 This is the first physical successor to `BlockMvp`: triples are held as term-ID
 rows and a predicate partition gives a bounded SPARQL triple pattern a smaller
-candidate sequence. The dictionary deliberately retains the first source term
-for an engine-equality class, so decoded result bindings remain RDF terms.
+candidate sequence. The dictionary interns structurally distinct source
+terms; RDF matching semantics are applied after decoding.
 
 This module is the in-memory representation and its backend-facing scan
 shape. Its byte formats are `IndexedBlockWireV1` (IBK1), `IndexedBlockWireV2`

@@ -7,7 +7,7 @@ hypothesis:
 
     encode? manifest = some bytes → decode? bytes = some manifest
 
-It is stated over EVERY manifest wire version, SBM0 through SBM7, because
+It is stated over EVERY manifest wire version, SBM0 through SBM10, because
 `encode?` and `decode?` are one pair of functions with a version field. A
 version-restricted statement would leave the older versions carrying the
 byte-format claim of the `#guard` fixtures alone.
@@ -545,7 +545,7 @@ theorem decodeBlobTable_encodeBlobTable (blobs : List ArtifactRef) (rest : List 
 
 /-! ### The entry round trip, one wire-version shape at a time
 
-Five shapes cover the eight versions: no commitment (SBM0), a chunk commitment
+Six shapes cover SBM0 through SBM7: no commitment (SBM0), a chunk commitment
 (SBM1/SBM2), plus a subject sidecar (SBM3), plus a term sidecar (SBM4/SBM5),
 plus an object sidecar (SBM6), and the chunk commitment plus the quad tail with
 no sidecar (SBM7). -/

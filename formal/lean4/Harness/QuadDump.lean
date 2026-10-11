@@ -1,5 +1,5 @@
 /-
-Harness.QuadDump — write the quads of an IBK4 generation back out as
+Harness.QuadDump — write the quads of an IBK4 or IBK5 generation back out as
 N-Quads, one block at a time.
 
     l4block-quad-dump <collection-root-or-generation-dir> <output.nq>
@@ -10,13 +10,12 @@ the two can be compared. Re-packing the dump reproduces the corpus rather
 than approximating it with a different one.
 
 Each block is decoded, denoted and serialised on its own, so the whole
-dataset is never one value. The output is canonical N-Quads, so re-packing it
-is a well-defined operation and not a guess about the writer's choices.
+dataset is never one value. Each block is serialized by the existing
+`Dataset.toCanonicalNQuads`; this does not claim whole-dataset RDF
+canonicalization or a global ordering across blocks.
 
-This reads blocks; it applies no delta log. A generation with a non-empty
-DLOG overlay is not the base generation, and dumping the base as though it
-were current would be wrong — so the delta log is refused rather than
-ignored.
+This reads base blocks; it applies no delta log. Any `deltas.dlog` file is
+refused, including an empty one, rather than silently omitting an overlay.
 
 No `sorry`, no user `axiom`, no `native_decide`.
 -/

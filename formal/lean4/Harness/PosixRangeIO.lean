@@ -16,11 +16,12 @@ open L4Factoidal.Storage.BlockMerkle
 
 /- Every chunk admission below hashes with `Harness.nativeHasher` (HACL*
     `Hacl_Hash_SHA2_hash_256`) rather than the pure Lean specification
-    hash. The admitted bytes are identical either way — the two hashers
-    agree on every input, measured by `lake exe l4vc-probe` — and a full
-    scan of a 25 MB store was spending about half its wall clock inside the
-    pure `sha256`. The specification instance stays `pureHasher`; nothing
-    proved about `ChunkedArtifact` or `BlockMerkle` mentions the extern. -/
+    hash. `lake exe l4native-crypto-smoke` checks agreement on FIPS vectors,
+    padding and block boundaries, and a 1 MiB buffer. Agreement for all
+    admitted inputs within the native binding's length bound remains a host
+    trust condition, not a Lean theorem. The specification instance stays
+    `pureHasher`; nothing proved about `ChunkedArtifact` or `BlockMerkle`
+    mentions the extern. -/
 
 /-- Read at an absolute file offset without changing any shared file cursor.
     The C implementation returns an empty array on open/read/short-read
@@ -43,9 +44,25 @@ opaque appendSyncAtSizeRaw (path : @& String) (expectedSize : UInt64)
 @[extern "l4_atomic_replace_file_sync"]
 opaque atomicReplaceFileSyncRaw (path : @& String) (bytes : @& ByteArray) : IO Bool
 
+def rangeArgs? (range : ByteRange) : Option (UInt64 × UInt64) :=
+  if range.offset >= 2 ^ 63 || range.offset + range.length > 2 ^ 63 then none
+  else some (UInt64.ofNat range.offset, UInt64.ofNat range.length)
+
+#guard (rangeArgs? { offset := 0, length := 4 }).map
+  (fun args => (args.1.toNat, args.2.toNat)) == some (0, 4)
+#guard (rangeArgs? { offset := 2 ^ 64, length := 1 }).isNone
+#guard (rangeArgs? { offset := 0, length := 2 ^ 64 }).isNone
+#guard (rangeArgs? { offset := 2 ^ 63 - 1, length := 2 }).isNone
+#guard (rangeArgs? { offset := 2 ^ 63, length := 0 }).isNone
+#guard (rangeArgs? { offset := 2 ^ 63 - 1, length := 1 }).map
+  (fun args => (args.1.toNat, args.2.toNat)) == some (2 ^ 63 - 1, 1)
+
 def readRange? (path : String) (range : ByteRange) : IO (Option ByteArray) := do
-  let bytes ← preadRaw path (UInt64.ofNat range.offset) (UInt64.ofNat range.length)
-  if bytes.size == range.length then pure (some bytes) else pure none
+  match rangeArgs? range with
+  | none => pure none
+  | some (offset, length) =>
+      let bytes ← preadRaw path offset length
+      if bytes.size == range.length then pure (some bytes) else pure none
 
 /-- Decode untrusted raw 32-byte leaf hashes from a packer's `.merkle`
     sidecar. Their authority comes only from a successful proof to an SBM1

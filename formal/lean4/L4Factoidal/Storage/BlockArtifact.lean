@@ -16,9 +16,8 @@ open L4Factoidal.Storage.BlockMerkle (Hasher pureHasher)
 abbrev Digest256 := ByteArray
 
 /-- Content identity under a supplied hash. The specification instance is
-    `pureHasher`; a host may pass `Harness.nativeHasher` (HACL* through
-    `Crypto.sha256Hacl`) to admit a large artifact at C speed. The two agree
-    on every input — measured by `lake exe l4vc-probe`, not proved. -/
+    `pureHasher`. A faster host instance needs a separate agreement argument;
+    this module proves no native-hash equivalence. -/
 def digestWith (h : Hasher) (bytes : ByteArray) : Digest256 := h.digest bytes
 
 def digest (bytes : ByteArray) : Digest256 := digestWith pureHasher bytes

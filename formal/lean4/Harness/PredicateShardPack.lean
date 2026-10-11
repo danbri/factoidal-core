@@ -57,32 +57,37 @@ private def writeArtifacts (output : String) (artifacts : List Artifact) : IO Un
   artifacts.forM fun artifact =>
     IO.FS.writeBinFile (output ++ "/" ++ artifact.name) artifact.bytes
 
-/-- Read the input in `inputChunkBytes` chunks and fold. Host I/O is
-    deliberately tail-recursive/`partial`; it is not semantic parser
-    recursion. Every decision is in `PackStream`, whose folds this drives:
-    the pre-pass, the IBK2/IBK3 ingest and the IBK4 N-Quads ingest all read
-    the file the same way and differ only in `feed`. -/
-private partial def foldHandle {α : Type} (handle : IO.FS.Handle)
-    (feed : α → ByteArray → IO α) (state : α) : IO α := do
-  let bytes ← handle.read inputChunkBytes
-  if bytes.isEmpty then pure state
-  else foldHandle handle feed (← feed state bytes)
+/-- Each nonempty read consumes at least one source byte. The observed file
+    size plus one therefore bounds all reads of an unchanged file, including
+    the final EOF read, even when the operating system returns short chunks.
+    Exhausting that bound refuses publication. -/
+private def foldHandle {α : Type} (handle : IO.FS.Handle)
+    (feed : α → ByteArray → IO α) : Nat → α → IO α
+  | 0, _ => throw <| IO.userError "input changed or exceeded its declared file extent"
+  | fuel + 1, state => do
+      let bytes ← handle.read inputChunkBytes
+      if bytes.isEmpty then pure state
+      else foldHandle handle feed fuel (← feed state bytes)
 
-private def prepassFile (input : System.FilePath) : IO SourcePrepass :=
+private def prepassFile (input : System.FilePath) : IO SourcePrepass := do
+  let fuel := (← input.metadata).byteSize.toNat + 1
   IO.FS.withFile input .read fun handle => do
     let state ← foldHandle handle (fun state bytes => ofExcept (prepassFeed state bytes))
+      fuel
       (prepassInit blockFold)
     ofExcept (prepassFinish state)
 
 /-- The second pass: read a chunk, feed it, write whatever completed. -/
 private def ingestFile (format : PackFormat) (input output : System.FilePath)
-    (prepass : SourcePrepass) : IO PackState :=
+    (prepass : SourcePrepass) : IO PackState := do
+  let fuel := (← input.metadata).byteSize.toNat + 1
   IO.FS.withFile input .read fun handle => do
     let state ← foldHandle handle
       (fun state bytes => do
         let (next, artifacts) ← ofExcept (ingestFeed state bytes)
         writeArtifacts output.toString artifacts
         pure next)
+      fuel
       (ingestInit hasher format prepass (some ("file://" ++ input.toString)) blockFold)
     let (packed, artifacts) ← ofExcept (ingestFinish state)
     writeArtifacts output.toString artifacts
@@ -157,13 +162,15 @@ private def syntaxOf (input : String) : PackSyntax :=
 private def quadIngestFile (format : PackFormat) (input : System.FilePath)
     (output : System.FilePath)
     (grammar : PackSyntax) (prepass : SourcePrepass) (baseIri : Option String)
-    (batchBytes : Nat) : IO QuadPack :=
+    (batchBytes : Nat) : IO QuadPack := do
+  let fuel := (← input.metadata).byteSize.toNat + 1
   IO.FS.withFile input .read fun handle => do
     let state ← foldHandle handle
       (fun state bytes => do
         let (next, artifacts) ← ofExcept (quadIngestFeed state bytes)
         writeArtifacts output.toString artifacts
         pure next)
+      fuel
       (quadIngestInit hasher format grammar prepass baseIri batchBytes blockFold)
     let result ← ofExcept (quadIngestFinish state)
     writeArtifacts output.toString result.artifacts

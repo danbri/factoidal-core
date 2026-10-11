@@ -262,10 +262,10 @@ call the tag dispatcher already made. -/
 
 /-- An OWL in-memory index hashes object terms structurally, while the SPARQL
     matcher uses `Term.eqb`: language tags compare case-insensitively and
-    `rdf:XMLLiteral` values compare after canonical XML.  An object in either
+    `rdf:XMLLiteral` values compare after canonical XML. An object in either
     class cannot safely select one exact hash bucket, because an equivalent
-    stored spelling may live in another bucket.  This asks only whether the
-    exact object access path is a *complete* candidate set; the normal matcher
+    stored spelling may live in another bucket. This asks only whether the
+    exact object access path is a complete candidate set; the normal matcher
     always remains the semantic authority. -/
 def exactObjectIndexKeySafe : Term → Bool
   | .iri _ | .bnode _ => true
@@ -291,6 +291,39 @@ def igSearch (i : OWL.RL.Index) (b : PatternBound) : List Triple :=
   tripleMatchesBound b candidates
 
 def igEstimate (i : OWL.RL.Index) (b : PatternBound) : Nat := (igSearch i b).length
+
+/-- Constant-time exact counts for unbound and predicate-only requests.
+    Every other bound retains the ordinary search, including the object
+    equality fallback for language tags and XML literals. -/
+def igEstimateFast (i : OWL.RL.Index) (b : PatternBound) : Nat :=
+  match b.s, b.p, b.o with
+  | none, none, none => i.all.size
+  | none, some p, none => i.byPCount.getD p 0
+  | _, _, _ => (igSearch i b).length
+
+theorem igEstimateFast_eq (i : OWL.RL.Index) (b : PatternBound) :
+    igEstimateFast i b = igEstimate i b := by
+  rcases b with ⟨s, p, o⟩
+  cases s <;> cases p <;> cases o <;> simp only [igEstimateFast] <;> try rfl
+  · change i.all.size = (i.all.toList.filter (fun _ => true)).length
+    rw [List.filter_eq_self.mpr (by intro _ _; rfl), Array.length_toList]
+  · rename_i p
+    rw [i.byPCount_valid]
+    change ((i.byP.getD p []).filter (fun t => p == t.p)).length =
+      ((i.byP.getD p []).reverse.filter (L4Factoidal.SPARQL.boundMatches { p := some p })).length
+    have bound_eq : L4Factoidal.SPARQL.boundMatches { p := some p } =
+        (fun t => p == t.p) := by
+      funext t
+      simp [L4Factoidal.SPARQL.boundMatches]
+    rw [bound_eq]
+    rw [List.filter_reverse, List.length_reverse]
+
+@[csimp] theorem igEstimate_csimp : igEstimate = igEstimateFast := by
+  funext i b
+  exact (igEstimateFast_eq i b).symm
+
+#print axioms igEstimateFast_eq
+#print axioms igEstimate_csimp
 
 def capsOfIndexed (i : OWL.RL.Index) : StoreCaps :=
   { flags :=
@@ -382,8 +415,6 @@ private def capsLang : StoreCaps := capsOfIndexed (OWL.RL.Index.ofGraph [lang1, 
 #guard capsA.solve { s := some (iriS "http://e.org/a"), o := some (iriT "http://e.org/2") } == []
 #guard capsA.predicatePresent (iriP "http://e.org/p")
 #guard !capsA.predicatePresent (iriP "http://e.org/q")
--- A structural hash bucket is not complete for language-tag equality; the
--- predicate bucket plus `Term.eqb` returns both W3C-equivalent spellings.
 #guard !exactObjectIndexKeySafe langEn
 #guard (capsLang.solve { p := some (iriP "http://e.org/lang"), o := some langEn }).length == 2
 

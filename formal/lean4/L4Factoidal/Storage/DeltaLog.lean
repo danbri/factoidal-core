@@ -138,7 +138,11 @@ def frameEntry (payload : List UInt8) : List UInt8 :=
   writeU32LE (UInt32.ofNat payload.length) ++ payload ++
   writeU32LE (simpleChecksum payload)
 
-/-- Read one record back, given its payload length.
+/-- Checked DLE1 framing refuses payloads that exceed the u32 length field. -/
+def frameEntry? (payload : List UInt8) : Option (List UInt8) :=
+  if payload.length < UInt32.size then some (frameEntry payload) else none
+
+/-- Read one record back, using its encoded payload length.
 
     Every failure mode returns `none` and they are DISTINCT reasons a
     replay must stop rather than continue: a wrong magic means this is
@@ -236,6 +240,19 @@ theorem parseEntry_frameEntry_append (payload rest : List UInt8)
       _ ≤ (16 + payload.length) + rest.length := Nat.le_add_right _ _
   · rw [readU32LE_append_writeU32LE payload (simpleChecksum payload) rest]
     simp [dropEntryFrame]
+
+/-- Successful checked DLE1 framing, aligned with
+`RDF.Store.Columnar.DeltaLog.fst`, preserves the payload and suffix. -/
+theorem parseEntry_frameEntry?_append (payload encoded rest : List UInt8)
+    (encoded_ok : frameEntry? payload = some encoded) :
+    parseEntry (encoded ++ rest) = some (payload, rest) := by
+  unfold frameEntry? at encoded_ok
+  split at encoded_ok
+  · rename_i payload_fits
+    have encoded_eq : frameEntry payload = encoded := Option.some.inj encoded_ok
+    subst encoded
+    exact parseEntry_frameEntry_append payload rest payload_fits
+  · cases encoded_ok
 
 /-- Replay a log: read records until one fails, returning the payloads
     recovered and whether the log ended CLEANLY.
@@ -455,21 +472,21 @@ def serializeTerm (t : Term) : List UInt8 :=
          | some tag => (1 : UInt8) :: serializeLString tag))
   | .tripleTerm _ _ _ => [termTagTripleTerm]
 
-/-- Durable delta-term admission. RDF-star triple terms are deliberately
-    refused because the current DLOG reader refuses their tag too; emitting one
-    would otherwise create a committed record that no replay can decode. -/
+/-- Durable delta-term admission. Triple terms and directional literals are
+    refused because the current DLOG reader cannot recover their encoding. -/
 def serializeTerm? (t : Term) : Option (List UInt8) :=
   match t with
   | .iri i => (serializeLString? i.val).map (termTagIri :: ·)
   | .bnode b => (serializeLString? b).map (termTagBnode :: ·)
-  | .literal l => do
-      let lexical ← serializeLString? l.val.lexicalForm
-      let datatype ← serializeLString? l.val.datatype.val
-      match l.val.langTag with
-      | none => some (termTagLiteral :: (lexical ++ datatype ++ [(0 : UInt8)]))
-      | some tag => do
-          let language ← serializeLString? tag
-          some (termTagLiteral :: (lexical ++ datatype ++ (1 : UInt8) :: language))
+  | .literal l =>
+      if l.val.direction.isSome then none else do
+        let lexical ← serializeLString? l.val.lexicalForm
+        let datatype ← serializeLString? l.val.datatype.val
+        match l.val.langTag with
+        | none => some (termTagLiteral :: (lexical ++ datatype ++ [(0 : UInt8)]))
+        | some tag => do
+            let language ← serializeLString? tag
+            some (termTagLiteral :: (lexical ++ datatype ++ (1 : UInt8) :: language))
   | .tripleTerm _ _ _ => none
 
 /-! ### The u32 length-prefix admission test
@@ -751,8 +768,9 @@ expected result of a process dying during its final append. -/
 def serializeFramedDeltaEntry (e : DeltaEntry) : List UInt8 :=
   frameEntry (serializeDeltaEntryPayload e)
 
-def serializeFramedDeltaEntry? (e : DeltaEntry) : Option (List UInt8) :=
-  frameEntry <$> serializeDeltaEntryPayload? e
+def serializeFramedDeltaEntry? (entry : DeltaEntry) : Option (List UInt8) := do
+  let payload ← serializeDeltaEntryPayload? entry
+  frameEntry? payload
 
 def parseFramedDeltaEntry (bs : List UInt8) : Option (DeltaEntry × List UInt8) := do
   let (payload, rest) ← parseEntry bs

@@ -2,8 +2,9 @@
 
    `Harness/PredicateShardPack.lean` used to interleave the two bounded
    passes with `IO.FS.writeBinFile`. Nothing in the packer needs a file
-   system: the fold state is small and bounded, and every output is a name
-   and a byte string. This module holds that fold with no `IO` in any
+   system: every output is a name and a byte string. Ingest buffers are
+   bounded by the batching policy; manifest entries still grow with the
+   number of artifacts. This module holds that fold with no `IO` in any
    signature, so the same code runs behind the native CLI and inside the
    WebAssembly module, where there is no file I/O by build decision
    (`Wasm/build-wasm.sh` omits libuv).
@@ -13,9 +14,10 @@
    Leaves and artifact digests are taken with a `BlockMerkle.Hasher` passed
    in by the caller. The native harness passes `Harness.nativeHasher`
    (HACL* extracted C); a wasm or interpreter caller passes
-   `BlockMerkle.pureHasher`. The committed bytes are identical either way —
-   the two hashers agree on every input, which `lake exe l4vc-probe`
-   measures in its `sha256 differential` section. This module must NOT
+   `BlockMerkle.pureHasher`. Identical committed bytes require the two
+   hashers to agree. `lake exe l4vc-probe` tests that agreement on a finite
+   differential corpus; agreement on all inputs remains a host assumption.
+   This module must NOT
    import `Harness.*`: the verified library does not depend on an extern
    for its own semantics.
 
