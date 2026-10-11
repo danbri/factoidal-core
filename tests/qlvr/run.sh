@@ -33,6 +33,15 @@
 #               REGEX, CONSTRUCT, a date constant) must exit 3 with
 #               "refused:" and print no answer.
 #
+#   (i) render  every oracle query answered twice, by the byte renderer
+#               (the default) and by the reference renderer
+#               (`--reference-render`: idTerm, then SPARQL.rowJson); the two
+#               outputs must be byte-identical. One check per query.
+#   (j) zstd    `l4qlvr zstd-diff`: every column frame of the instance through
+#               the Lean decoder and through libzstd (ffi/qlvr_zstd.c, loaded
+#               with dlopen); outputs byte-identical. Not scored when
+#               libzstd.so.1 cannot be loaded (exit 2).
+#
 # The stack canary case for the dump is in tests/stack/run.sh (qlvr-dump).
 #
 # Needs: formal/lean4/.lake/build/bin/l4qlvr (lake build l4qlvr, in
@@ -213,6 +222,31 @@ regex|SELECT ?s WHERE { ?s rdfs:label ?o FILTER(REGEX(?o, "^Her")) }
 construct|CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }
 date-constant|SELECT ?s WHERE { ?s ?p "2020-01-01"^^xsd:date }
 EOF
+
+# ---------------------------------------------------------------- (i) render
+echo
+echo "=== (i) byte renderer against the reference renderer"
+for rq in "$ROOT"/tests/qlvr/queries/q*.rq; do
+  n="$(basename "$rq" .rq)"
+  "$BIN" query "$INST" --file "$rq" >"$TMP/r-bytes.json" 2>/dev/null; rb=$?
+  "$BIN" query "$INST" --file "$rq" --reference-render >"$TMP/r-ref.json" 2>/dev/null; rr=$?
+  if [ "$rb" -eq 0 ] && [ "$rr" -eq 0 ] && cmp -s "$TMP/r-bytes.json" "$TMP/r-ref.json"; then
+    record render "$n" 0 "identical, $(wc -c <"$TMP/r-bytes.json") bytes"
+  else
+    record render "$n" 1 "exit $rb/$rr or outputs differ"
+  fi
+done
+
+# ------------------------------------------------------------------ (j) zstd
+echo
+echo "=== (j) Lean zstd decoder against libzstd on every column frame"
+zrc=0
+"$BIN" zstd-diff "$INST" >"$TMP/zd.out" 2>"$TMP/zd.err" || zrc=$?
+if [ "$zrc" -eq 2 ]; then
+  echo "not run (not scored): $(cat "$TMP/zd.err")"
+else
+  record zstd zstd-diff "$zrc" "$(head -1 "$TMP/zd.out"); $(sed -n 2p "$TMP/zd.out")"
+fi
 
 # -------------------------------------------------------------- (e) construct
 echo

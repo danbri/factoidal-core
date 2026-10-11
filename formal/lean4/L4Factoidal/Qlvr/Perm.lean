@@ -172,7 +172,7 @@ def parseRelations (d : ByteArray) : Except String (Array Relation) := do
 
 /-- Decompress one column frame: exactly `8 * rows` bytes of Ids. -/
 def decodeColumn (frame : ByteArray) (rows : Nat) : Except String ByteArray := do
-  let out ← L4Factoidal.Codec.Zstd.decompress frame (8 * rows)
+  let out ← L4Factoidal.Codec.Zstd.decompress frame (8 * rows) (8 * rows)
   if out.size != 8 * rows then throw s!"column: {out.size} bytes, want {8 * rows}"
   pure out
 

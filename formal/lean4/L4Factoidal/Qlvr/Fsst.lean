@@ -39,6 +39,17 @@ def Decoder.parse (d : ByteArray) (off : Nat) : Except String Decoder :=
           lens := d.extract (off + 9) (off + 264),
           syms := d.extract (off + 264) (off + 264 + 255 * 8) }
 
+/-- Append bytes `[p, p + n)` of `syms` (`n ≤ 8`, one symbol) by pushes. -/
+@[inline] def pushSym (syms : ByteArray) (p n : Nat) (out : ByteArray) : ByteArray :=
+  let out := if n > 0 then out.push (syms.get! p) else out
+  let out := if n > 1 then out.push (syms.get! (p + 1)) else out
+  let out := if n > 2 then out.push (syms.get! (p + 2)) else out
+  let out := if n > 3 then out.push (syms.get! (p + 3)) else out
+  let out := if n > 4 then out.push (syms.get! (p + 4)) else out
+  let out := if n > 5 then out.push (syms.get! (p + 5)) else out
+  let out := if n > 6 then out.push (syms.get! (p + 6)) else out
+  if n > 7 then out.push (syms.get! (p + 7)) else out
+
 /-- Decode code bytes `[i, stop)` of `src`, appending to `out`. -/
 def decodeLoop (dec : Decoder) (src : ByteArray) (stop : Nat) :
     Nat → Nat → ByteArray → Except String ByteArray
@@ -54,7 +65,7 @@ def decodeLoop (dec : Decoder) (src : ByteArray) (stop : Nat) :
       else
         let n := (dec.lens.get! c).toNat
         if n > 8 then .error s!"fsst: symbol {c} has length {n} > 8"
-        else decodeLoop dec src stop k (i + 1) (dec.syms.copySlice (8 * c) out out.size n false)
+        else decodeLoop dec src stop k (i + 1) (pushSym dec.syms (8 * c) n out)
     else if i ≥ stop then .ok out
     else .error "fsst: input range past the end of the buffer"
 

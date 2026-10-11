@@ -19,7 +19,10 @@ permutation choice, block-skipping scans, merge and hash joins
     the prefixes of its first and last triple (block metadata). A block whose
     first and last triple both carry the key prefix is "full": its key
     columns are not decoded. Only the columns that a check or an output
-    needs are fetched and decompressed.
+    needs are fetched and decompressed. In a block that is not full, the
+    rows with the key prefix are one range of its sorted rows, found by two
+    binary searches on the key columns (`keyRange`) and copied with
+    `extract`; only a variable repeated in the pattern needs a test per row.
   * Estimates: the rows of the selected blocks (exact for full blocks, an
     upper bound otherwise), from the metadata alone.
   * Order: start with the pattern of least estimate; then repeatedly take,
@@ -43,9 +46,12 @@ Tables store each variable's column as a `ByteArray` of 8-byte Ids (no boxed
 
 ## Loops
 
-Per-row loops (`selectRows`) are tail calls with a fuel `Nat` first and the
-output as an accumulator. Joins, filters and copies are `for` loops in
-`Id.run`. The loop over blocks is a `for` loop in the fetch monad.
+Per-row loops (`selectRows`) and the binary searches (`keyBound`) are tail
+calls with a fuel `Nat` first and the output as an accumulator. Joins,
+filters and copies are `for` loops in `Id.run`; a join first collects pairs
+of row indices, then copies each output column with one `copySlice` per run
+of consecutive rows (`gather`). The loop over blocks is a `for` loop in the
+fetch monad. Measurements: docs/designissues/2026-10-11-qlvr-performance.md.
 -/
 import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Qlvr.Side
@@ -177,6 +183,22 @@ def Table.idx (t : Table) (v : String) : Option Nat := t.vars.findIdx? (· == v)
 
 @[inline] def Table.at (t : Table) (c i : Nat) : UInt64 := word64 t.cols[c]! (8 * i)
 
+/-- Rows `idx` of an 8-byte column, in that order. A run of consecutive rows
+    is copied with one `copySlice` (a merge join emits the right rows of a
+    run consecutively). -/
+def gather (src : ByteArray) (idx : Array Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (8 * idx.size)
+  let mut k := 0
+  for _ in [0:idx.size] do
+    if k ≥ idx.size then break
+    let s := idx[k]!
+    let mut e := k + 1
+    for _ in [0:idx.size] do
+      if e < idx.size && idx[e]! == s + (e - k) then e := e + 1 else break
+    out := src.copySlice (8 * s) out out.size (8 * (e - k)) false
+    k := e
+  return out
+
 /-- Append row `i` of `src` (columns `srcCols`) to the columns `dst`. -/
 @[inline] def pushRowCols (dst : Array ByteArray) (dstOff : Nat) (src : Array ByteArray)
     (srcCols : Array Nat) (i : Nat) : Array ByteArray := _root_.Id.run do
@@ -194,22 +216,15 @@ def Table.append (a b : Table) : Table := _root_.Id.run do
 
 /-- The rows whose index `keep` holds, in order. -/
 def Table.select (t : Table) (keep : Nat → Bool) : Table := _root_.Id.run do
-  let all := (List.range t.vars.size).toArray
-  let mut cols := t.vars.map fun _ => ByteArray.empty
-  let mut n := 0
+  let mut idx : Array Nat := #[]
   for i in [0:t.rows] do
-    if keep i then
-      cols := pushRowCols cols 0 t.cols all i
-      n := n + 1
-  return { t with cols, rows := n }
+    if keep i then idx := idx.push i
+  if idx.size == t.rows then return t
+  return { t with cols := t.cols.map (gather · idx), rows := idx.size }
 
 /-- The rows in the order of the index array `perm`. -/
-def Table.reorder (t : Table) (perm : Array Nat) : Table := _root_.Id.run do
-  let all := (List.range t.vars.size).toArray
-  let mut cols := t.vars.map fun _ => ByteArray.emptyWithCapacity (8 * perm.size)
-  for i in perm do
-    cols := pushRowCols cols 0 t.cols all i
-  return { t with cols, rows := perm.size, sortVar := none }
+def Table.reorder (t : Table) (perm : Array Nat) : Table :=
+  { t with cols := t.cols.map (gather · perm), rows := perm.size, sortVar := none }
 
 /-- Rows `[lo, hi)`. -/
 def Table.slice (t : Table) (lo hi : Nat) : Table :=
@@ -287,23 +302,69 @@ def selectRows (cols : Array ByteArray) (checks : Array (Nat × UInt64)) (eqs : 
       if ok then selectRows cols checks eqs outCols rows k (i + 1) (pushRowCols acc 0 cols outCols i) (n + 1)
       else selectRows cols checks eqs outCols rows k (i + 1) acc n
 
-/-- Fetch and decompress column `c` of block `b`. -/
-def fetchColumn {m : Type → Type} [Monad m] (fetch : Nat → Nat → m ByteArray)
-    (b : BlockMeta) (c : Nat) : ExceptT String m ByteArray := do
-  let some cr := b.cols[c]? | throw s!"block {b.index}: no column {c}"
-  let frame ← (fetch cr.offset cr.size : m ByteArray)
-  if frame.size != cr.size then throw s!"block {b.index}: read {frame.size} of {cr.size} bytes at {cr.offset}"
-  match decodeColumn frame b.rows with
-  | .ok col => pure col
-  | .error e => throw s!"block {b.index}: {e}"
-
-/-- One permutation file: its metadata and positioned reads of it. -/
+/-- One permutation file: its metadata and a way to obtain one column of a
+    block, decompressed (`column ref rows` gives exactly `8 * rows` bytes or
+    an error). `PermSrc.ofFetch` builds it from positioned reads and the
+    pure-Lean decoder (`decodeColumn`), the reference; a host may supply
+    another decoder for measurement and check it against this one. -/
 structure PermSrc (m : Type → Type) where
   permMeta : PermMeta
-  fetch : Nat → Nat → m ByteArray
+  column : ColumnRef → Nat → m (Except String ByteArray)
 
 instance {m : Type → Type} [Monad m] : Inhabited (PermSrc m) :=
-  ⟨{ permMeta := default, fetch := fun _ _ => pure ByteArray.empty }⟩
+  ⟨{ permMeta := default, column := fun _ _ => pure (.error "no permutation") }⟩
+
+/-- Positioned reads (`fetch offset length`) and the pure-Lean decoder. -/
+def PermSrc.ofFetch {m : Type → Type} [Monad m] (pm : PermMeta) (fetch : Nat → Nat → m ByteArray) :
+    PermSrc m :=
+  { permMeta := pm,
+    column := fun cr rows => do
+      let frame ← fetch cr.offset cr.size
+      if frame.size != cr.size then
+        return .error s!"read {frame.size} of {cr.size} bytes at {cr.offset}"
+      return decodeColumn frame rows }
+
+/-- Compare the key prefix of row `r` (columns `0 .. key.size - 1` of
+    `cols`) with `key`. -/
+def rowKeyCmp (cols : Array ByteArray) (key : Array UInt64) (r : Nat) : Ordering := Id.run do
+  for j in [0:key.size] do
+    let a := word64 cols[j]! (8 * r)
+    let b := key[j]!
+    if a < b then return .lt
+    if b < a then return .gt
+  return .eq
+
+/-- Binary search in rows `[lo, hi)`, which are in key order: the least row
+    whose key prefix is not below `key` (`strict = false`) or is above `key`
+    (`strict = true`). The fuel bounds the halvings. -/
+def keyBound (cols : Array ByteArray) (key : Array UInt64) (strict : Bool) : Nat → Nat → Nat → Nat
+  | 0, lo, _ => lo
+  | fuel+1, lo, hi =>
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      let c := rowKeyCmp cols key mid
+      if c == .lt || (strict && c == .eq) then keyBound cols key strict fuel (mid + 1) hi
+      else keyBound cols key strict fuel lo mid
+    else lo
+
+/-- The rows of a block whose key prefix equals `key`: the rows of a block
+    are sorted by the permutation's columns, so they are one range, found by
+    two binary searches. -/
+def keyRange (cols : Array ByteArray) (key : Array UInt64) (rows : Nat) : Nat × Nat :=
+  let fuel := Nat.log2 rows + 2
+  let lo := keyBound cols key false fuel 0 rows
+  (lo, keyBound cols key true fuel lo rows)
+
+/-- Fetch and decompress column `c` of block `b`. -/
+def fetchColumn {m : Type → Type} [Monad m] (src : PermSrc m)
+    (b : BlockMeta) (c : Nat) : ExceptT String m ByteArray := do
+  let some cr := b.cols[c]? | throw s!"block {b.index}: no column {c}"
+  let r : Except String ByteArray ← ExceptT.lift (src.column cr b.rows)
+  match r with
+  | .ok col =>
+    if col.size != 8 * b.rows then throw s!"block {b.index}: column {c} has {col.size} bytes, want {8 * b.rows}"
+    pure col
+  | .error e => throw s!"block {b.index}: {e}"
 
 structure ScanStats where
   blocksRead : Nat := 0
@@ -331,7 +392,7 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (src : PermSrc m) (spec 
     let mut cols : Array ByteArray := #[ByteArray.empty, ByteArray.empty, ByteArray.empty]
     for c in [0:3] do
       if needCols.contains c then
-        cols := cols.set! c (← fetchColumn src.fetch b c)
+        cols := cols.set! c (← fetchColumn src b c)
         stats := { stats with framesRead := stats.framesRead + 1,
                               bytesRead := stats.bytesRead + (b.cols[c]?.map (·.size)).getD 0 }
     stats := { stats with blocksRead := stats.blocksRead + 1 }
@@ -339,9 +400,16 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (src : PermSrc m) (spec 
       if checks.isEmpty && spec.eqs.isEmpty then
         { vars := spec.outVars, cols := spec.outCols.map (cols[·]!), rows := b.rows, sortVar }
       else
-        let (acc, n) := selectRows cols checks spec.eqs spec.outCols b.rows (b.rows + 1) 0
-          (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * b.rows)) 0
-        { vars := spec.outVars, cols := acc, rows := n, sortVar }
+        -- the rows with the key prefix are one range (`keyRange`); only a
+        -- repeated variable (`eqs`) needs a test per row
+        let (lo, hi) := if checks.isEmpty then (0, b.rows) else keyRange cols spec.key b.rows
+        if spec.eqs.isEmpty then
+          { vars := spec.outVars, cols := spec.outCols.map fun c => cols[c]!.extract (8 * lo) (8 * hi),
+            rows := hi - lo, sortVar }
+        else
+          let (acc, n) := selectRows cols #[] spec.eqs spec.outCols hi (hi - lo + 1) lo
+            (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * (hi - lo))) 0
+          { vars := spec.outVars, cols := acc, rows := n, sortVar }
     stats := { stats with rowsOut := stats.rowsOut + chunk.rows }
     let (st', more) ← f st chunk
     st := st'
@@ -354,7 +422,11 @@ def scanTableM {m : Type → Type} [Monad m] (src : PermSrc m) (spec : ScanSpec)
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
-  let init : Table := { Table.empty spec.outVars with sortVar }
+  -- reserve the columns once, from the metadata estimate (an upper bound),
+  -- so that appending the blocks never reallocates
+  let cap := 8 * estimate src.permMeta spec.key
+  let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
+                        rows := 0, sortVar }
   scanFoldM src spec init fun acc chunk => pure (acc.append chunk, true)
 
 /-! ## Joins -/
@@ -373,16 +445,22 @@ def sharedCols (l r : Table) : Array (Nat × Nat) :=
     Array ByteArray :=
   pushRowCols (pushRowCols out 0 l.cols lAll i) lAll.size r.cols extra j
 
+/-- The join output from its pairs of row indices: `l`'s columns, then the
+    columns `extra` of `r`. -/
+def joinOutput (l r : Table) (vars : Array String) (extra : Array Nat) (li ri : Array Nat)
+    (sortVar : Option String) : Table :=
+  { vars, cols := l.cols.map (gather · li) ++ extra.map fun k => gather r.cols[k]! ri,
+    rows := li.size, sortVar }
+
 /-- Merge join of `l` and `r`, both in ascending order of variable `v`. -/
 def mergeJoin (l r : Table) (v : String) : Table := _root_.Id.run do
   let (vars, extra) := joinVars l r
-  let lAll := (List.range l.vars.size).toArray
   let shared := sharedCols l r
   let lc := (l.idx v).getD 0
   let rc := (r.idx v).getD 0
   let others := shared.filter fun (a, _) => a != lc
-  let mut out : Array ByteArray := vars.map fun _ => ByteArray.empty
-  let mut n := 0
+  let mut li : Array Nat := #[]
+  let mut ri : Array Nat := #[]
   let mut i := 0
   let mut j := 0
   for _ in [0:l.rows + r.rows + 1] do
@@ -401,44 +479,64 @@ def mergeJoin (l r : Table) (v : String) : Table := _root_.Id.run do
       for x in [i:ie] do
         for y in [j:je] do
           if others.all (fun (p, q) => l.at p x == r.at q y) then
-            out := emitPair out l r lAll extra x y
-            n := n + 1
+            li := li.push x
+            ri := ri.push y
       i := ie
       j := je
-  return { vars, cols := out, rows := n, sortVar := some v }
+  return joinOutput l r vars extra li ri (some v)
 
 /-- Hash join on all shared variables; built on the smaller input, output
     in the order of the other input. With no shared variable, the cross
-    product. -/
+    product. One shared variable is keyed by its `UInt64` Id; more by the
+    list of Ids. -/
 def hashJoin (l r : Table) : Table := _root_.Id.run do
   let (vars, extra) := joinVars l r
-  let lAll := (List.range l.vars.size).toArray
   let shared := sharedCols l r
   let keyL (i : Nat) : List UInt64 := (shared.map fun (p, _) => l.at p i).toList
   let keyR (j : Nat) : List UInt64 := (shared.map fun (_, q) => r.at q j).toList
-  let mut out : Array ByteArray := vars.map fun _ => ByteArray.empty
-  let mut n := 0
+  let mut li : Array Nat := #[]
+  let mut ri : Array Nat := #[]
   if r.rows ≤ l.rows then
-    let mut h : Std.HashMap (List UInt64) (Array Nat) := {}
-    for j in [0:r.rows] do
-      h := h.alter (keyR j) fun | some a => some (a.push j) | none => some #[j]
-    for i in [0:l.rows] do
-      for j in h.getD (keyL i) #[] do
-        out := emitPair out l r lAll extra i j
-        n := n + 1
-    return { vars, cols := out, rows := n, sortVar := l.sortVar }
+    if h : shared.size = 1 then
+      let (p, q) := shared[0]
+      let mut hm : Std.HashMap UInt64 (Array Nat) := {}
+      for j in [0:r.rows] do
+        hm := hm.alter (r.at q j) fun | some a => some (a.push j) | none => some #[j]
+      for i in [0:l.rows] do
+        for j in hm.getD (l.at p i) #[] do
+          li := li.push i
+          ri := ri.push j
+    else
+      let mut hm : Std.HashMap (List UInt64) (Array Nat) := {}
+      for j in [0:r.rows] do
+        hm := hm.alter (keyR j) fun | some a => some (a.push j) | none => some #[j]
+      for i in [0:l.rows] do
+        for j in hm.getD (keyL i) #[] do
+          li := li.push i
+          ri := ri.push j
+    return joinOutput l r vars extra li ri l.sortVar
   else
-    let mut h : Std.HashMap (List UInt64) (Array Nat) := {}
-    for i in [0:l.rows] do
-      h := h.alter (keyL i) fun | some a => some (a.push i) | none => some #[i]
-    for j in [0:r.rows] do
-      for i in h.getD (keyR j) #[] do
-        out := emitPair out l r lAll extra i j
-        n := n + 1
-    return { vars, cols := out, rows := n,
-             sortVar := match r.sortVar with
-               | some v => if l.vars.contains v || r.vars.contains v then some v else none
-               | none => none }
+    if h : shared.size = 1 then
+      let (p, q) := shared[0]
+      let mut hm : Std.HashMap UInt64 (Array Nat) := {}
+      for i in [0:l.rows] do
+        hm := hm.alter (l.at p i) fun | some a => some (a.push i) | none => some #[i]
+      for j in [0:r.rows] do
+        for i in hm.getD (r.at q j) #[] do
+          li := li.push i
+          ri := ri.push j
+    else
+      let mut hm : Std.HashMap (List UInt64) (Array Nat) := {}
+      for i in [0:l.rows] do
+        hm := hm.alter (keyL i) fun | some a => some (a.push i) | none => some #[i]
+      for j in [0:r.rows] do
+        for i in hm.getD (keyR j) #[] do
+          li := li.push i
+          ri := ri.push j
+    return joinOutput l r vars extra li ri
+      (match r.sortVar with
+       | some v => if l.vars.contains v || r.vars.contains v then some v else none
+       | none => none)
 
 /-! ## Planning and execution -/
 

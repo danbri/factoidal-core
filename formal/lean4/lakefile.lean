@@ -171,6 +171,20 @@ extern_lib libl4blockhost pkg := do
   let name := nameToStaticLib "l4blockhost"
   buildStaticLib (pkg.staticLibDir / name) #[pread]
 
+/-- Optional libzstd call-out for the `l4qlvr` measurements
+    (https://github.com/danbri/factoidal/issues/778): `Harness/Qlvr.lean`'s
+    `@[extern "l4_zstd_decompress"]`. libzstd is loaded with dlopen at run
+    time, so the build needs no zstd headers; the pure Lean decoder
+    (`L4Factoidal.Codec.Zstd`) stays the reference and the default. Not part
+    of the WASM closure. -/
+target qlvr_zstd.o pkg : FilePath :=
+  buildHaclO pkg "qlvr_zstd" (pkg.dir / "ffi" / "qlvr_zstd.c")
+
+extern_lib libl4qlvrzstd pkg := do
+  let z ← qlvr_zstd.o.fetch
+  let name := nameToStaticLib "l4qlvrzstd"
+  buildStaticLib (pkg.staticLibDir / name) #[z]
+
 /-- The host call-out for caller-registered SPARQL 1.1 section 17.6
     extension functions (`Wasm/ExtHost.lean`'s `@[extern "l4_ext_call"]`).
     On a native build it has no host and answers the empty string, which
@@ -195,7 +209,7 @@ extern_lib libl4exthost pkg := do
   #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
-    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun]
+    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).

@@ -35,11 +35,24 @@ Semantics follow QLever, the oracle (format record, section 1 and stage 4):
 
 ## Loops
 
-No function here recurses. The FILTER expression tree and the WHERE pattern
-tree are walked with an explicit stack in a `for` loop of bounded length
-(`maxNodes`); a filter is compiled to a postfix program that a `for` loop
-evaluates with a value stack. Rendering is a tail call over rows with a fuel
-`Nat` first.
+No function here recurses except by tail calls. The FILTER expression tree
+and the WHERE pattern tree are walked with an explicit stack in a `for` loop
+of bounded length (`maxNodes`); a filter is compiled to a postfix program
+that a `for` loop evaluates with a value stack. Rendering (`renderLoop`, the
+reference, and `renderBytesLoop`) is a tail call over rows with a fuel `Nat`
+first; JSON escaping (`escLoop`) is a tail call over bytes; `colUpper` is a
+binary search with fuel; sorting and `topK` are `for` loops.
+
+## Speed (2026-10-11)
+
+ORDER BY sorts by `UInt64` keys when it can (`orderPerm`), COUNT counts
+blocks and runs (`countGroups`), string FILTERs test the word's bytes
+(`strTestBytes`), and SPARQL JSON is written as bytes (`renderBytes`). The
+earlier forms stay: `renderLoop` (`tests/qlvr/run.sh` part (i) compares its
+output with `renderBytes` byte for byte), `strTest`, and the comparison sort
+(used when a column has no keys). The outputs of the 21 oracle queries are
+byte-identical to those of stage 4. Measurements:
+docs/designissues/2026-10-11-qlvr-performance.md.
 -/
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.SPARQL.Parser
@@ -422,6 +435,41 @@ def bytesContain (hay needle : ByteArray) : Bool := Id.run do
     if bytesAt hay needle i then return true
   return false
 
+/-- One string-function test on a stored word, on its bytes (no `String` is
+    built): the same answer as `strTest`. `needle` and `lang` are UTF-8. -/
+def strTestBytes (w : ByteArray) (k : Nat) (needle : ByteArray) (lang : Option ByteArray) : Option Bool :=
+  let q := lastQuote w w.size (w.size - 1)
+  if w.size == 0 || w.get! 0 != 34 || q == 0 then none
+  else if !w.validateUTF8 then none
+  else
+    -- the suffix after the closing quote: none, @lang or ^^<datatype>
+    let sfx := q + 1
+    let (ok, wl, stringish) : Bool × Option ByteArray × Bool :=
+      if sfx == w.size then (true, none, true)
+      else if w.get! sfx == 64 then (true, some (w.extract (sfx + 1) w.size), true)
+      else if sfx + 3 ≤ w.size && w.get! sfx == 94 && w.get! (sfx + 1) == 94 && w.get! (sfx + 2) == 60 &&
+          w.get! (w.size - 1) == 62 then
+        (true, none, w.extract (sfx + 3) (w.size - 1) == (xsd "string").toUTF8)
+      else (false, none, false)
+    if !ok then none
+    else
+      let compat := match lang with
+        | some l => wl == some l
+        | none => true
+      if !stringish || !compat then none
+      else
+        -- content: bytes [1, q)
+        let len := q - 1
+        some (match k with
+          | 0 => needle.size ≤ len && bytesAt w needle 1
+          | 1 => needle.size ≤ len && bytesAt w needle (q - needle.size)
+          | _ =>
+            if needle.size > len then false
+            else Id.run do
+              for i in [1:q - needle.size + 1] do
+                if bytesAt w needle i then return true
+              return false)
+
 /-- One string-function test on a row value. `none` is an error. -/
 def strTest (v : Vocab) (x : Id) (k : Nat) (needle : String) (lang : Option String) : Option Bool :=
   match x.decode with
@@ -484,7 +532,13 @@ def evalProgram (v : Vocab) (t : Table) (col : String → Option Nat) (prog : Ar
       st := st.push r
     | .str k x needle lang =>
       st := st.push (match col x with
-        | some c => strTest v ⟨t.at c i⟩ k needle lang
+        | some c =>
+          match (⟨t.at c i⟩ : Id).decode with
+          | .vocabIndex wi =>
+            match v.wordBytes wi with
+            | .ok w => strTestBytes w k needle.toUTF8 (lang.map (·.toUTF8))
+            | .error _ => none
+          | _ => none
         | none => none)
     | .not => st := (st.pop).push ((st.back?.getD none).map (!·))
     | .and =>
@@ -532,6 +586,129 @@ def jsonHead (vars : Array String) : String :=
 
 def jsonTail : String := "]}}"
 
+/-! ## SPARQL JSON written as bytes
+
+`renderBytes` writes the same text as `renderLoop` (`idTerm`, then
+`L4Factoidal.SPARQL.rowJson`) without building a term or a JSON tree per
+value: the stored word's bytes are escaped straight into the output.
+`renderLoop` stays as the reference; `l4qlvr query --reference-render` uses
+it, and `tests/qlvr/run.sh` compares the two outputs byte for byte on every
+oracle query. The byte path does not re-check IRI and literal
+well-formedness (`isIri`, `literalWf`); QLever checked the words when it
+built the index. -/
+
+def hexLc (n : Nat) : UInt8 := if n < 10 then (48 + n).toUInt8 else (87 + n).toUInt8
+
+/-- Append the JSON escape of one byte that needs it (`escapeChar`: quote,
+    backslash, and the controls below 0x20). -/
+def escByte (b : UInt8) (out : ByteArray) : ByteArray :=
+  if b == 92 then out.push 92 |>.push 92
+  else if b == 34 then out.push 92 |>.push 34
+  else if b == 10 then out.push 92 |>.push 110
+  else if b == 13 then out.push 92 |>.push 114
+  else if b == 9 then out.push 92 |>.push 116
+  else if b == 8 then out.push 92 |>.push 98
+  else if b == 12 then out.push 92 |>.push 102
+  else out.push 92 |>.push 117 |>.push 48 |>.push 48 |>.push (hexLc (b.toNat / 16)) |>.push (hexLc (b.toNat % 16))
+
+/-- Append bytes `[run, stop)` of `src`, JSON-escaped: runs of bytes that
+    need no escape are copied with one `copySlice` (every byte of 0x20 and
+    above other than quote and backslash, so multi-byte UTF-8 passes
+    unchanged, as in `escapeChar`, which works on characters). -/
+def escLoop (src : ByteArray) (stop : Nat) : Nat → Nat → Nat → ByteArray → ByteArray
+  | 0, run, i, out => src.copySlice run out out.size (i - run) false
+  | k+1, run, i, out =>
+    if i < stop then
+      let b := src.get! i
+      if b ≥ 32 && b != 34 && b != 92 then escLoop src stop k run (i + 1) out
+      else escLoop src stop k (i + 1) (i + 1) (escByte b (src.copySlice run out out.size (i - run) false))
+    else src.copySlice run out out.size (i - run) false
+
+/-- Bytes `[a, b)` of `src` as a JSON string. -/
+def jsonStr (src : ByteArray) (a b : Nat) (out : ByteArray) : ByteArray :=
+  (escLoop src b (b - a + 1) a a (out.push 34)).push 34
+
+def kUri : ByteArray := "{\"type\":\"uri\",\"value\":".toUTF8
+def kLit : ByteArray := "{\"type\":\"literal\",\"value\":".toUTF8
+def kBnode : ByteArray := "{\"type\":\"bnode\",\"value\":".toUTF8
+def kLang : ByteArray := ",\"xml:lang\":".toUTF8
+def kDt : ByteArray := ",\"datatype\":".toUTF8
+def xsdStringBytes : ByteArray := (xsd "string").toUTF8
+
+/-- A literal from its lexical form and datatype IRI (`jsonOfTerm`: no
+    datatype member for `xsd:string`). -/
+def litBytes (lex dt : String) (out : ByteArray) : ByteArray :=
+  let l := lex.toUTF8
+  let out := jsonStr l 0 l.size (out ++ kLit)
+  if dt == xsd "string" then out.push 125
+  else
+    let d := dt.toUTF8
+    (jsonStr d 0 d.size (out ++ kDt)).push 125
+
+/-- One Id as a SPARQL JSON term, as `jsonOfTerm (idTerm v x)` prints it. -/
+def termBytes (v : Vocab) (x : Id) (out : ByteArray) : Except String ByteArray := do
+  match x.decode with
+  | .vocabIndex i =>
+    let w ← v.wordBytes i
+    if w.size ≥ 2 && w.get! 0 == 60 then
+      return (jsonStr w 1 (w.size - 1) (out ++ kUri)).push 125
+    let q := lastQuote w w.size (w.size - 1)
+    if w.size == 0 || w.get! 0 != 34 || q == 0 then throw "vocabulary: not a literal"
+    let out := jsonStr w 1 q (out ++ kLit)
+    if q + 1 == w.size then return out.push 125
+    if w.get! (q + 1) == 64 then return (jsonStr w (q + 2) w.size (out ++ kLang)).push 125
+    if q + 5 ≤ w.size && w.get! (q + 1) == 94 && w.get! (q + 2) == 94 && w.get! (q + 3) == 60 &&
+        w.get! (w.size - 1) == 62 then
+      if w.extract (q + 4) (w.size - 1) == xsdStringBytes then return out.push 125
+      return (jsonStr w (q + 4) (w.size - 1) (out ++ kDt)).push 125
+    throw s!"vocabulary: literal suffix of word {i}"
+  | .int i => return litBytes (Format.intLexical i) (xsd "int") out
+  | .double b =>
+    let (lex, dt) := Format.doubleLexical b
+    return litBytes lex (xsd dt) out
+  | .bool val l01 => return litBytes (Format.boolLexical val l01) (xsd "boolean") out
+  | .blankNodeIndex n =>
+    let s := s!"bn{n}".toUTF8
+    return (jsonStr s 0 s.size (out ++ kBnode)).push 125
+  | other => throw s!"Id {x.bits}: no term for {repr other} (https://github.com/danbri/factoidal/issues/780)"
+
+/-- One row's binding object; `names[k]` is `"<escaped name>":` for column
+    `cols[k]`. -/
+def rowBytes (v : Vocab) (t : Table) (names : Array ByteArray) (cols : Array Nat) (i : Nat)
+    (out : ByteArray) : Except String ByteArray := do
+  let mut out := out.push 123
+  for k in [0:cols.size] do
+    if k > 0 then out := out.push 44
+    out := out ++ names[k]!
+    out ← termBytes v ⟨t.at cols[k]! i⟩ out
+  return out.push 125
+
+/-- Rows `i..stop-1` as comma-separated binding objects (`first`: no comma
+    before the first). -/
+def renderBytesLoop (v : Vocab) (t : Table) (names : Array ByteArray) (cols : Array Nat) (stop : Nat) :
+    Nat → Nat → Bool → ByteArray → Except String ByteArray
+  | 0, _, _, acc => .ok acc
+  | k+1, i, first, acc =>
+    if i ≥ stop then .ok acc
+    else
+      match rowBytes v t names cols i (if first then acc else acc.push 44) with
+      | .error e => .error e
+      | .ok acc => renderBytesLoop v t names cols stop k (i + 1) false acc
+
+/-- `"<escaped name>":` for each projected variable. -/
+def nameBytes (cols : Array (String × Nat)) : Array ByteArray :=
+  cols.map fun (n, _) => ("\"" ++ L4Factoidal.JSON.escapeString n ++ "\":").toUTF8
+
+/-- Rows `lo..hi-1` of `t` in SPARQL JSON: the byte path, or the reference
+    path (`renderLoop`) when `reference`. -/
+def renderRows (v : Vocab) (t : Table) (cols : Array (String × Nat)) (lo hi : Nat) (first reference : Bool) :
+    Except String ByteArray :=
+  if reference then
+    (renderLoop v t cols hi (hi - lo + 1) lo first "").map (·.toUTF8)
+  else
+    renderBytesLoop v t (nameBytes cols) (cols.map (·.2)) hi (hi - lo + 1) lo first
+      (ByteArray.emptyWithCapacity (64 * (hi - lo)))
+
 /-! ## Execution -/
 
 structure RunStats where
@@ -562,18 +739,133 @@ def progVars (prog : Array FOp) : Array String :=
     | .str _ x _ _ => acc.push x
     | _ => acc) #[]
 
+/-! ## ORDER BY on sort keys
+
+`cmpIdsOrder` on one column is a total preorder whose classes are given by a
+`UInt64` key when every Id of the column has the same datatype tag (not 0)
+and no `Double` is NaN: `Int` by its value (bit 59 flipped), `Double` by its
+binary64 value (sign-magnitude to unsigned order; -0 as +0, since
+`cmpFloat` makes them equal), other tags by payload (`cmpIdsCompatible` of
+one datatype). Then a stable sort by the keys of the last ORDER BY
+condition, then the one before, and so on, gives the order of a stable sort
+with the lexicographic comparison (`mergeSortBy` in `finishReference`). A
+column without such keys uses the reference comparison. -/
+
+/-- The sort keys of column `c` (complemented for DESC), or `none`. -/
+def orderKeys (t : Table) (c : Nat) (desc : Bool) : Option (Array UInt64) := Id.run do
+  if t.rows == 0 then return some #[]
+  let tag0 := t.at c 0 >>> 60
+  if tag0 == 0 then return none
+  let mut out : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    let x := t.at c i
+    if x >>> 60 != tag0 then return none
+    let k : UInt64 :=
+      if tag0 == 2 then (x &&& payloadMask) ^^^ ((1 : UInt64) <<< 59)
+      else if tag0 == 3 then
+        let b := x <<< 4
+        let b := if b == (1 : UInt64) <<< 63 then 0 else b
+        if b &&& ((1 : UInt64) <<< 63) != 0 then ~~~b else b ||| ((1 : UInt64) <<< 63)
+      else x &&& payloadMask
+    if tag0 == 3 then
+      let b := x <<< 4
+      if (b >>> 52) &&& 0x7FF == 0x7FF && b &&& 0xFFFFFFFFFFFFF != 0 then return none
+    out := out.push (if desc then ~~~k else k)
+  return some out
+
+/-- Stable bottom-up merge sort of `perm` by `key[perm[i]]` (`for` loops, no
+    closure per comparison). -/
+def sortPermByKey (perm : Array Nat) (key : Array UInt64) : Array Nat := Id.run do
+  let n := perm.size
+  let mut src := perm
+  let mut width := 1
+  for _ in [0:64] do
+    if width ≥ n then break
+    let mut out : Array Nat := Array.mkEmpty n
+    let mut lo := 0
+    for _ in [0:n] do
+      if lo ≥ n then break
+      let mid := min (lo + width) n
+      let hi := min (lo + 2 * width) n
+      let mut i := lo
+      let mut j := mid
+      for _ in [0:hi - lo] do
+        if i < mid && (j ≥ hi || key[src[i]!]! ≤ key[src[j]!]!) then
+          out := out.push src[i]!
+          i := i + 1
+        else
+          out := out.push src[j]!
+          j := j + 1
+      lo := hi
+    src := out
+    width := 2 * width
+  return src
+
+/-- Row `a` before row `b` in the lexicographic order of the keys. -/
+def keysLt (keys : Array (Array UInt64)) (a b : Nat) : Bool := Id.run do
+  for k in keys do
+    let x := k[a]!
+    let y := k[b]!
+    if x < y then return true
+    if y < x then return false
+  return false
+
+/-- The first `k` rows of the stable order of the keys, in that order: one
+    pass, keeping the best `k` in a sorted array (a later row with an equal
+    key goes after the earlier ones, as in a stable sort). -/
+def topK (n k : Nat) (keys : Array (Array UInt64)) : Array Nat := Id.run do
+  let mut best : Array Nat := Array.mkEmpty (k + 1)
+  if k == 0 then return best
+  for i in [0:n] do
+    if best.size == k && !(keysLt keys i best[best.size - 1]!) then continue
+    -- insertion point: the first position whose row is after row i
+    let mut lo := 0
+    let mut hi := best.size
+    for _ in [0:64] do
+      if lo ≥ hi then break
+      let mid := (lo + hi) / 2
+      if keysLt keys i best[mid]! then hi := mid else lo := mid + 1
+    best := best.insertIdxIfInBounds lo i
+    if best.size > k then best := best.pop
+  return best
+
+/-- The rows of `t` in ORDER BY order: by sort keys when every condition
+    column has them, else by the reference comparison. With `firstK`, only
+    the first `firstK` rows of that order. -/
+def orderPerm (plan : Plan) (t : Table) (firstK : Option Nat) : Array Nat := Id.run do
+  let conds := plan.order.filterMap fun (v, desc) => (t.idx v).map fun c => (c, desc)
+  let mut keys : Array (Array UInt64) := #[]
+  let mut keyed := true
+  for (c, desc) in conds do
+    match orderKeys t c desc with
+    | some k => keys := keys.push k
+    | none => keyed := false
+  if keyed then
+    match firstK with
+    | some k => if 4 * k < t.rows then return topK t.rows k keys
+                else pure ()
+    | none => pure ()
+    let mut perm := (List.range t.rows).toArray
+    for j in [0:keys.size] do
+      perm := sortPermByKey perm keys[keys.size - 1 - j]!
+    match firstK with
+    | some k => return perm.extract 0 k
+    | none => return perm
+  let le (i j : Nat) : Bool := Id.run do
+    for (c, desc) in conds do
+      let o := cmpIdsOrder ⟨t.at c i⟩ ⟨t.at c j⟩
+      if o != .eq then return (if desc then o == .gt else o == .lt)
+    return true
+  return mergeSortBy (List.range t.rows).toArray le
+
 /-- Final modifiers on a collected table: ORDER BY, projection, DISTINCT,
-    OFFSET, LIMIT. -/
+    OFFSET, LIMIT. Without DISTINCT, ORDER BY with LIMIT orders only the
+    first OFFSET + LIMIT rows (`topK`). -/
 def finish (plan : Plan) (t : Table) : Table := Id.run do
   let mut t := t
   if !plan.order.isEmpty then
-    let keys := plan.order.filterMap fun (v, desc) => (t.idx v).map fun c => (c, desc)
-    let le (i j : Nat) : Bool := Id.run do
-      for (c, desc) in keys do
-        let o := cmpIdsOrder ⟨t.at c i⟩ ⟨t.at c j⟩
-        if o != .eq then return (if desc then o == .gt else o == .lt)
-      return true
-    t := t.reorder (mergeSortBy (List.range t.rows).toArray le)
+    let firstK := if plan.distinct then none else plan.limit.map (plan.offset + ·)
+    t := t.reorder (orderPerm plan t firstK)
   if plan.distinct then
     let cols := plan.proj.filterMap fun p => t.idx p.name
     let mut seen : Std.HashSet (List UInt64) := {}
@@ -589,6 +881,17 @@ def finish (plan : Plan) (t : Table) : Table := Id.run do
     | none => t.rows
   return t.slice plan.offset hi
 
+/-- In rows `[lo, hi)` of a column in ascending order, the first row whose
+    Id is above `x`. -/
+def colUpper (col : ByteArray) (x : UInt64) : Nat → Nat → Nat → Nat
+  | 0, lo, _ => lo
+  | fuel+1, lo, hi =>
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if L4Factoidal.Codec.Zstd.word64 col (8 * mid) ≤ x then colUpper col x fuel (mid + 1) hi
+      else colUpper col x fuel lo mid
+    else lo
+
 /-- Count the rows of `t` per group key (the Ids of the group variables). -/
 def countGroups (plan : Plan) (t : Table)
     (acc : Std.HashMap (List UInt64) Nat × Array (List UInt64)) :
@@ -596,6 +899,33 @@ def countGroups (plan : Plan) (t : Table)
   let gc := plan.groupVars.map fun g => (t.idx g).getD 0
   let mut h := acc.1
   let mut ks := acc.2
+  -- no GROUP BY: one group, the row count
+  if gc.isEmpty then
+    match h.get? [] with
+    | some n => return (h.insert [] (n + t.rows), ks)
+    | none => return (h.insert [] t.rows, ks.push [])
+  -- one group variable: runs of equal Ids (found by binary search when the
+  -- table is sorted by that variable), one map update per run
+  if gc.size == 1 then
+    let c := gc[0]!
+    let sorted := t.sortVar == plan.groupVars[0]?
+    let mut i := 0
+    for _ in [0:t.rows] do
+      if i ≥ t.rows then break
+      let x := t.at c i
+      let e := if sorted then colUpper t.cols[c]! x (Nat.log2 t.rows + 2) (i + 1) t.rows
+        else Id.run do
+          let mut e := i + 1
+          for _ in [0:t.rows] do
+            if e < t.rows && t.at c e == x then e := e + 1 else break
+          return e
+      match h.get? [x] with
+      | some n => h := h.insert [x] (n + (e - i))
+      | none =>
+        h := h.insert [x] (e - i)
+        ks := ks.push [x]
+      i := e
+    return (h, ks)
   for i in [0:t.rows] do
     let k := (gc.map fun c => t.at c i).toList
     match h.get? k with
@@ -622,7 +952,8 @@ def groupTable (plan : Plan) (h : Std.HashMap (List UInt64) Nat) (keys : Array (
 
 /-- Run a translated plan. `emit` receives the SPARQL JSON text in pieces. -/
 def runPlanM {m : Type → Type} [Monad m] (srcs : Array (PermSrc m)) (v : Vocab) (plan : Plan)
-    (lookup : String → ExceptT String m (Option Nat)) (emit : String → m Unit) :
+    (lookup : String → ExceptT String m (Option Nat)) (emit : ByteArray → m Unit)
+    (referenceRender : Bool := false) :
     ExceptT String m RunStats := do
   let pats ← plan.pats.mapM fun (s, p, o) => do
     pure ({ s := toSlot (← resolveArg lookup s), p := toSlot (← resolveArg lookup p),
@@ -641,7 +972,7 @@ def runPlanM {m : Type → Type} [Monad m] (srcs : Array (PermSrc m)) (v : Vocab
   let projCols (t : Table) : Array (String × Nat) :=
     plan.proj.filterMap fun p => (t.idx p.name).map fun c => (p.name, c)
   let mut stats : RunStats := {}
-  emit (jsonHead outVars)
+  emit (jsonHead outVars).toUTF8
   -- the BGP, as chunks of rows
   let streamable := pats.size == 1 && !plan.agg && plan.order.isEmpty && !plan.distinct
   if streamable then
@@ -659,8 +990,8 @@ def runPlanM {m : Type → Type} [Monad m] (srcs : Array (PermSrc m)) (v : Vocab
         let skipHere := min (plan.offset - skipped) ch.rows
         let takeHere := min (lim - emitted) (ch.rows - skipHere)
         if takeHere > 0 then
-          let s ← match renderLoop v ch (projCols ch) (skipHere + takeHere) (takeHere + 1) skipHere
-              (emitted == 0) "" with
+          let s ← match renderRows v ch (projCols ch) skipHere (skipHere + takeHere)
+              (emitted == 0) referenceRender with
             | .ok s => pure s
             | .error e => throw e
           (emit s : m Unit)
@@ -700,11 +1031,11 @@ def runPlanM {m : Type → Type} [Monad m] (srcs : Array (PermSrc m)) (v : Vocab
     for k in [0:pieces] do
       let lo := 4096 * k
       let hi := min out.rows (lo + 4096)
-      match renderLoop v out pc hi (hi - lo + 1) lo (lo == 0) "" with
+      match renderRows v out pc lo hi (lo == 0) referenceRender with
       | .ok s => (emit s : m Unit)
       | .error e => throw e
     stats := { stats with rows := out.rows }
-  emit jsonTail
+  emit jsonTail.toUTF8
   return stats
 
 end L4Factoidal.Qlvr.Query

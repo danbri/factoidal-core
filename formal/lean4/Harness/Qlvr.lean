@@ -27,11 +27,33 @@ read whole (16 MB for the instance); a word is decoded only when it is used.
                                    forms the query looks up, one per line, and
                                    does not run it. Exit 3: the query is outside
                                    the fragment (refused); exit 1: an error.
+                                   --repeat N: load once, run N times in this
+                                   process, print the last answer and the median
+                                   execution time; --libzstd: decode column
+                                   frames with libzstd (ffi/qlvr_zstd.c, dlopen)
+                                   in place of the Lean decoder, for
+                                   measurement; --reference-render: write the
+                                   answer through idTerm and SPARQL.rowJson (the
+                                   reference) in place of the byte renderer
+  l4qlvr serve INDEXDIR [--libzstd]
+                                   load once; answer one query per line of stdin
+                                   (a query, or --file PATH); one line of SPARQL
+                                   JSON per query on stdout, timings on stderr
+  l4qlvr zstd-diff INDEXDIR        every column frame through the Lean decoder
+                                   and libzstd: byte comparison and times
+  l4qlvr kernel-dump INDEXDIR OUT  the input of the q07 kernel
+                                   (Harness/QlvrKernel.lean)
+  l4qlvr kernel FILE [ITERS]       the Lean implementations of the kernel; the
+                                   C reference is tools/qlvr/bench/kernel.c
+                                   (tests/qlvr/kernel.sh runs both)
+
+Performance record: docs/designissues/2026-10-11-qlvr-performance.md.
 
 Timings and peak RSS (VmHWM) go to stderr; data goes to stdout.
 -/
 import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Qlvr.Query
+import Harness.QlvrKernel
 
 open L4Factoidal.Qlvr
 
@@ -373,12 +395,134 @@ def runSideCheck (dir : String) (given : List String) : IO UInt32 := do
 
 /-! ## Query -/
 
-def runQuery (dir : String) (text : String) (explain : Bool) (constants : Bool := false) : IO UInt32 := do
+/-- libzstd, loaded at run time by `ffi/qlvr_zstd.c` (dlopen). Only for
+    measurement; the pure Lean decoder is the reference and the default. -/
+@[extern "l4_zstd_available"]
+opaque zstdAvailable : IO Bool
+
+/-- Decompress one column frame with libzstd into exactly `size` bytes; an
+    empty array on any failure. -/
+@[extern "l4_zstd_decompress"]
+opaque zstdDecompressRaw (frame : @& ByteArray) (size : UInt64) : IO ByteArray
+
+/-- The column decoder: the pure Lean one (the reference) or libzstd. -/
+inductive Codec where
+  | lean
+  | libzstd
+  deriving BEq
+
+def Codec.name : Codec → String
+  | .lean => "lean"
+  | .libzstd => "libzstd"
+
+/-- The pure Lean decoder as an IO step of its own, so that the time taken
+    around the call is the decode time. -/
+@[noinline] def decodeLeanIO (frame : ByteArray) (rows : Nat) : IO (Except String ByteArray) :=
+  pure (decodeColumn frame rows)
+
+def decodeWith (codec : Codec) (frame : ByteArray) (rows : Nat) : IO (Except String ByteArray) := do
+  match codec with
+  | .lean => decodeLeanIO frame rows
+  | .libzstd =>
+    let out ← zstdDecompressRaw frame (8 * rows).toUInt64
+    if out.size != 8 * rows then return .error s!"libzstd: {out.size} bytes, want {8 * rows}"
+    return .ok out
+
+/-- Per-run counters of the column reads. -/
+structure IoCounters where
+  preadNs : Nat := 0
+  decodeNs : Nat := 0
+  frames : Nat := 0
+  frameBytes : Nat := 0
+  outBytes : Nat := 0
+
+/-- What `l4qlvr query` and `l4qlvr serve` load once: the vocabulary, the
+    six permutation trailers, the side index. -/
+structure Session where
+  dir : String
+  vocab : Vocab
+  srcs : Array (PermSrc IO)
+  side : Option SideIdx
+  codec : Codec
+  counters : IO.Ref IoCounters
+
+def openSession (dir : String) (codec : Codec) : IO Session := do
+  let base ← findBase dir
+  checkMetaData dir base
+  let v ← loadVocab dir base
+  if codec == .libzstd && !(← zstdAvailable) then
+    throw (IO.userError "--libzstd: libzstd.so.1 could not be loaded")
+  let counters ← IO.mkRef ({} : IoCounters)
+  let mut srcs : Array (PermSrc IO) := #[]
+  for pi in permInfos do
+    let path := s!"{dir}/{base}.index.{pi.name}"
+    let pm ← loadPermMeta path
+    let column (cr : ColumnRef) (rows : Nat) : IO (Except String ByteArray) := do
+      let a ← IO.monoNanosNow
+      let frame ← pread path cr.offset cr.size
+      let b ← IO.monoNanosNow
+      let r ← decodeWith codec frame rows
+      let c ← IO.monoNanosNow
+      counters.modify fun k =>
+        { preadNs := k.preadNs + (b - a), decodeNs := k.decodeNs + (c - b), frames := k.frames + 1,
+          frameBytes := k.frameBytes + cr.size, outBytes := k.outBytes + 8 * rows }
+      pure r
+    srcs := srcs.push { permMeta := pm, column }
+  let side ← openSide dir v
+  return { dir, vocab := v, srcs, side, codec, counters }
+
+/-- Run one query on an open session; `emit` gets the SPARQL JSON in pieces.
+    Returns the statistics, the number of constant lookups and their time. -/
+def Session.run (ss : Session) (plan : Query.Plan) (emit : ByteArray → IO Unit) (reference : Bool := false) :
+    IO (Except String (Query.RunStats × Nat × Nat)) := do
+  let lookups ← IO.mkRef (0 : Nat)
+  let lookupNs ← IO.mkRef (0 : Nat)
+  let lookup (s : String) : ExceptT String IO (Option Nat) := do
+    let a ← IO.monoNanosNow
+    let r ← match ss.side with
+      | some sd => do pure (← sd.lookup s).1
+      | none => match ss.vocab.findWord s with
+        | .ok r => pure r
+        | .error e => throw e
+    let b ← IO.monoNanosNow
+    lookups.modify (· + 1)
+    lookupNs.modify (· + (b - a))
+    pure r
+  match ← (Query.runPlanM ss.srcs ss.vocab plan lookup emit reference).run with
+  | .error e => return .error e
+  | .ok st => return .ok (st, ← lookups.get, ← lookupNs.get)
+
+def parsePlan (text : String) : IO (Except String Query.Plan) := do
+  match L4Factoidal.SPARQL.parseSparql text with
+  | .error e => throw (IO.userError s!"SPARQL parse error: {e}")
+  | .ok q => return Query.translate q
+
+def median (xs : Array Nat) : Nat :=
+  let s := mergeSortBy xs (· ≤ ·)
+  if s.isEmpty then 0 else s[(s.size - 1) / 2]!
+
+/-- `--repeat N` and the remaining arguments. -/
+def queryOpts (xs : List String) : Nat × List String := Id.run do
+  let mut n := 1
+  let mut acc : Array String := #[]
+  let mut skip := false
+  let arr := xs.toArray
+  for i in [0:arr.size] do
+    if skip then
+      skip := false
+      continue
+    let x := arr[i]!
+    if x == "--repeat" then
+      n := (arr.getD (i + 1) "1").toNat?.getD 1
+      skip := true
+    else if x == "--explain" || x == "--constants" || x == "--libzstd" || x == "--reference-render" then pure ()
+    else acc := acc.push x
+  return (n, acc.toList)
+
+def runQuery (dir : String) (text : String) (explain : Bool) (constants : Bool := false)
+    (codec : Codec := .lean) (repeatN : Nat := 1) (reference : Bool := false) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let q ← match L4Factoidal.SPARQL.parseSparql text with
-    | .ok q => pure q
-    | .error e => throw (IO.userError s!"SPARQL parse error: {e}")
-  let plan ← match Query.translate q with
+  let plan ← match ← parsePlan text with
     | .ok p => pure p
     | .error e =>
       IO.eprintln s!"l4qlvr: refused: {e}"
@@ -386,42 +530,199 @@ def runQuery (dir : String) (text : String) (explain : Bool) (constants : Bool :
   if constants then
     for w in plan.words do IO.println w
     return 0
-  let base ← findBase dir
-  checkMetaData dir base
-  let v ← loadVocab dir base
-  let mut srcs : Array (PermSrc IO) := #[]
-  for pi in permInfos do
-    let path := s!"{dir}/{base}.index.{pi.name}"
-    srcs := srcs.push { permMeta := ← loadPermMeta path, fetch := pread path }
-  let side ← openSide dir v
-  let lookups ← IO.mkRef (0 : Nat)
-  let lookupNs ← IO.mkRef (0 : Nat)
-  let lookup (s : String) : ExceptT String IO (Option Nat) := do
-    let a ← IO.monoNanosNow
-    let r ← match side with
-      | some sd => do pure (← sd.lookup s).1
-      | none => match v.findWord s with
-        | .ok r => pure r
-        | .error e => throw e
-    let b ← IO.monoNanosNow
-    lookups.modify (· + 1)
-    lookupNs.modify (· + (b - a))
-    pure r
+  let ss ← openSession dir codec
   let t1 ← IO.monoNanosNow
   let stdout ← IO.getStdout
-  match ← (Query.runPlanM srcs v plan lookup (fun s => stdout.write s.toUTF8)).run with
-  | .error e =>
-    stdout.flush
-    IO.eprintln s!"l4qlvr: query failed: {e}"
-    return 1
-  | .ok st =>
-    stdout.write "\n".toUTF8
-    stdout.flush
-    let t2 ← IO.monoNanosNow
-    if explain then
-      for l in st.plan do IO.eprintln s!"plan: {l}"
-    IO.eprintln s!"query: {st.rows} rows; {← lookups.get} constants looked up by {if side.isSome then "side index" else "linear scan (no side index)"} in {(← lookupNs.get) / 1000000} ms; setup {ms t0 t1} ms; execution {ms t1 t2} ms; total {ms t0 t2} ms; peak RSS (VmHWM): {← vmHWM}"
-    return 0
+  let runs := max repeatN 1
+  let mut execs : Array Nat := #[]
+  let mut last : Option (Query.RunStats × Nat × Nat) := none
+  let mut io : IoCounters := {}
+  for k in [0:runs] do
+    let final := k + 1 == runs
+    ss.counters.set {}
+    let a ← IO.monoNanosNow
+    let r ← ss.run plan (if final then fun s => stdout.write s else fun _ => pure ()) reference
+    let b ← IO.monoNanosNow
+    match r with
+    | .error e =>
+      stdout.flush
+      IO.eprintln s!"l4qlvr: query failed: {e}"
+      return 1
+    | .ok x =>
+      last := some x
+      execs := execs.push (b - a)
+      io ← ss.counters.get
+  stdout.write "\n".toUTF8
+  stdout.flush
+  let t2 ← IO.monoNanosNow
+  let some (st, nLookups, lookupNs) := last | return 1
+  if explain then
+    for l in st.plan do IO.eprintln s!"plan: {l}"
+  let ioLine := s!"codec {codec.name}: {io.frames} frames, {io.frameBytes} bytes read, {io.outBytes} bytes decoded; pread {io.preadNs / 1000} us; decode {io.decodeNs / 1000} us"
+  if runs > 1 then
+    let us := execs.map (· / 1000)
+    IO.eprintln s!"repeat: {execs.size} runs in one process; execution us min {us.foldl min (us.getD 0 0)} median {median us} max {us.foldl max 0}; last run {ioLine}"
+  IO.eprintln s!"query: {st.rows} rows; {nLookups} constants looked up by {if ss.side.isSome then "side index" else "linear scan (no side index)"} in {lookupNs / 1000000} ms; setup {ms t0 t1} ms; execution {ms t1 t2} ms; total {ms t0 t2} ms; {ioLine}; peak RSS (VmHWM): {← vmHWM}"
+  return 0
+
+/-- `l4qlvr serve INDEXDIR`: load once, then answer one query per line of
+    standard input (a query on one line, or `--file PATH`). Each answer is
+    one line of SPARQL JSON on stdout; one timing line per query on stderr. -/
+def runServe (dir : String) (codec : Codec) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let ss ← openSession dir codec
+  let t1 ← IO.monoNanosNow
+  IO.eprintln s!"serve: session loaded in {ms t0 t1} ms (vocabulary, 6 permutation trailers, side index); codec {codec.name}; peak RSS (VmHWM): {← vmHWM}"
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  let mut failures := 0
+  for _ in [0:1000000] do
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    let line := line.trimAscii.toString
+    if line.isEmpty then continue
+    let text ← if line.startsWith "--file " then IO.FS.readFile (line.drop 7).trimAscii.toString else pure line
+    let a ← IO.monoNanosNow
+    match ← parsePlan text with
+    | .error e =>
+      IO.eprintln s!"l4qlvr: refused: {e}"
+      stdout.write "{\"refused\":true}\n".toUTF8
+      stdout.flush
+      failures := failures + 1
+    | .ok plan =>
+      ss.counters.set {}
+      let b ← IO.monoNanosNow
+      let r ← ss.run plan fun s => stdout.write s
+      let c ← IO.monoNanosNow
+      stdout.write "\n".toUTF8
+      stdout.flush
+      let io ← ss.counters.get
+      match r with
+      | .error e =>
+        IO.eprintln s!"l4qlvr: query failed: {e}"
+        failures := failures + 1
+      | .ok (st, n, lns) =>
+        IO.eprintln s!"serve: {st.rows} rows; parse {(b - a) / 1000} us; execution {(c - b) / 1000} us; {n} lookups {lns / 1000} us; {io.frames} frames; pread {io.preadNs / 1000} us; decode {io.decodeNs / 1000} us; peak RSS (VmHWM): {← vmHWM}"
+  return (if failures == 0 then 0 else 1)
+
+/-! ## zstd: the Lean decoder against libzstd on every column frame -/
+
+/-- Decode every column frame of the eight permutation files with the Lean
+    decoder and with libzstd; compare the outputs byte for byte and time
+    each decoder. -/
+def runZstdDiff (dir : String) : IO UInt32 := do
+  let base ← findBase dir
+  checkMetaData dir base
+  unless ← zstdAvailable do
+    IO.eprintln "zstd-diff: libzstd.so.1 could not be loaded"
+    return 2
+  let mut pass := 0
+  let mut fail := 0
+  let mut leanNs := 0
+  let mut libNs := 0
+  let mut outBytes := 0
+  let mut inBytes := 0
+  for p in perms do
+    let path := s!"{dir}/{base}.{p}"
+    unless (← System.FilePath.pathExists path) do continue
+    let pm ← loadPermMeta path
+    for b in pm.blocks do
+      for cr in b.cols do
+        let frame ← pread path cr.offset cr.size
+        let t0 ← IO.monoNanosNow
+        let l ← decodeLeanIO frame b.rows
+        let t1 ← IO.monoNanosNow
+        let z ← zstdDecompressRaw frame (8 * b.rows).toUInt64
+        let t2 ← IO.monoNanosNow
+        leanNs := leanNs + (t1 - t0)
+        libNs := libNs + (t2 - t1)
+        inBytes := inBytes + cr.size
+        outBytes := outBytes + 8 * b.rows
+        match l with
+        | .ok lb =>
+          if lb.size == 8 * b.rows && lb == z then pass := pass + 1
+          else
+            fail := fail + 1
+            IO.println s!"DIFFERENT {p} block {b.index} frame at {cr.offset}"
+        | .error e =>
+          fail := fail + 1
+          IO.println s!"LEAN ERROR {p} block {b.index} frame at {cr.offset}: {e}"
+  let mbps (ns : Nat) : Nat := if ns == 0 then 0 else outBytes * 1000 / ns
+  IO.println s!"zstd-diff: {pass} pass, {fail} fail (out of {pass + fail}) column frames; {inBytes} bytes in, {outBytes} bytes out"
+  IO.println s!"zstd-diff: Lean {leanNs / 1000000} ms ({mbps leanNs} MB/s of output); libzstd {libNs / 1000000} ms ({mbps libNs} MB/s)"
+  IO.eprintln s!"zstd-diff: peak RSS (VmHWM): {← vmHWM}"
+  return (if fail == 0 then 0 else 1)
+
+
+/-! ## The q07 kernel: Lean against C on the same input -/
+
+/-- Decoded columns 0, 1, 2 of every block of `src` that the key prefix
+    selects, concatenated. -/
+def gatherBlocks (src : PermSrc IO) (key : Array UInt64) : IO (ByteArray × ByteArray × ByteArray × Nat) := do
+  let mut c0 := ByteArray.empty
+  let mut c1 := ByteArray.empty
+  let mut c2 := ByteArray.empty
+  let mut n := 0
+  for b in src.permMeta.blocks do
+    if b.selects key then
+      c0 := c0 ++ (← ok "kernel-dump" (← (fetchColumn src b 0).run))
+      c1 := c1 ++ (← ok "kernel-dump" (← (fetchColumn src b 1).run))
+      c2 := c2 ++ (← ok "kernel-dump" (← (fetchColumn src b 2).run))
+      n := n + b.rows
+  return (c0, c1, c2, n)
+
+/-- `l4qlvr kernel-dump INDEXDIR OUT`: the input of the q07 kernel. -/
+def runKernelDump (dir out : String) : IO UInt32 := do
+  let ss ← openSession dir .lean
+  let some sd := ss.side | throw (IO.userError "kernel-dump: needs the side index (l4qlvr side-index)")
+  let look (w : String) : IO UInt64 := do
+    match (← sd.lookup w).1 with
+    | some i => pure (Id.ofVocabIndex i).bits
+    | none => throw (IO.userError s!"kernel-dump: {w} is not in the vocabulary")
+  let medal ← look "<http://wallscope.co.uk/ontology/olympics/medal>"
+  let gold ← look "<http://wallscope.co.uk/resource/olympics/medal/Gold>"
+  let athlete ← look "<http://wallscope.co.uk/ontology/olympics/athlete>"
+  -- permInfos: 0 = pso, 1 = pos
+  let (a0, a1, a2, nA) ← gatherBlocks ss.srcs[1]! #[medal, gold]
+  let (b0, b1, b2, nB) ← gatherBlocks ss.srcs[0]! #[athlete]
+  let x : QlvrKernel.Input := { kA0 := medal, kA1 := gold, kB0 := athlete, nA, nB, a0, a1, a2, b0, b1, b2 }
+  IO.FS.writeBinFile out x.encode
+  IO.eprintln s!"kernel-dump: A (POS, wso:medal Gold) {nA} rows; B (PSO, wso:athlete) {nB} rows; {out}"
+  return 0
+
+@[noinline] def kernelOnce (impl : Nat) (x : QlvrKernel.Input) (fx : QlvrKernel.FInput)
+    (ux : QlvrKernel.UInput) : IO (Nat × UInt64) :=
+  pure (match impl with
+    | 0 => QlvrKernel.runCurrent x
+    | 1 => QlvrKernel.runBytes x
+    | 2 => QlvrKernel.runBytesSet x
+    | 3 => QlvrKernel.runFloats fx
+    | 4 => QlvrKernel.runProduction x
+    | _ => QlvrKernel.runNative ux)
+
+/-- `l4qlvr kernel FILE [ITERS]`: run every Lean implementation of the
+    kernel ITERS times (default 50); print the median and minimum time of one
+    run, the output rows and the checksum. -/
+def runKernel (file : String) (iters : Nat) : IO UInt32 := do
+  let x ← ok "kernel" (QlvrKernel.Input.parse (← IO.FS.readBinFile file))
+  let fx := QlvrKernel.FInput.ofInput x
+  let ux := QlvrKernel.UInput.ofInput x
+  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native"]
+  let mut sums : Array (Nat × UInt64) := #[]
+  for impl in [0:names.size] do
+    let mut ts : Array Nat := #[]
+    let mut r : Nat × UInt64 := (0, 0)
+    for _ in [0:max iters 1] do
+      let a ← IO.monoNanosNow
+      r ← kernelOnce impl x fx ux
+      let b ← IO.monoNanosNow
+      ts := ts.push (b - a)
+    sums := sums.push r
+    let us := ts.map (· / 1000)
+    IO.println s!"kernel lean-{names[impl]!}: A {x.nA} rows, B {x.nB} rows; output {r.1} rows, checksum {r.2}; us median {median us} min {us.foldl min (us.getD 0 0)} ({ts.size} runs)"
+  let agree := sums.all (· == sums[0]!)
+  IO.println s!"kernel: implementations {if agree then "agree" else "DISAGREE"}"
+  return (if agree then 0 else 1)
 
 end QlvrTool
 
@@ -437,15 +738,23 @@ def main (args : List String) : IO UInt32 := do
     | "query" :: dir :: rest =>
       let explain := rest.contains "--explain"
       let constants := rest.contains "--constants"
-      let rest := rest.filter fun a => a != "--explain" && a != "--constants"
+      let codec := if rest.contains "--libzstd" then QlvrTool.Codec.libzstd else .lean
+      let reference := rest.contains "--reference-render"
+      let (repeatN, rest) := QlvrTool.queryOpts rest
       match rest with
-      | ["--file", f] => do QlvrTool.runQuery dir (← IO.FS.readFile f) explain constants
-      | [text] => QlvrTool.runQuery dir text explain constants
+      | ["--file", f] => do QlvrTool.runQuery dir (← IO.FS.readFile f) explain constants codec repeatN reference
+      | [text] => QlvrTool.runQuery dir text explain constants codec repeatN reference
       | _ =>
-        IO.eprintln "usage: l4qlvr query INDEXDIR 'SPARQL' | --file Q.rq [--explain]"
+        IO.eprintln "usage: l4qlvr query INDEXDIR 'SPARQL' | --file Q.rq [--explain] [--repeat N] [--libzstd]"
         pure 2
+    | ["serve", dir] => QlvrTool.runServe dir .lean
+    | ["serve", dir, "--libzstd"] => QlvrTool.runServe dir .libzstd
+    | ["zstd-diff", dir] => QlvrTool.runZstdDiff dir
+    | ["kernel-dump", dir, out] => QlvrTool.runKernelDump dir out
+    | ["kernel", file] => QlvrTool.runKernel file 50
+    | ["kernel", file, n] => QlvrTool.runKernel file (n.toNat?.getD 50)
     | _ =>
-      IO.eprintln "usage: l4qlvr stats|dump|words|side-index INDEXDIR | scan INDEXDIR PRED-IRI | side-check INDEXDIR [STORED..] | query INDEXDIR ('SPARQL' | --file Q.rq) [--explain]"
+      IO.eprintln "usage: l4qlvr stats|dump|words|side-index|zstd-diff INDEXDIR | scan INDEXDIR PRED-IRI | side-check INDEXDIR [STORED..] | query INDEXDIR ('SPARQL' | --file Q.rq) [--explain] [--repeat N] [--libzstd] | serve INDEXDIR [--libzstd]"
       pure 2
   catch e =>
     IO.eprintln s!"l4qlvr: {e}"

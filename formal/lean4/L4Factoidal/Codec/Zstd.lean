@@ -50,11 +50,31 @@ namespace L4Factoidal.Codec.Zstd
 @[inline] def byteAt (d : ByteArray) (i : Nat) : UInt64 :=
   if h : i < d.size then (d[i]'h).toUInt64 else 0
 
-/-- The little-endian 64-bit word at byte `i` (bytes past the end read 0). -/
-@[inline] def word64 (d : ByteArray) (i : Nat) : UInt64 :=
+/-- `word64` near the end of `d`: each byte tested (bytes past the end read 0). -/
+def word64Slow (d : ByteArray) (i : Nat) : UInt64 :=
   byteAt d i ||| (byteAt d (i+1) <<< 8) ||| (byteAt d (i+2) <<< 16) |||
   (byteAt d (i+3) <<< 24) ||| (byteAt d (i+4) <<< 32) ||| (byteAt d (i+5) <<< 40) |||
   (byteAt d (i+6) <<< 48) ||| (byteAt d (i+7) <<< 56)
+
+/-- The little-endian 64-bit word at byte `i` (bytes past the end read 0).
+    One bounds test for the eight bytes when they are all inside `d`; the
+    value is `word64Slow d i` (`word64_eq_slow`). -/
+@[inline] def word64 (d : ByteArray) (i : Nat) : UInt64 :=
+  if h : i + 8 ≤ d.size then
+    (d[i]'(by omega)).toUInt64 ||| ((d[i+1]'(by omega)).toUInt64 <<< 8) |||
+    ((d[i+2]'(by omega)).toUInt64 <<< 16) ||| ((d[i+3]'(by omega)).toUInt64 <<< 24) |||
+    ((d[i+4]'(by omega)).toUInt64 <<< 32) ||| ((d[i+5]'(by omega)).toUInt64 <<< 40) |||
+    ((d[i+6]'(by omega)).toUInt64 <<< 48) ||| ((d[i+7]'(by omega)).toUInt64 <<< 56)
+  else word64Slow d i
+
+theorem word64_eq_slow (d : ByteArray) (i : Nat) : word64 d i = word64Slow d i := by
+  unfold word64 word64Slow byteAt
+  split
+  · rename_i h
+    simp only [show i < d.size by omega, show i + 1 < d.size by omega, show i + 2 < d.size by omega,
+      show i + 3 < d.size by omega, show i + 4 < d.size by omega, show i + 5 < d.size by omega,
+      show i + 6 < d.size by omega, show i + 7 < d.size by omega, dite_true]
+  · rfl
 
 /-- `n` bits (`n ≤ 56`) of `d` at bit offset `p`, least significant first. -/
 @[inline] def bitsAt (d : ByteArray) (p n : Nat) : Nat :=
@@ -484,6 +504,17 @@ def copyMatch (s : Nat) : Nat → Nat → ByteArray → ByteArray
         let chunk := out.extract s (s + m)
         copyMatch s k (rem - m) (out ++ chunk)
 
+/-- Append `out[s + i]` for `i` from `i0`, `k` bytes, one byte at a time (the
+    source may overlap the bytes being written). No allocation: `out` is
+    unique, `get!` borrows it and `push` grows it in place. -/
+def pushCopy (s : Nat) : Nat → Nat → ByteArray → ByteArray
+  | 0, _, out => out
+  | k+1, i, out => pushCopy s k (i + 1) (out.push (out.get! (s + i)))
+
+/-- Matches of at most this many bytes are copied byte by byte (`pushCopy`);
+    longer ones by `copyMatch`, which allocates one chunk per step. -/
+def shortMatch : Nat := 32
+
 structure SeqOut where
   out : ByteArray
   litPos : Nat
@@ -491,59 +522,77 @@ structure SeqOut where
   r1 : Nat
   r2 : Nat
 
+/-- `n` bits (`n ≤ 56`) of `d` at bit offset `p`, as `bitsAt`, in `UInt64`
+    arithmetic. -/
+@[inline] def bitsAtU (d : ByteArray) (p n : UInt64) : UInt64 :=
+  if n == 0 then 0 else
+  (word64 d (p >>> 3).toNat >>> (p &&& 7)) &&& (((1 : UInt64) <<< n) - 1)
+
 /-- Decode and execute `k` sequences from the backward stream at bit `pos`
     (first bit `lo`). The states, repeat offsets, literal position and
-    output are the accumulators. -/
-def seqLoop (d : ByteArray) (lo : Nat) (llT ofT mlT : Fse) (lits : ByteArray)
+    output are the accumulators. The bit position, the three states and the
+    repeat offsets are `UInt64` (every value fits: positions are bit offsets
+    of the input, states are below 2^9, offsets below 2^32); the literal
+    position is a `Nat` (it indexes `lits`). Until 2026-10-11 all of them
+    were `Nat`, with the same steps: `l4qlvr zstd-diff` over the 1,860
+    column frames of the QLever instance gave 218 MB/s of output then and
+    268-280 MB/s with `UInt64` (docs/designissues/2026-10-11-qlvr-performance.md). -/
+def seqLoop (d : ByteArray) (lo : UInt64) (llT ofT mlT : Fse) (lits : ByteArray)
     (frameStart maxOut : Nat) :
-    Nat → Nat → Nat → Nat → Nat → Nat → Nat → Nat → Nat → ByteArray → Except String SeqOut
+    Nat → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → UInt64 → Nat → ByteArray →
+      Except String SeqOut
   | 0, pos, _, _, _, r0, r1, r2, litPos, out =>
     if pos != lo then .error "sequences section: bits left over at the end of the stream"
-    else .ok ⟨out, litPos, r0, r1, r2⟩
+    else .ok ⟨out, litPos, r0.toNat, r1.toNat, r2.toNat⟩
   | k+1, pos, sLL, sOF, sML, r0, r1, r2, litPos, out =>
-    let ofc := ofT.sym.getD sOF 0
-    let llc := llT.sym.getD sLL 0
-    let mlc := mlT.sym.getD sML 0
-    let llb := llBits.getD llc 0
-    let mlb := mlBits.getD mlc 0
+    let ofc := (ofT.sym.getD sOF.toNat 0).toUInt64
+    let llc := llT.sym.getD sLL.toNat 0
+    let mlc := mlT.sym.getD sML.toNat 0
+    let llb := (llBits.getD llc 0).toUInt64
+    let mlb := (mlBits.getD mlc 0).toUInt64
     if ofc > 31 then .error s!"sequences section: offset code {ofc} above 31"
     else if ofc + mlb + llb > pos - lo then .error "sequences section: the stream ends inside a sequence"
     else
     let pos := pos - ofc
-    let ofv := (1 <<< ofc) + bitsAt d pos ofc
+    let ofv := ((1 : UInt64) <<< ofc) + bitsAtU d pos ofc
     let pos := pos - mlb
-    let ml := mlBase.getD mlc 0 + bitsAt d pos mlb
+    let ml := (mlBase.getD mlc 0).toUInt64 + bitsAtU d pos mlb
     let pos := pos - llb
-    let ll := llBase.getD llc 0 + bitsAt d pos llb
+    let ll := (llBase.getD llc 0).toUInt64 + bitsAtU d pos llb
     -- repeat offsets (section 3.1.1.5)
     let i := ofv - 1 + (if ll == 0 then 1 else 0)
     let off :=
       if ofv > 3 then ofv - 3
-      else if i == 0 then r0 else if i == 1 then r1 else if i == 2 then r2 else r0 - 1
+      else if i == 0 then r0 else if i == 1 then r1 else if i == 2 then r2
+      else if r0 == 0 then 0 else r0 - 1
     let n1 := if ofv ≤ 3 && i == 0 then r1 else r0
     let n2 := if ofv > 3 then r1 else if i ≤ 1 then r2 else r1
     -- state update, except after the last sequence: LL, ML, OF
-    let nLL := llT.nb.getD sLL 0
-    let nML := mlT.nb.getD sML 0
-    let nOF := ofT.nb.getD sOF 0
+    let nLL := (llT.nb.getD sLL.toNat 0).toUInt64
+    let nML := (mlT.nb.getD sML.toNat 0).toUInt64
+    let nOF := (ofT.nb.getD sOF.toNat 0).toUInt64
     if k != 0 && nLL + nML + nOF > pos - lo then .error "sequences section: the stream ends inside a state update"
     else
     let pos1 := if k != 0 then pos - nLL else pos
-    let sLL' := if k != 0 then llT.base.getD sLL 0 + bitsAt d pos1 nLL else sLL
+    let sLL' := if k != 0 then (llT.base.getD sLL.toNat 0).toUInt64 + bitsAtU d pos1 nLL else sLL
     let pos2 := if k != 0 then pos1 - nML else pos1
-    let sML' := if k != 0 then mlT.base.getD sML 0 + bitsAt d pos2 nML else sML
+    let sML' := if k != 0 then (mlT.base.getD sML.toNat 0).toUInt64 + bitsAtU d pos2 nML else sML
     let pos3 := if k != 0 then pos2 - nOF else pos2
-    let sOF' := if k != 0 then ofT.base.getD sOF 0 + bitsAt d pos3 nOF else sOF
+    let sOF' := if k != 0 then (ofT.base.getD sOF.toNat 0).toUInt64 + bitsAtU d pos3 nOF else sOF
     -- execution (section 3.1.1.4)
-    if litPos + ll > lits.size then .error "sequences section: Literals_Length exceeds the literals"
-    else if out.size + ll + ml > maxOut then .error "frame: output exceeds the limit"
+    let llN := ll.toNat
+    let mlN := ml.toNat
+    if litPos + llN > lits.size then .error "sequences section: Literals_Length exceeds the literals"
+    else if out.size + llN + mlN > maxOut then .error "frame: output exceeds the limit"
     else
-    let out := lits.copySlice litPos out out.size ll false
+    let out := lits.copySlice litPos out out.size llN false
     if off == 0 then .error "sequences section: offset 0"
-    else if off > out.size - frameStart then .error "sequences section: offset reaches before the start of the frame"
+    else if off.toNat > out.size - frameStart then .error "sequences section: offset reaches before the start of the frame"
     else
-    let out := copyMatch (out.size - off) (ml + 1) ml out
-    seqLoop d lo llT ofT mlT lits frameStart maxOut k pos3 sLL' sOF' sML' off n1 n2 (litPos + ll) out
+    let s := out.size - off.toNat
+    let out := if mlN ≤ shortMatch then pushCopy s mlN 0 out
+      else copyMatch s (mlN + 1) mlN out
+    seqLoop d lo llT ofT mlT lits frameStart maxOut k pos3 sLL' sOF' sML' off n1 n2 (litPos + llN) out
 
 /-- Select one of the three sequence tables (section 3.1.1.3.2.1). -/
 def readSeqTable (mode : Nat) (d : ByteArray) (p stop : Nat) (prev : Option Fse)
@@ -603,7 +652,8 @@ def compressedBlock (d : ByteArray) (p stop : Nat) (st : FrameState) (stats : St
   let pos := pos - ofT.log
   let sML := bitsAt d (pos - mlT.log) mlT.log
   let pos := pos - mlT.log
-  let r ← seqLoop d lo llT ofT mlT lits frameStart maxOut nseq pos sLL sOF sML st.r0 st.r1 st.r2 0 out
+  let r ← seqLoop d lo.toUInt64 llT ofT mlT lits frameStart maxOut nseq pos.toUInt64 sLL.toUInt64
+    sOF.toUInt64 sML.toUInt64 st.r0.toUInt64 st.r1.toUInt64 st.r2.toUInt64 0 out
   let rest := lits.size - r.litPos
   if r.out.size + rest > maxOut then throw "frame: output exceeds the limit"
   let out := lits.copySlice r.litPos r.out r.out.size rest false
@@ -703,10 +753,12 @@ def decodeFrame (d : ByteArray) (p : Nat) (out : ByteArray) (stats : Stats) (max
 def maxOutputDefault : Nat := 1024 * 1024 * 1024
 
 /-- Decompress every frame of `d`, with the counts of what was decoded. -/
-def decompressStats (d : ByteArray) (maxOut : Nat := maxOutputDefault) :
+def decompressStats (d : ByteArray) (maxOut : Nat := maxOutputDefault) (sizeHint : Nat := 0) :
     Except String (ByteArray × Stats) := do
   if d.size == 0 then throw "input: empty, no frame"
-  let mut out := ByteArray.empty
+  -- `sizeHint`: the expected output size, when the caller knows it; the
+  -- output then never grows by reallocation. It does not change the result.
+  let mut out := ByteArray.emptyWithCapacity (min sizeHint maxOut)
   let mut p := 0
   let mut stats : Stats := {}
   for _ in [0:d.size] do
@@ -717,7 +769,8 @@ def decompressStats (d : ByteArray) (maxOut : Nat := maxOutputDefault) :
   pure (out, stats)
 
 /-- Decompress every frame of `d` (RFC 8878). -/
-def decompress (d : ByteArray) (maxOut : Nat := maxOutputDefault) : Except String ByteArray :=
-  (decompressStats d maxOut).map (·.1)
+def decompress (d : ByteArray) (maxOut : Nat := maxOutputDefault) (sizeHint : Nat := 0) :
+    Except String ByteArray :=
+  (decompressStats d maxOut sizeHint).map (·.1)
 
 end L4Factoidal.Codec.Zstd
