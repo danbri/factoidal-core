@@ -29,7 +29,9 @@ tree's `build-ocaml.sh` compiles them (`-O2 -fPIC -I include`), and
 archived into `libl4hacl.a`, which Lake links into every executable of
 this package. `Crypto/SHA2Native.lean` also exposes whole SHA-256 and raw
 block compression through the same shim. Differential smoke tests compare
-them with pure Lean; a universal native-equivalence proof is not supplied. -/
+them with pure Lean; a universal native-equivalence proof is not supplied
+(https://github.com/danbri/factoidal/issues/777; expected-failure case
+NX-1 in `tests/known-defects/run.sh`). -/
 
 /-- `third_party/hacl`, relative to this package (`formal/lean4`). -/
 def haclDir (pkg : Package) : FilePath :=

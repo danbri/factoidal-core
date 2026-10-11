@@ -754,6 +754,33 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# NX-1 (https://github.com/danbri/factoidal/issues/777) -- the Lean native
+# crypto externs (HACL*, `@[extern]` + `opaque`) have no stated equivalence
+# to the pure Lean functions. `sha256Hacl` is opaque, so no Lean theorem can
+# relate it to `Crypto.sha256`; agreement is only measured (l4vc-probe,
+# l4native-crypto-smoke). This probe reads the SOURCE, because the gap is
+# the absence of a statement: XFAIL while no declaration named
+# `sha256Hacl_eq_sha256` exists under formal/lean4. When one lands (an axiom
+# citing the HACL* theorem, or a theorem), this reads XPASS: update issue 777
+# and retire the case in the same commit.
+# ---------------------------------------------------------------------
+LEAN_SRC="${ROOT}/formal/lean4"
+if [ ! -f "${LEAN_SRC}/L4Factoidal/Crypto/SHA2Native.lean" ]; then
+  record NX-1 777 "native SHA-256 extern has no equivalence statement" ERROR \
+    "formal/lean4/L4Factoidal/Crypto/SHA2Native.lean not found"
+elif ! grep -q 'opaque sha256Hacl' "${LEAN_SRC}/L4Factoidal/Crypto/SHA2Native.lean"; then
+  record NX-1 777 "native SHA-256 extern has no equivalence statement" ERROR \
+    "probe drifted: sha256Hacl is no longer declared opaque in SHA2Native.lean"
+elif grep -rqE '^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(theorem|axiom|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?sha256Hacl_eq_sha256\b' \
+      "${LEAN_SRC}" --include='*.lean'; then
+  record NX-1 777 "native SHA-256 extern has no equivalence statement" XPASS \
+    "a declaration named sha256Hacl_eq_sha256 now exists"
+else
+  record NX-1 777 "native SHA-256 extern has no equivalence statement" XFAIL \
+    "no sha256Hacl_eq_sha256 theorem or axiom in formal/lean4 (agreement is measured only)"
+fi
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))
