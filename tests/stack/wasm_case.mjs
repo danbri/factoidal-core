@@ -25,6 +25,7 @@ const CASES = {
   'nquads-one-subject': () => ['parseToDatasetJson', readArgs('args-nquads.json')],
   'sparql-union': () => ['queryDataset', readArgs('args-sparql-union.json')],
   'sparql-nested': () => ['queryDataset', readArgs('args-sparql-nested.json')],
+  'sparql-order-limit': () => ['queryDataset', readArgs('args-sparql-order-limit.json')],
   'manifest': () => ['storeManifestInspect', readArgs('manifest-args.json')],
 };
 

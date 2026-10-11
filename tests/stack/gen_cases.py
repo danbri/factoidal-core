@@ -105,6 +105,16 @@ N_NEST = int(os.environ.get("STACK_NEST", "1000"))
 write("sparql-nested.rq",
       "SELECT ?s WHERE %s{ ?s ?p ?o }%s\n" % ("{ " * N_NEST, " }" * N_NEST))
 
+# ORDER BY with LIMIT over many solution rows: the ordered-prefix merge
+# sort (SPARQL/OrderedPrefix.lean, mergeSortPrefix) recurses ceil(log2 n)
+# deep and its merge is a loop; a frame per row would overflow here.
+N_ORDER = int(os.environ.get("STACK_ORDER_ROWS", "100000"))
+write("sparql-order-limit.nq",
+      "".join('<http://example.org/s%d> <http://example.org/p> "%d" .\n' % (i, (i * 7919) % N_ORDER)
+              for i in range(N_ORDER)))
+write("sparql-order-limit.rq",
+      "SELECT ?s ?o WHERE { ?s <http://example.org/p> ?o } ORDER BY DESC(?o) LIMIT 3\n")
+
 # -------------------------------------------------------------- JSON-LD
 # The nesting is written as text. json.dumps recurses once per nesting level
 # and raises RecursionError at 5000 levels on Python 3.13 (issue 749), so no
@@ -196,9 +206,12 @@ args("args-sparql-union.json",
 args("args-sparql-nested.json",
      "<http://example.org/s> <http://example.org/p> <http://example.org/o> .",
      open(os.path.join(OUT, "sparql-nested.rq")).read())
+args("args-sparql-order-limit.json",
+     open(os.path.join(OUT, "sparql-order-limit.nq")).read(),
+     open(os.path.join(OUT, "sparql-order-limit.rq")).read())
 
 print(json.dumps({
     "dir": OUT, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
-    "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST,
+    "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man)}))

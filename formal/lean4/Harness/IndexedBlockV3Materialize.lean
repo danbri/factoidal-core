@@ -391,24 +391,26 @@ private def readSparsePtdPages (path : String) (ref : Ref) (leaves : List Digest
               | _, _ => pure none
 
 /-- Index only pages already authenticated and decoded for this artifact.
-    `PageCache.term_ofList` preserves the old list lookup, including misses. -/
+    `PageCache.term_ofList` preserves the old list lookup, including misses.
+    The result is `none` when any row fails to decode or names another
+    predicate; otherwise the triples are in row order. `go` is a tail loop
+    with a reversed accumulator (one stack frame for any number of rows of
+    a block; danbri/factoidal issue 746). -/
 private def sparseRowsToTriples? (ptdHeader : L4Factoidal.Storage.PagedTermDictionary.Prefix)
     (pages : List (Nat × Array Term)) (predicate : WfIri)
     (rows : List L4Factoidal.Storage.IndexedBlock.IdTriple) : Option (List Triple) :=
   let indexed := L4Factoidal.Storage.PageCache.ofList pages
   let termAt := L4Factoidal.Storage.PageCache.term? indexed ptdHeader.pageTerms
-  let rec go : List L4Factoidal.Storage.IndexedBlock.IdTriple → Option (List Triple)
-    | [] => some []
-    | row :: rest => do
-        let subject ← termAt row.s
-        let actualPredicate ← termAt row.p
-        let object ← termAt row.o
-        let later ← go rest
-        match subject, actualPredicate with
-        | .iri iri, .iri actual => if actual == predicate then some ({ s := .iri iri, p := actual, o := object } :: later) else none
-        | .bnode bnode, .iri actual => if actual == predicate then some ({ s := .bnode bnode, p := actual, o := object } :: later) else none
-        | _, _ => none
-  go rows
+  let rec go : List L4Factoidal.Storage.IndexedBlock.IdTriple → List Triple → Option (List Triple)
+    | [], acc => some acc.reverse
+    | row :: rest, acc =>
+        match termAt row.s, termAt row.p, termAt row.o with
+        | some (.iri iri), some (.iri actual), some object =>
+            if actual == predicate then go rest ({ s := .iri iri, p := actual, o := object } :: acc) else none
+        | some (.bnode bnode), some (.iri actual), some object =>
+            if actual == predicate then go rest ({ s := .bnode bnode, p := actual, o := object } :: acc) else none
+        | _, _, _ => none
+  go rows []
 
 private def sparseIndexedTermsAgree (ptdHeader : L4Factoidal.Storage.PagedTermDictionary.Prefix)
     (pages : List (Nat × Array Term)) (terms : List (Term × Nat)) : Bool :=

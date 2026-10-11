@@ -1373,3 +1373,17 @@ L4Wasm_Json_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 l
 L4Wasm_decodeSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:331
 L4Wasm_termIriString  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:340
 L4Factoidal_Syntax_readCollectionCells  # (b) the readObject cycle recurses once per NESTING level of collections and [ ] (2,897 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements of one collection are a loop (goto _start), issue 678
+#
+# --- Added 2026-10-11 after commit 4bfa8b49 and the 2026-10-10 SPARQL merge ---
+# (b)/(c) as above. The data-proportional row of that landing
+# (Harness_IndexedBlockV3Materialize_sparseRowsToTriples?_go) was converted
+# to a tail loop instead.
+L4Factoidal_SPARQL_QueryPattern_inScopeVars  # (b) nesting of graph patterns and subqueries in one query (BGP triples via List.flatMap); mutual with Query.projectedVars
+L4Factoidal_SPARQL_Query_projectedVars  # (b) subquery nesting in one query; mutual with QueryPattern.inScopeVars
+L4Factoidal_SPARQL_projectionTermVars  # (b) RDF 1.2 triple-term nesting in one pattern term of the query
+L4Factoidal_SPARQL_exprHasAggregateList  # (b) arguments of one expression in the query (CONCAT, COALESCE, IN, a function call); mutual with exprHasAggregate
+L4Factoidal_SPARQL_exprHasAggregateOpt  # (b) expression nesting in the query; mutual with exprHasAggregate
+L4Factoidal_SPARQL_rewriteAggregateList  # (b) arguments of one function call in a projected or HAVING expression of the query; mutual with rewriteAggregates
+L4Factoidal_SPARQL_rewriteAggregateOpt  # (b) expression nesting in the query; mutual with rewriteAggregates
+L4Factoidal_SPARQL_mergeSortPrefix  # (c) top-down merge sort over solution rows: each call halves its input (splitInTwo), so depth is ceil(log2 n), at most 64; the merge is a loop (mergePrefix csimp to mergePrefixTR); same depth as core List.mergeSort
+L4Factoidal_Storage_SubjectRowIndexWireV2_candidatePages  # (c) Array.qsort over the distinct page references selected by one subject probe batch; median-of-three pivot, expected depth O(log n), worst case n

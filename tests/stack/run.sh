@@ -356,6 +356,7 @@ CASES=(
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
   "sparql-union        queryDataset         args-sparql-union.json"
   "sparql-nested       queryDataset         args-sparql-nested.json"
+  "sparql-order-limit  queryDataset         args-sparql-order-limit.json"
   "manifest            storeManifestInspect manifest-args.json"
 )
 
