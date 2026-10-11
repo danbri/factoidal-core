@@ -14,7 +14,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 lean_dir="$repo_root/formal/lean4"
 bin="$lean_dir/.lake/build/bin"
-run_dir=$(mktemp -d /private/tmp/factoidal-ibk5-quad.XXXXXX)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/factoidal-ibk5-quad.XXXXXX")
 trap 'rm -rf "$run_dir"' EXIT
 
 trig="$repo_root/tests/local/data/quad_sample.trig"

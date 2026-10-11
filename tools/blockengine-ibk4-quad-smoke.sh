@@ -10,7 +10,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 lean_dir="$repo_root/formal/lean4"
 bin="$lean_dir/.lake/build/bin"
-run_dir=$(mktemp -d /private/tmp/factoidal-ibk4-quad.XXXXXX)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/factoidal-ibk4-quad.XXXXXX")
 trap 'rm -rf "$run_dir"' EXIT
 
 trig="$repo_root/tests/local/data/quad_sample.trig"
@@ -110,7 +110,7 @@ quad_query 'SELECT * WHERE { ?s ?p ?o }' >"$run_dir/q-default.txt"
 cat "$run_dir/q-default.txt"
 grep -q '^l4block-quad-query rows=2 ' "$run_dir/q-default.txt"
 grep -q 'http://example.org/alice' "$run_dir/q-default.txt"
-grep -vq 'http://example.org/shared' "$run_dir/q-default.txt" || \
+! grep -Fq 'http://example.org/shared' "$run_dir/q-default.txt" || \
   { echo 'default-graph query leaked a named-graph row'; exit 1; }
 
 # FROM NAMED restricts the dataset to g1, so GRAPH ?g answers two rows.
@@ -119,7 +119,7 @@ quad_query 'SELECT * FROM NAMED <http://example.org/g1> WHERE { GRAPH ?g { ?s ?p
 cat "$run_dir/q-from-named.txt"
 grep -q '^l4block-quad-query rows=2 ' "$run_dir/q-from-named.txt"
 grep -q 'http://example.org/g1' "$run_dir/q-from-named.txt"
-grep -vq 'http://example.org/g2' "$run_dir/q-from-named.txt" || \
+! grep -Fq 'http://example.org/g2' "$run_dir/q-from-named.txt" || \
   { echo 'FROM NAMED query leaked a graph the dataset does not name'; exit 1; }
 
 # `ex:knows` is in the default graph only, so exactly one block is opened.

@@ -6,7 +6,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 lean_dir="$repo_root/formal/lean4"
-run_dir=$(mktemp -d /private/tmp/factoidal-ibk3-persistent.XXXXXX)
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/factoidal-ibk3-persistent.XXXXXX")
 trap 'rm -rf "$run_dir"' EXIT
 root="$run_dir/collection"
 generation='first'

@@ -5,7 +5,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 lean_dir="$repo_root/formal/lean4"
-run_dir=$(mktemp -d "$repo_root/tmp/blockengine-ibk3-compact.XXXXXX")
+run_dir=$(mktemp -d "${TMPDIR:-/tmp}/factoidal-ibk3-compact.XXXXXX")
 trap 'rm -rf "$run_dir"' EXIT
 
 "$lean_dir/.lake/build/bin/l4block-shard-pack" \
