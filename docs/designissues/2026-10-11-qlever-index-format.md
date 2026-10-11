@@ -359,6 +359,35 @@ Raw (3,085), Huffman-compressed (795) and treeless (328). A reader therefore
 needs the full RFC 8878 decoder: Huffman literals, FSE-coded sequences and
 repeat offsets.
 
+**Decoded in Lean (stage 3 step 1, 2026-10-11).**
+`formal/lean4/L4Factoidal/Codec/Zstd.lean` is a pure-Lean RFC 8878 decoder:
+frames (several per input, skippable frames skipped, a non-zero dictionary id
+refused), Raw/RLE/Compressed blocks, the four literal section types with 1 or
+4 Huffman streams, Huffman weights direct or FSE-coded, the four table modes
+for the three sequence codes, repeat offsets, and the content checksum (XXH64
+in Lean, checked when the frame has one). `lake exe l4qlvr-zstd-check blocks`
+decodes every column frame of the instance and compares the sha256 with
+libzstd's output (`probe_index.py --zstd-tsv` writes the list). Measured
+2026-10-11, linux x86_64, 4 cores, Lean 4.33.1:
+
+| What | Result |
+| --- | --- |
+| column frames | 1,860 pass, 0 fail (out of 1,860) |
+| zstd blocks decoded | 4,208, all Compressed; literal sections Raw 3,085, Huffman 795, treeless 328 (the same counts as the probe above) |
+| sequences executed | 17,581,843 |
+| Lean decode time, all frames | 4,413 ms for 499,663,936 output bytes from 22,232,169 compressed bytes: 113 MB/s of output |
+| libzstd 1.5.7 (`tools/qlvr/zstd_bench.py`, best of 5) | 280 ms: 1,785 MB/s, 16 times the Lean rate |
+| peak RSS of `l4qlvr-zstd-check blocks` (VmHWM) | 21,444 kB (one permutation file in memory at a time, one frame decoded at a time) |
+| one 9,600,000-byte frame (tests/stack `zstd-8mib`) | 213 ms, peak RSS 33,480 kB; ran under `LEAN_STACK_SIZE_KB=512` |
+
+Committed vectors (`formal/lean4/Harness/TestData/zstd`, 32 KB, written by
+`tools/qlvr/zstd_vectors.py` with libzstd 1.5.7 at levels 1, 3 and 19, with
+and without checksum, empty, RLE, raw, 300 KiB multi-block, two frames with a
+skippable frame): 14 pass, 0 fail (out of 14). Seven small ones are `#guard`s
+in `L4Factoidal/Codec/ZstdTests.lean`, with the XXH64 reference values and
+refusal cases (every truncation of one frame, a flipped checksum, wrong magic,
+a dictionary id).
+
 ### Relations and the `.meta` files
 
 A "relation" is the run of triples with one col0 value. A relation with at
@@ -491,7 +520,8 @@ into memory works for this 46 MB instance but is not the target (CLAUDE.md,
   and `q12` in `/home/user/qlvr-work/oracle/` (manifest
   `tests/qlvr/instance.json`).
 - Differential zstd test: Lean `Zstd` against the `zstandard` Python package
-  over all 1,860 frames of the instance (byte equality).
+  over all 1,860 frames of the instance (sha256 equality). Landed 2026-10-11:
+  1,860 pass, 0 fail (out of 1,860); see "Column frames".
 - Negative tests: truncated frame, wrong magic, `blockIndex` out of order,
   `index-format-version` other than 2026-09-26/3470: each is an error with a
   message, never a crash.
@@ -509,7 +539,9 @@ into memory works for this 46 MB instance but is not the target (CLAUDE.md,
    compiled into the wasm build, and a new trust-surface entry. Proposal: (a)
    as the reference decoder, (b) optional for speed, with the differential
    test above between them. Whether a pure-Lean zstd decoder exists outside
-   this repository was not checked.
+   this repository was not checked. **Done for (a), 2026-10-11:**
+   `L4Factoidal/Codec/Zstd.lean` (723 lines), 113 MB/s of output
+   against libzstd's 1,785 MB/s on this instance. (b) is not done.
 2. **String to Id.** The vocabulary is in ICU collation order (section 2).
    Lean has no ICU. A bound term in a query needs its `VocabIndex`: stage 3
    uses a full scan (543,754 words); a later stage builds its own sorted or

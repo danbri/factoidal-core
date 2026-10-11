@@ -10,12 +10,14 @@ the Lean reader is the implementation. The probe exists so that every
 Usage:
   python3 -I tools/qlvr/probe_index.py <index-dir> <basename> [--scan PRED_IRI]
   python3 -I tools/qlvr/probe_index.py <index-dir> <basename> --dump-block0 index.pso
+  python3 -I tools/qlvr/probe_index.py <index-dir> <basename> --zstd-tsv OUT.tsv
 
 Needs the `zstandard` Python package (pip install zstandard).
 
 With --scan, it decodes the PSO permutation for one bound predicate and
 prints the (subject, object) pairs as N-Triples terms, in PSO order.
 """
+import hashlib
 import json
 import os
 import struct
@@ -269,8 +271,37 @@ def dump_block0(path):
     show("blockIndex", 8); r.u64()
 
 
+def zstd_tsv(d, base, out_path):
+    """Write one line per column frame of every permutation file:
+    file, offset, compressed length, decompressed size, sha256 of the
+    decompressed bytes (libzstd through the zstandard package). The input of
+    `l4qlvr-zstd-check blocks`."""
+    n = 0
+    with open(out_path, "w") as out:
+        out.write("# zstandard %s; file offset length size sha256\n" % zstandard.__version__)
+        for p in ("pso", "pos", "spo", "sop", "osp", "ops"):
+            for kind in ("index", "internal.index"):
+                name = "%s.%s.%s" % (base, kind, p)
+                path = os.path.join(d, name)
+                if not os.path.exists(path):
+                    continue
+                perm = read_permutation(path)
+                buf = perm["buf"]
+                for b in perm["blocks"]:
+                    for off, size in b["cols"]:
+                        raw = zstandard.ZstdDecompressor().decompress(buf[off:off + size])
+                        assert len(raw) == 8 * b["rows"], (name, off)
+                        out.write("%s\t%d\t%d\t%d\t%s\n" % (name, off, size, len(raw),
+                                                          hashlib.sha256(raw).hexdigest()))
+                        n += 1
+    print("wrote %d column frames to %s" % (n, out_path))
+
+
 def main():
     d, base = sys.argv[1], sys.argv[2]
+    if "--zstd-tsv" in sys.argv:
+        zstd_tsv(d, base, sys.argv[sys.argv.index("--zstd-tsv") + 1])
+        return
     if "--dump-block0" in sys.argv:
         dump_block0(os.path.join(d, base + "." + sys.argv[sys.argv.index("--dump-block0") + 1]))
         return

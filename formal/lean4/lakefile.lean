@@ -271,6 +271,11 @@ extern_lib libl4exthost pkg := do
 -- printed scores.
 @[default_target] lean_exe «l4owl-probe» where root := `Harness.OwlProbe
 
+-- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): the pure-Lean
+-- zstd decoder (L4Factoidal.Codec.Zstd) against libzstd's answers, on the
+-- committed vectors and on every column frame of the QLever instance.
+@[default_target] lean_exe «l4qlvr-zstd-check» where root := `Harness.QlvrZstdCheck
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."

@@ -335,6 +335,8 @@ import L4Factoidal.Codec.Archive
 import L4Factoidal.Codec.Lzma
 import L4Factoidal.Codec.Xz
 import L4Factoidal.Codec.XzTests
+import L4Factoidal.Codec.Zstd
+import L4Factoidal.Codec.ZstdTests
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RML.Mapping

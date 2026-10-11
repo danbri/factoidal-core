@@ -428,6 +428,48 @@ if [ "$ROUTE" = wasm ] || [ "$ROUTE" = both ]; then
   fi
 fi
 
+# ------------------------------------------- zstd (Factoidal/qlvr, issue 778)
+# The pure-Lean zstd decoder (L4Factoidal.Codec.Zstd) has no op on the
+# dispatch ABI; it runs through its own harness, l4qlvr-zstd-check, on one
+# frame of 9,600,000 bytes of output (gen_cases.py, zstd-ids.zst). Native
+# route at the default stack; canary route under the canary budget once the
+# control has passed. https://github.com/danbri/factoidal/issues/778
+ZSTD_BIN="$LEAN_DIR/.lake/build/bin/l4qlvr-zstd-check"
+zstd_case() { # zstd_case <route> <prefix...>
+  local route="$1"; shift
+  local f="$FIXTURES/zstd-ids.zst" out rc
+  if [ ! -f "$f" ] || [ ! -f "$f.sha256" ]; then
+    record "$route" zstd-8mib 1 "fixture missing: gen_cases.py needs the Python zstandard package"
+    return
+  fi
+  if [ ! -x "$ZSTD_BIN" ]; then
+    record "$route" zstd-8mib 1 "$ZSTD_BIN does not exist (lake build l4qlvr-zstd-check)"
+    return
+  fi
+  out="$(run_capped "$TIMEOUT" "$@" "$ZSTD_BIN" frame "$f" "$(cat "$f.sha256")" 2>&1)"; rc=$?
+  if printf '%s' "$out" | grep -q 'Stack overflow'; then
+    score_case "$route" zstd-8mib overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ]; then
+    score_case "$route" zstd-8mib error "exit $rc: $(printf '%s' "$out" | tail -1 | head -c 160)"
+  else
+    score_case "$route" zstd-8mib ran "$(printf '%s' "$out" | sed -n 2p)"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== zstd frame, native default stack"
+  zstd_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== zstd frame, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    zstd_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary zstd-8mib 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"

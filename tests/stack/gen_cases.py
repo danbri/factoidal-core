@@ -238,8 +238,33 @@ args("args-sparql-order-limit.json",
      open(os.path.join(OUT, "sparql-order-limit.nq")).read(),
      open(os.path.join(OUT, "sparql-order-limit.rq")).read())
 
+# ------------------------------------------------- zstd (Factoidal/qlvr)
+# One zstd frame of 1,200,000 QLever-like 8-byte Ids (9,600,000 bytes of
+# output, above 8 MiB), level 3 with a content checksum, for
+# `l4qlvr-zstd-check frame` (https://github.com/danbri/factoidal/issues/778).
+# The expected sha256 is written beside it. Needs the `zstandard` package;
+# without it no file is written and run.sh records a failure.
+N_ZSTD_IDS = 1200000
+try:
+    import random
+    import zstandard
+    zpath = os.path.join(OUT, "zstd-ids.zst")
+    if not os.path.exists(zpath) or not os.path.exists(zpath + ".sha256"):
+        rnd = random.Random(8878)
+        v = (4 << 60) | 137024
+        raw = bytearray()
+        for _ in range(N_ZSTD_IDS):
+            v += rnd.choice((0, 0, 1, 1, 2, 7, 300))
+            raw += struct.pack("<Q", v)
+        with open(zpath, "wb") as fh:
+            fh.write(zstandard.ZstdCompressor(level=3, write_checksum=True).compress(bytes(raw)))
+        with open(zpath + ".sha256", "w") as fh:
+            fh.write(hashlib.sha256(raw).hexdigest())
+except ImportError:
+    pass
+
 print(json.dumps({
-    "dir": OUT, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
+    "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man)}))
