@@ -623,6 +623,212 @@ terms go into the local vocabulary, numeric literals are folded into value
 Ids. The test is to start the server with `--persist-updates` on a copy of
 the index with the written file and compare its answers.
 
+## Basic graph patterns from Lean (stage 4, 2026-10-11)
+
+`l4qlvr query INDEXDIR 'SPARQL'` (or `--file q.rq`) answers a SELECT query
+from the index on disk and prints SPARQL JSON. The query is parsed by the
+repository's SPARQL parser (`L4Factoidal.SPARQL.parseSparql`); rows are
+printed with its results serializer (`rowJson`, `varListJson`). Permutation
+column frames are read with `pread`, only for the blocks a scan selects. The
+three vocabulary files are still read whole (16 MB here), as in stage 3.
+
+| Module | Content |
+| --- | --- |
+| `Qlvr.Sort` | `cmpBytes` (unsigned byte order) and `mergeSortBy` (stable bottom-up merge sort, `for` loops) |
+| `Qlvr.Side` | the side index format, run records, `sideLookupM` (binary search over two fetch functions) |
+| `Qlvr.Bgp` | QLever's `Id` comparison, permutation choice, block selection and estimates, `scanFoldM` (block by block), merge and hash joins, `evalBgpM` (the planner) |
+| `Qlvr.Query` | the fragment (`translate`), constant folding, FILTER programs, GROUP BY with COUNT, ORDER BY, DISTINCT, LIMIT/OFFSET, `Id` to RDF term, `runPlanM` |
+
+### The fragment
+
+Accepted: SELECT with `*`, variables, `(COUNT(*) AS ?n)`, `(COUNT(?x) AS ?n)`;
+DISTINCT (REDUCED is read as no modifier); a WHERE clause of triple patterns
+and FILTERs; FILTER with `&&`, `||`, `!`, `= != < > <= >=`, `sameTerm`
+between variables and constants, and `STRSTARTS`, `STRENDS`, `CONTAINS` of a
+variable and a string literal; GROUP BY variables; ORDER BY variables, ASC or
+DESC; LIMIT; OFFSET. Everything else is refused before any file is read:
+`l4qlvr` prints `l4qlvr: refused: <reason>` and exits 3
+(`tests/qlvr/run.sh` part (h) checks eight refusals: OPTIONAL, UNION, BIND,
+an ORDER BY expression, COUNT DISTINCT, REGEX, CONSTRUCT, a date constant).
+
+### Constants
+
+A query constant becomes an `Id` as QLever's parser makes it (section 1,
+"Literals that become ..."): the 12 integer datatypes to `Int` (when the
+value fits in 60 bits), `xsd:decimal`, `xsd:double`, `xsd:float` to `Double`
+(binary64 bits shifted right by 4; the lexical form is read with
+`Float.ofScientific`), `xsd:boolean` to `Bool`. So `1936` (`xsd:integer`)
+matches `"1936"^^xsd:int` (`q15`: 2 rows, as QLever). Other literals and IRIs
+are looked up in their stored form (section 2): `<iri>`, `"lex"@lang`,
+`"lex"` for `xsd:string`, `"lex"^^<dt>`. A constant that is not in the
+vocabulary makes its pattern empty. Date and duration constants are refused
+(https://github.com/danbri/factoidal/issues/780).
+
+### String to Id: the side index
+
+`l4qlvr side-index INDEXDIR` writes `INDEXDIR.qlvr-side/` next to the index
+directory (never inside it): `words.sorted` (every stored word, in unsigned
+byte order), `words.entries` (24 bytes per word: offset, length,
+`VocabIndex`) and `side.header` (64 bytes: `QLVRSIDE`, version 1, word count,
+size of `words.external`, XXH64 of `words.external.offsets`, size of
+`words.sorted`). A reader refuses a side index whose count, size or hash
+does not match the loaded vocabulary. The build is an external merge sort:
+chunks of 65,536 words in index order are decoded, sorted in memory and
+written as run files; the 9 runs are merged by positioned reads of 1 MiB
+into the two files. A lookup is a binary search: 20 probes of two positioned
+reads each for this vocabulary. Without a side index, `l4qlvr query` uses
+the linear scan `findWord` of stage 3 and says so on stderr.
+
+| Measure | Value |
+| --- | --- |
+| Build (`side-index`), 543,754 words | 3.3 s (runs 2.7 s including the vocabulary load, merge 0.5-0.6 s); peak RSS 82-83 MB |
+| Size | `words.sorted` 41,771,588 bytes, `words.entries` 13,050,096 bytes (the FSST-compressed vocabulary is 11,783,453 + 4,350,072 bytes) |
+| Agreement with the linear scan (`side-check`) | 1,120 pass, 0 fail (out of 1,120): the 20 distinct stored-form constants of the 21 queries (by `findWord`), 1,000 sampled words and 100 words not in the vocabulary (one linear pass over all words gives each sample's first index) |
+| Lookup time | 20 constants by `findWord`: 2,981 ms in total; 1,100 lookups by the side index: 77 ms, 19,975 probes |
+
+The side index stores the words uncompressed, so it is 3.4 times the size
+of the compressed vocabulary. Storing FSST-compressed words would need a
+decode per probe.
+
+### Plan rules and join choice
+
+The rules are in the header of `L4Factoidal/Qlvr/Bgp.lean`. In short:
+
+1. A pattern is scanned from a permutation whose first columns are exactly
+   its bound positions (the key prefix); of those, one whose next column is
+   the variable the planner wants the rows sorted by.
+2. A block is read only when the key prefix is between the prefixes of its
+   first and last triple. In a block whose first and last triple both carry
+   the key ("full"), the key columns are not decoded. Only the columns that
+   an output or a check needs are fetched. A count with no output reads no
+   frame (`q01`: 67 blocks, 0 frames, 0 bytes).
+3. Estimate per pattern: the rows of the selected blocks, from metadata.
+4. Start with the least estimate; then take the connected pattern of least
+   estimate (a cross product only when nothing connected remains).
+5. When the left table is sorted by a variable the next pattern has, scan
+   that pattern sorted by it and merge (merge join); otherwise hash join on
+   all shared variables, built on the smaller input. `q07`, for example:
+   `wso:medal Gold` (POS, 13,369 rows) merge `wso:games 1936/Summer` (POS)
+   on `?i`, merge `wso:athlete` (PSO, 269,625 rows, 9 of 67 blocks) on `?i`,
+   hash join `rdfs:label` (PSO, 137,026 rows) on `?a`: 313 rows.
+6. A variable used in one pattern only and nowhere else in the query is not
+   stored.
+7. One pattern with no ORDER BY, DISTINCT or aggregate is streamed block by
+   block: FILTER, OFFSET, LIMIT and rendering happen per block, and the scan
+   stops at the LIMIT. One pattern with an aggregate is counted per block.
+   Otherwise the BGP result is materialised (only the needed variables, as
+   8-byte columns), then ORDER BY, DISTINCT, OFFSET, LIMIT, and it is
+   printed in pieces of 4,096 rows.
+
+ORDER BY and FILTER compare Ids as QLever does
+(`global/ValueIdComparators.h:492-600`): `Int` and `Double` by value,
+vocabulary words by `VocabIndex` (so strings are in the ICU collation order
+of the vocabulary, not in code point order), other incompatible datatypes by
+tag for ORDER BY and as an error for FILTER. This is QLever's order, which
+differs from SPARQL 1.1 section 15.1 (literals before IRIs here, because the
+vocabulary puts `"` before `<`).
+
+The graph column is not read; every triple of the instance is in the default
+graph.
+
+### Tests (2026-10-11, linux x86_64, 4 cores, Lean 4.33.1)
+
+`tests/qlvr/queries.sh` (part (g) of `tests/qlvr/run.sh`) runs every oracle
+query through `l4qlvr query` and compares with QLever's answer as multisets
+of solutions, numbers by value, and the sequence of ORDER BY keys when the
+query has ORDER BY (`tests/qlvr/compare_query.py`). Result: **21 pass, 0
+fail, 0 refused (out of 21)**. `tests/qlvr/expected-refusals.tsv` lists
+refusals with their issues; it is empty. `tests/qlvr/run.sh`: 18 pass, 0
+fail (out of 18).
+
+`tests/stack/run.sh` case `qlvr-join` runs `q07` (the largest join) under
+the 512 KB canary stack.
+
+### Measurements
+
+`tests/qlvr/bench.sh`, same machine, warm (one run first), median of 3.
+Lean wall: the whole `l4qlvr query` process (start, vocabulary load, six
+permutation trailers, side-index lookups, execution, JSON to a file). Lean
+exec: its execution phase. QLever HTTP: `curl` time for
+`application/sparql-results+json`, result cache cleared before each run.
+QLever total: the server's own `time.total` with `send=0` (no rows
+exported), cache cleared.
+
+| Query | Rows | Lean wall ms | Lean exec ms | Lean peak RSS kB | QLever HTTP ms | QLever total ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| q01-count-all | 1 | 85 | 61 | 29,208 | 15 | 16 |
+| q02-predicate-counts | 16 | 194 | 169 | 31,368 | 37 | 33 |
+| q03-scan-bound-predicate-int | 51 | 18 | 0 | 29,280 | 3 | 1 |
+| q04-subject-lookup | 5 | 46 | 25 | 33,384 | 5 | 3 |
+| q05-object-bound-type | 51 | 27 | 7 | 33,412 | 3 | 1 |
+| q06-join-two | 52 | 23 | 1 | 29,244 | 5 | 2 |
+| q07-join-three | 313 | 351 | 268 | 45,632 | 19 | 17 |
+| q08-filter-lang-literal | 1 | 93 | 74 | 37,488 | 3 | 2 |
+| q09-bgp-lang-literal | 1 | 50 | 24 | 31,372 | 3 | 2 |
+| q10-orderby-limit-double | 10 | 511 | 489 | 58,624 | 18 | 17 |
+| q11-filter-numeric | 34 | 115 | 95 | 37,216 | 4 | 2 |
+| q12-group-medals | 3 | 28 | 10 | 31,296 | 4 | 2 |
+| q13-subclass-of | 10 | 20 | 0 | 29,336 | 2 | 1 |
+| q14-typed-int-object | 2 | 18 | 0 | 29,320 | 2 | 1 |
+| q15-integer-object-matches-int | 2 | 19 | 0 | 29,252 | 2 | 1 |
+| q16-strstarts | 5 | 214 | 193 | 37,324 | 37 | 34 |
+| q17-noc-team-join | 1 | 34 | 13 | 33,412 | 4 | 3 |
+| q18-games-by-year-limit | 5 | 23 | 0 | 29,332 | 3 | 1 |
+| q19-scan-bound-predicate-iri | 39,768 | 336 | 310 | 44,420 | 198 | 2 |
+| q20-scan-bound-predicate-double | 100,666 | 756 | 715 | 45,704 | 517 | 4 |
+| q21-scan-bound-predicate-lang | 137,026 | 968 | 940 | 44,756 | 717 | 5 |
+
+The QLever server process was started with `MEMORY_FOR_QUERIES = 2G`; its
+RSS per query was not measured. The Lean process starts, loads and exits
+once per query; QLever's numbers are for a running server. Of the Lean peak
+RSS, about 27 MB is the process with the vocabulary loaded (the `stats`
+command: 27-29 MB).
+
+### What this taught about Lean
+
+- **Generic monad code and the loop rule.** A tail-recursive loop written
+  in a generic monad `m` (with a bind before the self-call) compiles to a
+  call through a closure, which the tail-recursion audit reports as a
+  cycle. The scans and the side-index search are generic over the fetch
+  monad (so they run from `pread` and from bytes in memory), so their loops
+  over blocks and probes are `for` loops over a range, whose bodies do not
+  call back; every per-row loop is a pure tail call (`selectRows`) or a
+  `for` loop in `Id.run`. The audit finds no recursive declaration in the
+  new modules other than the hash-map bucket chains it bounds itself.
+- **Trees without recursion.** The FILTER expression and the WHERE pattern
+  are trees from the parser. A recursive walk would be a `depth`
+  recursion that the audit gates. They are walked with an explicit stack in
+  a `for` loop of at most 4,096 steps, and a FILTER is compiled to a postfix
+  program evaluated by a `for` loop with a value stack.
+- **Columns as ByteArray.** A table holds one `ByteArray` of 8-byte Ids per
+  variable. An `Array Id` would box every Id (one heap object per value).
+  Appends go through `Array.modify`, which takes the `ByteArray` out of the
+  array before the push, so the column stays unique and grows in place.
+- **Elaboration traps.** (1) A `let x := ...` that names a `let mut`
+  variable of the same `do` block is an error ("mutable variable cannot be
+  shadowed"). (2) `arr[i]!` needs `Inhabited` of the element; a structure
+  with a function field in a generic monad (`PermSrc m`) needs a hand-written
+  instance under `[Monad m]`. (3) `Float.toBits` and `Float.ofBits` give the
+  binary64 bits directly; `Float.ofScientific` turns a decimal mantissa and
+  exponent into a `Float`.
+- **What was slow.** Rendering: `rowJson` builds a JSON tree per term
+  (137,026 rows of `q21` take most of its 940 ms). ORDER BY over 100,666
+  rows (`q10`) decodes both `Double` Ids at every comparison. Every Lean run
+  also pays the process start and the vocabulary load (11-85 ms setup).
+
+### What remains
+
+Each item is refused or tested as an expected failure, and tracked in
+https://github.com/danbri/factoidal/issues/778 until a narrower issue exists.
+
+- The vocabulary files are read whole; positioned reads for them are not
+  written.
+- Delta triples from `<base>.update-triples` are not merged into scans.
+- No OPTIONAL, UNION, MINUS, BIND, VALUES, sub-queries, property paths,
+  expressions in SELECT or ORDER BY, other aggregates, HAVING, GRAPH or FROM.
+- The graph column is not read (named graphs give one row per graph).
+- Writing `.update-triples` (stage 5, section 6).
+
 ## Plan for stage 3: a Lean reader (Factoidal/qlvr)
 
 Goal of stage 3: from Lean, decode the PSO scan for one bound predicate of the

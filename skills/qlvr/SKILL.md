@@ -1,6 +1,6 @@
 ---
 name: qlvr
-description: Factoidal/qlvr — read a QLever index from Lean. How to rebuild the reference QLever instance (olympics dataset, 1,781,625 triples, image pinned by digest) and its SPARQL JSON query oracle with tools/qlvr/build-instance.sh, where the byte-level format record is (docs/designissues/2026-10-11-qlever-index-format.md), how to probe an index with tools/qlvr/probe_index.py, and the rules for the Lean decoders (loops, not per-item recursion). Use for any QLever on-disk format question, for work on the Lean QLever reader, or when the oracle or the instance must be rebuilt. Tracking https://github.com/danbri/factoidal/issues/778.
+description: Factoidal/qlvr — read and query a QLever index from Lean. How to rebuild the reference QLever instance (olympics dataset, 1,781,625 triples, image pinned by digest) and its SPARQL JSON query oracle with tools/qlvr/build-instance.sh, where the byte-level format record is (docs/designissues/2026-10-11-qlever-index-format.md), how to probe an index with tools/qlvr/probe_index.py, how to answer SPARQL basic graph patterns from the index with l4qlvr query (side index, plan rules, tests against the oracle), and the rules for the Lean decoders (loops, not per-item recursion). Use for any QLever on-disk format question, for work on the Lean QLever reader, or when the oracle or the instance must be rebuilt. Tracking https://github.com/danbri/factoidal/issues/778.
 ---
 
 # Factoidal/qlvr: a QLever index read from Lean
@@ -24,7 +24,10 @@ Tracking: https://github.com/danbri/factoidal/issues/778.
 | `formal/lean4/Harness/TestData/zstd/` | 14 libzstd vectors with expected sha256 (`tools/qlvr/zstd_vectors.py` writes them) |
 | `tools/qlvr/zstd_bench.py` | libzstd time on the same frame list, for the throughput comparison |
 | `formal/lean4/L4Factoidal/Qlvr/*.lean` | the Lean reader: `Id`, `Format` (exact `%.13g`), `Fsst`, `Vocab` (`vocabWord`, `findWord`), `Perm` (block metadata, `.meta`, `decodeColumn`), `Term` (N-Triples with QLever's escaping), `Scan` (`scanCol0M`, `scanPredicate`, rendering) |
-| `formal/lean4/Harness/Qlvr.lean` | `l4qlvr stats INDEXDIR`, `scan INDEXDIR PRED-IRI`, `dump INDEXDIR`, `words INDEXDIR`; permutation frames by `pread` |
+| `formal/lean4/L4Factoidal/Qlvr/{Sort,Side,Bgp,Query}.lean` | stage 4: byte order and merge sort; the side index (string to `VocabIndex`); permutation choice, block-skipping scans, merge and hash joins; the SPARQL fragment, constant folding, FILTER, GROUP BY with COUNT, ORDER BY, DISTINCT, LIMIT/OFFSET, SPARQL JSON |
+| `formal/lean4/Harness/Qlvr.lean` | `l4qlvr stats INDEXDIR`, `scan INDEXDIR PRED-IRI`, `dump INDEXDIR`, `words INDEXDIR`, `side-index INDEXDIR`, `side-check INDEXDIR [STORED..]`, `query INDEXDIR ('SPARQL' \| --file Q.rq) [--explain] [--constants]`; permutation frames by `pread` |
+| `tests/qlvr/queries.sh`, `compare_query.py`, `expected-refusals.tsv` | every oracle query through `l4qlvr query` against QLever's answer (multisets of solutions, numbers by value, ORDER BY keys in order); refusals listed with their issue are expected failures |
+| `tests/qlvr/bench.sh` | Lean time and peak RSS against QLever's server time, per query, warm, median of 3 |
 | `tests/qlvr/run.sh` | scans against the oracle, dump against the input N-Triples and against QLever's CONSTRUCT, every word against the probe, stats |
 | `tests/qlvr/canon_nt.py`, `compare_scan.py` | the canonicaliser (QLever's documented normalisations) and the scan-to-oracle comparison used by `run.sh` |
 | `tests/qlvr/queries/*.rq` | the 21 oracle queries (q19-q21: single bound-predicate scans for the Lean reader) |
@@ -122,13 +125,53 @@ Numbers, method and the Lean lessons: the format record, section "Read from
 Lean".
 
 - The vocabulary lookup (`findWord`) is a binary search on the first byte
-  and then a linear scan: up to 406,730 decodes for an IRI (355-637 ms). A
-  side index or the ICU collation subset is stage 4 work.
+  and then a linear scan: up to 406,730 decodes for an IRI (355-637 ms).
+  Stage 4 added the side index (below); `findWord` stays as the reference.
 - A local `structure Id` shadows the `Id` monad in the namespace; write
   `_root_.Id`. `meta` is a keyword. UInt64 literals in bit expressions need
   a type ascription.
 - `tests/qlvr/run.sh` part (e) needs the server on port 7019; without it the
   part is printed as not run and not scored.
+
+## Query the index from Lean (stage 4)
+
+```
+cd formal/lean4 && lake build l4qlvr
+.lake/build/bin/l4qlvr side-index /home/user/qlvr-work/instance   # writes /home/user/qlvr-work/instance.qlvr-side/
+.lake/build/bin/l4qlvr query /home/user/qlvr-work/instance --file ../../tests/qlvr/queries/q07-join-three.rq --explain
+tests/qlvr/queries.sh        # from the repository root: the 21 oracle queries
+tests/qlvr/bench.sh          # needs the server on port 7019
+tests/stack/run.sh --route native --canary   # includes case qlvr-join (q07)
+```
+
+2026-10-11: 21 pass, 0 fail, 0 refused (out of 21); `tests/qlvr/run.sh` 18
+pass, 0 fail (out of 18); side index against the linear scan 1,120 pass, 0
+fail (out of 1,120); side-index build 3.3 s, peak RSS 83 MB. Times, plan
+rules, join choice and the Lean lessons: the format record, section "Basic
+graph patterns from Lean (stage 4)".
+
+- The fragment: SELECT (variables, `*`, `COUNT(*)`, `COUNT(?x)`), a BGP with
+  FILTERs (`&& || ! = != < > <= >= sameTerm STRSTARTS STRENDS CONTAINS`),
+  GROUP BY variables, ORDER BY variables, DISTINCT, LIMIT, OFFSET. Anything
+  else exits 3 with `l4qlvr: refused: <reason>` before any file is read.
+  A refused oracle query goes into `tests/qlvr/expected-refusals.tsv` with an
+  issue; `queries.sh` fails when a listed query starts to be answered.
+- Semantics are QLever's, because QLever is the oracle: numeric constants
+  fold to `Int`/`Double` Ids (`1936` matches `"1936"^^xsd:int`), FILTER and
+  ORDER BY compare Ids as `compareIds` does (words by vocabulary position,
+  which is ICU collation order; numbers by value). This is not SPARQL 1.1
+  section 15.1 order.
+- The side index is ours, next to the index directory (`INDEXDIR.qlvr-side/`),
+  checked against the vocabulary by word count, `words.external` size and the
+  XXH64 of `words.external.offsets`. Rebuild it after the index changes;
+  `l4qlvr query` refuses a stale one. Without one it falls back to
+  `findWord` and says so on stderr.
+- Code that is generic over the fetch monad (scans, the side-index search)
+  loops with `for` over a range; a hand-written tail call in a generic monad
+  goes through a closure and the tail-recursion audit reports it. Trees from
+  the parser (FILTER, WHERE) are walked with an explicit stack, not
+  recursion.
+- `run.sh` part (f) rebuilds the side index (about 3 s) before part (g).
 
 ## Rules for the Lean decoders
 
