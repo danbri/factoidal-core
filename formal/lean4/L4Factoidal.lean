@@ -337,6 +337,13 @@ import L4Factoidal.Codec.Xz
 import L4Factoidal.Codec.XzTests
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Codec.ZstdTests
+import L4Factoidal.Qlvr.Id
+import L4Factoidal.Qlvr.Format
+import L4Factoidal.Qlvr.Fsst
+import L4Factoidal.Qlvr.Vocab
+import L4Factoidal.Qlvr.Perm
+import L4Factoidal.Qlvr.Term
+import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RML.Mapping

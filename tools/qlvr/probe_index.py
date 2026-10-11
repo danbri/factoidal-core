@@ -11,8 +11,13 @@ Usage:
   python3 -I tools/qlvr/probe_index.py <index-dir> <basename> [--scan PRED_IRI]
   python3 -I tools/qlvr/probe_index.py <index-dir> <basename> --dump-block0 index.pso
   python3 -I tools/qlvr/probe_index.py <index-dir> <basename> --zstd-tsv OUT.tsv
+  python3 -I tools/qlvr/probe_index.py <index-dir> <basename> --words OUT.txt
 
 Needs the `zstandard` Python package (pip install zstandard).
+
+With --words, it writes every vocabulary word in index order, one per line,
+literals escaped as QLever prints them (backslash, LF, CR and double quote
+between the first and the last quote), the reference for `l4qlvr words`.
 
 With --scan, it decodes the PSO permutation for one bound predicate and
 prints the (subject, object) pairs as N-Triples terms, in PSO order.
@@ -297,8 +302,24 @@ def zstd_tsv(d, base, out_path):
     print("wrote %d column frames to %s" % (n, out_path))
 
 
+def printed_word(w):
+    """QLever's validRDFLiteralFromNormalized for literals; IRIs unchanged."""
+    if not w.startswith('"'):
+        return w
+    q = w.rfind('"')
+    c = w[1:q].replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
+    return '"' + c + w[q:]
+
+
 def main():
     d, base = sys.argv[1], sys.argv[2]
+    if "--words" in sys.argv:
+        vocab = Vocabulary(d, base)
+        with open(sys.argv[sys.argv.index("--words") + 1], "w", encoding="utf-8", newline="\n") as out:
+            for i in range(vocab.size):
+                out.write(printed_word(vocab.word(i)) + "\n")
+        print("wrote %d words" % vocab.size)
+        return
     if "--zstd-tsv" in sys.argv:
         zstd_tsv(d, base, sys.argv[sys.argv.index("--zstd-tsv") + 1])
         return

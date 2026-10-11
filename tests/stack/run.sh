@@ -470,6 +470,53 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------- QLever index dump (Factoidal/qlvr, issue 778)
+# `l4qlvr dump` decodes every SPO block of the QLever instance (1,781,625
+# triples, 39 blocks of up to 31,250 rows; every row loop, the FSST word
+# loop, the literal escape loop and the zstd decoder) and prints N-Triples.
+# The instance is outside the repository (QLVR_WORK, default
+# /home/user/qlvr-work; tools/qlvr/build-instance.sh builds it). Without it
+# the case is reported as NOT RUN and not scored.
+QLVR_BIN="$LEAN_DIR/.lake/build/bin/l4qlvr"
+QLVR_INST="${QLVR_WORK:-/home/user/qlvr-work}/instance"
+qlvr_case() { # qlvr_case <route> <prefix...>
+  local route="$1"; shift
+  local out="$FIXTURES/qlvr-dump.nt" err="$FIXTURES/qlvr-dump.err" rc lines
+  if [ ! -x "$QLVR_BIN" ]; then
+    record "$route" qlvr-dump 1 "$QLVR_BIN does not exist (lake build l4qlvr)"
+    return
+  fi
+  run_capped "$TIMEOUT" "$@" "$QLVR_BIN" dump "$QLVR_INST" >"$out" 2>"$err"; rc=$?
+  lines="$(wc -l <"$out")"
+  rm -f "$out"
+  if grep -q 'Stack overflow' "$err"; then
+    score_case "$route" qlvr-dump overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || [ "$lines" -ne 1781625 ]; then
+    score_case "$route" qlvr-dump error "exit $rc, $lines lines: $(tail -1 "$err" | head -c 160)"
+  else
+    score_case "$route" qlvr-dump ran "$(tail -1 "$err")"
+  fi
+}
+if [ ! -f "$QLVR_INST/olympics.index.spo" ]; then
+  echo
+  echo "=== qlvr-dump NOT RUN (not scored): no QLever instance at $QLVR_INST"
+else
+  if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+    echo
+    echo "=== QLever index dump, native default stack"
+    qlvr_case native env
+  fi
+  if [ "$CANARY" = 1 ]; then
+    echo
+    echo "=== QLever index dump, native under ${CANARY_VAR}=${CANARY_KB}"
+    if [ "$CONTROL_OK" = 1 ]; then
+      qlvr_case canary "${CANARY_PREFIX[@]}"
+    else
+      record canary qlvr-dump 1 "NOT SCORED: the canary control did not pass"
+    fi
+  fi
+fi
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"

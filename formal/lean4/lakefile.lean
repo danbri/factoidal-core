@@ -276,6 +276,10 @@ extern_lib libl4exthost pkg := do
 -- committed vectors and on every column frame of the QLever instance.
 @[default_target] lean_exe «l4qlvr-zstd-check» where root := `Harness.QlvrZstdCheck
 
+-- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): read a QLever
+-- index directory (stats, bound-predicate scan over PSO, full SPO dump, vocabulary).
+@[default_target] lean_exe «l4qlvr» where root := `Harness.Qlvr
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."

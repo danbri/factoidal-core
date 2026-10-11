@@ -273,6 +273,21 @@
    "query": "tests/qlvr/queries/q18-games-by-year-limit.rq",
    "rows": 5,
    "sha256": "0ef17401ec2474f1d49f6bffea9bf3fcd2872d73a22bbd01a3caff2e80bf0541"
+  },
+  {
+   "query": "tests/qlvr/queries/q19-scan-bound-predicate-iri.rq",
+   "rows": 39768,
+   "sha256": "aa17b5d5174c35873b334e1bb156d7d63180c5b53083f4fac2615e5aa177e7e6"
+  },
+  {
+   "query": "tests/qlvr/queries/q20-scan-bound-predicate-double.rq",
+   "rows": 100666,
+   "sha256": "0bde5f04dd3a181e474ac69926ad0761711845c4bda492970d699aa3ac4e7976"
+  },
+  {
+   "query": "tests/qlvr/queries/q21-scan-bound-predicate-lang.rq",
+   "rows": 137026,
+   "sha256": "9a80a6c8361ddd535829464eb47304777772775f3219c51b83f3378241cf24fd"
   }
  ],
  "note": "olympics.meta-data.json holds the build date, so its sha256 changes on every rebuild. See docs/designissues/2026-10-11-qlever-index-format.md for which other files are byte-reproducible."
