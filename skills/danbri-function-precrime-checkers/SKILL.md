@@ -64,6 +64,16 @@ and truncated every body at its first nested block, reporting 24 recursions
 instead of 833 and missing both known cases — an audit that finds almost
 nothing is evidence about the audit's reach before the code (anti-pattern 28).
 
+Run it as CI runs it: `python3 tools/lean-tail-recursion-audit.py --gate`,
+after a full `lake build`, and read the exit code. Without `--gate` the tool
+exits 0 whatever it finds. Cost of not doing so: on 2026-10-11 a landing
+agent ran the audit without `--gate`, reported "exit 0", and the landing
+(factoidal-core 4bfa8b49) went to `main` with 10 recursive declarations
+outside the allow list. The next danbri/factoidal-builds run failed at
+this gate, so the wasm build and the npm suite did not run
+(https://github.com/danbri/factoidal-builds/actions/runs/38141637018). The
+repair is 196b62d6.
+
 ### 2. The canary run: the whole suite under a small budget
 
 Run the existing corpora once with a deliberately small stack, so anything
