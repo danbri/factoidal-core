@@ -1261,10 +1261,11 @@ theorem evalAskBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
     simp only [List.any_eq_false]
     intro a ha
     simp [hall x a ha]
+  rw [evalAskBackend_eq_reference, evalAskBackend_eq_reference]
   cases hqf : q.form with
-  | select _ => simp only [evalAskBackend, hqf]
-  | construct _ => simp only [evalAskBackend, hqf]
-  | describe _ => simp only [evalAskBackend, hqf]
+  | select _ => simp only [evalAskBackendReference, hqf]
+  | construct _ => simp only [evalAskBackendReference, hqf]
+  | describe _ => simp only [evalAskBackendReference, hqf]
   | ask =>
       have heval : evalPatternBackend env (indexedDatasetBackend dr) q.pattern
             (indexedDatasetBackend dr).default
@@ -1274,7 +1275,7 @@ theorem evalAskBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
               (indexedGraphBackend dr.default) = _
         rw [hd.dflt]
         exact evalPatternBackend_restrict env hd q.pattern d.default hf hk hn hv
-      simp only [evalAskBackend, hqf, heval, hdf dr, hdf d]
+      simp only [evalAskBackendReference, hqf, heval, finishAskBackend, hdf dr, hdf d]
 
 /-! ## 16. The two query entry points
 

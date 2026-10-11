@@ -1,0 +1,154 @@
+{
+  "all_checks_passed": false,
+  "answer_differences": [
+    "ask-present",
+    "ask-absent"
+  ],
+  "binary_sha256": "7c05fb6de45fedb59789d7792f0b41e627cc828933818971b070a4ab5c2301cb",
+  "bottle_sha256": "34460ec8da9cdde5e97f8b6a22ffe3a012b5cbcac6b634311d334ae9dcc41028",
+  "client_sha256": "d378c64e5ab4fdcdb7c843cfe3c0ef8452836e349230a2b1359438081208b39f",
+  "comparison": "Exact bindings, RDF term fields and row positions. Explicitly remove only head.link and Virtuoso results.distinct/results.ordered extensions. No RDF datatype coercion.",
+  "configuration": "[Database]\nDatabaseFile = db.db\nErrorLogFile = db.log\nLockFile = db.lck\nTransactionFile = db.trx\nFileExtend = 200\nTempStorage = TempDatabase\n[TempDatabase]\nDatabaseFile = temp.db\nTransactionFile = temp.trx\n[Parameters]\nServerPort = 127.0.0.1:56544\nDisableUnixSocket = 1\nNumberOfBuffers = 10000\nMaxDirtyBuffers = 6000\nDirsAllowed = .\nMaxQueryMem = 256M\nThreadsPerQuery = 1\nAsyncQueueMaxThreads = 1\nCheckpointInterval = 0\n[HTTPServer]\nServerPort = 127.0.0.1:56545\nServerRoot = .\nMaxClientConnections = 4\n[SPARQL]\nResultSetMaxRows = 20000\nMaxQueryExecutionTime = 30\n",
+  "driver_sha256": "525482545a12b60950ac5caaf4e1574994ac9df47f2ed2bba98ef1da773d89f5",
+  "fixture_sha256": "55e24ac9a5ea02c54a64e55788658eeda0635d91509a7d2a0b8697c90e201db2",
+  "load_sql": "DB.DBA.TTLP(file_to_string('fixture.ttl'), '', 'urn:shardborough:fixture');\ncheckpoint;\n",
+  "observed_ask_shape": {
+    "head": {
+      "vars": [
+        "__ASK_RETVAL"
+      ]
+    },
+    "results": {
+      "bindings": [
+        {
+          "__ASK_RETVAL": {
+            "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+            "type": "literal",
+            "value": "1 or 0"
+          }
+        }
+      ]
+    }
+  },
+  "protocol_dataset": "default-graph-uri=urn:shardborough:fixture; fixture loaded into that graph",
+  "scope": "Native Virtuoso correctness probe only; no performance claim. Compare complete ordered answers to the independently generated fixture oracle used for Shardborough and QLever.",
+  "server_command": [
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/virtuoso-native/virtuoso/7.2.17/bin/virtuoso-t",
+    "+foreground",
+    "+configfile",
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/virtuoso-native/complete-smoke/virtuoso.ini"
+  ],
+  "subjects": 1000,
+  "triples": 3000,
+  "version": "7.2.17.3243-pthreads (440dbf41b3)",
+  "workloads": [
+    {
+      "answer_sha256": "8ed42ce98b57eefeaeb9e6cb5ee627d4c3a7e4a0c37275d9019061790532c9db",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "limit-zero",
+      "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 0"
+    },
+    {
+      "answer_sha256": "571db419bf217bd6227f49bca65fcf131ee8362580cdc718d3e3e5215e02b734",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "predicate-count",
+      "query": "SELECT (COUNT(*) AS ?count) WHERE { ?subject <urn:scale:type> ?type }"
+    },
+    {
+      "answer_sha256": "b4db643fbf015ab4298213d943a9ea4c70eb07f1203d3316d0f885e1bd7e3e4e",
+      "content_type": "text/html",
+      "exact_expected_answer": false,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "ask-present",
+      "query": "ASK { ?subject <urn:scale:type> ?type }"
+    },
+    {
+      "answer_sha256": "abd85bcd1f9ce597ea7fac6479b5284022ca1267ee2f1b9e9660b4c8602e1b1c",
+      "content_type": "text/html",
+      "exact_expected_answer": false,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "ask-absent",
+      "query": "ASK { ?subject <urn:scale:absent> ?object }"
+    },
+    {
+      "answer_sha256": "c4ec6310cdc15c14818a11e0674a69cc88b0141e9ddbca97cdf1c7e351196cfd",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "object-index",
+      "query": "SELECT ?subject WHERE { ?subject <urn:scale:group> <urn:scale:group:0> } ORDER BY ?subject"
+    },
+    {
+      "answer_sha256": "1e88e653462f8ae1f4891aa5143c22632bcaa6b0330cc215b20967f53aae64ad",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "subject-join",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+    },
+    {
+      "answer_sha256": "4789245e0a2687e43f214c2c9ad4016aa04578ded89f81228c260015a9bc0c0c",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "object-subject-join",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+    },
+    {
+      "answer_sha256": "26efd8e0a95c778235d64a0fbd3829873e76b81e8ed666ec5dda6a82dacabbc8",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "subject-triple-join",
+      "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+    },
+    {
+      "answer_sha256": "829c3a2264a3737dd4735130e0a4b2f144c077f6fcac7630b1f1b2f7124befff",
+      "content_type": "text/html",
+      "exact_expected_answer": true,
+      "ignored_extensions": {
+        "head.link": [],
+        "results.distinct": false,
+        "results.ordered": true
+      },
+      "name": "limit-slice",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:name> ?name } ORDER BY ?subject OFFSET 3 LIMIT 7"
+    }
+  ]
+}

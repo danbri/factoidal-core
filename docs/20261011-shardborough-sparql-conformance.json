@@ -1,0 +1,16 @@
+{
+  "counts": {
+    "fail": 0,
+    "pass": 631,
+    "skip": 0,
+    "total": 631,
+    "unsupported": 0
+  },
+  "log_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/w3c-sparql11.log",
+  "log_sha256": "404887ceafc2127c8c62fb3aecf9055323c7bfa214d497b6f895fdc8e33b65d3",
+  "manifest": "third_party/testing/w3c/sparql/sparql11/manifest-all.ttl",
+  "runner_binary_sha256": "5525c5c0eebb04191df06b1117059e473b93acac65803c8159bdee69d8c2495a",
+  "scope": "Fresh reference/evaluator W3C SPARQL 1.1 conformance; not native disk-backend or competitor performance conformance.",
+  "submodule_commit": "35c503a6323db83c2e54ff404387210c20d57c18",
+  "toolchain": "leanprover/lean4:v4.33.1"
+}

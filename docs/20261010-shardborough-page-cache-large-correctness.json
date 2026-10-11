@@ -1,0 +1,50 @@
+{
+  "binary_sha256": "28af3322d12f8de877f4665b8720f16cf348cfbcb4315a7a2b88e144dd8b8c67",
+  "scope": "Correctness only; host contention excludes timing claims.",
+  "subjects": 100000,
+  "triples": 300000,
+  "workloads": [
+    {
+      "command": [
+        "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+        "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+        "--json",
+        "--query",
+        "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+      ],
+      "documents": 1,
+      "exit_code": 0,
+      "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+      "failure": null,
+      "output_bytes": 11600354,
+      "pid": 56887,
+      "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-large-correctness/subject-join.stderr",
+      "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+      "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-large-correctness/subject-join.stdout",
+      "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+      "validation_passed": true,
+      "wall_ns": 18882014167
+    },
+    {
+      "command": [
+        "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+        "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+        "--json",
+        "--query",
+        "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+      ],
+      "documents": 1,
+      "exit_code": 0,
+      "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+      "failure": null,
+      "output_bytes": 16700423,
+      "pid": 56888,
+      "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-large-correctness/subject-triple-join.stderr",
+      "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+      "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-large-correctness/subject-triple-join.stdout",
+      "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+      "validation_passed": true,
+      "wall_ns": 26836471375
+    }
+  ]
+}

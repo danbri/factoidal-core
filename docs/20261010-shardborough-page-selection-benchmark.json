@@ -1,0 +1,2621 @@
+{
+  "discarded_cache_trial": {
+    "all_checks_passed": false,
+    "benchmark": "shardborough-paired-page-selection-v1",
+    "binary_sha256": {
+      "baseline": "525923fff0757bddc155afa7496740b52722b41b85308c7d1e5afb994f4df22a",
+      "optimized": "28af3322d12f8de877f4665b8720f16cf348cfbcb4315a7a2b88e144dd8b8c67"
+    },
+    "collection_sha256": {
+      "CURRENT": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+      "first/manifest.sbm2": "bd8fd04afb0bc521fd066ce4e7ca0c0d9272703756951d3d76ae5da01c3618c2",
+      "first/manifest.tsv": "fc4851bb4c0aee10c40374f38f14a272e0cd29415f7ebd8fe79825d1e336766d",
+      "first/predicate-0.ibk3": "72b49b4bf4ec0b81dbb6aa0f9c0aaca396b4e9af2d7a121fe6a6ece5e5989297",
+      "first/predicate-0.ibk3.merkle": "df961ba2241de809a78bd432b35727ceb489d02d923d444f7b024c972d5d5fe9",
+      "first/predicate-0.ibk3.oli2": "380fbcb79c4a183a27f37de661b3796e5f36a17be972617735dcb8e9785c6023",
+      "first/predicate-0.ibk3.oli2.merkle": "899f2d2cd4c2157c4c2c204736155a8dbb964f2e2631ef8801d77c8092cf7027",
+      "first/predicate-0.ibk3.sri2": "bd7f474544e5a529c84abf04e1c712f4e352b1b3ba4a5fd1e2732aa10a9e72e6",
+      "first/predicate-0.ibk3.sri2.merkle": "69a6e8635d97a8c34492ac8d3f708f62632c75795d76bad0fd1428a80d46471f",
+      "first/predicate-0.ibk3.tli1": "79cf17a01318055ad834ca4cc6ea533142f5540578d08bd1ce96f27b41b6e3c5",
+      "first/predicate-0.ibk3.tli1.merkle": "ef85b06ce0276a95f692a406382a39764c9815f641e69d7f64a19f635b7c664d",
+      "first/predicate-1.ibk3": "34fd4c0192fcdbea7d5ed4263f08b34caf6b91dfb2102398f415197dd2b91cf6",
+      "first/predicate-1.ibk3.merkle": "b1b52bb6875fe005dbd8d62aa388d83b4d8a56e94664855396c2b8bc83b39b10",
+      "first/predicate-1.ibk3.oli2": "f4640f38db91f31f507812a08d8434d4cf8503f39ecd0de2e52c85eb55a53452",
+      "first/predicate-1.ibk3.oli2.merkle": "2d1ca51927a9843d8d3ae9c3a85b607fa12ee0342e9734674ad574aaf16f6528",
+      "first/predicate-1.ibk3.sri2": "f032831680e0ea6fb56ba02f83e150ad64c986b55de763ae1ce6962a5563fea8",
+      "first/predicate-1.ibk3.sri2.merkle": "1716258b55579ae382bfcad71e51644aabb9cfc9a3df537203fad454d644a94d",
+      "first/predicate-1.ibk3.tli1": "60017dd150959be390aeddbcab957a63b12a0ba8ca621885d411c0be18b215c8",
+      "first/predicate-1.ibk3.tli1.merkle": "47cf323a23a061023edb81509935c87d79d341d6acb1be3d8d80fcd6bde73ec2",
+      "first/predicate-10.ibk3": "1c93c5fb3b4ca5be9ea80a25d023b25e8b6793a9ca925994e6b61b335e2f44db",
+      "first/predicate-10.ibk3.merkle": "e8da4a65c561435b2ab5968f3eefbf6ed5d1acdbabb2a6f9870f6e3f3205acfb",
+      "first/predicate-10.ibk3.oli2": "6d13cd3e84a7ba10f49c313b56e00a19d17392591d0546afa9e0a661277053f4",
+      "first/predicate-10.ibk3.oli2.merkle": "65f4f822d8e06b3532b249b22e092de68befa54cfc39b55cf5c130bae4b7dfbc",
+      "first/predicate-10.ibk3.sri2": "3380ce0031199782cd2f3251dc21cc94a597cd097457165604b64d27c4c3d356",
+      "first/predicate-10.ibk3.sri2.merkle": "5136cec7c92e7efd061b6ef46e5bd82cdb2328d961d44125e72ad8b1553424c0",
+      "first/predicate-10.ibk3.tli1": "0acada02b00771c38b0ceb0fbfbc68d8806d25761f778a4007b1dba45f174fed",
+      "first/predicate-10.ibk3.tli1.merkle": "cecef460280e52dcd83b10bc869c7274c83aaa5fdf92e1c1dbe2747d67a3db65",
+      "first/predicate-11.ibk3": "95b1b93938f0108717076efb28c73a95dda55773ce28242ebb0dc240914610c4",
+      "first/predicate-11.ibk3.merkle": "4e4aa64416cc5274dfdafbaf64cbc52441e64a217aa7b3f36848d99b5972953b",
+      "first/predicate-11.ibk3.oli2": "056d1f82df0a4b568a283d91357274066aec6dd065ff28cb2b76c18f67aa717c",
+      "first/predicate-11.ibk3.oli2.merkle": "4583f6cea182b6f69e41f5c44ab840aee9a5e252ce0a55c66ae6772a3ea5de62",
+      "first/predicate-11.ibk3.sri2": "6633710fd20d0e8a2c1e5dd586594ac17fe91490ac88688bba859c76139d3cc2",
+      "first/predicate-11.ibk3.sri2.merkle": "5b5a274f3a18bc1ea89ca3c132f20ff7dc4031eb522ca28fa179b0dc5c79f622",
+      "first/predicate-11.ibk3.tli1": "0cde7e82bcf9d3fa39871ce3cd35fd9b5e488bf295db82f3993066a4300974a2",
+      "first/predicate-11.ibk3.tli1.merkle": "5701c155d1a58d0b46d6da48cfb0a167986f3c114773d906fcf0ba7af66bf3f0",
+      "first/predicate-12.ibk3": "10f5f47e048c27f09b0e8d61acec0a8c97a05255803e88f6d525c583e1f6f2b0",
+      "first/predicate-12.ibk3.merkle": "01ddd432e1536f6e1a76b97cf9ab567d3c1d4b0c4115c1a406e0c0688c6a1498",
+      "first/predicate-12.ibk3.oli2": "75992935fa5dd31cadf90ee6d4de192b092768d2d990ef64b7edb13a33b01f70",
+      "first/predicate-12.ibk3.oli2.merkle": "eb6c87aaad3a9f7c6d4e102d03f9461204a652bec75ba62b797ed09f61c78ba2",
+      "first/predicate-12.ibk3.sri2": "d3960160eb3c984dfa8a54122dc9b7297cfdb15d35688c3b78215fbc3802e192",
+      "first/predicate-12.ibk3.sri2.merkle": "af7925812f6ad9a1df6d00995fda496b1b33e8960122b84e990b56a7a4966f7f",
+      "first/predicate-12.ibk3.tli1": "fe02e308ee1553bf0405ad8e92ec1dc2bb37aac8daa63699f1e0ca044c4dc12f",
+      "first/predicate-12.ibk3.tli1.merkle": "e78674de94fa00b9b68c85cdc836efee07b1336fde3f0ab919b3779a2a5ec62d",
+      "first/predicate-13.ibk3": "29f2e8b98117f2da25655c72ea74e5368467d1f1e66a0c42b1f0a736b9c8496d",
+      "first/predicate-13.ibk3.merkle": "9f8f2ba21108a586918cd4d58915769d6067285071a25761b264fd6012140208",
+      "first/predicate-13.ibk3.oli2": "dd7c132af1faad9fca96dfd2468ca906b0be9e9dd319ed664211a287a2b718d0",
+      "first/predicate-13.ibk3.oli2.merkle": "444ce63b8c0d303d22caa2e7bb0d6a4fb7c50e2ebb078ad29743a69be3326284",
+      "first/predicate-13.ibk3.sri2": "87ead1df904aacb44bdb1bb7b9a87e30144fbf6d3edfa9ff4acbf0a198006cd7",
+      "first/predicate-13.ibk3.sri2.merkle": "a91dd59e7db476bf26ff7ef7f513ffce1ca6e92876d0a9bc7b6ea4d13d0971c9",
+      "first/predicate-13.ibk3.tli1": "553ca4ae2c08430139717fc6817384caab2561ae2cc9d5fcb43de13fdb44d0b6",
+      "first/predicate-13.ibk3.tli1.merkle": "8f51f6dd448ad43f2bb11a032982ca5836e70245ba15b898a6d498bc98179ed7",
+      "first/predicate-14.ibk3": "c30435f5ffc1fa9f234aa1baa3f01c61c544f444d02b31ddfb28569b7e960eff",
+      "first/predicate-14.ibk3.merkle": "6f7bade59c8b21c7be4d261c728203b890a4e7e86bea938e762cef9ee01ac83d",
+      "first/predicate-14.ibk3.oli2": "51143cb51603edd08c9de384847b3deea63836f41a6d56cb0224a41c74eefd26",
+      "first/predicate-14.ibk3.oli2.merkle": "2de01efe7eaf23cfd3c69a3b88f586f63c44a2bf1983a8a473158f6f201a9cf4",
+      "first/predicate-14.ibk3.sri2": "a78da636b2a519e91345536dd6601b4cb31c44e460e931dcb931b808cad1fd2e",
+      "first/predicate-14.ibk3.sri2.merkle": "f241df034460c61eb8b60b2311e37b53ce04ae0cf099224af091c4c098696f38",
+      "first/predicate-14.ibk3.tli1": "64a139ad5c92d931eb1d5e7060e22d140c048eda8d133fb43729215ba6d05f86",
+      "first/predicate-14.ibk3.tli1.merkle": "1016d7ddec5ed408629452329432ca04b7c50cb2c3a626716176585cd2971660",
+      "first/predicate-2.ibk3": "c88f88cad3717a889005b6cacc4800da1f1a8a0dd34100950c2a5e4bd159c48c",
+      "first/predicate-2.ibk3.merkle": "8a518cfde2f5261ffa93d7ab7aa3508a209a10f3b367c456454793bb9b9873fa",
+      "first/predicate-2.ibk3.oli2": "881d6e1a2835c7ecb04044ecec90ba19648f48673d4778b4711d46cdf8198a57",
+      "first/predicate-2.ibk3.oli2.merkle": "2c14fa1c371b8a5110bd0c55f8c5dd01a9ba6dae1fe133792ba400f43625428d",
+      "first/predicate-2.ibk3.sri2": "10e780e28428759df57b9df5cce4331b7cba580b7d3db9855abac9844ad4139f",
+      "first/predicate-2.ibk3.sri2.merkle": "1e6addd55b49728a6d92fd57a3eff3ab61b15e0c15051a174c730dbb2e43e5de",
+      "first/predicate-2.ibk3.tli1": "bb7437512d1c80c3fd54c5377c33e554dc01b69ea591859109eead323b22a963",
+      "first/predicate-2.ibk3.tli1.merkle": "8477031cd8ad3902d593993075e929a8631cd3bd7a212d52f13d503dfd51f731",
+      "first/predicate-3.ibk3": "275101b0ac511b17224f2969cd8157ac0e6d7091a216e03a1cc5bbc80442b3da",
+      "first/predicate-3.ibk3.merkle": "547e5cf358acee92a9ea3854f2154749caf9257bfa37d00c40c966e52476f418",
+      "first/predicate-3.ibk3.oli2": "f29c1dd35cb7e488e075bc68f66ac336e1f4442695d4063e50c8c81def6c88d6",
+      "first/predicate-3.ibk3.oli2.merkle": "6b8034d88b8fe032f3c2f670d4daf5e52583f4fd004c38c78f67470cc060f335",
+      "first/predicate-3.ibk3.sri2": "172e55c2d8630ce45f69430776691cf7260bae54727de76748a984b7762804c9",
+      "first/predicate-3.ibk3.sri2.merkle": "b867233607910f2bd7173b23c34d5d49d1d3887b3ed1e005270a2dac67755b3e",
+      "first/predicate-3.ibk3.tli1": "08a1ad86b0b7707c860760331b7c1418982918f1ecd267081a160b551bc5443a",
+      "first/predicate-3.ibk3.tli1.merkle": "da9f89a0fd886900e00046d8832bc8aa2a1aa470d88e19cca396ae23fb63f3a9",
+      "first/predicate-4.ibk3": "69b19bb184d7576a14c526c374d805f9489ee9e2d9c2efc571364faa51b59bd7",
+      "first/predicate-4.ibk3.merkle": "d03ec0dcd326f4a7646a0143300fa7401f73518d3dc851532617c70d0655b89d",
+      "first/predicate-4.ibk3.oli2": "c049f38b8dc7b69fb90c0056705718b82e4659071da62120d693b8d1ef29e8ce",
+      "first/predicate-4.ibk3.oli2.merkle": "c10e26a3f79819a88ebf24c08946c5e1532e5b9bab5b4f9dc0120bd9f26a48ba",
+      "first/predicate-4.ibk3.sri2": "664b9897a56125901b7cfdf633f8523a5408a5a7684724b1c36b2a69b6d0e8de",
+      "first/predicate-4.ibk3.sri2.merkle": "f791c38c40a9521d8728178ee40912128f5a456268c5dc6a8b98152756f54c11",
+      "first/predicate-4.ibk3.tli1": "d7174c18ad776bc5cf378fada55856413c219ea64cba3b8691d21fab233e99bd",
+      "first/predicate-4.ibk3.tli1.merkle": "b0cc45109b667a83e770b0efcd56a2c71a1f30be62260172d1eea8a703e572f5",
+      "first/predicate-5.ibk3": "1bf1998e2bba8bdf1f7ec4d6b7d2b44cc3ed42e15fdb80b8c3596f4d97c9f2ec",
+      "first/predicate-5.ibk3.merkle": "4f97a331ed3308d8841adf1a563dca9ce80fd1ad8caf993305eb1b5a80a1d658",
+      "first/predicate-5.ibk3.oli2": "4d255cae3b53f3bc0ac5d928372ed636ca184b8e48d6ae5d8417d1e0df3add49",
+      "first/predicate-5.ibk3.oli2.merkle": "606184d980ce7e441c1126a0b54d162bd418a629cf5f7275719fc26a43c1627a",
+      "first/predicate-5.ibk3.sri2": "5cdc090f8954c52e16cfb21d994c3ea5e18168fef9ace46c9fd8ef3abb3776cd",
+      "first/predicate-5.ibk3.sri2.merkle": "c9374c0bfbb979ea8b2fbdaf65dd242a3cc181f3ec9922897e63552919adc23f",
+      "first/predicate-5.ibk3.tli1": "58b2346a3d479aaa5e93cb56b30ebe9e6a1dd0d22bbf38738878f8c4e0db2e99",
+      "first/predicate-5.ibk3.tli1.merkle": "5fa4b0a04b4b0631c2ca2853372c77bad772eef905f00477e997349b2cdc5699",
+      "first/predicate-6.ibk3": "d6ca872de14e8344268cbd64da4fc22cfa4b1bbaab9619ea87d9b3916dc7e595",
+      "first/predicate-6.ibk3.merkle": "0590c0a10f79ac374ef9d11f31084a25e1b6f54a9e9fdf6579127226906a4a29",
+      "first/predicate-6.ibk3.oli2": "1a00aea0e46442cb3d3fca46188bc952f2af5c0cecdcaac5f45f36f91b8973c4",
+      "first/predicate-6.ibk3.oli2.merkle": "986bb3ee211328704371e4e0aef0febc9f3eae7d6ffe39d3bcdf9943e3833f13",
+      "first/predicate-6.ibk3.sri2": "dc4bd2ff8b2ad2235a19e79f02e3d183a822791ae3cffb318f83ca359f5e37ac",
+      "first/predicate-6.ibk3.sri2.merkle": "79f71ff384d0a2074285656041c5d6fc341e1432415dab95b8c65ac77dd8ab1a",
+      "first/predicate-6.ibk3.tli1": "198548ddd08a8921d199da4954fef855f458826cfdd6cae73c438fa36aaed61b",
+      "first/predicate-6.ibk3.tli1.merkle": "becd897ad2be9b81f10781478292e1ab3bc76da062873a72836d801a48fe6e79",
+      "first/predicate-7.ibk3": "e76b30fa6cbd6b12e9b1b6d59df5aac55674be6fa90c1e1fdd63c015429c36e9",
+      "first/predicate-7.ibk3.merkle": "ce92dc95dcad24fe4c9749e5229e935953fc746dfd4f47a35ee0ccfb051f2d0a",
+      "first/predicate-7.ibk3.oli2": "91c0c7b309e1f380804f0a61ffa558b940cb28e47197ea6b10137c43c9fc01d4",
+      "first/predicate-7.ibk3.oli2.merkle": "7433ae3bf112a364a5589118ec8109cf27a613eec49bd1210603c290a8e094ef",
+      "first/predicate-7.ibk3.sri2": "74cf68a3b17a6a5d67d28f4bb3901d545beb88fd65ea2a285f72303566f18628",
+      "first/predicate-7.ibk3.sri2.merkle": "b1e9603fe5df3771fb0554f83ec9e186f710a31f05a2ea80075ae95be94a73f8",
+      "first/predicate-7.ibk3.tli1": "8e7b833fb5f120ff168843a2977e53f3c0004f28ad61be34c3892141af2178ef",
+      "first/predicate-7.ibk3.tli1.merkle": "a9a66820c99e4d65417d2d74cdb141b0c83891952b454131f969ead1701b8c49",
+      "first/predicate-8.ibk3": "11dfb059c3a6c11afc4a59fbfc0117da374ab5e70c1ae787ddd0f4d041e6856e",
+      "first/predicate-8.ibk3.merkle": "bbe7546d03c5435c70130aab8efbc873b11e8c7e0266549e874e2e3d41bc14a3",
+      "first/predicate-8.ibk3.oli2": "5f3b2b26e75aeb5f746124df901ef5a57ff635b0cd5b56f6444d366781f7b786",
+      "first/predicate-8.ibk3.oli2.merkle": "a9b47b39010add7ec57f150d2f317a639ef57e7be1d530f2af4d6c4c5a8b7b15",
+      "first/predicate-8.ibk3.sri2": "ac47e8b2b94c65a15ac1eb4f96b31414ecfa0b20d5fec031b33813b9f7a0837c",
+      "first/predicate-8.ibk3.sri2.merkle": "4e20cb7bd8b78587e31b72ddb6e43a5b376f434467a3053c8396e5f3e3e2a7c8",
+      "first/predicate-8.ibk3.tli1": "125ff78366e5352a91570011d7e843f8f686e9c30d375e0563958f6a58d1dcae",
+      "first/predicate-8.ibk3.tli1.merkle": "43cfaf27f606fb5ef84b33f9152eba6ecddb6095b6f17625c5fd35f636c475eb",
+      "first/predicate-9.ibk3": "ded50fb7458eb1f1011abb9a8e40500184d4c0216a89bcf722171fd8730e57fc",
+      "first/predicate-9.ibk3.merkle": "fadb9d2716147a660d549318e23b6e1c0cb6ef625db5358cb8ca38ed9694e756",
+      "first/predicate-9.ibk3.oli2": "05892350496c71fdceba8292004b8c6e0c58b2df6a684533f890f7102599db38",
+      "first/predicate-9.ibk3.oli2.merkle": "c9329aa2c91fc476a8599f200c15bf35e34badf903b17536149caf84a9ad66c8",
+      "first/predicate-9.ibk3.sri2": "b7ead566ccdb85f4be98b822662a2a2c882b25e58ab1dbe2ddcc942c29c6ee68",
+      "first/predicate-9.ibk3.sri2.merkle": "3bce20c770f4e9e2abca9c3b2c5b8c5e1a7ed993712ff41fbc37a234826ecdb4",
+      "first/predicate-9.ibk3.tli1": "906f60f189cdbb1a76a9d8bef1b4a79dc8ba749e4047727f1d7b22a414742999",
+      "first/predicate-9.ibk3.tli1.merkle": "8ec1b7630eab14edab3e8fd5160c5a021f2ad29eabb74bf528848d4200e63573"
+    },
+    "counter_scope": "Artifact range counters only; excludes some control/sidecar/delta and failed speculative reads.",
+    "discarded_reason": "Unrelated Lean build and high browser CPU load; unchanged baseline warmup rose from approximately 6 seconds to 35.815 seconds. Stopped by operator; no performance claim.",
+    "driver_sha256": "7b3af955d4c8f546a24de26712d37ee673eca6feab1030bd5edb4d1043dd965f",
+    "fixture_sha256": "820c587ebdf3c1bdbe54b8081cb20c2895ebda6a1284c89060ccb70cc8eaf830",
+    "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "samples": 3,
+    "scope": "Fresh native processes; startup, admission, reads, evaluation and complete JSON output. OS cache not evicted. No competitor measurement.",
+    "source_head": "98028a368d508fe45ff90b5d98210af855d15532",
+    "subjects": 100000,
+    "timestamp_utc": "2026-10-10T22:54:24.287024+00:00",
+    "toolchain": "leanprover/lean4:v4.33.1",
+    "triples": 300000,
+    "validation": "Every complete ordered answer equals the independently generated expected JSON. Exact term fields, variables, row positions and multiplicities.",
+    "validation_driver_sha256": "1f2aa6957d13c49560079ab884e595882e543aa31b79f069541f6e3a0a68f6fc",
+    "warmups_per_binary_per_query": 1,
+    "workloads": [
+      {
+        "name": "subject-join",
+        "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+        "samples": {
+          "baseline": [],
+          "optimized": []
+        },
+        "warmups": {
+          "baseline": {
+            "command": [
+              "/private/tmp/shardborough-page-selection-only-query",
+              "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+              "--json",
+              "--query",
+              "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+            ],
+            "counter": {
+              "delta": "base",
+              "fetched_bytes": 20745528,
+              "logical_read_bytes": 20643925,
+              "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+              "shards": 10
+            },
+            "documents": 1,
+            "exit_code": 0,
+            "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+            "failure": null,
+            "output_bytes": 11600354,
+            "pid": 56749,
+            "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-paired-100000/subject-join-0-baseline.stderr",
+            "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+            "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/cache-paired-100000/subject-join-0-baseline.stdout",
+            "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+            "validation_passed": true,
+            "wall_ns": 35815332459
+          }
+        }
+      }
+    ]
+  },
+  "reports": [
+    {
+      "all_checks_passed": true,
+      "benchmark": "shardborough-paired-page-selection-v1",
+      "binary_sha256": {
+        "baseline": "a643533c5a2775af70d99b733d014f6c6a842f301e1a3075fc61f0789440bff5",
+        "optimized": "525923fff0757bddc155afa7496740b52722b41b85308c7d1e5afb994f4df22a"
+      },
+      "collection_sha256": {
+        "CURRENT": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+        "first/manifest.sbm2": "780ee4a2fad750879ae1cfa7c71d85139d6c6acbeeea314fddd9ed79428e16ea",
+        "first/manifest.tsv": "45de3e38f32fa973f0810f1ad67b2fe2720ab52ce838a26d51126973b64cf518",
+        "first/predicate-0.ibk3": "11dcfccab3037d5ebcf2f04889a48dd5e0893aa70eaa8ca495af8993b04572c0",
+        "first/predicate-0.ibk3.merkle": "f1869907334387169ba9bab77bd3fc17fb02ce91b0675fb27bcdf0faddf6fdc8",
+        "first/predicate-0.ibk3.oli2": "18147e415878633b754549eb05656c9560a48467221ee225ac6c159b40fdb5fc",
+        "first/predicate-0.ibk3.oli2.merkle": "81e46c850ff00089e4a7e1b5ca2441f2ff23cd4b2b5539acd0f8315c0cbf3ff4",
+        "first/predicate-0.ibk3.sri2": "4ce653965d825471c412a1d2f45a8bc2e951844c0cf863fa9467c92cc7a67303",
+        "first/predicate-0.ibk3.sri2.merkle": "0d897905823d6ab09a67b0c55ae0d157c1efe09d18f3b858b596a234a7cb4020",
+        "first/predicate-0.ibk3.tli1": "bcccab54352de3a85dfab6758d9a55fb22904b508f08be8a32acee7420bd96de",
+        "first/predicate-0.ibk3.tli1.merkle": "cc3ac98fd9ecb30575e21ee152ece8e36454d7b71d45ee0eeaf42c8650e4f7d8",
+        "first/predicate-1.ibk3": "60023f156ad926101eda8568d0600130830a15e7c37c0b939e3ea50bc16a88f3",
+        "first/predicate-1.ibk3.merkle": "1c5af0d9b248369b6958ff9dbaa4dadea8b7ae6e76ee493c28a7b896e2c61cd3",
+        "first/predicate-1.ibk3.oli2": "ce1f3b2b68ceea489832d28d8ec2436af718358910078d9f286d8ce6a57d6a99",
+        "first/predicate-1.ibk3.oli2.merkle": "787da9122bf6d24491e045f65796cf6f79d29bd8b7bd5673f19512cb913aeac3",
+        "first/predicate-1.ibk3.sri2": "8f00b7c1136a8f24495a80c61a1cb68af068275825fcbcd92cd8c4ff8cff1fb7",
+        "first/predicate-1.ibk3.sri2.merkle": "956d369482427568454150991c726d5582878fe422cc4f2e39f12364872103e9",
+        "first/predicate-1.ibk3.tli1": "9251680a03f399ba808894d7c7ccd4243c4af16e528f3a2619d5e3d7bf825f8c",
+        "first/predicate-1.ibk3.tli1.merkle": "8284699b07ef69e1b0f6d06ff394293dbf78d6d2ca62cfe37fd54316fc878596",
+        "first/predicate-2.ibk3": "7a17eff77a16775e8258ae1cb6f8d035b13eb9c16936691ec487a1352a5bc085",
+        "first/predicate-2.ibk3.merkle": "27d81e406e5b069890ed8d32e648c0613b93ed09aee93e4a04789d77212ce437",
+        "first/predicate-2.ibk3.oli2": "8424422dd39511b83c169978db3af918b3f10660c02ae4452e4d938362e94366",
+        "first/predicate-2.ibk3.oli2.merkle": "055e2b6d94d02644ca50a8020130a127fabaa64ecf57f448c1dce2129775fee4",
+        "first/predicate-2.ibk3.sri2": "5916c708e3cab8001e2264b9de1f9f00025f54ac531b96574b09ab6b81f5a0f6",
+        "first/predicate-2.ibk3.sri2.merkle": "f5555c6babca66defd53ccfed8f07716d5811abc86b1bacb94f18e35764c21b1",
+        "first/predicate-2.ibk3.tli1": "790b2192278c8b6ae580b554c94294ae0f4924fa623ae12284107bb1a02e4e24",
+        "first/predicate-2.ibk3.tli1.merkle": "af77078d08e53736a0ed601f0f6f489a63bb1ca9d721080bc32588bacd1c0afa"
+      },
+      "counter_scope": "Artifact range counters only; excludes some control/sidecar/delta and failed speculative reads.",
+      "driver_sha256": "7b3af955d4c8f546a24de26712d37ee673eca6feab1030bd5edb4d1043dd965f",
+      "fixture_sha256": "55e24ac9a5ea02c54a64e55788658eeda0635d91509a7d2a0b8697c90e201db2",
+      "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "samples": 3,
+      "scope": "Fresh native processes; startup, admission, reads, evaluation and complete JSON output. OS cache not evicted. No competitor measurement.",
+      "source_head": "98028a368d508fe45ff90b5d98210af855d15532",
+      "subjects": 1000,
+      "timestamp_utc": "2026-10-10T22:49:56.570156+00:00",
+      "toolchain": "leanprover/lean4:v4.33.1",
+      "triples": 3000,
+      "validation": "Every complete ordered answer equals the independently generated expected JSON. Exact term fields, variables, row positions and multiplicities.",
+      "validation_driver_sha256": "1f2aa6957d13c49560079ab884e595882e543aa31b79f069541f6e3a0a68f6fc",
+      "warmups_per_binary_per_query": 1,
+      "workloads": [
+        {
+          "median_ms": {
+            "baseline": 51.733,
+            "optimized": 51.659833
+          },
+          "name": "subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56106,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-1-baseline.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-1-baseline.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 52040458
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56107,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-2-baseline.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-2-baseline.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 51733000
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56110,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-3-baseline.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-3-baseline.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 51711166
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56105,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-1-optimized.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-1-optimized.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 51545667
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56108,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-2-optimized.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-2-optimized.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 53806917
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 231896,
+                  "logical_read_bytes": 207544,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+                "failure": null,
+                "output_bytes": 116349,
+                "pid": 56109,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-3-optimized.stderr",
+                "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-3-optimized.stdout",
+                "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+                "validation_passed": true,
+                "wall_ns": 51659833
+              }
+            ]
+          },
+          "speedup": 1.0014163228131225,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 231896,
+                "logical_read_bytes": 207544,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+              "failure": null,
+              "output_bytes": 116349,
+              "pid": 56103,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-0-baseline.stderr",
+              "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-0-baseline.stdout",
+              "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+              "validation_passed": true,
+              "wall_ns": 257478000
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 231896,
+                "logical_read_bytes": 207544,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "8c56fdaf2e4e8f4ed014b10a12f0a52feed6868dd7144c6d461e5942e4823e59",
+              "failure": null,
+              "output_bytes": 116349,
+              "pid": 56104,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-0-optimized.stderr",
+              "stderr_sha256": "f4807d96112192bbcc8ed644d7c748abac001b88eea1433218f3c1635ae02b50",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-join-0-optimized.stdout",
+              "stdout_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd",
+              "validation_passed": true,
+              "wall_ns": 51666958
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 40.901667,
+            "optimized": 40.734833
+          },
+          "name": "object-subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56114,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-1-baseline.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-1-baseline.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40576542
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56115,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-2-baseline.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-2-baseline.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40965166
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56118,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-3-baseline.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-3-baseline.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40901667
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56113,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-1-optimized.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-1-optimized.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40734833
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56116,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-2-optimized.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-2-optimized.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40741250
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 279775,
+                  "logical_read_bytes": 191218,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+                "failure": null,
+                "output_bytes": 11976,
+                "pid": 56117,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-3-optimized.stderr",
+                "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-3-optimized.stdout",
+                "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+                "validation_passed": true,
+                "wall_ns": 40604791
+              }
+            ]
+          },
+          "speedup": 1.0040956102606338,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 279775,
+                "logical_read_bytes": 191218,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+              "failure": null,
+              "output_bytes": 11976,
+              "pid": 56111,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-0-baseline.stderr",
+              "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-0-baseline.stdout",
+              "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+              "validation_passed": true,
+              "wall_ns": 40627792
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 279775,
+                "logical_read_bytes": 191218,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "2c8137f0f2d15fcc5ef62ec8764dc7bd9bb9a3b3bf6483494f03d0f3d415ae3c",
+              "failure": null,
+              "output_bytes": 11976,
+              "pid": 56112,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-0-optimized.stderr",
+              "stderr_sha256": "4b2f947bc62c1ae2ea8a4ee9e97de389ae28eff22bac2f9db3f5b930f67a9e45",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/object-subject-join-0-optimized.stdout",
+              "stdout_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11",
+              "validation_passed": true,
+              "wall_ns": 40596416
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 62.118334,
+            "optimized": 61.998292
+          },
+          "name": "subject-triple-join",
+          "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56122,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-1-baseline.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-1-baseline.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 61901917
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56123,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-2-baseline.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-2-baseline.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 62118334
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56126,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-3-baseline.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-3-baseline.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 62487792
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56121,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-1-optimized.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-1-optimized.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 62528541
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56124,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-2-optimized.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-2-optimized.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 61998292
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 326885,
+                  "logical_read_bytes": 302517,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+                "failure": null,
+                "output_bytes": 167418,
+                "pid": 56125,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-3-optimized.stderr",
+                "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-3-optimized.stdout",
+                "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+                "validation_passed": true,
+                "wall_ns": 61821958
+              }
+            ]
+          },
+          "speedup": 1.0019362146299127,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 326885,
+                "logical_read_bytes": 302517,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 3
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+              "failure": null,
+              "output_bytes": 167418,
+              "pid": 56119,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-0-baseline.stderr",
+              "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-0-baseline.stdout",
+              "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+              "validation_passed": true,
+              "wall_ns": 62795958
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 326885,
+                "logical_read_bytes": 302517,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 3
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "f4fcf5e668d7b4679b2a69e239e91132047ed9f3d0814f18bc798f2a9806e98d",
+              "failure": null,
+              "output_bytes": 167418,
+              "pid": 56120,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-0-optimized.stderr",
+              "stderr_sha256": "c1fc9d1a4640d8be9be4184ad4dc9467bf47f47dabfa3c9c5256d9a8f5c1e870",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-1000/subject-triple-join-0-optimized.stdout",
+              "stdout_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69",
+              "validation_passed": true,
+              "wall_ns": 61991541
+            }
+          }
+        }
+      ]
+    },
+    {
+      "all_checks_passed": true,
+      "benchmark": "shardborough-paired-page-selection-v1",
+      "binary_sha256": {
+        "baseline": "a643533c5a2775af70d99b733d014f6c6a842f301e1a3075fc61f0789440bff5",
+        "optimized": "525923fff0757bddc155afa7496740b52722b41b85308c7d1e5afb994f4df22a"
+      },
+      "collection_sha256": {
+        "CURRENT": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+        "first/manifest.sbm2": "01e7fad9209179072d8d204460abdc4b27b04f9dbd9482cedff4962367c96a75",
+        "first/manifest.tsv": "512c5a03791afb4cf326b142333495e63b8a755cc422f683bf565aa300593e3d",
+        "first/predicate-0.ibk3": "c6838cdd05622a2783bf533975844f1de96d9fcacd472ea642f0b6354d3c45a6",
+        "first/predicate-0.ibk3.merkle": "3caa547e21f9a804b63503b981dca10e97787d5c7f5082b9db72222cfb2450e3",
+        "first/predicate-0.ibk3.oli2": "4fec2cfb67b4230337a5c7716ac06e26a69cc16aa6075a63535121e8bef55dd8",
+        "first/predicate-0.ibk3.oli2.merkle": "74606ca1970eba6e8b7c7976cdfb3a9d59280b73a9fccdfbfab72e5f7e8a8c59",
+        "first/predicate-0.ibk3.sri2": "2e653c38725c400aeab9dce1e7b3c9ced658f13578265fbfe4566784d4fedda4",
+        "first/predicate-0.ibk3.sri2.merkle": "59ac71dbb3f66295655276999b058dc89adf449834ff6b486766c4492e89ffb8",
+        "first/predicate-0.ibk3.tli1": "fd8ed9c658e1a1d444878c6e5375ba682f21730cf72718188e06766052c5f014",
+        "first/predicate-0.ibk3.tli1.merkle": "f94f3681a112916f1708e4fc965e0f3a3d0c05c1b151a778b7bf56ac1364c034",
+        "first/predicate-1.ibk3": "988e9b93e1d6ad7d2142fafbdbfee84441f2081f5b9f2551be7f17d730fb3bb7",
+        "first/predicate-1.ibk3.merkle": "113a5f357d966309af4a4b59c2b23826fc4252688c05fa19a5cac794a6710f8e",
+        "first/predicate-1.ibk3.oli2": "f0d36695822b38935bd895f96cbd8bfeb1f5153735b5859afc140d3424a8f76c",
+        "first/predicate-1.ibk3.oli2.merkle": "3ae4fa959198fd87d02290a466c89ffc19a0c9f8bf8fa37a2b448a84ae681c7f",
+        "first/predicate-1.ibk3.sri2": "4d4a27788ef7a1d7a0f3f69846f5104d091c9e41c1bac27a8e717285e7cd2d35",
+        "first/predicate-1.ibk3.sri2.merkle": "cba80a5cbc1cd9f3a9eb3e58a4abb8220080233789fbca47a81c1c5e487fd412",
+        "first/predicate-1.ibk3.tli1": "ae97f7132efdf93977693c2e4ca652e1c35e049e1b977980985cd00608eca5a5",
+        "first/predicate-1.ibk3.tli1.merkle": "dfca8d8bb841bd05407e302f6d9f162eeefbfc31f6f0d2391b63bf26627f7091",
+        "first/predicate-2.ibk3": "6d9ef9e2027f96847425f0aba59c3b27887a438f9ac208297e4f0231447e65d1",
+        "first/predicate-2.ibk3.merkle": "bd891e214b2d30c4462dd2131926891d78b85a491db34c7d1b08bf3c33a39305",
+        "first/predicate-2.ibk3.oli2": "969ed02858944ee7ca4eb9ab667dc7bf23c956be1a7724043dedeed9069b4a4f",
+        "first/predicate-2.ibk3.oli2.merkle": "5c6e5bc6642b161fed61adbcdf2b184df717be42427b3149111a8ac06df01939",
+        "first/predicate-2.ibk3.sri2": "98a32834290be6c153c9428e946975f19b8e7a2fb17e66080cf87adfe5f60004",
+        "first/predicate-2.ibk3.sri2.merkle": "5cc5a9690150d2d16417907c3ffc8478272ef6fe694c06c040273a40be094ce3",
+        "first/predicate-2.ibk3.tli1": "ff761f4419b76b9d0f1b78c5eadd2939ec0e9c396fbd434db49fe437e0cb339f",
+        "first/predicate-2.ibk3.tli1.merkle": "e22f24371cae1fb60959089b763adbf73b40c47c99f19eddc396911ba6c27a5b"
+      },
+      "counter_scope": "Artifact range counters only; excludes some control/sidecar/delta and failed speculative reads.",
+      "driver_sha256": "7b3af955d4c8f546a24de26712d37ee673eca6feab1030bd5edb4d1043dd965f",
+      "fixture_sha256": "f921d1eea2468ff85bb2f094df87518f2be1f2e5d670e695cc97b1ecbc5919a7",
+      "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "samples": 3,
+      "scope": "Fresh native processes; startup, admission, reads, evaluation and complete JSON output. OS cache not evicted. No competitor measurement.",
+      "source_head": "98028a368d508fe45ff90b5d98210af855d15532",
+      "subjects": 10000,
+      "timestamp_utc": "2026-10-10T22:49:58.226513+00:00",
+      "toolchain": "leanprover/lean4:v4.33.1",
+      "triples": 30000,
+      "validation": "Every complete ordered answer equals the independently generated expected JSON. Exact term fields, variables, row positions and multiplicities.",
+      "validation_driver_sha256": "1f2aa6957d13c49560079ab884e595882e543aa31b79f069541f6e3a0a68f6fc",
+      "warmups_per_binary_per_query": 1,
+      "workloads": [
+        {
+          "median_ms": {
+            "baseline": 322.251,
+            "optimized": 314.217791
+          },
+          "name": "subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56134,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-1-baseline.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-1-baseline.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 322251000
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56135,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-2-baseline.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-2-baseline.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 314348958
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56138,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-3-baseline.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-3-baseline.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 332173042
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56133,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-1-optimized.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-1-optimized.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 314217791
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56136,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-2-optimized.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-2-optimized.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 314406125
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2120544,
+                  "logical_read_bytes": 2073736,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+                "failure": null,
+                "output_bytes": 1160351,
+                "pid": 56137,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-3-optimized.stderr",
+                "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-3-optimized.stdout",
+                "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+                "validation_passed": true,
+                "wall_ns": 312109458
+              }
+            ]
+          },
+          "speedup": 1.0255657357097263,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 2120544,
+                "logical_read_bytes": 2073736,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+              "failure": null,
+              "output_bytes": 1160351,
+              "pid": 56131,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-0-baseline.stderr",
+              "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-0-baseline.stdout",
+              "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+              "validation_passed": true,
+              "wall_ns": 316477334
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 2120544,
+                "logical_read_bytes": 2073736,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "e34b1e80ce7f441f407651cf87e94e5c4dea96fc5ef32b28ecd8daba35c1ef26",
+              "failure": null,
+              "output_bytes": 1160351,
+              "pid": 56132,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-0-optimized.stderr",
+              "stderr_sha256": "5026a2ba0c128ca405fe0a7a2ad44d776d40937420ddbd587629dd299c3f3a85",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-join-0-optimized.stdout",
+              "stdout_sha256": "a5b4aa98c12102ed75e0bae9df77d3fb8d0df5c5a4b935e6b0868ead667ba523",
+              "validation_passed": true,
+              "wall_ns": 314963083
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 160.166209,
+            "optimized": 161.018042
+          },
+          "name": "object-subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56142,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-1-baseline.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-1-baseline.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 160138708
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56143,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-2-baseline.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-2-baseline.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 160166209
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56146,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-3-baseline.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-3-baseline.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 161533334
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56141,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-1-optimized.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-1-optimized.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 171858084
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56144,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-2-optimized.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-2-optimized.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 161018042
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 2251816,
+                  "logical_read_bytes": 1806478,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 2
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+                "failure": null,
+                "output_bytes": 116378,
+                "pid": 56145,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-3-optimized.stderr",
+                "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-3-optimized.stdout",
+                "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+                "validation_passed": true,
+                "wall_ns": 159973792
+              }
+            ]
+          },
+          "speedup": 0.994709704642912,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 2251816,
+                "logical_read_bytes": 1806478,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+              "failure": null,
+              "output_bytes": 116378,
+              "pid": 56139,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-0-baseline.stderr",
+              "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-0-baseline.stdout",
+              "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+              "validation_passed": true,
+              "wall_ns": 161082875
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 2251816,
+                "logical_read_bytes": 1806478,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 2
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "81a4551522bc0a9643c34ffa32c1f9663c2fb716c61d89f63ed3dd20976b82a0",
+              "failure": null,
+              "output_bytes": 116378,
+              "pid": 56140,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-0-optimized.stderr",
+              "stderr_sha256": "b189908aa96305dc0c75b140b63626bb2c2b4d01ec344bdea8964fe0e287fd7c",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/object-subject-join-0-optimized.stdout",
+              "stdout_sha256": "c3080f6ff35db7d2675ea6bb3c6fa9e7913f0c69fa4e9f26f99d43cef1534072",
+              "validation_passed": true,
+              "wall_ns": 160059209
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 453.165583,
+            "optimized": 450.710542
+          },
+          "name": "subject-triple-join",
+          "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56153,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-1-baseline.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-1-baseline.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 450485750
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56154,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-2-baseline.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-2-baseline.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 453165583
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56197,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-3-baseline.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-3-baseline.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 474759166
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56151,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-1-optimized.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-1-optimized.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 450197916
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56155,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-2-optimized.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-2-optimized.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 471389208
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 3063945,
+                  "logical_read_bytes": 3017121,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 3
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+                "failure": null,
+                "output_bytes": 1670420,
+                "pid": 56196,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-3-optimized.stderr",
+                "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-3-optimized.stdout",
+                "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+                "validation_passed": true,
+                "wall_ns": 450710542
+              }
+            ]
+          },
+          "speedup": 1.0054470458780618,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 3063945,
+                "logical_read_bytes": 3017121,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 3
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+              "failure": null,
+              "output_bytes": 1670420,
+              "pid": 56147,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-0-baseline.stderr",
+              "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-0-baseline.stdout",
+              "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+              "validation_passed": true,
+              "wall_ns": 455980625
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-10000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 3063945,
+                "logical_read_bytes": 3017121,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 3
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "ea6df9edfcba81e51e61d2836a4d4eecb5a6c6864918e84f08317fb1732166f1",
+              "failure": null,
+              "output_bytes": 1670420,
+              "pid": 56148,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-0-optimized.stderr",
+              "stderr_sha256": "b7b8298da3022860b85d9db832a91a9a3569ea7d4813205dd460585b517eed56",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-10000/subject-triple-join-0-optimized.stdout",
+              "stdout_sha256": "bdf2cf37bd0b02c8f1c6d76bf5b12a72f4b254784a75b774a37493838bb9716f",
+              "validation_passed": true,
+              "wall_ns": 447084917
+            }
+          }
+        }
+      ]
+    },
+    {
+      "all_checks_passed": true,
+      "benchmark": "shardborough-paired-page-selection-v1",
+      "binary_sha256": {
+        "baseline": "a643533c5a2775af70d99b733d014f6c6a842f301e1a3075fc61f0789440bff5",
+        "optimized": "525923fff0757bddc155afa7496740b52722b41b85308c7d1e5afb994f4df22a"
+      },
+      "collection_sha256": {
+        "CURRENT": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+        "first/manifest.sbm2": "bd8fd04afb0bc521fd066ce4e7ca0c0d9272703756951d3d76ae5da01c3618c2",
+        "first/manifest.tsv": "fc4851bb4c0aee10c40374f38f14a272e0cd29415f7ebd8fe79825d1e336766d",
+        "first/predicate-0.ibk3": "72b49b4bf4ec0b81dbb6aa0f9c0aaca396b4e9af2d7a121fe6a6ece5e5989297",
+        "first/predicate-0.ibk3.merkle": "df961ba2241de809a78bd432b35727ceb489d02d923d444f7b024c972d5d5fe9",
+        "first/predicate-0.ibk3.oli2": "380fbcb79c4a183a27f37de661b3796e5f36a17be972617735dcb8e9785c6023",
+        "first/predicate-0.ibk3.oli2.merkle": "899f2d2cd4c2157c4c2c204736155a8dbb964f2e2631ef8801d77c8092cf7027",
+        "first/predicate-0.ibk3.sri2": "bd7f474544e5a529c84abf04e1c712f4e352b1b3ba4a5fd1e2732aa10a9e72e6",
+        "first/predicate-0.ibk3.sri2.merkle": "69a6e8635d97a8c34492ac8d3f708f62632c75795d76bad0fd1428a80d46471f",
+        "first/predicate-0.ibk3.tli1": "79cf17a01318055ad834ca4cc6ea533142f5540578d08bd1ce96f27b41b6e3c5",
+        "first/predicate-0.ibk3.tli1.merkle": "ef85b06ce0276a95f692a406382a39764c9815f641e69d7f64a19f635b7c664d",
+        "first/predicate-1.ibk3": "34fd4c0192fcdbea7d5ed4263f08b34caf6b91dfb2102398f415197dd2b91cf6",
+        "first/predicate-1.ibk3.merkle": "b1b52bb6875fe005dbd8d62aa388d83b4d8a56e94664855396c2b8bc83b39b10",
+        "first/predicate-1.ibk3.oli2": "f4640f38db91f31f507812a08d8434d4cf8503f39ecd0de2e52c85eb55a53452",
+        "first/predicate-1.ibk3.oli2.merkle": "2d1ca51927a9843d8d3ae9c3a85b607fa12ee0342e9734674ad574aaf16f6528",
+        "first/predicate-1.ibk3.sri2": "f032831680e0ea6fb56ba02f83e150ad64c986b55de763ae1ce6962a5563fea8",
+        "first/predicate-1.ibk3.sri2.merkle": "1716258b55579ae382bfcad71e51644aabb9cfc9a3df537203fad454d644a94d",
+        "first/predicate-1.ibk3.tli1": "60017dd150959be390aeddbcab957a63b12a0ba8ca621885d411c0be18b215c8",
+        "first/predicate-1.ibk3.tli1.merkle": "47cf323a23a061023edb81509935c87d79d341d6acb1be3d8d80fcd6bde73ec2",
+        "first/predicate-10.ibk3": "1c93c5fb3b4ca5be9ea80a25d023b25e8b6793a9ca925994e6b61b335e2f44db",
+        "first/predicate-10.ibk3.merkle": "e8da4a65c561435b2ab5968f3eefbf6ed5d1acdbabb2a6f9870f6e3f3205acfb",
+        "first/predicate-10.ibk3.oli2": "6d13cd3e84a7ba10f49c313b56e00a19d17392591d0546afa9e0a661277053f4",
+        "first/predicate-10.ibk3.oli2.merkle": "65f4f822d8e06b3532b249b22e092de68befa54cfc39b55cf5c130bae4b7dfbc",
+        "first/predicate-10.ibk3.sri2": "3380ce0031199782cd2f3251dc21cc94a597cd097457165604b64d27c4c3d356",
+        "first/predicate-10.ibk3.sri2.merkle": "5136cec7c92e7efd061b6ef46e5bd82cdb2328d961d44125e72ad8b1553424c0",
+        "first/predicate-10.ibk3.tli1": "0acada02b00771c38b0ceb0fbfbc68d8806d25761f778a4007b1dba45f174fed",
+        "first/predicate-10.ibk3.tli1.merkle": "cecef460280e52dcd83b10bc869c7274c83aaa5fdf92e1c1dbe2747d67a3db65",
+        "first/predicate-11.ibk3": "95b1b93938f0108717076efb28c73a95dda55773ce28242ebb0dc240914610c4",
+        "first/predicate-11.ibk3.merkle": "4e4aa64416cc5274dfdafbaf64cbc52441e64a217aa7b3f36848d99b5972953b",
+        "first/predicate-11.ibk3.oli2": "056d1f82df0a4b568a283d91357274066aec6dd065ff28cb2b76c18f67aa717c",
+        "first/predicate-11.ibk3.oli2.merkle": "4583f6cea182b6f69e41f5c44ab840aee9a5e252ce0a55c66ae6772a3ea5de62",
+        "first/predicate-11.ibk3.sri2": "6633710fd20d0e8a2c1e5dd586594ac17fe91490ac88688bba859c76139d3cc2",
+        "first/predicate-11.ibk3.sri2.merkle": "5b5a274f3a18bc1ea89ca3c132f20ff7dc4031eb522ca28fa179b0dc5c79f622",
+        "first/predicate-11.ibk3.tli1": "0cde7e82bcf9d3fa39871ce3cd35fd9b5e488bf295db82f3993066a4300974a2",
+        "first/predicate-11.ibk3.tli1.merkle": "5701c155d1a58d0b46d6da48cfb0a167986f3c114773d906fcf0ba7af66bf3f0",
+        "first/predicate-12.ibk3": "10f5f47e048c27f09b0e8d61acec0a8c97a05255803e88f6d525c583e1f6f2b0",
+        "first/predicate-12.ibk3.merkle": "01ddd432e1536f6e1a76b97cf9ab567d3c1d4b0c4115c1a406e0c0688c6a1498",
+        "first/predicate-12.ibk3.oli2": "75992935fa5dd31cadf90ee6d4de192b092768d2d990ef64b7edb13a33b01f70",
+        "first/predicate-12.ibk3.oli2.merkle": "eb6c87aaad3a9f7c6d4e102d03f9461204a652bec75ba62b797ed09f61c78ba2",
+        "first/predicate-12.ibk3.sri2": "d3960160eb3c984dfa8a54122dc9b7297cfdb15d35688c3b78215fbc3802e192",
+        "first/predicate-12.ibk3.sri2.merkle": "af7925812f6ad9a1df6d00995fda496b1b33e8960122b84e990b56a7a4966f7f",
+        "first/predicate-12.ibk3.tli1": "fe02e308ee1553bf0405ad8e92ec1dc2bb37aac8daa63699f1e0ca044c4dc12f",
+        "first/predicate-12.ibk3.tli1.merkle": "e78674de94fa00b9b68c85cdc836efee07b1336fde3f0ab919b3779a2a5ec62d",
+        "first/predicate-13.ibk3": "29f2e8b98117f2da25655c72ea74e5368467d1f1e66a0c42b1f0a736b9c8496d",
+        "first/predicate-13.ibk3.merkle": "9f8f2ba21108a586918cd4d58915769d6067285071a25761b264fd6012140208",
+        "first/predicate-13.ibk3.oli2": "dd7c132af1faad9fca96dfd2468ca906b0be9e9dd319ed664211a287a2b718d0",
+        "first/predicate-13.ibk3.oli2.merkle": "444ce63b8c0d303d22caa2e7bb0d6a4fb7c50e2ebb078ad29743a69be3326284",
+        "first/predicate-13.ibk3.sri2": "87ead1df904aacb44bdb1bb7b9a87e30144fbf6d3edfa9ff4acbf0a198006cd7",
+        "first/predicate-13.ibk3.sri2.merkle": "a91dd59e7db476bf26ff7ef7f513ffce1ca6e92876d0a9bc7b6ea4d13d0971c9",
+        "first/predicate-13.ibk3.tli1": "553ca4ae2c08430139717fc6817384caab2561ae2cc9d5fcb43de13fdb44d0b6",
+        "first/predicate-13.ibk3.tli1.merkle": "8f51f6dd448ad43f2bb11a032982ca5836e70245ba15b898a6d498bc98179ed7",
+        "first/predicate-14.ibk3": "c30435f5ffc1fa9f234aa1baa3f01c61c544f444d02b31ddfb28569b7e960eff",
+        "first/predicate-14.ibk3.merkle": "6f7bade59c8b21c7be4d261c728203b890a4e7e86bea938e762cef9ee01ac83d",
+        "first/predicate-14.ibk3.oli2": "51143cb51603edd08c9de384847b3deea63836f41a6d56cb0224a41c74eefd26",
+        "first/predicate-14.ibk3.oli2.merkle": "2de01efe7eaf23cfd3c69a3b88f586f63c44a2bf1983a8a473158f6f201a9cf4",
+        "first/predicate-14.ibk3.sri2": "a78da636b2a519e91345536dd6601b4cb31c44e460e931dcb931b808cad1fd2e",
+        "first/predicate-14.ibk3.sri2.merkle": "f241df034460c61eb8b60b2311e37b53ce04ae0cf099224af091c4c098696f38",
+        "first/predicate-14.ibk3.tli1": "64a139ad5c92d931eb1d5e7060e22d140c048eda8d133fb43729215ba6d05f86",
+        "first/predicate-14.ibk3.tli1.merkle": "1016d7ddec5ed408629452329432ca04b7c50cb2c3a626716176585cd2971660",
+        "first/predicate-2.ibk3": "c88f88cad3717a889005b6cacc4800da1f1a8a0dd34100950c2a5e4bd159c48c",
+        "first/predicate-2.ibk3.merkle": "8a518cfde2f5261ffa93d7ab7aa3508a209a10f3b367c456454793bb9b9873fa",
+        "first/predicate-2.ibk3.oli2": "881d6e1a2835c7ecb04044ecec90ba19648f48673d4778b4711d46cdf8198a57",
+        "first/predicate-2.ibk3.oli2.merkle": "2c14fa1c371b8a5110bd0c55f8c5dd01a9ba6dae1fe133792ba400f43625428d",
+        "first/predicate-2.ibk3.sri2": "10e780e28428759df57b9df5cce4331b7cba580b7d3db9855abac9844ad4139f",
+        "first/predicate-2.ibk3.sri2.merkle": "1e6addd55b49728a6d92fd57a3eff3ab61b15e0c15051a174c730dbb2e43e5de",
+        "first/predicate-2.ibk3.tli1": "bb7437512d1c80c3fd54c5377c33e554dc01b69ea591859109eead323b22a963",
+        "first/predicate-2.ibk3.tli1.merkle": "8477031cd8ad3902d593993075e929a8631cd3bd7a212d52f13d503dfd51f731",
+        "first/predicate-3.ibk3": "275101b0ac511b17224f2969cd8157ac0e6d7091a216e03a1cc5bbc80442b3da",
+        "first/predicate-3.ibk3.merkle": "547e5cf358acee92a9ea3854f2154749caf9257bfa37d00c40c966e52476f418",
+        "first/predicate-3.ibk3.oli2": "f29c1dd35cb7e488e075bc68f66ac336e1f4442695d4063e50c8c81def6c88d6",
+        "first/predicate-3.ibk3.oli2.merkle": "6b8034d88b8fe032f3c2f670d4daf5e52583f4fd004c38c78f67470cc060f335",
+        "first/predicate-3.ibk3.sri2": "172e55c2d8630ce45f69430776691cf7260bae54727de76748a984b7762804c9",
+        "first/predicate-3.ibk3.sri2.merkle": "b867233607910f2bd7173b23c34d5d49d1d3887b3ed1e005270a2dac67755b3e",
+        "first/predicate-3.ibk3.tli1": "08a1ad86b0b7707c860760331b7c1418982918f1ecd267081a160b551bc5443a",
+        "first/predicate-3.ibk3.tli1.merkle": "da9f89a0fd886900e00046d8832bc8aa2a1aa470d88e19cca396ae23fb63f3a9",
+        "first/predicate-4.ibk3": "69b19bb184d7576a14c526c374d805f9489ee9e2d9c2efc571364faa51b59bd7",
+        "first/predicate-4.ibk3.merkle": "d03ec0dcd326f4a7646a0143300fa7401f73518d3dc851532617c70d0655b89d",
+        "first/predicate-4.ibk3.oli2": "c049f38b8dc7b69fb90c0056705718b82e4659071da62120d693b8d1ef29e8ce",
+        "first/predicate-4.ibk3.oli2.merkle": "c10e26a3f79819a88ebf24c08946c5e1532e5b9bab5b4f9dc0120bd9f26a48ba",
+        "first/predicate-4.ibk3.sri2": "664b9897a56125901b7cfdf633f8523a5408a5a7684724b1c36b2a69b6d0e8de",
+        "first/predicate-4.ibk3.sri2.merkle": "f791c38c40a9521d8728178ee40912128f5a456268c5dc6a8b98152756f54c11",
+        "first/predicate-4.ibk3.tli1": "d7174c18ad776bc5cf378fada55856413c219ea64cba3b8691d21fab233e99bd",
+        "first/predicate-4.ibk3.tli1.merkle": "b0cc45109b667a83e770b0efcd56a2c71a1f30be62260172d1eea8a703e572f5",
+        "first/predicate-5.ibk3": "1bf1998e2bba8bdf1f7ec4d6b7d2b44cc3ed42e15fdb80b8c3596f4d97c9f2ec",
+        "first/predicate-5.ibk3.merkle": "4f97a331ed3308d8841adf1a563dca9ce80fd1ad8caf993305eb1b5a80a1d658",
+        "first/predicate-5.ibk3.oli2": "4d255cae3b53f3bc0ac5d928372ed636ca184b8e48d6ae5d8417d1e0df3add49",
+        "first/predicate-5.ibk3.oli2.merkle": "606184d980ce7e441c1126a0b54d162bd418a629cf5f7275719fc26a43c1627a",
+        "first/predicate-5.ibk3.sri2": "5cdc090f8954c52e16cfb21d994c3ea5e18168fef9ace46c9fd8ef3abb3776cd",
+        "first/predicate-5.ibk3.sri2.merkle": "c9374c0bfbb979ea8b2fbdaf65dd242a3cc181f3ec9922897e63552919adc23f",
+        "first/predicate-5.ibk3.tli1": "58b2346a3d479aaa5e93cb56b30ebe9e6a1dd0d22bbf38738878f8c4e0db2e99",
+        "first/predicate-5.ibk3.tli1.merkle": "5fa4b0a04b4b0631c2ca2853372c77bad772eef905f00477e997349b2cdc5699",
+        "first/predicate-6.ibk3": "d6ca872de14e8344268cbd64da4fc22cfa4b1bbaab9619ea87d9b3916dc7e595",
+        "first/predicate-6.ibk3.merkle": "0590c0a10f79ac374ef9d11f31084a25e1b6f54a9e9fdf6579127226906a4a29",
+        "first/predicate-6.ibk3.oli2": "1a00aea0e46442cb3d3fca46188bc952f2af5c0cecdcaac5f45f36f91b8973c4",
+        "first/predicate-6.ibk3.oli2.merkle": "986bb3ee211328704371e4e0aef0febc9f3eae7d6ffe39d3bcdf9943e3833f13",
+        "first/predicate-6.ibk3.sri2": "dc4bd2ff8b2ad2235a19e79f02e3d183a822791ae3cffb318f83ca359f5e37ac",
+        "first/predicate-6.ibk3.sri2.merkle": "79f71ff384d0a2074285656041c5d6fc341e1432415dab95b8c65ac77dd8ab1a",
+        "first/predicate-6.ibk3.tli1": "198548ddd08a8921d199da4954fef855f458826cfdd6cae73c438fa36aaed61b",
+        "first/predicate-6.ibk3.tli1.merkle": "becd897ad2be9b81f10781478292e1ab3bc76da062873a72836d801a48fe6e79",
+        "first/predicate-7.ibk3": "e76b30fa6cbd6b12e9b1b6d59df5aac55674be6fa90c1e1fdd63c015429c36e9",
+        "first/predicate-7.ibk3.merkle": "ce92dc95dcad24fe4c9749e5229e935953fc746dfd4f47a35ee0ccfb051f2d0a",
+        "first/predicate-7.ibk3.oli2": "91c0c7b309e1f380804f0a61ffa558b940cb28e47197ea6b10137c43c9fc01d4",
+        "first/predicate-7.ibk3.oli2.merkle": "7433ae3bf112a364a5589118ec8109cf27a613eec49bd1210603c290a8e094ef",
+        "first/predicate-7.ibk3.sri2": "74cf68a3b17a6a5d67d28f4bb3901d545beb88fd65ea2a285f72303566f18628",
+        "first/predicate-7.ibk3.sri2.merkle": "b1e9603fe5df3771fb0554f83ec9e186f710a31f05a2ea80075ae95be94a73f8",
+        "first/predicate-7.ibk3.tli1": "8e7b833fb5f120ff168843a2977e53f3c0004f28ad61be34c3892141af2178ef",
+        "first/predicate-7.ibk3.tli1.merkle": "a9a66820c99e4d65417d2d74cdb141b0c83891952b454131f969ead1701b8c49",
+        "first/predicate-8.ibk3": "11dfb059c3a6c11afc4a59fbfc0117da374ab5e70c1ae787ddd0f4d041e6856e",
+        "first/predicate-8.ibk3.merkle": "bbe7546d03c5435c70130aab8efbc873b11e8c7e0266549e874e2e3d41bc14a3",
+        "first/predicate-8.ibk3.oli2": "5f3b2b26e75aeb5f746124df901ef5a57ff635b0cd5b56f6444d366781f7b786",
+        "first/predicate-8.ibk3.oli2.merkle": "a9b47b39010add7ec57f150d2f317a639ef57e7be1d530f2af4d6c4c5a8b7b15",
+        "first/predicate-8.ibk3.sri2": "ac47e8b2b94c65a15ac1eb4f96b31414ecfa0b20d5fec031b33813b9f7a0837c",
+        "first/predicate-8.ibk3.sri2.merkle": "4e20cb7bd8b78587e31b72ddb6e43a5b376f434467a3053c8396e5f3e3e2a7c8",
+        "first/predicate-8.ibk3.tli1": "125ff78366e5352a91570011d7e843f8f686e9c30d375e0563958f6a58d1dcae",
+        "first/predicate-8.ibk3.tli1.merkle": "43cfaf27f606fb5ef84b33f9152eba6ecddb6095b6f17625c5fd35f636c475eb",
+        "first/predicate-9.ibk3": "ded50fb7458eb1f1011abb9a8e40500184d4c0216a89bcf722171fd8730e57fc",
+        "first/predicate-9.ibk3.merkle": "fadb9d2716147a660d549318e23b6e1c0cb6ef625db5358cb8ca38ed9694e756",
+        "first/predicate-9.ibk3.oli2": "05892350496c71fdceba8292004b8c6e0c58b2df6a684533f890f7102599db38",
+        "first/predicate-9.ibk3.oli2.merkle": "c9329aa2c91fc476a8599f200c15bf35e34badf903b17536149caf84a9ad66c8",
+        "first/predicate-9.ibk3.sri2": "b7ead566ccdb85f4be98b822662a2a2c882b25e58ab1dbe2ddcc942c29c6ee68",
+        "first/predicate-9.ibk3.sri2.merkle": "3bce20c770f4e9e2abca9c3b2c5b8c5e1a7ed993712ff41fbc37a234826ecdb4",
+        "first/predicate-9.ibk3.tli1": "906f60f189cdbb1a76a9d8bef1b4a79dc8ba749e4047727f1d7b22a414742999",
+        "first/predicate-9.ibk3.tli1.merkle": "8ec1b7630eab14edab3e8fd5160c5a021f2ad29eabb74bf528848d4200e63573"
+      },
+      "counter_scope": "Artifact range counters only; excludes some control/sidecar/delta and failed speculative reads.",
+      "driver_sha256": "7b3af955d4c8f546a24de26712d37ee673eca6feab1030bd5edb4d1043dd965f",
+      "fixture_sha256": "820c587ebdf3c1bdbe54b8081cb20c2895ebda6a1284c89060ccb70cc8eaf830",
+      "host": "macOS-15.6.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "samples": 3,
+      "scope": "Fresh native processes; startup, admission, reads, evaluation and complete JSON output. OS cache not evicted. No competitor measurement.",
+      "source_head": "98028a368d508fe45ff90b5d98210af855d15532",
+      "subjects": 100000,
+      "timestamp_utc": "2026-10-10T22:50:06.813251+00:00",
+      "toolchain": "leanprover/lean4:v4.33.1",
+      "triples": 300000,
+      "validation": "Every complete ordered answer equals the independently generated expected JSON. Exact term fields, variables, row positions and multiplicities.",
+      "validation_driver_sha256": "1f2aa6957d13c49560079ab884e595882e543aa31b79f069541f6e3a0a68f6fc",
+      "warmups_per_binary_per_query": 1,
+      "workloads": [
+        {
+          "median_ms": {
+            "baseline": 6104.138084,
+            "optimized": 5943.78625
+          },
+          "name": "subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56208,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-1-baseline.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-1-baseline.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 6184210625
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56216,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-2-baseline.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-2-baseline.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 6104138084
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56236,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-3-baseline.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-3-baseline.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 6088514959
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56207,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-1-optimized.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-1-optimized.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 6025581292
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56219,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-2-optimized.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-2-optimized.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 5943786250
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 20745528,
+                  "logical_read_bytes": 20643925,
+                  "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+                "failure": null,
+                "output_bytes": 11600354,
+                "pid": 56235,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-3-optimized.stderr",
+                "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-3-optimized.stdout",
+                "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+                "validation_passed": true,
+                "wall_ns": 5894918000
+              }
+            ]
+          },
+          "speedup": 1.0269780620055105,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 20745528,
+                "logical_read_bytes": 20643925,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 10
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+              "failure": null,
+              "output_bytes": 11600354,
+              "pid": 56201,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-0-baseline.stderr",
+              "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-0-baseline.stdout",
+              "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+              "validation_passed": true,
+              "wall_ns": 6213424042
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 20745528,
+                "logical_read_bytes": 20643925,
+                "open_mode": "ibk3-sri2-tli1-subject-join(2)",
+                "shards": 10
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "7309ff83ac1762ab7f09ef94f75a4c8cfc8ce07af6baba2efc7237246f57eee1",
+              "failure": null,
+              "output_bytes": 11600354,
+              "pid": 56202,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-0-optimized.stderr",
+              "stderr_sha256": "8b2fa740e239847b897aa70817e0160a0d2b468a2cf7cfbda95dfd2c1b6bd3de",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-join-0-optimized.stdout",
+              "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+              "validation_passed": true,
+              "wall_ns": 6091056083
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 1742.365375,
+            "optimized": 1744.717625
+          },
+          "name": "object-subject-join",
+          "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56246,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-1-baseline.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-1-baseline.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1732534375
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56247,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-2-baseline.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-2-baseline.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1769359583
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56251,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-3-baseline.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-3-baseline.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1742365375
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56239,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-1-optimized.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-1-optimized.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1695912208
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56248,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-2-optimized.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-2-optimized.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1744717625
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 21671330,
+                  "logical_read_bytes": 17924420,
+                  "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                  "shards": 10
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+                "failure": null,
+                "output_bytes": 1160381,
+                "pid": 56249,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-3-optimized.stderr",
+                "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-3-optimized.stdout",
+                "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+                "validation_passed": true,
+                "wall_ns": 1758375667
+              }
+            ]
+          },
+          "speedup": 0.9986517875636179,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 21671330,
+                "logical_read_bytes": 17924420,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 10
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+              "failure": null,
+              "output_bytes": 1160381,
+              "pid": 56237,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-0-baseline.stderr",
+              "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-0-baseline.stdout",
+              "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+              "validation_passed": true,
+              "wall_ns": 1702086000
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 21671330,
+                "logical_read_bytes": 17924420,
+                "open_mode": "ibk3-sri2-tli1-oli2-object-subject-join(2)",
+                "shards": 10
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "59c0a6354ad1270016d5afd54d9e8d3d060e9cc32bdc9b10f7d51882883d4961",
+              "failure": null,
+              "output_bytes": 1160381,
+              "pid": 56238,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-0-optimized.stderr",
+              "stderr_sha256": "518e2e6f6245a5f63784c7b372fbf541e4309b9a0e255ee817119af7f74f11e1",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/object-subject-join-0-optimized.stdout",
+              "stdout_sha256": "a6a82e46fc349ba09ea0cdefe6326dba625d060cdab063d57db7aba3f0ebc217",
+              "validation_passed": true,
+              "wall_ns": 1670965000
+            }
+          }
+        },
+        {
+          "median_ms": {
+            "baseline": 10257.404708,
+            "optimized": 9597.107416
+          },
+          "name": "subject-triple-join",
+          "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject",
+          "samples": {
+            "baseline": [
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56266,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-1-baseline.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-1-baseline.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 10324107875
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56271,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-2-baseline.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-2-baseline.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 9796281209
+              },
+              {
+                "command": [
+                  "/private/tmp/shardborough-parity-before-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56297,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-3-baseline.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-3-baseline.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 10257404708
+              }
+            ],
+            "optimized": [
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56263,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-1-optimized.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-1-optimized.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 9597107416
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56275,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-2-optimized.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-2-optimized.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 9348951792
+              },
+              {
+                "command": [
+                  "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                  "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                  "--json",
+                  "--query",
+                  "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+                ],
+                "counter": {
+                  "delta": "base",
+                  "fetched_bytes": 30175598,
+                  "logical_read_bytes": 30073915,
+                  "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                  "shards": 15
+                },
+                "documents": 1,
+                "exit_code": 0,
+                "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+                "failure": null,
+                "output_bytes": 16700423,
+                "pid": 56287,
+                "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-3-optimized.stderr",
+                "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+                "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-3-optimized.stdout",
+                "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+                "validation_passed": true,
+                "wall_ns": 9956596208
+              }
+            ]
+          },
+          "speedup": 1.0688016986138107,
+          "warmups": {
+            "baseline": {
+              "command": [
+                "/private/tmp/shardborough-parity-before-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 30175598,
+                "logical_read_bytes": 30073915,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 15
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+              "failure": null,
+              "output_bytes": 16700423,
+              "pid": 56252,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-0-baseline.stderr",
+              "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-0-baseline.stdout",
+              "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+              "validation_passed": true,
+              "wall_ns": 10006661375
+            },
+            "optimized": {
+              "command": [
+                "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+                "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline-100k/subjects-100000/collection",
+                "--json",
+                "--query",
+                "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject"
+              ],
+              "counter": {
+                "delta": "base",
+                "fetched_bytes": 30175598,
+                "logical_read_bytes": 30073915,
+                "open_mode": "ibk3-sri2-tli1-subject-triple-join(3)",
+                "shards": 15
+              },
+              "documents": 1,
+              "exit_code": 0,
+              "expected_canonical_sha256": "cdb43e827f66c84cd44665b734198da45d077dc69ef146dd9edb227e7d9b6cc6",
+              "failure": null,
+              "output_bytes": 16700423,
+              "pid": 56260,
+              "stderr_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-0-optimized.stderr",
+              "stderr_sha256": "069b313e6511e9a739b231ed8d0ff1296d00c1103aceaafda8c54694500de2dc",
+              "stdout_file": "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/page-paired-100000/subject-triple-join-0-optimized.stdout",
+              "stdout_sha256": "19ead265e5da69180da1f08a1895dd0bea1d597c2d08f212b518c78033902d1a",
+              "validation_passed": true,
+              "wall_ns": 9667591416
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scope": "Batch page selection only. Each raw sample validates the full ordered answer; no competitor timings. Later PageCache increment is not timed here."
+}

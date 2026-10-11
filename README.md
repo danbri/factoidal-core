@@ -5,6 +5,24 @@ first and test first. Shardborough's native pack, activation, disk query,
 update and compaction targets now live here with their Lean dependencies.
 See the [native runtime record](docs/20261010-shardborough-native-runtime.md)
 for validation and the remaining assurance and performance work.
+The native query tools also provide [complete JSON results](docs/20261010-shardborough-results-json.md)
+for answer validation instead of the default ten-row preview.
+The [indexed-selection measurement](docs/20261010-shardborough-indexed-selection.md)
+records a proved local optimization and a fourfold improvement on one 300,000-triple synthetic join.
+Read snapshots now use proved [ordered subject access](docs/20261011-shardborough-ordered-subject-access.md),
+[metadata counts](docs/20261011-shardborough-metadata-count.md),
+[native string ordering](docs/20261011-shardborough-native-string-order.md) and
+[streaming JSON escaping](docs/20261011-shardborough-streaming-json-escape.md).
+On the generated 300,000-triple fixture, the streaming-escape trial measured
+the two-pattern join at
+294 ms versus QLever's 378 ms and Virtuoso's 3,499 ms. These single-client,
+in-memory snapshot measurements include different transports; larger varied
+workloads and production resource costs remain necessary for industry parity.
+The [varied-workload follow-up](docs/20261011-shardborough-relational-workloads.md)
+now checks nine full answers through 1.57 million triples. It fixes nested
+aggregate evaluation and adds proved cached planner counts. Chain joins
+approach QLever's timings, while grouping and selective queries expose large
+remaining gaps. Industry parity remains open.
 Historical suite counts and deployment links below are not a fresh test run
 of this checkout.
 

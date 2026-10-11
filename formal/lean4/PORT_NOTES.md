@@ -13935,3 +13935,269 @@ axioms. The migration adds no `sorry`, `native_decide`, custom axioms or
 partial definitions. Full W3C conformance requires separate destination
 manifest runs. The Lean basics skill records source freshness and serialized
 integration after deliberately red dependency builds.
+
+### Native complete results (2026-10-10)
+
+Lean-native `SPARQL.ResultsJsonFast` refines the existing `ResultsJson`
+serializer with accumulator-based row joining. Universal theorems establish
+exact string and UTF-8 byte equality for arbitrary `QueryResult`; fourteen
+guards exercise boundary cases and RDF 1.2 terms. The existing serializer
+specification is unchanged. Native IBK3/IBK4/IBK5 query tools expose complete
+SELECT/ASK JSON results while preserving default preview output. The repeat
+mode still performs fresh artifact admission per iteration. This is not a
+general parser round-trip, full W3C rerun or persistent-server implementation.
+See `docs/20261010-shardborough-results-json.md` for the test commands and scope.
+
+### Indexed subject selection (2026-10-10)
+
+`Storage.SubjectRowIndexWireV2.distinctIds` replaces repeated linear duplicate
+scans with a Nat hash set; `selectedPostings` uses hash membership while
+retaining page and posting order and duplicates. Universal exact-list
+refinements establish equality to `List.eraseDups` and the previous list
+membership filter. Six guards include duplicate, empty and large-Nat cases;
+an order-reversing mutation fails the order-sensitive guards. The native
+materializer calls these pure Lean helpers without changing authentication.
+
+Three interleaved fresh-process samples on one 300,000-triple fixture reduce
+the 100,000-subject full-join median from 19,548.911 to 4,897.184 ms. Artifact
+range counters stay equal; a separate new-CLI full-output check validates all
+100,000 known bindings. The preserved original CLI only supports previews,
+so paired timings themselves check cardinality and preview equality, not
+complete old/new answer bags. These local refinements are not an end-to-end
+proof of the disk IO path or a QLever/Virtuoso parity result. Evidence and
+remaining profile costs are in `docs/20261010-shardborough-indexed-selection.md`.
+
+### Native read snapshot sessions (2026-10-11)
+
+`SPARQL.PreparedSnapshot` retains a graph, its index and `Index.Wf` proof.
+`Harness.SnapshotSession` admits one complete IBK3 generation and strict DLOG
+replay, then answers JSONL SELECT/ASK requests without collection reads.
+New sessions see later delta/generation state; existing sessions keep their
+snapshot. The graph and indexes remain in RAM. Dataset clauses delegate to
+the reference evaluator; BASE and a request-local NOW environment are supplied.
+
+Theorems preserve the exact materialised graph and establish the zero-LIMIT
+shortcut against the current reference evaluator. The inherited SELECT-star
+header construction still depends on returned rows and needs a separate
+scope/schema correction; equality to that evaluator does not certify full
+W3C result-format conformance. Twenty-three guards and native state-change,
+admission-failure and complete-answer tests pass, as does the 627-job build.
+
+At 300,000 generated triples, three-sample medians for fresh CLI versus an
+open snapshot are 6,014.164 versus 1,343.800 ms (two-pattern subject join),
+9,013.532 versus 1,664.289 ms (three patterns), and 1,614.355 versus 133.851 ms
+(object-driven join). Opening costs 1,780.510 ms; RSS sampled after readiness
+is 181.688 MiB, not peak RSS. The later zero-LIMIT shortcut is measured
+separately at 0.059 ms. These different freshness/process/memory modes do not
+establish competitor parity. Full evidence, commands and remaining work are
+in `docs/20261011-shardborough-snapshot-sessions.md`.
+
+### Static projection and native competitor measurements (2026-10-11)
+
+The SELECT-star header gap above is now corrected in Lean. `Query.projectedVars`
+collects statically in-scope names, preserving explicit projection order and
+deduplicating SELECT-star names. Empty/all-UNDEF results keep their columns.
+Reference, snapshot, triple and quad native routes share the function.
+`ProjectionTheorems` proves header independence from graph/environment and
+duplicate-free SELECT-star headers; zero-limit proofs use the corrected header.
+Twenty new guards, native complete-answer checks and the 693-job combined
+build pass. The reference W3C rerun remains 631/631, with its existing harness
+tolerances documented separately from exact header regressions.
+
+Interleaved warm native comparisons at 300,000 triples measure Shardborough
+versus QLever at 1,348.828 versus 376.484 ms for the two-pattern join,
+1,653.018 versus 571.844 ms for three patterns, and 847.626 versus 3.700 ms
+for ordered slicing. Present-ASK is 21.944 versus 1.059 ms. The pinned Virtuoso
+configuration is slower on broad joins but faster on ordered slicing and
+COUNT. All paired times require complete exact answers; COUNT/ASK differences
+are explicit exclusions. JSONL/HTTP transports, cache settings, startup and
+memory scopes differ and are retained. Larger real workloads, tuning,
+concurrency and industry parity remain unestablished. Evidence and next
+operator work are in `docs/20261011-shardborough-projection-and-competitor-sessions.md`.
+
+### Indexed ASK and ordered prefixes (2026-10-11)
+
+`SPARQL/IndexedExists` short-circuits a singleton indexed ASK without reversing
+its hash bucket or allocating all matching solution rows. The matcher theorem
+holds for every index/pattern/binding, and `evalAskBackend_eq_reference` proves
+the complete wrapper equals the retained evaluator, including decode failures.
+Fallback patterns still use that evaluator. Unbound access still constructs
+`index.toGraph`, so no constant-time claim applies to every ASK shape.
+
+`SPARQL/OrderedPrefix` proves bounded merge sort equals the exact prefix of
+the current `List.mergeSort`, without comparator laws. Its tail-recursive
+merge has a separate refinement. `finishSelectRowsPrefix_eq` proves equality
+of final SELECT stages for all projection functions, flags and slices; a
+`csimp` function-equality theorem installs it in native execution. Matching
+and partitioning still visit the full input. DISTINCT/REDUCED retain full sort,
+and SELECT expressions/freshness contexts remain before ordering. ASK tests
+also exposed rejected trailing VALUES; seven parser guards now cover the
+narrow acceptance fix. ASK solution modifiers remain a separate gap.
+
+The 701-job combined build, 631/631 reference W3C run, expanded native state
+and answer tests, IBK3/4/5 JSON checks and large finite-limit checks pass.
+All new audited proofs have only standard Lean axioms. Local five-sample
+paired medians at 300,000 triples improve present-ASK from 21.600 to 0.042 ms
+and ordered slicing from 852.300 to 318.482 ms. Broad joins are roughly
+unchanged. A separate QLever rerun measures the updated slice at 321.248
+versus 3.613 ms, still about an 89-fold gap. Ordered access and compact joins,
+larger varied data and concurrency remain necessary. Full reports, proof
+boundaries and competitor reruns are in
+`docs/20261011-shardborough-exists-and-ordered-prefix.md`.
+
+### Ordered subject access in read snapshots (2026-10-11)
+
+`SPARQL/OrderedSubject` prepares ascending/descending stable subject orders
+per predicate, with a private constructor retaining exact original-bucket
+sort invariants. Its conservative detector admits a complete singleton
+predicate bucket, distinct subject/object variables, one subject order key,
+projection without expressions and a finite slice. Array extraction happens
+before binding construction. Tied rows and duplicates retain the ordinary
+evaluator's exact order; unsupported shapes keep the existing path.
+
+`OrderedSubjectTheorems.execute_eq_backend` proves equality with the complete
+indexed SELECT entry point under the admitted source index invariant.
+`PreparedSnapshotTheorems.selectRows_eq_reference` proves the optimized wrapper
+equals its reference for every query/environment. All audited proofs use only
+standard Lean axioms. The new arrays are in-memory snapshot state, rebuilt
+after admission/delta replay; they do not change persisted formats or fresh
+CLI execution. Readiness explicitly identifies hash/ordered-index preparation;
+legacy `index-builds` retains its hash-index meaning.
+
+Twenty guards include 120 answer-comparison combinations and rejection cases.
+The 705-job combined build, 631/631 W3C reference run, expanded native state
+and tie-order tests, IBK3/4/5 JSON smokes and actual 100,000-row finite ordered
+single-pattern checks pass. Paired five-sample slice medians at 300,000 triples
+fall from 320.981 to 0.089 ms. Opening rises from 1.778 to 6.241 seconds and
+RSS after readiness from 182.234 to 192.562 MiB, not peak RSS. Broad joins
+remain roughly unchanged. Separate QLever/Virtuoso reruns and the remaining
+compact-ID, cardinality, disk-execution and concurrency work are recorded in
+`docs/20261011-shardborough-ordered-subject-access.md`. Industry parity remains
+unestablished.
+
+### Retained-array metadata counts (2026-10-11)
+
+`SPARQL/MetadataCount` reuses existing graph/predicate array sizes for admitted
+COUNT(*) queries. It preserves the existing streaming-count detector, blank-node
+rewrite, integer datatype, alias and count-row slicing. It introduces no extra
+index or preparation pass. Bound subject/object constraints, repeated variables
+and other unsupported shapes keep the existing evaluator.
+
+`MetadataCountTheorems.cardinality_eq` proves each successful lookup equals the
+backend's exact count under `Index.Wf`; `countRows_eq_backend` lifts the result
+to the complete SELECT answer. `PreparedSnapshotTheorems.selectRows_eq_reference`
+still holds for every query/environment. All audited proofs use only standard
+Lean axioms. The F* lineage is the streaming-count detector/result in
+`formal/fstar/SPARQL11.Store.fst`; these metadata refinements are Lean-first.
+
+Nineteen focused guards, expanded snapshot guards, 709 combined build jobs,
+631 W3C reference tests and native IBK3/4/5 JSON checks pass. Native tests also
+found and fixed a pre-existing fresh IBK3 CLI FROM fallback error; dataset
+clauses now use the reference evaluator's local graph-selection policy for
+SELECT/ASK. The failed trial is retained. Frozen counts are tested across
+updates and generation changes: 7/2, 8/3 and 1/0 whole-graph/predicate counts.
+
+At 300,000 triples, paired predicate COUNT medians fall from 9.025 to 0.075 ms;
+broad joins remain unchanged. A separate Virtuoso run measures 0.044 versus
+1.158 ms. QLever COUNT is still excluded for its datatype difference. Opening
+and RSS remain subject to the prior eager ordered-array costs. Raw evidence,
+proof/test boundaries and remaining parity work are in
+`docs/20261011-shardborough-metadata-count.md`. Industry parity is unestablished.
+
+### Proved native string ordering (2026-10-11)
+
+`SPARQL/StringOrder` proves that the existing character-list comparator equals
+Lean's native string-order decision for all strings. A proved `csimp` function
+equality replaces runtime calls compiled after the module import. `Query`
+imports it before term-ordering definitions; generated C confirms those callers
+use `strCompareFast` and its standard `lean_string_dec_lt` primitive. Specification
+collation, sort stability and existing proofs retain their original definitions.
+Previously compiled expression functions keep their earlier comparator calls.
+The axiom audit lists only standard Lean axioms. F* lineage is the ordering
+`String.compare` calls in `formal/fstar/SPARQL11.Algebra.fst`.
+
+Nineteen test-first guards include 529 Unicode/NUL/prefix pair comparisons.
+A new native test verifies 24 complete snapshot/fresh-CLI ordering and slice
+answers on a 27-row Unicode fixture. The combined build passes 712 jobs,
+W3C reference/evaluator passes 631 tests, and snapshot/state plus IBK3/4/5 JSON
+checks pass. Paired 300,000-triple medians improve two-pattern join from
+1,352.909 to 610.002 ms, three-pattern join from 1,686.631 to 928.138 ms and
+ordered object lookup from 91.771 to 30.697 ms. The latter includes sorting;
+no physical object-index read improvement is claimed. Opening observations
+fall from 6.550 to 1.912 seconds; RSS after readiness is about 192 MiB, not peak.
+
+Separate native QLever reruns put broad joins about 1.6 times behind QLever,
+with object-driven joins about 1.9 times behind. This narrows the synthetic
+single-client gap without establishing industry parity. Complete raw evidence,
+proof/compiled-runtime boundaries and remaining work are in
+`docs/20261011-shardborough-native-string-order.md`.
+
+### Proved streaming JSON escaping (2026-10-11)
+
+A separate post-benchmark profile found serialization in about 70% of sampled
+worker stacks for the two-pattern query. `JSON/Serialize` now retains its
+original escape specification and adds a proved compiler replacement that
+folds over the string directly, using `String.push` for ordinary characters.
+`appendEscaped_eq`, `escapeStringFast_eq` and `escapeString_csimp` preserve the
+exact string for all characters/accumulators/inputs. Existing complete SRJ
+byte-equality refinements still build. Only standard Lean axioms are used;
+generated C confirms JSON fields/values and SRJ variable names call the new
+UTF-8 character loop. F* lineage is `SPARQL.JSON.Escape.fst` and
+`SPARQL.Protocol.fst`; this is a new Lean refinement.
+
+Fourteen test-first guards cover every control character and mixed Unicode,
+NUL, quote/backslash and long inputs. The native Unicode tool's optional
+`--escaping-controls` mode validates 24 full/sliced snapshot/fresh answers
+on 62 rows. Snapshot/state tests and IBK3/4/5 JSON smokes pass. The combined
+build passes 713 jobs and the W3C reference/evaluator passes 631 tests.
+
+At 300,000 triples, paired medians improve two-pattern join from 605.382 to
+295.389 ms and three-pattern join from 915.302 to 474.693 ms, with every sample
+byte-identical before/after. These gains include serialization, not a new
+join algorithm. Separate QLever medians are 294.166 versus 378.124 ms for
+two patterns and 471.278 versus 574.269 ms for three. The object-driven join
+still trails QLever, 43.316 versus 39.592 ms. Virtuoso comparisons, exact-answer
+exclusions, startup/RSS scope and full evidence are in
+`docs/20261011-shardborough-streaming-json-escape.md`. Larger varied queries,
+normalized execution resources/transports, persistence, concurrency and
+update/recovery costs remain necessary for the original parity goal.
+
+### Varied relational workloads and exact planner counts (2026-10-11)
+
+The new controlled relational corpus has independent construction-based
+answers for nine chain, dimension, selective, OPTIONAL, UNION DISTINCT,
+grouping, numeric and VALUES queries. It reaches 1,570,231 triples; it is
+not a standard LUBM/BSBM/SP2Bench result. A 5,334-triple pilot found a real
+nested aggregate bug before larger timing: `STR(COUNT(...))` became unbound.
+Seventeen test-first guards and universal expression-scope/parser-agreement
+theorems accompany complete aggregate traversal in `SPARQL/Query`. Native
+fresh and snapshot answers cover the fix. F* traversal is likewise incomplete;
+this is a deliberate Lean extension, not a corresponding F* theorem claim.
+
+A separate 523,477-triple chain trial then hit the 120-second native cap.
+A separate validated profile identifies repeated whole-predicate scans for
+planner estimates. `OWL.RL.Index` now maintains a certified map of exact
+predicate-match counts. Its certificate applies to arbitrary bucket contents,
+including duplicates, without an extra whole-graph Wf premise. Empty/push
+maintain it. `RDF.StoreCapabilities.igEstimateFast_eq` proves the replacement
+equals the original search length for every index and bound; a proved compiler
+simplification installs it. Other bounds retain the original search semantics.
+Only standard Lean axioms are used. Generated C confirms array size/map lookup
+and the fallback. Ten guards include two complete 64-bound matrices.
+
+The local performance baseline already includes the aggregate fix: at 5,334
+triples, three-step chain medians improve from 26.055 to 2.919 ms over five
+alternating samples. The capped large trial is not an exact before latency.
+The initial combined build passes 716 jobs and the final build including pack
+and activation passes 739; W3C reference tests remain 631/631;
+native snapshot, Unicode/control escaping and IBK3/4/5 JSON checks pass.
+
+At 1,570,231 triples, the QLever-paired three-step chain measures 1.171 versus
+1.206 seconds with every full answer matching. The broader corpus also finds
+large gaps: grouped count 5.767 seconds versus 4.412 ms, VALUES 583.533 versus
+10.129 ms, and numeric top-k 161.611 versus 2.943 ms. Thus the earlier star-join
+wins do not establish general parity. The larger corpus explicitly raises
+file/capture/loader bounds, with all per-run settings and failed trials retained.
+See `docs/20261011-shardborough-relational-workloads.md` and its JSON record
+for exact answers, native and competitor configurations, scaling, preparation
+and RSS boundaries, proof scope and remaining work. Industry parity remains open.

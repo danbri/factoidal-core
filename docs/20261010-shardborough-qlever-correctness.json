@@ -1,0 +1,174 @@
+{
+  "all_checks_passed": true,
+  "binary_sha256": {
+    "l4block-id-v3-query": "28af3322d12f8de877f4665b8720f16cf348cfbcb4315a7a2b88e144dd8b8c67",
+    "qlever-index": "a1319ea3249768ec19a8cd6b7c744148794970b9defc7b582df53e28d5d04c0e",
+    "qlever-server": "c5fda63f257773f379bcabe540b5a8d676831f4573158b616fdb8a911d20ae2c"
+  },
+  "collection_sha256": {
+    "CURRENT": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+    "first/manifest.sbm2": "780ee4a2fad750879ae1cfa7c71d85139d6c6acbeeea314fddd9ed79428e16ea",
+    "first/manifest.tsv": "45de3e38f32fa973f0810f1ad67b2fe2720ab52ce838a26d51126973b64cf518",
+    "first/predicate-0.ibk3": "11dcfccab3037d5ebcf2f04889a48dd5e0893aa70eaa8ca495af8993b04572c0",
+    "first/predicate-0.ibk3.merkle": "f1869907334387169ba9bab77bd3fc17fb02ce91b0675fb27bcdf0faddf6fdc8",
+    "first/predicate-0.ibk3.oli2": "18147e415878633b754549eb05656c9560a48467221ee225ac6c159b40fdb5fc",
+    "first/predicate-0.ibk3.oli2.merkle": "81e46c850ff00089e4a7e1b5ca2441f2ff23cd4b2b5539acd0f8315c0cbf3ff4",
+    "first/predicate-0.ibk3.sri2": "4ce653965d825471c412a1d2f45a8bc2e951844c0cf863fa9467c92cc7a67303",
+    "first/predicate-0.ibk3.sri2.merkle": "0d897905823d6ab09a67b0c55ae0d157c1efe09d18f3b858b596a234a7cb4020",
+    "first/predicate-0.ibk3.tli1": "bcccab54352de3a85dfab6758d9a55fb22904b508f08be8a32acee7420bd96de",
+    "first/predicate-0.ibk3.tli1.merkle": "cc3ac98fd9ecb30575e21ee152ece8e36454d7b71d45ee0eeaf42c8650e4f7d8",
+    "first/predicate-1.ibk3": "60023f156ad926101eda8568d0600130830a15e7c37c0b939e3ea50bc16a88f3",
+    "first/predicate-1.ibk3.merkle": "1c5af0d9b248369b6958ff9dbaa4dadea8b7ae6e76ee493c28a7b896e2c61cd3",
+    "first/predicate-1.ibk3.oli2": "ce1f3b2b68ceea489832d28d8ec2436af718358910078d9f286d8ce6a57d6a99",
+    "first/predicate-1.ibk3.oli2.merkle": "787da9122bf6d24491e045f65796cf6f79d29bd8b7bd5673f19512cb913aeac3",
+    "first/predicate-1.ibk3.sri2": "8f00b7c1136a8f24495a80c61a1cb68af068275825fcbcd92cd8c4ff8cff1fb7",
+    "first/predicate-1.ibk3.sri2.merkle": "956d369482427568454150991c726d5582878fe422cc4f2e39f12364872103e9",
+    "first/predicate-1.ibk3.tli1": "9251680a03f399ba808894d7c7ccd4243c4af16e528f3a2619d5e3d7bf825f8c",
+    "first/predicate-1.ibk3.tli1.merkle": "8284699b07ef69e1b0f6d06ff394293dbf78d6d2ca62cfe37fd54316fc878596",
+    "first/predicate-2.ibk3": "7a17eff77a16775e8258ae1cb6f8d035b13eb9c16936691ec487a1352a5bc085",
+    "first/predicate-2.ibk3.merkle": "27d81e406e5b069890ed8d32e648c0613b93ed09aee93e4a04789d77212ce437",
+    "first/predicate-2.ibk3.oli2": "8424422dd39511b83c169978db3af918b3f10660c02ae4452e4d938362e94366",
+    "first/predicate-2.ibk3.oli2.merkle": "055e2b6d94d02644ca50a8020130a127fabaa64ecf57f448c1dce2129775fee4",
+    "first/predicate-2.ibk3.sri2": "5916c708e3cab8001e2264b9de1f9f00025f54ac531b96574b09ab6b81f5a0f6",
+    "first/predicate-2.ibk3.sri2.merkle": "f5555c6babca66defd53ccfed8f07716d5811abc86b1bacb94f18e35764c21b1",
+    "first/predicate-2.ibk3.tli1": "790b2192278c8b6ae580b554c94294ae0f4924fa623ae12284107bb1a02e4e24",
+    "first/predicate-2.ibk3.tli1.merkle": "af77078d08e53736a0ed601f0f6f489a63bb1ca9d721080bc32588bacd1c0afa"
+  },
+  "comparison": "Exact complete JSON answers, including ordered rows and RDF datatypes. Exclude only QLever's top-level meta extension. COUNT xsd:int is separately reported as a known exact-term difference, never coerced to xsd:integer.",
+  "driver_sha256": "97cb8afdd8f196ad4cfd124e09549a2a700558a5ec68c0d1250cbcb9d12e0d7b",
+  "fixture_sha256": "55e24ac9a5ea02c54a64e55788658eeda0635d91509a7d2a0b8697c90e201db2",
+  "index_command": [
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/qlever-native/qlever-index",
+    "-i",
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/qlever-native/retained-smoke/db",
+    "-f",
+    "/Users/danbri/working/sandbox/october/factoidal-core/.codex-runs/parity-baseline/subjects-1000/fixture.ttl",
+    "-F",
+    "ttl",
+    "-m",
+    "256 MB"
+  ],
+  "jemalloc_bottle_sha256": "100f278db6678ee5e3487e6e56c679759739195010755498d2c25d5f9013b6f9",
+  "listener": "QLever default bind address, temporary port; requests use 127.0.0.1",
+  "qlever_package": {
+    "sha256": "e496c08902a8e4a2262dfcea8106f00feaa6060cabdfcf55e4838639396022f3",
+    "url": "https://packages.qlever.dev/mac/qlever_0.6.0-1_macos_arm64.tar.gz"
+  },
+  "qlever_version": "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/qlever-native/qlever-server v0.6.0",
+  "scope": "Complete-answer correctness only. No performance claim; fresh Shardborough processes and a native QLever server are different process models.",
+  "server_command": [
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/qlever-native/qlever-server",
+    "-i",
+    "/Users/danbri/working/sandbox/october/factoidal-core/.claude-runs/qlever-native/retained-smoke/db",
+    "-p",
+    "54561",
+    "-m",
+    "1 GB",
+    "-c",
+    "0 B",
+    "-k",
+    "0",
+    "--no-metrics-log",
+    "--no-resource-usage-log"
+  ],
+  "subjects": 1000,
+  "triples": 3000,
+  "workloads": [
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "limit-zero",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "e01364c1eae2dc2b26a3d5dac95b52ba8a65c7271f5700d9dda6ae0501ceba6c",
+      "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 0",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "1c6be9a8a2f04fb56d1fdfa101519c4250364fce5fa779d87982d00dcab4e462"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "known_count_datatype_difference": true,
+      "name": "predicate-count",
+      "qlever_exact_expected_answer": false,
+      "qlever_output_sha256": "8516bb01e8404c70ea100cbb8f2a2f268ec45f8331437dd0ecc417a22076a1d3",
+      "query": "SELECT (COUNT(*) AS ?count) WHERE { ?subject <urn:scale:type> ?type }",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "b76f066d834ffcd3516edc5b0ccaf29ca605c9b5f37c1a1e25b29973a6be99fb"
+    },
+    {
+      "ignored_extension_keys": [],
+      "name": "ask-present",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "226de3cca95abf16a8ab7eef21e59902a3acd9b1486fae43be648b540741e49d",
+      "query": "ASK { ?subject <urn:scale:type> ?type }",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "30fe726a43485296e79b03c3ddd5ad8b4d2416deb7a84f811ee5deeaca8106b9"
+    },
+    {
+      "ignored_extension_keys": [],
+      "name": "ask-absent",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "fc3cf69b155b6dedca64f1ea6704fb12bdf6b213977bc8b296018298cba31b81",
+      "query": "ASK { ?subject <urn:scale:absent> ?object }",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "4d4dbfc639b4c5a66b27b2cb341850addff7f7bf577297d01d3dbb4a17760f3a"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "object-index",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "5049226c882ee271823ec31c3316463f3ba364b0c5ea944f9458636632111f4c",
+      "query": "SELECT ?subject WHERE { ?subject <urn:scale:group> <urn:scale:group:0> } ORDER BY ?subject",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "8fd20fe15a69f1230b77106b337693fb1e84cd20e090fed7886fed83ca912ad1"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "subject-join",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "3997c0074bdb474b31fb465ef932ded10853d671d24ae7c83b6b45d7f58b7a54",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "89b82df089135209e13792b15fbf943df7c3ce891cf8561b2cfd0d10674b12dd"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "object-subject-join",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "f2ef845bfc7493b2a80c557d16ac2149f15e547483b0e79636b2f521309dc3f1",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name } ORDER BY ?subject",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "94a348bb31257706fdff45ab18dc6ea97e03a7f5a27be049997149c7c5770b11"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "subject-triple-join",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "475dd5cc2371512b85833511992ee97a47e1faefe5721dd5558016c967f6bf1a",
+      "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group } ORDER BY ?subject",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "5335a97785d4b4543c0a6054aed2c32b19eb7a65cba39c955894366068692d69"
+    },
+    {
+      "ignored_extension_keys": [
+        "meta"
+      ],
+      "name": "limit-slice",
+      "qlever_exact_expected_answer": true,
+      "qlever_output_sha256": "51e0952be727013ee2d4111d31b47ba8810a551c61b621c1b74543794290277f",
+      "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:name> ?name } ORDER BY ?subject OFFSET 3 LIMIT 7",
+      "shardborough_exact_expected_answer": true,
+      "shardborough_output_sha256": "dacefcd345cecd9bf5bb04a8eef68e564e6788296146b01f23d563fb39995c3d"
+    }
+  ]
+}

@@ -119,6 +119,12 @@ structure Index where
   set  : Std.HashSet Triple
   byS  : Std.HashMap Subject (List Triple)
   byP  : Std.HashMap WfIri (List Triple)
+  /-- Exact predicate-match counts, including duplicates. The certificate
+      covers arbitrary bucket contents, without a graph well-formedness
+      assumption. This makes planner estimates independent of bucket size. -/
+  byPCount : Std.HashMap WfIri Nat
+  byPCount_valid : ∀ p, byPCount.getD p 0 =
+    ((byP.getD p []).filter (fun t => p == t.p)).length
   byO  : Std.HashMap Term (List Triple)
   bySP : Std.HashMap (Subject × WfIri) (List Triple)
   byPO : Std.HashMap (WfIri × Term) (List Triple)
@@ -126,7 +132,9 @@ structure Index where
 namespace Index
 
 def empty : Index :=
-  { all := #[], set := ∅, byS := ∅, byP := ∅, byO := ∅, bySP := ∅, byPO := ∅ }
+  { all := #[], set := ∅, byS := ∅, byP := ∅, byO := ∅, bySP := ∅, byPO := ∅,
+    byPCount := ∅,
+    byPCount_valid := by intro p; simp }
 
 /-- The graph the index pictures, in insertion order. -/
 def toGraph (i : Index) : Graph := i.all.toList
@@ -146,6 +154,15 @@ def push (i : Index) (t : Triple) : Index :=
     set  := i.set.insert t,
     byS  := i.byS.insert t.s (t :: i.byS.getD t.s []),
     byP  := i.byP.insert t.p (t :: i.byP.getD t.p []),
+    byPCount := i.byPCount.insert t.p (i.byPCount.getD t.p 0 + 1),
+    byPCount_valid := by
+      intro p
+      simp only [Std.HashMap.getD_insert]
+      by_cases h : t.p = p
+      · subst p
+        simp [i.byPCount_valid]
+      · have hb : (t.p == p) = false := by simpa [Subtype.ext_iff] using h
+        simp [hb, i.byPCount_valid],
     byO  := i.byO.insert t.o (t :: i.byO.getD t.o []),
     bySP := i.bySP.insert (t.s, t.p) (t :: i.bySP.getD (t.s, t.p) []),
     byPO := i.byPO.insert (t.p, t.o) (t :: i.byPO.getD (t.p, t.o) []) }

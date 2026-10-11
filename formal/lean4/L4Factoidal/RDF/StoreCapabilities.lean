@@ -292,6 +292,39 @@ def igSearch (i : OWL.RL.Index) (b : PatternBound) : List Triple :=
 
 def igEstimate (i : OWL.RL.Index) (b : PatternBound) : Nat := (igSearch i b).length
 
+/-- Constant-time exact counts for unbound and predicate-only requests.
+    Every other bound retains the ordinary search, including the object
+    equality fallback for language tags and XML literals. -/
+def igEstimateFast (i : OWL.RL.Index) (b : PatternBound) : Nat :=
+  match b.s, b.p, b.o with
+  | none, none, none => i.all.size
+  | none, some p, none => i.byPCount.getD p 0
+  | _, _, _ => (igSearch i b).length
+
+theorem igEstimateFast_eq (i : OWL.RL.Index) (b : PatternBound) :
+    igEstimateFast i b = igEstimate i b := by
+  rcases b with ⟨s, p, o⟩
+  cases s <;> cases p <;> cases o <;> simp only [igEstimateFast] <;> try rfl
+  · change i.all.size = (i.all.toList.filter (fun _ => true)).length
+    rw [List.filter_eq_self.mpr (by intro _ _; rfl), Array.length_toList]
+  · rename_i p
+    rw [i.byPCount_valid]
+    change ((i.byP.getD p []).filter (fun t => p == t.p)).length =
+      ((i.byP.getD p []).reverse.filter (L4Factoidal.SPARQL.boundMatches { p := some p })).length
+    have bound_eq : L4Factoidal.SPARQL.boundMatches { p := some p } =
+        (fun t => p == t.p) := by
+      funext t
+      simp [L4Factoidal.SPARQL.boundMatches]
+    rw [bound_eq]
+    rw [List.filter_reverse, List.length_reverse]
+
+@[csimp] theorem igEstimate_csimp : igEstimate = igEstimateFast := by
+  funext i b
+  exact (igEstimateFast_eq i b).symm
+
+#print axioms igEstimateFast_eq
+#print axioms igEstimate_csimp
+
 def capsOfIndexed (i : OWL.RL.Index) : StoreCaps :=
   { flags :=
       { supportsNamedGraphs := true

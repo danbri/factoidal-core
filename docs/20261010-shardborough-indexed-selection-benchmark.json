@@ -1,0 +1,778 @@
+{
+  "assurance": {
+    "axioms": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "competitor_parity_or_general_scalability_claim": false,
+    "complete_json_ibk3_ibk4_ibk5_smokes_passed": true,
+    "deliberate_reversal_negative_guard_failures": 3,
+    "exact_list_equivalence_theorems": [
+      "distinctIds_eq_eraseDups",
+      "selectedPostings_eq_filter"
+    ],
+    "final_library_and_ten_native_targets_build_jobs": 673,
+    "final_library_and_ten_native_targets_build_passed": true,
+    "five_persistent_disk_smokes_passed": true,
+    "formal_complexity_or_native_performance_theorem": false,
+    "host_io_crypto_and_native_compiler_remain_trusted": true,
+    "native_crypto_checks_passed": 107,
+    "native_range_checks_passed": 38,
+    "new_sorry_custom_axioms_native_decide_or_partial_definitions": 0,
+    "runtime_guards_passed": 6,
+    "theorem_scope": "first-occurrence Nat dedup order and exact page/list filtering, including duplicate postings"
+  },
+  "benchmark": "factoidal-core-ibk3-nat-selection-20261010",
+  "commands": {
+    "complete_json_validator": "python3 /private/tmp/factoidal-core-selection-validate.py",
+    "corrected_driver_small_native_check": "python3 tools/blockengine-core-scale.py --subjects 100 --warm-runs 1 --timeout 5 --output-dir /private/tmp/factoidal-core-scale-driver-check",
+    "corrected_three_way_checks": "python3 /private/tmp/factoidal-core-scale-correct-three-way.py",
+    "exploratory_scale": "python3 tools/blockengine-core-scale.py --subjects 1000,10000,100000 --warm-runs 3 --timeout 120 --output-dir /private/tmp/factoidal-core-scale-98028a36",
+    "final_build_from_formal_lean4": "lake build L4Factoidal l4native-crypto-smoke l4native-range-smoke l4block-id-v3-query l4block-id-v3-merkle-scan l4block-shard-pack l4block-shard-activate l4block-quad-query l4block-quad-dump l4block-shard-compact l4block-delta-log",
+    "focused_build_from_formal_lean4": "lake build L4Factoidal.Storage.SubjectRowIndexWireV2Theorems l4block-id-v3-query l4block-shard-pack",
+    "paired_comparison": "python3 tools/blockengine-core-scale.py --subjects 100000 --warm-runs 3 --timeout 120 --baseline-query /private/tmp/factoidal-core-scale-98028a36/l4block-id-v3-query-98028a36 --existing-collection /private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection --output-dir /private/tmp/factoidal-core-selection-comparison"
+  },
+  "complete_json_validation": {
+    "actual_rows": 100000,
+    "all_typed_bindings_and_multiplicity_match_generated_fixture": true,
+    "canonical_bag_sha256": "b64456d1afade3393970179c1a88c1f911fd8aebad87bcd26e605d137b233246",
+    "command": [
+      "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+      "/private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection",
+      "--json",
+      "--query",
+      "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }"
+    ],
+    "excluded_from_performance_samples": true,
+    "exit_code": 0,
+    "expected_canonical_bag_sha256": "b64456d1afade3393970179c1a88c1f911fd8aebad87bcd26e605d137b233246",
+    "expected_rows": 100000,
+    "stderr_file": "/private/tmp/factoidal-core-selection-comparison/optimized-full-json.stderr",
+    "stdout_bytes": 11600062,
+    "stdout_file": "/private/tmp/factoidal-core-selection-comparison/optimized-full-json.stdout",
+    "stdout_sha256": "95dd9b960aa3b49c2bb2de980e7de2db3ace27656df9bdcfe99a3a68f1be6ebf",
+    "validator_source_sha256": "222ae2811708038ca30467d4819c6a7656629ddcd5bbe8a8af80d81ea7e78b7b"
+  },
+  "controlled_comparison": {
+    "all_cardinality_checks_passed": true,
+    "all_native_read_counters_equal": true,
+    "all_preview_rows_equal": true,
+    "baseline_command": [
+      "/private/tmp/factoidal-core-scale-98028a36/l4block-id-v3-query-98028a36",
+      "/private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection",
+      "--query",
+      "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }"
+    ],
+    "baseline_median_divided_by_optimized_median": 3.991868132165455,
+    "collection": "/private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection",
+    "complete_result_serialization_excluded": true,
+    "concurrent_builds_or_container_workloads": false,
+    "excluded_timing_samples": [],
+    "expected_rows": 100000,
+    "fixture_bytes": 20200000,
+    "fixture_construction_excluded": true,
+    "fixture_sha256": "820c587ebdf3c1bdbe54b8081cb20c2895ebda6a1284c89060ccb70cc8eaf830",
+    "median_input_sample_indices_per_binary": [
+      0,
+      1,
+      2
+    ],
+    "median_ms": {
+      "baseline": 19548.91125,
+      "optimized": 4897.183625
+    },
+    "optimized_command": [
+      "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+      "/private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection",
+      "--query",
+      "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }"
+    ],
+    "pack_and_activation_excluded": true,
+    "process_model": "paired baseline/optimized fresh processes; OS cache is not evicted",
+    "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }",
+    "raw_report_file": "/private/tmp/factoidal-core-selection-comparison/report.json",
+    "read_counter_scope": "selected successful artifact reads; omits control files, Merkle sidecars, delta log and failed speculative paths; not total disk IO",
+    "sample_order": [
+      "baseline-0",
+      "optimized-0",
+      "baseline-1",
+      "optimized-1",
+      "baseline-2",
+      "optimized-2"
+    ],
+    "samples": {
+      "baseline": [
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 19548.91125
+        },
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 20406.934875
+        },
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 19363.814417
+        }
+      ],
+      "optimized": [
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 4897.183625
+        },
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 4893.83825
+        },
+        {
+          "exit_code": 0,
+          "fetched_bytes": 20745528,
+          "logical_read_bytes": 20643925,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 5065.95925
+        }
+      ]
+    },
+    "started_utc": "2026-10-10T22:42:03.690195+00:00",
+    "startup_and_artifact_admission_included": true,
+    "subjects": 100000,
+    "timeout_seconds": 120,
+    "triples": 300000,
+    "warmup_runs": 0
+  },
+  "environment": {
+    "lean_toolchain": "leanprover/lean4:v4.33.1",
+    "machine": "arm64",
+    "platform": "macOS-15.6.1-arm64-arm-64bit-Mach-O"
+  },
+  "exploratory_scale": {
+    "completed_report_file": "/private/tmp/factoidal-core-scale-98028a36/completed-report.json",
+    "corrected_three_way_samples_are_single_checks_not_three_run_medians": true,
+    "excluded_from_controlled_speedup_claim": true,
+    "original_three_way_driver_brace_error_discarded": true,
+    "possible_small_module_build_overlap": true,
+    "process_model": "fresh native process for every sample; OS page cache is not evicted",
+    "raw_report_file": "/private/tmp/factoidal-core-scale-98028a36/report.json",
+    "sizes": [
+      {
+        "activate_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 83.041958
+        },
+        "artifact_bytes": 447228,
+        "fixture_bytes": 202000,
+        "fixture_sha256": "55e24ac9a5ea02c54a64e55788658eeda0635d91509a7d2a0b8697c90e201db2",
+        "pack_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 135.260208
+        },
+        "queries": {
+          "limit-two": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 2,
+            "fetched_bytes": 47110,
+            "logical_read_bytes": 8008,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 2",
+            "sample_wall_ms": [
+              27.17925,
+              27.124167,
+              27.095625,
+              27.021459
+            ],
+            "subsequent_median_ms": 27.095625
+          },
+          "limit-zero": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 0,
+            "fetched_bytes": 0,
+            "logical_read_bytes": 0,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 0",
+            "sample_wall_ms": [
+              25.778541,
+              25.800083,
+              25.610666,
+              25.626542
+            ],
+            "subsequent_median_ms": 25.626542
+          },
+          "object-index": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 100,
+            "fetched_bytes": 94989,
+            "logical_read_bytes": 45176,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:group> <urn:scale:group:0> }",
+            "sample_wall_ms": [
+              29.643542,
+              29.708709,
+              29.79075,
+              29.598916
+            ],
+            "subsequent_median_ms": 29.708709
+          },
+          "object-subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 100,
+            "fetched_bytes": 279775,
+            "logical_read_bytes": 191218,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              39.898833,
+              39.710083,
+              39.378333,
+              39.682667
+            ],
+            "subsequent_median_ms": 39.682667
+          },
+          "predicate-count": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1,
+            "expected_scalar": 1000,
+            "fetched_bytes": 47110,
+            "logical_read_bytes": 23976,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT (COUNT(*) AS ?count) WHERE { ?subject <urn:scale:type> ?type }",
+            "sample_wall_ms": [
+              27.22475,
+              27.106625,
+              27.179375,
+              27.245584
+            ],
+            "subsequent_median_ms": 27.179375
+          },
+          "subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1000,
+            "fetched_bytes": 231896,
+            "logical_read_bytes": 207544,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              47.374959,
+              47.42975,
+              47.20575,
+              47.199792
+            ],
+            "subsequent_median_ms": 47.20575
+          },
+          "subject-triple-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "discarded_exit_codes": [
+              1
+            ],
+            "discarded_prototype_parse_failures": 1,
+            "expected_rows": 1000,
+            "fetched_bytes": 326885,
+            "logical_read_bytes": 302517,
+            "median_input_sample_indices": [],
+            "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group }",
+            "sample_kind": "corrected single cardinality-validation sample; not a median",
+            "sample_wall_ms": [
+              275.55925
+            ]
+          }
+        },
+        "subjects": 1000,
+        "triples": 3000
+      },
+      {
+        "activate_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 611.39375
+        },
+        "artifact_bytes": 4439090,
+        "fixture_bytes": 2020000,
+        "fixture_sha256": "f921d1eea2468ff85bb2f094df87518f2be1f2e5d670e695cc97b1ecbc5919a7",
+        "pack_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 1157.59925
+        },
+        "queries": {
+          "limit-two": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 2,
+            "fetched_bytes": 131072,
+            "logical_read_bytes": 8296,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 2",
+            "sample_wall_ms": [
+              28.113042,
+              28.295375,
+              28.358292,
+              28.403583
+            ],
+            "subsequent_median_ms": 28.358292
+          },
+          "limit-zero": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 0,
+            "fetched_bytes": 0,
+            "logical_read_bytes": 0,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 0",
+            "sample_wall_ms": [
+              25.667458,
+              25.523791,
+              25.459667,
+              25.508458
+            ],
+            "subsequent_median_ms": 25.508458
+          },
+          "object-index": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1000,
+            "fetched_bytes": 601670,
+            "logical_read_bytes": 347132,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:group> <urn:scale:group:0> }",
+            "sample_wall_ms": [
+              49.882709,
+              49.98975,
+              50.100083,
+              50.198
+            ],
+            "subsequent_median_ms": 50.100083
+          },
+          "object-subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1000,
+            "fetched_bytes": 2251816,
+            "logical_read_bytes": 1806478,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              164.591291,
+              164.583666,
+              164.746834,
+              164.492792
+            ],
+            "subsequent_median_ms": 164.583666
+          },
+          "predicate-count": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1,
+            "expected_scalar": 10000,
+            "fetched_bytes": 196608,
+            "logical_read_bytes": 168264,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT (COUNT(*) AS ?count) WHERE { ?subject <urn:scale:type> ?type }",
+            "sample_wall_ms": [
+              29.427625,
+              29.493209,
+              29.526584,
+              29.545916
+            ],
+            "subsequent_median_ms": 29.526584
+          },
+          "subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 10000,
+            "fetched_bytes": 2120544,
+            "logical_read_bytes": 2073736,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              978.058333,
+              985.639,
+              977.561458,
+              979.010625
+            ],
+            "subsequent_median_ms": 979.010625
+          },
+          "subject-triple-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "discarded_exit_codes": [
+              1
+            ],
+            "discarded_prototype_parse_failures": 1,
+            "expected_rows": 10000,
+            "fetched_bytes": 3063945,
+            "logical_read_bytes": 3017121,
+            "median_input_sample_indices": [],
+            "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group }",
+            "sample_kind": "corrected single cardinality-validation sample; not a median",
+            "sample_wall_ms": [
+              1652.896041
+            ]
+          }
+        },
+        "subjects": 10000,
+        "triples": 30000
+      },
+      {
+        "activate_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 6072.036041
+        },
+        "artifact_bytes": 44370259,
+        "fixture_bytes": 20200000,
+        "fixture_sha256": "820c587ebdf3c1bdbe54b8081cb20c2895ebda6a1284c89060ccb70cc8eaf830",
+        "pack_single_sample": {
+          "exit_code": 0,
+          "fetched_bytes": null,
+          "logical_read_bytes": null,
+          "timed_out": false,
+          "validation_passed": true,
+          "wall_ms": 11230.973208
+        },
+        "queries": {
+          "limit-two": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 2,
+            "fetched_bytes": 131072,
+            "logical_read_bytes": 8632,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 2",
+            "sample_wall_ms": [
+              28.803917,
+              28.758459,
+              28.7265,
+              28.729167
+            ],
+            "subsequent_median_ms": 28.729167
+          },
+          "limit-zero": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 0,
+            "fetched_bytes": 0,
+            "logical_read_bytes": 0,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:type> ?type } LIMIT 0",
+            "sample_wall_ms": [
+              26.964542,
+              25.972292,
+              26.151959,
+              26.16
+            ],
+            "subsequent_median_ms": 26.151959
+          },
+          "object-index": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 10000,
+            "fetched_bytes": 5629352,
+            "logical_read_bytes": 3424005,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject WHERE { ?subject <urn:scale:group> <urn:scale:group:0> }",
+            "sample_wall_ms": [
+              262.48325,
+              262.153666,
+              262.933084,
+              267.07
+            ],
+            "subsequent_median_ms": 262.933084
+          },
+          "object-subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 10000,
+            "fetched_bytes": 21671330,
+            "logical_read_bytes": 17924420,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:group> <urn:scale:group:0> . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              2160.138708,
+              2153.609416,
+              2146.579792,
+              2172.63625
+            ],
+            "subsequent_median_ms": 2153.609416
+          },
+          "predicate-count": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [],
+            "expected_rows": 1,
+            "expected_scalar": 100000,
+            "fetched_bytes": 1900544,
+            "logical_read_bytes": 1642880,
+            "median_input_sample_indices": [
+              1,
+              2,
+              3
+            ],
+            "query": "SELECT (COUNT(*) AS ?count) WHERE { ?subject <urn:scale:type> ?type }",
+            "sample_wall_ms": [
+              61.326167,
+              61.279917,
+              61.302792,
+              61.4585
+            ],
+            "subsequent_median_ms": 61.302792
+          },
+          "subject-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "excluded_first_sample_index": 0,
+            "excluded_profile_sample_indices": [
+              1
+            ],
+            "expected_rows": 100000,
+            "fetched_bytes": 20745528,
+            "logical_read_bytes": 20643925,
+            "median_input_sample_indices": [
+              2,
+              3
+            ],
+            "query": "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }",
+            "sample_wall_ms": [
+              19115.454209,
+              19378.954583,
+              19303.047875,
+              19357.821792
+            ],
+            "subsequent_median_ms": 19330.4348335
+          },
+          "subject-triple-join": {
+            "all_retained_cardinality_checks_passed": true,
+            "discarded_exit_codes": [
+              1
+            ],
+            "discarded_prototype_parse_failures": 1,
+            "expected_rows": 100000,
+            "fetched_bytes": 30175598,
+            "logical_read_bytes": 30073915,
+            "median_input_sample_indices": [],
+            "query": "SELECT ?subject ?name ?group WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name . ?subject <urn:scale:group> ?group }",
+            "sample_kind": "corrected single cardinality-validation sample; not a median",
+            "sample_wall_ms": [
+              37018.475791
+            ]
+          }
+        },
+        "subjects": 100000,
+        "triples": 300000
+      }
+    ],
+    "started_utc": "2026-10-10T22:30:02.559540+00:00",
+    "timeout_seconds": 120,
+    "validation": "generated cardinalities and COUNT scalar; previews are not complete result bags"
+  },
+  "fixture": {
+    "all_terms_deterministic": true,
+    "generator": "tools/blockengine-core-scale.py:generate_fixture",
+    "shape": "one type, one unique name and one modulo-10 group per unique subject",
+    "subject_counts": [
+      1000,
+      10000,
+      100000
+    ],
+    "triple_counts": [
+      3000,
+      30000,
+      300000
+    ]
+  },
+  "profiling": {
+    "baseline": {
+      "command": "sample 52629 2 -file /private/tmp/factoidal-core-scale-10k-subject-join.sample",
+      "correct_subjects": 100000,
+      "correct_triples": 300000,
+      "distinct_ids_at_materialization_sampled_stacks": 1077,
+      "distinct_wanted_ids_sampled_stacks": 110,
+      "excluded_exploratory_sample_index": 1,
+      "file": "/private/tmp/factoidal-core-scale-100k-subject-join.sample",
+      "file_sha256": "78eed83da67e8f624ec3e76e0c9c038ab947229e6016ebdd45435c8f593f0c51",
+      "original_filename_mislabelled_10k": true,
+      "physical_footprint_peak_mb": 97.0,
+      "posting_list_membership_sampled_stacks": 39
+    },
+    "optimized": {
+      "approved_direct_sample_retry_succeeded": true,
+      "command": "sample 54999 2 -file /private/tmp/factoidal-core-selection-comparison/optimized.sample",
+      "excluded_from_timing_samples": true,
+      "file": "/private/tmp/factoidal-core-selection-comparison/optimized.sample",
+      "file_sha256": "d7e4239ad6ab407946601ccf9aa93e940fc55b0981311b578bf761663581aaf8",
+      "initial_sandbox_sample_exit_code": 255,
+      "initial_sandbox_sample_refused_to_examine_process": true,
+      "memory_comparison_claim": null,
+      "observed_remaining_work": "378 sampled stacks under finish/indexedGraphBackend; row and paged-dictionary materialization also present; Nat dedup no longer dominates this slice",
+      "query_command": [
+        "/Users/danbri/working/sandbox/october/factoidal-core/formal/lean4/.lake/build/bin/l4block-id-v3-query",
+        "/private/tmp/factoidal-core-scale-98028a36/subjects-100000/collection",
+        "--repeat",
+        "3",
+        "--query",
+        "SELECT ?subject ?name WHERE { ?subject <urn:scale:type> ?type . ?subject <urn:scale:name> ?name }"
+      ],
+      "query_exit_code": 0,
+      "sample_exit_code": 0
+    },
+    "scope": "bounded two-second native sample slices, not complete-query CPU accounting"
+  },
+  "post_measurement_changes": {
+    "controlled_query_samples_finished_by_local_time": "2026-10-10T23:43:17+0100",
+    "complete_json_validation_finished_by_local_time": "2026-10-10T23:43:49+0100",
+    "excluded_repeat_profile_finished_by_local_time": "2026-10-10T23:44:37+0100",
+    "finish_times_derived_from_output_file_mtimes": true,
+    "additional_source_edits_observed_local_time": "2026-10-10T23:46:48+0100",
+    "later_query_rebuild_observed_local_time": "2026-10-10T23:48:05+0100",
+    "later_query_binary_sha256_observed": "525923fff0757bddc155afa7496740b52722b41b85308c7d1e5afb994f4df22a",
+    "later_changes": "SubjectPageSelection/candidatePages and pagesForArray edits are not part of this measured Nat-selection increment",
+    "later_source_and_binary_are_not_validated_or_timed_by_this_report": true,
+    "measured_source_hashes_preserved_not_updated_to_later_working_tree": true,
+    "measured_focused_diff_hash_captured_before_later_edits": true
+  },
+  "provenance": {
+    "additional_query_cli_change": "JSON output branch and serializer included in new binary; controlled timing uses unchanged preview mode, not JSON",
+    "baseline_binary_sha256": {
+      "l4block-id-v3-query": "65eea7595de1e52f609257d02b9c9583d0cb71bde1adb670242d0340f20a3ecb",
+      "l4block-shard-activate": "fb81b0cc944fb0f050939c0fad3239f51321c6261bfa0bd9c915d2fba0e5b335",
+      "l4block-shard-pack": "9cea2d18d433187db48b66b945f16bcf4bc9534ef086e82da26c4dc584290f1a"
+    },
+    "baseline_source_head": "98028a368d508fe45ff90b5d98210af855d15532",
+    "focused_optimization_files": [
+      "formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2.lean",
+      "formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2Theorems.lean",
+      "formal/lean4/Harness/IndexedBlockV3Materialize.lean"
+    ],
+    "focused_optimization_git_diff_sha256": "4460274029be699acc0d0888e02525e1a265e95fd76372c31dc5d8ba6a511d0a",
+    "optimized_query_binary_sha256": "a643533c5a2775af70d99b733d014f6c6a842f301e1a3075fc61f0789440bff5",
+    "optimized_source_file_sha256_at_measurement": {
+      "formal/lean4/Harness/IndexedBlockV3Materialize.lean": "0931d24e7e496c580af872a869529e70bc949cb85a3c3045dc067258148c0458",
+      "formal/lean4/Harness/IndexedBlockV3Query.lean": "f75a58c47c17e715e4e91a4b651bb6290b9b06e181a1bce70a5655aa216091e6",
+      "formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2.lean": "fa3abf7e4b8a1fe1d11d40453912448bb14cb9dfc42ebfc7b0e0cd42a6ce04b5",
+      "formal/lean4/L4Factoidal/Storage/SubjectRowIndexWireV2Theorems.lean": "7572e3d78a3ebdab4b9708510c79580ed0f64ee219d8a6cd3fa646d9af2928da"
+    },
+    "optimized_source_state": "working-tree-on-98028a368d508fe45ff90b5d98210af855d15532",
+    "retained_driver_sha256": "fe9c3816ce52b43fe3d852ce596d9aa7ceca293ca4c0ecac5ab1c1a0b8134125"
+  }
+}

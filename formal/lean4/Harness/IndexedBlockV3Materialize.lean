@@ -6,6 +6,8 @@ import Harness.NativeHasher
 import L4Factoidal.Storage.IndexedBlockWireV3
 import L4Factoidal.Storage.SubjectRowIndexWire
 import L4Factoidal.Storage.SubjectRowIndexWireV2
+import L4Factoidal.Storage.SubjectPageSelection
+import L4Factoidal.Storage.PageCache
 import L4Factoidal.Storage.TermLocalIndex
 import L4Factoidal.Storage.TermLocalIndexWire
 import L4Factoidal.Storage.ShardManifest
@@ -59,16 +61,10 @@ private def tliRange (offset length : Nat) : L4Factoidal.Storage.IndexedBlockWir
     distinct term. The result still has to be checked against the target PTD1
     dictionary before a row scan uses it: this makes direct file queries safe
     even if they bypass a prior generation activation. -/
-private def decodedTliPage? : List (Nat × Array L4Factoidal.Storage.TermLocalIndex.Entry) → Nat →
-    Option (Array L4Factoidal.Storage.TermLocalIndex.Entry)
-  | [], _ => none
-  | (ordinal, entries) :: rest, wanted =>
-      if ordinal == wanted then some entries else decodedTliPage? rest wanted
-
 private def termIdsViaIndex (path : String) (ref : Ref) (leaves : List Digest)
     (cache : IO.Ref VerifiedChunkCache) (header : L4Factoidal.Storage.TermLocalIndexWire.Prefix)
     (directory : List L4Factoidal.Storage.TermLocalIndexWire.PageRef) : List Term →
-    List (Nat × Array L4Factoidal.Storage.TermLocalIndex.Entry) → Counters →
+    L4Factoidal.Storage.PageCache.Cache (Array L4Factoidal.Storage.TermLocalIndex.Entry) → Counters →
     IO (Option (List (Term × Nat) × Counters))
   | [], _, counters => pure (some ([], counters))
   | subject :: rest, decoded, counters => do
@@ -84,7 +80,7 @@ private def termIdsViaIndex (path : String) (ref : Ref) (leaves : List Digest)
                 match found with
                 | some localId => pure (some ((subject, localId) :: later, next))
                 | none => pure (some (later, next))
-          match decodedTliPage? decoded ordinal with
+          match L4Factoidal.Storage.PageCache.lookup decoded ordinal with
           | some entries => continueWith entries decoded counters
           | none =>
               let range := tliRange
@@ -94,7 +90,7 @@ private def termIdsViaIndex (path : String) (ref : Ref) (leaves : List Digest)
               | some (pageBytes, footprint) =>
                   match L4Factoidal.Storage.TermLocalIndexWire.decodePage? header ordinal page pageBytes with
                   | none => pure none
-                  | some entries => continueWith entries ((ordinal, entries) :: decoded) (addRead counters footprint)
+                  | some entries => continueWith entries (L4Factoidal.Storage.PageCache.insert decoded ordinal entries) (addRead counters footprint)
 
 private def subjectIdsViaTli? (directory : System.FilePath) (entry : Entry) (subjects : List Term) :
     IO (Option (List (Term × Nat) × Counters)) := do
@@ -126,7 +122,7 @@ private def subjectIdsViaTli? (directory : System.FilePath) (entry : Entry) (sub
                           match L4Factoidal.Storage.TermLocalIndexWire.decodeDirectory? header directoryBytes with
                           | none => pure none
                           | some refs =>
-                              termIdsViaIndex path ref leaves cache header refs subjects []
+                              termIdsViaIndex path ref leaves cache header refs subjects ∅
                                 (addRead (addRead {} prefixFootprint) directoryFootprint)
 
 /-- Open a subject-posting sidecar only after all its independent integrity
@@ -175,11 +171,7 @@ def subjectPostings? (directory : System.FilePath) (entry : Entry) :
     a posting list crosses a page boundary; deduplication stops repeated query
     bindings from rereading a page. Page order is canonical so the reader can
     also validate cross-page strict ordering of the fetched postings. -/
-private def sri2CandidatePages : List L4Factoidal.Storage.SubjectRowIndexWireV2.PageRef →
-    List Nat → List (Nat × L4Factoidal.Storage.SubjectRowIndexWireV2.PageRef)
-  | refs, ids =>
-      (ids.flatMap (L4Factoidal.Storage.SubjectRowIndexWireV2.pagesFor refs) |>.eraseDups).toArray
-        |>.qsort (fun left right => left.1 < right.1) |>.toList
+private def sri2CandidatePages := L4Factoidal.Storage.SubjectRowIndexWireV2.candidatePages
 
 private def sri2PairsStrictlyOrdered : List (Nat × Nat) → Bool
   | [] | [_] => true
@@ -209,11 +201,7 @@ private def readSRI2Pages (path : String) (ref : Ref) (leaves : List Digest)
           | some pairs, some (later, next) => pure (some ((ordinal, pairs) :: later, next))
           | _, _ => pure none
 
-private def sri2SelectedPostings (wanted : List Nat) :
-    List (Nat × Array (Nat × Nat)) → List (Nat × Nat)
-  | [] => []
-  | (_, pairs) :: rest =>
-      pairs.toList.filter (fun pair => wanted.contains pair.1) ++ sri2SelectedPostings wanted rest
+private def sri2SelectedPostings := L4Factoidal.Storage.SubjectRowIndexWireV2.selectedPostings
 
 /-- Read SRI2 as a verified range object: prefix, directory and only pages
     whose inclusive subject range can contain a requested local ID. Its Merkle
@@ -250,7 +238,7 @@ def subjectPostingsV2For? (directory : System.FilePath) (entry : Entry)
                       match L4Factoidal.Storage.SubjectRowIndexWireV2.decodeDirectory? header directoryBytes with
                       | none => pure none
                       | some directory =>
-                          let wanted := subjects.eraseDups
+                          let wanted := L4Factoidal.Storage.SubjectRowIndexWireV2.distinctIds subjects
                           let pages := sri2CandidatePages directory wanted
                           let initial := addRead (addRead {} prefixFootprint) directoryFootprint
                           match ← readSRI2Pages path ref leaves cache header pages initial with
@@ -402,32 +390,31 @@ private def readSparsePtdPages (path : String) (ref : Ref) (leaves : List Digest
               | some terms, some (later, next) => pure (some ((page, terms) :: later, next))
               | _, _ => pure none
 
-private def sparseTerm? (ptdHeader : L4Factoidal.Storage.PagedTermDictionary.Prefix) :
-    List (Nat × Array Term) → Nat → Option Term
-  | [], _ => none
-  | (page, terms) :: rest, termId =>
-      if termId / ptdHeader.pageTerms == page then terms[termId % ptdHeader.pageTerms]?
-      else sparseTerm? ptdHeader rest termId
-
+/-- Index only pages already authenticated and decoded for this artifact.
+    `PageCache.term_ofList` preserves the old list lookup, including misses. -/
 private def sparseRowsToTriples? (ptdHeader : L4Factoidal.Storage.PagedTermDictionary.Prefix)
-    (pages : List (Nat × Array Term)) (predicate : WfIri) :
-    List L4Factoidal.Storage.IndexedBlock.IdTriple → Option (List Triple)
-  | [] => some []
-  | row :: rest => do
-      let subject ← sparseTerm? ptdHeader pages row.s
-      let actualPredicate ← sparseTerm? ptdHeader pages row.p
-      let object ← sparseTerm? ptdHeader pages row.o
-      let later ← sparseRowsToTriples? ptdHeader pages predicate rest
-      match subject, actualPredicate with
-      | .iri iri, .iri actual => if actual == predicate then some ({ s := .iri iri, p := actual, o := object } :: later) else none
-      | .bnode bnode, .iri actual => if actual == predicate then some ({ s := .bnode bnode, p := actual, o := object } :: later) else none
-      | _, _ => none
+    (pages : List (Nat × Array Term)) (predicate : WfIri)
+    (rows : List L4Factoidal.Storage.IndexedBlock.IdTriple) : Option (List Triple) :=
+  let indexed := L4Factoidal.Storage.PageCache.ofList pages
+  let termAt := L4Factoidal.Storage.PageCache.term? indexed ptdHeader.pageTerms
+  let rec go : List L4Factoidal.Storage.IndexedBlock.IdTriple → Option (List Triple)
+    | [] => some []
+    | row :: rest => do
+        let subject ← termAt row.s
+        let actualPredicate ← termAt row.p
+        let object ← termAt row.o
+        let later ← go rest
+        match subject, actualPredicate with
+        | .iri iri, .iri actual => if actual == predicate then some ({ s := .iri iri, p := actual, o := object } :: later) else none
+        | .bnode bnode, .iri actual => if actual == predicate then some ({ s := .bnode bnode, p := actual, o := object } :: later) else none
+        | _, _ => none
+  go rows
 
 private def sparseIndexedTermsAgree (ptdHeader : L4Factoidal.Storage.PagedTermDictionary.Prefix)
-    (pages : List (Nat × Array Term)) : List (Term × Nat) → Bool
-  | [] => true
-  | (term, localId) :: rest => sparseTerm? ptdHeader pages localId == some term &&
-      sparseIndexedTermsAgree ptdHeader pages rest
+    (pages : List (Nat × Array Term)) (terms : List (Term × Nat)) : Bool :=
+  let indexed := L4Factoidal.Storage.PageCache.ofList pages
+  terms.all fun (term, localId) =>
+    L4Factoidal.Storage.PageCache.term? indexed ptdHeader.pageTerms localId == some term
 
 /-- Select rows for RDF subjects through an admitted SRI1 companion. SBM4
     uses TLI1's prefix, directory and selected pages to obtain local subject
@@ -541,7 +528,7 @@ def scanEntryForSubjectsV2 (directory : System.FilePath) (predicate : WfIri)
           if indexed.isEmpty then
             pure (some { triples := [], counters := termCounters, artifactBytes := entry.artifact.bytes })
           else
-            let ids := indexed.map Prod.snd |>.eraseDups
+            let ids := L4Factoidal.Storage.SubjectRowIndexWireV2.distinctIds (indexed.map Prod.snd)
             match ← subjectPostingsV2For? directory entry subjectIndex ids with
             | none => pure none
             | some (selected, sriCounters) =>

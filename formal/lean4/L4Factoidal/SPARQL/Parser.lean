@@ -2685,7 +2685,15 @@ def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Quer
     let (ds, ts2) ← pDatasetClauses f st ts1
     let ts3 := if peekTok ts2 == Token.whereKw then advTok ts2 else ts2
     let (pattern, ts4) ← pGroupGraphPattern f st ts3
-    .ok (Query.mk .ask ds pattern none [] {} none st.base, ts4)
+    -- [2] Query permits a trailing [28] ValuesClause after ASK too.
+    -- Retain its declared variables and UNDEF positions as a pattern join,
+    -- just as SELECT does. Malformed data must propagate its parse error.
+    let (pattern, ts5) ← match peekTok ts4 with
+      | .values => do
+          let (values, rest) ← pValuesClause f st (advTok ts4)
+          pure (ggpJoin pattern values, rest)
+      | _ => pure (pattern, ts4)
+    .ok (Query.mk .ask ds pattern none [] {} none st.base, ts5)
 
 /-- [10] ConstructQuery — the full form and the `CONSTRUCT WHERE`
 short form, whose WHERE pattern must be a basic graph pattern. -/

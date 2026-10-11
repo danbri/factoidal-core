@@ -86,6 +86,7 @@ extern_lib libl4blockhost pkg := do
 lean_exe «l4native-crypto-smoke» where root := `Harness.NativeCryptoSmoke
 lean_exe «l4native-range-smoke» where root := `Harness.NativeRangeSmoke
 lean_exe «l4block-id-v3-query» where root := `Harness.IndexedBlockV3Query
+lean_exe «l4block-snapshot-session» where root := `Harness.SnapshotSession
 lean_exe «l4block-id-v3-merkle-scan» where root := `Harness.IndexedBlockV3MerkleScan
 lean_exe «l4block-shard-pack» where root := `Harness.PredicateShardPack
 lean_exe «l4block-shard-activate» where root := `Harness.ShardActivate

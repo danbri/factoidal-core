@@ -1,0 +1,653 @@
+{
+  "full_build_jobs": 693,
+  "full_build_log_sha256": "d9d779b1ce673b84faca925f456d0a65328de4d84540070655b1dfcb0b69bca0",
+  "native_session": {
+    "all_checks_passed": true,
+    "records": [
+      {
+        "rejection": "require an activated collection root",
+        "stderr": "l4block-snapshot-session rejected: SBM5 and later require an activated collection root (CURRENT)\n"
+      },
+      {
+        "open": {
+          "admissions": 1,
+          "delta": false,
+          "fetched-bytes": 543,
+          "index-builds": 1,
+          "logical-read-bytes": 519,
+          "mode": "ibk3-full-snapshot",
+          "ready": true,
+          "resolved-directory": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/shardborough-snapshot-test-zd332b15/collection/first",
+          "triples": 7
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Alice"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "SELECT ?name ?team WHERE { ?s <urn:type> <urn:Person> ; <urn:name> ?name ; <urn:member> ?team } ORDER BY ?name ?team",
+        "response": {
+          "head": {
+            "vars": [
+              "name",
+              "team"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                },
+                "team": {
+                  "type": "uri",
+                  "value": "urn:team1"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                },
+                "team": {
+                  "type": "uri",
+                  "value": "urn:team2"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                },
+                "team": {
+                  "type": "uri",
+                  "value": "urn:team1"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                },
+                "team": {
+                  "type": "uri",
+                  "value": "urn:team2"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "SELECT (COUNT(*) AS ?n) WHERE { ?s <urn:name> ?name }",
+        "response": {
+          "head": {
+            "vars": [
+              "n"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "n": {
+                  "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+                  "type": "literal",
+                  "value": "3"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "ASK { ?s <urn:type> <urn:Person> FILTER EXISTS { ?s <urn:name> \"Alice\" } }",
+        "response": {
+          "boolean": true,
+          "head": {}
+        }
+      },
+      {
+        "query": "ASK FROM <urn:unavailable> { ?s ?p ?o }",
+        "response": {
+          "boolean": false,
+          "head": {}
+        }
+      },
+      {
+        "query": "SELECT ?s FROM <urn:unavailable> WHERE { ?s ?p ?o }",
+        "response": {
+          "head": {
+            "vars": [
+              "s"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "query": "SELECT ?s WHERE { ?s ?p ?o } LIMIT 0",
+        "response": {
+          "head": {
+            "vars": [
+              "s"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "query": "SELECT * WHERE { ?s ?p ?o } LIMIT 0",
+        "response": {
+          "head": {
+            "vars": [
+              "s",
+              "p",
+              "o"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "fresh-query": "SELECT * WHERE { ?s ?p ?o } LIMIT 0",
+        "response": {
+          "head": {
+            "vars": [
+              "s",
+              "p",
+              "o"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "query": "SELECT * WHERE { ?s <urn:absent> ?o }",
+        "response": {
+          "head": {
+            "vars": [
+              "s",
+              "o"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "fresh-query": "SELECT * WHERE { ?s <urn:absent> ?o }",
+        "response": {
+          "head": {
+            "vars": [
+              "s",
+              "o"
+            ]
+          },
+          "results": {
+            "bindings": []
+          }
+        }
+      },
+      {
+        "query": "SELECT * WHERE {} VALUES (?x ?y) { (UNDEF UNDEF) }",
+        "response": {
+          "head": {
+            "vars": [
+              "x",
+              "y"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {}
+            ]
+          }
+        }
+      },
+      {
+        "fresh-query": "SELECT * WHERE {} VALUES (?x ?y) { (UNDEF UNDEF) }",
+        "response": {
+          "head": {
+            "vars": [
+              "x",
+              "y"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {}
+            ]
+          }
+        }
+      },
+      {
+        "query": "SELECT * WHERE { BIND(?outside AS ?made) }",
+        "response": {
+          "head": {
+            "vars": [
+              "made"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {}
+            ]
+          }
+        }
+      },
+      {
+        "fresh-query": "SELECT * WHERE { BIND(?outside AS ?made) }",
+        "response": {
+          "head": {
+            "vars": [
+              "made"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {}
+            ]
+          }
+        }
+      },
+      {
+        "query": "not-json",
+        "response": {
+          "error": "invalid-request",
+          "message": "expected one JSON string containing SPARQL"
+        }
+      },
+      {
+        "query": "42",
+        "response": {
+          "error": "invalid-request",
+          "message": "expected one JSON string containing SPARQL"
+        }
+      },
+      {
+        "query": "not a SPARQL query",
+        "response": {
+          "error": "invalid-query",
+          "message": "at 0: expected SELECT, ASK, CONSTRUCT, or DESCRIBE"
+        }
+      },
+      {
+        "query": "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }",
+        "response": {
+          "error": "unsupported-form",
+          "message": "snapshot sessions support SELECT and ASK only"
+        }
+      },
+      {
+        "query": "# \u03a9\nSELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Alice"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "BASE <http://example.org/base/> SELECT (IRI(\"child\") AS ?iri) WHERE {}",
+        "response": {
+          "head": {
+            "vars": [
+              "iri"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "iri": {
+                  "type": "uri",
+                  "value": "http://example.org/base/child"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "ASK { FILTER(NOW() = NOW()) }",
+        "response": {
+          "boolean": true,
+          "head": {}
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Alice"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "open": {
+          "admissions": 1,
+          "delta": true,
+          "fetched-bytes": 543,
+          "index-builds": 1,
+          "logical-read-bytes": 519,
+          "mode": "ibk3-full-snapshot",
+          "ready": true,
+          "resolved-directory": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/shardborough-snapshot-test-zd332b15/collection/first",
+          "triples": 8
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Carol"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Alice"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Bob"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "B\u00f3b"
+                }
+              },
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Carol"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "open": {
+          "admissions": 1,
+          "delta": false,
+          "fetched-bytes": 139,
+          "index-builds": 1,
+          "logical-read-bytes": 131,
+          "mode": "ibk3-full-snapshot",
+          "ready": true,
+          "resolved-directory": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/shardborough-snapshot-test-zd332b15/collection/second",
+          "triples": 1
+        }
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Zelda"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "rejection": "malformed DLOG sidecar",
+        "stderr": "l4block-snapshot-session rejected: malformed DLOG sidecar\n"
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Zelda"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "rejection": "malformed or unavailable committed artifact",
+        "stderr": "l4block-snapshot-session rejected: malformed or unavailable committed artifact\n"
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Zelda"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "rejection": "CURRENT",
+        "stderr": "l4block-snapshot-session rejected: CURRENT does not name a safe generation directory\n"
+      },
+      {
+        "query": "SELECT ?name WHERE { ?s <urn:name> ?name } ORDER BY ?name",
+        "response": {
+          "head": {
+            "vars": [
+              "name"
+            ]
+          },
+          "results": {
+            "bindings": [
+              {
+                "name": {
+                  "type": "literal",
+                  "value": "Zelda"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "stderr": ""
+      },
+      {
+        "stderr": ""
+      },
+      {
+        "stderr": ""
+      }
+    ],
+    "session_binary_sha256": "66520b8ad39ed2a931bb4100f85969ac34de21e0d34d9108b27ee7c48873610a",
+    "test_sha256": "9469f91bd9a87cbb7ee3a6079dae5ea88ae1f0998ae18fffe305b1e4ece16297"
+  },
+  "pure_projection_guards": 20,
+  "reference": {
+    "counts": {
+      "fail": 0,
+      "pass": 631,
+      "skip": 0,
+      "total": 631,
+      "unsupported": 0
+    },
+    "log_sha256": "404887ceafc2127c8c62fb3aecf9055323c7bfa214d497b6f895fdc8e33b65d3",
+    "runner_sha256": "8b89d71df222ee8933663c8497b2f79928b492eec14714e00c403b79ab442793",
+    "submodule_commit": "35c503a6323db83c2e54ff404387210c20d57c18"
+  },
+  "scope": "Projection correction: Lean library/native answers plus reference W3C rerun. W3C runner uses reference/evaluator route; disk routes checked by separate native tests.",
+  "toolchain": "leanprover/lean4:v4.33.1"
+}

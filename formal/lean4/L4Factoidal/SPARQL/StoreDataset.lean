@@ -70,6 +70,7 @@ No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.IndexedEvalRefinement
+import L4Factoidal.SPARQL.IndexedExists
 
 namespace L4Factoidal.SPARQL.StoreDataset
 
@@ -527,20 +528,48 @@ def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBacke
 decoded cleanly; otherwise it is `none`, because a column that failed
 to decode contributes zero rows silently and ASK would report a read
 failure as the answer `false`. -/
-def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
+def finishAskBackend (nonempty : Bool) (dsb : DatasetBackend) : Option Bool :=
+  if nonempty then some true
+  else if backendDecodeFailure dsb.default
+          || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
+       then none else some false
+
+/-- The full-row ASK evaluator, retained as the refinement reference. -/
+def evalAskBackendReference (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
   match q.form with
   | .ask =>
       let omega0 := evalPatternBackend env dsb q.pattern dsb.default
       let omega := match q.postValues with
         | none => omega0
         | some vals => SPARQL.join omega0 vals
-      match omega with
-      | [] =>
-          if backendDecodeFailure dsb.default
-             || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
-          then none else some false
-      | _ => some true
+      finishAskBackend (!omega.isEmpty) dsb
   | _ => none
+
+/-- A singleton indexed BGP can stop at its first match. Other query shapes
+    retain the reference evaluator. Named-backend read failures still prevent
+    an empty result from being reported as `false`. -/
+def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
+  match q.form, q.pattern, q.postValues, dsb.default with
+  | .ask, .bgp [tp], none, .indexed index =>
+      finishAskBackend (indexedSingleTpExists index tp []) dsb
+  | _, _, _, _ => evalAskBackendReference env q dsb
+
+theorem evalAskBackend_eq_reference (env : EvalEnv) (q : Query)
+    (dsb : DatasetBackend) :
+    evalAskBackend env q dsb = evalAskBackendReference env q dsb := by
+  cases hf : q.form <;> try simp [evalAskBackend, hf]
+  cases hp : q.pattern <;> try simp [evalAskBackend, hf, hp]
+  rename_i patterns
+  cases patterns with
+  | nil => simp [evalAskBackend, hf, hp]
+  | cons tp rest =>
+      cases rest with
+      | cons _ _ => simp [evalAskBackend, hf, hp]
+      | nil =>
+          cases hv : q.postValues <;> try simp [evalAskBackend, hf, hp, hv]
+          cases hb : dsb.default <;> try simp [evalAskBackend, hf, hp, hv, hb]
+          simp [evalAskBackend, evalAskBackendReference, hf, hp, hv, hb,
+            evalPatternBackend, evalBgpBackend_single, indexedSingleTpExists_eq]
 
 /-- The blank-node rewrite happens once, at the entry point. The F*
 source records why it cannot live inside the evaluator: replacing the
@@ -694,7 +723,10 @@ theorem evalAskBackend_none_on_decode_failure (env : EvalEnv) (q : Query)
                    SPARQL.join (evalPatternBackend env dsb q.pattern dsb.default) vals)
               = []) :
     evalAskBackend env q dsb = none := by
-  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, if_true]
+  rw [evalAskBackend_eq_reference]
+  simp only [evalAskBackendReference, hform, hempty, List.isEmpty_nil,
+    Bool.not_true, finishAskBackend, Bool.false_eq_true, if_false, hfail,
+    Bool.true_or, if_true]
 
 /-! ## Build-time checks -/
 
@@ -1209,6 +1241,7 @@ plus the default. -/
 #print axioms evalBgpBackend_allVars_list
 #print axioms countGroupByGraph_length
 #print axioms evalAskBackend_none_on_decode_failure
+#print axioms evalAskBackend_eq_reference
 #print axioms limitGraphVarAcc_bounded
 
 end L4Factoidal.SPARQL.StoreDataset

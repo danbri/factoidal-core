@@ -23,9 +23,115 @@ evict the OS page cache or measure steady-state server throughput. The
 JSON contains raw wall times, median/min/max, host/toolchain and binary
 hashes. `--warm-runs` defaults to five; per-process `--timeout` defaults
 to 120 seconds. Expected modes/cardinalities and the COUNT scalar are
-checked, not complete answer bags (the CLI prints ten preview rows).
+checked, not complete answer bags (the default CLI output prints ten preview rows).
 Do not infer large-data scaling, speedup or QLever/Virtuoso parity from
 this small baseline. See `docs/20261010-shardborough-native-runtime.md`.
+
+### Native complete results and repeated admission
+
+Both native disk query tools provide `--json --query QUERY`: complete
+SELECT/ASK result documents on stdout, physical diagnostics on stderr.
+`tools/blockengine-results-json-smoke.py` checks complete known-fixture bags
+and exact modifier-sensitive sequences. The triple tool's
+`--json --repeat N --query QUERY` emits one document per fresh-admission
+iteration in a single process. This amortizes process startup, but does not
+pin CURRENT or share admitted artifacts/backend state between iterations.
+
+On 2026-10-10, native inspection found that repeated mode reopens the manifest
+and delta and builds fresh chunk caches. Calling it a warm persistent session
+would misattribute startup savings to cached storage. Report the process model
+and every cost included; full-result serialization is absent from preview-only
+samples. Read counters omit control files, Merkle sidecars, DLOG and failed
+speculative paths; do not label them total disk IO. The existing Harness.Compare
+also multiset-compares some ordered cases and permits numeric-value matching;
+do not use it as an exact sequence oracle. Use actual row-position and binding
+checks for deterministic ORDER BY regressions.
+
+The Lean `l4block-snapshot-session` target now pins an admitted IBK3 generation
+and replayed delta and reuses a complete in-memory graph index. Its JSONL
+interface flushes full SELECT/ASK results. `tools/blockengine-snapshot-session-bench.py`
+records opening separately from per-query latency and reports RSS after
+readiness (not peak RSS). Its fresh CLI comparison has different startup,
+freshness and memory costs. Do not label that ratio a live-update server
+speedup or a competitor comparison. Preserve each implementation stage's
+binary hash when a later optimisation follows the full workload run; the
+2026-10-11 LIMIT-zero shortcut has a separate targeted report.
+
+`tools/blockengine-competitor-session-bench.py` now pairs a pinned native
+snapshot with isolated QLever or Virtuoso HTTP sessions. It gates every
+paired time on complete exact answers; known COUNT datatype and bare-endpoint
+ASK shape differences are retained and excluded. Do not describe different
+transports as normalized core timings or interpret RSS immediately after
+readiness as peak memory (competitor mappings can fault pages during queries).
+Keep failed ingestion reports separate from successful measurements. The
+large Virtuoso fixture requires the streaming bulk loader; `file_to_string`
+failed at its 10 MiB bound. Check bulk-loader completion and error state.
+
+`tools/blockengine-snapshot-pair-bench.py` alternates archived/current pinned
+snapshot binaries against the same complete oracle. Opening is separate and
+both snapshots stay resident. Preserve binary hashes and validate every full
+answer; do not infer peak-memory or competitor results from this local pair.
+The 2026-10-11 indexed-ASK and ordered-prefix report keeps these local samples
+separate from the competitor reruns. Prefix sorting still matches/partitions
+the entire input; a measured sort improvement is not ordered-index push-down.
+
+The subsequent ordered-subject snapshot index extracts eligible finite slices
+before constructing bindings. Report its preparation and memory costs along
+with query latency: on the 300,000-triple fixture, opening rose from 1.78 to
+6.24 seconds and RSS after readiness from 182 to 193 MiB. Arrays are rebuilt
+in memory per snapshot; neither persisted ordered access nor ordered joins
+follow from this measurement. Keep the eligibility and exact tie-order proof
+boundary explicit. The pair driver now samples RSS after each readiness frame.
+
+The later metadata-count path reuses existing array sizes, with exact refinements
+under the source index's well-formedness invariant. Its count speedup does not
+remove the ordered index's eager preparation cost or improve broad joins.
+Keep the 2026-10-11 native FROM regression and corrected dataset-clause fallback
+separate from count timings. QLever's COUNT datatype difference remains excluded;
+the successful Virtuoso comparison does not resolve that answer difference.
+
+The subsequent proved native string comparator removes character-list allocation
+from Query's compiled ordering callers. Its paired broad-join and startup gains
+have separate 2026-10-11 samples: two-pattern join 1.35 to 0.61 seconds, opening
+6.55 to 1.91 seconds. The object-lookup workload includes sorting; do not label
+its gain a faster physical index read. Keep diagnostic profiling separate from
+these timing runs and retain the remaining QLever gaps and answer exclusions.
+
+The following separate profile identified JSON escaping as the largest sampled
+cost. The proved string-fold replacement has its own byte-identical paired
+answers and competitor reruns (two-pattern join 605 to 295 ms). It improves
+complete-result rendering; do not describe it as a new join algorithm. The
+large star joins now beat the configured QLever timings on this generated
+fixture, while the object-driven join still trails. Larger varied workloads
+and normalized execution resources/transports are required before parity claims.
+
+The varied relational corpus adds independent complete oracles for nine chain,
+dimension, selective, OPTIONAL, UNION DISTINCT, grouping, numeric and VALUES
+queries. It is controlled synthetic data, not LUBM/BSBM/SP2Bench. A small pilot
+found incorrect nested aggregate traversal; retain the failed report and measure
+subsequent optimizations against an archived binary that already has that
+correctness fix. Query-level STR(COUNT(...)) specifies a string answer; it is
+not permission to coerce numeric result terms during comparison.
+
+On 523,477 triples, the prior three-step chain hit the native 120-second cap.
+A separate validated profile identified repeated exact predicate estimates.
+The proved count-map replacement has a small paired report and full competitor
+reruns through 1,570,231 triples. Do not treat the capped trial as an exact
+before latency or claim a numeric speedup from it. The large fixture uses
+explicit file/capture/loader bounds recorded per run. All nine relational
+queries match complete answers with both competitors at both larger sizes;
+this does not erase the
+original corpus's COUNT/ASK exclusions. Grouping and selective query gaps
+remain large. Report QLever's default operator parallelism separately from
+its -j 1 limit on concurrent queries, and retain Virtuoso's actual configuration.
+
+Scaling progress lines must include fixture size and phase, not only a query
+name. On 2026-10-10, an unlabelled log tail caused a 100,000-subject result to
+be read as a 10,000-subject result during investigation. The report's size
+keys corrected it before publication; the driver now prefixes every progress
+line with its size directory. Preserve parse-failed prototype samples as
+discarded evidence, not timings of the corrected query, and exclude profiled
+or build-contended samples explicitly before calculating medians.
 
 ### Turtle/parser throughput — `formal/fstar/bench-turtle-metrics.sh`
 
@@ -216,6 +322,14 @@ Plus `factoidal --explain` dumps the query plan without executing
 ad-hoc profiling.
 
 ## Profiling policy
+
+On 2026-10-10 a decoded-page-cache trial's unchanged baseline warmup rose from
+approximately six seconds to 35.815 seconds while unrelated Lean work and heavy
+Chrome CPU activity ran. The trial was stopped and retained as discarded
+evidence. Inspect host CPU/build activity before paired timings; preserve
+contended samples, exclude them explicitly and do not stop unrelated user
+processes to obtain a quiet host. A correct answer on that host is still a
+correctness check, not attributable performance evidence.
 
 OCaml-level profiling (the `Profile_runtime.ml` pattern, env-gated by
 `FACTOIDAL_PROFILE`) is a **temporary post-extraction step only**: it

@@ -78,7 +78,8 @@ three dissolve, none becomes a Lean `axiom`/`opaque`/`partial`):
 Readability contract: every definition cites the SPARQL 1.1 spec
 section it implements.
 -/
-import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.StringOrder
+import L4Factoidal.SPARQL.OrderedPrefix
 
 namespace L4Factoidal.SPARQL
 
@@ -552,6 +553,70 @@ def sortSolutions (cmp : Binding → Binding → Int) : SolutionSeq → Solution
 def sortSolutionsFast (cmp : Binding → Binding → Int) (omega : SolutionSeq) : SolutionSeq :=
   omega.mergeSort (fun left right => cmp left right ≤ 0)
 
+/-- The final SELECT stages: order, project, remove duplicates, then slice.
+    SELECT expressions and row freshness contexts have already been evaluated. -/
+def finishSelectRows (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) : SolutionSeq :=
+  let ordered := match order with
+    | none => rows
+    | some cmp => sortSolutionsFast cmp rows
+  let projected := ordered.map project
+  let deduped := if distinct then distinctSolutionsFast projected
+                else if reduced then reducedSolutions projected else projected
+  sliceSolutions offset limit deduped
+
+/-- Only a finite slice without duplicate removal can truncate the ordered
+    input. Projection preserves row count, including entirely unbound rows. -/
+def finishSelectRowsPrefix (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) : SolutionSeq :=
+  match order with
+  | none => finishSelectRows order project distinct reduced offset limit rows
+  | some cmp =>
+      if distinct || reduced then
+        finishSelectRows order project distinct reduced offset limit rows
+      else match limit with
+        | none => finishSelectRows order project distinct reduced offset limit rows
+        | some count =>
+            let orderedPrefix := mergeSortPrefix rows (fun a b => cmp a b ≤ 0)
+              (offset.getD 0 + count)
+            sliceSolutions offset limit (orderedPrefix.map project)
+
+theorem sliceSolutions_map_prefix (offset : Option Nat) (count : Nat)
+    (rows : SolutionSeq) (project : Binding → Binding) :
+    sliceSolutions offset (some count) ((rows.take (offset.getD 0 + count)).map project)
+      = sliceSolutions offset (some count) (rows.map project) := by
+  cases offset <;>
+    simp [sliceSolutions, List.map_take, List.drop_take, List.take_take]
+
+theorem sliceSolutions_take_prefix (offset : Option Nat) (count : Nat)
+    (rows : SolutionSeq) :
+    sliceSolutions offset (some count) (rows.take (offset.getD 0 + count))
+      = sliceSolutions offset (some count) rows := by
+  cases offset <;> simp [sliceSolutions, List.drop_take, List.take_take]
+
+theorem finishSelectRowsPrefix_eq (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) :
+    finishSelectRowsPrefix order project distinct reduced offset limit rows
+      = finishSelectRows order project distinct reduced offset limit rows := by
+  cases order with
+  | none => rfl
+  | some cmp =>
+      cases distinct <;> cases reduced <;> cases limit <;>
+        simp [finishSelectRowsPrefix, finishSelectRows, reducedSolutions,
+          mergeSortPrefix_eq_take, sortSolutionsFast, sliceSolutions_take_prefix]
+
+/-- Compile the proven prefix implementation while retaining the full-sort
+    specification for reduction and downstream proofs. -/
+@[csimp] theorem finishSelectRows_eq_prefix :
+    @finishSelectRows = @finishSelectRowsPrefix := by
+  funext order project distinct reduced offset limit rows
+  exact (finishSelectRowsPrefix_eq order project distinct reduced offset limit rows).symm
+
+#print axioms finishSelectRows_eq_prefix
+
 /-! ## §18.5.1 grouping and aggregation -/
 
 /-- One GROUP BY group: the key its rows share, and those rows. -/
@@ -735,11 +800,106 @@ def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
       erString (String.intercalate s (vals.filterMap EvalResult.toString?))
   | .sample => firstNonError (evalOverGroup env e g)
 
+mutual
 /-- Replace every aggregate sub-expression by its computed value, so
 an ordinary §17 evaluation can finish the job — this is what lets
 `HAVING (COUNT(?o) > 2)` and `SELECT (COUNT(?o) * 2 AS ?c)` work
 (port of `rewrite_aggregates`). -/
 def rewriteAggregates (env : EvalEnv) (g : SolutionGroup) : Expr → Expr
+  | .existsPat p    => .existsPat p
+  | .notExistsPat p => .notExistsPat p
+  -- Leaves.
+  | .var v => .var v
+  | .iri i => .iri i
+  | .lit l => .lit l
+  | .boolLit b => .boolLit b
+  | .numericLit n => .numericLit n
+  | .decimalLit s => .decimalLit s
+  | .doubleLit s => .doubleLit s
+  | .bound v => .bound v
+  | .now => .now
+  -- Recurse into sub-expressions.
+  | .arith op a b => .arith op (rewriteAggregates env g a)
+                              (rewriteAggregates env g b)
+  | .unaryMinus a => .unaryMinus (rewriteAggregates env g a)
+  | .unaryPlus a => .unaryPlus (rewriteAggregates env g a)
+  | .compare op a b => .compare op (rewriteAggregates env g a)
+                                  (rewriteAggregates env g b)
+  | .and a b => .and (rewriteAggregates env g a)
+                     (rewriteAggregates env g b)
+  | .or a b => .or (rewriteAggregates env g a)
+                   (rewriteAggregates env g b)
+  | .not a => .not (rewriteAggregates env g a)
+  | .isIri a => .isIri (rewriteAggregates env g a)
+  | .isBlank a => .isBlank (rewriteAggregates env g a)
+  | .isLiteral a => .isLiteral (rewriteAggregates env g a)
+  | .isNumeric a => .isNumeric (rewriteAggregates env g a)
+  | .str a => .str (rewriteAggregates env g a)
+  | .lang a => .lang (rewriteAggregates env g a)
+  | .datatype a => .datatype (rewriteAggregates env g a)
+  | .iriFn a => .iriFn (rewriteAggregates env g a)
+  | .hasLang a => .hasLang (rewriteAggregates env g a)
+  | .hasLangDir a => .hasLangDir (rewriteAggregates env g a)
+  | .langDir a => .langDir (rewriteAggregates env g a)
+  | .strDt a b => .strDt (rewriteAggregates env g a)
+                         (rewriteAggregates env g b)
+  | .strLang a b => .strLang (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+  | .strLangDir a b c => .strLangDir (rewriteAggregates env g a)
+                                     (rewriteAggregates env g b)
+                                     (rewriteAggregates env g c)
+  | .cond c t e => .cond (rewriteAggregates env g c)
+                         (rewriteAggregates env g t)
+                         (rewriteAggregates env g e)
+  | .coalesce es => .coalesce (rewriteAggregateList env g es)
+  | .inList a es => .inList (rewriteAggregates env g a)
+                            (rewriteAggregateList env g es)
+  | .notInList a es => .notInList (rewriteAggregates env g a)
+                                  (rewriteAggregateList env g es)
+  | .strLen a => .strLen (rewriteAggregates env g a)
+  | .substr a b c => .substr (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+                             (rewriteAggregateOpt env g c)
+  | .uCase a => .uCase (rewriteAggregates env g a)
+  | .lCase a => .lCase (rewriteAggregates env g a)
+  | .strStarts a b => .strStarts (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+  | .strEnds a b => .strEnds (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+  | .contains a b => .contains (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
+  | .strBefore a b => .strBefore (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+  | .strAfter a b => .strAfter (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
+  | .concat es => .concat (rewriteAggregateList env g es)
+  | .encodeForUri a => .encodeForUri (rewriteAggregates env g a)
+  | .replace a b c d => .replace (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+                                 (rewriteAggregates env g c)
+                                 (rewriteAggregateOpt env g d)
+  | .regex a b c => .regex (rewriteAggregates env g a)
+                           (rewriteAggregates env g b)
+                           (rewriteAggregateOpt env g c)
+  | .abs a => .abs (rewriteAggregates env g a)
+  | .round a => .round (rewriteAggregates env g a)
+  | .ceil a => .ceil (rewriteAggregates env g a)
+  | .floor a => .floor (rewriteAggregates env g a)
+  | .md5 a => .md5 (rewriteAggregates env g a)
+  | .sha1 a => .sha1 (rewriteAggregates env g a)
+  | .sha256 a => .sha256 (rewriteAggregates env g a)
+  | .sha384 a => .sha384 (rewriteAggregates env g a)
+  | .sha512 a => .sha512 (rewriteAggregates env g a)
+  | .year a => .year (rewriteAggregates env g a)
+  | .month a => .month (rewriteAggregates env g a)
+  | .day a => .day (rewriteAggregates env g a)
+  | .hours a => .hours (rewriteAggregates env g a)
+  | .minutes a => .minutes (rewriteAggregates env g a)
+  | .seconds a => .seconds (rewriteAggregates env g a)
+  | .timezone a => .timezone (rewriteAggregates env g a)
+  | .tz a => .tz (rewriteAggregates env g a)
+  | .sameTerm a b => .sameTerm (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
   | .aggregate fn distinct sub =>
       match evalAggregate env fn distinct sub g with
       | .num n     => .numericLit n
@@ -752,14 +912,23 @@ def rewriteAggregates (env : EvalEnv) (g : SolutionGroup) : Expr → Expr
       -- An unbound variable is exactly the §17 type error the F*
       -- source encodes here with the same sentinel name.
       | .error     => .var "_:error:"
-  | .compare op e1 e2 =>
-      .compare op (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .and e1 e2 => .and (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .or e1 e2  => .or (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .arith op e1 e2 =>
-      .arith op (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .not e1    => .not (rewriteAggregates env g e1)
-  | e          => e
+  | .functionCall i args => .functionCall i (rewriteAggregateList env g args)
+  | .tripleTerm a b c => .tripleTerm (rewriteAggregates env g a)
+                                     (rewriteAggregates env g b)
+                                     (rewriteAggregates env g c)
+  | .ttSubject a => .ttSubject (rewriteAggregates env g a)
+  | .ttPredicate a => .ttPredicate (rewriteAggregates env g a)
+  | .ttObject a => .ttObject (rewriteAggregates env g a)
+  | .isTriple a => .isTriple (rewriteAggregates env g a)
+
+def rewriteAggregateList (env : EvalEnv) (g : SolutionGroup) : List Expr → List Expr
+  | [] => []
+  | e :: rest => rewriteAggregates env g e :: rewriteAggregateList env g rest
+
+def rewriteAggregateOpt (env : EvalEnv) (g : SolutionGroup) : Option Expr → Option Expr
+  | none => none
+  | some e => some (rewriteAggregates env g e)
+end
 
 /-- The group's REPRESENTATIVE row: the solution mapping §18.5.4
 evaluates a HAVING condition and a projected expression against. Every
@@ -785,20 +954,51 @@ EXISTS positions are already booleans. -/
 def evalExprInGroup (env : EvalEnv) (g : SolutionGroup) (e : Expr) : EvalResult :=
   Expr.evalIn env g.representative (rewriteAggregates env g e)
 
+mutual
 /-- Does this expression contain an aggregate anywhere? An aggregate
 in the SELECT clause triggers grouping even with no GROUP BY
 (§18.2.4.1). Port of `expr_has_aggregate`. -/
 def exprHasAggregate : Expr → Bool
-  | .aggregate _ _ _ => true
-  | .arith _ e1 e2   => exprHasAggregate e1 || exprHasAggregate e2
-  | .compare _ e1 e2 => exprHasAggregate e1 || exprHasAggregate e2
-  | .and e1 e2       => exprHasAggregate e1 || exprHasAggregate e2
-  | .or e1 e2        => exprHasAggregate e1 || exprHasAggregate e2
-  | .not e1          => exprHasAggregate e1
-  | .unaryMinus e1   => exprHasAggregate e1
-  | .unaryPlus e1    => exprHasAggregate e1
-  | .cond c t f      => exprHasAggregate c || exprHasAggregate t || exprHasAggregate f
-  | _                => false
+  | .aggregate _ _ _   => true
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _
+  | .decimalLit _ | .doubleLit _ | .bound _ | .now
+  | .existsPat _ | .notExistsPat _ => false
+  | .arith _ a b | .compare _ a b | .and a b | .or a b
+  | .strDt a b | .strLang a b
+  | .strStarts a b | .strEnds a b | .contains a b
+  | .strBefore a b | .strAfter a b | .sameTerm a b =>
+      exprHasAggregate a || exprHasAggregate b
+  | .unaryMinus a | .unaryPlus a | .not a
+  | .isIri a | .isBlank a | .isLiteral a | .isNumeric a
+  | .str a | .lang a | .datatype a | .iriFn a
+  | .hasLang a | .hasLangDir a | .langDir a
+  | .strLen a | .uCase a | .lCase a | .encodeForUri a
+  | .abs a | .round a | .ceil a | .floor a
+  | .md5 a | .sha1 a | .sha256 a | .sha384 a | .sha512 a
+  | .year a | .month a | .day a | .hours a | .minutes a | .seconds a
+  | .timezone a | .tz a
+  | .ttSubject a | .ttPredicate a | .ttObject a | .isTriple a =>
+      exprHasAggregate a
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      exprHasAggregate a || exprHasAggregate b || exprHasAggregate c
+  | .coalesce es | .concat es | .functionCall _ es => exprHasAggregateList es
+  | .inList a es | .notInList a es => exprHasAggregate a || exprHasAggregateList es
+  | .substr a b o => exprHasAggregate a || exprHasAggregate b || exprHasAggregateOpt o
+  | .replace a b c o =>
+      exprHasAggregate a || exprHasAggregate b || exprHasAggregate c || exprHasAggregateOpt o
+  | .regex a b o => exprHasAggregate a || exprHasAggregate b || exprHasAggregateOpt o
+
+/-- `expr_list_has_aggregate`. -/
+def exprHasAggregateList : List Expr → Bool
+  | []        => false
+  | e :: rest => exprHasAggregate e || exprHasAggregateList rest
+
+/-- `expr_opt_has_aggregate`. -/
+def exprHasAggregateOpt : Option Expr → Bool
+  | none   => false
+  | some e => exprHasAggregate e
+
+end
 
 /-- Does the SELECT clause use aggregation? (`SELECT *` never can.) -/
 def selectHasAggregates : SelectClause → Bool
@@ -1592,18 +1792,13 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
             | .vars items => filtered.map (fun g => evalSelectItemsGroup env active items g)
             | .all        =>
                 stripSyntheticBnodeVars (filtered.map (fun g => g.solutions.headD Binding.empty))
-          -- 6. ORDER BY.
-          let ordered := match ob with
-            | none   => omega'
-            | some o => sortSolutionsFast
-                          (fun mu1 mu2 => compareOnConditions env active o mu1 mu2) omega'
-          -- 8. DISTINCT / REDUCED.
-          let deduped :=
-            if dd then distinctSolutionsFast ordered
-            else if rr then reducedSolutions ordered
-            else ordered
-          -- 9. OFFSET / LIMIT.
-          sliceSolutions oo ll deduped
+          -- 6–9. Ordering, duplicate removal and slicing. Group projection
+          -- already happened above, so the final row projection is identity.
+          match ob with
+          | none => finishSelectRows none id dd rr oo ll omega'
+          | some o => finishSelectRows
+              (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
+              id dd rr oo ll omega'
         else
           -- 5. SELECT expressions (`eval_select_items`, inlined for
           -- the same reason).
@@ -1612,22 +1807,17 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
                 numberRows (fun row mu => evalSelectItemsRowFrom env active row items mu 0)
                   omega 0
             | .all        => omega
-          -- 6. ORDER BY (before projection, so ORDER BY can name a
-          -- variable the projection drops — §15.1).
-          let ordered := match ob with
-            | none   => omega'
-            | some o => sortSolutionsFast
-                          (fun mu1 mu2 => compareOnConditions env active o mu1 mu2) omega'
-          -- 7. Projection. `SELECT *` drops the rewrite-invented
-          -- `_bnode_*` variables here, before DISTINCT (F* site).
-          let projected := match sel with
-            | .vars items => projectSolutions (selectItemVars items) ordered
-            | .all        => stripSyntheticBnodeVars ordered
-          let deduped :=
-            if dd then distinctSolutionsFast projected
-            else if rr then reducedSolutions projected
-            else projected
-          sliceSolutions oo ll deduped
+          -- 6–9. ORDER BY precedes projection, so it can use variables the
+          -- projection drops. SELECT * strips synthetic blank-node variables
+          -- before DISTINCT, exactly as the full-sort specification does.
+          let project := match sel with
+            | .vars items => projectBinding (selectItemVars items)
+            | .all => fun mu => mu.filter (fun b => !isSyntheticBnodeVar b.1)
+          match ob with
+          | none => finishSelectRows none project dd rr oo ll omega'
+          | some o => finishSelectRows
+              (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
+              project dd rr oo ll omega'
     -- ASK / CONSTRUCT / DESCRIBE have their own entry points; as a
     -- SOLUTION SEQUENCE producer they contribute nothing, exactly as
     -- `eval_select_query`'s other arms return `[]`.
@@ -1681,8 +1871,8 @@ def applyDataset (dcs : List DatasetClause) (ds : Dataset) (active : Graph) :
 /-! ## Query evaluation — §18.2.4, §16.2 -/
 
 /-- Every distinct variable a solution sequence binds, in first-seen
-order — the projected variable list `SELECT *` denotes (port of
-`collect_distinct_vars_in_order`). -/
+order (port of `collect_distinct_vars_in_order`). This describes observed
+bindings, not the projected header of a SELECT query. -/
 def collectVarsFromRow : Binding → List VarName → List VarName
   | [],            acc => acc
   | (v, _) :: rest, acc =>
@@ -1691,6 +1881,52 @@ def collectVarsFromRow : Binding → List VarName → List VarName
 
 def collectVarsInOrder (omega : SolutionSeq) : List VarName :=
   omega.foldl (fun acc row => collectVarsFromRow row acc) []
+
+/-- Variables inside a term pattern; RDF constants and query blank nodes
+    do not declare projected variables. -/
+def projectionTermVars : PatternTerm → List VarName
+  | .var name => [name]
+  | .tripleTerm s p o => projectionTermVars s ++ projectionTermVars p ++ projectionTermVars o
+  | _ => []
+
+def projectionSubjectVars : PatternSubject → List VarName
+  | .var name => [name]
+  | .tripleTerm s p o => projectionTermVars s ++ projectionTermVars p ++ projectionTermVars o
+  | _ => []
+
+mutual
+
+/-- SPARQL 1.1 §18.2.1: variables in scope, determined from syntax rather
+    than the returned solutions. FILTER expressions and MINUS's right side
+    introduce none; a subquery exposes only its projected variables. -/
+def QueryPattern.inScopeVars : QueryPattern → List VarName
+  | .bgp patterns => patterns.flatMap fun tp =>
+      projectionSubjectVars tp.s ++ projectionTermVars tp.p ++ projectionTermVars tp.o
+  | .join l r | .union l r | .leftJoin l r _ | .lateral l r =>
+      l.inScopeVars ++ r.inScopeVars
+  | .minus l _ | .filter _ l => l.inScopeVars
+  | .graph name pattern => projectionTermVars name ++ pattern.inScopeVars
+  | .bind _ name pattern => pattern.inScopeVars ++ [name]
+  | .values names _ => names
+  | .service _ _ pattern => pattern.inScopeVars
+  | .serviceVar name _ pattern => name :: pattern.inScopeVars
+  | .subSelect query => query.projectedVars
+  | .propertyPath s _ o => projectionSubjectVars s ++ projectionTermVars o
+  | .empty => []
+
+/-- §16.1.1 and §18.2.4.4: declared projection, independent of data, row
+    order, LIMIT and unbound values. The parser retains trailing VALUES as
+    a `.values names rows` pattern, including empty and all-UNDEF columns.
+    The legacy `postValues` field contributes any binding names it carries.
+    SELECT * has no specified header order; first syntactic occurrence is
+    retained here. Explicit projections retain their declared order. -/
+def Query.projectedVars : Query → List VarName
+  | .mk (.select (.vars items)) _ _ _ _ _ _ _ => selectItemVars items
+  | .mk (.select .all) _ pattern _ _ _ postValues _ =>
+      (pattern.inScopeVars ++ (postValues.getD []).flatMap (fun row => row.map Prod.fst)).eraseDups
+  | _ => []
+
+end
 
 /-- Evaluate a SELECT query — §18.2.4. Returns the projected variable
 list (the result-set header) and the solution sequence.
@@ -1708,13 +1944,10 @@ def evalSelect (env : EvalEnv) (ds : Dataset) (q : Query) :
   -- query's dataset (after FROM / FROM NAMED).
   let env := { env with dataset := some ds' }
   match q.form with
-  | .select sel =>
+  | .select _ =>
       let omega := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
       let rows := selectPost env active q omega
-      let vars := match sel with
-        | .vars items => selectItemVars items
-        | .all        => collectVarsInOrder rows
-      (vars, rows)
+      (q.projectedVars, rows)
   | _ => ([], [])
 
 /-- Evaluate an ASK query — §18.2.4: true exactly when the pattern has

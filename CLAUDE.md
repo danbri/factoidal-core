@@ -86,6 +86,14 @@ and test first. Bring runtime dependencies and proofs into this repository
 together; a successful build or measurement in the older `factoidal`
 checkout is not validation of this checkout.
 
+Owner, 2026-10-10: **"if using /Users/danbri/working/factoidal/formal/lean4
+make sure git is up to date with remote changes".** Fetch before reuse and
+check ancestry and relevant source differences. Use a non-destructive
+fast-forward when possible. If dirty files prevent it, preserve them and
+read a pinned fetched remote commit instead of the stale working-copy Lean
+files; record the pin and the failed update. Never reset or stash owner edits
+without approval to make a source checkout look current.
+
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —
 > [agentskills.io](https://agentskills.io) format, vendor-neutral) and

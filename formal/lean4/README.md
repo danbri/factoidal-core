@@ -88,7 +88,7 @@ Build and exercise the native disk route from the repository root:
 
 ```bash
 (cd formal/lean4 && lake build l4native-crypto-smoke l4native-range-smoke l4block-shard-pack \
-  l4block-shard-activate l4block-id-v3-query l4block-id-v3-merkle-scan \
+  l4block-shard-activate l4block-id-v3-query l4block-snapshot-session l4block-id-v3-merkle-scan \
   l4block-delta-log l4block-shard-compact l4block-quad-query l4block-quad-dump)
 formal/lean4/.lake/build/bin/l4native-crypto-smoke
 formal/lean4/.lake/build/bin/l4native-range-smoke
@@ -97,6 +97,7 @@ tools/blockengine-ibk3-compact-smoke.sh
 tools/blockengine-ibk3-direct-select-smoke.sh
 tools/blockengine-ibk4-quad-smoke.sh
 tools/blockengine-ibk5-quad-smoke.sh
+python3 tools/blockengine-results-json-smoke.py
 python3 tools/blockengine-core-baseline.py
 ```
 
@@ -104,6 +105,47 @@ The baseline uses the checked-in 368-triple binding-site fixture and fresh
 native processes. It does not evict the OS page cache, establish large-data
 scaling, or compare QLever/Virtuoso. The standalone `Bench/lakefile.lean`
 remains available for pure Lean benchmarks without the extern libraries.
+
+Both native query tools accept `COLLECTION --json --query QUERY` for complete
+SELECT/ASK results on stdout, with physical diagnostics on stderr. The triple
+tool also accepts `--json --repeat N --query QUERY` and emits one JSON document
+per iteration. Each iteration still performs fresh admission; this is not a
+persistent shared-cache session. See
+[`docs/20261010-shardborough-results-json.md`](../../docs/20261010-shardborough-results-json.md)
+for the exact serializer refinement and validation boundaries.
+
+`l4block-snapshot-session COLLECTION` pins one admitted IBK3 generation and
+its replayed default-graph delta. It builds the in-memory index once, emits
+a readiness JSON record, then accepts one JSON string containing SELECT/ASK
+per stdin line and flushes one complete result or error per request. A new
+session is needed to see later updates. The full graph and indexes stay in
+RAM. Run `python3 tools/blockengine-snapshot-session-test.py --report /tmp/session.json`
+to check native answers, admission failures and snapshot isolation. See
+[`docs/20261011-shardborough-snapshot-sessions.md`](../../docs/20261011-shardborough-snapshot-sessions.md)
+for proofs, measured startup/memory costs and remaining parity work.
+
+SELECT-star JSON headers now use statically in-scope variables, including
+empty results and never-bound columns. Native warm comparisons with pinned
+QLever/Virtuoso are recorded in
+[`docs/20261011-shardborough-projection-and-competitor-sessions.md`](../../docs/20261011-shardborough-projection-and-competitor-sessions.md).
+Those measurements exposed substantial ordered-slice and ASK gaps. The next
+Lean operator changes add proved early-exit indexed ASK and exact ordered
+prefixes for finite SELECT slices. On the 300,000-triple fixture, paired
+medians improve from 21.60 to 0.042 ms for present-ASK and 852 to 318 ms for
+ordered slicing. Full matching still precedes the slice; industry parity
+remains open. See
+[`docs/20261011-shardborough-exists-and-ordered-prefix.md`](../../docs/20261011-shardborough-exists-and-ordered-prefix.md)
+for contracts, tests, competitor reruns and remaining gaps.
+
+Read snapshots now also prepare stable subject-ordered predicate arrays.
+Eligible single-pattern `ORDER BY ?subject OFFSET ... LIMIT ...` queries slice
+those arrays before constructing bindings. The universal wrapper refinement
+preserves exact answers and tie order. Paired latency on the same fixture
+falls from 321 to 0.089 ms; opening rises from 1.78 to 6.24 seconds and RSS
+after readiness from 182 to 193 MiB. See
+[`docs/20261011-shardborough-ordered-subject-access.md`](../../docs/20261011-shardborough-ordered-subject-access.md)
+for scope, proof/test evidence and competitor reruns. These in-memory arrays
+do not yet provide persisted ordered access, ordered joins or industry parity.
 
 ## Relation to the F\* development
 
