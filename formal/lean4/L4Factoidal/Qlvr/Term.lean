@@ -14,7 +14,7 @@ L4Factoidal.Qlvr.Term — an `Id` as an N-Triples term, with QLever's printing
     tags: refused with an error. The instance has none of them (format
     record, section 1); `#guard`s below assert the refusal, so the guard
     fails when printing is added and must then be changed. Tracking:
-    https://github.com/danbri/factoidal/issues/778.
+    https://github.com/danbri/factoidal/issues/780.
 
 ## Loops
 
@@ -74,7 +74,7 @@ def appendTerm (v : Vocab) (x : Id) (acc : ByteArray) : Except String ByteArray 
   | .bool val l01 => .ok (acc ++ s!"\"{Format.boolLexical val l01}\"^^<{xsdNs}boolean>".toUTF8)
   | .blankNodeIndex n => .ok (acc ++ s!"_:bn{n}".toUTF8)
   | .undefined => .error "Id: Undefined has no term"
-  | other => .error s!"Id {x.bits}: printing not implemented for {repr other} (https://github.com/danbri/factoidal/issues/778)"
+  | other => .error s!"Id {x.bits}: printing not implemented for {repr other} (https://github.com/danbri/factoidal/issues/780)"
 
 /-- `x` as an N-Triples term. -/
 def toTerm (v : Vocab) (x : Id) : Except String String := do
@@ -96,7 +96,7 @@ private def lit (s : String) : Option String :=
 #guard (toTerm default ⟨((3 : UInt64) <<< 60) ||| ((0x4051800000000000 : UInt64) >>> 4)⟩).toOption ==
   some "\"70.0\"^^<http://www.w3.org/2001/XMLSchema#decimal>"
 -- Expected refusals (printing not implemented; flip when it is):
--- https://github.com/danbri/factoidal/issues/778
+-- https://github.com/danbri/factoidal/issues/780
 #guard (toTerm default ⟨((8 : UInt64) <<< 60) ||| 12345⟩) matches .error _
 #guard (toTerm default ⟨((9 : UInt64) <<< 60) ||| 12345⟩) matches .error _
 #guard (toTerm default ⟨((12 : UInt64) <<< 60) ||| 1⟩) matches .error _
