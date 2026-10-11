@@ -371,7 +371,7 @@ def bumpGroup (scores : List (String × Score)) (group : String) (o : Outcome) :
     List (String × Score) :=
   if scores.any (·.1 == group) then
     scores.map fun (g, s) => if g == group then (g, s.bump o) else (g, s)
-  else scores ++ [(group, (Score.mk 0 0 0 0).bump o)]
+  else scores ++ [(group, ({} : Score).bump o)]
 
 def defaultManifest : String :=
   "third_party/testing/shacl/data-shapes-test-suite/tests/core/manifest.ttl"

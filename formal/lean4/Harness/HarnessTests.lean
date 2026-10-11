@@ -73,6 +73,12 @@ report quote, so it is pinned here. -/
 -- An empty run still prints its (zero) denominator rather than nothing.
 #guard Score.line "empty" {} == "empty: 0 pass, 0 fail, 0 skip, 0 unsupported (out of 0)"
 #guard ({ pass := 2, fail := 1, skip := 0, unsupported := 3 } : Score).total == 6
+-- Expected failures are their own bucket, printed only when present.
+#guard Score.line "tp" { pass := 27, xfail := 3 }
+       == "tp: 27 pass, 0 fail, 0 skip, 0 unsupported, 3 expected-fail (out of 30)"
+#guard (expectedFailure? "/x/sparql10/type-promotion/manifest.ttl" "tP-float-float").isSome
+#guard (expectedFailure? "/x/sparql10/type-promotion/manifest.ttl" "tP-double-double").isNone
+#guard (expectedFailure? "/x/sparql11/other/manifest.ttl" "tP-float-float").isNone
 #guard (Score.bump { pass := 1 } (.fail "x")) == { pass := 1, fail := 1 }
 #guard (Score.bump {} (.unsupported "TestXMLEval")) == { unsupported := 1 }
 #guard (Score.add { pass := 1, fail := 1 } { pass := 2, skip := 5 })
@@ -359,6 +365,53 @@ def rsDecoded : Option (List VarName × List Binding) :=
 -- A plain graph is not a result set.
 #guard (match L4Factoidal.Syntax.parseTurtle "<http://example.org/a> <http://example.org/p> 1 ." none with
         | .ok g => isRsResultSet g | .error _ => true) == false
+
+-- `rs:boolean`: an ASK result (sparql10 `type-promotion/false.ttl`).
+-- https://github.com/danbri/factoidal/issues/785
+def rsBoolTurtle (lex : String) : String :=
+  "@prefix rs: <http://www.w3.org/2001/sw/DataAccess/tests/result-set#> .\n" ++
+  "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n" ++
+  "[] a rs:ResultSet ; rs:boolean \"" ++ lex ++ "\"^^xsd:boolean ."
+
+def expectedShape : Except String Expected → String
+  | .ok (.boolean b)     => s!"boolean {b}"
+  | .ok (.rows r _ o)    => s!"rows {r.length} ordered {o}"
+  | .ok (.graph g)       => s!"graph {g.length}"
+  | .error _             => "error"
+
+#guard expectedShape (parseExpected "/r/false.ttl" (rsBoolTurtle "false")) == "boolean false"
+#guard expectedShape (parseExpected "/r/true.ttl" (rsBoolTurtle "true")) == "boolean true"
+#guard expectedShape (parseExpected "/r/one.ttl" (rsBoolTurtle "1")) == "boolean true"
+-- A value outside the xsd:boolean lexical space is refused, not read as rows.
+#guard expectedShape (parseExpected "/r/bad.ttl" (rsBoolTurtle "yes")) == "error"
+-- Rows with `rs:index` keep their order; without it they compare as a multiset.
+#guard expectedShape (parseExpected "/r/x.ttl" rsTurtle) == "rows 2 ordered true"
+#guard expectedShape (parseExpected "/r/x.ttl"
+  ("@prefix rs: <http://www.w3.org/2001/sw/DataAccess/tests/result-set#> .\n" ++
+   "[] a rs:ResultSet ; rs:resultVariable \"x\" ;\n" ++
+   "  rs:solution [ rs:binding [ rs:variable \"x\" ; rs:value 1 ] ] .")) == "rows 1 ordered false"
+-- The same vocabulary in RDF/XML (sparql10 `sort/result-sort-*.rdf`).
+def rsRdfXml : String :=
+  "<?xml version=\"1.0\"?>\n<rdf:RDF xmlns:rs=\"http://www.w3.org/2001/sw/DataAccess/tests/result-set#\"" ++
+  " xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" ++
+  "<rs:ResultSet><rs:resultVariable>name</rs:resultVariable>\n" ++
+  "<rs:solution rdf:parseType=\"Resource\">" ++
+  "<rs:index rdf:datatype=\"http://www.w3.org/2001/XMLSchema#integer\">2</rs:index>" ++
+  "<rs:binding rdf:parseType=\"Resource\"><rs:variable>name</rs:variable><rs:value>Bob</rs:value></rs:binding>" ++
+  "</rs:solution>\n<rs:solution rdf:parseType=\"Resource\">" ++
+  "<rs:index rdf:datatype=\"http://www.w3.org/2001/XMLSchema#integer\">1</rs:index>" ++
+  "<rs:binding rdf:parseType=\"Resource\"><rs:variable>name</rs:variable><rs:value>Alice</rs:value></rs:binding>" ++
+  "</rs:solution></rs:ResultSet></rdf:RDF>"
+
+#guard expectedShape (parseExpected "/r/result-sort.rdf" rsRdfXml) == "rows 2 ordered true"
+#guard (match parseExpected "/r/result-sort.rdf" rsRdfXml with
+        | .ok (.rows rows _ _) => rows == [[("name", .literal (Literal.string "Alice"))],
+                                           [("name", .literal (Literal.string "Bob"))]]
+        | _ => false)
+-- An RDF/XML file without rs:ResultSet is a graph.
+#guard expectedShape (parseExpected "/r/g.rdf"
+  ("<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns:e=\"http://e/\">" ++
+   "<rdf:Description rdf:about=\"http://e/a\"><e:p>v</e:p></rdf:Description></rdf:RDF>")) == "graph 1"
 
 end compare
 

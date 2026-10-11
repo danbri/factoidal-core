@@ -208,19 +208,36 @@ def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
       | .ok d    => services := services ++ [(endpoint, d.default)]
   return .ok (ds, services)
 
-/-- What an expected-result file decodes to. -/
+/-- What an expected-result file decodes to. `ordered` is false when
+the file does not define an order for its rows (an `rs:ResultSet`
+without `rs:index`); the rows then compare as a multiset even under
+ORDER BY. -/
 inductive Expected where
-  | rows    (rows : List Binding) (csv : Bool)
+  | rows    (rows : List Binding) (csv : Bool) (ordered : Bool)
   | boolean (b : Bool)
   | graph   (g : Graph)
 
+/-- An expected graph: a DAWG `rs:ResultSet` (`rs:boolean` for ASK,
+else rows) or, without one, a CONSTRUCT/DESCRIBE graph. -/
+def expectedOfGraph (g : Graph) : Except String Expected :=
+  if isRsResultSet g then
+    match rsBoolean? g with
+    | some (some b) => .ok (.boolean b)
+    | some none     => .error "rs:boolean is not an xsd:boolean lexical form"
+    | none =>
+        match decodeRsResultSet g with
+        | some (_, rows) => .ok (.rows rows false (rsRowsOrdered g))
+        | none           => .error "rs:ResultSet typed but no result-set subject"
+  else .ok (.graph g)
+
 /-- Decode the expected file by extension (the `.srx/.srj/.tsv/.csv`
-and `.ttl` branches of `run_query_eval_test`, plus `.nt`). -/
+and `.ttl` branches of `run_query_eval_test`, plus `.nt` and RDF/XML
+`.rdf`). -/
 def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Expected :=
   let ofResult (label : String) (csv : Bool) (r : Except ResultsError QueryResult) :
       Except String Expected :=
     match r with
-    | .ok (.bindings _ rows) => .ok (.rows rows csv)
+    | .ok (.bindings _ rows) => .ok (.rows rows csv true)
     | .ok (.boolean b)       => .ok (.boolean b)
     | .error e               => .error s!"{label}: {e}"
   if rf.endsWith ".srx" then ofResult "SRX" false (parseSrx text)
@@ -230,12 +247,13 @@ def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Exp
   else if rf.endsWith ".ttl" then
     match parseTurtle text (some ("file://" ++ rf)) mode with
     | .error e => .error s!"Turtle: {fmtParseError e}"
-    | .ok g    =>
-      if isRsResultSet g then
-        match decodeRsResultSet g with
-        | some (_, rows) => .ok (.rows rows false)
-        | none           => .error "rs:ResultSet typed but no result-set subject"
-      else .ok (.graph g)
+    | .ok g    => expectedOfGraph g
+  else if rf.endsWith ".rdf" then
+    -- A result set (sparql10 `sort/result-sort-*.rdf`) or a graph, in
+    -- RDF/XML.
+    match RdfXml.parseRdfXml text (some ("file://" ++ rf)) with
+    | .error e => .error s!"RDF/XML: {e}"
+    | .ok g    => expectedOfGraph g
   else if rf.endsWith ".nt" then
     -- A CONSTRUCT result given as N-Triples (W3C sparql12
     -- `codepoint-esc-08.nt`).
@@ -509,12 +527,12 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   | some f => return .ofOutcome (.fail s!"query failed: {f.message}")
   | none =>
   match q.form, expected with
-  | .select _, .rows erows csv =>
+  | .select _, .rows erows csv eordered =>
       let arows := if owlRegime then
                      (L4Factoidal.OWL.QueryEval.evalSelectOwl env ds q).filter rowAllowed
                    else (evalSelect env ds q).2
       let n := erows.length + arows.length
-      return (match compareSelectRows ordered csv erows arows with
+      return (match compareSelectRows (ordered && eordered) csv erows arows with
         | .equal    => { outcome := .pass, rowsCompared := n }
         | .notEqual => { outcome := .fail (selectMismatch csv erows arows), rowsCompared := n }
         | .budgetExceeded =>

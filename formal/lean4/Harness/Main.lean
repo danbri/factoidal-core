@@ -111,14 +111,26 @@ def runManifest (lenient : Bool := false) : Nat → System.FilePath → Bool →
       for tc in tests do
         let r ← if lenient then runLenientTest mode assumedBase manifestDir tc
                 else runTest mode assumedBase manifestDir gspStore tc
-        score := score.bump r.outcome
+        let xf := expectedFailure? abs tc.name
+        let outcome : Outcome := match xf, r.outcome with
+          | some x, .pass =>
+              .fail s!"unexpected pass: remove the expected-failure entry and close {x.issue}"
+          | _, o => o
+        match xf, outcome with
+        | some x, .fail _ =>
+            if r.outcome.isFail then
+              score := { score with xfail := score.xfail + 1 }
+              IO.println s!"XFAIL {tc.name} ({x.issue}): {x.reason}"
+            else
+              score := score.bump outcome
+        | _, _ => score := score.bump outcome
         diag := { diag with
                   budgetExceeded := diag.budgetExceeded + (if r.budgetExceeded then 1 else 0),
                   rowsCompared := diag.rowsCompared + r.rowsCompared,
                   triplesCompared := diag.triplesCompared + r.triplesCompared,
                   gspSeeded := diag.gspSeeded + (if r.gspSeeded then 1 else 0) }
-        if verbose || r.outcome.isFail then
-          IO.println (Outcome.line tc.name r.outcome)
+        if (verbose || outcome.isFail) && !(xf.isSome && r.outcome.isFail) then
+          IO.println (Outcome.line tc.name outcome)
       IO.println (Score.line label score)
       IO.println (Diag.line label diag)
       return (score, diag)

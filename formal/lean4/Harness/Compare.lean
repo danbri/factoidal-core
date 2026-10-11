@@ -223,11 +223,18 @@ def compareSelectRows (ordered csv : Bool) (expected actual : List Binding) : Cm
   else
     (if matchGreedy termMatchStrict expected actual then .equal else .notEqual)
 
-/-! ## `rs:ResultSet` — SELECT results written as Turtle
+/-! ## `rs:ResultSet` — results written as an RDF graph
 
-Some sparql11 tests (`aggregates/agg-empty-group-count-graph`,
-`bindings/graph`) ship their expected rows in the DAWG result-set
-vocabulary. Port of the decoder inside `run_query_eval_test`. -/
+Some tests ship their expected results in the DAWG result-set
+vocabulary (http://www.w3.org/2001/sw/DataAccess/tests/result-set#) as
+an RDF graph: sparql11 `aggregates/agg-empty-group-count-graph` and
+`bindings/graph` in Turtle, sparql10 `type-promotion` (ASK, `rs:boolean`)
+in Turtle and sparql10 `sort` (`rs:index`) in RDF/XML. The graph comes
+from the repository's own Turtle or RDF/XML parser; this section reads
+the vocabulary: `rs:ResultSet`, `rs:resultVariable`, `rs:solution`,
+`rs:binding`, `rs:variable`, `rs:value`, `rs:index`, `rs:boolean`.
+Port of the decoder inside `run_query_eval_test`, plus `rs:boolean`
+(https://github.com/danbri/factoidal/issues/785). -/
 
 def rsNs : String := "http://www.w3.org/2001/sw/DataAccess/tests/result-set#"
 
@@ -285,6 +292,32 @@ def decodeRsResultSet (g : Graph) : Option (List VarName × List Binding) :=
           (sortByIndex indexed).map Prod.snd
         else decoded.map Prod.snd
       some (vars, rows)
+
+/-- The `rs:boolean` of the result set: `some (some b)` for an ASK
+result, `some none` when the object is not an `xsd:boolean` lexical form
+in its lexical space, `none` when the result set has no `rs:boolean`. -/
+def rsBoolean? (g : Graph) : Option (Option Bool) :=
+  match rsResultSetSubject g with
+  | none    => none
+  | some rs =>
+      match findObject? g rs (rsNs ++ "boolean") with
+      | none   => none
+      | some t =>
+          match literalLex t with
+          | some "true" | some "1"  => some (some true)
+          | some "false" | some "0" => some (some false)
+          | _                       => some none
+
+/-- True when the order of the decoded rows is defined: every
+`rs:solution` carries an `rs:index` (or there is no solution). Without
+indexes the graph has no order, so the rows compare as a multiset even
+under ORDER BY. -/
+def rsRowsOrdered (g : Graph) : Bool :=
+  match rsResultSetSubject g with
+  | none    => false
+  | some rs =>
+      let sols := (findObjects g rs (rsNs ++ "solution")).filterMap subjectOfTerm
+      sols.all (fun sol => (findObject? g sol (rsNs ++ "index")).isSome)
 
 /-- Render a row for a FAIL line. -/
 def termShow : Term → String
