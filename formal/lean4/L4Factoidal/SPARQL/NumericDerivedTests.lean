@@ -246,4 +246,79 @@ private def int (n : Int) : Option Term := some (.literal (mkTypedLiteral (toStr
   "FILTER(?s != <http://ex/e>) }") ==
   some [some (.literal (mkTypedLiteral "100" tUByte))]
 
+/-! ### A typed numeric or boolean literal written in the query
+
+SPARQL 1.1 §4.1.2: `72` is syntax for `"72"^^xsd:integer`; both denote
+the same RDF term, so an operator sees the same value for both. The
+literal stays a term (DATATYPE, STR and sameTerm see it as written);
+only the operators read its value (§17.3 operator mapping, §17.1
+promotion). An ill-typed literal written in the query has no value and
+compares as a term (§17.4.1.7 RDFterm-equal).
+https://github.com/danbri/factoidal/issues/784 -/
+
+private def tDec : WfIri := RDF.xsdDecimal
+private def tDbl : WfIri := RDF.xsdDouble
+private def tBool : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#boolean", rfl⟩
+private def litE (lex : String) (dt : WfIri) : Expr := .lit (mkTypedLiteral lex dt)
+
+-- Equality and ordering against each primitive numeric type.
+#guard (Expr.compare .eq (.var "a") (litE "72" RDF.xsdInteger)).eval mInt == .bool true
+#guard (Expr.compare .eq (.var "a") (litE "072" RDF.xsdInteger)).eval mInt == .bool true
+#guard (Expr.compare .ne (.var "a") (litE "72" RDF.xsdInteger)).eval mInt == .bool false
+#guard (Expr.compare .lt (.var "a") (litE "73.0" tDec)).eval mInt == .bool true
+#guard (Expr.compare .eq (.var "a") (litE "72.0" tDec)).eval mInt == .bool true
+#guard (Expr.compare .eq (.var "a") (litE "7.2E1" tDbl)).eval mInt == .bool true
+#guard (Expr.compare .gt (.var "a") (litE "7.1E1" tDbl)).eval mInt == .bool true
+#guard (Expr.compare .eq (litE "72" tShort) (litE "72" RDF.xsdInteger)).eval [] == .bool true
+#guard (Expr.compare .le (litE "72" RDF.xsdInteger) (litE "72.5" tDec)).eval [] == .bool true
+#guard (Expr.compare .eq (litE "1" RDF.xsdInteger) (litE "1.0E0" tDbl)).eval [] == .bool true
+-- Boolean literals are not numeric, but `=` compares their values.
+#guard (Expr.compare .eq (litE "true" tBool) (.boolLit true)).eval [] == .bool true
+#guard (Expr.compare .eq (litE "1" tBool) (.boolLit true)).eval [] == .bool true
+#guard (Expr.compare .lt (litE "false" tBool) (litE "1" tBool)).eval [] == .bool true
+#guard (Expr.compare .eq (.var "a") (.boolLit true)).eval (mu "1" tBool) == .bool true
+#guard (Expr.isNumeric (litE "true" tBool)).eval [] == .bool false
+-- Arithmetic, with promotion.
+#guard (Expr.arith .add (.var "a") (litE "1" RDF.xsdInteger)).eval mInt == .num 73
+#guard (Expr.arith .add (litE "1" RDF.xsdInteger) (litE "1.5" tDec)).eval [] == .dec "2.5"
+#guard (Expr.arith .mul (litE "2" RDF.xsdInteger) (litE "1.5E0" tDbl)).eval [] == .dbl "3.0E0"
+#guard (Expr.arith .sub (litE "5" tByte) (litE "2" RDF.xsdInteger)).eval [] == .num 3
+#guard (Expr.unaryMinus (litE "72" RDF.xsdInteger)).eval [] == .num (-72)
+#guard (Expr.abs (litE "-2.5" tDec)).eval [] == .dec "2.5"
+-- The term itself is kept.
+#guard (Expr.datatype (litE "072" RDF.xsdInteger)).eval [] == .term (.iri RDF.xsdInteger)
+#guard (Expr.str (litE "072" RDF.xsdInteger)).eval [] ==
+  .term (.literal (Literal.string "072"))
+#guard (Expr.sameTerm (litE "072" RDF.xsdInteger) (litE "72" RDF.xsdInteger)).eval [] == .bool false
+-- An ill-typed literal compares as a term: equal to itself, unordered.
+#guard (Expr.compare .eq (litE "abc" RDF.xsdInteger) (litE "abc" RDF.xsdInteger)).eval [] == .bool true
+#guard (Expr.compare .eq (litE "abc" tDec) (litE "abc" tDec)).eval [] == .bool true
+#guard (Expr.compare .eq (litE "abc" tBool) (litE "abc" tBool)).eval [] == .bool true
+#guard (Expr.compare .eq (.var "a") (litE "abc" RDF.xsdInteger)).eval mInt == .error
+#guard (Expr.arith .add (litE "abc" RDF.xsdInteger) (.numericLit 1)).eval [] == .error
+
+-- The queries of issue 784, reference evaluator and indexed backend.
+#guard col "s" ("SELECT ?s WHERE { ?s <http://ex/age> ?a " ++
+  "FILTER(?a = \"72\"^^<http://www.w3.org/2001/XMLSchema#integer>) } ORDER BY ?s") ==
+  some [ex "http://ex/a", ex "http://ex/b"]
+#guard col "s" ("SELECT ?s WHERE { ?s <http://ex/age> ?a " ++
+  "FILTER(?a < \"73.0\"^^<http://www.w3.org/2001/XMLSchema#decimal>) } ORDER BY ?s") ==
+  some [ex "http://ex/a", ex "http://ex/b"]
+#guard col "s" ("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s WHERE { " ++
+  "?s <http://ex/age> ?a FILTER(?a = \"7.2E1\"^^xsd:double) } ORDER BY ?s") ==
+  some [ex "http://ex/a", ex "http://ex/b"]
+#guard col "s" ("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s WHERE { " ++
+  "?s <http://ex/age> ?a FILTER(?a = \"72\"^^xsd:short) } ORDER BY ?s") ==
+  some [ex "http://ex/a", ex "http://ex/b"]
+#guard col "s" ("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s WHERE { " ++
+  "?s <http://ex/age> ?a FILTER(?a >= \"73\"^^xsd:integer && \"true\"^^xsd:boolean) } ORDER BY ?s") ==
+  some [ex "http://ex/c", ex "http://ex/d"]
+#guard col "b" ("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s ?b WHERE { " ++
+  "?s <http://ex/age> ?a FILTER(?s != <http://ex/e>) BIND(?a + \"1\"^^xsd:integer AS ?b) } ORDER BY ?s") ==
+  some [int 73, int 73, int 74, int 101]
+-- BIND of the constant itself keeps the lexical form as written.
+#guard col "b" ("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?b WHERE { " ++
+  "<http://ex/a> <http://ex/age> ?a BIND(\"072\"^^xsd:integer AS ?b) }") ==
+  some [some (.literal (mkTypedLiteral "072" RDF.xsdInteger))]
+
 end L4Factoidal.SPARQL.NumericDerivedTests

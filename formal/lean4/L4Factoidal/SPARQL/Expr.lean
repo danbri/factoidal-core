@@ -893,12 +893,117 @@ def formatAsDouble (value : Int) (scale : Nat) : String :=
     let withDot := if strContains stripped "." then stripped else stripped ++ ".0"
     (if value < 0 then "-" else "") ++ withDot ++ "E" ++ toString exp
 
+/-- Promote a literal to the numeric/boolean result it denotes, so that
+comparison sees VALUES rather than lexical forms (port of
+`literal_promote`). The `xsd:integer` lexical mapping is the shared
+XSD one (§3.4.13 `[\-+]?[0-9]+`, so a leading `+` is admitted and a lone
+sign is not). Types derived from `xsd:integer` are NOT promoted here:
+they stay terms and `numericView` reads their value. -/
+def literalPromote (l : WfLiteral) : EvalResult :=
+  if l.val.datatype == xsdInteger then
+    match XSD.parseIntegerLex l.val.lexicalForm with
+    | some n => .num n
+    | none => .term (.literal l)
+  else if l.val.datatype == xsdDecimal then .dec l.val.lexicalForm
+  else if l.val.datatype == xsdDouble || l.val.datatype == xsdFloat then
+    .dbl l.val.lexicalForm
+  else if l.val.datatype == xsdBoolean then
+    -- Valid lexical forms only, like the integer arm above: an
+    -- ill-formed boolean has no value to promote TO, and promoting it
+    -- to `false` hid the type error `ebv` must raise (sparql12
+    -- `expression/not-not`, the `"z"^^xsd:boolean` row).
+    match l.val.lexicalForm with
+    | "true" | "1" => .bool true
+    | "false" | "0" => .bool false
+    | _ => .term (.literal l)
+  else .term (.literal l)
+
+/-- The value an operator reads from a literal TERM (SPARQL 1.1 §17.3
+operator mapping, §17.1 operand types). A literal of a type derived from
+`xsd:integer` with a value becomes its `xsd:integer` value (XPath 3.1
+§B.1 type promotion). A literal of `xsd:integer`, `xsd:decimal`,
+`xsd:double`, `xsd:float` or `xsd:boolean` whose lexical form has a value
+becomes that value, as `literalPromote` gives it. Any other literal, and
+an ill-typed one, stays the term: it has no value, and §17.4.1.7
+compares it as an RDF term.
+
+The same literal reaches an operator from a variable binding
+(`Expr.evalIn` promotes it there) and from the query text (`.lit`, kept
+as a term so DATATYPE, STR, sameTerm and an assignment see it as
+written). This function gives both the same value: SPARQL 1.1 §4.1.2
+makes `72` and `"72"^^xsd:integer` the same term.
+https://github.com/danbri/factoidal/issues/784 -/
+def literalOperandView (l : WfLiteral) : EvalResult :=
+  match integerDerivedValue? l with
+  | some i => .num i
+  | none =>
+      match literalPromote l with
+      | .dec s => if (parseToScaled s).isSome then .dec s else .term (.literal l)
+      | .dbl s => if (parseDoubleToScaled s).isSome then .dbl s else .term (.literal l)
+      | v => v
+
+/-- A literal of a datatype that is neither numeric, nor derived from
+`xsd:integer`, nor `xsd:boolean` has no value for the operators: it
+stays the term. -/
+theorem literalOperandView_of_datatype (l : WfLiteral)
+    (hd : integerDerivedBuiltinOfIri? l.val.datatype.val = none)
+    (h1 : (l.val.datatype == xsdInteger) = false)
+    (h2 : (l.val.datatype == xsdDecimal) = false)
+    (h3 : (l.val.datatype == xsdDouble) = false)
+    (h4 : (l.val.datatype == xsdFloat) = false)
+    (h5 : (l.val.datatype == xsdBoolean) = false) :
+    literalOperandView l = .term (.literal l) := by
+  have hi : integerDerivedValue? l = none := by simp [integerDerivedValue?, hd]
+  simp [literalOperandView, literalPromote, hi, h1, h2, h3, h4, h5]
+
+/-- The five shapes `literalOperandView` returns: the term itself, or a
+value; a decimal or double value always has a scaled reading. -/
+theorem literalOperandView_cases (l : WfLiteral) :
+    literalOperandView l = .term (.literal l) ∨
+    (∃ i, literalOperandView l = .num i) ∨
+    (∃ s v, literalOperandView l = .dec s ∧ parseToScaled s = some v) ∨
+    (∃ s v, literalOperandView l = .dbl s ∧ parseDoubleToScaled s = some v) ∨
+    (∃ b, literalOperandView l = .bool b) := by
+  have hp : literalPromote l = .term (.literal l) ∨ (∃ n, literalPromote l = .num n) ∨
+      (∃ s, literalPromote l = .dec s) ∨ (∃ s, literalPromote l = .dbl s) ∨
+      (∃ b, literalPromote l = .bool b) := by
+    unfold literalPromote
+    split
+    · split <;> simp
+    · split
+      · simp
+      · split
+        · simp
+        · split
+          · split <;> simp
+          · simp
+  unfold literalOperandView
+  cases hi : integerDerivedValue? l with
+  | some i => exact Or.inr (Or.inl ⟨i, rfl⟩)
+  | none =>
+      simp only
+      rcases hp with h | ⟨n, h⟩ | ⟨s, h⟩ | ⟨s, h⟩ | ⟨b, h⟩ <;> rw [h]
+      · exact Or.inl rfl
+      · exact Or.inr (Or.inl ⟨n, rfl⟩)
+      · cases hs : parseToScaled s with
+        | none => exact Or.inl (by simp [hs])
+        | some v => exact Or.inr (Or.inr (Or.inl ⟨s, v, by simp [hs], hs⟩))
+      · cases hs : parseDoubleToScaled s with
+        | none => exact Or.inl (by simp [hs])
+        | some v => exact Or.inr (Or.inr (Or.inr (Or.inl ⟨s, v, by simp [hs], hs⟩)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨b, rfl⟩)))
+
 /-- The scaled value and numeric type a result denotes; `none` for
-anything non-numeric (port of `er_to_numeric`). -/
+anything non-numeric (port of `er_to_numeric`). A literal term is read
+through `literalOperandView`. -/
 def EvalResult.toNumeric? : EvalResult → Option (Scaled × NumKind)
   | .num n => some (⟨n, 0⟩, .int)
-  -- §17.1: a type derived from xsd:integer promotes to xsd:integer.
-  | .term (.literal l) => (integerDerivedValue? l).map (fun i => (⟨i, 0⟩, .int))
+  | .term (.literal l) =>
+      match literalOperandView l with
+      | .num i => some (⟨i, 0⟩, .int)
+      | .dec s => (parseToScaled s).map (fun v => (v, .dec))
+      | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
+      | _ => none
   | .dec s => (parseToScaled s).map (fun v => (v, .dec))
   | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
   | _ => none
@@ -970,42 +1075,14 @@ def evalArithInt (op : ArithOp) (a b : Int) : EvalResult :=
 
 /-! ## §17.4.1.7 value comparison and RDF-term equality -/
 
-/-- §17.1 the numeric value an operand denotes: a literal of a type
-derived from `xsd:integer` becomes its `xsd:integer` value (XPath 3.1
-§B.1 type promotion); every other result is unchanged. The numeric
-operators apply this to their operands; nothing else does, so the term
-itself survives evaluation. -/
+/-- §17.1 the value an operand denotes: a literal term is read through
+`literalOperandView` (a numeric or boolean literal with a value becomes
+that value); every other result is unchanged. The operators apply this
+to their operands; nothing else does, so the term itself survives
+evaluation. -/
 def numericView : EvalResult → EvalResult
-  | .term (.literal l) =>
-      match integerDerivedValue? l with
-      | some i => .num i
-      | none => .term (.literal l)
+  | .term (.literal l) => literalOperandView l
   | v => v
-
-/-- Promote a literal to the numeric/boolean result it denotes, so that
-comparison sees VALUES rather than lexical forms (port of
-`literal_promote`). The `xsd:integer` lexical mapping is the shared
-XSD one (§3.4.13 `[\-+]?[0-9]+`, so a leading `+` is admitted and a lone
-sign is not). Types derived from `xsd:integer` are NOT promoted here:
-they stay terms and `numericView` reads their value. -/
-def literalPromote (l : WfLiteral) : EvalResult :=
-  if l.val.datatype == xsdInteger then
-    match XSD.parseIntegerLex l.val.lexicalForm with
-    | some n => .num n
-    | none => .term (.literal l)
-  else if l.val.datatype == xsdDecimal then .dec l.val.lexicalForm
-  else if l.val.datatype == xsdDouble || l.val.datatype == xsdFloat then
-    .dbl l.val.lexicalForm
-  else if l.val.datatype == xsdBoolean then
-    -- Valid lexical forms only, like the integer arm above: an
-    -- ill-formed boolean has no value to promote TO, and promoting it
-    -- to `false` hid the type error `ebv` must raise (sparql12
-    -- `expression/not-not`, the `"z"^^xsd:boolean` row).
-    match l.val.lexicalForm with
-    | "true" | "1" => .bool true
-    | "false" | "0" => .bool false
-    | _ => .term (.literal l)
-  else .term (.literal l)
 
 /-- Literal equality that compares numeric literals by VALUE and
 everything else by the engine's term equality (port of

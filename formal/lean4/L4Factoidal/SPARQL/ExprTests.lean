@@ -85,11 +85,12 @@ def muNums : Binding :=
 #guard (Expr.compare .ne (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval [] == .bool false
 -- ...but they are different TERMS, so sameTerm on the terms is false.
 #guard (Expr.sameTerm (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
--- A literal written directly in the expression is NOT promoted (the F*
--- `E_Literal` arm returns the term as-is), so `=` on two typed literals
--- compares them by datatype + lexical form. Recorded here because it is
--- a real fidelity edge, not an accident.
-#guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
+-- A literal written directly in the expression is the same term as the
+-- one a variable binds (SPARQL 1.1 §4.1.2), so the operators compare its
+-- value: "1"^^xsd:integer = "01"^^xsd:integer. The F* `E_Literal` arm
+-- returns the term as-is and answers false; that was a defect
+-- (https://github.com/danbri/factoidal/issues/784).
+#guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool true
 
 -- Two literals of DIFFERENT, unknown datatypes are a type error under
 -- `<` — the open-world rule. Under `=` on the same datatype but
@@ -437,14 +438,15 @@ open L4Factoidal.Tests
     (.compare .gt (.var "a") (.numericLit 18))
     (.bgp qNameAge)).eval g).length == 0
 
--- FINDING, shared with the F* source: STRDT builds a TERM, and terms
--- are not promoted (only a variable lookup promotes), so
--- `STRDT(STR(?a), xsd:integer) > 18` is still a type error and drops
--- every row. Recorded as behaviour, not asserted as correct — SPARQL
--- 1.1 §17.1's operand mapping would compare these numerically.
-#guard ((GraphPattern.filterExpr
+-- STRDT builds a TERM; the operators read its value (`numericView`,
+-- SPARQL 1.1 §17.1 operand mapping), so `STRDT(STR(?a), xsd:integer) > 18`
+-- compares numbers and keeps Alice (30). The F* source keeps such terms
+-- unpromoted and drops every row; that was a defect
+-- (https://github.com/danbri/factoidal/issues/784).
+#guard (((GraphPattern.filterExpr
     (.compare .gt (.strDt (.str (.var "a")) (.iri xsdInteger)) (.numericLit 18))
-    (.bgp qNameAge)).eval g).length == 0
+    (.bgp qNameAge)).eval g).map (fun mu => mu.lookup "n"))
+  == [some (Term.literal (litStr "Alice"))]
 
 -- With xsd:integer ages IN THE DATA, the variable lookup promotes and
 -- the numeric filter works end to end: Alice (30) survives, Bob (7)

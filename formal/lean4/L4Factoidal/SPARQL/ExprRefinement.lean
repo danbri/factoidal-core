@@ -303,6 +303,40 @@ theorem integerDerivedBuiltinOfIri?_of_langTag (l : WfLiteral)
             simpa [literalWf, ht, hd] using wf
           rw [this]; rfl
 
+/-- A literal of datatype `rdf:langString` or `rdf:dirLangString` has no
+value for the operators: `literalOperandView` keeps the term. -/
+theorem literalOperandView_of_langDatatype (l : WfLiteral)
+    (h : l.val.datatype = rdfLangString ∨ l.val.datatype = rdfDirLangString) :
+    literalOperandView l = .term (.literal l) := by
+  rcases h with e | e <;>
+    exact literalOperandView_of_datatype l (by rw [e]; rfl) (by rw [e]; decide)
+      (by rw [e]; decide) (by rw [e]; decide) (by rw [e]; decide) (by rw [e]; decide)
+
+/-- A literal with a language tag has datatype `rdf:langString` or
+`rdf:dirLangString` (`literalWf`). -/
+theorem langDatatype_of_langTag (l : WfLiteral) (h : l.val.langTag ≠ none) :
+    l.val.datatype = rdfLangString ∨ l.val.datatype = rdfDirLangString := by
+  rcases l with ⟨l, wf⟩
+  simp only at h ⊢
+  cases ht : l.langTag with
+  | none => exact absurd ht h
+  | some _ =>
+      cases hd : l.direction with
+      | none =>
+          have : l.datatype.val = rdfLangString.val := by
+            simpa [literalWf, ht, hd] using wf
+          exact Or.inl (Subtype.ext this)
+      | some _ =>
+          have : l.datatype.val = rdfDirLangString.val := by
+            simpa [literalWf, ht, hd] using wf
+          exact Or.inr (Subtype.ext this)
+
+/-- An `xsd:string` literal has no value for the operators. -/
+theorem literalOperandView_of_xsdString (l : WfLiteral) (h : l.val.datatype = xsdString) :
+    literalOperandView l = .term (.literal l) :=
+  literalOperandView_of_datatype l (by rw [h]; rfl) (by rw [h]; decide)
+    (by rw [h]; decide) (by rw [h]; decide) (by rw [h]; decide) (by rw [h]; decide)
+
 /-! ### Agreement -/
 
 theorem eq_num_matches_spec (a b : Int) :
@@ -321,8 +355,8 @@ theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
         = some (eqSpecPlainString l1 l2) ∧
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne
         = some (!eqSpecPlainString l1 l2) := by
-  have n1 := integerDerivedValue?_of_xsdString l1 h1
-  have n2 := integerDerivedValue?_of_xsdString l2 h2
+  have n1 := literalOperandView_of_xsdString l1 h1
+  have n2 := literalOperandView_of_xsdString l2 h2
   constructor <;>
     simp [valueCompare, numericView, n1, n2, h1, h2, t1, t2, applyCompOp,
           eqSpecPlainString, strCompare_beq_zero, bne]
@@ -348,19 +382,31 @@ theorem eq_dbl_reflexive (s : String) (h : (parseDoubleToScaled s).isSome) :
 
 /-- Two literals of DIFFERENT datatypes are a type error under `=`, not
 a `false`. This is what keeps `=` open-world on datatypes the engine
-does not know. The exception is two numerics: two literals of types
-derived from `xsd:integer` that both have values compare by value
-(SPARQL 1.1 §17.1; `"72"^^xsd:int = "72"^^xsd:short`), so one of the two
-must have no such value. -/
+does not know. The exception is two literals that both have a value for
+the operators (`literalOperandView`): numerics compare by value (SPARQL
+1.1 §17.1; `"72"^^xsd:int = "72"^^xsd:short`,
+`"72"^^xsd:integer = "72.0"^^xsd:decimal`), so one of the two must have
+no such value.
+
+Statement changed 2026-10-11 (https://github.com/danbri/factoidal/issues/784):
+the hypothesis was `integerDerivedValue? l = none` for one side. A
+literal of `xsd:integer`, `xsd:decimal`, `xsd:double`, `xsd:float` or
+`xsd:boolean` written in the query now has a value too, so
+`"72"^^xsd:integer = "72.0"^^xsd:decimal` is `true` and the old
+hypothesis no longer implies a type error. The new hypothesis is the
+general one: the literal is not read as a value. -/
 theorem eq_literal_different_datatype_typeerror (l1 l2 : WfLiteral)
     (h : l1.val.datatype ≠ l2.val.datatype)
-    (hn : integerDerivedValue? l1 = none ∨ integerDerivedValue? l2 = none) :
+    (hn : literalOperandView l1 = .term (.literal l1) ∨
+      literalOperandView l2 = .term (.literal l2)) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = none := by
   have hne : (l1.val.datatype == l2.val.datatype) = false :=
     beq_eq_false_iff_ne.mpr h
   rcases hn with hn | hn
-  · cases h2 : integerDerivedValue? l2 <;> simp [valueCompare, numericView, hn, h2, hne]
-  · cases h1 : integerDerivedValue? l1 <;> simp [valueCompare, numericView, hn, h1, hne]
+  · rcases literalOperandView_cases l2 with h2 | ⟨_, h2⟩ | ⟨_, _, h2, _⟩ | ⟨_, _, h2, _⟩ | ⟨_, h2⟩ <;>
+      simp [valueCompare, numericView, hn, h2, hne]
+  · rcases literalOperandView_cases l1 with h1 | ⟨_, h1⟩ | ⟨_, _, h1, _⟩ | ⟨_, _, h1, _⟩ | ⟨_, h1⟩ <;>
+      simp [valueCompare, numericView, hn, h1, hne]
 
 /-- Two literals of the SAME datatype whose language tags are in DIFFERENT
 SPARQL language-tag equivalence classes are unequal — a definite `false`, not
@@ -373,16 +419,15 @@ theorem eq_literal_same_datatype_diff_lang (l1 l2 : WfLiteral)
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne = some true := by
   -- One of the two carries a language tag, so the shared datatype is
   -- rdf:langString or rdf:dirLangString: neither literal has a value.
-  have hb : integerDerivedBuiltinOfIri? l1.val.datatype.val = none := by
+  have hl : l1.val.datatype = rdfLangString ∨ l1.val.datatype = rdfDirLangString := by
     cases h1 : l1.val.langTag with
-    | some _ => exact integerDerivedBuiltinOfIri?_of_langTag l1 (by simp [h1])
+    | some _ => exact langDatatype_of_langTag l1 (by simp [h1])
     | none =>
         cases h2 : l2.val.langTag with
-        | some _ =>
-            rw [hd]; exact integerDerivedBuiltinOfIri?_of_langTag l2 (by simp [h2])
+        | some _ => rw [hd]; exact langDatatype_of_langTag l2 (by simp [h2])
         | none => simp [h1, h2, langTagOptionEq] at ht
-  have n1 := integerDerivedValue?_none_of_iri l1 hb
-  have n2 := integerDerivedValue?_none_of_iri l2 (by rw [← hd]; exact hb)
+  have n1 := literalOperandView_of_langDatatype l1 hl
+  have n2 := literalOperandView_of_langDatatype l2 (by rw [← hd]; exact hl)
   constructor <;> simp [valueCompare, numericView, n1, n2, hd, ht]
 
 /-- The expression-level corollary: the `.compare .eq` arm over two

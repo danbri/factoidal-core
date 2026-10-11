@@ -374,15 +374,20 @@ theorem valueCompare_eq_refl_iri (i : WfIri) :
   simp [valueCompare, numericView, applyCompOp]
 
 /-- `=` holds between a literal term and itself, whatever its datatype
-and language tag. A literal of a type derived from `xsd:integer` with a
-value compares by that value; every other literal by its term. -/
+and language tag. A literal with a value for the operators
+(`literalOperandView`: numeric, derived from `xsd:integer`, or boolean)
+compares by that value; every other literal by its term. -/
 theorem valueCompare_eq_refl_literal (l : WfLiteral) :
     valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true := by
-  cases h : integerDerivedValue? l with
-  | none => simp [valueCompare, numericView, h, applyCompOp]
-  | some i =>
-      simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?,
-        Scaled.cmp, intCompare, applyCompOp]
+  rcases literalOperandView_cases l with h | ⟨i, h⟩ | ⟨s, v, h, hp⟩ | ⟨s, v, h, hp⟩ | ⟨b, h⟩
+  · simp [valueCompare, numericView, h, applyCompOp]
+  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?,
+      Scaled.cmp, intCompare, applyCompOp]
+  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?, hp,
+      applyCompOp, Scaled.cmp_refl]
+  · simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?, hp,
+      applyCompOp, Scaled.cmp_refl]
+  · cases b <;> simp [valueCompare, numericView, h, applyCompOp]
 
 /-- `=` holds between a Boolean value and itself. -/
 theorem valueCompare_eq_refl_bool (b : Bool) :

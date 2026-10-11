@@ -430,6 +430,27 @@ assert v != '' and b <= v[:19] <= a, (b, v, a)
 " "$T_BEFORE" "$T_AFTER" "$NOW_AT" 2>/dev/null && echo 1 || echo 0 )" \
   "before=$T_BEFORE after=$T_AFTER" "inserted=$NOW_AT" "stdout=$NOW_UPD"
 
+# --- typed numeric literals written in the query (SPARQL 1.1 §4.1.2, §17.3) ---
+# `72` and "72"^^xsd:integer are the same term, so both compare by value
+# against xsd:int and xsd:integer data. https://github.com/danbri/factoidal/issues/784
+cat > "$TMP/ages.ttl" <<'TTL'
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<http://ex/a> <http://ex/age> "72"^^xsd:int .
+<http://ex/b> <http://ex/age> "72"^^xsd:integer .
+<http://ex/c> <http://ex/age> "73"^^xsd:int .
+TTL
+for FILT in '?a = 72' '?a = "72"^^xsd:integer' '?a < "73.0"^^xsd:decimal' '?a = "7.2E1"^^xsd:double'; do
+  run_cmd "$CLI" query "$TMP/ages.ttl" --format turtle --query-string \
+    "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s WHERE { ?s <http://ex/age> ?a FILTER($FILT) } ORDER BY ?s"
+  verdict "query FILTER($FILT) -> a, b (typed literal compared by value)" "" \
+    "$(json_holds '[b["s"]["value"] for b in r["results"]["bindings"]] == ["http://ex/a", "http://ex/b"]')" \
+    "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+done
+run_cmd "$CLI" query "$TMP/ages.ttl" --format turtle --query-string \
+  'PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> ASK { FILTER("1"^^xsd:boolean = true && "01"^^xsd:integer + "1.5"^^xsd:decimal = 2.5) }'
+verdict "query: typed boolean and numeric constants in ASK -> true" "" \
+  "$( [ "$RC" -eq 0 ] && [ "$OUT" = true ] && echo 1 || echo 0 )" "exit=$RC" "stdout=$OUT" "stderr=$ERR"
+
 # --- canonicalize ------------------------------------------------------
 assert_text "canonicalize" 0 out "_:c14n0" \
   bash -c "printf '_:b0 <http://e/p> \"v\" .' | '$CLI' canonicalize --format nquads"
