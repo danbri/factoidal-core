@@ -110,6 +110,48 @@ measurement, never by assertion.
 Standing priorities: `docs/claude-rules/current-state.md` § Standing
 priorities.
 
+## Repository and branch (owner, 2026-10-10 and 2026-10-11)
+
+Owner, 2026-10-10, verbatim: **"Factoidal-core should be the new home for
+Factoidal."** New Shardborough work belongs here, Lean 4 first and test
+first.
+
+Owner, 2026-10-11, verbatim: **"We should call default branch “main”."**
+The mainline of this repository is the branch `main`. It continues the
+history of `claude/core-split`. Start every work branch from `origin/main`.
+Before reusing any Lean file from another checkout or repository (the
+`factoidal` monorepo, or a local working copy such as
+`/Users/danbri/working/factoidal/formal/lean4`), fetch `origin/main` here
+and compare: the file here is newer unless a diff shows otherwise.
+
+Cost of not having this rule: on 2026-10-10 an agent imported Shardborough
+Lean files from the `factoidal` monorepo (about 2026-09-07 content) onto a
+2026-08-30 branch with no common history with `claude/core-split`. Of 59
+changed Lean files, 18 were older than the mainline copies. The landing
+took one more agent session (re-applied on `claude/core-split`, commits
+`4bfa8b49`, `69e92e14`, `19a32098`).
+
+## Shardborough is a persistent store for very large data (owner, 2026-10-11)
+
+Owner, 2026-10-11, verbatim: "As for “all in memory” that undermines whole
+point of Shardcore which is to support very large persistent stores
+efficiently."
+
+Rules that follow:
+
+- A Shardborough performance result is measured on the disk-resident
+  query path, with peak RSS and on-disk size reported next to latency. A
+  mode that materialises a whole generation in memory
+  (`l4block-snapshot-session`, mode `ibk3-full-snapshot`) is an in-memory
+  engine; its numbers are not Shardborough results and are not compared
+  with disk-backed engines as if they were.
+- Gap: query execution materialises the selected blocks (or the whole
+  generation) before evaluation:
+  <https://github.com/danbri/factoidal/issues/775>.
+- Gap: no end-to-end theorem that a persisted query answers the same as
+  the in-memory reference evaluator:
+  <https://github.com/danbri/factoidal/issues/776>.
+
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —
 > [agentskills.io](https://agentskills.io) format, vendor-neutral) and
