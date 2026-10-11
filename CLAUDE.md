@@ -152,6 +152,33 @@ Rules that follow:
   the in-memory reference evaluator:
   <https://github.com/danbri/factoidal/issues/776>.
 
+## COTTAS suspended; Shardborough is primary; QLever reader (owner, 2026-10-11)
+
+Owner, 2026-10-11, verbatim: "All work on cottas is suspended; Shardborough
+is our primary persistent rdf storage mechanism."
+
+- No new work on COTTAS in either tree (F\* `Cottas.*`, Lean
+  `L4Factoidal/Cottas/*`, the npm COTTAS functions, which 0.9.0 removed).
+  Existing COTTAS code and tests stay as they are; do not delete them
+  without a further decision. Persistent RDF storage work goes to
+  Shardborough. This replaces the 2026-08-24 "Not urgent: COTTAS" line
+  below.
+
+Owner, 2026-10-11, verbatim: "Can we build a medium sized qlever database
+instance and work up enough Lean machinery (call it Factoidal/qlvr) to be
+able to access its data on disk for query, or even create/edit? This may
+teach us something about Lean." and "consider tail recursive approach".
+
+- `Factoidal/qlvr`: Lean code that reads a QLever index from disk (and
+  later may write or edit one). It is a study of an external on-disk
+  format, in the same family as the Oxigraph reader
+  (https://github.com/danbri/factoidal/issues/671). Tracking:
+  https://github.com/danbri/factoidal/issues/778.
+- Every decoder over input-proportional data is a loop or tail call
+  (accumulator), never one stack frame per item. Check with
+  `python3 tools/lean-tail-recursion-audit.py --gate` (read the exit code)
+  and a `tests/stack` case at a size above any wasm stack limit.
+
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —
 > [agentskills.io](https://agentskills.io) format, vendor-neutral) and
