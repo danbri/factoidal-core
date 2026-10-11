@@ -503,6 +503,21 @@ from request 250 on, so the rise is start-up, not a per-request leak.
 - Parser differential for the N-Quads path the browser uses:
   `tools/nquads-parser-differential.sh FILE.nq`.
 
+## Against QLever, and the proposed wire version 11
+
+[`docs/designissues/2026-10-11-shardborough-vs-qlever.md`](../../docs/designissues/2026-10-11-shardborough-vs-qlever.md)
+measures both disk query paths (IBK3, IBK5) on the QLever reference instance
+(olympics, 1,781,625 triples) with the 21 oracle queries, next to `l4qlvr` and
+QLever, and proposes SBM11: one byte-ordered global dictionary, 64-bit term
+ids with inline canonical numerics, sorted PSO/POS/SPO/OSP column blocks with
+first/last-key metadata, and joins over ids. Rerun with
+`bash tools/shardborough-cmp/pack.sh`, `bash tools/shardborough-cmp/run.sh`
+and `bash tools/shardborough-cmp/profile.sh LAYOUT QUERY` (perf needed).
+Measured 2026-10-11: 437 MB (IBK3) and 222 MB (IBK5) against 38.5 MB; q07
+13.6 s (IBK3) and 62.1 s (IBK5) against 0.35 s for `l4qlvr` on QLever's
+layout; 60 % to 90 % of query time is decoding terms and building the
+in-memory index before evaluation.
+
 ## Where the code is
 
 - Codecs and pure validators: `formal/lean4/L4Factoidal/Storage/`
