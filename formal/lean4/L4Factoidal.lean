@@ -344,6 +344,10 @@ import L4Factoidal.Qlvr.Vocab
 import L4Factoidal.Qlvr.Perm
 import L4Factoidal.Qlvr.Term
 import L4Factoidal.Qlvr.Scan
+import L4Factoidal.Qlvr.Sort
+import L4Factoidal.Qlvr.Side
+import L4Factoidal.Qlvr.Bgp
+import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RML.Mapping

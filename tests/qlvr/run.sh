@@ -20,6 +20,18 @@
 #               set of lines equals QLever's own
 #               `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }` in N-Triples.
 #               Not scored when no server answers.
+#   (f) side    `l4qlvr side-index` rebuilds INDEXDIR.qlvr-side/, then
+#               `l4qlvr side-check` compares the side index with the linear
+#               scan on every distinct stored-form constant of the 21 queries
+#               (`l4qlvr query --constants`), 1,000 sampled words and 100
+#               absent words.
+#   (g) queries tests/qlvr/queries.sh: every oracle query through
+#               `l4qlvr query` against QLever's answer; prints
+#               "N pass, M fail, R refused (out of 21)". Scored as one check.
+#   (h) refusals queries outside the fragment of L4Factoidal.Qlvr.Query
+#               (OPTIONAL, UNION, BIND, an ORDER BY expression, COUNT DISTINCT,
+#               REGEX, CONSTRUCT, a date constant) must exit 3 with
+#               "refused:" and print no answer.
 #
 # The stack canary case for the dump is in tests/stack/run.sh (qlvr-dump).
 #
@@ -155,6 +167,52 @@ if "$BIN" stats "$INST" >"$TMP/stats.out" 2>"$TMP/stats.err"; then
 else
   record stats stats 1 "$(tail -1 "$TMP/stats.err")"
 fi
+
+# ------------------------------------------------------------------- (f) side
+echo
+echo "=== (f) side index against the linear scan"
+"$BIN" side-index "$INST" 2>"$TMP/side.err"; rc=$?
+cat "$TMP/side.err"
+if [ "$rc" -ne 0 ]; then
+  record side side-index 1 "exit $rc"
+else
+  : >"$TMP/constants"
+  for rq in "$ROOT"/tests/qlvr/queries/q*.rq; do
+    "$BIN" query "$INST" --file "$rq" --constants >>"$TMP/constants" 2>/dev/null
+  done
+  mapfile -t CONSTS < <(sort -u "$TMP/constants")
+  "$BIN" side-check "$INST" "${CONSTS[@]}" >"$TMP/sidecheck.out" 2>"$TMP/sidecheck.err"; rc=$?
+  cat "$TMP/sidecheck.out" "$TMP/sidecheck.err"
+  record side side-check "$([ "$rc" = 0 ] && echo 0 || echo 1)" "$(grep '^side-check:' "$TMP/sidecheck.out")"
+fi
+
+# ---------------------------------------------------------------- (g) queries
+echo
+echo "=== (g) oracle queries through l4qlvr query"
+"$HERE/queries.sh" | tee "$TMP/queries.out"; rc=${PIPESTATUS[0]}
+record queries queries "$([ "$rc" = 0 ] && echo 0 || echo 1)" "$(tail -1 "$TMP/queries.out")"
+
+# --------------------------------------------------------------- (h) refusals
+echo
+echo "=== (h) queries outside the fragment are refused"
+P='PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> '
+while IFS='|' read -r rname rtext; do
+  "$BIN" query "$INST" "$P$rtext" >"$TMP/ref.out" 2>"$TMP/ref.err"; rc=$?
+  if [ "$rc" -eq 3 ] && grep -q 'refused:' "$TMP/ref.err" && [ ! -s "$TMP/ref.out" ]; then
+    record refuse "$rname" 0 "$(grep -o 'refused: .*' "$TMP/ref.err")"
+  else
+    record refuse "$rname" 1 "exit $rc: $(tail -1 "$TMP/ref.err")"
+  fi
+done <<'EOF'
+optional|SELECT ?s ?l WHERE { ?s ?p ?o OPTIONAL { ?s rdfs:label ?l } }
+union|SELECT ?s WHERE { { ?s rdfs:label ?o } UNION { ?s rdfs:comment ?o } }
+bind|SELECT ?s ?x WHERE { ?s rdfs:label ?o BIND(STR(?o) AS ?x) }
+order-expression|SELECT ?s WHERE { ?s rdfs:label ?o } ORDER BY STRLEN(?o)
+count-distinct|SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s rdfs:label ?o }
+regex|SELECT ?s WHERE { ?s rdfs:label ?o FILTER(REGEX(?o, "^Her")) }
+construct|CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }
+date-constant|SELECT ?s WHERE { ?s ?p "2020-01-01"^^xsd:date }
+EOF
 
 # -------------------------------------------------------------- (e) construct
 echo

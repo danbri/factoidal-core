@@ -477,6 +477,10 @@ fi
 # The instance is outside the repository (QLVR_WORK, default
 # /home/user/qlvr-work; tools/qlvr/build-instance.sh builds it). Without it
 # the case is reported as NOT RUN and not scored.
+# `qlvr-join` runs the largest join of the oracle queries,
+# tests/qlvr/queries/q07-join-three.rq, through `l4qlvr query`: four scans
+# (one of 269,625 rows over 9 PSO blocks), two merge joins and a hash join,
+# ORDER BY over 313 rows (the merge sort) and the SPARQL JSON renderer.
 QLVR_BIN="$LEAN_DIR/.lake/build/bin/l4qlvr"
 QLVR_INST="${QLVR_WORK:-/home/user/qlvr-work}/instance"
 qlvr_case() { # qlvr_case <route> <prefix...>
@@ -497,6 +501,25 @@ qlvr_case() { # qlvr_case <route> <prefix...>
     score_case "$route" qlvr-dump ran "$(tail -1 "$err")"
   fi
 }
+QLVR_JOIN_RQ="$ROOT/tests/qlvr/queries/q07-join-three.rq"
+qlvr_join_case() { # qlvr_join_case <route> <prefix...>
+  local route="$1"; shift
+  local out="$FIXTURES/qlvr-join.json" err="$FIXTURES/qlvr-join.err" rc rows
+  if [ ! -x "$QLVR_BIN" ]; then
+    record "$route" qlvr-join 1 "$QLVR_BIN does not exist (lake build l4qlvr)"
+    return
+  fi
+  run_capped "$TIMEOUT" "$@" "$QLVR_BIN" query "$QLVR_INST" --file "$QLVR_JOIN_RQ" >"$out" 2>"$err"; rc=$?
+  rows="$(grep -o '"a":' "$out" | wc -l)"
+  rm -f "$out"
+  if grep -q 'Stack overflow' "$err"; then
+    score_case "$route" qlvr-join overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || [ "$rows" -ne 313 ]; then
+    score_case "$route" qlvr-join error "exit $rc, $rows rows: $(tail -1 "$err" | head -c 160)"
+  else
+    score_case "$route" qlvr-join ran "$(tail -1 "$err")"
+  fi
+}
 if [ ! -f "$QLVR_INST/olympics.index.spo" ]; then
   echo
   echo "=== qlvr-dump NOT RUN (not scored): no QLever instance at $QLVR_INST"
@@ -505,14 +528,21 @@ else
     echo
     echo "=== QLever index dump, native default stack"
     qlvr_case native env
+    echo
+    echo "=== QLever four-pattern join (l4qlvr query q07), native default stack"
+    qlvr_join_case native env
   fi
   if [ "$CANARY" = 1 ]; then
     echo
     echo "=== QLever index dump, native under ${CANARY_VAR}=${CANARY_KB}"
     if [ "$CONTROL_OK" = 1 ]; then
       qlvr_case canary "${CANARY_PREFIX[@]}"
+      echo
+      echo "=== QLever four-pattern join (l4qlvr query q07), native under ${CANARY_VAR}=${CANARY_KB}"
+      qlvr_join_case canary "${CANARY_PREFIX[@]}"
     else
       record canary qlvr-dump 1 "NOT SCORED: the canary control did not pass"
+      record canary qlvr-join 1 "NOT SCORED: the canary control did not pass"
     fi
   fi
 fi
