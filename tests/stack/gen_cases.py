@@ -96,6 +96,31 @@ write("nquads-one-subject.nq",
       "".join('<http://example.org/s> <http://example.org/p%d> "%d" .\n' % (i, i)
               for i in range(N_Q)))
 
+# N-Quads with named graphs and long literals and IRIs. The STRING_LITERAL_QUOTED
+# and IRIREF body readers (Syntax/Lexing.lean, readStringLiteralBody and
+# readIriRefBody) used one native frame per character until 2026-10-11; a
+# 23 MB file with ~6,000-character geo:asWKT literals then exhausted the wasm
+# stack in `parse(text, {format: 'nquads'})`. Every 1,000th quad here carries
+# a LONG_LIT-character WKT literal; every 10,000th has a LONG_LIT-character
+# object IRI.
+N_QL = int(os.environ.get("STACK_QUADS_LONG", "120000"))
+LONG_LIT = int(os.environ.get("STACK_LONG_LITERAL", "20000"))
+def nq_long_line(i):
+    g = "<http://example.org/g%d>" % (i % 7)
+    s = "<http://example.org/s%d>" % (i // 4)
+    if i % 1000 == 0:
+        pts = ", ".join("%d.%d %d.%d" % (i % 90, k, k % 180, i % 97)
+                        for k in range(LONG_LIT // 12))
+        wkt = ("POLYGON((%s))" % pts)[:LONG_LIT]
+        return ('%s <http://www.opengis.net/ont/geosparql#asWKT> "%s"'
+                '^^<http://www.opengis.net/ont/geosparql#wktLiteral> %s .\n'
+                % (s, wkt, g))
+    if i % 10000 == 5:
+        return '%s <http://example.org/link> <http://example.org/%s> %s .\n' % (
+            s, "x" * LONG_LIT, g)
+    return '%s <http://example.org/p%d> "v%d" %s .\n' % (s, i % 13, i, g)
+write("nquads-long-literal.nq", "".join(nq_long_line(i) for i in range(N_QL)))
+
 # ------------------------------------------------------------------ SPARQL
 N_UNION = int(os.environ.get("STACK_UNION", "1000"))
 arms = " UNION ".join("{ ?s <http://example.org/p%d> ?o }" % i for i in range(N_UNION))
@@ -199,6 +224,9 @@ args("args-turtle-collection.json",
      open(os.path.join(OUT, "turtle-collection.ttl")).read(), "turtle",
      "http://example.org/")
 args("args-nquads.json", open(os.path.join(OUT, "nquads-one-subject.nq")).read(),
+     "nquads", "http://example.org/")
+args("args-nquads-long-literal.json",
+     open(os.path.join(OUT, "nquads-long-literal.nq")).read(),
      "nquads", "http://example.org/")
 args("args-sparql-union.json",
      "<http://example.org/s> <http://example.org/p0> <http://example.org/o> .",

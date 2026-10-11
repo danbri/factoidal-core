@@ -354,6 +354,7 @@ CASES=(
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
+  "nquads-long-literal parseToDatasetJson   args-nquads-long-literal.json"
   "sparql-union        queryDataset         args-sparql-union.json"
   "sparql-nested       queryDataset         args-sparql-nested.json"
   "sparql-order-limit  queryDataset         args-sparql-order-limit.json"

@@ -23,6 +23,7 @@ const CASES = {
   'turtle-literal': () => ['parseToDatasetJson', readArgs('args-turtle-literal.json')],
   'turtle-collection': () => ['parseToDatasetJson', readArgs('args-turtle-collection.json')],
   'nquads-one-subject': () => ['parseToDatasetJson', readArgs('args-nquads.json')],
+  'nquads-long-literal': () => ['parseToDatasetJson', readArgs('args-nquads-long-literal.json')],
   'sparql-union': () => ['queryDataset', readArgs('args-sparql-union.json')],
   'sparql-nested': () => ['queryDataset', readArgs('args-sparql-nested.json')],
   'sparql-order-limit': () => ['queryDataset', readArgs('args-sparql-order-limit.json')],
