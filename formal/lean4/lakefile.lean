@@ -206,6 +206,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
              `Wasm.Ops.StoreHandles,
+             `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
              `Wasm.Ops.Handles,
              `Wasm.Ops.Pack,
@@ -333,6 +334,9 @@ extern_lib libl4exthost pkg := do
 -- SBM7 by layout. `GRAPH <iri>`, `GRAPH ?g`, `FROM` / `FROM NAMED` and
 -- default-graph patterns all run against the dataset the blocks denote.
 @[default_target] lean_exe «l4block-quad-query» where root := `Harness.QuadQuery
+-- The W3C SPARQL 1.1 Protocol, Graph Store and Service Description tests
+-- replayed against a live `factoidal serve` (issue 669 step 1).
+@[default_target] lean_exe «l4protocol-live» where root := `Harness.ProtocolLive
 @[default_target] lean_exe «l4block-literal-gram» where root := `Harness.LiteralGramProbe
 @[default_target] lean_exe «l4block-geo-bbox» where root := `Harness.GeoBBoxProbe
 

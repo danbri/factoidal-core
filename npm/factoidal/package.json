@@ -96,6 +96,9 @@
     "./store-worker": {
       "default": "./bin/store-worker-host.mjs"
     },
+    "./serve": {
+      "default": "./bin/serve.mjs"
+    },
     "./pack": {
       "default": "./bin/pack.mjs"
     },

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **`factoidal serve STORE --port N`: a SPARQL 1.1 endpoint over an activated
+  store** ([issue 669](https://github.com/danbri/factoidal/issues/669), step
+  1). SPARQL 1.1 Protocol query and update at `/sparql`, the Service
+  Description on a GET there with no query string, and the Graph Store HTTP
+  Protocol at `/data`. An update or a Graph Store write is appended to the
+  generation's delta log as one batch, synced, before it is answered. The
+  request framing, routing, status codes, negotiation and the delta-log batch
+  are decided by the engine (`storeServeKeys`, `storeServeOpen`,
+  `storeServeRequest`, `storeServeCommit`, `storeServeClose`); `bin/serve.mjs`
+  moves bytes. W3C protocol, graph-store and service-description tests over
+  a live socket: 50 pass, 0 fail (out of 50). Open gap: a quad generation's
+  delta log is not replayed by the native quad reader
+  ([issue 770](https://github.com/danbri/factoidal/issues/770)).
 - **`@factoidal/core/core`: the core engine** ([issue 713](https://github.com/danbri/factoidal/issues/713),
   stage 4). `l4factoidal-core.wasm` (5.68 MB, 1.07 MB with gzip; the full
   engine is 10.54 MB, 2.07 MB) serves parse and serialize (Turtle, TriG,

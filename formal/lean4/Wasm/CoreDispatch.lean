@@ -118,6 +118,8 @@ def fullOnlyOpNames : List String :=
   , "mathmlEval", "xformsRecalc", "rifEval"
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
+  , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
+  , "storeServeClose"
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"
   , "lwsOpen", "lwsStep", "lwsClose", "solidOpen", "solidStep", "solidClose"
   , "solidClientRequest", "solidClientResponse"

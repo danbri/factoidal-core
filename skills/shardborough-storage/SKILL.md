@@ -390,6 +390,97 @@ Deno's worker shim does not raise the stack, so Deno re-executes itself
 instead, which needs `--allow-run` and `--allow-env`. Design record:
 [`docs/designissues/2026-09-05-store-handle-call-stack.md`](../../docs/designissues/2026-09-05-store-handle-call-stack.md).
 
+## Serving
+
+`factoidal serve STORE --port N [--host H]` (npm/factoidal) serves the
+activated generation of a collection, with its delta log, over HTTP/1.1
+(https://github.com/danbri/factoidal/issues/669 step 1; design record
+[`docs/designissues/2026-10-10-store-serve.md`](../../docs/designissues/2026-10-10-store-serve.md)):
+
+```bash
+l4block-shard-pack data.nq COL/gen-1 ibk5 && l4block-shard-activate COL gen-1
+node npm/factoidal/bin/factoidal.mjs serve COL --port 3030
+# serve: listening on http://127.0.0.1:3030 for COL (layout quad-ibk5-…, N rows,
+#        delta batches replayed: 0, write scope all-graphs)
+curl -s 'http://127.0.0.1:3030/sparql?query=ASK%7B%7D'           # Protocol §2.1
+curl -s -H 'content-type: application/sparql-update' \
+     --data-binary 'INSERT DATA { <s> <p> <o> }' http://127.0.0.1:3030/sparql
+curl -s http://127.0.0.1:3030/sparql                              # Service Description
+curl -s 'http://127.0.0.1:3030/data?graph=http%3A%2F%2Fe%2Fg'      # Graph Store
+```
+
+What it serves: `/sparql` (also `/sparql/`, `/query`, `/update`) is SPARQL
+1.1 Protocol query and update; a GET there with no query string is the
+SPARQL 1.1 Service Description; `/data` is the Graph Store HTTP Protocol
+(`--query-path`, `--gsp-path` move them). Results are negotiated: SPARQL
+Results JSON (the default), XML, CSV and TSV for SELECT; JSON and XML for
+ASK; Turtle and N-Triples for CONSTRUCT, DESCRIBE and the Graph Store.
+
+Where the decisions are: the request framing and the response bytes in
+`L4Factoidal/HTTP/Wire.lean`; routing, status codes, negotiation,
+evaluation, the service description, the Graph Store and the delta-log batch
+in `L4Factoidal/SPARQL/StoreEndpoint.lean`; the ops in
+`Wasm/Ops/StoreServe.lean`. The host (`npm/factoidal/bin/serve.mjs`, on a
+worker thread with a raised stack) moves bytes and is in both groups of
+`tools/host-purity-lint.sh`.
+
+Rules it enforces:
+
+- **An update is durable before it is answered.** The server executes the
+  update (or Graph Store write) with the reference semantics, writes the
+  change as ONE DLB1 batch to the activated generation's `deltas.dlog`
+  (append at the expected size, fsync), and only then answers. A
+  WHERE-dependent update is stored too. The native tools read the batch:
+  `l4block-delta-log --inspect`, `l4block-id-v3-query` and
+  `l4block-shard-compact`.
+- **Write scope by layout.** An IBK3 generation takes default-graph changes
+  only and answers 501 to a named-graph change, because its log is
+  replayed and compacted for the default graph only. A quad generation
+  (IBK4, IBK5) takes every graph, but no native reader replays its log yet
+  (https://github.com/danbri/factoidal/issues/770): `l4block-quad-query`
+  answers the pre-update data.
+- **After compaction, restart.** `l4block-shard-compact COL/gen-1 COL/gen-2`,
+  `l4block-shard-activate COL gen-2`, then restart the server; a running
+  server keeps the generation it opened.
+- **One writer.** The append has no advisory lock
+  (https://github.com/danbri/factoidal/issues/644).
+
+Scores (2026-10-10, wasm sha256 `c7d88f17…`):
+
+- W3C over a live socket, `lake exe l4protocol-live --cli
+  ../../npm/factoidal/bin/factoidal.mjs --bin .lake/build/bin --work DIR
+  <protocol, graph-store-protocol direct and indirect, service-description
+  manifests>`: **50 pass, 0 fail (out of 50)** — protocol 34,
+  graph-store-protocol 13, service-description 3. Each test gets its own
+  IBK5 collection packed from its `ut:graphData`. The deprecated
+  `http-rdf-update` suite is not replayed live (Markdown requests, seeded
+  by runner glue).
+- `node tests/store-serve/serve.mjs`: **19 pass, 0 fail, 1 expected failure
+  (out of 20)**: FILTER NOT EXISTS, FILTER EXISTS, MINUS, OPTIONAL with
+  FILTER and a sub-SELECT give the same non-empty rows through the server,
+  `factoidal query` and the in-memory engine over the source file; update,
+  query, compact, activate, restart, query; framing; write scope. The
+  expected failure is issue 770.
+
+Measured 2026-10-10 on this container (4 shared CPUs) with
+`node tests/store-serve/measure.mjs COL http://www.wikidata.org/entity/Q287043 4000`
+over `examples/wikidata/subsets/lifesci-kgx/data/gene.ttl` packed as IBK3
+(888,949 triples, 13 blocks, 24,928,958 verified bytes):
+
+| Measurement | Value |
+| --- | --- |
+| start to first answer (read, verify, decode, index) | 6.9 to 8.0 s (three runs) |
+| bound-subject SELECT, 1 row, 4,000 requests, one keep-alive connection | median 0.50 ms, p95 0.82 ms, max 19.2 ms |
+| `SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }`, 20 requests | median 31.5 ms (26.1 to 36.9 ms over three runs) |
+| `… FILTER(isIRI(?o))`, every row evaluated, 5 requests | median 420 ms |
+| resident set after 100, 1,000 and 4,000 bound requests | 508.5 MB, 527.3 MB, 526.6 MB: +3.6 % after 100, flat from 250 to 4,000 |
+| resident set after the scans | 658.7 MB (the wasm heap grows and does not shrink) |
+
+The growth gate (at most 10 % after 1,000 requests) passed in three runs:
++3.4 %, +9.1 % and +3.6 % between request 100 and request 1,000. The 9.1 %
+run was the outlier; the 4,000-request series shows the resident set flat
+from request 250 on, so the rise is start-up, not a per-request leak.
+
 ## Corpus ladder, profiling and the census
 
 - Corpus ladder (which files are used at which size rung, and the rules
