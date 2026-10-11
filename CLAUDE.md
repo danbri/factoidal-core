@@ -872,6 +872,10 @@ session.
   generation directory contains, the corpus ladder and census tools, and
   the rules for changing a format (encoder admission equals decoder
   admission; byte change means new wire version).
+- [`qlvr`](skills/qlvr/SKILL.md) — Factoidal/qlvr, a QLever index read
+  from Lean: rebuild the pinned QLever instance and its query oracle, the
+  byte-level format record, the Python format probe, and the loop rule for
+  the decoders (https://github.com/danbri/factoidal/issues/778).
 - [`lean-proof`](third_party/skills/leanprover-skills/lean-proof/SKILL.md)
   and [`lean-mwe`](third_party/skills/leanprover-skills/lean-mwe/SKILL.md)
   — vendored unmodified from leanprover/skills (Apache-2.0, provenance in
