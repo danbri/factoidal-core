@@ -816,6 +816,13 @@ command: 27-29 MB).
   rows (`q10`) decodes both `Double` Ids at every comparison. Every Lean run
   also pays the process start and the vocabulary load (11-85 ms setup).
 
+### Performance after stage 4
+
+The warm path, the Lean zstd decoder against libzstd, the q07 kernel in Lean
+and in C, and the speed work these measurements caused are in
+[2026-10-11-qlvr-performance.md](2026-10-11-qlvr-performance.md). The table
+above is the stage 4 state (one process per query).
+
 ### What remains
 
 Each item is refused or tested as an expected failure, and tracked in

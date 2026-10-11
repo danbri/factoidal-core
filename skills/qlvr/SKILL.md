@@ -33,6 +33,10 @@ Tracking: https://github.com/danbri/factoidal/issues/778.
 | `tests/qlvr/queries/*.rq` | the 21 oracle queries (q19-q21: single bound-predicate scans for the Lean reader) |
 | `tests/qlvr/instance.json` | manifest: image digest, QLever commit, dataset URL and sha256, triple counts, every index file with size and sha256, every oracle answer with row count and sha256 |
 | `docs/designissues/2026-10-11-qlever-index-format.md` | the format record: each file, its byte layout, source `file:line` at the pinned commit, what the instance confirmed, and the stage 3 plan |
+| `docs/designissues/2026-10-11-qlvr-performance.md` | the performance record: warm against process times, phase shares, the Lean zstd decoder against libzstd, the q07 kernel in Lean and in C, the remainder against QLever with source lines, what was changed and what it gave |
+| `tests/qlvr/bench-warm.sh` | per query: QLever compute and HTTP, Lean process, Lean warm (`--repeat`), Lean warm with libzstd, decode times |
+| `tests/qlvr/kernel.sh`, `formal/lean4/Harness/QlvrKernel.lean`, `tools/qlvr/bench/kernel.c` | the q07 kernel (two scans, merge join) in six Lean forms and in C on the same dumped input; the checksums must agree |
+| `formal/lean4/ffi/qlvr_zstd.c` | optional libzstd call-out, loaded with dlopen (`l4qlvr query --libzstd`, `l4qlvr zstd-diff`); the Lean decoder stays the default |
 
 Bulky data stays outside the repository, in `QLVR_WORK` (default
 `/home/user/qlvr-work`): `instance/` (input N-Triples and index files),
@@ -172,6 +176,38 @@ graph patterns from Lean (stage 4)".
   the parser (FILTER, WHERE) are walked with an explicit stack, not
   recursion.
 - `run.sh` part (f) rebuilds the side index (about 3 s) before part (g).
+
+## Measure performance (2026-10-11)
+
+```
+tests/qlvr/bench-warm.sh                 # all 21 queries; needs the server on port 7019
+tests/qlvr/kernel.sh                     # Lean against C on the q07 kernel
+cd formal/lean4 && .lake/build/bin/l4qlvr zstd-diff /home/user/qlvr-work/instance
+.lake/build/bin/l4qlvr query /home/user/qlvr-work/instance --file Q.rq --repeat 20 [--libzstd]
+.lake/build/bin/l4qlvr serve /home/user/qlvr-work/instance < queries.txt
+```
+
+Numbers, method and causes: docs/designissues/2026-10-11-qlvr-performance.md.
+Rules that the measurements gave:
+
+- Compare warm with warm. A process per query cost 17 to 22 ms of start and
+  load for every query; in stage 4 the setup was up to 96 ms of a query.
+- In `q07`, after the changes, the Lean zstd decoder is 52 of 75 ms; with
+  libzstd the query takes 23 ms against QLever's 19 to 21 ms.
+- A `Nat` shift (`1 <<< n`) calls `lean_nat_shiftl` and GMP: use `UInt64`.
+  Loop state that is a `Nat` is boxed and tested at each step; `UInt64`
+  state made the zstd sequence loop 15 to 30 percent faster (218 to 249-282
+  MB/s).
+- An 8-byte Id in a `ByteArray` is 8 byte reads with `Nat` index
+  arithmetic, and `ByteArray.push` is an out-of-line call: the same kernel is
+  9 to 16 times C with `ByteArray` columns and 2.5 to 2.9 times C with one
+  word per Id (`FloatArray` or `Array UInt64`).
+- Avoid per-row work that the order of the data makes unnecessary: rows with a
+  key prefix are one range (binary search), `COUNT(*)` is a sum of block
+  counts, runs of a sorted group variable need one map update each.
+- Check every output change against the form kept beside it:
+  `--reference-render` and `tests/qlvr/run.sh` part (i); `zstd-diff` and part
+  (j); a `cmp` of all 21 answers against the previous binary.
 
 ## Rules for the Lean decoders
 
