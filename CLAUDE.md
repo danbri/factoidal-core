@@ -174,6 +174,14 @@ teach us something about Lean." and "consider tail recursive approach".
   format, in the same family as the Oxigraph reader
   (https://github.com/danbri/factoidal/issues/671). Tracking:
   https://github.com/danbri/factoidal/issues/778.
+- Owner, 2026-10-11, verbatim: "I am interested to see if we can create
+  Lean that approximates qlever perf avainst native qlever data, so we can
+  work out why our own efforts are too slow: how much is lean vs approach."
+  The qlvr performance work separates two causes of slowness: the cost of
+  the Lean implementation (the same algorithm, measured in Lean and in C)
+  and the cost of the storage and query design (the same Lean code, run
+  on QLever's layout and on Shardborough's). Every claim in that record
+  names the measurement that supports it.
 - Every decoder over input-proportional data is a loop or tail call
   (accumulator), never one stack frame per item. Check with
   `python3 tools/lean-tail-recursion-audit.py --gate` (read the exit code)
