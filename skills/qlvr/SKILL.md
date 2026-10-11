@@ -18,12 +18,16 @@ Tracking: https://github.com/danbri/factoidal/issues/778.
 | --- | --- |
 | `tools/qlvr/build-instance.sh` | rebuild the instance and the oracle (idempotent) |
 | `tools/qlvr/Qleverfile` | the qlever control-script configuration (image pinned by digest) |
-| `tools/qlvr/probe_index.py` | Python format probe: decodes vocabulary, permutation metadata, zstd column frames; `--scan IRI`, `--dump-block0 index.pso`, `--zstd-tsv OUT` (every column frame with libzstd's sha256) |
+| `tools/qlvr/probe_index.py` | Python format probe: decodes vocabulary, permutation metadata, zstd column frames; `--scan IRI`, `--dump-block0 index.pso`, `--zstd-tsv OUT` (every column frame with libzstd's sha256), `--words OUT` (every word as QLever prints it) |
 | `formal/lean4/L4Factoidal/Codec/Zstd.lean` | pure-Lean zstd decoder (RFC 8878, XXH64 checksum); `decompress`, `decompressStats` |
 | `formal/lean4/Harness/QlvrZstdCheck.lean` | `l4qlvr-zstd-check vectors DIR`, `blocks INDEXDIR TSV`, `frame FILE SHA256` |
 | `formal/lean4/Harness/TestData/zstd/` | 14 libzstd vectors with expected sha256 (`tools/qlvr/zstd_vectors.py` writes them) |
 | `tools/qlvr/zstd_bench.py` | libzstd time on the same frame list, for the throughput comparison |
-| `tests/qlvr/queries/*.rq` | the 18 oracle queries |
+| `formal/lean4/L4Factoidal/Qlvr/*.lean` | the Lean reader: `Id`, `Format` (exact `%.13g`), `Fsst`, `Vocab` (`vocabWord`, `findWord`), `Perm` (block metadata, `.meta`, `decodeColumn`), `Term` (N-Triples with QLever's escaping), `Scan` (`scanCol0M`, `scanPredicate`, rendering) |
+| `formal/lean4/Harness/Qlvr.lean` | `l4qlvr stats INDEXDIR`, `scan INDEXDIR PRED-IRI`, `dump INDEXDIR`, `words INDEXDIR`; permutation frames by `pread` |
+| `tests/qlvr/run.sh` | scans against the oracle, dump against the input N-Triples and against QLever's CONSTRUCT, every word against the probe, stats |
+| `tests/qlvr/canon_nt.py`, `compare_scan.py` | the canonicaliser (QLever's documented normalisations) and the scan-to-oracle comparison used by `run.sh` |
+| `tests/qlvr/queries/*.rq` | the 21 oracle queries (q19-q21: single bound-predicate scans for the Lean reader) |
 | `tests/qlvr/instance.json` | manifest: image digest, QLever commit, dataset URL and sha256, triple counts, every index file with size and sha256, every oracle answer with row count and sha256 |
 | `docs/designissues/2026-10-11-qlever-index-format.md` | the format record: each file, its byte layout, source `file:line` at the pinned commit, what the instance confirmed, and the stage 3 plan |
 
@@ -98,6 +102,33 @@ What the zstd decoder taught about Lean (the loop rule in practice):
   doubles the copied run each step.
 - Setup code (FSE and Huffman tables, at most 2,048 entries) uses `for` loops
   in `Except`; that is per table, not per byte.
+
+## Run the Lean reader
+
+```
+cd formal/lean4 && lake build l4qlvr
+.lake/build/bin/l4qlvr stats /home/user/qlvr-work/instance
+.lake/build/bin/l4qlvr scan /home/user/qlvr-work/instance http://dbpedia.org/property/year
+tests/qlvr/run.sh                        # from the repository root
+tests/stack/run.sh --route native --canary   # includes case qlvr-dump
+```
+
+2026-10-11: scans 4 pass, 0 fail (out of 4); `tests/qlvr/run.sh` 8 pass, 0
+fail (out of 8). Dump against the input: 1,680,959 lines equal, 100,666 equal
+after normalisation (all `xsd:double` printed as `xsd:decimal`), 0
+different; dump against QLever's CONSTRUCT: 1,781,625 equal, 0 different.
+Dump 4.4-5.2 s, peak RSS 49 MB; QLever's CONSTRUCT over HTTP 3.3-3.9 s.
+Numbers, method and the Lean lessons: the format record, section "Read from
+Lean".
+
+- The vocabulary lookup (`findWord`) is a binary search on the first byte
+  and then a linear scan: up to 406,730 decodes for an IRI (355-637 ms). A
+  side index or the ICU collation subset is stage 4 work.
+- A local `structure Id` shadows the `Id` monad in the namespace; write
+  `_root_.Id`. `meta` is a keyword. UInt64 literals in bit expressions need
+  a type ascription.
+- `tests/qlvr/run.sh` part (e) needs the server on port 7019; without it the
+  part is printed as not run and not scored.
 
 ## Rules for the Lean decoders
 

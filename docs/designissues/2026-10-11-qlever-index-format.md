@@ -478,6 +478,151 @@ it changes what the server answers after a restart, with no change to the
 permutations or the vocabulary. [not confirmed: a file written by anything
 other than QLever has not been loaded.]
 
+## Read from Lean (stage 3 step 2, 2026-10-11)
+
+`formal/lean4/L4Factoidal/Qlvr/` reads the instance far enough to answer a
+bound-predicate scan and to print every triple. The native executable
+`l4qlvr` (`formal/lean4/Harness/Qlvr.lean`) has four commands: `stats`,
+`scan INDEXDIR PRED-IRI`, `dump INDEXDIR` and `words INDEXDIR`. The tests are
+`tests/qlvr/run.sh` and the `qlvr-dump` case of `tests/stack/run.sh`.
+
+| Module | Content |
+| --- | --- |
+| `Qlvr.Id` | the `Id`: tag and payload, `Int` sign extension, `Double` bits, `Bool` bits; `Value` for all 13 tags |
+| `Qlvr.Format` | QLever's lexical forms: `%.1f` / `%.13g` for `Double` computed exactly from the binary64 bits with `Nat` arithmetic (round half to even on the exact value), `xsd:int` for `Int`, `true`/`false`/`1`/`0` for `Bool` |
+| `Qlvr.Fsst` | the 2,304-byte `fsst_decoder_t` and the decode loop |
+| `Qlvr.Vocab` | codebooks, offsets with the MmapVector trailer, `vocabWord`, `findWord` (string to `VocabIndex`) |
+| `Qlvr.Perm` | the trailing `IndexMetaData`, block metadata, `.meta` relations, `decodeColumn` (zstd through `Codec.Zstd`) |
+| `Qlvr.Term` | an `Id` as an N-Triples term with QLever's literal escaping |
+| `Qlvr.Scan` | `scanCol0M` over a fetch function (positioned reads or memory), `scanPredicate`, block and scan rendering |
+
+### What the Lean reader confirmed [instance]
+
+- Section 1: `Int` (60-bit two's complement), `Double` (bits shifted right by
+  4) and `VocabIndex` decode as stated; QLever's printing of `Double` is
+  reproduced byte for byte (all 100,666 `dbo:weight` values; `q20` below).
+- Section 2: every one of the 543,754 words decodes (FSST with the second
+  decoder, then the first) to the same bytes as the Python probe; after the
+  escaping of `validRDFLiteralFromNormalized`, sha256 of the listing
+  `67e3669c...1859` is equal on both sides. The first-byte order holds for
+  the whole vocabulary: a binary search on the first byte finds the IRI range
+  137,023..543,752.
+- Section 3: all eight permutation files parse; in each, the rows of the
+  blocks add up to `totalElements` (1,781,625 normal, 680,749 internal);
+  blocks are sorted by col0 and `blockIndex` equals the position. Columns per
+  block: 6 for PSO, POS, OSP, OPS; 4 for SPO, SOP and the internal pair.
+- The dump of SPO, as a set of lines, is equal to QLever's own
+  `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }` in N-Triples: 1,781,625 equal,
+  0 different.
+
+### Tests (2026-10-11, linux x86_64, 4 cores, Lean 4.33.1)
+
+| Test | Result |
+| --- | --- |
+| (a) scan against the oracle, every single bound-predicate query (`q03`, and `q19`, `q20`, `q21` added for this step): rows as multisets of RDF terms, numbers by value | 4 pass, 0 fail (out of 4) |
+| (b) dump against the input `olympics.nt` (1,781,625 lines, all distinct) | 1,680,959 equal byte for byte; 100,666 equal after normalisation, all of class `double` (`"70"^^xsd:double` printed as `"70.0"^^xsd:decimal`); 0 different |
+| (c) every vocabulary word against the Python probe | equal (543,754 words) |
+| (d) `stats` | runs; block rows equal `totalElements` in all eight files |
+| (e) dump against QLever's CONSTRUCT | 1,781,625 equal, 0 different |
+| `tests/stack` `qlvr-dump` under `LEAN_STACK_SIZE_KB=512` | ran (control passed) |
+| `#guard`s | `Id` hexdumps of section 1; 18 `%.13g`/`%.1f` cases against C `printf`; FSST table; literal escaping; refusals |
+
+The input has only `xsd:int` (282,287) and `xsd:double` (100,666) typed
+literals, no blank nodes, no `Bool` and no `Date`: those parts of section 1
+remain [not confirmed] by data. Printing a `Date`, `GeoPoint`, `EncodedVal`
+or `LocalVocabIndex` Id is refused with an error; `#guard`s in
+`Qlvr/Term.lean` assert the refusal, so they fail when printing is added.
+Tracking: https://github.com/danbri/factoidal/issues/778.
+
+### Measurements
+
+Time is wall-clock inside `l4qlvr` (`IO.monoNanosNow`); peak RSS is VmHWM.
+
+| Command | Time | Peak RSS |
+| --- | ---: | ---: |
+| `stats` (8 metadata trailers by `pread`, 8 `.meta` files, vocabulary load) | 9-77 ms | 27 MB |
+| `scan dbp:year` (51 rows, 1 PSO block of 67) | 7 ms | 28 MB |
+| `scan wso:medal` (39,768 rows, 2 blocks) | 200 ms | 46 MB |
+| `scan rdfs:label` (137,026 rows, 5 blocks) | 0.9-1.0 s, of which 355-637 ms vocabulary lookup | 67 MB |
+| `dump` (1,781,625 triples, 39 SPO blocks, 338 MB of N-Triples) | 4.4-5.2 s | 49 MB |
+| `words` (543,754 words) | 755 ms | 47 MB |
+| QLever `CONSTRUCT { ?s ?p ?o }` over HTTP, N-Triples, same machine | 3.3-3.9 s | (server) |
+
+The peak RSS is the three vocabulary files (16 MB, read whole) plus one
+block's columns and its rendered text. The dump writes one block at a time
+and never holds the graph. Of the dump time, zstd is about 0.4 s (three
+columns of 39 blocks at the 113 MB/s of section 3); the rest is FSST decode,
+term rendering and output.
+
+**Vocabulary lookup cost.** `findWord` uses only the first-byte order: a
+binary search (20 decodes) finds the range of words with the target's first
+byte, then a linear scan decodes each word of the range until a match. For
+an IRI the range is 406,730 words. Measured: `dbp:year` (word 137,034) 12
+decodes, under 1 ms; `rdfs:label` (543,747) 406,725 decodes, 355-637 ms;
+`foaf:gender` (543,751) 420 ms. A side index removes the scan: a file
+written once by the reader, holding the words' hashes (or the words) sorted
+byte-wise with their `VocabIndex`, searched by binary search; it must be
+rebuilt when the vocabulary changes, and it needs a format version of its
+own. The other option is an implementation of the ICU collation subset that
+the data needs (section 2, "Sort order"), which is also what a vocabulary
+writer needs.
+
+### What this taught about Lean
+
+- **One scan, two I/O models.** `scanCol0M` is written once over a fetch
+  function `Nat → Nat → m ByteArray` in `ExceptT String m`. With `m = IO` and
+  `pread` it reads only the selected blocks' frames; with `m = Id` and
+  `ByteArray.extract` it is the pure `scanPredicate`. The `for` loop over
+  blocks runs in the monad (per block, not per row); every per-row loop is a
+  pure tail call outside it.
+- **Loop shape.** Every input-proportional loop (`Fsst.decodeLoop`,
+  `escapeLoop`, `lastQuote`, `collectRows`, `renderLoop`, `renderPairs`,
+  `renderWords`, `scanRange`, `findFirstByte`) has a fuel `Nat` first, all
+  state as arguments, and the self-call last in an `if`/`match` chain whose
+  other branches return `.ok`/`.error`. All compile to `goto _start`;
+  `tools/lean-tail-recursion-audit.py` finds no recursive declaration in
+  `L4Factoidal/Qlvr/*` or `Harness/Qlvr.lean`, and the dump runs under the
+  512 KB canary stack. A `match` on two `Except` values before the self-call
+  (`renderLoop`) does not stop the jump.
+- **ByteArray sharing.** `renderLoop` keeps the rendered bytes of the
+  previous subject and predicate as arguments, so a run of equal Ids in SPO
+  order is decoded once. Those cached arrays are shared, but they are only
+  ever the SOURCE of an append (`acc ++ sb`); the accumulator stays unique
+  and grows in place. FSST appends a symbol with
+  `syms.copySlice (8 * c) out out.size n false`: the decoder table and the
+  output are different objects, so the output is not copied.
+- **No C `printf` in Lean.** `toString (70.0 : Float)` is `70.000000`; no
+  core function gives `%g`. `Format.fmtG` computes `%.13g` exactly from the
+  bits with `Nat` (numerator, denominator, scaled by a power of 10, rounded
+  half to even); a 1,074-bit subnormal is a few `Nat` multiplications.
+- **Elaboration traps.** (1) A local `structure Id` shadows the `Id` monad
+  inside the namespace: `(m := Id)` failed to type-check and needed
+  `_root_.Id`. (2) `meta` is a keyword in Lean 4.33: a field named `meta`
+  failed to parse. (3) `(4 <<< 60) ||| x` with `x : UInt64` failed: the
+  literal is elaborated as `Nat` first; it needs `(4 : UInt64)`.
+- **What was slow.** The vocabulary lookup by scan (above). The dump is
+  1.3-1.6 times QLever's CONSTRUCT over HTTP, with no tuning.
+
+### What remains
+
+For BGP queries (stage 4): a side index or collation for string to `Id`;
+folding a query's numeric constants into `Int`/`Double` Ids as the parser
+does (`q15` matches `1936` against `"1936"^^xsd:int`); choosing among the six
+permutations by the bound positions (bound subject: SPO, bound object: OSP or
+OPS); joins over the sorted columns (merge join when the join variable is the
+sort key, otherwise hash join); the graph column; the internal permutations
+for the language-filter predicate (`@en@rdfs:label`); delta triples from
+`.update-triples` merged into each scan; positioned reads for the vocabulary
+files instead of reading them whole; `Date` and `GeoPoint` printing.
+
+For writing (stage 5): a writer of `<base>.update-triples` (section 6): the
+magic and version, the local vocabulary (a key `Id` with tag 5 and the stored
+form of each new word), then the deleted and inserted triples as `Id`
+vectors. Existing terms need their `VocabIndex` (the side index above), new
+terms go into the local vocabulary, numeric literals are folded into value
+Ids. The test is to start the server with `--persist-updates` on a copy of
+the index with the written file and compare its answers.
+
 ## Plan for stage 3: a Lean reader (Factoidal/qlvr)
 
 Goal of stage 3: from Lean, decode the PSO scan for one bound predicate of the
