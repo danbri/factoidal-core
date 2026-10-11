@@ -338,6 +338,20 @@ generates exactly those 26, listed in `STD_TIME_MODULES` in `build-wasm.sh`.
 Trap: a module missing from that list is an undefined `initialize_Std_Time_*`
 symbol at the link in step 7, and a toolchain bump can change the closure
 (recompute it from the `import` lines of `Std/Time/DateTime/Timestamp.lean`).
+
+Trap: never write `import Std` (the whole package) in a module the wasm
+links. Import the `Std.Data.*` module you use. `import Std` makes the
+module's initialiser call `initialize_Std`, which step 3 does not generate,
+and it puts `Std.Http` in scope, so the compiler reuses `Std.Http`
+specialisations in OTHER modules that the native build links without
+complaint. Cost, 2026-10-11: `SPARQL/OrderedPrefix.lean` (landed from
+factoidal-core 906527b) had `import Std` and used nothing from it; the
+native build and every native gate passed, and the wasm link failed with
+five undefined symbols in `OrderedPrefix.o`, `Solid/Server/Methods.o`,
+`Storage/PackStream.o` and `Wasm/Ops/Solid.o`
+(https://github.com/danbri/factoidal-builds/actions/runs/38150346038).
+Check before a push: `grep -rn '^import Std$' formal/lean4 --include='*.lean'`
+prints nothing.
 Measured cost (full / core module, `-O3` after `wasm-opt`): +82,436 and +88,885
 bytes. The check after a rebuild: `queryDataset` with W3C `functions/now01.rq`
 answers `true` through `l4factoidal.js` and through `npm/factoidal`.
