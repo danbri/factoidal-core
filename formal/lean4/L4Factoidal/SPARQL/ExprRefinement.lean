@@ -50,6 +50,12 @@ def ebvSpec : EvalResult → Option Bool
   | .dec s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "")
   | .dbl s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "NaN" && s ≠ "")
   | .term (.literal l) =>
+      -- The numeric row, for a type derived from xsd:integer (§17.1):
+      -- false iff the value is 0. An ill-typed one has no value and is
+      -- "any other argument".
+      match integerDerivedValue? l with
+      | some i => some (i ≠ 0)
+      | none =>
       if l.val.datatype == xsdBoolean then
         -- SPARQL 1.2 §17.2: valid boolean lexical forms only
         -- (XSD 1.1 §3.3.2). SPARQL 1.1 additionally sent an
@@ -261,6 +267,42 @@ theorem strCompare_beq_zero (a b : String) : (strCompare a b == 0) = (a == b) :=
   rw [Bool.eq_iff_iff, beq_iff_eq, beq_iff_eq]
   exact strCompare_eq_zero_iff a b
 
+/-! ### Literals that are not of a type derived from `xsd:integer`
+
+`valueCompare` reads a literal of a type derived from `xsd:integer` as
+its value (`numericView`). The agreement theorems below are about
+literals of other datatypes; these lemmas discharge that side condition. -/
+
+theorem integerDerivedValue?_none_of_iri (l : WfLiteral)
+    (h : integerDerivedBuiltinOfIri? l.val.datatype.val = none) :
+    integerDerivedValue? l = none := by
+  simp [integerDerivedValue?, h]
+
+theorem integerDerivedValue?_of_xsdString (l : WfLiteral)
+    (h : l.val.datatype = xsdString) : integerDerivedValue? l = none :=
+  integerDerivedValue?_none_of_iri l (by rw [h]; rfl)
+
+/-- A literal with a language tag has datatype `rdf:langString` or
+`rdf:dirLangString` (`literalWf`), and neither is derived from
+`xsd:integer`. -/
+theorem integerDerivedBuiltinOfIri?_of_langTag (l : WfLiteral)
+    (h : l.val.langTag ≠ none) :
+    integerDerivedBuiltinOfIri? l.val.datatype.val = none := by
+  rcases l with ⟨l, wf⟩
+  simp only at h ⊢
+  cases ht : l.langTag with
+  | none => exact absurd ht h
+  | some _ =>
+      cases hd : l.direction with
+      | none =>
+          have : l.datatype.val = rdfLangString.val := by
+            simpa [literalWf, ht, hd] using wf
+          rw [this]; rfl
+      | some _ =>
+          have : l.datatype.val = rdfDirLangString.val := by
+            simpa [literalWf, ht, hd] using wf
+          rw [this]; rfl
+
 /-! ### Agreement -/
 
 theorem eq_num_matches_spec (a b : Int) :
@@ -269,7 +311,7 @@ theorem eq_num_matches_spec (a b : Int) :
   have hz : Scaled.cmp ⟨a, 0⟩ ⟨b, 0⟩ = intCompare a b := by
     simp [Scaled.cmp, pow10_zero]
   constructor <;>
-    simp [valueCompare, numericCompare, EvalResult.toNumeric?, hz,
+    simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, hz,
           applyCompOp, eqSpecNum, intCompare_beq_zero, bne]
 
 theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
@@ -279,9 +321,11 @@ theorem eq_plain_string_matches_spec (l1 l2 : WfLiteral)
         = some (eqSpecPlainString l1 l2) ∧
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne
         = some (!eqSpecPlainString l1 l2) := by
+  have n1 := integerDerivedValue?_of_xsdString l1 h1
+  have n2 := integerDerivedValue?_of_xsdString l2 h2
   constructor <;>
-    simp [valueCompare, h1, h2, t1, t2, applyCompOp, eqSpecPlainString,
-          strCompare_beq_zero, bne]
+    simp [valueCompare, numericView, n1, n2, h1, h2, t1, t2, applyCompOp,
+          eqSpecPlainString, strCompare_beq_zero, bne]
 
 /-- Same-kind decimal reflexivity. The scaled-value parse is a total
 function of the lexical form, so calling it twice on one string returns
@@ -291,7 +335,7 @@ theorem eq_dec_reflexive (s : String) (h : (parseToScaled s).isSome) :
   cases hp : parseToScaled s with
   | none => rw [hp] at h; exact absurd h (by simp)
   | some v =>
-      simp [valueCompare, numericCompare, EvalResult.toNumeric?, hp,
+      simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, hp,
             applyCompOp, Scaled.cmp_refl]
 
 theorem eq_dbl_reflexive (s : String) (h : (parseDoubleToScaled s).isSome) :
@@ -299,18 +343,24 @@ theorem eq_dbl_reflexive (s : String) (h : (parseDoubleToScaled s).isSome) :
   cases hp : parseDoubleToScaled s with
   | none => rw [hp] at h; exact absurd h (by simp)
   | some v =>
-      simp [valueCompare, numericCompare, EvalResult.toNumeric?, hp,
+      simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, hp,
             applyCompOp, Scaled.cmp_refl]
 
 /-- Two literals of DIFFERENT datatypes are a type error under `=`, not
 a `false`. This is what keeps `=` open-world on datatypes the engine
-does not know. -/
+does not know. The exception is two numerics: two literals of types
+derived from `xsd:integer` that both have values compare by value
+(SPARQL 1.1 §17.1; `"72"^^xsd:int = "72"^^xsd:short`), so one of the two
+must have no such value. -/
 theorem eq_literal_different_datatype_typeerror (l1 l2 : WfLiteral)
-    (h : l1.val.datatype ≠ l2.val.datatype) :
+    (h : l1.val.datatype ≠ l2.val.datatype)
+    (hn : integerDerivedValue? l1 = none ∨ integerDerivedValue? l2 = none) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = none := by
   have hne : (l1.val.datatype == l2.val.datatype) = false :=
     beq_eq_false_iff_ne.mpr h
-  simp [valueCompare, hne]
+  rcases hn with hn | hn
+  · cases h2 : integerDerivedValue? l2 <;> simp [valueCompare, numericView, hn, h2, hne]
+  · cases h1 : integerDerivedValue? l1 <;> simp [valueCompare, numericView, hn, h1, hne]
 
 /-- Two literals of the SAME datatype whose language tags are in DIFFERENT
 SPARQL language-tag equivalence classes are unequal — a definite `false`, not
@@ -321,7 +371,19 @@ theorem eq_literal_same_datatype_diff_lang (l1 l2 : WfLiteral)
     (ht : langTagOptionEq l1.val.langTag l2.val.langTag = false) :
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .eq = some false ∧
     valueCompare (.term (.literal l1)) (.term (.literal l2)) .ne = some true := by
-  constructor <;> simp [valueCompare, hd, ht]
+  -- One of the two carries a language tag, so the shared datatype is
+  -- rdf:langString or rdf:dirLangString: neither literal has a value.
+  have hb : integerDerivedBuiltinOfIri? l1.val.datatype.val = none := by
+    cases h1 : l1.val.langTag with
+    | some _ => exact integerDerivedBuiltinOfIri?_of_langTag l1 (by simp [h1])
+    | none =>
+        cases h2 : l2.val.langTag with
+        | some _ =>
+            rw [hd]; exact integerDerivedBuiltinOfIri?_of_langTag l2 (by simp [h2])
+        | none => simp [h1, h2, langTagOptionEq] at ht
+  have n1 := integerDerivedValue?_none_of_iri l1 hb
+  have n2 := integerDerivedValue?_none_of_iri l2 (by rw [← hd]; exact hb)
+  constructor <;> simp [valueCompare, numericView, n1, n2, hd, ht]
 
 /-- The expression-level corollary: the `.compare .eq` arm over two
 integer-denoting sub-expressions computes the transcribed spec. -/

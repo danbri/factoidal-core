@@ -61,7 +61,7 @@ theorem termToExpr_evalIn_eq_literalPromote (env : EvalEnv) (mu : Binding) (l : 
   simp only [termToExpr?, literalPromote]
   by_cases h1 : (l.val.datatype == RDF.xsdInteger) = true
   · rw [if_pos h1, if_pos h1]
-    cases hp : parseIntString l.val.lexicalForm <;> simp [Expr.evalIn, hp]
+    cases hp : XSD.parseIntegerLex l.val.lexicalForm <;> simp [Expr.evalIn, hp]
   · rw [if_neg h1, if_neg h1]
     by_cases h2 : (l.val.datatype == RDF.xsdDecimal) = true
     · rw [if_pos h2, if_pos h2]; simp [Expr.evalIn]

@@ -152,7 +152,7 @@ def termToExpr? : Term → Option Expr
   | .iri i => some (.iri i)
   | .literal l =>
     if l.val.datatype == RDF.xsdInteger then
-      match parseIntString l.val.lexicalForm with
+      match XSD.parseIntegerLex l.val.lexicalForm with
       | some n => some (.numericLit n)
       | none => some (.lit l)
     else if l.val.datatype == RDF.xsdDecimal then some (.decimalLit l.val.lexicalForm)

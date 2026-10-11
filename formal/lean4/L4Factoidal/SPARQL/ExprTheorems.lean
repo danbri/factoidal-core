@@ -371,23 +371,28 @@ theorem listCharCompare_refl (cs : List Char) : listCharCompare cs cs = 0 := by
 /-- `=` holds between an IRI term and itself. -/
 theorem valueCompare_eq_refl_iri (i : WfIri) :
     valueCompare (.term (.iri i)) (.term (.iri i)) .eq = some true := by
-  simp [valueCompare, applyCompOp]
+  simp [valueCompare, numericView, applyCompOp]
 
 /-- `=` holds between a literal term and itself, whatever its datatype
-and language tag. -/
+and language tag. A literal of a type derived from `xsd:integer` with a
+value compares by that value; every other literal by its term. -/
 theorem valueCompare_eq_refl_literal (l : WfLiteral) :
     valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true := by
-  simp [valueCompare, applyCompOp]
+  cases h : integerDerivedValue? l with
+  | none => simp [valueCompare, numericView, h, applyCompOp]
+  | some i =>
+      simp [valueCompare, numericView, h, numericCompare, EvalResult.toNumeric?,
+        Scaled.cmp, intCompare, applyCompOp]
 
 /-- `=` holds between a Boolean value and itself. -/
 theorem valueCompare_eq_refl_bool (b : Bool) :
     valueCompare (.bool b) (.bool b) .eq = some true := by
-  cases b <;> simp [valueCompare, applyCompOp]
+  cases b <;> simp [valueCompare, numericView, applyCompOp]
 
 /-- `=` holds between an integer value and itself. -/
 theorem valueCompare_eq_refl_num (n : Int) :
     valueCompare (.num n) (.num n) .eq = some true := by
-  simp [valueCompare, numericCompare, EvalResult.toNumeric?, applyCompOp]
+  simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, applyCompOp]
 
 /-- A blank node has no `op:` mapping under `=`, so comparing one with
 ITSELF is a type error. Not an omission — §17.4.1.7's operator table

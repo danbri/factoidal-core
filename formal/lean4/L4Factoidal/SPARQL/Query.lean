@@ -202,6 +202,15 @@ def sparqlOrder (a b : EvalResult) : Int :=
     | .term t1, .term t2 => termOrder t1 t2
     | _, _ => 0
 
+/-- The §15.1 ordering ORDER BY, MIN and MAX use: `sparqlOrder` on the
+`numericView` of each value, so a literal of a type derived from
+`xsd:integer` sorts among the numerics by value (§15.1 orders numerics
+by the `<` operator). `erEqual`, the GROUP BY and DISTINCT key, keeps
+`sparqlOrder` on the values as they are.
+https://github.com/danbri/factoidal/issues/782 -/
+def sparqlOrderValue (a b : EvalResult) : Int :=
+  sparqlOrder (numericView a) (numericView b)
+
 /-- Order-equality of two evaluated values (port of `er_equal`). -/
 def erEqual (a b : EvalResult) : Bool := sparqlOrder a b == 0
 
@@ -1000,13 +1009,13 @@ def avgNumeric (vals : List EvalResult) : EvalResult :=
 def findMin (vals : List EvalResult) : EvalResult :=
   match vals with
   | []      => .error
-  | v :: rest => rest.foldl (fun acc x => if sparqlOrder x acc ≤ 0 then x else acc) v
+  | v :: rest => rest.foldl (fun acc x => if sparqlOrderValue x acc ≤ 0 then x else acc) v
 
 /-- §18.5.1.7 MAX by the §15.1 ordering. -/
 def findMax (vals : List EvalResult) : EvalResult :=
   match vals with
   | []      => .error
-  | v :: rest => rest.foldl (fun acc x => if sparqlOrder x acc ≥ 0 then x else acc) v
+  | v :: rest => rest.foldl (fun acc x => if sparqlOrderValue x acc ≥ 0 then x else acc) v
 
 /-- The first non-error value — §18.5.1.9 SAMPLE (any one value of the
 group; the spec explicitly allows an arbitrary choice). -/
@@ -2043,10 +2052,10 @@ def compareOnCondition (env : EvalEnv) (active : Graph) (c : OrderCondition)
     (mu1 mu2 : Binding) : Int :=
   match c with
   | .asc e  =>
-      sparqlOrder (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
+      sparqlOrderValue (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
                   (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
   | .desc e =>
-      sparqlOrder (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
+      sparqlOrderValue (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
                   (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
 
 /-- Lexicographic comparison over the ORDER BY list: the first

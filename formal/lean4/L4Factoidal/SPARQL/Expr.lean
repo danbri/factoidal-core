@@ -112,6 +112,7 @@ import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Crypto.MD5
 import L4Factoidal.Crypto.SHA1
 import L4Factoidal.Regex.XPath
+import L4Factoidal.XSD.Datatypes
 
 namespace L4Factoidal.SPARQL
 
@@ -141,6 +142,56 @@ def fnNamespace : String := "http://www.w3.org/2005/xpath-functions#"
 /-- SPARQL 1.1 §17.1: the numeric operand types. -/
 def isNumericDatatype (dt : WfIri) : Bool :=
   dt == xsdInteger || dt == xsdDecimal || dt == xsdDouble || dt == xsdFloat
+
+/-! ### The types derived from `xsd:integer`
+
+SPARQL 1.1 §17.1 counts as numeric the "types derived from xsd:integer
+and xsd:decimal". XSD 1.1 Part 2 §3.4 has twelve built-in types derived
+from `xsd:integer`, and none derived from `xsd:decimal` other than
+`xsd:integer` itself.
+
+A value of a derived type is kept as its TERM (`EvalResult.term`), so
+DATATYPE, STR, sameTerm and an assignment see the literal as written.
+Only the numeric operators read its value, through `numericView`. A
+literal whose lexical form is not in the type's lexical space, or whose
+value is outside the type's bounds, is ill-typed and has no value: it
+stays a term, so a relational operator or arithmetic on it is a type
+error. The lexical form is read without whitespace processing (RDF 1.1
+Semantics §7, the rule `RDF/Datatypes.lean` applies), so
+`" 72"^^xsd:int` is ill-typed.
+https://github.com/danbri/factoidal/issues/782 -/
+
+/-- XSD 1.1 Part 2 §3.4.14-§3.4.26: the built-in type a datatype IRI
+names, when that type is derived from `xsd:integer`. A direct match on
+the IRI: every relational operator on a literal asks this, and
+`XSD.builtinOfIri?` searches a list. `NumericDerivedTests` checks this
+table against `XSD.derivedFrom` for every built-in. -/
+def integerDerivedBuiltinOfIri? : String → Option XSD.Builtin
+  | "http://www.w3.org/2001/XMLSchema#long" => some .long
+  | "http://www.w3.org/2001/XMLSchema#int" => some .int
+  | "http://www.w3.org/2001/XMLSchema#short" => some .short
+  | "http://www.w3.org/2001/XMLSchema#byte" => some .byte
+  | "http://www.w3.org/2001/XMLSchema#nonNegativeInteger" => some .nonNegativeInteger
+  | "http://www.w3.org/2001/XMLSchema#positiveInteger" => some .positiveInteger
+  | "http://www.w3.org/2001/XMLSchema#nonPositiveInteger" => some .nonPositiveInteger
+  | "http://www.w3.org/2001/XMLSchema#negativeInteger" => some .negativeInteger
+  | "http://www.w3.org/2001/XMLSchema#unsignedLong" => some .unsignedLong
+  | "http://www.w3.org/2001/XMLSchema#unsignedInt" => some .unsignedInt
+  | "http://www.w3.org/2001/XMLSchema#unsignedShort" => some .unsignedShort
+  | "http://www.w3.org/2001/XMLSchema#unsignedByte" => some .unsignedByte
+  | _ => none
+
+/-- The value of a literal whose datatype is derived from `xsd:integer`:
+the §3.4.13 lexical mapping (`XSD.parseIntegerLex`), then the type's
+bounds (`XSD.inIntBounds`). `none` for an ill-typed literal and for
+every other datatype. -/
+def integerDerivedValue? (l : WfLiteral) : Option Int :=
+  match integerDerivedBuiltinOfIri? l.val.datatype.val with
+  | none => none
+  | some b =>
+      match XSD.parseIntegerLex l.val.lexicalForm with
+      | some i => if XSD.inIntBounds b i then some i else none
+      | none => none
 
 /-! ## Well-formed literal builders
 
@@ -444,6 +495,11 @@ def ebv : EvalResult → Option Bool
   | .dec s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "")
   | .dbl s  => some (s ≠ "0" && s ≠ "0.0" && s ≠ "NaN" && s ≠ "")
   | .term (.literal l) =>
+      -- A type derived from xsd:integer: the numeric row, on its value.
+      -- An ill-typed one falls to "any other argument".
+      match integerDerivedValue? l with
+      | some i => some (i ≠ 0)
+      | none =>
       if l.val.datatype == xsdBoolean then
         -- Valid lexical forms only (XSD 1.1 §3.3.2). SPARQL 1.1
         -- §17.2.2 sent an ill-formed boolean to `false`; SPARQL 1.2
@@ -841,6 +897,8 @@ def formatAsDouble (value : Int) (scale : Nat) : String :=
 anything non-numeric (port of `er_to_numeric`). -/
 def EvalResult.toNumeric? : EvalResult → Option (Scaled × NumKind)
   | .num n => some (⟨n, 0⟩, .int)
+  -- §17.1: a type derived from xsd:integer promotes to xsd:integer.
+  | .term (.literal l) => (integerDerivedValue? l).map (fun i => (⟨i, 0⟩, .int))
   | .dec s => (parseToScaled s).map (fun v => (v, .dec))
   | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
   | _ => none
@@ -912,12 +970,27 @@ def evalArithInt (op : ArithOp) (a b : Int) : EvalResult :=
 
 /-! ## §17.4.1.7 value comparison and RDF-term equality -/
 
+/-- §17.1 the numeric value an operand denotes: a literal of a type
+derived from `xsd:integer` becomes its `xsd:integer` value (XPath 3.1
+§B.1 type promotion); every other result is unchanged. The numeric
+operators apply this to their operands; nothing else does, so the term
+itself survives evaluation. -/
+def numericView : EvalResult → EvalResult
+  | .term (.literal l) =>
+      match integerDerivedValue? l with
+      | some i => .num i
+      | none => .term (.literal l)
+  | v => v
+
 /-- Promote a literal to the numeric/boolean result it denotes, so that
 comparison sees VALUES rather than lexical forms (port of
-`literal_promote`). -/
+`literal_promote`). The `xsd:integer` lexical mapping is the shared
+XSD one (§3.4.13 `[\-+]?[0-9]+`, so a leading `+` is admitted and a lone
+sign is not). Types derived from `xsd:integer` are NOT promoted here:
+they stay terms and `numericView` reads their value. -/
 def literalPromote (l : WfLiteral) : EvalResult :=
   if l.val.datatype == xsdInteger then
-    match parseIntString l.val.lexicalForm with
+    match XSD.parseIntegerLex l.val.lexicalForm with
     | some n => .num n
     | none => .term (.literal l)
   else if l.val.datatype == xsdDecimal then .dec l.val.lexicalForm
@@ -938,7 +1011,8 @@ def literalPromote (l : WfLiteral) : EvalResult :=
 everything else by the engine's term equality (port of
 `literal_value_eq_numeric`). -/
 def literalValueEqNumeric (l1 l2 : WfLiteral) : Bool :=
-  if isNumericDatatype l1.val.datatype || isNumericDatatype l2.val.datatype then
+  if isNumericDatatype l1.val.datatype || isNumericDatatype l2.val.datatype ||
+     (integerDerivedValue? l1).isSome || (integerDerivedValue? l2).isSome then
     match numericCompare (literalPromote l1) (literalPromote l2) with
     | some c => c == 0
     | none => false
@@ -1047,9 +1121,11 @@ lexical order — and two literals of DIFFERENT datatypes are a type
 error, which is what makes `=` open-world on unknown datatypes; two
 triple terms support only `=`/`!=` (they have no order). Port of
 `value_compare`. Blank nodes fall to the final catch-all: a type
-error, exactly as the F* source. -/
+error, exactly as the F* source. The arms match on `numericView` of each
+operand, so a literal of a type derived from `xsd:integer` with a value
+is a numeric; an ill-typed one stays a term (the literal arms). -/
 def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
-  match v1, v2 with
+  match numericView v1, numericView v2 with
   | .num _, .num _ | .num _, .dec _ | .num _, .dbl _
   | .dec _, .num _ | .dec _, .dec _ | .dec _, .dbl _
   | .dbl _, .num _ | .dbl _, .dec _ | .dbl _, .dbl _ =>
@@ -1098,7 +1174,8 @@ def fnIsLiteral : EvalResult → EvalResult
 
 def fnIsNumeric : EvalResult → EvalResult
   | .num _ | .dec _ | .dbl _ => .bool true
-  | .term (.literal l) => .bool (isNumericDatatype l.val.datatype)
+  | .term (.literal l) =>
+      .bool (isNumericDatatype l.val.datatype || (integerDerivedValue? l).isSome)
   | .error => .error
   | _ => .bool false
 
@@ -1712,8 +1789,8 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
 
   -- §17.4.1 arithmetic, with §17.1 numeric promotion.
   | .arith op e1 e2 =>
-      let v1 := Expr.evalIn env mu e1
-      let v2 := Expr.evalIn env mu e2
+      let v1 := numericView (Expr.evalIn env mu e1)
+      let v2 := numericView (Expr.evalIn env mu e2)
       match v1, v2 with
       | .num a, .num b => evalArithInt op a b
       | _, _ =>
@@ -1732,7 +1809,7 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
                   | none => .error
           | _, _ => .error
   | .unaryMinus e1 =>
-      match Expr.evalIn env mu e1 with
+      match numericView (Expr.evalIn env mu e1) with
       | .num n => .num (-n)
       | .dec s =>
           if strStartsWith s "-" && s.length > 1 then .dec (String.ofList (s.toList.drop 1))
@@ -1920,25 +1997,25 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
 
   -- §17.4.4 numeric functions.
   | .abs e1 =>
-      match Expr.evalIn env mu e1 with
+      match numericView (Expr.evalIn env mu e1) with
       | .num n => .num (n.natAbs : Int)
       | .dec s => .dec (if strStartsWith s "-" then String.ofList (s.toList.drop 1) else s)
       | .dbl s => .dbl (if strStartsWith s "-" then String.ofList (s.toList.drop 1) else s)
       | _ => .error
   | .round e1 =>
-      match Expr.evalIn env mu e1 with
+      match numericView (Expr.evalIn env mu e1) with
       | .num n => .num n
       | .dec s => .dec (toString (lexRound s))
       | .dbl s => .dbl (toString (lexRound s))
       | _ => .error
   | .ceil e1 =>
-      match Expr.evalIn env mu e1 with
+      match numericView (Expr.evalIn env mu e1) with
       | .num n => .num n
       | .dec s => .dec (toString (lexCeil s))
       | .dbl s => .dbl (toString (lexCeil s))
       | _ => .error
   | .floor e1 =>
-      match Expr.evalIn env mu e1 with
+      match numericView (Expr.evalIn env mu e1) with
       | .num n => .num n
       | .dec s => .dec (toString (lexFloor s))
       | .dbl s => .dbl (toString (lexFloor s))

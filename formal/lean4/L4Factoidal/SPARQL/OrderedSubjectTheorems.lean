@@ -23,10 +23,10 @@ theorem compare_binding (plan : Plan) (env : EvalEnv) (active : Graph)
   rcases a with ⟨asub, apred, aobj⟩
   rcases b with ⟨bsub, bpred, bobj⟩
   by_cases hd : plan.descending = true <;>
-    simp [compareOnCondition, substituteExistentials, Expr.evalIn, binding_subject,
-      compareSubjects, hd] <;>
+    simp [compareOnCondition, sparqlOrderValue, numericView, substituteExistentials,
+      Expr.evalIn, binding_subject, compareSubjects, hd] <;>
     cases asub <;> cases bsub <;>
-    simp [Subject.toTerm, Expr.evalIn, binding_subject, sparqlOrder, erRank,
+    simp [Subject.toTerm, binding_subject, sparqlOrder, erRank,
       subjectOrder, termOrder, termRank] <;> (intro hz; exact hz.symm)
 
 theorem detect_query (query : Query) (plan : Plan) (found : detect query = some plan) :

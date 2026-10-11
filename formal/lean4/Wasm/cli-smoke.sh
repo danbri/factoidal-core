@@ -185,6 +185,29 @@ assert_text "query construct" 0 out "<http://e/q>" \
   "$CLI" query "$TMP/d.nt" --format ntriples \
     --query-string 'CONSTRUCT { ?s <http://e/q> ?o } WHERE { ?s <http://e/p> ?o }'
 
+# SPARQL 1.1 §17.1: the types derived from xsd:integer are numeric. An
+# xsd:int literal compares and adds by value; an out-of-range xsd:unsignedByte
+# is ill-typed, so the comparison is a type error and FILTER drops the row
+# (https://github.com/danbri/factoidal/issues/782).
+cat > "$TMP/int.nt" <<'INTEOF'
+<http://ex/a> <http://ex/age> "72"^^<http://www.w3.org/2001/XMLSchema#int> .
+<http://ex/b> <http://ex/age> "72"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex/c> <http://ex/age> "73"^^<http://www.w3.org/2001/XMLSchema#int> .
+<http://ex/e> <http://ex/age> "300"^^<http://www.w3.org/2001/XMLSchema#unsignedByte> .
+INTEOF
+assert_json "query FILTER(?a >= 72) on xsd:int (issue 782)" 0 \
+  '[b["s"]["value"] for b in r["results"]["bindings"]] == ["http://ex/a", "http://ex/b", "http://ex/c"]' \
+  "$CLI" query "$TMP/int.nt" --format ntriples \
+    --query-string 'SELECT ?s WHERE { ?s <http://ex/age> ?a FILTER(?a >= 72) } ORDER BY ?s'
+assert_json "query FILTER(?a = 72) on xsd:int (issue 782)" 0 \
+  '[b["s"]["value"] for b in r["results"]["bindings"]] == ["http://ex/a", "http://ex/b"]' \
+  "$CLI" query "$TMP/int.nt" --format ntriples \
+    --query-string 'SELECT ?s WHERE { ?s <http://ex/age> ?a FILTER(?a = 72) } ORDER BY ?s'
+assert_json "query (?a + 1) on xsd:int is xsd:integer (issue 782)" 0 \
+  '[(b.get("b") or {}).get("value") for b in r["results"]["bindings"]] == ["73", "73", "74", None] and r["results"]["bindings"][0]["b"]["datatype"] == "http://www.w3.org/2001/XMLSchema#integer"' \
+  "$CLI" query "$TMP/int.nt" --format ntriples \
+    --query-string 'SELECT ?s ?b WHERE { ?s <http://ex/age> ?a BIND(?a + 1 AS ?b) } ORDER BY ?s'
+
 # DESCRIBE (SPARQL 1.1 §16.4) prints the Concise Bounded Description of the
 # resources it names: Alice's blank-node address is followed to its street,
 # Carol is unrelated, and an IRI with no statements has an empty description.

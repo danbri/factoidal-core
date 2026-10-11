@@ -197,6 +197,7 @@ import L4Factoidal.SPARQL.MetadataCountTests
 import L4Factoidal.SPARQL.MetadataCountTheorems
 import L4Factoidal.SPARQL.StringOrderTests
 import L4Factoidal.SPARQL.AggregateExpressionTests
+import L4Factoidal.SPARQL.NumericDerivedTests
 import L4Factoidal.SPARQL.AggregateExpressionTheorems
 import L4Factoidal.SPARQL.SelectSliceTests
 import L4Factoidal.SPARQL.AskValuesTests
