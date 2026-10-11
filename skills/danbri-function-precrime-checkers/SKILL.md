@@ -74,6 +74,18 @@ this gate, so the wasm build and the npm suite did not run
 (https://github.com/danbri/factoidal-builds/actions/runs/38141637018). The
 repair is 196b62d6.
 
+A green gate does not cover the allow list's UNTRIAGED lines: the gate
+passes them, and nothing bounds their depth. Cost, 2026-10-11:
+`Syntax.readStringLiteralBody` and `readIriRefBody` were UNTRIAGED. Each
+used one stack frame per character of a literal, so a 6,000-character
+`geo:asWKT` literal in danbri/londat exhausted Node's default stack in the
+npm 0.9.0 wasm `parse()` (https://github.com/danbri/factoidal/issues/779),
+with every gate green. The native canary at 512 KB showed it at once
+(about 8,100 nested frames). Repair: 6135ee02, which makes both functions
+tail calls with an accumulator, proves them equal to the old definitions
+(`@[csimp]`), and adds the `tests/stack` case `nquads-long-literal`. Before
+relying on an UNTRIAGED function for input-proportional data, triage it.
+
 ### 2. The canary run: the whole suite under a small budget
 
 Run the existing corpora once with a deliberately small stack, so anything
