@@ -1,5 +1,3 @@
-import Std
-
 namespace L4Factoidal.SPARQL
 
 /-- Merge at most `count` rows, preserving the exact tie choices of `List.merge`.
