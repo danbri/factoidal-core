@@ -1,0 +1,10 @@
+# Bound literal 1936 (xsd:integer). Under RDF term equality there is no match; QLever stores both as one Int Id and returns two rows. Records QLever behaviour.
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX wso: <http://wallscope.co.uk/ontology/olympics/>
+PREFIX wsr: <http://wallscope.co.uk/resource/olympics/>
+SELECT ?g WHERE { ?g dbp:year 1936 } ORDER BY ?g
