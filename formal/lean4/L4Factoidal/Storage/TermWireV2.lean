@@ -240,6 +240,163 @@ def parseInlineGo : Nat → List UInt8 → Option (Term × List UInt8)
 def parseInline (bs : List UInt8) : Option (Term × List UInt8) :=
   parseInlineGo bs.length bs
 
+/-! ### The executable decoder
+
+`parseInline` is the specification: its fuel is `bs.length`, which is the
+length of the REST OF THE PAGE when a page decoder calls it once per term
+(`PTD.decodeTermsGo`). Computing that length for each term made the decode
+of a page of `n` terms walk the page `n` times
+(https://github.com/danbri/factoidal/issues/783; 65 % to 70 % of IBK5 query
+time on the olympics data, `docs/designissues/2026-10-11-shardborough-vs-qlever.md`
+section 4.4).
+
+`parseInlineLoop` needs no fuel and reads the bytes of one term and nothing
+else. It is a tail loop: for each triple-term level it reads the subject
+and the predicate and pushes them on `frames`; at the first other tag it
+reads the leaf with `parseInlineGo 1` (which never reads its fuel away from
+tag 3) and `wrapFrames` builds the nested triple terms from the inside out.
+Its termination measure is the input length, which the tag byte makes
+strictly smaller. `parseInline_eq_fast` (`@[csimp]`) proves that
+`parseInline bs = parseInlineLoop bs []`, so compiled code runs the loop and
+every theorem about `parseInline` holds of it unchanged: the bytes and the
+admitted inputs are the same. -/
+
+theorem parseLString_rest_length {bs rest : List UInt8} {s : String}
+    (h : parseLString bs = some (s, rest)) : rest.length ≤ bs.length := by
+  unfold parseLString at h
+  split at h
+  · simp at h
+  · dsimp only at h
+    split at h
+    · simp at h
+    · simp only [Option.map_eq_some_iff, Prod.mk.injEq] at h
+      obtain ⟨_, _, _, hrest⟩ := h
+      subst hrest
+      simp only [List.length_drop]
+      omega
+
+theorem parseSubject_rest_length {bs rest : List UInt8} {s : Subject}
+    (h : parseSubject bs = some (s, rest)) : rest.length ≤ bs.length := by
+  match bs with
+  | [] => simp [parseSubject, parseU8] at h
+  | tag :: afterTag =>
+      simp only [parseSubject, parseU8, Option.bind_eq_bind, Option.bind_some] at h
+      split at h
+      · cases hp : parseLString afterTag with
+        | none => simp [hp] at h
+        | some r =>
+            obtain ⟨i, r'⟩ := r
+            have hl := parseLString_rest_length hp
+            simp only [hp, Option.bind_some] at h
+            split at h
+            · simp only [Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨_, rfl⟩ := h
+              simp only [List.length_cons]; omega
+            · simp at h
+      · split at h
+        · cases hp : parseLString afterTag with
+          | none => simp [hp] at h
+          | some r =>
+              obtain ⟨b, r'⟩ := r
+              have hl := parseLString_rest_length hp
+              simp only [hp, Option.bind_some, Option.some.injEq,
+                Prod.mk.injEq] at h
+              obtain ⟨_, rfl⟩ := h
+              simp only [List.length_cons]; omega
+        · simp at h
+
+/-- Build the triple terms of `frames` around `t`. The head of `frames` is
+the innermost level. -/
+def wrapFrames : List (Subject × WfIri) → Term → Term
+  | [], t => t
+  | (s, p) :: rest, t => wrapFrames rest (.tripleTerm s p t)
+
+def parseInlineLoop (bs : List UInt8) (frames : List (Subject × WfIri)) :
+    Option (Term × List UInt8) :=
+  match bs with
+  | [] => none
+  | tag :: afterTag =>
+      if tag == tagTripleTerm then
+        match _hs : parseSubject afterTag with
+        | none => none
+        | some (s, afterSubject) =>
+            match _hp : parseLString afterSubject with
+            | none => none
+            | some (p, afterPredicate) =>
+                if hpi : isIri p then
+                  parseInlineLoop afterPredicate ((s, ⟨p, hpi⟩) :: frames)
+                else none
+      else (parseInlineGo 1 bs).map (fun r => (wrapFrames frames r.1, r.2))
+termination_by bs.length
+decreasing_by
+  have h1 := parseSubject_rest_length _hs
+  have h2 := parseLString_rest_length _hp
+  simp only [List.length_cons]
+  omega
+
+/-- Away from tag 3 the fuel of `parseInlineGo` is never read. -/
+theorem parseInlineGo_succ_of_ne {tag : UInt8} {afterTag : List UInt8}
+    (h : (tag == tagTripleTerm) = false) (fuel : Nat) :
+    parseInlineGo (fuel + 1) (tag :: afterTag)
+      = parseInlineGo 1 (tag :: afterTag) := by
+  simp only [parseInlineGo, parseU8, Option.bind_eq_bind, Option.bind_some, h]
+  simp
+
+theorem parseInlineLoop_eq_go (bs : List UInt8) (frames : List (Subject × WfIri))
+    (fuel : Nat) (hf : bs.length ≤ fuel) :
+    parseInlineLoop bs frames
+      = (parseInlineGo fuel bs).map (fun r => (wrapFrames frames r.1, r.2)) := by
+  match bs, fuel with
+  | [], 0 => simp [parseInlineGo, parseInlineLoop]
+  | [], _ + 1 => simp [parseInlineGo, parseInlineLoop, parseU8]
+  | _ :: _, 0 => simp at hf
+  | tag :: afterTag, fuel + 1 =>
+      rw [parseInlineLoop]
+      cases ht : (tag == tagTripleTerm) with
+      | false =>
+          simp only [Bool.false_eq_true, if_false]
+          rw [parseInlineGo_succ_of_ne ht fuel]
+      | true =>
+          simp only [if_true]
+          have ht' : tag = tagTripleTerm := by simpa using ht
+          subst ht'
+          simp only [parseInlineGo, parseU8, Option.bind_eq_bind, Option.bind_some]
+          have e1 : (tagTripleTerm == tagIri) = false := by decide
+          have e2 : (tagTripleTerm == tagBnode) = false := by decide
+          have e3 : (tagTripleTerm == tagLiteralInline) = false := by decide
+          simp only [e1, e2, e3, ht, Bool.false_eq_true, if_false, if_true]
+          split
+          · rename_i hs
+            simp [hs]
+          · rename_i s afterSubject hs
+            simp only [hs, Option.bind_some]
+            split
+            · rename_i hp
+              simp [hp]
+            · rename_i p afterPredicate hp
+              simp only [hp, Option.bind_some]
+              have h1 := parseSubject_rest_length hs
+              have h2 := parseLString_rest_length hp
+              split
+              · rename_i hpi
+                have ih := parseInlineLoop_eq_go afterPredicate
+                  ((s, ⟨p, hpi⟩) :: frames) fuel (by
+                    simp only [List.length_cons] at hf; omega)
+                rw [ih]
+                cases parseInlineGo fuel afterPredicate <;> simp [wrapFrames]
+              · simp
+termination_by bs.length
+
+/-- The compiled form of `parseInline`. -/
+def parseInlineFast (bs : List UInt8) : Option (Term × List UInt8) :=
+  parseInlineLoop bs []
+
+@[csimp] theorem parseInline_eq_fast : @parseInline = @parseInlineFast := by
+  funext bs
+  rw [parseInlineFast]
+  rw [parseInlineLoop_eq_go bs [] bs.length (Nat.le_refl _), parseInline]
+  cases parseInlineGo bs.length bs <;> simp [wrapFrames]
+
 def parseBlob (bs : List UInt8) : Option (BlobLiteral × List UInt8) := do
   let (tag, afterTag) ← parseU8 bs
   if tag != tagLiteralBlob then none else do

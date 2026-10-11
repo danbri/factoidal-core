@@ -546,5 +546,7 @@ theorem resolve_toWire (h : ByteArray → ByteArray) (t : Term) :
 #print axioms toWire_inline_iff
 #print axioms toWire_blob_iff
 #print axioms resolve_toWire
+#print axioms parseInlineLoop_eq_go
+#print axioms parseInline_eq_fast
 
 end L4Factoidal.Storage.TermWireV2

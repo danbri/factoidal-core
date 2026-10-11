@@ -64,6 +64,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
                    3.82 s for 4x input before the data index, 0.043 s to 0.139 s after)
+  termwire-page-decode  decode of one PTD2 page of n IRI terms (term codec v2,
+                   the IBK5 dictionary page), 100 times, through
+                   `l4termwire-page-decode`. Bound 6.0 (ROW_BOUND). Before the
+                   repair of https://github.com/danbri/factoidal/issues/783
+                   `TermWireV2.parseInline` took `List.length` of the rest of the
+                   page for each term: 1,000 to 4,000 terms, 5 decodes, went from
+                   0.20 s to 5.30 s (ratio 26); after, 0.015 s to 0.049 s
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -86,6 +93,7 @@ expected failure passes, 2 when the binary is missing. Scores print as
 Usage:  tests/stack/lean_scaling.py [--runs N] [--only ROW[,ROW...]]
 Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4factoidal)
         L4_SHACL_BIN   path of l4shacl (default: beside L4_BIN)
+        L4_TERMWIRE_BIN  path of l4termwire-page-decode (default: beside L4_BIN)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
 """
 
@@ -108,11 +116,12 @@ BOUND = 9.0
 FLOOR = 0.05
 BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4factoidal"))
 SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
+TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-page-decode"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
 # Rows whose OUTPUT grows faster than their input use a larger bound.
-ROW_BOUND = {"owlrl-closure-chain": 20.0}
+ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
@@ -241,6 +250,10 @@ ROWS = {
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "query", str(p), "--format", "turtle", "--query-string",
                    "SELECT * WHERE { ?s ?p ?o }"]),
+    "termwire-page-decode": (
+        1000,
+        lambda n: n,
+        lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),

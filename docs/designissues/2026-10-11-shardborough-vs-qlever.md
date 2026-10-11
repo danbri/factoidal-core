@@ -314,7 +314,13 @@ codec (`Storage.parseTerm`) has the same shape at a smaller share (3.8 % to
 be a value that does not depend on the rest of the page. This is the sixth
 accidental cost of this kind in the tree
 (`docs/designissues/2026-09-05-shard-pack-profile-and-memory.md` section 2
-lists five). It is not repaired here; it needs an issue (section 8).
+lists five). Repaired by https://github.com/danbri/factoidal/issues/783:
+`TermWireV2.parseInlineLoop`, a tail loop with no fuel, is the compiled form of
+`parseInline` through the `@[csimp]` theorem `parseInline_eq_fast`; bytes and
+admitted inputs do not change. Measured after the repair on the same IBK5
+generation, warm, median of 3, answers byte-identical: q01 121,206 to 41,773 ms,
+q07 63,480 to 20,000 ms, q08 16,247 to 4,610 ms, q21 16,351 to 4,655 ms.
+Gate: row `termwire-page-decode` of `tests/stack/lean_scaling.py`.
 
 ### 4.5 Comparison table
 
