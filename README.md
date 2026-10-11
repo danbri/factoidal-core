@@ -1,5 +1,31 @@
 # Factoidal
 
+**Current home: `factoidal-core`.** New Shardborough development is Lean 4
+first and test first. Shardborough's native pack, activation, disk query,
+update and compaction targets now live here with their Lean dependencies.
+See the [native runtime record](docs/20261010-shardborough-native-runtime.md)
+for validation and the remaining assurance and performance work.
+The native query tools also provide [complete JSON results](docs/20261010-shardborough-results-json.md)
+for answer validation instead of the default ten-row preview.
+The [indexed-selection measurement](docs/20261010-shardborough-indexed-selection.md)
+records a proved local optimization and a fourfold improvement on one 300,000-triple synthetic join.
+Read snapshots now use proved [ordered subject access](docs/20261011-shardborough-ordered-subject-access.md),
+[metadata counts](docs/20261011-shardborough-metadata-count.md),
+[native string ordering](docs/20261011-shardborough-native-string-order.md) and
+[streaming JSON escaping](docs/20261011-shardborough-streaming-json-escape.md).
+On the generated 300,000-triple fixture, the streaming-escape trial measured
+the two-pattern join at
+294 ms versus QLever's 378 ms and Virtuoso's 3,499 ms. These single-client,
+in-memory snapshot measurements include different transports; larger varied
+workloads and production resource costs remain necessary for industry parity.
+The [varied-workload follow-up](docs/20261011-shardborough-relational-workloads.md)
+now checks nine full answers through 1.57 million triples. It fixes nested
+aggregate evaluation and adds proved cached planner counts. Chain joins
+approach QLever's timings, while grouping and selective queries expose large
+remaining gaps. Industry parity remains open.
+Historical suite counts and deployment links below are not a fresh test run
+of this checkout.
+
 **A linked information system with graph data and the Web at its
 heart.** Factoidal stores, queries, links and serves RDF, with its
 APIs, interfaces and protocols grounded in the W3C specifications and
@@ -141,7 +167,20 @@ the persisted block query gate is
 [`tools/blockengine-ibk3-persistent-smoke.sh`](tools/blockengine-ibk3-persistent-smoke.sh).
 Record substantial storage work in a dated `docs/YYYYMMDD-*.md` worknote.
 
-## Quick Start
+## Lean 4 Check
+
+With the pinned Lean toolchain installed:
+
+```bash
+cd formal/lean4
+lake build L4Factoidal
+```
+
+This checks the library, proofs and build-time regression tests. It does not
+run the W3C corpus or build all native executables. See the
+[Lean README](formal/lean4/README.md) for the native dependency boundary.
+
+## F* Quick Start
 
 ```bash
 # Install prerequisites
@@ -157,8 +196,8 @@ eval $(opam env --switch=fstar)
 opam install fstar z3 zarith sha digestif
 
 # Clone with W3C test data
-git clone --recurse-submodules https://github.com/danbri/factoidal.git
-cd factoidal
+git clone --recurse-submodules https://github.com/danbri/factoidal-core.git
+cd factoidal-core
 
 # Already cloned without submodules? The test runners need these two
 # (without them they report zero tests):

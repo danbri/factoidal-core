@@ -58,6 +58,28 @@ shard packer, the proofs between them, the costs paid and open):
   before trusting its silence.
 - The lakefile is `lakefile.lean` (Lean DSL) since the VC stage — the
   TOML format has no `extern_lib`; keep new targets in the DSL.
+- **zsh loop variable trap (2026-10-10):** `path` is a special array
+  tied to `PATH`. A read-only instruction-file loop used `for path in`
+  and two subsequent git metadata reads failed with `command not found`.
+  Run a fresh shell to restore the environment; use a descriptive ordinary
+  variable such as `instruction_file`, never `path`, for these loops.
+- **zsh exit-status trap (2026-10-10):** `status` is read-only. A build
+  followed by `status=$?` ran but its wrapper failed before showing the
+  log or propagating the build result. Use `build_status=$?`, then
+  `tail -n 100 "$build_log"; exit "$build_status"`; inspect the log to
+  distinguish a compiler failure from a wrapper failure.
+- **Serialize red phases and integration builds (2026-10-10):** a deliberate
+  failing regression build can remove that module's `.olean`. Concurrent
+  dependent builds then report a missing artifact even if they previously
+  compiled. Stabilize the source and complete the focused red-to-green run
+  before launching integration builds; do not misclassify this as a toolchain
+  failure or trust a build racing a red phase.
+- **Check new files after staging (2026-10-10):** an unstaged
+  `git diff --check` omits untracked files. The native migration's final
+  staged check exposed blank lines at EOF in three unchanged vendored HACL*
+  C files. Preserve their source hashes; check nonvendored changes separately
+  and record the upstream whitespace exception rather than silently editing
+  pinned third-party code.
 - `formal/lean4/lean-toolchain` pins the version (4.33.1 at
   creation); elan auto-fetches it. Bump only deliberately, own
   commit, green `lake build`.
@@ -406,6 +428,22 @@ executable edge only.
   simplification laws.
 - `PORT_NOTES.md` is the F\*↔Lean ledger: update its correspondence
   table and assumption report with every ported module.
+- When migrating modules between repositories, recheck assurance prose as
+  well as imports. On 2026-10-10, two copied hash-module headers referred to
+  an absent native harness and claimed universal hash agreement from finite
+  differential tests. Corrected before commit: tests are measurements, not
+  an equivalence theorem, and a source-tree run is not a destination-tree run.
+  The native migration review also found copied Fn/XSD headers claiming
+  caller centralization that was not migrated, and a benchmark description
+  calling cardinality/preview checks complete result validation. Both needed
+  a review correction: qualify source-only integration claims, and state
+  exactly which outputs a measurement checks (a ten-row preview is not an
+  answer-bag oracle).
+- Before a cross-repository migration, fetch the source remote and inspect
+  ancestry and relevant file differences. Preserve dirty source files: do
+  not reset them or mix their uncommitted shared definitions into the port.
+  Pin a commit and use `git show <commit>:<file>` for source contents; record
+  deliberate destination repairs separately from the upstream snapshot.
 - Iron-rule-#6 discipline carries over: NO conformance claims for
   the Lean side until a Lean executable reads the same W3C manifests
   `bin/w3c-runner` does (the continuation ladder at
