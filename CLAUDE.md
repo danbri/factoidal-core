@@ -474,6 +474,11 @@ Lean functionality and gates land. Port functionality, not files.
 - The owner approves a batch before its new work starts. Work already
   running when the batch is proposed continues.
 - Batch 1: https://github.com/danbri/factoidal/issues/768.
+- Batch 2: https://github.com/danbri/factoidal/issues/801 (approved
+  2026-10-12). Owner, verbatim: "Batch 2 yes, noting that some lean overhead
+  may be unavoidable". A Lean-against-C speed target is a goal: when it is
+  not met, name each remaining cost and say whether Lean's semantics need it
+  or an issue removes it.
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
