@@ -21,7 +21,9 @@ Negative cases, one condition each, so a check that answered
   (the conclusion types `#p` `owl:TransitiveProperty` and does not
   declare it an object property);
 * 2.2 and 5.2-5.5: `New-Feature-ObjectQCR-001` (the conclusion's
-  restriction and its literal `2` are not in the premise);
+  restriction and its literal `2` are not in the premise; the renaming of
+  blank nodes is one-to-one: two copies of the restriction do not map to
+  one);
 * 3, the IRI branch, as a POSITIVE for that condition: `chain2trans1`
   (both documents name the ontology `http://example.org/ontology`);
 * 4.1: `WebOnt-AnnotationProperty-002` (an annotation assertion with
@@ -435,6 +437,12 @@ def hasDefect (g1 g2 : Graph) (k s : String) : Bool :=
 -- search finds it (a check that never embedded would fail this).
 #guard structuralEmbed (parseC qcr001C) ((parseC qcr001C).prefixBnodes "d_") == .found
 #guard structuralEmbed (parse qcr001P) (parseC qcr001C) == .notFound
+-- One-to-one: two copies of the restriction (different blank nodes) cannot
+-- both go to the one copy in G1; they can go to two copies.
+#guard structuralEmbed (parseC qcr001C)
+  (parseC qcr001C ++ (parseC qcr001C).prefixBnodes "e_") == .notFound
+#guard structuralEmbed ((parseC qcr001C).prefixBnodes "d_" ++ (parseC qcr001C).prefixBnodes "f_")
+  (parseC qcr001C ++ (parseC qcr001C).prefixBnodes "e_") == .found
 
 -- 4.1: an annotation assertion in the conclusion.
 #guard hasDefect (parse ap002P) (parseC ap002C) "4.1" "premises002#ap"

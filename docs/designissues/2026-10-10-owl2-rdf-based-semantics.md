@@ -37,6 +37,10 @@ numbers below are that document's unless another document is named.
   carry over" under the correspondence theorem, does not follow from
   the text of Theorem 7.1 and is not used. § 4.2 gives the text and
   the condition under which it would hold.
+* Since 2026-10-12 that condition is checked (§ 7.3, "balanced";
+  `RdfBased/Balanced.lean`), and the answers of the DL path on balanced
+  pairs are printed on a SEPARATE line, `[rdf-based or balanced
+  refutation]`, that is never counted as proved: § 6.2.
 
 ## 1. What the RDF-Based Semantics is
 
@@ -205,9 +209,10 @@ two links of the argument are not proofs in this tree: the § 7.3 text is
 itself a proof SKETCH ("some technical aspects of the theorem are only
 coarsely treated"), and the tableau refuter (`OWL/Refute.lean`, `partial
 def`) has no soundness theorem for the Direct Semantics either. The
-task's rule "a rule without a proof does not ship" excludes it.
-Issue-ready text for a separately labelled line, the way `--dl` prints
-`[closure or refutation]`: § 8.
+task's rule "a rule without a proof does not ship" excludes it from the
+`[rdf-based]` lines. The separately labelled line that § 8 proposed, the
+way `--dl` prints `[closure or refutation]`, exists since 2026-10-12, with
+the balanced check and the refuter's certificates: § 6.2.
 
 ### 4.3 Rules taken from the § 5 conditions
 
@@ -532,7 +537,9 @@ check and a checked DL answer (the refuter has no Direct Semantics soundness
 theorem; plan item 2 of https://github.com/danbri/factoidal/issues/651 adds
 refutation certificates). Until both land, the line of
 https://github.com/danbri/factoidal/issues/732 stays separate from the
-proved count.
+proved count. Both checks exist since 2026-10-12, and the line is
+measured in § 6.2; it is still not a proved count, for the reasons given
+there.
 
 The 242 not-refuted units (ConsistencyTest and NegativeEntailmentTest) are a
 different case. Theorem 7.1 carries entailment in one direction only: a
@@ -608,7 +615,7 @@ PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
    `-equivalentClass-004`, `-oneOf-004`, `-SymmetricProperty-002`,
    `-TransitiveProperty-002`. The DL regime decides most of these with
    the tableau refuter under the Direct Semantics; § 4.2 says why that
-   is not used here.
+   is not used here, and § 6.2 gives each unit on the separate line.
 3. **Arithmetic over cardinalities** (3, all issue 721):
    `WebOnt-extra-credit-002`, `-003`, `-004`. "This test shows a
    relationship between integer multiplication and OWL Full" (the
@@ -646,7 +653,8 @@ on the closure (84 before § 4.5; § 6 lists the 11 that moved).
    `-TopObjectProperty-001`, `WebOnt-I5.5-003`, `-I5.5-004`,
    `-miscellaneous-203`, `-miscellaneous-204`. The DL
    regime decides most of them with the tableau refuter (unions,
-   nominals, cardinalities); § 4.2 says why that is not used here.
+   nominals, cardinalities); § 4.2 says why that is not used here, and
+   § 6.2 gives each unit on the separate line.
 
 ## 8. Gaps, with issue-ready text
 
@@ -668,8 +676,10 @@ not excluded. Repair: run the regime's closure without those three rows
 constructors), and prove the bridge. Design record:
 `docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 4.1.
 
-**B. Title: OWL RDF-Based regime: a separately labelled line for Direct
-Semantics refutations on balanced pairs (Theorem 7.1).** Body: Theorem
+**B. Filed as https://github.com/danbri/factoidal/issues/732; items 1 and
+2 done on 2026-10-12 (§ 6.2), item 3 open. Title: OWL RDF-Based regime: a
+separately labelled line for Direct Semantics refutations on balanced
+pairs (Theorem 7.1).** Body: Theorem
 7.1 carries a Direct Semantics entailment to the RDF-Based Semantics for
 the substitute pair it constructs, not for the input pair. For an input
 pair that is already balanced (§ 7.3, Definition (Balanced)), the two

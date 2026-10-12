@@ -555,6 +555,23 @@ What the split shows:
 - The RDF-Based numbers: a `not-refuted` unit is never a pass. The regime
   proves entailments and inconsistencies and never proves their absence.
 
+**The separate line `[rdf-based or balanced refutation]`** (2026-10-12,
+https://github.com/danbri/factoidal/issues/732). The same `--rdf-based`
+run checks, for each PositiveEntailmentTest and InconsistencyTest the
+RDF-Based rules did not prove, whether its pair is balanced (OWL 2
+RDF-Based Semantics § 7.3, `OWL/RdfBased/Balanced.lean`), and gives a
+balanced pair to the DL path. It prints `BALANCED-PASS`, `NOT-BALANCED`
+or `BALANCED-UNDECIDED` per unit, the score lines with the tag
+`rdf-based or balanced refutation`, and `BALANCED all.rdf [status
+Approved, species DL]` for key result 3.2 of
+https://github.com/danbri/factoidal/issues/768. The `[rdf-based]` lines do
+not change. Never quote the separate line as a proved count: it rests on
+Theorem 7.1 (a proof sketch) and on obligations O1 and O2
+(https://github.com/danbri/factoidal/issues/761,
+https://github.com/danbri/factoidal/issues/762), and O3 for entailments
+(https://github.com/danbri/factoidal/issues/763). Record:
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 6.2.
+
 **Rules for quoting an OWL number.**
 
 1. Give the regime tag and the line. Give the `IN-SCOPE` line as the
