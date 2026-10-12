@@ -158,7 +158,7 @@ not written yet.
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` |
-| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]`; `l4sbm11 serve GEN`; decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN` |
+| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN` |
 | SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
@@ -561,6 +561,22 @@ against the fallback, the gate fixture with the anti-pattern 34 queries,
 the `sbm11-query` case of `tests/stack/run.sh --canary`; timings with
 `tests/sbm11/bench.sh GEN`. A query tool that changes routing must keep
 the `ref-*` gate queries on `path=reference`.
+
+Read verification is an option (2026-10-12,
+https://github.com/danbri/factoidal/issues/796; record: section 9 of the
+stage 4 record). `l4sbm11 query|serve|scan|count|dump|dump-ids ...
+--verify merkle|none`; in Lean, `Sbm11Gen.openGen v` and
+`Sbm11Query.openSession v` take a `Sbm11Gen.Verify` (no library default).
+`merkle`: every read is widened to its 65,536-byte chunks and each chunk is
+checked by its Merkle proof; PRM1 and GDX1 are checked by SHA-256. `none`:
+exact `pread` ranges, no hashing, only the manifest and the file lengths are
+checked at open; a byte changed after activation is NOT detected
+(`tests/sbm11/run.sh` part (g) pins this). CLI default: `none` when a
+`CURRENT` pointer names GEN (activation checked every file), else `merkle`;
+`--explain` prints `plan: verify=...` and why. `verify`, `activate`,
+`stats`, `prm-check`, `frame-check` always check. The format is unchanged:
+the packer writes the roots and `.merkle` sidecars either way. Bench one
+mode with `VERIFY=none tests/sbm11/bench.sh GEN`.
 
 Format registry rows (wire version 11):
 

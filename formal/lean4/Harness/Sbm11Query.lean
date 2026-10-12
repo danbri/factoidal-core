@@ -4,7 +4,8 @@ generation (stage 4, https://github.com/danbri/factoidal/issues/790).
 
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain]
                 [--repeat N] [--reference-render] [--reference]
-  l4sbm11 serve GEN
+                [--verify merkle|none]
+  l4sbm11 serve GEN [--verify merkle|none]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
 
@@ -23,6 +24,13 @@ guard selects nothing. A line on stderr names the path that ran
   --reference-render  print every term through `jsonOfTerm` (the key
                       printer is compared with it in tests/sbm11/run.sh)
   --reference         run the reference fallback even for the id fragment
+  --verify V          how reads are checked (`Sbm11Gen.Verify`,
+                      https://github.com/danbri/factoidal/issues/796):
+                      `merkle` widens each read to its 65,536-byte chunks and
+                      checks each by its Merkle proof; `none` reads exactly
+                      the needed bytes and hashes nothing (activation checked
+                      the files). Default: `none` when a `CURRENT` pointer
+                      names GEN (an activated generation), else `merkle`.
 
 Output: SPARQL JSON for SELECT and ASK; N-Triples for CONSTRUCT and DESCRIBE.
 `serve` reads one query per line of stdin (or `--file PATH`) and writes one
@@ -64,8 +72,8 @@ structure LoadedPerm where
 
 /-- An open generation: the manifest, the dictionary's Merkle leaves and
     header; each permutation is opened on its first use (its PRM1 read, length
-    and SHA-256 checked against the manifest, decoded; its PRB1 leaves
-    admitted against the manifest root). -/
+    and, under `Verify.merkle`, SHA-256 checked against the manifest, decoded;
+    under `merkle` its PRB1 leaves admitted against the manifest root). -/
 structure Session where
   g : Gen
   perms : IO.Ref (Array (Option LoadedPerm))
@@ -73,29 +81,34 @@ structure Session where
   /-- bytes of PRB1 blocks read (the frames a plan reads) -/
   frameBytes : IO.Ref Nat
   lookups : IO.Ref Nat
-  /-- GDX1, read whole on the first dictionary access (102 KB on olympics:
-      12 bytes per page), its length and SHA-256 checked against the
-      manifest -/
+  /-- Under `Verify.merkle`: GDX1, read whole on the first dictionary access
+      (102 KB on olympics: 12 bytes per page), its length and SHA-256 checked
+      against the manifest. Unused under `none` (each GDX1 entry is one
+      `pread`). -/
   gdx : IO.Ref (Option ByteArray)
 
-def openSession (dir0 : String) : IO Session := do
+/-- Open a generation for queries, reads checked as `v` says (no default:
+    the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
+def openSession (v : Verify) (dir0 : String) : IO Session := do
   let dir := (← Harness.GenerationPointer.resolveStoreDirectory dir0).toString
   let mbytes ← IO.FS.readBinFile s!"{dir}/{manifestName}"
   let some m := decodeManifest mbytes.data.toList
     | throw (IO.userError s!"{dir}/{manifestName}: does not decode as an SBM11 manifest")
+  if v == .none then checkLengths dir m
+  let fileBytes ← IO.mkRef mbytes.size
   let gdvA ← artifact m "GDV1"
   let gdxA ← artifact m "GDX1"
   let gdvPath := s!"{dir}/{gdvA.file}"
   let gdxPath := s!"{dir}/{gdxA.file}"
-  let gdvLeaves ← loadLeaves gdvPath gdvA.merkle
-  let gdxLeaves ← loadLeaves gdxPath gdxA.merkle
+  let gdvLeaves ← loadLeaves v fileBytes gdvPath gdvA.merkle
+  let gdxLeaves ← loadLeaves v fileBytes gdxPath gdxA.merkle
   let readBytes ← IO.mkRef 0
   let fetchedBytes ← IO.mkRef 0
-  let gdvCache ← Harness.PosixRangeIO.newVerifiedChunkCache gdvA.merkle
-  let gdxCache ← Harness.PosixRangeIO.newVerifiedChunkCache gdxA.merkle
-  let g0 : Gen := { dir, manifest := m, gdvPath, gdxPath, gdvRef := gdvA.merkle, gdxRef := gdxA.merkle,
+  let gdvCache ← newChunkCache v gdvA.merkle
+  let gdxCache ← newChunkCache v gdxA.merkle
+  let g0 : Gen := { dir, manifest := m, verify := v, gdvPath, gdxPath, gdvRef := gdvA.merkle, gdxRef := gdxA.merkle,
                     gdvLeaves, gdxLeaves, gdvCache, gdxCache, dictHdr := default, perms := #[],
-                    readBytes, fetchedBytes }
+                    readBytes, fetchedBytes, fileBytes }
   let hdrBytes ← verifiedRead g0 gdxPath gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   return { g := { g0 with dictHdr }, perms := ← IO.mkRef #[none, none, none, none],
@@ -112,14 +125,12 @@ def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
     let prbA ← artifact m s!"PRB1-{nm}"
     let prmPath := s!"{ss.g.dir}/{prmA.file}"
     let prbPath := s!"{ss.g.dir}/{prbA.file}"
-    let prmBytes ← IO.FS.readBinFile prmPath
-    if prmBytes.size != prmA.bytes || Harness.nativeSha256 prmBytes != prmA.sha256 then
-      throw (IO.userError s!"{prmPath}: length or SHA-256 differs from the manifest")
+    let prmBytes ← readPrm ss.g.verify ss.g.fileBytes prmPath prmA
     let some (perm, ms) := PrmAt.decodePrmAt prmBytes
       | throw (IO.userError s!"{prmPath}: does not decode as PRM1")
     if perm != p then throw (IO.userError s!"{prmPath}: permutation code {perm}, expected {p}")
-    let leaves ← loadLeaves prbPath prbA.merkle
-    let cache ← Harness.PosixRangeIO.newVerifiedChunkCache prbA.merkle
+    let leaves ← loadLeaves ss.g.verify ss.g.fileBytes prbPath prbA.merkle
+    let cache ← newChunkCache ss.g.verify prbA.merkle
     let lp : LoadedPerm := { prbPath, prbRef := prbA.merkle, leaves, cache, metas := ms }
     ss.perms.modify (·.set! p (some lp))
     return lp
@@ -131,21 +142,27 @@ def Session.gdxBytes (ss : Session) : IO ByteArray := do
   | none =>
     let a ← artifact ss.g.manifest "GDX1"
     let b ← IO.FS.readBinFile ss.g.gdxPath
+    ss.g.fileBytes.modify (· + b.size)
     if b.size != a.bytes || Harness.nativeSha256 b != a.sha256 then
       throw (IO.userError s!"{ss.g.gdxPath}: length or SHA-256 differs from the manifest")
     ss.gdx.set (some b)
     return b
 
 def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray := do
+  if ss.g.verify == .none then
+    return (← verifiedRead ss.g ss.g.gdxPath ss.g.gdxRef ss.g.gdxLeaves ss.g.gdxCache off len)
   let b ← ss.gdxBytes
   if off + len > b.size then throw (IO.userError s!"GDX1: read past the end")
   return b.extract off (off + len)
 
-/-- Bytes `[off, off + len)` of GDV1 through the verified chunk cache: each
-    65,536-byte chunk is admitted once by its Merkle proof
-    (`readVerifiedChunkCached?`), then ranges are cut from it. -/
+/-- Bytes `[off, off + len)` of GDV1. `merkle`: through the verified chunk
+    cache: each 65,536-byte chunk is admitted once by its Merkle proof
+    (`readVerifiedChunkCached?`), then ranges are cut from it. `none`: one
+    `pread` of exactly those bytes. -/
 def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
   if len == 0 then return ByteArray.empty
+  if ss.g.verify == .none then
+    return (← verifiedRead ss.g ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache off len)
   let cb := ss.g.gdvRef.chunkBytes
   let first := off / cb
   let last := (off + len - 1) / cb
@@ -154,6 +171,7 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     match ← Harness.PosixRangeIO.readVerifiedChunkCached? ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache c with
     | some (chunk, fp) =>
       ss.g.fetchedBytes.modify (· + fp.fetchedBytes)
+      ss.g.fileBytes.modify (· + fp.fetchedBytes)
       let lo := max off (c * cb) - c * cb
       let hi := min (off + len) ((c + 1) * cb) - c * cb
       if hi > chunk.size then throw (IO.userError s!"GDV1: chunk {c} is short")
@@ -402,6 +420,10 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 
+def verifyText : Verify → String
+  | .merkle => "each read widened to its 65,536-byte chunks, each chunk checked by its Merkle proof"
+  | .none => "exact byte ranges, no chunk widening, no hash checks; activation checked the files"
+
 def median (xs : Array Nat) : Nat :=
   let s := L4Factoidal.Qlvr.mergeSortBy xs (· ≤ ·)
   if s.isEmpty then 0 else s[(s.size - 1) / 2]!
@@ -418,6 +440,8 @@ structure Opts where
   repeatN : Nat := 1
   referenceRender : Bool := false
   reference : Bool := false
+  /-- `--verify`; when absent the CLI uses `cliDefaultVerify` -/
+  verify : Option Verify := Option.none
 
 def parseOpts (xs : List String) : Except String Opts := Id.run do
   let arr := xs.toArray
@@ -444,11 +468,24 @@ def parseOpts (xs : List String) : Except String Opts := Id.run do
     else if x == "--reference" then
       o := { o with reference := true }
       i := i + 1
+    else if x == "--verify" then
+      match (arr[i + 1]?).bind Verify.ofString? with
+      | some v => o := { o with verify := some v }
+      | Option.none => return .error "--verify takes merkle or none"
+      i := i + 2
     else if x.startsWith "--" then return .error s!"unknown option {x}"
     else
       o := { o with text := some x }
       i := i + 1
   return .ok o
+
+/-- The `--verify` option, or the CLI default for `dir`; the second part says
+    which (for `--explain` and the stderr summary). -/
+def chooseVerify (dir : String) : Option Verify → IO (Verify × String)
+  | some v => pure (v, "--verify")
+  | Option.none => do
+    let v ← cliDefaultVerify dir
+    pure (v, if v == .none then "default: CURRENT names this generation" else "default: not an activated generation")
 
 def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
@@ -457,7 +494,8 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     | none, some t => pure t
     | none, none => throw (IO.userError "no query")
   let q ← parse text o.base
-  let ss ← openSession dir
+  let (v, why) ← chooseVerify dir o.verify
+  let ss ← openSession v dir
   let t1 ← IO.monoNanosNow
   let stdout ← IO.getStdout
   let runs := max o.repeatN 1
@@ -479,20 +517,22 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let t2 ← IO.monoNanosNow
   let some r := last | return 1
   if o.explain then
+    IO.eprintln s!"plan: verify={v.name} ({why}; {verifyText v})"
     for l in r.plan do IO.eprintln s!"plan: {l}"
   let fb ← ss.frameBytes.get
   let fetched ← ss.g.fetchedBytes.get
   if runs > 1 then
     IO.eprintln s!"repeat: {runs} runs in one process; execution ms median {msText (median execs)} min {msText (execs.foldl min (execs.getD 0 0))} max {msText (execs.foldl max 0)}"
-  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; constants looked up {← ss.lookups.get}; block bytes read {fb}; chunk bytes fetched and verified {fetched}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; constants looked up {← ss.lookups.get}; block bytes read {fb}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   return 0
 
 /-- One query per line of stdin; one line of SPARQL JSON per query. -/
-def runServe (dir : String) : IO UInt32 := do
+def runServe (dir : String) (verify? : Option Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let ss ← openSession dir
+  let (v, why) ← chooseVerify dir verify?
+  let ss ← openSession v dir
   let t1 ← IO.monoNanosNow
-  IO.eprintln s!"serve: open {msText (t1 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"serve: verify={v.name} ({why}); open {msText (t1 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   let mut failures := 0
@@ -537,7 +577,7 @@ def runPrmCheck (dir0 : String) : IO UInt32 := do
 /-- `FrameWords.decodeWords` against `decodeColumnAt` on every frame of
     every block of every permutation. -/
 def runFrameCheck (dir : String) : IO UInt32 := do
-  let ss ← openSession dir
+  let ss ← openSession .merkle dir
   let mut frames := 0
   let mut bad := 0
   for p in [0:4] do
@@ -566,8 +606,14 @@ def main (args : List String) : IO UInt32 := do
       try runQuery dir o
       catch e => IO.eprintln s!"l4sbm11 query: {e}"; return 1
   | ["serve", dir] =>
-    try runServe dir
+    try runServe dir Option.none
     catch e => IO.eprintln s!"l4sbm11 serve: {e}"; return 1
+  | ["serve", dir, "--verify", vs] =>
+    match Verify.ofString? vs with
+    | Option.none => IO.eprintln "l4sbm11 serve: --verify takes merkle or none"; return 2
+    | some v =>
+      try runServe dir (some v)
+      catch e => IO.eprintln s!"l4sbm11 serve: {e}"; return 1
   | ["prm-check", dir] =>
     try runPrmCheck dir
     catch e => IO.eprintln s!"l4sbm11 prm-check: {e}"; return 1
@@ -575,7 +621,7 @@ def main (args : List String) : IO UInt32 := do
     try runFrameCheck dir
     catch e => IO.eprintln s!"l4sbm11 frame-check: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] | serve GEN | prm-check GEN | frame-check GEN"
+    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
     return 2
 
 end Harness.Sbm11Query

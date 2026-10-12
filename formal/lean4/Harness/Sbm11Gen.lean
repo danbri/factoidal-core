@@ -156,6 +156,42 @@ def writeLeaves (path : String) (leaves : Array ByteArray) : IO Unit := do
   for l in leaves do out := out ++ l
   IO.FS.writeBinFile (path ++ ".merkle") out
 
+/-! ## Verification of reads (https://github.com/danbri/factoidal/issues/796) -/
+
+/-- How a reader checks the bytes it reads from a generation. The library has
+    no default: every caller of `openGen` and `Sbm11Query.openSession` names
+    one.
+
+    * `merkle`: each read is widened to the 65,536-byte chunks it touches, and
+      each chunk is checked by its Merkle proof against the root in the
+      manifest (the leaves come from the `.merkle` sidecar, admitted only when
+      they rebuild that root); PRM1 files and GDX1 are read whole and checked
+      by SHA-256. A changed byte in a chunk the reader touches is refused.
+    * `none`: each read is one `pread` of exactly the bytes it needs (block
+      frames, GDX1 entries, GDV1 pages); no file is hashed and no sidecar is
+      read. The open still decodes the manifest and checks that every file
+      has the manifest's length. The reader relies on activation
+      (`l4sbm11 activate`, which checks every file's length, SHA-256, Merkle
+      root and sidecar) having admitted the files, and on nobody changing
+      them after that: a changed byte is NOT detected (pinned by
+      `tests/sbm11/run.sh` part (g)).
+
+    The format does not change: the packer writes the Merkle roots and
+    sidecars in both cases. -/
+inductive Verify where
+  | merkle
+  | none
+  deriving BEq, Repr
+
+def Verify.name : Verify → String
+  | .merkle => "merkle"
+  | .none => "none"
+
+def Verify.ofString? : String → Option Verify
+  | "merkle" => some .merkle
+  | "none" => some .none
+  | _ => Option.none
+
 /-! ## An open generation -/
 
 structure PermSrc where
@@ -170,6 +206,7 @@ structure PermSrc where
 structure Gen where
   dir : String
   manifest : Manifest
+  verify : Verify
   gdvPath : String
   gdxPath : String
   gdvRef : Ref
@@ -180,9 +217,15 @@ structure Gen where
   gdxCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
   dictHdr : Dict.GdxHeader
   perms : Array PermSrc
-  /-- Bytes read by verified reads, and the fixed chunks fetched for them. -/
+  /-- Bytes the callers asked for, and the bytes fetched for them: under
+      `merkle` the whole 65,536-byte chunks not yet in the chunk cache, under
+      `none` the asked bytes themselves. -/
   readBytes : IO.Ref Nat
   fetchedBytes : IO.Ref Nat
+  /-- Every byte this open read from the generation's files: the manifest,
+      the `.merkle` sidecars, whole-file reads (PRM1, GDX1) and the fetched
+      ranges. -/
+  fileBytes : IO.Ref Nat
 
 def manifestName : String := "manifest.sbm11"
 
@@ -192,9 +235,13 @@ def artifact (m : Manifest) (role : String) : IO Artifact :=
   | none => throw (IO.userError s!"manifest has no artifact {role}")
 
 /-- The untrusted leaves of a file, admitted only when they rebuild the
-    committed root. -/
-def loadLeaves (path : String) (ref : Ref) : IO (List L4Factoidal.Storage.BlockMerkle.Digest) := do
+    committed root. Under `Verify.none` no sidecar is read and there are no
+    leaves. -/
+def loadLeaves (v : Verify) (io : IO.Ref Nat) (path : String) (ref : Ref) :
+    IO (List L4Factoidal.Storage.BlockMerkle.Digest) := do
+  if v == .none then return []
   let bytes ← IO.FS.readBinFile (path ++ ".merkle")
+  io.modify (· + bytes.size)
   match L4Factoidal.Storage.GenerationVerify.leaves? ref.chunkCount bytes with
   | none => throw (IO.userError s!"{path}.merkle: not {ref.chunkCount} leaves")
   | some ls =>
@@ -202,37 +249,95 @@ def loadLeaves (path : String) (ref : Ref) : IO (List L4Factoidal.Storage.BlockM
       throw (IO.userError s!"{path}.merkle: leaves do not rebuild the manifest root")
     pure ls
 
+/-- An empty chunk cache under `Verify.none` (never filled), one slot per
+    chunk under `merkle`. -/
+def newChunkCache (v : Verify) (ref : Ref) : IO (IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) :=
+  if v == .merkle then Harness.PosixRangeIO.newVerifiedChunkCache ref else IO.mkRef #[]
+
+/-- Bytes `[off, off + len)` of a file of the generation. `merkle`: through
+    the verified chunk cache (`readVerifiedRangeCached?`); `none`: one `pread`
+    of exactly those bytes, inside the manifest's length of the file. -/
 def verifiedRead (g : Gen) (path : String) (ref : Ref) (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
     (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (off len : Nat) : IO ByteArray := do
   if len == 0 then return ByteArray.empty
-  match ← Harness.PosixRangeIO.readVerifiedRangeCached? path ref leaves cache { offset := off, length := len } with
-  | some (b, fp) =>
+  match g.verify with
+  | .none =>
+    if off + len > ref.totalBytes then
+      throw (IO.userError s!"{path}: read of {len} bytes at {off} past the manifest's length {ref.totalBytes}")
+    let b ← pread path off len
     g.readBytes.modify (· + len)
-    g.fetchedBytes.modify (· + fp.fetchedBytes)
+    g.fetchedBytes.modify (· + len)
+    g.fileBytes.modify (· + len)
     pure b
-  | none => throw (IO.userError s!"{path}: verified read of {len} bytes at {off} refused")
+  | .merkle =>
+    match ← Harness.PosixRangeIO.readVerifiedRangeCached? path ref leaves cache { offset := off, length := len } with
+    | some (b, fp) =>
+      g.readBytes.modify (· + len)
+      g.fetchedBytes.modify (· + fp.fetchedBytes)
+      g.fileBytes.modify (· + fp.fetchedBytes)
+      pure b
+    | Option.none => throw (IO.userError s!"{path}: verified read of {len} bytes at {off} refused")
+
+/-- Under `Verify.none`: every file of the manifest has the manifest's
+    length (one `stat` per file; no file is read). -/
+def checkLengths (dir : String) (m : Manifest) : IO Unit := do
+  for a in m.artifacts do
+    let n ← fileSize s!"{dir}/{a.file}"
+    if n != a.bytes then
+      throw (IO.userError s!"{dir}/{a.file}: {n} bytes, the manifest says {a.bytes}")
+
+/-- A whole PRM1 file, its length checked against the manifest, and under
+    `merkle` its SHA-256 too. -/
+def readPrm (v : Verify) (io : IO.Ref Nat) (prmPath : String) (prmA : Artifact) : IO ByteArray := do
+  let prmBytes ← IO.FS.readBinFile prmPath
+  io.modify (· + prmBytes.size)
+  if prmBytes.size != prmA.bytes then
+    throw (IO.userError s!"{prmPath}: length differs from the manifest")
+  if v == .merkle && Harness.nativeSha256 prmBytes != prmA.sha256 then
+    throw (IO.userError s!"{prmPath}: length or SHA-256 differs from the manifest")
+  pure prmBytes
+
+/-- The CLI's default when `--verify` is not given: `none` for a generation
+    that a `CURRENT` pointer names (GEN is a collection root with `CURRENT`,
+    or the parent of GEN has a `CURRENT` that names GEN), because activation
+    checked every file's length, SHA-256 and Merkle root before it wrote
+    `CURRENT`; `merkle` for any other directory. -/
+def cliDefaultVerify (dir0 : String) : IO Verify := do
+  let p : System.FilePath := dir0
+  if ← (p / Harness.GenerationPointer.currentName).pathExists then return .none
+  try
+    let real ← IO.FS.realPath p
+    match real.parent, real.fileName with
+    | some parent, some nm =>
+      let b ← IO.FS.readBinFile (parent / Harness.GenerationPointer.currentName)
+      return (if String.fromUTF8? b == some nm then .none else .merkle)
+    | _, _ => return .merkle
+  catch _ => return .merkle
 
 /-- Open a generation directory (or a collection root with `CURRENT`):
-    decode the manifest, admit the Merkle leaves of every file, read and
-    verify every PRM1 file. -/
-def openGen (dir0 : String) : IO Gen := do
+    decode the manifest; under `merkle` admit the Merkle leaves of every file
+    and check every PRM1 file's SHA-256, under `none` check every file's
+    length; read and decode every PRM1 file. -/
+def openGen (v : Verify) (dir0 : String) : IO Gen := do
   let dir := (← Harness.GenerationPointer.resolveStoreDirectory dir0).toString
   let mbytes ← IO.FS.readBinFile s!"{dir}/{manifestName}"
   let some m := decodeManifest mbytes.data.toList
     | throw (IO.userError s!"{dir}/{manifestName}: does not decode as an SBM11 manifest")
+  if v == .none then checkLengths dir m
+  let fileBytes ← IO.mkRef mbytes.size
   let gdvA ← artifact m "GDV1"
   let gdxA ← artifact m "GDX1"
   let gdvPath := s!"{dir}/{gdvA.file}"
   let gdxPath := s!"{dir}/{gdxA.file}"
-  let gdvLeaves ← loadLeaves gdvPath gdvA.merkle
-  let gdxLeaves ← loadLeaves gdxPath gdxA.merkle
+  let gdvLeaves ← loadLeaves v fileBytes gdvPath gdvA.merkle
+  let gdxLeaves ← loadLeaves v fileBytes gdxPath gdxA.merkle
   let readBytes ← IO.mkRef 0
   let fetchedBytes ← IO.mkRef 0
-  let gdvCache ← Harness.PosixRangeIO.newVerifiedChunkCache gdvA.merkle
-  let gdxCache ← Harness.PosixRangeIO.newVerifiedChunkCache gdxA.merkle
-  let g0 : Gen := { dir, manifest := m, gdvPath, gdxPath, gdvRef := gdvA.merkle, gdxRef := gdxA.merkle,
+  let gdvCache ← newChunkCache v gdvA.merkle
+  let gdxCache ← newChunkCache v gdxA.merkle
+  let g0 : Gen := { dir, manifest := m, verify := v, gdvPath, gdxPath, gdvRef := gdvA.merkle, gdxRef := gdxA.merkle,
                     gdvLeaves, gdxLeaves, gdvCache, gdxCache, dictHdr := default, perms := #[],
-                    readBytes, fetchedBytes }
+                    readBytes, fetchedBytes, fileBytes }
   let hdrBytes ← verifiedRead g0 gdxPath gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   let mut perms : Array PermSrc := #[]
@@ -242,14 +347,12 @@ def openGen (dir0 : String) : IO Gen := do
     let prbA ← artifact m s!"PRB1-{nm}"
     let prmPath := s!"{dir}/{prmA.file}"
     let prbPath := s!"{dir}/{prbA.file}"
-    let prmBytes ← IO.FS.readBinFile prmPath
-    if prmBytes.size != prmA.bytes || Harness.nativeSha256 prmBytes != prmA.sha256 then
-      throw (IO.userError s!"{prmPath}: length or SHA-256 differs from the manifest")
+    let prmBytes ← readPrm v fileBytes prmPath prmA
     let some (perm, ms) := decodePrm prmBytes.data.toList
       | throw (IO.userError s!"{prmPath}: does not decode as PRM1")
     if perm != p then throw (IO.userError s!"{prmPath}: permutation code {perm}, expected {p}")
-    let leaves ← loadLeaves prbPath prbA.merkle
-    let cache ← Harness.PosixRangeIO.newVerifiedChunkCache prbA.merkle
+    let leaves ← loadLeaves v fileBytes prbPath prbA.merkle
+    let cache ← newChunkCache v prbA.merkle
     perms := perms.push { perm := p, prbPath, prbRef := prbA.merkle, leaves, cache, metas := ms.toArray,
                           rows := rowSum ms }
   pure { g0 with dictHdr, perms }

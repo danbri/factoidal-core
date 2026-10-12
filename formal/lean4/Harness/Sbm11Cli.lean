@@ -17,6 +17,17 @@ https://github.com/danbri/factoidal/issues/789).
       Every quad as N-Quads, in the order of PERM (default spo).
   l4sbm11 dump-ids GEN PERM
       Every row as `s p o g` ids (the quad order, whatever the permutation).
+  --verify merkle|none   (query, serve, scan, count, dump, dump-ids)
+      How reads are checked (https://github.com/danbri/factoidal/issues/796,
+      `Sbm11Gen.Verify`). `merkle`: each read is widened to the 65,536-byte
+      chunks it touches and each chunk is checked by its Merkle proof; PRM1
+      and GDX1 are checked by SHA-256 at open. `none`: each read is one
+      `pread` of exactly the needed bytes, no file is hashed; the open checks
+      only that the manifest decodes and every file has its length, and a
+      changed byte is not detected. Default: `none` when a `CURRENT` pointer
+      names GEN (activation checked every file), `merkle` otherwise.
+      `stats`, `verify`, `activate`, `prm-check` and `frame-check` always use
+      `merkle` (or hash every file).
   l4sbm11 canon SOURCE
       The quads of an N-Triples or N-Quads source as N-Quads, with the term
       normalisation of the packer (language tags in lower case), so that
@@ -26,8 +37,8 @@ https://github.com/danbri/factoidal/issues/789).
   l4sbm11 activate ROOT NAME
       The activation checks on ROOT/NAME, then `ROOT/CURRENT` := NAME.
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N]
-                [--reference-render] [--reference]
-  l4sbm11 serve GEN
+                [--reference-render] [--reference] [--verify merkle|none]
+  l4sbm11 serve GEN [--verify merkle|none]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
       SPARQL over the generation (stage 4): `Harness/Sbm11Query.lean`.
@@ -89,13 +100,29 @@ def quadText (g : Gen) (cache : PageCache) (s p o gid : Nat) : IO String := do
 
 def report (g : Gen) (t0 : Nat) (extra : String) : IO Unit := do
   let t1 ← IO.monoNanosNow
-  IO.eprintln s!"sbm11: {extra} read-bytes={← g.readBytes.get} fetched-bytes={← g.fetchedBytes.get} ms={ms t0 t1} peak-rss={← vmHWM}"
+  IO.eprintln s!"sbm11: {extra} verify={g.verify.name} read-bytes={← g.readBytes.get} fetched-bytes={← g.fetchedBytes.get} file-bytes={← g.fileBytes.get} ms={ms t0 t1} peak-rss={← vmHWM}"
+
+/-- `--verify V` out of an argument list (the last one wins), and the other
+    arguments in order. -/
+def splitVerify : List String → List String → Option Verify → Except String (List String × Option Verify)
+  | [], acc, v => .ok (acc.reverse, v)
+  | "--verify" :: x :: rest, acc, _ =>
+    match Verify.ofString? x with
+    | some v => splitVerify rest acc (some v)
+    | Option.none => .error "--verify takes merkle or none"
+  | ["--verify"], _, _ => .error "--verify takes merkle or none"
+  | x :: rest, acc, v => splitVerify rest (x :: acc) v
+
+/-- The `--verify` option, or the CLI default (`cliDefaultVerify`). -/
+def verifyFor (dir : String) : Option Verify → IO Verify
+  | some v => pure v
+  | Option.none => cliDefaultVerify dir
 
 /-! ## stats -/
 
 def runStats (dir : String) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let g ← openGen dir
+  let g ← openGen .merkle dir
   let m := g.manifest
   IO.println s!"generation: {g.dir}"
   IO.println s!"layout: {m.layout}"
@@ -138,9 +165,9 @@ def prefixOf (g : Gen) (keys : List String) : IO (Option Prefix) := do
     | none => return none
   pure (some ⟨vals⟩)
 
-def runScan (dir permS : String) (rest : List String) : IO UInt32 := do
+def runScan (dir permS : String) (rest : List String) (verify? : Option Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let g ← openGen dir
+  let g ← openGen (← verifyFor dir verify?) dir
   let perm ← permArg permS
   let (keys, lim, ids) := parseScanArgs rest [] none false
   let tOpen ← IO.monoNanosNow
@@ -162,9 +189,9 @@ def runScan (dir permS : String) (rest : List String) : IO UInt32 := do
   report g t0 "scan"
   pure 0
 
-def runCount (dir permS : String) (keys : List String) : IO UInt32 := do
+def runCount (dir permS : String) (keys : List String) (verify? : Option Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let g ← openGen dir
+  let g ← openGen (← verifyFor dir verify?) dir
   let perm ← permArg permS
   let tOpen ← IO.monoNanosNow
   let some p ← prefixOf g keys
@@ -179,9 +206,9 @@ def runCount (dir permS : String) (keys : List String) : IO UInt32 := do
 
 /-! ## dump -/
 
-def runDump (dir permS : String) (idsOnly : Bool) : IO UInt32 := do
+def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
-  let g ← openGen dir
+  let g ← openGen (← verifyFor dir verify?) dir
   let perm ← permArg permS
   let src ← permSrc g perm
   let ps := src.metas
@@ -281,7 +308,7 @@ def verifyGen (dir : String) : IO Nat := do
   let t1 ← IO.monoNanosNow
   IO.eprintln s!"sbm11-verify: manifest and {m.artifacts.length} files: failures={fails} ms={ms t0 t1}"
   if fails > 0 then return fails
-  let g ← openGen dir
+  let g ← openGen .merkle dir
   -- the dictionary
   if g.dictHdr.termCount != m.terms then
     fails := fails + 1; IO.eprintln s!"FAIL: GDX1 term count {g.dictHdr.termCount}, the manifest says {m.terms}"
@@ -384,25 +411,39 @@ def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
   "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
-  "       | serve GEN | prm-check GEN | frame-check GEN"
+  "       | serve GEN | prm-check GEN | frame-check GEN\n" ++
+  "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
+  "    read by its Merkle proof; none reads exact byte ranges and hashes nothing (a changed byte is not\n" ++
+  "    detected). Default: none when a CURRENT pointer names GEN (activated: every file was checked at\n" ++
+  "    activation), merkle otherwise. --explain prints the choice (plan: verify=...)."
 
 end Sbm11Cli
 
 open Sbm11Cli in
-def main (args : List String) : IO UInt32 := do
+def main (args0 : List String) : IO UInt32 := do
   try
+    let (args, verify?) ← match splitVerify args0 [] Option.none with
+      | .ok r => pure r
+      | .error e => IO.eprintln s!"l4sbm11: {e}"; return 2
+    let verifyUsed := match args with
+      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids"].contains c
+      | [] => false
+    if verify?.isSome && !verifyUsed then
+      IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump and dump-ids"
+      return 2
     match args with
     | ["stats", dir] => runStats dir
-    | "scan" :: dir :: perm :: rest => runScan dir perm rest
-    | "count" :: dir :: perm :: keys => runCount dir perm keys
-    | ["dump", dir] => runDump dir "spo" false
-    | ["dump", dir, perm] => runDump dir perm false
-    | ["dump-ids", dir, perm] => runDump dir perm true
+    | "scan" :: dir :: perm :: rest => runScan dir perm rest verify?
+    | "count" :: dir :: perm :: keys => runCount dir perm keys verify?
+    | ["dump", dir] => runDump dir "spo" false verify?
+    | ["dump", dir, perm] => runDump dir perm false verify?
+    | ["dump-ids", dir, perm] => runDump dir perm true verify?
     | ["canon", src] => runCanon src
     | ["verify", dir] => runVerify dir
     | ["activate", root, name] => runActivate root name
     | ["reseal", dir] => runReseal dir
-    | "query" :: _ | ["serve", _] | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args
+    | ["serve", dir] => Harness.Sbm11Query.runServe dir verify?
+    | "query" :: _ | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args0
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11: {e}"
