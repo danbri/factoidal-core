@@ -403,78 +403,10 @@ pattern for this shape:
   in advance); size a wasm probe from the native peak first
   (`/usr/bin/time -v`).
 
-## Sequential references read by a loop (https://github.com/danbri/factoidal/issues/673, 2026-10-10)
-
-The `xml-entities` case that the repaired canary found (above) is repaired.
-`XML.scanRefs` stays as the readable definition; `XML.scanRefsLoop` carries
-the flags of the references already read in its arguments, so every
-self-call is a `goto _start` in the emitted C (7 of them, no real
-self-call), and `@[csimp] scanRefs_eq_scanRefsFast` (proved through
-`scanRefsLoop_eq`) makes the compiler run it at both call sites, which are
-inside the `mutual` pair `parseChildren`/`parseElement` (see the csimp note
-above). Outputs are byte-identical: native `parseToDatasetJson` on 20
-reference documents (10 shapes at 1,000 and 10,000 references), and the
-scoreboard rows `l4xmlconf` 1861 pass, 0 fail (out of 1861 scored),
-`l4rdfxml-probe`, `l4xslt`, `l4mathml`, `l4schematron`, `l4xsd-datatypes`
-and `l4w3c` RDF 1.1, all 14 rows the same before and after.
-
-Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0
-(`tests/stack/run.sh --canary`, 512 KB):
-
-| run | native canary | wasm canary (`--stack-size=512`) | wasm (Node default) | suite |
-|---|---|---|---|---|
-| before (core 4b5892b0) | `xml-entities` overflows (expected failure, 673) | overflows (expected failure) | overflows (expected failure) | 29 pass, 0 fail (out of 29) |
-| after (scanRefsLoop) | `xml-entities` runs | runs, 89 ms | runs, 155 ms | 37 pass, 0 fail (out of 37) |
-
-The 37 include two new cases, `xml-entities-attr` (10,000 references in one
-attribute value) and `xml-entities-dtd` (an entity value of 10,000
-character references and an attribute default of 10,000 entity
-references), in each of the four routes, and the native control. The
-remaining expected failures are the three `turtle-collection` rows
-(https://github.com/danbri/factoidal/issues/678).
-
-Thresholds of the reference run, measured with ten document shapes (general,
-decimal, hexadecimal and `&amp;` references in content; general and decimal
-references in an attribute value; DTD entity values and an ATTLIST default):
-
-| shape | before, native 512 KB | before, wasm `--stack-size=512` | after, both |
-|---|---|---|---|
-| content and attribute value | 5,000 runs, 10,000 overflows | 1,000 runs, 5,000 overflows | 100,000 runs |
-| DTD entity value, ATTLIST default | 10,000 runs | 10,000 runs | 100,000 runs |
-
-Natively at `LEAN_STACK_SIZE_KB=256`, 400,000 references ran in 768 ms
-(content) and 815 ms (attribute value).
-
-What stayed recursive, with its bound (repaired 2026-10-12, next section):
-the NESTED expansion of an entity
-whose replacement text references another entity (`expandEntityValue` for
-text and attribute values, the markup re-parse of `parseChildren`) costs
-one frame per level. The depth is at most the number of declared general
-entities, because WFC: No Recursion rejects a cycle (a self-referencing
-entity is rejected at 512 KB without overflow). Measured 2026-10-10 with a
-chain `e0` -> `e1` -> ... -> `eK`: natively at 512 KB, text and attribute
-chains of 3,000 run and 10,000 overflow; a markup chain (`<b>&eN;</b>`) of
-1,000 runs and 3,000 overflows. In wasm, a text chain of 3,000 runs under
-`--stack-size=512`; a markup chain of 1,000 overflows there and runs on the
-default Node stack, and 3,000 overflows on both.
-
-Two traps of the day:
-
-- **`prlimit --as` stops the wasm routes.** Under `prlimit --as=8000000000`
-  every wasm case failed with `WebAssembly.instantiate(): Out of memory:
-  Cannot allocate Wasm memory for new instance`: V8 reserves the wasm
-  memory's address range (with guard regions) up front, so an address-space
-  cap refuses it while the resident memory is small. Cap native runs with
-  `prlimit --as`; run the Node routes without it.
-- **The audit had the old shape in class `counter`**, which `--gate` does not
-  check: the signature names `Chars`, an `abbrev` of `Array Char`, which the
-  textual length match does not resolve, and the `Nat` fuel then decides the
-  class. The fuel was the length of the scanned range, so the depth was the
-  input length (https://github.com/danbri/factoidal/issues/750).
-
 ## Nested entity expansion on a worklist (https://github.com/danbri/factoidal/issues/755, 2026-10-12)
 
-The nesting bound recorded at the end of the previous section is repaired.
+The nesting bound recorded at the end of the next section (issue 673) is
+repaired.
 Three functions recursed once per level of ENTITY nesting (the replacement
 text of entity N references entity N-1): `expandEntityValue` (text and
 attribute values), `entityHasWsCharRef` (the white-space character-reference
@@ -520,3 +452,72 @@ in the native canary, the wasm canary and the wasm route; the markup chain in
 the wasm canary); after (this branch and a wasm module built from it) 45 pass, 0 fail (out
 of 45), with no expected failure left.
 
+## Sequential references read by a loop (https://github.com/danbri/factoidal/issues/673, 2026-10-10)
+
+The `xml-entities` case that the repaired canary found (above) is repaired.
+`XML.scanRefs` stays as the readable definition; `XML.scanRefsLoop` carries
+the flags of the references already read in its arguments, so every
+self-call is a `goto _start` in the emitted C (7 of them, no real
+self-call), and `@[csimp] scanRefs_eq_scanRefsFast` (proved through
+`scanRefsLoop_eq`) makes the compiler run it at both call sites, which are
+inside the `mutual` pair `parseChildren`/`parseElement` (see the csimp note
+above). Outputs are byte-identical: native `parseToDatasetJson` on 20
+reference documents (10 shapes at 1,000 and 10,000 references), and the
+scoreboard rows `l4xmlconf` 1861 pass, 0 fail (out of 1861 scored),
+`l4rdfxml-probe`, `l4xslt`, `l4mathml`, `l4schematron`, `l4xsd-datatypes`
+and `l4w3c` RDF 1.1, all 14 rows the same before and after.
+
+Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0
+(`tests/stack/run.sh --canary`, 512 KB):
+
+| run | native canary | wasm canary (`--stack-size=512`) | wasm (Node default) | suite |
+|---|---|---|---|---|
+| before (core 4b5892b0) | `xml-entities` overflows (expected failure, 673) | overflows (expected failure) | overflows (expected failure) | 29 pass, 0 fail (out of 29) |
+| after (scanRefsLoop) | `xml-entities` runs | runs, 89 ms | runs, 155 ms | 37 pass, 0 fail (out of 37) |
+
+The 37 include two new cases, `xml-entities-attr` (10,000 references in one
+attribute value) and `xml-entities-dtd` (an entity value of 10,000
+character references and an attribute default of 10,000 entity
+references), in each of the four routes, and the native control. The
+remaining expected failures are the three `turtle-collection` rows
+(https://github.com/danbri/factoidal/issues/678).
+
+Thresholds of the reference run, measured with ten document shapes (general,
+decimal, hexadecimal and `&amp;` references in content; general and decimal
+references in an attribute value; DTD entity values and an ATTLIST default):
+
+| shape | before, native 512 KB | before, wasm `--stack-size=512` | after, both |
+|---|---|---|---|
+| content and attribute value | 5,000 runs, 10,000 overflows | 1,000 runs, 5,000 overflows | 100,000 runs |
+| DTD entity value, ATTLIST default | 10,000 runs | 10,000 runs | 100,000 runs |
+
+Natively at `LEAN_STACK_SIZE_KB=256`, 400,000 references ran in 768 ms
+(content) and 815 ms (attribute value).
+
+What stayed recursive, with its bound (repaired 2026-10-12: the section on
+nested entity expansion above):
+the NESTED expansion of an entity
+whose replacement text references another entity (`expandEntityValue` for
+text and attribute values, the markup re-parse of `parseChildren`) costs
+one frame per level. The depth is at most the number of declared general
+entities, because WFC: No Recursion rejects a cycle (a self-referencing
+entity is rejected at 512 KB without overflow). Measured 2026-10-10 with a
+chain `e0` -> `e1` -> ... -> `eK`: natively at 512 KB, text and attribute
+chains of 3,000 run and 10,000 overflow; a markup chain (`<b>&eN;</b>`) of
+1,000 runs and 3,000 overflows. In wasm, a text chain of 3,000 runs under
+`--stack-size=512`; a markup chain of 1,000 overflows there and runs on the
+default Node stack, and 3,000 overflows on both.
+
+Two traps of the day:
+
+- **`prlimit --as` stops the wasm routes.** Under `prlimit --as=8000000000`
+  every wasm case failed with `WebAssembly.instantiate(): Out of memory:
+  Cannot allocate Wasm memory for new instance`: V8 reserves the wasm
+  memory's address range (with guard regions) up front, so an address-space
+  cap refuses it while the resident memory is small. Cap native runs with
+  `prlimit --as`; run the Node routes without it.
+- **The audit had the old shape in class `counter`**, which `--gate` does not
+  check: the signature names `Chars`, an `abbrev` of `Array Char`, which the
+  textual length match does not resolve, and the `Nat` fuel then decides the
+  class. The fuel was the length of the scanned range, so the depth was the
+  input length (https://github.com/danbri/factoidal/issues/750).
