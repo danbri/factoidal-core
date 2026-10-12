@@ -424,7 +424,10 @@ def graphFree : QueryPattern → Bool
 
 /-- The shape the restriction theorem covers. -/
 def plannerFragment : QueryPattern → Bool
-  | .bgp _ => true
+  -- A `text:query` pattern reads the literals of every triple in its field
+  -- (every triple, without a field), which no constant-predicate,
+  -- constant-term or graph-name restriction of its triple pattern bounds.
+  | .bgp ps => !bgpHasFulltext ps
   | .empty => true
   | .join a b | .union a b | .minus a b => plannerFragment a && plannerFragment b
   | .leftJoin a b c => c.backendLocal && plannerFragment a && plannerFragment b
@@ -1294,7 +1297,9 @@ theorem runSelectQueryBackendDataset_restrict (env : EvalEnv) {keep : Triple →
     runSelectQueryBackendDataset env q (indexedDatasetBackend dr)
       = runSelectQueryBackendDataset env q (indexedDatasetBackend d) := by
   simp only [runSelectQueryBackendDataset]
-  exact evalSelectBackendDataset_restrict env hd _ hf hk hn hv
+  split
+  · rfl
+  · exact evalSelectBackendDataset_restrict env hd _ hf hk hn hv
 
 theorem runAskQueryBackendDataset_restrict (env : EvalEnv) {keep : Triple → Bool}
     {readable : Option (List WfIri)} {d dr : Dataset} (hd : DatasetRestricted keep readable d dr)
@@ -1306,7 +1311,9 @@ theorem runAskQueryBackendDataset_restrict (env : EvalEnv) {keep : Triple → Bo
     runAskQueryBackendDataset env q (indexedDatasetBackend dr)
       = runAskQueryBackendDataset env q (indexedDatasetBackend d) := by
   simp only [runAskQueryBackendDataset]
-  exact evalAskBackend_restrict env hd _ hf hk hn hv
+  split
+  · rfl
+  · exact evalAskBackend_restrict env hd _ hf hk hn hv
 
 #print axioms evalPatternBackend_nil
 #print axioms evalPatternBackend_restrict

@@ -9,8 +9,27 @@ pure default tokeniser, and the match predicate over token lists. There
 is no `score_bm25` and no `rank_results` — this module makes **no
 ranking claim**. A caller applies `limit` in dataset order only.
 
-`SPARQL/Parser.lean` records this module as absent ("whose encoding
-lives in `SPARQL.FullText.fst` — no Lean"). It is no longer.
+## Where it is wired (https://github.com/danbri/factoidal/issues/727)
+
+* The parser (`SPARQL/Parser.lean`, `pFulltextObject`) reads the jena-text
+  object argument after a `text:query` predicate and builds ONE triple
+  pattern whose object is the marker literal below.
+* The reference evaluator (`SPARQL/Query.lean`, `lowerBgp`) takes each such
+  pattern out of its BGP and joins back `fulltextSolutions`, computed from
+  the ACTIVE graph, so `GRAPH` chooses the graph that is searched.
+* The backend evaluator (`SPARQL/StoreDataset.lean`) and its fast paths
+  (LIMIT push-down, streaming `COUNT(*)`, ASK) would read the pattern as an
+  ordinary triple and answer nothing; `runSelectQueryBackendDataset` and
+  `runAskQueryBackendDataset` answer `none` for such a query
+  (`QueryPattern.mentionsFulltext`), and the caller's reference evaluator
+  answers.
+* The persisted-store planner (`DatasetRestriction.plannerFragment`,
+  `ShardManifest.nativeConstantPredicates?`) refuses such a pattern, so no
+  shard is skipped: the search reads every literal.
+
+Slice 1 over a persisted store is a SCAN of the decoded dataset; the
+`LiteralGramIndex` sidecar is not used. Record, parity check and cost:
+`docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`.
 
 ## The tokeniser floor, stated
 
@@ -49,10 +68,11 @@ against data that has no such triples.
 
 So the parser recognises `text:query` directly, before the generic
 collection desugaring runs, and encodes the resolved query into a single
-internally-tagged literal that the evaluation hooks decode back out of
-the object position. User-visible SPARQL syntax is unaffected.
+internally-tagged literal that the evaluator decodes back out of the
+object position (`TriplePattern.fulltext?`). User-visible SPARQL syntax is
+unaffected.
 -/
-import L4Factoidal.RDF.Graph
+import L4Factoidal.SPARQL.Algebra
 
 namespace L4Factoidal.SPARQL
 
@@ -65,8 +85,8 @@ def fulltextQueryPred : WfIri := ⟨"http://jena.apache.org/text#query", rfl⟩
 
 /-- The internal marker datatype carrying the parsed `(field, term,
     limit)` tuple through the ordinary literal AST. It never appears in
-    user-visible RDF data: the parser is the only producer and the two
-    evaluation hooks the only consumers. -/
+    user-visible RDF data: the parser is the only producer and
+    `TriplePattern.fulltext?` the only consumer. -/
 def fulltextArgsDatatype : WfIri := ⟨"http://jena.apache.org/text#query-args", rfl⟩
 
 /-- `field = none` is jena-text's bare-string two-arity form. -/
@@ -163,12 +183,131 @@ def decodeFulltextLiteral (l : WfLiteral) : Option FulltextQuery :=
         some { field := field, terms := term, limit := limit }
     | _ => none
 
-/-- The per-candidate filter both evaluation hooks apply after fetching
-    the candidate set from the backend. Takes the object as a `Term`
+/-- The per-candidate filter the evaluation (`fulltextCandidates`)
+    applies to each candidate triple. Takes the object as a `Term`
     because that is what a triple's object position holds. -/
 def objectMatchesQuery (ftq : FulltextQuery) : Term → Bool
   | .literal l => literalMatchesQuery ftq l
   | _          => false
+
+/-! ## Evaluation — slice 1, over one graph
+
+Port of the F\* `eval_fulltext_tp_store` (`SPARQL11.Algebra.fst`). The
+candidates are the triples of the active graph whose predicate is the
+field (every triple when there is no field), in graph order; a candidate
+matches when its object is a literal whose tokens include every query
+token; the limit, when there is one, keeps the first `n` matches; and
+only then is the subject bound. So the limit counts MATCHING TRIPLES, not
+subjects, and it is applied before the subject pattern is checked —
+exactly the F\* order (`list_take n matched`, then `try_bind_subject`).
+
+`fulltextScan` stops reading the graph once the limit is reached and
+tokenises the query once rather than once per candidate. `fulltextScan_eq`
+proves it returns exactly the list the spec-shaped `fulltextCandidates`
+describes. -/
+
+/-- The object test with the query already tokenised. -/
+def objectMatchesTokens (queryTokens : List String) : Term → Bool
+  | .literal l => matchTokens queryTokens (defaultTokenizer l.val.lexicalForm)
+  | _          => false
+
+theorem objectMatchesTokens_eq (ftq : FulltextQuery) (o : Term) :
+    objectMatchesTokens (defaultTokenizer ftq.terms) o = objectMatchesQuery ftq o := by
+  cases o <;> rfl
+
+/-- Is this triple a candidate: its predicate is the field, when there is one. -/
+def inField (field : Option WfIri) (t : Triple) : Bool :=
+  match field with
+  | none   => true
+  | some f => t.p == f
+
+/-- The specification of the candidate list: filter by field, filter by
+match, take the limit. -/
+def fulltextCandidates (ftq : FulltextQuery) (g : Graph) : List Triple :=
+  let matched := g.filter (fun t => inField ftq.field t && objectMatchesQuery ftq t.o)
+  match ftq.limit with
+  | some n => matched.take n
+  | none   => matched
+
+/-- The same list, computed in one tail-recursive pass that stops at the
+limit. `remaining = none` means no limit. -/
+def fulltextScanGo (queryTokens : List String) (field : Option WfIri) :
+    List Triple → Option Nat → List Triple → List Triple
+  | [],        _,            acc => acc.reverse
+  | _,         some 0,       acc => acc.reverse
+  | t :: rest, remaining,    acc =>
+      if inField field t && objectMatchesTokens queryTokens t.o then
+        fulltextScanGo queryTokens field rest (remaining.map (· - 1)) (t :: acc)
+      else fulltextScanGo queryTokens field rest remaining acc
+
+def fulltextScan (ftq : FulltextQuery) (g : Graph) : List Triple :=
+  fulltextScanGo (defaultTokenizer ftq.terms) ftq.field g ftq.limit []
+
+private theorem fulltextScanGo_none (qt : List String) (field : Option WfIri) :
+    ∀ (g acc : List Triple),
+      fulltextScanGo qt field g none acc
+        = acc.reverse ++ g.filter (fun t => inField field t && objectMatchesTokens qt t.o)
+  | [], acc => by simp [fulltextScanGo]
+  | t :: rest, acc => by
+      by_cases h : (inField field t && objectMatchesTokens qt t.o) = true
+      · simp only [fulltextScanGo, h, if_true, Option.map_none,
+          fulltextScanGo_none qt field rest (t :: acc), List.filter_cons, List.reverse_cons]
+        simp
+      · simp only [fulltextScanGo, h, Bool.false_eq_true, if_false,
+          fulltextScanGo_none qt field rest acc, List.filter_cons]
+
+private theorem fulltextScanGo_some (qt : List String) (field : Option WfIri) :
+    ∀ (n : Nat) (g acc : List Triple),
+      fulltextScanGo qt field g (some n) acc
+        = acc.reverse ++ (g.filter (fun t => inField field t && objectMatchesTokens qt t.o)).take n
+  | 0, [], acc => by simp [fulltextScanGo]
+  | 0, _ :: _, acc => by simp [fulltextScanGo]
+  | n + 1, [], acc => by simp [fulltextScanGo]
+  | n + 1, t :: rest, acc => by
+      by_cases h : (inField field t && objectMatchesTokens qt t.o) = true
+      · simp only [fulltextScanGo, h, if_true, Option.map_some,
+          Nat.add_sub_cancel, fulltextScanGo_some qt field n rest (t :: acc),
+          List.filter_cons, List.reverse_cons]
+        simp
+      · simp only [fulltextScanGo, h, Bool.false_eq_true, if_false,
+          fulltextScanGo_some qt field (n + 1) rest acc, List.filter_cons]
+
+/-- The one-pass scan is the specification's list, order included. -/
+theorem fulltextScan_eq (ftq : FulltextQuery) (g : Graph) :
+    fulltextScan ftq g = fulltextCandidates ftq g := by
+  have hf : (fun t : Triple => inField ftq.field t
+              && objectMatchesTokens (defaultTokenizer ftq.terms) t.o)
+          = (fun t => inField ftq.field t && objectMatchesQuery ftq t.o) := by
+    funext t; rw [objectMatchesTokens_eq]
+  unfold fulltextScan fulltextCandidates
+  cases hl : ftq.limit with
+  | none => rw [fulltextScanGo_none, hf]; simp
+  | some n => rw [fulltextScanGo_some, hf]; simp
+
+/-- The solutions of one `text:query` pattern over the active graph: the
+matched triples' subjects, bound to the pattern's subject. One row per
+MATCHED TRIPLE, so a subject with two matching literals gives two rows,
+as in the F\* engine. -/
+def fulltextSolutions (ftq : FulltextQuery) (s : PatternSubject) (g : Graph) :
+    SolutionSeq :=
+  (fulltextScan ftq g).filterMap (fun t => tryBindSubject s t.s Binding.empty)
+
+/-! ## Recognising a `text:query` triple pattern
+
+A triple pattern is a `text:query` pattern when its predicate is the
+`text:query` IRI and its object is the marker-typed literal the parser
+builds. A `text:query` predicate with any other object is an ordinary
+triple pattern, which matches the data as written — the F\*
+`eval_single_tp_store` falls through to `eval_single_tp_store_default`
+in that case, and so does this port. -/
+
+def TriplePattern.fulltext? (tp : TriplePattern) : Option FulltextQuery :=
+  match tp.p, tp.o with
+  | .iri p, .literal l => if p == fulltextQueryPred then decodeFulltextLiteral l else none
+  | _, _ => none
+
+/-- Does a BGP hold a `text:query` pattern? -/
+def bgpHasFulltext (b : Bgp) : Bool := b.any (fun tp => tp.fulltext?.isSome)
 
 /-! ## Build-time checks
 
@@ -264,5 +403,69 @@ private theorem exIri (s : String) : isIri ("http://e/" ++ s) = true := by
 
 #guard !objectMatchesQuery { field := none, terms := "ell", limit := none }
         (.literal (Literal.string "Hello there"))
+
+/-! ### Evaluation over a graph
+
+A five-triple graph: two labels with "panel", one title with "panel", one
+label without it, and a non-literal object carrying the word in its IRI. -/
+
+private def ex (s : String) : WfIri := ⟨"http://e/" ++ s, exIri s⟩
+private def lbl : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#label", rfl⟩
+private def ttl : WfIri := ⟨"http://purl.org/dc/elements/1.1/title", rfl⟩
+
+private def gPanels : Graph :=
+  [ { s := .iri (ex "a"), p := lbl, o := .literal (Literal.string "Solar panel array") },
+    { s := .iri (ex "b"), p := lbl, o := .literal (Literal.string "Solar panel kit") },
+    { s := .iri (ex "c"), p := ttl, o := .literal (Literal.string "Control panel") },
+    { s := .iri (ex "d"), p := lbl, o := .literal (Literal.string "Water heater") },
+    { s := .iri (ex "e"), p := lbl, o := .iri (ex "panel") } ]
+
+private def subjectsOf (rows : SolutionSeq) : List String :=
+  rows.filterMap (fun mu => match mu.lookup "s" with
+    | some (.iri i) => some i.val
+    | _ => none)
+
+private def q (terms : String) (field : Option WfIri := none) (limit : Option Nat := none) :
+    FulltextQuery := { field := field, terms := terms, limit := limit }
+
+-- No field: every literal is searched, in graph order; the IRI object is not.
+#guard subjectsOf (fulltextSolutions (q "panel") (.var "s") gPanels)
+         == ["http://e/a", "http://e/b", "http://e/c"]
+-- AND of tokens.
+#guard subjectsOf (fulltextSolutions (q "solar PANEL") (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard subjectsOf (fulltextSolutions (q "solar heater") (.var "s") gPanels) == []
+-- A field restricts the predicate.
+#guard subjectsOf (fulltextSolutions (q "panel" (some lbl)) (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard subjectsOf (fulltextSolutions (q "panel" (some ttl)) (.var "s") gPanels)
+         == ["http://e/c"]
+-- A limit keeps the first n matches in graph order; zero keeps none.
+#guard subjectsOf (fulltextSolutions (q "panel" none (some 2)) (.var "s") gPanels)
+         == ["http://e/a", "http://e/b"]
+#guard (fulltextSolutions (q "panel" none (some 0)) (.var "s") gPanels).isEmpty
+-- The limit counts MATCHES before the subject is checked, as in the F*:
+-- a constant subject outside the first n matches gets no row.
+#guard (fulltextSolutions (q "panel" none (some 1)) (.iri (ex "b")) gPanels).isEmpty
+#guard (fulltextSolutions (q "panel") (.iri (ex "b")) gPanels).length == 1
+#guard (fulltextSolutions (q "panel") (.iri (ex "d")) gPanels).isEmpty
+-- The one-pass scan and the specification list agree on these graphs.
+#guard fulltextScan (q "panel" none (some 2)) gPanels == fulltextCandidates (q "panel" none (some 2)) gPanels
+#guard fulltextScan (q "panel" (some lbl)) gPanels == fulltextCandidates (q "panel" (some lbl)) gPanels
+
+/-! ### Recognising the pattern -/
+
+private def ftTp (obj : PatternTerm) : TriplePattern :=
+  { s := .var "s", p := .iri fulltextQueryPred, o := obj }
+
+#guard (ftTp (.literal (encodeFulltextLiteral (q "panel")))).fulltext? == some (q "panel")
+#guard bgpHasFulltext [ftTp (.literal (encodeFulltextLiteral (q "panel")))]
+-- A text:query predicate with an ordinary object is an ordinary triple pattern.
+#guard (ftTp (.literal (Literal.string "panel"))).fulltext?.isNone
+#guard (ftTp (.var "o")).fulltext?.isNone
+#guard !bgpHasFulltext [ftTp (.var "o")]
+-- The marker literal under any other predicate is an ordinary object.
+#guard ({ s := .var "s", p := .iri lbl,
+          o := .literal (encodeFulltextLiteral (q "panel")) } : TriplePattern).fulltext?.isNone
 
 end L4Factoidal.SPARQL

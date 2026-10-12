@@ -217,7 +217,14 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   match query.form with
   | .select _ =>
       let rows? :=
-        if indexed then runSelectQueryBackendDataset env stripped (indexedDatasetBackend applied)
+        if indexed then
+          match runSelectQueryBackendDataset env stripped (indexedDatasetBackend applied) with
+          | some rows => some rows
+          -- `text:query`: the backend declines and the reference evaluator
+          -- answers (`SPARQL/StoreDataset.lean`, `runSelectQueryBackendDataset`).
+          | none =>
+              if stripped.pattern.mentionsFulltext then some (evalSelect env applied stripped).2
+              else none
         else some (evalSelect env applied stripped).2
       match rows? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as SELECT"; return 1
@@ -228,7 +235,12 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
           return 0
   | .ask =>
       let answer? :=
-        if indexed then runAskQueryBackendDataset env stripped (indexedDatasetBackend applied)
+        if indexed then
+          match runAskQueryBackendDataset env stripped (indexedDatasetBackend applied) with
+          | some answer => some answer
+          | none =>
+              if stripped.pattern.mentionsFulltext then some (evalAsk env applied stripped)
+              else none
         else some (evalAsk env applied stripped)
       match answer? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as ASK"; return 1
