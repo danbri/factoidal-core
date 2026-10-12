@@ -63,6 +63,14 @@ triple that is `Triple.eqb`-equal to one already present.
    whenever `closureFix g` is saturated. This holds for every fuel of
    the delta loop, because of the run-time check and the fallback.
    `closureSemiNaiveChecked_sound` holds with no hypothesis.
+5. **The compiled code** (section 7). `closureSemiNaiveCheckedFast_eq`:
+   the checked entry equals, as a list and with no hypothesis, a twin
+   that runs round 1 as one indexed naive round
+   (`addAll_deltaConclusions_self`), runs the indexed delta loop of
+   `RDFS.SemiNaive` (`semiNaiveLoop_eq_fast`), and runs the naive
+   check round only when the loop used up its fuel. The proof uses
+   item 2: a loop that stopped by a test returns a saturated graph, so
+   the check would answer `true`. Both twins are `@[csimp]`.
 
 ## Open obligation: fuel adequacy (issue 756, item 4)
 
@@ -525,6 +533,130 @@ theorem closureSemiNaiveChecked_complete {g : Graph}
   rw [closureSemiNaiveChecked_mem_eq_closureFix hc]
   exact closure_complete_of_saturated hc h
 
+/-! ## Section 7 — the checked entry without the redundant naive round
+
+`closureSemiNaiveChecked` applies one full naive round
+(`isNaiveFixpoint`) to the result of the delta loop. Section 4 proves
+that round redundant whenever the loop stopped by one of its tests:
+`semiNaive_saturated_of_stopsByTest` gives the answer the round would
+compute. So the compiled code only needs the round when the loop used
+up its fuel, which is the case the open obligation (item 4 of issue
+https://github.com/danbri/factoidal/issues/756) is about.
+
+The first delta round of `semiNaive g` has the whole graph as its
+delta, so its two delta terms per row are the same list, and the round
+is exactly one naive round (`addAll_deltaConclusions_self`). The
+compiled code runs that round as `stepFast`.
+
+`closureSemiNaiveCheckedFast` does both. `closureSemiNaiveCheckedFast_eq`
+proves it equal to `closureSemiNaiveChecked` as a LIST, with no
+hypothesis, and `@[csimp]` makes every caller compiled after this module
+run it. The definition `closureSemiNaiveChecked`, with its run-time
+check, is unchanged. -/
+
+theorem addAll_append (a b : List Triple) :
+    ∀ g : Graph, addAll g (a ++ b) = addAll (addAll g a) b := by
+  induction a with
+  | nil => intro g; rfl
+  | cons t a ih => intro g; exact ih (g.add t)
+
+theorem addAll_twice (g : Graph) (c : List Triple) : addAll (addAll g c) c = addAll g c :=
+  addAll_eq_self c _ (fun _ ht => graphMem_addAll_of_mem_list c g ht)
+
+/-- Round 1 of `semiNaive g` is one naive round. -/
+theorem addAll_deltaConclusions_self (g : Graph) :
+    addAll g (deltaConclusions g g) = step g := by
+  simp only [deltaConclusions, rowDelta, step, stepConclusions, addAll_append, addAll_twice]
+
+/-- The indexed delta loop, also returning whether it stopped by one of
+its tests. -/
+def semiNaiveLoopFlagFast (g delta : Graph) : Nat → Graph × Bool
+  | 0     => (g, false)
+  | n + 1 =>
+      if delta.isEmpty then (g, true)
+      else
+        let g' := ((FastGraph.ofGraph g).addAll (deltaConclusionsIx delta g)).toGraph
+        if g'.length = g.length then (g, true)
+        else semiNaiveLoopFlagFast g' (g'.drop g.length) n
+
+theorem semiNaiveLoopFlagFast_eq (n : Nat) :
+    ∀ g delta : Graph, semiNaiveLoopFlagFast g delta n =
+      (semiNaiveLoop g delta n, semiNaiveLoopStopsByTest g delta n) := by
+  induction n with
+  | zero => intro g delta; rfl
+  | succ n ih =>
+    intro g delta
+    have hstep : ((FastGraph.ofGraph g).addAll (deltaConclusionsIx delta g)).toGraph
+        = addAll g (deltaConclusions delta g) := by
+      rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+        deltaConclusionsIx_eq, addAll_eq_graphAddAll]
+    simp only [semiNaiveLoopFlagFast, semiNaiveLoop, semiNaiveLoopStopsByTest, hstep]
+    by_cases hd : delta.isEmpty = true
+    · simp only [hd, if_true]
+    · simp only [hd, Bool.false_eq_true, if_false]
+      by_cases hl : (addAll g (deltaConclusions delta g)).length = g.length
+      · simp only [hl, if_true]
+      · simp only [hl, if_false]
+        rw [ih, graphDiff_addAll]
+
+/-- The delta closure with its stopping reason: round 1 as one indexed
+naive round, then the indexed delta loop. -/
+def semiNaiveRunFast (g : Graph) : Nat → Graph × Bool
+  | 0     => (g, false)
+  | n + 1 =>
+      if g.isEmpty then (g, true)
+      else
+        let g' := stepFast g
+        if g'.length = g.length then (g, true)
+        else semiNaiveLoopFlagFast g' (g'.drop g.length) n
+
+theorem semiNaiveRunFast_eq (g : Graph) (n : Nat) :
+    semiNaiveRunFast g n = (semiNaiveLoop g g n, semiNaiveLoopStopsByTest g g n) := by
+  rw [← semiNaiveLoopFlagFast_eq]
+  cases n with
+  | zero => rfl
+  | succ n =>
+    have h1 : ((FastGraph.ofGraph g).addAll (deltaConclusionsIx g g)).toGraph = stepFast g := by
+      rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+        deltaConclusionsIx_eq, ← addAll_eq_graphAddAll, addAll_deltaConclusions_self,
+        stepFast_eq]
+    simp only [semiNaiveRunFast, semiNaiveLoopFlagFast, h1]
+
+/-- `semiNaive` through `semiNaiveRunFast`. -/
+def semiNaiveFast (g : Graph) : Graph := (semiNaiveRunFast g (closureFuelBound g)).1
+
+@[csimp] theorem semiNaive_eq_fast : @semiNaive = @semiNaiveFast := by
+  funext g
+  simp only [semiNaiveFast, semiNaiveRunFast_eq, semiNaive]
+
+/-- `closureSemiNaiveChecked`, with the naive round run only when the
+delta loop used up its fuel. -/
+def closureSemiNaiveCheckedFast (g : Graph) : Graph :=
+  let r := semiNaiveRunFast g (closureFuelBound g)
+  if r.2 then r.1
+  else if isNaiveFixpoint r.1 then r.1 else closureFix g
+
+/-- **The fast checked entry is the checked entry**, as a list, with no
+hypothesis. The proof is where saturation at termination
+(`semiNaive_saturated_of_stopsByTest`) is used. -/
+theorem closureSemiNaiveCheckedFast_eq (g : Graph) :
+    closureSemiNaiveCheckedFast g = closureSemiNaiveChecked g := by
+  simp only [closureSemiNaiveCheckedFast, closureSemiNaiveChecked, semiNaiveRunFast_eq]
+  by_cases hs : semiNaiveLoopStopsByTest g g (closureFuelBound g) = true
+  · have hfix : isNaiveFixpoint (semiNaive g) = true :=
+      (isNaiveFixpoint_iff _).mpr (semiNaive_saturated_of_stopsByTest hs)
+    simp only [semiNaive] at hfix
+    simp only [hs, hfix, if_true, semiNaive]
+  · simp only [hs, Bool.false_eq_true, if_false, semiNaive]
+    rfl
+
+/-- The compiler emits `closureSemiNaiveCheckedFast` for every call of
+`closureSemiNaiveChecked` compiled after this module. -/
+@[csimp] theorem closureSemiNaiveChecked_eq_fast :
+    @closureSemiNaiveChecked = @closureSemiNaiveCheckedFast := by
+  funext g
+  exact (closureSemiNaiveCheckedFast_eq g).symm
+
 /-! ## Build-time checks
 
 The hypotheses of the theorems above are satisfiable on real inputs:
@@ -587,5 +719,19 @@ on 2026-10-12 is recorded beside each line. -/
 #print axioms L4Factoidal.RDFS.closureSemiNaiveChecked_mem_eq_closureFix
 -- 'L4Factoidal.RDFS.closureSemiNaiveChecked_complete' depends on axioms: [propext, Classical.choice, Quot.sound]
 #print axioms L4Factoidal.RDFS.closureSemiNaiveChecked_complete
+-- 'L4Factoidal.RDFS.semiNaiveLoop_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.semiNaiveLoop_eq_fast
+-- 'L4Factoidal.RDFS.isNaiveFixpoint_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.isNaiveFixpoint_eq_fast
+-- 'L4Factoidal.RDFS.addAll_deltaConclusions_self' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.addAll_deltaConclusions_self
+-- 'L4Factoidal.RDFS.semiNaiveRunFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.semiNaiveRunFast_eq
+-- 'L4Factoidal.RDFS.semiNaive_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.semiNaive_eq_fast
+-- 'L4Factoidal.RDFS.closureSemiNaiveCheckedFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.closureSemiNaiveCheckedFast_eq
+-- 'L4Factoidal.RDFS.closureSemiNaiveChecked_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+#print axioms L4Factoidal.RDFS.closureSemiNaiveChecked_eq_fast
 
 end L4Factoidal.RDFS

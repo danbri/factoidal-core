@@ -42,7 +42,7 @@ so a hole in the delta reasoning costs a slow run, never a wrong one.
 sound, saturated when it stops by a test, and equal to `closureFix` as
 a set when both are saturated.
 -/
-import L4Factoidal.RDFS.SemiNaive
+import L4Factoidal.RDFS.SemiNaiveTheorems
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.Turtle
 
