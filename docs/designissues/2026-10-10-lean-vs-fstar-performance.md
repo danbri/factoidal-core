@@ -1558,6 +1558,67 @@ ratio 2.6 for 4 times the input (bound 9). It reported "UNEXPECTED PASS", and
 the row is now an assertion (removed from `XFAIL`). Before: 0.32 s and 6.24 s,
 ratio 19.7.
 
+### 11.6 Repair 2: `escapeString` without a list (issue 744)
+
+* **Change.** `JSON/Serialize.lean`: `escapeStringFast` walks the `String`
+  with `String.foldl` and appends to one accumulator: a character outside
+  the RFC 8259 §7 escape set (`escapeNeeded`) is pushed, a character inside
+  it appends `escapeChar`'s sequence. No `List Char`, no string per
+  character.
+* **Proved.** `escapeChar_of_not_needed` (outside the set, `escapeChar c` is
+  the character itself), `escapeStep_eq`, and `@[csimp] escapeString_eq_fast`
+  (`escapeString = escapeStringFast`, by `String.foldl_eq_foldl_toList` and
+  `List.foldl_map`). Every call of `escapeString`, among them every
+  `Json.string` that `toStringCompact` writes and the SPARQL Results JSON
+  writer's (`ResultsJson.lean`), runs the fast form; the emitted C of the
+  writers calls `escapeStringFast`, and its `String.foldl` is a loop
+  (`goto _start`).
+* **Guards** (`JSON/Tests.lean`): `escapeString` against the specification's
+  expression written out in the test module (which the `csimp` does not
+  rewrite) on 8 strings with every escape class, multi-byte characters and
+  U+007F; four literal results.
+
+Native, the op `parseToDatasetJson` through `l4wasm-cli call` (the same
+dispatch path as the wasm module, the arguments as a JSON array), peak
+resident set in MB and wall time in s, the binary of `a3ee3e2a` against the
+binary with repairs 1 and 2 (load 15 to 20):
+
+| people | triples | before MB | after MB | before s | after s | envelope |
+|---:|---:|---:|---:|---:|---:|---|
+| 2,000 | 6,000 | 66.9 | 27.6 | 0.52 | 0.10 | identical |
+| 4,000 | 12,000 | 111.0 | 31.5 | 0.44 | 0.20 | identical |
+| 8,000 | 24,000 | 197.4 | 39.7 | 1.12 | 0.41 | identical |
+| 16,000 | 48,000 | 379.3 | 61.1 | 3.76 | 0.44 | identical |
+| 64,000 | 192,000 | 1,444.9 | 145.3 | 12.55 | 2.20 | identical |
+
+MB here is 2^20 bytes; the 379.3 MB before at 48,000 triples is 388,360 KB,
+issue 744's "the native Lean build of the same op peaks at 388 MB". Phases after (`l4query-phases FILE --parse-op`, peak MB
+of a process that stops after the phase): at 64,000 people read 18.1, parse
+134.3, scope 134.0, nquads 134.2, envelope 134.1, output 134.2. The largest
+holder natively is now the Turtle reader: `parseTurtleWithPrefixes` builds
+the whole-document `List Char` (section 10.2) that the command line's
+`parseTurtleText` avoids; the op reads the prefix table, which the walk does
+not return.
+
+Wasm (`tests/perf/l4_parse_memory_ladder.mjs`, module with repairs 1 and 2,
+load 15 to 20), linear memory in MB:
+
+| people | triples | load | open | parse1 | parse6 | nquads1 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2,000 | 6,000 | 44.1 | 52.9 | 52.9 | 52.9 | 63.5 |
+| 4,000 | 12,000 | 44.1 | 52.9 | 52.9 | 52.9 | 96.1 |
+| 8,000 | 24,000 | 44.1 | 52.9 | 52.9 | 52.9 | 184.4 |
+| 16,000 | 48,000 | 44.1 | 63.5 | 257.4 | 1,224.1 | 553.0 |
+| 64,000 | 192,000 | 44.1 | 205.5 | 876.1 | 1,588.1 | 1,692.1 |
+
+Up to 14,000 people `parse1` and `parse6` now stay at 52.9 to 88.1 MB, flat
+across calls (221 MB at 8,000 people before). At 16,000 people the first call
+ends at 257.4 MB and six calls at 1,224.1 MB, almost as before. The live
+Lean heap after each of the six calls is 0.5 MB (`l4_heap_tags_c`, every live
+mimalloc block): nothing is retained. Between 14,000 and 16,000 people the
+envelope and the N-Quads text pass 4 MiB (4.48 MB of N-Quads at 16,000), the
+segment size of mimalloc on wasm32; see repair 3.
+
 ## 7. How to repeat
 
 ```

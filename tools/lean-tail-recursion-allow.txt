@@ -1393,3 +1393,12 @@ L4Factoidal_OWL_Refute_toConceptList  # (b) the cycle with toConcept recurses on
 L4Factoidal_OWL_Refute_toConceptListAcc  # (b) as toConceptList: nesting through toConcept; one tail call per operand
 L4Factoidal_OWL_checkCases  # (c) the cycle with checkF is certificate depth, bounded by the refuter budget (default 64) as checkF; the cases of one merge point are a tail call through ||, one per pair the merge point branched on (as Refute_emitMergeCases)
 L4Factoidal_OWL_instHashableConcept_hash  # (b) derived Hashable instance: class-expression nesting of one concept
+# --- Added 2026-10-12, the JSON parser's reverse-accumulator twin (https://github.com/danbri/factoidal/issues/729,
+# OKR batch 1 KR 2.3; JSON/Parser.lean, parseR_eq). The twins have the shape of the specification's block
+# (parseValue ... parseItems, UNTRIAGED above): parseItemsR and parseMembersR step to the next element with a
+# self tail call (goto _start in the emitted C), so the cycle through parseValueR is one frame per NESTING level.
+L4Factoidal_JSON_parseValueR  # (b) the depth is the nesting of the JSON document (arrays and objects inside one another)
+L4Factoidal_JSON_parseObjectR  # (b) as parseValueR: one frame per object nesting level
+L4Factoidal_JSON_parseMembersR  # (b) as parseValueR; the members of one object are a self tail call (loop)
+L4Factoidal_JSON_parseArrayR  # (b) as parseValueR: one frame per array nesting level
+L4Factoidal_JSON_parseItemsR  # (b) as parseValueR; the items of one array are a self tail call (loop)

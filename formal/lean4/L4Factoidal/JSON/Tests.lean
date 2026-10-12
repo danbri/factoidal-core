@@ -175,4 +175,21 @@ everything, fails the build. -/
 #guard charsOfString "" == #[]
 #guard charsOfString "😀x" == "😀x".toList.toArray
 
+/-! ### `escapeString` at run time (issue 744)
+
+`escapeString` runs `escapeStringFast` (`@[csimp] escapeString_eq_fast`). The
+first guards compare it with the specification's expression written out here
+(the `csimp` does not rewrite this expression, so two programs are compared);
+the literal ones fix the escapes. -/
+
+def escapeSamples : List String :=
+  ["", "plain", "a\"b", "back\\slash", "line\nfeed\r\t", "\x01\x1f\x7f",
+   "caf\u00e9 \u263a 😀", "<http://e/x> <http://e/p> \"lit\\n\" .\n"]
+
+#guard escapeSamples.all fun s => escapeString s == (s.toList.map escapeChar).foldl (· ++ ·) ""
+#guard escapeString "a\"b\\c\nd\x01\u00e9" == "a\\\"b\\\\c\\nd\\u0001\u00e9"
+#guard escapeString "" == ""
+#guard escapeString "\x7f" == "\x7f"
+#guard (Json.string "x\ty").toString == "\"x\\ty\""
+
 end L4Factoidal.JSON.Tests
