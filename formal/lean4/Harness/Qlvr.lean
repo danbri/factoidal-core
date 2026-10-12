@@ -698,7 +698,9 @@ def runKernelDump (dir out : String) : IO UInt32 := do
     | 2 => QlvrKernel.runBytesSet x
     | 3 => QlvrKernel.runFloats fx
     | 4 => QlvrKernel.runProduction x
-    | _ => QlvrKernel.runNative ux)
+    | 5 => QlvrKernel.runNative ux
+    | 6 => QlvrKernel.runUsize x
+    | _ => QlvrKernel.runUsizeCStore x)
 
 /-- `l4qlvr kernel FILE [ITERS]`: run every Lean implementation of the
     kernel ITERS times (default 50); print the median and minimum time of one
@@ -707,7 +709,7 @@ def runKernel (file : String) (iters : Nat) : IO UInt32 := do
   let x ← ok "kernel" (QlvrKernel.Input.parse (← IO.FS.readBinFile file))
   let fx := QlvrKernel.FInput.ofInput x
   let ux := QlvrKernel.UInput.ofInput x
-  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native"]
+  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore"]
   let mut sums : Array (Nat × UInt64) := #[]
   for impl in [0:names.size] do
     let mut ts : Array Nat := #[]
