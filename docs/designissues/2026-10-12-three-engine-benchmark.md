@@ -289,14 +289,22 @@ configuration with one loader.
   to one CPU (`taskset -c 0`, section 11.8). That limits the CPUs; it does
   not limit the threads. Olympics has no one-CPU run.
 - **QLever index build with one thread:** not measured (`-j 4` only).
-- **QLever cold runs:** the index files were evicted with `posix_fadvise`, as
-  for the other engines (section 6). Section 11.8 shows that on d17 this
-  cold time contains reads of the vocabulary and permutation metadata at
-  the first query.
+- **QLever in the same rounds as SBM11 and Virtuoso:** not done. The QLever
+  timings are separate runs (section 11), not interleaved with the other
+  engines as in section 6; the load averages are given per run.
+- **What a QLever cold request reads:** not measured. The cold time of d17
+  (167 ms against a warm 1.9 ms) is the cost of the first request of a new
+  server on evicted index files; which files it reads was not traced.
 - **Cold runs with the whole OS page cache dropped:** refused (it would
   affect the other workload on the machine). Cold here means section 6.
-- **SBM11 single-thread against default threads:** the query path has one
-  thread; the packer was measured only with 4 workers.
+- **SBM11 threads in this record:** the SBM11 columns of section 7 use the
+  single-thread query path of commit 408898bd. The parallel block scans
+  (`--threads N`, https://github.com/danbri/factoidal/issues/799) were timed
+  on the 8 DBpedia BGP joins at 1, 2, 4, 8 threads (4/1 ratio 0.58 to 0.72):
+  `docs/designissues/2026-10-12-parallel-block-scans.md` section 5.1. They
+  were not timed against Virtuoso or QLever in the interleaved rounds of
+  section 6, and the streamed scans (d10, d13, d16, d17) are single-thread.
+  The packer was measured only with 4 workers.
 - **Virtuoso load with one thread or with several loaders:** one
   configuration only.
 
@@ -606,5 +614,5 @@ HTTP and JSON, about 2 to 3 ms for a small answer):
   and d13, d14, d17 do not change (0.82 to 1.00). The server RSS is half on
   one CPU (66 to 69 MB against 137 to 142 MB).
 - The cold time of d17 (167 ms default, 583 ms on 1 CPU, against a warm 1.9
-  ms) is the first read of the evicted index files by a new server; the
-  answer itself comes from metadata.
+  ms) is the cost of the first request of a new server on evicted index
+  files. Which files that request reads was not traced (section 9).

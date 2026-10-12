@@ -17,10 +17,13 @@ our baseline for shardcore").
   (section 4). The byte counts that `--explain` prints are identical too.
 - Speed on olympics: q07 at 4 threads is 0.79 of the 1-thread time; q10 is
   0.89. q01, q19 and q21 do not use the parallel path and do not change
-  (section 5). The 10x dataset was not measured: it is not in place.
-  The issue's target (4 threads at most 0.4 of 1 thread on q07, q19, q21, on
-  the 10x dataset) is not met on olympics and is not measured on the 10x
-  dataset.
+  (section 5).
+- Speed on the DBpedia slice (13.1 times olympics, section 5.1), 8 BGP join
+  queries: 4 threads give 0.58 to 0.72 of the 1-thread time (d06 0.58, d05
+  0.66, d07 0.62, d09 0.72). The issue's target (4 threads at most 0.4 of 1
+  thread on q07, q19, q21, on the 10x dataset) is not met. q07, q19 and q21
+  are olympics queries; the DBpedia slice has no queries with those names,
+  and its scan queries (the streamed path) were not timed here.
 
 ### 2. Method
 
@@ -141,6 +144,52 @@ Findings:
   target can be measured.
 - q01: no block is read (counted from PRM1 metadata).
 
+### 5.1 DBpedia slice (2026-10-12, evening)
+
+`ROUNDS=8 VERIFY=none bash tests/sbm11/bench-threads.sh
+/home/user/bench-data/sbm11/dbpedia <8 queries>` on the DBpedia slice
+generation of https://github.com/danbri/factoidal/issues/798 (23,269,559
+quads, packed by commit 408898bd), with `l4sbm11` built from commit
+659dcd5a. `VERIFY` is a new option of the script (it passes `--verify none`;
+the generation is not activated, so the binary default is `merkle`). Queries:
+every BGP join of `tools/bench/three-engines/queries/dbpedia` (d05, d06 star
+joins; d07, d08 path joins; d09 join and GROUP BY; d12, d14 join and FILTER;
+d15 join and ORDER BY LIMIT). Round 1 discarded; rounds 2 to 8 kept (7 per
+cell), interleaved by round, query and thread count; `--repeat 10` per
+process. 1-minute load average before each process: median 1.20, range 0.46
+to 1.98 over the kept rounds. Answers at 1, 4 and 8 threads were checked
+before the timing: equal multisets for all 8 queries (row counts as in the
+three-engine record, for example d05 1,130, d08 688).
+
+| Query | 1 thread ms (range) | 2 threads ms | 4 threads ms (range) | 8 threads ms | 4/1 | 8/1 | RSS kB 1 / 4 / 8 | load before |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| d05-star-three | 331.30 (300.57 to 362.37) | 259.04 | 219.54 (197.56 to 223.25) | 206.35 | 0.66 | 0.62 | 92,744 / 244,972 / 260,624 | 0.46 to 1.98 |
+| d06-star-film | 36.01 (34.77 to 38.42) | 26.48 | 21.00 (20.20 to 21.68) | 22.43 | 0.58 | 0.62 | 29,168 / 59,304 / 89,588 | 0.74 to 1.98 |
+| d07-path-two-hops | 77.81 (71.06 to 82.25) | 56.03 | 48.26 (43.86 to 56.72) | 53.09 | 0.62 | 0.68 | 37,944 / 90,056 / 136,328 | 0.74 to 1.98 |
+| d08-path-three-hops | 88.05 (71.78 to 101.28) | 70.72 | 59.20 (53.08 to 76.09) | 59.48 | 0.67 | 0.68 | 43,688 / 103,240 / 155,236 | 0.74 to 1.90 |
+| d09-group-birthplace | 43.62 (36.52 to 47.05) | 37.42 | 31.37 (29.80 to 36.67) | 32.56 | 0.72 | 0.75 | 27,120 / 47,912 / 55,896 | 0.76 to 1.91 |
+| d12-filter-numeric | 27.48 (24.65 to 40.53) | 21.43 | 16.62 (14.16 to 19.85) | 25.18 | 0.60 | 0.92 | 29,224 / 57,612 / 85,492 | 0.76 to 1.91 |
+| d14-filter-date | 49.78 (48.74 to 54.35) | 37.59 | 32.01 (30.45 to 34.22) | 41.08 | 0.64 | 0.83 | 39,312 / 68,604 / 86,984 | 0.86 to 1.91 |
+| d15-orderby-limit | 25.55 (21.43 to 27.81) | 20.59 | 16.41 (13.81 to 17.18) | 17.50 | 0.64 | 0.68 | 25,156 / 60,564 / 91,408 | 0.86 to 1.91 |
+
+Findings:
+
+- 4 threads give 0.58 to 0.72 of the 1-thread time on all 8 queries. On
+  every query the 4-thread range is below the 1-thread range (no overlap).
+  On olympics the same build gave 0.79 (q07) and 0.89 (q10): the larger
+  scans divide better.
+- 8 threads on 4 vCPU are not faster than 4 threads (0.62 to 0.92).
+- Peak RSS grows with the thread count (d05: 92.7 MB at 1 thread, 245 MB at
+  4, 261 MB at 8), as on olympics (section 5).
+- The 1-thread times are lower than the SBM11 warm times of the
+  three-engine record (d05 331 against 575 ms there, section 7.3). That
+  record used the binary of commit 408898bd and `--repeat 5`; this table
+  uses commit 659dcd5a and `--repeat 10`. The cause of the difference was
+  not isolated. Compare thread counts only within this table.
+
+Raw CSV: `/home/user/bench-data/results/sbm11-threads-dbpedia.csv` (not in
+the repository).
+
 ### 6. What is open
 
 - The streamed path (q19, q21), the counted and grouped paths: single-thread.
@@ -152,7 +201,8 @@ Findings:
 - Peak RSS grows with the thread count; chunk tables could be appended as
   tasks finish in order to keep fewer of them live.
 - The 10x dataset (DBpedia slice, https://github.com/danbri/factoidal/issues/798):
-  not measured; not in place on 2026-10-12.
+  BGP joins measured (section 5.1); the streamed scans (d10, d13, d16, d17)
+  and the 4/1 target of 0.4 are open.
 - The W3C census at 2, 4, 8 threads: not run.
 - Stage 2 (PushIR): not started.
 
