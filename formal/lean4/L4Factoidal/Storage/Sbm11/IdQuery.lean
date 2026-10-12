@@ -481,14 +481,18 @@ def rowCol (r : Row) : Nat → Nat
   | 2 => r.c2
   | _ => r.g
 
+/-- Columns `j..` of `r` against `key` (a tail call with fuel). -/
+def prefixCmpGo (r : Row) (key : Array UInt64) : Nat → Nat → Ordering
+  | 0, _ => .eq
+  | f + 1, j =>
+    if j < key.size then
+      if rowCol r j < key[j]!.toNat then .lt
+      else if key[j]!.toNat < rowCol r j then .gt
+      else prefixCmpGo r key f (j + 1)
+    else .eq
+
 /-- Compare the first `key.size` columns of `r` with `key`. -/
-def prefixCmp (r : Row) (key : Array UInt64) : Ordering := Id.run do
-  for j in [0:key.size] do
-    let a := rowCol r j
-    let b := key[j]!.toNat
-    if a < b then return .lt
-    if b < a then return .gt
-  return .eq
+def prefixCmp (r : Row) (key : Array UInt64) : Ordering := prefixCmpGo r key key.size 0
 
 def selects (b : BlockMeta) (key : Array UInt64) : Bool :=
   prefixCmp b.first key != .gt && prefixCmp b.last key != .lt
@@ -523,17 +527,19 @@ def firstBlockGo (metas : Array BlockMeta) (key : Array UInt64) : Nat → Nat �
       else firstBlockGo metas key f l mid
     else l
 
-/-- The indices of the blocks that may hold a row with the key prefix. -/
-def blocksFor (metas : Array BlockMeta) (key : Array UInt64) : Array Nat := Id.run do
-  let start := firstBlockGo metas key (Nat.log2 metas.size + 2) 0 metas.size
-  let mut out : Array Nat := #[]
-  let mut i := start
-  for _ in [0:metas.size] do
-    if i ≥ metas.size then break
-    if prefixCmp metas[i]!.first key == .gt then break
-    out := out.push i
-    i := i + 1
-  return out
+/-- Blocks `i, i + 1, ...` while the first row is not above the key prefix,
+    appended to `out` (a tail call with fuel). -/
+def blocksForGo (metas : Array BlockMeta) (key : Array UInt64) : Nat → Nat → Array Nat → Array Nat
+  | 0, _, out => out
+  | f + 1, i, out =>
+    if i ≥ metas.size then out
+    else if prefixCmp metas[i]!.first key == .gt then out
+    else blocksForGo metas key f (i + 1) (out.push i)
+
+/-- The indices of the blocks that may hold a row with the key prefix
+    (`ScanTheorems.blocksFor_complete`). -/
+def blocksFor (metas : Array BlockMeta) (key : Array UInt64) : Array Nat :=
+  blocksForGo metas key metas.size (firstBlockGo metas key (Nat.log2 metas.size + 2) 0 metas.size) #[]
 
 /-- Rows of the selected blocks: exact when every one is full. -/
 def estimate (metas : Array BlockMeta) (key : Array UInt64) : Nat :=

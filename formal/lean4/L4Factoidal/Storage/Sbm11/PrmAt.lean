@@ -7,9 +7,9 @@ query path (stage 4, https://github.com/danbri/factoidal/issues/790).
 to a list and decoding it was most of the 77 ms open of stage 3 (stage 3
 record, open item 3). `decodePrmAt` reads the same fields with `get64At` and
 `get32At` into an `Array`, then applies the same admission (`prmAdmitted`,
-the row total). It is not proved equal to `decodePrm`: the `#guard`s below
-compare the two on encoded files, and `l4sbm11 prm-check GEN` compares them
-on every PRM1 file of a generation.
+the row total). `PrmAtTheorems.decodePrmAt_eq` proves it equal to
+`decodePrm` on every input; the `#guard`s below and `l4sbm11 prm-check GEN`
+(every PRM1 file of a generation) compare the two as well.
 -/
 import L4Factoidal.Storage.Sbm11.Block
 
