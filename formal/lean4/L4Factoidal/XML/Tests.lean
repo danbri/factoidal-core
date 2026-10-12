@@ -1383,4 +1383,75 @@ def copiesOf (n : Nat) (c : Char) : String := String.ofList (List.replicate n c)
 #guard !isWellFormed (refRunDoc "" s!"<a x=\"{refRun 10000}&zz;\"/>")
 #guard !isWellFormed (refRunDoc "" s!"<a>{refRun 10000}&zz;</a>")
 
+/-! ## Nested entity expansion in constant stack (issue 755)
+
+An entity whose replacement text references a second entity, and so on, cost
+one native frame per level: in `expandEntityValue` (text and attribute
+values), in `entityHasWsCharRef` (the note on white-space character
+references) and in `parseChildren` (an entity whose replacement text carries
+markup). A chain of 10,000 text entities and one of 3,000 markup entities
+overflowed a 512 KB stack (https://github.com/danbri/factoidal/issues/755).
+The compiler now runs worklist loops in their place (`expandEntityLoop`,
+`entityWsLoop`, `parseChildrenW`, each proved equal and `@[csimp]`). These
+guards check the RESULT through chains of 2,000 and 1,000 levels; the stack
+is checked by the `xml-text-chain` and `xml-markup-chain` cases of
+`tests/stack/run.sh --canary`. The chains are shorter than there because each
+reference looks its entity up in a list, which the elaborator's interpreter
+does slowly. -/
+
+/-- A document whose internal subset declares the chain `t0` = `bottom`,
+`t(K+1)` = `&tK;y` for K below `n - 1`, then holds `body`. -/
+def textChainDoc (n : Nat) (bottom body : String) : String :=
+  let decls := String.join ((List.range (n - 1)).map fun i => s!"<!ENTITY t{i + 1} \"&t{i};y\">")
+  s!"<!DOCTYPE a [<!ENTITY t0 \"{bottom}\">{decls}]>{body}"
+
+/-- A document whose internal subset declares the chain `m0` = `bottom`,
+`m(K+1)` = `<b>K+1</b>&mK;`, then holds `body`. -/
+def markupChainDoc (n : Nat) (bottom body : String) : String :=
+  let decls := String.join ((List.range (n - 1)).map fun i =>
+    s!"<!ENTITY m{i + 1} \"<b>{i + 1}</b>&m{i};\">")
+  s!"<!DOCTYPE a [<!ENTITY m0 \"{bottom}\">{decls}]>{body}"
+
+/-- The number of child nodes of the document element. -/
+def rootChildCount (doc : String) : Option Nat :=
+  match parseXML doc with
+  | .ok d => match d.root with
+    | .element _ _ cs => some cs.length
+    | _ => none
+  | .error _ => none
+
+-- Content: a chain of 2,000 levels gives "x" and 1,999 "y".
+#guard rootText (textChainDoc 2000 "x" "<a>&t1999;</a>") == some ("x" ++ copiesOf 1999 'y')
+-- An attribute value: the same chain, the same characters.
+#guard rootAttrs (textChainDoc 2000 "x" "<a v=\"&t1999;\"/>") == some [("v", "x" ++ copiesOf 1999 'y')]
+-- A character reference to white space at the bottom of the chain is noted
+-- through all 2,000 levels; without it, it is not. (`&#38;#32;` in the
+-- declaration leaves `&#32;` in the replacement text: section 4.5 expands
+-- character references when the replacement text is constructed.)
+#guard refRunNotes (textChainDoc 2000 "&#38;#32;" "<a>&t1999;</a>") == some (true, true, false)
+#guard refRunNotes (textChainDoc 2000 "x" "<a>&t1999;</a>") == some (true, false, false)
+-- WFC: No Recursion is still enforced at the end of a chain: `t0` references
+-- `t1999`, in content and in an attribute value.
+#guard !isWellFormed (textChainDoc 2000 "&t1999;" "<a>&t1999;</a>")
+#guard !isWellFormed (textChainDoc 2000 "&t1999;" "<a v=\"&t1999;\"/>")
+-- WFC: Entity Declared at the bottom of a chain.
+#guard !isWellFormed (textChainDoc 2000 "&zz;" "<a>&t1999;</a>")
+-- Markup: a chain of 1,000 levels gives 1,000 `b` elements, in document order.
+#guard rootChildCount (markupChainDoc 1000 "<b>0</b>" "<a>&m999;</a>") == some 1000
+#guard rootText (markupChainDoc 1000 "<b>0</b>" "<a>&m999;</a>") ==
+  some (String.join ((List.range 1000).reverse.map toString))
+-- Text around the reference stays in place.
+#guard rootText (markupChainDoc 3 "<b>0</b>" "<a>p&m2;q</a>") == some "p210q"
+-- WFC: Parsed Entity at the bottom of a chain: `<b>` is not closed there.
+#guard !isWellFormed (markupChainDoc 1000 "<b>" "<a>&m999;</a>")
+-- ... and a `</a>` in the replacement text does not close the element.
+#guard !isWellFormed (markupChainDoc 1000 "</a>" "<a>&m999;")
+-- A markup entity that references itself through the chain is rejected.
+#guard !isWellFormed (markupChainDoc 1000 "<b/>&m999;" "<a>&m999;</a>")
+
+-- The three replacements rest on the standard axioms only.
+#print axioms expandEntityValue_eq_fast
+#print axioms entityHasWsCharRef_eq_fast
+#print axioms parseElement_eq_parseElementW
+
 end L4Factoidal.XML.Tests

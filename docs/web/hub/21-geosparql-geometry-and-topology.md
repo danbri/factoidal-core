@@ -508,12 +508,14 @@ did *not* pair with the Greater London box. London is missing here,
 exactly because it is not disjoint from the box it sits inside.
 
 > **On this site's engine.** The hub runs the Lean 4 engine of
-> `@factoidal/core` since 0.9.0, and the Lean library does not implement
-> `geof:distance` or `geof:envelope` (GeoSPARQL 1.1 § 8.4) yet:
-> https://github.com/danbri/factoidal/issues/727. The two cells of this
-> section and the next do not give the answers the prose describes until
-> it does; `tests/hub/post21_test.mjs` carries both as expected failures
-> naming that issue.
+> `@factoidal/core` since 0.9.0. Its `geof:distance` and `geof:envelope`
+> (GeoSPARQL 1.1 § 8.4) give the F\* engine's answers on the cells below,
+> since https://github.com/danbri/factoidal/issues/727;
+> `tests/hub/post21_test.mjs` pins both. The Lean engine also takes
+> `geof:distance`'s third argument, the unit of measure, and answers only
+> in the unit of the first geometry's reference system (degrees for
+> CRS84). A request for metres between two CRS84 points is an error:
+> https://github.com/danbri/factoidal/issues/772.
 
 ## `geof:distance`: exact squared distance, one disclosed square root
 

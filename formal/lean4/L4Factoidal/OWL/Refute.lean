@@ -68,12 +68,18 @@ fragment, weaker only through its caps (witness depth ≤ 3, ≤ 6
 generated witnesses, the threaded budget) — caps withhold
 refutations, never invent them. `RefuteTests.lean` keeps an
 instance-level paired witness: one input refuted here by `#guard`
-and refuted in the calculus by an explicit `Refuted` derivation. The
-general linkage — an abstraction from a clash trace to a serialisable
-`Refuted` derivation, `refute g b = some false → Refuted R A` on the
-shared fragment — is the certificate-checker rung
-`OWL/Tableau.lean`'s header names; tracked as follow-up 6 on
-https://github.com/danbri/factoidal/issues/586 .
+and refuted in the calculus by an explicit `Refuted` derivation.
+
+Since 2026-10-10 the general linkage is certificate checking:
+`search` returns a `SearchTrace` beside its verdict,
+`OWL/RefuteCert.lean` turns it into a `Cert`, and
+`OWL/DirectCert.lean`'s total `checkCert` accepts or rejects it, with
+`checkCert_sound`: an accepted certificate means the ontology read from
+the graph has no model under the OWL 2 Direct Semantics. Design record
+`docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`;
+follow-up 6 of https://github.com/danbri/factoidal/issues/586 ; the
+refutations not yet certified are
+https://github.com/danbri/factoidal/issues/764 .
 
 ## What is NOT here, named
 
@@ -3174,6 +3180,28 @@ def pendingUnion (st : RState) : Option (Subject × List ClassExpr) :=
           else some (n.id, cs)
       | _ => none)))
 
+/-- What closed, for the certificate emitter (`OWL/RefuteCert.lean`,
+    design record `docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`).
+    `search` builds it beside the verdict and changes nothing else: a
+    branch that stays open or runs out of budget carries `none`, and
+    the verdict and the budget are computed exactly as without it.
+
+    * `leaf st` — a clash rule fired on `st`;
+    * `forced before after sub` — `forcedIdentifications` turned
+      `before` into `after`, and `sub` closed from there;
+    * `union st i cs subs` — the union `cs` at node `i` was split on
+      `st`; `subs` closed the disjuncts, in order;
+    * `merge st pairs subs` — the ≤-rule or the nominal choice
+      branched on `pairs` at `st`; `subs` closed them, in order. -/
+inductive SearchTrace where
+  | none
+  | leaf (st : RState)
+  | forced (before after : RState) (sub : SearchTrace)
+  | union (st : RState) (i : Subject) (cs : List ClassExpr) (subs : List SearchTrace)
+  | merge (st : RState) (nominal : Bool) (pairs : List (Term × Term)) (subs : List SearchTrace)
+
+instance : Inhabited SearchTrace := ⟨.none⟩
+
 /-- The search, with the budget THREADED through the branches rather
     than handed to each in full.
 
@@ -3184,31 +3212,36 @@ def pendingUnion (st : RState) : Option (Subject × List ClassExpr) :=
     out answers `out`, which the caller reads as "not refuted" — the
     same withholding as every other cap here.
 
-    Returns the verdict and what is left. -/
+    Returns the verdict, what is left of the budget, and the trace of
+    what closed (`SearchTrace`; `none` unless the verdict is `clash`).
+    `wrap` is applied to the trace of a clash; it carries the forced
+    identifications made on the way down, so that every self-call that
+    was a tail call before the trace existed stays one. -/
 partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
-    (budget : Nat) : Verdict × Nat :=
+    (budget : Nat) (wrap : SearchTrace → SearchTrace := id) : Verdict × Nat × SearchTrace :=
   match budget with
-  | 0     => (.out, 0)
+  | 0     => (.out, 0, .none)
   | n + 1 =>
-    if clashNodes g st then (.clash, n)
+    if clashNodes g st then (.clash, n, wrap (.leaf st))
     else
       let (st', changed) := onePass tb g st
-      if changed then search tb g st' n
-      else if clashNodes g st' then (.clash, n)
+      if changed then search tb g st' n wrap
+      else if clashNodes g st' then (.clash, n, wrap (.leaf st'))
       else
         -- Identifications every model makes come before any choice.
         let (stF, forced) := forcedIdentifications g st'
-        if forced then search tb g stF n
-        else if propositionalClash st' || nominalClash g st' then (.clash, n)
+        if forced then search tb g stF n (fun t => wrap (.forced st' stF t))
+        else if propositionalClash st' || nominalClash g st' then (.clash, n, wrap (.leaf st'))
         else
         match pendingUnion st' with
         | some (i, cs) =>
           -- EVERY disjunct must close for the union to refute the
           -- node. One branch out of budget makes the whole answer
           -- indeterminate: it might have stayed open.
-          let rec tryAll (ds : List ClassExpr) (b : Nat) : Verdict × Nat :=
+          let rec tryAll (ds : List ClassExpr) (b : Nat) (acc : List SearchTrace)
+              : Verdict × Nat × SearchTrace :=
             match ds with
-            | []      => (.clash, b)
+            | []      => (.clash, b, wrap (.union st' i cs acc.reverse))
             | c :: tl =>
                 let (sb, _) := addLabel { st' with
                   nodes := st'.nodes.map (fun m =>
@@ -3219,28 +3252,29 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
                           | _         => true))
                     else m) } i c
                 match search tb g sb b with
-                | (.clash, b') => tryAll tl b'
-                | (.open', b') => (.open', b')
-                | (.out, b')   => (.out, b')
-          tryAll cs n
+                | (.clash, b', t) => tryAll tl b' (t :: acc)
+                | (.open', b', _) => (.open', b', .none)
+                | (.out, b', _)   => (.out, b', .none)
+          tryAll cs n []
         | none =>
           -- No union left. The ≤-rule may still force a choice, and
           -- every mergeable pair must close; then the nominal choice,
           -- with the same AND over its branches.
-          let rec tryMerges (ps : List (Term × Term)) (b : Nat) : Verdict × Nat :=
+          let rec tryMerges (nominal : Bool) (all ps : List (Term × Term)) (b : Nat)
+              (acc : List SearchTrace) : Verdict × Nat × SearchTrace :=
             match ps with
-            | []           => (.clash, b)
+            | []           => (.clash, b, wrap (.merge st' nominal all acc.reverse))
             | (x, y) :: tl =>
                 match search tb g (mergeInto st' x y) b with
-                | (.clash, b') => tryMerges tl b'
-                | (.open', b') => (.open', b')
-                | (.out, b')   => (.out, b')
+                | (.clash, b', t) => tryMerges nominal all tl b' (t :: acc)
+                | (.open', b', _) => (.open', b', .none)
+                | (.out, b', _)   => (.out, b', .none)
           match pendingMerge g st' with
-          | some pairs => tryMerges pairs n
+          | some pairs => tryMerges false pairs pairs n []
           | none =>
             match pendingNominal g st' with
-            | some pairs => tryMerges pairs n
-            | none       => (.open', n)
+            | some pairs => tryMerges true pairs pairs n []
+            | none       => (.open', n, .none)
 
 /-! ## The entry point -/
 
@@ -3347,6 +3381,28 @@ def initState (g : Graph) : RState :=
     the module header says why. -/
 def countingRefutes (g : Graph) : Bool := L4Factoidal.OWL.CountingOracle.classSizeUnsat g
 
+/-- How a `some false` verdict was reached, for the certificate emitter:
+    by the graph-level checks, by the counting rung, or by the search
+    (with its trace). -/
+inductive RefutationSource where
+  | immediate
+  | counting
+  | search (tb : List (ClassExpr × ClassExpr)) (trace : SearchTrace)
+  | notRefuted
+
+/-- `tableauConsistent` with the source of a refutation beside the
+    verdict. ONE search: `tableauConsistent` is the first projection
+    of this function. -/
+def tableauConsistentTraced (g : Graph) (budget : Nat) : Option Bool × RefutationSource :=
+  if immediateInconsistency g then (some false, .immediate)
+  else if countingRefutes g then (some false, .counting)
+  else
+    let tb := collectAxioms g
+    match search tb g { initState g with tbox := tb } budget with
+    | (.clash, _, t) => (some false, .search tb t)
+    | (.open', _, _) => (some true, .notRefuted)
+    | (.out, _, _)   => (none, .notRefuted)
+
 /-- The three-valued satisfiability verdict — the Lean counterpart of
     F* `Tableau_Refute.tableau_consistent`, meaning for meaning:
 
@@ -3360,13 +3416,7 @@ def countingRefutes (g : Graph) : Bool := L4Factoidal.OWL.CountingOracle.classSi
     branch search (see `search`), so cost is close to linear in it
     and running out is reported, never silently absorbed. -/
 def tableauConsistent (g : Graph) (budget : Nat) : Option Bool :=
-  if immediateInconsistency g || countingRefutes g then some false
-  else
-    let tb := collectAxioms g
-    match (search tb g { initState g with tbox := tb } budget).1 with
-    | .clash => some false
-    | .open' => some true
-    | .out   => none
+  (tableauConsistentTraced g budget).1
 
 /-- Is this graph provably UNSATISFIABLE?
 

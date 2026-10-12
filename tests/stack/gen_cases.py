@@ -78,6 +78,38 @@ write("xml-entities-dtd.rdf",
       '  </rdf:Description>\n'
       '</rdf:RDF>\n' % (ents, charrefs, refs))
 
+# NESTED entity expansion (https://github.com/danbri/factoidal/issues/755): a
+# chain in which the replacement text of entity N references entity N-1, so
+# expanding the last entity goes through every level.  XML 1.0 section 4.1,
+# WFC: No Recursion, makes the chain finite, but the document chooses its
+# length.  The text chain ends in a literal of N_TEXT_CHAIN characters.  Each
+# level of the markup chain holds one property element and the reference to
+# the level below, so the ELEMENT nesting stays at one level and only the
+# entity nesting grows; the parse gives N_MARKUP_CHAIN triples.
+N_TEXT_CHAIN = int(os.environ.get("STACK_TEXT_CHAIN", "10000"))
+text_decls = "\n".join(['<!ENTITY t0 "x">'] +
+                       ['<!ENTITY t%d "&t%d;y">' % (i, i - 1) for i in range(1, N_TEXT_CHAIN)])
+write("xml-text-chain.rdf",
+      '<?xml version="1.0"?>\n'
+      '<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+      '         xmlns:ex="http://example.org/">\n'
+      '  <rdf:Description rdf:about="http://example.org/s">\n'
+      '    <ex:p>&t%d;</ex:p>\n'
+      '  </rdf:Description>\n'
+      '</rdf:RDF>\n' % (text_decls, N_TEXT_CHAIN - 1))
+N_MARKUP_CHAIN = int(os.environ.get("STACK_MARKUP_CHAIN", "3000"))
+markup_decls = "\n".join(['<!ENTITY m0 "<ex:p>0</ex:p>">'] +
+                         ['<!ENTITY m%d "<ex:p>%d</ex:p>&m%d;">' % (i, i, i - 1)
+                          for i in range(1, N_MARKUP_CHAIN)])
+write("xml-markup-chain.rdf",
+      '<?xml version="1.0"?>\n'
+      '<!DOCTYPE rdf:RDF [\n%s\n]>\n'
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+      '         xmlns:ex="http://example.org/">\n'
+      '  <rdf:Description rdf:about="http://example.org/s">&m%d;</rdf:Description>\n'
+      '</rdf:RDF>\n' % (markup_decls, N_MARKUP_CHAIN - 1))
+
 # ------------------------------------------------------------------ Turtle
 # One literal of 1 MB on one line.
 LIT = int(os.environ.get("STACK_LITERAL_BYTES", str(1 << 20)))
@@ -89,6 +121,13 @@ N_COLL = int(os.environ.get("STACK_COLLECTION", "100000"))
 write("turtle-collection.ttl",
       "@prefix ex: <http://example.org/> .\n"
       "ex:s ex:p ( %s ) .\n" % " ".join("%d" % i for i in range(N_COLL)))
+
+# One statement with 10,000 predicates: `ex:s ex:p0 0 ; ex:p1 1 ; ...`, one
+# `;` group per predicate (https://github.com/danbri/factoidal/issues/754).
+N_PRED = int(os.environ.get("STACK_PREDICATES", "10000"))
+write("turtle-predicates.ttl",
+      "@prefix ex: <http://example.org/> .\n"
+      "ex:s %s .\n" % " ;\n  ".join("ex:p%d %d" % (i, i) for i in range(N_PRED)))
 
 # ----------------------------------------------------------------- N-Quads
 N_Q = int(os.environ.get("STACK_QUADS", "50000"))
@@ -217,11 +256,20 @@ args("args-xml-attr.json", open(os.path.join(OUT, "xml-entities-attr.rdf")).read
      "rdfxml", "http://example.org/")
 args("args-xml-dtd.json", open(os.path.join(OUT, "xml-entities-dtd.rdf")).read(),
      "rdfxml", "http://example.org/")
+args("args-xml-text-chain.json",
+     open(os.path.join(OUT, "xml-text-chain.rdf")).read(), "rdfxml",
+     "http://example.org/")
+args("args-xml-markup-chain.json",
+     open(os.path.join(OUT, "xml-markup-chain.rdf")).read(), "rdfxml",
+     "http://example.org/")
 args("args-turtle-literal.json",
      open(os.path.join(OUT, "turtle-literal.ttl")).read(), "turtle",
      "http://example.org/")
 args("args-turtle-collection.json",
      open(os.path.join(OUT, "turtle-collection.ttl")).read(), "turtle",
+     "http://example.org/")
+args("args-turtle-predicates.json",
+     open(os.path.join(OUT, "turtle-predicates.ttl")).read(), "turtle",
      "http://example.org/")
 args("args-nquads.json", open(os.path.join(OUT, "nquads-one-subject.nq")).read(),
      "nquads", "http://example.org/")
@@ -309,7 +357,7 @@ if not os.path.exists(dins):
         fh.write("}\n")
 
 print(json.dumps({
-    "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
+    "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man)}))

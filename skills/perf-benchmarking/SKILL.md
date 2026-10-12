@@ -288,6 +288,35 @@ STEPS="answers timing report" DATASETS=dbpedia tools/bench/three-engines/run.sh
   running and starting it was refused) the QLever columns are the olympics
   oracle answers and the recorded 2026-10-11 numbers only.
 
+### OWL reasoning on real ontologies — `tools/owl-real-bench.py`
+
+Ten vendored ontologies (SKOS, FOAF, PROV-O, BFO, Pizza, wine and food, RO,
+schema.org, Cell Ontology basic, QUDT; GO basic fetched at run time with
+`--optional`). For each: parse (both engines), OWL 2 species (`l4owl-species`),
+OWL RL closure (both engines), `owl-consistent` and 40 `owl-entails` checks
+(Lean only: the F* command line has no such verbs). One JSON line per
+(ontology, step, engine), wall and CPU time, peak resident set, load average,
+TIMEOUT and OOM as statuses, never as verdicts. Record, table and the issues
+it opened:
+[`docs/designissues/2026-10-10-owl-real-ontologies.md`](../../docs/designissues/2026-10-10-owl-real-ontologies.md).
+`tests/stack/owl_real_gate.sh` is its gate, with an XFAIL row per open issue.
+
+- **An address-space cap is not a memory cap for a Lean executable.** Measured
+  2026-10-10: a Lean process reserves two thread stacks of 1 GiB each and grows
+  its heap in 1 GiB `MAP_NORESERVE` regions (`strace -e trace=mmap`). Under
+  `prlimit --as=6000000000` the OWL RL closure of QUDT stopped with
+  "INTERNAL PANIC: out of memory" at 27 s with 1.25 GB resident, and prefixes
+  of the same file stopped at 0.7 GB and 3.4 GB resident. A step that dies
+  under `--as` has therefore not shown that it needs that much memory. Use
+  `--rss-cap-mb` (a watchdog on the resident set of the process tree) to find
+  the real need; the same closure then ran to 6.0 GB resident before the
+  watchdog stopped it at 78 s. A wasm module in Node does not run under
+  `prlimit --as` at all ("Cannot allocate Wasm memory").
+- **`time -v` does not see a step that `timeout -s KILL` killed.** It then
+  reports the `timeout` process itself (1.9 MB). The harness samples the
+  resident set of the process tree every 0.2 s and reports that sample for a
+  killed step.
+
 ### Other tools
 
 - `formal/lean4/Bench/StorageCodecBench.lean` — native IBK3 encode/decode

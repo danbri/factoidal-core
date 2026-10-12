@@ -178,6 +178,7 @@ import L4Factoidal.OWL.Materialise
 import L4Factoidal.OWL.Comprehension
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import L4Factoidal.OWL.RefuteCert
 import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
@@ -772,6 +773,12 @@ structure Verdict where
   regime  : Harness.Outcome
   closure : Harness.Outcome
   measure : Measure
+  /-- For a unit the refuter decided: whether its refutation is
+  certificate-checked (`OWL/RefuteCert.lean`), and how the refuter
+  refuted (the clash sources and branch counts). Reporting only; the
+  verdict above never reads it. -/
+  cert    : Option L4Factoidal.OWL.Refute.CertOutcome := none
+  profile : Option String := none
 
 /-- The closure decided it; the regime agrees. -/
 def Verdict.same (o : Harness.Outcome) (m : Measure) : Verdict :=
@@ -1175,6 +1182,68 @@ def refuteEntailsWhyBounded (ms : Nat) (label : String) (closure : Graph)
 ({closure.length} triples, budget {rb}); no verdict"
     pure RefuteWhy.budget
 
+/-! ## Certificates for refutations (`--dl`)
+
+Design record `docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`.
+For every unit the refuter decided, the probe asks `Refute.certify` for a
+checked certificate and prints `PROVED-BY-CERTIFICATE` or
+`DECIDED-BY-REFUTER (unchecked)`. The certificate run repeats the
+refuter's search on the same graph; it never changes the unit's
+verdict. A run that exceeds the wall clock is `unchecked`. -/
+
+/-- Default wall clock for one certificate run (search plus check),
+not a flag: a timeout is reported as `unchecked` with the time. -/
+def defaultCertMs : Nat := 20000
+
+def certOutcomeOf : L4Factoidal.OWL.Refute.CertOutcome → L4Factoidal.OWL.Refute.CertOutcome
+  | .proved => .proved
+  | .unchecked r => .unchecked r
+  | .notRefuted => .notRefuted
+
+/-- `Refute.certify` under the wall clock. -/
+def certifyBounded (ms : Nat) (g : Graph) (rb : Nat)
+    : IO L4Factoidal.OWL.Refute.CertOutcome := do
+  let t ← IO.asTask (pure (certOutcomeOf (L4Factoidal.OWL.Refute.certify g rb)))
+  match ← pollTask t (ms / 5 + 1) with
+  | some v => pure v
+  | none =>
+    IO.cancel t
+    pure (.unchecked s!"certificate run abandoned after {ms} ms")
+
+/-- How the refuter refuted `g`, under the wall clock. -/
+def profileBounded (ms : Nat) (g : Graph) (rb : Nat) : IO String := do
+  let t ← IO.asTask (pure ((L4Factoidal.OWL.Refute.refutationProfileLine g rb).getD "not refuted"))
+  match ← pollTask t (ms / 5 + 1) with
+  | some v => pure v
+  | none => IO.cancel t; pure s!"profile run abandoned after {ms} ms"
+
+/-- An entailment decided by refutation is certified when EVERY negation
+goal's refutation is (`refuteEntailsWhy` asks the same goals). Soundness
+of the reduction to the goals is obligation O3 of the design record. -/
+def certifyEntailsBounded (ms : Nat) (closure gc : Graph) (rb : Nat)
+    : IO (L4Factoidal.OWL.Refute.CertOutcome × String) := do
+  match L4Factoidal.OWL.Refute.negationGoals (renameConclusionBNodes gc) with
+  | none => pure (.unchecked "no negation goals", "no negation goals")
+  | some goals =>
+    let mut k := 0
+    let mut profs : List String := []
+    let mut out : L4Factoidal.OWL.Refute.CertOutcome := .proved
+    for goal in goals do
+      k := k + 1
+      let gg := closure ++ goal
+      profs := profs ++ [s!"goal {k}: " ++ (← profileBounded ms gg rb)]
+      match out with
+      | .proved =>
+          match ← certifyBounded ms gg rb with
+          | .proved => pure ()
+          | .unchecked r =>
+              out := .unchecked s!"goal {k} of {goals.length}: {r}"
+              if (← IO.getEnv "OWL_CERT_DEBUG").isSome then
+                IO.println s!"CERT-DEBUG goal {k}: {L4Factoidal.OWL.Refute.certifyDebug gg rb}"
+          | .notRefuted => out := .unchecked s!"goal {k} of {goals.length}: not refuted on the certificate run"
+      | _ => pure ()
+    pure (out, String.intercalate "; " profs)
+
 /-- The comprehension / existential-witness layer, applied ONCE over a
 stable closure, then one plain re-closure. Shared by the positive judge
 and, under a refuter regime, by the negative judge's cross-check, so
@@ -1262,8 +1331,10 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
           let alone := (← refuteBounded rms c.id r.graph rb) == some false
           IO.println s!"PE-BY-REFUTATION {c.id}: premise_alone_refuted={alone} \
 (closure {r.graph.length} triples)"
+          let (cert, prof) ← certifyEntailsBounded defaultCertMs r.graph gc rb
           return { regime := .pass, closure := closureOutcome,
-                   measure := { m with clashes := m.clashes + 1 } }
+                   measure := { m with clashes := m.clashes + 1 },
+                   cert := some cert, profile := some prof }
         else
           -- Named, not silent: a fail the refuter could not even ask
           -- about reads differently from one it asked and lost.
@@ -1383,7 +1454,12 @@ def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (r
     else if refuted then
       IO.println s!"INCONSISTENCY-BY-REFUTATION {c.id}: no RL clash row fired; \
 the tableau refuted the premise closure ({r.graph.length} triples)"
-      return { regime := .pass, closure := closureOutcome, measure := m }
+      let cert ← certifyBounded defaultCertMs r.graph rb
+      let prof ← profileBounded defaultCertMs r.graph rb
+      if (← IO.getEnv "OWL_CERT_DEBUG").isSome && !cert.isProved then
+        IO.println s!"CERT-DEBUG {c.id}: {L4Factoidal.OWL.Refute.certifyDebug r.graph rb}"
+      return { regime := .pass, closure := closureOutcome, measure := m,
+               cert := some cert, profile := some prof }
     else return Verdict.same closureOutcome m
 
 def testTypes : List String :=
@@ -1659,11 +1735,41 @@ structure CatalogResult where
   fabricates a contradiction, so a non-zero count here is a defect
   report, not a score. -/
   refuterFlips  : Nat := 0
+  /-- Of `refuterPasses`: certificate-checked, and not, with the
+  reasons of the second. -/
+  certProved    : Nat := 0
+  certUnchecked : Nat := 0
+  certReasons   : List (String × Nat) := []
+  /-- The clash sources and branch kinds of the refuter-decided units,
+  counted (`Refute.refutationProfileLine`). -/
+  profiles      : List (String × Nat) := []
   units    : Nat := 0
   wallMs   : Nat := 0
   /-- The facts and the regime's outcome of every unit, for the
   breakdown lines (`breakdownLines`). Reporting only. -/
   unitFacts : List (UnitFacts × Harness.Outcome) := []
+
+def bumpCount (l : List (String × Nat)) (k : String) : List (String × Nat) :=
+  match l.find? (fun p => p.1 == k) with
+  | some _ => l.map (fun p => if p.1 == k then (p.1, p.2 + 1) else p)
+  | none   => l ++ [(k, 1)]
+
+/-- The countable parts of a profile line: the graph-level check, or
+each leaf clash source and each kind of branch point that occurred. -/
+def profileKeys (pr : String) : List String :=
+  if pr.startsWith "graph-level" || pr.startsWith "counting" then [pr]
+  else
+    let words := (pr.splitOn " ").filter (· ≠ "")
+    let leafPart := match pr.splitOn "leaves=[" with
+      | _ :: rest :: _ => (rest.splitOn "]").headD ""
+      | _ => ""
+    let leaves := ((leafPart.splitOn ", ").filter (· ≠ "")).map (fun k => "leaf " ++ k)
+    let branches := words.filterMap (fun w =>
+      match w.splitOn "=" with
+      | [k, v] => if (k == "unions" || k == "merges" || k == "nominal_choices" ||
+                      k == "forced_identifications") && v != "0" then some ("uses " ++ k) else none
+      | _ => none)
+    (leaves ++ branches).eraseDups
 
 def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Outcome)
     : List (String × Harness.Score) :=
@@ -1711,6 +1817,30 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
           | .pass, .fail cr =>
               IO.println s!"DECIDED-BY-REFUTER {label}: the closure did not ({cr})"
               r := { r with refuterPasses := r.refuterPasses + 1 }
+              -- The certificate verdict for the same unit, on its own
+              -- line (design record 2026-10-10-owl-dl-refutation-certificates).
+              match v.cert with
+              | some .proved =>
+                  IO.println s!"PROVED-BY-CERTIFICATE {label}"
+                  r := { r with certProved := r.certProved + 1 }
+              | some (.unchecked why) =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: {why}"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons why }
+              | some .notRefuted =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: not refuted on the certificate run"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons "not refuted on the certificate run" }
+              | none =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: no certificate run"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons "no certificate run" }
+              match v.profile with
+              | some pr =>
+                  IO.println s!"REFUTATION-PROFILE {label}: {pr}"
+                  for part in profileKeys pr do
+                    r := { r with profiles := bumpCount r.profiles part }
+              | none => pure ()
           | .fail _, .pass =>
               IO.println s!"REFUTER-FLIPPED-TO-FAIL {label}: the closure passed it"
               r := { r with refuterFlips := r.refuterFlips + 1 }
@@ -1747,6 +1877,13 @@ refuter_passes={r.refuterPasses} refuter_flips_to_fail={r.refuterFlips} \
 pe_no_negation_goal={r.measure.peNoGoals} pe_refuter_budget={r.measure.peBudget} \
 pe_countermodel={r.measure.peCountermodel} \
 ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
+  if rg.refuter then
+    IO.println s!"CERTIFICATE {name}: {r.certProved} certificate-checked, \
+{r.certUnchecked} unchecked (out of {r.refuterPasses} decided by refutation)"
+    for (why, n) in r.certReasons do
+      IO.println s!"  CERTIFICATE-UNCHECKED {name} ({n}): {why}"
+    for (k, n) in r.profiles do
+      IO.println s!"  REFUTATION-USES {name} ({n}): {k}"
   -- FAILs grouped by cause.
   let causes := (r.fails.map (·.1)).eraseDups
   for cause in causes do
@@ -3108,6 +3245,8 @@ unrelated triple absent = {!unrelatedAbsent}"
   let mut totalClosure : Harness.Score := {}
   let mut totalRefPass := 0
   let mut totalRefFlip := 0
+  let mut totalCertProved := 0
+  let mut totalCertUnchecked := 0
   let mut totalM : Measure := {}
   let mut totalCases := 0
   let mut allUnits : List (UnitFacts × Harness.Outcome) := []
@@ -3132,6 +3271,8 @@ unrelated triple absent = {!unrelatedAbsent}"
         totalClosure := totalClosure.add r.closureScore
         totalRefPass := totalRefPass + r.refuterPasses
         totalRefFlip := totalRefFlip + r.refuterFlips
+        totalCertProved := totalCertProved + r.certProved
+        totalCertUnchecked := totalCertUnchecked + r.certUnchecked
         totalM := totalM.add r.measure
         totalCases := totalCases + cat.cases.length
         allUnits := allUnits ++ r.unitFacts
@@ -3153,6 +3294,8 @@ by refutation; {totalM.peNoGoals} positive-entailment units the closure failed p
 NO negation goal at all (`negationGoals` does not negate that conclusion shape, so the \
 refuter could not state the question), {totalM.peBudget} exhausted the tableau budget, \
 {totalM.peCountermodel} were answered with a countermodel."
+    IO.println s!"CERTIFICATE TOTAL: {totalCertProved} certificate-checked, \
+{totalCertUnchecked} unchecked (out of {totalRefPass} decided by refutation)"
 
   -- Breakdown of the TOTAL by status and species, and what the
   -- IN-SCOPE lines count (reporting only; see `breakdownLines`). The

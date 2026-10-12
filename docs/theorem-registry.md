@@ -3004,6 +3004,32 @@ issue <https://github.com/danbri/factoidal/issues/721>. No `sorry`, no
 | `rbConclusions_entailed` — every triple the executable rules return is entailed by `g` | same | `RdfBased.rbConclusions` | ✅ PROVED | none |
 | **The RL base under `RdfBasedConditions`** — `RdfBasedConditions i → RlConditions i'` for an `i'` agreeing with `i` off the reserved helper IRIs | — | `OWL.RL` closure | 🔴 NOT ATTEMPTED | the regime drops comprehension-witness triples (`withoutCompWitness`); design record § 8, gap A |
 
+## OWL 2 DL refutation certificates (Lean 4, 2026-10-10)
+
+`L4Factoidal/OWL/DirectCert.lean` (checker and theorems),
+`OWL/RefuteCert.lean` (reader and emitter, not trusted), run by
+`l4owl-probe --dl` (`PROVED-BY-CERTIFICATE` lines). Design record:
+[`designissues/2026-10-10-owl-dl-refutation-certificates.md`](designissues/2026-10-10-owl-dl-refutation-certificates.md);
+issue <https://github.com/danbri/factoidal/issues/651> (plan item 2). No
+`sorry`, no `axiom`, no `native_decide`, no new `partial`.
+
+| Theorem | Module | Engine anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `sem_nnfP` — `nnfP true c` denotes `c`, `nnfP false c` its complement (Direct Semantics Table 4) | `OWL/DirectCert.lean` | `Concept.nnfP` | ✅ PROVED | none |
+| `respects_normTBox` — the TBox in negation normal form with contrapositives holds wherever the TBox holds | same | `normTBox` | ✅ PROVED | none |
+| `gen_sound` — every forward rule (conjE, allE, allTransE, subRoleE, transE, tboxE, topI, exI, invE, conjI, disjI) yields facts true in every model of its premises | same | `stepGen` | ✅ PROVED | `CtxValid`: TBox, role box, inverse pairs respected |
+| `clashIn_sound` — a clash in the saturated facts contradicts every model | same | `clashIn` | ✅ PROVED | none |
+| `checkCert_sound` — `checkCert O c = true → ¬ ∃ δ I ν, DirectModel I ν O` | same | `checkCert` (`Refute.certify`) | ✅ PROVED | `DirectModel`: TBox, role box, inverse pairs, `SameIndividual`, ABox over `Concept` |
+| `checkCert_not_consistent` — the same in the shape of `Tableau.Consistent` | same | `checkCert` | ✅ PROVED | empty TBox |
+| **The reader** — every axiom `readOntology g` returns holds in every Direct Semantics model of the ontology `g` encodes | — | `Refute.readOntology` | 🔴 NOT ATTEMPTED | obligation O1, <https://github.com/danbri/factoidal/issues/761> |
+| **The DL preprocessing** — RL closure and materialisation keep Direct Semantics models | — | `premiseClosure` (`--dl`) | 🔴 NOT ATTEMPTED | obligation O2, <https://github.com/danbri/factoidal/issues/762> |
+| **The negation goals** — every goal refuted implies the entailment | — | `Refute.negationGoals` | 🔴 NOT ATTEMPTED | obligation O3, <https://github.com/danbri/factoidal/issues/763> |
+
+Measured 2026-10-10 (`--dl --refute-ms 3000`, certificate-checked out of
+decided by refutation): type-inconsistency 50 of 77; type-positive-entailment
+32 of 55; type-consistency 32 of 55; syntax-dl 72 of 113. Unchecked
+rules: <https://github.com/danbri/factoidal/issues/764>.
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:

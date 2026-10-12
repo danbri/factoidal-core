@@ -80,6 +80,7 @@ section it implements.
 -/
 import L4Factoidal.SPARQL.Expr
 import L4Factoidal.SPARQL.ExprRefinement
+import L4Factoidal.SPARQL.FullText
 import L4Factoidal.RDF.ConciseBoundedDescription
 import Std.Data.HashMap
 import L4Factoidal.SPARQL.OrderedPrefix
@@ -1802,12 +1803,38 @@ verbatim; the two agree whenever the body rebinds, or does not mention,
 the outer variables — every W3C case — and this port keeps the
 spec-literal reading the previous EXISTS stage chose.) -/
 
+/-- Lower one BGP. A BGP with no `text:query` pattern lowers to itself.
+Each `text:query` pattern (`TriplePattern.fulltext?`) is taken out of the
+BGP and joined back as its own pattern, whose rows `fulltextSolutions`
+computes from the ACTIVE graph (so `GRAPH` selects the graph it
+searches, as `store_search gs` does in the F\* engine).
+
+Why a join gives the F\* answer: the F\* `eval_fulltext_tp_store` reads
+its candidates with an unbound subject (`bs = None`), so the candidate
+list, the match and the limit are the same for every row μ the rest of
+the BGP produces, and only `try_bind_subject … mu` depends on μ. That is
+`Join(Ω_rest, Ω_text)` for the variable and constant subject alike. Row
+ORDER can differ from the F\* nested evaluation; SPARQL fixes no order
+without ORDER BY. -/
+def lowerBgp (b : Bgp) : GraphPattern :=
+  if bgpHasFulltext b then
+    b.foldl (fun acc tp =>
+        match tp.fulltext? with
+        | some ftq => .join acc (.modified (fun active _ => fulltextSolutions ftq tp.s active) .empty)
+        | none     => acc)
+      (.bgp (b.filter (fun tp => tp.fulltext?.isNone)))
+  else .bgp b
+
+theorem lowerBgp_of_no_fulltext (b : Bgp) (h : bgpHasFulltext b = false) :
+    lowerBgp b = .bgp b := by
+  simp [lowerBgp, h]
+
 mutual
 
 def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
     GraphPattern :=
   match p with
-  | .bgp b       => .bgp (substBgp mu b)
+  | .bgp b       => lowerBgp (substBgp mu b)
   | .join l r    => .join (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
   | .leftJoin l r c =>
       .leftJoin (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
@@ -2679,6 +2706,30 @@ def QueryPattern.mentionsService : QueryPattern → Bool
   | .service _ _ _      => true
   | .serviceVar _ _ _   => true
   | .subSelect _        => true
+  | .propertyPath _ _ _ => false
+  | .empty              => false
+
+/-- Does the pattern hold a `text:query` pattern in a BGP the backend
+evaluator (`SPARQL/StoreDataset.lean`) could reach? A sub-SELECT, a
+VALUES block, a property path and the empty pattern answer `false`: the
+backend evaluator hands a sub-SELECT to the reference evaluator, which
+lowers `text:query` itself (`lowerBgp`). An EXISTS body is never
+evaluated by the backend either. The backend entry points answer `none`
+when this is `true`, so the reference evaluator answers the query. -/
+def QueryPattern.mentionsFulltext : QueryPattern → Bool
+  | .bgp b              => bgpHasFulltext b
+  | .join l r           => l.mentionsFulltext || r.mentionsFulltext
+  | .leftJoin l r _     => l.mentionsFulltext || r.mentionsFulltext
+  | .filter _ p         => p.mentionsFulltext
+  | .union l r          => l.mentionsFulltext || r.mentionsFulltext
+  | .minus l r          => l.mentionsFulltext || r.mentionsFulltext
+  | .graph _ p          => p.mentionsFulltext
+  | .lateral l r        => l.mentionsFulltext || r.mentionsFulltext
+  | .bind _ _ p         => p.mentionsFulltext
+  | .values _ _         => false
+  | .service _ _ p      => p.mentionsFulltext
+  | .serviceVar _ _ p   => p.mentionsFulltext
+  | .subSelect _        => false
   | .propertyPath _ _ _ => false
   | .empty              => false
 

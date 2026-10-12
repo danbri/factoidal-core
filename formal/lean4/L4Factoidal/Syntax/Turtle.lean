@@ -1359,10 +1359,16 @@ termination_by fuel
 
 /-- [8] `objectList ::= object (',' object)*`, emitting one triple per
 object against the given subject and verb. Under `.rdf12` each object
-may be followed by an RDF 1.2 annotation sequence. Port of
-`parse_object_list_rev`; the accumulator is reversed by the caller. -/
-def readObjectList (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
-    (pos : Nat) (cs : List Char) (acc : List Triple) :
+may be followed by an RDF 1.2 annotation sequence. The triples are pushed
+onto `accRev`, which holds every triple read so far NEWEST FIRST, and the
+result is that list, still reversed: the caller reverses it once. Each
+object costs time in proportion to its own triples, and the next object is
+read by a tail call, so the LENGTH of an object list uses no stack and the
+time is linear (https://github.com/danbri/factoidal/issues/754).
+`readObjectListRev_eq` (after this block) proves it equal to the readable
+`readObjectList`, the F* source's `parse_object_list_rev`. -/
+def readObjectListRev (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
+    (pos : Nat) (cs : List Char) (accRev : List Triple) :
     Except ParseError (List Triple × TurtleState × Nat × List Char) :=
   match fuel with
   | 0 => .error ⟨"recursion limit in object list", pos⟩
@@ -1370,18 +1376,18 @@ def readObjectList (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIr
     match readObject f st pos cs with
     | .error e => .error e
     | .ok (o, p1, r1) =>
-        let acc0 := acc ++ o.triples ++ [{ s := subj, p := pred, o := o.term }]
         match (if o.state.mode == .rdf12 then
                  readAnnotations f o.state subj pred o.term p1 r1 none
                else .ok ([], o.state, p1, r1)) with
         | .error e => .error e
         | .ok (annTriples, stA, p1a, r1a) =>
-            let acc1 := acc0 ++ annTriples
+            let acc1 := annTriples.reverseAux
+              ({ s := subj, p := pred, o := o.term } :: o.triples.reverseAux accRev)
             let (p2, r2) := tws p1a r1a
             match r2 with
             | ',' :: r3 =>
                 let (p4, r4) := tws (p2 + 1) r3
-                readObjectList f stA subj pred p4 r4 acc1
+                readObjectListRev f stA subj pred p4 r4 acc1
             | _ => .ok (acc1, stA, p2, r2)
 termination_by fuel
 
@@ -1434,61 +1440,61 @@ def readAnnotations (fuel : Nat) (st : TurtleState) (bs : Subject) (bp : WfIri) 
 termination_by fuel
 
 /-- [7] `predicateObjectList ::= verb objectList (';' (verb objectList)?)*`.
-Port of `parse_predicate_object_list_rev`. A `;` may be followed by
-another verb, by more `;`, or by a terminator — `.` `]` `|}` `}` — the
-last of which is TriG's graph-block close (the F* source's issue #434). -/
+A `;` may be followed by another verb, by more `;`, or by a terminator —
+`.` `]` `|}` `}` — the last of which is TriG's graph-block close (the F*
+source's issue #434).
+
+One function reads every `verb objectList` group of the list, each by a
+tail call, so the NUMBER of groups uses no stack
+(https://github.com/danbri/factoidal/issues/754). `more` says where the
+input stands: `false` at a verb (the F* `parse_predicate_object_list_rev`),
+`true` at a run of `;` (the F* `parse_trailing_semicolons_rev`, which at
+fuel 0 accepts and reads nothing). `accRev` holds the triples of the groups
+already read, newest first; every exit returns them reversed once, in
+document order. Callers start with the defaults (`[]`, `false`).
+`readPredicateObjectList_eq` (after this block) proves the loop equal to the
+readable mutual recursion `readPredicateObjectListSpec` /
+`readPredicateObjectListMoreSpec`, the F* source's form. -/
 def readPredicateObjectList (fuel : Nat) (st : TurtleState) (subj : Subject)
-    (pos : Nat) (cs : List Char) :
+    (pos : Nat) (cs : List Char) (accRev : List Triple := []) (more : Bool := false) :
     Except ParseError (List Triple × TurtleState × Nat × List Char) :=
-  match fuel with
-  | 0 => .error ⟨"recursion limit in predicate-object list", pos⟩
-  | f + 1 =>
+  match more, fuel with
+  | false, 0 => .error ⟨"recursion limit in predicate-object list", pos⟩
+  | false, f + 1 =>
     match readVerb f st pos cs with
     | .error e => .error e
     | .ok (pred, p1, r1) =>
         let (p2, r2) := tws p1 r1
-        match readObjectList f st subj pred p2 r2 [] with
+        match readObjectListRev f st subj pred p2 r2 accRev with
         | .error e => .error e
-        | .ok (ts, st1, p3, r3) =>
+        | .ok (acc1, st1, p3, r3) =>
             let (p4, r4) := tws p3 r3
             match r4 with
             | ';' :: r5 =>
                 let (p6, r6) := tws (p4 + 1) r5
                 (match r6 with
-                 | [] => .ok (ts, st1, p6, r6)
+                 | [] => .ok (acc1.reverse, st1, p6, r6)
                  | c :: _ =>
                      if c == ';' then
-                       match readPredicateObjectListMore f st1 subj p6 r6 with
-                       | .error e => .error e
-                       | .ok (more, st2, p7, r7) => .ok (ts ++ more, st2, p7, r7)
+                       readPredicateObjectList f st1 subj p6 r6 acc1 true
                      else if c == '.' || c == ']' || c == '|' || c == '}' then
-                       .ok (ts, st1, p6, r6)
+                       .ok (acc1.reverse, st1, p6, r6)
                      else
-                       match readPredicateObjectList f st1 subj p6 r6 with
-                       | .error e => .error e
-                       | .ok (more, st2, p7, r7) => .ok (ts ++ more, st2, p7, r7))
-            | _ => .ok (ts, st1, p4, r4)
-termination_by fuel
-
-/-- Skip a run of `;` separators and, if a verb follows, keep parsing.
-Port of `parse_trailing_semicolons_rev`. -/
-def readPredicateObjectListMore (fuel : Nat) (st : TurtleState) (subj : Subject)
-    (pos : Nat) (cs : List Char) :
-    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
-  match fuel with
-  | 0 => .ok ([], st, pos, cs)
-  | f + 1 =>
+                       readPredicateObjectList f st1 subj p6 r6 acc1 false)
+            | _ => .ok (acc1.reverse, st1, p4, r4)
+  | true, 0 => .ok (accRev.reverse, st, pos, cs)
+  | true, f + 1 =>
     match cs with
     | ';' :: rest =>
         let (p2, r2) := tws (pos + 1) rest
         (match r2 with
-         | [] => .ok ([], st, p2, r2)
+         | [] => .ok (accRev.reverse, st, p2, r2)
          | c :: _ =>
              if c == ';' || c == '.' || c == ']' || c == '|' || c == '}' then
-               if c == ';' then readPredicateObjectListMore f st subj p2 r2
-               else .ok ([], st, p2, r2)
-             else readPredicateObjectList f st subj p2 r2)
-    | _ => .ok ([], st, pos, cs)
+               if c == ';' then readPredicateObjectList f st subj p2 r2 accRev true
+               else .ok (accRev.reverse, st, p2, r2)
+             else readPredicateObjectList f st subj p2 r2 accRev false)
+    | _ => .ok (accRev.reverse, st, pos, cs)
 termination_by fuel
 
 /-- [10] subject, plus [14] blankNodePropertyList and [15] collection
@@ -1677,6 +1683,294 @@ theorem readCollection_eq (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List
         cases readCollectionRest f first.state.freshBnode.snd p2 r2 with
         | error e => rfl
         | ok res => rfl
+
+/-! ### Object lists and predicate-object lists: the readable recursion and the loop
+
+`readObjectList` is the F* source's `parse_object_list_rev`: each object's
+triples are appended to the accumulator with `acc ++ ...`, so an object list
+of n objects takes time in proportion to n². `readPredicateObjectListSpec`
+and `readPredicateObjectListMoreSpec` are `parse_predicate_object_list_rev`
+and `parse_trailing_semicolons_rev`: one recursive call per `;` group, so a
+statement of n groups takes n stack frames. These are the readable forms.
+The parser runs `readObjectListRev` and the loop `readPredicateObjectList`
+from the block above; the theorems below prove each loop equal to its
+readable form for every fuel (the same triples in the same order, the same
+blank-node labels, the same errors at the same positions), and `@[csimp]`
+makes any caller of a readable form run the loop.
+https://github.com/danbri/factoidal/issues/754 -/
+
+/-- [8] `objectList ::= object (',' object)*`, the readable form. Port of
+`parse_object_list_rev`; callers start with `acc = []`. -/
+def readObjectList (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
+    (pos : Nat) (cs : List Char) (acc : List Triple) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  match fuel with
+  | 0 => .error ⟨"recursion limit in object list", pos⟩
+  | f + 1 =>
+    match readObject f st pos cs with
+    | .error e => .error e
+    | .ok (o, p1, r1) =>
+        let acc0 := acc ++ o.triples ++ [{ s := subj, p := pred, o := o.term }]
+        match (if o.state.mode == .rdf12 then
+                 readAnnotations f o.state subj pred o.term p1 r1 none
+               else .ok ([], o.state, p1, r1)) with
+        | .error e => .error e
+        | .ok (annTriples, stA, p1a, r1a) =>
+            let acc1 := acc0 ++ annTriples
+            let (p2, r2) := tws p1a r1a
+            match r2 with
+            | ',' :: r3 =>
+                let (p4, r4) := tws (p2 + 1) r3
+                readObjectList f stA subj pred p4 r4 acc1
+            | _ => .ok (acc1, stA, p2, r2)
+
+mutual
+
+/-- [7] `predicateObjectList ::= verb objectList (';' (verb objectList)?)*`,
+the readable form. Port of `parse_predicate_object_list_rev`. -/
+def readPredicateObjectListSpec (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  match fuel with
+  | 0 => .error ⟨"recursion limit in predicate-object list", pos⟩
+  | f + 1 =>
+    match readVerb f st pos cs with
+    | .error e => .error e
+    | .ok (pred, p1, r1) =>
+        let (p2, r2) := tws p1 r1
+        match readObjectList f st subj pred p2 r2 [] with
+        | .error e => .error e
+        | .ok (ts, st1, p3, r3) =>
+            let (p4, r4) := tws p3 r3
+            match r4 with
+            | ';' :: r5 =>
+                let (p6, r6) := tws (p4 + 1) r5
+                (match r6 with
+                 | [] => .ok (ts, st1, p6, r6)
+                 | c :: _ =>
+                     if c == ';' then
+                       match readPredicateObjectListMoreSpec f st1 subj p6 r6 with
+                       | .error e => .error e
+                       | .ok (more, st2, p7, r7) => .ok (ts ++ more, st2, p7, r7)
+                     else if c == '.' || c == ']' || c == '|' || c == '}' then
+                       .ok (ts, st1, p6, r6)
+                     else
+                       match readPredicateObjectListSpec f st1 subj p6 r6 with
+                       | .error e => .error e
+                       | .ok (more, st2, p7, r7) => .ok (ts ++ more, st2, p7, r7))
+            | _ => .ok (ts, st1, p4, r4)
+
+/-- Skip a run of `;` separators and, if a verb follows, keep parsing. The
+readable form; port of `parse_trailing_semicolons_rev`. -/
+def readPredicateObjectListMoreSpec (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  match fuel with
+  | 0 => .ok ([], st, pos, cs)
+  | f + 1 =>
+    match cs with
+    | ';' :: rest =>
+        let (p2, r2) := tws (pos + 1) rest
+        (match r2 with
+         | [] => .ok ([], st, p2, r2)
+         | c :: _ =>
+             if c == ';' || c == '.' || c == ']' || c == '|' || c == '}' then
+               if c == ';' then readPredicateObjectListMoreSpec f st subj p2 r2
+               else .ok ([], st, p2, r2)
+             else readPredicateObjectListSpec f st subj p2 r2)
+    | _ => .ok ([], st, pos, cs)
+
+end
+
+/-- Starting the readable object list with `acc` puts `acc` in front of its
+result and changes nothing else. -/
+theorem readObjectList_acc : ∀ (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
+    (pos : Nat) (cs : List Char) (acc : List Triple),
+    readObjectList fuel st subj pred pos cs acc =
+      (readObjectList fuel st subj pred pos cs []).map (fun r => (acc ++ r.1, r.2))
+  | 0, st, subj, pred, pos, cs, acc => by
+      rw [readObjectList, readObjectList]; rfl
+  | f + 1, st, subj, pred, pos, cs, acc => by
+      rw [readObjectList, readObjectList]
+      cases readObject f st pos cs with
+      | error e => rfl
+      | ok res =>
+        rcases res with ⟨o, p1, r1⟩
+        dsimp only
+        generalize (if o.state.mode == .rdf12 then
+                 readAnnotations f o.state subj pred o.term p1 r1 none
+               else .ok ([], o.state, p1, r1)) = A
+        cases A with
+        | error e => rfl
+        | ok res2 =>
+          rcases res2 with ⟨ann, stA, p1a, r1a⟩
+          dsimp only
+          generalize tws p1a r1a = x
+          rcases x with ⟨p2, r2⟩
+          dsimp only
+          split
+          · rw [readObjectList_acc f _ _ _ _ _ (_ ++ ann),
+                readObjectList_acc f _ _ _ _ _ (_ ++ ann)]
+            cases readObjectList f stA subj pred _ _ [] with
+            | error e => rfl
+            | ok res3 => simp [Except.map, List.append_assoc]
+          · simp [Except.map, List.append_assoc]
+
+/-- The loop equals the readable object list: `readObjectListRev` returns,
+newest first, `accRev` followed by what `readObjectList` reads. The same
+triples in the same order, the same state (so the same blank-node labels),
+the same errors at the same positions, for every fuel. -/
+theorem readObjectListRev_eq : ∀ (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
+    (pos : Nat) (cs : List Char) (accRev : List Triple),
+    readObjectListRev fuel st subj pred pos cs accRev =
+      (readObjectList fuel st subj pred pos cs []).map (fun r => (r.1.reverse ++ accRev, r.2))
+  | 0, st, subj, pred, pos, cs, accRev => by
+      rw [readObjectListRev, readObjectList]; rfl
+  | f + 1, st, subj, pred, pos, cs, accRev => by
+      rw [readObjectListRev, readObjectList]
+      cases readObject f st pos cs with
+      | error e => rfl
+      | ok res =>
+        rcases res with ⟨o, p1, r1⟩
+        dsimp only
+        generalize (if o.state.mode == .rdf12 then
+                 readAnnotations f o.state subj pred o.term p1 r1 none
+               else .ok ([], o.state, p1, r1)) = A
+        cases A with
+        | error e => rfl
+        | ok res2 =>
+          rcases res2 with ⟨ann, stA, p1a, r1a⟩
+          dsimp only
+          generalize tws p1a r1a = x
+          rcases x with ⟨p2, r2⟩
+          dsimp only
+          split
+          · rw [readObjectListRev_eq f, readObjectList_acc f _ _ _ _ _ (_ ++ ann)]
+            cases readObjectList f stA subj pred _ _ [] with
+            | error e => rfl
+            | ok res3 => simp [Except.map, List.reverseAux_eq, List.append_assoc]
+          · simp [Except.map, List.reverseAux_eq, List.append_assoc]
+
+/-- `readObjectList` run as the loop. -/
+def readObjectListTR (fuel : Nat) (st : TurtleState) (subj : Subject) (pred : WfIri)
+    (pos : Nat) (cs : List Char) (acc : List Triple) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  (readObjectListRev fuel st subj pred pos cs acc.reverse).map (fun r => (r.1.reverse, r.2))
+
+@[csimp] theorem readObjectList_eq_TR : @readObjectList = @readObjectListTR := by
+  funext fuel st subj pred pos cs acc
+  rw [readObjectListTR, readObjectListRev_eq, readObjectList_acc]
+  cases readObjectList fuel st subj pred pos cs [] with
+  | error e => rfl
+  | ok res => simp [Except.map]
+
+/-- The predicate-object loop equals the readable mutual recursion: started
+at a verb (`more = false`) it reads what `readPredicateObjectListSpec` reads,
+started at a `;` run (`more = true`) what `readPredicateObjectListMoreSpec`
+reads, and puts the triples of `accRev` (held newest first) in front. The same
+triples in the same order, the same state, the same errors at the same
+positions, for every fuel. -/
+theorem readPredicateObjectList_eq : ∀ (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) (accRev : List Triple) (more : Bool),
+    readPredicateObjectList fuel st subj pos cs accRev more =
+      (if more then readPredicateObjectListMoreSpec fuel st subj pos cs
+       else readPredicateObjectListSpec fuel st subj pos cs).map
+        (fun r => (accRev.reverse ++ r.1, r.2))
+  | 0, st, subj, pos, cs, accRev, false => by
+      rw [readPredicateObjectList, readPredicateObjectListSpec]; rfl
+  | 0, st, subj, pos, cs, accRev, true => by
+      rw [readPredicateObjectList, readPredicateObjectListMoreSpec]
+      simp [Except.map]
+  | f + 1, st, subj, pos, cs, accRev, false => by
+      rw [readPredicateObjectList, readPredicateObjectListSpec]
+      simp only [Bool.false_eq_true, if_false]
+      cases readVerb f st pos cs with
+      | error e => rfl
+      | ok res =>
+        rcases res with ⟨pred, p1, r1⟩
+        dsimp only
+        generalize tws p1 r1 = x
+        rcases x with ⟨p2, r2⟩
+        dsimp only
+        rw [readObjectListRev_eq]
+        cases readObjectList f st subj pred p2 r2 [] with
+        | error e => rfl
+        | ok res2 =>
+          rcases res2 with ⟨ts, st1, p3, r3⟩
+          dsimp only [Except.map]
+          generalize tws p3 r3 = y
+          rcases y with ⟨p4, r4⟩
+          dsimp only
+          split
+          · generalize tws (p4 + 1) _ = z
+            rcases z with ⟨p6, r6⟩
+            dsimp only
+            split
+            · simp
+            · split
+              · rw [readPredicateObjectList_eq f]
+                simp only [if_true]
+                cases readPredicateObjectListMoreSpec f st1 subj p6 _ with
+                | error e => rfl
+                | ok res3 => simp [Except.map, List.append_assoc]
+              · split
+                · simp
+                · rw [readPredicateObjectList_eq f]
+                  simp only [Bool.false_eq_true, if_false]
+                  cases readPredicateObjectListSpec f st1 subj p6 _ with
+                  | error e => rfl
+                  | ok res3 => simp [Except.map, List.append_assoc]
+          · simp
+  | f + 1, st, subj, pos, cs, accRev, true => by
+      rw [readPredicateObjectList.eq_def, readPredicateObjectListMoreSpec.eq_def]
+      simp only [if_true]
+      split
+      · generalize tws (pos + 1) _ = z
+        rcases z with ⟨p2, r2⟩
+        dsimp only
+        split
+        · simp [Except.map]
+        · split
+          · split
+            · rw [readPredicateObjectList_eq f]
+              simp only [if_true]
+            · simp [Except.map]
+          · rw [readPredicateObjectList_eq f]
+            simp only [Bool.false_eq_true, if_false]
+      · simp [Except.map]
+
+/-- At the defaults (no triples read, at a verb) the loop is the readable
+form. -/
+theorem readPredicateObjectList_eq_spec (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) :
+    readPredicateObjectList fuel st subj pos cs = readPredicateObjectListSpec fuel st subj pos cs := by
+  rw [readPredicateObjectList_eq]
+  simp only [Bool.false_eq_true, if_false, List.reverse_nil, List.nil_append]
+  cases readPredicateObjectListSpec fuel st subj pos cs <;> rfl
+
+/-- `readPredicateObjectListSpec` run as the loop. -/
+def readPredicateObjectListSpecTR (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  readPredicateObjectList fuel st subj pos cs [] false
+
+/-- `readPredicateObjectListMoreSpec` run as the loop. -/
+def readPredicateObjectListMoreSpecTR (fuel : Nat) (st : TurtleState) (subj : Subject)
+    (pos : Nat) (cs : List Char) :
+    Except ParseError (List Triple × TurtleState × Nat × List Char) :=
+  readPredicateObjectList fuel st subj pos cs [] true
+
+@[csimp] theorem readPredicateObjectListSpec_eq_TR :
+    @readPredicateObjectListSpec = @readPredicateObjectListSpecTR := by
+  funext fuel st subj pos cs
+  rw [readPredicateObjectListSpecTR, readPredicateObjectList_eq_spec]
+
+@[csimp] theorem readPredicateObjectListMoreSpec_eq_TR :
+    @readPredicateObjectListMoreSpec = @readPredicateObjectListMoreSpecTR := by
+  funext fuel st subj pos cs
+  rw [readPredicateObjectListMoreSpecTR, readPredicateObjectList_eq]
+  simp only [if_true, List.reverse_nil, List.nil_append]
+  cases readPredicateObjectListMoreSpec fuel st subj pos cs <;> rfl
 
 /-! ## Directives — [3] directive
 

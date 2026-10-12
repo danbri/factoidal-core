@@ -211,7 +211,8 @@ extern_lib libl4exthost pkg := do
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
     `Harness.Sbm11Gen, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
-    `Harness.PlannerCheck, `Harness.PlannerKinds]
+    `Harness.PlannerCheck, `Harness.PlannerKinds,
+    `Harness.ProofObligations]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -314,6 +315,12 @@ extern_lib libl4exthost pkg := do
 -- verify and activate.
 @[default_target] lean_exe «l4sbm11-pack» where root := `Harness.Sbm11Pack
 @[default_target] lean_exe «l4sbm11» where root := `Harness.Sbm11Cli
+-- The OWL 2 species verdict (DL or Full) of one ontology document and its
+-- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
+-- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`
+-- scores; this executable only reads files and prints JSON. Used by
+-- tools/owl-real-bench.sh (https://github.com/danbri/factoidal/issues/651).
+@[default_target] lean_exe «l4owl-species» where root := `Harness.OwlSpeciesFile
 
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where

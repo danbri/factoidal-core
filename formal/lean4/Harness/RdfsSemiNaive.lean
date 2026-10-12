@@ -1,47 +1,52 @@
 /-
 Harness.RdfsSemiNaive — `l4rdfs-semi`: does the delta closure agree
-with the naive one?
+with the naive one, and how long does each take?
 
-Not part of the verified library: it reads no files but prints scores.
+Not part of the verified library: it reads files and prints scores.
+
+## Two modes
 
     lake exe l4rdfs-semi [maxChainLength]
+    l4rdfs-semi --time [--runs N] FILE...
 
-## ⚠️ Speed is NOT measured here, and that is a gap
+The first mode generates subclass chains and property hierarchies and
+reports AGREEMENT only (`delta vs naive closure: ...`, read by
+`tools/lean-scoreboard.sh`).
 
-`RDFS.SemiNaive` exists for speed, so this harness was written to
-measure speed as well as agreement. It does not. Three versions of the
-timing were tried and every one reported 0 ms for both closures while
-the process spent 90 seconds of CPU on a run whose largest input is a
-100-triple graph:
+The second mode (added 2026-10-12, issue
+https://github.com/danbri/factoidal/issues/756) reads each FILE as
+Turtle (N-Triples is a subset) and reports, per file, the minimum over
+N runs of the time of `closureFix` (the naive loop, which the compiler
+replaces by the indexed `closureFast`), `semiNaive`, the run-time check
+`isNaiveFixpoint (semiNaive g)`, and the checked entry
+`closureSemiNaiveChecked`, with agreement of the checked entry and
+`closureFix` as sets.
 
-1. `timed (fun _ => closureFix g)` — but `measure` then called
-   `closureFix g` AGAIN for the agreement check, so the closure was
-   computed twice and the timed call may have been the cheap one.
-2. Each closure computed exactly once, with `.length` to force it —
-   still 0 ms.
-3. `clockAfter`, which reads the clock through an `if` on the value so
-   the pure computation cannot be deferred past the timestamp — still
-   0 ms.
+## How the timing forces the computation
 
-`clockAfter` is a working technique: a standalone binary using it
-reports 5723 ms for a 20-million-step fold, so the clock and the
-forcing are both fine. What has not been established is WHERE the 90
-seconds goes. `isNaiveFixpoint` and `sameGraph` are both plausible —
-each is superlinear in the closure size, and the closures are 5000
-triples — but that is a hypothesis, not a measurement.
+Three earlier versions of the timing in this harness reported 0 ms
+while the process spent 90 seconds of CPU (issue
+https://github.com/danbri/factoidal/issues/554). `timed` below makes
+the INPUT depend on the first clock read (`if t0 == 0 then [] else g`),
+so the computation cannot move before it, and writes the result's
+length to an `IO.Ref` before the second clock read, so it cannot move
+after it. The clock is the monotonic wall clock. Check of the method,
+2026-10-12: the per-call times printed by `--time`, times the number of
+runs, add up to most of the wall time `/usr/bin/time` reports for the
+whole process (chain 40, list-scan loop, 3 runs: 1.44 s of 1.57 s; the
+rest is parsing and the agreement check). Numbers:
+`docs/designissues/2026-10-10-rdfs-seminaive.md`.
 
-So the harness reports AGREEMENT only. A speed column that always reads
-0 is worse than no column: it reads as "instant" when the truth is
-"not measured". Tracked in
-https://github.com/danbri/factoidal/issues/554.
-
-The agreement result stands on its own and is what makes the port
-usable: `closureSemiNaiveChecked` returns the naive answer whenever the
-delta loop is not a fixed point, so a hole in the delta reasoning costs
-a slow run, never a wrong one.
+The agreement result stands on its own: `closureSemiNaiveChecked`
+returns the naive answer whenever the delta loop is not a fixed point,
+so a hole in the delta reasoning costs a slow run, never a wrong one.
+`L4Factoidal/RDFS/SemiNaiveTheorems.lean` now proves the delta loop
+sound, saturated when it stops by a test, and equal to `closureFix` as
+a set when both are saturated.
 -/
-import L4Factoidal.RDFS.SemiNaive
+import L4Factoidal.RDFS.SemiNaiveTheorems
 import L4Factoidal.Syntax.NTriples
+import L4Factoidal.Syntax.Turtle
 
 open L4Factoidal.RDF L4Factoidal.RDFS
 
@@ -103,7 +108,102 @@ def render (r : Row) : String :=
   s!"  {r.label} in={r.size} out={r.outSize} agree={r.agree} " ++
   s!"delta-reached-fixpoint={r.ownFix}"
 
+/-! ## Timing mode -/
+
+/-- Run `f` on `g`; return the result and the elapsed nanoseconds. The
+input depends on the first clock read and the result's length is
+written to `sink` before the second, so the computation sits between
+the two reads. -/
+def timed (sink : IO.Ref Nat) (g : Graph) (f : Graph → Graph) : IO (Graph × Nat) := do
+  let t0 ← IO.monoNanosNow
+  let g' := if t0 == 0 then [] else g
+  let r := f g'
+  sink.set r.length
+  let t1 ← IO.monoNanosNow
+  return (r, t1 - t0)
+
+/-- `timed` for a Boolean test of a graph. -/
+def timedBool (sink : IO.Ref Nat) (g : Graph) (f : Graph → Bool) : IO (Bool × Nat) := do
+  let t0 ← IO.monoNanosNow
+  let g' := if t0 == 0 then [] else g
+  let r := f g'
+  sink.set (if r then 1 else 0)
+  let t1 ← IO.monoNanosNow
+  return (r, t1 - t0)
+
+/-- The minimum over `runs` runs, and the last result. -/
+def minTimed (runs : Nat) (act : IO (α × Nat)) : IO (α × Nat) := do
+  let (r0, t0) ← act
+  let mut best := t0
+  let mut res := r0
+  for _ in [1:runs] do
+    let (r, t) ← act
+    res := r
+    if t < best then best := t
+  return (res, best)
+
+def ms (ns : Nat) : String :=
+  let tenths := (ns + 50000) / 100000
+  s!"{tenths / 10}.{tenths % 10}"
+
+structure TimeRow where
+  label    : String
+  size     : Nat
+  outSize  : Nat
+  naiveNs  : Nat
+  deltaNs  : Nat
+  checkNs  : Nat
+  checkedNs : Nat
+  agree    : Bool
+  ownFix   : Bool
+
+def timeFile (runs : Nat) (path : String) : IO (Option TimeRow) := do
+  let text ← IO.FS.readFile path
+  match L4Factoidal.Syntax.parseTurtle text (some ("file://" ++ path)) with
+  | .error e =>
+      IO.println s!"  {path}: parse error {e}"
+      return none
+  | .ok g =>
+      let sink ← IO.mkRef 0
+      let (naive, tn) ← minTimed runs (timed sink g closureFix)
+      let (fast, td) ← minTimed runs (timed sink g semiNaive)
+      let (own, tc) ← minTimed runs (timedBool sink fast isNaiveFixpoint)
+      let (checked, tk) ← minTimed runs (timed sink g closureSemiNaiveChecked)
+      return some { label := path, size := g.length, outSize := naive.length,
+                    naiveNs := tn, deltaNs := td, checkNs := tc, checkedNs := tk,
+                    agree := sameGraph checked naive, ownFix := own }
+
+def renderTime (r : TimeRow) : String :=
+  s!"  {r.label} in={r.size} out={r.outSize} naive_ms={ms r.naiveNs} " ++
+  s!"delta_ms={ms r.deltaNs} check_ms={ms r.checkNs} checked_ms={ms r.checkedNs} " ++
+  s!"agree={r.agree} delta-reached-fixpoint={r.ownFix}"
+
+def timeMain (args : List String) : IO UInt32 := do
+  let (runs, files) :=
+    match args with
+    | "--runs" :: n :: rest => ((n.toNat?).getD 3, rest)
+    | rest => (3, rest)
+  let mut rows : List TimeRow := []
+  IO.println s!"--- closureFix against closureSemiNaiveChecked, minimum of {runs} runs, ms ---"
+  for f in files do
+    match ← timeFile runs f with
+    | some r =>
+        IO.println (renderTime r)
+        rows := r :: rows
+    | none => pure ()
+  let agree := rows.countP (·.agree)
+  let own := rows.countP (·.ownFix)
+  let total := rows.length
+  let sum (f : TimeRow → Nat) : Nat := rows.foldl (fun a r => a + f r) 0
+  IO.println ""
+  IO.println s!"delta vs naive closure: {agree} agree, {total - agree} differ (out of {total})"
+  IO.println s!"delta loop reached the fixpoint without the fallback: {own} of {total}"
+  IO.println (s!"total ms: naive {ms (sum (·.naiveNs))}, delta {ms (sum (·.deltaNs))}, " ++
+    s!"check {ms (sum (·.checkNs))}, checked {ms (sum (·.checkedNs))}")
+  return (if agree == total then 0 else 1)
+
 def main (args : List String) : IO UInt32 := do
+  if args.head? == some "--time" then return (← timeMain args.tail) else
   let maxN := (args.head?.bind String.toNat?).getD 100
   let sizes := [20, 50, 100, maxN].filter (· ≤ maxN) |>.eraseDups
   let mut rows : List Row := []
@@ -126,7 +226,7 @@ def main (args : List String) : IO UInt32 := do
   IO.println s!"delta loop reached the fixpoint without the fallback: {own} of {total}"
   IO.println "A case where the fallback fired still AGREES -- it returns the naive answer."
   IO.println "The second line is what says the delta loop did the work."
-  IO.println "Speed is NOT measured here. See the module header and issue #554."
+  IO.println "Speed: run with --time FILE... (module header)."
   return (if agree == total then 0 else 1)
 
 end Harness.RdfsSemiNaive

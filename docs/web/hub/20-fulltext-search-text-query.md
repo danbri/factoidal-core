@@ -35,12 +35,11 @@ regression suite is
 every query below is drawn from it.
 
 > **On this site's engine.** The hub runs the Lean 4 engine of
-> `@factoidal/core` since 0.9.0, and the Lean SPARQL evaluator does not
-> serve `text:query` yet:
-> https://github.com/danbri/factoidal/issues/727. The query cells below
-> answer no rows here until it does; `tests/hub/post20_test.mjs` carries
-> each of them as an expected failure naming that issue. The prose
-> records what the F\* engine answered until 0.9.0.
+> `@factoidal/core` since 0.9.0. Its SPARQL evaluator serves `text:query`
+> with the F\* engine's slice-1 semantics (exact tokens, AND of tokens, no
+> scoring), since https://github.com/danbri/factoidal/issues/727;
+> `tests/hub/post20_test.mjs` pins every cell below. The Lean module is
+> [`SPARQL/FullText.lean`](https://github.com/danbri/factoidal-core/blob/claude/core-split/formal/lean4/L4Factoidal/SPARQL/FullText.lean).
 
 ## A small labelled dataset
 

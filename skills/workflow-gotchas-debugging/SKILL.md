@@ -1883,3 +1883,49 @@ them.
    is clean; the merge commit is the accepted cost.
 2. If a rebase must be used, pass `--rebase-merges`.
 3. `git rebase --abort` restores the pre-rebase tip; nothing is lost.
+
+## Hazard #40 — a submodule command in a worktree whose fixtures are symlinks rewrites the main checkout's submodules (2026-10-12)
+
+### Symptom
+
+After the `claude/wt-xml-nested` worktree was merged and removed, every
+`git status` in the main checkout failed:
+`fatal: cannot chdir to '../../../../../../wt-xml-nested/third_party/testing/csvw'`
+and `'git status --porcelain=2' failed in submodule third_party/testing/csvw`.
+Creating the next worktree failed at the same point.
+
+### Root cause
+
+The coordinator makes Lean worktrees with `third_party/testing/<suite>`
+as SYMLINKS into the main checkout's populated submodules (it saves about
+1 GB per worktree). A `git submodule update --init` run inside such a
+worktree (`tools/ensure-test-env.sh` runs one) follows the symlink to the
+main checkout's submodule, whose `.git` file points at the shared
+`.git/modules/...`, and git rewrites that module's `core.worktree` to the
+WORKTREE's path. Nested modules (`rml-modules/*`, `xslt1-xalan/*`) are
+rewritten too. While the worktree exists nothing visibly breaks; when it
+is removed, 21 modules point at a directory that is gone.
+
+### Repair
+
+For each config under `.git/modules` whose `core.worktree` names a
+worktree, set it back to the main checkout's path:
+
+    grep -rl 'wt-' --include=config .git/modules/ | while read -r c; do
+      wt=$(git config -f "$c" core.worktree)
+      git config -f "$c" core.worktree "${wt/\/wt-NAME\//\/core-main\/}"
+    done
+
+(top-level modules: `../../../../../third_party/testing/<suite>`; nested
+modules: one more `../` per level.) The working files were never moved, so
+no suite result is affected.
+
+### The rules
+
+1. In a worktree whose `third_party/testing` entries are symlinks, never
+   run `tools/ensure-test-env.sh` or any `git submodule` command. The
+   fixtures are already present through the symlinks.
+2. `tools/ensure-test-env.sh` is for a worktree WITHOUT the symlinks
+   (hazard #15). Check with `ls -la third_party/testing | head` first.
+3. After removing a worktree, run `git status` in the main checkout. A
+   failure that names the removed worktree is this hazard.

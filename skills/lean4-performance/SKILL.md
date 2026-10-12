@@ -256,6 +256,21 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   theorem explicitly, with a comment that says why; after moving imports,
   compare the size table (`tools/wasm-size-profile.py`) of the module before
   and after, and treat growth in a specification module as a lost `csimp`.
+- **A `csimp` twin of a loop does not reach the other callers of its
+  round.** `closure_eq_closureFast` makes `RDFS.closure` run indexed rounds,
+  but `RDFS.step`, the round it is built from, has no twin. `rhoDfClosure`
+  (`Wasm/Ops/Reason.lean`) computed its closure with `closureFix` (indexed)
+  and its `rounds` field with `roundsToFixpoint RDFS.step` (scanning), so the
+  round counter took almost all of the op's time: no result in 120 s on a
+  160-class `rdfs:subClassOf` chain, against 1.6 s for the closure. The
+  2026-10-10 survey compared the op's output byte for byte but timed only
+  `closure --regime rdfs`. Found 2026-10-12 by gdb stack samples of the
+  running command; repaired with `stepFast` and `rhoDfRounds_eq`
+  (https://github.com/danbri/factoidal/issues/756,
+  `docs/designissues/2026-10-10-rdfs-seminaive.md` § 5). Rule: after adding
+  a `csimp` twin, grep for every other call of the scanning pieces it replaces
+  (here `step`, `stepConclusions`) and time each production entry that calls
+  them, not only the one the twin was written for.
 
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 

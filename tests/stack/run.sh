@@ -262,9 +262,17 @@ fi
 # for https://github.com/danbri/factoidal/issues/678 until 2026-10-10, when
 # the Turtle collection reader became a loop; it runs in all three routes.
 # `xml-entities` was listed for https://github.com/danbri/factoidal/issues/673
-# until the same day, when the XML reference scan became a loop.)
+# until the same day, when the XML reference scan became a loop.
+# `turtle-predicates` was listed for
+# https://github.com/danbri/factoidal/issues/754 until the same day, when the
+# Turtle predicate-object list reader became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
+    # $2 is the route (canary, wcanary or wasm), for a case that overflows
+    # in some of the small-stack routes only. (`xml-text-chain` was listed
+    # for https://github.com/danbri/factoidal/issues/755 in all three
+    # routes, and `xml-markup-chain` in wcanary, until 2026-10-12, when
+    # nested entity expansion became a worklist.)
     # No case is listed today.
   esac
 }
@@ -272,7 +280,7 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
 # score_case <route> <case> <kind> <detail>, with kind ran | overflow | error.
 score_case() {
   local route="$1" name="$2" kind="$3" detail="$4" issue
-  issue="$(xfail_issue "$name")"
+  issue="$(xfail_issue "$name" "$route")"
   if [ -z "$issue" ]; then
     if [ "$kind" = ran ]; then record "$route" "$name" 0 "$detail"
     else record "$route" "$name" 1 "$detail"; fi
@@ -351,8 +359,11 @@ CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
   "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
+  "xml-text-chain      parseToDatasetJson   args-xml-text-chain.json"
+  "xml-markup-chain    parseToDatasetJson   args-xml-markup-chain.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
+  "turtle-predicates   parseToDatasetJson   args-turtle-predicates.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
   "nquads-long-literal parseToDatasetJson   args-nquads-long-literal.json"
   "sparql-union        queryDataset         args-sparql-union.json"

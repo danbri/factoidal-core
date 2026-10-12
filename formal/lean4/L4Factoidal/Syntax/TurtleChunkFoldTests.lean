@@ -163,6 +163,24 @@ private def collectionSource : String :=
 #guard textMatches "@prefix ex: <http://example.org/> .\nex:s ex:p ( 1 2 .\n"
 #guard match parseTurtleText "@prefix ex: <http://example.org/> .\nex:s ex:p ( 1 2 .\n" with
   | .error _ => true | .ok _ => false
+-- Long object lists and many `;` groups read through the scanner walk, with
+-- `[ ]` objects that have their own groups, a `;;` run, a trailing `;`, a dot
+-- inside a string, and the chunked fold at every 97th character: the same
+-- graph and the same blank-node labels as `parseTurtle`
+-- (https://github.com/danbri/factoidal/issues/754).
+private def listsSource : String :=
+  "@prefix ex: <http://example.org/> .\nex:s ex:p 1, [ ex:q 2 ; ex:r 3, \"a. b\" ], ( 4 ) ;; ex:t [ ex:u [ ex:v 5 ] ] ; .\n" ++
+  "ex:s ex:p " ++ ", ".intercalate ((List.range 500).map toString) ++ " .\n" ++
+  "ex:s " ++ " ; ".intercalate ((List.range 500).map fun i => s!"ex:p{i} [ ex:q {i} ; ex:r {i}, {i} ]") ++ " ; .\n"
+#guard walkMatches listsSource
+#guard textMatches listsSource
+#guard chunksMatchParser listsSource
+  ((List.range (listsSource.length / 97 + 1)).map
+    (fun i => String.ofList ((listsSource.toList.drop (97 * i)).take 97)))
+-- Negative: a `,` with no object after it is refused with `parseTurtle`'s error.
+#guard textMatches "@prefix ex: <http://example.org/> .\nex:s ex:p 1, 2, ; ex:q 3 .\n"
+#guard match parseTurtleText "@prefix ex: <http://example.org/> .\nex:s ex:p 1, 2, ; ex:q 3 .\n" with
+  | .error _ => true | .ok _ => false
 #guard walkMatches "<s> <p> <o> .\n" .rdf11 (some "http://base.example/dir/")
 
 -- Documents `parseTurtle` refuses: `parseTurtleText` reports the same error,
