@@ -1052,15 +1052,106 @@ def scanRows (bounds : List LinConstraint) (numBounds : Nat) :
 def findLinCert (n : Nat) (eqs bounds : List LinConstraint) : Option (List Int) :=
   scanRows bounds bounds.length (elimCols n 0 (erowsOf eqs) [])
 
-/-- The verdict. Gated by `inCountingFragment` to mirror the oracle's
-scope; the validator is what makes it sound, not the gate. -/
-def classSizeUnsat (g : Graph) : Bool :=
+/-- The verdict as first written: build the whole system, then search
+for a certificate. `classSizeUnsat` below is equal to it
+(`classSizeUnsat_eq_ref`) and does not build the system when it has no
+equality row. -/
+def classSizeUnsatRef (g : Graph) : Bool :=
   if !inCountingFragment g then false
   else
     let (n, _, eqs, bounds) := buildLinSystem g
     match findLinCert n eqs bounds with
     | none => false
     | some ms => farkasCheck n (eqs ++ bounds) ms
+
+/-! ### No equality row, no certificate
+
+Every equality row of `buildLinSystem` comes from a declared
+`owl:FunctionalProperty` (FIBER rows read `propsTyped g
+owlFunctionalProperty`; BIJECTION rows read `bijProps g`, a subset of it)
+or from an `owl:unionOf` list (DISJOINT UNION rows). Without an equality
+row the eliminator has no row to reduce and `findLinCert` answers `none`
+(`findLinCert_nil`), so the verdict is `false` whatever the bound rows
+are.
+
+Measured 2026-10-12 (https://github.com/danbri/factoidal/issues/760): on
+the OWL 2 RL closure of the first 20,000 lines of the Cell Ontology
+(56,839 triples, 5 cardinality triples, no functional property, no
+`owl:unionOf`), `buildLinSystem` took 101.9 s of the 102 s the refuter
+used: `finiteClasses` and `lcOneofAll` scan the whole graph once for each
+of the graph's IRIs, and `dedupIris` compares every IRI occurrence with
+every later one. The test below is two linear scans. -/
+
+/-- No declared functional property and no `owl:unionOf` triple. -/
+def noEqualityRows (g : Graph) : Bool :=
+  (propsTyped g owlFunctionalProperty).isEmpty && !(g.any (fun t => t.p == owlUnionOf))
+
+theorem elimCols_nil_nil : ∀ (k j : Nat), elimCols k j [] [] = []
+  | 0, _ => rfl
+  | k + 1, j => by simp [elimCols, findUnitPivot, elimCols_nil_nil k (j + 1)]
+
+/-- With no equality row there is no certificate. -/
+theorem findLinCert_nil (n : Nat) (bounds : List LinConstraint) :
+    findLinCert n [] bounds = none := by
+  simp [findLinCert, erowsOf, elimCols_nil_nil, scanRows]
+
+theorem firstObjectOf_none_of_noPred (g : Graph) (s : Subject) (p : WfIri)
+    (h : g.any (fun t => t.p == p) = false) : firstObjectOf g s p = none := by
+  unfold firstObjectOf
+  simp only [Option.map_eq_none_iff, List.find?_eq_none]
+  intro t ht
+  have := List.any_eq_false.mp h t ht
+  simp_all
+
+theorem unionPairOf_none_of_noUnion (g : Graph) (t : Triple)
+    (h : g.any (fun t => t.p == owlUnionOf) = false) : unionPairOf g t = none := by
+  have hf : ∀ s, firstObjectOf g s owlUnionOf = none :=
+    fun s => firstObjectOf_none_of_noPred g s owlUnionOf h
+  unfold unionPairOf
+  split
+  · rfl
+  · split
+    · split
+      · rfl
+      · simp [hf]
+    · rfl
+
+/-- `noEqualityRows g` gives an empty equality block. -/
+theorem buildLinSystem_eqs_nil (g : Graph) (h : noEqualityRows g = true) :
+    (buildLinSystem g).2.2.1 = [] := by
+  simp only [noEqualityRows, Bool.and_eq_true, Bool.not_eq_true',
+    List.isEmpty_iff] at h
+  obtain ⟨hf, hu⟩ := h
+  simp only [buildLinSystem, bijProps, hf, iriInter, List.filter_nil, lcFiberAll,
+    List.filterMap_nil, lcBijAll, List.flatMap_nil, List.nil_append, lcUnionAll,
+    List.filterMap_eq_nil_iff]
+  intro t _
+  rw [unionPairOf_none_of_noUnion g t hu]
+
+/-- The verdict. Gated by `inCountingFragment` to mirror the oracle's
+scope; the validator is what makes it sound, not the gate. A graph with no
+equality row answers `false` before the system is built
+(`classSizeUnsat_eq_ref`). -/
+def classSizeUnsat (g : Graph) : Bool :=
+  if !inCountingFragment g then false
+  else if noEqualityRows g then false
+  else
+    let (n, _, eqs, bounds) := buildLinSystem g
+    match findLinCert n eqs bounds with
+    | none => false
+    | some ms => farkasCheck n (eqs ++ bounds) ms
+
+/-- The short cut changes no verdict. -/
+theorem classSizeUnsat_eq_ref (g : Graph) : classSizeUnsat g = classSizeUnsatRef g := by
+  unfold classSizeUnsat classSizeUnsatRef
+  by_cases hn : noEqualityRows g = true
+  · have he := buildLinSystem_eqs_nil g hn
+    generalize hb : buildLinSystem g = sys at he ⊢
+    obtain ⟨n, cls, eqs, bounds⟩ := sys
+    simp only at he
+    subst he
+    simp [hn, findLinCert_nil]
+  · simp [hn]
 
 /-- **What an accepted verdict means.** The linear system built from `g`
 has no integer solution — proved, not delegated.
@@ -1073,7 +1164,8 @@ proof. -/
 theorem classSizeUnsat_sound (g : Graph) (x : List Int)
     (h : classSizeUnsat g = true) :
     linSat ((buildLinSystem g).2.2.1 ++ (buildLinSystem g).2.2.2) x = false := by
-  simp only [classSizeUnsat] at h
+  rw [classSizeUnsat_eq_ref] at h
+  simp only [classSizeUnsatRef] at h
   split at h
   · simp at h
   · rename_i hfrag
@@ -1177,6 +1269,45 @@ the validator accepts it. This is the end-to-end path. -/
 #guard match findLinCert 1 [rowEq0] [rowGe1] with
        | some ms => farkasCheck 1 ([rowEq0] ++ [rowGe1]) ms
        | none    => false
+
+/-! ### The no-equality-row short cut (https://github.com/danbri/factoidal/issues/760)
+
+`clashGraph` has no functional property and no `owl:unionOf`: the short
+cut applies and the verdict is `false`, as `classSizeUnsatRef` says. -/
+#guard noEqualityRows clashGraph
+#guard !classSizeUnsat clashGraph && !classSizeUnsatRef clashGraph
+
+/-! Two disjoint unions with a common part: `Z ≡ m1 ⊔ m2` and
+`m1 ≡ Z ⊔ m2` give `|Z| = |m1| + |m2|` and `|m1| = |Z| + |m2|`, so
+`|m2| = 0`, against `m2 ≡ {b}`, `|m2| ≥ 1`. The graph has equality rows,
+the short cut does not apply, and the certificate is found. -/
+private def unionClashGraph : Graph :=
+  let u (b : String) : Subject := .bnode b
+  [ { s := .iri (exI "Z"), p := owlEquivalentClass, o := .bnode "u1" }
+  , { s := u "u1", p := owlUnionOf, o := .bnode "l1" }
+  , { s := u "l1", p := rdfFirst, o := .iri (exI "m1") }
+  , { s := u "l1", p := rdfRest, o := .bnode "l2" }
+  , { s := u "l2", p := rdfFirst, o := .iri (exI "m2") }
+  , { s := u "l2", p := rdfRest, o := .iri rdfNil }
+  , { s := .iri (exI "m1"), p := owlDisjointWith, o := .iri (exI "m2") }
+  , { s := .iri (exI "m1"), p := owlEquivalentClass, o := .bnode "u2" }
+  , { s := u "u2", p := owlUnionOf, o := .bnode "l3" }
+  , { s := u "l3", p := rdfFirst, o := .iri (exI "Z") }
+  , { s := u "l3", p := rdfRest, o := .bnode "l4" }
+  , { s := u "l4", p := rdfFirst, o := .iri (exI "m2") }
+  , { s := u "l4", p := rdfRest, o := .iri rdfNil }
+  , { s := .iri (exI "Z"), p := owlDisjointWith, o := .iri (exI "m2") }
+  , { s := .iri (exI "m2"), p := owlOneOf, o := .bnode "l5" }
+  , { s := u "l5", p := rdfFirst, o := .iri (exI "b") }
+  , { s := u "l5", p := rdfRest, o := .iri rdfNil } ] ++ clashGraph
+
+#guard !noEqualityRows unionClashGraph
+#guard (buildLinSystem unionClashGraph).2.2.1.length == 2
+#guard classSizeUnsat unionClashGraph && classSizeUnsatRef unionClashGraph
+
+/-! Without the second union the system is satisfiable: no certificate. -/
+#guard !classSizeUnsat (unionClashGraph.filter (fun t => t.s != .iri (exI "m1") ||
+          t.p != owlEquivalentClass))
 
 /-! The oracle seam: the Phase-0 stub consults nothing. -/
 #guard noOracle "(check-sat)" 1000 == Verdict.unknown
