@@ -293,6 +293,9 @@ extern_lib libl4exthost pkg := do
 -- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): read a QLever
 -- index directory (stats, bound-predicate scan over PSO, full SPO dump, vocabulary).
 @[default_target] lean_exe «l4qlvr» where root := `Harness.Qlvr
+-- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
+-- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
+@[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack
 
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where

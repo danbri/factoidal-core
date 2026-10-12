@@ -547,6 +547,51 @@ else
   fi
 fi
 
+# ------------------------- SBM11 global dictionary (issue 788)
+# `l4sbm11-dict-pack` packs gen_cases.py's sbm11-dict.nt (150,000 subjects,
+# a 300,000-byte literal) with runs of 20,000 terms: the streaming parse, the
+# external sort (sorted runs, k-way merge), the front-coded page encoder and
+# decoder over the 300,000-byte key; then `--check` decodes every page and
+# looks up every key and every source term.
+# https://github.com/danbri/factoidal/issues/788
+SBM11_BIN="$LEAN_DIR/.lake/build/bin/l4sbm11-dict-pack"
+sbm11_case() { # sbm11_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-dict-out" rc log
+  if [ ! -x "$SBM11_BIN" ]; then
+    record "$route" sbm11-dict 1 "$SBM11_BIN does not exist (lake build l4sbm11-dict-pack)"
+    return
+  fi
+  rm -rf "$out"
+  log="$(run_capped "$TIMEOUT" "$@" "$SBM11_BIN" "$src" "$out" --run-terms 20000 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log="$log
+$(run_capped "$TIMEOUT" "$@" "$SBM11_BIN" --check "$src" "$out" 2>&1)"; rc=$?
+  fi
+  rm -rf "$out"
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-dict overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q 'failures=0'; then
+    score_case "$route" sbm11-dict error "exit $rc: $(printf '%s' "$log" | tail -1 | head -c 160)"
+  else
+    score_case "$route" sbm11-dict ran "$(printf '%s' "$log" | grep -o 'terms=[0-9]* pages=[0-9]*' | head -1); $(printf '%s' "$log" | grep -o 'runs=[0-9]*' | head -1); check failures=0"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 dictionary pack and check, native default stack"
+  sbm11_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 dictionary pack and check, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-dict 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"

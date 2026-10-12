@@ -263,6 +263,25 @@ try:
 except ImportError:
     pass
 
+# ------------------------------------------- SBM11 dictionary (issue 788)
+# `l4sbm11-dict-pack` phases 1 and 2 on 150,000 subjects with a run size of
+# 20,000 terms (so the external sort writes and merges 15 or more runs), one
+# literal of 300,000 bytes (the largest page decode: a front-coded key far
+# above any per-byte stack budget), language tags in upper case (folded),
+# canonical and non-canonical integers and blank nodes.
+N_SBM11 = 150000
+SBM11_LIT = 300000
+sbm11_path = os.path.join(OUT, "sbm11-dict.nt")
+if not os.path.exists(sbm11_path):
+    with open(sbm11_path, "w") as fh:
+        for i in range(N_SBM11):
+            s = "<http://example.org/sbm11/s%07d>" % i
+            fh.write('%s <http://example.org/p/label> "label %d"@EN-GB .\n' % (s, i))
+            fh.write('%s <http://example.org/p/n> "%d"^^<http://www.w3.org/2001/XMLSchema#int> .\n' % (s, i))
+            fh.write('%s <http://example.org/p/m> "0%d"^^<http://www.w3.org/2001/XMLSchema#integer> .\n' % (s, i % 1000))
+            fh.write('%s <http://example.org/p/b> _:b%d .\n' % (s, i % 5000))
+        fh.write('<http://example.org/sbm11/big> <http://example.org/p/text> "%s" .\n' % ("x" * SBM11_LIT))
+
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
