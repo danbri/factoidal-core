@@ -2353,6 +2353,36 @@ checkseq "SERVICE endpoint registry: register, replace, clear, errors" "$TMP/svc
    and rs[10]["ok"] is False and "SERVICE <http://example.org/sparql> failed" in rs[10]["error"]
    and rs[11]["srj"]["results"]["bindings"] == [{}]'
 
+# Issue 735 (Federated Query 2.3, 3.2): a failed SERVICE call inside EXISTS
+# fails the query, and a failed SERVICE nested in an outer SERVICE SILENT is
+# a failure of the outer call, which SILENT turns into one empty solution.
+python3 - "$TMP/svc735-seq.json" <<'EOF'
+import json, sys
+OUTER = "http://example.org/outer-sparql"
+BAD = "http://unregistered.example/sparql"
+DATA = "<http://e/x> <http://e/q> <http://e/y> ."
+seq = [
+  ["clearServiceEndpoints", []],
+  ["registerServiceEndpoint", [OUTER, "<http://e/a> <http://e/p> \"v\" ."]],
+  ["queryDataset", [DATA, "SELECT * WHERE { SERVICE SILENT <%s> { SERVICE <%s> { ?a ?b ?c } } }" % (OUTER, BAD)]],
+  ["queryDataset", [DATA, "SELECT * WHERE { SERVICE <%s> { SERVICE <%s> { ?a ?b ?c } } }" % (OUTER, BAD)]],
+  ["queryDataset", [DATA, "SELECT ?o WHERE { SERVICE SILENT <%s> { SERVICE <%s> { ?s ?p ?o } } }" % (OUTER, OUTER)]],
+  ["queryDataset", [DATA, "SELECT * WHERE { ?s ?p ?o FILTER EXISTS { SERVICE <%s> { ?a ?b ?c } } }" % BAD]],
+  ["queryDataset", [DATA, "SELECT ?s WHERE { ?s ?p ?o FILTER EXISTS { SERVICE <%s> { ?a ?b ?c } } }" % OUTER]],
+  ["clearServiceEndpoints", []],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "SERVICE failure inside EXISTS and under an outer SILENT (issue 735)" "$TMP/svc735-seq.json" \
+  'len(rs) == 8
+   and rs[1] == {"ok": True, "count": 1}
+   and rs[2]["srj"]["results"]["bindings"] == [{}]
+   and rs[3]["ok"] is False and "SERVICE <http://unregistered.example/sparql> failed" in rs[3]["error"]
+   and [b["o"]["value"] for b in rs[4]["srj"]["results"]["bindings"]] == ["v"]
+   and rs[5]["ok"] is False and "SERVICE <http://unregistered.example/sparql> failed" in rs[5]["error"]
+   and [b["s"]["value"] for b in rs[6]["srj"]["results"]["bindings"]] == ["http://e/x"]
+   and rs[7] == {"ok": True}'
+
 # --- Envelope parity, https://github.com/danbri/factoidal/issues/685 ----
 # Positioned parse errors, prefixes, per-document blank-node scope,
 # serializeTurtleWith / datasetSerializeWith and bare literals.
