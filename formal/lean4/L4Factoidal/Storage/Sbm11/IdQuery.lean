@@ -348,30 +348,6 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
            groupVars, agg, order, distinct := q.modifier.distinct,
            offset := q.modifier.offset.getD 0, limit := q.modifier.limit }
 
-/-! ## The store -/
-
-/-- What the id engine reads. `metas perm` are the PRM1 entries of a
-    permutation; `prb perm off len` bytes of its PRB1 file; `idOf` the id of a
-    term (inline or by dictionary lookup; `none` when the term has no id);
-    `keyOf` the dictionary key of an id of tag 1, 2 or 3; `termOf` the term
-    of any id. -/
-structure Store (m : Type → Type) where
-  metas : Nat → ExceptT String m (Array BlockMeta)
-  prb : Nat → Nat → Nat → ExceptT String m ByteArray
-  idOf : Term → ExceptT String m (Option UInt64)
-  keyOf : UInt64 → ExceptT String m ByteArray
-  /-- the key of a dictionary id as a range `[a, e)` of a byte array (no
-      copy) -/
-  keySlice : UInt64 → ExceptT String m (ByteArray × Nat × Nat)
-  termOf : UInt64 → ExceptT String m Term
-  /-- the rank of the first dictionary key not below the bytes
-      (`DictRange.lowerBoundM`) -/
-  lowerBound : ByteArray → ExceptT String m Nat
-  /-- the delta overlay of a permutation (stage 5, `Overlay.forPerm`):
-      inserts and deletes in its row order, sorted; cleared graph ids. Empty
-      for a generation without a delta log. -/
-  ovl : Nat → L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := fun _ => {}
-
 /-! ## Patterns over ids and permutations -/
 
 inductive Slot where
@@ -450,6 +426,49 @@ structure ScanSpec where
   /-- pairs of columns that hold one variable -/
   eqs : Array (Nat × Nat)
   deriving Repr, Inhabited
+
+structure ScanStats where
+  blocksRead : Nat := 0
+  blocksSelected : Nat := 0
+  blocksTotal : Nat := 0
+  framesRead : Nat := 0
+  bytesRead : Nat := 0
+  rowsOut : Nat := 0
+  deriving Repr, Inhabited
+
+def ScanStats.add (a b : ScanStats) : ScanStats :=
+  { blocksRead := a.blocksRead + b.blocksRead, blocksSelected := a.blocksSelected + b.blocksSelected,
+    blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
+    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut }
+
+/-! ## The store -/
+
+/-- What the id engine reads. `metas perm` are the PRM1 entries of a
+    permutation; `prb perm off len` bytes of its PRB1 file; `idOf` the id of a
+    term (inline or by dictionary lookup; `none` when the term has no id);
+    `keyOf` the dictionary key of an id of tag 1, 2 or 3; `termOf` the term
+    of any id. -/
+structure Store (m : Type → Type) where
+  metas : Nat → ExceptT String m (Array BlockMeta)
+  prb : Nat → Nat → Nat → ExceptT String m ByteArray
+  idOf : Term → ExceptT String m (Option UInt64)
+  keyOf : UInt64 → ExceptT String m ByteArray
+  /-- the key of a dictionary id as a range `[a, e)` of a byte array (no
+      copy) -/
+  keySlice : UInt64 → ExceptT String m (ByteArray × Nat × Nat)
+  termOf : UInt64 → ExceptT String m Term
+  /-- the rank of the first dictionary key not below the bytes
+      (`DictRange.lowerBoundM`) -/
+  lowerBound : ByteArray → ExceptT String m Nat
+  /-- the delta overlay of a permutation (stage 5, `Overlay.forPerm`):
+      inserts and deletes in its row order, sorted; cleared graph ids. Empty
+      for a generation without a delta log. -/
+  ovl : Nat → L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := fun _ => {}
+  /-- stage 1 (issue 799): a replacement for `scanTableM`, used by every BGP
+      scan of `evalBgpM`. `none` is the single-thread path. The parallel
+      driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
+      it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
+  scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -567,19 +586,6 @@ def constWordsGo (x : UInt64) : Nat → ByteArray → ByteArray
 def constWords (x : UInt64) (rows : Nat) : ByteArray :=
   constWordsGo x rows (ByteArray.emptyWithCapacity (8 * rows))
 
-structure ScanStats where
-  blocksRead : Nat := 0
-  blocksSelected : Nat := 0
-  blocksTotal : Nat := 0
-  framesRead : Nat := 0
-  bytesRead : Nat := 0
-  rowsOut : Nat := 0
-  deriving Repr, Inhabited
-
-def ScanStats.add (a b : ScanStats) : ScanStats :=
-  { blocksRead := a.blocksRead + b.blocksRead, blocksSelected := a.blocksSelected + b.blocksSelected,
-    blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
-    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut }
 
 /-- The bytes of the frames `need` of block `b`: one positioned read of the
     contiguous frames from the first to the last needed one. Returns the
@@ -991,6 +997,32 @@ def scanTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
                         rows := 0, sortVar }
   scanFoldM st spec true init fun acc ch => pure (acc.append ch.table, true)
 
+/-- The sort variable of a scan's output (the first output column, when it is
+    the key's successor column), as `scanFoldM` computes it. -/
+def sortVarOf (spec : ScanSpec) : Option String :=
+  match spec.outCols[0]? with
+  | some c => if c == spec.key.size then spec.outVars[0]? else none
+  | none => none
+
+/-- The scan of a list of selected blocks (in the given order) with `f`, from
+    the state `init`, as `scanFoldM` runs its loop. The parallel scan
+    (`Harness/Sbm11Query.lean`, issue 799) runs one such loop per block range
+    and appends the results in range order
+    (`ParallelScanTheorems.parallel_acc_eq`). -/
+def scanListM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
+    (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) (metas : Array BlockMeta)
+    (sortVar : Option String) (ox : OvCtx) (sel : List Nat) : ExceptT String m (σ × ScanStats) := do
+  let s ← forIn sel { acc := init, stats := {}, insPos := 0, stopped := false }
+    (scanBlockM st spec fill f metas sortVar ox)
+  return (s.acc, s.stats)
+
+/-- `scanTableM`, or the store's `scanTable` when it sets one (stage 1). -/
+def scanTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
+    ExceptT String m (Table × ScanStats) :=
+  match st.scanTable with
+  | some f => f spec
+  | none => scanTableM st spec
+
 /-! ## The BGP -/
 
 def varCount (pats : Array Pat) (v : String) : Nat :=
@@ -1032,7 +1064,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   remaining := remaining.filter (· != first)
   let t0 := pats[first]!
   let spec0 := mkSpec t0 (permFor t0 (bestSortPos t0 pats)) keep
-  let (tab0, st0) ← scanTableM st spec0
+  let (tab0, st0) ← scanTableOf st spec0
   let mut total := st0
   lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}"
   let mut tab := tab0
@@ -1050,7 +1082,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
       | some (_, q) => permFor t (some q)
       | none => permFor t (bestSortPos t pats)
     let spec := mkSpec t perm keep
-    let (rt, s) ← scanTableM st spec
+    let (rt, s) ← scanTableOf st spec
     total := total.add s
     let (joined, how) := match mergeVar with
       | some (v, _) =>

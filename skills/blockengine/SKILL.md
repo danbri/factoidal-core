@@ -58,9 +58,12 @@ Re-measure when the dated baseline changes. At commit `73209342c232`:
   `Storage.IndexedBlockWireV1` frames that shape directly for its supported
   RDF subset; its general codec theorem and canonical ordering are pending.
 - There is no Physical Plan IR, PushIR, PostgreSQL adapter, or TiKV adapter
-  yet. Query execution is single-threaded (no Lean `Task`). Owner approved
-  on 2026-10-12: parallel block scans on SBM11 first, then PushIR
-  (https://github.com/danbri/factoidal/issues/799). Where work runs is
+  yet. Stage 1 of https://github.com/danbri/factoidal/issues/799 (parallel
+  block scans on SBM11, `l4sbm11 query --threads N`, BGP scans only) has
+  landed: record
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md).
+  Stage 2 (PushIR) is not started. Owner approved on 2026-10-12: parallel
+  block scans on SBM11 first, then PushIR. Where work runs is
   decided by the capability-aware planner (skill `capability-planner`,
   https://github.com/danbri/factoidal/issues/800).
 - The current Cottas IDs are separate per subject, predicate, object, and graph

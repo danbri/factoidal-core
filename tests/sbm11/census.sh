@@ -117,7 +117,7 @@ for t in "${order[@]}"; do
   fi
   qbase="file://$(realpath "$qfile")"
   rc=0
-  timeout 120 "$BIN/l4sbm11" query "$st" --file "$qfile" --base "$qbase" >"$st/got" 2>"$st/got.err" || rc=$?
+  timeout 120 "$BIN/l4sbm11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" >"$st/got" 2>"$st/got.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     rquery=$((rquery + 1)); printf '%s\trefused-query\t%s\n' "$t" "$(tail -1 "$st/got.err" | head -c 200)" >>"$TSV"
     rm -rf "$st"; continue

@@ -4,7 +4,7 @@ generation (stage 4, https://github.com/danbri/factoidal/issues/790).
 
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain]
                 [--repeat N] [--reference-render] [--reference]
-                [--verify merkle|none]
+                [--verify merkle|none] [--threads N]
   l4sbm11 serve GEN [--verify merkle|none]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
@@ -24,6 +24,9 @@ guard selects nothing. A line on stderr names the path that ran
   --reference-render  print every term through `jsonOfTerm` (the key
                       printer is compared with it in tests/sbm11/run.sh)
   --reference         run the reference fallback even for the id fragment
+  --threads N         scan tasks per BGP scan (issue 799): the selected blocks
+                      of each scan are cut into N consecutive chunks, each
+                      scanned in its own task; N = 1 is the single-thread path
   --verify V          how reads are checked (`Sbm11Gen.Verify`,
                       https://github.com/danbri/factoidal/issues/796):
                       `merkle` widens each read to its 65,536-byte chunks and
@@ -42,6 +45,7 @@ This is a HARNESS: it does file I/O. The query engine is
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.DictRange
@@ -292,6 +296,54 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     lowerBound := fun k => liftIO (ss.lowerBound k)
     ovl := fun p => ss.ovl.getD p {} }
 
+/-! ## Parallel block scans (stage 1, issue 799) -/
+
+/-- The table of `IdQuery.scanTableM`, computed with the selected blocks cut
+    into at most `threads` consecutive chunks. Each chunk is scanned by its
+    own dedicated task (`IO.asTask`) with the same loop
+    (`IdQuery.scanListM`), the chunk tables are appended in chunk order and
+    the statistics are summed. A scan with an overlay (stage 5) stays on one
+    thread. Answers: `ParallelScanTheorems.parallel_acc_eq` (the list form),
+    tests/sbm11/threads.sh (the tables, native). -/
+def scanTableParM (st : IdQuery.Store IO) (spec : IdQuery.ScanSpec) (threads : Nat) :
+    ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  let metas ← st.metas spec.perm
+  let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
+  if threads ≤ 1 || ox.on then return ← IdQuery.scanTableM st spec
+  let sortVar := IdQuery.sortVarOf spec
+  let sel := (IdQuery.blocksFor metas spec.key).toList
+  let c := (sel.length + threads - 1) / threads
+  let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
+  let cap := 8 * IdQuery.estimate metas spec.key
+  let init : L4Factoidal.Qlvr.Table :=
+    { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
+      rows := 0, sortVar }
+  let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
+    (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
+  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats))) := #[]
+  for X in chunks do
+    let t ← IO.asTask (prio := .dedicated) (do
+      match ← (IdQuery.scanListM st spec true init f metas sortVar ox X).run with
+      | .ok r => pure r
+      | .error e => throw (IO.userError e))
+    tasks := tasks.push t
+  let mut out := init
+  let mut stats : IdQuery.ScanStats := { blocksTotal := metas.size }
+  for t in tasks do
+    match ← IO.wait t with
+    | .ok (tab, s) =>
+      out := out.append tab
+      stats := stats.add s
+    | .error e => throw (toString e)
+  return (out, stats)
+
+/-- The session's store with `threads` scan tasks per BGP scan (1: the
+    single-thread store, `scanTable` unset). -/
+def Session.storeWith (ss : Session) (threads : Nat) : IdQuery.Store IO :=
+  let base := ss.store
+  if threads ≤ 1 then base
+  else { base with scanTable := some fun spec => scanTableParM base spec threads }
+
 /-! ## The delta overlay (stage 5) -/
 
 /-- The id of `t`: its base id, its overlay id, or a new overlay id. -/
@@ -513,15 +565,15 @@ def parse (text : String) (base : Option String) : IO Query :=
   | .ok q => pure q
 
 /-- Run one parsed query on an open session. -/
-def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceReference referenceRender : Bool) :
-    IO Outcome := do
+def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceReference referenceRender : Bool)
+    (threads : Nat := 1) : IO Outcome := do
   let plan? := if forceReference then .error "--reference" else IdQuery.translate q
   match plan? with
   | .error reason =>
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
-    match ← (IdQuery.runPlanM ss.store plan emit referenceRender).run with
+    match ← (IdQuery.runPlanM (ss.storeWith threads) plan emit referenceRender).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 
@@ -547,6 +599,8 @@ structure Opts where
   reference : Bool := false
   /-- `--verify`; when absent the CLI uses `cliDefaultVerify` -/
   verify : Option Verify := Option.none
+  /-- `--threads N`: scan tasks per BGP scan; 1 is the single-thread path -/
+  threads : Nat := 1
 
 def parseOpts (xs : List String) : Except String Opts := Id.run do
   let arr := xs.toArray
@@ -573,6 +627,11 @@ def parseOpts (xs : List String) : Except String Opts := Id.run do
     else if x == "--reference" then
       o := { o with reference := true }
       i := i + 1
+    else if x == "--threads" then
+      match (arr[i + 1]?).bind String.toNat? with
+      | some n => if n ≥ 1 then o := { o with threads := n } else return .error "--threads takes N ≥ 1"
+      | Option.none => return .error "--threads takes N ≥ 1"
+      i := i + 2
     else if x == "--verify" then
       match (arr[i + 1]?).bind Verify.ofString? with
       | some v => o := { o with verify := some v }
@@ -614,6 +673,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     ss.g.fetchedBytes.set 0
     let a ← IO.monoNanosNow
     let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
+      o.threads
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
     last := some r
@@ -623,6 +683,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let some r := last | return 1
   if o.explain then
     IO.eprintln s!"plan: verify={v.name} ({why}; {verifyText v})"
+    IO.eprintln s!"plan: threads={o.threads} (scan tasks per BGP scan; 1 is the single-thread path)"
     for l in r.plan do IO.eprintln s!"plan: {l}"
     IO.eprintln s!"plan: {ss.deltaText}"
   let fb ← ss.frameBytes.get
@@ -727,7 +788,7 @@ def main (args : List String) : IO UInt32 := do
     try runFrameCheck dir
     catch e => IO.eprintln s!"l4sbm11 frame-check: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
+    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
     return 2
 
 end Harness.Sbm11Query
