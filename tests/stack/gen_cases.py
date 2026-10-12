@@ -90,6 +90,13 @@ write("turtle-collection.ttl",
       "@prefix ex: <http://example.org/> .\n"
       "ex:s ex:p ( %s ) .\n" % " ".join("%d" % i for i in range(N_COLL)))
 
+# One statement with 10,000 predicates: `ex:s ex:p0 0 ; ex:p1 1 ; ...`, one
+# `;` group per predicate (https://github.com/danbri/factoidal/issues/754).
+N_PRED = int(os.environ.get("STACK_PREDICATES", "10000"))
+write("turtle-predicates.ttl",
+      "@prefix ex: <http://example.org/> .\n"
+      "ex:s %s .\n" % " ;\n  ".join("ex:p%d %d" % (i, i) for i in range(N_PRED)))
+
 # ----------------------------------------------------------------- N-Quads
 N_Q = int(os.environ.get("STACK_QUADS", "50000"))
 write("nquads-one-subject.nq",
@@ -188,6 +195,9 @@ args("args-turtle-literal.json",
 args("args-turtle-collection.json",
      open(os.path.join(OUT, "turtle-collection.ttl")).read(), "turtle",
      "http://example.org/")
+args("args-turtle-predicates.json",
+     open(os.path.join(OUT, "turtle-predicates.ttl")).read(), "turtle",
+     "http://example.org/")
 args("args-nquads.json", open(os.path.join(OUT, "nquads-one-subject.nq")).read(),
      "nquads", "http://example.org/")
 args("args-sparql-union.json",
@@ -198,7 +208,7 @@ args("args-sparql-nested.json",
      open(os.path.join(OUT, "sparql-nested.rq")).read())
 
 print(json.dumps({
-    "dir": OUT, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
+    "dir": OUT, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST,
     "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man)}))

@@ -596,6 +596,112 @@ directive at TriG's own top level ([3] directive). -/
 #guard (parseTriG "VERSION \"1.2\" PREFIX p: <http://a/> p:g { p:s p:p p:o }" none .rdf12).toOption.isSome
 #guard (parseTriG "VERSION \"1.2\" PREFIX p: <http://a/> p:g { p:s p:p p:o }" none .rdf11).toOption.isNone
 
+/-! ## Object lists and predicate-object lists in linear time and constant stack
+
+https://github.com/danbri/factoidal/issues/754. `readObjectListRev` reads the
+objects of an object list with a tail call and pushes their triples onto a
+list held newest first, which is reversed once; `readPredicateObjectList`
+reads the `;` groups of a statement with a tail call. `readObjectListRev_eq`
+and `readPredicateObjectList_eq` prove them equal to the F* source's
+recursions (`readObjectList`, `readPredicateObjectListSpec`). The guards pin
+what the equality preserves: the blank-node labels, the order of the
+triples, the errors and their positions. Each expected text is the output of
+`l4factoidal parse --out nquads` built from the tree before the change. The
+LENGTH is measured by `tests/stack/run.sh --canary` (`turtle-predicates`,
+10,000 groups under a 512 KB stack), the TIME by `tests/stack/lean_scaling.sh`
+(`turtle-object-list`, 25,000 against 100,000 objects). -/
+
+/-- The position of a Turtle parse error, or `none` when the text parses. -/
+def ttlErrorPos (s : String) (base : Option String := none) : Option Nat :=
+  match parseTurtle s base with
+  | .error e => some e.pos
+  | .ok _    => none
+
+/-- The default graph of a TriG parse as N-Triples, or a marker string. -/
+def trigDefaultToNT (s : String) (base : Option String := none) : String :=
+  match parseTriG s base with
+  | .error e => s!"PARSE-ERROR: {e.msg}"
+  | .ok ds   => match Graph.toNTriples ds.default with
+                | .error e => s!"SERIALISE-ERROR: {e}"
+                | .ok t    => t
+
+-- Objects with side triples (a `[ ]` with its own `;` and `,`, a collection),
+-- a `;;` run, nested `[ ]`, and a trailing `;`. `_:anon_0` is the first
+-- `[ ]`, `_:anon_1` the collection's cell, `_:anon_2` and `_:anon_3` the
+-- outer and inner `[ ]` of the second group.
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p 1, [ p:q 2 ; p:r 3, 4 ], ( 5 ) ;; p:t [ p:u [ p:v 6 ] ] ; p:w 7 ; ." ==
+  "<http://a/s> <http://a/p> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_0 <http://a/q> \"2\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_0 <http://a/r> \"3\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_0 <http://a/r> \"4\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/p> _:anon_0 .\n" ++
+  "_:anon_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"5\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n" ++
+  "<http://a/s> <http://a/p> _:anon_1 .\n" ++
+  "_:anon_3 <http://a/v> \"6\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_2 <http://a/u> _:anon_3 .\n" ++
+  "<http://a/s> <http://a/t> _:anon_2 .\n" ++
+  "<http://a/s> <http://a/w> \"7\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n"
+-- RDF 1.2: annotation blocks with `;` groups after objects of one object list,
+-- a reifier, and a second group after the list.
+#guard ttl12ToNT "@prefix p: <http://a/> . p:s p:p p:o1 {| p:a 1 ; p:b 2 |}, p:o2 ~ p:r {| p:c 3 |} ; p:q 4 ." ==
+  "<http://a/s> <http://a/p> <http://a/o1> .\n" ++
+  "_:anon_0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> <<( <http://a/s> <http://a/p> <http://a/o1> )>> .\n" ++
+  "_:anon_0 <http://a/a> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_0 <http://a/b> \"2\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/p> <http://a/o2> .\n" ++
+  "<http://a/r> <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> <<( <http://a/s> <http://a/p> <http://a/o2> )>> .\n" ++
+  "<http://a/r> <http://a/c> \"3\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/q> \"4\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n"
+-- TriG: the groups of a statement inside a graph block, closed by `; }`.
+#guard trigDefaultToNT "@prefix p: <http://a/> .\n{ p:s p:p 1 ; p:q 2, 3 ;; p:r [ p:x 4 ; ] ; }" ==
+  "<http://a/s> <http://a/p> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/q> \"2\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/q> \"3\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "_:anon_0 <http://a/x> \"4\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://a/s> <http://a/r> _:anon_0 .\n"
+#guard trigShape "@prefix p: <http://a/> .\np:g { p:s p:p 1 ; p:q 2, 3 ;; p:r [ p:x 4 ; ] ; }" == (0, 1, 5)
+-- Errors in a later object, in a later group, after `,`, at the end of input
+-- after a verb, and inside a `[ ]` of a later group: the same message at the
+-- same offset as before the change.
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p 1, 2, ( 3 .\n" ==
+  "PARSE-ERROR: expected prefixed name"
+#guard ttlErrorPos "@prefix p: <http://a/> . p:s p:p 1, 2, ( 3 .\n" == some 43
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p 1 ; p:q 2 , ; .\n" ==
+  "PARSE-ERROR: expected prefixed name"
+#guard ttlErrorPos "@prefix p: <http://a/> . p:s p:p 1 ; p:q 2 , ; .\n" == some 45
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p 1 ; p:q\n" == "PARSE-ERROR: expected object"
+#guard ttlErrorPos "@prefix p: <http://a/> . p:s p:p 1 ; p:q\n" == some 41
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p 1 ; p:q 2 ; p:r [ p:x 1 ; p:y ] .\n" ==
+  "PARSE-ERROR: expected prefixed name"
+#guard ttlErrorPos "@prefix p: <http://a/> . p:s p:p 1 ; p:q 2 ; p:r [ p:x 1 ; p:y ] .\n" == some 63
+#guard ttlRejects "@prefix p: <http://a/> . p:s p:p 1, ."
+#guard ttlRejects "@prefix p: <http://a/> . p:s ; p:p 1 ."
+
+/-- One statement with `n` predicates, one `;` group each. -/
+def ttlPredicatesDoc (n : Nat) : String :=
+  "@prefix p: <http://a/> . p:s " ++
+    " ; ".intercalate ((List.range n).map fun i => s!"p:p{i} {i}") ++ " ."
+
+/-- One statement with one predicate and `n` objects. -/
+def ttlObjectsDoc (n : Nat) : String :=
+  "@prefix p: <http://a/> . p:s p:p " ++
+    ", ".intercalate ((List.range n).map toString) ++ " ."
+
+-- 2,000 groups and 2,000 objects: one triple each, in document order.
+#guard ttlCount (ttlPredicatesDoc 2000) == 2000
+#guard ((ttlToNT (ttlPredicatesDoc 2000)).splitOn "\n").take 2 ==
+  ["<http://a/s> <http://a/p0> \"0\"^^<http://www.w3.org/2001/XMLSchema#integer> .",
+   "<http://a/s> <http://a/p1> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> ."]
+#guard (ttlToNT (ttlPredicatesDoc 2000)).endsWith
+  "<http://a/s> <http://a/p1999> \"1999\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n"
+#guard ttlCount (ttlObjectsDoc 2000) == 2000
+#guard ((ttlToNT (ttlObjectsDoc 2000)).splitOn "\n").take 2 ==
+  ["<http://a/s> <http://a/p> \"0\"^^<http://www.w3.org/2001/XMLSchema#integer> .",
+   "<http://a/s> <http://a/p> \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> ."]
+#guard (ttlToNT (ttlObjectsDoc 2000)).endsWith
+  "<http://a/s> <http://a/p> \"1999\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n"
+
 /-! ## Axiom audit
 
 Every `#guard` above is a kernel computation, so nothing here can

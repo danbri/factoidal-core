@@ -391,5 +391,17 @@ theorem parseTurtle_eq_fold (text : String) (base : Option String) (mode : Mode)
 #print axioms maxUnderscoreRun_ge_best
 #print axioms parseStatements_eq_fold
 #print axioms parseTurtle_eq_fold
+-- The loops of Turtle.lean and their equality to the readable forms:
+-- collections (https://github.com/danbri/factoidal/issues/678), object lists
+-- and predicate-object lists (https://github.com/danbri/factoidal/issues/754).
+#print axioms readCollectionCells_eq
+#print axioms readCollectionRest_eq_TR
+#print axioms readObjectList_acc
+#print axioms readObjectListRev_eq
+#print axioms readObjectList_eq_TR
+#print axioms readPredicateObjectList_eq
+#print axioms readPredicateObjectList_eq_spec
+#print axioms readPredicateObjectListSpec_eq_TR
+#print axioms readPredicateObjectListMoreSpec_eq_TR
 
 end L4Factoidal.Syntax

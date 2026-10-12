@@ -22,6 +22,7 @@ const CASES = {
   'xml-entities-dtd': () => ['parseToDatasetJson', readArgs('args-xml-dtd.json')],
   'turtle-literal': () => ['parseToDatasetJson', readArgs('args-turtle-literal.json')],
   'turtle-collection': () => ['parseToDatasetJson', readArgs('args-turtle-collection.json')],
+  'turtle-predicates': () => ['parseToDatasetJson', readArgs('args-turtle-predicates.json')],
   'nquads-one-subject': () => ['parseToDatasetJson', readArgs('args-nquads.json')],
   'sparql-union': () => ['queryDataset', readArgs('args-sparql-union.json')],
   'sparql-nested': () => ['queryDataset', readArgs('args-sparql-nested.json')],

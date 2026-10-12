@@ -262,7 +262,10 @@ fi
 # for https://github.com/danbri/factoidal/issues/678 until 2026-10-10, when
 # the Turtle collection reader became a loop; it runs in all three routes.
 # `xml-entities` was listed for https://github.com/danbri/factoidal/issues/673
-# until the same day, when the XML reference scan became a loop.)
+# until the same day, when the XML reference scan became a loop.
+# `turtle-predicates` was listed for
+# https://github.com/danbri/factoidal/issues/754 until the same day, when the
+# Turtle predicate-object list reader became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
     # No case is listed today.
@@ -353,6 +356,7 @@ CASES=(
   "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
+  "turtle-predicates   parseToDatasetJson   args-turtle-predicates.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
   "sparql-union        queryDataset         args-sparql-union.json"
   "sparql-nested       queryDataset         args-sparql-nested.json"

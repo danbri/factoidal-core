@@ -841,7 +841,8 @@ L4Factoidal_Syntax_RdfXml_propertyAttrTriples  # (b) attributes of one RDF/XML e
 L4Factoidal_Syntax_RdfXml_renderAttrs  # (b) attributes of one XML element
 L4Factoidal_Syntax_RdfXml_serializeNodes  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per sibling node when an XMLLiteral is serialised (data); fuel-bounded
 L4Factoidal_Syntax_readAnnotations  # (b) annotation blocks on one Turtle triple; was hidden as `replaced` by the short-name csimp mark of OwlXml.readAnnotations
-L4Factoidal_Syntax_readPredicateObjectList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per `;`-separated predicate of one Turtle subject (confirm; mutual with readObject)
+L4Factoidal_Syntax_readPredicateObjectList  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the `;` groups of one statement are a loop (goto _start), issue 754
+L4Factoidal_Syntax_readObjectListRev  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the objects of one object list are a loop (goto _start), issue 754
 L4Factoidal_Syntax_assignLabelsAvoiding  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Turtle serializer: one frame per blank-node label to assign (data)
 L4Factoidal_Syntax_tsUserUsed  # (c) prefixes of the serializer's prefix table
 L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
@@ -1264,10 +1265,8 @@ L4Factoidal_Syntax_RdfXml_propertyElt  # UNTRIAGED https://github.com/danbri/fac
 L4Factoidal_Syntax_RdfXml_propertyEltBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:833
 L4Factoidal_Syntax_RdfXml_propertyEltList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:777
 L4Factoidal_Syntax_RdfXml_serializeNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/RdfXml.lean:635
-L4Factoidal_Syntax_readCollection  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1282
-L4Factoidal_Syntax_readObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1211
-L4Factoidal_Syntax_readObjectList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1338
-L4Factoidal_Syntax_readPredicateObjectListMore  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 7, L4Factoidal/Syntax/Turtle.lean:1449
+L4Factoidal_Syntax_readCollection  # (b) one frame per NESTING level of ( ) (2,695 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements after the first are read by the loop readCollectionCells, issue 678
+L4Factoidal_Syntax_readObject  # (b) one frame per NESTING level of [ ] and ( ) in an object (1,501 levels of [ ] and 2,695 of ( ) ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); objects of one list, groups of one statement and elements of one collection are loops, issues 678 and 754
 L4Factoidal_Syntax_readReifiedTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1162
 L4Factoidal_Syntax_readRtObject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1118
 L4Factoidal_Syntax_readRtSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1085
@@ -1372,7 +1371,7 @@ L4Wasm_Json_pValue  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 l
 L4Wasm_Json_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:106
 L4Wasm_decodeSubject  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:331
 L4Wasm_termIriString  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, Wasm/Abi.lean:340
-L4Factoidal_Syntax_readCollectionCells  # (b) the readObject cycle recurses once per NESTING level of collections and [ ] (2,897 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements of one collection are a loop (goto _start), issue 678
+L4Factoidal_Syntax_readCollectionCells  # (b) the readObject cycle recurses once per NESTING level of collections and [ ] (2,695 levels ran at 512 KB since issue 754; 2,890 before it, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements of one collection are a loop (goto _start), issue 678
 # --- Added 2026-10-10, OWL DL refutation certificates
 # (docs/designissues/2026-10-10-owl-dl-refutation-certificates.md,
 # https://github.com/danbri/factoidal/issues/651) ---
