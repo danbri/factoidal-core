@@ -763,3 +763,45 @@ Factoidal query path).
   index build.
 - The profile shares are of `perf` cpu-clock samples with 16 KiB DWARF
   stacks; a stack deeper than that is attributed to its leaf frames only.
+
+## 10. Related work
+
+Owner, 2026-10-12, verbatim, on adding these citations: "yes, do not imply
+derivations". The works below are listed because they study the same
+problems (dictionary encoding of RDF terms, indexes over several orders of
+the triple, joins over sorted ids, compact RDF storage). SBM11 was designed in
+this repository from the measurements in sections 3 and 4; this section does
+not state that SBM11 copies or derives from any of them, and no code from them
+is in the repository. The QLever comparison in this record reads QLever's
+on-disk files and cites its source (Apache License 2.0) by file and line for
+the format description only.
+
+- T. Neumann and G. Weikum. "RDF-3X: a RISC-style engine for RDF".
+  *Proceedings of the VLDB Endowment* 1(1):647–659, 2008.
+  https://doi.org/10.14778/1453856.1453927
+- C. Weiss, P. Karras and A. Bernstein. "Hexastore: sextuple indexing for
+  semantic web data management". *Proceedings of the VLDB Endowment*
+  1(1):1008–1019, 2008. https://doi.org/10.14778/1454159.1454274
+- H. Bast and B. Buchhold. "QLever: a query engine for efficient
+  SPARQL+Text search". *Proceedings of CIKM 2017*, ACM, pp. 647–656.
+  https://doi.org/10.1145/3132847.3132921
+- J. D. Fernández, M. A. Martínez-Prieto, C. Gutiérrez, A. Polleres and
+  M. Arias. "Binary RDF representation for publication and exchange (HDT)".
+  *Journal of Web Semantics* 19:22–41, 2013.
+  https://doi.org/10.1016/j.websem.2013.01.002
+- D. Arroyuelo, A. Hogan, G. Navarro, J. L. Reutter, J. Rojas-Ledesma and
+  A. Soto. "Worst-case optimal graph joins in almost no space". *Proceedings
+  of SIGMOD 2021*, ACM. https://doi.org/10.1145/3448016.3457256 (the ring:
+  one structure that answers all six triple orders; extended as "The Ring:
+  worst-case optimal joins in graph databases using (almost) no extra
+  space", *ACM Transactions on Database Systems*, 2024).
+- D. Vrgoč, C. Rojas, R. Angles, M. Arenas, D. Arroyuelo, C. Buil-Aranda,
+  A. Hogan, G. Navarro, C. Riveros and J. Romero. "MillenniumDB: an
+  open-source graph database system". *Data Intelligence* 5(3):560–610,
+  2023. https://doi.org/10.1162/dint_a_00209
+
+Bibliographic details checked 2026-10-12 against dblp, the publishers' DOI
+records as reported by dblp and the authors' pages
+(https://users.dcc.uchile.cl/~gnavarro/abstracts/sigmod21.html,
+https://users.dcc.uchile.cl/~gnavarro/abstracts/di23.html,
+https://repositorio.uchile.cl/handle/2250/126366).

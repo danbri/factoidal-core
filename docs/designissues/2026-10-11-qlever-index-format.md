@@ -919,3 +919,16 @@ into memory works for this 46 MB instance but is not the target (CLAUDE.md,
 
 FSST (a 255-entry table and a byte loop) and the fixed-layout metadata are
 small by comparison.
+
+## Related work
+
+QLever's design is described by its authors in H. Bast and B. Buchhold,
+"QLever: a query engine for efficient SPARQL+Text search", *Proceedings of
+CIKM 2017*, ACM, pp. 647–656, https://doi.org/10.1145/3132847.3132921. This
+record describes the on-disk files of one QLever version, read from its
+source (Apache License 2.0) and from the files of a test instance; the Lean
+reader in `L4Factoidal/Qlvr/` is written in this repository and contains no
+QLever code. Other work on indexing triples in several orders and on
+dictionary-encoded RDF storage is listed in section 10 of
+`2026-10-11-shardborough-vs-qlever.md`; it is related work, not a source of
+this reader.
