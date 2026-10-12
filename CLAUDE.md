@@ -160,6 +160,9 @@ Rules that follow:
   `docs/designissues/2026-10-11-shardborough-vs-qlever.md`. Tracking:
   <https://github.com/danbri/factoidal/issues/787>. IBK3 and IBK5 stay
   readable as the differential oracle until stage 7.
+- Owner, 2026-10-12, verbatim: "Consider smb11 our baseline for
+  shardcore." SBM11 is the Shardborough baseline: every new Shardborough
+  performance or design result is compared with SBM11, not with IBK3/IBK5.
 
 ## COTTAS suspended; Shardborough is primary; QLever reader (owner, 2026-10-11)
 
