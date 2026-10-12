@@ -267,6 +267,13 @@ extern_lib libl4exthost pkg := do
 -- printed scores.
 @[default_target] lean_exe «l4owl-probe» where root := `Harness.OwlProbe
 
+-- The OWL 2 species verdict (DL or Full) of one ontology document and its
+-- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
+-- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`
+-- scores; this executable only reads files and prints JSON. Used by
+-- tools/owl-real-bench.sh (https://github.com/danbri/factoidal/issues/651).
+@[default_target] lean_exe «l4owl-species» where root := `Harness.OwlSpeciesFile
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."
