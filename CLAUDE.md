@@ -217,9 +217,10 @@ the place everything must first be imported."
 - Probing and discovery are costed work: do a step only when the expected
   saving is more than its cost.
 - Semantics in Lean; system behaviour as a state machine with invariants
-  (TLA+ discipline).
+  (TLA+ discipline). Candidate Lean framework: Veil (owner, 2026-10-12:
+  "Keep Veil on the relevant mentions lists too").
 - Full direction, model and prior work (PDQ, Calcite, Comunica, SPARQL
-  Anything): `docs/designissues/2026-10-12-capability-aware-planner.md`,
+  Anything, Veil): `docs/designissues/2026-10-12-capability-aware-planner.md`,
   skill `capability-planner`. Epic:
   https://github.com/danbri/factoidal/issues/800. OKR batch 2 (proposed):
   https://github.com/danbri/factoidal/issues/801. Parallel block scans, then

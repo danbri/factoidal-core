@@ -139,6 +139,16 @@ imported into Shardborough before the planner can use it.
   quotas and service interaction form a state machine with stated invariants,
   written in Lean. First invariants: no answer outside the requirement, and no
   quota exceeded.
+- **Veil** (owner, 2026-10-12: "Keep Veil on the relevant mentions lists
+  too") is the candidate Lean 4 framework for this state machine: it states
+  transition systems and their invariants in Lean, discharges verification
+  conditions with SMT solvers, and falls back to interactive proof. Before
+  adoption, check: compatibility with this tree's Lean toolchain (v4.33.1);
+  whether goals that SMT discharges give kernel-checked proofs or rest on a
+  trusted solver result (this tree allows no `sorry` and no user `axiom`, and
+  `#print axioms` must show only `propext`, `Classical.choice`,
+  `Quot.sound`); its dependencies (z3, cvc5, uv) in CI and in the wasm build,
+  where it is a proof-time dependency only.
 - **Approximate operations:** an LLM result carries an approximation marker
   through the plan. An answer that depends on it is marked, and a theorem
   about exact answers does not apply to it.
@@ -175,6 +185,10 @@ imported into Shardborough before the planner can use it.
   Construction with a façade: a unified method to access heterogeneous data
   sources on the Web", ACM TOIT 23(1), 2022,
   https://doi.org/10.1145/3555312
+- G. Pîrlea, V. Gladshtein, E. Kinsbruner, Q. Zhao, I. Sergey, "Veil: A
+  Framework for Automated and Interactive Verification of Transition
+  Systems", CAV 2025, https://doi.org/10.1007/978-3-031-98682-6_2. Code:
+  https://github.com/verse-lab/veil
 - L. Lamport, *Specifying Systems: The TLA+ Language and Tools for Hardware
   and Software Engineers*, Addison-Wesley, 2002.
 - Model Context Protocol, https://modelcontextprotocol.io/. WebMCP: a Draft

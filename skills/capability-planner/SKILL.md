@@ -1,6 +1,6 @@
 ---
 name: capability-planner
-description: The capability-aware, cost-based planner for data access, computation and service interaction (owner direction 2026-10-12) — the six questions the system answers explicitly, the objects (requirement, available information, capability with access pattern/location/cost/exactness, plan family, execution state), the structural and runtime planner layers, information acquisition as costed work, the Lean semantics and TLA+-style state-machine discipline, and the prior work (PDQ, Calcite, Comunica, SPARQL Anything). Use when designing or implementing anything that plans across SPARQL endpoints, SQL, REST, MCP or WebMCP tools, files, document transformations, LLM calls or Shardborough; when adding a source kind; or when someone proposes importing data into Shardborough first. Tracking https://github.com/danbri/factoidal/issues/800.
+description: The capability-aware, cost-based planner for data access, computation and service interaction (owner direction 2026-10-12) — the six questions the system answers explicitly, the objects (requirement, available information, capability with access pattern/location/cost/exactness, plan family, execution state), the structural and runtime planner layers, information acquisition as costed work, the Lean semantics and TLA+-style state-machine discipline, and the prior work (PDQ, Calcite, Comunica, SPARQL Anything, Veil). Use when designing or implementing anything that plans across SPARQL endpoints, SQL, REST, MCP or WebMCP tools, files, document transformations, LLM calls or Shardborough; when adding a source kind; or when someone proposes importing data into Shardborough first. Tracking https://github.com/danbri/factoidal/issues/800.
 ---
 
 # Capability-aware planner
@@ -42,7 +42,10 @@ Status 2026-10-12: direction set, no code.
    answer of an executed plan is an answer of the requirement over the
    declared relations. Completeness is stated per capability set. System
    behaviour (execution, adaptation, retries, quotas) is a Lean state machine
-   with stated invariants, in the manner of TLA+.
+   with stated invariants, in the manner of TLA+. Candidate framework: Veil
+   (Lean 4, CAV 2025, https://github.com/verse-lab/veil). Check toolchain
+   compatibility and that its SMT-discharged goals pass this tree's axiom
+   policy before adopting it.
 
 ## Existing parts to reuse
 
