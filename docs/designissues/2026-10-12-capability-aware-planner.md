@@ -335,3 +335,145 @@ graph (41).
   of https://github.com/danbri/factoidal/issues/801).
 - IO: implementations are pure functions; an IO wrapper and its relation
   to `CapSemantics` are not defined.
+
+Section 9 (KR 2.2) gives the search with its completeness theorem
+relative to exact covers, and a cost estimate that orders the plan
+family. The other items stay open; section 9 lists their
+expected-failure cases.
+
+## 9. KR 2.2: structural planner
+
+Landed 2026-10-12 for OKR batch 2, KR 2.2
+(https://github.com/danbri/factoidal/issues/801). Modules
+`formal/lean4/L4Factoidal/Planner/Search.lean` (search and theorems),
+`Planner/FromQuery.lean` (a requirement from a parsed SPARQL query),
+`Planner/SearchTests.lean` (`#guard` cases and the axiom audit), and the
+executable `l4planner-test` (`Harness/PlannerTest.lean`, the test set).
+
+### Algorithm
+
+The search works backwards from the requirement: it uses only accesses
+that put a requirement triple pattern in the declared graph, and it adds
+an access only when the access's required inputs are bound (PDQ's
+answerability under access patterns).
+
+1. Pool: the variables and the constants of the requirement's BGP.
+2. Candidates: for each source, each argument list over the pool, kept
+   when the access is an exact cover (`Access.exactCover`): some template
+   of the source, with the arguments put in, is a requirement triple
+   pattern, and every argument position is used by such a template. An
+   exact cover adds no join condition and no constant that the
+   requirement does not state.
+3. Depth-first search with fuel `k`, the bound on the number of accesses
+   (`dfs`). A state is the accesses chosen so far, in execution order, and
+   the variables they bind. A state whose accesses cover every triple
+   pattern is a result. Otherwise each candidate that is executable (its
+   required inputs are constants or bound variables) and useful (it binds
+   a new variable or covers a pattern not yet covered) extends the state.
+4. Admission: a result is kept when it passes `Rewriting.check` and is
+   minimal: no single access can be removed with the check still passing
+   (`familyAll`). When some kept rewriting is also irredundant in any
+   order (`Rewriting.irredundant`: no access can be removed with the
+   others in the greedy executable order), only those are kept.
+5. Order: exact before approximate, then the cost estimate, then the
+   number of accesses (`Ranked.le`). The estimate (`estCost`) charges
+   `perCall` for each call and `perRow` for each row, with one call of an
+   access per incoming row (the dependent join of `Plan.exec`) and
+   `fanout` rows (default 10) for each variable that an access binds
+   first. No theorem uses the order or the estimate.
+6. Verdict (`plan`): `plans family`, or `notAnswerable` when the family
+   is empty.
+
+`dfs` recurses once per chosen access (at most `k`), `argLists` once per
+argument position, `queryPatternBgp?` once per join of a WHERE clause;
+the three are in `tools/lean-tail-recursion-allow.txt` with their bounds.
+`chainOk`, `estCostGo`, `greedyGo` and `selectVarsGo` are tail calls. No
+`partial`.
+
+### Theorems (`Search.lean`)
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `search_check` | Each member of `search cat req k` passes `Rewriting.check`. | Proved. Admission (step 4) applies the check. |
+| `search_isRewriting` | Each member's plan satisfies `IsRewriting`. | Proved. |
+| `search_sound` | Under sound exact sources, each unmarked row of a member's plan is an answer of the requirement over the declared graph. | Proved: `rewriting_sound` applied to `search_isRewriting`. |
+| `search_mem_of_minimal` | Each minimal rewriting of exact covers with at most `k` accesses that passes the check is in `familyAll`. | Proved. |
+| `search_complete` | If some rewriting of exact covers with at most `k` accesses passes the check, then `search cat req k ≠ []`. | Proved. |
+| `plan_notAnswerable_sound` | If the verdict is `notAnswerable`, no rewriting of exact covers with at most `k` accesses passes the check. | Proved, from `search_complete`. |
+| `args_mem_pool_of_exactCover` | Each argument of an exact cover is in the pool, so step 2 lists every exact cover. | Proved. |
+
+The completeness proof: a checked rewriting has a minimal sub-rewriting
+(remove accesses one at a time; `exists_minimal`). For a minimal one, no
+proper prefix covers the requirement (else the last access can be
+removed), and each access is useful where it stands (else it can be
+removed: it binds no new variable, so later inputs stay bound, and it
+covers no new pattern). So `dfs` reaches it along its own prefixes
+(`mem_dfs_of_minimal`). The irredundancy preference never empties a
+non-empty family, and the sort keeps every member.
+
+Check against anti-pattern 29: the hypotheses of `search_complete` are
+the Boolean check, the length bound and the exact-cover property of each
+access; none mentions `dfs` or `search`.
+
+`#print axioms` for the seven theorems and for `mem_dfs_of_minimal`:
+`propext`, `Classical.choice`, `Quot.sound` only
+(`Planner/SearchTests.lean`).
+
+### Tests (`lake exe l4planner-test`)
+
+Each case: a requirement, mock sources with binding patterns, the bound
+`k`, the expected verdict, and for most the expected first plan. For each
+plan returned: the rewriting passes the check; its plan finds no input
+unbound at run time; an exact plan's `Plan.exec` gives the reference
+evaluator's answers over the materialised declared graph (multiset
+equality of the projected rows; mode `subset`: a strictly smaller
+sub-multiset); an approximate plan marks every row.
+
+| Case | Sources (required inputs) | Verdict |
+|---|---|---|
+| `subject-lookup` | REST lookup by subject | plan: lookup with the subject constant |
+| `object-lookup` | lookup by object | plan |
+| `object-input-never-bound` | lookup by object; `?x name ?n` | not answerable |
+| `two-sources-cheaper-first` | scan (500 per call) and lookup (50 per call) of the same relation | 2 plans, lookup first |
+| `dependent-join` | scan `knows`, lookup `name` by subject | plan `[knows, name]` |
+| `dependent-join-bound-too-small` | the same, `k = 1` | not answerable |
+| `dependent-join-three` | two `knows` steps, then `name` | plan of 3 accesses |
+| `input-never-bound` | sensor read needs its subject; a scan of another relation | not answerable |
+| `no-source-for-predicate` | no template gives `worksIn` | not answerable |
+| `binder-without-constraint-not-admitted` | lookup by subject; a scan of another relation that lists some people | not answerable |
+| `source-not-complete-for-inputs` | lookup whose implementation returns part of its extension | plan; answers a strict sub-multiset |
+| `indirect-through-mapping` | lookup by subject; an SQL table (person, name, department) whose mapping gives `name` and `worksIn` | plan through the table only |
+| `approximate-marked` | scan; LLM-like age source (answers 99 where its extension says 41) | plan, every row marked |
+| `exact-before-approximate` | scan; LLM age source (2000 per call); exact age source (5000 per call) | exact plan first |
+| `filter` | dependent join with a `RowFilter` | plan |
+| `constant-in-output` | scan with a constant subject | plan |
+| `triple-scan-variable-predicate` | triple scan, predicate as a tuple position | plan |
+| `mapping-constant` | unary relation mapped to `rdf:type :Member` | plan |
+| `empty-bgp` | empty BGP | plan with no access |
+| `dependent-join-email` | scan, email lookup by subject | plan |
+| `all-constants` | scan; a pattern of three constants | plan |
+| `from-sparql` | the requirement parsed from SPARQL by `Requirement.ofQuery?` | plan |
+| `three-sources-ranked` | scan, lookup and scan of `name` | at least 2 plans, lookup first |
+| `outside-constant-control` | control: the hand rewriting with key `"k1"` passes the check and gives the reference answers | (control) |
+| `from-sparql-filter-rejected-today` | control: `ofQuery?` returns `none` for FILTER and GRAPH | (control) |
+
+Result 2026-10-12: planner: 25 pass, 0 fail, 7 expected-fail (out of 32):
+23 requirement cases, 2 controls, 7 expected failures.
+
+### Open, with expected-failure cases
+
+Each case is an `xfail` in `Harness/PlannerTest.lean` that names
+https://github.com/danbri/factoidal/issues/801. It is counted in the
+`expected-fail` bucket while it fails; when it passes, the run prints
+`XPASS` and exits 1. Form: the Lean probe convention of
+`skills/test-suites/SKILL.md` § Expected failures.
+
+| xfail case | Open item | What the case asserts |
+|---|---|---|
+| `search-outside-constant` | Search completeness over all checked rewritings: an access with a required input that no requirement pattern names | the search finds a plan for `?s ?p ?o` over a scan that requires a key (the rewriting with key `"k1"` passes the check: control case) |
+| `wide-relation-unnamed-output` | `Rewriting.check` admits no fresh variable, so a relation with a column that the requirement does not use gives no plan | the first plan for `?x name ?n` over the (person, name, department) table gives the reference answers |
+| `indirect-binder-inclusion-dependency` | Inclusion dependencies (PDQ constraints) are not modelled, so an access that covers no pattern and only binds an input for a later access is not admitted. This is also the case for answer completeness (section 8, first item): the sources are complete and no plan gives every answer | the first plan for `?x name ?n` over a lookup by subject and a complete scan of members gives the reference answers |
+| `quota-in-admission` | Costs and quotas are not used for admission; no theorem about cost | no plan in the family exceeds a call quota |
+| `runtime-quota-adaptation` | Adaptation: no execution state machine; quotas are not enforced at run time | the run of the first plan stays within each call quota and gives the reference answers |
+| `named-graph-requirement` | Named graphs: the declared dataset has a default graph only | `ofQuery?` accepts `GRAPH <g> { ... }` |
+| `rowfilter-from-expr` | `RowFilter` from a SPARQL `Expr` | `ofQuery?` accepts a FILTER |

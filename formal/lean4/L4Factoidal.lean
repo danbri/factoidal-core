@@ -703,3 +703,6 @@ import L4Factoidal.Planner.Mapping
 import L4Factoidal.Planner.Plan
 import L4Factoidal.Planner.Soundness
 import L4Factoidal.Planner.Tests
+import L4Factoidal.Planner.Search
+import L4Factoidal.Planner.FromQuery
+import L4Factoidal.Planner.SearchTests

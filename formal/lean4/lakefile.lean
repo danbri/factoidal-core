@@ -298,6 +298,9 @@ extern_lib libl4exthost pkg := do
 -- differential test of the `@[extern c inline]` store against its Lean reference.
 -- tests/prim/run.sh runs it natively and as wasm32 under node.
 @[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
+-- the structural planner's test set, with its expected-failure bucket.
+@[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
 -- The q07 kernel timing loop alone (no FFI in its imports), for the native and
 -- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
 @[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench

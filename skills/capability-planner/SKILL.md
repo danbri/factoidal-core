@@ -14,8 +14,23 @@ Status 2026-10-12: KR 2.1 landed. Lean definitions in
 `formal/lean4/L4Factoidal/Planner/` (requirement, capability, mapping,
 plan, `Plan.exec`, rewriting check) with the soundness theorem
 `rewriting_sound`, the marker theorem `run_unmarked_of_allExact` and
-`#guard` tests; record section 8 of the design record. Completeness, costs
-and adaptation are open.
+`#guard` tests; record section 8 of the design record.
+
+KR 2.2 landed 2026-10-12: the structural planner `Planner/Search.lean`
+(`search`, `plan`: a plan family ordered by a cost estimate, or
+`notAnswerable`) over exact-cover accesses, with `search_check` and
+`search_sound` (each member is a rewriting, so `rewriting_sound` applies)
+and `search_complete` (if a checked rewriting of exact covers with at most
+`k` accesses exists, the search returns one), all proved;
+`Requirement.ofQuery?` (`Planner/FromQuery.lean`). Test set:
+`lake exe l4planner-test` (run in `formal/lean4/`), 25 pass, 0 fail,
+7 expected-fail (out of 32); the expected failures name
+https://github.com/danbri/factoidal/issues/801 and the run exits 1 on an
+XPASS. Record section 9. Open, each with an expected-failure case: access
+positions that no requirement pattern names, inclusion dependencies
+(indirect plans through a binder access) and answer completeness, quotas
+in admission, the execution state machine, named graphs, `RowFilter` from
+a SPARQL `Expr`.
 
 ## Rules
 

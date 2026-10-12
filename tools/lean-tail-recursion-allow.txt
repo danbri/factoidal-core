@@ -1397,3 +1397,6 @@ L4Factoidal_Storage_Sbm11_Dict_searchPagesM  # (c) binary search over the dictio
 L4Factoidal_Planner_Plan_exec  # (b) nesting of the plan tree (one level per plan operator), not the number of rows
 L4Factoidal_Planner_Plan_inputFailure  # (b) nesting of the plan tree, as Plan.exec
 L4Factoidal_Planner_Plan_wfBound  # (b) nesting of the plan tree, as Plan.exec
+L4Factoidal_Planner_argLists  # (c) one level per argument position: the arity of a capability
+L4Factoidal_Planner_dfs  # (c) one level per chosen access: at most k, the access bound given to the search (issue 801)
+L4Factoidal_Planner_queryPatternBgp?  # (b) nesting of the joins in a parsed WHERE clause
