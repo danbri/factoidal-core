@@ -171,6 +171,8 @@ import L4Factoidal.OWL.RdfBased.Witness
 import L4Factoidal.OWL.RdfBased.Engine
 import L4Factoidal.OWL.RdfBased.Clash
 import L4Factoidal.OWL.RdfBased.Tests
+import L4Factoidal.OWL.RdfBased.Balanced
+import L4Factoidal.OWL.RdfBased.BalancedTests
 import L4Factoidal.RDF.EntailmentRdfsModelTheory
 import L4Factoidal.RDF.SemanticsHypothesisWitness
 import L4Factoidal.RDF.EntailmentSimpleBoundary
