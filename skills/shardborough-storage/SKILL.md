@@ -157,6 +157,8 @@ not written yet.
 | Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (`.trig`, `.nq`, `.ttl`) |
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
+| SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` |
+| SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
 
@@ -528,6 +530,26 @@ Gates for a change there: `tests/sbm11/dict_scaling.sh [--doubled]`,
 `l4sbm11-dict-pack --check SOURCE OUTDIR` (failures=0),
 `python3 tests/sbm11/dict_reference.py SOURCE` (same counts) and the
 `sbm11-dict` case of `tests/stack/run.sh --canary`.
+
+SBM11 stage 3 (2026-10-12, https://github.com/danbri/factoidal/issues/789):
+the sorted permutations PSO, POS, SPO, OSP as PRB1 column-frame blocks with
+PRM1 block metadata, the manifest `manifest.sbm11` (wire version 11), packer
+phase 3 and the activation checks. Record with bytes, theorems and
+measurements:
+[`docs/designissues/2026-10-12-sbm11-stage3.md`](../../docs/designissues/2026-10-12-sbm11-stage3.md).
+Gates for a change there: `tests/sbm11/stage3_check.sh SOURCE WORKDIR`
+(dump equals the source as a set, four permutations equal, tampered copies
+refused), `tests/sbm11/pack_scaling.sh`, and the `sbm11-perm` case of
+`tests/stack/run.sh --canary`.
+
+Format registry rows (wire version 11):
+
+| Name | File | Status | Definition |
+| --- | --- | --- | --- |
+| GDV1, GDX1 | `dict.gdv1`, `dict.gdx1` | landed (stage 2) | `Storage/Sbm11/Dict.lean` |
+| PRB1 | `<perm>.prb1` | landed (stage 3); column codecs 0 constant, 1 raw, 2 delta; 3 zstd reserved and refused | `Storage/Sbm11/Column.lean`, `Block.lean` |
+| PRM1 | `<perm>.prm1` | landed (stage 3) | `Storage/Sbm11/Block.lean` |
+| SBM11 manifest | `manifest.sbm11` (`"SBM0"` version 11) | landed (stage 3) | `Storage/Sbm11/Manifest.lean` |
 
 ## Where the code is
 

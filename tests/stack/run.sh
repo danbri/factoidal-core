@@ -592,6 +592,65 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------- SBM11 permutations (issue 789)
+# `l4sbm11-pack` packs the same sbm11-dict.nt (600,001 triples) with runs of
+# 20,000 terms, row runs of 20,000 rows (the external sort of phase 3 writes
+# and merges 30 or more runs per permutation) and blocks of 65,536 rows (the
+# largest block encode, and the frame decode the packer runs on every frame);
+# then `l4sbm11 verify` decodes every block of the four permutations, checks
+# PRM1, re-encodes every frame and compares the quad digests, and
+# `l4sbm11 dump-ids` reads every SPO block.
+# https://github.com/danbri/factoidal/issues/789
+SBM11P_BIN="$LEAN_DIR/.lake/build/bin/l4sbm11-pack"
+SBM11C_BIN="$LEAN_DIR/.lake/build/bin/l4sbm11"
+sbm11_perm_case() { # sbm11_perm_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-perm-out" rc log rows
+  if [ ! -x "$SBM11P_BIN" ] || [ ! -x "$SBM11C_BIN" ]; then
+    record "$route" sbm11-perm 1 "l4sbm11-pack or l4sbm11 does not exist (lake build l4sbm11-pack l4sbm11)"
+    return
+  fi
+  rm -rf "$out"
+  log="$(run_capped "$TIMEOUT" "$@" "$SBM11P_BIN" "$src" "$out" --run-terms 20000 --sort-rows 20000 --block-rows 65536 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log="$log
+$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" verify "$out" 2>&1)"; rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    rows="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" dump-ids "$out" spo 2>>"$FIXTURES/sbm11-perm.err" | wc -l)"
+    rc=$?
+    log="$log
+dump-ids rows=$rows"
+    if [ "$(cat "$FIXTURES/sbm11-perm.err" 2>/dev/null | grep -c 'Stack overflow')" -gt 0 ]; then
+      log="$log
+Stack overflow in dump-ids"
+    fi
+    rm -f "$FIXTURES/sbm11-perm.err"
+  fi
+  rm -rf "$out"
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-perm overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q 'admitted failures=0' || ! printf '%s' "$log" | grep -q 'dump-ids rows=600001'; then
+    score_case "$route" sbm11-perm error "exit $rc: $(printf '%s' "$log" | grep -m1 'FAIL\|l4sbm11' | head -c 160)"
+  else
+    score_case "$route" sbm11-perm ran "$(printf '%s' "$log" | grep -o 'quads=[0-9]*' | head -1); $(printf '%s' "$log" | grep -o 'spo blocks=[0-9]*' | head -1); verify admitted; dump-ids rows=600001"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 permutation pack, verify and dump, native default stack"
+  sbm11_perm_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 permutation pack, verify and dump, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_perm_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-perm 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"

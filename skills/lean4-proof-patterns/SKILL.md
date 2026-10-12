@@ -76,6 +76,20 @@ variable. `exact escapeResult_ok h` then assigns `cp := <the arithmetic>`
 by unification without unfolding. Cost of not knowing this: two stalled
 proof subagents and an evening.
 
+The same trap without `split`: on 2026-10-12 the SBM11 manifest round trip
+(`Storage/Sbm11/ManifestTheorems.lean`) ran out of memory after 240 s three
+times. The goal held the decoder's later `match` arms and an admission `if`
+over `decide (x < two64)` (`two64` is a reducible literal). Each of these
+did not return on it: `rw [← h32]` with `h32 : l.length = 32` (it rewrites
+every `32` it can unify with), `simp only [takeExact_of_length _ _ _ h32]`,
+and `dsimp only` after a successful `rw`. What returned: `rw` with the lemma
+instance, then `split` on each `match` and `obtain ⟨rfl, rfl⟩` from the
+equation hypothesis; and the decoder cut into a field decoder with no `if`
+and a separate admission function, so the big `if` is never in a goal that
+`simp` or `dsimp` rewrites. Find the step by bisection: copy the theorem to
+a scratch file, cut it with `sorry` after step k, and run
+`lake env lean FILE` under a 60 s timeout for each k.
+
 ## 5. `rename_i` order after `split`
 
 After `split` on `match c :: rest with ...` the inaccessible names are, in

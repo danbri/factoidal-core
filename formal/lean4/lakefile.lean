@@ -209,7 +209,8 @@ extern_lib libl4exthost pkg := do
   #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
-    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel]
+    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
+    `Harness.Sbm11Gen]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -296,6 +297,12 @@ extern_lib libl4exthost pkg := do
 -- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
 -- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
 @[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack
+-- SBM11 stage 3 (https://github.com/danbri/factoidal/issues/789): packer phases
+-- 1 to 3 (dictionary, then the PSO/POS/SPO/OSP permutations as PRB1 blocks with
+-- PRM1 metadata, the SBM11 manifest), and the reader: stats, scan, count, dump,
+-- verify and activate.
+@[default_target] lean_exe «l4sbm11-pack» where root := `Harness.Sbm11Pack
+@[default_target] lean_exe «l4sbm11» where root := `Harness.Sbm11Cli
 
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
