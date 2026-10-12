@@ -766,16 +766,6 @@ Factoidal query path).
 
 ## 10. Related work
 
-Owner, 2026-10-12, verbatim, on adding these citations: "yes, do not imply
-derivations". The works below are listed because they study the same
-problems (dictionary encoding of RDF terms, indexes over several orders of
-the triple, joins over sorted ids, compact RDF storage). SBM11 was designed in
-this repository from the measurements in sections 3 and 4; this section does
-not state that SBM11 copies or derives from any of them, and no code from them
-is in the repository. The QLever comparison in this record reads QLever's
-on-disk files and cites its source (Apache License 2.0) by file and line for
-the format description only.
-
 - T. Neumann and G. Weikum. "RDF-3X: a RISC-style engine for RDF".
   *Proceedings of the VLDB Endowment* 1(1):647–659, 2008.
   https://doi.org/10.14778/1453856.1453927
