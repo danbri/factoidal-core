@@ -1,6 +1,6 @@
 # Capability-aware, cost-based planner for data access, computation and service interaction
 
-2026-10-12. Status: direction set by the owner. No code yet.
+2026-10-12. Status: direction set by the owner. KR 2.1, 2.2 and 2.3 landed (sections 8, 9, 10).
 
 Tracking:
 - Epic: https://github.com/danbri/factoidal/issues/800
@@ -477,3 +477,126 @@ https://github.com/danbri/factoidal/issues/801. It is counted in the
 | `runtime-quota-adaptation` | Adaptation: no execution state machine; quotas are not enforced at run time | the run of the first plan stays within each call quota and gives the reference answers |
 | `named-graph-requirement` | Named graphs: the declared dataset has a default graph only | `ofQuery?` accepts `GRAPH <g> { ... }` |
 | `rowfilter-from-expr` | `RowFilter` from a SPARQL `Expr` | `ofQuery?` accepts a FILTER |
+
+## 10. KR 2.3: source kinds
+
+Landed 2026-10-12 for OKR batch 2, KR 2.3
+(https://github.com/danbri/factoidal/issues/801). Owner, 2026-10-12,
+verbatim: "service descriptions" are the source of capability
+descriptions. Each source kind has a function `describe` from its
+description document to a list of `Described` records (a `Capability`, its
+`Mapping` to triples, the source kind and the predicate the mapping fixes).
+One document gives a list because it declares several access shapes (the
+permutations of a generation, the properties of a response). The
+implementation is attached separately, from data or from a mock service.
+
+Modules: `formal/lean4/L4Factoidal/Planner/Kinds/`: `Common.lean` (the two
+mapping forms, `graphSource`, theorems), `Sbm11.lean`, `Memory.lean`,
+`Sparql.lean`, `FacadeX.lean`, `JsonTerms.lean` (JSON values as terms,
+shared by REST and MCP), `Rest.lean`, `Mcp.lean`, `Tests.lean` (`#guard`s,
+axiom audit). Test set: `Harness/PlannerKinds.lean`, run by
+`lake exe l4planner-test`. The case machinery moved from
+`Harness/PlannerTest.lean` to `Harness/PlannerCheck.lean` with no change of
+behaviour.
+
+### Mapping forms
+
+Every graph-backed kind uses one of two mappings:
+
+- triple form: arity 3, template `(0, 1, 2)`; the predicate is a tuple
+  position;
+- predicate form: arity 2, template `(0, p, 1)` for one predicate `p`.
+
+REST and MCP use the predicate form, with the subject (tuple position 0)
+as the required input.
+
+### The six kinds
+
+| Kind | Description document | Capabilities (required inputs) | Cost model | Exactness | Implementation in tests |
+|---|---|---|---|---|---|
+| `sbm11` | the generation's `manifest.sbm11` (its PRM1/PRB1 roles give the permutations) and a predicate probe (the distinct first column of PSO, read through the id path) | per permutation and key length `k = 0..3`, inputs = the triple positions of the first `k` columns; PSO, POS, SPO, OSP give all 8 subsets of `{S, P, O}` (triple form); per predicate, the subsets that contain `P`, with `P` removed: `{}`, `{S}`, `{O}`, `{S, O}` (predicate form) | key length 0: the quad count; else 20 plus the quad count halved per key column (a proxy: no per-column statistics yet); 1 per row | exact | `graphSource` over the rows that a full SPO scan of the id path reads; a differential test against the keyed id-path scan of each capability's permutation |
+| `memory` | the dataset (a `Graph`): its size and its distinct predicates | the 8 subsets (triple form); per predicate the 4 subsets of `{S, O}` | scan: the triple count; lookup: 1; 1 per row | exact | `graphSource` over the dataset |
+| `sparql` | a SPARQL 1.1 Service Description in Turtle, parsed by `parseTurtle`: `sd:endpoint` (location), `sd:supportedLanguage` (a query language is required), `sd:resultFormat` (JSON, XML, CSV or TSV results are required), `sd:feature`, and on `sd:defaultDataset` / `sd:defaultGraph` the VoID `void:triples` and `void:propertyPartition` | one triple-form scan; per VoID property partition the predicate form with `{}`, `{S}`, `{O}` (a bound join sends one request per input row) | 200 per request, 1 per row | exact | `serviceImpl`: the query text `SELECT ... WHERE { SERVICE <e> { s p o } }` with the inputs as N-Triples terms, parsed by `parseSparql` and run by `evalSelect` with `EvalEnv.services` set to the mock endpoint map |
+| `facadex` | a SPARQL Anything IRI (`x-sparql-anything:location=...,csv.headers=true`; options `location`, `media-type`, `csv.headers`, `csv.delimiter`, `namespace`, `root`) and, as a probe, the CSV header row | one triple-form free scan; per column a predicate-form free scan | the file size per call, 1 per row | exact | `graphSource` over the Façade-X triples of the CSV (`triplesOf`: `fx:root`, `rdf:_n` rows, `xyz:<column>` cells; the CSV read by `CSVW.read`) |
+| `rest` | an OpenAPI-like JSON document: `servers`, `paths`, a GET with one path parameter, `x-rdf-subject` (subject IRI template), response schema properties with `x-rdf-predicate` (and `x-rdf-object: iri`), `x-cost` | per mapped response property, the predicate form with `{S}` (the path parameter) | `x-cost`; default 50 per call, 1 per row | exact | `restImpl`: a GET through a mock function from URL to body; the body parsed by `parseJson` |
+| `mcp` | an MCP tool declaration (`name`, `inputSchema` with `required`, `outputSchema`, and `_meta."org.factoidal/rdf"`: `subject`, `subjectTemplate`, `predicates`, `objectIri`, `exactness`, `cost`); the required properties are the required inputs | per mapped output property, the predicate form with `{S}` | `_meta` cost; default 100 per call, 1 per row | `exact`, or `approximate` from `_meta` (a model's answer; its rows are marked) | `mcpImpl`: `tools/call` through a mock function; values from `structuredContent`; `isError: true` gives no tuple |
+
+### Theorems (`Kinds/Common.lean`)
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `graphSource_triples` | A graph-backed source declares exactly the triples of the graph that its predicate allows: `t ∈ (graphSource d g).triples ↔ t ∈ g ∧ keeps d.partition t = true`. | Proved. |
+| `lookupImpl_sound`, `graphSource_sound` | The lookup returns only extension tuples (`CapSemantics.Sound`), so `rewriting_sound` and `search_sound` apply to plans over `sbm11`, `memory` and `facadex` sources. | Proved. |
+| `lookupImpl_complete`, `graphSource_complete` | The lookup returns every extension tuple that matches the input (`CompleteFor`). | Proved. |
+
+`#print axioms` for the five: `propext`, `Classical.choice`, `Quot.sound`
+only (`Kinds/Tests.lean`). For `sparql`, `rest` and `mcp` the
+implementation is a call. For these, soundness is a test, not a theorem:
+the test set compares `Plan.exec` with the reference evaluator over the
+materialised declared graph.
+
+SBM11: there is no end-to-end theorem between the id path and the
+reference evaluator (https://github.com/danbri/factoidal/issues/776).
+The test set has a differential test instead. For each of the 16
+capabilities of the test generation (8 triple form; 4 per predicate for
+`knows` and `manages`) and each input binding from the generation's terms
+plus one term that is not in it, the keyed scan of the capability's
+permutation equals the pure implementation (134 calls). The rows that the
+id path reads equal the packed triples.
+
+### Tests (`lake exe l4planner-test`)
+
+| Case | Kinds in the catalog | Verdict and first plan |
+|---|---|---|
+| `sbm11-pack-read-round-trip` | sbm11 | the rows read through the id path are the packed triples |
+| `sbm11-id-path-differential` | sbm11 | 134 keyed id-path scans equal the pure implementation |
+| `describe-sbm11`, `describe-memory`, `describe-sparql`, `describe-facadex`, `describe-rest`, `describe-mcp` | each | the document parses; the expected capabilities (names, input sets, exactness, cost fields) |
+| `describe-sparql-refuses-update-only` | sparql | a description with only `sd:SPARQL11Update` is refused |
+| `describe-mcp-refuses-unmapped-required-input` | mcp | a tool with a second required input is refused |
+| `sparql-service-query-text` | sparql | the query text of a bound call parses |
+| `sbm11-predicate-scan` | sbm11 (predicate form) | `?x knows ?y`: `pso/1[knows]` |
+| `sbm11-subject-then-lookup` | sbm11 | `alice knows ?y . ?y knows ?z`: `[pso/2[knows], pso/2[knows]]` (a dependent join on the PSO key) |
+| `sbm11-object-key` | sbm11 | `?x knows carol`: `pos/2[knows]` before the PSO scan |
+| `sbm11-variable-predicate` | sbm11 (triple form) | `?s ?p ?o`: `pso/0` |
+| `memory-predicate-scan`, `memory-object-lookup`, `memory-variable-predicate` | memory | the scan; `memory:o[livesIn]`; `memory:s` |
+| `sparql-partition-scan`, `sparql-subject-bound`, `sparql-triple-scan` | sparql | the partition scan; 2 plans (scan, bound); `sparql:triples` |
+| `facadex-column`, `facadex-two-columns`, `facadex-triple-scan` | facadex | `facadex:name`; two columns joined on the row; `facadex:scan` |
+| `rest-lookup`, `rest-two-properties` | rest | `rest:getPerson.name`; the name and the email of one subject |
+| `rest-input-never-bound`, `mcp-input-never-bound` | rest; mcp | not answerable: no access binds the subject |
+| `mcp-tool-call`, `mcp-approximate-marked` | mcp | `mcp:get_weather.temperature`; the rows of the approximate tool are marked |
+| `mixed-sbm11-rest-facadex` | sbm11, rest, facadex | the first plan uses the three kinds: `[sbm11 pso/1[knows], rest name, facadex name, facadex team]` |
+| `mixed-five-kinds` | sbm11, memory, sparql, mcp, rest | the first plan uses the five kinds |
+| `mixed-approximate-marked` | memory, mcp (approximate) | marked |
+
+For every plan of every family: the rewriting passes the check, no input
+is unbound at run time, and the answers of an exact plan equal the
+reference evaluator's answers over the materialised declared graph
+(multiset equality).
+
+Result 2026-10-12: planner: 58 pass, 0 fail, 16 expected-fail (out of
+74). The KR 2.2 part is unchanged: 25 pass, 0 fail, 7 expected-fail (out
+of 32). The KR 2.3 part: 33 pass, 0 fail, 9 expected-fail (out of 42).
+Run time 0.4 s.
+
+### Open, with expected-failure cases
+
+Each is an `xfail` in `Harness/PlannerKinds.lean` that names
+https://github.com/danbri/factoidal/issues/801; an XPASS makes the run
+exit 1.
+
+| xfail case | Open item | What the case asserts |
+|---|---|---|
+| `triple-form-in-mixed-catalog` | Source content constraints. A triple-form capability covers every triple pattern. In a catalog with other kinds, a plan that reads a pattern from a source that holds none of its triples is sound and gives fewer answers. The mixed cases use predicate-form capabilities only (`partitioned`). | with triple-form capabilities in a mixed catalog, every plan of the family gives the reference answers |
+| `sbm11-io-at-call-time` | `CapSemantics.impl` is a pure function, so a plan over SBM11 reads rows that were decoded before the run. An IO implementation (the disk-resident id path at call time) is open. | `Plan.exec` reads PRB1 bytes during the run |
+| `facadex-json` | Façade-X mapping of JSON (and of XML and other formats) | `describe` accepts a `.json` location |
+| `rest-two-path-parameters` | A REST operation with two required inputs | `describe` accepts it |
+| `mcp-two-required-inputs` | An MCP tool with two required inputs | `describe` accepts it |
+| `tool-without-rdf-mapping` | MCP and WebMCP tool declarations with no `_meta` mapping: a mapping made from the output schema, Façade-X style | `describe` accepts a plain tool declaration |
+| `sparql-endpoint-over-http` | A SERVICE call over HTTP (`SPARQL/ProtocolClient.lean`) | the call with no mock endpoint map answers |
+| `service-description-fetch` | Fetch of the service description from the endpoint IRI | `describe` with no document text gives capabilities |
+| `sql-source-kind` | SQL engines as a source kind | `sql` is an implemented kind |
+
+Other limits, with no case yet: the cost models are fixed numbers or
+proxies, not measurements; `perCall` of an SBM11 keyed scan does not come
+from the block metadata; the test generation has the default graph only
+(`named-graph-requirement` in section 9 covers requirements with GRAPH).

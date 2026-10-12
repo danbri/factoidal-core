@@ -32,6 +32,34 @@ positions that no requirement pattern names, inclusion dependencies
 in admission, the execution state machine, named graphs, `RowFilter` from
 a SPARQL `Expr`.
 
+KR 2.3 landed 2026-10-12: six source kinds, each described from its
+description document by a `describe` function in
+`formal/lean4/L4Factoidal/Planner/Kinds/` (record section 10): `sbm11`
+(the manifest and a PSO predicate probe; one capability per permutation
+key prefix, all 8 input sets of `{S, P, O}`), `memory` (the dataset),
+`sparql` (a SPARQL 1.1 Service Description with VoID property partitions;
+calls go through SERVICE), `facadex` (a SPARQL Anything IRI and the CSV
+header), `rest` (an OpenAPI-like document; the path parameter is the
+required input), `mcp` (an MCP tool declaration; required properties are
+required inputs; `_meta` gives the mapping and the exactness). Theorems
+`graphSource_triples`, `graphSource_sound`, `graphSource_complete`
+(`Kinds/Common.lean`). Tests in `Harness/PlannerKinds.lean`: at least two
+requirements per kind, a mixed requirement over three kinds and one over
+five, and an SBM11 differential test against the id path.
+`l4planner-test`: 58 pass, 0 fail, 16 expected-fail (out of 74). Open,
+each with an expected-failure case naming
+https://github.com/danbri/factoidal/issues/801: source content constraints
+(triple-form capabilities in a mixed catalog), SBM11 read at call time
+through IO, Façade-X JSON, two required inputs (REST, MCP), tools with no
+RDF mapping (MCP, WebMCP), SERVICE over HTTP, fetch of a service
+description, SQL engines.
+
+When you add a source kind: write `describe` from the kind's own
+description document, attach the implementation separately, use the
+predicate form when the document names predicates, and add the kind to a
+mixed case in `Harness/PlannerKinds.lean`. A triple-form capability in a
+mixed catalog gives plans that are sound and incomplete (open item above).
+
 ## Rules
 
 1. SPARQL is one way to state a requirement. SQL engines, REST APIs, MCP

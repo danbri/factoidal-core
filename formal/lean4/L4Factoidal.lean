@@ -706,3 +706,12 @@ import L4Factoidal.Planner.Tests
 import L4Factoidal.Planner.Search
 import L4Factoidal.Planner.FromQuery
 import L4Factoidal.Planner.SearchTests
+import L4Factoidal.Planner.Kinds.Common
+import L4Factoidal.Planner.Kinds.Sbm11
+import L4Factoidal.Planner.Kinds.Memory
+import L4Factoidal.Planner.Kinds.Sparql
+import L4Factoidal.Planner.Kinds.FacadeX
+import L4Factoidal.Planner.Kinds.JsonTerms
+import L4Factoidal.Planner.Kinds.Rest
+import L4Factoidal.Planner.Kinds.Mcp
+import L4Factoidal.Planner.Kinds.Tests
