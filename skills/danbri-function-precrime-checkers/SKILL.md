@@ -445,7 +445,8 @@ references in an attribute value; DTD entity values and an ATTLIST default):
 Natively at `LEAN_STACK_SIZE_KB=256`, 400,000 references ran in 768 ms
 (content) and 815 ms (attribute value).
 
-What stays recursive, with its bound: the NESTED expansion of an entity
+What stayed recursive, with its bound (repaired 2026-10-12, next section):
+the NESTED expansion of an entity
 whose replacement text references another entity (`expandEntityValue` for
 text and attribute values, the markup re-parse of `parseChildren`) costs
 one frame per level. The depth is at most the number of declared general
