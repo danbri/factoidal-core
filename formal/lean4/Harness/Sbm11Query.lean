@@ -559,20 +559,22 @@ def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray 
     let rows? :=
       if indexed then StoreDataset.runSelectQueryBackendDataset env stripped (StoreDataset.indexedDatasetBackend applied)
       else some (evalSelect env applied stripped).2
-    match rows? with
-    | none => throw (IO.userError "the query was not evaluated as SELECT")
-    | some rows =>
-      emit (QueryResult.bindings q.projectedVars rows).toSrjFast.toUTF8
-      return (rows.length, line)
+    -- The backend runner answers `none` for a query it hands to the reference
+    -- evaluator (`text:query`, StoreDataset.runSelectQueryBackendDataset).
+    let rows := match rows? with
+      | some rows => rows
+      | none => (evalSelect env applied stripped).2
+    emit (QueryResult.bindings q.projectedVars rows).toSrjFast.toUTF8
+    return (rows.length, line)
   | .ask =>
     let answer? :=
       if indexed then StoreDataset.runAskQueryBackendDataset env stripped (StoreDataset.indexedDatasetBackend applied)
       else some (evalAsk env applied stripped)
-    match answer? with
-    | none => throw (IO.userError "the query was not evaluated as ASK")
-    | some answer =>
-      emit (QueryResult.boolean answer).toSrjFast.toUTF8
-      return ((if answer then 1 else 0), line)
+    let answer := match answer? with
+      | some answer => answer
+      | none => evalAsk env applied stripped
+    emit (QueryResult.boolean answer).toSrjFast.toUTF8
+    return ((if answer then 1 else 0), line)
   | .construct _ | .describe _ =>
     let graph := match q.form with
       | .construct _ => evalConstruct env applied stripped
