@@ -30,8 +30,11 @@ section "SBM11 against Virtuoso and QLever".
 - QLever (image-extracted binaries, ceace86; section 11): on olympics, index
   4.7 s, 285 MB peak RSS, 38.5 MB on disk; answers 19 of 21 equal to SBM11,
   Virtuoso and the oracle (q15 and q20: the two causes of section 5); warm
-  median 1.8 to 591 ms. QLever on the DBpedia slice is not measured yet
-  (section 11.5).
+  median 1.8 to 591 ms. On the DBpedia slice (section 11.8): index 56.5 s,
+  2,069 MB peak RSS, 872.5 MB on disk; answers 17 of 17 equal to SBM11 and
+  Virtuoso; warm median 1.9 to 248 ms. QLever is faster than SBM11 warm on
+  every join (6.4 to 13 times on d05 to d09) and on d11 to d17; SBM11 is
+  faster on the lookups d01 to d04 and on d10.
 
 ## 2. Engines
 
@@ -39,7 +42,7 @@ section "SBM11 against Virtuoso and QLever".
 | --- | --- | --- |
 | SBM11 | `l4sbm11` and `l4sbm11-pack` built from commit 408898bd (Lean `v4.33.1`) | `--verify none` and `--verify merkle`; query path single-threaded; packer 4 workers (default) |
 | Virtuoso Open Source | 7.2.5.3229 (Ubuntu package `virtuoso-opensource-7` 7.2.5.1+dfsg1-0.8build1), native | ini written by `bench.py`: 340,000 buffers (about 2.8 GB), `MaxDirtyBuffers` 250,000, no result-row cap, no execution-time cap; thread configurations `1t` (`ThreadsPerQuery` 1, `AsyncQueueMaxThreads` 1) and `default` (4 and 10, the package values) |
-| QLever | image-extracted (Docker Hub adfreiburg/qlever, ceace86): `qlever-index` and `qlever-server` from `/home/user/qlever-image/rootfs/qlever` (image digest `b2087ec9...`) | olympics measured 2026-10-12 (section 11); DBpedia not run; the source build was stopped by the owner |
+| QLever | image-extracted (Docker Hub adfreiburg/qlever, ceace86): `qlever-index` and `qlever-server` from `/home/user/qlever-image/rootfs/qlever` (image digest `b2087ec9...`) | olympics and DBpedia slice measured 2026-10-12 (section 11); server result cache off; the source build was stopped by the owner |
 
 Virtuoso loads with `ld_dir`, one `rdf_loader_run()` and `checkpoint`, into a
 named graph; every query is sent with `default-graph-uri` set to that graph,
@@ -162,6 +165,7 @@ Per-query row counts and SBM11 paths: `report.md` from `run.sh` (all
 | olympics | QLever `qlever index` (recorded 2026-10-11) | 4.35 | 250 | 38.5 | 1,781,625 | not recorded |
 | DBpedia slice | SBM11 `l4sbm11-pack` (4 workers) | 1,334.3 | 552 | 567.7 | 23,269,559 | 0.80 / 2.66 |
 | DBpedia slice | Virtuoso bulk load (1 loader) + checkpoint | 202.7 | 2,871 | 1,746.9 | 23,269,559 | 2.04 / 4.53 |
+| DBpedia slice | QLever `qlever-index -p true -j 4 -m 4G` (image-extracted, ceace86; section 11.8) | 56.5 | 2,069 | 872.5 | 23,269,559 | 0.16 / 3.37 |
 
 SBM11 pack phases, DBpedia slice (ms): parse 211,843; term-run merge
 799,203; remap and sort 259,695; permutation merge and blocks 44,272; hashes
@@ -275,14 +279,20 @@ configuration with one loader.
 
 ## 9. What could not be measured, and why
 
-- **QLever on the DBpedia slice: not measured** (load time, size, answers,
-  any query time). The index step stopped at the owner's 3 GB free-disk line
-  (section 11.5). The image binaries replaced the docker run of 2026-10-11;
-  the source build was stopped by the owner on 2026-10-12.
-- **QLever on olympics:** measured 2026-10-12 (section 11): index, answers,
-  cold and warm times, server RSS, load average. Single-thread QLever time was
-  not measured (the server ran with its default settings except the cache
-  flags).
+- **QLever:** measured on both datasets on 2026-10-12 (section 11): index,
+  answers, cold and warm times, server RSS, load average. Image-extracted
+  binaries only; the source build was stopped by the owner on 2026-10-12.
+- **QLever with one thread: not available as a QLever option.** The ceace86
+  server has no option for the number of threads of one query (`-j` is the
+  number of simultaneous queries; only the spatial join has a thread
+  option). The DBpedia slice was timed a second time with the server pinned
+  to one CPU (`taskset -c 0`, section 11.8). That limits the CPUs; it does
+  not limit the threads. Olympics has no one-CPU run.
+- **QLever index build with one thread:** not measured (`-j 4` only).
+- **QLever cold runs:** the index files were evicted with `posix_fadvise`, as
+  for the other engines (section 6). Section 11.8 shows that on d17 this
+  cold time contains reads of the vocabulary and permutation metadata at
+  the first query.
 - **Cold runs with the whole OS page cache dropped:** refused (it would
   affect the other workload on the machine). Cold here means section 6.
 - **SBM11 single-thread against default threads:** the query path has one
@@ -315,8 +325,8 @@ need it before ... Accept image binaries. regenerate (or refetch)."). The
 source build of `qlever-native-build.sh` was stopped and its output is not
 used.
 
-Status: QLever on olympics is measured (index, answers, timing). QLever on the
-DBpedia slice is not measured yet (section 11.5).
+Status: QLever on olympics (sections 11.2 to 11.4) and on the DBpedia slice
+(section 11.8) is measured: index, answers, timing.
 
 ### 11.1 Flag test (olympics, run before the measurement)
 
@@ -446,18 +456,12 @@ Comparison notes, all on olympics at load below 2.0:
 
 ### 11.5 Not measured, and why
 
-- **QLever on the DBpedia slice: not measured.** The DBpedia N-Triples slice
-  was regenerated (section 11.6). The index step stopped before it started:
-  the owner's stop rule is free disk under 3 GB, and free space fell to 2.7 GB
-  during the step (other work on the same disk; Lean worktree builds were
-  running). No index was built for DBpedia, so no DBpedia load time, size,
-  answer check or timing exists for QLever.
-- **Resume:** when free space is above the stop line with room for the index,
-  run `STEPS="qindex qanswers qtiming report" DATASETS=dbpedia
-  SHM=/home/user/bench-data/stage QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever
-  tools/bench/three-engines/run.sh`. The staged N-Triples file (3.0 GB) is the
-  index input and is deleted only by the `load` step.
-- **Cold runs with the page cache dropped: refused** (section 9, unchanged).
+- **First attempt on the DBpedia slice (2026-10-12, afternoon): stopped.**
+  Free space fell to 2.7 GB during the index step (other work on the same
+  disk), under the owner's 3 GB stop line. No index was built. The second
+  attempt (section 11.8) started with 6.7 GB free and completed.
+- **QLever with one thread, index build with one thread, cold runs with the
+  page cache dropped:** section 9.
 
 ### 11.6 DBpedia slice regenerated (sha256 check)
 
@@ -485,8 +489,122 @@ was too low for a sort with temporary files.
 QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever STEPS="qindex qanswers" DATASETS=olympics tools/bench/three-engines/run.sh
 QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever STEPS="qtiming" DATASETS=olympics tools/bench/three-engines/run.sh
 STEPS=data DATASETS=dbpedia SHM=/home/user/bench-data/stage tools/bench/three-engines/run.sh
+# DBpedia slice, second attempt (section 11.8):
+STEPS="qindex" DATASETS=dbpedia SHM=/home/user/bench-data/stage QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever tools/bench/three-engines/run.sh
+STEPS="qanswers" DATASETS=dbpedia SHM=/home/user/bench-data/stage QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever tools/bench/three-engines/run.sh
+STEPS="qtiming" DATASETS=dbpedia SHM=/home/user/bench-data/stage QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever tools/bench/three-engines/run.sh
+# one CPU: QLEVER_NATIVE_BUILD names a directory whose qlever-server is
+#   exec taskset -c 0 /home/user/qlever-image/rootfs/qlever/qlever-server "$@"
+QLEVER_NATIVE_BUILD=/home/user/bench-data/qlever-1cpu python3 -I tools/bench/three-engines/bench.py qlever-timing \
+  --dataset dbpedia --queries tools/bench/three-engines/queries/dbpedia \
+  --index /home/user/bench-data/qlever/dbpedia/dbpedia --answers /home/user/bench-data/results/qlever-answers-dbpedia.json \
+  --rounds 7 --cold-rounds 3 --out /home/user/bench-data/results/qlever-timing-dbpedia-1cpu.json
 ```
 
 Results: `$BENCH_DATA/results/qlever-index-olympics.json`,
-`qlever-answers-olympics.json`, `qlever-timing-olympics.json`; logs in
+`qlever-answers-olympics.json`, `qlever-timing-olympics.json`, and the same three files for `dbpedia`
+(`qlever-timing-dbpedia.json` is the default run, also saved as
+`qlever-timing-dbpedia-default.json`; `qlever-timing-dbpedia-1cpu.json` is the
+one-CPU run); logs in
 `$BENCH_DATA/logs/`.
+
+### 11.8 DBpedia slice (17 queries), 2026-10-12, evening
+
+Input: `/home/user/bench-data/stage/dbpedia.nt`, sha256
+`94025f74d5c4643ce05984524e5583c59a057b8110544ec9a7c55fbd21de85e1`, checked
+with `sha256sum` before the index step (match). Free disk at the start: 6.7
+GB. `guarded.sh` (a check every 5 s, stop under 3 GB) did not stop the step;
+the lowest free space seen in the manual checks was 5.8 GB.
+
+**Index build** (`run.sh` step `qindex`: `qlever-index -i <base> -f
+dbpedia.nt -F nt -p true -j 4 -m 4G -s <settings>`):
+
+| Measure | QLever | SBM11 (section 7.1) | Virtuoso (section 7.1) |
+| --- | ---: | ---: | ---: |
+| Wall time | 56.5 s | 1,334.3 s | 202.7 s |
+| Peak RSS | 2,118,784 kB (2,069 MB) | 552 MB | 2,871 MB |
+| On-disk size | 872,478,541 B (872.5 MB) | 567.7 MB | 1,746.9 MB |
+| Load average before / after | 0.16 / 3.37 | 0.80 / 2.66 | 2.04 / 4.53 |
+
+User CPU 169.2 s, system CPU 26.6 s. As reported by the binary: parse 26.4 s
+(23,269,560 lines, 4 threads); 30,006,852 triples including QLever-internal
+ones; 157 partial vocabularies merged into 8,779,200 words (vocabulary 122.9
+MB compressed); 23,269,559 distinct triples after the sort. The on-disk size
+is the sum of the index files without logs (it includes the 3,204-byte
+resource-usage log of the index step; that file is not a `.log`).
+
+**Answer check** (`run.sh` step `qanswers`; multisets, `bench.py` `term_key`,
+section 5):
+
+| Result | Count |
+| --- | ---: |
+| Equal on QLever, SBM11 (`--verify none`) and Virtuoso | 17 of 17 |
+| Different | 0 of 17 |
+
+Row counts are the same on the three engines for each query (d03 1,083, d05
+1,130, d11 1,084, d17 1 row). There is no QLever oracle for DBpedia.
+Record: `$BENCH_DATA/results/qlever-answers-dbpedia.json`.
+
+**Timing.** Method of section 11.4: cache off; warm is the median of 7 rounds
+after one warm-up pass on one server; cold is the median of 3 rounds, each
+the first request of a new server process after `posix_fadvise` eviction of
+the index files (`resident_before` 0 bytes in all 51 cold runs of each
+configuration). Two configurations:
+
+- **default**: the server as in section 11.4 (no CPU limit; 4 vCPU).
+- **1 CPU**: the same server pinned to CPU 0 with `taskset -c 0` (checked:
+  `Cpus_allowed_list: 0`, 8 threads). QLever has no option for the number of
+  threads of one query (section 9), so this limits the CPUs, not the
+  threads.
+
+1-minute load average at the start of each round: default warm 0.75 in all 7
+rounds, default cold 0.29, 0.51, 0.63; 1-CPU warm 0.46 to 0.84, 1-CPU cold
+0.04, 0.35, 0.45. Server start (median of the cold starts): 217 to 223 ms.
+
+Times in ms. RSS: server VmHWM in MB, maximum over the warm rounds. SBM11
+warm is the in-process execution median (`--verify none`, section 7.3);
+Virtuoso default warm is a client HTTP time (section 7.3). QLever times are
+client HTTP times (they include HTTP and SPARQL JSON).
+
+| Query | QLever default warm / cold | RSS | QLever 1 CPU warm / cold | RSS | 1 CPU / default (warm) | SBM11 none warm | Virtuoso default warm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| d01-subject-lookup | 4.81 / 8.4 | 137 | 4.80 / 7.8 | 66 | 1.00 | 0.24 | 3.42 |
+| d02-object-lookup | 3.92 / 8.7 | 137 | 3.20 / 7.8 | 66 | 0.82 | 0.28 | 3.26 |
+| d03-predicate-object | 5.49 / 62.8 | 137 | 4.90 / 63.5 | 66 | 0.89 | 2.35 | 22.67 |
+| d04-lang-literal-lookup | 2.68 / 6.6 | 137 | 2.30 / 6.9 | 66 | 0.86 | 0.62 | 3.62 |
+| d05-star-three | 43.10 / 151.2 | 142 | 105.03 / 236.7 | 69 | 2.44 | 574.79 | 48.92 |
+| d06-star-film | 10.54 / 36.4 | 139 | 15.27 / 36.9 | 69 | 1.45 | 67.77 | 7.24 |
+| d07-path-two-hops | 11.70 / 27.9 | 141 | 24.83 / 38.3 | 69 | 2.12 | 136.34 | 6.33 |
+| d08-path-three-hops | 21.35 / 89.7 | 141 | 33.91 / 105.4 | 69 | 1.59 | 152.05 | 42.72 |
+| d09-group-birthplace | 11.75 / 20.0 | 138 | 23.53 / 43.0 | 69 | 2.00 | 75.84 | 3.71 |
+| d10-group-predicates | 248.31 / 250.5 | 137 | 745.41 / 833.4 | 68 | 3.00 | 42.55 | 355.68 |
+| d11-optional | 12.79 / 76.6 | 139 | 14.81 / 78.6 | 66 | 1.16 | 48,732.18 | 21.12 |
+| d12-filter-numeric | 7.38 / 17.8 | 137 | 10.10 / 19.7 | 66 | 1.37 | 49.69 | 8.02 |
+| d13-filter-strstarts | 26.60 / 30.7 | 137 | 26.45 / 33.6 | 66 | 0.99 | 557.62 | 3,736.20 |
+| d14-filter-date | 6.09 / 13.9 | 137 | 6.09 / 14.9 | 66 | 1.00 | 81.30 | 7.94 |
+| d15-orderby-limit | 8.75 / 13.9 | 137 | 15.18 / 22.6 | 66 | 1.74 | 42.18 | 9.85 |
+| d16-orderby-limit-scan | 42.61 / 46.2 | 137 | 119.34 / 131.2 | 66 | 2.80 | 79.77 | 471.91 |
+| d17-count-all | 1.91 / 167.1 | 137 | 1.79 / 583.1 | 66 | 0.94 | 6.16 | 86.08 |
+
+No query failed (0 failures in warm and cold runs, both configurations).
+
+Comparison notes (warm; the SBM11 column is in-process, the others include
+HTTP and JSON, about 2 to 3 ms for a small answer):
+
+- QLever against SBM11: QLever is faster on every join (d05 43.1 against
+  574.8, 13 times; d06 6.4 times; d07 11.7 times; d08 7.1 times; d09 6.5
+  times), on d11 OPTIONAL (12.8 against 48,732; SBM11 uses its reference
+  fallback, section 8 item 2), on the filters d12, d13 (21 times), d14 and on
+  d15, d16, d17. SBM11 is faster on the lookups d01 to d04 (under 2.4 ms
+  against 2.7 to 5.5 ms, which includes HTTP) and on d10 (42.6 against 248.3).
+- QLever against Virtuoso (default threads): QLever is faster on d03, d04,
+  d05, d08, d10 to d17. Virtuoso is faster on d01, d02, d06, d07 and d09 (d09 3.7
+  against 11.7; d07 6.3 against 11.7).
+- 1 CPU against default: joins, aggregates and the whole-predicate ORDER BY
+  take 1.4 to 3.0 times longer on one CPU (d05 2.44, d10 3.00, d16 2.80), so
+  the default QLever run uses more than one core for these queries. Lookups
+  and d13, d14, d17 do not change (0.82 to 1.00). The server RSS is half on
+  one CPU (66 to 69 MB against 137 to 142 MB).
+- The cold time of d17 (167 ms default, 583 ms on 1 CPU, against a warm 1.9
+  ms) is the first read of the evicted index files by a new server; the
+  answer itself comes from metadata.

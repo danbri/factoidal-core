@@ -14,6 +14,9 @@
 # ms, warm min ms, peak RSS kB (VmHWM), load1 before, load1 after. A summary
 # table with the medians over rounds and the ratio to threads = 1 follows.
 # Nothing is compared with a target here: the ratio is reported as measured.
+#
+# VERIFY (optional): passed as `--verify VERIFY` (none or merkle). Unset: the
+# binary default (none for an activated generation, merkle otherwise).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -22,6 +25,7 @@ GEN="${1:?usage: bench-threads.sh GEN [query.rq ...]}"; shift
 ROUNDS="${ROUNDS:-7}"
 REPEAT="${REPEAT:-10}"
 THREADS="${THREADS:-1 2 4 8}"
+VERIFY_ARGS=(); [ -n "${VERIFY:-}" ] && VERIFY_ARGS=(--verify "$VERIFY")
 if [ $# -eq 0 ]; then
   set -- "$ROOT"/tests/qlvr/queries/q01-count-all.rq "$ROOT"/tests/qlvr/queries/q07-join-three.rq \
     "$ROOT"/tests/qlvr/queries/q10-orderby-limit-double.rq "$ROOT"/tests/qlvr/queries/q19-scan-bound-predicate-iri.rq \
@@ -37,7 +41,7 @@ for r in $(seq 1 "$ROUNDS"); do
     name="$(basename "$q" .rq)"
     for t in $THREADS; do
       lb="$(load1)"
-      "$BIN" query "$GEN" --file "$q" --threads "$t" --repeat "$REPEAT" >"$OUT/out" 2>"$OUT/err" || {
+      "$BIN" query "$GEN" --file "$q" --threads "$t" --repeat "$REPEAT" "${VERIFY_ARGS[@]}" >"$OUT/out" 2>"$OUT/err" || {
         echo "bench: $name threads=$t exit $?" >&2; exit 1; }
       la="$(load1)"
       med="$(grep -o 'execution ms median [0-9.]*' "$OUT/err" | awk '{print $4}')"
