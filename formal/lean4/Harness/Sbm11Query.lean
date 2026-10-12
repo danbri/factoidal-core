@@ -56,6 +56,7 @@ import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Geo.Functions
 import Wasm.Ops.Clock
+import Std.Sync.Mutex
 
 namespace Harness.Sbm11Query
 
@@ -97,6 +98,9 @@ structure Session where
       `tagDelta · 2^60 + k`. -/
   ovVocab : IO.Ref (Array Term)
   ovIds : IO.Ref (Std.HashMap Term Nat)
+  /-- Serialises the verified chunk cache (`merkle` reads) between scan
+      tasks (issue 799). Shared by every task view of the session. -/
+  lock : Std.Mutex Unit
   /-- The overlay per permutation (`Overlay.forPerm`), fixed at open. -/
   ovl : Array L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := #[{}, {}, {}, {}]
   /-- committed batches and entries replayed at open; overlay inserts,
@@ -135,7 +139,8 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   return { g := { g0 with dictHdr }, perms := ← IO.mkRef #[none, none, none, none],
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, lookups := ← IO.mkRef 0,
-           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {} }
+           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {},
+           lock := ← Std.Mutex.new () }
 
 def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
   match (← ss.perms.get)[p]? with
@@ -282,7 +287,30 @@ def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
 def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   let lp ← ss.perm p
   ss.frameBytes.modify (· + len)
-  verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len
+  match ss.g.verify with
+  | .merkle =>
+    -- the chunk cache is one shared table: one read at a time (issue 799)
+    ss.lock.atomically (verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len)
+  | .none => verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len
+
+/-- A view of the session for one scan task (issue 799): its own byte and
+    lookup counters, its own dictionary state, and a copy of the permutations
+    opened so far (the parent opens a permutation before it starts tasks, so a
+    task never opens one). The chunk cache and the lock are shared. The parent
+    adds the view's counters after the task has finished (`Session.absorb`). -/
+def Session.view (ss : Session) : IO Session := do
+  let g' : Gen := { ss.g with readBytes := ← IO.mkRef 0, fetchedBytes := ← IO.mkRef 0,
+                              fileBytes := ← IO.mkRef 0 }
+  return { ss with g := g', perms := ← IO.mkRef (← ss.perms.get), frameBytes := ← IO.mkRef 0,
+                   lookups := ← IO.mkRef 0, pages := ← IO.mkRef {}, gdx := ← IO.mkRef none }
+
+/-- Add the counters of a finished task view to the session. -/
+def Session.absorb (ss v : Session) : IO Unit := do
+  ss.frameBytes.modify (· + (← v.frameBytes.get))
+  ss.lookups.modify (· + (← v.lookups.get))
+  ss.g.readBytes.modify (· + (← v.g.readBytes.get))
+  ss.g.fetchedBytes.modify (· + (← v.g.fetchedBytes.get))
+  ss.g.fileBytes.modify (· + (← v.g.fileBytes.get))
 
 def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
@@ -305,8 +333,9 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     the statistics are summed. A scan with an overlay (stage 5) stays on one
     thread. Answers: `ParallelScanTheorems.parallel_acc_eq` (the list form),
     tests/sbm11/threads.sh (the tables, native). -/
-def scanTableParM (st : IdQuery.Store IO) (spec : IdQuery.ScanSpec) (threads : Nat) :
+def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) :
     ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
+  let st := ss.store
   let metas ← st.metas spec.perm
   let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
   if threads ≤ 1 || ox.on then return ← IdQuery.scanTableM st spec
@@ -320,21 +349,27 @@ def scanTableParM (st : IdQuery.Store IO) (spec : IdQuery.ScanSpec) (threads : N
       rows := 0, sortVar }
   let f := fun (acc : L4Factoidal.Qlvr.Table) (ch : IdQuery.Chunk) =>
     (pure (acc.append ch.table, true) : ExceptT String IO (L4Factoidal.Qlvr.Table × Bool))
-  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats))) := #[]
+  -- each task: its own view (counters, dictionary state, permutation copies)
+  let mut tasks : Array (Task (Except IO.Error (L4Factoidal.Qlvr.Table × IdQuery.ScanStats)) × Session) := #[]
   for X in chunks do
+    let v ← ss.view
     let t ← IO.asTask (prio := .dedicated) (do
-      match ← (IdQuery.scanListM st spec true init f metas sortVar ox X).run with
+      match ← (IdQuery.scanListM v.store spec true init f metas sortVar ox X).run with
       | .ok r => pure r
       | .error e => throw (IO.userError e))
-    tasks := tasks.push t
+    tasks := tasks.push (t, v)
   let mut out := init
   let mut stats : IdQuery.ScanStats := { blocksTotal := metas.size }
-  for t in tasks do
+  let mut failure : Option String := none
+  for (t, v) in tasks do
     match ← IO.wait t with
     | .ok (tab, s) =>
       out := out.append tab
       stats := stats.add s
-    | .error e => throw (toString e)
+    | .error e => if failure.isNone then failure := some (toString e)
+    -- the counters of every task are added, failed or not
+    ss.absorb v
+  if let some e := failure then throw e
   return (out, stats)
 
 /-- The session's store with `threads` scan tasks per BGP scan (1: the
@@ -342,7 +377,7 @@ def scanTableParM (st : IdQuery.Store IO) (spec : IdQuery.ScanSpec) (threads : N
 def Session.storeWith (ss : Session) (threads : Nat) : IdQuery.Store IO :=
   let base := ss.store
   if threads ≤ 1 then base
-  else { base with scanTable := some fun spec => scanTableParM base spec threads }
+  else { base with scanTable := some fun spec => scanTableParM ss spec threads }
 
 /-! ## The delta overlay (stage 5) -/
 
