@@ -29,9 +29,14 @@ the output identical, and the evidence for and against a support library
   same, with one inline-C 8-byte store in place of eight `uset`) 5.8 ms; C
   `-O2` 4.3 to 8.8 ms in the same rounds. Per round, `usize` is 1.5 to 2.5
   times C (median 1.96) and `usize-cstore` 0.8 to 1.3 times C (median 1.16).
-- Evidence on the support library (end of this record): the load side needs no
+- Evidence on the support library (section 5): the load side needs no
   C primitive, only an idiom and its bound lemmas; the store side needs one
   primitive, which halves the kernel time.
+- Owner, 2026-10-12: "library yes". Section 6: `L4Factoidal/Prim/Bytes.lean`
+  (`ldU64LE`, the `stU64LE` primitive with its Lean reference, the lemmas),
+  one C source for native and wasm32, and a differential test that runs on
+  both (14,605 pass, 0 fail (out of 14,605) on each). Kernel with the
+  primitive: 1.1 to 1.3 times C natively, 2.9 to 3.4 times C in wasm32.
 
 ## Method and machine
 
@@ -237,7 +242,7 @@ reference-count operations to take it apart.
     MB/s (ratio 1.26 over 5 interleaved rounds). q07 warm 0.88, q10 0.88,
     q16 1.00 (inside the noise).
 - `Harness/QlvrKernel.lean`: the kernel implementations `usize` and
-  `usize-cstore` with `ldU`, `setU`, `setC` and the `USize` loop lemmas
+  `usize-cstore` with `ldU`, `setU`, `setC` (replaced by the library of section 6) and the `USize` loop lemmas
   (`usize_succ_toNat`, `usize_pred_toNat`, `ldU_bound`, `usize_lt_size`).
   `setC` is an `@[extern c inline]` 8-byte store whose Lean body is `setU`;
   it exists only in this harness, to measure what a store primitive gives,
@@ -320,6 +325,174 @@ test, wasm-checked) and a `USize` loop lemma set; no builders or merge
 helpers until a measurement asks for them. Wasm: the new `Codec/Zstd.c`
 compiles with `emcc` and the build's flags (`/tmp/l4wasm-build` include
 paths); a full wasm build was not run.
+
+## 6. The support library (owner decision, 2026-10-12)
+
+Owner, 2026-10-12, verbatim, on the proposal of section 5: "library yes".
+And, the same day: "But should it be actual native C or a wasm build of that
+C, or is our normal path to wasm equivalent wrt perf? Our tool must be
+portable crossplatform and provably doing same things everywhere."
+
+Answer, by construction: there is one C source. The C of a primitive is the
+string in its `@[extern c inline "..."]` attribute; the Lean compiler pastes
+it into each call site of the generated `.c` file (seen in
+`.lake/build/ir/Harness/PrimBytesTest.c` and `Harness/QlvrKernel.c`). The
+native build compiles that file with clang, the wasm build
+(`Wasm/build-wasm.sh`, and `tools/lean-wasm-exe.sh` for a single
+executable) compiles the same file with emcc. So the normal wasm path IS a
+wasm build of that C; there is no second implementation.
+
+### What landed
+
+`L4Factoidal/Prim/Bytes.lean`:
+
+- `ldU64LE d p` (pure Lean): one `USize` test, eight `uget`. Bytes past the
+  end read 0. clang -O3: two compares and one `movq`; emcc -O3: one
+  `i64.load`. `Codec.Zstd.word64U` now reads through it (`word64U_eq` kept,
+  `word64Slow_eq_spec` added); `Harness/QlvrKernel.lean` uses it in place of
+  its own `ldU`.
+- `stU64LE b p x`: `@[extern c inline]` 8-byte little-endian store. Lean body:
+  `stU64LERef b p x`, a separate executable definition (eight `uset`; out of
+  bounds or `p + 8` wrapping, `b` unchanged). The kernel's `usize-cstore`
+  variant calls `stU64LE` and `usize` calls `stU64LERef`; the harness-only
+  `setC` and `setU` are deleted.
+- The `USize` loop lemmas moved from the kernel harness:
+  `usize_succ_toNat`, `usize_pred_toNat`, `usize_lt_size`, and the window
+  lemmas `usize_add_small`, `window_of_test`, `window_lt`, `test_of_window`.
+
+The C expression:
+
+```c
+({ lean_object* _l4a = #1; size_t _l4p = #2; uint64_t _l4x = #3;
+   if (_l4p + 8 <= lean_sarray_size(_l4a) && _l4p < _l4p + 8) {
+     if (!lean_is_exclusive(_l4a)) _l4a = lean_copy_byte_array(_l4a);
+     uint8_t* _l4q = lean_sarray_cptr(_l4a) + _l4p;
+     _l4q[0] = (uint8_t)_l4x; _l4q[1] = (uint8_t)(_l4x >> 8); /* ... */
+     _l4q[7] = (uint8_t)(_l4x >> 56); }
+   _l4a; })
+```
+
+Compiled (`leanc -O3 -S`, x86-64): two compares, one exclusivity compare,
+`movq %rdx, 24(%rax,%rsi)`. Compiled (`emcc -O3 -S`, wasm32): the same tests
+in `i32`, one `i64.store 16`. The `setC` of section 3 used `memcpy` and a
+`__BYTE_ORDER__` test; this one writes byte `k` as `x >> 8k`, so the byte order
+is in the source and the code is correct on a big-endian host (clang there
+emits a byte swap and a store, or eight stores).
+
+### What is proved, over the Lean definitions
+
+All in `L4Factoidal.Prim.Bytes`; `#print axioms`: only `propext`,
+`Classical.choice`, `Quot.sound`.
+
+- `ldU64LE_eq`: `ldU64LE d p = ldU64LESpec d p.toNat` for every `d`, `p`.
+- `size_stU64LE`: the size is preserved.
+- `getOr0_stU64LE`: every byte of the result, as a function of `b`, `p`, `x`;
+  `getOr0_stU64LE_other` and `getElem_stU64LE_other`: bytes outside
+  `[p, p+8)` unchanged; `getOr0_stU64LE_at`: byte `p + k` is byte `k` of `x`;
+  `stU64LE_oob`: out of bounds (or wrap), the array is unchanged.
+- `ldU64LE_stU64LE`: read after write, `ldU64LE (stU64LE b p x) p = x` when
+  `p.toNat + 8 ≤ b.size < USize.size`.
+- `u64_of_bytes`: the eight little-endian bytes of `x` reassemble to `x`.
+- No theorem assumes `System.Platform.numBits = 64`; where the width matters
+  the proof splits on `System.Platform.numBits_eq` (32 or 64). No executable
+  code tests against `USize.size`.
+
+### What is trusted, and how it is checked
+
+Trusted: that the C expression computes `stU64LERef`. The four facts it
+rests on (byte order, `size_t` and `USize` of equal width so the wrap test
+agrees, `lean_sarray_size` equals `ByteArray.usize` for every array that can
+be allocated, the copy on a shared array) are in the module header.
+
+Checked by `tests/prim/run.sh`, which runs `l4prim-test`
+(`Harness/PrimBytesTest.lean`) natively and, built by
+`tools/lean-wasm-exe.sh` from the same generated C, as wasm32 under node.
+It compares `stU64LE` and `stU64LERef` byte for byte on 30 array sizes ×
+22 positions (0, 1, size-9, size-8, size-7, size-1, size, size+1, six
+random, and 2^w-1, 2^w-7, 2^w-8, 2^w-9 where `p + 8` wraps) × 5 values
+(0, 2^64-1, 0x0102030405060708, two random), each with an exclusive and a
+shared array (the shared original must stay unchanged), plus read after
+write and `ldU64LE` against `ldU64LESpec`:
+
+- native (numBits 64): 14,605 pass, 0 fail (out of 14,605);
+- wasm32 under node 22 (numBits 32, emcc 6.0.12): 14,605 pass, 0 fail
+  (out of 14,605).
+
+The test sees a defect: with the byte order of byte 0 changed and the copy
+on a shared array removed, it reported 3,085 fail (out of 14,605).
+
+### Numbers: the q07 kernel, native and wasm32
+
+`tools/qlvr/bench/kernel-targets.py 5 10 KERNELFILE ...`: 5 interleaved
+rounds; per round each program runs each implementation 10 times; median
+over rounds of the per-round median, and median over rounds of the ratio to
+the C kernel (`tools/qlvr/bench/kernel.c`, `-O2`) of the same target. Native:
+`l4qlvr-kernel` (Lake build) and gcc 13.3. Wasm32: the same Lean C and the
+same `kernel.c`, built with emcc 6.0.12 (`-O3` for Lean, as
+`Wasm/build-wasm.sh`; `-O2` for the C), run by node 22. Same input
+(`l4qlvr kernel-dump`, 31,250 and 269,625 rows; 13,369 output rows); all
+implementations on both targets give checksum 5325009063194286364.
+
+Run 1, 1-minute load 0.74, 0.78, 0.80, 0.81, 0.91:
+
+| Implementation | native ms | native × C | wasm32 ms | wasm32 × C |
+| --- | ---: | ---: | ---: | ---: |
+| bytes-set (`Nat` indices) | 32.3 | 5.87 | 68.5 | 20.47 |
+| usize (`ldU64LE`, `stU64LERef`) | 12.3 | 2.30 | 15.6 | 4.36 |
+| usize-cstore (`ldU64LE`, `stU64LE`) | 6.4 | 1.26 | 12.6 | 2.91 |
+| C `-O2` | 5.3 | 1 | 3.8 | 1 |
+
+Run 2 (after the gates), load 1.64, 1.54, 1.49, 1.45, 1.42:
+
+| Implementation | native ms | native × C | wasm32 ms | wasm32 × C |
+| --- | ---: | ---: | ---: | ---: |
+| bytes-set | 32.8 | 6.23 | 66.0 | 16.78 |
+| usize | 12.0 | 2.09 | 15.2 | 4.77 |
+| usize-cstore | 6.4 | 1.08 | 11.8 | 3.35 |
+| C `-O2` | 6.5 | 1 | 4.0 | 1 |
+
+What the numbers say, and what they do not:
+
+- Natively the store primitive halves the kernel time, to 1.1 to 1.3 times C,
+  as in section 5.
+- In wasm32 the primitive gives 15.2-15.6 to 11.8-12.6 ms (about -20 %), and
+  the Lean kernel stays 2.9 to 3.4 times the C kernel compiled by the same
+  emcc. The loop of `filterAU` in the wasm object has three `i64.load` and one
+  `i64.store` (merged, as natively); the cause of the remaining gap in wasm32
+  was not found in this work. Candidates not measured: the allocation and
+  copy of the scratch arrays through the Lean runtime (mimalloc in wasm32)
+  against `malloc` in the C kernel, and the per-call result tuples
+  (section 2).
+- The C kernel is faster under node than natively (3.8 to 4.0 against 5.3 to
+  6.5 ms); not analysed.
+- On wasm32 the slow path of `ldU64LE` converts `p` to `Nat`
+  (`lean_big_usize_to_nat` for `p ≥ 2^31`); it runs only for a read that is not
+  inside the array.
+
+### Gates for this change
+
+Worktree of `main` at e0c998b8, 2026-10-12:
+
+- `lake build`: 1,546 jobs, 0 errors.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (no new
+  allow-list line; the first version of the kernel timing loop sorted with
+  `Array.qsort`, which the gate refused; it now uses `Qlvr.mergeSortBy`).
+- `tests/prim/run.sh`: native 14,605 pass, 0 fail (out of 14,605); wasm32
+  14,605 pass, 0 fail (out of 14,605).
+- `tests/qlvr/run.sh`: 39 pass, 0 fail (out of 39); in it zstd-diff 1,860
+  pass, 0 fail (out of 1,860 frames), 177 MB/s (not an interleaved
+  comparison with the previous decoder).
+- `tests/qlvr/kernel.sh`: all eight Lean implementations and the C reference
+  give the same checksum.
+- `tests/sbm11/run.sh`: 123 pass, 0 fail (out of 123).
+- `formal/lean4/Wasm/native-smoke.sh`: 350 pass, 0 fail, 0 xfail (out of 350).
+- `tests/known-defects/run.sh`: 13 XFAIL, 0 XPASS, 0 probe errors (out of 13).
+- `tests/stack/run.sh --canary`: 57 pass, 0 fail (out of 57).
+- `Wasm/build-wasm.sh` (a copy of the work directory, `L4_WASM_NO_INSTALL=1`,
+  emcc 6.0.12): both modules link, with `L4Factoidal/Prim/Bytes.c` and the
+  changed `Codec/Zstd.c` among the library objects; nothing installed.
+- No `sorry`, `native_decide`, user `axiom` or `import Std` in the new or
+  changed files.
 
 ## What did not work or was not done
 

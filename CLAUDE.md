@@ -195,6 +195,11 @@ teach us something about Lean." and "consider tail recursive approach".
   (accumulator), never one stack frame per item. Check with
   `python3 tools/lean-tail-recursion-audit.py --gate` (read the exit code)
   and a `tests/stack` case at a size above any wasm stack limit.
+- Support library: owner, 2026-10-12, "library yes" (`L4Factoidal/Prim/Bytes.lean`,
+  https://github.com/danbri/factoidal/issues/797). Rule: a C primitive
+  (`@[extern c inline]`) always has a Lean reference body, a separate non-extern
+  reference definition, and a differential test that runs on every target
+  (native and wasm32: `tests/prim/run.sh`).
 
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —

@@ -390,15 +390,17 @@ the assembly.
   `Nat` position each byte read is `lean_nat_add` (a scalar test, an
   overflow test and a box), `lean_byte_array_fget` (an unbox) and `lean_dec`
   (a scalar test). At a `USize` position with one bounds test and eight
-  `uget`, clang -O3 emits two compares and ONE 8-byte `movq` (`ldU` in
-  `Harness/QlvrKernel.lean`, `word64U` in `Codec/Zstd.lean`). The q07 kernel:
-  31.4 ms with `Nat` indices, 11.3 ms with `USize` indices, pure Lean.
+  `uget`, clang -O3 emits two compares and ONE 8-byte `movq`; emcc emits one
+  `i64.load`. Use `L4Factoidal.Prim.Bytes.ldU64LE` (proved equal to its
+  specification, `ldU64LE_eq`); `Codec.Zstd.word64U` reads through it. The q07
+  kernel: 31.4 ms with `Nat` indices, 11.3 ms with `USize` indices, pure Lean.
 - **Write the bounds test in `USize`, then derive the `Nat` fact.** `if h :
   i < a.usize` costs one compare; `if h : i.toNat < a.size` costs
   `lean_usize_to_nat`, a boxed `lean_byte_array_size`, `lean_nat_dec_lt` and
   two `lean_dec` (16 `Nat` operations and 8 reference-count tests per kernel
-  iteration before the repair). The lemmas to reuse: `usize_lt_size`,
-  `ldU_bound` (kernel), `word64U_toNat` (zstd); each has to handle
+  iteration before the repair). The lemmas to reuse are in
+  `L4Factoidal.Prim.Bytes`: `usize_lt_size`, `usize_add_small`,
+  `window_of_test`, `window_lt`, `test_of_window`; each handles
   `ByteArray.usize = size % 2 ^ numBits` and both 32-bit and 64-bit hosts.
 - **Never test against `USize.size`, or any constant of 2^63 or more, at run
   time.** On a 64-bit host it is a big `Nat`: the test calls
@@ -406,7 +408,7 @@ the assembly.
   below `USize.size` (`Codec.Zstd.copyBound`, 2^30, small on wasm32 too).
 - **Loop over `USize` with a proved measure, not with `Nat` fuel.**
   `termination_by n.toNat - i.toNat` and `decreasing_by` with
-  `usize_succ_toNat` (or `usize_pred_toNat` for a count-down) give a loop
+  `Prim.Bytes.usize_succ_toNat` (or `usize_pred_toNat` for a count-down) give a loop
   whose C uses `size_t` only. A `Nat` fuel argument costs
   `lean_nat_dec_eq`, `lean_nat_sub` and `lean_dec` per iteration.
 - **A loop that takes a function argument gets `@[specialize]`.** The kernel
@@ -414,11 +416,21 @@ the assembly.
   directly or inlines it, with no `lean_apply_*`.
 - **Eight `uset` are eight stores.** Each `uset` tests exclusivity and may
   copy; clang cannot merge them because a byte store may alias the reference
-  count. One 8-byte store needs inline C (`@[extern c inline]` with the Lean
-  definition as the reference body, as `setC` in the kernel harness). Kernel:
-  11.3 ms with eight `uset`, 5.8 ms with one store; C 4.3 to 8.8 ms in the
-  same rounds. Inline C is trusted code: it needs a differential test and an
-  owner decision before it enters the library.
+  count. Use `L4Factoidal.Prim.Bytes.stU64LE`: an `@[extern c inline]` 8-byte
+  store (one bounds and wrap test, one exclusivity test, byte order explicit
+  in the C) whose Lean meaning is `stU64LERef` (eight `uset`). Kernel, native:
+  12.3 ms with eight `uset`, 6.4 ms with `stU64LE`, C 5.3 ms; wasm32: 15.6,
+  12.6 and 3.8 ms (2026-10-12, load 0.7 to 0.9).
+- **A C primitive has a Lean reference and a differential test on every
+  target** (owner, 2026-10-12, "library yes"; CLAUDE.md, qlvr section). The
+  extern's body is a call of a separate non-extern definition (the
+  reference), every theorem is about the reference, and a test executable
+  compares the two natively and as wasm32 under node (`tests/prim/run.sh`).
+  `tools/lean-wasm-exe.sh MODULE OUT.js` builds any executable whose imports
+  have no FFI as a wasm32 program from the same generated C, with the
+  runtime objects that `Wasm/build-wasm.sh` leaves in `/tmp/l4wasm-build`.
+  In such a program read files through `IO.FS.Handle.read`, not
+  `IO.FS.readBinFile` (its size query calls libuv, absent on wasm32).
 - **`ByteArray.push` is an out-of-line call** (`lean.h` line 1195 in 4.33):
   14 % of the zstd decoder's self time. Write into a buffer of known size
   where the algorithm allows it.
