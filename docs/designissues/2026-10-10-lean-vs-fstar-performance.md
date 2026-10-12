@@ -1500,6 +1500,64 @@ list that `parseTurtleText` avoids, section 10.3) and the JSON parse of the
 call's arguments (the text travels as a JSON array, `engine.call`) are each
 below the 35 MB step from 52.9 to 88.1 MB.
 
+### 11.5 Repair 1: the JSON parser with reverse accumulators (`select-star`)
+
+* **Change.** `JSON/Parser.lean`: the five functions of the parser's `mutual`
+  block (`parseValue`, `parseObject`, `parseMembers`, `parseArray`,
+  `parseItems`) have twins with an `R` suffix that are the same grammar,
+  except that `parseMembersR` and `parseItemsR` put each element at the front
+  of a reversed accumulator and reverse it once, at the closing bracket.
+  `parseJsonTextCharsR` calls them. `charsOfString` reads the characters of a
+  `String` in place (`String.foldl`) into the `Array Char` the parser indexes,
+  without the whole-document `List Char`; `parseJsonTextFast` uses it.
+* **Proved.** `parseR_eq`: at every fuel, on every input, each twin answers
+  what its specification answers, the accumulators differing by one
+  `reverse` (induction on the fuel, all five at once). `charsOfString_eq`:
+  `charsOfString s = s.toList.toArray`. Two `@[csimp]` theorems,
+  `parseJsonTextChars_eq_R` and `parseJsonText_eq_fast`, make the compiler
+  emit the fast forms for every call of `parseJsonTextChars` and
+  `parseJsonText`, so `parseJson` and `parseJson?` run them (the emitted C of
+  `parseJson` calls `parseJsonTextFast`, which calls `charsOfString` and
+  `parseJsonTextCharsR`). A `csimp` cannot replace a call between two members
+  of one `mutual` block (`skills/danbri-function-precrime-checkers`), so the
+  whole block has a twin and the replacement is made at the first function
+  outside it. Every theorem about the parser is stated about the
+  specification and is unchanged.
+* **Guards** (`JSON/Tests.lean`): element order of arrays, objects with a
+  repeated key, nested arrays and objects, 3,000 items in order; the message
+  and position of five rejections (a trailing comma in an array and in an
+  object, a missing comma in both, trailing content); `charsOfString` on
+  multi-byte characters and on the empty string.
+* **Output.** Equal by the theorems above. Measured as well: `l4factoidal
+  query`, binary before against binary after, standard output, standard
+  error and exit status (section 11.8).
+
+`SELECT *` after, wall time of each phase in ms (one run, load 15 to 21):
+
+| paragraphs | bytes | parse | normalize | index | solutions | eval | decode | render | whole, CPU s |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,250 | 96,581 | 35 | 19 | 16 | 2 | 28 | 60 | 27 | 0.11 |
+| 2,500 | 205,706 | 126 | 39 | 23 | 8 | 61 | 156 | 75 | 0.37 |
+| 5,000 | 430,251 | 161 | 34 | 42 | 41 | 159 | 567 | 214 | 1.10 |
+| 10,000 | 847,023 | 200 | 102 | 91 | 86 | 224 | 878 | 312 | 1.55 |
+| 20,000 | 1,706,149 | 422 | 277 | 279 | 210 | 632 | 1,256 | 544 | 2.72 |
+
+`decode`: 72.2 s before, 0.88 s after at 10,000 paragraphs; growth per
+doubling 2.6, 3.6, 1.5 and 1.4 (5.7, 7.8 and 8.1 before). The whole command at
+5,000 paragraphs: 8.57 s of CPU time before, 1.10 s after (F*: 1.43 s,
+section 10.5a). Peak resident set after the `output` phase: 26.3, 50.2, 90.0,
+160.0 and 311.7 MB (55.9, 96.1, 206.0 and 368.1 MB before at the first four
+sizes); `decode` still adds 10 to 12 bytes of peak per envelope character at 2,500
+paragraphs and above (the `Array Char`, 8 bytes per character, and the `Json`
+tree; about 34 before), and `render` holds
+the pretty-printed text beside the tree.
+
+The gate row `select-star` (`tests/stack/lean_scaling.sh --only select-star`,
+minimum of 3 runs, load 15): 0.236 s at 1,250 paragraphs, 0.614 s at 5,000,
+ratio 2.6 for 4 times the input (bound 9). It reported "UNEXPECTED PASS", and
+the row is now an assertion (removed from `XFAIL`). Before: 0.32 s and 6.24 s,
+ratio 19.7.
+
 ## 7. How to repeat
 
 ```

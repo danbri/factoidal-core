@@ -407,6 +407,156 @@ def parseItems (cs : Chars) (pos fuel : Nat) (acc : List Json)
 
 end
 
+/-! ## The same grammar with reverse accumulators (the run-time form)
+
+`parseMembers` and `parseItems` above append each member and item at the END
+of the list read so far (`acc ++ [v]`), which copies the list once per element:
+an array of n items costs n²/2 list cells. `l4factoidal query` parses the JSON
+envelope of every SELECT it prints, and the `bindings` array has one item per
+solution: over 1,250, 2,500, 5,000 and 10,000 paragraphs of `gene.ttl`,
+`SELECT * WHERE { ?s ?p ?o }` spent 0.20, 1.14, 8.87 and 72.2 s in this parse
+(5.7 to 8.1 times the time per doubling of the input), and the rest of the
+command 0.13 to 1.7 s (https://github.com/danbri/factoidal/issues/729,
+https://github.com/danbri/factoidal/issues/768 KR 2.3; design record
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md` section 11).
+
+The functions below are the same grammar, member for member, except that
+`parseMembersR` and `parseItemsR` put each element at the FRONT of a reversed
+accumulator and reverse it once, when the closing bracket is read.
+`parseR_eq` proves that each answers what its specification above answers, at
+every fuel, with the accumulator reversed; `parseJsonTextChars_eq_R` makes the
+compiler emit `parseJsonTextCharsR` for every call of `parseJsonTextChars`.
+(`csimp` cannot replace a call between two members of one `mutual` block,
+`skills/danbri-function-precrime-checkers`, so the whole block is twinned and
+the replacement is made at the first function outside it.) The theorems of
+`Theorems.lean` and of the modules that reason about `parseJson` are stated
+about the specification and are unchanged. -/
+
+mutual
+
+/-- `parseValue`, calling the reverse-accumulator forms. -/
+def parseValueR (cs : Chars) (pos fuel : Nat) : Except JsonError (Json × Nat) :=
+  match fuel with
+  | 0 => .error ⟨"JSON nesting too deep", pos⟩
+  | fuel + 1 =>
+    let p := skipWs cs pos (cs.size + 1)
+    match charAt? cs p with
+    | some '"' =>
+      match parseString cs p with
+      | .ok (str, np) => .ok (.string str, np)
+      | .error e => .error e
+    | some '{' => parseObjectR cs (p + 1) fuel
+    | some '[' => parseArrayR cs (p + 1) fuel
+    | some 't' =>
+      if matchKeyword cs p "true".toList then .ok (.bool true, p + 4)
+      else .error ⟨"expected literal true", p⟩
+    | some 'f' =>
+      if matchKeyword cs p "false".toList then .ok (.bool false, p + 5)
+      else .error ⟨"expected literal false", p⟩
+    | some 'n' =>
+      if matchKeyword cs p "null".toList then .ok (.null, p + 4)
+      else .error ⟨"expected literal null", p⟩
+    | some c =>
+      if c = '-' || c.isDigit then
+        match parseNumber cs p with
+        | .ok (lex, np) => .ok (.number lex, np)
+        | .error e => .error e
+      else .error ⟨"unexpected character in JSON value", p⟩
+    | none => .error ⟨"unexpected end of input in JSON value", p⟩
+
+/-- `parseObject`, calling `parseMembersR`. -/
+def parseObjectR (cs : Chars) (pos fuel : Nat) : Except JsonError (Json × Nat) :=
+  match fuel with
+  | 0 => .error ⟨"JSON nesting too deep", pos⟩
+  | fuel + 1 =>
+    let p := skipWs cs pos (cs.size + 1)
+    match charAt? cs p with
+    | some '}' => .ok (.object [], p + 1)
+    | _ => parseMembersR cs p fuel []
+
+/-- `parseMembers` with the members read so far in REVERSE order in
+`accRev`; reversed once at the closing brace. -/
+def parseMembersR (cs : Chars) (pos fuel : Nat) (accRev : List (String × Json))
+    : Except JsonError (Json × Nat) :=
+  match fuel with
+  | 0 => .error ⟨"JSON nesting too deep", pos⟩
+  | fuel + 1 =>
+    let p := skipWs cs pos (cs.size + 1)
+    match parseString cs p with
+    | .error e => .error e
+    | .ok (key, p1) =>
+      let p2 := skipWs cs p1 (cs.size + 1)
+      match charAt? cs p2 with
+      | some ':' =>
+        match parseValueR cs (p2 + 1) fuel with
+        | .error e => .error e
+        | .ok (v, p3) =>
+          let acc2 := (key, v) :: accRev
+          let p4 := skipWs cs p3 (cs.size + 1)
+          match charAt? cs p4 with
+          | some '}' => .ok (.object acc2.reverse, p4 + 1)
+          | some ',' => parseMembersR cs (p4 + 1) fuel acc2
+          | _ => .error ⟨"expected comma or closing brace in JSON object", p4⟩
+      | _ => .error ⟨"expected colon in JSON object", p2⟩
+
+/-- `parseArray`, calling `parseItemsR`. -/
+def parseArrayR (cs : Chars) (pos fuel : Nat) : Except JsonError (Json × Nat) :=
+  match fuel with
+  | 0 => .error ⟨"JSON nesting too deep", pos⟩
+  | fuel + 1 =>
+    let p := skipWs cs pos (cs.size + 1)
+    match charAt? cs p with
+    | some ']' => .ok (.array [], p + 1)
+    | _ => parseItemsR cs p fuel []
+
+/-- `parseItems` with the items read so far in REVERSE order in `accRev`;
+reversed once at the closing bracket. -/
+def parseItemsR (cs : Chars) (pos fuel : Nat) (accRev : List Json)
+    : Except JsonError (Json × Nat) :=
+  match fuel with
+  | 0 => .error ⟨"JSON nesting too deep", pos⟩
+  | fuel + 1 =>
+    match parseValueR cs pos fuel with
+    | .error e => .error e
+    | .ok (v, p1) =>
+      let acc2 := v :: accRev
+      let p2 := skipWs cs p1 (cs.size + 1)
+      match charAt? cs p2 with
+      | some ']' => .ok (.array acc2.reverse, p2 + 1)
+      | some ',' => parseItemsR cs (p2 + 1) fuel acc2
+      | _ => .error ⟨"expected comma or closing bracket in JSON array", p2⟩
+
+end
+
+/-- Each reverse-accumulator function answers what its specification answers,
+at every fuel, on every input; the accumulators differ by one `reverse`.
+Induction on the fuel, all five functions at once: each step unfolds one layer
+of both sides and uses the hypothesis at the smaller fuel for every call into
+the block. -/
+theorem parseR_eq : ∀ fuel : Nat,
+    (∀ cs pos, parseValueR cs pos fuel = parseValue cs pos fuel) ∧
+    (∀ cs pos, parseObjectR cs pos fuel = parseObject cs pos fuel) ∧
+    (∀ cs pos acc, parseMembersR cs pos fuel acc = parseMembers cs pos fuel acc.reverse) ∧
+    (∀ cs pos, parseArrayR cs pos fuel = parseArray cs pos fuel) ∧
+    (∀ cs pos acc, parseItemsR cs pos fuel acc = parseItems cs pos fuel acc.reverse)
+  | 0 => by
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> intros <;>
+      simp only [parseValueR, parseValue, parseObjectR, parseObject, parseMembersR,
+        parseMembers, parseArrayR, parseArray, parseItemsR, parseItems]
+  | n + 1 => by
+    obtain ⟨hv, ho, hm, ha, hi⟩ := parseR_eq n
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · intro cs pos
+      simp only [parseValueR, parseValue, ho, ha]
+    · intro cs pos
+      simp only [parseObjectR, parseObject, hm, List.reverse_nil]
+    · intro cs pos acc
+      simp only [parseMembersR, parseMembers, hv, hm, List.reverse_cons]
+    · intro cs pos
+      simp only [parseArrayR, parseArray, hi, List.reverse_nil]
+    · intro cs pos acc
+      simp only [parseItemsR, parseItems, hv, hi, List.reverse_cons]
+
 /-! ## Top level -/
 
 /-- Parse a complete RFC 8259 JSON text: exactly one value, with only
@@ -421,10 +571,43 @@ def parseJsonTextChars (cs : Chars) : Except JsonError (Json × Nat) :=
     if p2 ≥ cs.size then .ok (v, p2)
     else .error ⟨"trailing content after JSON value", p2⟩
 
+/-- `parseJsonTextChars` through the reverse-accumulator block. -/
+def parseJsonTextCharsR (cs : Chars) : Except JsonError (Json × Nat) :=
+  match parseValueR cs 0 (cs.size + 1) with
+  | .error e => .error e
+  | .ok (v, p) =>
+    let p2 := skipWs cs p (cs.size + 1)
+    if p2 ≥ cs.size then .ok (v, p2)
+    else .error ⟨"trailing content after JSON value", p2⟩
+
+@[csimp] theorem parseJsonTextChars_eq_R : @parseJsonTextChars = @parseJsonTextCharsR := by
+  funext cs
+  simp only [parseJsonTextChars, parseJsonTextCharsR, (parseR_eq (cs.size + 1)).1]
+
+/-- The characters of `s` as an array, read from the `String` in place
+(`String.foldl`) into an array of the byte size's capacity. `s.toList.toArray`
+builds the whole document as a `List Char` first: one list cell per character,
+35 bytes of peak resident memory per character natively (design record
+section 10.2) and a heap object per character as well on wasm32, where a boxed
+`Char` is allocated (`Wasm/build-wasm.sh` step 1b). -/
+def charsOfString (s : String) : Chars :=
+  s.foldl (fun a c => a.push c) (Array.mkEmpty s.utf8ByteSize)
+
+theorem charsOfString_eq (s : String) : charsOfString s = s.toList.toArray := by
+  simp [charsOfString, String.foldl_eq_foldl_toList, Array.mkEmpty]
+
 /-- Parse a complete RFC 8259 JSON text from a `String`. Port of
 `parse_json_text`. -/
 def parseJsonText (s : String) : Except JsonError (Json × Nat) :=
   parseJsonTextChars s.toList.toArray
+
+/-- `parseJsonText` without the whole-document character list. -/
+def parseJsonTextFast (s : String) : Except JsonError (Json × Nat) :=
+  parseJsonTextChars (charsOfString s)
+
+@[csimp] theorem parseJsonText_eq_fast : @parseJsonText = @parseJsonTextFast := by
+  funext s
+  simp only [parseJsonText, parseJsonTextFast, charsOfString_eq]
 
 /-- `Except`-typed top-level parse (what `Value.lean`'s theorems build
 on; the F* module's `parse_json_text` with the position dropped). -/

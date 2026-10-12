@@ -139,4 +139,40 @@ def fixtures : List Json := [
 #guard fixtures.all (fun j => parseJson j.toString == .ok j)
 #guard fixtures.all (fun j => parseJson j.toStringPretty == .ok j)
 
+/-! ### The reverse-accumulator parser (issue 729, OKR batch 1 KR 2.3)
+
+`parseJson` runs `parseJsonTextCharsR` and `charsOfString` at run time
+(`@[csimp]` in `Parser.lean`, proved equal to the specification by `parseR_eq`
+and `charsOfString_eq`). These guards fix the element order the reversed
+accumulators must restore, and the error each rejection reports, as literal
+values, so an implementation that kept the accumulators reversed, or accepted
+everything, fails the build. -/
+
+#guard parseJson "[1,2,3,4,5]" ==
+  .ok (.array [.number "1", .number "2", .number "3", .number "4", .number "5"])
+#guard parseJson "{\"b\":1,\"a\":2,\"b\":3}" ==
+  .ok (.object [("b", .number "1"), ("a", .number "2"), ("b", .number "3")])
+#guard parseJson "[[1,2],[3,[4,5]],{\"k\":[6,7]}]" ==
+  .ok (.array [.array [.number "1", .number "2"],
+               .array [.number "3", .array [.number "4", .number "5"]],
+               .object [("k", .array [.number "6", .number "7"])]])
+#guard parseJson " [ ] " == .ok (.array [])
+#guard parseJson "{ }" == .ok (.object [])
+-- 3,000 items in order: the last one read is the last one in the list.
+#guard (match parseJson ("[" ++ String.intercalate "," ((List.range 3000).map toString) ++ "]") with
+  | .ok (.array items) => items.length == 3000 && items.head? == some (.number "0") &&
+      items.getLast? == some (.number "2999")
+  | _ => false)
+-- Rejections: the message and the character position of the specification.
+#guard parseJson "[1,2,]" == .error ⟨"unexpected character in JSON value", 5⟩
+#guard parseJson "{\"a\":1,}" == .error ⟨"expected JSON string", 7⟩
+#guard parseJson "[1 2]" == .error ⟨"expected comma or closing bracket in JSON array", 3⟩
+#guard parseJson "{\"a\":1 \"b\":2}" ==
+  .error ⟨"expected comma or closing brace in JSON object", 7⟩
+#guard parseJson "[1,2] x" == .error ⟨"trailing content after JSON value", 6⟩
+-- `charsOfString` reads every character, multi-byte ones included.
+#guard charsOfString "a\u00e9\u263a" == #['a', 'é', '☺']
+#guard charsOfString "" == #[]
+#guard charsOfString "😀x" == "😀x".toList.toArray
+
 end L4Factoidal.JSON.Tests
