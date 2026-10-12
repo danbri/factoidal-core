@@ -5,7 +5,7 @@ shared with compaction (`Harness/Sbm11Compact.lean`, stage 5)
 `docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 6.8).
 
   l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N]
-               [--block-rows B] [--sort-rows M]
+               [--block-rows B] [--sort-rows M] [--phase2-only]
 
 Phase 1. SOURCE is cut into K byte ranges at line starts (default 4); each
   range is parsed by its own task with the streaming N-Quads parser (64 KiB
@@ -620,6 +620,35 @@ def printPermLines (tool : String) (outs : Array PermOut) : IO Unit := do
     let o := outs[p]!
     IO.println s!"{tool}: {permNamesArr[p]!} blocks={o.blocks} rows={o.rows} prb1-bytes={o.prbBytes} prm1-bytes={o.prmBytes} frames-const={o.codecs[0]!} frames-raw={o.codecs[1]!} frames-delta={o.codecs[2]!} col-bytes={o.frameBytes[0]!},{o.frameBytes[1]!},{o.frameBytes[2]!},{o.frameBytes[3]!} digest={o.digest.sum}/{o.digest.xor}"
 
+/-- `--phase2-only`: phase 1, then phase 2; the quad runs are removed, and
+    GDV1, GDX1 and the remap files (`run-W-J.tmp.remap`) are kept, so that
+    phase 2 can be timed and its output compared byte for byte
+    (`tests/sbm11/phase2_scaling.sh`,
+    https://github.com/danbri/factoidal/issues/804). -/
+def runPhase2Only (source outDir : String) (workers runTerms : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  IO.FS.createDirAll outDir
+  let size ← fileSize source
+  let mut bounds : Array Nat := #[]
+  for i in [0:workers + 1] do
+    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
+  let perWorker := max 1 (runTerms / workers)
+  let mut tasks := #[]
+  for i in [0:workers] do
+    let t ← IO.asTask (phase1Worker source outDir i bounds[i]! bounds[i + 1]! perWorker) .dedicated
+    tasks := tasks.push t
+  let mut batches : Array Batch := #[]
+  for t in tasks do
+    match ← IO.wait t with
+    | .ok o => batches := batches ++ o.batches
+    | .error e => throw e
+  let t1 ← IO.monoNanosNow
+  let (terms, pages, records) ← phase2 outDir batches
+  let t2 ← IO.monoNanosNow
+  for b in batches do IO.FS.removeFile b.quadRun
+  IO.println s!"sbm11-pack: phase2-only source={source} source-bytes={size} workers={workers} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2} peak-rss={← vmHWM}"
+  pure 0
+
 def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
@@ -657,7 +686,7 @@ def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : N
   pure 0
 
 def usage : String :=
-  "usage: l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]"
+  "usage: l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]"
 
 def parseOpts : List String → Nat × Nat × Nat × Nat → Option (Nat × Nat × Nat × Nat)
   | [], o => some o
