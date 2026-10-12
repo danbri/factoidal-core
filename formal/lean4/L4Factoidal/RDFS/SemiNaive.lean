@@ -57,7 +57,7 @@ implementation and the fallback.
    `RDFS.Closure`'s `StepIndex` and takes the delta as the suffix the
    round appended (section "Indexed evaluation of the same rounds"),
    with proofs that both give the same lists. Measured times are in
-   `docs/designissues/2026-10-12-rdfs-seminaive.md`.
+   `docs/designissues/2026-10-10-rdfs-seminaive.md`.
 2. The F\* module writes the delta term for each of the twelve rows by
    hand. Every row of `RDFS.Closure` has the shape
    `Graph → Triple → List Triple`, second premise first, so one

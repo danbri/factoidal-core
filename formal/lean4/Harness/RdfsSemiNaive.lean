@@ -33,7 +33,7 @@ length to an `IO.Ref` before the second clock read, so it cannot move
 after it. Check of the method, 2026-10-12: the per-call times printed
 by `--time` add up to within a few percent of the user CPU time
 `/usr/bin/time` reports for the whole process (numbers in
-`docs/designissues/2026-10-12-rdfs-seminaive.md`).
+`docs/designissues/2026-10-10-rdfs-seminaive.md`).
 
 The agreement result stands on its own: `closureSemiNaiveChecked`
 returns the naive answer whenever the delta loop is not a fixed point,
