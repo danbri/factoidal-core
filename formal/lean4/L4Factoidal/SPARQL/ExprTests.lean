@@ -77,6 +77,10 @@ def muNums : Binding :=
 -- "1"^^xsd:integer and "01"^^xsd:integer are the same VALUE: a variable
 -- lookup promotes the literal, so `=` compares numbers.
 #guard (Expr.compare .eq (.var "a") (.var "b")).eval muNums == .bool true
+-- RDFterm-equal on blank nodes: the same node is equal, another is not.
+#guard (Expr.compare .eq (.var "n") (.var "n")).eval [("n", .bnode "b")] == .bool true
+#guard (Expr.compare .eq (.var "n") (.var "m")).eval [("n", .bnode "b"), ("m", .bnode "c")] == .bool false
+#guard (Expr.compare .ne (.var "n") (.var "m")).eval [("n", .bnode "b"), ("m", .bnode "c")] == .bool true
 #guard (Expr.compare .eq (.var "a") (.var "d")).eval muNums == .bool true
 
 -- RDF/SPARQL language tags compare case-insensitively for `=`; this is not
@@ -85,6 +89,13 @@ def muNums : Binding :=
 #guard (Expr.compare .ne (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval [] == .bool false
 -- ...but they are different TERMS, so sameTerm on the terms is false.
 #guard (Expr.sameTerm (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
+-- ...and the same holds when the operands are VARIABLES bound to those
+-- literals: a variable is promoted to its value for `=` but sameTerm
+-- must read the bound term (issue 794; W3C sameTerm-simple, sameTerm-eq).
+#guard (Expr.sameTerm (.var "a") (.var "b")).eval muNums == .bool false
+#guard (Expr.sameTerm (.var "a") (.var "a")).eval muNums == .bool true
+#guard (Expr.sameTerm (.var "a") (.var "d")).eval muNums == .bool false
+#guard (Expr.compare .eq (.var "a") (.var "b")).eval muNums == .bool true
 -- A literal written directly in the expression is the same term as the
 -- one a variable binds (SPARQL 1.1 §4.1.2), so the operators compare its
 -- value: "1"^^xsd:integer = "01"^^xsd:integer. The F* `E_Literal` arm

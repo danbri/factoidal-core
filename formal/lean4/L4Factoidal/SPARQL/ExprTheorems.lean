@@ -399,17 +399,17 @@ theorem valueCompare_eq_refl_num (n : Int) :
     valueCompare (.num n) (.num n) .eq = some true := by
   simp [valueCompare, numericView, numericCompare, EvalResult.toNumeric?, applyCompOp]
 
-/-- A blank node has no `op:` mapping under `=`, so comparing one with
-ITSELF is a type error. Not an omission — §17.4.1.7's operator table
-does not cover blank nodes, which is why SPARQL has `sameTerm`. -/
-theorem valueCompare_eq_bnode_error (b : BNodeId) :
-    valueCompare (.term (.bnode b)) (.term (.bnode b)) .eq = none := rfl
+/-- RDFterm-equal (§17.4.1.7) holds between a blank node and itself:
+`=` on two blank nodes is term identity. -/
+theorem valueCompare_eq_bnode_refl (b : BNodeId) :
+    valueCompare (.term (.bnode b)) (.term (.bnode b)) .eq = some true := by
+  simp [valueCompare, numericView]
 
-/-- `sameTerm`, by contrast, IS reflexive on every RDF term — it is
+/-- `sameTerm` IS reflexive on every RDF term — it is
 term identity, and `Term.eqb` is proved reflexive in `RDF.Core`. -/
 theorem eval_sameTerm_refl (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
     Expr.evalIn env mu (.sameTerm (.lit l) (.lit l)) = .bool true := by
-  simp [Expr.evalIn]
+  simp [Expr.evalIn, EvalResult.toTerm?]
 
 /-! ## §18.5 — the FILTER bridge -/
 
@@ -444,7 +444,7 @@ The lines below put that in every build log. -/
 #print axioms Scaled.cmp_swap
 #print axioms Scaled.cmp_trans
 #print axioms valueCompare_eq_refl_literal
-#print axioms valueCompare_eq_bnode_error
+#print axioms valueCompare_eq_bnode_refl
 #print axioms toCond_bound
 
 end L4Factoidal.SPARQL

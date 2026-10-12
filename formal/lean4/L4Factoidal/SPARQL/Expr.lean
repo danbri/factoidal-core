@@ -1197,8 +1197,9 @@ false < true; two IRIs and two same-datatype literals compare by
 lexical order — and two literals of DIFFERENT datatypes are a type
 error, which is what makes `=` open-world on unknown datatypes; two
 triple terms support only `=`/`!=` (they have no order). Port of
-`value_compare`. Blank nodes fall to the final catch-all: a type
-error, exactly as the F* source. The arms match on `numericView` of each
+`value_compare`. Two blank nodes support only `=`/`!=` (RDFterm-equal);
+a blank node against any other term falls to the final catch-all, a type
+error. The arms match on `numericView` of each
 operand, so a literal of a type derived from `xsd:integer` with a value
 is a numeric; an ill-typed one stays a term (the literal arms). -/
 def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
@@ -1224,6 +1225,14 @@ def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
           | .ne => some true
           | _ => none
       else none
+  | .term (.bnode b1), .term (.bnode b2) =>
+      -- RDFterm-equal (§17.4.1.7): the same RDF term is TRUE, a
+      -- different blank node FALSE; no order. W3C SPARQL 1.0
+      -- `expr-builtin/sameTerm-eq` expects `?b = ?b` to hold.
+      match op with
+      | .eq => some (b1 == b2)
+      | .ne => some (b1 != b2)
+      | _ => none
   | .term (.tripleTerm s1 p1 o1), .term (.tripleTerm s2 p2 o2) =>
       match op with
       | .eq => some (tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
@@ -2152,13 +2161,21 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | none => .error
 
   -- §17.4.1.2 sameTerm — term IDENTITY, stricter than `=`.
+  -- A bound variable is read as the TERM it holds, not as its promoted
+  -- value: `"1"^^xsd:integer` and `"01"^^xsd:integer` have one value
+  -- and are two terms (RDF 1.1 Concepts §3.1; issue 794). Any other
+  -- operand is a computed value and denotes the term `toTerm?` gives.
   | .sameTerm e1 e2 =>
-      match Expr.evalIn env mu e1, Expr.evalIn env mu e2 with
-      | .term t1, .term t2 => .bool (t1.eqb t2)
-      | .num a, .num b => .bool (a == b)
-      | .dec a, .dec b => .bool (a == b)
-      | .dbl a, .dbl b => .bool (a == b)
-      | .bool a, .bool b => .bool (a == b)
+      let t1 : Option Term :=
+        match e1 with
+        | .var v => mu.lookup v
+        | _ => (Expr.evalIn env mu e1).toTerm?
+      let t2 : Option Term :=
+        match e2 with
+        | .var v => mu.lookup v
+        | _ => (Expr.evalIn env mu e2).toTerm?
+      match t1, t2 with
+      | some a, some b => .bool (a.eqb b)
       | _, _ => .bool false
 
   -- §18.6 EXISTS: evaluated by the pattern layer, which replaces every

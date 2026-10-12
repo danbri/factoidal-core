@@ -1197,4 +1197,40 @@ labels and lexical forms, in both directions. -/
 #guard erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "x")))
 #guard !erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "X")))
 
+/-! ### sameTerm over variable bindings (issue 794)
+
+W3C SPARQL 1.0 `expr-builtin/sameTerm-simple` and `sameTerm-eq`: a
+variable bound to a numeric or boolean literal is promoted to its value
+for `=`, but `sameTerm` compares RDF terms (SPARQL 1.1 §17.4.1.8). Eight
+objects: "1"^^integer twice, "01"^^integer, "1.0"^^decimal, "true" and
+"1" booleans, "1.0e0" and "1.0" doubles. Terms equal under sameTerm: the
+two "1"^^integer objects in both orders plus each object with itself. -/
+
+def pSt : WfIri := iriQ "https://example.org/things#p"
+def lt (lex : String) (dt : WfIri) : Term := .literal (mkTypedLiteral lex dt)
+
+def gSame : Graph :=
+  [ tr iAlice pSt (lt "1" xsdInteger),
+    tr iBob   pSt (lt "1" xsdInteger),
+    tr iCarol pSt (lt "01" xsdInteger),
+    tr iDave  pSt (lt "1.0" xsdDecimal),
+    tr iZed   pSt (lt "true" xsdBoolean),
+    tr epOne  pSt (lt "1" xsdBoolean),
+    tr epTwo  pSt (lt "1.0e0" xsdDouble),
+    tr gOne   pSt (lt "1.0" xsdDouble) ]
+
+def pSame : QueryPattern :=
+  .bgp [tpv "x1" pSt (.var "v1"), tpv "x2" pSt (.var "v2")]
+
+def dsSame : Dataset := { default := gSame, named := [] }
+
+-- 8 self pairs plus the (x1, x2) and (x2, x1) pair of equal terms.
+#guard (rows dsSame (qAll (.filter (.sameTerm (.var "v1") (.var "v2")) pSame))).length == 10
+-- `=` is value equality: the six numeric objects of value 1 give 36
+-- pairs and the two true booleans give 4, so it keeps more rows.
+#guard (rows dsSame (qAll (.filter (.compare .eq (.var "v1") (.var "v2")) pSame))).length == 40
+-- sameTerm and `=` together: sameTerm already decides, so 10 rows.
+#guard (rows dsSame (qAll (.filter
+    (.and (.sameTerm (.var "v1") (.var "v2")) (.compare .eq (.var "v1") (.var "v2"))) pSame))).length == 10
+
 end L4Factoidal.SPARQL.QueryTests
