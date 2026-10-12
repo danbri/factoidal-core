@@ -3,22 +3,51 @@ Harness.QueryPhases — `l4query-phases`: the phases of `l4factoidal query`,
 one at a time, with the resident memory after each.
 
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
+    l4query-phases FILE --parse-op [--format F] [--stop-after PHASE]
     l4query-phases --walk-check LIST
 
-PHASE is one of `read`, `parse`, `normalize`, `index`, `eval`, `output`
-(default `output`). The program runs the same functions, in the same order,
-as `queryCmd` in `Wasm/Cli.lean` (`readInput`, `Ops.parseTextToDataset`,
-`Ops.queryDatasetOf`, whose body is `datasetForOps`, `indexedDatasetBackend`
-and `queryParsedDatasetWith`), and after each phase prints one line
+PHASE is one of `read`, `parse`, `normalize`, `index`, `solutions`, `eval`,
+`decode`, `render`, `output` (default `output`). The program runs the same
+functions, in the same order, as `queryCmd` in `Wasm/Cli.lean` (`readInput`,
+`Ops.parseTextToDataset`, `Ops.queryDatasetOf`, whose body is
+`datasetForOps`, `indexedDatasetBackend` and `queryParsedDatasetWith`, then
+`Cli.parseEnvelope` and `Cli.printQueryResult`), and after each phase prints
+one line to standard error
 
-    phase=NAME value=V rss_kb=R hwm_kb=H
+    phase=NAME value=V rss_kb=R hwm_kb=H ms=T
 
 where V is a number computed from the phase's result (so that the phase is
 evaluated before the line is printed), R is `VmRSS` and H is `VmHWM` of
-`/proc/self/status` (Linux only; 0 elsewhere). Run it once per PHASE under
-`/usr/bin/time -v` to get the peak resident set of a process that stops after
-that phase (https://github.com/danbri/factoidal/issues/729,
+`/proc/self/status` (Linux only; 0 elsewhere), and T is the wall time in
+milliseconds since the program started (`IO.monoNanosNow`). Run it once per
+PHASE under `/usr/bin/time -v` to get the peak resident set of a process that
+stops after that phase (https://github.com/danbri/factoidal/issues/729,
 `docs/designissues/2026-10-10-lean-vs-fstar-performance.md` §10).
+
+The phases after `index` (https://github.com/danbri/factoidal/issues/768
+KR 2.3, the `select-star` row):
+
+* `solutions`: the solution sequence of a SELECT alone, by the evaluator
+  `queryParsedDatasetWith` calls (`runSelectQueryBackendDataset`, else
+  `evalSelect`); V is the number of solutions. A process that stops here
+  does not run `eval`.
+* `eval`: `queryParsedDatasetWith`, the op's whole envelope string (it
+  computes the solutions again, then `QueryResult.toSrj` and the envelope);
+  V is its length in bytes.
+* `decode`: `Cli.parseEnvelope`, the JSON parse of the envelope that the
+  command line makes; V is 1.
+* `render`: the text `l4factoidal query` prints for a SELECT
+  (`Cli.printQueryResult`: the envelope's `srj` member, `toStringPretty`);
+  V is its length in bytes.
+* `output`: that text written to standard output.
+
+`--parse-op` runs the phases of the wasm op `parseToDatasetJson` instead
+(`parseToDatasetJsonWithBy` in `Wasm/Ops/Parse.lean`, the op `parse()` of the
+npm package calls; https://github.com/danbri/factoidal/issues/744): `read`,
+`parse` (`parseDocumentOutcomeBy`, which reads Turtle with the prefix table),
+`scope` (`scopeBnodes`), `nquads` (`Dataset.toCanonicalNQuads`), `envelope`
+(the op's JSON envelope, `okWith`), `output` (the envelope written to
+standard output).
 
 The memory figures are of the process, not of one data structure: the
 allocator keeps freed pages, so `rss_kb` after a phase includes memory a
@@ -51,12 +80,36 @@ def procStatusKb (key : String) : IO Nat := do
         pure digits.toNat!
   catch _ => pure 0
 
-def report (phase : String) (value : Nat) : IO Unit := do
+/-- Print the phase line. `t0` is `IO.monoNanosNow` at the start. -/
+def report (t0 : Nat) (phase : String) (value : Nat) : IO Unit := do
   let rss ← procStatusKb "VmRSS"
   let hwm ← procStatusKb "VmHWM"
-  IO.println s!"phase={phase} value={value} rss_kb={rss} hwm_kb={hwm}"
+  let t ← IO.monoNanosNow
+  let ms := (t - t0) / 1000000
+  (← IO.getStderr).putStrLn s!"phase={phase} value={value} rss_kb={rss} hwm_kb={hwm} ms={ms}"
 
-def phases : List String := ["read", "chars", "parse", "normalize", "index", "eval", "output"]
+def phases : List String :=
+  ["read", "chars", "parse", "normalize", "index", "solutions", "eval", "decode", "render",
+   "output"]
+
+open L4Factoidal.SPARQL in
+/-- The solution sequence of a SELECT as `queryParsedDatasetWith` computes it
+(the same environment, the backend runner first, the reference evaluator when
+it answers `none` or the query has a dataset clause); the number of
+solutions. `0` for another query form or a parse error. -/
+def selectSolutionCount (ds : Dataset) (dsb : DatasetBackend) (sparql : String)
+    (now : Option String) : Nat :=
+  match parseSparql sparql none .v11 with
+  | .error _ => 0
+  | .ok q =>
+    let env : EvalEnv := { base := q.base, ext := L4Wasm.Ops.extFnsWith [],
+                           dataset := some ds, services := [], now := now }
+    match q.form with
+    | .select _ =>
+        match (if q.dataset.isEmpty then runSelectQueryBackendDataset env q dsb else none) with
+        | some rows => rows.length
+        | none => (evalSelect env ds q).2.length
+    | _ => 0
 
 def flagValue (args : List String) (flag : String) : Option String :=
   match args.dropWhile (· != flag) with
@@ -96,13 +149,42 @@ def walkCheck (listFile : String) : IO UInt32 := do
   IO.println s!"files {files.length}; cases: parseTurtle accepts {refOk} (walk agrees {agree}, walk refuses {fallback}, walk differs {differ}); parseTurtle refuses {refErr}; with << {skipped}"
   pure (if differ == 0 then 0 else 1)
 
-def main (args : List String) : IO UInt32 := do
-  match args with
-  | ["--walk-check", listFile] => walkCheck listFile
-  | [] =>
-      IO.eprintln "usage: l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]"
-      pure 2
-  | file :: rest =>
+def parseOpPhases : List String := ["read", "parse", "scope", "nquads", "envelope", "output"]
+
+/-- `--parse-op`: the phases of `parseToDatasetJsonWithBy noExtraReader (some "d0_")`. -/
+def parseOpMain (file format stop : String) : IO UInt32 := do
+  unless parseOpPhases.contains stop do
+    IO.eprintln s!"l4query-phases: unknown --parse-op phase '{stop}' ({String.intercalate " | " parseOpPhases})"
+    return 2
+  let t0 ← IO.monoNanosNow
+  let report := report t0
+  report "start" 0
+  let text ← IO.FS.readFile file
+  report "read" text.utf8ByteSize
+  if stop == "read" then return 0
+  match L4Wasm.Ops.parseDocumentOutcomeBy L4Wasm.Ops.noExtraReader text format "" with
+  | .error f => IO.eprintln f.message; pure 1
+  | .ok o =>
+    report "parse" (L4Wasm.Ops.datasetQuadCount o.ds)
+    if stop == "parse" then return 0
+    let ds := L4Wasm.Ops.scopeBnodes "d0_" o.ds
+    report "scope" (L4Wasm.Ops.datasetQuadCount ds)
+    if stop == "scope" then return 0
+    let nq := L4Factoidal.Syntax.Dataset.toCanonicalNQuads ds
+    report "nquads" nq.utf8ByteSize
+    if stop == "nquads" then return 0
+    let env := L4Wasm.Ops.okWith
+      [("count", .number (toString (L4Wasm.Ops.datasetQuadCount ds))),
+       ("nquads", .string nq),
+       ("prefixes", L4Wasm.Ops.prefixesJson o.prefixes)]
+    report "envelope" env.utf8ByteSize
+    if stop == "envelope" then return 0
+    IO.println env
+    report "output" env.utf8ByteSize
+    pure 0
+
+/-- The phases of `l4factoidal query` on `file`. -/
+def queryMain (file : String) (rest : List String) : IO UInt32 := do
     let format := (flagValue rest "--format").getD "turtle"
     let sparql := (flagValue rest "--query-string").getD
       "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"
@@ -110,6 +192,8 @@ def main (args : List String) : IO UInt32 := do
     unless phases.contains stop do
       IO.eprintln s!"l4query-phases: unknown phase '{stop}' ({String.intercalate " | " phases})"
       return 2
+    let t0 ← IO.monoNanosNow
+    let report := report t0
     report "start" 0
     let text ← IO.FS.readFile file
     report "read" text.utf8ByteSize
@@ -140,12 +224,45 @@ def main (args : List String) : IO UInt32 := do
           | .indexed ix => ix.all.size
           | _ => 0)
         if stop == "index" then return 0
+        if stop == "solutions" then
+          report "solutions" (selectSolutionCount nds dsb sparql (some now))
+          return 0
         let out := L4Wasm.Ops.queryParsedDatasetWith nds (some dsb) sparql (now := some now)
         report "eval" out.utf8ByteSize
         if stop == "eval" then return 0
-        IO.println out
-        report "output" out.utf8ByteSize
-        pure 0
+        -- `Cli.parseEnvelope` (Wasm/Cli.lean, which this harness cannot import:
+        -- it defines `main`): parse the envelope, require `"ok":true`.
+        match L4Factoidal.JSON.parseJson out with
+        | .error e => IO.eprintln s!"internal: op result was not JSON ({e})"; pure 1
+        | .ok j =>
+          if j.getBool? "ok" != some true then
+            IO.eprintln ((j.getString? "error").getD "unknown error"); return 1
+          report "decode" 1
+          if stop == "decode" then return 0
+          -- `printQueryResult` of a SELECT: the `srj` member, pretty-printed.
+          match j.getString? "kind", j.field? "srj" with
+          | some "select", some srj =>
+            let txt := srj.toStringPretty
+            report "render" txt.utf8ByteSize
+            if stop == "render" then return 0
+            IO.println txt
+            report "output" txt.utf8ByteSize
+            pure 0
+          | _, _ =>
+            IO.eprintln "l4query-phases: the render and output phases are for SELECT only"
+            pure 1
+
+def main (args : List String) : IO UInt32 := do
+  match args with
+  | ["--walk-check", listFile] => walkCheck listFile
+  | file :: rest =>
+    if rest.contains "--parse-op" then
+      parseOpMain file ((flagValue rest "--format").getD "turtle")
+        ((flagValue rest "--stop-after").getD "output")
+    else queryMain file rest
+  | [] =>
+      IO.eprintln "usage: l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]"
+      pure 2
 
 end Harness.QueryPhases
 

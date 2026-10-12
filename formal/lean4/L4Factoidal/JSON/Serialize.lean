@@ -86,6 +86,61 @@ Lean side is the SPECIFICATION evaluator, not the performance one). -/
 def escapeString (s : String) : String :=
   (s.toList.map escapeChar).foldl (· ++ ·) ""
 
+/-! ### The run-time form of `escapeString`
+
+`escapeString` builds the whole string as a `List Char`, then one `String` per
+character, then joins them: three heap objects per character before the join.
+The wasm op `parseToDatasetJson` (the npm `parse()`) escapes the whole N-Quads
+text of the parsed dataset into its envelope this way, and that was the
+largest holder of the module's linear memory
+(https://github.com/danbri/factoidal/issues/744; design record
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md` section 11).
+`escapeStringFast` reads the characters of the `String` in place
+(`String.foldl`) and appends to one accumulator: a character outside the
+escape set is pushed, a character inside it appends its escape sequence.
+`escapeString_eq_fast` proves the two equal and makes the compiler emit the
+fast form for every call. -/
+
+/-- The characters `escapeChar` maps to an escape sequence (the RFC 8259 §7
+mandatory set): backslash, quotation mark, and the controls below U+0020. -/
+def escapeNeeded (c : Char) : Bool :=
+  c = '\\' || c = '"' || c.toNat < 0x20
+
+/-- One step of `escapeStringFast`. -/
+def escapeStep (acc : String) (c : Char) : String :=
+  if escapeNeeded c then acc ++ escapeChar c else acc.push c
+
+/-- `escapeString` without the character list and without a string per
+character. -/
+def escapeStringFast (s : String) : String :=
+  s.foldl escapeStep ""
+
+/-- A character outside the escape set is written as itself. -/
+theorem escapeChar_of_not_needed (c : Char) (h : escapeNeeded c = false) :
+    escapeChar c = String.singleton c := by
+  simp only [escapeNeeded, Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+  obtain ⟨⟨h1, h2⟩, h3⟩ := h
+  have h3' : ¬ c.toNat < 0x20 := h3
+  have hA : c.toNat ≠ 0x0A := by omega
+  have hD : c.toNat ≠ 0x0D := by omega
+  have h9 : c.toNat ≠ 0x09 := by omega
+  have h8 : c.toNat ≠ 0x08 := by omega
+  have hC : c.toNat ≠ 0x0C := by omega
+  simp [escapeChar, h1, h2, hA, hD, h9, h8, hC, h3']
+
+theorem escapeStep_eq (acc : String) (c : Char) : escapeStep acc c = acc ++ escapeChar c := by
+  unfold escapeStep
+  cases h : escapeNeeded c
+  · simp [escapeChar_of_not_needed c h, String.append_singleton]
+  · simp
+
+@[csimp] theorem escapeString_eq_fast : @escapeString = @escapeStringFast := by
+  funext s
+  simp only [escapeString, escapeStringFast, String.foldl_eq_foldl_toList, List.foldl_map]
+  congr 1
+  funext acc c
+  exact (escapeStep_eq acc c).symm
+
 /-! ## Compact writer
 
 Object key order is exactly as stored (see module header); this is
