@@ -364,6 +364,7 @@ import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.IdQueryTests
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson

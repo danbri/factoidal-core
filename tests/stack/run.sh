@@ -651,6 +651,69 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------------- SBM11 id query path (issue 790)
+# `l4sbm11 query` on the sbm11-dict.nt generation (600,001 quads, blocks of
+# 65,536 rows): a merge join of 150,000 rows with each side and a COUNT over
+# it, ORDER BY DESC with LIMIT over 150,000 rows (top-k), GROUP BY over
+# 150,000 rows (1,000 groups), STRSTARTS on 150,000 labels (61,111 match,
+# by rank ranges of the dictionary) counted and streamed out, and the
+# 300,000-byte literal written as SPARQL JSON (the key printer's escape
+# loop). The block decode, the joins, the sort and the printer each run over
+# input-proportional data. https://github.com/danbri/factoidal/issues/790
+sbm11_query_case() { # sbm11_query_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-query-out" rc log r q
+  local P='PREFIX p: <http://example.org/p/> '
+  if [ ! -x "$SBM11P_BIN" ] || [ ! -x "$SBM11C_BIN" ]; then
+    record "$route" sbm11-query 1 "l4sbm11-pack or l4sbm11 does not exist (lake build l4sbm11-pack l4sbm11)"
+    return
+  fi
+  if [ ! -f "$out/manifest.sbm11" ]; then
+    rm -rf "$out"
+    if ! "$SBM11P_BIN" "$src" "$out" --block-rows 65536 >/dev/null 2>&1; then
+      record "$route" sbm11-query 1 "l4sbm11-pack failed"
+      return
+    fi
+  fi
+  log=""
+  rc=0
+  for q in \
+    "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l . ?s p:n ?n }" \
+    "SELECT ?s ?n WHERE { ?s p:n ?n . ?s p:m ?m } ORDER BY DESC(?n) ?s LIMIT 3" \
+    "SELECT ?m (COUNT(*) AS ?c) WHERE { ?s p:m ?m } GROUP BY ?m ORDER BY DESC(?c) ?m LIMIT 2" \
+    "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l FILTER(STRSTARTS(?l, \"label 1\")) }" \
+    "SELECT ?l WHERE { ?s p:label ?l FILTER(STRSTARTS(?l, \"label 1\")) }" \
+    "SELECT ?o WHERE { <http://example.org/sbm11/big> p:text ?o }"; do
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$out" "$P$q" 2>&1)"; rc=$?
+    log="$log
+$(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query: path=[a-z]*; rows [0-9]*') rc=$rc"
+    [ "$rc" -ne 0 ] && break
+  done
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-query overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' || ! printf '%s' "$log" | grep -q '"value":"61111"' \
+      || ! printf '%s' "$log" | grep -q 'path=ids; rows 61111'; then
+    score_case "$route" sbm11-query error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
+  else
+    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 id query path, native default stack"
+  sbm11_query_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 id query path, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_query_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-query 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+rm -rf "$FIXTURES/sbm11-query-out"
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"
