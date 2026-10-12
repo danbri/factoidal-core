@@ -371,6 +371,7 @@ import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.ScanWordsTheorems
 import L4Factoidal.Storage.Sbm11.BlockAtTheorems
+import L4Factoidal.Storage.Sbm11.DictLookupTheorems
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson

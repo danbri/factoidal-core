@@ -40,18 +40,7 @@ def firstNotBelow (ks : Array ByteArray) (k : ByteArray) : Nat := Id.run do
 def lowerBoundM {m : Type → Type} [Monad m] (fetchGdx fetchGdv : Nat → Nat → m ByteArray)
     (h : GdxHeader) (k : ByteArray) : ExceptT String m Nat := do
   if h.pageCount == 0 then return 0
-  let mut lo := 0
-  let mut hi := h.pageCount
-  for _ in [0:Nat.log2 h.pageCount + 2] do
-    if lo + 1 ≥ hi then break
-    let mid := (lo + hi) / 2
-    let b ← pageBytesM fetchGdx fetchGdv mid
-    match firstKeyAt b with
-    | none => throw s!"GDV1: page {mid} has no first key"
-    | some fk =>
-      match cmpBytesAt fk k with
-      | .gt => hi := mid
-      | _ => lo := mid
+  let (lo, _) ← searchPagesM fetchGdx fetchGdv k (Nat.log2 h.pageCount + 2) 0 h.pageCount 0
   let ks ← pageM fetchGdx fetchGdv lo
   -- page `lo`'s first key is not above `k` unless `lo` is page 0
   return min h.termCount (lo * pageTerms + firstNotBelow ks k)

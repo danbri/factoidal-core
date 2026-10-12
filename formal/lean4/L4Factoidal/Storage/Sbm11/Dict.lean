@@ -63,8 +63,8 @@ returns the keys and the end position that `decodePage` returns.
 ## Loops
 
 Every recursive function here is a tail call with an accumulator (or a
-fuel `Nat` first); `lookupM` is a `for` loop of at most `log2 n + 2`
-probes. No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
+fuel `Nat` first); the page search `searchPagesM` makes at most
+`log2 n + 2` probes. No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.Sbm11.TermKey
 import L4Factoidal.Storage.DeltaLog
@@ -409,37 +409,42 @@ def pageM {m : Type → Type} [Monad m] (fetchGdx fetchGdv : Nat → Nat → m B
   | some (ks, j) => if j == b.size then pure ks else throw s!"GDV1: page {i} has trailing bytes"
   | none => throw s!"GDV1: page {i} does not decode"
 
+/-- Positions `i..` of a page against `k` (a tail call with fuel). -/
+def indexInPageGo (ks : Array ByteArray) (k : ByteArray) : Nat → Nat → Option Nat
+  | 0, _ => none
+  | f + 1, i => if i < ks.size then (if ks[i]! == k then some i else indexInPageGo ks k f (i + 1)) else none
+
 /-- The position of `k` in a page, by a loop over its keys. -/
-def indexInPage (ks : Array ByteArray) (k : ByteArray) : Option Nat := Id.run do
-  for i in [0:ks.size] do
-    if ks[i]! == k then return some i
-  return none
+def indexInPage (ks : Array ByteArray) (k : ByteArray) : Option Nat := indexInPageGo ks k ks.size 0
+
+/-- The binary search of `lookupM` and `DictRange.lowerBoundM`: the last
+    page in `[lo, hi)` whose first key is not above `k`, and the number of
+    pages read. Invariant: `firstKey(lo) ≤ k` when `lo > 0`, and
+    `firstKey(hi) > k` when `hi < pageCount`. A tail call with fuel. -/
+def searchPagesM {m : Type → Type} [Monad m] (fetchGdx fetchGdv : Nat → Nat → m ByteArray)
+    (k : ByteArray) : Nat → Nat → Nat → Nat → ExceptT String m (Nat × Nat)
+  | 0, lo, _, probes => pure (lo, probes)
+  | f + 1, lo, hi, probes =>
+    if lo + 1 ≥ hi then pure (lo, probes)
+    else do
+      let mid := (lo + hi) / 2
+      let b ← pageBytesM fetchGdx fetchGdv mid
+      match firstKeyAt b with
+      | none => throw s!"GDV1: page {mid} has no first key"
+      | some fk =>
+        match cmpBytesAt fk k with
+        | .gt => searchPagesM fetchGdx fetchGdv k f lo mid (probes + 1)
+        | _ => searchPagesM fetchGdx fetchGdv k f mid hi (probes + 1)
 
 /-- String-to-id: the rank of key `k`, or `none` when it is not in the
     dictionary, and the number of page reads. Binary search over the first
-    keys of the pages, then a scan of one page. A rank this returns is
-    always right: it is the position of a key equal to `k` in a decoded
-    page. That every key is FOUND rests on the pages being in key order,
-    which `l4sbm11-dict-pack --check` verifies for every key of a
-    dictionary. -/
+    keys of the pages (`searchPagesM`), then a scan of one page.
+    `DictLookupTheorems.lookupM_encodeDict` proves, over the bytes
+    `encodeDict?` writes, that it returns the rank of `k` exactly when `k` is
+    a key and `none` otherwise. -/
 def lookupM {m : Type → Type} [Monad m] (fetchGdx fetchGdv : Nat → Nat → m ByteArray)
     (h : GdxHeader) (k : ByteArray) : ExceptT String m (Option Nat × Nat) := do
-  -- the last page whose first key is ≤ k: firstKey(lo) ≤ k when lo > 0,
-  -- and firstKey(hi) > k when hi < pageCount
-  let mut lo := 0
-  let mut hi := h.pageCount
-  let mut probes := 0
-  for _ in [0:Nat.log2 h.pageCount + 2] do
-    if lo + 1 ≥ hi then break
-    let mid := (lo + hi) / 2
-    let b ← pageBytesM fetchGdx fetchGdv mid
-    probes := probes + 1
-    match firstKeyAt b with
-    | none => throw s!"GDV1: page {mid} has no first key"
-    | some fk =>
-      match cmpBytesAt fk k with
-      | .gt => hi := mid
-      | _ => lo := mid
+  let (lo, probes) ← searchPagesM fetchGdx fetchGdv k (Nat.log2 h.pageCount + 2) 0 h.pageCount 0
   if h.pageCount == 0 then return (none, probes)
   let ks ← pageM fetchGdx fetchGdv lo
   match indexInPage ks k with
