@@ -38,6 +38,7 @@ packer writes is decoded again and compared with its column.
 Prints phase times and VmHWM. Exit 1 on any error.
 -/
 import Harness.Sbm11Gen
+import Harness.RunHeap
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Qlvr.Sort
@@ -290,7 +291,13 @@ def tagOfKey (k : ByteArray) : Nat :=
   let c := k.get! 0
   if c == classBnode then tagBnode else if c == classIri then tagIri else tagLit
 
-/-- Merge the term runs into GDV1/GDX1; per run, the remap file. Returns the
+/-- The order of run heads in the merge tree: byte order of the keys. -/
+@[inline] def ltKey (a b : ByteArray) : Bool := cmpBytes a b == .lt
+
+/-- Merge the term runs into GDV1/GDX1; per run, the remap file. The next
+    record comes from a loser tree over the runs (`Harness/RunHeap.lean`):
+    about log2 k comparisons per record for k runs (issue 804; the linear scan
+    of every head it replaces made phase 2 quadratic in the terms). Returns the
     term count, the page count and the number of run records. -/
 def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) := do
   let mut readers : Array RunReader := #[]
@@ -314,26 +321,20 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
   let mut prev : Option ByteArray := none
   let mut prevId : UInt64 := 0
   let mut records := 0
+  let mut tree := Harness.RunHeap.build ltKey heads
   for _ in [0:runBytes + 1] do
-    let mut best : Option (Nat × ByteArray) := none
-    for k in [0:heads.size] do
-      match heads[k]! with
-      | some x =>
-        match best with
-        | some (_, b) => if cmpBytes x b == .lt then best := some (k, x)
-        | none => best := some (k, x)
-      | none => pure ()
-    match best with
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
     | none => break
-    | some (k, x) =>
+    | some x =>
       records := records + 1
-      let dup := match prev with
-        | some p => cmpBytes p x == .eq
-        | none => false
+      let c := match prev with
+        | some p => cmpBytes p x
+        | none => .lt
+      let dup := c == .eq
       if !dup then
-        if let some p := prev then
-          if cmpBytes p x != .lt then
-            throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
+        if c != .lt then
+          throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
         let rank := w.terms
         w ← w.add x
         prev := some x
@@ -342,6 +343,7 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
       let (hd, r) ← readers[k]!.next
       readers := readers.set! k r
       heads := heads.set! k hd
+      tree := Harness.RunHeap.replay ltKey heads tree k
   w ← w.closePage
   w ← w.flushBufs true
   hV.flush; hE.flush
