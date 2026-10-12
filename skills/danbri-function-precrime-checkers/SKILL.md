@@ -470,3 +470,84 @@ Two traps of the day:
   textual length match does not resolve, and the `Nat` fuel then decides the
   class. The fuel was the length of the scanned range, so the depth was the
   input length (https://github.com/danbri/factoidal/issues/750).
+
+## Two list readers in one mutual block: an append and a frame per group (https://github.com/danbri/factoidal/issues/754, 2026-10-10)
+
+`Syntax/Turtle.lean` read [8] `objectList` and [7] `predicateObjectList`
+inside the `readObject` mutual block with two different defects, which the
+audit triage of issue 750 had listed as one `(a) PENDING` line and two
+`UNTRIAGED` lines:
+
+- **Time.** `readObjectList` (F\* `parse_object_list_rev`) built its result
+  with `acc ++ ...`, so one object list of n objects took time in
+  proportion to n². The stack was flat; only the scaling row could see it.
+- **Stack.** `readPredicateObjectList` and `readPredicateObjectListMore`
+  (F\* `parse_trailing_semicolons_rev`) called each other once per `;` group,
+  so one statement of n predicates took n frames.
+
+The expected failures were committed first, each naming the issue: the
+`tests/stack` case `turtle-predicates` (one statement of 10,000 `;` groups)
+and the `lean_scaling.py` row `turtle-object-list` (25,000 against 100,000
+objects). Both failed as expected before the repair.
+
+The repair, and the pattern for this shape:
+
+- **An object list: a reversed accumulator carried THROUGH the caller.**
+  `readObjectListRev` pushes each object's triples onto a newest-first list
+  (`List.reverseAux`) and reads the next object by a tail call. The caller
+  passes its own reversed list in, so all triples of one statement go onto
+  ONE list, which is reversed once at the statement's end.
+- **Two mutually recursive functions become one function with a flag.**
+  A call from `readPredicateObjectList` to `readPredicateObjectListMore` and
+  back is a tail call in the source, but Lean compiles only a SELF tail
+  call to `goto _start`; a tail call to a different function of the block
+  is a real C call. One function `readPredicateObjectList ... (accRev :=
+  []) (more := false)` covers both: `more` says whether the input stands at
+  a verb or at a run of `;`. The flag also keeps the old fuel-0 behaviour of
+  the `More` function (accept, read nothing). The defaults keep every caller
+  (`readStatement`, `readObject`, `readAnnotations`, TriG) unchanged.
+- **Check the emitted C.** `readObjectListRev` has one `goto _start;`,
+  `readPredicateObjectList` four, and neither has a self-call left.
+- **The readable forms move after the block, with theorems.**
+  `readObjectList` (the `acc ++` form) and the mutual pair
+  `readPredicateObjectListSpec`/`readPredicateObjectListMoreSpec` keep the
+  F\* shape. `readObjectListRev_eq` and `readPredicateObjectList_eq` prove
+  the loops equal to them for every fuel, errors and positions included,
+  with the same state, so the blank-node labels are the same. Three
+  `@[csimp]` theorems make a call of a readable form run the loop. Axioms:
+  `propext`, `Classical.choice`, `Quot.sound` only.
+- **Measure the output, not only the stack.** `l4factoidal parse --out
+  nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of
+  the W3C RDF 1.1 and 1.2 suites, against the binary from before (stdout,
+  stderr and exit code): 2,044 of 2,044 identical. The 239 RDF 1.2 files
+  again with `--format turtle12` and `trig12`, which is the only mode that
+  reads annotations: 478 of 478 identical. With `turtle` and `trig` only 51
+  of the 239 parse, so a comparison in the 1.1 mode alone does not test the
+  annotation path of `readObjectListRev`.
+
+Measured, linux x86_64, Lean 4.33.1, Node 22.22.0 (before 2026-10-10, after
+2026-10-12):
+
+| | before (13ff0a9d) | after |
+|---|---|---|
+| `turtle-object-list`, 25,000 objects | 10.33 s | 0.058 s |
+| `turtle-object-list`, 100,000 objects | no result in 120 s (expected failure) | 0.403 s, row passes (ratio 6.9, bound 9.0) |
+| `turtle-predicates`, native 512 KB canary | overflow (expected failure) | runs |
+| `turtle-predicates`, Node `--stack-size=512` | overflow (expected failure) | 264 ms |
+| `turtle-predicates`, Node default stack | overflow (expected failure) | 282 ms |
+| `tests/stack/run.sh --canary` | 41 pass, 0 fail (out of 41), 3 expected failures | 41 pass, 0 fail (out of 41), none |
+
+The wasm "after" column is a module rebuilt from this tree; the "before"
+column is the `web` build set of 1b06a9c8, whose `Syntax/` is the same as
+13ff0a9d.
+
+**A loop for one dimension cost the other dimension 16 bytes a level.**
+Nesting of `[ ... ]` and `( ... )` stays recursive through `readObject`,
+bounded by the document's nesting. The `readObject` frame grew from
+`sub $0x38,%rsp` to `sub $0x48,%rsp`: its call to `readPredicateObjectList`
+now has seven arguments, and on x86-64 the seventh goes on the stack. At
+512 KB, nested collections ran at 2,890 levels before and 2,695 after
+(overflow at 2,902 and 2,707); `ex:s ex:p [ ex:p [ ... 1 ] ] .` ran at
+1,501 levels before and after (overflow at 1,507). Rule: after a change to
+any function of a mutual cycle, measure the nesting bound again, and
+write the new number in the allow-list line.

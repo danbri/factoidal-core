@@ -25,8 +25,8 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    objects (`ex:s ex:p 0, 1, ... .`), 25,000 against 100,000
                    (https://github.com/danbri/factoidal/issues/754; the object
                    list was built with `acc ++ ...`: 10.33 s at 25,000 and no
-                   result in 120 s at 100,000 before the repair, 0.12 s and
-                   0.29 s after)
+                   result in 120 s at 100,000 before the repair, 0.058 s and
+                   0.403 s after, measured 2026-10-12)
   rdfc-iri         RDFC-1.0 canonicalisation of a graph with no blank nodes
   rdfc-person      RDFC-1.0 canonicalisation of a graph with one blank node per person
   rdfc-bnode-unique  RDFC-1.0 canonicalisation of n persons, each a blank node with an
