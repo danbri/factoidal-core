@@ -8,6 +8,9 @@
 # executable `l4prim-test` (Harness/PrimBytesTest.lean) compares the two on
 # random and edge-case inputs (positions size-8, size-7, 0, past the end, the
 # USize wrap-around; shared and exclusive arrays) and checks read after write.
+# The same for the append primitive `pushU64LE` against `pushU64LERef`
+# (capacity at and around the 8-byte boundary, growth, shared arrays, chains
+# of appends; record section 8).
 #
 #   (a) native  formal/lean4/.lake/build/bin/l4prim-test (clang, USize 64 bits).
 #   (b) wasm32  the same generated C compiled by emcc (tools/lean-wasm-exe.sh,

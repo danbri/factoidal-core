@@ -45,6 +45,14 @@ the output identical, and the evidence for and against a support library
   and 3.8 to 4.9 times C in wasm32. No cause is specific to wasm32. Of the
   gap, about half is the five 2 MB buffer copies the harness makes before it
   writes; the rest is about 4 times more instructions per row than C.
+- Section 8 (owner, "Yes A B"): an append primitive `pushU64LE` removes the
+  copies, a fused merge loop removes the tuple per run of equal keys (proved
+  equal to the old loop), and a proved bounds test before the merge loop
+  removes the bounds test per load. Native: 4.0 to 4.4 times C before, 1.8
+  to 1.9 times C after (3.0 ms); wasm32: 4.1 to 4.4 before, 2.3 after;
+  instructions per run 32.1 to 21.6 million (C 7.8). Not applied to the
+  production `Qlvr.Side.put64`: no gain on the queries, and an inline-C
+  primitive cannot run under `#guard`.
 
 ## Method and machine
 
@@ -677,6 +685,267 @@ dfcc267a, 2026-10-12: `lake build` 1,546 jobs, 0 errors;
 (out of 39); `tests/qlvr/kernel.sh`: all implementations, with
 `c-O2-copies`, give the same checksum; `Wasm/build-wasm.sh`
 (`L4_WASM_NO_INSTALL=1`, a copy of the work directory): both modules link.
+
+## 8. No buffer copies, no tuple per run, no bounds test per load
+
+Owner, 2026-10-12, verbatim: "Yes A B", to two steps of section 7: (A) a
+builder primitive that appends 8 bytes, so that the kernel makes no buffer
+copies; (B) no tuple allocation per `crossLeftU` call, with a proof that the
+new function equals the old, and a look at the bounds test per step of
+`mergeLoopU`, removed only with a proof.
+
+### Where the copies and the tuples came from
+
+Generated C of `runUsizeCStore` (`.lake/build/ir/Harness/QlvrKernel.c`):
+three calls of `scratch` (`ByteArray.extract`, so
+`lean_byte_array_copy_slice`: one copy of `a2`, 250 KB, and one each of `b1`
+and `b2`, 2.16 MB), then `lean_inc_ref` of the two `b` buffers, because the
+compiler made the two equal `scratch x.b1 (8 * x.nB)` (and the two of
+`x.b2`) one object each, given both to `filterBU` and to `mergeLoopU`. The
+first `stU64LE` into each shared buffer copies it (`lean_copy_byte_array`):
+two more copies of 2.16 MB. Callgrind (native) shows the tuples: under
+`mergeLoopU`, 13,369 calls of `crossLeftU` and 40,107 calls of
+`lean_dec_ref_cold` per run.
+
+### What changed
+
+`L4Factoidal/Prim/Bytes.lean`:
+
+- `pushU64LE b x`: `@[extern c inline]`, append the eight little-endian bytes
+  of `x`. Its Lean body is `pushU64LERef b x`, a separate non-extern
+  definition (eight `ByteArray.push`). The C: when `b` is exclusive and has at
+  least 8 bytes of spare capacity (`lean_sarray_capacity - lean_sarray_size
+  >= 8`, which cannot wrap), eight byte stores `(uint8_t)(x >> 8k)` and
+  `m_size += 8`; otherwise eight calls of `lean_byte_array_push`, the runtime
+  function that `ByteArray.push` compiles to (it copies a shared array and
+  grows the capacity with `lean_sarray_ensure_capacity`). No `realloc`, no
+  other runtime function: `lean_is_exclusive`, `lean_sarray_capacity`,
+  `lean_sarray_size`, `lean_sarray_cptr` and `lean_to_sarray` are the inline
+  functions of `lean.h`.
+- `ldU64LEIn d p h`: `ldU64LE` with no bounds test (eight `uget`), for
+  `h : p.toNat + 8 ≤ d.usize.toNat`. `le_div8_toNat` and `idx8_window` give
+  `h` for row `i < n` of a column after ONE test `n ≤ d.usize / 8` in `USize`.
+
+`Harness/QlvrKernel.lean`, four new variants (all old variants unchanged):
+
+| Variant | Output buffers | Merge loop |
+| --- | --- | --- |
+| `usize-cstore` (section 6) | `scratch` copies, `stU64LE` | `mergeLoopU` + `crossLeftU` |
+| `usize-cstore-flat` | the same | `mergeFlatU` (step B) |
+| `usize-cpush` | `emptyWithCapacity`, `pushU64LE` (step A) | `mergeLoopU` + `crossLeftU` |
+| `usize-cpush-flat` | the same | `mergeFlatU` |
+| `usize-cpush-in` | the same | `mergeFlatIn`: one test, then `mergeFlatP` (no bounds test per load) |
+
+`mergeFlatU` makes the cross product a state of the merge loop: when
+`ci < ie` it emits left row `ci` with right rows `cj` to `je`, then returns to
+the merge. Every call is a self tail call, so the C is one loop; it allocates
+only the result tuple, once. In the push variants each output buffer is
+`ByteArray.emptyWithCapacity (8 * n + tag)` with a different `tag`: with equal
+expressions the compiler shared them again (four references to one empty
+array), and an unused tag parameter did not help (the compiler removed it,
+`newBuf___redArg`).
+
+A push variant is correct for every input: a buffer that is too small grows.
+The `stU64LE` variants drop rows that do not fit their buffers (here the
+output has at most `nB` rows, so none is dropped).
+
+### What is proved
+
+`#print axioms`: `propext`, `Quot.sound`, and for `ldU64LESpec_pushU64LE`
+and `ldU64LE_pushU64LE` also `Classical.choice`. No `sorry`,
+`native_decide`, user axiom, `import Std` or raised heartbeats.
+
+- Over the reference of `pushU64LE` (`Prim.Bytes`): `data_pushU64LE` (the
+  bytes are `b.data ++ u64Bytes x`), `size_pushU64LE` (size + 8),
+  `getOr0_pushU64LE_old` (old bytes unchanged), `getOr0_pushU64LE_new` (byte
+  `b.size + k` is byte `k` of `x`), `getOr0_pushU64LE_past`,
+  `ldU64LESpec_pushU64LE` (`ldU64LESpec` at the old size is `x`, no
+  hypothesis) and `ldU64LE_pushU64LE` (the same through `ldU64LE` at a
+  `USize` position equal to the old size).
+- `ldU64LE_eq_in`: `ldU64LE d p = ldU64LEIn d p h`; `test_of_usize_window`,
+  `le_div8_toNat`, `idx8_window`. Each holds for `numBits` 32 and 64.
+- Step B (`QlvrKernel`): `mergeFlatU_spec` (in any state, `mergeFlatU` equals
+  the rest of `crossRightU` for row `ci`, then `crossLeftU` from `ci + 1`,
+  then `mergeLoopU`; by `fun_induction`), `mergeFlatU_eq` (from the start
+  state, `mergeFlatU = mergeLoopU`, the old definition, which stays as the
+  reference), for every store function `st`.
+- Bounds: `runEndU_le` (`runEndU` does not pass `n`), `mergeFlatP_eq`
+  (`mergeFlatP = mergeFlatU` under the column hypotheses and the invariant
+  `je ≤ nb`), `mergeFlatIn_eq` (`mergeFlatIn = mergeLoopU` from the start
+  state, whether its one test passes or not).
+
+Not proved: that `runUsizeCPush` equals `runUsizeCStore` (different buffers;
+the checksum comparison of `tests/qlvr/kernel.sh` checks it on q07).
+`@[csimp]` was not used for step B: `mergeFlatU` is a separate function with
+more arguments, and the variants call it directly.
+
+### What is trusted, and how it is checked
+
+Trusted: the C of `pushU64LE` computes `pushU64LERef`. The facts it rests
+on: byte `k` is written as `x >> 8k` (byte order in the source); the fast-path
+test `capacity - size >= 8` (no wrap, since size ≤ capacity); the size field
+update; that `lean_byte_array_push` is the compiled `ByteArray.push` (it is
+the `@[extern]` of `ByteArray.push` in Lean 4.33).
+
+`tests/prim/run.sh` (`Harness/PrimBytesTest.lean`) now also compares
+`pushU64LE` with `pushU64LERef`: every listed array size (0 to 1000 and 20
+random) with capacity equal to the size, 1, 7, 8, 9 and 16 bytes above it, 0
+and half the size (growth); five values; exclusive and shared (the shared
+original must not change); size + 8 and read back with `ldU64LE`; and chains
+of 120 appends from an empty array of capacity 0, 1, 7, 8, 9, 13, 64 and 800
+with one intermediate array kept live (shared):
+
+- native (numBits 64): 21,581 pass, 0 fail (out of 21,581);
+- wasm32 under node 22 (numBits 32, emcc 6.0.12): 21,581 pass, 0 fail (out
+  of 21,581).
+
+Mutation check (native, each change alone, then restored):
+
+| Change to the C of `pushU64LE` | Result |
+| --- | --- |
+| byte 0 written as `x >> 8` | 1,645 fail (out of 21,581) |
+| no exclusivity test | 1,146 fail (out of 21,581) |
+| `m_size += 7` | 2,562 fail (out of 21,581) |
+| capacity test `>= 1` in place of `>= 8` | segmentation fault (exit 139) |
+
+### Numbers
+
+Instruction counts, native, valgrind callgrind 3.22, `l4qlvr-kernel` built by
+Lake, million instructions per kernel run (inclusive, 4 runs divided by 4).
+They do not change with load. The C kernel `run` (section 7): 7.8.
+
+| Variant | total | merge loop | `filterBU` | other |
+| --- | ---: | ---: | ---: | ---: |
+| `usize-cstore` | 32.1 | 19.3 | 11.0 | 1.8 |
+| `usize-cstore-flat` | 27.9 | 15.1 | 11.0 | 1.8 |
+| `usize-cpush` | 32.9 | 19.5 | 12.4 | 1.0 |
+| `usize-cpush-flat` | 29.7 | 16.3 | 12.4 | 1.0 |
+| `usize-cpush-in` | 21.6 | 8.2 | 12.4 | 1.0 |
+
+- Step B removes 4.2 million instructions per run and all 40,107 frees in the
+  merge loop (`lean_dec_ref_cold` under `mergeFlatU`: 0 calls).
+- Step A adds 0.8 million instructions (the append tests the capacity and
+  writes the size field; `filterBU` 11.0 to 12.4) and removes the copies,
+  which are few instructions (`rep movsb`) and 10.8 MB of memory traffic per
+  run: the gain is in time, not in instructions.
+- The proved bounds removes 8.1 million instructions from the merge loop.
+  The slow paths of `ldU64LE` (a call of `ldU64LESpec` and a `lean_dec`) left
+  the loop. In the disassembly before the change, the loop (17 arguments)
+  kept most of its state in stack slots; the instruction count of the
+  change is measured, its split into tests and spills is not.
+
+Time, `tools/qlvr/bench/kernel-targets.py 9 10`: interleaved, 9 rounds, 10
+runs per implementation per round, median over rounds; native gcc 13.3 `-O2`
+C with the glibc thresholds of section 7; wasm32 emcc 6.0.12, node 22
+`--no-liftoff`. Other agents used the machine.
+
+Run 1, 1-minute load 2.13 to 2.25:
+
+| Implementation | native ms | native × C | wasm32 ms | wasm32 × C |
+| --- | ---: | ---: | ---: | ---: |
+| `usize-cstore` | 6.8 | 4.39 | 8.7 | 4.08 |
+| `usize-cstore-flat` | 5.3 | 3.41 | 8.0 | 3.58 |
+| `usize-cpush` | 5.0 | 2.94 | 6.9 | 3.45 |
+| `usize-cpush-flat` | 3.9 | 2.40 | 5.3 | 2.52 |
+| `usize-cpush-in` | 3.0 | 1.88 | 5.0 | 2.29 |
+| C `-O2` | 1.6 | 1 | 2.2 | 1 |
+| C `-O2` with the five copies | 3.9 | 2.38 | 4.7 | 2.11 |
+
+Run 2 (after the gates), load 3.04 to 5.13:
+
+| Implementation | native ms | native × C | wasm32 ms | wasm32 × C |
+| --- | ---: | ---: | ---: | ---: |
+| `usize-cstore` | 6.6 | 4.04 | 10.1 | 4.42 |
+| `usize-cstore-flat` | 5.4 | 3.17 | 8.2 | 3.85 |
+| `usize-cpush` | 4.7 | 2.92 | 6.9 | 3.16 |
+| `usize-cpush-flat` | 4.1 | 2.48 | 5.9 | 2.57 |
+| `usize-cpush-in` | 3.0 | 1.83 | 5.4 | 2.34 |
+| C `-O2` | 1.6 | 1 | 2.4 | 1 |
+| C `-O2` with the five copies | 3.7 | 2.54 | 4.8 | 1.90 |
+
+Noise: between the two runs, the implementations that did not change moved
+by 1 to 12 % (native `lean-native` 13.2 and 14.8 ms, wasm32 `lean-usize` 14.3
+and 15.6 ms). A difference smaller than that is not claimed.
+
+All implementations on both targets give checksum 5325009063194286364.
+
+What the numbers say:
+
+- Natively the three steps together take the kernel from 4.0 to 4.4 times C
+  to 1.8 to 1.9 times C (6.6 to 6.8 ms to 3.0 ms), in both runs. Each step
+  alone (step B: `cstore` to `cstore-flat`; step A: `cstore` to `cpush`; the
+  proved bounds: `cpush-flat` to `cpush-in`) is 18 % or more, larger than
+  the noise, in both runs.
+- In wasm32: 4.1 to 4.4 times C to 2.3 times C (8.7 to 10.1 ms to 5.0 to
+  5.4 ms). Step A is larger than the noise in both runs (21 and 32 %).
+  Step B on top of step A is too (6.9 to 5.3 and 5.9 ms); step B alone is in
+  run 2 (10.1 to 8.2 ms), not in run 1 (8.7 to 8.0 ms). The proved bounds
+  gives 5.3 to 5.0 and 5.9 to 5.4 ms (6 to 8 %), not separated from the
+  noise. Why it gives less in wasm32 than natively was not analysed.
+- The instruction counts agree with the native times for steps B and the
+  proved bounds. For step A they do not move (the copies are memory traffic);
+  the C kernel with the same five copies (`c-O2-copies`) costs 2.1 to 2.3
+  ms more than `c-O2` natively, close to the 1.8 to 1.9 ms that step A
+  saves.
+
+### Production paths
+
+- `Qlvr.Side.put64` (append 8 bytes, used by the joins of `Qlvr.Bgp`, by
+  `Qlvr.Query` and by `Storage/Sbm11/IdQuery`) is the same eight
+  `ByteArray.push` as `pushU64LERef`, so `@[csimp] put64 = pushU64LE` is
+  `rfl`. Measured with `tools/qlvr/bench/compare.py 7` (before and after
+  binaries, load 5.1 to 7.6): q07 warm 112.1 against 125.5 ms (median ratio
+  1.02), q10 1.00, q16 0.97, zstd 1.05; the kernel variants that do not call
+  `put64` moved by 0.92 to 1.13 (the noise). Only `lean-current` (the old
+  scan with `selectRows`) gained (0.77). No query gain is larger than the
+  noise, so the change is NOT applied. It also breaks the build: an
+  `@[extern c inline]` primitive has no symbol that the interpreter can call,
+  so the `#guard`s of `Qlvr/Side.lean` and `Qlvr/MergeTheorems.lean`, which
+  evaluate code that reaches `put64`, fail ("Could not find native
+  implementation of external declaration"). They were disabled only for the
+  measurement build.
+- `Storage/Sbm11/FrameWords.put64` is the same eight pushes. Not changed (the
+  SBM11 files belong to other work in progress); the `#guard` limit above
+  applies there too.
+- `Codec/Zstd`: the decoder writes literal and match bytes, not 8-byte
+  values; steps A and B do not apply. Not measured.
+
+### Gates for this change
+
+Worktree of `main` at 26ee727f, 2026-10-12:
+
+- `lake build` (whole library and executables): 1,546 jobs, 0 errors.
+- `python3 tools/lean-tail-recursion-audit.py --gate`: exit 0 (no new
+  allow-list line; the new loops are self tail calls).
+- `tests/prim/run.sh`: native 21,581 pass, 0 fail (out of 21,581); wasm32
+  21,581 pass, 0 fail (out of 21,581).
+- `tests/qlvr/run.sh`: 39 pass, 0 fail (out of 39); queries 21 pass, 0 fail,
+  0 refused (out of 21); zstd-diff 1,860 pass, 0 fail (out of 1,860 frames).
+- `tests/qlvr/kernel.sh`: all twelve Lean implementations and the three C
+  ones give the same checksum.
+- `tests/sbm11/run.sh`: 123 pass, 0 fail (out of 123).
+- `formal/lean4/Wasm/native-smoke.sh`: 350 pass, 0 fail, 0 xfail (out of 350).
+- `tests/known-defects/run.sh`: 13 XFAIL, 0 XPASS, 0 probe errors (out of 13).
+- `tests/stack/run.sh --canary`: 57 pass, 0 fail (out of 57).
+- `Wasm/build-wasm.sh` (`L4_WASM_NO_INSTALL=1`, a copy of the work
+  directory, emcc 6.0.12): both modules link, with the changed
+  `L4Factoidal/Prim/Bytes.c` among the library objects; nothing installed.
+- `#print axioms` on the 18 new theorems: `propext`, `Quot.sound`, and
+  `Classical.choice` for two (listed above). No `sorry`, `native_decide`,
+  user `axiom`, `import Std`, `partial`, `unsafe` or raised heartbeats in the
+  diff.
+- The production files (`Qlvr/Side.lean`, `Qlvr/MergeTheorems.lean`) are
+  unchanged; the `@[csimp]` measurement build was reverted.
+
+### Still open
+
+- `filterBU` is now the largest part: 12.4 of 21.6 million instructions, 46
+  per B row (C about 10). Its three loads per row have the same bounds tests
+  that `mergeFlatP` proved away; the same method applies.
+- The ratio in wasm32 stays above the native one (2.3 against 1.9 times C).
+- Code that a `#guard` evaluates cannot call an `@[extern c inline]`
+  primitive. A primitive for a production path needs its checks as compiled
+  tests, or a form the interpreter can run.
 
 ## What did not work or was not done
 

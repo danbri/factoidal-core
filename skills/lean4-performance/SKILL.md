@@ -440,7 +440,44 @@ the assembly.
   tail-recursive function with the state as arguments.
 - **A tuple returned from an inner loop is an allocation per call**
   (`lean_alloc_ctor`, and `lean_box_usize` for a `USize` field). Return one
-  value, or fuse the inner loop into the outer one.
+  value, or fuse the inner loop into the outer one. Fusing: make the inner
+  loop a state of the outer loop (extra arguments, a lexicographic
+  `termination_by`), keep the nested version as the reference and prove the
+  two equal by `fun_induction` on the fused one (`QlvrKernel.mergeFlatU_eq`,
+  record section 8). q07 kernel: 40,107 frees per run to 0, 32.1 to 27.9
+  million instructions per run.
+- **Build an output buffer by appending, not by writing into a copy.** Pure
+  Lean has no uninitialised `ByteArray`, so a buffer for `stU64LE` must first
+  be a copy of some array of the final size: in the q07 kernel, five copies
+  per run, four of 2.16 MB. Start from `ByteArray.emptyWithCapacity n`
+  (allocation, no copy) and append with `L4Factoidal.Prim.Bytes.pushU64LE`
+  (an `@[extern c inline]` primitive: one exclusivity and capacity test, one
+  8-byte store; otherwise eight calls of the runtime's
+  `lean_byte_array_push`). A buffer that is too small grows, so the append
+  version is also correct for any input.
+- **The compiler shares equal pure expressions.** Two
+  `ByteArray.emptyWithCapacity (8 * n)` (or two `scratch` calls with the same
+  arguments) in one function become ONE object with two references; the first
+  write to each then copies or reallocates. An unused "tag" parameter does not
+  prevent it: the compiler removes it (`___redArg`) and shares again. Make
+  the expressions differ (capacity `n + tag`), and check the generated C for
+  `lean_inc_ref_n` on the buffer.
+- **Prove the per-load bounds test away with one test before the loop.**
+  `Prim.Bytes.ldU64LEIn d p h` is eight `uget` and no test, for
+  `h : p.toNat + 8 ≤ d.usize.toNat`; `ldU64LE_eq_in` proves it equal to
+  `ldU64LE`. Test `n ≤ d.usize / 8` once in `USize`, then `le_div8_toNat` and
+  `idx8_window` give `h` for every row `i < n`. In the q07 merge loop this
+  removed the slow-path calls from the loop, and with them the register
+  spills: 16.3 to 8.2 million instructions in that loop
+  (`QlvrKernel.mergeFlatP_eq`, `mergeFlatIn_eq`).
+- **An `@[extern c inline]` primitive cannot run in the interpreter.**
+  `#guard`, `#eval` and `decide`-by-evaluation of code that reaches it fail
+  at build time: "Could not find native implementation of external
+  declaration". So a `@[csimp]` from a widely used function to such a
+  primitive breaks every `#guard` on the way (it did for `Qlvr.Side.put64`:
+  the `#guard`s of `Qlvr/Side.lean` and `Qlvr/MergeTheorems.lean`, 2026-10-12).
+  Call the primitive only in code that no `#guard` evaluates, or keep the
+  check as a compiled test.
 - **The C compiler options do not repair these costs.** `-O2`, `-march=native`,
   thin LTO over the generated C and PGO (clang 18) changed the kernel and the
   queries by less than the noise and the zstd decoder by +11 to +12 %; the

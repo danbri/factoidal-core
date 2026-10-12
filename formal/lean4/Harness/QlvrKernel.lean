@@ -363,6 +363,215 @@ decreasing_by (have := usize_succ_toNat _h; have := USize.lt_iff_toNat_lt.mp _h;
 termination_by fuel.toNat
 decreasing_by all_goals (have := usize_pred_toNat _hf; have := USize.lt_iff_toNat_lt.mp _hf; simp only [USize.toNat_zero] at *; omega)
 
+/-- `mergeLoopU` with `crossLeftU` and `crossRightU` fused into ONE loop
+    (record section 8, step B). `mergeLoopU` calls `crossLeftU` once per run
+    of equal join keys (13,369 times per q07 run), and each call returns a
+    tuple `(oi, oa, m)`: in the generated C, three allocations and three
+    frees per call. Here the cross product is a state of the same loop: when
+    `ci < ie`, the loop emits left row `ci` with right rows `cj` to `je`
+    (`cj` restarts at `j0`), then returns to the merge. Every call is a self
+    tail call, so the C is one loop with no allocation; the tuple is made
+    once, at the end. `mergeFlatU_eq` proves it equal to `mergeLoopU` when
+    started outside a run (`ci = ie`). -/
+@[specialize] def mergeFlatU (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (fuel i j : USize) (iv : UInt64) (ci ie j0 cj je m : USize) (oi oa : ByteArray) :
+    ByteArray × ByteArray × USize :=
+  if hc : ci < ie then
+    if hj : cj < je then
+      mergeFlatU ai na bi ba nb fuel i j iv ci ie j0 (cj + 1) je (m + 1)
+        (st oi (8 * m) iv) (st oa (8 * m) (ldU64LE ba (8 * cj)))
+    else mergeFlatU ai na bi ba nb fuel i j iv (ci + 1) ie j0 j0 je m oi oa
+  else if hf : 0 < fuel then
+    if i < na && j < nb then
+      let x := ldU64LE ai (8 * i)
+      let y := ldU64LE bi (8 * j)
+      if x < y then mergeFlatU ai na bi ba nb (fuel - 1) (i + 1) j iv ci ie j0 cj je m oi oa
+      else if y < x then mergeFlatU ai na bi ba nb (fuel - 1) i (j + 1) iv ci ie j0 cj je m oi oa
+      else
+        let ie' := runEndU ai x na (i + 1)
+        let je' := runEndU bi x nb (j + 1)
+        mergeFlatU ai na bi ba nb (fuel - 1) ie' je' x i ie' j j je' m oi oa
+    else (oi, oa, m)
+  else (oi, oa, m)
+termination_by (fuel.toNat, ie.toNat - ci.toNat, je.toNat - cj.toNat)
+decreasing_by
+  · have := usize_succ_toNat hj; have := USize.lt_iff_toNat_lt.mp hj
+    apply Prod.Lex.right; apply Prod.Lex.right; omega
+  · have := usize_succ_toNat hc; have := USize.lt_iff_toNat_lt.mp hc
+    apply Prod.Lex.right; apply Prod.Lex.left; omega
+  all_goals (have := usize_pred_toNat hf; have := USize.lt_iff_toNat_lt.mp hf;
+             simp only [USize.toNat_zero] at *; apply Prod.Lex.left; omega)
+
+/-- `mergeFlatU` in any state equals the nested loops: finish the current
+    run (the rest of `crossRightU` for left row `ci`, then `crossLeftU` from
+    `ci + 1`), then `mergeLoopU`. -/
+theorem mergeFlatU_spec (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (fuel i j : USize) (iv : UInt64) (ci ie j0 cj je m : USize) (oi oa : ByteArray) :
+    mergeFlatU st ai na bi ba nb fuel i j iv ci ie j0 cj je m oi oa =
+      if ci < ie then
+        (match crossRightU st ba iv je cj m oi oa with
+         | (oi, oa, m) =>
+           match crossLeftU st ba iv j0 je ie (ci + 1) m oi oa with
+           | (oi, oa, m) => mergeLoopU st ai na bi ba nb fuel i j m oi oa)
+      else mergeLoopU st ai na bi ba nb fuel i j m oi oa := by
+  fun_induction mergeFlatU st ai na bi ba nb fuel i j iv ci ie j0 cj je m oi oa with
+  | case1 fuel i j iv ci ie j0 cj je m oi oa hc hj ih =>
+    rw [ih, if_pos hc, if_pos hc]
+    conv => rhs; rw [crossRightU, dif_pos hj]
+  | case2 fuel i j iv ci ie j0 cj je m oi oa hc hj ih =>
+    rw [ih, if_pos hc]
+    conv => rhs; rw [crossRightU, dif_neg hj]
+    simp only
+    conv => rhs; rw [crossLeftU]
+    by_cases h1 : ci + 1 < ie
+    · rw [if_pos h1, dif_pos h1]
+    · rw [if_neg h1, dif_neg h1]
+  | case3 fuel i j iv ci ie j0 cj je m oi oa hc hf hb x y hxy ih =>
+    rw [ih, if_neg hc, if_neg hc]
+    conv => rhs; rw [mergeLoopU, dif_pos hf, if_pos hb]
+    simp only
+    rw [if_pos hxy]
+  | case4 fuel i j iv ci ie j0 cj je m oi oa hc hf hb x y hxy hyx ih =>
+    rw [ih, if_neg hc, if_neg hc]
+    conv => rhs; rw [mergeLoopU, dif_pos hf, if_pos hb]
+    simp only
+    rw [if_neg hxy, if_pos hyx]
+  | case5 fuel i j iv ci ie j0 cj je m oi oa hc hf hb x y hxy hyx ie' je' ih =>
+    rw [ih, if_neg hc]
+    conv => rhs; rw [mergeLoopU, dif_pos hf, if_pos hb]
+    simp only
+    rw [if_neg hxy, if_neg hyx]
+    conv => rhs; rw [crossLeftU]
+    by_cases h : i < ie'
+    · rw [if_pos h, dif_pos h]
+    · rw [if_neg h, dif_neg h]
+  | case6 fuel i j iv ci ie j0 cj je m oi oa hc hf hb =>
+    rw [if_neg hc, mergeLoopU, dif_pos hf, if_neg hb]
+  | case7 fuel i j iv ci ie j0 cj je m oi oa hc hf =>
+    rw [if_neg hc, mergeLoopU, dif_neg hf]
+
+/-- Step B of the record, section 8: the fused loop, started outside a run,
+    equals `mergeLoopU`. -/
+theorem mergeFlatU_eq (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (fuel i j m : USize) (oi oa : ByteArray) :
+    mergeFlatU st ai na bi ba nb fuel i j 0 0 0 0 0 0 m oi oa = mergeLoopU st ai na bi ba nb fuel i j m oi oa := by
+  rw [mergeFlatU_spec, if_neg (by decide)]
+
+/-- `runEndU` does not pass `n`. -/
+theorem runEndU_le (c : ByteArray) (v : UInt64) (n i : USize) (h : i.toNat ≤ n.toNat) :
+    (runEndU c v n i).toNat ≤ n.toNat := by
+  fun_induction runEndU c v n i with
+  | case1 i hi _ ih => exact ih (by have := usize_succ_toNat hi; have := USize.lt_iff_toNat_lt.mp hi; omega)
+  | case2 i hi _ => exact h
+  | case3 i hi => exact h
+
+/-- `mergeFlatU` with the bounds tests of its loads proved away (record
+    section 8, step B, the bounds test per step). The four loads of the loop
+    (`ai` and `bi` at the merge step, `ba` in the cross product) are
+    `ldU64LEIn`: eight `uget`, no test. The proofs come from `hA`, `hB`,
+    `hBa` (the columns hold `na` and `nb` rows, tested once by the caller,
+    `mergeFlatIn`), the loop tests `i < na`, `j < nb`, `cj < je`, and the
+    invariant `hje : je ≤ nb` (from `runEndU_le`). `mergeFlatP_eq`: equal to
+    `mergeFlatU`. -/
+@[specialize] def mergeFlatP (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (hA : 8 * na.toNat ≤ ai.usize.toNat) (hB : 8 * nb.toNat ≤ bi.usize.toNat)
+    (hBa : 8 * nb.toNat ≤ ba.usize.toNat)
+    (fuel i j : USize) (iv : UInt64) (ci ie j0 cj je m : USize) (hje : je.toNat ≤ nb.toNat)
+    (oi oa : ByteArray) : ByteArray × ByteArray × USize :=
+  if hc : ci < ie then
+    if hj : cj < je then
+      mergeFlatP ai na bi ba nb hA hB hBa fuel i j iv ci ie j0 (cj + 1) je (m + 1) hje
+        (st oi (8 * m) iv)
+        (st oa (8 * m) (ldU64LEIn ba (8 * cj) (idx8_window (by have := USize.lt_iff_toNat_lt.mp hj; omega) hBa)))
+    else mergeFlatP ai na bi ba nb hA hB hBa fuel i j iv (ci + 1) ie j0 j0 je m hje oi oa
+  else if hf : 0 < fuel then
+    if hb : i < na ∧ j < nb then
+      let x := ldU64LEIn ai (8 * i) (idx8_window (USize.lt_iff_toNat_lt.mp hb.1) hA)
+      let y := ldU64LEIn bi (8 * j) (idx8_window (USize.lt_iff_toNat_lt.mp hb.2) hB)
+      if x < y then mergeFlatP ai na bi ba nb hA hB hBa (fuel - 1) (i + 1) j iv ci ie j0 cj je m hje oi oa
+      else if y < x then mergeFlatP ai na bi ba nb hA hB hBa (fuel - 1) i (j + 1) iv ci ie j0 cj je m hje oi oa
+      else
+        let ie' := runEndU ai x na (i + 1)
+        let je' := runEndU bi x nb (j + 1)
+        mergeFlatP ai na bi ba nb hA hB hBa (fuel - 1) ie' je' x i ie' j j je'  m
+          (runEndU_le bi x nb (j + 1) (by have := usize_succ_toNat hb.2; have := USize.lt_iff_toNat_lt.mp hb.2; omega))
+          oi oa
+    else (oi, oa, m)
+  else (oi, oa, m)
+termination_by (fuel.toNat, ie.toNat - ci.toNat, je.toNat - cj.toNat)
+decreasing_by
+  · have := usize_succ_toNat hj; have := USize.lt_iff_toNat_lt.mp hj
+    apply Prod.Lex.right; apply Prod.Lex.right; omega
+  · have := usize_succ_toNat hc; have := USize.lt_iff_toNat_lt.mp hc
+    apply Prod.Lex.right; apply Prod.Lex.left; omega
+  all_goals (have := usize_pred_toNat hf; have := USize.lt_iff_toNat_lt.mp hf;
+             simp only [USize.toNat_zero] at *; apply Prod.Lex.left; omega)
+
+theorem mergeFlatP_eq (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (hA : 8 * na.toNat ≤ ai.usize.toNat) (hB : 8 * nb.toNat ≤ bi.usize.toNat)
+    (hBa : 8 * nb.toNat ≤ ba.usize.toNat)
+    (fuel i j : USize) (iv : UInt64) (ci ie j0 cj je m : USize) (hje : je.toNat ≤ nb.toNat)
+    (oi oa : ByteArray) :
+    mergeFlatP st ai na bi ba nb hA hB hBa fuel i j iv ci ie j0 cj je m hje oi oa =
+      mergeFlatU st ai na bi ba nb fuel i j iv ci ie j0 cj je m oi oa := by
+  fun_induction mergeFlatP st ai na bi ba nb hA hB hBa fuel i j iv ci ie j0 cj je m hje oi oa with
+  | case1 fuel i j iv ci ie j0 cj je m hje oi oa hc hj ih =>
+    rw [ih]
+    conv => rhs; rw [mergeFlatU, dif_pos hc, dif_pos hj]
+    rw [ldU64LE_eq_in]
+  | case2 fuel i j iv ci ie j0 cj je m hje oi oa hc hj ih =>
+    rw [ih]
+    conv => rhs; rw [mergeFlatU, dif_pos hc, dif_neg hj]
+  | case3 fuel i j iv ci ie j0 cj je m hje oi oa hc hf hb x y hxy ih =>
+    rw [ih]
+    conv => rhs; rw [mergeFlatU, dif_neg hc, dif_pos hf]
+    have hb' : (decide (i < na) && decide (j < nb)) = true := by simp [hb.1, hb.2]
+    rw [if_pos hb']
+    simp only
+    rw [ldU64LE_eq_in ai _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.1) hA),
+      ldU64LE_eq_in bi _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.2) hB), if_pos hxy]
+  | case4 fuel i j iv ci ie j0 cj je m hje oi oa hc hf hb x y hxy hyx ih =>
+    rw [ih]
+    conv => rhs; rw [mergeFlatU, dif_neg hc, dif_pos hf]
+    have hb' : (decide (i < na) && decide (j < nb)) = true := by simp [hb.1, hb.2]
+    rw [if_pos hb']
+    simp only
+    rw [ldU64LE_eq_in ai _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.1) hA),
+      ldU64LE_eq_in bi _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.2) hB), if_neg hxy, if_pos hyx]
+  | case5 fuel i j iv ci ie j0 cj je m hje oi oa hc hf hb x y hxy hyx ie' je' ih =>
+    rw [ih]
+    conv => rhs; rw [mergeFlatU, dif_neg hc, dif_pos hf]
+    have hb' : (decide (i < na) && decide (j < nb)) = true := by simp [hb.1, hb.2]
+    rw [if_pos hb']
+    simp only
+    rw [ldU64LE_eq_in ai _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.1) hA),
+      ldU64LE_eq_in bi _ (idx8_window (USize.lt_iff_toNat_lt.mp hb.2) hB), if_neg hxy, if_neg hyx]
+  | case6 fuel i j iv ci ie j0 cj je m hje oi oa hc hf hb =>
+    have hb' : ¬ (decide (i < na) && decide (j < nb)) = true := by
+      intro h; apply hb; simpa using h
+    rw [mergeFlatU, dif_neg hc, dif_pos hf, if_neg hb']
+  | case7 fuel i j iv ci ie j0 cj je m hje oi oa hc hf =>
+    rw [mergeFlatU, dif_neg hc, dif_neg hf]
+
+/-- The caller of `mergeFlatP`: ONE test, before the loop, that the three
+    columns hold `na` and `nb` rows (`USize` arithmetic only), then the loop
+    with no bounds test per load; otherwise `mergeFlatU`. Equal to
+    `mergeLoopU` from the start state (`mergeFlatIn_eq`). -/
+@[inline] def mergeFlatIn (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (fuel : USize) (oi oa : ByteArray) : ByteArray × ByteArray × USize :=
+  if h : na ≤ ai.usize / 8 ∧ nb ≤ bi.usize / 8 ∧ nb ≤ ba.usize / 8 then
+    mergeFlatP st ai na bi ba nb (le_div8_toNat h.1) (le_div8_toNat h.2.1) (le_div8_toNat h.2.2)
+      fuel 0 0 0 0 0 0 0 0 0 (by simp) oi oa
+  else mergeFlatU st ai na bi ba nb fuel 0 0 0 0 0 0 0 0 0 oi oa
+
+theorem mergeFlatIn_eq (ai : ByteArray) (na : USize) (bi ba : ByteArray) (nb : USize)
+    (fuel : USize) (oi oa : ByteArray) :
+    mergeFlatIn st ai na bi ba nb fuel oi oa = mergeLoopU st ai na bi ba nb fuel 0 0 0 oi oa := by
+  unfold mergeFlatIn
+  split
+  · rw [mergeFlatP_eq, mergeFlatU_eq]
+  · rw [mergeFlatU_eq]
+
 end UsizeLoops
 
 def sumLoopU (oi oa : ByteArray) (n : USize) (i : USize) (s : UInt64) : UInt64 :=
@@ -382,6 +591,81 @@ decreasing_by (have := usize_succ_toNat _h; have := USize.lt_iff_toNat_lt.mp _h;
 def runUsize (x : Input) : Nat × UInt64 := runUsizeWith stU64LERef x
 
 def runUsizeCStore (x : Input) : Nat × UInt64 := runUsizeWith stU64LE x
+
+/-! ## Record section 8: no buffer copies (step A), no tuple per run (step B)
+
+`usize-cstore-flat`: `usize-cstore` with `mergeFlatU` in place of
+`mergeLoopU` (step B alone; `mergeFlatU_eq`).
+
+`usize-cpush`: the output buffers start EMPTY (`ByteArray.emptyWithCapacity`,
+an allocation and no copy) and each Id is appended with
+`Prim.Bytes.pushU64LE`, the library's `@[extern c inline]` append (step A
+alone). The store argument `st` of the loops ignores the position:
+`pushAt b _ x = pushU64LE b x`. The `scratch` copies of `usize-cstore` (five
+per run, four of 2.16 MB: three `scratch` calls, and two copies on the first
+store into the two `scratch` buffers that the compiler shares) go away. A
+buffer that is too small grows (`pushU64LE` falls back to the runtime's
+`lean_byte_array_push`), so this variant is correct for any input; the
+`stU64LE` variants drop a row that does not fit their buffer.
+
+`usize-cpush-flat`: both.
+
+`usize-cpush-in`: `usize-cpush-flat` with `mergeFlatIn`: one test before the
+merge loop that the columns hold `na` and `nb` rows, then no bounds test in
+the loads of the loop (`mergeFlatP`; `mergeFlatIn_eq`). -/
+
+/-- The store argument of the loops for the append variants: append `x`; the
+    position is not used. -/
+@[inline] def pushAt (b : ByteArray) (_ : USize) (x : UInt64) : ByteArray := pushU64LE b x
+
+/-- A new empty buffer of capacity at least `n` (`n + tag`). Distinct tags
+    keep the compiler from making equal calls one shared object: it does so
+    for equal pure expressions (seen in the generated C: the four
+    `ByteArray.emptyWithCapacity (8 * x.nB)` of `runUsizeCPush` became one
+    object with four references, and the first append to each buffer then
+    took the slow path and a new allocation). A tag that is not used does not
+    help: the compiler removes the unused parameter (`newBuf___redArg`) and
+    shares the calls again. The capacity is not observable in Lean. -/
+@[inline] def newBuf (n : Nat) (tag : Nat) : ByteArray := ByteArray.emptyWithCapacity (n + tag)
+
+def runUsizeCStoreFlat (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAU stU64LE x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (scratch x.a2 (8 * x.nA))
+  let (bi, ba, nb) := filterBU stU64LE x.b0 x.b1 x.b2 x.kB0 nB 0 0 (scratch x.b1 (8 * x.nB)) (scratch x.b2 (8 * x.nB))
+  let (oi, oa, n) := mergeFlatU stU64LE ai na bi ba nb (na + nb + 1) 0 0 0 0 0 0 0 0 0
+    (scratch x.b1 (8 * x.nB)) (scratch x.b2 (8 * x.nB))
+  (n.toNat, sumLoopU oi oa n 0 0)
+
+def runUsizeCPush (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAU pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (newBuf (8 * x.nA) 1)
+  let (bi, ba, nb) := filterBU pushAt x.b0 x.b1 x.b2 x.kB0 nB 0 0
+    (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
+  let (oi, oa, n) := mergeLoopU pushAt ai na bi ba nb (na + nb + 1) 0 0 0
+    (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
+  (n.toNat, sumLoopU oi oa n 0 0)
+
+def runUsizeCPushFlat (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAU pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (newBuf (8 * x.nA) 1)
+  let (bi, ba, nb) := filterBU pushAt x.b0 x.b1 x.b2 x.kB0 nB 0 0
+    (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
+  let (oi, oa, n) := mergeFlatU pushAt ai na bi ba nb (na + nb + 1) 0 0 0 0 0 0 0 0 0
+    (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
+  (n.toNat, sumLoopU oi oa n 0 0)
+
+def runUsizeCPushIn (x : Input) : Nat × UInt64 :=
+  let nA := x.nA.toUSize
+  let nB := x.nB.toUSize
+  let (ai, na) := filterAU pushAt x.a0 x.a1 x.a2 x.kA0 x.kA1 nA 0 0 (newBuf (8 * x.nA) 1)
+  let (bi, ba, nb) := filterBU pushAt x.b0 x.b1 x.b2 x.kB0 nB 0 0
+    (newBuf (8 * x.nB) 2) (newBuf (8 * x.nB) 3)
+  let (oi, oa, n) := mergeFlatIn pushAt ai na bi ba nb (na + nb + 1)
+    (newBuf (8 * x.nB) 4) (newBuf (8 * x.nB) 5)
+  (n.toNat, sumLoopU oi oa n 0 0)
 
 /-! ## floats: FloatArray columns (one 8-byte slot per Id) -/
 
@@ -547,7 +831,11 @@ tools/lean-wasm-exe.sh: its import closure has no FFI). -/
     | 4 => runProduction x
     | 5 => runNative ux
     | 6 => runUsize x
-    | _ => runUsizeCStore x)
+    | 7 => runUsizeCStore x
+    | 8 => runUsizeCStoreFlat x
+    | 9 => runUsizeCPush x
+    | 10 => runUsizeCPushFlat x
+    | _ => runUsizeCPushIn x)
 
 def medianNat (xs : Array Nat) : Nat :=
   let s := mergeSortBy xs (· ≤ ·)
@@ -563,7 +851,8 @@ def runKernel (data : ByteArray) (iters : Nat) : IO UInt32 := do
     | .error e => throw (IO.userError s!"kernel: {e}")
   let fx := FInput.ofInput x
   let ux := UInput.ofInput x
-  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore"]
+  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore",
+    "usize-cstore-flat", "usize-cpush", "usize-cpush-flat", "usize-cpush-in"]
   let mut sums : Array (Nat × UInt64) := #[]
   for impl in [0:names.size] do
     let mut ts : Array Nat := #[]

@@ -21,7 +21,15 @@ Cases, for every array size in a fixed list and a random set:
   and shared (another reference is live): the shared original must be
   unchanged after the store.
 
-Checks per case: the extern result equals the reference byte for byte and in
+`Prim.Bytes.pushU64LE` (append 8 bytes) is compared with `pushU64LERef`
+(eight `ByteArray.push`) on arrays of every listed size with capacity equal
+to the size, 1, 7, 8, 9 and 16 bytes above it, 0 and half the size (so the
+append must grow the array), exclusive and shared; and on chains of 120
+appends from an empty array of several capacities, one intermediate array
+kept live (shared). Checks: same bytes and size, size + 8, the shared
+original unchanged, `ldU64LE` at the old size reads the value.
+
+Checks per store case: the extern result equals the reference byte for byte and in
 size; the shared original is unchanged; in bounds, `ldU64LE` reads back the
 value written (the theorem `ldU64LE_stU64LE`, here on the C); `ldU64LE`
 equals `ldU64LESpec` at every tested position.
@@ -86,6 +94,56 @@ def runCase (t : Tally) (n : Nat) (seed : UInt64) (p : USize) (x : UInt64) : IO 
   t := t.check (ldU64LE r1 p == ldU64LESpec r1 p.toNat) s!"load /= spec after store ({tag})"
   return t
 
+/-- An array of `n` pseudo-random bytes from `seed` with capacity `cap`
+    (when `cap < n` the pushes grow it), made in `IO`. -/
+@[noinline] def mkArrayCap (n cap : Nat) (seed : UInt64) : IO ByteArray := do
+  let mut b := ByteArray.emptyWithCapacity cap
+  let mut s := seed
+  for _ in [0:n] do
+    let (z, s') := next s
+    s := s'
+    b := b.push z.toUInt8
+  return b
+
+/-- One append case: array of size `n` and capacity `cap` from `seed`, value
+    `x`. -/
+def runPushCase (t : Tally) (n cap : Nat) (seed : UInt64) (x : UInt64) : IO Tally := do
+  let tag := s!"push n={n} cap={cap} seed={seed} x={x}"
+  -- Exclusive.
+  let r1 := pushU64LE (← mkArrayCap n cap seed) x
+  let r2 := pushU64LERef (← mkArrayCap n cap seed) x
+  let mut t := t.check (sameBytes r1 r2) s!"exclusive: extern /= reference ({tag})"
+  t := t.check (r1.size == n + 8) s!"size /= n + 8 ({tag})"
+  t := t.check (ldU64LE r1 n.toUSize == x) s!"read after append ({tag})"
+  -- Shared: the original stays live after the call.
+  let orig ← mkArrayCap n cap seed
+  let keep ← mkArrayCap n cap seed
+  let s1 := pushU64LE orig x
+  let s2 := pushU64LERef orig x
+  t := t.check (sameBytes s1 s2) s!"shared: extern /= reference ({tag})"
+  t := t.check (sameBytes orig keep) s!"shared: original changed ({tag})"
+  return t
+
+/-- A chain of `k` appends from an empty array of capacity `cap` (growth
+    through every capacity boundary), compared after each append; at step
+    `share` the intermediate array is also kept live (shared). -/
+def runPushChain (t : Tally) (cap k share : Nat) (seed : UInt64) : IO Tally := do
+  let mut a ← mkArrayCap 0 cap seed
+  let mut b ← mkArrayCap 0 cap seed
+  let mut t := t
+  let mut s := seed
+  let mut kept : ByteArray := ByteArray.empty
+  for i in [0:k] do
+    let (z, s') := next s
+    s := s'
+    if i == share then kept := a
+    a := pushU64LE a z
+    b := pushU64LERef b z
+    t := t.check (sameBytes a b) s!"chain cap={cap} step={i}: extern /= reference"
+  t := t.check (kept.size == 8 * (min share k)) s!"chain cap={cap}: kept array changed size"
+  t := t.check (ldU64LE a (8 * (k - 1)).toUSize == ldU64LESpec b (8 * (k - 1))) s!"chain cap={cap}: last read"
+  return t
+
 def positions (n : Nat) (s : UInt64) : List USize :=
   let top : USize := 0 - 1
   let fixed : List Nat := [0, 1, n - 9, n - 8, n - 7, n - 1, n, n + 1]
@@ -110,6 +168,15 @@ def main : IO UInt32 := do
       for x in values (s + n.toUInt64 + p.toUInt64) do
         t ← runCase t n (s + n.toUInt64) p x
     s := (next s).2
+  -- Appends: every size of the list, capacities at and around the 8-byte
+  -- boundary (spare 0, 1, 7, 8, 9, 16) and below the size (growth).
+  for n in sizes do
+    for cap in [0, n, n + 1, n + 7, n + 8, n + 9, n + 16, n / 2] do
+      for x in values (s + n.toUInt64 + cap.toUInt64) do
+        t ← runPushCase t n cap (s + n.toUInt64) x
+    s := (next s).2
+  for cap in [0, 1, 7, 8, 9, 13, 64, 800] do
+    t ← runPushChain t cap 120 (cap % 37) (s + cap.toUInt64)
   for m in t.firstFails do
     IO.println s!"FAIL {m}"
   IO.println s!"prim-bytes: platform numBits {System.Platform.numBits}"
