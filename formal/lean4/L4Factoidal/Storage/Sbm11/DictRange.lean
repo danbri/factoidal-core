@@ -12,9 +12,10 @@ lexical form is a prefix of the key of an `xsd:string` or `rdf:langString`
 literal) and for the rank range of a key class.
 
 `lowerBoundM` is a binary search over the pages by their first keys (as
-`Dict.lookupM`), then a scan of one page. The `#guard`s compare it with the
-definition (`lowerBoundList`: the number of keys below the target) on an
-encoded sample dictionary for every target of a list.
+`Dict.lookupM`), then a scan of one page. `DictRangeTheorems.lowerBoundM_encodeDict`
+proves it equal to the definition (`lowerBoundList`: the number of keys
+below the target) over the bytes `encodeDict?` writes; the `#guard`s compare
+the two on an encoded sample dictionary for every target of a list.
 -/
 import L4Factoidal.Storage.Sbm11.Dict
 
@@ -26,12 +27,16 @@ open L4Factoidal.Storage.Sbm11.Dict
 def lowerBoundList (keys : List ByteArray) (k : ByteArray) : Nat :=
   (keys.filter fun x => cmpBytesAt x k == .lt).length
 
+/-- Positions `i..` of a page against `k` (a tail call with fuel). -/
+def firstNotBelowGo (ks : Array ByteArray) (k : ByteArray) : Nat → Nat → Nat
+  | 0, _ => ks.size
+  | f + 1, i =>
+    if i < ks.size then (if cmpBytesAt ks[i]! k != .lt then i else firstNotBelowGo ks k f (i + 1))
+    else ks.size
+
 /-- The first position of a page's keys whose key is not below `k`
     (`ks.size` when there is none). -/
-def firstNotBelow (ks : Array ByteArray) (k : ByteArray) : Nat := Id.run do
-  for i in [0:ks.size] do
-    if cmpBytesAt ks[i]! k != .lt then return i
-  return ks.size
+def firstNotBelow (ks : Array ByteArray) (k : ByteArray) : Nat := firstNotBelowGo ks k ks.size 0
 
 /-- The rank of the first key that is not below `k`: the last page whose
     first key is not above `k` (binary search with fuel), then that page.
