@@ -192,4 +192,12 @@ def escapeSamples : List String :=
 #guard escapeString "\x7f" == "\x7f"
 #guard (Json.string "x\ty").toString == "\"x\\ty\""
 
+/-! ### Axiom audit of the run-time forms' theorems (issues 729 and 744) -/
+
+#print axioms parseR_eq
+#print axioms parseJsonTextChars_eq_R
+#print axioms charsOfString_eq
+#print axioms parseJsonText_eq_fast
+#print axioms escapeString_eq_fast
+
 end L4Factoidal.JSON.Tests
