@@ -1,0 +1,3 @@
+# Selective lookup: every triple with one IRI as object (OSP prefix scan).
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?s ?p WHERE { ?s ?p dbr:CERN }

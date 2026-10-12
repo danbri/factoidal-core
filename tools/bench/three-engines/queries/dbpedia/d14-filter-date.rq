@@ -1,0 +1,9 @@
+# FILTER on an xsd:date literal after a star join.
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?p ?d WHERE {
+  ?p dbo:birthPlace dbr:Edinburgh .
+  ?p dbo:birthDate ?d
+  FILTER(?d < "1800-01-01"^^xsd:date)
+}

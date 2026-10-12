@@ -1,0 +1,3 @@
+# ORDER BY with LIMIT over a whole predicate: the 10 largest populations.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?c ?pop WHERE { ?c dbo:populationTotal ?pop } ORDER BY DESC(?pop) ?c LIMIT 10

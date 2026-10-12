@@ -1,0 +1,7 @@
+# OPTIONAL: people born in Edinburgh, with a death date when there is one.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?p ?d WHERE {
+  ?p dbo:birthPlace dbr:Edinburgh
+  OPTIONAL { ?p dbo:deathDate ?d }
+}

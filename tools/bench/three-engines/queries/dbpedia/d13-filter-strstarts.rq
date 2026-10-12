@@ -1,0 +1,3 @@
+# FILTER on a string literal: STRSTARTS over every foaf:name.
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?s ?n WHERE { ?s foaf:name ?n FILTER(STRSTARTS(?n, "Tim Bern")) }

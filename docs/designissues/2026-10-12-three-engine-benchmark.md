@@ -1,0 +1,303 @@
+# SBM11, Virtuoso 7.2 and QLever on olympics and a 23 M triple DBpedia slice
+
+Date: 2026-10-12. Status: record (measurement). Work issue (OKR batch 2,
+KR 1.1): https://github.com/danbri/factoidal/issues/798. Owner, 2026-10-12:
+"bench yes", after the question "Are we becoming comparable to virtuoso and
+qlever yet?"; and "Consider smb11 our baseline for shardcore." Script:
+`tools/bench/three-engines/run.sh`. How to rerun: skill `perf-benchmarking`,
+section "SBM11 against Virtuoso and QLever".
+
+## 1. Result
+
+- Answer check: DBpedia slice 17 of 17 queries equal on SBM11 and Virtuoso.
+  Olympics 19 of 21 equal on SBM11, Virtuoso and the QLever oracle; 2 differ
+  and are not timed (section 5). No difference is an SBM11 defect.
+- On-disk size: SBM11 is 3.1 times smaller than Virtuoso on the DBpedia
+  slice (567.7 MB against 1,746.9 MB) and 3.8 times smaller on olympics.
+- Load: the SBM11 pack is 6.6 times slower than the Virtuoso bulk load on the
+  DBpedia slice (1,334 s against 203 s). 60 % of the pack (799 s) is phase 2,
+  the merge of the term runs, which grows about with the square of the number
+  of distinct terms (section 8, item 1).
+- Warm queries (SBM11 execution in one process against one Virtuoso HTTP
+  request): SBM11 is faster on scans and aggregates over large ranges
+  (DBpedia d10, d13, d16, d17: 5.9 to 14 times faster than Virtuoso with its
+  default threads) and on selective lookups. Virtuoso is faster on every join:
+  3.6 to 26 times on d05 to d09, d12, d14, d15. OPTIONAL (d11) runs in the
+  SBM11 reference fallback: 48.7 s and 849 MB, against 19 ms in Virtuoso.
+- Process and cold times of SBM11 on the DBpedia slice are 41 to 582 ms for
+  queries whose warm time is under 1 ms: each process reads the PRM1 block
+  metadata whole (section 8, item 3).
+- QLever was not measured on the DBpedia slice: there is no docker daemon in
+  this container and starting one was refused (section 9).
+
+## 2. Engines
+
+| Engine | Version | Configuration |
+| --- | --- | --- |
+| SBM11 | `l4sbm11` and `l4sbm11-pack` built from commit 408898bd (Lean `v4.33.1`) | `--verify none` and `--verify merkle`; query path single-threaded; packer 4 workers (default) |
+| Virtuoso Open Source | 7.2.5.3229 (Ubuntu package `virtuoso-opensource-7` 7.2.5.1+dfsg1-0.8build1), native | ini written by `bench.py`: 340,000 buffers (about 2.8 GB), `MaxDirtyBuffers` 250,000, no result-row cap, no execution-time cap; thread configurations `1t` (`ThreadsPerQuery` 1, `AsyncQueueMaxThreads` 1) and `default` (4 and 10, the package values) |
+| QLever | image `adfreiburg/qlever@sha256:b2087ec9...`, commit ceace86 (skill `qlvr`) | not run in this record; recorded numbers of 2026-10-11 only |
+
+Virtuoso loads with `ld_dir`, one `rdf_loader_run()` and `checkpoint`, into a
+named graph; every query is sent with `default-graph-uri` set to that graph,
+so Virtuoso's system graphs are not in the default graph. With a cap on
+execution time, Virtuoso returns a partial answer with an `X-SQL-State`
+header; the cap is off, and `bench.py` counts any such header as a failure
+(none occurred).
+
+## 3. Machine
+
+Firecracker VM, kernel 6.18.44-fc. CPU: Intel Xeon @ 2.80 GHz, 4 vCPU. RAM:
+16,479,424 kB, no swap. Disk: virtio block device `vda`, 256 GB (the guest
+reports it as rotational; the physical medium is not known). The machine is
+shared with one other agent; the 1-minute load average is in every table.
+
+## 4. Datasets
+
+| Dataset | Source | Licence | Triples | sha256 of the N-Triples file |
+| --- | --- | --- | ---: | --- |
+| olympics | https://github.com/wallscope/olympics-rdf at commit 54483d5 (skill `qlvr`) | as the qlvr record | 1,781,625 | `44e15095a3a9beefe09c512882a08d9b7aa82bba5e48fa22bfbfb361dde01ce0` |
+| DBpedia 2016-10 slice | https://downloads.dbpedia.org/2016-10/core-i18n/en/mappingbased_objects_en.ttl.bz2 (sha256 `a5811aa5...c9953`) and `mappingbased_literals_en.ttl.bz2` (sha256 `0d0d6b55...d518`) | CC BY-SA 3.0 and GFDL (DBpedia 2016-10 release) | 23,269,560 lines, 23,269,559 distinct triples (13.1 times olympics) | `94025f74d5c4643ce05984524e5583c59a057b8110544ec9a7c55fbd21de85e1` |
+
+Slice rule (`tools/bench/three-engines/slice.py`): every statement of
+`mappingbased_objects_en` (18,746,174), and the statements of
+`mappingbased_literals_en` with predicate `foaf:name`, `dbo:birthDate`,
+`dbo:deathDate` or `dbo:populationTotal` (4,523,386); a statement with an IRI
+that is not an N-Triples IRIREF is dropped (0 dropped). The file is 3.12 GB.
+
+## 5. Queries and answer check
+
+Olympics: the 21 qlvr oracle queries (`tests/qlvr/queries`, copied to
+`tools/bench/three-engines/queries/olympics`). DBpedia slice: 17 queries in
+`tools/bench/three-engines/queries/dbpedia`:
+
+| Query | Shape |
+| --- | --- |
+| d01, d02, d03, d04 | selective lookup: subject; object; predicate and object; language-tagged literal object |
+| d05, d06 | star join (three patterns on one subject) |
+| d07, d08 | path join, two and three hops |
+| d09, d10 | aggregate with GROUP BY (after a join; over every triple) |
+| d11 | OPTIONAL |
+| d12, d13, d14 | FILTER on a numeric literal, STRSTARTS, an `xsd:date` |
+| d15, d16 | ORDER BY with LIMIT (after a join; over a whole predicate) |
+| d17 | COUNT(*) over every triple |
+
+Comparison (`bench.py`, `term_key`): each answer is a multiset of solutions.
+IRIs by value; blank nodes all equal (no blank nodes occur in the answers);
+language-tagged literals by lexical form and lower-cased tag; numeric literals
+(the integer types, decimal, double, float) by value printed with 12
+significant digits (QLever and Virtuoso do not keep the input datatype or
+lexical form of numbers); `xsd:string` and simple literals by lexical form;
+other literals by lexical form and datatype. SBM11 `--verify none` and
+`--verify merkle` gave byte-identical answers on all 38 queries.
+
+| Dataset | Equal | Different (not timed) |
+| --- | ---: | --- |
+| olympics | 19 of 21 | q15, q20 |
+| DBpedia slice | 17 of 17 | none |
+
+Causes of the two differences:
+
+- **q15** `?g dbp:year 1936`: SBM11 0 rows, Virtuoso 2, QLever 2. The data
+  says `"1936"^^xsd:int`; the query constant is `"1936"^^xsd:integer`. These
+  are different RDF terms, and SPARQL 1.1 basic graph pattern matching under
+  simple entailment (section 18.3) matches terms, so 0 rows conforms. Virtuoso
+  and QLever match the value. Not a Factoidal defect (SBM11 stage 4 record,
+  section 2.2).
+- **q20** `?s dbo:weight ?o` (100,666 rows): 2 rows differ. Virtuoso's SPARQL
+  JSON writer prints `xsd:double` with 6 significant digits (`74.6667` for
+  74.66666666666667); SBM11 and QLever agree at 12 digits. Not a Factoidal
+  defect.
+
+Per-query row counts and SBM11 paths: `report.md` from `run.sh` (all
+`path=ids` except d11, `path=reference`).
+
+## 6. Method
+
+- **Order.** `run.sh` steps: data, pack, load, answers, timing, report. Each
+  timing phase starts one Virtuoso thread configuration (`1t`, then
+  `default`). Phase `1t` times SBM11 `none`, SBM11 `merkle` and Virtuoso;
+  phase `default` times SBM11 `none` and Virtuoso (the SBM11 columns below are
+  from phase `1t`).
+- **Cold.** The page cache cannot be dropped here (writing
+  `/proc/sys/vm/drop_caches` was refused). A cold run is the first run in a
+  new process after the engine's own files were evicted with
+  `posix_fadvise(POSIX_FADV_DONTNEED)`: SBM11, a new `l4sbm11 query` process
+  after eviction of the generation; Virtuoso, the first query of a new server
+  process started after eviction of `virtuoso.db`. `mincore` gave 0 resident
+  bytes of those files in all 432 checks (one per engine, query and cold
+  round). Median of 3 cold rounds.
+- **SBM11 process.** Wall time of one `l4sbm11 query` process (start,
+  manifest, PRM1 files, plan, scans, SPARQL JSON to `/dev/null`), median of 7
+  rounds.
+- **SBM11 warm.** The execution median that `l4sbm11 query --repeat 5`
+  reports (the opened permutations and caches kept between runs), median over
+  7 rounds. d11 (process over 5 s): 3 rounds, warm is the faster of 2 runs.
+- **Virtuoso warm.** Client wall time of one HTTP POST to `/sparql` on
+  localhost, from the request to the last byte of the SPARQL JSON response,
+  median of 7 rounds after one warm-up pass. It includes parsing, compiling,
+  HTTP and JSON (about 2 to 3 ms for a 1-row answer).
+- **RSS.** SBM11: VmHWM of the query process, maximum over the rounds.
+  Virtuoso: VmHWM of the server, reset (`/proc/PID/clear_refs` 5) before each
+  request, maximum over the rounds; it includes the resident buffer pool.
+  Load: VmHWM of the packer (`wait4`) and of the Virtuoso server since its
+  start.
+- **Interleaving and load.** In each round every query runs on every engine,
+  with the engine order rotated per query and round. Before each round the
+  driver waits up to 90 s for the 1-minute load average to fall under 2.0 and
+  records it. Every round started under 2.0 (ranges in the tables). The
+  load and pack steps ran at load 0.8 to 4.5 (the other agent).
+
+## 7. Tables
+
+### 7.1 Load
+
+| Dataset | Engine | load s | peak RSS MB | on-disk MB | triples | load avg before / after |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| olympics | SBM11 `l4sbm11-pack` (4 workers) | 39.2 | 195 | 34.8 | 1,781,625 | 1.14 / not recorded |
+| olympics | Virtuoso bulk load (1 loader) + checkpoint | 14.5 | 970 | 132.1 | 1,781,625 | 1.61 / 2.73 |
+| olympics | QLever `qlever index` (recorded 2026-10-11) | 4.35 | 250 | 38.5 | 1,781,625 | not recorded |
+| DBpedia slice | SBM11 `l4sbm11-pack` (4 workers) | 1,334.3 | 552 | 567.7 | 23,269,559 | 0.80 / 2.66 |
+| DBpedia slice | Virtuoso bulk load (1 loader) + checkpoint | 202.7 | 2,871 | 1,746.9 | 23,269,559 | 2.04 / 4.53 |
+
+SBM11 pack phases, DBpedia slice (ms): parse 211,843; term-run merge
+799,203; remap and sort 259,695; permutation merge and blocks 44,272; hashes
+and manifest 19,264. 8,877,307 distinct non-inline terms. Virtuoso on-disk
+size is `virtuoso.db` plus `virtuoso-temp.db` after checkpoint and shutdown;
+it includes the database's own system tables (not subtracted).
+
+### 7.2 Olympics (19 queries)
+
+Load average at round start: phase `1t` 0.76 to 1.98, phase `default` 1.89
+to 1.98. Times in ms; RSS in MB.
+
+| Query | SBM11 none cold / process / warm | RSS | SBM11 merkle cold / process / warm | RSS | Virtuoso 1t cold / warm | RSS | Virtuoso default cold / warm | RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| q01-count-all | 24.7 / 19.9 / 0.34 | 15 | 25.2 / 20.6 / 0.34 | 17 | 21.4 / 21.60 | 280 | 27.2 / 23.44 | 288 |
+| q02-predicate-counts | 60.8 / 18.3 / 1.69 | 15 | 51.4 / 36.6 / 1.78 | 19 | 100.5 / 84.50 | 280 | 88.0 / 86.21 | 288 |
+| q03-scan-bound-predicate-int | 24.5 / 18.0 / 0.49 | 17 | 48.2 / 44.7 / 0.40 | 19 | 27.9 / 4.97 | 280 | 31.4 / 5.19 | 288 |
+| q04-subject-lookup | 41.9 / 43.8 / 0.22 | 17 | 92.8 / 74.6 / 0.11 | 21 | 14.2 / 2.90 | 280 | 10.9 / 2.88 | 288 |
+| q05-object-bound-type | 23.2 / 17.1 / 0.70 | 17 | 66.7 / 59.1 / 0.41 | 21 | 10.6 / 3.58 | 280 | 9.8 / 3.19 | 288 |
+| q06-join-two | 24.3 / 18.1 / 0.94 | 17 | 48.4 / 45.7 / 0.49 | 19 | 45.2 / 5.32 | 280 | 38.8 / 4.03 | 288 |
+| q07-join-three | 206.7 / 88.6 / 53.11 | 23 | 466.3 / 322.6 / 54.32 | 33 | 390.5 / 16.08 | 280 | 450.5 / 14.79 | 288 |
+| q08-filter-lang-literal | 95.4 / 38.7 / 15.45 | 21 | 152.6 / 86.9 / 14.34 | 23 | 65.0 / 2.82 | 280 | 68.1 / 2.44 | 288 |
+| q09-bgp-lang-literal | 42.3 / 17.3 / 0.50 | 15 | 86.8 / 65.6 / 0.22 | 21 | 65.8 / 2.45 | 280 | 97.6 / 2.42 | 288 |
+| q10-orderby-limit-double | 45.0 / 60.6 / 26.58 | 23 | 102.4 / 98.2 / 24.41 | 25 | 361.9 / 218.63 | 280 | 239.2 / 92.16 | 288 |
+| q11-filter-numeric | 123.3 / 72.8 / 40.96 | 21 | 184.7 / 171.2 / 40.74 | 23 | 65.6 / 3.48 | 280 | 60.9 / 3.38 | 288 |
+| q12-group-medals | 71.2 / 28.4 / 7.33 | 17 | 96.9 / 69.8 / 7.05 | 19 | 86.3 / 4.68 | 280 | 89.9 / 4.36 | 288 |
+| q13-subclass-of | 33.5 / 16.9 / 0.32 | 17 | 129.5 / 43.2 / 0.15 | 19 | 5.0 / 2.81 | 280 | 5.1 / 2.38 | 288 |
+| q14-typed-int-object | 19.4 / 19.3 / 0.48 | 15 | 110.0 / 45.9 / 0.36 | 19 | 16.4 / 2.39 | 280 | 18.7 / 2.29 | 288 |
+| q16-strstarts | 63.3 / 42.4 / 22.64 | 21 | 107.9 / 122.5 / 21.65 | 25 | 285.8 / 212.79 | 280 | 210.1 / 84.90 | 288 |
+| q17-noc-team-join | 25.9 / 18.1 / 0.76 | 17 | 82.1 / 54.7 / 0.45 | 21 | 121.2 / 2.38 | 280 | 103.1 / 2.60 | 288 |
+| q18-games-by-year-limit | 18.0 / 17.7 / 0.37 | 17 | 47.0 / 40.4 / 0.24 | 19 | 30.6 / 2.79 | 280 | 29.4 / 3.10 | 288 |
+| q19-scan-bound-predicate-iri | 232.9 / 207.6 / 162.38 | 35 | 462.9 / 452.6 / 114.95 | 47 | 918.0 / 823.19 | 280 | 950.1 / 917.88 | 288 |
+| q21-scan-bound-predicate-lang | 423.2 / 326.0 / 281.30 | 27 | 691.4 / 578.2 / 270.38 | 37 | 4,801.1 / 5,249.84 | 281 | 4,827.0 / 5,364.31 | 289 |
+
+QLever on olympics, recorded 2026-10-11 (`tests/qlvr/bench.sh`, the qlvr
+format record section "Measurements"; same machine, not re-measured today):
+`curl` time of a warm HTTP request with the result cache cleared, median of
+3, default server threads, no load average, no cold time, no server RSS. In
+ms: q01 15, q02 37, q03 3, q04 5, q05 3, q06 5, q07 19, q08 3, q09 3, q10 18,
+q11 4, q12 4, q13 2, q14 2, q16 37, q17 4, q18 3, q19 198, q21 717.
+
+### 7.3 DBpedia slice (17 queries)
+
+Load average at round start: phase `1t` 1.01 to 1.96, phase `default` 1.00
+to 1.41. Times in ms; RSS in MB.
+
+| Query | SBM11 none cold / process / warm | RSS | SBM11 merkle cold / process / warm | RSS | Virtuoso 1t cold / warm | RSS | Virtuoso default cold / warm | RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| d01-subject-lookup | 582.3 / 483.8 / 0.24 | 41 | 761.6 / 748.0 / 0.11 | 45 | 60.0 / 3.54 | 891 | 67.3 / 3.42 | 682 |
+| d02-object-lookup | 512.1 / 306.5 / 0.28 | 33 | 592.7 / 573.7 / 0.14 | 37 | 197.5 / 3.52 | 891 | 177.5 / 3.26 | 682 |
+| d03-predicate-object | 215.1 / 75.3 / 2.35 | 23 | 3,015.7 / 2,832.3 / 1.62 | 67 | 440.1 / 20.11 | 891 | 497.1 / 22.67 | 682 |
+| d04-lang-literal-lookup | 77.9 / 41.4 / 0.62 | 17 | 488.3 / 318.6 / 0.32 | 27 | 794.2 / 4.54 | 891 | 698.6 / 3.62 | 682 |
+| d05-star-three | 1,100.1 / 672.0 / 574.79 | 83 | 7,111.8 / 6,962.6 / 609.22 | 135 | 1,816.0 / 54.90 | 875 | 1,939.9 / 48.92 | 682 |
+| d06-star-film | 235.4 / 147.9 / 67.77 | 25 | 2,138.2 / 1,862.1 / 66.83 | 51 | 405.5 / 8.58 | 875 | 437.7 / 7.24 | 682 |
+| d07-path-two-hops | 382.0 / 209.4 / 136.34 | 37 | 1,501.0 / 1,331.3 / 143.45 | 51 | 410.7 / 5.34 | 875 | 433.7 / 6.33 | 682 |
+| d08-path-three-hops | 602.1 / 245.6 / 152.05 | 41 | 4,525.9 / 3,931.1 / 213.30 | 83 | 757.3 / 44.07 | 875 | 778.1 / 42.72 | 682 |
+| d09-group-birthplace | 257.0 / 165.5 / 75.84 | 27 | 1,101.0 / 885.4 / 75.22 | 45 | 261.2 / 3.61 | 875 | 303.0 / 3.71 | 682 |
+| d10-group-predicates | 119.7 / 94.7 / 42.55 | 21 | 935.6 / 974.6 / 46.60 | 37 | 1,314.5 / 1,123.97 | 875 | 484.8 / 355.68 | 682 |
+| d11-optional | 49,632.6 / 50,688.7 / 48,732.18 | 849 | 52,925.4 / 57,349.3 / 47,407.98 | 961 | 633.6 / 19.07 | 875 | 621.8 / 21.12 | 682 |
+| d12-filter-numeric | 210.8 / 158.6 / 49.69 | 25 | 986.2 / 919.2 / 58.90 | 37 | 328.9 / 8.62 | 875 | 394.5 / 8.02 | 682 |
+| d13-filter-strstarts | 700.2 / 642.3 / 557.62 | 19 | 2,124.3 / 2,098.2 / 557.55 | 45 | 4,332.5 / 3,754.06 | 879 | 4,679.8 / 3,736.20 | 682 |
+| d14-filter-date | 300.1 / 179.3 / 81.30 | 29 | 1,079.5 / 1,038.6 / 88.88 | 45 | 460.0 / 6.78 | 881 | 485.0 / 7.94 | 682 |
+| d15-orderby-limit | 163.1 / 132.3 / 42.18 | 25 | 638.0 / 476.3 / 39.22 | 35 | 559.4 / 9.15 | 883 | 583.2 / 9.85 | 682 |
+| d16-orderby-limit-scan | 327.6 / 279.8 / 79.77 | 37 | 484.4 / 582.5 / 81.81 | 43 | 1,659.4 / 1,301.85 | 884 | 763.8 / 471.91 | 682 |
+| d17-count-all | 46.6 / 44.7 / 6.16 | 17 | 67.8 / 103.9 / 4.68 | 21 | 288.2 / 272.20 | 885 | 86.9 / 86.08 | 682 |
+
+### 7.4 Threads
+
+SBM11 queries are single-threaded; the packer ran with its default 4
+workers only. Virtuoso `default` against `1t`: the warm time falls on scans
+and aggregates over many rows (d10 1,124 to 356 ms, d16 1,302 to 472, d17
+272 to 86, olympics q10 219 to 92, q16 213 to 85) and does not change on
+joins and lookups. The Virtuoso load ran once, in the `default`
+configuration with one loader.
+
+## 8. SBM11 findings (issue texts; no issue filed by this work)
+
+1. **Pack phase 2 grows about with the square of the distinct terms.**
+   Olympics: 543,967 terms, phase 2 3.4 s. Earlier scaling log
+   (`tests/sbm11/dict_scaling.sh`): 950,691 terms, 9.2 s. DBpedia slice:
+   8,877,307 terms, 799 s. 16.3 times the terms of olympics gave 234 times
+   the time. Phase 2 is the k-way merge of the term runs that writes GDV1,
+   GDX1 and the remap files (`Harness/Sbm11PackLib.lean`, stage 3 record
+   section 4). The machine load was 0.8 to 4.5 during the pack; that does not
+   explain a factor of 14 over linear. Proposed issue: "SBM11 pack phase 2
+   (term-run merge) time is superlinear in distinct terms: 799 s of 1,334 s
+   on 8.9 M terms"; acceptance: phase 2 time within 2.2 times per doubling of
+   terms on the n/2n/4n ladder, and a `danbri-function-precrime-checkers`
+   scaling assertion.
+2. **OPTIONAL goes to the reference fallback, which materialises the
+   selected quads.** d11: 48.7 s warm, 849 MB peak RSS (all `dbo:birthPlace`
+   and `dbo:deathDate` quads decoded into a dataset); Virtuoso 19 ms. This is
+   https://github.com/danbri/factoidal/issues/775 and SBM11 stage 4 open item
+   2; add this measurement to that issue.
+3. **Each process reads PRM1 whole.** On the DBpedia slice the SPO PRM1 is
+   8,185,170 bytes and the OSP PRM1 5,596,106 bytes; d01 takes 484 ms per
+   process and 0.24 ms warm. Under `--verify none` PRM1 is still read whole
+   (stage 4 record section 9.1). Proposed issue: "SBM11 query: read PRM1
+   entries by binary search with positioned reads, not whole files";
+   acceptance: d01 process time under 50 ms on the DBpedia slice. Related:
+   stage 4 open item 4 (process start-up).
+4. **Joins.** Warm SBM11 joins are 3.6 to 26 times Virtuoso's on the DBpedia
+   slice (d05 575 against 49 ms, d07 136 against 6, d09 76 against 3.6).
+   Tracking: https://github.com/danbri/factoidal/issues/787 (SBM11 stages)
+   and https://github.com/danbri/factoidal/issues/799 (parallel block scans,
+   then PushIR).
+5. **`--verify merkle` cold and process times** are 1.5 to 38 times those of
+   `none` on the DBpedia slice (d03 2,832 against 75 ms process): every read
+   is widened to 65,536-byte chunks that are read and checked. Warm times are
+   equal. No issue proposed; this is the cost the option was made for.
+
+## 9. What could not be measured, and why
+
+- **QLever on the DBpedia slice: not measured** (load time, size, answers,
+  any query time). The QLever server and index builder run in docker; the
+  docker daemon was not running, and starting `dockerd` was refused by the
+  session's permission system. QLever was not built natively (the issue's
+  constraint: do not work around the missing daemon).
+- **QLever on olympics:** answers from the existing oracle
+  (`/home/user/qlvr-work/oracle`, compared above); times from the 2026-10-11
+  records only (section 7.1 and 7.2). Not measured: cold time, server RSS per
+  query, single-thread time, load average.
+- **Cold runs with the whole OS page cache dropped:** refused (it would
+  affect the other workload on the machine). Cold here means section 6.
+- **SBM11 single-thread against default threads:** the query path has one
+  thread; the packer was measured only with 4 workers.
+- **Virtuoso load with one thread or with several loaders:** one
+  configuration only.
+
+## 10. Rerun
+
+```
+apt-get install -y virtuoso-opensource
+tools/bench/three-engines/run.sh            # data, pack, load, answers, timing, report
+```
+
+Needs about 4.3 GB of free disk at the peak (the SBM11 pack's temporary row
+runs) and 3.2 GB of `/dev/shm` for the staged N-Triples file. `olympics.nt`
+comes from `tools/qlvr/build-instance.sh` (`QLVR_WORK`). Outputs go to
+`$BENCH_DATA/results` (default `/home/user/bench-data/results`):
+`results.json` holds every number above, with the per-round records and
+load averages. Running all steps takes about 3 hours on this machine.

@@ -1,0 +1,4 @@
+# Selective lookup: bound predicate and object (POS prefix scan).
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?p WHERE { ?p dbo:birthPlace dbr:Edinburgh }

@@ -1,0 +1,3 @@
+# Selective lookup: every triple of one subject (SPO prefix scan).
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?p ?o WHERE { dbr:Tim_Berners-Lee ?p ?o }

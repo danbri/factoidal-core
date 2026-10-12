@@ -1,0 +1,2 @@
+# COUNT(*) over every triple.
+SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }

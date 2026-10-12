@@ -254,6 +254,40 @@ Five traps from that survey, each of which cost a re-run or a wrong ranking:
   rows measured before the repair at load 6 and after it at load 34 to 45.
   Record both, and compare CPU time when the loads differ.
 
+### SBM11 against Virtuoso and QLever — `tools/bench/three-engines/run.sh`
+
+Issue https://github.com/danbri/factoidal/issues/798. Record and results:
+[`docs/designissues/2026-10-12-three-engine-benchmark.md`](../../docs/designissues/2026-10-12-three-engine-benchmark.md).
+Rebuilds every number: the DBpedia 2016-10 slice (23,269,560 triples, pinned
+sha256), the SBM11 generations (`l4sbm11-pack`), the Virtuoso 7.2 databases
+(native `apt-get install virtuoso-opensource`, bulk loader), the answer check
+(every engine, multisets of solutions; a query with a difference is not
+timed) and the timing rounds; it writes `$BENCH_DATA/results/results.json`
+and prints the tables.
+
+```
+apt-get install -y virtuoso-opensource          # 7.2.5.1 here
+tools/bench/three-engines/run.sh                # all steps, about 3 h
+STEPS="answers timing report" DATASETS=dbpedia tools/bench/three-engines/run.sh
+```
+
+- Data and indexes live in `BENCH_DATA` (default `/home/user/bench-data`),
+  never in the repository. Peak disk about 4.3 GB (SBM11 pack temporary runs
+  of the DBpedia slice, then the Virtuoso database of 1.75 GB); the 3.1 GB
+  N-Triples file is staged in `/dev/shm` and deleted after the loads.
+  `guarded.sh` stops a pack when free disk falls under `MIN_FREE_GB` (3).
+- Cold run: the page cache cannot be dropped in the container (writing
+  `/proc/sys/vm/drop_caches` is refused), so a cold run is the first run in a
+  new process (Virtuoso: a new server process) after the engine's own files
+  are evicted with `posix_fadvise(DONTNEED)`; `mincore` gives the resident
+  bytes before the run (0 in every recorded round).
+- Each round records the 1-minute load average and waits up to
+  `LOAD_WAIT_S` (90 s) for it to fall under 2.0; engines are interleaved in
+  every round, with the order rotated.
+- QLever needs a docker daemon. Without one (2026-10-12: the daemon was not
+  running and starting it was refused) the QLever columns are the olympics
+  oracle answers and the recorded 2026-10-11 numbers only.
+
 ### Other tools
 
 - `formal/lean4/Bench/StorageCodecBench.lean` — native IBK3 encode/decode
