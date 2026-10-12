@@ -30,10 +30,12 @@ https://github.com/danbri/factoidal/issues/554). `timed` below makes
 the INPUT depend on the first clock read (`if t0 == 0 then [] else g`),
 so the computation cannot move before it, and writes the result's
 length to an `IO.Ref` before the second clock read, so it cannot move
-after it. Check of the method, 2026-10-12: the per-call times printed
-by `--time` add up to within a few percent of the user CPU time
-`/usr/bin/time` reports for the whole process (numbers in
-`docs/designissues/2026-10-10-rdfs-seminaive.md`).
+after it. The clock is the monotonic wall clock. Check of the method,
+2026-10-12: the per-call times printed by `--time`, times the number of
+runs, add up to most of the wall time `/usr/bin/time` reports for the
+whole process (chain 40, list-scan loop, 3 runs: 1.44 s of 1.57 s; the
+rest is parsing and the agreement check). Numbers:
+`docs/designissues/2026-10-10-rdfs-seminaive.md`.
 
 The agreement result stands on its own: `closureSemiNaiveChecked`
 returns the naive answer whenever the delta loop is not a fixed point,

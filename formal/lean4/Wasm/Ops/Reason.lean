@@ -90,10 +90,13 @@ indexed round that `RDFS.stepFast_eq` proves equal to `RDFS.step`, so the
 count is the same number. Until 2026-10-12 it stepped with `RDFS.step`,
 whose list scans `closure`'s `@[csimp]` twin does not replace: the
 counter repeated every round of the closure with scans, and it took
-almost all of the op's time (`l4factoidal closure --regime rho-df` on a
-160-class `rdfs:subClassOf` chain ran over 600 s; `closureFix` alone
-takes 1.6 s; gdb stack samples were all in `roundsToFixpoint` and
-`Graph.mem`). Issue https://github.com/danbri/factoidal/issues/756. -/
+almost all of the op's time: `l4factoidal closure --regime rho-df` on a
+160-class `rdfs:subClassOf` chain gave no result in 120 s, every gdb
+stack sample was in `roundsToFixpoint` and `Graph.mem`, and `closureFix`
+alone takes 1.6 s. With `stepFast` the command takes 1.6 s of CPU time,
+and its output is byte-identical on the 11 inputs of
+`docs/designissues/2026-10-10-rdfs-seminaive.md` § 5.
+Issue https://github.com/danbri/factoidal/issues/756. -/
 theorem rhoDfRounds_eq (cap : Nat) (g : Graph) :
     roundsToFixpoint L4Factoidal.RDFS.stepFast cap g
       = roundsToFixpoint L4Factoidal.RDFS.step cap g := by

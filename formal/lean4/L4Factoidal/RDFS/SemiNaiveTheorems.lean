@@ -77,9 +77,11 @@ triple that is `Triple.eqb`-equal to one already present.
 NOT PROVED: `∀ g, Saturated (semiNaive g)`, i.e. that
 `closureFuelBound g` rounds are enough for the delta loop. The same
 obligation is open for the naive loop (`ClosureTheorems.lean` header,
-T4). The semi-naive loop makes the same rounds as the naive loop
-(round k of each adds exactly the conclusions of `stepConclusions` on
-the graph of round k-1), so one proof would serve both. Until it is
+T4). After round k, the delta loop holds the same triples as the
+naive loop, up to `Triple.eqb`: `RoundInv.closed` gives every naive
+conclusion, and `mem_stepConclusions_of_mem_deltaConclusions` gives
+nothing more (that equality is not stated as a theorem here). So one
+fuel proof would serve both loops. Until it is
 proved, `closureSemiNaiveChecked` keeps its run-time check
 (`isNaiveFixpoint`) and its fallback to `closureFix`.
 
