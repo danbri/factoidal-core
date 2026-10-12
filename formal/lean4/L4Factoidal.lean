@@ -695,3 +695,9 @@ import L4Factoidal.XMPP.Framing
 import L4Factoidal.XMPP.Server
 import L4Factoidal.XMPP.Gc3
 import L4Factoidal.Fn.Theorems
+import L4Factoidal.Planner.Requirement
+import L4Factoidal.Planner.Capability
+import L4Factoidal.Planner.Mapping
+import L4Factoidal.Planner.Plan
+import L4Factoidal.Planner.Soundness
+import L4Factoidal.Planner.Tests

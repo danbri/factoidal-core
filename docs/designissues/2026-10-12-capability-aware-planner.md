@@ -240,3 +240,98 @@ access patterns with a test set of at least 20 requirements, six source kinds
 described as capabilities, and the execution state machine with two
 invariants. The runtime planner, information acquisition, WebMCP and LLM
 operations come in batch 3.
+
+## 8. KR 2.1: Lean definitions
+
+Landed 2026-10-12 for OKR batch 2, KR 2.1
+(https://github.com/danbri/factoidal/issues/801). Module tree
+`formal/lean4/L4Factoidal/Planner/`. Every module is imported by
+`L4Factoidal.lean`.
+
+### Definitions
+
+| Lean name | Module | What it is |
+|---|---|---|
+| `Requirement` | `Requirement.lean` | A BGP (`SPARQL.Bgp`), a list of `RowFilter`, a projection. No new term or solution type: it uses `TriplePattern`, `Binding`, `GraphPattern` of the reference evaluator. |
+| `Requirement.answers r g` | `Requirement.lean` | `projectSolutions r.projection (r.pattern.eval g)`: the reference evaluator (`GraphPattern.eval`, filters as `GraphPattern.filter`), then the evaluator's `Project`. |
+| `RowFilter` | `Requirement.lean` | A test on solution mappings with a proof field `respects`: the test gives the same result for two association lists that denote the same partial function. |
+| `SolEquiv`, `SolLe` | `Requirement.lean` | Equality and extension of solution mappings as partial functions (SPARQL 1.1 section 18.1.8). The evaluator stores a mapping as an association list, so list equality is too strict. |
+| `Capability` | `Capability.lean` | Name, arity, required input positions (`inputs`; outputs are the other positions), `location`, `CostModel` (per-call cost, per-row cost, optional call and row quotas, all `Nat`), `exactness : Exactness` (`exact` or `approximate`). |
+| `CapSemantics` | `Capability.lean` | `ext` (the declared extension, a list of tuples) and `impl` (input binding to a list of tuples, a pure function). `Sound`: every returned tuple is in `ext`. `CompleteFor inp`: every `ext` tuple that matches `inp` is returned. |
+| `Mapping`, `TripleTemplate`, `Slot` | `Mapping.lean` | View-style mapping: each tuple denotes the triples of a list of templates whose positions are tuple positions or constants. |
+| `Source`, `Catalog`, `declaredGraph` | `Mapping.lean` | A source is a capability, a mapping and its semantics. The declared graph is the union of the templates applied to every extension tuple of every source (the default graph of the declared dataset). |
+| `Arg`, `Access`, `Plan` | `Plan.lean` | Plan tree: `unit`, `access` (source index and one argument per position, each a constant or a variable), `join` (dependent join: the right side runs once per left row, with that row's bindings as inputs), `filter`, `project`, `union`. |
+| `Plan.exec`, `Plan.run`, `Row` | `Plan.lean` | Executable semantics over the pure implementations. An access drops a tuple that does not bind consistently with the arguments or whose templates do not give triples. Each row carries `approx`, set when the row depends on an `approximate` source. |
+| `Plan.wfBound`, `Plan.WellFormed` | `Plan.lean` | The access-pattern condition: every required input is a constant or a variable bound by an earlier step; arities agree. Decidable. |
+| `Rewriting`, `Rewriting.check`, `Rewriting.toPlan`, `IsRewriting` | `Plan.lean` | A list of access steps. `check` (Boolean) requires: (1) each requirement triple pattern is equal to some template of some step's source with the step's arguments put in for the tuple positions; (2) each variable a step binds is a variable of the BGP; (3) the chain of steps is well-formed. `toPlan` is the chain of dependent joins, then the requirement's own filters and projection. `IsRewriting cat req p` is: some rewriting passes `check` and denotes `p`. |
+
+### Theorems (`Soundness.lean`)
+
+- `rewriting_sound`: if each `exact` source of the catalog is sound, and
+  `p` is a rewriting of `req`, then each row of `p.run cat` that is not
+  marked is, as a partial function, equal to an answer in
+  `req.answers (declaredGraph cat)`.
+- `run_unmarked_of_allExact`: if all sources are `exact`, no row of any
+  plan is marked.
+- `rewriting_sound_allExact`: if all sources are `exact` and sound, each
+  row of a rewriting is an answer.
+- `union_sound`: if two plans are sound for a requirement, their union is
+  sound for it.
+- `wellFormed_no_inputFailure`: in a well-formed plan, no access in the run
+  finds a required input unbound (`Plan.inputFailure` is `false`).
+
+Check against anti-pattern 29: the hypotheses are the soundness of each
+source implementation against its own extension, and the Boolean check on
+the access steps. Neither mentions the evaluator or `Requirement.answers`.
+The proof builds a run of the evaluator's `evalBgpFrom`: for each triple
+pattern it takes the triple that the covering template gives for the
+returned tuple, shows that this triple is in the declared graph, and shows
+that `tpMatch` accepts it from any restriction of the plan row.
+
+All five theorems: `#print axioms` gives `propext`, `Classical.choice`,
+`Quot.sound` only (`Planner/Tests.lean`). No `sorry`, no `native_decide`,
+no `partial`, no raised heartbeats, no `import Std` in the planner modules.
+`python3 tools/lean-tail-recursion-audit.py --gate` exits 0. `bindArgs` and
+`inputsGo` are tail calls. `Plan.exec`, `Plan.wfBound` and
+`Plan.inputFailure` recurse once per plan operator; they are in
+`tools/lean-tail-recursion-allow.txt` with class (b), plan nesting.
+
+### Tests (`Planner/Tests.lean`)
+
+`#guard` cases over three mock sources: a REST-like lookup that requires
+the subject, a free scan like a SPARQL endpoint, and an approximate source
+whose implementation returns a value outside its declared extension. They
+check: a plan with bound inputs is well-formed and passes `check`; the
+reversed plan (first access has an unbound input) fails both and reports
+`inputFailure`; a plan that covers only one triple pattern fails `check`;
+the executed answers of the exact rewriting are the reference evaluator's
+answers over the materialised declared graph (same multiset of projected
+rows, with and without a filter); the approximate plan marks every row,
+and its answer (99) differs from the evaluator's answer over the declared
+graph (41).
+
+### Limits of these definitions
+
+- Only triple patterns whose positions are variables or constants can be
+  covered. A triple-term pattern (RDF 1.2) is never covered.
+- The rewriting shape is one chain of accesses under the requirement's
+  filters and projection. Unions of rewritings are sound by
+  `union_sound`. Other plan shapes need their own relation.
+- The declared dataset has only a default graph; named graphs (quads) are
+  not mapped yet.
+- `RowFilter` is an abstract test. A constructor from the SPARQL `Expr`
+  AST needs a proof that expression evaluation reads a mapping only
+  through `Binding.lookup`.
+
+### Open
+
+- Completeness: for a given capability set, each answer of the
+  requirement is found by some rewriting (needs `CompleteFor` on each
+  access input, and the PDQ-style search that produces the rewritings).
+- Costs: `CostModel` is recorded and not used. No cost function on plans
+  and no theorem about cost.
+- Adaptation: the runtime planner, retries, quotas and probing as costed
+  work; the execution state machine with invariants (a later key result
+  of https://github.com/danbri/factoidal/issues/801).
+- IO: implementations are pure functions; an IO wrapper and its relation
+  to `CapSemantics` are not defined.

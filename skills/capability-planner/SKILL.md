@@ -10,7 +10,12 @@ Record: [`docs/designissues/2026-10-12-capability-aware-planner.md`](../../docs/
 Epic: https://github.com/danbri/factoidal/issues/800.
 OKR batch 2, objective O2: https://github.com/danbri/factoidal/issues/801.
 
-Status 2026-10-12: direction set, no code.
+Status 2026-10-12: KR 2.1 landed. Lean definitions in
+`formal/lean4/L4Factoidal/Planner/` (requirement, capability, mapping,
+plan, `Plan.exec`, rewriting check) with the soundness theorem
+`rewriting_sound`, the marker theorem `run_unmarked_of_allExact` and
+`#guard` tests; record section 8 of the design record. Completeness, costs
+and adaptation are open.
 
 ## Rules
 
