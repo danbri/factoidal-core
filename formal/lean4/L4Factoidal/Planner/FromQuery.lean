@@ -43,7 +43,7 @@ def selectVarsGo : List SelectItem → List VarName → Option (List VarName)
 
 def Requirement.ofQuery? (q : Query) : Option Requirement :=
   let m := q.modifier
-  if q.dataset.isEmpty && q.groupBy.isNone && q.having.isEmpty && q.postValues.isNone &&
+  if !q.pattern.mentionsFulltext && q.dataset.isEmpty && q.groupBy.isNone && q.having.isEmpty && q.postValues.isNone &&
       m.orderBy.isNone && !m.distinct && !m.reduced && m.offset.isNone && m.limit.isNone then
     match q.form, queryPatternBgp? q.pattern with
     | .select .all, some b => some { bgp := b, projection := (bgpVars b).eraseDups }

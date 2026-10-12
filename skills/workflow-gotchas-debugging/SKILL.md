@@ -1929,3 +1929,42 @@ no suite result is affected.
    (hazard #15). Check with `ls -la third_party/testing | head` first.
 3. After removing a worktree, run `git status` in the main checkout. A
    failure that names the removed worktree is this hazard.
+
+## Hazard #41 — a new reference-evaluator feature and the fast paths that bypass it (2026-10-12)
+
+### Symptom
+
+The merge of `claude/core-split` into `main` on 2026-10-12 failed in one
+proof, `MetadataCountTheorems.countRows_eq_backend`. The proof was correct
+before the merge; the merge changed what it is about.
+
+### Root cause
+
+Two lines of development ran for two days (80 commits each). One line added
+`text:query` (full-text search) to the reference SPARQL evaluator and made
+the backend runner `runSelectQueryBackendDataset` refuse any query whose
+pattern mentions it. The other line added query paths that answer SPARQL
+without the reference evaluator: the metadata COUNT fast path
+(`SPARQL/MetadataCount.lean`), the SBM11 id path (`IdQuery.translate`), the
+qlvr reader (`Qlvr.Query.translate`) and the planner's query reader
+(`Planner.Requirement.ofQuery?`). None of them knew `text:query`: each would
+read `?s text:query "x"` as an ordinary triple pattern and answer from the
+stored triples, which is a different answer. Only the COUNT path had a
+theorem that tied it to the backend runner, so only that one failed to
+build. The other three would have given wrong answers with every build and
+suite green.
+
+### The rules
+
+- When a feature lands in the reference evaluator, list every path that
+  answers queries without it and make each one refuse the feature (return
+  `none` or throw, so the reference evaluator answers) until it implements
+  the feature. Today that list is: `runSelectQueryBackendDataset`,
+  `MetadataCount.countRows?`, `Sbm11.IdQuery.translate`,
+  `Qlvr.Query.translate`, `Planner.Requirement.ofQuery?`. Find new ones with
+  `grep -rn 'def translate\|ofQuery?\|countRows?' formal/lean4/L4Factoidal`.
+- Add a `tests/sbm11/gate/ref-*.rq` query for the feature: the gate checks
+  that it goes to the reference path and that the answers equal
+  `l4factoidal`. (`ref-fulltext.rq` is the 2026-10-12 case.)
+- One mainline. Work that lands on a second branch for days produces this
+  hazard at the merge. Land on `main` (CLAUDE.md, "Repository and branch").

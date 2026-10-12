@@ -882,6 +882,12 @@ rule #17").
     of which ran an EXISTS query through that path. Found by
     `tools/w3c-persisted-census.sh`. Full text: hazard #35 in
     `skills/workflow-gotchas-debugging`.)
+    The same applies to a feature added to the reference evaluator: every
+    path that bypasses it must refuse the feature until it implements it.
+    (2026-10-12: `text:query` landed on `claude/core-split` while the SBM11
+    id path, the qlvr reader, the planner and the COUNT fast path landed on
+    `main`; three of the four would have answered `text:query` patterns
+    from stored triples with all gates green. Hazard #41.)
 
 ## Skills (operational details, on-demand)
 

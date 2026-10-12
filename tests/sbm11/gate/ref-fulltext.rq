@@ -1,0 +1,3 @@
+# A text:query (full-text search) pattern goes to the reference evaluator:
+# the id path does not implement it (merge of claude/core-split, 2026-10-12).
+SELECT ?s WHERE { ?s <http://jena.apache.org/text#query> "abc" }

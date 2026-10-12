@@ -333,6 +333,8 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
     | .select s => pure s
     | _ => throw "only SELECT queries"
   unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
+  if q.pattern.mentionsFulltext then
+    throw "text:query (full-text search): the reference evaluator answers it"
   unless q.having.isEmpty do throw "HAVING"
   if q.postValues.isSome then throw "a trailing VALUES block"
   let (pats, filters) ← flattenWhere q.pattern

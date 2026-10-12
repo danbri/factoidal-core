@@ -38,6 +38,9 @@ theorem countRows_eq_backend (ordered : OrderedSubject.Index source) (valid : so
     (env : EvalEnv) :
     some rows = runSelectQueryBackendDataset env query { default := .indexed source, named := [] } := by
   unfold countRows? at found
+  split at found
+  · contradiction
+  next noFulltext =>
   dsimp only at found
   split at found <;> try contradiction
   split at found <;> try contradiction
@@ -47,6 +50,7 @@ theorem countRows_eq_backend (ordered : OrderedSubject.Index source) (valid : so
     subst rows
     have exactCount := cardinality_eq ordered valid (patternBoundFor tp []) count cardSome
     unfold runSelectQueryBackendDataset
+    rw [if_neg noFulltext]
     change _ = evalSelectBackendDataset env (backendQuery query) _
     simp only [evalSelectBackendDataset, graphNone, evalSelectBackendOnGraph, countSome]
     rw [exactCount]
