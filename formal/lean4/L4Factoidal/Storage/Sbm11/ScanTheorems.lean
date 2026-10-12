@@ -16,9 +16,17 @@ https://github.com/danbri/factoidal/issues/776).
 * `decodedRow_selected`: the same for every row of a block that decodes
   (`Block.decodeBlock`).
 
+* `keyBound_spec`, `blockRows_exact`: inside a block, the two binary
+  searches of `scanFoldM` select exactly the rows whose comparison with the
+  key is `.eq`, when that comparison is monotone over the rows.
+* `fullFor_row`: in a block whose first and last rows carry the key prefix,
+  every row between them does (the `full` shortcut of `scanFoldM`).
+
 These say that `IdQuery.scanFoldM` reads every block that can hold a row with
-the key prefix. The rows inside a block (`keyBound`, `selectRows`) and the
-metadata shortcuts (`colConst?`) are other lemmas of the record.
+the key prefix, and inside it the right row range. Not proved here: that
+`rowKeyCmp` over the decoded words is `prefixCmp` of the rows
+(`at64 (words xs) r = xs[r]`), the filters of `selectRows`, the metadata
+shortcuts of `colConst?`, and the monadic loop of `scanFoldM` as a whole.
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -388,6 +396,125 @@ theorem decodedRow_selected (perm : Nat) (ms : List BlockMeta) (hadm : prmAdmitt
   obtain ⟨_, hf, hl, hs⟩ := decodeBlock_bounds _ _ _ hdec
   obtain ⟨h1, h2⟩ := rowsSorted_bounds rows hs _ _ hf hl r hr
   exact blocksFor_complete perm ms hadm key k hk r h1 h2 hkey
+
+
+/-! ## Rows inside a block
+
+`scanFoldM` decodes the key columns of a selected block and finds the rows
+with the key prefix by two binary searches (`keyBound`, lower and strict).
+The lemmas below are stated over the comparison `rowKeyCmp cols key` and
+need only that it is monotone over the rows (it is `prefixCmp` of the sorted
+rows when the key columns are the words of the block's columns; that bridge,
+`at64 (words xs) r = xs[r]`, is not proved here). -/
+
+theorem keyBound_spec (cols : Array ByteArray) (key : Array UInt64) (strict : Bool) (n : Nat)
+    (hmono : ∀ r s, r ≤ s → s < n →
+      (rowKeyCmp cols key s == .lt || (strict && rowKeyCmp cols key s == .eq)) = true →
+      (rowKeyCmp cols key r == .lt || (strict && rowKeyCmp cols key r == .eq)) = true) :
+    ∀ f lo hi, hi ≤ n → lo ≤ hi → hi - lo < 2 ^ f →
+      lo ≤ keyBound cols key strict f lo hi ∧ keyBound cols key strict f lo hi ≤ hi ∧
+      (∀ r, lo ≤ r → r < keyBound cols key strict f lo hi →
+        (rowKeyCmp cols key r == .lt || (strict && rowKeyCmp cols key r == .eq)) = true) ∧
+      (∀ r, keyBound cols key strict f lo hi ≤ r → r < hi →
+        (rowKeyCmp cols key r == .lt || (strict && rowKeyCmp cols key r == .eq)) = false) := by
+  intro f
+  induction f with
+  | zero =>
+    intro lo hi _ hlh hs
+    have : lo = hi := by simp at hs; omega
+    subst this
+    simp only [keyBound]
+    refine ⟨Nat.le_refl _, Nat.le_refl _, fun r h1 h2 => absurd h2 (by omega),
+      fun r h1 h2 => absurd h2 (by omega)⟩
+  | succ f ih =>
+    intro lo hi hn hlh hs
+    have hp : 2 ^ (f + 1) = 2 * 2 ^ f := by rw [Nat.pow_succ, Nat.mul_comm]
+    simp only [keyBound]
+    by_cases hlt : lo < hi
+    · rw [if_pos hlt]
+      by_cases hm : (rowKeyCmp cols key ((lo + hi) / 2) == .lt ||
+          (strict && rowKeyCmp cols key ((lo + hi) / 2) == .eq)) = true
+      · rw [if_pos hm]
+        obtain ⟨h1, h2, h3, h4⟩ := ih ((lo + hi) / 2 + 1) hi hn (by omega) (by omega)
+        refine ⟨by omega, h2, fun r hr1 hr2 => ?_, h4⟩
+        by_cases hr : r ≤ (lo + hi) / 2
+        · exact hmono r _ hr (by omega) hm
+        · exact h3 r (by omega) hr2
+      · rw [if_neg hm]
+        have hm' : (rowKeyCmp cols key ((lo + hi) / 2) == .lt ||
+            (strict && rowKeyCmp cols key ((lo + hi) / 2) == .eq)) = false := by simpa using hm
+        obtain ⟨h1, h2, h3, h4⟩ := ih lo ((lo + hi) / 2) (by omega) (by omega) (by omega)
+        refine ⟨h1, by omega, h3, fun r hr1 hr2 => ?_⟩
+        by_cases hr : r < (lo + hi) / 2
+        · exact h4 r hr1 hr
+        · cases hc : (rowKeyCmp cols key r == .lt || (strict && rowKeyCmp cols key r == .eq))
+          · rfl
+          · have := hmono ((lo + hi) / 2) r (by omega) (by omega) hc
+            rw [hm'] at this; cases this
+    · rw [if_neg hlt]
+      refine ⟨Nat.le_refl _, by omega, fun r h1 h2 => absurd h2 (by omega),
+        fun r h1 h2 => absurd h2 (by omega)⟩
+
+/-- The two binary searches of `scanFoldM` select exactly the rows whose key
+    prefix equals the key, when the comparison is monotone over the rows. -/
+theorem blockRows_exact (cols : Array ByteArray) (key : Array UInt64) (n : Nat)
+    (hmono : ∀ r s, r ≤ s → s < n →
+      (rowKeyCmp cols key s = .lt → rowKeyCmp cols key r = .lt) ∧
+      (rowKeyCmp cols key r = .gt → rowKeyCmp cols key s = .gt)) (r : Nat) (hr : r < n) :
+    (keyBound cols key false (Nat.log2 n + 2) 0 n ≤ r ∧
+      r < keyBound cols key true (Nat.log2 n + 2) (keyBound cols key false (Nat.log2 n + 2) 0 n) n) ↔
+      rowKeyCmp cols key r = .eq := by
+  have hfuel : n < 2 ^ (Nat.log2 n + 2) := by
+    have := @Nat.lt_log2_self n
+    have h2 : 2 ^ (Nat.log2 n + 1) ≤ 2 ^ (Nat.log2 n + 2) := Nat.pow_le_pow_right (by omega) (by omega)
+    omega
+  have hm1 : ∀ r s, r ≤ s → s < n →
+      (rowKeyCmp cols key s == .lt || (false && rowKeyCmp cols key s == .eq)) = true →
+      (rowKeyCmp cols key r == .lt || (false && rowKeyCmp cols key r == .eq)) = true := by
+    intro r s hrs hs h
+    have := (hmono r s hrs hs).1
+    revert h this
+    cases rowKeyCmp cols key s <;> cases rowKeyCmp cols key r <;> simp
+  have hm2 : ∀ r s, r ≤ s → s < n →
+      (rowKeyCmp cols key s == .lt || (true && rowKeyCmp cols key s == .eq)) = true →
+      (rowKeyCmp cols key r == .lt || (true && rowKeyCmp cols key r == .eq)) = true := by
+    intro r s hrs hs h
+    have := (hmono r s hrs hs).2
+    revert h this
+    cases rowKeyCmp cols key s <;> cases rowKeyCmp cols key r <;> simp
+  obtain ⟨_, l2, l3, l4⟩ := keyBound_spec cols key false n hm1 (Nat.log2 n + 2) 0 n (Nat.le_refl _)
+    (by omega) (by omega)
+  obtain ⟨u1, _, u3, u4⟩ := keyBound_spec cols key true n hm2 (Nat.log2 n + 2)
+    (keyBound cols key false (Nat.log2 n + 2) 0 n) n (Nat.le_refl _) l2 (by omega)
+  constructor
+  · intro ⟨h1, h2⟩
+    have a := l4 r h1 hr
+    have b := u3 r h1 h2
+    revert a b
+    cases rowKeyCmp cols key r <;> simp
+  · intro he
+    by_cases h1 : keyBound cols key false (Nat.log2 n + 2) 0 n ≤ r
+    · refine ⟨h1, ?_⟩
+      by_cases h2 : r < keyBound cols key true (Nat.log2 n + 2) (keyBound cols key false (Nat.log2 n + 2) 0 n) n
+      · exact h2
+      · have := u4 r (by omega) hr
+        rw [he] at this; simp at this
+    · have := l3 r (Nat.zero_le _) (by omega)
+      rw [he] at this; simp at this
+
+/-- In a block whose first and last rows both carry the key prefix (`fullFor`),
+    every row between them carries it. -/
+theorem fullFor_row (b : BlockMeta) (key : Array UInt64) (h : fullFor b key = true) (r : Row)
+    (h1 : b.first.le r = true) (h2 : r.le b.last = true) : prefixCmp r key = .eq := by
+  simp only [fullFor, Bool.and_eq_true, beq_iff_eq] at h
+  cases hc : prefixCmp r key with
+  | eq => rfl
+  | lt =>
+    have := prefixCmp_lt_of_le key h1 hc
+    rw [h.1] at this; cases this
+  | gt =>
+    have := prefixCmp_gt_of_le key h2 hc
+    rw [h.2] at this; cases this
 
 /-! ## The loop forms before the refactor, compared on samples
 
