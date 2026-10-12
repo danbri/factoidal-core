@@ -204,6 +204,27 @@ teach us something about Lean." and "consider tail recursive approach".
   reference definition, and a differential test that runs on every target
   (native and wasm32: `tests/prim/run.sh`).
 
+## Capability-aware planner (owner, 2026-10-12)
+
+Owner, 2026-10-12, verbatim: "capability-aware, cost-based planner for data
+access, computation and service interaction, with Lean-defined semantics and
+adaptive execution." and "SPARQL would be one way to express requirements.
+SQL, REST, MCP tools, file sources and LLMs would offer different ways of
+satisfying them. Shardborough would be an execution and storage option, not
+the place everything must first be imported."
+
+- Do not design a path that must import data into Shardborough first.
+- Probing and discovery are costed work: do a step only when the expected
+  saving is more than its cost.
+- Semantics in Lean; system behaviour as a state machine with invariants
+  (TLA+ discipline).
+- Full direction, model and prior work (PDQ, Calcite, Comunica, SPARQL
+  Anything): `docs/designissues/2026-10-12-capability-aware-planner.md`,
+  skill `capability-planner`. Epic:
+  https://github.com/danbri/factoidal/issues/800. OKR batch 2 (proposed):
+  https://github.com/danbri/factoidal/issues/801. Parallel block scans, then
+  PushIR: https://github.com/danbri/factoidal/issues/799.
+
 > **CLAUDE.md is short on purpose.** Operational detail lives in
 > per-topic skill docs (`skills/<name>/SKILL.md` —
 > [agentskills.io](https://agentskills.io) format, vendor-neutral) and
@@ -901,6 +922,11 @@ session.
   from Lean: rebuild the pinned QLever instance and its query oracle, the
   byte-level format record, the Python format probe, and the loop rule for
   the decoders (https://github.com/danbri/factoidal/issues/778).
+- [`capability-planner`](skills/capability-planner/SKILL.md) — the
+  capability-aware, cost-based planner across SPARQL, SQL, REST, MCP,
+  WebMCP, files, LLMs and Shardborough: the six questions, capabilities with
+  access patterns and costs, structural and runtime planners, probing as
+  costed work, Lean semantics (https://github.com/danbri/factoidal/issues/800).
 - [`lean-proof`](third_party/skills/leanprover-skills/lean-proof/SKILL.md)
   and [`lean-mwe`](third_party/skills/leanprover-skills/lean-mwe/SKILL.md)
   — vendored unmodified from leanprover/skills (Apache-2.0, provenance in
