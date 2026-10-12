@@ -368,6 +368,7 @@ import L4Factoidal.Storage.Sbm11.IdQueryTests
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
+import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson

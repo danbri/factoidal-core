@@ -12,10 +12,11 @@ loop with no allocation per value.
 
 `FrameWordsTheorems.decodeWords_eq` proves
 `decodeWords b n i = (decodeColumnAt b n i).map (fun (xs, j) => (words xs, j))`
-for `n ≤ 2^64`. `decodeWordsRange` is not proved equal to its definition
-(the cut words). The `#guard`s below compare them on encoded columns of every
-codec and on refused frames; `l4sbm11 frame-check GEN` compares them on every
-frame of every block of a generation.
+for `n ≤ 2^64`; `FrameRangeTheorems.decodeWordsRange_eq` proves that
+`decodeWordsRange` gives the words of rows `[lo, hi)` of a frame that
+decodes. The `#guard`s below compare them on encoded columns of every codec
+and on refused frames; `l4sbm11 frame-check GEN` compares them on every frame
+of every block of a generation.
 -/
 import L4Factoidal.Storage.Sbm11.Column
 
