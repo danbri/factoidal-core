@@ -560,11 +560,12 @@ def wordsOf (xs : Array Nat) : ByteArray := Id.run do
   return out
 
 /-- A column of `rows` copies of `x`. -/
-def constWords (x : UInt64) (rows : Nat) : ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity (8 * rows)
-  for _ in [0:rows] do
-    out := L4Factoidal.Qlvr.Side.put64 out x
-  return out
+def constWordsGo (x : UInt64) : Nat → ByteArray → ByteArray
+  | 0, out => out
+  | k + 1, out => constWordsGo x k (L4Factoidal.Qlvr.Side.put64 out x)
+
+def constWords (x : UInt64) (rows : Nat) : ByteArray :=
+  constWordsGo x rows (ByteArray.emptyWithCapacity (8 * rows))
 
 structure ScanStats where
   blocksRead : Nat := 0
@@ -583,17 +584,29 @@ def ScanStats.add (a b : ScanStats) : ScanStats :=
 /-- The bytes of the frames `need` of block `b`: one positioned read of the
     contiguous frames from the first to the last needed one. Returns the
     bytes, the start of each frame in them, and the bytes read. -/
+def frameStarts (b : BlockMeta) : Array Nat := #[0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2]
+
+/-- The byte range `[lo, hi)` of a block (from its first frame) that holds
+    the frames `need`: from the start of the first needed frame to the end
+    of the last; `none` when no frame is needed. -/
+def frameSpan (b : BlockMeta) (need : Array Bool) : Option (Nat × Nat) :=
+  let lo? : Option Nat :=
+    if need[0]! then some 0
+    else if need[1]! then some b.len0
+    else if need[2]! then some (b.len0 + b.len1)
+    else if need[3]! then some (b.len0 + b.len1 + b.len2)
+    else none
+  let hi :=
+    if need[3]! then b.len0 + b.len1 + b.len2 + b.len3
+    else if need[2]! then b.len0 + b.len1 + b.len2
+    else if need[1]! then b.len0 + b.len1
+    else b.len0
+  lo?.map fun lo => (lo, hi)
+
 def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : BlockMeta)
     (need : Array Bool) : ExceptT String m (ByteArray × Array Nat × Nat) := do
-  let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
-  let starts : Array Nat := #[0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2]
-  let mut lo : Option Nat := none
-  let mut hi := 0
-  for c in [0:4] do
-    if need[c]! then
-      if lo.isNone then lo := some starts[c]!
-      hi := starts[c]! + lens[c]!
-  let some lo0 := lo | return (.empty, starts, 0)
+  let starts := frameStarts b
+  let some (lo0, hi) := frameSpan b need | return (.empty, starts, 0)
   let bytes ← st.prb perm (b.offset + lo0) (hi - lo0)
   if bytes.size != hi - lo0 then throw s!"block at {b.offset}: short read"
   return (bytes, starts.map (· - lo0), hi - lo0)
@@ -705,6 +718,22 @@ def chunkOfRows (spec : ScanSpec) (rows : List Row) (sortVar : Option String) : 
   { table := { vars := spec.outVars, cols := out, rows := k, sortVar },
     consts := spec.outVars.map fun _ => none }
 
+/-- Columns `c, c + 1, ...` (`k` of them) of a block in full, as words
+    (`colAll`), appended to `acc`; the first error stops (a tail call with
+    a count). -/
+def colsAllGo (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) :
+    Nat → Nat → Array ByteArray → Except String (Array ByteArray)
+  | 0, _, acc => .ok acc
+  | k + 1, c, acc =>
+    match colAll b bytes starts c with
+    | .ok w => colsAllGo b bytes starts k (c + 1) (acc.push w)
+    | .error e => .error e
+
+/-- A pure `Except` in the scan's monad. -/
+@[inline] def ofExceptM {m : Type → Type} [Monad m] {α : Type} : Except String α → ExceptT String m α
+  | .ok a => pure a
+  | .error e => throw e
+
 /-- A block with overlay rows in its range: all four frames are read and
     decoded, the rows with the key prefix are merged with the deletes, the
     cleared graphs and the inserts (`Overlay.mergeRows`, proved:
@@ -714,11 +743,7 @@ def overlayChunkM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
     (ins del : List Row) (cleared : Array Nat) (sortVar : Option String) :
     ExceptT String m (Chunk × Nat) := do
   let (bytes, starts, nbytes) ← readFrames st spec.perm b #[true, true, true, true]
-  let mut cols : Array ByteArray := #[]
-  for c in [0:4] do
-    match colAll b bytes starts c with
-    | .ok w => cols := cols.push w
-    | .error e => throw e
+  let cols ← ofExceptM (colsAllGo b bytes starts 4 0 #[])
   let fuel := Nat.log2 b.rows + 2
   let lo := keyBound cols spec.key false fuel 0 b.rows
   let hi := keyBound cols spec.key true fuel lo b.rows
@@ -726,133 +751,233 @@ def overlayChunkM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
   let merged := L4Factoidal.Storage.Sbm11.Overlay.mergeRows (fun g => cleared.contains g) base del ins
   return (chunkOfRows spec merged sortVar, nbytes)
 
+/-! ## The scan, block by block
+
+`scanFoldM` is a `forIn` over the blocks that `blocksFor` returns, with the
+body `scanBlockM`. For each block the work is split into pure functions:
+
+  * `blockPlan`: what the PRM1 entry decides (`selects` is tested first):
+    the checks that fail for every row (`skip`), the checks left to test row
+    by row, the named-graph test, the `full` shortcut;
+  * `needOf`: the frames to read;
+  * `readFrames`: one positioned read (the only store access);
+  * `blockChunk`: from the frame bytes to the chunk.
+
+`ScanFoldTheorems.scanFoldM_tuples` proves, over an in-memory store of an
+admitted permutation with no overlay, that the chunks are the rows of the
+permutation with the key prefix that pass the checks, the named-graph test
+and the repeated-variable tests, projected to the output columns, in row
+order. -/
+
+/-- The checks of a block that `colConst?` decides: `skip` becomes true when
+    one fails for every row; the undecided checks are kept (a tail call over
+    the list). -/
+def planChecksGo (b : BlockMeta) : List (Nat × UInt64) → Bool → Array (Nat × UInt64) →
+    Bool × Array (Nat × UInt64)
+  | [], skip, acc => (skip, acc)
+  | (c, x) :: cs, skip, acc =>
+    match colConst? b c with
+    | some y => planChecksGo b cs (skip || y != x.toNat) acc
+    | none => planChecksGo b cs skip (acc.push (c, x))
+
+/-- What the PRM1 entry of a block decides. -/
+structure BlockPlan where
+  /-- a check or the named-graph test fails for every row -/
+  skip : Bool
+  /-- the checks to test row by row -/
+  checks : Array (Nat × UInt64)
+  /-- the named-graph test is needed row by row -/
+  named : Bool
+  /-- every row carries the key prefix (`fullFor`) -/
+  full : Bool
+
+def blockPlan (spec : ScanSpec) (b : BlockMeta) : BlockPlan :=
+  let (skip, checks) := planChecksGo b spec.checks.toList false #[]
+  let (skip, named) :=
+    if spec.named then
+      match colConst? b 3 with
+      | some 0 => (true, true)
+      | some _ => (skip, false)
+      | none => (skip, true)
+    else (skip, false)
+  { skip, checks, named, full := fullFor b spec.key }
+
+def BlockPlan.perRow (bp : BlockPlan) (spec : ScanSpec) : Bool :=
+  !bp.checks.isEmpty || bp.named || !spec.eqs.isEmpty
+
+/-- Per output column, its value when the block is `full` and the column is
+    constant over the block. -/
+def constOutOf (spec : ScanSpec) (b : BlockMeta) (bp : BlockPlan) : Array (Option Nat) :=
+  spec.outCols.map fun c => if bp.full then colConst? b c else none
+
+/-- Whether output `k` or a later one reads column `c` (a tail call). -/
+def outNeedGo (outCols : Array Nat) (constOut : Array (Option Nat)) (perRow : Bool) (c : Nat) :
+    Nat → Nat → Bool
+  | 0, _ => false
+  | f + 1, k =>
+    if outCols[k]! == c && ((constOut[k]!).isNone || perRow) then true
+    else outNeedGo outCols constOut perRow c f (k + 1)
+
+/-- Whether the chunk reads column `c`: a key column (unless `full`), a
+    checked column, the graph for the named-graph test, a column of a
+    repeated variable, an output column that is not constant (or any output
+    column when rows are tested one by one). -/
+def needCol (spec : ScanSpec) (bp : BlockPlan) (constOut : Array (Option Nat)) (c : Nat) : Bool :=
+  (!bp.full && decide (c < spec.key.size)) || bp.checks.any (fun ck => ck.1 == c) ||
+    (bp.named && c == 3) || spec.eqs.any (fun e => e.1 == c || e.2 == c) ||
+    outNeedGo spec.outCols constOut (bp.perRow spec) c spec.outCols.size 0
+
+def needOf (spec : ScanSpec) (bp : BlockPlan) (constOut : Array (Option Nat)) : Array Bool :=
+  #[needCol spec bp constOut 0, needCol spec bp constOut 1, needCol spec bp constOut 2,
+    needCol spec bp constOut 3]
+
+/-- Column `c` cut to rows `[lo, hi)`: empty when not needed; from the full
+    key column when there is one; else by the range decoder. -/
+def cutCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
+    (keyWords : Array ByteArray) (lo hi c : Nat) : Except String ByteArray :=
+  if need[c]! then
+    if h : c < keyWords.size then .ok (keyWords[c].extract (8 * lo) (8 * hi))
+    else colRange b bytes starts c lo hi
+  else .ok .empty
+
+/-- The key columns `0 .. k - 1` of a block in full; none when the block is
+    `full` (every row carries the key prefix). -/
+def keyWordsOf (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (full : Bool) (k : Nat) :
+    Except String (Array ByteArray) :=
+  if full then .ok #[] else colsAllGo b bytes starts k 0 #[]
+
+/-- The rows `[lo, hi)` of a block that carry the key prefix: all rows when
+    the block is `full`; else two binary searches over the key columns. -/
+def keyRange (spec : ScanSpec) (b : BlockMeta) (full : Bool) (keyWords : Array ByteArray) : Nat × Nat :=
+  if full then (0, b.rows)
+  else
+    let fuel := Nat.log2 b.rows + 2
+    let lo := keyBound keyWords spec.key false fuel 0 b.rows
+    (lo, keyBound keyWords spec.key true fuel lo b.rows)
+
+/-- The chunk of `n` rows from the cut columns: the row tests
+    (`selectRows`) or, with none, the columns as they are (a constant output
+    column filled, or left empty and given in `consts` when `fill = false`). -/
+def chunkOfCols (spec : ScanSpec) (fill : Bool) (sortVar : Option String) (bp : BlockPlan)
+    (constOut : Array (Option Nat)) (cols : Array ByteArray) (n : Nat) : Chunk :=
+  if bp.perRow spec then
+    let (out, k) := selectRows cols bp.checks bp.named spec.eqs spec.outCols n (n + 1) 0
+      (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * n)) 0
+    { table := { vars := spec.outVars, cols := out, rows := k, sortVar },
+      consts := spec.outVars.map fun _ => none }
+  else
+    let outs := (List.range spec.outCols.size).toArray.map fun k =>
+      match constOut[k]! with
+      | some x => if fill then constWords x.toUInt64 n else ByteArray.empty
+      | none => cols[spec.outCols[k]!]!
+    { table := { vars := spec.outVars, cols := outs, rows := n, sortVar },
+      consts := constOut.map (·.map Nat.toUInt64) }
+
+/-- The chunk of one block from the bytes of its needed frames: the key
+    columns in full (to find the rows with the key prefix, unless `full`),
+    then every needed column for those rows only (`cutCol`), then
+    `chunkOfCols`. -/
+def blockChunk (spec : ScanSpec) (fill : Bool) (sortVar : Option String) (b : BlockMeta)
+    (bp : BlockPlan) (constOut : Array (Option Nat)) (need : Array Bool) (bytes : ByteArray)
+    (starts : Array Nat) : Except String Chunk := do
+  let keyWords ← keyWordsOf b bytes starts bp.full spec.key.size
+  let (lo, hi) := keyRange spec b bp.full keyWords
+  -- columns cut to rows [lo, hi): row r of the chunk is row lo + r
+  let c0 ← cutCol b bytes starts need keyWords lo hi 0
+  let c1 ← cutCol b bytes starts need keyWords lo hi 1
+  let c2 ← cutCol b bytes starts need keyWords lo hi 2
+  let c3 ← cutCol b bytes starts need keyWords lo hi 3
+  pure (chunkOfCols spec fill sortVar bp constOut #[c0, c1, c2, c3] (hi - lo))
+
+/-- The state of the scan between blocks. -/
+structure ScanState (σ : Type) where
+  acc : σ
+  stats : ScanStats
+  /-- the next overlay insert not yet given to a chunk -/
+  insPos : Nat
+  /-- `f` asked to stop -/
+  stopped : Bool
+
+/-- The delta overlay of a scan (stage 5): the permutation's overlay and its
+    inserts with the key prefix, in row order. -/
+structure OvCtx where
+  ov : L4Factoidal.Storage.Sbm11.Overlay.PermOverlay
+  on : Bool
+  insK : Array Row
+  insFuel : Nat
+  delFuel : Nat
+
+def ovCtx (ov : L4Factoidal.Storage.Sbm11.Overlay.PermOverlay) (key : Array UInt64) : OvCtx :=
+  let on := !ov.isEmpty
+  let insK : Array Row := if on then ov.ins.filter (fun r => prefixCmp r key == .eq) else #[]
+  { ov, on, insK, insFuel := Nat.log2 insK.size + 2, delFuel := Nat.log2 ov.del.size + 2 }
+
+/-- `f`'s answer as the loop's step. -/
+@[inline] def stepOf {σ : Type} (s : ScanState σ) (acc : σ) (stats : ScanStats) (insPos : Nat)
+    (more : Bool) : ForInStep (ScanState σ) :=
+  if more then .yield { s with acc, stats, insPos }
+  else .done { s with acc, stats, insPos, stopped := true }
+
+/-- One block of the scan. With an overlay, a block that holds inserts,
+    deletes or cleared graphs in its range is read whole and merged
+    (`overlayChunkM`); each insert with the key prefix goes to the first
+    selected block whose last row is not below it. -/
+def scanBlockM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
+    (f : σ → Chunk → ExceptT String m (σ × Bool)) (metas : Array BlockMeta) (sortVar : Option String)
+    (ox : OvCtx) (i : Nat) (s : ScanState σ) : ExceptT String m (ForInStep (ScanState σ)) := do
+  let b := metas[i]!
+  if !selects b spec.key then return .yield s
+  let bp := blockPlan spec b
+  if ox.on then
+    let insEnd := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.insK b.last ox.insFuel s.insPos ox.insK.size
+    let dLo := L4Factoidal.Storage.Sbm11.Overlay.lowerIdx ox.ov.del b.first ox.delFuel 0 ox.ov.del.size
+    let dHi := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.ov.del b.last ox.delFuel dLo ox.ov.del.size
+    let clHit := !ox.ov.cleared.isEmpty && (match colConst? b 3 with
+      | some g => ox.ov.cleared.contains g
+      | none => true)
+    if insEnd > s.insPos || (!bp.skip && (dHi > dLo || clHit)) then
+      let insL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (insEnd - s.insPos) []
+      let delL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.ov.del dLo (dHi - dLo) []
+      let (chunk, nbytes) ← overlayChunkM st spec b insL delL ox.ov.cleared sortVar
+      let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1,
+                                  blocksRead := s.stats.blocksRead + 1, framesRead := s.stats.framesRead + 4,
+                                  bytesRead := s.stats.bytesRead + nbytes,
+                                  rowsOut := s.stats.rowsOut + chunk.table.rows }
+      let (acc', more) ← f s.acc chunk
+      return stepOf s acc' stats insEnd more
+  if bp.skip then return .yield s
+  let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1 }
+  let constOut := constOutOf spec b bp
+  let need := needOf spec bp constOut
+  let (bytes, starts, nbytes) ← readFrames st spec.perm b need
+  let stats := if need.any id then
+      { stats with blocksRead := stats.blocksRead + 1, framesRead := stats.framesRead + (need.filter id).size,
+                   bytesRead := stats.bytesRead + nbytes }
+    else stats
+  let chunk ← ofExceptM (blockChunk spec fill sortVar b bp constOut need bytes starts)
+  let stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
+  let (acc', more) ← f s.acc chunk
+  return stepOf s acc' stats s.insPos more
+
 /-- Scan block by block; `f` gets each block's rows and says whether to go
     on. With `fill = false` a column that is constant over a chunk is left
-    empty and given in `consts` (the aggregate path counts it so). -/
+    empty and given in `consts` (the aggregate path counts it so). With an
+    overlay, the inserts after the last selected block form a last chunk. -/
 def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
     (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) : ExceptT String m (σ × ScanStats) := do
   let metas ← st.metas spec.perm
-  let mut acc := init
-  let mut stats : ScanStats := { blocksTotal := metas.size }
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
-  -- the delta overlay (stage 5): the inserts with the key prefix, in row
-  -- order; each is merged into the first selected block whose last row is
-  -- not below it, or into a last chunk after the blocks
-  let ov := st.ovl spec.perm
-  let ovOn := !ov.isEmpty
-  let insK : Array Row := if ovOn then ov.ins.filter (fun r => prefixCmp r spec.key == .eq) else #[]
-  let insFuel := Nat.log2 insK.size + 2
-  let delFuel := Nat.log2 ov.del.size + 2
-  let mut insPos := 0
-  let mut stopped := false
-  for i in blocksFor metas spec.key do
-    let b := metas[i]!
-    if !selects b spec.key then continue
-    let full := fullFor b spec.key
-    -- checks decided by the metadata
-    let mut skip := false
-    let mut checks : Array (Nat × UInt64) := #[]
-    for (c, x) in spec.checks do
-      match colConst? b c with
-      | some y => if y != x.toNat then skip := true
-      | none => checks := checks.push (c, x)
-    let mut named := spec.named
-    if named then
-      match colConst? b 3 with
-      | some 0 => skip := true
-      | some _ => named := false
-      | none => pure ()
-    if ovOn then
-      let insEnd := L4Factoidal.Storage.Sbm11.Overlay.upperIdx insK b.last insFuel insPos insK.size
-      let dLo := L4Factoidal.Storage.Sbm11.Overlay.lowerIdx ov.del b.first delFuel 0 ov.del.size
-      let dHi := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ov.del b.last delFuel dLo ov.del.size
-      let clHit := !ov.cleared.isEmpty && (match colConst? b 3 with
-        | some g => ov.cleared.contains g
-        | none => true)
-      if insEnd > insPos || (!skip && (dHi > dLo || clHit)) then
-        let insL := L4Factoidal.Storage.Sbm11.Overlay.sliceList insK insPos (insEnd - insPos) []
-        let delL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ov.del dLo (dHi - dLo) []
-        let (chunk, nbytes) ← overlayChunkM st spec b insL delL ov.cleared sortVar
-        insPos := insEnd
-        stats := { stats with blocksSelected := stats.blocksSelected + 1, blocksRead := stats.blocksRead + 1,
-                              framesRead := stats.framesRead + 4, bytesRead := stats.bytesRead + nbytes,
-                              rowsOut := stats.rowsOut + chunk.table.rows }
-        let (acc', more) ← f acc chunk
-        acc := acc'
-        if !more then
-          stopped := true
-          break
-        continue
-    if skip then continue
-    stats := { stats with blocksSelected := stats.blocksSelected + 1 }
-    -- the columns to decode
-    let constOut : Array (Option Nat) := spec.outCols.map fun c => if full then colConst? b c else none
-    let keyCols : Array Nat := if full then #[] else (List.range spec.key.size).toArray
-    let perRow := !checks.isEmpty || named || !spec.eqs.isEmpty
-    let mut need : Array Bool := #[false, false, false, false]
-    for c in keyCols do need := need.set! c true
-    for (c, _) in checks do need := need.set! c true
-    if named then need := need.set! 3 true
-    for (a, c) in spec.eqs do
-      need := (need.set! a true).set! c true
-    for k in [0:spec.outCols.size] do
-      if constOut[k]!.isNone || perRow then need := need.set! spec.outCols[k]! true
-    let (bytes, starts, nbytes) ← readFrames st spec.perm b need
-    if need.any id then
-      stats := { stats with blocksRead := stats.blocksRead + 1,
-                            framesRead := stats.framesRead + (need.filter id).size,
-                            bytesRead := stats.bytesRead + nbytes }
-    -- the key columns in full (to find the rows with the key prefix), then
-    -- every other needed column for those rows only
-    let mut keyWords : Array ByteArray := #[]
-    for c in keyCols do
-      match colAll b bytes starts c with
-      | .ok w => keyWords := keyWords.push w
-      | .error e => throw e
-    let (lo, hi) :=
-      if full then (0, b.rows)
-      else
-        let fuel := Nat.log2 b.rows + 2
-        let lo := keyBound keyWords spec.key false fuel 0 b.rows
-        (lo, keyBound keyWords spec.key true fuel lo b.rows)
-    -- columns cut to rows [lo, hi): row r of the chunk is row lo + r
-    let mut cols : Array ByteArray := #[.empty, .empty, .empty, .empty]
-    for c in [0:4] do
-      if need[c]! then
-        if h : c < keyWords.size then
-          cols := cols.set! c (keyWords[c].extract (8 * lo) (8 * hi))
-        else
-          match colRange b bytes starts c lo hi with
-          | .ok w => cols := cols.set! c w
-          | .error e => throw e
-    let n := hi - lo
-    let chunk : Chunk :=
-      if perRow then
-        let (out, k) := selectRows cols checks named spec.eqs spec.outCols n (n + 1) 0
-          (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * n)) 0
-        { table := { vars := spec.outVars, cols := out, rows := k, sortVar },
-          consts := spec.outVars.map fun _ => none }
-      else
-        let outs := (List.range spec.outCols.size).toArray.map fun k =>
-          match constOut[k]! with
-          | some x => if fill then constWords x.toUInt64 n else ByteArray.empty
-          | none => cols[spec.outCols[k]!]!
-        { table := { vars := spec.outVars, cols := outs, rows := n, sortVar },
-          consts := constOut.map (·.map Nat.toUInt64) }
-    stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
-    let (acc', more) ← f acc chunk
-    acc := acc'
-    if !more then
-      stopped := true
-      break
-  if ovOn && !stopped && insPos < insK.size then
-    let chunk := chunkOfRows spec (L4Factoidal.Storage.Sbm11.Overlay.sliceList insK insPos (insK.size - insPos) []) sortVar
-    stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
-    let (acc', _) ← f acc chunk
-    acc := acc'
-  return (acc, stats)
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := metas.size }, insPos := 0, stopped := false }
+  let s ← forIn (blocksFor metas spec.key) s0 (scanBlockM st spec fill f metas sortVar ox)
+  if ox.on && !s.stopped && s.insPos < ox.insK.size then
+    let chunk := chunkOfRows spec
+      (L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (ox.insK.size - s.insPos) []) sortVar
+    let (acc', _) ← f s.acc chunk
+    return (acc', { s.stats with rowsOut := s.stats.rowsOut + chunk.table.rows })
+  return (s.acc, s.stats)
 
 /-- The whole scan as one table. -/
 def scanTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :

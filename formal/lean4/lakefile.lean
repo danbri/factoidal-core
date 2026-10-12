@@ -210,7 +210,7 @@ extern_lib libl4exthost pkg := do
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
     `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
-    `Harness.Sbm11Gen, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11PackLib, `Harness.Sbm11Compact,
+    `Harness.Sbm11Gen, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI

@@ -23,10 +23,10 @@ https://github.com/danbri/factoidal/issues/776).
   every row between them does (the `full` shortcut of `scanFoldM`).
 
 These say that `IdQuery.scanFoldM` reads every block that can hold a row with
-the key prefix, and inside it the right row range. Not proved here: that
-`rowKeyCmp` over the decoded words is `prefixCmp` of the rows
-(`at64 (words xs) r = xs[r]`), the filters of `selectRows`, the metadata
-shortcuts of `colConst?`, and the monadic loop of `scanFoldM` as a whole.
+the key prefix, and inside it the right row range. The word reads are in
+`ScanWordsTheorems`; the filters of `selectRows`, the metadata shortcuts of
+`colConst?` and the scan as a whole are in `ScanFoldTheorems`
+(`scanFoldM_tuples`).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/

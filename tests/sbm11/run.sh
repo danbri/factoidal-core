@@ -60,6 +60,14 @@
 #                byte-identical to the fresh pack; compaction time at most 1.2
 #                times the fresh pack time. Needs QLVR_WORK/instance/olympics.nt;
 #                SBM11_DELTA_OLYMPICS=0 leaves (i) out (printed, not counted).
+#   (j) exact    the exact permutation check of activation (lemma L3b,
+#                Harness/Sbm11PermCheck.lean, PermSet.perms_same): the gate
+#                fixture is admitted with groups of 1, 3 and 1,000,000 PSO rows
+#                (SBM11_VERIFY_GROUP_ROWS); a copy whose POS files come from a
+#                pack of the fixture with one quad changed (same dictionary, same
+#                row count, another quad set; resealed) is refused by the exact
+#                check with the digest comparison off (SBM11_VERIFY_DIGEST=0)
+#                and by the digest with it on; no bucket directory is left.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -409,6 +417,54 @@ else
     done
     if [ -z "$bad" ]; then record olympics overlay-vs-fresh-pack 0 "$(echo $OQ | wc -w) queries equal (q01 to q21 and the delta queries)"
     else record olympics overlay-vs-fresh-pack 1 "differ:$bad"; fi
+  fi
+fi
+
+echo "=== (j) the exact permutation check of activation (lemma L3b)"
+J="$TMP/exact"
+mkdir -p "$J"
+# B: the gate fixture with one quad changed to another quad over the same
+# terms (same dictionary, same row count, another quad set)
+sed 's|^<http://ex.org/a> <http://ex.org/knows> <http://ex.org/b> \.$|<http://ex.org/a> <http://ex.org/knows> <http://ex.org/d> .|' \
+  "$HERE/gate/gate.nq" >"$J/b.nq"
+if cmp -s "$HERE/gate/gate.nq" "$J/b.nq"; then
+  record exact fixture 1 "the sed did not change gate.nq"
+else
+  rc=0
+  "$BIN/l4sbm11-pack" "$HERE/gate/gate.nq" "$J/a" --workers 1 --block-rows 2 >"$J/pa.log" 2>&1 || rc=$?
+  "$BIN/l4sbm11-pack" "$J/b.nq" "$J/b" --workers 1 --block-rows 2 >"$J/pb.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then record exact pack 1 "exit $rc"
+  elif ! cmp -s "$J/a/dict.gdv1" "$J/b/dict.gdv1"; then record exact same-dictionary 1 "GDV1 differs"
+  else
+    # blocks of two rows; groups of 1 row (one block each), 3 rows, all rows
+    for gr in 1 3 1000000; do
+      vrc=0
+      SBM11_VERIFY_GROUP_ROWS=$gr "$BIN/l4sbm11" verify "$J/a" >"$J/va-$gr.log" 2>&1 || vrc=$?
+      if [ "$vrc" -eq 0 ] && grep -q "exact permutation check: buckets=[0-9]* group-rows=$gr digest=on failures=0" "$J/va-$gr.log"; then
+        record exact "admitted-group-rows-$gr" 0 "$(grep -o 'buckets=[0-9]*' "$J/va-$gr.log")"
+      else record exact "admitted-group-rows-$gr" 1 "exit $vrc: $(grep 'FAIL\|exact' "$J/va-$gr.log" | head -2 | tr '\n' ' ')"; fi
+    done
+    # A with the POS files of B: same row count, same ids, another quad set
+    cp -r "$J/a" "$J/t"
+    cp "$J/b/pos.prb1" "$J/b/pos.prm1" "$J/t/"
+    "$BIN/l4sbm11" reseal "$J/t" >/dev/null 2>&1
+    for gr in 1 1000000; do
+      vrc=0
+      SBM11_VERIFY_DIGEST=0 SBM11_VERIFY_GROUP_ROWS=$gr "$BIN/l4sbm11" verify "$J/t" >"$J/vt-$gr.log" 2>&1 || vrc=$?
+      if [ "$vrc" -ne 0 ] && grep -q "FAIL: pos .*\(other quads than pso\|rows in bucket\)" "$J/vt-$gr.log" \
+          && grep -q "digest=off failures=1" "$J/vt-$gr.log"; then
+        record exact "refused-digest-off-$gr" 0 "$(grep -o 'FAIL: pos.*' "$J/vt-$gr.log" | head -1)"
+      else record exact "refused-digest-off-$gr" 1 "exit $vrc: $(grep 'FAIL\|exact' "$J/vt-$gr.log" | head -2 | tr '\n' ' ')"; fi
+    done
+    vrc=0
+    "$BIN/l4sbm11" verify "$J/t" >"$J/vt-d.log" 2>&1 || vrc=$?
+    if [ "$vrc" -ne 0 ] && grep -q "holds other quads than pso (digest)" "$J/vt-d.log"; then
+      record exact refused-digest-on 0 "the digest refuses it too"
+    else record exact refused-digest-on 1 "exit $vrc"; fi
+    # no bucket directory is left next to the generation
+    left="$(ls -d "$J"/*.verify-* 2>/dev/null | wc -l)"
+    if [ "$left" = 0 ]; then record exact temp-removed 0 "no bucket directory left"
+    else record exact temp-removed 1 "$left left"; fi
   fi
 fi
 

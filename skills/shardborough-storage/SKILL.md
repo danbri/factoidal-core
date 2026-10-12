@@ -607,6 +607,27 @@ pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
 every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
 after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
 
+Activation's exact permutation check and the scan theorem (2026-10-12,
+https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
+[`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md`](../../docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md)).
+`l4sbm11 verify` and `activate` now also check exactly that POS, SPO and OSP
+hold the quads of PSO (`Harness/Sbm11PermCheck.lean`): the rows are re-keyed
+to PSO rows, written to bucket files by groups of PSO blocks
+(`SBM11_VERIFY_GROUP_ROWS`, default 262,144) in `GEN.verify-PID` next to
+the generation, and each bucket is sorted and compared with its group;
+stderr prints `exact permutation check: buckets=... failures=...`. The check
+is proved to give equal quad multisets (`PermSet.perms_same`, lemma L3b).
+Cost on olympics: activation 6.4 to 7.4 s before, 13.8 to 15.4 s after;
+peak RSS 88 to 111 MB; 171 MB of bucket files written and read.
+`SBM11_VERIFY_DIGEST=0` turns the digest comparison off (test support).
+The scan (`IdQuery.scanFoldM`) is a `forIn` over `blocksFor` with the body
+`scanBlockM` and pure per-block functions; `ScanFoldTheorems.scanFoldM_tuples`
+proves it returns exactly the kept rows of an admitted permutation (no
+overlay, `m = Id`). Keep the per-block functions pure when changing the scan,
+and run the old-against-new `#guard`s of `ScanFoldTests.lean` (update
+`OldForms` only when the output is meant to change). Gate:
+`tests/sbm11/run.sh` part (j).
+
 Format registry rows (wire version 11):
 
 | Name | File | Status | Definition |

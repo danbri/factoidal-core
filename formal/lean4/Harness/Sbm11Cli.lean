@@ -58,13 +58,17 @@ column; every id has a known tag, a dictionary id is below the term count, a
 predicate is an IRI, a subject is an IRI or a blank node, a graph is the
 default graph or an IRI or a blank node; the four permutations have the
 manifest's row count and the same quad digest (sum and xor of a 64-bit hash
-of each quad).
+of each quad); and the exact check that they hold the same quads: the rows of
+POS, SPO and OSP re-keyed to PSO rows, bucketed on disk by groups of PSO
+blocks, each bucket sorted and compared with its group (`Sbm11PermCheck`;
+the check is proved to give equal quad multisets, `PermSet.perms_same`).
 
 Exit 1 on any error or failed check. Timings, bytes and VmHWM go to stderr.
 -/
 import Harness.Sbm11Gen
 import Harness.Sbm11Query
 import Harness.Sbm11Compact
+import Harness.Sbm11PermCheck
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 
@@ -280,9 +284,10 @@ def checkPosition (termCount : Nat) (s p o g : Nat) : Option String :=
     some "graph is not the default graph, an IRI or a blank node"
   else none
 
-/-- The activation checks of a generation directory. Returns the number of
-    failures; prints what it checked. -/
-def verifyGen (dir : String) : IO Nat := do
+/-- The activation checks of a generation directory, with `tmp` the
+    directory for the bucket files of the exact permutation check. Returns
+    the number of failures; prints what it checked. -/
+def verifyGenIn (dir tmp : String) : IO Nat := do
   let t0 ← IO.monoNanosNow
   let mut fails := 0
   -- the manifest and every file
@@ -330,7 +335,15 @@ def verifyGen (dir : String) : IO Nat := do
     fails := fails + 1; IO.eprintln s!"FAIL: {keys} dictionary keys, the manifest says {m.terms}"
   let t2 ← IO.monoNanosNow
   IO.eprintln s!"sbm11-verify: dictionary keys={keys}: failures={fails} ms={ms t1 t2}"
-  -- the permutations
+  -- the permutations: digests, and the buckets of the exact check (lemma
+  -- L3b, `Sbm11PermCheck`, `PermSet.perms_same`)
+  let groupRows ← Harness.Sbm11PermCheck.groupRowsOf
+  let plan := Harness.Sbm11PermCheck.planGroups (((g.perms[0]?).map (·.metas)).getD #[]) groupRows
+  let nb := plan.rows.size
+  let flush := Harness.Sbm11PermCheck.flushBytes nb
+  Harness.Sbm11PermCheck.createBuckets tmp nb
+  let mut bufs : Array ByteArray := Array.replicate (3 * nb) ByteArray.empty
+  let mut counts : Array Nat := Array.replicate (3 * nb) 0
   let mut digests : Array Digest2 := #[]
   for ps in g.perms do
     let name := permNamesArr[ps.perm]!
@@ -360,17 +373,46 @@ def verifyGen (dir : String) : IO Nat := do
             if fails < 5 then IO.eprintln s!"FAIL {name} block {i} row {j}: {e}"
             fails := fails + 1
           d := d.add (quadDigest s p o gg)
+          if ps.perm != 0 then
+            let q := PermSet.rekey ps.perm (c.row j)
+            (bufs, counts) ← Harness.Sbm11PermCheck.addRow tmp nb flush bufs counts ps.perm
+              (PermSet.bucketOf plan.bounds q) q
     if d.rows != m.quads then
       fails := fails + 1; IO.eprintln s!"FAIL {name}: {d.rows} rows, the manifest says {m.quads}"
     digests := digests.push d
     IO.eprintln s!"sbm11-verify: {name} blocks={ps.metas.size} rows={d.rows} digest={d.sum}/{d.xor}"
-  for i in [1:digests.size] do
-    if !(digests[i]! == digests[0]!) then
-      fails := fails + 1; IO.eprintln s!"FAIL: {permNamesArr[i]!} holds other quads than pso (digest)"
+  let digestOn := (← IO.getEnv "SBM11_VERIFY_DIGEST") != some "0"
+  if digestOn then
+    for i in [1:digests.size] do
+      if !(digests[i]! == digests[0]!) then
+        fails := fails + 1; IO.eprintln s!"FAIL: {permNamesArr[i]!} holds other quads than pso (digest)"
   let t3 ← IO.monoNanosNow
   IO.eprintln s!"sbm11-verify: permutations: failures={fails} ms={ms t2 t3}"
+  -- the exact check: each bucket sorted and compared with its PSO group
+  Harness.Sbm11PermCheck.flushAll tmp nb bufs
+  bufs := #[]
+  let mut exactFails := 0
+  if fails == 0 then
+    for p in [1:4] do
+      for j in [0:nb] do
+        if exactFails == 0 then
+          if let some e ← Harness.Sbm11PermCheck.compareBucket g plan tmp counts p j then
+            exactFails := exactFails + 1
+            IO.eprintln s!"FAIL: {e}"
+  fails := fails + exactFails
+  let t4 ← IO.monoNanosNow
+  IO.eprintln s!"sbm11-verify: exact permutation check: buckets={nb} group-rows={groupRows} digest={if digestOn then "on" else "off"} failures={exactFails} ms={ms t3 t4}"
+  let t3 := t4
   IO.eprintln s!"sbm11-verify: failures={fails} total-ms={ms t0 t3} read-bytes={← g.readBytes.get} peak-rss={← vmHWM}"
   pure fails
+
+/-- The activation checks of a generation directory; the bucket files of the
+    exact permutation check go to a directory next to it, removed at the end. -/
+def verifyGen (dir : String) : IO Nat := do
+  let tmp := s!"{dir}.verify-{← IO.Process.getPID}"
+  try verifyGenIn dir tmp
+  finally
+    if ← System.FilePath.pathExists tmp then IO.FS.removeDirAll tmp
 
 def runVerify (dir : String) : IO UInt32 := do
   let f ← verifyGen dir

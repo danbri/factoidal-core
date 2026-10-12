@@ -377,6 +377,9 @@ import L4Factoidal.Storage.Sbm11.DictLookupTheorems
 import L4Factoidal.Storage.Sbm11.DictRangeTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.Storage.Sbm11.ScanFoldTests
+import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
+import L4Factoidal.Storage.Sbm11.PermSet
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.MergeTheorems
 import L4Factoidal.Qlvr.Query
