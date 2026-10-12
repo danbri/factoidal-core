@@ -569,6 +569,227 @@ def expandEntityValue (inAttr : Bool) (ents : EntityTable) (visited : List Strin
           (String.singleton out :: acc)
 termination_by (depth, budget)
 
+/-! ### `expandEntityValue` with a worklist (https://github.com/danbri/factoidal/issues/755)
+
+`expandEntityValue` expands a nested reference with a call that is not a
+tail call: the text after the reference continues only when the nested
+replacement text is fully expanded. That costs one native stack frame per
+level of entity nesting. The nesting is chosen by the document (an entity
+whose replacement text references a second entity, and so on), and is
+bounded only by the number of declared entities, because **WFC: No
+Recursion** rejects a cycle. A chain of 10,000 such entities overflowed a
+512 KB native stack and the Node stack of the wasm module.
+
+`expandEntityLoop` reads the same text with a worklist. When it meets a
+reference to a declared entity, it puts the place after the reference on
+`pending` (an `EntPending`: the enclosing text, its position, its
+`(depth, budget)` and what it has decoded so far) and continues in the
+replacement text. At the end of a replacement text it takes the first
+pending text and adds the decoded replacement text to it. Every
+recursive call is a tail call. The recursion check is unchanged: the
+names in `visited` are the entities that are being expanded, and a
+reference to one of them rejects.
+
+There is no nesting limit beyond the one of the readable definition
+(`depth` starts at the number of declared entities plus one).
+`expandEntityLoop_eq` proves the loop equal to `expandEntityValue`, with
+the same characters, the same positions and the same errors, and
+`@[csimp] expandEntityValue_eq_fast` makes the compiler run the loop at
+every call below.
+
+The termination measure is `EntPending.weight k pending + budget * (k +
+1) ^ depth`. It decreases when a replacement text is put on the worklist
+only if that text has at most `k - 1` characters. `k` is
+`expandPendingBound`, 2^64: an array that long cannot exist in memory,
+so the other branch, which calls `expandEntityValue` itself for that one
+reference and gives the same answer, is never taken. -/
+
+/-- A text that waits on `expandEntityLoop`'s worklist while a replacement
+text that it references is expanded. -/
+structure EntPending where
+  visited : List String
+  s : Chars
+  pos : Nat
+  depth : Nat
+  budget : Nat
+  acc : List String
+
+/-- The part of `expandEntityLoop`'s termination measure that the waiting
+texts carry. -/
+def EntPending.weight (k : Nat) (ps : List EntPending) : Nat :=
+  ps.foldr (fun p w => p.budget * (k + 1) ^ p.depth + w) 0
+
+theorem EntPending.weight_step (b k d : Nat) : b * (k + 1) ^ d < (b + 1) * (k + 1) ^ d :=
+  Nat.mul_lt_mul_of_pos_right (Nat.lt_succ_self _) (Nat.pow_pos (Nat.succ_pos _))
+
+theorem EntPending.weight_push (W b k d L : Nat) (h : L + 1 ≤ k) :
+    b * (k + 1) ^ (d + 1) + W + (L + 1) * (k + 1) ^ d < W + (b + 1) * (k + 1) ^ (d + 1) := by
+  have hX : 0 < (k + 1) ^ d := Nat.pow_pos (Nat.succ_pos _)
+  have h2 : (L + 1) * (k + 1) ^ d < (k + 1) * (k + 1) ^ d :=
+    Nat.mul_lt_mul_of_pos_right (by omega) hX
+  have h3 : (b + 1) * (k + 1) ^ (d + 1) = b * (k + 1) ^ (d + 1) + (k + 1) * (k + 1) ^ d := by
+    rw [Nat.add_mul, Nat.one_mul, Nat.pow_succ, Nat.mul_comm ((k + 1) ^ d) (k + 1)]
+  omega
+
+/-- `expandEntityValue` with the nested replacement texts on a worklist
+(`pending`); see the section comment. -/
+def expandEntityLoop (inAttr : Bool) (ents : EntityTable) (k : Nat)
+    (pending : List EntPending) (visited : List String)
+    (s : Chars) (pos : Nat) (depth : Nat) (budget : Nat)
+    (acc : List String) : PResult String :=
+  match budget with
+  | 0 => .err "entity replacement text too long" pos
+  | budget' + 1 =>
+    if pos ≥ s.size then
+      match pending with
+      | [] => .ok (String.join acc.reverse) pos
+      | p :: ps =>
+          expandEntityLoop inAttr ents k ps p.visited p.s p.pos p.depth p.budget
+            (String.join acc.reverse :: p.acc)
+    else
+      let ch := charAt s pos
+      if ch == '<' then
+        .err "a `<` in entity replacement text is not allowed here" pos
+      else if ch == '&' then
+        if pos + 1 < s.size && charAt s (pos + 1) == '#' then
+          if pos + 2 ≥ s.size then .err "unterminated character reference in entity" pos
+          else if charAt s (pos + 2) == 'x' then
+            match parseRefDigits isHexDigit s (pos + 3) [] (s.size + 1) with
+            | .err m p => .err m p
+            | .ok digits pos' =>
+              let cp := hexValue digits
+              if ents.version.isCharCode cp then
+                expandEntityLoop inAttr ents k pending visited s pos' depth budget'
+                  (codepointToString cp :: acc)
+              else .err "character reference to a non-Char codepoint" pos'
+          else
+            match parseRefDigits isDecDigit s (pos + 2) [] (s.size + 1) with
+            | .err m p => .err m p
+            | .ok digits pos' =>
+              let cp := decValue digits
+              if ents.version.isCharCode cp then
+                expandEntityLoop inAttr ents k pending visited s pos' depth budget'
+                  (codepointToString cp :: acc)
+              else .err "character reference to a non-Char codepoint" pos'
+        else
+          match parseName s (pos + 1) with
+          | .err m p => .err m p
+          | .ok name posN =>
+            if posN ≥ s.size || charAt s posN != ';' then
+              .err "entity reference not terminated by ';'" posN
+            else
+              let pos' := posN + 1
+              if isPredefinedEntity name then
+                expandEntityLoop inAttr ents k pending visited s pos' depth budget'
+                  (predefinedValue name :: acc)
+              else if visited.contains name then
+                .err "recursive entity reference (WFC: No Recursion)" pos
+              else
+                match lookupEntityDef name ents with
+                | none =>
+                    if ents.lax then
+                      expandEntityLoop inAttr ents k pending visited s pos' depth budget' acc
+                    else .err "reference to undeclared entity (WFC: Entity Declared)" pos
+                | some ed =>
+                  if inAttr && ed.external then
+                    .err "an attribute value may not reference an external entity, directly or indirectly (WFC: No External Entity References, section 4.4.4)" pos
+                  else if let some m := ed.unreadable then .err m pos
+                  else if !ed.resolved then
+                    if ents.lax then
+                      expandEntityLoop inAttr ents k pending visited s pos' depth budget' acc
+                    else .err "reference to undeclared entity (WFC: Entity Declared)" pos
+                  else
+                  let subval := ed.value
+                  match depth with
+                  | 0 => .err "entity nesting too deep" pos
+                  | depth' + 1 =>
+                    let subArr : Chars := subval.toList.toArray
+                    if subArr.size + 1 ≤ k then
+                      -- The replacement text goes on the worklist: the
+                      -- place after the reference waits on `pending`.
+                      expandEntityLoop inAttr ents k
+                        ({ visited := visited, s := s, pos := pos', depth := depth' + 1,
+                           budget := budget', acc := acc } :: pending)
+                        (name :: visited) subArr 0 depth' (subArr.size + 1) []
+                    else
+                      match expandEntityValue inAttr ents (name :: visited) subArr 0 depth'
+                              (subArr.size + 1) [] with
+                      | .err m p => .err m p
+                      | .ok decoded _ =>
+                        expandEntityLoop inAttr ents k pending visited s pos' (depth' + 1) budget'
+                          (decoded :: acc)
+      else
+        let out := if inAttr && (ch == '\t' || ch == '\n' || ch == '\r') then ' ' else ch
+        expandEntityLoop inAttr ents k pending visited s (pos + 1) depth budget'
+          (String.singleton out :: acc)
+termination_by EntPending.weight k pending + budget * (k + 1) ^ depth
+decreasing_by
+  all_goals simp_wf
+  · simp only [EntPending.weight, List.foldr_cons]
+    have : 0 < (budget' + 1) * (k + 1) ^ depth :=
+      Nat.mul_pos (Nat.succ_pos _) (Nat.pow_pos (Nat.succ_pos _))
+    omega
+  all_goals first
+    | exact EntPending.weight_step _ _ _
+    | (simp only [EntPending.weight, List.foldr_cons]
+       rename_i hk
+       simp only [String.length_toList] at hk ⊢
+       exact EntPending.weight_push _ _ _ _ _ hk)
+
+/-- What the waiting texts do with the result of the replacement text
+being expanded: an error ends the expansion; decoded characters are added
+to the first waiting text, which then continues. -/
+def resumeEnt (inAttr : Bool) (ents : EntityTable) (k : Nat) :
+    List EntPending → PResult String → PResult String
+  | [], r => r
+  | _ :: _, .err m q => .err m q
+  | p :: ps, .ok decoded _ =>
+      expandEntityLoop inAttr ents k ps p.visited p.s p.pos p.depth p.budget (decoded :: p.acc)
+
+theorem resumeEnt_err (inAttr : Bool) (ents : EntityTable) (k : Nat)
+    (pending : List EntPending) (m : String) (q : Nat) :
+    resumeEnt inAttr ents k pending (.err m q) = .err m q := by
+  cases pending <;> rfl
+
+/-- The loop equals the readable definition: with an empty worklist it IS
+`expandEntityValue`, and with waiting texts it is `expandEntityValue`
+followed by `resumeEnt`. Proved by the functional induction of
+`expandEntityValue`. -/
+theorem expandEntityLoop_eq (inAttr : Bool) (ents : EntityTable) (k : Nat)
+    (visited : List String) (s : Chars) (pos depth budget : Nat) (acc : List String) :
+    ∀ pending, expandEntityLoop inAttr ents k pending visited s pos depth budget acc =
+      resumeEnt inAttr ents k pending
+        (expandEntityValue inAttr ents visited s pos depth budget acc) := by
+  induction visited, s, pos, depth, budget, acc
+    using expandEntityValue.induct (inAttr := inAttr) (ents := ents)
+  all_goals intro pending
+  all_goals rw [expandEntityValue.eq_def, expandEntityLoop.eq_def]
+  case case2 =>
+    rename_i hpos
+    simp only [hpos, ↓reduceIte]
+    cases pending <;> simp only [resumeEnt]
+  all_goals simp_all (config := {zetaDelta := true}) only
+    [resumeEnt_err, ↓reduceIte, Bool.false_eq_true, dite_eq_ite]
+  all_goals (split <;> simp_all only [resumeEnt])
+
+/-- The size bound of a replacement text that `expandEntityLoop` keeps on
+its worklist: 2^64 characters, more than any array in memory. -/
+def expandPendingBound : Nat := 2 ^ 64
+
+/-- `expandEntityValue` through the loop, from an empty worklist. -/
+def expandEntityValueFast (inAttr : Bool) (ents : EntityTable) (visited : List String)
+    (s : Chars) (pos : Nat) (depth : Nat) (budget : Nat)
+    (acc : List String) : PResult String :=
+  expandEntityLoop inAttr ents expandPendingBound [] visited s pos depth budget acc
+
+/-- The compiler runs `expandEntityValueFast` wherever `expandEntityValue`
+is called below (`parseReference`, the attribute-default check of the
+DTD). -/
+@[csimp] theorem expandEntityValue_eq_fast : @expandEntityValue = @expandEntityValueFast := by
+  funext inAttr ents visited s pos depth budget acc
+  simp only [expandEntityValueFast, expandEntityLoop_eq]
+  rfl
+
 /-- Parse one `[67] Reference` whose leading `&` has already been
 consumed, returning its replacement text and the position after the
 `;`. Port of F* `parse_reference`. -/
@@ -1167,6 +1388,137 @@ def entityHasWsCharRef (ents : EntityTable) (name : String) : Nat → Bool
           else go (i + 1) k
       go 0 (arr.size + 1)
 
+/-! ### `entityHasWsCharRef` with a worklist (https://github.com/danbri/factoidal/issues/755)
+
+`entityHasWsCharRef` looks into the replacement text of every entity a
+replacement text references, with a call that is not a tail call: one
+native stack frame (and one of `go`) per level of entity nesting, the same
+depth as `expandEntityValue`'s. `entityWsLoop` keeps the texts still to
+scan on a list (`WsPending`: the text, the fuel of its level, the
+position and the scan budget), scans the first one, puts the replacement
+text of a nested reference in front of the rest, and answers `true` at the
+first character reference to white space. `entityWsLoop_eq` proves it
+equal to `go` over every text on the list, and
+`@[csimp] entityHasWsCharRef_eq_fast` makes the compiler run it in
+`scanRefs` and `scanRefsLoop`. The measure and the branch for a text of
+`expandPendingBound` or more characters are those of `expandEntityLoop`. -/
+
+/-- A replacement text still to scan for `entityWsLoop`. `fuel` is the
+fuel that `entityHasWsCharRef.go` has for the references in it. -/
+structure WsPending where
+  fuel : Nat
+  arr : Chars
+  i : Nat
+  k : Nat
+
+/-- `entityWsLoop`'s termination measure. -/
+def WsPending.weight (K : Nat) (ps : List WsPending) : Nat :=
+  ps.foldr (fun p w => (p.k + 1) * (K + 1) ^ p.fuel + w) 0
+
+theorem WsPending.weight_pos (K d W b : Nat) : W < (b + 1) * (K + 1) ^ d + W := by
+  have : 0 < (b + 1) * (K + 1) ^ d := Nat.mul_pos (Nat.succ_pos _) (Nat.pow_pos (Nat.succ_pos _))
+  omega
+
+theorem WsPending.weight_step (b K d W : Nat) :
+    (b + 1) * (K + 1) ^ d + W < (b + 1 + 1) * (K + 1) ^ d + W := by
+  have : (b + 1) * (K + 1) ^ d < (b + 1 + 1) * (K + 1) ^ d :=
+    Nat.mul_lt_mul_of_pos_right (Nat.lt_succ_self _) (Nat.pow_pos (Nat.succ_pos _))
+  omega
+
+theorem WsPending.weight_push (W b K f L : Nat) (h : L + 2 ≤ K) :
+    (L + 1 + 1) * (K + 1) ^ f + ((b + 1) * (K + 1) ^ (f + 1) + W) <
+      (b + 1 + 1) * (K + 1) ^ (f + 1) + W := by
+  have hX : 0 < (K + 1) ^ f := Nat.pow_pos (Nat.succ_pos _)
+  have h2 : (L + 1 + 1) * (K + 1) ^ f < (K + 1) * (K + 1) ^ f :=
+    Nat.mul_lt_mul_of_pos_right (by omega) hX
+  have h3 : (b + 1 + 1) * (K + 1) ^ (f + 1) =
+      (b + 1) * (K + 1) ^ (f + 1) + (K + 1) * (K + 1) ^ f := by
+    rw [Nat.add_mul (b + 1) 1, Nat.one_mul, Nat.pow_succ, Nat.mul_comm ((K + 1) ^ f) (K + 1)]
+  omega
+
+/-- `entityHasWsCharRef.go` over a list of texts, with the nested texts on
+the list instead of the native stack; see the section comment. -/
+def entityWsLoop (ents : EntityTable) (K : Nat) : List WsPending → Bool
+  | [] => false
+  | ⟨_, _, _, 0⟩ :: ps => entityWsLoop ents K ps
+  | ⟨fuel, arr, i, k + 1⟩ :: ps =>
+      if i ≥ arr.size then entityWsLoop ents K ps
+      else if charAt arr i == '&' then
+        if charAt arr (i + 1) == '#' then
+          let hex := charAt arr (i + 2) == 'x'
+          match parseRefDigits (if hex then isHexDigit else isDecDigit) arr
+                  (if hex then i + 3 else i + 2) [] (arr.size + 1) with
+          | .ok digits j =>
+              let cp := if hex then hexValue digits else decValue digits
+              cp == 32 || cp == 9 || cp == 10 || cp == 13 ||
+                entityWsLoop ents K (⟨fuel, arr, j, k⟩ :: ps)
+          | .err _ _ => entityWsLoop ents K (⟨fuel, arr, i + 1, k⟩ :: ps)
+        else
+          match parseName arr (i + 1) with
+          | .ok n j =>
+              if j < arr.size && charAt arr j == ';' then
+                if isPredefinedEntity n then entityWsLoop ents K (⟨fuel, arr, j + 1, k⟩ :: ps)
+                else
+                  match fuel with
+                  | 0 => entityWsLoop ents K (⟨0, arr, j + 1, k⟩ :: ps)
+                  | f + 1 =>
+                    match lookupEntity n ents with
+                    | none => entityWsLoop ents K (⟨f + 1, arr, j + 1, k⟩ :: ps)
+                    | some v =>
+                      let arr2 : Chars := v.toList.toArray
+                      if arr2.size + 2 ≤ K then
+                        entityWsLoop ents K
+                          (⟨f, arr2, 0, arr2.size + 1⟩ :: ⟨f + 1, arr, j + 1, k⟩ :: ps)
+                      else
+                        entityHasWsCharRef ents n (f + 1) ||
+                          entityWsLoop ents K (⟨f + 1, arr, j + 1, k⟩ :: ps)
+              else entityWsLoop ents K (⟨fuel, arr, i + 1, k⟩ :: ps)
+          | .err _ _ => entityWsLoop ents K (⟨fuel, arr, i + 1, k⟩ :: ps)
+      else entityWsLoop ents K (⟨fuel, arr, i + 1, k⟩ :: ps)
+termination_by stack => WsPending.weight K stack
+decreasing_by
+  all_goals simp_wf
+  all_goals simp only [WsPending.weight, List.foldr_cons]
+  all_goals first
+    | exact WsPending.weight_pos _ _ _ _
+    | exact WsPending.weight_step _ _ _ _
+    | (rename_i hsz
+       simp only [String.length_toList] at hsz ⊢
+       exact WsPending.weight_push _ _ _ _ _ hsz)
+
+/-- The loop answers what `entityHasWsCharRef.go` answers for some text on
+the list. Proved by the functional induction of `entityWsLoop`. -/
+theorem entityWsLoop_eq (ents : EntityTable) (K : Nat) (stack : List WsPending) :
+    entityWsLoop ents K stack =
+      stack.any (fun p => entityHasWsCharRef.go ents p.fuel p.arr p.i p.k) := by
+  induction stack using entityWsLoop.induct (ents := ents) (K := K)
+  all_goals rw [entityWsLoop.eq_def]
+  all_goals simp only [List.any_cons, List.any_nil]
+  all_goals (try rw [entityHasWsCharRef.go.eq_def])
+  all_goals simp_all (config := {zetaDelta := true}) only
+    [↓reduceIte, Bool.false_eq_true, dite_eq_ite, Bool.or_assoc, Bool.false_or,
+     List.any_cons, Bool.not_true, Bool.false_and, Bool.not_false, Bool.true_and,
+     entityHasWsCharRef]
+
+/-- `entityHasWsCharRef` through the loop. -/
+def entityHasWsCharRefFast (ents : EntityTable) (name : String) (fuel : Nat) : Bool :=
+  match fuel with
+  | 0 => false
+  | f + 1 =>
+    match lookupEntity name ents with
+    | none => false
+    | some v => entityWsLoop ents expandPendingBound [⟨f, v.toList.toArray, 0, v.toList.toArray.size + 1⟩]
+
+/-- The compiler runs `entityHasWsCharRefFast` wherever `entityHasWsCharRef`
+is called below (`scanRefs`, `scanRefsLoop`). -/
+@[csimp] theorem entityHasWsCharRef_eq_fast : @entityHasWsCharRef = @entityHasWsCharRefFast := by
+  funext ents name fuel
+  cases fuel with
+  | zero => simp only [entityHasWsCharRefFast, entityHasWsCharRef]
+  | succ f =>
+    simp only [entityHasWsCharRefFast, entityHasWsCharRef]
+    split <;> simp [entityWsLoop_eq]
+
 /-- Scan the source range `[start, stop)` of a text run or a start tag for
 references. Returns the content flags and whether a reference named an
 entity that is not declared. -/
@@ -1208,15 +1560,13 @@ a 512 KB stack natively and Node's default stack in wasm
 
 The flags are disjunctions, so reading them left to right into an
 accumulator gives the same result (`scanRefsLoop_eq`). A reference to a
-general entity still calls `entityHasWsCharRef`, whose own depth is the
-NESTING of entity declarations (an entity whose replacement text
-references another), bounded by its fuel `ents.defs.length + 1`: the
-number of declared entities, not the number of references. The same bound
-holds for the other recursions on this path, the nested dives of
-`expandEntityValue` and the markup re-parse in `parseChildren`: one frame
-per level of nesting, at most the number of declared entities (WFC: No
-Recursion rejects a cycle). Measured depths are in
-`skills/danbri-function-precrime-checkers/SKILL.md`. -/
+general entity calls `entityHasWsCharRef`, which looks through the NESTING
+of entity declarations (an entity whose replacement text references
+another). Since https://github.com/danbri/factoidal/issues/755 the compiler
+runs `entityWsLoop` there, with the nested replacement texts on a list; the
+nested dives of `expandEntityValue` and the markup re-parse of
+`parseChildren` are worklists too (`expandEntityLoop`, `parseChildrenW`).
+Measured depths are in `skills/danbri-function-precrime-checkers/SKILL.md`. -/
 def scanRefsLoop (ents : EntityTable) (s : Chars) (start stop : Nat)
     (fl : RefFlags) (u : Bool) : Nat → RefFlags × Bool
   | 0 => (fl, u)
@@ -1310,6 +1660,16 @@ def changedAttrs (before after : List Attribute) : List String :=
 
 /-! ## `[39] element` -/
 
+/-- When the reference at `pos` names a general entity whose replacement
+text carries markup: that replacement text and the position after the
+reference. `parseChildren` reparses such a text as `[43] content`. -/
+def markupFragAt (ents : EntityTable) (s : Chars) (pos : Nat) : Option (String × Nat) :=
+  if charAt s pos == '&' then
+    match generalEntityRaw ents s (pos + 1) with
+    | some (txt, pos') => if txt.toList.contains '<' then some (txt, pos') else none
+    | none             => none
+  else none
+
 mutual
 
 /-- `[43] content` — the children of an element, up to its `[42] ETag`.
@@ -1400,13 +1760,7 @@ def parseChildren (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : 
       -- content: a fragment that stops early has a stray `</` or
       -- worse, and the reference is then a well-formedness error
       -- rather than a partial splice.
-      let markupFrag : Option (String × Nat) :=
-        if charAt s pos == '&' then
-          match generalEntityRaw ents s (pos + 1) with
-          | some (txt, pos') => if txt.toList.contains '<' then some (txt, pos') else none
-          | none             => none
-        else none
-      match markupFrag with
+      match markupFragAt ents s pos with
       | some (txt, posAfter) =>
           let farr : Chars := txt.toList.toArray
           (match parseChildren ents atts farr 0 [] {} notes fuel with
@@ -1492,6 +1846,280 @@ def parseElement (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : N
                                      wsCharRef := cflags.wsCharRef } :: notes1.elems }) pos10
 
 end
+
+/-! ### Markup entities with a worklist (https://github.com/danbri/factoidal/issues/755)
+
+`parseChildren` splices the replacement text of an entity that carries
+markup by calling itself on the replacement text and continuing after the
+reference only when that call returns: one native stack frame per level
+of entity nesting (an entity whose replacement text references a second
+markup entity, and so on). `parseChildrenW` keeps the place after the
+reference on a worklist (`ChildFrame`: the enclosing text, the position
+after the reference, the position of the reference for the error message,
+the nodes and flags read so far, the fuel and the size of the replacement
+text) and continues in the replacement text. Where `parseChildren` would
+return (end of text, `</`, out of fuel, nothing more to read), a non-empty
+worklist resumes its first frame instead: **WFC: Parsed Entity** rejects
+when the replacement text was not read to its end, and otherwise the
+replacement text's nodes are added to the frame's and the frame continues.
+
+Element nesting stays one frame of `parseElementW` per level: it is the
+document's own nesting, not the entity nesting.
+
+`parseChildrenW_eq` proves the pair equal to `parseChildren` and
+`parseElement` (same nodes, flags, notes, positions and errors), by the
+mutual functional induction of the readable pair, and
+`@[csimp] parseElement_eq_parseElementW` makes the compiler run the
+worklist form at the document element. The termination measure is
+`ChildFrame.weight frames + 3 ^ fuel`: putting a frame on the worklist
+replaces `3 ^ (fuel + 1)` by two terms of `3 ^ fuel`. -/
+
+/-- The place after a markup entity reference, waiting on
+`parseChildrenW`'s worklist while the replacement text is read. -/
+structure ChildFrame where
+  s : Chars
+  posAfter : Nat
+  refPos : Nat
+  acc : List Node
+  flags : RefFlags
+  fuel : Nat
+  /-- The size of the replacement text read in place of the reference. -/
+  size : Nat
+
+/-- The part of the termination measure that the waiting frames carry. -/
+def ChildFrame.weight (frs : List ChildFrame) : Nat :=
+  frs.foldr (fun fr w => 3 ^ fr.fuel + w) 0
+
+theorem ChildFrame.three_pow_pos (n : Nat) : 0 < 3 ^ n := Nat.pow_pos (by decide)
+
+theorem ChildFrame.three_pow_succ (n : Nat) : 3 ^ (n + 1) = 3 ^ n + 3 ^ n + 3 ^ n := by
+  rw [Nat.pow_succ]; omega
+
+mutual
+
+/-- `parseChildren` with markup replacement texts on a worklist; see the
+section comment. -/
+def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
+    (s : Chars) (pos : Nat) (acc : List Node) (flags : RefFlags) (notes : Notes) :
+    Nat → PResult (List Node × RefFlags × Notes)
+  | 0 =>
+    match frames with
+    | [] => .ok (acc.reverse, flags, notes) pos
+    | fr :: frs =>
+      if pos < fr.size then
+        .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+      else
+        parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+          ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
+  | fuel + 1 =>
+    if pos ≥ s.size || (charAt s pos == '<' && pos + 1 < s.size && charAt s (pos + 1) == '/') then
+      match frames with
+      | [] => .ok (acc.reverse, flags, notes) pos
+      | fr :: frs =>
+        if pos < fr.size then
+          .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+        else
+          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+            ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
+    else if charAt s pos == '<' then
+      if pos + 1 < s.size then
+        let ch2 := charAt s (pos + 1)
+        if ch2 == '!' then
+          if peekLit "<!--" s pos then
+            match parseComment ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenW ents atts frames s pos' (node :: acc) flags notes fuel
+          else
+            match parseCdata ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenW ents atts frames s pos' (node :: acc) flags notes fuel
+        else if ch2 == '?' then
+          match parsePi ents.version s pos with
+          | .err m p => .err m p
+          | .ok node pos' => parseChildrenW ents atts frames s pos' (node :: acc) flags notes fuel
+        else
+          match parseElementW ents atts s pos notes fuel with
+          | .err m p => .err m p
+          | .ok (node, notes') pos' =>
+              parseChildrenW ents atts frames s pos' (node :: acc) flags notes' fuel
+      else .err "unexpected end after '<'" pos
+    else
+      match markupFragAt ents s pos with
+      | some (txt, posAfter) =>
+          let farr : Chars := txt.toList.toArray
+          parseChildrenW ents atts
+            ({ s := s, posAfter := posAfter, refPos := pos, acc := acc, flags := flags,
+               fuel := fuel, size := farr.size } :: frames)
+            farr 0 [] {} notes fuel
+      | none =>
+      match parseTextContent ents s pos [] (s.size + 1) with
+      | .err m p => .err m p
+      | .ok text pos' =>
+        if pos' == pos then
+          match frames with
+          | [] => .ok (acc.reverse, flags, notes) pos
+          | fr :: frs =>
+            if pos < fr.size then
+              .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+            else
+              parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+                ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel
+        else
+          let (rf, undecl) := scanRefs ents s pos pos' (pos' - pos + 1)
+          let flags' := rf.merge flags
+          let notes' := if undecl then { notes with undeclared := true } else notes
+          if text.isEmpty then parseChildrenW ents atts frames s pos' acc flags' notes' fuel
+          else parseChildrenW ents atts frames s pos' (.text text :: acc) flags' notes' fuel
+termination_by fuel => ChildFrame.weight frames + 3 ^ fuel
+decreasing_by
+  all_goals simp_wf
+  all_goals simp only [ChildFrame.weight, List.foldr_cons, ChildFrame.three_pow_succ]
+  all_goals
+    have := ChildFrame.three_pow_pos
+    first
+      | omega
+      | (have h1 := ChildFrame.three_pow_pos fuel; omega)
+      | (have h1 := ChildFrame.three_pow_pos 0; omega)
+      | (rename_i fr frs; have h1 := ChildFrame.three_pow_pos fr.fuel; omega)
+
+/-- `parseElement`, with the children read by `parseChildrenW`. -/
+def parseElementW (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : Nat)
+    (notes : Notes) : Nat → PResult (Node × Notes)
+  | 0 => .err "element nesting too deep (out of fuel)" pos
+  | fuel + 1 =>
+    match pchar '<' s pos with
+    | .err m p => .err m p
+    | .ok _ pos1 =>
+      match parseName s pos1 with
+      | .err m p => .err m p
+      | .ok tag pos2 =>
+        match parseAttributes ents s pos2 (s.size + 1) with
+        | .err m p => .err m p
+        | .ok attrs0 pos3 =>
+          let attrs1 := normalizeAttrsByType atts tag attrs0
+          match defaultedAttrs ents atts tag attrs1 with
+          | .error m => .err m pos2
+          | .ok defaulted =>
+          let attrs := attrs1 ++ defaulted
+          let (_, undeclAttr) := scanRefs ents s pos2 pos3 (pos3 - pos2 + 1)
+          let notes0 := if undeclAttr then { notes with undeclared := true } else notes
+          let normalized := changedAttrs attrs0 attrs1
+          let defaultedNames := defaulted.map (·.name)
+          let pos4 := skipSpace s pos3
+          if peekLit "/>" s pos4 then
+            .ok (.element tag attrs [],
+                 { notes0 with elems :=
+                     { normalized := normalized, defaulted := defaultedNames } :: notes0.elems }) (pos4 + 2)
+          else
+            match pchar '>' s pos4 with
+            | .err m p => .err m p
+            | .ok _ pos5 =>
+              match parseChildrenW ents atts [] s pos5 [] {} notes0 fuel with
+              | .err m p => .err m p
+              | .ok (children, cflags, notes1) pos6 =>
+                match pstring "</" s pos6 with
+                | .err m p => .err m p
+                | .ok _ pos7 =>
+                  match parseName s pos7 with
+                  | .err m p => .err m p
+                  | .ok closeTag pos8 =>
+                    if closeTag != tag then
+                      .err s!"closing tag '</{closeTag}>' does not match opening '<{tag}>' (WFC: Element Type Match)" pos7
+                    else
+                      match pchar '>' s (skipSpace s pos8) with
+                      | .err m p => .err m p
+                      | .ok _ pos10 =>
+                          .ok (.element tag attrs children,
+                               { notes1 with elems :=
+                                   { normalized := normalized, defaulted := defaultedNames,
+                                     entityRef := cflags.entityRef,
+                                     wsCharRef := cflags.wsCharRef } :: notes1.elems }) pos10
+termination_by fuel => 3 ^ fuel
+decreasing_by
+  all_goals simp_wf
+  all_goals simp only [ChildFrame.weight, List.foldr_nil, ChildFrame.three_pow_succ]
+  have h1 := ChildFrame.three_pow_pos fuel
+  omega
+
+end
+
+/-- What the waiting frames do with the result of the replacement text
+that is being read: an error ends the parse; otherwise **WFC: Parsed
+Entity** asks that the whole replacement text was read, and the first
+frame continues with the replacement text's nodes added. -/
+def resumeC (ents : EntityTable) (atts : List AttDecl) :
+    List ChildFrame → PResult (List Node × RefFlags × Notes) →
+      PResult (List Node × RefFlags × Notes)
+  | [], r => r
+  | _ :: _, .err m p => .err m p
+  | fr :: frs, .ok (nodes, fl2, notes2) q =>
+      if q < fr.size then
+        .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+      else
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+          ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel
+
+theorem resumeC_err (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
+    (m : String) (p : Nat) : resumeC ents atts frames (.err m p) = .err m p := by
+  cases frames <;> rfl
+
+/-- `resumeC` on the result `parseChildren` returns where it stops: this is
+the code `parseChildrenW` runs at the same place. -/
+theorem resumeC_exit (ents : EntityTable) (atts : List AttDecl) (frames : List ChildFrame)
+    (acc : List Node) (flags : RefFlags) (notes : Notes) (pos : Nat) :
+    resumeC ents atts frames (.ok (acc.reverse, flags, notes) pos) =
+      match frames with
+      | [] => .ok (acc.reverse, flags, notes) pos
+      | fr :: frs =>
+        if pos < fr.size then
+          .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+        else
+          parseChildrenW ents atts frs fr.s fr.posAfter (acc ++ fr.acc)
+            ({ flags with entityRef := true }.merge fr.flags) notes fr.fuel := by
+  cases frames <;> simp only [resumeC, List.reverse_reverse]
+
+theorem resumeC_nil (ents : EntityTable) (atts : List AttDecl)
+    (r : PResult (List Node × RefFlags × Notes)) : resumeC ents atts [] r = r := rfl
+
+theorem resumeC_cons_ok (ents : EntityTable) (atts : List AttDecl) (fr : ChildFrame)
+    (frs : List ChildFrame) (nodes : List Node) (fl2 : RefFlags) (notes2 : Notes) (q : Nat) :
+    resumeC ents atts (fr :: frs) (.ok (nodes, fl2, notes2) q) =
+      if q < fr.size then
+        .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" fr.refPos
+      else
+        parseChildrenW ents atts frs fr.s fr.posAfter (nodes.reverse ++ fr.acc)
+          ({ fl2 with entityRef := true }.merge fr.flags) notes2 fr.fuel := rfl
+
+/-- The worklist pair equals the readable pair: `parseElementW` IS
+`parseElement`, and `parseChildrenW` with a worklist is `parseChildren`
+followed by `resumeC`. Proved by the mutual functional induction of
+`parseChildren` and `parseElement`. -/
+theorem parseChildrenW_eq (ents : EntityTable) (atts : List AttDecl) :
+    (∀ s pos acc flags notes fuel, ∀ frames,
+      parseChildrenW ents atts frames s pos acc flags notes fuel =
+        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel)) ∧
+    (∀ s pos notes fuel,
+      parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel) := by
+  apply parseChildren.mutual_induct ents atts
+    (motive_1 := fun s pos acc flags notes fuel => ∀ frames,
+      parseChildrenW ents atts frames s pos acc flags notes fuel =
+        resumeC ents atts frames (parseChildren ents atts s pos acc flags notes fuel))
+    (motive_2 := fun s pos notes fuel =>
+      parseElementW ents atts s pos notes fuel = parseElement ents atts s pos notes fuel)
+  all_goals intros
+  all_goals (first
+    | (rw [parseChildren.eq_def, parseChildrenW.eq_def])
+    | (rw [parseElement.eq_def, parseElementW.eq_def]))
+  all_goals simp_all (config := {zetaDelta := true}) only
+    [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok, ↓reduceIte, Bool.false_eq_true,
+     decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false, Bool.false_and,
+     Bool.true_or, Bool.or_true]
+
+/-- The compiler runs `parseElementW` wherever `parseElement` is called
+below (the document element in `parseXMLNotes`). -/
+@[csimp] theorem parseElement_eq_parseElementW : @parseElement = @parseElementW := by
+  funext ents atts s pos notes fuel
+  exact ((parseChildrenW_eq ents atts).2 s pos notes fuel).symm
 
 /-! ## `[28] doctypedecl` and the internal subset -/
 

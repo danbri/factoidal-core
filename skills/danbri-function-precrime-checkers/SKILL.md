@@ -403,6 +403,55 @@ pattern for this shape:
   in advance); size a wasm probe from the native peak first
   (`/usr/bin/time -v`).
 
+## Nested entity expansion on a worklist (https://github.com/danbri/factoidal/issues/755, 2026-10-12)
+
+The nesting bound recorded at the end of the next section (issue 673) is
+repaired.
+Three functions recursed once per level of ENTITY nesting (the replacement
+text of entity N references entity N-1): `expandEntityValue` (text and
+attribute values), `entityHasWsCharRef` (the white-space character-reference
+note, called from `scanRefs`) and the markup re-parse of `parseChildren`. Each
+now has a twin that keeps the waiting texts on a list (`expandEntityLoop`,
+`entityWsLoop`, the mutual pair `parseChildrenW`/`parseElementW`), proved
+equal to the readable definition by its functional induction
+(`expandEntityLoop_eq`, `entityWsLoop_eq`, `parseChildrenW_eq`), and run by
+the compiler through `@[csimp]`. WFC: No Recursion is enforced as before: in
+text by the `visited` names, in markup because a self-referencing markup
+entity exhausts the fuel and its replacement text then does not parse as
+content (WFC: Parsed Entity). There is no nesting limit.
+
+What the repair taught:
+
+- **A chain of `<b>&eN;</b>` measures ELEMENT nesting.** The issue measured
+  markup chains of that shape (1,000 ran, 3,000 overflowed natively at
+  512 KB). 3,000 plainly nested elements with no entity overflow at 512 KB
+  too (`xmlWellformed`, measured 2026-10-12), so that number was the element
+  parser's, class (b), and a worklist of replacement texts cannot change it.
+  The stack case `xml-markup-chain` therefore keeps the elements flat (level
+  N is `<ex:p>N</ex:p>&m(N-1);`): only the entity nesting grows. Before
+  choosing a deep-input shape, check that it is deep in ONE dimension.
+- **The proof pattern** (induct on the specification, a measure with a
+  run-time bound, one named function for an expression both definitions
+  match on) is in `skills/lean4-proof-patterns/SKILL.md`, section 9a.
+
+Canary numbers, linux x86_64, Lean 4.33.1, Node 22.22.0, RDF/XML through
+`parseToDatasetJson`:
+
+| chain | before, native 512 KB | before, wasm `--stack-size=512` | before, wasm default | after, native 512 KB | after, wasm `--stack-size=512` | after, wasm default |
+|---|---|---|---|---|---|---|
+| text, 10,000 levels (`xml-text-chain`) | overflows (3,000 runs) | overflows (3,000 runs) | overflows | runs, 3.8 s | runs, 3.2 s | runs, 3.4 s |
+| attribute value, 10,000 levels | overflows (3,000 runs) | overflows (3,000 runs) | overflows | runs | runs, 3.3 s | runs, 3.2 s |
+| markup, flat, 3,000 levels (`xml-markup-chain`) | runs | overflows (1,000 runs) | runs | runs | runs, 0.4 s | runs, 0.5 s |
+| markup, flat, 10,000 levels | overflows | overflows | overflows | runs, 3.8 s | runs, 2.8 s | runs, 2.7 s |
+| text and markup, 30,000 levels, native 256 KB | | | | both run | | |
+| `<b>&eN;</b>`, 3,000 levels (element nesting) | overflows | | | overflows (class (b)) | | |
+
+`tests/stack/run.sh --canary`: before (base 24d5aab2 and its web build)
+45 pass, 0 fail (out of 45), with four rows expected failures (the text chain
+in the native canary, the wasm canary and the wasm route; the markup chain in
+the wasm canary); after (this branch and a wasm module built from it) 45 pass, 0 fail (out
+of 45), with no expected failure left.
+
 ## Sequential references read by a loop (https://github.com/danbri/factoidal/issues/673, 2026-10-10)
 
 The `xml-entities` case that the repaired canary found (above) is repaired.
@@ -445,7 +494,9 @@ references in an attribute value; DTD entity values and an ATTLIST default):
 Natively at `LEAN_STACK_SIZE_KB=256`, 400,000 references ran in 768 ms
 (content) and 815 ms (attribute value).
 
-What stays recursive, with its bound: the NESTED expansion of an entity
+What stayed recursive, with its bound (repaired 2026-10-12: the section on
+nested entity expansion above):
+the NESTED expansion of an entity
 whose replacement text references another entity (`expandEntityValue` for
 text and attribute values, the markup re-parse of `parseChildren`) costs
 one frame per level. The depth is at most the number of declared general

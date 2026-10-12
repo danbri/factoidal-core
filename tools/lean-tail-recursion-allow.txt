@@ -595,10 +595,9 @@ L4Factoidal_XForms_topoPass
 L4Factoidal_XML_Node_decEqList
 L4Factoidal_XML_Node_serializeList
 L4Factoidal_XML_Node_textContentList
-L4Factoidal_XML_expandEntityValue
 L4Factoidal_XML_findColons
 L4Factoidal_XML_parseAttributes
-L4Factoidal_XML_parseChildren
+L4Factoidal_XML_parseChildren  # specification only since https://github.com/danbri/factoidal/issues/755: its one compiled caller, parseElement, is replaced by parseElementW (@[csimp]); the audit marks only the csimp left side
 L4Factoidal_XML_parseSubset
 L4Factoidal_XML_peScan
 L4Factoidal_XML_textDeclAttrs_go
@@ -849,7 +848,8 @@ L4Factoidal_Syntax_tsUserUsed  # (c) prefixes of the serializer's prefix table
 L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
 L4Factoidal_VC_Multibase_natToBytesBE  # (a) PENDING https://github.com/danbri/factoidal/issues/752 bytes of one big-endian number: one frame per byte of the value decoded from a multibase string
 L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
-L4Factoidal_XML_entityHasWsCharRef_go  # (b) nesting of entity references inside entity definitions of the DTD; fuel = entity count
+L4Factoidal_XML_parseChildrenW  # (b) one frame of parseElementW per ELEMENT nesting level of the document; the nesting of markup entities is on the worklist, issue 755
+L4Factoidal_XML_parseElementW  # (b) element nesting of the document, as parseChildrenW
 L4Factoidal_XML_validate_countList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 children of one element during DTD validation: one frame per child (data)
 L4Factoidal_XPath_Num_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of an xs:decimal value: one frame per digit
 L4Factoidal_XSD_natDigits_go  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
@@ -1288,10 +1288,8 @@ L4Factoidal_XML_Node_textContent  # UNTRIAGED https://github.com/danbri/factoida
 L4Factoidal_XML_checkChildren  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:246
 L4Factoidal_XML_checkElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Namespaces.lean:228
 L4Factoidal_XML_cpListGo  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1601
-L4Factoidal_XML_entityHasWsCharRef  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Parser.lean:1140
 L4Factoidal_XML_parseChoiceOrSeq  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1623
 L4Factoidal_XML_parseCp  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Parser.lean:1585
-L4Factoidal_XML_parseElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Parser.lean:1333
 L4Factoidal_XML_Node_serialize  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:228
 L4Factoidal_XML_Node_wellFormed  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:97
 L4Factoidal_XML_Node_wellFormedList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Theorems.lean:119

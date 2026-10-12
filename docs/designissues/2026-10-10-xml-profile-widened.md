@@ -377,3 +377,41 @@ reference between declarations with a partial declaration (not well-formed).
 - Errata E20 and the 3.3.3 example say a tab or CR put in by a character
   reference directly in the attribute value stays a tab or CR and so breaks
   NMTOKENS; `rmt-e2e-20` pins that.
+
+## Nested entities in constant stack (https://github.com/danbri/factoidal/issues/755, 2026-10-12)
+
+Section 4.4.2 includes the replacement text of an internal entity at the
+reference, and that text can reference another entity. The parser expanded
+such a chain with one native stack frame per level, in three places:
+`expandEntityValue` (a reference in text or in an attribute value),
+`entityHasWsCharRef` (the note that a white-space character reference is in
+the content) and `parseChildren` (an entity whose replacement text carries
+markup, reparsed as `[43] content`). WFC: No Recursion makes a chain finite,
+but the document chooses its length: a chain of 10,000 text entities
+overflowed a 512 KB native stack and the wasm module in Node, and a chain of
+3,000 markup entities overflowed the wasm module under
+`node --stack-size=512`.
+
+Each now runs as a worklist, with the readable definition kept as the
+specification and an equality theorem between the two:
+
+| readable definition | loop the compiler runs (`@[csimp]`) | theorem |
+|---|---|---|
+| `expandEntityValue` | `expandEntityLoop` (pending texts: `EntPending`) | `expandEntityLoop_eq`, `expandEntityValue_eq_fast` |
+| `entityHasWsCharRef` | `entityWsLoop` (texts to scan: `WsPending`) | `entityWsLoop_eq`, `entityHasWsCharRef_eq_fast` |
+| `parseChildren`, `parseElement` | `parseChildrenW`, `parseElementW` (waiting frames: `ChildFrame`) | `parseChildrenW_eq`, `parseElement_eq_parseElementW` |
+
+The theorems state the same characters, nodes, flags, notes, positions and
+errors, with no hypothesis. A recursive text entity is rejected by the
+`visited` check as before; a recursive markup entity exhausts the fuel and is
+rejected by WFC: Parsed Entity, as before. Element nesting still costs one
+frame of `parseElementW` per level: that is the document's own nesting.
+
+The guards are in `XML/Tests.lean` (chains of 2,000 text and 1,000 markup
+levels, the white-space note at the bottom of a chain, No Recursion and
+Parsed Entity at the end of a chain); the stack is checked by the
+`xml-text-chain` and `xml-markup-chain` cases of `tests/stack/run.sh`. The
+scored lines did not move: `l4xmlconf` 1861 pass, 0 fail (out of 1861
+scored), and the RDF/XML, XSLT, Schematron, MathML and XSD rows of
+`tools/lean-scoreboard.sh` equal those of the base build (core 24d5aab2).
+Measured canary numbers: `skills/danbri-function-precrime-checkers/SKILL.md`.
