@@ -527,8 +527,13 @@ def evalSelectBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) 
 evaluator and its fast paths read a BGP as triple patterns matched
 against stored triples, and a `text:query` pattern is not one: matched
 that way it answers no rows. `none` sends the query to the reference
-evaluator, whose lowering (`lowerBgp`) evaluates it. Every caller already
-falls back to `evalSelect` on `none`. -/
+evaluator, whose lowering (`lowerBgp`) evaluates it. The query entry points
+(`Wasm/Ops/Query.lean`, `SPARQL/StoreEndpoint.lean`, `Harness/QuadQuery.lean`)
+fall back to `evalSelect` on `none`. The diagnostic harnesses that run only
+this evaluator (`Harness/BlockCorpus.lean`, `IndexedBlockV3Query.lean`,
+`ShardMerkleQuery.lean`, `ShardMerkleSession.lean`, `PredicateBlocksQuery.lean`,
+`BlockFileQuery.lean`) report "query was not evaluated" and exit 1 for such a
+query, instead of answering zero rows. -/
 def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) :
     Option SolutionSeq :=
   if q.pattern.mentionsFulltext then none else

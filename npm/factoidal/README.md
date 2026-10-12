@@ -733,7 +733,7 @@ the retry off. See
 
 ## Searching a store
 
-### GeoSPARQL — six topological functions
+### GeoSPARQL — six topological functions, distance and envelope
 
 The `geof:` functions below are built into the SPARQL engine and need no
 import. They work through `query()` / `fn.query()` AND against a
@@ -742,6 +742,17 @@ in the same environment.
 
     geof:sfEquals   geof:sfDisjoint   geof:sfIntersects
     geof:sfTouches  geof:sfWithin     geof:sfContains
+    geof:distance   geof:envelope
+
+`geof:distance(?a, ?b)` takes two points in the same reference system and
+returns the planar distance in that system's coordinate units as an
+`xsd:double`. With the GeoSPARQL 1.1 third argument, a unit of measure
+IRI, it answers only when the unit is the unit of the first point's
+reference system (`uom:degree` for CRS84 and EPSG:4326, `uom:metre` for
+EPSG:3857 and EPSG:27700) and is an error otherwise; a geodesic distance
+in metres between CRS84 points is not computed
+(https://github.com/danbri/factoidal/issues/772). `geof:envelope(?g)` returns
+the bounding box as a `geo:wktLiteral` `POLYGON`.
 
 ```sparql
 PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
@@ -753,8 +764,8 @@ SELECT ?a WHERE {
 ```
 
 **What is NOT there**, stated so nobody plans around it: no
-`geof:distance`, `geof:buffer`, `geof:envelope`, `geof:boundary`,
-`geof:convexHull` or any other non-topological measure; no
+`geof:buffer`, `geof:boundary`, `geof:convexHull` or any other
+non-topological function beyond distance and envelope; no
 `geof:relate` with a DE-9IM matrix; no coordinate reference system
 handling beyond what the WKT literal carries; no GML literals. Geometry
 comes from a WKT parser, so a shapefile, GeoJSON or GML source must be
@@ -763,8 +774,8 @@ converted to `geo:wktLiteral` before it is loaded.
 ### Full text: SPARQL's own functions, over a character-gram index
 
 `CONTAINS`, `STRSTARTS`, `STRENDS` and `REGEX` (SPARQL 1.1 §17.4.3) are
-the way to search text. There is no `text:query`-style extension and you
-do not ask for the index: where the query shape allows it, the planner
+the way to search text with an index. You do not ask for the index: where
+the query shape allows it, the planner
 uses the **LGI3** or **LGI4** literal index the packer writes beside each block
 (LGI3 beside an IBK4 block, LGI4 beside an IBK5 block; they were named LGI1 and
 LGI2 until 2026-10-10).
@@ -799,6 +810,27 @@ generation packed before 2026-10-10 names LGI1 or LGI2, which were folded with
 the ASCII-only fold and miss rows the Unicode `LCASE` keeps: the engine refuses
 it, says so, and asks for a re-pack. The
 index costs about 55% of the block bytes.
+
+### Full text by token: jena-text `text:query`
+
+The engine also reads the jena-text property function, slice 1 of it:
+exact tokens, every query token required, no score, no ranking.
+
+```sparql
+PREFIX text: <http://jena.apache.org/text#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?s WHERE { ?s text:query (rdfs:label "solar panel" 10) }
+```
+
+The object is `"terms"`, `( property "terms" )` or
+`( property "terms" limit )`. A literal matches when its lexical form,
+lowercased and split on every character that is not an ASCII letter or
+digit, holds every query token, so `"panel"` matches `Solar Panel kit`
+and does not match `panels`. Without a property every literal is
+searched. The limit keeps the first matches in data order. It does not
+use the literal index: it reads every candidate literal, about 17 ms per
+10,000 literals on a native build (measured 2026-10-12; record:
+`docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`).
 
 ### Geometry: the GBI1 bounding-box index
 

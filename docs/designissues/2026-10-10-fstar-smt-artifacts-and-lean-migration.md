@@ -157,7 +157,9 @@ What still keeps F\* in the build:
   https://github.com/danbri/factoidal/issues/743.
 - SERVICE follow-ups: https://github.com/danbri/factoidal/issues/735.
 - The browser durable log: https://github.com/danbri/factoidal/issues/728.
-- Geo functions: https://github.com/danbri/factoidal/issues/727.
+- Geo functions and `text:query`: https://github.com/danbri/factoidal/issues/727
+  (the Lean engine has them since 2026-10-10:
+  `2026-10-10-lean-geo-distance-fulltext.md`).
 
 Speed: query time is 0.9 to 1.4 times F\* (design record
 `2026-10-10-lean-vs-fstar-performance.md`).

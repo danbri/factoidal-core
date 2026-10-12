@@ -131,11 +131,16 @@ other object is an ordinary triple pattern.
   against stored triples, and would read a `text:query` pattern as an ordinary
   triple and answer nothing. `runSelectQueryBackendDataset` and
   `runAskQueryBackendDataset` answer `none` for a query whose pattern holds a
-  `text:query` pattern (`QueryPattern.mentionsFulltext`), and every caller
-  then runs the reference evaluator (`Wasm/Ops/Query.lean`
+  `text:query` pattern (`QueryPattern.mentionsFulltext`), and the query
+  entry points then run the reference evaluator (`Wasm/Ops/Query.lean`
   `queryParsedDatasetWith`, `SPARQL/StoreEndpoint.lean`, and
   `Harness/QuadQuery.lean`, which now falls back for this case instead of
-  failing). The restriction theorems `runSelectQueryBackendDataset_restrict`
+  failing). The diagnostic harnesses that run only the backend evaluator
+  (`Harness/BlockCorpus.lean`, `IndexedBlockV3Query.lean`,
+  `ShardMerkleQuery.lean`, `ShardMerkleSession.lean`,
+  `PredicateBlocksQuery.lean`, `BlockFileQuery.lean`) report "query was not
+  evaluated as SELECT" and exit 1 for such a query; before this change they
+  answered zero rows. The restriction theorems `runSelectQueryBackendDataset_restrict`
   and `runAskQueryBackendDataset_restrict` still hold (both sides are `none`).
   The F\* engine has this defect on the three fast paths:
   https://github.com/danbri/factoidal/issues/774.
@@ -155,6 +160,14 @@ other object is an ordinary triple pattern.
   index can serve as a candidate filter for tokens of that length, with a
   superset theorem stated over `fulltextCandidates`. That is a separate piece
   of work with its own proof.
+* **Checked on a persisted store** (2026-10-12): the 10,000-literal fixture of
+  section 4 packed with `l4block-shard-pack ... ibk4` and activated, then
+  queried with `l4block-quad-query` and with the npm command line
+  (`node npm/factoidal/bin/factoidal.mjs query STORE ...`, which reports
+  `mode ibk4-full-manifest(1)`, the scan). Both give the in-memory answers:
+  `COUNT(*)` of `"panel"` 137, of `"panel solar"` 2, of
+  `(rdfs:label "panel")` 137; `ASK` of `"zzzz"` false;
+  `(rdfs:label "panel" 3)` three rows.
 
 ## 3. Check against the F\* engine
 
@@ -172,7 +185,8 @@ python3 tests/parity/geo-fulltext/run-parity.py \
     --fstar bin/linux-x86_64/factoidal --lean formal/lean4/.lake/build/bin/l4factoidal
 ```
 
-Result, 2026-10-10: **21 agree, 0 fail, 6 expected divergence (out of 27).**
+Result, 2026-10-10, and again 2026-10-12 after the last Lean change:
+**21 agree, 0 fail, 6 expected divergence (out of 27).**
 
 | query | why the answers differ |
 |---|---|
@@ -190,7 +204,56 @@ and the argument errors all agree.
 
 ## 4. Measured cost of `text:query`
 
-@COST@
+Method: one native process (`l4wasm-cli callseq`) opens the dataset once
+(`datasetOpen`: parse and index) and then runs the same query K times
+(`datasetQuery`, the path the npm dataset handles take: the backend runner,
+the reference evaluator for a `text:query` query, SPARQL JSON results). The
+cost of one query is (CPU of the open and K queries minus CPU of the open
+alone) / K, CPU being user plus system time of the child process, median of
+R runs of each. The fixture has one `rdfs:label` literal of 3 to 8 words per
+subject, drawn from a 404-word vocabulary with a fixed seed; "panel" is in
+1.4 % of the literals (137 of 10,000).
+
+```
+python3 tests/parity/geo-fulltext/cost/gen-literals.py 10000 > /tmp/ft10k.ttl
+python3 -I tests/parity/geo-fulltext/cost/measure-text-query.py \
+    formal/lean4/.lake/build/bin/l4wasm-cli /tmp/ft10k.ttl 200 5
+```
+
+Result, 2026-10-12, Linux x86-64, 4 CPUs shared with two other build
+agents (load average 2 to 5), K = 200, R = 5:
+
+| query, over 10,000 literals | rows | CPU per query |
+|---|---|---|
+| `?s rdfs:label ?o` (no text search; for scale) | 10,000 | 30.0 ms |
+| `?s text:query "panel"` | 137 | 17.7 ms |
+| `?s text:query "panel solar"` | 2 | 17.3 ms |
+| `?s text:query (rdfs:label "panel")` | 137 | 17.3 ms |
+| `?s text:query (rdfs:label "panel" 10)` | 10 | 1.5 ms |
+| `?s text:query "zzzz"` (no match) | 0 | 16.2 ms |
+| `?s rdfs:label ?o FILTER(CONTAINS(LCASE(?o), "panel"))` | 137 | 17.8 ms |
+
+A first run with K = 40 gave 12.8 to 14.3 ms for the four full scans; the
+spread between runs is about 4 ms. Opening the dataset (parse and index)
+costs 200 to 330 ms, so one `text:query` scan costs less than a tenth of
+loading the data.
+
+What the numbers say:
+
+* A `text:query` without a limit reads every candidate literal: about 1.7
+  microseconds per literal, the same as `CONTAINS(LCASE(?o), ...)` over the
+  same literals. The field restriction saves nothing here, because every
+  triple of the fixture is an `rdfs:label` triple.
+* A limit stops the scan: `( field "term" 10 )` reads the literals up to the
+  tenth match (the 830th of 10,000 here) and costs 1.5 ms.
+* The cost is linear in the number of literals. The same measurement over
+  100,000 literals (K = 20, R = 3) gave 139 to 160 ms per full scan (1,372
+  rows for `"panel"`), 8 to 9 times the 10,000-literal figure; the limit-10
+  query was below the resolution of that run (the open alone costs 3.2 s).
+* There is no index: the cost does not fall when the term is rare (the
+  no-match query costs as much as the 137-match query). An index-backed
+  candidate filter (`LiteralGramIndex`, section 2) is the step that would
+  change that.
 
 ## 5. Tests
 
@@ -207,3 +270,22 @@ and the argument errors all agree.
   six cases that were expected failures.
 * npm: `npm/factoidal/test/geo-fulltext.test.js`, with the metres case as an
   expected failure naming issue 772.
+* The sabotage checks above were run on 2026-10-10 and not repeated.
+
+Gates, 2026-10-12, on `claude/wt-geo-fulltext`:
+
+* `lake build` (all targets): exit 0. `tools/lean-hygiene-audit.py` over its
+  log: clean (`partial def` 164, the baseline).
+* `tools/lean-tail-recursion-audit.py --gate`: pass, after one allow-list line
+  for `QueryPattern.mentionsFulltext` (recursion depth is the nesting of graph
+  patterns in one query, as for `mentionsService`). `fulltextScanGo` compiles
+  to a loop.
+* `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350).
+  `Wasm/cli-smoke.sh`: 73 pass, 0 fail (out of 73).
+* `l4w3c` on `sparql/sparql11/manifest-all.ttl`: 650 pass, 0 fail (out of 650),
+  unchanged.
+* `npm test` in `npm/factoidal`, with the rebuilt wasm: 413 pass, 0 fail,
+  1 skipped (out of 414); the skipped case needs `esbuild`, which is not
+  installed in this checkout.
+* `node --test tests/hub/post20* tests/hub/post21*`: 23 pass, 0 fail
+  (out of 23).
