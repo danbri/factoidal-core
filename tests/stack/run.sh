@@ -266,10 +266,11 @@ fi
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
     # $2 is the route (canary, wcanary or wasm), for a case that overflows
-    # in some of the small-stack routes only.
-    xml-text-chain) echo "https://github.com/danbri/factoidal/issues/755" ;;
-    xml-markup-chain)
-      [ "${2:-}" = wcanary ] && echo "https://github.com/danbri/factoidal/issues/755" ;;
+    # in some of the small-stack routes only. (`xml-text-chain` was listed
+    # for https://github.com/danbri/factoidal/issues/755 in all three
+    # routes, and `xml-markup-chain` in wcanary, until 2026-10-12, when
+    # nested entity expansion became a worklist.)
+    # No case is listed today.
   esac
 }
 

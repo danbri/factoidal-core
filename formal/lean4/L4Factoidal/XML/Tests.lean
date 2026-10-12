@@ -1449,4 +1449,9 @@ def rootChildCount (doc : String) : Option Nat :=
 -- A markup entity that references itself through the chain is rejected.
 #guard !isWellFormed (markupChainDoc 1000 "<b/>&m999;" "<a>&m999;</a>")
 
+-- The three replacements rest on the standard axioms only.
+#print axioms expandEntityValue_eq_fast
+#print axioms entityHasWsCharRef_eq_fast
+#print axioms parseElement_eq_parseElementW
+
 end L4Factoidal.XML.Tests

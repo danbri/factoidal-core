@@ -616,9 +616,8 @@ structure EntPending where
 
 /-- The part of `expandEntityLoop`'s termination measure that the waiting
 texts carry. -/
-def EntPending.weight (k : Nat) : List EntPending → Nat
-  | [] => 0
-  | p :: ps => p.budget * (k + 1) ^ p.depth + EntPending.weight k ps
+def EntPending.weight (k : Nat) (ps : List EntPending) : Nat :=
+  ps.foldr (fun p w => p.budget * (k + 1) ^ p.depth + w) 0
 
 theorem EntPending.weight_step (b k d : Nat) : b * (k + 1) ^ d < (b + 1) * (k + 1) ^ d :=
   Nat.mul_lt_mul_of_pos_right (Nat.lt_succ_self _) (Nat.pow_pos (Nat.succ_pos _))
@@ -726,13 +725,13 @@ def expandEntityLoop (inAttr : Bool) (ents : EntityTable) (k : Nat)
 termination_by EntPending.weight k pending + budget * (k + 1) ^ depth
 decreasing_by
   all_goals simp_wf
-  · simp only [EntPending.weight]
+  · simp only [EntPending.weight, List.foldr_cons]
     have : 0 < (budget' + 1) * (k + 1) ^ depth :=
       Nat.mul_pos (Nat.succ_pos _) (Nat.pow_pos (Nat.succ_pos _))
     omega
   all_goals first
     | exact EntPending.weight_step _ _ _
-    | (simp only [EntPending.weight]
+    | (simp only [EntPending.weight, List.foldr_cons]
        rename_i hk
        simp only [String.length_toList] at hk ⊢
        exact EntPending.weight_push _ _ _ _ _ hk)
@@ -1413,9 +1412,8 @@ structure WsPending where
   k : Nat
 
 /-- `entityWsLoop`'s termination measure. -/
-def WsPending.weight (K : Nat) : List WsPending → Nat
-  | [] => 0
-  | p :: ps => (p.k + 1) * (K + 1) ^ p.fuel + WsPending.weight K ps
+def WsPending.weight (K : Nat) (ps : List WsPending) : Nat :=
+  ps.foldr (fun p w => (p.k + 1) * (K + 1) ^ p.fuel + w) 0
 
 theorem WsPending.weight_pos (K d W b : Nat) : W < (b + 1) * (K + 1) ^ d + W := by
   have : 0 < (b + 1) * (K + 1) ^ d := Nat.mul_pos (Nat.succ_pos _) (Nat.pow_pos (Nat.succ_pos _))
@@ -1480,7 +1478,7 @@ def entityWsLoop (ents : EntityTable) (K : Nat) : List WsPending → Bool
 termination_by stack => WsPending.weight K stack
 decreasing_by
   all_goals simp_wf
-  all_goals simp only [WsPending.weight]
+  all_goals simp only [WsPending.weight, List.foldr_cons]
   all_goals first
     | exact WsPending.weight_pos _ _ _ _
     | exact WsPending.weight_step _ _ _ _
@@ -1891,9 +1889,8 @@ structure ChildFrame where
   size : Nat
 
 /-- The part of the termination measure that the waiting frames carry. -/
-def ChildFrame.weight : List ChildFrame → Nat
-  | [] => 0
-  | fr :: frs => 3 ^ fr.fuel + ChildFrame.weight frs
+def ChildFrame.weight (frs : List ChildFrame) : Nat :=
+  frs.foldr (fun fr w => 3 ^ fr.fuel + w) 0
 
 theorem ChildFrame.three_pow_pos (n : Nat) : 0 < 3 ^ n := Nat.pow_pos (by decide)
 
@@ -1978,7 +1975,7 @@ def parseChildrenW (ents : EntityTable) (atts : List AttDecl) (frames : List Chi
 termination_by fuel => ChildFrame.weight frames + 3 ^ fuel
 decreasing_by
   all_goals simp_wf
-  all_goals simp only [ChildFrame.weight, ChildFrame.three_pow_succ]
+  all_goals simp only [ChildFrame.weight, List.foldr_cons, ChildFrame.three_pow_succ]
   all_goals
     have := ChildFrame.three_pow_pos
     first
@@ -2042,7 +2039,7 @@ def parseElementW (ents : EntityTable) (atts : List AttDecl) (s : Chars) (pos : 
 termination_by fuel => 3 ^ fuel
 decreasing_by
   all_goals simp_wf
-  all_goals simp only [ChildFrame.weight, ChildFrame.three_pow_succ]
+  all_goals simp only [ChildFrame.weight, List.foldr_nil, ChildFrame.three_pow_succ]
   have h1 := ChildFrame.three_pow_pos fuel
   omega
 
