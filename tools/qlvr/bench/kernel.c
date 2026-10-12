@@ -8,6 +8,18 @@
  * Prints the output rows, the checksum and the median and minimum time of
  * one run. NOT linked into the Lean library; a measurement tool only.
  *
+ * `c-O2-copies` is `c-O2` plus the five buffer copies that the Lean kernels
+ * make before they write (Harness/QlvrKernel.lean, `scratch`: each output
+ * buffer starts as a copy of an input column). It measures what those
+ * copies cost (docs/designissues/2026-10-12-lean-to-c-performance.md,
+ * section 7).
+ *
+ * With glibc, main sets M_MMAP_THRESHOLD and M_TRIM_THRESHOLD to 1 GiB. With
+ * the defaults, each 2 MB buffer of a run is an mmap that free returns to the
+ * kernel, so every run pays about 1,100 page faults and the C kernel measured
+ * 3 times slower than its loops (section 7). The Lean runtime (mimalloc)
+ * keeps freed memory, so without this the comparison is not of the same work.
+ *
  *   cc -O2 -o /tmp/qlvr-kernel tools/qlvr/bench/kernel.c
  *   /tmp/qlvr-kernel KERNEL-FILE [ITERS]
  */
@@ -16,6 +28,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 static uint64_t now_ns(void) {
   struct timespec t;
@@ -34,14 +49,16 @@ typedef struct { size_t rows; uint64_t sum; } result;
 
 static result run(const uint64_t *a0, const uint64_t *a1, const uint64_t *a2, size_t nA,
                   const uint64_t *b0, const uint64_t *b1, const uint64_t *b2, size_t nB,
-                  uint64_t kA0, uint64_t kA1, uint64_t kB0) {
+                  uint64_t kA0, uint64_t kA1, uint64_t kB0, int copies) {
   uint64_t *ai = malloc(8 * (nA + 1)), *bi = malloc(8 * (nB + 1)), *ba = malloc(8 * (nB + 1));
   size_t na = 0, nb = 0;
+  if (copies) { memcpy(ai, a2, 8 * nA); memcpy(bi, b1, 8 * nB); memcpy(ba, b2, 8 * nB); }
   for (size_t i = 0; i < nA; i++)
     if (a0[i] == kA0 && a1[i] == kA1) ai[na++] = a2[i];
   for (size_t j = 0; j < nB; j++)
     if (b0[j] == kB0) { bi[nb] = b1[j]; ba[nb] = b2[j]; nb++; }
   uint64_t *oi = malloc(8 * (nb + 1)), *oa = malloc(8 * (nb + 1));
+  if (copies) { memcpy(oi, b1, 8 * (nb < nB ? nb : nB)); memcpy(oa, b2, 8 * (nb < nB ? nb : nB)); }
   size_t cap = nb + 1, n = 0;
   size_t i = 0, j = 0;
   while (i < na && j < nb) {
@@ -117,6 +134,10 @@ static result run_range(const uint64_t *a0, const uint64_t *a1, const uint64_t *
 }
 
 int main(int argc, char **argv) {
+#ifdef __GLIBC__
+  mallopt(M_MMAP_THRESHOLD, 1 << 30);
+  mallopt(M_TRIM_THRESHOLD, 1 << 30);
+#endif
   if (argc < 2) { fprintf(stderr, "usage: kernel FILE [ITERS]\n"); return 2; }
   int iters = argc > 2 ? atoi(argv[2]) : 50;
   if (iters < 1) iters = 1;
@@ -140,16 +161,19 @@ int main(int argc, char **argv) {
   const uint64_t *b0 = a2 + nA, *b1 = b0 + nB, *b2 = b1 + nB;
   uint64_t *ts = malloc(sizeof(uint64_t) * (size_t)iters);
   result r = { 0, 0 };
-  for (int k = 0; k < iters; k++) {
-    uint64_t t0 = now_ns();
-    r = run(a0, a1, a2, nA, b0, b1, b2, nB, kA0, kA1, kB0);
-    uint64_t t1 = now_ns();
-    ts[k] = t1 - t0;
+  for (int copies = 0; copies < 2; copies++) {
+    for (int k = 0; k < iters; k++) {
+      uint64_t t0 = now_ns();
+      r = run(a0, a1, a2, nA, b0, b1, b2, nB, kA0, kA1, kB0, copies);
+      uint64_t t1 = now_ns();
+      ts[k] = t1 - t0;
+    }
+    qsort(ts, (size_t)iters, sizeof(uint64_t), cmp_u64);
+    printf("kernel %s: A %llu rows, B %llu rows; output %zu rows, checksum %llu; us median %llu min %llu (%d runs)\n",
+           copies ? "c-O2-copies" : "c-O2",
+           (unsigned long long)nA, (unsigned long long)nB, r.rows, (unsigned long long)r.sum,
+           (unsigned long long)(ts[(iters - 1) / 2] / 1000), (unsigned long long)(ts[0] / 1000), iters);
   }
-  qsort(ts, (size_t)iters, sizeof(uint64_t), cmp_u64);
-  printf("kernel c-O2: A %llu rows, B %llu rows; output %zu rows, checksum %llu; us median %llu min %llu (%d runs)\n",
-         (unsigned long long)nA, (unsigned long long)nB, r.rows, (unsigned long long)r.sum,
-         (unsigned long long)(ts[(iters - 1) / 2] / 1000), (unsigned long long)(ts[0] / 1000), iters);
   for (int k = 0; k < iters; k++) {
     uint64_t t0 = now_ns();
     r = run_range(a0, a1, a2, nA, b0, b1, b2, nB, kA0, kA1, kB0);

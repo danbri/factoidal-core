@@ -37,6 +37,14 @@ the output identical, and the evidence for and against a support library
   one C source for native and wasm32, and a differential test that runs on
   both (14,605 pass, 0 fail (out of 14,605) on each). Kernel with the
   primitive: 1.1 to 1.3 times C natively, 2.9 to 3.4 times C in wasm32.
+- Section 7 replaces the two ratios above. Both came from errors in the C
+  measurement: natively the C kernel paid about 1,100 page faults per run
+  (glibc returned its 2 MB buffers to the kernel at each `free`), and under
+  node both kernels ran as V8 baseline (Liftoff) code. With the two errors
+  removed, the Lean kernel with the primitive is 3.5 to 4.7 times C natively
+  and 3.8 to 4.9 times C in wasm32. No cause is specific to wasm32. Of the
+  gap, about half is the five 2 MB buffer copies the harness makes before it
+  writes; the rest is about 4 times more instructions per row than C.
 
 ## Method and machine
 
@@ -464,7 +472,8 @@ What the numbers say, and what they do not:
   against `malloc` in the C kernel, and the per-call result tuples
   (section 2).
 - The C kernel is faster under node than natively (3.8 to 4.0 against 5.3 to
-  6.5 ms); not analysed.
+  6.5 ms); not analysed. (Analysed in section 7: both numbers, and the two
+  tables above, are wrong for the C kernel, for two different reasons.)
 - On wasm32 the slow path of `ldU64LE` converts `p` to `Nat`
   (`lean_big_usize_to_nat` for `p ≥ 2^31`); it runs only for a read that is not
   inside the array.
@@ -493,6 +502,181 @@ Worktree of `main` at e0c998b8, 2026-10-12:
   changed `Codec/Zstd.c` among the library objects; nothing installed.
 - No `sorry`, `native_decide`, user `axiom` or `import Std` in the new or
   changed files.
+
+## 7. Why wasm32 looked slower: two measurement errors, then the real gap
+
+Question (issue 797): why is the Lean kernel (`usize-cstore`) 2.9 to 3.4
+times the C kernel in wasm32 under node, but 1.1 to 1.3 times C natively? And
+why is the C kernel faster under node (3.8 to 4.0 ms) than natively (5.3 to
+6.5 ms)?
+
+Answer: both ratios of section 6 are wrong, for the C side. The native C
+kernel paid page faults that the Lean kernel did not pay (H1), and under node
+both kernels ran as V8 baseline code (H2). With both errors removed, the Lean
+kernel is 3.5 to 4.7 times C on both targets. No cause specific to wasm32 was
+found (H3, H4). The gap that stays is the same on both targets (H5).
+
+Method: one hypothesis at a time; each one is a change and an interleaved
+A/B run (each round runs every variant once, in the same order; median over
+rounds; the 1-minute load before each round is given). Other agents used the
+machine: the load was 0.7 to 10.2. Instruction counts (valgrind
+`callgrind`, native only) do not change with load; they support the timing
+where the load was high. Scripts: `tools/qlvr/bench/kernel-targets.py` and
+ad hoc copies of `tools/lean-wasm-exe.sh` with other flags. Input:
+`l4qlvr kernel-dump` of q07 (31,250 A rows, 269,625 B rows, 13,369 output
+rows). Every variant gave checksum 5325009063194286364.
+
+### H1. The native C kernel pays page faults (confirmed)
+
+The C kernel allocates five buffers per run, four of them 2.16 MB. glibc
+serves an allocation above its mmap threshold with `mmap` and returns it to
+the kernel at `free`, so every run touches new pages. The Lean runtime
+allocates through mimalloc, which keeps freed memory.
+
+Change: glibc tunables `glibc.malloc.mmap_threshold=33554432` and
+`glibc.malloc.trim_threshold=1073741824` (no code change).
+
+| Measure | default | tuned |
+| --- | ---: | ---: |
+| C kernel, minor page faults per process (100 runs) | 114,102 | 4,789 |
+| Lean kernel, minor page faults per process (80 runs) | 8,906 | 6,330 |
+| C `c-O2` median ms, 7 rounds, load 2.16 to 2.94 | 4.53 | 1.41 (ratio 0.28) |
+| Lean `usize-cstore` median ms, same rounds | 6.91 | 6.57 |
+
+Verdict: confirmed. About 1,100 page faults per C run took 3.1 of 4.5 ms.
+The Lean kernel does not change. `tools/qlvr/bench/kernel.c` now sets the
+two thresholds with `mallopt` when it is built against glibc.
+
+### H2. Under node, both kernels run as Liftoff code (confirmed)
+
+V8 compiles wasm first with Liftoff (baseline) and compiles hot functions
+again with TurboFan. TurboFan code is used from the NEXT call of a function;
+V8 has no on-stack replacement for wasm. wasm-opt (`emcc -O2`/`-O3` at link)
+inlines `run` into `main` in the C kernel (the `.wat` has `main` and no
+`run`, also with `__attribute__((noinline))`), and inlines the Lean kernels
+into `runKernel` (in a `node --cpu-prof` profile, 37,474 of the samples are
+self time of `runKernel`). Both functions are entered once.
+`node --trace-wasm-compilation-times` shows TurboFan code for `main` that is
+never called again.
+
+Change: node flags. 5 rounds, load 0.74 to 3.90:
+
+| Kernel | default | `--liftoff-only` | `--no-liftoff` (TurboFan only) |
+| --- | ---: | ---: | ---: |
+| C `c-O2` ms | 4.13 | 4.44 (0.99) | 2.16 (0.56) |
+| Lean `usize` ms | 17.23 | 18.91 | 13.96 |
+| Lean `usize-cstore` ms | 11.93 | 11.66 | 8.83 |
+
+Verdict: confirmed. node's default equals `--liftoff-only` for both kernels.
+Liftoff costs the C kernel more (1.9 times) than the Lean kernel (1.35 times),
+so the section 6 ratio in wasm32 was too LOW, not too high. A C build with
+`run` marked `noinline` did not change this (3.21 against 3.40 ms, 7 rounds,
+load 1.33 to 1.36), because wasm-opt inlines it all the same.
+`kernel-targets.py` now runs node with `--no-liftoff` (`KERNEL_NODE_FLAGS`
+sets other flags). The same effect can apply to a long first call into the
+library module (`Wasm/build-wasm.sh`); that was not measured.
+
+### H3. emcc options (rejected)
+
+What the build already uses: `-O3 -DNDEBUG`, `-sASSERTIONS=0`, no
+`SAFE_HEAP`, no stack checks, mimalloc, and bulk memory (the kernel module
+has 113 `memory.copy` and 32 `memory.fill`). Changed: the flags of the 14
+Lean modules of the kernel program (runtime objects unchanged), TurboFan
+only, 9 rounds, load 7.36 to 10.14:
+
+| Lean module flags | `usize-cstore` ms | ratio to `-O3` |
+| --- | ---: | ---: |
+| `-O3` (as `Wasm/build-wasm.sh`) | 9.40 | 1.00 |
+| `-O2` | 11.96 | 0.98 |
+| `-O3 -msimd128` | 9.14 | 0.92 |
+| `-O3 -flto` (Lean modules only) | 9.17 | 1.01 |
+
+A first run of the same four (7 rounds, load 7.0 to 8.6) gave 1.12, 0.93,
+0.95. The C kernel at `-O3` was 1.37 times its `-O2` time. Verdict: no flag
+gives a gain that is larger than the noise and repeats. `Wasm/build-wasm.sh`
+is not changed.
+
+### H4. 32-bit `USize` boxes `UInt64` values (rejected)
+
+In the generated C (`.lake/build/ir/Harness/QlvrKernel.c`, the same file
+for both targets), the specialised hot functions of `usize-cstore` take
+`uint64_t` and `size_t` arguments unboxed and contain no `lean_box_uint64`
+(`c-audit.py`: `filterBU` box 1, `crossLeftU` box 2, all for the result
+tuples, `lean_box_usize`). The loads are `i64.load` in wasm32 (section 6).
+Verdict: rejected for this kernel.
+
+### H5. The gap that stays, on both targets
+
+Instruction counts, native, `callgrind`, per run: C `run` 7.8 million;
+Lean `usize-cstore` 32.1 million (4.1 times). Lean, by function:
+
+| Function (inclusive) | million instructions per run | Notes |
+| --- | ---: | --- |
+| `filterBU` | 11.0 | 39 instructions per B row in its own code (all 269,625 rows match); 0.5 of the 11.0 is one `lean_copy_byte_array` (below) |
+| `mergeLoopU`, own code | 9.0 | two `ldU64LE` with bounds tests and a fuel counter per step |
+| `crossLeftU`, `crossRightU`, and the tuples they return | 9.6 | 13,369 calls per run; each result is a 3-tuple: 3 allocations (`mi_malloc_small`) and 3 frees (`lean_dec_ref_cold`, `mi_free`) |
+| `filterAU`, `runEndU`, `sumLoopU` | 1.7 | |
+| `scratch` | 0.7 | the buffer copies (below) |
+| total (`runUsizeCStore`) | 32.1 | |
+
+Each Lean output buffer starts as a copy of an input column
+(`scratch x.b1 (8 * x.nB)`, so that `stU64LE` overwrites). That is five copies
+per run, four of 2.16 MB (the compiler shares the two identical `scratch`
+calls; the first store then copies the shared array). A copy is few
+instructions (`rep movsb`, `memory.copy`) but 10.8 MB of memory traffic.
+Change: `c-O2-copies` in `kernel.c`, the C kernel plus the same five copies.
+7 rounds, load 8.57 to 10.18:
+
+| | native ms | wasm32 ms (TurboFan) |
+| --- | ---: | ---: |
+| C `c-O2` | 2.20 | 2.22 |
+| C `c-O2-copies` | 4.63 (1.90) | 4.97 (2.24) |
+| Lean `usize-cstore` | 7.01 | 9.54 |
+
+Verdict: the copies are about half of the gap on both targets. After them,
+Lean is 1.5 times `c-O2-copies` natively and 1.9 times in wasm32.
+
+Final run, `kernel-targets.py 7 10` with both fixes, load 7.78 to 9.63:
+
+| Implementation | native ms | native × C | wasm32 ms | wasm32 × C |
+| --- | ---: | ---: | ---: | ---: |
+| bytes-set | 32.4 | 14.85 | 46.4 | 17.96 |
+| usize | 12.1 | 5.67 | 14.0 | 5.54 |
+| usize-cstore | 6.7 | 3.45 | 9.2 | 3.83 |
+| C `-O2` | 2.2 | 1 | 2.5 | 1 |
+| C `-O2` with the five copies | 3.8 | 2.05 | 4.7 | 1.54 |
+
+### What is still not explained
+
+- In the same rounds the wasm32 ratio is 1.1 to 1.3 times the native ratio
+  (3.83 against 3.45 above; 1.9 against 1.5 after the copies). At load 8 to
+  10 this is not separated from noise. Not measured: the mimalloc small
+  allocation path in wasm32 (40,107 allocations per run, for the tuples of
+  `crossLeftU`).
+
+### Next steps (not done; each needs the owner's decision or its own issue)
+
+- Remove the copies: an output buffer that is not a copy of an input. Pure
+  Lean has no uninitialised `ByteArray`; a builder primitive (append 8 bytes
+  to a `ByteArray` with reserved capacity, `@[extern c inline]` with a Lean
+  reference body and a differential test, as `stU64LE`) would remove them.
+  Measured value: about half of the gap (H5).
+- Remove the tuple allocation per `crossLeftU` call (a Lean change with an
+  equality theorem against the present definition).
+- The bounds and exclusivity tests per row in `filterBU` (39 against about 10
+  instructions per row).
+
+### Gates for this change
+
+No Lean source and no build script changed (`kernel.c`,
+`kernel-targets.py`, this record, two skills). Worktree of `main` at
+dfcc267a, 2026-10-12: `lake build` 1,546 jobs, 0 errors;
+`python3 tools/lean-tail-recursion-audit.py --gate` exit 0;
+`tests/prim/run.sh` native 14,605 pass, 0 fail (out of 14,605), wasm32
+14,605 pass, 0 fail (out of 14,605); `tests/qlvr/run.sh` 39 pass, 0 fail
+(out of 39); `tests/qlvr/kernel.sh`: all implementations, with
+`c-O2-copies`, give the same checksum; `Wasm/build-wasm.sh`
+(`L4_WASM_NO_INSTALL=1`, a copy of the work directory): both modules link.
 
 ## What did not work or was not done
 
@@ -537,4 +721,11 @@ tools/qlvr/bench/pipeline.sh /home/user/qlvr-work/perf/pipeline o3      # and o2
 python3 -I tools/qlvr/bench/compare.py 5 /home/user/qlvr-work/instance KERNELFILE o3=.../o3/l4qlvr lto=.../lto/l4qlvr ...
 python3 tools/qlvr/bench/c-audit.py formal/lean4/.lake/build/ir/L4Factoidal/Codec/Zstd.c Zstd_seqLoop
 formal/lean4/.lake/build/bin/l4qlvr kernel-dump /home/user/qlvr-work/instance KERNELFILE
+# section 7
+tools/lean-wasm-exe.sh Harness.QlvrKernelBench OUT/l4qlvr-kernel.js
+cc -O2 -o OUT/kernel-c tools/qlvr/bench/kernel.c
+emcc -O2 tools/qlvr/bench/kernel.c -o OUT/kernel-c.js -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=node -sNODERAWFS=1 -sEXIT_RUNTIME=1
+python3 -I tools/qlvr/bench/kernel-targets.py 7 10 KERNELFILE native-lean=formal/lean4/.lake/build/bin/l4qlvr-kernel native-c=OUT/kernel-c wasm32-lean=OUT/l4qlvr-kernel.js wasm32-c=OUT/kernel-c.js
+node --liftoff-only OUT/kernel-c.js KERNELFILE 10      # against --no-liftoff and no flag
+valgrind --tool=callgrind formal/lean4/.lake/build/bin/l4qlvr-kernel KERNELFILE 2; callgrind_annotate --inclusive=yes --tree=calling callgrind.out.*
 ```

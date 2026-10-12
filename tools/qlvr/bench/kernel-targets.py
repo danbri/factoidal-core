@@ -16,6 +16,15 @@ per-run median (ms), and the median over rounds of the ratio to `c-O2` of the
 SAME target and round (the target is the part of the name before the first
 `-`, so `native-lean` and `native-c` compare with each other). Every
 implementation must print the same checksum, or the script exits 1.
+
+A `.js` program runs as `node $KERNEL_NODE_FLAGS PROGRAM ...`; the default
+flags are `--no-liftoff` (TurboFan code only). The reason, measured
+2026-10-12 (record section 7): wasm-opt inlines both timing loops (C and
+Lean) into a function that is entered once, V8 replaces Liftoff code by
+TurboFan code only at the next call (no on-stack replacement for wasm), so
+with node's defaults every timed run executes Liftoff code: the C kernel
+3.6 to 4.1 ms against 1.6 to 2.2 ms. Set KERNEL_NODE_FLAGS= (empty) to
+measure node's defaults.
 """
 import os
 import re
@@ -23,11 +32,12 @@ import statistics
 import subprocess
 import sys
 
+NODE_FLAGS = os.environ.get("KERNEL_NODE_FLAGS", "--no-liftoff").split()
 LINE = re.compile(r"kernel ([\w-]+): .*?checksum (\d+); us median (\d+)")
 
 
 def run(prog, kfile, iters):
-    cmd = (["node", prog] if prog.endswith(".js") else [prog]) + [kfile, str(iters)]
+    cmd = (["node"] + NODE_FLAGS + [prog] if prog.endswith(".js") else [prog]) + [kfile, str(iters)]
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
     if p.returncode != 0:
         raise SystemExit(f"kernel-targets: {' '.join(cmd)} exited {p.returncode}: {p.stderr[-400:]}")
@@ -50,6 +60,7 @@ def main():
                 sums.add(cs)
                 data.setdefault((target.split("-")[0], impl), []).append(us / 1000)
         print(f"round {r + 1}: load {loads[-1]:.2f}", file=sys.stderr)
+    print(f"node flags: {' '.join(NODE_FLAGS) or '(none)'}")
     print(f"rounds {rounds}, {iters} runs per implementation per round; "
           f"1-minute load before each round: {', '.join(f'{x:.2f}' for x in loads)}")
     print("| target | implementation | median ms | times C (median of per-round ratios) |")

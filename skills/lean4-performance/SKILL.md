@@ -515,3 +515,25 @@ duplicate background packers competing for the same temporary output.
 
 For the current KGX scale observations and the required future byte-streaming
 ingest boundary, read [`docs/20260830-ibk2-ingest-scale.md`](../../docs/20260830-ibk2-ingest-scale.md).
+
+### Two traps in a Lean-against-C timing (paid for 2026-10-12)
+
+The record of 2026-10-12 reported the q07 kernel at 1.1 to 1.3 times C
+natively and 2.9 to 3.4 times C in wasm32, and an agent was sent to find the
+wasm32 cause. Both ratios were wrong, for the C side; the real figure was 3.5
+to 4.9 times C on both targets
+([record, section 7](../../docs/designissues/2026-10-12-lean-to-c-performance.md)).
+
+- **glibc returns large buffers to the kernel.** A C program that `malloc`s
+  and `free`s buffers above the mmap threshold (128 KiB at first) in its timed
+  loop pays the page faults again on every run; the Lean runtime (mimalloc)
+  keeps freed memory. The C kernel spent 3.1 of 4.5 ms in about 1,100 faults
+  per run. Count the faults (`getrusage` `ru_minflt`) of both programs, and
+  set `mallopt(M_MMAP_THRESHOLD, ...)` and `M_TRIM_THRESHOLD` in the C
+  reference (as `tools/qlvr/bench/kernel.c` now does).
+- **Under node, a loop in a function entered once runs as Liftoff code.**
+  V8 uses TurboFan code from the next call only (no on-stack replacement
+  for wasm), and wasm-opt inlines timed functions into `main` or the timing
+  loop, also against `noinline`. Check with `node --liftoff-only` (if the
+  time does not change, the default run was Liftoff code); compare with
+  `node --no-liftoff`, as `tools/qlvr/bench/kernel-targets.py` now does.

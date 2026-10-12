@@ -671,6 +671,15 @@ against the old core library.
 
 ## Traps, each one paid for
 
+- **Timing wasm under node with default flags measures Liftoff code.** A
+  timed loop that wasm-opt inlined into a function entered once never runs
+  as TurboFan code (V8 has no on-stack replacement for wasm). Paid for
+  2026-10-12: a C kernel timed at 3.8 ms under node ran in 1.6 to 2.2 ms with
+  `--no-liftoff`, and a wrong Lean-to-C ratio sent an agent to look for a
+  wasm32 cause that did not exist. Check with `node --liftoff-only`; the
+  record is section 7 of `docs/designissues/2026-10-12-lean-to-c-performance.md`.
+  Not measured: how much a long first call into the library module loses.
+
 - **A `Nat` literal at or above 2^31 leaks one bignum per evaluation on
   wasm32.** The compiler emits `lean_cstr_to_nat("4294967296")` at the
   use site; when that value goes straight into a borrowing comparison
