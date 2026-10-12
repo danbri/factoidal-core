@@ -452,38 +452,61 @@ def joinOutput (l r : Table) (vars : Array String) (extra : Array Nat) (li ri : 
   { vars, cols := l.cols.map (gather · li) ++ extra.map fun k => gather r.cols[k]! ri,
     rows := li.size, sortVar }
 
+/-- The end of the run of `a` from row `e` of column `A` of `n` rows (a
+    tail call with fuel). -/
+@[specialize] def runEnd (A : Nat → UInt64) (n : Nat) (a : UInt64) : Nat → Nat → Nat
+  | 0, e => e
+  | f + 1, e => if e < n && A e == a then runEnd A n a f (e + 1) else e
+
+/-- Row `x` of a run against rows `y..je-1`: the pairs that `ok` accepts are
+    appended (a tail call with fuel). -/
+@[specialize] def pairsRow (ok : Nat → Nat → Bool) (x je : Nat) : Nat → Nat → Array Nat → Array Nat → Array Nat × Array Nat
+  | 0, _, li, ri => (li, ri)
+  | f + 1, y, li, ri =>
+    if y < je then
+      if ok x y then pairsRow ok x je f (y + 1) (li.push x) (ri.push y)
+      else pairsRow ok x je f (y + 1) li ri
+    else (li, ri)
+
+/-- Rows `x..ie-1` against rows `j..je-1`, row by row (a tail call with
+    fuel). -/
+@[specialize] def pairsBlock (ok : Nat → Nat → Bool) (ie j je : Nat) : Nat → Nat → Array Nat → Array Nat → Array Nat × Array Nat
+  | 0, _, li, ri => (li, ri)
+  | f + 1, x, li, ri =>
+    if x < ie then
+      let (li, ri) := pairsRow ok x je (je - j) j li ri
+      pairsBlock ok ie j je f (x + 1) li ri
+    else (li, ri)
+
+/-- The merge loop over row indices: columns `A` (left) and `B` (right) of
+    `nl` and `nr` rows, `ok` the test of the other shared columns (a tail
+    call with fuel; `MergeTheorems.mergeGo_eq`). -/
+@[specialize] def mergeGo (A B : Nat → UInt64) (ok : Nat → Nat → Bool) (nl nr : Nat) :
+    Nat → Nat → Nat → Array Nat → Array Nat → Array Nat × Array Nat
+  | 0, _, _, li, ri => (li, ri)
+  | f + 1, i, j, li, ri =>
+    if i ≥ nl || j ≥ nr then (li, ri)
+    else
+      let a := A i
+      let b := B j
+      if a < b then mergeGo A B ok nl nr f (i + 1) j li ri
+      else if b < a then mergeGo A B ok nl nr f i (j + 1) li ri
+      else
+        let ie := runEnd A nl a nl (i + 1)
+        let je := runEnd B nr a nr (j + 1)
+        let (li, ri) := pairsBlock ok ie j je (ie - i) i li ri
+        mergeGo A B ok nl nr f ie je li ri
+
 /-- Merge join of `l` and `r`, both in ascending order of variable `v`. -/
-def mergeJoin (l r : Table) (v : String) : Table := _root_.Id.run do
+def mergeJoin (l r : Table) (v : String) : Table :=
   let (vars, extra) := joinVars l r
   let shared := sharedCols l r
   let lc := (l.idx v).getD 0
   let rc := (r.idx v).getD 0
   let others := shared.filter fun (a, _) => a != lc
-  let mut li : Array Nat := #[]
-  let mut ri : Array Nat := #[]
-  let mut i := 0
-  let mut j := 0
-  for _ in [0:l.rows + r.rows + 1] do
-    if i ≥ l.rows || j ≥ r.rows then break
-    let a := l.at lc i
-    let b := r.at rc j
-    if a < b then i := i + 1
-    else if b < a then j := j + 1
-    else
-      let mut ie := i + 1
-      for _ in [0:l.rows] do
-        if ie < l.rows && l.at lc ie == a then ie := ie + 1 else break
-      let mut je := j + 1
-      for _ in [0:r.rows] do
-        if je < r.rows && r.at rc je == a then je := je + 1 else break
-      for x in [i:ie] do
-        for y in [j:je] do
-          if others.all (fun (p, q) => l.at p x == r.at q y) then
-            li := li.push x
-            ri := ri.push y
-      i := ie
-      j := je
-  return joinOutput l r vars extra li ri (some v)
+  let ok (x y : Nat) : Bool := others.all (fun (p, q) => l.at p x == r.at q y)
+  let (li, ri) := mergeGo (l.at lc) (r.at rc) ok l.rows r.rows (l.rows + r.rows + 1) 0 0 #[] #[]
+  joinOutput l r vars extra li ri (some v)
 
 /-- Hash join on all shared variables; built on the smaller input, output
     in the order of the other input. With no shared variable, the cross

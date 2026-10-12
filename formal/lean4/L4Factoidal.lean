@@ -374,6 +374,7 @@ import L4Factoidal.Storage.Sbm11.BlockAtTheorems
 import L4Factoidal.Storage.Sbm11.DictLookupTheorems
 import L4Factoidal.Storage.Sbm11.DictRangeTheorems
 import L4Factoidal.Qlvr.Bgp
+import L4Factoidal.Qlvr.MergeTheorems
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson
 import L4Factoidal.Syntax.RdfXmlWrite
