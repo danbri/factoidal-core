@@ -64,6 +64,7 @@ import L4Factoidal.Qlvr.Query
 import L4Factoidal.Storage.Sbm11.Block
 import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
+import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
 import Std.Data.HashMap
@@ -366,6 +367,10 @@ structure Store (m : Type → Type) where
   /-- the rank of the first dictionary key not below the bytes
       (`DictRange.lowerBoundM`) -/
   lowerBound : ByteArray → ExceptT String m Nat
+  /-- the delta overlay of a permutation (stage 5, `Overlay.forPerm`):
+      inserts and deletes in its row order, sorted; cleared graph ids. Empty
+      for a generation without a delta log. -/
+  ovl : Nat → L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := fun _ => {}
 
 /-! ## Patterns over ids and permutations -/
 
@@ -668,6 +673,59 @@ structure Chunk where
   consts : Array (Option UInt64)
   deriving Inhabited
 
+/-- Rows `[lo, lo + k)` of the columns as rows (a tail call from the end). -/
+def rowsOfColsGo (cols : Array ByteArray) (lo : Nat) : Nat → List Row → List Row
+  | 0, acc => acc
+  | k + 1, acc =>
+    rowsOfColsGo cols lo k
+      (⟨(at64 cols[0]! (lo + k)).toNat, (at64 cols[1]! (lo + k)).toNat,
+        (at64 cols[2]! (lo + k)).toNat, (at64 cols[3]! (lo + k)).toNat⟩ :: acc)
+
+/-- Rows as four columns of words: a tail call with each column its own
+    argument, so every column has one reference and each push is in place
+    (an array of the four columns, read with `cs[0]!` and rebuilt, copied
+    every column on every row: q01 over the overlay took 40 ms for 7 blocks). -/
+def colsOfRowsGo : List Row → ByteArray → ByteArray → ByteArray → ByteArray → Array ByteArray
+  | [], a, b, c, d => #[a, b, c, d]
+  | r :: rs, a, b, c, d =>
+    let put := L4Factoidal.Qlvr.Side.put64
+    colsOfRowsGo rs (put a r.c0.toUInt64) (put b r.c1.toUInt64) (put c r.c2.toUInt64) (put d r.g.toUInt64)
+
+def colsOfRows (rows : List Row) (n : Nat) : Array ByteArray :=
+  colsOfRowsGo rows (ByteArray.emptyWithCapacity (8 * n)) (ByteArray.emptyWithCapacity (8 * n))
+    (ByteArray.emptyWithCapacity (8 * n)) (ByteArray.emptyWithCapacity (8 * n))
+
+/-- A chunk of rows (all four columns known): every check of the scan applied
+    row by row (`selectRows`). -/
+def chunkOfRows (spec : ScanSpec) (rows : List Row) (sortVar : Option String) : Chunk :=
+  let n := rows.length
+  let cols := colsOfRows rows n
+  let (out, k) := selectRows cols spec.checks spec.named spec.eqs spec.outCols n (n + 1) 0
+    (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * n)) 0
+  { table := { vars := spec.outVars, cols := out, rows := k, sortVar },
+    consts := spec.outVars.map fun _ => none }
+
+/-- A block with overlay rows in its range: all four frames are read and
+    decoded, the rows with the key prefix are merged with the deletes, the
+    cleared graphs and the inserts (`Overlay.mergeRows`, proved:
+    `OverlayTheorems.mergeRows_spec`), and the checks run per row. Returns
+    the chunk and the bytes read. -/
+def overlayChunkM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (b : BlockMeta)
+    (ins del : List Row) (cleared : Array Nat) (sortVar : Option String) :
+    ExceptT String m (Chunk × Nat) := do
+  let (bytes, starts, nbytes) ← readFrames st spec.perm b #[true, true, true, true]
+  let mut cols : Array ByteArray := #[]
+  for c in [0:4] do
+    match colAll b bytes starts c with
+    | .ok w => cols := cols.push w
+    | .error e => throw e
+  let fuel := Nat.log2 b.rows + 2
+  let lo := keyBound cols spec.key false fuel 0 b.rows
+  let hi := keyBound cols spec.key true fuel lo b.rows
+  let base := rowsOfColsGo cols lo (hi - lo) []
+  let merged := L4Factoidal.Storage.Sbm11.Overlay.mergeRows (fun g => cleared.contains g) base del ins
+  return (chunkOfRows spec merged sortVar, nbytes)
+
 /-- Scan block by block; `f` gets each block's rows and says whether to go
     on. With `fill = false` a column that is constant over a chunk is left
     empty and given in `consts` (the aggregate path counts it so). -/
@@ -679,6 +737,16 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
+  -- the delta overlay (stage 5): the inserts with the key prefix, in row
+  -- order; each is merged into the first selected block whose last row is
+  -- not below it, or into a last chunk after the blocks
+  let ov := st.ovl spec.perm
+  let ovOn := !ov.isEmpty
+  let insK : Array Row := if ovOn then ov.ins.filter (fun r => prefixCmp r spec.key == .eq) else #[]
+  let insFuel := Nat.log2 insK.size + 2
+  let delFuel := Nat.log2 ov.del.size + 2
+  let mut insPos := 0
+  let mut stopped := false
   for i in blocksFor metas spec.key do
     let b := metas[i]!
     if !selects b spec.key then continue
@@ -696,6 +764,27 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
       | some 0 => skip := true
       | some _ => named := false
       | none => pure ()
+    if ovOn then
+      let insEnd := L4Factoidal.Storage.Sbm11.Overlay.upperIdx insK b.last insFuel insPos insK.size
+      let dLo := L4Factoidal.Storage.Sbm11.Overlay.lowerIdx ov.del b.first delFuel 0 ov.del.size
+      let dHi := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ov.del b.last delFuel dLo ov.del.size
+      let clHit := !ov.cleared.isEmpty && (match colConst? b 3 with
+        | some g => ov.cleared.contains g
+        | none => true)
+      if insEnd > insPos || (!skip && (dHi > dLo || clHit)) then
+        let insL := L4Factoidal.Storage.Sbm11.Overlay.sliceList insK insPos (insEnd - insPos) []
+        let delL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ov.del dLo (dHi - dLo) []
+        let (chunk, nbytes) ← overlayChunkM st spec b insL delL ov.cleared sortVar
+        insPos := insEnd
+        stats := { stats with blocksSelected := stats.blocksSelected + 1, blocksRead := stats.blocksRead + 1,
+                              framesRead := stats.framesRead + 4, bytesRead := stats.bytesRead + nbytes,
+                              rowsOut := stats.rowsOut + chunk.table.rows }
+        let (acc', more) ← f acc chunk
+        acc := acc'
+        if !more then
+          stopped := true
+          break
+        continue
     if skip then continue
     stats := { stats with blocksSelected := stats.blocksSelected + 1 }
     -- the columns to decode
@@ -755,7 +844,14 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
     stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
     let (acc', more) ← f acc chunk
     acc := acc'
-    if !more then break
+    if !more then
+      stopped := true
+      break
+  if ovOn && !stopped && insPos < insK.size then
+    let chunk := chunkOfRows spec (L4Factoidal.Storage.Sbm11.Overlay.sliceList insK insPos (insK.size - insPos) []) sortVar
+    stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
+    let (acc', _) ← f acc chunk
+    acc := acc'
   return (acc, stats)
 
 /-- The whole scan as one table. -/

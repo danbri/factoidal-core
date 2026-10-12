@@ -1,0 +1,230 @@
+/-
+Harness/Sbm11Compact — `l4sbm11 update` and `l4sbm11 compact` (SBM11 stage 5,
+https://github.com/danbri/factoidal/issues/791; design record
+`docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 6.7).
+
+  l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)
+  l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]
+
+`update` appends one DLOG batch to the generation's `deltas.dlog`
+(`Sbm11Delta.appendUpdate`). Every later open replays the log into the
+overlay (`Sbm11Query.openOverlaid`), and every scan merges it
+(`IdQuery.scanFoldM`, `Overlay.mergeRows`).
+
+`compact` writes a new generation that holds the base with the overlay
+applied, through the packer's phases 2 and 3 (`Sbm11PackLib.packBatches`), in
+place of the packer's phase 1 (parse):
+
+  A. One SPO scan of the overlaid generation (overlay merged) marks the ids
+     the remaining quads use: dictionary ranks and overlay vocabulary entries.
+  B. One term run: the used dictionary keys (read page by page, already in key
+     order) merged with the sorted keys of the used overlay terms; each gets a
+     run-local number.
+  C. A second SPO scan writes one quad run: per quad four words, a run-local
+     number for a dictionary or overlay term, the id itself for an inline
+     term, 0 for the default graph (the phase-1 format).
+  D. `packBatches`: phase 2 (dictionary, remap), phase 3 (four permutations,
+     blocks, PRM1), hashes and the manifest, by the packer's own code.
+
+So the output's dictionary holds exactly the terms of its quads, in key
+order, as a pack of the same quads does: `tests/sbm11/run.sh` part (i)
+compares every artifact of a compacted generation with a fresh pack of the
+updated source, byte for byte. Then `compacted.epoch` (the greatest epoch
+folded) and `compacted.source.sha256` (SHA-256 of the source manifest and
+log) are written, as `l4block-shard-compact` does. OUTDIR is a new
+generation; activate it with `l4sbm11 activate`.
+
+Memory: the two scans are block by block; B holds one byte per dictionary
+term (used flags) and one number per used term (the local numbers), and the
+sorted overlay keys. The quad run is written in 8 MiB pieces.
+
+This is a HARNESS: it does file I/O.
+-/
+import Harness.Sbm11Query
+import Harness.Sbm11PackLib
+import Harness.Sbm11Delta
+import L4Factoidal.Storage.Sbm11.Overlay
+
+namespace Harness.Sbm11Compact
+
+open L4Factoidal.RDF
+open L4Factoidal.Storage.Sbm11
+open Harness.Sbm11Gen
+open Harness.Sbm11Query
+open L4Factoidal.Qlvr (cmpBytes mergeSortBy)
+
+/-- The id kinds a quad column holds. -/
+inductive IdKind where
+  | dict (rank : Nat)
+  | delta (idx : Nat)
+  | other
+  deriving Inhabited
+
+@[inline] def kindOf (x : UInt64) : IdKind :=
+  let tag := (x >>> 60).toNat
+  let pay := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
+  if tag == tagBnode || tag == tagIri || tag == tagLit then .dict pay
+  else if tag == Overlay.tagDelta then .delta pay
+  else .other
+
+def runCompact (src outDir : String) (blockRows sortRowsMax : Nat) (v : Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let ss ← openOverlaid v src
+  let tOpen ← IO.monoNanosNow
+  let srcDir := ss.g.dir
+  IO.FS.createDirAll outDir
+  let termCount := ss.g.dictHdr.termCount
+  let vocab ← ss.ovVocab.get
+  -- A. used ids
+  let usedRef ← IO.mkRef (ByteArray.mk (Array.replicate termCount 0))
+  let usedVRef ← IO.mkRef (ByteArray.mk (Array.replicate vocab.size 0))
+  let rowsRef ← IO.mkRef 0
+  scanAll ss 2 #[] fun cols n => do
+    let mut u ← usedRef.swap .empty
+    let mut uv ← usedVRef.swap .empty
+    for i in [0:n] do
+      for c in [0:4] do
+        match kindOf (IdQuery.at64 cols[c]! i) with
+        | .dict r => u := u.set! r 1
+        | .delta k => uv := uv.set! k 1
+        | .other => pure ()
+    usedRef.set u
+    usedVRef.set uv
+    rowsRef.modify (· + n)
+  let used ← usedRef.get
+  let usedV ← usedVRef.get
+  let t1 ← IO.monoNanosNow
+  -- B. one term run: used dictionary keys merged with the used overlay keys
+  let mut vkeys : Array (ByteArray × Nat) := #[]
+  for k in [0:vocab.size] do
+    if usedV.get! k == 1 then
+      match vocab[k]?.bind termKeyBytes? with
+      | some key => vkeys := vkeys.push (key, k)
+      | none => throw (IO.userError s!"overlay term {k} has no dictionary key")
+  vkeys := mergeSortBy vkeys fun a b => cmpBytes a.1 b.1 != .gt
+  let termRun := s!"{outDir}/run-compact-0.tmp"
+  let hRun ← IO.FS.Handle.mk termRun .write
+  let mut buf := ByteArray.emptyWithCapacity (1 <<< 20)
+  let mut localOf : Array Nat := Array.replicate termCount 0
+  let mut localOfV : Array Nat := Array.replicate vocab.size 0
+  let mut next := 1
+  let mut vi := 0
+  let pages := (termCount + Dict.pageTerms - 1) / Dict.pageTerms
+  for pg in [0:pages] do
+    let (packed, offs) ← ss.pageKeys pg
+    for j in [0:offs.size - 1] do
+      let rank := pg * Dict.pageTerms + j
+      if rank < termCount && used.get! rank == 1 then
+        let key := packed.extract offs[j]! offs[j + 1]!
+        -- overlay keys below this key first
+        for _ in [0:vkeys.size] do
+          if vi < vkeys.size then
+            let (vk, k) := vkeys[vi]!
+            match cmpBytes vk key with
+            | .lt =>
+              buf := Sbm11Pack.put32 buf vk.size ++ vk
+              localOfV := localOfV.set! k next
+              next := next + 1
+              vi := vi + 1
+            | .eq => throw (IO.userError "an overlay term has a dictionary key")
+            | .gt => break
+          else break
+        buf := Sbm11Pack.put32 buf key.size ++ key
+        localOf := localOf.set! rank next
+        next := next + 1
+        if buf.size ≥ (1 <<< 20) then
+          hRun.write buf
+          buf := ByteArray.emptyWithCapacity (1 <<< 20)
+  for _ in [0:vkeys.size] do
+    if vi < vkeys.size then
+      let (vk, k) := vkeys[vi]!
+      buf := Sbm11Pack.put32 buf vk.size ++ vk
+      localOfV := localOfV.set! k next
+      next := next + 1
+      vi := vi + 1
+  hRun.write buf
+  hRun.flush
+  let terms := next - 1
+  let t2 ← IO.monoNanosNow
+  -- C. one quad run over run-local numbers
+  let quadRun := s!"{outDir}/quads-compact-0.tmp"
+  let hQ ← IO.FS.Handle.mk quadRun .write
+  let qbuf ← IO.mkRef (ByteArray.emptyWithCapacity (8 <<< 20))
+  let badRef ← IO.mkRef 0
+  scanAll ss 2 #[] fun cols n => do
+    let mut b ← qbuf.swap .empty
+    let mut bad := 0
+    for i in [0:n] do
+      for c in [0:4] do
+        let x := IdQuery.at64 cols[c]! i
+        let y : Nat := match kindOf x with
+          | .dict r => localOf[r]!
+          | .delta k => localOfV[k]!
+          | .other => x.toNat
+        if y == 0 && x != 0 then bad := bad + 1
+        b := Sbm11Pack.pushW b y.toUInt64
+    if b.size ≥ (8 <<< 20) then
+      hQ.write b
+      b := ByteArray.emptyWithCapacity (8 <<< 20)
+    qbuf.set b
+    badRef.modify (· + bad)
+  hQ.write (← qbuf.get)
+  hQ.flush
+  if (← badRef.get) != 0 then throw (IO.userError s!"{← badRef.get} ids without a run-local number")
+  let quads ← rowsRef.get
+  let t3 ← IO.monoNanosNow
+  -- D. the packer's phases 2 and 3
+  let manifestBytes ← IO.FS.readBinFile s!"{srcDir}/{manifestName}"
+  let (allBatches, dlogBytes, _) ← Harness.Sbm11Delta.readBatches srcDir
+  let identityInput := manifestBytes ++ dlogBytes
+  let identity := Harness.nativeSha256 identityInput
+  let batch : Sbm11Pack.Batch := { termRun, quadRun, terms, quads }
+  let r ← Sbm11Pack.packBatches outDir #[batch] blockRows sortRowsMax identityInput.size (pure identity)
+  let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk srcDir)
+  let epoch := Harness.CompactedEpoch.foldedThrough baseEpoch allBatches
+  if !(← Harness.CompactedEpoch.write (System.FilePath.mk outDir) epoch) then
+    throw (IO.userError "could not write compacted.epoch")
+  if !(← Harness.PosixRangeIO.atomicReplaceFileSyncRaw s!"{outDir}/compacted.source.sha256" identity) then
+    throw (IO.userError "could not write compacted.source.sha256")
+  let t4 ← IO.monoNanosNow
+  IO.println s!"sbm11-compact: source={srcDir} output={outDir} base-quads={ss.g.manifest.quads} {ss.deltaText} quads={r.outs[0]!.rows} terms={r.terms} new-terms-kept={vkeys.size} dictionary-terms-dropped={termCount - (terms - vkeys.size)} epoch={epoch} verify={v.name}"
+  Sbm11Pack.printPermLines "sbm11-compact" r.outs
+  IO.println s!"sbm11-compact: generation-bytes={r.genBytes} manifest-bytes={r.manifestBytes} merkle-bytes={r.merkleBytes} total-on-disk={r.genBytes + r.manifestBytes + r.merkleBytes}"
+  IO.println s!"sbm11-compact: open-and-replay-ms={ms t0 tOpen} scan-used-ms={ms tOpen t1} term-run-ms={ms t1 t2} quad-run-ms={ms t2 t3} phase2-ms={ms 0 r.phase2Ns} phase3a-ms={ms 0 r.phase3aNs} phase3b-ms={ms 0 r.phase3bNs} hash-manifest-ms={ms 0 r.hashNs} total-ms={ms t0 t4} peak-rss={← vmHWM}"
+  pure 0
+
+def parseCompactOpts : List String → Nat × Nat × Option Verify → Option (Nat × Nat × Option Verify)
+  | [], o => some o
+  | "--block-rows" :: x :: rest, (_, m, v) => parseCompactOpts rest (max 1 x.toNat!, m, v)
+  | "--sort-rows" :: x :: rest, (b, _, v) => parseCompactOpts rest (b, max 1 x.toNat!, v)
+  | "--verify" :: x :: rest, (b, m, _) => (Verify.ofString? x).bind fun v => parseCompactOpts rest (b, m, some v)
+  | _, _ => none
+
+def main (args : List String) : IO UInt32 := do
+  match args with
+  | ["update", dir, "--file", path] =>
+    try Harness.Sbm11Delta.appendUpdate dir (← IO.FS.readFile path)
+    catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
+  | "update" :: dir :: parts =>
+    if parts.isEmpty then
+      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)"
+      return 2
+    try Harness.Sbm11Delta.appendUpdate dir (String.intercalate " " parts)
+    catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
+  | "compact" :: src :: out :: opts =>
+    match parseCompactOpts opts (4096, 524288, none) with
+    | none =>
+      IO.eprintln "usage: l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+      return 2
+    | some (b, m, v?) =>
+      try
+        let v ← match v? with
+          | some v => pure v
+          | none => cliDefaultVerify src
+        runCompact src out b m v
+      catch e => IO.eprintln s!"l4sbm11 compact: {e}"; return 1
+  | _ =>
+    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+    return 2
+
+end Harness.Sbm11Compact

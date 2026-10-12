@@ -40,7 +40,9 @@ This is a HARNESS: it does file I/O. The query engine is
 `L4Factoidal.Storage.Sbm11.IdQuery`.
 -/
 import Harness.Sbm11Gen
+import Harness.Sbm11Delta
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
@@ -86,6 +88,22 @@ structure Session where
       against the manifest. Unused under `none` (each GDX1 entry is one
       `pread`). -/
   gdx : IO.Ref (Option ByteArray)
+  /-- The overlay vocabulary (stage 5): terms of the delta log that have no
+      base id, in the order the replay met them; the id of entry `k` is
+      `tagDelta · 2^60 + k`. -/
+  ovVocab : IO.Ref (Array Term)
+  ovIds : IO.Ref (Std.HashMap Term Nat)
+  /-- The overlay per permutation (`Overlay.forPerm`), fixed at open. -/
+  ovl : Array L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := #[{}, {}, {}, {}]
+  /-- committed batches and entries replayed at open; overlay inserts,
+      deletes, cleared graphs -/
+  deltaBatches : Nat := 0
+  deltaOps : Nat := 0
+  ovInserts : Nat := 0
+  ovDeletes : Nat := 0
+  ovCleared : Nat := 0
+  ovNewTerms : Nat := 0
+  replayNs : Nat := 0
 
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
@@ -113,7 +131,7 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   return { g := { g0 with dictHdr }, perms := ← IO.mkRef #[none, none, none, none],
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, lookups := ← IO.mkRef 0,
-           gdx := ← IO.mkRef none }
+           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {} }
 
 def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
   match (← ss.perms.get)[p]? with
@@ -226,6 +244,10 @@ def Session.termOf (ss : Session) (x : UInt64) : IO Term := do
     match ofInlineCode? id with
     | some t => return t
     | none => throw (IO.userError s!"inline id {id} does not decode")
+  if tag == L4Factoidal.Storage.Sbm11.Overlay.tagDelta then
+    match (← ss.ovVocab.get)[id % two60]? with
+    | some t => return t
+    | none => throw (IO.userError s!"id {id}: not in the overlay vocabulary")
   let kb ← ss.keyOf x
   let k := kb.data.toList
   if classTag k != tag then throw (IO.userError s!"id {id}: tag differs from the key's class")
@@ -243,7 +265,12 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
     | none => return none
     | some k =>
       let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
-      return r.map fun r => (dictCode k.data.toList r).toUInt64
+      match r with
+      | some r => return some (dictCode k.data.toList r).toUInt64
+      | none =>
+        -- a term the delta log added (stage 5)
+        return ((← ss.ovIds.get).get? t).map fun n =>
+          (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
 
 def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
   ok "lower bound" (← (DictRange.lowerBoundM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
@@ -262,7 +289,85 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     keyOf := fun x => liftIO (ss.keyOf x)
     keySlice := fun x => liftIO (ss.keySlice x)
     termOf := fun x => liftIO (ss.termOf x)
-    lowerBound := fun k => liftIO (ss.lowerBound k) }
+    lowerBound := fun k => liftIO (ss.lowerBound k)
+    ovl := fun p => ss.ovl.getD p {} }
+
+/-! ## The delta overlay (stage 5) -/
+
+/-- The id of `t`: its base id, its overlay id, or a new overlay id. -/
+def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := do
+  match ← ss.idOf t0 with
+  | some x => pure x.toNat
+  | none =>
+    let t := normalizeTerm t0
+    if (termKeyBytes? t).isNone then
+      throw (IO.userError s!"delta log: a term the SBM11 dictionary does not admit: {repr t}")
+    let n := (← ss.ovVocab.get).size
+    ss.ovVocab.modify (·.push t)
+    ss.ovIds.modify (·.insert t n)
+    pure (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n)
+
+/-- A graph name of a DLOG entry as a term. -/
+def graphTerm (g : Iri) : IO Term :=
+  if h : isIri g = true then pure (.iri ⟨g, h⟩)
+  else throw (IO.userError s!"delta log: graph name is not an IRI: {g}")
+
+def Session.graphIdOrNew (ss : Session) : Option Iri → IO Nat
+  | none => pure 0
+  | some g => do ss.idOrNew (← graphTerm g)
+
+/-- The id of a quad when every term has an id (a quad with a term that has
+    no id is in no generation). -/
+def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option Row) := do
+  let some s ← ss.idOf t.s.toTerm | return none
+  let some p ← ss.idOf (.iri t.p) | return none
+  let some o ← ss.idOf t.o | return none
+  let gid ← match g with
+    | none => pure (some 0)
+    | some gi => do pure ((← ss.idOf (← graphTerm gi)).map (·.toNat))
+  let some gid := gid | return none
+  return some ⟨s.toNat, p.toNat, o.toNat, gid⟩
+
+/-- Replay the committed batches of the generation's delta log
+    (`Sbm11Delta.readBatches`) into the overlay: each entry's terms mapped to
+    ids (`idOrNew` for an addition), then `Overlay.step`. -/
+def Session.loadOverlay (ss : Session) : IO Session := do
+  let t0 ← IO.monoNanosNow
+  let (batches, _, _) ← Harness.Sbm11Delta.readBatches ss.g.dir
+  if batches.isEmpty then return ss
+  let mut st : L4Factoidal.Storage.Sbm11.Overlay.State := {}
+  let mut ops := 0
+  for b in batches do
+    for e in b.ops do
+      ops := ops + 1
+      match e with
+      | .add t g =>
+        let s ← ss.idOrNew t.s.toTerm
+        let p ← ss.idOrNew (.iri t.p)
+        let o ← ss.idOrNew t.o
+        let gid ← ss.graphIdOrNew g
+        st := L4Factoidal.Storage.Sbm11.Overlay.step st (.add ⟨s, p, o, gid⟩)
+      | .remove t g =>
+        if let some r ← ss.quadIds? t g then
+          st := L4Factoidal.Storage.Sbm11.Overlay.step st (.remove r)
+      | .clear none => st := L4Factoidal.Storage.Sbm11.Overlay.step st (.clear 0)
+      | .clear (some g) | .drop g =>
+        if let some x ← ss.idOf (← graphTerm g) then
+          st := L4Factoidal.Storage.Sbm11.Overlay.step st (.clear x.toNat)
+      | .create _ => pure ()
+  let ovl := #[0, 1, 2, 3].map (L4Factoidal.Storage.Sbm11.Overlay.forPerm st)
+  let t1 ← IO.monoNanosNow
+  return { ss with ovl, deltaBatches := batches.length, deltaOps := ops, ovInserts := st.ins.size,
+                    ovDeletes := st.del.size, ovCleared := st.cleared.length,
+                    ovNewTerms := (← ss.ovVocab.get).size, replayNs := t1 - t0 }
+
+/-- Open a generation with its delta log replayed (the session every query,
+    serve and compaction uses). -/
+def openOverlaid (v : Verify) (dir0 : String) : IO Session := do
+  (← openSession v dir0).loadOverlay
+
+def Session.deltaText (ss : Session) : String :=
+  s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, replay ms {ms 0 ss.replayNs}"
 
 /-! ## The reference fallback -/
 
@@ -495,7 +600,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     | none, none => throw (IO.userError "no query")
   let q ← parse text o.base
   let (v, why) ← chooseVerify dir o.verify
-  let ss ← openSession v dir
+  let ss ← openOverlaid v dir
   let t1 ← IO.monoNanosNow
   let stdout ← IO.getStdout
   let runs := max o.repeatN 1
@@ -519,20 +624,21 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   if o.explain then
     IO.eprintln s!"plan: verify={v.name} ({why}; {verifyText v})"
     for l in r.plan do IO.eprintln s!"plan: {l}"
+    IO.eprintln s!"plan: {ss.deltaText}"
   let fb ← ss.frameBytes.get
   let fetched ← ss.g.fetchedBytes.get
   if runs > 1 then
     IO.eprintln s!"repeat: {runs} runs in one process; execution ms median {msText (median execs)} min {msText (execs.foldl min (execs.getD 0 0))} max {msText (execs.foldl max 0)}"
-  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; constants looked up {← ss.lookups.get}; block bytes read {fb}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   return 0
 
 /-- One query per line of stdin; one line of SPARQL JSON per query. -/
 def runServe (dir : String) (verify? : Option Verify) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   let (v, why) ← chooseVerify dir verify?
-  let ss ← openSession v dir
+  let ss ← openOverlaid v dir
   let t1 ← IO.monoNanosNow
-  IO.eprintln s!"serve: verify={v.name} ({why}); open {msText (t1 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"serve: verify={v.name} ({why}); {ss.deltaText}; open {msText (t1 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   let mut failures := 0

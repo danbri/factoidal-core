@@ -64,6 +64,7 @@ Exit 1 on any error or failed check. Timings, bytes and VmHWM go to stderr.
 -/
 import Harness.Sbm11Gen
 import Harness.Sbm11Query
+import Harness.Sbm11Compact
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 
@@ -412,6 +413,7 @@ def usage : String :=
   "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME\n" ++
   "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
   "       | serve GEN | prm-check GEN | frame-check GEN\n" ++
+  "       | update GEN ('SPARQL UPDATE' | --file U.ru) | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
   "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
   "    read by its Merkle proof; none reads exact byte ranges and hashes nothing (a changed byte is not\n" ++
   "    detected). Default: none when a CURRENT pointer names GEN (activated: every file was checked at\n" ++
@@ -426,7 +428,7 @@ def main (args0 : List String) : IO UInt32 := do
       | .ok r => pure r
       | .error e => IO.eprintln s!"l4sbm11: {e}"; return 2
     let verifyUsed := match args with
-      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids"].contains c
+      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "compact"].contains c
       | [] => false
     if verify?.isSome && !verifyUsed then
       IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump and dump-ids"
@@ -444,6 +446,7 @@ def main (args0 : List String) : IO UInt32 := do
     | ["reseal", dir] => runReseal dir
     | ["serve", dir] => Harness.Sbm11Query.runServe dir verify?
     | "query" :: _ | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args0
+    | "update" :: _ | "compact" :: _ => Harness.Sbm11Compact.main args0
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11: {e}"
