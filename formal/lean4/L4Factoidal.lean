@@ -369,6 +369,7 @@ import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
+import L4Factoidal.Storage.Sbm11.FrameLocalTheorems
 import L4Factoidal.Storage.Sbm11.ScanWordsTheorems
 import L4Factoidal.Storage.Sbm11.BlockAtTheorems
 import L4Factoidal.Storage.Sbm11.DictLookupTheorems
