@@ -76,6 +76,76 @@ theorem word64_eq_slow (d : ByteArray) (i : Nat) : word64 d i = word64Slow d i :
       show i + 6 < d.size by omega, show i + 7 < d.size by omega, dite_true]
   · rfl
 
+/-! ### `word64U`: the same word with a `UInt64` byte position
+
+`word64` takes a `Nat` position: its generated C does eight `Nat` additions
+(each a test for a big number), eight boxed-index byte reads and eight
+reference-count tests per word. `word64U` takes the position as `UInt64`
+and reads with `ByteArray.uget` at `USize` indices after one test in
+`UInt64`; clang -O3 compiles its fast path to two compares and one 8-byte
+load (docs/designissues/2026-10-12-lean-to-c-performance.md, "Audit").
+`word64U_eq` proves it equal to `word64` at every position. -/
+
+/-- On the fast path of `word64U`, the `USize` index `q + k` is exact and the
+    eight bytes are inside `d`. -/
+theorem word64U_toNat {d : ByteArray} {q : UInt64}
+    (h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8) (k : Nat) (hk : k < 8) :
+    (q.toUSize + k.toUSize).toNat = q.toNat + k ∧ q.toNat + 8 ≤ d.size := by
+  obtain ⟨h1, h2⟩ := h
+  have a1 := UInt64.le_iff_toNat_le.mp h1
+  have a2 := UInt64.le_iff_toNat_le.mp h2
+  have hb : (2 : Nat) ^ System.Platform.numBits ≤ 2 ^ 64 := by
+    rcases System.Platform.numBits_eq with e | e <;> rw [e] <;> decide
+  have h8 : 8 ≤ 2 ^ System.Platform.numBits := by
+    rcases System.Platform.numBits_eq with e | e <;> rw [e] <;> decide
+  have hu : d.usize.toUInt64.toNat = d.size % 2 ^ System.Platform.numBits := by
+    simp [ByteArray.usize, USize.toUInt64, Nat.toUSize]
+  have hm := Nat.mod_lt d.size (by omega : 0 < 2 ^ System.Platform.numBits)
+  have hml := Nat.mod_le d.size (2 ^ System.Platform.numBits)
+  rw [UInt64.toNat_sub_of_le _ _ h1] at a2
+  have e8 : (8 : UInt64).toNat = 8 := by decide
+  simp only [hu, e8] at a1 a2
+  refine ⟨?_, by omega⟩
+  simp only [USize.toNat_add, UInt64.toNat_toUSize, Nat.toUSize, USize.toNat_ofNat']
+  rw [Nat.mod_eq_of_lt (by omega : q.toNat < _), Nat.mod_eq_of_lt (by omega : k < _),
+    Nat.mod_eq_of_lt (by omega : q.toNat + k < _)]
+
+theorem word64U_lt {d : ByteArray} {q : UInt64}
+    (h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8) (k : Nat) (hk : k < 8) :
+    (q.toUSize + k.toUSize).toNat < d.size := by
+  have := word64U_toNat h k hk; omega
+
+theorem uget_at (d : ByteArray) (u : USize) (h : u.toNat < d.size) (n : Nat) (e : u.toNat = n) :
+    d.uget u h = d[n]'(e ▸ h) := by subst e; rfl
+
+/-- `word64 d q.toNat`, read with one `UInt64` test and eight `uget`
+    (`word64U_eq`). -/
+@[inline] def word64U (d : ByteArray) (q : UInt64) : UInt64 :=
+  if h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8 then
+    (d.uget (q.toUSize + (0 : Nat).toUSize) (word64U_lt h 0 (by decide))).toUInt64 |||
+    ((d.uget (q.toUSize + (1 : Nat).toUSize) (word64U_lt h 1 (by decide))).toUInt64 <<< 8) |||
+    ((d.uget (q.toUSize + (2 : Nat).toUSize) (word64U_lt h 2 (by decide))).toUInt64 <<< 16) |||
+    ((d.uget (q.toUSize + (3 : Nat).toUSize) (word64U_lt h 3 (by decide))).toUInt64 <<< 24) |||
+    ((d.uget (q.toUSize + (4 : Nat).toUSize) (word64U_lt h 4 (by decide))).toUInt64 <<< 32) |||
+    ((d.uget (q.toUSize + (5 : Nat).toUSize) (word64U_lt h 5 (by decide))).toUInt64 <<< 40) |||
+    ((d.uget (q.toUSize + (6 : Nat).toUSize) (word64U_lt h 6 (by decide))).toUInt64 <<< 48) |||
+    ((d.uget (q.toUSize + (7 : Nat).toUSize) (word64U_lt h 7 (by decide))).toUInt64 <<< 56)
+  else word64Slow d q.toNat
+
+theorem word64U_eq (d : ByteArray) (q : UInt64) : word64U d q = word64 d q.toNat := by
+  unfold word64U
+  split
+  · rename_i h
+    have hb := (word64U_toNat h 0 (by decide)).2
+    unfold word64
+    rw [dif_pos hb]
+    rw [uget_at _ _ _ _ (word64U_toNat h 0 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 1 (by decide)).1,
+      uget_at _ _ _ _ (word64U_toNat h 2 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 3 (by decide)).1,
+      uget_at _ _ _ _ (word64U_toNat h 4 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 5 (by decide)).1,
+      uget_at _ _ _ _ (word64U_toNat h 6 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 7 (by decide)).1]
+    rfl
+  · rw [word64_eq_slow]
+
 /-- `n` bits (`n ≤ 56`) of `d` at bit offset `p`, least significant first. -/
 @[inline] def bitsAt (d : ByteArray) (p n : Nat) : Nat :=
   if n == 0 then 0 else
@@ -511,6 +581,114 @@ def pushCopy (s : Nat) : Nat → Nat → ByteArray → ByteArray
   | 0, _, out => out
   | k+1, i, out => pushCopy s k (i + 1) (out.push (out.get! (s + i)))
 
+theorem get!_eq_dite (a : ByteArray) (n : Nat) : a.get! n = if h : n < a.size then a[n] else 0 := by
+  rcases a with ⟨bs⟩
+  simp only [ByteArray.get!, ByteArray.size]
+  split
+  · rename_i h; simp [getElem!_pos, h]; rfl
+  · rename_i h; simp [getElem!_neg, h]; rfl
+
+theorem usize_lt_size {a : ByteArray} {i : USize} (h : i < a.usize) : i.toNat < a.size := by
+  have h1 := USize.lt_iff_toNat_lt.mp h
+  simp only [ByteArray.usize, USize.toNat_ofNat', Nat.toUSize] at h1
+  have := Nat.mod_le a.size (2 ^ System.Platform.numBits)
+  omega
+
+theorem usize_pred_toNat {k : USize} (h : k ≠ 0) : (k - 1).toNat = k.toNat - 1 := by
+  have h0 : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by simpa using e))
+  have h1 : (1 : USize) ≤ k := by
+    apply USize.le_iff_toNat_le.mpr
+    simp only [USize.toNat_one]
+    omega
+  rw [USize.toNat_sub_of_le _ _ h1, USize.toNat_one]
+
+/-- `pushCopy` with `USize` counters and an unboxed read (`uget`). The
+    generated C of `pushCopy` does, per byte, four `Nat` operations, three
+    reference-count tests and a boxed-index read; this one none
+    (docs/designissues/2026-10-12-lean-to-c-performance.md).
+    `pushCopyU_eq`: equal to `pushCopy` when the counts fit in `USize`. -/
+def pushCopyU (s : USize) (k i : USize) (out : ByteArray) : ByteArray :=
+  if h : k = 0 then out
+  else
+    let j := s + i
+    let b := if hj : j < out.usize then out.uget j (usize_lt_size hj) else 0
+    pushCopyU s (k - 1) (i + 1) (out.push b)
+termination_by k.toNat
+decreasing_by
+  have := usize_pred_toNat h
+  have : k.toNat ≠ 0 := fun e => h (USize.toNat_inj.mp (by simpa using e))
+  omega
+
+theorem pushCopyU_eq (s i : USize) (out : ByteArray) : ∀ (k : USize),
+    s.toNat + i.toNat + k.toNat < USize.size → out.size + k.toNat < USize.size →
+    pushCopyU s k i out = pushCopy s.toNat k.toNat i.toNat out := by
+  intro k
+  induction hk : k.toNat generalizing k i out with
+  | zero =>
+    intro _ _
+    have : k = 0 := USize.toNat_inj.mp (by simpa using hk)
+    subst this
+    unfold pushCopyU; simp [pushCopy]
+  | succ n ih =>
+    intro h1 h2
+    have hk0 : k ≠ 0 := by intro e; subst e; simp at hk
+    rw [pushCopyU, dif_neg hk0]
+    simp only [pushCopy]
+    have hs : USize.size = 2 ^ System.Platform.numBits := rfl
+    have hi : (i + 1).toNat = i.toNat + 1 := by
+      rw [USize.toNat_add, USize.toNat_one]; apply Nat.mod_eq_of_lt; omega
+    have hj : (s + i).toNat = s.toNat + i.toNat := by
+      rw [USize.toNat_add]; apply Nat.mod_eq_of_lt; omega
+    have hb : (if hj : s + i < out.usize then out.uget (s + i) (usize_lt_size hj) else 0)
+        = out.get! (s.toNat + i.toNat) := by
+      rw [get!_eq_dite]
+      have hu : out.usize.toNat = out.size := by
+        simp only [ByteArray.usize, USize.toNat_ofNat', Nat.toUSize]
+        apply Nat.mod_eq_of_lt; omega
+      by_cases c : s + i < out.usize
+      · have c' : s.toNat + i.toNat < out.size := by
+          have := USize.lt_iff_toNat_lt.mp c; omega
+        rw [dif_pos c, dif_pos c']
+        rcases out with ⟨bs⟩
+        simp only [ByteArray.uget, ← hj]
+        rfl
+      · have c' : ¬ s.toNat + i.toNat < out.size := by
+          intro c'; apply c; apply USize.lt_iff_toNat_lt.mpr; omega
+        rw [dif_neg c, dif_neg c']
+    rw [hb]
+    have hk' : (k - 1).toNat = n := by rw [usize_pred_toNat hk0]; omega
+    rw [ih (i + 1) (out.push _) (k - 1) hk' (by omega) (by simp [ByteArray.size_push]; omega), hi]
+
+/-- A bound below `USize.size` on every platform that is also a small (unboxed)
+    `Nat` on every platform: a test against `USize.size` itself compiles to
+    a big-number comparison on 64-bit hosts (2^64 is not a small `Nat`), which
+    put `lean_nat_big_lt` and GMP in the decoder's profile on 2026-10-12. -/
+def copyBound : Nat := 1073741824
+
+theorem copyBound_le : copyBound ≤ USize.size := by
+  rcases USize.size_eq with e | e <;> rw [e] <;> decide
+
+/-- Append `out[s + i]` for `i < k`, as `pushCopy s k 0 out`
+    (`copyShort_eq`): by `pushCopyU` when the counts are below `copyBound`
+    (one test per match), else by `pushCopy`. -/
+@[inline] def copyShort (s k : Nat) (out : ByteArray) : ByteArray :=
+  if s + k < copyBound ∧ out.size + k < copyBound then
+    pushCopyU s.toUSize k.toUSize 0 out
+  else pushCopy s k 0 out
+
+theorem copyShort_eq (s k : Nat) (out : ByteArray) : copyShort s k out = pushCopy s k 0 out := by
+  unfold copyShort
+  have hb := copyBound_le
+  split
+  · rename_i h
+    have hs : s.toUSize.toNat = s := by
+      simp only [Nat.toUSize, USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by have := h.1; simp only [USize.size] at hb; omega)
+    have hk : k.toUSize.toNat = k := by
+      simp only [Nat.toUSize, USize.toNat_ofNat']; exact Nat.mod_eq_of_lt (by have := h.1; simp only [USize.size] at hb; omega)
+    rw [pushCopyU_eq _ _ _ _ (by rw [hs, hk]; simp; omega) (by rw [hk]; omega), hs, hk]
+    rfl
+  · rfl
+
 /-- Matches of at most this many bytes are copied byte by byte (`pushCopy`);
     longer ones by `copyMatch`, which allocates one chunk per step. -/
 def shortMatch : Nat := 32
@@ -523,10 +701,16 @@ structure SeqOut where
   r2 : Nat
 
 /-- `n` bits (`n ≤ 56`) of `d` at bit offset `p`, as `bitsAt`, in `UInt64`
-    arithmetic. -/
+    arithmetic. The word is read by `word64U` (since 2026-10-12; before, by
+    `word64` at a `Nat` position, the same value: `bitsAtU_eq`). -/
 @[inline] def bitsAtU (d : ByteArray) (p n : UInt64) : UInt64 :=
   if n == 0 then 0 else
-  (word64 d (p >>> 3).toNat >>> (p &&& 7)) &&& (((1 : UInt64) <<< n) - 1)
+  (word64U d (p >>> 3) >>> (p &&& 7)) &&& (((1 : UInt64) <<< n) - 1)
+
+theorem bitsAtU_eq (d : ByteArray) (p n : UInt64) : bitsAtU d p n =
+    if n == 0 then (0 : UInt64) else
+    (word64 d (p >>> 3).toNat >>> (p &&& 7)) &&& (((1 : UInt64) <<< n) - 1) := by
+  simp only [bitsAtU, word64U_eq]
 
 /-- Decode and execute `k` sequences from the backward stream at bit `pos`
     (first bit `lo`). The states, repeat offsets, literal position and
@@ -590,7 +774,7 @@ def seqLoop (d : ByteArray) (lo : UInt64) (llT ofT mlT : Fse) (lits : ByteArray)
     else if off.toNat > out.size - frameStart then .error "sequences section: offset reaches before the start of the frame"
     else
     let s := out.size - off.toNat
-    let out := if mlN ≤ shortMatch then pushCopy s mlN 0 out
+    let out := if mlN ≤ shortMatch then copyShort s mlN out
       else copyMatch s (mlN + 1) mlN out
     seqLoop d lo llT ofT mlT lits frameStart maxOut k pos3 sLL' sOF' sML' off n1 n2 (litPos + llN) out
 
