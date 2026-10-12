@@ -375,6 +375,68 @@ built by `Wasm/build-wasm.sh`; not committed since 2026-10-09) and the
 native CLI. Add a case there
 whenever you repair one of these.
 
+## Idioms that compile to tight C
+
+Each rule below names the generated C or assembly that supports it. Record,
+numbers and method:
+[`docs/designissues/2026-10-12-lean-to-c-performance.md`](../../docs/designissues/2026-10-12-lean-to-c-performance.md)
+(https://github.com/danbri/factoidal/issues/797). Look at the C before you
+measure: `lake build` writes it to `.lake/build/ir/<Module>.c`;
+`python3 tools/qlvr/bench/c-audit.py FILE.c NAME` counts the runtime
+operations per loop iteration; `leanc -O3 -DNDEBUG -S` of a small file gives
+the assembly.
+
+- **Index bytes with `USize` and `ByteArray.uget`, never with `Nat`.** At a
+  `Nat` position each byte read is `lean_nat_add` (a scalar test, an
+  overflow test and a box), `lean_byte_array_fget` (an unbox) and `lean_dec`
+  (a scalar test). At a `USize` position with one bounds test and eight
+  `uget`, clang -O3 emits two compares and ONE 8-byte `movq` (`ldU` in
+  `Harness/QlvrKernel.lean`, `word64U` in `Codec/Zstd.lean`). The q07 kernel:
+  31.4 ms with `Nat` indices, 11.3 ms with `USize` indices, pure Lean.
+- **Write the bounds test in `USize`, then derive the `Nat` fact.** `if h :
+  i < a.usize` costs one compare; `if h : i.toNat < a.size` costs
+  `lean_usize_to_nat`, a boxed `lean_byte_array_size`, `lean_nat_dec_lt` and
+  two `lean_dec` (16 `Nat` operations and 8 reference-count tests per kernel
+  iteration before the repair). The lemmas to reuse: `usize_lt_size`,
+  `ldU_bound` (kernel), `word64U_toNat` (zstd); each has to handle
+  `ByteArray.usize = size % 2 ^ numBits` and both 32-bit and 64-bit hosts.
+- **Never test against `USize.size`, or any constant of 2^63 or more, at run
+  time.** On a 64-bit host it is a big `Nat`: the test calls
+  `lean_nat_big_lt` and GMP. Test against a small constant and prove it is
+  below `USize.size` (`Codec.Zstd.copyBound`, 2^30, small on wasm32 too).
+- **Loop over `USize` with a proved measure, not with `Nat` fuel.**
+  `termination_by n.toNat - i.toNat` and `decreasing_by` with
+  `usize_succ_toNat` (or `usize_pred_toNat` for a count-down) give a loop
+  whose C uses `size_t` only. A `Nat` fuel argument costs
+  `lean_nat_dec_eq`, `lean_nat_sub` and `lean_dec` per iteration.
+- **A loop that takes a function argument gets `@[specialize]`.** The kernel
+  loops take the store function as an argument; specialised, their C calls it
+  directly or inlines it, with no `lean_apply_*`.
+- **Eight `uset` are eight stores.** Each `uset` tests exclusivity and may
+  copy; clang cannot merge them because a byte store may alias the reference
+  count. One 8-byte store needs inline C (`@[extern c inline]` with the Lean
+  definition as the reference body, as `setC` in the kernel harness). Kernel:
+  11.3 ms with eight `uset`, 5.8 ms with one store; C 4.3 to 8.8 ms in the
+  same rounds. Inline C is trusted code: it needs a differential test and an
+  owner decision before it enters the library.
+- **`ByteArray.push` is an out-of-line call** (`lean.h` line 1195 in 4.33):
+  14 % of the zstd decoder's self time. Write into a buffer of known size
+  where the algorithm allows it.
+- **A `for` loop with several `let mut` variables carries an `MProd`.** Each
+  iteration tests exclusivity of each cell, takes it apart and builds it again;
+  `for x in [i:ie]` allocates its `Std.Range`. In a hot loop write a
+  tail-recursive function with the state as arguments.
+- **A tuple returned from an inner loop is an allocation per call**
+  (`lean_alloc_ctor`, and `lean_box_usize` for a `USize` field). Return one
+  value, or fuse the inner loop into the outer one.
+- **The C compiler options do not repair these costs.** `-O2`, `-march=native`,
+  thin LTO over the generated C and PGO (clang 18) changed the kernel and the
+  queries by less than the noise and the zstd decoder by +11 to +12 %; the
+  `word64U`/`pushCopyU` change gave +26 %. LTO and PGO do not reach the Lean
+  runtime (`push`, `copy_slice`, the allocator), which is machine code in the
+  toolchain. `tools/qlvr/bench/pipeline.sh` rebuilds `l4qlvr` with other
+  options for such a measurement.
+
 ## Factoidal RDF/block ingestion
 
 The parsing layers and their entry points are recorded in

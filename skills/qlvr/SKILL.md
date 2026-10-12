@@ -35,7 +35,8 @@ Tracking: https://github.com/danbri/factoidal/issues/778.
 | `docs/designissues/2026-10-11-qlever-index-format.md` | the format record: each file, its byte layout, source `file:line` at the pinned commit, what the instance confirmed, and the stage 3 plan |
 | `docs/designissues/2026-10-11-qlvr-performance.md` | the performance record: warm against process times, phase shares, the Lean zstd decoder against libzstd, the q07 kernel in Lean and in C, the remainder against QLever with source lines, what was changed and what it gave |
 | `tests/qlvr/bench-warm.sh` | per query: QLever compute and HTTP, Lean process, Lean warm (`--repeat`), Lean warm with libzstd, decode times |
-| `tests/qlvr/kernel.sh`, `formal/lean4/Harness/QlvrKernel.lean`, `tools/qlvr/bench/kernel.c` | the q07 kernel (two scans, merge join) in six Lean forms and in C on the same dumped input; the checksums must agree |
+| `tests/qlvr/kernel.sh`, `formal/lean4/Harness/QlvrKernel.lean`, `tools/qlvr/bench/kernel.c` | the q07 kernel (two scans, merge join) in eight Lean forms (with `usize` and `usize-cstore`, 2026-10-12) and in C on the same dumped input; the checksums must agree |
+| `docs/designissues/2026-10-12-lean-to-c-performance.md`, `tools/qlvr/bench/pipeline.sh`, `compare.py`, `c-audit.py` | the Lean-to-C record: C compiler options (O2, native, LTO, PGO) against the generated C, the per-iteration audit of the kernel and zstd loops, `word64U`/`pushCopyU`, the case for a column library |
 | `formal/lean4/ffi/qlvr_zstd.c` | optional libzstd call-out, loaded with dlopen (`l4qlvr query --libzstd`, `l4qlvr zstd-diff`); the Lean decoder stays the default |
 | `docs/designissues/2026-10-11-shardborough-vs-qlever.md` | Shardborough on the same instance and queries, against `l4qlvr` and QLever, and the proposed Shardborough layout with global term ids (scripts `tools/shardborough-cmp/`) |
 

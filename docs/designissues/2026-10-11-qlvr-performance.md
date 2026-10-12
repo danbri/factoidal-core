@@ -291,6 +291,17 @@ decoder the default.
    part (i) checks that both give byte-identical output on the 21 queries.
    `q21` 883.9 to 222.1 ms (with items 2, 3 and 8).
 
+## Follow-up: the Lean-to-C record (2026-10-12)
+
+[2026-10-12-lean-to-c-performance.md](2026-10-12-lean-to-c-performance.md)
+measures C compiler options (O2, `-march=native`, LTO, PGO) on the same
+binary, audits the generated C of the kernel and zstd loops, and shows that
+`USize` indices with `ByteArray.uget` compile to one 8-byte load: the kernel
+goes from 31.4 ms (`bytes-set`) to 11.3 ms in pure Lean and to 5.8 ms with
+one inline-C store (C 4.3 to 8.8 ms in the same rounds, at a higher machine
+load than the tables above). The decoder's bit reader and short-match copy
+now use the same idiom (`word64U`, `pushCopyU`, with equality theorems).
+
 ## What did not work or was not done
 
 - One bounds test per `word64` in place of one per byte: 214 to 218 MB/s,
