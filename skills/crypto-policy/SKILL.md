@@ -203,6 +203,11 @@ cannot reach an extern).
 Design record for the last four:
 [`docs/designissues/2026-09-07-crypto-primitives.md`](../../docs/designissues/2026-09-07-crypto-primitives.md).
 
+No Lean theorem relates an extern to a pure Lean specification yet
+(https://github.com/danbri/factoidal/issues/777, expected-failure case NX-1).
+Options, sources and the recommended order:
+[`docs/designissues/2026-10-12-native-crypto-equivalence.md`](../../docs/designissues/2026-10-12-native-crypto-equivalence.md).
+
 🔴 **AES-GCM is NOT available and must not be hand-written or taken from
 the AES-NI path.** The pinned release ships no PORTABLE AES-GCM: every
 AES-GCM branch of `EverCrypt_AEAD.c` is behind `#if HACL_CAN_COMPILE_VALE`
