@@ -4,6 +4,11 @@
 **Status:** design only. No F\* module, no OCaml glue, no test files
 land in this slice. Owner priority: "some fulltext sparql extensions
 close to solr."
+**Later:** slice 1 is implemented in the F\* engine
+(`SPARQL.FullText.fst`) and, since 2026-10-10, in the Lean engine. The Lean
+semantics, the parity check against the F\* engine and the measured cost
+are in
+[`2026-10-10-lean-geo-distance-fulltext.md`](2026-10-10-lean-geo-distance-fulltext.md).
 
 ## 0. What "Solr-like" means here
 

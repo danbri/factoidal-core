@@ -827,6 +827,7 @@ L4Factoidal_SPARQL_Protocol_readHeaders  # (c) header lines of one HTTP message 
 L4Factoidal_SPARQL_Protocol_rtrimBlanks  # (c) lines of one protocol test description
 L4Factoidal_SPARQL_Protocol_takeIndented  # (c) lines of one protocol test description
 L4Factoidal_SPARQL_QueryPattern_mentionsService  # (b) nesting of graph patterns in one query
+L4Factoidal_SPARQL_QueryPattern_mentionsFulltext  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_QueryPattern_rewriteBnodes  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_groundObject  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
 L4Factoidal_SPARQL_patHasBnode  # (b) nesting of graph patterns in one update request
