@@ -173,6 +173,18 @@ is one solution with no bindings. `applyUpdate` has no endpoints. -/
   == none
 -- No SERVICE: no error.
 #guard error? dsDefault (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o }") == none
+-- A failed call inside EXISTS in the WHERE clause fails the operation
+-- too (https://github.com/danbri/factoidal/issues/735); with SILENT the
+-- call is Ω0, so NOT EXISTS is false and nothing is deleted.
+#guard error? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER EXISTS { SERVICE <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == some (.serviceFailed (.unreachable "http://example.org/nowhere"))
+#guard error? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER NOT EXISTS { SERVICE SILENT <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == none
+#guard run? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER NOT EXISTS { SERVICE SILENT <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == some dsDefault
 
 /-! ## §3.1.4 LOAD -/
 
