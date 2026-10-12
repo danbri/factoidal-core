@@ -658,6 +658,270 @@ def summarise(t):
     return summ
 
 
+# ---------------------------------------------------------------- QLever (native)
+#
+# QLever at the commit pinned in tests/qlvr/instance.json, built natively by
+# qlever-native-build.sh (no docker). Record: docs/designissues/
+# 2026-10-12-three-engine-benchmark.md, section "QLever native (2026-10-12)".
+# The server runs with the result cache off: a warm time that is a cache hit
+# would measure the cache, not the engine.
+
+QLEVER_BUILD = os.environ.get("QLEVER_NATIVE_BUILD", "/home/user/qlever-native/build")
+QLEVER_INDEX = os.path.join(QLEVER_BUILD, "qlever-index")
+QLEVER_SERVER = os.path.join(QLEVER_BUILD, "qlever-server")
+QPORT = int(os.environ.get("QLEVER_PORT", "7031"))
+QTOKEN = "factoidal_bench"
+QLEVER_SETTINGS = {"ascii-prefixes-only": False, "num-triples-per-batch": 100000}
+QLEVER_SERVER_ARGS = ["--memory-max-size", "2G", "--default-query-timeout", "600s",
+                      "--cache-max-size", "0", "--cache-max-size-single-entry", "0",
+                      "--cache-max-num-entries", "0",
+                      "--no-metrics-log", "--no-resource-usage-log"]
+
+
+def qlever_index_settings(base):
+    """Write the settings file next to the index (same values as the image
+    build in tools/qlvr/Qleverfile)."""
+    path = base + ".settings.json"
+    with open(path, "w") as f:
+        json.dump(QLEVER_SETTINGS, f)
+    return path
+
+
+class QleverServer:
+    def __init__(self, base):
+        self.base = base
+        self.proc = None
+        self.start_ms = None
+
+    def start(self, timeout=600):
+        logf = open(self.base + ".server-%d.log" % int(time.time() * 1000), "ab")
+        cmd = [QLEVER_SERVER, "-i", self.base, "-p", str(QPORT), "-a", QTOKEN] + QLEVER_SERVER_ARGS
+        t0 = time.monotonic()
+        self.proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+        while time.monotonic() - t0 < timeout:
+            if self.proc.poll() is not None:
+                raise RuntimeError("qlever-server exited during start; see %s" % logf.name)
+            try:
+                st, _ = self.http("ASK { ?s ?p ?o }", timeout=5)
+                if st == 200:
+                    self.start_ms = round((time.monotonic() - t0) * 1000.0, 1)
+                    return
+            except OSError:
+                pass
+            time.sleep(0.2)
+        raise RuntimeError("qlever-server did not answer within %d s" % timeout)
+
+    def stop(self):
+        if self.proc is None:
+            return
+        os.killpg(self.proc.pid, signal.SIGTERM)
+        try:
+            self.proc.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+            self.proc.wait()
+        self.proc = None
+
+    def status_kb(self, field):
+        with open("/proc/%d/status" % self.proc.pid) as f:
+            for line in f:
+                if line.startswith(field + ":"):
+                    return int(line.split()[1])
+        return None
+
+    def reset_hwm(self):
+        with open("/proc/%d/clear_refs" % self.proc.pid, "w") as f:
+            f.write("5")
+
+    def http(self, query, timeout=QUERY_TIMEOUT_S):
+        body = urllib.parse.urlencode({"query": query, "access-token": QTOKEN})
+        c = http.client.HTTPConnection("127.0.0.1", QPORT, timeout=timeout)
+        try:
+            c.request("POST", "/", body=body, headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/sparql-results+json"})
+            r = c.getresponse()
+            return r.status, r.read()
+        finally:
+            c.close()
+
+    def query(self, query):
+        """One SPARQL request; wall ms on the client from send to the last
+        byte; server VmHWM during the request."""
+        self.reset_hwm()
+        t0 = time.monotonic()
+        try:
+            st, data = self.http(query)
+        except OSError as e:
+            return {"rc": "error: %s" % e, "wall_ms": round((time.monotonic() - t0) * 1000.0, 3)}
+        wall = (time.monotonic() - t0) * 1000.0
+        return {"rc": 0 if st == 200 else st, "wall_ms": round(wall, 3),
+                "maxrss_kb": self.status_kb("VmHWM"), "out": data}
+
+
+def cmd_qlever_answers(a):
+    """Every query once on the native server; compare with the saved SBM11
+    and Virtuoso answers and, where present, the image-built QLever oracle."""
+    os.makedirs(a.outdir, exist_ok=True)
+    srv = QleverServer(a.index)
+    srv.start()
+    res = {"dataset": a.dataset, "server_start_ms": srv.start_ms,
+           "build": QLEVER_BUILD, "queries": {}}
+    try:
+        for rq in query_files(a.queries):
+            name = os.path.basename(rq)[:-3]
+            r = {"name": name}
+            vr = srv.query(open(rq).read())
+            r["rc"] = vr["rc"]
+            r["wall_ms"] = vr["wall_ms"]
+            r["maxrss_kb"] = vr.get("maxrss_kb")
+            if vr["rc"] != 0:
+                r["body"] = vr.get("out", b"")[:2000].decode("utf-8", "replace")
+                r["all_equal"] = False
+                res["queries"][name] = r
+                log("%s: QLever error %s" % (name, vr["rc"]))
+                continue
+            open(os.path.join(a.outdir, "%s.qlever.json" % name), "wb").write(vr["out"])
+            qparsed = solutions(vr["out"])
+            r["rows"] = {"qlever": qparsed[1]}
+            refs = {"sbm11_none": os.path.join(a.answers_dir, "%s.sbm11-none.json" % name),
+                    "virtuoso": os.path.join(a.answers_dir, "%s.virtuoso.json" % name)}
+            if a.oracle:
+                refs["oracle"] = os.path.join(a.oracle, name + ".srj")
+            comps = {}
+            for key, path in refs.items():
+                if not os.path.exists(path):
+                    r.setdefault("missing_reference", []).append(key)
+                    continue
+                other = solutions(open(path, "rb").read())
+                r["rows"][key] = other[1]
+                comps["qlever~" + key] = compare(qparsed, other)
+            r["comparisons"] = comps
+            r["all_equal"] = ("qlever~sbm11_none" in comps and "qlever~virtuoso" in comps
+                              and all(c["equal"] for c in comps.values()))
+            res["queries"][name] = r
+            log("%s: %s rows=%s" % (name, "equal" if r["all_equal"] else "DIFFERENT", r["rows"]))
+    finally:
+        srv.stop()
+    res["equal"] = sorted(n for n, r in res["queries"].items() if r.get("all_equal"))
+    res["different"] = sorted(n for n, r in res["queries"].items() if not r.get("all_equal"))
+    json.dump(res, open(a.out, "w"), indent=1, default=str)
+
+
+def cmd_qlever_timing(a):
+    """Cold: per query, a new server process after the index files were
+    evicted from the page cache; the first query's client wall time. Warm: one
+    server, one warm-up pass, then ROUNDS rounds of one request per query.
+    Only the queries whose QLever answer equals SBM11 and Virtuoso."""
+    ans = json.load(open(a.answers))
+    names = set(ans["equal"])
+    qs = [(os.path.basename(rq)[:-3], rq) for rq in query_files(a.queries)
+          if os.path.basename(rq)[:-3] in names]
+    index_dir = os.path.dirname(a.index)
+    idx_files = files_under(index_dir)
+    srv = QleverServer(a.index)
+    out = {"dataset": a.dataset, "rounds": a.rounds, "cold_rounds": a.cold_rounds,
+           "queries": [n for n, _ in qs], "excluded": ans["different"],
+           "cold": [], "rounds_warm": [], "load_target": LOAD_TARGET}
+
+    def save():
+        json.dump(out, open(a.out, "w"), indent=1, default=str)
+
+    for cr in range(a.cold_rounds):
+        la = wait_for_load()
+        crec = {"round": cr, "loadavg": la, "q": {}}
+        for name, rq in qs:
+            q = open(rq).read()
+            evict(idx_files)
+            resident = resident_bytes(idx_files)
+            srv.start()
+            r = srv.query(q)
+            r.pop("out", None)
+            crec["q"][name] = {"start_ms": srv.start_ms, "resident_before": resident, "qlever": r}
+            srv.stop()
+        crec["loadavg_end"] = loadavg()
+        out["cold"].append(crec)
+        save()
+        log("cold round %d load %.2f" % (cr, la))
+    srv.start()
+    try:
+        for name, rq in qs:
+            srv.query(open(rq).read())
+        for rnd in range(a.rounds):
+            la = wait_for_load()
+            rrec = {"round": rnd, "loadavg": la, "q": {}}
+            for name, rq in qs:
+                r = srv.query(open(rq).read())
+                r.pop("out", None)
+                rrec["q"][name] = {"qlever": r}
+            rrec["loadavg_end"] = loadavg()
+            out["rounds_warm"].append(rrec)
+            save()
+            log("warm round %d load %.2f -> %.2f" % (rnd, la, rrec["loadavg_end"]))
+    finally:
+        srv.stop()
+    summ = []
+    for name in out["queries"]:
+        warm = [r["q"][name]["qlever"] for r in out["rounds_warm"]]
+        cold = [c["q"][name] for c in out["cold"]]
+        summ.append({
+            "query": name,
+            "warm_ms": median([w["wall_ms"] for w in warm if w["rc"] == 0]),
+            "warm_fails": sum(1 for w in warm if w["rc"] != 0),
+            "warm_maxrss_kb": max([w.get("maxrss_kb") or 0 for w in warm]) if warm else None,
+            "cold_ms": median([c["qlever"]["wall_ms"] for c in cold if c["qlever"]["rc"] == 0]),
+            "cold_fails": sum(1 for c in cold if c["qlever"]["rc"] != 0),
+            "cold_maxrss_kb": max([c["qlever"].get("maxrss_kb") or 0 for c in cold]) if cold else None,
+            "server_start_ms": median([c["start_ms"] for c in cold])})
+    out["summary"] = summ
+    out["loadavg_warm"] = [r["loadavg"] for r in out["rounds_warm"]]
+    save()
+
+
+def cmd_qlever_report(a):
+    """Markdown tables for the record from the QLever JSON files in RES."""
+    lines = []
+    for ds in a.datasets:
+        ans = load_json(os.path.join(a.results, "qlever-answers-%s.json" % ds))
+        tim = load_json(os.path.join(a.results, "qlever-timing-%s.json" % ds))
+        bld = load_json(os.path.join(a.results, "qlever-index-%s.json" % ds))
+        lines.append("### %s" % ds)
+        if bld:
+            lines.append("Index build: wall %.1f s, peak RSS %s kB, rc %s" % (
+                bld["wall_ms"] / 1000.0, bld["maxrss_kb"], bld["rc"]))
+        if ans:
+            lines.append("Answers: %d equal on SBM11, Virtuoso and the oracle (where present), "
+                         "%d different, out of %d queries." % (
+                             len(ans["equal"]), len(ans["different"]), len(ans["queries"])))
+            for n in ans["different"]:
+                r = ans["queries"][n]
+                lines.append("- different: %s rows=%s rc=%s" % (n, r.get("rows"), r.get("rc")))
+        if tim:
+            lines.append("")
+            lines.append("| Query | Cold ms (median) | Warm ms (median) | Warm peak RSS kB | Start ms (median) |")
+            lines.append("| --- | ---: | ---: | ---: | ---: |")
+            for s in tim["summary"]:
+                lines.append("| %s | %s | %s | %s | %s |" % (
+                    s["query"], fmt3(s["cold_ms"]), fmt3(s["warm_ms"]),
+                    s["warm_maxrss_kb"], fmt3(s["server_start_ms"])))
+            lines.append("Load average (1 min) at the start of each warm round: %s" % tim["loadavg_warm"])
+        lines.append("")
+    text = "\n".join(lines)
+    print(text)
+
+
+def load_json(path):
+    try:
+        return json.load(open(path))
+    except (OSError, ValueError):
+        return None
+
+
+def fmt3(x):
+    return "-" if x is None else "%.1f" % x
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -684,8 +948,36 @@ def main():
             p.add_argument("--cold-rounds", type=int, default=3)
             p.add_argument("--repeat", type=int, default=5)
             p.add_argument("--virtuoso-threads", default="1t,default")
+    p = sub.add_parser("qlever-answers")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--queries", required=True)
+    p.add_argument("--index", required=True, help="index basename (QLever -i)")
+    p.add_argument("--answers-dir", required=True, help="saved SBM11 and Virtuoso answers")
+    p.add_argument("--outdir", required=True)
+    p.add_argument("--oracle")
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("qlever-timing")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--queries", required=True)
+    p.add_argument("--index", required=True)
+    p.add_argument("--answers", required=True, help="qlever-answers JSON")
+    p.add_argument("--rounds", type=int, default=7)
+    p.add_argument("--cold-rounds", type=int, default=3)
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("qlever-settings")
+    p.add_argument("--base", required=True)
+    p = sub.add_parser("qlever-report")
+    p.add_argument("--results", required=True)
+    p.add_argument("datasets", nargs="+")
     a = ap.parse_args()
-    {"virtuoso-load": cmd_virtuoso_load, "answers": cmd_answers, "timing": cmd_timing}[a.cmd](a)
+    if a.cmd == "qlever-settings":
+        print(qlever_index_settings(a.base))
+        return
+    if a.cmd == "qlever-report":
+        cmd_qlever_report(a)
+        return
+    {"virtuoso-load": cmd_virtuoso_load, "answers": cmd_answers, "timing": cmd_timing,
+     "qlever-answers": cmd_qlever_answers, "qlever-timing": cmd_qlever_timing}[a.cmd](a)
 
 
 if __name__ == "__main__":

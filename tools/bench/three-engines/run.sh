@@ -19,7 +19,16 @@
 # (default /home/user/qlvr-work: olympics.nt and the QLever oracle, from
 # tools/qlvr/build-instance.sh), ROUNDS (7), COLD_ROUNDS (3), REPEAT (5),
 # DATASETS ("olympics dbpedia"), STEPS ("data pack load answers timing
-# report"), MIN_FREE_GB (3).
+# qbuild qindex qanswers qtiming report"), MIN_FREE_GB (3), QLEVER_NATIVE
+# (default /home/user/qlever-native: QLever source and build, no docker).
+#
+# QLever runs natively (steps qbuild, qindex, qanswers, qtiming; see
+# qlever-native-build.sh and the record, section "QLever native"). The docker
+# path (tools/qlvr/build-instance.sh, the image of the pinned commit) needs a
+# docker daemon, which this machine does not run; it stays documented there
+# and is not used here. The QLever index needs the N-Triples file: for
+# olympics it is $QLVR_WORK/instance/olympics.nt; for dbpedia it is the staged
+# $SHM/dbpedia.nt, which the load step deletes unless KEEP_NT=1.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -28,9 +37,11 @@ QLVR_WORK="${QLVR_WORK:-/home/user/qlvr-work}"
 SHM="${SHM:-/dev/shm/bench-data}"
 ROUNDS="${ROUNDS:-7}"; COLD_ROUNDS="${COLD_ROUNDS:-3}"; REPEAT="${REPEAT:-5}"
 DATASETS="${DATASETS:-olympics dbpedia}"
-STEPS="${STEPS:-data pack load answers timing report}"
+STEPS="${STEPS:-data pack load answers timing qbuild qindex qanswers qtiming report}"
+QLEVER_NATIVE="${QLEVER_NATIVE:-/home/user/qlever-native}"
+QLEVER_BIN="$QLEVER_NATIVE/build"
 RES="$BENCH_DATA/results"
-mkdir -p "$BENCH_DATA/dl" "$BENCH_DATA/sbm11" "$BENCH_DATA/virtuoso" "$RES" "$SHM"
+mkdir -p "$BENCH_DATA/dl" "$BENCH_DATA/sbm11" "$BENCH_DATA/virtuoso" "$BENCH_DATA/qlever" "$RES" "$SHM"
 export PATH="$HOME/.elan/bin:$PATH"
 BIN="$ROOT/formal/lean4/.lake/build/bin"
 log() { printf '[run %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
@@ -142,7 +153,47 @@ if has_step timing; then
   done
 fi
 
-# 6. report --------------------------------------------------------------------
+# 6. QLever native -------------------------------------------------------------
+if has_step qbuild; then
+  "$HERE/qlever-native-build.sh" all
+fi
+if has_step qindex; then
+  for ds in $DATASETS; do
+    check_disk
+    nt="$(nt_of "$ds")"
+    [ -f "$nt" ] || { log "QLever $ds: missing input $nt (see the header of run.sh)"; exit 1; }
+    base="$BENCH_DATA/qlever/$ds"
+    rm -rf "$base"; mkdir -p "$base"
+    settings="$(python3 -I "$HERE/bench.py" qlever-settings --base "$base/$ds")"
+    log "qlever index $ds"
+    echo "loadavg_before $(cut -d' ' -f1 /proc/loadavg)" >"$RES/qlever-index-$ds.log"
+    (cd "$base" && "$HERE/guarded.sh" "$RES/qlever-index-$ds.json" -- "$QLEVER_BIN/qlever-index" \
+      -i "$base/$ds" -f "$nt" -F nt -p -j 4 -m 4G -s "$settings") >>"$RES/qlever-index-$ds.log" 2>&1
+    echo "loadavg_after $(cut -d' ' -f1 /proc/loadavg)" >>"$RES/qlever-index-$ds.log"
+    find "$base" -maxdepth 1 -type f -name "$ds.*" ! -name '*.log' ! -name '*.settings.json' \
+      -printf '%s\n' | awk '{s+=$1} END {print s+0}' >"$RES/qlever-size-$ds.txt"
+  done
+fi
+if has_step qanswers; then
+  for ds in $DATASETS; do
+    oracle=(); [ "$ds" = olympics ] && [ -d "$QLVR_WORK/oracle" ] && oracle=(--oracle "$QLVR_WORK/oracle")
+    log "qlever answers $ds"
+    python3 -I "$HERE/bench.py" qlever-answers --dataset "$ds" --queries "$HERE/queries/$ds" \
+      --index "$BENCH_DATA/qlever/$ds/$ds" --answers-dir "$BENCH_DATA/answers/$ds" \
+      --outdir "$BENCH_DATA/answers/$ds" "${oracle[@]}" --out "$RES/qlever-answers-$ds.json"
+  done
+fi
+if has_step qtiming; then
+  for ds in $DATASETS; do
+    log "qlever timing $ds"
+    python3 -I "$HERE/bench.py" qlever-timing --dataset "$ds" --queries "$HERE/queries/$ds" \
+      --index "$BENCH_DATA/qlever/$ds/$ds" --answers "$RES/qlever-answers-$ds.json" \
+      --rounds "$ROUNDS" --cold-rounds "$COLD_ROUNDS" --out "$RES/qlever-timing-$ds.json"
+  done
+fi
+
+# 7. report --------------------------------------------------------------------
 if has_step report; then
   python3 -I "$HERE/report.py" "$RES" $DATASETS
+  python3 -I "$HERE/bench.py" qlever-report --results "$RES" $DATASETS > "$RES/qlever-report.md"
 fi
