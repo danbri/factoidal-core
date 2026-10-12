@@ -578,6 +578,35 @@ checked at open; a byte changed after activation is NOT detected
 the packer writes the roots and `.merkle` sidecars either way. Bench one
 mode with `VERIFY=none tests/sbm11/bench.sh GEN`.
 
+SBM11 stage 5 (2026-10-12, https://github.com/danbri/factoidal/issues/791):
+updates and compaction. `l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)`
+appends one DLB1 batch to `GEN/deltas.dlog` (format unchanged; INSERT DATA,
+DELETE DATA, CLEAR, DROP, CREATE; an update with WHERE and INSERT DATA with
+a blank node are refused). Every `query`, `serve` and `compact` open replays
+the batches after `compacted.epoch` into an overlay over ids
+(`Sbm11Query.openOverlaid`): a term without a base id gets a tag-14 id
+(`Overlay.tagDelta`, never a base id); `IdQuery.scanFoldM` merges the
+overlay's sorted inserts and deletes into each block that has overlay rows
+in its range (`Overlay.mergeRows`, proved in `OverlayTheorems`), other
+blocks take the stage 4 path. stderr names `delta batches N, entries M,
+overlay inserts I, deletes D, ...`. `l4sbm11 compact GEN OUTDIR` writes a
+new generation through the packer's phases 2 and 3
+(`Harness/Sbm11PackLib.lean` `packBatches`, shared with `l4sbm11-pack`)
+from two scans of the overlaid SPO permutation; unused terms are dropped,
+so the result is byte-identical to a fresh pack of the updated quads; then
+`l4sbm11 activate ROOT NAME`. Quad (named-graph) generations replay their
+log. Record:
+[`docs/designissues/2026-10-12-sbm11-stage5.md`](../../docs/designissues/2026-10-12-sbm11-stage5.md).
+Gates for a change there: `tests/sbm11/run.sh` parts (h) (the gate fixture,
+batch by batch, against `l4factoidal` over the state
+`tests/sbm11/delta_apply.py` computes; fresh pack; compaction byte-identical)
+and (i) (olympics: insert seen, delete not seen, q01 to q21 equal to a fresh
+pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
+`tests/stack/run.sh --canary`. Trap: a column built by reading
+`cs[0]!` out of an array and storing it back keeps a second reference, and
+every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
+after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
+
 Format registry rows (wire version 11):
 
 | Name | File | Status | Definition |

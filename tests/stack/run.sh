@@ -714,6 +714,87 @@ if [ "$CANARY" = 1 ]; then
 fi
 rm -rf "$FIXTURES/sbm11-query-out"
 
+# ------------------------------- SBM11 delta overlay (issue 791)
+# The sbm11-dict.nt generation (600,001 quads, blocks of 65,536 rows), then
+# gen_cases.py's two updates: DELETE DATA of 1,000 p:n quads and INSERT DATA
+# of 1,000 new p:n values for the same subjects (inside the base blocks) and
+# 1,000 quads of new subjects with new labels (overlay ids, after every base
+# id). Replayed at every open (3,000 entries), merged into the PSO scans
+# block by block (`Overlay.mergeRows` over whole 65,536-row blocks), counted,
+# sorted, filtered; then `l4sbm11 compact` (two scans of the overlaid SPO
+# permutation, the term run, the packer's phases 2 and 3) and a count on the
+# compacted generation. https://github.com/danbri/factoidal/issues/791
+sbm11_delta_case() { # sbm11_delta_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" col="$FIXTURES/sbm11-delta-col" rc log r q
+  local P='PREFIX p: <http://example.org/p/> '
+  if [ ! -x "$SBM11P_BIN" ] || [ ! -x "$SBM11C_BIN" ]; then
+    record "$route" sbm11-delta 1 "l4sbm11-pack or l4sbm11 does not exist (lake build l4sbm11-pack l4sbm11)"
+    return
+  fi
+  rm -rf "$col"
+  if ! "$SBM11P_BIN" "$src" "$col/gen" --block-rows 65536 >/dev/null 2>&1 \
+      || ! "$SBM11C_BIN" activate "$col" gen >/dev/null 2>&1; then
+    record "$route" sbm11-delta 1 "l4sbm11-pack or activate failed"
+    return
+  fi
+  log=""
+  rc=0
+  for u in "$FIXTURES/sbm11-delta-del-1000.ru" "$FIXTURES/sbm11-delta-ins-1000.ru"; do
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" update "$col" --file "$u" 2>&1)"; rc=$?
+    log="$log
+$(printf '%s' "$r" | head -c 300) rc=$rc"
+    [ "$rc" -ne 0 ] && break
+  done
+  if [ "$rc" -eq 0 ]; then
+    for q in \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:n ?n }" \
+      "SELECT ?s ?n WHERE { ?s p:n ?n } ORDER BY DESC(?n) LIMIT 1" \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l }" \
+      "SELECT ?s WHERE { ?s p:label ?l FILTER(STRSTARTS(?l, \"new 99\")) }"; do
+      r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$col" "$P$q" 2>&1)"; rc=$?
+      log="$log
+$(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query: path=[a-z]*; rows [0-9]*') rc=$rc"
+      [ "$rc" -ne 0 ] && break
+    done
+  fi
+  if [ "$rc" -eq 0 ]; then
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" compact "$col" "$col/gen2" 2>&1)"; rc=$?
+    log="$log
+$(printf '%s' "$r" | grep -o 'quads=[0-9]* terms=[0-9]*' | head -1) rc=$rc"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$col/gen2" "${P}SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l }" 2>&1)"; rc=$?
+    log="$log
+compacted: $(printf '%s' "$r" | head -c 300) rc=$rc"
+  fi
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-delta overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' \
+      || ! printf '%s' "$log" | grep -q '"value":"1000999"' \
+      || [ "$(printf '%s' "$log" | grep -c '"value":"151000"')" -ne 2 ] \
+      || ! printf '%s' "$log" | grep -q 'path=ids; rows 11'; then
+    score_case "$route" sbm11-delta error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
+  else
+    score_case "$route" sbm11-delta ran "3000 entries replayed; 65536-row blocks merged; counts 150000 and 151000; compacted count 151000"
+  fi
+  rm -rf "$col"
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 delta overlay, native default stack"
+  sbm11_delta_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 delta overlay, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_delta_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-delta 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------------- surfaces the shipped ABI does not reach
 echo
 echo "=== not reachable from a shipped surface (reported, not scored)"

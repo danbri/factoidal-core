@@ -1,0 +1,2 @@
+# Every named graph, with inserted, deleted and cleared quads.
+SELECT ?g ?s ?p ?o WHERE { GRAPH ?g { ?s ?p ?o } }

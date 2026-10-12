@@ -1,0 +1,2 @@
+# OPTIONAL with FILTER over the changed age rows.
+SELECT ?s ?a WHERE { ?s <http://ex.org/name> ?n OPTIONAL { ?s <http://ex.org/age> ?a FILTER(?a > 71) } }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # tests/sbm11/run.sh — SBM11 stage 4, SPARQL over a generation
-# (https://github.com/danbri/factoidal/issues/790; tracking
+# (https://github.com/danbri/factoidal/issues/790), and stage 5, the delta
+# overlay and compaction (https://github.com/danbri/factoidal/issues/791; tracking
 # https://github.com/danbri/factoidal/issues/787). Record:
 # docs/designissues/2026-10-12-sbm11-stage4.md.
 #
@@ -36,6 +37,29 @@
 #                (https://github.com/danbri/factoidal/issues/796): the
 #                outputs must be byte-identical. Parts (a) to (e) use the
 #                CLI default (none when a CURRENT pointer names GEN).
+#   (h) delta    stage 5 (https://github.com/danbri/factoidal/issues/791):
+#                the gate fixture packed, then the batches of
+#                tests/sbm11/delta/gate-ops.txt sent one by one with
+#                `l4sbm11 update`; after each batch every gate query and every
+#                tests/sbm11/delta/*.rq (EXISTS, NOT EXISTS, MINUS, OPTIONAL
+#                with FILTER on the changed rows) answered on the overlay and
+#                by `l4factoidal query` over the state tests/sbm11/delta_apply.py
+#                computes (a separate implementation over the quads' text);
+#                equal as multisets, on the path the name says. Then a fresh
+#                pack of the final state answers the same; `l4sbm11 compact`
+#                writes a generation whose every artifact is byte-identical to
+#                the fresh pack's; the compacted generation answers the same;
+#                an update after compaction is seen (epoch 2); an update with
+#                WHERE and INSERT DATA with a blank node are refused (the
+#                stage 5 limits: a change of either turns this RED).
+#   (i) olympics stage 5 on the olympics generation (a copy): the batches of
+#                tests/sbm11/delta/olympics-ops.txt, the inserted row seen,
+#                the deleted row not seen; q01 to q21 and
+#                tests/sbm11/delta/olympics/*.rq on the overlay equal to a
+#                fresh pack of the updated source; the compacted generation
+#                byte-identical to the fresh pack; compaction time at most 1.2
+#                times the fresh pack time. Needs QLVR_WORK/instance/olympics.nt;
+#                SBM11_DELTA_OLYMPICS=0 leaves (i) out (printed, not counted).
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -223,6 +247,171 @@ if [ -f "$GEN/CURRENT" ]; then
   else record tamper default-activated 1 "$(grep 'verify' "$TMP/def.err" | head -1)"; fi
 fi
 
+# --- stage 5 ----------------------------------------------------------------
+# run_q <gen> <rq> <out> <err>: one query on a generation, exit code in $QRC
+run_q() {
+  QRC=0
+  timeout 600 "$BIN/l4sbm11" query "$1" --file "$2" --base "file://$(realpath "$2")" >"$3" 2>"$4" || QRC=$?
+}
+# want_path <name>: the path a query named ref-* must take (path=reference);
+# every other query, path=ids
+want_path() { case $1 in ref-*) echo path=reference ;; *) echo path=ids ;; esac; }
+ARTS="dict.gdv1 dict.gdx1 pso.prb1 pso.prm1 pos.prb1 pos.prm1 spo.prb1 spo.prm1 osp.prb1 osp.prm1"
+# same_artifacts <dirA> <dirB>: every artifact and its .merkle sidecar byte-identical
+same_artifacts() {
+  for a in $ARTS; do
+    cmp -s "$1/$a" "$2/$a" || { echo "$a differs"; return 1; }
+    cmp -s "$1/$a.merkle" "$2/$a.merkle" || { echo "$a.merkle differs"; return 1; }
+  done
+  echo "10 artifacts and their .merkle sidecars byte-identical"
+}
+
+echo "=== (h) delta overlay on the gate fixture"
+H="$TMP/delta"
+mkdir -p "$H"
+"$BIN/l4sbm11" canon "$HERE/gate/gate.nq" >"$H/base.nq"
+NB="$(python3 -I "$HERE/delta_apply.py" "$H/base.nq" "$HERE/delta/gate-ops.txt" "$H/ops")"
+rc=0
+"$BIN/l4sbm11-pack" "$H/base.nq" "$H/col/gen" --workers 1 >"$H/pack.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$H/col" gen >"$H/act.log" 2>&1 || rc=$?; }
+GQ="$(ls "$HERE"/gate/*.rq "$HERE"/delta/*.rq)"
+# check_all <gen> <reference.nq> <label> [<directory to keep the answers in>]
+check_all() {
+  local bad="" n=0 nq rrc v
+  for rq in $GQ; do
+    nq="$(basename "$rq" .rq)"
+    n=$((n + 1))
+    run_q "$1" "$rq" "$H/got.srj" "$H/got.err"
+    if [ "$QRC" -ne 0 ]; then bad="$bad $nq(exit $QRC)"; continue; fi
+    [ -n "${4:-}" ] && cp "$H/got.srj" "$4/$nq.srj"
+    rrc=0
+    timeout 120 "$BIN/l4factoidal" query "$2" --format nquads --query "$rq" >"$H/want.srj" 2>/dev/null || rrc=$?
+    v="$(python3 -I "$HERE/compare_answers.py" "$H/got.srj" "$H/want.srj" "$rrc")"
+    case "$v" in equal*) ;; *) bad="$bad $nq($v)"; continue ;; esac
+    if [ "$(grep -o 'path=[a-z]*' "$H/got.err")" != "$(want_path "$nq")" ]; then bad="$bad $nq(path)"; fi
+  done
+  if [ -z "$bad" ]; then record delta "$3" 0 "$n queries equal to the reference engine, each on its path"
+  else record delta "$3" 1 "failed:$bad"; fi
+}
+if [ "$rc" -ne 0 ]; then
+  record delta pack-activate 1 "exit $rc"
+else
+  for k in $(seq 1 "$NB"); do
+    urc=0
+    "$BIN/l4sbm11" update "$H/col" "$(cat "$H/ops/batch-$k.ru")" >"$H/upd-$k.log" 2>&1 || urc=$?
+    if [ "$urc" -ne 0 ]; then record delta "batch-$k-update" 1 "exit $urc: $(tail -1 "$H/upd-$k.log")"; continue; fi
+    check_all "$H/col" "$H/ops/after-$k.nq" "batch-$k"
+  done
+  # the overlay's answers after the last batch, kept for the comparisons below
+  mkdir -p "$H/ans-overlay" "$H/ans-fresh"
+  check_all "$H/col" "$H/ops/final.nq" "final-overlay" "$H/ans-overlay"
+  rc=0
+  "$BIN/l4sbm11-pack" "$H/ops/final.nq" "$H/fresh" --workers 1 >"$H/fresh.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then record delta fresh-pack 1 "exit $rc"; fi
+  bad=""
+  for rq in $GQ; do
+    nq="$(basename "$rq" .rq)"
+    run_q "$H/fresh" "$rq" "$H/ans-fresh/$nq.srj" "$H/f.err"
+    v="$(python3 -I "$HERE/compare_answers.py" "$H/ans-overlay/$nq.srj" "$H/ans-fresh/$nq.srj" "$QRC")"
+    case "$v" in equal*) ;; *) bad="$bad $nq($v)" ;; esac
+  done
+  if [ -z "$bad" ]; then record delta overlay-vs-fresh-pack 0 "$(echo $GQ | wc -w) queries: overlay answers equal a fresh pack of the updated data"
+  else record delta overlay-vs-fresh-pack 1 "differ:$bad"; fi
+  crc=0
+  "$BIN/l4sbm11" compact "$H/col" "$H/col/gen2" >"$H/compact.log" 2>&1 || crc=$?
+  if [ "$crc" -ne 0 ]; then record delta compact 1 "exit $crc: $(tail -1 "$H/compact.log")"
+  else
+    v="$(same_artifacts "$H/col/gen2" "$H/fresh")"; c=$?
+    record delta compact-equals-fresh-pack "$c" "$v"
+    "$BIN/l4sbm11" activate "$H/col" gen2 >"$H/act2.log" 2>&1 || record delta activate-compacted 1 "$(tail -1 "$H/act2.log")"
+    check_all "$H/col" "$H/ops/final.nq" "compacted"
+    run_q "$H/col" "$HERE/delta/ids-upd-count.rq" "$H/c.srj" "$H/c.err"
+    if grep -q 'delta batches 0' "$H/c.err"; then record delta compacted-no-replay 0 "the compacted generation replays no batch"
+    else record delta compacted-no-replay 1 "$(grep -o 'delta batches [0-9]*' "$H/c.err")"; fi
+    urc=0
+    "$BIN/l4sbm11" update "$H/col" 'INSERT DATA { <http://ex.org/after> <http://ex.org/name> "after compaction" }' >"$H/upd-after.log" 2>&1 || urc=$?
+    "$BIN/l4sbm11" query "$H/col" 'SELECT ?n WHERE { <http://ex.org/after> <http://ex.org/name> ?n }' >"$H/after.srj" 2>/dev/null
+    if [ "$urc" -eq 0 ] && grep -q 'epoch=2' "$H/upd-after.log" && grep -q 'after compaction' "$H/after.srj"; then
+      record delta update-after-compaction 0 "epoch 2 batch committed and seen"
+    else record delta update-after-compaction 1 "exit $urc: $(tail -1 "$H/upd-after.log")"; fi
+  fi
+  # the stage 5 limits, pinned: both must stay refused until they are implemented
+  r1=0; "$BIN/l4sbm11" update "$H/col" 'DELETE WHERE { ?s <http://ex.org/name> ?n }' >"$H/r1.log" 2>&1 || r1=$?
+  if [ "$r1" -eq 1 ] && grep -q 'refused' "$H/r1.log"; then record delta refuse-where 0 "DELETE WHERE refused (stage 5 limit)"
+  else record delta refuse-where 1 "exit $r1: $(tail -1 "$H/r1.log")"; fi
+  r2=0; "$BIN/l4sbm11" update "$H/col" 'INSERT DATA { _:b <http://ex.org/name> "blank" }' >"$H/r2.log" 2>&1 || r2=$?
+  if [ "$r2" -eq 1 ] && grep -q 'refused' "$H/r2.log"; then record delta refuse-insert-bnode 0 "INSERT DATA with a blank node refused (stage 5 limit)"
+  else record delta refuse-insert-bnode 1 "exit $r2: $(tail -1 "$H/r2.log")"; fi
+fi
+
+echo "=== (i) delta overlay and compaction on olympics"
+OLY_SRC="$WORK/instance/olympics.nt"
+if [ "${SBM11_DELTA_OLYMPICS:-1}" = 0 ]; then
+  echo "(i) left out: SBM11_DELTA_OLYMPICS=0 (not counted)"
+elif [ ! -f "$OLY_SRC" ]; then
+  record olympics source 1 "missing: $OLY_SRC"
+else
+  O="$TMP/oly"
+  SRCG="$GEN"; [ -f "$GEN/CURRENT" ] && SRCG="$GEN/$(cat "$GEN/CURRENT")"
+  mkdir -p "$O/col" "$O/ans-overlay" "$O/ans-fresh"
+  cp -r "$SRCG" "$O/col/gen" && rm -f "$O/col/gen/deltas.dlog" "$O/col/gen/compacted.epoch"
+  "$BIN/l4sbm11" activate "$O/col" gen >"$O/act.log" 2>&1 || record olympics activate 1 "$(tail -1 "$O/act.log")"
+  NO="$(python3 -I "$HERE/delta_apply.py" "$OLY_SRC" "$HERE/delta/olympics-ops.txt" "$O/ops" --final-only)"
+  for k in $(seq 1 "$NO"); do
+    urc=0
+    "$BIN/l4sbm11" update "$O/col" "$(cat "$O/ops/batch-$k.ru")" >"$O/upd-$k.log" 2>&1 || urc=$?
+    record olympics "batch-$k-update" "$urc" "$(tail -1 "$O/upd-$k.log" | cut -c1-140)"
+  done
+  OQ="$(ls "$ROOT"/tests/qlvr/queries/q*.rq "$HERE"/delta/olympics/*.rq)"
+  for rq in $OQ; do
+    nq="$(basename "$rq" .rq)"
+    run_q "$O/col" "$rq" "$O/ans-overlay/$nq.srj" "$O/ans-overlay/$nq.err"
+  done
+  rows() { python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$1" 2>/dev/null; }
+  n1="$(rows "$O/ans-overlay/ids-seen-insert.srj")"
+  if [ "$n1" = 1 ]; then record olympics insert-seen 0 "1 row"; else record olympics insert-seen 1 "$n1 rows"; fi
+  n0="$(rows "$O/ans-overlay/ids-not-seen-delete.srj")"
+  if [ "$n0" = 0 ]; then record olympics delete-not-seen 0 "0 rows"; else record olympics delete-not-seen 1 "$n0 rows"; fi
+  echo "    overlay q19: $(grep -o 'execution [0-9.]* ms; total [0-9.]* ms; peak RSS (VmHWM): [0-9]* kB' "$O/ans-overlay/q19-scan-bound-predicate-iri.err")"
+  prc=0
+  t0=$(date +%s%N)
+  "$BIN/l4sbm11-pack" "$O/ops/final.nq" "$O/fresh" >"$O/fresh.log" 2>&1 || prc=$?
+  pwall=$(( ($(date +%s%N) - t0) / 1000000 ))
+  rm -f "$O/ops/final.nq"
+  crc=0
+  t0=$(date +%s%N)
+  "$BIN/l4sbm11" compact "$O/col" "$O/col/gen2" >"$O/compact.log" 2>&1 || crc=$?
+  cwall=$(( ($(date +%s%N) - t0) / 1000000 ))
+  if [ "$prc" -ne 0 ] || [ "$crc" -ne 0 ]; then
+    record olympics pack-and-compact 1 "pack exit $prc, compact exit $crc: $(tail -1 "$O/compact.log")"
+  else
+    pms="$(grep -o 'total-ms=[0-9.]*' "$O/fresh.log" | cut -d= -f2)"
+    cms="$(grep -o 'total-ms=[0-9.]*' "$O/compact.log" | cut -d= -f2)"
+    ratio="$(python3 -I -c 'import sys; print(round(float(sys.argv[2]) / float(sys.argv[1]), 3))' "$pms" "$cms")"
+    if python3 -I -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= 1.2 else 1)' "$ratio"; then
+      record olympics compact-time 0 "compact $cms ms, fresh pack $pms ms, ratio $ratio (limit 1.2); load $(cut -d' ' -f1-3 /proc/loadavg)"
+    else
+      record olympics compact-time 1 "compact $cms ms, fresh pack $pms ms, ratio $ratio: above 1.2"
+    fi
+    echo "    pack:    process wall $pwall ms; $(grep -o 'peak-rss=[0-9]* kB' "$O/fresh.log"); $(grep -o 'total-on-disk=[0-9]*' "$O/fresh.log")"
+    echo "    compact: process wall $cwall ms; $(grep -o 'peak-rss=[0-9]* kB' "$O/compact.log"); $(grep -o 'total-on-disk=[0-9]*' "$O/compact.log")"
+    grep 'ms=' "$O/compact.log" | sed 's/^/    /'
+    v="$(same_artifacts "$O/col/gen2" "$O/fresh")"; c=$?
+    record olympics compact-equals-fresh-pack "$c" "$v"
+    bad=""
+    for rq in $OQ; do
+      nq="$(basename "$rq" .rq)"
+      run_q "$O/fresh" "$rq" "$O/ans-fresh/$nq.srj" "$O/ans-fresh/$nq.err"
+      v="$(python3 -I "$HERE/compare_answers.py" "$O/ans-overlay/$nq.srj" "$O/ans-fresh/$nq.srj" "$QRC")"
+      case "$v" in equal*) ;; *) bad="$bad $nq($v)" ;; esac
+      p="$(grep -o 'path=[a-z]*' "$O/ans-overlay/$nq.err")"
+      case $nq in ref-*|ids-*) [ "$p" = "$(want_path "$nq")" ] || bad="$bad $nq($p)" ;; esac
+    done
+    if [ -z "$bad" ]; then record olympics overlay-vs-fresh-pack 0 "$(echo $OQ | wc -w) queries equal (q01 to q21 and the delta queries)"
+    else record olympics overlay-vs-fresh-pack 1 "differ:$bad"; fi
+  fi
+fi
+
 echo
-echo "sbm11 stage 4: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
+echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"
 [ "$FAIL" -eq 0 ]

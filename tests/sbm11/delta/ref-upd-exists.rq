@@ -1,0 +1,2 @@
+# EXISTS over the changed knows rows (reference semantics, CLAUDE.md anti-pattern 34).
+SELECT ?s ?n WHERE { ?s <http://ex.org/name> ?n FILTER EXISTS { ?s <http://ex.org/knows> ?o } }

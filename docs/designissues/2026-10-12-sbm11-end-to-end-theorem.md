@@ -100,6 +100,13 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L6a | E1 from L1 to L5 | open | — |
 | L6b | E2: the fallback selection keeps every quad the query can read (the planner theorem of 2026-09-06 restated for PSO scans), and the `datasetOfQuads` bridge (that record's section 6.6 item 1) | open | — |
 | L6c | The JSON printer (`keyJsonInto`) equals `jsonOfTerm` | tested only | `tests/sbm11/run.sh` part (b), byte comparison on 21 queries |
+| L7a | Delta overlay (stage 5, https://github.com/danbri/factoidal/issues/791): for sorted `base` and `del`, `filterDel cl base del = base.filter (r ∉ del ∧ ¬ cl r.g)` | **proved (stage 5)** | `OverlayTheorems.filterDel_eq` |
+| L7b | The sorted union holds the rows of both lists and is strictly sorted | **proved (stage 5)** | `OverlayTheorems.unionRows_mem`, `unionRows_sorted` |
+| L7c | `mergeRows cl base del ins` is strictly sorted and `r ∈ it ↔ (r ∈ base ∧ r ∉ del ∧ cl r.g = false) ∨ r ∈ ins`; a strictly sorted list is determined by its members, so the merge is THE sorted list of that set | **proved (stage 5)** | `OverlayTheorems.mergeRows_spec`, `sorted_eq_of_mem_iff`, `mergeRows_eq_of_spec` |
+| L7d | One replay step changes the denoted quad set as INSERT DATA (`∪ {q}`), DELETE DATA (`∖ {q}`) and CLEAR/DROP (graph `g` removed) say, over the `Std.HashSet` state the reader uses | **proved (stage 5)** | `OverlayTheorems.step_add`, `step_remove`, `step_clear`, `replay_append`, `denote_empty` |
+| L7e | `scanFoldM` with an overlay: each insert with the key prefix is merged into exactly one chunk (the first selected block whose last row is not below it, else the last chunk), the deletes of a block are the slice `[lowerIdx first, upperIdx last)`, and the chunks stay in row order | tested only; part of L4e | `tests/sbm11/run.sh` parts (h), (i); `tests/stack/run.sh` case `sbm11-delta` |
+| L7f | Replay's term-to-id map: a term with a base id keeps it; any other term gets one tag-14 id (`Overlay.tagDelta`), so ids stay injective and never collide with base ids | tested only | `Harness/Sbm11Query.lean` `Session.idOrNew`; parts (h), (i) |
+| L7g | Compaction: the generation `l4sbm11 compact` writes for `G` with log `L` equals `packSpec` of the updated quads | tested only (byte-identical artifacts to a fresh pack, gate and olympics); open with L3c | `tests/sbm11/run.sh` parts (h), (i) |
 
 ## 3. Open lemmas: the obstacle of each
 
@@ -144,6 +151,15 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
   scan of predicate `p` returns every quad with predicate `p`" (L4a, L4b,
   L4e) and the evaluator side reuses `SPARQL/DatasetRestriction.lean`. The
   `datasetOfQuads` bridge is open since 2026-09-06.
+
+- **L7e.** Needs L4e first (the loop cut into per-block functions); then the
+  insert assignment is a statement about `upperIdx` over a sorted array and
+  the chunk order follows from L7c and `chain_sorted`.
+- **L7f, L7g.** The session and the compaction are `IO` programs; L7g needs
+  L3c (a pure `packSpec`) and a pure statement of the two compaction scans.
+- **E1 and E2 with a log.** With the overlay, `denote G` is replaced by
+  `Overlay.denote (denote G) (replay {} ops)` (L7d). E1 then needs L7c, L7e
+  and L7f in addition to the lemmas above.
 
 ## 4. Definitions the statement needs and that do not exist
 

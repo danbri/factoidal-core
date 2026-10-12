@@ -1,0 +1,16 @@
+# SBM11 stage 5 delta test over the olympics data
+# (https://github.com/danbri/factoidal/issues/791). Format: tests/sbm11/delta_apply.py.
+# The deleted quads are lines of olympics.nt, spelled as there. The changes
+# reach oracle queries q03, q04, q05, q11, q16, q18 and q19.
+batch
++ <http://example.org/sbm11/games/2032/Summer> <http://dbpedia.org/property/year> "2032"^^<http://www.w3.org/2001/XMLSchema#int> .
++ <http://example.org/sbm11/games/2032/Summer> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://dbpedia.org/ontology/Olympics> .
++ <http://wallscope.co.uk/resource/olympics/athlete/AAananthaSambuMayavo> <http://xmlns.com/foaf/0.1/age> "99"^^<http://www.w3.org/2001/XMLSchema#int> .
++ <http://example.org/sbm11/athlete/HermannSchnew> <http://www.w3.org/2000/01/rdf-schema#label> "Hermann Schnew"@en .
++ <http://example.org/sbm11/athlete/HermannSchnew> <http://wallscope.co.uk/ontology/olympics/medal> <http://wallscope.co.uk/resource/olympics/medal/Gold> .
++ <http://wallscope.co.uk/resource/olympics/athlete/AAananthaSambuMayavo> <http://dbpedia.org/ontology/team> <http://wallscope.co.uk/resource/olympics/team/Malaysia> <http://example.org/sbm11/graph> .
+batch
+- <http://wallscope.co.uk/resource/olympics/athlete/AAananthaSambuMayavo> <http://www.w3.org/2000/01/rdf-schema#label> "A. Aanantha Sambu Mayavo"@en .
+- <http://wallscope.co.uk/resource/olympics/games/1900/Summer> <http://dbpedia.org/property/year> "1900"^^<http://www.w3.org/2001/XMLSchema#int> .
+- <http://wallscope.co.uk/resource/olympics/instance/AeronauticsMixedAeronautics/1936Summer/HermannSchreiber> <http://wallscope.co.uk/ontology/olympics/medal> <http://wallscope.co.uk/resource/olympics/medal/Gold> .
+- <http://example.org/sbm11/games/2032/Summer> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://dbpedia.org/ontology/Olympics> .

@@ -1,0 +1,3 @@
+# MINUS over changed year rows: games without a location (2032 inserted, 1900 deleted).
+PREFIX dbp: <http://dbpedia.org/property/>
+SELECT ?g ?y WHERE { ?g dbp:year ?y MINUS { ?g dbp:location ?c } }

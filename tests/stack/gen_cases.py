@@ -282,6 +282,32 @@ if not os.path.exists(sbm11_path):
             fh.write('%s <http://example.org/p/b> _:b%d .\n' % (s, i % 5000))
         fh.write('<http://example.org/sbm11/big> <http://example.org/p/text> "%s" .\n' % ("x" * SBM11_LIT))
 
+# ------------------------------------------- SBM11 delta overlay (issue 791)
+# Two SPARQL Update requests over sbm11-dict.nt: DELETE DATA of the p:n quads
+# of the first 1,000 subjects, then INSERT DATA of a new p:n value for each
+# of them (inside the base blocks: each touched 65,536-row block is merged
+# whole) and 1,000 quads of new subjects with new labels (overlay terms,
+# sorted after every base id: one chunk after the last block). The merge of
+# a 65,536-row block and the compaction scans run over input-proportional
+# data. The request size is kept at 2,000 quads because the SPARQL tokenizer
+# is quadratic in the request length (stage 5 record section 4: 4,000 quads
+# take 62 s to parse).
+N_DELTA = 1000
+ddel = os.path.join(OUT, "sbm11-delta-del-%d.ru" % N_DELTA)
+dins = os.path.join(OUT, "sbm11-delta-ins-%d.ru" % N_DELTA)
+if not os.path.exists(dins):
+    with open(ddel, "w") as fh:
+        fh.write("DELETE DATA {\n")
+        for i in range(N_DELTA):
+            fh.write('<http://example.org/sbm11/s%07d> <http://example.org/p/n> "%d"^^<http://www.w3.org/2001/XMLSchema#int> .\n' % (i, i))
+        fh.write("}\n")
+    with open(dins, "w") as fh:
+        fh.write("INSERT DATA {\n")
+        for i in range(N_DELTA):
+            fh.write('<http://example.org/sbm11/s%07d> <http://example.org/p/n> "%d"^^<http://www.w3.org/2001/XMLSchema#int> .\n' % (i, 1000000 + i))
+            fh.write('<http://example.org/sbm11/new%07d> <http://example.org/p/label> "new %d"@en .\n' % (i, i))
+        fh.write("}\n")
+
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
