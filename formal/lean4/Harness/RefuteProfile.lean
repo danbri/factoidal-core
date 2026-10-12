@@ -91,13 +91,12 @@ def clashNodesP (r : IO.Ref Prof) (sink : IO.Ref Nat) (g : Graph) (st : RState) 
   pure false
 
 /-- The library's `onePass`, its parts timed apart. -/
-def onePassP (r : IO.Ref Prof) (sink : IO.Ref Nat) (tb : List (ClassExpr × ClassExpr))
+def onePassP (r : IO.Ref Prof) (sink : IO.Ref Nat) (ix : TBoxIndex)
     (g : Graph) (st : RState) : IO (RState × Bool) := do
-  let ix ← timed r sink "pass.tboxIndex" (fun (ix : TBoxIndex) => ix.top.length)
-    (fun _ => TBoxIndex.build tb)
   let (st0, ch0) ← timed r sink "pass.injectFunctional" obsSt (fun _ => injectFunctional st)
   let (st1, chG) ← timed r sink "pass.injectGlobal" obsSt (fun _ => injectGlobalAxioms ix.top st0)
-  let mut acc : RState × Bool := (st1, ch0 || chG)
+  let (st1, chL) ← timed r sink "pass.injectLazyRanges" obsSt (fun _ => injectLazyRanges ix st1)
+  let mut acc : RState × Bool := (st1, ch0 || chG || chL)
   let leaders ← timed r sink "pass.groupLeaders" (·.length) (fun _ => groupLeaders st1)
   for n in leaders do
     bump r "pass.nodeVisits" 1
@@ -127,7 +126,7 @@ def onePassP (r : IO.Ref Prof) (sink : IO.Ref Nat) (tb : List (ClassExpr × Clas
     a reference. `fuel` is the structural bound of the recursion; it is
     the budget at the call, so it is never the bound that stops it. -/
 def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace : Bool)
-    (tb : List (ClassExpr × ClassExpr)) (g : Graph) :
+    (ix : TBoxIndex) (g : Graph) :
     Nat → Nat → RState → IO Verdict
   | 0, _, _ => pure .out
   | fuel + 1, depth, st => do
@@ -153,7 +152,7 @@ def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace :
       stepDone "clash"; return .clash
     let (st', changed) ← do
       let t0 ← IO.monoNanosNow
-      let v ← onePassP r sink tb g st
+      let v ← onePassP r sink ix g st
       let t1 ← IO.monoNanosNow
       r.modify (fun p => { p with
         calls := p.calls.insert "step.onePass" (p.calls.getD "step.onePass" 0 + 1),
@@ -162,7 +161,7 @@ def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace :
     if changed then
       bump r "search.passChanged" 1
       stepDone "changed"
-      return ← searchP r sink budget trace tb g fuel depth st'
+      return ← searchP r sink budget trace ix g fuel depth st'
     if ← do
         let t0 ← IO.monoNanosNow
         let v ← clashNodesP r sink g st'
@@ -178,7 +177,7 @@ def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace :
     if forced then
       bump r "search.forced" 1
       stepDone "forced"
-      return ← searchP r sink budget trace tb g fuel depth stF
+      return ← searchP r sink budget trace ix g fuel depth stF
     if ← timed r sink "step.propositionalClash" obsB (fun _ => propositionalClash st') then
       stepDone "clash"; return .clash
     if ← timed r sink "step.nominalClash" obsB (fun _ => nominalClash g st') then
@@ -199,7 +198,7 @@ def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace :
                   | .union es => !(ClassExpr.beqList es cs)
                   | _         => true))
             else m) } i c)
-        match ← searchP r sink budget trace tb g fuel (depth + 1) sb with
+        match ← searchP r sink budget trace ix g fuel (depth + 1) sb with
         | .clash => pure ()
         | v => out := some v; break
       pure (out.getD .clash)
@@ -216,7 +215,7 @@ def searchP (r : IO.Ref Prof) (sink : IO.Ref Nat) (budget : IO.Ref Nat) (trace :
         let mut out : Option Verdict := none
         for (x, y) in pairs do
           bump r "search.mergeBranches" 1
-          match ← searchP r sink budget trace tb g fuel (depth + 1) (mergeInto st' x y) with
+          match ← searchP r sink budget trace ix g fuel (depth + 1) (mergeInto st' x y) with
           | .clash => pure ()
           | v => out := some v; break
         pure (out.getD .clash)
@@ -254,6 +253,29 @@ def main (args : List String) : IO UInt32 := do
     let tb ← timed r sink "handoff.collectAxioms" (·.length) (fun _ => collectAxioms closure)
     let st0 ← timed r sink "handoff.initState" (·.nodes.size) (fun _ => initState closure)
     let st0 := { st0 with tbox := tb }
+    let ix ← timed r sink "handoff.tboxIndex" (fun (ix : TBoxIndex) => ix.top.length)
+      (fun _ => TBoxIndex.buildLazy tb (lazyOccurrences tb st0))
+    IO.println s!"tbox.lazyRangeProps {ix.lazyByProp.size}"
+    IO.println s!"tbox.lazyRangeAxioms {ix.lazyByProp.fold (fun a _ v => a + v.length) 0}"
+    IO.println s!"tbox.eagerTop {ix.top.length}"
+    if rest.contains "--why-eager" then
+      let occ := lazyOccurrences tb st0
+      let mut reasons : Std.HashMap String Nat := {}
+      let mut shown := 0
+      for ax in ix.top do
+        let why := match ax.2 with
+          | .allOf p c =>
+              if p == owlTopObjectProperty then "top-property"
+              else if !inertRangeFillerCe c then "datatype-filler"
+              else if occ.contains (ClassExpr.hashCe ax.2) then "occurs-elsewhere"
+              else "lazy?"
+          | _ => "not-a-range"
+        reasons := reasons.insert why (reasons.getD why 0 + 1)
+        if shown < 8 && why != "occurs-elsewhere" then
+          IO.println s!"eager.sample {why}: {reprStr ax.2}"
+          shown := shown + 1
+      for (k, v) in reasons.toList do
+        IO.println s!"eager.reason {k} {v}"
     IO.println s!"input.triples {input.length}"
     IO.println s!"closure.triples {closure.length}"
     IO.println s!"tbox.axioms {tb.length}"
@@ -265,7 +287,7 @@ def main (args : List String) : IO UInt32 := do
       else do
         let bref ← IO.mkRef budget
         let t0 ← IO.monoNanosNow
-        let v ← searchP r sink bref trace tb closure (budget + 1) 0 st0
+        let v ← searchP r sink bref trace ix closure (budget + 1) 0 st0
         let t1 ← IO.monoNanosNow
         IO.println s!"search.ms {ms (t1 - t0)}"
         IO.println s!"search.budgetLeft {← bref.get}"
