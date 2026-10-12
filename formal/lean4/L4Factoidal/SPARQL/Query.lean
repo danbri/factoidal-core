@@ -1620,6 +1620,116 @@ theorem lowerBgp_of_no_fulltext (b : Bgp) (h : bgpHasFulltext b = false) :
     lowerBgp b = .bgp b := by
   simp [lowerBgp, h]
 
+/-! ## Can evaluating this pattern or expression invoke a SERVICE?
+
+A cheap syntactic pre-check for the SERVICE failure channel
+(`GraphPattern.serviceFailure`, Federated Query §2.3). `false` means no
+SERVICE clause can be reached: none in the pattern, none in the body of
+an EXISTS or NOT EXISTS in any expression the pattern holds. A sub-SELECT
+counts as `true` without a look inside. When the answer is `false`, the
+failure channel answers `none` without evaluating anything, and the
+lowering gives a condition no failure twin. An answer of `true` is only
+a reason to look. -/
+
+mutual
+/-- Does the pattern hold a SERVICE clause, directly or in the body of
+an EXISTS / NOT EXISTS in one of its expressions? -/
+def QueryPattern.mentionsService : QueryPattern → Bool
+  | .bgp _              => false
+  | .join l r           => l.mentionsService || r.mentionsService
+  | .leftJoin l r c     => l.mentionsService || r.mentionsService || c.mentionsService
+  | .filter c p         => c.mentionsService || p.mentionsService
+  | .union l r          => l.mentionsService || r.mentionsService
+  | .minus l r          => l.mentionsService || r.mentionsService
+  | .graph _ p          => p.mentionsService
+  | .lateral l r        => l.mentionsService || r.mentionsService
+  | .bind e _ p         => e.mentionsService || p.mentionsService
+  | .values _ _         => false
+  | .service _ _ _      => true
+  | .serviceVar _ _ _   => true
+  | .subSelect _        => true
+  | .propertyPath _ _ _ => false
+  | .empty              => false
+
+/-- Does an EXISTS or NOT EXISTS in the expression hold a SERVICE
+clause? Arm for arm with `Expr.existsFree`. -/
+def Expr.mentionsService : Expr → Bool
+  | .existsPat p | .notExistsPat p => p.mentionsService
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _
+  | .doubleLit _ | .bound _ | .now => false
+  | .unaryMinus e | .unaryPlus e | .not e
+  | .isIri e | .isBlank e | .isLiteral e | .isNumeric e
+  | .str e | .lang e | .datatype e | .iriFn e
+  | .hasLang e | .hasLangDir e | .langDir e
+  | .strLen e | .uCase e | .lCase e | .encodeForUri e
+  | .abs e | .round e | .ceil e | .floor e
+  | .md5 e | .sha1 e | .sha256 e | .sha384 e | .sha512 e
+  | .year e | .month e | .day e | .hours e | .minutes e | .seconds e
+  | .timezone e | .tz e
+  | .aggregate _ _ e
+  | .ttSubject e | .ttPredicate e | .ttObject e | .isTriple e =>
+      Expr.mentionsService e
+  | .arith _ left right | .compare _ left right | .and left right
+  | .or left right | .sameTerm left right
+  | .strDt left right | .strLang left right
+  | .strStarts left right | .strEnds left right | .contains left right
+  | .strBefore left right | .strAfter left right =>
+      Expr.mentionsService left || Expr.mentionsService right
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      Expr.mentionsService a || Expr.mentionsService b || Expr.mentionsService c
+  | .coalesce es | .concat es | .functionCall _ es => Expr.mentionsServiceList es
+  | .inList e es | .notInList e es =>
+      Expr.mentionsService e || Expr.mentionsServiceList es
+  | .substr e start none => Expr.mentionsService e || Expr.mentionsService start
+  | .substr e start (some len) =>
+      Expr.mentionsService e || Expr.mentionsService start || Expr.mentionsService len
+  | .regex e pat none => Expr.mentionsService e || Expr.mentionsService pat
+  | .regex e pat (some flags) =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService flags
+  | .replace e pat rep none =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService rep
+  | .replace e pat rep (some flags) =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService rep
+        || Expr.mentionsService flags
+
+/-- `Expr.mentionsService` over an argument list. -/
+def Expr.mentionsServiceList : List Expr → Bool
+  | [] => false
+  | e :: es => Expr.mentionsService e || Expr.mentionsServiceList es
+end
+
+/-- Does an expression the post-WHERE pipeline evaluates with
+`substituteExistentials` (a HAVING condition, a SELECT expression, an
+ORDER BY condition) hold an EXISTS whose body holds a SERVICE clause? -/
+def Query.postMentionsService (q : Query) : Bool :=
+  q.having.any Expr.mentionsService ||
+  (match q.form with
+   | .select (.vars items) => items.any (fun
+       | .var _    => false
+       | .expr e _ => e.mentionsService)
+   | _ => false) ||
+  (match q.modifier.orderBy with
+   | none    => false
+   | some os => os.any (fun
+       | .asc e  => e.mentionsService
+       | .desc e => e.mentionsService))
+
+/-- Can evaluating the query invoke a SERVICE: in its WHERE clause, or
+in an EXISTS of its post-WHERE pipeline? -/
+def Query.mentionsService (q : Query) : Bool :=
+  q.pattern.mentionsService || q.postMentionsService
+
+/-- The first `some` that `f` gives over the rows, each with its index
+as a string (the row half of the freshness context, as `numberRows`
+passes it). A tail call per row. -/
+def findSomeNumbered (f : String → Binding → Option ServiceFailure) :
+    SolutionSeq → Nat → Option ServiceFailure
+  | [],         _ => none
+  | mu :: rest, i =>
+      match f (toString i) mu with
+      | some x => some x
+      | none   => findSomeNumbered f rest (i + 1)
+
 mutual
 
 def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
@@ -1627,16 +1737,26 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
   match p with
   | .bgp b       => lowerBgp (substBgp mu b)
   | .join l r    => .join (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
+  -- Each expression gets its failure twin (Federated Query §2.3): the
+  -- failed SERVICE call an EXISTS in it makes on the same row, read by
+  -- `GraphPattern.serviceFailure`. An expression whose EXISTS bodies
+  -- hold no SERVICE gets none.
   | .leftJoin l r c =>
       .leftJoin (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
         (fun active row =>
           let mu' := mu.merge row
           ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+        (if c.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) c)
+         else none)
   | .filter c q  =>
       .filter (fun active row =>
           let mu' := mu.merge row
           ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
         (QueryPattern.lowerWith env mu q)
+        (if c.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) c)
+         else none)
   | .union l r   => .union (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
   | .minus l r   => .minus (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
   | .graph name q =>
@@ -1655,6 +1775,9 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
           let mu' := mu.merge row
           (Expr.evalIn env mu' (substituteExistentials env active mu' e)).toTerm?) v
         (QueryPattern.lowerWith env mu q)
+        (if e.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) e)
+         else none)
   | .values vars rows => .values vars rows
   | .service i silent q =>
       .service i.val (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
@@ -1681,6 +1804,9 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
         (match q with
          | .mk form _dcs inner _gb _hv _md _pv _bs =>
              QueryPattern.lowerWith env (lateralVisibleMu mu form inner) inner)
+        (if q.postMentionsService then
+           some (fun active => selectPostFailure env active q)
+         else none)
   | .propertyPath s path o =>
       .propertyPath (substPatternSubject mu s) path (substPatternTerm mu o)
   | .empty => .empty
@@ -1828,6 +1954,76 @@ def substituteExistentialsOpt (env : EvalEnv) (active : Graph) (mu : Binding) :
     Option Expr → Option Expr
   | none   => none
   | some e => some (substituteExistentials env active mu e)
+
+/-- The failure twin of `substituteExistentials`: the first failed
+SERVICE call without SILENT that replacing the EXISTS / NOT EXISTS
+sub-expressions of `e` by their booleans makes (Federated Query §2.3).
+Each EXISTS body is lowered under `mu` and evaluated against the active
+graph and the query's dataset, exactly as `substituteExistentials`
+does; its failed calls are the ones `GraphPattern.serviceFailure`
+reports for that lowered body. `substituteExistentials` evaluates EVERY
+EXISTS in the expression (both operands of `&&`, both branches of
+`IF`), so this function checks every one, left to right. An EXISTS in
+an aggregate's argument is not evaluated (the expression-layer error,
+https://github.com/danbri/factoidal/issues/639), so it invokes nothing.
+With no dataset in the environment no EXISTS is evaluated. -/
+def existsFailure (env : EvalEnv) (active : Graph) (mu : Binding) :
+    Expr → Option ServiceFailure
+  | .existsPat p =>
+      match env.dataset with
+      | some ds => (QueryPattern.lowerWith env mu p).serviceFailure ds active
+      | none    => none
+  | .notExistsPat p =>
+      match env.dataset with
+      | some ds => (QueryPattern.lowerWith env mu p).serviceFailure ds active
+      | none    => none
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _
+  | .doubleLit _ | .bound _ | .now => none
+  | .aggregate _ _ _ => none
+  | .unaryMinus a | .unaryPlus a | .not a
+  | .isIri a | .isBlank a | .isLiteral a | .isNumeric a
+  | .str a | .lang a | .datatype a | .iriFn a
+  | .hasLang a | .hasLangDir a | .langDir a
+  | .strLen a | .uCase a | .lCase a | .encodeForUri a
+  | .abs a | .round a | .ceil a | .floor a
+  | .md5 a | .sha1 a | .sha256 a | .sha384 a | .sha512 a
+  | .year a | .month a | .day a | .hours a | .minutes a | .seconds a
+  | .timezone a | .tz a
+  | .ttSubject a | .ttPredicate a | .ttObject a | .isTriple a =>
+      existsFailure env active mu a
+  | .arith _ a b | .compare _ a b | .and a b | .or a b | .sameTerm a b
+  | .strDt a b | .strLang a b
+  | .strStarts a b | .strEnds a b | .contains a b
+  | .strBefore a b | .strAfter a b =>
+      (existsFailure env active mu a).or (existsFailure env active mu b)
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailure env active mu c))
+  | .coalesce es | .concat es | .functionCall _ es => existsFailureList env active mu es
+  | .inList a es | .notInList a es =>
+      (existsFailure env active mu a).or (existsFailureList env active mu es)
+  | .substr a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailureOpt env active mu c))
+  | .regex a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailureOpt env active mu c))
+  | .replace a b c d =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or
+          ((existsFailure env active mu c).or (existsFailureOpt env active mu d)))
+
+/-- `existsFailure` over an argument list, left to right. -/
+def existsFailureList (env : EvalEnv) (active : Graph) (mu : Binding) :
+    List Expr → Option ServiceFailure
+  | []      => none
+  | e :: es => (existsFailure env active mu e).or (existsFailureList env active mu es)
+
+/-- `existsFailure` of an optional argument. -/
+def existsFailureOpt (env : EvalEnv) (active : Graph) (mu : Binding) :
+    Option Expr → Option ServiceFailure
+  | none   => none
+  | some e => existsFailure env active mu e
 
 /- The §18.2.4 post-WHERE pipeline (a plain comment, not a section
 doc: a mutual block admits only definitions).
@@ -2037,6 +2233,133 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
     -- `eval_select_query`'s other arms return `[]`.
     | _ => []
 
+/- The failure twins of the post-WHERE pipeline (plain comments: a
+mutual block admits only definitions).
+
+Federated Query §2.3: a failed SERVICE call without SILENT made by an
+EXISTS in a HAVING condition, a SELECT expression or an ORDER BY
+condition fails the query. Each function below follows one step of
+`selectPost` and applies `existsFailure` to the solution mapping that
+step hands `substituteExistentials`:
+  * HAVING: every condition on every group, under the group's
+    representative row (`havingSatisfies`);
+  * SELECT expressions: every item on every row, under the row the item
+    sees (`evalSelectItemsGroup`, `evalSelectItemsRowFrom`, with the
+    bindings of the earlier items and the freshness context);
+  * ORDER BY: every condition on every row of the sequence being
+    ordered. `compareOnCondition` evaluates a condition on the two rows
+    it compares, so the sort reaches every row of a sequence of two or
+    more; this reading also counts the row of a one-row sequence, the
+    sort key that §15.1 assigns to every solution.
+GROUP BY keys and aggregate arguments evaluate no EXISTS (the
+expression-layer error, https://github.com/danbri/factoidal/issues/639),
+so they invoke nothing. -/
+
+/-- HAVING (twin of `havingSatisfies`): every condition, left to right,
+under the group's representative row. -/
+def havingFailure (env : EvalEnv) (active : Graph) :
+    List Expr → SolutionGroup → Option ServiceFailure
+  | [],        _ => none
+  | c :: rest, g =>
+      (existsFailure env active g.representative c).or (havingFailure env active rest g)
+
+/-- One SELECT item over one group (twin of `evalSelectItemGroup`). -/
+def selectItemGroupFailure (env : EvalEnv) (active : Graph) (item : SelectItem)
+    (row : Binding) : Option ServiceFailure :=
+  match item with
+  | .var _    => none
+  | .expr e _ => existsFailure env active row e
+
+/-- The SELECT items over one group (twin of `evalSelectItemsGroup`):
+each item sees the bindings of the items before it. -/
+def selectItemsGroupFailure (env : EvalEnv) (active : Graph) :
+    List SelectItem → SolutionGroup → Binding → Option ServiceFailure
+  | [],         _, _   => none
+  | it :: rest, g, row =>
+      (selectItemGroupFailure env active it row).or
+        (match evalSelectItemGroup env active it g row with
+         | some b => selectItemsGroupFailure env active rest g (b :: row)
+         | none   => selectItemsGroupFailure env active rest g row)
+
+/-- The SELECT items over one row of a non-aggregating SELECT (twin of
+`evalSelectItemsRowFrom`): the same accumulated row and the same
+freshness context. -/
+def selectItemsRowFailure (env : EvalEnv) (active : Graph) (row : String) :
+    List SelectItem → Binding → Nat → Option ServiceFailure
+  | [],                _,   _ => none
+  | .var _ :: rest,    acc, i => selectItemsRowFailure env active row rest acc (i + 1)
+  | .expr e v :: rest, acc, i =>
+      let mu := acc.withFreshnessCtx row (toString i)
+      (existsFailure env active mu e).or
+        (match (Expr.evalIn env mu (substituteExistentials env active mu e)).toTerm? with
+         | some t => selectItemsRowFailure env active row rest (acc.bind v t) (i + 1)
+         | none   => selectItemsRowFailure env active row rest acc (i + 1))
+
+/-- One ORDER BY condition on one row. -/
+def orderConditionFailure (env : EvalEnv) (active : Graph) (c : OrderCondition)
+    (mu : Binding) : Option ServiceFailure :=
+  match c with
+  | .asc e  => existsFailure env active mu e
+  | .desc e => existsFailure env active mu e
+
+/-- The ORDER BY conditions on one row, left to right. -/
+def orderFailure (env : EvalEnv) (active : Graph) :
+    List OrderCondition → Binding → Option ServiceFailure
+  | [],        _  => none
+  | c :: rest, mu =>
+      (orderConditionFailure env active c mu).or (orderFailure env active rest mu)
+
+/-- The failure twin of `selectPost`: the same steps over the same
+intermediate sequences, each checked with the twin of the function
+`selectPost` calls there. -/
+def selectPostFailure (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Option ServiceFailure :=
+  match q with
+  | .mk form _dcs _pattern gb hv md pv _base =>
+    match md with
+    | { orderBy := ob, distinct := _, reduced := _, offset := _, limit := _ } =>
+    match form with
+    | .select sel =>
+        let needsGrouping := gb.isSome || selectHasAggregates sel
+        if needsGrouping then
+          let groups := groupWhere env gb omega0
+          let filtered := if hv.isEmpty then groups
+                          else groups.filter (fun g => havingSatisfies env active hv g)
+          let rows : List (SolutionGroup × Binding) := groupedRowsWithValues gb pv filtered
+          let omega' : SolutionSeq := match sel with
+            | .vars items =>
+                rows.map (fun (gr : SolutionGroup × Binding) =>
+                  evalSelectItemsGroup env active items gr.1 gr.2 ++
+                    gr.2.filter (fun p => !(selectItemVars items).contains p.1))
+            | .all        => stripSyntheticBnodeVars (rows.map Prod.snd)
+          (groups.findSome? (fun g => havingFailure env active hv g)).or
+            ((match sel with
+              | .vars items =>
+                  rows.findSome? (fun (gr : SolutionGroup × Binding) =>
+                    selectItemsGroupFailure env active items gr.1 gr.2)
+              | .all => none).or
+              (match ob with
+               | none   => none
+               | some o => omega'.findSome? (fun mu => orderFailure env active o mu)))
+        else
+          let omega := match pv with
+            | none      => omega0
+            | some vals => join omega0 vals
+          let omega' := match sel with
+            | .vars items =>
+                numberRows (fun row mu => evalSelectItemsRowFrom env active row items mu 0)
+                  omega 0
+            | .all        => omega
+          (match sel with
+           | .vars items =>
+               findSomeNumbered (fun row mu => selectItemsRowFailure env active row items mu 0)
+                 omega 0
+           | .all => none).or
+            (match ob with
+             | none   => none
+             | some o => omega'.findSome? (fun mu => orderFailure env active o mu))
+    | _ => none
+
 end
 
 /-- Compile a query pattern into the §18.5 algebra. -/
@@ -2208,6 +2531,22 @@ def formHasSolution (env : EvalEnv) (active : Graph) (q : Query)
     (omega0 : SolutionSeq) : Bool :=
   !(sliceSolutions q.modifier.offset q.modifier.limit
       (formRows env active q omega0)).isEmpty
+
+/-- The failure twin of `formSolutions` (Federated Query §2.3): the
+failed SERVICE call an EXISTS in a HAVING condition (every condition on
+every group) or in an ORDER BY condition (every condition on every row
+of `formRows`) makes. ASK uses it too: `formHasSolution` skips the sort
+because the sort cannot change the answer, but the query's algebra
+still orders by the conditions, and a failed call there fails the
+query. -/
+def formFailure (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Option ServiceFailure :=
+  (if q.groupsSolutions then
+     (groupWhere env q.groupBy omega0).findSome? (fun g => havingFailure env active q.having g)
+   else none).or
+    (match q.modifier.orderBy with
+     | none   => none
+     | some o => (formRows env active q omega0).findSome? (orderFailure env active o))
 
 /-- Evaluate an ASK query — §18.2.4, §18.2.5: true exactly when the
 solution sequence after GROUP BY, HAVING, the trailing VALUES join,
@@ -2445,27 +2784,6 @@ returns the error, and an entry point that answers a query (the dispatch
 op, the CLI, the W3C runner) checks it first and answers the error in
 place of the rows. The `*Checked` forms below do both. -/
 
-/-- Does the pattern hold a SERVICE clause at all? A sub-SELECT counts
-as yes without a look inside, so the answer is `false` only when no
-SERVICE can be reached. This is a cheap pre-check: when it is `false`,
-`Query.serviceFailure` does no evaluation. -/
-def QueryPattern.mentionsService : QueryPattern → Bool
-  | .bgp _              => false
-  | .join l r           => l.mentionsService || r.mentionsService
-  | .leftJoin l r _     => l.mentionsService || r.mentionsService
-  | .filter _ p         => p.mentionsService
-  | .union l r          => l.mentionsService || r.mentionsService
-  | .minus l r          => l.mentionsService || r.mentionsService
-  | .graph _ p          => p.mentionsService
-  | .lateral l r        => l.mentionsService || r.mentionsService
-  | .bind _ _ p         => p.mentionsService
-  | .values _ _         => false
-  | .service _ _ _      => true
-  | .serviceVar _ _ _   => true
-  | .subSelect _        => true
-  | .propertyPath _ _ _ => false
-  | .empty              => false
-
 /-- Does the pattern hold a `text:query` pattern in a BGP the backend
 evaluator (`SPARQL/StoreDataset.lean`) could reach? A sub-SELECT, a
 VALUES block, a property path and the empty pattern answer `false`: the
@@ -2491,13 +2809,16 @@ def QueryPattern.mentionsFulltext : QueryPattern → Bool
   | .empty              => false
 
 /-- The failed SERVICE invocation without SILENT that evaluating the
-query's WHERE clause makes, if any (§2.3, §3.2), under the same dataset
-(FROM / FROM NAMED applied) and environment the query evaluators use.
-A DESCRIBE that names only IRIs does not evaluate its WHERE clause
+query makes, if any (§2.3, §3.2), under the same dataset (FROM / FROM
+NAMED applied) and environment the query evaluators use: first the
+WHERE clause, including every EXISTS in its expressions, then an EXISTS
+in the post-WHERE pipeline (HAVING, SELECT expressions, ORDER BY;
+`selectPostFailure` for SELECT, `formFailure` for the other forms). A
+DESCRIBE that names only IRIs does not evaluate its WHERE clause
 (`describeNeedsSolutions`), so it invokes nothing. -/
 def Query.serviceFailure (env : EvalEnv) (ds : Dataset) (q : Query) :
     Option ServiceFailure :=
-  if !q.pattern.mentionsService then none
+  if !q.mentionsService then none
   else
     let (ds', active) := applyDataset q.dataset ds ds.default
     let env := { env with dataset := some ds' }
@@ -2505,7 +2826,16 @@ def Query.serviceFailure (env : EvalEnv) (ds : Dataset) (q : Query) :
       | .describe targets => describeNeedsSolutions targets
       | _                 => true
     if evaluatesWhere then
-      (q.pattern.rewriteBnodes.lower env).serviceFailure ds' active
+      let pattern := q.pattern.rewriteBnodes.lower env
+      match pattern.serviceFailure ds' active with
+      | some f => some f
+      | none   =>
+          if !q.postMentionsService then none
+          else
+            let omega := pattern.evalIn ds' active
+            match q.form with
+            | .select _ => selectPostFailure env active q omega
+            | _         => formFailure env active q omega
     else none
 
 /-- `evalSelect`, or the §2.3 error. -/
