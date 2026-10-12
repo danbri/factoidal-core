@@ -47,6 +47,16 @@ Status 2026-10-12: direction set, no code.
    compatibility and that its SMT-discharged goals pass this tree's axiom
    policy before adopting it.
 
+8. Service descriptions (SPARQL 1.1 Service Description, MCP and WebMCP tool
+   schemas, REST API descriptions) are the source of capability
+   descriptions. Plan probes where they are incomplete.
+9. A proved Lean equivalence between two plan fragments is a rewrite the
+   planner may apply. An unproved rewrite is not admitted, or only with a
+   differential check.
+10. Distributed strategies compose through temporal properties: each states
+    what it guarantees under stated assumptions about its environment
+    (assume-guarantee), checked over the execution state machine's traces.
+
 ## Existing parts to reuse
 
 - `docs/designissues/2026-07-06-virtual-sources-design.md`: SERVICE-wrapped

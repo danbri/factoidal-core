@@ -78,6 +78,39 @@ Tracking:
 > assistance inside the optimisation problem rather than treating them as
 > free preliminaries."
 
+Owner, 2026-10-12, second message, verbatim:
+
+> "service descriptions and adaptive tool orchestration. Lean supplies
+> knowledge the planner can exploit; Shardborough supplies one efficient
+> place to retain and execute data; temporal reasoning makes the distributed
+> strategies composable."
+
+What this adds to the model below:
+- **Service descriptions** are the source of capability descriptions. For
+  SPARQL endpoints this is SPARQL 1.1 Service Description (records of
+  2026-04-25); for MCP and WebMCP tools it is the tool's declared name,
+  description and input schema; for REST it is an API description. The
+  planner reads them and, where they are incomplete, plans probes (section 3,
+  item 3).
+- **Adaptive tool orchestration** is the runtime planner applied to tool and
+  service calls: batching, retries, choice among admitted tools, placement and
+  concurrency, inside the admitted plan family.
+- **Lean supplies knowledge the planner can exploit.** Proved Lean theorems
+  are planner rules: a proved equivalence between two plan fragments is a
+  rewrite the planner may apply without a run-time check (for example the
+  SBM11 lemmas on block skipping and merge joins, the `@[csimp]` equalities,
+  and the RDFS and OWL entailment rules). A rewrite with no proof is not
+  admitted, or is admitted only with a differential check.
+- **Shardborough** is one place to retain data and execute work on it
+  efficiently (SBM11 baseline). It is one of the capabilities.
+- **Temporal reasoning makes the distributed strategies composable.** The
+  execution state machine is specified with temporal properties (safety and
+  liveness over its traces, as in TLA+). Each component strategy states the
+  property it guarantees, given stated assumptions about its environment.
+  Strategies are then composed by checking that each one's assumptions are
+  met by the others' guarantees (assume-guarantee reasoning). Veil is the
+  candidate framework.
+
 ## 2. Model
 
 The planner works over five kinds of object. Each one gets a typed Lean

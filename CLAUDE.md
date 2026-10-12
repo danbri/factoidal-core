@@ -213,6 +213,12 @@ SQL, REST, MCP tools, file sources and LLMs would offer different ways of
 satisfying them. Shardborough would be an execution and storage option, not
 the place everything must first be imported."
 
+- Owner, 2026-10-12, verbatim: "service descriptions and adaptive tool
+  orchestration. Lean supplies knowledge the planner can exploit;
+  Shardborough supplies one efficient place to retain and execute data;
+  temporal reasoning makes the distributed strategies composable." A proved
+  Lean equivalence is a planner rewrite; an unproved one needs a
+  differential check.
 - Do not design a path that must import data into Shardborough first.
 - Probing and discovery are costed work: do a step only when the expected
   saving is more than its cost.
