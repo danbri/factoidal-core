@@ -616,14 +616,19 @@ def colRange (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi :
 
 @[inline] def at64 (col : ByteArray) (i : Nat) : UInt64 := word64 col (8 * i)
 
+/-- Key columns `j..` of row `r` against `key` (a tail call with fuel). -/
+def rowKeyCmpGo (cols : Array ByteArray) (key : Array UInt64) (r : Nat) : Nat → Nat → Ordering
+  | 0, _ => .eq
+  | f + 1, j =>
+    if j < key.size then
+      if at64 cols[j]! r < key[j]! then .lt
+      else if key[j]! < at64 cols[j]! r then .gt
+      else rowKeyCmpGo cols key r f (j + 1)
+    else .eq
+
 /-- Compare the key columns of row `r` with `key`. -/
-def rowKeyCmp (cols : Array ByteArray) (key : Array UInt64) (r : Nat) : Ordering := Id.run do
-  for j in [0:key.size] do
-    let a := at64 cols[j]! r
-    let b := key[j]!
-    if a < b then return .lt
-    if b < a then return .gt
-  return .eq
+def rowKeyCmp (cols : Array ByteArray) (key : Array UInt64) (r : Nat) : Ordering :=
+  rowKeyCmpGo cols key r key.size 0
 
 /-- Binary search in rows `[lo, hi)` (key order): the least row whose key
     prefix is not below `key` (`strict = false`) or is above it. -/
