@@ -358,6 +358,13 @@ Lean functionality and gates land. Port functionality, not files.
 - The owner approves a batch before its new work starts. Work already
   running when the batch is proposed continues.
 - Batch 1: https://github.com/danbri/factoidal/issues/768.
+- Owner, 2026-10-12, verbatim: "OKRs - extend batch 1 to 2026-10-15." and
+  "/goal OKRs addresses successfully especially perf and scaling should
+  approach SOTA". So batch 1 runs to 2026-10-15, and performance and
+  scaling are measured against state-of-the-art engines on the same machine
+  and the same input (for example Oxigraph and Serd for parsing and SPARQL,
+  HermiT for OWL DL), never only against the F\* engine or an earlier
+  Lean build.
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 
