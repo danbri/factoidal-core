@@ -380,19 +380,25 @@ def table5Redundant (g : Graph) (t : Triple) : Bool :=
 def dropTable5Redundant (g : Graph) : Graph :=
   g.filter (fun t => !table5Redundant g t)
 
-/-- The keys of the ROOT ontology headers of one document: typed
+/-- The keys of the ROOT ontology headers of a graph: typed
     `owl:Ontology` and not the object of an `owl:imports` or
-    `owl:priorVersion` link from another node (the nested `<owl:Ontology rdf:about=...>` objects
-    of OWL 1 style documents are not roots), plus the `owl:versionIRI`
-    objects of those roots. -/
-def rootOntologyKeys (g : Graph) : List String :=
+    `owl:priorVersion` link from a different node. -/
+def rootHeaderKeys (g : Graph) : List String :=
   let headers := dedupStrs (subjectsTyped g owlOntologyC)
   -- A header that imports itself is still a root: only a link from a
   -- DIFFERENT header makes a node a non-root.
   let nonroot := g.filterMap (fun t =>
     if (t.p.val == owlImportsP || t.p.val == owlPriorVersionP) &&
        termKeyDl t.o != some (subjKey t.s) then termKeyDl t.o else none)
-  let roots := headers.filter (fun h => !(nonroot.contains h))
+  headers.filter (fun h => !(nonroot.contains h))
+
+/-- The keys of the ROOT ontology headers of one document: typed
+    `owl:Ontology` and not the object of an `owl:imports` or
+    `owl:priorVersion` link from another node (the nested `<owl:Ontology rdf:about=...>` objects
+    of OWL 1 style documents are not roots), plus the `owl:versionIRI`
+    objects of those roots (`rootHeaderKeys` gives the roots alone). -/
+def rootOntologyKeys (g : Graph) : List String :=
+  let roots := rootHeaderKeys g
   roots ++ (g.filterMap (fun t =>
     if t.p.val == nsOwl ++ "versionIRI" && roots.contains (subjKey t.s)
     then termKeyDl t.o else none))
