@@ -50,6 +50,7 @@ import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Qlvr.Sort
 import Harness.PosixRangeIO
+import Harness.RunHeap
 import Std.Data.HashMap
 
 open L4Factoidal.RDF
@@ -319,31 +320,26 @@ def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
   let mut w : Writer := { gdv := hV, ent := hE }
   let mut prev : Option ByteArray := none
   let mut records := 0
+  -- the next record comes from a loser tree over the runs (issue 804)
+  let mut tree := Harness.RunHeap.build (fun a b => cmpBytes a b == .lt) heads
   for _ in [0:runBytes + 1] do
-    let mut best : Option (Nat × ByteArray) := none
-    for k in [0:heads.size] do
-      match heads[k]! with
-      | some x =>
-        match best with
-        | some (_, b) => if cmpBytes x b == .lt then best := some (k, x)
-        | none => best := some (k, x)
-      | none => pure ()
-    match best with
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
     | none => break
-    | some (k, x) =>
+    | some x =>
       records := records + 1
-      let dup := match prev with
-        | some p => cmpBytes p x == .eq
-        | none => false
-      if !dup then
-        if let some p := prev then
-          if cmpBytes p x != .lt then
-            throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
+      let c := match prev with
+        | some p => cmpBytes p x
+        | none => .lt
+      if c != .eq then
+        if c != .lt then
+          throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
         w ← w.add x
         prev := some x
       let (hd, r) ← readers[k]!.next
       readers := readers.set! k r
       heads := heads.set! k hd
+      tree := Harness.RunHeap.replay (fun a b => cmpBytes a b == .lt) heads tree k
   w ← w.closePage
   w ← w.flushBufs true
   hV.flush; hE.flush

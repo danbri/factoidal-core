@@ -516,18 +516,12 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
   let mut dups := 0
   let mut rows := 0
   let cutAt := max 1 (blockRows / 16)
+  let mut tree := Harness.RunHeap.build QRow.lt heads
   for _ in [0:total + 1] do
-    let mut best : Option (Nat × QRow) := none
-    for k in [0:heads.size] do
-      match heads[k]! with
-      | some x =>
-        match best with
-        | some (_, b) => if x.lt b then best := some (k, x)
-        | none => best := some (k, x)
-      | none => pure ()
-    match best with
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
     | none => break
-    | some (k, x) =>
+    | some x =>
       let dup := match prev with
         | some p => p == x
         | none => false
@@ -543,6 +537,7 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
       let (hd, r) ← readers[k]!.nextRow
       readers := readers.set! k r
       heads := heads.set! k hd
+      tree := Harness.RunHeap.replay QRow.lt heads tree k
   w ← w.close
   w.h.write w.buf
   w.h.flush
