@@ -347,6 +347,13 @@ import L4Factoidal.Qlvr.Term
 import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Qlvr.Sort
 import L4Factoidal.Qlvr.Side
+import L4Factoidal.Storage.Sbm11.TermKey
+import L4Factoidal.Storage.Sbm11.TermKeyTheorems
+import L4Factoidal.Storage.Sbm11.TermId
+import L4Factoidal.Storage.Sbm11.TermIdTheorems
+import L4Factoidal.Storage.Sbm11.Dict
+import L4Factoidal.Storage.Sbm11.DictTheorems
+import L4Factoidal.Storage.Sbm11.DictFastTheorems
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson
