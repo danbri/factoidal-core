@@ -1,0 +1,1420 @@
+/-
+L4Factoidal.Storage.Sbm11.IdQuery — SPARQL over an SBM11 generation on term
+ids (stage 4, https://github.com/danbri/factoidal/issues/790; tracking
+https://github.com/danbri/factoidal/issues/787). Design:
+docs/designissues/2026-10-11-shardborough-vs-qlever.md section 6.9; record:
+docs/designissues/2026-10-12-sbm11-stage4.md.
+
+The module is pure and generic over the monad of a `Store` (positioned reads
+of PRB1 blocks, PRM1 entries, dictionary lookups); `Harness/Sbm11Query.lean`
+gives the `IO` store over verified `pread`.
+
+## The fragment (`translate`)
+
+`SELECT` with variables, `*`, `(COUNT(*) AS ?n)` and `(COUNT(?x) AS ?n)`
+(not DISTINCT); `DISTINCT`; a WHERE clause of triple patterns, group joins,
+FILTERs and `GRAPH <iri>` / `GRAPH ?g` around such a group (not nested);
+`GROUP BY` variables; `ORDER BY` variables; `LIMIT`, `OFFSET`. A FILTER is
+admitted when its expression is `Expr.backendLocal` (the repository's set of
+operators that read only their operands) and every variable it reads occurs
+in a triple pattern of the group it belongs to (so the FILTER can be applied
+after the joins of the whole BGP: every such variable is bound in every row
+of the group, with the same value after the join). Everything else is
+refused with a reason; the caller then runs the reference evaluator.
+
+## Ids and values
+
+A BGP constant is a term: it matches by RDF term identity, so it is mapped to
+its id (inline, or a dictionary lookup) and compared by id; a constant that
+has no id makes its pattern empty. Ids are injective on the dictionary
+(`TermIdTheorems.toId?_eq_iff`).
+
+A FILTER conjunct is evaluated in one of three ways (section "FILTER"):
+
+  * `?v = c` and `c = ?v` with `c` an IRI, an `xsd:string` literal or a
+    language-tagged literal without direction, and `sameTerm(?v, c)`: the row
+    is kept exactly when the id of `?v` is the id of `c`.
+  * `STRSTARTS`, `STRENDS`, `CONTAINS` of a variable and a simple literal:
+    for a dictionary literal of class `xsd:string` or `rdf:langString`, a
+    test on the key bytes; for any other id, the reference evaluator.
+  * any other admitted expression: the reference evaluator
+    (`Expr.evalIn`, `ebvOrFalse`) on the terms of the variables it reads,
+    once per distinct tuple of ids (a memo keyed by the ids).
+
+So `FILTER(?x = 72)` over `"72"^^xsd:int` is decided by the reference
+evaluator on the decoded term, by value. `#guard`s in
+`Storage/Sbm11/IdQueryTests.lean` compare each fast path with the reference
+evaluator on sample terms.
+
+## ORDER BY
+
+SPARQL 1.1 section 15.1 as the reference evaluator orders
+(`sparqlOrderValue` on `Expr.evalIn` of the variable): the distinct ids of a
+column are decoded, sorted with that comparison, and numbered (equal values
+one number); rows are then sorted by the numbers (`sortPermByKey`, stable;
+`topK` with LIMIT). The order of rows that compare equal is not specified by
+SPARQL and may differ from the reference.
+
+## Loops
+
+Every loop over rows, blocks or ids is a `for` loop or a tail call with fuel;
+WHERE trees and FILTER expressions are walked with explicit stacks.
+-/
+import L4Factoidal.Qlvr.Query
+import L4Factoidal.Storage.Sbm11.Block
+import L4Factoidal.Storage.Sbm11.TermId
+import L4Factoidal.Storage.Sbm11.FrameWords
+import L4Factoidal.SPARQL.Query
+import L4Factoidal.SPARQL.ResultsJson
+import Std.Data.HashMap
+import Std.Data.HashSet
+
+namespace L4Factoidal.Storage.Sbm11.IdQuery
+
+open L4Factoidal.RDF
+open L4Factoidal.SPARQL (Expr CompOp QueryPattern QueryForm SelectClause SelectItem GroupCondition
+  OrderCondition PatternTerm PatternSubject AggregateFn TriplePattern EvalEnv EvalResult Binding)
+open L4Factoidal.Qlvr (Table gather joinVars sharedCols mergeJoin hashJoin mergeSortBy)
+open L4Factoidal.Codec.Zstd (word64)
+open L4Factoidal.Storage.Sbm11.Block (BlockMeta Row)
+
+/-- Bound on the nodes of a WHERE tree or FILTER expression. -/
+def maxNodes : Nat := 4096
+
+/-! ## The plan -/
+
+/-- A pattern position before the dictionary lookup. -/
+inductive Arg where
+  | var (v : String)
+  | term (t : Term)
+  deriving Inhabited
+
+/-- The graph of a triple pattern: the default graph, a named graph given by
+    an IRI, or a variable over the named graphs. -/
+inductive GArg where
+  | dflt
+  | term (t : Term)
+  | var (v : String)
+  deriving Inhabited
+
+structure PatSpec where
+  s : Arg
+  p : Arg
+  o : Arg
+  g : GArg
+  deriving Inhabited
+
+inductive ProjItem where
+  | var (v : String)
+  /-- `COUNT(*)` (`none`) or `COUNT(?x)` -/
+  | count (alias : String) (arg : Option String)
+  deriving Inhabited
+
+def ProjItem.name : ProjItem → String
+  | .var v => v
+  | .count a _ => a
+
+structure Plan where
+  pats : Array PatSpec
+  /-- FILTER conjuncts; each is `backendLocal` and its variables are bound by
+      the patterns of its group -/
+  filters : Array Expr
+  proj : Array ProjItem
+  /-- the result variables (`Query.projectedVars`) -/
+  outVars : Array String
+  groupVars : Array String
+  agg : Bool
+  /-- (variable, descending) -/
+  order : Array (String × Bool)
+  distinct : Bool
+  offset : Nat
+  limit : Option Nat
+  deriving Inhabited
+
+def argOfSubject : PatternSubject → Except String Arg
+  | .var v => .ok (.var v)
+  | .iri i => .ok (.term (.iri i))
+  | .bnode b => .ok (.var ("_bnode_" ++ b))
+  | .tripleTerm _ _ _ => .error "a triple term pattern (RDF 1.2)"
+
+def argOfTerm : PatternTerm → Except String Arg
+  | .var v => .ok (.var v)
+  | .iri i => .ok (.term (.iri i))
+  | .bnode b => .ok (.var ("_bnode_" ++ b))
+  | .literal l => .ok (.term (.literal l))
+  | .tripleTerm _ _ _ => .error "a triple term pattern (RDF 1.2)"
+
+def Arg.var? : Arg → Option String
+  | .var v => some v
+  | _ => none
+
+def PatSpec.vars (t : PatSpec) : Array String :=
+  let base := [t.s, t.p, t.o].foldl (fun acc a => match a.var? with
+    | some v => if acc.contains v then acc else acc.push v
+    | none => acc) #[]
+  match t.g with
+  | .var v => if base.contains v then base else base.push v
+  | _ => base
+
+/-- The variables an admitted (`backendLocal`) expression reads, by an
+    explicit stack. `none` for a constructor outside `backendLocal`. -/
+def exprVars (e : Expr) : Option (Array String) := Id.run do
+  let mut stack : Array Expr := #[e]
+  let mut out : Array String := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .var v | .bound v => if !out.contains v then out := out.push v
+      | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _ | .doubleLit _ => pure ()
+      | .arith _ a b | .compare _ a b | .and a b | .or a b | .sameTerm a b
+      | .strDt a b | .strLang a b | .strStarts a b | .strEnds a b | .contains a b
+      | .strBefore a b | .strAfter a b => stack := (stack.push a).push b
+      | .unaryMinus a | .unaryPlus a | .not a | .isIri a | .isBlank a | .isLiteral a
+      | .isNumeric a | .str a | .lang a | .datatype a | .hasLang a | .hasLangDir a
+      | .langDir a | .strLen a | .uCase a | .lCase a | .encodeForUri a | .abs a | .round a
+      | .ceil a | .floor a | .year a | .month a | .day a | .hours a | .minutes a
+      | .seconds a | .timezone a | .tz a => stack := stack.push a
+      | .strLangDir a b c | .cond a b c => stack := ((stack.push a).push b).push c
+      | .substr a b none => stack := (stack.push a).push b
+      | .substr a b (some c) => stack := ((stack.push a).push b).push c
+      | .coalesce es | .concat es => stack := stack ++ es.toArray
+      | .inList a es | .notInList a es => stack := (stack ++ es.toArray).push a
+      | _ => return none
+  if !stack.isEmpty then return none
+  return some out
+
+/-- The conjuncts of `a && b && ...`. `ebvOrFalse` of a conjunction is the
+    conjunction of the `ebvOrFalse` of its operands
+    (`ebvOrFalse_evalIn_and`), so each conjunct is a FILTER of its own. -/
+def conjuncts (e : Expr) : Array Expr := Id.run do
+  let mut stack : Array Expr := #[e]
+  let mut out : Array Expr := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .and a b => stack := (stack.push b).push a
+      | other => out := out.push other
+  -- a pathological depth: keep the rest whole (still correct)
+  return out ++ stack.reverse
+
+/-- The variables of the triple patterns of a WHERE subtree (a `GRAPH ?g`
+    variable is not counted: inside the group it is not bound). `none` for a
+    subtree outside the fragment. -/
+def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
+  let mut stack : Array QueryPattern := #[p]
+  let mut out : Array String := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .bgp tps =>
+        for tp in tps do
+          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfTerm tp.o] do
+            match a with
+            | .ok (.var v) => if !out.contains v then out := out.push v
+            | .ok _ => pure ()
+            | .error _ => return none
+      | .join l r => stack := (stack.push r).push l
+      | .filter _ q | .graph _ q => stack := stack.push q
+      | .empty => pure ()
+      | _ => return none
+  if !stack.isEmpty then return none
+  return some out
+
+/-- One item of the WHERE walk: a pattern and the graph it reads. -/
+structure WalkItem where
+  p : QueryPattern
+  g : GArg
+
+/-- Flatten a WHERE tree of BGPs, joins, FILTERs and one level of GRAPH. -/
+def flattenWhere (p : QueryPattern) : Except String (Array PatSpec × Array Expr) := do
+  let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
+  let mut pats : Array PatSpec := #[]
+  let mut filters : Array Expr := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some ⟨x, g⟩ =>
+      stack := stack.pop
+      match x with
+      | .bgp tps =>
+        for tp in tps do
+          pats := pats.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfTerm tp.o, g }
+      | .join l r => stack := (stack.push ⟨r, g⟩).push ⟨l, g⟩
+      | .filter c q =>
+        unless c.backendLocal do throw "a FILTER expression outside Expr.backendLocal"
+        let some vs := exprVars c | throw "a FILTER expression outside the fragment"
+        let some inScope := subtreeVars q | throw "a FILTER over a group outside the fragment"
+        unless vs.all inScope.contains do
+          throw "a FILTER that reads a variable no triple pattern of its group binds"
+        filters := filters ++ conjuncts c
+        stack := stack.push ⟨q, g⟩
+      | .graph n q =>
+        match g with
+        | .dflt => pure ()
+        | _ => throw "a GRAPH inside a GRAPH"
+        match subtreeVars q with
+        | some _ => pure ()
+        | none => throw "a GRAPH group outside the fragment"
+        let gArg : GArg ← match n with
+          | .iri i => pure (.term (.iri i))
+          | .var v => pure (.var v)
+          | _ => throw "a GRAPH name that is not an IRI or a variable"
+        -- a GRAPH group with no triple pattern reads the graph names only
+        if !(hasPattern q) then throw "a GRAPH group with no triple pattern"
+        stack := stack.push ⟨q, gArg⟩
+      | .empty => pure ()
+      | _ => throw "a WHERE clause outside the fragment (OPTIONAL, UNION, MINUS, BIND, VALUES, sub-SELECT, SERVICE or a property path)"
+  if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
+  return (pats, filters)
+where
+  /-- Whether a subtree holds a triple pattern. -/
+  hasPattern (q : QueryPattern) : Bool := Id.run do
+    let mut stack : Array QueryPattern := #[q]
+    for _ in [0:maxNodes] do
+      match stack.back? with
+      | none => break
+      | some x =>
+        stack := stack.pop
+        match x with
+        | .bgp tps => if !tps.isEmpty then return true
+        | .join l r => stack := (stack.push r).push l
+        | .filter _ y | .graph _ y => stack := stack.push y
+        | _ => pure ()
+    return false
+
+/-- Accept the fragment or say why not. -/
+def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
+  let sel ← match q.form with
+    | .select s => pure s
+    | _ => throw "not a SELECT query"
+  unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
+  unless q.having.isEmpty do throw "HAVING"
+  if q.postValues.isSome then throw "a trailing VALUES block"
+  if q.modifier.reduced then throw "REDUCED"
+  let (pats, filters) ← flattenWhere q.pattern.rewriteBnodes
+  if pats.isEmpty then throw "a WHERE clause with no triple pattern"
+  let patVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  let groupVars ← match q.groupBy with
+    | none => pure #[]
+    | some gs => gs.toArray.mapM fun
+        | .var v => pure v
+        | _ => throw "GROUP BY an expression"
+  for v in groupVars do
+    unless patVars.contains v do throw s!"GROUP BY ?{v}, which no triple pattern binds"
+  let proj ← match sel with
+    | .all => pure ((L4Factoidal.SPARQL.Query.projectedVars q).toArray.map ProjItem.var)
+    | .vars items => items.toArray.mapM fun
+        | .var v => pure (ProjItem.var v)
+        | .expr (.aggregate .count false (.boolLit true)) a => pure (ProjItem.count a none)
+        | .expr (.aggregate .count false (.var x)) a =>
+          if patVars.contains x then pure (ProjItem.count a (some x))
+          else throw s!"COUNT(?{x}) of a variable no triple pattern binds"
+        | .expr _ _ => throw "a SELECT expression other than COUNT(*) or COUNT(?x)"
+  let agg := q.groupBy.isSome || proj.any fun | .count _ _ => true | _ => false
+  let aliases := proj.filterMap fun | .count a _ => some a | _ => none
+  if agg then
+    if (match sel with | .all => true | _ => false) then throw "SELECT * with GROUP BY"
+    for p in proj do
+      match p with
+      | .var v => unless groupVars.contains v do throw s!"?{v} is projected but not grouped"
+      | _ => pure ()
+    for a in aliases do
+      if patVars.contains a then throw s!"the COUNT alias ?{a} is bound by a triple pattern"
+  -- two items with one name
+  let names := proj.map ProjItem.name
+  for i in [0:names.size] do
+    for j in [i + 1:names.size] do
+      if names[i]! == names[j]! then throw s!"?{names[i]!} is projected twice"
+  let order ← match q.modifier.orderBy with
+    | none => pure #[]
+    | some cs => cs.toArray.mapM fun
+        | .asc (.var v) => pure (v, false)
+        | .desc (.var v) => pure (v, true)
+        | _ => throw "ORDER BY an expression"
+  for (v, _) in order do
+    let ok := if agg then groupVars.contains v || aliases.contains v else patVars.contains v
+    unless ok do throw s!"ORDER BY ?{v}, which is not bound in every row"
+  return { pats, filters, proj, outVars := (L4Factoidal.SPARQL.Query.projectedVars q).toArray,
+           groupVars, agg, order, distinct := q.modifier.distinct,
+           offset := q.modifier.offset.getD 0, limit := q.modifier.limit }
+
+/-! ## The store -/
+
+/-- What the id engine reads. `metas perm` are the PRM1 entries of a
+    permutation; `prb perm off len` bytes of its PRB1 file; `idOf` the id of a
+    term (inline or by dictionary lookup; `none` when the term has no id);
+    `keyOf` the dictionary key of an id of tag 1, 2 or 3; `termOf` the term
+    of any id. -/
+structure Store (m : Type → Type) where
+  metas : Nat → ExceptT String m (Array BlockMeta)
+  prb : Nat → Nat → Nat → ExceptT String m ByteArray
+  idOf : Term → ExceptT String m (Option UInt64)
+  keyOf : UInt64 → ExceptT String m ByteArray
+  /-- the key of a dictionary id as a range `[a, e)` of a byte array (no
+      copy) -/
+  keySlice : UInt64 → ExceptT String m (ByteArray × Nat × Nat)
+  termOf : UInt64 → ExceptT String m Term
+  /-- the rank of the first dictionary key not below the bytes
+      (`DictRange.lowerBoundM`) -/
+  lowerBound : ByteArray → ExceptT String m Nat
+
+/-! ## Patterns over ids and permutations -/
+
+inductive Slot where
+  | var (v : String)
+  | const (x : UInt64)
+  /-- a constant with no id: the pattern has no solutions -/
+  | missing
+  deriving Repr, BEq, Inhabited
+
+/-- Positions 0 subject, 1 predicate, 2 object, 3 graph. The graph of a
+    default-graph pattern is `.const 0`. -/
+structure Pat where
+  s : Slot
+  p : Slot
+  o : Slot
+  g : Slot
+  /-- `g` is a variable over the NAMED graphs (`GRAPH ?g`): id 0 excluded -/
+  named : Bool
+  deriving Repr, Inhabited
+
+def Pat.slot (t : Pat) : Nat → Slot
+  | 0 => t.s
+  | 1 => t.p
+  | 2 => t.o
+  | _ => t.g
+
+def Pat.vars (t : Pat) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for i in [0:4] do
+    match t.slot i with
+    | .var v => if !out.contains v then out := out.push v
+    | _ => pure ()
+  return out
+
+def Pat.hasMissing (t : Pat) : Bool :=
+  t.s == .missing || t.p == .missing || t.o == .missing || t.g == .missing
+
+def Pat.bound (t : Pat) (i : Nat) : Bool :=
+  match t.slot i with
+  | .var _ => false
+  | _ => true
+
+/-- The four permutations: the triple positions of columns 0, 1, 2 (column 3
+    is the graph). -/
+def permOrder : Array (Array Nat) := #[#[1, 0, 2], #[1, 2, 0], #[0, 1, 2], #[2, 0, 1]]
+
+def permNames : Array String := #["pso", "pos", "spo", "osp"]
+
+/-- The permutation for `t`: its bound triple positions first (every set of
+    bound positions is a prefix of one of the four); then position `pref`
+    when that is possible. -/
+def permFor (t : Pat) (pref : Option Nat) : Nat := Id.run do
+  let m := ([0, 1, 2].filter t.bound).length
+  let mut first : Option Nat := none
+  for k in [0:permOrder.size] do
+    let o := permOrder[k]!
+    let prefixOk := (List.range m).all fun j => t.bound o[j]!
+    if prefixOk then
+      if first.isNone then first := some k
+      match pref with
+      | some q => if m < 3 && o[m]! == q then return k
+      | none => pure ()
+  return first.getD 0
+
+/-- What a scan of one pattern reads. Columns are permutation columns 0..3. -/
+structure ScanSpec where
+  perm : Nat
+  /-- the leading columns' values -/
+  key : Array UInt64
+  /-- other columns that must hold a value -/
+  checks : Array (Nat × UInt64)
+  /-- the graph column must not be 0 -/
+  named : Bool
+  outVars : Array String
+  outCols : Array Nat
+  /-- pairs of columns that hold one variable -/
+  eqs : Array (Nat × Nat)
+  deriving Repr, Inhabited
+
+def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
+
+def mkSpec (t : Pat) (perm : Nat) (need : String → Bool) : ScanSpec := Id.run do
+  let mut key : Array UInt64 := #[]
+  let mut checks : Array (Nat × UInt64) := #[]
+  let mut outVars : Array String := #[]
+  let mut outCols : Array Nat := #[]
+  let mut eqs : Array (Nat × Nat) := #[]
+  let mut seen : Array (String × Nat) := #[]
+  let mut leading := true
+  for c in [0:4] do
+    match t.slot (ScanSpec.colPos perm c) with
+    | .const x =>
+      if leading then key := key.push x else checks := checks.push (c, x)
+    | .missing =>
+      if leading then key := key.push 0 else checks := checks.push (c, 0)
+    | .var v =>
+      leading := false
+      match seen.find? (·.1 == v) with
+      | some (_, c0) => eqs := eqs.push (c0, c)
+      | none =>
+        seen := seen.push (v, c)
+        if need v then
+          outVars := outVars.push v
+          outCols := outCols.push c
+  return { perm, key, checks, named := t.named, outVars, outCols, eqs }
+
+/-! ## Block metadata -/
+
+def rowCol (r : Row) : Nat → Nat
+  | 0 => r.c0
+  | 1 => r.c1
+  | 2 => r.c2
+  | _ => r.g
+
+/-- Compare the first `key.size` columns of `r` with `key`. -/
+def prefixCmp (r : Row) (key : Array UInt64) : Ordering := Id.run do
+  for j in [0:key.size] do
+    let a := rowCol r j
+    let b := key[j]!.toNat
+    if a < b then return .lt
+    if b < a then return .gt
+  return .eq
+
+def selects (b : BlockMeta) (key : Array UInt64) : Bool :=
+  prefixCmp b.first key != .gt && prefixCmp b.last key != .lt
+
+def fullFor (b : BlockMeta) (key : Array UInt64) : Bool :=
+  prefixCmp b.first key == .eq && prefixCmp b.last key == .eq
+
+/-- The value of column `c` when every row of the block has the same value
+    there. Columns 0..2: the first and last row agree on columns `0..c`, so
+    every row between them does (the rows are sorted). Column 3 (graph): a
+    block of one row, or a graph frame of 9 bytes in a block of 9 rows or
+    more. The packer's encoder writes a constant frame (tag and one u64: 9
+    bytes) exactly when all values are equal; a delta frame has at least one
+    byte per row after its tag, a raw frame eight; activation re-encodes every
+    column and compares the bytes, so an activated generation has the
+    encoder's frames. -/
+def colConst? (b : BlockMeta) (c : Nat) : Option Nat :=
+  if c < 3 then
+    if (List.range (c + 1)).all (fun j => rowCol b.first j == rowCol b.last j) then some (rowCol b.first c)
+    else none
+  else if b.rows == 1 || (b.rows ≥ 9 && b.len3 == 9) then some b.first.g
+  else none
+
+/-- The first block whose last row is not below the key prefix (binary
+    search with fuel). -/
+def firstBlockGo (metas : Array BlockMeta) (key : Array UInt64) : Nat → Nat → Nat → Nat
+  | 0, l, _ => l
+  | f + 1, l, h =>
+    if l < h then
+      let mid := (l + h) / 2
+      if prefixCmp metas[mid]!.last key == .lt then firstBlockGo metas key f (mid + 1) h
+      else firstBlockGo metas key f l mid
+    else l
+
+/-- The indices of the blocks that may hold a row with the key prefix. -/
+def blocksFor (metas : Array BlockMeta) (key : Array UInt64) : Array Nat := Id.run do
+  let start := firstBlockGo metas key (Nat.log2 metas.size + 2) 0 metas.size
+  let mut out : Array Nat := #[]
+  let mut i := start
+  for _ in [0:metas.size] do
+    if i ≥ metas.size then break
+    if prefixCmp metas[i]!.first key == .gt then break
+    out := out.push i
+    i := i + 1
+  return out
+
+/-- Rows of the selected blocks: exact when every one is full. -/
+def estimate (metas : Array BlockMeta) (key : Array UInt64) : Nat :=
+  (blocksFor metas key).foldl (fun a i => a + metas[i]!.rows) 0
+
+/-! ## Reading columns -/
+
+/-- 8-byte little-endian words of a column of ids. -/
+def wordsOf (xs : Array Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (8 * xs.size)
+  for x in xs do
+    out := L4Factoidal.Qlvr.Side.put64 out x.toUInt64
+  return out
+
+/-- A column of `rows` copies of `x`. -/
+def constWords (x : UInt64) (rows : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (8 * rows)
+  for _ in [0:rows] do
+    out := L4Factoidal.Qlvr.Side.put64 out x
+  return out
+
+structure ScanStats where
+  blocksRead : Nat := 0
+  blocksSelected : Nat := 0
+  blocksTotal : Nat := 0
+  framesRead : Nat := 0
+  bytesRead : Nat := 0
+  rowsOut : Nat := 0
+  deriving Repr, Inhabited
+
+def ScanStats.add (a b : ScanStats) : ScanStats :=
+  { blocksRead := a.blocksRead + b.blocksRead, blocksSelected := a.blocksSelected + b.blocksSelected,
+    blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
+    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut }
+
+/-- The bytes of the frames `need` of block `b`: one positioned read of the
+    contiguous frames from the first to the last needed one. Returns the
+    bytes, the start of each frame in them, and the bytes read. -/
+def readFrames {m : Type → Type} [Monad m] (st : Store m) (perm : Nat) (b : BlockMeta)
+    (need : Array Bool) : ExceptT String m (ByteArray × Array Nat × Nat) := do
+  let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
+  let starts : Array Nat := #[0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2]
+  let mut lo : Option Nat := none
+  let mut hi := 0
+  for c in [0:4] do
+    if need[c]! then
+      if lo.isNone then lo := some starts[c]!
+      hi := starts[c]! + lens[c]!
+  let some lo0 := lo | return (.empty, starts, 0)
+  let bytes ← st.prb perm (b.offset + lo0) (hi - lo0)
+  if bytes.size != hi - lo0 then throw s!"block at {b.offset}: short read"
+  return (bytes, starts.map (· - lo0), hi - lo0)
+
+/-- Column `c` of the block, all rows, as words (`FrameWords.decodeWords`,
+    tested equal to `Column.decodeColumnAt`, which is proved equal to the
+    specification decoder, `ColumnTheorems.decodeColumnAt_eq`); the frame
+    must end at its PRM1 length. -/
+def colAll (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c : Nat) : Except String ByteArray :=
+  let lens : Array Nat := #[b.len0, b.len1, b.len2, b.len3]
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWords bytes b.rows starts[c]! with
+  | some (ws, j) =>
+    if j != starts[c]! + lens[c]! || ws.size != 8 * b.rows then
+      .error s!"block at {b.offset}: frame {c} does not end at its length"
+    else .ok ws
+  | none => .error s!"block at {b.offset}: frame {c} does not decode"
+
+/-- Rows `[lo, hi)` of column `c` as words (`FrameWords.decodeWordsRange`:
+    the frame is read only up to row `hi - 1`). -/
+def colRange (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (c lo hi : Nat) :
+    Except String ByteArray :=
+  match L4Factoidal.Storage.Sbm11.FrameWords.decodeWordsRange bytes b.rows starts[c]! lo hi with
+  | some ws => .ok ws
+  | none => .error s!"block at {b.offset}: frame {c} does not decode"
+
+@[inline] def at64 (col : ByteArray) (i : Nat) : UInt64 := word64 col (8 * i)
+
+/-- Compare the key columns of row `r` with `key`. -/
+def rowKeyCmp (cols : Array ByteArray) (key : Array UInt64) (r : Nat) : Ordering := Id.run do
+  for j in [0:key.size] do
+    let a := at64 cols[j]! r
+    let b := key[j]!
+    if a < b then return .lt
+    if b < a then return .gt
+  return .eq
+
+/-- Binary search in rows `[lo, hi)` (key order): the least row whose key
+    prefix is not below `key` (`strict = false`) or is above it. -/
+def keyBound (cols : Array ByteArray) (key : Array UInt64) (strict : Bool) : Nat → Nat → Nat → Nat
+  | 0, lo, _ => lo
+  | fuel + 1, lo, hi =>
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      let c := rowKeyCmp cols key mid
+      if c == .lt || (strict && c == .eq) then keyBound cols key strict fuel (mid + 1) hi
+      else keyBound cols key strict fuel lo mid
+    else lo
+
+/-- Rows `i..hi-1`: keep those that pass the checks, the named-graph test and
+    the repeated-variable tests; append their output columns. -/
+def selectRows (cols : Array ByteArray) (checks : Array (Nat × UInt64)) (named : Bool)
+    (eqs : Array (Nat × Nat)) (outCols : Array Nat) (hi : Nat) :
+    Nat → Nat → Array ByteArray → Nat → Array ByteArray × Nat
+  | 0, _, acc, n => (acc, n)
+  | k + 1, i, acc, n =>
+    if i ≥ hi then (acc, n)
+    else
+      let ok := checks.all (fun (c, x) => at64 cols[c]! i == x) &&
+        (!named || at64 cols[3]! i != 0) &&
+        eqs.all (fun (a, b) => at64 cols[a]! i == at64 cols[b]! i)
+      if ok then
+        let acc := (List.range outCols.size).foldl (fun acc k =>
+          acc.modify k fun out => L4Factoidal.Qlvr.Side.put64 out (at64 cols[outCols[k]!]! i)) acc
+        selectRows cols checks named eqs outCols hi k (i + 1) acc (n + 1)
+      else selectRows cols checks named eqs outCols hi k (i + 1) acc n
+
+/-- One block's matching rows. `consts` gives, per output variable, the value
+    when it is the same in every row of the chunk (the column is then not
+    filled unless `fill`). -/
+structure Chunk where
+  table : Table
+  consts : Array (Option UInt64)
+  deriving Inhabited
+
+/-- Scan block by block; `f` gets each block's rows and says whether to go
+    on. With `fill = false` a column that is constant over a chunk is left
+    empty and given in `consts` (the aggregate path counts it so). -/
+def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
+    (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) : ExceptT String m (σ × ScanStats) := do
+  let metas ← st.metas spec.perm
+  let mut acc := init
+  let mut stats : ScanStats := { blocksTotal := metas.size }
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  for i in blocksFor metas spec.key do
+    let b := metas[i]!
+    if !selects b spec.key then continue
+    let full := fullFor b spec.key
+    -- checks decided by the metadata
+    let mut skip := false
+    let mut checks : Array (Nat × UInt64) := #[]
+    for (c, x) in spec.checks do
+      match colConst? b c with
+      | some y => if y != x.toNat then skip := true
+      | none => checks := checks.push (c, x)
+    let mut named := spec.named
+    if named then
+      match colConst? b 3 with
+      | some 0 => skip := true
+      | some _ => named := false
+      | none => pure ()
+    if skip then continue
+    stats := { stats with blocksSelected := stats.blocksSelected + 1 }
+    -- the columns to decode
+    let constOut : Array (Option Nat) := spec.outCols.map fun c => if full then colConst? b c else none
+    let keyCols : Array Nat := if full then #[] else (List.range spec.key.size).toArray
+    let perRow := !checks.isEmpty || named || !spec.eqs.isEmpty
+    let mut need : Array Bool := #[false, false, false, false]
+    for c in keyCols do need := need.set! c true
+    for (c, _) in checks do need := need.set! c true
+    if named then need := need.set! 3 true
+    for (a, c) in spec.eqs do
+      need := (need.set! a true).set! c true
+    for k in [0:spec.outCols.size] do
+      if constOut[k]!.isNone || perRow then need := need.set! spec.outCols[k]! true
+    let (bytes, starts, nbytes) ← readFrames st spec.perm b need
+    if need.any id then
+      stats := { stats with blocksRead := stats.blocksRead + 1,
+                            framesRead := stats.framesRead + (need.filter id).size,
+                            bytesRead := stats.bytesRead + nbytes }
+    -- the key columns in full (to find the rows with the key prefix), then
+    -- every other needed column for those rows only
+    let mut keyWords : Array ByteArray := #[]
+    for c in keyCols do
+      match colAll b bytes starts c with
+      | .ok w => keyWords := keyWords.push w
+      | .error e => throw e
+    let (lo, hi) :=
+      if full then (0, b.rows)
+      else
+        let fuel := Nat.log2 b.rows + 2
+        let lo := keyBound keyWords spec.key false fuel 0 b.rows
+        (lo, keyBound keyWords spec.key true fuel lo b.rows)
+    -- columns cut to rows [lo, hi): row r of the chunk is row lo + r
+    let mut cols : Array ByteArray := #[.empty, .empty, .empty, .empty]
+    for c in [0:4] do
+      if need[c]! then
+        if h : c < keyWords.size then
+          cols := cols.set! c (keyWords[c].extract (8 * lo) (8 * hi))
+        else
+          match colRange b bytes starts c lo hi with
+          | .ok w => cols := cols.set! c w
+          | .error e => throw e
+    let n := hi - lo
+    let chunk : Chunk :=
+      if perRow then
+        let (out, k) := selectRows cols checks named spec.eqs spec.outCols n (n + 1) 0
+          (spec.outVars.map fun _ => ByteArray.emptyWithCapacity (8 * n)) 0
+        { table := { vars := spec.outVars, cols := out, rows := k, sortVar },
+          consts := spec.outVars.map fun _ => none }
+      else
+        let outs := (List.range spec.outCols.size).toArray.map fun k =>
+          match constOut[k]! with
+          | some x => if fill then constWords x.toUInt64 n else ByteArray.empty
+          | none => cols[spec.outCols[k]!]!
+        { table := { vars := spec.outVars, cols := outs, rows := n, sortVar },
+          consts := constOut.map (·.map Nat.toUInt64) }
+    stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows }
+    let (acc', more) ← f acc chunk
+    acc := acc'
+    if !more then break
+  return (acc, stats)
+
+/-- The whole scan as one table. -/
+def scanTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
+    ExceptT String m (Table × ScanStats) := do
+  let metas ← st.metas spec.perm
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let cap := 8 * estimate metas spec.key
+  let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
+                        rows := 0, sortVar }
+  scanFoldM st spec true init fun acc ch => pure (acc.append ch.table, true)
+
+/-! ## The BGP -/
+
+def varCount (pats : Array Pat) (v : String) : Nat :=
+  pats.foldl (fun a t => if t.vars.contains v then a + 1 else a) 0
+
+/-- A triple position of `t` holding the variable that occurs in most
+    patterns. -/
+def bestSortPos (t : Pat) (pats : Array Pat) : Option Nat := Id.run do
+  let mut best : Option (Nat × Nat) := none
+  for i in [0:3] do
+    match t.slot i with
+    | .var v =>
+      let c := varCount pats v
+      match best with
+      | some (_, c0) => if c > c0 then best := some (i, c)
+      | none => best := some (i, c)
+    | _ => pure ()
+  return best.map (·.1)
+
+def posOf (t : Pat) (v : String) : Option Nat :=
+  [0, 1, 2].find? fun i => t.slot i == .var v
+
+/-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
+    SBM11 permutations). `need v`: the query reads `v` after the BGP. -/
+def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool) :
+    ExceptT String m (Table × Array String × ScanStats) := do
+  let allVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  let keep (v : String) : Bool := need v || varCount pats v ≥ 2
+  if pats.isEmpty then throw "empty basic graph pattern"
+  if pats.any (·.hasMissing) then
+    return (Table.empty (allVars.filter keep), #["a constant has no id: no solutions"], {})
+  let mut ests : Array Nat := #[]
+  for t in pats do
+    let spec := mkSpec t (permFor t none) keep
+    ests := ests.push (estimate (← st.metas spec.perm) spec.key)
+  let mut remaining := (List.range pats.size).toArray
+  let mut lines : Array String := #[]
+  let first := remaining.foldl (fun b k => if ests[k]! < ests[b]! then k else b) remaining[0]!
+  remaining := remaining.filter (· != first)
+  let t0 := pats[first]!
+  let spec0 := mkSpec t0 (permFor t0 (bestSortPos t0 pats)) keep
+  let (tab0, st0) ← scanTableM st spec0
+  let mut total := st0
+  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}"
+  let mut tab := tab0
+  for _ in [0:pats.size] do
+    if remaining.isEmpty then break
+    let connected := remaining.filter fun k => pats[k]!.vars.any tab.vars.contains
+    let cands := if connected.isEmpty then remaining else connected
+    let next := cands.foldl (fun b k => if ests[k]! < ests[b]! then k else b) cands[0]!
+    remaining := remaining.filter (· != next)
+    let t := pats[next]!
+    let mergeVar : Option (String × Nat) := match tab.sortVar with
+      | some v => (posOf t v).bind fun q => if t.bound q then none else some (v, q)
+      | none => none
+    let perm := match mergeVar with
+      | some (_, q) => permFor t (some q)
+      | none => permFor t (bestSortPos t pats)
+    let spec := mkSpec t perm keep
+    let (rt, s) ← scanTableM st spec
+    total := total.add s
+    let (joined, how) := match mergeVar with
+      | some (v, _) =>
+        if rt.sortVar == some v then (mergeJoin tab rt v, s!"merge join on ?{v}")
+        else (hashJoin tab rt, "hash join")
+      | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
+    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}; {how}: {joined.rows} rows"
+    tab := joined
+  return (tab, lines, total)
+
+/-! ## FILTER -/
+
+/-- The reference value of a FILTER conjunct on one row: `ebvOrFalse` of
+    `Expr.evalIn` (the FILTER of `QueryPattern.lowerWith`; for an `EXISTS`-free
+    expression `substituteExistentials` is the identity). -/
+def refFilter (e : Expr) (mu : Binding) : Bool :=
+  L4Factoidal.SPARQL.ebvOrFalse (L4Factoidal.SPARQL.Expr.evalIn {} mu e)
+
+/-- A constant whose `=` with any term is true exactly when the term is the
+    same term: an IRI, an `xsd:string` literal, a language-tagged literal
+    without direction (`valueCompare`: two IRIs by their strings, two literals
+    of one datatype by language tag and lexical form, anything else false or
+    an error). -/
+def eqByTermConst? : Expr → Option Term
+  | .iri i => some (.iri i)
+  | .lit l =>
+    if l.val.direction.isNone && (l.val.langTag.isSome || l.val.datatype == xsdString) then
+      some (.literal l)
+    else none
+  | _ => none
+
+/-- A constant for `sameTerm`: any IRI or literal. -/
+def sameTermConst? : Expr → Option Term
+  | .iri i => some (.iri i)
+  | .lit l => some (.literal l)
+  | _ => none
+
+/-- How one FILTER conjunct is evaluated. -/
+inductive FKind where
+  /-- keep the row when the id of `v` is `c` (`none`: the constant has no
+      id, no row is kept) -/
+  | idEq (v : String) (c : Option UInt64)
+  /-- `sameTerm(?v, ?w)`: equal ids -/
+  | idEqVar (v w : String)
+  /-- 0 STRSTARTS, 1 STRENDS, 2 CONTAINS of `v` and a simple literal: key
+      bytes for `xsd:string` and `rdf:langString` dictionary literals, the
+      reference evaluator otherwise -/
+  | str (k : Nat) (v : String) (needle : ByteArray) (e : Expr)
+  /-- STRSTARTS of `v` and a simple literal without U+0000: a dictionary
+      literal whose rank is in `[classLo, classHi)` (the keys of classes 3
+      and 4, `xsd:string` and `rdf:langString`) passes exactly when the rank
+      is in one of `ranges` (the keys `[c] ++ needle ...` for c = 3, 4); any
+      other id goes to the reference evaluator -/
+  | strRange (v : String) (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (e : Expr)
+  /-- the reference evaluator on the terms of `vars`, memoised by their ids -/
+  | general (e : Expr) (vars : Array String)
+  deriving Inhabited
+
+/-- A simple literal needle (no language tag, `xsd:string`). -/
+def simpleNeedle? : Expr → Option String
+  | .lit l => if l.val.langTag.isNone && l.val.direction.isNone && l.val.datatype == xsdString then
+      some l.val.lexicalForm else none
+  | _ => none
+
+/-- Classify a conjunct; constants are looked up. -/
+def compileFilter {m : Type → Type} [Monad m] (st : Store m) (e : Expr) : ExceptT String m FKind := do
+  let general : ExceptT String m FKind := do
+    let some vs := exprVars e | throw "a FILTER expression outside the fragment"
+    pure (.general e vs)
+  match e with
+  | .compare .eq (.var v) c | .compare .eq c (.var v) =>
+    match eqByTermConst? c with
+    | some t => pure (.idEq v (← st.idOf (L4Factoidal.Storage.Sbm11.normalizeTerm t)))
+    | none => general
+  | .sameTerm (.var v) (.var w) => pure (.idEqVar v w)
+  | .sameTerm (.var v) c | .sameTerm c (.var v) =>
+    match sameTermConst? c with
+    | some t =>
+      -- `sameTerm` does not fold language-tag case: a constant that the
+      -- packer's normalisation would change is no stored term
+      let n := L4Factoidal.Storage.Sbm11.normalizeTerm t
+      if n == t then pure (.idEq v (← st.idOf t)) else pure (.idEq v none)
+    | none => general
+  | .strStarts (.var v) c | .strEnds (.var v) c | .contains (.var v) c =>
+    match simpleNeedle? c with
+    | some s =>
+      let k := match e with | .strStarts _ _ => 0 | .strEnds _ _ => 1 | _ => 2
+      let n := s.toUTF8
+      if k == 0 && !n.data.contains 0 then
+        -- keys with the prefix [c] ++ n: [lowerBound P, lowerBound (P ++ [0xFF]))
+        let lb (bytes : ByteArray) : ExceptT String m Nat := st.lowerBound bytes
+        let mut ranges : Array (Nat × Nat) := #[]
+        for c in [3, 4] do
+          let p := (ByteArray.mk #[c.toUInt8]) ++ n
+          ranges := ranges.push (← lb p, ← lb (p.push 255))
+        pure (.strRange v ranges (← lb (ByteArray.mk #[3])) (← lb (ByteArray.mk #[5])) e)
+      else pure (.str k v n e)
+    | none => general
+  | _ => general
+
+/-- Does `needle` occur in `hay` at `at_`? -/
+def bytesAt (hay needle : ByteArray) (at_ : Nat) : Bool := Id.run do
+  if at_ + needle.size > hay.size then return false
+  for j in [0:needle.size] do
+    if hay.get! (at_ + j) != needle.get! j then return false
+  return true
+
+/-- The string test on the lexical form `key[a, b)`. -/
+def strTestRange (key : ByteArray) (a b : Nat) (k : Nat) (needle : ByteArray) : Bool :=
+  if needle.size > b - a then false
+  else match k with
+    | 0 => bytesAt key needle a
+    | 1 => bytesAt key needle (b - needle.size)
+    | _ => Id.run do
+      for i in [a:b - needle.size + 1] do
+        if bytesAt key needle i then return true
+      return false
+
+/-- The string test on a dictionary key of class 3 (`xsd:string`: the body
+    is the lexical form) or 4 (`rdf:langString`: lexical form, 0x00, tag; the
+    tag has no 0x00, so the lexical form ends at the last 0x00). `none` for
+    any other key. -/
+def strTestKey (key : ByteArray) (k : Nat) (needle : ByteArray) : Option Bool :=
+  if key.size == 0 then none
+  else
+    let cls := key.get! 0
+    if cls == 3 then some (strTestRange key 1 key.size k needle)
+    else if cls == 4 then
+      let z := Id.run do
+        let mut z := 0
+        for i in [1:key.size] do
+          if key.get! (key.size - i) == 0 then
+            z := key.size - i
+            break
+        return z
+      if z == 0 then none else some (strTestRange key 1 z k needle)
+    else none
+
+/-- The id's tag. -/
+@[inline] def tagOf (x : UInt64) : Nat := (x >>> 60).toNat
+
+/-- Memo of the reference evaluation per FILTER conjunct. -/
+abbrev Memo := Std.HashMap (List UInt64) Bool
+
+/-- Keep the rows of `t` that pass every conjunct. -/
+def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (memos : Array Memo)
+    (t : Table) : ExceptT String m (Table × Array Memo) := do
+  if fs.isEmpty || t.rows == 0 then return (t, memos)
+  let mut memos := memos
+  let mut keep : Array Bool := Array.replicate t.rows true
+  for fi in [0:fs.size] do
+    match fs[fi]! with
+    | .idEq v c =>
+      match t.idx v, c with
+      | some col, some x =>
+        for i in [0:t.rows] do
+          if keep[i]! && t.at col i != x then keep := keep.set! i false
+      | _, _ => keep := Array.replicate t.rows false
+    | .idEqVar v w =>
+      match t.idx v, t.idx w with
+      | some a, some b =>
+        for i in [0:t.rows] do
+          if keep[i]! && t.at a i != t.at b i then keep := keep.set! i false
+      | _, _ => keep := Array.replicate t.rows false
+    | .str k v needle e =>
+      match t.idx v with
+      | none => keep := Array.replicate t.rows false
+      | some col =>
+        let mut memo := memos[fi]!
+        for i in [0:t.rows] do
+          if !keep[i]! then continue
+          let x := t.at col i
+          let fast : Option Bool ← if tagOf x == 3 then pure (strTestKey (← st.keyOf x) k needle)
+            else pure none
+          let r ← match fast with
+            | some r => pure r
+            | none => match memo.get? [x] with
+              | some r => pure r
+              | none => do
+                let r := refFilter e [(v, ← st.termOf x)]
+                memo := memo.insert [x] r
+                pure r
+          if !r then keep := keep.set! i false
+        -- the memo of a string test holds one entry per distinct id; keep it
+        -- bounded
+        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+    | .strRange v ranges classLo classHi e =>
+      match t.idx v with
+      | none => keep := Array.replicate t.rows false
+      | some col =>
+        let mut memo := memos[fi]!
+        for i in [0:t.rows] do
+          if !keep[i]! then continue
+          let x := t.at col i
+          let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
+          let r ← if tagOf x == 3 && classLo ≤ rank && rank < classHi then
+              pure (ranges.any fun (lo, hi) => lo ≤ rank && rank < hi)
+            else match memo.get? [x] with
+              | some r => pure r
+              | none => do
+                let r := refFilter e [(v, ← st.termOf x)]
+                memo := memo.insert [x] r
+                pure r
+          if !r then keep := keep.set! i false
+        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+    | .general e vs =>
+      let cols := vs.filterMap t.idx
+      if cols.size != vs.size then
+        keep := Array.replicate t.rows false
+      else
+        let mut memo := memos[fi]!
+        for i in [0:t.rows] do
+          if !keep[i]! then continue
+          let ids := (cols.map fun c => t.at c i).toList
+          let r ← match memo.get? ids with
+            | some r => pure r
+            | none => do
+              let mut mu : Binding := []
+              for k in [0:vs.size] do
+                mu := mu ++ [(vs[k]!, ← st.termOf (t.at cols[k]! i))]
+              let r := refFilter e mu
+              memo := memo.insert ids r
+              pure r
+          if !r then keep := keep.set! i false
+        memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+  return (t.select fun i => keep[i]!, memos)
+
+/-! ## GROUP BY with COUNT -/
+
+/-- Group key → count, and the keys in first-seen order. -/
+structure Groups where
+  counts : Std.HashMap (List UInt64) Nat := {}
+  keys : Array (List UInt64) := #[]
+  deriving Inhabited
+
+def Groups.add (g : Groups) (k : List UInt64) (n : Nat) : Groups :=
+  match g.counts.get? k with
+  | some c => { g with counts := g.counts.insert k (c + n) }
+  | none => { counts := g.counts.insert k n, keys := g.keys.push k }
+
+/-- Count the rows of a chunk per group key. A group column that is constant
+    over the chunk counts the chunk at once. -/
+def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := Id.run do
+  let t := ch.table
+  if t.rows == 0 then return g
+  let gc := groupVars.map fun v => (t.idx v).getD 0
+  let consts := gc.map fun c => ch.consts.getD c none
+  if consts.all Option.isSome then
+    return g.add (consts.map (·.getD 0)).toList t.rows
+  let mut g := g
+  -- runs of equal keys
+  let keyAt (i : Nat) : List UInt64 :=
+    (List.range gc.size).map fun k => match consts[k]! with
+      | some x => x
+      | none => t.at gc[k]! i
+  let mut i := 0
+  for _ in [0:t.rows] do
+    if i ≥ t.rows then break
+    let k := keyAt i
+    let mut e := i + 1
+    for _ in [0:t.rows] do
+      if e < t.rows && keyAt e == k then e := e + 1 else break
+    g := g.add k (e - i)
+    i := e
+  return g
+
+/-- The inline id of an `xsd:integer` count (`TermId`: tag 4, datatype 0,
+    value + 2^55). -/
+def countId (n : Nat) : UInt64 :=
+  (L4Factoidal.Storage.Sbm11.tagInt * L4Factoidal.Storage.Sbm11.two60 + 0 + (n + 2 ^ 55)).toUInt64
+
+/-- The aggregated table: the group variables, then one column per COUNT.
+    With no GROUP BY there is one group, also over no rows. -/
+def groupTable (plan : Plan) (g : Groups) : Except String Table := Id.run do
+  let ks := if g.keys.isEmpty && plan.groupVars.isEmpty then #[[]] else g.keys
+  let cnt := plan.proj.filterMap fun | .count a _ => some a | _ => none
+  let mut cols := (plan.groupVars ++ cnt).map fun _ => ByteArray.empty
+  for k in ks do
+    let n := g.counts.getD k 0
+    if n ≥ 2 ^ 55 then return .error "a count of 2^55 or more"
+    let mut j := 0
+    for x in k do
+      cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · x)
+      j := j + 1
+    for _ in cnt do
+      cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · (countId n))
+      j := j + 1
+  return .ok { vars := plan.groupVars ++ cnt, cols, rows := ks.size }
+
+/-! ## ORDER BY, DISTINCT, OFFSET, LIMIT -/
+
+/-- The value the reference ORDER BY compares for a variable bound to `t`. -/
+def orderValue (t : Term) : EvalResult :=
+  L4Factoidal.SPARQL.Expr.evalIn {} [("v", t)] (.var "v")
+
+/-- Sort keys read from the ids alone, when every id of column `c` is a
+    blank node or an IRI (tags 1 and 2), or every one is an inline integer
+    (tag 4); `none` otherwise.
+
+    * Tags 1 and 2: `sparqlOrderValue` puts blank nodes before IRIs and
+      compares two blank nodes by label, two IRIs by `strCompare` (code point
+      order, which is the byte order of UTF-8). A dictionary key is the class
+      byte and the UTF-8 bytes; ranks are in key byte order
+      (`DictTheorems.decodeDict_sorted`); the tag is above the rank. So the id
+      order is the section 15.1 order.
+    * Tag 4: `numericView` makes every integer literal a number, compared by
+      value; bits 55..0 of the id are the value plus 2^55 for every integer
+      datatype, so they are a key (equal values, equal keys). -/
+def orderKeysByIds? (t : Table) (c : Nat) : Option (Array UInt64) := Id.run do
+  if t.rows == 0 then return some #[]
+  let mut allRef := true
+  let mut allInt := true
+  for i in [0:t.rows] do
+    let g := tagOf (t.at c i)
+    if g != 1 && g != 2 then allRef := false
+    if g != 4 then allInt := false
+    if !allRef && !allInt then return none
+  let mut out : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    let x := t.at c i
+    out := out.push (if allRef then x else x &&& 0x00FFFFFFFFFFFFFF)
+  return some out
+
+/-- Per row of column `c`, the number of its value in the section 15.1 order
+    of the column's distinct values (`sparqlOrderValue`), complemented for
+    DESC. -/
+def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat) (desc : Bool) :
+    ExceptT String m (Array UInt64) := do
+  match orderKeysByIds? t c with
+  | some ks => return (if desc then ks.map (~~~ ·) else ks)
+  | none => pure ()
+  let mut idx : Std.HashMap UInt64 Nat := {}
+  let mut ids : Array UInt64 := #[]
+  for i in [0:t.rows] do
+    let x := t.at c i
+    if !idx.contains x then
+      idx := idx.insert x ids.size
+      ids := ids.push x
+  let mut vals : Array EvalResult := #[]
+  for x in ids do
+    vals := vals.push (orderValue (← st.termOf x))
+  let sorted := mergeSortBy (List.range ids.size).toArray fun a b =>
+    L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
+  let mut rank : Array Nat := Array.replicate ids.size 0
+  let mut r := 0
+  for j in [0:sorted.size] do
+    if j > 0 && L4Factoidal.SPARQL.sparqlOrderValue (vals.getD sorted[j - 1]! .error)
+        (vals.getD sorted[j]! .error) != 0 then
+      r := r + 1
+    rank := rank.set! sorted[j]! r
+  let mut out : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    let k := (rank[idx.getD (t.at c i) 0]!).toUInt64
+    out := out.push (if desc then ~~~k else k)
+  return out
+
+/-- ORDER BY, DISTINCT (on the projected columns: ids are injective, so equal
+    ids are equal terms and different ids different terms), OFFSET, LIMIT.
+    Without DISTINCT, ORDER BY with LIMIT keeps only the first OFFSET + LIMIT
+    rows of the order (`topK`). -/
+def finishM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table) :
+    ExceptT String m Table := do
+  let mut t := t
+  if !plan.order.isEmpty then
+    let mut keys : Array (Array UInt64) := #[]
+    for (v, desc) in plan.order do
+      match t.idx v with
+      | some c => keys := keys.push (← orderKeysM st t c desc)
+      | none => pure ()
+    let firstK := if plan.distinct then none else plan.limit.map (plan.offset + ·)
+    let perm : Array Nat ← match firstK with
+      | some k =>
+        if 4 * k < t.rows then pure (L4Factoidal.Qlvr.Query.topK t.rows k keys)
+        else
+          let mut p := (List.range t.rows).toArray
+          for j in [0:keys.size] do
+            p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
+          pure (p.extract 0 k)
+      | none =>
+        let mut p := (List.range t.rows).toArray
+        for j in [0:keys.size] do
+          p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
+        pure p
+    t := t.reorder perm
+  if plan.distinct then
+    let cols := plan.outVars.filterMap t.idx
+    let mut seen : Std.HashSet (List UInt64) := {}
+    let mut keep : Array Nat := #[]
+    for i in [0:t.rows] do
+      let k := (cols.map fun c => t.at c i).toList
+      if !seen.contains k then
+        seen := seen.insert k
+        keep := keep.push i
+    t := t.reorder keep
+  let hi := match plan.limit with
+    | some l => plan.offset + l
+    | none => t.rows
+  return t.slice plan.offset hi
+
+/-! ## SPARQL JSON
+
+`jsonOfTerm` (`SPARQL/ResultsJson.lean`) is the reference: a term is built
+and printed. `keyJson` prints the same text from a dictionary key's bytes for
+the classes it knows (blank node, IRI, `xsd:string`, `rdf:langString`,
+other datatype); `tests/sbm11/run.sh` compares the two outputs byte for byte
+on every oracle query (`--reference-render`). -/
+
+open L4Factoidal.Qlvr.Query (jsonStr kUri kLit kBnode kLang kDt)
+
+/-- The shape of the dictionary key `buf[a, e)` for the key printer: its
+    class and the position of its 0x00 separator (classes 4 and 5), or `none`
+    for a class the printer does not know. Class 4 (`rdf:langString`) is
+    lexical form, 0x00, tag; the tag has no 0x00, so the separator is the last
+    0x00. Class 5 (other datatype) is datatype IRI, 0x00, lexical form; the
+    IRI has no 0x00, so the separator is the first. -/
+def keyShape (buf : ByteArray) (a e : Nat) : Option (Nat × Nat) := Id.run do
+  if e ≤ a || e > buf.size then return none
+  let cls := (buf.get! a).toNat
+  if cls == 1 || cls == 2 || cls == 3 then return some (cls, 0)
+  if cls == 4 then
+    for i in [1:e - a] do
+      if buf.get! (e - i) == 0 then return some (4, e - i)
+    return none
+  if cls == 5 then
+    for i in [a + 1:e] do
+      if buf.get! i == 0 then return some (5, i)
+    return none
+  return none
+
+/-- Append the SPARQL JSON object of the key `buf[a, e)` of shape
+    `(cls, z)` to `out`: the text `jsonOfTerm` prints for the key's term. -/
+def keyJsonInto (buf : ByteArray) (a e cls z : Nat) (out : ByteArray) : ByteArray :=
+  if cls == 1 then (jsonStr buf (a + 1) e (out ++ kBnode)).push 125
+  else if cls == 2 then (jsonStr buf (a + 1) e (out ++ kUri)).push 125
+  else if cls == 3 then (jsonStr buf (a + 1) e (out ++ kLit)).push 125
+  else if cls == 4 then (jsonStr buf (z + 1) e (jsonStr buf (a + 1) z (out ++ kLit) ++ kLang)).push 125
+  else
+    let dtIsString := buf.extract (a + 1) z == (L4Factoidal.Qlvr.Query.xsd "string").toUTF8
+    let o := jsonStr buf (z + 1) e (out ++ kLit)
+    if dtIsString then o.push 125 else (jsonStr buf (a + 1) z (o ++ kDt)).push 125
+
+/-- The SPARQL JSON object of a dictionary key, or `none` for a class this
+    printer does not know. -/
+def keyJson (key : ByteArray) (out : ByteArray) : Option ByteArray :=
+  match keyShape key 0 key.size with
+  | some (cls, z) => some (keyJsonInto key 0 key.size cls z out)
+  | none => none
+
+def jsonHead (vars : Array String) : String :=
+  "{\"head\":{\"vars\":[" ++ L4Factoidal.SPARQL.varListJson vars.toList ++ "]},\"results\":{\"bindings\":["
+
+def jsonTail : String := "]}}"
+
+/-- `"<escaped name>":` per result variable. -/
+def nameBytes (vars : Array String) : Array ByteArray :=
+  vars.map fun n => ("\"" ++ L4Factoidal.JSON.escapeString n ++ "\":").toUTF8
+
+/-- Append the JSON of one id to `out`: the key printer for dictionary ids
+    (unless `reference`), else `jsonOfTerm` of the decoded term. The shape is
+    decided before `out` is used, so `out` has one reference in each branch
+    and is appended to in place. (A first version passed `out` to a printer
+    that returned `none` for some keys and then appended to `out` again; the
+    second use kept a second reference, and every append in the printer
+    copied the whole output: q19 took 3.7 s, quadratic in the rows of a
+    block.) -/
+def appendIdJsonM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (x : UInt64)
+    (out : ByteArray) : ExceptT String m ByteArray := do
+  let tag := tagOf x
+  if !reference && (tag == 1 || tag == 2 || tag == 3) then
+    let (buf, a, e) ← st.keySlice x
+    match keyShape buf a e with
+    | some (cls, z) => return keyJsonInto buf a e cls z out
+    | none => pure ()
+  let t ← st.termOf x
+  return out ++ (L4Factoidal.SPARQL.jsonOfTerm t).toString.toUTF8
+
+/-- Rows `[lo, hi)` of `t` as comma-separated binding objects (`first`: no
+    comma before the first). Variables without a column are unbound and
+    left out (`rowJson`). -/
+def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (vars : Array String) (lo hi : Nat) (first : Bool) : ExceptT String m ByteArray := do
+  let names := nameBytes vars
+  let cols : Array (Nat × Nat) := (List.range vars.size).toArray.filterMap fun k =>
+    (t.idx vars[k]!).map fun c => (k, c)
+  let mut out := ByteArray.emptyWithCapacity (64 * (hi - lo))
+  for i in [lo:hi] do
+    if !(first && i == lo) then out := out.push 44
+    out := out.push 123
+    for j in [0:cols.size] do
+      let (k, c) := cols[j]!
+      if j > 0 then out := out.push 44
+      out := out ++ names[k]!
+      out ← appendIdJsonM st reference (t.at c i) out
+    out := out.push 125
+  return out
+
+/-! ## Running a plan -/
+
+structure RunStats where
+  plan : Array String := #[]
+  rows : Nat := 0
+  scan : ScanStats := {}
+  deriving Inhabited
+
+def toSlot {m : Type → Type} [Monad m] (st : Store m) : Arg → ExceptT String m Slot
+  | .var v => pure (.var v)
+  | .term t => do
+    match ← st.idOf t with
+    | some x => pure (.const x)
+    | none => pure .missing
+
+def resolvePat {m : Type → Type} [Monad m] (st : Store m) (p : PatSpec) : ExceptT String m Pat := do
+  let (g, named) ← match p.g with
+    | .dflt => pure (Slot.const 0, false)
+    | .term t => do pure (← toSlot st (.term t), false)
+    | .var v => pure (Slot.var v, true)
+  return { s := ← toSlot st p.s, p := ← toSlot st p.p, o := ← toSlot st p.o, g, named }
+
+/-- Run a plan. `emit` receives the SPARQL JSON text in pieces. -/
+def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : ByteArray → m Unit)
+    (reference : Bool := false) : ExceptT String m RunStats := do
+  let pats ← plan.pats.mapM (resolvePat st)
+  let fs ← plan.filters.mapM (compileFilter st)
+  let memos0 : Array Memo := fs.map fun _ => {}
+  let filterVars : Array String := fs.foldl (fun a f => match f with
+    | .idEq v _ => a.push v
+    | .idEqVar v w => (a.push v).push w
+    | .str _ v _ _ => a.push v
+    | .strRange v _ _ _ _ => a.push v
+    | .general _ vs => a ++ vs) #[]
+  let used : Array String :=
+    plan.proj.foldl (fun a p => match p with
+      | .var x => a.push x
+      | .count _ (some x) => a.push x
+      | .count _ none => a) #[]
+    ++ filterVars ++ plan.order.map (·.1) ++ plan.groupVars
+  let need (x : String) : Bool := used.contains x
+  let mut stats : RunStats := {}
+  (emit (jsonHead plan.outVars).toUTF8 : m Unit)
+  let single := pats.size == 1 && !pats[0]!.hasMissing
+  if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
+    -- one pattern, no modifier that needs every row: block by block
+    let t := pats[0]!
+    let spec := mkSpec t (permFor t none) need
+    let lim := plan.limit.getD (2 ^ 63)
+    if lim == 0 then
+      stats := { stats with plan := #["LIMIT 0"] }
+    else
+      let ((_, emitted, _), s) ← scanFoldM st spec true ((0 : Nat), (0 : Nat), memos0)
+          fun (skipped, emitted, memos) ch => do
+        let (tab, memos) ← applyFilters st fs memos ch.table
+        let skipHere := min (plan.offset - skipped) tab.rows
+        let takeHere := min (lim - emitted) (tab.rows - skipHere)
+        if takeHere > 0 then
+          let bytes ← renderRowsM st reference tab plan.outVars skipHere (skipHere + takeHere) (emitted == 0)
+          (emit bytes : m Unit)
+        let emitted := emitted + takeHere
+        pure ((skipped + skipHere, emitted, memos), emitted < lim)
+      stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
+                 rows := emitted, scan := s }
+  else
+    let mut table : Table := default
+    if single && plan.agg then
+      -- aggregate block by block
+      let t := pats[0]!
+      let spec := mkSpec t (permFor t none) need
+      let ((groups, _), s) ← scanFoldM st spec (!fs.isEmpty) (({} : Groups), memos0) fun (g, memos) ch => do
+        if fs.isEmpty then
+          pure ((countChunk plan.groupVars ch g, memos), true)
+        else
+          let (tab, memos) ← applyFilters st fs memos ch.table
+          pure ((countChunk plan.groupVars { table := tab, consts := tab.vars.map fun _ => none } g, memos), true)
+      let line := s!"pattern 0 counted while streaming: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; groups {groups.keys.size}"
+      stats := { stats with plan := #[line], scan := s }
+      match groupTable plan groups with
+      | .ok t => table := t
+      | .error e => throw e
+    else
+      let (t0, lines, s) ← evalBgpM st pats need
+      let (t1, _) ← applyFilters st fs memos0 t0
+      stats := { stats with plan := lines, scan := s }
+      if plan.agg then
+        let g := countChunk plan.groupVars { table := t1, consts := t1.vars.map fun _ => none } {}
+        match groupTable plan g with
+        | .ok t => table := t
+        | .error e => throw e
+      else table := t1
+    let out ← finishM st plan table
+    let pieces := (out.rows + 4095) / 4096
+    for k in [0:pieces] do
+      let lo := 4096 * k
+      let hi := min out.rows (lo + 4096)
+      let bytes ← renderRowsM st reference out plan.outVars lo hi (lo == 0)
+      (emit bytes : m Unit)
+    stats := { stats with rows := out.rows }
+  (emit jsonTail.toUTF8 : m Unit)
+  return stats
+
+end L4Factoidal.Storage.Sbm11.IdQuery

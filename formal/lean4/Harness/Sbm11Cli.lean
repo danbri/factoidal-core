@@ -25,6 +25,12 @@ https://github.com/danbri/factoidal/issues/789).
       The activation checks, without activating.
   l4sbm11 activate ROOT NAME
       The activation checks on ROOT/NAME, then `ROOT/CURRENT` := NAME.
+  l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N]
+                [--reference-render] [--reference]
+  l4sbm11 serve GEN
+  l4sbm11 prm-check GEN
+  l4sbm11 frame-check GEN
+      SPARQL over the generation (stage 4): `Harness/Sbm11Query.lean`.
   l4sbm11 reseal GEN
       Test support: rewrite the manifest digests and the `.merkle` sidecars
       from the files as they are (`tests/sbm11/stage3_check.sh` uses it to
@@ -46,6 +52,7 @@ of each quad).
 Exit 1 on any error or failed check. Timings, bytes and VmHWM go to stderr.
 -/
 import Harness.Sbm11Gen
+import Harness.Sbm11Query
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 
@@ -375,7 +382,9 @@ def runReseal (dir : String) : IO UInt32 := do
 
 def usage : String :=
   "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
-  "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME"
+  "       | dump GEN [PERM] | dump-ids GEN PERM | canon SOURCE | verify GEN | activate ROOT NAME\n" ++
+  "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
+  "       | serve GEN | prm-check GEN | frame-check GEN"
 
 end Sbm11Cli
 
@@ -393,6 +402,7 @@ def main (args : List String) : IO UInt32 := do
     | ["verify", dir] => runVerify dir
     | ["activate", root, name] => runActivate root name
     | ["reseal", dir] => runReseal dir
+    | "query" :: _ | ["serve", _] | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11: {e}"
