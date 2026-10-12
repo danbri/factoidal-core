@@ -1394,3 +1394,19 @@ L4Factoidal_OWL_Refute_toConceptList  # (b) the cycle with toConcept recurses on
 L4Factoidal_OWL_Refute_toConceptListAcc  # (b) as toConceptList: nesting through toConcept; one tail call per operand
 L4Factoidal_OWL_checkCases  # (c) the cycle with checkF is certificate depth, bounded by the refuter budget (default 64) as checkF; the cases of one merge point are a tail call through ||, one per pair the merge point branched on (as Refute_emitMergeCases)
 L4Factoidal_OWL_instHashableConcept_hash  # (b) derived Hashable instance: class-expression nesting of one concept
+# --- Added 2026-10-12, SERVICE failures inside EXISTS and under an outer SILENT
+#     (https://github.com/danbri/factoidal/issues/735). Each is the failure twin of
+#     an expression or post-WHERE function and recurses on the same query AST; the
+#     row lists are walked by `List.findSome?` and `findSomeNumbered` (loops). ---
+L4Factoidal_SPARQL_Expr_mentionsService  # (b) nesting of one expression in a query, and of the patterns in its EXISTS bodies
+L4Factoidal_SPARQL_Expr_mentionsServiceList  # (b) arguments of one expression in a query
+L4Factoidal_SPARQL_existsFailure  # (b) nesting of one expression in a query (twin of substituteExistentials); EXISTS bodies through lowerWith
+L4Factoidal_SPARQL_existsFailureList  # (b) arguments of one expression in a query
+L4Factoidal_SPARQL_existsFailureOpt  # (b) the optional argument of one expression in a query
+L4Factoidal_SPARQL_havingFailure  # (b) HAVING conditions of one query
+L4Factoidal_SPARQL_orderConditionFailure  # (b) one ORDER BY condition of one query (cycle through existsFailure)
+L4Factoidal_SPARQL_orderFailure  # (b) ORDER BY conditions of one query
+L4Factoidal_SPARQL_selectItemGroupFailure  # (b) one SELECT item of one query (cycle through existsFailure)
+L4Factoidal_SPARQL_selectItemsGroupFailure  # (b) SELECT items of one query
+L4Factoidal_SPARQL_selectItemsRowFailure  # (b) SELECT items of one query
+L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query (twin of selectPost)
