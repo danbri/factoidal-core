@@ -294,6 +294,13 @@ extern_lib libl4exthost pkg := do
 -- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): read a QLever
 -- index directory (stats, bound-predicate scan over PSO, full SPO dump, vocabulary).
 @[default_target] lean_exe «l4qlvr» where root := `Harness.Qlvr
+-- L4Factoidal.Prim.Bytes (https://github.com/danbri/factoidal/issues/797): the
+-- differential test of the `@[extern c inline]` store against its Lean reference.
+-- tests/prim/run.sh runs it natively and as wasm32 under node.
+@[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- The q07 kernel timing loop alone (no FFI in its imports), for the native and
+-- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
+@[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench
 -- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
 -- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
 @[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack

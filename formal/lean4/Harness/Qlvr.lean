@@ -690,41 +690,9 @@ def runKernelDump (dir out : String) : IO UInt32 := do
   IO.eprintln s!"kernel-dump: A (POS, wso:medal Gold) {nA} rows; B (PSO, wso:athlete) {nB} rows; {out}"
   return 0
 
-@[noinline] def kernelOnce (impl : Nat) (x : QlvrKernel.Input) (fx : QlvrKernel.FInput)
-    (ux : QlvrKernel.UInput) : IO (Nat × UInt64) :=
-  pure (match impl with
-    | 0 => QlvrKernel.runCurrent x
-    | 1 => QlvrKernel.runBytes x
-    | 2 => QlvrKernel.runBytesSet x
-    | 3 => QlvrKernel.runFloats fx
-    | 4 => QlvrKernel.runProduction x
-    | 5 => QlvrKernel.runNative ux
-    | 6 => QlvrKernel.runUsize x
-    | _ => QlvrKernel.runUsizeCStore x)
-
-/-- `l4qlvr kernel FILE [ITERS]`: run every Lean implementation of the
-    kernel ITERS times (default 50); print the median and minimum time of one
-    run, the output rows and the checksum. -/
-def runKernel (file : String) (iters : Nat) : IO UInt32 := do
-  let x ← ok "kernel" (QlvrKernel.Input.parse (← IO.FS.readBinFile file))
-  let fx := QlvrKernel.FInput.ofInput x
-  let ux := QlvrKernel.UInput.ofInput x
-  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore"]
-  let mut sums : Array (Nat × UInt64) := #[]
-  for impl in [0:names.size] do
-    let mut ts : Array Nat := #[]
-    let mut r : Nat × UInt64 := (0, 0)
-    for _ in [0:max iters 1] do
-      let a ← IO.monoNanosNow
-      r ← kernelOnce impl x fx ux
-      let b ← IO.monoNanosNow
-      ts := ts.push (b - a)
-    sums := sums.push r
-    let us := ts.map (· / 1000)
-    IO.println s!"kernel lean-{names[impl]!}: A {x.nA} rows, B {x.nB} rows; output {r.1} rows, checksum {r.2}; us median {median us} min {us.foldl min (us.getD 0 0)} ({ts.size} runs)"
-  let agree := sums.all (· == sums[0]!)
-  IO.println s!"kernel: implementations {if agree then "agree" else "DISAGREE"}"
-  return (if agree then 0 else 1)
+/-- `l4qlvr kernel FILE [ITERS]`: `QlvrKernel.runKernel`. -/
+def runKernel (file : String) (iters : Nat) : IO UInt32 :=
+  do QlvrKernel.runKernel (← IO.FS.readBinFile file) iters
 
 end QlvrTool
 

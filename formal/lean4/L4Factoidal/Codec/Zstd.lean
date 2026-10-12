@@ -1,3 +1,5 @@
+import L4Factoidal.Prim.Bytes
+
 /-
 L4Factoidal.Codec.Zstd — Zstandard decoding (RFC 8878).
 
@@ -81,69 +83,31 @@ theorem word64_eq_slow (d : ByteArray) (i : Nat) : word64 d i = word64Slow d i :
 `word64` takes a `Nat` position: its generated C does eight `Nat` additions
 (each a test for a big number), eight boxed-index byte reads and eight
 reference-count tests per word. `word64U` takes the position as `UInt64`
-and reads with `ByteArray.uget` at `USize` indices after one test in
-`UInt64`; clang -O3 compiles its fast path to two compares and one 8-byte
-load (docs/designissues/2026-10-12-lean-to-c-performance.md, "Audit").
-`word64U_eq` proves it equal to `word64` at every position. -/
+and reads through `L4Factoidal.Prim.Bytes.ldU64LE` (one `USize` test, eight
+`ByteArray.uget`); clang -O3 compiles its fast path to two compares and one
+8-byte load (docs/designissues/2026-10-12-lean-to-c-performance.md, "Audit").
+The test `q.toUSize.toUInt64 = q` is a no-op on a 64-bit host and refuses a
+position above `2 ^ 32` on wasm32. `word64U_eq` proves `word64U` equal to
+`word64` at every position. -/
 
-/-- On the fast path of `word64U`, the `USize` index `q + k` is exact and the
-    eight bytes are inside `d`. -/
-theorem word64U_toNat {d : ByteArray} {q : UInt64}
-    (h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8) (k : Nat) (hk : k < 8) :
-    (q.toUSize + k.toUSize).toNat = q.toNat + k ∧ q.toNat + 8 ≤ d.size := by
-  obtain ⟨h1, h2⟩ := h
-  have a1 := UInt64.le_iff_toNat_le.mp h1
-  have a2 := UInt64.le_iff_toNat_le.mp h2
-  have hb : (2 : Nat) ^ System.Platform.numBits ≤ 2 ^ 64 := by
-    rcases System.Platform.numBits_eq with e | e <;> rw [e] <;> decide
-  have h8 : 8 ≤ 2 ^ System.Platform.numBits := by
-    rcases System.Platform.numBits_eq with e | e <;> rw [e] <;> decide
-  have hu : d.usize.toUInt64.toNat = d.size % 2 ^ System.Platform.numBits := by
-    simp [ByteArray.usize, USize.toUInt64, Nat.toUSize]
-  have hm := Nat.mod_lt d.size (by omega : 0 < 2 ^ System.Platform.numBits)
-  have hml := Nat.mod_le d.size (2 ^ System.Platform.numBits)
-  rw [UInt64.toNat_sub_of_le _ _ h1] at a2
-  have e8 : (8 : UInt64).toNat = 8 := by decide
-  simp only [hu, e8] at a1 a2
-  refine ⟨?_, by omega⟩
-  simp only [USize.toNat_add, UInt64.toNat_toUSize, Nat.toUSize, USize.toNat_ofNat']
-  rw [Nat.mod_eq_of_lt (by omega : q.toNat < _), Nat.mod_eq_of_lt (by omega : k < _),
-    Nat.mod_eq_of_lt (by omega : q.toNat + k < _)]
+theorem word64Slow_eq_spec (d : ByteArray) (i : Nat) :
+    word64Slow d i = Prim.Bytes.ldU64LESpec d i := by
+  have e : ∀ j, byteAt d j = (Prim.Bytes.getOr0 d j).toUInt64 := by
+    intro j; unfold byteAt Prim.Bytes.getOr0; split <;> rfl
+  simp only [word64Slow, Prim.Bytes.ldU64LESpec, e]
 
-theorem word64U_lt {d : ByteArray} {q : UInt64}
-    (h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8) (k : Nat) (hk : k < 8) :
-    (q.toUSize + k.toUSize).toNat < d.size := by
-  have := word64U_toNat h k hk; omega
-
-theorem uget_at (d : ByteArray) (u : USize) (h : u.toNat < d.size) (n : Nat) (e : u.toNat = n) :
-    d.uget u h = d[n]'(e ▸ h) := by subst e; rfl
-
-/-- `word64 d q.toNat`, read with one `UInt64` test and eight `uget`
-    (`word64U_eq`). -/
+/-- `word64 d q.toNat`, read with `Prim.Bytes.ldU64LE` (`word64U_eq`). -/
 @[inline] def word64U (d : ByteArray) (q : UInt64) : UInt64 :=
-  if h : 8 ≤ d.usize.toUInt64 ∧ q ≤ d.usize.toUInt64 - 8 then
-    (d.uget (q.toUSize + (0 : Nat).toUSize) (word64U_lt h 0 (by decide))).toUInt64 |||
-    ((d.uget (q.toUSize + (1 : Nat).toUSize) (word64U_lt h 1 (by decide))).toUInt64 <<< 8) |||
-    ((d.uget (q.toUSize + (2 : Nat).toUSize) (word64U_lt h 2 (by decide))).toUInt64 <<< 16) |||
-    ((d.uget (q.toUSize + (3 : Nat).toUSize) (word64U_lt h 3 (by decide))).toUInt64 <<< 24) |||
-    ((d.uget (q.toUSize + (4 : Nat).toUSize) (word64U_lt h 4 (by decide))).toUInt64 <<< 32) |||
-    ((d.uget (q.toUSize + (5 : Nat).toUSize) (word64U_lt h 5 (by decide))).toUInt64 <<< 40) |||
-    ((d.uget (q.toUSize + (6 : Nat).toUSize) (word64U_lt h 6 (by decide))).toUInt64 <<< 48) |||
-    ((d.uget (q.toUSize + (7 : Nat).toUSize) (word64U_lt h 7 (by decide))).toUInt64 <<< 56)
-  else word64Slow d q.toNat
+  if q.toUSize.toUInt64 = q then Prim.Bytes.ldU64LE d q.toUSize else word64Slow d q.toNat
 
 theorem word64U_eq (d : ByteArray) (q : UInt64) : word64U d q = word64 d q.toNat := by
   unfold word64U
   split
   · rename_i h
-    have hb := (word64U_toNat h 0 (by decide)).2
-    unfold word64
-    rw [dif_pos hb]
-    rw [uget_at _ _ _ _ (word64U_toNat h 0 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 1 (by decide)).1,
-      uget_at _ _ _ _ (word64U_toNat h 2 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 3 (by decide)).1,
-      uget_at _ _ _ _ (word64U_toNat h 4 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 5 (by decide)).1,
-      uget_at _ _ _ _ (word64U_toNat h 6 (by decide)).1, uget_at _ _ _ _ (word64U_toNat h 7 (by decide)).1]
-    rfl
+    rw [Prim.Bytes.ldU64LE_eq, ← word64Slow_eq_spec, word64_eq_slow]
+    have := congrArg UInt64.toNat h
+    rw [USize.toNat_toUInt64] at this
+    rw [this]
   · rw [word64_eq_slow]
 
 /-- `n` bits (`n ≤ 56`) of `d` at bit offset `p`, least significant first. -/

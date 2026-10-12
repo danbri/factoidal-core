@@ -40,6 +40,7 @@ Implementations:
              boxed object in Lean's runtime).
 -/
 import L4Factoidal.Qlvr.Bgp
+import L4Factoidal.Qlvr.Sort
 
 open L4Factoidal.Qlvr
 open L4Factoidal.Codec.Zstd (word64)
@@ -288,93 +289,17 @@ Added 2026-10-12 for the Lean-to-C audit
 (docs/designissues/2026-10-12-lean-to-c-performance.md). Same loops as
 bytes-set, but every row index, byte position and counter is a `USize` and
 every byte read is `ByteArray.uget` with a proof, so the generated C has no
-`Nat` operation, no `lean_dec` and no boxing in the loops. The load `ldU`
-compiles (clang -O3, x86-64) to ONE 8-byte `movq` after two compares.
+`Nat` operation, no `lean_dec` and no boxing in the loops. The load is
+`L4Factoidal.Prim.Bytes.ldU64LE`, which clang -O3 compiles (x86-64) to ONE
+8-byte `movq` after two compares.
 
-`usize` writes each Id with eight `ByteArray.uset` (`setU`, pure Lean);
-`usize-cstore` writes it with `setC`, an `@[extern c inline]` 8-byte store
-whose Lean body is `setU` (the reference). `setC` exists only in this
-harness, to measure what an unboxed store primitive would give; the
-checksum comparison of `l4qlvr kernel` and `tests/qlvr/kernel.sh` is its
-differential test. It assumes a little-endian host (x86-64, wasm32); on a
-big-endian host the C expression swaps the bytes. -/
+`usize` writes each Id with `Prim.Bytes.stU64LERef` (eight `ByteArray.uset`,
+pure Lean); `usize-cstore` writes it with `Prim.Bytes.stU64LE`, the library's
+`@[extern c inline]` 8-byte store whose Lean meaning is `stU64LERef`. The
+library's differential test is `tests/prim/run.sh`; the checksum comparison
+of `l4qlvr kernel` and `tests/qlvr/kernel.sh` checks the two here too. -/
 
-theorem usize_succ_toNat {i n : USize} (h : i < n) : (i + 1).toNat = i.toNat + 1 := by
-  have h1 := USize.lt_iff_toNat_lt.mp h
-  have h2 := n.toNat_lt_size
-  rw [USize.toNat_add, USize.toNat_one]
-  apply Nat.mod_eq_of_lt
-  simp only [USize.size] at h2
-  omega
-
-theorem usize_pred_toNat {k : USize} (h : 0 < k) : (k - 1).toNat = k.toNat - 1 := by
-  have h1 : (1 : USize) ≤ k := by
-    have := USize.lt_iff_toNat_lt.mp h
-    apply USize.le_iff_toNat_le.mpr
-    simp only [USize.toNat_one]
-    simp only [USize.toNat_zero] at this
-    omega
-  rw [USize.toNat_sub_of_le _ _ h1, USize.toNat_one]
-
-theorem ldU_bound {d : ByteArray} {p : USize} (h1 : p + 8 ≤ d.usize) (h2 : p < p + 8)
-    (k : USize) (hk : k.toNat < 8) : (p + k).toNat < d.size := by
-  have a1 := USize.le_iff_toNat_le.mp h1
-  have a2 := USize.lt_iff_toNat_lt.mp h2
-  have hs := p.toNat_lt_size
-  simp only [USize.size] at hs
-  simp only [ByteArray.usize, USize.toNat_add, USize.toNat_ofNat', Nat.toUSize] at a1 a2 ⊢
-  have e8 : (8 : USize).toNat = 8 := by simp
-  rw [e8] at a1 a2
-  have h8 : 8 ≤ 2 ^ System.Platform.numBits := by
-    rcases System.Platform.numBits_eq with h | h <;> rw [h] <;> decide
-  have m1 : d.size % 2 ^ System.Platform.numBits ≤ d.size := Nat.mod_le _ _
-  have hw : p.toNat + 8 < 2 ^ System.Platform.numBits := by
-    rcases Nat.lt_or_ge (p.toNat + 8) (2 ^ System.Platform.numBits) with h | h
-    · exact h
-    · rw [Nat.mod_eq_sub_mod h, Nat.mod_eq_of_lt (by omega)] at a2; omega
-  rw [Nat.mod_eq_of_lt (by omega : p.toNat + 8 < _)] at a1
-  rw [Nat.mod_eq_of_lt (by omega : p.toNat + k.toNat < _)]
-  omega
-
-/-- The little-endian `u64` at byte `p` (0 when the eight bytes are not all
-    inside `d`): one bounds test, eight `uget`. -/
-@[inline] def ldU (d : ByteArray) (p : USize) : UInt64 :=
-  if h : p + 8 ≤ d.usize ∧ p < p + 8 then
-    (d.uget p (by have := ldU_bound h.1 h.2 0 (by simp); simpa using this)).toUInt64 |||
-    ((d.uget (p+1) (ldU_bound h.1 h.2 1 (by simp))).toUInt64 <<< 8) |||
-    ((d.uget (p+2) (ldU_bound h.1 h.2 2 (by simp))).toUInt64 <<< 16) |||
-    ((d.uget (p+3) (ldU_bound h.1 h.2 3 (by simp))).toUInt64 <<< 24) |||
-    ((d.uget (p+4) (ldU_bound h.1 h.2 4 (by simp))).toUInt64 <<< 32) |||
-    ((d.uget (p+5) (ldU_bound h.1 h.2 5 (by simp))).toUInt64 <<< 40) |||
-    ((d.uget (p+6) (ldU_bound h.1 h.2 6 (by simp))).toUInt64 <<< 48) |||
-    ((d.uget (p+7) (ldU_bound h.1 h.2 7 (by simp))).toUInt64 <<< 56)
-  else 0
-
-theorem usize_lt_size {a : ByteArray} {i : USize} (h : i < a.usize) : i.toNat < a.size := by
-  have h1 := USize.lt_iff_toNat_lt.mp h
-  simp only [ByteArray.usize, USize.toNat_ofNat', Nat.toUSize] at h1
-  have := Nat.mod_le a.size (2 ^ System.Platform.numBits)
-  omega
-
-/-- Byte `i` set to `v`; `a` unchanged when `i` is out of range. The test is
-    on `USize` (`i < a.usize`): `i.toNat < a.size` would compile to `Nat`
-    operations. -/
-@[inline] def set1 (a : ByteArray) (i : USize) (v : UInt8) : ByteArray :=
-  if h : i < a.usize then a.uset i v (usize_lt_size h) else a
-
-/-- Write `x` little-endian at byte `p` when the eight bytes are inside `b`
-    (in place when `b` is unique); otherwise `b` unchanged. -/
-@[inline] def setU (b : ByteArray) (p : USize) (x : UInt64) : ByteArray :=
-  if p + 8 ≤ b.usize ∧ p < p + 8 then
-    set1 b p x.toUInt8 |> (set1 · (p+1) (x >>> 8).toUInt8) |> (set1 · (p+2) (x >>> 16).toUInt8)
-     |> (set1 · (p+3) (x >>> 24).toUInt8) |> (set1 · (p+4) (x >>> 32).toUInt8)
-     |> (set1 · (p+5) (x >>> 40).toUInt8) |> (set1 · (p+6) (x >>> 48).toUInt8)
-     |> (set1 · (p+7) (x >>> 56).toUInt8)
-  else b
-
-/-- `setU` as one 8-byte store (harness only; see the section comment). -/
-@[extern c inline "({ lean_object* _a = #1; size_t _p = #2; uint64_t _x = #3; if (_p + 8 <= lean_sarray_size(_a) && _p + 8 > _p) { if (!lean_is_exclusive(_a)) _a = lean_copy_byte_array(_a); if (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__) _x = __builtin_bswap64(_x); __builtin_memcpy(lean_sarray_cptr(_a) + _p, &_x, 8); } _a; })"]
-def setC (b : ByteArray) (p : USize) (x : UInt64) : ByteArray := setU b p x
+open L4Factoidal.Prim.Bytes
 
 section UsizeLoops
 variable (st : ByteArray → USize → UInt64 → ByteArray)
@@ -383,7 +308,7 @@ variable (st : ByteArray → USize → UInt64 → ByteArray)
     ByteArray × USize :=
   if h : i < n then
     let p := 8 * i
-    if ldU c0 p == k0 && ldU c1 p == k1 then filterAU c0 c1 c2 k0 k1 n (i + 1) (m + 1) (st out (8 * m) (ldU c2 p))
+    if ldU64LE c0 p == k0 && ldU64LE c1 p == k1 then filterAU c0 c1 c2 k0 k1 n (i + 1) (m + 1) (st out (8 * m) (ldU64LE c2 p))
     else filterAU c0 c1 c2 k0 k1 n (i + 1) m out
   else (out, m)
 termination_by n.toNat - i.toNat
@@ -393,20 +318,20 @@ decreasing_by all_goals (have := usize_succ_toNat h; have := USize.lt_iff_toNat_
     ByteArray × ByteArray × USize :=
   if h : i < n then
     let p := 8 * i
-    if ldU c0 p == k0 then filterBU c0 c1 c2 k0 n (i + 1) (m + 1) (st o1 (8 * m) (ldU c1 p)) (st o2 (8 * m) (ldU c2 p))
+    if ldU64LE c0 p == k0 then filterBU c0 c1 c2 k0 n (i + 1) (m + 1) (st o1 (8 * m) (ldU64LE c1 p)) (st o2 (8 * m) (ldU64LE c2 p))
     else filterBU c0 c1 c2 k0 n (i + 1) m o1 o2
   else (o1, o2, m)
 termination_by n.toNat - i.toNat
 decreasing_by all_goals (have := usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega)
 
 def runEndU (c : ByteArray) (v : UInt64) (n : USize) (i : USize) : USize :=
-  if h : i < n then (if ldU c (8 * i) == v then runEndU c v n (i + 1) else i) else i
+  if h : i < n then (if ldU64LE c (8 * i) == v then runEndU c v n (i + 1) else i) else i
 termination_by n.toNat - i.toNat
 decreasing_by (have := usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega)
 
 @[specialize] def crossRightU (ba : ByteArray) (iv : UInt64) (je : USize) (j m : USize) (oi oa : ByteArray) :
     ByteArray × ByteArray × USize :=
-  if h : j < je then crossRightU ba iv je (j + 1) (m + 1) (st oi (8 * m) iv) (st oa (8 * m) (ldU ba (8 * j)))
+  if h : j < je then crossRightU ba iv je (j + 1) (m + 1) (st oi (8 * m) iv) (st oa (8 * m) (ldU64LE ba (8 * j)))
   else (oi, oa, m)
 termination_by je.toNat - j.toNat
 decreasing_by (have := usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega)
@@ -424,8 +349,8 @@ decreasing_by (have := usize_succ_toNat _h; have := USize.lt_iff_toNat_lt.mp _h;
     (fuel i j m : USize) (oi oa : ByteArray) : ByteArray × ByteArray × USize :=
   if _hf : 0 < fuel then
     if i < na && j < nb then
-      let x := ldU ai (8 * i)
-      let y := ldU bi (8 * j)
+      let x := ldU64LE ai (8 * i)
+      let y := ldU64LE bi (8 * j)
       if x < y then mergeLoopU ai na bi ba nb (fuel - 1) (i + 1) j m oi oa
       else if y < x then mergeLoopU ai na bi ba nb (fuel - 1) i (j + 1) m oi oa
       else
@@ -441,7 +366,7 @@ decreasing_by all_goals (have := usize_pred_toNat _hf; have := USize.lt_iff_toNa
 end UsizeLoops
 
 def sumLoopU (oi oa : ByteArray) (n : USize) (i : USize) (s : UInt64) : UInt64 :=
-  if _h : i < n then sumLoopU oi oa n (i + 1) (s + ldU oi (8 * i) * mixK + ldU oa (8 * i)) else s
+  if _h : i < n then sumLoopU oi oa n (i + 1) (s + ldU64LE oi (8 * i) * mixK + ldU64LE oa (8 * i)) else s
 termination_by n.toNat - i.toNat
 decreasing_by (have := usize_succ_toNat _h; have := USize.lt_iff_toNat_lt.mp _h; omega)
 
@@ -454,9 +379,9 @@ decreasing_by (have := usize_succ_toNat _h; have := USize.lt_iff_toNat_lt.mp _h;
     (scratch x.b1 (8 * x.nB)) (scratch x.b2 (8 * x.nB))
   (n.toNat, sumLoopU oi oa n 0 0)
 
-def runUsize (x : Input) : Nat × UInt64 := runUsizeWith setU x
+def runUsize (x : Input) : Nat × UInt64 := runUsizeWith stU64LERef x
 
-def runUsizeCStore (x : Input) : Nat × UInt64 := runUsizeWith setC x
+def runUsizeCStore (x : Input) : Nat × UInt64 := runUsizeWith stU64LE x
 
 /-! ## floats: FloatArray columns (one 8-byte slot per Id) -/
 
@@ -606,5 +531,53 @@ def runNative (x : UInput) : Nat × UInt64 := Id.run do
   for k in [0:oi.size] do
     s := s + oi[k]! * mixK + oa[k]!
   return (oi.size, s)
+
+/-! ## The timing loop
+
+Shared by `l4qlvr kernel` (Harness/Qlvr.lean) and `l4qlvr-kernel`
+(Harness/QlvrKernelBench.lean, which builds for wasm32 with
+tools/lean-wasm-exe.sh: its import closure has no FFI). -/
+
+@[noinline] def kernelOnce (impl : Nat) (x : Input) (fx : FInput) (ux : UInput) : IO (Nat × UInt64) :=
+  pure (match impl with
+    | 0 => runCurrent x
+    | 1 => runBytes x
+    | 2 => runBytesSet x
+    | 3 => runFloats fx
+    | 4 => runProduction x
+    | 5 => runNative ux
+    | 6 => runUsize x
+    | _ => runUsizeCStore x)
+
+def medianNat (xs : Array Nat) : Nat :=
+  let s := mergeSortBy xs (· ≤ ·)
+  if s.isEmpty then 0 else s[(s.size - 1) / 2]!
+
+/-- Run every Lean implementation of the kernel on the input file contents
+    `data`, `iters` times; print the
+    median and minimum time of one run, the output rows and the checksum.
+    Exit code 1 when the implementations disagree. -/
+def runKernel (data : ByteArray) (iters : Nat) : IO UInt32 := do
+  let x ← match Input.parse data with
+    | .ok x => pure x
+    | .error e => throw (IO.userError s!"kernel: {e}")
+  let fx := FInput.ofInput x
+  let ux := UInput.ofInput x
+  let names := #["current", "bytes-push", "bytes-set", "floats", "production", "native", "usize", "usize-cstore"]
+  let mut sums : Array (Nat × UInt64) := #[]
+  for impl in [0:names.size] do
+    let mut ts : Array Nat := #[]
+    let mut r : Nat × UInt64 := (0, 0)
+    for _ in [0:max iters 1] do
+      let a ← IO.monoNanosNow
+      r ← kernelOnce impl x fx ux
+      let b ← IO.monoNanosNow
+      ts := ts.push (b - a)
+    sums := sums.push r
+    let us := ts.map (· / 1000)
+    IO.println s!"kernel lean-{names[impl]!}: A {x.nA} rows, B {x.nB} rows; output {r.1} rows, checksum {r.2}; us median {medianNat us} min {us.foldl min (us.getD 0 0)} ({ts.size} runs)"
+  let agree := sums.all (· == sums[0]!)
+  IO.println s!"kernel: implementations {if agree then "agree" else "DISAGREE"}"
+  return (if agree then 0 else 1)
 
 end QlvrKernel
