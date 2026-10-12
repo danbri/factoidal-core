@@ -610,7 +610,12 @@ earlier. Full recovery procedure: hazard #36 in
 inherit zero test submodules, and absent fixtures produce lying 0/0
 scores and phantom ENOENT failures (hazard #15,
 `skills/workflow-gotchas-debugging`). Never trust a suite number from
-a checkout where that script exits 1.
+a checkout where that script exits 1. **Exception:** when a worktree's
+`third_party/testing` entries are symlinks into the main checkout, never
+run that script or any `git submodule` command there: git follows the
+symlink and rewrites the main checkout's submodule `core.worktree`
+(2026-10-12: 21 submodules pointed at a removed worktree and every `git
+status` in the main checkout failed; hazard #40).
 
 ## Anti-patterns (one-line summaries)
 
