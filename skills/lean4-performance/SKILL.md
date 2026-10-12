@@ -52,6 +52,16 @@ Rules from that repair:
   alive, so it copies `a`.** `Frame.allocM` did this and copied the whole
   output arena on every allocation. Use `modifyGet` or `modify`, which use
   the state once.
+- **A map in the accumulator of a streaming fold is shared once per chunk.**
+  `NQuadsFold.feedChunkC` reads `st.pos` after the fold over `st.acc`, so
+  `st` is alive during the fold and the first insert of every chunk finds
+  the map shared and copies it. Cost, 2026-10-12, `l4sbm11-dict-pack`
+  phase 1 on the olympics N-Triples (338 MB, 5,153 chunks of 64 KiB, a set
+  of up to 262,144 terms): 96 s, against 72 s when the fold only conses the
+  chunk's terms onto a list and the caller inserts them into a set it took
+  out of an `IO.Ref` with `swap` (unique while it is updated). An `IO.Ref`
+  read with `get` and written back with `set` has the same defect: the ref
+  still holds the old map during the insert.
 - **When insertion order is observable, use `OMap`** (`JSONLD/OrderedMap.lean`:
   a `Std.TreeMap` plus the keys newest first). Lookup and update agree with
   `flLookup` and `flUpd` on the entries in insertion order

@@ -101,6 +101,61 @@ def splitCompleteLines : List Char → List Char × List Char
         if isNl c then ([c], carry) else ([], c :: carry)
       else (c :: complete, carry)
 
+/-! ### The compiled splitter: a loop over the reversed buffer
+
+`splitCompleteLines` recurses once per character of the buffer, so a
+64 KiB chunk (plus any carried partial line) took one native frame per
+character: `l4sbm11-dict-pack` overflowed the 512 KB canary stack on every
+chunk (2026-10-12, https://github.com/danbri/factoidal/issues/788). The
+code generator runs `splitCompleteLinesTR` in its place (`@[csimp]` below):
+it reverses the buffer once and scans it for the last newline with an
+accumulator. The definition above stays for the proofs. -/
+
+/-- Scan a REVERSED buffer up to its first newline: the characters before it
+    are the carry (consed back into order), the newline and the rest,
+    reversed again, are the complete lines. -/
+def splitCompleteLinesTRGo : List Char → List Char → List Char × List Char
+  | [], carry => ([], carry)
+  | c :: rs, carry =>
+      if isNl c then ((c :: rs).reverse, carry) else splitCompleteLinesTRGo rs (c :: carry)
+
+def splitCompleteLinesTR (cs : List Char) : List Char × List Char :=
+  splitCompleteLinesTRGo cs.reverse []
+
+theorem splitCompleteLines_append_singleton : ∀ (l : List Char) (c : Char),
+    splitCompleteLines (l ++ [c]) =
+      if isNl c then (l ++ [c], [])
+      else ((splitCompleteLines l).1, (splitCompleteLines l).2 ++ [c])
+  | [], c => by
+      by_cases h : isNl c <;> simp [splitCompleteLines, h]
+  | x :: l, c => by
+      have ih := splitCompleteLines_append_singleton l c
+      by_cases h : isNl c
+      · simp only [h, if_true] at ih
+        simp [List.cons_append, splitCompleteLines, ih, h]
+      · simp only [h, Bool.false_eq_true, if_false] at ih
+        rw [List.cons_append, splitCompleteLines, ih, splitCompleteLines]
+        rcases splitCompleteLines l with ⟨a, b⟩
+        by_cases ha : a.isEmpty = true <;> by_cases hx : isNl x = true <;>
+          simp [ha, hx, h]
+
+theorem splitCompleteLinesTRGo_eq : ∀ (ys carry : List Char),
+    splitCompleteLinesTRGo ys carry =
+      ((splitCompleteLines ys.reverse).1, (splitCompleteLines ys.reverse).2 ++ carry)
+  | [], carry => by simp [splitCompleteLinesTRGo, splitCompleteLines]
+  | c :: rs, carry => by
+      have ih := splitCompleteLinesTRGo_eq rs (c :: carry)
+      rw [List.reverse_cons, splitCompleteLines_append_singleton]
+      by_cases h : isNl c
+      · simp [splitCompleteLinesTRGo, h]
+      · simp only [splitCompleteLinesTRGo, h, Bool.false_eq_true, if_false, ih]
+        simp
+
+@[csimp] theorem splitCompleteLines_eq_TR : @splitCompleteLines = @splitCompleteLinesTR := by
+  funext cs
+  rw [splitCompleteLinesTR, splitCompleteLinesTRGo_eq, List.reverse_reverse]
+  simp
+
 /-! ## 2. What the splitter guarantees -/
 
 /-- **Nothing is lost at a chunk boundary.** -/

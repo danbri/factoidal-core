@@ -156,6 +156,7 @@ not written yet.
 | Session of many SELECTs over one shard | `l4block-shard-merkle-session SHARD-DIR < queries.rq` |
 | Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (`.trig`, `.nq`, `.ttl`) |
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
+| SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
 
@@ -517,6 +518,16 @@ Measured 2026-10-11: 437 MB (IBK3) and 222 MB (IBK5) against 38.5 MB; q07
 13.6 s (IBK3) and 62.1 s (IBK5) against 0.35 s for `l4qlvr` on QLever's
 layout; 60 % to 90 % of query time is decoding terms and building the
 in-memory index before evaluation.
+
+SBM11 stage 2 (2026-10-12, https://github.com/danbri/factoidal/issues/788):
+64-bit term ids and the global dictionary GDV1/GDX1, with round-trip
+theorems, and `l4sbm11-dict-pack` (packer phases 1 and 2). Format bytes,
+theorem names and measurements:
+[`docs/designissues/2026-10-12-sbm11-stage2.md`](../../docs/designissues/2026-10-12-sbm11-stage2.md).
+Gates for a change there: `tests/sbm11/dict_scaling.sh [--doubled]`,
+`l4sbm11-dict-pack --check SOURCE OUTDIR` (failures=0),
+`python3 tests/sbm11/dict_reference.py SOURCE` (same counts) and the
+`sbm11-dict` case of `tests/stack/run.sh --canary`.
 
 ## Where the code is
 

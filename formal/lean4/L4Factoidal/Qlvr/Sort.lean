@@ -6,9 +6,9 @@ https://github.com/danbri/factoidal/issues/778).
 ## Loops
 
 `cmpBytesLoop` is a tail call with a fuel `Nat` first. `mergeSortBy` is
-`for` loops in `Id.run`: the passes (at most 64), the runs of one pass and
-the elements of one merge. There is no recursion, so the depth of the call
-stack does not depend on the input size.
+three tail calls with a fuel `Nat` first: the passes (at most 64), the runs
+of one pass and the elements of one merge, so the depth of the call stack
+does not depend on the input size.
 -/
 
 namespace L4Factoidal.Qlvr
@@ -27,33 +27,42 @@ def cmpBytesLoop (a b : ByteArray) : Nat → Nat → Ordering
 def cmpBytes (a b : ByteArray) : Ordering :=
   cmpBytesLoop a b (min a.size b.size + 1) 0
 
-/-- A stable sort: `le a b` is "a may come before b". Bottom-up merge sort
-    with `for` loops; `O(n log n)` comparisons, two arrays of size `n`. -/
-def mergeSortBy {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) : Array α := Id.run do
-  let n := a.size
-  let mut src := a
-  let mut width := 1
-  for _ in [0:64] do
-    if width ≥ n then break
-    let mut out : Array α := Array.mkEmpty n
-    let mut lo := 0
-    for _ in [0:n] do
-      if lo ≥ n then break
+/-- Merge `src[i..mid)` and `src[j..hi)` onto `out`; `k` is the fuel. -/
+def mergeRunGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (mid hi : Nat) :
+    Nat → Array α → Nat → Nat → Array α
+  | 0, out, _, _ => out
+  | k+1, out, i, j =>
+    if i < mid && (j ≥ hi || le src[i]! src[j]!) then mergeRunGo src le mid hi k (out.push src[i]!) (i + 1) j
+    else if j < hi then mergeRunGo src le mid hi k (out.push src[j]!) i (j + 1)
+    else out
+
+/-- One pass: merge every pair of adjacent runs of `width`, from `lo`. -/
+def mergePassGo {α : Type} [Inhabited α] (src : Array α) (le : α → α → Bool) (width n : Nat) :
+    Nat → Array α → Nat → Array α
+  | 0, out, _ => out
+  | k+1, out, lo =>
+    if lo ≥ n then out
+    else
       let mid := min (lo + width) n
       let hi := min (lo + 2 * width) n
-      let mut i := lo
-      let mut j := mid
-      for _ in [0:hi - lo] do
-        if i < mid && (j ≥ hi || le src[i]! src[j]!) then
-          out := out.push src[i]!
-          i := i + 1
-        else
-          out := out.push src[j]!
-          j := j + 1
-      lo := hi
-    src := out
-    width := 2 * width
-  return src
+      mergePassGo src le width n k (mergeRunGo src le mid hi (hi - lo) out lo mid) hi
+
+def mergeSortGo {α : Type} [Inhabited α] (le : α → α → Bool) (n : Nat) :
+    Nat → Array α → Nat → Array α
+  | 0, src, _ => src
+  | k+1, src, width =>
+    if width ≥ n then src
+    else mergeSortGo le n k (mergePassGo src le width n (n + 1) (Array.mkEmpty n) 0) (2 * width)
+
+/-- A stable sort: `le a b` is "a may come before b". Bottom-up merge sort;
+    `O(n log n)` comparisons, two arrays of size `n`. Every loop is a tail
+    call with a fuel `Nat` first. Until 2026-10-12 it was `for` loops in
+    `Id.run`, which the compiler left as the generic `forIn` loop over
+    closures, one native frame per element: it overflowed the 512 KB
+    canary stack sorting 20,000 keys (`l4sbm11-dict-pack`,
+    https://github.com/danbri/factoidal/issues/788). -/
+def mergeSortBy {α : Type} [Inhabited α] (a : Array α) (le : α → α → Bool) : Array α :=
+  mergeSortGo le a.size 64 a 1
 
 #guard cmpBytes "abc".toUTF8 "abd".toUTF8 == .lt
 #guard cmpBytes "ab".toUTF8 "abc".toUTF8 == .lt

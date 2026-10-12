@@ -64,6 +64,20 @@ and truncated every body at its first nested block, reporting 24 recursions
 instead of 833 and missing both known cases — an audit that finds almost
 nothing is evidence about the audit's reach before the code (anti-pattern 28).
 
+A `for` loop in `Id.run do` is one of those combinators. On 2026-10-12 the
+gate passed `Qlvr.mergeSortBy` (three `for` loops in `Id.run`), and the
+`tests/stack` case `sbm11-dict` aborted with a stack overflow under the
+512 KB canary sorting 20,000 keys: gdb showed
+`Std.Legacy.Range.forIn'.loop` called back through `lean_apply_*`, one frame
+per element, in Lean's own library where the audit does not look. The same
+canary run found `NQuadsStreaming.splitCompleteLines` (allow-listed since the
+first baseline) using one frame per character of each 64 KiB parser chunk.
+Repairs (https://github.com/danbri/factoidal/issues/788): `mergeSortBy` as
+tail calls with fuel; `splitCompleteLines` through a `@[csimp]` loop over
+the reversed buffer, proved equal. Write loops over data as tail-recursive
+functions, and give every new decoder, sort or fold a canary case: the
+canary saw both, the audit saw neither.
+
 Run it as CI runs it: `python3 tools/lean-tail-recursion-audit.py --gate`,
 after a full `lake build`, and read the exit code. Without `--gate` the tool
 exits 0 whatever it finds. Cost of not doing so: on 2026-10-11 a landing

@@ -20,10 +20,12 @@ and prints. The formats and the decoders are
       set lives outside the fold, so no insert finds it shared (a shared
       set is copied whole on its first insert of every chunk: measured
       2026-10-12, phase 1 took 96 s on olympics that way).
-      Phase 2: k-way merge of the runs (1 MiB positioned reads per run),
+      Phase 2: k-way merge of the runs (positioned reads of 16 MiB / k per
+      run, at least 64 KiB),
       drop duplicates, write `OUTDIR/dict.gdv1` page by page and
       `OUTDIR/dict.gdx1`; remove the runs.
-      Memory is bounded by N terms plus one read buffer per run.
+      Memory is bounded by N terms plus 16 MiB of run buffers (64 KiB per
+      run once there are more than 256 runs).
 
   l4sbm11-dict-pack --check SOURCE OUTDIR [--exact]
       Read the dictionary into memory and check (1) every key in rank order:
@@ -207,12 +209,15 @@ structure RunReader where
   base : Nat
   buf : ByteArray
   pos : Nat
+  /-- Bytes per positioned read: 16 MiB shared by all runs, at least 64 KiB,
+      so the merge's buffers do not grow with the number of runs. -/
+  chunk : Nat := 1 <<< 20
   deriving Inhabited
 
 def RunReader.ensure (r : RunReader) (need : Nat) : IO RunReader := do
   if r.pos + need ≤ r.buf.size then return r
   let base := r.base + r.pos
-  let len := min (r.size - base) (max need (1 <<< 20))
+  let len := min (r.size - base) (max need r.chunk)
   if len < need then throw (IO.userError s!"{r.path}: truncated record at {base}")
   return { r with base, buf := ← pread r.path base len, pos := 0 }
 
@@ -301,7 +306,8 @@ def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
   for path in runs do
     let sz ← fileSize path
     runBytes := runBytes + sz
-    let (hd, r) ← RunReader.next { path, size := sz, base := 0, buf := .empty, pos := 0 }
+    let chunk := max 65536 ((16 <<< 20) / max 1 runs.size)
+    let (hd, r) ← RunReader.next { path, size := sz, base := 0, buf := .empty, pos := 0, chunk }
     readers := readers.push r
     heads := heads.push hd
   let gdvPath := s!"{outDir}/dict.gdv1"

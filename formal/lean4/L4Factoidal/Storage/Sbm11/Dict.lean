@@ -355,15 +355,20 @@ def word32At (b : ByteArray) (p : Nat) : Nat :=
   (b.get! p).toNat + (b.get! (p + 1)).toNat * 256 + (b.get! (p + 2)).toNat * 65536 +
     (b.get! (p + 3)).toNat * 16777216
 
-/-- Unsigned byte order on byte arrays (a loop; a proper prefix sorts first). -/
-def cmpBytesAt (a b : ByteArray) : Ordering := Id.run do
+def cmpBytesAtGo (a b : ByteArray) (n : Nat) : Nat → Nat → Ordering
+  | 0, _ => compare a.size b.size
+  | k+1, i =>
+    if i < n then
+      let x := a.get! i
+      let y := b.get! i
+      if x < y then .lt else if y < x then .gt else cmpBytesAtGo a b n k (i + 1)
+    else compare a.size b.size
+
+/-- Unsigned byte order on byte arrays (a tail call; a proper prefix sorts
+    first). -/
+def cmpBytesAt (a b : ByteArray) : Ordering :=
   let n := min a.size b.size
-  for i in [0:n] do
-    let x := a.get! i
-    let y := b.get! i
-    if x < y then return .lt
-    if y < x then return .gt
-  return compare a.size b.size
+  cmpBytesAtGo a b n (n + 1) 0
 
 /-- The GDX1 header, read from its first 21 bytes. -/
 structure GdxHeader where
