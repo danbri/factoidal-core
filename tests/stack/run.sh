@@ -265,14 +265,18 @@ fi
 # until the same day, when the XML reference scan became a loop.)
 xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
   case "$1" in
-    # No case is listed today.
+    # $2 is the route (canary, wcanary or wasm), for a case that overflows
+    # in some of the small-stack routes only.
+    xml-text-chain) echo "https://github.com/danbri/factoidal/issues/755" ;;
+    xml-markup-chain)
+      [ "${2:-}" = wcanary ] && echo "https://github.com/danbri/factoidal/issues/755" ;;
   esac
 }
 
 # score_case <route> <case> <kind> <detail>, with kind ran | overflow | error.
 score_case() {
   local route="$1" name="$2" kind="$3" detail="$4" issue
-  issue="$(xfail_issue "$name")"
+  issue="$(xfail_issue "$name" "$route")"
   if [ -z "$issue" ]; then
     if [ "$kind" = ran ]; then record "$route" "$name" 0 "$detail"
     else record "$route" "$name" 1 "$detail"; fi
@@ -351,6 +355,8 @@ CASES=(
   "xml-entities        parseToDatasetJson   args-xml.json"
   "xml-entities-attr   parseToDatasetJson   args-xml-attr.json"
   "xml-entities-dtd    parseToDatasetJson   args-xml-dtd.json"
+  "xml-text-chain      parseToDatasetJson   args-xml-text-chain.json"
+  "xml-markup-chain    parseToDatasetJson   args-xml-markup-chain.json"
   "turtle-literal      parseToDatasetJson   args-turtle-literal.json"
   "turtle-collection   parseToDatasetJson   args-turtle-collection.json"
   "nquads-one-subject  parseToDatasetJson   args-nquads.json"
