@@ -2352,6 +2352,11 @@ def defectConds (ds : List String) : List String :=
     | some h => h
     | none => d).eraseDups
 
+/-- The condition numbers of a unit's defects, comma-separated. -/
+def condNumbers (ds : List String) : String :=
+  String.intercalate ", " ((defectConds ds).map fun k =>
+    if k.startsWith "condition " then (k.drop "condition ".length).toString else k)
+
 /-- What the balanced pass of one catalog gathers. Reporting only. -/
 structure BalResult where
   /-- Every unit with its outcome on the separate line, for its score
@@ -2519,7 +2524,8 @@ tests/local-overrides/ and close {issue}"
             let b ← balancedJudge cat c ty capMs rb rms strict
             match b with
             | .passed how _ _ => IO.println s!"BALANCED-PASS {label}: {how}"
-            | .notBalanced ds => IO.println s!"NOT-BALANCED {label}: {defectsText ds}"
+            | .notBalanced ds =>
+                IO.println s!"NOT-BALANCED {label}: conditions {condNumbers ds}; {defectsText ds}"
             | .undecided why => IO.println s!"BALANCED-UNDECIDED {label}: {why}"
             let o2 : RbOutcome := match b with | .passed _ _ _ => .proved | _ => o
             let ov2 : Option String := match b with | .passed _ _ _ => none | _ => ovIssue

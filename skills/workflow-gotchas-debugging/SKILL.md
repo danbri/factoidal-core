@@ -1883,3 +1883,35 @@ them.
    is clean; the merge commit is the accepted cost.
 2. If a rebase must be used, pass `--rebase-merges`.
 3. `git rebase --abort` restores the pre-rebase tip; nothing is lost.
+
+## Hazard #41 — editing a shell script while bash runs it re-runs part of it, even when the edit is reverted (2026-10-12)
+
+### Symptom
+
+A baseline run of `tools/lean-scoreboard.sh --only l4owl-probe` (ten OWL
+jobs, 31 minutes) was in its sixth job when an agent added 22 lines to
+`parse_owl_rdf_based` in the same file, saw the risk, and restored the file
+byte for byte with `git checkout` about a minute later. After the tenth job
+the run printed `line 1240: ---...: command not found` and started the job
+loop again from job 1, overwriting the finished logs in the same
+`--logdir`. The fourth log was truncated when the run was stopped, and that
+job had to be run again (issue 732 work, branch `claude/wt-rdfbased-balanced`).
+
+### Root cause
+
+bash reads a script from the file as it executes it, at a byte offset. A
+function body is parsed when bash reaches its definition, but the commands
+after the current one are read later, from the offset bash holds. Bytes
+inserted before that offset move the text under it; restoring the file does
+not help when bash read its next block while the file was edited.
+
+### The rules
+
+1. Never edit a script that a running process executes, not even for a
+   minute. Edit a copy (`cp tools/x.sh "$TMP/x.new.sh"`) and move it into
+   place after the run ends. `tools/lean-scoreboard.sh` finds the
+   repository from its own path, so running a copy from another directory
+   does not work.
+2. When it happens anyway: stop the run (the shell and its children), keep
+   the logs of the jobs that finished before the loop started again, and run
+   the truncated job alone with `--only JOB` and the same `--logdir`.
