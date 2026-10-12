@@ -672,8 +672,10 @@ QLEVER_SERVER = os.path.join(QLEVER_BUILD, "qlever-server")
 QPORT = int(os.environ.get("QLEVER_PORT", "7031"))
 QTOKEN = "factoidal_bench"
 QLEVER_SETTINGS = {"ascii-prefixes-only": False, "num-triples-per-batch": 100000}
-QLEVER_SERVER_ARGS = ["--memory-max-size", "2G", "--default-query-timeout", "600s",
-                      "--cache-max-size", "0", "--cache-max-size-single-entry", "0",
+# A memory size needs a unit: "0" is rejected by the ceace86 binaries
+# ("0 B" is accepted; tested 2026-10-12 on olympics, record section "QLever native").
+QLEVER_SERVER_ARGS = ["--memory-max-size", "2 GB", "--default-query-timeout", "600s",
+                      "--cache-max-size", "0 B", "--cache-max-size-single-entry", "0 B",
                       "--cache-max-num-entries", "0",
                       "--no-metrics-log", "--no-resource-usage-log"]
 

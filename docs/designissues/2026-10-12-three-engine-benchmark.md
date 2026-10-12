@@ -27,8 +27,11 @@ section "SBM11 against Virtuoso and QLever".
 - Process and cold times of SBM11 on the DBpedia slice are 41 to 582 ms for
   queries whose warm time is under 1 ms: each process reads the PRM1 block
   metadata whole (section 8, item 3).
-- QLever was not measured on the DBpedia slice: there is no docker daemon in
-  this container and starting one was refused (section 9).
+- QLever (image-extracted binaries, ceace86; section 11): on olympics, index
+  4.7 s, 285 MB peak RSS, 38.5 MB on disk; answers 19 of 21 equal to SBM11,
+  Virtuoso and the oracle (q15 and q20: the two causes of section 5); warm
+  median 1.8 to 591 ms. QLever on the DBpedia slice is not measured yet
+  (section 11.5).
 
 ## 2. Engines
 
@@ -36,7 +39,7 @@ section "SBM11 against Virtuoso and QLever".
 | --- | --- | --- |
 | SBM11 | `l4sbm11` and `l4sbm11-pack` built from commit 408898bd (Lean `v4.33.1`) | `--verify none` and `--verify merkle`; query path single-threaded; packer 4 workers (default) |
 | Virtuoso Open Source | 7.2.5.3229 (Ubuntu package `virtuoso-opensource-7` 7.2.5.1+dfsg1-0.8build1), native | ini written by `bench.py`: 340,000 buffers (about 2.8 GB), `MaxDirtyBuffers` 250,000, no result-row cap, no execution-time cap; thread configurations `1t` (`ThreadsPerQuery` 1, `AsyncQueueMaxThreads` 1) and `default` (4 and 10, the package values) |
-| QLever | image `adfreiburg/qlever@sha256:b2087ec9...`, commit ceace86 (skill `qlvr`) | not run in this record; recorded numbers of 2026-10-11 only |
+| QLever | image-extracted (Docker Hub adfreiburg/qlever, ceace86): `qlever-index` and `qlever-server` from `/home/user/qlever-image/rootfs/qlever` (image digest `b2087ec9...`) | olympics measured 2026-10-12 (section 11); DBpedia not run; the source build was stopped by the owner |
 
 Virtuoso loads with `ld_dir`, one `rdf_loader_run()` and `checkpoint`, into a
 named graph; every query is sent with `default-graph-uri` set to that graph,
@@ -273,14 +276,13 @@ configuration with one loader.
 ## 9. What could not be measured, and why
 
 - **QLever on the DBpedia slice: not measured** (load time, size, answers,
-  any query time). The QLever server and index builder run in docker; the
-  docker daemon was not running, and starting `dockerd` was refused by the
-  session's permission system. QLever was not built natively (the issue's
-  constraint: do not work around the missing daemon).
-- **QLever on olympics:** answers from the existing oracle
-  (`/home/user/qlvr-work/oracle`, compared above); times from the 2026-10-11
-  records only (section 7.1 and 7.2). Not measured: cold time, server RSS per
-  query, single-thread time, load average.
+  any query time). The index step stopped at the owner's 3 GB free-disk line
+  (section 11.5). The image binaries replaced the docker run of 2026-10-11;
+  the source build was stopped by the owner on 2026-10-12.
+- **QLever on olympics:** measured 2026-10-12 (section 11): index, answers,
+  cold and warm times, server RSS, load average. Single-thread QLever time was
+  not measured (the server ran with its default settings except the cache
+  flags).
 - **Cold runs with the whole OS page cache dropped:** refused (it would
   affect the other workload on the machine). Cold here means section 6.
 - **SBM11 single-thread against default threads:** the query path has one
@@ -301,3 +303,190 @@ comes from `tools/qlvr/build-instance.sh` (`QLVR_WORK`). Outputs go to
 `$BENCH_DATA/results` (default `/home/user/bench-data/results`):
 `results.json` holds every number above, with the per-round records and
 load averages. Running all steps takes about 3 hours on this machine.
+
+## 11. QLever native (2026-10-12)
+
+Label: every QLever number in this section is **image-extracted (Docker Hub
+adfreiburg/qlever, ceace86)**. The binaries are
+`/home/user/qlever-image/rootfs/qlever/qlever-index` and `qlever-server`
+(version `ceace86`; image digest `sha256:b2087ec9...`, manifest `769924e6...`).
+They were accepted by the owner on 2026-10-12 ("Stop src build - we didn't
+need it before ... Accept image binaries. regenerate (or refetch)."). The
+source build of `qlever-native-build.sh` was stopped and its output is not
+used.
+
+Status: QLever on olympics is measured (index, answers, timing). QLever on the
+DBpedia slice is not measured yet (section 11.5).
+
+### 11.1 Flag test (olympics, run before the measurement)
+
+Two flags in the 2026-10-11 bench code were not valid for the ceace86
+binaries. Commit 7208c783 said the native QLever path was untested. This
+test found both defects:
+
+| Flag set | Binary message | Result | Repair in `bench.py` / `run.sh` |
+| --- | --- | --- | --- |
+| `qlever-index -p` (no value) | required argument for option `--parallel-parsing` is missing | rc 1, no index | `-p true` |
+| `qlever-server --cache-max-size 0` (and `--cache-max-size-single-entry 0`) | `'0' could not be parsed as a memory size` | server exits at start | `0 B` |
+
+With the repairs, `qlever-index -p true -j 4 -m 4G -s <settings>` built the
+olympics index (rc 0), and the server started (median start 219 ms).
+
+What the cache flags do (`--cache-max-size 0 B`, `--cache-max-size-single-entry 0 B`,
+`--cache-max-num-entries 0`), measured on olympics with the bench harness,
+six requests of the same query per server process, client wall time in ms:
+
+| Query | Flags | Request 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| q12-group-medals (small result) | cache off | 6.94 | 3.94 | 3.39 | 3.88 | 3.35 | 3.29 |
+| q12-group-medals | default cache | 6.23 | 1.74 | 1.31 | 1.57 | 1.97 | 1.56 |
+| q19-scan-bound-predicate-iri (39,768 rows) | cache off | 203.9 | 176.1 | 157.9 | 129.8 | 230.4 | 177.0 |
+| q19-scan-bound-predicate-iri | default cache | 161.4 | 172.5 | 204.9 | 163.4 | 153.5 | 162.3 |
+
+Reading: with the default cache, a repeated small query is answered from the
+result cache from its second request on (about 1.6 ms against 3.4 ms). With the
+cache off, every request runs the engine, so the warm number measures the
+engine. The 39,768-row result was not cached by the default settings in this
+test, so the two rows for q19 do not differ. Cache-off is the setting for every
+warm number below.
+
+Flag test artifacts: the scratch harness `flagtest.py` (not in the repository)
+and the server logs under `$BENCH_DATA/qlever/olympics/`.
+
+### 11.2 Index build (olympics)
+
+Command: `qlever-index -i <base> -f olympics.nt -F nt -p true -j 4 -m 4G -s
+<settings>` (`run.sh`, step `qindex`). Input: 1,781,625 triples (337,695,911
+bytes). Index: 2,055,677 triples including 680,749 QLever-internal ones.
+
+| Measure | Image-extracted QLever, 2026-10-12 | Recorded 2026-10-11 (docker, same commit) |
+| --- | ---: | ---: |
+| Wall time | 4.71 s | 4.35 s |
+| Peak RSS (rusage, `qlever-index`) | 291,936 kB (285 MB) | 250 MB |
+| On-disk size (index files, no logs) | 38,462,166 B (38.5 MB) | 38.5 MB |
+| Load average before / after | 0.63 / 0.74 | not recorded |
+
+Index build as reported by the binary: parse 2.6 s, 15 partial vocabularies,
+543,754 words, internal vocabulary 11.8 MB compressed.
+
+### 11.3 Answer check (olympics, 21 queries)
+
+Compared as multisets with `bench.py` `term_key` (section 5), against SBM11
+(`--verify none`), Virtuoso and the qlvr oracle (`tests/qlvr/queries`).
+
+| Result | Count |
+| --- | ---: |
+| Equal on QLever, SBM11, Virtuoso and the oracle | 19 of 21 |
+| Different (not timed) | 2 of 21: q15, q20 |
+
+The two differences are the same as in section 5, and they have the same
+causes:
+
+- **q15** `?g dbp:year 1936`: QLever 2 rows; SBM11 0 rows; Virtuoso 2 rows;
+  oracle 2 rows. QLever is equal to Virtuoso and the oracle, and different from
+  SBM11. Cause: the data term is `"1936"^^xsd:int` and the query constant is
+  `"1936"^^xsd:integer`. SBM11 matches the terms. Not a QLever or SBM11 defect.
+- **q20** `?s dbo:weight ?o` (100,666 rows): QLever equal to SBM11 and to the
+  oracle; QLever different from Virtuoso in 2 rows, which print `xsd:double`
+  with 6 significant digits in Virtuoso. Cause: section 5.
+
+Record: `$BENCH_DATA/results/qlever-answers-olympics.json`.
+
+### 11.4 Timing (olympics, 19 queries)
+
+Method: section 6. Warm: one server, one warm-up pass, then 7 rounds; median.
+Cold: first request of a new server process after the index files were
+evicted with `posix_fadvise` (`resident_before` was 0 bytes in all 57 cold
+runs, 19 queries times 3 rounds); median of 3 rounds. Cache off (section 11.1).
+Load average (1-minute) at the start of every round: warm rounds 1.08
+to 1.16; cold rounds 1.01 to 1.01
+(all under the target 2.0). Server start (median of the 19 cold starts):
+221 ms.
+
+Times in ms; RSS of the server in MB (maximum over the warm rounds, VmHWM,
+reset before each request). The last column is the SBM11 `none` warm median
+from section 7.2, for comparison only.
+
+| Query | QLever warm | QLever cold | QLever warm RSS MB | SBM11 none warm |
+| --- | ---: | ---: | ---: | ---: |
+| q01-count-all | 2.57 | 20.8 | 85.8 | 0.34 |
+| q02-predicate-counts | 32.84 | 37.4 | 88.0 | 1.69 |
+| q03-scan-bound-predicate-int | 2.75 | 4.9 | 86.9 | 0.49 |
+| q04-subject-lookup | 4.45 | 8.3 | 86.9 | 0.22 |
+| q05-object-bound-type | 2.75 | 5.9 | 87.0 | 0.70 |
+| q06-join-two | 3.68 | 6.5 | 87.0 | 0.94 |
+| q07-join-three | 18.09 | 41.3 | 87.2 | 53.11 |
+| q08-filter-lang-literal | 3.69 | 7.2 | 87.2 | 15.45 |
+| q09-bgp-lang-literal | 2.89 | 7.1 | 87.2 | 0.50 |
+| q10-orderby-limit-double | 13.51 | 19.4 | 87.2 | 26.58 |
+| q11-filter-numeric | 2.97 | 10.1 | 87.2 | 40.96 |
+| q12-group-medals | 3.13 | 6.8 | 87.2 | 7.33 |
+| q13-subclass-of | 1.76 | 5.2 | 87.2 | 0.32 |
+| q14-typed-int-object | 1.96 | 4.9 | 87.0 | 0.48 |
+| q16-strstarts | 27.09 | 33.2 | 86.9 | 22.64 |
+| q17-noc-team-join | 4.71 | 8.6 | 86.6 | 0.76 |
+| q18-games-by-year-limit | 2.46 | 6.7 | 86.5 | 0.37 |
+| q19-scan-bound-predicate-iri | 162.70 | 184.9 | 90.4 | 162.38 |
+| q21-scan-bound-predicate-lang | 591.06 | 624.2 | 91.4 | 281.30 |
+
+Excluded from timing: q15 and q20 (section 11.3).
+
+Comparison notes, all on olympics at load below 2.0:
+
+- Warm, QLever faster than SBM11 (QLever against SBM11, ms): q07 18.1 against
+  53.1; q10 13.5 against 26.6; q11 3.0 against 41.0; q12 3.1 against 7.3; q08
+  3.7 against 15.5.
+- Warm, SBM11 faster than QLever: q02 1.7 against 32.8; q04 0.2 against 4.4;
+  q16 22.6 against 27.1; q21 281 against 591. On q01, q03, q05, q06, q09, q13,
+  q14, q17 and q18 SBM11 is faster by 1.4 to 4.0 ms per query (both below 5 ms).
+- Equal within 0.3 ms: q19 (162.7 for QLever, 162.4 for SBM11).
+- Warm times for the same query differ between this table and the 2026-10-11
+  `curl` numbers in section 7.2 (the same engine, another client method and
+  load). Use this table for the 2026-10-12 comparison.
+
+### 11.5 Not measured, and why
+
+- **QLever on the DBpedia slice: not measured.** The DBpedia N-Triples slice
+  was regenerated (section 11.6). The index step stopped before it started:
+  the owner's stop rule is free disk under 3 GB, and free space fell to 2.7 GB
+  during the step (other work on the same disk; Lean worktree builds were
+  running). No index was built for DBpedia, so no DBpedia load time, size,
+  answer check or timing exists for QLever.
+- **Resume:** when free space is above the stop line with room for the index,
+  run `STEPS="qindex qanswers qtiming report" DATASETS=dbpedia
+  SHM=/home/user/bench-data/stage QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever
+  tools/bench/three-engines/run.sh`. The staged N-Triples file (3.0 GB) is the
+  index input and is deleted only by the `load` step.
+- **Cold runs with the page cache dropped: refused** (section 9, unchanged).
+
+### 11.6 DBpedia slice regenerated (sha256 check)
+
+Sources: `mappingbased_objects_en.ttl.bz2` (sha256 `a5811aa5...c9953`) and
+`mappingbased_literals_en.ttl.bz2` (sha256 `0d0d6b55...d518`), both
+re-verified from `$BENCH_DATA/dl` (the files of 2026-10-12 16:05, not refetched).
+`slice.py` run by `run.sh` step `data` into `/home/user/bench-data/stage/dbpedia.nt`
+(3,121,628,229 bytes; not `/dev/shm`).
+
+| Check | Expected | Observed |
+| --- | --- | --- |
+| sha256 of the N-Triples file | `94025f74d5c4643ce05984524e5583c59a057b8110544ec9a7c55fbd21de85e1` | `94025f74d5c4643ce05984524e5583c59a057b8110544ec9a7c55fbd21de85e1` (match) |
+| Lines | 23,269,560 | 23,269,560 |
+| Distinct triples | 23,269,559 | 23,269,559 (by a 64-bit BLAKE2b digest per line, sorted; a collision could only lower the count, so the true distinct count is 23,269,559 or 23,269,560) |
+| Statements selected from `mappingbased_literals_en` | 4,523,386 | 4,523,386 |
+| Dropped by the IRI rule | 0 | 0 |
+
+The sha256 check is the gate in `run.sh`: a mismatch stops the step. It passed.
+The distinct count used the 64-bit hash, not an exact sort, because the disk
+was too low for a sort with temporary files.
+
+### 11.7 Commands run
+
+```
+QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever STEPS="qindex qanswers" DATASETS=olympics tools/bench/three-engines/run.sh
+QLEVER_NATIVE_BUILD=/home/user/qlever-image/rootfs/qlever STEPS="qtiming" DATASETS=olympics tools/bench/three-engines/run.sh
+STEPS=data DATASETS=dbpedia SHM=/home/user/bench-data/stage tools/bench/three-engines/run.sh
+```
+
+Results: `$BENCH_DATA/results/qlever-index-olympics.json`,
+`qlever-answers-olympics.json`, `qlever-timing-olympics.json`; logs in
+`$BENCH_DATA/logs/`.

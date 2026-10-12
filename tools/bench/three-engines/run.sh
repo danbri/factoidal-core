@@ -22,11 +22,13 @@
 # qbuild qindex qanswers qtiming report"), MIN_FREE_GB (3), QLEVER_NATIVE
 # (default /home/user/qlever-native: QLever source and build, no docker).
 #
-# QLever runs natively (steps qbuild, qindex, qanswers, qtiming; see
-# qlever-native-build.sh and the record, section "QLever native"). The docker
-# path (tools/qlvr/build-instance.sh, the image of the pinned commit) needs a
-# docker daemon, which this machine does not run; it stays documented there
-# and is not used here. The QLever index needs the N-Triples file: for
+# QLever runs from prebuilt binaries: set QLEVER_NATIVE_BUILD to the directory
+# holding qlever-index and qlever-server. Record 2026-10-12 (section 11):
+# image-extracted (Docker Hub adfreiburg/qlever, ceace86) from
+# /home/user/qlever-image/rootfs/qlever. The source build (step qbuild,
+# qlever-native-build.sh) was stopped by the owner on 2026-10-12 and is not
+# part of the record. The docker path (tools/qlvr/build-instance.sh) stays
+# documented there. The QLever index needs the N-Triples file: for
 # olympics it is $QLVR_WORK/instance/olympics.nt; for dbpedia it is the staged
 # $SHM/dbpedia.nt, which the load step deletes unless KEEP_NT=1.
 set -euo pipefail
@@ -39,7 +41,10 @@ ROUNDS="${ROUNDS:-7}"; COLD_ROUNDS="${COLD_ROUNDS:-3}"; REPEAT="${REPEAT:-5}"
 DATASETS="${DATASETS:-olympics dbpedia}"
 STEPS="${STEPS:-data pack load answers timing qbuild qindex qanswers qtiming report}"
 QLEVER_NATIVE="${QLEVER_NATIVE:-/home/user/qlever-native}"
-QLEVER_BIN="$QLEVER_NATIVE/build"
+# QLEVER_NATIVE_BUILD selects a prebuilt binary directory (the image-extracted
+# binaries, 2026-10-12); the default is the native source build.
+QLEVER_BIN="${QLEVER_NATIVE_BUILD:-$QLEVER_NATIVE/build}"
+export QLEVER_NATIVE_BUILD="$QLEVER_BIN"
 RES="$BENCH_DATA/results"
 mkdir -p "$BENCH_DATA/dl" "$BENCH_DATA/sbm11" "$BENCH_DATA/virtuoso" "$BENCH_DATA/qlever" "$RES" "$SHM"
 export PATH="$HOME/.elan/bin:$PATH"
@@ -168,7 +173,7 @@ if has_step qindex; then
     log "qlever index $ds"
     echo "loadavg_before $(cut -d' ' -f1 /proc/loadavg)" >"$RES/qlever-index-$ds.log"
     (cd "$base" && "$HERE/guarded.sh" "$RES/qlever-index-$ds.json" -- "$QLEVER_BIN/qlever-index" \
-      -i "$base/$ds" -f "$nt" -F nt -p -j 4 -m 4G -s "$settings") >>"$RES/qlever-index-$ds.log" 2>&1
+      -i "$base/$ds" -f "$nt" -F nt -p true -j 4 -m 4G -s "$settings") >>"$RES/qlever-index-$ds.log" 2>&1
     echo "loadavg_after $(cut -d' ' -f1 /proc/loadavg)" >>"$RES/qlever-index-$ds.log"
     find "$base" -maxdepth 1 -type f -name "$ds.*" ! -name '*.log' ! -name '*.settings.json' \
       -printf '%s\n' | awk '{s+=$1} END {print s+0}' >"$RES/qlever-size-$ds.txt"
