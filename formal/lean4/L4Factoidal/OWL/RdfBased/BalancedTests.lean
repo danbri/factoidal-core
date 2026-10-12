@@ -26,8 +26,13 @@ Negative cases, one condition each, so a check that answered
   one);
 * 3, the IRI branch, as a POSITIVE for that condition: `chain2trans1`
   (both documents name the ontology `http://example.org/ontology`);
+* 1 and 3: `WebOnt-I5.5-005` (the conclusion has no ontology header);
 * 4.1: `WebOnt-AnnotationProperty-002` (an annotation assertion with
   `first:ap` in the conclusion);
+* 4.2: the premise of `WebOnt-imports-011` in the place of G2 (no
+  conclusion of the catalog states an ontology property; no document of
+  the catalog has a deprecation statement (4.3) or an annotation property
+  axiom (4.4), so those two conditions have no case here);
 * 5.1: `WebOnt-I5.8-011` (the conclusion declares `xsd:integer` and
   `xsd:string` as datatypes; the premise is an empty ontology).
 
@@ -373,6 +378,53 @@ def c2t1C : String :=
   "    <owl:TransitiveProperty rdf:about=\"#p\"/>\n" ++
   "</rdf:RDF>"
 
+/-- `WebOnt-I5.5-005`, the premise document (RDF/XML, verbatim from `all.rdf`). -/
+def i55005P : String :=
+  "<rdf:RDF\n" ++
+  "    xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n" ++
+  "    xmlns:owl=\"http://www.w3.org/2002/07/owl#\"\n" ++
+  "    xml:base=\"http://www.w3.org/2002/03owlt/I5.5/premises005\" >\n" ++
+  "    <owl:Class rdf:ID=\"a\" />\n" ++
+  "</rdf:RDF>"
+
+/-- `WebOnt-I5.5-005`, the conclusion document (RDF/XML, verbatim from `all.rdf`). -/
+def i55005C : String :=
+  "<rdf:RDF\n" ++
+  "    xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n" ++
+  "    xmlns:owl=\"http://www.w3.org/2002/07/owl#\"\n" ++
+  "    xml:base=\"http://www.w3.org/2002/03owlt/I5.5/conclusions005\" >\n" ++
+  "   \n" ++
+  "   <owl:Class>\n" ++
+  "     <owl:unionOf>\n" ++
+  "       <rdf:List>\n" ++
+  "         <rdf:first>\n" ++
+  "           <owl:Class rdf:about=\"premises005#a\"/>\n" ++
+  "         </rdf:first>\n" ++
+  "         <rdf:rest rdf:resource = \"http://www.w3.org/1999/02/22-rdf-syntax-ns#nil\"/>\n" ++
+  "       </rdf:List>\n" ++
+  "     </owl:unionOf>\n" ++
+  "   </owl:Class>\n" ++
+  "\n" ++
+  "</rdf:RDF>"
+
+/-- `WebOnt-imports-011`, the premise document (RDF/XML, verbatim from `all.rdf`). -/
+def imp011P : String :=
+  "<rdf:RDF\n" ++
+  "    xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'\n" ++
+  "    xmlns:rdfs='http://www.w3.org/2000/01/rdf-schema#'\n" ++
+  "    xmlns:owl='http://www.w3.org/2002/07/owl#'\n" ++
+  "    xmlns:ont='http://www.w3.org/2002/03owlt/imports/support011-A#'\n" ++
+  "    xml:base='http://www.w3.org/2002/03owlt/imports/premises011' >\n" ++
+  "\n" ++
+  "    <owl:Ontology rdf:about=''>\n" ++
+  "        <owl:imports \n" ++
+  "     rdf:resource=\"http://www.w3.org/2002/03owlt/imports/support011-A\"/>\n" ++
+  "    </owl:Ontology>\n" ++
+  "\n" ++
+  "    <ont:Man rdf:about='http://example.org/data#Socrates'/>\n" ++
+  "\n" ++
+  "</rdf:RDF>"
+
 /-! ## Reading them
 
 The premise is parsed as it is; the conclusion's blank nodes get the
@@ -395,7 +447,8 @@ def hasDefect (g1 g2 : Graph) (k s : String) : Bool :=
   (balancedDefectsOf g1 g2).any (fun d => d.cond == k && (d.what.splitOn s).length > 1)
 
 #guard [eqc004P, eqc004C, dl101P, union003P, union003C, refl001P, refl001C, i58011P,
-        i58011C, qcr001P, qcr001C, ap002P, ap002C, c2t1P, c2t1C].all
+        i58011C, qcr001P, qcr001C, ap002P, ap002C, c2t1P, c2t1C, i55005P, i55005C,
+        imp011P].all
   (fun t => !(parse t).isEmpty)
 
 /-! ## Positive: balanced pairs -/
@@ -450,6 +503,18 @@ def hasDefect (g1 g2 : Graph) (k s : String) : Bool :=
 -- 5.1: declarations of the conclusion that the premise does not carry.
 #guard hasDefect (parse i58011P) (parseC i58011C) "5.1" "xsd:integer rdf:type rdfs:Datatype"
 #guard !isBalanced (parse i58011P) (parseC i58011C)
+
+-- 1 and 3: the conclusion of `WebOnt-I5.5-005` has no ontology header (the
+-- disputed fixture of https://github.com/danbri/factoidal/issues/711).
+#guard hasDefect (parse i55005P) (parseC i55005C) "1" "no-ontology-header"
+#guard hasDefect (parse i55005P) (parseC i55005C) "3" "no ontology header"
+
+-- 4.2: no conclusion of the catalog states an ontology property, so the
+-- premise of `WebOnt-imports-011` (its header imports `support011-A`) is put
+-- in the place of G2. The same document is also not balanced against
+-- itself by condition 3: its header has two triples.
+#guard hasDefect (parse imp011P) (parseC imp011P) "4.2" "owl:imports"
+#guard hasDefect (parse imp011P) (parseC imp011P) "3" "consists of 2 triples"
 
 /-! ## The inconsistency goal
 
