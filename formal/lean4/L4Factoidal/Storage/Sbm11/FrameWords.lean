@@ -10,8 +10,10 @@ https://github.com/danbri/factoidal/issues/790).
 copy), a constant frame is its 8 bytes repeated, a delta frame is decoded by a
 loop with no allocation per value.
 
+`FrameWordsTheorems.decodeWords_eq` proves
 `decodeWords b n i = (decodeColumnAt b n i).map (fun (xs, j) => (words xs, j))`
-is not proved. The `#guard`s below compare the two on encoded columns of every
+for `n ≤ 2^64`. `decodeWordsRange` is not proved equal to its definition
+(the cut words). The `#guard`s below compare them on encoded columns of every
 codec and on refused frames; `l4sbm11 frame-check GEN` compares them on every
 frame of every block of a generation.
 -/
@@ -29,23 +31,23 @@ open L4Factoidal (two64)
    |>.push (x >>> 56).toUInt8
 
 /-- The words of a column of values below `2^64`. -/
-def words (xs : Array Nat) : ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity (8 * xs.size)
-  for x in xs do
-    out := put64 out x.toUInt64
-  return out
+def words (xs : Array Nat) : ByteArray :=
+  xs.foldl (fun out x => put64 out x.toUInt64) (ByteArray.emptyWithCapacity (8 * xs.size))
 
-/-- `n` copies of the 8 bytes `v8`, by doubling. -/
-def repeatWords (v8 : ByteArray) (n : Nat) : ByteArray := Id.run do
-  if n == 0 then return ByteArray.empty
-  let total := 8 * n
-  let mut out := ByteArray.emptyWithCapacity total
-  out := out ++ v8
-  for _ in [0:64] do
-    if out.size ≥ total then break
-    let take := min out.size (total - out.size)
-    out := out.copySlice 0 out out.size take
-  return out
+/-- The doubling loop of `repeatWords`: append the first
+    `min out.size (total - out.size)` bytes of `out` to itself until it holds
+    `total` bytes, at most `fuel` times (a tail call with fuel). -/
+def repeatGo (total : Nat) : Nat → ByteArray → ByteArray
+  | 0, out => out
+  | f + 1, out =>
+    if out.size ≥ total then out
+    else repeatGo total f (out.copySlice 0 out out.size (min out.size (total - out.size)))
+
+/-- `n` copies of the 8 bytes `v8`, by doubling (64 doublings: enough for
+    `n ≤ 2^64`, `FrameWordsTheorems.repeatWords_eq`). -/
+def repeatWords (v8 : ByteArray) (n : Nat) : ByteArray :=
+  if n == 0 then ByteArray.empty
+  else repeatGo (8 * n) 64 (ByteArray.emptyWithCapacity (8 * n) ++ v8)
 
 /-- The delta loop, one byte per step (a tail call with every value an
     argument, so nothing is allocated per value): `rows` values still to
