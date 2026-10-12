@@ -354,6 +354,12 @@ import L4Factoidal.Storage.Sbm11.TermIdTheorems
 import L4Factoidal.Storage.Sbm11.Dict
 import L4Factoidal.Storage.Sbm11.DictTheorems
 import L4Factoidal.Storage.Sbm11.DictFastTheorems
+import L4Factoidal.Storage.Sbm11.Column
+import L4Factoidal.Storage.Sbm11.ColumnTheorems
+import L4Factoidal.Storage.Sbm11.Block
+import L4Factoidal.Storage.Sbm11.BlockTheorems
+import L4Factoidal.Storage.Sbm11.Manifest
+import L4Factoidal.Storage.Sbm11.ManifestTheorems
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.Query
 import L4Factoidal.Syntax.RdfJson
