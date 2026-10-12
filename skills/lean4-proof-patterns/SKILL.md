@@ -294,6 +294,34 @@ Three things that cost time on 2026-09-07:
 self-calls that are not `goto _start`. Run it before you go looking by hand.
 `skills/lean4-performance/SKILL.md` carries the rule and what it cost.
 
+When the recursion is a NESTED call whose result the caller continues with (an
+entity whose replacement text references another entity), an accumulator is
+not enough: the twin keeps the callers' continuations on a list. Three things
+from https://github.com/danbri/factoidal/issues/755 (2026-10-12,
+`XML/Parser.lean`: `expandEntityLoop`, `entityWsLoop`, `parseChildrenW`):
+
+* **Induct on the SPECIFICATION, not on the loop.** State the loop as the
+  specification followed by a `resume` function that applies the waiting
+  continuations (`loop pending args = resume pending (spec args)`), and
+  prove it with the specification's functional induction
+  (`expandEntityValue.induct`, `parseChildren.mutual_induct`). The
+  specification's induction principle has a hypothesis for the call AFTER the
+  nested one; the loop's does not, because the loop makes that call later,
+  when it takes the continuation off the list. With the motive
+  `∀ pending, ...`, every case closed with one `simp_all (config :=
+  {zetaDelta := true}) only [...]` over `↓reduceIte`, Bool lemmas and the
+  `resume` equations.
+* **Give the termination measure a bound, and keep the bound out of the
+  theorem.** `sum of budget * (k + 1) ^ depth` decreases on a push only when
+  the pushed text is shorter than `k`. Test that at run time (`k = 2^64`)
+  and, in the other branch, call the specification for that one call: the
+  equality theorem then needs no hypothesis.
+* **Two definitions never share an inline `match`.** Each compiles its own
+  matcher, so the hypothesis `(if c then match e with ... else none) = some x`
+  from the specification does not rewrite the same-looking expression in the
+  loop, and `simp_all` stalls on seven cases. Factor the expression into a
+  named function used by both (`markupFragAt`).
+
 ## 10. Gate before commit
 
 - `#print axioms <thm>` at the end of the module: only `propext`,
