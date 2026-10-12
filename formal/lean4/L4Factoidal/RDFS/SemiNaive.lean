@@ -52,10 +52,12 @@ implementation and the fallback.
    needs `sorted_diff` over `graph_dedup_sort` output to compute the
    delta in one linear merge. `L4Factoidal.RDFS.Closure` states its
    rows against plain list scans (its own header records that choice),
-   so the delta here is a filter against the previous round. The
-   asymptotic win — not re-deriving old answers — is the same; the
-   constant-factor index work is not part of the specification either
-   module states.
+   so the delta here is STATED as a filter against the previous round.
+   Since 2026-10-12 the compiled code reads premises through
+   `RDFS.Closure`'s `StepIndex` and takes the delta as the suffix the
+   round appended (section "Indexed evaluation of the same rounds"),
+   with proofs that both give the same lists. Measured times are in
+   `docs/designissues/2026-10-12-rdfs-seminaive.md`.
 2. The F\* module writes the delta term for each of the twelve rows by
    hand. Every row of `RDFS.Closure` has the shape
    `Graph → Triple → List Triple`, second premise first, so one
@@ -110,6 +112,138 @@ def semiNaiveLoop (g delta : Graph) : Nat → Graph
         if g'.length = g.length then g
         else semiNaiveLoop g' (graphDiff g' g) n
 
+/-! ## Indexed evaluation of the same rounds (2026-10-12)
+
+`deltaConclusions` reads premises through `RDFS.Closure`'s list scans,
+`addAll` tests membership with a scan of the graph, and `graphDiff`
+scans the old graph once per triple of the new one. Each round
+therefore costs O(|g|^2), the cost the naive loop had before
+`RDFS.Closure`'s indexed section. This section computes the SAME rounds
+with the same indexes and proves it, in the pattern of `closureFast`:
+
+* `deltaConclusionsIx` reads the second premise of the left delta term
+  from `StepIndex.build g` and that of the right term from
+  `StepIndex.build delta`; `deltaConclusionsIx_eq` proves it equal to
+  `deltaConclusions` as a LIST, from `RDFS.Closure`'s `rdfs7ForIx_eq` ..
+  `rdfs5ForIx_eq`.
+* `Graph.add` only appends, so the triples a round adds are the suffix of
+  the new graph after the old one, and none of them is in the old graph
+  up to `Triple.eqb`; `graphDiff_addAll` proves that `graphDiff` is
+  that suffix (`List.drop`).
+* `semiNaiveLoopFast` is `semiNaiveLoop` with those two changes and
+  `FastGraph.addAll`; `semiNaiveLoopFast_eq` proves the two equal, and
+  `semiNaiveLoop_eq_fast` is registered `@[csimp]`, so `semiNaive` and
+  every later caller compile to the indexed loop. The definition of
+  `semiNaiveLoop`, and every theorem stated about it
+  (`RDFS.SemiNaiveTheorems`), is unchanged. -/
+
+/-- `deltaConclusions` with the second premise read from indexes. -/
+def deltaConclusionsIx (delta g : Graph) : List Triple :=
+  let ixG := StepIndex.build g
+  let ixD := StepIndex.build delta
+  (delta.flatMap (rdfs7ForIx ixG) ++ g.flatMap (rdfs7ForIx ixD)) ++
+  (delta.flatMap (rdfs2ForIx ixG) ++ g.flatMap (rdfs2ForIx ixD)) ++
+  (delta.flatMap (rdfs3ForIx ixG) ++ g.flatMap (rdfs3ForIx ixD)) ++
+  (delta.flatMap (rdfs9ForIx ixG) ++ g.flatMap (rdfs9ForIx ixD)) ++
+  (delta.flatMap (rdfs11ForIx ixG) ++ g.flatMap (rdfs11ForIx ixD)) ++
+  (delta.flatMap (rdfs5ForIx ixG) ++ g.flatMap (rdfs5ForIx ixD))
+
+theorem deltaConclusionsIx_eq (delta g : Graph) :
+    deltaConclusionsIx delta g = deltaConclusions delta g := by
+  have h7g : rdfs7ForIx (StepIndex.build g) = rdfs7For g := funext (rdfs7ForIx_eq g)
+  have h2g : rdfs2ForIx (StepIndex.build g) = rdfs2For g := funext (rdfs2ForIx_eq g)
+  have h3g : rdfs3ForIx (StepIndex.build g) = rdfs3For g := funext (rdfs3ForIx_eq g)
+  have h9g : rdfs9ForIx (StepIndex.build g) = rdfs9For g := funext (rdfs9ForIx_eq g)
+  have h11g : rdfs11ForIx (StepIndex.build g) = rdfs11For g := funext (rdfs11ForIx_eq g)
+  have h5g : rdfs5ForIx (StepIndex.build g) = rdfs5For g := funext (rdfs5ForIx_eq g)
+  have h7d : rdfs7ForIx (StepIndex.build delta) = rdfs7For delta := funext (rdfs7ForIx_eq delta)
+  have h2d : rdfs2ForIx (StepIndex.build delta) = rdfs2For delta := funext (rdfs2ForIx_eq delta)
+  have h3d : rdfs3ForIx (StepIndex.build delta) = rdfs3For delta := funext (rdfs3ForIx_eq delta)
+  have h9d : rdfs9ForIx (StepIndex.build delta) = rdfs9For delta := funext (rdfs9ForIx_eq delta)
+  have h11d : rdfs11ForIx (StepIndex.build delta) = rdfs11For delta :=
+    funext (rdfs11ForIx_eq delta)
+  have h5d : rdfs5ForIx (StepIndex.build delta) = rdfs5For delta := funext (rdfs5ForIx_eq delta)
+  simp only [deltaConclusionsIx, deltaConclusions, rowDelta]
+  rw [h7g, h2g, h3g, h9g, h11g, h5g, h7d, h2d, h3d, h9d, h11d, h5d]
+
+/-- `addAll` appends: the result is the input followed by triples the
+input does not hold, up to `Triple.eqb`. -/
+theorem addAll_eq_append (ts : List Triple) :
+    ∀ g : Graph, ∃ suf : List Triple, addAll g ts = g ++ suf ∧
+      ∀ u, u ∈ suf → Graph.mem u g = false := by
+  induction ts with
+  | nil => intro g; exact ⟨[], by simp [addAll], by simp⟩
+  | cons t ts ih =>
+    intro g
+    obtain ⟨suf, he, hsuf⟩ := ih (g.add t)
+    by_cases hm : Graph.mem t g = true
+    · have hadd : g.add t = g := by simp [Graph.add, hm]
+      refine ⟨suf, ?_, ?_⟩
+      · simp only [addAll]; rw [he, hadd]
+      · intro u hu; have := hsuf u hu; rwa [hadd] at this
+    · have hadd : g.add t = g ++ [t] := by simp [Graph.add, hm]
+      refine ⟨t :: suf, ?_, ?_⟩
+      · simp only [addAll]; rw [he, hadd]; simp
+      · intro u hu
+        rcases List.mem_cons.mp hu with rfl | hu'
+        · simpa using hm
+        · have := hsuf u hu'
+          rw [hadd, Graph.mem_append] at this
+          simp only [Bool.or_eq_false_iff] at this
+          exact this.1
+
+/-- The delta of a round is the suffix the round appended. -/
+theorem graphDiff_addAll (g : Graph) (ts : List Triple) :
+    graphDiff (addAll g ts) g = (addAll g ts).drop g.length := by
+  obtain ⟨suf, he, hsuf⟩ := addAll_eq_append ts g
+  rw [he, List.drop_left]
+  have hl : g.filter (fun t => !(g.any (fun u => u.eqb t))) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro t ht
+    simp only [Bool.not_eq_true', Bool.not_eq_false, List.any_eq_true]
+    exact ⟨t, ht, Triple.eqb_refl t⟩
+  have hr : suf.filter (fun t => !(g.any (fun u => u.eqb t))) = suf := by
+    rw [List.filter_eq_self]
+    intro u hu
+    have := hsuf u hu
+    rw [graphMem_eq_any] at this
+    simp [this]
+  simp only [graphDiff, List.filter_append, hl, hr, List.nil_append]
+
+/-- `semiNaiveLoop` with indexed premises, bucketed membership and the
+appended suffix as the delta. -/
+def semiNaiveLoopFast (g delta : Graph) : Nat → Graph
+  | 0     => g
+  | n + 1 =>
+      if delta.isEmpty then g
+      else
+        let g' := ((FastGraph.ofGraph g).addAll (deltaConclusionsIx delta g)).toGraph
+        if g'.length = g.length then g
+        else semiNaiveLoopFast g' (g'.drop g.length) n
+
+theorem semiNaiveLoopFast_eq (n : Nat) :
+    ∀ g delta : Graph, semiNaiveLoopFast g delta n = semiNaiveLoop g delta n := by
+  induction n with
+  | zero => intro g delta; rfl
+  | succ n ih =>
+    intro g delta
+    have hstep : ((FastGraph.ofGraph g).addAll (deltaConclusionsIx delta g)).toGraph
+        = addAll g (deltaConclusions delta g) := by
+      rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+        deltaConclusionsIx_eq, addAll_eq_graphAddAll]
+    simp only [semiNaiveLoopFast, semiNaiveLoop, hstep]
+    split
+    · rfl
+    · split
+      · rfl
+      · rw [ih, graphDiff_addAll]
+
+/-- The compiler emits `semiNaiveLoopFast` for every later call of
+`semiNaiveLoop`. -/
+@[csimp] theorem semiNaiveLoop_eq_fast : @semiNaiveLoop = @semiNaiveLoopFast := by
+  funext g delta n
+  exact (semiNaiveLoopFast_eq n g delta).symm
+
 /-- The delta closure. The first round has no previous delta, so the
     whole graph is the delta — which makes round 1 exactly one naive
     step, as it must be. -/
@@ -126,6 +260,27 @@ delta reasoning above costs a slow run, not a wrong answer. -/
     the whole safety argument. -/
 def isNaiveFixpoint (h : Graph) : Bool :=
   (stepConclusions h).all (fun t => h.any (fun u => u.eqb t))
+
+/-- `isNaiveFixpoint` with the indexed conclusions and the bucketed
+membership test. -/
+def isNaiveFixpointFast (h : Graph) : Bool :=
+  let fg := FastGraph.ofGraph h
+  (stepConclusionsIx h).all (fun t => (fg.buckets.getD (tripleKey t) []).any (fun u => u.eqb t))
+
+theorem isNaiveFixpointFast_eq (h : Graph) : isNaiveFixpointFast h = isNaiveFixpoint h := by
+  have hb : ∀ t, ((FastGraph.ofGraph h).buckets.getD (tripleKey t) []).any (fun u => u.eqb t)
+      = h.any (fun u => u.eqb t) := by
+    intro t
+    rw [FastGraph.bucket_any t (FastGraph.ofGraph_inv h), FastGraph.ofGraph,
+      FastGraph.ofGraph_foldl_rev]
+    simp [List.any_reverse]
+  simp only [isNaiveFixpointFast, isNaiveFixpoint, stepConclusionsIx_eq, hb]
+
+/-- The compiler emits `isNaiveFixpointFast` for every later call of
+`isNaiveFixpoint`. -/
+@[csimp] theorem isNaiveFixpoint_eq_fast : @isNaiveFixpoint = @isNaiveFixpointFast := by
+  funext h
+  exact (isNaiveFixpointFast_eq h).symm
 
 def closureSemiNaiveChecked (g : Graph) : Graph :=
   let fast := semiNaive g
