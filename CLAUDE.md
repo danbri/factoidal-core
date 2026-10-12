@@ -151,6 +151,15 @@ Rules that follow:
 - Gap: no end-to-end theorem that a persisted query answers the same as
   the in-memory reference evaluator:
   <https://github.com/danbri/factoidal/issues/776>.
+- Next layout, approved by the owner on 2026-10-12 ("2 yes", to the
+  question "start the new Shardborough layout (SBM11) from the design
+  record, in its stages?"): SBM11, wire version 11 — 64-bit global term
+  ids, a byte-order global dictionary, sorted quad permutations PSO, POS,
+  SPO, OSP with per-block key metadata, and a streaming id query path.
+  Design and measured reasons:
+  `docs/designissues/2026-10-11-shardborough-vs-qlever.md`. Tracking:
+  <https://github.com/danbri/factoidal/issues/787>. IBK3 and IBK5 stay
+  readable as the differential oracle until stage 7.
 
 ## COTTAS suspended; Shardborough is primary; QLever reader (owner, 2026-10-11)
 
