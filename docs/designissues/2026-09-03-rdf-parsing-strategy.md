@@ -246,7 +246,10 @@ Modules, in data order:
   error messages and error offsets taken from the binary built before the
   change (Turtle, RDF 1.2 annotations, TriG); those in
   `TurtleChunkFoldTests.lean` run 500 objects and 500 groups through the
-  scanner walk, `parseTurtleText` and a 97-character chunking.
+  scanner walk, `parseTurtleText` and a 97-character chunking. The axiom
+  audit block of `TurtleTheorems.lean` prints the axioms of these theorems
+  and of the collection theorems above: `propext`, `Classical.choice` and
+  `Quot.sound` only (2026-10-12).
 - Still not proved: the CHUNK-BOUNDARY half — that the streaming execution
   (2.2) reaches the same accumulator whatever the chunking, and so equals
   `parseTurtle` on the same text. It rests on `TurtleStatementScan` never
