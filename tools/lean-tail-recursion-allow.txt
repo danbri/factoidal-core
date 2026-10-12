@@ -1384,3 +1384,9 @@ L4Factoidal_SPARQL_rewriteAggregateList  # (b) arguments of one function call in
 L4Factoidal_SPARQL_rewriteAggregateOpt  # (b) expression nesting in the query; mutual with rewriteAggregates
 L4Factoidal_SPARQL_mergeSortPrefix  # (c) top-down merge sort over solution rows: each call halves its input (splitInTwo), so depth is ceil(log2 n), at most 64; the merge is a loop (mergePrefix csimp to mergePrefixTR); same depth as core List.mergeSort
 L4Factoidal_Storage_SubjectRowIndexWireV2_candidatePages  # (c) Array.qsort over the distinct page references selected by one subject probe batch; median-of-three pivot, expected depth O(log n), worst case n
+#
+# --- Added 2026-10-12 (issue 776, SBM11 end-to-end lemmas) ---
+# The page binary search of Dict.lookupM and DictRange.lowerBoundM was a `for`
+# loop over [0:log2 pageCount + 2]; it is now this fuel-bounded monadic tail
+# call so that DictLookupTheorems.searchPagesM_spec can be stated.
+L4Factoidal_Storage_Sbm11_Dict_searchPagesM  # (c) binary search over the dictionary pages; fuel log2 pageCount + 2, so at most 66 nested binds for any page count below 2^64

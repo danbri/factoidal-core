@@ -673,7 +673,7 @@ What changes:
 | Block skipping | a block whose key range excludes a prefix holds no row with that prefix (follows from sortedness; the analogue of `zoneMap_sound`) | new, short |
 | Merge join | merge join on sorted inputs equals the reference join as multisets of solutions | new; hash join already proved (`SPARQL/IndexedEvalRefinement.lean`, list equality) |
 | Planner soundness | `plannerSoundnessSelect`/`Ask` (`Storage/PlannerSoundness.lean`) are stated over manifest entry selection; the evaluator-side restriction lemmas (`SPARQL/DatasetRestriction.lean`) carry over unchanged; the storage side becomes "the selected block ranges contain every quad that matches a key prefix of the pattern" | adapted |
-| End to end | the answer of the persisted query equals the reference evaluator over the generation's dataset | open: https://github.com/danbri/factoidal/issues/776 |
+| End to end | the answer of the persisted query equals the reference evaluator over the generation's dataset | open: https://github.com/danbri/factoidal/issues/776; plan, lemmas and status (block skipping, dictionary lookup, frame decoders and merge-join row pairs proved 2026-10-12): [`2026-10-12-sbm11-end-to-end-theorem.md`](2026-10-12-sbm11-end-to-end-theorem.md) |
 
 What still holds unchanged: the term codec v2 round trip for dictionary
 entries; SBM decode and encode round trip pattern; Merkle leaf construction;

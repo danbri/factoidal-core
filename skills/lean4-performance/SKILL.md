@@ -409,6 +409,20 @@ ladder of slices without large literals was linear (34 µs per triple), so
 the cost was isolated to the large-literal region and that region packed
 alone; do that before reading code for a superlinear ingest.
 
+## A loop rewritten for a proof keeps its speed only if measured
+
+On 2026-10-12 `Qlvr.mergeJoin` (nested `for` loops that read the join
+columns inline) was rewritten as tail calls with fuel (`mergeGo`,
+`runEnd`, `pairsRow`, `pairsBlock`) so that its row pairs could be proved
+(`Qlvr/MergeTheorems.lean`). The new functions take the join columns and
+the column test as closures. q07 on the olympics SBM11 generation (warm,
+20 runs per process, 8 processes) went from a minimum of 50 to 53 ms to 56
+to 67 ms. `@[specialize]` on the four functions made Lean compile a copy for
+the closures at the call site: 47 to 52 ms. Rule: when a hot loop becomes
+higher-order for a proof, mark it `@[specialize]` and measure the query that
+runs it before and after
+(`docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md` section 5).
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

@@ -484,7 +484,7 @@ theorem entryM_gdxBytes (tc : Nat) (es : List DirEntry) (hfit : es.all entryFits
 /-! ### GDV1 pages -/
 
 /-- The bytes of the pages before page `i`. -/
-def pagesBefore (ps : List (List Key)) (i : Nat) : Nat := ((ps.take i).map fun p => (encodePage p).length).sum
+noncomputable def pagesBefore (ps : List (List Key)) (i : Nat) : Nat := ((ps.take i).map fun p => (encodePage p).length).sum
 
 theorem dirEntriesGo_acc (ps : List (List Key)) : ∀ off acc,
     dirEntriesGo ps off acc = acc.reverse ++ dirEntriesGo ps off [] := by

@@ -2917,6 +2917,35 @@ Quot.sound` under `#print axioms`. Probe: `lake -d formal/lean4 exe
 l4geo` — 37 pass, 0 fail (out of 37), the same 37 assertions as the
 F\* `geosparql-v0` pin file.
 
+## SBM11 query path (Lean 4, 2026-10-12)
+
+The lemmas toward the end-to-end theorem of
+[#776](https://github.com/danbri/factoidal/issues/776): a persisted SBM11
+query answers what the reference evaluator answers. Plan, lemma table and
+open obstacles:
+[`designissues/2026-10-12-sbm11-end-to-end-theorem.md`](designissues/2026-10-12-sbm11-end-to-end-theorem.md).
+The end-to-end theorem itself is ⬜ OPEN.
+
+| Theorem | Module | Native anchor | Status | Hypotheses |
+|---|---|---|---|---|
+| `lookupM_encodeDict` — string-to-id finds exactly the keys: `res = some r ↔ keys[r]? = some k`, no error; the GDX1 header decodes to the counts | `Storage/Sbm11/DictLookupTheorems.lean` | `Dict.lookupM`, `Dict.searchPagesM` | ✅ PROVED (2026-10-12) | `encodeDict? keys = some (v, x)`; `m = Id`, `fetchOf` |
+| `lowerBoundM_encodeDict` — the dictionary lower bound is the number of keys below the target | `Storage/Sbm11/DictRangeTheorems.lean` | `DictRange.lowerBoundM` | ✅ PROVED (2026-10-12) | same |
+| `cmpBytesAt_eq`, `searchPagesM_spec`, `pageM_dict`, `firstKeyAt_page` — byte order, page search, page reads | `Storage/Sbm11/DictLookupTheorems.lean` | `Dict.cmpBytesAt`, `searchPagesM`, `pageM`, `firstKeyAt` | ✅ PROVED (2026-10-12) | — / page invariant / encoder output |
+| `decodeWords_eq` — the query path's frame decoder equals `decodeColumnAt` followed by `words` | `Storage/Sbm11/FrameWordsTheorems.lean` | `FrameWords.decodeWords` | ✅ PROVED (2026-10-12) | `n ≤ 2^64` rows |
+| `decodeWordsRange_eq` — the row-range decoder gives rows `[lo, hi)` of the words | `Storage/Sbm11/FrameRangeTheorems.lean` | `FrameWords.decodeWordsRange` | ✅ PROVED (2026-10-12) | the whole frame decodes; `lo ≤ hi ≤ n ≤ 2^64` |
+| `decodePrmAt_eq`, `decodePrmAt_admitted` — the byte-array PRM1 decoder equals `decodePrm`; what it reads is admitted | `Storage/Sbm11/PrmAtTheorems.lean` | `PrmAt.decodePrmAt` | ✅ PROVED (2026-10-12) | — |
+| `blocksFor_complete`, `decodedRow_selected` — block skipping by PRM1 keys reads every block that holds a row with the key prefix | `Storage/Sbm11/ScanTheorems.lean` | `IdQuery.blocksFor`, `selects` | ✅ PROVED (2026-10-12) | `prmAdmitted`; the row is between the block's first and last row |
+| `keyBound_spec`, `blockRows_exact`, `fullFor_row` — the in-block binary searches select exactly the rows with comparison `.eq` | `Storage/Sbm11/ScanTheorems.lean` | `IdQuery.keyBound` | ✅ PROVED (2026-10-12) | `rowKeyCmp` monotone over the rows |
+| `word64_bytes`, `at64_words`, `rowKeyCmp_words`, `scanRows_exact` — the scan's word reads are the decoded ids; the in-block range is exact over decoded columns | `Storage/Sbm11/ScanWordsTheorems.lean` | `Codec.Zstd.word64`, `IdQuery.rowKeyCmp` | ✅ PROVED (2026-10-12) | rows strictly increasing; ids below `2^64`; key of at most 4 columns |
+| `decodeColumn_local`, `decodeColumnAt_extract`, `decodeWords_extract` — a frame decoder reads only the bytes of its frame, so a slice that contains the frame decodes it the same | `Storage/Sbm11/FrameLocalTheorems.lean` | `Column.decodeColumnAt`, `FrameWords.decodeWords` | ✅ PROVED (2026-10-12) | `s ≤ i`, `j ≤ e ≤ b.size`; `n ≤ 2^64` for the words |
+| `decodeBlockAt_ok`, `decodeWords_of_decodeBlockAt`, `scanRows_exact_of_decodeBlockAt` — what activation's block check gives the scan | `Storage/Sbm11/BlockAtTheorems.lean` | `Block.decodeBlockAt` | ✅ PROVED (2026-10-12) | `decodeBlockAt b m base = .ok cols` |
+| `mergeGo_spec`, `mergeGo_pairs`, `mergeJoin_eq` — the merge join's index arrays are every matching row pair in left-then-right order | `Qlvr/MergeTheorems.lean` | `Qlvr.mergeJoin`, `mergeGo` | ✅ PROVED (2026-10-12) | join columns non-decreasing on both sides |
+| `decodeBlockAt` equals `decodeBlock`; `encodeColumnFast` equals `frameBytes`; FILTER-on-ids rules; ORDER BY shortcuts; JSON printer | record section 2 | — | 🟡 TESTED ONLY (`#guard`s, `tests/sbm11/run.sh`) | — |
+| Permutation equivalence of an admitted generation; packer correctness; `scanFoldM` as a whole; merge join against the reference join on solutions; hash join; the fallback; the end-to-end theorem | record section 3 | — | ⬜ OPEN (obstacles in the record) | — |
+
+Every theorem in this section reports `propext`, `Classical.choice`,
+`Quot.sound` or a subset under `#print axioms`.
+
 ## OWL 2 comprehension and existential witnesses (Lean 4, 2026-09-07)
 
 The PositiveEntailmentTest-only layer of `L4Factoidal/OWL/Comprehension.lean`
