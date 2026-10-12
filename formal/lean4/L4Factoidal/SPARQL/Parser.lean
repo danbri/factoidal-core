@@ -92,10 +92,15 @@ NOT PORTED (each with its reason)
   * SPARQL 1.1 Update ([29]-[52]). The tokenizer emits the update
     keywords, but `parse_single_update_op` and friends are a separate
     rung; `parseSparql` is a QUERY parser, as its name says.
-  * The jena-text `text:query` object grammar
-    (`parse_fulltext_query_object`). A vendor extension outside
-    §19.8, whose encoding lives in `SPARQL.FullText.fst` — no Lean
-    counterpart exists to encode into.
+
+PORTED IN A LATER WAVE (https://github.com/danbri/factoidal/issues/727):
+the jena-text `text:query` object grammar (`parse_fulltext_query_object`
+→ `pFulltextObject`), a vendor extension outside §19.8. A `text:query`
+predicate takes a bare string, `( field "term" )` or
+`( field "term" limit )`, read before any collection desugaring, and the
+resolved query is encoded into one marker-typed literal in the object
+position (`SPARQL/FullText.lean`). The grammar and the error messages are
+the F*'s.
 
 PORTED IN A LATER WAVE (issue #556): SPARQL 1.2 bare reified triples
 `<< s p o (~ reifier)? >>` in subject and object position, and the

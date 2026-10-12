@@ -9,8 +9,27 @@ pure default tokeniser, and the match predicate over token lists. There
 is no `score_bm25` and no `rank_results` — this module makes **no
 ranking claim**. A caller applies `limit` in dataset order only.
 
-`SPARQL/Parser.lean` records this module as absent ("whose encoding
-lives in `SPARQL.FullText.fst` — no Lean"). It is no longer.
+## Where it is wired (https://github.com/danbri/factoidal/issues/727)
+
+* The parser (`SPARQL/Parser.lean`, `pFulltextObject`) reads the jena-text
+  object argument after a `text:query` predicate and builds ONE triple
+  pattern whose object is the marker literal below.
+* The reference evaluator (`SPARQL/Query.lean`, `lowerBgp`) takes each such
+  pattern out of its BGP and joins back `fulltextSolutions`, computed from
+  the ACTIVE graph, so `GRAPH` chooses the graph that is searched.
+* The backend evaluator (`SPARQL/StoreDataset.lean`) and its fast paths
+  (LIMIT push-down, streaming `COUNT(*)`, ASK) would read the pattern as an
+  ordinary triple and answer nothing; `runSelectQueryBackendDataset` and
+  `runAskQueryBackendDataset` answer `none` for such a query
+  (`QueryPattern.mentionsFulltext`), and the caller's reference evaluator
+  answers.
+* The persisted-store planner (`DatasetRestriction.plannerFragment`,
+  `ShardManifest.nativeConstantPredicates?`) refuses such a pattern, so no
+  shard is skipped: the search reads every literal.
+
+Slice 1 over a persisted store is a SCAN of the decoded dataset; the
+`LiteralGramIndex` sidecar is not used. Record, parity check and cost:
+`docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`.
 
 ## The tokeniser floor, stated
 
@@ -49,8 +68,9 @@ against data that has no such triples.
 
 So the parser recognises `text:query` directly, before the generic
 collection desugaring runs, and encodes the resolved query into a single
-internally-tagged literal that the evaluation hooks decode back out of
-the object position. User-visible SPARQL syntax is unaffected.
+internally-tagged literal that the evaluator decodes back out of the
+object position (`TriplePattern.fulltext?`). User-visible SPARQL syntax is
+unaffected.
 -/
 import L4Factoidal.SPARQL.Algebra
 
@@ -65,8 +85,8 @@ def fulltextQueryPred : WfIri := ⟨"http://jena.apache.org/text#query", rfl⟩
 
 /-- The internal marker datatype carrying the parsed `(field, term,
     limit)` tuple through the ordinary literal AST. It never appears in
-    user-visible RDF data: the parser is the only producer and the two
-    evaluation hooks the only consumers. -/
+    user-visible RDF data: the parser is the only producer and
+    `TriplePattern.fulltext?` the only consumer. -/
 def fulltextArgsDatatype : WfIri := ⟨"http://jena.apache.org/text#query-args", rfl⟩
 
 /-- `field = none` is jena-text's bare-string two-arity form. -/
@@ -163,8 +183,8 @@ def decodeFulltextLiteral (l : WfLiteral) : Option FulltextQuery :=
         some { field := field, terms := term, limit := limit }
     | _ => none
 
-/-- The per-candidate filter both evaluation hooks apply after fetching
-    the candidate set from the backend. Takes the object as a `Term`
+/-- The per-candidate filter the evaluation (`fulltextCandidates`)
+    applies to each candidate triple. Takes the object as a `Term`
     because that is what a triple's object position holds. -/
 def objectMatchesQuery (ftq : FulltextQuery) : Term → Bool
   | .literal l => literalMatchesQuery ftq l

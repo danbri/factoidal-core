@@ -380,8 +380,10 @@ Kind 2, functions only F\* had:
   packFinish) held in a Map, opens it with `openStore(reader, {generation})`
   and queries the `Store`; the store and in-memory answers agree.
 - post20 (`text:query`) and post21 (`geof:distance`, `geof:envelope`):
-  expected failures naming https://github.com/danbri/factoidal/issues/727,
-  with a note in each post.
+  expected failures naming https://github.com/danbri/factoidal/issues/727
+  until 2026-10-10, when the Lean engine gained the three functions; the
+  cases are now assertions (record:
+  `docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`).
 - post18 (the browser durable update log): opened as
   https://github.com/danbri/factoidal/issues/728; the three lifecycle cells
   and the browser.js exports are expected failures naming it, and a note in

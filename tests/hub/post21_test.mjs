@@ -26,7 +26,7 @@
 // asserted here -- that's tests/web-demos/hub_post21_geo_check.sh
 // (headless Chromium, both the strict page and its live-mode twin).
 
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty, HUB_POST_DIR, xfail } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, runReactivePost, pretty, HUB_POST_DIR } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,10 +35,6 @@ import path from 'node:path';
 
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 
-// geof:distance and geof:envelope (GeoSPARQL 1.1 § 8.4): the F* engine
-// served them, the Lean engine does not yet:
-// https://github.com/danbri/factoidal/issues/727. Each case below is an expected failure naming it.
-const TEXT_GEO_ISSUE = 'https://github.com/danbri/factoidal/issues/727';
 const POST_FILE = '21-geosparql-geometry-and-topology.md';
 
 // The two vendored GeoJSON files the map cell fetches (task #105) --
@@ -289,7 +285,7 @@ test('post21 cell 4 (geof:sfDisjoint): the two cities outside the London box', a
   });
 });
 
-xfail('post21 cell 5 (geof:distance ORDER BY): London 0 first, then Manchester, Edinburgh', TEXT_GEO_ISSUE, async () => {
+test('post21 cell 5 (geof:distance ORDER BY): London 0 first, then Manchester, Edinburgh', async () => {
   const post = runReactivePost(cells, B);
   const result = await post.value(post.names[5]);
   assert.deepEqual(result, {
@@ -303,7 +299,7 @@ xfail('post21 cell 5 (geof:distance ORDER BY): London 0 first, then Manchester, 
   });
 });
 
-xfail('post21 cell 6 (geof:envelope): polygon envelopes to itself, point to a degenerate box', TEXT_GEO_ISSUE, async () => {
+test('post21 cell 6 (geof:envelope): polygon envelopes to itself, point to a degenerate box', async () => {
   const result = await runObservableCell(cells[6], B);
   assert.deepEqual(result, {
     kind: 'table',
