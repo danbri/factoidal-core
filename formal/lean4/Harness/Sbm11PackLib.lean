@@ -620,6 +620,16 @@ def printPermLines (tool : String) (outs : Array PermOut) : IO Unit := do
     let o := outs[p]!
     IO.println s!"{tool}: {permNamesArr[p]!} blocks={o.blocks} rows={o.rows} prb1-bytes={o.prbBytes} prm1-bytes={o.prmBytes} frames-const={o.codecs[0]!} frames-raw={o.codecs[1]!} frames-delta={o.codecs[2]!} col-bytes={o.frameBytes[0]!},{o.frameBytes[1]!},{o.frameBytes[2]!},{o.frameBytes[3]!} digest={o.digest.sum}/{o.digest.xor}"
 
+/-- CPU time of the calling thread in nanoseconds (Linux
+    `/proc/thread-self/schedstat`, first field); `none` where it cannot be
+    read. Phase 2 runs on one thread, so its CPU time is not inflated by
+    other processes the way wall time is under load. -/
+def threadCpuNs : IO (Option Nat) := do
+  try
+    let s ← IO.FS.readFile "/proc/thread-self/schedstat"
+    pure ((s.splitOn " ").head?.bind String.toNat?)
+  catch _ => pure none
+
 /-- `--phase2-only`: phase 1, then phase 2; the quad runs are removed, and
     GDV1, GDX1 and the remap files (`run-W-J.tmp.remap`) are kept, so that
     phase 2 can be timed and its output compared byte for byte
@@ -643,10 +653,15 @@ def runPhase2Only (source outDir : String) (workers runTerms : Nat) : IO UInt32 
     | .ok o => batches := batches ++ o.batches
     | .error e => throw e
   let t1 ← IO.monoNanosNow
+  let c1 ← threadCpuNs
   let (terms, pages, records) ← phase2 outDir batches
+  let c2 ← threadCpuNs
   let t2 ← IO.monoNanosNow
   for b in batches do IO.FS.removeFile b.quadRun
-  IO.println s!"sbm11-pack: phase2-only source={source} source-bytes={size} workers={workers} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2} peak-rss={← vmHWM}"
+  let cpu := match c1, c2 with
+    | some a, some b => s!" phase2-cpu-ms={ms a b}"
+    | _, _ => ""
+  IO.println s!"sbm11-pack: phase2-only source={source} source-bytes={size} workers={workers} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
   pure 0
 
 def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat) : IO UInt32 := do
