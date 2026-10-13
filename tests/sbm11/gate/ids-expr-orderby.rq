@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY an expression, with LIMIT, so the order is part of the answer.
+SELECT ?s ?a WHERE { ?s ex:age ?a } ORDER BY DESC(STR(?a)) ?s LIMIT 3

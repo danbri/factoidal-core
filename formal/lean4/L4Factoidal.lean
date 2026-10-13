@@ -376,6 +376,7 @@ import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
+import L4Factoidal.Storage.Sbm11.IdPostTheorems
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems

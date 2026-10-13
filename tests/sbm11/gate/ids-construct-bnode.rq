@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A template blank node is fresh per solution (6 solutions, 12 triples).
+CONSTRUCT { _:b ex:who ?s ; ex:age ?a } WHERE { ?s ex:age ?a }

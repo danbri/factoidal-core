@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# An expression error leaves the variable unbound ("abc" + 1), and so
+# does an unbound variable (?zz): SPARQL 1.1 section 18.2.4.2 (Extend).
+SELECT ?s (?a + 1 AS ?b) (?zz + 1 AS ?u) WHERE { ?s ex:age ?a }

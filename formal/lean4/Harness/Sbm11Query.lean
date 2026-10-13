@@ -833,6 +833,34 @@ private def stripDatasetClauses (query : Query) : Query :=
   .mk query.form [] query.pattern query.groupBy query.having query.modifier
       query.postValues query.base
 
+/-- Write a graph (CONSTRUCT, DESCRIBE) as N-Triples lines; returns the
+    number of triples. -/
+def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
+  let mut n := 0
+  for tr in graph do
+    match nquadLine (match tr.s with | .iri i => .iri i | .bnode b => .bnode b) (.iri tr.p) tr.o none with
+    | .ok l =>
+      emit (l ++ "\n").toUTF8
+      n := n + 1
+    | .error e => throw (IO.userError e)
+  return n
+
+/-- The query's environment for expressions (NOW read once, BASE, the
+    GeoSPARQL extension functions), without a dataset: the id path's
+    post-processing and residual FILTERs (issue 823) read no EXISTS. The
+    reference fallback adds its dataset (`runReference`). -/
+def queryEnv (q : Query) : IO EvalEnv := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  return { clockEnv with ext := L4Factoidal.Geo.extFns, base := q.base }
+
+/-- Write the answer of a post-processed id plan (issue 823) as
+    `runReference` writes the reference evaluator's answer of the same form. -/
+def emitPost (ans : IdQuery.PostAnswer) (emit : ByteArray → IO Unit) : IO Unit := do
+  match ans with
+  | .solutions vars rows => emit (QueryResult.bindings vars rows).toSrjFast.toUTF8
+  | .boolean b => emit (QueryResult.boolean b).toSrjFast.toUTF8
+  | .graph g => discard <| emitGraph g emit
+
 /-- The reference evaluator over the selected dataset (the evaluation of
     `Harness/QuadQuery.lean`'s `finish`). -/
 def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray → IO Unit) :
@@ -872,13 +900,7 @@ def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray 
     let graph := match q.form with
       | .construct _ => evalConstruct env applied stripped
       | _ => evalDescribe env applied stripped
-    let mut n := 0
-    for tr in graph do
-      match nquadLine (match tr.s with | .iri i => .iri i | .bnode b => .bnode b) (.iri tr.p) tr.o none with
-      | .ok l =>
-        emit (l ++ "\n").toUTF8
-        n := n + 1
-      | .error e => throw (IO.userError e)
+    let n ← emitGraph graph emit
     return (n, line)
 
 /-! ## Running a query -/
@@ -905,7 +927,18 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
   | .ok plan =>
     let minRows ← minRangeRows
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
-    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par).run with
+    let env ← queryEnv q
+    match plan.post with
+    | some ps =>
+      -- issue 823: the WHERE clause on ids, the reference post-processing on
+      -- the decoded solutions
+      match ← (IdQuery.runPostM (ss.storeWith threads sip minRows) plan ps env).run with
+      | .ok (ans, st) =>
+        emitPost ans emit
+        return { rows := st.rows, path := "path=ids", plan := st.plan }
+      | .error e => throw (IO.userError s!"id query failed: {e}")
+    | none =>
+    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER error removes the row: xsd:integer("abc") is an error.
+SELECT ?s ?a WHERE { ?s ex:age ?a FILTER(xsd:integer(?a) > 71) }

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER over the variable of a GRAPH group inside its own group.
+SELECT ?s ?g WHERE { GRAPH ?g { ?s ex:knows ?o } FILTER(STRENDS(STR(?g), "1")) }
