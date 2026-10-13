@@ -29,6 +29,10 @@ DIR/owlready2/hermit/HermiT.jar), with OpenJDK 21.
 
 Usage: python3 tools/owl-real-hermit.py OUT --hermit-jar JAR [--cap-s 600]
        [--xmx 3g]
+
+Exit 2 when JAR is not a file or when Java cannot start HermiT from it. Until
+2026-10-13 a wrong JAR path gave exit 0 and "HermiT not decided" on every
+pair of every ontology, which reads like a slow reasoner, not a setup error.
 """
 
 import argparse
@@ -91,6 +95,9 @@ def main():
     ap.add_argument("--cap-s", type=int, default=600)
     ap.add_argument("--xmx", default="3g")
     a = ap.parse_args()
+    if not os.path.isfile(a.hermit_jar):
+        print(f"owl-real-hermit: {a.hermit_jar} is not a file", file=sys.stderr)
+        return 2
     rows = [json.loads(l) for l in open(os.path.join(a.out, "results.jsonl")) if l.strip()]
     names = []
     for r in rows:
@@ -111,6 +118,10 @@ def main():
                 if "<http://www.w3.org/2002/07/owl#imports>" not in line:
                     g.write(line)
         rc, out = hermit(a.hermit_jar, a.xmx, a.cap_s, ["-k", ttl])
+        if "Could not find or load main class" in out or "Unable to access jarfile" in out:
+            print(f"owl-real-hermit: Java cannot start HermiT from {a.hermit_jar}:\n"
+                  f"{out.strip()[-300:]}", file=sys.stderr)
+            return 2
         if "Inconsistent ontology" in out or "InconsistentOntologyException" in out:
             consistent = False
         elif "owl#Thing is satisfiable" in out:

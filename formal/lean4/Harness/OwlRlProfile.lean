@@ -138,12 +138,16 @@ round. `lo` is the first position of the delta in `i.all`. -/
   return (e, n, ed, nd)
 
 /-- Emitted conclusions and time of one row in a semi-naive round: its delta
-term at the old driving triples, the full row at the new ones. -/
+term at the old driving triples whose predicate is the row's guard (the
+dispatch of `oldBlockFast`), the full row at the new ones. -/
 @[noinline] def rowStatsSN (i : Index) (s sD : Store) (lo : Nat) (r : RowSpec) : Nat := Id.run do
   let mut e := 0
   for h : j in [0:i.all.size] do
     let d := i.all[j]
-    let out := if j < lo then r.delta s sD lo d else r.f s d
+    -- At an old driving triple the library evaluates only the rows whose
+    -- guard is the triple's predicate (`oldBlockFast`, through `dispatchMap`).
+    let out := if j < lo then (if r.guard == some d.p then r.delta s sD lo d else [])
+      else r.f s d
     e := e + out.length
   return e
 

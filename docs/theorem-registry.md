@@ -3017,7 +3017,7 @@ axioms`: `propext`, `Classical.choice`, `Quot.sound`.
 |---|---|---|---|---|
 | `indexedClosureSN_eq` — the semi-naive loop returns the list of `closure` at every fuel | `OWL/RLClosureIndexed.lean` | `indexedClosureSN` (`csimp` for `closure`, `closureFix`) | ✅ PROVED | none |
 | `addAll_stepConclusionsSN` — one semi-naive round is one naive round, as a list | same | `stepConclusionsSN` | ✅ PROVED | `RoundOk` (every naive round establishes it: `RoundOk.next`) |
-| `rowTable_ok`, `prpSpo2_ok`, `clsInt1_ok`, `RowSpec.skip_ok` — the 74 delta terms meet `RowSpec.Ok` | same | `rowTable` | ✅ PROVED | none |
+| `rowTable_ok`, `prpSpo2_ok`, `clsInt1_ok` — the 74 delta terms meet `RowSpec.Ok` (`RowSpec.skip_ok` is proved too; the skip terms are not in `rowTable`, record § 11.5) | same | `rowTable` | ✅ PROVED | none |
 | `rowTable_guard`, `dispatchMap_getD`, `oldBlockFast_eq` — the predicate dispatch lists exactly the rows that can emit | same | `dispatchMap` | ✅ PROVED | none |
 | `indexedClosureSN_sound` — every triple of the closure is `Derives` | `OWL/RLSemiNaiveTheorems.lean` | `indexedClosureSN` | ✅ PROVED | none |
 | `stepSNI_saturated`, `stepSNI_closed` — a round that adds nothing leaves the graph closed under every row | same | `stepSNI` | ✅ PROVED | `RoundOk` |
