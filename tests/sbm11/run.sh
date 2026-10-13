@@ -28,15 +28,21 @@
 #                take the reference fallback (path=reference): EXISTS, NOT
 #                EXISTS, MINUS, sub-SELECT, the OPTIONAL shapes outside the id
 #                fragment (nested, a variable two groups share that the base
-#                does not bind, a FILTER in the group over a base variable, a
-#                FILTER beside it over an optional variable, OPTIONAL first,
-#                GRAPH in the group) and the other forms only the reference
-#                semantics decide (CLAUDE.md anti-pattern 34). The
-#                ids-optional-* queries run OPTIONAL on ids (issue 775): no
-#                match, one, several, FILTER in the group true, false and an
-#                error, two groups, GRAPH in the base, ORDER BY the optional
-#                variable (with LIMIT, so the order is part of the answer),
-#                COUNT and GROUP BY over it, DISTINCT, SELECT *.
+#                does not bind, a FILTER in the group over a base variable,
+#                OPTIONAL first, GRAPH in the group), EXISTS in a SELECT
+#                expression, DESCRIBE, a FILTER inside GRAPH ?g over ?g, and
+#                the other forms only the reference semantics decide
+#                (CLAUDE.md anti-pattern 34). The ids-optional-* queries run
+#                OPTIONAL on ids (issue 775): no match, one, several, FILTER
+#                in the group true, false and an error, two groups, GRAPH in
+#                the base, ORDER BY the optional variable (with LIMIT, so the
+#                order is part of the answer), COUNT and GROUP BY over it,
+#                DISTINCT, SELECT *. The ids-ask-*, ids-construct-*,
+#                ids-expr-*, ids-agg-* and ids-filter-* queries run ASK,
+#                CONSTRUCT, SELECT expressions, aggregates and FILTERs outside
+#                Expr.backendLocal on ids (issue 823), with the error cases: a
+#                FILTER error removes the row, an aggregate over an empty
+#                group, an unbound variable in an expression.
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem) and `l4sbm11
 #                frame-check` (the word decoder against decodeColumnAt) on

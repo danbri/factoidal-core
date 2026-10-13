@@ -676,6 +676,10 @@ fi
 # COUNT(?n) 1,000) and to 2 (ORDER BY DESC(?n) with unbound last, LIMIT 3):
 # the merge pairs, `OptJoin.outerPairs` and `gatherOpt` over 150,000 rows;
 # every query of the case must run on the id path.
+# Issue 823: SUM and MAX over the 150,000 joined rows (the rows decoded by
+# `IdQuery.decodeRowsM`, then the reference `selectPost`), a REGEX (a residual
+# FILTER) counted over the 150,000 labels, an ASK whose REGEX no joined row
+# passes, and ORDER BY an expression (`selectPost` over 150,000 rows).
 sbm11_query_case() { # sbm11_query_case <route> <prefix...>
   local route="$1"; shift
   local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-query-out" rc log r q
@@ -721,7 +725,21 @@ $(printf '%s' "$r" | grep -o '"value":"[0-9]*"' | tr '\n' ' ') $(printf '%s' "$r
       [ "$rc" -ne 0 ] && break
     done
   fi
-  log="$log$sip"
+  # issue 823: the reference post-processing and residual FILTERs on ids
+  local post=""
+  if [ "$rc" -eq 0 ]; then
+    for q in \
+      "SELECT (SUM(?n) AS ?t) (MAX(?n) AS ?mx) WHERE { ?s p:label ?l . ?s p:n ?n }" \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l FILTER(REGEX(?l, \"^label 1\")) }" \
+      "ASK { ?s p:label ?l . ?s p:n ?n FILTER(REGEX(?l, \"^nomatch\")) }" \
+      "SELECT (STRLEN(?l) AS ?k) WHERE { ?s p:label ?l } ORDER BY DESC(?k) LIMIT 1"; do
+      r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$out" "$P$q" 2>&1)"; rc=$?
+      post="$post
+$(printf '%s' "$r" | grep -o '"value":"[0-9]*"\|"boolean":[a-z]*' | tr '\n' ' ') $(printf '%s' "$r" | grep -o 'path=[a-z]*' | head -1) $(printf '%s' "$r" | grep -o 'Stack overflow' | head -1) rc=$rc"
+      [ "$rc" -ne 0 ] && break
+    done
+  fi
+  log="$log$sip$post"
   if printf '%s' "$log" | grep -q 'Stack overflow'; then
     score_case "$route" sbm11-query overflow "STACK OVERFLOW (exit $rc)"
   elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' || ! printf '%s' "$log" | grep -q '"value":"61111"' \
@@ -729,10 +747,14 @@ $(printf '%s' "$r" | grep -o '"value":"[0-9]*"' | tr '\n' ' ') $(printf '%s' "$r
       || ! printf '%s' "$log" | grep -q '"value":"1000"' || ! printf '%s' "$log" | grep -q '"value":"149998"' \
       || printf '%s' "$log" | grep -q 'path=reference' \
       || [ "$(printf '%s' "$sip" | grep -c '"value":"150000" .*sideways ?s: 150000 candidates')" -ne 2 ] \
-      || ! printf '%s' "$sip" | grep -q '"value":"1000"'; then
+      || ! printf '%s' "$sip" | grep -q '"value":"1000"' \
+      || ! printf '%s' "$post" | grep -q '"value":"11249925000" "value":"149999" path=ids' \
+      || ! printf '%s' "$post" | grep -q '"value":"61111" path=ids' \
+      || ! printf '%s' "$post" | grep -q '"boolean":false path=ids' \
+      || ! printf '%s' "$post" | grep -q '"value":"12" path=ids'; then
     score_case "$route" sbm11-query error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
   else
-    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY); both joins again with 150000 candidates (issue 809)"
+    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY); both joins again with 150000 candidates (issue 809); SUM and MAX over 150000 decoded rows, REGEX counted over 150000 labels, ASK false, ORDER BY an expression (issue 823)"
   fi
 }
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
