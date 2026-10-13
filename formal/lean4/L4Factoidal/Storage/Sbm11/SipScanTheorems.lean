@@ -526,6 +526,16 @@ theorem forIn_blocks_sip (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec)
       exact h2
     · rw [a2, a1, List.flatMap_cons, List.append_assoc, getElem!_pos ms k hk']
 
+/-- The loop of `scanFoldSipM` over the entries `metasFor metas key` is the
+    loop over the blocks `blocksFor metas key` (issue 805). -/
+theorem forIn_metasFor_sip {m : Type → Type} [Monad m] [LawfulMonad m] {σ : Type} (st : Store m)
+    (spec : ScanSpec) (cands : Array UInt64) (f : σ → Chunk → ExceptT String m (σ × Bool))
+    (sortVar : Option String) (ox : OvCtx) (metas : Array BlockMeta) (key : Array UInt64) (s : ScanState σ) :
+    forIn (List.range (metasFor metas key).size) s (scanBlockSipM st spec cands f (metasFor metas key) sortVar ox) =
+      forIn (blocksFor metas key).toList s (scanBlockSipM st spec cands f metas sortVar ox) :=
+  forIn_metasFor_of (fun a i => scanBlockSipM st spec cands f a sortVar ox i)
+    (fun a a' i i' h => by funext s; unfold scanBlockSipM; rw [h]) metas key s
+
 /-! ## The scan with candidates (lemma L4i) -/
 
 /-- **L4i.** A scan with candidates (in non-decreasing order) of an admitted
@@ -537,7 +547,8 @@ theorem forIn_blocks_sip (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec)
 theorem scanFoldSipM_tuples (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (hk : spec.key.size < 4)
     (cands : Array UInt64) (hs : Sip.Sorted cands)
     (prb : ByteArray) (ms : List BlockMeta)
-    (hmetas : st.metas spec.perm = pure ms.toArray)
+    (hrange : st.blocksForRange spec.perm spec.key = pure (metasFor ms.toArray spec.key))
+    (hcount : st.blockCount spec.perm = pure ms.length)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
     (hovl : (st.ovl spec.perm).isEmpty = true)
     (hadm : prmAdmitted spec.perm ms = true)
@@ -569,16 +580,16 @@ theorem scanFoldSipM_tuples (st : Store Id) (spec : ScanSpec) (hspec : SpecOk sp
     · omega
     · omega
   unfold scanFoldSipM
-  rw [hmetas, pure_bind]
+  rw [hrange, pure_bind, hcount, pure_bind]
   obtain ⟨s', hfor, hacc, hstop⟩ := forIn_blocks_sip st spec hspec hk cands hs prb ms hprb hfits hblocks
     (match spec.outCols[0]? with
       | some c => if c == spec.key.size then spec.outVars[0]? else none
       | none => none) _ hon
     (blocksFor ms.toArray spec.key).toList hLk
-    { acc := [], stats := { blocksTotal := ms.toArray.size }, insPos := 0, stopped := false }
+    { acc := [], stats := { blocksTotal := ms.length }, insPos := 0, stopped := false }
   refine ⟨s'.stats, ?_⟩
   simp only []
-  rw [← Array.forIn_toList]
+  rw [forIn_metasFor_sip]
   erw [hfor]
   rw [pure_bind]
   simp only [hon, Bool.false_and, Bool.false_eq_true, if_false]
@@ -624,7 +635,8 @@ theorem scanFoldSipM_filter (st : Store Id) (spec : ScanSpec) (hspec : SpecOk sp
     (hout : spec.outCols[0]? = some spec.key.size)
     (cands : Array UInt64) (hs : Sip.Sorted cands)
     (prb : ByteArray) (ms : List BlockMeta)
-    (hmetas : st.metas spec.perm = pure ms.toArray)
+    (hrange : st.blocksForRange spec.perm spec.key = pure (metasFor ms.toArray spec.key))
+    (hcount : st.blockCount spec.perm = pure ms.length)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
     (hovl : (st.ovl spec.perm).isEmpty = true)
     (hadm : prmAdmitted spec.perm ms = true)
@@ -632,8 +644,8 @@ theorem scanFoldSipM_filter (st : Store Id) (spec : ScanSpec) (hspec : SpecOk sp
     ∃ T s1 s2, scanFoldM st spec true [] (collectWith colTuples) = pure (T, s1) ∧
       scanFoldSipM st spec cands [] (collectWith colTuples) =
         pure (T.filter (fun t => cands.contains (t.headD 0).toUInt64), s2) := by
-  obtain ⟨s1, h1⟩ := scanFoldM_columns st spec hspec prb ms hmetas hprb hovl hadm hblocks
-  obtain ⟨s2, h2⟩ := scanFoldSipM_tuples st spec hspec hk cands hs prb ms hmetas hprb hovl hadm hblocks
+  obtain ⟨s1, h1⟩ := scanFoldM_columns st spec hspec prb ms hrange hcount hprb hovl hadm hblocks
+  obtain ⟨s2, h2⟩ := scanFoldSipM_tuples st spec hspec hk cands hs prb ms hrange hcount hprb hovl hadm hblocks
   refine ⟨_, s1, s2, h1, ?_⟩
   rw [h2]
   have hsz : 0 < spec.outCols.size := by

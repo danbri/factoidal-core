@@ -44,9 +44,14 @@
 #                FILTER error removes the row, an aggregate over an empty
 #                group, an unbound variable in an expression.
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
-#                list decoder of the round-trip theorem) and `l4sbm11
-#                frame-check` (the word decoder against decodeColumnAt) on
-#                every PRM1 file and every frame of the generation.
+#                list decoder of the round-trip theorem; and the PRM1 range
+#                search of issue 805, PrmRange.rangeM, against decoding the
+#                whole file and selecting, on 385 keys per PRM1 file, over the
+#                bytes in memory and through query sessions under --verify
+#                none and merkle) and `l4sbm11 frame-check` (the word decoder
+#                against decodeColumnAt) on every PRM1 file and every frame of
+#                the generation. The process time of a lookup on the DBpedia
+#                slice is tests/sbm11/process-start.sh (issue 805).
 #   (f) verify   q01 to q21 answered with --verify merkle and --verify none
 #                (https://github.com/danbri/factoidal/issues/796): the
 #                outputs must be byte-identical. Parts (a) to (e) use the

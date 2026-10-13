@@ -8,7 +8,9 @@ end-to-end theorem open (section 2 table, section 3 obstacles); L5g and L5g′
 proved 2026-10-13, L5g″ open; L4g, L4h, L4i and L5h (the scan with candidates
 and the semi-join reduction of sideways information passing,
 https://github.com/danbri/factoidal/issues/809) proved 2026-10-13 (section
-12). Gap issue: https://github.com/danbri/factoidal/issues/776.
+12); L4a′ and L2d′ (PRM1 entries by key range, binary search over
+positioned reads, https://github.com/danbri/factoidal/issues/805) proved
+2026-10-13 (section 13). Gap issue: https://github.com/danbri/factoidal/issues/776.
 Tracking: https://github.com/danbri/factoidal/issues/787. Related work
 issues: https://github.com/danbri/factoidal/issues/792 (dictionary, item 4),
 https://github.com/danbri/factoidal/issues/793 (items 2 and 4),
@@ -85,6 +87,7 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L2b | `FrameWords.decodeWords b n i = decodeWordsRef b n i` (the words of `decodeColumnAt`), `n ≤ 2^64` | **proved now** | `FrameWordsTheorems.decodeWords_eq` |
 | L2c | `FrameWords.decodeWordsRange b n i lo hi` = rows `[lo, hi)` of the words, when the whole frame decodes | **proved now** | `FrameRangeTheorems.decodeWordsRange_eq` |
 | L2d | `PrmAt.decodePrmAt` equals `Block.decodePrm` (https://github.com/danbri/factoidal/issues/793 item 2) | **proved now** | `PrmAtTheorems.decodePrmAt_eq`, `decodePrmAt_admitted` |
+| L2d′ | The range search over positioned reads of a PRM1 file (issue 805): when `decodePrmAt b = some (p, ms)` and a read of `[off, off + len)` returns those bytes of `b`, `PrmRange.openM` gives the entry count and `PrmRange.rangeM` over `bytesReader` gives `IdQuery.metasFor ms key`, the same entries as decoding the whole file and selecting; an entry read from a slice of the file is the entry at the shifted position | **proved (2026-10-13)** | `PrmRangeTheorems.rangeM_bytes`, `openM_bytes`, `entryOfM_bytes`, `sliceOfM_bytes`, `entryAt_extract`, `decodePrmAt_some` |
 | L2e | `Block.decodeBlockAt` equals `Block.decodeBlock` | tested only | `Block.lean` `#guard`s; `stage3_check.sh` tamper cases |
 | L2e′ | What activation's block check gives: a block that `decodeBlockAt` admits has four frames that `decodeColumnAt` decodes to `m.rows` ids below `2^64`, ending at the PRM1 lengths, rows strictly increasing from `m.first` to `m.last`; the word decoder on those frames gives the words of the checked columns | **proved now** | `BlockAtTheorems.decodeBlockAt_ok`, `colsSortedGo_sorted`, `decodeColumnAt_lt`, `decodeWords_of_decodeBlockAt` |
 | L2f | `Column.encodeColumnFast` equals `Column.frameBytes` (https://github.com/danbri/factoidal/issues/795 item 3) | tested only | `Column.lean` `#guard`s (8 columns); the packer decodes every frame it writes; activation re-encodes every frame |
@@ -93,10 +96,11 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L3b | An admitted generation's four permutations denote one quad set (https://github.com/danbri/factoidal/issues/793 item 4) | **proved (second landing)**, over the exact check that activation now runs (section 9); the bucket files of the check are tested, not proved | `PermSet.perms_same`, `perms_same_mem`, `sameQuads_perm`; `Harness/Sbm11PermCheck.lean`; `tests/sbm11/run.sh` part (j) |
 | L3c | Packer correctness, E0 | open | — |
 | L4a | Block skipping is complete: a row of block `k` whose key prefix equals the scan key is in a block that `blocksFor` returns and `selects` admits | **proved now** | `ScanTheorems.blocksFor_complete`, `decodedRow_selected`, `chain_sorted` |
+| L4a′ | The range search over an array (issue 805): over the PRM1 entries of an admitted permutation, `PrmRange.rangeM` over `arrayReader` (a binary search for the first block whose last row is not below the key prefix, a binary search for the first block from there whose first row is above it, the slice between) is `IdQuery.metasFor`, the entries of the blocks `blocksFor` returns; the second search is exact (the least index where a monotone test holds, with fuel `log2 n + 2`) | **proved (2026-10-13)** | `PrmRangeTheorems.rangeM_array`, `rangeM_reader`, `metasFor_search`, `searchPure_spec`, `searchPure_firstBlockGo`, `blocksForGo_upto` |
 | L4b | Inside a block, the two binary searches select exactly the rows whose comparison is `.eq`, given that `rowKeyCmp` is monotone over the rows; the `full` shortcut | **proved now** | `ScanTheorems.keyBound_spec`, `blockRows_exact`, `fullFor_row` |
 | L4c | `rowKeyCmp` over the words of decoded columns is `prefixCmp` of the rows; so the in-block range is exact over decoded columns, and over the columns of every block that activation admitted | **proved now** | `ScanWordsTheorems.rowKeyCmp_words`, `scanRows_exact`; `BlockAtTheorems.scanRows_exact_of_decodeBlockAt` |
 | L4d | The metadata shortcuts of `scanFoldM`: `colConst?` is sound on a block that activation admitted: columns 0 to 2 from the row order; the graph column because a frame of nine bytes that holds nine rows or more can only be a constant frame (a raw frame takes 8 bytes per row, a delta frame at least one), so L2f is not needed | **proved (second landing)** | `ScanFoldTheorems.colConst_sound`, `decodeColumnAt_short`, `between_agree` |
-| L4e | `scanFoldM` as a whole: the chunks are the rows of the permutation with the key prefix, filtered by `checks`, `named`, `eqs` | **proved (second landing)** for a store over the PRM1 entries and PRB1 bytes in memory (`m = Id`) with no overlay, under the activation checks (`prmAdmitted`, `decodeBlockAt` of every block); the chunk tuples (`tuples`: constants, else columns) and, with `fill = true`, the columns alone (`colTuples`) | `ScanFoldTheorems.scanFoldM_tuples`, `scanFoldM_columns`, `blockChunk_tuples`, `chunkOfCols_tuples`, `keyRange_spec`, `readFrames_slice`, `selectRows_spec`, `blockPlan_keep` |
+| L4e | `scanFoldM` as a whole: the chunks are the rows of the permutation with the key prefix, filtered by `checks`, `named`, `eqs` | **proved (second landing)** for a store over the PRM1 entries and PRB1 bytes in memory (`m = Id`) with no overlay, under the activation checks (`prmAdmitted`, `decodeBlockAt` of every block); the chunk tuples (`tuples`: constants, else columns) and, with `fill = true`, the columns alone (`colTuples`). Since issue 805 the store gives the entries of one key range (`blocksForRange`); the hypothesis is that it answers `metasFor`, which L4a′ and L2d′ prove of the in-memory and the positioned-read readers; `scanFoldM_tuples_prm` is L4e for a store that reads a PRM1 file by `rangeM` (the PRM1 admission then follows from the decoding) | `ScanFoldTheorems.scanFoldM_tuples`, `scanFoldM_columns`, `blockChunk_tuples`, `chunkOfCols_tuples`, `keyRange_spec`, `readFrames_slice`, `selectRows_spec`, `blockPlan_keep` |
 | L4f | A frame decoder reads only the bytes of its frame: in any slice `[s, e)` of the array that contains the frame, the column (and the words) at the shifted start are the same (`readFrames` reads one such slice per block) | **proved now** | `FrameLocalTheorems.decodeColumn_local`, `decodeColumnAt_extract`, `decodeWords_extract` |
 | L4g | Sideways information passing, frame level (https://github.com/danbri/factoidal/issues/809): on a frame that `decodeWords` decodes to the words `ws`, `Sip.findWords` returns exactly the rows of `[lo, hi)` whose word is a candidate, in order, with their words, from any candidate pointer, for candidates in non-decreasing order; `Sip.gatherWords` and `Sip.pickWords` return the words of strictly increasing rows; the pointer test is membership | **proved (2026-10-13)** | `SipTheorems.findWords_spec`, `gatherWords_spec`, `pickWords_data`, `probe_mem`, `sorted_spec` (with `deltaFindGo_step`, `deltaFindGo_eq`, `deltaGatherGo_step`, `deltaGatherGo_eq`, `wordsFindGo_spec`, `decodeWords_delta`) |
 | L4h | Block skipping by candidates: a block that `Sip.mayHold` rules out (no candidate between the join-column values of its first and last rows, `IdQuery.sipRange`) holds no row the scan keeps whose join column is a candidate | **proved (2026-10-13)** | `SipTheorems.mayHold_false`; `SipScanTheorems.sipRange_bounds`, `sipSkip_none`, `col_le_of_le`, `prefixCmp_eq_cols` |
@@ -473,3 +477,44 @@ What the proofs taught:
   `mergeSortBy`, which has no theorem; the planner uses the candidates only
   when they are in order and contain every left value, both checked at run
   time, and `sipCands_sound` uses only those checks.
+
+## 13. PRM1 entries by key range (issue 805, 2026-10-13)
+
+https://github.com/danbri/factoidal/issues/805. The query engine no longer
+receives the whole PRM1 array: `IdQuery.Store.blocksForRange perm key`
+gives the entries of the blocks that `blocksFor` selects
+(`IdQuery.metasFor`), `Store.blockCount perm` the block count. Record of the
+change and its measurements:
+[`2026-10-12-sbm11-stage4.md`](2026-10-12-sbm11-stage4.md) section 13.
+
+How the pieces compose: `rangeM_bytes` (L2d′) says that the I/O store's
+answer, computed by binary search over positioned reads of a PRM1 file that
+`decodePrmAt` decodes, is `metasFor` of the decoded entries; `rangeM_array`
+(L4a′) says the same of the in-memory store. L4e and L4i
+(`scanFoldM_tuples`, `scanFoldSipM_tuples`) take that equation as their
+hypothesis on the store (`hrange`), and `forIn_metasFor` turns the loop over
+the positions of the selected entries into the loop over the block numbers
+of `blocksFor`, after which the earlier proofs run unchanged.
+`scanFoldM_tuples_prm` composes L2d′ and L4e. Not proved: that the host's
+`pread` and the verified chunk reader return the file's bytes (the I/O
+boundary); `l4sbm11 prm-check` compares the three readers (bytes in memory,
+`pread`, Merkle chunks) with decoding the whole file on 385 keys per PRM1
+file.
+
+What the proofs taught:
+
+- **Keep a hypothesis that rewrites a size out of the simp set.**
+  `decodePrmAt_some` first called `simp [..., hsz]` with
+  `hsz : b.size = 22 + 92 * rd64 b 6`. The file needed 13.8 GB and was
+  killed by the out-of-memory handler; a bisection with a 6 GB guard found
+  that one `simp` call. Without `hsz` the call closes the goal at once.
+- **`rw` does not see through `have`.** After `unfold scanFoldM` the body is
+  a chain of `have`s; `rw [forIn_metasFor]` found no instance until
+  `simp only []` had removed them, as in the earlier proofs of the same
+  function.
+- **One search lemma for both searches.** `searchPure_spec` states the
+  binary search once, over any test that is monotone below `n` (false, then
+  true); the first search is `firstBlockGo` itself
+  (`searchPure_firstBlockGo`, no monotonicity needed), the second needs the
+  order of an admitted PRM1 (`firstGt_mono` from `chain_sorted`) and the
+  fuel bound `n < 2^(log2 n + 1)` (`Nat.lt_log2_self`).

@@ -158,7 +158,7 @@ not written yet.
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]`; `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
-| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
+| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN` (PRM1 decoders, and the issue 805 range search against decoding the whole file on 385 keys per PRM1 file, over bytes, `pread` and Merkle chunks), `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
 | SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
@@ -570,7 +570,8 @@ stage 4 record). `l4sbm11 query|serve|scan|count|dump|dump-ids ...
 --verify merkle|none`; in Lean, `Sbm11Gen.openGen v` and
 `Sbm11Query.openSession v` take a `Sbm11Gen.Verify` (no library default).
 `merkle`: every read is widened to its 65,536-byte chunks and each chunk is
-checked by its Merkle proof; PRM1 and GDX1 are checked by SHA-256. `none`:
+checked by its Merkle proof (PRM1 too since issue 805); GDX1 is read whole
+on the first dictionary access and checked by SHA-256. `none`:
 exact `pread` ranges, no hashing, only the manifest and the file lengths are
 checked at open; a byte changed after activation is NOT detected
 (`tests/sbm11/run.sh` part (g) pins this). CLI default: `none` when a
@@ -579,6 +580,31 @@ checked at open; a byte changed after activation is NOT detected
 `stats`, `prm-check`, `frame-check` always check. The format is unchanged:
 the packer writes the roots and `.merkle` sidecars either way. Bench one
 mode with `VERIFY=none tests/sbm11/bench.sh GEN`.
+
+PRM1 by key range (2026-10-13, https://github.com/danbri/factoidal/issues/805;
+record: section 13 of the stage 4 record). A query process never reads a
+PRM1 file whole: the first use of a permutation reads its 22-byte header
+(`PrmRange.openM`: magic, permutation code, block count, file length), and
+each scan asks the store for the entries of its key range
+(`IdQuery.Store.blocksForRange perm key`, `Store.blockCount perm`; the
+`metas` field that held the whole array is gone). The I/O store answers with
+`PrmRange.rangeM`: a binary search (one 92-byte entry per probe) for the
+first block whose last row is not below the key prefix, a second for the
+first block from there whose first row is above it, and one read of the
+entries between; the answer is kept per key in the session. Proved:
+`PrmRangeTheorems.rangeM_bytes` (over positioned reads of a PRM1 file that
+decodes, the answer is `IdQuery.metasFor` of the decoded entries),
+`rangeM_array` (the in-memory store), `scanFoldM_tuples_prm` (L4e over that
+store). DBpedia slice d01 (one subject), `--verify none`: 220.0 ms and
+8,210,091 bytes read per process before, 12.0 ms and 27,795 bytes after;
+the process time is now about the start-up of the binary (10.5 ms with no
+arguments).
+Gates for a change there: `l4sbm11 prm-check GEN` on olympics and the
+DBpedia slice, `tests/sbm11/process-start.sh` (d01 under 50 ms; exit 2
+without the DBpedia slice), `tests/sbm11/run.sh`, `census.sh` and
+`threads.sh`. The query and serve paths (`Sbm11Query.openSession`) read
+PRM1 by range; `Sbm11Gen.openGen` (`scan`, `count`, `dump`, `verify`,
+`activate`) decodes every PRM1 file at open, as before.
 
 SBM11 stage 5 (2026-10-12, https://github.com/danbri/factoidal/issues/791):
 updates and compaction. `l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)`

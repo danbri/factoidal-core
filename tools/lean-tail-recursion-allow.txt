@@ -1370,6 +1370,7 @@ L4Factoidal_Storage_SubjectRowIndexWireV2_candidatePages  # (c) Array.qsort over
 # loop over [0:log2 pageCount + 2]; it is now this fuel-bounded monadic tail
 # call so that DictLookupTheorems.searchPagesM_spec can be stated.
 L4Factoidal_Storage_Sbm11_Dict_searchPagesM  # (c) binary search over the dictionary pages; fuel log2 pageCount + 2, so at most 66 nested binds for any page count below 2^64
+L4Factoidal_Storage_Sbm11_PrmRange_searchM  # (c) binary search over the PRM1 entries of one permutation (issue 805); fuel log2 blockCount + 2, so at most 66 nested binds for any block count below 2^64
 # --- Added 2026-10-12 (issue 801, KR 2.1 capability-aware planner) ---
 # Plan is a query-plan tree built by the planner from one requirement; the
 # recursion follows the plan nesting. Rows and tuples go through List.flatMap,
