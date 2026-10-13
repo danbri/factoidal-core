@@ -841,6 +841,63 @@ export function queryStore(
 /** The store handles this engine instance holds open, with the residency caps (op storeHandleList). */
 export function listStores(): Promise<Record<string, unknown>>;
 
+/**
+ * A durable update log (hub post 18): the object deltaLogOpen() returns.
+ * In the browser the log is an IndexedDB database named `dbName`; under
+ * Node it lives in the memory of the process.
+ */
+export interface DeltaLogHandle {
+  dbName: string;
+}
+
+/** What deltaLogInspect() reports (op deltaLogDecode). */
+export interface DeltaLogInspection {
+  /** Batches (records) that verify, from the start of the log. */
+  batches: number;
+  /** Entries in those batches. */
+  entries: number;
+  /** The log ends with a record that does not verify (a torn write). */
+  torn: boolean;
+  /** Bytes from the first record that does not verify to the end. */
+  tornBytes: number;
+  /** Bytes of the whole log. */
+  logBytes: number;
+  records: Array<{ seq: number; epoch: number; entries: number }>;
+}
+
+/** Open (create when absent) a durable update log. Default name 'factoidal-delta-log'. */
+export function deltaLogOpen(dbName?: string): Promise<DeltaLogHandle>;
+
+/**
+ * Append one SPARQL Update request as one record (op deltaLogEncode).
+ * INSERT DATA, DELETE DATA, CLEAR DEFAULT, CLEAR GRAPH, DROP GRAPH and
+ * CREATE GRAPH are admitted; any other form rejects and nothing is written.
+ */
+export function deltaLogAppend(
+  handle: DeltaLogHandle,
+  sparqlUpdate: string,
+  options?: { epoch?: number }
+): Promise<{ seq: number; opCount: number }>;
+
+/** The records of the log, in commit order, as hexadecimal text joined by "\n". */
+export function deltaLogReadAllHex(handle: DeltaLogHandle): Promise<string>;
+
+/**
+ * Merge on read (op deltaLogMerge): `baseNQuads` with the batches of the log
+ * applied in commit order, as N-Quads. A torn record and every record after
+ * it are not applied.
+ */
+export function deltaLogMerge(handle: DeltaLogHandle, baseNQuads: string): Promise<string>;
+
+/** What the log holds, record by record (op deltaLogDecode). */
+export function deltaLogInspect(handle: DeltaLogHandle): Promise<DeltaLogInspection>;
+
+/** Remove the log and its records. */
+export function deltaLogDestroy(handle: DeltaLogHandle): Promise<void>;
+
+/** TEST ONLY: cut the last 4 bytes of the last record, as a torn write would. False when the log is empty. */
+export function _deltaLogCorruptLastForTest(handle: DeltaLogHandle): Promise<boolean>;
+
 /** The collection root of the sample store this package carries (Node only). */
 export function sampleStorePath(): string;
 
@@ -1289,6 +1346,8 @@ export function capabilities(): Promise<{
   sparql12: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
+  /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */
+  deltaLog: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -1392,6 +1451,13 @@ declare const _default: {
   openStore: typeof openStore;
   queryStore: typeof queryStore;
   listStores: typeof listStores;
+  deltaLogOpen: typeof deltaLogOpen;
+  deltaLogAppend: typeof deltaLogAppend;
+  deltaLogReadAllHex: typeof deltaLogReadAllHex;
+  deltaLogMerge: typeof deltaLogMerge;
+  deltaLogInspect: typeof deltaLogInspect;
+  deltaLogDestroy: typeof deltaLogDestroy;
+  _deltaLogCorruptLastForTest: typeof _deltaLogCorruptLastForTest;
   xsltTransform: typeof xsltTransform;
   mathmlEval: typeof mathmlEval;
   xformsRecalc: typeof xformsRecalc;

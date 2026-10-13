@@ -384,6 +384,8 @@ CASES=(
   "sparql-replace-long queryDataset         args-sparql-replace-long.json"
   "regex-replace-groups queryDataset        args-regex-replace-groups.json"
   "rdfc-bnode-chain    canonicalizeToNQuads args-rdfc-bnode-chain.json"
+  "delta-log-decode    deltaLogDecode       args-delta-log-decode.json"
+  "delta-log-merge     deltaLogMerge        args-delta-log-merge.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
@@ -400,6 +402,26 @@ if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
   done
 fi
 
+# The delta-log fixture is written by gen_cases.py, not by the engine, so a
+# run that only "did not overflow" could pass on a log the engine reads as
+# torn at its first record. This case checks the decode itself: all 100,000
+# batches, one entry each, nothing torn (issue 728).
+deltalog_count_case() { # deltalog_count_case <route> <prefix...>
+  local route="$1"; shift
+  local out rc want='"batches":100000,"entries":100000,"torn":false,"tornBytes":0'
+  out="$(run_capped "$TIMEOUT" "$@" "$CLI" call deltaLogDecode "$FIXTURES/args-delta-log-decode.json" 2>&1)"; rc=$?
+  if printf '%s' "$out" | grep -q 'Stack overflow'; then
+    score_case "$route" delta-log-count overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -qF "$want"; then
+    score_case "$route" delta-log-count error "exit $rc: $(printf '%s' "$out" | head -c 160)"
+  else
+    score_case "$route" delta-log-count ran "100,000 batches, not torn"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  deltalog_count_case native env
+fi
+
 NATIVE_CANARY="not run"
 if [ "$CANARY" = 1 ]; then
   echo
@@ -414,6 +436,7 @@ if [ "$CANARY" = 1 ]; then
       set -- $row
       canary_case "$1" "$2" "$3"
     done
+    deltalog_count_case canary "${CANARY_PREFIX[@]}"
   else
     record canary control 1 "native canary NOT SCORED: $CONTROL_WHY"
     NATIVE_CANARY="NOT SCORED (control failed)"

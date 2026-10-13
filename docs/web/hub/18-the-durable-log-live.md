@@ -21,14 +21,22 @@ broken every wasm-side capability probe (SHACL, ShEx, OWL/RDFS
 closure, RML, CSVW, JSON-LD, RIF, and this delta log alike) is fixed.
 
 > **On this site's engine.** The hub runs the Lean 4 engine of
-> `@factoidal/core` since 0.9.0. The Lean package has no durable update
-> log for a browser host yet, so steps 2–4 below answer
-> `{available: false}` here; step 1 runs. The gap is
-> https://github.com/danbri/factoidal/issues/728, with expected-failure
-> cases in `tests/hub/post18_test.mjs`. The rest of this page records
-> the F\* delta log that served these cells until 0.9.0.
+> `@factoidal/core` since 0.9.0, and all four cells below run on it. The
+> log is `L4Factoidal.Storage.BrowserLog`
+> ([`BrowserLog.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Storage/BrowserLog.lean)):
+> one record per update, in the same DLB1 byte format as the F\* module
+> this page describes, written by the engine op `deltaLogEncode` and read
+> back, checked and merged by `deltaLogMerge`. `browser.js` keeps each
+> record in IndexedDB as the hexadecimal text the engine gives and reads
+> no byte of it. The theorems are in `BrowserLogTheorems.lean`: decode
+> inverts encode (`decode_encodeLog`); a log whose last record is cut at
+> any byte decodes to exactly the batches before it
+> (`decode_encodeLog_cut`); a merge equals applying the batches one by
+> one (`merge_encodeLog`). Issue:
+> https://github.com/danbri/factoidal/issues/728. The sections after the
+> cells record the F\* delta log that served these cells until 0.9.0.
 
-Nothing below is a mock. Every cell calls the real
+Nothing below is a mock. Until 0.9.0 every cell called the
 `RDF_Store_Columnar_DeltaLog`/`RDF_Store_Columnar_DeltaMerge` functions
 `fstar.exe --codegen` produced from
 [`RDF.Store.Columnar.DeltaLog.fst`](https://github.com/danbri/factoidal/blob/claude/main/formal/fstar/RDF.Store.Columnar.DeltaLog.fst) —
@@ -83,7 +91,14 @@ part that's new.
 
 ## Step 2 of 4: persist it, durably, via IndexedDB
 
-This is not the same code path as Step 1. `deltaLogAppend` translates
+This is not the same code path as Step 1. On the Lean engine
+`deltaLogAppend` calls the op `deltaLogEncode`: the update becomes one
+`DeltaBatch` (`SPARQL.deltaBatchForUpdate?`; the blank nodes of INSERT
+DATA get a prefix of the record's `seq`, so each request has fresh ones)
+and the batch becomes one DLB1 record (`serializeDeltaBatch?`). The host
+counts the records, has the engine encode, and adds the record in one
+IndexedDB transaction, so two tabs never get the same `seq`. On the F\*
+engine before 0.9.0, `deltaLogAppend` translated
 a SPARQL Update into a `delta_batch`
 (`RDF_Store_Columnar_DeltaMerge.update_ops_to_delta_entries` — INSERT
 DATA/DELETE DATA/CLEAR/DROP/CREATE only, the same subset the native
@@ -135,7 +150,11 @@ starting over.
 
 This cell does not share any JavaScript state with Step 2 — it opens
 the *same* `IndexedDB` database fresh, reads every committed batch back
-(`deltaLogReadAllHex`), and merges them onto an empty base graph via
+(`deltaLogReadAllHex`), and merges them onto an empty base graph. On the
+Lean engine the merge is `BrowserLog.merge`, whose replay step is proved
+equal to the served store's (`applyEntry_eq_store`), and whose result on
+each admitted update form is checked at build time against the SPARQL 1.1
+Update semantics. On the F\* engine it was
 `RDF_Store_Columnar_DeltaMerge.apply_entries_ref`, the function backed
 by a **proved** correspondence lemma
 (`lemma_merge_on_read_matches_apply_entries` — for every triple,
@@ -144,11 +163,12 @@ membership in the merged read).
 
 ```observable-js
 try {
-  // Step 2's cell and this one mount independently and can start
-  // executing concurrently on the very FIRST page load this browser
-  // has ever seen -- a brief wait here avoids racing Step 2's write.
-  // On every later reload this is moot: Step 2's earlier writes are
-  // already durably committed long before this page load even starts.
+  // Step 2's cell and this one mount independently and run at the
+  // same time. Step 2's append waits for the engine to load; waiting
+  // for the same engine here, and a little longer, lets this page
+  // load's append commit before this cell reads the log. The batches
+  // of earlier page loads are committed before this load starts.
+  await Factoidal.capabilities?.();
   await new Promise((resolve) => setTimeout(resolve, 300));
 
   const handle = await Factoidal.deltaLogOpen("factoidal-hub-post18-lifecycle");
@@ -174,7 +194,10 @@ page load) — proof the merged view isn't starting from nothing.
 [`tests/web-demos/browser_persistence_smoke.sh`](https://github.com/danbri/factoidal/blob/claude/main/tests/web-demos/browser_persistence_smoke.sh)
 is the harder version of this same proof: real headless Chromium, a
 real `page.reload()`, and an assertion that the merged output is
-byte-identical before and after — 17 of 17 checks, not a sample of 1.
+byte-identical before and after — 18 of 18 checks on the Lean engine
+(17 of 17 on the F\* bundle), not a sample of 1.
+[`tests/web-demos/hub_post18_value_check.sh`](https://github.com/danbri/factoidal-core/blob/main/tests/web-demos/hub_post18_value_check.sh)
+reads the values of this page's own cells in Chromium, across a reload.
 
 ## Step 4 of 4: the torn write
 
@@ -219,8 +242,10 @@ INSERT DATA { <http://example.org/frank> <http://xmlns.com/foaf/0.1/name> "Frank
 ```
 
 `frankWasLostToCorruption` should read `true`: Frank's batch is the one
-truncated, `parse_delta_batch`'s checksum framing rejects it as
-unparseable, and it is **skipped whole** — never partially decoded,
+truncated, the record's length field asks for more bytes than are left
+(on the Lean engine `parseDeltaBatch_take` proves this for a cut at any
+byte; the F\* engine's `parse_delta_batch` did the same), and it is
+**skipped whole** — never partially decoded,
 never silently accepted with garbage bytes. `eveSurvivesCorruption`
 should also read `true`: Eve's earlier, uncorrupted batch is untouched.
 This is the same "clean prefix survives, corrupt entry never appears"

@@ -71,6 +71,15 @@ export const openStore = api.openStore;
 export const queryStore = api.queryStore;
 export const listStores = api.listStores;
 
+// The durable update log (hub post 18)
+export const deltaLogOpen = api.deltaLogOpen;
+export const deltaLogAppend = api.deltaLogAppend;
+export const deltaLogReadAllHex = api.deltaLogReadAllHex;
+export const deltaLogMerge = api.deltaLogMerge;
+export const deltaLogInspect = api.deltaLogInspect;
+export const deltaLogDestroy = api.deltaLogDestroy;
+export const _deltaLogCorruptLastForTest = api._deltaLogCorruptLastForTest;
+
 // Validation and reasoning
 export const shaclValidate = api.shaclValidate;
 export const shexValidate = api.shexValidate;

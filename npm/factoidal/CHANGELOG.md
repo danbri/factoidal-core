@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **The durable update log in the browser, on the Lean engine**
+  ([issue 728](https://github.com/danbri/factoidal/issues/728); hub post 18).
+  `deltaLogOpen`, `deltaLogAppend`, `deltaLogReadAllHex`, `deltaLogMerge`,
+  `deltaLogDestroy` and `_deltaLogCorruptLastForTest` are back, with the names
+  and result shapes of the F\* browser entry before 0.9.0, and
+  `deltaLogInspect` and the capability `deltaLog` are new. One record per
+  update, in the DLB1 format of the store's delta log; the engine ops
+  `deltaLogEncode`, `deltaLogDecode` and `deltaLogMerge` make every decision
+  about the bytes (checksums, a torn last record, merge on read), with
+  theorems in `formal/lean4/L4Factoidal/Storage/BrowserLogTheorems.lean`.
+  The browser entries keep the records in IndexedDB; the Node entries keep
+  them in the memory of the process. A record that does not verify, and
+  every record after it, is not applied.
+
 - **SPARQL `SERVICE` failures inside `EXISTS` and under an outer `SILENT`**
   ([issue 735](https://github.com/danbri/factoidal/issues/735); SPARQL 1.1
   Federated Query §2.3 and §3.2). A failed `SERVICE` call without `SILENT`

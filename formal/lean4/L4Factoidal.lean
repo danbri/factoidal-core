@@ -540,6 +540,9 @@ import L4Factoidal.Storage.PagedTermDictionaryV2
 import L4Factoidal.Storage.PagedTermDictionaryV2Tests
 import L4Factoidal.Storage.PagedTermDictionaryV2Theorems
 import L4Factoidal.Storage.DeltaLogTests
+import L4Factoidal.Storage.BrowserLog
+import L4Factoidal.Storage.BrowserLogTheorems
+import L4Factoidal.Storage.BrowserLogTests
 import L4Factoidal.Storage.PageCache
 import L4Factoidal.Storage.PageCacheTests
 import L4Factoidal.Storage.PageCacheTheorems

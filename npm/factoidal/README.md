@@ -394,6 +394,29 @@ use the native `l4block-*` tools. Large collections need a deeper call
 stack than Node gives by default: see "A handle on a large store: the
 worker route" below.
 
+## The durable update log
+
+A SPARQL Update log that survives a page reload (hub post 18,
+[issue 728](https://github.com/danbri/factoidal/issues/728)). In the browser
+each log is an IndexedDB database; under Node it lives in the memory of the
+process.
+
+```js
+import { deltaLogOpen, deltaLogAppend, deltaLogMerge, deltaLogInspect } from '@factoidal/core/browser';
+const log = await deltaLogOpen('my-log');
+const { seq, opCount } = await deltaLogAppend(log,
+  'INSERT DATA { <http://example.org/a> <http://example.org/p> "v" }');
+const nquads = await deltaLogMerge(log, '');          // base N-Quads + the log
+const { batches, torn } = await deltaLogInspect(log);  // what the log holds
+```
+
+`deltaLogAppend` admits INSERT DATA, DELETE DATA, CLEAR DEFAULT, CLEAR GRAPH,
+DROP GRAPH and CREATE GRAPH; any other form rejects and nothing is written.
+Each update is one record: the engine writes its bytes (a DLB1 frame with
+checksums) and, on merge, decodes the records in order and stops at the first
+that does not verify, so a torn last write is never applied. The page stores
+the records and reads none of their bytes.
+
 ## The `factoidal` command
 
 Installing this package puts a `factoidal` command on PATH. It reads a

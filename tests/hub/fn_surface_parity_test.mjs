@@ -29,15 +29,10 @@ import { xfail } from './_helpers.mjs';
 
 // Names a published post calls that the Lean package does not serve yet,
 // each with its open issue. Every one is also an expected-failure case
-// below, so the entry must go when the package gains the name.
-const KNOWN_GAPS = {
-  'Factoidal.deltaLogOpen': 'https://github.com/danbri/factoidal/issues/728',
-  'Factoidal.deltaLogAppend': 'https://github.com/danbri/factoidal/issues/728',
-  'Factoidal.deltaLogReadAllHex': 'https://github.com/danbri/factoidal/issues/728',
-  'Factoidal.deltaLogMerge': 'https://github.com/danbri/factoidal/issues/728',
-  'Factoidal.deltaLogDestroy': 'https://github.com/danbri/factoidal/issues/728',
-  'Factoidal._deltaLogCorruptLastForTest': 'https://github.com/danbri/factoidal/issues/728',
-};
+// below, so the entry must go when the package gains the name. (The six
+// deltaLog* names of post 18 were here until the Lean package served them,
+// https://github.com/danbri/factoidal/issues/728.)
+const KNOWN_GAPS = {};
 
 const HUB_DIR = new URL('../../docs/web/hub/', import.meta.url);
 const hub = readFileSync(new URL('../../docs/_includes/hub.njk', import.meta.url), 'utf8');
@@ -86,6 +81,16 @@ test('fn-surface parity: every fn.* and Factoidal.* name called by any published
   assert.deepEqual(missingFactoidal, [],
     'Factoidal.* names npm/factoidal/browser.js does not export');
 });
+
+// Post 18's durable update log, an expected failure naming
+// https://github.com/danbri/factoidal/issues/728 until the Lean package
+// served it.
+for (const name of ['deltaLogOpen', 'deltaLogAppend', 'deltaLogReadAllHex', 'deltaLogMerge',
+  'deltaLogDestroy', '_deltaLogCorruptLastForTest']) {
+  test(`fn-surface parity: npm/factoidal/browser.js exports ${name}`, () => {
+    assert.equal(typeof browser[name], 'function', `Factoidal.${name} is not exported`);
+  });
+}
 
 for (const [qualified, issue] of Object.entries(KNOWN_GAPS)) {
   xfail(`fn-surface parity: npm/factoidal/browser.js exports ${qualified.split('.')[1]}`, issue, () => {

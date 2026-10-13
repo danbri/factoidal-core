@@ -241,6 +241,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
+             `Wasm.Ops.DeltaLog,
              -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
              -- the op modules the split moved out of the core closure, and the
              -- build-time agreement checks of the two tables.

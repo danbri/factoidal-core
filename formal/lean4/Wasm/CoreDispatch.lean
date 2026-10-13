@@ -16,7 +16,8 @@ four below; this module imports only the op modules of the core subset:
     the SERVICE endpoint registry (`ExtFns`, `ServiceReg`), `queryRaw`;
   * RDFC-1.0 canonicalisation (`Canon`);
   * the RDFS, RDFS-Plus and OWL 2 RL closures (`Reason`);
-  * SHACL validation (`Validate`).
+  * SHACL validation (`Validate`);
+  * the durable update log of a browser host (`DeltaLog`).
 
 JSON-LD is outside the core: `Wasm/Ops/Parse.lean` takes the reader of the
 syntaxes outside its table as an argument (`ExtraReader`), and this table
@@ -48,6 +49,7 @@ import Wasm.Ops.ServiceReg
 import Wasm.Ops.QueryExtras
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
+import Wasm.Ops.DeltaLog
 
 namespace L4Wasm.Core
 
@@ -79,7 +81,7 @@ def coreOpNames : List String :=
   , "rhoDfFragmentCheck"
   , "rdfsPlusClosure"
   , "queryRaw"
-  , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames
+  , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames
 
 /-- The op names of the core engine that hold state (an `IO.Ref`), served by
 `callIO` only: dataset handles, the §17.6 registry, the SERVICE registry, and
@@ -242,6 +244,11 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "rdfsPlusClosure"      => some (arity1 op rdfsPlusClosure args)
   | "queryRaw"             => some (arity3Now op (fun a b c n => queryRawBy extra a b c n) args)
   | "shaclValidate"        => some (arity2 op shaclValidate args)
+  -- The durable update log of a browser host (`Wasm/Ops/DeltaLog.lean`,
+  -- https://github.com/danbri/factoidal/issues/728).
+  | "deltaLogEncode"       => some (arity3 op deltaLogEncode args)
+  | "deltaLogDecode"       => some (arity1 op deltaLogDecode args)
+  | "deltaLogMerge"        => some (arity2 op deltaLogMerge args)
   | _ =>
       match callParity op args with
       | some r => some r

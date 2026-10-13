@@ -76,6 +76,12 @@ def samePure (op : String) (args : List String) : Bool :=
 #guard samePure "parseDocument" [nt, "ntriples", "", "{\"lenient\":true}"]
 #guard samePure "queryDataset" [nt]
 #guard samePure "noSuchOp" []
+#guard samePure "deltaLogEncode" ["INSERT DATA { <http://e/a> <http://e/p> \"v\" }", "0", "0"]
+#guard samePure "deltaLogEncode" ["DELETE WHERE { ?s ?p ?o }", "0", "0"]
+#guard samePure "deltaLogDecode" [""]
+#guard samePure "deltaLogDecode" ["zz"]
+#guard samePure "deltaLogMerge" [nt, ""]
+#guard samePure "deltaLogMerge" [nt, "444c"]
 
 -- JSON-LD: read by the full table, refused by name by the core table.
 private def jl : String := "{\"@id\":\"http://e/a\",\"http://e/p\":\"v\"}"

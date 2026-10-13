@@ -409,8 +409,52 @@ if not os.path.exists(dins):
             fh.write('<http://example.org/sbm11/new%07d> <http://example.org/p/label> "new %d"@en .\n' % (i, i))
         fh.write("}\n")
 
+# ------------------------------- browser update log (issue 728, post 18)
+# A log of 100,000 records for the ops deltaLogDecode and deltaLogMerge
+# (formal/lean4/Wasm/Ops/DeltaLog.lean): one DLB1 record per committed
+# update, each one batch of one entry that adds <http://e/s> <http://e/p>
+# <http://e/o> to the default graph, seq 0 to 99,999. The decoders over the
+# log are loops (one record, one entry per iteration); a frame per record
+# would overflow here. The bytes are written here, from the format of
+# L4Factoidal/Storage/BrowserLog.lean (DLB1 around DLE1 frames, additive
+# mod-2^32 checksums), so the fixture costs no engine run. A wrong byte
+# would show as a torn log: run.sh checks that the engine decodes all
+# 100,000 batches and reports the log clean.
+N_DLOG = int(os.environ.get("STACK_DELTA_RECORDS", "100000"))
+
+
+def dl_u32(n):
+    return struct.pack("<I", n)
+
+
+def dl_lstring(text):
+    b = text.encode()
+    return dl_u32(len(b)) + b
+
+
+def dl_frame(magic, body):
+    return dl_u32(magic) + dl_u32(1) + dl_u32(len(body)) + body + dl_u32(sum(body) % 4294967296)
+
+
+DL_PAYLOAD = (bytes([0])                                   # entry tag: add
+              + bytes([0]) + dl_lstring("http://e/s")      # subject: IRI
+              + dl_lstring("http://e/p")                   # predicate
+              + bytes([0]) + dl_lstring("http://e/o")      # object: IRI
+              + bytes([0]))                                # graph: default
+DL_ENTRY = dl_frame(0x31454C44, DL_PAYLOAD)               # 'DLE1'
+
+
+def dl_record(seq):
+    body = struct.pack("<QQ", seq, 0) + dl_u32(1) + DL_ENTRY
+    return dl_frame(0x31424C44, body)                     # 'DLB1'
+
+
+dl_hex = "\n".join(dl_record(i).hex() for i in range(N_DLOG))
+args("args-delta-log-decode.json", dl_hex)
+args("args-delta-log-merge.json", "", dl_hex)
+
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
     "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
-    "manifestBytes": len(man)}))
+    "manifestBytes": len(man), "deltaLogRecords": N_DLOG}))

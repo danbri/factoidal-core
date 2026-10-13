@@ -386,8 +386,9 @@ Kind 2, functions only F\* had:
   `docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`).
 - post18 (the browser durable update log): opened as
   https://github.com/danbri/factoidal/issues/728; the three lifecycle cells
-  and the browser.js exports are expected failures naming it, and a note in
-  the post says steps 2-4 answer `{available: false}` on the Lean engine.
+  and the browser.js exports were expected failures naming it until
+  2026-10-13, when the Lean package gained the log (section 11); the cases
+  are now assertions.
 
 Kind 3, cells that needed an F\* build: posts 06, 07, 09, 10, 13, 23, 25,
 45, 48 and 49 call the typed functions (`shexValidate`, `jsonldToRdf`,
@@ -1136,6 +1137,163 @@ at 12,000; js_of_ocaml 0.35 s, 1.7 s, 6.6 s at 48,000), both fail
 `canonicalize` of 24,000 blank-node quads (stack overflow), and both fail
 SHACL validation of 24,000 triples (the bench of that run kept no error
 text), which the Lean module answers in 1.5 s.
+
+## 11. The durable update log of a browser host (issue 728, 2026-10-13)
+
+https://github.com/danbri/factoidal/issues/728 (OKR batch 1, KR 4.2,
+https://github.com/danbri/factoidal/issues/768). Hub post 18 keeps a SPARQL
+Update log in the browser: it appends a batch, reads the log back after a
+page reload, merges it on read, and shows that a torn last batch is not
+applied. Before 0.9.0 the F\* bundle served these cells
+(`RDF.Store.Columnar.DeltaLog.fst`, `DeltaMerge.fst`); the Lean package had no
+such functions, and the cells answered `{available: false}`.
+
+### What the log is
+
+One record for each committed update request. The records, in commit order,
+are the log. The host stores the records and gives them back; it does not
+read them. Lean makes every decision about the bytes, with no I/O:
+`formal/lean4/L4Factoidal/Storage/BrowserLog.lean`.
+
+### Byte format
+
+A record is the DLB1 frame of one `DeltaBatch`, the format of the F\*
+`serialize_delta_batch` and of the store's `Storage.DeltaLog`
+(`serializeDeltaBatch?`), little-endian:
+
+    magic u32 'DLB1' (44 4C 42 31) | version u32 = 1 | body length u32
+    body: seq u64 | epoch u64 | entry count u32 | entries
+    checksum u32 = sum of the body bytes modulo 2^32
+
+Each entry is a DLE1 frame of the same shape (magic 'DLE1', its own length and
+checksum) around one `DeltaEntry`: add or remove of a triple in a graph,
+clear, drop or create of a graph; terms are tag bytes and u32
+length-prefixed UTF-8 strings. The log is the records concatenated. These are
+the bytes of a Shardborough `deltas.dlog` after its eight-byte DLOG header:
+`parseLog_header_append` proves that the store's reader finds the same
+batches in them.
+
+Reused from the store without change (`Storage.DeltaLog`): the record and
+entry codecs, the checksum, and `replayDeltaBatches` (the reference decoder).
+Not reused: the store's files (`deltas.dlog`, `compacted.epoch`) and its
+writer. The pure parts were usable as a library, so the browser log is a
+small module over them: `encodeBatch?`, the loop decoders `entriesLoop`,
+`parseBatch` and `decodeGo`, and `merge`. The store's
+`parseNFramedDeltaEntries` keeps one stack frame per entry (allow-list line);
+`entriesLoop` is its loop twin, proved equal (`entriesLoop_eq`). The replay
+step `applyEntry` is a copy of `SPARQL.StoreEndpoint.applyDeltaEntry` (that
+module links the HTTP server, which the core wasm must not); `rfl` proves the
+two equal (`applyEntry_eq_store`, `BrowserLogTests.lean`). No store module was
+changed.
+
+### Checks, and the theorems
+
+`decode` reads one record after the other and stops at the first record that
+does not verify: a wrong magic or version, fewer bytes than the length field
+says, a checksum that is not the sum of the body, or a body that is not
+exactly its entries. It answers the batches before that record and the bytes
+from it (`rest`; `torn` when not empty). It does not read past that record:
+a later batch can depend on an earlier one, so a log is replayed as a prefix
+only. (The F\* browser entry parsed each record on its own; its comment
+reads "A batch record that fails to parse (a torn/corrupt write) is silently
+skipped, never partially applied".) `merge` applies the decoded batches in order over a base dataset.
+Theorems (`BrowserLogTheorems.lean`, all with the axioms propext,
+Classical.choice and Quot.sound only):
+
+| Theorem | Statement |
+|---|---|
+| `parseDeltaBatch_serializeDeltaBatch?` | a record the encoder writes parses back to its batch, with any bytes after it untouched (with the triple, graph, entry, entry-frame and body layers under it) |
+| `decode_encodeLog`, `decode_encodeBatch` | decode inverts encode, for every list of batches the encoder admits |
+| `decode_encodeLog_torn` | a log whose last record does not verify decodes to exactly the batches before it, and reports that record's bytes |
+| `parseDeltaBatch_take`, `decode_encodeLog_cut` | a record cut after any number of its bytes does not verify; so every torn write of the last record gives the batches before it |
+| `parseDeltaBatch_body_byte`, `decode_encodeLog_byte` | a record with one body byte changed after the write does not verify (the sum moves by the difference of the two bytes) |
+| `merge_encodeLog`, `merge_encodeLog_torn`, `merge_encodeLog_append` | a merge of a log equals applying its batches one by one; a torn last record changes nothing; a merge of a longer log is the merge of the extra records over the merge of the shorter one |
+| `parseBatch_eq`, `decode_eq_replay` | the loop decoders answer what the store's `parseDeltaBatch` and `replayDeltaBatches` answer |
+| `parseLog_header_append` | the log after a DLOG header is a `deltas.dlog` with the same batches |
+
+Build-time checks (`BrowserLogTests.lean`): for each update form the log
+admits, the merge of the update's log over a base equals the SPARQL 1.1
+Update reference semantics (`SPARQL.applyUpdate`) over the same base, as
+datasets compared as sets.
+
+### The dispatch ops (core table)
+
+`Wasm/Ops/DeltaLog.lean`, in both the core and the full engine:
+
+    deltaLogEncode(sparqlUpdate, seq, epoch) -> {hex, seq, epoch, opCount, bytes}
+    deltaLogDecode(logHex)  -> {batches, entries, torn, tornBytes, logBytes, records}
+    deltaLogMerge(baseNQuads, logHex) -> {nquads, batches, entries, torn, tornBytes}
+
+`deltaLogEncode` admits INSERT DATA, DELETE DATA, CLEAR DEFAULT, CLEAR GRAPH,
+DROP GRAPH and CREATE GRAPH (`SPARQL.deltaBatchForUpdate?`); a form whose
+effect needs a WHERE clause or a graph set evaluated is refused, never
+written as a partial batch. INSERT DATA blank nodes get the label prefix
+`u<seq>_` (fresh for each request, SPARQL 1.1 Update section 3.1.1); the merge
+gives the base's blank nodes the prefix `b`, so the two never meet. `logHex` is
+the records' hexadecimal text; white space between bytes is ignored, so the
+host joins records with "\n".
+
+### What the host does
+
+`npm/factoidal/lib/delta-log-hosts.mjs`. A host store keeps `{seq, epoch,
+hex}` for each record: IndexedDB in `browser.js` and `core-browser.js` (one
+database for each log, object store `deltaBatches` keyed by `seq`), the memory
+of the process in Node (`index.mjs`, `core.mjs`, and `buildApi` with no
+`deltaLogStore`). `deltaLogAppend` counts the records, has the engine encode
+the update with that `seq`, and adds the record, in one readwrite
+transaction with `durability: 'strict'`; IndexedDB runs the readwrite
+transactions of one object store one after another, so two tabs never get
+the same `seq`, and `add` refuses a `seq` that exists. `deltaLogReadAllHex`
+joins the records with "\n"; `deltaLogMerge` hands that text and the base
+N-Quads to the engine and returns the merged N-Quads; `deltaLogInspect`
+returns the decode report; `deltaLogDestroy` deletes the database;
+`_deltaLogCorruptLastForTest` cuts the last 8 hex digits of the last record.
+No byte layout and no checksum is in JavaScript. The names and result shapes
+are those of the F\* browser entry; `deltaLogInspect` and the capability
+`deltaLog` are new.
+
+### Costs measured (native, linux-x86_64, 2026-10-13)
+
+The log is a `List UInt8` in Lean. A log of 100,000 records (98 bytes each,
+9,800,000 bytes) through `l4wasm-cli call deltaLogDecode` under
+`LEAN_STACK_SIZE_KB=512`: 4.0 to 7.3 s, peak resident set 699 MB. Of that,
+receiving the 19,800,000-character argument through the dispatch ABI (JSON
+argument parse) alone costs 4.0 s and 413 MB (the same argument to an op that
+refuses it at once).
+
+The merge costs time proportional to n squared, where n is the number of
+distinct triples the log adds: https://github.com/danbri/factoidal/issues/822.
+Each add entry goes through `Dataset.insertQuad` and `Graph.add`, a
+membership scan and an append on a list (the served store's replay step is the
+same function). `l4wasm-cli call deltaLogMerge`, empty base, one triple per
+record: 1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at 32,000 (wall
+time, load average about 10). The row `delta-log-merge` of
+`tests/stack/lean_scaling.py` measures it at 8,000, 16,000 and 32,000 records
+and is an expected failure naming the issue (CPU time 1.08 s, 4.24 s and
+15.86 s: 3.9 and 3.7 for each doubling, bound 3.0; 14.7 for 4x input, bound
+9.0). Post 18's logs have a few records.
+
+### Gates
+
+Measured on branch `claude/wt-browser-deltalog` (base `main` 52182fb4),
+linux-x86_64, 2026-10-13.
+
+| Gate | Before | After |
+|---|---|---|
+| `lake build` (no target) | exit 0 | exit 0 (1634 jobs) |
+| `Wasm/native-smoke.sh` | 351 (derived: 362 less the 11 new cases) | 362 pass, 0 fail (out of 362) |
+| `Wasm/cli-smoke.sh` | not measured | 83 pass, 0 fail (out of 83) |
+| `tools/lean-tail-recursion-audit.py --gate` (stale IR removed: none) | pass, 2,361 recursive rows | pass, 2,361 rows; none from the new modules (`decodeGo`, `entriesLoop`, `logHexGo` compile to `goto _start`) |
+| `tools/lean-hygiene-audit.py --build-log` | not measured | clean (no sorry, axiom, native_decide, unsafe or implemented_by; partial def 163, baseline 164, from the base) |
+| `tests/stack/run.sh --canary 512` | 67 (derived: 77 less the 10 new cases) | 77 pass, 0 fail (out of 77): `delta-log-decode`, `delta-log-merge` (100,000 records) on the native, native 512 KB, wasm and wasm 512 KB routes, and `delta-log-count` (all 100,000 batches, not torn) on the two native routes |
+| `tests/stack/lean_scaling.sh` | 24 pass, 0 fail, 2 expected-fail (out of 26) (derived: the new row less) | 24 pass, 0 fail, 3 expected-fail (out of 27): the new row `delta-log-merge` is an expected failure naming https://github.com/danbri/factoidal/issues/822 |
+| `npm test` (npm/factoidal) | 413 pass, 0 fail, 1 skipped (out of 414), measured before `test/delta-log.test.mjs` was added | 417 pass, 0 fail, 1 skipped (out of 418) |
+| `node --test tests/hub/post18_test.mjs tests/hub/fn_surface_parity_test.mjs` | 29 cases (counted in the base files), 10 of them expected failures naming issue 728 | 31 pass, 0 fail (out of 31), no expected failure |
+| `node --test tests/hub/*_test.mjs` | 445 cases (derived: 447 less the 2 new cases), 11 expected failures | 447 pass, 0 fail (out of 447), 1 expected failure (not this issue) |
+| `tests/web-demos/browser_persistence_smoke.sh` (Chromium, IndexedDB, `page.reload()`) | could not run (needed the F\* bundle) | 18 pass, 0 fail (out of 18) |
+| `tests/web-demos/hub_post18_value_check.sh` (new; post 18 cell values in Chromium, across a reload) | none | 10 pass, 0 fail (out of 10), two runs |
+| `tests/web-demos/hub_browser_all.sh` | not run here | 54 pass, 0 fail (out of 54 posts) (run before the cell 3 edit, which adds one `await`) |
+| wasm (`Wasm/build-wasm.sh`) | | full 11,149,721 bytes, core 6,062,770 bytes; the core size table gives the modules this change adds or grows 80,223 bytes before `wasm-opt` |
 
 ## 5. Stage 2: what landed (2026-10-10)
 

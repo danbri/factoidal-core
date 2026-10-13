@@ -26,6 +26,7 @@ import { Dataset, dataFactory, termFromSrj } from '../rdfjs.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
+import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 
 const DATA_FORMAT_EXT = {
   turtle:    'ttl',
@@ -518,6 +519,10 @@ class Store {
  * @param {(root: string) => ((path: string) => any)} [driver.storeReaderFor]
  *        Turns a collection root path into a store reader (Node: the file
  *        system). Without it, openStore() takes a reader function only.
+ * @param {object} [driver.deltaLogStore]
+ *        Where the deltaLog* functions keep their records
+ *        (lib/delta-log-hosts.mjs): IndexedDB in the browser entries. The
+ *        default keeps them in the memory of this process.
  */
 function buildApi(driver) {
   let parseCounter = 0;
@@ -2434,6 +2439,144 @@ function buildApi(driver) {
     return output === 'json' ? JSON.parse(r.text) : r.text;
   }
 
+  // ---------------------------------------------------------------
+  // The durable update log of a browser host (hub post 18,
+  // https://github.com/danbri/factoidal/issues/728).
+  //
+  // One record for each committed SPARQL Update request, kept by the host
+  // store (driver.deltaLogStore: IndexedDB in the browser entries, the
+  // memory of the process by default). The engine makes every decision
+  // about the bytes: op deltaLogEncode writes a record (a DLB1 frame with
+  // its checksum), op deltaLogMerge decodes the records, stops at the first
+  // record that does not verify, and applies the batches before it
+  // (formal/lean4/L4Factoidal/Storage/BrowserLog.lean, with the theorems in
+  // BrowserLogTheorems.lean). This layer moves text between the two. The
+  // names and result shapes are those of the F* browser entry before 0.9.0.
+  // ---------------------------------------------------------------
+  const DEFAULT_DELTA_DB_NAME = 'factoidal-delta-log';
+  const deltaLogStore = driver.deltaLogStore || memoryDeltaLogStore();
+
+  function requireDeltaHandle(handle, who) {
+    if (!handle || typeof handle.dbName !== 'string') {
+      throw new TypeError(`${who}: handle must be the object deltaLogOpen() returned`);
+    }
+  }
+
+  /**
+   * Open (create when absent) a durable update log. In the browser the log is
+   * an IndexedDB database of that name; under Node it lives in the memory of
+   * the process.
+   * @param {string} [dbName='factoidal-delta-log']
+   * @returns {Promise<{dbName: string}>}
+   */
+  async function deltaLogOpen(dbName) {
+    const name = dbName == null || dbName === '' ? DEFAULT_DELTA_DB_NAME : String(dbName);
+    await deltaLogStore.open(name);
+    return { dbName: name };
+  }
+
+  /**
+   * Append one SPARQL Update request as one record (op deltaLogEncode).
+   * INSERT DATA, DELETE DATA, CLEAR DEFAULT, CLEAR GRAPH, DROP GRAPH and
+   * CREATE GRAPH are admitted; any other form rejects and nothing is
+   * written. `seq` is the record's position in the log.
+   * @param {{dbName: string}} handle
+   * @param {string} sparqlUpdate
+   * @param {{epoch?: number}} [options]
+   * @returns {Promise<{seq: number, opCount: number}>}
+   */
+  async function deltaLogAppend(handle, sparqlUpdate, options) {
+    requireDeltaHandle(handle, 'deltaLogAppend');
+    if (typeof sparqlUpdate !== 'string') {
+      throw new TypeError('deltaLogAppend: sparqlUpdate must be a string');
+    }
+    const epoch = (options && options.epoch) || 0;
+    if (!Number.isSafeInteger(epoch) || epoch < 0) {
+      throw new TypeError('deltaLogAppend: options.epoch must be a natural number');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'deltaLogEncode', 'deltaLogAppend');
+    let opCount = 0;
+    const { seq } = await deltaLogStore.append(handle.dbName, (nextSeq) => {
+      const r = entryResult(e.deltaLogEncode(sparqlUpdate, String(nextSeq), String(epoch)),
+        'deltaLogAppend');
+      opCount = r.opCount;
+      return { hex: r.hex, epoch };
+    });
+    return { seq, opCount };
+  }
+
+  /**
+   * The records of the log, in commit order, as hexadecimal text joined by
+   * "\n": the text deltaLogMerge() hands to the engine.
+   * @param {{dbName: string}} handle
+   * @returns {Promise<string>}
+   */
+  async function deltaLogReadAllHex(handle) {
+    requireDeltaHandle(handle, 'deltaLogReadAllHex');
+    return (await deltaLogStore.readAll(handle.dbName)).join('\n');
+  }
+
+  /**
+   * Merge on read (op deltaLogMerge): the base dataset with the log's
+   * batches applied in commit order, as N-Quads. A record that does not
+   * verify (a torn write) and every record after it are not applied;
+   * deltaLogInspect() reports them.
+   * @param {{dbName: string}} handle
+   * @param {string} baseNQuads the dataset before the log, as N-Quads
+   * @returns {Promise<string>}
+   */
+  async function deltaLogMerge(handle, baseNQuads) {
+    requireDeltaHandle(handle, 'deltaLogMerge');
+    if (typeof baseNQuads !== 'string') {
+      throw new TypeError('deltaLogMerge: baseNQuads must be a string');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'deltaLogMerge', 'deltaLogMerge');
+    const logHex = await deltaLogReadAllHex(handle);
+    return entryResult(e.deltaLogMerge(baseNQuads, logHex), 'deltaLogMerge').nquads;
+  }
+
+  /**
+   * What the log holds (op deltaLogDecode): the number of batches and
+   * entries that verify, whether the log ends with a torn record and its
+   * size in bytes, and {seq, epoch, entries} for each batch.
+   * @param {{dbName: string}} handle
+   * @returns {Promise<{batches: number, entries: number, torn: boolean,
+   *   tornBytes: number, logBytes: number,
+   *   records: Array<{seq: number, epoch: number, entries: number}>}>}
+   */
+  async function deltaLogInspect(handle) {
+    requireDeltaHandle(handle, 'deltaLogInspect');
+    const e = await entry();
+    requireEntryFn(e, 'deltaLogDecode', 'deltaLogInspect');
+    const { ok: _ok, ...rest } = entryResult(
+      e.deltaLogDecode(await deltaLogReadAllHex(handle)), 'deltaLogInspect');
+    return rest;
+  }
+
+  /**
+   * Remove the log and its records.
+   * @param {{dbName: string}} handle
+   * @returns {Promise<void>}
+   */
+  async function deltaLogDestroy(handle) {
+    requireDeltaHandle(handle, 'deltaLogDestroy');
+    await deltaLogStore.destroy(handle.dbName);
+  }
+
+  /**
+   * TEST ONLY: cut the last 4 bytes (8 hex digits) of the last record, as a
+   * write torn by a crash would leave it. IndexedDB transactions are atomic,
+   * so a page has no other way to make one. False when the log is empty.
+   * @param {{dbName: string}} handle
+   * @returns {Promise<boolean>}
+   */
+  async function _deltaLogCorruptLastForTest(handle) {
+    requireDeltaHandle(handle, '_deltaLogCorruptLastForTest');
+    return deltaLogStore.corruptLast(handle.dbName);
+  }
+
   /**
    * Feature probe, for tests and downstream capability checks.
    * @returns {Promise<{entry: boolean, construct: boolean,
@@ -2490,6 +2633,7 @@ function buildApi(driver) {
       parseDiagnostics: has('parseDocument'),
       turtlePrefixes: has('serializeTurtleWith'),
       store: has('storeOpen') && has('storeHandleQuery'),
+      deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
     };
   }
 
@@ -2562,6 +2706,13 @@ function buildApi(driver) {
     openStore,
     queryStore,
     listStores,
+    deltaLogOpen,
+    deltaLogAppend,
+    deltaLogReadAllHex,
+    deltaLogMerge,
+    deltaLogInspect,
+    deltaLogDestroy,
+    _deltaLogCorruptLastForTest,
     queryRaw,
     Dataset,
     DatasetHandle,

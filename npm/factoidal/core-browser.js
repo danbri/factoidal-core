@@ -27,6 +27,7 @@
 import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { browserEngine } from './lib/browser-engine.mjs';
+import { indexedDbDeltaLogStore } from './lib/delta-log-hosts.mjs';
 
 const l4Engine = browserEngine('l4factoidal-core', new URL('./l4-assets/', import.meta.url).href);
 
@@ -56,6 +57,8 @@ export function loadEngine() {
 const api = buildApi({
   engineName: 'lean4-wasm-core',
   loadEntry: async () => entryFromEngine(await loadEngine()),
+  // The deltaLog* functions keep their records in IndexedDB (hub post 18).
+  deltaLogStore: indexedDbDeltaLogStore(),
 });
 
 // RDF and SPARQL
@@ -79,6 +82,15 @@ export const clearServiceEndpoints = api.clearServiceEndpoints;
 export const openStore = api.openStore;
 export const queryStore = api.queryStore;
 export const listStores = api.listStores;
+
+// The durable update log (hub post 18)
+export const deltaLogOpen = api.deltaLogOpen;
+export const deltaLogAppend = api.deltaLogAppend;
+export const deltaLogReadAllHex = api.deltaLogReadAllHex;
+export const deltaLogMerge = api.deltaLogMerge;
+export const deltaLogInspect = api.deltaLogInspect;
+export const deltaLogDestroy = api.deltaLogDestroy;
+export const _deltaLogCorruptLastForTest = api._deltaLogCorruptLastForTest;
 
 // Validation and reasoning
 export const shaclValidate = api.shaclValidate;

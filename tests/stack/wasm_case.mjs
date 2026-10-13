@@ -36,6 +36,8 @@ const CASES = {
   'sparql-replace-long': () => ['queryDataset', readArgs('args-sparql-replace-long.json')],
   'regex-replace-groups': () => ['queryDataset', readArgs('args-regex-replace-groups.json')],
   'rdfc-bnode-chain': () => ['canonicalizeToNQuads', readArgs('args-rdfc-bnode-chain.json')],
+  'delta-log-decode': () => ['deltaLogDecode', readArgs('args-delta-log-decode.json')],
+  'delta-log-merge': () => ['deltaLogMerge', readArgs('args-delta-log-merge.json')],
 };
 
 const out = { case: caseName, route: 'wasm' };
