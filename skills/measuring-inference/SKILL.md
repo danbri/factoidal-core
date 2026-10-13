@@ -185,6 +185,15 @@ passing.
 > about 600 s measured and 6.1 s for HermiT), so the row fails or passes
 > because of the code, not the load.
 
+> 🔴 **2026-10-13 (a comparison tool that compared nothing).**
+> `tools/owl-real-hermit.py` with a wrong `--hermit-jar` path printed
+> "HermiT not decided" for every pair of every ontology and exited 0. Java
+> had not loaded HermiT at all. The output reads like a slow reasoner. Rule:
+> a tool whose reference engine did not start exits non-zero and says why
+> (the script now exits 2 on a missing JAR or a class Java cannot load); a
+> run where the reference decided NOTHING is a setup error until shown
+> otherwise.
+
 ## 9. A timer around a pure `let` in Lean measures nothing
 
 **Force the value between the two clock reads with an I/O action that
@@ -468,6 +477,15 @@ Rules that follow.
   over 163,444 old driving triples and the rows evaluated in full. A
   dispatch on the driving triple's predicate (one hash lookup in place of a
   test per row) took the round from about 0.88 s to 0.49 s.
+- **Time the test of a delta term, not only what it saves.** A test that
+  skips scm-svf1/2, scm-avf1/2 and scm-hv at an old driving triple when the
+  delta holds no triple on their predicates was proved correct and made the
+  Cell Ontology's closure SLOWER (2026-10-13: round 3 took 2.5 s against
+  0.5 s without it; scm-svf1 8.25 s over the run). The test
+  `(sD.withPred p).isEmpty` built the delta's whole `rdfs:subClassOf` list,
+  tens of thousands of triples, once per old `owl:someValuesFrom` triple. The
+  five rows went back to full evaluation; the proof stays, unused, until the
+  store can answer emptiness without building the list.
 
 ## The standing discipline
 

@@ -75,6 +75,19 @@ ROWS: dict[str, tuple] = {
     "qudt-closure": ("qudt", "closure", "done", None),
     "qudt-closure-address-space": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
+    "pizza-consistent-address-space-3gb": ("pizza", "consistent", "decided", None),
+}
+
+# Rows with their own address-space cap in bytes, in place of AS_BYTES.
+# pizza-consistent-address-space-3gb: the Pizza consistency check peaks at
+# about 33 MB resident; under 3,000,000,000 bytes of address space (about 90
+# times that) the Lean runtime cannot create its thread ("failed to create
+# thread"), because it reserves 1 GiB per thread stack
+# (https://github.com/danbri/factoidal/issues/759). Added 2026-10-13, when the
+# two QUDT rows that showed issue 759 began to pass for another reason (the
+# semi-naive closure halved the QUDT peak).
+ROW_AS_BYTES: dict[str, int] = {
+    "pizza-consistent-address-space-3gb": 3_000_000_000,
 }
 
 # Rows that run under a resident-set watchdog (tools/owl-real-bench.py
@@ -128,6 +141,9 @@ XFAIL: dict[str, str] = {
     # 1.2 GB at which mimalloc's arena reservations exhaust the address-space
     # cap (https://github.com/danbri/factoidal/issues/759, which this does not
     # repair: a closure above about 1.2 GB still stops under the cap).
+    # The Lean runtime reserves 1 GiB per thread stack and 1 GiB mimalloc
+    # arenas, so a 33 MB process stops under a 3 GB address-space cap.
+    "pizza-consistent-address-space-3gb": "https://github.com/danbri/factoidal/issues/759",
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
     # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte).
@@ -182,9 +198,10 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
         cmd = [lean, "owl-entails", str(merged), str(concl), "--format", "nquads"]
     else:
         return False, f"unknown step {step}"
-    r = bench.run_step(cmd, cap_s, AS_BYTES, out, str(wd), rss_cap)
+    as_bytes = ROW_AS_BYTES.get(rid, AS_BYTES)
+    r = bench.run_step(cmd, cap_s, as_bytes, out, str(wd), rss_cap)
     cap_text = (f"resident-set cap {ROW_RSS_CAP_MB[rid]} MB" if rss_cap
-                else f"address-space cap {AS_BYTES}")
+                else f"address-space cap {as_bytes}")
     detail = (f"{step}: {r['status']}, {r['wall_s']:.2f} s, peak RSS {r['peak_rss_mb']:.0f} MB "
               f"({cap_text})")
     if r["status"] != "ok":
