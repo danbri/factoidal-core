@@ -869,7 +869,11 @@ Rules from this repair:
    old one was complete. The loop twin is `serializeNodeTF`/`serializeNodesTLoop`.
 4. **`collectQuads` used one native frame per join.** `collectQuadsLoop` keeps a
    work list (termination: twice the `sizeOf` of each pattern plus one, summed);
-   `collectQuadsLoop_eq`, `csimp collectQuads_eq_fast`.
+   `collectQuadsLoop_eq`, `csimp collectQuads_eq_fast`. The `tests/stack` case
+   `sparql-collection` still overflows in the wasm canary route (Node,
+   `--stack-size=512`): the next frame per member is `ggpLabeledBnodes`, the
+   INSERT DATA blank node label check (gdb: native runs at 128 KB, overflows at
+   64 KB). The case stays an expected failure in that route under issue 818.
 
 | `l4factoidal`, one run per point | before | after |
 |---|---|---|
