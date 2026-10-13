@@ -110,6 +110,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    naming https://github.com/danbri/factoidal/issues/812:
                    `componentsOf` merges components in a list (1.09 s at 8,000
                    pairs, 14.79 s at 32,000, measured 2026-10-13)
+  delta-log-merge  `l4wasm-cli call deltaLogMerge` (the merge on read of the
+                   browser update log, hub post 18) of a log of n records, each
+                   an INSERT DATA of one distinct triple, over an empty base:
+                   8,000, 16,000 and 32,000 records, the n, 2n, 4n assertion of
+                   owl-consistent-cl. The engine writes the log
+                   (`l4wasm-cli callseq` of `deltaLogEncode`), and
+                   `deltaLogDecode` must find every batch, before the row is
+                   timed. Expected failure naming
+                   https://github.com/danbri/factoidal/issues/822: each add
+                   goes through `Graph.add`, a membership scan and an append on
+                   a list (1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at
+                   32,000, measured 2026-10-13)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -134,6 +146,9 @@ Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4f
         L4_SHACL_BIN   path of l4shacl (default: beside L4_BIN)
         L4_TERMWIRE_BIN  path of l4termwire-page-decode (default: beside L4_BIN)
         L4_SPECIES_BIN   path of l4owl-species (default: beside L4_BIN)
+        L4_WASMCLI_BIN   path of l4wasm-cli (default: beside L4_BIN)
+        L4_SCALING_FIXTURES  fixture directory (default: $STACK_FIXTURES/lean-scaling
+                   when STACK_FIXTURES is set, else /tmp/factoidal-lean-scaling)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
 """
 
@@ -158,8 +173,14 @@ BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4facto
 SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
 TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-page-decode"))
 SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"))
+WASMCLI_BIN = Path(os.environ.get("L4_WASMCLI_BIN", BIN.parent / "l4wasm-cli"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
-FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
+# A fixture directory of one's own (hazard #43 of
+# skills/workflow-gotchas-debugging: runs that share a directory delete each
+# other's files): L4_SCALING_FIXTURES, else a directory under STACK_FIXTURES.
+FIX = Path(os.environ.get("L4_SCALING_FIXTURES")
+           or (os.environ["STACK_FIXTURES"] + "/lean-scaling" if os.environ.get("STACK_FIXTURES")
+               else "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
 # Rows whose OUTPUT grows faster than their input use a larger bound.
 ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
@@ -168,6 +189,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "owl-species-bnode-edges": "https://github.com/danbri/factoidal/issues/812",
+    "delta-log-merge": "https://github.com/danbri/factoidal/issues/822",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -502,28 +524,74 @@ def cl_prefix(n: int) -> Path:
     return p
 
 
+def delta_log_merge_args(n: int) -> Path:
+    """The arguments of `deltaLogMerge` (an empty base and a log of n
+    records, each an INSERT DATA of one distinct triple), as a JSON file. The
+    engine writes the records (`l4wasm-cli callseq` of `deltaLogEncode`); the
+    file is written only after `deltaLogDecode` finds n batches and no torn
+    record, so a fixture the engine does not read is an error, never a fast
+    row."""
+    import json
+    FIX.mkdir(parents=True, exist_ok=True)
+    p = FIX / f"delta-log-merge-{n}.json"
+    if p.exists():
+        return p
+    seq = FIX / f"delta-log-merge-{n}.seq.json"
+    seq.write_text(json.dumps([
+        ["deltaLogEncode",
+         [f'INSERT DATA {{ <{EX}s{i}> <{EX}p> "v{i}" . }}', str(i), "0"]]
+        for i in range(n)]), encoding="utf-8")
+    out = subprocess.run([str(WASMCLI_BIN), "callseq", str(seq)], stdout=subprocess.PIPE,
+                         timeout=CAP, check=True).stdout.decode("utf-8")
+    seq.unlink()
+    records = [json.loads(line)["hex"] for line in out.splitlines() if line.strip()]
+    log = "\n".join(records)
+    check = FIX / f"delta-log-merge-{n}.decode.json"
+    check.write_text(json.dumps([log]), encoding="utf-8")
+    dec = json.loads(subprocess.run([str(WASMCLI_BIN), "call", "deltaLogDecode", str(check)],
+                                    stdout=subprocess.PIPE, timeout=CAP, check=True).stdout)
+    check.unlink()
+    if len(records) != n or dec.get("batches") != n or dec.get("torn") is not False:
+        raise RuntimeError(f"delta-log-merge fixture: {len(records)} records, "
+                           f"decode {dec.get('batches')} batches, torn {dec.get('torn')}")
+    p.write_text(json.dumps(["", log]), encoding="utf-8")
+    return p
+
+
+# row id -> (x, make input, command, expected first line (a string, or a
+# predicate on the line), a file the row needs or None)
 SERIES_ROWS = {
     "owl-consistent-cl": (
         10000, cl_prefix,
-        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true"),
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
+        CL_SOURCE),
+    "delta-log-merge": (
+        8000, delta_log_merge_args,
+        lambda p: [str(WASMCLI_BIN), "call", "deltaLogMerge", str(p)],
+        lambda line: line.startswith('{"ok":true,"nquads":"<' + EX + 's0> '),
+        WASMCLI_BIN),
 }
 
 
 def series_row(rid, runs):
-    x, make, cmd, first = SERIES_ROWS[rid]
-    if not CL_SOURCE.exists():
-        return False, f"{CL_SOURCE} missing"
+    x, make, cmd, first, needs = SERIES_ROWS[rid]
+    if needs is not None and not needs.exists():
+        return False, f"{needs} missing"
     pts = []
     for n in (x, 2 * x, 4 * x):
         best = None
+        try:
+            arg = make(n)
+        except Exception as e:  # a fixture that cannot be made fails the row
+            return False, f"n={n}: fixture: {e}"
         for _ in range(runs):
-            t = bl.run_once(cmd(make(n)), CAP)
+            t = bl.run_once(cmd(arg), CAP)
             if t["status"] != "ok":
                 return False, f"n={n}: exit status {t['status']}"
             got = t["first_line"].decode("utf-8", "replace") if isinstance(
                 t["first_line"], bytes) else str(t["first_line"])
-            if got.strip() != first:
-                return False, f"n={n}: printed {got.strip()!r}, expected {first!r}"
+            if (not first(got.strip())) if callable(first) else (got.strip() != first):
+                return False, f"n={n}: printed {got.strip()[:120]!r}, not the expected answer"
             best = t["cpu"] if best is None else min(best, t["cpu"])
             if t["wall"] > REPEAT_LIMIT:
                 break

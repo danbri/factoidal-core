@@ -1259,9 +1259,19 @@ The log is a `List UInt8` in Lean. A log of 100,000 records (98 bytes each,
 `LEAN_STACK_SIZE_KB=512`: 4.0 to 7.3 s, peak resident set 699 MB. Of that,
 receiving the 19,800,000-character argument through the dispatch ABI (JSON
 argument parse) alone costs 4.0 s and 413 MB (the same argument to an op that
-refuses it at once). The merge runs on `Graph` lists, so a merge that adds n
-distinct triples costs time proportional to n squared (`Graph.add` checks
-membership); post 18's logs have a few records.
+refuses it at once).
+
+The merge costs time proportional to n squared, where n is the number of
+distinct triples the log adds: https://github.com/danbri/factoidal/issues/822.
+Each add entry goes through `Dataset.insertQuad` and `Graph.add`, a
+membership scan and an append on a list (the served store's replay step is the
+same function). `l4wasm-cli call deltaLogMerge`, empty base, one triple per
+record: 1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at 32,000 (wall
+time, load average about 10). The row `delta-log-merge` of
+`tests/stack/lean_scaling.py` measures it at 8,000, 16,000 and 32,000 records
+and is an expected failure naming the issue (CPU time 1.08 s, 4.24 s and
+15.86 s: 3.9 and 3.7 for each doubling, bound 3.0; 14.7 for 4x input, bound
+9.0). Post 18's logs have a few records.
 
 ### Gates
 
@@ -1276,6 +1286,7 @@ linux-x86_64, 2026-10-13.
 | `tools/lean-tail-recursion-audit.py --gate` (stale IR removed: none) | pass, 2,361 recursive rows | pass, 2,361 rows; none from the new modules (`decodeGo`, `entriesLoop`, `logHexGo` compile to `goto _start`) |
 | `tools/lean-hygiene-audit.py --build-log` | not measured | clean (no sorry, axiom, native_decide, unsafe or implemented_by; partial def 163, baseline 164, from the base) |
 | `tests/stack/run.sh --canary 512` | 67 (derived: 77 less the 10 new cases) | 77 pass, 0 fail (out of 77): `delta-log-decode`, `delta-log-merge` (100,000 records) on the native, native 512 KB, wasm and wasm 512 KB routes, and `delta-log-count` (all 100,000 batches, not torn) on the two native routes |
+| `tests/stack/lean_scaling.sh` | 24 pass, 0 fail, 2 expected-fail (out of 26) (derived: the new row less) | 24 pass, 0 fail, 3 expected-fail (out of 27): the new row `delta-log-merge` is an expected failure naming https://github.com/danbri/factoidal/issues/822 |
 | `npm test` (npm/factoidal) | 413 pass, 0 fail, 1 skipped (out of 414), measured before `test/delta-log.test.mjs` was added | 417 pass, 0 fail, 1 skipped (out of 418) |
 | `node --test tests/hub/post18_test.mjs tests/hub/fn_surface_parity_test.mjs` | 29 cases (counted in the base files), 10 of them expected failures naming issue 728 | 31 pass, 0 fail (out of 31), no expected failure |
 | `node --test tests/hub/*_test.mjs` | 445 cases (derived: 447 less the 2 new cases), 11 expected failures | 447 pass, 0 fail (out of 447), 1 expected failure (not this issue) |
