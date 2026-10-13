@@ -4,6 +4,7 @@ ontology document given as N-Triples or N-Quads, with its imported
 documents.
 
     l4owl-species DOC.nt [IMPORTED.nt ...]
+    l4owl-species --phases DOC.nt
 
 Prints one JSON object: the verdict, the number of violations, the count
 of each violation kind, and the first ten violations. Exit 0 when the
@@ -72,11 +73,60 @@ def readGraph (path : String) : IO (Except String Graph) := do
     | .error e => pure (.error s!"{path}: parse error at {e.pos}: {e.msg}")
   catch e => pure (.error s!"{path}: {e}")
 
+open L4Factoidal.OWL.SyntaxDL in
+/-- `--phases DOC.nt`: the wall time of each part of `speciesViolations` on
+one document (no imports), in the order the function computes them, with the
+number of violations of each part. Each part's result is forced between its
+two clock reads by writing its length to an `IO.Ref`
+(`skills/measuring-inference` § 9 and § 11); the last line is the whole
+function, timed on its own, whose count the parts must add up to. Measurement
+only: every part is a library function, called as `speciesViolations` and
+`graphBodyViolations` call it. -/
+def phasesMain (doc : String) : IO UInt32 := do
+  match ← readGraph doc with
+  | .error e => IO.eprintln e; pure 2
+  | .ok g0 =>
+    let sink ← IO.mkRef (0 : Nat)
+    let err ← IO.getStderr
+    let t00 ← IO.monoNanosNow
+    let timed := fun (name : String) (f : Unit → Nat) => do
+      let t0 ← IO.monoNanosNow
+      let n := f ()
+      sink.set n
+      let t1 ← IO.monoNanosNow
+      err.putStrLn s!"part={name} count={n} ms={(t1 - t0) / 1000000}"
+      pure n
+    let mut parts := 0
+    parts := parts + (← timed "header" (fun _ => (docHeaderViolations g0).length))
+    let g := dropTable5Redundant g0
+    let _ ← timed "table5" (fun _ => g.length)
+    let d := buildDeclIndex g
+    let _ ← timed "declindex" (fun _ => d.cls.length + d.restr.length + d.datatype.length +
+      d.objProp.length + d.dataProp.length + d.annProp.length + d.charProp.length +
+      d.hasDR.length + d.inv.length + d.annSubj.length)
+    parts := parts + (← timed "per-triple" (fun _ => (g.flatMap (tripleViolations g d)).length))
+    parts := parts + (← timed "punning" (fun _ => (punningViolations d).length))
+    let ns := nonsimpleKeys g
+    let _ ← timed "nonsimple-keys" (fun _ => ns.length)
+    parts := parts + (← timed "top-data" (fun _ => (topDataViolations g).length))
+    parts := parts + (← timed "datatype-definitions" (fun _ => (datatypeDefinitionViolations g d).length))
+    parts := parts + (← timed "simple-roles" (fun _ => (simpleRoleViolations g ns).length))
+    parts := parts + (← timed "regularity" (fun _ => (regularityViolations g).length))
+    parts := parts + (← timed "anonymous-individuals" (fun _ => (anonymousIndividualViolations g d).length))
+    parts := parts + (← timed "unresolved-imports" (fun _ =>
+      (unresolvedImportViolations (some (ontologyIris g0)) (rootOntologyKeys g0) g0).length))
+    let t01 ← IO.monoNanosNow
+    err.putStrLn s!"part=sum-of-parts count={parts} ms={(t01 - t00) / 1000000}"
+    let _ ← timed "whole" (fun _ =>
+      (speciesViolations g0 g0 false [] g0 (some (ontologyIris g0))).length)
+    pure 0
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-      IO.eprintln "usage: l4owl-species DOC.nt [IMPORTED.nt ...]"
+      IO.eprintln "usage: l4owl-species DOC.nt [IMPORTED.nt ...] | l4owl-species --phases DOC.nt"
       pure 2
+  | ["--phases", doc] => phasesMain doc
   | doc :: imports =>
     match ← readGraph doc with
     | .error e => IO.eprintln e; pure 2

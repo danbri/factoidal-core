@@ -591,17 +591,21 @@ def closureCmd (args : List String) : IO UInt32 := do
         match ← readDataset s.positional[0]? format base with
         | .error e => IO.eprintln e; pure 1
         | .ok ds =>
-          let raw :=
-            match regime with
-            | "rdfs"      => Ops.owlClosureOf ds "RDFS"
-            | "owl-rl"    => Ops.owlClosureOf ds "OWL-RL"
-            | "rho-df"    => Ops.rhoDfClosureOf ds
-            | _           => Ops.rdfsPlusClosureOf ds
-          match ← parseEnvelope raw with
-          | none => pure 1
-          | some j =>
-              let out := (j.getString? "nquads") <|> (j.getString? "ntriples")
-              IO.println (out.getD "")
+          -- One N-Triples line per closure triple, written as it is made
+          -- (https://github.com/danbri/factoidal/issues/758). Until
+          -- 2026-10-13 this verb took the closure as one string inside the
+          -- JSON envelope of `Ops.closureEnvelopeOf`, decoded the envelope
+          -- and printed its `nquads` (or `ntriples`) member and a newline.
+          -- `Ops.closureEnvelopeOf_stream` proves that member is these lines
+          -- in this order, and the error text is the envelope's.
+          match Ops.closureStreamOf ds regime with
+          | .error m => IO.eprintln m; pure 1
+          | .ok g =>
+              let out ← IO.getStdout
+              for t in g do
+                out.putStr (Triple.toNTriplesLine .rdf11 t)
+              out.putStr "\n"
+              out.flush
               pure 0
 
 def owlConsistentCmd (args : List String) : IO UInt32 := do

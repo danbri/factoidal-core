@@ -4,6 +4,7 @@ one at a time, with the resident memory after each.
 
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
     l4query-phases FILE --parse-op [--format F] [--stop-after PHASE]
+    l4query-phases FILE --closure-op [--format F] [--stop-after PHASE]
     l4query-phases --walk-check LIST
 
 PHASE is one of `read`, `parse`, `normalize`, `index`, `solutions`, `eval`,
@@ -60,6 +61,7 @@ import Wasm.Ops.Clock
 import L4Factoidal.RDF.DatasetNormalize
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Syntax.TurtleChunkFold
+import Wasm.Ops.Reason
 
 namespace Harness.QueryPhases
 
@@ -183,6 +185,58 @@ def parseOpMain (file format stop : String) : IO UInt32 := do
     report "output" env.utf8ByteSize
     pure 0
 
+def closureOpPhases : List String :=
+  ["read", "parse", "normalize", "closure", "ntriples", "envelope", "decode", "output"]
+
+/-- `--closure-op`: the phases of `l4factoidal closure --regime owl-rl` as it
+was until https://github.com/danbri/factoidal/issues/758: `read`, `parse`
+(`Ops.parseTextToDataset`), `normalize` (`datasetForOps .rdf11`, the dataset
+`Ops.owlClosureOf` closes), `closure` (`OWL.RL.closureFix` of the default
+graph; V is its length), `ntriples` (`Graph.toNTriples`; V is its length in
+bytes), `envelope` (`okWith`, the op's JSON string), `decode` (the JSON parse
+of the envelope `Cli.parseEnvelope` makes, and the `nquads` member), `output`
+(that member written). -/
+def closureOpMain (file format stop : String) : IO UInt32 := do
+  unless closureOpPhases.contains stop do
+    IO.eprintln s!"l4query-phases: unknown --closure-op phase '{stop}' ({String.intercalate " | " closureOpPhases})"
+    return 2
+  let t0 ← IO.monoNanosNow
+  let report := report t0
+  report "start" 0
+  let text ← IO.FS.readFile file
+  report "read" text.utf8ByteSize
+  if stop == "read" then return 0
+  match L4Wasm.Ops.parseTextToDataset text format "" with
+  | .error e => IO.eprintln e; pure 1
+  | .ok ds =>
+    report "parse" (L4Wasm.Ops.datasetQuadCount ds)
+    if stop == "parse" then return 0
+    match datasetForOps .rdf11 ds with
+    | .error _ => IO.eprintln "normalize: parse error"; pure 1
+    | .ok nds =>
+      report "normalize" (L4Wasm.Ops.datasetQuadCount nds)
+      if stop == "normalize" then return 0
+      let g := L4Factoidal.OWL.RL.closureFix nds.default
+      report "closure" g.length
+      if stop == "closure" then return 0
+      match L4Factoidal.Syntax.Graph.toNTriples g with
+      | .error e => IO.eprintln e; pure 1
+      | .ok lines =>
+        report "ntriples" lines.utf8ByteSize
+        if stop == "ntriples" then return 0
+        let env := L4Wasm.Ops.okWith [("nquads", .string lines)]
+        report "envelope" env.utf8ByteSize
+        if stop == "envelope" then return 0
+        match L4Factoidal.JSON.parseJson env with
+        | .error e => IO.eprintln s!"internal: op result was not JSON ({e})"; pure 1
+        | .ok j =>
+          let out := (j.getString? "nquads").getD ""
+          report "decode" out.utf8ByteSize
+          if stop == "decode" then return 0
+          IO.println out
+          report "output" out.utf8ByteSize
+          pure 0
+
 /-- The phases of `l4factoidal query` on `file`. -/
 def queryMain (file : String) (rest : List String) : IO UInt32 := do
     let format := (flagValue rest "--format").getD "turtle"
@@ -258,6 +312,9 @@ def main (args : List String) : IO UInt32 := do
   | file :: rest =>
     if rest.contains "--parse-op" then
       parseOpMain file ((flagValue rest "--format").getD "turtle")
+        ((flagValue rest "--stop-after").getD "output")
+    else if rest.contains "--closure-op" then
+      closureOpMain file ((flagValue rest "--format").getD "nquads")
         ((flagValue rest "--stop-after").getD "output")
     else queryMain file rest
   | [] =>
