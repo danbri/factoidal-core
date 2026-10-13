@@ -1,7 +1,7 @@
 /-
 Harness.OwlRlProfile — where the OWL 2 RL closure spends its rounds.
 
-    l4owl-rl-profile FILE.nt [--rows] [--fuel N]
+    l4owl-rl-profile FILE.nt [--rows] [--sn] [--fuel N]
 
 Reads one N-Triples or N-Quads file and runs the indexed OWL 2 RL closure
 (`OWL.RL.stepI`, the loop `OWL.RL.closureI` runs) round by round. For each
@@ -11,7 +11,10 @@ the insertion. With `--rows` it also evaluates each of the 74 rows of
 `conclusionsListS` on its own over every driving triple of the round, and
 prints per row: the conclusions it emits, how many of them are new (not in
 the round's input), how many come from driving triples added by the
-previous round (the delta), and its time. Every timed value is consumed by
+previous round (the delta), and its time. With `--sn` it runs the
+semi-naive rounds (`OWL.RL.stepSNI`) instead, and `--rows` then times
+each row's delta term at the old driving triples and the full row at the
+new ones. Every timed value is consumed by
 a counter before the second clock read (skills/measuring-inference,
 sections 9 and 11), and the row times are printed beside the round total.
 
@@ -135,10 +138,73 @@ round. `lo` is the first position of the delta in `i.all`. -/
       nd := nd + kn
   return (e, n, ed, nd)
 
+/-- Emitted conclusions and time of one row in a semi-naive round: its delta
+term at the old driving triples, the full row at the new ones. -/
+@[noinline] def rowStatsSN (i : Index) (iD : Index) (lo : Nat) (r : RowSpec) : Nat := Id.run do
+  let s := Store.ofIndex i
+  let sD := Store.ofIndex iD
+  let mut e := 0
+  for h : j in [0:i.all.size] do
+    let d := i.all[j]
+    let out := if j < lo then r.delta s sD lo d else r.f s d
+    e := e + out.length
+  return e
+
+/-- The semi-naive rounds (`OWL.RL.stepSNI`), timed. -/
+def runSN (g : Graph) (fuel : Nat) (withRows : Bool) : IO Unit := do
+  let sink ← IO.mkRef 0
+  let mut cur := Index.ofGraph g
+  let mut lo := 0
+  let mut totC := 0
+  let mut totI := 0
+  let mut totD := 0
+  let mut totRows : Std.HashMap String (Nat × Nat) := {}
+  for k in [0:fuel] do
+    let a0 ← IO.monoNanosNow
+    let iD := if lo = 0 then Index.empty else Index.ofGraph (cur.toGraph.drop lo)
+    sink.modify (· + iD.all.size)
+    let a ← IO.monoNanosNow
+    if withRows then
+      let mut idx := 0
+      for r in rowTable do
+        let name := (rows.getD idx ("?", fun _ _ => [])).1
+        idx := idx + 1
+        let x ← IO.monoNanosNow
+        let e := rowStatsSN cur iD lo r
+        sink.modify (· + e)
+        let y ← IO.monoNanosNow
+        let (pe, pt) := totRows.getD name (0, 0)
+        totRows := totRows.insert name (pe + e, pt + (y - x))
+    let b0 ← IO.monoNanosNow
+    let concl := stepConclusionsSN (Store.ofIndex cur) (Store.ofIndex iD) lo
+    sink.modify (· + concl.length)
+    let b ← IO.monoNanosNow
+    let next := cur.insertAll concl
+    sink.modify (· + next.all.size)
+    let c ← IO.monoNanosNow
+    totC := totC + (b - b0)
+    totI := totI + (c - b)
+    totD := totD + (a - a0)
+    let added := next.all.size - cur.all.size
+    IO.println s!"sn.round {k + 1} input {cur.all.size} delta {cur.all.size - lo} emitted {concl.length} new {added} deltaIndex.ms {ms (a - a0)} conclusions.ms {ms (b - b0)} insert.ms {ms (c - b)}"
+    if added = 0 then
+      IO.println s!"sn.rounds {k + 1}"
+      break
+    lo := cur.all.size
+    cur := next
+  IO.println s!"sn.closure.triples {cur.all.size}"
+  IO.println s!"sn.total.deltaIndex.ms {ms totD}"
+  IO.println s!"sn.total.conclusions.ms {ms totC}"
+  IO.println s!"sn.total.insert.ms {ms totI}"
+  if withRows then
+    for (name, (e, t)) in totRows.toList.mergeSort (fun a b => a.2.2 ≥ b.2.2) do
+      IO.println s!"sn.rowtotal {name} emitted {e} ms {ms t}"
+  IO.eprintln s!"(sink {← sink.get})"
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-      IO.eprintln "usage: l4owl-rl-profile FILE.nt [--rows] [--fuel N]"
+      IO.eprintln "usage: l4owl-rl-profile FILE.nt [--rows] [--sn] [--fuel N]"
       pure 2
   | file :: rest =>
     let fuel := ((flagValue rest "--fuel").bind String.toNat?).getD 1000
@@ -148,6 +214,9 @@ def main (args : List String) : IO UInt32 := do
       | .ok ds => pure ds
       | .error e => throw (IO.userError s!"{file}: parse error at {e.pos}: {e.msg}")
     let g := ds.default
+    if rest.contains "--sn" then
+      runSN g fuel withRows
+      return 0
     let sink ← IO.mkRef 0
     let t0 ← IO.monoNanosNow
     let i0 := Index.ofGraph g

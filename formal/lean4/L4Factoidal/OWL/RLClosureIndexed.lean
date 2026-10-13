@@ -1604,11 +1604,12 @@ graph `P ++ D`, the delta term and the full row agree on every triple the
 full row over `P` does not already conclude. -/
 
 /-- A row together with the term the semi-naive round evaluates at a
-driving triple of the previous round's input. `delta sS sD d` reads the
-store of the whole input (`sS`) and the store of the delta (`sD`). -/
+driving triple of the previous round's input. `delta sS sD lo d` reads the
+store of the whole input (`sS`), the store of the delta (`sD`) and the length
+`lo` of the previous round's input. -/
 structure RowSpec where
   f     : Store → Triple → List Triple
-  delta : Store → Store → Triple → List Triple
+  delta : Store → Store → Nat → Triple → List Triple
 
 /-- The obligation of a delta term: on `P ++ D`, once the triples the row
 concludes from `P` alone are filtered out, the delta term and the full row
@@ -1617,21 +1618,21 @@ def RowSpec.Ok (r : RowSpec) : Prop :=
   ∀ (P D : Graph) (d : Triple) (q : Triple → Bool),
     (∀ t ∈ r.f (Store.ofGraph P) d, q t = false) →
     (r.f (Store.ofGraph (P ++ D)) d).filter q =
-      (r.delta (Store.ofGraph (P ++ D)) (Store.ofGraph D) d).filter q
+      (r.delta (Store.ofGraph (P ++ D)) (Store.ofGraph D) P.length d).filter q
 
 /-- A row that reads only its driving triple: nothing at an old one. -/
 def RowSpec.indep (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun _ _ _ => [] }
+  { f := f, delta := fun _ _ _ _ => [] }
 
 /-- A row additive over `P ++ D`: at an old driving triple, the row over
 the delta's store. -/
 def RowSpec.additive (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun _ sD d => f sD d }
+  { f := f, delta := fun _ sD _ d => f sD d }
 
 /-- A row evaluated in full at every driving triple, as the naive round
 does. -/
 def RowSpec.full (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun sS _ d => f sS d }
+  { f := f, delta := fun sS _ _ d => f sS d }
 
 theorem RowSpec.indep_ok {f : Store → Triple → List Triple}
     (h : ∀ s s' d, f s d = f s' d) : (RowSpec.indep f).Ok := by
@@ -1800,6 +1801,230 @@ theorem inverseOfDomRngFlipForS_add (P D : Graph) (d : Triple) : inverseOfDomRng
     inverseOfDomRngFlipForS (Store.ofGraph P) d ++ inverseOfDomRngFlipForS (Store.ofGraph D) d := by
   revert P D d; unfold inverseOfDomRngFlipForS; additive_row
 
+/-! ### Delta terms of two collection rows: prp-spo2 and cls-int1
+
+Both rows iterate every subject of the graph for each reading of their
+collection (`subjectsOf s.graph`), so the naive round costs the graph size
+times the number of `owl:propertyChainAxiom` (resp. `owl:intersectionOf`)
+triples. At an old driving triple the semi-naive round evaluates the row in
+full only when the delta can change its output: when the delta holds an
+`rdf:first` or `rdf:rest` triple, when the collection walk at the larger
+fuel `listFuel S` reads more than at the previous round's fuel, or when the
+delta holds an edge on a chain property (prp-spo2) or a typing in a member
+class (cls-int1) of one of the readings. Otherwise every conclusion the row
+draws from `S` it already drew from the previous round's input. -/
+
+@[simp] theorem Store.ofGraph_graph (g : Graph) : (Store.ofGraph g).graph = g := rfl
+
+theorem withSubjPred_nil_of {D : Graph} {s : Subject} {p : WfIri}
+    (h : ∀ u ∈ D, u.p ≠ p) : RL.withSubjPred D s p = [] := by
+  unfold RL.withSubjPred
+  refine List.filter_eq_nil_iff.mpr (fun u hu => ?_)
+  have := h u hu
+  simp only [Bool.and_eq_true, beq_iff_eq, not_and]
+  exact fun _ hv => this hv
+
+theorem withPred_isEmpty {D : Graph} {p : WfIri}
+    (h : ((Store.ofGraph D).withPred p).isEmpty = true) : ∀ u ∈ D, u.p ≠ p := by
+  intro u hu hup
+  have hm : u ∈ (Store.ofGraph D).withPred p := by
+    simp only [Store.ofGraph, RL.withPred, List.mem_filter]
+    exact ⟨hu, by simp [hup]⟩
+  rw [List.isEmpty_iff] at h
+  rw [h] at hm
+  cases hm
+
+theorem withPredObj_isEmpty {D : Graph} {p : WfIri} {o : Term}
+    (h : ((Store.ofGraph D).withPredObj p o).isEmpty = true) :
+    ∀ u ∈ D, ¬ (u.p = p ∧ u.o = o) := by
+  intro u hu ⟨hup, huo⟩
+  have hm : u ∈ (Store.ofGraph D).withPredObj p o := by
+    simp only [Store.ofGraph, RL.withPredObj, List.mem_filter]
+    exact ⟨hu, by simp [hup, huo]⟩
+  rw [List.isEmpty_iff] at h
+  rw [h] at hm
+  cases hm
+
+/-- With no `rdf:first` or `rdf:rest` triple in the delta, the collection
+walk reads the same cells over `P ++ D` as over `P`. -/
+theorem listSeqsS_append_of_noList {P D : Graph}
+    (hf : ∀ u ∈ D, u.p ≠ rdfFirst) (hr : ∀ u ∈ D, u.p ≠ rdfRest) :
+    ∀ (n : Nat) (h : Term),
+      listSeqsS (Store.ofGraph (P ++ D)) h n = listSeqsS (Store.ofGraph P) h n := by
+  intro n
+  induction n with
+  | zero => intro h; rfl
+  | succ n ih =>
+    intro h
+    simp only [listSeqsS]
+    split
+    · rfl
+    · simp only [Store.ofGraph, withSubjPred_append, withSubjPred_nil_of hf,
+        withSubjPred_nil_of hr, List.append_nil]
+      simp only [Store.ofGraph] at ih
+      simp only [ih]
+
+/-- With no delta edge on a chain property, the chain walk is the same over
+`P ++ D` as over `P`. -/
+theorem chainTargetsS_append_of {P D : Graph} :
+    ∀ (ps : List WfIri) (x : Subject), (∀ p ∈ ps, ∀ u ∈ D, u.p ≠ p) →
+      chainTargetsS (Store.ofGraph (P ++ D)) x ps = chainTargetsS (Store.ofGraph P) x ps := by
+  intro ps
+  induction ps with
+  | nil => intro x _; rfl
+  | cons p rest ih =>
+    intro x h
+    have hp : ∀ u ∈ D, u.p ≠ p := h p List.mem_cons_self
+    cases rest with
+    | nil =>
+      simp only [chainTargetsS, Store.ofGraph, withSubjPred_append, withSubjPred_nil_of hp,
+        List.append_nil]
+    | cons q rest' =>
+      have ih' := fun y => ih y (fun p' hp' => h p' (List.mem_cons_of_mem _ hp'))
+      simp only [chainTargetsS, Store.ofGraph, withSubjPred_append, withSubjPred_nil_of hp,
+        List.append_nil]
+      simp only [Store.ofGraph] at ih'
+      simp only [ih']
+
+/-- A chain of at least one link starts at a subject of the graph. -/
+theorem subjectsOf_of_chainTargetsS {P : Graph} {x : Subject} {xn : Term} :
+    ∀ {p : WfIri} {ps : List WfIri}, xn ∈ chainTargetsS (Store.ofGraph P) x (p :: ps) →
+      x ∈ subjectsOf P := by
+  intro p ps h
+  cases ps with
+  | nil =>
+    simp only [chainTargetsS, Store.ofGraph, List.mem_map] at h
+    obtain ⟨u, hu, _⟩ := h
+    simp only [RL.withSubjPred, List.mem_filter, Bool.and_eq_true, beq_iff_eq] at hu
+    exact List.mem_map.mpr ⟨u, hu.1, hu.2.1⟩
+  | cons q rest =>
+    simp only [chainTargetsS, Store.ofGraph, List.mem_flatMap] at h
+    obtain ⟨u, hu, _⟩ := h
+    simp only [RL.withSubjPred, List.mem_filter, Bool.and_eq_true, beq_iff_eq] at hu
+    exact List.mem_map.mpr ⟨u, hu.1, hu.2.1⟩
+
+/-- The run-time test that a collection row's output at an old driving
+triple cannot change: no list cell in the delta, and the walk reads no more
+at the larger fuel. -/
+def listStable (sS sD : Store) (lo : Nat) (head : Term) : Bool :=
+  (sD.withPred rdfFirst).isEmpty && (sD.withPred rdfRest).isEmpty &&
+    listSeqsS sS head (listFuel sS.graph) == listSeqsS sS head (lo + 1)
+
+theorem listStable_spec {P D : Graph} {head : Term}
+    (h : listStable (Store.ofGraph (P ++ D)) (Store.ofGraph D) P.length head = true) :
+    (∀ u ∈ D, u.p ≠ rdfFirst) ∧ (∀ u ∈ D, u.p ≠ rdfRest) ∧
+      listSeqsS (Store.ofGraph (P ++ D)) head (listFuel (P ++ D)) =
+        listSeqsS (Store.ofGraph P) head (listFuel P) := by
+  simp only [listStable, Bool.and_eq_true, beq_iff_eq, Store.ofGraph_graph] at h
+  obtain ⟨⟨h1, h2⟩, h3⟩ := h
+  have hf := withPred_isEmpty h1
+  have hr := withPred_isEmpty h2
+  refine ⟨hf, hr, ?_⟩
+  rw [h3, listSeqsS_append_of_noList hf hr]
+  rfl
+
+/-- prp-spo2 at an old driving triple. -/
+def prpSpo2Delta (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
+  if d.p == owlPropertyChainAxiom && listStable sS sD lo d.o &&
+      (listSeqsS sS d.o (listFuel sS.graph)).all (fun terms =>
+        (allIris terms).all (fun preds => preds.all (fun p => (sD.withPred p).isEmpty)))
+  then [] else prpSpo2ForS sS d
+
+theorem prpSpo2_ok : (RowSpec.mk prpSpo2ForS prpSpo2Delta).Ok := by
+  intro P D d q hq
+  simp only [prpSpo2Delta]
+  split
+  · rename_i hc
+    simp only [Bool.and_eq_true, List.all_eq_true] at hc
+    obtain ⟨⟨hg, hst⟩, hpreds⟩ := hc
+    obtain ⟨_, _, hseq⟩ := listStable_spec hst
+    simp only [List.filter_nil]
+    refine List.filter_eq_nil_iff.mpr (fun t ht => ?_)
+    have hP : t ∈ prpSpo2ForS (Store.ofGraph P) d := by
+      unfold prpSpo2ForS at ht ⊢
+      rw [if_pos hg] at ht ⊢
+      · simp only [List.mem_flatMap, List.mem_map, Store.ofGraph_graph] at ht ⊢
+        obtain ⟨p, hp, terms, hterms, preds, hpr, x1, _, xn, hxn, rfl⟩ := ht
+        have hnoD : ∀ p' ∈ preds, ∀ u ∈ D, u.p ≠ p' := by
+          intro p' hp' u hu
+          have hm : preds ∈ allIris terms := (List.mem_filter.mp hpr).1
+          exact withPred_isEmpty (hpreds terms hterms preds hm p' hp') u hu
+        rw [chainTargetsS_append_of preds x1 hnoD] at hxn
+        rw [hseq] at hterms
+        have hne : preds ≠ [] := by
+          intro h0
+          simp [nonEmpty, h0] at hpr
+        obtain ⟨p1, ps, rfl⟩ := List.exists_cons_of_ne_nil hne
+        exact ⟨p, hp, terms, hterms, p1 :: ps, hpr, x1,
+          subjectsOf_of_chainTargetsS hxn, xn, hxn, rfl⟩
+    simp [hq t hP]
+  · rfl
+
+/-- cls-int1's typing test reads the same over `P ++ D` as over `P` when the
+delta types nothing in a member class. -/
+theorem typesAllBS_append_of {P D : Graph} {y : Subject} :
+    ∀ (cs : List Term), (∀ c ∈ cs, ∀ u ∈ D, ¬ (u.p = rdfType ∧ u.o = c)) →
+      typesAllBS (Store.ofGraph (P ++ D)) y cs = typesAllBS (Store.ofGraph P) y cs := by
+  intro cs h
+  simp only [typesAllBS, Store.ofGraph]
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+    have hD : RL.memB D ⟨y, rdfType, c⟩ = false := by
+      simp only [RL.memB, List.any_eq_false, beq_iff_eq]
+      intro u hu heq
+      exact h c List.mem_cons_self u hu ⟨by rw [heq], by rw [heq]⟩
+    simp only [List.all_cons]
+    rw [memB_append, hD, Bool.or_false, ih (fun c' hc' => h c' (List.mem_cons_of_mem _ hc'))]
+
+theorem subjectsOf_of_typesAllBS {P : Graph} {y : Subject} {c : Term} {cs : List Term}
+    (h : typesAllBS (Store.ofGraph P) y (c :: cs) = true) : y ∈ subjectsOf P := by
+  simp only [typesAllBS, Store.ofGraph, List.all_cons, Bool.and_eq_true] at h
+  have hm := h.1
+  simp only [RL.memB, List.any_eq_true, beq_iff_eq] at hm
+  obtain ⟨u, hu, rfl⟩ := hm
+  exact List.mem_map.mpr ⟨_, hu, rfl⟩
+
+/-- cls-int1 at an old driving triple. -/
+def clsInt1Delta (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
+  if d.p == owlIntersectionOf && listStable sS sD lo d.o &&
+      (listSeqsS sS d.o (listFuel sS.graph)).all (fun cs =>
+        cs.all (fun c => (sD.withPredObj rdfType c).isEmpty))
+  then [] else clsInt1ForS sS d
+
+theorem clsInt1_ok : (RowSpec.mk clsInt1ForS clsInt1Delta).Ok := by
+  intro P D d q hq
+  simp only [clsInt1Delta]
+  split
+  · rename_i hc
+    simp only [Bool.and_eq_true, List.all_eq_true] at hc
+    obtain ⟨⟨hg, hst⟩, hcls⟩ := hc
+    obtain ⟨_, _, hseq⟩ := listStable_spec hst
+    simp only [List.filter_nil]
+    refine List.filter_eq_nil_iff.mpr (fun t ht => ?_)
+    have hP : t ∈ clsInt1ForS (Store.ofGraph P) d := by
+      unfold clsInt1ForS at ht ⊢
+      rw [if_pos hg] at ht ⊢
+      · simp only [List.mem_flatMap, Store.ofGraph_graph] at ht ⊢
+        obtain ⟨cs, hcs, y, _, hy⟩ := ht
+        have hcs' : cs ∈ listSeqsS (Store.ofGraph (P ++ D)) d.o (listFuel (P ++ D)) :=
+          (List.mem_filter.mp hcs).1
+        have hnoD : ∀ c ∈ cs, ∀ u ∈ D, ¬ (u.p = rdfType ∧ u.o = c) :=
+          fun c hc u hu => withPredObj_isEmpty (hcls cs hcs' c hc) u hu
+        rw [typesAllBS_append_of cs hnoD] at hy
+        rw [hseq] at hcs
+        have hne : cs ≠ [] := by
+          intro h0
+          simp [nonEmpty, h0] at hcs
+        obtain ⟨c1, cs1, rfl⟩ := List.exists_cons_of_ne_nil hne
+        refine ⟨c1 :: cs1, hcs, y, ?_, hy⟩
+        split at hy
+        · rename_i htrue
+          exact subjectsOf_of_typesAllBS htrue
+        · simp at hy
+    simp [hq t hP]
+  · rfl
+
 /-- The 74 rows of `conclusionsListS`, in its order, each with the term the
 semi-naive round evaluates at a driving triple of the previous round's
 input. -/
@@ -1819,7 +2044,7 @@ def rowTable : List RowSpec := [
     RowSpec.additive prpSympForS,
     RowSpec.full prpTrpForS,
     RowSpec.additive prpSpo1ForS,
-    RowSpec.full prpSpo2ForS,
+    RowSpec.mk prpSpo2ForS prpSpo2Delta,
     RowSpec.additive prpEqp1ForS,
     RowSpec.additive prpEqp2ForS,
     RowSpec.additive prpInv1ForS,
@@ -1829,7 +2054,7 @@ def rowTable : List RowSpec := [
     RowSpec.full invFpIfpRevForS,
     RowSpec.full invIfpFpRevForS,
     RowSpec.full prpKeyForS,
-    RowSpec.full clsInt1ForS,
+    RowSpec.mk clsInt1ForS clsInt1Delta,
     RowSpec.full clsInt2ForS,
     RowSpec.full clsUniForS,
     RowSpec.full clsSvf1ForS,
@@ -1906,7 +2131,7 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   · exact RowSpec.additive_ok prpSympForS_add
   · exact RowSpec.full_ok _
   · exact RowSpec.additive_ok prpSpo1ForS_add
-  · exact RowSpec.full_ok _
+  · exact prpSpo2_ok
   · exact RowSpec.additive_ok prpEqp1ForS_add
   · exact RowSpec.additive_ok prpEqp2ForS_add
   · exact RowSpec.additive_ok prpInv1ForS_add
@@ -1916,7 +2141,7 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   · exact RowSpec.full_ok _
   · exact RowSpec.full_ok _
   · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact clsInt1_ok
   · exact RowSpec.full_ok _
   · exact RowSpec.full_ok _
   · exact RowSpec.full_ok _
@@ -1971,21 +2196,21 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
 
 /-- The terms the semi-naive round evaluates at a driving triple of the
 previous round's input. -/
-def oldBlock (sS sD : Store) (d : Triple) : List Triple :=
-  rowTable.flatMap (fun r => r.delta sS sD d)
+def oldBlock (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
+  rowTable.flatMap (fun r => r.delta sS sD lo d)
 
 /-- Everything a semi-naive round emits, before deduplication. `lo` is the
 length of the previous round's input: the first `lo` triples of `sS.graph`
 are old driving triples, the rest are the delta. -/
 def stepConclusionsSN (sS sD : Store) (lo : Nat) : List Triple :=
-  axiomTriples ++ ((sS.graph.take lo).flatMap (oldBlock sS sD) ++
+  axiomTriples ++ ((sS.graph.take lo).flatMap (oldBlock sS sD lo) ++
     (sS.graph.drop lo).flatMap (conclusionsFromS sS))
 
 /-- One semi-naive round over the index: the delta's own index is built
 from the triples after position `lo`. -/
 def stepSNI (i : Index) (lo : Nat) : Index :=
   i.insertAll (stepConclusionsSN (Store.ofIndex i)
-    (Store.ofIndex (Index.ofGraph (i.toGraph.drop lo))) lo)
+    (Store.ofIndex (if lo = 0 then Index.empty else Index.ofGraph (i.toGraph.drop lo))) lo)
 
 /-- The semi-naive loop, with the naive loop's stopping rule (the size did
 not change). The first round has `lo = 0`, so every driving triple is new
@@ -2078,7 +2303,7 @@ theorem flatMap_filter_congr {α β : Type} {l : List α} {f g : α → List β}
 every triple outside `S`. -/
 theorem oldBlock_filter {P D : Graph} {d : Triple}
     (hS : ∀ t ∈ conclusionsFrom P d, RL.memB (P ++ D) t = true) :
-    (oldBlock (Store.ofGraph (P ++ D)) (Store.ofGraph D) d).filter
+    (oldBlock (Store.ofGraph (P ++ D)) (Store.ofGraph D) P.length d).filter
         (fun t => !RL.memB (P ++ D) t) =
       (conclusionsFromS (Store.ofGraph (P ++ D)) d).filter
         (fun t => !RL.memB (P ++ D) t) := by
@@ -2111,6 +2336,7 @@ theorem addAll_stepConclusionsSN {P D : Graph} {lo : Nat} (hlo : P.length = lo)
   conv => rhs; rw [List.flatMap_append]
   simp only [List.filter_append]
   congr 2
+  subst hlo
   exact flatMap_filter_congr (fun d hd => oldBlock_filter (hS d hd))
 
 /-- What a semi-naive round needs of its input `S` and its `lo`: `S` is
@@ -2139,8 +2365,15 @@ theorem Index.Wf.stepSN {i : Index} {S : Graph} {lo : Nat} (h : i.Wf S)
   unfold stepSNI
   have hD : i.toGraph.drop lo = D := by
     rw [Index.toGraph, h.all, List.drop_left' hlo]
-  rw [hD, Store.ofIndex_eq h, Store.ofIndex_eq (Index.Wf.ofGraph D),
-    ← addAll_stepConclusionsSN hlo hS]
+  -- With `lo = 0` no driving triple is old, so the delta's store is never read.
+  have hsame : stepConclusionsSN (Store.ofIndex i)
+      (Store.ofIndex (if lo = 0 then Index.empty else Index.ofGraph (i.toGraph.drop lo))) lo =
+      stepConclusionsSN (Store.ofIndex i) (Store.ofGraph D) lo := by
+    by_cases h0 : lo = 0
+    · subst h0
+      simp [stepConclusionsSN]
+    · rw [if_neg h0, hD, Store.ofIndex_eq (Index.Wf.ofGraph D)]
+  rw [hsame, Store.ofIndex_eq h, ← addAll_stepConclusionsSN hlo hS]
   exact h.insertAll _
 
 /-- The semi-naive loop pictures the list loop at every fuel. -/
