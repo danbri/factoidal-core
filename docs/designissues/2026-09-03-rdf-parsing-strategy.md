@@ -197,6 +197,12 @@ Modules, in data order:
    (`parseTurtleText_error`). Record:
    `2026-10-10-lean-vs-fstar-performance.md` section 10.
 
+6. `StrictFeed.turtleFeed` (2026-10-13,
+   https://github.com/danbri/factoidal/issues/813): the same walk over the
+   decoded 64 KiB chunks of a file, for the command line's strict
+   `parse FILE`; the walk's accumulator is written and emptied after each
+   chunk (`drainRun_eq`). Section 3b.
+
 ### 2.3 Proofs
 
 - `TurtleFuelTheorems.lean` (2026-09-02): the three literal loops are the
@@ -290,8 +296,8 @@ Modules, in data order:
 
 | Syntax | Reference | Other executions | Agreement |
 | --- | --- | --- | --- |
-| N-Triples | `NTriples.lean` `parseNTriples` | — | W3C suite; `NTriplesRoundTrip.lean` |
-| N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
+| N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
+| N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
 | TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | none; an IBK4 pack over TriG still buffers the whole source, unlike the Turtle and N-Quads routes (quad-aware layout: `2026-09-02-quad-aware-block-layout.md`) | W3C suites |
 | RDF/XML | `RdfXml.lean` | — | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction) |
 
@@ -505,6 +511,133 @@ lenient TriG walk, which runs that reader, is linear too: 25,000, 50,000,
 100,000 and 200,000 statements (10 per graph block, one bad in 500;
 1,681,242 to 13,822,892 bytes) took 0.72, 1.32, 2.77 and 5.43 s of CPU and
 141, 265, 513 and 987 MB peak.
+
+## 3b. The strict command line reads a file in chunks (2026-10-13)
+
+Issue: https://github.com/danbri/factoidal/issues/813 (key result of
+objective O2 of https://github.com/danbri/factoidal/issues/768). Before this
+change `l4factoidal parse FILE [--out nquads]` read the whole file into one
+`String` and gave it to `Ops.parseTextToDataset`; the state-of-the-art table
+(`2026-10-12-sota-reference.md`) measured 33 to 35 bytes of peak resident
+memory per input byte, where the streaming reader of the same binary
+(`--lenient`) held 24 MB at every size.
+
+### 3b.1 Where the memory and the time went (before)
+
+`l4query-phases FILE --parse-cli --format F --stop-after PHASE` runs the
+phases of the old `parseCmd` one at a time (`Harness/QueryPhases.lean`) and
+prints the resident set after each. Native binary of `d371f1d9`, load
+average 8 on 4 CPUs, one run per phase. Time is milliseconds since the
+process started; RSS and peak in MB.
+
+N-Triples, 100,000 triples, 8,077,780 bytes (`nt-100000.nt` of
+`tools/sota-bench.py`):
+
+| Phase | What it holds | ms | RSS after | Peak so far |
+| --- | --- | ---: | ---: | ---: |
+| start | the process | 0 | 12.6 | 12.6 |
+| read | the file as one `String` | 34 to 69 | 29.0 | 29.0 |
+| chars (alone) | the whole document as a `List Char` | 952 | 264.6 | 303.9 |
+| parse | `parseNTriples`: the `List Char` plus the graph | 605 to 644 | 264.6 | 303.9 |
+| normalize (count) | `normalizeDataset`, the set of distinct triples | 825 | 61.4 | 303.9 |
+| nquads (`--out`) | `Dataset.toCanonicalNQuads`, one 8 MB `String` | 692 | 59.2 | 304.1 |
+| output | written | 692 | 42.9 | 304.1 |
+
+Turtle, 20,000 paragraphs of `gene.ttl`, 87,468 triples, 1,706,149 bytes:
+
+| Phase | What it holds | ms | RSS after | Peak so far |
+| --- | --- | ---: | ---: | ---: |
+| start | the process | 0 | 12.5 | 12.5 |
+| read | the file as one `String` | 5 | 16.6 | 16.6 |
+| chars (alone; the Turtle path does not build it) | `List Char` | 58 | 65.9 | 74.2 |
+| parse | `parseTurtleText` (the scanner walk over the `String`): the graph | 369 to 391 | 37.4 | 37.4 |
+| normalize (count) | the set of distinct triples | 553 | 48.1 | 49.6 |
+| nquads (`--out`) | the 11.4 MB N-Quads `String` | 405 | 68.1 | 68.1 |
+| output | written | 406 | 43.6 | 68.1 |
+
+So for N-Triples (and N-Quads) the peak was the document's `List Char`:
+256 MB of 304 MB, 32 bytes per input byte, and 0.9 s of the time (most of it
+system time to fault in the pages). For Turtle the peak was the dataset and
+the output `String` together. The count added the set of distinct triples to
+the dataset.
+
+### 3b.2 The chunked execution
+
+`L4Factoidal/Syntax/StrictFeed.lean`, called by `streamStrictFile` in
+`Wasm/Cli.lean`. The file is read in 65,536-byte chunks (`forChunks`), each
+decoded by `Utf8Stream`:
+
+| Syntax | Walk | `--out nquads` | Count |
+| --- | --- | --- | --- |
+| N-Triples | `LineFeed` with `tripleReader`: the complete lines of each chunk (`splitCompleteLines`) through `foldLines`, the five branches of `parseLinesAcc` with the reader as a parameter; the partial last line and the absolute offset are carried | each chunk's triples are written (`chunkText`) and dropped | `countQuad` into a `FastDataset`: the step of `normalizeDataset` (language tags in lower case, §3.3; one entry per distinct triple, §3) |
+| N-Quads | `LineFeed` with `quadReader` | `addQuadFast` into a `FastDataset` (the accumulator of `parseNQuadsFast`), written at the end: the canonical form groups the quads by graph and keeps each quad once, so the set is needed | the same set, then `normalizeDataset` |
+| Turtle | a pre-pass (`TurtlePrepass`: the generated blank-node prefix and `hasDoubleLt` of the whole file), then the scanner walk of `parseTurtleWalk` one character at a time (`turtleFeed`) | after each chunk the walk's accumulator is written and emptied | `countQuad` per chunk |
+
+The text, the `List Char` of the document, the dataset (except where the
+output needs the set) and the output `String` are never built. What a run
+keeps between chunks: the walk's state (prefixes, base, the unfinished line or
+candidate, the offset), the UTF-8 decoder's last bytes, and the consumer's
+state.
+
+The whole-file path (`strictWhole`, which is the code before the change) is
+used when a streamed run cannot give today's answer by itself:
+
+- standard input (`-` or no file) and every other syntax (TriG, RDF/XML,
+  JSON-LD) and `--out turtle`: as before;
+- a Turtle document that contains `<<` (as in `parseTurtleText`);
+- a Turtle document the walk refuses: the file is read whole and given to
+  `Ops.parseTextToDataset`, so every Turtle error is `parseTurtle`'s, as
+  `parseTurtleText_error` states for the in-memory path. When `parseTurtle`
+  accepts a document the walk refused (a `PREFIX` directive cut at a line end,
+  2.3), the lines already written are the walk's first triples; the command
+  line checks that they are the first triples of the reference graph
+  (`StrictFeed.walkPrefix`) and writes the rest, or reports an internal error
+  (exit 1);
+- bytes that are not UTF-8: `readInput` reports them as before.
+
+The N-Triples and N-Quads errors are the line walk's own: the same reader on
+the same line, with the absolute offset. On an error the lines of the chunks
+before it are already on standard output (a streamed parse writes each chunk
+before it reads the next); the message, the offset and the exit status are
+the ones before the change.
+
+### 3b.3 Theorems
+
+All in `StrictFeed.lean` and `TurtleChunkFold.lean`; axioms `propext`,
+`Classical.choice`, `Quot.sound` at most.
+
+- `foldLines_quadReader`: `foldLines (quadReader mode)` is
+  `foldQuadLinesAcc mode`, so `LineFeed.feed_quad11` is one step of
+  `NQuadsFold.feedChunkC` and `LineFeed.run_quad11_eq_batch` holds: a chunked
+  N-Quads (RDF 1.1) run that succeeds gives the whole document's fold, from
+  `streamConsume11_eq_batch` (section 3). The N-Quads output is that fold with
+  `addQuadFast`, which is `parseNQuadsFast`.
+- `parseLinesAcc_eq_foldLines`, `parseNTriples_eq_foldLines`: the N-Triples
+  reference is `foldLines (tripleReader mode)` with a list consumer.
+- `turtleFeedChunks_eq`, `turtleFeed_eq_walkChars`, `walkChars_eq_foldl`:
+  the characters of the decoded chunks go through the walk's step in order;
+  the chunking does not enter.
+- `TurtleChunkFold.walk_drain`, `finish_drain` (from `consumeText_map`,
+  `consumeCandidates_map`, `feedChar_map`, `finish_map`, `walkChars_map`: the
+  walk passes its accumulator only to `step`, so a map that commutes with
+  `step` commutes with the walk) and `StrictFeed.drainRun_eq`: emptying the
+  accumulator after each chunk and writing what it held writes exactly the
+  triples of the walk of the concatenated chunks, in order, and fails exactly
+  when that walk fails.
+- `TurtlePrepass.feedText_chunks`: the pre-pass over chunks gives
+  `freshBnodePrefixText` and `hasDoubleLt` of the concatenation.
+- `normalizeDataset_default`, `toCanonicalNQuads_default`, `chunkText_eq`:
+  the count and the written text are the ones of the whole-file path for a
+  dataset with one default graph.
+- `isIri_eq_isIriFast` (`NTriples.lean`, `@[csimp]`): section 3b.5.
+
+Not proved: the N-Triples chunk boundary (a line walk over the lines of each
+chunk equals the walk over the whole text; the N-Quads RDF 1.1 case is
+`streamConsume11_eq_batch`), the N-Quads RDF 1.2 case, the N-Triples and
+N-Quads error at a chunk boundary, and that the Utf8Stream decoding of the
+chunks concatenates to the text `readInput` reads. The Turtle walk itself
+against `parseTurtle` is the chunk-boundary half of 2.3, also not proved. The
+check for all of these is `tools/strict-parse-differential.sh` (3b.4).
 
 ## 4. Rules that follow
 

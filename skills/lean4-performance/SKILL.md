@@ -62,6 +62,18 @@ Rules from that repair:
   out of an `IO.Ref` with `swap` (unique while it is updated). An `IO.Ref`
   read with `get` and written back with `set` has the same defect: the ref
   still holds the old map during the insert.
+  Paid again 2026-10-13 in two forms, by an agent that had not read this
+  bullet (https://github.com/danbri/factoidal/issues/813):
+  (1) `StrictFeed.LineFeed.feed` was written with `st.pos` after the walk,
+  as above; (2) the command line's chunk loop returned the OLD line state
+  `lf` in its error branch, so the compiler emitted `lean_inc(lf)` before
+  `LineFeed.feed` and the count's `FastDataset` was copied at the first quad
+  of every chunk: 400,000 N-Triples counted in 8.6 s of CPU against 2.9 s
+  after both repairs (take the state apart with `match st with | {..} =>`
+  before the walk; return a fresh empty state on the error branch). A
+  value named in ANY later branch of the caller is alive during the call.
+  Check the emitted C: `grep -n "lean_inc(v_x)" .lake/build/ir/<Module>.c`
+  just above the call that updates the map.
 - **When insertion order is observable, use `OMap`** (`JSONLD/OrderedMap.lean`:
   a `Std.TreeMap` plus the keys newest first). Lookup and update agree with
   `flLookup` and `flUpd` on the entries in insertion order
