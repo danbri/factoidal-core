@@ -199,9 +199,12 @@ defjob l4owl-probe-fs-input l4owl-probe parse_owl_fs_input owl \
 # OWL 2 RDF-Based Semantics (issue 721): every RDF-BASED case of all.rdf.
 # pass = entailment or inconsistency PROVED; "not-refuted" (counted as
 # other) = non-entailment or consistency NOT REFUTED, never a pass.
+# The same run prints the separate line [rdf-based or balanced refutation]
+# (issue 732): balanced pairs given to the DL path, with the DL rows' refuter
+# wall clock (--refute-ms 3000). It is never counted as proved.
 defjob l4owl-probe-rdf-based l4owl-probe parse_owl_rdf_based owl \
   "OWL 2, RDF-Based Semantics regime (RL closure + proved RDF-Based rules)" "" \
-  "--rdf-based --dir $OWLDIR all.rdf"
+  "--rdf-based --refute-ms 3000 --dir $OWLDIR all.rdf"
 # --- SHACL -------------------------------------------------------------------
 defjob l4shacl-core10 l4shacl parse_shacl shacl \
   "SHACL Core (1.0 suite)" "" \
@@ -643,6 +646,20 @@ parse_owl_rdf_based() {
   row_sl "$CUR_AREA" "InconsistencyTest" '^all\.rdf InconsistencyTest \[rdf-based\]: [0-9]+ pass' last \
     "pass = inconsistency proved (a clash row fired); fail = not proved"
   owl_scope_rows "$CUR_AREA" '^IN-SCOPE all\.rdf \[rdf-based\]'
+  # The separate line of issue 732. NOT a proved count: these rows rest on
+  # OWL 2 RDF-Based Semantics Theorem 7.1 for balanced pairs (section 7.3 is
+  # a proof sketch) and on obligations O1 and O2 of the DL certificates
+  # (issues 761, 762), and O3 (issue 763) for entailments.
+  local bnote="separate line, NOT counted as proved: rests on OWL 2 RDF-Based Semantics Theorem 7.1 for balanced pairs (section 7.3, a proof sketch) and on obligations O1 and O2 (https://github.com/danbri/factoidal/issues/761, https://github.com/danbri/factoidal/issues/762), and O3 for entailments (https://github.com/danbri/factoidal/issues/763); the rows above are the proved count"
+  row_sl "$CUR_AREA" "rdf-based or balanced refutation, all units" \
+    '^all\.rdf \[rdf-based or balanced refutation\]: [0-9]+ pass' last \
+    "$bnote; pass = proved by the RDF-Based rules, or a balanced pair the DL path decided; other = not-refuted, unsupported and local-override units"
+  row_sl "$CUR_AREA" "rdf-based or balanced refutation, Approved, in scope" \
+    '^IN-SCOPE all\.rdf \[rdf-based or balanced refutation\] ' last \
+    "$bnote; in = status Approved; other = not-refuted, unsupported and local-override units"
+  row_sl "$CUR_AREA" "balanced line: Approved species-DL units the rules did not prove" \
+    '^BALANCED all\.rdf \[status Approved, species DL\]: [0-9]+ pass' last \
+    "$bnote; the units are the PositiveEntailmentTest and InconsistencyTest failures of the rdf-based rows with status Approved and species DL (key result 3.2 of https://github.com/danbri/factoidal/issues/768); pass = balanced and decided by the DL path; other = not balanced (section 7.3, Definition (Balanced)) or balanced and not decided"
 }
 
 parse_owl_fs_input() {

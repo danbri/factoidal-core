@@ -37,6 +37,10 @@ numbers below are that document's unless another document is named.
   carry over" under the correspondence theorem, does not follow from
   the text of Theorem 7.1 and is not used. § 4.2 gives the text and
   the condition under which it would hold.
+* Since 2026-10-12 that condition is checked (§ 7.3, "balanced";
+  `RdfBased/Balanced.lean`), and the answers of the DL path on balanced
+  pairs are printed on a SEPARATE line, `[rdf-based or balanced
+  refutation]`, that is never counted as proved: § 6.2.
 
 ## 1. What the RDF-Based Semantics is
 
@@ -205,9 +209,10 @@ two links of the argument are not proofs in this tree: the § 7.3 text is
 itself a proof SKETCH ("some technical aspects of the theorem are only
 coarsely treated"), and the tableau refuter (`OWL/Refute.lean`, `partial
 def`) has no soundness theorem for the Direct Semantics either. The
-task's rule "a rule without a proof does not ship" excludes it.
-Issue-ready text for a separately labelled line, the way `--dl` prints
-`[closure or refutation]`: § 8.
+task's rule "a rule without a proof does not ship" excludes it from the
+`[rdf-based]` lines. The separately labelled line that § 8 proposed, the
+way `--dl` prints `[closure or refutation]`, exists since 2026-10-12, with
+the balanced check and the refuter's certificates: § 6.2.
 
 ### 4.3 Rules taken from the § 5 conditions
 
@@ -427,6 +432,15 @@ rules still read the raw closure; gap A
   end-to-end cases on the shapes of
   `WebOnt-Class-003`, `WebOnt-imports-010`, `WebOnt-I5.3-015` and
   `WebOnt-someValuesFrom-003` (a two-step witness chain).
+* `Balanced.lean` (2026-10-12, § 6.2). `balancedDefects`, the check of
+  OWL 2 RDF-Based Semantics § 7.3, Definition (Balanced), for a pair of
+  graphs, over the species checker `OWL/SyntaxDL.lean`;
+  `inconsistencyGoal`, the conclusion an InconsistencyTest is checked
+  against; `structuralEmbed`, a bounded depth-first search on an explicit
+  stack for a one-to-one renaming of blank nodes. A check, not a theorem.
+* `BalancedTests.lean`. 27 `#guard` cases on W3C catalog documents: two
+  balanced pairs, and a negative case for each condition except 4.3 and
+  4.4, which no catalog document exercises (§ 6.2).
 
 ## 6. Scores
 
@@ -532,7 +546,9 @@ check and a checked DL answer (the refuter has no Direct Semantics soundness
 theorem; plan item 2 of https://github.com/danbri/factoidal/issues/651 adds
 refutation certificates). Until both land, the line of
 https://github.com/danbri/factoidal/issues/732 stays separate from the
-proved count.
+proved count. Both checks exist since 2026-10-12, and the line is
+measured in § 6.2; it is still not a proved count, for the reasons given
+there.
 
 The 242 not-refuted units (ConsistencyTest and NegativeEntailmentTest) are a
 different case. Theorem 7.1 carries entailment in one direction only: a
@@ -581,6 +597,250 @@ unit, to a run of the same jobs earlier the same day. These modes do not
 call the RDF-Based modules. `Wasm/native-smoke.sh`: 310 pass, 0 fail
 (out of 310).
 
+### 6.2 Direct Semantics answers on balanced pairs: the separate line (2026-10-12)
+
+Issue: https://github.com/danbri/factoidal/issues/732 (items 1 and 2; item
+3 as far as the certificates allow). Key result 3.2 of
+https://github.com/danbri/factoidal/issues/768: "the 102 species-DL
+failures go through Theorem 7.1 on balanced pairs, as a separate line";
+target "each of the 102 is passed on that line or named as unbalanced".
+
+**What Theorem 7.1 gives, from the text.** § 7.3 proves relationship 4 of
+the theorem for the pair the balancing lemma constructs, and of that pair
+the proof assumes only that it is balanced: "Since the pair ( G1 , G2 ) is balanced,
+there exist entity declarations in F(G1) for each entity type of every
+non-built-in IRI occurring in G1". So for an input pair that is already
+balanced, the pair itself is the substitute pair: if F(G1) OWL 2 Direct
+entails F(G2), then G1 OWL 2 RDF-Based entails G2. For a pair that is not
+balanced, nothing follows (§ 7.1 gives a Direct entailment that is not an
+RDF-Based one).
+
+**The pairs.**
+
+* PositiveEntailmentTest: G1 is the premise with its imports merged, G2 the
+  conclusion document, read as `--species` reads them (`speciesDocs`; the
+  conclusion's blank nodes get the prefix `c_`).
+* InconsistencyTest: G1 as above, G2 is `Balanced.inconsistencyGoal`, an
+  anonymous ontology header and `owl:Thing rdfs:subClassOf owl:Nothing`.
+  Under the Direct Semantics an ontology with no model entails every
+  ontology. Under the RDF-Based Semantics no interpretation satisfies the
+  goal: `rdfs:subClassOf` gives ICEXT(I(owl:Thing)) ⊆ ICEXT(I(owl:Nothing)),
+  Table 5.2 gives ICEXT(I(owl:Thing)) = IR and ICEXT(I(owl:Nothing)) = ∅,
+  and IR is not empty. So relationship 4 for (G1, goal) says that G1 has no
+  RDF-Based model. The goal has no literal, no non-built-in IRI, no
+  annotation, no expression and no sequence, so the pair is balanced exactly
+  when G1 is an OWL 2 DL ontology that declares its entities (conditions 1
+  and 2.1).
+
+**The check** (`L4Factoidal/OWL/RdfBased/Balanced.lean`). Every condition
+of Definition (Balanced) is checked; the module header quotes each one and
+says how it is read. The readings that are choices:
+
+* Condition 1 is the species verdict of `OWL/SyntaxDL.lean` for the pair,
+  the function `--species` scores (488 pass, 0 fail, 1 local-override, out
+  of 489).
+* Condition 2.1 reads the entity type of each non-built-in IRI from its
+  position in a triple (OWL 2 Mapping to RDF Graphs § 3.2, Tables 10 to 16)
+  and asks for the typing triple of Table 7 of that mapping in the SAME
+  graph. A named individual needs `rdf:type owl:NamedIndividual`; the
+  specification says "for every entity type T of u", and NamedIndividual
+  is an entity type (Structural Specification § 5.6.1). An anonymous
+  individual needs nothing.
+* Conditions 5.2 to 5.5 compare the triples of G2 that encode
+  expressions and sequences (the patterns of Tables 3 and 11 to 15 of the
+  mapping, which all have a blank-node subject) with G1 under ONE
+  one-to-one renaming of blank nodes, because the two graphs come from
+  different documents. The renaming must be one-to-one: identifying two
+  blank nodes of G2 gives a stronger conclusion. A Table 18 axiom with an
+  IRI subject (`notA owl:complementOf A`, OWL 1 DL compatibility) is an
+  axiom, not the encoding of a class expression, so condition 5.3 does not
+  read it; its list (`owl:unionOf (...)`) is a sequence and condition 5.5
+  does.
+
+`L4Factoidal/OWL/RdfBased/BalancedTests.lean` has 27 `#guard` cases on
+real catalog documents, copied verbatim and parsed by the RDF/XML parser:
+balanced pairs `WebOnt-equivalentClass-004` (PositiveEntailmentTest) and
+`WebOnt-description-logic-101` (InconsistencyTest); negative cases from
+`WebOnt-I5.5-005` (1 and 3), `WebOnt-unionOf-003` (2.1 in G1),
+`New-Feature-ReflexiveProperty-001` and `chain2trans1` (2.1 in G2),
+`New-Feature-ObjectQCR-001` (2.2 and 5.2 to 5.5),
+`WebOnt-AnnotationProperty-002` (4.1), the premise of `WebOnt-imports-011`
+in the place of G2 (4.2, and 3: a header of two triples) and
+`WebOnt-I5.8-011` (5.1). `chain2trans1` is also the positive case of the
+IRI branch of condition 3, and two cases built from the restriction of
+`New-Feature-ObjectQCR-001` test that the renaming is one-to-one. No
+catalog document has a deprecation statement (4.3) or an annotation
+property axiom (4.4), so those two conditions have no case.
+
+**The DL path.** For a balanced pair the probe runs exactly what `--dl`
+runs for the unit (`judgePositive`, or `judgeInconsistencyDl` under
+`Regime.dl`): the RL closure, one materialisation pass, the RL closure
+again, the clash rows, then the refuter with `--refute-ms 3000` (the DL
+rows' setting, now on the `--rdf-based` scoreboard job too) and the
+certificate run. `judgeInconsistency` was split into
+`judgeInconsistencyDl` and the `--dl` wrapper that skips RDF-BASED-only
+cases; `--dl` output is unchanged.
+
+**Measured** (2026-10-12, `tools/lean-scoreboard.sh --only l4owl-probe`,
+binary of this branch, `--rdf-based --refute-ms 3000 --dir
+third_party/testing/owl all.rdf`, 153 s for the job):
+
+| line | count |
+|---|---|
+| `BALANCED all.rdf [status Approved, species DL]` (key result 3.2) | 62 pass, 40 not-balanced, 0 undecided (out of 102) |
+| of the 62 passes | 51 `PROVED-BY-CERTIFICATE`, 7 decided by refutation without a checked certificate, 4 decided by the DL closure (no certificate) |
+| all units the rules did not prove (PositiveEntailmentTest, InconsistencyTest) | 63 passed, 64 not balanced, 0 undecided (out of 127) |
+| `all.rdf [rdf-based or balanced refutation]` | 265 pass, 62 fail, 370 not-refuted, 0 unsupported, 2 local-override (out of 699) |
+| `IN-SCOPE all.rdf [rdf-based or balanced refutation] status Approved` | 217 pass, 41 fail, 242 not-refuted, 0 unsupported, 0 local-override (out of 500) |
+| `all.rdf [rdf-based]` (unchanged) | 202 pass, 125 fail, 370 not-refuted, 0 unsupported, 2 local-override (out of 699) |
+| `IN-SCOPE all.rdf [rdf-based] status Approved` (unchanged) | 155 pass, 103 fail, 242 not-refuted, 0 unsupported, 0 local-override (out of 500) |
+
+Each of the 102 units of key result 3.2 is passed on the line or named as
+not balanced; none is balanced and undecided. Of the 62 passes, 59 are
+InconsistencyTests and 3 PositiveEntailmentTests (`WebOnt-I5.2-004` and
+`WebOnt-equivalentClass-004` with a checked certificate, `WebOnt-I5.21-002`
+without). The certificate status agrees unit by unit with the `--dl` logs
+(`PROVED-BY-CERTIFICATE` and `DECIDED-BY-REFUTER (unchecked)` lines of the
+type-inconsistency and type-positive-entailment runs). The four passes of
+the DL closure (`WebOnt-description-logic-004`, `-017`, `-102`, `-107`) are
+clashes of the RL rows after the class-expression materialisation of the
+DL regime, which the RDF-Based regime does not run.
+
+The 7 refutations without a checked certificate: `Contradicting-dateTime-restrictions`,
+`WebOnt-I5.21-002`, `WebOnt-description-logic-040`, `-108`, `-504`,
+`WebOnt-miscellaneous-203`, `-204` (the kinds of
+https://github.com/danbri/factoidal/issues/764). One unit outside the key
+result also passes: `Inconsistent String Pattern with Disjoint
+Dataproperties` (status Proposed), without a checked certificate.
+
+Every line the probe printed before is byte-identical in all ten OWL logs
+of the scoreboard (failing ids included; compared with the `wall_ms` field
+masked, after dropping the new lines from the `--rdf-based` log). The
+scoreboard has three new rows, each with a note that the line is not a
+proved count; 79 rows, 0 ERROR, TIMEOUT or UNPARSED.
+
+**The 40 units of key result 3.2 that are not balanced**, by the condition
+sets they fail: 2.1 alone 12; 2.1 with 5.2 to 5.5, 10; 5.2 to 5.5 alone 6;
+2.2 with 5.2 to 5.5, 3; 2.1 with 2.2 and 5.2 to 5.5, 3; 2.1 with 2.2, 2;
+5.1 with 5.2 to 5.5, 1; 5.1 alone, 1; 2.1 with 5.1, 1; 1 with 3 and 5.2 to
+5.5, 1. The `NOT-BALANCED` line of each unit names every condition it
+fails and the first four defects; the table gives the first.
+
+| unit | type | conditions | first defect |
+|---|---|---|---|
+| `bnode2somevaluesfrom` | PE | 2.1, 5.2-5.5 | G1: `a` used as an individual (rdf:type owl:Thing or owl:Nothing), not declared (no `owl:NamedIndividual` typing) |
+| `Consistent-but-all-unsat` | PE | 2.1, 5.1 | G1: `i1` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+| `Datatype-Float-Discrete-001` | Inc | 2.1 | G1: `a` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `DisjointClasses-001` | PE | 2.1, 5.2-5.5 | G1: `Stewie` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `DisjointClasses-003` | PE | 2.1, 5.2-5.5 | G1: `Stewie` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-DataQCR-001` | PE | 2.1, 2.2, 5.2-5.5 | G1: `Meg` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-DisjointDataProperties-002` | PE | 2.1, 5.2-5.5 | G1: `Peter` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-DisjointObjectProperties-002` | PE | 2.1, 5.2-5.5 | G1: `Stewie` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-DisjointUnion-001` | PE | 2.1 | G1: `Stewie` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-ObjectQCR-001` | PE | 2.1, 2.2, 5.2-5.5 | G1: `Peter` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-ObjectQCR-002` | PE | 2.1, 5.2-5.5 | G1: `Peter` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-Rational-002` | Inc | 2.1 | G1: `a` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-SelfRestriction-002` | PE | 2.1, 2.2, 5.2-5.5 | G1: `Peter` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `New-Feature-TopObjectProperty-001` | Inc | 2.1 | G1: `i` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `one=two` | Inc | 2.1 | G1: `j` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+| `Qualified-cardinality-boolean` | PE | 2.1, 2.2 | G2: `a` used as an individual (subject of a property assertion), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-I5.2-002` | PE | 5.1 | the declaration `owl:Nothing rdf:type owl:Class` of G2 is not in G1 |
+| `WebOnt-I5.2-006` | PE | 5.2-5.5 | 4 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b1 rdf:first premises006#A`) |
+| `WebOnt-I5.24-003` | PE | 5.1, 5.2-5.5 | the declaration `owl:Thing rdf:type owl:Class` of G2 is not in G1 |
+| `WebOnt-I5.26-009` | PE | 2.2, 5.2-5.5 | the literal `"1"^^xsd:int` of G2 does not occur in G1 |
+| `WebOnt-I5.26-010` | PE | 2.2, 5.2-5.5 | the literal `"1"^^xsd:int` of G2 does not occur in G1 |
+| `WebOnt-I5.5-005` | PE | 1, 3, 5.2-5.5 | not OWL 2 DL: conclusion: no-ontology-header |
+| `WebOnt-I5.8-010` | PE | 2.1, 2.2 | G1: `john` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-SymmetricProperty-002` | PE | 2.1, 5.2-5.5 | G1: `equalityOnA` used as an object property (rdf:type owl:InverseFunctionalProperty), not declared (no `owl:ObjectProperty` typing) |
+| `WebOnt-TransitiveProperty-002` | PE | 2.1, 5.2-5.5 | G1: `symProp` used as an object property (rdf:type owl:SymmetricProperty), not declared (no `owl:ObjectProperty` typing) |
+| `WebOnt-cardinality-001` | PE | 5.2-5.5 | 6 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b1 owl:maxCardinality "1"^^xsd:nonNegativeInteger`) |
+| `WebOnt-cardinality-002` | PE | 5.2-5.5 | 3 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b1 owl:cardinality "1"^^xsd:nonNegativeInteger`) |
+| `WebOnt-cardinality-003` | PE | 5.2-5.5 | 6 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b1 owl:maxCardinality "2"^^xsd:nonNegativeInteger`) |
+| `WebOnt-cardinality-004` | PE | 5.2-5.5 | 7 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b2 owl:cardinality "2"^^xsd:nonNegativeInteger`) |
+| `WebOnt-description-logic-035` | Inc | 2.1 | G1: `spy` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-description-logic-201` | PE | 2.1 | G1: `V822576` used as an individual (rdf:type owl:Thing or owl:Nothing), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-description-logic-205` | PE | 2.1 | G1: `V16560` used as an individual (rdf:type owl:Thing or owl:Nothing), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-description-logic-208` | PE | 2.1 | G1: `V16439` used as an individual (rdf:type owl:Thing or owl:Nothing), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-description-logic-502` | Inc | 2.1 | G1: `T` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-description-logic-901` | PE | 2.2, 5.2-5.5 | the literal `"2"^^xsd:nonNegativeInteger` of G2 does not occur in G1 |
+| `WebOnt-equivalentClass-006` | PE | 5.2-5.5 | 18 expression or sequence triples of G2 are not in G1 (none of G1 has the form `_:c_b1 rdf:type owl:Class`) |
+| `WebOnt-maxCardinality-001` | Inc | 2.1 | G1: `sb1` used as an individual (subject of rdf:type), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-oneOf-004` | PE | 2.1 | G1: `i` used as an individual (rdf:type owl:Thing or owl:Nothing), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-unionOf-003` | PE | 2.1, 5.2-5.5 | G1: `a` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+| `WebOnt-unionOf-004` | PE | 2.1, 5.2-5.5 | G1: `a` used as an individual, list member (owl:oneOf), not declared (no `owl:NamedIndividual` typing) |
+
+What the reasons are:
+
+* Condition 2.1 (28 units): the premise (and often the conclusion) uses an
+  IRI as a named individual without `rdf:type owl:NamedIndividual`. The
+  WebOnt documents are OWL 1 documents, which had no such class, and the
+  OWL 2 cases of the New-Feature series do not declare individuals either.
+  Two units (`WebOnt-SymmetricProperty-002`, `-TransitiveProperty-002`)
+  type a property only by a characteristic (`owl:InverseFunctionalProperty`,
+  `owl:SymmetricProperty`) and never `owl:ObjectProperty`. The balancing
+  lemma adds these declarations (step 5), but that changes G1:
+  Table 5.2 gives only ICEXT(I(owl:NamedIndividual)) ⊆ IR, so `a rdf:type
+  owl:NamedIndividual` is not true in every RDF-Based interpretation, and
+  adding it to a premise is not sound for the RDF-Based Semantics without a
+  proof.
+* Conditions 5.2 to 5.5 (24 units): the conclusion contains a class
+  expression, a restriction or a list that the premise does not contain.
+  Most of them are conclusions of § 7, group 1: they ask for an individual
+  of IR that no § 5 condition makes exist.
+* Condition 2.2 (8 units): a literal of the conclusion (a cardinality, a
+  boolean, a data value) is not in the premise.
+* Condition 5.1 (3 units): the conclusion declares the built-in class
+  `owl:Thing` or `owl:Nothing` (`WebOnt-I5.2-002`, `-I5.24-003`,
+  `Consistent-but-all-unsat`), and the premise does not. Table 5.2
+  makes `owl:Thing rdf:type owl:Class` and `owl:Nothing rdf:type owl:Class`
+  true in every RDF-Based interpretation, so a reading that exempts
+  declarations of built-in classes would be sound and would make
+  `WebOnt-I5.2-002` balanced; this check keeps the letter of the definition.
+* Conditions 1 and 3 (`WebOnt-I5.5-005`): the conclusion has no ontology
+  header (the disputed fixture of
+  https://github.com/danbri/factoidal/issues/711).
+
+**What would make the line count as proved.** A pass on this line is the
+end of this chain, for an InconsistencyTest with `PROVED-BY-CERTIFICATE`:
+
+```
+G1 (premise)  ── O2: the DL preprocessing keeps Direct models ──▶  g (what the refuter reads)
+g             ── O1: the reader is sound for the reverse mapping ─▶ O = readOntology g
+checkCert O c = true  ──THEOREM checkCert_sound──▶  O has no Direct model
+F(G1) has no Direct model  ── Theorem 7.1, relationship 4, (G1, goal) balanced ──▶  G1 has no RDF-Based model
+```
+
+Only the third arrow is a theorem in this tree. The line can count as
+proved when all of these hold, and the change is then recorded here:
+
+1. O1 and O2 are proved (https://github.com/danbri/factoidal/issues/761,
+   https://github.com/danbri/factoidal/issues/762); for a
+   PositiveEntailmentTest also O3, the negation goals
+   (https://github.com/danbri/factoidal/issues/763).
+2. Relationship 4 of Theorem 7.1 for balanced pairs is a Lean theorem, at
+   least for the constructs the certificates read: from an interpretation
+   that meets `RdfBasedConditions` and satisfies a balanced G1, build a
+   model of `DirectModel` for the ontology of G1 (§ 7.3, step 1, builds it
+   with ΔI := IR and C^C := ICEXT(I(C)) for each declared class). The § 7.3
+   text is a sketch, so this is new proof work, not a transcription.
+3. The check is proved against a definition: `Balanced G1 G2` as a
+   proposition over a Lean reverse mapping (the tree has the forward
+   mapping, `OWL/StructureRdf.lean`, and the syntax-directed species
+   checker, not the reverse mapping), and `balancedDefects … = [] →
+   Balanced G1 G2`.
+4. A pass without a checked certificate (refutation unchecked, or decided by
+   the DL closure, whose clash rows have no Direct Semantics theorem) stays
+   outside the count until it has one
+   (https://github.com/danbri/factoidal/issues/764 lists the refutation
+   kinds the checker cannot certify yet).
+
+A second route avoids items 1 and 2 for inconsistencies: prove that the
+DL preprocessing is sound for the RDF-Based Semantics (the RL closure part
+is gap A of § 8) and that an interpretation meeting `RdfBasedConditions`
+on a declared graph `g` gives a `DirectModel` of `readOntology g`. Then
+`checkCert_sound` gives "G1 has no RDF-Based model" directly. This route
+does not need Theorem 7.1.
+
 ## 7. Left failing, with the reason
 
 PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
@@ -608,7 +868,7 @@ PositiveEntailmentTest, 54 units, in four groups (30 + 19 + 3 + 2):
    `-equivalentClass-004`, `-oneOf-004`, `-SymmetricProperty-002`,
    `-TransitiveProperty-002`. The DL regime decides most of these with
    the tableau refuter under the Direct Semantics; § 4.2 says why that
-   is not used here.
+   is not used here, and § 6.2 gives each unit on the separate line.
 3. **Arithmetic over cardinalities** (3, all issue 721):
    `WebOnt-extra-credit-002`, `-003`, `-004`. "This test shows a
    relationship between integer multiplication and OWL Full" (the
@@ -646,7 +906,8 @@ on the closure (84 before § 4.5; § 6 lists the 11 that moved).
    `-TopObjectProperty-001`, `WebOnt-I5.5-003`, `-I5.5-004`,
    `-miscellaneous-203`, `-miscellaneous-204`. The DL
    regime decides most of them with the tableau refuter (unions,
-   nominals, cardinalities); § 4.2 says why that is not used here.
+   nominals, cardinalities); § 4.2 says why that is not used here, and
+   § 6.2 gives each unit on the separate line.
 
 ## 8. Gaps, with issue-ready text
 
@@ -668,8 +929,10 @@ not excluded. Repair: run the regime's closure without those three rows
 constructors), and prove the bridge. Design record:
 `docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 4.1.
 
-**B. Title: OWL RDF-Based regime: a separately labelled line for Direct
-Semantics refutations on balanced pairs (Theorem 7.1).** Body: Theorem
+**B. Filed as https://github.com/danbri/factoidal/issues/732; items 1 and
+2 done on 2026-10-12 (§ 6.2), item 3 open. Title: OWL RDF-Based regime: a
+separately labelled line for Direct Semantics refutations on balanced
+pairs (Theorem 7.1).** Body: Theorem
 7.1 carries a Direct Semantics entailment to the RDF-Based Semantics for
 the substitute pair it constructs, not for the input pair. For an input
 pair that is already balanced (§ 7.3, Definition (Balanced)), the two
