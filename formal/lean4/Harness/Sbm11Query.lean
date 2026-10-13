@@ -26,7 +26,12 @@ guard selects nothing. A line on stderr names the path that ran
   --reference         run the reference fallback even for the id fragment
   --threads N         scan tasks per BGP scan (issue 799): the selected blocks
                       of each scan are cut into N consecutive chunks, each
-                      scanned in its own task; N = 1 is the single-thread path
+                      scanned in its own task; N = 1 is the single-thread path.
+                      Stage 1b: a single-pattern query that streams, counts
+                      or orders with LIMIT renders, counts or keeps its first
+                      rows in each chunk (at most 16 blocks per chunk when it
+                      streams, N tasks at once), and the parent combines the
+                      chunk results in chunk order
   --sip S             sideways information passing (issue 809): the right
                       scan of a merge join takes the sorted distinct left
                       values of the join variable as candidates and decodes
@@ -64,6 +69,7 @@ import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Geo.Functions
 import Wasm.Ops.Clock
 import Std.Sync.Mutex
+import Std.Data.TreeMap
 
 namespace Harness.Sbm11Query
 
@@ -76,6 +82,13 @@ open Harness.Sbm11Gen
 open L4Factoidal.Storage.ChunkedArtifact (Ref)
 
 /-! ## A generation opened lazily -/
+
+/-- A page of `Session.taskPages` (issue 799, stage 1b): its keys, or a
+    promise of them while one task loads it (the other tasks that need the
+    page wait for the promise, so a page is loaded once). -/
+inductive TaskPage where
+  | ready (ks : ByteArray × Array Nat)
+  | loading (p : IO.Promise (Except String (ByteArray × Array Nat)))
 
 structure LoadedPerm where
   prbPath : String
@@ -108,6 +121,27 @@ structure Session where
   /-- Serialises the verified chunk cache (`merkle` reads) between scan
       tasks (issue 799). Shared by every task view of the session. -/
   lock : Std.Mutex Unit
+  /-- Serialises the dictionary between task views (issue 799, stage 1b):
+      `taskPages`, and under `merkle` the page loads (the GDX1 copy and the
+      GDV1 and GDX1 chunk caches are shared). Shared by every task view. -/
+  dictLock : Std.Mutex Unit
+  /-- The dictionary pages that scan tasks loaded or are loading (issue 799,
+      stage 1b), shared by the tasks under `dictLock` and read by the session
+      on a miss in `pages`; at most `SBM11_PAGES` entries, emptied when full,
+      like `pages`. A tree map: a value that two threads can reach is never
+      updated in place by the Lean runtime (`lean_is_exclusive` is false for
+      it), so each insert into a shared hash map copied its bucket array; an
+      insert into a tree map copies one path. Empty while no task has run. -/
+  taskPages : IO.Ref (Std.TreeMap Nat TaskPage)
+  /-- A task view (`Session.view`): `pageKeys` goes to `taskPages` under
+      `dictLock` on a miss in the view's own `pages`. -/
+  inTask : Bool := false
+  /-- The dictionary's term count (`g.dictHdr.termCount`), read by every
+      `keySlice`. A field of its own: reading it through `g.dictHdr` took and
+      released a reference to the header object, which every task view
+      shares, and on an object that two threads reach that is an atomic
+      operation on one cache line from every thread. -/
+  termCount : Nat := 0
   /-- The overlay per permutation (`Overlay.forPerm`), fixed at open. -/
   ovl : Array L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := #[{}, {}, {}, {}]
   /-- committed batches and entries replayed at open; overlay inserts,
@@ -144,10 +178,11 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
                     readBytes, fetchedBytes, fileBytes }
   let hdrBytes ← verifiedRead g0 gdxPath gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
-  return { g := { g0 with dictHdr }, perms := ← IO.mkRef #[none, none, none, none],
+  return { g := { g0 with dictHdr }, termCount := dictHdr.termCount,
+           perms := ← IO.mkRef #[none, none, none, none],
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {},
-           lock := ← Std.Mutex.new () }
+           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
 
 def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
   match (← ss.perms.get)[p]? with
@@ -220,22 +255,171 @@ def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
     pages, and slower, each new huge page being cleared on first touch). The
     cache holds at most `SBM11_PAGES` pages (default 2,048) and is emptied
     when full. -/
+def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
+  let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM ss.gdxFetch ss.gdvFetch pg).run)
+  let total := ks.foldl (fun a k => a + k.size) 0
+  let mut packed := ByteArray.emptyWithCapacity total
+  let mut offs : Array Nat := Array.mkEmpty (ks.size + 1)
+  for k in ks do
+    offs := offs.push packed.size
+    packed := packed ++ k
+  offs := offs.push packed.size
+  return (packed, offs)
+
+/-- Put page `pg` in the page cache `c`, emptied first when it holds
+    `SBM11_PAGES` pages (default 2,048; 0: no cache). -/
+def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+    (ks : ByteArray × Array Nat) : IO Unit := do
+  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  if lim > 0 then
+    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+
+/-- A copy of a page made by the calling thread. A page in `taskPages` is
+    reachable from every task, so taking and releasing a reference to it is an
+    atomic operation on one cache line from every thread that renders with it;
+    each task and the session keep their own copy (about 2 KB). -/
+def copyPage (ks : ByteArray × Array Nat) : ByteArray × Array Nat :=
+  (ks.1.extract 0 ks.1.size, ks.2.extract 0 ks.2.size)
+
+/-- Put an entry in `taskPages` (call under `dictLock`), emptied first when
+    it holds `SBM11_PAGES` entries. -/
+def Session.putTaskPage (ss : Session) (pg : Nat) (e : TaskPage) : IO Unit := do
+  let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  if lim > 0 then
+    ss.taskPages.modify fun m => (if m.size ≥ lim then {} else m).insert pg e
+
+/-- A task view (issue 799, stage 1b) on a miss in its own cache: the page in
+    `taskPages`, else this task loads it. Under `none` the load runs outside
+    `dictLock` with a promise in `taskPages`, so tasks load different pages
+    at the same time and a task that needs a page being loaded waits for it
+    (one load per page while `taskPages` holds it; loads under the lock made
+    olympics q21 slower at 4 threads than at 1, with the default page limit
+    the pages are loaded again on every run). Under `merkle` the load runs
+    under the lock (the chunk caches are shared). Then a copy goes to the
+    view's own cache. -/
+def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
+  let underLock := ss.g.verify != .none
+  let step ← ss.dictLock.atomically (do
+    match (← ss.taskPages.get).get? pg with
+    | some (.ready ks) => pure (Sum.inl ks)
+    | some (.loading p) => pure (Sum.inr (p, false))
+    | none =>
+      if underLock then
+        let ks ← ss.loadPage pg
+        ss.putTaskPage pg (.ready ks)
+        pure (Sum.inl ks)
+      else
+        let p ← IO.Promise.new
+        ss.putTaskPage pg (.loading p)
+        pure (Sum.inr (p, true)) : IO ((ByteArray × Array Nat) ⊕ (IO.Promise (Except String (ByteArray × Array Nat)) × Bool)))
+  let ks ← match step with
+    | .inl ks => pure ks
+    | .inr (p, false) =>
+      match ← IO.wait p.result? with
+      | some (.ok ks) => pure ks
+      | some (.error e) => throw (IO.userError e)
+      | none => throw (IO.userError s!"GDV1 page {pg}: the task that loaded it stopped")
+    | .inr (p, true) =>
+      match ← (ss.loadPage pg).toBaseIO with
+      | .ok ks =>
+        ss.dictLock.atomically (ss.putTaskPage pg (.ready ks) : IO Unit)
+        p.resolve (.ok ks)
+        pure ks
+      | .error e =>
+        ss.dictLock.atomically (ss.taskPages.modify (·.erase pg) : IO Unit)
+        p.resolve (.error (toString e))
+        throw e
+  let ks := copyPage ks
+  cachePage ss.pages pg ks
+  return ks
+
+/-- A task view under `none` (issue 799, stage 1b): the dictionary pages of
+    the ids in rows `[0, n)` of `t` that the view's cache does not hold, put
+    in it with two rounds of `dictLock` for the whole set: one to take the
+    pages that `taskPages` holds and to mark the others as loading by this
+    task, one to publish the pages this task loaded (outside the lock). A
+    page another task is loading is waited for. Rendering then finds every
+    page in the view's cache. Per-page rounds (`sharedPage`) made olympics
+    q19 slower at 4 threads than at 1 with the default page limit (a fifth of
+    the profile in the scheduler: threads that wait for the lock). -/
+def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO Unit := do
+  if !ss.inTask || ss.g.verify != .none then return
+  let localPages ← ss.pages.get
+  let mut want : Array Nat := #[]
+  let mut seen : Std.HashSet Nat := {}
+  for c in [0:t.cols.size] do
+    for i in [0:min n t.rows] do
+      let x := t.at c i
+      let tag := (x >>> 60).toNat
+      if tag == 1 || tag == 2 || tag == 3 then
+        let rank := (x &&& 0x0FFFFFFFFFFFFFFF).toNat
+        if rank < ss.termCount then
+          let pg := rank / Dict.pageTerms
+          if !seen.contains pg && !localPages.contains pg then
+            seen := seen.insert pg
+            want := want.push pg
+  if want.isEmpty then return
+  let (got, waits, mine) ← ss.dictLock.atomically (do
+    let tp ← ss.taskPages.get
+    let mut got : Array (Nat × (ByteArray × Array Nat)) := #[]
+    let mut waits : Array (Nat × IO.Promise (Except String (ByteArray × Array Nat))) := #[]
+    let mut mine : Array (Nat × IO.Promise (Except String (ByteArray × Array Nat))) := #[]
+    for pg in want do
+      match tp.get? pg with
+      | some (.ready ks) => got := got.push (pg, ks)
+      | some (.loading p) => waits := waits.push (pg, p)
+      | none =>
+        let p ← IO.Promise.new
+        mine := mine.push (pg, p)
+    for (pg, p) in mine do ss.putTaskPage pg (.loading p)
+    pure (got, waits, mine) : IO _)
+  -- load this task's pages outside the lock
+  let mut loaded : Array (Nat × (ByteArray × Array Nat)) := Array.mkEmpty mine.size
+  let mut failure : Option IO.Error := none
+  for (pg, _) in mine do
+    if failure.isNone then
+      match ← (ss.loadPage pg).toBaseIO with
+      | .ok ks => loaded := loaded.push (pg, ks)
+      | .error e => failure := some e
+  let loadedNow := loaded
+  let failed := failure
+  ss.dictLock.atomically (do
+    for (pg, ks) in loadedNow do ss.putTaskPage pg (.ready ks)
+    if failed.isSome then
+      for (pg, _) in mine do
+        if !(loadedNow.any (·.1 == pg)) then ss.taskPages.modify (·.erase pg)
+    pure () : IO Unit)
+  let mut k := 0
+  for (_, p) in mine do
+    match loaded[k]? with
+    | some (_, ks) => p.resolve (.ok ks)
+    | none => p.resolve (.error (match failure with | some e => toString e | none => "not loaded"))
+    k := k + 1
+  if let some e := failure then throw e
+  for (pg, ks) in got ++ loaded do cachePage ss.pages pg (copyPage ks)
+  for (pg, p) in waits do
+    match ← IO.wait p.result? with
+    | some (.ok ks) => cachePage ss.pages pg (copyPage ks)
+    | some (.error e) => throw (IO.userError e)
+    | none => throw (IO.userError s!"GDV1 page {pg}: the task that loaded it stopped")
+
+/-- The keys of a page: the cache `pages`; on a miss in a task view
+    `sharedPage`; on a miss in the session, the pages scan tasks loaded
+    (empty unless a divided path ran), then the file. -/
 def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
   match (← ss.pages.get).get? pg with
   | some ks => return ks
   | none =>
-    let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM ss.gdxFetch ss.gdvFetch pg).run)
-    let total := ks.foldl (fun a k => a + k.size) 0
-    let mut packed := ByteArray.emptyWithCapacity total
-    let mut offs : Array Nat := Array.mkEmpty (ks.size + 1)
-    for k in ks do
-      offs := offs.push packed.size
-      packed := packed ++ k
-    offs := offs.push packed.size
-    let lim := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
-    if lim > 0 then
-      ss.pages.modify fun c => (if c.size ≥ lim then {} else c).insert pg (packed, offs)
-    return (packed, offs)
+    if ss.inTask then return ← ss.sharedPage pg
+    let tp ← ss.taskPages.get
+    if !tp.isEmpty then
+      if let some (.ready ks) := tp.get? pg then
+        let ks := copyPage ks
+        cachePage ss.pages pg ks
+        return ks
+    let ks ← ss.loadPage pg
+    cachePage ss.pages pg ks
+    return ks
 
 def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := do
   let id := x.toNat
@@ -243,7 +427,7 @@ def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) 
   unless tag == tagBnode || tag == tagIri || tag == tagLit do
     throw (IO.userError s!"id {id}: not a dictionary id")
   let rank := id % two60
-  if rank ≥ ss.g.dictHdr.termCount then throw (IO.userError s!"id {id}: rank not below the term count")
+  if rank ≥ ss.termCount then throw (IO.userError s!"id {id}: rank not below the term count")
   let (packed, offs) ← ss.pageKeys (rank / Dict.pageTerms)
   let j := rank % Dict.pageTerms
   if j + 1 < offs.size then return (packed, offs[j]!, offs[j + 1]!)
@@ -301,15 +485,29 @@ def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   | .none => verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len
 
 /-- A view of the session for one scan task (issue 799): its own byte and
-    lookup counters, its own dictionary state, and a copy of the permutations
-    opened so far (the parent opens a permutation before it starts tasks, so a
-    task never opens one). The chunk cache and the lock are shared. The parent
-    adds the view's counters after the task has finished (`Session.absorb`). -/
+    lookup counters, and a copy of the permutations opened so far (the parent
+    opens a permutation before it starts tasks, so a task never opens one).
+    The chunk caches, the locks, the GDX1 copy and `taskPages` (read under
+    `dictLock`) are shared; the session's own page cache is not (`pages` here
+    is a placeholder that the task replaces with a cache it creates itself,
+    `Session.local`). A task reaches the dictionary only through `pageKeys`
+    (`keySlice`, `keyOf`, `termOf`): never `idOf` or `lowerBound`, which the
+    parent calls before it starts tasks. The parent adds the view's counters
+    after the task has finished (`Session.absorb`). -/
 def Session.view (ss : Session) : IO Session := do
   let g' : Gen := { ss.g with readBytes := ← IO.mkRef 0, fetchedBytes := ← IO.mkRef 0,
                               fileBytes := ← IO.mkRef 0 }
   return { ss with g := g', perms := ← IO.mkRef (← ss.perms.get), frameBytes := ← IO.mkRef 0,
-                   lookups := ← IO.mkRef 0, pages := ← IO.mkRef {}, gdx := ← IO.mkRef none }
+                   lookups := ← IO.mkRef 0, pages := ← IO.mkRef {}, inTask := true }
+
+/-- The view with a page cache made by the calling thread (call it in the
+    task). A cache made in the parent is reachable from two threads, so the
+    Lean runtime marks it shared and never updates it in place: every insert
+    copied the whole hash map (q21 at 4 threads: 335 ms against 158 ms at one
+    thread, `lean_copy_expand_array` and `lean_mark_mt` at the top of the
+    profile). -/
+def Session.local (v : Session) : IO Session := do
+  return { v with pages := ← IO.mkRef {} }
 
 /-- Add the counters of a finished task view to the session. -/
 def Session.absorb (ss v : Session) : IO Unit := do
@@ -329,7 +527,8 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     keySlice := fun x => liftIO (ss.keySlice x)
     termOf := fun x => liftIO (ss.termOf x)
     lowerBound := fun k => liftIO (ss.lowerBound k)
-    ovl := fun p => ss.ovl.getD p {} }
+    ovl := fun p => ss.ovl.getD p {}
+    prefetch := some fun t n => liftIO (ss.prefetch t n) }
 
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
@@ -378,6 +577,55 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) :
     ss.absorb v
   if let some e := failure then throw e
   return (out, stats)
+
+/-- `IdQuery.Par.fold` on this session (issue 799, stage 1b): one dedicated
+    task per chunk of blocks, each on its own view (`Session.view`), at most
+    `window` tasks at once; the results are folded with `g` in chunk order as
+    they finish, and the next task starts when one is folded, so at most
+    `window` results wait in memory. The counters of every task are added
+    (`Session.absorb`), failed or not; after a failure no task starts. -/
+def parFold (ss : Session) (window : Nat) {α β : Type}
+    (job : IdQuery.Store IO → List Nat → ExceptT String IO α) (chunks : List (List Nat)) (init : β)
+    (g : β → α → ExceptT String IO β) : ExceptT String IO β := do
+  let arr := chunks.toArray
+  let spawn (X : List Nat) : IO (Task (Except IO.Error α) × Session) := do
+    let v ← ss.view
+    let t ← IO.asTask (do
+      let w ← v.local
+      match ← (job w.store X).run with
+      | .ok r => pure r
+      | .error e => throw (IO.userError e))
+    pure (t, v)
+  let mut queue : Array (Task (Except IO.Error α) × Session) := #[]
+  let mut next := 0
+  for _ in [0:max window 1] do
+    if next < arr.size then
+      queue := queue.push (← liftIO (spawn arr[next]!))
+      next := next + 1
+  let mut acc := init
+  let mut failure : Option String := none
+  for _ in [0:arr.size] do
+    let some (t, v) := queue[0]? | break
+    queue := queue.extract 1 queue.size
+    let r ← liftIO (IO.wait t)
+    liftIO (ss.absorb v)
+    match r with
+    | .ok a =>
+      if failure.isNone then
+        match ← liftIO (g acc a).run with
+        | .ok b => acc := b
+        | .error e => failure := some e
+    | .error e => if failure.isNone then failure := some (toString e)
+    if failure.isNone && next < arr.size then
+      queue := queue.push (← liftIO (spawn arr[next]!))
+      next := next + 1
+  if let some e := failure then throw e
+  return acc
+
+/-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
+    tasks at once (issue 799, stage 1b). -/
+def Session.par (ss : Session) (threads : Nat) : IdQuery.Par IO :=
+  { threads, fold := fun job chunks init g => parFold ss threads job chunks init g }
 
 /-- The session's store with `threads` scan tasks per BGP scan (1: the
     single-thread store, `scanTable` unset). -/
@@ -617,7 +865,8 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
-    match ← (IdQuery.runPlanM (ss.storeWith threads sip) plan emit referenceRender).run with
+    let par := if threads ≤ 1 then none else some (ss.par threads)
+    match ← (IdQuery.runPlanM (ss.storeWith threads sip) plan emit referenceRender par).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 

@@ -1,0 +1,3 @@
+# Stage 1b: LIMIT below the estimate: the single scan stops early, so the
+# path is not divided (same answer and the same bytes read).
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5

@@ -1,0 +1,3 @@
+# Stage 1b: ORDER BY with LIMIT and OFFSET, with ties on ?o (rows whose keys
+# are equal keep the scan order, in each range and in the union).
+SELECT ?s ?o WHERE { ?s ?p ?o } ORDER BY ?o LIMIT 7 OFFSET 2

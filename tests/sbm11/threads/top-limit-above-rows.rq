@@ -1,0 +1,2 @@
+# Stage 1b: LIMIT above the number of rows (each range keeps all its rows).
+SELECT ?s ?o WHERE { ?s ?p ?o } ORDER BY ?s LIMIT 100
