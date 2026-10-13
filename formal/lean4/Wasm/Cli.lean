@@ -270,16 +270,20 @@ def lenientChunkBytes : USize := 65536
 /-- Read `h` chunk by chunk, at most `fuel` chunks, stopping early when
 `stop` holds. The `Bool` is `true` when the end of the file was reached (or
 `stop` held). Structural recursion on `fuel`. -/
-def forChunks {α : Type} (h : IO.FS.Handle) (stop : α → Bool)
+def forChunksOf {α : Type} (chunk : USize) (h : IO.FS.Handle) (stop : α → Bool)
     (f : α → ByteArray → IO (Except String α)) : Nat → α → IO (Except String (α × Bool))
   | 0, a => pure (.ok (a, false))
   | n + 1, a => do
       if stop a then return .ok (a, true)
-      let bytes ← h.read lenientChunkBytes
+      let bytes ← h.read chunk
       if bytes.isEmpty then return .ok (a, true)
       match ← f a bytes with
       | .error e => pure (.error e)
-      | .ok a' => forChunks h stop f n a'
+      | .ok a' => forChunksOf chunk h stop f n a'
+
+def forChunks {α : Type} (h : IO.FS.Handle) (stop : α → Bool)
+    (f : α → ByteArray → IO (Except String α)) : Nat → α → IO (Except String (α × Bool)) :=
+  forChunksOf lenientChunkBytes h stop f
 
 def printDiagnostics (ds : List Diagnostic) : IO Unit := do
   let err ← IO.getStderr
@@ -496,6 +500,15 @@ design record (section 3b) for the byte comparison. Errors:
 * bytes that are not UTF-8: the file is read whole by `readInput`, which
   reports them as before. -/
 
+/-- The chunk size of the streamed strict parse: 65,536 bytes, or the
+environment variable `L4_STRICT_CHUNK_BYTES` when it is a positive number.
+`tools/strict-parse-differential.sh` sets it to 1 and to 7 so that every line
+and statement boundary of the W3C files falls across a chunk boundary. -/
+def strictChunkBytes : IO USize := do
+  match (← IO.getEnv "L4_STRICT_CHUNK_BYTES").bind String.toNat? with
+  | some n => pure (if n > 0 then n.toUSize else lenientChunkBytes)
+  | none => pure lenientChunkBytes
+
 /-- What a streamed strict parse needs from the whole-file path. -/
 inductive StrictOutcome where
   /-- Finished: exit status. -/
@@ -515,12 +528,13 @@ canonical N-Quads; otherwise print the count. -/
 def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
     IO StrictOutcome := do
   let size := (← System.FilePath.metadata path).byteSize.toNat
-  let fuel := size / lenientChunkBytes.toNat + 2
+  let chunk ← strictChunkBytes
+  let fuel := size / chunk.toNat + 2
   let reader := if ntriples then tripleReader mode else quadReader mode
   if ntriples && emit then
     -- The triples of each chunk are written and dropped.
     let walked ← IO.FS.withFile path .read fun h =>
-      forChunks h
+      forChunksOf chunk h
         (fun (st : Utf8Stream × StrictFeed.LineFeed (List Triple) × Nat × Option StrictOutcome) =>
           st.2.2.2.isSome)
         (fun st bytes => do
@@ -531,7 +545,7 @@ def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
             match StrictFeed.LineFeed.feed reader (fun a t _ => t :: a) lf text.toList with
             | .error e =>
                 IO.eprintln (fmtParseError e)
-                pure (.ok (utf8', lf, printed, some (.done 1)))
+                pure (.ok (utf8', { acc := [] }, printed, some (.done 1)))
             | .ok lf' =>
                 writeTriples lf'.acc
                 pure (.ok (utf8', { lf' with acc := [] }, printed + lf'.acc.length, none)))
@@ -556,7 +570,7 @@ def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
     let consume : FastDataset → Triple → Option Subject → FastDataset :=
       if ntriples then StrictFeed.countQuad else addQuadFast
     let walked ← IO.FS.withFile path .read fun h =>
-      forChunks h
+      forChunksOf chunk h
         (fun (st : Utf8Stream × StrictFeed.LineFeed FastDataset × Option StrictOutcome) =>
           st.2.2.isSome)
         (fun st bytes => do
@@ -564,10 +578,14 @@ def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
           match utf8.feed bytes with
           | .error _ => pure (.ok (utf8, lf, some (.whole 0 false)))
           | .ok (text, utf8') =>
+            -- No branch below names `lf` again: the walk must hold the only
+            -- reference to the set, or `addQuadFast` copies its hash map at
+            -- the first quad of every chunk (measured: 400,000 N-Triples
+            -- counted in 8.6 s of CPU, 100,000 in 1.25 s).
             match StrictFeed.LineFeed.feed reader consume lf text.toList with
             | .error e =>
                 IO.eprintln (fmtParseError e)
-                pure (.ok (utf8', lf, some (.done 1)))
+                pure (.ok (utf8', { acc := {} }, some (.done 1)))
             | .ok lf' => pure (.ok (utf8', lf', none)))
         fuel (Utf8Stream.init, { acc := {} }, none)
     match walked with
@@ -593,10 +611,11 @@ def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
 def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Bool) :
     IO StrictOutcome := do
   let size := (← System.FilePath.metadata path).byteSize.toNat
-  let fuel := size / lenientChunkBytes.toNat + 2
+  let chunk ← strictChunkBytes
+  let fuel := size / chunk.toNat + 2
   let baseOpt : Option String := if base == "" then none else some base
   let pre ← IO.FS.withFile path .read fun h =>
-    forChunks h (fun (_ : StrictFeed.TurtlePrepass) => false)
+    forChunksOf chunk h (fun (_ : StrictFeed.TurtlePrepass) => false)
       (fun p b => pure (p.feed b)) fuel ({} : StrictFeed.TurtlePrepass)
   match pre with
   | .error _ => pure (.whole 0 true)
@@ -611,7 +630,7 @@ def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Boo
   -- State: UTF-8 decoder, walk state (its accumulator holds the current
   -- chunk's triples), triples written, the set for the count.
   let walked ← IO.FS.withFile path .read fun h =>
-    forChunks h
+    forChunksOf chunk h
       (fun (st : Utf8Stream × TurtleChunkFoldState (List Triple) × Nat × FastDataset × Bool) =>
         st.2.2.2.2)
       (fun st bytes => do
@@ -619,8 +638,10 @@ def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Boo
         match utf8.feed bytes with
         | .error _ => pure (.ok (utf8, ws, printed, fd, true))
         | .ok (text, utf8') =>
+          -- As above: no branch names `ws` again, so the walk updates its
+          -- state in place.
           match StrictFeed.turtleFeed prependReverse (.ok ws) text with
-          | .error _ => pure (.ok (utf8', ws, printed, fd, true))
+          | .error _ => pure (.ok (utf8', init, printed, fd, true))
           | .ok ws' =>
               if emit then
                 writeTriples ws'.acc

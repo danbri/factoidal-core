@@ -158,13 +158,22 @@ structure LineFeed (α : Type) where
   pos : Nat := 0
 
 /-- Feed one decoded chunk: walk the complete lines of `carry ++ chunk`,
-keep the rest. -/
+keep the rest.
+
+The state is taken apart before the walk, so the consumer's state is the only
+reference to itself when the walk updates it. Reading `st.pos` after the walk
+kept `st`, and through it the accumulator, alive: `addQuadFast` then copied
+the whole hash map of a `FastDataset` at the first quad of every chunk, and
+the count of 400,000 N-Triples took 9.16 s of CPU where 100,000 took 0.97 s
+(2026-10-13, https://github.com/danbri/factoidal/issues/813). -/
 def LineFeed.feed (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
     (st : LineFeed α) (chunk : List Char) : Except ParseError (LineFeed α) :=
-  let (complete, carry) := splitCompleteLines (st.carry ++ chunk)
-  match foldLines reader consume (complete.length + 1) st.pos complete st.acc with
-  | .ok acc => .ok { acc, carry, pos := st.pos + complete.length }
-  | .error e => .error e
+  match st with
+  | { acc, carry, pos } =>
+    let (complete, carry') := splitCompleteLines (carry ++ chunk)
+    match foldLines reader consume (complete.length + 1) pos complete acc with
+    | .ok acc' => .ok { acc := acc', carry := carry', pos := pos + complete.length }
+    | .error e => .error e
 
 /-- End of input: walk the partial last line. -/
 def LineFeed.finish (reader : LineReader) {α : Type} (consume : α → Triple → Option Subject → α)
@@ -189,8 +198,10 @@ theorem LineFeed.feed_quad11 {α : Type} (consume : α → Triple → Option Sub
       | .error e => { acc := st.acc, carry := (splitCompleteLines (st.carry ++ chunk)).2,
                       pos := st.pos + (splitCompleteLines (st.carry ++ chunk)).1.length,
                       err := some e } := by
-  simp only [feedChunkC, LineFeed.feed, foldFrom, foldLines_quadReader]
-  cases foldQuadLinesAcc .rdf11 consume _ st.pos _ st.acc <;> rfl
+  cases st with
+  | mk acc carry pos =>
+    simp only [feedChunkC, LineFeed.feed, foldFrom, foldLines_quadReader]
+    cases foldQuadLinesAcc .rdf11 consume _ pos _ acc <;> rfl
 
 private theorem foldlM_quad11 {α : Type} (consume : α → Triple → Option Subject → α) :
     ∀ (chunks : List (List Char)) (st st' : LineFeed α),
