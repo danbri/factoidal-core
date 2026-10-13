@@ -1061,7 +1061,6 @@ theorem trimTrailingDots_len (l : List Char) :
   simpa using this
 
 
-namespace L4Factoidal.SPARQL
 
 theorem scanVarName_pos (pos : Nat) (cs : List Char) :
     (scanVarName pos cs).2.1 + (scanVarName pos cs).2.2.length = pos + cs.length := by
@@ -1285,7 +1284,6 @@ theorem nextToken_len (v12 : Bool) (pos0 : Nat) (cs0 : List Char) :
       | (right; refine ⟨trivial, ?_, ?_⟩ <;> omega)
       | (left; have := pos_of_eq (scanIriBody_pos _ _ _) ‹scanIriBody _ _ _ = (_, _, _)›;
          simp only [List.length_cons] at this; omega)
-      | (trace "GOAL"; trace_state; sorry)
 
 
 /-- The progress test of `tokenizeLoop` (the rest is not shorter than the
@@ -1365,7 +1363,16 @@ brackets. -/
 #guard tokenize12Fast "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z" ==
   tokenizeLoop true 200 0 "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z".toList []
 #guard (tokenize "?a × ?b").map (·.tok) == [.var "a", .pname "×", .var "b", .eof]
+/-! Token offsets increase along a token list: the generated blank node
+labels of the parser (`freshBnodeId`) rely on it. -/
+#guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))
+  (tokenize "INSERT DATA { <s> <p> ( 1 [ <q> 2 ] \"x\"@en ) ; <r> _:b , ?v . } # end")
+#guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))
+  (tokenize12 "SELECT * { << <a> <b> <c> >> ~ _:r {| <d> <e> |} . } VALUES ?x { 1.5 2e3 }")
 #guard skipWsFast 0 "  # one\n\t# two".toList == skipWs 0 "  # one\n\t# two".toList
 #guard skipWsFast 3 "x".toList == (3, ['x'])
+
+#print axioms nextToken_len
+#print axioms tokenizeAt_eq_fast
 
 end L4Factoidal.SPARQL

@@ -71,13 +71,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    0.24 s to 0.61 s after, measured 2026-10-12; F*: 1.43 s at
                    5,000)
   sparql-collection-parse  `query` SELECT over one collection of 2,000 and
-                   8,000 members (one triple of data, no answer). Expected failure, issue 818
-                   item 2: `freshBnodeId` walks the remaining token list once
-                   per cell. The SPARQL tokenizer is quadratic too (issue 802);
-                   on 2026-10-13 the tokenizer took 0.06 s and 0.80 s of the
-                   0.09 s and 1.18 s of an ASK of this shape, an ASK with a VALUES block of the same
-                   size 0.08 s and 0.89 s. The row passes only when both are
-                   repaired.
+                   8,000 members (one triple of data, no answer). An expected
+                   failure until 2026-10-13 (issue 818 item 2: `freshBnodeId`
+                   walked the remaining token list once per cell; issue 802:
+                   the tokenizer was quadratic): 0.086 s and 1.230 s before
+                   both repairs
   sparql-tokenize  `query` ASK over one triple with a VALUES block of 2,000,
                    4,000 and 8,000 IRIs, measured at x, 2x and 4x like
                    owl-consistent-cl (each doubling at most DOUBLING, 4x at most
@@ -88,6 +86,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    (`tokenizeLoop`'s progress test and `skipWs`'s fuel):
                    0.52 s, 1.92 s, 6.97 s; after, 0.017 s, 0.032 s, 0.040 s
                    (2026-10-13)
+  sparql-collection-scope  the same query over 10,000 and 40,000 members, past
+                   the constant fuel 10,000 (a parse error before the repair
+                   of https://github.com/danbri/factoidal/issues/818). Expected
+                   failure, https://github.com/danbri/factoidal/issues/824: the
+                   blank node scope check (`validateBnodeScope`, §19.6) walks
+                   the join chain of the collection once per join (0.44 s
+                   and 8.80 s, measured 2026-10-13)
   sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
                    empty dataset (issue 802: DELETE DATA of 4,000 quads took
                    61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
@@ -170,8 +175,8 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sparql-collection-parse": "https://github.com/danbri/factoidal/issues/818",
     "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
+    "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -326,6 +331,12 @@ ROWS = {
         lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
     "sparql-collection-parse": (
         2000,
+        lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"]),
+    "sparql-collection-scope": (
+        10000,
         lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
         lambda p: [str(BIN), "query",
                    str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),

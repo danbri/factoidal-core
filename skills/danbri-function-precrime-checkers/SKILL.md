@@ -809,3 +809,61 @@ Rules from this repair:
   block the base tokenizer gave ratios of 2.8 and 3.2 per doubling, 9.1 for
   4x: a pass or a fail by noise. With 40-character IRIs it gave 3.7 and 3.6,
   13.4 for 4x.
+
+### Four limits of one issue (https://github.com/danbri/factoidal/issues/818)
+
+1. **The constant fuel 10,000 of the SPARQL parser.** Every sibling loop of
+   the parser (collection members, the triples of a block, VALUES values)
+   spends one unit per sibling. `parseSparql` and `parseSparqlUpdate` now
+   parse once at `topFuel` and, when that pass rejects the request, once more
+   at `scaledFuel` (`topFuel` + the request length). There is no theorem that
+   more fuel gives the same answer (the parser is one mutual block of about
+   100 functions, and some of them return a partial result when the fuel runs
+   out), so the design makes the needed facts true by construction:
+   `parseSparql_of_topFuel` (an answer of the first pass is the answer),
+   `parseSparql_error` (a rejection is the first pass's rejection, with its
+   message) and `parseSparql_ok` (every answer is an answer of
+   `parseSparqlWith` at some fuel, so the theorems stated at every fuel hold);
+   the same three for updates.
+2. **`freshBnodeId` walked the rest of the token list once per cell.** The
+   label is now the character offset of the token (`_:bnode_30`, where the F*
+   and this port gave the remaining token count, `_:bnode_5`). The offsets
+   increase along a token list (`#guard`s in `Tokenizer.lean`), so the labels
+   stay distinct; three SSE snapshot guards in `ParserTests.lean` changed
+   their label numbers.
+3. **XMLLiteral children were cut after about 10,000, with no error.**
+   `serializeNodeT`/`serializeNodesT` recurse on the node and the child list
+   and have no fuel; `serialize_fuel_eq` proves them equal to the fuelled pair
+   whenever the fuel covers `litNeed` of the node, so
+   `serializeLiteralContent_eq_fuel` gives the old lexical form wherever the
+   old one was complete. The loop twin is `serializeNodeTF`/`serializeNodesTLoop`.
+4. **`collectQuads` used one native frame per join.** `collectQuadsLoop` keeps a
+   work list (termination: twice the `sizeOf` of each pattern plus one, summed);
+   `collectQuadsLoop_eq`, `csimp collectQuads_eq_fast`.
+
+| `l4factoidal`, one run per point | before | after |
+|---|---|---|
+| `query` ASK, VALUES of 16,000 IRIs | parse error after 33.6 s | 0.13 s |
+| the same, 32,000 IRIs | no answer in 200 s | 0.39 s |
+| `query` SELECT, one collection of 10,001 / 20,000 / 40,000 members | parse error after 1.37 / 6.51 / 27.6 s | 0.44 / 2.03 / 8.80 s |
+| `update` INSERT DATA, one collection of 10,001 / 20,000 / 40,000 members | parse error after 1.46 / 6.62 / 27.6 s | 6.02 / 25.0 / 132 s |
+| `parse` RDF/XML, an XMLLiteral element with 10,001 / 40,000 children | 0.19 / 0.09 s, last children cut | 0.14 / 0.22 s, complete |
+
+The two "after" rows that grow as n² are other costs, each with an issue and
+an expected-failure row: the §19.6 blank node scope check walks the join chain
+once per join (https://github.com/danbri/factoidal/issues/824, row
+`sparql-collection-scope`), and `Dataset.insertQuads` scans the graph for each
+new quad (https://github.com/danbri/factoidal/issues/821, row
+`sparql-update-insert`).
+
+Rules from this repair:
+
+- **A repair that makes an input pass shows the next cost on that input.** The
+  expected-failure checks of issue 818 tested the answer; the scaling row at
+  2,000 and 8,000 members passed (ratio 6.9). At 40,000 members the same query
+  took 8.8 s. Measure a repaired path at sizes past the old limit, not only at
+  the sizes the old limit allowed.
+- **When a monotonicity theorem is out of reach, make the extension
+  conservative by construction.** A second pass that runs only on a rejection,
+  and keeps the first rejection when it also fails, changes no answer the old
+  code gave; the three theorems are a few lines each.

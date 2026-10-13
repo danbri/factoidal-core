@@ -447,7 +447,6 @@ L4Factoidal_SPARQL_bindRowsFresh
 L4Factoidal_SPARQL_bnodesInBgp
 L4Factoidal_SPARQL_buildSolutionMapping
 L4Factoidal_SPARQL_collectBgpsAux
-L4Factoidal_SPARQL_collectQuads  # (a) PENDING https://github.com/danbri/factoidal/issues/818 one frame per member of an INSERT DATA collection: the desugaring nests one join per member; 8,000 members overflow under node --stack-size=512 (tests/stack sparql-collection, wcanary xfail); found 2026-10-13 (issue 752); this line carried no reason before
 L4Factoidal_SPARQL_collectTemplateTriples
 L4Factoidal_SPARQL_concatResults
 L4Factoidal_SPARQL_constructObject
@@ -1438,3 +1437,11 @@ L4Factoidal_SPARQL_pCollectionCells  # (b) nesting of [ ] and ( ) in the query o
 L4Factoidal_Syntax_RdfXml_collectionCells  # (b) element nesting of the RDF/XML document, through nodeElement (cycle of 5); the members of one rdf:parseType="Collection" are a goto _start in the emitted C: the loop twin of collectionList, proved equal (collectionCells_eq); 20,000 members run at 512 KB (tests/stack rdfxml-collection)
 L4Factoidal_Syntax_RdfXml_serializeNodeF  # (b) element nesting of the rdf:parseType="Literal" content; the twin of serializeNode (csimp serializeNode_eq_fast), whose child list is the loop serializeNodesLoop
 L4Factoidal_Syntax_RdfXml_serializeNodesLoop  # (b) element nesting of the rdf:parseType="Literal" content, as serializeNodeF; the siblings of one element are a goto _start in the emitted C (csimp serializeNodes_eq_fast)
+# --- Added 2026-10-13 by the scaling repairs of OKR batch 1 KR 2.5 (issues 802, 818, 812) ---
+# L4Factoidal_SPARQL_collectQuads left this list: the code generator emits
+# collectQuadsLoop, a loop over a work list (csimp collectQuads_eq_fast,
+# https://github.com/danbri/factoidal/issues/818 item 4).
+L4Factoidal_Syntax_RdfXml_serializeNodeTF  # (b) element nesting of the rdf:parseType="Literal" content; the twin of the fuel-free serializeNodeT (csimp serializeNodeT_eq_fast), whose child list is the loop serializeNodesTLoop (https://github.com/danbri/factoidal/issues/818 item 3)
+L4Factoidal_Syntax_RdfXml_serializeNodesTLoop  # (b) element nesting, as serializeNodeTF; the siblings of one element are a goto _start in the emitted C (csimp serializeNodesT_eq_fast)
+L4Factoidal_Syntax_RdfXml_litNeed  # (s) the fuel the fuelled serializeNode needs to write a node completely; read by the theorems serialize_fuel_eq and serializeLiteralContent_eq_fuel only, no function of the emitted C outside RdfXml.c calls it (checked 2026-10-13)
+L4Factoidal_Syntax_RdfXml_litNeeds  # (s) as litNeed, for a child list
