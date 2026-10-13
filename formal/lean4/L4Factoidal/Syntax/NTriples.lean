@@ -549,6 +549,8 @@ theorem Graph.toNTriples_eq_lines (g : Graph) (mode : Mode) :
   | some e => rfl
   | none => simp [String.empty_append]
 
+#print axioms Graph.toNTriples_eq_lines
+
 /-! ## Canonical N-Triples (RDF 1.2 N-Triples §canonical form)
 
 https://www.w3.org/TR/rdf12-n-triples/#canonical-ntriples — the form the

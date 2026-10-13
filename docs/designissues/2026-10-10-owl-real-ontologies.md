@@ -320,3 +320,193 @@ The table of section 2 is `OUT/table.md`; every number in it is a field of a
 row of `OUT/results.jsonl`, and each row carries the exact command it ran
 (`cmd`).
 
+## 9. OWL RL closure on QUDT and the species check (2026-10-13, OKR batch 1 KR 3.4)
+
+Key result 3.4 of https://github.com/danbri/factoidal/issues/768: "OWL RL
+closure on QUDT, and the species check": target "under 2 GB; species check
+linear". Issues https://github.com/danbri/factoidal/issues/758 and
+https://github.com/danbri/factoidal/issues/766. Branch `claude/wt-qudt-owl`,
+base `e3c3aa01`.
+
+Inputs: `qudt.nt` is the Lean parse of `third_party/qudt/QUDT-all-in-one-OWL.ttl`
+(`l4factoidal parse --out nquads | grep . | LC_ALL=C sort -u`, 130,404 lines,
+18,100,516 bytes; as a set, the same triples as the gate's `merged.nt`), and
+its first 16,000, 32,000 and 65,000 lines. The binaries before are copies of
+`e3c3aa01`'s. Each closure row ran alone under the resident-set watchdog of
+`tools/owl-real-bench.py` (6,000 MB, no address-space cap), at a load average
+of 4 to 8 on 4 CPUs shared with two other agents.
+
+### 9.1 Closure: where the memory was
+
+At `e3c3aa01` the QUDT closure already finished: the JSON repairs of
+2026-10-12 (`2026-10-10-lean-vs-fstar-performance.md` § 11: `escapeString`
+without a character list, the reverse-accumulator JSON parser) removed most
+of the 10 KB per closure triple that issue 758 measured at `eab58d16`.
+
+`l4query-phases FILE --closure-op` (new) runs the phases of the `closure`
+verb as it was and prints the resident set after each. QUDT, before, MB
+(`hwm` is the peak so far):
+
+| Phase | What it holds | Wall, cumulative | RSS after | Peak so far |
+|---|---|---:|---:|---:|
+| read | the file as a `String` | 0.07 s | 48 | 48 |
+| parse | the `Dataset` | 2.3 s | 461 | 651 |
+| normalize | `datasetForOps .rdf11` | 3.2 s | 389 | 651 |
+| closure | `OWL.RL.closureFix`, 638,420 triples | 48.8 s | 646 | **1,343** |
+| ntriples | `Graph.toNTriples`, 72,698,862 bytes | 49.1 s | 661 | 1,343 |
+| envelope | `okWith`, the JSON string | 49.6 s | 674 | 1,343 |
+| decode | `parseJson` of the envelope, its `nquads` member | 54.0 s | 1,097 | 1,343 |
+| output | the member written | 54.1 s | 1,097 | 1,343 |
+
+On the whole file the closure itself sets the peak. On the prefixes the
+output path does: the decode (an `Array Char` of 8 bytes per character, and
+the `Json` tree) raised the peak from 358 to 443 MB at 32,000 lines and from
+492 to 688 MB at 65,000.
+
+**Repair.** `closure` writes one N-Triples line per closure triple
+(`Wasm/Cli.lean`, `closureCmd`), from `Ops.closureStreamOf`
+(`Wasm/Ops/Reason.lean`): the closure graph of the regime, or the error text.
+Before the first line it asks `Graph.firstNTriplesError`, because
+`Graph.toNTriples` gives only the first error when a triple does not
+serialise. Proved: `Graph.toNTriples_eq_lines` (the document is the first
+error, or the lines in order, joined) and `Ops.closureEnvelopeOf_stream` (for
+every dataset and every `--regime` value, the old envelope is `errJson` of the
+stream's error, or `okWith` of the stream's lines joined, in the member the
+command line printed, `nquads` or `ntriples`). Not proved: that the JSON
+encoding and decoding of that member gave the string back; the byte
+comparison below stands in for it, as in § 9.2 of the performance record.
+
+`closure --regime owl-rl`, before and after (wall time, CPU time user+system,
+peak resident set; output compared with `cmp`):
+
+| Input lines | Closure triples | Output bytes | Before | After | Output |
+|---:|---:|---:|---|---|---|
+| 16,000 | 117,250 | 14,597,306 | 6.0 s, 5.2 s, 181 MB | 4.9 s, 4.8 s, 153 MB | identical |
+| 32,000 | 250,490 | 30,281,632 | 12.9 s, 12.1 s, 457 MB | 10.8 s, 10.6 s, 369 MB | identical |
+| 65,000 | 344,044 | 42,006,990 | 22.6 s, 21.4 s, 677 MB | 21.2 s, 20.9 s, 501 MB | identical |
+| 130,404 | 638,420 | 72,698,863 | 48.8 s, 45.6 s, 1,352 MB | 43.6 s, 42.7 s, 1,352 MB | identical |
+
+At `eab58d16` (issue 758): 1,269 MB at 16,000 lines, 2,470 MB at 32,000, more
+than 6,037 MB on the whole file. After the repair the peak is that of the
+closure computation: the output adds nothing measurable. 📊 QUDT: 1,352 MB,
+under the 2 GB target. Under `prlimit --as=6000000000` the same command still
+stops at about 1.2 GB resident (`INTERNAL PANIC: out of memory`): that is
+https://github.com/danbri/factoidal/issues/759, the 1 GiB mimalloc arena
+reservations, and the gate keeps it as its own row
+(`qudt-closure-address-space`, expected failure).
+
+PREMISE_LINE
+
+### 9.2 Species check: where the time was
+
+`l4owl-species --phases DOC.nt` (new) times each part of the readable
+definition of `speciesViolations` (the specification's own functions, forced
+between two clock reads through an `IO.Ref`), then the whole function, and
+checks that the parts, joined in the definition's order, are the list the
+whole returned. Before, ms:
+
+| Part | 32,000 lines | 65,000 lines | 130,404 lines |
+|---|---:|---:|---:|
+| per-triple checks (`tripleViolations`) | 210 | 1,080 | 10,679 |
+| simple roles (§ 11.2) | 3 | 11 | 4,061 |
+| anonymous individuals (§ 11.2) | 24 | **27,512** | **225,036** |
+| all other parts | 123 | 285 | 1,380 |
+| sum of the parts | 360 | 28,888 | 241,156 |
+
+**Causes.** (1) The anonymous-individual check counted the named links of
+each blank node with a scan of the whole graph (`namedLinks`), and each scan
+tested every triple's predicate against the list of declared object
+properties: QUDT has 4,860 blank nodes in object property assertions,
+130,404 triples and 100 object properties. The jump between 32,000 and 65,000
+sorted lines is where the first of those blank nodes appear (1 and 1,308).
+(2) The per-triple checks read (subject, predicate) pairs with scans of the
+graph (`hasTripleSp`, `countSp`): every literal whose datatype is not built in
+costs three scans (QUDT: 1,120 `rdf:HTML` literals), and every `rdf:first` and
+`rdf:rest` triple two. (3) The simple-role check scanned the graph seven
+times per restriction. (4) `DeclIndex` membership, `dedupStrs` and Table 5
+were list scans.
+
+**Repair** (`L4Factoidal/OWL/SyntaxDL.lean`, section "The species check with
+indexes"). Three indexes built once per graph: `spIndexOf` (subject key and
+predicate to the objects, in graph order), `DeclSets` (the `DeclIndex` lists
+as hash sets) and `namedLinkCounts` (each key's named-link count), and
+`dedupStrsFast`. Twins of the parts that read them (`table5RedundantI`,
+`tripleViolationsI`, `punningViolationsS`, `simpleRoleViolationsI`,
+`anonymousIndividualViolationsI`, `graphBodyViolationsI`). Proved, each equal
+to its readable definition: `spIndexOf_getD`, `hasTripleSpI_eq`,
+`findObjectSpI_eq`, `countSpI_eq`, `hasTypeSpI_eq`, `collectionMembersI_eq`,
+`dedupStrsFast_eq`, `namedLinkCounts_getD`, `tripleViolationsI_eq`,
+`punningViolationsS_eq`, `simpleRoleViolationsI_eq`,
+`anonymousIndividualViolationsI_eq`, `graphBodyViolationsI_eq`,
+`speciesViolations_eq_fast`. Five `@[csimp]` theorems make the compiler emit
+the twins for `graphBodyViolations`, `speciesViolations`, `speciesIsDl`,
+`speciesViolationsFunctional` and `speciesIsDlFunctional`; the readable
+definitions and their 101 guards do not change. Thirteen new guards, before
+the `csimp` theorems, compare the twin with the definition on a leaf, a tree
+without a leaf, a cycle and an undeclared predicate, and check `dedupStrsFast`.
+
+`l4owl-species`, before and after (wall time, CPU time user, peak resident
+set; the JSON printed compared with `cmp`):
+
+| Input lines | Violations | Before | After | Output |
+|---:|---:|---|---|---|
+| 16,000 | 1,337 | 0.57 s, 0.39 s, 100 MB | 0.37 s, 0.24 s, 100 MB | identical |
+| 32,000 | 1,838 | 1.10 s, 0.77 s, 192 MB | 0.96 s, 0.51 s, 192 MB | identical |
+| 65,000 | 2,527 | 31.2 s CPU (issue 766) | 2.27 s, 1.33 s, 359 MB | identical |
+| 130,404 | 7,334 | 253.4 s CPU, 323 s wall (issue 766) | 3.84 s, 2.27 s, 648 MB | parts equal whole |
+
+On the whole file and on 65,000 lines the `--phases` run of the new binary
+computed the readable definition part by part (242.6 s and 30.0 s) and the
+twin (0.94 s and 0.48 s), and the two lists are equal
+(`parts-equal-whole=true`).
+
+Scaling (`tests/stack/lean_scaling.py`, new rows, minimum of 3 runs):
+`owl-species`, a generated OWL 2 DL document of 2,000 and 8,000 units (16
+triples each: a restriction on a blank node, a union over an RDF list, an
+individual with a language-tagged label, a data value and an object property
+assertion to a blank node): before, 8,000 units gave no result in 120 s;
+after, 0.414 s and 2.279 s, ratio 5.5 for 4 times the input (bound 9).
+
+⚠️ One part stays quadratic: `componentsOf`, which merges the components of
+the anonymous individual graph in a list, costs time proportional to the
+square of the number of object property assertions between two blank nodes
+(8,000 pairs 1.09 s, 16,000 3.58 s, 32,000 14.79 s). QUDT has none.
+https://github.com/danbri/factoidal/issues/812; scaling row
+`owl-species-bnode-edges`, expected failure (8,000 against 32,000 pairs:
+0.882 s and 14.374 s, ratio 16.3).
+
+### 9.3 The same work on other tools
+
+Same machine, same `qudt.nt`, one run each, the Lean rows from § 9.1 and § 9.2.
+No tool was vendored: Apache Jena 5.1.0 is the binary distribution from
+archive.apache.org (SHA-512 checked against the published one), owlrl 7.1.4
+with rdflib 7.6.0 and owlready2 0.51 (HermiT 1.3.8 with the OWL API 3.4) were
+installed with `pip install --target` into a scratch directory; OpenJDK
+21.0.12. The two Java programs are 40 lines each: `JenaClosure` reads the
+N-Triples, builds Jena's inference model and writes every statement of it;
+`DlProfile` loads the document with the OWL API and runs `OWL2DLProfile`.
+
+| Tool | Task | Result | Wall | CPU | Peak resident set |
+|---|---|---|---:|---:|---:|
+| Lean `l4factoidal closure --regime owl-rl` | OWL 2 RL/RDF closure | 638,420 triples | 43.6 s | 42.7 s | 1,352 MB |
+| owlrl 7.1.4 (rdflib 7.6.0), `DeductiveClosure(OWLRL_Semantics)` | OWL 2 RL/RDF closure | OWLRL_QUDT | | | |
+| owlrl 7.1.4, first 16,000 lines | OWL 2 RL/RDF closure | 122,973 triples (Lean: 117,250 in 4.9 s) | 59.7 s | 58.8 s | 109 MB |
+| Jena 5.1.0 `ReasonerRegistry.getOWLMicroReasoner()`, `java -Xmx5g` | OWL Micro rules, every statement written | no result in 600 s (2,806,127 statements written when stopped) | 600 s | — | 5,560 MB sampled |
+| Lean `l4owl-species` | OWL 2 DL against Full (§ 9.2) | Full, 7,334 violations | 3.84 s | 2.27 s | 648 MB |
+| OWL API 3.4 (in HermiT.jar 1.3.8), `OWL2DLProfile` | OWL 2 DL profile | not in DL, 32,820 violations; load 5.04 s, check 1.01 s | 6.35 s | 9.42 s | 371 MB |
+HERMIT_ROW
+
+The closures are not the same set: owlrl gives 122,973 triples on the first
+16,000 lines where Lean gives 117,250 (the axiomatic and datatype triples each
+adds differ; § 6 notes the same for F\*), and Jena's OWL Micro is a different
+rule set. The violation counts are not comparable either: the OWL API counts
+one violation per axiom and entity (`IllegalPunning` 15,933,
+`DatatypeIRIAlsoUsedAsClassIRI` 14,035, `UseOfUnknownDatatype` 1,118, ...),
+the Lean checker one per triple or per component. Both checkers say QUDT
+3.4.0 is not OWL 2 DL. The OWL API 3.4 Turtle parser does not read the
+original `.ttl` (parse error at line 14,977), so the OWL API rows read
+`qudt.nt`.
+
+### 9.4 Gates
+
+GATES_LINE

@@ -260,4 +260,6 @@ theorem closureEnvelopeOf_stream (ds : Dataset) (regime : String) :
           ntriplesEnvelope_lines] <;>
         cases Graph.firstNTriplesError _ <;> rfl
 
+#print axioms closureEnvelopeOf_stream
+
 end L4Wasm.Ops

@@ -101,15 +101,27 @@ def phasesMain (doc : String) : IO UInt32 := do
       err.putStrLn s!"part={name} count={v.length} ms={(t1 - t0) / 1000000}"
       pure v
     let header ← timed "header" (fun _ => docHeaderViolations g0)
+    -- Table 5 and the declaration index are values the later parts read, so
+    -- they are computed inside their own timed window and handed on.
+    let t0 ← IO.monoNanosNow
     let g := dropTable5Redundant g0
-    let _ ← timed "table5" (fun _ => g.map (fun _ => ""))
+    sink.set g.length
+    let t1 ← IO.monoNanosNow
+    err.putStrLn s!"part=table5 count={g.length} ms={(t1 - t0) / 1000000}"
     let d := buildDeclIndex g
-    let _ ← timed "declindex" (fun _ => d.cls ++ d.restr ++ d.datatype ++ d.objProp ++
-      d.dataProp ++ d.annProp ++ d.charProp ++ d.hasDR ++ d.inv ++ d.annSubj)
+    let dSize := d.cls.length + d.restr.length + d.datatype.length + d.objProp.length +
+      d.dataProp.length + d.annProp.length + d.charProp.length + d.hasDR.length +
+      d.inv.length + d.annSubj.length
+    sink.set dSize
+    let t2 ← IO.monoNanosNow
+    err.putStrLn s!"part=declindex count={dSize} ms={(t2 - t1) / 1000000}"
     let perTriple ← timed "per-triple" (fun _ => g.flatMap (tripleViolations g d))
     let punning ← timed "punning" (fun _ => punningViolations d)
+    let t3 ← IO.monoNanosNow
     let ns := nonsimpleKeys g
-    let _ ← timed "nonsimple-keys" (fun _ => ns)
+    sink.set ns.length
+    let t4 ← IO.monoNanosNow
+    err.putStrLn s!"part=nonsimple-keys count={ns.length} ms={(t4 - t3) / 1000000}"
     let topData ← timed "top-data" (fun _ => topDataViolations g)
     let dtDefs ← timed "datatype-definitions" (fun _ => datatypeDefinitionViolations g d)
     let roles ← timed "simple-roles" (fun _ => simpleRoleViolations g ns)

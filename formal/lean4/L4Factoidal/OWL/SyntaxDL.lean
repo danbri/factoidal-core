@@ -1391,7 +1391,7 @@ private theorem any_eq_not_isEmpty_filter (l : List Triple) (f : Triple → Bool
     l.any f = !(l.filter f).isEmpty := by
   induction l with
   | nil => rfl
-  | cons t rest ih => by_cases h : f t = true <;> simp [List.filter_cons, h, ih]
+  | cons t rest ih => by_cases h : f t = true <;> simp [h, ih]
 
 theorem hasTripleSpI_eq (g : Graph) (sk p : String) :
     hasTripleSpI (spIndexOf g) sk p = hasTripleSp g sk p := by
@@ -1420,12 +1420,12 @@ theorem hasTypeSpI_eq (g : Graph) (sk ty : String) :
   | cons t rest ih =>
       by_cases h : spSel sk rdfTypeP t = true
       · simp only [spSel, Bool.and_eq_true, beq_iff_eq] at h
-        simp [List.filter_cons, spSel, h, ih]
+        simp [spSel, h, ih]
       · simp only [spSel, Bool.and_eq_true, beq_iff_eq, not_and] at h
         by_cases h1 : t.p.val = rdfTypeP
         · have h2 := h h1
-          simp [List.filter_cons, spSel, h1, h2, ih]
-        · simp [List.filter_cons, spSel, h1, ih]
+          simp [spSel, h1, h2, ih]
+        · simp [spSel, h1, ih]
 
 /-! ### Declaration sets -/
 
@@ -1457,7 +1457,7 @@ def propEvidenceS (s : DeclSets) (k : String) : Bool :=
 
 theorem propEvidenceS_eq (d : DeclIndex) (k : String) :
     propEvidenceS d.sets k = propEvidence d k := by
-  simp [propEvidenceS, propEvidence, DeclIndex.sets, setContains]
+  simp [propEvidenceS, propEvidence, DeclIndex.sets]
 
 def classEvidenceI (ix : SpIndex) (s : DeclSets) (k : String) : Bool :=
   s.cls.contains k || s.datatype.contains k || s.restr.contains k ||
@@ -1467,7 +1467,7 @@ def classEvidenceI (ix : SpIndex) (s : DeclSets) (k : String) : Bool :=
 
 theorem classEvidenceI_eq (g : Graph) (d : DeclIndex) (k : String) :
     classEvidenceI (spIndexOf g) d.sets k = classEvidence g d k := by
-  simp [classEvidenceI, classEvidence, DeclIndex.sets, setContains, hasTripleSpI_eq]
+  simp [classEvidenceI, classEvidence, DeclIndex.sets, hasTripleSpI_eq]
 
 def datatypeEvidenceI (ix : SpIndex) (s : DeclSets) (dt : String) : Bool :=
   builtinDatatypes.contains dt ||
@@ -1478,33 +1478,47 @@ def datatypeEvidenceI (ix : SpIndex) (s : DeclSets) (dt : String) : Bool :=
 
 theorem datatypeEvidenceI_eq (g : Graph) (d : DeclIndex) (dt : String) :
     datatypeEvidenceI (spIndexOf g) d.sets dt = datatypeEvidence g d dt := by
-  simp [datatypeEvidenceI, datatypeEvidence, DeclIndex.sets, setContains, hasTripleSpI_eq]
+  simp [datatypeEvidenceI, datatypeEvidence, DeclIndex.sets, hasTripleSpI_eq]
 
-def collectionMembersI (ix : SpIndex) : Term → Nat → List Term
-  | _, 0 => []
-  | node, f + 1 =>
+/-- `collectionMembers` with the index, as a loop: the members so far are
+kept in reverse in `acc`, so a long RDF list costs no stack. -/
+def collectionMembersLoop (ix : SpIndex) : Term → Nat → List Term → List Term
+  | _, 0, acc => acc.reverse
+  | node, f + 1, acc =>
       match termKeyDl node with
-      | none => []
+      | none => acc.reverse
       | some nk =>
-          if termIsIri node rdfNilI then []
+          if termIsIri node rdfNilI then acc.reverse
           else match findObjectSpI ix nk rdfFirstP with
-               | none => []
+               | none => acc.reverse
                | some first =>
                    match findObjectSpI ix nk rdfRestP with
-                   | none => [first]
-                   | some rest => first :: collectionMembersI ix rest f
+                   | none => (first :: acc).reverse
+                   | some rest => collectionMembersLoop ix rest f (first :: acc)
+
+def collectionMembersI (ix : SpIndex) (node : Term) (fuel : Nat) : List Term :=
+  collectionMembersLoop ix node fuel []
+
+private theorem collectionMembersLoop_eq (g : Graph) (node : Term) (fuel : Nat)
+    (acc : List Term) :
+    collectionMembersLoop (spIndexOf g) node fuel acc
+      = acc.reverse ++ collectionMembers g node fuel := by
+  induction fuel generalizing node acc with
+  | zero => simp [collectionMembersLoop, collectionMembers]
+  | succ f ih =>
+      unfold collectionMembersLoop collectionMembers
+      cases termKeyDl node with
+      | none => simp
+      | some nk =>
+          simp only [findObjectSpI_eq]
+          cases findObjectSp g nk rdfFirstP <;> cases findObjectSp g nk rdfRestP <;>
+            by_cases hn : termIsIri node rdfNilI = true <;> simp [ih, hn]
 
 theorem collectionMembersI_eq (g : Graph) (node : Term) (fuel : Nat) :
     collectionMembersI (spIndexOf g) node fuel = collectionMembers g node fuel := by
-  induction fuel generalizing node with
-  | zero => rfl
-  | succ f ih =>
-      unfold collectionMembersI collectionMembers
-      cases termKeyDl node with
-      | none => rfl
-      | some nk =>
-          simp only [findObjectSpI_eq]
-          cases findObjectSp g nk rdfFirstP <;> cases findObjectSp g nk rdfRestP <;> simp [ih]
+  unfold collectionMembersI
+  rw [collectionMembersLoop_eq]
+  simp
 
 /-! ### Duplicate removal -/
 
@@ -2043,5 +2057,13 @@ def speciesIsDlFunctionalFast (p : Graph) (hasConclusion : Bool) (u : Graph) : B
   funext p hc u
   simp only [speciesIsDlFunctional, speciesIsDlFunctionalFast,
     speciesViolationsFunctional_eq_fast]
+
+#print axioms speciesViolations_eq_fast
+#print axioms graphBodyViolationsI_eq
+#print axioms anonymousIndividualViolationsI_eq
+#print axioms namedLinkCounts_getD
+#print axioms spIndexOf_getD
+#print axioms dedupStrsFast_eq
+#print axioms collectionMembersI_eq
 
 end L4Factoidal.OWL.SyntaxDL
