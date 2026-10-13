@@ -825,13 +825,27 @@ def ScanStats.withSip (s : ScanStats) : ScanStats := { s with rowsDecoded := s.r
 
 /-! ## The store -/
 
-/-- What the id engine reads. `metas perm` are the PRM1 entries of a
-    permutation; `prb perm off len` bytes of its PRB1 file; `idOf` the id of a
-    term (inline or by dictionary lookup; `none` when the term has no id);
-    `keyOf` the dictionary key of an id of tag 1, 2 or 3; `termOf` the term
-    of any id. -/
+/-- What the id engine reads. `blockCount perm` is the number of blocks of a
+    permutation (its PRM1 header); `blocksForRange perm key` the PRM1 entries
+    of the blocks that may hold a row with the key prefix (`metasFor`);
+    `prb perm off len` bytes of its PRB1 file; `idOf` the id of a term
+    (inline or by dictionary lookup; `none` when the term has no id); `keyOf`
+    the dictionary key of an id of tag 1, 2 or 3; `termOf` the term of any
+    id. -/
 structure Store (m : Type → Type) where
-  metas : Nat → ExceptT String m (Array BlockMeta)
+  /-- The number of blocks of a permutation (the count of its PRM1 header). -/
+  blockCount : Nat → ExceptT String m Nat
+  /-- The PRM1 entries of the blocks of a permutation that may hold a row
+      whose first `key.size` columns are `key`, in row order: `metasFor` of
+      the permutation's PRM1 entries
+      (https://github.com/danbri/factoidal/issues/805). The planner asks for
+      the entries of one key range; it never receives the whole PRM1 array.
+      `PrmRange.rangeM` computes it by two binary searches and one read of the
+      entries between, over an array (`arrayReader`, the in-memory store) or
+      over positioned reads of the PRM1 file (`bytesReader`, the I/O store);
+      `PrmRangeTheorems.rangeM_array` and `rangeM_bytes` prove both equal to
+      `metasFor`. -/
+  blocksForRange : Nat → Array UInt64 → ExceptT String m (Array BlockMeta)
   prb : Nat → Nat → Nat → ExceptT String m ByteArray
   idOf : Term → ExceptT String m (Option UInt64)
   keyOf : UInt64 → ExceptT String m ByteArray
@@ -956,6 +970,15 @@ def blocksForGo (metas : Array BlockMeta) (key : Array UInt64) : Nat → Nat →
     (`ScanTheorems.blocksFor_complete`). -/
 def blocksFor (metas : Array BlockMeta) (key : Array UInt64) : Array Nat :=
   blocksForGo metas key metas.size (firstBlockGo metas key (Nat.log2 metas.size + 2) 0 metas.size) #[]
+
+/-- The PRM1 entries of the blocks that `blocksFor` selects, in order: what
+    `Store.blocksForRange` answers (the reference of `PrmRange.rangeM`). -/
+def metasFor (metas : Array BlockMeta) (key : Array UInt64) : Array BlockMeta :=
+  (blocksFor metas key).map (metas[·]!)
+
+/-- The rows of some selected blocks: exact when every one is full. -/
+def selRows (sel : Array BlockMeta) : Nat :=
+  sel.foldl (fun a b => a + b.rows) 0
 
 /-- Rows of the selected blocks: exact when every one is full. -/
 def estimate (metas : Array BlockMeta) (key : Array UInt64) : Nat :=
@@ -1151,8 +1174,10 @@ def overlayChunkM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec)
 
 /-! ## The scan, block by block
 
-`scanFoldM` is a `forIn` over the blocks that `blocksFor` returns, with the
-body `scanBlockM`. For each block the work is split into pure functions:
+`scanFoldM` asks the store for the PRM1 entries of the selected blocks
+(`Store.blocksForRange`, `metasFor`: the blocks `blocksFor` returns) and is a
+`forIn` over their positions, with the body `scanBlockM`. For each block the
+work is split into pure functions:
 
   * `blockPlan`: what the PRM1 entry decides (`selects` is tested first):
     the checks that fail for every row (`skip`), the checks left to test row
@@ -1363,13 +1388,15 @@ def scanBlockM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : 
     overlay, the inserts after the last selected block form a last chunk. -/
 def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
     (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) : ExceptT String m (σ × ScanStats) := do
-  let metas ← st.metas spec.perm
+  -- the PRM1 entries of the selected blocks only (issue 805)
+  let sel ← st.blocksForRange spec.perm spec.key
+  let total ← st.blockCount spec.perm
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
   let ox := ovCtx (st.ovl spec.perm) spec.key
-  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := metas.size }, insPos := 0, stopped := false }
-  let s ← forIn (blocksFor metas spec.key) s0 (scanBlockM st spec fill f metas sortVar ox)
+  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := total }, insPos := 0, stopped := false }
+  let s ← forIn (List.range sel.size) s0 (scanBlockM st spec fill f sel sortVar ox)
   if ox.on && !s.stopped && s.insPos < ox.insK.size then
     let chunk := chunkOfRows spec
       (L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (ox.insK.size - s.insPos) []) sortVar
@@ -1380,11 +1407,11 @@ def scanFoldM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : S
 /-- The whole scan as one table. -/
 def scanTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
     ExceptT String m (Table × ScanStats) := do
-  let metas ← st.metas spec.perm
+  let sel ← st.blocksForRange spec.perm spec.key
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
-  let cap := 8 * estimate metas spec.key
+  let cap := 8 * selRows sel
   let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
                         rows := 0, sortVar }
   scanFoldM st spec true init fun acc ch => pure (acc.append ch.table, true)
@@ -1545,13 +1572,14 @@ def scanBlockSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec
 def scanFoldSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
     (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) :
     ExceptT String m (σ × ScanStats) := do
-  let metas ← st.metas spec.perm
+  let sel ← st.blocksForRange spec.perm spec.key
+  let total ← st.blockCount spec.perm
   let sortVar := match spec.outCols[0]? with
     | some c => if c == spec.key.size then spec.outVars[0]? else none
     | none => none
   let ox := ovCtx (st.ovl spec.perm) spec.key
-  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := metas.size }, insPos := 0, stopped := false }
-  let s ← forIn (blocksFor metas spec.key) s0 (scanBlockSipM st spec cands f metas sortVar ox)
+  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := total }, insPos := 0, stopped := false }
+  let s ← forIn (List.range sel.size) s0 (scanBlockSipM st spec cands f sel sortVar ox)
   if ox.on && !s.stopped && s.insPos < ox.insK.size then
     let chunk := sipFilterChunk cands (chunkOfRows spec
       (L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (ox.insK.size - s.insPos) []) sortVar)
@@ -1682,7 +1710,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   let mut ests : Array Nat := #[]
   for t in pats do
     let spec := mkSpec t (permFor t none) keep
-    ests := ests.push (estimate (← st.metas spec.perm) spec.key)
+    ests := ests.push (selRows (← st.blocksForRange spec.perm spec.key))
   let mut remaining := (List.range pats.size).toArray
   let mut lines : Array String := #[]
   let first := remaining.foldl (fun b k => if ests[k]! < ests[b]! then k else b) remaining[0]!
@@ -2459,16 +2487,20 @@ def rangeCount (threads minRows est : Nat) : Nat :=
     ranges (`rangeCount`), no delta overlay on the scan, two or more
     selected blocks; each range of at most `maxBlocks` blocks when
     `maxBlocks > 0` (then there can be more ranges than threads). Also the
-    PRM1 entries, the overlay context and the estimate (`estimate`). -/
+    PRM1 entries of the selected blocks (`Store.blocksForRange`; a range is a
+    list of positions in that array), the overlay context and the estimate
+    (`selRows`). -/
 def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
     (maxBlocks : Nat) :
     ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
   if threads ≤ 1 then return none
-  let metas ← st.metas spec.perm
   let ox := ovCtx (st.ovl spec.perm) spec.key
   if ox.on then return none
-  let sel := (blocksFor metas spec.key).toList
-  let est := estimate metas spec.key
+  -- the selected blocks' PRM1 entries (issue 805); the ranges are lists of
+  -- positions in that array
+  let metas ← st.blocksForRange spec.perm spec.key
+  let sel := List.range metas.size
+  let est := selRows metas
   let n := rangeCount threads minRows est
   if sel.length < 2 || n < 2 then return none
   let c0 := (sel.length + n - 1) / n
@@ -2683,9 +2715,10 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       -- scan then reads every selected block)
       match par, (← divideFor? st par spec 16).filter (fun d => plan.offset + lim > d.2.2.2) with
       | some p, some (metas, ox, chunks, est) =>
+        let total ← st.blockCount spec.perm
         let ((_, emitted), s) ← p.fold
             (fun v X => streamPartM v spec fs reference plan.outVars (plan.offset + lim) metas ox X) chunks
-            (((0 : Nat), (0 : Nat)), ({ blocksTotal := metas.size } : ScanStats))
+            (((0 : Nat), (0 : Nat)), ({ blocksTotal := total } : ScanStats))
             fun (acc, s) (pieces, s') => do
               let acc ← pieces.foldlM (emitPieceM emit plan.offset lim) acc
               pure (acc, s.add s')
@@ -2713,8 +2746,9 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       -- stage 1b: one group map per block range, added in range order
       let (groups, s, how) ← match par, ← divideFor? st par spec 0 with
         | some p, some (metas, ox, chunks, _) => do
+          let total ← st.blockCount spec.perm
           let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
-            (({} : Groups), ({ blocksTotal := metas.size } : ScanStats))
+            (({} : Groups), ({ blocksTotal := total } : ScanStats))
             fun (g, s) (g', s') => pure (g.merge g', s.add s')
           pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
         | _, _ => do
@@ -2737,7 +2771,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           -- the estimate `evalBgpM` computes (on the permutation of
           -- `permFor t0 none`, which it opens for that)
           let specE := mkSpec t0 (permFor t0 none) keep
-          let est := estimate (← st.metas specE.perm) specE.key
+          let est := selRows (← st.blocksForRange specE.perm specE.key)
           let spec0 := mkSpec t0 (permFor t0 (bestSortPos t0 pats)) keep
           pure ((← divideFor? st par spec0 0).map fun d => (spec0, est, d))
         else pure none
@@ -2745,8 +2779,9 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         | some p, some (spec0, est, metas, ox, chunks, _) => do
           let k := plan.offset + plan.limit.getD 0
           let init : Table := Table.empty spec0.outVars
+          let total ← st.blockCount spec0.perm
           let (u, s) ← p.fold (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
-            (init, ({ blocksTotal := metas.size } : ScanStats))
+            (init, ({ blocksTotal := total } : ScanStats))
             fun (u, s) (t, s') => pure (u.append t, s.add s')
           pure (u, #[s!"pattern 0: {permNames[spec0.perm]!} key {spec0.key.size} estimate {est}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; first {k} rows of the order kept in each of {chunks.length} block ranges ({p.threads} tasks at once at most): {u.rows} rows"], s.full)
         | _, _ =>

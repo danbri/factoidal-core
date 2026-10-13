@@ -367,6 +367,7 @@ import L4Factoidal.Storage.Sbm11.BlockTheorems
 import L4Factoidal.Storage.Sbm11.Manifest
 import L4Factoidal.Storage.Sbm11.ManifestTheorems
 import L4Factoidal.Storage.Sbm11.PrmAt
+import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.OptJoin
@@ -379,6 +380,7 @@ import L4Factoidal.Storage.Sbm11.IdQueryTests
 import L4Factoidal.Storage.Sbm11.IdPostTheorems
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
+import L4Factoidal.Storage.Sbm11.PrmRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameLocalTheorems
