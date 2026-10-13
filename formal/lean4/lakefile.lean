@@ -322,6 +322,13 @@ extern_lib libl4exthost pkg := do
 -- tools/owl-real-bench.sh (https://github.com/danbri/factoidal/issues/651).
 @[default_target] lean_exe «l4owl-species» where root := `Harness.OwlSpeciesFile
 
+-- Where the OWL DL tableau refuter spends its work: steps, branch points,
+-- state size and the time of each phase of `OWL.Refute.search`, on the OWL
+-- RL closure of one N-Triples file (Harness/RefuteProfile.lean). Holds no
+-- OWL logic; `--check` compares its verdict with `tableauConsistent`.
+-- https://github.com/danbri/factoidal/issues/760
+@[default_target] lean_exe «l4refute-profile» where root := `Harness.RefuteProfile
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."

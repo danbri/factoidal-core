@@ -447,6 +447,15 @@ structure RState where
       it. -/
   subClosure : List (WfIri × List WfIri) := []
   supClosure : List (WfIri × List WfIri) := []
+  /-- `subClosure`, `supClosure` and the inverse pairs `inv` as hash maps,
+      built once at `initState` (`closureMap`, `inverseMap`). `subsOf`,
+      `supsOf` and `inversesOfSt` read them: the list lookups they replace
+      scanned the whole table at every successor read, and a successor
+      read is made per label per node per pass
+      (https://github.com/danbri/factoidal/issues/760). -/
+  subMap     : Std.HashMap WfIri (List WfIri) := {}
+  supMap     : Std.HashMap WfIri (List WfIri) := {}
+  invMap     : Std.HashMap WfIri (List WfIri) := {}
   /-- The INDEXED view of the input graph, built once. The successor
       lookups and the `owl:differentFrom` test run per label per node
       per round, and a list scan of the whole graph at each of them
@@ -643,15 +652,105 @@ partial def superpropertiesOfRaw (sp : List (WfIri × WfIri)) (p : WfIri) : List
 
 /-- The memoised lookups. A property absent from the table is in no
     subproperty pair, and the fixpoint returns `[p]` for it. -/
-def subsOf (st : RState) (p : WfIri) : List WfIri :=
-  match st.subClosure.find? (fun q => q.1 == p) with
-  | some (_, xs) => xs
-  | none         => [p]
+def subsOf (st : RState) (p : WfIri) : List WfIri := st.subMap.getD p [p]
 
-def supsOf (st : RState) (p : WfIri) : List WfIri :=
-  match st.supClosure.find? (fun q => q.1 == p) with
+def supsOf (st : RState) (p : WfIri) : List WfIri := st.supMap.getD p [p]
+
+/-- `inversesOf st.inv p`, read through `RState.invMap`. -/
+def inversesOfSt (st : RState) (p : WfIri) : List WfIri := st.invMap.getD p []
+
+/-- One pair of a closure table into the map; the first pair of a key is
+    kept. -/
+def closureMapStep (m : Std.HashMap WfIri (List WfIri)) (q : WfIri × List WfIri) :
+    Std.HashMap WfIri (List WfIri) :=
+  if m.contains q.1 then m else m.insert q.1 q.2
+
+/-- A closure table as a map. It holds what `find?` on the list returns
+    (`closureMap_getD`), which is what `subsOf` and `supsOf` read before
+    the map. -/
+def closureMap (t : List (WfIri × List WfIri)) : Std.HashMap WfIri (List WfIri) :=
+  t.foldl closureMapStep {}
+
+/-- The lookup the list table answered. -/
+def findClosure (t : List (WfIri × List WfIri)) (p : WfIri) (d : List WfIri) : List WfIri :=
+  match t.find? (fun q => q.1 == p) with
   | some (_, xs) => xs
-  | none         => [p]
+  | none         => d
+
+theorem foldl_closureMapStep_getD : ∀ (t : List (WfIri × List WfIri))
+    (m : Std.HashMap WfIri (List WfIri)) (p : WfIri) (d : List WfIri),
+    (t.foldl closureMapStep m).getD p d =
+      if m.contains p then m.getD p d else findClosure t p d
+  | [], m, p, d => by
+      by_cases h : m.contains p
+      · simp [h]
+      · simp [h, findClosure]
+        exact Std.HashMap.getD_eq_fallback (by simpa using h)
+  | (q, xs) :: tl, m, p, d => by
+      rw [List.foldl_cons, foldl_closureMapStep_getD tl]
+      have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+      unfold closureMapStep findClosure
+      by_cases hq : m.contains q
+      · by_cases hqp : q = p
+        · subst hqp; simp [hq]
+        · simp [hq, e, hqp]
+      · by_cases hqp : q = p
+        · subst hqp; simp [hq]
+        · simp [hq, e, hqp, Std.HashMap.getD_insert, Std.HashMap.contains_insert]
+
+/-- `subsOf` and `supsOf` over `closureMap t` answer as the list lookup
+    `find?` on `t`. -/
+theorem closureMap_getD (t : List (WfIri × List WfIri)) (p : WfIri) (d : List WfIri) :
+    (closureMap t).getD p d = findClosure t p d := by
+  simp [closureMap, foldl_closureMapStep_getD]
+
+/-- One inverse pair into the map: `b` is appended to `a`'s list and, when
+    `b ≠ a`, `a` to `b`'s. -/
+def inverseMapStep (m : Std.HashMap WfIri (List WfIri)) (q : WfIri × WfIri) :
+    Std.HashMap WfIri (List WfIri) :=
+  let m := m.insert q.1 (m.getD q.1 [] ++ [q.2])
+  if q.2 == q.1 then m else m.insert q.2 (m.getD q.2 [] ++ [q.1])
+
+/-- The inverse pairs as a map, in pair order. It holds the list
+    `inversesOf inv p` returns for each `p` (`inverseMap_getD`). -/
+def inverseMap (inv : List (WfIri × WfIri)) : Std.HashMap WfIri (List WfIri) :=
+  inv.foldl inverseMapStep {}
+
+theorem inverseMapStep_getD (m : Std.HashMap WfIri (List WfIri)) (a b p : WfIri) :
+    (inverseMapStep m (a, b)).getD p [] =
+      m.getD p [] ++ (if a == p then [b] else if b == p then [a] else []) := by
+  unfold inverseMapStep
+  have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+  by_cases hab : b = a
+  · subst hab
+    by_cases hp : b = p
+    · subst hp; simp
+    · simp [Std.HashMap.getD_insert, e, hp]
+  · have hba : ¬ a = b := fun h => hab h.symm
+    by_cases hap : a = p
+    · subst hap; simp [Std.HashMap.getD_insert, e, hab, hba]
+    · by_cases hbp : b = p
+      · subst hbp; simp [Std.HashMap.getD_insert, e, hab, hba]
+      · simp [Std.HashMap.getD_insert, e, hab, hba, hap, hbp]
+
+theorem foldl_inverseMapStep_getD : ∀ (inv : List (WfIri × WfIri))
+    (m : Std.HashMap WfIri (List WfIri)) (p : WfIri),
+    (inv.foldl inverseMapStep m).getD p [] = m.getD p [] ++ inversesOf inv p
+  | [], m, p => by simp [inversesOf]
+  | (a, b) :: tl, m, p => by
+      rw [List.foldl_cons, foldl_inverseMapStep_getD tl, inverseMapStep_getD]
+      simp only [inversesOf, List.filterMap_cons]
+      have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+      by_cases hap : a = p
+      · subst hap; simp
+      · by_cases hbp : b = p
+        · subst hbp; simp [e, hap]
+        · simp [e, hap, hbp]
+
+/-- `inversesOfSt` over `inverseMap inv` is `inversesOf inv`. -/
+theorem inverseMap_getD (inv : List (WfIri × WfIri)) (p : WfIri) :
+    (inverseMap inv).getD p [] = inversesOf inv p := by
+  simp [inverseMap, foldl_inverseMapStep_getD]
 
 /-- The `p`-successors of `i`: the graph's `q`-edges for every
     `q ⊑* p`, the inverse direction of each, and the expansion's own
@@ -665,7 +764,7 @@ def successorsOf (_g : Graph) (st : RState) (i : Subject) (p : WfIri)
     roles.flatMap (fun r => (st.store.withSubjPred j r).map (·.o)))
   let viaInverse := selves.flatMap (fun j =>
     roles.flatMap (fun r =>
-      (inversesOf st.inv r).flatMap (fun r' =>
+      (inversesOfSt st r).flatMap (fun r' =>
         (st.store.withPredObj r' j.toTerm).map (·.s.toTerm))))
   let fromExtra := selves.flatMap (fun j =>
     (st.extraOut.getD j #[]).toList.filterMap (fun e =>
@@ -677,7 +776,7 @@ def successorsOf (_g : Graph) (st : RState) (i : Subject) (p : WfIri)
   -- `x invR y` mints `y`, and `y`'s `r`-successors must include `x`.
   -- `Inv(r') = r` holds in every model, so the edge `(a, r', b)`
   -- entails `(b, r, a)` and reading it back is sound.
-  let inverseRoles := roles.flatMap (fun r => inversesOf st.inv r)
+  let inverseRoles := roles.flatMap (fun r => inversesOfSt st r)
   let fromExtraInverse := selves.flatMap (fun j =>
     (st.extraIn.getD j.toTerm #[]).toList.filterMap (fun e =>
       if inverseRoles.contains e.p && (!counted || e.counts)
@@ -689,7 +788,38 @@ def successorsOf (_g : Graph) (st : RState) (i : Subject) (p : WfIri)
 
 /-- `Trans(r)` holds for `r` and for its inverse alike. -/
 def roleIsTransitive (st : RState) (r : WfIri) : Bool :=
-  st.transProps.contains r || (inversesOf st.inv r).any (st.transProps.contains ·)
+  st.transProps.contains r || (inversesOfSt st r).any (st.transProps.contains ·)
+
+/-- The properties of the edges `successorsOf` reads at `i`'s
+    identification group: the property of every out-edge (input graph and
+    expansion) and every inverse of the property of an in-edge.
+
+    `successorsOf st i p c` reads, for each `r` in `subsOf st p`, the
+    group's out-edges on `r` and its in-edges on each inverse of `r`
+    (`inversesOfSt` is symmetric: `r'` is an inverse of `r` exactly when
+    `r` is one of `r'`). So it is non-empty only when some property `q`
+    here is in `subsOf st p`. -/
+def edgePropsAt (st : RState) (i : Subject) : Std.HashSet WfIri :=
+  let selves := (identifiedWith st i.toTerm).filterMap termAsSubject
+  let outs : Std.HashSet WfIri := selves.foldl (fun acc j =>
+    let acc := (st.store.withSubj j).foldl (fun a t => a.insert t.p) acc
+    (st.extraOut.getD j #[]).foldl (fun a e => a.insert e.p) acc) {}
+  let ins : Std.HashSet WfIri := selves.foldl (fun acc j =>
+    let acc := (st.store.withObj j.toTerm).foldl (fun a t => a.insert t.p) acc
+    (st.extraIn.getD j.toTerm #[]).foldl (fun a e => a.insert e.p) acc) {}
+  ins.fold (fun acc q => (inversesOfSt st q).foldl (fun a r => a.insert r) acc) outs
+
+/-- Every `p` whose `successorsOf st i p` can be non-empty: the
+    super-properties of `edgePropsAt st i`. `q` is in `subsOf st p`
+    exactly when `p` is in `supsOf st q`: the two tables are the two
+    directions of one reflexive-transitive closure of the
+    `rdfs:subPropertyOf` pairs (`subpropertiesOfRaw`,
+    `superpropertiesOfRaw`, each run to its fixpoint), and a property in
+    no pair is its own only sub- and super-property. A property outside
+    this set has no successor at `i`, so a rule that reads only
+    successors can skip it. -/
+def successorPropsAt (st : RState) (i : Subject) : Std.HashSet WfIri :=
+  (edgePropsAt st i).fold (fun acc q => (supsOf st q).foldl (fun a p => a.insert p) acc) {}
 
 /-! ## Provable distinctness
 
@@ -1309,10 +1439,65 @@ def fillerValueSet (st : RState) (p : WfIri) (ls : List ClassExpr) : ValueSet :=
   valueSetIntersect (universalForProperty st p ls .unconstrained)
                     (rangeValueSet st st.ranges p .unconstrained)
 
-def datatypeRangeClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
+/-- The rule as first written: every property a `∃`, `∀` or `hasValue`
+    label mentions. -/
+def datatypeRangeClashRef (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
     : Bool :=
   (collectDtProperties ls).any (fun p =>
     existsUnsatisfiableWitness p ls (fillerValueSet st p ls) (excludedValues g st i p))
+
+/-- The properties an existence obligation label mentions: `∃p.D` and
+    `hasValue p v`. `existsUnsatisfiableWitness p` is `false` for every
+    other property (`mem_obligationProperties_of_witness`). -/
+def obligationProperties (ls : List ClassExpr) : List WfIri :=
+  ls.filterMap (fun l => match l with
+    | .someOf p _   => some p
+    | .hasValue p _ => some p
+    | _             => none)
+
+/-- The range clash, asked only of the properties with an existence
+    obligation. `datatypeRangeClashRef` asked every property a label
+    mentions, `∀` labels included, and computed the filler value space and
+    the excluded values for each before the obligation test that answers
+    `false` without them: 7.9 s per clash check on the first 4,000 lines
+    of RO, whose nodes carried up to 374 `∀` labels each
+    (https://github.com/danbri/factoidal/issues/760). Equal to it
+    (`datatypeRangeClash_eq_ref`). -/
+def datatypeRangeClash (g : Graph) (st : RState) (i : Subject) (ls : List ClassExpr)
+    : Bool :=
+  (obligationProperties ls).any (fun p =>
+    existsUnsatisfiableWitness p ls (fillerValueSet st p ls) (excludedValues g st i p))
+
+theorem mem_obligationProperties_of_witness {p : WfIri} {ls : List ClassExpr}
+    {u : ValueSet} {ex : List Term} (h : existsUnsatisfiableWitness p ls u ex = true) :
+    p ∈ obligationProperties ls := by
+  unfold existsUnsatisfiableWitness at h
+  rw [List.any_eq_true] at h
+  obtain ⟨l, hl, hp⟩ := h
+  unfold obligationProperties
+  rw [List.mem_filterMap]
+  refine ⟨l, hl, ?_⟩
+  cases l <;> simp_all [Subtype.ext_iff]
+
+theorem obligationProperties_sub {p : WfIri} {ls : List ClassExpr}
+    (h : p ∈ obligationProperties ls) : p ∈ collectDtProperties ls := by
+  unfold obligationProperties at h
+  unfold collectDtProperties
+  rw [List.mem_filterMap] at h ⊢
+  obtain ⟨l, hl, hp⟩ := h
+  refine ⟨l, hl, ?_⟩
+  cases l <;> simp_all
+
+theorem datatypeRangeClash_eq_ref (g : Graph) (st : RState) (i : Subject)
+    (ls : List ClassExpr) : datatypeRangeClash g st i ls = datatypeRangeClashRef g st i ls := by
+  unfold datatypeRangeClash datatypeRangeClashRef
+  apply Bool.eq_iff_iff.mpr
+  simp only [List.any_eq_true]
+  constructor
+  · rintro ⟨p, hp, h⟩
+    exact ⟨p, obligationProperties_sub hp, h⟩
+  · rintro ⟨p, _, h⟩
+    exact ⟨p, mem_obligationProperties_of_witness h, h⟩
 
 /-- Every label that demands `k` pairwise different `p`-fillers:
     `(k, p, none)` for `≥ k p` and `= k p`, `(k, p, some D)` for the
@@ -1874,7 +2059,7 @@ def predecessorsOf (st : RState) (j : Subject) (p : WfIri) : List Term :=
     (st.extraIn.getD t #[]).toList.filterMap (fun e =>
       if roles.contains e.p then some e.s.toTerm else none))
   let viaInverse := (selves.filterMap termAsSubject).flatMap (fun s => roles.flatMap (fun r =>
-    (inversesOf st.inv r).flatMap (fun r' =>
+    (inversesOfSt st r).flatMap (fun r' =>
       (st.store.withSubjPred s r').map (·.o) ++
       (st.extraOut.getD s #[]).toList.filterMap (fun e =>
         if e.p == r' then some e.o else none))))
@@ -2774,8 +2959,16 @@ structure TBoxIndex where
       node that carries every conjunct, the first one included, so a
       node need read only the buckets of its own labels' keys. -/
   conjByKey  : Std.HashMap String (List (ClassExpr × ClassExpr)) := {}
-  /-- Axioms whose antecedent is `owl:Thing` (`isTopAntecedent`). -/
+  /-- Axioms whose antecedent is `owl:Thing` (`isTopAntecedent`), except
+      the range axioms in `lazyByProp`. -/
   top        : List (ClassExpr × ClassExpr) := []
+  /-- The range axioms `⊤ ⊑ ∀p.C` the expansion applies at a node only
+      when the node has a `p`-successor (`TBoxIndex.buildLazy`,
+      `injectLazyRanges`), by `p`, each consequent with its position in
+      the TBox. Empty unless built by `buildLazy`. -/
+  lazyByProp : Std.HashMap WfIri (List (Nat × ClassExpr)) := {}
+  /-- The position of each property in `edgeProps`. -/
+  edgePropPos : Std.HashMap WfIri Nat := {}
 
 /-- Build the index. Every bucket keeps the TBox order. -/
 def TBoxIndex.build (tb : List (ClassExpr × ClassExpr)) : TBoxIndex :=
@@ -2797,7 +2990,8 @@ def TBoxIndex.build (tb : List (ClassExpr × ClassExpr)) : TBoxIndex :=
     | .named c         => if c == owlThing then { ix with top := ax :: ix.top } else ix
     | .intersection [] => { ix with top := ax :: ix.top }
     | _                => ix) {}
-  ix
+  { ix with edgePropPos := (ix.edgeProps.foldl (fun (acc : Std.HashMap WfIri Nat × Nat) p =>
+      (acc.1.insert p acc.2, acc.2 + 1)) ({}, 0)).1 }
 
 /-- Fire the axioms whose left-hand side the node's EDGES prove. The
     left-hand side is added as a label too, so the label-level clash
@@ -2812,7 +3006,18 @@ def applyAxiomsEdges (ix : TBoxIndex) (g : Graph) (st : RState)
   -- Reading them per AXIOM costs one node-list walk per axiom per
   -- node per round. Adding a label adds no edge, so the successors
   -- read for a property stay valid through its bucket.
-  let (st', ch, _) := ix.edgeProps.foldl (fun (acc : RState × Bool × List ClassExpr) p =>
+  --
+  -- Only the properties of `ix.edgeProps` with a possible successor at `i`
+  -- are read (`successorPropsAt`), in `ix.edgeProps` order. Every other
+  -- property has no successor, so the loop below skipped it at
+  -- `succ.isEmpty`. Asking every property of `edgeProps` at every node
+  -- cost one successor read per node per property per pass: 2.2 s per
+  -- pass on the first 4,000 lines of RO, whose closure has 8,888
+  -- `rdfs:domain` triples (https://github.com/danbri/factoidal/issues/760).
+  let cands := successorPropsAt st i
+  let props := (cands.toList.filter ix.edgePropPos.contains).mergeSort
+    (fun a b => ix.edgePropPos.getD a 0 ≤ ix.edgePropPos.getD b 0)
+  let (st', ch, _) := props.foldl (fun (acc : RState × Bool × List ClassExpr) p =>
     let succ := successorsOf g acc.1 i p true
     if succ.isEmpty then acc
     else
@@ -2897,13 +3102,166 @@ def injectFunctional (st : RState) : RState × Bool :=
       let (s, ch) := addLabel a2.1 n.id (.maxCard 1 p)
       (s, a2.2 || ch)) acc) (st, false)
 
-/-- One saturation pass over every node and every label it carries. -/
-def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
+/-! ### Range axioms, applied where there is an edge
+
+A range axiom `p rdfs:range C` is `⊤ ⊑ ∀p.C` (`domainRangeAxioms`), and
+`injectGlobalAxioms` puts its consequent `∀p.C` on EVERY node. On a node
+with no `p`-successor that label does nothing: the `∀` rule pushes `C` to
+the node's `p`-successors (and `∀r.C` across the transitive `r ⊑* p`,
+whose successors are among them), and there are none. So the number of
+labels grew as the number of nodes times the number of range axioms. The
+OWL 2 RL closure of RO (11,703 triples) has 8,246 `rdfs:range` triples
+(the closure carries each range up the class hierarchy and down the
+property hierarchy): on the first 4,000 lines of RO, 923 nodes carried
+342,869 labels, 374 on the largest node, and one pass took 13 s
+(https://github.com/danbri/factoidal/issues/760).
+
+`injectLazyRanges` puts `∀p.C` on a node only when the node has a
+possible `p`-successor (`successorPropsAt`). This is the range half of the
+domain and range absorption of Tsarkov and Horrocks ("Efficient reasoning
+with range and domain constraints", DL 2004), which FaCT++, Pellet and
+HermiT use: a range constraint is applied along the edges of its property
+instead of as a disjunction-free label on every node. The domain half is
+already here: a domain axiom `≥ 1 p ⊑ C` fires on a node's edges
+(`applyAxiomsEdges`).
+
+A range axiom is applied this way only when its consequent cannot matter
+at a node with no `p`-successor (`lazyRangeAxiom`):
+
+* `p` is not `owl:topObjectProperty` (`∀top.C` puts `C` on the node
+  itself);
+* the datatype rules read the filler as no constraint
+  (`inertRangeFillerCe`: `foldDatatypeConstraint` returns its accumulator
+  for it), so the datatype clash rules read the same value space with the
+  label or without it;
+* the expression `∀p.C` occurs nowhere else: not inside any TBox axiom
+  except as the whole consequent of a `⊤` axiom, and not inside any
+  initial label (`lazyOccurrences`). Then no axiom antecedent, no
+  intersection antecedent, no union disjunct and no propositional clause
+  mentions it, so no rule but the `∀` rule reads the label.
+
+The label is still added, at the start of the pass, on every node that
+has an edge it applies to, so the `∀` rule pushes `C` across every edge
+exactly as before. A refutation can only use labels on nodes the search
+reaches through edges; what changes is the work on nodes with no edge on
+the property. -/
+
+/-- A class name `C` the datatype rules read as no constraint:
+    `foldDatatypeConstraint acc (.named C)` returns `acc` for it (its
+    `.named` arm changes the accumulator only for a date-time datatype, a
+    dense numeric datatype or a datatype of a value-space family). -/
+def inertRangeFiller (c : WfIri) : Bool :=
+  !isDateTimeDatatype c && !isDenseNumericDatatype c && (classifyFamily c).isNone
+
+/-- A filler `D` with `foldDatatypeConstraint acc D = acc` for every `acc`,
+    read off that function's arms: it changes the accumulator only for a
+    data restriction, a non-empty enumeration of literals, a datatype name
+    (`inertRangeFiller`) and a complement (taken as never inert here); the
+    other shapes fall to its last arm, which returns the accumulator. -/
+def inertRangeFillerCe : ClassExpr → Bool
+  | .named c             => inertRangeFiller c
+  | .complement _        => false
+  | .dataRestriction _ _ => false
+  | .oneOf ms            => ms.isEmpty || !(ms.all (fun t => match t with
+                                                   | .literal _ => true
+                                                   | _          => false))
+  | _                    => true
+
+mutual
+/-- `acc` with the `hashCe` of `c` and of every sub-expression of `c`. -/
+def ceSubHashesInto (acc : Std.HashSet UInt64) : ClassExpr → Std.HashSet UInt64
+  | .someOf p d          => ceSubHashesInto (acc.insert (ClassExpr.hashCe (.someOf p d))) d
+  | .allOf p d           => ceSubHashesInto (acc.insert (ClassExpr.hashCe (.allOf p d))) d
+  | .complement d        => ceSubHashesInto (acc.insert (ClassExpr.hashCe (.complement d))) d
+  | .minQualCard k p d   =>
+      ceSubHashesInto (acc.insert (ClassExpr.hashCe (.minQualCard k p d))) d
+  | .maxQualCard k p d   =>
+      ceSubHashesInto (acc.insert (ClassExpr.hashCe (.maxQualCard k p d))) d
+  | .exactQualCard k p d =>
+      ceSubHashesInto (acc.insert (ClassExpr.hashCe (.exactQualCard k p d))) d
+  | .intersection cs     =>
+      ceListSubHashesInto (acc.insert (ClassExpr.hashCe (.intersection cs))) cs
+  | .union cs            => ceListSubHashesInto (acc.insert (ClassExpr.hashCe (.union cs))) cs
+  | c                    => acc.insert (ClassExpr.hashCe c)
+
+def ceListSubHashesInto (acc : Std.HashSet UInt64) : List ClassExpr → Std.HashSet UInt64
+  | []      => acc
+  | c :: cs => ceListSubHashesInto (ceSubHashesInto acc c) cs
+end
+
+/-- `acc` with the hashes of the PROPER sub-expressions of `c`. -/
+def ceProperSubHashesInto (acc : Std.HashSet UInt64) : ClassExpr → Std.HashSet UInt64
+  | .someOf _ d          => ceSubHashesInto acc d
+  | .allOf _ d           => ceSubHashesInto acc d
+  | .complement d        => ceSubHashesInto acc d
+  | .minQualCard _ _ d   => ceSubHashesInto acc d
+  | .maxQualCard _ _ d   => ceSubHashesInto acc d
+  | .exactQualCard _ _ d => ceSubHashesInto acc d
+  | .intersection cs     => ceListSubHashesInto acc cs
+  | .union cs            => ceListSubHashesInto acc cs
+  | _                    => acc
+
+/-- The hashes of every class expression that occurs in the TBox or in an
+    initial label, except as the whole consequent of a `⊤` axiom. A hash
+    collision can only put a lazy candidate in this set, which keeps that
+    axiom eager. -/
+def lazyOccurrences (tb : List (ClassExpr × ClassExpr)) (st : RState) : Std.HashSet UInt64 :=
+  let acc := tb.foldl (fun acc (a, d) =>
+    let acc := ceSubHashesInto acc a
+    if isTopAntecedent a then ceProperSubHashesInto acc d else ceSubHashesInto acc d) {}
+  st.nodes.foldl (fun acc n => ceListSubHashesInto acc n.labels) acc
+
+/-- The axioms `injectLazyRanges` applies: `⊤ ⊑ ∀p.C`, `p` not
+    `owl:topObjectProperty`, `C` inert for the datatype rules
+    (`inertRangeFillerCe`), `∀p.C` not in `occ`. -/
+def lazyRangeAxiom (occ : Std.HashSet UInt64) (ax : ClassExpr × ClassExpr) : Bool :=
+  isTopAntecedent ax.1 &&
+  (match ax.2 with
+   | .allOf p c =>
+       p != owlTopObjectProperty && inertRangeFillerCe c &&
+       !occ.contains (ClassExpr.hashCe ax.2)
+   | _ => false)
+
+/-- The index of `TBoxIndex.build`, with the lazy range axioms taken out of
+    every bucket (they sat in `top` and in the `owl:Thing` bucket of
+    `byKey`) and put in `lazyByProp`. -/
+def TBoxIndex.buildLazy (tb : List (ClassExpr × ClassExpr)) (occ : Std.HashSet UInt64)
+    : TBoxIndex :=
+  let ix := TBoxIndex.build (tb.filter (fun ax => !lazyRangeAxiom occ ax))
+  { ix with lazyByProp := tb.zipIdx.foldl (fun (m : Std.HashMap WfIri (List (Nat × ClassExpr)))
+      (ax, k) =>
+        if lazyRangeAxiom occ ax then
+          match ax.2 with
+          | .allOf p _ => m.insert p (m.getD p [] ++ [(k, ax.2)])
+          | _          => m
+        else m) {} }
+
+/-- The lazy range consequents that apply at `i`: those of every property
+    with a possible successor at `i`, in TBox order. -/
+def lazyRangeLabels (ix : TBoxIndex) (st : RState) (i : Subject) : List ClassExpr :=
+  let hits := (successorPropsAt st i).fold
+    (fun (acc : List (Nat × ClassExpr)) p => ix.lazyByProp.getD p [] ++ acc) []
+  (hits.mergeSort (fun a b => a.1 ≤ b.1)).map (·.2)
+
+/-- Put each lazy range consequent on the group leaders it applies at. -/
+def injectLazyRanges (ix : TBoxIndex) (st : RState) : RState × Bool :=
+  if ix.lazyByProp.isEmpty then (st, false)
+  else
+    (groupLeaders st).foldl (fun (acc : RState × Bool) n =>
+      (lazyRangeLabels ix acc.1 n.id).foldl (fun (a2 : RState × Bool) d =>
+        let (s, ch) := addLabel a2.1 n.id d
+        (s, a2.2 || ch)) acc) (st, false)
+
+/-- One saturation pass over every node and every label it carries, over
+    a prebuilt TBox index. `search` uses it with the index
+    `tableauConsistentTraced` builds once per search, where `onePass` built
+    one on every pass. -/
+def onePassIx (ix : TBoxIndex) (g : Graph) (st : RState)
     : RState × Bool :=
-  let ix := TBoxIndex.build tb
   let (st0, ch0) := injectFunctional st
   let (st1, chG) := injectGlobalAxioms ix.top st0
-  let ch1 := ch0 || chG
+  let (st1, chL) := injectLazyRanges ix st1
+  let ch1 := ch0 || chG || chL
   (groupLeaders st1).foldl (fun (acc : RState × Bool) n =>
     let byLabel := (labelsOf acc.1 n.id).foldl (fun (a2 : RState × Bool) l =>
       let (s1, c1) := applyLabelRules g a2.1 n.id l
@@ -2912,6 +3270,13 @@ def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
     let (s3, c3) := applyAxiomsEdges ix g byLabel.1 n.id
     let (s4, c4) := applyAxiomsConj ix s3 n.id
     (s4, byLabel.2 || c3 || c4)) (st1, ch1)
+
+/-- One saturation pass with every axiom applied eagerly, over an index
+    built from `tb` (`TBoxIndex.build`, no lazy range axioms). The search
+    does not use it; `l4owl-probe`'s per-pass timing does. -/
+def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
+    : RState × Bool :=
+  onePassIx (TBoxIndex.build tb) g st
 
 /-! ## The ≤-rule: merging witness successors
 
@@ -3217,20 +3582,20 @@ instance : Inhabited SearchTrace := ⟨.none⟩
     `wrap` is applied to the trace of a clash; it carries the forced
     identifications made on the way down, so that every self-call that
     was a tail call before the trace existed stays one. -/
-partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
+partial def search (ix : TBoxIndex) (g : Graph) (st : RState)
     (budget : Nat) (wrap : SearchTrace → SearchTrace := id) : Verdict × Nat × SearchTrace :=
   match budget with
   | 0     => (.out, 0, .none)
   | n + 1 =>
     if clashNodes g st then (.clash, n, wrap (.leaf st))
     else
-      let (st', changed) := onePass tb g st
-      if changed then search tb g st' n wrap
+      let (st', changed) := onePassIx ix g st
+      if changed then search ix g st' n wrap
       else if clashNodes g st' then (.clash, n, wrap (.leaf st'))
       else
         -- Identifications every model makes come before any choice.
         let (stF, forced) := forcedIdentifications g st'
-        if forced then search tb g stF n (fun t => wrap (.forced st' stF t))
+        if forced then search ix g stF n (fun t => wrap (.forced st' stF t))
         else if propositionalClash st' || nominalClash g st' then (.clash, n, wrap (.leaf st'))
         else
         match pendingUnion st' with
@@ -3251,7 +3616,7 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
                           | .union es => !(ClassExpr.beqList es cs)
                           | _         => true))
                     else m) } i c
-                match search tb g sb b with
+                match search ix g sb b with
                 | (.clash, b', t) => tryAll tl b' (t :: acc)
                 | (.open', b', _) => (.open', b', .none)
                 | (.out, b', _)   => (.out, b', .none)
@@ -3265,7 +3630,7 @@ partial def search (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState
             match ps with
             | []           => (.clash, b, wrap (.merge st' nominal all acc.reverse))
             | (x, y) :: tl =>
-                match search tb g (mergeInto st' x y) b with
+                match search ix g (mergeInto st' x y) b with
                 | (.clash, b', t) => tryMerges nominal all tl b' (t :: acc)
                 | (.open', b', _) => (.open', b', .none)
                 | (.out, b', _)   => (.out, b', .none)
@@ -3303,6 +3668,9 @@ def initState (g : Graph) : RState :=
       subClosure := props.map (fun p => (p, subpropertiesOfRaw sp p)),
       supClosure := props.map (fun p => (p, superpropertiesOfRaw sp p)),
       store := Store.ofIndex (Index.ofGraph g) }
+  let st0 := { st0 with subMap := closureMap st0.subClosure,
+                        supMap := closureMap st0.supClosure,
+                        invMap := inverseMap st0.inv }
   -- Built in ONE pass with a hash map and the index store. The fold
   -- through `addLabel` this replaces scanned the node list per triple
   -- and parsed every type through the LIST store, quadratic in the
@@ -3346,6 +3714,25 @@ def initState (g : Graph) : RState :=
       nodes := order'.map (fun x => RNode.ofLabels x (labelMap'.getD x [])),
       pos := (order'.foldl (fun (acc : Std.HashMap Subject Nat × Nat) x =>
         (acc.1.insert x acc.2, acc.2 + 1)) ({}, 0)).1 }
+
+/-- The maps `initState` builds answer as the list tables they replace:
+    `subsOf` and `supsOf` as `find?` on the closure tables, `inversesOfSt`
+    as `inversesOf` on the inverse pairs. No rule writes these fields after
+    `initState`. -/
+theorem subsOf_initState (g : Graph) (p : WfIri) :
+    subsOf (initState g) p = findClosure (initState g).subClosure p [p] := by
+  show (initState g).subMap.getD p [p] = _
+  rw [show (initState g).subMap = closureMap (initState g).subClosure from rfl, closureMap_getD]
+
+theorem supsOf_initState (g : Graph) (p : WfIri) :
+    supsOf (initState g) p = findClosure (initState g).supClosure p [p] := by
+  show (initState g).supMap.getD p [p] = _
+  rw [show (initState g).supMap = closureMap (initState g).supClosure from rfl, closureMap_getD]
+
+theorem inversesOfSt_initState (g : Graph) (p : WfIri) :
+    inversesOfSt (initState g) p = inversesOf (initState g).inv p := by
+  show (initState g).invMap.getD p [] = _
+  rw [show (initState g).invMap = inverseMap (initState g).inv from rfl, inverseMap_getD]
 
 /-- The class-size counting rung (`OWL/CountingOracle.lean`), the
     Lean counterpart of the F* owl-runner's `class_size_refutes`.
@@ -3398,7 +3785,9 @@ def tableauConsistentTraced (g : Graph) (budget : Nat) : Option Bool × Refutati
   else if countingRefutes g then (some false, .counting)
   else
     let tb := collectAxioms g
-    match search tb g { initState g with tbox := tb } budget with
+    let st0 := { initState g with tbox := tb }
+    let ix := TBoxIndex.buildLazy tb (lazyOccurrences tb st0)
+    match search ix g st0 budget with
     | (.clash, _, t) => (some false, .search tb t)
     | (.open', _, _) => (some true, .notRefuted)
     | (.out, _, _)   => (none, .notRefuted)

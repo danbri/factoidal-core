@@ -357,6 +357,52 @@ the method that relies on it.**
 > thereby sound for a semantics whose normative conditions exclude
 > those rows; the RDF-Based regime removes their witness triples.
 
+## 15. The function an issue names is not the phase that costs
+
+**Time every phase inside the function the issue names, and count the
+units each phase works on, before you name a mechanism.**
+
+> 🔴 **2026-10-12 (Lean `owl-consistent`, https://github.com/danbri/factoidal/issues/760).**
+> The issue said "the cost is in the tableau refuter
+> (`OWL.Refute.tableauConsistent` on the closure)", measured by subtracting
+> the closure time from the command time, and its work order was to count
+> expansion steps, branches and nodes. The counters
+> (`l4refute-profile`, `formal/lean4/Harness/RefuteProfile.lean`) showed a
+> search of TWO steps with NO branch point on both ontologies.
+>
+> * Cell Ontology, first 20,000 lines: 101.9 s of 104.3 s was the
+>   class-size counting rung (`CountingOracle.classSizeUnsat`), which
+>   `tableauConsistent` runs BEFORE the search. It built a linear system by
+>   scanning the graph once per IRI, and the system had no equality row, so
+>   it could only answer `false`. After a proved short cut: 3.9 ms.
+> * RO, first 4,000 lines: the search was the cost, but not through steps
+>   or branches. Every range axiom `⊤ ⊑ ∀p.C` was a label on every node:
+>   342,869 labels on 923 nodes, because the OWL 2 RL closure has 8,246
+>   `rdfs:range` triples. After range absorption (the label only where the
+>   node has a `p`-edge): 8 labels on the largest node, 0.57 s for the
+>   command instead of 28.1 s.
+>
+> Both ontologies now finish (Cell Ontology 13.3 s, RO 9.9 s CPU; record:
+> `docs/designissues/2026-10-10-owl-real-ontologies.md` § 9). Steps and
+> branches, the quantities the issue asked for, were constant across every
+> prefix: they could not have explained a cost that grew 5 to 27 times per
+> doubling.
+
+Rules that follow.
+
+- **A component boundary is not a phase boundary.** "Command minus
+  closure" located the cost in a function; it did not say which part of
+  that function. Profile inside it, phase by phase.
+- **Count the units each phase iterates over, and watch which count grows.**
+  A per-pass cost of nodes × labels is fixed by the label COUNT, and a rule
+  that writes one label per node per axiom makes that count the product of
+  two input sizes. The step count can stay at 2 while the work grows
+  quadratically.
+- **A check that must answer the same for a whole class of inputs should
+  answer before it does the work, and the short cut should be proved equal
+  to the full check.** `classSizeUnsat_eq_ref` is that proof; without it the
+  short cut would be a guess about the eliminator.
+
 ## The standing discipline
 
 1. State the acceptance criterion **as a number**, before the work.
@@ -386,6 +432,11 @@ re-measurement is worse than nothing.**
 * `tools/owl-real-bench.py` and
   `docs/designissues/2026-10-10-owl-real-ontologies.md` — OWL RL closure, DL
   consistency and DL entailment on ten real ontologies (section 2's rule
-  applied to the DL regime), with time, memory and the open issues.
+  applied to the DL regime), with time, memory and the open issues; § 9 is
+  the phase profile of section 15.
+* `formal/lean4/Harness/RefuteProfile.lean` (`l4refute-profile FILE.nt
+  [--trace] [--check] [--goal CONCL.nt]`) — the refuter's phases, steps,
+  branch points and label counts on the OWL 2 RL closure of one file, or on
+  the refutation `owl-entails` runs for a conclusion.
 * `formal/fstar/RDF.Semantics.HypothesisWitness.fst` — theorem-vacuity
   witnesses.

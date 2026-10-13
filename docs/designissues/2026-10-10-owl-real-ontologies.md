@@ -20,7 +20,8 @@ F\* steps, `prlimit --as=6000000000` for both.
 - 📊 **Lean DL consistency:** decided on 7 of 10, all `true` (SKOS, FOAF,
   PROV-O, BFO, Pizza, wine with food, schema.org; 0.06 s to 44 s). RO and the
   Cell Ontology: TIMEOUT at 600 s (https://github.com/danbri/factoidal/issues/760;
-  HermiT: 29.8 s and 6.1 s). QUDT: OOM under the address-space cap; without it,
+  HermiT: 29.8 s and 6.1 s). ✅ Repaired 2026-10-12 (section 9): RO 9.9 s and
+  the Cell Ontology 13.3 s of CPU time, both `true`. QUDT: OOM under the address-space cap; without it,
   `false` in 72 s with 1.35 GB, and HermiT also finds QUDT 3.4.0 inconsistent.
 - 📊 **Lean DL entailment, 354 checks planned:** stated pairs 150 `true`
   (out of 150 run); unrelated pairs 124 decided (4 `true`, 120 `false`); 2
@@ -218,14 +219,14 @@ issue and its expected-failure row in `tests/stack/owl_real_gate.py`
 
 | What | Measured | Issue | Gate row |
 |---|---|---|---|
-| Lean `owl-consistent`, Cell Ontology (78,833 triples) | TIMEOUT at 600 s at load 6 to 8; in the gate run at load 3.5 it finished in 598 s with `true`. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
-| Lean `owl-consistent`, RO (11,703 triples) | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `cl-basic-consistent` covers the cause |
+| Lean `owl-consistent`, Cell Ontology (78,833 triples). ✅ Repaired 2026-10-12, section 9: 13.3 s CPU | TIMEOUT at 600 s at load 6 to 8; in the gate run at load 3.5 it finished in 598 s with `true`. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
+| Lean `owl-consistent`, RO (11,703 triples). ✅ Repaired 2026-10-12, section 9: 9.9 s CPU | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `ro-consistent` (added 2026-10-12) |
 | Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure` |
 | Lean `owl-consistent` and `owl-entails`, QUDT, under `prlimit --as=6000000000` | OOM at 27 s with 1.25 GB resident. The Lean runtime's mimalloc reserves 1 GiB arenas and two 1 GiB thread stacks; with `MIMALLOC_ARENA_RESERVE=64MiB` the same command finishes under the same cap (41 s, 1,378 MB) | https://github.com/danbri/factoidal/issues/759 | `qudt-consistent` |
 | Lean `parse --format rdfxml`, GO basic 2026-08-05 (118,080,840 bytes; fetched at run time, not vendored) | under `prlimit --as`: `std::bad_alloc` after 0.57 s. With the 6 GB resident-set watchdog: 1,283,913 triples, 52 s (32 s CPU), 4,919 MB peak, 43.7 bytes per document byte; the Cell Ontology: 52.6. F\* `count`: 33.6 s, 831 MB | https://github.com/danbri/factoidal/issues/771 | `cl-basic-parse-memory` (15 bytes per byte) |
 | Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound) |
 | F\* `entail --regime OWL-RL` on wine and food (2,709 triples), RO, schema.org, the Cell Ontology and QUDT | TIMEOUT at 300 s on all five; Lean on the first four: 5.8 s, 8.0 s, 4.6 s, 26.7 s | https://github.com/danbri/factoidal/issues/765 | `wine-closure-fstar` (skipped when the F\* binary is absent) |
-| Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
+| Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology. ✅ Repaired 2026-10-12, section 9: all 40 decided, all agree with HermiT | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
 
 QUDT under the resident-set watchdog (`--rss-cap-mb 6000`, no address-space
 cap, `--pairs 5`, Lean only; `OUT/results.jsonl` of that run):
@@ -303,6 +304,228 @@ answer `true`.
   (https://github.com/danbri/factoidal/issues/759): the OOM rows under
   `prlimit --as` say that the step did not finish under that cap, not that it
   needs 6 GB. Section 5 gives the resident-set measurements.
+
+## 9. RO and the Cell Ontology: where the time was, and the repair (2026-10-12)
+
+Issue: https://github.com/danbri/factoidal/issues/760; OKR batch 1, key
+result 3.3 (https://github.com/danbri/factoidal/issues/768): RO and the Cell
+Ontology finish `owl-consistent` in 600 s. Branch `claude/wt-refuter-scaling`
+of `danbri/factoidal-core`, base commit `fb263d6f`.
+
+### 9.1 Method
+
+`l4refute-profile FILE.nt [--trace] [--check] [--goal CONCL.nt]` (new,
+`formal/lean4/Harness/RefuteProfile.lean`) runs what `owl-consistent` runs:
+the OWL 2 RL closure, the graph-level checks, the class-size counting rung,
+the TBox read, the initial state, and `OWL.Refute.search`. It calls the
+library's phase functions in the order `search` calls them, with the same
+threaded budget, and times each one; every timed value is consumed by a
+counter before the second clock read (`skills/measuring-inference`, sections
+9 and 11), and the parts are printed beside the step total. `--check` runs
+`tableauConsistent` on the same closure and fails when the verdicts differ;
+`--goal` profiles the refutation `owl-entails` runs (the closure with the
+first negation goal of the conclusion appended). It holds no OWL logic. It counts expansion steps (calls of `search`),
+saturation passes, union and merge branch points and branches, nodes,
+labels and the largest label set, and the calls and time of each rule of a
+pass. The refuter has no blocking (a witness-depth cap stands in for it), so
+there is no blocking count.
+
+Inputs: the issue's reproduction, `l4factoidal parse … --out nquads | grep . |
+sort -u` in the POSIX locale (byte order), then the first N lines. The
+prefixes of the issue's table were cut from a file sorted in another order,
+so their times are not comparable with these. CPU time is user time of one
+run; the load average was 1.5 to 4 on 4 CPUs shared with two other agents.
+Callgrind (`valgrind --tool=callgrind`) on the 5,000-line prefix checked the
+attribution independently.
+
+### 9.2 What was measured, before the repair (`fb263d6f`)
+
+| Input (first N lines) | Closure triples | TBox axioms | Nodes | Labels (largest set) | Steps | Branch points | RL closure | Counting rung | TBox read + initial state | Search | `owl-consistent` CPU |
+|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| Cell Ontology 5,000 | 11,187 | 4,572 | 754 | 1,877 (4) | 2 | 0 | 0.28 s | 2.75 s | 0.06 s | 0.014 s | 3.20 s |
+| Cell Ontology 10,000 | 26,952 | 13,216 | 1,315 | 3,498 (4) | 2 | 0 | 0.77 s | 19.4 s | 0.19 s | 0.050 s | 19.3 s |
+| Cell Ontology 20,000 | 56,839 | 30,061 | 2,535 | 6,994 (4) | 2 | 0 | 1.75 s | 101.9 s | 0.59 s | 0.150 s | 104.3 s |
+| RO 2,000 | 5,126 | 580 | 452 | 939 at start | 2 | 0 | 0.09 s | 0.00005 s | 0.02 s | 0.88 s | 1.03 s |
+| RO 4,000 | 12,011 | 1,160 | 923 | 342,869 after one pass (374) | 2 | 0 | 0.37 s | 0.00006 s | 0.08 s | 26.8 s | 28.1 s |
+
+Two different causes, one per ontology.
+
+**The Cell Ontology: the class-size counting rung.** The search is two steps
+(one pass that changes the state, one that does not) with no branch point,
+and it takes 0.15 s at 20,000 lines. 98 % of the time is
+`OWL.CountingOracle.classSizeUnsat` (`countingRefutes`), which
+`tableauConsistentTraced` runs before the search. The closure has 5
+cardinality triples and no datatype property, so it is in the counting
+fragment, and `buildLinSystem` builds the class-size linear system:
+`finiteClasses` and `lcOneofAll` scan the whole graph once for each IRI of the
+graph, and `dedupIris` compares every IRI occurrence with every later one.
+That is quadratic in the graph (7.0 and 5.3 times per doubling). Callgrind on
+5,000 lines: `classSizeUnsat` 83.8 % of the instructions, `finiteClasses`
+67.0 %, `lcOneofAll` 13.5 %. The system it built had no equality row: the
+closure declares no functional property and has no `owl:unionOf`. With no
+equality row the certificate search has nothing to eliminate and answers
+"no certificate", so all of that work could only answer `false`.
+
+**RO: every range axiom on every node.** RO is not in the counting fragment
+(it declares two datatype properties), so the rung answers at once. The
+search is again two steps with no branch point, but one pass takes 13 s on
+4,000 lines. `domainRangeAxioms` reads each `p rdfs:range C` as `⊤ ⊑ ∀p.C`,
+and `injectGlobalAxioms` put `∀p.C` on every node. The OWL 2 RL closure of RO
+has 8,246 `rdfs:range` and 8,888 `rdfs:domain` triples (the closure carries
+each range up the class hierarchy and down the property hierarchy), so the
+label count is the node count times the range-axiom count: 342,869 labels on
+923 nodes, 374 on the largest node. Per pass: the `∀` rule 7.3 s (675,636
+calls, each a successor read that scanned the sub-property and inverse
+tables as lists), the datatype range clash 7.9 s (it computed the filler
+value space of every property a label mentions, `∀` labels included), the
+domain rule 2.2 s (it read the successors of every property with a domain
+axiom at every node). On the whole RO graph the TBox has 4,159 axioms
+with the antecedent `⊤`, so every one of its 2,728 nodes would carry 4,159
+labels from them alone.
+
+### 9.3 The repair
+
+All in the library; no verdict rule changed.
+
+1. **The counting rung answers `false` without building a system that has no
+   equality row** (`CountingOracle.noEqualityRows`, `classSizeUnsat`). Every
+   equality row comes from a declared `owl:FunctionalProperty` (fibre and
+   bijection rows) or an `owl:unionOf` list (disjoint-union rows). Proved:
+   `findLinCert_nil` (no equality row, no certificate),
+   `buildLinSystem_eqs_nil`, and `classSizeUnsat_eq_ref` (the new verdict
+   equals the old one, kept as `classSizeUnsatRef`, on every graph).
+2. **Range axioms are applied where there is an edge.** A range axiom
+   `⊤ ⊑ ∀p.C` is put on a node only when the node has a possible
+   `p`-successor (`TBoxIndex.buildLazy`, `injectLazyRanges`,
+   `successorPropsAt`). This is the range half of domain and range
+   absorption (D. Tsarkov and I. Horrocks, "Efficient reasoning with range
+   and domain constraints", DL 2004; used by FaCT++, Pellet and HermiT); the
+   domain half was already there (`applyAxiomsEdges` fires `≥ 1 p ⊑ C` on a
+   node's edges). An axiom is applied this way only when its consequent
+   cannot matter at a node with no `p`-successor (`lazyRangeAxiom`): `p` is
+   not `owl:topObjectProperty`, the datatype rules read the filler as no
+   constraint, and `∀p.C` occurs in no other axiom and no initial label, so no
+   rule but the `∀` rule reads the label. The label is still added on every
+   node with an edge on `p` or a sub-property of it, in either direction, so
+   the `∀` rule pushes `C` across every edge as before.
+3. **The rules ask only the properties that have successors.**
+   `applyAxiomsEdges` reads only the edge properties `successorPropsAt`
+   names (the loop skipped every other property at `succ.isEmpty`); the
+   datatype range clash asks only properties with an existence obligation
+   (`datatypeRangeClash`, proved equal to the old rule:
+   `datatypeRangeClash_eq_ref`).
+4. **Constant-time role tables, and one TBox index per search.** The
+   sub-property, super-property and inverse tables are hash maps
+   (`subMap`, `supMap`, `invMap`); each answers as the list lookup it
+   replaces, proved (`closureMap_getD`, `inverseMap_getD`,
+   `subsOf_initState`, `supsOf_initState`, `inversesOfSt_initState`).
+   `onePass` takes the TBox index; `tableauConsistentTraced` builds it once,
+   where `onePass` built it on every pass.
+
+Not changed, because the measurement did not point at them: the TBox is
+already applied by lazy unfolding (an axiom `A ⊑ C` fires on a node that
+carries `A`, `applyAxioms`; it is never a global `¬A ⊔ C`, and the
+propositional clash takes it as a clause only for the node it reads); the
+refuter has no blocking to tune (a witness-depth cap of 3 stands in for
+it); and with no branch point on either ontology, semantic branching and
+dependency-directed backjumping have nothing to act on. Told-subsumer
+caching would serve classification, which `owl-consistent` does not do.
+
+The certificate path is unchanged: `checkCert` re-derives every forward
+consequence itself (`saturate`), so a certificate never relied on a `∀`
+label being present on a node with no successor. `#guard`s in
+`OWL/RefuteTests.lean` (range on an asserted edge, on an expansion edge, on
+an inverse edge, on a sub-property edge, and the domain on a sub-property
+edge, each with a twin that has a model) and in `OWL/CountingOracle.lean`
+(the short cut on a graph with no equality row, and a graph with two
+disjoint unions whose certificate the rung still finds).
+
+### 9.4 After the repair, beside HermiT
+
+| Input | Before: `owl-consistent` CPU | After: CPU (wall), peak RSS | Of which RL closure | Of which search | HermiT 1.3.8, wall |
+|---|---:|---:|---:|---:|---:|
+| Cell Ontology 5,000 lines | 3.20 s | 0.48 s (0.69 s), 52 MB | 0.23 s | 0.020 s | — |
+| Cell Ontology 10,000 lines | 19.3 s | 1.05 s (1.31 s), 86 MB | 0.65 s | 0.059 s | — |
+| Cell Ontology 20,000 lines | 104.3 s | 2.74 s (2.89 s), 149 MB | 1.93 s | 0.166 s | — |
+| Cell Ontology 40,000 lines | — | 7.48 s (8.42 s), 266 MB | 5.03 s | 0.383 s | — |
+| Cell Ontology, whole (78,833 triples) | not finished in 600 s | 13.3 s (14.9 s), 447 MB | 8.9 s | 0.55 s (2 steps) | 6.1 s, 275 MB |
+| RO 2,000 lines | 1.03 s | 0.17 s (0.24 s), 31 MB | 0.09 s | 0.018 s | — |
+| RO 4,000 lines | 28.1 s | 0.57 s (0.59 s), 42 MB | 0.37 s | 0.067 s | — |
+| RO 8,000 lines | not finished in 200 s (issue 760) | 2.33 s (2.54 s), 65 MB | — | — | — |
+| RO, whole (11,703 triples) | not finished in 600 s | 9.89 s (10.2 s), 77 MB | 9.1 s | 0.57 s (3 steps) | 29.8 s, 1.6 GB |
+
+Callgrind on the repaired command over the first 20,000 lines of the Cell
+Ontology: the OWL 2 RL closure 55.3 % of the instructions
+(`stepConclusionsS` 35.1 %, `Index.insertAll` 18.3 %), the refuter 14.1 %
+(`collectAxioms` 5.9 %, `initState` 4.2 %, `search` 2.8 %), the class-size
+rung below 0.1 %, reading the N-Triples file 26.3 %.
+
+The refuter is no longer the cost on either ontology: on the whole Cell
+Ontology the search is 0.55 s of 13.3 s and on RO 0.57 s of 9.9 s. The cost
+now is the OWL 2 RL closure, which grows about 2.6 to 3.0 times per doubling
+of these prefixes (its output grows about 2.0 times): it re-evaluates every
+rule over the whole graph each round (no semi-naive evaluation,
+`OWL/RLClosureIndexed.lean` header; https://github.com/danbri/factoidal/issues/756
+item 2). On RO the Lean check is three times faster than HermiT and uses a
+twentieth of its memory; on the Cell Ontology it is 2.2 times slower, and
+the closure is two thirds of it.
+
+The other ontologies of section 2 (`owl-consistent` wall time, before at
+load 5 to 9 and after at load 2 to 3): BFO 2.38 s to 0.14 s, PROV-O 1.33 s
+to 0.18 s, wine 21.9 s to 13.8 s. On wine the search is now the larger part:
+9.1 s of a profile total of 14.2 s, in 19 steps with 8 merge branch points,
+where every step re-runs every rule on all 823 nodes (the propositional and
+nominal clash checks are 3.9 s of it).
+
+### 9.5 Gates
+
+- `tests/stack/owl_real_gate.sh` (whole gate, final binary, load average
+  4.8): 7 pass, 0 fail, 5 expected-fail (out of 12); 1 skipped
+  (`wine-closure-fstar`: no F\* binary in this checkout).
+  `cl-basic-consistent` 16.67 s wall, 447 MB, `true`; its expected-failure
+  mark is removed. `ro-consistent` (new) 12.65 s wall, 77 MB, `true`. Both
+  rows have a 60 s bound. The other rows give what they gave before:
+  `ro-parse`, `qudt-species`, `cl-basic-parse-memory`, `qudt-closure` and
+  `qudt-consistent` expected failures with their issues; the other four
+  pass.
+- `tests/stack/lean_scaling.py --only owl-consistent-cl` (new row), final
+  binary: 1 pass, 0 fail, 0 expected-fail (out of 1). 1.407 s, 3.169 s and
+  7.966 s of CPU at 10,000, 20,000 and 40,000 lines: 2.3 and 2.5 per
+  doubling (bound 3.0), 5.7 for 4x input (bound 9.0).
+- OWL DL catalogs (`tools/lean-scoreboard.sh --only l4owl-probe`, before at
+  `fb263d6f` and after, one run each, `MIMALLOC_ARENA_RESERVE=64MiB`):
+  all 77 table rows identical (pass, fail, skip/other, total), and every
+  runner log identical once the timing fields are removed: every summary
+  line, failing id, `PROVED-BY-CERTIFICATE` and `REFUTATION-PROFILE` line.
+  The certificate counts did not move: type-inconsistency 50
+  certificate-checked, 27 unchecked (out of 77 decided by refutation);
+  type-positive-entailment and type-consistency 32 and 23 (out of 55);
+  syntax-dl 72 and 41 (out of 113). DL type-inconsistency stays 126 pass,
+  1 fail, 1 skip (out of 128). One log line differs: the RDF-Based job (which
+  runs no refuter) reported a closure time cap on `WebOnt-miscellaneous-001`
+  in the run before and none in the run after; its rows are identical, and
+  the cap is the 30 s wall-clock budget of a run that shared the machine
+  with the benchmark below.
+- HermiT agreement (`tools/owl-real-hermit.py` over a new
+  `tools/owl-real-bench.py --no-fstar` run on the repaired binary): 314
+  Lean verdicts compared, 314 agree, 0 Lean `true` where HermiT says `false`,
+  0 Lean `false` where HermiT says `true`. The 40 new ones are the RO and
+  Cell Ontology pairs that were TIMEOUT or NOT_RUN on 2026-10-10. QUDT stays
+  undecided under the address-space cap
+  (https://github.com/danbri/factoidal/issues/759). Against the run of
+  2026-10-10, 322 Lean verdicts are unchanged and 42 changed, each from
+  TIMEOUT or NOT_RUN to a verdict. `owl-consistent` of schema.org went from
+  44.3 s to 4.0 s wall.
+- `tools/lean-tail-recursion-audit.py --gate` (stale IR removed first): pass,
+  with three new allow-list lines: the occurrence walk
+  `ceSubHashesInto`/`ceListSubHashesInto` (class-expression nesting) and the
+  profiler's copy of the search (one frame per expansion step).
+- `tools/lean-hygiene-audit.py --build-log`: clean (no `sorry`, axiom,
+  `native_decide`, `unsafe` or `implemented_by`; `partial def` 164, the
+  baseline; the `#print axioms` lines of the build, the six new equality
+  theorems among them, name only `propext`, `Classical.choice` and
+  `Quot.sound`). `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350). Full
+  `lake build`: exit 0 (1,412 jobs).
 
 ## 8. Reproduce
 
