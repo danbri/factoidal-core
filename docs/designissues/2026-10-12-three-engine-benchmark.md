@@ -238,6 +238,12 @@ to 1.41. Times in ms; RSS in MB.
 | d16-orderby-limit-scan | 327.6 / 279.8 / 79.77 | 37 | 484.4 / 582.5 / 81.81 | 43 | 1,659.4 / 1,301.85 | 884 | 763.8 / 471.91 | 682 |
 | d17-count-all | 46.6 / 44.7 / 6.16 | 17 | 67.8 / 103.9 / 4.68 | 21 | 288.2 / 272.20 | 885 | 86.9 / 86.08 | 682 |
 
+d01 after https://github.com/danbri/factoidal/issues/805 (2026-10-13, the
+PRM1 entries of one key range by binary search over positioned reads; the
+other rows of this table are not measured again here): SBM11 none process
+12.0 ms (483.8 above), merkle process 170.3 ms (748.0 above);
+section 8 item 3.
+
 ### 7.4 Threads
 
 SBM11 queries are single-threaded; the packer ran with its default 4
@@ -280,6 +286,19 @@ configuration with one loader.
    entries by binary search with positioned reads, not whole files";
    acceptance: d01 process time under 50 ms on the DBpedia slice. Related:
    stage 4 open item 4 (process start-up).
+   Repaired (https://github.com/danbri/factoidal/issues/805, 2026-10-13): the
+   query engine asks its store for the PRM1 entries of one key range, found
+   by two binary searches over positioned reads of the PRM1 file, and the
+   process reads the 22-byte header at the first use of a permutation. d01
+   with `--verify none` on the DBpedia slice: process 220.0 ms before,
+   12.0 ms after (median of 7 processes, load average 0.69); file
+   bytes read per process 8,210,091 before, 27,795 after; peak RSS
+   42.2 MB before, 16.2 MB after. With `--verify merkle`: 408.5 ms before, 170.3 ms
+   after (4,106,727 bytes read, most of them the GDX1 file read whole and
+   the dictionary chunks). Answers of all 40 queries of both sets
+   byte-identical before and after, in both modes. Record:
+   `2026-10-12-sbm11-stage4.md` section 13; failing-first test
+   `tests/sbm11/process-start.sh`.
 4. **Joins.** Warm SBM11 joins are 3.6 to 26 times Virtuoso's on the DBpedia
    slice (d05 575 against 49 ms, d07 136 against 6, d09 76 against 3.6).
    Tracking: https://github.com/danbri/factoidal/issues/787 (SBM11 stages)
