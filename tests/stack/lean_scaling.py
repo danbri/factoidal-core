@@ -72,6 +72,16 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
                    3.82 s for 4x input before the data index, 0.043 s to 0.139 s after)
+  owl-consistent-cl  `owl-consistent` (OWL 2 RL closure, then the tableau
+                   refuter) on the first 10,000, 20,000 and 40,000 lines of the
+                   Cell Ontology as sorted N-Triples (the reproduction of
+                   https://github.com/danbri/factoidal/issues/760). Measured at
+                   x, 2x and 4x in CPU time: each doubling at most DOUBLING
+                   (3.0) times the time before it, and 4x at most BOUND. Before
+                   the repair: 19.3 s, 105 s and not finished at 600 s (the
+                   class-size counting rung built its linear system by scanning
+                   the graph once per IRI); after: 1.05 s, 2.74 s, 7.48 s,
+                   measured 2026-10-12, most of it the OWL 2 RL closure
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -370,6 +380,70 @@ def memory_row(rid):
                 f"({b4} bytes): {slope:.1f} bytes of peak RSS per input byte (bound {bound})")
 
 
+# Rows measured at x, 2x and 4x (the n, 2n, 4n assertion of
+# skills/danbri-function-precrime-checkers), in CPU time, minimum of the runs:
+# time(2x) <= DOUBLING * time(x), time(4x) <= DOUBLING * time(2x), and
+# time(4x) <= BOUND * max(time(x), FLOOR). A linear or n log n command gives
+# about 2 per doubling; a quadratic one 4. The command must also print the
+# expected first line.
+DOUBLING = 3.0
+CL_SOURCE = ROOT / "third_party/ontologies/cl-basic/cl-basic.owl"
+
+
+def cl_prefix(n: int) -> Path:
+    """The first n lines of the Cell Ontology basic edition as N-Triples:
+    parsed by the Lean RDF/XML reader, one line per distinct triple, sorted
+    by code point (the reproduction of issue 760, `sort -u` in the C locale)."""
+    FIX.mkdir(parents=True, exist_ok=True)
+    full = FIX / "cl-basic.sorted.nt"
+    if not full.exists():
+        r = subprocess.run([str(BIN), "parse", str(CL_SOURCE), "--format", "rdfxml",
+                            "--out", "nquads"], stdout=subprocess.PIPE, timeout=CAP, check=True)
+        lines = sorted({ln for ln in r.stdout.decode("utf-8").split("\n") if ln.strip()})
+        full.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    p = FIX / f"cl-basic.{n}.nt"
+    if not p.exists():
+        with full.open(encoding="utf-8") as f:
+            head = [next(f) for _ in range(n)]
+        p.write_text("".join(head), encoding="utf-8")
+    return p
+
+
+SERIES_ROWS = {
+    "owl-consistent-cl": (
+        10000, cl_prefix,
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true"),
+}
+
+
+def series_row(rid, runs):
+    x, make, cmd, first = SERIES_ROWS[rid]
+    if not CL_SOURCE.exists():
+        return False, f"{CL_SOURCE} missing"
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        best = None
+        for _ in range(runs):
+            t = bl.run_once(cmd(make(n)), CAP)
+            if t["status"] != "ok":
+                return False, f"n={n}: exit status {t['status']}"
+            got = t["first_line"].decode("utf-8", "replace") if isinstance(
+                t["first_line"], bytes) else str(t["first_line"])
+            if got.strip() != first:
+                return False, f"n={n}: printed {got.strip()!r}, expected {first!r}"
+            best = t["cpu"] if best is None else min(best, t["cpu"])
+            if t["wall"] > REPEAT_LIMIT:
+                break
+        pts.append((n, best))
+    (n1, t1), (n2, t2), (n4, t4) = pts
+    r2, r4 = t2 / max(t1, 1e-9), t4 / max(t2, 1e-9)
+    ok = (t2 <= DOUBLING * max(t1, FLOOR) and t4 <= DOUBLING * max(t2, FLOOR)
+          and t4 <= BOUND * max(t1, FLOOR))
+    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s CPU "
+                f"(ratios {r2:.1f} and {r4:.1f} per doubling, bound {DOUBLING}; "
+                f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {BOUND})")
+
+
 def startup_row():
     """Minimum CPU time (user + system) of `l4factoidal version`."""
     best = None
@@ -396,6 +470,8 @@ def main() -> int:
         [] if names else list(PARSE_RATIO_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS] or (
         [] if names else list(MEMORY_ROWS))
+    series_rows = [r for r in names if r in SERIES_ROWS] or (
+        [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -442,6 +518,20 @@ def main() -> int:
     for rid in memory_rows:
         issue = XFAIL.get(rid)
         ok, detail = memory_row(rid)
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in series_rows:
+        issue = XFAIL.get(rid)
+        ok, detail = series_row(rid, args.runs)
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")

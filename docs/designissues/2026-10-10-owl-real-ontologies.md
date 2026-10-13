@@ -304,6 +304,165 @@ answer `true`.
   `prlimit --as` say that the step did not finish under that cap, not that it
   needs 6 GB. Section 5 gives the resident-set measurements.
 
+## 9. RO and the Cell Ontology: where the time was, and the repair (2026-10-12)
+
+Issue: https://github.com/danbri/factoidal/issues/760; OKR batch 1, key
+result 3.3 (https://github.com/danbri/factoidal/issues/768): RO and the Cell
+Ontology finish `owl-consistent` in 600 s. Branch `claude/wt-refuter-scaling`
+of `danbri/factoidal-core`, base commit `fb263d6f`.
+
+### 9.1 Method
+
+`l4refute-profile FILE.nt [--trace] [--check]` (new,
+`formal/lean4/Harness/RefuteProfile.lean`) runs what `owl-consistent` runs:
+the OWL 2 RL closure, the graph-level checks, the class-size counting rung,
+the TBox read, the initial state, and `OWL.Refute.search`. It calls the
+library's phase functions in the order `search` calls them, with the same
+threaded budget, and times each one; every timed value is consumed by a
+counter before the second clock read (`skills/measuring-inference`, sections
+9 and 11), and the parts are printed beside the step total. `--check` runs
+`tableauConsistent` on the same closure and fails when the verdicts differ.
+It holds no OWL logic. It counts expansion steps (calls of `search`),
+saturation passes, union and merge branch points and branches, nodes,
+labels and the largest label set, and the calls and time of each rule of a
+pass. The refuter has no blocking (a witness-depth cap stands in for it), so
+there is no blocking count.
+
+Inputs: the issue's reproduction, `l4factoidal parse … --out nquads | grep . |
+sort -u` in the POSIX locale (byte order), then the first N lines. The
+prefixes of the issue's table were cut from a file sorted in another order,
+so their times are not comparable with these. CPU time is user time of one
+run; the load average was 1.5 to 4 on 4 CPUs shared with two other agents.
+Callgrind (`valgrind --tool=callgrind`) on the 5,000-line prefix checked the
+attribution independently.
+
+### 9.2 What was measured, before the repair (`fb263d6f`)
+
+| Input (first N lines) | Closure triples | TBox axioms | Nodes | Labels (largest set) | Steps | Branch points | RL closure | Counting rung | TBox read + initial state | Search | `owl-consistent` CPU |
+|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| Cell Ontology 5,000 | 11,187 | 4,572 | 754 | 1,877 (4) | 2 | 0 | 0.28 s | 2.75 s | 0.06 s | 0.014 s | 3.20 s |
+| Cell Ontology 10,000 | 26,952 | 13,216 | 1,315 | 3,498 (4) | 2 | 0 | 0.77 s | 19.4 s | 0.19 s | 0.050 s | 19.3 s |
+| Cell Ontology 20,000 | 56,839 | 30,061 | 2,535 | 6,994 (4) | 2 | 0 | 1.75 s | 101.9 s | 0.59 s | 0.150 s | 104.3 s |
+| RO 2,000 | 5,126 | 580 | 452 | 939 at start | 2 | 0 | 0.09 s | 0.00005 s | 0.02 s | 0.88 s | 1.03 s |
+| RO 4,000 | 12,011 | 1,160 | 923 | 342,869 after one pass (374) | 2 | 0 | 0.37 s | 0.00006 s | 0.08 s | 26.8 s | 28.1 s |
+
+Two different causes, one per ontology.
+
+**The Cell Ontology: the class-size counting rung.** The search is two steps
+(one pass that changes the state, one that does not) with no branch point,
+and it takes 0.15 s at 20,000 lines. 98 % of the time is
+`OWL.CountingOracle.classSizeUnsat` (`countingRefutes`), which
+`tableauConsistentTraced` runs before the search. The closure has 5
+cardinality triples and no datatype property, so it is in the counting
+fragment, and `buildLinSystem` builds the class-size linear system:
+`finiteClasses` and `lcOneofAll` scan the whole graph once for each IRI of the
+graph, and `dedupIris` compares every IRI occurrence with every later one.
+That is quadratic in the graph (7.0 and 5.3 times per doubling). Callgrind on
+5,000 lines: `classSizeUnsat` 83.8 % of the instructions, `finiteClasses`
+67.0 %, `lcOneofAll` 13.5 %. The system it built had no equality row: the
+closure declares no functional property and has no `owl:unionOf`. With no
+equality row the certificate search has nothing to eliminate and answers
+"no certificate", so all of that work could only answer `false`.
+
+**RO: every range axiom on every node.** RO is not in the counting fragment
+(it declares two datatype properties), so the rung answers at once. The
+search is again two steps with no branch point, but one pass takes 13 s on
+4,000 lines. `domainRangeAxioms` reads each `p rdfs:range C` as `⊤ ⊑ ∀p.C`,
+and `injectGlobalAxioms` put `∀p.C` on every node. The OWL 2 RL closure of RO
+has 8,246 `rdfs:range` and 8,888 `rdfs:domain` triples (the closure carries
+each range up the class hierarchy and down the property hierarchy), so the
+label count is the node count times the range-axiom count: 342,869 labels on
+923 nodes, 374 on the largest node. Per pass: the `∀` rule 7.3 s (675,636
+calls, each a successor read that scanned the sub-property and inverse
+tables as lists), the datatype range clash 7.9 s (it computed the filler
+value space of every property a label mentions, `∀` labels included), the
+domain rule 2.2 s (it read the successors of every property with a domain
+axiom at every node). On the whole RO graph the TBox has 4,159 axioms
+with the antecedent `⊤`, so every one of its 2,728 nodes would carry 4,159
+labels from them alone.
+
+### 9.3 The repair
+
+All in the library; no verdict rule changed.
+
+1. **The counting rung answers `false` without building a system that has no
+   equality row** (`CountingOracle.noEqualityRows`, `classSizeUnsat`). Every
+   equality row comes from a declared `owl:FunctionalProperty` (fibre and
+   bijection rows) or an `owl:unionOf` list (disjoint-union rows). Proved:
+   `findLinCert_nil` (no equality row, no certificate),
+   `buildLinSystem_eqs_nil`, and `classSizeUnsat_eq_ref` (the new verdict
+   equals the old one, kept as `classSizeUnsatRef`, on every graph).
+2. **Range axioms are applied where there is an edge.** A range axiom
+   `⊤ ⊑ ∀p.C` is put on a node only when the node has a possible
+   `p`-successor (`TBoxIndex.buildLazy`, `injectLazyRanges`,
+   `successorPropsAt`). This is the range half of domain and range
+   absorption (D. Tsarkov and I. Horrocks, "Efficient reasoning with range
+   and domain constraints", DL 2004; used by FaCT++, Pellet and HermiT); the
+   domain half was already there (`applyAxiomsEdges` fires `≥ 1 p ⊑ C` on a
+   node's edges). An axiom is applied this way only when its consequent
+   cannot matter at a node with no `p`-successor (`lazyRangeAxiom`): `p` is
+   not `owl:topObjectProperty`, the datatype rules read the filler as no
+   constraint, and `∀p.C` occurs in no other axiom and no initial label, so no
+   rule but the `∀` rule reads the label. The label is still added on every
+   node with an edge on `p` or a sub-property of it, in either direction, so
+   the `∀` rule pushes `C` across every edge as before.
+3. **The rules ask only the properties that have successors.**
+   `applyAxiomsEdges` reads only the edge properties `successorPropsAt`
+   names (the loop skipped every other property at `succ.isEmpty`); the
+   datatype range clash asks only properties with an existence obligation
+   (`datatypeRangeClash`, proved equal to the old rule:
+   `datatypeRangeClash_eq_ref`).
+4. **Constant-time role tables, and one TBox index per search.** The
+   sub-property, super-property and inverse tables are hash maps
+   (`subMap`, `supMap`, `invMap`; each holds what the list lookup returned).
+   `onePass` takes the TBox index; `tableauConsistentTraced` builds it once,
+   where `onePass` built it on every pass.
+
+The certificate path is unchanged: `checkCert` re-derives every forward
+consequence itself (`saturate`), so a certificate never relied on a `∀`
+label being present on a node with no successor. `#guard`s in
+`OWL/RefuteTests.lean` (range on an asserted edge, on an expansion edge, on
+an inverse edge, on a sub-property edge, and the domain on a sub-property
+edge, each with a twin that has a model) and in `OWL/CountingOracle.lean`
+(the short cut on a graph with no equality row, and a graph with two
+disjoint unions whose certificate the rung still finds).
+
+### 9.4 After the repair, beside HermiT
+
+| Input | Before: `owl-consistent` CPU | After: CPU (wall), peak RSS | Of which RL closure | Of which search | HermiT 1.3.8, wall |
+|---|---:|---:|---:|---:|---:|
+| Cell Ontology 5,000 lines | 3.20 s | 0.48 s (0.69 s), 52 MB | 0.23 s | 0.020 s | — |
+| Cell Ontology 10,000 lines | 19.3 s | 1.05 s (1.31 s), 86 MB | 0.65 s | 0.059 s | — |
+| Cell Ontology 20,000 lines | 104.3 s | 2.74 s (2.89 s), 149 MB | 1.93 s | 0.166 s | — |
+| Cell Ontology 40,000 lines | — | 7.48 s (8.42 s), 266 MB | 5.03 s | 0.383 s | — |
+| Cell Ontology, whole (78,833 triples) | not finished in 600 s | 13.3 s (14.9 s), 447 MB | 8.9 s | 0.55 s (2 steps) | 6.1 s, 275 MB |
+| RO 2,000 lines | 1.03 s | 0.17 s (0.24 s), 31 MB | 0.09 s | 0.018 s | — |
+| RO 4,000 lines | 28.1 s | 0.57 s (0.59 s), 42 MB | 0.37 s | 0.067 s | — |
+| RO 8,000 lines | not finished in 200 s (issue 760) | 2.33 s (2.54 s), 65 MB | — | — | — |
+| RO, whole (11,703 triples) | not finished in 600 s | 9.89 s (10.2 s), 77 MB | 9.1 s | 0.57 s (3 steps) | 29.8 s, 1.6 GB |
+
+The refuter is no longer the cost on either ontology: on the whole Cell
+Ontology the search is 0.55 s of 13.3 s and on RO 0.57 s of 9.9 s. The cost
+now is the OWL 2 RL closure, which grows about 2.6 to 3.0 times per doubling
+of these prefixes (its output grows about 2.0 times): it re-evaluates every
+rule over the whole graph each round (no semi-naive evaluation,
+`OWL/RLClosureIndexed.lean` header; https://github.com/danbri/factoidal/issues/756
+item 2). On RO the Lean check is three times faster than HermiT and uses a
+twentieth of its memory; on the Cell Ontology it is 2.2 times slower, and
+the closure is two thirds of it.
+
+The other ontologies of section 2 (`owl-consistent` wall time, before at
+load 5 to 9 and after at load 2 to 3): BFO 2.38 s to 0.14 s, PROV-O 1.33 s
+to 0.18 s, wine 21.9 s to 13.8 s; all verdicts unchanged (section 9.5). On
+wine the search is now the larger part (9.1 s: 19
+steps, 8 merge branch points, each step re-runs every rule on all 823
+nodes; the propositional and nominal clash checks are 3.9 s of it), of a
+profile total of 14.2 s.
+
+### 9.5 Gates
+
+(filled in at the end of the landing)
+
 ## 8. Reproduce
 
 ```

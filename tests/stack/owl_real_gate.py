@@ -67,6 +67,7 @@ ROWS: dict[str, tuple] = {
     "ro-closure": ("ro", "closure", "done", None),
     "cl-basic-closure": ("cl-basic", "closure", "done", None),
     "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
+    "ro-consistent": ("ro", "consistent", "decided", None),
     "wine-closure-fstar": ("wine", "closure", "done", None),
     "qudt-species": ("qudt", "species", 60, None),
     "cl-basic-parse-memory": ("cl-basic", "parse-memory", 15, None),
@@ -77,11 +78,17 @@ ROWS: dict[str, tuple] = {
 # Rows with their own wall-clock bound, below the --cap-s default. A bound at
 # the cap makes the row depend on the machine's load: on 2026-10-10
 # cl-basic-consistent ran out of the 600 s cap at load 6 to 8 and finished in
-# 598 s at load 3.5 (skills/measuring-inference, section 8). 120 s is twenty
-# times the time HermiT needs for the same check (6.1 s), and a fifth of the
-# measured time, so the row says "does not scale" on any load.
+# 598 s at load 3.5 (skills/measuring-inference, section 8). The two
+# consistency rows passed on 2026-10-12, when the refuter stopped building the
+# class-size system with no equality row and stopped putting every range
+# axiom on every node (https://github.com/danbri/factoidal/issues/760): the
+# Cell Ontology in 15 s wall, RO in 10 s. HermiT 1.3.8 on this machine: 6.1 s
+# and 29.8 s. 60 s is four times the measured time and about ten times
+# HermiT's on the Cell Ontology, so the rows fail on a return of the
+# superlinear cost and not on load.
 ROW_CAP: dict[str, int] = {
-    "cl-basic-consistent": 120,
+    "cl-basic-consistent": 60,
+    "ro-consistent": 60,
     "wine-closure-fstar": 120,
 }
 
@@ -96,9 +103,6 @@ XFAIL: dict[str, str] = {
     # Fits in 1.4 GB resident, but mimalloc's 1 GiB arena reservations exhaust
     # the 6,000,000,000-byte address-space cap first.
     "qudt-consistent": "https://github.com/danbri/factoidal/issues/759",
-    # The tableau refuter grows about 5 times per doubling of the input;
-    # killed at 600 s (HermiT: 6.1 s).
-    "cl-basic-consistent": "https://github.com/danbri/factoidal/issues/760",
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
     # 253 s of CPU time on 130,404 triples.
