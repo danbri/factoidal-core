@@ -163,11 +163,12 @@ membership in the merged read).
 
 ```observable-js
 try {
-  // Step 2's cell and this one mount independently and can start
-  // executing concurrently on the very FIRST page load this browser
-  // has ever seen -- a brief wait here avoids racing Step 2's write.
-  // On every later reload this is moot: Step 2's earlier writes are
-  // already durably committed long before this page load even starts.
+  // Step 2's cell and this one mount independently and run at the
+  // same time. Step 2's append waits for the engine to load; waiting
+  // for the same engine here, and a little longer, lets this page
+  // load's append commit before this cell reads the log. The batches
+  // of earlier page loads are committed before this load starts.
+  await Factoidal.capabilities?.();
   await new Promise((resolve) => setTimeout(resolve, 300));
 
   const handle = await Factoidal.deltaLogOpen("factoidal-hub-post18-lifecycle");
@@ -193,7 +194,10 @@ page load) — proof the merged view isn't starting from nothing.
 [`tests/web-demos/browser_persistence_smoke.sh`](https://github.com/danbri/factoidal/blob/claude/main/tests/web-demos/browser_persistence_smoke.sh)
 is the harder version of this same proof: real headless Chromium, a
 real `page.reload()`, and an assertion that the merged output is
-byte-identical before and after — 17 of 17 checks, not a sample of 1.
+byte-identical before and after — 18 of 18 checks on the Lean engine
+(17 of 17 on the F\* bundle), not a sample of 1.
+[`tests/web-demos/hub_post18_value_check.sh`](https://github.com/danbri/factoidal-core/blob/main/tests/web-demos/hub_post18_value_check.sh)
+reads the values of this page's own cells in Chromium, across a reload.
 
 ## Step 4 of 4: the torn write
 
