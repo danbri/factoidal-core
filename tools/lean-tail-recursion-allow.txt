@@ -7,6 +7,9 @@
 # Markers after `#`:
 #   (b)  the depth is the nesting of a document, schema, ontology or query
 #   (c)  the depth has a constant or logarithmic bound
+#   (s)  specification only: no function of the emitted C outside the
+#        definition's own module and its theorem modules calls it (the line
+#        names the check and the executed path that replaces it)
 #   (a) PENDING <issue>  LENGTH- or VALUE-proportional over data; the issue
 #        lists it for conversion; the line keeps the gate green meanwhile
 #   UNTRIAGED <issue>  found by the 2026-10-10 repair (issue 750); no bound
@@ -741,9 +744,7 @@ locationHints_pairs  # (c) test harness; the schemaLocation hints of one XSD tes
 L4Factoidal_Cottas_BaseWriterPrims_bitsNeeded  # (c) bit length of one id or count (at most 64)
 L4Factoidal_Cottas_BaseWriterPrims_leUintDecode  # (c) one fixed-width little-endian field (at most 8 bytes)
 L4Factoidal_Cottas_BaseWriterPrims_uvarintDecode  # (c) bytes of one LEB128 value; fuel-bounded
-L4Factoidal_Cottas_OnDiskStore_namedGraphsAux  # (a) PENDING https://github.com/danbri/factoidal/issues/752 COTTAS: one frame per named graph of a store
 L4Factoidal_Cottas_OnDiskStore_objectToRevmapKey  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_JSONLD_FState_removeEmbed_replaceFirst  # (a) PENDING https://github.com/danbri/factoidal/issues/752 framing: one frame per value of one property before the match (data)
 L4Factoidal_Math_Sigmoid_ifact  # (c) k! for the Taylor term index k, bounded by the fixed term count of the working precision
 L4Factoidal_Math_Sigmoid_ipow  # (c) 2^shift for the range-reduction shift of the working precision
 L4Factoidal_Math_Sigmoid_wpIPow  # (c) r^k for the Taylor term index k, bounded by the fixed term count
@@ -762,17 +763,15 @@ L4Factoidal_RDF_Term_instance?  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_substTerm  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_termSubst  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_renameBnodes  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_RDF_Graph_dedup  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per triple of a graph (Isomorphism.lean; the comment says it is off the answer path: confirm the callers)
 L4Factoidal_RDF_denotTerm  # (b) nesting depth of RDF 1.2 triple terms; model-theoretic definition
 L4Factoidal_RDF_XmlCanon_emitDecls  # (b) namespace declarations of one XML element (canonical XML of an rdf:XMLLiteral)
 L4Factoidal_RDF_XmlCanon_insertAttr  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
 L4Factoidal_RDF_XmlCanon_renderAttrs  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
 L4Factoidal_RDF_XmlCanon_sortAttrs  # (b) attributes of one XML element (canonical XML of an rdf:XMLLiteral)
-L4Factoidal_RDF_XmlCanon_walk  # (a) PENDING https://github.com/danbri/factoidal/issues/752 canonical XML of an rdf:XMLLiteral: one frame per character or node of the literal text (fuel = literal length)
 L4Factoidal_Regex_Derivative_deriv  # (b) nesting of one regular expression
 L4Factoidal_Regex_Exec_nderiv  # (b) nesting of one regular expression
 L4Factoidal_Regex_Re_size  # (b) nesting of one regular expression
-L4Factoidal_Regex_memStar  # (a) PENDING https://github.com/danbri/factoidal/issues/752 regex membership specification: one frame per character of the word; the executable path uses Exec.nderiv (confirm no runtime caller)
+L4Factoidal_Regex_memStar  # (s) the reference language `mem` (F* `mem`) only: in the emitted C of 2026-10-13 no function outside Regex/Syntax.c (mem, memStar) and Regex/RegexTheorems.c (memAltList, memAndList, used by theorems) names mem or memStar; the executed matchers are Regex.Exec (derivatives, nderiv, proved equal to mem) and Regex.XPath. Checked for https://github.com/danbri/factoidal/issues/752
 L4Factoidal_Regex_nullable  # (b) nesting of one regular expression
 L4Factoidal_Regex_reCmp  # (b) nesting of two regular expressions
 L4Factoidal_Regex_CRe_dotAll  # (b) nesting of one regular expression
@@ -784,7 +783,6 @@ L4Factoidal_Regex_cparseAlt  # (b) branches of one alternation in one regex patt
 L4Factoidal_Regex_cparseSeq  # (b) atoms of one sequence in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_dotAll  # (b) nesting of one regular expression
 L4Factoidal_Regex_expandTemplate  # (b) characters of one fn:replace replacement template (query text)
-L4Factoidal_Regex_replaceLoop  # (a) PENDING https://github.com/danbri/factoidal/issues/752 fn:replace: one frame per match in the input string (a literal in the data)
 L4Factoidal_Regex_XSDPattern_parseAlt  # (b) branches of one alternation in one xsd:pattern (schema text); fuel-bounded
 L4Factoidal_Regex_XSDPattern_parseSeq  # (b) atoms of one sequence in one xsd:pattern (schema text); fuel-bounded
 L4Factoidal_SHACL_pathListToRdf  # (b) members of one sequence or alternative SHACL path
@@ -800,7 +798,6 @@ L4Factoidal_SHACL_substVarPattern  # (b) nesting of graph patterns in one sh:spa
 L4Factoidal_SHACL_substVarTerm  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
 L4Factoidal_SHACL_Path_invert  # (b) nesting of one SHACL property path
 L4Factoidal_SHACL_Path_invertList  # (b) members of one sequence or alternative SHACL path
-L4Factoidal_SHACL_duplicatedLangTags_distinctDups  # (a) PENDING https://github.com/danbri/factoidal/issues/752 the values of one property at one focus node (data): one frame per value
 L4Factoidal_SHACL_evalPathFuel  # (b) nesting of one SHACL property path; fuel-bounded
 L4Factoidal_SHACL_evalPathFuelIx  # (b) nesting of one SHACL property path; fuel-bounded
 L4Factoidal_SPARQL_GraphPattern_evalIn  # (b) nesting of graph patterns in one query (reference evaluator)
@@ -812,7 +809,6 @@ L4Factoidal_SPARQL_pAnnotations  # (b) annotation blocks on one triple in the qu
 L4Factoidal_SPARQL_pCollection  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per element of one RDF collection in the query or update text (the SPARQL twin of issue 678; INSERT DATA can carry data)
 L4Factoidal_SPARQL_pGroupOrUnion  # (b) UNION branches of one group in the query text; fuel-bounded
 L4Factoidal_SPARQL_tpHasVar_ptHasVar  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
-L4Factoidal_SPARQL_dedupPath  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per (subject, object) pair of a property-path result (data)
 L4Factoidal_SPARQL_Protocol_indentBudget  # (c) indentation of one line of a protocol test description
 L4Factoidal_SPARQL_Protocol_readHeaders  # (c) header lines of one HTTP message in a protocol test description
 L4Factoidal_SPARQL_Protocol_rtrimBlanks  # (c) lines of one protocol test description
@@ -835,13 +831,12 @@ L4Factoidal_Syntax_RdfXml_serializeNodes  # (a) PENDING https://github.com/danbr
 L4Factoidal_Syntax_readAnnotations  # (b) annotation blocks on one Turtle triple; was hidden as `replaced` by the short-name csimp mark of OwlXml.readAnnotations
 L4Factoidal_Syntax_readPredicateObjectList  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the `;` groups of one statement are a loop (goto _start), issue 754
 L4Factoidal_Syntax_readObjectListRev  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the objects of one object list are a loop (goto _start), issue 754
-L4Factoidal_Syntax_assignLabelsAvoiding  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Turtle serializer: one frame per blank-node label to assign (data)
+L4Factoidal_Syntax_assignLabelsAvoiding  # (c) at most 9 levels: idx starts at 1 and the function returns [] when idx reaches 9 (labels ns1: to ns8:); the one caller, turtleOfGraphOpts, also passes fuel 10 (TurtleSerialize.lean). Checked 2026-10-13 for https://github.com/danbri/factoidal/issues/752
 L4Factoidal_Syntax_tsUserUsed  # (c) prefixes of the serializer's prefix table
 L4Factoidal_Unified_patternTermBnodeFree  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
 L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
 L4Factoidal_XML_parseChildrenW  # (b) one frame of parseElementW per ELEMENT nesting level of the document; the nesting of markup entities is on the worklist, issue 755
 L4Factoidal_XML_parseElementW  # (b) element nesting of the document, as parseChildrenW
-L4Factoidal_XML_validate_countList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 children of one element during DTD validation: one frame per child (data)
 L4Factoidal_XSD_pow2i  # (c) called with the constants 150 and 23 only (float facet checks)
 L4Factoidal_XSLT_parseSteps_build  # (b) steps of one XSLT match pattern (stylesheet text)
 L4Wasm_Ops_roundsToFixpoint  # (c) one frame per closure round; the cap argument bounds it (rounds, not triples)
@@ -1291,7 +1286,6 @@ L4Factoidal_XML_parseGroup  # UNTRIAGED https://github.com/danbri/factoidal/issu
 L4Factoidal_XML_parseItems  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/XML/Validity.lean:230
 L4Factoidal_XML_validateChildrenAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:574
 L4Factoidal_XML_validateElement  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:560
-L4Factoidal_XML_validate_countElements  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/Validity.lean:650
 L4Factoidal_XML_Node_attributePairs  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:275
 L4Factoidal_XML_Node_attributePairsListAcc  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XML/XmlAttributes.lean:282
 L4Factoidal_XMPP_Wire_render  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/XMPP/Wire.lean:53
@@ -1439,3 +1433,7 @@ L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query 
 L4Factoidal_OWL_Refute_ceSubHashesInto  # (b) class-expression nesting of one TBox axiom or initial label (lazyOccurrences); operand lists are tail calls
 L4Factoidal_OWL_Refute_ceListSubHashesInto  # (b) as ceSubHashesInto: the operands of one intersection or union are a self tail call (loop); one frame per nesting level
 RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 on the real ontologies measured
+#
+# --- Added 2026-10-13, the accumulator twins of issue 752 (OKR batch 1 KR 2.6) ---
+L4Factoidal_XML_countElementsAcc  # (b) element nesting of the document: the twin of validate.countElements (csimp validate_eq_fast); the sibling step of countListAcc is a goto _start, so the two call each other once per nesting level only
+L4Factoidal_XML_countListAcc  # (b) element nesting of the document, as countElementsAcc (siblings are a goto _start in the emitted C)

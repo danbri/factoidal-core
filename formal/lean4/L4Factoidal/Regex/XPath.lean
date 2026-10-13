@@ -597,6 +597,56 @@ def replaceLoop (pr : Re) (creOpt : Option CRe) (rep inputAll : List Nat) :
           let newSuffix := suffix.drop len
           expanded ++ replaceLoop pr creOpt rep inputAll fuel newSuffix mend
 
+/-- `replaceLoop` as a loop: the output so far is a newest-first list `acc`,
+each copied codepoint and each expanded replacement goes on its front, one
+tail call per step, and the list is reversed once at the end (the input is a
+literal in the data; https://github.com/danbri/factoidal/issues/752). -/
+def replaceLoopAcc (pr : Re) (creOpt : Option CRe) (rep inputAll : List Nat) :
+    Nat → List Nat → Nat → List Nat → List Nat
+  | 0, suffix, _, acc => acc.reverseAux suffix
+  | fuel + 1, suffix, pos, acc =>
+    match suffix with
+    | [] => acc.reverse
+    | c :: rest =>
+      match longestEnd pr suffix with
+      | none => replaceLoopAcc pr creOpt rep inputAll fuel rest (pos + 1) (c :: acc)
+      | some len =>
+        if len = 0 then
+          replaceLoopAcc pr creOpt rep inputAll fuel rest (pos + 1) (c :: acc)
+        else
+          let mend := pos + len
+          let caps : List Cap :=
+            match creOpt with
+            | none => []
+            | some cre => pickCaps (cmatch (cmatchFuel cre suffix) cre suffix pos) mend
+          let expanded := expandTemplate rep inputAll pos mend caps
+          let newSuffix := suffix.drop len
+          replaceLoopAcc pr creOpt rep inputAll fuel newSuffix mend (expanded.reverseAux acc)
+
+theorem replaceLoopAcc_eq (pr : Re) (creOpt : Option CRe) (rep inputAll : List Nat) :
+    ∀ (fuel : Nat) (suffix : List Nat) (pos : Nat) (acc : List Nat),
+      replaceLoopAcc pr creOpt rep inputAll fuel suffix pos acc =
+        acc.reverse ++ replaceLoop pr creOpt rep inputAll fuel suffix pos
+  | 0, suffix, pos, acc => by simp [replaceLoopAcc, replaceLoop]
+  | fuel + 1, [], pos, acc => by simp [replaceLoopAcc, replaceLoop]
+  | fuel + 1, c :: rest, pos, acc => by
+      simp only [replaceLoopAcc, replaceLoop]
+      cases longestEnd pr (c :: rest) with
+      | none => simp [replaceLoopAcc_eq pr creOpt rep inputAll fuel]
+      | some len =>
+        by_cases hl : len = 0
+        · simp [hl, replaceLoopAcc_eq pr creOpt rep inputAll fuel]
+        · simp [hl, replaceLoopAcc_eq pr creOpt rep inputAll fuel]
+
+def replaceLoopFast (pr : Re) (creOpt : Option CRe) (rep inputAll : List Nat)
+    (fuel : Nat) (suffix : List Nat) (pos : Nat) : List Nat :=
+  replaceLoopAcc pr creOpt rep inputAll fuel suffix pos []
+
+/-- The compiler runs `replaceLoopFast` wherever the source says `replaceLoop`. -/
+@[csimp] theorem replaceLoop_eq_fast : @replaceLoop = @replaceLoopFast := by
+  funext pr creOpt rep inputAll fuel suffix pos
+  simp [replaceLoopFast, replaceLoopAcc_eq]
+
 /-- XPath `fn:replace`, exactly the F* `regex_replace` (an unparseable
 pattern leaves the text unchanged; `flags = ""` is the F* `None`). -/
 def regexReplace (text pattern replacement : String) (flags : String) : String :=

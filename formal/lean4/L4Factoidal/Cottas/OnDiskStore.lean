@@ -204,6 +204,26 @@ def namedGraphsAux : List Iri → Nat → List (Iri × GraphRef)
   | [], _ => []
   | g :: rest, idx => (g, idx) :: namedGraphsAux rest (idx + 1)
 
+/-- `namedGraphsAux` as a loop: the pairs go on a newest-first list, one
+tail call per named graph, reversed once at the end (https://github.com/danbri/factoidal/issues/752). -/
+def namedGraphsLoop : List Iri → Nat → List (Iri × GraphRef) → List (Iri × GraphRef)
+  | [], _, acc => acc.reverse
+  | g :: rest, idx, acc => namedGraphsLoop rest (idx + 1) ((g, idx) :: acc)
+
+theorem namedGraphsLoop_eq : ∀ (gs : List Iri) (idx : Nat) (acc : List (Iri × GraphRef)),
+    namedGraphsLoop gs idx acc = acc.reverse ++ namedGraphsAux gs idx
+  | [], _, acc => by simp [namedGraphsLoop, namedGraphsAux]
+  | g :: rest, idx, acc => by
+      simp [namedGraphsLoop, namedGraphsAux, namedGraphsLoop_eq rest (idx + 1)]
+
+def namedGraphsAuxFast (gs : List Iri) (idx : Nat) : List (Iri × GraphRef) :=
+  namedGraphsLoop gs idx []
+
+/-- The compiler runs `namedGraphsAuxFast` wherever the source says
+`namedGraphsAux`. -/
+@[csimp] theorem namedGraphsAux_eq_fast : @namedGraphsAux = @namedGraphsAuxFast := by
+  funext gs idx; simp [namedGraphsAuxFast, namedGraphsLoop_eq]
+
 def namedGraphs (ds : Store) : List (Iri × GraphRef) :=
   namedGraphsAux ds.handle.graphs 0
 

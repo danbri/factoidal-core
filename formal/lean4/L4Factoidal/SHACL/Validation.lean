@@ -379,6 +379,49 @@ def langMatchesRange (tag range : String) : Bool :=
   let r := range.toLower
   t == r || t.startsWith (r ++ "-")
 
+/-- The keys of `xs` with `count x ≥ 2`, each listed once (first
+occurrence, `keyEq` decides "the same key"), skipping keys in `seen`. -/
+def distinctDupsBy {α : Type} (keyEq : α → α → Bool) (count : α → Nat) (seen : List α) :
+    List α → List α
+  | [] => []
+  | x :: rest =>
+    if seen.any (keyEq x) then distinctDupsBy keyEq count seen rest
+    else if count x ≥ 2 then x :: distinctDupsBy keyEq count (x :: seen) rest
+    else distinctDupsBy keyEq count (x :: seen) rest
+
+/-- `distinctDupsBy` as a loop: the result so far is a newest-first list,
+one tail call per value, reversed once at the end (the values of one
+property at one focus node are data; https://github.com/danbri/factoidal/issues/752). -/
+def distinctDupsLoop {α : Type} (keyEq : α → α → Bool) (count : α → Nat) :
+    List α → List α → List α → List α
+  | _, [], acc => acc.reverse
+  | seen, x :: rest, acc =>
+    if seen.any (keyEq x) then distinctDupsLoop keyEq count seen rest acc
+    else if count x ≥ 2 then distinctDupsLoop keyEq count (x :: seen) rest (x :: acc)
+    else distinctDupsLoop keyEq count (x :: seen) rest acc
+
+theorem distinctDupsLoop_eq {α : Type} (keyEq : α → α → Bool) (count : α → Nat) :
+    ∀ (seen l acc : List α), distinctDupsLoop keyEq count seen l acc =
+      acc.reverse ++ distinctDupsBy keyEq count seen l
+  | _, [], acc => by simp [distinctDupsLoop, distinctDupsBy]
+  | seen, x :: rest, acc => by
+      by_cases h1 : seen.any (keyEq x) = true
+      · simp [distinctDupsLoop, distinctDupsBy, h1, distinctDupsLoop_eq keyEq count seen rest]
+      · by_cases h2 : count x ≥ 2
+        · simp [distinctDupsLoop, distinctDupsBy, h1, h2,
+            distinctDupsLoop_eq keyEq count (x :: seen) rest]
+        · simp [distinctDupsLoop, distinctDupsBy, h1, h2,
+            distinctDupsLoop_eq keyEq count (x :: seen) rest]
+
+def distinctDupsFast {α : Type} (keyEq : α → α → Bool) (count : α → Nat) (seen l : List α) :
+    List α :=
+  distinctDupsLoop keyEq count seen l []
+
+/-- The compiler runs `distinctDupsFast` wherever the source says
+`distinctDupsBy`. -/
+@[csimp] theorem distinctDupsBy_eq_fast : @distinctDupsBy = @distinctDupsFast := by
+  funext α keyEq count seen l; simp [distinctDupsFast, distinctDupsLoop_eq]
+
 /-- §4.4.5 sh:uniqueLang: the language tags used by two or more of the
 values (case-insensitive), each listed once — one result per tag.
 SHACL 1.2 §UniqueLangConstraintComponent: "For value nodes of datatype
@@ -393,14 +436,7 @@ def duplicatedLangTags (values : List Term) : List (String × Option TextDirecti
     | _ => none
   let keyEq (a b : String × Option TextDirection) : Bool := langTagEq a.1 b.1 && a.2 == b.2
   let count (x : String × Option TextDirection) : Nat := (langs.filter (keyEq x)).length
-  let rec distinctDups (seen : List (String × Option TextDirection)) :
-      List (String × Option TextDirection) → List (String × Option TextDirection)
-    | [] => []
-    | x :: rest =>
-      if seen.any (keyEq x) then distinctDups seen rest
-      else if count x ≥ 2 then x :: distinctDups (x :: seen) rest
-      else distinctDups (x :: seen) rest
-  distinctDups [] langs
+  distinctDupsBy keyEq count [] langs
 
 /-! ## §2.3.1 property-path evaluation
 

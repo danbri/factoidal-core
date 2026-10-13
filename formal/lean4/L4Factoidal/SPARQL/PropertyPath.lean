@@ -77,6 +77,27 @@ def dedupPath : PathResult → PathResult
   | []      => []
   | x :: xs => if xs.any (pathPairEq x) then dedupPath xs else x :: dedupPath xs
 
+/-- `dedupPath` as a loop: the kept pairs go on a newest-first list, one tail
+call per pair, reversed once at the end (https://github.com/danbri/factoidal/issues/752). -/
+def dedupPathLoop : PathResult → PathResult → PathResult
+  | [],      acc => acc.reverse
+  | x :: xs, acc =>
+      if xs.any (pathPairEq x) then dedupPathLoop xs acc else dedupPathLoop xs (x :: acc)
+
+theorem dedupPathLoop_eq : ∀ (l acc : PathResult),
+    dedupPathLoop l acc = acc.reverse ++ dedupPath l
+  | [],      acc => by simp [dedupPathLoop, dedupPath]
+  | x :: xs, acc => by
+      by_cases h : xs.any (pathPairEq x) = true
+      · simp [dedupPathLoop, dedupPath, h, dedupPathLoop_eq xs]
+      · simp [dedupPathLoop, dedupPath, h, dedupPathLoop_eq xs]
+
+def dedupPathFast (l : PathResult) : PathResult := dedupPathLoop l []
+
+/-- The compiler runs `dedupPathFast` wherever the source says `dedupPath`. -/
+@[csimp] theorem dedupPath_eq_fast : @dedupPath = @dedupPathFast := by
+  funext l; simp [dedupPathFast, dedupPathLoop_eq]
+
 /-- Is this term usable as a subject? An inverse path turns objects
 into subjects, and a literal cannot be one — port of
 `is_not_literal`. -/
