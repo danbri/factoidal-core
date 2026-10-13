@@ -3483,6 +3483,18 @@ def skipBom : List Char → List Char
   | c :: rest => if c.toNat == 0xFEFF then rest else c :: rest
   | [] => []
 
+/-- The version a document's `[23] XMLDecl` declares, read from the start of
+`s`; XML 1.0 when the declaration is absent or does not parse (§2.8). -/
+def declaredVersion (s : Chars) : XmlVersion :=
+  match parseXmlDecl s 0 with
+  | .ok d _ => XmlVersion.ofDeclared d.version
+  | .err _ _ => .v10
+
+/-- Is the first character U+FEFF, the byte order mark `skipBom` consumes? -/
+def bomFirst : List Char → Bool
+  | c :: _ => c.toNat == 0xFEFF
+  | [] => false
+
 /-- XML 1.0 §4.3.3 (Character Encoding in Entities), applied to the
     DOCUMENT entity.
 
@@ -3523,6 +3535,131 @@ def encodingConflict (hadBom : Bool) (declared : Option String) : Option String 
 
 /-! ## `[1] document` -/
 
+/-- The characters the document productions read: the text after the
+byte order mark (XML 1.0 section 4.3.3; kept when `decoded`), with line ends
+normalised by the rules of the declared version (section 2.11; XML 1.1 adds
+#x85 and #x2028), as an array; whether a byte order mark was consumed; and
+that version (XML 1.0 when the declaration is absent or does not parse,
+section 2.8). -/
+def documentChars (decoded : Bool) (input : String) : Chars × Bool × XmlVersion :=
+  let raw := input.toList
+  -- Whether a byte order mark was there is needed by §4.3.3 below,
+  -- and `skipBom` consumes it. When the text came from
+  -- `decodeXmlBytes` the decoder has consumed the mark and applied
+  -- §4.3.3 against the real bytes, so neither step runs here: a
+  -- U+FEFF that is still in front is a character of the document.
+  let hadBom := !decoded && bomFirst raw
+  let body := if decoded then raw else skipBom raw
+  -- The VERSION is read from the declaration BEFORE line ends are
+  -- normalised, because which characters are line ends depends on it:
+  -- XML 1.1 section 2.11 adds #x85 and #x2028 to #xD and #xA. `[3] S`
+  -- contains #xD, so the declaration parses the same on the raw text.
+  -- A document with no declaration, or one that does not parse, is
+  -- read by the XML 1.0 rules (section 2.8).
+  let ver := declaredVersion body.toArray
+  ((normalizeLineEndingsFor ver body).toArray, hadBom, ver)
+
+/-- A character that §2.11 rewrites for version `ver`: `#xD` in XML 1.0;
+also `#x85` and `#x2028` in XML 1.1. -/
+def isLineEndChar (ver : XmlVersion) (c : Char) : Bool :=
+  c == '\r' || (ver == .v11 && (c == '\u0085' || c == '\u2028'))
+
+/-- With no `#xD`, the XML 1.0 rewrite changes nothing. -/
+theorem normalizeLineEndings_of_clean (cs : List Char)
+    (h : cs.all (fun c => !isLineEndChar .v10 c) = true) : normalizeLineEndings cs = cs := by
+  induction cs with
+  | nil => simp [normalizeLineEndings]
+  | cons c rest ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have hc : c ≠ '\r' := by
+      intro e; subst e; simp [isLineEndChar] at h
+    rw [normalizeLineEndings.eq_3 c rest (fun _ e _ => hc e) (fun e => hc e), ih h.2]
+
+/-- With no `#xD`, `#x85` or `#x2028`, the XML 1.1 rewrite changes nothing. -/
+theorem normalizeLineEndings11_of_clean (cs : List Char)
+    (h : cs.all (fun c => !isLineEndChar .v11 c) = true) : normalizeLineEndings11 cs = cs := by
+  induction cs with
+  | nil => simp [normalizeLineEndings11]
+  | cons c rest ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have h1 : c ≠ '\r' := by intro e; subst e; simp [isLineEndChar] at h
+    have h2 : c ≠ '\u0085' := by intro e; subst e; simp [isLineEndChar] at h
+    have h3 : c ≠ '\u2028' := by intro e; subst e; simp [isLineEndChar] at h
+    rw [normalizeLineEndings11.eq_6 c rest (fun _ e _ => h1 e) (fun _ e _ => h1 e)
+      (fun e => h1 e) (fun e => h2 e) (fun e => h3 e), ih h.2]
+
+/-- With no character `isLineEndChar` names, §2.11 changes nothing. -/
+theorem normalizeLineEndingsFor_of_clean (ver : XmlVersion) (cs : List Char)
+    (h : cs.all (fun c => !isLineEndChar ver c) = true) : normalizeLineEndingsFor ver cs = cs := by
+  cases ver with
+  | v10 => exact normalizeLineEndings_of_clean cs h
+  | v11 => exact normalizeLineEndings11_of_clean cs h
+
+/-- The characters of `input`, in order, as an array: one pass over the
+UTF-8 bytes (`String.foldl`), into an array allocated once with a capacity of
+the byte count. No `List Char` is built. -/
+def stringChars (input : String) : Chars :=
+  input.foldl Array.push (Array.emptyWithCapacity input.utf8ByteSize)
+
+/-- `stringChars` is `input.toList.toArray`. -/
+theorem stringChars_eq (input : String) : stringChars input = input.toList.toArray := by
+  apply Array.ext'
+  simp [stringChars, String.foldl_eq_foldl_toList]
+
+/-- `bomFirst` on an array. -/
+def startsWithBom (raw : Chars) : Bool :=
+  match raw[0]? with
+  | some c => c.toNat == 0xFEFF
+  | none => false
+
+/-- `documentChars` without a `List Char`. The readable form turns the text
+into a list (about 24 bytes per character), into an array to read the
+declaration, and through the line-end rewrite into a second list, then an
+array: 633 MB of peak resident memory for 13,177,910 bytes of RDF/XML
+(https://github.com/danbri/factoidal/issues/771). This form reads the text
+into one array (8 bytes per character) and keeps it when no character of it
+is one §2.11 rewrites (`isLineEndChar`); otherwise it runs the readable
+rewrite. `documentChars_eq_fast` proves the two equal. -/
+def documentCharsFast (decoded : Bool) (input : String) : Chars × Bool × XmlVersion :=
+  let raw := stringChars input
+  let bom := startsWithBom raw
+  let body : Chars := if !decoded && bom then raw.extract 1 raw.size else raw
+  let ver := declaredVersion body
+  let s := if body.all (fun c => !isLineEndChar ver c) then body
+           else (normalizeLineEndingsFor ver body.toList).toArray
+  (s, !decoded && bom, ver)
+
+/-- The array body is the list body, as an array. -/
+theorem fastBody_eq (decoded : Bool) (l : List Char) :
+    (if !decoded && startsWithBom l.toArray then l.toArray.extract 1 l.toArray.size else l.toArray)
+      = (if decoded then l else skipBom l).toArray := by
+  cases decoded with
+  | true => simp
+  | false =>
+    cases l with
+    | nil => simp [startsWithBom, skipBom]
+    | cons c rest =>
+      by_cases hc : c.toNat = 0xFEFF
+      · simp [startsWithBom, skipBom, hc]
+      · simp [startsWithBom, skipBom, hc]
+
+/-- The compiler runs `documentCharsFast` wherever the source says
+`documentChars`. -/
+@[csimp] theorem documentChars_eq_fast : @documentChars = @documentCharsFast := by
+  funext decoded input
+  unfold documentChars documentCharsFast
+  rw [stringChars_eq]
+  dsimp only
+  generalize input.toList = l
+  have hb : bomFirst l = startsWithBom l.toArray := by
+    cases l <;> simp [bomFirst, startsWithBom]
+  rw [hb, fastBody_eq]
+  generalize (if decoded then l else skipBom l) = b
+  generalize declaredVersion b.toArray = ver
+  by_cases hall : (b.toArray.all fun c => !isLineEndChar ver c) = true
+  · rw [if_pos hall, normalizeLineEndingsFor_of_clean _ _ (by rw [Array.all_toList]; exact hall)]
+  · rw [if_neg hall]
+
 /-- Parse a whole XML document.
 
 `[1] document ::= prolog element Misc*`. Returns the infoset the F*
@@ -3543,28 +3680,7 @@ but malformed leaves the cursor where it was, and the element parser
 then rejects the document from there. -/
 def parseXMLNotes (resolve : Resolver) (decoded : Bool) (input : String) :
     Except XmlError (Document × Notes) :=
-  let raw := input.toList
-  -- Whether a byte order mark was there is needed by §4.3.3 below,
-  -- and `skipBom` consumes it. When the text came from
-  -- `decodeXmlBytes` the decoder has consumed the mark and applied
-  -- §4.3.3 against the real bytes, so neither step runs here: a
-  -- U+FEFF that is still in front is a character of the document.
-  let hadBom := !decoded && (match raw with
-    | c :: _ => c.toNat == 0xFEFF
-    | []     => false)
-  let body := if decoded then raw else skipBom raw
-  -- The VERSION is read from the declaration BEFORE line ends are
-  -- normalised, because which characters are line ends depends on it:
-  -- XML 1.1 section 2.11 adds #x85 and #x2028 to #xD and #xA. `[3] S`
-  -- contains #xD, so the declaration parses the same on the raw text.
-  -- A document with no declaration, or one that does not parse, is
-  -- read by the XML 1.0 rules (section 2.8).
-  let ver : XmlVersion :=
-    match parseXmlDecl body.toArray 0 with
-    | .ok d _ => XmlVersion.ofDeclared d.version
-    | .err _ _ => .v10
-  let chars := normalizeLineEndingsFor ver body
-  let s : Chars := chars.toArray
+  let (s, hadBom, ver) := documentChars decoded input
   let fuel := s.size + 1
   -- The declaration, if present, must be the very first thing: no
   -- whitespace is skipped before trying it (§2.8 — nothing may precede
