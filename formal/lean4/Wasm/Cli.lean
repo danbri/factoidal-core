@@ -706,15 +706,17 @@ def parseCmd (args : List String) : IO UInt32 := do
     if s.hasBool "--lenient" then parseLenientCmd s else
     let format := (s.value? "--format").getD "turtle"
     let base := (s.value? "--base").getD ""
+    -- An exception of the streamed run (a missing or unreadable file) goes
+    -- to the whole-file path, whose `readInput` words the error as before.
     let streamed ← match s.positional[0]?, s.value? "--out" with
       | some path, none =>
           if path == "-" then pure none else
           try streamStrictFile path format base false
-          catch e => IO.eprintln s!"{path}: {e}"; pure (some 1)
+          catch _ => pure none
       | some path, some "nquads" =>
           if path == "-" then pure none else
           try streamStrictFile path format base true
-          catch e => IO.eprintln s!"{path}: {e}"; pure (some 1)
+          catch _ => pure none
       | _, _ => pure none
     match streamed with
     | some code => pure code
