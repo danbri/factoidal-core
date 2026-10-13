@@ -414,6 +414,13 @@ ROWS = {
         1250,
         lambda n: bl.gene_slice(n),
         lambda p: [str(BIN), "parse", str(p), "--format", "turtle", "--out", "turtle"]),
+    # RDF/XML, one rdf:Description per triple, count only: the name
+    # resolution and the walk of the children of rdf:RDF are linear
+    # (https://github.com/danbri/factoidal/issues/814).
+    "parse-rdfxml": (
+        12500,
+        lambda n: bl.gen_rdfxml(n),
+        lambda p: [str(BIN), "parse", str(p), "--format", "rdfxml"]),
     "rdfc-iri": (
         1000,
         lambda n: bl.gen_canon("iri", n),
@@ -604,6 +611,15 @@ PARSE_MEMORY_ROWS = {
     "parse-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples", "--out", "nquads"], 1.0),
     "parse-ttl-memory": (20000, bl.gene_slice, ["--format", "turtle", "--out", "nquads"], 1.0),
     "count-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples"], 12.0),
+    # RDF/XML (https://github.com/danbri/factoidal/issues/771): the document
+    # characters are one array of 8 bytes per character, and the triples, the
+    # N-Quads text and the parser's notes grow with the input; no element tree
+    # of rdf:RDF is built (`RdfXml.parseRdfXml_eq_stream`). Measured
+    # 2026-10-13 with gen_rdfxml (one rdf:Description per triple), 25,000 and
+    # 100,000 triples: 55.1 bytes of peak RSS per input byte on `main`
+    # `80dc8ffc` (the document as `List Char`, then the element tree), 12.3
+    # after the repair.
+    "parse-rdfxml-memory": (25000, bl.gen_rdfxml, ["--format", "rdfxml", "--out", "nquads"], 16.0),
 }
 
 

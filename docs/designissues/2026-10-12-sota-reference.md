@@ -19,6 +19,18 @@ load 28 to 31 (the CPU time in section 4 and the appendix is the fairer
 figure for those). The `npm` rows and the `start` rows were not measured
 again. The results file holds both measurements; the later one is the row.
 
+Update, 2026-10-13 (RDF/XML): the rows `parse-rdfxml` (25,000, 50,000 and
+100,000 triples) and `parse-rdfxml-real` were measured again for Lean,
+Oxigraph and Jena after the repairs of
+https://github.com/danbri/factoidal/issues/814 and
+https://github.com/danbri/factoidal/issues/771 (branch
+`claude/wt-rdfxml-speed`, merged with `main` `80dc8ffc`;
+`docs/designissues/2026-09-03-rdf-parsing-strategy.md` section 3c), load
+average 1.4 to 1.8, 15:30 UTC. In this run Oxigraph's process start held
+18.1 MB and its RDF/XML rows 19.1 to 19.3 MB (22.8 MB in the first run, the
+same pyoxigraph 0.5.11); Lean's start held 19.7 MB. The `start` rows of the
+results file are not replaced.
+
 This record answers one question for each performance and scaling row of the
 Lean engine: on the same machine and the same input file, how many times the
 time and the peak memory of a state-of-the-art engine does the Lean engine
@@ -38,8 +50,8 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
 | the same, Lean streaming reader | `parse --lenient --out nquads`: 2.02 s, 24 MB | Serd | 4.6 | 12.7 (4.6 MB above process start) | — |
 | Parse Turtle, gene.ttl, 346,100 triples | 1.44 s, 26 MB (before the repair: 1.95 s, 243 MB) | Serd 0.48 s, 2 MB | 3.0 | 12.8 (6.1 MB above start) | https://github.com/danbri/factoidal/issues/813 (repaired) |
 | the same, Lean streaming reader | 1.61 s, 24 MB | Serd | 3.4 | 12.1 (4.7 MB above start) | — |
-| Parse RDF/XML, 100,000 triples | 5.33 s, 671 MB | Oxigraph 0.36 s, 23 MB | 15.0 | 29.4 | https://github.com/danbri/factoidal/issues/814, https://github.com/danbri/factoidal/issues/771 |
-| Parse RDF/XML, the Cell Ontology (9.6 MB) | 2.46 s, 479 MB | Oxigraph 0.26 s, 23 MB | 9.5 | 21.1 | as above |
+| Parse RDF/XML, 100,000 triples | 2.23 s, 181 MB (2026-10-13, after the repairs of https://github.com/danbri/factoidal/issues/814 and https://github.com/danbri/factoidal/issues/771; before: 5.33 s, 671 MB) | Oxigraph 0.36 s, 19 MB | 6.2 | 9.5 (162 MB above process start) | https://github.com/danbri/factoidal/issues/814 (repaired), https://github.com/danbri/factoidal/issues/771 (open: 8 bytes per document character) |
+| Parse RDF/XML, the Cell Ontology (9.6 MB) | 1.09 s, 148 MB (before: 2.46 s, 479 MB) | Oxigraph 0.27 s, 19 MB | 4.0 | 7.7 | as above |
 | Count statements, N-Triples 400,000 (no output) | 5.66 s (3.28 s CPU, load 31), 226 MB (before the repair: 5.13 s, 1,186 MB); streaming 2.84 s, 24 MB (counts repeats) | Jena `riot --count` 4.31 s, 224 MB | 1.3; streaming 0.66 | 1.0; streaming 0.11 | https://github.com/danbri/factoidal/issues/813 (repaired) |
 | Count, npm package (wasm), gene.ttl 346,100 triples | 11.51 s, 4,045 MB (wasm from before the issue 744 repair) | Jena 2.29 s, 296 MB | 5.0 | 13.6 | https://github.com/danbri/factoidal/issues/744 |
 | SPARQL in memory, gene.ttl 346,100 triples, four queries (bound subject, COUNT, join, OPTIONAL+FILTER) | 3.97 to 4.77 s, 193 to 195 MB | Oxigraph 1.17 to 1.30 s, 141 MB | 3.4 to 4.1 | 1.4 | — |
@@ -61,8 +73,12 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
   Turtle in 64 KiB chunks and holds 24 to 26 MB at every size, 3.0 to 4.8
   times Serd's time (https://github.com/danbri/factoidal/issues/813; rows of
   2026-10-13 in section 4, binary of `claude/wt-strict-parse-stream`).
-  RDF/XML is 13 to 15 times Oxigraph's time
-  (https://github.com/danbri/factoidal/issues/814).
+  RDF/XML was 13 to 15 times Oxigraph's time; after the repairs of
+  https://github.com/danbri/factoidal/issues/814 and
+  https://github.com/danbri/factoidal/issues/771 it is 4.0 to 6.2 times
+  Oxigraph's time and 3.4 to 9.5 times its peak resident set (most of it the
+  document characters, 8 bytes each), and Jena `riot` (with about 0.9 s of
+  JVM start) takes 1.0 to 3.2 times Lean's time.
 - 📊 SPARQL over a file in memory: 3.0 to 4.3 times Oxigraph's time at every
   size, 1.2 to 1.4 times its memory; faster than Jena `arq` at every size (Jena
   includes 1.2 s of JVM start).
@@ -218,10 +234,10 @@ RSS above start: each engine's peak resident set minus the peak resident set of 
 | parse-ttl-rich | 200000 | serd | 0.247 s, 2 MB | lean-stream | 1.046 s ±15%, 24 MB | 4.2 | 6.1 | 11.5 | 4.7 |
 | parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean | 1.836 s ±6%, 26 MB | 3.3 | 5.0 | 12.2 | 6.1 |
 | parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean-stream | 2.060 s ±10%, 24 MB | 3.7 | 5.6 | 11.5 | 4.6 |
-| parse-rdfxml | 25000 | oxigraph | 0.115 s, 23 MB | lean | 1.472 s ±37%, 151 MB | 12.8 | 18.0 | 6.7 | 131.7 |
-| parse-rdfxml | 50000 | oxigraph | 0.191 s, 23 MB | lean | 2.695 s ±32%, 281 MB | 14.1 | 16.3 | 12.3 | 261.7 |
-| parse-rdfxml | 100000 | oxigraph | 0.356 s, 23 MB | lean | 5.331 s ±30%, 671 MB | 15.0 | 16.5 | 29.4 | 651.6 |
-| parse-rdfxml-real | 1 | oxigraph | 0.258 s, 23 MB | lean | 2.464 s ±97%, 479 MB | 9.5 | 11.9 | 21.1 | 459.6 |
+| parse-rdfxml | 25000 | oxigraph | 0.107 s, 19 MB | lean | 0.455 s ±66%, 65 MB | 4.3 | 5.0 | 3.4 | 45.7 |
+| parse-rdfxml | 50000 | oxigraph | 0.180 s, 19 MB | lean | 0.840 s ±13%, 101 MB | 4.7 | 4.9 | 5.3 | 81.8 |
+| parse-rdfxml | 100000 | oxigraph | 0.358 s, 19 MB | lean | 2.228 s ±23%, 181 MB | 6.2 | 6.4 | 9.5 | 161.9 |
+| parse-rdfxml-real | 1 | oxigraph | 0.273 s, 19 MB | lean | 1.094 s ±68%, 148 MB | 4.0 | 4.9 | 7.7 | 128.7 |
 | count-nt | 100000 | jena | 2.105 s, 158 MB | lean | 1.326 s ±28%, 72 MB | 0.63 | 0.25 | 0.45 | 0.79 |
 | count-nt | 100000 | jena | 2.105 s, 158 MB | lean-stream | 0.615 s ±60%, 24 MB | 0.29 | 0.14 | 0.15 | 0.07 |
 | count-nt | 100000 | jena | 2.105 s, 158 MB | npm | 6.085 s ±22%, 889 MB | 2.9 | 2.1 | 5.6 | 11.7 |
@@ -318,7 +334,7 @@ the streaming reader).
 | Rows | Cause, as far as measured | Issue | Gate |
 |---|---|---|---|
 | `parse-nt`, `parse-nt-mixed` (all sizes; time 10.2 and 10.8 at 200,000), `parse-ttl-gene`, `parse-ttl-rich` (memory), on `e3c3aa01` | the strict `parse` kept the whole dataset in memory, 33 to 35 bytes per input byte. Repaired 2026-10-13 (`StrictFeed.lean`; `docs/designissues/2026-09-03-rdf-parsing-strategy.md` section 3b): no row is over 10 now | https://github.com/danbri/factoidal/issues/813 | the expected-failure marks `parse-nt` 400,000 and `parse-ttl-gene` 80,000 are removed; the rows are plain assertions |
-| `parse-rdfxml` (all sizes), `parse-rdfxml-real` (memory) | not located; 48 to 49 bytes per input byte (the memory is https://github.com/danbri/factoidal/issues/771) | https://github.com/danbri/factoidal/issues/814 (new) | expected failure `parse-rdfxml` 100,000 |
+| `parse-rdfxml` (all sizes), `parse-rdfxml-real` (memory) | located 2026-10-13 (`2026-09-03-rdf-parsing-strategy.md` section 3c): the document as a `List Char` (633 MB of the 678 MB peak at 100,000 triples) and the name resolution of the grammar (`XML.splitQName` 53 percent of the instructions). Repaired: no row is over 10 now (time 4.0 to 6.2, memory 3.4 to 9.5 times Oxigraph's) | https://github.com/danbri/factoidal/issues/814; memory https://github.com/danbri/factoidal/issues/771 | the expected-failure mark `parse-rdfxml` 100,000 is removed (the gate reported UNEXPECTED PASS: time ratio 5.3, memory ratio 7.9); the row is a plain assertion |
 | `count-nt` 400,000 and `count-ttl-gene` 80,000, npm (memory) | wasm of release `build-3bf333414efd-web`, before the repair `a7bdc189` | https://github.com/danbri/factoidal/issues/744 (comment with these rows) | — (the gate runs native Lean only) |
 | `rdfc-pairs` 4,000 and 8,000 (Lean), 2,000 to 8,000 (npm; 8,000 stops with "Maximum call stack size exceeded") | Hash N-Degree Quads over a collision group, repaired on branch `claude/wt-rdfc-collide` | https://github.com/danbri/factoidal/issues/751 (comment with these rows) | expected failure `rdfc-pairs` 8,000 |
 | `owl-dl-consistent` schema.org | not located; HermiT decides the file in 1.4 s. 2026-10-13: located and below 10 times HermiT on a base with the repair of issue 760 and the semi-naive closure: the OWL 2 RL closure is most of the time (`2026-10-10-owl-real-ontologies.md` § 11.7) | https://github.com/danbri/factoidal/issues/819 (new) | expected failure `owl-dl-consistent` schema.org; removed 2026-10-13 (the gate reported UNEXPECTED PASS) |
@@ -326,10 +342,6 @@ the streaming reader).
 
 The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 
-- parse-rdfxml 25000, lean against oxigraph: time ratio 12.8, RSS ratio 6.7
-- parse-rdfxml 50000, lean against oxigraph: time ratio 14.1, RSS ratio 12.3
-- parse-rdfxml 100000, lean against oxigraph: time ratio 15.0, RSS ratio 29.4
-- parse-rdfxml-real 1, lean against oxigraph: time ratio 9.5, RSS ratio 21.1
 - count-nt 400000, npm against jena: time ratio 5.1, RSS ratio 14.0
 - count-ttl-gene 80000, npm against jena: time ratio 2.6, RSS ratio 13.6
 - rdfc-pairs 2000, npm against oxigraph: time ratio 24.8, RSS ratio 4.6
@@ -409,6 +421,16 @@ of https://github.com/danbri/factoidal/issues/751 is in the base) and
 `owl-dl-consistent` schema.org (3.91 s, recorded 43.13 s;
 https://github.com/danbri/factoidal/issues/819). Those two marks and rows
 belong to their own issues and are not changed here.
+
+Run of 2026-10-13, 15:31 to 15:40 UTC, the binary of
+`claude/wt-rdfxml-speed` (the RDF/XML repairs of
+https://github.com/danbri/factoidal/issues/814 and
+https://github.com/danbri/factoidal/issues/771, merged with `main`
+`80dc8ffc`), with the RDF/XML rows of 15:30 UTC in the results file, load
+average 0.8 to 1.6: 79 pass, 0 fail (out of 79). Before the expected-failure
+mark of `parse-rdfxml` 100,000 was removed, the same row reported UNEXPECTED
+PASS (CPU 1.8 s against 5.12 s recorded; time ratio 5.3, memory ratio 7.9
+against the recorded Oxigraph row). No expected failure is left in the gate.
 
 ## 9. Reproduce
 
@@ -492,18 +514,18 @@ rm -rf /tmp/sota-dl                                 # the downloads
 | parse-ttl-rich | 400000 | oxigraph | 0.878 s ±1% | 0.68 s | 23 MB | 457136 | 6.75 to 6.77 |
 | parse-ttl-rich | 400000 | serd | 0.564 s ±40% | 0.32 s | 2 MB | 457136 | 6.77 to 7.03 |
 | parse-ttl-rich | 400000 | jena | 4.676 s ±50% | 5.83 s | 252 MB | 457136 | 7.01 to 7.27 |
-| parse-rdfxml | 25000 | lean | 1.472 s ±37% | 1.44 s | 151 MB | 25000 | 4.7 to 4.85 |
-| parse-rdfxml | 25000 | oxigraph | 0.115 s ±5% | 0.08 s | 23 MB | 25000 | 4.56 to 4.56 |
-| parse-rdfxml | 25000 | jena | 2.090 s ±10% | 3.06 s | 130 MB | 25000 | 4.56 to 4.92 |
-| parse-rdfxml | 50000 | lean | 2.695 s ±32% | 2.61 s | 281 MB | 50000 | 4.92 to 5.25 |
-| parse-rdfxml | 50000 | oxigraph | 0.191 s ±14% | 0.16 s | 23 MB | 50000 | 4.98 to 4.98 |
-| parse-rdfxml | 50000 | jena | 2.676 s ±4% | 4.10 s | 177 MB | 50000 | 4.98 to 5.14 |
-| parse-rdfxml | 100000 | lean | 5.331 s ±30% | 5.12 s | 671 MB | 100000 | 5.36 to 5.79 |
-| parse-rdfxml | 100000 | oxigraph | 0.356 s ±9% | 0.31 s | 23 MB | 100000 | 4.83 to 4.83 |
-| parse-rdfxml | 100000 | jena | 2.951 s ±7% | 4.79 s | 267 MB | 100000 | 4.83 to 4.92 |
-| parse-rdfxml-real | 1 | lean | 2.464 s ±97% | 2.38 s | 479 MB | 78835 | 4.57 to 4.93 |
-| parse-rdfxml-real | 1 | oxigraph | 0.258 s ±11% | 0.20 s | 23 MB | 78835 | 4.57 to 4.57 |
-| parse-rdfxml-real | 1 | jena | 2.507 s ±51% | 3.88 s | 139 MB | 78835 | 4.57 to 4.96 |
+| parse-rdfxml | 25000 | lean | 0.455 s ±66% | 0.40 s | 65 MB | 25000 | 1.49 to 1.54 |
+| parse-rdfxml | 25000 | oxigraph | 0.107 s ±9% | 0.08 s | 19 MB | 25000 | 1.49 to 1.49 |
+| parse-rdfxml | 25000 | jena | 1.470 s ±23% | 3.19 s | 154 MB | 25000 | 1.49 to 1.49 |
+| parse-rdfxml | 50000 | lean | 0.840 s ±13% | 0.79 s | 101 MB | 50000 | 1.45 to 1.45 |
+| parse-rdfxml | 50000 | oxigraph | 0.180 s ±25% | 0.16 s | 19 MB | 50000 | 1.45 to 1.45 |
+| parse-rdfxml | 50000 | jena | 1.694 s ±10% | 3.87 s | 191 MB | 50000 | 1.42 to 1.45 |
+| parse-rdfxml | 100000 | lean | 2.228 s ±23% | 2.12 s | 181 MB | 100000 | 1.38 to 1.42 |
+| parse-rdfxml | 100000 | oxigraph | 0.358 s ±30% | 0.33 s | 19 MB | 100000 | 1.35 to 1.35 |
+| parse-rdfxml | 100000 | jena | 2.160 s ±4% | 5.08 s | 240 MB | 100000 | 1.35 to 1.48 |
+| parse-rdfxml-real | 1 | lean | 1.094 s ±68% | 1.02 s | 148 MB | 78835 | 1.56 to 1.61 |
+| parse-rdfxml-real | 1 | oxigraph | 0.273 s ±28% | 0.21 s | 19 MB | 78835 | 1.56 to 1.56 |
+| parse-rdfxml-real | 1 | jena | 1.644 s ±14% | 3.99 s | 143 MB | 78835 | 1.56 to 1.83 |
 | count-nt | 100000 | lean | 1.326 s ±28% | 0.74 s | 72 MB | 100000 | 30.41 to 30.41 |
 | count-nt | 100000 | lean-stream | 0.615 s ±60% | 0.42 s | 24 MB | 100000 | 7.07 to 7.07 |
 | count-nt | 100000 | npm | 6.085 s ±22% | 6.18 s | 889 MB | 100000 | 4.52 to 4.88 |

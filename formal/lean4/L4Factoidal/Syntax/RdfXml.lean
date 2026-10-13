@@ -262,6 +262,38 @@ def findNsAttr (st : St) (ns localName : String) (attrs : List XML.Attribute) :
     | some e => e.namespace_ == some ns && e.localPart == localName
     | none   => false)).map (·.value)
 
+/-- `findNsAttr` that first asks whether the attribute's name ends with
+`localName`, which every name resolving to that local part does
+(`XML.endsWith_of_resolveAttributeName`); only such an attribute has its
+name split and its prefix looked up. Most lookups are for attributes an
+element does not carry (`checkCommonAttrs` alone asks for four), and each
+one used to split every attribute name of the element
+(https://github.com/danbri/factoidal/issues/814: 975,008 name resolutions for
+25,000 triples, 33 percent of the instructions after `splitQName_eq_fast`). -/
+def findNsAttrFast (st : St) (ns localName : String) (attrs : List XML.Attribute) :
+    Option String :=
+  (attrs.find? (fun a =>
+    a.name.endsWith localName &&
+    match XML.resolveAttributeName st.scope a.name with
+    | some e => e.namespace_ == some ns && e.localPart == localName
+    | none   => false)).map (·.value)
+
+/-- The compiler runs `findNsAttrFast` wherever the source says
+`findNsAttr`: the same attribute for every state, name and list. -/
+@[csimp] theorem findNsAttr_eq_fast : @findNsAttr = @findNsAttrFast := by
+  funext st ns localName attrs
+  unfold findNsAttr findNsAttrFast
+  congr 2
+  funext a
+  cases he : XML.resolveAttributeName st.scope a.name with
+  | none => simp
+  | some e =>
+    by_cases hl : e.localPart = localName
+    · have hw := XML.endsWith_of_resolveAttributeName he
+      rw [hl] at hw
+      simp [hw]
+    · simp [hl]
+
 /-- An attribute in the RDF namespace, by local name. -/
 def findRdfAttr (st : St) (localName : String) (attrs : List XML.Attribute) :
     Option String :=
@@ -1256,12 +1288,498 @@ well-formed, or an RDF/XML rule violation anywhere in it, is a
 rejection, not a partial graph. -/
 def parseRdfXml (text : String) (base : Option String := none) :
     Except ParseError Graph :=
+  -- The walk's fuel is computed before the XML parse, so that `text` is not
+  -- held while the element tree is built (https://github.com/danbri/factoidal/issues/771).
+  let fuel := text.length + 2
   match XML.parseXML text with
   | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
   | .ok doc =>
-    let res := processDocument (text.length + 2) (St.init (base.getD "")) doc.root
+    let res := processDocument fuel (St.init (base.getD "")) doc.root
     match res.st.err with
     | some e => .error e
     | none   => .ok res.triples
+
+/-! ## `parseRdfXml` without the element tree of the document element
+
+https://github.com/danbri/factoidal/issues/771,
+https://github.com/danbri/factoidal/issues/814.
+
+`RdfXml.parseRdfXml` parses the whole document into an XML element tree
+(`XML.parseXML`) and then walks the tree with the productions of RDF 1.1 XML
+Syntax section 7 (`processDocument`). At the end of the XML parse both the
+document characters (one `Char` per array cell, 8 bytes) and the whole tree
+are live: for 13,177,910 bytes of RDF/XML (100,000 `rdf:Description`
+elements) that is 105 MB of characters and about 90 MB of tree, in a process
+of 227 MB peak resident memory.
+
+When the document element is `rdf:RDF` ([7.2.8] RDF), the walk of
+`nodeElementList` takes its children one at a time and never looks at one
+again. `parseRdfXmlStream` reads the children with the same XML functions in
+the same order (`parseChildrenFold`, a copy of `XML.parseChildren` that hands
+each child to a step function instead of putting it on a list) and runs the
+step of `nodeElementList` (`WalkSt.step`) on each child as soon as it is read.
+No child is kept after its step. Every other document element (a single node
+element, [7.2.2] doc) goes the readable way.
+
+The theorems, in this section:
+
+* `nodeElementList_eq_fold`: `nodeElementList` is a left fold of
+  `WalkSt.step` over the children.
+* `parseChildrenFold_eq`: `parseChildrenFold` gives the fold of the step over
+  the children `XML.parseChildren` reads, with the same flags, notes,
+  position and errors.
+* `parseRootFold_eq`: the same for the document element.
+* `parseRdfXml_eq_stream` (`csimp`): `parseRdfXml = parseRdfXmlStream`, so
+  every caller of `parseRdfXml` runs the stream.
+-/
+
+section Stream
+open L4Factoidal.XML
+
+/-! ## `nodeElementList` as a fold -/
+
+/-- The state of `nodeElementList` between two children: the parser state,
+the fuel, and the triples so far, newest first. -/
+structure WalkSt where
+  st : St
+  fuel : Nat
+  acc : List Triple
+
+/-- One child of `rdf:RDF`, as `nodeElementList` takes it: with no fuel left
+nothing happens; an element is a `[7.2.11] nodeElement`; any other node only
+uses one unit of fuel. -/
+def WalkSt.step (w : WalkSt) (c : XML.Node) : WalkSt :=
+  match w.fuel with
+  | 0 => w
+  | f + 1 =>
+    match c with
+    | .element _ _ _ =>
+      let r := nodeElement f w.st c
+      { st := r.st, fuel := f, acc := r.triples.reverse ++ w.acc }
+    | _ => { w with fuel := f }
+
+/-- With no fuel left the step does nothing, for every child after. -/
+theorem foldl_step_zero (cs : List XML.Node) (st : St) (acc : List Triple) :
+    cs.foldl WalkSt.step ⟨st, 0, acc⟩ = ⟨st, 0, acc⟩ := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih => simp only [List.foldl_cons, WalkSt.step]; exact ih
+
+/-- `nodeElementList` is the fold of `WalkSt.step` over the children, then
+the triples in order. -/
+theorem nodeElementList_eq_fold : ∀ (fuel : Nat) (st : St) (cs : List XML.Node)
+    (acc : List Triple),
+    nodeElementList fuel st cs acc =
+      let w := cs.foldl WalkSt.step ⟨st, fuel, acc⟩
+      ⟨w.acc.reverse, w.st⟩
+  | 0, st, cs, acc => by
+      simp only [foldl_step_zero]; cases cs <;> simp [nodeElementList]
+  | f + 1, st, [], acc => by simp [nodeElementList]
+  | f + 1, st, c :: rest, acc => by
+      simp only [List.foldl_cons]
+      cases c with
+      | element t a ch =>
+        rw [nodeElementList, nodeElementList_eq_fold f]
+        rfl
+      | text _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | comment _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | cdata _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | pi _ _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+
+/-! ## The children of the document element, one at a time -/
+
+/-- `XML.parseChildren`, with every child handed to `f` as soon as it is read
+instead of being put on a list. Same branches, same calls, same order; the
+children of a markup entity's replacement text are read by `parseChildren`
+itself and then handed to `f` in order. -/
+def parseChildrenFold {α : Type} (f : α → XML.Node → α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (a : α) (flags : RefFlags)
+    (notes : Notes) : Nat → PResult (α × RefFlags × Notes)
+  | 0 => .ok (a, flags, notes) pos
+  | fuel + 1 =>
+    if pos ≥ s.size then .ok (a, flags, notes) pos
+    else if charAt s pos == '<' then
+      if pos + 1 < s.size then
+        let ch2 := charAt s (pos + 1)
+        if ch2 == '/' then .ok (a, flags, notes) pos
+        else if ch2 == '!' then
+          if peekLit "<!--" s pos then
+            match parseComment ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+          else
+            match parseCdata ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+        else if ch2 == '?' then
+          match parsePi ents.version s pos with
+          | .err m p => .err m p
+          | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+        else
+          match parseElement ents atts s pos notes fuel with
+          | .err m p => .err m p
+          | .ok (node, notes') pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes' fuel
+      else .err "unexpected end after '<'" pos
+    else
+      match markupFragAt ents s pos with
+      | some (txt, posAfter) =>
+          let farr : Chars := txt.toList.toArray
+          (match parseChildren ents atts farr 0 [] {} notes fuel with
+           | .err m p => .err m p
+           | .ok (nodes, fl2, notes2) q =>
+               if q < farr.size then
+                 .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" pos
+               else
+                 parseChildrenFold f ents atts s posAfter (nodes.foldl f a)
+                   ({ fl2 with entityRef := true }.merge flags) notes2 fuel)
+      | none =>
+      match parseTextContent ents s pos [] (s.size + 1) with
+      | .err m p => .err m p
+      | .ok text pos' =>
+        if pos' == pos then .ok (a, flags, notes) pos
+        else
+          let (rf, undecl) := scanRefs ents s pos pos' (pos' - pos + 1)
+          let flags' := rf.merge flags
+          let notes' := if undecl then { notes with undeclared := true } else notes
+          if text.isEmpty then parseChildrenFold f ents atts s pos' a flags' notes' fuel
+          else parseChildrenFold f ents atts s pos' (f a (.text text)) flags' notes' fuel
+
+/-- `parseChildrenFold` from the fold of the children already read (`acc`,
+newest first) gives the fold of all the children `parseChildren` reads, with
+the same flags, notes, position and errors. -/
+theorem parseChildrenFold_eq {α : Type} (f : α → XML.Node → α) (a0 : α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) : ∀ (fuel pos : Nat) (acc : List XML.Node) (a : α)
+    (flags : RefFlags) (notes : Notes), a = acc.reverse.foldl f a0 →
+    parseChildrenFold f ents atts s pos a flags notes fuel =
+      match parseChildren ents atts s pos acc flags notes fuel with
+      | .err m p => .err m p
+      | .ok (cs, fl, nt) p => .ok (cs.foldl f a0, fl, nt) p := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro pos acc a flags notes ha; subst ha; simp [parseChildrenFold, parseChildren]
+  | succ fuel ih =>
+    intro pos acc a flags notes ha
+    subst ha
+    rw [parseChildrenFold, parseChildren]
+    by_cases h1 : pos ≥ s.size
+    · simp [h1]
+    simp only [h1, if_false]
+    by_cases h2 : (charAt s pos == '<') = true
+    · simp only [h2, if_true]
+      by_cases h3 : pos + 1 < s.size
+      · simp only [h3, if_true]
+        by_cases h4 : (charAt s (pos + 1) == '/') = true
+        · simp [h4]
+        simp only [h4, if_false, Bool.false_eq_true]
+        by_cases h5 : (charAt s (pos + 1) == '!') = true
+        · simp only [h5, if_true]
+          by_cases h6 : peekLit "<!--" s pos = true
+          · simp only [h6, if_true]
+            cases hc : parseComment ents.version s pos with
+            | err m p => rfl
+            | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+          · simp only [h6, if_false, Bool.false_eq_true]
+            cases hc : parseCdata ents.version s pos with
+            | err m p => rfl
+            | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+        simp only [h5, if_false, Bool.false_eq_true]
+        by_cases h7 : (charAt s (pos + 1) == '?') = true
+        · simp only [h7, if_true]
+          cases hc : parsePi ents.version s pos with
+          | err m p => rfl
+          | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+        simp only [h7, if_false, Bool.false_eq_true]
+        cases hc : parseElement ents atts s pos notes fuel with
+        | err m p => rfl
+        | ok r pos' =>
+          obtain ⟨node, notes'⟩ := r
+          exact ih pos' (node :: acc) _ flags notes' (by simp)
+      · simp [h3]
+    simp only [h2, if_false, Bool.false_eq_true]
+    cases hm : markupFragAt ents s pos with
+    | some tp =>
+      obtain ⟨txt, posAfter⟩ := tp
+      dsimp only
+      cases hp : parseChildren ents atts txt.toList.toArray 0 [] {} notes fuel with
+      | err m p => rfl
+      | ok r q =>
+        obtain ⟨nodes, fl2, notes2⟩ := r
+        dsimp only
+        by_cases hq : q < txt.toList.toArray.size
+        · simp only [hq, if_true]
+        · simp only [hq, if_false]
+          exact ih posAfter (nodes.reverse ++ acc) _ _ notes2 (by simp [List.foldl_append])
+    | none =>
+      dsimp only
+      cases ht : parseTextContent ents s pos [] (s.size + 1) with
+      | err m p => rfl
+      | ok text pos' =>
+        dsimp only
+        by_cases he : (pos' == pos) = true
+        · simp [he]
+        simp only [he, if_false, Bool.false_eq_true]
+        by_cases hx : text.isEmpty = true
+        · simp only [hx, if_true]
+          exact ih pos' acc _ _ _ rfl
+        · simp only [hx, if_false, Bool.false_eq_true]
+          exact ih pos' (.text text :: acc) _ _ _ (by simp)
+
+/-- The document element: `XML.parseElement`'s start tag, then (when `start`
+accepts the tag and attributes) the children through `parseChildrenFold` from
+the state `start` gives, then the end tag. When `start` answers `none`, the
+element is read by `XML.parseElement` itself, from the same position. -/
+def parseRootFold {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (notes : Notes) :
+    Nat → PResult ((XML.Node ⊕ α) × Notes)
+  | 0 => .err "element nesting too deep (out of fuel)" pos
+  | fuel + 1 =>
+    match pchar '<' s pos with
+    | .err m p => .err m p
+    | .ok _ pos1 =>
+      match parseName s pos1 with
+      | .err m p => .err m p
+      | .ok tag pos2 =>
+        match parseAttributes ents s pos2 (s.size + 1) with
+        | .err m p => .err m p
+        | .ok attrs0 pos3 =>
+          let attrs1 := normalizeAttrsByType atts tag attrs0
+          match defaultedAttrs ents atts tag attrs1 with
+          | .error m => .err m pos2
+          | .ok defaulted =>
+          let attrs := attrs1 ++ defaulted
+          match start tag attrs with
+          | none =>
+            match parseElement ents atts s pos notes (fuel + 1) with
+            | .err m p => .err m p
+            | .ok (node, notes') p => .ok (.inl node, notes') p
+          | some a0 =>
+          let (_, undeclAttr) := scanRefs ents s pos2 pos3 (pos3 - pos2 + 1)
+          let notes0 := if undeclAttr then { notes with undeclared := true } else notes
+          let normalized := changedAttrs attrs0 attrs1
+          let defaultedNames := defaulted.map (·.name)
+          let pos4 := skipSpace s pos3
+          if peekLit "/>" s pos4 then
+            .ok (.inr a0,
+                 { notes0 with elems :=
+                     { normalized := normalized, defaulted := defaultedNames } :: notes0.elems }) (pos4 + 2)
+          else
+            match pchar '>' s pos4 with
+            | .err m p => .err m p
+            | .ok _ pos5 =>
+              match parseChildrenFold f ents atts s pos5 a0 {} notes0 fuel with
+              | .err m p => .err m p
+              | .ok (a, cflags, notes1) pos6 =>
+                match pstring "</" s pos6 with
+                | .err m p => .err m p
+                | .ok _ pos7 =>
+                  match parseName s pos7 with
+                  | .err m p => .err m p
+                  | .ok closeTag pos8 =>
+                    if closeTag != tag then
+                      .err s!"closing tag '</{closeTag}>' does not match opening '<{tag}>' (WFC: Element Type Match)" pos7
+                    else
+                      match pchar '>' s (skipSpace s pos8) with
+                      | .err m p => .err m p
+                      | .ok _ pos10 =>
+                          .ok (.inr a,
+                               { notes1 with elems :=
+                                   { normalized := normalized, defaulted := defaultedNames,
+                                     entityRef := cflags.entityRef,
+                                     wsCharRef := cflags.wsCharRef } :: notes1.elems }) pos10
+
+/-- What `parseRootFold` gives for a document element `parseElement` read. -/
+def rootResult {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) : XML.Node → (XML.Node ⊕ α)
+  | .element tag attrs children =>
+    match start tag attrs with
+    | none => .inl (.element tag attrs children)
+    | some a0 => .inr (children.foldl f a0)
+  | n => .inl n
+
+/-- `parseRootFold` gives `rootResult` of the element `parseElement` reads,
+with the same notes, position and errors. -/
+theorem parseRootFold_eq {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (notes : Notes) (fuel : Nat) :
+    parseRootFold f start ents atts s pos notes fuel =
+      match parseElement ents atts s pos notes fuel with
+      | .err m p => .err m p
+      | .ok (node, nt) p => .ok (rootResult f start node, nt) p := by
+  cases fuel with
+  | zero => simp [parseRootFold, parseElement]
+  | succ fuel =>
+    rw [parseRootFold]
+    cases h1 : pchar '<' s pos with
+    | err m p => simp [parseElement, h1]
+    | ok u pos1 =>
+    dsimp only
+    cases h2 : parseName s pos1 with
+    | err m p => simp [parseElement, h1, h2]
+    | ok tag pos2 =>
+    dsimp only
+    cases h3 : parseAttributes ents s pos2 (s.size + 1) with
+    | err m p => simp [parseElement, h1, h2, h3]
+    | ok attrs0 pos3 =>
+    dsimp only
+    cases h4 : defaultedAttrs ents atts tag (normalizeAttrsByType atts tag attrs0) with
+    | error m => simp [parseElement, h1, h2, h3, h4]
+    | ok defaulted =>
+    dsimp only
+    cases h5 : start tag (normalizeAttrsByType atts tag attrs0 ++ defaulted) with
+    | none =>
+      dsimp only
+      cases h6 : parseElement ents atts s pos notes (fuel + 1) with
+      | err m p => rfl
+      | ok r p =>
+        obtain ⟨node, nt⟩ := r
+        dsimp only
+        -- the node is the element whose start tag was read above
+        rw [parseElement] at h6
+        simp only [h1, h2, h3, h4] at h6
+        split at h6
+        · cases h6; simp [rootResult, h5]
+        · split at h6
+          · cases h6
+          · split at h6
+            · cases h6
+            · split at h6
+              · cases h6
+              · split at h6
+                · cases h6
+                · split at h6
+                  · cases h6
+                  · split at h6
+                    · cases h6
+                    · cases h6; simp [rootResult, h5]
+    | some a0 =>
+      dsimp only
+      rw [parseElement]
+      simp only [h1, h2, h3, h4]
+      cases hs : scanRefs ents s pos2 pos3 (pos3 - pos2 + 1) with
+      | mk x undeclAttr =>
+      dsimp only
+      by_cases hp : peekLit "/>" s (skipSpace s pos3) = true
+      · simp [hp, rootResult, h5]
+      simp only [hp, if_false, Bool.false_eq_true]
+      cases hg : pchar '>' s (skipSpace s pos3) with
+      | err m p => rfl
+      | ok u2 pos5 =>
+      dsimp only
+      rw [parseChildrenFold_eq f a0 ents atts s fuel pos5 [] a0 {} _ rfl]
+      cases hc : parseChildren ents atts s pos5 [] {} (if undeclAttr = true then { notes with undeclared := true } else notes) fuel with
+      | err m p => rfl
+      | ok r pos6 =>
+      obtain ⟨children, cflags, notes1⟩ := r
+      dsimp only
+      cases hq : pstring "</" s pos6 with
+      | err m p => rfl
+      | ok u3 pos7 =>
+      dsimp only
+      cases hn : parseName s pos7 with
+      | err m p => rfl
+      | ok closeTag pos8 =>
+      dsimp only
+      by_cases ht : (closeTag != tag) = true
+      · simp only [ht, if_true]
+      simp only [ht, if_false, Bool.false_eq_true]
+      cases hz : pchar '>' s (skipSpace s pos8) with
+      | err m p => rfl
+      | ok u4 pos10 => simp [rootResult, h5]
+
+/-! ## The entry point -/
+
+/-- The start of the walk when the document element is `rdf:RDF`
+([7.2.8] RDF): the state after the element's own attributes, and the fuel
+`processDocument` hands to `nodeElementList`. `none` for any other document
+element. -/
+def rdfStart (fuel : Nat) (st : St) (tag : String) (attrs : List XML.Attribute) :
+    Option WalkSt :=
+  let st1 := updateState st attrs
+  match elementIri st1 tag with
+  | some full => if full == rdfTerm "RDF" then some ⟨st1, fuel, []⟩ else none
+  | none => none
+
+/-- The outcome of the walk: `processDocument` on a document element read
+whole, or the triples and state of a walk that ran as the children were
+read. -/
+def streamRes (fuel : Nat) (st0 : St) : (XML.Node ⊕ WalkSt) → Res
+  | .inl root => processDocument fuel st0 root
+  | .inr w => ⟨w.acc.reverse, w.st⟩
+
+/-- `parseRdfXml`, with the children of an `rdf:RDF` document element walked
+as they are read: no element tree of the document is built. -/
+def parseRdfXmlStream (text : String) (base : Option String := none) :
+    Except ParseError Graph :=
+  let fuel := text.length + 2
+  let st0 := St.init (base.getD "")
+  match XML.documentPrologue (fun _ => none) false text with
+  | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
+  | .ok pr =>
+    match parseRootFold WalkSt.step (rdfStart fuel st0) pr.ents pr.usable pr.s pr.pos {}
+        (pr.s.size + 1) with
+    | .err m p => .error { msg := s!"XML: {m}", pos := p }
+    | .ok (r, _) pos4 =>
+      match XML.documentEpilog pr.ver pr.s pos4 with
+      | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
+      | .ok _ =>
+        let res := streamRes fuel st0 r
+        match res.st.err with
+        | some e => .error e
+        | none => .ok res.triples
+
+/-- The walk of a document element read as a stream is `processDocument`
+of that element. -/
+theorem processDocument_rootResult (fuel : Nat) (st0 : St) (node : XML.Node) :
+    streamRes fuel st0 (rootResult WalkSt.step (rdfStart fuel st0) node)
+      = processDocument fuel st0 node := by
+  cases node with
+  | element tag attrs children =>
+    simp only [rootResult, rdfStart]
+    cases he : elementIri (updateState st0 attrs) tag with
+    | none => rfl
+    | some full =>
+      by_cases hr : (full == rdfTerm "RDF") = true
+      · simp only [hr, if_true, streamRes]
+        rw [processDocument]
+        simp only [he, hr, if_true, nodeElementList_eq_fold]
+      · simp only [hr, if_false, Bool.false_eq_true, streamRes]
+  | text _ => rfl
+  | comment _ => rfl
+  | cdata _ => rfl
+  | pi _ _ => rfl
+
+/-- The compiler runs `parseRdfXmlStream` wherever the source says
+`parseRdfXml`: the same graph, and the same error, for every text and base. -/
+@[csimp] theorem parseRdfXml_eq_stream : @parseRdfXml = @parseRdfXmlStream := by
+  funext text base
+  unfold parseRdfXml parseRdfXmlStream XML.parseXML XML.parseXMLWith XML.parseXMLCore
+    XML.parseXMLNotes
+  cases hp : XML.documentPrologue (fun _ => none) false text with
+  | error e => rfl
+  | ok pr =>
+    simp only []
+    rw [parseRootFold_eq]
+    cases he : parseElement pr.ents pr.usable pr.s pr.pos {} (pr.s.size + 1) with
+    | err m p => rfl
+    | ok r pos4 =>
+      obtain ⟨node, nt⟩ := r
+      simp only []
+      cases hq : XML.documentEpilog pr.ver pr.s pos4 with
+      | error e => rfl
+      | ok post =>
+        simp only []
+        rw [processDocument_rootResult]
+
+end Stream
 
 end L4Factoidal.Syntax.RdfXml

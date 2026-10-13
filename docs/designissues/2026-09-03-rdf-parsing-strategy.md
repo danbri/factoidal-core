@@ -1,7 +1,7 @@
 # RDF parsing strategy in the Lean tree: layers, entry points, proofs, costs
 
 Status: record of the design as it stands on 2026-09-03 (section 3a, the
-lenient mode, added 2026-10-10), written because the
+lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13), written because the
 owner asked for it to live somewhere findable (2026-09-03: "this and similar
 ought to be recorded properly somewhere I can find it. Ephemeral coding logs
 aren't that place"). Update this file when a layer, an entry point or a
@@ -301,7 +301,7 @@ Modules, in data order:
 | N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
 | N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
 | TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | none; an IBK4 pack over TriG still buffers the whole source, unlike the Turtle and N-Quads routes (quad-aware layout: `2026-09-02-quad-aware-block-layout.md`) | W3C suites |
-| RDF/XML | `RdfXml.lean` | — | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction) |
+| RDF/XML | `RdfXml.lean` `parseRdfXml` (the element tree, then the walk) | `parseRdfXmlStream` (the children of `rdf:RDF` walked as they are read; every caller runs it, section 3c) | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction); `parseRdfXml_eq_stream` (`@[csimp]`) |
 
 Shared lexical pieces: `Lexing.lean` (the N-Triples string body and escape
 table the Turtle `decodeEscape` mirrors), `IriResolve.lean` (RFC 3986),
@@ -769,6 +769,198 @@ it now names both.
   `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit 0
   (1635 jobs). WebAssembly module rebuilt (`NTriples.lean` changed); `npm
   test`: 413 pass, 0 fail, 1 skipped (out of 414).
+
+## 3c. RDF/XML: where the time and the memory went, and the repair (2026-10-13)
+
+Issues: https://github.com/danbri/factoidal/issues/814 (time: 13 to 15 times
+Oxigraph's) and https://github.com/danbri/factoidal/issues/771 (memory: 48 to
+49 bytes of resident memory per input byte). Branch `claude/wt-rdfxml-speed`
+of `danbri/factoidal-core`, base `e9590cde`, merged with `main` `80dc8ffc`.
+`RdfXml.lean` is a grammar walk over an XML element tree: `XML.parseXML`
+(`XML/Parser.lean`) reads the document into the tree of XML 1.0, and
+`processDocument` walks the tree with the productions of RDF 1.1 XML Syntax
+section 7.
+
+### 3c.1 Before: measurement
+
+Binary of `e9590cde`; inputs: the generated files of `tools/sota-bench.py`
+(one `rdf:Description` with one property element per triple) and the Cell
+Ontology (`third_party/ontologies/cl-basic/cl-basic.owl`, 9,557,097 bytes).
+
+Callgrind (`valgrind --tool=callgrind l4factoidal parse FILE --format rdfxml
+--out nquads`), inclusive instructions:
+
+| Input | Total | XML parse (`XML.parseXML`) | Grammar (`processDocument`) | N-Quads output | Largest single cost |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 25,000 triples, 3,277,910 bytes | 10,663 M | 26 % | 72 % | under 2 % | `XML.splitQName` 53 %: 1,125,011 calls, about 5,000 instructions each (`String.toList` 1,910, two `String.ofList`); 975,008 of the calls from `findNsAttr`, which resolved every attribute name of an element for each of about 20 lookups per element |
+| first 1,001,141 bytes of the Cell Ontology (8,014 triples) | 1,833 M | 42 % | 42 % | 12 % | `splitQName` 25 %; `lean_list_to_array` 8.5 % (the document as a `List Char`, then an array) |
+
+Phases (`l4query-phases FILE --rdfxml-op [--stop-after PHASE]`,
+`Harness/QueryPhases.lean`; one process per phase for the peak; load 5 to 9;
+time in seconds since process start, memory in MB):
+
+| Input | read | chars (alone) | xml (characters and tree) | grammar | nquads |
+| --- | --- | --- | --- | --- | --- |
+| 100,000 triples, 13,177,910 bytes | 0.05 s, 39 MB | peak 633 MB | 2.34 s, peak 678 MB | 5.77 s (3.37 s for the phase) | 5.87 s |
+| Cell Ontology | 0.03 s, 31 MB | — | 1.30 s, peak 482 MB | 2.30 s | 2.63 s |
+
+So the memory was the document characters: `parseXMLNotes` turned the
+`String` into a `List Char` (24 bytes per character), into an array to read
+the declaration, through the line-end rewrite of XML 1.0 section 2.11 into a
+second `List Char`, and into the `Array Char` the parser reads (8 bytes per
+character): 633 MB for 13 MB of text before the first element was read. The
+tree added 45 MB. The time was the name resolution of the grammar.
+
+### 3c.2 The repairs
+
+Each fast form is proved equal to the readable definition and registered with
+`@[csimp]`, so every caller (the command line, the wasm module, the W3C and
+OWL runners) runs it; `#print axioms` gives `propext`, `Classical.choice`,
+`Quot.sound` only.
+
+| Function | Fast form | Theorem |
+| --- | --- | --- |
+| `XML.splitQName` (`XML/Namespaces.lean`) | one `String.foldl` pass with the prefix, the local part and the colon count | `splitQName_eq_fast` |
+| `XML.documentChars` (the head of `parseXMLNotes`, now its own definition) | `stringChars`: one array from the `String` (capacity: the byte count), no `List Char`; the section 2.11 rewrite runs only when the text holds a character it rewrites (`isLineEndChar`) | `documentChars_eq_fast`, `normalizeLineEndingsFor_of_clean` |
+| `XML.sub` | the characters pushed onto one string (`Array.foldl` with bounds) | `sub_eq_fast` |
+| `XML.normalizeAttrLiteralWs` | the string itself when it holds no tab, line feed or carriage return | `normalizeAttrLiteralWs_eq_fast` |
+| `RdfXml.findNsAttr` | an attribute's name is split and its prefix looked up only when the name ends with the wanted local part, which every match does | `findNsAttr_eq_fast`, `XML.endsWith_of_resolveAttributeName` |
+| `XML.scanWhile` | `@[specialize]`: no closure call per character | — (compiler attribute) |
+| `RdfXml.parseRdfXml` | `parseRdfXmlStream`, 3c.3 | `parseRdfXml_eq_stream` |
+
+`parseRdfXml` also computes the walk's fuel (`text.length + 2`) before the
+XML parse, so the document `String` is released while the characters are
+read.
+
+### 3c.3 The children of `rdf:RDF` walked as they are read
+
+`nodeElementList` takes the children of `rdf:RDF` one at a time and never
+looks at one again (`nodeElementList_eq_fold`: it is a left fold of
+`WalkSt.step`). `parseChildrenFold` is `XML.parseChildren` with the same
+branches and calls in the same order, but it hands each child to a step
+function instead of putting it on a list; `parseRootFold` reads the document
+element's start tag like `XML.parseElement` and, when the element is
+`rdf:RDF` ([7.2.8]), its children through `parseChildrenFold` with
+`WalkSt.step`. Every other document element ([7.2.2] doc: one node element)
+is read by `parseElement` and walked by `processDocument` as before.
+`XML.parseXMLNotes` is split into `documentPrologue` (declaration,
+section 4.3.3, `Misc*`, `[28] doctypedecl`) and `documentEpilog` (`Misc*` and
+the end of the text), which both paths call.
+
+Theorems (`Syntax/RdfXml.lean`, section "`parseRdfXml` without the element
+tree of the document element"):
+
+- `parseChildrenFold_eq`: from the fold of the children already read,
+  `parseChildrenFold` gives the fold of every child `parseChildren` reads,
+  with the same flags, notes, position and error;
+- `parseRootFold_eq`: the same for the document element (`rootResult`);
+- `processDocument_rootResult`: the walk of a streamed document element is
+  `processDocument` of that element;
+- `parseRdfXml_eq_stream` (`@[csimp]`): `parseRdfXml = parseRdfXmlStream` on
+  every text and base, errors included (an XML error still wins over an
+  RDF/XML error found earlier in the document).
+
+No element tree of the document is built: each child of `rdf:RDF` is freed
+after its step. The characters (8 bytes each) are still read into one array.
+Build-time guards (`RdfXmlTests.lean`) reach each branch: comments,
+processing instructions and text between node elements, an empty `rdf:RDF`,
+a node element as document element, a markup entity whose replacement text
+is a node element, an XML error after an RDF/XML error, content after the
+document element.
+
+### 3c.4 After
+
+Callgrind, the same commands: 25,000 triples 10,663 M to 3,400 M instructions
+(-68 percent); the first 1,001,141 bytes of the Cell Ontology 1,833 M to 943 M
+(-49 percent).
+
+Phases of the final binary (`l4query-phases FILE --rdfxml-op --stream`: the
+`stream` phase is `parseRdfXml` as compiled, characters, XML and grammar
+together); one process per phase for the peak; load 1.5 to 2; the harness
+holds the document `String` throughout, which the command line releases:
+
+| Input | read | chars (alone) | stream | nquads |
+| --- | --- | --- | --- | --- |
+| 100,000 triples | 0.04 s, 39 MB | peak 144 MB | 2.04 s, peak 158 MB | 2.09 s, peak 178 MB |
+| Cell Ontology | 0.04 s, 31 MB | peak 107 MB | 0.85 s, peak 127 MB | 1.21 s, peak 147 MB |
+
+The command line (`tools/sota-bench.py --workloads
+parse-rdfxml,parse-rdfxml-real`, 15:30 UTC, load 1.4 to 1.8, median of 3 to 5
+runs; wall time (CPU time), peak resident set in MiB; Oxigraph 0.5.11, Jena
+6.2.0, from the same run):
+
+| Row | Before (`e3c3aa01`, SOTA record) | After | Oxigraph | Jena `riot` | After / Oxigraph: time; peak resident set |
+| --- | --- | --- | --- | --- | --- |
+| 25,000 triples | 1.47 s (1.44 s), 151 MB | 0.45 s (0.40 s), 65 MB | 0.11 s (0.08 s), 19 MB | 1.47 s (3.19 s), 154 MB | 4.3; 3.4 |
+| 50,000 triples | 2.70 s (2.61 s), 281 MB | 0.84 s (0.79 s), 101 MB | 0.18 s (0.16 s), 19 MB | 1.69 s (3.87 s), 191 MB | 4.7; 5.3 |
+| 100,000 triples | 5.33 s (5.12 s), 671 MB | 2.23 s (2.12 s), 181 MB | 0.36 s (0.33 s), 19 MB | 2.16 s (5.08 s), 240 MB | 6.2; 9.5 |
+| Cell Ontology | 2.46 s (2.38 s), 479 MB | 1.09 s (1.02 s), 148 MB | 0.27 s (0.21 s), 19 MB | 1.64 s (3.99 s), 143 MB | 4.0; 7.7 |
+
+The three runs of the 100,000 row took 1.92 to 2.43 s with 0.35 to 0.90 s of
+system time (the kernel clears the 2 MB pages of about 180 MB); separate runs
+at load 5 took 1.66 s (1.58 s user, 0.04 s system). The peak is 14.4 bytes
+per input byte at 100,000 triples (48 to 49 before) and 16.3 for the Cell
+Ontology with `--out nquads` (52.6 before). The expected-failure mark of
+`tests/perf/sota_gate.sh` for `parse-rdfxml` 100,000 (issue 814) is removed:
+the gate reported UNEXPECTED PASS (time ratio 5.3, memory ratio 7.9 against
+the recorded Oxigraph row).
+
+### 3c.5 Costs still open
+
+| Cost | Cause | Where it is tracked |
+| --- | --- | --- |
+| 8 bytes of resident memory per document character: 105 MB of the 181 MB at 100,000 triples, 76 MB of the Cell Ontology's 148 MB; the row `cl-basic-parse-memory` of `tests/stack/owl_real_gate.sh` (at most 15 bytes per input byte) stays an expected failure at 15.7 | the XML layer reads an `Array Char` (one boxed `Char` per cell); every production of `XML/Parser.lean` and its theorems are stated over it. The repair is a reader over byte positions of the UTF-8 text | https://github.com/danbri/factoidal/issues/771 (open) |
+| `RDF.isIri` runs its `List Char` form in `RdfXml.lean`: 10.5 percent of the instructions at 25,000 triples | the `@[csimp]` `isIri_eq_isIriFast` is in `NTriples.lean`, which `RdfXml.lean` does not import | profile only |
+| `resolveIri` parses the base and the reference again for each `rdf:about` and `rdf:resource`: 21.9 percent | `RdfXml.resolveRef` calls `resolveIri st.base r` | profile only (the row is within 10 times Oxigraph) |
+| `splitQNameFast` 14.9 percent | one structure per character in the fold; called for each element name, each declaration and each attribute that passes the suffix test | profile only |
+| one `ElemNote` (about 56 bytes) per element is kept until the end of the stream | `parseChildrenFold` threads the parser's notes as `parseChildren` does, which the equality theorem needs | part of https://github.com/danbri/factoidal/issues/771 |
+| `ro-parse` of `tests/stack/owl_real_gate.sh`: 11,703 triples where rdflib reads 11,705 | an `xml:lang` reaches the next sibling property element; output unchanged by this work | https://github.com/danbri/factoidal/issues/329 |
+
+### 3c.6 Gates (2026-10-13, this change)
+
+Before is the binary of `main` `80dc8ffc` (built in a separate worktree),
+after is this branch merged with it.
+
+- `tools/lean-scoreboard.sh --only l4w3c-rdf11,l4w3c-rdf12,l4rdfxml-probe,l4xmlconf`:
+  rows and logs identical before and after, line for line. `l4w3c` RDF 1.1:
+  1041 pass, 0 fail (out of 1041), of which RDF/XML 166 pass, 0 fail (out of
+  166); RDF 1.2: 1358 pass, 0 fail (out of 1358), of which RDF/XML 31 pass, 0
+  fail (out of 31); the RDF/XML probe 132, 41 and 132 pass, 0 fail; XML 1.0
+  conformance (`l4xmlconf`): 1861 pass, 0 fail, 345 out of profile (out of
+  2206).
+- The other runners that read RDF/XML (`l4owl-probe-rl`, `-species`,
+  `-fs-input`, `l4grddl`, `l4rif`): rows identical; the logs differ only in
+  their `wall_ms` fields.
+- Differential, `l4factoidal parse FILE --format rdfxml --out nquads`, with no
+  base and with the base `http://example.org/dir/doc.rdf`, on the 308 `.rdf`,
+  `.owl` and `.rdfxml` files under `third_party/testing` (the XML suite
+  excluded) and `third_party/ontologies`: 616 of 616 runs identical in
+  standard output, standard error and exit status. The Gene Ontology basic
+  release of issue 771 (118,080,840 bytes, SHA-256 `13a907d2…50d9`): 1,283,913
+  statements with both binaries; count path 54.4 s and 5,036 MB before, 22.2
+  s and 1,904 MB after (load 9: the WebAssembly build ran beside it).
+- `tests/stack/owl_real_gate.sh --only cl-basic-parse-memory,ro-parse`: 0
+  pass, 0 fail, 2 expected-fail (out of 2): `cl-basic-parse-memory` 143 MB, 15.7
+  bytes per byte against the bound 15 (https://github.com/danbri/factoidal/issues/771);
+  `ro-parse` 11,703 triples (https://github.com/danbri/factoidal/issues/329).
+- `tests/perf/sota_gate.sh`: 79 pass, 0 fail (out of 79), no expected failure
+  left; before the mark was removed the `parse-rdfxml` 100,000 row reported
+  UNEXPECTED PASS.
+- `tests/stack/lean_scaling.sh`: 38 pass, 0 fail, 1 expected-fail (out of 39),
+  with two new rows: `parse-rdfxml` (12,500 to 50,000 triples, 0.199 to 0.951
+  s of CPU, ratio 4.8 for 4 times the input, bound 9) and
+  `parse-rdfxml-memory` (25,000 to 100,000 triples: 12.5 bytes of peak
+  resident set per input byte, bound 16; 55.1 on the binary of `main`, which
+  fails the row).
+- `tests/stack/run.sh --canary`: 97 pass, 0 fail (out of 97).
+- `Wasm/cli-smoke.sh`: 83 pass, 0 fail, 0 xfail (out of 83).
+  `Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `tools/lean-tail-recursion-audit.py --gate`: pass. `tools/lean-unbuilt-modules.py
+  --gate`: 768 of 768 modules reached. `tools/lean-hygiene-audit.py
+  --build-log`: clean (partial def 163, baseline 163; every `#print axioms`
+  `propext`, `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit
+  0 (1665 jobs). WebAssembly module rebuilt; `npm test`: 418 pass, 0 fail, 1
+  skipped (out of 419).
 
 ## 4. Rules that follow
 

@@ -146,7 +146,11 @@ XFAIL: dict[str, str] = {
     "pizza-consistent-address-space-3gb": "https://github.com/danbri/factoidal/issues/759",
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
-    # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte).
+    # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte); 143 MB
+    # (15.7 bytes per byte) after the RDF/XML repairs of 2026-10-13
+    # (https://github.com/danbri/factoidal/issues/814): 76 MB of it is the
+    # document characters, 8 bytes each (docs/designissues/
+    # 2026-09-03-rdf-parsing-strategy.md section 3c).
     "cl-basic-parse-memory": "https://github.com/danbri/factoidal/issues/771",
 }
 

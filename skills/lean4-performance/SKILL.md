@@ -617,6 +617,45 @@ ladder of slices without large literals was linear (34 µs per triple), so
 the cost was isolated to the large-literal region and that region packed
 alone; do that before reading code for a superlinear ingest.
 
+## A tree read whole, then walked once (RDF/XML, 2026-10-13)
+
+`l4factoidal parse --format rdfxml` took 13 to 15 times Oxigraph's time and
+held 48 to 49 bytes of resident memory per input byte
+(https://github.com/danbri/factoidal/issues/814,
+https://github.com/danbri/factoidal/issues/771; record:
+[`docs/designissues/2026-09-03-rdf-parsing-strategy.md`](../../docs/designissues/2026-09-03-rdf-parsing-strategy.md)
+section 3c). Measured with callgrind and `l4query-phases FILE --rdfxml-op`;
+100,000 triples went from 7.67 s and 687 MB to 1.66 to 2.23 s and 181 to 190
+MB, output bytes unchanged. Rules from it:
+
+- **A conversion of the whole document to `List Char` costs 24 bytes per
+  character, and each further pass over it as many again.** The XML layer
+  built the list, an array to read the declaration, a second list through the
+  line-end rewrite and the final array: 633 MB for 13 MB of text before the
+  first element. Build the array from the `String` in one `String.foldl` with
+  `Array.emptyWithCapacity s.utf8ByteSize`, and run a rewrite only when the
+  text holds a character it changes (`documentChars_eq_fast`).
+- **A name split per lookup is a cost per lookup.** `findNsAttr` split every
+  attribute name of the element (`String.toList`, two `String.ofList`, about
+  5,000 instructions) for each of about 20 lookups per element: 53 percent of
+  the instructions. Test a cheap necessary condition first (the name ends with
+  the local part; `findNsAttr_eq_fast`). A `String.foldl` with a structure
+  state still allocates per character (about 140 instructions per character in
+  `splitQNameFast`); call it less often rather than only faster.
+- **When a consumer takes the children of a node once, in order, fold them
+  while they are read.** `parseChildrenFold` is `XML.parseChildren` with each
+  child handed to a step function instead of put on a list. The equality
+  theorem generalises over the children already read: the fold state is
+  `acc.reverse.foldl f a0`, and each branch of the two definitions, written
+  with the same structure, closes by `cases h : <inner call>` and the
+  induction hypothesis (`parseChildrenFold_eq`). The `csimp` on the entry
+  point (`parseRdfXml_eq_stream`) puts every caller on the fold.
+- **A freed array still counts in the peak.** After the 105 MB character
+  array of the 100,000-triple file is freed, the resident set does not fall:
+  the allocator keeps the huge segment resident, and the N-Quads output and the
+  count's set of distinct triples are allocated beside it. Reduce what is live
+  while the big array is live, and measure the peak of the whole command.
+
 ## Values that two threads can reach (paid for 2026-10-13)
 
 `IO.asTask` marks everything its closure reaches as multi-threaded (MT), and

@@ -5,6 +5,7 @@ one at a time, with the resident memory after each.
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
     l4query-phases FILE --parse-op [--format F] [--stop-after PHASE]
     l4query-phases FILE --closure-op [--format F] [--stop-after PHASE]
+    l4query-phases FILE --rdfxml-op [--stream] [--stop-after PHASE]
     l4query-phases FILE --parse-cli [--format F] [--stop-after PHASE]
     l4query-phases --walk-check LIST
 
@@ -238,6 +239,68 @@ def closureOpMain (file format stop : String) : IO UInt32 := do
           report "output" out.utf8ByteSize
           pure 0
 
+def rdfxmlOpPhases : List String := ["read", "chars", "xml", "grammar", "stream", "nquads", "output"]
+
+/-- `--rdfxml-op`: the phases of `l4factoidal parse FILE --format rdfxml --out
+nquads` (https://github.com/danbri/factoidal/issues/814,
+https://github.com/danbri/factoidal/issues/771): `read` (the file as a
+`String`), `chars` (the XML layer's character array alone,
+`XML.documentChars`; V is its size; a process that stops here does not run
+`xml`), `xml` (`XML.parseXML`, the tokenizer and the element tree of XML 1.0;
+V is the number of children of the document element), `grammar`
+(`RdfXml.processDocument` with the fuel and state `RdfXml.parseRdfXml` gives
+it, the productions of RDF 1.1 XML Syntax section 7; V is the number of
+triples), `nquads` (`Dataset.toCanonicalNQuads` of the graph as the default
+graph; V is its length in bytes), `output` (that text written). With
+`--stream` the phases `xml` and `grammar` are replaced by `stream`:
+`RdfXml.parseRdfXml` as compiled, which runs `parseRdfXmlStream` and builds no
+element tree of the document element (`RdfXml.parseRdfXml_eq_stream`); V is
+the number of triples. -/
+def rdfxmlOpMain (file stop : String) (stream : Bool) : IO UInt32 := do
+  unless rdfxmlOpPhases.contains stop do
+    IO.eprintln s!"l4query-phases: unknown --rdfxml-op phase '{stop}' ({String.intercalate " | " rdfxmlOpPhases})"
+    return 2
+  let t0 ← IO.monoNanosNow
+  let report := report t0
+  report "start" 0
+  let text ← IO.FS.readFile file
+  report "read" text.utf8ByteSize
+  if stop == "read" then return 0
+  if stop == "chars" then
+    report "chars" (L4Factoidal.XML.documentChars false text).1.size
+    return 0
+  if stream then
+    -- `parseRdfXml`, which runs `parseRdfXmlStream` (no element tree).
+    match L4Factoidal.Syntax.RdfXml.parseRdfXml text with
+    | .error e => IO.eprintln e.msg; return 1
+    | .ok g =>
+      report "stream" g.length
+      if stop == "stream" then return 0
+      let nq := L4Factoidal.Syntax.Dataset.toCanonicalNQuads { default := g, named := [] }
+      report "nquads" nq.utf8ByteSize
+      if stop == "nquads" then return 0
+      IO.println nq
+      report "output" nq.utf8ByteSize
+      return 0
+  match L4Factoidal.XML.parseXML text with
+  | .error e => IO.eprintln s!"XML: {e.message}"; pure 1
+  | .ok doc =>
+    report "xml" doc.root.elementChildren.length
+    if stop == "xml" then return 0
+    let res := L4Factoidal.Syntax.RdfXml.processDocument (text.length + 2)
+      (L4Factoidal.Syntax.RdfXml.St.init "") doc.root
+    match res.st.err with
+    | some e => IO.eprintln e.msg; pure 1
+    | none =>
+      report "grammar" res.triples.length
+      if stop == "grammar" then return 0
+      let nq := L4Factoidal.Syntax.Dataset.toCanonicalNQuads { default := res.triples, named := [] }
+      report "nquads" nq.utf8ByteSize
+      if stop == "nquads" then return 0
+      IO.println nq
+      report "output" nq.utf8ByteSize
+      pure 0
+
 def parseCliPhases : List String := ["read", "chars", "parse", "normalize", "nquads", "output"]
 
 /-- `--parse-cli`: the phases of `l4factoidal parse FILE [--out nquads]` as
@@ -355,6 +418,8 @@ def main (args : List String) : IO UInt32 := do
     if rest.contains "--parse-op" then
       parseOpMain file ((flagValue rest "--format").getD "turtle")
         ((flagValue rest "--stop-after").getD "output")
+    else if rest.contains "--rdfxml-op" then
+      rdfxmlOpMain file ((flagValue rest "--stop-after").getD "output") (rest.contains "--stream")
     else if rest.contains "--parse-cli" then
       parseCliMain file ((flagValue rest "--format").getD "turtle")
         ((flagValue rest "--stop-after").getD "output")
