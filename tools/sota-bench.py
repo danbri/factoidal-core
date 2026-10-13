@@ -535,6 +535,8 @@ def parse_time_v(path):
             r["sys"] = float(line.split(":")[1])
         elif line.startswith("Maximum resident set size (kbytes):"):
             r["rss_kb"] = int(line.split(":")[1])
+        elif line.startswith("Minor (reclaiming a frame) page faults:"):
+            r["minflt"] = int(line.split(":")[1])
         elif line.startswith("Exit status:"):
             r["exit"] = int(line.split(":")[1])
         elif line.startswith("Command terminated by signal"):
@@ -610,6 +612,7 @@ def run_once(cmd, env, cap, tfile):
     else:
         status = "ok"
     return {"status": status, "wall": wall, "cpu": tv.get("user", 0.0) + tv.get("sys", 0.0),
+            "sys": tv.get("sys", 0.0), "minflt": tv.get("minflt"),
             "rss_kb": tv.get("rss_kb"), "out": o}
 
 
@@ -659,6 +662,8 @@ def measure(cmd, env, runs, cap, tdir, load_limit, load_wait, extra_on_spread):
         "spread": round((max(walls) - min(walls)) / statistics.median(walls), 3)
         if statistics.median(walls) > 0 else 0,
         "cpu_s": round(statistics.median([x["cpu"] for x in ok]), 4),
+        "sys_all_s": [x["sys"] for x in ok],
+        "minflt_all": [x["minflt"] for x in ok],
         "rss_mb": round(statistics.median([x["rss_kb"] or 0 for x in ok]) / 1024, 1),
         "rss_max_mb": round(max(x["rss_kb"] or 0 for x in ok) / 1024, 1),
         "out_lines": ok[-1]["out"]["lines"], "out_bytes": ok[-1]["out"]["bytes"],
@@ -792,9 +797,19 @@ def report(path):
     print("\n### Lean against the fastest reference engine\n")
     print("Ratio = Lean / reference (time: median wall time; memory: median peak resident "
           "set). Above 1, Lean is slower or larger.\n")
+    print("RSS above start: each engine's peak resident set minus the peak resident set "
+          "of its own process start (row `start`); a reference that holds less than 1 MB "
+          "above its start counts as 1 MB.\n")
     print("| Workload | Size | Reference (fastest) | Reference time, RSS | Lean variant | "
-          "Lean time, RSS | Time ratio | RSS ratio |")
-    print("|---|---:|---|---|---|---|---:|---:|")
+          "Lean time, RSS | Time ratio | RSS ratio | RSS above start, ratio |")
+    print("|---|---:|---|---|---|---|---:|---:|---:|")
+    start_rss = {e: r.get("rss_mb") for e, r in by.get("start", {}).get("0", {}).items()
+                 if r["status"] == "ok"}
+    start_of = {"lean-stream": "lean", "jena-owl-micro": "jena"}
+
+    def above(engine, rss):
+        base = start_rss.get(start_of.get(engine, engine))
+        return None if base is None or rss is None else rss - base
     flagged = []
     for wid in wids:
         if wid == "start":
@@ -809,25 +824,32 @@ def report(path):
                 lr = cell.get(le)
                 if lr is None:
                     continue
+                ar = None
                 if lr["status"] == "ok":
                     tr = lr["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else None
                     mr = lr["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else None
+                    la, ra = above(le, lr.get("rss_mb")), above(ref["engine"], ref.get("rss_mb"))
+                    if la is not None and ra is not None:
+                        ar = la / max(ra, 1.0)  # a reference under 1 MB above start counts as 1 MB
                     trs = f"{tr:.1f}" if tr is not None else "—"
                     mrs = f"{mr:.1f}" if mr is not None else "—"
-                    if le == "lean" and ((tr or 0) > 10 or (mr or 0) > 10):
-                        flagged.append((wid, size, ref["engine"], tr, mr))
+                    # memory counts only when the ratio above process start is also over 10
+                    if (tr or 0) > 10 or ((mr or 0) > 10 and (ar is None or ar > 10)):
+                        flagged.append((wid, size, le, ref["engine"], tr, mr))
                 else:
                     trs = f"> {lr.get('wall_s', 0) / ref['wall_s']:.0f} ({lr['status']})"
                     mrs = "—"
-                    if le == "lean":
-                        flagged.append((wid, size, ref["engine"], None, None))
+                    flagged.append((wid, size, le, ref["engine"], None, None))
+                ars = f"{ar:.1f}" if ar is not None else "—"
                 print(f"| {wid} | {size} | {ref['engine']} | {ref['wall_s']:.3f} s, "
-                      f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {mrs} |")
+                      f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {mrs} | {ars} |")
     print("\n### Rows over 10 (lean variant against the fastest reference)\n")
-    for wid, size, e, t, m in flagged:
+    print("A row is listed when the time ratio is over 10, or when the RSS ratio and the "
+          "RSS-above-start ratio are both over 10.\n")
+    for wid, size, le, e, t, m in flagged:
         ts = f"{t:.1f}" if t is not None else "not finished"
         ms = f"{m:.1f}" if m is not None else "—"
-        print(f"- {wid} {size} against {e}: time ratio {ts}, RSS ratio {ms}")
+        print(f"- {wid} {size}, {le} against {e}: time ratio {ts}, RSS ratio {ms}")
 
 
 def check(args):
