@@ -918,7 +918,49 @@ the recorded Oxigraph row).
 
 ### 3c.6 Gates (2026-10-13, this change)
 
-GATES_PLACEHOLDER
+Before is the binary of `main` `80dc8ffc` (built in a separate worktree),
+after is this branch merged with it.
+
+- `tools/lean-scoreboard.sh --only l4w3c-rdf11,l4w3c-rdf12,l4rdfxml-probe,l4xmlconf`:
+  rows and logs identical before and after, line for line. `l4w3c` RDF 1.1:
+  1041 pass, 0 fail (out of 1041), of which RDF/XML 166 pass, 0 fail (out of
+  166); RDF 1.2: 1358 pass, 0 fail (out of 1358), of which RDF/XML 31 pass, 0
+  fail (out of 31); the RDF/XML probe 132, 41 and 132 pass, 0 fail; XML 1.0
+  conformance (`l4xmlconf`): 1861 pass, 0 fail, 345 out of profile (out of
+  2206).
+- The other runners that read RDF/XML (`l4owl-probe-rl`, `-species`,
+  `-fs-input`, `l4grddl`, `l4rif`): rows identical; the logs differ only in
+  their `wall_ms` fields.
+- Differential, `l4factoidal parse FILE --format rdfxml --out nquads`, with no
+  base and with the base `http://example.org/dir/doc.rdf`, on the 308 `.rdf`,
+  `.owl` and `.rdfxml` files under `third_party/testing` (the XML suite
+  excluded) and `third_party/ontologies`: 616 of 616 runs identical in
+  standard output, standard error and exit status. The Gene Ontology basic
+  release of issue 771 (118,080,840 bytes, SHA-256 `13a907d2…50d9`): 1,283,913
+  statements with both binaries; count path 54.4 s and 5,036 MB before, 22.2
+  s and 1,904 MB after (load 9: the WebAssembly build ran beside it).
+- `tests/stack/owl_real_gate.sh --only cl-basic-parse-memory,ro-parse`: 0
+  pass, 0 fail, 2 expected-fail (out of 2): `cl-basic-parse-memory` 143 MB, 15.7
+  bytes per byte against the bound 15 (https://github.com/danbri/factoidal/issues/771);
+  `ro-parse` 11,703 triples (https://github.com/danbri/factoidal/issues/329).
+- `tests/perf/sota_gate.sh`: 79 pass, 0 fail (out of 79), no expected failure
+  left; before the mark was removed the `parse-rdfxml` 100,000 row reported
+  UNEXPECTED PASS.
+- `tests/stack/lean_scaling.sh`: 38 pass, 0 fail, 1 expected-fail (out of 39),
+  with two new rows: `parse-rdfxml` (12,500 to 50,000 triples, 0.199 to 0.951
+  s of CPU, ratio 4.8 for 4 times the input, bound 9) and
+  `parse-rdfxml-memory` (25,000 to 100,000 triples: 12.5 bytes of peak
+  resident set per input byte, bound 16; 55.1 on the binary of `main`, which
+  fails the row).
+- `tests/stack/run.sh --canary`: 97 pass, 0 fail (out of 97).
+- `Wasm/cli-smoke.sh`: 83 pass, 0 fail, 0 xfail (out of 83).
+  `Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out of 366).
+- `tools/lean-tail-recursion-audit.py --gate`: pass. `tools/lean-unbuilt-modules.py
+  --gate`: 768 of 768 modules reached. `tools/lean-hygiene-audit.py
+  --build-log`: clean (partial def 163, baseline 163; every `#print axioms`
+  `propext`, `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit
+  0 (1665 jobs). WebAssembly module rebuilt; `npm test`: 418 pass, 0 fail, 1
+  skipped (out of 419).
 
 ## 4. Rules that follow
 
