@@ -3030,6 +3030,25 @@ decided by refutation): type-inconsistency 50 of 77; type-positive-entailment
 32 of 55; type-consistency 32 of 55; syntax-dl 72 of 113. Unchecked
 rules: <https://github.com/danbri/factoidal/issues/764>.
 
+## Capability-aware planner: execution state machine (Lean 4, 2026-10-13)
+
+OKR batch 2, KR 2.4 ([#801](https://github.com/danbri/factoidal/issues/801)).
+Design record:
+[`designissues/2026-10-12-capability-aware-planner.md`](designissues/2026-10-12-capability-aware-planner.md)
+section 11. Module `formal/lean4/L4Factoidal/Planner/Exec.lean`; axiom
+audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
+`Quot.sound` only).
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `init_inv`, `next_inv`, `reachable_inv` — `Init → Inv`, `Inv ∧ Next → Inv'`, every reachable state satisfies `Inv` | ✅ PROVED (2026-10-13) | none beyond the state relation |
+| `reachable_sound` (I1) — no unmarked output row outside `Requirement.answers` over the declared graph | ✅ PROVED (2026-10-13) | `ExactSourcesSound`, the rewriting check of each family member, reachability |
+| `reachable_quota` (I2) — no call count above its call quota | ✅ PROVED (2026-10-13) | reachability |
+| `reachable_output` — a `done` output is the `Plan.run` of a family member (list equality) | ✅ PROVED (2026-10-13) | reachability |
+| `next_measure_lt`, `next_wf` — `Next` has no infinite chain | ✅ PROVED (2026-10-13) | none |
+| `stepExec_next`, `runFrom_reachable`, `runFrom_final`, `run_spec` — the driver takes `Next` steps and ends `done` or `stopped` | ✅ PROVED (2026-10-13) | `ExactSourcesSound` for the I1 part of `run_spec` |
+| Row quotas at run time; reuse of call results after a switch | ⬜ OPEN — expected-failure cases `exec-row-quota`, `exec-reuse-after-adaptation` of `l4planner-test` | — |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:

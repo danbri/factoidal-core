@@ -10,7 +10,7 @@ Record: [`docs/designissues/2026-10-12-capability-aware-planner.md`](../../docs/
 Epic: https://github.com/danbri/factoidal/issues/800.
 OKR batch 2, objective O2: https://github.com/danbri/factoidal/issues/801.
 
-Status 2026-10-12: KR 2.1 landed. Lean definitions in
+Status 2026-10-13: KR 2.1 to 2.4 landed. KR 2.1 landed 2026-10-12. Lean definitions in
 `formal/lean4/L4Factoidal/Planner/` (requirement, capability, mapping,
 plan, `Plan.exec`, rewriting check) with the soundness theorem
 `rewriting_sound`, the marker theorem `run_unmarked_of_allExact` and
@@ -54,6 +54,38 @@ through IO, Façade-X JSON, two required inputs (REST, MCP), tools with no
 RDF mapping (MCP, WebMCP), SERVICE over HTTP, fetch of a service
 description, SQL engines.
 
+KR 2.4 landed 2026-10-13: the execution state machine in plain Lean,
+`formal/lean4/L4Factoidal/Planner/Exec.lean` (record section 11). TLA+
+form: `Init`, eight actions (`Call`, `Receive`, `Fail`, `Retry`,
+`Advance`, `Adapt`, `Finish`, `Stop`) and `Next` as their disjunction.
+Inductive invariant `Inv` with `init_inv` and `next_inv`; for every
+reachable state (induction on traces) `reachable_sound` (I1: no unmarked
+output row outside the requirement's answers, from `rewriting_sound`),
+`reachable_quota` (I2: no call count above its call quota),
+`reachable_output` (a `done` output is the `Plan.run` of a member of the
+family). `next_wf`: every action decreases a lexicographic measure, so no
+trace is infinite. The driver `Exec.run` (fault schedule for the
+environment; retry, then switch to the next plan of the family, then
+stop) ends `done` or `stopped` (`run_spec`). `#print axioms`: the three
+standard axioms only (`Planner/ExecTests.lean`). `l4planner-test`:
+67 pass, 0 fail, 17 expected-fail (out of 84); `runtime-quota-adaptation`
+is an assertion now. Open, each with an expected-failure case naming
+https://github.com/danbri/factoidal/issues/801: row quotas at run time,
+reuse of call results after a switch.
+
+Veil (rule 7) was evaluated for KR 2.4 (record section 11): Veil `main`
+needs Lean v4.32.0 (this tree: v4.33.1; no v4.33 branch of Veil,
+lean-smt or Loom), and with its default `veil.smt.trust true` an SMT goal
+is closed by `sorryAx`. It is not a Lake dependency. Do not add it
+without the owner's decision; if it is added, keep it out of the
+`L4Factoidal` library and the wasm roots, set `veil.smt.trust false`, and
+gate each theorem on `#print axioms`.
+
+When you change `Exec.lean`: a new action is a new disjunct of `Next`, a
+new case of `next_inv` and of `next_measure_lt`, and a new branch of the
+driver with its `stepExec_next` case. If a driver branch is not a `Next`
+step, the proof of `stepExec_next` fails and `lake build` fails.
+
 When you add a source kind: write `describe` from the kind's own
 description document, attach the implementation separately, use the
 predicate form when the document names predicates, and add the kind to a
@@ -90,10 +122,11 @@ mixed catalog gives plans that are sound and incomplete (open item above).
    answer of an executed plan is an answer of the requirement over the
    declared relations. Completeness is stated per capability set. System
    behaviour (execution, adaptation, retries, quotas) is a Lean state machine
-   with stated invariants, in the manner of TLA+. Candidate framework: Veil
-   (Lean 4, CAV 2025, https://github.com/verse-lab/veil). Check toolchain
-   compatibility and that its SMT-discharged goals pass this tree's axiom
-   policy before adopting it.
+   with stated invariants, in the manner of TLA+ (`Planner/Exec.lean`).
+   Candidate framework: Veil (Lean 4, CAV 2025,
+   https://github.com/verse-lab/veil); evaluated 2026-10-13 and not adopted
+   (toolchain v4.32.0; SMT goals trusted by default), decision with the
+   owner (record section 11).
 
 8. Service descriptions (SPARQL 1.1 Service Description, MCP and WebMCP tool
    schemas, REST API descriptions) are the source of capability
