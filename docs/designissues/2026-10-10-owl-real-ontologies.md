@@ -20,7 +20,8 @@ F\* steps, `prlimit --as=6000000000` for both.
 - 📊 **Lean DL consistency:** decided on 7 of 10, all `true` (SKOS, FOAF,
   PROV-O, BFO, Pizza, wine with food, schema.org; 0.06 s to 44 s). RO and the
   Cell Ontology: TIMEOUT at 600 s (https://github.com/danbri/factoidal/issues/760;
-  HermiT: 29.8 s and 6.1 s). QUDT: OOM under the address-space cap; without it,
+  HermiT: 29.8 s and 6.1 s). ✅ Repaired 2026-10-12 (section 9): RO 9.9 s and
+  the Cell Ontology 13.3 s of CPU time, both `true`. QUDT: OOM under the address-space cap; without it,
   `false` in 72 s with 1.35 GB, and HermiT also finds QUDT 3.4.0 inconsistent.
 - 📊 **Lean DL entailment, 354 checks planned:** stated pairs 150 `true`
   (out of 150 run); unrelated pairs 124 decided (4 `true`, 120 `false`); 2
@@ -218,8 +219,8 @@ issue and its expected-failure row in `tests/stack/owl_real_gate.py`
 
 | What | Measured | Issue | Gate row |
 |---|---|---|---|
-| Lean `owl-consistent`, Cell Ontology (78,833 triples) | TIMEOUT at 600 s at load 6 to 8; in the gate run at load 3.5 it finished in 598 s with `true`. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
-| Lean `owl-consistent`, RO (11,703 triples) | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `cl-basic-consistent` covers the cause |
+| Lean `owl-consistent`, Cell Ontology (78,833 triples). ✅ Repaired 2026-10-12, section 9: 13.3 s CPU | TIMEOUT at 600 s at load 6 to 8; in the gate run at load 3.5 it finished in 598 s with `true`. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
+| Lean `owl-consistent`, RO (11,703 triples). ✅ Repaired 2026-10-12, section 9: 9.9 s CPU | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `ro-consistent` (added 2026-10-12) |
 | Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure` |
 | Lean `owl-consistent` and `owl-entails`, QUDT, under `prlimit --as=6000000000` | OOM at 27 s with 1.25 GB resident. The Lean runtime's mimalloc reserves 1 GiB arenas and two 1 GiB thread stacks; with `MIMALLOC_ARENA_RESERVE=64MiB` the same command finishes under the same cap (41 s, 1,378 MB) | https://github.com/danbri/factoidal/issues/759 | `qudt-consistent` |
 | Lean `parse --format rdfxml`, GO basic 2026-08-05 (118,080,840 bytes; fetched at run time, not vendored) | under `prlimit --as`: `std::bad_alloc` after 0.57 s. With the 6 GB resident-set watchdog: 1,283,913 triples, 52 s (32 s CPU), 4,919 MB peak, 43.7 bytes per document byte; the Cell Ontology: 52.6. F\* `count`: 33.6 s, 831 MB | https://github.com/danbri/factoidal/issues/771 | `cl-basic-parse-memory` (15 bytes per byte) |
@@ -414,9 +415,20 @@ All in the library; no verdict rule changed.
    `datatypeRangeClash_eq_ref`).
 4. **Constant-time role tables, and one TBox index per search.** The
    sub-property, super-property and inverse tables are hash maps
-   (`subMap`, `supMap`, `invMap`; each holds what the list lookup returned).
+   (`subMap`, `supMap`, `invMap`); each answers as the list lookup it
+   replaces, proved (`closureMap_getD`, `inverseMap_getD`,
+   `subsOf_initState`, `supsOf_initState`, `inversesOfSt_initState`).
    `onePass` takes the TBox index; `tableauConsistentTraced` builds it once,
    where `onePass` built it on every pass.
+
+Not changed, because the measurement did not point at them: the TBox is
+already applied by lazy unfolding (an axiom `A ⊑ C` fires on a node that
+carries `A`, `applyAxioms`; it is never a global `¬A ⊔ C`, and the
+propositional clash takes it as a clause only for the node it reads); the
+refuter has no blocking to tune (a witness-depth cap of 3 stands in for
+it); and with no branch point on either ontology, semantic branching and
+dependency-directed backjumping have nothing to act on. Told-subsumer
+caching would serve classification, which `owl-consistent` does not do.
 
 The certificate path is unchanged: `checkCert` re-derives every forward
 consequence itself (`saturate`), so a certificate never relied on a `∀`
