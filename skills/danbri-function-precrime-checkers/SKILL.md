@@ -902,35 +902,44 @@ Rules from this repair:
 
 `componentsOf` (`L4Factoidal/OWL/SyntaxDL.lean`, Structural Specification
 §11.2) adds one edge at a time to a list of components and looks for the
-component of each end with `List.find?` over the whole list. The repair
-carries the set of vertices that are already in a component
-(`componentsOfLoop`): when neither end of an edge is in it, no component
-contains either end (`find?_none_of_not_covered`), so the edge is a new
-two-vertex component without a scan (`addEdgeSeen_eq`). `addEdge_covered`
-states which vertices one step covers, and `componentsOf_eq_fast` (`csimp`)
-gives the same list of components in the same order, so the verdict
-`anonymous-individuals-not-a-forest` and the number of
-`anonymous-individual-tree-without-leaf` are unchanged for every input.
+component of each end with `List.find?` over the whole list. The repair is
+`componentsOfLoop`, which carries the set of vertices already in a component,
+with two fast paths, each an exact equality with `addEdge`:
 
-| `l4owl-species`, one run per point | 8,000 | 32,000 |
+- neither end is in a component: no component contains either end
+  (`find?_none_of_not_covered`), so the edge is a new two-vertex component
+  without a scan;
+- one end is the first vertex of the first component and the other end is in
+  no component (one step along a chain, in either direction): the components
+  are pairwise disjoint (`addEdge_disj`, proved for every step), so the first
+  component is the only one equal to itself and `filter` returns the rest
+  unchanged (`addEdge_head_left`, `addEdge_head_right`).
+
+`addEdge_covered` states which vertices one step covers; `addEdgeSeen_eq` and
+`componentsOfLoop_eq` carry the covered set and disjointness through the loop;
+`componentsOf_eq_fast` (`csimp`) gives the same components in the same order,
+so the verdict `anonymous-individuals-not-a-forest` and the number of
+`anonymous-individual-tree-without-leaf` are unchanged for every input. Other
+edges (a merge of two components, or an edge whose covered end is not first)
+still scan the list.
+
+| `l4owl-species`, minimum of 3 runs | 8,000 | 32,000 |
 |---|---:|---:|
-| n pairs `_:x p _:y`, before | 1.03 s | 15.71 s |
-| the same, after (minimum of 3) | 0.34 s | 1.57 s |
-| one chain of n blank nodes, before | 0.49 s | 9.18 s |
-| the same, after | 0.61 s | 13.67 s |
+| n pairs `_:x p _:y`, before (one run) | 1.03 s | 15.71 s |
+| the same, after the first fast path | 0.34 s | 1.57 s |
+| one chain of n blank nodes, before (one run) | 0.49 s | 9.18 s |
+| the same, after the first fast path (one run) | 0.61 s | 13.67 s |
+| the same, after the second fast path | 0.22 s | 0.81 s |
 
-The chain is still quadratic: every edge of a chain touches a vertex that is
-already in a component, so `addEdge` scans and filters the list. It is the
-expected-failure row `owl-species-bnode-chain` under issue 812, which stays
-open. A union-find with a theorem that its verdict and count equal
-`componentsOf`'s needs the invariant that the components are disjoint; that
-proof was not done here.
-
-Rule from this repair:
+Rules from this repair:
 
 - **A fast path that is exact needs only the facts of its own case.** The
-  covered-vertex set makes the new-pair case linear with one invariant (which
-  vertices are covered), and the theorem is an exact equality, so nothing
-  downstream changes. The other cases need the disjointness of the
-  components; state which shape the fast path covers, and keep a row for the
-  shape it does not.
+  first fast path needed one invariant (which vertices are covered) and made
+  the pairs row linear; the chain row stayed quadratic and was measured as
+  such before the second fast path, which needed one more invariant
+  (disjointness). Each fast path is an equality with `addEdge`, so nothing
+  downstream changed.
+- **Add a row for each shape of the data structure, not only the shape in
+  the issue.** The issue's row was disjoint pairs; a chain exercises the
+  other branch of `addEdge`, and passed the first repair's gate unnoticed
+  until it had its own row.

@@ -142,11 +142,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    32,000); after `componentsOf_eq_fast`, which skips the scans
                    for vertices in no component, 0.34 s and 1.57 s
   owl-species-bnode-chain  the same check over one chain of n blank nodes
-                   (`_:x0 p _:x1 . _:x1 p _:x2 ...`), 8,000 against 32,000.
-                   Expected failure, issue 812: each edge touches a vertex that
-                   is already in a component, so `addEdge` still scans and
-                   filters the component list (0.49 s and 9.18 s before the
-                   repair of the pairs row, 0.61 s and 13.67 s after)
+                   (`_:x0 p _:x1 . _:x1 p _:x2 ...`), 8,000 against 32,000:
+                   each edge touches a vertex that is already in a component.
+                   0.49 s and 9.18 s before issue 812; after, the first
+                   component is extended without a scan (`addEdge_head_left`,
+                   the components are disjoint): 0.22 s and 0.81 s
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -206,7 +206,6 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
     "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
-    "owl-species-bnode-chain": "https://github.com/danbri/factoidal/issues/812",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

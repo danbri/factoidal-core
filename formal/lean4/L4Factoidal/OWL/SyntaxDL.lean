@@ -824,7 +824,12 @@ the edge is a new two-vertex component without a scan (`addEdgeSeen_eq`).
 (`csimp`) runs the loop wherever `componentsOf` is called, with the same
 components in the same order, so the forest verdict and the number of trees
 without a leaf are those of `componentsOf`. An edge that touches a vertex
-already in a component still scans; a chain of n blank nodes is quadratic. -/
+already in a component, with the other end new, and the first vertex of the
+first component (one step along a chain, built in either direction) skips the
+scan and the `filter` too: the components are pairwise disjoint
+(`addEdge_disj`), so the first component is the only one equal to itself
+(`addEdge_head_left`, `addEdge_head_right`). Any other edge that touches a
+covered vertex still scans the component list. -/
 
 /-- A vertex is in some component. -/
 def Covered (comps : List (List String)) (v : String) : Prop := ∃ c ∈ comps, v ∈ c
@@ -921,11 +926,147 @@ theorem addEdge_covered {comps comps' : List (List String)} {a b : String}
       · exact ⟨_, List.mem_cons_self .., by simp⟩
 
 
-/-- `addEdge` with the set of covered vertices beside it: when neither end is
-covered, the two `find?` scans are skipped. -/
+/-- Two components share no vertex. -/
+def DisjL (c d : List String) : Prop := ∀ v, v ∈ c → v ∉ d
+
+/-- The components are pairwise disjoint. -/
+def Disj (comps : List (List String)) : Prop := comps.Pairwise DisjL
+
+theorem DisjL.symm {c d : List String} (h : DisjL c d) : DisjL d c :=
+  fun v hd hc => h v hc hd
+
+theorem pairwise_ne {l : List (List String)} (h : l.Pairwise DisjL) :
+    ∀ c ∈ l, ∀ d ∈ l, c ≠ d → DisjL c d := by
+  induction l with
+  | nil => intro c hc; simp at hc
+  | cons x rest ih =>
+    rw [List.pairwise_cons] at h
+    intro c hc d hd hne
+    rcases List.mem_cons.mp hc with hc1 | hc1 <;> rcases List.mem_cons.mp hd with hd1 | hd1
+    · exact absurd (hc1.trans hd1.symm) hne
+    · rw [hc1]; exact h.1 d hd1
+    · rw [hd1]; exact (h.1 c hc1).symm
+    · exact ih h.2 c hc1 d hd1 hne
+
+theorem not_mem_of_find?_none {comps : List (List String)} {a : String}
+    (h : comps.find? (fun c => c.contains a) = none) : ∀ c ∈ comps, a ∉ c := by
+  intro c hc hac
+  rw [List.find?_eq_none] at h
+  exact h c hc (by simpa using hac)
+
+theorem addEdge_disj {comps comps' : List (List String)} {a b : String}
+    (hd : Disj comps) (h : addEdge comps a b = some comps') : Disj comps' := by
+  unfold addEdge at h
+  simp only at h
+  unfold Disj at *
+  split at h
+  · rename_i x y hx hy
+    obtain ⟨hxm, hax⟩ := covered_of_find? hx
+    obtain ⟨hym, hby⟩ := covered_of_find? hy
+    split at h
+    · simp at h
+    · rename_i hxy
+      have hxy' : x ≠ y := fun e => hxy (by simp [e])
+      simp only [Option.some.injEq] at h
+      subst h
+      rw [List.pairwise_cons]
+      refine ⟨?_, hd.filter _⟩
+      intro c hc v hv hvc
+      simp only [List.mem_filter, Bool.and_eq_true, bne_iff_ne, ne_eq] at hc
+      rcases List.mem_append.mp hv with hv | hv
+      · exact pairwise_ne hd x hxm c hc.1 (fun e => hc.2.1 e.symm) v hv hvc
+      · exact pairwise_ne hd y hym c hc.1 (fun e => hc.2.2 e.symm) v hv hvc
+  · rename_i x hx hy
+    obtain ⟨hxm, hax⟩ := covered_of_find? hx
+    have hb := not_mem_of_find?_none hy
+    simp only [Option.some.injEq] at h
+    subst h
+    rw [List.pairwise_cons]
+    refine ⟨?_, hd.filter _⟩
+    intro c hc v hv hvc
+    simp only [List.mem_filter, bne_iff_ne, ne_eq] at hc
+    rcases List.mem_cons.mp hv with rfl | hv
+    · exact hb c hc.1 hvc
+    · exact pairwise_ne hd x hxm c hc.1 (fun e => hc.2 e.symm) v hv hvc
+  · rename_i y hx hy
+    obtain ⟨hym, hby⟩ := covered_of_find? hy
+    have ha := not_mem_of_find?_none hx
+    simp only [Option.some.injEq] at h
+    subst h
+    rw [List.pairwise_cons]
+    refine ⟨?_, hd.filter _⟩
+    intro c hc v hv hvc
+    simp only [List.mem_filter, bne_iff_ne, ne_eq] at hc
+    rcases List.mem_cons.mp hv with rfl | hv
+    · exact ha c hc.1 hvc
+    · exact pairwise_ne hd y hym c hc.1 (fun e => hc.2 e.symm) v hv hvc
+  · rename_i hx hy
+    have ha := not_mem_of_find?_none hx
+    have hb := not_mem_of_find?_none hy
+    simp only [Option.some.injEq] at h
+    subst h
+    rw [List.pairwise_cons]
+    refine ⟨?_, hd⟩
+    intro c hc v hv hvc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hv
+    rcases hv with rfl | rfl
+    · exact ha c hc hvc
+    · exact hb c hc hvc
+
+
+theorem filter_ne_self_of_disj {x : List String} {rest : List (List String)} {a : String}
+    (hd : Disj (x :: rest)) (hax : a ∈ x) :
+    rest.filter (fun c => c != x) = rest := by
+  rw [List.filter_eq_self]
+  intro c hc
+  have h := (List.pairwise_cons.mp hd).1 c hc
+  simp only [bne_iff_ne, ne_eq]
+  intro e
+  subst e
+  exact h a hax hax
+
+/-- A chain step: `a` is the first vertex of the first component and `b` is
+in no component. -/
+theorem addEdge_head_left {a b : String} {xs : List String} {rest : List (List String)}
+    (hd : Disj ((a :: xs) :: rest))
+    (hb : ((a :: xs) :: rest).find? (fun c => c.contains b) = none) :
+    addEdge ((a :: xs) :: rest) a b = some ((b :: a :: xs) :: rest) := by
+  have hfa : ((a :: xs) :: rest).find? (fun c => c.contains a) = some (a :: xs) := by
+    simp
+  unfold addEdge
+  simp only [hfa, hb]
+  rw [List.filter_cons]
+  simp only [bne_self_eq_false, Bool.false_eq_true, if_false]
+  rw [filter_ne_self_of_disj hd (List.mem_cons_self ..)]
+
+/-- The same step in the other direction: `b` is the first vertex of the
+first component and `a` is in no component. -/
+theorem addEdge_head_right {a b : String} {ys : List String} {rest : List (List String)}
+    (hd : Disj ((b :: ys) :: rest))
+    (ha : ((b :: ys) :: rest).find? (fun c => c.contains a) = none) :
+    addEdge ((b :: ys) :: rest) a b = some ((a :: b :: ys) :: rest) := by
+  have hfb : ((b :: ys) :: rest).find? (fun c => c.contains b) = some (b :: ys) := by
+    simp
+  unfold addEdge
+  simp only [hfb, ha]
+  rw [List.filter_cons]
+  simp only [bne_self_eq_false, Bool.false_eq_true, if_false]
+  rw [filter_ne_self_of_disj hd (List.mem_cons_self ..)]
+
+/-- `addEdge` with the set of covered vertices beside it. When neither end is
+covered, the two `find?` scans are skipped; when one end is the first vertex
+of the first component and the other is not covered (one step along a
+chain), the scan and the `filter` are skipped. -/
 def addEdgeSeen (comps : List (List String)) (seen : Std.HashSet String) (a b : String) :
     Option (List (List String)) :=
-  if !seen.contains a && !seen.contains b then some ([a, b] :: comps) else addEdge comps a b
+  if !seen.contains a && !seen.contains b then some ([a, b] :: comps)
+  else
+    match comps with
+    | (h :: xs) :: rest =>
+      if h == a && !seen.contains b then some ((b :: h :: xs) :: rest)
+      else if h == b && !seen.contains a then some ((a :: h :: xs) :: rest)
+      else addEdge comps a b
+    | _ => addEdge comps a b
 
 /-- `componentsOf` as a loop that carries the covered vertices. -/
 def componentsOfLoop : List (String × String) → List (List String) → Std.HashSet String →
@@ -937,29 +1078,43 @@ def componentsOfLoop : List (String × String) → List (List String) → Std.Ha
     | some comps' => componentsOfLoop rest comps' ((seen.insert a).insert b)
 
 theorem addEdgeSeen_eq {comps : List (List String)} {seen : Std.HashSet String} {a b : String}
-    (hs : ∀ v, seen.contains v = true ↔ Covered comps v) :
+    (hs : ∀ v, seen.contains v = true ↔ Covered comps v) (hd : Disj comps) :
     addEdgeSeen comps seen a b = addEdge comps a b := by
+  have hnc : ∀ v, seen.contains v = false →
+      comps.find? (fun c => c.contains v) = none := fun v hv =>
+    find?_none_of_not_covered (fun hc => by have := (hs v).mpr hc; simp_all)
   unfold addEdgeSeen
   split
   · rename_i h
     simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
-    have ha : ¬ Covered comps a := fun hc => by have := (hs a).mpr hc; simp_all
-    have hb : ¬ Covered comps b := fun hc => by have := (hs b).mpr hc; simp_all
     unfold addEdge
-    simp only [find?_none_of_not_covered ha, find?_none_of_not_covered hb]
-  · rfl
+    simp only [hnc a h.1, hnc b h.2]
+  · split
+    · rename_i h xs rest _
+      split
+      · rename_i hh
+        simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at hh
+        obtain ⟨rfl, hb⟩ := hh
+        exact (addEdge_head_left hd (hnc b hb)).symm
+      · split
+        · rename_i hh
+          simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at hh
+          obtain ⟨rfl, ha⟩ := hh
+          exact (addEdge_head_right hd (hnc a ha)).symm
+        · rfl
+    · rfl
 
 theorem componentsOfLoop_eq : ∀ (edges : List (String × String)) (comps : List (List String))
-    (seen : Std.HashSet String), (∀ v, seen.contains v = true ↔ Covered comps v) →
+    (seen : Std.HashSet String), (∀ v, seen.contains v = true ↔ Covered comps v) → Disj comps →
     componentsOfLoop edges comps seen = edges.foldlM (fun comps (a, b) => addEdge comps a b) comps
-  | [], comps, seen, _ => by simp [componentsOfLoop]
-  | (a, b) :: rest, comps, seen, hs => by
-    simp only [componentsOfLoop, List.foldlM_cons, addEdgeSeen_eq hs]
+  | [], comps, seen, _, _ => by simp [componentsOfLoop]
+  | (a, b) :: rest, comps, seen, hs, hd => by
+    simp only [componentsOfLoop, List.foldlM_cons, addEdgeSeen_eq hs hd]
     cases h : addEdge comps a b with
     | none => rfl
     | some comps' =>
       simp only
-      apply componentsOfLoop_eq
+      apply componentsOfLoop_eq _ _ _ _ (addEdge_disj hd h)
       intro v
       rw [addEdge_covered h v, Std.HashSet.contains_insert, Std.HashSet.contains_insert]
       simp only [Bool.or_eq_true, beq_iff_eq, hs v]
@@ -979,7 +1134,7 @@ def componentsOfFast (edges : List (String × String)) : Option (List (List Stri
 @[csimp] theorem componentsOf_eq_fast : @componentsOf = @componentsOfFast := by
   funext edges
   simp only [componentsOf, componentsOfFast]
-  exact (componentsOfLoop_eq edges [] ∅ (fun v => by simp [Covered])).symm
+  exact (componentsOfLoop_eq edges [] ∅ (fun v => by simp [Covered]) List.Pairwise.nil).symm
 
 #print axioms componentsOf_eq_fast
 
@@ -997,6 +1152,11 @@ private def foldComps (es : List (String × String)) : Option (List (List String
 #guard componentsOf [("a", "b"), ("a", "b")] == none
 #guard componentsOf [("a", "a")] == foldComps [("a", "a")]
 #guard componentsOf [("a", "a")] == some [["a", "a"]]
+#guard componentsOf [("b", "a"), ("c", "b"), ("d", "c")] == foldComps [("b", "a"), ("c", "b"), ("d", "c")]
+#guard componentsOf [("a", "b"), ("b", "c"), ("x", "y"), ("c", "d"), ("y", "z"), ("d", "x")] ==
+  foldComps [("a", "b"), ("b", "c"), ("x", "y"), ("c", "d"), ("y", "z"), ("d", "x")]
+#guard componentsOf [("a", "b"), ("b", "c"), ("c", "a")] == foldComps [("a", "b"), ("b", "c"), ("c", "a")]
+#guard componentsOf [("a", "b"), ("b", "c"), ("b", "a")] == none
 
 /-- Restrictions on the usage of anonymous individuals (§11.2). -/
 def anonymousIndividualViolations (g : Graph) (d : DeclIndex) : List String :=
