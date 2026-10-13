@@ -314,7 +314,7 @@ of `danbri/factoidal-core`, base commit `fb263d6f`.
 
 ### 9.1 Method
 
-`l4refute-profile FILE.nt [--trace] [--check]` (new,
+`l4refute-profile FILE.nt [--trace] [--check] [--goal CONCL.nt]` (new,
 `formal/lean4/Harness/RefuteProfile.lean`) runs what `owl-consistent` runs:
 the OWL 2 RL closure, the graph-level checks, the class-size counting rung,
 the TBox read, the initial state, and `OWL.Refute.search`. It calls the
@@ -322,8 +322,9 @@ library's phase functions in the order `search` calls them, with the same
 threaded budget, and times each one; every timed value is consumed by a
 counter before the second clock read (`skills/measuring-inference`, sections
 9 and 11), and the parts are printed beside the step total. `--check` runs
-`tableauConsistent` on the same closure and fails when the verdicts differ.
-It holds no OWL logic. It counts expansion steps (calls of `search`),
+`tableauConsistent` on the same closure and fails when the verdicts differ;
+`--goal` profiles the refutation `owl-entails` runs (the closure with the
+first negation goal of the conclusion appended). It holds no OWL logic. It counts expansion steps (calls of `search`),
 saturation passes, union and merge branch points and branches, nodes,
 labels and the largest label set, and the calls and time of each rule of a
 pass. The refuter has no blocking (a witness-depth cap stands in for it), so

@@ -435,7 +435,8 @@ re-measurement is worse than nothing.**
   applied to the DL regime), with time, memory and the open issues; § 9 is
   the phase profile of section 15.
 * `formal/lean4/Harness/RefuteProfile.lean` (`l4refute-profile FILE.nt
-  [--trace] [--check]`) — the refuter's phases, steps, branch points and
-  label counts on the OWL 2 RL closure of one file.
+  [--trace] [--check] [--goal CONCL.nt]`) — the refuter's phases, steps,
+  branch points and label counts on the OWL 2 RL closure of one file, or on
+  the refutation `owl-entails` runs for a conclusion.
 * `formal/fstar/RDF.Semantics.HypothesisWitness.fst` — theorem-vacuity
   witnesses.
