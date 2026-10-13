@@ -453,11 +453,10 @@ the closure is two thirds of it.
 
 The other ontologies of section 2 (`owl-consistent` wall time, before at
 load 5 to 9 and after at load 2 to 3): BFO 2.38 s to 0.14 s, PROV-O 1.33 s
-to 0.18 s, wine 21.9 s to 13.8 s; all verdicts unchanged (section 9.5). On
-wine the search is now the larger part (9.1 s: 19
-steps, 8 merge branch points, each step re-runs every rule on all 823
-nodes; the propositional and nominal clash checks are 3.9 s of it), of a
-profile total of 14.2 s.
+to 0.18 s, wine 21.9 s to 13.8 s. On wine the search is now the larger part:
+9.1 s of a profile total of 14.2 s, in 19 steps with 8 merge branch points,
+where every step re-runs every rule on all 823 nodes (the propositional and
+nominal clash checks are 3.9 s of it).
 
 ### 9.5 Gates
 

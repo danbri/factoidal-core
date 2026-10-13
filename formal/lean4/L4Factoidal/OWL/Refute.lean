@@ -3174,10 +3174,11 @@ def injectLazyRanges (ix : TBoxIndex) (st : RState) : RState × Bool :=
         let (s, ch) := addLabel a2.1 n.id d
         (s, a2.2 || ch)) acc) (st, false)
 
-/-- One saturation pass over every node and every label it carries. The
-    TBox index is built once per search (`tableauConsistentTraced`), not
-    once per pass. -/
-def onePass (ix : TBoxIndex) (g : Graph) (st : RState)
+/-- One saturation pass over every node and every label it carries, over
+    a prebuilt TBox index. `search` uses it with the index
+    `tableauConsistentTraced` builds once per search, where `onePass` built
+    one on every pass. -/
+def onePassIx (ix : TBoxIndex) (g : Graph) (st : RState)
     : RState × Bool :=
   let (st0, ch0) := injectFunctional st
   let (st1, chG) := injectGlobalAxioms ix.top st0
@@ -3191,6 +3192,13 @@ def onePass (ix : TBoxIndex) (g : Graph) (st : RState)
     let (s3, c3) := applyAxiomsEdges ix g byLabel.1 n.id
     let (s4, c4) := applyAxiomsConj ix s3 n.id
     (s4, byLabel.2 || c3 || c4)) (st1, ch1)
+
+/-- One saturation pass with every axiom applied eagerly, over an index
+    built from `tb` (`TBoxIndex.build`, no lazy range axioms). The search
+    does not use it; `l4owl-probe`'s per-pass timing does. -/
+def onePass (tb : List (ClassExpr × ClassExpr)) (g : Graph) (st : RState)
+    : RState × Bool :=
+  onePassIx (TBoxIndex.build tb) g st
 
 /-! ## The ≤-rule: merging witness successors
 
@@ -3503,7 +3511,7 @@ partial def search (ix : TBoxIndex) (g : Graph) (st : RState)
   | n + 1 =>
     if clashNodes g st then (.clash, n, wrap (.leaf st))
     else
-      let (st', changed) := onePass ix g st
+      let (st', changed) := onePassIx ix g st
       if changed then search ix g st' n wrap
       else if clashNodes g st' then (.clash, n, wrap (.leaf st'))
       else

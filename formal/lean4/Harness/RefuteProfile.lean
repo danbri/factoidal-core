@@ -90,7 +90,7 @@ def clashNodesP (r : IO.Ref Prof) (sink : IO.Ref Nat) (g : Graph) (st : RState) 
       return true
   pure false
 
-/-- The library's `onePass`, its parts timed apart. -/
+/-- The library's `onePassIx`, its parts timed apart. -/
 def onePassP (r : IO.Ref Prof) (sink : IO.Ref Nat) (ix : TBoxIndex)
     (g : Graph) (st : RState) : IO (RState × Bool) := do
   let (st0, ch0) ← timed r sink "pass.injectFunctional" obsSt (fun _ => injectFunctional st)
