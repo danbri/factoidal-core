@@ -1,7 +1,7 @@
 /-
 Harness.RefuteProfile — where the OWL DL tableau refuter spends its work.
 
-    l4refute-profile FILE.nt [--budget N] [--trace] [--check]
+    l4refute-profile FILE.nt [--budget N] [--trace] [--check] [--goal CONCL.nt]
 
 Reads one N-Triples or N-Quads file, takes the OWL 2 RL closure of its
 default graph (`OWL.RL.closureFix`, as `l4factoidal owl-consistent` does),
@@ -20,6 +20,10 @@ two verdicts differ. Each timed value is consumed by a counter before the
 second clock read (skills/measuring-inference, sections 9 and 11), and
 the parts are printed beside the step total they must sum to.
 
+`--goal CONCL.nt` profiles the refutation `l4factoidal owl-entails FILE
+CONCL` runs instead: the search on the closure of FILE with the first
+negation goal of CONCL appended (`OWL.Refute.negationGoals`).
+
 `--trace` prints one line per expansion step: depth, nodes, labels, the
 largest label set, expansion edges, and the step's time.
 
@@ -30,6 +34,7 @@ import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.RLClosure
 import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.OWL.NegationGoals
 
 namespace RefuteProfile
 
@@ -234,7 +239,7 @@ def ms (n : Nat) : String :=
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-      IO.eprintln "usage: l4refute-profile FILE.nt [--budget N] [--trace] [--check]"
+      IO.eprintln "usage: l4refute-profile FILE.nt [--budget N] [--trace] [--check] [--goal CONCL.nt]"
       pure 2
   | file :: rest =>
     let budget := ((flagValue rest "--budget").bind String.toNat?).getD 20000
@@ -246,8 +251,21 @@ def main (args : List String) : IO UInt32 := do
       | .ok ds => pure ds
       | .error e => throw (IO.userError s!"{file}: parse error at {e.pos}: {e.msg}")
     let input := ds.default
-    let closure ← timed r sink "handoff.closure" (·.length)
+    let closure0 ← timed r sink "handoff.closure" (·.length)
       (fun _ => L4Factoidal.OWL.RL.closureFix input)
+    let closure ← match flagValue rest "--goal" with
+      | none => pure closure0
+      | some gf => do
+        let gtext ← IO.FS.readFile gf
+        match parseNQuadsFast gtext with
+        | .error e => throw (IO.userError s!"{gf}: parse error at {e.pos}: {e.msg}")
+        | .ok gds =>
+          match negationGoals gds.default with
+          | some (goal :: more) =>
+              IO.println s!"goal.count {more.length + 1}"
+              IO.println s!"goal.triples {goal.length}"
+              pure (closure0 ++ goal)
+          | _ => throw (IO.userError s!"{gf}: no negation goal")
     let immediate ← timed r sink "handoff.immediate" obsB (fun _ => immediateInconsistency closure)
     let counting ← timed r sink "handoff.counting" obsB (fun _ => countingRefutes closure)
     let tb ← timed r sink "handoff.collectAxioms" (·.length) (fun _ => collectAxioms closure)
