@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# FILTER in OPTIONAL whose expression raises an error ("abc" + 1): that extension is removed, the left row stays.
+SELECT ?s ?a WHERE { ?s ex:name ?n OPTIONAL { ?s ex:age ?a FILTER(?a + 1 > 0) } }

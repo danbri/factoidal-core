@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY DESC the optional variable: unbound last.
+SELECT ?s ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n } } ORDER BY DESC(?n) LIMIT 2

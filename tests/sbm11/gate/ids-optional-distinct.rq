@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# DISTINCT over an optional variable: unbound is one value.
+SELECT DISTINCT ?f WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } }

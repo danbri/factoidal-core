@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# FILTER in OPTIONAL (the LeftJoin condition): true for 72, "072" and 72.0, false for 71, an error for "abc" (SPARQL 1.1 section 17.2: the extension is removed).
+SELECT ?s ?n ?a WHERE { ?s ex:name ?n OPTIONAL { ?s ex:age ?a FILTER(?a > 71) } }

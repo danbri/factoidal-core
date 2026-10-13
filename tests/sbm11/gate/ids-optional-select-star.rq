@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# SELECT * with a blank node reached through the OPTIONAL (c knows _:x, named "anon").
+SELECT * WHERE { ?s ex:knows ?o OPTIONAL { ?o ex:name ?n } }
