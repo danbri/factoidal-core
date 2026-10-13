@@ -123,3 +123,29 @@ a temporary ibk5 collection and serves it at `/ds/...`. Live W3C run after
 the change: 50 pass, 0 fail (out of 50). Mapping, tested endpoints and the
 open gaps (issues 829 to 834 of danbri/factoidal):
 `npm/factoidal/docs/fuseki-replacement.md`.
+
+## Update 2026-10-13: dataset-level Graph Store, RDF/XML, administration API
+
+Three Fuseki gaps closed in Lean (`StoreEndpoint.lean`, `GraphStoreService.lean`,
+`Wasm/Ops/StoreServe.lean`); the Node host is unchanged.
+
+- Graph Store endpoint with no graph parameter
+  (https://github.com/danbri/factoidal/issues/829): `datasetOutcome`. GET
+  negotiates over N-Quads, TriG, then the triple syntaxes; a triple syntax in
+  `Accept` answers the default graph. PUT of N-Quads or TriG replaces the
+  dataset, POST adds to it with the blank nodes of the document renamed apart
+  from the stored ones once for the whole document (`mergeDataset`). POST of a
+  triple syntax is still Graph Store Protocol section 5.5 (new graph). PUT of a
+  triple syntax is 415, DELETE is 405 (Fuseki defines no DELETE of the dataset;
+  that is the implementing session's recollection of Fuseki's `REST_Quads_RW`, not
+  re-checked against a Fuseki instance). Every write goes through
+  `commitOutcome`, so the write scope and the delta log apply as for an update.
+- RDF/XML (https://github.com/danbri/factoidal/issues/830):
+  `GraphStoreService.graphResponse` negotiates `application/rdf+xml` through
+  `Syntax.RdfXmlWrite.graphToRdfXml`. A graph with no RDF/XML form falls back
+  to the next acceptable syntax, else 406. It is last in the server's order, so
+  `*/*` still answers Turtle.
+- Administration API (https://github.com/danbri/factoidal/issues/831):
+  `adminOutcome`, read-only. The request counters are a `Stats` value in the
+  handle's state; `storeServeRequest` records each answered service request
+  and passes the counters, the start time and the uptime in `ServerInfo`.
