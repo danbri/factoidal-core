@@ -660,7 +660,12 @@ N-Triples string at line 50,000). A case agrees when the exit status and
 standard error are the same and, when OLD succeeds, standard output is the
 same byte for byte.
 
-DIFFRESULT
+Result, 2026-10-13, OLD `d371f1d9` against the final binary of this change:
+21,012 agree, 0 differ (out of 21,012 cases: 6,992 W3C cases at each of the
+three chunk sizes, and 36 generated; OLD succeeded in 14,562 and refused in
+6,450). The W3C files are smaller than one 65,536-byte chunk, so the 7-byte and
+1-byte runs and the generated files are the ones that cross chunk
+boundaries.
 
 The largest inputs of the state-of-the-art table, compared by hand the same
 way (both outputs and the count): `nt-400000.nt`, `mixed-nt-400000.nt`,
