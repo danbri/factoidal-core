@@ -1401,3 +1401,7 @@ L4Factoidal_JSON_parseObjectR  # (b) as parseValueR: one frame per object nestin
 L4Factoidal_JSON_parseMembersR  # (b) as parseValueR; the members of one object are a self tail call (loop)
 L4Factoidal_JSON_parseArrayR  # (b) as parseValueR: one frame per array nesting level
 L4Factoidal_JSON_parseItemsR  # (b) as parseValueR; the items of one array are a self tail call (loop)
+# --- Added 2026-10-12, refuter scaling (https://github.com/danbri/factoidal/issues/760, OKR batch 1 KR 3.3)
+L4Factoidal_OWL_Refute_ceSubHashesInto  # (b) class-expression nesting of one TBox axiom or initial label (lazyOccurrences); operand lists are tail calls
+L4Factoidal_OWL_Refute_ceListSubHashesInto  # (b) as ceSubHashesInto: the operands of one intersection or union are a self tail call (loop); one frame per nesting level
+RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 on the real ontologies measured
