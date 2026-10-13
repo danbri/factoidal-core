@@ -754,6 +754,54 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# SPARQL-OPT-FILTER-SCOPE (https://github.com/danbri/factoidal/issues/815)
+# -- a FILTER in an OPTIONAL group is evaluated on the group's row only, so a
+# variable of the left side reads as unbound. SPARQL 1.1 section 18.2.2.5
+# makes `OPTIONAL { P FILTER(F) }` LeftJoin(G, P, F), with F evaluated on the
+# merged solution (section 18.5). The Lean reference evaluator (and the F*
+# engine) evaluate LeftJoin(G, Filter(F, P), true). Data and query:
+# fixtures/sparql-815-optional-filter-scope.{ttl,rq}; ex:a has age 72, so its
+# name is the OPTIONAL extension; ex:c has age 71, so it has none.
+# Probe: the Lean CLI (`l4factoidal query`), rows from sparql_rows.py.
+#   XFAIL  the rows without ?n for ex:a (the defect)
+#   XPASS  the rows of section 18.2.2.5 (?n "Alice" for ex:a): fixed; admit a
+#          group FILTER over a left-side variable on the SBM11 id path
+#          (IdQuery.flattenOptional), retire this case, close the issue
+#   ERROR  any other answer
+# ---------------------------------------------------------------------
+S815_TITLE="FILTER in OPTIONAL does not see left-side variables"
+XSD_I="<http://www.w3.org/2001/XMLSchema#integer>"
+EXPECT815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
+?a=\"72\"^^${XSD_I} ?n=\"Alice\" ?s=<http://ex.org/a>"
+WRONG815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
+?a=\"72\"^^${XSD_I} ?s=<http://ex.org/a>"
+if [ -n "$SPARQL_PROBE_ERR" ]; then
+  record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR "$SPARQL_PROBE_ERR"
+else
+  d="${WORKDIR}/q815"; mkdir -p "$d"
+  printf '%s\n' "$EXPECT815" > "$d/expected.rows"
+  printf '%s\n' "$WRONG815" > "$d/wrong.rows"
+  lrc=0
+  timeout 120 "$L4_BIN" query "${FIXTURES}/sparql-815-optional-filter-scope.ttl" --format turtle \
+      --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" \
+      < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
+  if [ "$lrc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "Lean run failed (exit ${lrc}): $(tr "\n" " " < "$d/lean.err" | cut -c1-100)"
+  elif cmp -s "$d/lean.rows" "$d/expected.rows"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XPASS \
+      "the Lean CLI now binds ?n for ex:a -- defect appears FIXED"
+  elif cmp -s "$d/lean.rows" "$d/wrong.rows"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XFAIL \
+      "OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a"
+  else
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "the Lean CLI answers neither the expected nor the recorded rows: $(head -n 1 "$d/lean.rows" | cut -c1-100)"
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # NX-1 (https://github.com/danbri/factoidal/issues/777) -- the Lean native
 # crypto externs (HACL*, `@[extern]` + `opaque`) have no stated equivalence
 # to the pure Lean functions. `sha256Hacl` is opaque, so no Lean theorem can
