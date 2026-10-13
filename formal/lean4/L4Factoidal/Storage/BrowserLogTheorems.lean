@@ -16,9 +16,9 @@ that its host relies on.
    the log decodes to exactly the batches before it, and the decoder reports
    the bytes of that record. `parseDeltaBatch_take` shows that a record cut
    short at any byte does not verify, so `decode_encodeLog_cut` covers every
-   torn write. A record with a changed body byte fails its checksum; the
-   build-time checks of `BrowserLog` show one such case, and no theorem
-   states it for every byte yet.
+   torn write. `parseDeltaBatch_body_byte` shows that a record with one
+   body byte changed after the write does not verify (the checksum), and
+   `decode_encodeLog_byte` gives the decode of such a log.
 5. `merge_encodeLog`: a merge of a log equals applying its batches one by one,
    in order; `merge_encodeLog_torn` the same for a log with a torn last
    record; `merge_encodeLog_append` gives an incremental merge.
@@ -441,6 +441,103 @@ theorem parseDeltaBatch_take (b : DeltaBatch) (frame : List UInt8) (m : Nat)
   simp only [List.length_take, List.length_nil] at hl hl'
   omega
 
+/-! ### The checksum detects one changed body byte -/
+
+private theorem foldl_sum (a : UInt32) (l : List UInt8) :
+    l.foldl (fun acc b => acc + b.toUInt32) a =
+      a + l.foldl (fun acc b => acc + b.toUInt32) 0 := by
+  induction l generalizing a with
+  | nil => simp
+  | cons x xs ih =>
+      simp only [List.foldl_cons]
+      rw [ih (a + x.toUInt32), ih (0 + x.toUInt32)]
+      simp [UInt32.add_assoc]
+
+/-- The checksum of bytes with one byte in the middle. -/
+theorem simpleChecksum_middle (p q : List UInt8) (x : UInt8) :
+    simpleChecksum (p ++ x :: q) = simpleChecksum p + x.toUInt32 + simpleChecksum q := by
+  unfold simpleChecksum
+  rw [List.foldl_append, List.foldl_cons, foldl_sum]
+
+/-- Two byte sequences that differ in one byte have different checksums: the
+sum moves by the difference of the two bytes, which is not 0 modulo 2^32. -/
+theorem simpleChecksum_ne_of_byte (p q : List UInt8) (x y : UInt8) (hxy : x ≠ y) :
+    simpleChecksum (p ++ x :: q) ≠ simpleChecksum (p ++ y :: q) := by
+  intro h
+  rw [simpleChecksum_middle, simpleChecksum_middle] at h
+  have k : x.toUInt32 + (simpleChecksum p + simpleChecksum q) =
+      y.toUInt32 + (simpleChecksum p + simpleChecksum q) := by
+    have e1 : simpleChecksum p + x.toUInt32 + simpleChecksum q =
+        x.toUInt32 + (simpleChecksum p + simpleChecksum q) := by
+      rw [UInt32.add_comm (simpleChecksum p) x.toUInt32, UInt32.add_assoc]
+    have e2 : simpleChecksum p + y.toUInt32 + simpleChecksum q =
+        y.toUInt32 + (simpleChecksum p + simpleChecksum q) := by
+      rw [UInt32.add_comm (simpleChecksum p) y.toUInt32, UInt32.add_assoc]
+    rw [← e1, ← e2, h]
+  have k2 := congrArg (fun z => z - (simpleChecksum p + simpleChecksum q)) k
+  simp only [UInt32.add_sub_cancel] at k2
+  exact hxy (UInt8.toUInt32_inj.mp k2)
+
+/-- A DLB1 record with one body byte changed after the write does not verify:
+the length and checksum fields are those of the written body `p ++ x :: q`,
+the body bytes read are `p ++ y :: q`, and the sums differ. -/
+theorem parseDeltaBatch_body_byte (p q rest : List UInt8) (x y : UInt8) (hxy : x ≠ y)
+    (hlen : (p ++ x :: q).length < UInt32.size) :
+    parseDeltaBatch (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat (p ++ x :: q).length) ++ (p ++ y :: q) ++
+      writeU32LE (simpleChecksum (p ++ x :: q)) ++ rest) = none := by
+  -- `body` is what was written; `body'` is what is read back.
+  generalize hb : p ++ x :: q = body at hlen ⊢
+  have hlen' : (p ++ y :: q).length = body.length := by rw [← hb]; simp
+  have hne : simpleChecksum body ≠ simpleChecksum (p ++ y :: q) := by
+    rw [← hb]; exact simpleChecksum_ne_of_byte p q x y hxy
+  generalize hb' : p ++ y :: q = body' at hlen' hne ⊢
+  have hmagic : readU32LE (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest) 0 =
+      some deltaBatchMagic := by
+    simp only [List.append_assoc]
+    exact readU32LE_writeU32LE_append _ _
+  have hver : readU32LE (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest) 4 =
+      some deltaBatchVersion := by
+    have h4 : (writeU32LE deltaBatchMagic).length = 4 := writeU32LE_length _
+    have := readU32LE_append_writeU32LE (writeU32LE deltaBatchMagic) deltaBatchVersion
+      (writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest)
+    rw [h4] at this
+    simpa [List.append_assoc] using this
+  have hlenB : readU32LE (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest) 8 =
+      some (UInt32.ofNat body.length) := by
+    have h8 : (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion).length = 8 := by simp
+    have := readU32LE_append_writeU32LE (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion)
+      (UInt32.ofNat body.length) (body' ++ writeU32LE (simpleChecksum body) ++ rest)
+    rw [h8] at this
+    simpa [List.append_assoc] using this
+  have hdrop12 : (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest).drop 12 =
+      body' ++ writeU32LE (simpleChecksum body) ++ rest := by
+    have hgroup : writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+        writeU32LE (UInt32.ofNat body.length) ++ body' ++ writeU32LE (simpleChecksum body) ++ rest =
+        (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+          writeU32LE (UInt32.ofNat body.length)) ++
+          (body' ++ writeU32LE (simpleChecksum body) ++ rest) := by
+      simp [List.append_assoc]
+    rw [hgroup]
+    have h12 : (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+        writeU32LE (UInt32.ofNat body.length)).length = 12 := by simp
+    rw [← h12, List.drop_left]
+  have htake : (body' ++ writeU32LE (simpleChecksum body) ++ rest).take body.length = body' := by
+    rw [← hlen', List.append_assoc, List.take_left]
+  have hchk : readU32LE (body' ++ writeU32LE (simpleChecksum body) ++ rest) body.length =
+      some (simpleChecksum body) := by
+    rw [← hlen']; exact readU32LE_append_writeU32LE _ _ _
+  have hne' : (simpleChecksum body != simpleChecksum body') = true := by
+    simpa [bne_iff_ne] using hne
+  rw [parseDeltaBatch]
+  simp only [bind, Option.bind, hmagic, if_false,
+    hver, hlenB, hdrop12, u32_toNat_ofNat_of_lt hlen, htake, List.length_take,
+    hchk, hne', if_true, ite_self]
+
 /-! ## 4. Decode inverts encode; a log with a torn last record -/
 
 /-- Any fuel at least the byte length gives the same decode. -/
@@ -597,6 +694,22 @@ theorem decode_encodeLog_cut (bs : List DeltaBatch) (b : DeltaBatch)
     decode (bytes ++ frame.take m) = { batches := bs, rest := frame.take m } :=
   decode_encodeLog_torn bs bytes (frame.take m) h (parseDeltaBatch_take b frame m hb hm)
 
+/-- The same in a log: when the last record has one body byte changed, the log
+decodes to exactly the batches before it. -/
+theorem decode_encodeLog_byte (bs : List DeltaBatch) (bytes p q : List UInt8) (x y : UInt8)
+    (h : encodeLog? bs = some bytes) (hxy : x ≠ y)
+    (hlen : (p ++ x :: q).length < UInt32.size) :
+    decode (bytes ++ (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+      writeU32LE (UInt32.ofNat (p ++ x :: q).length) ++ (p ++ y :: q) ++
+      writeU32LE (simpleChecksum (p ++ x :: q)))) =
+    { batches := bs,
+      rest := writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+        writeU32LE (UInt32.ofNat (p ++ x :: q).length) ++ (p ++ y :: q) ++
+        writeU32LE (simpleChecksum (p ++ x :: q)) } := by
+  apply decode_encodeLog_torn bs bytes _ h
+  have := parseDeltaBatch_body_byte p q [] x y hxy hlen
+  rwa [List.append_nil] at this
+
 /-! ## 5. Merge -/
 
 theorem applyBatches_nil (ds : Dataset) : applyBatches ds [] = ds := rfl
@@ -668,6 +781,8 @@ theorem parseLog_header_append (log : List UInt8) :
 #print axioms decode_encodeBatch
 #print axioms decode_encodeLog_torn
 #print axioms decode_encodeLog_cut
+#print axioms parseDeltaBatch_body_byte
+#print axioms decode_encodeLog_byte
 #print axioms merge_encodeLog
 #print axioms merge_encodeLog_torn
 #print axioms merge_encodeLog_append

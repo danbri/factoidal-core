@@ -66,34 +66,36 @@ private def hexNibble? (c : UInt8) : Option Nat :=
 private def isLogSpace (c : UInt8) : Bool :=
   c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09
 
-/-- The hex reader, as a loop over the UTF-8 bytes of the text: one character
-in each iteration; `hi` is a pending high digit; `acc` holds the bytes read,
-the last one first. -/
+/-- The hex reader, as a loop over the UTF-8 bytes of the text, from the LAST
+byte to the first, so that the byte list is built in order with no reversal
+(the log can be megabytes). `i` is the number of text bytes not read yet;
+`lo` is a pending low digit; `acc` holds the bytes read, in log order. The
+fuel is the text size plus one, and `i` decreases in each iteration. -/
 private def logHexGo (text : ByteArray) : Nat → Nat → Option Nat → List UInt8 →
     Except String (List UInt8)
-  | 0, _, none, acc => .ok acc.reverse
-  | 0, _, some _, _ => .error "the log text ends inside a byte (an odd number of hexadecimal digits)"
-  | fuel + 1, i, hi, acc =>
-    if h : i < text.size then
-      let c := text[i]
-      match hexNibble? c, hi with
-      | some lo, some h' => logHexGo text fuel (i + 1) none (UInt8.ofNat (h' * 16 + lo) :: acc)
-      | some d, none => logHexGo text fuel (i + 1) (some d) acc
+  | 0, _, _, _ => .error "the log text reader ran out of fuel"
+  | fuel + 1, i, lo, acc =>
+    match i with
+    | 0 =>
+      match lo with
+      | none => .ok acc
+      | some _ => .error "the log text has an odd number of hexadecimal digits"
+    | j + 1 =>
+      let c := text.get! j
+      match hexNibble? c, lo with
+      | some hi, some l => logHexGo text fuel j none (UInt8.ofNat (hi * 16 + l) :: acc)
+      | some d, none => logHexGo text fuel j (some d) acc
       | none, none =>
-        if isLogSpace c then logHexGo text fuel (i + 1) none acc
-        else .error s!"the log text has a character that is not a hexadecimal digit at byte {i}"
+        if isLogSpace c then logHexGo text fuel j none acc
+        else .error s!"the log text has a character that is not a hexadecimal digit at byte {j}"
       | none, some _ =>
-        .error s!"the log text has a lone hexadecimal digit before byte {i}"
-    else
-      match hi with
-      | none => .ok acc.reverse
-      | some _ => .error "the log text ends inside a byte (an odd number of hexadecimal digits)"
+        .error s!"the log text has a lone hexadecimal digit after byte {j}"
 
 /-- The bytes of a log from its hexadecimal text. White space between two
 bytes is ignored. -/
 def logBytesOfHex (text : String) : Except String (List UInt8) :=
   let bytes := text.toUTF8
-  logHexGo bytes (bytes.size + 1) 0 none []
+  logHexGo bytes (bytes.size + 1) bytes.size none []
 
 /-- The decimal text of a seq or epoch field. -/
 private def natArg (op what text : String) : Except String Nat :=
@@ -234,6 +236,8 @@ private def recDelEve : String :=
 #guard has (deltaLogEncode "INSERT DATA {" "0" "0") "parse error"
 #guard has (deltaLogDecode "zz") "not a hexadecimal digit"
 #guard has (deltaLogDecode "444c4") "odd number of hexadecimal digits"
+#guard (match logBytesOfHex "0a ff\n10" with | .ok bs => bs == [0x0a, 0xff, 0x10] | .error _ => false)
+#guard (match logBytesOfHex "" with | .ok bs => bs.isEmpty | .error _ => false)
 #guard has (deltaLogDecode "4 4") "lone hexadecimal digit"
 #guard has (deltaLogMerge "not n-quads" "") "\"ok\":false"
 

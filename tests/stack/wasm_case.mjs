@@ -31,6 +31,8 @@ const CASES = {
   'sparql-nested': () => ['queryDataset', readArgs('args-sparql-nested.json')],
   'sparql-order-limit': () => ['queryDataset', readArgs('args-sparql-order-limit.json')],
   'manifest': () => ['storeManifestInspect', readArgs('manifest-args.json')],
+  'delta-log-decode': () => ['deltaLogDecode', readArgs('args-delta-log-decode.json')],
+  'delta-log-merge': () => ['deltaLogMerge', readArgs('args-delta-log-merge.json')],
 };
 
 const out = { case: caseName, route: 'wasm' };
