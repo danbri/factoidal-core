@@ -77,6 +77,7 @@ import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
+import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
 import Std.Data.HashMap
@@ -556,12 +557,23 @@ structure ScanStats where
   framesRead : Nat := 0
   bytesRead : Nat := 0
   rowsOut : Nat := 0
+  /-- a scan with candidates (issue 809): selected blocks that no candidate
+      can match (`Sip.mayHold`), not read -/
+  sipSkipped : Nat := 0
+  /-- a scan with candidates: join-key values tested against the candidates
+      (the rows of the key range of every block read) -/
+  keysTested : Nat := 0
+  /-- a scan with candidates: rows whose other needed columns were decoded
+      (the rows whose join key is a candidate) -/
+  rowsGathered : Nat := 0
   deriving Repr, Inhabited
 
 def ScanStats.add (a b : ScanStats) : ScanStats :=
   { blocksRead := a.blocksRead + b.blocksRead, blocksSelected := a.blocksSelected + b.blocksSelected,
     blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
-    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut }
+    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut,
+    sipSkipped := a.sipSkipped + b.sipSkipped, keysTested := a.keysTested + b.keysTested,
+    rowsGathered := a.rowsGathered + b.rowsGathered }
 
 /-! ## The store -/
 
@@ -591,6 +603,12 @@ structure Store (m : Type → Type) where
       driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
       it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
   scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
+  /-- issue 809: the right scan of a merge join takes the left values of the
+      join variable as candidates when `k × left rows < estimate` for
+      `sipFactor = some k` (`sipRule`; 16 by default, 0 whenever the shape
+      allows it: `l4sbm11 query --sip always`); `none` never
+      (`--sip off`). -/
+  sipFactor : Option Nat := some 16
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -1145,6 +1163,227 @@ def scanTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
   | some f => f spec
   | none => scanTableM st spec
 
+/-! ## Sideways information passing (https://github.com/danbri/factoidal/issues/809)
+
+A scan with candidates returns the rows of the scan whose value in column
+`jc = spec.key.size` (the column after the key: the sort variable of the
+scan, the join variable of the merge join that consumes it) is a candidate.
+`SipScanTheorems.scanFoldSipM_tuples`: over an in-memory store with no
+overlay and candidates in non-decreasing order, the tuples are those of
+`scanFoldM` restricted to the rows whose column `jc` holds a candidate.
+
+Per block: blocks the PRM1 entry rules out are skipped as in `scanBlockM`;
+then a block whose first and last rows bound column `jc` below and above
+every candidate (`sipRange`, `Sip.mayHold`) is skipped unread; then the
+needed frames and the `jc` frame are read, the key range is found as in
+`blockChunk`, and `sipChunk` decodes the `jc` frame, finds the rows whose
+value is a candidate, and decodes the other needed columns at those rows
+only. -/
+
+/-- The values column `c` can hold in the rows of block `b` that carry the
+    key prefix: from the first row's value when the first row carries the
+    prefix (else 0) to the last row's value when the last row carries it
+    (else the largest word). The rows are sorted, so a row with the prefix
+    has its column `c = key.size` between them. -/
+def sipRange (b : BlockMeta) (key : Array UInt64) (c : Nat) : UInt64 × UInt64 :=
+  (if prefixCmp b.first key == .eq then (rowCol b.first c).toUInt64 else 0,
+   if prefixCmp b.last key == .eq then (rowCol b.last c).toUInt64 else 0xFFFFFFFFFFFFFFFF)
+
+/-- Column `c` of the chunk at the found rows `pos`: for the join column
+    `jc` the found values `jw`; for a needed key column its decoded words at
+    `pos`; for any other needed column the words of its frame at `pos`
+    (`Sip.gatherWords`). -/
+def sipCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
+    (keyWords : Array ByteArray) (jc : Nat) (jw : ByteArray) (pos : Array Nat) (c : Nat) :
+    Except String ByteArray :=
+  if c == jc then .ok jw
+  else if need[c]! then
+    if h : c < keyWords.size then .ok (Sip.pickWords keyWords[c] pos)
+    else match Sip.gatherWords bytes b.rows starts[c]! pos with
+      | some w => .ok w
+      | none => .error s!"block at {b.offset}: frame {c} does not decode"
+  else .ok .empty
+
+/-- The chunk of one block with candidates: the key range as in
+    `blockChunk`, the rows of the range whose column `jc` value is a
+    candidate (`Sip.findWords`, from the candidate pointer `p`), every
+    needed column at those rows (`sipCol`), then `chunkOfCols` with
+    `fill = true`. Also returns the join-key values tested and the rows
+    found. -/
+def sipChunk (spec : ScanSpec) (cands : Array UInt64) (sortVar : Option String) (b : BlockMeta)
+    (bp : BlockPlan) (constOut : Array (Option Nat)) (need : Array Bool) (bytes : ByteArray)
+    (starts : Array Nat) (p : Nat) : Except String (Chunk × Nat × Nat) := do
+  let keyWords ← keyWordsOf b bytes starts bp.full spec.key.size
+  let (lo, hi) := keyRange spec b bp.full keyWords
+  let jc := spec.key.size
+  match Sip.findWords bytes b.rows starts[jc]! lo hi cands p with
+  | none => throw s!"block at {b.offset}: frame {jc} does not decode"
+  | some (pos, jw) =>
+    let c0 ← sipCol b bytes starts need keyWords jc jw pos 0
+    let c1 ← sipCol b bytes starts need keyWords jc jw pos 1
+    let c2 ← sipCol b bytes starts need keyWords jc jw pos 2
+    let c3 ← sipCol b bytes starts need keyWords jc jw pos 3
+    pure (chunkOfCols spec true sortVar bp constOut #[c0, c1, c2, c3] pos.size, hi - lo, pos.size)
+
+/-- Whether `w` is a candidate (`cands` in non-decreasing order). -/
+@[inline] def sipMem (cands : Array UInt64) (w : UInt64) : Bool :=
+  let q := Sip.probeFrom cands w (Sip.lbHint cands w)
+  q < cands.size && cands[q]! == w
+
+/-- The rows of a chunk whose first output column (the column `jc`) holds a
+    candidate: the delta overlay's chunks, which are built from merged rows. -/
+def sipFilterChunk (cands : Array UInt64) (ch : Chunk) : Chunk :=
+  let t := ch.table
+  if t.cols.isEmpty then ch
+  else { ch with table := t.select fun i => sipMem cands (t.at 0 i) }
+
+/-- One block of a scan with candidates. With an overlay, a block that holds
+    overlay rows in its range is merged as in `scanBlockM` and its chunk
+    filtered (`sipFilterChunk`). -/
+def scanBlockSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (f : σ → Chunk → ExceptT String m (σ × Bool)) (metas : Array BlockMeta)
+    (sortVar : Option String) (ox : OvCtx) (i : Nat) (s : ScanState σ) :
+    ExceptT String m (ForInStep (ScanState σ)) := do
+  let b := metas[i]!
+  if !selects b spec.key then return .yield s
+  let bp := blockPlan spec b
+  if ox.on then
+    let insEnd := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.insK b.last ox.insFuel s.insPos ox.insK.size
+    let dLo := L4Factoidal.Storage.Sbm11.Overlay.lowerIdx ox.ov.del b.first ox.delFuel 0 ox.ov.del.size
+    let dHi := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.ov.del b.last ox.delFuel dLo ox.ov.del.size
+    let clHit := !ox.ov.cleared.isEmpty && (match colConst? b 3 with
+      | some g => ox.ov.cleared.contains g
+      | none => true)
+    if insEnd > s.insPos || (!bp.skip && (dHi > dLo || clHit)) then
+      let insL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (insEnd - s.insPos) []
+      let delL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.ov.del dLo (dHi - dLo) []
+      let (chunk0, nbytes) ← overlayChunkM st spec b insL delL ox.ov.cleared sortVar
+      let chunk := sipFilterChunk cands chunk0
+      let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1,
+                                  blocksRead := s.stats.blocksRead + 1, framesRead := s.stats.framesRead + 4,
+                                  bytesRead := s.stats.bytesRead + nbytes,
+                                  rowsOut := s.stats.rowsOut + chunk.table.rows,
+                                  keysTested := s.stats.keysTested + chunk0.table.rows,
+                                  rowsGathered := s.stats.rowsGathered + chunk0.table.rows }
+      let (acc', more) ← f s.acc chunk
+      return stepOf s acc' stats insEnd more
+  if bp.skip then return .yield s
+  let jc := spec.key.size
+  let (vlo, vhi) := sipRange b spec.key jc
+  let p := Sip.lbHint cands vlo
+  if !Sip.mayHold cands vlo vhi p then
+    return .yield { s with stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1,
+                                                   sipSkipped := s.stats.sipSkipped + 1 } }
+  let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1 }
+  let constOut := constOutOf spec b bp
+  let need := (needOf spec bp constOut).set! jc true
+  let (bytes, starts, nbytes) ← readFrames st spec.perm b need
+  let stats := { stats with blocksRead := stats.blocksRead + 1, framesRead := stats.framesRead + (need.filter id).size,
+                            bytesRead := stats.bytesRead + nbytes }
+  let (chunk, tested, found) ← ofExceptM (sipChunk spec cands sortVar b bp constOut need bytes starts p)
+  let stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows, keysTested := stats.keysTested + tested,
+                            rowsGathered := stats.rowsGathered + found }
+  let (acc', more) ← f s.acc chunk
+  return stepOf s acc' stats s.insPos more
+
+/-- `scanFoldM` with candidates for column `spec.key.size`: the rows of the
+    scan whose value there is a candidate (`cands` in non-decreasing order).
+    With an overlay, the inserts after the last selected block form a last
+    chunk, filtered. -/
+def scanFoldSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) :
+    ExceptT String m (σ × ScanStats) := do
+  let metas ← st.metas spec.perm
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := metas.size }, insPos := 0, stopped := false }
+  let s ← forIn (blocksFor metas spec.key) s0 (scanBlockSipM st spec cands f metas sortVar ox)
+  if ox.on && !s.stopped && s.insPos < ox.insK.size then
+    let chunk := sipFilterChunk cands (chunkOfRows spec
+      (L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (ox.insK.size - s.insPos) []) sortVar)
+    let (acc', _) ← f s.acc chunk
+    return (acc', { s.stats with rowsOut := s.stats.rowsOut + chunk.table.rows })
+  return (s.acc, s.stats)
+
+/-- The scan with candidates as one table. -/
+def scanSipTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (cands : Array UInt64) :
+    ExceptT String m (Table × ScanStats) := do
+  let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+                        rows := 0, sortVar := sortVarOf spec }
+  scanFoldSipM st spec cands init fun acc ch => pure (acc.append ch.table, true)
+
+/-- The rule that selects sideways information passing for a scan, with
+    the store's factor `k` (`Store.sipFactor`, 16 by default): the left input
+    has fewer than `1/k` of the rows the PRM1 entries give for the scan
+    (`k × left < estimate`). At sixteen, a block of 4,096 rows holds on
+    average fewer than 256 candidate rows; the scan still decodes the join
+    column of every block it reads, so the saving is in the other columns,
+    the blocks no candidate can match, and the rows the join does not read. -/
+def sipRule (factor : Option Nat) (leftRows estimate : Nat) : Bool :=
+  match factor with
+  | some k => k * leftRows < estimate
+  | none => false
+
+/-- The distinct values of `xs` (in order), appended to `out`: a value is
+    pushed when it differs from the last one pushed (a tail call with
+    fuel). -/
+def dedupGo (xs : Array UInt64) : Nat → Nat → Array UInt64 → Array UInt64
+  | 0, _, out => out
+  | f + 1, i, out =>
+    if i < xs.size then
+      let x := xs[i]!
+      match out.back? with
+      | some y => dedupGo xs f (i + 1) (if y != x then out.push x else out)
+      | none => dedupGo xs f (i + 1) (out.push x)
+    else out
+
+/-- Every row `i, i + 1, ...` of column `c` of `t` is a candidate (`sipMem`;
+    a tail call with fuel). -/
+def allMemGo (t : Table) (c : Nat) (cands : Array UInt64) : Nat → Nat → Bool
+  | 0, _ => true
+  | f + 1, i => if i < t.rows then (if sipMem cands (t.at c i) then allMemGo t c cands f (i + 1) else false) else true
+
+/-- The candidates for the join variable `v` of a scan: the distinct values
+    of the left table's column `v`, in non-decreasing order (the column as
+    it is when the table is sorted on `v`, else sorted here). Used only when
+    two checks pass at run time: the candidates are in non-decreasing order
+    (`Sip.sorted`), and every value of the column is a candidate
+    (`allMemGo`); else `none`, and the scan runs without candidates.
+    `SipScanTheorems.sipCands_sound` derives from the two checks what the
+    semi-join reduction needs. -/
+def sipCands (t : Table) (v : String) : Option (Array UInt64) := Id.run do
+  let some c := t.idx v | return none
+  let mut col : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    col := col.push (t.at c i)
+  let ordered := if t.sortVar == some v then col else mergeSortBy col (· ≤ ·)
+  let cands := dedupGo ordered ordered.size 0 (Array.mkEmpty ordered.size)
+  if Sip.sorted cands && allMemGo t c cands t.rows 0 then some cands else none
+
+/-- The right scan of a join with the table `left`: when the scan's sort
+    variable `v` (the column after its key) is a variable of `left` and
+    `sipRule` selects it, the scan with the left values of `v` as candidates
+    (`scanSipTableM`); else the full scan. A right row whose `v` is not a
+    left value joins no left row, in an inner join and in the left outer
+    join of an OPTIONAL group (whose shared variables are bound in every left
+    row, `flattenOptional`), so the join is the same
+    (`SemiJoinTheorems`). Returns the explain text of the choice. -/
+def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (left : Table)
+    (estimate : Nat) : ExceptT String m (Table × ScanStats × String) := do
+  match sortVarOf spec with
+  | some v =>
+    if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
+      match sipCands left v with
+      | some cands =>
+        let (t, s) ← scanSipTableM st spec cands
+        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested}, rows gathered {s.rowsGathered}")
+      | none => pure ()
+  | none => pure ()
+  let (t, s) ← scanTableOf st spec
+  return (t, s, "")
+
 /-! ## The BGP -/
 
 def varCount (pats : Array Pat) (v : String) : Nat :=
@@ -1172,7 +1411,7 @@ def posOf (t : Pat) (v : String) : Option Nat :=
     a variable to sort the first scan on when that pattern has it (the join
     variable of a left outer join, so that the join can merge). -/
 def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool)
-    (pref : Option String := none) :
+    (pref : Option String := none) (left0 : Option Table := none) :
     ExceptT String m (Table × Array String × ScanStats) := do
   let allVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let keep (v : String) : Bool := need v || varCount pats v ≥ 2
@@ -1192,9 +1431,15 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | some q => some q
     | none => bestSortPos t0 pats
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
-  let (tab0, st0) ← scanTableOf st spec0
+  -- an OPTIONAL group's first scan takes the left table's join values as
+  -- candidates (issue 809)
+  let (tab0, st0, sip0) ← match left0 with
+    | some l => scanForJoinM st spec0 l ests[first]!
+    | none => do
+      let (t, s) ← scanTableOf st spec0
+      pure (t, s, "")
   let mut total := st0
-  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}"
+  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
   let mut tab := tab0
   for _ in [0:pats.size] do
     if remaining.isEmpty then break
@@ -1210,14 +1455,14 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
       | some (_, q) => permFor t (some q)
       | none => permFor t (bestSortPos t pats)
     let spec := mkSpec t perm keep
-    let (rt, s) ← scanTableOf st spec
+    let (rt, s, sipNote) ← scanForJoinM st spec tab ests[next]!
     total := total.add s
     let (joined, how) := match mergeVar with
       | some (v, _) =>
         if rt.sortVar == some v then (mergeJoin tab rt v, s!"merge join on ?{v}")
         else (hashJoin tab rt, "hash join")
       | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
-    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}; {how}: {joined.rows} rows"
+    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows"
     tab := joined
   return (tab, lines, total)
 
@@ -1783,7 +2028,7 @@ def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (p
     let joinVar : Option String := match left.sortVar with
       | some v => if g.vars.contains v then some v else none
       | none => none
-    let (rt0, glines, gs) ← evalBgpM st gp gneed joinVar
+    let (rt0, glines, gs) ← evalBgpM st gp gneed joinVar (some left)
     let (rt, _) ← applyFilters st gfs (gfs.map fun _ => {}) rt0
     let (j, how) := OptJoin.leftOuterJoin left rt
     lines := lines ++ glines.map (s!"optional {k} " ++ ·)
