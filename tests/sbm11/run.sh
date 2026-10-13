@@ -79,7 +79,7 @@
 #   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
 #                merge of the term runs) on synthetic sources of 1, 2 and 4
 #                million lines (244 to 836 term runs; median of 3 runs each,
-#                CPU time of the merge thread); 4n at most 4.84 times n, 2.2
+#                CPU time of the merge thread); 4n at most 6.25 times n, 2.5
 #                per doubling (https://github.com/danbri/factoidal/issues/804;
 #                about 2 minutes). SBM11_PHASE2_SCALING=0 leaves (k) out
 #                (printed, not counted).

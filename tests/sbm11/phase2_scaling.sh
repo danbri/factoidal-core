@@ -16,7 +16,14 @@
 # /proc/thread-self/schedstat). The test uses phase2-cpu-ms where it is
 # printed, else phase2-ms. Each source is packed REPS times (default 3), in
 # rounds of n, 2n, 4n, and the median is used. Fails when
-#   phase2(4n) > 4.84 x max(phase2(n), FLOOR ms)   (2.2 per doubling; FLOOR 500)
+#   phase2(4n) > 6.25 x max(phase2(n), FLOOR ms)   (2.5 per doubling; FLOOR 500)
+# The bound comes from the cost model, not from "linear": with --run-terms
+# fixed, the number of runs k grows with n, and a loser-tree merge costs about
+# n * log2 k. From n to 4n (k 244 to 836) the model gives
+# 4 * log2(836) / log2(244) = 4.89. Machine load of 2 to 9 adds about 10 %.
+# A merge that scans every run head (the issue 804 defect) gives about 16.
+# A bound of 4.84 (2.2 per doubling, 2026-10-12) was below the model and
+# failed at 5.05 under load (2026-10-13).
 # The run count k grows with the source (a run holds at most run-terms /
 # workers terms). A merge that scans every run head per record is quadratic.
 # A merge through a tree costs about log2 k comparisons per record, one more
@@ -112,8 +119,8 @@ if [ -n "${P2[1]:-}" ] && [ -n "${P2[2]:-}" ] && [ -n "${P2[4]:-}" ]; then
   r2="$(python3 -c "print(f'{${P2[2]} / $b1:.2f}')")"
   r4="$(python3 -c "print(f'{${P2[4]} / max(${P2[2]}, $FLOOR):.2f}')")"
   echo "doublings: 2n/n $r2, 4n/2n $r4"
-  check "phase 2 ($KIND) at 4n ${P2[4]} ms <= 4.84 x max(n ${P2[1]} ms, $FLOOR ms): 2.2 per doubling (2n ${P2[2]} ms)" \
-    "$(( P2[4] * 100 <= 484 * b1 ? 1 : 0 ))"
+  check "phase 2 ($KIND) at 4n ${P2[4]} ms <= 6.25 x max(n ${P2[1]} ms, $FLOOR ms): 2.5 per doubling (2n ${P2[2]} ms)" \
+    "$(( P2[4] * 100 <= 625 * b1 ? 1 : 0 ))"
 else
   FAIL=1
 fi

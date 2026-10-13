@@ -131,6 +131,16 @@ what turns "it worked on the test files" into "it scales", which is the
 property the suite was silently not testing. `tests/stack/` is the seed; the
 assertion is what makes it a gate.
 
+**Set the bound from the stated complexity, with its parameters.** The SBM11
+packer phase 2 gate (`tests/sbm11/phase2_scaling.sh`, issue 804) first used
+4n ≤ 4.84 × n, "2.2 per doubling", from runs on a quiet machine. The
+algorithm is a loser-tree merge of k runs, and with `--run-terms` fixed k grows
+with n: the cost is about n · log2 k, and from n to 4n (k 244 to 836) the
+model gives 4.89, above the bound. The gate failed at 5.05 under load
+(2026-10-13) with no code change. It now uses 6.25 (2.5 per doubling): above
+the model plus 10 % for load, far below the 16 of the quadratic defect it
+guards. Write the model and the defect's ratio next to every bound.
+
 A worked example with a wall-clock bound is `l4jsonld-api --scale`
 (`formal/lean4/Harness/JsonLdScale.lean`, wrapper
 `tests/stack/jsonld_scaling.sh`). It builds five document shapes at n, 2n,
