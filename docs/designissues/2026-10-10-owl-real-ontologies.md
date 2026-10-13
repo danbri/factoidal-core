@@ -38,6 +38,11 @@ F\* steps, `prlimit --as=6000000000` for both.
   118 MB: 4.9 GB, F\* 0.83 GB; https://github.com/danbri/factoidal/issues/771);
   the Lean and F\* RDF/XML parsers give an `xml:lang` to the next sibling
   element (https://github.com/danbri/factoidal/issues/329).
+- ✅ 2026-10-13 (§ 9, OKR batch 1 KR 3.4): the QUDT closure peaks at 1,352 MB
+  and writes its lines as it goes (issue 758); the species check of QUDT takes
+  2.27 s of CPU time, with indexes proved equal to the readable definition
+  (issue 766). A part that stays quadratic in blank-node-to-blank-node
+  assertions: https://github.com/danbri/factoidal/issues/812.
 - ✅ Every failure above has an open issue and an expected-failure row in
   `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 7 expected-fail (out of
   12), exit 0 (11 rows in one run at 16:07 UTC, load average 1.8; the
@@ -220,10 +225,10 @@ issue and its expected-failure row in `tests/stack/owl_real_gate.py`
 |---|---|---|---|
 | Lean `owl-consistent`, Cell Ontology (78,833 triples) | TIMEOUT at 600 s at load 6 to 8; in the gate run at load 3.5 it finished in 598 s with `true`. Prefixes: 5,000 lines 0.69 s CPU, 10,000 5.08 s, 20,000 25.4 s, 40,000 147.5 s. The closure is less than a tenth of it. HermiT: 6.1 s | https://github.com/danbri/factoidal/issues/760 | `cl-basic-consistent` |
 | Lean `owl-consistent`, RO (11,703 triples) | TIMEOUT at 600 s. Prefixes: 2,000 lines 1.56 s CPU, 4,000 35.9 s, 8,000 not finished at 200 s. HermiT: 29.8 s | https://github.com/danbri/factoidal/issues/760 (comment) | `cl-basic-consistent` covers the cause |
-| Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure` |
+| Lean `closure --regime owl-rl`, QUDT (130,404 triples) | OOM under `prlimit --as` at 27 s. With the 6 GB resident-set watchdog instead: killed at 6,038 MB after 61 to 78 s. `owl-consistent`, which computes the same closure and does not print it, peaks at 1,346 to 1,362 MB. The output path costs about 10 KB of resident memory per closure triple (QUDT prefixes: 117,250 closure triples in 1,269 MB, 250,490 in 2,470 MB) | https://github.com/danbri/factoidal/issues/758 | `qudt-closure`. Repaired 2026-10-13 (§ 9.1): 1,352 MB, the row passes under the resident-set watchdog with a 2,000 MB bound; the address-space cap is row `qudt-closure-address-space` (issue 759) |
 | Lean `owl-consistent` and `owl-entails`, QUDT, under `prlimit --as=6000000000` | OOM at 27 s with 1.25 GB resident. The Lean runtime's mimalloc reserves 1 GiB arenas and two 1 GiB thread stacks; with `MIMALLOC_ARENA_RESERVE=64MiB` the same command finishes under the same cap (41 s, 1,378 MB) | https://github.com/danbri/factoidal/issues/759 | `qudt-consistent` |
 | Lean `parse --format rdfxml`, GO basic 2026-08-05 (118,080,840 bytes; fetched at run time, not vendored) | under `prlimit --as`: `std::bad_alloc` after 0.57 s. With the 6 GB resident-set watchdog: 1,283,913 triples, 52 s (32 s CPU), 4,919 MB peak, 43.7 bytes per document byte; the Cell Ontology: 52.6. F\* `count`: 33.6 s, 831 MB | https://github.com/danbri/factoidal/issues/771 | `cl-basic-parse-memory` (15 bytes per byte) |
-| Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound) |
+| Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound). Repaired 2026-10-13 (§ 9.2): 2.27 s CPU, the row passes |
 | F\* `entail --regime OWL-RL` on wine and food (2,709 triples), RO, schema.org, the Cell Ontology and QUDT | TIMEOUT at 300 s on all five; Lean on the first four: 5.8 s, 8.0 s, 4.6 s, 26.7 s | https://github.com/danbri/factoidal/issues/765 | `wine-closure-fstar` (skipped when the F\* binary is absent) |
 | Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
 
@@ -489,12 +494,11 @@ N-Triples, builds Jena's inference model and writes every statement of it;
 | Tool | Task | Result | Wall | CPU | Peak resident set |
 |---|---|---|---:|---:|---:|
 | Lean `l4factoidal closure --regime owl-rl` | OWL 2 RL/RDF closure | 638,420 triples | 43.6 s | 42.7 s | 1,352 MB |
-| owlrl 7.1.4 (rdflib 7.6.0), `DeductiveClosure(OWLRL_Semantics)` | OWL 2 RL/RDF closure | OWLRL_QUDT | | | |
+| owlrl 7.1.4 (rdflib 7.6.0), `DeductiveClosure(OWLRL_Semantics)` | OWL 2 RL/RDF closure | no result in 600 s | 600 s | — | 544 MB sampled |
 | owlrl 7.1.4, first 16,000 lines | OWL 2 RL/RDF closure | 122,973 triples (Lean: 117,250 in 4.9 s) | 59.7 s | 58.8 s | 109 MB |
 | Jena 5.1.0 `ReasonerRegistry.getOWLMicroReasoner()`, `java -Xmx5g` | OWL Micro rules, every statement written | no result in 600 s (2,806,127 statements written when stopped) | 600 s | — | 5,560 MB sampled |
 | Lean `l4owl-species` | OWL 2 DL against Full (§ 9.2) | Full, 7,334 violations | 3.84 s | 2.27 s | 648 MB |
 | OWL API 3.4 (in HermiT.jar 1.3.8), `OWL2DLProfile` | OWL 2 DL profile | not in DL, 32,820 violations; load 5.04 s, check 1.01 s | 6.35 s | 9.42 s | 371 MB |
-HERMIT_ROW
 
 The closures are not the same set: owlrl gives 122,973 triples on the first
 16,000 lines where Lean gives 117,250 (the axiomatic and datatype triples each

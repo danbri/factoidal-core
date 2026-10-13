@@ -357,6 +357,30 @@ the method that relies on it.**
 > thereby sound for a semantics whose normative conditions exclude
 > those rows; the RDF-Based regime removes their witness triples.
 
+## 15. A prefix of a sorted file is not a sample of the file
+
+**A size ladder made of prefixes of one file changes the content with the
+size. Before reading a growth factor from it as a growth rate, count the
+input feature the cost depends on at each rung.**
+
+> 🔴 **2026-10-10 (Lean OWL species check, issue 766).** The issue read "34
+> times longer from 32,000 to 65,000 lines" of the sorted QUDT N-Triples.
+> The rungs were prefixes of `sort -u` output. The cost was the
+> anonymous-individual check, one scan of the graph per blank node in an
+> object property assertion, and those blank nodes are not spread through a
+> sorted file: 1 in the first 32,000 lines, 1,308 in the first 65,000, 4,860
+> in the whole. The factor 34 measured that change of content, not the
+> exponent (the algorithm was quadratic: blank nodes times triples). The
+> repair was the same, but a reader of the factor as a rate (34 per
+> doubling) would have expected the whole file, two doublings above 32,000
+> lines, to take about 1,200 times longer; it took 280 times (0.91 s and
+> 253.4 s of CPU time). Found 2026-10-13 by counting the vertices per rung
+> (`docs/designissues/2026-10-10-owl-real-ontologies.md` § 9.2).
+
+Use a generated input whose units are all alike for the n, 2n, 4n assertion
+(`tests/stack/lean_scaling.py` row `owl-species`), and report a real file's
+rungs together with the count of the feature that drives the cost.
+
 ## The standing discipline
 
 1. State the acceptance criterion **as a number**, before the work.

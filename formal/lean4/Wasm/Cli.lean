@@ -573,6 +573,51 @@ def canonicalizeCmd (args : List String) : IO UInt32 := do
       | none => pure 1
       | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 
+/-- What `closure` printed until 2026-10-13 for a regime: the envelope's
+`nquads` (or `ntriples`) member after a JSON round trip, or the error text
+(https://github.com/danbri/factoidal/issues/758). Kept for the guards below. -/
+private def closureViaEnvelope (ds : Dataset) (regime : String) : Except String String :=
+  match parseJson (Ops.closureEnvelopeOf ds regime) with
+  | .error e => .error s!"internal: op result was not JSON ({toString e})"
+  | .ok j =>
+      if j.getBool? "ok" == some true then
+        .ok (((j.getString? "nquads") <|> (j.getString? "ntriples")).getD "")
+      else .error ((j.getString? "error").getD "unknown error")
+
+/-- What `closure` prints now, before the final newline: the lines of
+`Ops.closureStreamOf`, or its error text. -/
+private def closureViaStream (ds : Dataset) (regime : String) : Except String String :=
+  (Ops.closureStreamOf ds regime).map fun g =>
+    String.join (g.map (Triple.toNTriplesLine .rdf11))
+
+private def closureSample : Option Dataset :=
+  (Ops.parseTextToDataset ("@prefix e: <http://e/> . @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> . " ++
+    "@prefix owl: <http://www.w3.org/2002/07/owl#> . e:A rdfs:subClassOf e:B . e:x a e:A . " ++
+    "e:p a owl:TransitiveProperty . e:x e:p e:y . e:y e:p e:z . e:x e:q \"t\\\"q\"@EN .")
+    "turtle" "").toOption
+
+-- The stream gives the envelope's text, for every regime, on a graph with
+-- inferences, an escaped literal and a language tag.
+#guard closureSample.any fun ds => ["owl-rl", "rdfs", "rho-df", "rdfs-plus"].all fun r =>
+  sameOutput (closureViaStream ds r) (closureViaEnvelope ds r)
+-- Teeth: the closure holds the inferred triples, so two functions that both
+-- returned the input (or nothing) would not pass.
+#guard closureSample.any fun ds => match closureViaStream ds "owl-rl" with
+  | .ok t => (t.splitOn "<http://e/x> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://e/B> .").length == 2 &&
+             (t.splitOn "<http://e/x> <http://e/p> <http://e/z> .").length == 2
+  | .error _ => false
+#guard closureSample.any fun ds => match closureViaStream ds "rdfs" with
+  | .ok t => (t.splitOn "<http://e/x> <http://e/p> <http://e/z> .").length == 1
+  | .error _ => false
+-- The error path: a dataset that the RDF 1.1 round trip refuses (a triple
+-- term) gives the envelope's error text.
+private def closureTripleTerm : Option Dataset :=
+  (Ops.parseTextToDataset "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> ."
+    "ntriples12" "").toOption
+#guard closureTripleTerm.any fun ds =>
+  sameOutput (closureViaStream ds "owl-rl") (closureViaEnvelope ds "owl-rl") &&
+  (closureViaStream ds "owl-rl" matches .error _)
+
 def closureCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--regime"] [] args with
   | .error e => IO.eprintln s!"l4factoidal closure: {e}"; pure 2
