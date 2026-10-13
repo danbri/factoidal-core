@@ -698,6 +698,23 @@ against the old core library.
   keeps it transparent to proofs. Full record:
   `docs/designissues/2026-09-07-wasm-packer-memory.md` §9.
 
+- **Linear memory that grows across calls while the live heap does not is
+  the allocator, and the arena size decides it.** On wasm32 mimalloc takes
+  arenas of `arena_reserve` / 4 (32 MiB by default) from emmalloc, in 4 MiB
+  blocks; an object above 2 MiB is a run of whole blocks. Paid for
+  2026-10-12 (https://github.com/danbri/factoidal/issues/744): the npm
+  `parse()` of 48,000 triples builds strings of 4.5 MB, and six calls raised
+  linear memory from 257 to 1,224 MB while `l4_heap_tags_c` reported 0.5 MB
+  live after every call. Arenas of 64 and 96 MiB made it worse, 128 MiB
+  made it flat (184 MB). `l4_ensure_init` in `Wasm/l4_shim.c` now sets
+  `mi_option_arena_reserve` to 512 MiB (KiB units) after the module
+  initialisation, so the first arena keeps the default size. To tell the
+  two cases apart, read `l4_heap_tags_c` (the sum of its `bytes` is the live
+  heap) after each call beside `HEAPU8.byteLength`; to test an allocator
+  option without a rebuild, call `_l4_mi_option_set(option, value)` after the
+  engine has loaded. Record:
+  `docs/designissues/2026-10-10-lean-vs-fstar-performance.md` §11.7.
+
 1. **`leanir` fails silently** — emits a near-empty module and exits 0.
    Do not use it. (Above.)
 2. **Dropping mimalloc** aborts the module on error paths only, with a

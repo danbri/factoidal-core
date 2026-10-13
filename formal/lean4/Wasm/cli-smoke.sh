@@ -251,6 +251,16 @@ assert_json "query SERVICE SILENT, no endpoint -> one empty solution" 0 \
   'r["results"]["bindings"] == [{}]' \
   "$CLI" query "$TMP/d.nt" --format ntriples \
     --query-string 'SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }'
+# The same failure inside FILTER EXISTS fails the query too; with SILENT
+# the call is one solution, so NOT EXISTS is false for every row
+# (https://github.com/danbri/factoidal/issues/735).
+assert_text "query FILTER EXISTS { SERVICE } without SILENT, no endpoint -> error" 1 err "SERVICE <http://u.example/sparql> failed" \
+  "$CLI" query "$TMP/d.nt" --format ntriples \
+    --query-string 'SELECT * WHERE { ?s ?p ?o FILTER EXISTS { SERVICE <http://u.example/sparql> { ?a ?b ?c } } }'
+assert_json "query FILTER NOT EXISTS { SERVICE SILENT }, no endpoint -> no rows" 0 \
+  'r["results"]["bindings"] == []' \
+  "$CLI" query "$TMP/d.nt" --format ntriples \
+    --query-string 'SELECT * WHERE { ?s ?p ?o FILTER NOT EXISTS { SERVICE SILENT <http://u.example/sparql> { ?a ?b ?c } } }'
 assert_text "query missing --query/--query-string -> usage error" 2 err "need --query" \
   "$CLI" query "$TMP/d.nt" --format ntriples
 assert_text "query both --query and --query-string -> usage error" 2 err "pass only one" \

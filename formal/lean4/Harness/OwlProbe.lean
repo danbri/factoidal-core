@@ -184,6 +184,7 @@ import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.OwlXml
 import L4Factoidal.OWL.RdfBased.Clash
+import L4Factoidal.OWL.RdfBased.Balanced
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.JSON.Parser
@@ -1430,10 +1431,14 @@ def judgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb 
                closure := closureOutcome, measure := m }
     else return Verdict.same closureOutcome m
 
-def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+/-- The DL path of an InconsistencyTest: the premise closure of the
+regime, its clash rows, then the refuter and the certificate run. It
+reads no `test:semantics` annotation; `judgeInconsistency` adds the
+`--dl` skip of RDF-BASED-only cases, and the balanced line of
+`--rdf-based` (issue 732) calls this directly. -/
+def judgeInconsistencyDl (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) : IO Verdict := do
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
-  if isRdfBasedOnly c then return Verdict.same (.skip "semantics-rdf-based-only") {}
   let (res, m) ← premiseClosure cat c capMs rg
   match res with
   | .error o => return Verdict.same o m
@@ -1461,6 +1466,12 @@ the tableau refuted the premise closure ({r.graph.length} triples)"
       return { regime := .pass, closure := closureOutcome, measure := m,
                cert := some cert, profile := some prof }
     else return Verdict.same closureOutcome m
+
+def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+    (rms : Nat) : IO Verdict := do
+  if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
+  if isRdfBasedOnly c then return Verdict.same (.skip "semantics-rdf-based-only") {}
+  judgeInconsistencyDl cat c capMs rg rb rms
 
 def testTypes : List String :=
   ["PositiveEntailmentTest", "NegativeEntailmentTest", "ConsistencyTest", "InconsistencyTest"]
@@ -1901,6 +1912,116 @@ ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
     IO.println l
   return r
 
+/-! ## Species (`--species`)
+
+OWL 2 Conformance §2.2 (syntactic conformance) and the `test:species`
+annotation of each test case: a case annotated `test:DL` is within OWL 2
+DL; a case annotated only `test:FULL` is OWL 2 Full and not DL. The
+verdict is `L4Factoidal.OWL.SyntaxDL.speciesIsDl`, a syntax-directed
+check of the OWL 2 Mapping to RDF Graphs §3 (reverse mapping) and the
+Structural Specification §11 (global restrictions) over the RDF graphs
+of ALL the case's documents. The harness only reads documents and
+compares the verdict with the annotation.
+
+Which documents: the premise, and the conclusion or non-conclusion.
+Two cases with the same premise differ in species when only their
+conclusions differ (`WebOnt-I5.5-005` against `WebOnt-I5.5-006`), so the
+conclusion document is part of the input, as it is for the F* runner
+(`owl_runner.ml`, "Species mode").
+
+The premise comes from `test:rdfXmlPremiseOntology`; when a case has
+none, from `test:rdfXmlInputOntology` on the case itself (the import
+test cases); when it has neither, from the functional-syntax premise,
+read by `L4Factoidal.OWL.FS` and checked with the body checks only,
+because a successful parse of `Ontology(...)` is the header evidence.
+`owl:imports` is resolved against the import wrapper nodes the case
+links with `test:importedOntology`. -/
+
+/-- The input of one species verdict. -/
+structure SpeciesDocs where
+  functional    : Bool
+  /-- The IRIs of the documents the catalog provides for this case:
+  the `test:importedOntologyIRI` of each linked import wrapper. -/
+  available     : List String := []
+  pDoc          : Graph
+  pMerged       : Graph
+  hasConclusion : Bool
+  cDoc          : Graph
+  uMerged       : Graph
+
+/-- The conclusion document of a case: the RDF/XML conclusion, else the
+RDF/XML non-conclusion, else the functional-syntax ones. `none` when the
+case has no conclusion document. `Except` carries a parse failure. -/
+def conclusionDoc (c : Case) : Except String (Option Graph) :=
+  match c.conclusion <|> c.nonConclusion with
+  | some t =>
+      match parseDoc "conclusion" c.iri t with
+      | .ok g => .ok (some g)
+      | .error e => .error e
+  | none =>
+      let fs := c.fsConclusionText <|> c.fsNonConclusionText
+      let ox := c.owlXmlConclusion <|> c.owlXmlNonConclusion
+      match fs, ox with
+      | none, none => .ok none
+      | _, _ =>
+          match altGraph fs ox with
+          | some g => .ok (some g)
+          | none => .error "unsupported: functional-syntax or OWL/XML conclusion outside the grammar the reader accepts"
+
+/-- The species documents of a case read from a functional-syntax
+premise `pDoc` (and the functional-syntax or OWL/XML conclusion). -/
+def speciesDocsFunctional (c : Case) (pDoc : Graph) : Except String SpeciesDocs :=
+  match conclusionDoc c with
+  | .error e => .error e
+  | .ok none =>
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := false, cDoc := [], uMerged := pDoc }
+  | .ok (some g0) =>
+      let cDoc := g0.prefixBnodes "c_"
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
+
+/-- Gather the documents of a case for the species verdict. -/
+def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
+  let allowed := c.imports.filterMap (fun w =>
+    (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+  match c.premise <|> c.inputOntology with
+  | some ptxt =>
+    match parseDoc "premise" c.iri ptxt with
+    | .error e =>
+        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
+        -- The functional-syntax premise is read with the body checks,
+        -- as for a case that has no RDF/XML premise.
+        match normativeFsPremise? c with
+        | some g => speciesDocsFunctional c g
+        | none => .error e
+    | .ok pDoc =>
+      match loadImports cat.imports allowed pDoc [] (allowed.length + 1) with
+      | .error e => .error e
+      | .ok pMerged =>
+        match conclusionDoc c with
+        | .error e => .error e
+        | .ok none =>
+            .ok { functional := false, available := allowed, pDoc := pDoc, pMerged := pMerged,
+                  hasConclusion := false, cDoc := [], uMerged := pMerged }
+        | .ok (some g0) =>
+            let cDoc := g0.prefixBnodes "c_"
+            match loadImports cat.imports allowed (pDoc ++ cDoc) [] (allowed.length + 1) with
+            | .error e => .error e
+            | .ok uMerged =>
+                .ok { functional := false, available := allowed, pDoc := pDoc,
+                      pMerged := pMerged, hasConclusion := true, cDoc := cDoc,
+                      uMerged := uMerged }
+  | none =>
+    let alt : Option (Option Graph) :=
+      match c.fsPremiseText with
+      | some ftxt => some (L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt)
+      | none => c.owlXmlPremise.map L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+    match alt with
+    | none => .error "harness: the case has no premise document in any syntax"
+    | some none => .error "unsupported: functional-syntax or OWL/XML premise outside the grammar the reader accepts"
+    | some (some pDoc) => speciesDocsFunctional c pDoc
+
 /-! ## The OWL 2 RDF-Based Semantics regime (`--rdf-based`)
 
 Owner, 2026-10-10, verbatim: "721 Add an OWL 2 RDF-Based Semantics"
@@ -2126,6 +2247,206 @@ def RbOutcome.line (label : String) : RbOutcome → String
   | .notRefuted => s!"NOT-REFUTED {label}"
   | .unsupported r => s!"UNSUPPORTED {label}: {r}"
 
+/-! ### The balanced line, `[rdf-based or balanced refutation]` (issue 732)
+
+https://github.com/danbri/factoidal/issues/732; design record
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 6.2.
+
+OWL 2 RDF-Based Semantics § 7.3 proves relationship 4 of Theorem 7.1 for
+a BALANCED pair: if F(G1) Direct-entails F(G2), then G1 RDF-Based-entails
+G2. For a PositiveEntailmentTest or an InconsistencyTest that the
+RDF-Based rules did not prove, the probe checks that its pair is balanced
+(`RdfBased.Balanced.balancedDefects`; for an InconsistencyTest the
+conclusion is `Balanced.inconsistencyGoal`), and if it is, runs the DL
+path of `--dl` (`judgePositive` or `judgeInconsistencyDl` under
+`Regime.dl`) and prints the answer with its certificate status.
+
+The answers are printed on their own lines and counted on the separate
+line `[rdf-based or balanced refutation]`. They never change a verdict of
+the `[rdf-based]` line, its counts or the exit code. They are not proved:
+they rest on Theorem 7.1 (a proof sketch), on obligations O1 and O2 of
+the certificate record (https://github.com/danbri/factoidal/issues/761,
+https://github.com/danbri/factoidal/issues/762), and for an entailment
+on O3 (https://github.com/danbri/factoidal/issues/763); an answer of the
+DL closure has no certificate at all. -/
+
+/-- The tag of the separate line. -/
+def balancedTag : String := "rdf-based or balanced refutation"
+
+inductive BalOutcome where
+  /-- Balanced, and the DL path decided it. `certified`: the refutation
+  printed `PROVED-BY-CERTIFICATE` under `--dl`. -/
+  | passed (how : String) (byRefutation : Bool) (certified : Bool)
+  | notBalanced (defects : List String)
+  /-- Balanced, and the DL path did not decide it. -/
+  | undecided (why : String)
+
+/-- The pair `(G1, G2)` of a unit and the species violations of the
+pair (condition 1). G1 is the premise with its imports merged, read as
+`--species` reads it (`speciesDocs`); G2 is the conclusion document
+(blank nodes prefixed `c_`), or `Balanced.inconsistencyGoal` for an
+InconsistencyTest. -/
+def balancedPair (cat : Catalog) (c : Case) (ty : String)
+    : Except String (Graph × Graph × List String) :=
+  match speciesDocs cat c with
+  | .error e => .error e
+  | .ok d =>
+    if ty == "InconsistencyTest" then
+      let g2 := L4Factoidal.OWL.RdfBased.Balanced.inconsistencyGoal
+      let dl :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc true (d.pDoc ++ g2)
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged true g2
+            (d.pMerged ++ g2) (some d.available)
+      .ok (d.pMerged, g2, dl)
+    else if !d.hasConclusion then .error "the case has no conclusion document"
+    else
+      let dl :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc true d.uMerged
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged true d.cDoc d.uMerged
+            (some d.available)
+      .ok (d.pMerged, d.cDoc, dl)
+
+def outcomeReason : Harness.Outcome → String
+  | .pass => "pass"
+  | .fail r => r
+  | .skip r => s!"skip: {r}"
+  | .unsupported r => s!"unsupported: {r}"
+
+/-- Check the pair; when it is balanced, run the DL path. -/
+def balancedJudge (cat : Catalog) (c : Case) (ty : String) (capMs rb rms : Nat)
+    (strict : Bool) : IO BalOutcome := do
+  match balancedPair cat c ty with
+  | .error e => return .notBalanced [s!"the documents of the pair were not read: {e}"]
+  | .ok (g1, g2, dl) =>
+    let defects := L4Factoidal.OWL.RdfBased.Balanced.balancedDefects dl g1 g2
+    if !defects.isEmpty then return .notBalanced (defects.map (·.text))
+    let v ← if ty == "InconsistencyTest" then judgeInconsistencyDl cat c capMs Regime.dl rb rms
+            else judgePositive cat c capMs Regime.dl rb rms strict
+    match v.regime with
+    | .pass =>
+      if v.closure == .pass then
+        return .passed "decided by the DL closure; no certificate" false false
+      else match v.cert with
+        | some .proved => return .passed "PROVED-BY-CERTIFICATE" true true
+        | some (.unchecked w) =>
+            return .passed s!"decided by refutation; certificate unchecked: {w}" true false
+        | some .notRefuted =>
+            return .passed "decided by refutation; certificate unchecked: not refuted on the \
+certificate run" true false
+        | none => return .passed "decided by refutation; no certificate run" true false
+    | o => return .undecided (outcomeReason o)
+
+/-- At most `n` defects in the line, then how many more. -/
+def defectsText (ds : List String) (n : Nat := 4) : String :=
+  String.intercalate "; " (ds.take n) ++
+    (if ds.length > n then s!"; and {ds.length - n} more" else "")
+
+/-- The condition numbers of a unit's defects, once each. -/
+def defectConds (ds : List String) : List String :=
+  (ds.map fun d =>
+    match (d.splitOn ": ").head? with
+    | some h => h
+    | none => d).eraseDups
+
+/-- The condition numbers of a unit's defects, comma-separated. -/
+def condNumbers (ds : List String) : String :=
+  String.intercalate ", " ((defectConds ds).map fun k =>
+    if k.startsWith "condition " then (k.drop "condition ".length).toString else k)
+
+/-- What the balanced pass of one catalog gathers. Reporting only. -/
+structure BalResult where
+  /-- Every unit with its outcome on the separate line, for its score
+  lines (the `[rdf-based]` outcome, or `proved` for a balanced pass). -/
+  units : List (UnitFacts × (RbOutcome × Option String)) := []
+  /-- Units the RDF-Based rules did not prove, of type
+  PositiveEntailmentTest or InconsistencyTest, with the outcome here. -/
+  checked : List (UnitFacts × BalOutcome) := []
+
+def BalOutcome.isPassed : BalOutcome → Bool
+  | .passed _ _ _ => true
+  | _ => false
+
+def BalOutcome.isNotBalanced : BalOutcome → Bool
+  | .notBalanced _ => true
+  | _ => false
+
+def BalOutcome.isUndecided : BalOutcome → Bool
+  | .undecided _ => true
+  | _ => false
+
+/-- The unit facts of key result 3.2 of
+https://github.com/danbri/factoidal/issues/768: status Approved, species DL. -/
+def inApprovedDl (f : UnitFacts) : Bool := f.status == "Approved" && f.species == "DL"
+
+/-- The lines that name the units of one group, for one scope. -/
+def balancedGroupLines (name what : String) (xs : List (UnitFacts × BalOutcome)) : List String :=
+  let idsOf := fun (ys : List (UnitFacts × BalOutcome)) =>
+    String.intercalate ", " (ys.map fun p => s!"{p.1.caseId} [{p.1.ty}]")
+  let kr := xs.filter (fun p => inApprovedDl p.1)
+  let rest := xs.filter (fun p => !inApprovedDl p.1)
+  [s!"  {what} {name} [status Approved, species DL] ({kr.length}): {idsOf kr}",
+   s!"  {what} {name} [other units] ({rest.length}): {idsOf rest}"]
+
+/-- The summary lines of the balanced line for one catalog. They follow
+every line `runRdfBased` printed before this line existed. -/
+def balancedSummaryLines (name : String) (b : BalResult) : List String :=
+  let bumpU := fun (s : RbScore) (p : RbOutcome × Option String) =>
+    match p.2 with
+    | some _ => { s with overridden := s.overridden + 1 }
+    | none => s.bump p.1
+  let tallyOf := fun (us : List (UnitFacts × (RbOutcome × Option String))) =>
+    us.foldl (fun s u => bumpU s u.2) ({} : RbScore)
+  let perType := testTypes.filterMap fun ty =>
+    let us := b.units.filter (fun u => u.1.ty == ty)
+    if us.isEmpty then none
+    else some (RbScore.line s!"{name} {ty} [{balancedTag}]" (tallyOf us))
+  let total := RbScore.line s!"{name} [{balancedTag}]" (tallyOf b.units)
+  let breakdown := breakdownLines name balancedTag Scope.rdfBased b.units ({} : RbScore)
+    bumpU RbScore.line
+  let passed := b.checked.filter (fun p => p.2.isPassed)
+  let byRef := passed.filter (fun p => match p.2 with | .passed _ r _ => r | _ => false)
+  let cert := passed.filter (fun p => match p.2 with | .passed _ _ c => c | _ => false)
+  let notBal := b.checked.filter (fun p => p.2.isNotBalanced)
+  let undec := b.checked.filter (fun p => p.2.isUndecided)
+  let kr := b.checked.filter (fun p => inApprovedDl p.1)
+  let krPass := kr.filter (fun p => p.2.isPassed)
+  let krRef := krPass.filter (fun p => match p.2 with | .passed _ r _ => r | _ => false)
+  let krCert := krPass.filter (fun p => match p.2 with | .passed _ _ c => c | _ => false)
+  let conds := (notBal.flatMap fun p => match p.2 with
+    | .notBalanced ds => defectConds ds
+    | _ => []).eraseDups
+  let condLines := conds.map fun k =>
+    let n := (notBal.filter fun p => match p.2 with
+      | .notBalanced ds => (defectConds ds).contains k
+      | _ => false).length
+    s!"  NOT-BALANCED-BY-CONDITION {name} ({n}): {k}"
+  perType ++ [total] ++ breakdown ++
+  [s!"BALANCED {name}: {passed.length} passed on the balanced line ({byRef.length} by \
+refutation, of which {cert.length} certificate-checked; {passed.length - byRef.length} by \
+the DL closure), {notBal.length} not balanced, {undec.length} balanced and not decided by \
+the DL path (out of {b.checked.length} units of type PositiveEntailmentTest or \
+InconsistencyTest that the RDF-Based rules did not prove)",
+   s!"BALANCED {name} [status Approved, species DL]: {krPass.length} pass, \
+{(kr.filter (fun p => p.2.isNotBalanced)).length} not-balanced, \
+{(kr.filter (fun p => p.2.isUndecided)).length} undecided (out of {kr.length})",
+   s!"BALANCED-CERTIFICATE {name} [status Approved, species DL]: {krCert.length} \
+certificate-checked (PROVED-BY-CERTIFICATE), {krRef.length - krCert.length} decided by \
+refutation without a checked certificate, {krPass.length - krRef.length} decided by the \
+DL closure (out of {krPass.length} passed on the balanced line)"] ++
+  balancedGroupLines name "BALANCED-PASSED-UNITS" passed ++
+  balancedGroupLines name "NOT-BALANCED-UNITS" notBal ++
+  balancedGroupLines name "BALANCED-UNDECIDED-UNITS" undec ++
+  condLines ++
+  [s!"BALANCED-NOTE [{balancedTag}]: not counted as proved. A pass here rests on \
+OWL 2 RDF-Based Semantics Theorem 7.1 for a balanced pair (section 7.3, a proof sketch), \
+on obligations O1 and O2 (https://github.com/danbri/factoidal/issues/761, \
+https://github.com/danbri/factoidal/issues/762) and, for an entailment, O3 \
+(https://github.com/danbri/factoidal/issues/763)."]
+
 structure RbCatalogResult where
   score : RbScore := {}
   perType : List (String × RbScore) := []
@@ -2141,6 +2462,8 @@ structure RbCatalogResult where
   local override that counts it apart (a failing unit only), for the
   breakdown lines (`breakdownLines`). Reporting only. -/
   unitFacts : List (UnitFacts × (RbOutcome × Option String)) := []
+  /-- The balanced line (issue 732), when it was run. Reporting only. -/
+  bal : BalResult := {}
 
 /-- `overrides`: `(test_id, issue)` of the local overrides of suite
 `owl-rdf-based` (`loadLocalOverrides`, below). A FAILING unit of a named
@@ -2150,7 +2473,8 @@ a PASSING one is printed `STALE` and fails the run. Other outcomes
 never changed. First entries: `WebOnt-I5.5-001` and `-002`,
 https://github.com/danbri/factoidal/issues/734. -/
 def runRdfBased (name : String) (cat : Catalog) (capMs : Nat) (verbose : Bool)
-    (overrides : List (String × String) := []) : IO RbCatalogResult := do
+    (overrides : List (String × String) := [])
+    (balanced : Option (Nat × Nat × Bool) := none) : IO RbCatalogResult := do
   let t0 ← IO.monoMsNow
   let mut r : RbCatalogResult := {}
   for c in cat.cases do
@@ -2191,6 +2515,25 @@ tests/local-overrides/ and close {issue}"
         r := { r with score := bumpU r.score, perType := pt, measure := r.measure.add m,
                       units := r.units + 1,
                       unitFacts := r.unitFacts ++ [(UnitFacts.ofCase c ty, (o, ovIssue))] }
+        -- The balanced line (issue 732). Printed after the unit's own
+        -- lines; it never changes `o` or the counts above.
+        if let some (rb, rms, strict) := balanced then
+          let notProved := match o with | .notProved _ => true | _ => false
+          let facts := UnitFacts.ofCase c ty
+          if notProved && (ty == "PositiveEntailmentTest" || ty == "InconsistencyTest") then
+            let b ← balancedJudge cat c ty capMs rb rms strict
+            match b with
+            | .passed how _ _ => IO.println s!"BALANCED-PASS {label}: {how}"
+            | .notBalanced ds =>
+                IO.println s!"NOT-BALANCED {label}: conditions {condNumbers ds}; {defectsText ds}"
+            | .undecided why => IO.println s!"BALANCED-UNDECIDED {label}: {why}"
+            let o2 : RbOutcome := match b with | .passed _ _ _ => .proved | _ => o
+            let ov2 : Option String := match b with | .passed _ _ _ => none | _ => ovIssue
+            r := { r with bal := { r.bal with
+                     units := r.bal.units ++ [(facts, (o2, ov2))],
+                     checked := r.bal.checked ++ [(facts, b)] } }
+          else
+            r := { r with bal := { r.bal with units := r.bal.units ++ [(facts, (o, ovIssue))] } }
   let t1 ← IO.monoMsNow
   r := { r with wallMs := t1 - t0 }
   for ty in testTypes do
@@ -2217,117 +2560,9 @@ closures_with_comprehension_witness={r.measure.witnessClosures} wall_ms={r.wallM
     | _ => none
   for l in failingLines name "rdf-based" Scope.rdfBased r.units rbFailing do
     IO.println l
+  if balanced.isSome then
+    for l in balancedSummaryLines name r.bal do IO.println l
   return r
-
-/-! ## Species (`--species`)
-
-OWL 2 Conformance §2.2 (syntactic conformance) and the `test:species`
-annotation of each test case: a case annotated `test:DL` is within OWL 2
-DL; a case annotated only `test:FULL` is OWL 2 Full and not DL. The
-verdict is `L4Factoidal.OWL.SyntaxDL.speciesIsDl`, a syntax-directed
-check of the OWL 2 Mapping to RDF Graphs §3 (reverse mapping) and the
-Structural Specification §11 (global restrictions) over the RDF graphs
-of ALL the case's documents. The harness only reads documents and
-compares the verdict with the annotation.
-
-Which documents: the premise, and the conclusion or non-conclusion.
-Two cases with the same premise differ in species when only their
-conclusions differ (`WebOnt-I5.5-005` against `WebOnt-I5.5-006`), so the
-conclusion document is part of the input, as it is for the F* runner
-(`owl_runner.ml`, "Species mode").
-
-The premise comes from `test:rdfXmlPremiseOntology`; when a case has
-none, from `test:rdfXmlInputOntology` on the case itself (the import
-test cases); when it has neither, from the functional-syntax premise,
-read by `L4Factoidal.OWL.FS` and checked with the body checks only,
-because a successful parse of `Ontology(...)` is the header evidence.
-`owl:imports` is resolved against the import wrapper nodes the case
-links with `test:importedOntology`. -/
-
-/-- The input of one species verdict. -/
-structure SpeciesDocs where
-  functional    : Bool
-  /-- The IRIs of the documents the catalog provides for this case:
-  the `test:importedOntologyIRI` of each linked import wrapper. -/
-  available     : List String := []
-  pDoc          : Graph
-  pMerged       : Graph
-  hasConclusion : Bool
-  cDoc          : Graph
-  uMerged       : Graph
-
-/-- The conclusion document of a case: the RDF/XML conclusion, else the
-RDF/XML non-conclusion, else the functional-syntax ones. `none` when the
-case has no conclusion document. `Except` carries a parse failure. -/
-def conclusionDoc (c : Case) : Except String (Option Graph) :=
-  match c.conclusion <|> c.nonConclusion with
-  | some t =>
-      match parseDoc "conclusion" c.iri t with
-      | .ok g => .ok (some g)
-      | .error e => .error e
-  | none =>
-      let fs := c.fsConclusionText <|> c.fsNonConclusionText
-      let ox := c.owlXmlConclusion <|> c.owlXmlNonConclusion
-      match fs, ox with
-      | none, none => .ok none
-      | _, _ =>
-          match altGraph fs ox with
-          | some g => .ok (some g)
-          | none => .error "unsupported: functional-syntax or OWL/XML conclusion outside the grammar the reader accepts"
-
-/-- The species documents of a case read from a functional-syntax
-premise `pDoc` (and the functional-syntax or OWL/XML conclusion). -/
-def speciesDocsFunctional (c : Case) (pDoc : Graph) : Except String SpeciesDocs :=
-  match conclusionDoc c with
-  | .error e => .error e
-  | .ok none =>
-      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
-            hasConclusion := false, cDoc := [], uMerged := pDoc }
-  | .ok (some g0) =>
-      let cDoc := g0.prefixBnodes "c_"
-      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
-            hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
-
-/-- Gather the documents of a case for the species verdict. -/
-def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
-  let allowed := c.imports.filterMap (fun w =>
-    (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
-  match c.premise <|> c.inputOntology with
-  | some ptxt =>
-    match parseDoc "premise" c.iri ptxt with
-    | .error e =>
-        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
-        -- The functional-syntax premise is read with the body checks,
-        -- as for a case that has no RDF/XML premise.
-        match normativeFsPremise? c with
-        | some g => speciesDocsFunctional c g
-        | none => .error e
-    | .ok pDoc =>
-      match loadImports cat.imports allowed pDoc [] (allowed.length + 1) with
-      | .error e => .error e
-      | .ok pMerged =>
-        match conclusionDoc c with
-        | .error e => .error e
-        | .ok none =>
-            .ok { functional := false, available := allowed, pDoc := pDoc, pMerged := pMerged,
-                  hasConclusion := false, cDoc := [], uMerged := pMerged }
-        | .ok (some g0) =>
-            let cDoc := g0.prefixBnodes "c_"
-            match loadImports cat.imports allowed (pDoc ++ cDoc) [] (allowed.length + 1) with
-            | .error e => .error e
-            | .ok uMerged =>
-                .ok { functional := false, available := allowed, pDoc := pDoc,
-                      pMerged := pMerged, hasConclusion := true, cDoc := cDoc,
-                      uMerged := uMerged }
-  | none =>
-    let alt : Option (Option Graph) :=
-      match c.fsPremiseText with
-      | some ftxt => some (L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt)
-      | none => c.owlXmlPremise.map L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
-    match alt with
-    | none => .error "harness: the case has no premise document in any syntax"
-    | some none => .error "unsupported: functional-syntax or OWL/XML premise outside the grammar the reader accepts"
-    | some (some pDoc) => speciesDocsFunctional c pDoc
 
 /-- The species verdict of a case against its annotation. -/
 def judgeSpecies (cat : Catalog) (c : Case) : Harness.Outcome × List String :=
@@ -3115,6 +3350,10 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
   IO.println "  Buckets: pass = entailment or inconsistency PROVED; not-refuted ="
   IO.println "  non-entailment or consistency NOT REFUTED (never counted as proved);"
   IO.println "  fail = not proved (positive, inconsistency) or refuted (negative, consistency)."
+  IO.println s!"  Separate line [{balancedTag}] (issue 732): a PositiveEntailmentTest or"
+  IO.println "  InconsistencyTest the rules did not prove, whose pair is balanced (section 7.3),"
+  IO.println "  is given to the DL path (--dl: RL closure, materialisation, refuter, certificate)."
+  IO.println "  Its answers are never counted in the [rdf-based] lines or the exit code."
   let mut total : RbScore := {}
   let mut notRead : List String := []
   let overrides ← loadLocalOverrides "owl-rdf-based"
@@ -3132,6 +3371,7 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
         let cat := if o.cases.isEmpty then cat0
           else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         let r ← runRdfBased name cat o.capMs o.verbose overrides
+                  (some (o.refuteBudget, o.refuteMs, o.strictMatch))
         total := total.add r.score
         applied := applied ++ r.applied
         stale := stale ++ r.stale

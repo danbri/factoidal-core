@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **SPARQL `SERVICE` failures inside `EXISTS` and under an outer `SILENT`**
+  ([issue 735](https://github.com/danbri/factoidal/issues/735); SPARQL 1.1
+  Federated Query §2.3 and §3.2). A failed `SERVICE` call without `SILENT`
+  inside `EXISTS` or `NOT EXISTS` (in `FILTER`, `BIND`, an `OPTIONAL`
+  condition, `HAVING`, `ORDER BY` or a `SELECT` expression) now fails the
+  query, as the same call in a graph pattern does. A failed `SERVICE` call
+  nested in the body of an outer `SERVICE SILENT` is a failure of the outer
+  call, so the outer call gives one solution with no bindings; without
+  `SILENT` on the outer call the query fails. The two expected-failure cases
+  in `test/l4-parity.test.js` are now assertions.
+
 - **`factoidal serve STORE --port N`: a SPARQL 1.1 endpoint over an activated
   store** ([issue 669](https://github.com/danbri/factoidal/issues/669), step
   1). SPARQL 1.1 Protocol query and update at `/sparql`, the Service

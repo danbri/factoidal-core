@@ -269,7 +269,7 @@ exit 2 when the bundle is absent).
 
 Expected failures in `npm test`, each with an open issue (the issue-716
 merge turned its 2 cases, `{lenient: true}` parse, into assertions):
-- issue 717, `SERVICE` without `SILENT` to an unregistered endpoint: 1 case (fixed in ffbce3c0; issue 735 has the two remaining cases);
+- issue 717, `SERVICE` without `SILENT` to an unregistered endpoint: 1 case (fixed in ffbce3c0; issue 735 had the two remaining cases, fixed on 2026-10-12);
 - issue 691, unused `@prefix xsd:` in Turtle output with literal shorthand: 1
   case (the Lean writer has the defect the issue names for F\*);
 - issue 676, PRECIS for XMPP JIDs: 2 cases.
@@ -839,7 +839,10 @@ engines, plus the sizes its expected-failure keys name, and requires the Lean
 time to be at most 2 times the faster F\* bundle. `XFAIL` holds
 no row (it held `order-by@small` and `group-by@small` until the repairs
 above). `MEMORY_XFAIL` holds `parse-turtle@large` with a bound of 256 MB of
-linear memory (https://github.com/danbri/factoidal/issues/744). `SCALING_XFAIL` held `canonicalize`: the Lean
+linear memory (https://github.com/danbri/factoidal/issues/744). Since 2026-10-12 that key is asserted in `MEMORY` and
+`MEMORY_XFAIL` is empty: 184 MB after the six calls (the envelope's string
+escape without a character list, and 128 MiB allocator arenas on wasm32;
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md` section 11). `SCALING_XFAIL` held `canonicalize`: the Lean
 time at 24,000 quads at most 9 times the time at 6,000 (https://github.com/danbri/factoidal/issues/745); since
 the repair below, `SCALING` asserts that bound and `SCALING_XFAIL` is empty. Each
 expected failure turns the gate red when it passes. Without the F\* bundles
@@ -1143,7 +1146,8 @@ against a specification, and the one F\* limit that the Lean side lifts
   danbri/factoidal-core ffbce3c0 (the evaluator now reports the failure). Two
   remaining cases (inside `EXISTS`; nested under an outer `SILENT`) are
   https://github.com/danbri/factoidal/issues/735, with expected-failure cases
-  in `npm/factoidal/test/l4-parity.test.js`.
+  in `npm/factoidal/test/l4-parity.test.js`; fixed on 2026-10-12 (OKR batch 1
+  key result 4.3), and the two cases are now assertions.
 - `csvwToRdf`: with `metadataJson == ''` the table is described by its own
   header row (embedded metadata, CSV on the Web tabular data model); the F\* test
   and the Lean engine give the same counts and subjects. A

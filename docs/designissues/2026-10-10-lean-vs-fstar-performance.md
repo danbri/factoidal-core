@@ -1365,6 +1365,472 @@ open:
 > with `acc ++ [v]` in a mutual block) and pretty-prints it. Row
 > `select-star`: expected failure naming this issue.
 
+## 11. Fifth round: `SELECT *` time and the wasm `parse()` memory (https://github.com/danbri/factoidal/issues/768 KR 2.3, branch `claude/wt-query-mem`)
+
+Key result 2.3 of OKR batch 1: "query time and memory linear". Three rows: the
+`select-star` row of `tests/stack/lean_scaling.py` (an expected failure naming
+https://github.com/danbri/factoidal/issues/729 since section 10.5a), the
+command line's peak memory (https://github.com/danbri/factoidal/issues/729),
+and the wasm module's linear memory after `parse()` of 48,000 triples
+(https://github.com/danbri/factoidal/issues/744, `MEMORY_XFAIL` of
+`tests/perf/npm_speed_gate.mjs`). Base: core `a3ee3e2a`. The binaries before
+are copies of that commit's `l4factoidal` and `l4query-phases`; the wasm
+before is the module the coordinator built from the same commit
+(sha256 `b8895465...`).
+
+### 11.1 Method, and what it cannot see
+
+* **Phases of `l4factoidal query`.** `l4query-phases` (section 10.1) has five
+  more phases after `index`: `solutions` (the solution sequence alone, by the
+  evaluator the op calls), `eval` (the op's envelope string:
+  `queryParsedDatasetWith`, which computes the solutions again, then
+  `QueryResult.toSrj`), `decode` (the JSON parse of the envelope that
+  `Cli.parseEnvelope` makes), `render` (the text `Cli.printQueryResult`
+  prints: `srj.toStringPretty`) and `output` (that text written). Each
+  report line has `ms=`, the wall time since the start of the process; a phase
+  is the difference of two lines of one process. `solutions` is measured in
+  the process that stops after it. `tools/query_phase_ladder.py` runs the
+  ladder and prints the tables below; peak resident memory is
+  `/usr/bin/time`'s maximum resident set of the process that stops after the
+  phase.
+* **Phases of the wasm `parse()`.** `tests/perf/l4_parse_memory_ladder.mjs`
+  runs each (size, phase) in its own Node child and prints `HEAPU8.byteLength`
+  after the phase's dispatch calls: `load` (the engine and a one-triple
+  parse), `open` (`datasetOpen`: the Turtle reader with the prefix table, the
+  blank-node scope and the index, no N-Quads text), `parse1` and `parse6`
+  (`parseToDatasetJson` once and six times: the op `parse()` calls, and the
+  number of calls the speed gate makes), `nquads1` (`serializeNQuads` of the
+  same data as N-Quads: no Turtle reader). The input is the bench's: K
+  people, 3K triples. `l4query-phases FILE --parse-op` runs the same op's
+  phases natively (`read`, `parse`, `scope`, `nquads`, `envelope`, `output`).
+
+What it cannot see:
+
+1. Wall times were measured at load averages of 4 to 41 (two other agents
+   built Lean and wasm on the same 4 CPUs). A phase below about 50 ms is
+   noise; the growth figures are for the phases above that.
+2. Wasm linear memory grows in steps that Emscripten chooses and never
+   shrinks, so a figure is an upper bound of the high-water mark, with a
+   resolution of several MB.
+3. One query shape for time (`SELECT *` over `gene.ttl`) and one data shape
+   for the wasm memory (the bench's people).
+
+### 11.2 `select-star` before, by phase
+
+`SELECT * WHERE { ?s ?p ?o }` over 1,250 to 10,000 paragraphs of `gene.ttl`,
+binary before. Wall time of each phase in ms (one run; load 4 to 6 for the
+first three sizes, 20 to 38 for the last):
+
+| paragraphs | bytes | parse | normalize | index | solutions | eval | decode | render | whole, CPU s |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,250 | 96,581 | 20 | 6 | 5 | 7 | 52 | 199 | 54 | 0.32 |
+| 2,500 | 205,706 | 97 | 18 | 13 | 6 | 106 | 1,141 | 124 | 1.42 |
+| 5,000 | 430,251 | 187 | 48 | 31 | 29 | 251 | 8,873 | 279 | 8.57 |
+| 10,000 | 847,023 | 195 | 72 | 62 | 130 | 411 | 72,197 | 980 | 51.32 |
+
+Growth per doubling: `decode` 5.7, 7.8 and 8.1; `eval` 2.0, 2.4 and 1.6;
+`render` 2.3, 2.2 and 3.5 (the last at load 38); `parse` 4.8, 1.9 and 1.0
+(below 0.2 s). `read` and `output` are below 3 ms. The `solutions` column is
+from a separate run of the binary before (load 17 to 24).
+
+Peak resident set (MB) of a process that stops after the phase:
+
+| paragraphs | parse | normalize | index | solutions | eval | decode | render | output |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,250 | 13.6 | 13.5 | 15.4 | 15.6 | 17.7 | 49.0 | 55.8 | 55.9 |
+| 2,500 | 13.6 | 15.7 | 17.7 | 20.0 | 26.1 | 96.3 | 95.8 | 96.1 |
+| 5,000 | 17.5 | 19.8 | 23.5 | 29.8 | 37.9 | 204.0 | 205.8 | 206.0 |
+| 10,000 | 23.8 | 29.9 | 35.9 | 46.1 | 47.4 | 367.9 | 367.8 | 368.1 |
+
+**Cause.** The faster-than-linear phase is `decode`, the JSON parse of the
+envelope (0.98 MB at 1,250 paragraphs, 9.3 MB at 10,000). `JSON.parseItems`
+appends each item to the end of the list read so far, `acc ++ [v]`, and the
+`bindings` array has one item per solution (4,651 to 43,251 here), so it
+copies n²/2 list cells; `parseMembers` does the same per object member. The
+same phase raises the peak by 31 to 320 MB, about 34 bytes per envelope
+character: `parseJsonText` turns the envelope into a `List Char` before it
+builds the `Array Char` it indexes (section 10.2 measured 35 bytes per
+character for such a list). Section 10.5a named the parse; this table
+confirms it is the whole growth: every other phase grows by at most 2.7 per
+doubling where it is above 50 ms.
+
+### 11.3 `query` COUNT(*) peak memory before, by phase (issue 729)
+
+`SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }`, binary before, peak resident set
+(MB) of a process that stops after the phase:
+
+| paragraphs | bytes | read | parse | normalize | index | eval | output |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 847,023 | 13.3 | 23.7 | 29.8 | 35.8 | 36.1 | 36.0 |
+| 20,000 | 1,706,149 | 15.7 | 35.9 | 47.5 | 57.5 | 57.9 | 57.9 |
+| 40,000 | 3,399,450 | 17.6 | 57.8 | 83.8 | 101.8 | 101.9 | 101.8 |
+| 80,000 | 6,761,194 | 23.5 | 103.2 | 153.5 | 183.2 | 184.1 | 183.6 |
+| 160,000 | 13,509,433 | 37.7 | 195.8 | 295.6 | 347.7 | 348.0 | 348.1 |
+
+Bytes of peak per input byte, 10,000 to 160,000 paragraphs: read 2.0, parse
+14.2, normalize 22.0, index 25.8, eval 25.8, output 25.8. These are the
+figures of section 10.4: the holders are the parsed graph,
+`normalizeDataset`'s duplicate-removal table and the index (section 10.5). The
+JSON parse is not on this path's peak (a COUNT envelope is 177 bytes).
+
+### 11.4 wasm `parse()` linear memory before, by phase (issue 744)
+
+`node tests/perf/l4_parse_memory_ladder.mjs`, wasm before, linear memory in
+MB at the end of the phase (load 20 to 21):
+
+| people | triples | Turtle bytes | load | open | parse1 | parse6 | nquads1 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2,000 | 6,000 | 99,814 | 44.1 | 52.9 | 88.1 | 88.1 | 88.1 |
+| 4,000 | 12,000 | 201,814 | 44.1 | 52.9 | 132.1 | 132.1 | 132.1 |
+| 8,000 | 24,000 | 405,814 | 44.1 | 52.9 | 220.9 | 220.9 | 270.9 |
+| 16,000 | 48,000 | 825,814 | 44.1 | 88.1 | 640.7 | 1,226.5 | 666.1 |
+
+The 640.7 and 1,226.5 MB of issue 744 are reproduced. **Cause.** `open`, which
+reads the Turtle and indexes the dataset, ends at 88.1 MB; `parse1`, which
+also writes the dataset as canonical N-Quads and puts that text into the JSON
+envelope, ends at 640.7; `nquads1`, which has no Turtle reader at all, ends at
+666.1. So the holder is the N-Quads text's way into the envelope: the
+envelope's `Json.string` member is written by `escapeString`, which is
+`(s.toList.map escapeChar).foldl (· ++ ·) ""`. For the 3.3 MB of canonical
+N-Quads of 48,000 triples it builds a `List Char` (on wasm32 a list cell and a
+heap-allocated boxed `Char` per character, `Wasm/build-wasm.sh` step 1b), then
+a list of one-character `String`s, then joins them. The Turtle reader
+(`parseTurtleWithPrefixes`, which still builds the whole-document character
+list that `parseTurtleText` avoids, section 10.3) and the JSON parse of the
+call's arguments (the text travels as a JSON array, `engine.call`) are each
+below the 35 MB step from 52.9 to 88.1 MB.
+
+### 11.5 Repair 1: the JSON parser with reverse accumulators (`select-star`)
+
+* **Change.** `JSON/Parser.lean`: the five functions of the parser's `mutual`
+  block (`parseValue`, `parseObject`, `parseMembers`, `parseArray`,
+  `parseItems`) have twins with an `R` suffix that are the same grammar,
+  except that `parseMembersR` and `parseItemsR` put each element at the front
+  of a reversed accumulator and reverse it once, at the closing bracket.
+  `parseJsonTextCharsR` calls them. `charsOfString` reads the characters of a
+  `String` in place (`String.foldl`) into the `Array Char` the parser indexes,
+  without the whole-document `List Char`; `parseJsonTextFast` uses it.
+* **Proved.** `parseR_eq`: at every fuel, on every input, each twin answers
+  what its specification answers, the accumulators differing by one
+  `reverse` (induction on the fuel, all five at once). `charsOfString_eq`:
+  `charsOfString s = s.toList.toArray`. Two `@[csimp]` theorems,
+  `parseJsonTextChars_eq_R` and `parseJsonText_eq_fast`, make the compiler
+  emit the fast forms for every call of `parseJsonTextChars` and
+  `parseJsonText`, so `parseJson` and `parseJson?` run them (the emitted C of
+  `parseJson` calls `parseJsonTextFast`, which calls `charsOfString` and
+  `parseJsonTextCharsR`). A `csimp` cannot replace a call between two members
+  of one `mutual` block (`skills/danbri-function-precrime-checkers`), so the
+  whole block has a twin and the replacement is made at the first function
+  outside it. Every theorem about the parser is stated about the
+  specification and is unchanged.
+* **Guards** (`JSON/Tests.lean`): element order of arrays, objects with a
+  repeated key, nested arrays and objects, 3,000 items in order; the message
+  and position of five rejections (a trailing comma in an array and in an
+  object, a missing comma in both, trailing content); `charsOfString` on
+  multi-byte characters and on the empty string.
+* **Output.** Equal by the theorems above. Measured as well: `l4factoidal
+  query`, binary before against binary after, standard output, standard
+  error and exit status (section 11.8).
+
+`SELECT *` after, wall time of each phase in ms (one run, load 15 to 21):
+
+| paragraphs | bytes | parse | normalize | index | solutions | eval | decode | render | whole, CPU s |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,250 | 96,581 | 35 | 19 | 16 | 2 | 28 | 60 | 27 | 0.11 |
+| 2,500 | 205,706 | 126 | 39 | 23 | 8 | 61 | 156 | 75 | 0.37 |
+| 5,000 | 430,251 | 161 | 34 | 42 | 41 | 159 | 567 | 214 | 1.10 |
+| 10,000 | 847,023 | 200 | 102 | 91 | 86 | 224 | 878 | 312 | 1.55 |
+| 20,000 | 1,706,149 | 422 | 277 | 279 | 210 | 632 | 1,256 | 544 | 2.72 |
+
+`decode`: 72.2 s before, 0.88 s after at 10,000 paragraphs; growth per
+doubling 2.6, 3.6, 1.5 and 1.4 (5.7, 7.8 and 8.1 before). The whole command at
+5,000 paragraphs: 8.57 s of CPU time before, 1.10 s after (F*: 1.43 s,
+section 10.5a). Peak resident set after the `output` phase: 26.3, 50.2, 90.0,
+160.0 and 311.7 MB (55.9, 96.1, 206.0 and 368.1 MB before at the first four
+sizes); `decode` still adds 10 to 12 bytes of peak per envelope character at 2,500
+paragraphs and above (the `Array Char`, 8 bytes per character, and the `Json`
+tree; about 34 before), and `render` holds
+the pretty-printed text beside the tree.
+
+The gate row `select-star` (`tests/stack/lean_scaling.sh --only select-star`,
+minimum of 3 runs, load 15): 0.236 s at 1,250 paragraphs, 0.614 s at 5,000,
+ratio 2.6 for 4 times the input (bound 9). It reported "UNEXPECTED PASS", and
+the row is now an assertion (removed from `XFAIL`). Before: 0.32 s and 6.24 s,
+ratio 19.7.
+
+### 11.6 Repair 2: `escapeString` without a list (issue 744)
+
+* **Change.** `JSON/Serialize.lean`: `escapeStringFast` walks the `String`
+  with `String.foldl` and appends to one accumulator: a character outside
+  the RFC 8259 §7 escape set (`escapeNeeded`) is pushed, a character inside
+  it appends `escapeChar`'s sequence. No `List Char`, no string per
+  character.
+* **Proved.** `escapeChar_of_not_needed` (outside the set, `escapeChar c` is
+  the character itself), `escapeStep_eq`, and `@[csimp] escapeString_eq_fast`
+  (`escapeString = escapeStringFast`, by `String.foldl_eq_foldl_toList` and
+  `List.foldl_map`). Every call of `escapeString`, among them every
+  `Json.string` that `toStringCompact` writes and the SPARQL Results JSON
+  writer's (`ResultsJson.lean`), runs the fast form; the emitted C of the
+  writers calls `escapeStringFast`, and its `String.foldl` is a loop
+  (`goto _start`).
+* **Guards** (`JSON/Tests.lean`): `escapeString` against the specification's
+  expression written out in the test module (which the `csimp` does not
+  rewrite) on 8 strings with every escape class, multi-byte characters and
+  U+007F; four literal results.
+
+Native, the op `parseToDatasetJson` through `l4wasm-cli call` (the same
+dispatch path as the wasm module, the arguments as a JSON array), peak
+resident set in MB and wall time in s, the binary of `a3ee3e2a` against the
+binary with repairs 1 and 2 (load 15 to 20):
+
+| people | triples | before MB | after MB | before s | after s | envelope |
+|---:|---:|---:|---:|---:|---:|---|
+| 2,000 | 6,000 | 66.9 | 27.6 | 0.52 | 0.10 | identical |
+| 4,000 | 12,000 | 111.0 | 31.5 | 0.44 | 0.20 | identical |
+| 8,000 | 24,000 | 197.4 | 39.7 | 1.12 | 0.41 | identical |
+| 16,000 | 48,000 | 379.3 | 61.1 | 3.76 | 0.44 | identical |
+| 64,000 | 192,000 | 1,444.9 | 145.3 | 12.55 | 2.20 | identical |
+
+MB here is 2^20 bytes; the 379.3 MB before at 48,000 triples is 388,360 KB,
+issue 744's "the native Lean build of the same op peaks at 388 MB". Phases after (`l4query-phases FILE --parse-op`, peak MB
+of a process that stops after the phase): at 64,000 people read 18.1, parse
+134.3, scope 134.0, nquads 134.2, envelope 134.1, output 134.2. The largest
+holder natively is now the Turtle reader: `parseTurtleWithPrefixes` builds
+the whole-document `List Char` (section 10.2) that the command line's
+`parseTurtleText` avoids; the op reads the prefix table, which the walk does
+not return.
+
+Wasm (`tests/perf/l4_parse_memory_ladder.mjs`, module with repairs 1 and 2,
+load 15 to 20), linear memory in MB:
+
+| people | triples | load | open | parse1 | parse6 | nquads1 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2,000 | 6,000 | 44.1 | 52.9 | 52.9 | 52.9 | 63.5 |
+| 4,000 | 12,000 | 44.1 | 52.9 | 52.9 | 52.9 | 96.1 |
+| 8,000 | 24,000 | 44.1 | 52.9 | 52.9 | 52.9 | 184.4 |
+| 16,000 | 48,000 | 44.1 | 63.5 | 257.4 | 1,224.1 | 553.0 |
+| 64,000 | 192,000 | 44.1 | 205.5 | 876.1 | 1,588.1 | 1,692.1 |
+
+Up to 14,000 people `parse1` and `parse6` now stay at 52.9 to 88.1 MB, flat
+across calls (221 MB at 8,000 people before). At 16,000 people the first call
+ends at 257.4 MB and six calls at 1,224.1 MB, almost as before. The live
+Lean heap after each of the six calls is 0.5 MB (`l4_heap_tags_c`, every live
+mimalloc block): nothing is retained. Between 14,000 and 16,000 people the
+envelope and the N-Quads text pass 4 MiB (4.48 MB of N-Quads at 16,000), the
+segment size of mimalloc on wasm32; see repair 3.
+
+### 11.7 Repair 3: the allocator's arena size on wasm32 (issue 744)
+
+**What grew.** After repair 2, six calls at 48,000 triples still raised
+linear memory from 257.4 to 1,224.1 MB while the live heap after each call
+was 0.5 MB. On wasm32 mimalloc (the allocator Lean's runtime requires,
+`Wasm/build-wasm.sh` step 2) takes its memory from emmalloc
+(`emmalloc_memalign`, `src/prim/emscripten/prim.c`) in arenas of
+`arena_reserve` / 4, that is 32 MiB (the division by 4 is mimalloc's rule
+for a platform with no virtual reserve), made of 4 MiB blocks (the segment
+size on 32-bit). An object above 2 MiB gets a segment of its own, a run of
+whole blocks. At 48,000 triples the N-Quads text (4.48 MB) and every string
+built from it pass 4 MiB, and they are allocated, grown by doubling and
+freed several times per call; between 42,000 triples (88.1 MB, flat over three
+calls) and 48,000 the curve jumps. Each call then finds no free run long
+enough in the arenas it has and reserves another one.
+
+**Measured, by setting the option at run time** (`l4_mi_option_set` after the
+engine has loaded, so the first arena keeps its default size; six calls of
+`parseToDatasetJson` at 48,000 triples, linear memory in MB after calls 1 to
+6):
+
+| `arena_reserve` (arena on wasm32) | after call 1 | after call 6 |
+|---|---:|---:|
+| default, 128 MiB (32 MiB) | 257.4 | 1,224.1 |
+| 256 MiB (64 MiB) | 390.1 | 809.1 |
+| 384 MiB (96 MiB) | 524.3 | 1,087.3 |
+| 512 MiB (128 MiB) | 184.1 | 184.1 |
+| 768 MiB (192 MiB) | 248.1 | 248.1 |
+| 1 GiB (256 MiB) | 312.1 | 312.1 |
+| `disallow_arena_alloc` = 1 | 227.9 | 960.8 |
+| `purge_delay` = 0 or -1 | 257.4 | 1,224.1 |
+
+With 128 MiB arenas: 184.1 MB at 48,000 triples and 340.1 MB at 192,000
+(1,588.1 MB before), flat over six calls in both; 52.9 MB at 6,000 triples,
+as before. Arenas of 64 and 96 MiB are worse than the default: one call needs
+more than one of them, and the free runs left between calls are too short.
+This was found by measurement and not derived; section 11.1 item 2 applies.
+
+* **Change.** `Wasm/l4_shim.c`, `l4_ensure_init`: after the module
+  initialisation, `mi_option_set(mi_option_arena_reserve, 512 * 1024)`
+  (KiB). The first arena, reserved during the initialisation, keeps the
+  default size. Every later arena is 128 MiB (mimalloc doubles the size every
+  8 arenas). The shim is in the wasm build only; the native programs are
+  unchanged. It changes no output: it sets where the allocator places
+  objects.
+* **Cost.** A workload that outgrows the first 32 MiB arena now reserves 128
+  MiB at once, where it used to reserve 32 MiB at a time. Wasm linear memory
+  never shrinks, so such a workload ends at about 172 MB or more even when it
+  needed less: `serializeNQuads` of 12,000 triples ends at 192.1 MB (96.1 MB
+  with the default arena), of 24,000 at 211.3 MB (184.4). The bench rows of
+  section 11.9 give the before and after of every row.
+
+Wasm with repairs 1 to 3 (`tests/perf/l4_parse_memory_ladder.mjs`, load 2 to
+3), linear memory in MB:
+
+| people | triples | load | open | parse1 | parse6 | nquads1 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2,000 | 6,000 | 44.1 | 52.9 | 52.9 | 52.9 | 63.5 |
+| 4,000 | 12,000 | 44.1 | 52.9 | 52.9 | 52.9 | 192.1 |
+| 8,000 | 24,000 | 44.1 | 52.9 | 52.9 | 52.9 | 211.3 |
+| 16,000 | 48,000 | 44.1 | 63.5 | 184.1 | 184.1 | 380.1 |
+| 64,000 | 192,000 | 44.1 | 211.3 | 340.1 | 340.1 | 1,088.1 |
+
+`nquads1` remains the largest: its input is 4.48 MB of N-Quads text at 48,000
+triples, and the dispatch reads its arguments as JSON into an `Array Char`
+(`charsOfString`), where on wasm32 every element is a pointer to a
+heap-allocated boxed `Char`: 20 bytes per input character, 90 MB for that
+text, beside the text itself and the parse.
+
+### 11.8 Output comparison and gates
+
+**Output.** Repairs 1 and 2 are proved equal to the definitions they replace
+(`parseR_eq`, `charsOfString_eq`, `escapeString_eq_fast`). Measured as well,
+`l4factoidal query`, binary of `a3ee3e2a` against the binary with repairs 1
+and 2, standard output, standard error and exit status compared byte for
+byte: every `.rq` file of the W3C SPARQL 1.1 suite directories run on the
+first `.ttl` file of its directory (440 cases), and six query shapes (SELECT
+*, OPTIONAL with LIMIT, ASK, CONSTRUCT, COUNT, GROUP BY) with and without
+`--table` on 1,250, 2,500 and 5,000 paragraphs of `gene.ttl` (36 cases): 476
+identical, 0 differ, 0 timed out (out of 476). The envelope of
+`parseToDatasetJson` through `l4wasm-cli call`, before and after: identical
+at all five sizes of section 11.6. Repair 3 changes no output (it sets where
+the allocator places objects).
+
+**Gates**, after the last commit of this round:
+
+* `l4w3c --quiet`: SPARQL 1.1 manifest-all 650 pass, 0 fail (out of 650);
+  SPARQL 1.2 271 pass, 0 fail (out of 271); RDF 1.1 1041 pass, 0 fail (out
+  of 1041); RDF 1.2 1358 pass, 0 fail (out of 1358). All four equal to the
+  baseline.
+* `Wasm/native-smoke.sh` 350 pass, 0 fail, 0 xfail (out of 350);
+  `Wasm/cli-smoke.sh` 73 pass, 0 fail, 0 xfail (out of 73);
+  `tests/stack/lenient_scaling.sh` 16 pass, 0 fail (out of 16).
+* The wasm rebuilt (`Wasm/build-wasm.sh`, module sha256 `db4d79f0...`, core
+  `cbed0fe7...`): `npm test` in `npm/factoidal` 402 pass, 0 fail, 1 skipped
+  (out of 403; the skip is the esbuild bundler test, esbuild not installed);
+  `node tests/perf/npm_speed_gate.mjs` 10 pass, 0 fail, 0 expected failures
+  (out of 10), among them `memory parse-turtle@large`, 184 MB (bound 256),
+  at load 9.9.
+* `python3 tools/lean-tail-recursion-audit.py --gate` passes after the five
+  reverse-accumulator parser twins were added to the allow list as (b): the
+  cycle through `parseValueR` is one frame per nesting level, and
+  `parseItemsR` and `parseMembersR` step to the next element with
+  `goto _start`. `tools/lean-hygiene-audit.py`: 0 sorry, 0 axiom, 0
+  native_decide, 0 unsafe, 0 implemented_by, 164 partial def (baseline
+  164).
+* `tests/stack/lean_scaling.sh` 20 pass, 0 fail, 2 expected-fail (out of 22),
+  load 10: `select-star` passes (0.123 s to 0.658 s, ratio 5.4; 0.129 s to
+  0.575 s, ratio 4.5, in a second run at load 20 after the full build); the
+  expected failures are `rdfc-bnode-collide`
+  (https://github.com/danbri/factoidal/issues/751) and `query-memory-fstar`
+  (https://github.com/danbri/factoidal/issues/729, 27.2 bytes per input byte,
+  bound 6); every other row as before. `query-memory`: 27.1 (bound 32).
+* Full `lake build` exits 0 (1405 jobs). `#print axioms` of `parseR_eq`,
+  `parseJsonTextChars_eq_R`, `charsOfString_eq`, `parseJsonText_eq_fast` and
+  `escapeString_eq_fast` (`JSON/Tests.lean`): `propext`, `Classical.choice`,
+  `Quot.sound` only.
+
+### 11.9 Every row of the npm bench, before and after
+
+`node tests/perf/l4_vs_fstar_wasm_bench.mjs --engines l4` with the module
+before (`a3ee3e2a`) and the module with repairs 1 to 3, one after the other
+(load 2.1 to 6.5 for the run before, 6.5 to 11.3 for the run after, so the
+times after are measured at the higher load). Time is the median of five
+runs after a warmup; linear memory is the module's at the end of the child
+(six calls); max RSS is the Node process's peak resident set.
+
+| row | triples | ms before | ms after | linear MB before | linear MB after | max RSS MB before | max RSS MB after |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| parse-turtle | 3,000 | 55.3 | 40.8 | 52.9 | 52.9 | 151.3 | 135.4 |
+| parse-turtle | 12,000 | 229.8 | 166.1 | 132.1 | 52.9 | 249.1 | 184.2 |
+| parse-turtle | 48,000 | 1,004.8 | 627.4 | 1,226.5 | 184.1 | 614.6 | 389.7 |
+| parse-nquads | 3,000 | 117.2 | 86.1 | 52.9 | 52.9 | 147 | 142.3 |
+| parse-nquads | 12,000 | 467.7 | 358.4 | 132.1 | 192.1 | 243.5 | 218.2 |
+| parse-nquads | 48,000 | 2,037 | 1,572.8 | 1,272.1 | 380.1 | 699 | 520.4 |
+| select-join | 3,000 | 110.2 | 99.6 | 52.9 | 52.9 | 156.7 | 150.9 |
+| select-join | 12,000 | 451.4 | 365.3 | 158.5 | 211.3 | 239 | 206 |
+| select-join | 48,000 | 2,091 | 1,709.5 | 1,296.0 | 376.1 | 710.5 | 528 |
+| order-by | 3,000 | 121.3 | 119.2 | 52.9 | 52.9 | 163.7 | 152.8 |
+| order-by | 12,000 | 501 | 368 | 158.5 | 211.3 | 267.3 | 237.2 |
+| order-by | 48,000 | 2,129.4 | 1,671.1 | 1,296.0 | 376.1 | 726.7 | 557.3 |
+| group-by | 3,000 | 93.5 | 84.9 | 52.9 | 52.9 | 173.2 | 164.4 |
+| group-by | 12,000 | 384.3 | 341.5 | 158.5 | 211.3 | 260.6 | 208.6 |
+| group-by | 48,000 | 1,733.9 | 1,545.6 | 1,296.0 | 376.1 | 715.4 | 471.1 |
+| count-distinct | 3,000 | 86.3 | 90.4 | 52.9 | 52.9 | 161.1 | 159.1 |
+| count-distinct | 12,000 | 415.4 | 371.9 | 158.5 | 211.3 | 293 | 222.7 |
+| count-distinct | 48,000 | 1,861.2 | 1,765.9 | 1,296.0 | 376.1 | 713.6 | 486 |
+| canonicalize | 1,500 | 95.7 | 66.1 | 52.9 | 52.9 | 140.8 | 137.2 |
+| canonicalize | 6,000 | 327.1 | 293.9 | 84.1 | 52.9 | 169.6 | 147.6 |
+| canonicalize | 24,000 | 1,365.4 | 1,088.4 | 190.2 | 211.3 | 290.2 | 224.8 |
+| shacl | 1,500 | 65.5 | 79.7 | 52.9 | 52.9 | 138.1 | 139.4 |
+| shacl | 6,000 | 265 | 286.2 | 105.7 | 63.5 | 188.7 | 170.6 |
+| shacl | 24,000 | 1,139.2 | 1,025.9 | 1,245.7 | 216.1 | 457.9 | 305.2 |
+
+At the largest size, linear memory falls in 7 of the 8 rows, from 1,226.5 to
+1,296.0 MB before to 184.1 to 380.1 MB after; canonicalize rises from 190.2 to
+211.3 MB. At the middle size, five rows rise from 132.1 or 158.5 MB to 192.1
+or 211.3 MB: they outgrow the first arena, and the next one is now 128 MiB
+(the cost named in section 11.7); three fall. The peak resident set of the
+process, which counts only the pages that were touched, is lower after in 23
+of the 24 rows and 1.3 MB higher in the other (shacl, 1,500 triples). Time
+after is lower in 21 of the 24 rows, at a higher load.
+
+### 11.10 Text for the issues
+
+For https://github.com/danbri/factoidal/issues/729 (stays open):
+
+> **`select-star` repaired** (`claude/wt-query-mem`, design record section
+> 11). Phase ladder (`l4query-phases`, `tools/query_phase_ladder.py`, 1,250 to
+> 10,000 paragraphs of `gene.ttl`): the faster-than-linear phase of `SELECT *`
+> was the command line's JSON parse of the op's envelope, 0.20 to 72.2 s,
+> 5.7 to 8.1 times per doubling; `JSON.parseItems`/`parseMembers` appended
+> each element with `acc ++ [v]`. The parser's mutual block now has a
+> reverse-accumulator twin, proved equal (`parseR_eq`), with `csimp` at
+> `parseJsonTextChars`; `charsOfString` builds the `Array Char` without the
+> whole-document list. 10,000 paragraphs: 72.2 s to 0.88 s in that phase;
+> 5,000 paragraphs: 8.57 s to 1.10 s of CPU time for the command (F* 1.43
+> s). Gate row `select-star`: 0.236 s to 0.614 s, ratio 2.6 for 4x input
+> (19.7 before), now an assertion. Output identical by proof, and measured
+> on 476 of 476 command lines.
+> **Still open: the memory of a query.** COUNT(*) peak 25.8 bytes per input
+> byte (10,000 to 160,000 paragraphs), unchanged by this round: the parsed
+> graph (14.2), `normalizeDataset`'s duplicate-removal table while the parsed
+> graph is live (7.8 more) and the index built for every query (3.8 more).
+> Row `query-memory-fstar` (at most 6) stays an expected failure naming this
+> issue. Next repair: section 10.5 items 1 and 2 (intern IRIs inside the
+> walk's statement step; remove repeated triples while parsing).
+
+For https://github.com/danbri/factoidal/issues/744 (can close when the merge
+lands):
+
+> **Repaired** (`claude/wt-query-mem`, design record section 11). Phases in
+> the wasm module (`tests/perf/l4_parse_memory_ladder.mjs`): `datasetOpen` of
+> 48,000 triples ended at 88.1 MB, `parseToDatasetJson` at 640.7 MB,
+> `serializeNQuads` of the same data at 666.1 MB: the holder was the
+> N-Quads text's way into the envelope, `escapeString` = `(s.toList.map
+> escapeChar).foldl (++) ""`. `escapeStringFast` (String.foldl, push),
+> proved equal, `csimp`: one call 257.4 MB; natively 388,360 KB to 62,556 KB
+> for the same op, envelopes identical. Six calls still grew to 1,224 MB with
+> 0.5 MB of live heap after each call: objects above the 4 MiB segment size
+> fragmented mimalloc's 32 MiB arenas on wasm32. `Wasm/l4_shim.c` sets
+> 128 MiB arenas after the first: 184.1 MB after six calls (bound 256),
+> 340.1 MB at 192,000 triples (1,588 MB before), flat across calls. The gate
+> key is asserted in `MEMORY`; `MEMORY_XFAIL` is empty. Cost: rows that
+> outgrow the first 32 MiB arena step to about 172 MB of linear memory at
+> once (5 middle-size bench rows rise by 53 to 60 MB; the resident set falls
+> in 23 of 24 rows). Next holders: the Turtle reader of this op
+> (`parseTurtleWithPrefixes` builds the whole-document `List Char`; the
+> command line's `parseTurtleText` does not, but returns no prefix table),
+> and the dispatch's JSON arguments as an `Array Char` of boxed characters on
+> wasm32 (20 bytes per input character).
+
 ## 7. How to repeat
 
 ```
@@ -1381,6 +1847,12 @@ callgrind_annotate --inclusive=yes /tmp/cg.out | head -40
 # peak memory by phase (section 10)
 /usr/bin/time -v formal/lean4/.lake/build/bin/l4query-phases FILE --stop-after parse
 formal/lean4/.lake/build/bin/l4query-phases --walk-check LIST   # walk against parseTurtle
+# time and peak memory of every phase of `query`, and the wasm parse() (section 11)
+python3 tools/query_phase_ladder.py --sizes 1250,2500,5000,10000
+python3 tools/query_phase_ladder.py --sizes 10000,20000,40000,80000,160000 \
+    --query 'SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }'
+formal/lean4/.lake/build/bin/l4query-phases FILE --parse-op --stop-after nquads
+node tests/perf/l4_parse_memory_ladder.mjs --people 2000,4000,8000,16000,64000
 ```
 
 `tests/stack/lean_scaling.sh` asserts time(4x) <= 9.0 x max(time(x), 50 ms) for

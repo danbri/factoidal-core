@@ -331,8 +331,10 @@ def dsEmpty : Dataset := { default := [], named := [] }
 #guard failIn envSvc dsEmpty (qAll (.join (.service epNone false pLabels)
     (.service (iriQ "https://example.org/other") false pLabels))) ==
   some (.unreachable epNone.val)
--- A nested SERVICE without SILENT inside a reachable endpoint's body is
--- an invocation this engine makes: it fails the query.
+-- A nested SERVICE without SILENT inside a reachable endpoint's body
+-- fails the outer call (§3.2), and the outer call has no SILENT here,
+-- so the query fails. (Outer SILENT: the guards in the issue 735
+-- section below.)
 #guard failIn envSvc dsEmpty (qAll (.service epOne false
     (.join pLabels (.service epNone false pLabels)))) == some (.unreachable epNone.val)
 #guard failIn envSvc dsEmpty (qAll (.service epOne false
@@ -390,6 +392,217 @@ def dsEmpty : Dataset := { default := [], named := [] }
         | _ => false)
 #guard (match evalAskChecked envSvc dsEmpty (mkQuery .ask (.service epNone true pLabels)) with
         | .ok b => b
+        | _ => false)
+
+/-! ### A failed SERVICE call inside EXISTS, and under an outer SILENT
+
+https://github.com/danbri/factoidal/issues/735, Federated Query §2.3 and
+§3.2. Each error case is beside the same query with SILENT, or with a
+registered endpoint, or with no row to evaluate the expression on, so an
+evaluator that always fails, or never fails, breaks the build. -/
+
+/-- `EXISTS { SERVICE [SILENT] <ep> { ?s :label ?label } }`. -/
+def exSvc (ep : WfIri) (silent : Bool) : Expr := .existsPat (.service ep silent pLabels)
+/-- `NOT EXISTS { SERVICE [SILENT] <ep> { ?s :label ?label } }`. -/
+def notExSvc (ep : WfIri) (silent : Bool) : Expr := .notExistsPat (.service ep silent pLabels)
+/-- `ORDER BY ASC(e)`. -/
+def orderAsc (e : Expr) : SolutionModifier := { orderBy := some [.asc e] }
+/-- `GROUP BY ?s`. -/
+def groupS : Option (List GroupCondition) := some [.var "s"]
+
+-- 1. FILTER EXISTS. Without SILENT the failed call fails the query; with
+-- SILENT, or with a registered endpoint, it does not.
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epNone false) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epNone true) pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epOne false) pPersons)) == none
+-- The rows are unchanged: EXISTS over the registered endpoint keeps
+-- alice and bob; over SILENT it sees Ω0, one solution, so it is true.
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (exSvc epOne false) pPersons))) ==
+  ["alice", "bob"]
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (exSvc epNone true) pPersons))) ==
+  ["alice", "bob"]
+-- No row reaches the FILTER: the EXISTS is never evaluated, nothing fails.
+#guard failIn envSvc dsEmpty (qAll (.filter (exSvc epNone false) pPersons)) == none
+-- Every EXISTS in the expression is evaluated, also the right operand of
+-- an `||` whose left operand is true.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.or (.boolLit true) (exSvc epNone false)) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.or (.boolLit true) (exSvc epNone true)) pPersons)) == none
+-- An expression with no EXISTS gets no failure twin.
+#guard failIn envSvc dsMain (qAll (.filter (.boolLit true) pPersons)) == none
+
+-- 2. FILTER NOT EXISTS, the same three ways.
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epNone false) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epNone true) pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epTwo false) pPersons)) == none
+-- epTwo holds a label for carol only, so NOT EXISTS keeps alice and bob;
+-- the SILENT call is Ω0, so NOT EXISTS is false for every row.
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (notExSvc epTwo false) pPersons))) ==
+  ["alice", "bob"]
+#guard rowsIn envSvc dsMain (qAll (.filter (notExSvc epNone true) pPersons)) == []
+
+-- 3. BIND(EXISTS { ... } AS ?e).
+#guard failIn envSvc dsMain (qAll (.bind (exSvc epNone false) "e" pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.bind (exSvc epNone true) "e" pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.bind (notExSvc epOne false) "e" pPersons)) == none
+#guard colS "e" (rowsIn envSvc dsMain (qAll (.bind (notExSvc epOne false) "e" pPersons))) ==
+  ["false", "false"]
+
+-- 4. An OPTIONAL condition: evaluated on every compatible merge.
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (exSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (exSvc epNone true))) == none
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (notExSvc epOne false))) == none
+-- No compatible merge (no ages in this graph): the condition is never
+-- evaluated, so nothing fails.
+#guard failIn envSvc dsMain
+    (qAll (.leftJoin pPersons (.bgp [tpv "s" pAge (.var "a")]) (exSvc epNone false))) == none
+
+-- 5. HAVING, for SELECT and for ASK.
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epNone false])) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epNone true])) == none
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epOne false])) == none
+#guard failIn envSvc dsMain (mkQuery .ask pPersons (having := [notExSvc epNone false])) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (mkQuery .ask pPersons (having := [notExSvc epNone true])) == none
+
+-- 6. ORDER BY, for SELECT and for CONSTRUCT.
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone true))) == none
+#guard failIn envSvc dsMain
+    (mkQuery (.construct []) pPersons (modifier := orderAsc (notExSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.construct []) pPersons (modifier := orderAsc (notExSvc epOne false))) == none
+-- No row to order: nothing fails.
+#guard failIn envSvc dsEmpty
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone false))) == none
+
+-- 7. A SELECT expression, at the top and inside a sub-SELECT.
+#guard failIn envSvc dsMain
+    (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone false) "e"])) pPersons) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone true) "e"])) pPersons) == none
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone false) "e"]))
+      pPersons))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select .all) pPersons (groupBy := groupS)
+      (having := [exSvc epNone false])))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select .all) pPersons (groupBy := groupS)
+      (having := [exSvc epNone true])))) == none
+
+-- 8. EXISTS nested in EXISTS, one and two levels.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (exSvc epNone false) pLabels)) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (exSvc epNone true) pLabels)) pPersons)) == none
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (.notExistsPat (.filter (exSvc epNone false) pLabels))
+      pLabels)) pPersons)) == some (.unreachable epNone.val)
+
+-- 9. §3.2, one level: a failed SERVICE nested in an outer SERVICE SILENT
+-- is a failure of the outer call, so the outer SILENT gives one
+-- solution with no bindings. Without SILENT on the outer call the query
+-- fails.
+#guard failIn envSvc dsEmpty (qAll (.service epOne true (.service epNone false pLabels))) ==
+  none
+#guard rowsIn envSvc dsEmpty (qAll (.service epOne true (.service epNone false pLabels))) ==
+  [[]]
+#guard failIn envSvc dsEmpty (qAll (.service epOne false (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+-- A nested call that succeeds: the outer SILENT gives the body's rows.
+#guard failIn envSvc dsEmpty (qAll (.service epOne true (.service epTwo false pLabels))) ==
+  none
+#guard colS "label" (rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false pLabels)))) == ["ccc"]
+-- Joined with local rows: Ω0 keeps them unextended.
+#guard colS "s" (rowsIn envSvc dsMain
+    (qAll (.join pPersons (.service epOne true (.service epNone false pLabels))))) ==
+  ["alice", "bob"]
+#guard failIn envSvc dsMain
+    (qAll (.join pPersons (.service epOne true (.service epNone false pLabels)))) == none
+-- The failure inside the body may sit in an EXISTS.
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne true (.filter (exSvc epNone false) pLabels))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.filter (exSvc epNone false) pLabels))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.filter (exSvc epNone false) pLabels))) ==
+  some (.unreachable epNone.val)
+-- SERVICE ?v: each invocation is covered by its own SILENT.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" true (.service epNone false pLabels)))) == none
+#guard colS "ep" (rowsIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" true (.service epNone false pLabels))))) == ["endpoint1"]
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" false (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+
+-- 10. §3.2, two levels: the innermost SILENT that encloses the failure
+-- covers it.
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false (.service epNone false pLabels)))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false (.service epNone false pLabels)))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo true (.service epNone false pLabels)))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo true (.service epNone false pLabels)))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo false (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+-- Two levels with no failure: the rows come through both SILENT calls.
+#guard colS "label" (rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo true (.service epOne false pLabels))))) ==
+  ["aaa", "bbb"]
+
+-- 11. Both together: an outer SILENT inside an EXISTS covers the nested
+-- failure, so the EXISTS sees Ω0 and is true; without it the query fails.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne true (.service epNone false pLabels)))
+      pPersons)) == none
+#guard colS "s" (rowsIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne true (.service epNone false pLabels)))
+      pPersons))) == ["alice", "bob"]
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne false
+      (.service epTwo false (.service epNone false pLabels)))) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne false
+      (.service epTwo true (.service epNone false pLabels)))) pPersons)) == none
+
+-- 12. The checked evaluators answer the error for an EXISTS failure.
+#guard (match evalSelectChecked envSvc dsMain
+          (qAll (.filter (exSvc epNone false) pPersons)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalAskChecked envSvc dsMain
+          (mkQuery .ask (.filter (notExSvc epNone false) pPersons)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalSelectChecked envSvc dsEmpty
+          (qAll (.service epOne true (.service epNone false pLabels))) with
+        | .ok (_, r) => r == [[]]
         | _ => false)
 
 /-! ## §18.2.4 projection and SELECT expressions -/
