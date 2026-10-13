@@ -130,7 +130,7 @@ theorem probeFrom_spec (cands : Array UInt64) (hs : Sorted cands) (w : UInt64) (
 
 theorem contains_iff_getElem (cands : Array UInt64) (w : UInt64) :
     cands.contains w = true ↔ ∃ k, k < cands.size ∧ cands[k]! = w := by
-  rw [Array.contains_iff, Array.mem_iff_getElem]
+  rw [Array.contains_iff_mem, Array.mem_iff_getElem]
   constructor
   · rintro ⟨k, hk, he⟩
     exact ⟨k, hk, by rw [getElem!_pos cands k hk]; exact he⟩
