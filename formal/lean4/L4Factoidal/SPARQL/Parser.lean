@@ -846,6 +846,20 @@ def ggpLabeledBnodesQFast : Query → List String
   cases q
   simp [ggpLabeledBnodesQ, ggpLabeledBnodesQFast, labelsLoop_eq, labelStepSem]
 
+#print axioms ggpLabeledBnodes_eq_fast
+
+private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+
+-- The loop answers the lists of the recursive definition, in the same order
+-- (`strUnion` of the left side into the right).
+#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
+#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
+#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
+
 /-! ## Blank-node scope validation — `validate_bnode_scope_pattern`
 (F* line 4350)
 
@@ -1074,27 +1088,18 @@ def validateBnodeScopeQFast : Query → Bool × List String
   simp [validateBnodeScopeQ, validateBnodeScopeQFast, scopeLoop_eq, scopeStepSem]
 
 #print axioms validateBnodeScope_eq_fast
-#print axioms ggpLabeledBnodes_eq_fast
 
-private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
-private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
-private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+private def scA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def scB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
 
--- The loops answer the lists and verdicts of the recursive definitions, in
--- the same order (`strUnion` of the left side into the right).
-#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
-#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
-#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
-#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
-#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
 -- §19.6: a join of two BGP-preserving sides may share a label; a union may
 -- not; a join with a GRAPH side may not.
-#guard (scopeLoop [.visit (.join bnA bnA)] []).1.1
-#guard !(scopeLoop [.visit (.union bnA bnA)] []).1.1
-#guard !(scopeLoop [.visit (.join bnA (.graph (.var "g") bnA))] []).1.1
-#guard (scopeLoop [.visit (.join bnA (.graph (.var "g") bnB))] []).1.1
-#guard !(scopeLoop [.visit (.join bnA (.graph (.var "g") bnB))] []).2
-#guard (scopeLoop [.visit (.join (.filter (.boolLit true) bnA) bnA)] []).2
+#guard (scopeLoop [.visit (.join scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.union scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scA))] []).1.1
+#guard (scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).2
+#guard (scopeLoop [.visit (.join (.filter (.boolLit true) scA) scA)] []).2
 
 /-- `validate_bnode_scope_top`. -/
 def validateBnodeScopeTop (q : Query) : Bool := (validateBnodeScopeQ q).1
