@@ -524,4 +524,30 @@ original `.ttl` (parse error at line 14,977), so the OWL API rows read
 
 ### 10.4 Gates
 
-GATES_LINE
+Branch `claude/wt-qudt-owl`; load average 4 to 27 (two other agents building).
+
+- 📊 `tests/stack/owl_real_gate.sh`: 7 pass, 0 fail, 5 expected-fail (out of
+  12); 1 skipped (the F\* binary is not installed in the worktree). Before:
+  5 pass, 0 fail, 7 expected-fail. `qudt-closure` passes (1,352 MB, bound
+  2,000 MB, under the resident-set watchdog) and `qudt-species` passes (11.6 s
+  at load 27, bound 60 s); both left the expected-failure table. New row
+  `qudt-closure-address-space`, expected failure naming issue 759. Every other
+  row unchanged.
+- 📊 OWL scoreboard (`tools/lean-scoreboard.sh --only l4owl-probe`), compared
+  with the coordinator's logs of `main` after the timing lines are removed: 0
+  lines missing in each of the 10 logs; species 488 pass, 0 fail, 1
+  local-override (out of 489). The `rdf-based` log has 4 lines more: `CAP` notes
+  for WebOnt-miscellaneous-001, -002 and -011, whose closure ran into the
+  probe's wall-clock cap (`closureIO ... (t1 + capMs)`) at load 27; every
+  result line and every total is the same.
+- 📊 `tests/stack/lean_scaling.sh`: 22 pass, 1 fail, 2 expected-fail (out of
+  25). New rows: `owl-species` passes (ratio 5.0 to 7.9 for 4 times the input
+  at load 4 to 27), `owl-species-bnode-edges` is an expected failure
+  (https://github.com/danbri/factoidal/issues/812). The 1 fail is
+  `rdfc-bnode-collide` (issue 751), an expected failure on this branch that
+  passed by chance at load 27 (ratio 8.8, bound 9); `main` has its repair and
+  the row is an assertion there.
+- native-smoke 351 pass, 0 fail (out of 351); cli-smoke 83 pass, 0 fail (out
+  of 83); `tools/lean-tail-recursion-audit.py --gate` passes (the collection
+  walk of the twins is a loop); `tools/lean-hygiene-audit.py` clean.
+WASM_LINE
