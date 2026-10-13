@@ -447,7 +447,7 @@ L4Factoidal_SPARQL_bindRowsFresh
 L4Factoidal_SPARQL_bnodesInBgp
 L4Factoidal_SPARQL_buildSolutionMapping
 L4Factoidal_SPARQL_collectBgpsAux
-L4Factoidal_SPARQL_collectQuads
+L4Factoidal_SPARQL_collectQuads  # (a) PENDING https://github.com/danbri/factoidal/issues/818 one frame per member of an INSERT DATA collection: the desugaring nests one join per member; 8,000 members overflow under node --stack-size=512 (tests/stack sparql-collection, wcanary xfail); found 2026-10-13 (issue 752); this line carried no reason before
 L4Factoidal_SPARQL_collectTemplateTriples
 L4Factoidal_SPARQL_concatResults
 L4Factoidal_SPARQL_constructObject

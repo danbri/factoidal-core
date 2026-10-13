@@ -734,6 +734,17 @@ Rules from this work:
   5,000 characters and overflowed at 20,000. An XMLLiteral with 9,000
   siblings in one element ran, because the frames are small, so that
   family has no case above the old limit (the 10,000 fuel caps it).
+- **After a repair, run the case in every route: the next frame per item
+  shows in the route with the largest frames.** With the SPARQL collection
+  reader a loop, `INSERT DATA` with 8,000 members ran natively at 512 KB and
+  256 KB, and overflowed in Node under `--stack-size=512`: gdb at 128 KB
+  named `collectQuads`, which walks the join chain the desugaring builds,
+  one join per member. Its allow-list line (first baseline, no reason) now
+  names https://github.com/danbri/factoidal/issues/818, and the case is an
+  expected failure in the wasm canary route only. `xfail_issue` takes the
+  route as `$2`: `regex-replace-groups` runs on the default Node stack, so
+  it is an expected failure in `canary` and `wcanary` only; an entry for all
+  three routes turned the suite red with "UNEXPECTED PASS".
 - **Two recursions found here are also quadratic.** `cmatch` keeps every
   prefix outcome (1,000, 2,000, 4,000 repetitions: 36, 86, 274 MB), and a
   chain of blank nodes that share one first-degree hash makes RDFC-1.0
