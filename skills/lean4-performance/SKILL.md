@@ -137,6 +137,33 @@ these shapes first in any module that is slow on a large input.
   row (`SELECT *` over 5,000 paragraphs of `gene.ttl`: 9.8 s, F* 1.4 s).
   Append at the end of a string the function owns (`rowsJoinedTR` in
   `SPARQL/ResultsJson.lean`, proved and registered with `csimp`); Lean extends a unique string in place.
+- **`acc ++ [v]` inside a `mutual` block.** `JSON.parseItems` and
+  `parseMembers` appended each element at the end of the list read so far,
+  and `l4factoidal query` parses the JSON envelope of every answer it prints:
+  `SELECT *` over 10,000 paragraphs of `gene.ttl` spent 72.2 s in that parse
+  (https://github.com/danbri/factoidal/issues/729). A `csimp` cannot replace a
+  call between two members of one `mutual` block, so the repair twins the
+  WHOLE block (`parseValueR` ... `parseItemsR`, a reversed accumulator
+  reversed once at the closing bracket), proves every twin equal to its
+  member at every fuel in one induction over the fuel (`parseR_eq`, the
+  accumulators related by `reverse`), and puts the `csimp` on the first
+  function outside the block (`parseJsonTextChars_eq_R`): 0.88 s. The same
+  module built the `Array Char` it indexes from `s.toList.toArray`; read the
+  `String` with `String.foldl` and `push` instead (`charsOfString`,
+  `String.foldl_eq_foldl_toList` and `List.foldl_push_eq_append'`).
+- **A per-character map into strings.** `escapeString` was
+  `(s.toList.map escapeChar).foldl (· ++ ·) ""`: a list cell, a `Char` and a
+  one-character `String` per character before the join. On wasm32 a `Char`
+  in a list is a heap object as well (`Wasm/build-wasm.sh` step 1b). The wasm
+  `parse()` escapes the whole N-Quads text of the dataset into its envelope
+  this way, and that held most of the module's linear memory
+  (https://github.com/danbri/factoidal/issues/744). `escapeStringFast` walks
+  the `String` with `String.foldl`, pushes a character outside the escape set
+  and appends the escape of one inside it (`escapeString_eq_fast`, `csimp`).
+  To find such a holder in the wasm module, run the op's phases as separate
+  dispatch calls in fresh Node processes and compare linear memory
+  (`tests/perf/l4_parse_memory_ladder.mjs`): `datasetOpen` (parse and index,
+  no text out) ended at 88 MB where `parseToDatasetJson` ended at 641 MB.
 - **A comparison that converts to lists.** `Canonical.strLe` built two
   character lists per call: 57 percent of the instructions of `canonicalize`
   after the sorts were repaired. Lean's native `String` order is the same order

@@ -9,7 +9,7 @@
 //     the Lean engine answers, and
 //     Lean time <= 2 x the time of the faster F* bundle.
 //
-// It also runs the Lean engine alone for each MEMORY_XFAIL key and compares
+// It also runs the Lean engine alone for each MEMORY and MEMORY_XFAIL key and compares
 // the wasm module's linear memory high-water mark with the key's bound, and
 // for each SCALING and SCALING_XFAIL row compares its large size (4 times the
 // input) with its middle size.
@@ -53,14 +53,24 @@ export const XFAIL = {
 
 /**
  * Memory bounds, Lean engine only: the wasm module's linear memory at the
- * end of the row (its high-water mark), in MB. Each is an expected failure
- * naming its issue while the bound is not met.
+ * end of the row (its high-water mark over the warmup and the five runs), in
+ * MB. A key in MEMORY is asserted: it fails when the memory is above the
+ * bound. A key in MEMORY_XFAIL is an expected failure naming its issue while
+ * the bound is not met, and fails when it passes.
  */
-export const MEMORY_XFAIL = {
-  // parse() of 48,000 triples: 641 MB after one call, 1,227 MB after six
-  // (2026-10-10); the native build peaks at 388 MB resident for the same op.
-  'parse-turtle@large': { boundMB: 256, issue: 'https://github.com/danbri/factoidal/issues/744' },
+export const MEMORY = {
+  // parse() of 48,000 triples: 641 MB after one call and 1,227 MB after six
+  // on 2026-10-10 (https://github.com/danbri/factoidal/issues/744). The
+  // envelope's JSON string was written by escapeString through a character
+  // list and a string per character (JSON/Serialize.lean, escapeStringFast
+  // since 2026-10-12: 257 MB after one call), and objects above the 4 MiB
+  // segment size fragmented the allocator's 32 MiB arenas across calls
+  // (Wasm/l4_shim.c sets 128 MiB arenas after the first: 184 MB after six
+  // calls). Design record: docs/designissues/2026-10-10-lean-vs-fstar-performance.md
+  // section 11.
+  'parse-turtle@large': { boundMB: 256 },
 };
+export const MEMORY_XFAIL = {};
 
 /**
  * Scaling bounds, Lean engine only: time at the large size (4 times the
@@ -158,15 +168,26 @@ for (const [row, issue] of scalingRows) {
 }
 
 // Memory: the Lean engine alone, at the size each key names.
-for (const [key, { boundMB, issue }] of Object.entries(MEMORY_XFAIL)) {
+const memoryRows = [...Object.entries(MEMORY).map(([k, v]) => [k, v.boundMB, undefined]),
+  ...Object.entries(MEMORY_XFAIL).map(([k, v]) => [k, v.boundMB, v.issue])];
+for (const [key, boundMB, issue] of memoryRows) {
   const [row, size] = key.split('@');
   if (!rows.includes(row)) continue;
   const si = SIZE_NAMES.indexOf(size);
   const [r] = runMatrix({ rows: [row], engines: ['l4'], sizesFor: (x) => [ROWS[x][si]],
     log: (x) => console.log(JSON.stringify(x)) });
   const mb = r && r.wasmMemoryBytes ? r.wasmMemoryBytes / 1048576 : null;
+  const ok = mb !== null && mb <= boundMB;
   const what = `memory ${key} (${r && r.triples} triples): Lean linear memory ${mb === null ? 'unknown' : mb.toFixed(0) + ' MB'}, bound ${boundMB} MB`;
-  if (mb !== null && mb <= boundMB) {
+  if (issue === undefined) {
+    if (ok) {
+      passed += 1;
+      lines.push(`ok    ${what}`);
+    } else {
+      failed += 1;
+      lines.push(`FAIL  ${what}; above the bound`);
+    }
+  } else if (ok) {
     failed += 1;
     lines.push(`FAIL  unexpected pass: ${what}; move the row out of MEMORY_XFAIL and close ${issue}`);
   } else {
@@ -219,7 +240,7 @@ for (const [row, si] of cases) {
 }
 console.log('');
 for (const l of lines) console.log(l);
-const memoryCases = Object.keys(MEMORY_XFAIL).filter((k) => rows.includes(k.split('@')[0])).length +
+const memoryCases = memoryRows.filter(([k]) => rows.includes(k.split('@')[0])).length +
   scalingRows.filter(([k]) => rows.includes(k)).length;
 console.log(`npm_speed_gate: ${passed} pass, ${failed} fail, ${xfailed} expected failures ` +
   `(out of ${cases.length + memoryCases}); bound: Lean <= ${BOUND} x the faster F* bundle; ` +
