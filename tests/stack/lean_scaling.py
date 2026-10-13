@@ -88,11 +88,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    (2026-10-13)
   sparql-collection-scope  the same query over 10,000 and 40,000 members, past
                    the constant fuel 10,000 (a parse error before the repair
-                   of https://github.com/danbri/factoidal/issues/818). Expected
-                   failure, https://github.com/danbri/factoidal/issues/824: the
-                   blank node scope check (`validateBnodeScope`, §19.6) walks
-                   the join chain of the collection once per join (0.44 s
-                   and 8.80 s, measured 2026-10-13)
+                   of https://github.com/danbri/factoidal/issues/818). An
+                   expected failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/824): the blank
+                   node scope check (`validateBnodeScope`, §19.6) walked the
+                   join chain of the collection once per join (0.44 s and
+                   9.05 s); after `validateBnodeScope_eq_fast` (one pass, a
+                   work list) 0.061 s and 0.164 s
   sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
                    empty dataset (issue 802: DELETE DATA of 4,000 quads took
                    61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
@@ -238,7 +240,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.

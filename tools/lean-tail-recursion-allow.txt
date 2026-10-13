@@ -498,7 +498,6 @@ L4Factoidal_SPARQL_substituteExistentialsList
 L4Factoidal_SPARQL_termToXml
 L4Factoidal_SPARQL_tryBindTerm
 L4Factoidal_SPARQL_tsvSplitFieldsAcc
-L4Factoidal_SPARQL_validateBnodeScope
 L4Factoidal_ShEx_Compact_parseShapeNot
 L4Factoidal_ShEx_Compact_parseStatement
 L4Factoidal_ShEx_Compact_parseUnaryTripleExpr
@@ -1171,7 +1170,6 @@ L4Factoidal_SPARQL_pTtExprComponent  # UNTRIAGED https://github.com/danbri/facto
 L4Factoidal_SPARQL_pTtPatComponent  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 9, L4Factoidal/SPARQL/Parser.lean:2016
 L4Factoidal_SPARQL_sseQuery  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SPARQL/Parser.lean:3113
 L4Factoidal_SPARQL_sseSelectItem  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 6, L4Factoidal/SPARQL/Parser.lean:3136
-L4Factoidal_SPARQL_validateBnodeScopeQ  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:640
 L4Factoidal_SPARQL_Expr_backendLocalList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:310
 L4Factoidal_SPARQL_Expr_existsFreeList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Query.lean:374
 L4Factoidal_SPARQL_Expr_rewriteBnodesOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 depth, cycle of 10, L4Factoidal/SPARQL/Query.lean:1503
