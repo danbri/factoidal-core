@@ -2144,15 +2144,28 @@ stage 1. -/
     (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
 structure Par (m : Type → Type) where
   threads : Nat
+  /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
+  minRows : Nat := 8192
   fold : {α β : Type} → (Store m → List Nat → ExceptT String m α) → List (List Nat) → β →
     (β → α → ExceptT String m β) → ExceptT String m β
 
+/-- How many block ranges a scan of `est` estimated rows is divided into with
+    `threads` threads: at most `threads`, and with `minRows > 0` at most
+    `est / minRows`. Fewer than 2: the scan runs on one thread. A range costs
+    its task a fixed amount (the task, its view of the store, fresh memory in
+    the worker's heap): olympics q07, whose first two scans have 8,192 and
+    16,384 rows, took 12.2 ms at 4 threads against 9.9 ms at 1 with one range
+    per block. The default of 8,192 rows (two blocks of 4,096) is a measured
+    choice for this machine, not a derived one (`SBM11_MIN_RANGE_ROWS`). -/
+def rangeCount (threads minRows est : Nat) : Nat :=
+  if minRows == 0 then threads else min threads (est / minRows)
+
 /-- The block ranges of the scan `spec` when it is divided: two or more
-    threads, no delta overlay on the scan, two or more selected blocks. At
-    most `threads` ranges, each of at most `maxBlocks` blocks when
+    ranges (`rangeCount`), no delta overlay on the scan, two or more
+    selected blocks; each range of at most `maxBlocks` blocks when
     `maxBlocks > 0` (then there can be more ranges than threads). Also the
     PRM1 entries, the overlay context and the estimate (`estimate`). -/
-def divide? {m : Type → Type} [Monad m] (st : Store m) (threads : Nat) (spec : ScanSpec)
+def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
     (maxBlocks : Nat) :
     ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
   if threads ≤ 1 then return none
@@ -2160,16 +2173,18 @@ def divide? {m : Type → Type} [Monad m] (st : Store m) (threads : Nat) (spec :
   let ox := ovCtx (st.ovl spec.perm) spec.key
   if ox.on then return none
   let sel := (blocksFor metas spec.key).toList
-  if sel.length < 2 then return none
-  let c0 := (sel.length + threads - 1) / threads
+  let est := estimate metas spec.key
+  let n := rangeCount threads minRows est
+  if sel.length < 2 || n < 2 then return none
+  let c0 := (sel.length + n - 1) / n
   let c := if maxBlocks == 0 then c0 else min c0 maxBlocks
-  return some (metas, ox, L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel, estimate metas spec.key)
+  return some (metas, ox, L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel, est)
 
 /-- `divide?` with the threads of `par`; none without `par`. -/
 def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m)) (spec : ScanSpec)
     (maxBlocks : Nat) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
   match par with
-  | some p => divide? st p.threads spec maxBlocks
+  | some p => divide? st p.threads p.minRows spec maxBlocks
   | none => pure none
 
 /-- Rows `[lo, hi)` of `t`, each as a comma and its binding object (the text
@@ -2196,6 +2211,65 @@ def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bo
     ends := ends.push out.size
   return (out, ends)
 
+/-- A copy of `spec` whose arrays, pairs, boxed words and strings are new
+    objects, made by the task that calls it. A scan reads its spec in every
+    block; the spec the parent made is reachable from every task, and the Lean
+    runtime takes and releases references to an object that two threads can
+    reach with atomic operations, here on cache lines that every task uses
+    (DBpedia d17 at 4 threads: `planChecksGo`, `lean_array_to_list_impl` and
+    `lean_dec_ref_cold` together a third of the profile). The copy has the
+    same value (`ScanSpec.fresh_eq`). The words go through `toNat` and back
+    and the strings through `++ ""` so that the compiler does not reduce the
+    copy to the original object (it reduces `⟨x.a, x.b⟩` to `x`). -/
+def ScanSpec.fresh (s : ScanSpec) : ScanSpec :=
+  { perm := s.perm
+    key := s.key.map fun x => UInt64.ofNat x.toNat
+    checks := s.checks.map fun p => (p.1, UInt64.ofNat p.2.toNat)
+    named := s.named
+    outVars := s.outVars.map (· ++ "")
+    outCols := s.outCols.toList.toArray
+    eqs := s.eqs.map fun p => (p.1 + 0, p.2 + 0) }
+
+theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
+  obtain ⟨perm, key, checks, named, outVars, outCols, eqs⟩ := s
+  simp only [ScanSpec.fresh, Nat.add_zero, String.append_empty, Array.toArray_toList]
+  have hk : key.map (fun x => UInt64.ofNat x.toNat) = key := by
+    conv => rhs; rw [← Array.map_id key]
+    congr 1; funext x; simp
+  have hc : checks.map (fun p => (p.1, UInt64.ofNat p.2.toNat)) = checks := by
+    conv => rhs; rw [← Array.map_id checks]
+    congr 1; funext p; simp
+  rw [hk, hc]
+  simp
+
+/-- A copy of a compiled FILTER conjunct whose strings, words, ranges and
+    needle are new objects (the reason is `ScanSpec.fresh`'s: the conjuncts
+    are read for every row of every block). The expression `e` is shared: it
+    is read only when the reference evaluator decides a row. -/
+def FKind.fresh : FKind → FKind
+  | .idEq v c => .idEq (v ++ "") (c.map fun x => UInt64.ofNat x.toNat)
+  | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
+  | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
+  | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
+  | .general e vs => .general e (vs.map (· ++ ""))
+
+theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
+  cases f with
+  | idEq v c => cases c <;> simp [FKind.fresh]
+  | idEqVar v w => simp [FKind.fresh]
+  | str k v needle e => simp [FKind.fresh, ByteArray.extract_zero_size]
+  | strRange v ranges lo hi e =>
+    simp only [FKind.fresh, String.append_empty, Nat.add_zero]
+    congr 1
+    conv => rhs; rw [← Array.map_id ranges]
+    rfl
+  | general e vs => simp [FKind.fresh]
+
+/-- The overlay context of a divided scan (no overlay: `divide?` refuses a
+    scan with one), made by the task that calls it. -/
+def OvCtx.fresh (ox : OvCtx) (key : Array UInt64) : OvCtx :=
+  if ox.on then ox else ovCtx {} key
+
 /-- Rows per rendered piece of the divided streamed path. A piece is made by
     a task and freed by the parent after it is written; a buffer of a whole
     block (about 500 KB for olympics q21) was a large allocation of the task
@@ -2213,6 +2287,9 @@ def pieceRows : Nat := 512
 def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
     (reference : Bool) (vars : Array String) (cap : Nat) (metas : Array BlockMeta) (ox : OvCtx)
     (X : List Nat) : ExceptT String m (Array (ByteArray × Array Nat) × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
   let memos0 : Array Memo := fs.map fun _ => {}
   let ((_, pieces, _), s) ← scanListM st spec true (memos0, (#[] : Array (ByteArray × Array Nat)), (0 : Nat))
       (fun (memos, pieces, n) ch => do
@@ -2251,6 +2328,10 @@ def emitPieceM {m : Type → Type} [Monad m] (emit : ByteArray → m Unit) (off 
 def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
     (groupVars : Array String) (metas : Array BlockMeta) (ox : OvCtx) (X : List Nat) :
     ExceptT String m (Groups × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
+  let groupVars := groupVars.map (· ++ "")
   let ((g, _), s) ← scanListM st spec (!fs.isEmpty) (({} : Groups), (fs.map fun _ => ({} : Memo)))
     (countStepM st fs groupVars) metas (sortVarOf spec) ox X
   return (g, s)
@@ -2261,6 +2342,9 @@ def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (f
 def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : ScanSpec)
     (fs : Array FKind) (k : Nat) (metas : Array BlockMeta) (ox : OvCtx) (X : List Nat) :
     ExceptT String m (Table × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
   let sortVar := sortVarOf spec
   let cap := 8 * X.foldl (fun a i => a + metas[i]!.rows) 0
   let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,

@@ -29,6 +29,11 @@
 #             tools/bench/three-engines/bench.py) to the recorded Virtuoso
 #             answer of the three-engine record ($BENCH_DATA/answers/dbpedia)
 #
+# Block ranges: the gate sections set SBM11_MIN_RANGE_ROWS=0, so that a scan
+# of a few rows is divided into one range per thread (the default divides a
+# scan only into ranges of at least 8,192 estimated rows,
+# IdQuery.rangeCount); olympics and dbpedia run with the default.
+#
 # Dictionary page cache: the runs set SBM11_PAGES=1000000 (unless set), so
 # that no page cache is emptied during a query. A page is then read once in
 # every thread count and the dictionary byte counts are compared exactly.
@@ -102,6 +107,8 @@ compare_inputs() {
   echo "$label: $n queries x 4 thread counts (1 2 4 8): identical $same, differ $differ, nonzero exit $errs (out of $n)"
 }
 
+MINR_SAVED="${SBM11_MIN_RANGE_ROWS-unset}"
+export SBM11_MIN_RANGE_ROWS=0
 echo "=== gate fixture"
 G="$TMP/gate"
 rc=0
@@ -144,6 +151,7 @@ else
   fi
 fi
 
+if [ "$MINR_SAVED" = unset ]; then unset SBM11_MIN_RANGE_ROWS; else export SBM11_MIN_RANGE_ROWS="$MINR_SAVED"; fi
 echo "=== olympics"
 if [ ! -d "$OLY" ]; then
   echo "olympics: no generation at $OLY (set SBM11_OLYMPICS); not compared"

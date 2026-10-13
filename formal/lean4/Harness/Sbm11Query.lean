@@ -539,15 +539,17 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
     the statistics are summed. A scan with an overlay (stage 5) stays on one
     thread. Answers: `ParallelScanTheorems.parallel_acc_eq` (the list form),
     tests/sbm11/threads.sh (the tables, native). -/
-def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) :
+def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minRows : Nat := 8192) :
     ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
   let st := ss.store
   let metas ← st.metas spec.perm
   let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
-  if threads ≤ 1 || ox.on then return ← IdQuery.scanTableM st spec
+  -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread
+  let n := IdQuery.rangeCount threads minRows (IdQuery.estimate metas spec.key)
+  if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
   let sel := (IdQuery.blocksFor metas spec.key).toList
-  let c := (sel.length + threads - 1) / threads
+  let c := (sel.length + n - 1) / n
   let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
   let cap := 8 * IdQuery.estimate metas spec.key
   let init : L4Factoidal.Qlvr.Table :=
@@ -560,6 +562,20 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) :
   for X in chunks do
     let v ← ss.view
     let t ← IO.asTask (prio := .dedicated) (do
+      -- stage 1b: the task's own copies of the spec, the overlay context and
+      -- the empty table (`IdQuery.ScanSpec.fresh`; `ScanSpec.fresh_eq` says
+      -- the copy is equal to `spec`, the spec of `ParallelScanTheorems`). The
+      -- parent's spec is reachable from every task, and reading it in every
+      -- block cost atomic reference counts on shared cache lines; the
+      -- parent's empty table had the capacity of the whole scan, and each
+      -- task's first append copied it at that capacity.
+      let spec := spec.fresh
+      let ox := ox.fresh spec.key
+      let sortVar := IdQuery.sortVarOf spec
+      let capX := 8 * X.foldl (fun a i => a + metas[i]!.rows) 0
+      let init : L4Factoidal.Qlvr.Table :=
+        { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity capX,
+          rows := 0, sortVar }
       match ← (IdQuery.scanListM v.store spec true init f metas sortVar ox X).run with
       | .ok r => pure r
       | .error e => throw (IO.userError e))
@@ -624,15 +640,22 @@ def parFold (ss : Session) (window : Nat) {α β : Type}
 
 /-- The divided single-pattern paths of `IdQuery.runPlanM` with `threads`
     tasks at once (issue 799, stage 1b). -/
-def Session.par (ss : Session) (threads : Nat) : IdQuery.Par IO :=
-  { threads, fold := fun job chunks init g => parFold ss threads job chunks init g }
+def Session.par (ss : Session) (threads : Nat) (minRows : Nat := 8192) : IdQuery.Par IO :=
+  { threads, minRows, fold := fun job chunks init g => parFold ss threads job chunks init g }
+
+/-- `SBM11_MIN_RANGE_ROWS`: the fewest estimated rows per block range
+    (`IdQuery.rangeCount`; default 8,192; 0: one range per thread, as the
+    gate fixture tests use to divide scans of a few rows). -/
+def minRangeRows : IO Nat := do
+  return ((← IO.getEnv "SBM11_MIN_RANGE_ROWS").bind String.toNat?).getD 8192
 
 /-- The session's store with `threads` scan tasks per BGP scan (1: the
     single-thread store, `scanTable` unset). -/
-def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 16) : IdQuery.Store IO :=
+def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192) :
+    IdQuery.Store IO :=
   let base := { ss.store with sipFactor := sip }
   if threads ≤ 1 then base
-  else { base with scanTable := some fun spec => scanTableParM ss spec threads }
+  else { base with scanTable := some fun spec => scanTableParM ss spec threads minRows }
 
 /-! ## The delta overlay (stage 5) -/
 
@@ -865,8 +888,9 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
-    let par := if threads ≤ 1 then none else some (ss.par threads)
-    match ← (IdQuery.runPlanM (ss.storeWith threads sip) plan emit referenceRender par).run with
+    let minRows ← minRangeRows
+    let par := if threads ≤ 1 then none else some (ss.par threads minRows)
+    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 
