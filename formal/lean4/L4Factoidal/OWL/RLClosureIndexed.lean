@@ -1610,6 +1610,9 @@ store of the whole input (`sS`), the store of the delta (`sD`) and the length
 structure RowSpec where
   f     : Store → Triple → List Triple
   delta : Store → Store → Nat → Triple → List Triple
+  /-- The predicate the row's driving triple must have for `delta` to emit
+      anything; `none` when `delta` never emits. -/
+  guard : Option WfIri
 
 /-- The obligation of a delta term: on `P ++ D`, once the triples the row
 concludes from `P` alone are filtered out, the delta term and the full row
@@ -1622,17 +1625,17 @@ def RowSpec.Ok (r : RowSpec) : Prop :=
 
 /-- A row that reads only its driving triple: nothing at an old one. -/
 def RowSpec.indep (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun _ _ _ _ => [] }
+  { f := f, delta := fun _ _ _ _ => [], guard := none }
 
 /-- A row additive over `P ++ D`: at an old driving triple, the row over
 the delta's store. -/
-def RowSpec.additive (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun _ sD _ d => f sD d }
+def RowSpec.additive (g : WfIri) (f : Store → Triple → List Triple) : RowSpec :=
+  { f := f, delta := fun _ sD _ d => f sD d, guard := some g }
 
 /-- A row evaluated in full at every driving triple, as the naive round
 does. -/
-def RowSpec.full (f : Store → Triple → List Triple) : RowSpec :=
-  { f := f, delta := fun sS _ _ d => f sS d }
+def RowSpec.full (g : WfIri) (f : Store → Triple → List Triple) : RowSpec :=
+  { f := f, delta := fun sS _ _ d => f sS d, guard := some g }
 
 theorem RowSpec.indep_ok {f : Store → Triple → List Triple}
     (h : ∀ s s' d, f s d = f s' d) : (RowSpec.indep f).Ok := by
@@ -1641,16 +1644,17 @@ theorem RowSpec.indep_ok {f : Store → Triple → List Triple}
   rw [h (Store.ofGraph (P ++ D)) (Store.ofGraph P) d]
   exact List.filter_eq_nil_iff.mpr (fun t ht => by simp [hq t ht])
 
-theorem RowSpec.additive_ok {f : Store → Triple → List Triple}
+theorem RowSpec.additive_ok {g : WfIri} {f : Store → Triple → List Triple}
     (h : ∀ P D d, f (Store.ofGraph (P ++ D)) d =
       f (Store.ofGraph P) d ++ f (Store.ofGraph D) d) :
-    (RowSpec.additive f).Ok := by
+    (RowSpec.additive g f).Ok := by
   intro P D d q hq
   simp only [RowSpec.additive]
   rw [h P D d, List.filter_append,
     List.filter_eq_nil_iff.mpr (fun t ht => by simp [hq t ht]), List.nil_append]
 
-theorem RowSpec.full_ok (f : Store → Triple → List Triple) : (RowSpec.full f).Ok := by
+theorem RowSpec.full_ok (g : WfIri) (f : Store → Triple → List Triple) :
+    (RowSpec.full g f).Ok := by
   intro P D d q _
   rfl
 
@@ -1930,7 +1934,8 @@ def prpSpo2Delta (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
         (allIris terms).all (fun preds => preds.all (fun p => (sD.withPred p).isEmpty)))
   then [] else prpSpo2ForS sS d
 
-theorem prpSpo2_ok : (RowSpec.mk prpSpo2ForS prpSpo2Delta).Ok := by
+theorem prpSpo2_ok :
+    (RowSpec.mk prpSpo2ForS prpSpo2Delta (some owlPropertyChainAxiom)).Ok := by
   intro P D d q hq
   simp only [prpSpo2Delta]
   split
@@ -1992,7 +1997,8 @@ def clsInt1Delta (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
         cs.all (fun c => (sD.withPredObj rdfType c).isEmpty))
   then [] else clsInt1ForS sS d
 
-theorem clsInt1_ok : (RowSpec.mk clsInt1ForS clsInt1Delta).Ok := by
+theorem clsInt1_ok :
+    (RowSpec.mk clsInt1ForS clsInt1Delta (some owlIntersectionOf)).Ok := by
   intro P D d q hq
   simp only [clsInt1Delta]
   split
@@ -2033,76 +2039,76 @@ def rowTable : List RowSpec := [
     RowSpec.indep eqRefPForS,
     RowSpec.indep eqRefOForS,
     RowSpec.indep eqSymForS,
-    RowSpec.additive eqTransForS,
-    RowSpec.additive eqRepSForS,
-    RowSpec.additive eqRepPForS,
-    RowSpec.additive eqRepOForS,
-    RowSpec.additive prpDomForS,
-    RowSpec.additive prpRngForS,
-    RowSpec.full prpFpForS,
-    RowSpec.full prpIfpForS,
-    RowSpec.additive prpSympForS,
-    RowSpec.full prpTrpForS,
-    RowSpec.additive prpSpo1ForS,
-    RowSpec.mk prpSpo2ForS prpSpo2Delta,
-    RowSpec.additive prpEqp1ForS,
-    RowSpec.additive prpEqp2ForS,
-    RowSpec.additive prpInv1ForS,
-    RowSpec.additive prpInv2ForS,
-    RowSpec.full invFpIfpForS,
-    RowSpec.full invIfpFpForS,
-    RowSpec.full invFpIfpRevForS,
-    RowSpec.full invIfpFpRevForS,
-    RowSpec.full prpKeyForS,
-    RowSpec.mk clsInt1ForS clsInt1Delta,
-    RowSpec.full clsInt2ForS,
-    RowSpec.full clsUniForS,
-    RowSpec.full clsSvf1ForS,
-    RowSpec.full clsSvf2ForS,
-    RowSpec.full clsAvfForS,
-    RowSpec.full clsHv1ForS,
-    RowSpec.full clsHv2ForS,
-    RowSpec.full clsHs1ForS,
-    RowSpec.full clsHs2ForS,
-    RowSpec.full clsMaxc2ForS,
-    RowSpec.full clsOoForS,
-    RowSpec.additive caxScoForS,
-    RowSpec.additive caxEqc1ForS,
-    RowSpec.additive caxEqc2ForS,
+    RowSpec.additive owlSameAs eqTransForS,
+    RowSpec.additive owlSameAs eqRepSForS,
+    RowSpec.additive owlSameAs eqRepPForS,
+    RowSpec.additive owlSameAs eqRepOForS,
+    RowSpec.additive rdfsDomain prpDomForS,
+    RowSpec.additive rdfsRange prpRngForS,
+    RowSpec.full rdfType prpFpForS,
+    RowSpec.full rdfType prpIfpForS,
+    RowSpec.additive rdfType prpSympForS,
+    RowSpec.full rdfType prpTrpForS,
+    RowSpec.additive rdfsSubPropertyOf prpSpo1ForS,
+    RowSpec.mk prpSpo2ForS prpSpo2Delta (some owlPropertyChainAxiom),
+    RowSpec.additive owlEquivalentProperty prpEqp1ForS,
+    RowSpec.additive owlEquivalentProperty prpEqp2ForS,
+    RowSpec.additive owlInverseOf prpInv1ForS,
+    RowSpec.additive owlInverseOf prpInv2ForS,
+    RowSpec.full owlInverseOf invFpIfpForS,
+    RowSpec.full owlInverseOf invIfpFpForS,
+    RowSpec.full owlInverseOf invFpIfpRevForS,
+    RowSpec.full owlInverseOf invIfpFpRevForS,
+    RowSpec.full owlHasKey prpKeyForS,
+    RowSpec.mk clsInt1ForS clsInt1Delta (some owlIntersectionOf),
+    RowSpec.full owlIntersectionOf clsInt2ForS,
+    RowSpec.full owlUnionOf clsUniForS,
+    RowSpec.full owlSomeValuesFrom clsSvf1ForS,
+    RowSpec.full owlSomeValuesFrom clsSvf2ForS,
+    RowSpec.full owlAllValuesFrom clsAvfForS,
+    RowSpec.full owlHasValue clsHv1ForS,
+    RowSpec.full owlHasValue clsHv2ForS,
+    RowSpec.full owlHasSelf clsHs1ForS,
+    RowSpec.full owlHasSelf clsHs2ForS,
+    RowSpec.full owlMaxCardinality clsMaxc2ForS,
+    RowSpec.full owlOneOf clsOoForS,
+    RowSpec.additive rdfsSubClassOf caxScoForS,
+    RowSpec.additive owlEquivalentClass caxEqc1ForS,
+    RowSpec.additive owlEquivalentClass caxEqc2ForS,
     RowSpec.indep scmClsForS,
-    RowSpec.additive scmScoForS,
+    RowSpec.additive rdfsSubClassOf scmScoForS,
     RowSpec.indep scmEqc1ForS,
-    RowSpec.full scmEqc2ForS,
-    RowSpec.additive scmSpoForS,
+    RowSpec.full rdfsSubClassOf scmEqc2ForS,
+    RowSpec.additive rdfsSubPropertyOf scmSpoForS,
     RowSpec.indep scmEqp1ForS,
-    RowSpec.full scmEqp2ForS,
-    RowSpec.additive scmDom1ForS,
-    RowSpec.additive scmDom2ForS,
-    RowSpec.additive scmRng1ForS,
-    RowSpec.additive scmRng2ForS,
+    RowSpec.full rdfsSubPropertyOf scmEqp2ForS,
+    RowSpec.additive rdfsDomain scmDom1ForS,
+    RowSpec.additive rdfsDomain scmDom2ForS,
+    RowSpec.additive rdfsRange scmRng1ForS,
+    RowSpec.additive rdfsRange scmRng2ForS,
     RowSpec.indep scmOpForS,
     RowSpec.indep scmDpForS,
-    RowSpec.full scmSvf1ForS,
-    RowSpec.full scmSvf2ForS,
-    RowSpec.full scmAvf1ForS,
-    RowSpec.full scmAvf2ForS,
-    RowSpec.full scmHvForS,
-    RowSpec.full scmIntForS,
-    RowSpec.full scmUniForS,
+    RowSpec.full owlSomeValuesFrom scmSvf1ForS,
+    RowSpec.full owlSomeValuesFrom scmSvf2ForS,
+    RowSpec.full owlAllValuesFrom scmAvf1ForS,
+    RowSpec.full owlAllValuesFrom scmAvf2ForS,
+    RowSpec.full owlHasValue scmHvForS,
+    RowSpec.full owlIntersectionOf scmIntForS,
+    RowSpec.full owlUnionOf scmUniForS,
     RowSpec.indep eqDiffSymForS,
-    RowSpec.full pdwToDiffForS,
-    RowSpec.full caxDwToDiffForS,
-    RowSpec.full fpDiffToDiffForS,
-    RowSpec.full ifpDiffToDiffForS,
-    RowSpec.full chainToTransForS,
-    RowSpec.additive prpRflForS,
+    RowSpec.full owlPropertyDisjointWith pdwToDiffForS,
+    RowSpec.full owlDisjointWith caxDwToDiffForS,
+    RowSpec.full owlDifferentFrom fpDiffToDiffForS,
+    RowSpec.full owlDifferentFrom ifpDiffToDiffForS,
+    RowSpec.full owlPropertyChainAxiom chainToTransForS,
+    RowSpec.additive rdfType prpRflForS,
     RowSpec.indep xsdAxiomsForS,
-    RowSpec.additive dtRangeIntersectForS,
+    RowSpec.additive rdfsRange dtRangeIntersectForS,
     RowSpec.indep caxDwToComplementForS,
-    RowSpec.full clsMaxqc1ToComplementForS,
+    RowSpec.full owlMaxQualifiedCardinality clsMaxqc1ToComplementForS,
     RowSpec.indep minCard1ComprehensionForS,
-    RowSpec.full caxAdcToDwForS,
-    RowSpec.additive inverseOfDomRngFlipForS ]
+    RowSpec.full rdfType caxAdcToDwForS,
+    RowSpec.additive owlInverseOf inverseOfDomRngFlipForS ]
 
 /-- `rowTable` lists the rows of `conclusionsListS`, in its order. -/
 theorem rowTable_f (s : Store) (d : Triple) :
@@ -2126,69 +2132,69 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   · exact RowSpec.additive_ok eqRepOForS_add
   · exact RowSpec.additive_ok prpDomForS_add
   · exact RowSpec.additive_ok prpRngForS_add
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok prpSympForS_add
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok prpSpo1ForS_add
   · exact prpSpo2_ok
   · exact RowSpec.additive_ok prpEqp1ForS_add
   · exact RowSpec.additive_ok prpEqp2ForS_add
   · exact RowSpec.additive_ok prpInv1ForS_add
   · exact RowSpec.additive_ok prpInv2ForS_add
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
   · exact clsInt1_ok
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok caxScoForS_add
   · exact RowSpec.additive_ok caxEqc1ForS_add
   · exact RowSpec.additive_ok caxEqc2ForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.additive_ok scmScoForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok scmSpoForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok scmDom1ForS_add
   · exact RowSpec.additive_ok scmDom2ForS_add
   · exact RowSpec.additive_ok scmRng1ForS_add
   · exact RowSpec.additive_ok scmRng2ForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok prpRflForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.additive_ok dtRangeIntersectForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _ _
   · exact RowSpec.additive_ok inverseOfDomRngFlipForS_add
 
 
@@ -2199,11 +2205,294 @@ previous round's input. -/
 def oldBlock (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
   rowTable.flatMap (fun r => r.delta sS sD lo d)
 
+
+/-! ### Dispatch on the driving triple's predicate
+
+At an old driving triple only the rows whose guard is its predicate can
+emit. `dispatchMap` maps each guard predicate to those rows, in
+`rowTable` order, so an old driving triple costs one hash lookup instead
+of a test per row (`oldBlock_eq_dispatch`). -/
+
+/-- A row whose guard is not the driving triple's predicate emits nothing at
+it. -/
+def RowSpec.GuardOk (r : RowSpec) : Prop :=
+  ∀ (sS sD : Store) (lo : Nat) (d : Triple), r.guard ≠ some d.p → r.delta sS sD lo d = []
+
+theorem beq_false_of_guard {g : WfIri} {d : Triple} (h : some g ≠ some d.p) :
+    (d.p == g) = false := by
+  rw [beq_eq_false_iff_ne]
+  intro e
+  exact h (by rw [e])
+
+theorem rowTable_guard : ∀ r ∈ rowTable, r.GuardOk := by
+  intro r hr
+  simp only [rowTable, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · intro _ _ _ _ _; rfl
+  · intro _ _ _ _ _; rfl
+  · intro _ _ _ _ _; rfl
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSameAs) h
+    simp only [RowSpec.additive, eqTransForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSameAs) h
+    simp only [RowSpec.additive, eqRepSForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSameAs) h
+    simp only [RowSpec.additive, eqRepPForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSameAs) h
+    simp only [RowSpec.additive, eqRepOForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsDomain) h
+    simp only [RowSpec.additive, prpDomForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsRange) h
+    simp only [RowSpec.additive, prpRngForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.full, prpFpForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.full, prpIfpForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.additive, prpSympForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.full, prpTrpForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubPropertyOf) h
+    simp only [RowSpec.additive, prpSpo1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlPropertyChainAxiom) h
+    simp only [prpSpo2Delta, prpSpo2ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlEquivalentProperty) h
+    simp only [RowSpec.additive, prpEqp1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlEquivalentProperty) h
+    simp only [RowSpec.additive, prpEqp2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.additive, prpInv1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.additive, prpInv2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.full, invFpIfpForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.full, invIfpFpForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.full, invFpIfpRevForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.full, invIfpFpRevForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasKey) h
+    simp only [RowSpec.full, prpKeyForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlIntersectionOf) h
+    simp only [clsInt1Delta, clsInt1ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlIntersectionOf) h
+    simp only [RowSpec.full, clsInt2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlUnionOf) h
+    simp only [RowSpec.full, clsUniForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
+    simp only [RowSpec.full, clsSvf1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
+    simp only [RowSpec.full, clsSvf2ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlAllValuesFrom) h
+    simp only [RowSpec.full, clsAvfForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasValue) h
+    simp only [RowSpec.full, clsHv1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasValue) h
+    simp only [RowSpec.full, clsHv2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasSelf) h
+    simp only [RowSpec.full, clsHs1ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasSelf) h
+    simp only [RowSpec.full, clsHs2ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlMaxCardinality) h
+    simp only [RowSpec.full, clsMaxc2ForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlOneOf) h
+    simp only [RowSpec.full, clsOoForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubClassOf) h
+    simp only [RowSpec.additive, caxScoForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlEquivalentClass) h
+    simp only [RowSpec.additive, caxEqc1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlEquivalentClass) h
+    simp only [RowSpec.additive, caxEqc2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubClassOf) h
+    simp only [RowSpec.additive, scmScoForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubClassOf) h
+    simp only [RowSpec.full, scmEqc2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubPropertyOf) h
+    simp only [RowSpec.additive, scmSpoForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsSubPropertyOf) h
+    simp only [RowSpec.full, scmEqp2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsDomain) h
+    simp only [RowSpec.additive, scmDom1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsDomain) h
+    simp only [RowSpec.additive, scmDom2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsRange) h
+    simp only [RowSpec.additive, scmRng1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsRange) h
+    simp only [RowSpec.additive, scmRng2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
+    simp only [RowSpec.full, scmSvf1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
+    simp only [RowSpec.full, scmSvf2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlAllValuesFrom) h
+    simp only [RowSpec.full, scmAvf1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlAllValuesFrom) h
+    simp only [RowSpec.full, scmAvf2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlHasValue) h
+    simp only [RowSpec.full, scmHvForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlIntersectionOf) h
+    simp only [RowSpec.full, scmIntForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlUnionOf) h
+    simp only [RowSpec.full, scmUniForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlPropertyDisjointWith) h
+    simp only [RowSpec.full, pdwToDiffForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlDisjointWith) h
+    simp only [RowSpec.full, caxDwToDiffForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlDifferentFrom) h
+    simp only [RowSpec.full, fpDiffToDiffForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlDifferentFrom) h
+    simp only [RowSpec.full, ifpDiffToDiffForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlPropertyChainAxiom) h
+    simp only [RowSpec.full, chainToTransForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.additive, prpRflForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfsRange) h
+    simp only [RowSpec.additive, dtRangeIntersectForS, hb, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlMaxQualifiedCardinality) h
+    simp only [RowSpec.full, clsMaxqc1ToComplementForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro _ _ _ _ _; rfl
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := rdfType) h
+    simp only [RowSpec.full, caxAdcToDwForS, hb, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+  · intro sS sD lo d h
+    have hb := beq_false_of_guard (g := owlInverseOf) h
+    simp only [RowSpec.additive, inverseOfDomRngFlipForS, hb, Bool.false_eq_true, ↓reduceIte]
+
+/-- The rows of `rowTable` whose guard is `p`, in `rowTable` order. -/
+def rowsFor (p : WfIri) : List RowSpec := rowTable.filter (fun r => r.guard == some p)
+
+/-- Each guard predicate, mapped to its rows. -/
+def dispatchMap : Std.HashMap WfIri (List RowSpec) :=
+  (rowTable.filterMap (·.guard)).foldl (fun m p => m.insert p (rowsFor p)) ∅
+
+theorem foldl_insert_getD (ps : List WfIri) :
+    ∀ (m : Std.HashMap WfIri (List RowSpec)) (q : WfIri),
+      (ps.foldl (fun m p => m.insert p (rowsFor p)) m).getD q [] =
+        if q ∈ ps then rowsFor q else m.getD q [] := by
+  induction ps with
+  | nil => intro m q; simp
+  | cons p ps ih =>
+    intro m q
+    simp only [List.foldl_cons, ih, Std.HashMap.getD_insert, List.mem_cons]
+    by_cases hq : q ∈ ps
+    · simp [hq]
+    · by_cases hpq : p = q
+      · subst hpq; simp
+      · have hb : (p == q) = false := beq_eq_false_iff_ne.mpr hpq
+        have hor : ¬ (q = p ∨ q ∈ ps) := fun h => h.elim (fun e => hpq e.symm) hq
+        rw [if_neg hq, if_neg hor, hb]
+        rfl
+
+theorem dispatchMap_getD (q : WfIri) : dispatchMap.getD q [] = rowsFor q := by
+  unfold dispatchMap
+  rw [foldl_insert_getD]
+  split
+  · rfl
+  · rename_i hq
+    simp only [Std.HashMap.getD_empty]
+    symm
+    unfold rowsFor
+    refine List.filter_eq_nil_iff.mpr (fun r hr hg => hq ?_)
+    have : r.guard = some q := by simpa using hg
+    exact List.mem_filterMap.mpr ⟨r, hr, this⟩
+
+theorem flatMap_filter_of_nil {α β : Type} {l : List α} {f : α → List β} {p : α → Bool}
+    (h : ∀ x ∈ l, p x = false → f x = []) : (l.filter p).flatMap f = l.flatMap f := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    have ih' := ih (fun y hy => h y (List.mem_cons_of_mem _ hy))
+    by_cases hx : p x = true
+    · simp [hx, ih']
+    · have hf := h x List.mem_cons_self (by simpa using hx)
+      simp [hx, hf, ih']
+
+/-- The block of an old driving triple, through the dispatch map. -/
+def oldBlockFast (sS sD : Store) (lo : Nat) (d : Triple) : List Triple :=
+  (dispatchMap.getD d.p []).flatMap (fun r => r.delta sS sD lo d)
+
+theorem oldBlockFast_eq (sS sD : Store) (lo : Nat) (d : Triple) :
+    oldBlockFast sS sD lo d = oldBlock sS sD lo d := by
+  unfold oldBlockFast oldBlock
+  rw [dispatchMap_getD, rowsFor, flatMap_filter_of_nil]
+  intro r hr hg
+  apply rowTable_guard r hr
+  intro e
+  rw [e] at hg
+  simp at hg
+
 /-- Everything a semi-naive round emits, before deduplication. `lo` is the
 length of the previous round's input: the first `lo` triples of `sS.graph`
 are old driving triples, the rest are the delta. -/
 def stepConclusionsSN (sS sD : Store) (lo : Nat) : List Triple :=
-  axiomTriples ++ ((sS.graph.take lo).flatMap (oldBlock sS sD lo) ++
+  axiomTriples ++ ((sS.graph.take lo).flatMap (oldBlockFast sS sD lo) ++
     (sS.graph.drop lo).flatMap (conclusionsFromS sS))
 
 /-- One semi-naive round over the index: the delta's own index is built
@@ -2332,7 +2621,9 @@ theorem addAll_stepConclusionsSN {P D : Graph} {lo : Nat} (hlo : P.length = lo)
   congr 1
   have hg : (Store.ofGraph (P ++ D)).graph = P ++ D := rfl
   unfold stepConclusionsSN stepConclusionsS
-  rw [hg, List.take_left' hlo, List.drop_left' hlo]
+  rw [hg, List.take_left' hlo, List.drop_left' hlo,
+    show oldBlockFast (Store.ofGraph (P ++ D)) (Store.ofGraph D) lo =
+      oldBlock (Store.ofGraph (P ++ D)) (Store.ofGraph D) lo from funext (oldBlockFast_eq _ _ _)]
   conv => rhs; rw [List.flatMap_append]
   simp only [List.filter_append]
   congr 2
