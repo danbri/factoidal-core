@@ -3441,3 +3441,18 @@ Quot.sound.
   a bound variable) and `RDF.Semantics.HypothesisWitness.theorem_smap_exact_witness`
   (the SPARQL algebra exactness hypotheses are satisfiable). Both belong to
   the SPARQL tranche.
+
+#### Counts after the second tranche (2026-10-13)
+
+`python3 tools/check-fstar-theorem-classification.py` exit 0 (287 Lean
+names, 0 missing, `lake env lean` in `formal/lean4`):
+
+| Family | Relevant | R | S | F | A | U |
+| --- | ---: | --- | --- | --- | --- | --- |
+| RDF | 245 | 84 of 245 | 8 of 245 | 126 of 245 | 25 of 245 | 2 of 245 |
+| RDFS | 256 | 50 of 256 | 18 of 256 | 188 of 256 | 0 of 256 | 0 of 256 |
+| OWL | 178 | 8 of 178 | 1 of 178 | 169 of 178 | 0 of 178 | 0 of 178 |
+| SPARQL | 324 | 0 of 324 | 0 of 324 | 0 of 324 | 0 of 324 | 324 of 324 |
+| parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
+| other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
+| total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
