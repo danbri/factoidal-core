@@ -201,6 +201,19 @@ Tracking: <https://github.com/danbri/factoidal/issues/664>.
   `propext`, `Classical.choice`, `Quot.sound` (Lean's standard
   foundations). `Tests.lean` keeps audit lines on the headline
   theorems so every build log shows it.
+- **A theorem module is checked only if a build root imports it.** `lake
+  build` builds the modules that the roots of `lakefile.lean` reach
+  (`L4Factoidal.lean` for the library). A new `*Theorems.lean` that nothing
+  imports compiles in an editor and in `lake env lean FILE`, and is never
+  checked again. Paid for 2026-10-13: `Storage/Sbm11/ParallelScanTheorems.lean`
+  (stage 1 of https://github.com/danbri/factoidal/issues/799, theorem
+  `parallel_acc_eq`, reported as proved and checked by hand) had no olean
+  in the build tree since it landed on 2026-10-12; it is now imported by
+  `L4Factoidal.lean`. Add the import to
+  `L4Factoidal.lean` in the same commit, and check that
+  `.lake/build/lib/lean/<path>.olean` exists after `lake build`. A walk of
+  the imports from the roots on 2026-10-13 found two more such modules:
+  `L4Factoidal.OWL.ComprehensionTheorems`, `L4Factoidal.RDF.GraphPatterns`.
 - Well-formedness witnesses for string constants are `rfl` (kernel
   evaluation) — the Lean counterpart of F\* `assert_norm`. For
   literals built by concatenation at call sites, use the autoparam

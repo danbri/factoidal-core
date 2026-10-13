@@ -77,6 +77,8 @@ import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OptJoin
+import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
 import Std.Data.HashMap
@@ -556,12 +558,33 @@ structure ScanStats where
   framesRead : Nat := 0
   bytesRead : Nat := 0
   rowsOut : Nat := 0
+  /-- a scan with candidates (issue 809): selected blocks that no candidate
+      can match (`Sip.mayHold`), not read -/
+  sipSkipped : Nat := 0
+  /-- a scan with candidates: join-key values tested against the candidates
+      (the rows of the key range of every block read) -/
+  keysTested : Nat := 0
+  /-- a scan with candidates: rows whose other needed columns were decoded
+      (the rows whose join key is a candidate) -/
+  rowsGathered : Nat := 0
+  /-- rows decoded: of a full scan the rows of its table (`rowsOut`), of a
+      scan with candidates the rows gathered (`ScanStats.full`,
+      `ScanStats.withSip`, set once per scan by the planner) -/
+  rowsDecoded : Nat := 0
   deriving Repr, Inhabited
 
 def ScanStats.add (a b : ScanStats) : ScanStats :=
   { blocksRead := a.blocksRead + b.blocksRead, blocksSelected := a.blocksSelected + b.blocksSelected,
     blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
-    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut }
+    bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut,
+    sipSkipped := a.sipSkipped + b.sipSkipped, keysTested := a.keysTested + b.keysTested,
+    rowsGathered := a.rowsGathered + b.rowsGathered, rowsDecoded := a.rowsDecoded + b.rowsDecoded }
+
+/-- The rows decoded by one full scan: the rows of its table. -/
+def ScanStats.full (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsOut }
+
+/-- The rows decoded by one scan with candidates: the rows gathered. -/
+def ScanStats.withSip (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsGathered }
 
 /-! ## The store -/
 
@@ -586,11 +609,21 @@ structure Store (m : Type → Type) where
       inserts and deletes in its row order, sorted; cleared graph ids. Empty
       for a generation without a delta log. -/
   ovl : Nat → L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := fun _ => {}
+  /-- A hint before rows `[0, n)` of a table are rendered (issue 799, stage
+      1b: the divided streamed path calls it): the store may load the
+      dictionary entries of their ids at once. No effect on any answer. -/
+  prefetch : Option (Table → Nat → ExceptT String m Unit) := none
   /-- stage 1 (issue 799): a replacement for `scanTableM`, used by every BGP
       scan of `evalBgpM`. `none` is the single-thread path. The parallel
       driver (`Harness/Sbm11Query.lean`) sets it when `--threads` is above 1;
       it must return the table of `scanTableM` (`ParallelScanTheorems`). -/
   scanTable : Option (ScanSpec → ExceptT String m (Table × ScanStats)) := none
+  /-- issue 809: the right scan of a merge join takes the left values of the
+      join variable as candidates when `k × left rows < estimate` for
+      `sipFactor = some k` (`sipRule`; 16 by default, 0 whenever the shape
+      allows it: `l4sbm11 query --sip always`); `none` never
+      (`--sip off`). -/
+  sipFactor : Option Nat := some 16
 
 def ScanSpec.colPos (perm c : Nat) : Nat := if c < 3 then permOrder[perm]![c]! else 3
 
@@ -1145,6 +1178,236 @@ def scanTableOf {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) :
   | some f => f spec
   | none => scanTableM st spec
 
+/-! ## Sideways information passing (https://github.com/danbri/factoidal/issues/809)
+
+A scan with candidates returns the rows of the scan whose value in column
+`jc = spec.key.size` (the column after the key: the sort variable of the
+scan, the join variable of the merge join that consumes it) is a candidate.
+`SipScanTheorems.scanFoldSipM_tuples`: over an in-memory store with no
+overlay and candidates in non-decreasing order, the tuples are those of
+`scanFoldM` restricted to the rows whose column `jc` holds a candidate.
+
+Per block: blocks the PRM1 entry rules out are skipped as in `scanBlockM`;
+then a block whose first and last rows bound column `jc` below and above
+every candidate (`sipRange`, `Sip.mayHold`) is skipped unread; then the
+needed frames and the `jc` frame are read, the key range is found as in
+`blockChunk`, and `sipChunk` decodes the `jc` frame, finds the rows whose
+value is a candidate, and decodes the other needed columns at those rows
+only. -/
+
+/-- The values column `c` can hold in the rows of block `b` that carry the
+    key prefix: from the first row's value when the first row carries the
+    prefix (else 0) to the last row's value when the last row carries it
+    (else the largest word). The rows are sorted, so a row with the prefix
+    has its column `c = key.size` between them. -/
+def sipRange (b : BlockMeta) (key : Array UInt64) (c : Nat) : UInt64 × UInt64 :=
+  (if prefixCmp b.first key == .eq then (rowCol b.first c).toUInt64 else 0,
+   if prefixCmp b.last key == .eq then (rowCol b.last c).toUInt64 else 0xFFFFFFFFFFFFFFFF)
+
+/-- Column `c` of the chunk at the found rows `pos`: for the join column
+    `jc` the found values `jw`; for a needed key column its decoded words at
+    `pos`; for any other needed column the words of its frame at `pos`
+    (`Sip.gatherWords`). -/
+def sipCol (b : BlockMeta) (bytes : ByteArray) (starts : Array Nat) (need : Array Bool)
+    (keyWords : Array ByteArray) (jc : Nat) (jw : ByteArray) (pos : Array Nat) (c : Nat) :
+    Except String ByteArray :=
+  if c == jc then .ok jw
+  else if need[c]! then
+    if h : c < keyWords.size then .ok (Sip.pickWords keyWords[c] pos)
+    else match Sip.gatherWords bytes b.rows starts[c]! pos with
+      | some w => .ok w
+      | none => .error s!"block at {b.offset}: frame {c} does not decode"
+  else .ok .empty
+
+/-- The chunk of one block with candidates: the key range as in
+    `blockChunk`, the rows of the range whose column `jc` value is a
+    candidate (`Sip.findWords`, from the candidate pointer `p`), every
+    needed column at those rows (`sipCol`), then `chunkOfCols` with
+    `fill = true`. Also returns the join-key values tested and the rows
+    found. -/
+def sipChunk (spec : ScanSpec) (cands : Array UInt64) (sortVar : Option String) (b : BlockMeta)
+    (bp : BlockPlan) (constOut : Array (Option Nat)) (need : Array Bool) (bytes : ByteArray)
+    (starts : Array Nat) (p : Nat) : Except String (Chunk × Nat × Nat) := do
+  let keyWords ← keyWordsOf b bytes starts bp.full spec.key.size
+  let (lo, hi) := keyRange spec b bp.full keyWords
+  let jc := spec.key.size
+  match Sip.findWords bytes b.rows starts[jc]! lo hi cands p with
+  | none => throw s!"block at {b.offset}: frame {jc} does not decode"
+  | some (pos, jw) =>
+    let c0 ← sipCol b bytes starts need keyWords jc jw pos 0
+    let c1 ← sipCol b bytes starts need keyWords jc jw pos 1
+    let c2 ← sipCol b bytes starts need keyWords jc jw pos 2
+    let c3 ← sipCol b bytes starts need keyWords jc jw pos 3
+    pure (chunkOfCols spec true sortVar bp constOut #[c0, c1, c2, c3] pos.size, hi - lo, pos.size)
+
+/-- Whether `w` is a candidate (`cands` in non-decreasing order). -/
+@[inline] def sipMem (cands : Array UInt64) (w : UInt64) : Bool :=
+  let q := Sip.probeFrom cands w (Sip.lbHint cands w)
+  q < cands.size && cands[q]! == w
+
+/-- The rows of a chunk whose first output column (the column `jc`) holds a
+    candidate: the delta overlay's chunks, which are built from merged rows. -/
+def sipFilterChunk (cands : Array UInt64) (ch : Chunk) : Chunk :=
+  let t := ch.table
+  if t.cols.isEmpty then ch
+  else { ch with table := t.select fun i => sipMem cands (t.at 0 i) }
+
+/-- One block of a scan with candidates. With an overlay, a block that holds
+    overlay rows in its range is merged as in `scanBlockM` and its chunk
+    filtered (`sipFilterChunk`). -/
+def scanBlockSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (f : σ → Chunk → ExceptT String m (σ × Bool)) (metas : Array BlockMeta)
+    (sortVar : Option String) (ox : OvCtx) (i : Nat) (s : ScanState σ) :
+    ExceptT String m (ForInStep (ScanState σ)) := do
+  let b := metas[i]!
+  if !selects b spec.key then return .yield s
+  let bp := blockPlan spec b
+  if ox.on then
+    let insEnd := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.insK b.last ox.insFuel s.insPos ox.insK.size
+    let dLo := L4Factoidal.Storage.Sbm11.Overlay.lowerIdx ox.ov.del b.first ox.delFuel 0 ox.ov.del.size
+    let dHi := L4Factoidal.Storage.Sbm11.Overlay.upperIdx ox.ov.del b.last ox.delFuel dLo ox.ov.del.size
+    let clHit := !ox.ov.cleared.isEmpty && (match colConst? b 3 with
+      | some g => ox.ov.cleared.contains g
+      | none => true)
+    if insEnd > s.insPos || (!bp.skip && (dHi > dLo || clHit)) then
+      let insL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (insEnd - s.insPos) []
+      let delL := L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.ov.del dLo (dHi - dLo) []
+      let (chunk0, nbytes) ← overlayChunkM st spec b insL delL ox.ov.cleared sortVar
+      let chunk := sipFilterChunk cands chunk0
+      let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1,
+                                  blocksRead := s.stats.blocksRead + 1, framesRead := s.stats.framesRead + 4,
+                                  bytesRead := s.stats.bytesRead + nbytes,
+                                  rowsOut := s.stats.rowsOut + chunk.table.rows,
+                                  keysTested := s.stats.keysTested + chunk0.table.rows,
+                                  rowsGathered := s.stats.rowsGathered + chunk0.table.rows }
+      let (acc', more) ← f s.acc chunk
+      return stepOf s acc' stats insEnd more
+  if bp.skip then return .yield s
+  let jc := spec.key.size
+  let (vlo, vhi) := sipRange b spec.key jc
+  let p := Sip.lbHint cands vlo
+  if !Sip.mayHold cands vlo vhi p then
+    return .yield { s with stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1,
+                                                   sipSkipped := s.stats.sipSkipped + 1 } }
+  let stats := { s.stats with blocksSelected := s.stats.blocksSelected + 1 }
+  let constOut := constOutOf spec b bp
+  let need := (needOf spec bp constOut).set! jc true
+  let (bytes, starts, nbytes) ← readFrames st spec.perm b need
+  let stats := { stats with blocksRead := stats.blocksRead + 1, framesRead := stats.framesRead + (need.filter id).size,
+                            bytesRead := stats.bytesRead + nbytes }
+  let (chunk, tested, found) ← ofExceptM (sipChunk spec cands sortVar b bp constOut need bytes starts p)
+  let stats := { stats with rowsOut := stats.rowsOut + chunk.table.rows, keysTested := stats.keysTested + tested,
+                            rowsGathered := stats.rowsGathered + found }
+  let (acc', more) ← f s.acc chunk
+  return stepOf s acc' stats s.insPos more
+
+/-- `scanFoldM` with candidates for column `spec.key.size`: the rows of the
+    scan whose value there is a candidate (`cands` in non-decreasing order).
+    With an overlay, the inserts after the last selected block form a last
+    chunk, filtered. -/
+def scanFoldSipM {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec)
+    (cands : Array UInt64) (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) :
+    ExceptT String m (σ × ScanStats) := do
+  let metas ← st.metas spec.perm
+  let sortVar := match spec.outCols[0]? with
+    | some c => if c == spec.key.size then spec.outVars[0]? else none
+    | none => none
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  let s0 : ScanState σ := { acc := init, stats := { blocksTotal := metas.size }, insPos := 0, stopped := false }
+  let s ← forIn (blocksFor metas spec.key) s0 (scanBlockSipM st spec cands f metas sortVar ox)
+  if ox.on && !s.stopped && s.insPos < ox.insK.size then
+    let chunk := sipFilterChunk cands (chunkOfRows spec
+      (L4Factoidal.Storage.Sbm11.Overlay.sliceList ox.insK s.insPos (ox.insK.size - s.insPos) []) sortVar)
+    let (acc', _) ← f s.acc chunk
+    return (acc', { s.stats with rowsOut := s.stats.rowsOut + chunk.table.rows })
+  return (s.acc, s.stats)
+
+/-- The scan with candidates as one table. -/
+def scanSipTableM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (cands : Array UInt64) :
+    ExceptT String m (Table × ScanStats) := do
+  let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.empty,
+                        rows := 0, sortVar := sortVarOf spec }
+  scanFoldSipM st spec cands init fun acc ch => pure (acc.append ch.table, true)
+
+/-- The rule that selects sideways information passing for a scan, with
+    the store's factor `k` (`Store.sipFactor`, 16 by default): the left input
+    has fewer than `1/k` of the rows the PRM1 entries give for the scan
+    (`k × left < estimate`). At sixteen, a block of 4,096 rows holds on
+    average fewer than 256 candidate rows; the scan still decodes the join
+    column of every block it reads, so the saving is in the other columns,
+    the blocks no candidate can match, and the rows the join does not read. -/
+def sipRule (factor : Option Nat) (leftRows estimate : Nat) : Bool :=
+  match factor with
+  | some k => k * leftRows < estimate
+  | none => false
+
+/-- The distinct values of `xs` (in order), appended to `out`: a value is
+    pushed when it differs from the last one pushed (a tail call with
+    fuel). -/
+def dedupGo (xs : Array UInt64) : Nat → Nat → Array UInt64 → Array UInt64
+  | 0, _, out => out
+  | f + 1, i, out =>
+    if i < xs.size then
+      let x := xs[i]!
+      match out.back? with
+      | some y => dedupGo xs f (i + 1) (if y != x then out.push x else out)
+      | none => dedupGo xs f (i + 1) (out.push x)
+    else out
+
+/-- Every row `i, i + 1, ...` of column `c` of `t` is a candidate (`sipMem`;
+    a tail call with fuel). -/
+def allMemGo (t : Table) (c : Nat) (cands : Array UInt64) : Nat → Nat → Bool
+  | 0, _ => true
+  | f + 1, i => if i < t.rows then (if sipMem cands (t.at c i) then allMemGo t c cands f (i + 1) else false) else true
+
+/-- The two run-time checks of `sipCands`. -/
+def sipCheck (t : Table) (c : Nat) (cands : Array UInt64) : Option (Array UInt64) :=
+  if Sip.sorted cands && allMemGo t c cands t.rows 0 then some cands else none
+
+/-- The distinct values of column `c` (sorted first unless `isSorted`). -/
+def sipDistinct (t : Table) (c : Nat) (isSorted : Bool) : Array UInt64 := Id.run do
+  let mut col : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    col := col.push (t.at c i)
+  let ordered := if isSorted then col else mergeSortBy col (· ≤ ·)
+  return dedupGo ordered ordered.size 0 (Array.mkEmpty ordered.size)
+
+/-- The candidates for the join variable `v` of a scan: the distinct values
+    of the left table's column `v`, in non-decreasing order (the column as
+    it is when the table is sorted on `v`, else sorted here). Used only when
+    two checks pass at run time: the candidates are in non-decreasing order
+    (`Sip.sorted`), and every value of the column is a candidate
+    (`allMemGo`); else `none`, and the scan runs without candidates.
+    `SipScanTheorems.sipCands_sound` derives from the two checks what the
+    semi-join reduction needs. -/
+def sipCands (t : Table) (v : String) : Option (Array UInt64) :=
+  match t.idx v with
+  | none => none
+  | some c => sipCheck t c (sipDistinct t c (t.sortVar == some v))
+
+/-- The right scan of a join with the table `left`: when the scan's sort
+    variable `v` (the column after its key) is a variable of `left` and
+    `sipRule` selects it, the scan with the left values of `v` as candidates
+    (`scanSipTableM`); else the full scan. A right row whose `v` is not a
+    left value joins no left row, in an inner join and in the left outer
+    join of an OPTIONAL group (whose shared variables are bound in every left
+    row, `flattenOptional`), so the join is the same
+    (`SemiJoinTheorems`). Returns the explain text of the choice. -/
+def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (left : Table)
+    (estimate : Nat) : ExceptT String m (Table × ScanStats × String) := do
+  match sortVarOf spec with
+  | some v =>
+    if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
+      match sipCands left v with
+      | some cands =>
+        let (t, s0) ← scanSipTableM st spec cands
+        let s := s0.withSip
+        return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested}, rows gathered {s.rowsGathered}")
+      | none => pure ()
+  | none => pure ()
+  let (t, s) ← scanTableOf st spec
+  return (t, s.full, "")
+
 /-! ## The BGP -/
 
 def varCount (pats : Array Pat) (v : String) : Nat :=
@@ -1172,7 +1435,7 @@ def posOf (t : Pat) (v : String) : Option Nat :=
     a variable to sort the first scan on when that pattern has it (the join
     variable of a left outer join, so that the join can merge). -/
 def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool)
-    (pref : Option String := none) :
+    (pref : Option String := none) (left0 : Option Table := none) :
     ExceptT String m (Table × Array String × ScanStats) := do
   let allVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let keep (v : String) : Bool := need v || varCount pats v ≥ 2
@@ -1192,9 +1455,15 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | some q => some q
     | none => bestSortPos t0 pats
   let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
-  let (tab0, st0) ← scanTableOf st spec0
+  -- an OPTIONAL group's first scan takes the left table's join values as
+  -- candidates (issue 809)
+  let (tab0, st0, sip0) ← match left0 with
+    | some l => scanForJoinM st spec0 l ests[first]!
+    | none => do
+      let (t, s) ← scanTableOf st spec0
+      pure (t, s.full, "")
   let mut total := st0
-  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}"
+  lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
   let mut tab := tab0
   for _ in [0:pats.size] do
     if remaining.isEmpty then break
@@ -1210,14 +1479,14 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
       | some (_, q) => permFor t (some q)
       | none => permFor t (bestSortPos t pats)
     let spec := mkSpec t perm keep
-    let (rt, s) ← scanTableOf st spec
+    let (rt, s, sipNote) ← scanForJoinM st spec tab ests[next]!
     total := total.add s
     let (joined, how) := match mergeVar with
       | some (v, _) =>
         if rt.sortVar == some v then (mergeJoin tab rt v, s!"merge join on ?{v}")
         else (hashJoin tab rt, "hash join")
       | none => (hashJoin tab rt, if (sharedCols tab rt).isEmpty then "cross product" else "hash join")
-    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}; {how}: {joined.rows} rows"
+    lines := lines.push s!"pattern {next}: {permNames[perm]!} key {spec.key.size} estimate {ests[next]!}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {rt.rows}{sipNote}; {how}: {joined.rows} rows"
     tab := joined
   return (tab, lines, total)
 
@@ -1477,6 +1746,24 @@ def countChunk (groupVars : Array String) (ch : Chunk) (g : Groups) : Groups := 
     i := e
   return g
 
+/-- The groups of `b` added to `a`, in `b`'s key order (issue 799, stage 1b:
+    the parent adds the groups of each block range in range order). Over the
+    list model, `ParallelMergeTheorems.merge_foldl` and `groups_chunks`: the
+    result has the keys and counts of one pass over the concatenation. -/
+def Groups.merge (a b : Groups) : Groups :=
+  b.keys.foldl (fun g k => g.add k (b.counts.getD k 0)) a
+
+/-- The counted path's step for one scan chunk: the FILTERs, then `countChunk`
+    (the chunk's constant columns count at once when there is no FILTER). -/
+def countStepM {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind) (groupVars : Array String)
+    (acc : Groups × Array Memo) (ch : Chunk) : ExceptT String m ((Groups × Array Memo) × Bool) := do
+  let (g, memos) := acc
+  if fs.isEmpty then
+    pure ((countChunk groupVars ch g, memos), true)
+  else
+    let (tab, memos) ← applyFilters st fs memos ch.table
+    pure ((countChunk groupVars { table := tab, consts := tab.vars.map fun _ => none } g, memos), true)
+
 /-- The inline id of an `xsd:integer` count (`TermId`: tag 4, datatype 0,
     value + 2^55). -/
 def countId (n : Nat) : UInt64 :=
@@ -1577,6 +1864,31 @@ def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat
     out := out.push (if desc then ~~~k else k)
   return out
 
+/-- The rows of `t` in the ORDER BY order of `plan` (stable: rows whose keys
+    are equal keep their order), as row indices; with `firstK = some k` only
+    the first `k` of them (`topK`). `finishM` uses it; so does each block range
+    of the divided ORDER BY ... LIMIT path (`topPartM`). -/
+def orderPermM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Table)
+    (firstK : Option Nat) : ExceptT String m (Array Nat) := do
+  let mut keys : Array (Array UInt64) := #[]
+  for (v, desc) in plan.order do
+    match t.idx v with
+    | some c => keys := keys.push (← orderKeysM st t c desc)
+    | none => pure ()
+  match firstK with
+  | some k =>
+    if 4 * k < t.rows then pure (L4Factoidal.Qlvr.Query.topK t.rows k keys)
+    else
+      let mut p := (List.range t.rows).toArray
+      for j in [0:keys.size] do
+        p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
+      pure (p.extract 0 k)
+  | none =>
+    let mut p := (List.range t.rows).toArray
+    for j in [0:keys.size] do
+      p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
+    pure p
+
 /-- ORDER BY, DISTINCT (on the projected columns: ids are injective, so equal
     ids are equal terms and different ids different terms), OFFSET, LIMIT.
     Without DISTINCT, ORDER BY with LIMIT keeps only the first OFFSET + LIMIT
@@ -1585,25 +1897,8 @@ def finishM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (t : Tabl
     ExceptT String m Table := do
   let mut t := t
   if !plan.order.isEmpty then
-    let mut keys : Array (Array UInt64) := #[]
-    for (v, desc) in plan.order do
-      match t.idx v with
-      | some c => keys := keys.push (← orderKeysM st t c desc)
-      | none => pure ()
     let firstK := if plan.distinct then none else plan.limit.map (plan.offset + ·)
-    let perm : Array Nat ← match firstK with
-      | some k =>
-        if 4 * k < t.rows then pure (L4Factoidal.Qlvr.Query.topK t.rows k keys)
-        else
-          let mut p := (List.range t.rows).toArray
-          for j in [0:keys.size] do
-            p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
-          pure (p.extract 0 k)
-      | none =>
-        let mut p := (List.range t.rows).toArray
-        for j in [0:keys.size] do
-          p := L4Factoidal.Qlvr.Query.sortPermByKey p keys[keys.size - 1 - j]!
-        pure p
+    let perm ← orderPermM st plan t firstK
     t := t.reorder perm
   if plan.distinct then
     let cols := plan.outVars.filterMap t.idx
@@ -1783,7 +2078,7 @@ def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (p
     let joinVar : Option String := match left.sortVar with
       | some v => if g.vars.contains v then some v else none
       | none => none
-    let (rt0, glines, gs) ← evalBgpM st gp gneed joinVar
+    let (rt0, glines, gs) ← evalBgpM st gp gneed joinVar (some left)
     let (rt, _) ← applyFilters st gfs (gfs.map fun _ => {}) rt0
     let (j, how) := OptJoin.leftOuterJoin left rt
     lines := lines ++ glines.map (s!"optional {k} " ++ ·)
@@ -1813,9 +2108,257 @@ def countItems (plan : Plan) (t : Table) : Array (Option Groups) :=
           some (some (countChunk plan.groupVars { table := tb, consts := tb.vars.map fun _ => none } {}))
         else some none
 
-/-- Run a plan. `emit` receives the SPARQL JSON text in pieces. -/
+/-! ## Divided single-pattern paths (issue 799, stage 1b)
+
+Record: docs/designissues/2026-10-12-parallel-block-scans.md, section
+"Stage 1b". The streamed path, the counted path and ORDER BY with LIMIT
+over one pattern divide the selected blocks of their scan into consecutive
+block ranges (`ParallelScan.chunksOf`) and run one job per range, each on
+its own view of the store (`Par.fold`; the native driver runs one Lean task
+per range, at most `threads` at once). The parent folds the range results in
+range order:
+
+  * streamed: each range applies the FILTERs and renders at most
+    OFFSET + LIMIT of its rows (`streamPartM`); the parent takes the window
+    [OFFSET, OFFSET + LIMIT) across the ranges in order (`emitPieceM`;
+    `ParallelMergeTheorems.window_chunks`). The path is divided only when
+    OFFSET + LIMIT is above the scan's estimate (the rows of its selected
+    blocks): then the single scan never stops early, so the divided scan reads
+    the same blocks.
+  * counted: each range counts its rows per group (`countPartM`); the parent
+    adds the range groups in range order (`Groups.merge`;
+    `ParallelMergeTheorems.groups_chunks`).
+  * ORDER BY ... LIMIT k without DISTINCT: each range keeps the first
+    OFFSET + LIMIT rows of its rows in the order (`topPartM`); the parent
+    orders the union of those rows and keeps the window (`finishM`;
+    `ParallelMergeTheorems.topK_chunks`).
+
+With `par = none` (`--threads 1`) none of this runs: `runPlanM` takes the
+single-thread code. A scan with a delta overlay stays on one thread, as in
+stage 1. -/
+
+/-- The runner of the divided paths. `fold job chunks init g` runs `job` on
+    every chunk of block numbers, each with its own view of the store, and
+    folds `g` over the results in chunk order. Its meaning is
+    `chunks.foldlM (fun b X => do g b (← job st X)) init`; the native driver
+    (`Harness/Sbm11Query.lean`, `parFold`) runs the jobs as tasks. -/
+structure Par (m : Type → Type) where
+  threads : Nat
+  /-- the fewest estimated rows per range (`rangeCount`); 0: no minimum -/
+  minRows : Nat := 8192
+  fold : {α β : Type} → (Store m → List Nat → ExceptT String m α) → List (List Nat) → β →
+    (β → α → ExceptT String m β) → ExceptT String m β
+
+/-- How many block ranges a scan of `est` estimated rows is divided into with
+    `threads` threads: at most `threads`, and with `minRows > 0` at most
+    `est / minRows`. Fewer than 2: the scan runs on one thread. A range costs
+    its task a fixed amount (the task, its view of the store, fresh memory in
+    the worker's heap): olympics q07, whose first two scans have 8,192 and
+    16,384 rows, took 12.2 ms at 4 threads against 9.9 ms at 1 with one range
+    per block. The default of 8,192 rows (two blocks of 4,096) is a measured
+    choice for this machine, not a derived one (`SBM11_MIN_RANGE_ROWS`). -/
+def rangeCount (threads minRows est : Nat) : Nat :=
+  if minRows == 0 then threads else min threads (est / minRows)
+
+/-- The block ranges of the scan `spec` when it is divided: two or more
+    ranges (`rangeCount`), no delta overlay on the scan, two or more
+    selected blocks; each range of at most `maxBlocks` blocks when
+    `maxBlocks > 0` (then there can be more ranges than threads). Also the
+    PRM1 entries, the overlay context and the estimate (`estimate`). -/
+def divide? {m : Type → Type} [Monad m] (st : Store m) (threads minRows : Nat) (spec : ScanSpec)
+    (maxBlocks : Nat) :
+    ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) := do
+  if threads ≤ 1 then return none
+  let metas ← st.metas spec.perm
+  let ox := ovCtx (st.ovl spec.perm) spec.key
+  if ox.on then return none
+  let sel := (blocksFor metas spec.key).toList
+  let est := estimate metas spec.key
+  let n := rangeCount threads minRows est
+  if sel.length < 2 || n < 2 then return none
+  let c0 := (sel.length + n - 1) / n
+  let c := if maxBlocks == 0 then c0 else min c0 maxBlocks
+  return some (metas, ox, L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel, est)
+
+/-- `divide?` with the threads of `par`; none without `par`. -/
+def divideFor? {m : Type → Type} [Monad m] (st : Store m) (par : Option (Par m)) (spec : ScanSpec)
+    (maxBlocks : Nat) : ExceptT String m (Option (Array BlockMeta × OvCtx × List (List Nat) × Nat)) :=
+  match par with
+  | some p => divide? st p.threads p.minRows spec maxBlocks
+  | none => pure none
+
+/-- Rows `[lo, hi)` of `t`, each as a comma and its binding object (the text
+    `renderRowsM` writes for a row after the first), into a new buffer; and
+    the end offset of each row in it. -/
+def renderRowsEndsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
+    (vars : Array String) (lo hi : Nat) : ExceptT String m (ByteArray × Array Nat) := do
+  let names := nameBytes vars
+  let cols : Array (Nat × Nat) := (List.range vars.size).toArray.filterMap fun k =>
+    (t.idx vars[k]!).map fun c => (k, c)
+  let mut out := ByteArray.emptyWithCapacity (64 * (hi - lo))
+  let mut ends : Array Nat := Array.mkEmpty (hi - lo)
+  for i in [lo:hi] do
+    out := out.push 44
+    out := out.push 123
+    for j in [0:cols.size] do
+      let (k, c) := cols[j]!
+      let x := t.at c i
+      if x != OptJoin.unbound then
+        if out.get! (out.size - 1) != 123 then out := out.push 44
+        out := out ++ names[k]!
+        out ← appendIdJsonM st reference x out
+    out := out.push 125
+    ends := ends.push out.size
+  return (out, ends)
+
+/-- A copy of `spec` whose arrays, pairs, boxed words and strings are new
+    objects, made by the task that calls it. A scan reads its spec in every
+    block; the spec the parent made is reachable from every task, and the Lean
+    runtime takes and releases references to an object that two threads can
+    reach with atomic operations, here on cache lines that every task uses
+    (DBpedia d17 at 4 threads: `planChecksGo`, `lean_array_to_list_impl` and
+    `lean_dec_ref_cold` together a third of the profile). The copy has the
+    same value (`ScanSpec.fresh_eq`). The words go through `toNat` and back
+    and the strings through `++ ""` so that the compiler does not reduce the
+    copy to the original object (it reduces `⟨x.a, x.b⟩` to `x`). -/
+def ScanSpec.fresh (s : ScanSpec) : ScanSpec :=
+  { perm := s.perm
+    key := s.key.map fun x => UInt64.ofNat x.toNat
+    checks := s.checks.map fun p => (p.1, UInt64.ofNat p.2.toNat)
+    named := s.named
+    outVars := s.outVars.map (· ++ "")
+    outCols := s.outCols.toList.toArray
+    eqs := s.eqs.map fun p => (p.1 + 0, p.2 + 0) }
+
+theorem ScanSpec.fresh_eq (s : ScanSpec) : s.fresh = s := by
+  obtain ⟨perm, key, checks, named, outVars, outCols, eqs⟩ := s
+  simp only [ScanSpec.fresh, Nat.add_zero, String.append_empty, Array.toArray_toList]
+  have hk : key.map (fun x => UInt64.ofNat x.toNat) = key := by
+    conv => rhs; rw [← Array.map_id key]
+    congr 1; funext x; simp
+  have hc : checks.map (fun p => (p.1, UInt64.ofNat p.2.toNat)) = checks := by
+    conv => rhs; rw [← Array.map_id checks]
+    congr 1; funext p; simp
+  rw [hk, hc]
+  simp
+
+/-- A copy of a compiled FILTER conjunct whose strings, words, ranges and
+    needle are new objects (the reason is `ScanSpec.fresh`'s: the conjuncts
+    are read for every row of every block). The expression `e` is shared: it
+    is read only when the reference evaluator decides a row. -/
+def FKind.fresh : FKind → FKind
+  | .idEq v c => .idEq (v ++ "") (c.map fun x => UInt64.ofNat x.toNat)
+  | .idEqVar v w => .idEqVar (v ++ "") (w ++ "")
+  | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
+  | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
+  | .general e vs => .general e (vs.map (· ++ ""))
+
+theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
+  cases f with
+  | idEq v c => cases c <;> simp [FKind.fresh]
+  | idEqVar v w => simp [FKind.fresh]
+  | str k v needle e => simp [FKind.fresh, ByteArray.extract_zero_size]
+  | strRange v ranges lo hi e =>
+    simp only [FKind.fresh, String.append_empty, Nat.add_zero]
+    congr 1
+    conv => rhs; rw [← Array.map_id ranges]
+    rfl
+  | general e vs => simp [FKind.fresh]
+
+/-- The overlay context of a divided scan (no overlay: `divide?` refuses a
+    scan with one), made by the task that calls it. -/
+def OvCtx.fresh (ox : OvCtx) (key : Array UInt64) : OvCtx :=
+  if ox.on then ox else ovCtx {} key
+
+/-- Rows per rendered piece of the divided streamed path. A piece is made by
+    a task and freed by the parent after it is written; a buffer of a whole
+    block (about 500 KB for olympics q21) was a large allocation of the task
+    thread's heap that was not reused after a free from another thread, and
+    the next run cleared new huge pages for it (`clear_page_erms`, a third of
+    the profile of q19 at 4 threads). 512 rows of q21 are about 64 KB. -/
+def pieceRows : Nat := 512
+
+/-- One block range of the divided streamed path: per scan chunk, the rows
+    that pass the FILTERs, rendered (`renderRowsEndsM`) in pieces of at most
+    `pieceRows` rows, at most `cap` rows over the range; the scan stops when
+    it has `cap` rows. Each piece is its own buffer (a buffer carried through
+    the loop would be shared with the loop state and copied on its first
+    append in every block). -/
+def streamPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
+    (reference : Bool) (vars : Array String) (cap : Nat) (metas : Array BlockMeta) (ox : OvCtx)
+    (X : List Nat) : ExceptT String m (Array (ByteArray × Array Nat) × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
+  let memos0 : Array Memo := fs.map fun _ => {}
+  let ((_, pieces, _), s) ← scanListM st spec true (memos0, (#[] : Array (ByteArray × Array Nat)), (0 : Nat))
+      (fun (memos, pieces, n) ch => do
+        let (tab, memos) ← applyFilters st fs memos ch.table
+        let take := min (cap - n) tab.rows
+        if take == 0 then return ((memos, pieces, n), n < cap)
+        if let some f := st.prefetch then f tab take
+        let mut pieces := pieces
+        for k in [0:(take + pieceRows - 1) / pieceRows] do
+          let lo := k * pieceRows
+          pieces := pieces.push (← renderRowsEndsM st reference tab vars lo (min take (lo + pieceRows)))
+        pure ((memos, pieces, n + take), n + take < cap))
+      metas (sortVarOf spec) ox X
+  return (pieces, s)
+
+/-- The parent's step over one rendered piece, as the single-thread streamed
+    path steps over one scan chunk: skip what is left of OFFSET, emit up to
+    what is left of LIMIT (no comma before the first row emitted). -/
+def emitPieceM {m : Type → Type} [Monad m] (emit : ByteArray → m Unit) (off lim : Nat)
+    (acc : Nat × Nat) (piece : ByteArray × Array Nat) : ExceptT String m (Nat × Nat) := do
+  let (skipped, emitted) := acc
+  let (bytes, ends) := piece
+  let r := ends.size
+  let skipHere := min (off - skipped) r
+  let takeHere := min (lim - emitted) (r - skipHere)
+  if takeHere > 0 then
+    let a0 := if skipHere == 0 then 0 else ends[skipHere - 1]!
+    let a := if emitted == 0 then a0 + 1 else a0
+    let e := ends[skipHere + takeHere - 1]!
+    if a == 0 && e == bytes.size then (emit bytes : m Unit)
+    else (emit (bytes.extract a e) : m Unit)
+  return (skipped + skipHere, emitted + takeHere)
+
+/-- One block range of the divided counted path: `countStepM` over the range,
+    from no groups. -/
+def countPartM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) (fs : Array FKind)
+    (groupVars : Array String) (metas : Array BlockMeta) (ox : OvCtx) (X : List Nat) :
+    ExceptT String m (Groups × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
+  let groupVars := groupVars.map (· ++ "")
+  let ((g, _), s) ← scanListM st spec (!fs.isEmpty) (({} : Groups), (fs.map fun _ => ({} : Memo)))
+    (countStepM st fs groupVars) metas (sortVarOf spec) ox X
+  return (g, s)
+
+/-- One block range of the divided ORDER BY ... LIMIT path: the range's table,
+    its rows that pass the FILTERs, then the first `k` of them in the ORDER BY
+    order (`orderPermM`), in that order. -/
+def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : ScanSpec)
+    (fs : Array FKind) (k : Nat) (metas : Array BlockMeta) (ox : OvCtx) (X : List Nat) :
+    ExceptT String m (Table × ScanStats) := do
+  let spec := spec.fresh
+  let fs := fs.map FKind.fresh
+  let ox := ox.fresh spec.key
+  let sortVar := sortVarOf spec
+  let cap := 8 * X.foldl (fun a i => a + metas[i]!.rows) 0
+  let init : Table := { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
+                        rows := 0, sortVar }
+  let (t, s) ← scanListM st spec true init (fun acc ch => pure (acc.append ch.table, true)) metas sortVar ox X
+  let (t, _) ← applyFilters st fs (fs.map fun _ => {}) t
+  let perm ← orderPermM st plan t (some k)
+  return (t.reorder perm, s)
+
+/-- Run a plan. `emit` receives the SPARQL JSON text in pieces. `par`: divide
+    the single-pattern paths into block ranges (stage 1b); `none` is the
+    single-thread path. -/
 def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : ByteArray → m Unit)
-    (reference : Bool := false) : ExceptT String m RunStats := do
+    (reference : Bool := false) (par : Option (Par m) := none) : ExceptT String m RunStats := do
   let pats ← plan.pats.mapM (resolvePat st)
   let fs ← plan.filters.mapM (compileFilter st)
   let memos0 : Array Memo := fs.map fun _ => {}
@@ -1838,41 +2381,82 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
     if lim == 0 then
       stats := { stats with plan := #["LIMIT 0"] }
     else
-      let ((_, emitted, _), s) ← scanFoldM st spec true ((0 : Nat), (0 : Nat), memos0)
-          fun (skipped, emitted, memos) ch => do
-        let (tab, memos) ← applyFilters st fs memos ch.table
-        let skipHere := min (plan.offset - skipped) tab.rows
-        let takeHere := min (lim - emitted) (tab.rows - skipHere)
-        if takeHere > 0 then
-          let bytes ← renderRowsM st reference tab plan.outVars skipHere (skipHere + takeHere) (emitted == 0)
-          (emit bytes : m Unit)
-        let emitted := emitted + takeHere
-        pure ((skipped + skipHere, emitted, memos), emitted < lim)
-      stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
-                 rows := emitted, scan := s }
+      -- stage 1b: divided when OFFSET + LIMIT is above the estimate (the single
+      -- scan then reads every selected block)
+      match par, (← divideFor? st par spec 16).filter (fun d => plan.offset + lim > d.2.2.2) with
+      | some p, some (metas, ox, chunks, est) =>
+        let ((_, emitted), s) ← p.fold
+            (fun v X => streamPartM v spec fs reference plan.outVars (plan.offset + lim) metas ox X) chunks
+            (((0 : Nat), (0 : Nat)), ({ blocksTotal := metas.size } : ScanStats))
+            fun (acc, s) (pieces, s') => do
+              let acc ← pieces.foldlM (emitPieceM emit plan.offset lim) acc
+              pure (acc, s.add s')
+        stats := { plan := #[s!"pattern 0 streamed in {chunks.length} block ranges ({p.threads} tasks at once at most; OFFSET + LIMIT above the estimate {est}): {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
+                   rows := emitted, scan := s.full }
+      | _, _ =>
+        let ((_, emitted, _), s) ← scanFoldM st spec true ((0 : Nat), (0 : Nat), memos0)
+            fun (skipped, emitted, memos) ch => do
+          let (tab, memos) ← applyFilters st fs memos ch.table
+          let skipHere := min (plan.offset - skipped) tab.rows
+          let takeHere := min (lim - emitted) (tab.rows - skipHere)
+          if takeHere > 0 then
+            let bytes ← renderRowsM st reference tab plan.outVars skipHere (skipHere + takeHere) (emitted == 0)
+            (emit bytes : m Unit)
+          let emitted := emitted + takeHere
+          pure ((skipped + skipHere, emitted, memos), emitted < lim)
+        stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
+                   rows := emitted, scan := s.full }
   else
     let mut table : Table := default
     if single && plan.agg then
       -- aggregate block by block
       let t := pats[0]!
       let spec := mkSpec t (permFor t none) need
-      let ((groups, _), s) ← scanFoldM st spec (!fs.isEmpty) (({} : Groups), memos0) fun (g, memos) ch => do
-        if fs.isEmpty then
-          pure ((countChunk plan.groupVars ch g, memos), true)
-        else
-          let (tab, memos) ← applyFilters st fs memos ch.table
-          pure ((countChunk plan.groupVars { table := tab, consts := tab.vars.map fun _ => none } g, memos), true)
-      let line := s!"pattern 0 counted while streaming: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; groups {groups.keys.size}"
-      stats := { stats with plan := #[line], scan := s }
+      -- stage 1b: one group map per block range, added in range order
+      let (groups, s, how) ← match par, ← divideFor? st par spec 0 with
+        | some p, some (metas, ox, chunks, _) => do
+          let (g, s) ← p.fold (fun v X => countPartM v spec fs plan.groupVars metas ox X) chunks
+            (({} : Groups), ({ blocksTotal := metas.size } : ScanStats))
+            fun (g, s) (g', s') => pure (g.merge g', s.add s')
+          pure (g, s, s!" in {chunks.length} block ranges ({p.threads} tasks at once at most)")
+        | _, _ => do
+          let ((groups, _), s) ← scanFoldM st spec (!fs.isEmpty) (({} : Groups), memos0)
+            (countStepM st fs plan.groupVars)
+          pure (groups, s, "")
+      let line := s!"pattern 0 counted while streaming{how}: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; groups {groups.keys.size}"
+      stats := { stats with plan := #[line], scan := s.full }
       match groupTable plan groups with
       | .ok t => table := t
       | .error e => throw e
     else
-      let (t1, lines, s) ← if plan.optionals.isEmpty then do
-          let (t0, lines, s) ← evalBgpM st pats need
-          let (t1, _) ← applyFilters st fs memos0 t0
-          pure (t1, lines, s)
-        else evalOptionalsM st plan pats fs need
+      -- stage 1b: ORDER BY ... LIMIT over one pattern, without DISTINCT: the
+      -- first OFFSET + LIMIT rows of each block range, then `finishM` over
+      -- their union. The scan is the one `evalBgpM` makes for one pattern.
+      let topDiv ← if par.isSome && single && !plan.agg && !plan.order.isEmpty && !plan.distinct &&
+          plan.limit.isSome then do
+          let t0 := pats[0]!
+          let keep (v : String) : Bool := need v || varCount pats v ≥ 2
+          -- the estimate `evalBgpM` computes (on the permutation of
+          -- `permFor t0 none`, which it opens for that)
+          let specE := mkSpec t0 (permFor t0 none) keep
+          let est := estimate (← st.metas specE.perm) specE.key
+          let spec0 := mkSpec t0 (permFor t0 (bestSortPos t0 pats)) keep
+          pure ((← divideFor? st par spec0 0).map fun d => (spec0, est, d))
+        else pure none
+      let (t1, lines, s) ← match par, topDiv with
+        | some p, some (spec0, est, metas, ox, chunks, _) => do
+          let k := plan.offset + plan.limit.getD 0
+          let init : Table := Table.empty spec0.outVars
+          let (u, s) ← p.fold (fun v X => topPartM v plan spec0 fs k metas ox X) chunks
+            (init, ({ blocksTotal := metas.size } : ScanStats))
+            fun (u, s) (t, s') => pure (u.append t, s.add s')
+          pure (u, #[s!"pattern 0: {permNames[spec0.perm]!} key {spec0.key.size} estimate {est}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; first {k} rows of the order kept in each of {chunks.length} block ranges ({p.threads} tasks at once at most): {u.rows} rows"], s.full)
+        | _, _ =>
+          if plan.optionals.isEmpty then do
+            let (t0, lines, s) ← evalBgpM st pats need
+            let (t1, _) ← applyFilters st fs memos0 t0
+            pure (t1, lines, s)
+          else evalOptionalsM st plan pats fs need
       stats := { stats with plan := lines, scan := s }
       if plan.agg then
         let g := countChunk plan.groupVars { table := t1, consts := t1.vars.map fun _ => none } {}
@@ -1889,6 +2473,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       (emit bytes : m Unit)
     stats := { stats with rows := out.rows }
   (emit jsonTail.toUTF8 : m Unit)
-  return stats
+  let t := stats.scan
+  return { stats with plan := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes" }
 
 end L4Factoidal.Storage.Sbm11.IdQuery

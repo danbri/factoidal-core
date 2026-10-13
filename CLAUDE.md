@@ -905,6 +905,13 @@ rule #17").
     id path, the qlvr reader, the planner and the COUNT fast path landed on
     `main`; three of the four would have answered `text:query` patterns
     from stored triples with all gates green. Hazard #41.)
+35. A theorem file that no build root imports is never type-checked, and a
+    record that calls its theorems proved has no build behind it. Run
+    `python3 tools/lean-unbuilt-modules.py --gate` (exit 0) before writing
+    "proved". (2026-10-13: `Storage.Sbm11.ParallelScanTheorems`, reported
+    as proved for issue 799 stage 1, had never been built; two OWL and RDF
+    theorem files from 2026-09-07 were in the same state. All three build;
+    they are now imported from a root.)
 
 ## Skills (operational details, on-demand)
 

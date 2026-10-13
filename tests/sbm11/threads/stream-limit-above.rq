@@ -1,0 +1,2 @@
+# Stage 1b: OFFSET + LIMIT one above the estimate: divided.
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 23

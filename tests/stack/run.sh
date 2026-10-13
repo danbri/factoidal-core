@@ -721,15 +721,32 @@ sbm11_query_case() { # sbm11_query_case <route> <prefix...>
 $(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query: path=[a-z]*; rows [0-9]*') rc=$rc"
     [ "$rc" -ne 0 ] && break
   done
+  # issue 809: joins with candidates (--sip always): the find and gather
+  # loops of Storage/Sbm11/Sip.lean over blocks of 65,536 rows, every row a
+  # candidate (150,000 candidates), and a left outer join with candidates
+  local sip=""
+  if [ "$rc" -eq 0 ]; then
+    for q in \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l . ?s p:n ?n }" \
+      "SELECT (COUNT(*) AS ?c) (COUNT(?n) AS ?k) WHERE { ?s p:label ?l OPTIONAL { ?s p:n ?n FILTER(?n < 1000) } }"; do
+      r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$out" "$P$q" --sip always --explain 2>&1)"; rc=$?
+      sip="$sip
+$(printf '%s' "$r" | grep -o '"value":"[0-9]*"' | tr '\n' ' ') $(printf '%s' "$r" | grep -o 'sideways ?s: [0-9]* candidates' | head -1) $(printf '%s' "$r" | grep -o 'Stack overflow' | head -1) rc=$rc"
+      [ "$rc" -ne 0 ] && break
+    done
+  fi
+  log="$log$sip"
   if printf '%s' "$log" | grep -q 'Stack overflow'; then
     score_case "$route" sbm11-query overflow "STACK OVERFLOW (exit $rc)"
   elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' || ! printf '%s' "$log" | grep -q '"value":"61111"' \
       || ! printf '%s' "$log" | grep -q 'path=ids; rows 61111' \
       || ! printf '%s' "$log" | grep -q '"value":"1000"' || ! printf '%s' "$log" | grep -q '"value":"149998"' \
-      || printf '%s' "$log" | grep -q 'path=reference'; then
+      || printf '%s' "$log" | grep -q 'path=reference' \
+      || [ "$(printf '%s' "$sip" | grep -c '"value":"150000" .*sideways ?s: 150000 candidates')" -ne 2 ] \
+      || ! printf '%s' "$sip" | grep -q '"value":"1000"'; then
     score_case "$route" sbm11-query error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
   else
-    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY)"
+    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY); both joins again with 150000 candidates (issue 809)"
   fi
 }
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then

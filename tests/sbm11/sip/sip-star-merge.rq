@@ -1,0 +1,10 @@
+# Sideways information passing (issue 809), merge joins: a selective left side (gold medals of the 1936 Summer games) passes its instances into the PSO scans of wso:event and wso:athlete (269,625 rows each).
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbp: <http://dbpedia.org/property/>
+PREFIX wso: <http://wallscope.co.uk/ontology/olympics/>
+PREFIX wsr: <http://wallscope.co.uk/resource/olympics/>
+SELECT ?i ?e ?a WHERE { ?i wso:games <http://wallscope.co.uk/resource/olympics/games/1936/Summer> . ?i wso:medal <http://wallscope.co.uk/resource/olympics/medal/Gold> . ?i wso:event ?e . ?i wso:athlete ?a }

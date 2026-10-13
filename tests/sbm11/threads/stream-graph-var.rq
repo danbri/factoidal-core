@@ -1,0 +1,2 @@
+# Stage 1b: streamed over the named graphs (graph test per row in the tasks).
+SELECT ?g ?s WHERE { GRAPH ?g { ?s ?p ?o } }

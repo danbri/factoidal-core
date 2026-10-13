@@ -1438,3 +1438,7 @@ L4Factoidal_SPARQL_pCollectionCells  # (b) nesting of [ ] and ( ) in the query o
 L4Factoidal_Syntax_RdfXml_collectionCells  # (b) element nesting of the RDF/XML document, through nodeElement (cycle of 5); the members of one rdf:parseType="Collection" are a goto _start in the emitted C: the loop twin of collectionList, proved equal (collectionCells_eq); 20,000 members run at 512 KB (tests/stack rdfxml-collection)
 L4Factoidal_Syntax_RdfXml_serializeNodeF  # (b) element nesting of the rdf:parseType="Literal" content; the twin of serializeNode (csimp serializeNode_eq_fast), whose child list is the loop serializeNodesLoop
 L4Factoidal_Syntax_RdfXml_serializeNodesLoop  # (b) element nesting of the rdf:parseType="Literal" content, as serializeNodeF; the siblings of one element are a goto _start in the emitted C (csimp serializeNodes_eq_fast)
+# --- Added 2026-10-13: modules newly imported from the library root by the
+# unbuilt-module gate (tools/lean-unbuilt-modules.py, anti-pattern 35); the
+# audit reads only built IR, so it saw them for the first time ---
+L4Factoidal_RDF_GraphPatterns_matchSegs  # (b) one level per segment of one URI template (RFC 6570 level 1, a few segments); the IRI's characters are consumed by takeWhile/dropWhile, not by recursion

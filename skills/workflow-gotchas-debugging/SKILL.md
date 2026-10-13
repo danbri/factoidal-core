@@ -2033,3 +2033,41 @@ same time; each run deleted and rewrote files the other was reading.
   collision suspect: run the suite again alone before reading it as a defect.
 - Every new suite that writes fixtures takes its directory from an environment
   variable and defaults to a per-run directory (`mktemp -d`), not a fixed path.
+
+## Hazard #44 — main moves under a landing branch while its gates run (2026-10-13)
+
+### Symptom
+
+Two sessions land on `main` several times an hour. A landing branch passed
+its full gate set (about 40 minutes), and in that time `main` gained other
+commits, so the push was not a fast-forward. Running the full set again on
+the merge took another 40 minutes, and `main` moved again.
+
+### The rule (used 2026-10-13 for issue 809)
+
+1. The landing branch passes the full gate set once: build, tail-recursion
+   audit, the suites of its own area, `tests/qlvr`, `tests/prim`,
+   `l4planner-test`, native-smoke, `tests/known-defects`, and the stack suite
+   with a private `STACK_FIXTURES`.
+2. When `main` has moved, merge `origin/main` into the landing branch. If the
+   merge has no conflict AND no file changed on both sides since the merge
+   base (`comm -12` of the two `git diff --name-only` lists is empty), run
+   only: the full `lake build`, the tail-recursion audit, the landing's own
+   area suite, native-smoke and known-defects. The other side has already
+   gated its own files on its own landing.
+3. If a file changed on both sides, or the merge had a conflict, run the full
+   set again.
+   Exception (added by the batch 1 coordinator, 2026-10-13): when every file
+   changed on both sides is an append-only list, namely the import list
+   `formal/lean4/L4Factoidal.lean` or `tools/lean-tail-recursion-allow.txt`,
+   and each conflict hunk is lines added on both sides, resolved as their
+   union, the reduced set of step 2 applies. The full `lake build` checks the
+   import union and the audit checks the allow-list union. Check the union
+   adds no duplicate entry (`sort | uniq -d` before and after). A test runner
+   changed on both sides and merged without conflict (for example
+   `tests/stack/run.sh`) is also covered when the reduced set runs that
+   runner in full (`tests/stack/run.sh --canary`). This happened
+   at 06:10 UTC: the third move of `main` under one landing in two hours, with
+   the full set at 75 minutes under load average 35.
+4. Before every push: `git fetch origin main` and
+   `git merge-base --is-ancestor origin/main HEAD` (CLAUDE.md).
