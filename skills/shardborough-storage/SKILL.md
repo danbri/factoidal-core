@@ -627,11 +627,17 @@ DBpedia d11 (OPTIONAL): 48.7 s warm and 849 MB on the reference fallback
 before; 17.2 ms warm and 25.6 MB on ids (2026-10-13). Gates: `tests/sbm11/run.sh` part (d), the 16
 `ids-optional-*` and 6 `ref-optional-*` queries; a change that admits more
 OPTIONAL shapes must move a `ref-optional-*` query to `ids-` only with a
-gate query that the reference semantics decide. Trap: the reference
-evaluator evaluates a FILTER in an OPTIONAL group on the group's row only
-(https://github.com/danbri/factoidal/issues/815, known-defects case
-`SPARQL-OPT-FILTER-SCOPE`); the id path refuses a group FILTER over a
-left-side variable until that is fixed, so that both paths answer the same.
+gate query that the reference semantics decide. Trap: until 2026-10-13 the
+reference evaluator evaluated a FILTER in an OPTIONAL group on the group's
+row only (https://github.com/danbri/factoidal/issues/815). The Lean parser
+now makes the group's FILTERs the LeftJoin condition, evaluated on the merged
+row (SPARQL 1.1 section 18.2.2.5; `optionalGroup`, theorems in
+`SPARQL/OptionalFilterScope.lean`); the F* engine still has the defect
+(known-defects case `SPARQL-OPT-FILTER-SCOPE`). The id path still refuses a
+group FILTER over a left-side variable (`IdQuery.flattenOptional` reads the
+condition and throws), so such a query takes the reference fallback
+(`ref-optional-filter-outer.rq`), which now answers section 18.2.2.5. Admitting
+it on ids is open.
 
 Sideways information passing (2026-10-13,
 https://github.com/danbri/factoidal/issues/809; record: section 11 of the

@@ -2954,6 +2954,26 @@ The end-to-end theorem itself is ⬜ OPEN.
 Every theorem in this section reports `propext`, `Classical.choice`,
 `Quot.sound` or a subset under `#print axioms`.
 
+## SPARQL OPTIONAL: the group's FILTERs are the LeftJoin condition (Lean 4, 2026-10-13)
+
+SPARQL 1.1 Query §18.2.2.5 makes `OPTIONAL { P FILTER(F) }` the
+`LeftJoin(G, P, F)` of §18.5, F evaluated on the merged solution
+([#815](https://github.com/danbri/factoidal/issues/815)). The parser reads an
+OPTIONAL group's pattern and its own FILTERs apart and builds `optionalGroup`.
+Module: `formal/lean4/L4Factoidal/SPARQL/OptionalFilterScope.lean`.
+
+| Theorem | Engine function | Status | Hypotheses |
+|---|---|---|---|
+| `pGroupGraphPattern_eq_parts` — the group parser is the parts parser with the FILTERs wrapped (§18.2.2.6) | `pGroupGraphPattern`, `pGroupGraphPatternParts` | ✅ PROVED (2026-10-13) | — (every fuel and token stream) |
+| `evalIn_optionalGroup_filter` — with a FILTER, the lowered pattern evaluates to `SPARQL.leftJoin Ω1 Ω2 cond`, `cond` the conjunction F on the merged row | `optionalGroup`, `QueryPattern.lowerWith`, `GraphPattern.evalIn` | ✅ PROVED (2026-10-13) | `filterConjunction? filters = some f` |
+| `evalIn_optionalGroup_nil` — with no FILTER, `LeftJoin(Ω1, Ω2, true)` | same | ✅ PROVED (2026-10-13) | — |
+| `ebvOrFalse_and`, `filterTrue_foldl_and`, `conjunction_true_iff` — the condition is true on a row exactly when every FILTER of the group is true on it | `filterConjunction?`, `Expr.evalIn`, `substituteExistentials` | ✅ PROVED (2026-10-13) | `filterConjunction? filters = some f` |
+| The parser output for a FILTER in the group, in a nested group, beside the group; the issue 815 reproduction on `tests/sbm11/gate/gate.nq` | `parseSparql`, `evalSelect`, `StoreDataset.runSelectQueryBackendDataset` | 🟡 TESTED (`#guard`s in the module) | — |
+
+Every theorem in this section reports `propext`, `Classical.choice`,
+`Quot.sound` or a subset under `#print axioms`. The F\* engine still has the
+defect (known-defects case `SPARQL-OPT-FILTER-SCOPE`).
+
 ## OWL 2 comprehension and existential witnesses (Lean 4, 2026-09-07)
 
 The PositiveEntailmentTest-only layer of `L4Factoidal/OWL/Comprehension.lean`
