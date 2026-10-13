@@ -44,12 +44,12 @@ clash verdict follow as corollaries.
 
 ## Evaluation strategy and cost model
 
-Evaluation is NAIVE with indexed joins, not semi-naive: every round
-drives every row from every triple of the round's input snapshot,
-exactly as `RLClosure.step` does. That choice is what makes the bridge
-theorem a per-round list equality instead of a fixpoint argument; it
-is also sufficient for the corpus (see `PORT_NOTES.md` for the
-measured before/after — 0 cap hits at the same 20 s budget).
+The rounds of Sections 5 to 9 (`stepI`, `closureI`) are NAIVE with
+indexed joins: every round drives every row from every triple of the
+round's input snapshot, exactly as `RLClosure.step` does. That is what
+makes their bridge theorem a per-round list equality. The semi-naive
+rounds of Section 11 keep that per-round list equality and evaluate less
+(see "Semi-naive rounds" below); they are what the compiler emits.
 
 Cost model (hash operations are expected O(1); `n` = triples in the
 round's input, `E` = conclusions emitted before deduplication):
@@ -72,13 +72,25 @@ reverses, which costs no more than consuming the result does. That is
 what makes the bucket equal to the list filter as a list, not just as
 a set.
 
-## What is NOT here
+## Semi-naive rounds (Section 11, since 2026-10-13)
 
-No semi-naive delta evaluation and no rule stratification. Both would
-change which triples each ROUND emits (not which triples the FIXPOINT
-holds), so their bridge theorem is an equality at saturation, which is
-a different and longer proof. They are the next step if a corpus ever
-needs them; the measurements in `PORT_NOTES.md` say this one does not.
+The naive rounds above re-evaluate every row at every driving triple of
+every round. On real ontologies most of that work re-derives triples the
+graph already holds (RO: rounds 4 to 6 emitted 1.27 million conclusions
+to add 1,176 triples). Section 11 adds semi-naive rounds: at a driving
+triple the previous round already held, each row evaluates only its delta
+term (nothing, the row over the delta's index, or the row in full when a
+test says the delta can change its output). The emitted list is the naive
+round's list minus triples the round's input already holds, which
+`addAll` drops, so the semi-naive loop returns the SAME LIST as the naive
+loop at every fuel (`indexedClosureSN_eq`): the equality holds per round,
+not only at saturation. The `csimp` theorems of Section 10 name the
+semi-naive loop. Measurements and the theorems of issue
+https://github.com/danbri/factoidal/issues/756 item 2:
+`docs/designissues/2026-10-10-owl-real-ontologies.md` § 11 and
+`RLSemiNaiveTheorems.lean`.
+
+No rule stratification.
 -/
 import L4Factoidal.OWL.RLClosure
 import Std.Data.HashMap
