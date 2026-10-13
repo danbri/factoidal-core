@@ -479,15 +479,19 @@ nominal clash checks are 3.9 s of it).
 
 ### 9.5 Gates
 
-- `tests/stack/owl_real_gate.py --only cl-basic-consistent,ro-consistent`:
-  2 pass, 0 fail, 0 expected-fail (out of 2). `cl-basic-consistent` 15.17 s
-  wall, 447 MB, `true`; its expected-failure mark is removed.
-  `ro-consistent` (new) 12.61 s wall, 77 MB, `true`. Both rows now have a
-  60 s bound. The other rows are unchanged.
-- `tests/stack/lean_scaling.py --only owl-consistent-cl` (new row): 1 pass,
-  0 fail, 0 expected-fail (out of 1). 1.320 s, 3.180 s and 8.378 s of CPU at
-  10,000, 20,000 and 40,000 lines: 2.4 and 2.6 per doubling (bound 3.0),
-  6.3 for 4x input (bound 9.0).
+- `tests/stack/owl_real_gate.sh` (whole gate, final binary, load average
+  4.8): 7 pass, 0 fail, 5 expected-fail (out of 12); 1 skipped
+  (`wine-closure-fstar`: no F\* binary in this checkout).
+  `cl-basic-consistent` 16.67 s wall, 447 MB, `true`; its expected-failure
+  mark is removed. `ro-consistent` (new) 12.65 s wall, 77 MB, `true`. Both
+  rows have a 60 s bound. The other rows give what they gave before:
+  `ro-parse`, `qudt-species`, `cl-basic-parse-memory`, `qudt-closure` and
+  `qudt-consistent` expected failures with their issues; the other four
+  pass.
+- `tests/stack/lean_scaling.py --only owl-consistent-cl` (new row), final
+  binary: 1 pass, 0 fail, 0 expected-fail (out of 1). 1.407 s, 3.169 s and
+  7.966 s of CPU at 10,000, 20,000 and 40,000 lines: 2.3 and 2.5 per
+  doubling (bound 3.0), 5.7 for 4x input (bound 9.0).
 - OWL DL catalogs (`tools/lean-scoreboard.sh --only l4owl-probe`, before at
   `fb263d6f` and after, one run each, `MIMALLOC_ARENA_RESERVE=64MiB`):
   all 77 table rows identical (pass, fail, skip/other, total), and every
@@ -518,8 +522,10 @@ nominal clash checks are 3.9 s of it).
   profiler's copy of the search (one frame per expansion step).
 - `tools/lean-hygiene-audit.py --build-log`: clean (no `sorry`, axiom,
   `native_decide`, `unsafe` or `implemented_by`; `partial def` 164, the
-  baseline). `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350). Full
-  `lake build`: exit 0.
+  baseline; the `#print axioms` lines of the build, the six new equality
+  theorems among them, name only `propext`, `Classical.choice` and
+  `Quot.sound`). `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350). Full
+  `lake build`: exit 0 (1,412 jobs).
 
 ## 8. Reproduce
 
