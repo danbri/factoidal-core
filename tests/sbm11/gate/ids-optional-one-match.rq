@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# OPTIONAL with one match for b and c (ex:flag), none for a, d, e, f.
+SELECT ?s ?a ?f WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } }

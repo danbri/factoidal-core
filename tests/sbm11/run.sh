@@ -26,9 +26,17 @@
 #                (`l4factoidal query gate.nq`), equal as multisets. A query
 #                named ids-* must run on ids (path=ids); one named ref-* must
 #                take the reference fallback (path=reference): EXISTS, NOT
-#                EXISTS, MINUS, OPTIONAL with FILTER, sub-SELECT and the other
-#                forms only the reference semantics decide (CLAUDE.md
-#                anti-pattern 34).
+#                EXISTS, MINUS, sub-SELECT, the OPTIONAL shapes outside the id
+#                fragment (nested, a variable two groups share that the base
+#                does not bind, a FILTER in the group over a base variable, a
+#                FILTER beside it over an optional variable, OPTIONAL first,
+#                GRAPH in the group) and the other forms only the reference
+#                semantics decide (CLAUDE.md anti-pattern 34). The
+#                ids-optional-* queries run OPTIONAL on ids (issue 775): no
+#                match, one, several, FILTER in the group true, false and an
+#                error, two groups, GRAPH in the base, ORDER BY the optional
+#                variable (with LIMIT, so the order is part of the answer),
+#                COUNT and GROUP BY over it, DISTINCT, SELECT *.
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem) and `l4sbm11
 #                frame-check` (the word decoder against decodeColumnAt) on
@@ -71,7 +79,7 @@
 #   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
 #                merge of the term runs) on synthetic sources of 1, 2 and 4
 #                million lines (244 to 836 term runs; median of 3 runs each,
-#                CPU time of the merge thread); 4n at most 4.84 times n, 2.2
+#                CPU time of the merge thread); 4n at most 6.25 times n, 2.5
 #                per doubling (https://github.com/danbri/factoidal/issues/804;
 #                about 2 minutes). SBM11_PHASE2_SCALING=0 leaves (k) out
 #                (printed, not counted).

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# COUNT(?f) counts the rows where ?f is bound (2); COUNT(*) every row (6).
+SELECT (COUNT(?f) AS ?nf) (COUNT(*) AS ?n) WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } }

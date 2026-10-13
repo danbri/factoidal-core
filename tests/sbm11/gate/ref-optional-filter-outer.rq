@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Refused: a FILTER in the OPTIONAL reads ?a, which only the base binds.
+SELECT ?s ?a ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } }

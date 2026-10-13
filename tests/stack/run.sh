@@ -671,6 +671,11 @@ fi
 # 300,000-byte literal written as SPARQL JSON (the key printer's escape
 # loop). The block decode, the joins, the sort and the printer each run over
 # input-proportional data. https://github.com/danbri/factoidal/issues/790
+# OPTIONAL (issue 775): a left outer join of the 150,000 labels with the
+# 150,000 p:n rows, filtered in the group to 1,000 (COUNT(*) 150,000,
+# COUNT(?n) 1,000) and to 2 (ORDER BY DESC(?n) with unbound last, LIMIT 3):
+# the merge pairs, `OptJoin.outerPairs` and `gatherOpt` over 150,000 rows;
+# every query of the case must run on the id path.
 sbm11_query_case() { # sbm11_query_case <route> <prefix...>
   local route="$1"; shift
   local src="$FIXTURES/sbm11-dict.nt" out="$FIXTURES/sbm11-query-out" rc log r q
@@ -694,7 +699,9 @@ sbm11_query_case() { # sbm11_query_case <route> <prefix...>
     "SELECT ?m (COUNT(*) AS ?c) WHERE { ?s p:m ?m } GROUP BY ?m ORDER BY DESC(?c) ?m LIMIT 2" \
     "SELECT (COUNT(*) AS ?c) WHERE { ?s p:label ?l FILTER(STRSTARTS(?l, \"label 1\")) }" \
     "SELECT ?l WHERE { ?s p:label ?l FILTER(STRSTARTS(?l, \"label 1\")) }" \
-    "SELECT ?o WHERE { <http://example.org/sbm11/big> p:text ?o }"; do
+    "SELECT ?o WHERE { <http://example.org/sbm11/big> p:text ?o }" \
+    "SELECT (COUNT(*) AS ?c) (COUNT(?n) AS ?k) WHERE { ?s p:label ?l OPTIONAL { ?s p:n ?n FILTER(?n < 1000) } }" \
+    "SELECT ?n WHERE { ?s p:label ?l OPTIONAL { ?s p:n ?n FILTER(?n >= 149998) } } ORDER BY DESC(?n) LIMIT 3"; do
     r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$out" "$P$q" 2>&1)"; rc=$?
     log="$log
 $(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query: path=[a-z]*; rows [0-9]*') rc=$rc"
@@ -703,10 +710,12 @@ $(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query:
   if printf '%s' "$log" | grep -q 'Stack overflow'; then
     score_case "$route" sbm11-query overflow "STACK OVERFLOW (exit $rc)"
   elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' || ! printf '%s' "$log" | grep -q '"value":"61111"' \
-      || ! printf '%s' "$log" | grep -q 'path=ids; rows 61111'; then
+      || ! printf '%s' "$log" | grep -q 'path=ids; rows 61111' \
+      || ! printf '%s' "$log" | grep -q '"value":"1000"' || ! printf '%s' "$log" | grep -q '"value":"149998"' \
+      || printf '%s' "$log" | grep -q 'path=reference'; then
     score_case "$route" sbm11-query error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
   else
-    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written"
+    score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY)"
   fi
 }
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then

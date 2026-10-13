@@ -28,10 +28,11 @@
 #                (process median of RUNS; warm with --repeat REPEAT)
 #
 # Usage: tests/sbm11/bench.sh GEN [q01 q02 ...]
+# SBM11_BIN: the `l4sbm11` to time (default: the one this tree builds).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-BIN="$ROOT/formal/lean4/.lake/build/bin/l4sbm11"
+BIN="${SBM11_BIN:-$ROOT/formal/lean4/.lake/build/bin/l4sbm11}"
 QBIN="$ROOT/formal/lean4/.lake/build/bin/l4qlvr"
 INST="${QLVR_INST:-/home/user/qlvr-work/instance}"
 GEN="${1:?usage: bench.sh GEN [queries]}"; shift

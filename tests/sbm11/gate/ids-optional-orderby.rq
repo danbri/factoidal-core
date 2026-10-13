@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ORDER BY the optional variable: unbound first (SPARQL 1.1 section 15.1); LIMIT makes the order part of the answer.
+SELECT ?s ?f WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } } ORDER BY ?f ?s LIMIT 3
