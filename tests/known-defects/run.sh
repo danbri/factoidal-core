@@ -758,18 +758,21 @@ fi
 # -- a FILTER in an OPTIONAL group is evaluated on the group's row only, so a
 # variable of the left side reads as unbound. SPARQL 1.1 section 18.2.2.5
 # makes `OPTIONAL { P FILTER(F) }` LeftJoin(G, P, F), with F evaluated on the
-# merged solution (section 18.5). The Lean reference evaluator (and the F*
-# engine) evaluate LeftJoin(G, Filter(F, P), true). Data and query:
+# merged solution (section 18.5). Data and query:
 # fixtures/sparql-815-optional-filter-scope.{ttl,rq}; ex:a has age 72, so its
 # name is the OPTIONAL extension; ex:c has age 71, so it has none.
-# Probe: the Lean CLI (`l4factoidal query`), rows from sparql_rows.py.
-#   XFAIL  the rows without ?n for ex:a (the defect)
-#   XPASS  the rows of section 18.2.2.5 (?n "Alice" for ex:a): fixed; admit a
-#          group FILTER over a left-side variable on the SBM11 id path
-#          (IdQuery.flattenOptional), retire this case, close the issue
-#   ERROR  any other answer
+# The Lean engine is FIXED (2026-10-13: the parser makes the group's FILTERs
+# the LeftJoin condition, `optionalGroup`; theorems and guards in
+# formal/lean4/L4Factoidal/SPARQL/OptionalFilterScope.lean). Its answer is a
+# plain assertion: the Lean CLI must answer exactly the rows of section
+# 18.2.2.5, or the case is an ERROR. The F* engine (`factoidal query`) still
+# has the defect; this case is the F* defect:
+#   XFAIL  F* answers the rows without ?n for ex:a (the defect)
+#   XPASS  F* answers the rows of section 18.2.2.5: fixed in F*; retire this
+#          case and close the issue
+#   ERROR  the Lean CLI is wrong (a Lean regression), or any other answer
 # ---------------------------------------------------------------------
-S815_TITLE="FILTER in OPTIONAL does not see left-side variables"
+S815_TITLE="F*: FILTER in OPTIONAL does not see left-side variables"
 XSD_I="<http://www.w3.org/2001/XMLSchema#integer>"
 EXPECT815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
 ?a=\"72\"^^${XSD_I} ?n=\"Alice\" ?s=<http://ex.org/a>"
@@ -781,23 +784,33 @@ else
   d="${WORKDIR}/q815"; mkdir -p "$d"
   printf '%s\n' "$EXPECT815" > "$d/expected.rows"
   printf '%s\n' "$WRONG815" > "$d/wrong.rows"
-  lrc=0
+  lrc=0; frc=0
   timeout 120 "$L4_BIN" query "${FIXTURES}/sparql-815-optional-filter-scope.ttl" --format turtle \
       --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" \
       < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
+  timeout 120 "$BIN" query --data "${FIXTURES}/sparql-815-optional-filter-scope.ttl" \
+      --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" -o json \
+      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err" || frc=$?
   if [ "$lrc" -ne 0 ] \
      || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
       "Lean run failed (exit ${lrc}): $(tr "\n" " " < "$d/lean.err" | cut -c1-100)"
-  elif cmp -s "$d/lean.rows" "$d/expected.rows"; then
+  elif ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "the Lean CLI does not answer the rows of section 18.2.2.5 (Lean regression): $(head -n 1 "$d/lean.rows" | cut -c1-100)"
+  elif [ "$frc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XPASS \
-      "the Lean CLI now binds ?n for ex:a -- defect appears FIXED"
-  elif cmp -s "$d/lean.rows" "$d/wrong.rows"; then
+      "F* now binds ?n for ex:a -- defect appears FIXED in F*"
+  elif cmp -s "$d/fstar.rows" "$d/wrong.rows"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XFAIL \
-      "OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a"
+      "F*: OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a (the Lean CLI does)"
   else
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "the Lean CLI answers neither the expected nor the recorded rows: $(head -n 1 "$d/lean.rows" | cut -c1-100)"
+      "F* answers neither the expected nor the recorded rows: $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
   fi
 fi
 

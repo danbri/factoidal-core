@@ -289,6 +289,36 @@ def ggpJoin (a b : QueryPattern) : QueryPattern :=
               | .empty => a
               | _      => .join a b
 
+/-- §18.2.2.6 "If FS is not empty ... G := Filter(X, G)": the FILTERs a
+group collected (newest first, the order `pGgpBody` gathers them) around
+the group's pattern, one `Filter` per expression. A row passes the
+nest exactly when every expression is true on it, which is the
+condition of one `Filter` over their conjunction. -/
+def wrapFilters (filters : List Expr) (g : QueryPattern) : QueryPattern :=
+  filters.foldl (fun g e => .filter e g) g
+
+/-- §18.2.2.6 "Let X := Conjunction of expressions in FS": the FILTERs a
+group collected (newest first) as one `&&` expression in source order;
+`none` when the group has no FILTER. -/
+def filterConjunction? (filters : List Expr) : Option Expr :=
+  match filters.reverse with
+  | []      => none
+  | e :: es => some (es.foldl .and e)
+
+/-- §18.2.2.5, the OPTIONAL step: "If E is of the form OPTIONAL{P}: Let
+A := Translate(P). If A is of the form Filter(F, A2): G :=
+LeftJoin(G, A2, F) else G := LeftJoin(G, A, true)". `body` is the
+pattern of the group P and `filters` are the FILTERs of P itself (not
+of a group nested in it), so `Translate(P)` is `Filter(F, body)` with
+F their conjunction exactly when `filters` is not empty. The condition
+F of the LeftJoin is evaluated on the merged solution (§18.5), so it
+reads the variables of G as well as those of P
+(https://github.com/danbri/factoidal/issues/815). -/
+def optionalGroup (acc body : QueryPattern) (filters : List Expr) : QueryPattern :=
+  match filterConjunction? filters with
+  | some f => .leftJoin acc body f
+  | none   => .leftJoin acc body (.boolLit true)
+
 /-- `ggp_add_triple`: extend the accumulator's BGP in place when it is
 one, so a triples block stays a single §18.3 BGP. -/
 def ggpAddTriple (acc : QueryPattern) (tp : TriplePattern) : QueryPattern :=
@@ -1505,22 +1535,50 @@ def pGroupGraphPattern (fuel : Nat) (st : PState) (ts : TStream) : Except ParseE
       .ok (.subSelect q, ts3)
     | .rbrace => .ok (.empty, advTok ts1)
     | _ => do
-      let (g, ts2) ← pGgpBody f st .empty [] false ts1
+      let ((g, filters), ts2) ← pGgpBody f st .empty [] false ts1
       let (_, ts3) ← expectTok .rbrace ts2
-      .ok (g, ts3)
+      .ok (wrapFilters filters g, ts3)
+
+/-- [53] GroupGraphPattern, with the group's pattern and its OWN FILTERs
+(§18.2.2.6 FS, newest first) returned apart instead of wrapped
+(`pGroupGraphPattern` is this with `wrapFilters` applied:
+`pGroupGraphPattern_eq_parts`). The OPTIONAL arm of `pGgpBody` needs
+them apart, because §18.2.2.5 makes them the LeftJoin condition. A
+SubSelect and the empty group have no FILTER of their own; a FILTER of
+a group nested in this one is inside the pattern. -/
+def pGroupGraphPatternParts (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 => do
+    let (_, ts1) ← expectTok .lbrace ts
+    match peekTok ts1 with
+    | .select => do
+      let (q, ts2) ← pSelectQuery f st none ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok ((.subSelect q, []), ts3)
+    | .rbrace => .ok ((.empty, []), advTok ts1)
+    | _ => do
+      let (parts, ts2) ← pGgpBody f st .empty [] false ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok (parts, ts3)
 
 /-- [54] GroupGraphPatternSub: triples blocks interleaved with
 [56] GraphPatternNotTriples elements. FILTERs are COLLECTED and
-wrapped around the whole group at the end, per §18.2.4 — a filter
-scopes over its entire group, not over what precedes it.
+returned beside the group's pattern (newest first); the caller wraps
+them around the whole group (`wrapFilters`, §18.2.2.6: a filter scopes
+over its entire group, not over what precedes it), or, for an
+OPTIONAL group, makes them the LeftJoin condition (§18.2.2.5,
+`optionalGroup`).
 
 `crossScope` tracks whether a nested group has already been seen, so a
 following triples block's blank-node labels are checked against the
 accumulated ones (§19.6). -/
 def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
-    (filters : List Expr) (crossScope : Bool) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (filters : List Expr) (crossScope : Bool) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
   match fuel with
-  | 0     => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+  | 0     => .ok ((acc, filters), ts)
   | f + 1 =>
     let tok := peekTok ts
     if startsTriples tok then do
@@ -1531,8 +1589,10 @@ def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
     else
       match tok with
       | .optional => do
-        let (g, ts1) ← pGroupGraphPattern f st (advTok ts)
-        let acc' : QueryPattern := .leftJoin acc g (.boolLit true)
+        -- §18.2.2.5: the group's own FILTERs are the LeftJoin
+        -- condition, evaluated on the merged solution (issue 815).
+        let ((g, gFilters), ts1) ← pGroupGraphPatternParts f st (advTok ts)
+        let acc' : QueryPattern := optionalGroup acc g gFilters
         let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
         pGgpBody f st acc' filters true ts2
       | .minusKw => do
@@ -1609,7 +1669,7 @@ def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
           let acc' : QueryPattern := match acc with | .empty => g | _ => .join acc g
           let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
           pGgpBody f st acc' filters true ts2
-      | _ => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+      | _ => .ok ((acc, filters), ts)
 
 /-- [67] GroupOrUnionGraphPattern ::= GroupGraphPattern
 ( 'UNION' GroupGraphPattern )* — right-associated, as in the F*. -/

@@ -83,6 +83,7 @@ import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
 import L4Factoidal.SPARQL.QueryTests
+import L4Factoidal.SPARQL.OptionalFilterScope
 import L4Factoidal.SPARQL.ConstructLabelTests
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.Diagnostics
