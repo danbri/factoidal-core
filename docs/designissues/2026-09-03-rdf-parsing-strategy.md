@@ -633,15 +633,23 @@ All in `StrictFeed.lean` and `TurtleChunkFold.lean`; axioms `propext`,
   dataset with one default graph.
 - `isIri_eq_isIriFast` (`NTriples.lean`, `@[csimp]`): section 3b.5.
 
-Not proved: that `walkAll` (the walk `drainRun_eq` speaks of) from the
+Not proved, four equalities, tracked by
+https://github.com/danbri/factoidal/issues/826 with one expected failure
+each in `tests/known-defects/run.sh` (rows SF-1 to SF-4: XFAIL while no
+theorem of the name exists under `formal/lean4`, XPASS, which fails the
+suite, when one lands). SF-1, `walkAll_init_eq_parseTurtleWalk`: that
+`walkAll` (the walk `drainRun_eq` speaks of) from the
 initial state is `parseTurtleWalk`. `TurtleChunkFold.walkChars` writes out the
 fold of `parseTurtleWalk` with the same step text, but `rfl` does not close the
 equation, because the two `match` expressions elaborate to different auxiliary
 matchers; `#guard`s in `StrictFeed.lean` compare them on accepted and refused
-documents. Not proved either: the N-Triples chunk boundary (a line walk over the lines of each
-chunk equals the walk over the whole text; the N-Quads RDF 1.1 case is
-`streamConsume11_eq_batch`), the N-Quads RDF 1.2 case, the N-Triples and
-N-Quads error at a chunk boundary, and that the Utf8Stream decoding of the
+documents. SF-2, `LineFeed.run_triple_eq_batch`: the N-Triples chunk boundary
+(a line walk over the lines of each chunk equals the walk over the whole text,
+errors included; the N-Quads RDF 1.1 success direction is
+`streamConsume11_eq_batch`). SF-3, `LineFeed.run_quad12_eq_batch`: the N-Quads
+RDF 1.2 case. Not proved either, and inside SF-2 and SF-3 as stated in the
+issue: the N-Triples and N-Quads error at a chunk boundary. SF-4,
+`Utf8Stream.feedChunks_eq_fromUTF8`: that the Utf8Stream decoding of the
 chunks concatenates to the text `readInput` reads. The Turtle walk itself
 against `parseTurtle` is the chunk-boundary half of 2.3, also not proved. The
 check for all of these is `tools/strict-parse-differential.sh` (3b.4).

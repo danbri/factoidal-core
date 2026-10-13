@@ -44,14 +44,19 @@ Theorems, in this file and in `TurtleChunkFold.lean`:
 * `TurtlePrepass.feedText_chunks`: the pre-pass over chunks gives
   `freshBnodePrefixText` and `hasDoubleLt` of their concatenation.
 
-Not proved: that `walkAll` from the initial state is `parseTurtleWalk`.
+Not proved, tracked by https://github.com/danbri/factoidal/issues/826 (one
+expected failure per theorem in `tests/known-defects/run.sh`, rows SF-1 to
+SF-4): that `walkAll` from the initial state is `parseTurtleWalk` (SF-1,
+`walkAll_init_eq_parseTurtleWalk`).
 `TurtleChunkFold.walkChars` writes out the fold of `parseTurtleWalk` with the
 same step text, but `rfl` does not close the equation (the two `match`
 expressions elaborate to different auxiliary matchers); the `#guard`s below
 compare the two on accepted and refused documents. Not proved either: the
 N-Triples chunk boundary (`LineFeed` with `tripleReader` against
-`parseLinesAcc` on the whole text) and the N-Quads RDF 1.2 one; the N-Triples
-and N-Quads error text at a chunk boundary. The command line is checked
+`parseLinesAcc` on the whole text; SF-2, `LineFeed.run_triple_eq_batch`) and
+the N-Quads RDF 1.2 one (SF-3, `LineFeed.run_quad12_eq_batch`), errors
+included; and that `Utf8Stream` decodes the chunks to the text of the whole
+file (SF-4, `Utf8Stream.feedChunks_eq_fromUTF8`). The command line is checked
 against the binary before this change on every file of the W3C syntax suites
 at three chunk sizes (`tools/strict-parse-differential.sh`, design record
 section 3b.4).

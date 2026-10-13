@@ -829,6 +829,51 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# SF-1 to SF-4 (https://github.com/danbri/factoidal/issues/826) -- the
+# strict chunked parse (formal/lean4/L4Factoidal/Syntax/StrictFeed.lean,
+# https://github.com/danbri/factoidal/issues/813) has three equalities with
+# the reference parsers, and one about the UTF-8 decoding under them, that
+# are measured (tools/strict-parse-differential.sh,
+# 21,012 agree, 0 differ (out of 21,012) on 2026-10-13) but not proved.
+# Like NX-1, these probes read the SOURCE: XFAIL while no theorem of the
+# name exists under formal/lean4. When one lands, the row reads XPASS:
+# retire it, update issue 826 and docs/designissues/2026-09-03-rdf-parsing-
+# strategy.md section 3b.3 in the same commit.
+#   SF-1  walkAll_init_eq_parseTurtleWalk  (the chunked Turtle walk's
+#         `walkAll` from the initial state is `parseTurtleWalk`)
+#   SF-2  LineFeed.run_triple_eq_batch     (N-Triples chunk boundary; the probe
+#         matches the leaf name run_triple_eq_batch in any namespace)
+#   SF-3  LineFeed.run_quad12_eq_batch     (N-Quads chunk boundary, RDF 1.2;
+#         leaf name run_quad12_eq_batch)
+#   SF-4  Utf8Stream.feedChunks_eq_fromUTF8 (byte chunks decode to the text
+#         String.fromUTF8? gives for their concatenation; leaf name)
+# ---------------------------------------------------------------------
+SF_SRC="${LEAN_SRC}/L4Factoidal/Syntax/StrictFeed.lean"
+sf_probe () { # ID TITLE THEOREM DRIFT-PATTERN DRIFT-WHAT
+  local id="$1" title="$2" thm="$3" drift="$4" what="$5"
+  if [ ! -f "$SF_SRC" ]; then
+    record "$id" 826 "$title" ERROR "${SF_SRC#"$ROOT"/} not found"
+  elif ! grep -qE "$drift" "$SF_SRC"; then
+    record "$id" 826 "$title" ERROR "probe drifted: ${what} is no longer defined in ${SF_SRC#"$ROOT"/}"
+  elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?${thm//./\\.}\b" \
+        "${LEAN_SRC}" --include='*.lean'; then
+    record "$id" 826 "$title" XPASS "a theorem named ${thm} now exists"
+  else
+    record "$id" 826 "$title" XFAIL \
+      "no ${thm} theorem in formal/lean4 (agreement is measured by tools/strict-parse-differential.sh only)"
+  fi
+}
+sf_probe SF-1 "chunked Turtle walk: walkAll = parseTurtleWalk unproved" \
+  walkAll_init_eq_parseTurtleWalk '^def walkAll ' 'walkAll'
+sf_probe SF-2 "N-Triples chunk boundary of LineFeed unproved" \
+  run_triple_eq_batch '^def LineFeed\.run ' 'LineFeed.run'
+sf_probe SF-3 "N-Quads RDF 1.2 chunk boundary of LineFeed unproved" \
+  run_quad12_eq_batch '^theorem LineFeed\.run_quad11_eq_batch ' 'LineFeed.run_quad11_eq_batch'
+SF_SRC="${LEAN_SRC}/L4Factoidal/Syntax/Utf8Stream.lean"
+sf_probe SF-4 "Utf8Stream chunk decoding = whole-file decoding unproved" \
+  feedChunks_eq_fromUTF8 '^def Utf8Stream\.feed ' 'Utf8Stream.feed'
+
+# ---------------------------------------------------------------------
 # Summary + JSON
 # ---------------------------------------------------------------------
 TOTAL=$((XFAIL + XPASS + ERRORS))
