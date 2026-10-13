@@ -26,7 +26,12 @@
 # Prints executed / matched / differed / not comparable, per path, and the
 # refusals at pack and at query. Usage: tests/sbm11/census.sh [SUITE_DIR...]
 # SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
-# compare the census of two builds.
+# compare the census of two builds. SBM11_SIP: when set, the `--sip` mode
+# (auto, the CLI default; always: candidates into every join scan the shape
+# allows; off; issue 809), with `--explain`, and the summary counts the
+# tests in which a scan with candidates ran; unset, no `--sip` is passed (a
+# build before issue 809 has no such option). SBM11_THREADS: the
+# `--threads` count (1).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -81,7 +86,7 @@ while IFS=$'\t' read -r t q d g; do
 done <"$rows"
 
 eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; uncompared=0
-ids_exec=0; ids_match=0; ref_exec=0; ref_match=0
+ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
 for t in "${order[@]}"; do
@@ -120,7 +125,7 @@ for t in "${order[@]}"; do
   fi
   qbase="file://$(realpath "$qfile")"
   rc=0
-  timeout 120 "$S11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" >"$st/got" 2>"$st/got.err" || rc=$?
+  timeout 120 "$S11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" ${SBM11_SIP:+--sip "$SBM11_SIP" --explain} >"$st/got" 2>"$st/got.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     rquery=$((rquery + 1)); printf '%s\trefused-query\t%s\n' "$t" "$(tail -1 "$st/got.err" | head -c 200)" >>"$TSV"
     rm -rf "$st"; continue
@@ -128,6 +133,7 @@ for t in "${order[@]}"; do
   executed=$((executed + 1))
   path=ids; grep -q 'path=reference' "$st/got.err" && path=reference
   if [ $path = ids ]; then ids_exec=$((ids_exec + 1)); else ref_exec=$((ref_exec + 1)); fi
+  grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   rrc=0
   timeout 120 "$BIN/l4factoidal" query "$input" --format nquads --base "file://$input" --query "$qfile" \
     >"$st/want" 2>/dev/null || rrc=$?
@@ -147,6 +153,9 @@ echo "sbm11 census (row agreement with the reference engine over the same input,
 echo "  $executed executed, $rpack refused at convert/pack/activate, $rquery refused at query (out of $eligible eligible QueryEvaluationTest entries; $missing skipped for missing files)"
 echo "  of the $executed executed: $matched matched the reference engine, $differed differed, $uncompared not comparable"
 echo "  id path: $ids_exec executed, $ids_match matched; reference fallback: $ref_exec executed, $ref_match matched"
+if [ -n "${SBM11_SIP:-}" ]; then
+  echo "  --sip $SBM11_SIP: a scan with candidates ran in $sip_tests of the $ids_exec id-path tests (issue 809)"
+fi
 if [ -s "$MIS" ]; then echo "  mismatches:"; sed 's/^/    /' "$MIS"; fi
 cut -f2 "$TSV" | sort | uniq -c
 cp "$TSV" "$ROOT/tmp/sbm11-census-latest.tsv"

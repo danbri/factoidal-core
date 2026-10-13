@@ -1,0 +1,3 @@
+# Sideways information passing (issue 809), no candidate in the right scan: ex:e knows nothing, so the answer is empty.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?o WHERE { ?s ex:age "abc" . ?s ex:knows ?o }

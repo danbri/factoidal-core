@@ -371,6 +371,9 @@ import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.Storage.Sbm11.OptJoinTheorems
+import L4Factoidal.Storage.Sbm11.SemiJoinTheorems
+import L4Factoidal.Storage.Sbm11.Sip
+import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
 import L4Factoidal.Storage.Sbm11.ScanTheorems
@@ -386,6 +389,7 @@ import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
+import L4Factoidal.Storage.Sbm11.SipScanTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.MergeTheorems

@@ -621,8 +621,8 @@ an unbound variable is id 0 in its column (`OptJoin.unbound`): the renderer
 leaves it out, ORDER BY puts it first, `COUNT(?x)` skips it
 (`IdQuery.countItems`). Theorems: `Storage/Sbm11/OptJoinTheorems.lean`
 (lemmas L5g, L5g′ of the end-to-end record; the `Table` step L5g″ is open
-and tested by `#guard`s). The right side is scanned in full: using the left
-keys to skip blocks is https://github.com/danbri/factoidal/issues/809.
+and tested by `#guard`s). Since issue 809 (next paragraph) the group's first
+scan takes the left keys as candidates when the rule selects it.
 DBpedia d11 (OPTIONAL): 48.7 s warm and 849 MB on the reference fallback
 before; 17.2 ms warm and 25.6 MB on ids (2026-10-13). Gates: `tests/sbm11/run.sh` part (d), the 16
 `ids-optional-*` and 6 `ref-optional-*` queries; a change that admits more
@@ -632,6 +632,33 @@ evaluator evaluates a FILTER in an OPTIONAL group on the group's row only
 (https://github.com/danbri/factoidal/issues/815, known-defects case
 `SPARQL-OPT-FILTER-SCOPE`); the id path refuses a group FILTER over a
 left-side variable until that is fixed, so that both paths answer the same.
+
+Sideways information passing (2026-10-13,
+https://github.com/danbri/factoidal/issues/809; record: section 11 of the
+stage 4 record). The right scan of a join (merge or hash), and the first scan
+of an OPTIONAL group, take the sorted distinct left values of their sort
+variable as candidates when `16 × left rows < the scan's PRM1 estimate`
+(`IdQuery.sipRule`, `scanForJoinM`); a block whose first and last rows bound
+the join column away from every candidate is not read (`Sip.mayHold`); in a
+block read, only the join column is decoded (`Sip.findWords`, nothing written
+for a row that does not match) and the other columns at the found rows only
+(`Sip.gatherWords`, a delta frame stops after the last found row). `l4sbm11
+query --sip auto|always|off` (default auto; `always` for tests); `--explain`
+prints `sideways ?v: K candidates, blocks skipped B, key values tested T,
+rows gathered G` per scan and a `total: rows decoded ...` line. Theorems:
+`Storage/Sbm11/SipTheorems.lean`, `SipScanTheorems.lean`,
+`SemiJoinTheorems.lean` (lemmas L4g, L4h, L4i, L5h of the end-to-end record:
+the scan with candidates is the full scan filtered; a join over it is the
+same join). DBpedia d05 (2026-10-13, median of three rounds): rows decoded
+4,000,148 to 3,164, warm 365 to 76 ms, peak RSS 83 to 27 MB. Gates: `tests/sbm11/run.sh` part
+(l) (every `ids-*` gate query with `--sip always` on the gate fixture packed
+with blocks of 2 rows; olympics q01 to q21 and `tests/sbm11/sip/*.rq` under
+off, auto and always), `SBM11_SIP=always tests/sbm11/census.sh`, and the
+`sbm11-query` case of `tests/stack/run.sh` (150,000 candidates over blocks
+of 65,536 rows). Traps: a hash join over a reduced right side may change the
+output row order (the hash side is chosen by size), so compare answers as
+multisets; a candidate test that needs a correct start pointer is a proof
+obligation, so the pointer is a hint that `Sip.startFor` checks and resets.
 
 Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
