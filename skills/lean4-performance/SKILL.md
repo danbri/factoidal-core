@@ -204,9 +204,26 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   in `buildBucketsFor`, runs once per Hash N-Degree Quads call and gets one
   key; a `csimp` on it would rebuild the map per call. The map has to come
   from a caller that sees all the keys, which changes the signatures down the
-  chain (https://github.com/danbri/factoidal/issues/751, open). Look for a
-  `.filter` whose predicate names the element of an enclosing `map` over
-  all keys.
+  chain. Look for a `.filter` whose predicate names the element of an
+  enclosing `map` over all keys.
+- **A twin chain from the caller that sees every key, with the state type
+  replaced.** The repair of that second filter
+  (https://github.com/danbri/factoidal/issues/751, 2026-10-13) twins the
+  whole §4.4 step 5 chain in `RDF/Canonical.lean`, from
+  `buildCanonicalMappingBudgetedFast` (which builds the map once and shares
+  it with the first-degree hashes) down to `hndqRunF`, and puts the one
+  `csimp` on the top function. The issuer list was the second cost:
+  `issueIdentifier` scanned it and appended at its end, and `issueFresh`
+  adds at its FRONT. `FIssuer` holds the list as `front ++ backRev.reverse`
+  (both ends in constant time) and a `Std.TreeMap` beside it, with the
+  invariant as a field (`tree_get`), so no lemma needs a hypothesis about the
+  tree: every value carries the proof. Each twin is proved equal through
+  `toSpec`; a closure argument (`HndqRec`) becomes a hypothesis that the fast
+  closure maps to the slow one, discharged by induction on the fuel. 16,000
+  blank nodes with one shared first-degree hash: 10.83 s to 0.62 s; 64,000:
+  327.67 s to 2.71 s, byte-identical output. A row that passed
+  (`rdfc-bnode-unique`) did not show this cost: profile each shape that
+  sends the work down a different step of the algorithm.
 - **A text round trip that a caller depends on is a function: name it and
   prove it.** The command line's canonical N-Quads round trip is not the
   identity: it lowers language tags and keeps each quad of a graph once (RDF

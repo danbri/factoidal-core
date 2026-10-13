@@ -950,6 +950,7 @@ N-Degree Quads for each. 0.16 s at 2,000 blank nodes, 2.37 s at 8,000,
 instructions at 2,000, 3,139 million at 4,000), and the issuer's
 `lookupIssued` scan and `issued ++ [x]` append grow the same way. The row
 `rdfc-bnode-collide` holds it as an expected failure naming that issue.
+Repaired on 2026-10-13: see "Issue 751" below.
 
 The wasm module rebuilt from this change (`Wasm/build-wasm.sh`; full module
 10,666,063 bytes, core module 5,821,908 bytes), copied into
@@ -976,6 +977,138 @@ of 347); `npm test` in `npm/factoidal` 402 pass, 0 fail, 1 skipped (out of
 `tools/lean-tail-recursion-audit.py --gate` passes (one new allow-list line,
 `relabelTermBy`, whose depth is the RDF 1.2 triple-term nesting, as for
 `relabelTerm`); `lake build` exit 0 (1382 jobs).
+
+### Issue 751: blank nodes that share one first-degree hash
+
+Input: k quads `_:p{i} rdf:type ex:Person .` (the `rdfc-bnode-collide` row of
+`tests/stack/lean_scaling.py`). Every blank node has the same first-degree
+hash (§4.5), so §4.4 step 5 puts all k in one collision group and runs Hash
+N-Degree Quads (§4.7) once for each. The callgrind table in the issue put
+the time in two places, both growing about 4 times per doubling:
+
+1. `hndqRun` gave `buildBucketsFor` (§4.7 step 3) every quad of the
+   dataset, and `buildBucketsFor` tested each one with `quadMentionsBnode`,
+   once per call: 3,139 of 5,168 million instructions at 4,000 blank nodes.
+2. `IssuerState.issued` is a list. `issueIdentifier` (§4.8) scanned it with
+   `lookupIssued` and appended with `issued ++ [x]`; the §4.4 step 5.3
+   replay (`replayAll`, `replayOne`) does that once per blank node, and
+   `filterUnissued`, `exploreMembers` and `lookupIssued2` scan it once per
+   blank node or related blank node: 482 million instructions at 4,000.
+
+The repair (`RDF/Canonical.lean`, section "Hash N-Degree Quads through the
+map, with an indexed issuer"; every definition above it is unchanged):
+
+- **The map reaches §4.7.** A `csimp` theorem on `buildBucketsFor` alone
+  would rebuild the map on every call, because `buildBucketsFor` gets one
+  blank node. `buildCanonicalMappingBudgetedFast` builds `bnodeQuadIndex`
+  once, uses it for the first-degree hashes (§4.4 step 3, so the map is
+  built once and not twice) and passes it down through `walkGroupsF`,
+  `processCollisionGroupsF`, `processCollisionMembersF`, `exploreMembersF`
+  and `hndqRunF`, which gives `buildBucketsForF` the quads of its blank node
+  only (`quadsForBnodeIx`). `buildBucketsFor_filter` proves that
+  `buildBucketsFor` gives the same buckets over the quads of its blank node
+  alone, and `quadsForBnodeIx_bnodeQuadIndex` (from issue 745) proves the map
+  answers that list.
+- **The issuer gets a search tree.** `FIssuer` keeps the issued list as
+  `front ++ backRev.reverse`: `issueFresh` (§4.4 step 4) adds to the front
+  and `issueIdentifier` adds to the back, so the order is not one direction
+  and both ends must take a constant-time addition. A `Std.TreeMap` beside
+  it answers `lookupIssued`; the field `tree_get` states that agreement for
+  every blank node, so each value carries its own proof and no lemma needs a
+  hypothesis about the tree. `FIssuer.toSpec` gives the `IssuerState` a value
+  stands for. `FIssuer.issue_toSpec` and `FIssuer.issueFresh_toSpec` prove
+  that issuing on the fast form gives the same label and the same list.
+- **The first-degree hashes get a search tree.** `lookupHfdq` scanned the
+  table once per related blank node (§4.6 step 3). The twins read
+  `labelTree` of the table (`labelTree_get?`, `lookupHfdq_eq_lookupMap`).
+- **Every twin is proved equal through `toSpec`.** The theorems are
+  `insertRelatedEntriesF_eq`, `buildBucketsForF_eq`, `buildPathLabelsF_eq`,
+  `walkRecursionF_eq`, `walkPermF_eq`, `pickBestF_eq`,
+  `bestPermutationF_eq`, `walkBucketsF_eq`, `hndqRunF_eq` (induction on the
+  fuel; the closure argument `HndqRec` of each walker becomes a hypothesis
+  that the fast closure maps to the slow one), `assignSingletonsF_toSpec`,
+  `filterUnissuedF_eq`, `exploreMembersF_eq` (the twin is a loop on a
+  reverse accumulator), `replayOneF_toSpec`, `replayAllF_toSpec`,
+  `processCollisionMembersF_eq`, `processCollisionGroupsF_eq`,
+  `walkGroupsF_eq` and `foldl_issue_toSpec`. They give
+  `buildCanonicalMappingBudgeted_eq_fast`, a `csimp` theorem: the compiler
+  emits the twin for `buildCanonicalMapping`, `canonicalizeExceedsBudget`,
+  `canonicalize` and `Dataset.canonicalLines`. The issued identifiers, in the
+  order the definition gives them, are unchanged. `#print axioms`:
+  `propext`, `Classical.choice`, `Quot.sound`.
+- `CanonicalTests.lean` runs `issueIdentifier`, `issueFresh` and
+  `walkGroups` (no `csimp` of their own, so the definitions run) beside the
+  twins: on 12 blank nodes with one shared hash, on the two §4.2 examples of
+  the Recommendation and on a two-node cycle and chain. The negative guards
+  give the twin an empty map and check that the result changes where §4.7
+  has buckets to fill, and check that a blank node not yet issued gets a new
+  label.
+
+Measured, `l4factoidal canonicalize FILE --format nquads`, linux x86_64,
+Lean 4.33.1, 4 shared CPUs, one run per point, under `/usr/bin/time` (user
+CPU seconds, peak resident memory). The output is byte-identical before and
+after at every size (`cmp`), and the outputs of the two reference
+implementations are byte-identical to it at every size:
+
+| blank nodes | Lean before | Lean after | Oxigraph | rdf-canonize | after / Oxigraph |
+|---:|---:|---:|---:|---:|---:|
+| 2,000 | 0.16 s, 24 MB | 0.07 s, 24 MB | 0.03 s, 28 MB | 0.14 s, 66 MB | 2.3 |
+| 4,000 | 0.59 s, 33 MB | 0.15 s, 33 MB | 0.04 s, 32 MB | 0.27 s, 71 MB | 3.8 |
+| 8,000 | 2.66 s, 45 MB | 0.36 s, 47 MB | 0.09 s, 41 MB | 0.63 s, 85 MB | 4.0 |
+| 16,000 | 10.83 s, 70 MB | 0.62 s, 70 MB | 0.23 s, 59 MB | 1.88 s, 114 MB | 2.7 |
+| 64,000 | 327.67 s, 222 MB | 2.71 s, 223 MB | 0.98 s, 168 MB | 37.80 s, 197 MB | 2.8 |
+
+The reference implementations, installed into `/tmp` only (not vendored):
+
+- Oxigraph: `python3 -m venv /tmp/rc-sota/py/venv; /tmp/rc-sota/py/venv/bin/pip
+  install pyoxigraph` (pyoxigraph 0.5.11, the Rust Oxigraph library). The
+  script parses the N-Quads file into `pyoxigraph.Dataset`, calls
+  `canonicalize(CanonicalizationAlgorithm.RDFC_1_0)` and prints the quads
+  sorted in code point order. Its time includes Python start-up (about 0.02 s).
+- rdf-canonize: `npm install rdf-canonize` in `/tmp/rc-sota/js` (5.0.0, the
+  JavaScript implementation of Digital Bazaar), run on Node 22.22.0 with
+  `canonize.NQuads.parse` and `canonize.canonize(dataset, {algorithm:
+  'RDFC-1.0', format: 'application/n-quads'})` and the default
+  `maxWorkFactor` of 1. On this shape it is itself superlinear: 1.88 s at
+  16,000 and 37.80 s at 64,000 blank nodes.
+
+Lean is 2.3 to 4.0 times the CPU time of Oxigraph on this ladder, and from
+4,000 blank nodes it is faster than rdf-canonize. Where the time goes now
+(callgrind at 16,000 blank nodes, 5,701 million instructions, exclusive):
+the pure-Lean SHA-256 compression loop and its message schedule are about 20
+percent (one hash per blank node for §4.5 and one per Hash N-Degree Quads
+call for §4.7 step 6), reference counting and the allocator about 20
+percent, the N-Quads parse about 19 percent inclusive, and the command
+line's JSON envelope about 11 percent inclusive. No step is superlinear.
+
+Two other shapes, before and after, to check that the cost did not move to
+the parts of §4.7 that the collide shape does not use (related blank nodes,
+permutations and recursion): k pairs `_:a{i} ex:p _:b{i}` (two collision
+groups of k), 0.18 s and 2.08 s at 1,000 and 4,000 before, 0.07 s, 0.26 s and
+1.18 s at 1,000, 4,000 and 16,000 after; k chains `_:a{i} ex:p _:b{i} .
+_:b{i} ex:p _:c{i}` (three groups, recursion one level down), 0.40 s and
+7.00 s before, 0.12 s, 0.47 s and 2.26 s after. Output byte-identical.
+
+Gates on this tree:
+
+- RDFC-1.0 (`l4w3c --quiet third_party/testing/rdf-canon/tests/manifest.ttl`):
+  86 pass, 0 fail (out of 86), before and after. `l4rdfc-probe`: output
+  identical before and after (`rdfc10 eval: 63 of 63`, `sha384 eval: 1 of
+  1`, `rdfc10 map eval: 21 of 21`, `negative eval (excessive-calls abort):
+  1 of 1`).
+- `tests/stack/lean_scaling.sh`: 21 pass, 0 fail, 1 expected-fail (out of
+  22). `rdfc-bnode-collide` passes (0.081 s to 0.300 s, ratio 3.7, bound 9)
+  and is no longer in `XFAIL`; the one expected failure is
+  `query-memory-fstar` (https://github.com/danbri/factoidal/issues/729).
+  Every other row passes, as before.
+- `tools/lean-tail-recursion-audit.py --gate` passes with one new allow-list
+  line, `hndqRunF`, `(a) PENDING` with https://github.com/danbri/factoidal/issues/752
+  as `hndqRun`: it is the same Hash N-Degree Quads recursion (one level per
+  blank node of one path), now the code that runs. The (a) PENDING count is
+  26 (it was 25).
+- `tools/lean-hygiene-audit.py`: clean (0 sorry, 0 axiom, 0 native_decide,
+  0 unsafe, 0 implemented_by, 164 partial def, baseline 164).
+- `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350).
 
 ### What the F\* comparison found on the F\* side
 
