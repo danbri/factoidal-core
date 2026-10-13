@@ -566,6 +566,10 @@ structure ScanStats where
   /-- a scan with candidates: rows whose other needed columns were decoded
       (the rows whose join key is a candidate) -/
   rowsGathered : Nat := 0
+  /-- rows decoded: of a full scan the rows of its table (`rowsOut`), of a
+      scan with candidates the rows gathered (`ScanStats.full`,
+      `ScanStats.withSip`, set once per scan by the planner) -/
+  rowsDecoded : Nat := 0
   deriving Repr, Inhabited
 
 def ScanStats.add (a b : ScanStats) : ScanStats :=
@@ -573,7 +577,13 @@ def ScanStats.add (a b : ScanStats) : ScanStats :=
     blocksTotal := a.blocksTotal + b.blocksTotal, framesRead := a.framesRead + b.framesRead,
     bytesRead := a.bytesRead + b.bytesRead, rowsOut := a.rowsOut + b.rowsOut,
     sipSkipped := a.sipSkipped + b.sipSkipped, keysTested := a.keysTested + b.keysTested,
-    rowsGathered := a.rowsGathered + b.rowsGathered }
+    rowsGathered := a.rowsGathered + b.rowsGathered, rowsDecoded := a.rowsDecoded + b.rowsDecoded }
+
+/-- The rows decoded by one full scan: the rows of its table. -/
+def ScanStats.full (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsOut }
+
+/-- The rows decoded by one scan with candidates: the rows gathered. -/
+def ScanStats.withSip (s : ScanStats) : ScanStats := { s with rowsDecoded := s.rowsGathered }
 
 /-! ## The store -/
 
@@ -1385,12 +1395,13 @@ def scanForJoinM {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSpec) 
     if left.vars.contains v && sipRule st.sipFactor left.rows estimate then
       match sipCands left v with
       | some cands =>
-        let (t, s) ← scanSipTableM st spec cands
+        let (t, s0) ← scanSipTableM st spec cands
+        let s := s0.withSip
         return (t, s, s!"; sideways ?{v}: {cands.size} candidates, blocks skipped {s.sipSkipped}, key values tested {s.keysTested}, rows gathered {s.rowsGathered}")
       | none => pure ()
   | none => pure ()
   let (t, s) ← scanTableOf st spec
-  return (t, s, "")
+  return (t, s.full, "")
 
 /-! ## The BGP -/
 
@@ -1445,7 +1456,7 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
     | some l => scanForJoinM st spec0 l ests[first]!
     | none => do
       let (t, s) ← scanTableOf st spec0
-      pure (t, s, "")
+      pure (t, s.full, "")
   let mut total := st0
   lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}{sip0}"
   let mut tab := tab0
@@ -2102,7 +2113,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
         let emitted := emitted + takeHere
         pure ((skipped + skipHere, emitted, memos), emitted < lim)
       stats := { plan := #[s!"pattern 0 streamed: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}"],
-                 rows := emitted, scan := s }
+                 rows := emitted, scan := s.full }
   else
     let mut table : Table := default
     if single && plan.agg then
@@ -2116,7 +2127,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
           let (tab, memos) ← applyFilters st fs memos ch.table
           pure ((countChunk plan.groupVars { table := tab, consts := tab.vars.map fun _ => none } g, memos), true)
       let line := s!"pattern 0 counted while streaming: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {s.rowsOut}; groups {groups.keys.size}"
-      stats := { stats with plan := #[line], scan := s }
+      stats := { stats with plan := #[line], scan := s.full }
       match groupTable plan groups with
       | .ok t => table := t
       | .error e => throw e
@@ -2142,6 +2153,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       (emit bytes : m Unit)
     stats := { stats with rows := out.rows }
   (emit jsonTail.toUTF8 : m Unit)
-  return stats
+  let t := stats.scan
+  return { stats with plan := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes" }
 
 end L4Factoidal.Storage.Sbm11.IdQuery
