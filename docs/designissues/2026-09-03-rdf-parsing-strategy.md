@@ -31,7 +31,8 @@ theorems gate the other executions.
   (triple terms, reifiers, annotations, `VERSION`, base direction).
 - Consumers: the W3C runner (`Harness/Manifest.lean`), and every probe and
   pack tool other than the shard packer. Since 2026-10-10 the command line
-  and the WASM `parse`, `datasetOpen` and `queryDataset` Turtle path
+  (except `parse FILE`, which reads a file in chunks since 2026-10-13,
+  section 3b) and the WASM `parse`, `datasetOpen` and `queryDataset` Turtle path
   (`Wasm/Ops/Parse.lean`, `parseTextToDataset`) read Turtle with
   `parseTurtleText` (2.2), which calls `parseTurtle` for a document that
   contains `<<` and for every document the scanner walk refuses.
