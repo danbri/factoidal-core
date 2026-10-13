@@ -49,6 +49,7 @@ import L4Factoidal.Storage.Sbm11.Dict
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Qlvr.Sort
+import L4Factoidal.Qlvr.CmpBytesFast
 import Harness.PosixRangeIO
 import Harness.RunHeap
 import Std.Data.HashMap
@@ -321,7 +322,7 @@ def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
   let mut prev : Option ByteArray := none
   let mut records := 0
   -- the next record comes from a loser tree over the runs (issue 804)
-  let mut tree := Harness.RunHeap.build (fun a b => cmpBytes a b == .lt) heads
+  let mut tree := Harness.RunHeap.build cmpBytes heads
   for _ in [0:runBytes + 1] do
     let k := Harness.RunHeap.winner tree
     match heads[k]?.bind id with
@@ -339,7 +340,7 @@ def runPack (source outDir : String) (runTerms workers : Nat) : IO UInt32 := do
       let (hd, r) ← readers[k]!.next
       readers := readers.set! k r
       heads := heads.set! k hd
-      tree := Harness.RunHeap.replay (fun a b => cmpBytes a b == .lt) heads tree k
+      tree := Harness.RunHeap.replay cmpBytes heads tree k
   w ← w.closePage
   w ← w.flushBufs true
   hV.flush; hE.flush

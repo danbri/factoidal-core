@@ -42,6 +42,7 @@ import Harness.RunHeap
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Qlvr.Sort
+import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
 
 open L4Factoidal.RDF
@@ -291,8 +292,6 @@ def tagOfKey (k : ByteArray) : Nat :=
   let c := k.get! 0
   if c == classBnode then tagBnode else if c == classIri then tagIri else tagLit
 
-/-- The order of run heads in the merge tree: byte order of the keys. -/
-@[inline] def ltKey (a b : ByteArray) : Bool := cmpBytes a b == .lt
 
 /-- Merge the term runs into GDV1/GDX1; per run, the remap file. The next
     record comes from a loser tree over the runs (`Harness/RunHeap.lean`):
@@ -321,7 +320,7 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
   let mut prev : Option ByteArray := none
   let mut prevId : UInt64 := 0
   let mut records := 0
-  let mut tree := Harness.RunHeap.build ltKey heads
+  let mut tree := Harness.RunHeap.build cmpBytes heads
   for _ in [0:runBytes + 1] do
     let k := Harness.RunHeap.winner tree
     match heads[k]?.bind id with
@@ -343,7 +342,7 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
       let (hd, r) ← readers[k]!.next
       readers := readers.set! k r
       heads := heads.set! k hd
-      tree := Harness.RunHeap.replay ltKey heads tree k
+      tree := Harness.RunHeap.replay cmpBytes heads tree k
   w ← w.closePage
   w ← w.flushBufs true
   hV.flush; hE.flush
@@ -363,6 +362,10 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
   pure (w.terms, w.pages, records)
 
 /-! ## Phase 3: permutation runs -/
+
+/-- The three-way comparison of `QRow.lt`, for the merge tree of phase 3b. -/
+@[inline] def QRow.cmp (x y : QRow) : Ordering :=
+  if x.lt y then .lt else if y.lt x then .gt else .eq
 
 def sortRows (rows : Array QRow) : Array QRow := mergeSortBy rows QRow.le
 
@@ -516,7 +519,7 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
   let mut dups := 0
   let mut rows := 0
   let cutAt := max 1 (blockRows / 16)
-  let mut tree := Harness.RunHeap.build QRow.lt heads
+  let mut tree := Harness.RunHeap.build QRow.cmp heads
   for _ in [0:total + 1] do
     let k := Harness.RunHeap.winner tree
     match heads[k]?.bind id with
@@ -537,7 +540,7 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
       let (hd, r) ← readers[k]!.nextRow
       readers := readers.set! k r
       heads := heads.set! k hd
-      tree := Harness.RunHeap.replay QRow.lt heads tree k
+      tree := Harness.RunHeap.replay QRow.cmp heads tree k
   w ← w.close
   w.h.write w.buf
   w.h.flush

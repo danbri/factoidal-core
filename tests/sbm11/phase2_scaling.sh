@@ -10,7 +10,9 @@
 # and 4N lines (N default 1,000,000: 1,333,371, 2,666,704 and 5,333,371
 # distinct terms; 32, 62 and 121 term runs). Each is packed with
 # `l4sbm11-pack SOURCE OUT --phase2-only`, which runs phase 1 and phase 2 and
-# prints phase2-ms. Fails when, for each doubling,
+# prints phase2-ms; each source is packed REPS times (default 3) and the
+# median phase2-ms is used (at load 3 on 4 vCPUs one run varies by up to 15 %).
+# Fails when, for each doubling,
 #   phase2-ms(2m) > 2.2 x max(phase2-ms(m), FLOOR ms)      (FLOOR default 500)
 # The number of term runs grows with the source (a run holds at most
 # run-terms / workers terms), so a merge that scans every run head per record
@@ -23,6 +25,7 @@
 #
 # Usage: tests/sbm11/phase2_scaling.sh
 # Env:   SBM11_P2_LINES (default 1000000), SBM11_P2_FLOOR_MS (default 500),
+#        SBM11_P2_REPS (default 3),
 #        SBM11_WORK (default /home/user/qlvr-work/sbm11/phase2-scaling; removed
 #        at the end), L4_SBM11_PACK (default formal/lean4/.lake/build/bin/l4sbm11-pack),
 #        SBM11_REF_PACK (optional).
@@ -34,6 +37,7 @@ BIN="${L4_SBM11_PACK:-$ROOT/formal/lean4/.lake/build/bin/l4sbm11-pack}"
 REF="${SBM11_REF_PACK:-}"
 N="${SBM11_P2_LINES:-1000000}"
 FLOOR="${SBM11_P2_FLOOR_MS:-500}"
+REPS="${SBM11_P2_REPS:-3}"
 WORK="${SBM11_WORK:-/home/user/qlvr-work/sbm11/phase2-scaling}"
 [ -x "$BIN" ] || { echo "missing $BIN (lake build l4sbm11-pack)"; exit 2; }
 if [ -n "$REF" ] && [ ! -x "$REF" ]; then echo "missing $REF"; exit 2; fi
@@ -46,12 +50,19 @@ declare -A P2
 for rung in 1 2 4; do
   src="$WORK/s$rung.nt"
   if ! python3 -I "$HERE/gen_distinct_terms.py" $((rung * N)) "$src"; then echo "generator failed"; exit 2; fi
-  rm -rf "$WORK/out"
-  rc=0
-  log="$(timeout 900 "$BIN" "$src" "$WORK/out" --phase2-only 2>&1)" || rc=$?
-  if [ "$rc" -ne 0 ]; then echo "FAIL ${rung}n: pack exit $rc: $log"; FAIL=1; rm -f "$src"; continue; fi
-  printf '%s (load %s)\n' "$log" "$(cut -d' ' -f1-3 /proc/loadavg)"
-  P2[$rung]="$(field phase2-ms "$log" | cut -d. -f1)"
+  times=()
+  for rep in $(seq 1 "$REPS"); do
+    rm -rf "$WORK/out"
+    rc=0
+    log="$(timeout 900 "$BIN" "$src" "$WORK/out" --phase2-only 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ]; then echo "FAIL ${rung}n: pack exit $rc: $log"; FAIL=1; break; fi
+    printf '%s (load %s)\n' "$log" "$(cut -d' ' -f1-3 /proc/loadavg)"
+    times+=("$(field phase2-ms "$log" | cut -d. -f1)")
+  done
+  if [ "${#times[@]}" -eq "$REPS" ]; then
+    P2[$rung]="$(printf '%s\n' "${times[@]}" | sort -n | sed -n "$(( (REPS + 1) / 2 ))p")"
+    echo "${rung}n: phase2-ms median ${P2[$rung]} of ${times[*]}"
+  fi
   if [ -n "$REF" ]; then
     rm -rf "$WORK/ref"
     rc=0

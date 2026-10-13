@@ -32,10 +32,16 @@ depth does not depend on k.
 namespace Harness.RunHeap
 
 /-- Run `i` comes before run `j`: a head before no head; smaller head; equal
-    heads, smaller run number. -/
-@[inline] def before {α : Type} (lt : α → α → Bool) (keys : Array (Option α)) (i j : Nat) : Bool :=
+    heads, smaller run number. `cmp` is a three-way comparison, so one call
+    decides a match (a `<` test needs two calls when the heads are not in
+    order). -/
+@[inline] def before {α : Type} (cmp : α → α → Ordering) (keys : Array (Option α)) (i j : Nat) : Bool :=
   match (keys[i]?).bind id, (keys[j]?).bind id with
-  | some a, some b => lt a b || (!lt b a && i < j)
+  | some a, some b =>
+    match cmp a b with
+    | .lt => true
+    | .gt => false
+    | .eq => i < j
   | some _, none => true
   | none, some _ => false
   | none, none => i < j
@@ -50,25 +56,25 @@ def leavesFor (k : Nat) : Nat := Id.run do
 
 /-- Play `w` (the current winner on the way up) against the loser stored at
     node `n`, then at the parents of `n`; store the overall winner at 0. -/
-@[specialize] def replayGo {α : Type} (lt : α → α → Bool) (keys : Array (Option α)) :
+@[specialize] def replayGo {α : Type} (cmp : α → α → Ordering) (keys : Array (Option α)) :
     Nat → Array Nat → Nat → Nat → Array Nat
   | 0, t, _, w => t.set! 0 w
   | fuel + 1, t, n, w =>
     if n == 0 then t.set! 0 w
     else
       let l := t[n]!
-      if before lt keys l w then replayGo lt keys fuel (t.set! n w) (n / 2) l
-      else replayGo lt keys fuel t (n / 2) w
+      if before cmp keys l w then replayGo cmp keys fuel (t.set! n w) (n / 2) l
+      else replayGo cmp keys fuel t (n / 2) w
 
 /-- The head of run `i` changed (it moved on, or it has no head left):
     `i` must be the winner, `t[0]`. Restores the tree. -/
-@[inline, specialize] def replay {α : Type} (lt : α → α → Bool) (keys : Array (Option α))
+@[inline, specialize] def replay {α : Type} (cmp : α → α → Ordering) (keys : Array (Option α))
     (t : Array Nat) (i : Nat) : Array Nat :=
-  replayGo lt keys 64 t ((i + t.size) / 2) i
+  replayGo cmp keys 64 t ((i + t.size) / 2) i
 
 /-- The tree over runs `0 .. keys.size - 1`. Its size is the number of
     leaves `m`. -/
-@[specialize] def build {α : Type} (lt : α → α → Bool) (keys : Array (Option α)) : Array Nat := Id.run do
+@[specialize] def build {α : Type} (cmp : α → α → Ordering) (keys : Array (Option α)) : Array Nat := Id.run do
   let m := leavesFor keys.size
   -- win[n]: the winner of the subtree at n (leaves at m .. 2m-1)
   let mut win : Array Nat := Array.replicate (2 * m) 0
@@ -79,7 +85,7 @@ def leavesFor (k : Nat) : Nat := Id.run do
     let n := m - 1 - r
     let a := win[2 * n]!
     let b := win[2 * n + 1]!
-    if before lt keys a b then
+    if before cmp keys a b then
       win := win.set! n a
       t := t.set! n b
     else
@@ -94,10 +100,10 @@ def leavesFor (k : Nat) : Nat := Id.run do
 /-- A k-way merge of sorted arrays through the tree: every element, in the
     order the tree gives (used by the `#guard`s below to check the tree
     against `List.mergeSort`). -/
-def mergeArrays (lt : Nat → Nat → Bool) (runs : Array (Array Nat)) : Array Nat := Id.run do
+def mergeArrays (cmp : Nat → Nat → Ordering) (runs : Array (Array Nat)) : Array Nat := Id.run do
   let mut pos : Array Nat := runs.map fun _ => 0
   let mut keys : Array (Option Nat) := runs.map (·[0]?)
-  let mut t := build lt keys
+  let mut t := build cmp keys
   let mut out : Array Nat := #[]
   let total := runs.foldl (fun n r => n + r.size) 0
   for _ in [0:total + 1] do
@@ -109,21 +115,21 @@ def mergeArrays (lt : Nat → Nat → Bool) (runs : Array (Array Nat)) : Array N
       let p := pos[k]! + 1
       pos := pos.set! k p
       keys := keys.set! k (runs[k]![p]?)
-      t := replay lt keys t k
+      t := replay cmp keys t k
   return out
 
-#guard mergeArrays (· < ·) #[#[1, 4, 9], #[2, 3, 10], #[], #[0, 4, 5, 11]] ==
+#guard mergeArrays compare #[#[1, 4, 9], #[2, 3, 10], #[], #[0, 4, 5, 11]] ==
   #[0, 1, 2, 3, 4, 4, 5, 9, 10, 11]
-#guard mergeArrays (· < ·) #[] == #[]
-#guard mergeArrays (· < ·) #[#[7]] == #[7]
-#guard mergeArrays (· < ·) #[#[], #[], #[3]] == #[3]
+#guard mergeArrays compare #[] == #[]
+#guard mergeArrays compare #[#[7]] == #[7]
+#guard mergeArrays compare #[#[], #[], #[3]] == #[3]
 #guard
   let runs : Array (Array Nat) := (List.range 37).toArray.map fun r =>
     ((List.range (r % 11)).map fun i => (i * 7 + r * 13) % 50).mergeSort.toArray
-  mergeArrays (· < ·) runs == (runs.toList.flatMap Array.toList).mergeSort.toArray
+  mergeArrays compare runs == (runs.toList.flatMap Array.toList).mergeSort.toArray
 -- equal heads (here: equal tens) leave in run order: 40 (run 0), 41 (run 1), 42 (run 2)
 #guard
   let runs : Array (Array Nat) := #[#[40, 70], #[41, 50], #[42]]
-  mergeArrays (fun a b => a / 10 < b / 10) runs == #[40, 41, 42, 50, 70]
+  mergeArrays (fun a b => compare (a / 10) (b / 10)) runs == #[40, 41, 42, 50, 70]
 
 end Harness.RunHeap
