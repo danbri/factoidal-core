@@ -3156,6 +3156,16 @@ theorem parseSparql_ok {text : String} {base : Option String}
 #print axioms parseSparql_error
 #print axioms parseSparql_ok
 
+/-! A VALUES block of 10,001 values ran out of the constant fuel; the
+second pass reads it. The first pass alone still rejects it, and a query
+that is not SPARQL is rejected by both. -/
+private def valuesQuery (n : Nat) : String :=
+  "ASK { ?s ?p ?o } VALUES ?x { " ++ " ".intercalate ((List.range n).map toString) ++ " }"
+#guard (parseSparql (valuesQuery 10001)).toOption.isSome
+#guard (parseSparqlAtTopFuel (valuesQuery 10001)).toOption.isNone
+#guard (parseSparql (valuesQuery 100)).toOption.isSome
+#guard (parseSparql "ASK { ?s ?p }").toOption.isNone
+
 /-! ## The SSE algebra printer — F* Part 8
 
 Port of `sse_wrap`, `sse_pattern_term`, `sse_pattern_subject`,

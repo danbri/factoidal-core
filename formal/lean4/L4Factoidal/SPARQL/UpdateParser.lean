@@ -490,4 +490,12 @@ theorem parseSparqlUpdate_ok {text : String} {base : Option String}
 #print axioms parseSparqlUpdate_error
 #print axioms parseSparqlUpdate_ok
 
+/-! An INSERT DATA collection of 10,001 members ran out of the constant
+fuel; the second pass reads it. -/
+private def collectionUpdate (n : Nat) : String :=
+  "INSERT DATA { <http://e/s> <http://e/q> ( " ++ " ".intercalate ((List.range n).map toString) ++ " ) }"
+#guard (parseSparqlUpdate (collectionUpdate 10001)).toOption.isSome
+#guard (parseSparqlUpdateAtTopFuel (collectionUpdate 10001)).toOption.isNone
+#guard (parseSparqlUpdate "INSERT DATA { ?s <http://e/p> 1 }").toOption.isNone
+
 end L4Factoidal.SPARQL
