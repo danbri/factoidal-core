@@ -50,6 +50,8 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Unified.RdfsSchema
 import L4Factoidal.RDF.EntailmentRdfsModelTheory
+import L4Factoidal.RDFS.RhoDfCompleteness
+import L4Factoidal.RDFS.ReflexivityWitness
 
 namespace L4Factoidal.RDF
 
@@ -338,6 +340,135 @@ theorem rdfsReflexivityAxioms_preserves {D : DatatypeSet} {g : Graph}
     HoldsAll i aa (rdfsReflexivityAxioms g) :=
   rdfsStepLicensed_holds hc hg rdfsReflexivityAxioms_licensed
 
+
+/-- The RDFS-regime harvest emits nothing from a graph whose only class
+typing is `owl:Class` (F\* `rdfs_reflexivity_axioms_owl_class_empty`,
+the RS-1 witness graph). -/
+theorem rdfsReflexivityAxioms_owlClassGraph (c : WfIri) :
+    rdfsReflexivityAxioms (RDFS.owlClassGraph c) = [] := by
+  simp (config := { decide := true }) [rdfsReflexivityAxioms, RDFS.owlClassGraph,
+    reflexivityIrisOf]
+
+/-! ## ρdf saturation — F\* `RDF.Entailment.RDFS.Completeness`
+
+The F\* module states completeness for a ρdf-closed graph that contains
+the input (`rho_df_saturation_*`) and for the six-rule closure
+(`rdfs_closure_rho_df_complete`). `RDFS/RhoDfCompleteness.lean` has the
+closed-graph forms (`rhoDfClosed_*`); these are the saturation forms. -/
+
+/-- A subgraph is satisfied wherever the graph is. -/
+theorem subgraph_satisfies {g c : Graph} (hsub : ∀ t ∈ g, t ∈ c)
+    (h : Satisfies i c) : Satisfies i g := by
+  obtain ⟨a, ha⟩ := h
+  exact ⟨a, fun t ht => ha t (hsub t ht)⟩
+
+theorem rhoDf_saturation_sound {g c e : Graph} (hgc : RhoDfEntails g c)
+    (hce : SimpleEntailmentSpec c e) : RhoDfEntails g e :=
+  fun i hi hs => rhoDfClosed_sound hce i hi (hgc i hi hs)
+
+theorem rhoDf_saturation_complete {g c e : Graph} (hc : RhoDfClosed c)
+    (hf : RhoDfModelFragGraph c) (hfe : GraphTtFree e) (hsub : ∀ t ∈ g, t ∈ c)
+    (h : RhoDfEntails g e) : SimpleEntailmentSpec c e :=
+  rhoDfClosed_complete hc hf hfe (fun i hi hs => h i hi (subgraph_satisfies hsub hs))
+
+theorem rhoDf_saturation_iff {g c e : Graph} (hc : RhoDfClosed c)
+    (hf : RhoDfModelFragGraph c) (hfe : GraphTtFree e) (hsub : ∀ t ∈ g, t ∈ c)
+    (hgc : RhoDfEntails g c) : RhoDfEntails g e ↔ SimpleEntailmentSpec c e :=
+  ⟨rhoDf_saturation_complete hc hf hfe hsub, rhoDf_saturation_sound hgc⟩
+
+/-- The six-rule ρdf closure (`RDFS.closure`) decides ρdf entailment when
+it is closed and in the fragment: no hypothesis on the input graph, since
+`RDFS.closure_extensive` holds for every graph. -/
+theorem closure_rhoDf_complete {g e : Graph} (fuel : Nat)
+    (hc : RhoDfClosed (RDFS.closure g fuel))
+    (hf : RhoDfModelFragGraph (RDFS.closure g fuel)) (hfe : GraphTtFree e)
+    (h : RhoDfEntails g e) : SimpleEntailmentSpec (RDFS.closure g fuel) e :=
+  rhoDf_saturation_complete hc hf hfe (fun _ ht => RDFS.closure_extensive fuel g ht) h
+
+/-- Finding C-1 for every pair of IRIs: `x rdfs:subClassOf y` RDFS-entails
+`x rdfs:subClassOf x`, for every datatype set. (`rdfsEntails_subclassSelfLoop`
+in `RDFS/RhoDfCompleteness.lean` is the instance at two example IRIs.) -/
+theorem rdfsEntails_subclassSelfLoop_iri {D : DatatypeSet} (x y : WfIri) :
+    RdfsEntails D [{ s := .iri x, p := RDFS.rdfsSubClassOf, o := .iri y }]
+      [{ s := .iri x, p := RDFS.rdfsSubClassOf, o := .iri x }] := by
+  rintro i hcond ⟨aa, haa⟩
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, hrefl, hic, -⟩ := hcond
+  have hpremise := haa _ (List.mem_singleton.mpr rfl)
+  simp only [TripleHolds, denotSubject, denotTerm] at hpremise
+  refine ⟨aa, fun t ht => ?_⟩
+  rw [List.mem_singleton.mp ht]
+  simp only [TripleHolds, denotSubject, denotTerm]
+  exact hrefl _ (hic _ _ hpremise).1
+
+/-- The executable fragment check is exact: `isRhoDfFrag` answers true
+exactly on the model fragment (F\* `lemma_is_rho_df_frag_correct`). -/
+theorem isRhoDfFrag_iff (g : Graph) :
+    RDFS.isRhoDfFrag g = true ↔ RhoDfModelFragGraph g := by
+  constructor
+  · intro h t ht
+    have hb := List.all_eq_true.mp h t ht
+    simp only [RDFS.isRhoDfFragTriple, Bool.and_eq_true] at hb
+    obtain ⟨hobj, hsp⟩ := hb
+    constructor
+    · cases ho : t.o with
+      | iri x => trivial
+      | bnode b => trivial
+      | literal l => simp [ho] at hobj
+      | tripleTerm s p o => simp [ho] at hobj
+    · intro hp
+      rw [hp] at hsp
+      simp only [bne_self_eq_false, Bool.false_or] at hsp
+      cases ho : t.o with
+      | iri x => exact ⟨x, rfl⟩
+      | bnode b => simp [ho] at hsp
+      | literal l => simp [ho] at hsp
+      | tripleTerm s p o => simp [ho] at hsp
+  · intro h
+    apply List.all_eq_true.mpr
+    intro t ht
+    obtain ⟨hobj, hsp⟩ := h t ht
+    simp only [RDFS.isRhoDfFragTriple, Bool.and_eq_true]
+    refine ⟨?_, ?_⟩
+    · cases ho : t.o with
+      | iri x => rfl
+      | bnode b => rfl
+      | literal l => rw [ho] at hobj; exact absurd hobj id
+      | tripleTerm s p o => rw [ho] at hobj; exact absurd hobj id
+    · by_cases hp : t.p = RDFS.rdfsSubPropertyOf
+      · obtain ⟨x, hx⟩ := hsp hp
+        simp [hx]
+      · simp [hp]
+
+/-- The F\* finding F1 witness graph: `p rdfs:subPropertyOf
+rdfs:subPropertyOf . a p _:b1 .` -/
+def f1Witness (p a : WfIri) : Graph :=
+  [⟨.iri p, RDFS.rdfsSubPropertyOf, .iri RDFS.rdfsSubPropertyOf⟩, ⟨.iri a, p, .bnode "b1"⟩]
+
+/-- What rdfs7 derives from it: a `rdfs:subPropertyOf` triple whose
+object is a blank node. -/
+def f1BadTriple (a : WfIri) : Triple := ⟨.iri a, RDFS.rdfsSubPropertyOf, .bnode "b1"⟩
+
+/-- **Finding F1.** The ρdf model fragment is not preserved by the rules:
+the witness graph is in the fragment, rdfs7 derives `f1BadTriple a` from
+it, and that triple is not in the fragment. So the closure's fragment
+membership is a hypothesis of `closure_rhoDf_complete`, never a
+consequence of the input's. -/
+theorem rhoDf_frag_preservation_fails (p a : WfIri)
+    (hp : p ≠ RDFS.rdfsSubPropertyOf) :
+    RhoDfModelFragGraph (f1Witness p a) ∧ Rdfs7Derives (f1Witness p a) (f1BadTriple a) ∧
+    ¬ RhoDfModelFragTriple (f1BadTriple a) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro t ht
+    simp only [f1Witness, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl
+    · exact ⟨trivial, fun _ => ⟨_, rfl⟩⟩
+    · exact ⟨trivial, fun h => absurd h hp⟩
+  · exact ⟨_, List.mem_cons_self .., _, List.mem_cons_of_mem _ (List.mem_cons_self ..),
+      p, RDFS.rdfsSubPropertyOf, rfl, rfl, rfl, rfl, rfl⟩
+  · intro h
+    obtain ⟨x, hx⟩ := h.2 rfl
+    cases hx
+
 /-! ## Build-time checks -/
 
 section Checks
@@ -374,5 +505,14 @@ at most. -/
 #print axioms mem_reflexivityIrisOf
 #print axioms rdfsReflexivityAxioms_licensed
 #print axioms rdfsReflexivityAxioms_preserves
+#print axioms rdfsReflexivityAxioms_owlClassGraph
+#print axioms subgraph_satisfies
+#print axioms rhoDf_saturation_sound
+#print axioms rhoDf_saturation_complete
+#print axioms rhoDf_saturation_iff
+#print axioms closure_rhoDf_complete
+#print axioms rdfsEntails_subclassSelfLoop_iri
+#print axioms isRhoDfFrag_iff
+#print axioms rhoDf_frag_preservation_fails
 
 end L4Factoidal.RDF
