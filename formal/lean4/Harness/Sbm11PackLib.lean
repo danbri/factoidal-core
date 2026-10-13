@@ -5,7 +5,7 @@ shared with compaction (`Harness/Sbm11Compact.lean`, stage 5)
 `docs/designissues/2026-10-11-shardborough-vs-qlever.md` section 6.8).
 
   l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N]
-               [--block-rows B] [--sort-rows M]
+               [--block-rows B] [--sort-rows M] [--phase2-only]
 
 Phase 1. SOURCE is cut into K byte ranges at line starts (default 4); each
   range is parsed by its own task with the streaming N-Quads parser (64 KiB
@@ -38,9 +38,11 @@ packer writes is decoded again and compared with its column.
 Prints phase times and VmHWM. Exit 1 on any error.
 -/
 import Harness.Sbm11Gen
+import Harness.RunHeap
 import L4Factoidal.Syntax.NQuadsFold
 import L4Factoidal.Syntax.Utf8Stream
 import L4Factoidal.Qlvr.Sort
+import L4Factoidal.Qlvr.CmpBytesFast
 import Std.Data.HashMap
 
 open L4Factoidal.RDF
@@ -290,7 +292,11 @@ def tagOfKey (k : ByteArray) : Nat :=
   let c := k.get! 0
   if c == classBnode then tagBnode else if c == classIri then tagIri else tagLit
 
-/-- Merge the term runs into GDV1/GDX1; per run, the remap file. Returns the
+
+/-- Merge the term runs into GDV1/GDX1; per run, the remap file. The next
+    record comes from a loser tree over the runs (`Harness/RunHeap.lean`):
+    about log2 k comparisons per record for k runs (issue 804; the linear scan
+    of every head it replaces made phase 2 quadratic in the terms). Returns the
     term count, the page count and the number of run records. -/
 def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) := do
   let mut readers : Array RunReader := #[]
@@ -314,26 +320,20 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
   let mut prev : Option ByteArray := none
   let mut prevId : UInt64 := 0
   let mut records := 0
+  let mut tree := Harness.RunHeap.build cmpBytes heads
   for _ in [0:runBytes + 1] do
-    let mut best : Option (Nat × ByteArray) := none
-    for k in [0:heads.size] do
-      match heads[k]! with
-      | some x =>
-        match best with
-        | some (_, b) => if cmpBytes x b == .lt then best := some (k, x)
-        | none => best := some (k, x)
-      | none => pure ()
-    match best with
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
     | none => break
-    | some (k, x) =>
+    | some x =>
       records := records + 1
-      let dup := match prev with
-        | some p => cmpBytes p x == .eq
-        | none => false
+      let c := match prev with
+        | some p => cmpBytes p x
+        | none => .lt
+      let dup := c == .eq
       if !dup then
-        if let some p := prev then
-          if cmpBytes p x != .lt then
-            throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
+        if c != .lt then
+          throw (IO.userError s!"phase 2: keys out of order after {w.terms} terms")
         let rank := w.terms
         w ← w.add x
         prev := some x
@@ -342,6 +342,7 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
       let (hd, r) ← readers[k]!.next
       readers := readers.set! k r
       heads := heads.set! k hd
+      tree := Harness.RunHeap.replay cmpBytes heads tree k
   w ← w.closePage
   w ← w.flushBufs true
   hV.flush; hE.flush
@@ -361,6 +362,10 @@ def phase2 (outDir : String) (batches : Array Batch) : IO (Nat × Nat × Nat) :=
   pure (w.terms, w.pages, records)
 
 /-! ## Phase 3: permutation runs -/
+
+/-- The three-way comparison of `QRow.lt`, for the merge tree of phase 3b. -/
+@[inline] def QRow.cmp (x y : QRow) : Ordering :=
+  if x.lt y then .lt else if y.lt x then .gt else .eq
 
 def sortRows (rows : Array QRow) : Array QRow := mergeSortBy rows QRow.le
 
@@ -514,18 +519,12 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
   let mut dups := 0
   let mut rows := 0
   let cutAt := max 1 (blockRows / 16)
+  let mut tree := Harness.RunHeap.build QRow.cmp heads
   for _ in [0:total + 1] do
-    let mut best : Option (Nat × QRow) := none
-    for k in [0:heads.size] do
-      match heads[k]! with
-      | some x =>
-        match best with
-        | some (_, b) => if x.lt b then best := some (k, x)
-        | none => best := some (k, x)
-      | none => pure ()
-    match best with
+    let k := Harness.RunHeap.winner tree
+    match heads[k]?.bind id with
     | none => break
-    | some (k, x) =>
+    | some x =>
       let dup := match prev with
         | some p => p == x
         | none => false
@@ -541,6 +540,7 @@ def phase3b (outDir : String) (perm : Nat) (runs : Array String) (blockRows : Na
       let (hd, r) ← readers[k]!.nextRow
       readers := readers.set! k r
       heads := heads.set! k hd
+      tree := Harness.RunHeap.replay QRow.cmp heads tree k
   w ← w.close
   w.h.write w.buf
   w.h.flush
@@ -620,6 +620,50 @@ def printPermLines (tool : String) (outs : Array PermOut) : IO Unit := do
     let o := outs[p]!
     IO.println s!"{tool}: {permNamesArr[p]!} blocks={o.blocks} rows={o.rows} prb1-bytes={o.prbBytes} prm1-bytes={o.prmBytes} frames-const={o.codecs[0]!} frames-raw={o.codecs[1]!} frames-delta={o.codecs[2]!} col-bytes={o.frameBytes[0]!},{o.frameBytes[1]!},{o.frameBytes[2]!},{o.frameBytes[3]!} digest={o.digest.sum}/{o.digest.xor}"
 
+/-- CPU time of the calling thread in nanoseconds (Linux
+    `/proc/thread-self/schedstat`, first field); `none` where it cannot be
+    read. Phase 2 runs on one thread, so its CPU time is not inflated by
+    other processes the way wall time is under load. -/
+def threadCpuNs : IO (Option Nat) := do
+  try
+    let s ← IO.FS.readFile "/proc/thread-self/schedstat"
+    pure ((s.splitOn " ").head?.bind String.toNat?)
+  catch _ => pure none
+
+/-- `--phase2-only`: phase 1, then phase 2; the quad runs are removed, and
+    GDV1, GDX1 and the remap files (`run-W-J.tmp.remap`) are kept, so that
+    phase 2 can be timed and its output compared byte for byte
+    (`tests/sbm11/phase2_scaling.sh`,
+    https://github.com/danbri/factoidal/issues/804). -/
+def runPhase2Only (source outDir : String) (workers runTerms : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  IO.FS.createDirAll outDir
+  let size ← fileSize source
+  let mut bounds : Array Nat := #[]
+  for i in [0:workers + 1] do
+    bounds := bounds.push (← lineStartFrom source size (size * i / workers))
+  let perWorker := max 1 (runTerms / workers)
+  let mut tasks := #[]
+  for i in [0:workers] do
+    let t ← IO.asTask (phase1Worker source outDir i bounds[i]! bounds[i + 1]! perWorker) .dedicated
+    tasks := tasks.push t
+  let mut batches : Array Batch := #[]
+  for t in tasks do
+    match ← IO.wait t with
+    | .ok o => batches := batches ++ o.batches
+    | .error e => throw e
+  let t1 ← IO.monoNanosNow
+  let c1 ← threadCpuNs
+  let (terms, pages, records) ← phase2 outDir batches
+  let c2 ← threadCpuNs
+  let t2 ← IO.monoNanosNow
+  for b in batches do IO.FS.removeFile b.quadRun
+  let cpu := match c1, c2 with
+    | some a, some b => s!" phase2-cpu-ms={ms a b}"
+    | _, _ => ""
+  IO.println s!"sbm11-pack: phase2-only source={source} source-bytes={size} workers={workers} terms={terms} pages={pages} batches={batches.size} run-records={records} phase1-ms={ms t0 t1} phase2-ms={ms t1 t2}{cpu} peak-rss={← vmHWM}"
+  pure 0
+
 def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : Nat) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.FS.createDirAll outDir
@@ -657,7 +701,7 @@ def runPack (source outDir : String) (workers runTerms blockRows sortRowsMax : N
   pure 0
 
 def usage : String :=
-  "usage: l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]"
+  "usage: l4sbm11-pack SOURCE.nt|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M] [--phase2-only]"
 
 def parseOpts : List String → Nat × Nat × Nat × Nat → Option (Nat × Nat × Nat × Nat)
   | [], o => some o

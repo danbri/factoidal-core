@@ -151,6 +151,26 @@ n, 2n, 4n and 8n statements with errors spread through the input, under
 plus 64 MiB. On 2026-10-10, 25 MB to 204 MB of N-Quads kept a peak of 26.9
 to 27.3 MB.
 
+A worked example where the input-proportional quantity is hidden is
+`tests/sbm11/phase2_scaling.sh` (https://github.com/danbri/factoidal/issues/804,
+2026-10-12). The SBM11 packer's k-way merge of term runs scanned all k run
+heads per record. Each run holds at most a fixed number of terms (a memory
+bound), so k grows with the source and the scan is quadratic: 799 s of a
+1,334 s pack on 8.9 M terms, while olympics (12 runs) looked linear. The test
+packs synthetic sources of 0.5, 1 and 2 million lines with
+`l4sbm11-pack --phase2-only --run-terms 32768` (124 to 417 runs) and fails
+when the two doublings together exceed 2.2 each (4n at most 4.84 times n).
+Three details: a merge through a tree still costs log2 k comparisons per
+record, one more per doubling, so the ratio per doubling is 2.05 to 2.15,
+not 2.0; one run varied by up to 18 % at load 1 to 2.5 on 4 vCPUs, also in
+CPU time (other processes share the caches), so single doublings measured
+1.86 to 2.38 and the test bounds the two together, with the median of three
+runs per size taken in rounds of n, 2n, 4n; and the test reads the CPU time
+of the merge thread (`/proc/thread-self/schedstat`), which removes the
+scheduling share of the noise. Before the fix: 7,842, 28,769 and 100,264 ms;
+after: section 4.1 of
+`docs/designissues/2026-10-12-sbm11-stage3.md`.
+
 ## The rule
 
 1. **A function over input-proportional data is not done until its scaling is

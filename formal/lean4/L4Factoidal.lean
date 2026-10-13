@@ -351,6 +351,7 @@ import L4Factoidal.Qlvr.Perm
 import L4Factoidal.Qlvr.Term
 import L4Factoidal.Qlvr.Scan
 import L4Factoidal.Qlvr.Sort
+import L4Factoidal.Qlvr.CmpBytesFast
 import L4Factoidal.Qlvr.Side
 import L4Factoidal.Storage.Sbm11.TermKey
 import L4Factoidal.Storage.Sbm11.TermKeyTheorems

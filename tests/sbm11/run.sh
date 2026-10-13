@@ -68,6 +68,13 @@
 #                row count, another quad set; resealed) is refused by the exact
 #                check with the digest comparison off (SBM11_VERIFY_DIGEST=0)
 #                and by the digest with it on; no bucket directory is left.
+#   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
+#                merge of the term runs) on synthetic sources of 1, 2 and 4
+#                million lines (244 to 836 term runs; median of 3 runs each,
+#                CPU time of the merge thread); 4n at most 4.84 times n, 2.2
+#                per doubling (https://github.com/danbri/factoidal/issues/804;
+#                about 2 minutes). SBM11_PHASE2_SCALING=0 leaves (k) out
+#                (printed, not counted).
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -466,6 +473,17 @@ else
     if [ "$left" = 0 ]; then record exact temp-removed 0 "no bucket directory left"
     else record exact temp-removed 1 "$left left"; fi
   fi
+fi
+
+echo "=== (k) packer merge scaling (issue 804)"
+if [ "${SBM11_PHASE2_SCALING:-1}" = 0 ]; then
+  echo "(k) left out: SBM11_PHASE2_SCALING=0 (not counted)"
+else
+  rc=0
+  SBM11_WORK="$TMP/p2scale" L4_SBM11_PACK="$BIN/l4sbm11-pack" "$HERE/phase2_scaling.sh" >"$TMP/p2scale.log" 2>&1 || rc=$?
+  grep -E '^(ok|FAIL) ' "$TMP/p2scale.log" | sed 's/^/     /'
+  if [ "$rc" -eq 0 ]; then record scaling phase2-n-2n-4n 0 "$(grep -c '^ok' "$TMP/p2scale.log") assertions hold"
+  else record scaling phase2-n-2n-4n 1 "exit $rc: $(grep -E '^FAIL' "$TMP/p2scale.log" | head -1)"; fi
 fi
 
 echo
