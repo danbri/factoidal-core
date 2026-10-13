@@ -744,6 +744,10 @@ it now names both.
   set per input byte (bounds 1, 1, 12); on the binary before, 37.1, 30.2 and
   37.5, so they fail there.
 - `tests/stack/lenient_scaling.sh`: 16 pass, 0 fail (out of 16).
+- `tests/stack/run.sh --canary`: 87 pass, 0 fail (out of 87) with
+  `STACK_TIMEOUT=300`. With the default cap of 120 s, at load average 20 to
+  40, the `wasm manifest` case was killed at the cap once (86 pass, 1 fail
+  (out of 87)); in the rerun it took 72.6 s and `native manifest` 115.1 s.
 - `Wasm/cli-smoke.sh`: 83 pass, 0 fail (out of 83). `Wasm/native-smoke.sh`:
   353 pass, 0 fail, 2 expected failures (out of 355).
 - `tests/perf/sota_gate.sh` (load average 14 to 41): the 36 rows of the parse
