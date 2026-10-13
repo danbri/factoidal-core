@@ -1,0 +1,3 @@
+# Sideways information passing (issue 809), OPTIONAL: the subjects that know something pass into the scan of the group ex:flag; ex:a has no flag and keeps its row.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?o ?f WHERE { ?s ex:knows ?o OPTIONAL { ?s ex:flag ?f } }

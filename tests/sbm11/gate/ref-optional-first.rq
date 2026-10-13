@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Refused: an OPTIONAL before the triple patterns (Join(LeftJoin({}, P1), P2)).
+SELECT ?s ?a ?f WHERE { OPTIONAL { ?s ex:flag ?f } ?s ex:age ?a }

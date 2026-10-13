@@ -445,6 +445,17 @@ measure: `lake build` writes it to `.lake/build/ir/<Module>.c`;
 operations per loop iteration; `leanc -O3 -DNDEBUG -S` of a small file gives
 the assembly.
 
+- **A `let` is evaluated before the `match` that follows it, in every
+  branch.** Lean is strict: `let hash := hashPairs l r shared` written once
+  before `match l.sortVar with ...` and used only in the fallback branches
+  computed the hash index in the merge branch too and threw it away. On
+  DBpedia d11 (OPTIONAL, 2026-10-13) that was 33 ms of a 50 ms warm run:
+  a `Std.HashMap` of 197,044 right rows built for a merge join that did not
+  use it (found with `valgrind --tool=callgrind`: `hashPairs` called 8 times
+  in 8 runs that each printed `merge on ?p`). Put the work in a function and
+  call it in each branch that needs it (`OptJoin.hashInner`), or write the
+  binding as `fun () => ...`. The compiler does not move it into the
+  branches for you.
 - **Index bytes with `USize` and `ByteArray.uget`, never with `Nat`.** At a
   `Nat` position each byte read is `lean_nat_add` (a scalar test, an
   overflow test and a box), `lean_byte_array_fget` (an unbox) and `lean_dec`

@@ -4,7 +4,7 @@ generation (stage 4, https://github.com/danbri/factoidal/issues/790).
 
   l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain]
                 [--repeat N] [--reference-render] [--reference]
-                [--verify merkle|none] [--threads N]
+                [--verify merkle|none] [--threads N] [--sip auto|always|off]
   l4sbm11 serve GEN [--verify merkle|none]
   l4sbm11 prm-check GEN
   l4sbm11 frame-check GEN
@@ -27,6 +27,13 @@ guard selects nothing. A line on stderr names the path that ran
   --threads N         scan tasks per BGP scan (issue 799): the selected blocks
                       of each scan are cut into N consecutive chunks, each
                       scanned in its own task; N = 1 is the single-thread path
+  --sip S             sideways information passing (issue 809): the right
+                      scan of a merge join takes the sorted distinct left
+                      values of the join variable as candidates and decodes
+                      the other columns of the matching rows only. `auto`
+                      (default): when 16 × left rows < the scan's PRM1
+                      estimate; `always`: whenever the join shape allows it
+                      (tests); `off`: never. Answers are the same in each.
   --verify V          how reads are checked (`Sbm11Gen.Verify`,
                       https://github.com/danbri/factoidal/issues/796):
                       `merkle` widens each read to its 65,536-byte chunks and
@@ -374,8 +381,8 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) :
 
 /-- The session's store with `threads` scan tasks per BGP scan (1: the
     single-thread store, `scanTable` unset). -/
-def Session.storeWith (ss : Session) (threads : Nat) : IdQuery.Store IO :=
-  let base := ss.store
+def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 16) : IdQuery.Store IO :=
+  let base := { ss.store with sipFactor := sip }
   if threads ≤ 1 then base
   else { base with scanTable := some fun spec => scanTableParM ss spec threads }
 
@@ -603,14 +610,14 @@ def parse (text : String) (base : Option String) : IO Query :=
 
 /-- Run one parsed query on an open session. -/
 def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceReference referenceRender : Bool)
-    (threads : Nat := 1) : IO Outcome := do
+    (threads : Nat := 1) (sip : Option Nat := some 16) : IO Outcome := do
   let plan? := if forceReference then .error "--reference" else IdQuery.translate q
   match plan? with
   | .error reason =>
     let (n, line) ← runReference ss q reason emit
     return { rows := n, path := line }
   | .ok plan =>
-    match ← (IdQuery.runPlanM (ss.storeWith threads) plan emit referenceRender).run with
+    match ← (IdQuery.runPlanM (ss.storeWith threads sip) plan emit referenceRender).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 
@@ -638,6 +645,9 @@ structure Opts where
   verify : Option Verify := Option.none
   /-- `--threads N`: scan tasks per BGP scan; 1 is the single-thread path -/
   threads : Nat := 1
+  /-- `--sip auto|always|off` (issue 809): the factor of `IdQuery.sipRule`
+      (16, 0) or none -/
+  sip : Option Nat := some 16
 
 def parseOpts (xs : List String) : Except String Opts := Id.run do
   let arr := xs.toArray
@@ -668,6 +678,13 @@ def parseOpts (xs : List String) : Except String Opts := Id.run do
       match (arr[i + 1]?).bind String.toNat? with
       | some n => if n ≥ 1 then o := { o with threads := n } else return .error "--threads takes N ≥ 1"
       | Option.none => return .error "--threads takes N ≥ 1"
+      i := i + 2
+    else if x == "--sip" then
+      match arr[i + 1]? with
+      | some "auto" => o := { o with sip := some 16 }
+      | some "always" => o := { o with sip := some 0 }
+      | some "off" => o := { o with sip := Option.none }
+      | _ => return .error "--sip takes auto, always or off"
       i := i + 2
     else if x == "--verify" then
       match (arr[i + 1]?).bind Verify.ofString? with
@@ -710,7 +727,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     ss.g.fetchedBytes.set 0
     let a ← IO.monoNanosNow
     let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
-      o.threads
+      o.threads o.sip
     let b ← IO.monoNanosNow
     execs := execs.push (b - a)
     last := some r
@@ -721,6 +738,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   if o.explain then
     IO.eprintln s!"plan: verify={v.name} ({why}; {verifyText v})"
     IO.eprintln s!"plan: threads={o.threads} (scan tasks per BGP scan; 1 is the single-thread path)"
+    IO.eprintln s!"plan: sip={match o.sip with | some 16 => "auto" | some 0 => "always" | some k => s!"factor {k}" | Option.none => "off"} (candidates into a merge join's right scan when factor × left rows < estimate; issue 809)"
     for l in r.plan do IO.eprintln s!"plan: {l}"
     IO.eprintln s!"plan: {ss.deltaText}"
   let fb ← ss.frameBytes.get
@@ -825,7 +843,7 @@ def main (args : List String) : IO UInt32 := do
     try runFrameCheck dir
     catch e => IO.eprintln s!"l4sbm11 frame-check: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
+    IO.eprintln "usage: l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle|none] [--threads N] [--sip auto|always|off] | serve GEN [--verify merkle|none] | prm-check GEN | frame-check GEN"
     return 2
 
 end Harness.Sbm11Query

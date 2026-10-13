@@ -17,7 +17,8 @@ section "SBM11 against Virtuoso and QLever".
 - Load: the SBM11 pack is 6.6 times slower than the Virtuoso bulk load on the
   DBpedia slice (1,334 s against 203 s). 60 % of the pack (799 s) is phase 2,
   the merge of the term runs, which grows about with the square of the number
-  of distinct terms (section 8, item 1).
+  of distinct terms (section 8, item 1). After the repair of section 8 item 1 the pack
+  took 288 s (phase 2 26 s).
 - Warm queries (SBM11 execution in one process against one Virtuoso HTTP
   request): SBM11 is faster on scans and aggregates over large ranges
   (DBpedia d10, d13, d16, d17: 5.9 to 14 times faster than Virtuoso with its
@@ -35,6 +36,11 @@ section "SBM11 against Virtuoso and QLever".
   Virtuoso; warm median 1.9 to 248 ms. QLever is faster than SBM11 warm on
   every join (6.4 to 13 times on d05 to d09) and on d11 to d17; SBM11 is
   faster on the lookups d01 to d04 and on d10.
+- 2026-10-13, sideways information passing on the SBM11 id path (section
+  11.9, https://github.com/danbri/factoidal/issues/809): SBM11 warm d05 365
+  to 76 ms, d07 77 to 8.8 ms, d11 19.3 to 8.4 ms, peak RSS lower or equal
+  (d05 83 to 27 MB); faster than QLever warm on d06, d07, d09 and d11,
+  slower on d05 (76 against 43 ms), d08, d12, d14 and d15.
 
 ## 2. Engines
 
@@ -255,6 +261,13 @@ configuration with one loader.
    on 8.9 M terms"; acceptance: phase 2 time within 2.2 times per doubling of
    terms on the n/2n/4n ladder, and a `danbri-function-precrime-checkers`
    scaling assertion.
+   Repaired (https://github.com/danbri/factoidal/issues/804, 2026-10-13): the
+   merge scanned all k run heads per record and k grows with the source; it
+   now uses a loser tree and an 8-byte-word key comparison proved equal to
+   `cmpBytes`. DBpedia slice, same source, generation byte-identical (21
+   files): phase 2 26.2 s (799.2 s), pack 288.3 s (1,334.3 s), peak RSS
+   584 MB, load 1.4 to 3.6. Cause, fix, the scaling test and the other phase
+   times: `2026-10-12-sbm11-stage3.md` section 4.1.
 2. **OPTIONAL goes to the reference fallback, which materialises the
    selected quads.** d11: 48.7 s warm, 849 MB peak RSS (all `dbo:birthPlace`
    and `dbo:deathDate` quads decoded into a dataset); Virtuoso 19 ms. This is
@@ -616,3 +629,49 @@ HTTP and JSON, about 2 to 3 ms for a small answer):
 - The cold time of d17 (167 ms default, 583 ms on 1 CPU, against a warm 1.9
   ms) is the cost of the first request of a new server on evicted index
   files. Which files that request reads was not traced (section 9).
+
+### 11.9 SBM11 with sideways information passing, DBpedia slice (2026-10-13)
+
+https://github.com/danbri/factoidal/issues/809; record: section 11 of
+[`2026-10-12-sbm11-stage4.md`](2026-10-12-sbm11-stage4.md). SBM11 `--verify
+none` before (build of commit f2c87e47) and after (build of commit
+94bfd329, the right scan of a join takes the left values of the join
+variable as candidates), measured on 2026-10-13 in three interleaved rounds
+(warm: execution median of `--repeat 7` in one process; process: median
+wall time of 7 processes; RSS: median VmHWM of those processes; each cell
+the median of the three rounds; load average 0.65 to 0.95). The SBM11 warm
+times of this table were measured on a different day and binary than
+section 7.3 (d05 365 ms before here, 575 ms there): compare the before and
+after columns with each other. QLever and Virtuoso: the warm medians of
+sections 11.8 and 7.3, not measured again. Answers of all 17 queries equal
+to the stored SBM11, Virtuoso and QLever answers (`bench.py` comparison).
+
+| Query | SBM11 none warm before / after | process before / after | RSS MB before / after | rows decoded after | QLever default warm (11.8) | Virtuoso default warm (7.3) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| d01-subject-lookup | 0.12 / 0.10 | 231.9 / 245.2 | 41 / 41 | 12 | 4.81 | 3.42 |
+| d02-object-lookup | 0.11 / 0.10 | 159.4 / 162.8 | 33 / 33 | 17 | 3.92 | 3.26 |
+| d03-predicate-object | 1.00 / 0.95 | 40.0 / 40.4 | 23 / 23 | 1,083 | 5.49 | 22.67 |
+| d04-lang-literal-lookup | 0.31 / 0.48 | 24.2 / 24.5 | 17 / 17 | 55 | 2.68 | 3.62 |
+| d05-star-three | 365.33 / 75.92 | 389.1 / 126.6 | 83 / 27 | 3,164 | 43.10 | 48.92 |
+| d06-star-film | 35.02 / 3.30 | 79.9 / 47.0 | 25 / 19 | 308 | 10.54 | 7.24 |
+| d07-path-two-hops | 77.15 / 8.77 | 128.3 / 48.5 | 37 / 19 | 440 | 11.70 | 6.33 |
+| d08-path-three-hops | 81.98 / 29.68 | 150.0 / 84.2 | 41 / 22 | 11,628 | 21.35 | 42.72 |
+| d09-group-birthplace | 57.83 / 7.00 | 95.0 / 45.3 | 27 / 19 | 440 | 11.75 | 3.71 |
+| d10-group-predicates | 30.20 / 23.38 | 52.3 / 63.9 | 21 / 21 | 23,269,559 | 248.31 | 355.68 |
+| d11-optional | 19.28 / 8.39 | 79.2 / 63.1 | 25 / 25 | 1,479 | 12.79 | 21.12 |
+| d12-filter-numeric | 27.50 / 12.61 | 73.6 / 51.3 | 25 / 20 | 6,228 | 7.38 | 8.02 |
+| d13-filter-strstarts | 327.84 / 328.93 | 372.0 / 378.9 | 19 / 19 | 3,368,646 | 26.60 | 3,736.20 |
+| d14-filter-date | 56.32 / 20.80 | 104.8 / 70.9 | 29 / 22 | 2,036 | 6.09 | 7.94 |
+| d15-orderby-limit | 27.47 / 11.49 | 73.2 / 48.8 | 25 / 19 | 6,228 | 8.75 | 9.85 |
+| d16-orderby-limit-scan | 53.00 / 63.68 | 79.8 / 90.6 | 37 / 37 | 327,277 | 42.61 | 471.91 |
+| d17-count-all | 2.94 / 3.87 | 27.6 / 29.2 | 17 / 17 | 23,269,559 | 1.91 | 86.08 |
+
+Of the queries with joins (d05 to d09, d11, d12, d14, d15), SBM11 warm is
+now faster than QLever warm on d06, d07, d09 and d11 (d07 8.8 against 11.7
+ms, d11 8.4 against 12.8 ms) and slower on d05, d08, d12, d14 and d15 (d05
+75.9 against 43.1 ms); faster than Virtuoso on d06, d08 and d11, slower on
+the other six. As in section 11.8, the SBM11 column is in-process and the
+QLever and Virtuoso columns include HTTP and JSON (about 2 to 3 ms for a
+small answer). The queries with no join (d01 to d04, d10, d13, d16, d17)
+run the same plan as before; their differences are inside the spread
+between rounds.

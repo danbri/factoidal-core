@@ -131,6 +131,16 @@ what turns "it worked on the test files" into "it scales", which is the
 property the suite was silently not testing. `tests/stack/` is the seed; the
 assertion is what makes it a gate.
 
+**Set the bound from the stated complexity, with its parameters.** The SBM11
+packer phase 2 gate (`tests/sbm11/phase2_scaling.sh`, issue 804) first used
+4n ≤ 4.84 × n, "2.2 per doubling", from runs on a quiet machine. The
+algorithm is a loser-tree merge of k runs, and with `--run-terms` fixed k grows
+with n: the cost is about n · log2 k, and from n to 4n (k 244 to 836) the
+model gives 4.89, above the bound. The gate failed at 5.05 under load
+(2026-10-13) with no code change. It now uses 6.25 (2.5 per doubling): above
+the model plus 10 % for load, far below the 16 of the quadratic defect it
+guards. Write the model and the defect's ratio next to every bound.
+
 A worked example with a wall-clock bound is `l4jsonld-api --scale`
 (`formal/lean4/Harness/JsonLdScale.lean`, wrapper
 `tests/stack/jsonld_scaling.sh`). It builds five document shapes at n, 2n,
@@ -150,6 +160,26 @@ n, 2n, 4n and 8n statements with errors spread through the input, under
 1 s) or when the peak resident set at 8n exceeds 1.25 times the one at n
 plus 64 MiB. On 2026-10-10, 25 MB to 204 MB of N-Quads kept a peak of 26.9
 to 27.3 MB.
+
+A worked example where the input-proportional quantity is hidden is
+`tests/sbm11/phase2_scaling.sh` (https://github.com/danbri/factoidal/issues/804,
+2026-10-12). The SBM11 packer's k-way merge of term runs scanned all k run
+heads per record. Each run holds at most a fixed number of terms (a memory
+bound), so k grows with the source and the scan is quadratic: 799 s of a
+1,334 s pack on 8.9 M terms, while olympics (12 runs) looked linear. The test
+packs synthetic sources of 0.5, 1 and 2 million lines with
+`l4sbm11-pack --phase2-only --run-terms 32768` (124 to 417 runs) and fails
+when the two doublings together exceed 2.2 each (4n at most 4.84 times n).
+Three details: a merge through a tree still costs log2 k comparisons per
+record, one more per doubling, so the ratio per doubling is 2.05 to 2.15,
+not 2.0; one run varied by up to 18 % at load 1 to 2.5 on 4 vCPUs, also in
+CPU time (other processes share the caches), so single doublings measured
+1.86 to 2.38 and the test bounds the two together, with the median of three
+runs per size taken in rounds of n, 2n, 4n; and the test reads the CPU time
+of the merge thread (`/proc/thread-self/schedstat`), which removes the
+scheduling share of the noise. Before the fix: 7,842, 28,769 and 100,264 ms;
+after: section 4.1 of
+`docs/designissues/2026-10-12-sbm11-stage3.md`.
 
 ## The rule
 

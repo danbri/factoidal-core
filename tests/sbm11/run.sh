@@ -26,9 +26,17 @@
 #                (`l4factoidal query gate.nq`), equal as multisets. A query
 #                named ids-* must run on ids (path=ids); one named ref-* must
 #                take the reference fallback (path=reference): EXISTS, NOT
-#                EXISTS, MINUS, OPTIONAL with FILTER, sub-SELECT and the other
-#                forms only the reference semantics decide (CLAUDE.md
-#                anti-pattern 34).
+#                EXISTS, MINUS, sub-SELECT, the OPTIONAL shapes outside the id
+#                fragment (nested, a variable two groups share that the base
+#                does not bind, a FILTER in the group over a base variable, a
+#                FILTER beside it over an optional variable, OPTIONAL first,
+#                GRAPH in the group) and the other forms only the reference
+#                semantics decide (CLAUDE.md anti-pattern 34). The
+#                ids-optional-* queries run OPTIONAL on ids (issue 775): no
+#                match, one, several, FILTER in the group true, false and an
+#                error, two groups, GRAPH in the base, ORDER BY the optional
+#                variable (with LIMIT, so the order is part of the answer),
+#                COUNT and GROUP BY over it, DISTINCT, SELECT *.
 #   (e) checks   `l4sbm11 prm-check` (the byte-array PRM1 decoder against the
 #                list decoder of the round-trip theorem) and `l4sbm11
 #                frame-check` (the word decoder against decodeColumnAt) on
@@ -68,6 +76,24 @@
 #                row count, another quad set; resealed) is refused by the exact
 #                check with the digest comparison off (SBM11_VERIFY_DIGEST=0)
 #                and by the digest with it on; no bucket directory is left.
+#   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
+#                merge of the term runs) on synthetic sources of 1, 2 and 4
+#                million lines (244 to 836 term runs; median of 3 runs each,
+#                CPU time of the merge thread); 4n at most 6.25 times n, 2.5
+#                per doubling (https://github.com/danbri/factoidal/issues/804;
+#                about 2 minutes). SBM11_PHASE2_SCALING=0 leaves (k) out
+#                (printed, not counted).
+#   (l) sip      sideways information passing
+#                (https://github.com/danbri/factoidal/issues/809): the gate
+#                fixture packed with blocks of 2 rows, every ids-* gate query
+#                with `--sip always` (candidates whenever the join shape allows
+#                them) against `l4factoidal query gate.nq`; each ids-sip-*
+#                query must take a scan with candidates, and the run must
+#                skip a block by its candidates. Then q01 to q21 and
+#                tests/sbm11/sip/*.rq on olympics with --sip off, auto and
+#                always, equal as multisets; each sip-*.rq takes a scan with
+#                candidates under auto, sip-every-block one that skips no
+#                block.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -420,6 +446,70 @@ else
   fi
 fi
 
+echo "=== (l) sideways information passing (issue 809)"
+L="$TMP/sip"
+mkdir -p "$L"
+# (l1) the gate fixture packed with blocks of 2 rows, so that candidates skip
+# blocks and key ranges cross blocks; every ids-* gate query with --sip always
+# (candidates whenever the join shape allows them) against the reference engine
+rc=0
+"$BIN/l4sbm11-pack" "$HERE/gate/gate.nq" "$L/col/gen" --workers 1 --block-rows 2 >"$L/pack.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$L/col" gen >"$L/act.log" 2>&1 || rc=$?; }
+if [ "$rc" -ne 0 ]; then
+  record sip gate-pack 1 "exit $rc: $(tail -1 "$L/pack.log" "$L/act.log" 2>/dev/null | tr '\n' ' ')"
+else
+  n=0; bad=""; sw=0; skipped=0
+  for rq in "$HERE"/gate/ids-*.rq; do
+    nq="$(basename "$rq" .rq)"
+    n=$((n + 1))
+    qrc=0
+    timeout 120 "$BIN/l4sbm11" query "$L/col" --file "$rq" --base "file://$(realpath "$rq")" --sip always --explain \
+      >"$L/$nq.got" 2>"$L/$nq.err" || qrc=$?
+    if [ "$qrc" -ne 0 ]; then bad="$bad $nq(exit $qrc)"; continue; fi
+    rrc=0
+    timeout 120 "$BIN/l4factoidal" query "$HERE/gate/gate.nq" --format nquads --query "$rq" >"$L/$nq.want" 2>/dev/null || rrc=$?
+    v="$(python3 -I "$HERE/compare_answers.py" "$L/$nq.got" "$L/$nq.want" "$rrc")"
+    case "$v" in equal*) ;; *) bad="$bad $nq($v)" ;; esac
+    grep -q 'path=ids' "$L/$nq.err" || bad="$bad $nq(path)"
+    c="$(grep -c 'sideways' "$L/$nq.err")"; sw=$((sw + c))
+    s="$(grep -o 'blocks skipped [0-9]*' "$L/$nq.err" | awk '{t += $3} END {print t + 0}')"; skipped=$((skipped + s))
+  done
+  if [ -z "$bad" ]; then
+    record sip gate-always 0 "$n ids-* queries, --sip always, blocks of 2 rows: equal to the reference engine; $sw scans with candidates, $skipped blocks skipped"
+  else record sip gate-always 1 "failed:$bad"; fi
+  for rq in "$HERE"/gate/ids-sip-*.rq; do
+    nq="$(basename "$rq" .rq)"
+    if grep -q 'sideways' "$L/$nq.err"; then record sip "$nq" 0 "$(grep -o 'sideways [^;]*' "$L/$nq.err" | head -1)"
+    else record sip "$nq" 1 "no scan with candidates"; fi
+  done
+  if [ "$sw" -gt 0 ] && [ "$skipped" -gt 0 ]; then record sip gate-coverage 0 "scans with candidates and skipped blocks both seen"
+  else record sip gate-coverage 1 "scans with candidates $sw, blocks skipped $skipped: expected both above 0"; fi
+fi
+# (l2) olympics: q01 to q21 and tests/sbm11/sip/*.rq with --sip off, auto (the
+# default) and always, equal as multisets (a hash join may change the row
+# order); every sip-*.rq takes a scan with candidates under auto, and
+# sip-every-block one in which no block is skipped
+bad=""; n=0
+for rq in "$ROOT"/tests/qlvr/queries/q*.rq "$HERE"/sip/*.rq; do
+  nq="$(basename "$rq" .rq)"
+  n=$((n + 1))
+  for m in off auto always; do
+    qrc=0
+    timeout 600 "$BIN/l4sbm11" query "$GEN" --file "$rq" --sip $m --explain >"$L/o-$nq.$m" 2>"$L/o-$nq.$m.err" || qrc=$?
+    [ "$qrc" -eq 0 ] || bad="$bad $nq($m exit $qrc)"
+  done
+  for m in auto always; do
+    v="$(python3 -I "$HERE/compare_answers.py" "$L/o-$nq.$m" "$L/o-$nq.off" 0)"
+    case "$v" in equal*) ;; *) bad="$bad $nq($m: $v)" ;; esac
+  done
+  case $nq in sip-*) grep -q 'sideways' "$L/o-$nq.auto.err" || bad="$bad $nq(no scan with candidates)" ;; esac
+done
+if [ -z "$bad" ]; then record sip olympics-modes 0 "$n queries: --sip auto and always equal to off"
+else record sip olympics-modes 1 "failed:$bad"; fi
+if grep -q 'sideways ?a: [0-9]* candidates, blocks skipped 0' "$L/o-sip-every-block.auto.err"; then
+  record sip every-block 0 "$(grep -o 'sideways ?a: [^;]*' "$L/o-sip-every-block.auto.err")"
+else record sip every-block 1 "$(grep -o 'sideways [^;]*' "$L/o-sip-every-block.auto.err" | tr '\n' ' ')"; fi
+
 echo "=== (j) the exact permutation check of activation (lemma L3b)"
 J="$TMP/exact"
 mkdir -p "$J"
@@ -466,6 +556,17 @@ else
     if [ "$left" = 0 ]; then record exact temp-removed 0 "no bucket directory left"
     else record exact temp-removed 1 "$left left"; fi
   fi
+fi
+
+echo "=== (k) packer merge scaling (issue 804)"
+if [ "${SBM11_PHASE2_SCALING:-1}" = 0 ]; then
+  echo "(k) left out: SBM11_PHASE2_SCALING=0 (not counted)"
+else
+  rc=0
+  SBM11_WORK="$TMP/p2scale" L4_SBM11_PACK="$BIN/l4sbm11-pack" "$HERE/phase2_scaling.sh" >"$TMP/p2scale.log" 2>&1 || rc=$?
+  grep -E '^(ok|FAIL) ' "$TMP/p2scale.log" | sed 's/^/     /'
+  if [ "$rc" -eq 0 ]; then record scaling phase2-n-2n-4n 0 "$(grep -c '^ok' "$TMP/p2scale.log") assertions hold"
+  else record scaling phase2-n-2n-4n 1 "exit $rc: $(grep -E '^FAIL' "$TMP/p2scale.log" | head -1)"; fi
 fi
 
 echo

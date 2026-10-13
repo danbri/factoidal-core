@@ -462,6 +462,95 @@ def Graph.toNTriples (g : Graph) (mode : Mode := .rdf11) : Except String String 
         | .ok line => .ok (s ++ line))
     (.ok "")
 
+/-! ### `Graph.toNTriples` one line at a time
+
+`Graph.toNTriples` builds the whole document as one string. A caller that
+writes the lines as it goes (the command line's `closure` verb,
+https://github.com/danbri/factoidal/issues/758) needs to know, before the
+first line, whether some triple fails, because `Graph.toNTriples` then gives
+only the error. `Graph.firstNTriplesError` is that error, and
+`Graph.toNTriples_eq_lines` proves that the document is the error when there
+is one, and otherwise the concatenation of `Triple.toNTriplesLine` over the
+triples, in order. -/
+
+/-- The error `Triple.toNTriples` gives on `t`, if any. -/
+def Triple.nTriplesError? (mode : Mode) (t : Triple) : Option String :=
+  match Triple.toNTriples mode t with
+  | .error e => some e
+  | .ok _ => none
+
+/-- The N-Triples line of `t`; the empty string when `t` does not serialise
+in `mode` (a caller asks `Graph.firstNTriplesError` first). -/
+def Triple.toNTriplesLine (mode : Mode) (t : Triple) : String :=
+  match Triple.toNTriples mode t with
+  | .ok line => line
+  | .error _ => ""
+
+/-- The first triple's error, in graph order: the error `Graph.toNTriples`
+reports. -/
+def Graph.firstNTriplesError (g : Graph) (mode : Mode := .rdf11) : Option String :=
+  g.findSome? (Triple.nTriplesError? mode)
+
+private theorem toNTriples_foldl_error (mode : Mode) (l : List Triple) (e : String) :
+    l.foldl (fun acc t =>
+      match acc with
+      | .error e => .error e
+      | .ok s =>
+          match Triple.toNTriples mode t with
+          | .error e => .error e
+          | .ok line => .ok (s ++ line)) (Except.error e) = .error e := by
+  induction l with
+  | nil => rfl
+  | cons t rest ih => exact ih
+
+private theorem toNTriples_foldl_ok (mode : Mode) (l : List Triple) (s : String) :
+    l.foldl (fun acc t =>
+      match acc with
+      | .error e => .error e
+      | .ok s =>
+          match Triple.toNTriples mode t with
+          | .error e => .error e
+          | .ok line => .ok (s ++ line)) (Except.ok s) =
+      match l.findSome? (Triple.nTriplesError? mode) with
+      | some e => .error e
+      | none => .ok (s ++ String.join (l.map (Triple.toNTriplesLine mode))) := by
+  induction l generalizing s with
+  | nil => simp [String.append_empty, String.join_nil]
+  | cons t rest ih =>
+      simp only [List.foldl_cons, List.findSome?_cons, List.map_cons, String.join_cons]
+      cases h : Triple.toNTriples mode t with
+      | error e =>
+          have he : Triple.nTriplesError? mode t = some e := by
+            simp [Triple.nTriplesError?, h]
+          rw [he]
+          exact toNTriples_foldl_error mode rest e
+      | ok line =>
+          have he : Triple.nTriplesError? mode t = none := by
+            simp [Triple.nTriplesError?, h]
+          have hl : Triple.toNTriplesLine mode t = line := by
+            simp [Triple.toNTriplesLine, h]
+          rw [he, hl]
+          simp only
+          rw [ih (s ++ line)]
+          cases rest.findSome? (Triple.nTriplesError? mode) with
+          | some e => rfl
+          | none => simp [String.append_assoc]
+
+/-- `Graph.toNTriples` is the first triple's error when there is one, and
+otherwise the lines of the triples, in order, concatenated. -/
+theorem Graph.toNTriples_eq_lines (g : Graph) (mode : Mode) :
+    Graph.toNTriples g mode =
+      match Graph.firstNTriplesError g mode with
+      | some e => .error e
+      | none => .ok (String.join (g.map (Triple.toNTriplesLine mode))) := by
+  unfold Graph.toNTriples Graph.firstNTriplesError
+  rw [toNTriples_foldl_ok]
+  cases g.findSome? (Triple.nTriplesError? mode) with
+  | some e => rfl
+  | none => simp [String.empty_append]
+
+#print axioms Graph.toNTriples_eq_lines
+
 /-! ## Canonical N-Triples (RDF 1.2 N-Triples §canonical form)
 
 https://www.w3.org/TR/rdf12-n-triples/#canonical-ntriples — the form the

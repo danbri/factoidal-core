@@ -157,7 +157,7 @@ not written yet.
 | Pack a quad generation (IBK4, wire version 9) | `l4block-shard-pack INPUT OUTPUT-DIR ibk4 [--batch-bytes N]` (`.trig`, `.nq`, `.ttl`) |
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
-| SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]` |
+| SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]`; `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
 | SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN` |
 | SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
@@ -547,8 +547,8 @@ SBM11 stage 4 (2026-10-12, https://github.com/danbri/factoidal/issues/790):
 SPARQL on term ids over a generation, `l4sbm11 query GEN 'SPARQL' | --file
 Q.rq [--base IRI] [--explain] [--repeat N] [--reference-render]
 [--reference]` and `l4sbm11 serve GEN`. The id fragment (BGP, FILTER,
-one level of GRAPH, GROUP BY with COUNT, DISTINCT, ORDER BY, LIMIT/OFFSET)
-runs on ids with PRM1 block skipping and merge/hash joins; every other query
+one level of GRAPH, GROUP BY with COUNT, DISTINCT, ORDER BY, LIMIT/OFFSET,
+and since 2026-10-13 top-level OPTIONAL, below) runs on ids with PRM1 block skipping and merge/hash joins; every other query
 runs the reference evaluator over the quads the `quadEntriesForQuery` guard
 selects; stderr names the path (`path=ids` or `path=reference`). FILTER on
 ids: term identity only where `valueCompare` is term identity (IRI, string,
@@ -606,6 +606,59 @@ pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
 `cs[0]!` out of an array and storing it back keeps a second reference, and
 every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
 after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
+
+OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
+record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
+OPTIONAL { gk } }` at the top level runs on `path=ids` when the base is a
+group of the id fragment, each group is triple patterns of the default graph
+and FILTERs over the group's own variables, a variable of a group that the
+base does not bind occurs in no other group, and a FILTER beside the
+OPTIONALs reads base variables only (`IdQuery.flattenOptional`; every other
+OPTIONAL shape goes to the reference fallback). Each group's BGP is
+evaluated, its FILTERs applied to its rows, then `OptJoin.leftOuterJoin`
+(merge on a shared sort variable, else a hash index probed in left order);
+an unbound variable is id 0 in its column (`OptJoin.unbound`): the renderer
+leaves it out, ORDER BY puts it first, `COUNT(?x)` skips it
+(`IdQuery.countItems`). Theorems: `Storage/Sbm11/OptJoinTheorems.lean`
+(lemmas L5g, L5g′ of the end-to-end record; the `Table` step L5g″ is open
+and tested by `#guard`s). Since issue 809 (next paragraph) the group's first
+scan takes the left keys as candidates when the rule selects it.
+DBpedia d11 (OPTIONAL): 48.7 s warm and 849 MB on the reference fallback
+before; 17.2 ms warm and 25.6 MB on ids (2026-10-13). Gates: `tests/sbm11/run.sh` part (d), the 16
+`ids-optional-*` and 6 `ref-optional-*` queries; a change that admits more
+OPTIONAL shapes must move a `ref-optional-*` query to `ids-` only with a
+gate query that the reference semantics decide. Trap: the reference
+evaluator evaluates a FILTER in an OPTIONAL group on the group's row only
+(https://github.com/danbri/factoidal/issues/815, known-defects case
+`SPARQL-OPT-FILTER-SCOPE`); the id path refuses a group FILTER over a
+left-side variable until that is fixed, so that both paths answer the same.
+
+Sideways information passing (2026-10-13,
+https://github.com/danbri/factoidal/issues/809; record: section 11 of the
+stage 4 record). The right scan of a join (merge or hash), and the first scan
+of an OPTIONAL group, take the sorted distinct left values of their sort
+variable as candidates when `16 × left rows < the scan's PRM1 estimate`
+(`IdQuery.sipRule`, `scanForJoinM`); a block whose first and last rows bound
+the join column away from every candidate is not read (`Sip.mayHold`); in a
+block read, only the join column is decoded (`Sip.findWords`, nothing written
+for a row that does not match) and the other columns at the found rows only
+(`Sip.gatherWords`, a delta frame stops after the last found row). `l4sbm11
+query --sip auto|always|off` (default auto; `always` for tests); `--explain`
+prints `sideways ?v: K candidates, blocks skipped B, key values tested T,
+rows gathered G` per scan and a `total: rows decoded ...` line. Theorems:
+`Storage/Sbm11/SipTheorems.lean`, `SipScanTheorems.lean`,
+`SemiJoinTheorems.lean` (lemmas L4g, L4h, L4i, L5h of the end-to-end record:
+the scan with candidates is the full scan filtered; a join over it is the
+same join). DBpedia d05 (2026-10-13, median of three rounds): rows decoded
+4,000,148 to 3,164, warm 365 to 76 ms, peak RSS 83 to 27 MB. Gates: `tests/sbm11/run.sh` part
+(l) (every `ids-*` gate query with `--sip always` on the gate fixture packed
+with blocks of 2 rows; olympics q01 to q21 and `tests/sbm11/sip/*.rq` under
+off, auto and always), `SBM11_SIP=always tests/sbm11/census.sh`, and the
+`sbm11-query` case of `tests/stack/run.sh` (150,000 candidates over blocks
+of 65,536 rows). Traps: a hash join over a reduced right side may change the
+output row order (the hash side is chosen by size), so compare answers as
+multisets; a candidate test that needs a correct start pointer is a proof
+obligation, so the pointer is a hint that `Sip.startFor` checks and resets.
 
 Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of

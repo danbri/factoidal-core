@@ -5,9 +5,16 @@ description: Diagnostic playbook for the dev-loop hazards that recur in this rep
 
 # Workflow gotchas + debugging
 
-This skill catalogues the twelve hazards that have actually bitten this
+This skill catalogues the hazards that have actually bitten this
 project in production. Each section lists symptoms, root cause, the
 recovery procedure, and (where applicable) the prevention now in place.
+
+Numbering: more than one session adds hazards here at the same time. Before
+you add one, run `git fetch origin main` and take the next number free on
+`origin/main` AND on every branch you will merge; the coordinator renumbers
+at merge time when two branches take the same number. (Twice in two days:
+2026-10-12, two hazards #41, one renumbered to #42; 2026-10-13, two hazards
+#42 on `main`, the later one renumbered to #43 in the merge that found it.)
 
 ## 1. Subagent worktree-leakage
 
@@ -2000,3 +2007,55 @@ not help when bash read its next block while the file was edited.
 2. When it happens anyway: stop the run (the shell and its children), keep
    the logs of the jobs that finished before the loop started again, and run
    the truncated job alone with `--only JOB` and the same `--logdir`.
+
+## Hazard #43 — a fixed fixture path shared by parallel test runs (2026-10-13)
+
+### Symptom
+
+`tests/stack/run.sh --canary` on the main checkout failed 3 cases
+(sbm11-perm, sbm11-query, sbm11-delta) with "no such file or directory" and
+"rm: cannot remove ... Directory not empty", while the same cases passed in
+the same run under the 512 KB canary route. Run again alone, the suite gave
+71 pass, 0 fail (out of 71).
+
+### Root cause
+
+The stack suite writes its fixtures to `${TMPDIR:-/tmp}/factoidal-stack-fixtures`
+unless `STACK_FIXTURES` is set. A worktree agent ran the same suite at the
+same time; each run deleted and rewrote files the other was reading.
+
+### The rules
+
+- When more than one checkout runs on the machine (worktree agents, the main
+  checkout), run the stack suite with `STACK_FIXTURES` set to a directory of
+  that checkout or its scratch area.
+- A failure that names a missing file under a shared `/tmp` path is first a
+  collision suspect: run the suite again alone before reading it as a defect.
+- Every new suite that writes fixtures takes its directory from an environment
+  variable and defaults to a per-run directory (`mktemp -d`), not a fixed path.
+
+## Hazard #44 — main moves under a landing branch while its gates run (2026-10-13)
+
+### Symptom
+
+Two sessions land on `main` several times an hour. A landing branch passed
+its full gate set (about 40 minutes), and in that time `main` gained other
+commits, so the push was not a fast-forward. Running the full set again on
+the merge took another 40 minutes, and `main` moved again.
+
+### The rule (used 2026-10-13 for issue 809)
+
+1. The landing branch passes the full gate set once: build, tail-recursion
+   audit, the suites of its own area, `tests/qlvr`, `tests/prim`,
+   `l4planner-test`, native-smoke, `tests/known-defects`, and the stack suite
+   with a private `STACK_FIXTURES`.
+2. When `main` has moved, merge `origin/main` into the landing branch. If the
+   merge has no conflict AND no file changed on both sides since the merge
+   base (`comm -12` of the two `git diff --name-only` lists is empty), run
+   only: the full `lake build`, the tail-recursion audit, the landing's own
+   area suite, native-smoke and known-defects. The other side has already
+   gated its own files on its own landing.
+3. If a file changed on both sides, or the merge had a conflict, run the full
+   set again.
+4. Before every push: `git fetch origin main` and
+   `git merge-base --is-ancestor origin/main HEAD` (CLAUDE.md).

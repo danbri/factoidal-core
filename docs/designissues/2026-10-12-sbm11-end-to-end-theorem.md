@@ -3,7 +3,12 @@
 Date: 2026-10-12. Status: plan written; 12 lemmas proved in the first
 landing; L3b, L4d and L4e proved in the second (OKR batch 2 KR 1.5,
 https://github.com/danbri/factoidal/issues/801; sections 9 and 10); the
-end-to-end theorem open (section 2 table, section 3 obstacles). Gap issue: https://github.com/danbri/factoidal/issues/776.
+end-to-end theorem open (section 2 table, section 3 obstacles); L5g and L5g′
+(the left outer join of OPTIONAL on ids, https://github.com/danbri/factoidal/issues/775)
+proved 2026-10-13, L5g″ open; L4g, L4h, L4i and L5h (the scan with candidates
+and the semi-join reduction of sideways information passing,
+https://github.com/danbri/factoidal/issues/809) proved 2026-10-13 (section
+12). Gap issue: https://github.com/danbri/factoidal/issues/776.
 Tracking: https://github.com/danbri/factoidal/issues/787. Related work
 issues: https://github.com/danbri/factoidal/issues/792 (dictionary, item 4),
 https://github.com/danbri/factoidal/issues/793 (items 2 and 4),
@@ -93,12 +98,19 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L4d | The metadata shortcuts of `scanFoldM`: `colConst?` is sound on a block that activation admitted: columns 0 to 2 from the row order; the graph column because a frame of nine bytes that holds nine rows or more can only be a constant frame (a raw frame takes 8 bytes per row, a delta frame at least one), so L2f is not needed | **proved (second landing)** | `ScanFoldTheorems.colConst_sound`, `decodeColumnAt_short`, `between_agree` |
 | L4e | `scanFoldM` as a whole: the chunks are the rows of the permutation with the key prefix, filtered by `checks`, `named`, `eqs` | **proved (second landing)** for a store over the PRM1 entries and PRB1 bytes in memory (`m = Id`) with no overlay, under the activation checks (`prmAdmitted`, `decodeBlockAt` of every block); the chunk tuples (`tuples`: constants, else columns) and, with `fill = true`, the columns alone (`colTuples`) | `ScanFoldTheorems.scanFoldM_tuples`, `scanFoldM_columns`, `blockChunk_tuples`, `chunkOfCols_tuples`, `keyRange_spec`, `readFrames_slice`, `selectRows_spec`, `blockPlan_keep` |
 | L4f | A frame decoder reads only the bytes of its frame: in any slice `[s, e)` of the array that contains the frame, the column (and the words) at the shifted start are the same (`readFrames` reads one such slice per block) | **proved now** | `FrameLocalTheorems.decodeColumn_local`, `decodeColumnAt_extract`, `decodeWords_extract` |
+| L4g | Sideways information passing, frame level (https://github.com/danbri/factoidal/issues/809): on a frame that `decodeWords` decodes to the words `ws`, `Sip.findWords` returns exactly the rows of `[lo, hi)` whose word is a candidate, in order, with their words, from any candidate pointer, for candidates in non-decreasing order; `Sip.gatherWords` and `Sip.pickWords` return the words of strictly increasing rows; the pointer test is membership | **proved (2026-10-13)** | `SipTheorems.findWords_spec`, `gatherWords_spec`, `pickWords_data`, `probe_mem`, `sorted_spec` (with `deltaFindGo_step`, `deltaFindGo_eq`, `deltaGatherGo_step`, `deltaGatherGo_eq`, `wordsFindGo_spec`, `decodeWords_delta`) |
+| L4h | Block skipping by candidates: a block that `Sip.mayHold` rules out (no candidate between the join-column values of its first and last rows, `IdQuery.sipRange`) holds no row the scan keeps whose join column is a candidate | **proved (2026-10-13)** | `SipTheorems.mayHold_false`; `SipScanTheorems.sipRange_bounds`, `sipSkip_none`, `col_le_of_le`, `prefixCmp_eq_cols` |
+| L4i | The scan with candidates (`IdQuery.scanFoldSipM`) is the full scan filtered: over an in-memory store of an admitted permutation with no overlay, the output tuples of exactly the rows the full scan keeps whose join column holds a candidate; with the join column first, the full scan's tuples (L4e) filtered by the candidate test on the first value | **proved (2026-10-13)** for `m = Id`, no overlay, `key.size < 4`, candidates in non-decreasing order | `SipScanTheorems.scanFoldSipM_tuples`, `scanFoldSipM_filter`, `sipChunk_tuples`, `scanBlockSipM_step`, `forIn_blocks_sip` |
 | L5a | Merge join, index part: for join columns in non-decreasing order, the index arrays `Qlvr.mergeJoin` builds its output from zip to every pair of rows whose join values are equal and whose other shared columns agree, in left-then-right row order | **proved now** | `Qlvr.MergeTheorems.mergeGo_spec`, `mergeGo_pairs`, `mergeJoin_eq` |
 | L5a′ | Merge join, solution part: a row pair of id tables is a pair of compatible solutions exactly when its shared columns are equal, so the join output equals the reference join (SPARQL 1.1 section 18.5) of the decoded solutions, as multisets | open | — |
 | L5b | Hash join (`Qlvr.hashJoin`) on id tables equals the reference join | open | — |
 | L5c | FILTER: a conjunction is applied conjunct by conjunct | proved before (stage 4) | `IdQueryTests.ebvOrFalse_evalIn_and` |
 | L5d | FILTER on ids: rule 1 (term identity) and rule 2 (STRSTARTS as a rank range) agree with `Expr.evalIn` | tested only | `IdQueryTests.lean` `#guard`s on 23 terms |
 | L5e | ORDER BY shortcuts on ids agree with `sparqlOrderValue` | tested only | `IdQueryTests.lean` `#guard`s |
+| L5g | Left outer join (OPTIONAL on ids, https://github.com/danbri/factoidal/issues/775), index part: `OptJoin.outerPairs` over the inner pairs gives `ljSpec` (each left row with the right rows it accepts, in order, or alone with `none`), also directly over the index arrays of `Qlvr.mergeGo` (join columns sorted on both sides); (a) every left row is in the output; (b) an output row is an accepted pair, or a left row that accepts no right row, and every accepted pair is in the output; (c) left row `i` occurs `max 1 c` times, `c` the right rows it accepts, and the length is the sum | **proved (2026-10-13)** | `OptJoinTheorems.outerPairs_eq`, `outerPairs_merge`, `ljSpec_left_row`, `ljSpec_mem_some`, `ljSpec_mem_none`, `ljSpec_complete`, `ljSpec_count_row`, `ljSpec_length` (with `runPairs_spec`, `outerGo_spec`) |
+| L5g′ | Left outer join, solution part over rows of ids (`IdRow`: (variable, id), unbound absent): decoding `idLeftJoin L R` is SPARQL 1.1 `leftJoin` (section 18.5) of the decoded rows with condition `true`, as a list, when `Term.eqb` of two decoded ids is id equality on the ids that occur; `idLeftJoin` is `ljSpec` with id compatibility as the candidate relation; the index arrays of `outerPairs` mapped to rows and decoded are that `leftJoin`; `LeftJoin(Ω1, Ω2, c)` is `LeftJoin(Ω1, Filter(c2, Ω2), true)` when `c` on a compatible merge is `c2` on the right row (the id path applies a group's FILTER, which reads only the group's variables, to the group's rows) | **proved (2026-10-13)** | `OptJoinTheorems.leftJoin_decode`, `idLeftJoin_eq_ljSpec`, `outerPairs_leftJoin`, `leftJoin_filter_right` |
+| L5g″ | Left outer join, table part: the `Table` `OptJoin.leftOuterJoin` builds (`gather`, `gatherOpt` over `ByteArray` columns, id 0 for an unbound variable) denotes the rows of `idLeftJoin` of the denotations of its inputs; the hash path (`OptJoin.hashPairs`, `Std.HashMap`) computes `innerSpec`; on two id tables whose shared variables are bound in every row (`IdQuery.flattenOptional`), id compatibility of two rows is equality of the shared columns | open; tested | `OptJoinTheorems` `#guard`s (9 sample joins: merge, hash with one and two shared columns, cross product, empty sides, unbound ids on the left); `tests/sbm11/run.sh` part (d), 16 `ids-optional-*` queries against the reference engine |
+| L5h | Semi-join reduction (issue 809): a join whose right input is filtered to the rows whose join value passes a test that every left value passes is the same join; over rows (inner join pairs, left outer join), over the index arrays of the merge loop and of `OptJoin.outerPairs` over it (join columns non-decreasing), and over solution mappings of ids (SPARQL 1.1 Join and LeftJoin; `join_decode`: decoding `idJoin` is SPARQL Join); the planner's candidates are in non-decreasing order and contain every left value | **proved (2026-10-13)**; the hash join over a reduced right side and the `Table` of `scanSipTableM` are tested only (the open steps L5b and L5a′) | `SemiJoinTheorems.joinRows_semijoin`, `ljRows_semijoin`, `mergeGo_semijoin`, `outerPairs_merge_semijoin`, `mergeSpec_rows`, `ljSpec_rows`, `idJoin_semijoin`, `idLeftJoin_semijoin`, `join_decode`; `SipScanTheorems.sipCands_sound` |
 | L6a | E1 from L1 to L5 | open | — |
 | L6b | E2: the fallback selection keeps every quad the query can read (the planner theorem of 2026-09-06 restated for PSO scans), and the `datasetOfQuads` bridge (that record's section 6.6 item 1) | open | — |
 | L6c | The JSON printer (`keyJsonInto`) equals `jsonOfTerm` | tested only | `tests/sbm11/run.sh` part (b), byte comparison on 21 queries |
@@ -143,6 +155,12 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
   solutions (ids are injective, `TermIdTheorems.toId?_eq_iff`) and that
   `joinOutput`'s `gather` copies the rows of the pairs. `hashJoin` uses
   `Std.HashMap` and needs a lookup characterisation of its own.
+- **L5g″.** The same step as L5a′ and L5b, for the left outer join: a
+  denotation of a `Table` as rows of ids (columns read with `word64`, id 0
+  left out), a lemma that `gather` and `gatherOpt` copy the rows of their
+  index arrays (`copySlice` of runs, `put64`), and a lookup characterisation
+  of `Std.HashMap.alter` and `getD` for `hashPairs`. L5g and L5g′ give
+  everything from the index arrays on.
 - **L6a.** Needs everything above, plus the plan rules: the permutation
   chosen by `permFor` holds the bound positions as a prefix, and the join
   order does not change the multiset.
@@ -401,3 +419,48 @@ On the worktree with every change of this landing:
 | `#print axioms` of `scanFoldM_tuples`, `scanFoldM_columns`, `blockChunk_tuples`, `colConst_sound`, `perms_same` | `propext`, `Classical.choice`, `Quot.sound` |
 | new `sorry`, `native_decide`, user `axiom`, `import Std`, raised heartbeats | none |
 
+
+## 12. Sideways information passing (2026-10-13)
+
+https://github.com/danbri/factoidal/issues/809. The id path passes the left
+values of a join variable into the right scan; the record of the algorithm,
+the rule and the measurements is
+[`2026-10-12-sbm11-stage4.md`](2026-10-12-sbm11-stage4.md) section 11.
+Lemmas L4g, L4h, L4i and L5h (section 2) in
+`Storage/Sbm11/SipTheorems.lean`, `SipScanTheorems.lean` and
+`SemiJoinTheorems.lean`.
+
+How the pieces compose: L4i says the scan with candidates returns the full
+scan's tuples filtered by "the join value is a candidate"; `sipCands_sound`
+says every left value is a candidate; L5h says a join over a right input
+filtered that way is the join over the full right input (for the merge loop
+and for `outerPairs` over it, as index arrays; for SPARQL Join and LeftJoin
+over solution mappings of ids). The hash join (L5b) and the `Table` the
+scan appends (L5a′) stay open for the scans with candidates as for the full
+scans; `tests/sbm11/run.sh` part (l), the W3C census with `--sip always`
+and the DBpedia and olympics answers cover them.
+
+What the proofs taught:
+
+- **Prove a loop that writes nothing for most rows with the step lemma of
+  the loop that writes every row.** `deltaFindGo` and `deltaGatherGo` follow the shape of
+  `FrameWords.deltaRangeGo`: a step lemma that consumes one varint
+  (`getVarAtGo`), then an induction over the row count against
+  `Column.deltaAtGo` with the decoded values given as a function `val` of
+  the row number. Stating the values as `val t` (with `a[t - idx]! = val t`
+  as the invariant) kept the index arithmetic out of the induction.
+- **Make a search hint unnecessary for correctness.** The
+  candidate pointer starts at a binary search result; `startFor` falls back
+  to 0 when the hint is too far, so `probe_mem` holds for any start and the
+  binary search needs no lemma. `mayHold` checks its hint in the same way.
+- **Generalise each Boolean subterm before `cases`.** `cases` needs the
+  subterm as written. After
+  `blockPlan_keep`, the keep test reads `List.all (chk r)` while the chunk's
+  tests read `List.all fun ck => rowCol r ck.1 == ...`; `have e : ... := rfl`,
+  `rw [e]` and `generalize` on each Boolean, then `cases` on the variables,
+  closed the case analysis.
+- **Check at run time what a function without theorems must give.**
+  `sipCands` sorts with
+  `mergeSortBy`, which has no theorem; the planner uses the candidates only
+  when they are in order and contain every left value, both checked at run
+  time, and `sipCands_sound` uses only those checks.

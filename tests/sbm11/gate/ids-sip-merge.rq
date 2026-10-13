@@ -1,0 +1,3 @@
+# Sideways information passing (issue 809), merge joins: the one subject that knows ex:c passes into the scans of ex:name and ex:age.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?n ?a WHERE { ?s ex:knows ex:c . ?s ex:name ?n . ?s ex:age ?a }

@@ -4,6 +4,7 @@ ontology document given as N-Triples or N-Quads, with its imported
 documents.
 
     l4owl-species DOC.nt [IMPORTED.nt ...]
+    l4owl-species --phases DOC.nt
 
 Prints one JSON object: the verdict, the number of violations, the count
 of each violation kind, and the first ten violations. Exit 0 when the
@@ -72,11 +73,77 @@ def readGraph (path : String) : IO (Except String Graph) := do
     | .error e => pure (.error s!"{path}: parse error at {e.pos}: {e.msg}")
   catch e => pure (.error s!"{path}: {e}")
 
+open L4Factoidal.OWL.SyntaxDL in
+/-- `--phases DOC.nt`: the wall time of each part of the readable definition
+of `speciesViolations` on one document (no imports), in the order the
+definition computes them, with the number of violations of each part. Each
+part's result is forced between its two clock reads by writing its length to
+an `IO.Ref` (`skills/measuring-inference` § 9 and § 11). The parts are the
+specification's own functions (`tripleViolations`,
+`anonymousIndividualViolations`, ...), which no `csimp` theorem replaces; the
+line `whole` is `speciesViolations`, which the compiler runs as
+`speciesViolationsFast` (https://github.com/danbri/factoidal/issues/766). The
+last line says whether the parts, joined in the definition's order, are the
+list `whole` returned: a differential check of the indexed twins on real
+data, beside the theorem `speciesViolations_eq_fast`. -/
+def phasesMain (doc : String) : IO UInt32 := do
+  match ← readGraph doc with
+  | .error e => IO.eprintln e; pure 2
+  | .ok g0 =>
+    let sink ← IO.mkRef (0 : Nat)
+    let err ← IO.getStderr
+    let t00 ← IO.monoNanosNow
+    let timed := fun (name : String) (f : Unit → List String) => do
+      let t0 ← IO.monoNanosNow
+      let v := f ()
+      sink.set v.length
+      let t1 ← IO.monoNanosNow
+      err.putStrLn s!"part={name} count={v.length} ms={(t1 - t0) / 1000000}"
+      pure v
+    let header ← timed "header" (fun _ => docHeaderViolations g0)
+    -- Table 5 and the declaration index are values the later parts read, so
+    -- they are computed inside their own timed window and handed on.
+    let t0 ← IO.monoNanosNow
+    let g := dropTable5Redundant g0
+    sink.set g.length
+    let t1 ← IO.monoNanosNow
+    err.putStrLn s!"part=table5 count={g.length} ms={(t1 - t0) / 1000000}"
+    let d := buildDeclIndex g
+    let dSize := d.cls.length + d.restr.length + d.datatype.length + d.objProp.length +
+      d.dataProp.length + d.annProp.length + d.charProp.length + d.hasDR.length +
+      d.inv.length + d.annSubj.length
+    sink.set dSize
+    let t2 ← IO.monoNanosNow
+    err.putStrLn s!"part=declindex count={dSize} ms={(t2 - t1) / 1000000}"
+    let perTriple ← timed "per-triple" (fun _ => g.flatMap (tripleViolations g d))
+    let punning ← timed "punning" (fun _ => punningViolations d)
+    let t3 ← IO.monoNanosNow
+    let ns := nonsimpleKeys g
+    sink.set ns.length
+    let t4 ← IO.monoNanosNow
+    err.putStrLn s!"part=nonsimple-keys count={ns.length} ms={(t4 - t3) / 1000000}"
+    let topData ← timed "top-data" (fun _ => topDataViolations g)
+    let dtDefs ← timed "datatype-definitions" (fun _ => datatypeDefinitionViolations g d)
+    let roles ← timed "simple-roles" (fun _ => simpleRoleViolations g ns)
+    let regular ← timed "regularity" (fun _ => regularityViolations g)
+    let anon ← timed "anonymous-individuals" (fun _ => anonymousIndividualViolations g d)
+    let unres ← timed "unresolved-imports" (fun _ =>
+      unresolvedImportViolations (some (ontologyIris g0)) (rootOntologyKeys g0) g0)
+    let parts := (header ++ perTriple ++ punning ++ topData ++ dtDefs ++ roles ++ regular ++
+      anon ++ unres).map (fun v => "premise: " ++ v)
+    let t01 ← IO.monoNanosNow
+    err.putStrLn s!"part=sum-of-parts count={parts.length} ms={(t01 - t00) / 1000000}"
+    let whole ← timed "whole" (fun _ =>
+      speciesViolations g0 g0 false [] g0 (some (ontologyIris g0)))
+    err.putStrLn s!"parts-equal-whole={parts == whole}"
+    pure (if parts == whole then 0 else 1)
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-      IO.eprintln "usage: l4owl-species DOC.nt [IMPORTED.nt ...]"
+      IO.eprintln "usage: l4owl-species DOC.nt [IMPORTED.nt ...] | l4owl-species --phases DOC.nt"
       pure 2
+  | ["--phases", doc] => phasesMain doc
   | doc :: imports =>
     match ← readGraph doc with
     | .error e => IO.eprintln e; pure 2

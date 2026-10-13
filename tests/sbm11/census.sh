@@ -25,10 +25,18 @@
 #
 # Prints executed / matched / differed / not comparable, per path, and the
 # refusals at pack and at query. Usage: tests/sbm11/census.sh [SUITE_DIR...]
+# SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
+# compare the census of two builds. SBM11_SIP: when set, the `--sip` mode
+# (auto, the CLI default; always: candidates into every join scan the shape
+# allows; off; issue 809), with `--explain`, and the summary counts the
+# tests in which a scan with candidates ran; unset, no `--sip` is passed (a
+# build before issue 809 has no such option). SBM11_THREADS: the
+# `--threads` count (1).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="$ROOT/formal/lean4/.lake/build/bin"
+S11="${SBM11_BIN:-$BIN/l4sbm11}"
 suites=("$@")
 if [ ${#suites[@]} -eq 0 ]; then
   suites=("$ROOT/third_party/testing/w3c/sparql/sparql10" "$ROOT/third_party/testing/w3c/sparql/sparql11")
@@ -78,7 +86,7 @@ while IFS=$'\t' read -r t q d g; do
 done <"$rows"
 
 eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; uncompared=0
-ids_exec=0; ids_match=0; ref_exec=0; ref_match=0
+ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
 for t in "${order[@]}"; do
@@ -109,7 +117,7 @@ for t in "${order[@]}"; do
   rc=0
   timeout 120 "$BIN/l4sbm11-pack" "$input" "$st/gen" --workers 1 >"$st/pack.log" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
-    timeout 120 "$BIN/l4sbm11" activate "$st" gen >"$st/act.log" 2>&1 || rc=$?
+    timeout 120 "$S11" activate "$st" gen >"$st/act.log" 2>&1 || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     rpack=$((rpack + 1)); printf '%s\trefused-pack\t%s\n' "$t" "$(tail -1 "$st/pack.log" "$st/act.log" 2>/dev/null | tr '\n' ' ' | head -c 200)" >>"$TSV"
@@ -117,14 +125,18 @@ for t in "${order[@]}"; do
   fi
   qbase="file://$(realpath "$qfile")"
   rc=0
-  timeout 120 "$BIN/l4sbm11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" >"$st/got" 2>"$st/got.err" || rc=$?
+  timeout 120 "$S11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" ${SBM11_SIP:+--sip "$SBM11_SIP" --explain} >"$st/got" 2>"$st/got.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     rquery=$((rquery + 1)); printf '%s\trefused-query\t%s\n' "$t" "$(tail -1 "$st/got.err" | head -c 200)" >>"$TSV"
     rm -rf "$st"; continue
   fi
   executed=$((executed + 1))
   path=ids; grep -q 'path=reference' "$st/got.err" && path=reference
+  # the fallback's reason (`path=reference reason="..."`), for the histogram
+  # of shapes the id path does not run (issue 775)
+  reason=""; [ $path = reference ] && reason="$(grep -o 'reason="[^"]*"' "$st/got.err" | head -1 | sed 's/^reason="//; s/"$//')"
   if [ $path = ids ]; then ids_exec=$((ids_exec + 1)); else ref_exec=$((ref_exec + 1)); fi
+  grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   rrc=0
   timeout 120 "$BIN/l4factoidal" query "$input" --format nquads --base "file://$input" --query "$qfile" \
     >"$st/want" 2>/dev/null || rrc=$?
@@ -132,7 +144,7 @@ for t in "${order[@]}"; do
   case "$verdict" in
     equal*) matched=$((matched + 1))
             if [ $path = ids ]; then ids_match=$((ids_match + 1)); else ref_match=$((ref_match + 1)); fi
-            printf '%s\tmatched\t%s\n' "$t" "$path" >>"$TSV" ;;
+            printf '%s\tmatched\t%s\t%s\n' "$t" "$path" "$reason" >>"$TSV" ;;
     uncompared*) uncompared=$((uncompared + 1)); printf '%s\tuncompared\t%s\t%s\n' "$t" "$path" "$verdict" >>"$TSV" ;;
     *) differed=$((differed + 1)); printf '%s\tdiffered\t%s\t%s\n' "$t" "$path" "$verdict" >>"$TSV"
        printf '%s (%s): %s\n' "${t##*/}" "$path" "$verdict" >>"$MIS" ;;
@@ -144,7 +156,12 @@ echo "sbm11 census (row agreement with the reference engine over the same input,
 echo "  $executed executed, $rpack refused at convert/pack/activate, $rquery refused at query (out of $eligible eligible QueryEvaluationTest entries; $missing skipped for missing files)"
 echo "  of the $executed executed: $matched matched the reference engine, $differed differed, $uncompared not comparable"
 echo "  id path: $ids_exec executed, $ids_match matched; reference fallback: $ref_exec executed, $ref_match matched"
+if [ -n "${SBM11_SIP:-}" ]; then
+  echo "  --sip $SBM11_SIP: a scan with candidates ran in $sip_tests of the $ids_exec id-path tests (issue 809)"
+fi
 if [ -s "$MIS" ]; then echo "  mismatches:"; sed 's/^/    /' "$MIS"; fi
 cut -f2 "$TSV" | sort | uniq -c
+echo "  reference fallback reasons (executed tests):"
+awk -F'\t' '$3 == "reference" { r = $4; if (r == "") r = "(no reason printed)"; c[r]++ } END { for (k in c) printf "    %4d  %s\n", c[k], k }' "$TSV" | sort -rn
 cp "$TSV" "$ROOT/tmp/sbm11-census-latest.tsv"
 echo "  per-test outcomes: tmp/sbm11-census-latest.tsv"
