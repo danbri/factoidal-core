@@ -5,6 +5,7 @@ one at a time, with the resident memory after each.
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
     l4query-phases FILE --parse-op [--format F] [--stop-after PHASE]
     l4query-phases FILE --closure-op [--format F] [--stop-after PHASE]
+    l4query-phases FILE --parse-cli [--format F] [--stop-after PHASE]
     l4query-phases --walk-check LIST
 
 PHASE is one of `read`, `parse`, `normalize`, `index`, `solutions`, `eval`,
@@ -237,6 +238,47 @@ def closureOpMain (file format stop : String) : IO UInt32 := do
           report "output" out.utf8ByteSize
           pure 0
 
+def parseCliPhases : List String := ["read", "chars", "parse", "normalize", "nquads", "output"]
+
+/-- `--parse-cli`: the phases of `l4factoidal parse FILE [--out nquads]` as
+`parseCmd` in `Wasm/Cli.lean` ran them before
+https://github.com/danbri/factoidal/issues/813: `read` (`readInput`, the
+whole file as one `String`), `chars` (the whole-document `String.toList`
+that `parseNTriples` and `parseNQuadsFast` start with; V is its length),
+`parse` (`Ops.parseTextToDataset`; V is the quad count), `normalize` (the
+count `parse` prints without `--out`: `normalizeDataset`, then the quad
+count), `nquads` (`Dataset.toCanonicalNQuads` of the parsed dataset, what
+`--out nquads` prints; V is its length in bytes), `output` (that text
+written). `chars` is a phase of its own only when `--stop-after chars`
+asks for it; otherwise the list is built inside `parse`. -/
+def parseCliMain (file format stop : String) : IO UInt32 := do
+  unless parseCliPhases.contains stop do
+    IO.eprintln s!"l4query-phases: unknown --parse-cli phase '{stop}' ({String.intercalate " | " parseCliPhases})"
+    return 2
+  let t0 ← IO.monoNanosNow
+  let report := report t0
+  report "start" 0
+  let text ← IO.FS.readFile file
+  report "read" text.utf8ByteSize
+  if stop == "read" then return 0
+  if stop == "chars" then
+    report "chars" text.toList.length
+    return 0
+  match L4Wasm.Ops.parseTextToDataset text format "" with
+  | .error e => IO.eprintln e; pure 1
+  | .ok ds =>
+    report "parse" (L4Wasm.Ops.datasetQuadCount ds)
+    if stop == "parse" then return 0
+    if stop == "normalize" then
+      report "normalize" (L4Wasm.Ops.datasetQuadCount (normalizeDataset ds))
+      return 0
+    let nq := L4Factoidal.Syntax.Dataset.toCanonicalNQuads ds
+    report "nquads" nq.utf8ByteSize
+    if stop == "nquads" then return 0
+    IO.println nq
+    report "output" nq.utf8ByteSize
+    pure 0
+
 /-- The phases of `l4factoidal query` on `file`. -/
 def queryMain (file : String) (rest : List String) : IO UInt32 := do
     let format := (flagValue rest "--format").getD "turtle"
@@ -312,6 +354,9 @@ def main (args : List String) : IO UInt32 := do
   | file :: rest =>
     if rest.contains "--parse-op" then
       parseOpMain file ((flagValue rest "--format").getD "turtle")
+        ((flagValue rest "--stop-after").getD "output")
+    else if rest.contains "--parse-cli" then
+      parseCliMain file ((flagValue rest "--format").getD "turtle")
         ((flagValue rest "--stop-after").getD "output")
     else if rest.contains "--closure-op" then
       closureOpMain file ((flagValue rest "--format").getD "nquads")

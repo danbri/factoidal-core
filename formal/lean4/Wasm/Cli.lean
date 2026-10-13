@@ -31,6 +31,7 @@ output, row order included, is unchanged.
 import Wasm.Abi
 import Wasm.Dispatch
 import L4Factoidal.Syntax.LenientFeed
+import L4Factoidal.Syntax.StrictFeed
 import L4Factoidal.Syntax.FileIri
 
 namespace L4Wasm.Cli
@@ -471,6 +472,233 @@ private def queryCountOf (text : String) : Option String :=
 #guard queryCountOf sampleRepeat == some "2"
 #guard queryCountOf sampleTtl == some "4"
 
+/-! ## Strict `parse` of a FILE, streamed (issue 813)
+
+`l4factoidal parse FILE [--out nquads]` for N-Triples, N-Quads and Turtle
+reads FILE in 65,536-byte chunks through `Syntax/StrictFeed.lean` instead of
+reading it whole (https://github.com/danbri/factoidal/issues/813). Each
+chunk's canonical N-Quads lines are written before the next chunk is read
+(N-Triples, Turtle); N-Quads keeps the set `parseNQuadsFast` keeps
+(`FastDataset`) and writes it at the end, because the canonical form groups
+the quads by graph; the count keeps the set of distinct triples only.
+
+The output and the count are those of the whole-file path below
+(`Ops.parseTextToDataset`); see `StrictFeed.lean` for the theorems and the
+design record (section 3b) for the byte comparison. Errors:
+
+* N-Triples and N-Quads: the error of the chunk's line walk, with the
+  absolute offset (`fmtParseError`), and the lines of the chunks before it
+  already written;
+* Turtle: when the walk refuses a document (or the document contains `<<`),
+  the file is read whole and given to `Ops.parseTextToDataset`, as
+  `parseTurtleText` gives it to `parseTurtle`, so every Turtle error is the
+  reference parser's;
+* bytes that are not UTF-8: the file is read whole by `readInput`, which
+  reports them as before. -/
+
+/-- What a streamed strict parse needs from the whole-file path. -/
+inductive StrictOutcome where
+  /-- Finished: exit status. -/
+  | done (code : UInt32)
+  /-- Read the file whole; `printed` triples are written (`turtle`: in the
+  order of the Turtle walk). -/
+  | whole (printed : Nat) (turtle : Bool)
+
+/-- Write the text of one chunk's triples (newest first in `accRev`). -/
+def writeTriples (accRev : List Triple) : IO Unit := do
+  let out ← IO.getStdout
+  out.putStr (StrictFeed.chunkText accRev)
+  out.flush
+
+/-- N-Triples and N-Quads through `StrictFeed.LineFeed`. `emit`: write
+canonical N-Quads; otherwise print the count. -/
+def streamStrictLines (path : String) (mode : Mode) (ntriples emit : Bool) :
+    IO StrictOutcome := do
+  let size := (← System.FilePath.metadata path).byteSize.toNat
+  let fuel := size / lenientChunkBytes.toNat + 2
+  let reader := if ntriples then tripleReader mode else quadReader mode
+  if ntriples && emit then
+    -- The triples of each chunk are written and dropped.
+    let walked ← IO.FS.withFile path .read fun h =>
+      forChunks h
+        (fun (st : Utf8Stream × StrictFeed.LineFeed (List Triple) × Nat × Option StrictOutcome) =>
+          st.2.2.2.isSome)
+        (fun st bytes => do
+          let (utf8, lf, printed, _) := st
+          match utf8.feed bytes with
+          | .error _ => pure (.ok (utf8, lf, printed, some (.whole printed false)))
+          | .ok (text, utf8') =>
+            match StrictFeed.LineFeed.feed reader (fun a t _ => t :: a) lf text.toList with
+            | .error e =>
+                IO.eprintln (fmtParseError e)
+                pure (.ok (utf8', lf, printed, some (.done 1)))
+            | .ok lf' =>
+                writeTriples lf'.acc
+                pure (.ok (utf8', { lf' with acc := [] }, printed + lf'.acc.length, none)))
+        fuel (Utf8Stream.init, { acc := [] }, 0, none)
+    match walked with
+    | .error e => IO.eprintln s!"{path}: {e}"; pure (.done 1)
+    | .ok ((_, _, _, some o), _) => pure o
+    | .ok (_, false) => IO.eprintln s!"{path}: the file grew while it was read"; pure (.done 1)
+    | .ok ((utf8, lf, printed, none), true) =>
+      match utf8.finish with
+      | .error _ => pure (.whole printed false)
+      | .ok () =>
+        match StrictFeed.LineFeed.finish reader (fun a t _ => t :: a) lf with
+        | .error e => IO.eprintln (fmtParseError e); pure (.done 1)
+        | .ok accRev =>
+            writeTriples accRev
+            IO.println ""
+            pure (.done 0)
+  else
+    -- The set: `countQuad` for the N-Triples count, `addQuadFast` for N-Quads
+    -- (the accumulator of `parseNQuadsFast`).
+    let consume : FastDataset → Triple → Option Subject → FastDataset :=
+      if ntriples then StrictFeed.countQuad else addQuadFast
+    let walked ← IO.FS.withFile path .read fun h =>
+      forChunks h
+        (fun (st : Utf8Stream × StrictFeed.LineFeed FastDataset × Option StrictOutcome) =>
+          st.2.2.isSome)
+        (fun st bytes => do
+          let (utf8, lf, _) := st
+          match utf8.feed bytes with
+          | .error _ => pure (.ok (utf8, lf, some (.whole 0 false)))
+          | .ok (text, utf8') =>
+            match StrictFeed.LineFeed.feed reader consume lf text.toList with
+            | .error e =>
+                IO.eprintln (fmtParseError e)
+                pure (.ok (utf8', lf, some (.done 1)))
+            | .ok lf' => pure (.ok (utf8', lf', none)))
+        fuel (Utf8Stream.init, { acc := {} }, none)
+    match walked with
+    | .error e => IO.eprintln s!"{path}: {e}"; pure (.done 1)
+    | .ok ((_, _, some o), _) => pure o
+    | .ok (_, false) => IO.eprintln s!"{path}: the file grew while it was read"; pure (.done 1)
+    | .ok ((utf8, lf, none), true) =>
+      match utf8.finish with
+      | .error _ => pure (.whole 0 false)
+      | .ok () =>
+        match StrictFeed.LineFeed.finish reader consume lf with
+        | .error e => IO.eprintln (fmtParseError e); pure (.done 1)
+        | .ok fd =>
+            if ntriples then
+              IO.println (toString (StrictFeed.FastDataset.quadCount fd))
+            else
+              let ds := fd.toDataset
+              if emit then IO.println (Dataset.toCanonicalNQuads ds)
+              else IO.println (toString (datasetQuadCount (normalizeDataset ds)))
+            pure (.done 0)
+
+/-- Turtle through the pre-pass and the scanner walk of `parseTurtleWalk`. -/
+def streamStrictTurtle (path : String) (mode : Mode) (base : String) (emit : Bool) :
+    IO StrictOutcome := do
+  let size := (← System.FilePath.metadata path).byteSize.toNat
+  let fuel := size / lenientChunkBytes.toNat + 2
+  let baseOpt : Option String := if base == "" then none else some base
+  let pre ← IO.FS.withFile path .read fun h =>
+    forChunks h (fun (_ : StrictFeed.TurtlePrepass) => false)
+      (fun p b => pure (p.feed b)) fuel ({} : StrictFeed.TurtlePrepass)
+  match pre with
+  | .error _ => pure (.whole 0 true)
+  | .ok (_, false) => IO.eprintln s!"{path}: the file grew while it was read"; pure (.done 1)
+  | .ok (p, true) =>
+  match p.finish with
+  | .error _ => pure (.whole 0 true)
+  | .ok (_, true) => pure (.whole 0 true)
+  | .ok (pfx, false) =>
+  let init : TurtleChunkFoldState (List Triple) :=
+    TurtleChunkFoldState.init pfx prependReverse [] baseOpt mode
+  -- State: UTF-8 decoder, walk state (its accumulator holds the current
+  -- chunk's triples), triples written, the set for the count.
+  let walked ← IO.FS.withFile path .read fun h =>
+    forChunks h
+      (fun (st : Utf8Stream × TurtleChunkFoldState (List Triple) × Nat × FastDataset × Bool) =>
+        st.2.2.2.2)
+      (fun st bytes => do
+        let (utf8, ws, printed, fd, _) := st
+        match utf8.feed bytes with
+        | .error _ => pure (.ok (utf8, ws, printed, fd, true))
+        | .ok (text, utf8') =>
+          match StrictFeed.turtleFeed prependReverse (.ok ws) text with
+          | .error _ => pure (.ok (utf8', ws, printed, fd, true))
+          | .ok ws' =>
+              if emit then
+                writeTriples ws'.acc
+                pure (.ok (utf8', ws'.mapAcc (fun _ => []), printed + ws'.acc.length, fd, false))
+              else
+                pure (.ok (utf8', ws'.mapAcc (fun _ => []), printed,
+                  StrictFeed.countTriplesRev fd ws'.acc, false)))
+      fuel (Utf8Stream.init, init, 0, {}, false)
+  match walked with
+  | .error e => IO.eprintln s!"{path}: {e}"; pure (.done 1)
+  | .ok ((_, _, printed, _, true), _) => pure (.whole printed true)
+  | .ok (_, false) => IO.eprintln s!"{path}: the file grew while it was read"; pure (.done 1)
+  | .ok ((utf8, ws, printed, fd, false), true) =>
+    match utf8.finish with
+    | .error _ => pure (.whole printed true)
+    | .ok () =>
+      match ws.finish prependReverse with
+      | .error _ => pure (.whole printed true)
+      | .ok accRev =>
+          if emit then
+            writeTriples accRev
+            IO.println ""
+          else
+            IO.println (toString (StrictFeed.FastDataset.quadCount
+              (StrictFeed.countTriplesRev fd accRev)))
+          pure (.done 0)
+
+/-- The whole-file path after a streamed run handed over: `printed` triples
+of the walk are already on standard output. -/
+def strictWhole (path format base : String) (emit : Bool) (printed : Nat) (turtle : Bool) :
+    IO UInt32 := do
+  match ← readInput (some path) with
+  | .error e => IO.eprintln e; pure 1
+  | .ok text =>
+    if !emit then
+      match parseCountOutput text format base with
+      | .error msg => IO.eprintln msg; pure 1
+      | .ok n => IO.println n; pure 0
+    else
+    match Ops.parseTextToDataset text format base with
+    | .error msg => IO.eprintln msg; pure 1
+    | .ok ds =>
+      if printed == 0 then
+        IO.println (Dataset.toCanonicalNQuads ds)
+        pure 0
+      else
+        -- Only the Turtle walk hands over after writing (a document the walk
+        -- refuses and `parseTurtle` accepts). The triples written are the
+        -- walk's first `printed`; write the rest of the reference graph when
+        -- they are its first `printed`.
+        let (mode, _) := Ops.resolveModeAndTag format
+        let baseOpt : Option String := if base == "" then none else some base
+        let walked := StrictFeed.walkPrefix
+          (TurtleChunkFoldState.init (freshBnodePrefixText text) prependReverse [] baseOpt mode) text
+        if turtle && ds.named.isEmpty && printed ≤ walked.length &&
+            walked.take printed == ds.default.take printed then
+          let out ← IO.getStdout
+          out.putStr (String.join ((ds.default.drop printed).map Triple.toCanonicalNTriples))
+          IO.println ""
+          pure 0
+        else
+          IO.eprintln s!"l4factoidal parse: internal: the streamed walk and the reference parser disagree within the first {printed} triples; the output is not complete"
+          pure 1
+
+/-- `parse FILE [--out nquads]` streamed, or `none` when the format has no
+streamed execution (TriG, RDF/XML, JSON-LD). -/
+def streamStrictFile (path format base : String) (emit : Bool) : IO (Option UInt32) := do
+  let (mode, tag) := Ops.resolveModeAndTag format
+  let outcome? ← match tag with
+    | "ntriples" | "nt" | "n-triples" => some <$> streamStrictLines path mode true emit
+    | "nquads" | "nq" | "n-quads" => some <$> streamStrictLines path mode false emit
+    | "" | "turtle" | "ttl" => some <$> streamStrictTurtle path mode base emit
+    | _ => pure none
+  match outcome? with
+  | none => pure none
+  | some (.done code) => pure (some code)
+  | some (.whole printed turtle) => some <$> strictWhole path format base emit printed turtle
+
 def parseCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--out", "--max-errors"] ["--lenient"] args with
   | .error e => IO.eprintln s!"l4factoidal parse: {e}"; pure 2
@@ -478,6 +706,19 @@ def parseCmd (args : List String) : IO UInt32 := do
     if s.hasBool "--lenient" then parseLenientCmd s else
     let format := (s.value? "--format").getD "turtle"
     let base := (s.value? "--base").getD ""
+    let streamed ← match s.positional[0]?, s.value? "--out" with
+      | some path, none =>
+          if path == "-" then pure none else
+          try streamStrictFile path format base false
+          catch e => IO.eprintln s!"{path}: {e}"; pure (some 1)
+      | some path, some "nquads" =>
+          if path == "-" then pure none else
+          try streamStrictFile path format base true
+          catch e => IO.eprintln s!"{path}: {e}"; pure (some 1)
+      | _, _ => pure none
+    match streamed with
+    | some code => pure code
+    | none =>
     match ← readInput s.positional[0]? with
     | .error e => IO.eprintln e; pure 1
     | .ok text =>
