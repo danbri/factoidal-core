@@ -633,7 +633,12 @@ All in `StrictFeed.lean` and `TurtleChunkFold.lean`; axioms `propext`,
   dataset with one default graph.
 - `isIri_eq_isIriFast` (`NTriples.lean`, `@[csimp]`): section 3b.5.
 
-Not proved: the N-Triples chunk boundary (a line walk over the lines of each
+Not proved: that `walkAll` (the walk `drainRun_eq` speaks of) from the
+initial state is `parseTurtleWalk`. `TurtleChunkFold.walkChars` writes out the
+fold of `parseTurtleWalk` with the same step text, but `rfl` does not close the
+equation, because the two `match` expressions elaborate to different auxiliary
+matchers; `#guard`s in `StrictFeed.lean` compare them on accepted and refused
+documents. Not proved either: the N-Triples chunk boundary (a line walk over the lines of each
 chunk equals the walk over the whole text; the N-Quads RDF 1.1 case is
 `streamConsume11_eq_batch`), the N-Quads RDF 1.2 case, the N-Triples and
 N-Quads error at a chunk boundary, and that the Utf8Stream decoding of the

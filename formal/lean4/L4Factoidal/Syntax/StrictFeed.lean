@@ -38,16 +38,23 @@ Theorems, in this file and in `TurtleChunkFold.lean`:
   is the walk of the whole text (`String.foldl` over a concatenation);
   `TurtleChunkFold.walk_drain` (in `TurtleChunkFold.lean`): a walk started
   with triples `a` already in its accumulator ends with the triples of the
-  walk started empty, then `a`, so emptying the accumulator after each chunk
-  loses and reorders nothing.
-* `TurtlePrepass.finish_eq`: the pre-pass over chunks gives
+  walk started empty, then `a`; `drainRun_eq`: so emptying the accumulator
+  after each chunk and writing what it held writes the triples of the walk of
+  the whole text (`walkAll`), in order, and fails exactly when it fails.
+* `TurtlePrepass.feedText_chunks`: the pre-pass over chunks gives
   `freshBnodePrefixText` and `hasDoubleLt` of their concatenation.
 
-Not proved: the N-Triples chunk boundary (`LineFeed` with `tripleReader`
-against `parseLinesAcc` on the whole text) and the N-Quads RDF 1.2 one; the
-N-Triples and N-Quads error text at a chunk boundary. The command line is
-checked against the binary before this change on every file of the W3C
-syntax suites (design record, section 3b).
+Not proved: that `walkAll` from the initial state is `parseTurtleWalk`.
+`TurtleChunkFold.walkChars` writes out the fold of `parseTurtleWalk` with the
+same step text, but `rfl` does not close the equation (the two `match`
+expressions elaborate to different auxiliary matchers); the `#guard`s below
+compare the two on accepted and refused documents. Not proved either: the
+N-Triples chunk boundary (`LineFeed` with `tripleReader` against
+`parseLinesAcc` on the whole text) and the N-Quads RDF 1.2 one; the N-Triples
+and N-Quads error text at a chunk boundary. The command line is checked
+against the binary before this change on every file of the W3C syntax suites
+at three chunk sizes (`tools/strict-parse-differential.sh`, design record
+section 3b.4).
 
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
@@ -521,6 +528,27 @@ private def drainedWalk (n : Nat) (s : String) : Except ParseError (List Triple)
     | .error e => .error e
 
 #guard (List.range 12).all fun i => (drainedWalk (i + 1) ttlDoc).toOption == (parseTurtle ttlDoc).toOption
+
+/-- `walkAll` from the initial state of `parseTurtleWalk`. -/
+private def walkAllOf (s : String) : Except ParseError (List Triple) :=
+  walkAll (TurtleChunkFoldState.init (freshBnodePrefixText s) prependReverse [] none .rdf11)
+    s.toList
+
+private def ttlBad : String :=
+  "@prefix ex: <http://example.org/> .\nex:a ex:p ex:b .\nex:c ex:p .\nex:d ex:p ex:e ."
+
+-- `walkAll` is `parseTurtleWalk` on accepted documents (the triples) and on
+-- refused ones (message and offset), and `drainRun` at every chunk size is
+-- `walkAll` (`drainRun_eq`, here run).
+#guard (walkAllOf ttlDoc).toOption == (parseTurtleWalk ttlDoc).toOption
+#guard (walkAllOf ttlDoc).toOption.isSome
+#guard (match walkAllOf ttlBad, parseTurtleWalk ttlBad with
+        | .error e1, .error e2 => e1.msg == e2.msg && e1.pos == e2.pos
+        | _, _ => false)
+#guard (List.range 12).all fun i =>
+  match drainedWalk (i + 1) ttlBad, walkAllOf ttlBad with
+  | .error e1, .error e2 => e1.msg == e2.msg && e1.pos == e2.pos
+  | _, _ => false
 #guard (parseTurtle ttlDoc).toOption.map List.length == some 10
 
 /-! ## Axiom audit (propext, Classical.choice and Quot.sound only) -/
