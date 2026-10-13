@@ -664,4 +664,54 @@ theorem scanFoldSipM_filter (st : Store Id) (spec : ScanSpec) (hspec : SpecOk sp
 #print axioms scanFoldSipM_tuples
 #print axioms scanFoldSipM_filter
 
+/-! ## The candidates the planner passes (`sipCands`) -/
+
+theorem allMemGo_spec (t : L4Factoidal.Qlvr.Table) (c : Nat) (cands : Array UInt64) :
+    ∀ f i, t.rows - i ≤ f → allMemGo t c cands f i = true →
+      ∀ k, i ≤ k → k < t.rows → sipMem cands (t.at c k) = true := by
+  intro f
+  induction f with
+  | zero => intro i hf _ k hik hk; omega
+  | succ f ih =>
+    intro i hf h k hik hk
+    simp only [allMemGo] at h
+    rw [if_pos (by omega)] at h
+    split at h
+    · rename_i hm
+      rcases Nat.eq_or_lt_of_le hik with e | l
+      · subst e; exact hm
+      · exact ih (i + 1) (by omega) h k (by omega) hk
+    · cases h
+
+/-- **What the planner's candidates satisfy.** When `sipCands` gives
+    candidates for the variable `v` of a table, they are in non-decreasing
+    order and every value of the table's column `v` is a candidate: the two
+    hypotheses that `scanFoldSipM_filter` and the semi-join theorems
+    (`SemiJoinTheorems`) need. Both come from the run-time checks of
+    `sipCheck`, not from the sort. -/
+theorem sipCands_sound (t : L4Factoidal.Qlvr.Table) (v : String) (cands : Array UInt64)
+    (h : sipCands t v = some cands) :
+    Sip.Sorted cands ∧ ∃ c, t.idx v = some c ∧ ∀ i, i < t.rows → cands.contains (t.at c i) = true := by
+  unfold sipCands at h
+  cases hc : t.idx v with
+  | none => rw [hc] at h; cases h
+  | some c =>
+    rw [hc] at h
+    simp only at h
+    unfold sipCheck at h
+    split at h
+    · rename_i hok
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.and_eq_true] at hok
+      have hs := Sip.sorted_spec _ hok.1
+      refine ⟨hs, c, rfl, fun i hi => ?_⟩
+      have := allMemGo_spec t c _ t.rows 0 (by omega) hok.2 i (Nat.zero_le _) hi
+      unfold sipMem at this
+      rw [Sip.probe_mem _ hs] at this
+      exact this
+    · cases h
+
+#print axioms sipCands_sound
+
 end L4Factoidal.Storage.Sbm11.SipScanTheorems

@@ -1345,6 +1345,18 @@ def allMemGo (t : Table) (c : Nat) (cands : Array UInt64) : Nat → Nat → Bool
   | 0, _ => true
   | f + 1, i => if i < t.rows then (if sipMem cands (t.at c i) then allMemGo t c cands f (i + 1) else false) else true
 
+/-- The two run-time checks of `sipCands`. -/
+def sipCheck (t : Table) (c : Nat) (cands : Array UInt64) : Option (Array UInt64) :=
+  if Sip.sorted cands && allMemGo t c cands t.rows 0 then some cands else none
+
+/-- The distinct values of column `c` (sorted first unless `isSorted`). -/
+def sipDistinct (t : Table) (c : Nat) (isSorted : Bool) : Array UInt64 := Id.run do
+  let mut col : Array UInt64 := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    col := col.push (t.at c i)
+  let ordered := if isSorted then col else mergeSortBy col (· ≤ ·)
+  return dedupGo ordered ordered.size 0 (Array.mkEmpty ordered.size)
+
 /-- The candidates for the join variable `v` of a scan: the distinct values
     of the left table's column `v`, in non-decreasing order (the column as
     it is when the table is sorted on `v`, else sorted here). Used only when
@@ -1353,14 +1365,10 @@ def allMemGo (t : Table) (c : Nat) (cands : Array UInt64) : Nat → Nat → Bool
     (`allMemGo`); else `none`, and the scan runs without candidates.
     `SipScanTheorems.sipCands_sound` derives from the two checks what the
     semi-join reduction needs. -/
-def sipCands (t : Table) (v : String) : Option (Array UInt64) := Id.run do
-  let some c := t.idx v | return none
-  let mut col : Array UInt64 := Array.mkEmpty t.rows
-  for i in [0:t.rows] do
-    col := col.push (t.at c i)
-  let ordered := if t.sortVar == some v then col else mergeSortBy col (· ≤ ·)
-  let cands := dedupGo ordered ordered.size 0 (Array.mkEmpty ordered.size)
-  if Sip.sorted cands && allMemGo t c cands t.rows 0 then some cands else none
+def sipCands (t : Table) (v : String) : Option (Array UInt64) :=
+  match t.idx v with
+  | none => none
+  | some c => sipCheck t c (sipDistinct t c (t.sortVar == some v))
 
 /-- The right scan of a join with the table `left`: when the scan's sort
     variable `v` (the column after its key) is a variable of `left` and
