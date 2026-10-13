@@ -627,18 +627,19 @@ a field of the structure. One `csimp` theorem on the top function,
 `buildCanonicalMappingBudgeted_eq_fast`, reaches every caller. Record and
 proofs: `docs/designissues/2026-10-10-npm-lean-only.md` § 10, "Issue 751".
 
-The ladder, `l4factoidal canonicalize FILE --format nquads`, one run per
-point, user CPU seconds and peak resident memory, beside two RDFC-1.0
-implementations on the same files and machine (the canonical output of all
-three is byte-identical at every size):
+The ladder, `l4factoidal canonicalize FILE --format nquads`, user CPU
+seconds and peak resident memory (before: one run per point; after and the
+references: minimum of 3 runs, rdf-canonize at 64,000 one run), beside two
+RDFC-1.0 implementations on the same files and machine (the canonical output
+of all three is byte-identical at every size):
 
 | blank nodes | Lean before | Lean after | Oxigraph (pyoxigraph 0.5.11) | rdf-canonize 5.0.0 (Node 22.22.0) |
 |---:|---:|---:|---:|---:|
-| 2,000 | 0.16 s, 24 MB | 0.07 s, 24 MB | 0.03 s, 28 MB | 0.14 s, 66 MB |
-| 4,000 | 0.59 s, 33 MB | 0.15 s, 33 MB | 0.04 s, 32 MB | 0.27 s, 71 MB |
-| 8,000 | 2.66 s, 45 MB | 0.36 s, 47 MB | 0.09 s, 41 MB | 0.63 s, 85 MB |
-| 16,000 | 10.83 s, 70 MB | 0.62 s, 70 MB | 0.23 s, 59 MB | 1.88 s, 114 MB |
-| 64,000 | 327.67 s, 222 MB | 2.71 s, 223 MB | 0.98 s, 168 MB | 37.80 s, 197 MB |
+| 2,000 | 0.16 s, 24 MB | 0.07 s, 26 MB | 0.02 s, 27 MB | 0.14 s, 66 MB |
+| 4,000 | 0.59 s, 33 MB | 0.14 s, 33 MB | 0.05 s, 32 MB | 0.26 s, 75 MB |
+| 8,000 | 2.66 s, 45 MB | 0.27 s, 47 MB | 0.09 s, 41 MB | 0.64 s, 87 MB |
+| 16,000 | 10.83 s, 70 MB | 0.54 s, 70 MB | 0.19 s, 59 MB | 2.02 s, 115 MB |
+| 64,000 | 327.67 s, 222 MB | 2.66 s, 222 MB | 0.96 s, 167 MB | 37.80 s, 197 MB |
 
 Rules from this repair:
 
@@ -647,6 +648,6 @@ Rules from this repair:
   (collision groups). A scaling row on the cheap path passes while the
   expensive path is quadratic.
 - **A reference implementation can be quadratic too.** rdf-canonize 5.0.0
-  takes 1.88 s at 16,000 and 37.8 s at 64,000 blank nodes on this shape (20
+  takes 2.02 s at 16,000 and 37.8 s at 64,000 blank nodes on this shape (19
   times for 4 times the input). Put each reference on the same ladder; do
   not take one size as the measure of state of the art.

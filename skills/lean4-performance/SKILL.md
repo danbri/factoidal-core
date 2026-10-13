@@ -220,8 +220,8 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   tree: every value carries the proof. Each twin is proved equal through
   `toSpec`; a closure argument (`HndqRec`) becomes a hypothesis that the fast
   closure maps to the slow one, discharged by induction on the fuel. 16,000
-  blank nodes with one shared first-degree hash: 10.83 s to 0.62 s; 64,000:
-  327.67 s to 2.71 s, byte-identical output. A row that passed
+  blank nodes with one shared first-degree hash: 10.83 s to 0.54 s; 64,000:
+  327.67 s to 2.66 s, byte-identical output. A row that passed
   (`rdfc-bnode-unique`) did not show this cost: profile each shape that
   sends the work down a different step of the algorithm.
 - **A text round trip that a caller depends on is a function: name it and

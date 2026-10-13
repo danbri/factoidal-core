@@ -1045,18 +1045,28 @@ map, with an indexed issuer"; every definition above it is unchanged):
   label.
 
 Measured, `l4factoidal canonicalize FILE --format nquads`, linux x86_64,
-Lean 4.33.1, 4 shared CPUs, one run per point, under `/usr/bin/time` (user
-CPU seconds, peak resident memory). The output is byte-identical before and
-after at every size (`cmp`), and the outputs of the two reference
-implementations are byte-identical to it at every size:
+Lean 4.33.1, 4 CPUs shared with other work (load average 4 to 8), under
+`/usr/bin/time` (user CPU seconds, peak resident memory). "Before" is one run
+per point (the 64,000 point takes 5.5 minutes); "after" and the two
+reference implementations are the minimum of 3 runs (rdf-canonize at 64,000:
+one run). The output is byte-identical before and after at every size
+(`cmp`), and the outputs of the two reference implementations and of the
+wasm module are byte-identical to it at every size:
 
 | blank nodes | Lean before | Lean after | Oxigraph | rdf-canonize | after / Oxigraph |
 |---:|---:|---:|---:|---:|---:|
-| 2,000 | 0.16 s, 24 MB | 0.07 s, 24 MB | 0.03 s, 28 MB | 0.14 s, 66 MB | 2.3 |
-| 4,000 | 0.59 s, 33 MB | 0.15 s, 33 MB | 0.04 s, 32 MB | 0.27 s, 71 MB | 3.8 |
-| 8,000 | 2.66 s, 45 MB | 0.36 s, 47 MB | 0.09 s, 41 MB | 0.63 s, 85 MB | 4.0 |
-| 16,000 | 10.83 s, 70 MB | 0.62 s, 70 MB | 0.23 s, 59 MB | 1.88 s, 114 MB | 2.7 |
-| 64,000 | 327.67 s, 222 MB | 2.71 s, 223 MB | 0.98 s, 168 MB | 37.80 s, 197 MB | 2.8 |
+| 2,000 | 0.16 s, 24 MB | 0.07 s, 26 MB | 0.02 s, 27 MB | 0.14 s, 66 MB | 3.5 |
+| 4,000 | 0.59 s, 33 MB | 0.14 s, 33 MB | 0.05 s, 32 MB | 0.26 s, 75 MB | 2.8 |
+| 8,000 | 2.66 s, 45 MB | 0.27 s, 47 MB | 0.09 s, 41 MB | 0.64 s, 87 MB | 3.0 |
+| 16,000 | 10.83 s, 70 MB | 0.54 s, 70 MB | 0.19 s, 59 MB | 2.02 s, 115 MB | 2.8 |
+| 64,000 | 327.67 s, 222 MB | 2.66 s, 222 MB | 0.96 s, 167 MB | 37.80 s, 197 MB | 2.8 |
+
+The same inputs through the npm package with the wasm module rebuilt from
+this tree (`canonicalize(text, {format: 'nquads'})`, Node 22.22.0, one run,
+user CPU seconds and peak resident memory of the whole Node process, module
+instantiation included): 0.70 s, 0.89 s, 1.18 s, 1.86 s and 5.73 s; 134 MB,
+138 MB, 139 MB, 172 MB and 412 MB. The wasm module from before the change was
+not measured.
 
 The reference implementations, installed into `/tmp` only (not vendored):
 
@@ -1069,11 +1079,12 @@ The reference implementations, installed into `/tmp` only (not vendored):
   JavaScript implementation of Digital Bazaar), run on Node 22.22.0 with
   `canonize.NQuads.parse` and `canonize.canonize(dataset, {algorithm:
   'RDFC-1.0', format: 'application/n-quads'})` and the default
-  `maxWorkFactor` of 1. On this shape it is itself superlinear: 1.88 s at
+  `maxWorkFactor` of 1. On this shape it is itself superlinear: 2.02 s at
   16,000 and 37.80 s at 64,000 blank nodes.
 
-Lean is 2.3 to 4.0 times the CPU time of Oxigraph on this ladder, and from
-4,000 blank nodes it is faster than rdf-canonize. Where the time goes now
+Natively, Lean takes 2.8 to 3.5 times the CPU time of Oxigraph on this
+ladder (2.8 to 3.0 from 4,000 blank nodes up), and less than rdf-canonize at every
+size. Where the time goes now
 (callgrind at 16,000 blank nodes, 5,701 million instructions, exclusive):
 the pure-Lean SHA-256 compression loop and its message schedule are about 20
 percent (one hash per blank node for §4.5 and one per Hash N-Degree Quads
@@ -1106,9 +1117,16 @@ Gates on this tree:
   as `hndqRun`: it is the same Hash N-Degree Quads recursion (one level per
   blank node of one path), now the code that runs. The (a) PENDING count is
   26 (it was 25).
-- `tools/lean-hygiene-audit.py`: clean (0 sorry, 0 axiom, 0 native_decide,
-  0 unsafe, 0 implemented_by, 164 partial def, baseline 164).
+- `tools/lean-hygiene-audit.py --build-log` on the full build: clean (0
+  sorry, 0 axiom, 0 native_decide, 0 unsafe, 0 implemented_by, 164 partial
+  def, baseline 164; 1,051 `#print axioms` outputs, none outside `propext`,
+  `Classical.choice`, `Quot.sound`).
 - `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350).
+- The wasm modules rebuilt (`Wasm/build-wasm.sh`, 2,055 s at load 6 to 29):
+  full module 10,990,953 bytes, core module 5,898,200 bytes, copied into
+  `npm/factoidal/l4-assets`. `npm test` in `npm/factoidal`: 413 pass, 0 fail,
+  1 skipped (out of 414; the skip needs the `esbuild` devDependency).
+- `lake build` (no target): exit 0 (1409 jobs).
 
 ### What the F\* comparison found on the F\* side
 
