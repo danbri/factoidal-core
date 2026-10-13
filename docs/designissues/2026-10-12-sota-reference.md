@@ -379,7 +379,22 @@ The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 - The OWL DL rows decide consistency only (`owl:Thing` satisfiable); no
   classification, no entailment checks.
 
-## 8. Reproduce
+## 8. The gate
+
+`tests/perf/sota_gate.sh` re-runs every Lean row (`lean`, `lean-stream`) of
+the results file whose median wall time is at most 60 s, three runs each, and
+fails a row whose answer differs, whose median CPU time is more than 1.25
+times the recorded one plus 0.05 s, or whose median peak resident set is more
+than 1.25 times the recorded one plus 8 MB; a failing row is measured a second
+time before it fails. The rows over 10 with an open issue are expected
+failures: such a row fails the gate (UNEXPECTED PASS) when it comes within 10
+times the recorded fastest reference. Run of 2026-10-13, 03:27 to 04:00 UTC,
+the same `e3c3aa01` binary, load average 2.6 to 11.5: 79 pass, 0 fail (out of
+79), the 5 expected failures still present (issues 813 twice, 814, 751, 819).
+A forced bound (`SOTA_TOLERANCE=-0.5`) failed the `parse-rdfxml-real` row with
+exit status 1, so the gate can fail.
+
+## 9. Reproduce
 
 ```
 cd formal/lean4 && lake build l4factoidal          # the Lean binary
