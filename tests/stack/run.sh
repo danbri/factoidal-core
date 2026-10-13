@@ -282,13 +282,11 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     regex-replace-groups)
       case "${2:-}" in canary|wcanary) echo "https://github.com/danbri/factoidal/issues/816" ;; esac ;;
     rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
-    # sparql-collection: collectQuads became a loop over a work list on
-    # 2026-10-13 (issue 818 item 4); the next frame per member of the join
-    # chain is ggpLabeledBnodes (the INSERT DATA blank node label check):
-    # native runs at 128 KB and overflows at 64 KB (gdb), and the case still
-    # overflows in Node under --stack-size=512.
-    sparql-collection)
-      case "${2:-}" in wcanary) echo "https://github.com/danbri/factoidal/issues/818" ;; esac ;;
+    # (`sparql-collection` was listed in wcanary for
+    # https://github.com/danbri/factoidal/issues/818 until 2026-10-13, when
+    # ggpLabeledBnodes, the INSERT DATA blank node label check and the last
+    # frame per member of the join chain, became a loop over a work list;
+    # native now runs it at 64 KB.)
   esac
 }
 

@@ -707,6 +707,74 @@ def ggpLabeledBnodesQ : Query → List String
 
 end
 
+/-- The steps of the loop that computes `ggpLabeledBnodes`: read a pattern,
+or replace the two label lists on top of the value stack by their
+`strUnion`. -/
+inductive LabelStep where
+  | visit (p : QueryPattern)
+  | union2
+
+/-- What one step does to the value stack. -/
+def labelStepSem : LabelStep → List (List String) → List (List String)
+  | .visit p, vs => ggpLabeledBnodes p :: vs
+  | .union2, b :: a :: vs => strUnion a b :: vs
+  | .union2, vs => vs
+
+/-- `ggpLabeledBnodes` as a loop over a work list of steps and a stack of
+label lists. A two-sided pattern puts its sides and a `union2` on the front of
+the work list, so the stack does not grow with the length of a join chain: an
+INSERT DATA collection of n members is a chain of n joins, and
+`ggpLabeledBnodes` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818). The answer is the same list
+(`labelsLoop_eq`): the leaves and `strUnion` are the same functions. -/
+def labelsLoop : List LabelStep → List (List String) → List String
+  | [], vs => vs.headD []
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => labelsLoop ks (bnodesInBgp b :: vs)
+    | .propertyPath s _ o => labelsLoop ks (strUnion (bnodesInSubject s) (bnodesInTerm o) :: vs)
+    | .join a b | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      labelsLoop (.visit a :: .visit b :: .union2 :: ks) vs
+    | .filter _ q | .graph _ q | .bind _ _ q | .service _ _ q | .serviceVar _ _ q =>
+      labelsLoop (.visit q :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => labelsLoop (.visit pat :: ks) vs
+    | .values _ _ | .empty => labelsLoop ks ([] :: vs)
+  | .union2 :: ks, vs => labelsLoop ks (labelStepSem .union2 vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | .union2 => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem labelsLoop_eq (ks : List LabelStep) (vs : List (List String)) :
+    labelsLoop ks vs = (ks.foldl (fun vs k => labelStepSem k vs) vs).headD [] := by
+  fun_induction labelsLoop ks vs <;>
+    simp_all [labelStepSem, ggpLabeledBnodes, ggpLabeledBnodesQ]
+
+/-- What runs in place of `ggpLabeledBnodes`. -/
+def ggpLabeledBnodesFast (p : QueryPattern) : List String := labelsLoop [.visit p] []
+
+/-- What runs in place of `ggpLabeledBnodesQ`. -/
+def ggpLabeledBnodesQFast : Query → List String
+  | .mk _ _ pat _ _ _ _ _ => labelsLoop [.visit pat] []
+
+@[csimp] theorem ggpLabeledBnodes_eq_fast : @ggpLabeledBnodes = @ggpLabeledBnodesFast := by
+  funext p
+  simp [ggpLabeledBnodesFast, labelsLoop_eq, labelStepSem]
+
+@[csimp] theorem ggpLabeledBnodesQ_eq_fast : @ggpLabeledBnodesQ = @ggpLabeledBnodesQFast := by
+  funext q
+  cases q
+  simp [ggpLabeledBnodesQ, ggpLabeledBnodesQFast, labelsLoop_eq, labelStepSem]
+
 /-! ## Blank-node scope validation — `validate_bnode_scope_pattern`
 (F* line 4350)
 
@@ -754,6 +822,208 @@ def validateBnodeScopeQ : Query → Bool × List String
   | .mk _ _ pat _ _ _ _ _ => validateBnodeScope pat
 
 end
+
+/-! ### The scope check in one pass
+
+`validateBnodeScope` calls `preservesBgpScope` on both sides of every join,
+and each call walks the whole side, so a join chain of n patterns (the
+desugaring of a collection of n members) took time in n², and one native frame
+per join (https://github.com/danbri/factoidal/issues/824). `scopeLoop` reads
+each pattern once and carries, for each finished side, the pair
+`validateBnodeScope` answers and `preservesBgpScope`, on a value stack; the
+work list replaces the native stack. `scopeLoop_eq` proves it equal, and
+`validateBnodeScope_eq_fast` (`csimp`) makes the parser run it. -/
+
+/-- The answer for one pattern: `validateBnodeScope` and `preservesBgpScope`. -/
+abbrev ScopeVal := (Bool × List String) × Bool
+
+/-- §19.6 for `Join(l, r)`: labels may be shared when both sides preserve the
+BGP scope. -/
+def scopeJoin (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && ((l.2 && r.2) || !strOverlaps l.1.2 r.1.2), strUnion l.1.2 r.1.2),
+   l.2 && r.2)
+
+/-- §19.6 for Union, Minus, Lateral and LeftJoin: labels may not be shared. -/
+def scopeApart (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && !strOverlaps l.1.2 r.1.2, strUnion l.1.2 r.1.2), false)
+
+/-- The steps of the scope loop. -/
+inductive ScopeStep where
+  | visit (p : QueryPattern)
+  | joinScope
+  | apartScope
+  /-- GRAPH, SERVICE and a sub-SELECT: the answer of the inner pattern, which
+  does not preserve the BGP scope. -/
+  | closeScope
+
+/-- What a step that is not `visit` does to the value stack. -/
+def scopeCombine : ScopeStep → List ScopeVal → List ScopeVal
+  | .joinScope, r :: l :: vs => scopeJoin l r :: vs
+  | .apartScope, r :: l :: vs => scopeApart l r :: vs
+  | .closeScope, v :: vs => (v.1, false) :: vs
+  | _, vs => vs
+
+/-- What one step does to the value stack. -/
+def scopeStepSem : ScopeStep → List ScopeVal → List ScopeVal
+  | .visit p, vs => (validateBnodeScope p, preservesBgpScope p) :: vs
+  | k, vs => scopeCombine k vs
+
+/-- The scope check as a loop (see the section header). -/
+def scopeLoop : List ScopeStep → List ScopeVal → ScopeVal
+  | [], vs => vs.headD ((true, []), true)
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => scopeLoop ks (((true, bnodesInBgp b), true) :: vs)
+    | .propertyPath s _ o =>
+      scopeLoop ks (((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) :: vs)
+    | .values _ _ | .empty => scopeLoop ks (((true, []), true) :: vs)
+    | .filter _ q | .bind _ _ q => scopeLoop (.visit q :: ks) vs
+    | .join a b => scopeLoop (.visit a :: .visit b :: .joinScope :: ks) vs
+    | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      scopeLoop (.visit a :: .visit b :: .apartScope :: ks) vs
+    | .graph _ q | .service _ _ q | .serviceVar _ _ q =>
+      scopeLoop (.visit q :: .closeScope :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => scopeLoop (.visit pat :: .closeScope :: ks) vs
+  | .joinScope :: ks, vs => scopeLoop ks (scopeCombine .joinScope vs)
+  | .apartScope :: ks, vs => scopeLoop ks (scopeCombine .apartScope vs)
+  | .closeScope :: ks, vs => scopeLoop ks (scopeCombine .closeScope vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | _ => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem scope_join (a b : QueryPattern) :
+    (validateBnodeScope (.join a b), preservesBgpScope (.join a b)) =
+      scopeJoin (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeJoin]
+
+theorem scope_union (a b : QueryPattern) :
+    (validateBnodeScope (.union a b), preservesBgpScope (.union a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_minus (a b : QueryPattern) :
+    (validateBnodeScope (.minus a b), preservesBgpScope (.minus a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_lateral (a b : QueryPattern) :
+    (validateBnodeScope (.lateral a b), preservesBgpScope (.lateral a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_leftJoin (a b : QueryPattern) (e : Expr) :
+    (validateBnodeScope (.leftJoin a b e), preservesBgpScope (.leftJoin a b e)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_filter (e : Expr) (p : QueryPattern) :
+    (validateBnodeScope (.filter e p), preservesBgpScope (.filter e p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_bind (e : Expr) (v : VarName) (p : QueryPattern) :
+    (validateBnodeScope (.bind e v p), preservesBgpScope (.bind e v p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_graph (g : PatternTerm) (p : QueryPattern) :
+    (validateBnodeScope (.graph g p), preservesBgpScope (.graph g p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_service (i : WfIri) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.service i b p), preservesBgpScope (.service i b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_serviceVar (v : VarName) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.serviceVar v b p), preservesBgpScope (.serviceVar v b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_subSelect (f : QueryForm) (d : List DatasetClause) (pat : QueryPattern)
+    (g : Option (List GroupCondition)) (h : List Expr) (m : SolutionModifier)
+    (pv : Option (List Binding)) (base : Option String) :
+    (validateBnodeScope (.subSelect (.mk f d pat g h m pv base)),
+      preservesBgpScope (.subSelect (.mk f d pat g h m pv base))) =
+      (validateBnodeScope pat, false) := by
+  simp only [validateBnodeScope, validateBnodeScopeQ, preservesBgpScope]
+
+theorem scope_bgp (b : Bgp) :
+    (validateBnodeScope (.bgp b), preservesBgpScope (.bgp b)) = ((true, bnodesInBgp b), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_propertyPath (s : PatternSubject) (pp : PropertyPath) (o : PatternTerm) :
+    (validateBnodeScope (.propertyPath s pp o), preservesBgpScope (.propertyPath s pp o)) =
+      ((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_values (vs : List VarName) (rows : List (List (Option Term))) :
+    (validateBnodeScope (.values vs rows), preservesBgpScope (.values vs rows)) =
+      ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_empty :
+    (validateBnodeScope .empty, preservesBgpScope .empty) = ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scopeLoop_eq (ks : List ScopeStep) (vs : List ScopeVal) :
+    scopeLoop ks vs = (ks.foldl (fun vs k => scopeStepSem k vs) vs).headD ((true, []), true) := by
+  fun_induction scopeLoop ks vs <;>
+    simp_all only [List.foldl_cons, scopeStepSem, scopeCombine, scope_join, scope_union,
+      scope_minus, scope_lateral, scope_leftJoin, scope_filter, scope_bind, scope_graph,
+      scope_service, scope_serviceVar, scope_subSelect, scope_bgp, scope_propertyPath,
+      scope_values, scope_empty, List.foldl_nil]
+
+/-- What runs in place of `validateBnodeScope`. -/
+def validateBnodeScopeFast (p : QueryPattern) : Bool × List String :=
+  (scopeLoop [.visit p] []).1
+
+/-- What runs in place of `validateBnodeScopeQ`. -/
+def validateBnodeScopeQFast : Query → Bool × List String
+  | .mk _ _ pat _ _ _ _ _ => (scopeLoop [.visit pat] []).1
+
+@[csimp] theorem validateBnodeScope_eq_fast : @validateBnodeScope = @validateBnodeScopeFast := by
+  funext p
+  simp [validateBnodeScopeFast, scopeLoop_eq, scopeStepSem]
+
+@[csimp] theorem validateBnodeScopeQ_eq_fast : @validateBnodeScopeQ = @validateBnodeScopeQFast := by
+  funext q
+  cases q
+  simp [validateBnodeScopeQ, validateBnodeScopeQFast, scopeLoop_eq, scopeStepSem]
+
+#print axioms validateBnodeScope_eq_fast
+#print axioms ggpLabeledBnodes_eq_fast
+
+private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+
+-- The loops answer the lists and verdicts of the recursive definitions, in
+-- the same order (`strUnion` of the left side into the right).
+#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
+#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
+#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
+-- §19.6: a join of two BGP-preserving sides may share a label; a union may
+-- not; a join with a GRAPH side may not.
+#guard (scopeLoop [.visit (.join bnA bnA)] []).1.1
+#guard !(scopeLoop [.visit (.union bnA bnA)] []).1.1
+#guard !(scopeLoop [.visit (.join bnA (.graph (.var "g") bnA))] []).1.1
+#guard (scopeLoop [.visit (.join bnA (.graph (.var "g") bnB))] []).1.1
+#guard !(scopeLoop [.visit (.join bnA (.graph (.var "g") bnB))] []).2
+#guard (scopeLoop [.visit (.join (.filter (.boolLit true) bnA) bnA)] []).2
 
 /-- `validate_bnode_scope_top`. -/
 def validateBnodeScopeTop (q : Query) : Bool := (validateBnodeScopeQ q).1
