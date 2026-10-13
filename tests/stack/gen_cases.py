@@ -297,6 +297,10 @@ args("args-sparql-order-limit.json",
 #                       member, so about 10,000 members are a parse error
 #                       with or without the loop:
 #                       https://github.com/danbri/factoidal/issues/818
+#                       (since 2026-10-13 a second pass at topFuel plus the
+#                       request length; collectQuads, ggpLabeledBnodes and
+#                       validateBnodeScope are loops, so 8,000 members run
+#                       natively at 64 KB)
 #   sparql-replace-long REPLACE over one literal: 5,000 characters ran,
 #                       20,000 overflowed (replaceLoop, one frame per
 #                       character); case 100,000

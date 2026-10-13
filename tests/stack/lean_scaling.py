@@ -88,17 +88,30 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    (2026-10-13)
   sparql-collection-scope  the same query over 10,000 and 40,000 members, past
                    the constant fuel 10,000 (a parse error before the repair
-                   of https://github.com/danbri/factoidal/issues/818). Expected
-                   failure, https://github.com/danbri/factoidal/issues/824: the
-                   blank node scope check (`validateBnodeScope`, §19.6) walks
-                   the join chain of the collection once per join (0.44 s
-                   and 8.80 s, measured 2026-10-13)
+                   of https://github.com/danbri/factoidal/issues/818). An
+                   expected failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/824): the blank
+                   node scope check (`validateBnodeScope`, §19.6) walked the
+                   join chain of the collection once per join (0.44 s and
+                   9.05 s); after `validateBnodeScope_eq_fast` (one pass, a
+                   work list) 0.061 s and 0.164 s
   sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
                    empty dataset (issue 802: DELETE DATA of 4,000 quads took
                    61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
-                   tokenizer repair, 0.18 s and 2.01 s after. Expected failure,
-                   https://github.com/danbri/factoidal/issues/821: the parser
-                   appends each triple to the end of the block's BGP list
+                   tokenizer repair, 0.18 s and 2.01 s after. An expected
+                   failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/821): the parser
+                   appended each triple to the end of the block's BGP list, and
+                   `Dataset.insertQuads` scanned and copied the graph for each
+                   quad. After the triples accumulator (`pTriplesBlock_eq_ref`)
+                   and the graph index (`insertQuads_eq_fast`): 0.032 s and
+                   0.105 s
+  sparql-update-insert-bnodes  the same with a blank-node subject in each
+                   triple, 4,000 and 16,000 triples: the INSERT DATA blank node
+                   label checks (§19.6) scanned a list of labels per label
+                   (0.17 s and 2.00 s, 2026-10-13); after
+                   `bnodesInBgp_eq_fast` and `bnodeLabelsUnique_eq_fast` (a set
+                   of labels) 0.049 s and 0.257 s
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -154,11 +167,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    owl-consistent-cl. The engine writes the log
                    (`l4wasm-cli callseq` of `deltaLogEncode`), and
                    `deltaLogDecode` must find every batch, before the row is
-                   timed. Expected failure naming
-                   https://github.com/danbri/factoidal/issues/822: each add
-                   goes through `Graph.add`, a membership scan and an append on
-                   a list (1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at
-                   32,000, measured 2026-10-13)
+                   timed. An expected failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/822): each add
+                   went through `Graph.add`, a membership scan and an append on
+                   a list (1.33 s at 8,000 records, 4.53 s at 16,000, 17.23 s
+                   at 32,000 CPU); after `applyBatches_eq_fast` (a hash set of
+                   each graph carried through the batches) 0.36 s, 0.81 s and
+                   1.80 s
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -225,9 +240,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
-    "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
-    "delta-log-merge": "https://github.com/danbri/factoidal/issues/822",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -293,6 +305,11 @@ def sparql_values_ask(n: int) -> str:
 def sparql_insert_data(n: int) -> str:
     return "INSERT DATA {\n%s}\n" % "".join(
         f'  <{EX}s{i}> <{EX}p> "value {i}" .\n' for i in range(n))
+
+
+def sparql_insert_data_bnodes(n: int) -> str:
+    return "INSERT DATA {\n%s}\n" % "".join(
+        f'  _:b{i} <{EX}p> "value {i}" .\n' for i in range(n))
 
 
 OWL = "http://www.w3.org/2002/07/owl#"
@@ -457,6 +474,11 @@ ROWS = {
     "sparql-update-insert": (
         2000,
         lambda n: fixture(f"sparql-insert-data-{n}.ru", lambda: sparql_insert_data(n)),
+        lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
+                   "--update", str(p), "--format", "nquads"]),
+    "sparql-update-insert-bnodes": (
+        4000,
+        lambda n: fixture(f"sparql-insert-data-bnodes-{n}.ru", lambda: sparql_insert_data_bnodes(n)),
         lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
                    "--update", str(p), "--format", "nquads"]),
     "owl-species": (

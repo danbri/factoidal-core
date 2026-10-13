@@ -873,7 +873,9 @@ Rules from this repair:
    `sparql-collection` still overflows in the wasm canary route (Node,
    `--stack-size=512`): the next frame per member is `ggpLabeledBnodes`, the
    INSERT DATA blank node label check (gdb: native runs at 128 KB, overflows at
-   64 KB). The case stays an expected failure in that route under issue 818.
+   64 KB). The case stayed an expected failure in that route under issue 818
+   until `ggpLabeledBnodes` became a loop (section "The last three scaling
+   expected failures of KR 2.5" below).
 
 | `l4factoidal`, one run per point | before | after |
 |---|---|---|
@@ -963,3 +965,100 @@ from its own small process), as `tools/sota-bench.py` does; the rows now do
 (`peak_rss_run`). A memory row must also FAIL on the binary before the repair:
 the three `parse-*-memory` rows give 37.1, 30.2 and 37.5 bytes per input byte
 on `d371f1d9` against bounds of 1, 1 and 12.
+
+## The last three scaling expected failures of KR 2.5 (2026-10-13)
+
+`tests/stack/lean_scaling.sh` went from 4 expected failures to 1
+(`query-memory-fstar`, https://github.com/danbri/factoidal/issues/729).
+Each repair keeps the readable definition and adds a proved equality
+(`csimp`, or a theorem the parser's callers use). Standard axioms only.
+
+### INSERT DATA (https://github.com/danbri/factoidal/issues/821)
+
+Four costs, each found after the one before it was repaired:
+
+1. **The parser appended each triple to the end of the BGP list.** The four
+   triples-block functions of the grammar block now carry a `TriplesAcc`: the
+   pattern and the triple patterns added since, newest first. `flushTriples`
+   is the pattern it stands for (`ggpAddTriple` of each, oldest first) and
+   runs as one append (`flushTriples_eq_fast`). The readable functions are in
+   `SPARQL/TriplesBlockRef.lean` (the `pCollection` pattern: defined after
+   the grammar block, calling it); `pTriplesBlock_eq_ref` and the three
+   theorems before it prove that the parser computes them.
+2. **`Dataset.insertQuads` scanned and copied the graph per quad.**
+   `RDF/GraphIndex.lean`: a `GraphIx` holds the graph as `base ++
+   rev.reverse` and a `Std.HashSet` of the KEYS of its triples. `Graph.mem`
+   compares with `Triple.eqb` (tags case-insensitively, XMLLiterals by
+   canonical form), so the key is the triple with `Term.joinKey` in the object
+   position, and `Triple.eqb_iff_key` proves that equal keys are exactly
+   `eqb`-equal triples. A graph slot makes its set on the SECOND add, so one
+   insert into a large graph costs what it cost before.
+   `insertQuads_eq_fast`: same dataset, same graph and triple order.
+3. **`bnodesInBgp` used one native frame per triple and scanned a list per
+   label.** An INSERT DATA block of 40,000 triples overflowed the 512 KB
+   canary stack. `bnodesInBgp_eq_fast`: a `foldr` (compiled as
+   `List.foldrTR`, over an array) with a set beside the label list, the same
+   list. Native now runs 40,000 triples at 64 KB.
+4. **The label check across data operations scanned a list per label.**
+   `bnodeLabelsUnique_eq_fast`: the verdict depends on the labels only
+   through membership, so a set gives the same Bool.
+
+| `l4factoidal update`, empty dataset | before | after |
+|---|---:|---:|
+| INSERT DATA, 2,000 / 8,000 triples (row `sparql-update-insert`, min of 3) | 0.139 / 1.920 s | 0.032 / 0.105 s |
+| INSERT DATA, 4,000 / 16,000 triples with blank-node subjects (before: one run; after: row `sparql-update-insert-bnodes`, min of 3) | 0.17 / 2.00 s | 0.049 / 0.257 s |
+| INSERT DATA, one collection of 10,001 / 40,000 members (one run) | 6.02 / 132 s | 0.34 / 1.08 s |
+
+The blank-node shape has its own row, `sparql-update-insert-bnodes`: the
+first two repairs left it quadratic (0.09 s and 1.37 s), and the IRI row did
+not show it.
+
+### The merge of the browser update log (https://github.com/danbri/factoidal/issues/822)
+
+`BrowserLog.applyBatchesFast` carries a `DatasetIx` (the index of item 2
+above, for every graph of the dataset) through all the batches, so the index
+is made once per merge, not once per batch: a log of one triple per record
+would otherwise remake it for every record. An add entry is
+`DatasetIx.insertQuad`; any other entry is `applyEntry` on the dataset the
+index holds. `applyBatches_eq_fast` (`csimp`), so `merge` runs it and the
+theorems of `BrowserLogTheorems.lean` hold for it.
+
+| `deltaLogMerge`, records of one triple (CPU, min of 3) | 8,000 | 16,000 | 32,000 |
+|---|---:|---:|---:|
+| before | 1.33 s | 4.53 s | 17.23 s |
+| after | 0.36 s | 0.81 s | 1.80 s |
+
+### The §19.6 scope check and the labeled blank nodes (https://github.com/danbri/factoidal/issues/824, https://github.com/danbri/factoidal/issues/818)
+
+`validateBnodeScope` called `preservesBgpScope` on both sides of each join
+(a walk of the side), and both it and `ggpLabeledBnodes` used one native frame
+per join of a collection's chain. `scopeLoop` and `labelsLoop` run over a work
+list of steps (visit a pattern, or combine the two answers on top of a value
+stack). The proof needs no induction over the mutual pattern type:
+`fun_induction` over the loop, with the meaning of each step stated as a
+function of the value stack (`scopeStepSem`, `labelStepSem`), and one lemma
+per constructor that states the recursive definition's equation in that form
+(`scope_join` and the others). Termination: three times the `sizeOf` of each
+pattern to visit plus one, summed.
+
+| `l4factoidal query`, one collection of n members (min of 3) | 10,000 | 40,000 |
+|---|---:|---:|
+| before | 0.440 s | 9.053 s |
+| after | 0.061 s | 0.164 s |
+
+INSERT DATA with one collection of 8,000 members: native overflowed at
+64 KB in `ggpLabeledBnodes`; it now runs at 64 KB.
+
+Rules from these repairs:
+
+- **A `Std.HashSet` in a structure updates in place only when the structure
+  is taken apart by a match.** `GraphIx.add` and `DatasetIx.insertQuad` match
+  on the constructor; `{ x with keys := x.keys.insert k }` keeps `x` alive
+  during the insert and copies the set.
+- **A per-batch index is still quadratic when the batches are small.** Carry
+  the index through the outer fold (`applyBatchesFast`), not only through
+  one call of the inner one.
+- **A set may replace a list where the result is a verdict.** The label
+  checks of §19.6 read their lists only through membership, so a set gives the
+  same Bool; where a list is returned, keep the list and put the set beside
+  it (`strUnionSet`).
