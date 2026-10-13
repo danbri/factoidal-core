@@ -132,6 +132,9 @@ for t in "${order[@]}"; do
   fi
   executed=$((executed + 1))
   path=ids; grep -q 'path=reference' "$st/got.err" && path=reference
+  # the fallback's reason (`path=reference reason="..."`), for the histogram
+  # of shapes the id path does not run (issue 775)
+  reason=""; [ $path = reference ] && reason="$(grep -o 'reason="[^"]*"' "$st/got.err" | head -1 | sed 's/^reason="//; s/"$//')"
   if [ $path = ids ]; then ids_exec=$((ids_exec + 1)); else ref_exec=$((ref_exec + 1)); fi
   grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   rrc=0
@@ -141,7 +144,7 @@ for t in "${order[@]}"; do
   case "$verdict" in
     equal*) matched=$((matched + 1))
             if [ $path = ids ]; then ids_match=$((ids_match + 1)); else ref_match=$((ref_match + 1)); fi
-            printf '%s\tmatched\t%s\n' "$t" "$path" >>"$TSV" ;;
+            printf '%s\tmatched\t%s\t%s\n' "$t" "$path" "$reason" >>"$TSV" ;;
     uncompared*) uncompared=$((uncompared + 1)); printf '%s\tuncompared\t%s\t%s\n' "$t" "$path" "$verdict" >>"$TSV" ;;
     *) differed=$((differed + 1)); printf '%s\tdiffered\t%s\t%s\n' "$t" "$path" "$verdict" >>"$TSV"
        printf '%s (%s): %s\n' "${t##*/}" "$path" "$verdict" >>"$MIS" ;;
@@ -158,5 +161,7 @@ if [ -n "${SBM11_SIP:-}" ]; then
 fi
 if [ -s "$MIS" ]; then echo "  mismatches:"; sed 's/^/    /' "$MIS"; fi
 cut -f2 "$TSV" | sort | uniq -c
+echo "  reference fallback reasons (executed tests):"
+awk -F'\t' '$3 == "reference" { r = $4; if (r == "") r = "(no reason printed)"; c[r]++ } END { for (k in c) printf "    %4d  %s\n", c[k], k }' "$TSV" | sort -rn
 cp "$TSV" "$ROOT/tmp/sbm11-census-latest.tsv"
 echo "  per-test outcomes: tmp/sbm11-census-latest.tsv"
