@@ -394,8 +394,8 @@ def ans_rows(o):
 
 def ans_riot_count(o):
     """riot --count writes "FILE : Triples = N" to standard error."""
-    m = re.search(r"(?:Triples|Quads)\s*=\s*(\d+)", o["first"] + "\n" + o["stderr"])
-    return int(m.group(1)) if m else None
+    m = re.search(r"(?:Triples|Quads)\s*=\s*(\d[\d,]*)", o["first"] + "\n" + o["stderr"])
+    return int(m.group(1).replace(",", "")) if m else None
 
 
 def ans_count_value(o):
@@ -833,7 +833,7 @@ def report(path):
 def check(args):
     """The gate: re-run each recorded Lean row and compare."""
     rows, _ = load_rows(args.check)
-    todo = [r for r in rows if r["engine"] == "lean" and r["status"] == "ok"
+    todo = [r for r in rows if r["engine"] in ("lean", "lean-stream") and r["status"] == "ok"
             and r["workload"] in W and r["wall_s"] <= args.max_s]
     if args.workloads:
         keep = set(args.workloads.split(","))
@@ -848,12 +848,12 @@ def check(args):
             print(f"SKIP {r['workload']} {r['size']}: size no longer in the workload")
             continue
         path = w.make(size)
-        cmd, env = w.cmd("lean", path, size)
+        cmd, env = w.cmd(r["engine"], path, size)
         verdict = None
         for attempt in (1, 2):  # a failing row is measured once more before it fails
             rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
                              args.load_wait, True)
-            ans = w.answer("lean", o) if rec["status"] == "ok" else None
+            ans = w.answer(r["engine"], o) if rec["status"] == "ok" else None
             problems = []
             if rec["status"] != "ok":
                 problems.append(rec["status"])
@@ -873,7 +873,7 @@ def check(args):
                 break
         tag = "PASS" if not verdict else "FAIL"
         fails += bool(verdict)
-        print(f"{tag} {r['workload']} {r['size']}: cpu {rec.get('cpu_s')} s (recorded "
+        print(f"{tag} {r['workload']} {r['size']} {r['engine']}: cpu {rec.get('cpu_s')} s (recorded "
               f"{r['cpu_s']}), rss {rec.get('rss_mb')} MB (recorded {r['rss_mb']}), "
               f"load {rec['load1']}" + (f" -- {'; '.join(verdict)}" if verdict else ""),
               flush=True)
@@ -902,7 +902,7 @@ def main():
     ap.add_argument("--slack-s", type=float, default=0.05,
                     help="absolute CPU-time slack of the gate (process start noise)")
     ap.add_argument("--slack-mb", type=float, default=8.0)
-    ap.add_argument("--max-s", type=float, default=120,
+    ap.add_argument("--max-s", type=float, default=60,
                     help="gate: skip recorded Lean rows slower than this (wall median)")
     a = ap.parse_args()
     if a.install:
