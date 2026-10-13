@@ -1234,6 +1234,114 @@ private def ixSample : List (ClassExpr × ClassExpr) :=
 #guard ((TBoxIndex.build [(.maxCard 1 exP, .named exB)]).edgeProps).isEmpty
 
 
+/-! ## Range axioms applied where there is an edge (https://github.com/danbri/factoidal/issues/760)
+
+`p rdfs:range C` is `⊤ ⊑ ∀p.C`. `injectLazyRanges` puts `∀p.C` on a node
+only when the node has a possible `p`-successor (`successorPropsAt`), so
+each refutation below needs the range to reach the object of an edge: an
+asserted edge, an edge the expansion made, an edge read through an
+inverse property, and an edge on a sub-property. Each has a twin with a
+model that must not be refuted. -/
+
+private def exRgE : WfIri := ⟨"http://e/rgE", rfl⟩
+private def exRgS : WfIri := ⟨"http://e/rgS", rfl⟩
+
+/-- `i P y`, `P rdfs:range C`, `C` disjoint from `D`; `y : D` when
+    `clash`. -/
+private def gRangeEdge (clash : Bool) : Graph :=
+  [ ⟨indI, exP, .iri exY⟩,
+    ⟨.iri exP, rdfsRange, .iri exC⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩ ] ++
+  (if clash then [⟨.iri exY, rdfType, .iri exD⟩] else [⟨.iri exY, rdfType, .iri exRgE⟩])
+
+#guard refuted (gRangeEdge true)
+#guard !(refuted (gRangeEdge false))
+#guard tableauConsistent (gRangeEdge false) fuel == some true
+
+/-- `i : E`, `E ⊑ ∃P.D` (or `∃Q.D`), `P rdfs:range C`, `C` disjoint from
+    `D`: the witness the expansion makes for `∃P.D` is in `C` and `D`. -/
+private def gRangeWitness (onP : Bool) : Graph :=
+  [ ⟨indI, rdfType, .iri exRgE⟩,
+    ⟨.iri exRgE, rdfsSubClassOf, bnT "r"⟩,
+    ⟨bn "r", owlOnProperty, .iri (if onP then exP else exQ)⟩,
+    ⟨bn "r", owlSomeValuesFrom, .iri exD⟩,
+    ⟨.iri exP, rdfsRange, .iri exC⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩ ]
+
+#guard refuted (gRangeWitness true)
+#guard !(refuted (gRangeWitness false))
+
+/-- `y Q i` with `Q owl:inverseOf P`, so `i P y`; `P rdfs:range C`, `C`
+    disjoint from `D`, `y : D` (or `y : E`). -/
+private def gRangeInverse (clash : Bool) : Graph :=
+  [ ⟨.iri exY, exQ, .iri exI⟩,
+    ⟨.iri exQ, owlInverseOf, .iri exP⟩,
+    ⟨.iri exP, rdfsRange, .iri exC⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩,
+    ⟨.iri exY, rdfType, .iri (if clash then exD else exRgE)⟩ ]
+
+#guard refuted (gRangeInverse true)
+#guard !(refuted (gRangeInverse false))
+
+/-- `i S y` with `S rdfs:subPropertyOf P`; `P rdfs:range C`, `C` disjoint
+    from `D`, `y : D` (or `y : E`). -/
+private def gRangeSub (clash : Bool) : Graph :=
+  [ ⟨indI, exRgS, .iri exY⟩,
+    ⟨.iri exRgS, rdfsSubPropertyOf, .iri exP⟩,
+    ⟨.iri exP, rdfsRange, .iri exC⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩,
+    ⟨.iri exY, rdfType, .iri (if clash then exD else exRgE)⟩ ]
+
+#guard refuted (gRangeSub true)
+#guard !(refuted (gRangeSub false))
+
+/-- The domain half reads the sub-property edge too (`applyAxiomsEdges`
+    asks only the properties `successorPropsAt` names): `i S y`,
+    `S ⊑ P`, `P rdfs:domain C`, `C` disjoint from `D`, `i : D`. -/
+private def gDomainSub (clash : Bool) : Graph :=
+  [ ⟨indI, exRgS, .iri exY⟩,
+    ⟨.iri exRgS, rdfsSubPropertyOf, .iri exP⟩,
+    ⟨.iri exP, rdfsDomain, .iri exC⟩,
+    ⟨.iri exC, owlDisjointWith, .iri exD⟩,
+    ⟨indI, rdfType, .iri (if clash then exD else exRgE)⟩ ]
+
+#guard refuted (gDomainSub true)
+#guard !(refuted (gDomainSub false))
+
+/-! The range consequent is put on the subject of the edge and on no
+other node: `y` has no `P`-successor. -/
+#guard
+  let g := gRangeEdge false
+  let tb := collectAxioms g
+  let st := { initState g with tbox := tb }
+  let ix := TBoxIndex.buildLazy tb (lazyOccurrences tb st)
+  (lazyRangeLabels ix st indI).length == 1 && (lazyRangeLabels ix st (.iri exY)).isEmpty
+
+/-! Which range axioms are applied this way (`lazyRangeAxiom`): a class
+filler is; a datatype filler, a complement filler and a `∀p.C` that
+occurs in another axiom are not, and stay on every node. -/
+private def rangeAx (c : ClassExpr) : ClassExpr × ClassExpr := (.named owlThing, .allOf exP c)
+
+#guard ((TBoxIndex.buildLazy [rangeAx (.named exC)] {}).lazyByProp.getD exP []).length == 1
+#guard (TBoxIndex.buildLazy [rangeAx (.named exC)] {}).top.isEmpty
+#guard (TBoxIndex.buildLazy [rangeAx (.named xsdInteger)] {}).top.length == 1
+#guard (TBoxIndex.buildLazy [rangeAx (.complement (.named exC))] {}).top.length == 1
+#guard
+  let tb := [rangeAx (.named exC), (.allOf exP (.named exC), .named exD)]
+  let ix := TBoxIndex.buildLazy tb (lazyOccurrences tb {})
+  ix.top.length == 1 && ix.lazyByProp.isEmpty
+-- `owl:topObjectProperty` is never applied this way: `∀top.C` puts `C` on the node itself.
+#guard (TBoxIndex.buildLazy [(.named owlThing, .allOf owlTopObjectProperty (.named exC))] {}).top.length == 1
+
+/-! The equalities behind the repairs of https://github.com/danbri/factoidal/issues/760
+rest on the standard axioms only (`tools/lean-hygiene-audit.py`, check 7). -/
+#print axioms L4Factoidal.OWL.CountingOracle.classSizeUnsat_eq_ref
+#print axioms datatypeRangeClash_eq_ref
+#print axioms closureMap_getD
+#print axioms inverseMap_getD
+#print axioms subsOf_initState
+#print axioms inversesOfSt_initState
+
 /-! ## Qualified cardinality over a data range (`owl:onDataRange`)
 
 OWL 2 Mapping to RDF Graphs, Table 1: `DataMaxCardinality(n DPE DR)`

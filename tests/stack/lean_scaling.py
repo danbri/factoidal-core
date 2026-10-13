@@ -36,9 +36,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    for 4x input before the blank node to quads map, 0.18 s to 1.19 s
                    after)
   rdfc-bnode-collide  RDFC-1.0 canonicalisation of n blank nodes that share one
-                   first-degree hash, so Hash N-Degree Quads runs for each.
-                   Expected failure naming issue 751: 0.16 s to 2.37 s CPU for 4x
-                   input (each Hash N-Degree Quads call filters every quad)
+                   first-degree hash, so Hash N-Degree Quads runs for each
+                   (https://github.com/danbri/factoidal/issues/751; 0.16 s to
+                   2.66 s CPU for 4x input before the blank node to quads map
+                   reached Hash N-Degree Quads and the issuer got a search tree,
+                   0.07 s to 0.36 s after, measured 2026-10-13)
   group-by-few     SPARQL GROUP BY with 6 groups over many rows
   group-by-many    SPARQL GROUP BY with one group per subject
   count-distinct   SPARQL COUNT(DISTINCT ?s): the aggregate's DISTINCT
@@ -79,6 +81,35 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `TermWireV2.parseInline` took `List.length` of the rest of the
                    page for each term: 1,000 to 4,000 terms, 5 decodes, went from
                    0.20 s to 5.30 s (ratio 26); after, 0.015 s to 0.049 s
+  owl-consistent-cl  `owl-consistent` (OWL 2 RL closure, then the tableau
+                   refuter) on the first 10,000, 20,000 and 40,000 lines of the
+                   Cell Ontology as sorted N-Triples (the reproduction of
+                   https://github.com/danbri/factoidal/issues/760). Measured at
+                   x, 2x and 4x in CPU time: each doubling at most DOUBLING
+                   (3.0) times the time before it, and 4x at most BOUND. Before
+                   the repair: 19.3 s, 105 s and not finished at 600 s (the
+                   class-size counting rung built its linear system by scanning
+                   the graph once per IRI); after: 1.05 s, 2.74 s, 7.48 s,
+                   measured 2026-10-12, most of it the OWL 2 RL closure
+  owl-species      the OWL 2 species check (`l4owl-species`,
+                   `OWL.SyntaxDL.speciesViolations`) of a generated OWL 2 DL
+                   document of n units: a class with a restriction on a blank
+                   node, a union over an RDF list, an individual typed with the
+                   class, a language-tagged label, a data value and an object
+                   property assertion to a blank node (an anonymous individual
+                   with one named link). 2,000 against 8,000 units
+                   (https://github.com/danbri/factoidal/issues/766: the check
+                   counted the named links of each blank node with a scan of
+                   the graph, and read each (subject, predicate) pair with a
+                   scan; QUDT 3.4.0 took 253 s of CPU time before the indexes,
+                   2.3 s after)
+  owl-species-bnode-edges  the same check over n pairs of blank nodes linked by
+                   an object property assertion (`_:x p _:y`), each pair with
+                   one named link: the anonymous-individual graph has n
+                   components. 8,000 against 32,000 pairs. Expected failure
+                   naming https://github.com/danbri/factoidal/issues/812:
+                   `componentsOf` merges components in a list (1.09 s at 8,000
+                   pairs, 14.79 s at 32,000, measured 2026-10-13)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -102,6 +133,7 @@ Usage:  tests/stack/lean_scaling.py [--runs N] [--only ROW[,ROW...]]
 Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4factoidal)
         L4_SHACL_BIN   path of l4shacl (default: beside L4_BIN)
         L4_TERMWIRE_BIN  path of l4termwire-page-decode (default: beside L4_BIN)
+        L4_SPECIES_BIN   path of l4owl-species (default: beside L4_BIN)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
 """
 
@@ -125,6 +157,7 @@ FLOOR = 0.05
 BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4factoidal"))
 SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
 TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-page-decode"))
+SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
@@ -133,8 +166,8 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
+    "owl-species-bnode-edges": "https://github.com/danbri/factoidal/issues/812",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -184,6 +217,55 @@ def trig_blocks(n: int) -> str:
 def trig_one_graph(n: int) -> str:
     body = "\n".join(f"  ex:s{i} ex:p ex:o{i} ." for i in range(n))
     return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
+
+
+OWL = "http://www.w3.org/2002/07/owl#"
+RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+XSD = "http://www.w3.org/2001/XMLSchema#"
+
+
+def owl_species_doc(n: int) -> str:
+    """An OWL 2 DL document of n units, as N-Triples (the species check reads
+    N-Triples). Every unit is DL, so `l4owl-species` exits 0."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}q> {ty} <{OWL}DatatypeProperty> ."]
+    for i in range(n):
+        c, c2 = f"<{EX}C{i}>", f"<{EX}C{i + 1}>"
+        out += [f"{c} {ty} <{OWL}Class> .",
+                f"{c2} {ty} <{OWL}Class> .",
+                f"{c} <{RDFS}subClassOf> _:r{i} .",
+                f"_:r{i} {ty} <{OWL}Restriction> .",
+                f"_:r{i} <{OWL}onProperty> <{EX}p> .",
+                f"_:r{i} <{OWL}someValuesFrom> {c2} .",
+                f"<{EX}U{i}> {ty} <{OWL}Class> .",
+                f"<{EX}U{i}> <{OWL}unionOf> _:l{i}a .",
+                f"_:l{i}a <{RDF}first> {c} .",
+                f"_:l{i}a <{RDF}rest> _:l{i}b .",
+                f"_:l{i}b <{RDF}first> {c2} .",
+                f"_:l{i}b <{RDF}rest> <{RDF}nil> .",
+                f"<{EX}a{i}> {ty} {c} .",
+                f'<{EX}a{i}> <{RDFS}label> "a{i}"@en .',
+                f'<{EX}a{i}> <{EX}q> "{i}"^^<{XSD}integer> .',
+                f"<{EX}a{i}> <{EX}p> _:x{i} .",
+                f"_:x{i} {ty} {c2} ."]
+    return "\n".join(out) + "\n"
+
+
+def owl_species_bnode_edges(n: int) -> str:
+    """n pairs of blank nodes linked by an object property assertion, each
+    pair with one named link."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}C> {ty} <{OWL}Class> ."]
+    for i in range(n):
+        out += [f"<{EX}a{i}> {ty} <{EX}C> .",
+                f"<{EX}a{i}> <{EX}p> _:x{i} .",
+                f"_:x{i} <{EX}p> _:y{i} ."]
+    return "\n".join(out) + "\n"
 
 
 def turtle_object_list(n: int) -> str:
@@ -271,6 +353,14 @@ ROWS = {
         1000,
         lambda n: n,
         lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
+    "owl-species": (
+        2000,
+        lambda n: fixture(f"owl-species-{n}.nt", lambda: owl_species_doc(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
+    "owl-species-bnode-edges": (
+        8000,
+        lambda n: fixture(f"owl-species-bnode-edges-{n}.nt", lambda: owl_species_bnode_edges(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
@@ -383,6 +473,70 @@ def memory_row(rid):
                 f"({b4} bytes): {slope:.1f} bytes of peak RSS per input byte (bound {bound})")
 
 
+# Rows measured at x, 2x and 4x (the n, 2n, 4n assertion of
+# skills/danbri-function-precrime-checkers), in CPU time, minimum of the runs:
+# time(2x) <= DOUBLING * time(x), time(4x) <= DOUBLING * time(2x), and
+# time(4x) <= BOUND * max(time(x), FLOOR). A linear or n log n command gives
+# about 2 per doubling; a quadratic one 4. The command must also print the
+# expected first line.
+DOUBLING = 3.0
+CL_SOURCE = ROOT / "third_party/ontologies/cl-basic/cl-basic.owl"
+
+
+def cl_prefix(n: int) -> Path:
+    """The first n lines of the Cell Ontology basic edition as N-Triples:
+    parsed by the Lean RDF/XML reader, one line per distinct triple, sorted
+    by code point (the reproduction of issue 760, `sort -u` in the C locale)."""
+    FIX.mkdir(parents=True, exist_ok=True)
+    full = FIX / "cl-basic.sorted.nt"
+    if not full.exists():
+        r = subprocess.run([str(BIN), "parse", str(CL_SOURCE), "--format", "rdfxml",
+                            "--out", "nquads"], stdout=subprocess.PIPE, timeout=CAP, check=True)
+        lines = sorted({ln for ln in r.stdout.decode("utf-8").split("\n") if ln.strip()})
+        full.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    p = FIX / f"cl-basic.{n}.nt"
+    if not p.exists():
+        with full.open(encoding="utf-8") as f:
+            head = [next(f) for _ in range(n)]
+        p.write_text("".join(head), encoding="utf-8")
+    return p
+
+
+SERIES_ROWS = {
+    "owl-consistent-cl": (
+        10000, cl_prefix,
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true"),
+}
+
+
+def series_row(rid, runs):
+    x, make, cmd, first = SERIES_ROWS[rid]
+    if not CL_SOURCE.exists():
+        return False, f"{CL_SOURCE} missing"
+    pts = []
+    for n in (x, 2 * x, 4 * x):
+        best = None
+        for _ in range(runs):
+            t = bl.run_once(cmd(make(n)), CAP)
+            if t["status"] != "ok":
+                return False, f"n={n}: exit status {t['status']}"
+            got = t["first_line"].decode("utf-8", "replace") if isinstance(
+                t["first_line"], bytes) else str(t["first_line"])
+            if got.strip() != first:
+                return False, f"n={n}: printed {got.strip()!r}, expected {first!r}"
+            best = t["cpu"] if best is None else min(best, t["cpu"])
+            if t["wall"] > REPEAT_LIMIT:
+                break
+        pts.append((n, best))
+    (n1, t1), (n2, t2), (n4, t4) = pts
+    r2, r4 = t2 / max(t1, 1e-9), t4 / max(t2, 1e-9)
+    ok = (t2 <= DOUBLING * max(t1, FLOOR) and t4 <= DOUBLING * max(t2, FLOOR)
+          and t4 <= BOUND * max(t1, FLOOR))
+    return ok, (f"n={n1} {t1:.3f} s -> n={n2} {t2:.3f} s -> n={n4} {t4:.3f} s CPU "
+                f"(ratios {r2:.1f} and {r4:.1f} per doubling, bound {DOUBLING}; "
+                f"{t4 / max(t1, 1e-9):.1f} for 4x input, bound {BOUND})")
+
+
 def startup_row():
     """Minimum CPU time (user + system) of `l4factoidal version`."""
     best = None
@@ -409,6 +563,8 @@ def main() -> int:
         [] if names else list(PARSE_RATIO_ROWS))
     memory_rows = [r for r in names if r in MEMORY_ROWS] or (
         [] if names else list(MEMORY_ROWS))
+    series_rows = [r for r in names if r in SERIES_ROWS] or (
+        [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)
     passed = failed = xfailed = 0
     print(f"Lean scaling assertion: time(4x) <= {BOUND} * max(time(x), {FLOOR} s) "
@@ -455,6 +611,20 @@ def main() -> int:
     for rid in memory_rows:
         issue = XFAIL.get(rid)
         ok, detail = memory_row(rid)
+        if issue and not ok:
+            xfailed += 1
+            print(f"  XFAIL {rid} ({issue}): {detail}")
+        elif issue and ok:
+            failed += 1
+            print(f"  UNEXPECTED PASS {rid}: {detail}: flip it to an assertion "
+                  f"(remove it from XFAIL) and close {issue}")
+        else:
+            passed += ok
+            failed += (not ok)
+            print(f"  {'PASS' if ok else 'FAIL'} {rid}: {detail}")
+    for rid in series_rows:
+        issue = XFAIL.get(rid)
+        ok, detail = series_row(rid, args.runs)
         if issue and not ok:
             xfailed += 1
             print(f"  XFAIL {rid} ({issue}): {detail}")

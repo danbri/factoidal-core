@@ -11,7 +11,8 @@ with the stated result:
   decided   the step exits with a verdict, `true` or `false` (`unknown` is a
             budget-out and fails the row)
   true      the verdict is `true`
-  done      the step exits 0 (closure)
+  done      the step exits 0 (closure); a row in ROW_PEAK_MB also needs its peak
+            resident set at or below that many MB
   S         (species) l4owl-species finishes within S seconds
   B         (parse-memory) the peak resident set of `l4factoidal parse` of the
             first source file is at most B bytes per byte of that file
@@ -67,21 +68,49 @@ ROWS: dict[str, tuple] = {
     "ro-closure": ("ro", "closure", "done", None),
     "cl-basic-closure": ("cl-basic", "closure", "done", None),
     "cl-basic-consistent": ("cl-basic", "consistent", "decided", None),
+    "ro-consistent": ("ro", "consistent", "decided", None),
     "wine-closure-fstar": ("wine", "closure", "done", None),
     "qudt-species": ("qudt", "species", 60, None),
     "cl-basic-parse-memory": ("cl-basic", "parse-memory", 15, None),
     "qudt-closure": ("qudt", "closure", "done", None),
+    "qudt-closure-address-space": ("qudt", "closure", "done", None),
     "qudt-consistent": ("qudt", "consistent", "decided", None),
+}
+
+# Rows that run under a resident-set watchdog (tools/owl-real-bench.py
+# --rss-cap-mb) of this many MB in place of the address-space cap. An
+# address-space cap stops a Lean executable far below its resident need
+# (https://github.com/danbri/factoidal/issues/759, row qudt-consistent and row
+# qudt-closure-address-space), so a row that measures resident memory must not
+# use one.
+ROW_RSS_CAP_MB: dict[str, int] = {
+    "qudt-closure": 6000,
+}
+
+# Peak resident set bound in MB, for rows whose result is "done". qudt-closure:
+# https://github.com/danbri/factoidal/issues/758 and OKR batch 1 KR 3.4
+# (https://github.com/danbri/factoidal/issues/768), "under 2 GB". Measured
+# 2026-10-13 with the closure written line by line: 1,352 MB (the closure
+# itself; before, the JSON envelope of the output needed more than 6 GB at
+# eab58d16 and 1,352 MB at e3c3aa01, after the JSON repairs of 2026-10-12).
+ROW_PEAK_MB: dict[str, int] = {
+    "qudt-closure": 2000,
 }
 
 # Rows with their own wall-clock bound, below the --cap-s default. A bound at
 # the cap makes the row depend on the machine's load: on 2026-10-10
 # cl-basic-consistent ran out of the 600 s cap at load 6 to 8 and finished in
-# 598 s at load 3.5 (skills/measuring-inference, section 8). 120 s is twenty
-# times the time HermiT needs for the same check (6.1 s), and a fifth of the
-# measured time, so the row says "does not scale" on any load.
+# 598 s at load 3.5 (skills/measuring-inference, section 8). The two
+# consistency rows passed on 2026-10-12, when the refuter stopped building the
+# class-size system with no equality row and stopped putting every range
+# axiom on every node (https://github.com/danbri/factoidal/issues/760): the
+# Cell Ontology in 15 s wall, RO in 10 s. HermiT 1.3.8 on this machine: 6.1 s
+# and 29.8 s. 60 s is four times the measured time and about ten times
+# HermiT's on the Cell Ontology, so the rows fail on a return of the
+# superlinear cost and not on load.
 ROW_CAP: dict[str, int] = {
-    "cl-basic-consistent": 120,
+    "cl-basic-consistent": 60,
+    "ro-consistent": 60,
     "wine-closure-fstar": 120,
 }
 
@@ -91,18 +120,14 @@ XFAIL: dict[str, str] = {
     # The Lean RDF/XML parser gives an xml:lang to the next sibling property
     # element, so two literals collapse into existing ones (11,703 triples).
     "ro-parse": "https://github.com/danbri/factoidal/issues/329",
-    # The closure fits in 1.4 GB; printing it needs more than 6 GB resident.
-    "qudt-closure": "https://github.com/danbri/factoidal/issues/758",
+    # The same closure under the address-space cap: mimalloc's 1 GiB arena
+    # reservations exhaust it at about 1.2 GB resident.
+    "qudt-closure-address-space": "https://github.com/danbri/factoidal/issues/759",
     # Fits in 1.4 GB resident, but mimalloc's 1 GiB arena reservations exhaust
     # the 6,000,000,000-byte address-space cap first.
     "qudt-consistent": "https://github.com/danbri/factoidal/issues/759",
-    # The tableau refuter grows about 5 times per doubling of the input;
-    # killed at 600 s (HermiT: 6.1 s).
-    "cl-basic-consistent": "https://github.com/danbri/factoidal/issues/760",
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
-    # 253 s of CPU time on 130,404 triples.
-    "qudt-species": "https://github.com/danbri/factoidal/issues/766",
     # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte).
     "cl-basic-parse-memory": "https://github.com/danbri/factoidal/issues/771",
 }
@@ -110,6 +135,7 @@ XFAIL: dict[str, str] = {
 
 def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
     name, step, expect, pair = ROWS[rid]
+    rss_cap = ROW_RSS_CAP_MB.get(rid, 0) * 1024 * 1024
     onto = next(o for o in bench.ONTOLOGIES if o["name"] == name)
     lean = str(BIN_DIR / "l4factoidal")
     wd = WORK / name
@@ -154,8 +180,11 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
         cmd = [lean, "owl-entails", str(merged), str(concl), "--format", "nquads"]
     else:
         return False, f"unknown step {step}"
-    r = bench.run_step(cmd, cap_s, AS_BYTES, out, str(wd))
-    detail = f"{step}: {r['status']}, {r['wall_s']:.2f} s, peak RSS {r['peak_rss_mb']:.0f} MB"
+    r = bench.run_step(cmd, cap_s, AS_BYTES, out, str(wd), rss_cap)
+    cap_text = (f"resident-set cap {ROW_RSS_CAP_MB[rid]} MB" if rss_cap
+                else f"address-space cap {AS_BYTES}")
+    detail = (f"{step}: {r['status']}, {r['wall_s']:.2f} s, peak RSS {r['peak_rss_mb']:.0f} MB "
+              f"({cap_text})")
     if r["status"] != "ok":
         tail = r["stderr_tail"].splitlines()[-1:] if r["stderr_tail"] else []
         return False, detail + (f" ({tail[0][:120]})" if tail else "")
@@ -163,7 +192,9 @@ def run_row(rid: str, cap_s: int) -> tuple[bool, str]:
     if step == "closure":
         n = bench.count_lines(out)
         os.remove(out)
-        return r["rc"] == 0, detail + f", {n} triples"
+        peak_ok = rid not in ROW_PEAK_MB or r["peak_rss_mb"] <= ROW_PEAK_MB[rid]
+        bound = f" (bound {ROW_PEAK_MB[rid]} MB)" if rid in ROW_PEAK_MB else ""
+        return r["rc"] == 0 and peak_ok, detail + f", {n} triples{bound}"
     detail += f", verdict {verdict}"
     if expect == "decided":
         return verdict in ("true", "false"), detail

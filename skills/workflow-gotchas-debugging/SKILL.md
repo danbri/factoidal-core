@@ -5,9 +5,16 @@ description: Diagnostic playbook for the dev-loop hazards that recur in this rep
 
 # Workflow gotchas + debugging
 
-This skill catalogues the twelve hazards that have actually bitten this
+This skill catalogues the hazards that have actually bitten this
 project in production. Each section lists symptoms, root cause, the
 recovery procedure, and (where applicable) the prevention now in place.
+
+Numbering: more than one session adds hazards here at the same time. Before
+you add one, run `git fetch origin main` and take the next number free on
+`origin/main` AND on every branch you will merge; the coordinator renumbers
+at merge time when two branches take the same number. (Twice in two days:
+2026-10-12, two hazards #41, one renumbered to #42; 2026-10-13, two hazards
+#42 on `main`, the later one renumbered to #43 in the merge that found it.)
 
 ## 1. Subagent worktree-leakage
 
@@ -2001,7 +2008,7 @@ not help when bash read its next block while the file was edited.
    the logs of the jobs that finished before the loop started again, and run
    the truncated job alone with `--only JOB` and the same `--logdir`.
 
-## Hazard #42 — a fixed fixture path shared by parallel test runs (2026-10-13)
+## Hazard #43 — a fixed fixture path shared by parallel test runs (2026-10-13)
 
 ### Symptom
 

@@ -758,6 +758,7 @@ L4Factoidal_OWL_QueryRewriteNested_rewritePatternNested  # (b) nesting of graph 
 L4Factoidal_OWL_QueryRewriteCore_rewritePattern  # (b) nesting of graph patterns in one query
 L4Factoidal_OWL_Refute_disjointUnionAxioms_unorderedCePairs  # (b) operands of one DisjointUnion axiom
 L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Hash N-Degree Quads (RDFC-1.0 4.8) recursion over blank-node paths; depth follows the blank nodes of one gadget, the budget bounds calls, not depth (confirm)
+L4Factoidal_RDF_Canonical_hndqRunF  # (a) PENDING https://github.com/danbri/factoidal/issues/752 the twin of hndqRun that csimp emits through buildCanonicalMappingBudgeted_eq_fast (https://github.com/danbri/factoidal/issues/751): the same Hash N-Degree Quads recursion, one level per blank node of one path, through the walkBucketsF closure
 L4Factoidal_RDF_Canonical_rewriteTermForHfdq  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_joinKey  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_lowerTags  # (b) nesting depth of RDF 1.2 triple terms
@@ -1444,3 +1445,7 @@ L4Factoidal_SPARQL_selectItemGroupFailure  # (b) one SELECT item of one query (c
 L4Factoidal_SPARQL_selectItemsGroupFailure  # (b) SELECT items of one query
 L4Factoidal_SPARQL_selectItemsRowFailure  # (b) SELECT items of one query
 L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query (twin of selectPost)
+# --- Added 2026-10-12, refuter scaling (https://github.com/danbri/factoidal/issues/760, OKR batch 1 KR 3.3)
+L4Factoidal_OWL_Refute_ceSubHashesInto  # (b) class-expression nesting of one TBox axiom or initial label (lazyOccurrences); operand lists are tail calls
+L4Factoidal_OWL_Refute_ceListSubHashesInto  # (b) as ceSubHashesInto: the operands of one intersection or union are a self tail call (loop); one frame per nesting level
+RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 on the real ontologies measured
