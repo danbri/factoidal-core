@@ -165,11 +165,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    owl-consistent-cl. The engine writes the log
                    (`l4wasm-cli callseq` of `deltaLogEncode`), and
                    `deltaLogDecode` must find every batch, before the row is
-                   timed. Expected failure naming
-                   https://github.com/danbri/factoidal/issues/822: each add
-                   goes through `Graph.add`, a membership scan and an append on
-                   a list (1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at
-                   32,000, measured 2026-10-13)
+                   timed. An expected failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/822): each add
+                   went through `Graph.add`, a membership scan and an append on
+                   a list (1.33 s at 8,000 records, 4.53 s at 16,000, 17.23 s
+                   at 32,000 CPU); after `applyBatches_eq_fast` (a hash set of
+                   each graph carried through the batches) 0.36 s, 0.81 s and
+                   1.80 s
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -237,7 +239,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
-    "delta-log-merge": "https://github.com/danbri/factoidal/issues/822",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
