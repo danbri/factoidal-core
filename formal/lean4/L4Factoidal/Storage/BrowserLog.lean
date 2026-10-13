@@ -151,56 +151,6 @@ def applyBatch (ds : Dataset) (b : DeltaBatch) : Dataset := b.ops.foldl applyEnt
 /-- Apply batches one by one, in order. -/
 def applyBatches (ds : Dataset) (bs : List DeltaBatch) : Dataset := bs.foldl applyBatch ds
 
-/-! ## Merge through graph indexes
-
-`applyEntry` adds a triple with `Dataset.insertQuad`, which scans and copies
-the graph, so merging a log of n distinct triples took time in n²
-(https://github.com/danbri/factoidal/issues/822). `applyBatchesFast` carries a
-`DatasetIx` (`SPARQL/Update.lean`) through all the batches: an add is
-`DatasetIx.insertQuad`, which makes a hash set of the graph on its second add;
-any other entry is `applyEntry` on the dataset the index holds. It gives the
-dataset `applyBatches` gives (`applyBatches_eq_fast`, `csimp`), so `merge`
-runs it and the theorems of `BrowserLogTheorems.lean` hold for it. -/
-
-/-- `applyEntry` on the index. -/
-def applyEntryIx (d : DatasetIx) (e : DeltaEntry) : DatasetIx :=
-  match e with
-  | .add t none => d.insertQuad (none, t)
-  | .add t (some g) => if h : isIri g then d.insertQuad (some ⟨g, h⟩, t) else d
-  | e => DatasetIx.ofDataset (applyEntry d.toDataset e)
-
-theorem toDataset_applyEntryIx (d : DatasetIx) (e : DeltaEntry) :
-    (applyEntryIx d e).toDataset = applyEntry d.toDataset e := by
-  unfold applyEntryIx
-  split
-  · simp [DatasetIx.toDataset_insertQuad, applyEntry]
-  · split <;> simp_all [DatasetIx.toDataset_insertQuad, applyEntry]
-  · simp
-
-theorem toDataset_foldl_applyEntryIx (es : List DeltaEntry) (d : DatasetIx) :
-    (es.foldl applyEntryIx d).toDataset = es.foldl applyEntry d.toDataset := by
-  induction es generalizing d with
-  | nil => rfl
-  | cons e es ih => simp only [List.foldl_cons, ih, toDataset_applyEntryIx]
-
-theorem toDataset_foldl_batchIx (bs : List DeltaBatch) (d : DatasetIx) :
-    (bs.foldl (fun d b => b.ops.foldl applyEntryIx d) d).toDataset =
-      bs.foldl applyBatch d.toDataset := by
-  induction bs generalizing d with
-  | nil => rfl
-  | cons b bs ih =>
-    simp only [List.foldl_cons, ih, toDataset_foldl_applyEntryIx, applyBatch]
-
-/-- What runs in place of `applyBatches`. -/
-def applyBatchesFast (ds : Dataset) (bs : List DeltaBatch) : Dataset :=
-  (bs.foldl (fun d b => b.ops.foldl applyEntryIx d) (DatasetIx.ofDataset ds)).toDataset
-
-@[csimp] theorem applyBatches_eq_fast : @applyBatches = @applyBatchesFast := by
-  funext ds bs
-  simp [applyBatches, applyBatchesFast, toDataset_foldl_batchIx]
-
-#print axioms applyBatches_eq_fast
-
 /-- Merge on read: decode the log and apply the batches of the records that
 verify over `base`. A torn or corrupted record, and every byte after it,
 changes nothing. -/
