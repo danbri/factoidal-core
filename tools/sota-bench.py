@@ -881,8 +881,11 @@ def report(path):
 # PASS), so the repair cannot land without the row and the issue being updated.
 XFAIL = {
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
-    ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
 }
+# Removed 2026-10-13: ("rdfc-pairs", "8000", "lean") for
+# https://github.com/danbri/factoidal/issues/751. With the RDFC-1.0 repair of
+# that issue (OKR batch 1 KR 2.4) the row measured 0.58 s CPU (9.97 s
+# recorded), time ratio 2.9 to Oxigraph, and the gate reported UNEXPECTED PASS.
 # Removed 2026-10-13: ("owl-dl-consistent", "schema.org", "lean") for
 # https://github.com/danbri/factoidal/issues/819. On a base with the repair of
 # https://github.com/danbri/factoidal/issues/760 and the semi-naive OWL 2 RL
