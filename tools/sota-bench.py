@@ -690,6 +690,7 @@ def run(args):
             "cap_s": args.cap, "runs": args.runs, "jvm_heap": JVM_HEAP}
     out.write(json.dumps(meta, sort_keys=True) + "\n")
     out.flush()
+    lean_sha = (meta["versions"].get("lean_l4factoidal_sha256") or "")[:16]
     for w in wl:
         for n in w.sizes:
             if sizes_only and label(n) not in sizes_only:
@@ -707,6 +708,8 @@ def run(args):
                                  args.load_wait, not args.no_rerun)
                 ans = w.answer(e, o) if rec["status"] == "ok" else None
                 answers[e] = ans
+                if e in ("lean", "lean-stream"):
+                    rec["lean_sha256"] = lean_sha
                 rec.update({"kind": "row", "workload": w.wid, "group": w.group, "engine": e,
                             "size": n, "unit": w.unit, "answer": ans,
                             "input": str(path) if path else None,
@@ -865,6 +868,7 @@ XFAIL = {
     ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/813",
     ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/813",
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
+    ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
 }
 
 
