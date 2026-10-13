@@ -568,6 +568,15 @@ which reads the HDT file as the byte region and is therefore in
 included), and the JavaScript side (`npm/factoidal/l4-core.js`'s `OPS`
 list and exports, `l4-core.d.ts`).
 
+The three ops of the browser update log (`deltaLogEncode`, `deltaLogDecode`,
+`deltaLogMerge`, `Wasm/Ops/DeltaLog.lean`, 2026-10-13,
+https://github.com/danbri/factoidal/issues/728) are core-table ops: a name in
+`Core.coreOpNames`, an arm in `Core.callArgsBy`, the names appended to the full
+table's `stage2OpNames` for its reflection, and `samePure` cases in
+`Wasm/CoreDispatchTests.lean`. Their JavaScript side is `lib/api.mjs` with a
+host store in `lib/delta-log-hosts.mjs`. Record:
+`docs/designissues/2026-10-10-npm-lean-only.md` § 11.
+
 ## The core module and the size table (2026-10-10)
 
 `l4factoidal-core.wasm` exists because one dispatch table reaching the whole
