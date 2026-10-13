@@ -812,6 +812,192 @@ def addEdge (comps : List (List String)) (a b : String) : Option (List (List Str
 def componentsOf (edges : List (String × String)) : Option (List (List String)) :=
   edges.foldlM (fun comps (a, b) => addEdge comps a b) []
 
+/-! ### `componentsOf` without the scans for new vertices (https://github.com/danbri/factoidal/issues/812)
+
+`addEdge` looks for the component of each end with `List.find?` over all
+components, so n vertex-disjoint edges (a pair of blank nodes each) cost n²
+(8,000 pairs 1.09 s, 32,000 pairs 14.79 s, issue 812). `componentsOfLoop`
+carries the set of vertices already in a component: when neither end of an
+edge is in it, no component contains them (`find?_none_of_not_covered`), so
+the edge is a new two-vertex component without a scan (`addEdgeSeen_eq`).
+`addEdge_covered` states which vertices a step covers; `componentsOf_eq_fast`
+(`csimp`) runs the loop wherever `componentsOf` is called, with the same
+components in the same order, so the forest verdict and the number of trees
+without a leaf are those of `componentsOf`. An edge that touches a vertex
+already in a component still scans; a chain of n blank nodes is quadratic. -/
+
+/-- A vertex is in some component. -/
+def Covered (comps : List (List String)) (v : String) : Prop := ∃ c ∈ comps, v ∈ c
+
+theorem find?_none_of_not_covered {comps : List (List String)} {a : String}
+    (h : ¬ Covered comps a) : comps.find? (fun c => c.contains a) = none := by
+  rw [List.find?_eq_none]
+  intro c hc hca
+  exact h ⟨c, hc, by simpa using hca⟩
+
+theorem covered_of_find? {comps : List (List String)} {a : String} {x : List String}
+    (h : comps.find? (fun c => c.contains a) = some x) : x ∈ comps ∧ a ∈ x := by
+  have h1 := List.find?_some h
+  have h2 := List.mem_of_find?_eq_some h
+  exact ⟨h2, by simpa using h1⟩
+
+/-- After an edge, the covered vertices are the old ones and the edge's ends. -/
+theorem addEdge_covered {comps comps' : List (List String)} {a b : String}
+    (h : addEdge comps a b = some comps') (v : String) :
+    Covered comps' v ↔ (Covered comps v ∨ v = a ∨ v = b) := by
+  unfold addEdge at h
+  simp only at h
+  split at h
+  · rename_i x y hx hy
+    obtain ⟨hxm, hax⟩ := covered_of_find? hx
+    obtain ⟨hym, hby⟩ := covered_of_find? hy
+    split at h
+    · simp at h
+    · simp only [Option.some.injEq] at h
+      subst h
+      constructor
+      · rintro ⟨c, hc, hvc⟩
+        simp only [List.mem_cons, List.mem_filter] at hc
+        rcases hc with rfl | ⟨hc, _⟩
+        · rcases List.mem_append.mp hvc with h1 | h1
+          · exact Or.inl ⟨_, hxm, h1⟩
+          · exact Or.inl ⟨_, hym, h1⟩
+        · exact Or.inl ⟨c, hc, hvc⟩
+      · rintro (⟨c, hc, hvc⟩ | rfl | rfl)
+        · by_cases hcx : c = x
+          · subst hcx; exact ⟨_, List.mem_cons_self .., List.mem_append_left _ hvc⟩
+          · by_cases hcy : c = y
+            · subst hcy; exact ⟨_, List.mem_cons_self .., List.mem_append_right _ hvc⟩
+            · exact ⟨c, List.mem_cons_of_mem _ (List.mem_filter.mpr ⟨hc, by simp [hcx, hcy]⟩), hvc⟩
+        · exact ⟨_, List.mem_cons_self .., List.mem_append_left _ hax⟩
+        · exact ⟨_, List.mem_cons_self .., List.mem_append_right _ hby⟩
+  · rename_i x hx hy
+    obtain ⟨hxm, hax⟩ := covered_of_find? hx
+    simp only [Option.some.injEq] at h
+    subst h
+    constructor
+    · rintro ⟨c, hc, hvc⟩
+      simp only [List.mem_cons, List.mem_filter] at hc
+      rcases hc with rfl | ⟨hc, _⟩
+      · rcases List.mem_cons.mp hvc with h1 | h1
+        · exact Or.inr (Or.inr h1)
+        · exact Or.inl ⟨_, hxm, h1⟩
+      · exact Or.inl ⟨c, hc, hvc⟩
+    · rintro (⟨c, hc, hvc⟩ | rfl | rfl)
+      · by_cases hcx : c = x
+        · subst hcx; exact ⟨_, List.mem_cons_self .., List.mem_cons_of_mem _ hvc⟩
+        · exact ⟨c, List.mem_cons_of_mem _ (List.mem_filter.mpr ⟨hc, by simp [hcx]⟩), hvc⟩
+      · exact ⟨_, List.mem_cons_self .., List.mem_cons_of_mem _ hax⟩
+      · exact ⟨_, List.mem_cons_self .., List.mem_cons_self ..⟩
+  · rename_i y hx hy
+    obtain ⟨hym, hby⟩ := covered_of_find? hy
+    simp only [Option.some.injEq] at h
+    subst h
+    constructor
+    · rintro ⟨c, hc, hvc⟩
+      simp only [List.mem_cons, List.mem_filter] at hc
+      rcases hc with rfl | ⟨hc, _⟩
+      · rcases List.mem_cons.mp hvc with h1 | h1
+        · exact Or.inr (Or.inl h1)
+        · exact Or.inl ⟨_, hym, h1⟩
+      · exact Or.inl ⟨c, hc, hvc⟩
+    · rintro (⟨c, hc, hvc⟩ | rfl | rfl)
+      · by_cases hcy : c = y
+        · subst hcy; exact ⟨_, List.mem_cons_self .., List.mem_cons_of_mem _ hvc⟩
+        · exact ⟨c, List.mem_cons_of_mem _ (List.mem_filter.mpr ⟨hc, by simp [hcy]⟩), hvc⟩
+      · exact ⟨_, List.mem_cons_self .., List.mem_cons_self ..⟩
+      · exact ⟨_, List.mem_cons_self .., List.mem_cons_of_mem _ hby⟩
+  · rename_i hx hy
+    simp only [Option.some.injEq] at h
+    subst h
+    constructor
+    · rintro ⟨c, hc, hvc⟩
+      rcases List.mem_cons.mp hc with rfl | hc
+      · simp at hvc; rcases hvc with h1 | h1 <;> simp [h1]
+      · exact Or.inl ⟨c, hc, hvc⟩
+    · rintro (⟨c, hc, hvc⟩ | rfl | rfl)
+      · exact ⟨c, List.mem_cons_of_mem _ hc, hvc⟩
+      · exact ⟨_, List.mem_cons_self .., by simp⟩
+      · exact ⟨_, List.mem_cons_self .., by simp⟩
+
+
+/-- `addEdge` with the set of covered vertices beside it: when neither end is
+covered, the two `find?` scans are skipped. -/
+def addEdgeSeen (comps : List (List String)) (seen : Std.HashSet String) (a b : String) :
+    Option (List (List String)) :=
+  if !seen.contains a && !seen.contains b then some ([a, b] :: comps) else addEdge comps a b
+
+/-- `componentsOf` as a loop that carries the covered vertices. -/
+def componentsOfLoop : List (String × String) → List (List String) → Std.HashSet String →
+    Option (List (List String))
+  | [], comps, _ => some comps
+  | (a, b) :: rest, comps, seen =>
+    match addEdgeSeen comps seen a b with
+    | none => none
+    | some comps' => componentsOfLoop rest comps' ((seen.insert a).insert b)
+
+theorem addEdgeSeen_eq {comps : List (List String)} {seen : Std.HashSet String} {a b : String}
+    (hs : ∀ v, seen.contains v = true ↔ Covered comps v) :
+    addEdgeSeen comps seen a b = addEdge comps a b := by
+  unfold addEdgeSeen
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    have ha : ¬ Covered comps a := fun hc => by have := (hs a).mpr hc; simp_all
+    have hb : ¬ Covered comps b := fun hc => by have := (hs b).mpr hc; simp_all
+    unfold addEdge
+    simp only [find?_none_of_not_covered ha, find?_none_of_not_covered hb]
+  · rfl
+
+theorem componentsOfLoop_eq : ∀ (edges : List (String × String)) (comps : List (List String))
+    (seen : Std.HashSet String), (∀ v, seen.contains v = true ↔ Covered comps v) →
+    componentsOfLoop edges comps seen = edges.foldlM (fun comps (a, b) => addEdge comps a b) comps
+  | [], comps, seen, _ => by simp [componentsOfLoop]
+  | (a, b) :: rest, comps, seen, hs => by
+    simp only [componentsOfLoop, List.foldlM_cons, addEdgeSeen_eq hs]
+    cases h : addEdge comps a b with
+    | none => rfl
+    | some comps' =>
+      simp only
+      apply componentsOfLoop_eq
+      intro v
+      rw [addEdge_covered h v, Std.HashSet.contains_insert, Std.HashSet.contains_insert]
+      simp only [Bool.or_eq_true, beq_iff_eq, hs v]
+      constructor
+      · rintro (h1 | h1 | h1)
+        · exact Or.inr (Or.inr h1.symm)
+        · exact Or.inr (Or.inl h1.symm)
+        · exact Or.inl h1
+      · rintro (h1 | h1 | h1)
+        · exact Or.inr (Or.inr h1)
+        · exact Or.inr (Or.inl h1.symm)
+        · exact Or.inl h1.symm
+
+def componentsOfFast (edges : List (String × String)) : Option (List (List String)) :=
+  componentsOfLoop edges [] ∅
+
+@[csimp] theorem componentsOf_eq_fast : @componentsOf = @componentsOfFast := by
+  funext edges
+  simp only [componentsOf, componentsOfFast]
+  exact (componentsOfLoop_eq edges [] ∅ (fun v => by simp [Covered])).symm
+
+#print axioms componentsOf_eq_fast
+
+/-! The loop answers as the fold on disjoint pairs, a chain, a merge of two
+components, a cycle (`none`), a parallel edge (`none`) and a loop on a new
+vertex (the fold makes it a component, as before). -/
+private def foldComps (es : List (String × String)) : Option (List (List String)) :=
+  es.foldlM (fun comps (a, b) => addEdge comps a b) []
+#guard componentsOf [("a", "b"), ("c", "d"), ("e", "f")] == foldComps [("a", "b"), ("c", "d"), ("e", "f")]
+#guard componentsOf [("a", "b"), ("c", "d"), ("e", "f")] == some [["e", "f"], ["c", "d"], ["a", "b"]]
+#guard componentsOf [("a", "b"), ("b", "c"), ("c", "d")] == foldComps [("a", "b"), ("b", "c"), ("c", "d")]
+#guard componentsOf [("a", "b"), ("c", "d"), ("b", "c")] == foldComps [("a", "b"), ("c", "d"), ("b", "c")]
+#guard componentsOf [("a", "b"), ("b", "c"), ("c", "a")] == none
+#guard foldComps [("a", "b"), ("b", "c"), ("c", "a")] == none
+#guard componentsOf [("a", "b"), ("a", "b")] == none
+#guard componentsOf [("a", "a")] == foldComps [("a", "a")]
+#guard componentsOf [("a", "a")] == some [["a", "a"]]
+
 /-- Restrictions on the usage of anonymous individuals (§11.2). -/
 def anonymousIndividualViolations (g : Graph) (d : DeclIndex) : List String :=
   let sameDiff := g.filterMap (fun t =>

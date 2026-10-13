@@ -135,10 +135,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   owl-species-bnode-edges  the same check over n pairs of blank nodes linked by
                    an object property assertion (`_:x p _:y`), each pair with
                    one named link: the anonymous-individual graph has n
-                   components. 8,000 against 32,000 pairs. Expected failure
-                   naming https://github.com/danbri/factoidal/issues/812:
-                   `componentsOf` merges components in a list (1.09 s at 8,000
-                   pairs, 14.79 s at 32,000, measured 2026-10-13)
+                   components. 8,000 against 32,000 pairs. An expected
+                   failure until 2026-10-13 (https://github.com/danbri/factoidal/issues/812):
+                   `componentsOf` looked for the component of each end with a
+                   scan of all components (1.09 s at 8,000 pairs, 14.79 s at
+                   32,000); after `componentsOf_eq_fast`, which skips the scans
+                   for vertices in no component, 0.34 s and 1.57 s
+  owl-species-bnode-chain  the same check over one chain of n blank nodes
+                   (`_:x0 p _:x1 . _:x1 p _:x2 ...`), 8,000 against 32,000.
+                   Expected failure, issue 812: each edge touches a vertex that
+                   is already in a component, so `addEdge` still scans and
+                   filters the component list (0.49 s and 9.18 s before the
+                   repair of the pairs row, 0.61 s and 13.67 s after)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -198,7 +206,7 @@ XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
     "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
-    "owl-species-bnode-edges": "https://github.com/danbri/factoidal/issues/812",
+    "owl-species-bnode-chain": "https://github.com/danbri/factoidal/issues/812",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -298,6 +306,19 @@ def owl_species_doc(n: int) -> str:
                 f'<{EX}a{i}> <{EX}q> "{i}"^^<{XSD}integer> .',
                 f"<{EX}a{i}> <{EX}p> _:x{i} .",
                 f"_:x{i} {ty} {c2} ."]
+    return "\n".join(out) + "\n"
+
+
+def owl_species_bnode_chain(n: int) -> str:
+    """One chain of n + 1 blank nodes linked by an object property assertion,
+    with one named link at its start."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}C> {ty} <{OWL}Class> .",
+           f"<{EX}a> {ty} <{EX}C> .",
+           f"<{EX}a> <{EX}p> _:x0 ."]
+    out += [f"_:x{i} <{EX}p> _:x{i + 1} ." for i in range(n)]
     return "\n".join(out) + "\n"
 
 
@@ -424,6 +445,10 @@ ROWS = {
     "owl-species-bnode-edges": (
         8000,
         lambda n: fixture(f"owl-species-bnode-edges-{n}.nt", lambda: owl_species_bnode_edges(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
+    "owl-species-bnode-chain": (
+        8000,
+        lambda n: fixture(f"owl-species-bnode-chain-{n}.nt", lambda: owl_species_bnode_chain(n)),
         lambda p: [str(SPECIES_BIN), str(p)]),
     "shacl-person": (
         500,
