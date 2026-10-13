@@ -34,6 +34,7 @@ code is 0 only when M = 0 and there is no XPASS.
 -/
 import L4Factoidal.Planner.Search
 import L4Factoidal.Planner.FromQuery
+import L4Factoidal.Planner.Exec
 import L4Factoidal.SPARQL.Parser
 import Harness.PlannerCheck
 import Harness.PlannerKinds
@@ -285,14 +286,6 @@ def xcases : List XCase := [
     what := "cost model used for admission: no plan in the family exceeds a call quota",
     test := fun _ => (search [knows, peopleQuota] reqChain 2).all
       (fun r => withinQuota [knows, peopleQuota] r.rewriting) },
-  { id := "runtime-quota-adaptation", issue := issue801,
-    what := "execution state machine: the run stays within each call quota and gives the reference answers",
-    test := fun _ =>
-      match (search [knows, peopleQuota, namesScan] reqChain 2).head? with
-      | some r => withinQuota [knows, peopleQuota, namesScan] r.rewriting &&
-          sameMultiset (planRows [knows, peopleQuota, namesScan] reqChain r.rewriting)
-            (refRows [knows, peopleQuota, namesScan] reqChain)
-      | none => false },
   { id := "named-graph-requirement", issue := issue801,
     what := "named graphs: a requirement with GRAPH <g> { ... }",
     test := fun _ => (reqOfSparql sparqlGraph).isSome },
@@ -313,6 +306,160 @@ def xcases : List XCase := [
       | some r => sameMultiset (planRows [employee] reqXName r.rewriting) (refRows [employee] reqXName)
       | none => false }
 ]
+
+/-! ## KR 2.4: the execution state machine (`Planner/Exec.lean`)
+
+Each case runs the driver `Exec.run` over the plan family of `search`
+and checks the run's status, its output against the reference
+evaluator's answers over the materialised declared graph (multiset
+equality), the call counts against the call quotas, and the markers.
+`runtime-quota-adaptation` was an expected failure of KR 2.2; this work
+makes it pass, so it is an assertion now. -/
+
+section ExecCases
+open L4Factoidal.Planner.Exec
+
+def outRows (req : Requirement) (st : State) : List (List (Option Term)) :=
+  canon req.projection (st.output.map Row.binding)
+
+/-- Every call count is within its source's call quota. -/
+def callsWithinQuota (cat : Catalog) (st : State) : Bool :=
+  (List.range cat.length).all (fun i =>
+    match cat[i]? with
+    | some s => match s.cap.cost.callQuota with
+      | some q => st.calls i ≤ q
+      | none   => true
+    | none => true)
+
+def callList (cat : Catalog) (st : State) : List Nat := (List.range cat.length).map st.calls
+
+def statusName : Status → String
+  | .running => "running"
+  | .done    => "done"
+  | .stopped => "stopped"
+
+/-- The fault schedule that fails every call of source `i`. -/
+def failAll (i : Nat) : Faults := fun j _ => j == i
+
+/-- The fault schedule that fails call `n` of source `i` only. -/
+def failOnce (i n : Nat) : Faults := fun j m => j == i && m == n
+
+/-- Common checks: the run exists, ends with `want`, and stays within the
+call quotas; when `want` is `done` and `exact`, the output is the
+reference answers and no row is marked. -/
+def execChecks (cat : Catalog) (req : Requirement) (k : Nat) (cfg : Config) (faults : Faults)
+    (want : Status) (exact : Bool := true) : Option State × List String :=
+  match run cat req k cfg faults with
+  | none => (none, ["no plan family"])
+  | some st =>
+    let f1 := if st.status == want then [] else
+      [s!"status {statusName st.status}, want {statusName want}"]
+    let f2 := if callsWithinQuota cat st then [] else [s!"a call quota is exceeded: {callList cat st}"]
+    let f3 := if want == .done && exact then
+        (if sameMultiset (outRows req st) (refRows cat req) then []
+         else [s!"output differs from the reference ({st.output.length} rows)"]) ++
+        (if st.output.any (·.approx) then ["an exact run has a marked row"] else [])
+      else []
+    (some st, f1 ++ f2 ++ f3)
+
+def execCases : List (String × List String) :=
+  let catQ := [knows, peopleQuota]
+  let catA := [knows, peopleQuota, namesScan]
+  let catF := [knows, people, namesScan]
+  [
+  -- The static first plan needs 3 calls of a source with a call quota of 1,
+  -- and the family has no other plan: the run stops within the quota.
+  ("exec-quota-stops",
+    (match (search catQ reqChain 2).head? with
+     | some r => if withinQuota catQ r.rewriting then ["the static plan does not exceed the quota"] else []
+     | none => ["no plan"]) ++
+    (let (st?, errs) := execChecks catQ reqChain 2 {} noFaults .stopped
+     errs ++ match st? with
+       | some st => (if st.output.isEmpty then [] else ["a stopped run has output"]) ++
+           (if st.calls 1 == 1 then [] else [s!"calls {callList catQ st}, want 1 call of the quota source"])
+       | none => [])),
+  -- The same quota with another plan in the family: the run switches and
+  -- gives the reference answers.
+  ("runtime-quota-adaptation",
+    let (st?, errs) := execChecks catA reqChain 2 {} noFaults .done
+    errs ++ match st? with
+      | some st => if st.switches ≥ 1 then [] else ["no switch"]
+      | none => []),
+  -- Every call of the lookup fails; after one retry the run switches to
+  -- another plan of the family and gives the reference answers.
+  ("exec-failure-adaptation",
+    let (st?, errs) := execChecks catF reqChain 2 {} (failAll 1) .done
+    errs ++ match st? with
+      | some st => (if st.switches == 1 then [] else [s!"{st.switches} switches, want 1"]) ++
+          (if st.calls 1 == 2 then [] else [s!"calls {callList catF st}, want 2 calls of the lookup"])
+      | none => []),
+  -- The first call of the lookup fails and the retry succeeds: no switch,
+  -- one extra call.
+  ("exec-retry-succeeds",
+    let (st?, errs) := execChecks [knows, people] reqChain 2 {} (failOnce 1 1) .done
+    errs ++ match st? with
+      | some st => (if st.switches == 0 then [] else ["a switch"]) ++
+          (if st.calls 1 == 4 then [] else [s!"calls {callList [knows, people] st}, want 4 calls of the lookup"])
+      | none => []),
+  -- No retry allowed and no other plan: the failure stops the run.
+  ("exec-retry-bound-stops",
+    let (st?, errs) := execChecks [knows, people] reqChain 2 { maxRetries := 0 } (failOnce 1 1) .stopped
+    errs ++ match st? with
+      | some st => if st.output.isEmpty && st.retries == 0 then [] else ["output or retries"]
+      | none => []),
+  -- An approximate source: every output row is marked.
+  ("exec-approximate-marked",
+    let (st?, errs) := execChecks [knows, ageLlm] reqAge 2 {} noFaults .done (exact := false)
+    errs ++ match st? with
+      | some st => if !st.output.isEmpty && st.output.all (·.approx) then [] else ["a row is not marked"]
+      | none => []),
+  -- Exact before approximate: the run uses the exact source and gives the
+  -- reference answers, unmarked.
+  ("exec-exact-before-approximate",
+    (execChecks [knows, ageLlm, ageDb] reqAge 2 {} noFaults .done).2),
+  -- Not answerable: no plan family, no run.
+  ("exec-not-answerable",
+    if (run [byName] reqXName 3 {} noFaults).isNone then [] else ["a run without a plan family"])
+  ]
+
+/-- For each answerable case of KR 2.2: with no faults, the run ends
+`done`, and its output is the run (`Plan.run`) of the family's first plan
+when that plan is within the call quotas (same rows, same order). -/
+def execEqualsPlanRun : Nat × List String :=
+  cases.foldl (fun (n, errs) c =>
+    if !c.answerable then (n, errs) else
+    match c.req with
+    | none => (n, errs)
+    | some req =>
+      match (search c.cat req c.k).head?, run c.cat req c.k {} noFaults with
+      | some r, some st =>
+        if !withinQuota c.cat r.rewriting then (n, errs) else
+        let want := canon req.projection (((r.rewriting.toPlan req).run c.cat).map Row.binding)
+        if st.status == .done && outRows req st == want && st.switches == 0 then (n + 1, errs)
+        else (n + 1, errs ++ [s!"{c.id}: status {statusName st.status}, {st.output.length} rows, want {want.length}"])
+      | _, _ => (n + 1, errs ++ [s!"{c.id}: no plan or no run"])) (0, [])
+
+/-- Expected failures of KR 2.4 (issue 801). -/
+def execXcases : List XCase :=
+  let knowsRowQ1 : Source :=
+    mkSrc "knows-sparql-rowquota1" 2 [] { perCall := 200, perRow := 1, rowQuota := some 1 } [tmpl pKnows]
+      [[alice, bob], [bob, carol], [carol, dave]]
+  [
+  { id := "exec-row-quota", issue := issue801,
+    what := "row quota enforced at run time: a scan with a row quota of 1 that answers 3 rows gives at most 1 row or stops",
+    test := fun _ =>
+      match run [knowsRowQ1] { bgp := [tp (sv "x") pKnows (v "y")], projection := ["x", "y"] } 1 {} noFaults with
+      | some st => st.status == .stopped || st.output.length ≤ 1
+      | none => false },
+  { id := "exec-reuse-after-adaptation", issue := issue801,
+    what := "after a switch, a call whose answer is known is not made again (the knows scan is called once)",
+    test := fun _ =>
+      match run [knows, peopleQuota, namesScan] reqChain 2 {} noFaults with
+      | some st => st.calls 0 == 1
+      | none => false }
+  ]
+
+end ExecCases
 
 def main : IO UInt32 := do
   let mut pass := 0
@@ -335,6 +482,28 @@ def main : IO UInt32 := do
       fail := fail + 1
       IO.println s!"FAIL {id}: {errs}"
   for x in xcases do
+    if x.test () then
+      xpass := xpass + 1
+      IO.println s!"XPASS {x.id}: {x.what} now holds; flip to an assertion and update {x.issue}"
+    else
+      xfail := xfail + 1
+      IO.println s!"xfail {x.id}: {x.what} ({x.issue})"
+  -- KR 2.4: the execution state machine
+  for (id, errs) in execCases do
+    if errs.isEmpty then
+      pass := pass + 1
+      IO.println s!"PASS {id}"
+    else
+      fail := fail + 1
+      IO.println s!"FAIL {id}: {errs}"
+  let (nEq, errsEq) := execEqualsPlanRun
+  if errsEq.isEmpty then
+    pass := pass + 1
+    IO.println s!"PASS exec-equals-plan-run ({nEq} cases)"
+  else
+    fail := fail + 1
+    IO.println s!"FAIL exec-equals-plan-run ({nEq} cases): {errsEq}"
+  for x in execXcases do
     if x.test () then
       xpass := xpass + 1
       IO.println s!"XPASS {x.id}: {x.what} now holds; flip to an assertion and update {x.issue}"
