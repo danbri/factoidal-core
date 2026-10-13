@@ -79,6 +79,25 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    `TermWireV2.parseInline` took `List.length` of the rest of the
                    page for each term: 1,000 to 4,000 terms, 5 decodes, went from
                    0.20 s to 5.30 s (ratio 26); after, 0.015 s to 0.049 s
+  owl-species      the OWL 2 species check (`l4owl-species`,
+                   `OWL.SyntaxDL.speciesViolations`) of a generated OWL 2 DL
+                   document of n units: a class with a restriction on a blank
+                   node, a union over an RDF list, an individual typed with the
+                   class, a language-tagged label, a data value and an object
+                   property assertion to a blank node (an anonymous individual
+                   with one named link). 2,000 against 8,000 units
+                   (https://github.com/danbri/factoidal/issues/766: the check
+                   counted the named links of each blank node with a scan of
+                   the graph, and read each (subject, predicate) pair with a
+                   scan; QUDT 3.4.0 took 253 s of CPU time before the indexes,
+                   2.3 s after)
+  owl-species-bnode-edges  the same check over n pairs of blank nodes linked by
+                   an object property assertion (`_:x p _:y`), each pair with
+                   one named link: the anonymous-individual graph has n
+                   components. 8,000 against 32,000 pairs. Expected failure
+                   naming https://github.com/danbri/factoidal/issues/812:
+                   `componentsOf` merges components in a list (1.09 s at 8,000
+                   pairs, 14.79 s at 32,000, measured 2026-10-13)
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -102,6 +121,7 @@ Usage:  tests/stack/lean_scaling.py [--runs N] [--only ROW[,ROW...]]
 Env:    L4_BIN     path of l4factoidal (default formal/lean4/.lake/build/bin/l4factoidal)
         L4_SHACL_BIN   path of l4shacl (default: beside L4_BIN)
         L4_TERMWIRE_BIN  path of l4termwire-page-decode (default: beside L4_BIN)
+        L4_SPECIES_BIN   path of l4owl-species (default: beside L4_BIN)
         L4_SCALING_CAP   seconds per run before it counts as a failure (default 120)
 """
 
@@ -125,6 +145,7 @@ FLOOR = 0.05
 BIN = Path(os.environ.get("L4_BIN", ROOT / "formal/lean4/.lake/build/bin/l4factoidal"))
 SHACL_BIN = Path(os.environ.get("L4_SHACL_BIN", BIN.parent / "l4shacl"))
 TERMWIRE_BIN = Path(os.environ.get("L4_TERMWIRE_BIN", BIN.parent / "l4termwire-page-decode"))
+SPECIES_BIN = Path(os.environ.get("L4_SPECIES_BIN", BIN.parent / "l4owl-species"))
 CAP = float(os.environ.get("L4_SCALING_CAP", "120"))
 FIX = Path(os.environ.get("L4_SCALING_FIXTURES", "/tmp/factoidal-lean-scaling"))
 EX = "http://example.org/"
@@ -135,6 +156,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 XFAIL: dict[str, str] = {
     "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
+    "owl-species-bnode-edges": "https://github.com/danbri/factoidal/issues/812",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -184,6 +206,55 @@ def trig_blocks(n: int) -> str:
 def trig_one_graph(n: int) -> str:
     body = "\n".join(f"  ex:s{i} ex:p ex:o{i} ." for i in range(n))
     return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
+
+
+OWL = "http://www.w3.org/2002/07/owl#"
+RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+XSD = "http://www.w3.org/2001/XMLSchema#"
+
+
+def owl_species_doc(n: int) -> str:
+    """An OWL 2 DL document of n units, as N-Triples (the species check reads
+    N-Triples). Every unit is DL, so `l4owl-species` exits 0."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}q> {ty} <{OWL}DatatypeProperty> ."]
+    for i in range(n):
+        c, c2 = f"<{EX}C{i}>", f"<{EX}C{i + 1}>"
+        out += [f"{c} {ty} <{OWL}Class> .",
+                f"{c2} {ty} <{OWL}Class> .",
+                f"{c} <{RDFS}subClassOf> _:r{i} .",
+                f"_:r{i} {ty} <{OWL}Restriction> .",
+                f"_:r{i} <{OWL}onProperty> <{EX}p> .",
+                f"_:r{i} <{OWL}someValuesFrom> {c2} .",
+                f"<{EX}U{i}> {ty} <{OWL}Class> .",
+                f"<{EX}U{i}> <{OWL}unionOf> _:l{i}a .",
+                f"_:l{i}a <{RDF}first> {c} .",
+                f"_:l{i}a <{RDF}rest> _:l{i}b .",
+                f"_:l{i}b <{RDF}first> {c2} .",
+                f"_:l{i}b <{RDF}rest> <{RDF}nil> .",
+                f"<{EX}a{i}> {ty} {c} .",
+                f'<{EX}a{i}> <{RDFS}label> "a{i}"@en .',
+                f'<{EX}a{i}> <{EX}q> "{i}"^^<{XSD}integer> .',
+                f"<{EX}a{i}> <{EX}p> _:x{i} .",
+                f"_:x{i} {ty} {c2} ."]
+    return "\n".join(out) + "\n"
+
+
+def owl_species_bnode_edges(n: int) -> str:
+    """n pairs of blank nodes linked by an object property assertion, each
+    pair with one named link."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}C> {ty} <{OWL}Class> ."]
+    for i in range(n):
+        out += [f"<{EX}a{i}> {ty} <{EX}C> .",
+                f"<{EX}a{i}> <{EX}p> _:x{i} .",
+                f"_:x{i} <{EX}p> _:y{i} ."]
+    return "\n".join(out) + "\n"
 
 
 def turtle_object_list(n: int) -> str:
@@ -271,6 +342,14 @@ ROWS = {
         1000,
         lambda n: n,
         lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
+    "owl-species": (
+        2000,
+        lambda n: fixture(f"owl-species-{n}.nt", lambda: owl_species_doc(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
+    "owl-species-bnode-edges": (
+        8000,
+        lambda n: fixture(f"owl-species-bnode-edges-{n}.nt", lambda: owl_species_bnode_edges(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
