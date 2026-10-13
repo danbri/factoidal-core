@@ -2819,7 +2819,11 @@ inductive PostAnswer where
 
 /-- The rows of `t` as solution mappings: per row, each column whose id is
     not `OptJoin.unbound`, decoded (`Store.termOf`; each distinct id once,
-    so equal ids share one term). -/
+    so equal ids share one term). Cost (DBpedia, 2026-10-13): the 326,365
+    rows of three variables of d19's join decode in about 2.0 s (warm), most
+    of it `Session.termOf` on the distinct dictionary ids; decoding them in
+    id order (each dictionary page read once) measured the same within the
+    spread, so the rows are decoded in table order. -/
 def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
     ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
   let mut memo : Std.HashMap UInt64 Term := {}
