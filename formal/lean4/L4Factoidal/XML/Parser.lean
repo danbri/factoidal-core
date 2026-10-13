@@ -195,6 +195,37 @@ def charAt (s : Chars) (i : Nat) : Char := s.getD i (Char.ofNat 0)
 def sub (s : Chars) (start stop : Nat) : String :=
   String.ofList (s.extract start stop).toList
 
+/-- Pushing the characters of `l` onto `acc` one at a time appends
+`String.ofList l`. -/
+theorem foldl_push_string (l : List Char) : ∀ (acc : String),
+    l.foldl String.push acc = acc ++ String.ofList l := by
+  induction l with
+  | nil => intro acc; simp
+  | cons c l ih =>
+    intro acc
+    simp only [List.foldl_cons, ih]
+    rw [← String.toList_inj]
+    simp [String.toList_push]
+
+/-- `sub` without the two intermediate copies (`Array.extract`, then
+`Array.toList`) before `String.ofList`: the characters of `[start, stop)`
+are pushed onto one string (`Array.foldl` with bounds). Every name,
+attribute value and text node of a document goes through `sub`
+(https://github.com/danbri/factoidal/issues/814). -/
+def subFast (s : Chars) (start stop : Nat) : String :=
+  s.foldl String.push "" start stop
+
+/-- The compiler runs `subFast` wherever the source says `sub`. -/
+@[csimp] theorem sub_eq_fast : @sub = @subFast := by
+  funext s start stop
+  simp only [sub, subFast]
+  rw [Array.foldl_eq_foldl_extract, ← Array.foldl_toList, foldl_push_string]
+  simp
+
+#guard subFast #['a', 'b', 'c', 'd'] 1 3 == "bc"
+#guard subFast #['a', 'b'] 1 9 == "b"
+#guard subFast #['a', 'b'] 2 1 == ""
+
 /-! ## Primitive scanners
 
 Counterparts of `Parser.Combinators`' `pchar` / `pstring` /
@@ -220,8 +251,9 @@ def pchar (c : Char) (s : Chars) (pos : Nat) : PResult Unit :=
   else .err s!"expected '{c}'" pos
 
 /-- Scan forward while `p` holds; returns the first position where it
-does not. Port of F* `ptake_while_pos`. -/
-def scanWhile (p : Char → Bool) (s : Chars) (pos : Nat) : Nat → Nat
+does not. Port of F* `ptake_while_pos`. Specialised at each call site, so
+the predicate is not called through a closure per character. -/
+@[specialize] def scanWhile (p : Char → Bool) (s : Chars) (pos : Nat) : Nat → Nat
   | 0 => pos
   | fuel + 1 =>
     if pos < s.size && p (charAt s pos) then scanWhile p s (pos + 1) fuel else pos
@@ -861,6 +893,36 @@ construction. Port of F* `normalize_attr_literal_ws`. -/
 def normalizeAttrLiteralWs (str : String) : String :=
   String.ofList (str.toList.map
     (fun c => if c == '\t' || c == '\n' || c == '\r' then ' ' else c))
+
+/-- A literal tab, line feed or carriage return: §3.3.3 makes each a space. -/
+def isAttrWsLiteral (c : Char) : Bool := c == '\t' || c == '\n' || c == '\r'
+
+/-- `normalizeAttrLiteralWs` that returns the string itself when it holds
+no tab, line feed or carriage return (one `String.all` pass) instead of
+building it again through a `List Char`. -/
+def normalizeAttrLiteralWsFast (str : String) : String :=
+  if str.all (fun c => !isAttrWsLiteral c) then str
+  else String.ofList (str.toList.map (fun c => if isAttrWsLiteral c then ' ' else c))
+
+/-- The compiler runs the fast form wherever the source says
+`normalizeAttrLiteralWs`. -/
+@[csimp] theorem normalizeAttrLiteralWs_eq_fast : @normalizeAttrLiteralWs = @normalizeAttrLiteralWsFast := by
+  funext str
+  unfold normalizeAttrLiteralWs normalizeAttrLiteralWsFast
+  split
+  · rename_i h
+    rw [String.all_bool_eq, List.all_eq_true] at h
+    rw [← String.toList_inj, String.toList_ofList]
+    conv => rhs; rw [← List.map_id str.toList]
+    apply List.map_congr_left
+    intro c hc
+    have := h c hc
+    simp only [isAttrWsLiteral, Bool.not_eq_true'] at this
+    simp [this]
+  · rfl
+
+#guard normalizeAttrLiteralWs "a\tb\nc\rd" == "a b c d"
+#guard normalizeAttrLiteralWs "abc" == "abc"
 
 /-- The body of an `[10] AttValue`, up to its closing quote `qch`.
 Port of F* `parse_attr_value_body`. -/
@@ -3660,26 +3722,25 @@ theorem fastBody_eq (decoded : Bool) (l : List Char) :
   · rw [if_pos hall, normalizeLineEndingsFor_of_clean _ _ (by rw [Array.all_toList]; exact hall)]
   · rw [if_neg hall]
 
-/-- Parse a whole XML document.
+/-- What the productions before the document element give: the document
+characters, the version, the `[23] XMLDecl`, the `[28] doctypedecl`, the
+entity table and the usable attribute-list declarations, the prolog `Misc`,
+and the position where the document element starts. -/
+structure DocPrologue where
+  s : Chars
+  ver : XmlVersion
+  decl : Option XmlDecl
+  doctype : Option Doctype
+  ents : EntityTable
+  usable : List AttDecl
+  prolog : List Node
+  pos : Nat
 
-`[1] document ::= prolog element Misc*`. Returns the infoset the F*
-`parse_xml_document_children_with_ids` computes — prolog Misc, the
-single document element, epilog Misc, and the ID-typed attribute pairs
-— plus the `[23] XMLDecl` and `[28] doctypedecl`, which the F* parses
-and then discards.
-
-**This is the well-formedness decision.** `Except.ok` means well-formed
-under the profile documented in this module's header (XML 1.0,
-non-validating, non-namespace); `Except.error` carries the violated
-production or WFC and the character position.
-
-Two failure paths are deliberately silent, mirroring the F* exactly:
-a missing `[23] XMLDecl` and a missing `[28] doctypedecl` are simply
-absent constructs, not errors. A declaration or DOCTYPE that IS present
-but malformed leaves the cursor where it was, and the element parser
-then rejects the document from there. -/
-def parseXMLNotes (resolve : Resolver) (decoded : Bool) (input : String) :
-    Except XmlError (Document × Notes) :=
+/-- `[1] document` up to the document element: the declaration, §4.3.3,
+the XML 1.1 restricted characters, `Misc*`, the `[28] doctypedecl` and
+`Misc*` again. -/
+def documentPrologue (resolve : Resolver) (decoded : Bool) (input : String) :
+    Except XmlError DocPrologue :=
   let (s, hadBom, ver) := documentChars decoded input
   let fuel := s.size + 1
   -- The declaration, if present, must be the very first thing: no
@@ -3730,18 +3791,51 @@ def parseXMLNotes (resolve : Resolver) (decoded : Bool) (input : String) :
       -- follows a reference to a parameter entity it did not read.
       let usable := ((doctype.map (·.attDecls)).getD []).filter
         (fun d => standalone || !d.afterUnreadPe)
-      match parseElement ents usable s pos3 {} fuel with
-      | .err m p => .error { message := m, position := p }
-      | .ok (root, notes) pos4 =>
-        match collectMisc ver s pos4 [] fuel with
-        | .err m p => .error { message := m, position := p }
-        | .ok post pos5 =>
-          if pos5 < s.size then
-            .error { message := "content after the document element ([1] document ::= prolog element Misc*)",
-                     position := pos5 }
-          else
-            .ok ({ decl := decl, doctype := doctype,
-                   prolog := pre1 ++ pre2, root := root, epilog := post }, notes)
+      .ok { s := s, ver := ver, decl := decl, doctype := doctype, ents := ents,
+            usable := usable, prolog := pre1 ++ pre2, pos := pos3 }
+
+/-- `Misc*` after the document element, then the end of the text
+(`[1] document ::= prolog element Misc*`). -/
+def documentEpilog (ver : XmlVersion) (s : Chars) (pos : Nat) : Except XmlError (List Node) :=
+  match collectMisc ver s pos [] (s.size + 1) with
+  | .err m p => .error { message := m, position := p }
+  | .ok post pos5 =>
+    if pos5 < s.size then
+      .error { message := "content after the document element ([1] document ::= prolog element Misc*)",
+               position := pos5 }
+    else .ok post
+
+/-- Parse a whole XML document.
+
+`[1] document ::= prolog element Misc*`. Returns the infoset the F*
+`parse_xml_document_children_with_ids` computes — prolog Misc, the
+single document element, epilog Misc, and the ID-typed attribute pairs
+— plus the `[23] XMLDecl` and `[28] doctypedecl`, which the F* parses
+and then discards.
+
+**This is the well-formedness decision.** `Except.ok` means well-formed
+under the profile documented in this module's header (XML 1.0,
+non-validating, non-namespace); `Except.error` carries the violated
+production or WFC and the character position.
+
+Two failure paths are deliberately silent, mirroring the F* exactly:
+a missing `[23] XMLDecl` and a missing `[28] doctypedecl` are simply
+absent constructs, not errors. A declaration or DOCTYPE that IS present
+but malformed leaves the cursor where it was, and the element parser
+then rejects the document from there. -/
+def parseXMLNotes (resolve : Resolver) (decoded : Bool) (input : String) :
+    Except XmlError (Document × Notes) :=
+  match documentPrologue resolve decoded input with
+  | .error e => .error e
+  | .ok pr =>
+    match parseElement pr.ents pr.usable pr.s pr.pos {} (pr.s.size + 1) with
+    | .err m p => .error { message := m, position := p }
+    | .ok (root, notes) pos4 =>
+      match documentEpilog pr.ver pr.s pos4 with
+      | .error e => .error e
+      | .ok post =>
+        .ok ({ decl := pr.decl, doctype := pr.doctype,
+               prolog := pr.prolog, root := root, epilog := post }, notes)
 
 /-- `parseXMLNotes` without the notes. -/
 def parseXMLCore (resolve : Resolver) (decoded : Bool) (input : String) :

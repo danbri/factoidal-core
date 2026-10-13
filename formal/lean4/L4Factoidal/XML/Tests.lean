@@ -1454,4 +1454,39 @@ def rootChildCount (doc : String) : Option Nat :=
 #print axioms entityHasWsCharRef_eq_fast
 #print axioms parseElement_eq_parseElementW
 
+-- The document characters without a `List Char`
+-- (https://github.com/danbri/factoidal/issues/771, `documentChars_eq_fast`):
+-- section 2.11 still rewrites every line end, a byte order mark is still
+-- consumed (and reported) only when the text was not decoded from bytes,
+-- and the version still decides which characters are line ends.
+#guard (documentChars false "a\r\nb\rc\nd").1.toList == ['a', '\n', 'b', '\n', 'c', '\n', 'd']
+#guard (documentChars false "a\nb").1.toList == ['a', '\n', 'b']
+#guard (documentChars false "﻿<a/>").1.toList == "<a/>".toList
+#guard (documentChars false "﻿<a/>").2.1 == true
+#guard (documentChars false "<a/>").2.1 == false
+#guard (documentChars true "﻿<a/>").1.toList == "﻿<a/>".toList
+#guard (documentChars true "﻿<a/>").2.1 == false
+#guard (documentChars false "<?xml version=\"1.1\"?><a>x\u0085y z</a>").1.toList ==
+  "<?xml version=\"1.1\"?><a>x\ny\nz</a>".toList
+#guard (documentChars false "<?xml version=\"1.0\"?><a>x\u0085y</a>").1.toList ==
+  "<?xml version=\"1.0\"?><a>x\u0085y</a>".toList
+#guard (documentChars false "<?xml version=\"1.1\"?><a/>").2.2 == .v11
+#guard (documentChars false "<a/>").2.2 == .v10
+#guard (documentChars false "").1.size == 0
+-- The split of a `[7] QName` (`splitQName_eq_fast`).
+#guard splitQName "rdf:about" == .prefixed "rdf" "about"
+#guard splitQName "about" == .simple "about"
+#guard splitQName ":a" == .malformed
+#guard splitQName "a:" == .malformed
+#guard splitQName "a:b:c" == .malformed
+#guard splitQName "a::b" == .malformed
+#guard resolveAttributeName [("p", some "urn:x#")] "p:q" ==
+  some { namespace_ := some "urn:x#", localPart := "q" }
+#guard resolveAttributeName [("p", some "urn:x#")] "r:q" == none
+#guard resolveAttributeName [("", some "urn:x#")] "q" == some { namespace_ := none, localPart := "q" }
+
+#print axioms documentChars_eq_fast
+#print axioms splitQName_eq_fast
+#print axioms sub_eq_fast
+
 end L4Factoidal.XML.Tests

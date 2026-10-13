@@ -5,7 +5,7 @@ one at a time, with the resident memory after each.
     l4query-phases FILE [--format F] [--query-string Q] [--stop-after PHASE]
     l4query-phases FILE --parse-op [--format F] [--stop-after PHASE]
     l4query-phases FILE --closure-op [--format F] [--stop-after PHASE]
-    l4query-phases FILE --rdfxml-op [--stop-after PHASE]
+    l4query-phases FILE --rdfxml-op [--stream] [--stop-after PHASE]
     l4query-phases --walk-check LIST
 
 PHASE is one of `read`, `parse`, `normalize`, `index`, `solutions`, `eval`,
@@ -238,7 +238,7 @@ def closureOpMain (file format stop : String) : IO UInt32 := do
           report "output" out.utf8ByteSize
           pure 0
 
-def rdfxmlOpPhases : List String := ["read", "chars", "xml", "grammar", "nquads", "output"]
+def rdfxmlOpPhases : List String := ["read", "chars", "xml", "grammar", "stream", "nquads", "output"]
 
 /-- `--rdfxml-op`: the phases of `l4factoidal parse FILE --format rdfxml --out
 nquads` (https://github.com/danbri/factoidal/issues/814,
@@ -250,8 +250,12 @@ V is the number of children of the document element), `grammar`
 (`RdfXml.processDocument` with the fuel and state `RdfXml.parseRdfXml` gives
 it, the productions of RDF 1.1 XML Syntax section 7; V is the number of
 triples), `nquads` (`Dataset.toCanonicalNQuads` of the graph as the default
-graph; V is its length in bytes), `output` (that text written). -/
-def rdfxmlOpMain (file stop : String) : IO UInt32 := do
+graph; V is its length in bytes), `output` (that text written). With
+`--stream` the phases `xml` and `grammar` are replaced by `stream`:
+`RdfXml.parseRdfXml` as compiled, which runs `parseRdfXmlStream` and builds no
+element tree of the document element (`RdfXml.parseRdfXml_eq_stream`); V is
+the number of triples. -/
+def rdfxmlOpMain (file stop : String) (stream : Bool) : IO UInt32 := do
   unless rdfxmlOpPhases.contains stop do
     IO.eprintln s!"l4query-phases: unknown --rdfxml-op phase '{stop}' ({String.intercalate " | " rdfxmlOpPhases})"
     return 2
@@ -264,6 +268,19 @@ def rdfxmlOpMain (file stop : String) : IO UInt32 := do
   if stop == "chars" then
     report "chars" (L4Factoidal.XML.documentChars false text).1.size
     return 0
+  if stream then
+    -- `parseRdfXml`, which runs `parseRdfXmlStream` (no element tree).
+    match L4Factoidal.Syntax.RdfXml.parseRdfXml text with
+    | .error e => IO.eprintln e.msg; return 1
+    | .ok g =>
+      report "stream" g.length
+      if stop == "stream" then return 0
+      let nq := L4Factoidal.Syntax.Dataset.toCanonicalNQuads { default := g, named := [] }
+      report "nquads" nq.utf8ByteSize
+      if stop == "nquads" then return 0
+      IO.println nq
+      report "output" nq.utf8ByteSize
+      return 0
   match L4Factoidal.XML.parseXML text with
   | .error e => IO.eprintln s!"XML: {e.message}"; pure 1
   | .ok doc =>
@@ -360,7 +377,7 @@ def main (args : List String) : IO UInt32 := do
       parseOpMain file ((flagValue rest "--format").getD "turtle")
         ((flagValue rest "--stop-after").getD "output")
     else if rest.contains "--rdfxml-op" then
-      rdfxmlOpMain file ((flagValue rest "--stop-after").getD "output")
+      rdfxmlOpMain file ((flagValue rest "--stop-after").getD "output") (rest.contains "--stream")
     else if rest.contains "--closure-op" then
       closureOpMain file ((flagValue rest "--format").getD "nquads")
         ((flagValue rest "--stop-after").getD "output")

@@ -525,4 +525,56 @@ def resolveAttributeName (scope : NsScope) (name : String) : Option ExpandedName
     | some uri => some { namespace_ := some uri, localPart := localPart }
   | .malformed => none
 
+/-- An unprefixed split is the whole name. -/
+theorem splitQName_simple {str n : String} (h : splitQName str = .simple n) : n = str := by
+  unfold splitQName at h
+  dsimp only at h
+  split at h
+  · cases h; rfl
+  · split at h <;> cases h
+  · cases h
+
+/-- A prefixed split is the name around its one colon. -/
+theorem splitQName_prefixed {str p l : String} (h : splitQName str = .prefixed p l) :
+    str.toList = p.toList ++ ':' :: l.toList := by
+  unfold splitQName at h
+  dsimp only at h
+  generalize hcs : str.toList = cs at h
+  by_cases h0 : ':' ∈ cs
+  · obtain ⟨l1, l2, hsplit, hl1⟩ := exists_first_colon cs h0
+    subst hsplit
+    rw [findColons_split _ _ _ hl1] at h
+    by_cases h2 : ':' ∈ l2
+    · have hne := findColons_ne_nil l2 (0 + l1.length + 1) h2
+      obtain ⟨x, xs, hx⟩ := List.exists_cons_of_ne_nil hne
+      rw [hx] at h
+      cases h
+    · rw [findColons_nocolon _ _ h2] at h
+      dsimp only at h
+      split at h
+      · cases h
+      · cases h
+        simp [List.take_left']
+  · rw [findColons_nocolon _ _ h0] at h
+    cases h
+
+/-- An attribute name ends with the local part it resolves to. -/
+theorem endsWith_of_resolveAttributeName {sc : NsScope} {name : String} {e : ExpandedName}
+    (h : resolveAttributeName sc name = some e) : name.endsWith e.localPart = true := by
+  unfold resolveAttributeName at h
+  split at h
+  · rename_i n hs
+    cases h
+    rw [splitQName_simple hs, ← String.endsWith_toSlice, String.Slice.endsWith_string_iff]
+    simp
+  · rename_i p l hs
+    split at h
+    · cases h
+    · cases h
+      have := splitQName_prefixed hs
+      rw [← String.endsWith_toSlice, String.Slice.endsWith_string_iff]
+      simp only [String.copy_toSlice, this]
+      exact List.suffix_append_of_suffix (List.suffix_cons _ _)
+  · cases h
+
 end L4Factoidal.XML

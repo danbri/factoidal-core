@@ -886,4 +886,37 @@ def nsLiteralExpected002 : String :=
 #guard canonStr nsLiteralExpected002 == nsLiteralExpected002
 #guard (firstXmlLiteral nsLiteralDoc002).map canonStr == some nsLiteralExpected002
 
+/-! ## The children of `rdf:RDF` walked as they are read
+
+`parseRdfXml` runs `parseRdfXmlStream` (`RdfXml.parseRdfXml_eq_stream`,
+https://github.com/danbri/factoidal/issues/771). These cases reach each branch
+of `parseChildrenFold` and `parseRootFold`: comments, processing instructions
+and text between node elements, an empty `rdf:RDF`, a document element that
+is a node element, a markup entity whose replacement text is a node element,
+and an XML error after an RDF/XML error (the XML error is reported). -/
+
+#guard iso "<!-- c --><?pi x?>\n<rdf:Description rdf:about='http://example.org/a'><eg:p>1</eg:p></rdf:Description><rdf:Description rdf:about='http://example.org/b'><eg:p>2</eg:p></rdf:Description>"
+  "<http://example.org/a> <http://example.org/p> \"1\" .\n<http://example.org/b> <http://example.org/p> \"2\" .\n"
+#guard isoDoc "<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'/>" ""
+#guard isoDoc "<rdf:Description xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#' xmlns:eg='http://example.org/' rdf:about='http://example.org/a'><eg:p>1</eg:p></rdf:Description>"
+  "<http://example.org/a> <http://example.org/p> \"1\" .\n"
+#guard isoDoc ("<!DOCTYPE rdf:RDF [<!ENTITY d \"<rdf:Description rdf:about='http://example.org/e'><eg:p>3</eg:p></rdf:Description>\">]>"
+    ++ hdr ++ "&d;<rdf:Description rdf:about='http://example.org/f'><eg:p>4</eg:p></rdf:Description>" ++ ftr)
+  "<http://example.org/e> <http://example.org/p> \"3\" .\n<http://example.org/f> <http://example.org/p> \"4\" .\n"
+-- An RDF/XML error (rdf:aboutEach, RDF/XML §5.1) before an XML error
+-- (end tag mismatch): the XML error is the one reported.
+#guard (match RdfXml.parseRdfXml (doc "<rdf:Description rdf:aboutEach='x'/><eg:a></eg:b>") (some base) with
+  | .error e => e.msg.startsWith "XML: closing tag"
+  | .ok _ => false)
+#guard (match RdfXml.parseRdfXml (doc "<rdf:Description rdf:aboutEach='x'/><eg:a/>") (some base) with
+  | .error e => e.msg == "rdf:aboutEach was withdrawn from RDF (RDF/XML §5.1)"
+  | .ok _ => false)
+-- Content after the document element is still an XML error.
+#guard (match RdfXml.parseRdfXml (doc "" ++ "<x/>") (some base) with
+  | .error e => e.msg.startsWith "XML: content after the document element"
+  | .ok _ => false)
+
+#print axioms RdfXml.parseRdfXml_eq_stream
+#print axioms RdfXml.nodeElementList_eq_fold
+
 end L4Factoidal.Syntax.RdfXmlTests
