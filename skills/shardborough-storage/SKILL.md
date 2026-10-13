@@ -548,7 +548,9 @@ SPARQL on term ids over a generation, `l4sbm11 query GEN 'SPARQL' | --file
 Q.rq [--base IRI] [--explain] [--repeat N] [--reference-render]
 [--reference]` and `l4sbm11 serve GEN`. The id fragment (BGP, FILTER,
 one level of GRAPH, GROUP BY with COUNT, DISTINCT, ORDER BY, LIMIT/OFFSET,
-and since 2026-10-13 top-level OPTIONAL, below) runs on ids with PRM1 block skipping and merge/hash joins; every other query
+and since 2026-10-13 top-level OPTIONAL, below) runs on ids with PRM1 block skipping and merge/hash joins; since issue 823
+(below) also residual FILTERs, ASK, CONSTRUCT, SELECT expressions and
+aggregates; every other query
 runs the reference evaluator over the quads the `quadEntriesForQuery` guard
 selects; stderr names the path (`path=ids` or `path=reference`). FILTER on
 ids: term identity only where `valueCompare` is term identity (IRI, string,
@@ -659,6 +661,39 @@ of 65,536 rows). Traps: a hash join over a reduced right side may change the
 output row order (the hash side is chosen by size), so compare answers as
 multisets; a candidate test that needs a correct start pointer is a proof
 obligation, so the pointer is a hint that `Sip.startFor` checks and resets.
+
+Id path coverage (2026-10-13, https://github.com/danbri/factoidal/issues/823;
+record: section 12 of the stage 4 record). (1) A FILTER conjunct outside
+`Expr.backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes), or one over a
+variable no pattern binds, is a residual conjunct (`FKind.residual`): the
+reference FILTER (`IdQuery.residualHolds`, with the query's NOW, BASE and
+extension functions) on the decoded terms, memoised by ids, after the joins
+of the BGP; admitted when every variable it reads is bound by its group
+(`scopeVars`) or by no pattern at all (`whereVars`). A FILTER beside the
+OPTIONALs over a group variable runs after the left joins
+(`Plan.postFilters`). (2) ASK, CONSTRUCT and a SELECT clause outside the id
+projection (expressions, aggregates other than COUNT, HAVING, GROUP BY or
+ORDER BY an expression, REDUCED) run the WHERE clause on ids, decode the rows
+(`decodeRowsM`) and call the reference's own `selectPost`,
+`formHasSolution`, or `formSolutions` with `constructGraphOf`
+(`IdQuery.runPostM`; `--explain` prints `post: N WHERE solutions decoded;
+reference ...`). `firstRowsOf` cuts the WHERE rows to 1 (ASK without
+modifiers) or OFFSET + LIMIT (no grouping, ORDER BY, DISTINCT). EXISTS, NOT
+EXISTS anywhere, FROM and DESCRIBE stay on the fallback. COUNT stays on
+ids. Theorems: `Storage/Sbm11/IdPostTheorems.lean` (lemma L5i: the residual
+FILTER is the reference FILTER for every active graph; `evalConstruct_eq`;
+the first-rows cuts); open: L6a. W3C census: id path 230 to 438 of 605, 0
+differed. DBpedia d18 (REGEX after a join) 59.6 ms warm, 23.8 MB on ids (the
+fallback was killed at 13.9 GB); d19 (MAX, AVG per group over 326,365 joined
+rows) 3.2 s, 151.5 MB on ids, 25.3 s and 832 MB on the fallback; most of
+d19's time is `Session.termOf` decoding the rows. Gates: `tests/sbm11/run.sh`
+parts (d), (h), (l) with the `ids-ask-*`, `ids-construct-*`, `ids-expr-*`,
+`ids-agg-*`, `ids-filter-*` and `ref-*` queries; `tests/sbm11/census.sh`,
+whose CONSTRUCT and DESCRIBE answers `compare_answers.py` now compares line
+by line (blank node labels masked). Traps: a residual FILTER over a variable
+bound outside its group must stay refused (inside the group it is unbound);
+a gate query that answers nothing checks nothing (d18's first REGEX matched
+no row); run the fallback for a measurement under `ulimit -v`.
 
 Parallel block scans (2026-10-12 and 2026-10-13,
 https://github.com/danbri/factoidal/issues/799; record:
