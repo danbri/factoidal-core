@@ -19,8 +19,19 @@ admitted when its expression is `Expr.backendLocal` (the repository's set of
 operators that read only their operands) and every variable it reads occurs
 in a triple pattern of the group it belongs to (so the FILTER can be applied
 after the joins of the whole BGP: every such variable is bound in every row
-of the group, with the same value after the join). Everything else is
-refused with a reason; the caller then runs the reference evaluator.
+of the group, with the same value after the join).
+
+OPTIONAL (https://github.com/danbri/factoidal/issues/775): `{ base OPTIONAL
+{ g1 } ... OPTIONAL { gk } }` at the top level of the WHERE clause, the base
+a group of the fragment above, each group triple patterns of the default
+graph and FILTERs over the group's own variables, every variable a group
+shares with anything outside it bound by the base's triple patterns, a
+FILTER beside the OPTIONALs over base variables only (`flattenOptional`).
+Evaluation: `evalOptionalsM` and `OptJoin.leftOuterJoin`; an unbound
+variable is the id `OptJoin.unbound` (0) in its column.
+
+Everything else is refused with a reason; the caller then runs the reference
+evaluator.
 
 ## Ids and values
 
@@ -65,6 +76,7 @@ import L4Factoidal.Storage.Sbm11.Block
 import L4Factoidal.Storage.Sbm11.TermId
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.Overlay
+import L4Factoidal.Storage.Sbm11.OptJoin
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.ResultsJson
 import Std.Data.HashMap
@@ -115,11 +127,23 @@ def ProjItem.name : ProjItem → String
   | .var v => v
   | .count a _ => a
 
+/-- An OPTIONAL group of the WHERE clause's top level (issue 775): triple
+    patterns of the default graph and the LeftJoin condition as conjuncts,
+    each `backendLocal` and reading only variables of `pats`. -/
+structure OptGroup where
+  pats : Array PatSpec
+  filters : Array Expr
+  deriving Inhabited
+
 structure Plan where
   pats : Array PatSpec
   /-- FILTER conjuncts; each is `backendLocal` and its variables are bound by
       the patterns of its group -/
   filters : Array Expr
+  /-- the OPTIONAL groups, in order: `LeftJoin(...LeftJoin(base, g1), ..., gk)`;
+      every variable a group shares with anything outside it is bound by
+      `pats` -/
+  optionals : Array OptGroup := #[]
   proj : Array ProjItem
   /-- the result variables (`Query.projectedVars`) -/
   outVars : Array String
@@ -156,6 +180,10 @@ def PatSpec.vars (t : PatSpec) : Array String :=
   match t.g with
   | .var v => if base.contains v then base else base.push v
   | _ => base
+
+/-- The variables of a group's triple patterns. -/
+def OptGroup.vars (g : OptGroup) : Array String :=
+  g.pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
 
 /-- The variables an admitted (`backendLocal`) expression reads, by an
     explicit stack. `none` for a constructor outside `backendLocal`. -/
@@ -292,6 +320,96 @@ where
         | _ => pure ()
     return false
 
+/-- The OPTIONAL spine of a WHERE clause: `filter* (leftJoin (... (leftJoin
+    base g1 c1) ...) gk ck)` as the parser builds `{ base OPTIONAL { g1 } ...
+    OPTIONAL { gk } FILTER(...) }` (the FILTERs of a group wrap the whole
+    group). Returns the FILTERs around the spine, the base, and the groups
+    with their conditions in order; no group when the top level has no
+    OPTIONAL. -/
+def optionalSpine (p : QueryPattern) : Array Expr × QueryPattern × Array (QueryPattern × Expr) :=
+  Id.run do
+    let mut x := p
+    let mut tops : Array Expr := #[]
+    for _ in [0:maxNodes] do
+      match x with
+      | .filter c q =>
+        tops := tops.push c
+        x := q
+      | _ => break
+    let mut groups : Array (QueryPattern × Expr) := #[]
+    for _ in [0:maxNodes] do
+      match x with
+      | .leftJoin l r c =>
+        groups := groups.push (r, c)
+        x := l
+      | _ => break
+    return (tops, x, groups.reverse)
+
+/-- Whether a subtree holds a GRAPH. -/
+def hasGraph (q : QueryPattern) : Bool := Id.run do
+  let mut stack : Array QueryPattern := #[q]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .graph _ _ => return true
+      | .join l r => stack := (stack.push r).push l
+      | .filter _ y => stack := stack.push y
+      | _ => pure ()
+  return !stack.isEmpty
+
+/-- The WHERE clause as the base (patterns, FILTER conjuncts) and the
+    OPTIONAL groups (issue 775). Without a top-level OPTIONAL this is
+    `flattenWhere`. With one: the base is a group of the `flattenWhere`
+    fragment; a FILTER around the spine reads only variables of the base's
+    triple patterns (it is applied to the base rows: every output row has
+    its left row's values on them); each group is triple patterns and
+    FILTERs whose variables its own triple patterns bind (no GRAPH, no
+    nested OPTIONAL); a variable of a group that the base does not bind
+    occurs in no other group (a well-designed pattern: every variable a
+    group shares with anything outside it is bound in every left row). -/
+def flattenOptional (p : QueryPattern) :
+    Except String (Array PatSpec × Array Expr × Array OptGroup) := do
+  let (tops, base, raw) := optionalSpine p
+  if raw.isEmpty then
+    let (pats, filters) ← flattenWhere p
+    return (pats, filters, #[])
+  let (pats, filters) ← flattenWhere base
+  if pats.isEmpty then throw "an OPTIONAL with no triple pattern before it"
+  let some baseScope := subtreeVars base | throw "a group before an OPTIONAL outside the fragment"
+  let mut topFilters : Array Expr := #[]
+  for c in tops do
+    unless c.backendLocal do throw "a FILTER expression outside Expr.backendLocal"
+    let some vs := exprVars c | throw "a FILTER expression outside the fragment"
+    unless vs.all baseScope.contains do
+      throw "a FILTER beside an OPTIONAL that reads a variable the triple patterns before the OPTIONAL do not bind"
+    topFilters := topFilters ++ conjuncts c
+  let baseVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  let mut groups : Array OptGroup := #[]
+  for (r, c) in raw do
+    if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
+    let (gp, gf) ← flattenWhere r
+    if gp.isEmpty then throw "an OPTIONAL group with no triple pattern"
+    let g0 : OptGroup := { pats := gp, filters := gf }
+    let cf ← match c with
+      | .boolLit true => pure #[]
+      | e => do
+        unless e.backendLocal do throw "an OPTIONAL condition outside Expr.backendLocal"
+        let some vs := exprVars e | throw "an OPTIONAL condition outside the fragment"
+        unless vs.all g0.vars.contains do
+          throw "an OPTIONAL condition that reads a variable the group's triple patterns do not bind"
+        pure (conjuncts e)
+    groups := groups.push { g0 with filters := gf ++ cf }
+  for k in [0:groups.size] do
+    for v in groups[k]!.vars do
+      if !baseVars.contains v then
+        for j in [0:groups.size] do
+          if j != k && groups[j]!.vars.contains v then
+            throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
+  return (pats, filters ++ topFilters, groups)
+
 /-- Accept the fragment or say why not. -/
 def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   let sel ← match q.form with
@@ -303,9 +421,11 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   unless q.having.isEmpty do throw "HAVING"
   if q.postValues.isSome then throw "a trailing VALUES block"
   if q.modifier.reduced then throw "REDUCED"
-  let (pats, filters) ← flattenWhere q.pattern.rewriteBnodes
+  let (pats, filters, optionals) ← flattenOptional q.pattern.rewriteBnodes
   if pats.isEmpty then throw "a WHERE clause with no triple pattern"
-  let patVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
+  let patVars := allPats.foldl
+    (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let groupVars ← match q.groupBy with
     | none => pure #[]
     | some gs => gs.toArray.mapM fun
@@ -346,7 +466,7 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   for (v, _) in order do
     let ok := if agg then groupVars.contains v || aliases.contains v else patVars.contains v
     unless ok do throw s!"ORDER BY ?{v}, which is not bound in every row"
-  return { pats, filters, proj, outVars := (L4Factoidal.SPARQL.Query.projectedVars q).toArray,
+  return { pats, filters, optionals, proj, outVars := (L4Factoidal.SPARQL.Query.projectedVars q).toArray,
            groupVars, agg, order, distinct := q.modifier.distinct,
            offset := q.modifier.offset.getD 0, limit := q.modifier.limit }
 
@@ -1048,8 +1168,11 @@ def posOf (t : Pat) (v : String) : Option Nat :=
   [0, 1, 2].find? fun i => t.slot i == .var v
 
 /-- Evaluate a BGP over ids (the join rules of `Qlvr.evalBgpM`, with the four
-    SBM11 permutations). `need v`: the query reads `v` after the BGP. -/
-def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool) :
+    SBM11 permutations). `need v`: the query reads `v` after the BGP. `pref`:
+    a variable to sort the first scan on when that pattern has it (the join
+    variable of a left outer join, so that the join can merge). -/
+def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (need : String → Bool)
+    (pref : Option String := none) :
     ExceptT String m (Table × Array String × ScanStats) := do
   let allVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let keep (v : String) : Bool := need v || varCount pats v ≥ 2
@@ -1065,7 +1188,10 @@ def evalBgpM {m : Type → Type} [Monad m] (st : Store m) (pats : Array Pat) (ne
   let first := remaining.foldl (fun b k => if ests[k]! < ests[b]! then k else b) remaining[0]!
   remaining := remaining.filter (· != first)
   let t0 := pats[first]!
-  let spec0 := mkSpec t0 (permFor t0 (bestSortPos t0 pats)) keep
+  let sortPos0 := match pref.bind (posOf t0) with
+    | some q => some q
+    | none => bestSortPos t0 pats
+  let spec0 := mkSpec t0 (permFor t0 sortPos0) keep
   let (tab0, st0) ← scanTableOf st spec0
   let mut total := st0
   lines := lines.push s!"pattern {first}: {permNames[spec0.perm]!} key {spec0.key.size} estimate {ests[first]!}; blocks {st0.blocksRead} read of {st0.blocksSelected} selected of {st0.blocksTotal}, frames {st0.framesRead}, {st0.bytesRead} bytes; rows {tab0.rows}"
@@ -1357,8 +1483,12 @@ def countId (n : Nat) : UInt64 :=
   (L4Factoidal.Storage.Sbm11.tagInt * L4Factoidal.Storage.Sbm11.two60 + 0 + (n + 2 ^ 55)).toUInt64
 
 /-- The aggregated table: the group variables, then one column per COUNT.
-    With no GROUP BY there is one group, also over no rows. -/
-def groupTable (plan : Plan) (g : Groups) : Except String Table := Id.run do
+    With no GROUP BY there is one group, also over no rows. `items` (one per
+    COUNT, in order; empty or `none`: the rows of the group) holds the counts
+    of a `COUNT(?x)` over a variable that may be unbound: the rows of the
+    group where `?x` is bound (SPARQL 1.1 section 18.5, Count). -/
+def groupTable (plan : Plan) (g : Groups) (items : Array (Option Groups) := #[]) :
+    Except String Table := Id.run do
   let ks := if g.keys.isEmpty && plan.groupVars.isEmpty then #[[]] else g.keys
   let cnt := plan.proj.filterMap fun | .count a _ => some a | _ => none
   let mut cols := (plan.groupVars ++ cnt).map fun _ => ByteArray.empty
@@ -1369,8 +1499,11 @@ def groupTable (plan : Plan) (g : Groups) : Except String Table := Id.run do
     for x in k do
       cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · x)
       j := j + 1
-    for _ in cnt do
-      cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · (countId n))
+    for c in [0:cnt.size] do
+      let nc := match items[c]? with
+        | some (some gi) => gi.counts.getD k 0
+        | _ => n
+      cols := cols.modify j (L4Factoidal.Qlvr.Side.put64 · (countId nc))
       j := j + 1
   return .ok { vars := plan.groupVars ++ cnt, cols, rows := ks.size }
 
@@ -1425,7 +1558,10 @@ def orderKeysM {m : Type → Type} [Monad m] (st : Store m) (t : Table) (c : Nat
       ids := ids.push x
   let mut vals : Array EvalResult := #[]
   for x in ids do
-    vals := vals.push (orderValue (← st.termOf x))
+    -- an unbound variable (`OptJoin.unbound`, after an OPTIONAL) evaluates
+    -- to an error, which section 15.1 orders first, as the reference does
+    if x == OptJoin.unbound then vals := vals.push .error
+    else vals := vals.push (orderValue (← st.termOf x))
   let sorted := mergeSortBy (List.range ids.size).toArray fun a b =>
     L4Factoidal.SPARQL.sparqlOrderValue (vals.getD a .error) (vals.getD b .error) ≤ 0
   let mut rank : Array Nat := Array.replicate ids.size 0
@@ -1562,8 +1698,10 @@ def appendIdJsonM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool
   return out ++ (L4Factoidal.SPARQL.jsonOfTerm t).toString.toUTF8
 
 /-- Rows `[lo, hi)` of `t` as comma-separated binding objects (`first`: no
-    comma before the first). Variables without a column are unbound and
-    left out (`rowJson`). -/
+    comma before the first). Variables without a column, and a column's
+    `OptJoin.unbound` ids (after an OPTIONAL), are unbound and left out
+    (`rowJson`). A comma goes before a binding unless the object is still
+    empty (its last byte is `{`), so no flag is carried through the loop. -/
 def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) (t : Table)
     (vars : Array String) (lo hi : Nat) (first : Bool) : ExceptT String m ByteArray := do
   let names := nameBytes vars
@@ -1575,9 +1713,11 @@ def renderRowsM {m : Type → Type} [Monad m] (st : Store m) (reference : Bool) 
     out := out.push 123
     for j in [0:cols.size] do
       let (k, c) := cols[j]!
-      if j > 0 then out := out.push 44
-      out := out ++ names[k]!
-      out ← appendIdJsonM st reference (t.at c i) out
+      let x := t.at c i
+      if x != OptJoin.unbound then
+        if out.get! (out.size - 1) != 123 then out := out.push 44
+        out := out ++ names[k]!
+        out ← appendIdJsonM st reference x out
     out := out.push 125
   return out
 
@@ -1603,18 +1743,83 @@ def resolvePat {m : Type → Type} [Monad m] (st : Store m) (p : PatSpec) : Exce
     | .var v => pure (Slot.var v, true)
   return { s := ← toSlot st p.s, p := ← toSlot st p.p, o := ← toSlot st p.o, g, named }
 
+/-- The variables compiled FILTER conjuncts read. -/
+def fkVars (fs : Array FKind) : Array String :=
+  fs.foldl (fun a f => match f with
+    | .idEq v _ => a.push v
+    | .idEqVar v w => (a.push v).push w
+    | .str _ v _ _ => a.push v
+    | .strRange v _ _ _ _ => a.push v
+    | .general _ vs => a ++ vs) #[]
+
+/-- The base of a plan with OPTIONAL groups (issue 775): its BGP and FILTERs,
+    then, group by group, the left outer join with the group's BGP after the
+    group's FILTERs (`OptJoin.leftOuterJoin`). A group's FILTER reads only the
+    group's own variables (`flattenOptional`), so it gives the same answer on
+    the group's row as on the merged row, and `LeftJoin(Ω1, Ω2, e)` is
+    `LeftJoin(Ω1, Filter(e, Ω2), true)` (`OptJoinTheorems.leftJoin_filter_right`).
+    A single base pattern is scanned sorted on a variable it shares with the
+    first group, and each group's first scan on the left table's sort
+    variable, so that the joins can merge. -/
+def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (pats : Array Pat)
+    (fs : Array FKind) (need : String → Bool) : ExceptT String m (Table × Array String × ScanStats) := do
+  let groupVars := plan.optionals.foldl (fun a g => a ++ g.vars) #[]
+  let needBase (v : String) : Bool := need v || groupVars.contains v
+  let pref : Option String :=
+    if pats.size == 1 then plan.optionals[0]?.bind fun g => g.vars.find? pats[0]!.vars.contains
+    else none
+  let (t0, lines0, s0) ← evalBgpM st pats needBase pref
+  let (t1, _) ← applyFilters st fs (fs.map fun _ => {}) t0
+  let mut tab := t1
+  let mut lines := lines0
+  let mut total := s0
+  for k in [0:plan.optionals.size] do
+    let g := plan.optionals[k]!
+    let gp ← g.pats.mapM (resolvePat st)
+    let gfs ← g.filters.mapM (compileFilter st)
+    let gfv := fkVars gfs
+    let left := tab
+    let gneed (v : String) : Bool := need v || left.vars.contains v || gfv.contains v
+    let joinVar : Option String := match left.sortVar with
+      | some v => if g.vars.contains v then some v else none
+      | none => none
+    let (rt0, glines, gs) ← evalBgpM st gp gneed joinVar
+    let (rt, _) ← applyFilters st gfs (gfs.map fun _ => {}) rt0
+    let (j, how) := OptJoin.leftOuterJoin left rt
+    lines := lines ++ glines.map (s!"optional {k} " ++ ·)
+    lines := lines.push s!"optional {k}: {gfs.size} condition conjuncts, {rt.rows} right rows; left outer join ({how}): {j.rows} rows"
+    total := total.add gs
+    tab := j
+  return (tab, lines, total)
+
+/-- Per COUNT item, in order: for `COUNT(?x)` whose column holds an unbound
+    id (after an OPTIONAL), the groups of the rows where `?x` is bound
+    (SPARQL 1.1 section 18.5: Count counts the solutions whose expression
+    has a value); `none` for every other item (the rows of the group). -/
+def countItems (plan : Plan) (t : Table) : Array (Option Groups) :=
+  plan.proj.filterMap fun
+    | .var _ => none
+    | .count _ none => some none
+    | .count _ (some x) =>
+      match t.idx x with
+      | none => some (some {})
+      | some c =>
+        let anyUnbound : Bool := Id.run do
+          for i in [0:t.rows] do
+            if t.at c i == OptJoin.unbound then return true
+          return false
+        if anyUnbound then
+          let tb := t.select fun i => t.at c i != OptJoin.unbound
+          some (some (countChunk plan.groupVars { table := tb, consts := tb.vars.map fun _ => none } {}))
+        else some none
+
 /-- Run a plan. `emit` receives the SPARQL JSON text in pieces. -/
 def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : ByteArray → m Unit)
     (reference : Bool := false) : ExceptT String m RunStats := do
   let pats ← plan.pats.mapM (resolvePat st)
   let fs ← plan.filters.mapM (compileFilter st)
   let memos0 : Array Memo := fs.map fun _ => {}
-  let filterVars : Array String := fs.foldl (fun a f => match f with
-    | .idEq v _ => a.push v
-    | .idEqVar v w => (a.push v).push w
-    | .str _ v _ _ => a.push v
-    | .strRange v _ _ _ _ => a.push v
-    | .general _ vs => a ++ vs) #[]
+  let filterVars : Array String := fkVars fs
   let used : Array String :=
     plan.proj.foldl (fun a p => match p with
       | .var x => a.push x
@@ -1624,7 +1829,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
   let need (x : String) : Bool := used.contains x
   let mut stats : RunStats := {}
   (emit (jsonHead plan.outVars).toUTF8 : m Unit)
-  let single := pats.size == 1 && !pats[0]!.hasMissing
+  let single := pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty
   if single && !plan.agg && plan.order.isEmpty && !plan.distinct then
     -- one pattern, no modifier that needs every row: block by block
     let t := pats[0]!
@@ -1663,12 +1868,15 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
       | .ok t => table := t
       | .error e => throw e
     else
-      let (t0, lines, s) ← evalBgpM st pats need
-      let (t1, _) ← applyFilters st fs memos0 t0
+      let (t1, lines, s) ← if plan.optionals.isEmpty then do
+          let (t0, lines, s) ← evalBgpM st pats need
+          let (t1, _) ← applyFilters st fs memos0 t0
+          pure (t1, lines, s)
+        else evalOptionalsM st plan pats fs need
       stats := { stats with plan := lines, scan := s }
       if plan.agg then
         let g := countChunk plan.groupVars { table := t1, consts := t1.vars.map fun _ => none } {}
-        match groupTable plan g with
+        match groupTable plan g (countItems plan t1) with
         | .ok t => table := t
         | .error e => throw e
       else table := t1
