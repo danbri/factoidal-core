@@ -319,6 +319,41 @@ def collectQuads (outer : Option WfIri) : QueryPattern → List Quad
   | .graph _ inner        => collectQuads outer inner
   | _ => []
 
+/-- `collectQuads` as a loop over a work list of (graph, pattern) pairs,
+first pair first. A `join` puts its two sides on the front of the list, so
+the stack does not grow with the length of a join chain: the desugaring of
+an INSERT DATA collection of n members is a chain of n joins, and
+`collectQuads` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818 item 4). `acc` holds the
+quads so far, newest first. -/
+def collectQuadsLoop : List (Option WfIri × QueryPattern) → List Quad → List Quad
+  | [], acc => acc.reverse
+  | (outer, p) :: work, acc =>
+    match p with
+    | .empty  => collectQuadsLoop work acc
+    | .bgp b  =>
+      collectQuadsLoop work (((b.filterMap groundTriple).map (fun t => (outer, t))).reverseAux acc)
+    | .join a b => collectQuadsLoop ((outer, a) :: (outer, b) :: work) acc
+    | .graph (.iri g) inner => collectQuadsLoop ((some g, inner) :: work) acc
+    | .graph _ inner        => collectQuadsLoop ((outer, inner) :: work) acc
+    | _ => collectQuadsLoop work acc
+termination_by work _ => (work.map (fun w => 2 * sizeOf w.2 + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
+
+theorem collectQuadsLoop_eq (work : List (Option WfIri × QueryPattern)) (acc : List Quad) :
+    collectQuadsLoop work acc = acc.reverse ++ work.flatMap (fun w => collectQuads w.1 w.2) := by
+  fun_induction collectQuadsLoop work acc <;> simp_all [collectQuads, List.reverseAux_eq]
+
+/-- What runs in place of `collectQuads`. -/
+def collectQuadsFast (outer : Option WfIri) (p : QueryPattern) : List Quad :=
+  collectQuadsLoop [(outer, p)] []
+
+@[csimp] theorem collectQuads_eq_fast : @collectQuads = @collectQuadsFast := by
+  funext outer p
+  simp [collectQuadsFast, collectQuadsLoop_eq]
+
+#print axioms collectQuads_eq_fast
+
 /-! ## Fresh blank nodes -/
 
 /-- A label prefix strictly longer than every label in the store, so

@@ -714,11 +714,152 @@ def serializeNodesFast (fuel : Nat) (nsDecls : String) (l : List XML.Node) : Str
   funext fuel nsDecls l
   simp [serializeNodesFast, (serializeLoop_eq fuel).2, String.empty_append]
 
+/-! ### The serializer with no fuel (https://github.com/danbri/factoidal/issues/818 item 3)
+
+`serializeLiteralContent` gave each top-level node the fuel 10,000, and each
+sibling spends one unit, so an element with more than about 10,000 children
+lost the children after that, with no error. `serializeNodeT` and
+`serializeNodesT` recurse on the node and on the child list, so no input is
+cut; `litNeed` is the fuel the fuelled pair needs to write a node
+completely, and `serialize_fuel_eq` proves that whenever that fuel is there
+the two pairs agree. The twin `serializeNodeTF` / `serializeNodesTLoop` runs
+the siblings as a loop (`csimp` on both members). -/
+
+mutual
+/-- The fuel `serializeNode` needs to write a node completely. -/
+def litNeed : XML.Node → Nat
+  | .element _ _ children => litNeeds children + 1
+  | _ => 1
+/-- The fuel `serializeNodes` needs to write a child list completely: each
+sibling spends one unit. -/
+def litNeeds : List XML.Node → Nat
+  | [] => 0
+  | c :: rest => max (litNeed c) (litNeeds rest) + 1
+end
+
+mutual
+/-- `serializeNode` with no fuel: structural on the node. -/
+def serializeNodeT : String → Bool → XML.Node → String
+  | _, _, .text t    => escapeText t
+  | _, _, .cdata t   => escapeText t
+  | _, _, .comment _ => ""
+  | _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | nsDecls, isRoot, .element tag attrs children =>
+    "<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">"
+      ++ serializeNodesT nsDecls children
+      ++ "</" ++ tag ++ ">"
+/-- `serializeNodes` with no fuel: structural on the list. -/
+def serializeNodesT : String → List XML.Node → String
+  | _, [] => ""
+  | nsDecls, c :: rest => serializeNodeT nsDecls false c ++ serializeNodesT nsDecls rest
+end
+
+/-- On a node the fuelled serializer writes completely (`litNeed n ≤ f`), it
+writes what the fuel-free one writes. -/
+theorem serialize_fuel_eq : ∀ f : Nat,
+    (∀ nsDecls isRoot n, litNeed n ≤ f → serializeNode f nsDecls isRoot n = serializeNodeT nsDecls isRoot n) ∧
+    (∀ nsDecls l, litNeeds l ≤ f → serializeNodes f nsDecls l = serializeNodesT nsDecls l)
+  | 0 => ⟨fun _ _ n h => by cases n <;> simp [litNeed] at h,
+          fun _ l h => by cases l with
+            | nil => simp [serializeNodes, serializeNodesT]
+            | cons c rest => simp [litNeeds] at h⟩
+  | f + 1 =>
+    have ih := serialize_fuel_eq f
+    ⟨fun nsDecls isRoot n h => by
+        cases n with
+        | element tag attrs children =>
+          simp only [litNeed] at h
+          simp only [serializeNode, serializeNodeT, ih.2 nsDecls children (by omega)]
+        | text t => simp [serializeNode, serializeNodeT]
+        | cdata t => simp [serializeNode, serializeNodeT]
+        | comment b => simp [serializeNode, serializeNodeT]
+        | pi t d => simp [serializeNode, serializeNodeT],
+     fun nsDecls l h => by
+        cases l with
+        | nil => simp [serializeNodes, serializeNodesT]
+        | cons c rest =>
+          simp only [litNeeds] at h
+          simp only [serializeNodes, serializeNodesT, ih.1 nsDecls false c (by omega),
+            ih.2 nsDecls rest (by omega)]⟩
+
+mutual
+/-- `serializeNodeT` whose child list is written by `serializeNodesTLoop`. -/
+def serializeNodeTF : String → Bool → XML.Node → String
+  | _, _, .text t    => escapeText t
+  | _, _, .cdata t   => escapeText t
+  | _, _, .comment _ => ""
+  | _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | nsDecls, isRoot, .element tag attrs children =>
+    serializeNodesTLoop nsDecls children
+        ("<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">")
+      ++ "</" ++ tag ++ ">"
+/-- `serializeNodesT` as a loop: each sibling is appended to `acc` and the
+next one is a tail call. -/
+def serializeNodesTLoop : String → List XML.Node → String → String
+  | _, [], acc => acc
+  | nsDecls, c :: rest, acc =>
+    serializeNodesTLoop nsDecls rest (acc ++ serializeNodeTF nsDecls false c)
+end
+
+mutual
+theorem serializeNodeTF_eq : ∀ (nsDecls : String) (isRoot : Bool) (n : XML.Node),
+    serializeNodeTF nsDecls isRoot n = serializeNodeT nsDecls isRoot n
+  | _, _, .text t    => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .cdata t   => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .comment _ => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .pi tgt d  => by simp [serializeNodeTF, serializeNodeT]
+  | nsDecls, isRoot, .element tag attrs children => by
+    simp only [serializeNodeTF, serializeNodeT, serializeNodesTLoop_eq nsDecls children,
+      String.append_assoc]
+theorem serializeNodesTLoop_eq : ∀ (nsDecls : String) (l : List XML.Node) (acc : String),
+    serializeNodesTLoop nsDecls l acc = acc ++ serializeNodesT nsDecls l
+  | _, [], acc => by simp [serializeNodesTLoop, serializeNodesT, String.append_empty]
+  | nsDecls, c :: rest, acc => by
+    simp only [serializeNodesTLoop, serializeNodesT, serializeNodesTLoop_eq nsDecls rest,
+      serializeNodeTF_eq nsDecls false c, String.append_assoc]
+end
+
+def serializeNodesTFast (nsDecls : String) (l : List XML.Node) : String :=
+  serializeNodesTLoop nsDecls l ""
+
+@[csimp] theorem serializeNodeT_eq_fast : @serializeNodeT = @serializeNodeTF := by
+  funext nsDecls isRoot n; exact (serializeNodeTF_eq nsDecls isRoot n).symm
+
+@[csimp] theorem serializeNodesT_eq_fast : @serializeNodesT = @serializeNodesTFast := by
+  funext nsDecls l
+  simp [serializeNodesTFast, serializeNodesTLoop_eq, String.empty_append]
+
 /-- The lexical form of the `rdf:XMLLiteral` a `[7.2.17]` property
 element denotes. -/
 def serializeLiteralContent (scope : XML.NsScope) (children : List XML.Node) : String :=
   let nsDecls := renderNsDecls scope
-  String.join (children.map (fun c => serializeNode 10000 nsDecls true c))
+  String.join (children.map (fun c => serializeNodeT nsDecls true c))
+
+/-- Where the fuel 10,000 of the earlier definition wrote every top-level
+node completely, the lexical form is the one that definition gave. -/
+theorem serializeLiteralContent_eq_fuel (scope : XML.NsScope) (children : List XML.Node)
+    (h : ∀ c ∈ children, litNeed c ≤ 10000) :
+    serializeLiteralContent scope children =
+      String.join (children.map (fun c => serializeNode 10000 (renderNsDecls scope) true c)) := by
+  simp only [serializeLiteralContent]
+  congr 1
+  apply List.map_congr_left
+  intro c hc
+  exact ((serialize_fuel_eq 10000).1 _ true c (h c hc)).symm
+
+#print axioms serializeNodesT_eq_fast
+#print axioms serializeLiteralContent_eq_fuel
+
+/-! The 10,001st child of one element is kept, where the fuel 10,000 cut
+it; the fuelled definition, shown cutting it. -/
+#guard (serializeLiteralContent []
+    [.element "w" [] ((List.replicate 10000 (XML.Node.element "c" [] [])) ++ [.element "last" [] []])]).endsWith
+  "<last></last></w>"
+#guard !(String.join ([XML.Node.element "w" [] ((List.replicate 10000 (XML.Node.element "c" [] [])) ++
+    [.element "last" [] []])].map (fun c => serializeNode 10000 "" true c))).endsWith "<last></last></w>"
+#guard serializeLiteralContent [] [.element "a" [] [.text "x", .element "b" [⟨"k", "v"⟩] [], .comment "c"]] ==
+  String.join ([XML.Node.element "a" [] [.text "x", .element "b" [⟨"k", "v"⟩] [], .comment "c"]].map
+    (fun c => serializeNode 10000 "" true c))
 
 /-! ## The grammar walk
 

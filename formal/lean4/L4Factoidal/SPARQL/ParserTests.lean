@@ -20,7 +20,7 @@ that F* source, not by running a binary. The committed
 a different artifact (a COTTAS plan dump, and it refuses to run
 without `--data-cottas`), so it could not serve as the oracle. Two
 outputs a reader may find surprising, and both are faithful:
-  * a generated blank node prints as `_:_:bnode_6`, because the F*
+  * a generated blank node prints as `_:_:bnode_30`, because the F*
     `fresh_bnode_id` puts `_:` INSIDE the label and `sse_pattern_term`
     prepends `_:` again;
   * `(agg …)` drops the aggregate's name and its DISTINCT flag —
@@ -405,18 +405,21 @@ the file header on why the committed binary could not be the oracle. -/
 #guard sseOf "DESCRIBE <http://a/x>" ==
   "(describe\n  (table unit))"
 
--- `[ … ]` is named from the token after `[` (`bracketBnodeId`), so the F*
--- `_:_:bnode_6` (the `[` position) is `_:_:bnode_5` here. The F* name is the
--- position a collection cell around the `[` also uses, which made `( [ … ] )`
--- one node (issue 742's guards, `ConstructLabelTests.lean`).
+-- `[ … ]` is named from the token after `[` (`bracketBnodeId`), not from the
+-- `[` itself as in the F*. The F* name is the position a collection cell
+-- around the `[` also uses, which made `( [ … ] )` one node (issue 742's
+-- guards, `ConstructLabelTests.lean`). Since 2026-10-13 a generated label is
+-- the character offset of its token (`freshBnodeId`, issue 818 item 2): the
+-- token after `[` is at offset 30 here. The F* label, and this port's until
+-- that date, is the remaining token count (`_:_:bnode_5` here).
 #guard sseOf "SELECT ?s { ?s <http://a/p> [ <http://a/q> \"v\" ] }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_5))\n  (bgp (triple _:_:bnode_5 <http://a/q> \"v\"))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_30))\n  (bgp (triple _:_:bnode_30 <http://a/q> \"v\"))))"
 -- The cell and the element of `( [ … ] )` are two nodes.
 #guard sseOf "SELECT ?s { ?s <http://a/p> ( [ <http://a/q> \"v\" ] ) }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_7))\n  (join (bgp (triple _:_:bnode_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:_:bnode_6)\n    (triple _:_:bnode_7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>))\n  (bgp (triple _:_:bnode_6 <http://a/q> \"v\")))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_30))\n  (join (bgp (triple _:_:bnode_30 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:_:bnode_32)\n    (triple _:_:bnode_30 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>))\n  (bgp (triple _:_:bnode_32 <http://a/q> \"v\")))))"
 
 #guard sseOf "SELECT ?s { ?s <http://a/p> (1 2) }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_5))\n  (join (bgp (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"1\")\n    (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:_:bnode_4))\n  (bgp (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\")\n    (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>)))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_29))\n  (join (bgp (triple _:_:bnode_29 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"1\")\n    (triple _:_:bnode_29 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:_:bnode_31))\n  (bgp (triple _:_:bnode_31 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\")\n    (triple _:_:bnode_31 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>)))))"
 
 #guard sseOf "SELECT * { ?s ?p ?o . { SELECT ?o { ?a ?b ?o } LIMIT 2 } }" ==
   "(project *\n  (join (bgp (triple ?s ?p ?o))\n  (project (?o)\n  (bgp (triple ?a ?b ?o))\n  (slice _ 2))))"

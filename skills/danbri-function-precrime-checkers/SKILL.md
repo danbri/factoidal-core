@@ -793,3 +793,157 @@ Rules from this work:
   chain of blank nodes that share one first-degree hash makes RDFC-1.0
   §4.4 explore every member (300, 600, 900 nodes: 7.7, 30.9, 49.6 s).
   A loop does not repair either; each issue says so.
+
+## Three scaling expected failures removed (OKR batch 1 KR 2.5, 2026-10-13)
+
+### The SPARQL tokenizer took three length walks per token (https://github.com/danbri/factoidal/issues/802)
+
+`tokenizeLoop` tested progress with `rest.length ≥ cs.length`, and `skipWs`
+seeded its fuel with `cs.length + 1`: three walks over the rest of the request
+per token. The repair (`formal/lean4/L4Factoidal/SPARQL/Tokenizer.lean`) keeps
+both readable definitions. `skipWsLoop` scans whitespace and comments with a
+flag and no fuel (`skipWs_eq_fast`, a `csimp` placed before `nextToken`, so
+the compiled `nextToken` calls it). `nextToken_len` proves that one token moves
+the position by the characters it consumes, or uses up the input; so the
+length test is the F* test `pos' ≤ pos` (`nextToken_progress`), and
+`tokenizeLoopFast` with that test is `tokenizeLoop` (`tokenizeLoop_eq_fast`,
+`csimp` on `tokenize`, `tokenize12` and `tokenizeAt`).
+
+| `l4factoidal`, one run per point | 1,000 | 2,000 | 4,000 | 8,000 |
+|---|---:|---:|---:|---:|
+| `update` INSERT DATA, n triples, before | 0.76 s | 3.27 s | 13.25 s | 89.4 s |
+| the same, after | 0.11 s | 0.16 s | 0.51 s | 2.27 s |
+| `query` ASK with VALUES of n IRIs, before (CPU) | | 0.52 s | 1.92 s | 6.97 s |
+| the same, after (CPU, minimum of 3) | | 0.017 s | 0.024 s | 0.062 s |
+| `l4sbm11 update`, SBM11 store of 600,001 quads | | | DELETE DATA 0.49 s | INSERT DATA 1.60 s |
+
+The update row is still quadratic after the repair, from a second cost:
+the parser appends each triple to the end of the block's BGP list
+(`ggpAddTriple`, `.bgp (ts ++ [tp])`). It is the `lean_scaling.py` row
+`sparql-update-insert`, an expected failure naming
+https://github.com/danbri/factoidal/issues/821. The tokenizer row is
+`sparql-tokenize`. The `tests/stack` case `sbm11-delta` now sends 4,000 and
+8,000 quads (it sent 1,000 and 2,000 because of this cost).
+
+Rules from this repair:
+
+- **A length in a loop's guard is a walk per iteration.** `rest.length ≥
+  cs.length` reads as a comparison and costs two list walks. Compare positions
+  or counters that the loop already carries, and prove them equal to the
+  readable test.
+- **A fixed fuel can stop a row before it shows its curve.** At 16,000 VALUES
+  the row failed with "recursion limit" (the constant 10,000 of
+  https://github.com/danbri/factoidal/issues/818), not with a time. Choose the
+  sizes below such a limit, or repair the limit first.
+- **Make the per-item cost large enough to see.** With integers in the VALUES
+  block the base tokenizer gave ratios of 2.8 and 3.2 per doubling, 9.1 for
+  4x: a pass or a fail by noise. With 40-character IRIs it gave 3.7 and 3.6,
+  13.4 for 4x.
+
+### Four limits of one issue (https://github.com/danbri/factoidal/issues/818)
+
+1. **The constant fuel 10,000 of the SPARQL parser.** Every sibling loop of
+   the parser (collection members, the triples of a block, VALUES values)
+   spends one unit per sibling. `parseSparql` and `parseSparqlUpdate` now
+   parse once at `topFuel` and, when that pass rejects the request, once more
+   at `scaledFuel` (`topFuel` + the request length). There is no theorem that
+   more fuel gives the same answer (the parser is one mutual block of about
+   100 functions, and some of them return a partial result when the fuel runs
+   out), so the design makes the needed facts true by construction:
+   `parseSparql_of_topFuel` (an answer of the first pass is the answer),
+   `parseSparql_error` (a rejection is the first pass's rejection, with its
+   message) and `parseSparql_ok` (every answer is an answer of
+   `parseSparqlWith` at some fuel, so the theorems stated at every fuel hold);
+   the same three for updates.
+2. **`freshBnodeId` walked the rest of the token list once per cell.** The
+   label is now the character offset of the token (`_:bnode_30`, where the F*
+   and this port gave the remaining token count, `_:bnode_5`). The offsets
+   increase along a token list (`#guard`s in `Tokenizer.lean`), so the labels
+   stay distinct; three SSE snapshot guards in `ParserTests.lean` changed
+   their label numbers.
+3. **XMLLiteral children were cut after about 10,000, with no error.**
+   `serializeNodeT`/`serializeNodesT` recurse on the node and the child list
+   and have no fuel; `serialize_fuel_eq` proves them equal to the fuelled pair
+   whenever the fuel covers `litNeed` of the node, so
+   `serializeLiteralContent_eq_fuel` gives the old lexical form wherever the
+   old one was complete. The loop twin is `serializeNodeTF`/`serializeNodesTLoop`.
+4. **`collectQuads` used one native frame per join.** `collectQuadsLoop` keeps a
+   work list (termination: twice the `sizeOf` of each pattern plus one, summed);
+   `collectQuadsLoop_eq`, `csimp collectQuads_eq_fast`. The `tests/stack` case
+   `sparql-collection` still overflows in the wasm canary route (Node,
+   `--stack-size=512`): the next frame per member is `ggpLabeledBnodes`, the
+   INSERT DATA blank node label check (gdb: native runs at 128 KB, overflows at
+   64 KB). The case stays an expected failure in that route under issue 818.
+
+| `l4factoidal`, one run per point | before | after |
+|---|---|---|
+| `query` ASK, VALUES of 16,000 IRIs | parse error after 33.6 s | 0.13 s |
+| the same, 32,000 IRIs | no answer in 200 s | 0.39 s |
+| `query` SELECT, one collection of 10,001 / 20,000 / 40,000 members | parse error after 1.37 / 6.51 / 27.6 s | 0.44 / 2.03 / 8.80 s |
+| `update` INSERT DATA, one collection of 10,001 / 20,000 / 40,000 members | parse error after 1.46 / 6.62 / 27.6 s | 6.02 / 25.0 / 132 s |
+| `parse` RDF/XML, an XMLLiteral element with 10,001 / 40,000 children | 0.19 / 0.09 s, last children cut | 0.14 / 0.22 s, complete |
+
+The two "after" rows that grow as n² are other costs, each with an issue and
+an expected-failure row: the §19.6 blank node scope check walks the join chain
+once per join (https://github.com/danbri/factoidal/issues/824, row
+`sparql-collection-scope`), and `Dataset.insertQuads` scans the graph for each
+new quad (https://github.com/danbri/factoidal/issues/821, row
+`sparql-update-insert`).
+
+Rules from this repair:
+
+- **A repair that makes an input pass shows the next cost on that input.** The
+  expected-failure checks of issue 818 tested the answer; the scaling row at
+  2,000 and 8,000 members passed (ratio 6.9). At 40,000 members the same query
+  took 8.8 s. Measure a repaired path at sizes past the old limit, not only at
+  the sizes the old limit allowed.
+- **When a monotonicity theorem is out of reach, make the extension
+  conservative by construction.** A second pass that runs only on a rejection,
+  and keeps the first rejection when it also fails, changes no answer the old
+  code gave; the three theorems are a few lines each.
+
+### The anonymous individual graph of the OWL 2 species check (https://github.com/danbri/factoidal/issues/812)
+
+`componentsOf` (`L4Factoidal/OWL/SyntaxDL.lean`, Structural Specification
+§11.2) adds one edge at a time to a list of components and looks for the
+component of each end with `List.find?` over the whole list. The repair is
+`componentsOfLoop`, which carries the set of vertices already in a component,
+with two fast paths, each an exact equality with `addEdge`:
+
+- neither end is in a component: no component contains either end
+  (`find?_none_of_not_covered`), so the edge is a new two-vertex component
+  without a scan;
+- one end is the first vertex of the first component and the other end is in
+  no component (one step along a chain, in either direction): the components
+  are pairwise disjoint (`addEdge_disj`, proved for every step), so the first
+  component is the only one equal to itself and `filter` returns the rest
+  unchanged (`addEdge_head_left`, `addEdge_head_right`).
+
+`addEdge_covered` states which vertices one step covers; `addEdgeSeen_eq` and
+`componentsOfLoop_eq` carry the covered set and disjointness through the loop;
+`componentsOf_eq_fast` (`csimp`) gives the same components in the same order,
+so the verdict `anonymous-individuals-not-a-forest` and the number of
+`anonymous-individual-tree-without-leaf` are unchanged for every input. Other
+edges (a merge of two components, or an edge whose covered end is not first)
+still scan the list.
+
+| `l4owl-species`, minimum of 3 runs | 8,000 | 32,000 |
+|---|---:|---:|
+| n pairs `_:x p _:y`, before (one run) | 1.03 s | 15.71 s |
+| the same, after the first fast path | 0.34 s | 1.57 s |
+| one chain of n blank nodes, before (one run) | 0.49 s | 9.18 s |
+| the same, after the first fast path (one run) | 0.61 s | 13.67 s |
+| the same, after the second fast path | 0.22 s | 0.81 s |
+
+Rules from this repair:
+
+- **A fast path that is exact needs only the facts of its own case.** The
+  first fast path needed one invariant (which vertices are covered) and made
+  the pairs row linear; the chain row stayed quadratic and was measured as
+  such before the second fast path, which needed one more invariant
+  (disjointness). Each fast path is an equality with `addEdge`, so nothing
+  downstream changed.
+- **Add a row for each shape of the data structure, not only the shape in
+  the issue.** The issue's row was disjoint pairs; a chain exercises the
+  other branch of `addEdge`, and passed the first repair's gate unnoticed
+  until it had its own row.

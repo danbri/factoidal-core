@@ -2942,7 +2942,8 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
 
-# --- Constant fuel caps on data (https://github.com/danbri/factoidal/issues/818)
+# --- Constant fuel caps on data (https://github.com/danbri/factoidal/issues/818;
+# expected failures until 2026-10-13, plain assertions since the repair)
 # checkx <label> <issue> <op> <argsfile> <python-assert-expr>: like `check`,
 # through `xverdict`, so ISSUE set makes the case an expected failure that
 # fails the run on an XPASS. The output shown is cut to 300 bytes.
@@ -2981,23 +2982,27 @@ json.dump([doc, "rdfxml", "http://example.org/"], open(sys.argv[1], "w"))
 PYEOF
 }
 # (a) A collection reads its members with fuel - 1 each, from topFuel =
-# 10,000: 10,001 members are a parse error today. The check is the correct
-# result: the request is accepted and the last member is inserted. 100
-# members are the plain control. The quad count is 1 + 1 + 2 per member.
+# 10,000: 10,001 members were a parse error until 2026-10-13, when the
+# parser got a second pass with the fuel topFuel + the request length
+# (parseSparqlUpdate). The check is the correct result: the request is
+# accepted and the last member is inserted. 100 members are the control.
+# The quad count is 1 + 1 + 2 per member.
 coll_args "$TMP/coll-100.json" 100
 checkx "updateDataset INSERT DATA collection of 100 members" "" updateDataset "$TMP/coll-100.json" \
   'r["ok"] is True and "\"99\"^^" in r["nquads"] and len([l for l in r["nquads"].splitlines() if l.strip()]) == 202'
 coll_args "$TMP/coll-10001.json" 10001
-checkx "updateDataset INSERT DATA collection of 10,001 members (fuel cap)" 818 updateDataset "$TMP/coll-10001.json" \
+checkx "updateDataset INSERT DATA collection of 10,001 members (fuel cap)" "" updateDataset "$TMP/coll-10001.json" \
   'r["ok"] is True and "\"10000\"^^" in r["nquads"] and len([l for l in r["nquads"].splitlines() if l.strip()]) == 20004'
-# (b) XMLLiteral content: each sibling costs one unit of the 10,000 fuel of a
-# top-level node, so the children after about the 9,999th are dropped with no
-# error. The check is that the last child is in the lexical form.
+# (b) XMLLiteral content: each sibling cost one unit of the 10,000 fuel of a
+# top-level node, so the children after about the 9,999th were dropped with
+# no error, until the serializer lost its fuel on 2026-10-13
+# (serializeNodeT, serialize_fuel_eq). The check is that the last child is in
+# the lexical form.
 lit_args "$TMP/lit-100.json" 100
 checkx "parseToDatasetJson XMLLiteral element with 100 children keeps the last" "" parseToDatasetJson "$TMP/lit-100.json" \
   'r["ok"] is True and "ex:last" in r["nquads"]'
 lit_args "$TMP/lit-10001.json" 10001
-checkx "parseToDatasetJson XMLLiteral element with 10,001 children keeps the last (fuel cap)" 818 parseToDatasetJson "$TMP/lit-10001.json" \
+checkx "parseToDatasetJson XMLLiteral element with 10,001 children keeps the last (fuel cap)" "" parseToDatasetJson "$TMP/lit-10001.json" \
   'r["ok"] is True and "ex:last" in r["nquads"]'
 
 # --- The core dispatch (l4factoidal-core.wasm, issue 713 stage 4) ------

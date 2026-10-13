@@ -71,13 +71,34 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    0.24 s to 0.61 s after, measured 2026-10-12; F*: 1.43 s at
                    5,000)
   sparql-collection-parse  `query` SELECT over one collection of 2,000 and
-                   8,000 members (one triple of data, no answer). Expected failure, issue 818
-                   item 2: `freshBnodeId` walks the remaining token list once
-                   per cell. The SPARQL tokenizer is quadratic too (issue 802);
-                   on 2026-10-13 the tokenizer took 0.06 s and 0.80 s of the
-                   0.09 s and 1.18 s of an ASK of this shape, an ASK with a VALUES block of the same
-                   size 0.08 s and 0.89 s. The row passes only when both are
-                   repaired.
+                   8,000 members (one triple of data, no answer). An expected
+                   failure until 2026-10-13 (issue 818 item 2: `freshBnodeId`
+                   walked the remaining token list once per cell; issue 802:
+                   the tokenizer was quadratic): 0.086 s and 1.230 s before
+                   both repairs
+  sparql-tokenize  `query` ASK over one triple with a VALUES block of 2,000,
+                   4,000 and 8,000 IRIs, measured at x, 2x and 4x like
+                   owl-consistent-cl (each doubling at most DOUBLING, 4x at most
+                   BOUND): the SPARQL tokenizer reads every token of the
+                   request. Before the repair of
+                   https://github.com/danbri/factoidal/issues/802 it took the
+                   length of the rest of the input three times per token
+                   (`tokenizeLoop`'s progress test and `skipWs`'s fuel):
+                   0.52 s, 1.92 s, 6.97 s; after, 0.017 s, 0.032 s, 0.040 s
+                   (2026-10-13)
+  sparql-collection-scope  the same query over 10,000 and 40,000 members, past
+                   the constant fuel 10,000 (a parse error before the repair
+                   of https://github.com/danbri/factoidal/issues/818). Expected
+                   failure, https://github.com/danbri/factoidal/issues/824: the
+                   blank node scope check (`validateBnodeScope`, §19.6) walks
+                   the join chain of the collection once per join (0.44 s
+                   and 8.80 s, measured 2026-10-13)
+  sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
+                   empty dataset (issue 802: DELETE DATA of 4,000 quads took
+                   61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
+                   tokenizer repair, 0.18 s and 2.01 s after. Expected failure,
+                   https://github.com/danbri/factoidal/issues/821: the parser
+                   appends each triple to the end of the block's BGP list
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -114,10 +135,18 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   owl-species-bnode-edges  the same check over n pairs of blank nodes linked by
                    an object property assertion (`_:x p _:y`), each pair with
                    one named link: the anonymous-individual graph has n
-                   components. 8,000 against 32,000 pairs. Expected failure
-                   naming https://github.com/danbri/factoidal/issues/812:
-                   `componentsOf` merges components in a list (1.09 s at 8,000
-                   pairs, 14.79 s at 32,000, measured 2026-10-13)
+                   components. 8,000 against 32,000 pairs. An expected
+                   failure until 2026-10-13 (https://github.com/danbri/factoidal/issues/812):
+                   `componentsOf` looked for the component of each end with a
+                   scan of all components (1.09 s at 8,000 pairs, 14.79 s at
+                   32,000); after `componentsOf_eq_fast`, which skips the scans
+                   for vertices in no component, 0.34 s and 1.57 s
+  owl-species-bnode-chain  the same check over one chain of n blank nodes
+                   (`_:x0 p _:x1 . _:x1 p _:x2 ...`), 8,000 against 32,000:
+                   each edge touches a vertex that is already in a component.
+                   0.49 s and 9.18 s before issue 812; after, the first
+                   component is extended without a scan (`addEdge_head_left`,
+                   the components are disjoint): 0.22 s and 0.81 s
   delta-log-merge  `l4wasm-cli call deltaLogMerge` (the merge on read of the
                    browser update log, hub post 18) of a log of n records, each
                    an INSERT DATA of one distinct triple, over an empty base:
@@ -196,8 +225,8 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "owl-species-bnode-edges": "https://github.com/danbri/factoidal/issues/812",
-    "sparql-collection-parse": "https://github.com/danbri/factoidal/issues/818",
+    "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
+    "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
     "delta-log-merge": "https://github.com/danbri/factoidal/issues/822",
 }
 # A run longer than this is not repeated: the minimum of several runs only
@@ -250,6 +279,22 @@ def trig_one_graph(n: int) -> str:
     return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
 
 
+def sparql_collection_ask(n: int) -> str:
+    return "SELECT ?s WHERE { ?s ?p ( %s ) }\n" % " ".join(str(i) for i in range(n))
+
+
+def sparql_values_ask(n: int) -> str:
+    """ASK with a trailing VALUES block of n IRIs (about 40 characters each):
+    n tokens to read, one triple of data to match."""
+    return "ASK { ?s ?p ?o } VALUES ?x { %s }\n" % " ".join(
+        f"<{EX}item/{i:08d}>" for i in range(n))
+
+
+def sparql_insert_data(n: int) -> str:
+    return "INSERT DATA {\n%s}\n" % "".join(
+        f'  <{EX}s{i}> <{EX}p> "value {i}" .\n' for i in range(n))
+
+
 OWL = "http://www.w3.org/2002/07/owl#"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
@@ -285,6 +330,19 @@ def owl_species_doc(n: int) -> str:
     return "\n".join(out) + "\n"
 
 
+def owl_species_bnode_chain(n: int) -> str:
+    """One chain of n + 1 blank nodes linked by an object property assertion,
+    with one named link at its start."""
+    ty = f"<{RDF}type>"
+    out = [f"<{EX}o> {ty} <{OWL}Ontology> .",
+           f"<{EX}p> {ty} <{OWL}ObjectProperty> .",
+           f"<{EX}C> {ty} <{OWL}Class> .",
+           f"<{EX}a> {ty} <{EX}C> .",
+           f"<{EX}a> <{EX}p> _:x0 ."]
+    out += [f"_:x{i} <{EX}p> _:x{i + 1} ." for i in range(n)]
+    return "\n".join(out) + "\n"
+
+
 def owl_species_bnode_edges(n: int) -> str:
     """n pairs of blank nodes linked by an object property assertion, each
     pair with one named link."""
@@ -297,8 +355,6 @@ def owl_species_bnode_edges(n: int) -> str:
                 f"<{EX}a{i}> <{EX}p> _:x{i} .",
                 f"_:x{i} <{EX}p> _:y{i} ."]
     return "\n".join(out) + "\n"
-def sparql_collection_ask(n: int) -> str:
-    return "SELECT ?s WHERE { ?s ?p ( %s ) }\n" % " ".join(str(i) for i in range(n))
 
 
 def turtle_object_list(n: int) -> str:
@@ -386,6 +442,23 @@ ROWS = {
         1000,
         lambda n: n,
         lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
+    "sparql-collection-parse": (
+        2000,
+        lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"]),
+    "sparql-collection-scope": (
+        10000,
+        lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"]),
+    "sparql-update-insert": (
+        2000,
+        lambda n: fixture(f"sparql-insert-data-{n}.ru", lambda: sparql_insert_data(n)),
+        lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
+                   "--update", str(p), "--format", "nquads"]),
     "owl-species": (
         2000,
         lambda n: fixture(f"owl-species-{n}.nt", lambda: owl_species_doc(n)),
@@ -394,12 +467,10 @@ ROWS = {
         8000,
         lambda n: fixture(f"owl-species-bnode-edges-{n}.nt", lambda: owl_species_bnode_edges(n)),
         lambda p: [str(SPECIES_BIN), str(p)]),
-    "sparql-collection-parse": (
-        2000,
-        lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
-        lambda p: [str(BIN), "query",
-                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
-                   "--query", str(p), "--format", "nquads"]),
+    "owl-species-bnode-chain": (
+        8000,
+        lambda n: fixture(f"owl-species-bnode-chain-{n}.nt", lambda: owl_species_bnode_chain(n)),
+        lambda p: [str(SPECIES_BIN), str(p)]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
@@ -582,6 +653,12 @@ SERIES_ROWS = {
         10000, cl_prefix,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
         CL_SOURCE),
+    "sparql-tokenize": (
+        2000,
+        lambda n: fixture(f"sparql-values-ask-{n}.rq", lambda: sparql_values_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"], "true", None),
     "delta-log-merge": (
         8000, delta_log_merge_args,
         lambda p: [str(WASMCLI_BIN), "call", "deltaLogMerge", str(p)],

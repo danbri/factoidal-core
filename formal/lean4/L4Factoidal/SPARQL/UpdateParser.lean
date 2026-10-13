@@ -435,8 +435,67 @@ def parseSparqlUpdateWith (fuel : Nat) (text : String) (base : Option String)
       else .ok { base := st.base, prefixes := st.prefixes, ops := ops }
 
 /-- Parse at the query parser's fuel seed. -/
-def parseSparqlUpdate (text : String) (base : Option String := none)
+def parseSparqlUpdateAtTopFuel (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Update :=
   parseSparqlUpdateWith topFuel text base version
+
+/-- Parse a SPARQL Update request: first at the fuel seed `topFuel`; when
+that pass rejects the request, once more at `scaledFuel` (the seed plus the
+number of characters), and its answer when it accepts. An `INSERT DATA`
+block of more than about 10,000 triples, or a collection of more than about
+10,000 members, ran out of the constant fuel
+(https://github.com/danbri/factoidal/issues/818 item 1). A request the first
+pass accepts gets the same answer (`parseSparqlUpdate_of_topFuel`); a request
+that both passes reject gets the first pass's error
+(`parseSparqlUpdate_error`). -/
+def parseSparqlUpdate (text : String) (base : Option String := none)
+    (version : SparqlVersion := .v11) : Except ParseError Update :=
+  match parseSparqlUpdateWith topFuel text base version with
+  | .ok u => .ok u
+  | .error e =>
+    match parseSparqlUpdateWith (scaledFuel text) text base version with
+    | .ok u => .ok u
+    | .error _ => .error e
+
+theorem parseSparqlUpdate_of_topFuel {text : String} {base : Option String}
+    {version : SparqlVersion} {u : Update}
+    (h : parseSparqlUpdateWith topFuel text base version = .ok u) :
+    parseSparqlUpdate text base version = .ok u := by
+  simp [parseSparqlUpdate, h]
+
+theorem parseSparqlUpdate_error {text : String} {base : Option String}
+    {version : SparqlVersion} {e : ParseError}
+    (h : parseSparqlUpdate text base version = .error e) :
+    parseSparqlUpdateWith topFuel text base version = .error e := by
+  unfold parseSparqlUpdate at h
+  cases h1 : parseSparqlUpdateWith topFuel text base version with
+  | ok u => simp [h1] at h
+  | error e1 =>
+    cases h2 : parseSparqlUpdateWith (scaledFuel text) text base version with
+    | ok u => simp [h1, h2] at h
+    | error e2 => simp [h1, h2] at h; rw [h]
+
+theorem parseSparqlUpdate_ok {text : String} {base : Option String}
+    {version : SparqlVersion} {u : Update}
+    (h : parseSparqlUpdate text base version = .ok u) :
+    ∃ fuel, parseSparqlUpdateWith fuel text base version = .ok u := by
+  unfold parseSparqlUpdate at h
+  cases h1 : parseSparqlUpdateWith topFuel text base version with
+  | ok u1 => simp [h1] at h; exact ⟨topFuel, h ▸ h1⟩
+  | error e1 =>
+    cases h2 : parseSparqlUpdateWith (scaledFuel text) text base version with
+    | ok u2 => simp [h1, h2] at h; exact ⟨scaledFuel text, h ▸ h2⟩
+    | error e2 => simp [h1, h2] at h
+
+#print axioms parseSparqlUpdate_error
+#print axioms parseSparqlUpdate_ok
+
+/-! An INSERT DATA collection of 10,001 members ran out of the constant
+fuel; the second pass reads it. -/
+private def collectionUpdate (n : Nat) : String :=
+  "INSERT DATA { <http://e/s> <http://e/q> ( " ++ " ".intercalate ((List.range n).map toString) ++ " ) }"
+#guard (parseSparqlUpdate (collectionUpdate 10001)).toOption.isSome
+#guard (parseSparqlUpdateAtTopFuel (collectionUpdate 10001)).toOption.isNone
+#guard (parseSparqlUpdate "INSERT DATA { ?s <http://e/p> 1 }").toOption.isNone
 
 end L4Factoidal.SPARQL
