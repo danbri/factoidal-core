@@ -692,18 +692,21 @@ Rules from this repair:
 
 The audit repair of https://github.com/danbri/factoidal/issues/750 put 26
 declarations on the allow list as `(a) PENDING`: each recursed once per
-item, or once per unit of a value, of data. All 26 left issue 752 (OKR
-batch 1 KR 2.6, https://github.com/danbri/factoidal/issues/768): 21 by
-conversion with a proved equality, 2 by reclassification with the bound on
-the line, and 3 stay `(a) PENDING` under a new issue with an expected
-failure.
+item, or once per unit of a value, of data. 25 left issue 752 (OKR batch 1
+KR 2.6, https://github.com/danbri/factoidal/issues/768): 20 by conversion
+with a proved equality, 2 by reclassification with the bound on the line,
+and 3 stay `(a) PENDING` under a new issue with an expected failure. The
+26th, COTTAS `namedGraphsAux`, stays `(a) PENDING` under issue 752 and is
+not converted: owner, 2026-10-11, verbatim, "All work on cottas is
+suspended" (CLAUDE.md). A conversion landed on the branch first and was
+reverted, because the task list named it by mistake.
 
 | family | declarations | new form | theorem |
 |---|---|---|---|
 | 10^n | `pow10` of Geo.Scaled, Math.Sigmoid, SPARQL, XPath.Num, XSD | the core `10 ^ n`: `Nat.pow` is one `lean_nat_pow` (GMP) call, and `Int.pow` of a non-negative base is `Nat.pow` | `pow10_eq_pow : pow10 n = 10 ^ n` by induction (`Nat.pow_succ` or `Int.pow_succ`, then `mul_comm`); `@[csimp] pow10_eq_fast` |
 | x^n | MathML `powNat` | a loop that applies `mulRat x` to an accumulator k times | `powNatLoop_mulRat` (one step commutes with the loop), then `powNatLoop_eq`; no algebra of `mulRat` |
 | digit counts | SPARQL `countDigitsFuel`, XSD `natDigits.go`, Geo WKT `takeDigits`, VC `natToBytesBE` | an accumulator loop | `loop … k = k + spec …` (`fun_induction` on the loop); `takeDigits` keeps value and count (`v * 10^n + vr`) and computes no power per digit; `natToBytesBE` puts the low byte on the front (`loop n acc = spec n ++ acc`), no append per byte |
-| list walks | COTTAS `namedGraphsAux`, RDF `Graph.dedup`, SPARQL `dedupPath`, `fn:replace` `replaceLoop`, XMLLiteral `XmlCanon.walk`, JSON-LD `replaceFirst`, SHACL `distinctDups`, XML `validate.countList` | a newest-first accumulator reversed once; a block of output goes on with `List.reverseAux` | `loop l acc = acc.reverse ++ spec l`; `Graph.dedup` is `foldr step []`, and `List.foldl_reverse` makes it a left fold over the reversed list, with no new loop |
+| list walks | RDF `Graph.dedup`, SPARQL `dedupPath`, `fn:replace` `replaceLoop`, XMLLiteral `XmlCanon.walk`, JSON-LD `replaceFirst`, SHACL `distinctDups`, XML `validate.countList` | a newest-first accumulator reversed once; a block of output goes on with `List.reverseAux` | `loop l acc = acc.reverse ++ spec l`; `Graph.dedup` is `foldr step []`, and `List.foldl_reverse` makes it a left fold over the reversed list, with no new loop |
 | collections in a `mutual` block | SPARQL `pCollection`, RDF/XML `collectionList`, XMLLiteral `serializeNodes` | the pattern of issue 678: the cells go on a newest-first list by tail calls, then a fold links them | the readable form moves after the block, `cells_eq` states the loop with the earlier cells linked in front |
 | reclassified | Turtle `assignLabelsAvoiding` | (c): the label index runs 1 to 9 and stops | |
 | reclassified | Regex `memStar` | (s), a new marker: specification only; no function of the emitted C outside its own module and its theorem module calls it | |
@@ -745,6 +748,16 @@ Rules from this work:
   route as `$2`: `regex-replace-groups` runs on the default Node stack, so
   it is an expected failure in `canary` and `wcanary` only; an entry for all
   three routes turned the suite red with "UNEXPECTED PASS".
+- **A fuel cap on data is a shortfall too, and needs its own expected
+  failure.** https://github.com/danbri/factoidal/issues/818 records two
+  constant fuels of 10,000 that the loops above made visible: a SPARQL
+  collection of 10,001 members is a parse error, and an XMLLiteral element
+  with 10,001 children loses its last children with no error. The
+  tests/stack table counts stack overflows only, so these are `xfail` cases
+  of `Wasm/native-smoke.sh` (`checkx`, through `xverdict`; each checks the
+  correct result and has a 100-item control that passes), and the
+  quadratic cell names are the `lean_scaling.py` row
+  `sparql-collection-parse` in `XFAIL`.
 - **Two recursions found here are also quadratic.** `cmatch` keeps every
   prefix outcome (1,000, 2,000, 4,000 repetitions: 36, 86, 274 MB), and a
   chain of blank nodes that share one first-degree hash makes RDFC-1.0

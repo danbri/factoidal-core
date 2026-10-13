@@ -24,7 +24,6 @@ import L4Factoidal.XPath.Number
 import L4Factoidal.XSD.Facets
 import L4Factoidal.XSD.Datatypes
 import L4Factoidal.VC.Multibase
-import L4Factoidal.Cottas.OnDiskStore
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.RDF.XmlCanon
 import L4Factoidal.Regex.XPath
@@ -78,7 +77,6 @@ namespace L4Factoidal.TailRecursionTwins
 #print axioms XSD.natDigits_eq_fast
 #print axioms Geo.Wkt.takeDigits_eq_fast
 #print axioms VC.Multibase.natToBytesBE_eq_fast
-#print axioms Cottas.OnDiskStore.namedGraphsAux_eq_fast
 #print axioms RDF.Graph.dedup_eq_fast
 #print axioms SPARQL.dedupPath_eq_fast
 #print axioms Regex.replaceLoop_eq_fast

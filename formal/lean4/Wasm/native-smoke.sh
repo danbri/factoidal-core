@@ -2900,6 +2900,64 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
 
+# --- Constant fuel caps on data (https://github.com/danbri/factoidal/issues/818)
+# checkx <label> <issue> <op> <argsfile> <python-assert-expr>: like `check`,
+# through `xverdict`, so ISSUE set makes the case an expected failure that
+# fails the run on an XPASS. The output shown is cut to 300 bytes.
+checkx() {
+  local label="$1" issue="$2" op="$3" argsfile="$4" expr="$5"
+  local out ok=0
+  out="$("$CLI" call "$op" "$argsfile")"
+  if printf '%s' "$out" | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+assert ($expr), r
+" 2>/dev/null; then ok=1; fi
+  xverdict "$label" "$issue" "$ok" "$(printf '%s' "$out" | head -c 300)"
+}
+# coll_args <file> <n>: INSERT DATA of one collection with the members 0 .. n-1.
+coll_args() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+n = int(sys.argv[2])
+json.dump(["<http://e/s> <http://e/p> <http://e/o> .",
+           "INSERT DATA { <http://e/s> <http://e/q> ( %s ) }" % " ".join(str(i) for i in range(n))],
+          open(sys.argv[1], "w"))
+PYEOF
+}
+# lit_args <file> <n>: an rdf:parseType="Literal" property whose one element
+# <ex:w> has n-1 children <ex:c/> and then <ex:last/>.
+lit_args() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+n = int(sys.argv[2])
+doc = ('<?xml version="1.0"?>\n'
+       '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:ex="http://example.org/">\n'
+       '<rdf:Description rdf:about="http://example.org/s"><ex:p rdf:parseType="Literal">'
+       '<ex:w>' + "<ex:c/>" * (n - 1) + '<ex:last/></ex:w></ex:p></rdf:Description>\n</rdf:RDF>\n')
+json.dump([doc, "rdfxml", "http://example.org/"], open(sys.argv[1], "w"))
+PYEOF
+}
+# (a) A collection reads its members with fuel - 1 each, from topFuel =
+# 10,000: 10,001 members are a parse error today. The check is the correct
+# result: the request is accepted and the last member is inserted. 100
+# members are the plain control. The quad count is 1 + 1 + 2 per member.
+coll_args "$TMP/coll-100.json" 100
+checkx "updateDataset INSERT DATA collection of 100 members" "" updateDataset "$TMP/coll-100.json" \
+  'r["ok"] is True and "\"99\"^^" in r["nquads"] and len([l for l in r["nquads"].splitlines() if l.strip()]) == 202'
+coll_args "$TMP/coll-10001.json" 10001
+checkx "updateDataset INSERT DATA collection of 10,001 members (fuel cap)" 818 updateDataset "$TMP/coll-10001.json" \
+  'r["ok"] is True and "\"10000\"^^" in r["nquads"] and len([l for l in r["nquads"].splitlines() if l.strip()]) == 20004'
+# (b) XMLLiteral content: each sibling costs one unit of the 10,000 fuel of a
+# top-level node, so the children after about the 9,999th are dropped with no
+# error. The check is that the last child is in the lexical form.
+lit_args "$TMP/lit-100.json" 100
+checkx "parseToDatasetJson XMLLiteral element with 100 children keeps the last" "" parseToDatasetJson "$TMP/lit-100.json" \
+  'r["ok"] is True and "ex:last" in r["nquads"]'
+lit_args "$TMP/lit-10001.json" 10001
+checkx "parseToDatasetJson XMLLiteral element with 10,001 children keeps the last (fuel cap)" 818 parseToDatasetJson "$TMP/lit-10001.json" \
+  'r["ok"] is True and "ex:last" in r["nquads"]'
+
 # --- The core dispatch (l4factoidal-core.wasm, issue 713 stage 4) ------
 # `l4wasm-cli corecall` drives Wasm/CoreDispatch.lean's `L4Wasm.Core.callIO`,
 # the table the core wasm links.

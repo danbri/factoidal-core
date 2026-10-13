@@ -70,6 +70,14 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    6.24 s for 4x input before the reverse-accumulator parser,
                    0.24 s to 0.61 s after, measured 2026-10-12; F*: 1.43 s at
                    5,000)
+  sparql-collection-parse  `query` SELECT over one collection of 2,000 and
+                   8,000 members (one triple of data, no answer). Expected failure, issue 818
+                   item 2: `freshBnodeId` walks the remaining token list once
+                   per cell. The SPARQL tokenizer is quadratic too (issue 802);
+                   on 2026-10-13 the tokenizer took 0.06 s and 0.80 s of the
+                   0.09 s and 1.18 s of an ASK of this shape, an ASK with a VALUES block of the same
+                   size 0.08 s and 0.89 s. The row passes only when both are
+                   repaired.
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -146,6 +154,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
+    "sparql-collection-parse": "https://github.com/danbri/factoidal/issues/818",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -195,6 +204,10 @@ def trig_blocks(n: int) -> str:
 def trig_one_graph(n: int) -> str:
     body = "\n".join(f"  ex:s{i} ex:p ex:o{i} ." for i in range(n))
     return f"@prefix ex: <{EX}> .\nex:g {{\n{body}\n}}\n"
+
+
+def sparql_collection_ask(n: int) -> str:
+    return "SELECT ?s WHERE { ?s ?p ( %s ) }\n" % " ".join(str(i) for i in range(n))
 
 
 def turtle_object_list(n: int) -> str:
@@ -282,6 +295,12 @@ ROWS = {
         1000,
         lambda n: n,
         lambda n: [str(TERMWIRE_BIN), str(n), "100"]),
+    "sparql-collection-parse": (
+        2000,
+        lambda n: fixture(f"sparql-collection-select-{n}.rq", lambda: sparql_collection_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),

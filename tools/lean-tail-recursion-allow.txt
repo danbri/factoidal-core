@@ -744,6 +744,7 @@ locationHints_pairs  # (c) test harness; the schemaLocation hints of one XSD tes
 L4Factoidal_Cottas_BaseWriterPrims_bitsNeeded  # (c) bit length of one id or count (at most 64)
 L4Factoidal_Cottas_BaseWriterPrims_leUintDecode  # (c) one fixed-width little-endian field (at most 8 bytes)
 L4Factoidal_Cottas_BaseWriterPrims_uvarintDecode  # (c) bytes of one LEB128 value; fuel-bounded
+L4Factoidal_Cottas_OnDiskStore_namedGraphsAux  # (a) PENDING https://github.com/danbri/factoidal/issues/752 COTTAS: one frame per named graph of a store; COTTAS suspended by the owner on 2026-10-11; not converted
 L4Factoidal_Cottas_OnDiskStore_objectToRevmapKey  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_Math_Sigmoid_ifact  # (c) k! for the Taylor term index k, bounded by the fixed term count of the working precision
 L4Factoidal_Math_Sigmoid_ipow  # (c) 2^shift for the range-reduction shift of the working precision
