@@ -44,6 +44,22 @@ expression would appear:
   | `service`        | `Option Graph` (resolved)    | `Query.lean`          |
   | `modified`       | `SolutionSeq → SolutionSeq`  | `Query.lean`          |
 
+The `filter`, `leftJoin`, `bind` and `modified` constructors also take
+an optional FAILURE TWIN of their expression argument: the failed
+SERVICE call without SILENT that evaluating the expression makes (an
+EXISTS evaluates a pattern). `GraphPattern.serviceFailure` reads the
+twins; `evalIn` does not.
+
+SERVICE FAILURES (SPARQL 1.1 Federated Query §2.3, §3.2;
+https://github.com/danbri/factoidal/issues/717 and
+https://github.com/danbri/factoidal/issues/735). A failed SERVICE call
+without SILENT fails the query, also when it is made inside an EXISTS
+or NOT EXISTS of an expression. A SERVICE nested in the body of another
+SERVICE is part of the outer call (§3.2: the outer call is the remote
+evaluation of its body), so its failure is a failure of the outer call:
+an outer SILENT gives one solution with no bindings, and an outer call
+without SILENT fails the query. Details at `GraphPattern.serviceFailure`.
+
 `QueryPattern` — the concrete AST with one constructor per F*
 `group_graph_pattern` case, the one a parser builds — is declared in
 `Expr.lean` (in one mutual block with `Expr`, because EXISTS carries a
@@ -744,11 +760,48 @@ def addConstantReflexivity (ps : PatternSubject) (pt : PatternTerm)
       pairs ++ missing.map (fun n => (n, n))
   | _ => pairs
 
+/-! ## A failed SERVICE invocation — the error value
+
+SPARQL 1.1 Federated Query §2.3 and §3.2; the error channel that carries
+it is `GraphPattern.serviceFailure` below. The type is declared before
+`GraphPattern` because the expression-shaped arguments of `filter`,
+`leftJoin`, `bind` and `modified` report it: an EXISTS inside an
+expression evaluates a pattern, and that pattern can hold a SERVICE. -/
+
+/-- Why a SERVICE invocation failed. -/
+inductive ServiceFailure where
+  /-- No endpoint is known for this IRI (`EvalEnv.services` has no entry
+  for it). -/
+  | unreachable (endpoint : Iri)
+  /-- `SERVICE ?v` was invoked for a solution in which `?v` is not bound
+  to an IRI, so there is no endpoint to invoke. -/
+  | noEndpoint (v : VarName)
+  deriving DecidableEq, Repr
+
+/-- The error text a query evaluator answers for a failed invocation. -/
+def ServiceFailure.message : ServiceFailure → String
+  | .unreachable i =>
+      s!"SERVICE <{i}> failed: no endpoint is available for this IRI " ++
+      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+  | .noEndpoint v =>
+      s!"SERVICE ?{v} failed: ?{v} is not bound to an IRI " ++
+      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
+
 /-! ## Graph patterns — the algebra AST (§18.2.2.6 output forms)
 
 One constructor per F* `group_graph_pattern` case, with the
 expression-shaped arguments abstracted per the LAYERING table in the
-module banner. -/
+module banner.
+
+Each expression-shaped argument of `filter`, `leftJoin`, `bind` and
+`modified` has a FAILURE TWIN: an optional function with the same
+arguments that answers the failed SERVICE invocation without SILENT that
+evaluating the expression makes (an EXISTS in the expression evaluates a
+pattern, and that pattern can hold a SERVICE; Federated Query §2.3).
+`none`, the default, says the expression evaluates no pattern, so it
+invokes nothing. `evalIn` does not read the twins; `serviceFailure`
+applies each twin to exactly the arguments `evalIn` applies its
+expression to. `Query.lean` builds both from the same expression. -/
 
 inductive GraphPattern where
   /-- A Basic Graph Pattern (§18.3). -/
@@ -761,9 +814,11 @@ inductive GraphPattern where
   graph the enclosing GRAPH clause selected (the F* evaluator passes
   `gs.gs_graph` into `left_join_with_graph` for exactly this). -/
   | leftJoin (l r : GraphPattern) (cond : Graph → Binding → Bool)
+             (condFailure : Option (Graph → Binding → Option ServiceFailure) := none)
   /-- Filter(expr, P) — §18.5. Same active-graph argument as
   `leftJoin` (F*: `filter_solutions_with_graph … gs.gs_graph`). -/
   | filter   (cond : Graph → Binding → Bool) (p : GraphPattern)
+             (condFailure : Option (Graph → Binding → Option ServiceFailure) := none)
   /-- Union(P1, P2) — §18.5. -/
   | union    (l r : GraphPattern)
   /-- Minus(P1, P2) — §18.5. -/
@@ -786,6 +841,7 @@ inductive GraphPattern where
   bound expression and is evaluated against the graph the enclosing
   GRAPH clause selected. -/
   | bind     (binder : Graph → Binding → Option Term) (v : VarName) (p : GraphPattern)
+             (binderFailure : Option (Graph → Binding → Option ServiceFailure) := none)
   /-- `VALUES (?x ?y) { (1 2) (3 UNDEF) }` — inline data, §10.2. -/
   | values   (vars : List VarName) (rows : List (List (Option Term)))
   /-- `SERVICE [SILENT] <iri> { P }` — §18.6 / SPARQL 1.1 Federated
@@ -807,6 +863,7 @@ inductive GraphPattern where
   expressions and ORDER BY, each of which may hold an EXISTS, so it
   takes the ACTIVE graph too. -/
   | modified (post : Graph → SolutionSeq → SolutionSeq) (p : GraphPattern)
+             (postFailure : Option (Graph → SolutionSeq → Option ServiceFailure) := none)
   /-- `?s path ?o` — a property-path pattern, §18.4. -/
   | propertyPath (s : PatternSubject) (path : PropertyPath) (o : PatternTerm)
   /-- The empty group pattern `{}` — the identity for Join (§18.2.2.6:
@@ -828,7 +885,14 @@ well-founded. (The F* source needs a lexicographic
 `lemma_lateral_substitute_preserves_size` for the same clique,
 because there LATERAL substitutes and then re-enters the evaluator on
 a pattern that is not a subterm. Making the right operand a FUNCTION
-of the row moves that obligation into the type.) -/
+of the row moves that obligation into the type.)
+
+`evalIn` and `serviceFailure` are ONE mutual definition, structural on
+the pattern in both: a SILENT SERVICE answers Ω0 when its body makes a
+failed invocation (§3.2, below), so `evalIn` asks `serviceFailure`
+about the body, and `serviceFailure` reads the rows of `evalIn` where an
+invocation depends on a row. Every call in either direction is on a
+strict subterm, or on `r mu1` for LATERAL's function-valued field. -/
 
 /-- The BIND row loop (port of `fx_bind_rows`): row `i` is evaluated
 with its freshness context injected, and the value (if any, and if
@@ -843,6 +907,72 @@ def bindRowsFresh (binder : Graph → Binding → Option Term) (active : Graph)
                     | none   => mu.bind v t
         | none   => mu
       row :: bindRowsFresh binder active v rest (i + 1)
+
+/-- The failure twin of `bindRowsFresh`: the first failed invocation
+that the BIND expression makes, applied to the same rows with the same
+freshness context. Written as a tail call, so a long row list takes one
+stack frame. -/
+def bindFailureFresh (binderFailure : Graph → Binding → Option ServiceFailure)
+    (active : Graph) (v : VarName) : SolutionSeq → Nat → Option ServiceFailure
+  | [],        _ => none
+  | mu :: rest, i =>
+      match binderFailure active (mu.withFreshnessCtx (toString i) v) with
+      | some f => some f
+      | none   => bindFailureFresh binderFailure active v rest (i + 1)
+
+/-! ## A failed SERVICE invocation — SPARQL 1.1 Federated Query §2.3, §3.2
+
+§3.2 defines `eval(D(G), Service(IRI, P, SilentOp)) = Invocation(IRI, P,
+SilentOp)`, where `Invocation` is the solutions of the remote query "in
+case of a successful service invocation according to the SPARQL
+protocol, and otherwise Ω0 in case SilentOp is true, and otherwise
+error". §2.3 says what the error does: "If the SILENT keyword is not
+present, the query will stop and return the error."
+(https://www.w3.org/TR/sparql11-federated-query/; issue
+https://github.com/danbri/factoidal/issues/717.)
+
+`evalIn` above returns solution sequences only, and gives `[]` for a
+failed invocation without SILENT. `serviceFailure` is the error
+channel. It follows `evalIn` arm for arm, in the same evaluation order,
+and answers the first invocation without SILENT that failed. A query
+evaluator answers that error in place of the rows of `evalIn`
+(`Query.serviceFailure` in `Query.lean`). When `serviceFailure` is
+`none`, the rows of `evalIn` are the §18.5 / §3.2 answer, so every
+theorem about `evalIn` keeps its statement.
+
+A NESTED SERVICE — §3.2 reading (decision recorded in
+https://github.com/danbri/factoidal/issues/735). An endpoint is a graph
+here (`EvalEnv.services`), and this engine evaluates the body P of
+`Service(IRI, P, SilentOp)` against that graph itself. §3.2 defines the
+invocation as the solutions "of executing query SELECT * WHERE Q
+against the service endpoint", Q being P serialised. A failure while P
+is evaluated, which includes a SERVICE call nested in P that fails, is
+therefore a failure of the outer invocation: the endpoint "may return
+an error to the query" (§2.3). So:
+  * outer SILENT: the outer invocation is Ω0, one solution with no
+    bindings (`evalIn` answers `[Binding.empty]`), and
+    `serviceFailure` answers `none`;
+  * outer without SILENT: the query fails, and `serviceFailure`
+    answers the nested failure, which names the endpoint that failed.
+The same holds for each invocation of `SERVICE ?v` inside a join, and
+for a failure inside an EXISTS in the body.
+
+A SERVICE INSIDE AN EXPRESSION. An EXISTS or NOT EXISTS in a FILTER,
+an OPTIONAL condition, a BIND, or a sub-SELECT's HAVING, ORDER BY or
+SELECT expression evaluates its pattern once per row (§18.6
+`exists(pattern, μ)`), and each such evaluation makes the invocations
+that pattern holds. A failed invocation without SILENT there fails the
+query exactly as it does in the graph pattern itself (§2.3). The
+expression arguments are abstract here, so each carries its failure
+twin (see `GraphPattern`), and `serviceFailure` applies the twin
+wherever `evalIn` applies the expression.
+
+`SERVICE ?v` (§4, informative) is "a series of separate invocations"
+of the endpoints the solutions bind `?v` to. Each one is an invocation
+in the sense of §3.2, so a solution that binds `?v` to an IRI with no
+endpoint, or leaves `?v` without an IRI, is a failed invocation. -/
+
+mutual
 
 def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
     SolutionSeq :=
@@ -860,8 +990,13 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
         | some (.iri i) =>
             match resolve i.val with
             | some remote =>
-                (GraphPattern.evalIn ds remote inner).filterMap (fun mu1 =>
-                  if mu.compatible mu1 then some (mu.merge mu1) else none)
+                -- §3.2: a failure while the endpoint evaluates the body
+                -- is a failure of this invocation; with SILENT it is Ω0,
+                -- and Ω0 joined with μ is μ.
+                if silent && (GraphPattern.serviceFailure ds remote inner).isSome then [mu]
+                else
+                  (GraphPattern.evalIn ds remote inner).filterMap (fun mu1 =>
+                    if mu.compatible mu1 then some (mu.merge mu1) else none)
             | none => if silent then [mu] else []
         | _ => if silent then [mu] else [])
   -- Symmetric: SERVICE ?v on the LEFT of a join.
@@ -871,8 +1006,13 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
         | some (.iri i) =>
             match resolve i.val with
             | some remote =>
-                (GraphPattern.evalIn ds remote inner).filterMap (fun mu1 =>
-                  if mu.compatible mu1 then some (mu.merge mu1) else none)
+                -- §3.2: a failure while the endpoint evaluates the body
+                -- is a failure of this invocation; with SILENT it is Ω0,
+                -- and Ω0 joined with μ is μ.
+                if silent && (GraphPattern.serviceFailure ds remote inner).isSome then [mu]
+                else
+                  (GraphPattern.evalIn ds remote inner).filterMap (fun mu1 =>
+                    if mu.compatible mu1 then some (mu.merge mu1) else none)
             | none => if silent then [mu] else []
         | _ => if silent then [mu] else [])
   -- Wired to the hash join; `hashJoin_eq_join`
@@ -885,10 +1025,10 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   -- (IndexedEvalRefinement.lean) proves it returns exactly the
   -- nested-loop `SPARQL.leftJoin` of the two operands, list order
   -- included.
-  | .leftJoin l r c =>
+  | .leftJoin l r c _ =>
       SPARQL.hashLeftJoin (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
         (c active)
-  | .filter c q     => filterSeq (c active) (GraphPattern.evalIn ds active q)
+  | .filter c q _   => filterSeq (c active) (GraphPattern.evalIn ds active q)
   | .union l r      =>
       SPARQL.union (GraphPattern.evalIn ds active l) (GraphPattern.evalIn ds active r)
   | .minus l r      =>
@@ -925,7 +1065,7 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   -- freshness context (row index + the bound variable as call-site
   -- tag, port of `fx_bind_rows`); the result binds into the PRISTINE
   -- row.
-  | .bind binder v q =>
+  | .bind binder v q _ =>
       bindRowsFresh binder active v (GraphPattern.evalIn ds active q) 0
   | .values vars rows => evalValues vars rows
   -- SERVICE with a fixed endpoint. On a miss, SILENT yields one empty
@@ -933,94 +1073,42 @@ def GraphPattern.evalIn (ds : Dataset) (active : Graph) (p : GraphPattern) :
   -- invocation is an error (§3.2); the rows here are `[]` — the F* arm
   -- exactly — and `serviceFailure` below reports the error, which a
   -- query evaluator answers instead of these rows.
+  -- A reachable endpoint evaluates the body. A failed invocation that
+  -- the body makes (a nested SERVICE without SILENT, also inside an
+  -- EXISTS) is a failure of THIS invocation (§3.2, decision in
+  -- https://github.com/danbri/factoidal/issues/735), so SILENT answers
+  -- Ω0 for it.
   | .service _ remote silent q =>
       match remote with
-      | some g => GraphPattern.evalIn ds g q
+      | some g =>
+          if silent && (GraphPattern.serviceFailure ds g q).isSome then [Binding.empty]
+          else GraphPattern.evalIn ds g q
       | none   => if silent then [Binding.empty] else []
   -- SERVICE ?v outside a join has no row to read the endpoint from.
   | .serviceVar _ _ silent _  => if silent then [Binding.empty] else []
-  | .modified post q => post active (GraphPattern.evalIn ds active q)
+  | .modified post q _ => post active (GraphPattern.evalIn ds active q)
   -- §18.4 property paths, with the §18.2.2.5 constant-reflexivity fix.
   | .propertyPath ps path pt =>
       pathResultToSolutions ps pt
         (addConstantReflexivity ps pt path (evalPath path active))
   | .empty => [Binding.empty]
 
-/-- eval(P, G) — §18.5 evaluation against a single graph, the
-default-graph special case of `evalIn` (no named graphs, so GRAPH
-contributes nothing). Kept as the entry point every earlier theorem
-uses. -/
-def GraphPattern.eval (g : Graph) (p : GraphPattern) : SolutionSeq :=
-  p.evalIn { default := g, named := [] } g
-
-/-- The two entry points agree by definition, stated so it is checked
-rather than assumed. -/
-theorem GraphPattern.eval_eq_evalIn (g : Graph) (p : GraphPattern) :
-    p.eval g = p.evalIn { default := g, named := [] } g := rfl
-
-/-! ## A failed SERVICE invocation — SPARQL 1.1 Federated Query §2.3, §3.2
-
-§3.2 defines `eval(D(G), Service(IRI, P, SilentOp)) = Invocation(IRI, P,
-SilentOp)`, where `Invocation` is the solutions of the remote query "in
-case of a successful service invocation according to the SPARQL
-protocol, and otherwise Ω0 in case SilentOp is true, and otherwise
-error". §2.3 says what the error does: "If the SILENT keyword is not
-present, the query will stop and return the error."
-(https://www.w3.org/TR/sparql11-federated-query/; issue
-https://github.com/danbri/factoidal/issues/717.)
-
-`evalIn` above returns solution sequences only, and gives `[]` for a
-failed invocation without SILENT. `serviceFailure` is the error
-channel. It follows `evalIn` arm for arm, in the same evaluation order,
-and answers the first invocation without SILENT that failed. A query
-evaluator answers that error in place of the rows of `evalIn`
-(`Query.serviceFailure` in `Query.lean`). When `serviceFailure` is
-`none`, the rows of `evalIn` are the §18.5 / §3.2 answer, so every
-theorem about `evalIn` keeps its statement.
-
-An endpoint is a graph here (`EvalEnv.services`), and this engine
-evaluates the body of a SERVICE against that graph itself. A SERVICE
-nested in that body is therefore an invocation this engine makes, and
-its failure fails the query even when the enclosing SERVICE is SILENT:
-SILENT covers the access to its own endpoint (§2.3: "errors encountered
-while accessing a remote SPARQL endpoint").
-
-`SERVICE ?v` (§4, informative) is "a series of separate invocations"
-of the endpoints the solutions bind `?v` to. Each one is an invocation
-in the sense of §3.2, so a solution that binds `?v` to an IRI with no
-endpoint, or leaves `?v` without an IRI, is a failed invocation. -/
-
-/-- Why a SERVICE invocation failed. -/
-inductive ServiceFailure where
-  /-- No endpoint is known for this IRI (`EvalEnv.services` has no entry
-  for it). -/
-  | unreachable (endpoint : Iri)
-  /-- `SERVICE ?v` was invoked for a solution in which `?v` is not bound
-  to an IRI, so there is no endpoint to invoke. -/
-  | noEndpoint (v : VarName)
-  deriving DecidableEq, Repr
-
-/-- The error text a query evaluator answers for a failed invocation. -/
-def ServiceFailure.message : ServiceFailure → String
-  | .unreachable i =>
-      s!"SERVICE <{i}> failed: no endpoint is available for this IRI " ++
-      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
-  | .noEndpoint v =>
-      s!"SERVICE ?{v} failed: ?{v} is not bound to an IRI " ++
-      "(SPARQL 1.1 Federated Query §2.3: without SILENT, the query fails)"
-
 /-- The first failed SERVICE invocation without SILENT that evaluating
 `p` against `active` (with `ds` for GRAPH) makes, in `evalIn`'s
-evaluation order; `none` when every invocation succeeds or is SILENT.
+evaluation order; `none` when every invocation succeeds or is covered
+by SILENT.
 
 The arms match `evalIn`'s arms one for one. Where `evalIn` evaluates a
 sub-pattern once per solution (LATERAL, and SERVICE ?v inside a join),
 this function reads the same solutions from `evalIn` and checks each
 invocation; where `evalIn` evaluates a sub-pattern once per named graph
-(GRAPH ?g), so does this function. A FILTER, OPTIONAL, BIND or
-sub-SELECT condition is an expression (`Graph → Binding → Bool` and
-friends), so a SERVICE inside an EXISTS in a condition is not one of
-the patterns this walk reaches. -/
+(GRAPH ?g), so does this function. Where `evalIn` applies an expression
+(a FILTER or OPTIONAL condition, a BIND expression, a sub-SELECT's
+post-WHERE pipeline), this function applies the expression's failure
+twin to the same arguments: the rows of the filtered pattern, the
+compatible merges of an OPTIONAL, the BIND rows with their freshness
+context, the sub-SELECT's input sequence. A SILENT SERVICE whose
+endpoint is reachable answers `none` whatever its body does (§3.2). -/
 def GraphPattern.serviceFailure (ds : Dataset) (active : Graph) (p : GraphPattern) :
     Option ServiceFailure :=
   match p with
@@ -1031,7 +1119,7 @@ def GraphPattern.serviceFailure (ds : Dataset) (active : Graph) (p : GraphPatter
           match mu.lookup v with
           | some (.iri i) =>
               match resolve i.val with
-              | some remote => GraphPattern.serviceFailure ds remote inner
+              | some remote => if silent then none else GraphPattern.serviceFailure ds remote inner
               | none => if silent then none else some (.unreachable i.val)
           | _ => if silent then none else some (.noEndpoint v)))
   | .join (.serviceVar v resolve silent inner) p2 =>
@@ -1040,14 +1128,26 @@ def GraphPattern.serviceFailure (ds : Dataset) (active : Graph) (p : GraphPatter
           match mu.lookup v with
           | some (.iri i) =>
               match resolve i.val with
-              | some remote => GraphPattern.serviceFailure ds remote inner
+              | some remote => if silent then none else GraphPattern.serviceFailure ds remote inner
               | none => if silent then none else some (.unreachable i.val)
           | _ => if silent then none else some (.noEndpoint v)))
   | .join l r =>
       (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
-  | .leftJoin l r _ =>
-      (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
-  | .filter _ q => GraphPattern.serviceFailure ds active q
+  -- §18.5: the condition is evaluated on every compatible merge of a
+  -- left and a right solution, which are exactly the rows of the join.
+  | .leftJoin l r _ condFailure =>
+      (GraphPattern.serviceFailure ds active l).or
+        ((GraphPattern.serviceFailure ds active r).or
+          (match condFailure with
+           | none   => none
+           | some f =>
+               (SPARQL.hashJoin (GraphPattern.evalIn ds active l)
+                  (GraphPattern.evalIn ds active r)).findSome? (f active)))
+  | .filter _ q condFailure =>
+      (GraphPattern.serviceFailure ds active q).or
+        (match condFailure with
+         | none   => none
+         | some f => (GraphPattern.evalIn ds active q).findSome? (f active))
   | .union l r =>
       (GraphPattern.serviceFailure ds active l).or (GraphPattern.serviceFailure ds active r)
   | .minus l r =>
@@ -1065,16 +1165,41 @@ def GraphPattern.serviceFailure (ds : Dataset) (active : Graph) (p : GraphPatter
       (GraphPattern.serviceFailure ds active l).or
         ((GraphPattern.evalIn ds active l).findSome? (fun mu1 =>
           GraphPattern.serviceFailure ds active (r mu1)))
-  | .bind _ _ q => GraphPattern.serviceFailure ds active q
+  | .bind _ v q binderFailure =>
+      (GraphPattern.serviceFailure ds active q).or
+        (match binderFailure with
+         | none   => none
+         | some f => bindFailureFresh f active v (GraphPattern.evalIn ds active q) 0)
   | .values _ _ => none
+  -- §3.2: a reachable endpoint evaluates the body, and a failure there
+  -- is a failure of this invocation. SILENT turns it into Ω0 (`evalIn`
+  -- answers `[Binding.empty]`); without SILENT it is the error.
   | .service endpoint remote silent q =>
       match remote with
-      | some g => GraphPattern.serviceFailure ds g q
+      | some g => if silent then none else GraphPattern.serviceFailure ds g q
       | none   => if silent then none else some (.unreachable endpoint)
   | .serviceVar v _ silent _ => if silent then none else some (.noEndpoint v)
-  | .modified _ q => GraphPattern.serviceFailure ds active q
+  | .modified _ q postFailure =>
+      (GraphPattern.serviceFailure ds active q).or
+        (match postFailure with
+         | none   => none
+         | some f => f active (GraphPattern.evalIn ds active q))
   | .propertyPath _ _ _ => none
   | .empty => none
+
+end
+
+/-- eval(P, G) — §18.5 evaluation against a single graph, the
+default-graph special case of `evalIn` (no named graphs, so GRAPH
+contributes nothing). Kept as the entry point every earlier theorem
+uses. -/
+def GraphPattern.eval (g : Graph) (p : GraphPattern) : SolutionSeq :=
+  p.evalIn { default := g, named := [] } g
+
+/-- The two entry points agree by definition, stated so it is checked
+rather than assumed. -/
+theorem GraphPattern.eval_eq_evalIn (g : Graph) (p : GraphPattern) :
+    p.eval g = p.evalIn { default := g, named := [] } g := rfl
 
 /-- §3.2, `SilentOp` false: an invocation with no endpoint is the error. -/
 theorem GraphPattern.serviceFailure_service_miss (ds : Dataset) (active : Graph)
@@ -1094,5 +1219,58 @@ theorem GraphPattern.serviceFailure_join_service_miss (ds : Dataset) (active : G
     (b : Bgp) (endpoint : Iri) (p : GraphPattern) :
     (GraphPattern.join (.bgp b) (.service endpoint none false p)).serviceFailure ds active =
       some (.unreachable endpoint) := rfl
+
+/-! ### §3.2: a failure inside a reachable endpoint's body
+
+https://github.com/danbri/factoidal/issues/735. The outer invocation
+fails when its body makes a failed invocation. SILENT turns that into
+Ω0; without SILENT the body's failure is the query's error. -/
+
+/-- Without SILENT, a reachable endpoint reports what its body reports. -/
+theorem GraphPattern.serviceFailure_service_reachable (ds : Dataset) (active g : Graph)
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint (some g) false p).serviceFailure ds active =
+      p.serviceFailure ds g := rfl
+
+/-- With SILENT, a reachable endpoint never fails the query, whatever
+its body does. -/
+theorem GraphPattern.serviceFailure_service_silent_reachable (ds : Dataset)
+    (active g : Graph) (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint (some g) true p).serviceFailure ds active = none := rfl
+
+/-- With SILENT, a body that makes a failed invocation gives Ω0: one
+solution with no bindings. -/
+theorem GraphPattern.evalIn_service_silent_body_fails (ds : Dataset) (active g : Graph)
+    (endpoint : Iri) (p : GraphPattern) (f : ServiceFailure)
+    (h : p.serviceFailure ds g = some f) :
+    (GraphPattern.service endpoint (some g) true p).evalIn ds active = [Binding.empty] := by
+  rw [GraphPattern.evalIn]; simp [h]
+
+/-- With SILENT, a body that makes no failed invocation gives the
+body's solutions against the endpoint's graph, as without SILENT. -/
+theorem GraphPattern.evalIn_service_silent_body_ok (ds : Dataset) (active g : Graph)
+    (endpoint : Iri) (p : GraphPattern) (h : p.serviceFailure ds g = none) :
+    (GraphPattern.service endpoint (some g) true p).evalIn ds active =
+      (GraphPattern.service endpoint (some g) false p).evalIn ds active := by
+  rw [GraphPattern.evalIn, GraphPattern.evalIn]; simp [h]
+
+/-! ### Failure twins of the expression arguments -/
+
+/-- A condition with no failure twin evaluates no pattern: the FILTER
+fails exactly when its operand does. -/
+theorem GraphPattern.serviceFailure_filter_none (ds : Dataset) (active : Graph)
+    (c : Graph → Binding → Bool) (q : GraphPattern) :
+    (GraphPattern.filter c q none).serviceFailure ds active = q.serviceFailure ds active := by
+  rw [GraphPattern.serviceFailure]; simp
+
+/-- With a twin, every row the condition is applied to is checked: when
+the operand itself makes no failed invocation, the FILTER reports the
+first row whose condition does. -/
+theorem GraphPattern.serviceFailure_filter_some (ds : Dataset) (active : Graph)
+    (c : Graph → Binding → Bool) (q : GraphPattern)
+    (f : Graph → Binding → Option ServiceFailure) (h : q.serviceFailure ds active = none) :
+    (GraphPattern.filter c q (some f)).serviceFailure ds active =
+      (q.evalIn ds active).findSome? (f active) := by
+  rw [GraphPattern.serviceFailure]; simp [h]
 
 end L4Factoidal.SPARQL

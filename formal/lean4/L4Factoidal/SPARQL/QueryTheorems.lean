@@ -726,5 +726,12 @@ open L4Factoidal.SPARQL
 #print axioms evalDescribe_subset
 #print axioms evalDescribe_of_not_describe
 #print axioms evalDescribe_mem_of_iri
+-- Federated Query §3.2 and the failure twins (issue 735, `Algebra.lean`).
+#print axioms GraphPattern.serviceFailure_service_reachable
+#print axioms GraphPattern.serviceFailure_service_silent_reachable
+#print axioms GraphPattern.evalIn_service_silent_body_fails
+#print axioms GraphPattern.evalIn_service_silent_body_ok
+#print axioms GraphPattern.serviceFailure_filter_none
+#print axioms GraphPattern.serviceFailure_filter_some
 
 end Audit

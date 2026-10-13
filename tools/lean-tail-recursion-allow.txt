@@ -1428,3 +1428,19 @@ L4Factoidal_JSON_parseObjectR  # (b) as parseValueR: one frame per object nestin
 L4Factoidal_JSON_parseMembersR  # (b) as parseValueR; the members of one object are a self tail call (loop)
 L4Factoidal_JSON_parseArrayR  # (b) as parseValueR: one frame per array nesting level
 L4Factoidal_JSON_parseItemsR  # (b) as parseValueR; the items of one array are a self tail call (loop)
+# --- Added 2026-10-12, SERVICE failures inside EXISTS and under an outer SILENT
+#     (https://github.com/danbri/factoidal/issues/735). Each is the failure twin of
+#     an expression or post-WHERE function and recurses on the same query AST; the
+#     row lists are walked by `List.findSome?` and `findSomeNumbered` (loops). ---
+L4Factoidal_SPARQL_Expr_mentionsService  # (b) nesting of one expression in a query, and of the patterns in its EXISTS bodies
+L4Factoidal_SPARQL_Expr_mentionsServiceList  # (b) arguments of one expression in a query
+L4Factoidal_SPARQL_existsFailure  # (b) nesting of one expression in a query (twin of substituteExistentials); EXISTS bodies through lowerWith
+L4Factoidal_SPARQL_existsFailureList  # (b) arguments of one expression in a query
+L4Factoidal_SPARQL_existsFailureOpt  # (b) the optional argument of one expression in a query
+L4Factoidal_SPARQL_havingFailure  # (b) HAVING conditions of one query
+L4Factoidal_SPARQL_orderConditionFailure  # (b) one ORDER BY condition of one query (cycle through existsFailure)
+L4Factoidal_SPARQL_orderFailure  # (b) ORDER BY conditions of one query
+L4Factoidal_SPARQL_selectItemGroupFailure  # (b) one SELECT item of one query (cycle through existsFailure)
+L4Factoidal_SPARQL_selectItemsGroupFailure  # (b) SELECT items of one query
+L4Factoidal_SPARQL_selectItemsRowFailure  # (b) SELECT items of one query
+L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query (twin of selectPost)

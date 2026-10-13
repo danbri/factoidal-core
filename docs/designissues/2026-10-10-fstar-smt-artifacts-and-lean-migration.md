@@ -155,7 +155,9 @@ What still keeps F\* in the build:
 - `NOW()` on the command line and wasm path (repaired 2026-10-10: the IO
   entries read the clock once per execution):
   https://github.com/danbri/factoidal/issues/743.
-- SERVICE follow-ups: https://github.com/danbri/factoidal/issues/735.
+- SERVICE follow-ups: https://github.com/danbri/factoidal/issues/735 (the
+  Lean engine has both since 2026-10-12: a failed call inside `EXISTS` fails
+  the query; an outer `SILENT` covers a failed nested call).
 - The browser durable log: https://github.com/danbri/factoidal/issues/728.
 - Geo functions and `text:query`: https://github.com/danbri/factoidal/issues/727
   (the Lean engine has them since 2026-10-10:

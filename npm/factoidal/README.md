@@ -1033,11 +1033,6 @@ either engine; where one engine did less, the row says so.
 
 Each has an open issue and an expected-failure test in `test/`:
 
-- A failed `SERVICE` call without `SILENT` inside `EXISTS` does not fail the
-  query, and an outer `SERVICE SILENT` does not cover a failed nested
-  `SERVICE` (SPARQL 1.1 Federated Query §2.3, §3.2;
-  [issue 735](https://github.com/danbri/factoidal/issues/735)). A failed
-  call elsewhere fails the query (issue 717, fixed).
 - Turtle output with literal shorthand on keeps an `@prefix xsd:` line when
   no printed term uses it
   ([issue 691](https://github.com/danbri/factoidal/issues/691)).
