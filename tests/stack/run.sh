@@ -748,10 +748,10 @@ $(printf '%s' "$r" | grep -o '"value":"[0-9]*"\|"boolean":[a-z]*' | tr '\n' ' ')
       || printf '%s' "$log" | grep -q 'path=reference' \
       || [ "$(printf '%s' "$sip" | grep -c '"value":"150000" .*sideways ?s: 150000 candidates')" -ne 2 ] \
       || ! printf '%s' "$sip" | grep -q '"value":"1000"' \
-      || ! printf '%s' "$post" | grep -q '"value":"11249925000" "value":"149999" path=ids' \
-      || ! printf '%s' "$post" | grep -q '"value":"61111" path=ids' \
-      || ! printf '%s' "$post" | grep -q '"boolean":false path=ids' \
-      || ! printf '%s' "$post" | grep -q '"value":"12" path=ids'; then
+      || ! printf '%s' "$post" | grep -qE '"value":"11249925000" "value":"149999" +path=ids' \
+      || ! printf '%s' "$post" | grep -qE '"value":"61111" +path=ids' \
+      || ! printf '%s' "$post" | grep -qE '"boolean":false +path=ids' \
+      || ! printf '%s' "$post" | grep -qE '"value":"12" +path=ids'; then
     score_case "$route" sbm11-query error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
   else
     score_case "$route" sbm11-query ran "merge join of 150000 rows; STRSTARTS 61111 rows streamed; 300000-byte literal written; OPTIONAL left outer join of 150000 rows (COUNT, ORDER BY); both joins again with 150000 candidates (issue 809); SUM and MAX over 150000 decoded rows, REGEX counted over 150000 labels, ASK false, ORDER BY an expression (issue 823)"
