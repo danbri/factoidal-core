@@ -1,34 +1,35 @@
 #!/usr/bin/env bash
 # tests/web-demos/browser_persistence_smoke.sh
 #
-# Headless-Chromium proof for issue #282's browser-persistence
-# prototype (docs/designissues/2026-07-06-browser-persistence.md):
-# drives npm/factoidal/browser.js's deltaLogOpen/deltaLogAppend/
-# deltaLogMerge (IndexedDB-backed) through a REAL page navigation
-# (page.reload(), not an in-page state reset) to prove the durable-
-# UPDATE claim -- "parse data, apply an update, persist the delta
-# entries, reload the page, read the log back, merge-on-read
-# reproduces the updated dataset" -- against real browser storage, not
-# a mock. Also drives a torn-write simulation: directly corrupt the
-# most recently written IndexedDB record and confirm parse_delta_batch's
-# checksum framing causes it to be skipped (the clean prefix survives,
-# the corrupt entry never appears, never a partial/garbage decode).
+# Headless-Chromium proof of the durable update log of hub post 18
+# (https://github.com/danbri/factoidal/issues/728): drives
+# npm/factoidal/browser.js's deltaLogOpen/deltaLogAppend/deltaLogMerge
+# (IndexedDB-backed) through a REAL page navigation (page.reload(), not an
+# in-page state reset) to prove the durable-UPDATE claim -- "apply an
+# update, persist it, reload the page, read the log back, merge-on-read
+# reproduces the updated dataset" -- against real browser storage, not a
+# mock. Also drives a torn-write simulation: cut the most recently written
+# IndexedDB record and confirm the engine does not apply it (the clean
+# prefix survives, the cut batch never appears, never a partial decode).
+#
+# Since 0.9.0 the engine is the Lean wasm module (npm/factoidal/l4-assets/):
+# ops deltaLogEncode and deltaLogMerge make every byte decision
+# (formal/lean4/L4Factoidal/Storage/BrowserLog.lean); browser.js keeps the
+# hex records in IndexedDB. Until 2026-10-13 this script drove the F*
+# npm-entry bundle (issue 282), which 0.9.0 removed.
 #
 # Same Playwright-resolution pattern as tests/web-demos/hub_posts_smoke.sh
-# (this script does not need Eleventy -- there is no site build here,
-# just a static test fixture served over python3 -m http.server).
+# (no Eleventy -- no site build here, just the package served over
+# python3 -m http.server next to a static test fixture).
 #
 # Usage:
 #   tests/web-demos/browser_persistence_smoke.sh
 #
 # Requirements: node >= 20, the `playwright` package with Chromium
-# installed, and docs/fstar-extracted/factoidal-npm-entry.js (or
-# npm/factoidal/factoidal-npm-entry.js) built with the deltaBatchToHex/
-# deltaMergeApplyBrowser exports (formal/fstar/build-ocaml.sh's js step,
-# after bin/npm-entry/entry_jsoo.ml gained those exports).
+# installed, and the Lean wasm module in npm/factoidal/l4-assets/
+# (formal/lean4/Wasm/build-wasm.sh, or tools/fetch-builds.sh --set web).
 #
 # Exit code: 0 iff every check below passes; non-zero otherwise.
-
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -53,28 +54,17 @@ else
   PLAYWRIGHT_IMPORT_SPEC="playwright"
 fi
 
-ENTRY_CANDIDATES=(
-  "docs/npm/factoidal/factoidal-npm-entry.js"
-  "docs/fstar-extracted/factoidal-npm-entry.js"
-  "npm/factoidal/factoidal-npm-entry.js"
-)
-FOUND_ENTRY=""
-for c in "${ENTRY_CANDIDATES[@]}"; do
-  if [ -f "$c" ]; then FOUND_ENTRY="$c"; break; fi
+PKG="npm/factoidal"
+for f in "$PKG/browser.js" "$PKG/l4-assets/l4factoidal.js" "$PKG/l4-assets/l4factoidal.mjs" "$PKG/l4-assets/l4factoidal.wasm"; do
+  [ -f "$f" ] || { echo "Missing $f -- build the wasm module first (formal/lean4/Wasm/build-wasm.sh)" >&2; exit 2; }
 done
-if [ -z "$FOUND_ENTRY" ]; then
-  echo "Missing factoidal-npm-entry.js in any of: ${ENTRY_CANDIDATES[*]}" >&2
-  echo "Run formal/fstar/build-ocaml.sh's js step (then npm) first." >&2
-  exit 2
-fi
-echo "Using npm-entry bundle: $FOUND_ENTRY"
-
 SERVE_ROOT="$WORKDIR/serve-root"
 mkdir -p "$SERVE_ROOT"
-cp docs/fstar-extracted/browser.js "$SERVE_ROOT/browser.js"
-cp "$FOUND_ENTRY" "$SERVE_ROOT/factoidal-npm-entry.js"
+# The package's browser entry and what it imports, served as they are.
+for f in browser.js rdfjs.mjs lib l4-assets store-host; do
+  ln -s "$REPO_ROOT/$PKG/$f" "$SERVE_ROOT/$f"
+done
 cp tests/web-demos/browser-persistence-test.html "$SERVE_ROOT/index.html"
-
 PORT="${BROWSER_PERSISTENCE_SMOKE_PORT:-8933}"
 ( cd "$SERVE_ROOT" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 ) >"$WORKDIR/http-server.log" 2>&1 &
 HTTP_PID=$!
@@ -183,6 +173,12 @@ check('corrupt batch never partially applied: <urn:x:d> is entirely absent',
   !/<urn:x:d>/.test(mergedAfterCorrupt));
 check('output changed relative to the pre-corruption merge (corruption had an effect)',
   mergedAfterCorrupt !== mergedAfter);
+const inspected = await page.evaluate(async (dbName) => {
+  const F = window.__factoidalBrowserPersistence;
+  return await F.deltaLogInspect({ dbName });
+}, DB_NAME);
+check('the engine reports two batches and a torn last record',
+  inspected.batches === 2 && inspected.torn === true && inspected.tornBytes > 0);
 
 if (failures > 0) {
   console.log('console log:\n' + consoleMsgs.join('\n'));
