@@ -590,6 +590,53 @@ ladder of slices without large literals was linear (34 µs per triple), so
 the cost was isolated to the large-literal region and that region packed
 alone; do that before reading code for a superlinear ingest.
 
+## Values that two threads can reach (paid for 2026-10-13)
+
+`IO.asTask` marks everything its closure reaches as multi-threaded (MT), and
+so does a task's result and every value put in an `IO.Ref` that a task can
+reach. The Lean runtime treats an MT object differently in two ways, and
+both cost the divided SBM11 scans of
+https://github.com/danbri/factoidal/issues/799 (stage 1b; record
+[`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md)
+section "Stage 1b", subsection "What failed on the way"):
+
+- **An MT object is never updated in place.** `lean_is_exclusive` is false
+  for it whatever its count (`lean.h`), so every `insert`, `push` or `set`
+  copies it. A `Std.HashMap` page cache made in the parent and given to the
+  tasks copied its whole bucket array on every insert: olympics q21 took 335
+  ms at 4 threads against 158 ms at 1 thread, with `lean_copy_expand_array`
+  and `lean_mark_mt` at the top of the profile. Rules: a structure a task
+  writes is made by that task (create the `IO.Ref` inside the task body); a
+  structure tasks share and write is one whose update copies one path (a
+  `Std.TreeMap`), behind a lock.
+- **Taking and releasing a reference to an MT object is an atomic operation.**
+  Reading the parent's `ScanSpec` in every block from 4 tasks made them
+  contend on its cache lines: DBpedia d17 took 7.9 ms at 4 threads against
+  3.7 ms at 1, and the CPU time grew with the thread count (each task added
+  about 2.8 ms). A read through a field also takes a reference
+  (`ss.g.dictHdr.termCount` compiled to `lean_inc_ref` of the shared header
+  on every `keySlice`). Rules: give each task its own copy of every small
+  structure it reads in a loop (`IdQuery.ScanSpec.fresh`, `FKind.fresh`),
+  made inside the task; keep a scalar the hot path needs in a field of its
+  own; copy a value a task takes from a shared cache (`copyPage`).
+- **The compiler removes a copy that rebuilds a structure from its own
+  fields.** `⟨x.a, x.b⟩` compiles to `x` (check with
+  `set_option trace.compiler.ir.result true`). Arrays copied with `map` and a
+  non-identity function, words through `toNat` and back, and strings through
+  `++ ""` are new objects; a pair rebuilt from a shared pair is a new object
+  (the reset/reuse path allocates when the pair is shared).
+- **Memory a task allocates and the parent frees is not reused at once.**
+  mimalloc gives each thread its own heap; a block freed by another thread
+  returns to its heap later, and fresh memory in this machine's heaps comes
+  in 2 MB huge pages that the kernel clears on first touch (`clear_page_erms`,
+  a third of q19's profile at 4 threads with whole-block render buffers).
+  Rule: what a task hands to the parent is small pieces (512 rows, about 64
+  KB), not one buffer per block.
+
+Measure every one of these with `perf record` at 1 and N threads and the
+CPU time (`perf stat -e task-clock`): CPU time that grows with the thread
+count at a fixed amount of work is the sign.
+
 ## A loop rewritten for a proof keeps its speed only if measured
 
 On 2026-10-12 `Qlvr.mergeJoin` (nested `for` loops that read the join

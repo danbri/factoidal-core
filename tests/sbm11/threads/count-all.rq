@@ -1,0 +1,2 @@
+# Stage 1b: COUNT(*) over every triple, one count per block range.
+SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }

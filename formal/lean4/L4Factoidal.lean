@@ -390,6 +390,8 @@ import L4Factoidal.Storage.Sbm11.OverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems
+import L4Factoidal.Storage.Sbm11.ParallelScanTheorems
+import L4Factoidal.Storage.Sbm11.ParallelMergeTheorems
 import L4Factoidal.Storage.Sbm11.PermSet
 import L4Factoidal.Qlvr.Bgp
 import L4Factoidal.Qlvr.MergeTheorems

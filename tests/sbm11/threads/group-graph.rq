@@ -1,0 +1,2 @@
+# Stage 1b: GROUP BY the graph variable.
+SELECT ?g (COUNT(*) AS ?c) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g
