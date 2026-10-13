@@ -47,7 +47,6 @@ stays sorted on it. Theorems: `Storage/Sbm11/OptJoinTheorems.lean`.
 hash index are `for` loops.
 -/
 import L4Factoidal.Qlvr.Bgp
-import Std.Data.HashMap
 
 namespace L4Factoidal.Storage.Sbm11.OptJoin
 
