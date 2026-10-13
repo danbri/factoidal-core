@@ -58,11 +58,17 @@ Re-measure when the dated baseline changes. At commit `73209342c232`:
   `Storage.IndexedBlockWireV1` frames that shape directly for its supported
   RDF subset; its general codec theorem and canonical ordering are pending.
 - There is no Physical Plan IR, PushIR, PostgreSQL adapter, or TiKV adapter
-  yet. Stage 1 of https://github.com/danbri/factoidal/issues/799 (parallel
-  block scans on SBM11, `l4sbm11 query --threads N`, BGP scans only) has
-  landed: record
-  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md).
-  Stage 2 (PushIR) is not started. Owner approved on 2026-10-12: parallel
+  yet. Stages 1 and 1b of https://github.com/danbri/factoidal/issues/799
+  (parallel block scans on SBM11, `l4sbm11 query --threads N`) are in the
+  tree: stage 1 divides BGP scans; stage 1b (2026-10-13) divides the
+  single-pattern streamed path (when OFFSET + LIMIT is above the scan
+  estimate), the counted path (COUNT, GROUP BY) and ORDER BY ... LIMIT, and
+  merges the block ranges in range order
+  (`ParallelMergeTheorems`: window, counts, group maps, top k). Scans with
+  candidates (issue 809) and merge joins stay on one thread. Record:
+  [`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md)
+  (section "Stage 1b" has the 1/2/4/8-thread numbers and the costs of
+  values that two threads can reach). Stage 2 (PushIR) is not started. Owner approved on 2026-10-12: parallel
   block scans on SBM11 first, then PushIR. Where work runs is
   decided by the capability-aware planner (skill `capability-planner`,
   https://github.com/danbri/factoidal/issues/800).

@@ -158,7 +158,7 @@ not written yet.
 | Pack a quad generation (IBK5, wire version 10) | `l4block-shard-pack INPUT OUTPUT-DIR ibk5 [--batch-bytes N]` — same syntaxes, read as RDF 1.2 |
 | SBM11 packer phases 1 and 2: the global dictionary `dict.gdv1` + `dict.gdx1` (stage 2, no query path yet) | `l4sbm11-dict-pack SOURCE.nt\|.nq OUTDIR [--run-terms N] [--workers K]`; check every key and every source term: `--check SOURCE OUTDIR [--exact]`; string-to-id by `pread`: `--lookup-bench OUTDIR [N] [ABSENT]` |
 | SBM11 packer phases 1 to 3: dictionary, PSO/POS/SPO/OSP blocks, manifest (stage 3) | `l4sbm11-pack SOURCE.nt\|.nq OUTDIR [--workers K] [--run-terms N] [--block-rows B] [--sort-rows M]`; `--phase2-only` stops after the term-run merge and keeps `dict.gdv1`, `dict.gdx1` and the remap files (`run-W-J.tmp.remap`), to time phase 2 and compare its output byte for byte (`tests/sbm11/phase2_scaling.sh`, https://github.com/danbri/factoidal/issues/804) |
-| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN` |
+| SBM11 query (stage 4) | `l4sbm11 query GEN ('SPARQL' \| --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference] [--verify merkle\|none] [--threads N] [--sip auto\|always\|off]`; `l4sbm11 serve GEN [--verify merkle\|none]` (default `none` on a generation `CURRENT` names, else `merkle`); decoder checks `l4sbm11 prm-check GEN`, `l4sbm11 frame-check GEN`; environment: `SBM11_PAGES` (dictionary page cache, default 2,048 pages), `SBM11_TASK_PAGES` (a scan task's own page cache, default 1,024), `SBM11_MIN_RANGE_ROWS` (fewest estimated rows per block range, default 8,192; 0 divides every scan, for tests) |
 | SBM11 reader | `l4sbm11 stats GEN`; `scan GEN PERM [KEY...] [--limit N] [--ids]` (KEY an IRI `<...>` or an id); `count GEN PERM [KEY...]`; `dump GEN [PERM]`; `dump-ids GEN PERM`; `canon SOURCE`; `verify GEN`; `activate ROOT NAME`; `reseal GEN` (test support) |
 | Query an activated quad generation | `l4block-quad-query COLLECTION-ROOT --query SELECT...` |
 | Superseded formats (BLK0, IBK1, IBK2) | `l4block-pack`, `l4block-id-pack`, `l4block-id-v2-pack` and their `*-file-query` / `*-diff` partners |
@@ -659,6 +659,33 @@ of 65,536 rows). Traps: a hash join over a reduced right side may change the
 output row order (the hash side is chosen by size), so compare answers as
 multisets; a candidate test that needs a correct start pointer is a proof
 obligation, so the pointer is a hint that `Sip.startFor` checks and resets.
+
+Parallel block scans (2026-10-12 and 2026-10-13,
+https://github.com/danbri/factoidal/issues/799; record:
+[`docs/designissues/2026-10-12-parallel-block-scans.md`](../../docs/designissues/2026-10-12-parallel-block-scans.md)).
+`l4sbm11 query --threads N` cuts the selected blocks of a scan into
+consecutive block ranges (`ParallelScan.chunksOf`, at most N ranges and at
+most one per 8,192 estimated rows, `IdQuery.rangeCount`) and runs one Lean
+task per range. Stage 1: the BGP scans of `evalBgpM` (`scanTableParM`; tables
+appended in range order, `ParallelScanTheorems.parallel_acc_eq`). Stage 1b:
+one pattern that streams (ranges render their rows; the parent emits the
+OFFSET/LIMIT window; only when OFFSET + LIMIT is above the estimate, so that
+both read the same blocks), counts (range group maps merged in range order,
+`Groups.merge`) or orders with LIMIT (ranges keep their first OFFSET + LIMIT
+rows, `finishM` orders the union); `ParallelMergeTheorems` proves the merges
+as list lemmas. `--threads 1` is the single-thread code. A task makes its own
+copies of the spec and FILTERs (`ScanSpec.fresh`) and its own page cache;
+the tasks share loaded pages in `taskPages`. Gates: `tests/sbm11/threads.sh`
+(gate fixture, gate fixture with 2-row blocks and the coverage of the three
+divided paths, olympics, DBpedia d01 to d17 against the three-engine record;
+byte counts compared with `SBM11_PAGES=1000000`), `SBM11_THREADS=4
+tests/sbm11/census.sh`. Traps: a value two threads can reach is never
+updated in place and its reference counts are atomic (skill
+`lean4-performance`, section "Values that two threads can reach"); with the
+default page limit, a query that touches more than 2,048 dictionary pages
+loads pages again on every run, and its dictionary byte counts depend on the
+order of the tasks. Numbers (4 threads against 1, 2026-10-13): DBpedia d13
+0.31, d16 0.33, d10 0.57, d17 0.96; olympics q21 0.42, q19 0.65.
 
 Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of
