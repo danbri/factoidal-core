@@ -61,6 +61,26 @@ inductive Mode where
 well-formedness predicates from `RDF.Core`, which is why this lives here
 and not in `Syntax.Lexing`. -/
 
+/-- `RDF.isIri` without the character list: `String.contains` reads the
+string in place, where `isIri` builds `s.toList` to look for one `:`.
+Callgrind, the streamed `l4factoidal parse` of 20,000 N-Triples lines
+(2026-10-13): `isIri` was 27 percent of the instructions, nearly all of it
+`String.toList` (https://github.com/danbri/factoidal/issues/813). -/
+def isIriFast (s : String) : Bool := !s.isEmpty && s.contains ':'
+
+/-- The compiler calls `isIriFast` wherever the source says `isIri`, in this
+module and in every module that imports it (all the RDF parsers). -/
+@[csimp] theorem isIri_eq_isIriFast : @isIri = @isIriFast := by
+  funext s
+  simp [isIri, isIriFast, String.contains]
+
+-- Both answers on the edge cases, so a fast form that answered `true` (or
+-- `false`) everywhere would not build.
+#guard isIriFast "http://e/a" && isIri "http://e/a"
+#guard !isIriFast "" && !isIri ""
+#guard !isIriFast "relative/path" && !isIri "relative/path"
+#guard isIriFast "é:x" && isIri "é:x"
+
 /-- Wrap a raw IRI string as a `WfIri`, or report the failure at `pos`.
 Port of `parse_iri`'s `is_iri i` check. -/
 def mkIri (pos : Nat) (s : String) : Except ParseError WfIri :=

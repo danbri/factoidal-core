@@ -473,13 +473,36 @@ MEMORY_ROWS = {
 }
 
 
+# The strict `parse FILE` of N-Triples and Turtle reads the file in 64 KiB
+# chunks (https://github.com/danbri/factoidal/issues/813). With `--out nquads`
+# it writes each chunk's lines and keeps none, so its peak RSS does not grow
+# with the input: bound 1 byte per input byte. Before the repair the whole
+# file was one `String`, the N-Triples reader built its `List Char`, and the
+# whole dataset and its N-Quads text were built before the first line was
+# written: 35.5 (N-Triples) and 33.0 (Turtle) bytes per input byte. The count
+# (`parse` without `--out`) keeps the set of distinct triples (RDF 1.1
+# Concepts section 3), which grows with the input: bound 12 (36 before).
+# Each value is (base size, file maker, extra arguments, bound).
+PARSE_MEMORY_ROWS = {
+    "parse-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples", "--out", "nquads"], 1.0),
+    "parse-ttl-memory": (5000, bl.gene_slice, ["--format", "turtle", "--out", "nquads"], 1.0),
+    "count-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples"], 12.0),
+}
+
+
 def memory_row(rid):
-    x, sparql, bound = MEMORY_ROWS[rid]
+    if rid in PARSE_MEMORY_ROWS:
+        x, make, extra, bound = PARSE_MEMORY_ROWS[rid]
+        cmd_of = lambda p: [str(BIN), "parse", str(p)] + extra
+    else:
+        x, sparql, bound = MEMORY_ROWS[rid]
+        make = bl.gene_slice
+        cmd_of = lambda p: [str(BIN), "query", str(p), "--format", "turtle",
+                            "--query-string", sparql]
     pts = []
     for n in (x, 4 * x):
-        p = bl.gene_slice(n)
-        t = bl.run_once([str(BIN), "query", str(p), "--format", "turtle",
-                         "--query-string", sparql], CAP)
+        p = make(n)
+        t = bl.run_once(cmd_of(p), CAP)
         if t["status"] != "ok":
             return False, f"n={n}: exit status {t['status']}"
         pts.append((n, p.stat().st_size, t["rss_kb"]))
@@ -578,8 +601,8 @@ def main() -> int:
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
         [] if names else list(PARSE_RATIO_ROWS))
-    memory_rows = [r for r in names if r in MEMORY_ROWS] or (
-        [] if names else list(MEMORY_ROWS))
+    memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS] or (
+        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)
