@@ -2031,6 +2031,111 @@ theorem clsInt1_ok :
     simp [hq t hP]
   · rfl
 
+/-! ### Delta terms that test the delta's predicates
+
+scm-svf1, scm-svf2, scm-avf1, scm-avf2 and scm-hv read only triples whose
+predicates are fixed vocabulary (`owl:onProperty`, `owl:someValuesFrom`,
+`owl:allValuesFrom`, `owl:hasValue`, `rdfs:subClassOf`,
+`rdfs:subPropertyOf`). When the delta holds no triple with one of those
+predicates, every lookup the row makes over `P ++ D` returns what it
+returns over `P`, so at an old driving triple the row concludes nothing new
+(`RowSpec.skip_ok`). Otherwise the row is evaluated in full. -/
+
+/-- A row evaluated at an old driving triple only when the delta holds a
+triple whose predicate is in `preds`. -/
+def RowSpec.skip (g : WfIri) (preds : List WfIri) (f : Store → Triple → List Triple) :
+    RowSpec :=
+  { f := f,
+    delta := fun sS sD _ d =>
+      if preds.all (fun p => (sD.withPred p).isEmpty) then [] else f sS d,
+    guard := some g }
+
+theorem RowSpec.skip_ok {g : WfIri} {preds : List WfIri} {f : Store → Triple → List Triple}
+    (h : ∀ P D d, (∀ p ∈ preds, ∀ u ∈ D, u.p ≠ p) →
+      f (Store.ofGraph (P ++ D)) d = f (Store.ofGraph P) d) :
+    (RowSpec.skip g preds f).Ok := by
+  intro P D d q hq
+  simp only [RowSpec.skip]
+  split
+  · rename_i hall
+    have hD : ∀ p ∈ preds, ∀ u ∈ D, u.p ≠ p := by
+      intro p hp
+      exact withPred_isEmpty ((List.all_eq_true.mp hall) p hp)
+    rw [h P D d hD, List.filter_nil]
+    exact List.filter_eq_nil_iff.mpr (fun t ht => by simp [hq t ht])
+  · rfl
+
+theorem withPred_nil_of {D : Graph} {p : WfIri} (h : ∀ u ∈ D, u.p ≠ p) :
+    RL.withPred D p = [] := by
+  unfold RL.withPred
+  refine List.filter_eq_nil_iff.mpr (fun u hu => ?_)
+  have := h u hu
+  simp only [beq_iff_eq]
+  exact this
+
+theorem withPredObj_nil_of {D : Graph} {p : WfIri} {o : Term} (h : ∀ u ∈ D, u.p ≠ p) :
+    RL.withPredObj D p o = [] := by
+  unfold RL.withPredObj
+  refine List.filter_eq_nil_iff.mpr (fun u hu => ?_)
+  have := h u hu
+  simp only [Bool.and_eq_true, beq_iff_eq, not_and]
+  exact fun hv => absurd hv this
+
+theorem memB_false_of_pred {D : Graph} {p : WfIri} (h : ∀ u ∈ D, u.p ≠ p)
+    {s : Subject} {o : Term} : RL.memB D ⟨s, p, o⟩ = false := by
+  simp only [RL.memB, List.any_eq_false, beq_iff_eq]
+  intro u hu heq
+  exact h u hu (by rw [heq])
+
+/-- The lookups of the five rows, with no delta triple on their predicates. -/
+macro "skip_row" : tactic => `(tactic| (
+  intro P D d h
+  have h1 := h _ (List.mem_cons_self)
+  have h2 := h _ (List.mem_cons_of_mem _ List.mem_cons_self)
+  have h3 := h _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
+  have a1 := fun s => withSubjPred_nil_of (s := s) h1
+  have a2 := fun s => withSubjPred_nil_of (s := s) h2
+  have a3 := fun s => withSubjPred_nil_of (s := s) h3
+  have b1 := fun o => withPredObj_nil_of (o := o) h1
+  have b2 := fun o => withPredObj_nil_of (o := o) h2
+  have b3 := fun o => withPredObj_nil_of (o := o) h3
+  have c1 := fun s o => memB_false_of_pred (s := s) (o := o) h1
+  have c2 := fun s o => memB_false_of_pred (s := s) (o := o) h2
+  have c3 := fun s o => memB_false_of_pred (s := s) (o := o) h3
+  simp only [Store.ofGraph, withSubjPred_append, withPredObj_append, memB_append,
+    a1, a2, a3, b1, b2, b3, c1, c2, c3, List.append_nil, Bool.or_false]
+  all_goals rfl))
+
+set_option linter.unusedSimpArgs false in
+theorem scmSvf1ForS_skip : ∀ P D d,
+    (∀ p ∈ [owlOnProperty, owlSomeValuesFrom, rdfsSubClassOf], ∀ u ∈ D, u.p ≠ p) →
+    scmSvf1ForS (Store.ofGraph (P ++ D)) d = scmSvf1ForS (Store.ofGraph P) d := by
+  unfold scmSvf1ForS; skip_row
+
+set_option linter.unusedSimpArgs false in
+theorem scmSvf2ForS_skip : ∀ P D d,
+    (∀ p ∈ [owlOnProperty, rdfsSubPropertyOf, owlSomeValuesFrom], ∀ u ∈ D, u.p ≠ p) →
+    scmSvf2ForS (Store.ofGraph (P ++ D)) d = scmSvf2ForS (Store.ofGraph P) d := by
+  unfold scmSvf2ForS; skip_row
+
+set_option linter.unusedSimpArgs false in
+theorem scmAvf1ForS_skip : ∀ P D d,
+    (∀ p ∈ [owlOnProperty, owlAllValuesFrom, rdfsSubClassOf], ∀ u ∈ D, u.p ≠ p) →
+    scmAvf1ForS (Store.ofGraph (P ++ D)) d = scmAvf1ForS (Store.ofGraph P) d := by
+  unfold scmAvf1ForS; skip_row
+
+set_option linter.unusedSimpArgs false in
+theorem scmAvf2ForS_skip : ∀ P D d,
+    (∀ p ∈ [owlOnProperty, rdfsSubPropertyOf, owlAllValuesFrom], ∀ u ∈ D, u.p ≠ p) →
+    scmAvf2ForS (Store.ofGraph (P ++ D)) d = scmAvf2ForS (Store.ofGraph P) d := by
+  unfold scmAvf2ForS; skip_row
+
+set_option linter.unusedSimpArgs false in
+theorem scmHvForS_skip : ∀ P D d,
+    (∀ p ∈ [owlOnProperty, rdfsSubPropertyOf, owlHasValue], ∀ u ∈ D, u.p ≠ p) →
+    scmHvForS (Store.ofGraph (P ++ D)) d = scmHvForS (Store.ofGraph P) d := by
+  unfold scmHvForS; skip_row
+
 /-- The 74 rows of `conclusionsListS`, in its order, each with the term the
 semi-naive round evaluates at a driving triple of the previous round's
 input. -/
@@ -2088,11 +2193,11 @@ def rowTable : List RowSpec := [
     RowSpec.additive rdfsRange scmRng2ForS,
     RowSpec.indep scmOpForS,
     RowSpec.indep scmDpForS,
-    RowSpec.full owlSomeValuesFrom scmSvf1ForS,
-    RowSpec.full owlSomeValuesFrom scmSvf2ForS,
-    RowSpec.full owlAllValuesFrom scmAvf1ForS,
-    RowSpec.full owlAllValuesFrom scmAvf2ForS,
-    RowSpec.full owlHasValue scmHvForS,
+    RowSpec.skip owlSomeValuesFrom [owlOnProperty, owlSomeValuesFrom, rdfsSubClassOf] scmSvf1ForS,
+    RowSpec.skip owlSomeValuesFrom [owlOnProperty, rdfsSubPropertyOf, owlSomeValuesFrom] scmSvf2ForS,
+    RowSpec.skip owlAllValuesFrom [owlOnProperty, owlAllValuesFrom, rdfsSubClassOf] scmAvf1ForS,
+    RowSpec.skip owlAllValuesFrom [owlOnProperty, rdfsSubPropertyOf, owlAllValuesFrom] scmAvf2ForS,
+    RowSpec.skip owlHasValue [owlOnProperty, rdfsSubPropertyOf, owlHasValue] scmHvForS,
     RowSpec.full owlIntersectionOf scmIntForS,
     RowSpec.full owlUnionOf scmUniForS,
     RowSpec.indep eqDiffSymForS,
@@ -2114,7 +2219,7 @@ def rowTable : List RowSpec := [
 theorem rowTable_f (s : Store) (d : Triple) :
     rowTable.flatMap (fun r => r.f s d) = conclusionsFromS s d := by
   simp only [rowTable, conclusionsFromS, conclusionsListS, List.flatMap_cons, List.flatMap_nil,
-    RowSpec.indep, RowSpec.additive, RowSpec.full, List.flatten_cons, List.flatten_nil,
+    RowSpec.indep, RowSpec.additive, RowSpec.full, RowSpec.skip, List.flatten_cons, List.flatten_nil,
     List.append_nil]
 
 /-- Every delta term of `rowTable` meets its obligation. -/
@@ -2175,11 +2280,11 @@ theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
   · exact RowSpec.additive_ok scmRng2ForS_add
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
-  · exact RowSpec.full_ok _ _
-  · exact RowSpec.full_ok _ _
-  · exact RowSpec.full_ok _ _
-  · exact RowSpec.full_ok _ _
-  · exact RowSpec.full_ok _ _
+  · exact RowSpec.skip_ok scmSvf1ForS_skip
+  · exact RowSpec.skip_ok scmSvf2ForS_skip
+  · exact RowSpec.skip_ok scmAvf1ForS_skip
+  · exact RowSpec.skip_ok scmAvf2ForS_skip
+  · exact RowSpec.skip_ok scmHvForS_skip
   · exact RowSpec.full_ok _ _
   · exact RowSpec.full_ok _ _
   · exact RowSpec.indep_ok (fun _ _ _ => rfl)
@@ -2371,19 +2476,19 @@ theorem rowTable_guard : ∀ r ∈ rowTable, r.GuardOk := by
   · intro _ _ _ _ _; rfl
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
-    simp only [RowSpec.full, scmSvf1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+    simp only [RowSpec.skip, scmSvf1ForS, hb, Bool.false_eq_true, ↓reduceIte, ite_self]
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlSomeValuesFrom) h
-    simp only [RowSpec.full, scmSvf2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+    simp only [RowSpec.skip, scmSvf2ForS, hb, Bool.false_eq_true, ↓reduceIte, ite_self]
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlAllValuesFrom) h
-    simp only [RowSpec.full, scmAvf1ForS, hb, Bool.false_eq_true, ↓reduceIte]
+    simp only [RowSpec.skip, scmAvf1ForS, hb, Bool.false_eq_true, ↓reduceIte, ite_self]
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlAllValuesFrom) h
-    simp only [RowSpec.full, scmAvf2ForS, hb, Bool.false_eq_true, ↓reduceIte]
+    simp only [RowSpec.skip, scmAvf2ForS, hb, Bool.false_eq_true, ↓reduceIte, ite_self]
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlHasValue) h
-    simp only [RowSpec.full, scmHvForS, hb, Bool.false_eq_true, ↓reduceIte]
+    simp only [RowSpec.skip, scmHvForS, hb, Bool.false_eq_true, ↓reduceIte, ite_self]
   · intro sS sD lo d h
     have hb := beq_false_of_guard (g := owlIntersectionOf) h
     simp only [RowSpec.full, scmIntForS, hb, Bool.false_eq_true, ↓reduceIte]

@@ -523,6 +523,13 @@ SERIES_ROWS = {
     "owl-consistent-cl": (
         10000, cl_prefix,
         lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true"),
+    # The OWL 2 RL closure of the same prefixes (semi-naive rounds since
+    # 2026-10-13, https://github.com/danbri/factoidal/issues/756 item 2).
+    # No first-line check: the output is the closure, one triple per line.
+    "owlrl-closure-cl": (
+        10000, cl_prefix,
+        lambda p: [str(BIN), "closure", str(p), "--format", "nquads", "--regime", "owl-rl"],
+        None),
 }
 
 
@@ -539,7 +546,7 @@ def series_row(rid, runs):
                 return False, f"n={n}: exit status {t['status']}"
             got = t["first_line"].decode("utf-8", "replace") if isinstance(
                 t["first_line"], bytes) else str(t["first_line"])
-            if got.strip() != first:
+            if first is not None and got.strip() != first:
                 return False, f"n={n}: printed {got.strip()!r}, expected {first!r}"
             best = t["cpu"] if best is None else min(best, t["cpu"])
             if t["wall"] > REPEAT_LIMIT:
