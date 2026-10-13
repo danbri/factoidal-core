@@ -806,7 +806,6 @@ L4Factoidal_SPARQL_DatasetRestriction_graphFree  # (b) nesting of graph patterns
 L4Factoidal_SPARQL_DatasetRestriction_graphVarIn  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_ggpHasVar  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_pAnnotations  # (b) annotation blocks on one triple in the query text; fuel-bounded
-L4Factoidal_SPARQL_pCollection  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per element of one RDF collection in the query or update text (the SPARQL twin of issue 678; INSERT DATA can carry data)
 L4Factoidal_SPARQL_pGroupOrUnion  # (b) UNION branches of one group in the query text; fuel-bounded
 L4Factoidal_SPARQL_tpHasVar_ptHasVar  # (b) nesting depth of RDF 1.2 triple terms in one pattern term
 L4Factoidal_SPARQL_Protocol_indentBudget  # (c) indentation of one line of a protocol test description
@@ -823,11 +822,9 @@ L4Factoidal_SPARQL_patHasNestedGraph  # (b) nesting of graph patterns in one upd
 L4Factoidal_SPARQL_patHasVar  # (b) nesting of graph patterns in one update request
 L4Factoidal_Solid_Server_unvarTerm  # (b) nesting depth of RDF 1.2 triple terms in one N3 Patch term
 L4Factoidal_Storage_PredicateQuadBlocks_termWireBytes  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_Syntax_RdfXml_collectionList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 RDF/XML rdf:parseType="Collection": one frame per member element (data)
 L4Factoidal_Syntax_RdfXml_dedupScope  # (b) namespace declarations of one element
 L4Factoidal_Syntax_RdfXml_propertyAttrTriples  # (b) attributes of one RDF/XML element
 L4Factoidal_Syntax_RdfXml_renderAttrs  # (b) attributes of one XML element
-L4Factoidal_Syntax_RdfXml_serializeNodes  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per sibling node when an XMLLiteral is serialised (data); fuel-bounded
 L4Factoidal_Syntax_readAnnotations  # (b) annotation blocks on one Turtle triple; was hidden as `replaced` by the short-name csimp mark of OwlXml.readAnnotations
 L4Factoidal_Syntax_readPredicateObjectList  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the `;` groups of one statement are a loop (goto _start), issue 754
 L4Factoidal_Syntax_readObjectListRev  # (b) the readObject cycle recurses once per NESTING level of [ ] and ( ) (1,501 levels of [ ] ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the objects of one object list are a loop (goto _start), issue 754
@@ -1248,7 +1245,6 @@ L4Factoidal_Syntax_RdfXml_nodeElement  # UNTRIAGED https://github.com/danbri/fac
 L4Factoidal_Syntax_RdfXml_propertyElt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:789
 L4Factoidal_Syntax_RdfXml_propertyEltBody  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:833
 L4Factoidal_Syntax_RdfXml_propertyEltList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 5, L4Factoidal/Syntax/RdfXml.lean:777
-L4Factoidal_Syntax_RdfXml_serializeNode  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/Syntax/RdfXml.lean:635
 L4Factoidal_Syntax_readCollection  # (b) one frame per NESTING level of ( ) (2,695 levels ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); the elements after the first are read by the loop readCollectionCells, issue 678
 L4Factoidal_Syntax_readObject  # (b) one frame per NESTING level of [ ] and ( ) in an object (1,501 levels of [ ] and 2,695 of ( ) ran at 512 KB, docs/designissues/2026-09-03-rdf-parsing-strategy.md); objects of one list, groups of one statement and elements of one collection are loops, issues 678 and 754
 L4Factoidal_Syntax_readReifiedTriple  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/Syntax/Turtle.lean:1162
@@ -1437,3 +1433,7 @@ RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/75
 # --- Added 2026-10-13, the accumulator twins of issue 752 (OKR batch 1 KR 2.6) ---
 L4Factoidal_XML_countElementsAcc  # (b) element nesting of the document: the twin of validate.countElements (csimp validate_eq_fast); the sibling step of countListAcc is a goto _start, so the two call each other once per nesting level only
 L4Factoidal_XML_countListAcc  # (b) element nesting of the document, as countElementsAcc (siblings are a goto _start in the emitted C)
+L4Factoidal_SPARQL_pCollectionCells  # (b) nesting of [ ] and ( ) in the query or update text, through pObjectWithExtras (cycle of 8); the members of one collection are a goto _start in the emitted C: the loop twin of pCollection, proved equal (pCollectionCells_eq); 8,000 members run at 512 KB (tests/stack sparql-collection; the constant fuel caps a collection near 10,000 members, https://github.com/danbri/factoidal/issues/818)
+L4Factoidal_Syntax_RdfXml_collectionCells  # (b) element nesting of the RDF/XML document, through nodeElement (cycle of 5); the members of one rdf:parseType="Collection" are a goto _start in the emitted C: the loop twin of collectionList, proved equal (collectionCells_eq); 20,000 members run at 512 KB (tests/stack rdfxml-collection)
+L4Factoidal_Syntax_RdfXml_serializeNodeF  # (b) element nesting of the rdf:parseType="Literal" content; the twin of serializeNode (csimp serializeNode_eq_fast), whose child list is the loop serializeNodesLoop
+L4Factoidal_Syntax_RdfXml_serializeNodesLoop  # (b) element nesting of the rdf:parseType="Literal" content, as serializeNodeF; the siblings of one element are a goto _start in the emitted C (csimp serializeNodes_eq_fast)

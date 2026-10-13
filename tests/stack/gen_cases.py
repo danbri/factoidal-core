@@ -292,7 +292,11 @@ args("args-sparql-order-limit.json",
 #   rdfxml-collection   rdf:parseType="Collection": 2,000 members ran,
 #                       5,000 overflowed (collectionList); case 20,000
 #   sparql-collection   INSERT DATA with one collection: 2,000 members ran,
-#                       5,000 overflowed (pCollection); case 20,000
+#                       5,000 overflowed (pCollection); case 8,000. The
+#                       parser's fuel (topFuel, 10,000) falls by one per
+#                       member, so about 10,000 members are a parse error
+#                       with or without the loop:
+#                       https://github.com/danbri/factoidal/issues/818
 #   sparql-replace-long REPLACE over one literal: 5,000 characters ran,
 #                       20,000 overflowed (replaceLoop, one frame per
 #                       character); case 100,000
@@ -316,7 +320,7 @@ args("args-rdfxml-collection.json",
      '</rdf:RDF>\n' % "".join('<rdf:Description rdf:about="http://example.org/m%d"/>' % i
                               for i in range(N_RX_COLL)),
      "rdfxml", "http://example.org/")
-N_SP_COLL = int(os.environ.get("STACK_SPARQL_COLLECTION", "20000"))
+N_SP_COLL = int(os.environ.get("STACK_SPARQL_COLLECTION", "8000"))
 args("args-sparql-collection.json", NQ1,
      "INSERT DATA { <http://example.org/s> <http://example.org/q> ( %s ) }"
      % " ".join(str(i) for i in range(N_SP_COLL)))
