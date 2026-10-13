@@ -1193,13 +1193,14 @@ theorem regime_rhoDf_answers_closure_iff {g : RDF.Graph} {b : SPARQL.Bgp}
 
 /-- **`RDFS`** (`RDF.Regime.closure .rdfs`, the full closure): every
 answer over the closure is an answer over the graph under the RDFS
-schema. Carries the two hypotheses `unified_rdfs_closure_sound`
-carries — the `rdf:_n` slice condition and `rdf:XMLLiteral ∈ D`
-(stage 2 correction note 10b). -/
+schema. Carries the hypothesis `unified_rdfs_closure_sound` carries:
+the `rdf:_n` slice condition. (Until 2026-10-13 it also carried
+`rdf:XMLLiteral ∈ D`, stage 2 correction note 10b; the seed table lost
+its two `rdf:XMLLiteral` rows, https://github.com/danbri/factoidal/issues/767
+gap 1, and the hypothesis went with them.) -/
 theorem regime_sound_rdfs {g : RDF.Graph} {b : SPARQL.Bgp}
     {mu : SPARQL.Binding} (D cmps : List RDF.WfIri)
     (hcmps : ∀ c ∈ cmps, RDF.IsRdfMemberIri c)
-    (hxml : RDF.rdfXMLLiteral ∈ D)
     (h : mu ∈ SPARQL.evalBgp b (RDF.Regime.closure .rdfs D cmps g)) :
     Answers condTrue (bgpSchema (rdfsSchema (fun x => x ∈ D)))
       [rdfToTheorySk g] (sparqlBgpToQuery b) mu := by
@@ -1208,7 +1209,7 @@ theorem regime_sound_rdfs {g : RDF.Graph} {b : SPARQL.Bgp}
   refine RDF.derivesFull_holds hc ?_ hg (RDFS.fullClosure_sound D cmps g ht)
   exact RDF.axiomaticTriples_hold (skAssign i) D cmps hcmps hc.1.2
     (fun a' t' ht' => hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2 a' t' ht')
-    hc.2.2.2.1 hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1 hxml
+    hc.2.2.2.1
 
 /-! ## The assertion-decoration merge: a premise-list transform, not
 a closure

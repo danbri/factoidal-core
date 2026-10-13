@@ -147,7 +147,18 @@ def rdfAxiomaticTriples (cmps : List WfIri) : Graph :=
 the table's order: the `rdfs:domain` block, the `rdfs:range` block,
 then the subclass / subproperty / datatype block. The three rows RDF 1.2
 Semantics §9 adds (`rdf:reifies` domain and range, `rdfs:Proposition
-rdfs:subClassOf rdfs:Resource`) sit where the RDF 1.2 table puts them. -/
+rdfs:subClassOf rdfs:Resource`) sit where the RDF 1.2 table puts them.
+
+The table has no `rdf:XMLLiteral` row (decision of 2026-10-13,
+https://github.com/danbri/factoidal/issues/767 gap 1). The RDF 1.0
+(2004) table had `rdf:XMLLiteral rdf:type rdfs:Datatype .` and
+`rdf:XMLLiteral rdfs:subClassOf rdfs:Literal .`; the RDF 1.1 §9 table
+does not, and §8 says "RDF-D interpretations MAY fail to recognize these
+datatypes". Until 2026-10-13 this table carried both rows, so the RDFS
+regime emitted two triples that are not RDFS-entailed when
+`rdf:XMLLiteral ∉ D`. When `rdf:XMLLiteral ∈ D`, the closure still
+derives both: rdfs1 (`datatypeAxioms D`) gives the first and rdfs13 the
+second. -/
 def rdfsAxiomaticTriplesFixed : Graph :=
   [ iriTriple rdfType rdfsDomain rdfsResource,
     iriTriple rdfReifies rdfsDomain rdfsResource,           -- RDF 1.2 §9
@@ -191,8 +202,6 @@ def rdfsAxiomaticTriplesFixed : Graph :=
     iriTriple rdfsContainerMembershipProperty rdfsSubClassOf rdfProperty,
     iriTriple rdfsProposition rdfsSubClassOf rdfsResource,  -- RDF 1.2 §9
     iriTriple rdfsIsDefinedBy rdfsSubPropertyOf rdfsSeeAlso,
-    iriTriple rdfXMLLiteral rdfType rdfsDatatype,
-    iriTriple rdfXMLLiteral rdfsSubClassOf rdfsLiteral,
     iriTriple rdfsDatatype rdfsSubClassOf rdfsClass ]
 
 /-- §9.3, the per-`rdf:_n` RDFS axioms: "rdf:_1 rdf:type

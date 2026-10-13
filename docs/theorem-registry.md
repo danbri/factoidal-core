@@ -3330,3 +3330,129 @@ note). The rest of the RDF entailment rungs, `OWL.Semantics`,
   only); `reflexivity_needs_rdfs_Class` and
   `rdfs_reflexivity_axioms_preserves` (no Lean statement);
   `lemma_pterms_agree` and `lemma_rdf_term_eq_iri` (not decided).
+
+### Second tranche (2026-10-13): RDF, RDFS and OWL families, and the gaps of issue 767
+
+OKR batch 1, KR 4.4 (https://github.com/danbri/factoidal/issues/768).
+Gaps: https://github.com/danbri/factoidal/issues/767. New gap list:
+https://github.com/danbri/factoidal/issues/820.
+
+#### Gap 1 decision: the two `rdf:XMLLiteral` seed rows are not entailed when D does not recognise `rdf:XMLLiteral`
+
+Until 2026-10-13 `RDFS.rdfsAxiomaticTriplesFixed` (the seed table of the
+RDFS-regime closure `RDFS.fullClosure`) held
+`rdf:XMLLiteral rdf:type rdfs:Datatype .` and
+`rdf:XMLLiteral rdfs:subClassOf rdfs:Literal .`. These are rows of the RDF
+1.0 (2004) RDFS axiomatic table. RDF 1.1 Semantics does not make them true in
+every RDFS interpretation:
+
+- § 9, the RDFS axiomatic triples table, has no `rdf:XMLLiteral` row. Its
+  datatype rows are `rdfs:Datatype rdfs:subClassOf rdfs:Class .` and the
+  semantic condition "for every IRI aaa in D, I(aaa) is in
+  ICEXT(I(rdfs:Datatype))" (rule rdfs1: "any IRI aaa in D ⊢ aaa rdf:type
+  rdfs:Datatype"). That condition applies only to IRIs in D.
+- § 8: "The datatype IRIs rdf:langString and xsd:string MUST be recognized by
+  all RDF interpretations. Two other datatypes rdf:XMLLiteral and rdf:HTML are
+  defined in [RDF11-CONCEPTS]. RDF-D interpretations MAY fail to recognize
+  these datatypes."
+- § 7: "Datatypes are identified by IRIs. Interpretations will vary according
+  to which IRIs are recognized as denoting datatypes." When `rdf:XMLLiteral`
+  is not in D it is an IRI with no semantic condition.
+- Appendix D (informative): "RDF imposes no particular normative meanings on
+  the rest of the RDF vocabulary" (§ 8); Appendix D describes intended uses
+  of the reification, container and collection vocabulary and does not
+  mention `rdf:XMLLiteral`.
+- Appendix A: the generalized RDFS closure of the empty graph, with
+  D = {rdf:langString, xsd:string}, contains neither triple (rdfs1 fires only
+  for IRIs in D, and no other rule has a conclusion with subject
+  `rdf:XMLLiteral`). By the completeness result stated there ("S RDFS entails
+  E just when the generalized RDFS closure of S towards E simply entails E",
+  for RDFS-consistent S) the empty graph does not RDFS-entail either triple
+  at that D.
+
+(§ 9's informative list of "some rdfs-valid triples" names
+`rdf:XMLLiteral rdf:type rdfs:Class .` and `rdf:HTML rdf:type rdfs:Class .`.
+By the conditions above they are valid only when the datatype is recognised;
+the list carries them over from RDF 2004, where `rdf:XMLLiteral` was always
+in D.)
+
+Decision: the closure was wrong, and it changed. Both rows left the seed
+table. When `rdf:XMLLiteral ∈ D` the closure still derives both triples:
+rdfs1 (the seed table `datatypeAxioms D`) gives the first and rdfs13 the
+second (`#guard` lines in `Unified/RdfsSchema.lean` check both D cases).
+`RDF.axiomaticTriples_hold`, `Unified.unified_rdfs_closure_sound` and
+`Unified.regime_sound_rdfs` lose their `rdf:XMLLiteral ∈ D` hypothesis.
+
+Measured with the same binaries built before and after (logs in the agent
+notes): `l4w3c` RDF 1.1 TOTAL 1041 pass, 0 fail (out of 1041) before and
+after, rdf-mt row 48 pass, 0 fail (out of 48) before and after; RDF 1.2
+TOTAL 1358 pass, 0 fail (out of 1358) before and after; `l4rdf-semantics`
+29 pass, 0 fail (out of 29) before and after; `l4rdfs-semi` 6 pass, 0 fail
+(out of 6) before and after; SPARQL 1.1 after the change 650 pass, 0 fail
+(out of 650), its entailment section 70 pass, 0 fail (out of 70). No failing
+id before or after. The closure-size `#guard` lines that pin the derivation
+witnesses were re-measured (150, 199, 156 steps became 144, 193, 150: the
+two rows and four consequences each).
+
+#### New Lean theorems (`L4Factoidal/RDF/EntailmentRegimeSoundness.lean`)
+
+All `#print axioms` lines show at most propext, Classical.choice and
+Quot.sound.
+
+| Lean theorem | What it states | F\* row it answers |
+| --- | --- | --- |
+| `fullClosure_holds`, `fullClosure_entails` | the RDFS-regime closure is RDFS-entailed by its input, for every D (gap 1) | `rdfs_closure_with_reflexivity_sound`, `_entails` (S) |
+| `fullClosure_entails_dMinimal` | the same at D = {rdf:langString, xsd:string} | `rdfs_closure_with_reflexivity_entails` (S) |
+| `fullClosureLoop_holds`, `fullClosureLoop_entails` | the rule loop alone, every graph, no hypothesis | `rdfs_closure_sound`, `rdfs_closure_entails` (S) |
+| `rdfClosure_holds`, `rdfClosure_entails`, `rdfClosure_entails_nil` | the RDF-regime closure is sound under `RdfConditions` only (gap 2) | `rdf_property_axiom_closure_entails` (S) |
+| `reflexivity_needs_rdfsClass` | RS-1, semantic half (gap 3) | `reflexivity_needs_rdfs_Class` (R) |
+| `rdfsReflexivityAxioms`, `_licensed`, `_preserves`, `_owlClassGraph` | the RDFS-regime reflexivity harvest, licensed and true for every D (gap 3) | `rdfs_reflexivity_axioms_licensed`, `_preserves` (S), `_owl_class_empty` (R) |
+| `rdfs5_true2`, `rdfs9_true2`, `rdfs11_true2` | the two-graph forms of the truth lemmas | `rdfs5_true`, `rdfs9_true`, `rdfs11_true` (F to R) |
+| `rhoDf_saturation_sound`, `_complete`, `_iff`, `subgraph_satisfies` | rho-df saturation forms | `RDF.Entailment.RDFS.Completeness` rows (R) |
+| `closure_rhoDfEntails`, `closure_rhoDf_iff`, `closure_rhoDf_complete` | the six-rule closure is rho-df sound, and decides when closed and in the fragment | `rho_df_closure_sound`, `_decides`, `rdfs_closure_rho_df_complete` (S) |
+| `rdfsEntails_subclassSelfLoop_iri` | finding C-1 for every IRI pair and every D | `rdfs_entails_subclass_selfloop` (S) |
+| `isRhoDfFrag_iff` | the fragment check is exact | `lemma_is_rho_df_frag_correct` (R) |
+| `rhoDf_frag_preservation_fails` | finding F1: the fragment is not preserved by rdfs7 | `lemma_f1_witness_frag` (R), `rho_df_frag_preservation_fails` (F) |
+| `merge_satisfies_iff`, `merge_entails_iff`, `merge_entails_component`, `merge_holdsAll`, `mergeAssignment_g1`, `_g2` | the merge of two blank-node-disjoint graphs (RDF 1.1 Semantics § 4) | the six merge rows of `RDF.Entailment.Simple.ModelTheory` (R) |
+
+#### Decisions recorded in the TSV notes
+
+- **F\* engine functions over the string-keyed index.** A theorem about an
+  F\* indexed rule (`rdfs_rule_*`, `owl_rule_*`, the rho-df `*_reaches`)
+  is F against the Lean rule function's theorem (`rdfsNFor_sound`,
+  `XFor_sound`, `mem_stepConclusions_*`), which has no index hypothesis.
+- **The index-key repair modules** (`RDF.Indexed.KeyInjectivity`,
+  `RDF.Indexed.Completeness`, `RDF.Indexed.StringOrder`,
+  `RDF.Entailment.RDFS.SepFree`, `RDF.Entailment.RDFS.ChainWf`,
+  `OWL.Semantics.MemLemmas`): F. They prove the F\* composite string keys
+  (separator U+001F) injective. The Lean indexes are hash maps keyed on
+  structured values; `OWL.RL.Index.Wf.ofGraph` holds for every graph, and
+  the indexed closures are proved equal to the list closures.
+- **COTTAS** (`RDF.CottasStore.*`): 25 rows A. The loss, in each note: no
+  Lean theorem states that the COTTAS companion file parses back to what was
+  written (or the query-plan table property). The owner suspended COTTAS on
+  2026-10-11. Rows with a Lean port theorem (`Cottas/PresenceBitmap.lean`,
+  `Cottas/PageCache.lean`, `Cottas/OffsetIndex.lean`, ...) are R or F.
+- **Vocabulary-agreement lemmas** (`lemma_vocab_*_agree`): F. F\* declares
+  separate IRI constants in the engine and in the table; Lean has one
+  vocabulary module.
+- **Left U** (https://github.com/danbri/factoidal/issues/820):
+  `RDF.Graph.Executable.lemma_bind_preserves_existing` (BIND does not change
+  a bound variable) and `RDF.Semantics.HypothesisWitness.theorem_smap_exact_witness`
+  (the SPARQL algebra exactness hypotheses are satisfiable). Both belong to
+  the SPARQL tranche.
+
+#### Counts after the second tranche (2026-10-13)
+
+`python3 tools/check-fstar-theorem-classification.py` exit 0 (287 Lean
+names, 0 missing, `lake env lean` in `formal/lean4`):
+
+| Family | Relevant | R | S | F | A | U |
+| --- | ---: | --- | --- | --- | --- | --- |
+| RDF | 245 | 84 of 245 | 8 of 245 | 126 of 245 | 25 of 245 | 2 of 245 |
+| RDFS | 256 | 50 of 256 | 18 of 256 | 188 of 256 | 0 of 256 | 0 of 256 |
+| OWL | 178 | 8 of 178 | 1 of 178 | 169 of 178 | 0 of 178 | 0 of 178 |
+| SPARQL | 324 | 0 of 324 | 0 of 324 | 0 of 324 | 0 of 324 | 324 of 324 |
+| parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
+| other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
+| total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |

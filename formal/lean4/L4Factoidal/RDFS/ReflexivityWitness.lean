@@ -104,8 +104,9 @@ theorem selfloop_not_in_fixed (c : WfIri) :
   -- 17 `rdfs:domain` rows, 17 `rdfs:range` rows (each block carries
   -- one RDF 1.2 `rdf:reifies` row), then five `rdfs:subClassOf` rows
   -- (the fifth is RDF 1.2's `rdfs:Proposition rdfs:subClassOf
-  -- rdfs:Resource`), subPropertyOf, the `rdf:type` row, and two more
-  -- `rdfs:subClassOf` rows.
+  -- rdfs:Resource`), subPropertyOf, and one more `rdfs:subClassOf` row.
+  -- (The two `rdf:XMLLiteral` rows left the table on 2026-10-13,
+  -- issue 767 gap 1.)
   rcases h with ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
@@ -114,7 +115,7 @@ theorem selfloop_not_in_fixed (c : WfIri) :
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨-, hp, -⟩
     | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩
-    | ⟨-, hp, -⟩ | ⟨-, hp, -⟩ | ⟨hs, -, ho⟩ | ⟨hs, -, ho⟩
+    | ⟨-, hp, -⟩ | ⟨hs, -, ho⟩
   all_goals first
     | exact absurd hp (by decide)
     | (subst hs; exact absurd ho (by decide))

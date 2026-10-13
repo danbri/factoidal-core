@@ -8,8 +8,9 @@ would satisfy it and be useless. So the gate has two halves, and both
 are mandatory:
 
 * POSITIVE — the three witnesses `DerivationTests.lean` builds must be
-  ACCEPTED (150, 199 and 156 steps; 141, 190 and 147 before the RDF 1.2
-  axiomatic triples joined the seed table on 2026-10-09). A checker that cannot accept this
+  ACCEPTED (144, 193 and 150 steps; 141, 190 and 147 before the RDF 1.2
+  axiomatic triples joined the seed table on 2026-10-09; 150, 199 and 156
+  until the two rdf:XMLLiteral seed rows left it on 2026-10-13). A checker that cannot accept this
   engine's own output is not a checker.
 * NEGATIVE — one mutation per row of design §5 that applies at this
   layer must be REJECTED. Each is built by changing ONE field of ONE
@@ -87,9 +88,11 @@ concrete instances, kept because they also pin the SIZES and so fail
 loudly if a row goes silent. -/
 
 -- Re-measured 2026-10-09 after the four RDF 1.2 axiomatic triples (rdf:reifies, rdfs:Proposition) joined the seed table.
-#guard emptyWitness.2.size = 150
-#guard schemaWitness.2.size = 199
-#guard dataOnlyWitness.2.size = 156
+-- Re-measured 2026-10-13 after the two rdf:XMLLiteral rows left the seed table
+-- (https://github.com/danbri/factoidal/issues/767 gap 1): 150, 199 and 156 became 144, 193 and 150.
+#guard emptyWitness.2.size = 144
+#guard schemaWitness.2.size = 193
+#guard dataOnlyWitness.2.size = 150
 
 #guard checkDerivation emptyAx [] emptyWitness.2 = true
 #guard checkDerivation schemaAx schemaGraph schemaWitness.2 = true
@@ -148,7 +151,7 @@ private def joinIdx : Nat := idxOfRule schemaWitness.2 .rdfs7
 each really names the row it is supposed to name. -/
 #guard baseIdx = 0
 #guard axiomIdx = 6
-#guard joinIdx = 63  -- 59 under the RDF 1.1 tables
+#guard joinIdx = 61  -- 59 under the RDF 1.1 tables; 63 until the rdf:XMLLiteral rows left (2026-10-13)
 #guard (schemaWitness.2[baseIdx]!).rule = .base
 #guard (schemaWitness.2[axiomIdx]!).rule = .axiomatic
 #guard (schemaWitness.2[joinIdx]!).rule = .rdfs7
