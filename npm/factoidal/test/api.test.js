@@ -645,3 +645,22 @@ test('query: each solution Map iterates in the SELECT projection order', async (
     'SELECT ?z ?name ?a WHERE { ?p foaf:name ?name OPTIONAL { ?p foaf:age ?a } }');
   assert.deepEqual(opt.map((r) => [...r.keys()].join(' ')).sort(), ['name', 'name', 'name a']);
 });
+
+// SPARQL 1.1 section 18.2.2.5: OPTIONAL { P FILTER(F) } is LeftJoin(G, P, F),
+// F evaluated on the merged solution (section 18.5), so F reads ?a from the
+// left side (https://github.com/danbri/factoidal/issues/815). A FILTER of a
+// group nested in the OPTIONAL group stays inside it and sees no ?a.
+test('query: a FILTER in an OPTIONAL group reads the variables of the left side', async () => {
+  const ttl = '@prefix ex: <http://ex.org/> . ' +
+    'ex:a ex:age 72 ; ex:name "Alice" . ex:c ex:age 71 ; ex:name "Carol" .';
+  const val = (t) => (t === undefined ? null : (typeof t === 'string' ? t : t.value));
+  const names = async (q) => (await query(ttl, q))
+    .map((r) => [val(r.get('s')), val(r.get('n'))])
+    .sort((x, y) => (x[0] < y[0] ? -1 : 1));
+  assert.deepEqual(await names('PREFIX ex: <http://ex.org/> SELECT ?s ?n WHERE { ' +
+    '?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } }'),
+  [['http://ex.org/a', 'Alice'], ['http://ex.org/c', null]]);
+  assert.deepEqual(await names('PREFIX ex: <http://ex.org/> SELECT ?s ?n WHERE { ' +
+    '?s ex:age ?a OPTIONAL { { ?s ex:name ?n FILTER(?a = 72) } } }'),
+  [['http://ex.org/a', null], ['http://ex.org/c', null]]);
+});
