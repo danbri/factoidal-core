@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# OFFSET and LIMIT without ORDER BY: the first OFFSET + LIMIT rows suffice;
+# every row has the same value, so the answer does not depend on the order.
+SELECT (STRLEN("abc") AS ?k) WHERE { ?s ex:age ?a } OFFSET 4 LIMIT 5

@@ -30,6 +30,19 @@ FILTER beside the OPTIONALs over base variables only (`flattenOptional`).
 Evaluation: `evalOptionalsM` and `OptJoin.leftOuterJoin`; an unbound
 variable is the id `OptJoin.unbound` (0) in its column.
 
+Issue 823 (https://github.com/danbri/factoidal/issues/823): a FILTER conjunct
+outside `backendLocal` (REGEX, LANGMATCHES, casts, IRI(), hashes, ...), or one
+that reads a variable no pattern of the WHERE clause binds, is a residual
+conjunct (`FKind.residual`): the reference FILTER on the decoded terms,
+applied after the joins of its group's BGP. A FILTER beside the OPTIONALs that
+reads a group variable is applied after the left joins (`Plan.postFilters`).
+A query whose WHERE clause is in the fragment but whose SELECT clause is not
+(expressions, aggregates other than COUNT, HAVING, GROUP BY or ORDER BY an
+expression, REDUCED), and every ASK and CONSTRUCT, run the WHERE clause on
+ids and the reference evaluator's post-WHERE function on the decoded
+solutions (`PostSpec`, `runPostM`; theorems in `IdPostTheorems`). EXISTS and
+NOT EXISTS, anywhere, and DESCRIBE stay refused.
+
 Everything else is refused with a reason; the caller then runs the reference
 evaluator.
 
@@ -135,13 +148,42 @@ def ProjItem.name : ProjItem → String
 structure OptGroup where
   pats : Array PatSpec
   filters : Array Expr
+  /-- the group's FILTER conjuncts that the reference evaluator decides on
+      decoded terms (`FKind.residual`, issue 823), applied to the group's
+      rows before the left outer join, as `filters` -/
+  residuals : Array Expr := #[]
   deriving Inhabited
+
+/-- The reference post-processing of a plan (issue 823). The id path computes
+    the solutions of the WHERE clause on ids, decodes them, and applies the
+    reference evaluator's own post-WHERE functions to that solution sequence:
+    `selectPost` (SELECT), `formHasSolution` (ASK), `formSolutions` and
+    `constructGraphOf` (CONSTRUCT). `firstRows = some n`: the answer reads
+    only the first `n` solutions (`firstRowsOf`), so the id path stops after
+    them. -/
+structure PostSpec where
+  query : L4Factoidal.SPARQL.Query
+  firstRows : Option Nat
 
 structure Plan where
   pats : Array PatSpec
   /-- FILTER conjuncts; each is `backendLocal` and its variables are bound by
       the patterns of its group -/
   filters : Array Expr
+  /-- FILTER conjuncts that the reference evaluator decides on the decoded
+      terms of the variables they read (`FKind.residual`, issue 823): not
+      `backendLocal`, or reading a variable that no pattern of the WHERE
+      clause binds. Each reads only variables of its group's patterns or
+      variables unbound in every row, so it is applied after the joins of
+      the whole BGP (SPARQL 1.1 section 18.2.2.6 gives it the group). -/
+  residuals : Array Expr := #[]
+  /-- FILTER conjuncts beside the OPTIONAL groups that read a variable of a
+      group: `Filter(f, LeftJoin(...))`, applied after the left outer joins
+      (`FKind.residual`; an id `OptJoin.unbound` is an unbound variable) -/
+  postFilters : Array Expr := #[]
+  /-- the reference post-processing (issue 823); `none`: the plan's own
+      projection, COUNT, ORDER BY, DISTINCT, OFFSET and LIMIT on ids -/
+  post : Option PostSpec := none
   /-- the OPTIONAL groups, in order: `LeftJoin(...LeftJoin(base, g1), ..., gk)`;
       every variable a group shares with anything outside it is bound by
       `pats` -/
@@ -217,6 +259,43 @@ def exprVars (e : Expr) : Option (Array String) := Id.run do
   if !stack.isEmpty then return none
   return some out
 
+/-- The variables an EXISTS-free expression reads (`?v` and `BOUND(?v)`), by
+    an explicit stack, for any constructor; `none` for `EXISTS` and `NOT
+    EXISTS` (they read the active graph), an aggregate (no FILTER holds one:
+    SPARQL 1.1 grammar rule [69] Constraint), or a tree of more than
+    `maxNodes` nodes. The match has no catch-all arm, so a new `Expr`
+    constructor does not build until it is placed here. -/
+def residualVars (e : Expr) : Option (Array String) := Id.run do
+  let mut stack : Array Expr := #[e]
+  let mut out : Array String := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .var v | .bound v => if !out.contains v then out := out.push v
+      | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _ | .doubleLit _ | .now => pure ()
+      | .arith _ a b | .compare _ a b | .and a b | .or a b | .sameTerm a b
+      | .strDt a b | .strLang a b | .strStarts a b | .strEnds a b | .contains a b
+      | .strBefore a b | .strAfter a b => stack := (stack.push a).push b
+      | .unaryMinus a | .unaryPlus a | .not a | .isIri a | .isBlank a | .isLiteral a
+      | .isNumeric a | .str a | .lang a | .datatype a | .iriFn a | .hasLang a | .hasLangDir a
+      | .langDir a | .strLen a | .uCase a | .lCase a | .encodeForUri a | .abs a | .round a
+      | .ceil a | .floor a | .md5 a | .sha1 a | .sha256 a | .sha384 a | .sha512 a
+      | .year a | .month a | .day a | .hours a | .minutes a | .seconds a | .timezone a | .tz a
+      | .ttSubject a | .ttPredicate a | .ttObject a | .isTriple a => stack := stack.push a
+      | .strLangDir a b c | .cond a b c | .tripleTerm a b c => stack := ((stack.push a).push b).push c
+      | .substr a b none | .regex a b none => stack := (stack.push a).push b
+      | .substr a b (some c) | .regex a b (some c) | .replace a b c none =>
+        stack := ((stack.push a).push b).push c
+      | .replace a b c (some d) => stack := (((stack.push a).push b).push c).push d
+      | .coalesce es | .concat es | .functionCall _ es => stack := stack ++ es.toArray
+      | .inList a es | .notInList a es => stack := (stack ++ es.toArray).push a
+      | .existsPat _ | .notExistsPat _ | .aggregate _ _ _ => return none
+  if !stack.isEmpty then return none
+  return some out
+
 /-- The conjuncts of `a && b && ...`. `ebvOrFalse` of a conjunction is the
     conjunction of the `ebvOrFalse` of its operands
     (`ebvOrFalse_evalIn_and`), so each conjunct is a FILTER of its own. -/
@@ -260,16 +339,98 @@ def subtreeVars (p : QueryPattern) : Option (Array String) := Id.run do
   if !stack.isEmpty then return none
   return some out
 
+/-- The variables bound in every solution of a WHERE subtree of the fragment:
+    the variables of its triple patterns and the names `?g` of the `GRAPH ?g`
+    groups inside it (`Graph(?g, P)` binds `?g` in each of its solutions,
+    SPARQL 1.1 section 18.5). A `GRAPH ?g` around the subtree is not inside
+    it, so its `?g` is not counted: the subtree's own solutions do not bind
+    it. `none` for a subtree outside the fragment. -/
+def scopeVars (p : QueryPattern) : Option (Array String) := Id.run do
+  let some vs := subtreeVars p | return none
+  let mut out := vs
+  let mut stack : Array QueryPattern := #[p]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .join l r => stack := (stack.push r).push l
+      | .filter _ q => stack := stack.push q
+      | .graph (.var v) q =>
+        if !out.contains v then out := out.push v
+        stack := stack.push q
+      | .graph _ q => stack := stack.push q
+      | _ => pure ()
+  if !stack.isEmpty then return none
+  return some out
+
+/-- Every variable that a solution of some part of the WHERE tree can bind:
+    the variables of its triple patterns and of its `GRAPH ?g` names,
+    OPTIONAL groups included. A FILTER may read a variable outside its group
+    when the variable is not here: then it is unbound in every row, before
+    and after the joins, and the FILTER has the same value on each.
+    (`flattenWhere` refuses a tree outside the fragment, so only the
+    fragment's constructors need to be walked.) -/
+def whereVars (p : QueryPattern) : Array String := Id.run do
+  let mut stack : Array QueryPattern := #[p]
+  let mut out : Array String := #[]
+  for _ in [0:maxNodes] do
+    match stack.back? with
+    | none => break
+    | some x =>
+      stack := stack.pop
+      match x with
+      | .bgp tps =>
+        for tp in tps do
+          for a in [argOfSubject tp.s, argOfTerm tp.p, argOfTerm tp.o] do
+            match a with
+            | .ok (.var v) => if !out.contains v then out := out.push v
+            | _ => pure ()
+      | .join l r | .leftJoin l r _ => stack := (stack.push r).push l
+      | .filter _ q => stack := stack.push q
+      | .graph (.var v) q =>
+        if !out.contains v then out := out.push v
+        stack := stack.push q
+      | .graph _ q => stack := stack.push q
+      | _ => pure ()
+  return out
+
 /-- One item of the WHERE walk: a pattern and the graph it reads. -/
 structure WalkItem where
   p : QueryPattern
   g : GArg
 
-/-- Flatten a WHERE tree of BGPs, joins, FILTERs and one level of GRAPH. -/
-def flattenWhere (p : QueryPattern) : Except String (Array PatSpec × Array Expr) := do
+/-- Split a group's FILTER into the conjuncts the id path evaluates on ids
+    (`backendLocal`, every variable bound by the group) and the residual
+    conjuncts (`FKind.residual`: any other EXISTS-free conjunct whose
+    variables are bound by the group or by no pattern of the WHERE clause,
+    `allVars`). Refused: EXISTS, NOT EXISTS, an aggregate, and a variable
+    that a pattern outside the group binds (inside the group it is unbound,
+    after the joins it may be bound). -/
+def splitFilter (c : Expr) (inScope allVars : Array String) :
+    Except String (Array Expr × Array Expr) := do
+  let mut onIds : Array Expr := #[]
+  let mut residual : Array Expr := #[]
+  for cj in conjuncts c do
+    let some vs := residualVars cj | throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+    unless cj.existsFree do throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+    unless vs.all (fun v => inScope.contains v || !allVars.contains v) do
+      throw "a FILTER that reads a variable no triple pattern of its group binds"
+    if cj.backendLocal && (exprVars cj).isSome && vs.all inScope.contains then onIds := onIds.push cj
+    else residual := residual.push cj
+  return (onIds, residual)
+
+/-- Flatten a WHERE tree of BGPs, joins, FILTERs and one level of GRAPH: the
+    triple patterns, the FILTER conjuncts on ids and the residual FILTER
+    conjuncts (`splitFilter`). `allVars`: `whereVars` of the whole WHERE
+    clause. -/
+def flattenWhere (p : QueryPattern) (allVars : Array String) :
+    Except String (Array PatSpec × Array Expr × Array Expr) := do
   let mut stack : Array WalkItem := #[⟨p, .dflt⟩]
   let mut pats : Array PatSpec := #[]
   let mut filters : Array Expr := #[]
+  let mut residuals : Array Expr := #[]
   for _ in [0:maxNodes] do
     match stack.back? with
     | none => break
@@ -281,12 +442,10 @@ def flattenWhere (p : QueryPattern) : Except String (Array PatSpec × Array Expr
           pats := pats.push { s := ← argOfSubject tp.s, p := ← argOfTerm tp.p, o := ← argOfTerm tp.o, g }
       | .join l r => stack := (stack.push ⟨r, g⟩).push ⟨l, g⟩
       | .filter c q =>
-        unless c.backendLocal do throw "a FILTER expression outside Expr.backendLocal"
-        let some vs := exprVars c | throw "a FILTER expression outside the fragment"
-        let some inScope := subtreeVars q | throw "a FILTER over a group outside the fragment"
-        unless vs.all inScope.contains do
-          throw "a FILTER that reads a variable no triple pattern of its group binds"
-        filters := filters ++ conjuncts c
+        let some inScope := scopeVars q | throw "a FILTER over a group outside the fragment"
+        let (onIds, residual) ← splitFilter c inScope allVars
+        filters := filters ++ onIds
+        residuals := residuals ++ residual
         stack := stack.push ⟨q, g⟩
       | .graph n q =>
         match g with
@@ -305,7 +464,7 @@ def flattenWhere (p : QueryPattern) : Except String (Array PatSpec × Array Expr
       | .empty => pure ()
       | _ => throw "a WHERE clause outside the fragment (OPTIONAL, UNION, MINUS, BIND, VALUES, sub-SELECT, SERVICE or a property path)"
   if !stack.isEmpty then throw s!"a WHERE clause with more than {maxNodes} nodes"
-  return (pats, filters)
+  return (pats, filters, residuals)
 where
   /-- Whether a subtree holds a triple pattern. -/
   hasPattern (q : QueryPattern) : Bool := Id.run do
@@ -373,61 +532,98 @@ def hasGraph (q : QueryPattern) : Bool := Id.run do
     occurs in no other group (a well-designed pattern: every variable a
     group shares with anything outside it is bound in every left row). -/
 def flattenOptional (p : QueryPattern) :
-    Except String (Array PatSpec × Array Expr × Array OptGroup) := do
+    Except String (Array PatSpec × Array Expr × Array Expr × Array Expr × Array OptGroup) := do
+  let allVars := whereVars p
   let (tops, base, raw) := optionalSpine p
   if raw.isEmpty then
-    let (pats, filters) ← flattenWhere p
-    return (pats, filters, #[])
-  let (pats, filters) ← flattenWhere base
+    let (pats, filters, residuals) ← flattenWhere p allVars
+    return (pats, filters, residuals, #[], #[])
+  let (pats, filters, residuals) ← flattenWhere base allVars
   if pats.isEmpty then throw "an OPTIONAL with no triple pattern before it"
-  let some baseScope := subtreeVars base | throw "a group before an OPTIONAL outside the fragment"
+  let some baseScope := scopeVars base | throw "a group before an OPTIONAL outside the fragment"
+  -- A FILTER beside the OPTIONALs is `Filter(f, LeftJoin(...))` (section
+  -- 18.2.2.6: its group is the whole group). Over base variables only it is
+  -- applied to the base rows (each output row has its left row's values on
+  -- them); otherwise after the left joins, on the rows they output.
   let mut topFilters : Array Expr := #[]
+  let mut topResiduals : Array Expr := #[]
+  let mut postFilters : Array Expr := #[]
   for c in tops do
-    unless c.backendLocal do throw "a FILTER expression outside Expr.backendLocal"
-    let some vs := exprVars c | throw "a FILTER expression outside the fragment"
-    unless vs.all baseScope.contains do
-      throw "a FILTER beside an OPTIONAL that reads a variable the triple patterns before the OPTIONAL do not bind"
-    topFilters := topFilters ++ conjuncts c
+    for cj in conjuncts c do
+      let some vs := residualVars cj | throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+      unless cj.existsFree do throw "a FILTER with EXISTS, NOT EXISTS or an aggregate"
+      if vs.all baseScope.contains then
+        if cj.backendLocal && (exprVars cj).isSome then topFilters := topFilters.push cj
+        else topResiduals := topResiduals.push cj
+      else postFilters := postFilters.push cj
   let baseVars := pats.foldl (fun a t => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let mut groups : Array OptGroup := #[]
   for (r, c) in raw do
     if hasGraph r then throw "a GRAPH inside an OPTIONAL group"
-    let (gp, gf) ← flattenWhere r
+    let (gp, gf, gr) ← flattenWhere r allVars
     if gp.isEmpty then throw "an OPTIONAL group with no triple pattern"
-    let g0 : OptGroup := { pats := gp, filters := gf }
-    let cf ← match c with
-      | .boolLit true => pure #[]
+    let g0 : OptGroup := { pats := gp, filters := gf, residuals := gr }
+    let (cf, cr) ← match c with
+      | .boolLit true => pure (#[], #[])
       | e => do
-        unless e.backendLocal do throw "an OPTIONAL condition outside Expr.backendLocal"
-        let some vs := exprVars e | throw "an OPTIONAL condition outside the fragment"
-        unless vs.all g0.vars.contains do
-          throw "an OPTIONAL condition that reads a variable the group's triple patterns do not bind"
-        pure (conjuncts e)
-    groups := groups.push { g0 with filters := gf ++ cf }
+        let mut cf : Array Expr := #[]
+        let mut cr : Array Expr := #[]
+        for cj in conjuncts e do
+          let some vs := residualVars cj
+            | throw "an OPTIONAL condition with EXISTS, NOT EXISTS or an aggregate"
+          unless cj.existsFree do throw "an OPTIONAL condition with EXISTS, NOT EXISTS or an aggregate"
+          unless vs.all (fun v => g0.vars.contains v || !allVars.contains v) do
+            throw "an OPTIONAL condition that reads a variable the group's triple patterns do not bind"
+          if cj.backendLocal && (exprVars cj).isSome && vs.all g0.vars.contains then cf := cf.push cj
+          else cr := cr.push cj
+        pure (cf, cr)
+    groups := groups.push { g0 with filters := gf ++ cf, residuals := gr ++ cr }
   for k in [0:groups.size] do
     for v in groups[k]!.vars do
       if !baseVars.contains v then
         for j in [0:groups.size] do
           if j != k && groups[j]!.vars.contains v then
             throw s!"?{v} occurs in two OPTIONAL groups and not in the triple patterns before them"
-  return (pats, filters ++ topFilters, groups)
+  return (pats, filters ++ topFilters, residuals ++ topResiduals, postFilters, groups)
 
-/-- Accept the fragment or say why not. -/
-def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
-  let sel ← match q.form with
-    | .select s => pure s
-    | _ => throw "not a SELECT query"
-  unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
-  if q.pattern.mentionsFulltext then
-    throw "text:query (full-text search): the reference evaluator answers it"
+/-- The number of first WHERE solutions the answer of a post-processed query
+    reads (`PostSpec.firstRows`), or `none` for all of them.
+
+    * ASK with no GROUP BY, HAVING, trailing VALUES, OFFSET or LIMIT: 1.
+      `formHasSolution` is then "the sequence is not empty"
+      (`StoreDataset.formHasSolution_no_modifiers`), and the first solution
+      decides it (`IdPostTheorems.formHasSolution_take_one`).
+    * SELECT without grouping (no GROUP BY, no aggregate, no HAVING), ORDER
+      BY, DISTINCT, REDUCED or trailing VALUES, with LIMIT: OFFSET + LIMIT.
+      `selectPost` then evaluates the SELECT expressions row by row (the row
+      number is the solution's position, so a prefix keeps it), projects and
+      slices.
+    * CONSTRUCT with the same restrictions (DISTINCT and REDUCED do not
+      apply): OFFSET + LIMIT; `formSolutions` slices before the template is
+      instantiated. -/
+def firstRowsOf (q : L4Factoidal.SPARQL.Query) : Option Nat :=
+  let md := q.modifier
+  let plain := q.groupBy.isNone && q.having.isEmpty && q.postValues.isNone && md.orderBy.isNone
+  match q.form with
+  | .ask =>
+    if !(q.groupsSolutions || q.postValues.isSome || md.offset.isSome || md.limit.isSome) then some 1
+    else none
+  | .select sel =>
+    if plain && !L4Factoidal.SPARQL.selectHasAggregates sel && !md.distinct && !md.reduced then
+      md.limit.map (md.offset.getD 0 + ·)
+    else none
+  | .construct _ => if plain then md.limit.map (md.offset.getD 0 + ·) else none
+  | .describe _ => none
+
+/-- The plan's own SELECT on ids: projection of variables, `COUNT(*)` and
+    `COUNT(?x)`, GROUP BY variables, ORDER BY variables, DISTINCT, OFFSET,
+    LIMIT. Anything else says why; `translate` then gives the query to the
+    reference post-processing (`PostSpec`). -/
+def selectOnIds (q : L4Factoidal.SPARQL.Query) (sel : SelectClause) (base : Plan)
+    (patVars : Array String) : Except String Plan := do
   unless q.having.isEmpty do throw "HAVING"
   if q.postValues.isSome then throw "a trailing VALUES block"
   if q.modifier.reduced then throw "REDUCED"
-  let (pats, filters, optionals) ← flattenOptional q.pattern.rewriteBnodes
-  if pats.isEmpty then throw "a WHERE clause with no triple pattern"
-  let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
-  let patVars := allPats.foldl
-    (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
   let groupVars ← match q.groupBy with
     | none => pure #[]
     | some gs => gs.toArray.mapM fun
@@ -468,9 +664,50 @@ def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
   for (v, _) in order do
     let ok := if agg then groupVars.contains v || aliases.contains v else patVars.contains v
     unless ok do throw s!"ORDER BY ?{v}, which is not bound in every row"
-  return { pats, filters, optionals, proj, outVars := (L4Factoidal.SPARQL.Query.projectedVars q).toArray,
-           groupVars, agg, order, distinct := q.modifier.distinct,
+  return { base with
+           proj := proj, outVars := (L4Factoidal.SPARQL.Query.projectedVars q).toArray,
+           groupVars := groupVars, agg := agg, order := order, distinct := q.modifier.distinct,
            offset := q.modifier.offset.getD 0, limit := q.modifier.limit }
+
+/-- Accept the fragment or say why not.
+
+    The WHERE clause must be in the id fragment (`flattenOptional`). Then:
+
+    * a SELECT that `selectOnIds` accepts runs all on ids (`runPlanM`);
+    * any other SELECT, every ASK and every CONSTRUCT run the WHERE clause on
+      ids and the reference post-processing on the decoded solutions
+      (`PostSpec`, `runPostM`; issue 823), when no expression outside the
+      WHERE clause holds EXISTS or NOT EXISTS
+      (`Query.expressionsOutsidePatternExistsFree`: they read the active
+      graph, which the id path does not build);
+    * DESCRIBE goes to the fallback: its description reads statements that no
+      pattern of the query selects. -/
+def translate (q : L4Factoidal.SPARQL.Query) : Except String Plan := do
+  if let .describe _ := q.form then
+    throw "DESCRIBE: the description reads statements no pattern of the query selects"
+  unless q.dataset.isEmpty do throw "FROM / FROM NAMED"
+  if q.pattern.mentionsFulltext then
+    throw "text:query (full-text search): the reference evaluator answers it"
+  let (pats, filters, residuals, postFilters, optionals) ← flattenOptional q.pattern.rewriteBnodes
+  let allPats : Array PatSpec := pats ++ optionals.foldl (fun (a : Array PatSpec) (g : OptGroup) => a ++ g.pats) #[]
+  let patVars := allPats.foldl
+    (fun a (t : PatSpec) => t.vars.foldl (fun a v => if a.contains v then a else a.push v) a) #[]
+  let base : Plan := {
+    pats, filters, residuals, postFilters, optionals, proj := #[], outVars := #[],
+    groupVars := #[], agg := false, order := #[], distinct := false, offset := 0,
+    limit := none }
+  let post (why : String) : Except String Plan := do
+    unless q.expressionsOutsidePatternExistsFree do
+      throw s!"{why}; EXISTS or NOT EXISTS outside the WHERE clause"
+    return { base with post := some { query := q, firstRows := firstRowsOf q } }
+  match q.form with
+  | .select sel =>
+    if pats.isEmpty then post "a WHERE clause with no triple pattern"
+    else
+      match selectOnIds q sel base patVars with
+      | .ok plan => pure plan
+      | .error why => post why
+  | _ => post "not a SELECT query"
 
 /-! ## Patterns over ids and permutations -/
 
@@ -1536,7 +1773,30 @@ inductive FKind where
   | strRange (v : String) (ranges : Array (Nat × Nat)) (classLo classHi : Nat) (e : Expr)
   /-- the reference evaluator on the terms of `vars`, memoised by their ids -/
   | general (e : Expr) (vars : Array String)
+  /-- issue 823: an EXISTS-free FILTER conjunct outside `backendLocal`, or
+      one that reads a variable a row may leave unbound (`OptJoin.unbound`,
+      or no column: no pattern binds it). The reference FILTER
+      (`residualHolds`, with the query's environment `env`: NOW, BASE,
+      extension functions) on the decoded terms of the bound variables of
+      `vars`, memoised by the ids (0 for unbound) -/
+  | residual (env : EvalEnv) (e : Expr) (vars : Array String)
   deriving Inhabited
+
+/-- The reference FILTER on one solution mapping, as `QueryPattern.lowerWith`
+    builds it: `ebvOrFalse (Expr.evalIn env mu (substituteExistentials env
+    active mu e))`. The id path has no active graph; a residual conjunct is
+    EXISTS-free (`residualVars`), and on an EXISTS-free expression
+    `substituteExistentials` rebuilds the expression unchanged
+    (`IdPostTheorems.substituteExistentials_existsFree`), so the empty graph
+    stands for it. -/
+def residualHolds (env : EvalEnv) (e : Expr) (mu : Binding) : Bool :=
+  L4Factoidal.SPARQL.ebvOrFalse
+    (L4Factoidal.SPARQL.Expr.evalIn env mu (L4Factoidal.SPARQL.substituteExistentials env Graph.empty mu e))
+
+/-- The residual FILTER conjunct of `e` (its variables by `residualVars`;
+    `translate` admits only conjuncts with some). -/
+def residualKind (env : EvalEnv) (e : Expr) : FKind :=
+  .residual env e ((residualVars e).getD #[])
 
 /-- A simple literal needle (no language tag, `xsd:string`). -/
 def simpleNeedle? : Expr → Option String
@@ -1705,6 +1965,31 @@ def applyFilters {m : Type → Type} [Monad m] (st : Store m) (fs : Array FKind)
               pure r
           if !r then keep := keep.set! i false
         memos := memos.set! fi (if memo.size > 65536 then {} else memo)
+    | .residual env e vs =>
+      -- a variable with no column, or with the id `OptJoin.unbound` in a
+      -- row, is unbound in that row's solution mapping
+      let cols : Array (Option Nat) := vs.map t.idx
+      let mut memo := memos[fi]!
+      for i in [0:t.rows] do
+        if !keep[i]! then continue
+        let ids := (cols.map fun c => match c with
+          | some c => t.at c i
+          | none => OptJoin.unbound).toList
+        let r ← match memo.get? ids with
+          | some r => pure r
+          | none => do
+            let mut mu : Binding := []
+            for k in [0:vs.size] do
+              match cols[k]! with
+              | some c =>
+                let x := t.at c i
+                if x != OptJoin.unbound then mu := mu ++ [(vs[k]!, ← st.termOf x)]
+              | none => pure ()
+            let r := residualHolds env e mu
+            memo := memo.insert ids r
+            pure r
+        if !r then keep := keep.set! i false
+      memos := memos.set! fi (if memo.size > 65536 then {} else memo)
   return (t.select fun i => keep[i]!, memos)
 
 /-! ## GROUP BY with COUNT -/
@@ -2045,7 +2330,8 @@ def fkVars (fs : Array FKind) : Array String :=
     | .idEqVar v w => (a.push v).push w
     | .str _ v _ _ => a.push v
     | .strRange v _ _ _ _ => a.push v
-    | .general _ vs => a ++ vs) #[]
+    | .general _ vs => a ++ vs
+    | .residual _ _ vs => a ++ vs) #[]
 
 /-- The base of a plan with OPTIONAL groups (issue 775): its BGP and FILTERs,
     then, group by group, the left outer join with the group's BGP after the
@@ -2057,7 +2343,8 @@ def fkVars (fs : Array FKind) : Array String :=
     first group, and each group's first scan on the left table's sort
     variable, so that the joins can merge. -/
 def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (pats : Array Pat)
-    (fs : Array FKind) (need : String → Bool) : ExceptT String m (Table × Array String × ScanStats) := do
+    (fs : Array FKind) (need : String → Bool) (env : EvalEnv := {}) :
+    ExceptT String m (Table × Array String × ScanStats) := do
   let groupVars := plan.optionals.foldl (fun a g => a ++ g.vars) #[]
   let needBase (v : String) : Bool := need v || groupVars.contains v
   let pref : Option String :=
@@ -2071,7 +2358,7 @@ def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (p
   for k in [0:plan.optionals.size] do
     let g := plan.optionals[k]!
     let gp ← g.pats.mapM (resolvePat st)
-    let gfs ← g.filters.mapM (compileFilter st)
+    let gfs := (← g.filters.mapM (compileFilter st)) ++ g.residuals.map (residualKind env)
     let gfv := fkVars gfs
     let left := tab
     let gneed (v : String) : Bool := need v || left.vars.contains v || gfv.contains v
@@ -2085,6 +2372,14 @@ def evalOptionalsM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (p
     lines := lines.push s!"optional {k}: {gfs.size} condition conjuncts, {rt.rows} right rows; left outer join ({how}): {j.rows} rows"
     total := total.add gs
     tab := j
+  -- the FILTERs beside the OPTIONALs that read a group's variable:
+  -- `Filter(f, LeftJoin(...))`, on the rows of the last left join
+  if !plan.postFilters.isEmpty then
+    let pfs := plan.postFilters.map (residualKind env)
+    let before := tab.rows
+    let (t, _) ← applyFilters st pfs (pfs.map fun _ => {}) tab
+    lines := lines.push s!"{pfs.size} FILTER conjuncts beside the OPTIONALs, after the left joins: {before} rows to {t.rows}"
+    tab := t
   return (tab, lines, total)
 
 /-- Per COUNT item, in order: for `COUNT(?x)` whose column holds an unbound
@@ -2252,6 +2547,7 @@ def FKind.fresh : FKind → FKind
   | .str k v needle e => .str k (v ++ "") (needle.extract 0 needle.size) e
   | .strRange v ranges lo hi e => .strRange (v ++ "") (ranges.map fun p => (p.1 + 0, p.2 + 0)) lo hi e
   | .general e vs => .general e (vs.map (· ++ ""))
+  | .residual env e vs => .residual env e (vs.map (· ++ ""))
 
 theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
   cases f with
@@ -2264,6 +2560,7 @@ theorem FKind.fresh_eq (f : FKind) : f.fresh = f := by
     conv => rhs; rw [← Array.map_id ranges]
     rfl
   | general e vs => simp [FKind.fresh]
+  | residual env e vs => simp [FKind.fresh]
 
 /-- The overlay context of a divided scan (no overlay: `divide?` refuses a
     scan with one), made by the task that calls it. -/
@@ -2358,11 +2655,12 @@ def topPartM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (spec : 
     the single-pattern paths into block ranges (stage 1b); `none` is the
     single-thread path. -/
 def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : ByteArray → m Unit)
-    (reference : Bool := false) (par : Option (Par m) := none) : ExceptT String m RunStats := do
+    (reference : Bool := false) (par : Option (Par m) := none) (env : EvalEnv := {}) :
+    ExceptT String m RunStats := do
   let pats ← plan.pats.mapM (resolvePat st)
-  let fs ← plan.filters.mapM (compileFilter st)
+  let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
   let memos0 : Array Memo := fs.map fun _ => {}
-  let filterVars : Array String := fkVars fs
+  let filterVars : Array String := fkVars fs ++ fkVars (plan.postFilters.map (residualKind env))
   let used : Array String :=
     plan.proj.foldl (fun a p => match p with
       | .var x => a.push x
@@ -2456,7 +2754,7 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
             let (t0, lines, s) ← evalBgpM st pats need
             let (t1, _) ← applyFilters st fs memos0 t0
             pure (t1, lines, s)
-          else evalOptionalsM st plan pats fs need
+          else evalOptionalsM st plan pats fs need env
       stats := { stats with plan := lines, scan := s }
       if plan.agg then
         let g := countChunk plan.groupVars { table := t1, consts := t1.vars.map fun _ => none } {}
@@ -2475,5 +2773,133 @@ def runPlanM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (emit : 
   (emit jsonTail.toUTF8 : m Unit)
   let t := stats.scan
   return { stats with plan := stats.plan.push s!"total: rows decoded {t.rowsDecoded} (of a full scan the rows of its table, of a scan with candidates the rows gathered); join-key values tested {t.keysTested}; blocks read {t.blocksRead} of {t.blocksSelected} selected, {t.sipSkipped} skipped by candidates; {t.bytesRead} bytes" }
+
+/-! ## The reference post-processing on decoded solutions (issue 823)
+
+A plan with `post = some ps` runs its WHERE clause on ids (`whereTableM`: the
+BGP joins, the FILTERs on ids and the residual FILTERs, the OPTIONAL left
+joins), decodes the rows into solution mappings (`decodeRowsM`; a variable
+whose id is `OptJoin.unbound` is left unbound), and then calls the reference
+evaluator's own function for the form, on that solution sequence:
+
+  * SELECT: `selectPost` (SPARQL 1.1 section 18.2.4: GROUP BY, the
+    aggregates, HAVING, the trailing VALUES join, the SELECT expressions,
+    ORDER BY, projection, DISTINCT or REDUCED, OFFSET and LIMIT), the
+    function `evalSelect` and `StoreDataset.runSelectQueryBackendDataset`
+    call on the WHERE solutions;
+  * ASK: `formHasSolution`, the function of `evalAsk` and
+    `StoreDataset.evalAskBackendReference`;
+  * CONSTRUCT: `formSolutions` then `constructGraphOf` (section 16.2), the
+    two steps of `evalConstruct` (`IdPostTheorems.evalConstruct_eq`).
+
+So each step equals the reference by definition once its input does. The
+open step is that input: the decoded id rows are the reference's BGP-plus-
+FILTER solutions (lemma L6a of https://github.com/danbri/factoidal/issues/776);
+the W3C census (`tests/sbm11/census.sh`) is the differential check until it
+is proved. The reference functions get `Graph.empty` as the active graph and
+an environment without a dataset: `translate` admits a post-processed query
+only when no expression outside its WHERE clause holds EXISTS or NOT EXISTS,
+the only expressions that read them. -/
+
+/-- SPARQL 1.1 section 16.2: the CONSTRUCT template instantiated for each
+    solution (`instantiateSolutions`: fresh blank nodes per solution index,
+    ill-formed triples dropped) and collected into a graph (`Graph.add`:
+    duplicates collapse). This is the graph `evalConstruct` builds from its
+    solution sequence (`IdPostTheorems.evalConstruct_eq`). -/
+def constructGraphOf (template : List TriplePattern) (solutions : L4Factoidal.SPARQL.SolutionSeq) :
+    Graph :=
+  (L4Factoidal.SPARQL.instantiateSolutions template solutions 0).foldl (fun g t => g.add t) Graph.empty
+
+/-- The answer of a post-processed plan; the harness writes it as the
+    reference fallback writes its answer. -/
+inductive PostAnswer where
+  | solutions (vars : List String) (rows : L4Factoidal.SPARQL.SolutionSeq)
+  | boolean (b : Bool)
+  | graph (g : Graph)
+
+/-- The rows of `t` as solution mappings: per row, each column whose id is
+    not `OptJoin.unbound`, decoded (`Store.termOf`; each distinct id once,
+    so equal ids share one term). Cost (DBpedia, 2026-10-13): the 326,365
+    rows of three variables of d19's join decode in about 2.0 s (warm), most
+    of it `Session.termOf` on the distinct dictionary ids; decoding them in
+    id order (each dictionary page read once) measured the same within the
+    spread, so the rows are decoded in table order. -/
+def decodeRowsM {m : Type → Type} [Monad m] (st : Store m) (t : Table) :
+    ExceptT String m L4Factoidal.SPARQL.SolutionSeq := do
+  let mut memo : Std.HashMap UInt64 Term := {}
+  let mut out : Array Binding := Array.mkEmpty t.rows
+  for i in [0:t.rows] do
+    let mut mu : Array (String × Term) := Array.mkEmpty t.vars.size
+    for c in [0:t.vars.size] do
+      let x := t.at c i
+      if x != OptJoin.unbound then
+        match memo.get? x with
+        | some tm => mu := mu.push (t.vars[c]!, tm)
+        | none =>
+          let tm ← st.termOf x
+          memo := memo.insert x tm
+          mu := mu.push (t.vars[c]!, tm)
+    out := out.push mu.toList
+  return out.toList
+
+/-- The solutions of the WHERE clause of a plan on ids, every variable kept:
+    the BGP joins, the FILTERs (on ids and residual), the OPTIONAL left joins
+    and the FILTERs beside them. With no triple pattern: one solution with
+    no binding (the empty group), then the FILTERs. `firstRows = some n`:
+    only the first `n` rows; a single pattern then streams and its scan stops
+    after them. -/
+def whereTableM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (env : EvalEnv)
+    (firstRows : Option Nat) : ExceptT String m (Table × Array String × ScanStats) := do
+  let fs := (← plan.filters.mapM (compileFilter st)) ++ plan.residuals.map (residualKind env)
+  let memos0 : Array Memo := fs.map fun _ => {}
+  if plan.pats.isEmpty then
+    let t0 : Table := { vars := #[], cols := #[], rows := 1 }
+    let (t, _) ← applyFilters st fs memos0 t0
+    return (t, #[s!"no triple pattern: one solution with no binding, {fs.size} FILTER conjuncts: {t.rows} rows"], {})
+  let pats ← plan.pats.mapM (resolvePat st)
+  let need : String → Bool := fun _ => true
+  if let some n := firstRows then
+    if pats.size == 1 && !pats[0]!.hasMissing && plan.optionals.isEmpty then
+      let t := pats[0]!
+      let spec := mkSpec t (permFor t none) need
+      let init : Table := Table.empty spec.outVars
+      if n == 0 then return (init, #["the first 0 rows: no scan"], {})
+      let ((acc, _), s) ← scanFoldM st spec true (init, memos0) fun (acc, memos) ch => do
+        let (tab, memos) ← applyFilters st fs memos ch.table
+        let acc := acc.append (tab.slice 0 (n - acc.rows))
+        pure ((acc, memos), acc.rows < n)
+      return (acc, #[s!"pattern 0 streamed until {n} rows: {permNames[spec.perm]!} key {spec.key.size}; blocks {s.blocksRead} read of {s.blocksSelected} selected of {s.blocksTotal}, frames {s.framesRead}, {s.bytesRead} bytes; rows {acc.rows}"], s.full)
+  let (t0, lines, s) ← if plan.optionals.isEmpty then do
+      let (t0, lines, s) ← evalBgpM st pats need
+      let (t1, _) ← applyFilters st fs memos0 t0
+      pure (t1, lines, s)
+    else evalOptionalsM st plan pats fs need env
+  let t := match firstRows with
+    | some n => t0.slice 0 n
+    | none => t0
+  return (t, lines, s)
+
+/-- Run a post-processed plan: the WHERE solutions on ids, decoded, then the
+    reference function of the query form (section above). -/
+def runPostM {m : Type → Type} [Monad m] (st : Store m) (plan : Plan) (ps : PostSpec) (env : EvalEnv) :
+    ExceptT String m (PostAnswer × RunStats) := do
+  let (t, lines, s) ← whereTableM st plan env ps.firstRows
+  let omega0 ← decodeRowsM st t
+  let q := ps.query
+  let active : Graph := Graph.empty
+  let (ans, n, how) ← match q.form with
+    | .select _ =>
+      let rows := L4Factoidal.SPARQL.selectPost env active q omega0
+      pure (PostAnswer.solutions (L4Factoidal.SPARQL.Query.projectedVars q) rows, rows.length, "selectPost")
+    | .ask =>
+      let b := L4Factoidal.SPARQL.formHasSolution env active q omega0
+      pure (PostAnswer.boolean b, (if b then 1 else 0), "formHasSolution")
+    | .construct template =>
+      let g := constructGraphOf template (L4Factoidal.SPARQL.formSolutions env active q omega0)
+      pure (PostAnswer.graph g, g.length, "formSolutions, constructGraphOf")
+    | .describe _ => throw "DESCRIBE is not post-processed on ids"
+  let line := s!"post: {t.rows} WHERE solutions decoded{match ps.firstRows with | some k => s!" (the first {k} suffice)" | none => ""}; reference {how}: {n} results"
+  return (ans, { plan := (lines.push line).push s!"total: rows decoded {s.rowsDecoded}; blocks read {s.blocksRead} of {s.blocksSelected} selected, {s.sipSkipped} skipped by candidates; {s.bytesRead} bytes",
+                 rows := n, scan := s })
 
 end L4Factoidal.Storage.Sbm11.IdQuery

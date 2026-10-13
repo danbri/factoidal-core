@@ -1,0 +1,11 @@
+# A residual FILTER (REGEX is outside Expr.backendLocal) after a join:
+# people born in Edinburgh whose name ends in "son", in any case.
+# Issue 823: the reference FILTER on the decoded names, after the join.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+SELECT ?p ?n WHERE {
+  ?p dbo:birthPlace dbr:Edinburgh .
+  ?p foaf:name ?n
+  FILTER(REGEX(?n, "SON$", "i"))
+}

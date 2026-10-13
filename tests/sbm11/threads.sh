@@ -24,10 +24,13 @@
 #   dbpedia   the DBpedia slice generation of issue 798 (default
 #             /home/user/bench-data/sbm11/dbpedia, or $SBM11_DBPEDIA; skipped
 #             with a line when absent), tools/bench/three-engines/queries/
-#             dbpedia d01-d17, `--verify none`; and at every thread count the
+#             dbpedia d*.rq, `--verify none`; and at every thread count the
 #             answer equal (as a multiset, the normalisation of
 #             tools/bench/three-engines/bench.py) to the recorded Virtuoso
-#             answer of the three-engine record ($BENCH_DATA/answers/dbpedia)
+#             answer of the three-engine record ($BENCH_DATA/answers/dbpedia),
+#             or, for d18 and d19 (added after that run, issue 823), to the
+#             recorded answer of `l4factoidal query` over the source triples
+#             the query reads (NAME.l4factoidal.json)
 #
 # Block ranges: the gate sections set SBM11_MIN_RANGE_ROWS=0, so that a scan
 # of a few rows is divided into one range per thread (the default divides a
@@ -174,6 +177,9 @@ else
   for q in "$ROOT"/tools/bench/three-engines/queries/dbpedia/d*.rq; do
     name="$(basename "$q" .rq)"
     want="$BENCH_DATA/answers/dbpedia/$name.virtuoso.json"
+    # a query added after the three-engine run (d18, d19: issue 823) has the
+    # answer of `l4factoidal query` over the source triples it reads
+    [ -f "$want" ] || want="$BENCH_DATA/answers/dbpedia/$name.l4factoidal.json"
     if [ ! -f "$want" ]; then rec_missing=$((rec_missing + 1)); continue; fi
     for t in $THREADS; do
       got="$TMP/dbpedia-$name-t$t.out"
@@ -191,7 +197,7 @@ PY
       else rec_diff=$((rec_diff + 1)); echo "  dbpedia $name threads=$t: $v from the Virtuoso record"; fi
     done
   done
-  echo "dbpedia against the three-engine record (Virtuoso answers): equal $rec_equal, different $rec_diff (query x thread count), queries without a record $rec_missing"
+  echo "dbpedia against the three-engine record (Virtuoso answers; l4factoidal answers for d18, d19): equal $rec_equal, different $rec_diff (query x thread count), queries without a record $rec_missing"
   [ "$rec_diff" -eq 0 ] && [ "$rec_missing" -eq 0 ] || fail=1
   EXTRA=()
 fi

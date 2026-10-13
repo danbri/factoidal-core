@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ASK over a join and a residual FILTER (LANGMATCHES).
+ASK { ?s ex:knows ?o . ?o ex:name ?n FILTER(LANGMATCHES(LANG(?n), "en")) }

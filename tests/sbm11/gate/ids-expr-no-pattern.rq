@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# No triple pattern: one solution with no binding.
+SELECT (CONCAT("a", "b") AS ?c) (1 + 2 AS ?n) WHERE { }

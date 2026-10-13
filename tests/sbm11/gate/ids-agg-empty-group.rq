@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# An aggregate over an empty group (no row passes the FILTER): one group;
+# COUNT 0, SUM 0, MAX unbound.
+SELECT (MAX(?a) AS ?m) (COUNT(*) AS ?c) (SUM(?a) AS ?s) WHERE { ?x ex:age ?a FILTER(?a > 1000) }

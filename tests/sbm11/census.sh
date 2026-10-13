@@ -21,7 +21,9 @@
 # SELECT answers are compared as multisets of solutions
 # (tests/sbm11/compare_answers.py: blank-node labels ignored, language tags
 # compared in lower case, since the packer folds them, RDF 1.1 Concepts 3.3);
-# ASK by the boolean; CONSTRUCT and DESCRIBE by the number of triples.
+# ASK by the boolean; CONSTRUCT and DESCRIBE as multisets of N-Triples lines,
+# blank node labels and language-tag case masked (until issue 823 by the number
+# of triples only).
 #
 # Prints executed / matched / differed / not comparable, per path, and the
 # refusals at pack and at query. Usage: tests/sbm11/census.sh [SUITE_DIR...]
