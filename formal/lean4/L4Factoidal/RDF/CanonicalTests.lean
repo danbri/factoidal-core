@@ -402,6 +402,77 @@ def indexQuads : List QQuad := dedupQQuads (datasetQuads indexDs)
   joinStrings (dedupAdj (sortStrings ((datasetQuads (relabelDatasetBy
     (fun b => lookupMap b (buildCanonicalMapping .sha256 indexDs)) indexDs)).map canonQuad)))
 
+/-! ## Hash N-Degree Quads through the map, with an indexed issuer
+
+https://github.com/danbri/factoidal/issues/751. `Canonical.lean` registers
+`buildCanonicalMappingBudgeted_eq_fast` as `csimp`, so every caller of
+`buildCanonicalMappingBudgeted` runs the twin. `issueIdentifier`, `issueFresh`,
+`hndqRun` and `walkGroups` have no `csimp` theorem of their own, so the guards
+below run the definitions on one side and the twins on the other. -/
+
+-- The fast issuer gives the labels, and the order of the issued list, that
+-- `issueFresh` (to the front) and `issueIdentifier` (to the back) give.
+private def fiTwo : FIssuer := ((FIssuer.empty "c14n").issueFresh "s").issueFresh "t"
+#guard ((fiTwo.issue "x").1.issue "y").1.toSpec.issued ==
+  (issueIdentifier (issueIdentifier
+    (issueFresh (issueFresh emptyIssuer "s") "t") "x").1 "y").1.issued
+#guard ((fiTwo.issue "x").1.issue "y").1.toSpec.issued ==
+  [("t", "c14n1"), ("s", "c14n0"), ("x", "c14n2"), ("y", "c14n3")]
+-- Issuing again answers the label already issued, from the front or the back.
+#guard (fiTwo.issue "s").2 == "c14n0" && (fiTwo.issue "s").1.counter == 2
+#guard ((fiTwo.issue "x").1.issue "x").2 == "c14n2"
+#guard ((fiTwo.issue "x").1.issue "x").1.counter == 3
+-- Teeth: a blank node not yet issued gets a new label, and the tree has no
+-- entry for it before.
+#guard (fiTwo.issue "x").2 != "c14n0"
+#guard fiTwo.tree.get? "x" == none
+#guard (fiTwo.issue "x").1.tree.get? "x" == some "c14n2"
+#guard (FIssuer.empty "b").toSpec.labelPrefix == "b"
+
+/-- `k` blank nodes with one quad each and one shared first-degree hash: the
+input of the `rdfc-bnode-collide` row of `tests/stack/lean_scaling.py`. -/
+def collideText (k : Nat) : String :=
+  String.join ((List.range k).map fun i =>
+    s!"_:p{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .\n")
+
+/-- §4.4 steps 4 and 5 by the definitions and by the twins, with the map `ix`
+and the first-degree hash tree given to the twins: the issued list, the
+counter and the budget must agree. -/
+def walkGroupsAgreeWith (ds : Dataset) (ix : QuadIndex) : Bool :=
+  let qs := dedupQQuads (datasetQuads ds)
+  let tbl := hfdqTableOf .sha256 ds qs
+  let groups := groupByHfdq tbl
+  let fuel := (datasetBnodes ds).length + 1
+  let spec := walkGroups .sha256 fuel qs tbl emptyIssuer groups (hbInit defaultHndqBudget)
+  let fast := walkGroupsF .sha256 fuel ix (labelTree tbl) (FIssuer.empty "c14n") groups
+    (hbInit defaultHndqBudget)
+  spec.1.issued == fast.1.toSpec.issued && spec.1.counter == fast.1.counter &&
+    spec.2.remaining == fast.2.remaining && spec.2.exceeded == fast.2.exceeded
+
+def walkGroupsAgree (ds : Dataset) : Bool :=
+  walkGroupsAgreeWith ds (bnodeQuadIndex (dedupQQuads (datasetQuads ds)))
+
+#guard parsesOk (collideText 12)
+#guard (groupByHfdq (hfdqTableOf .sha256 (parseDs (collideText 12))
+  (dedupQQuads (datasetQuads (parseDs (collideText 12)))))).length == 1
+#guard walkGroupsAgree (parseDs (collideText 12))
+#guard walkGroupsAgree (parseDs sharedHashesInput)
+#guard walkGroupsAgree (parseDs uniqueHashesInput)
+#guard walkGroupsAgree (parseDs twoNodeCycle)
+#guard walkGroupsAgree (parseDs twoNodeChain)
+-- Teeth: Hash N-Degree Quads reads the related blank nodes from the map, so an
+-- empty map changes the result where §4.7 has buckets to fill.
+#guard !walkGroupsAgreeWith (parseDs sharedHashesInput) ∅
+#guard !walkGroupsAgreeWith (parseDs twoNodeCycle) ∅
+-- The canonical labels of the shared-hash shape: one per blank node, all distinct.
+#guard ((canonicalize (parseDs (collideText 12))).issued.map (·.2)).eraseDups.length == 12
+#guard (canonicalize (parseDs (collideText 12))).issued.length == 12
+#guard !(canonicalize (parseDs (collideText 12))).aborted
+-- The §4.4 excessive-calls abort still reaches the twin: 12 Hash N-Degree
+-- Quads calls do not fit in a budget of 5.
+#guard canonicalizeExceedsBudget .sha256 5 (parseDs (collideText 12))
+#guard !canonicalizeExceedsBudget .sha256 12 (parseDs (collideText 12))
+
 /-! ## Axiom audit — the whole point of the Lean port -/
 
 #print axioms L4Factoidal.RDF.Canonical.canonicalize
@@ -410,5 +481,6 @@ def indexQuads : List QQuad := dedupQQuads (datasetQuads indexDs)
 #print axioms L4Factoidal.RDF.Canonical.hndqRun
 #print axioms L4Factoidal.RDF.Canonical.hfdqTableOf_eq_Ix
 #print axioms L4Factoidal.RDF.Canonical.relabelDataset_eq_fast
+#print axioms L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgeted_eq_fast
 
 end L4Factoidal.RDF.CanonicalTests

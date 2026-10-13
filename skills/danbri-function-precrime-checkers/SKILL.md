@@ -638,3 +638,52 @@ now has seven arguments, and on x86-64 the seventh goes on the stack. At
 1,501 levels before and after (overflow at 1,507). Rule: after a change to
 any function of a mutual cycle, measure the nesting bound again, and
 write the new number in the allow-list line.
+
+## A filter per call and a list issuer, under a row that passed (https://github.com/danbri/factoidal/issues/751, 2026-10-13)
+
+After the repair of https://github.com/danbri/factoidal/issues/745 the row
+`rdfc-bnode-unique` of `tests/stack/lean_scaling.py` passed: every blank node
+of that input has its own first-degree hash, so RDFC-1.0 §4.4 step 5 has no
+collision group and never runs Hash N-Degree Quads (§4.7). The row
+`rdfc-bnode-collide` (`_:p{i} rdf:type ex:Person`, one shared hash) sends
+every blank node through §4.7, and it was quadratic: two costs that the
+first row could not reach.
+
+- `hndqRun` gave `buildBucketsFor` every quad of the dataset, and
+  `buildBucketsFor` tested each one, once per call.
+- The issuer kept its identifiers in a list: a scan per lookup and
+  `issued ++ [x]` per new identifier, in the §4.4 step 5.3 replay and in
+  `filterUnissued` and `exploreMembers`.
+
+The repair is a twin chain from the caller that sees every key
+(`buildCanonicalMappingBudgetedFast`, which builds the §4.4 step 2 map once)
+down to `hndqRunF`, with an issuer type `FIssuer` that holds the list as
+`front ++ backRev.reverse` and a search tree whose agreement with the list is
+a field of the structure. One `csimp` theorem on the top function,
+`buildCanonicalMappingBudgeted_eq_fast`, reaches every caller. Record and
+proofs: `docs/designissues/2026-10-10-npm-lean-only.md` § 10, "Issue 751".
+
+The ladder, `l4factoidal canonicalize FILE --format nquads`, user CPU
+seconds and peak resident memory (before: one run per point; after and the
+references: minimum of 3 runs, rdf-canonize at 64,000 one run), beside two
+RDFC-1.0 implementations on the same files and machine (the canonical output
+of all three is byte-identical at every size):
+
+| blank nodes | Lean before | Lean after | Oxigraph (pyoxigraph 0.5.11) | rdf-canonize 5.0.0 (Node 22.22.0) |
+|---:|---:|---:|---:|---:|
+| 2,000 | 0.16 s, 24 MB | 0.07 s, 26 MB | 0.02 s, 27 MB | 0.14 s, 66 MB |
+| 4,000 | 0.59 s, 33 MB | 0.14 s, 33 MB | 0.05 s, 32 MB | 0.26 s, 75 MB |
+| 8,000 | 2.66 s, 45 MB | 0.27 s, 47 MB | 0.09 s, 41 MB | 0.64 s, 87 MB |
+| 16,000 | 10.83 s, 70 MB | 0.54 s, 70 MB | 0.19 s, 59 MB | 2.02 s, 115 MB |
+| 64,000 | 327.67 s, 222 MB | 2.66 s, 222 MB | 0.96 s, 167 MB | 37.80 s, 197 MB |
+
+Rules from this repair:
+
+- **One row per path through the algorithm, not one row per function.** A
+  canonicalizer has a cheap path (unique hashes) and an expensive one
+  (collision groups). A scaling row on the cheap path passes while the
+  expensive path is quadratic.
+- **A reference implementation can be quadratic too.** rdf-canonize 5.0.0
+  takes 2.02 s at 16,000 and 37.8 s at 64,000 blank nodes on this shape (19
+  times for 4 times the input). Put each reference on the same ladder; do
+  not take one size as the measure of state of the art.

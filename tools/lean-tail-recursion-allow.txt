@@ -758,6 +758,7 @@ L4Factoidal_OWL_QueryRewriteNested_rewritePatternNested  # (b) nesting of graph 
 L4Factoidal_OWL_QueryRewriteCore_rewritePattern  # (b) nesting of graph patterns in one query
 L4Factoidal_OWL_Refute_disjointUnionAxioms_unorderedCePairs  # (b) operands of one DisjointUnion axiom
 L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Hash N-Degree Quads (RDFC-1.0 4.8) recursion over blank-node paths; depth follows the blank nodes of one gadget, the budget bounds calls, not depth (confirm)
+L4Factoidal_RDF_Canonical_hndqRunF  # (a) PENDING https://github.com/danbri/factoidal/issues/752 the twin of hndqRun that csimp emits through buildCanonicalMappingBudgeted_eq_fast (https://github.com/danbri/factoidal/issues/751): the same Hash N-Degree Quads recursion, one level per blank node of one path, through the walkBucketsF closure
 L4Factoidal_RDF_Canonical_rewriteTermForHfdq  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_joinKey  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_lowerTags  # (b) nesting depth of RDF 1.2 triple terms

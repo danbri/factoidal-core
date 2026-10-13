@@ -84,8 +84,9 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      §4.4 step 2 blank node to quads map (`bnodeQuadIndex`, replacing a
      filter over every quad per blank node) and a search tree for
      relabelling (`labelTree`, the role of F*'s `bn_lookup_tree`);
-     https://github.com/danbri/factoidal/issues/745. The Hash N-Degree
-     Quads path still filters every quad per call:
+     https://github.com/danbri/factoidal/issues/745. Hash N-Degree Quads
+     reads the same map, and its issuers keep a search tree beside the
+     issued list (`FIssuer`, `buildCanonicalMappingBudgeted_eq_fast`);
      https://github.com/danbri/factoidal/issues/751.
 -/
 import L4Factoidal.RDF.Graph
@@ -1025,18 +1026,6 @@ def buildCanonicalMappingBudgeted (alg : HashAlgorithm) (budget : Nat) (ds : Dat
         (leftover.map (fun b => (b, lookupHfdq b hfdqTable)))
     some (leftoverSorted.foldl (fun s p => (issueIdentifier s p.1).1) st).issued
 
-/-- The blank-node label map: original label → `c14nN`. -/
-def buildCanonicalMapping (alg : HashAlgorithm := .sha256) (ds : Dataset) :
-    List (BNodeId × String) :=
-  (buildCanonicalMappingBudgeted alg defaultHndqBudget ds).getD []
-
-/-- True when canonicalization under `budget` aborted for excessive
-calls to Hash N-Degree Quads — the W3C suite's `RDFC10NegativeEvalTest`
-criterion. Use a budget well below `defaultHndqBudget` so a
-pathological input aborts promptly. -/
-def canonicalizeExceedsBudget (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) : Bool :=
-  (buildCanonicalMappingBudgeted alg budget ds).isNone
-
 /-! ### Applying the map -/
 
 def lookupMap (b : BNodeId) : List (BNodeId × String) → Option String
@@ -1154,6 +1143,650 @@ def relabelDatasetFast (m : List (BNodeId × String)) (ds : Dataset) : Dataset :
   rw [relabelDataset_eq_by]
   unfold relabelDatasetFast
   simp only [labelTree_get?]
+
+/-! ### Hash N-Degree Quads through the map, with an indexed issuer
+
+When k blank nodes share one first-degree hash, §4.4 step 5 runs Hash
+N-Degree Quads (§4.7) once for each of them. Two costs then grew with k
+squared (https://github.com/danbri/factoidal/issues/751; callgrind, 4,000 blank
+nodes: 3,139 of 5,168 million instructions in `buildBucketsFor`, 482 million in
+the replay):
+
+  1. `hndqRun` gave `buildBucketsFor` every quad of the dataset, and
+     `buildBucketsFor` tested each one with `quadMentionsBnode`, once per call.
+     A `csimp` theorem on `buildBucketsFor` alone would build the §4.4 step 2
+     map once per call, so the map is built once, in
+     `buildCanonicalMappingBudgetedFast`, and passed down.
+  2. `IssuerState.issued` is a list: `issueIdentifier` scans it
+     (`lookupIssued`) and appends at its end, and `filterUnissued`,
+     `exploreMembers` and `lookupIssued2` scan it once per blank node.
+
+The twins below run the same steps with `FIssuer`: the issued list held as
+`front ++ backRev.reverse` (`issueFresh` adds to the front, `issueIdentifier`
+to the back, each in constant time) and a search tree that answers
+`lookupIssued` on that list (the field `tree_get`, carried by every value).
+`FIssuer.toSpec` gives the `IssuerState` a value stands for. Every twin is
+proved to give the definition's result through `toSpec` (`*_toSpec` and
+`*_eq` below), and `buildCanonicalMappingBudgeted_eq_fast` makes the compiler
+emit the twin for every caller: the issued identifiers, in the order the
+definition gives them, are unchanged. -/
+
+/-- A search tree from a blank node to a label (or a hash). -/
+abbrev LabelTree := Std.TreeMap BNodeId String compare
+
+theorem lookupIssued_eq_lookupMap (b : BNodeId) :
+    ∀ (l : List (BNodeId × String)), lookupIssued b l = lookupMap b l
+  | [] => rfl
+  | (k, v) :: rest => by simp only [lookupIssued, lookupMap, lookupIssued_eq_lookupMap b rest]
+
+theorem lookupHfdq_eq_lookupMap (b : BNodeId) :
+    ∀ (l : List (BNodeId × String)), lookupHfdq b l = (lookupMap b l).getD ""
+  | [] => rfl
+  | (k, v) :: rest => by
+      simp only [lookupHfdq, lookupMap, lookupHfdq_eq_lookupMap b rest]
+      split <;> rfl
+
+theorem labelTree_get?_insert (t : LabelTree) (k a : BNodeId) (v : String) :
+    (t.insert k v).get? a = if k = a then some v else t.get? a := by
+  have h := @Std.TreeMap.getElem?_insert _ _ _ t _ a k v
+  simp only [Std.compare_eq_iff_eq] at h
+  simp only [Std.TreeMap.get?_eq_getElem?, h]
+
+/-- Adding a blank node that is not yet in the list at its end: a lookup of
+any blank node answers as before, except for the new one. -/
+theorem lookupIssued_append_fresh {b0 : BNodeId} (l : String) (b : BNodeId) :
+    ∀ {L : List (BNodeId × String)}, lookupIssued b0 L = none →
+      lookupIssued b (L ++ [(b0, l)]) = if b0 = b then some l else lookupIssued b L
+  | [], _ => by
+      by_cases h : b0 = b
+      · simp [lookupIssued, h]
+      · simp [lookupIssued, h]
+  | (k, v) :: rest, h0 => by
+      have hk : k ≠ b0 := by
+        intro hk; subst hk; simp [lookupIssued] at h0
+      have hrest : lookupIssued b0 rest = none := by
+        simp only [lookupIssued] at h0
+        split at h0
+        · cases h0
+        · exact h0
+      simp only [List.cons_append, lookupIssued, lookupIssued_append_fresh l b hrest]
+      by_cases hkb : k = b
+      · subst hkb
+        have hb0 : b0 ≠ k := fun h => hk h.symm
+        simp [hb0]
+      · by_cases hb : b0 = b
+        · simp [hkb, hb]
+        · simp [hkb, hb]
+
+/-- An identifier issuer (§4.8) whose issued list is `front ++ backRev.reverse`
+and whose `tree` answers `lookupIssued` on that list. -/
+structure FIssuer where
+  labelPrefix : String
+  counter : Nat
+  front : List (BNodeId × String)
+  backRev : List (BNodeId × String)
+  tree : LabelTree
+  tree_get : ∀ b, tree.get? b = lookupIssued b (front ++ backRev.reverse)
+
+/-- The issuer state a fast issuer stands for. -/
+def FIssuer.toSpec (st : FIssuer) : IssuerState :=
+  { labelPrefix := st.labelPrefix, counter := st.counter, issued := st.front ++ st.backRev.reverse }
+
+/-- A fresh issuer with the label prefix `pfx`. -/
+def FIssuer.empty (pfx : String) : FIssuer :=
+  { labelPrefix := pfx, counter := 0, front := [], backRev := [], tree := ∅,
+    tree_get := fun b => by simp [lookupIssued] }
+
+theorem FIssuer.empty_toSpec_c14n : (FIssuer.empty "c14n").toSpec = emptyIssuer := rfl
+
+theorem FIssuer.empty_toSpec_b : (FIssuer.empty "b").toSpec = emptyTempIssuer := rfl
+
+theorem FIssuer.get?_eq (st : FIssuer) (b : BNodeId) :
+    st.tree.get? b = lookupIssued b st.toSpec.issued := st.tree_get b
+
+/-- Issue a label to a blank node the issuer has not seen. -/
+def FIssuer.issueNew (st : FIssuer) (b : BNodeId) (h : st.tree.get? b = none) : FIssuer :=
+  { labelPrefix := st.labelPrefix, counter := st.counter + 1, front := st.front,
+    backRev := (b, mkLabel st.labelPrefix st.counter) :: st.backRev,
+    tree := st.tree.insert b (mkLabel st.labelPrefix st.counter),
+    tree_get := fun a => by
+      rw [labelTree_get?_insert, List.reverse_cons, ← List.append_assoc,
+        lookupIssued_append_fresh _ _ (by rw [← st.tree_get]; exact h), st.tree_get] }
+
+/-- `issueIdentifier` (§4.8) on a fast issuer. -/
+def FIssuer.issue (st : FIssuer) (b : BNodeId) : FIssuer × String :=
+  match h : st.tree.get? b with
+  | some v => (st, v)
+  | none => (st.issueNew b h, mkLabel st.labelPrefix st.counter)
+
+theorem FIssuer.issue_of_some {st : FIssuer} {b : BNodeId} {v : String}
+    (h : st.tree.get? b = some v) : st.issue b = (st, v) := by
+  unfold FIssuer.issue
+  split
+  · rename_i v' h'
+    rw [h] at h'
+    cases h'
+    rfl
+  · rename_i h'
+    rw [h] at h'
+    cases h'
+
+theorem FIssuer.issue_of_none {st : FIssuer} {b : BNodeId} (h : st.tree.get? b = none) :
+    st.issue b = (st.issueNew b h, mkLabel st.labelPrefix st.counter) := by
+  unfold FIssuer.issue
+  split
+  · rename_i v' h'
+    rw [h] at h'
+    cases h'
+  · rfl
+
+theorem FIssuer.issue_toSpec (st : FIssuer) (b : BNodeId) :
+    issueIdentifier st.toSpec b = ((st.issue b).1.toSpec, (st.issue b).2) := by
+  unfold issueIdentifier
+  rw [← FIssuer.get?_eq]
+  cases hc : st.tree.get? b with
+  | some v => rw [FIssuer.issue_of_some hc]
+  | none =>
+      rw [FIssuer.issue_of_none hc]
+      simp [FIssuer.toSpec, FIssuer.issueNew]
+
+/-- `issueFresh` on a fast issuer: the new pair goes to the FRONT, as in
+`issueFresh`. -/
+def FIssuer.issueFresh (st : FIssuer) (b : BNodeId) : FIssuer :=
+  { labelPrefix := st.labelPrefix, counter := st.counter + 1,
+    front := (b, mkLabel st.labelPrefix st.counter) :: st.front, backRev := st.backRev,
+    tree := st.tree.insert b (mkLabel st.labelPrefix st.counter),
+    tree_get := fun a => by
+      rw [labelTree_get?_insert, st.tree_get]
+      by_cases h : b = a
+      · simp [lookupIssued, h]
+      · simp [lookupIssued, h] }
+
+theorem FIssuer.issueFresh_toSpec (st : FIssuer) (b : BNodeId) :
+    (st.issueFresh b).toSpec = L4Factoidal.RDF.Canonical.issueFresh st.toSpec b := rfl
+
+/-- `lookupIssued2` (§4.6 step 3) on fast issuers. -/
+def lookupIssued2F (b : BNodeId) (canonF localF : FIssuer) : Option String :=
+  match canonF.tree.get? b with
+  | some lbl => some lbl
+  | none     => localF.tree.get? b
+
+theorem lookupIssued2F_eq (b : BNodeId) (canonF localF : FIssuer) :
+    lookupIssued2F b canonF localF = lookupIssued2 b canonF.toSpec localF.toSpec := by
+  unfold lookupIssued2F lookupIssued2
+  rw [FIssuer.get?_eq, FIssuer.get?_eq]
+
+/-- `insertRelatedEntries` with fast issuers and the first-degree hashes in a
+search tree. -/
+def insertRelatedEntriesF (alg : HashAlgorithm) (pred : String) (hT : LabelTree)
+    (canonF localF : FIssuer) : List (String × BNodeId) → List Bucket → List Bucket
+  | [],                acc => acc
+  | (pos, rb) :: rest, acc =>
+      let identifier := match lookupIssued2F rb canonF localF with
+        | some lbl => "_:" ++ lbl
+        | none     => (hT.get? rb).getD ""
+      insertRelatedEntriesF alg pred hT canonF localF rest
+        (bucketInsert (hashRelatedBlankNode alg pos pred identifier) rb acc)
+
+theorem insertRelatedEntriesF_eq (alg : HashAlgorithm) (pred : String) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF localF : FIssuer) :
+    ∀ (xs : List (String × BNodeId)) (acc : List Bucket),
+      insertRelatedEntriesF alg pred hT canonF localF xs acc =
+        insertRelatedEntries alg pred tbl canonF.toSpec localF.toSpec xs acc
+  | [], acc => rfl
+  | (pos, rb) :: rest, acc => by
+      simp only [insertRelatedEntriesF, insertRelatedEntries, lookupIssued2F_eq, hhT]
+      exact insertRelatedEntriesF_eq alg pred hhT canonF localF rest _
+
+/-- `buildBucketsFor` with fast issuers, run over the quads of `target` only. -/
+def buildBucketsForF (alg : HashAlgorithm) (target : BNodeId) (hT : LabelTree)
+    (canonF localF : FIssuer) : List QQuad → List Bucket → List Bucket
+  | [],       acc => acc
+  | q :: rest, acc =>
+      if !quadMentionsBnode target q then
+        buildBucketsForF alg target hT canonF localF rest acc
+      else
+        buildBucketsForF alg target hT canonF localF rest
+          (insertRelatedEntriesF alg q.2.p.val hT canonF localF (relatedComponents target q) acc)
+
+theorem buildBucketsForF_eq (alg : HashAlgorithm) (target : BNodeId) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF localF : FIssuer) :
+    ∀ (qs : List QQuad) (acc : List Bucket),
+      buildBucketsForF alg target hT canonF localF qs acc =
+        buildBucketsFor alg target tbl canonF.toSpec localF.toSpec qs acc
+  | [], acc => rfl
+  | q :: rest, acc => by
+      simp only [buildBucketsForF, buildBucketsFor,
+        insertRelatedEntriesF_eq alg _ hhT canonF localF]
+      split
+      · exact buildBucketsForF_eq alg target hhT canonF localF rest _
+      · exact buildBucketsForF_eq alg target hhT canonF localF rest _
+
+/-- `buildBucketsFor` skips every quad that does not mention `target`, so it
+gives the same buckets over the quads of `target` alone. -/
+theorem buildBucketsFor_filter (alg : HashAlgorithm) (target : BNodeId)
+    (tbl : List (BNodeId × String)) (canonSt localSt : IssuerState) :
+    ∀ (qs : List QQuad) (acc : List Bucket),
+      buildBucketsFor alg target tbl canonSt localSt (qs.filter (quadMentionsBnode target)) acc =
+        buildBucketsFor alg target tbl canonSt localSt qs acc
+  | [], acc => rfl
+  | q :: rest, acc => by
+      by_cases h : quadMentionsBnode target q = true
+      · simp only [List.filter_cons, h, if_true, buildBucketsFor, Bool.not_true]
+        exact buildBucketsFor_filter alg target tbl canonSt localSt rest _
+      · simp only [List.filter_cons, h, buildBucketsFor]
+        simp only [Bool.not_eq_true] at h
+        simp only [Bool.not_false, if_true, Bool.false_eq_true, if_false]
+        exact buildBucketsFor_filter alg target tbl canonSt localSt rest _
+
+/-- The result of one step of the fast §4.7 walk. -/
+abbrev HndqOutF := String × FIssuer × HndqBudget
+
+/-- "Run Hash N-Degree Quads one level down" with a fast issuer. -/
+abbrev HndqRecF := FIssuer → BNodeId → HndqBudget → HndqOutF
+
+/-- The `HndqOut` a fast result stands for. -/
+def HndqOutF.toSpec (o : HndqOutF) : HndqOut := (o.1, o.2.1.toSpec, o.2.2)
+
+/-- `buildPathLabels` (§4.7 step 5.4.4) with fast issuers. -/
+def buildPathLabelsF (canonF : FIssuer) : FIssuer → List BNodeId → String →
+    List BNodeId → String × FIssuer × List BNodeId
+  | localF, [],        path, recursion => (path, localF, recursion)
+  | localF, b :: rest, path, recursion =>
+      match lookupIssued2F b canonF localF with
+      | some lbl => buildPathLabelsF canonF localF rest (path ++ "_:" ++ lbl) recursion
+      | none     =>
+          let r := localF.issue b
+          buildPathLabelsF canonF r.1 rest (path ++ "_:" ++ r.2) (recursion ++ [b])
+
+theorem buildPathLabelsF_eq (canonF : FIssuer) :
+    ∀ (localF : FIssuer) (bs : List BNodeId) (path : String) (recursion : List BNodeId),
+      (fun r => (r.1, r.2.1.toSpec, r.2.2)) (buildPathLabelsF canonF localF bs path recursion) =
+        buildPathLabels canonF.toSpec localF.toSpec bs path recursion
+  | localF, [], path, recursion => rfl
+  | localF, b :: rest, path, recursion => by
+      simp only [buildPathLabelsF, buildPathLabels, lookupIssued2F_eq]
+      split
+      · exact buildPathLabelsF_eq canonF localF rest _ _
+      · rw [FIssuer.issue_toSpec]
+        exact buildPathLabelsF_eq canonF _ rest _ _
+
+/-- `walkRecursion` (§4.7 step 5.4.5) with fast issuers. -/
+def walkRecursionF (rec : HndqRecF) : FIssuer → List BNodeId → String → HndqBudget → HndqOutF
+  | localF, [],        path, hb => (path, localF, hb)
+  | localF, b :: rest, path, hb =>
+      if hb.exceeded then (path, localF, hb)
+      else
+        let r1 := localF.issue b
+        let r2 := rec r1.1 b hb
+        walkRecursionF rec r2.2.1 rest (path ++ "_:" ++ r1.2 ++ "<" ++ r2.1 ++ ">") r2.2.2
+
+theorem walkRecursionF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb) :
+    ∀ (localF : FIssuer) (bs : List BNodeId) (path : String) (hb : HndqBudget),
+      (walkRecursionF recF localF bs path hb).toSpec = walkRecursion rec localF.toSpec bs path hb
+  | localF, [], path, hb => rfl
+  | localF, b :: rest, path, hb => by
+      simp only [walkRecursionF, walkRecursion]
+      split
+      · rfl
+      · rw [FIssuer.issue_toSpec, ← hrec]
+        exact walkRecursionF_eq hrec _ rest _ _
+
+/-- `walkPerm` with fast issuers. -/
+def walkPermF (rec : HndqRecF) (canonF localF : FIssuer) (perm : List BNodeId)
+    (path : String) (hb : HndqBudget) : HndqOutF :=
+  let r := buildPathLabelsF canonF localF perm path []
+  walkRecursionF rec r.2.1 r.2.2 r.1 hb
+
+theorem walkPermF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localF : FIssuer) (perm : List BNodeId) (path : String) (hb : HndqBudget) :
+    (walkPermF recF canonF localF perm path hb).toSpec =
+      walkPerm rec canonF.toSpec localF.toSpec perm path hb := by
+  unfold walkPermF walkPerm
+  rw [← buildPathLabelsF_eq]
+  exact walkRecursionF_eq hrec _ _ _ _
+
+/-- `pickBest` with fast issuers. -/
+def pickBestF (rec : HndqRecF) (canonF localStInitial : FIssuer) :
+    List (List BNodeId) → String → FIssuer → HndqBudget → HndqOutF
+  | [],       bestHash, bestSt, hb => (bestHash, bestSt, hb)
+  | p :: rest, bestHash, bestSt, hb =>
+      if hb.exceeded then (bestHash, bestSt, hb)
+      else
+        let r := walkPermF rec canonF localStInitial p "" hb
+        if strLe r.1 bestHash && r.1 != bestHash then
+          pickBestF rec canonF localStInitial rest r.1 r.2.1 r.2.2
+        else
+          pickBestF rec canonF localStInitial rest bestHash bestSt r.2.2
+
+theorem pickBestF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localStInitial : FIssuer) :
+    ∀ (perms : List (List BNodeId)) (bestHash : String) (bestSt : FIssuer) (hb : HndqBudget),
+      (pickBestF recF canonF localStInitial perms bestHash bestSt hb).toSpec =
+        pickBest rec canonF.toSpec localStInitial.toSpec perms bestHash bestSt.toSpec hb
+  | [], bestHash, bestSt, hb => rfl
+  | p :: rest, bestHash, bestSt, hb => by
+      simp only [pickBestF, pickBest]
+      split
+      · rfl
+      · rw [← walkPermF_eq hrec]
+        simp only [HndqOutF.toSpec]
+        split
+        · rename_i hc
+          simp only [hc, if_true]
+          exact pickBestF_eq hrec canonF localStInitial rest _ _ _
+        · rename_i hc
+          simp only [hc, if_false, Bool.false_eq_true]
+          exact pickBestF_eq hrec canonF localStInitial rest _ _ _
+
+/-- `bestPermutation` with fast issuers. -/
+def bestPermutationF (rec : HndqRecF) (canonF localF : FIssuer)
+    (perms : List (List BNodeId)) (hb : HndqBudget) : HndqOutF :=
+  match perms with
+  | []       => ("", localF, hb)
+  | p :: rest =>
+      if hb.exceeded then ("", localF, hb)
+      else
+        let r := walkPermF rec canonF localF p "" hb
+        pickBestF rec canonF localF rest r.1 r.2.1 r.2.2
+
+theorem bestPermutationF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localF : FIssuer) (perms : List (List BNodeId)) (hb : HndqBudget) :
+    (bestPermutationF recF canonF localF perms hb).toSpec =
+      bestPermutation rec canonF.toSpec localF.toSpec perms hb := by
+  unfold bestPermutationF bestPermutation
+  cases perms with
+  | nil => rfl
+  | cons p rest =>
+      simp only
+      split
+      · rfl
+      · rw [← walkPermF_eq hrec]
+        exact pickBestF_eq hrec canonF localF rest _ _ _
+
+/-- `walkBuckets` with fast issuers. -/
+def walkBucketsF (alg : HashAlgorithm) (rec : HndqRecF) (canonF : FIssuer) :
+    FIssuer → List Bucket → String → HndqBudget → HndqOutF
+  | localF, [],                 data, hb => (hashHex alg data, localF, hb)
+  | localF, (k, members) :: rest, data, hb =>
+      if hb.exceeded then (hashHex alg data, localF, hb)
+      else
+        let perms := permutationsOf (members.take permutationCap)
+        let r := bestPermutationF rec canonF localF perms hb
+        walkBucketsF alg rec canonF r.2.1 rest (data ++ k ++ r.1) r.2.2
+
+theorem walkBucketsF_eq (alg : HashAlgorithm) {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb) (canonF : FIssuer) :
+    ∀ (localF : FIssuer) (bs : List Bucket) (data : String) (hb : HndqBudget),
+      (walkBucketsF alg recF canonF localF bs data hb).toSpec =
+        walkBuckets alg rec canonF.toSpec localF.toSpec bs data hb
+  | localF, [], data, hb => rfl
+  | localF, (k, members) :: rest, data, hb => by
+      simp only [walkBucketsF, walkBuckets]
+      split
+      · rfl
+      · rw [← bestPermutationF_eq hrec]
+        exact walkBucketsF_eq alg hrec canonF _ rest _ _
+
+/-- RDFC-1.0 §4.7 with the blank node to quads map `ix` (§4.4 step 2), the
+first-degree hashes in the search tree `hT`, and fast issuers. -/
+def hndqRunF (alg : HashAlgorithm) (ix : QuadIndex) (hT : LabelTree) (canonF : FIssuer) :
+    Nat → FIssuer → BNodeId → HndqBudget → HndqOutF
+  | 0,        localF, _,      hb => ("", localF, hbConsume hb)
+  | fuel + 1, localF, target, hb =>
+      let hb1 := hbConsume hb
+      if hb1.exceeded then ("", localF, hb1)
+      else
+        let buckets := buildBucketsForF alg target hT canonF localF (quadsForBnodeIx ix target) []
+        walkBucketsF alg (hndqRunF alg ix hT canonF fuel) canonF localF buckets "" hb1
+
+theorem hndqRunF_eq (alg : HashAlgorithm) {ix : QuadIndex} {qs : List QQuad}
+    (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF : FIssuer) :
+    ∀ (fuel : Nat) (localF : FIssuer) (target : BNodeId) (hb : HndqBudget),
+      (hndqRunF alg ix hT canonF fuel localF target hb).toSpec =
+        hndqRun alg qs tbl canonF.toSpec fuel localF.toSpec target hb
+  | 0, localF, target, hb => rfl
+  | fuel + 1, localF, target, hb => by
+      simp only [hndqRunF, hndqRun]
+      split
+      · rfl
+      · rw [hix, buildBucketsForF_eq alg target hhT, quadsForBnode, buildBucketsFor_filter]
+        exact walkBucketsF_eq alg (hndqRunF_eq alg hix hhT canonF fuel) canonF _ _ _ _
+
+/-! The §4.4 steps 4 and 5 with fast issuers. -/
+
+def assignSingletonsF (st : FIssuer) : List Bucket → FIssuer
+  | []                => st
+  | (_, [b]) :: rest  => assignSingletonsF (st.issueFresh b) rest
+  | (_, _) :: rest    => assignSingletonsF st rest
+
+theorem assignSingletonsF_toSpec :
+    ∀ (st : FIssuer) (groups : List Bucket),
+      (assignSingletonsF st groups).toSpec = assignSingletons st.toSpec groups
+  | st, [] => rfl
+  | st, (_, []) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      exact assignSingletonsF_toSpec st rest
+  | st, (_, [b]) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      rw [← FIssuer.issueFresh_toSpec]
+      exact assignSingletonsF_toSpec _ rest
+  | st, (_, b :: c :: more) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      exact assignSingletonsF_toSpec st rest
+
+def filterUnissuedF (st : FIssuer) (xs : List BNodeId) : List BNodeId :=
+  xs.filter (fun b => (st.tree.get? b).isNone)
+
+theorem filterUnissuedF_eq (st : FIssuer) (xs : List BNodeId) :
+    filterUnissuedF st xs = filterUnissued st.toSpec xs := by
+  unfold filterUnissuedF filterUnissued
+  simp only [FIssuer.get?_eq]
+
+/-- `exploreMembers` with fast issuers and the map, the results on a reverse
+accumulator (one loop instead of one stack frame per member). -/
+def exploreMembersF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex) (hT : LabelTree)
+    (canonF : FIssuer) : List BNodeId → HndqBudget → List (String × List (BNodeId × String)) →
+    List (String × List (BNodeId × String)) × HndqBudget
+  | [],       hb, acc => (acc.reverse, hb)
+  | m :: rest, hb, acc =>
+      if hb.exceeded then (acc.reverse, hb)
+      else match canonF.tree.get? m with
+        | some _ => exploreMembersF alg fuel ix hT canonF rest hb acc
+        | none   =>
+            let r := hndqRunF alg ix hT canonF fuel ((FIssuer.empty "b").issue m).1 m hb
+            exploreMembersF alg fuel ix hT canonF rest r.2.2 ((r.1, r.2.1.toSpec.issued) :: acc)
+
+theorem exploreMembersF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF : FIssuer) :
+    ∀ (ms : List BNodeId) (hb : HndqBudget) (acc : List (String × List (BNodeId × String))),
+      exploreMembersF alg fuel ix hT canonF ms hb acc =
+        (acc.reverse ++ (exploreMembers alg fuel qs tbl canonF.toSpec ms hb).1,
+         (exploreMembers alg fuel qs tbl canonF.toSpec ms hb).2)
+  | [], hb, acc => by simp [exploreMembersF, exploreMembers]
+  | m :: rest, hb, acc => by
+      simp only [exploreMembersF, exploreMembers]
+      split
+      · simp
+      · rw [← FIssuer.get?_eq]
+        split
+        · exact exploreMembersF_eq alg fuel hix hhT canonF rest hb acc
+        · rw [← FIssuer.empty_toSpec_b, FIssuer.issue_toSpec,
+            ← hndqRunF_eq alg hix hhT canonF fuel]
+          rw [exploreMembersF_eq alg fuel hix hhT canonF rest]
+          simp [HndqOutF.toSpec]
+
+def replayOneF (canonF : FIssuer) : List (BNodeId × String) → FIssuer
+  | []             => canonF
+  | (b, _) :: rest => replayOneF (canonF.issue b).1 rest
+
+theorem replayOneF_toSpec :
+    ∀ (canonF : FIssuer) (l : List (BNodeId × String)),
+      (replayOneF canonF l).toSpec = replayOne canonF.toSpec l
+  | canonF, [] => rfl
+  | canonF, (b, _) :: rest => by
+      simp only [replayOneF, replayOne, FIssuer.issue_toSpec]
+      exact replayOneF_toSpec _ rest
+
+def replayAllF (canonF : FIssuer) : List (String × List (BNodeId × String)) → FIssuer
+  | []                      => canonF
+  | (_, tempIssued) :: rest => replayAllF (replayOneF canonF tempIssued) rest
+
+theorem replayAllF_toSpec :
+    ∀ (canonF : FIssuer) (l : List (String × List (BNodeId × String))),
+      (replayAllF canonF l).toSpec = replayAll canonF.toSpec l
+  | canonF, [] => rfl
+  | canonF, (_, tempIssued) :: rest => by
+      simp only [replayAllF, replayAll, ← replayOneF_toSpec]
+      exact replayAllF_toSpec _ rest
+
+def processCollisionMembersF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex)
+    (hT : LabelTree) (st : FIssuer) (members : List BNodeId) (hb : HndqBudget) :
+    FIssuer × HndqBudget :=
+  let r := exploreMembersF alg fuel ix hT st members hb []
+  (replayAllF st (sortByFast (fun a b => strLe a.1 b.1) r.1), r.2)
+
+theorem processCollisionMembersF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (st : FIssuer) (members : List BNodeId) (hb : HndqBudget) :
+    (fun r => (r.1.toSpec, r.2)) (processCollisionMembersF alg fuel ix hT st members hb) =
+      processCollisionMembers alg fuel qs tbl st.toSpec members hb := by
+  simp only [processCollisionMembersF, processCollisionMembers,
+    exploreMembersF_eq alg fuel hix hhT st members hb [], replayAllF_toSpec]
+  simp
+
+def processCollisionGroupsF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex)
+    (hT : LabelTree) : FIssuer → List Bucket → HndqBudget → FIssuer × HndqBudget
+  | st, [],                   hb => (st, hb)
+  | st, (_, [_]) :: rest,     hb => processCollisionGroupsF alg fuel ix hT st rest hb
+  | st, (_, members) :: rest, hb =>
+      if hb.exceeded then (st, hb)
+      else
+        let r := processCollisionMembersF alg fuel ix hT st (filterUnissuedF st members) hb
+        processCollisionGroupsF alg fuel ix hT r.1 rest r.2
+
+theorem processCollisionGroupsF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl) :
+    ∀ (st : FIssuer) (groups : List Bucket) (hb : HndqBudget),
+      (fun r => (r.1.toSpec, r.2)) (processCollisionGroupsF alg fuel ix hT st groups hb) =
+        processCollisionGroups alg fuel qs tbl st.toSpec groups hb
+  | st, [], hb => rfl
+  | st, (_, [_]) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      exact processCollisionGroupsF_eq alg fuel hix hhT st rest hb
+  | st, (h, []) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      split
+      · rfl
+      · rw [filterUnissuedF_eq, ← processCollisionMembersF_eq alg fuel hix hhT]
+        exact processCollisionGroupsF_eq alg fuel hix hhT _ rest _
+  | st, (h, b :: c :: more) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      split
+      · rfl
+      · rw [filterUnissuedF_eq, ← processCollisionMembersF_eq alg fuel hix hhT]
+        exact processCollisionGroupsF_eq alg fuel hix hhT _ rest _
+
+def walkGroupsF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex) (hT : LabelTree)
+    (st : FIssuer) (groups : List Bucket) (hb : HndqBudget) : FIssuer × HndqBudget :=
+  processCollisionGroupsF alg fuel ix hT (assignSingletonsF st groups) groups hb
+
+theorem walkGroupsF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (st : FIssuer) (groups : List Bucket) (hb : HndqBudget) :
+    (fun r => (r.1.toSpec, r.2)) (walkGroupsF alg fuel ix hT st groups hb) =
+      walkGroups alg fuel qs tbl st.toSpec groups hb := by
+  unfold walkGroupsF walkGroups
+  rw [← assignSingletonsF_toSpec]
+  exact processCollisionGroupsF_eq alg fuel hix hhT _ _ _
+
+theorem foldl_issue_toSpec (l : List (BNodeId × String)) :
+    ∀ (st : FIssuer),
+      (l.foldl (fun s p => (s.issue p.1).1) st).toSpec =
+        l.foldl (fun s p => (issueIdentifier s p.1).1) st.toSpec := by
+  induction l with
+  | nil => intro st; rfl
+  | cons p rest ih =>
+      intro st
+      simp only [List.foldl_cons, FIssuer.issue_toSpec]
+      exact ih _
+
+/-- `buildCanonicalMappingBudgeted` with the §4.4 step 2 map built once and
+shared by §4.4 step 3 and every Hash N-Degree Quads call, the first-degree
+hashes in a search tree, and fast issuers. -/
+def buildCanonicalMappingBudgetedFast (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) :
+    Option (List (BNodeId × String)) :=
+  let qs := dedupQQuads (datasetQuads ds)
+  let bs := datasetBnodes ds
+  let ix := bnodeQuadIndex qs
+  let hfdqTable := bs.map (fun b => (b, hashFirstDegreeQuadsIx alg ix b))
+  let hT := labelTree hfdqTable
+  let groups := groupByHfdq hfdqTable
+  let r := walkGroupsF alg (bs.length + 1) ix hT (FIssuer.empty "c14n") groups (hbInit budget)
+  if r.2.exceeded then none
+  else
+    let st := r.1
+    let leftover := if st.toSpec.issued.length == bs.length then [] else filterUnissuedF st bs
+    let leftoverSorted :=
+      sortBy (fun a b => if a.2 == b.2 then strLe a.1 b.1 else strLe a.2 b.2)
+        (leftover.map (fun b => (b, (hT.get? b).getD "")))
+    some (leftoverSorted.foldl (fun s p => (s.issue p.1).1) st).toSpec.issued
+
+theorem buildCanonicalMappingBudgeted_eq_fast_apply (alg : HashAlgorithm) (budget : Nat)
+    (ds : Dataset) :
+    buildCanonicalMappingBudgeted alg budget ds = buildCanonicalMappingBudgetedFast alg budget ds := by
+  have htbl : hfdqTableOf alg ds (dedupQQuads (datasetQuads ds)) =
+      (datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b)) := by
+    unfold hfdqTableOf
+    simp only [hashFirstDegreeQuadsIx_eq]
+  have hix := quadsForBnodeIx_bnodeQuadIndex (dedupQQuads (datasetQuads ds))
+  have hhT : ∀ b, ((labelTree ((datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b)))).get?
+          b).getD "" =
+      lookupHfdq b ((datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b))) := by
+    intro b
+    rw [labelTree_get?, lookupHfdq_eq_lookupMap]
+  unfold buildCanonicalMappingBudgeted buildCanonicalMappingBudgetedFast
+  dsimp only
+  rw [htbl, ← FIssuer.empty_toSpec_c14n, ← walkGroupsF_eq alg _ hix hhT]
+  dsimp only
+  split
+  · rfl
+  · simp only [filterUnissuedF_eq, hhT, foldl_issue_toSpec]
+
+/-- The compiler calls `buildCanonicalMappingBudgetedFast` wherever the source
+says `buildCanonicalMappingBudgeted`. -/
+@[csimp] theorem buildCanonicalMappingBudgeted_eq_fast :
+    @buildCanonicalMappingBudgeted = @buildCanonicalMappingBudgetedFast := by
+  funext alg budget ds
+  exact buildCanonicalMappingBudgeted_eq_fast_apply alg budget ds
+
+/-- The blank-node label map: original label → `c14nN`. -/
+def buildCanonicalMapping (alg : HashAlgorithm := .sha256) (ds : Dataset) :
+    List (BNodeId × String) :=
+  (buildCanonicalMappingBudgeted alg defaultHndqBudget ds).getD []
+
+/-- True when canonicalization under `budget` aborted for excessive
+calls to Hash N-Degree Quads — the W3C suite's `RDFC10NegativeEvalTest`
+criterion. Use a budget well below `defaultHndqBudget` so a
+pathological input aborts promptly. -/
+def canonicalizeExceedsBudget (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) : Bool :=
+  (buildCanonicalMappingBudgeted alg budget ds).isNone
 
 /-! ### Canonical N-Quads output -/
 

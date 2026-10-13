@@ -36,9 +36,11 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    for 4x input before the blank node to quads map, 0.18 s to 1.19 s
                    after)
   rdfc-bnode-collide  RDFC-1.0 canonicalisation of n blank nodes that share one
-                   first-degree hash, so Hash N-Degree Quads runs for each.
-                   Expected failure naming issue 751: 0.16 s to 2.37 s CPU for 4x
-                   input (each Hash N-Degree Quads call filters every quad)
+                   first-degree hash, so Hash N-Degree Quads runs for each
+                   (https://github.com/danbri/factoidal/issues/751; 0.16 s to
+                   2.66 s CPU for 4x input before the blank node to quads map
+                   reached Hash N-Degree Quads and the issuer got a search tree,
+                   0.07 s to 0.36 s after, measured 2026-10-13)
   group-by-few     SPARQL GROUP BY with 6 groups over many rows
   group-by-many    SPARQL GROUP BY with one group per subject
   count-distinct   SPARQL COUNT(DISTINCT ?s): the aggregate's DISTINCT
@@ -133,7 +135,6 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # Rows that fail today, each with the open issue that tracks the cost. A row
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
-    "rdfc-bnode-collide": "https://github.com/danbri/factoidal/issues/751",
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
 }
 # A run longer than this is not repeated: the minimum of several runs only
