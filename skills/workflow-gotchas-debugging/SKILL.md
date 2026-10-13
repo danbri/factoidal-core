@@ -2033,6 +2033,15 @@ same time; each run deleted and rewrote files the other was reading.
   collision suspect: run the suite again alone before reading it as a defect.
 - Every new suite that writes fixtures takes its directory from an environment
   variable and defaults to a per-run directory (`mktemp -d`), not a fixed path.
+- Delete only the directories your own run made. Never delete a shared default
+  directory at the end of a run.
+
+Second instance, the same day (batch 1 coordinator): tools/sota-bench.py and
+tests/perf/sota_gate.sh defaulted to `/tmp/sota-dl`. An agent deleted it at
+the end of its run (its task said "delete /tmp/sota-dl when done") while the
+coordinator's gate on `main` read fixtures from it: 74 of 79 gate rows failed
+with exit 125. The default is now `/tmp/sota-dl-<checkout directory name>`,
+and the agent protocol asks for a private `SOTA_DL`.
 
 ## Hazard #44 — main moves under a landing branch while its gates run (2026-10-13)
 

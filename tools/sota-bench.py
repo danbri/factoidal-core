@@ -25,7 +25,7 @@ when one is more than 25 % slower in CPU time or larger in peak resident set,
 or gives a different answer.
 
 Reference engines are not vendored. `--install` fetches them into the
-download directory (default /tmp/sota-dl) and checks each archive against
+download directory (default /tmp/sota-dl-<checkout directory name>) and checks each archive against
 the SHA-256 below: pyoxigraph (pip, in a venv), Apache Jena (binary
 distribution), Serd (`serdi`, the Ubuntu packages, unpacked, not installed),
 HermiT (inside the owlready2 wheel) and rdf-canonize (npm). The npm package
@@ -58,7 +58,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-DL = Path(os.environ.get("SOTA_DL", "/tmp/sota-dl"))
+# One directory per checkout (hazard #43 of skills/workflow-gotchas-debugging:
+# on 2026-10-13 one agent deleted the shared /tmp/sota-dl at the end of its
+# run while another checkout's gate read fixtures from it, and 74 of 79 rows
+# failed with exit 125). Downloads are still reused within one checkout.
+DL = Path(os.environ.get("SOTA_DL", f"/tmp/sota-dl-{ROOT.name}"))
 FIX = Path(os.environ.get("SOTA_FIXTURES", str(DL / "fixtures")))
 os.environ.setdefault("BENCH_FIXTURE_DIR", str(FIX))
 
