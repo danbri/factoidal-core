@@ -33,6 +33,7 @@ import Wasm.Dispatch
 import L4Factoidal.Syntax.LenientFeed
 import L4Factoidal.Syntax.StrictFeed
 import L4Factoidal.Syntax.FileIri
+import L4Factoidal.Tdb2.Read
 
 namespace L4Wasm.Cli
 
@@ -111,6 +112,15 @@ an `Ops.*Of` function, which gives the op what the N-Quads text round trip
 would have given it (`Wasm/Ops/FromDataset.lean`). -/
 def readDataset (pathOpt : Option String) (formatTag baseIri : String) :
     IO (Except String Dataset) := do
+  -- `--format tdb2`: the path is an Apache Jena TDB2 database directory, read
+  -- with the Lean decoder (https://github.com/danbri/factoidal/issues/834).
+  if formatTag == "tdb2" then
+    match pathOpt with
+    | none | some "-" => return .error "--format tdb2 needs a database directory"
+    | some dir =>
+      match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
+      | .error e => return .error e
+      | .ok text => return Ops.parseTextToDataset text "nquads" baseIri
   match ← readInput pathOpt with
   | .error e => pure (.error e)
   | .ok text => pure (Ops.parseTextToDataset text formatTag baseIri)
@@ -1035,6 +1045,8 @@ def usageLines : List String :=
   , "      A FILE is streamed in 64 KiB chunks (TriG and stdin are read"
   , "      whole). Prints the quad count, or with --out nquads the kept"
   , "      quads as they are read. Exit 1 when any diagnostic was written."
+  , "  tdb2-dump DIR      the quads of an Apache Jena TDB2 database, as N-Quads"
+  , "                    (also: --format tdb2 DIR for query, parse, update)"
   , "  query [FILE] (--query FILE.rq | --query-string SPARQL)"
   , "        [--format FMT] [--base IRI] [--table]"
   , "      Run a SPARQL query. SELECT prints SPARQL Results JSON (or a"
@@ -1100,6 +1112,10 @@ def main (args : List String) : IO UInt32 := do
   | "ops" :: _ => opsCmd
   | "parse" :: rest => parseCmd rest
   | "query" :: rest => queryCmd rest
+  | "tdb2-dump" :: [dir] =>
+      match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
+      | .error e => IO.eprintln s!"l4factoidal tdb2-dump: {e}"; pure 1
+      | .ok text => IO.print text; pure 0
   | "update" :: rest => updateCmd rest
   | "canonicalize" :: rest => canonicalizeCmd rest
   | "closure" :: rest => closureCmd rest

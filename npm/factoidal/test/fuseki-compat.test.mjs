@@ -88,3 +88,17 @@ xfail('Fuseki administration API /$/ping', 'https://github.com/danbri/factoidal/
   const r = await fetch(`${base}/$/ping`)
   assert.equal(r.status, 200)
 })
+
+// `fuseki-server --loc DB /ds` serves a TDB2 database in place. The Lean
+// decoder reads TDB2 (`l4factoidal tdb2-dump DIR`, `--format tdb2`), but the
+// npm `serve` command has no --tdb2 option yet.
+xfail('serve --tdb2 DIR /ds (TDB2 database in place)', 'https://github.com/danbri/factoidal/issues/834', async () => {
+  const tdb = mkdtempSync(join(tmpdir(), 'factoidal-tdb2-'))
+  const p = spawn(process.execPath, [cli, 'serve', '--tdb2', tdb, '/ds', '--port', '0'], { stdio: 'ignore' })
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 3000)
+    p.on('exit', (c) => { clearTimeout(timer); resolve(c) })
+  })
+  if (code === null) p.kill()
+  assert.equal(code, null, `serve --tdb2 exited with code ${code}`)
+})

@@ -348,6 +348,8 @@ import L4Factoidal.Prim.Bytes
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Codec.ZstdTests
 import L4Factoidal.Qlvr.Id
+import L4Factoidal.Tdb2.Format
+import L4Factoidal.Tdb2.Read
 import L4Factoidal.Qlvr.Format
 import L4Factoidal.Qlvr.Fsst
 import L4Factoidal.Qlvr.Vocab

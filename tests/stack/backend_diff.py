@@ -309,12 +309,14 @@ def main():
             continue
         nq = cdir / "data.nq"
         nq.write_text("".join(parts))
+        # Named graphs come from qt:graphData, or from a TriG/N-Quads qt:data.
+        named = bool(e["graphs"]) or (e["data"] or "").endswith((".trig", ".nq"))
         ref = lean_ref(nq, qfile)
         if ref.get("error") == "not SELECT or ASK":
             results[t] = {"skip": "CONSTRUCT or DESCRIBE"}
             continue
         results[t] = {"lean-ref": ref,
-                      "lean-store": lean_store(nq, qfile, bool(e["graphs"]), cdir),
+                      "lean-store": lean_store(nq, qfile, named, cdir),
                       "ordered": bool(re.search(r"ORDER\s+BY", Path(qfile).read_text(), re.I)),
                       "dir": cdir}
         jena_lines.append(f"{t}\t{nq}\t{qfile}\t{cdir}\n")
@@ -372,12 +374,19 @@ def main():
     for line in detail:
         tag = "expected" if tuple(line.split(" ")[1:3]) in expected else "UNEXPECTED"
         print(f"{line}  [{tag}]")
-    for a, b in PAIRS:
-        for t in compared:
-            for side in (a, b):
-                err = results[t][side].get("error")
-                if err and (a, b) == ("lean-ref", "lean-store"):
-                    print(f"REFUSED {side} {t}: {err[:160]}")
+    # A Lean backend that refuses (or fails) a test is a Lean shortfall: it
+    # must be listed as "refused:<backend>" with its issue, like a disagreement.
+    for t in compared:
+        for side in ("lean-ref", "lean-store"):
+            err = results[t][side].get("error")
+            key = (f"refused:{side}", t)
+            if err:
+                tag = "expected" if key in expected else "UNEXPECTED"
+                print(f"REFUSED {side} {t}: {err[:160]}  [{tag}]")
+                if key not in expected:
+                    unexpected.append(key)
+            elif key in expected:
+                stale.append(key)
     for key in stale:
         print(f"STALE expected disagreement now agrees or is not comparable: {key[0]} {key[1]}")
     if not os.environ.get("BACKEND_DIFF_WORK"):
