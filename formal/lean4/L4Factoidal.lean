@@ -120,6 +120,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TurtleLenient
 import L4Factoidal.Syntax.TurtleLenientTheorems
 import L4Factoidal.Syntax.LenientFeed
+import L4Factoidal.Syntax.StrictFeed
 import L4Factoidal.Syntax.TurtleTests
 import L4Factoidal.Syntax.TurtleStreamStateTheorems
 import L4Factoidal.Syntax.TurtleTheorems

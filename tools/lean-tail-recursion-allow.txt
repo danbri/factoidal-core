@@ -771,6 +771,7 @@ L4Factoidal_RDF_XmlCanon_sortAttrs  # (b) attributes of one XML element (canonic
 L4Factoidal_Regex_Derivative_deriv  # (b) nesting of one regular expression
 L4Factoidal_Regex_Exec_nderiv  # (b) nesting of one regular expression
 L4Factoidal_Regex_Re_size  # (b) nesting of one regular expression
+L4Factoidal_Syntax_StrictFeed_drainRun  # (s) the command line's chunk loop stated as a function over a list of chunks, for the theorem drainRun_eq only: in the emitted C of 2026-10-13 no function outside Syntax/StrictFeed.c names drainRun; the executed loop is streamStrictTurtle in Wasm/Cli.lean over forChunksOf (a fuel-bounded tail call). Checked for https://github.com/danbri/factoidal/issues/813
 L4Factoidal_Regex_memStar  # (s) the reference language `mem` (F* `mem`) only: in the emitted C of 2026-10-13 no function outside Regex/Syntax.c (mem, memStar) and Regex/RegexTheorems.c (memAltList, memAndList, used by theorems) names mem or memStar; the executed matchers are Regex.Exec (derivatives, nderiv, proved equal to mem) and Regex.XPath. Checked for https://github.com/danbri/factoidal/issues/752
 L4Factoidal_Regex_nullable  # (b) nesting of one regular expression
 L4Factoidal_Regex_reCmp  # (b) nesting of two regular expressions

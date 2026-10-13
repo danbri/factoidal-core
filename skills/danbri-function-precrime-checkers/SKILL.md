@@ -947,3 +947,19 @@ Rules from this repair:
   the issue.** The issue's row was disjoint pairs; a chain exercises the
   other branch of `addEdge`, and passed the first repair's gate unnoticed
   until it had its own row.
+
+## The memory rows read the harness, not the command (https://github.com/danbri/factoidal/issues/813, 2026-10-13)
+
+`tests/stack/lean_scaling.py`'s memory rows took the peak resident set from
+`os.wait4` (`bench_lean_vs_fstar.run_once`). The maximum `wait4` reports for a
+child forked from the Python harness includes the pages the child shared with
+the harness between `fork` and `exec`, so every command smaller than the
+harness read as the harness: 94 MB at both sizes on 2026-10-13, slope 0.0,
+for the old strict `parse` (304 MB at 100,000 N-Triples) as for the new one
+(24 MB). Three new rows that would pass for a quadratic-memory parser passed;
+`query-memory` had read 7.0 bytes per input byte where the real slope is 27.7
+(bound 32). Rule: take peak memory from `/usr/bin/time` (it forks the command
+from its own small process), as `tools/sota-bench.py` does; the rows now do
+(`peak_rss_run`). A memory row must also FAIL on the binary before the repair:
+the three `parse-*-memory` rows give 37.1, 30.2 and 37.5 bytes per input byte
+on `d371f1d9` against bounds of 1, 1 and 12.

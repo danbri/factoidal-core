@@ -880,8 +880,6 @@ def report(path):
 # issue. The row fails the gate when it comes within the bound (UNEXPECTED
 # PASS), so the repair cannot land without the row and the issue being updated.
 XFAIL = {
-    ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/813",
-    ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/813",
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
     ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
     ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/819",

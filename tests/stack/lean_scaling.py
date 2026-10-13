@@ -566,13 +566,60 @@ MEMORY_ROWS = {
 }
 
 
+# The strict `parse FILE` of N-Triples and Turtle reads the file in 64 KiB
+# chunks (https://github.com/danbri/factoidal/issues/813). With `--out nquads`
+# it writes each chunk's lines and keeps none, so its peak RSS does not grow
+# with the input: bound 1 byte per input byte. Before the repair the whole
+# file was one `String`, the N-Triples reader built its `List Char`, and the
+# whole dataset and its N-Quads text were built before the first line was
+# written. The count (`parse` without `--out`) keeps the set of distinct
+# triples (RDF 1.1 Concepts section 3), which grows with the input: bound 12.
+# Measured 2026-10-13 (peak RSS through /usr/bin/time), before the repair
+# (`d371f1d9`) and after: parse-nt-memory 37.1 and 0.2, parse-ttl-memory 30.2
+# and 0.0, count-nt-memory 37.5 and 6.2 bytes per input byte.
+# Each value is (base size, file maker, extra arguments, bound).
+PARSE_MEMORY_ROWS = {
+    "parse-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples", "--out", "nquads"], 1.0),
+    "parse-ttl-memory": (20000, bl.gene_slice, ["--format", "turtle", "--out", "nquads"], 1.0),
+    "count-nt-memory": (25000, bl.gen_nt, ["--format", "ntriples"], 12.0),
+}
+
+
+def peak_rss_run(cmd):
+    """Run `cmd` under /usr/bin/time and take the peak RSS (KB) from it.
+
+    `bl.run_once` takes `ru_maxrss` from `os.wait4`, and the maximum of a
+    child forked from this Python process includes the pages it shared with
+    the parent before `exec`: on 2026-10-13 every row below read 94 MB, the
+    harness's own size, at both sizes, so a command that holds 24 MB and one
+    that holds 90 MB gave the same slope, 0.0 (found while adding the
+    `parse-*-memory` rows of https://github.com/danbri/factoidal/issues/813).
+    `/usr/bin/time` forks the command from its own small process, as
+    `tools/sota-bench.py` does."""
+    tfile = FIX / "peak-rss.time"
+    FIX.mkdir(parents=True, exist_ok=True)
+    t = bl.run_once(["/usr/bin/time", "-f", "%M", "-o", str(tfile)] + cmd, CAP)
+    if t["status"] == "ok":
+        try:
+            t["rss_kb"] = int(tfile.read_text().strip().splitlines()[-1])
+        except (OSError, ValueError, IndexError):
+            t["status"] = "no /usr/bin/time output"
+    return t
+
+
 def memory_row(rid):
-    x, sparql, bound = MEMORY_ROWS[rid]
+    if rid in PARSE_MEMORY_ROWS:
+        x, make, extra, bound = PARSE_MEMORY_ROWS[rid]
+        cmd_of = lambda p: [str(BIN), "parse", str(p)] + extra
+    else:
+        x, sparql, bound = MEMORY_ROWS[rid]
+        make = bl.gene_slice
+        cmd_of = lambda p: [str(BIN), "query", str(p), "--format", "turtle",
+                            "--query-string", sparql]
     pts = []
     for n in (x, 4 * x):
-        p = bl.gene_slice(n)
-        t = bl.run_once([str(BIN), "query", str(p), "--format", "turtle",
-                         "--query-string", sparql], CAP)
+        p = make(n)
+        t = peak_rss_run(cmd_of(p))
         if t["status"] != "ok":
             return False, f"n={n}: exit status {t['status']}"
         pts.append((n, p.stat().st_size, t["rss_kb"]))
@@ -723,8 +770,8 @@ def main() -> int:
     rows = [r for r in names if r in ROWS] or ([] if names else list(ROWS))
     ratio_rows = [r for r in names if r in PARSE_RATIO_ROWS] or (
         [] if names else list(PARSE_RATIO_ROWS))
-    memory_rows = [r for r in names if r in MEMORY_ROWS] or (
-        [] if names else list(MEMORY_ROWS))
+    memory_rows = [r for r in names if r in MEMORY_ROWS or r in PARSE_MEMORY_ROWS] or (
+        [] if names else list(MEMORY_ROWS) + list(PARSE_MEMORY_ROWS))
     series_rows = [r for r in names if r in SERIES_ROWS] or (
         [] if names else list(SERIES_ROWS))
     run_startup = (not names) or ("startup" in names)
