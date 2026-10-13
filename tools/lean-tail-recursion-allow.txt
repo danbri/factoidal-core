@@ -458,7 +458,6 @@ L4Factoidal_SPARQL_evalSelectItemsGroup
 L4Factoidal_SPARQL_exprHasAggregate
 L4Factoidal_SPARQL_exprHasAggregateFull
 L4Factoidal_SPARQL_exprHasUngroupedVar
-L4Factoidal_SPARQL_ggpLabeledBnodes
 L4Factoidal_SPARQL_insertOrdered
 L4Factoidal_SPARQL_insertQuadsFor
 L4Factoidal_SPARQL_instObject
@@ -1105,7 +1104,6 @@ L4Factoidal_SHACL_qualifyingCount  # UNTRIAGED https://github.com/danbri/factoid
 L4Factoidal_SPARQL_evalBgpFrom  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Algebra.lean:339
 L4Factoidal_SPARQL_Expr_evalOpt  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 3, L4Factoidal/SPARQL/Expr.lean:2109
 L4Factoidal_SPARQL_exprsHaveAggregate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:430
-L4Factoidal_SPARQL_ggpLabeledBnodesQ  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 2, L4Factoidal/SPARQL/Parser.lean:592
 L4Factoidal_SPARQL_pAddExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:939
 L4Factoidal_SPARQL_pAddRest  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:947
 L4Factoidal_SPARQL_pAggregate  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1273

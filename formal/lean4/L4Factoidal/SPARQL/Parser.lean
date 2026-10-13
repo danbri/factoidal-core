@@ -778,6 +778,88 @@ def ggpLabeledBnodesQ : Query → List String
 
 end
 
+/-- The steps of the loop that computes `ggpLabeledBnodes`: read a pattern,
+or replace the two label lists on top of the value stack by their
+`strUnion`. -/
+inductive LabelStep where
+  | visit (p : QueryPattern)
+  | union2
+
+/-- What one step does to the value stack. -/
+def labelStepSem : LabelStep → List (List String) → List (List String)
+  | .visit p, vs => ggpLabeledBnodes p :: vs
+  | .union2, b :: a :: vs => strUnion a b :: vs
+  | .union2, vs => vs
+
+/-- `ggpLabeledBnodes` as a loop over a work list of steps and a stack of
+label lists. A two-sided pattern puts its sides and a `union2` on the front of
+the work list, so the stack does not grow with the length of a join chain: an
+INSERT DATA collection of n members is a chain of n joins, and
+`ggpLabeledBnodes` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818). The answer is the same list
+(`labelsLoop_eq`): the leaves and `strUnion` are the same functions. -/
+def labelsLoop : List LabelStep → List (List String) → List String
+  | [], vs => vs.headD []
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => labelsLoop ks (bnodesInBgp b :: vs)
+    | .propertyPath s _ o => labelsLoop ks (strUnion (bnodesInSubject s) (bnodesInTerm o) :: vs)
+    | .join a b | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      labelsLoop (.visit a :: .visit b :: .union2 :: ks) vs
+    | .filter _ q | .graph _ q | .bind _ _ q | .service _ _ q | .serviceVar _ _ q =>
+      labelsLoop (.visit q :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => labelsLoop (.visit pat :: ks) vs
+    | .values _ _ | .empty => labelsLoop ks ([] :: vs)
+  | .union2 :: ks, vs => labelsLoop ks (labelStepSem .union2 vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | .union2 => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem labelsLoop_eq (ks : List LabelStep) (vs : List (List String)) :
+    labelsLoop ks vs = (ks.foldl (fun vs k => labelStepSem k vs) vs).headD [] := by
+  fun_induction labelsLoop ks vs <;>
+    simp_all [labelStepSem, ggpLabeledBnodes, ggpLabeledBnodesQ]
+
+/-- What runs in place of `ggpLabeledBnodes`. -/
+def ggpLabeledBnodesFast (p : QueryPattern) : List String := labelsLoop [.visit p] []
+
+/-- What runs in place of `ggpLabeledBnodesQ`. -/
+def ggpLabeledBnodesQFast : Query → List String
+  | .mk _ _ pat _ _ _ _ _ => labelsLoop [.visit pat] []
+
+@[csimp] theorem ggpLabeledBnodes_eq_fast : @ggpLabeledBnodes = @ggpLabeledBnodesFast := by
+  funext p
+  simp [ggpLabeledBnodesFast, labelsLoop_eq, labelStepSem]
+
+@[csimp] theorem ggpLabeledBnodesQ_eq_fast : @ggpLabeledBnodesQ = @ggpLabeledBnodesQFast := by
+  funext q
+  cases q
+  simp [ggpLabeledBnodesQ, ggpLabeledBnodesQFast, labelsLoop_eq, labelStepSem]
+
+#print axioms ggpLabeledBnodes_eq_fast
+
+private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+
+-- The loop answers the lists of the recursive definition, in the same order
+-- (`strUnion` of the left side into the right).
+#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
+#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
+#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
+
 /-! ## Blank-node scope validation — `validate_bnode_scope_pattern`
 (F* line 4350)
 
