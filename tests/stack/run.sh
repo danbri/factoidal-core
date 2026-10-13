@@ -100,6 +100,10 @@ CONTROL_ONLY=0
 CANARY_KB=512
 FIXTURES="${STACK_FIXTURES:-${TMPDIR:-/tmp}/factoidal-stack-fixtures}"
 TIMEOUT="${STACK_TIMEOUT:-120}"
+# sbm11-delta request size (quads deleted; the insert has twice as many).
+# gen_cases.py reads the same variable.
+N_DELTA="${STACK_SBM11_DELTA:-4000}"
+export STACK_SBM11_DELTA="$N_DELTA"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -741,10 +745,12 @@ rm -rf "$FIXTURES/sbm11-query-out"
 
 # ------------------------------- SBM11 delta overlay (issue 791)
 # The sbm11-dict.nt generation (600,001 quads, blocks of 65,536 rows), then
-# gen_cases.py's two updates: DELETE DATA of 1,000 p:n quads and INSERT DATA
-# of 1,000 new p:n values for the same subjects (inside the base blocks) and
-# 1,000 quads of new subjects with new labels (overlay ids, after every base
-# id). Replayed at every open (3,000 entries), merged into the PSO scans
+# gen_cases.py's two updates: DELETE DATA of N_DELTA (4,000) p:n quads and
+# INSERT DATA of 4,000 new p:n values for the same subjects (inside the base
+# blocks) and 4,000 quads of new subjects with new labels (overlay ids, after
+# every base id), 8,000 quads in one request (1,000 and 2,000 until the
+# SPARQL tokenizer became linear, https://github.com/danbri/factoidal/issues/802).
+# Replayed at every open (12,000 entries), merged into the PSO scans
 # block by block (`Overlay.mergeRows` over whole 65,536-row blocks), counted,
 # sorted, filtered; then `l4sbm11 compact` (two scans of the overlaid SPO
 # permutation, the term run, the packer's phases 2 and 3) and a count on the
@@ -765,7 +771,7 @@ sbm11_delta_case() { # sbm11_delta_case <route> <prefix...>
   fi
   log=""
   rc=0
-  for u in "$FIXTURES/sbm11-delta-del-1000.ru" "$FIXTURES/sbm11-delta-ins-1000.ru"; do
+  for u in "$FIXTURES/sbm11-delta-del-$N_DELTA.ru" "$FIXTURES/sbm11-delta-ins-$N_DELTA.ru"; do
     r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" update "$col" --file "$u" 2>&1)"; rc=$?
     log="$log
 $(printf '%s' "$r" | head -c 300) rc=$rc"
@@ -796,12 +802,12 @@ compacted: $(printf '%s' "$r" | head -c 300) rc=$rc"
   if printf '%s' "$log" | grep -q 'Stack overflow'; then
     score_case "$route" sbm11-delta overflow "STACK OVERFLOW (exit $rc)"
   elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q '"value":"150000"' \
-      || ! printf '%s' "$log" | grep -q '"value":"1000999"' \
-      || [ "$(printf '%s' "$log" | grep -c '"value":"151000"')" -ne 2 ] \
+      || ! printf '%s' "$log" | grep -q "\"value\":\"$((1000000 + N_DELTA - 1))\"" \
+      || [ "$(printf '%s' "$log" | grep -c "\"value\":\"$((150000 + N_DELTA))\"")" -ne 2 ] \
       || ! printf '%s' "$log" | grep -q 'path=ids; rows 11'; then
     score_case "$route" sbm11-delta error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
   else
-    score_case "$route" sbm11-delta ran "3000 entries replayed; 65536-row blocks merged; counts 150000 and 151000; compacted count 151000"
+    score_case "$route" sbm11-delta ran "$((3 * N_DELTA)) entries replayed ($N_DELTA and $((2 * N_DELTA)) quads per request); 65536-row blocks merged; counts 150000 and $((150000 + N_DELTA)); compacted count $((150000 + N_DELTA))"
   fi
   rm -rf "$col"
 }

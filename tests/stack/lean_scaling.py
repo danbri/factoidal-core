@@ -78,6 +78,22 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    0.09 s and 1.18 s of an ASK of this shape, an ASK with a VALUES block of the same
                    size 0.08 s and 0.89 s. The row passes only when both are
                    repaired.
+  sparql-tokenize  `query` ASK over one triple with a VALUES block of 2,000,
+                   4,000 and 8,000 IRIs, measured at x, 2x and 4x like
+                   owl-consistent-cl (each doubling at most DOUBLING, 4x at most
+                   BOUND): the SPARQL tokenizer reads every token of the
+                   request. Before the repair of
+                   https://github.com/danbri/factoidal/issues/802 it took the
+                   length of the rest of the input three times per token
+                   (`tokenizeLoop`'s progress test and `skipWs`'s fuel):
+                   0.52 s, 1.92 s, 6.97 s; after, 0.017 s, 0.032 s, 0.040 s
+                   (2026-10-13)
+  sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
+                   empty dataset (issue 802: DELETE DATA of 4,000 quads took
+                   61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
+                   tokenizer repair, 0.18 s and 2.01 s after. Expected failure,
+                   https://github.com/danbri/factoidal/issues/821: the parser
+                   appends each triple to the end of the block's BGP list
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -155,6 +171,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
     "sparql-collection-parse": "https://github.com/danbri/factoidal/issues/818",
+    "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
@@ -208,6 +225,18 @@ def trig_one_graph(n: int) -> str:
 
 def sparql_collection_ask(n: int) -> str:
     return "SELECT ?s WHERE { ?s ?p ( %s ) }\n" % " ".join(str(i) for i in range(n))
+
+
+def sparql_values_ask(n: int) -> str:
+    """ASK with a trailing VALUES block of n IRIs (about 40 characters each):
+    n tokens to read, one triple of data to match."""
+    return "ASK { ?s ?p ?o } VALUES ?x { %s }\n" % " ".join(
+        f"<{EX}item/{i:08d}>" for i in range(n))
+
+
+def sparql_insert_data(n: int) -> str:
+    return "INSERT DATA {\n%s}\n" % "".join(
+        f'  <{EX}s{i}> <{EX}p> "value {i}" .\n' for i in range(n))
 
 
 def turtle_object_list(n: int) -> str:
@@ -301,6 +330,11 @@ ROWS = {
         lambda p: [str(BIN), "query",
                    str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
                    "--query", str(p), "--format", "nquads"]),
+    "sparql-update-insert": (
+        2000,
+        lambda n: fixture(f"sparql-insert-data-{n}.ru", lambda: sparql_insert_data(n)),
+        lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
+                   "--update", str(p), "--format", "nquads"]),
     "shacl-person": (
         500,
         lambda n: bl.shacl_manifest(*bl.gen_shacl(n)),
@@ -445,14 +479,21 @@ def cl_prefix(n: int) -> Path:
 SERIES_ROWS = {
     "owl-consistent-cl": (
         10000, cl_prefix,
-        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true"),
+        lambda p: [str(BIN), "owl-consistent", str(p), "--format", "nquads"], "true",
+        CL_SOURCE),
+    "sparql-tokenize": (
+        2000,
+        lambda n: fixture(f"sparql-values-ask-{n}.rq", lambda: sparql_values_ask(n)),
+        lambda p: [str(BIN), "query",
+                   str(fixture("one-triple.nq", lambda: f"<{EX}s> <{EX}p> <{EX}o> .\n")),
+                   "--query", str(p), "--format", "nquads"], "true", None),
 }
 
 
 def series_row(rid, runs):
-    x, make, cmd, first = SERIES_ROWS[rid]
-    if not CL_SOURCE.exists():
-        return False, f"{CL_SOURCE} missing"
+    x, make, cmd, first, needs = SERIES_ROWS[rid]
+    if needs is not None and not needs.exists():
+        return False, f"{needs} missing"
     pts = []
     for n in (x, 2 * x, 4 * x):
         best = None

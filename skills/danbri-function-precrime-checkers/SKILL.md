@@ -763,3 +763,49 @@ Rules from this work:
   chain of blank nodes that share one first-degree hash makes RDFC-1.0
   §4.4 explore every member (300, 600, 900 nodes: 7.7, 30.9, 49.6 s).
   A loop does not repair either; each issue says so.
+
+## Three scaling expected failures removed (OKR batch 1 KR 2.5, 2026-10-13)
+
+### The SPARQL tokenizer took three length walks per token (https://github.com/danbri/factoidal/issues/802)
+
+`tokenizeLoop` tested progress with `rest.length ≥ cs.length`, and `skipWs`
+seeded its fuel with `cs.length + 1`: three walks over the rest of the request
+per token. The repair (`formal/lean4/L4Factoidal/SPARQL/Tokenizer.lean`) keeps
+both readable definitions. `skipWsLoop` scans whitespace and comments with a
+flag and no fuel (`skipWs_eq_fast`, a `csimp` placed before `nextToken`, so
+the compiled `nextToken` calls it). `nextToken_len` proves that one token moves
+the position by the characters it consumes, or uses up the input; so the
+length test is the F* test `pos' ≤ pos` (`nextToken_progress`), and
+`tokenizeLoopFast` with that test is `tokenizeLoop` (`tokenizeLoop_eq_fast`,
+`csimp` on `tokenize`, `tokenize12` and `tokenizeAt`).
+
+| `l4factoidal`, one run per point | 1,000 | 2,000 | 4,000 | 8,000 |
+|---|---:|---:|---:|---:|
+| `update` INSERT DATA, n triples, before | 0.76 s | 3.27 s | 13.25 s | 89.4 s |
+| the same, after | 0.11 s | 0.16 s | 0.51 s | 2.27 s |
+| `query` ASK with VALUES of n IRIs, before (CPU) | | 0.52 s | 1.92 s | 6.97 s |
+| the same, after (CPU, minimum of 3) | | 0.017 s | 0.024 s | 0.062 s |
+| `l4sbm11 update`, SBM11 store of 600,001 quads | | | DELETE DATA 0.49 s | INSERT DATA 1.60 s |
+
+The update row is still quadratic after the repair, from a second cost:
+the parser appends each triple to the end of the block's BGP list
+(`ggpAddTriple`, `.bgp (ts ++ [tp])`). It is the `lean_scaling.py` row
+`sparql-update-insert`, an expected failure naming
+https://github.com/danbri/factoidal/issues/821. The tokenizer row is
+`sparql-tokenize`. The `tests/stack` case `sbm11-delta` now sends 4,000 and
+8,000 quads (it sent 1,000 and 2,000 because of this cost).
+
+Rules from this repair:
+
+- **A length in a loop's guard is a walk per iteration.** `rest.length ≥
+  cs.length` reads as a comparison and costs two list walks. Compare positions
+  or counters that the loop already carries, and prove them equal to the
+  readable test.
+- **A fixed fuel can stop a row before it shows its curve.** At 16,000 VALUES
+  the row failed with "recursion limit" (the constant 10,000 of
+  https://github.com/danbri/factoidal/issues/818), not with a time. Choose the
+  sizes below such a limit, or repair the limit first.
+- **Make the per-item cost large enough to see.** With integers in the VALUES
+  block the base tokenizer gave ratios of 2.8 and 3.2 per doubling, 9.1 for
+  4x: a pass or a fail by noise. With 40-character IRIs it gave 3.7 and 3.6,
+  13.4 for 4x.
