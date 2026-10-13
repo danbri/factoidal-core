@@ -48,6 +48,8 @@ reads the `"I"` prefix to skip blank-node keys, because a blank node
 typed both `owl:Class` and `owl:Restriction` is legitimate.
 -/
 import L4Factoidal.RDF.Graph
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace L4Factoidal.OWL.SyntaxDL
 
@@ -1323,5 +1325,745 @@ reason `speciesIsDl` takes five arguments. -/
          (okGraph ++ [tr (ex "a") (ex "undeclared") (ex "b")])
 
 end Checks
+
+
+/-! ## The species check with indexes (https://github.com/danbri/factoidal/issues/766)
+
+The definitions above are the specification. They read the graph with list
+scans: `hasTripleSp`, `findObjectSp` and `countSp` scan every triple for one
+(subject, predicate) pair, `DeclIndex` membership scans a list of keys, and
+the anonymous-individual check counts the named links of each blank node with
+one scan of the graph per node. On QUDT 3.4.0 (130,404 triples, 4,860 blank
+nodes in object property assertions) the check took 241 s, 225 s of it in the
+named-link counts, and the time grew 34 times from 32,000 to 65,000 lines.
+
+The twins below compute the same lists with three indexes built once per
+graph: `spIndexOf` (subject key and predicate to the objects, in graph
+order), `DeclSets` (the `DeclIndex` lists as hash sets) and `namedLinkCounts`
+(the named-link count of every key). Each twin is proved equal to its
+specification; `@[csimp]` theorems at the end make the compiler emit the
+twins wherever the source calls `graphBodyViolations`, `speciesViolations`,
+`speciesIsDl`, `speciesViolationsFunctional` or `speciesIsDlFunctional`. -/
+
+/-! ### Subject-predicate index -/
+
+/-- Objects of each (subject key, predicate IRI) pair, in graph order. -/
+abbrev SpIndex := Std.HashMap (String × String) (List Term)
+
+def spIndexOf (g : Graph) : SpIndex :=
+  g.foldr (fun t m =>
+    m.insert (subjKey t.s, t.p.val) (t.o :: m.getD (subjKey t.s, t.p.val) [])) ∅
+
+/-- The (subject key, predicate) selector the scans use. -/
+def spSel (sk p : String) (t : Triple) : Bool := t.p.val == p && subjKey t.s == sk
+
+theorem spIndexOf_getD (g : Graph) (sk p : String) :
+    (spIndexOf g).getD (sk, p) [] = (g.filter (spSel sk p)).map (·.o) := by
+  induction g with
+  | nil => simp [spIndexOf]
+  | cons t rest ih =>
+      unfold spIndexOf at ih ⊢
+      rw [List.foldr_cons, Std.HashMap.getD_insert, List.filter_cons]
+      by_cases h : spSel sk p t = true
+      · have hk : (subjKey t.s, t.p.val) = (sk, p) := by
+          simp only [spSel, Bool.and_eq_true, beq_iff_eq] at h
+          rw [h.1, h.2]
+        rw [hk, ih]
+        simp [h]
+      · have hk : ((subjKey t.s, t.p.val) == (sk, p)) = false := by
+          simp only [spSel, Bool.and_eq_true, beq_iff_eq, not_and] at h
+          simp only [beq_eq_false_iff_ne, ne_eq, Prod.mk.injEq, not_and]
+          intro h1 h2
+          exact h h2 h1
+        rw [hk, ih]
+        simp [h]
+
+def hasTripleSpI (ix : SpIndex) (sk p : String) : Bool := !(ix.getD (sk, p) []).isEmpty
+
+def findObjectSpI (ix : SpIndex) (sk p : String) : Option Term := (ix.getD (sk, p) []).head?
+
+def countSpI (ix : SpIndex) (sk p : String) : Nat := (ix.getD (sk, p) []).length
+
+def hasTypeSpI (ix : SpIndex) (sk ty : String) : Bool :=
+  (ix.getD (sk, rdfTypeP) []).any (fun o => termIsIri o ty)
+
+private theorem any_eq_not_isEmpty_filter (l : List Triple) (f : Triple → Bool) :
+    l.any f = !(l.filter f).isEmpty := by
+  induction l with
+  | nil => rfl
+  | cons t rest ih => by_cases h : f t = true <;> simp [h, ih]
+
+theorem hasTripleSpI_eq (g : Graph) (sk p : String) :
+    hasTripleSpI (spIndexOf g) sk p = hasTripleSp g sk p := by
+  unfold hasTripleSpI hasTripleSp
+  rw [spIndexOf_getD, any_eq_not_isEmpty_filter, List.isEmpty_map]
+  rfl
+
+theorem findObjectSpI_eq (g : Graph) (sk p : String) :
+    findObjectSpI (spIndexOf g) sk p = findObjectSp g sk p := by
+  unfold findObjectSpI findObjectSp
+  rw [spIndexOf_getD, List.head?_map, List.head?_filter]
+  rfl
+
+theorem countSpI_eq (g : Graph) (sk p : String) :
+    countSpI (spIndexOf g) sk p = countSp g sk p := by
+  unfold countSpI countSp
+  rw [spIndexOf_getD, List.length_map]
+  rfl
+
+theorem hasTypeSpI_eq (g : Graph) (sk ty : String) :
+    hasTypeSpI (spIndexOf g) sk ty = hasTypeSp g sk ty := by
+  unfold hasTypeSpI hasTypeSp
+  rw [spIndexOf_getD]
+  induction g with
+  | nil => rfl
+  | cons t rest ih =>
+      by_cases h : spSel sk rdfTypeP t = true
+      · simp only [spSel, Bool.and_eq_true, beq_iff_eq] at h
+        simp [spSel, h, ih]
+      · simp only [spSel, Bool.and_eq_true, beq_iff_eq, not_and] at h
+        by_cases h1 : t.p.val = rdfTypeP
+        · have h2 := h h1
+          simp [spSel, h1, h2, ih]
+        · simp [spSel, h1, ih]
+
+/-! ### Declaration sets -/
+
+structure DeclSets where
+  cls      : Std.HashSet String
+  restr    : Std.HashSet String
+  datatype : Std.HashSet String
+  objProp  : Std.HashSet String
+  dataProp : Std.HashSet String
+  annProp  : Std.HashSet String
+  charProp : Std.HashSet String
+  hasDR    : Std.HashSet String
+  inv      : Std.HashSet String
+  annSubj  : Std.HashSet String
+
+def DeclIndex.sets (d : DeclIndex) : DeclSets :=
+  { cls := .ofList d.cls, restr := .ofList d.restr, datatype := .ofList d.datatype
+  , objProp := .ofList d.objProp, dataProp := .ofList d.dataProp
+  , annProp := .ofList d.annProp, charProp := .ofList d.charProp
+  , hasDR := .ofList d.hasDR, inv := .ofList d.inv, annSubj := .ofList d.annSubj }
+
+theorem setContains (l : List String) (k : String) :
+    (Std.HashSet.ofList l).contains k = l.contains k := Std.HashSet.contains_ofList
+
+def propEvidenceS (s : DeclSets) (k : String) : Bool :=
+  s.objProp.contains k || s.dataProp.contains k || s.annProp.contains k ||
+  s.inv.contains k ||
+  (s.charProp.contains k && (s.hasDR.contains k || s.inv.contains k))
+
+theorem propEvidenceS_eq (d : DeclIndex) (k : String) :
+    propEvidenceS d.sets k = propEvidence d k := by
+  simp [propEvidenceS, propEvidence, DeclIndex.sets]
+
+def classEvidenceI (ix : SpIndex) (s : DeclSets) (k : String) : Bool :=
+  s.cls.contains k || s.datatype.contains k || s.restr.contains k ||
+  hasTripleSpI ix k owlIntersectionOfP || hasTripleSpI ix k owlUnionOfP ||
+  hasTripleSpI ix k owlComplementOfP || hasTripleSpI ix k owlOneOfP ||
+  hasTripleSpI ix k owlOnPropertyP
+
+theorem classEvidenceI_eq (g : Graph) (d : DeclIndex) (k : String) :
+    classEvidenceI (spIndexOf g) d.sets k = classEvidence g d k := by
+  simp [classEvidenceI, classEvidence, DeclIndex.sets, hasTripleSpI_eq]
+
+def datatypeEvidenceI (ix : SpIndex) (s : DeclSets) (dt : String) : Bool :=
+  builtinDatatypes.contains dt ||
+  s.cls.contains ("I" ++ dt) ||
+  hasTripleSpI ix ("I" ++ dt) owlEquivClassP ||
+  hasTripleSpI ix ("I" ++ dt) owlOnDatatypeP ||
+  hasTripleSpI ix ("I" ++ dt) owlOneOfP
+
+theorem datatypeEvidenceI_eq (g : Graph) (d : DeclIndex) (dt : String) :
+    datatypeEvidenceI (spIndexOf g) d.sets dt = datatypeEvidence g d dt := by
+  simp [datatypeEvidenceI, datatypeEvidence, DeclIndex.sets, hasTripleSpI_eq]
+
+/-- `collectionMembers` with the index, as a loop: the members so far are
+kept in reverse in `acc`, so a long RDF list costs no stack. -/
+def collectionMembersLoop (ix : SpIndex) : Term → Nat → List Term → List Term
+  | _, 0, acc => acc.reverse
+  | node, f + 1, acc =>
+      match termKeyDl node with
+      | none => acc.reverse
+      | some nk =>
+          if termIsIri node rdfNilI then acc.reverse
+          else match findObjectSpI ix nk rdfFirstP with
+               | none => acc.reverse
+               | some first =>
+                   match findObjectSpI ix nk rdfRestP with
+                   | none => (first :: acc).reverse
+                   | some rest => collectionMembersLoop ix rest f (first :: acc)
+
+def collectionMembersI (ix : SpIndex) (node : Term) (fuel : Nat) : List Term :=
+  collectionMembersLoop ix node fuel []
+
+private theorem collectionMembersLoop_eq (g : Graph) (node : Term) (fuel : Nat)
+    (acc : List Term) :
+    collectionMembersLoop (spIndexOf g) node fuel acc
+      = acc.reverse ++ collectionMembers g node fuel := by
+  induction fuel generalizing node acc with
+  | zero => simp [collectionMembersLoop, collectionMembers]
+  | succ f ih =>
+      unfold collectionMembersLoop collectionMembers
+      cases termKeyDl node with
+      | none => simp
+      | some nk =>
+          simp only [findObjectSpI_eq]
+          cases findObjectSp g nk rdfFirstP <;> cases findObjectSp g nk rdfRestP <;>
+            by_cases hn : termIsIri node rdfNilI = true <;> simp [ih, hn]
+
+theorem collectionMembersI_eq (g : Graph) (node : Term) (fuel : Nat) :
+    collectionMembersI (spIndexOf g) node fuel = collectionMembers g node fuel := by
+  unfold collectionMembersI
+  rw [collectionMembersLoop_eq]
+  simp
+
+/-! ### Duplicate removal -/
+
+/-- `dedupStrs` with a hash set: the last occurrence of each string, in
+order. -/
+def dedupStrsFast (l : List String) : List String :=
+  (l.foldr (fun x (acc : Std.HashSet String × List String) =>
+    if acc.1.contains x then acc else (acc.1.insert x, x :: acc.2)) (∅, [])).2
+
+private theorem dedupFold (l : List String) :
+    (∀ y, (l.foldr (fun x (acc : Std.HashSet String × List String) =>
+      if acc.1.contains x then acc else (acc.1.insert x, x :: acc.2)) (∅, [])).1.contains y
+        = l.contains y) ∧
+    (l.foldr (fun x (acc : Std.HashSet String × List String) =>
+      if acc.1.contains x then acc else (acc.1.insert x, x :: acc.2)) (∅, [])).2
+        = dedupStrs l := by
+  induction l with
+  | nil => exact ⟨fun y => by simp, rfl⟩
+  | cons x rest ih =>
+      obtain ⟨h1, h2⟩ := ih
+      rw [List.foldr_cons]
+      by_cases hx : rest.contains x = true
+      · have hc : (rest.foldr (fun x (acc : Std.HashSet String × List String) =>
+            if acc.1.contains x then acc else (acc.1.insert x, x :: acc.2)) (∅, [])).1.contains x
+              = true := by rw [h1]; exact hx
+        simp only [hc, if_true]
+        refine ⟨fun y => ?_, ?_⟩
+        · rw [h1, List.contains_cons]
+          by_cases hy : y = x
+          · subst hy; rw [hx]; simp
+          · simp [hy]
+        · rw [h2, dedupStrs.eq_2, if_pos hx]
+      · have hc : (rest.foldr (fun x (acc : Std.HashSet String × List String) =>
+            if acc.1.contains x then acc else (acc.1.insert x, x :: acc.2)) (∅, [])).1.contains x
+              = false := by rw [h1]; simpa using hx
+        simp only [hc, Bool.false_eq_true, if_false]
+        refine ⟨fun y => ?_, ?_⟩
+        · rw [Std.HashSet.contains_insert, h1, List.contains_cons]
+          by_cases hy : y = x
+          · subst hy; simp
+          · have : (x == y) = false := by simp; exact fun h => hy h.symm
+            simp [this, hy]
+        · rw [h2, dedupStrs.eq_2, if_neg hx]
+
+theorem dedupStrsFast_eq (l : List String) : dedupStrsFast l = dedupStrs l :=
+  (dedupFold l).2
+
+/-! ### Named links of the anonymous individual graph -/
+
+/-- One or two optional keys as a list without repeats. -/
+def keysOf : Option String → Option String → List String
+  | some a, some b => if a == b then [a] else [a, b]
+  | some a, none => [a]
+  | none, some b => [b]
+  | none, none => []
+
+theorem keysOf_count (k1 k2 : Option String) (k : String) :
+    (keysOf k1 k2).count k = if (k1 == some k || k2 == some k) then 1 else 0 := by
+  cases k1 <;> cases k2 <;> simp only [keysOf, List.count_cons, List.count_nil]
+  · simp
+  · rename_i b; by_cases h : b = k <;> simp [h]
+  · rename_i a; by_cases h : a = k <;> simp [h]
+  · rename_i a b
+    by_cases hab : a = b
+    · subst hab; by_cases h : a = k <;> simp [h]
+    · have hab' : (a == b) = false := by simpa using hab
+      rw [if_neg (by simp [hab'])]
+      simp only [List.count_cons, List.count_nil]
+      by_cases ha : a = k <;> by_cases hb : b = k <;> simp_all
+
+/-- The keys whose named-link count the triple `t` raises by one (the
+selector of `anonymousIndividualViolations`' `namedLinks`): its subject when
+the object is an IRI, its object when the subject is an IRI, each once. -/
+def linkKeys (t : Triple) : List String :=
+  keysOf (match t.o with | .iri _ => some (subjKey t.s) | _ => none)
+    (match t.s with | .iri _ => termKeyDl t.o | _ => none)
+
+/-- The selector of `namedLinks k`, without the assertion test. -/
+def linkSel (k : String) (t : Triple) : Bool :=
+  (subjKey t.s == k && (match t.o with | .iri _ => true | _ => false)) ||
+  (termKeyDl t.o == some k && (match t.s with | .iri _ => true | _ => false))
+
+theorem linkKeys_count (t : Triple) (k : String) :
+    (linkKeys t).count k = if linkSel k t then 1 else 0 := by
+  unfold linkKeys
+  rw [keysOf_count]
+  congr 1
+  unfold linkSel
+  cases t.s <;> cases t.o <;> simp
+
+def bumpKey (m : Std.HashMap String Nat) (k : String) : Std.HashMap String Nat :=
+  m.insert k (m.getD k 0 + 1)
+
+private theorem bumpKeys_getD (ks : List String) (m : Std.HashMap String Nat) (k : String) :
+    (ks.foldl bumpKey m).getD k 0 = m.getD k 0 + ks.count k := by
+  induction ks generalizing m with
+  | nil => simp
+  | cons a rest ih =>
+      rw [List.foldl_cons, ih, List.count_cons]
+      unfold bumpKey
+      rw [Std.HashMap.getD_insert]
+      by_cases h : a = k
+      · subst h; simp; omega
+      · have : (a == k) = false := by simpa using h
+        simp [this]
+
+/-- Each key's number of named links among the triples that pass `a`. -/
+def namedLinkCounts (a : Triple → Bool) (g : Graph) : Std.HashMap String Nat :=
+  g.foldl (fun m t => if a t then (linkKeys t).foldl bumpKey m else m) ∅
+
+private theorem namedLinkCounts_fold (a : Triple → Bool) (g : Graph)
+    (m : Std.HashMap String Nat) (k : String) :
+    (g.foldl (fun m t => if a t then (linkKeys t).foldl bumpKey m else m) m).getD k 0
+      = m.getD k 0 + (g.filter (fun t => a t && linkSel k t)).length := by
+  induction g generalizing m with
+  | nil => simp
+  | cons t rest ih =>
+      rw [List.foldl_cons, ih, List.filter_cons]
+      by_cases ha : a t = true
+      · simp only [ha, if_true, bumpKeys_getD, linkKeys_count, Bool.true_and]
+        by_cases hl : linkSel k t = true
+        · simp [hl]; omega
+        · simp [hl]
+      · simp [ha]
+
+theorem namedLinkCounts_getD (a : Triple → Bool) (g : Graph) (k : String) :
+    (namedLinkCounts a g).getD k 0 = (g.filter (fun t => a t && linkSel k t)).length := by
+  unfold namedLinkCounts
+  rw [namedLinkCounts_fold]
+  simp
+
+/-! ### Table 5 -/
+
+def table5RedundantI (ix : SpIndex) (t : Triple) : Bool :=
+  if t.p.val != rdfTypeP then false
+  else match t.o with
+  | .iri o =>
+      let sk := subjKey t.s
+      if o.val == rdfsClassC then
+        hasTypeSpI ix sk owlClassC || hasTypeSpI ix sk rdfsDatatypeC ||
+        hasTypeSpI ix sk owlDataRangeC || hasTypeSpI ix sk owlRestrictionC
+      else if o.val == owlClassC then hasTypeSpI ix sk owlRestrictionC
+      else if o.val == rdfPropertyC then propertyTypings.any (hasTypeSpI ix sk)
+      else if o.val == rdfListC then
+        hasTripleSpI ix sk rdfFirstP && hasTripleSpI ix sk rdfRestP
+      else false
+  | _ => false
+
+theorem table5RedundantI_eq (g : Graph) (t : Triple) :
+    table5RedundantI (spIndexOf g) t = table5Redundant g t := by
+  unfold table5RedundantI table5Redundant
+  have hty : hasTypeSpI (spIndexOf g) = hasTypeSp g := by
+    funext sk ty; exact hasTypeSpI_eq g sk ty
+  simp only [hty, hasTripleSpI_eq] <;> rfl
+
+def dropTable5RedundantI (g : Graph) : Graph :=
+  let ix := spIndexOf g
+  g.filter (fun t => !table5RedundantI ix t)
+
+theorem dropTable5RedundantI_eq (g : Graph) : dropTable5RedundantI g = dropTable5Redundant g := by
+  simp only [dropTable5RedundantI, dropTable5Redundant, table5RedundantI_eq]
+
+/-! ### Per-triple checks -/
+
+def tripleViolationsI (g : Graph) (ix : SpIndex) (s : DeclSets) (t : Triple) : List String :=
+  let v1 :=
+    match t.s with
+    | .iri i =>
+        if iriReserved i.val && !(subjectWhitelist.contains i.val)
+        then ["reserved-vocabulary-subject: " ++ i.val] else []
+    | _ => []
+  let v2 :=
+    if iriReserved t.p.val then []
+    else if builtinAnnProps.contains t.p.val || builtinProps.contains t.p.val then []
+    else if propEvidenceS s ("I" ++ t.p.val) then []
+    else if s.annSubj.contains (subjKey t.s) then []
+    else ["untyped-predicate: " ++ t.p.val]
+  let v3 :=
+    if t.p.val != rdfTypeP then []
+    else match t.o with
+    | .literal _ => ["literal-as-type-object"]
+    | .tripleTerm _ _ _ => ["triple-term-as-type-object"]
+    | .bnode b =>
+        if classEvidenceI ix s ("B" ++ b) then [] else ["undefined-bnode-class-expression"]
+    | .iri o =>
+        if iriReserved o.val then
+          (if typeObjectWhitelist.contains o.val then []
+           else ["reserved-vocabulary-as-class: " ++ o.val])
+        else if classEvidenceI ix s ("I" ++ o.val) then []
+        else ["untyped-class: " ++ o.val]
+  let v4 :=
+    if t.p.val != owlOnPropertyP then []
+    else match t.o with
+    | .literal _ => ["literal-as-onProperty"]
+    | .tripleTerm _ _ _ => ["triple-term-as-onProperty"]
+    | .bnode b => if s.inv.contains ("B" ++ b) then [] else ["undefined-bnode-onProperty"]
+    | .iri o =>
+        if builtinProps.contains o.val then []
+        else if iriReserved o.val then ["reserved-vocabulary-as-onProperty: " ++ o.val]
+        else if propEvidenceS s ("I" ++ o.val) then []
+        else ["untyped-onProperty: " ++ o.val]
+  let v5 :=
+    match t.o with
+    | .literal _ =>
+        if s.objProp.contains ("I" ++ t.p.val)
+        then ["object-property-with-literal-object: " ++ t.p.val] else []
+    | _ => []
+  let v6 :=
+    match t.o with
+    | .literal l =>
+        let dt := l.val.datatype.val
+        if datatypeEvidenceI ix s dt then []
+        else if iriReserved dt then ["reserved-vocabulary-as-datatype: " ++ dt]
+        else ["undefined-datatype: " ++ dt]
+    | _ => []
+  let v7 :=
+    if (t.p.val == rdfsRangeP && s.dataProp.contains (subjKey t.s))
+       || t.p.val == owlOnDatatypeP then
+      match t.o with
+      | .iri o =>
+          if datatypeEvidenceI ix s o.val then []
+          else if iriReserved o.val then ["reserved-vocabulary-as-datatype: " ++ o.val]
+          else ["undefined-datatype: " ++ o.val]
+      | _ => []
+    else []
+  let v8 :=
+    if t.p.val == rdfFirstP || t.p.val == rdfRestP then
+      let sk := subjKey t.s
+      if countSpI ix sk rdfFirstP == 1 && countSpI ix sk rdfRestP == 1 then []
+      else ["malformed-rdf-list-node"]
+    else []
+  let v9 :=
+    if t.p.val == owlChainP then
+      let members := collectionMembersI ix t.o g.length
+      let interior := match members with
+                      | [] => []
+                      | _ :: tl => dropLastTerm tl
+      let self := subjKey t.s
+      if interior.any (fun m => termKeyDl m == some self)
+      then ["property-inside-own-chain: " ++ self] else []
+    else []
+  v1 ++ v2 ++ v3 ++ v4 ++ v5 ++ v6 ++ v7 ++ v8 ++ v9
+
+theorem tripleViolationsI_eq (g : Graph) (d : DeclIndex) (t : Triple) :
+    tripleViolationsI g (spIndexOf g) d.sets t = tripleViolations g d t := by
+  have hp : propEvidenceS d.sets = propEvidence d := funext (propEvidenceS_eq d)
+  have hc : classEvidenceI (spIndexOf g) d.sets = classEvidence g d :=
+    funext (classEvidenceI_eq g d)
+  have hd : datatypeEvidenceI (spIndexOf g) d.sets = datatypeEvidence g d :=
+    funext (datatypeEvidenceI_eq g d)
+  have hn : countSpI (spIndexOf g) = countSp g := by
+    funext sk p; exact countSpI_eq g sk p
+  have hm : collectionMembersI (spIndexOf g) = collectionMembers g := by
+    funext n f; exact collectionMembersI_eq g n f
+  unfold tripleViolationsI tripleViolations
+  rw [hp, hc, hd, hn, hm]
+  simp only [DeclIndex.sets, setContains] <;> rfl
+
+/-! ### Punning -/
+
+def punningHereS (s : DeclSets) (k : String) : List String :=
+  if !(k.startsWith "I") then []
+  else
+    (if s.cls.contains k && s.datatype.contains k
+     then ["illegal-punning-class-datatype: " ++ k] else []) ++
+    (if s.objProp.contains k && s.dataProp.contains k
+     then ["illegal-punning-object-data-property: " ++ k] else []) ++
+    (if s.objProp.contains k && s.annProp.contains k
+     then ["illegal-punning-object-annotation-property: " ++ k] else []) ++
+    (if s.dataProp.contains k && s.annProp.contains k
+     then ["illegal-punning-data-annotation-property: " ++ k] else [])
+
+def punningViolationsS (d : DeclIndex) (s : DeclSets) : List String :=
+  (dedupStrsFast (d.cls ++ d.objProp ++ d.dataProp)).flatMap (punningHereS s)
+
+private theorem punningKeys_flatMap (d : DeclIndex) (ks : List String) :
+    punningViolationsKeys d ks = ks.flatMap (punningHereS d.sets) := by
+  induction ks with
+  | nil => rfl
+  | cons k rest ih =>
+      rw [punningViolationsKeys, List.flatMap_cons, ih]
+      simp only [punningHereS, DeclIndex.sets, setContains]
+
+theorem punningViolationsS_eq (d : DeclIndex) :
+    punningViolationsS d d.sets = punningViolations d := by
+  unfold punningViolationsS punningViolations
+  rw [dedupStrsFast_eq, punningKeys_flatMap]
+
+/-! ### Simple roles -/
+
+def opeOfTermI (ix : SpIndex) (t : Term) : Option Ope :=
+  match t with
+  | .iri i => some ⟨"I" ++ i.val, false⟩
+  | .bnode b =>
+      match findObjectSpI ix ("B" ++ b) owlInverseOfP with
+      | some (.iri p) => some ⟨"I" ++ p.val, true⟩
+      | _ => none
+  | _ => none
+
+theorem opeOfTermI_eq (g : Graph) (t : Term) : opeOfTermI (spIndexOf g) t = opeOfTerm g t := by
+  unfold opeOfTermI opeOfTerm
+  simp only [findObjectSpI_eq] <;> rfl
+
+def simpleRoleViolationsI (g : Graph) (ix : SpIndex) (ns : List String) : List String :=
+  let keyOfTerm := fun (t : Term) => (opeOfTermI ix t).map (·.key)
+  let restrictions := (dedupStrsFast (subjectsOfP g owlOnPropertyP)).flatMap (fun r =>
+    if cardinalityPreds.any (fun cp => hasTripleSpI ix r cp) || hasTripleSpI ix r owlHasSelfP then
+      match (findObjectSpI ix r owlOnPropertyP).bind keyOfTerm with
+      | some k => if ns.contains k then ["non-simple-property-in-restriction: " ++ k] else []
+      | none => []
+    else [])
+  let characteristics :=
+    [nsOwl ++ "FunctionalProperty", nsOwl ++ "InverseFunctionalProperty",
+     nsOwl ++ "IrreflexiveProperty", nsOwl ++ "AsymmetricProperty"].flatMap (fun ty =>
+      (subjectsTyped g ty).flatMap (fun k =>
+        if ns.contains k then ["non-simple-property-in-characteristic: " ++ k] else []))
+  let disjoint := g.flatMap (fun t =>
+    if t.p.val == owlPropDisjointP then
+      [opeOfTermI ix (subjTermDl t.s), opeOfTermI ix t.o].flatMap (fun o? =>
+        match o? with
+        | some o => if ns.contains o.key then ["non-simple-property-in-disjointness: " ++ o.key] else []
+        | none => [])
+    else [])
+  let allDisjoint := (subjectsTyped g (nsOwl ++ "AllDisjointProperties")).flatMap (fun n =>
+    match findObjectSpI ix n owlMembersP with
+    | some l =>
+        (collectionMembersI ix l g.length).flatMap (fun m =>
+          match keyOfTerm m with
+          | some k => if ns.contains k then ["non-simple-property-in-disjointness: " ++ k] else []
+          | none => [])
+    | none => [])
+  restrictions ++ characteristics ++ disjoint ++ allDisjoint
+
+theorem simpleRoleViolationsI_eq (g : Graph) (ns : List String) :
+    simpleRoleViolationsI g (spIndexOf g) ns = simpleRoleViolations g ns := by
+  have ho : opeOfTermI (spIndexOf g) = opeOfTerm g := funext (opeOfTermI_eq g)
+  have hh : hasTripleSpI (spIndexOf g) = hasTripleSp g := by
+    funext sk p; exact hasTripleSpI_eq g sk p
+  have hf : findObjectSpI (spIndexOf g) = findObjectSp g := by
+    funext sk p; exact findObjectSpI_eq g sk p
+  have hm : collectionMembersI (spIndexOf g) = collectionMembers g := by
+    funext n f; exact collectionMembersI_eq g n f
+  unfold simpleRoleViolationsI simpleRoleViolations
+  simp only [ho, hh, hf, hm, dedupStrsFast_eq, opeOfSubject] <;> rfl
+
+/-! ### Anonymous individuals -/
+
+private theorem any_contains_flatten (comps : List (List String)) (v : String) :
+    comps.any (fun c => c.contains v) = comps.flatten.contains v := by
+  induction comps with
+  | nil => rfl
+  | cons c rest ih => rw [List.any_cons, List.flatten_cons, List.contains_append, ih]
+
+def anonymousIndividualViolationsI (g : Graph) (ix : SpIndex) (s : DeclSets) : List String :=
+  let sameDiff := g.filterMap (fun t =>
+    if (t.p.val == owlSameAsP || t.p.val == owlDifferentFromP) &&
+       (isBnodeSubject t.s || isBnodeTerm t.o)
+    then some "anonymous-individual-in-sameAs-or-differentFrom" else none)
+  let allDifferent := (subjectsTyped g (nsOwl ++ "AllDifferent")).flatMap (fun n =>
+    [owlMembersP, owlDistinctMembersP].flatMap (fun p =>
+      match findObjectSpI ix n p with
+      | some l =>
+          if (collectionMembersI ix l g.length).any isBnodeTerm
+          then ["anonymous-individual-in-AllDifferent"] else []
+      | none => []))
+  let negative := (subjectsTyped g (nsOwl ++ "NegativePropertyAssertion")).flatMap (fun n =>
+    [owlSourceIndP, owlTargetIndP].flatMap (fun p =>
+      match findObjectSpI ix n p with
+      | some (.bnode _) => ["anonymous-individual-in-negative-assertion"]
+      | _ => []))
+  let oneOf := g.filterMap (fun t =>
+    if t.p.val == owlOneOfP && !(s.datatype.contains (subjKey t.s)) &&
+       (collectionMembersI ix t.o g.length).any isBnodeTerm
+    then some "anonymous-individual-in-ObjectOneOf" else none)
+  let hasValue := g.filterMap (fun t =>
+    if t.p.val == owlHasValueP && isBnodeTerm t.o
+    then some "anonymous-individual-in-ObjectHasValue" else none)
+  let assertion := fun (t : Triple) => s.objProp.contains ("I" ++ t.p.val)
+  let edges : List (String × String) := g.filterMap (fun t =>
+    match t.s, t.o with
+    | .bnode a, .bnode b => if assertion t then some ("B" ++ a, "B" ++ b) else none
+    | _, _ => none)
+  let counts := namedLinkCounts assertion g
+  let verts : List String := dedupStrsFast (g.flatMap (fun t =>
+    if assertion t then
+      (match t.s with | .bnode b => ["B" ++ b] | _ => []) ++
+      (match t.o with | .bnode b => ["B" ++ b] | _ => [])
+    else []))
+  let forest :=
+    match componentsOf edges with
+    | none => ["anonymous-individuals-not-a-forest"]
+    | some comps =>
+        let inComps : Std.HashSet String := .ofList comps.flatten
+        let isolated := verts.filter (fun v => !(inComps.contains v))
+        (comps ++ isolated.map (fun v => [v])).filterMap (fun c =>
+          if c.any (fun v => counts.getD v 0 ≤ 1) then none
+          else some "anonymous-individual-tree-without-leaf")
+  sameDiff ++ allDifferent ++ negative ++ oneOf ++ hasValue ++ forest
+
+theorem anonymousIndividualViolationsI_eq (g : Graph) (d : DeclIndex) :
+    anonymousIndividualViolationsI g (spIndexOf g) d.sets = anonymousIndividualViolations g d := by
+  have hf : findObjectSpI (spIndexOf g) = findObjectSp g := by
+    funext sk p; exact findObjectSpI_eq g sk p
+  have hm : collectionMembersI (spIndexOf g) = collectionMembers g := by
+    funext n f; exact collectionMembersI_eq g n f
+  have hc : ∀ (a : Triple → Bool) (k : String),
+      (namedLinkCounts a g).getD k 0 = (g.filter (fun t => a t && linkSel k t)).length :=
+    fun a k => namedLinkCounts_getD a g k
+  unfold anonymousIndividualViolationsI anonymousIndividualViolations
+  simp only [hf, hm, hc, dedupStrsFast_eq, DeclIndex.sets, setContains, linkSel,
+    any_contains_flatten] <;> rfl
+
+/-! ### The body, and the species verdict -/
+
+def globalRestrictionViolationsI (g : Graph) (ix : SpIndex) (d : DeclIndex) (s : DeclSets) :
+    List String :=
+  let ns := nonsimpleKeys g
+  topDataViolations g ++ datatypeDefinitionViolations g d ++
+  simpleRoleViolationsI g ix ns ++ regularityViolations g ++
+  anonymousIndividualViolationsI g ix s
+
+theorem globalRestrictionViolationsI_eq (g : Graph) (d : DeclIndex) :
+    globalRestrictionViolationsI g (spIndexOf g) d d.sets = globalRestrictionViolations g d := by
+  unfold globalRestrictionViolationsI globalRestrictionViolations
+  simp only [simpleRoleViolationsI_eq, anonymousIndividualViolationsI_eq]
+
+/-- `graphBodyViolations` with the indexes. -/
+def graphBodyViolationsI (g0 : Graph) : List String :=
+  let g := dropTable5RedundantI g0
+  let d := buildDeclIndex g
+  let s := d.sets
+  let ix := spIndexOf g
+  let perTriple := g.flatMap (tripleViolationsI g ix s)
+  perTriple ++ punningViolationsS d s ++ globalRestrictionViolationsI g ix d s
+
+theorem graphBodyViolationsI_eq (g0 : Graph) : graphBodyViolationsI g0 = graphBodyViolations g0 := by
+  unfold graphBodyViolationsI graphBodyViolations
+  rw [dropTable5RedundantI_eq]
+  have ht : tripleViolationsI (dropTable5Redundant g0) (spIndexOf (dropTable5Redundant g0))
+      (buildDeclIndex (dropTable5Redundant g0)).sets
+      = tripleViolations (dropTable5Redundant g0) (buildDeclIndex (dropTable5Redundant g0)) :=
+    funext (tripleViolationsI_eq _ _)
+  simp only [ht, punningViolationsS_eq, globalRestrictionViolationsI_eq]
+
+/-! ### The twins agree with the specification on the fixtures above
+
+`graphBodyViolationsI_eq` proves it for every graph; these cases also check
+that the anonymous-individual counts see a leaf, a tree without a leaf and a
+cycle (Structural Specification §11.2), so a twin that answered `[]` for
+everything would fail the build. They come before the `csimp` theorems
+below, which would make a later comparison call the twin twice. -/
+
+section Checks
+
+private def bn (b : String) : Subject := .bnode b
+private def anonBase : Graph :=
+  okGraph ++ [tr (ex "q") rdfTypeP owlObjPropC]
+
+-- `_:x` has one named link: a leaf, no violation.
+private def anonLeaf : Graph := anonBase ++ [trb (ex "a") (ex "p") "x"]
+-- `_:x` has two named links and no other vertex: a tree without a leaf.
+private def anonNoLeaf : Graph :=
+  anonBase ++ [trb (ex "a") (ex "p") "x", ⟨bn "x", i (ex "q"), ti (ex "b")⟩]
+-- `_:x p _:y`, `_:y q _:x`: a cycle.
+private def anonCycle : Graph :=
+  anonBase ++ [⟨bn "x", i (ex "p"), .bnode "y"⟩, ⟨bn "y", i (ex "q"), .bnode "x"⟩]
+
+#guard graphBodyViolationsI okGraph == graphBodyViolations okGraph
+#guard graphBodyViolationsI okGraph == []
+#guard graphBodyViolationsI anonLeaf == graphBodyViolations anonLeaf
+#guard !(graphBodyViolationsI anonLeaf).contains "anonymous-individual-tree-without-leaf"
+#guard graphBodyViolationsI anonNoLeaf == graphBodyViolations anonNoLeaf
+#guard (graphBodyViolationsI anonNoLeaf).contains "anonymous-individual-tree-without-leaf"
+#guard graphBodyViolationsI anonCycle == graphBodyViolations anonCycle
+#guard (graphBodyViolationsI anonCycle).contains "anonymous-individuals-not-a-forest"
+#guard graphBodyViolationsI noHeader == graphBodyViolations noHeader
+#guard graphBodyViolationsI (okGraph ++ [tr (ex "a") (ex "q") (ex "b")])
+         == graphBodyViolations (okGraph ++ [tr (ex "a") (ex "q") (ex "b")])
+#guard (graphBodyViolationsI (okGraph ++ [tr (ex "a") (ex "q") (ex "b")])).any
+         (fun v => v.startsWith "untyped-predicate")
+#guard dedupStrsFast ["a", "b", "a", "c", "b"] == dedupStrs ["a", "b", "a", "c", "b"]
+#guard dedupStrsFast ["a", "b", "a", "c", "b"] == ["a", "c", "b"]
+
+end Checks
+
+/-! ### The compiler emits the twins -/
+
+def speciesViolationsFast (pDoc pMerged : Graph) (hasConclusion : Bool)
+    (cDoc uMerged : Graph) (available : Option (List String) := none) : List String :=
+  (docHeaderViolations pDoc).map (fun v => "premise: " ++ v) ++
+  (graphBodyViolationsI pMerged).map (fun v => "premise: " ++ v) ++
+  (unresolvedImportViolations available (rootOntologyKeys pDoc) pMerged).map
+    (fun v => "premise: " ++ v) ++
+  (if hasConclusion then
+     (docHeaderViolations cDoc).map (fun v => "conclusion: " ++ v) ++
+     (graphBodyViolationsI uMerged).map (fun v => "conclusion: " ++ v) ++
+     (unresolvedImportViolations available
+        (rootOntologyKeys pDoc ++ rootOntologyKeys cDoc) uMerged).map
+       (fun v => "conclusion: " ++ v)
+   else [])
+
+theorem speciesViolations_eq_fast : @speciesViolations = @speciesViolationsFast := by
+  funext pDoc pMerged hc cDoc uMerged av
+  simp only [speciesViolations, speciesViolationsFast, graphBodyViolationsI_eq]
+
+def speciesIsDlFast (pDoc pMerged : Graph) (hasConclusion : Bool)
+    (cDoc uMerged : Graph) (available : Option (List String) := none) : Bool :=
+  (speciesViolationsFast pDoc pMerged hasConclusion cDoc uMerged available).isEmpty
+
+def speciesViolationsFunctionalFast (p : Graph) (hasConclusion : Bool) (u : Graph) :
+    List String :=
+  (graphBodyViolationsI p).map (fun v => "premise: " ++ v) ++
+  (if hasConclusion then (graphBodyViolationsI u).map (fun v => "conclusion: " ++ v)
+   else [])
+
+def speciesIsDlFunctionalFast (p : Graph) (hasConclusion : Bool) (u : Graph) : Bool :=
+  (speciesViolationsFunctionalFast p hasConclusion u).isEmpty
+
+@[csimp] theorem graphBodyViolations_eq_fast : @graphBodyViolations = @graphBodyViolationsI :=
+  funext fun g => (graphBodyViolationsI_eq g).symm
+
+@[csimp] theorem speciesViolations_csimp : @speciesViolations = @speciesViolationsFast :=
+  speciesViolations_eq_fast
+
+@[csimp] theorem speciesIsDl_eq_fast : @speciesIsDl = @speciesIsDlFast := by
+  funext pDoc pMerged hc cDoc uMerged av
+  simp only [speciesIsDl, speciesIsDlFast, speciesViolations_eq_fast]
+
+@[csimp] theorem speciesViolationsFunctional_eq_fast :
+    @speciesViolationsFunctional = @speciesViolationsFunctionalFast := by
+  funext p hc u
+  simp only [speciesViolationsFunctional, speciesViolationsFunctionalFast, graphBodyViolationsI_eq]
+
+@[csimp] theorem speciesIsDlFunctional_eq_fast :
+    @speciesIsDlFunctional = @speciesIsDlFunctionalFast := by
+  funext p hc u
+  simp only [speciesIsDlFunctional, speciesIsDlFunctionalFast,
+    speciesViolationsFunctional_eq_fast]
+
+#print axioms speciesViolations_eq_fast
+#print axioms graphBodyViolationsI_eq
+#print axioms anonymousIndividualViolationsI_eq
+#print axioms namedLinkCounts_getD
+#print axioms spIndexOf_getD
+#print axioms dedupStrsFast_eq
+#print axioms collectionMembersI_eq
 
 end L4Factoidal.OWL.SyntaxDL
