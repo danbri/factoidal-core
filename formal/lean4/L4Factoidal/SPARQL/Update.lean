@@ -58,6 +58,7 @@ operation list).
 -/
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.RDF.Isomorphism
+import L4Factoidal.RDF.GraphIndex
 
 namespace L4Factoidal.SPARQL
 
@@ -236,6 +237,101 @@ def Dataset.deleteQuad (ds : Dataset) : Quad → Dataset
 
 def Dataset.deleteQuads (ds : Dataset) (qs : List Quad) : Dataset :=
   qs.foldl Dataset.deleteQuad ds
+
+/-! ## Many inserts through graph indexes
+
+`Dataset.insertQuads` is a fold of `insertQuad`, and `insertQuad` is
+`Graph.add` on one graph: a scan and a copy of the graph per quad, so INSERT
+DATA of n triples took time in n² (https://github.com/danbri/factoidal/issues/821).
+`DatasetIx` holds each graph as a `GraphSlot` (`RDF/GraphIndex.lean`), which
+makes a hash set of the graph's triples on its second add. `DatasetIx.insertQuad`
+does what `Dataset.insertQuad` does, on the first named graph of that name,
+and appends a new named graph at the end, as `replaceNamed` does
+(`DatasetIx.toDataset_insertQuad`). So `Dataset.insertQuadsFast` gives the
+same dataset, graphs and triples in the same order (`insertQuads_eq_fast`,
+`csimp`). -/
+
+structure DatasetIx where
+  default : GraphSlot
+  named : List (Subject × GraphSlot)
+
+def DatasetIx.namedToGraph (p : Subject × GraphSlot) : NamedGraph :=
+  { name := p.1, graph := p.2.toGraph }
+
+def DatasetIx.toDataset (d : DatasetIx) : Dataset :=
+  { default := d.default.toGraph, named := d.named.map DatasetIx.namedToGraph }
+
+def DatasetIx.ofDataset (ds : Dataset) : DatasetIx :=
+  { default := .plain ds.default, named := ds.named.map (fun ng => (ng.name, .plain ng.graph)) }
+
+@[simp] theorem DatasetIx.toDataset_ofDataset (ds : Dataset) :
+    (DatasetIx.ofDataset ds).toDataset = ds := by
+  obtain ⟨dflt, named⟩ := ds
+  simp only [DatasetIx.ofDataset, DatasetIx.toDataset, GraphSlot.toGraph_plain, List.map_map,
+    Dataset.mk.injEq, true_and]
+  conv => rhs; rw [← List.map_id named]
+  apply List.map_congr_left
+  intro ng _
+  rfl
+
+/-- Add `t` to the first named graph called `i`, or append that graph. -/
+def DatasetIx.addNamed (i : WfIri) (t : Triple) :
+    List (Subject × GraphSlot) → List (Subject × GraphSlot)
+  | [] => [(.iri i, (GraphSlot.plain []).add t)]
+  | (n, s) :: rest =>
+    if n == .iri i then (n, s.add t) :: rest
+    else (n, s) :: DatasetIx.addNamed i t rest
+
+theorem DatasetIx.addNamed_toGraph (i : WfIri) (t : Triple) (l : List (Subject × GraphSlot))
+    (d : Graph) :
+    (DatasetIx.addNamed i t l).map DatasetIx.namedToGraph =
+      replaceNamed i ((Dataset.graphOf i ⟨d, l.map DatasetIx.namedToGraph⟩).add t)
+        (l.map DatasetIx.namedToGraph) := by
+  induction l with
+  | nil =>
+    simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+      Dataset.lookupNamed]
+  | cons hd rest ih =>
+    obtain ⟨n, s⟩ := hd
+    by_cases h : (n == Subject.iri i) = true
+    · simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+        Dataset.lookupNamed, h]
+    · simp only [Bool.not_eq_true] at h
+      simp only [Dataset.graphOf, Dataset.lookupNamed] at ih
+      simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+        Dataset.lookupNamed, h, ih]
+
+/-- `Dataset.insertQuad` on the index. The structure is taken apart by the
+match, so a slot is updated in place when the `DatasetIx` is not shared. -/
+def DatasetIx.insertQuad : DatasetIx → Quad → DatasetIx
+  | ⟨dflt, named⟩, (none, t) => ⟨dflt.add t, named⟩
+  | ⟨dflt, named⟩, (some g, t) => ⟨dflt, DatasetIx.addNamed g t named⟩
+
+theorem DatasetIx.toDataset_insertQuad (d : DatasetIx) (q : Quad) :
+    (d.insertQuad q).toDataset = d.toDataset.insertQuad q := by
+  obtain ⟨dflt, named⟩ := d
+  obtain ⟨g, t⟩ := q
+  cases g with
+  | none => simp [DatasetIx.insertQuad, DatasetIx.toDataset, Dataset.insertQuad]
+  | some g =>
+    simp only [DatasetIx.insertQuad, DatasetIx.toDataset, Dataset.insertQuad, Dataset.setGraph]
+    rw [DatasetIx.addNamed_toGraph g t named dflt.toGraph]
+
+theorem DatasetIx.toDataset_foldl_insertQuad (qs : List Quad) (d : DatasetIx) :
+    (qs.foldl DatasetIx.insertQuad d).toDataset = qs.foldl Dataset.insertQuad d.toDataset := by
+  induction qs generalizing d with
+  | nil => rfl
+  | cons q qs ih => simp only [List.foldl_cons, ih, DatasetIx.toDataset_insertQuad]
+
+/-- What runs in place of `Dataset.insertQuads`. -/
+def Dataset.insertQuadsFast (ds : Dataset) (qs : List Quad) : Dataset :=
+  (qs.foldl DatasetIx.insertQuad (DatasetIx.ofDataset ds)).toDataset
+
+@[csimp] theorem Dataset.insertQuads_eq_fast : @Dataset.insertQuads = @Dataset.insertQuadsFast := by
+  funext ds qs
+  simp [Dataset.insertQuads, Dataset.insertQuadsFast, DatasetIx.toDataset_foldl_insertQuad]
+
+#print axioms Dataset.insertQuads_eq_fast
 
 /-- §3.1.2 / §4.1.2: DELETE DATA may not mention blank nodes (they could
 not denote an existing node). The parser rejects them; the semantics

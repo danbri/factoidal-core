@@ -193,12 +193,12 @@ def pQuadBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream) :
             let ts4 := if peekTok ts4 == Token.dot then advTok ts4 else ts4
             pQuadBlock f st (ggpJoin acc (.graph gn .empty)) ts4
         | _ => do
-            let (inner, ts4) ← pTriplesBlock f st .empty ts3
+            let (inner, ts4) ← pTriplesBlock f st (.empty, []) ts3
             let (_, ts5)     ← expectTok .rbrace ts4
             let ts5 := if peekTok ts5 == Token.dot then advTok ts5 else ts5
             pQuadBlock f st (ggpJoin acc (.graph gn inner)) ts5
     | _ =>
-        match pTriplesBlock f st .empty ts with
+        match pTriplesBlock f st (.empty, []) ts with
         | .error _            => .ok (acc, ts)
         | .ok (triples, ts1)  => pQuadBlock f st (ggpJoin acc triples) ts1
 

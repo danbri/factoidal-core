@@ -96,9 +96,14 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
   sparql-update-insert  `update` INSERT DATA of 2,000 and 8,000 triples into an
                    empty dataset (issue 802: DELETE DATA of 4,000 quads took
                    61.8 s in the SBM11 store). 5.11 s and 89.4 s before the
-                   tokenizer repair, 0.18 s and 2.01 s after. Expected failure,
-                   https://github.com/danbri/factoidal/issues/821: the parser
-                   appends each triple to the end of the block's BGP list
+                   tokenizer repair, 0.18 s and 2.01 s after. An expected
+                   failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/821): the parser
+                   appended each triple to the end of the block's BGP list, and
+                   `Dataset.insertQuads` scanned and copied the graph for each
+                   quad. After the triples accumulator (`pTriplesBlock_eq_ref`)
+                   and the graph index (`insertQuads_eq_fast`): 0.053 s and
+                   0.182 s
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -154,11 +159,13 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    owl-consistent-cl. The engine writes the log
                    (`l4wasm-cli callseq` of `deltaLogEncode`), and
                    `deltaLogDecode` must find every batch, before the row is
-                   timed. Expected failure naming
-                   https://github.com/danbri/factoidal/issues/822: each add
-                   goes through `Graph.add`, a membership scan and an append on
-                   a list (1.23 s at 8,000 records, 4.47 s at 16,000, 17.78 s at
-                   32,000, measured 2026-10-13)
+                   timed. An expected failure until 2026-10-13
+                   (https://github.com/danbri/factoidal/issues/822): each add
+                   went through `Graph.add`, a membership scan and an append on
+                   a list (1.33 s at 8,000 records, 4.53 s at 16,000, 17.23 s
+                   at 32,000 CPU); after `applyBatches_eq_fast` (a hash set of
+                   each graph carried through the batches) 0.43 s, 0.78 s and
+                   1.60 s
   startup          process start: `l4factoidal version` must take at most
                    STARTUP_BUDGET (20 ms) of CPU time, minimum of 15 runs
                    (305 million instructions and 43 ms before the fixtures were
@@ -225,9 +232,7 @@ ROW_BOUND = {"owlrl-closure-chain": 20.0, "termwire-page-decode": 6.0}
 # leaves this table in the commit that repairs it.
 XFAIL: dict[str, str] = {
     "query-memory-fstar": "https://github.com/danbri/factoidal/issues/729",
-    "sparql-update-insert": "https://github.com/danbri/factoidal/issues/821",
     "sparql-collection-scope": "https://github.com/danbri/factoidal/issues/824",
-    "delta-log-merge": "https://github.com/danbri/factoidal/issues/822",
 }
 # A run longer than this is not repeated: the minimum of several runs only
 # removes timer and load noise, which is small against a run this long.
