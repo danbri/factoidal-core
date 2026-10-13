@@ -46,6 +46,7 @@ import L4Factoidal.HTTP.Multipart
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.TurtleSerialize
+import L4Factoidal.Syntax.RdfXmlWrite
 import L4Factoidal.RDF.Isomorphism
 
 namespace L4Factoidal.SPARQL.GraphStoreService
@@ -147,21 +148,45 @@ def payloadGraph (contentType base body : String) : Except Nat Graph :=
 
 /-! ## Responses -/
 
-/-- The media types GET can answer with, in the service's order of
-preference. -/
-def getMediaTypes : List String := ["text/turtle", "application/n-triples"]
+/-- The RDF/XML media type (RDF 1.1 XML Syntax, IANA registration). -/
+def rdfXmlType : String := "application/rdf+xml"
 
-/-- A GET response carrying `g` in the negotiated media type. -/
+/-- The media types GET can answer with, in the service's order of
+preference. RDF/XML is last, so an `Accept` of `*/*` still answers Turtle. -/
+def getMediaTypes : List String := ["text/turtle", "application/n-triples", rdfXmlType]
+
+/-- The media type's body for `g`, or why `g` has no such form. RDF/XML has
+no form for a graph whose predicate IRI cannot be split into a namespace and
+an NCName, nor for a triple term (`Syntax.RdfXmlWrite`). -/
+def graphBody (mt : String) (g : Graph) : Except String (String × String) :=
+  if mt == "application/n-triples" then
+    (Syntax.Graph.toNTriples g).map fun text => ("application/n-triples", text)
+  else if mt == rdfXmlType then
+    (Syntax.RdfXmlWrite.graphToRdfXml g).map fun text => (rdfXmlType ++ "; charset=utf-8", text)
+  else .ok ("text/turtle; charset=utf-8", Syntax.turtleOfGraphAuto g)
+
+/-- A GET response carrying `g` in the negotiated media type `mt`. -/
+private def respondAs (mt : String) (g : Graph) : Except String HTTP.Response :=
+  (graphBody mt g).map fun (ct, body) => { status := 200, headers := [("content-type", ct)], body }
+
+/-- A GET response carrying `g` in the negotiated media type. When RDF/XML
+is negotiated and `g` has no RDF/XML form, the next acceptable type is used,
+and 406 answers when none is acceptable. -/
 def graphResponse (accept : String) (g : Graph) : HTTP.Response :=
   match HTTP.negotiate accept getMediaTypes with
-  | some "application/n-triples" =>
-    match Syntax.Graph.toNTriples g with
-    | .ok text => { status := 200, headers := [("content-type", "application/n-triples")], body := text }
-    | .error e => { status := 500, body := e }
-  | some _ =>
-    { status := 200, headers := [("content-type", "text/turtle; charset=utf-8")],
-      body := Syntax.turtleOfGraphAuto g }
   | none => { status := 406 }
+  | some mt =>
+    match respondAs mt g with
+    | .ok r => r
+    | .error e =>
+      if mt == rdfXmlType then
+        match HTTP.negotiate accept (getMediaTypes.filter (· != rdfXmlType)) with
+        | none => { status := 406 }
+        | some mt' =>
+          match respondAs mt' g with
+          | .ok r => r
+          | .error e' => { status := 500, body := e' }
+      else { status := 500, body := e }
 
 /-- A new graph IRI under the endpoint, not yet in the store: the
 first `<endpoint>/graph-<k>` free, `k` from 1. One of the

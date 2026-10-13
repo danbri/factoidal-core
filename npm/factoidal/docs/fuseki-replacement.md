@@ -35,8 +35,8 @@ With `--file DATA /ds`, or `--query-path /ds/sparql --gsp-path /ds/data`:
 | `/ds/update` | update | query and update (the same endpoint) |
 | `/ds/data` | Graph Store read and write | Graph Store read and write (`?default`, `?graph=IRI`, or a path under `/ds/data`) |
 | `/ds/get` | Graph Store read | Graph Store read; PUT, POST and DELETE answer 405 with `Allow: GET, HEAD, OPTIONS` |
-| `/ds/data` with no graph parameter | the whole dataset | 405: https://github.com/danbri/factoidal/issues/829 |
-| `/$/ping`, `/$/datasets`, `/$/stats`, `/$/server` | administration API | 404: https://github.com/danbri/factoidal/issues/831 |
+| `/ds/data` with no graph parameter | the whole dataset | GET: N-Quads (the default) or TriG by `Accept`; a triple syntax in `Accept` selects the default graph. PUT of N-Quads or TriG replaces the dataset. POST of N-Quads or TriG adds to it (blank nodes renamed apart). POST of a triple syntax creates a new graph (Graph Store Protocol section 5.5). PUT of a triple syntax answers 415; DELETE answers 405 with `Allow`. https://github.com/danbri/factoidal/issues/829 |
+| `/$/ping`, `/$/datasets`, `/$/datasets/ds`, `/$/stats`, `/$/stats/ds`, `/$/server` | administration API | read-only, with Fuseki's JSON member names (`ds.name`, `ds.state`, `ds.services`, `Requests`, `RequestsGood`, `RequestsBad`, `startDateTime`, `uptime`); `built` is not reported. POST or DELETE of a dataset answers 405; other `/$/` operations answer 404. https://github.com/danbri/factoidal/issues/831 |
 
 Without `--query-path`, the endpoint is `/sparql` and also `/query` and
 `/update`; the Graph Store is `/data`.
@@ -51,13 +51,17 @@ re-run 2026-10-13 after the endpoint aliases were added
 
 - Query results: `application/sparql-results+json`,
   `application/sparql-results+xml`, `text/csv`, `text/tab-separated-values`.
-- CONSTRUCT and DESCRIBE: `text/turtle` and the other RDF types the engine
-  negotiates.
+- CONSTRUCT and DESCRIBE: `text/turtle`, `application/n-triples` and
+  `application/rdf+xml`. A graph with no RDF/XML form (a predicate IRI that
+  is no XML QName) answers the next acceptable syntax, or 406 when RDF/XML
+  is the only one acceptable.
 - Query requests: GET `?query=`, POST `application/x-www-form-urlencoded`,
   POST `application/sparql-query`. Updates: POST
   `application/sparql-update` and form `update=`.
-- Graph Store GET: `text/turtle`, `application/n-triples`. JSON-LD and
-  RDF/XML answer 406: https://github.com/danbri/factoidal/issues/830.
+- Graph Store GET: `text/turtle`, `application/n-triples`,
+  `application/rdf+xml`; on the whole dataset also `application/n-quads` and
+  `application/trig`. JSON-LD answers 406:
+  https://github.com/danbri/factoidal/issues/830.
 
 ## Storage
 
@@ -88,4 +92,6 @@ of numeric, boolean and date literals (`"0"^^xsd:boolean` reads back as
 - Authentication, access control, HTTPS:
   https://github.com/danbri/factoidal/issues/833. Bind to 127.0.0.1 (the
   default) or put a reverse proxy in front.
-- Fuseki's administration API and UI: https://github.com/danbri/factoidal/issues/831.
+- The administration operations that change the server (create and delete
+  a dataset, backup, compaction, tasks, metrics) and the UI:
+  https://github.com/danbri/factoidal/issues/831.

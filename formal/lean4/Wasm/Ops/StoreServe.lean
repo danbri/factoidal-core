@@ -86,6 +86,9 @@ structure ServeState where
   view : View
   log : LogState
   pending : Option PendingCommit := none
+  /-- The system clock at open, in milliseconds since the Unix epoch. -/
+  startMillis : Int := 0
+  stats : Stats := {}
 
 initialize serveCounter : IO.Ref Nat ← IO.mkRef 0
 initialize serveTable : IO.Ref (Std.HashMap String ServeState) ← IO.mkRef ∅
@@ -198,8 +201,9 @@ def storeServeOpen (manifestHex artifactsJson stateJson configJson : String)
       else View.of (applyDeltaEntries base entries)
     let n ← serveCounter.modifyGet fun n => (n + 1, n + 1)
     let handle := s!"v{n}"
+    let startMillis ← unixMillisNow
     serveTable.modify (·.insert handle
-      { layout := manifest.layout, wireVersion := manifest.version, rows, config, view, log })
+      { layout := manifest.layout, wireVersion := manifest.version, rows, config, view, log, startMillis })
     pure (okWith
       [ ("handle", .string handle)
       , ("layout", .string manifest.layout)
@@ -239,13 +243,22 @@ def storeServeRequest (h : String) (blob : ByteArray) : IO (String × ByteArray)
     let extIris ← extSnapshot
     let now ← nowDateTime
     let env : EvalEnv := { ext := extFnsWith extIris, now := some now }
-    let out := handle st.config env st.view req
+    let nowMillis ← unixMillisNow
+    let info : ServerInfo :=
+      { startDateTime := dateTimeOfUnixMillis st.startMillis
+      , uptimeSeconds := ((nowMillis - st.startMillis) / 1000).toNat
+      , stats := st.stats }
+    let out := handle st.config env st.view req info
+    let stats := st.stats.record st.config req.path out.response.status
     let wire := L4Factoidal.HTTP.Wire.formatResponse out.response keepAlive out.headOnly
     match out.commit with
-    | none => pure (respondEnvelope (some consumed) (!keepAlive) out.response.status, wire.toUTF8)
+    | none =>
+      serveTable.modify (·.insert h { st with stats })
+      pure (respondEnvelope (some consumed) (!keepAlive) out.response.status, wire.toUTF8)
     | some (entries, next) =>
       match appendBytes st.log entries with
       | none =>
+        serveTable.modify (·.insert h { st with stats })
         let refused := L4Factoidal.HTTP.Wire.formatResponse
           (textResponse 500 "the change exceeds the delta-log wire-format limits; nothing was stored") keepAlive
         pure (respondEnvelope (some consumed) (!keepAlive) 500, refused.toUTF8)
@@ -253,7 +266,7 @@ def storeServeRequest (h : String) (blob : ByteArray) : IO (String × ByteArray)
         let id := s!"p{st.log.nextSeq}"
         let pending : PendingCommit :=
           { id, next, logAfter, response := wire, close := !keepAlive, status := out.response.status }
-        serveTable.modify (·.insert h { st with pending := some pending })
+        serveTable.modify (·.insert h { st with pending := some pending, stats })
         pure (okWith
           [ ("state", .string "append")
           , ("consumed", .number (toString consumed))
