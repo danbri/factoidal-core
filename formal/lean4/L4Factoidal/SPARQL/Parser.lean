@@ -302,11 +302,22 @@ def ggpAddPp (acc : QueryPattern) (s : PatternSubject) (pp : PropertyPath)
     (o : PatternTerm) : QueryPattern :=
   ggpJoin acc (.propertyPath s pp o)
 
-/-- `fresh_bnode_id`: the label is derived from the REMAINING token
-count, so it is stable and collision-free within one parse. The `_:`
-is part of the label, exactly as in the F*; `isLabeledBnodeId` below
-uses that to tell a generated label from a user-written one. -/
-def freshBnodeId (ts : TStream) : String := "_:bnode_" ++ toString ts.length
+/-- `fresh_bnode_id`: the label is derived from the character offset at
+which the current token starts. Token offsets increase along the token
+list (each token after the first starts after the one before it), so the
+label is stable and collision-free within one parse. The F* label is the
+REMAINING token count, which is collision-free for the same reason; this
+port used it until 2026-10-13, when it was found to cost a walk over the
+rest of the token list for each generated blank node, so a collection of n
+members took time in n² (https://github.com/danbri/factoidal/issues/818
+item 2). The labels name fresh blank nodes (SPARQL 1.1 §4.1.4), so only
+their distinctness is observable up to blank node renaming. The `_:` is
+part of the label, exactly as in the F*; `isLabeledBnodeId` below uses
+that to tell a generated label from a user-written one. -/
+def freshBnodeId (ts : TStream) : String :=
+  match ts with
+  | []      => "_:bnode_end"
+  | pt :: _ => "_:bnode_" ++ toString pt.pos
 
 /-- The name of the blank node `[ … ]` or `[]` makes, where `ts` starts at the
 `[`: `freshBnodeId` of the stream after the `[`. SPARQL 1.1 §4.1.4: each `[ ]`
@@ -3075,9 +3086,85 @@ reason about the entry point without a tactic ever weak-head-
 normalising `pSelectQuery 10000 …` — doing so unfolds ten thousand
 levels of the mutual block and exhausts memory. See
 `SPARQL/ParserTheorems.lean`. -/
-def parseSparql (text : String) (base : Option String := none)
+def parseSparqlAtTopFuel (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Query :=
   parseSparqlWith topFuel text base version
+
+/-- The fuel of the second pass of `parseSparql`: the F* seed plus the
+number of characters of the request. A sibling loop of the parser (the
+members of a collection, the triples of a block, the values of a VALUES
+block) spends one unit of fuel per sibling, so with the constant seed alone
+a request with more than about 10,000 siblings in one loop was rejected
+("recursion limit", or a missing `}` after the loop stopped);
+https://github.com/danbri/factoidal/issues/818 item 1. Every sibling has at
+least one character. -/
+def scaledFuel (text : String) : Nat := topFuel + text.length
+
+/-- Parse a SPARQL query: first at the F* seed `topFuel`; when that pass
+rejects the request, once more at `scaledFuel`, and its answer when it
+accepts. A request the first pass accepts gets the same answer
+(`parseSparql_of_topFuel`), and a request that both passes reject gets the
+first pass's error (`parseSparql_error`), so the second pass adds answers
+and changes no other result. The nesting depth of a request is bounded by
+the stack in both passes, before and after this change: under a 512 KB
+native stack, 3,000 nested `{ }` groups overflowed with the constant fuel
+alone (measured 2026-10-13). -/
+def parseSparql (text : String) (base : Option String := none)
+    (version : SparqlVersion := .v11) : Except ParseError Query :=
+  match parseSparqlWith topFuel text base version with
+  | .ok q => .ok q
+  | .error e =>
+    match parseSparqlWith (scaledFuel text) text base version with
+    | .ok q => .ok q
+    | .error _ => .error e
+
+/-- Where the F* seed answers, the answer is unchanged. -/
+theorem parseSparql_of_topFuel {text : String} {base : Option String}
+    {version : SparqlVersion} {q : Query}
+    (h : parseSparqlWith topFuel text base version = .ok q) :
+    parseSparql text base version = .ok q := by
+  simp [parseSparql, h]
+
+/-- A rejection is the F* seed's rejection, with its message. -/
+theorem parseSparql_error {text : String} {base : Option String}
+    {version : SparqlVersion} {e : ParseError}
+    (h : parseSparql text base version = .error e) :
+    parseSparqlWith topFuel text base version = .error e := by
+  unfold parseSparql at h
+  cases h1 : parseSparqlWith topFuel text base version with
+  | ok q => simp [h1] at h
+  | error e1 =>
+    cases h2 : parseSparqlWith (scaledFuel text) text base version with
+    | ok q => simp [h1, h2] at h
+    | error e2 => simp [h1, h2] at h; rw [h]
+
+/-- Every answer is an answer of the readable parser at some fuel, so the
+theorems stated for `parseSparqlWith` at every fuel
+(`parseSparql_bnodeScope_valid`, `parseSparql_consumes_stream`) hold of it. -/
+theorem parseSparql_ok {text : String} {base : Option String}
+    {version : SparqlVersion} {q : Query}
+    (h : parseSparql text base version = .ok q) :
+    ∃ fuel, parseSparqlWith fuel text base version = .ok q := by
+  unfold parseSparql at h
+  cases h1 : parseSparqlWith topFuel text base version with
+  | ok q1 => simp [h1] at h; exact ⟨topFuel, h ▸ h1⟩
+  | error e1 =>
+    cases h2 : parseSparqlWith (scaledFuel text) text base version with
+    | ok q2 => simp [h1, h2] at h; exact ⟨scaledFuel text, h ▸ h2⟩
+    | error e2 => simp [h1, h2] at h
+
+#print axioms parseSparql_error
+#print axioms parseSparql_ok
+
+/-! A VALUES block of 10,001 values ran out of the constant fuel; the
+second pass reads it. The first pass alone still rejects it, and a query
+that is not SPARQL is rejected by both. -/
+private def valuesQuery (n : Nat) : String :=
+  "ASK { ?s ?p ?o } VALUES ?x { " ++ " ".intercalate ((List.range n).map toString) ++ " }"
+#guard (parseSparql (valuesQuery 10001)).toOption.isSome
+#guard (parseSparqlAtTopFuel (valuesQuery 10001)).toOption.isNone
+#guard (parseSparql (valuesQuery 100)).toOption.isSome
+#guard (parseSparql "ASK { ?s ?p }").toOption.isNone
 
 /-! ## The SSE algebra printer — F* Part 8
 

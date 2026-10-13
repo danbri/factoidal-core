@@ -16,20 +16,8 @@ import L4Factoidal.SPARQL.TokenizerLemmas
 
 namespace L4Factoidal.SPARQL
 
-/-- A comment scan returns a suffix, so it never grows the input. This
-is what makes the fuel induction below well-founded through the `#`
-branch. -/
-theorem scanToEol_length : ∀ (pos : Nat) (cs : List Char),
-    (skipWsComments.scanToEol pos cs).2.length ≤ cs.length := by
-  intro pos cs
-  induction cs generalizing pos with
-  | nil => simp [skipWsComments.scanToEol]
-  | cons c rest ih =>
-      conv => lhs; unfold skipWsComments.scanToEol
-      by_cases hc : c = '\n'
-      · simp [hc]
-      · simp only [hc, if_neg, beq_iff_eq]
-        exact Nat.le_succ_of_le (ih (pos + 1))
+-- `scanToEol_length` (a comment scan never grows the input) moved to
+-- `Tokenizer.lean`, where `skipWs_eq_fast` needs it before `nextToken`.
 
 /-- Above the input length, the fuel does not change what whitespace
 skipping returns. -/

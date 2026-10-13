@@ -385,15 +385,17 @@ if not os.path.exists(sbm11_path):
 
 # ------------------------------------------- SBM11 delta overlay (issue 791)
 # Two SPARQL Update requests over sbm11-dict.nt: DELETE DATA of the p:n quads
-# of the first 1,000 subjects, then INSERT DATA of a new p:n value for each
+# of the first 4,000 subjects, then INSERT DATA of a new p:n value for each
 # of them (inside the base blocks: each touched 65,536-row block is merged
-# whole) and 1,000 quads of new subjects with new labels (overlay terms,
+# whole) and 4,000 quads of new subjects with new labels (overlay terms,
 # sorted after every base id: one chunk after the last block). The merge of
 # a 65,536-row block and the compaction scans run over input-proportional
-# data. The request size is kept at 2,000 quads because the SPARQL tokenizer
-# is quadratic in the request length (stage 5 record section 4: 4,000 quads
-# take 62 s to parse).
-N_DELTA = 1000
+# data. The INSERT DATA request has 8,000 quads. Until 2026-10-13 the case
+# used 1,000 and 2,000 quads, because the SPARQL tokenizer was quadratic in
+# the request length (stage 5 record section 4: 4,000 quads took 62 s to
+# parse; https://github.com/danbri/factoidal/issues/802, repaired by
+# `tokenizeLoop_eq_fast` in formal/lean4/L4Factoidal/SPARQL/Tokenizer.lean).
+N_DELTA = int(os.environ.get("STACK_SBM11_DELTA", "4000"))
 ddel = os.path.join(OUT, "sbm11-delta-del-%d.ru" % N_DELTA)
 dins = os.path.join(OUT, "sbm11-delta-ins-%d.ru" % N_DELTA)
 if not os.path.exists(dins):
@@ -456,5 +458,5 @@ args("args-delta-log-merge.json", "", dl_hex)
 print(json.dumps({
     "dir": OUT, "zstdIds": N_ZSTD_IDS, "entities": N_ENT, "literalBytes": LIT, "collection": N_COLL, "predicates": N_PRED,
     "quads": N_Q, "unionArms": N_UNION, "nestDepth": N_NEST, "orderRows": N_ORDER,
-    "jsonldDepth": N_JSONLD, "shapes": N_SHAPES, "manifestEntries": N_MAN,
+    "jsonldDepth": N_JSONLD, "sbm11Delta": N_DELTA, "shapes": N_SHAPES, "manifestEntries": N_MAN,
     "manifestBytes": len(man), "deltaLogRecords": N_DLOG}))
