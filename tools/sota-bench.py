@@ -505,7 +505,7 @@ add(Workload("rdfc-pairs", "rdfc",
 
 add(Workload("owl-rl-closure", "owl-rl",
              "OWL RL closure of a real ontology, every closure triple written out",
-             [o for o in OWL_SET if o != "qudt"], owl_input,
+             OWL_SET, owl_input,
              ["lean", "jena-owl-micro"],
              lambda e, p, n: cmd_closure(e, p),
              lambda e, o: ans_lines(o) if e == "lean" else ans_rows(o),
@@ -762,6 +762,12 @@ def fmt_m(r):
 LEAN_ENGINES = ("lean", "lean-stream", "npm")
 
 
+def fmt_r(x):
+    if x is None:
+        return "—"
+    return f"{x:.2f}" if x < 1 else f"{x:.1f}"
+
+
 def size_key(s):
     return (0, int(s)) if str(s).isdigit() else (1, OWL_SET.index(s) if s in OWL_SET else 99)
 
@@ -832,14 +838,14 @@ def report(path):
                 crs = "—"
                 if lr["status"] == "ok":
                     if ref.get("cpu_s"):
-                        crs = f"{lr['cpu_s'] / ref['cpu_s']:.1f}"
+                        crs = fmt_r(lr['cpu_s'] / ref['cpu_s'])
                     tr = lr["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else None
                     mr = lr["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else None
                     la, ra = above(le, lr.get("rss_mb")), above(ref["engine"], ref.get("rss_mb"))
                     if la is not None and ra is not None:
                         ar = la / max(ra, 1.0)  # a reference under 1 MB above start counts as 1 MB
-                    trs = f"{tr:.1f}" if tr is not None else "—"
-                    mrs = f"{mr:.1f}" if mr is not None else "—"
+                    trs = fmt_r(tr)
+                    mrs = fmt_r(mr)
                     # memory counts only when the ratio above process start is also over 10
                     if (tr or 0) > 10 or ((mr or 0) > 10 and (ar is None or ar > 10)):
                         flagged.append((wid, size, le, ref["engine"], tr, mr))
@@ -847,7 +853,7 @@ def report(path):
                     trs = f"> {lr.get('wall_s', 0) / ref['wall_s']:.0f} ({lr['status']})"
                     mrs = "—"
                     flagged.append((wid, size, le, ref["engine"], None, None))
-                ars = f"{ar:.1f}" if ar is not None else "—"
+                ars = fmt_r(ar)
                 print(f"| {wid} | {size} | {ref['engine']} | {ref['wall_s']:.3f} s, "
                       f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {crs} | {mrs} | "
                       f"{ars} |")
