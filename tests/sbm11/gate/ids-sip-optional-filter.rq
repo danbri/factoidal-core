@@ -1,0 +1,3 @@
+# Sideways information passing (issue 809), OPTIONAL with a FILTER over the group variable.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?a WHERE { ?s ex:name ?n OPTIONAL { ?s ex:age ?a FILTER(?a > 71) } }
