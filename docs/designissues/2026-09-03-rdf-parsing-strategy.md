@@ -722,6 +722,37 @@ repairs: 2.86 s and 0.62 s of CPU at load 17. The skill
 `lean4-performance` already named the first form (`feedChunkC`, 2026-10-12);
 it now names both.
 
+### 3b.7 Gates (2026-10-13, this change)
+
+- `l4w3c` RDF 1.1: 1041 pass, 0 fail (out of 1041) before and after; RDF
+  1.2: 1358 pass, 0 fail (out of 1358) before and after. The scoreboard rows
+  of `l4w3c-rdf11`, `l4w3c-rdf12` and `l4turtle-probe`
+  (`tools/lean-scoreboard.sh --only ...`) are identical before and after, logs
+  line for line (the probe's one failure, `test-38.ttl`, is there before and
+  after).
+- `tools/strict-parse-differential.sh`: 21,012 agree, 0 differ (out of
+  21,012) (3b.4).
+- `tests/stack/lean_scaling.sh`: 27 pass, 0 fail, 3 expected-fail (out of 30),
+  with the three new rows `parse-nt-memory`, `parse-ttl-memory` and
+  `count-nt-memory`; those rows measured through `/usr/bin/time` after the
+  harness defect of 3b.6 was found: 0.2, 0.0 and 6.2 bytes of peak resident
+  set per input byte (bounds 1, 1, 12); on the binary before, 37.1, 30.2 and
+  37.5, so they fail there.
+- `tests/stack/lenient_scaling.sh`: 16 pass, 0 fail (out of 16).
+- `Wasm/cli-smoke.sh`: 83 pass, 0 fail (out of 83). `Wasm/native-smoke.sh`:
+  353 pass, 0 fail, 2 expected failures (out of 355).
+- `tests/perf/sota_gate.sh` (load average 14 to 41): the 36 rows of the parse
+  and count workloads pass in the full run; issue 813's two expected-failure
+  rows are plain assertions now. See the SOTA record, section 8, for the
+  other rows.
+- `tools/lean-tail-recursion-audit.py --gate`: pass, with one new allow line
+  (`StrictFeed.drainRun`, a specification of the command line's loop used by
+  `drainRun_eq` only). `tools/lean-hygiene-audit.py --build-log`: clean
+  (partial def 163, baseline 163; every `#print axioms` line `propext`,
+  `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit 0
+  (1635 jobs). WebAssembly module rebuilt (`NTriples.lean` changed); `npm
+  test`: 413 pass, 0 fail, 1 skipped (out of 414).
+
 ## 4. Rules that follow
 
 1. A new fast path is added beside the reference parser with a theorem or,

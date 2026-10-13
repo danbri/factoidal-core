@@ -395,6 +395,21 @@ the same `e3c3aa01` binary, load average 2.6 to 11.5: 79 pass, 0 fail (out of
 A forced bound (`SOTA_TOLERANCE=-0.5`) failed the `parse-rdfxml-real` row with
 exit status 1, so the gate can fail.
 
+Run of 2026-10-13, 06:30 to 06:52 UTC, the binary of
+`claude/wt-strict-parse-stream` (after the repair of
+https://github.com/danbri/factoidal/issues/813), load average 14 to 16: 76
+pass, 3 fail (out of 79). The 36 rows of the parse and count workloads
+(`lean`, `lean-stream`) pass; issue 813's two rows are plain assertions now.
+The 3 failures: `parse-rdfxml` 100,000, CPU 6.68 s against a bound of 6.45 s
+(recorded at load 4; in a rerun at load 17 to 19 the row passed and
+`parse-rdfxml-real` failed by 3 percent, 3.11 s against 3.03 s; the RDF/XML
+reader is not changed by that branch except the faster `isIri`), and two
+UNEXPECTED PASSES: `rdfc-pairs` 8,000 (0.61 s, recorded 9.97 s; the repair
+of https://github.com/danbri/factoidal/issues/751 is in the base) and
+`owl-dl-consistent` schema.org (3.91 s, recorded 43.13 s;
+https://github.com/danbri/factoidal/issues/819). Those two marks and rows
+belong to their own issues and are not changed here.
+
 ## 9. Reproduce
 
 ```
