@@ -119,9 +119,8 @@ def flagValue (args : List String) (flag : String) : Option String :=
 
 /-- Emitted, new, from-delta emitted, from-delta new, for one row over a
 round. `lo` is the first position of the delta in `i.all`. -/
-@[noinline] def rowStats (i : Index) (lo : Nat) (f : Store → Triple → List Triple) :
+@[noinline] def rowStats (i : Index) (s : Store) (lo : Nat) (f : Store → Triple → List Triple) :
     Nat × Nat × Nat × Nat := Id.run do
-  let s := Store.ofIndex i
   let mut e := 0
   let mut n := 0
   let mut ed := 0
@@ -140,9 +139,7 @@ round. `lo` is the first position of the delta in `i.all`. -/
 
 /-- Emitted conclusions and time of one row in a semi-naive round: its delta
 term at the old driving triples, the full row at the new ones. -/
-@[noinline] def rowStatsSN (i : Index) (iD : Index) (lo : Nat) (r : RowSpec) : Nat := Id.run do
-  let s := Store.ofIndex i
-  let sD := Store.ofIndex iD
+@[noinline] def rowStatsSN (i : Index) (s sD : Store) (lo : Nat) (r : RowSpec) : Nat := Id.run do
   let mut e := 0
   for h : j in [0:i.all.size] do
     let d := i.all[j]
@@ -166,13 +163,16 @@ def runSN (g : Graph) (fuel : Nat) (withRows : Bool) : IO Unit := do
     let a ← IO.monoNanosNow
     if withRows then
       let mut idx := 0
+      let sCur := Store.ofIndex cur
+      let sDelta := Store.ofIndex iD
       for r in rowTable do
         let name := (rows.getD idx ("?", fun _ _ => [])).1
         idx := idx + 1
         let x ← IO.monoNanosNow
-        let e := rowStatsSN cur iD lo r
+        let e := rowStatsSN cur sCur sDelta lo r
         sink.modify (· + e)
         let y ← IO.monoNanosNow
+        IO.println s!"sn.row {k + 1} {name} emitted {e} ms {ms (y - x)}"
         let (pe, pt) := totRows.getD name (0, 0)
         totRows := totRows.insert name (pe + e, pt + (y - x))
     let b0 ← IO.monoNanosNow
@@ -232,15 +232,15 @@ def main (args : List String) : IO UInt32 := do
     for k in [0:fuel] do
       if withRows then
         let mut rowSum := 0
+        let sCur := Store.ofIndex cur
         for (name, f) in rows do
           let a ← IO.monoNanosNow
-          let st := rowStats cur lo f
+          let st := rowStats cur sCur lo f
           sink.modify (· + st.1)
           let b ← IO.monoNanosNow
           rowSum := rowSum + (b - a)
           let (e, n, ed, nd) := st
-          if e > 0 then
-            IO.println s!"row {k + 1} {name} emitted {e} new {n} deltaEmitted {ed} deltaNew {nd} ms {ms (b - a)}"
+          IO.println s!"row {k + 1} {name} emitted {e} new {n} deltaEmitted {ed} deltaNew {nd} ms {ms (b - a)}"
           let (pe, pn, ped, pnd, pt) := totRows.getD name (0, 0, 0, 0, 0)
           totRows := totRows.insert name (pe + e, pn + n, ped + ed, pnd + nd, pt + (b - a))
         IO.println s!"rows.sum {k + 1} ms {ms rowSum}"

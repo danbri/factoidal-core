@@ -426,6 +426,49 @@ Use a generated input whose units are all alike for the n, 2n, 4n assertion
 (`tests/stack/lean_scaling.py` row `owl-species`), and report a real file's
 rungs together with the count of the feature that drives the cost.
 
+## 17. Count emitted against new, per round and per row, before writing a delta term
+
+**Before a semi-naive form, print for every round the input size, the delta,
+the conclusions emitted, the new triples and the time; and for every row in
+every round its emitted conclusions, how many are new, and its time. Build
+the state the rows share once per round, print every row (also those that
+emit nothing), and check that the row times add up to about the round time.**
+
+> 🔴 **2026-10-13 (Lean OWL 2 RL closure, https://github.com/danbri/factoidal/issues/756
+> item 2).** The naive indexed closure of RO took 6 rounds; rounds 4 to 6
+> emitted 1.27 million conclusions to add 1,176 triples. A first semi-naive
+> form, with delta terms for the rows whose premises come from one lookup,
+> took RO only from 10.5 s to 8.0 s of CPU time. The per-row profile of the
+> semi-naive rounds named the cause: prp-spo2 was 7.0 s of the 8. It is not
+> a redundant-derivation cost: at each `owl:propertyChainAxiom` it walks
+> every subject of the graph (172 chain axioms times 42,736 triples per
+> round), and it emitted 26,600 conclusions in all. A delta term that
+> evaluates the row at an old chain axiom only when the delta holds an edge
+> on one of its chain properties took RO to 2.9 s (deltas of rounds 3 to 5
+> hold no such edge). The instrument had two defects first: it built the
+> rows' store (a list conversion of the whole input) once per ROW, 74 times
+> per round, and charged that to every row; and it printed only rows that
+> emitted something, so cls-int1 on RO (0 conclusions, 0.30 s) was absent
+> from the per-round family sums (the cls family read 88 ms where its rows'
+> totals were 388 ms). Record:
+> `docs/designissues/2026-10-10-owl-real-ontologies.md` § 11; harness
+> `formal/lean4/Harness/OwlRlProfile.lean` (`l4owl-rl-profile`).
+
+Rules that follow.
+
+- **Emitted divided by new is the redundancy a delta term can remove.** A
+  row with a high ratio (eq-rep-s on the Cell Ontology: 730,016 emitted, 0
+  new, in 6 naive rounds) is what semi-naive evaluation is for.
+- **Time divided by emitted finds the other cost.** A row that is slow and
+  emits little iterates the graph per driving triple (prp-spo2, cls-int1).
+  A delta term over its premises does not remove the iteration; a test that
+  the delta cannot change the row's output at that driving triple does.
+- **Measure the round's floor.** With a delta of 4 triples, the Cell
+  Ontology's last semi-naive round still took about 0.47 s: the iteration
+  over 163,444 old driving triples and the rows evaluated in full. A
+  dispatch on the driving triple's predicate (one hash lookup in place of a
+  test per row) took the round from about 0.88 s to 0.49 s.
+
 ## The standing discipline
 
 1. State the acceptance criterion **as a number**, before the work.
