@@ -550,4 +550,7 @@ Branch `claude/wt-qudt-owl`; load average 4 to 27 (two other agents building).
 - native-smoke 351 pass, 0 fail (out of 351); cli-smoke 83 pass, 0 fail (out
   of 83); `tools/lean-tail-recursion-audit.py --gate` passes (the collection
   walk of the twins is a loop); `tools/lean-hygiene-audit.py` clean.
-WASM_LINE
+- wasm rebuilt (`Wasm/build-wasm.sh`; 11,079,212 bytes full, 5,985,002 core;
+  every committed copy agrees); `npm test` in `npm/factoidal`: 413 pass, 0
+  fail, 1 skipped (out of 414; the skipped test needs the `esbuild`
+  devDependency, which is not installed in the worktree).
