@@ -880,6 +880,7 @@ XFAIL = {
     ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/813",
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
     ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
+    ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/819",
 }
 
 
