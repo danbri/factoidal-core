@@ -84,8 +84,9 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      §4.4 step 2 blank node to quads map (`bnodeQuadIndex`, replacing a
      filter over every quad per blank node) and a search tree for
      relabelling (`labelTree`, the role of F*'s `bn_lookup_tree`);
-     https://github.com/danbri/factoidal/issues/745. The Hash N-Degree
-     Quads path still filters every quad per call:
+     https://github.com/danbri/factoidal/issues/745. Hash N-Degree Quads
+     reads the same map, and its issuers keep a search tree beside the
+     issued list (`FIssuer`, `buildCanonicalMappingBudgeted_eq_fast`);
      https://github.com/danbri/factoidal/issues/751.
 -/
 import L4Factoidal.RDF.Graph
