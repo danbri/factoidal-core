@@ -31,6 +31,11 @@ const CASES = {
   'sparql-nested': () => ['queryDataset', readArgs('args-sparql-nested.json')],
   'sparql-order-limit': () => ['queryDataset', readArgs('args-sparql-order-limit.json')],
   'manifest': () => ['storeManifestInspect', readArgs('manifest-args.json')],
+  'rdfxml-collection': () => ['parseToDatasetJson', readArgs('args-rdfxml-collection.json')],
+  'sparql-collection': () => ['updateDataset', readArgs('args-sparql-collection.json')],
+  'sparql-replace-long': () => ['queryDataset', readArgs('args-sparql-replace-long.json')],
+  'regex-replace-groups': () => ['queryDataset', readArgs('args-regex-replace-groups.json')],
+  'rdfc-bnode-chain': () => ['canonicalizeToNQuads', readArgs('args-rdfc-bnode-chain.json')],
 };
 
 const out = { case: caseName, route: 'wasm' };

@@ -286,6 +286,55 @@ args("args-sparql-order-limit.json",
      open(os.path.join(OUT, "sparql-order-limit.nq")).read(),
      open(os.path.join(OUT, "sparql-order-limit.rq")).read())
 
+# ------------------------------------- issue 752 (OKR batch 1 KR 2.6) cases
+# Each is above the depth at which the readable recursion overflowed under
+# LEAN_STACK_SIZE_KB=512 (measured 2026-10-13 on base 7d314f43, native):
+#   rdfxml-collection   rdf:parseType="Collection": 2,000 members ran,
+#                       5,000 overflowed (collectionList); case 20,000
+#   sparql-collection   INSERT DATA with one collection: 2,000 members ran,
+#                       5,000 overflowed (pCollection); case 20,000
+#   sparql-replace-long REPLACE over one literal: 5,000 characters ran,
+#                       20,000 overflowed (replaceLoop, one frame per
+#                       character); case 100,000
+# Two cases are expected failures (xfail_issue in run.sh):
+#   regex-replace-groups  REPLACE with "$1" over "(a)+": the capture matcher
+#                         cmatch recurses once per repetition (4,000 ran,
+#                         5,000 overflowed), issue 816; case 5,000
+#   rdfc-bnode-chain      two chains of 2,000 blank nodes, each node with its
+#                         own literal: RDFC-1.0 Hash N-Degree Quads recurses
+#                         once per node of one chain (2,000 overflowed),
+#                         issue 817
+NQ1 = "<http://example.org/s> <http://example.org/p> <http://example.org/o> ."
+N_RX_COLL = int(os.environ.get("STACK_RDFXML_COLLECTION", "20000"))
+args("args-rdfxml-collection.json",
+     '<?xml version="1.0"?>\n'
+     '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"\n'
+     '         xmlns:ex="http://example.org/">\n'
+     '  <rdf:Description rdf:about="http://example.org/s">\n'
+     '    <ex:p rdf:parseType="Collection">%s</ex:p>\n'
+     '  </rdf:Description>\n'
+     '</rdf:RDF>\n' % "".join('<rdf:Description rdf:about="http://example.org/m%d"/>' % i
+                              for i in range(N_RX_COLL)),
+     "rdfxml", "http://example.org/")
+N_SP_COLL = int(os.environ.get("STACK_SPARQL_COLLECTION", "20000"))
+args("args-sparql-collection.json", NQ1,
+     "INSERT DATA { <http://example.org/s> <http://example.org/q> ( %s ) }"
+     % " ".join(str(i) for i in range(N_SP_COLL)))
+N_REPL = int(os.environ.get("STACK_REPLACE_CHARS", "100000"))
+args("args-sparql-replace-long.json", NQ1,
+     'SELECT (STRLEN(REPLACE("%s", "b", "c")) AS ?n) WHERE {}' % ("a" * N_REPL))
+N_REPL_G = int(os.environ.get("STACK_REPLACE_GROUP_REPS", "5000"))
+args("args-regex-replace-groups.json", NQ1,
+     'SELECT (STRLEN(REPLACE("%s", "(a)+", "$1")) AS ?n) WHERE {}' % ("a" * N_REPL_G))
+N_RDFC_CHAIN = int(os.environ.get("STACK_RDFC_CHAIN", "2000"))
+_chain = []
+for _c in "ab":
+    for _i in range(N_RDFC_CHAIN):
+        _chain.append('_:%s%d <http://example.org/v> "%d" .' % (_c, _i, _i))
+        if _i + 1 < N_RDFC_CHAIN:
+            _chain.append("_:%s%d <http://example.org/p> _:%s%d ." % (_c, _i, _c, _i + 1))
+args("args-rdfc-bnode-chain.json", "\n".join(_chain) + "\n")
+
 # ------------------------------------------------- zstd (Factoidal/qlvr)
 # One zstd frame of 1,200,000 QLever-like 8-byte Ids (9,600,000 bytes of
 # output, above 8 MiB), level 3 with a content checksum, for

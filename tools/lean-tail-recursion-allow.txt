@@ -754,8 +754,8 @@ L4Factoidal_OWL_QueryRewriteNested_patternHasCeMarker  # (b) nesting of graph pa
 L4Factoidal_OWL_QueryRewriteNested_rewritePatternNested  # (b) nesting of graph patterns in one query
 L4Factoidal_OWL_QueryRewriteCore_rewritePattern  # (b) nesting of graph patterns in one query
 L4Factoidal_OWL_Refute_disjointUnionAxioms_unorderedCePairs  # (b) operands of one DisjointUnion axiom
-L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/752 Hash N-Degree Quads (RDFC-1.0 4.8) recursion over blank-node paths; depth follows the blank nodes of one gadget, the budget bounds calls, not depth (confirm)
-L4Factoidal_RDF_Canonical_hndqRunF  # (a) PENDING https://github.com/danbri/factoidal/issues/752 the twin of hndqRun that csimp emits through buildCanonicalMappingBudgeted_eq_fast (https://github.com/danbri/factoidal/issues/751): the same Hash N-Degree Quads recursion, one level per blank node of one path, through the walkBucketsF closure
+L4Factoidal_RDF_Canonical_hndqRun  # (a) PENDING https://github.com/danbri/factoidal/issues/817 Hash N-Degree Quads (RDFC-1.0 4.8): one level per blank node of one path, which the data sets; the budget bounds calls, and a path of n levels costs only n calls; expected failure: tests/stack case rdfc-bnode-chain, two chains of 2,000 blank nodes overflow at 512 KB (split from issue 752)
+L4Factoidal_RDF_Canonical_hndqRunF  # (a) PENDING https://github.com/danbri/factoidal/issues/817 the twin of hndqRun that csimp runs through buildCanonicalMappingBudgeted_eq_fast (https://github.com/danbri/factoidal/issues/751): the same recursion through the walkBucketsF closure; expected failure rdfc-bnode-chain (split from issue 752)
 L4Factoidal_RDF_Canonical_rewriteTermForHfdq  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_joinKey  # (b) nesting depth of RDF 1.2 triple terms
 L4Factoidal_RDF_Term_lowerTags  # (b) nesting depth of RDF 1.2 triple terms
@@ -778,7 +778,7 @@ L4Factoidal_Regex_CRe_dotAll  # (b) nesting of one regular expression
 L4Factoidal_Regex_CRe_repeatExact  # (b) the count of one {n} quantifier in the pattern (query or schema text)
 L4Factoidal_Regex_CRe_size  # (b) nesting of one regular expression
 L4Factoidal_Regex_absorbMarkers  # (b) nesting of one regular expression
-L4Factoidal_Regex_cmatch  # (a) PENDING https://github.com/danbri/factoidal/issues/752 regex matcher: the .cat case recurses per piece of the pattern and the star case per repetition over the matched string (a literal in the data)
+L4Factoidal_Regex_cmatch  # (a) PENDING https://github.com/danbri/factoidal/issues/816 the star case recurses once per repetition over the matched text (data), and every level maps all outcomes of the level below (quadratic memory); expected failure: tests/stack case regex-replace-groups, 5,000 repetitions overflow at 512 KB (split from issue 752)
 L4Factoidal_Regex_cparseAlt  # (b) branches of one alternation in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_cparseSeq  # (b) atoms of one sequence in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_dotAll  # (b) nesting of one regular expression

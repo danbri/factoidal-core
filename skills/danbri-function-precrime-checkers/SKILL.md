@@ -687,3 +687,55 @@ Rules from this repair:
   takes 2.02 s at 16,000 and 37.8 s at 64,000 blank nodes on this shape (19
   times for 4 times the input). Put each reference on the same ladder; do
   not take one size as the measure of state of the art.
+
+## Twenty-six PENDING lines removed (https://github.com/danbri/factoidal/issues/752, 2026-10-13)
+
+The audit repair of https://github.com/danbri/factoidal/issues/750 put 26
+declarations on the allow list as `(a) PENDING`: each recursed once per
+item, or once per unit of a value, of data. All 26 left issue 752 (OKR
+batch 1 KR 2.6, https://github.com/danbri/factoidal/issues/768): 21 by
+conversion with a proved equality, 2 by reclassification with the bound on
+the line, and 3 stay `(a) PENDING` under a new issue with an expected
+failure.
+
+| family | declarations | new form | theorem |
+|---|---|---|---|
+| 10^n | `pow10` of Geo.Scaled, Math.Sigmoid, SPARQL, XPath.Num, XSD | the core `10 ^ n`: `Nat.pow` is one `lean_nat_pow` (GMP) call, and `Int.pow` of a non-negative base is `Nat.pow` | `pow10_eq_pow : pow10 n = 10 ^ n` by induction (`Nat.pow_succ` or `Int.pow_succ`, then `mul_comm`); `@[csimp] pow10_eq_fast` |
+| x^n | MathML `powNat` | a loop that applies `mulRat x` to an accumulator k times | `powNatLoop_mulRat` (one step commutes with the loop), then `powNatLoop_eq`; no algebra of `mulRat` |
+| digit counts | SPARQL `countDigitsFuel`, XSD `natDigits.go`, Geo WKT `takeDigits`, VC `natToBytesBE` | an accumulator loop | `loop … k = k + spec …` (`fun_induction` on the loop); `takeDigits` keeps value and count (`v * 10^n + vr`) and computes no power per digit; `natToBytesBE` puts the low byte on the front (`loop n acc = spec n ++ acc`), no append per byte |
+| list walks | COTTAS `namedGraphsAux`, RDF `Graph.dedup`, SPARQL `dedupPath`, `fn:replace` `replaceLoop`, XMLLiteral `XmlCanon.walk`, JSON-LD `replaceFirst`, SHACL `distinctDups`, XML `validate.countList` | a newest-first accumulator reversed once; a block of output goes on with `List.reverseAux` | `loop l acc = acc.reverse ++ spec l`; `Graph.dedup` is `foldr step []`, and `List.foldl_reverse` makes it a left fold over the reversed list, with no new loop |
+| collections in a `mutual` block | SPARQL `pCollection`, RDF/XML `collectionList`, XMLLiteral `serializeNodes` | the pattern of issue 678: the cells go on a newest-first list by tail calls, then a fold links them | the readable form moves after the block, `cells_eq` states the loop with the earlier cells linked in front |
+| reclassified | Turtle `assignLabelsAvoiding` | (c): the label index runs 1 to 9 and stops | |
+| reclassified | Regex `memStar` | (s), a new marker: specification only; no function of the emitted C outside its own module and its theorem module calls it | |
+| open | Regex `cmatch`; RDFC-1.0 `hndqRun`, `hndqRunF` | expected failures `regex-replace-groups` (https://github.com/danbri/factoidal/issues/816) and `rdfc-bnode-chain` (https://github.com/danbri/factoidal/issues/817) in `tests/stack/run.sh` | |
+
+Rules from this work:
+
+- **A `csimp` on a `let rec` or `where` helper does not reach the definition
+  that holds it.** The holder is compiled together with the helper, before
+  the theorem exists, so its C still calls the helper. Put the `csimp` on the
+  holder (`natDigits_eq_fast`, `validate_eq_fast`), or make the helper a
+  top-level function that is defined and replaced before its caller
+  (`FState.replaceFirstMatch`, `distinctDupsBy`).
+- **A `mutual` pair that csimp cannot enter can be replaced from outside.**
+  Define a twin pair after the readable pair, prove both members equal by
+  induction on the fuel (one theorem with a conjunction), and put `csimp` on
+  BOTH readable members (`serializeNode_eq_fast`, `serializeNodes_eq_fast`).
+  Callers outside the pair then run the twin, and the audit marks both
+  readable members `replaced`.
+- **A loop over siblings still recurses per nesting level.** The twins of
+  `validate.countElements` and of `serializeNodes` form a two-member cycle
+  whose sibling step is a `goto _start`; the cycle is a `(b)` line (element
+  nesting), and the line says so.
+- **Measure the old limit before choosing a case size.** Under
+  `LEAN_STACK_SIZE_KB=512`, natively, on base 7d314f43: an RDF/XML
+  collection ran at 2,000 members and overflowed at 5,000; a SPARQL
+  `INSERT DATA` collection the same; `REPLACE` over one literal ran at
+  5,000 characters and overflowed at 20,000. An XMLLiteral with 9,000
+  siblings in one element ran, because the frames are small, so that
+  family has no case above the old limit (the 10,000 fuel caps it).
+- **Two recursions found here are also quadratic.** `cmatch` keeps every
+  prefix outcome (1,000, 2,000, 4,000 repetitions: 36, 86, 274 MB), and a
+  chain of blank nodes that share one first-degree hash makes RDFC-1.0
+  §4.4 explore every member (300, 600, 900 nodes: 7.7, 30.9, 49.6 s).
+  A loop does not repair either; each issue says so.

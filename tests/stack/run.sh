@@ -273,7 +273,8 @@ xfail_issue() { # xfail_issue <case>; prints the issue URL or nothing
     # for https://github.com/danbri/factoidal/issues/755 in all three
     # routes, and `xml-markup-chain` in wcanary, until 2026-10-12, when
     # nested entity expansion became a worklist.)
-    # No case is listed today.
+    regex-replace-groups) echo "https://github.com/danbri/factoidal/issues/816" ;;
+    rdfc-bnode-chain) echo "https://github.com/danbri/factoidal/issues/817" ;;
   esac
 }
 
@@ -370,6 +371,11 @@ CASES=(
   "sparql-nested       queryDataset         args-sparql-nested.json"
   "sparql-order-limit  queryDataset         args-sparql-order-limit.json"
   "manifest            storeManifestInspect manifest-args.json"
+  "rdfxml-collection   parseToDatasetJson   args-rdfxml-collection.json"
+  "sparql-collection   updateDataset        args-sparql-collection.json"
+  "sparql-replace-long queryDataset         args-sparql-replace-long.json"
+  "regex-replace-groups queryDataset        args-regex-replace-groups.json"
+  "rdfc-bnode-chain    canonicalizeToNQuads args-rdfc-bnode-chain.json"
 )
 
 if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
