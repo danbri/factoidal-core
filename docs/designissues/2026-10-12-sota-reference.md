@@ -36,15 +36,16 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
 | RDFC-1.0, 100,000 quads, IRIs only | 2.24 s, 306 MB | Oxigraph 1.51 s, 189 MB | 1.5 | 1.6 | — |
 | RDFC-1.0, 20,000 persons (one blank node each) | 1.64 s, 127 MB | Oxigraph 0.80 s, 128 MB | 2.0 | 0.99 | — |
 | RDFC-1.0, 8,000 blank node pairs (two collision groups) | 10.23 s, 33 MB (`e3c3aa01`, before the repair) | Oxigraph 0.20 s, 48 MB | 50.3 | 0.67 | https://github.com/danbri/factoidal/issues/751 |
-| OWL RL closure, nine real ontologies (SKOS to the Cell Ontology) | 0.12 to 15.0 s, 25 to 445 MB | Jena OWL Micro 4.2 to 20.2 s, 139 to 1,485 MB (a different rule set) | 0.03 to 0.91 | 0.1 to 0.75 | — |
+| OWL RL closure, nine real ontologies (SKOS to the Cell Ontology) | 0.07 to 13.4 s, 25 to 446 MB | Jena OWL Micro 1.7 to 19.9 s, 147 to 1,658 MB (a different rule set; more than one thread) | 0.04 to 1.6 (CPU: 0.02 to 0.69) | 0.06 to 0.72 | — |
 | OWL 2 DL consistency, SKOS, FOAF, PROV-O, BFO, Pizza | 0.07 to 1.39 s, 24 to 43 MB | HermiT 1.0 to 1.6 s, 75 to 82 MB | 0.07 to 1.1 | 0.3 to 0.5 | — |
 | OWL 2 DL consistency, wine and food | 18.8 s, 80 MB | HermiT 2.1 s, 110 MB | 8.8 | 0.73 | — |
 | OWL 2 DL consistency, schema.org | 43.8 s, 104 MB | HermiT 1.4 s, 134 MB | 31.2 | 0.78 | https://github.com/danbri/factoidal/issues/819 |
 | OWL 2 DL consistency, QUDT (both: inconsistent) | 55.8 s, 1,351 MB | HermiT 6.5 s, 470 MB | 8.6 | 2.9 | — |
+| OWL 2 DL consistency, RO | TIMEOUT at 600 s (`e3c3aa01`; the repair, not in this binary, is reported at 9.9 s) | HermiT 14.6 s, 1,609 MB | over 41 | — | https://github.com/danbri/factoidal/issues/760 |
+| OWL 2 DL consistency, the Cell Ontology | TIMEOUT at 600 s (`e3c3aa01`; reported 13.3 s with the repair) | HermiT 3.4 s, 284 MB | over 178 | — | https://github.com/danbri/factoidal/issues/760 |
 
-
-- 📊 Parsing: the Lean streaming reader is 3 to 5 times the time of Serd and
-  Oxigraph with constant memory (24 MB, of which 19.5 MB is the Lean process
+- 📊 Parsing: the Lean streaming reader takes 2.7 to 5.1 times the time of
+  Serd and Oxigraph at the largest sizes, with constant memory (24 MB, of which 19.5 MB is the Lean process
   start). The default strict `parse` keeps the whole dataset in memory, 33 to
   35 bytes per input byte (https://github.com/danbri/factoidal/issues/813).
   RDF/XML is 13 to 15 times Oxigraph's time
@@ -57,22 +58,32 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
   https://github.com/danbri/factoidal/issues/751 (merging on 2026-10-13) takes
   the shared-hash shape to 2.8 times Oxigraph. rdf-canonize, the JavaScript
   reference implementation, is slower than Lean on every shape except pairs
-  and is superlinear on IRIs only (25,000 quads 10.9 s; 100,000 quads 309 s).
-- 📊 OWL RL closure: Lean is faster and smaller than Jena's OWL Micro rule
-  reasoner on all nine ontologies; the rule sets differ (section 2).
-- 📊 OWL 2 DL consistency: Lean is faster than HermiT on the five small
-  ontologies, 8.6 to 8.8 times HermiT's time on wine and QUDT, and 31 times on
+  and is superlinear on IRIs only (25,000 quads 10.8 s of CPU time, 100,000
+  quads 305 s: one run each in the trial run of 2026-10-13 00:58 UTC at load
+  4; the results file has the 25,000 case only).
+- 📊 OWL RL closure: Lean takes less wall time than Jena's OWL Micro rule
+  reasoner on seven of nine ontologies and 1.3 and 1.6 times its wall time on
+  RO and the Cell Ontology, where Jena uses 1.4 times Lean's CPU time on more
+  than one thread. Lean uses less memory on all nine. The rule sets differ
+  (section 2).
+- 📊 OWL 2 DL consistency: Lean is faster than HermiT on SKOS, FOAF, PROV-O
+  and Pizza and 1.1 times its time on BFO; 8.6 to 8.8 times on wine and QUDT;
+  31 times on
   schema.org (https://github.com/danbri/factoidal/issues/819).
-<!-- ROCLBULLET -->
+  RO and the Cell Ontology: TIMEOUT at 600 s on `e3c3aa01` against HermiT's
+  14.6 s and 3.4 s (https://github.com/danbri/factoidal/issues/760).
 - ⚠️ Lean rows: `l4factoidal` from `e3c3aa01`. The repairs of key results
   3.3 (OWL DL refuter), 2.4 (RDFC-1.0 shared hashes) and 3.4 (QUDT closure)
   were merging into `main` during the run and are not in these rows; the
   coordinator reported RO 9.9 s, the Cell Ontology 13.3 s, 64,000 colliding
-  blank nodes 2.66 s and the QUDT closure at 1,352 MB peak with them. The
-  gate re-measures every Lean row on the new binary.
-- ⚠️ Load average: 3.4 to 5 for the parse, count, SPARQL, RDFC and OWL DL rows
-  (the SPARQL and RDFC rows first measured at load 6 to 30 were measured
-  again); 5 to 15 for the OWL RL rows.
+  blank nodes 2.66 s and the QUDT closure at 1,352 MB peak with them. Run
+  `tests/perf/sota_gate.sh` on the new binary: a repaired row over 10 shows
+  as UNEXPECTED PASS and its row and issue are then updated.
+- ⚠️ Load average: 1.9 to 5.9 for every Lean, Oxigraph, Serd, Jena and HermiT
+  row (the SPARQL, RDFC and OWL RL rows first measured at load 6 to 30 were
+  measured again; the results file keeps both, and the report takes the later
+  one). The npm and rdf-canonize RDFC rows were measured at load 10 to 26 and
+  not repeated; they are informative.
 - Persisted store (SBM11 against QLever and Virtuoso): not measured again;
   section 5 cites the records.
 
@@ -246,15 +257,15 @@ RSS above start: each engine's peak resident set minus the peak resident set of 
 | rdfc-pairs | 4000 | oxigraph | 0.100 s, 35 MB | npm | 4.058 s ±8%, 136 MB | 40.6 | 41.2 | 3.8 | 1.1 |
 | rdfc-pairs | 8000 | oxigraph | 0.203 s, 48 MB | lean | 10.229 s ±6%, 33 MB | 50.3 | 55.4 | 0.67 | 0.51 |
 | rdfc-pairs | 8000 | oxigraph | 0.203 s, 48 MB | npm | exit1 (10.353 s), 149 MB | > 51 (exit1) | — | — | — |
-| owl-rl-closure | skos | jena-owl-micro | 4.612 s, 139 MB | lean | 0.118 s ±103%, 25 MB | 0.03 | 0.02 | 0.18 | 0.11 |
-| owl-rl-closure | foaf | jena-owl-micro | 4.188 s, 146 MB | lean | 0.188 s ±121%, 26 MB | 0.04 | 0.03 | 0.18 | 0.11 |
-| owl-rl-closure | prov-o | jena-owl-micro | 4.755 s, 164 MB | lean | 0.281 s ±118%, 31 MB | 0.06 | 0.04 | 0.19 | 0.16 |
-| owl-rl-closure | bfo | jena-owl-micro | 5.701 s, 168 MB | lean | 0.315 s ±93%, 28 MB | 0.06 | 0.03 | 0.16 | 0.11 |
-| owl-rl-closure | pizza | jena-owl-micro | 6.015 s, 220 MB | lean | 0.633 s ±41%, 47 MB | 0.11 | 0.08 | 0.21 | 0.22 |
-| owl-rl-closure | wine | jena-owl-micro | 13.482 s, 575 MB | lean | 5.336 s ±9%, 90 MB | 0.40 | 0.34 | 0.16 | 0.15 |
-| owl-rl-closure | schema.org | jena-owl-micro | 20.241 s, 1485 MB | lean | 2.746 s ±26%, 118 MB | 0.14 | 0.10 | 0.08 | 0.07 |
-| owl-rl-closure | ro | jena-owl-micro | 16.451 s, 838 MB | lean | 14.954 s ±28%, 80 MB | 0.91 | 0.79 | 0.10 | 0.08 |
-| owl-rl-closure | cl-basic | jena-owl-micro | 17.217 s, 594 MB | lean | 15.011 s ±7%, 445 MB | 0.87 | 0.68 | 0.75 | 0.85 |
+| owl-rl-closure | skos | jena-owl-micro | 1.668 s, 148 MB | lean | 0.071 s ±41%, 25 MB | 0.04 | 0.02 | 0.17 | 0.09 |
+| owl-rl-closure | foaf | jena-owl-micro | 1.877 s, 161 MB | lean | 0.102 s ±18%, 27 MB | 0.05 | 0.02 | 0.17 | 0.10 |
+| owl-rl-closure | prov-o | jena-owl-micro | 1.828 s, 147 MB | lean | 0.195 s ±8%, 30 MB | 0.11 | 0.04 | 0.20 | 0.18 |
+| owl-rl-closure | bfo | jena-owl-micro | 2.019 s, 158 MB | lean | 0.140 s ±16%, 29 MB | 0.07 | 0.03 | 0.18 | 0.14 |
+| owl-rl-closure | pizza | jena-owl-micro | 2.296 s, 238 MB | lean | 0.410 s ±10%, 47 MB | 0.18 | 0.08 | 0.20 | 0.19 |
+| owl-rl-closure | wine | jena-owl-micro | 7.405 s, 548 MB | lean | 4.765 s ±11%, 89 MB | 0.64 | 0.39 | 0.16 | 0.15 |
+| owl-rl-closure | schema.org | jena-owl-micro | 19.868 s, 1658 MB | lean | 2.840 s ±18%, 108 MB | 0.14 | 0.11 | 0.06 | 0.06 |
+| owl-rl-closure | ro | jena-owl-micro | 8.584 s, 849 MB | lean | 11.259 s ±10%, 77 MB | 1.3 | 0.69 | 0.09 | 0.08 |
+| owl-rl-closure | cl-basic | jena-owl-micro | 8.632 s, 619 MB | lean | 13.443 s ±6%, 446 MB | 1.6 | 0.69 | 0.72 | 0.81 |
 | owl-dl-consistent | skos | hermit | 0.991 s, 77 MB | lean | 0.068 s ±17%, 24 MB | 0.07 | 0.06 | 0.31 | 0.12 |
 | owl-dl-consistent | foaf | hermit | 1.065 s, 75 MB | lean | 0.143 s ±36%, 26 MB | 0.13 | 0.12 | 0.34 | 0.19 |
 | owl-dl-consistent | prov-o | hermit | 1.591 s, 82 MB | lean | 0.592 s ±16%, 30 MB | 0.37 | 0.36 | 0.36 | 0.27 |
@@ -263,6 +274,8 @@ RSS above start: each engine's peak resident set minus the peak resident set of 
 | owl-dl-consistent | wine | hermit | 2.135 s, 110 MB | lean | 18.778 s ±6%, 80 MB | 8.8 | 4.9 | 0.73 | 0.91 |
 | owl-dl-consistent | schema.org | hermit | 1.402 s, 134 MB | lean | 43.751 s ±1%, 104 MB | 31.2 | 16.8 | 0.78 | 0.94 |
 | owl-dl-consistent | qudt | hermit | 6.480 s, 470 MB | lean | 55.830 s ±9%, 1351 MB | 8.6 | 4.8 | 2.9 | 3.1 |
+| owl-dl-consistent | ro | hermit | 14.628 s, 1609 MB | lean | TIMEOUT (600.013 s), 2 MB | > 41 (TIMEOUT) | — | — | — |
+| owl-dl-consistent | cl-basic | hermit | 3.360 s, 284 MB | lean | TIMEOUT (600.005 s), 2 MB | > 179 (TIMEOUT) | — | — | — |
 
 
 ## 5. Rows measured in other records (not measured again here)
@@ -296,7 +309,7 @@ the streaming reader).
 | `count-nt` 400,000 and `count-ttl-gene` 80,000, npm (memory) | wasm of release `build-3bf333414efd-web`, before the repair `a7bdc189` | https://github.com/danbri/factoidal/issues/744 (comment with these rows) | — (the gate runs native Lean only) |
 | `rdfc-pairs` 4,000 and 8,000 (Lean), 2,000 to 8,000 (npm; 8,000 stops with "Maximum call stack size exceeded") | Hash N-Degree Quads over a collision group, repaired on branch `claude/wt-rdfc-collide` | https://github.com/danbri/factoidal/issues/751 (comment with these rows) | expected failure `rdfc-pairs` 8,000 |
 | `owl-dl-consistent` schema.org | not located; HermiT decides the file in 1.4 s | https://github.com/danbri/factoidal/issues/819 (new) | expected failure `owl-dl-consistent` schema.org |
-<!-- ROCLOVER -->
+| `owl-dl-consistent` RO and the Cell Ontology: TIMEOUT at 600 s | the tableau refuter's growth; repaired on the branch of key result 3.3, merging into `main` | https://github.com/danbri/factoidal/issues/760 (comment with these rows) | — (a TIMEOUT row is not re-run by the gate; `tests/stack/owl_real_gate.sh` holds the expected failure) |
 
 The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 
@@ -324,6 +337,8 @@ The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 - rdfc-pairs 8000, lean against oxigraph: time ratio 50.3, RSS ratio 0.7
 - rdfc-pairs 8000, npm against oxigraph: time ratio not finished, RSS ratio —
 - owl-dl-consistent schema.org, lean against hermit: time ratio 31.2, RSS ratio 0.8
+- owl-dl-consistent ro, lean against hermit: time ratio not finished, RSS ratio —
+- owl-dl-consistent cl-basic, lean against hermit: time ratio not finished, RSS ratio —
 
 
 
@@ -351,7 +366,16 @@ The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 - One input shape per row. The RDFC rows do not include the shape where every
   blank node has the same first-degree hash; that row is in
   `2026-10-10-npm-lean-only.md` section 10 (issue 751).
-- The OWL RL rows compare different rule sets (section 2).
+- The OWL RL rows compare different rule sets (section 2). The OWL RL closure
+  of QUDT was not run on `e3c3aa01`: it needs more than 6 GB there
+  (https://github.com/danbri/factoidal/issues/758; the repair of key result
+  3.4 reports 1,352 MB). The workload includes QUDT for the next binary.
+- A TIMEOUT row has no memory figure: `time -v` then reports the `timeout`
+  process (1.8 MB), not the killed step.
+- Every Lean row is the `l4factoidal` of `e3c3aa01` (SHA-256 prefix
+  `98d5bc128281718e`, field `lean_sha256` of the later rows). The repairs of
+  key results 3.3, 2.4 and 3.4, which the coordinator was merging into `main`
+  during the run, are not in it.
 - The OWL DL rows decide consistency only (`owl:Thing` satisfiable); no
   classification, no entailment checks.
 
@@ -542,24 +566,24 @@ rm -rf /tmp/sota-dl                                 # the downloads
 | rdfc-pairs | 8000 | oxigraph | 0.203 s ±23% | 0.18 s | 48 MB | 84015726b01cb1d9 | 4.72 to 4.72 |
 | rdfc-pairs | 8000 | rdf-canonize | 0.927 s ±10% | 0.89 s | 104 MB | 84015726b01cb1d9 | 10.18 to 10.18 |
 | rdfc-pairs | 8000 | npm | exit1 (10.353 s) | — | 149 MB | — | 13.32 to 13.32 |
-| owl-rl-closure | skos | lean | 0.118 s ±103% | 0.06 s | 25 MB | 915 | 9.75 to 9.75 |
-| owl-rl-closure | skos | jena-owl-micro | 4.612 s ±8% | 3.26 s | 139 MB | 1023 | 11.04 to 12.19 |
-| owl-rl-closure | foaf | lean | 0.188 s ±121% | 0.09 s | 26 MB | 1872 | 11.96 to 11.96 |
-| owl-rl-closure | foaf | jena-owl-micro | 4.188 s ±36% | 3.38 s | 146 MB | 1909 | 12.72 to 14.45 |
-| owl-rl-closure | prov-o | lean | 0.281 s ±118% | 0.15 s | 31 MB | 3266 | 14.69 to 14.69 |
-| owl-rl-closure | prov-o | jena-owl-micro | 4.755 s ±14% | 3.92 s | 164 MB | 3240 | 14.68 to 14.82 |
-| owl-rl-closure | bfo | lean | 0.315 s ±93% | 0.14 s | 28 MB | 3837 | 14.81 to 15.06 |
-| owl-rl-closure | bfo | jena-owl-micro | 5.701 s ±13% | 4.07 s | 168 MB | 3675 | 13.74 to 14.09 |
-| owl-rl-closure | pizza | lean | 0.633 s ±41% | 0.43 s | 47 MB | 12813 | 13.89 to 13.9 |
-| owl-rl-closure | pizza | jena-owl-micro | 6.015 s ±19% | 5.51 s | 220 MB | 10804 | 13.94 to 14.7 |
-| owl-rl-closure | wine | lean | 5.336 s ±9% | 4.99 s | 90 MB | 28855 | 11.73 to 12.5 |
-| owl-rl-closure | wine | jena-owl-micro | 13.482 s ±101% | 14.75 s | 575 MB | 26650 | 6.74 to 9.08 |
-| owl-rl-closure | schema.org | lean | 2.746 s ±26% | 2.67 s | 118 MB | 60770 | 5.73 to 5.97 |
-| owl-rl-closure | schema.org | jena-owl-micro | 20.241 s ±24% | 27.71 s | 1485 MB | 43793 | 4.99 to 5.56 |
-| owl-rl-closure | ro | lean | 14.954 s ±28% | 13.43 s | 80 MB | 42736 | 6.28 to 6.72 |
-| owl-rl-closure | ro | jena-owl-micro | 16.451 s ±60% | 17.01 s | 838 MB | 36703 | 6.1 to 10.71 |
-| owl-rl-closure | cl-basic | lean | 15.011 s ±7% | 13.24 s | 445 MB | 163444 | 10.22 to 11.53 |
-| owl-rl-closure | cl-basic | jena-owl-micro | 17.217 s ±8% | 19.55 s | 594 MB | 149426 | 10.84 to 11.8 |
+| owl-rl-closure | skos | lean | 0.071 s ±41% | 0.06 s | 25 MB | 915 | 1.86 to 1.86 |
+| owl-rl-closure | skos | jena-owl-micro | 1.668 s ±9% | 3.34 s | 148 MB | 1023 | 1.86 to 2.12 |
+| owl-rl-closure | foaf | lean | 0.102 s ±18% | 0.08 s | 27 MB | 1872 | 2.12 to 2.12 |
+| owl-rl-closure | foaf | jena-owl-micro | 1.877 s ±7% | 3.48 s | 161 MB | 1909 | 2.11 to 2.12 |
+| owl-rl-closure | prov-o | lean | 0.195 s ±8% | 0.17 s | 30 MB | 3266 | 2.11 to 2.11 |
+| owl-rl-closure | prov-o | jena-owl-micro | 1.828 s ±6% | 3.88 s | 147 MB | 3240 | 2.11 to 2.34 |
+| owl-rl-closure | bfo | lean | 0.140 s ±16% | 0.13 s | 29 MB | 3837 | 2.34 to 2.34 |
+| owl-rl-closure | bfo | jena-owl-micro | 2.019 s ±17% | 4.07 s | 158 MB | 3675 | 2.31 to 2.34 |
+| owl-rl-closure | pizza | lean | 0.410 s ±10% | 0.39 s | 47 MB | 12813 | 2.53 to 2.53 |
+| owl-rl-closure | pizza | jena-owl-micro | 2.296 s ±7% | 5.15 s | 238 MB | 10804 | 2.53 to 2.64 |
+| owl-rl-closure | wine | lean | 4.765 s ±11% | 4.68 s | 89 MB | 28855 | 2.59 to 2.64 |
+| owl-rl-closure | wine | jena-owl-micro | 7.405 s ±254% | 12.00 s | 548 MB | 26650 | 2.58 to 4.3 |
+| owl-rl-closure | schema.org | lean | 2.840 s ±18% | 2.70 s | 108 MB | 60770 | 4.73 to 4.75 |
+| owl-rl-closure | schema.org | jena-owl-micro | 19.868 s ±4% | 25.36 s | 1658 MB | 43793 | 4.77 to 4.83 |
+| owl-rl-closure | ro | lean | 11.259 s ±10% | 11.02 s | 77 MB | 42736 | 4.6 to 4.71 |
+| owl-rl-closure | ro | jena-owl-micro | 8.584 s ±28% | 15.96 s | 849 MB | 36703 | 4.76 to 5.1 |
+| owl-rl-closure | cl-basic | lean | 13.443 s ±6% | 13.17 s | 446 MB | 163444 | 4.54 to 4.95 |
+| owl-rl-closure | cl-basic | jena-owl-micro | 8.632 s ±3% | 19.21 s | 619 MB | 149426 | 3.67 to 4.03 |
 | owl-dl-consistent | skos | lean | 0.068 s ±17% | 0.05 s | 24 MB | true | 3.37 to 3.37 |
 | owl-dl-consistent | skos | hermit | 0.991 s ±19% | 0.88 s | 77 MB | true | 11.4 to 11.4 |
 | owl-dl-consistent | foaf | lean | 0.143 s ±36% | 0.13 s | 26 MB | true | 3.37 to 3.37 |
@@ -576,5 +600,7 @@ rm -rf /tmp/sota-dl                                 # the downloads
 | owl-dl-consistent | schema.org | hermit | 1.402 s ±14% | 2.57 s | 134 MB | true | 4.66 to 4.8 |
 | owl-dl-consistent | qudt | lean | 55.830 s ±9% | 54.70 s | 1351 MB | false | 3.91 to 4.84 |
 | owl-dl-consistent | qudt | hermit | 6.480 s ±67% | 11.50 s | 470 MB | false | 4.35 to 4.72 |
+| owl-dl-consistent | ro | lean | TIMEOUT (600.013 s) | — | 2 MB | — | 5.35 to 5.35 |
 | owl-dl-consistent | ro | hermit | 14.628 s ±7% | 22.04 s | 1609 MB | true | 4.71 to 5.27 |
+| owl-dl-consistent | cl-basic | lean | TIMEOUT (600.005 s) | — | 2 MB | — | 5.91 to 5.91 |
 | owl-dl-consistent | cl-basic | hermit | 3.360 s ±5% | 6.02 s | 284 MB | true | 4.8 to 4.9 |
