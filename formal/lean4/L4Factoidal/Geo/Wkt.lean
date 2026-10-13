@@ -42,6 +42,37 @@ def takeDigits : P → (Nat × Nat × P)
       else (0, 0, c :: rest)
   | [] => (0, 0, [])
 
+/-- `takeDigits` as a loop: the value so far `v` and the count `k` are
+arguments, each digit is one tail call, and no power of ten is computed
+(the digits of one number in a WKT literal;
+https://github.com/danbri/factoidal/issues/752). -/
+def takeDigitsLoop : P → Nat → Nat → (Nat × Nat × P)
+  | c :: rest, v, k =>
+      if isDigit c then takeDigitsLoop rest (v * 10 + (c.toNat - '0'.toNat)) (k + 1)
+      else (v, k, c :: rest)
+  | [], v, k => (v, k, [])
+
+theorem takeDigitsLoop_eq : ∀ (cs : P) (v k : Nat),
+    takeDigitsLoop cs v k =
+      (v * Scaled.pow10 (takeDigits cs).2.1 + (takeDigits cs).1,
+       k + (takeDigits cs).2.1, (takeDigits cs).2.2)
+  | [], v, k => by simp [takeDigitsLoop, takeDigits, Scaled.pow10]
+  | c :: rest, v, k => by
+      by_cases hd : isDigit c = true
+      · rw [takeDigitsLoop, if_pos hd, takeDigitsLoop_eq rest]
+        simp only [takeDigits, if_pos hd]
+        rcases takeDigits rest with ⟨vr, n, tl⟩
+        simp only [Scaled.pow10, Nat.add_mul, Nat.mul_assoc, Prod.mk.injEq]
+        exact ⟨Nat.add_assoc _ _ _, by omega, trivial⟩
+      · rw [takeDigitsLoop, if_neg hd]
+        simp [takeDigits, hd, Scaled.pow10]
+
+def takeDigitsFast (cs : P) : Nat × Nat × P := takeDigitsLoop cs 0 0
+
+/-- The compiler runs `takeDigitsFast` wherever the source says `takeDigits`. -/
+@[csimp] theorem takeDigits_eq_fast : @takeDigits = @takeDigitsFast := by
+  funext cs; simp [takeDigitsFast, takeDigitsLoop_eq]
+
 /-- A signed decimal number: `-?DIGITS(.DIGITS)?`. Exponent notation
     is not part of Simple Features WKT and is rejected. -/
 def number (inp : P) : Option (Scaled × P) :=

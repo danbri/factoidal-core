@@ -290,6 +290,29 @@ def natDigits (n : Nat) : Nat :=
     | fuel + 1, acc => if acc < 10 then 1 else 1 + go fuel (acc / 10)
   go (n + 1) n
 
+/-- `natDigits.go` with the count in an accumulator, so each step is a tail
+call (the digits of a literal in the data;
+https://github.com/danbri/factoidal/issues/752). -/
+def natDigitsLoop : Nat → Nat → Nat → Nat
+  | 0, acc, k => k + acc
+  | fuel + 1, acc, k => if acc < 10 then k + 1 else natDigitsLoop fuel (acc / 10) (k + 1)
+
+theorem natDigitsLoop_eq : ∀ fuel acc k, natDigitsLoop fuel acc k = k + natDigits.go fuel acc
+  | 0, acc, k => by simp [natDigitsLoop, natDigits.go]
+  | fuel + 1, acc, k => by
+      simp only [natDigitsLoop, natDigits.go]
+      split
+      · rfl
+      · rw [natDigitsLoop_eq fuel (acc / 10) (k + 1)]; omega
+
+def natDigitsFast (n : Nat) : Nat := natDigitsLoop (n + 1) n 0
+
+/-- The compiler runs `natDigitsFast` wherever the source says `natDigits`
+(a `csimp` on the `let rec` itself would not reach `natDigits`, which is
+compiled with it). -/
+@[csimp] theorem natDigits_eq_fast : @natDigits = @natDigitsFast := by
+  funext n; simp [natDigits, natDigitsFast, natDigitsLoop_eq]
+
 def Dec.totalDigits (a : Dec) : Nat :=
   let n := Dec.norm a
   let d := natDigits n.mantissa.natAbs

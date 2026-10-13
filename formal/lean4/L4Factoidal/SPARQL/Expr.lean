@@ -891,6 +891,27 @@ def countDigitsFuel : Nat → Nat → Nat
   | 0, _ => 1
   | _ + 1, n => if n < 10 then 1 else 1 + countDigitsFuel n (n / 10)
 
+/-- `countDigitsFuel` with the count in an accumulator, so each step is a
+tail call (the digits of a literal in the data;
+https://github.com/danbri/factoidal/issues/752). -/
+def countDigitsLoop : Nat → Nat → Nat → Nat
+  | 0, _, k => k + 1
+  | _ + 1, n, k => if n < 10 then k + 1 else countDigitsLoop n (n / 10) (k + 1)
+
+theorem countDigitsLoop_eq (f n k : Nat) :
+    countDigitsLoop f n k = k + countDigitsFuel f n := by
+  fun_induction countDigitsLoop f n k with
+  | case1 n k => simp [countDigitsFuel]
+  | case2 f n k h => rw [countDigitsFuel]; simp [h]
+  | case3 f n k h ih => rw [countDigitsFuel, ih]; simp [h]; omega
+
+def countDigitsFuelFast (f n : Nat) : Nat := countDigitsLoop f n 0
+
+/-- The compiler runs `countDigitsFuelFast` wherever the source says
+`countDigitsFuel`. -/
+@[csimp] theorem countDigitsFuel_eq_fast : @countDigitsFuel = @countDigitsFuelFast := by
+  funext f n; simp [countDigitsFuelFast, countDigitsLoop_eq]
+
 def countDigits (n : Nat) : Nat := countDigitsFuel n n
 
 /-- xsd:double canonical lexical form: `(32100, 0) ↦ "3.21E4"`,
