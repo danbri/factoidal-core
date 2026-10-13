@@ -381,6 +381,12 @@ command line printed, `nquads` or `ntriples`). Not proved: that the JSON
 encoding and decoding of that member gave the string back; the byte
 comparison below stands in for it, as in § 9.2 of the performance record.
 
+For `rho-df` and `rdfs-plus` the old envelope also carried a `rounds` member,
+counted by running the step function again to the fixpoint; the command line
+never printed it and now does not compute it. `closure --regime rdfs-plus` on
+schema.org (17,949 triples): 214.7 s of CPU time before, 108.9 s after, the
+same output.
+
 `closure --regime owl-rl`, before and after (wall time, CPU time user+system,
 peak resident set; output compared with `cmp`):
 
@@ -536,10 +542,12 @@ Branch `claude/wt-qudt-owl`; load average 4 to 27 (two other agents building).
 - 📊 OWL scoreboard (`tools/lean-scoreboard.sh --only l4owl-probe`), compared
   with the coordinator's logs of `main` after the timing lines are removed: 0
   lines missing in each of the 10 logs; species 488 pass, 0 fail, 1
-  local-override (out of 489). The `rdf-based` log has 4 lines more: `CAP` notes
-  for WebOnt-miscellaneous-001, -002 and -011, whose closure ran into the
-  probe's wall-clock cap (`closureIO ... (t1 + capMs)`) at load 27; every
-  result line and every total is the same.
+  local-override (out of 489). In the first run the `rdf-based` log had 4
+  lines more: `CAP` notes for WebOnt-miscellaneous-001, -002 and -011, whose
+  closure ran into the probe's wall-clock cap (`closureIO ... (t1 + capMs)`)
+  at load 27. Run again on the binary of the final full build at load 5 to
+  10, the `species` and `rdf-based` logs are identical to `main`'s (0 lines
+  missing, 0 added).
 - 📊 `tests/stack/lean_scaling.sh`: 22 pass, 1 fail, 2 expected-fail (out of
   25). New rows: `owl-species` passes (ratio 5.0 to 7.9 for 4 times the input
   at load 4 to 27), `owl-species-bnode-edges` is an expected failure
@@ -550,6 +558,7 @@ Branch `claude/wt-qudt-owl`; load average 4 to 27 (two other agents building).
 - native-smoke 351 pass, 0 fail (out of 351); cli-smoke 83 pass, 0 fail (out
   of 83); `tools/lean-tail-recursion-audit.py --gate` passes (the collection
   walk of the twins is a loop); `tools/lean-hygiene-audit.py` clean.
+- One full `lake build`: 1,621 jobs, exit 0.
 - wasm rebuilt (`Wasm/build-wasm.sh`; 11,079,212 bytes full, 5,985,002 core;
   every committed copy agrees); `npm test` in `npm/factoidal`: 413 pass, 0
   fail, 1 skipped (out of 414; the skipped test needs the `esbuild`
