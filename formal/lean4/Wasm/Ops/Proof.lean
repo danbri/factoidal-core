@@ -629,7 +629,7 @@ the pins live here, where a wrong answer is a build error.
 They are a MATCHED PAIR (`skills/measuring-inference` sections 3 and
 4). An op that errored on every input would trivially never return a
 wrong verdict, so the ACCEPTED half is mandatory: the three real
-bundles of `L4Factoidal/Proof/Tests.lean` — the 156-step RDFS witness,
+bundles of `L4Factoidal/Proof/Tests.lean` — the 150-step RDFS witness,
 the mixed one-assumption bundle and the R-level adapter bundle —
 encoded to JSON, fed to `proofCheck`, and pinned BOTH against literal
 expected values AND against the kernel's own `checkBundle` answer for
@@ -646,7 +646,7 @@ could read.
 
 ⚠️ The fixtures below are FUNCTIONS of `Unit`, not constants. A
 top-level `def` is computed by the module INITIALIZER, and this module
-initializes inside the wasm instance — a 156-step RDFS closure and two
+initializes inside the wasm instance — a 150-step RDFS closure and two
 RDFC-1.0 digests would then be paid for on every load, by every
 caller, whether or not they ever call a proof op. -/
 
@@ -661,7 +661,7 @@ private def pfExP : WfIri := ⟨"http://example.org/p", by rfl⟩
 private def pfDataTriple : Triple := ⟨.iri pfExA, pfExP, .iri pfExB⟩
 private def pfDataGraph : Graph := [pfDataTriple]
 
-/-- POSITIVE 1 — the 156-step RDFS witness wrapped as an FPP0 bundle,
+/-- POSITIVE 1 — the 150-step RDFS witness wrapped as an FPP0 bundle,
 the fixture `Proof/Tests.lean` pins as accepted with an EMPTY
 frontier. -/
 private def pfRdfsBundle : Unit → Bundle := fun _ =>
@@ -761,16 +761,17 @@ Literal pins first. `envelopeMatchesKernel` alone would still pass if
 `checkBundle` itself changed its answer, so the numbers the RDFS layer
 already pins are restated here against the ABI. -/
 
--- The 156-step witness (147 before the RDF 1.2 axiomatic triples
+-- The 150-step witness (147 before the RDF 1.2 axiomatic triples
 -- joined the seed table, 2026-10-09): accepted, all foundational, EMPTY frontier,
--- and 4 foundational steps in the SUPPORT of its conclusion out of 156
+-- and 4 foundational steps in the SUPPORT of its conclusion out of 150
+-- (156 until the two rdf:XMLLiteral seed rows left the RDFS table, 2026-10-13, issue 767 gap 1)
 -- steps in the bundle.
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"valid\":true"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"assumptions\":[]"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"foundationalOnly\":true"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ())))
   "\"counts\":{\"foundational\":4,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
-#guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"checkedSteps\":156"
+#guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"checkedSteps\":150"
 #guard roundTrips (pfRdfsBundle ())
 #guard envelopeMatchesKernel (pfRdfsBundle ())
 
@@ -805,9 +806,9 @@ already pins are restated here against the ABI. -/
 #guard envelopeMatchesKernel (pfDegenerateBundle ())
 
 -- `proofInspect` reads the same document and reports NO verdict.
-#guard subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"steps\":156"
+#guard subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"steps\":150"
 #guard subOf (proofInspect (pfJson (pfRdfsBundle ())))
-  "\"declaredStepLevels\":{\"foundational\":156,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
+  "\"declaredStepLevels\":{\"foundational\":150,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
 #guard !(subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"valid\"")
 #guard subOf (proofInspect (pfJson (pfAdapterBundle ()))) "\"adapters\":[\"sparql\"]"
 

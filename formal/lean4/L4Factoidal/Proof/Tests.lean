@@ -46,8 +46,9 @@ private def dataGraph : Graph := [dataTriple]
 
 /-! ## POSITIVE 1 — a whole RDFS witness, all foundational, empty frontier
 
-`fullClosureWithProof [] [] dataGraph` is the 156-step witness (147 before
-the RDF 1.2 axiomatic triples joined the seed table, 2026-10-09)
+`fullClosureWithProof [] [] dataGraph` is the 150-step witness (147 before
+the RDF 1.2 axiomatic triples joined the seed table, 2026-10-09; 156 until the
+two rdf:XMLLiteral seed rows left it, 2026-10-13)
 `RDFS/DerivationCheckTests.lean` pins as accepted by
 `checkDerivation`. `bundleOfRdfsDerivation` renames its positional
 premises to ids and nothing else. Both graph artifacts carry inline
@@ -64,7 +65,7 @@ private def rdfsBundle : Bundle :=
   bundleOfRdfsDerivation dataGraph dataAx dataWitness.2 dataConcl
 
 /- The witness is the one the RDFS layer already pins. -/
-#guard dataWitness.2.size = 156
+#guard dataWitness.2.size = 150  -- 156 until the rdf:XMLLiteral rows left the seed table (2026-10-13, issue 767 gap 1)
 #guard checkDerivation dataAx dataGraph dataWitness.2 = true
 
 /- ACCEPTED, and the report says the chain rests on nothing. -/
@@ -77,11 +78,11 @@ private def rdfsBundle : Bundle :=
 #guard (checkBundle rdfsBundle).counts.attestation = 0
 
 /- The support of this conclusion is a PROPER PART of the bundle: 4
-foundational steps out of 156. A count over the whole bundle would
-have read 156 and would have said nothing about what the conclusion
+foundational steps out of 150. A count over the whole bundle would
+have read 150 and would have said nothing about what the conclusion
 uses. -/
 #guard (checkBundle rdfsBundle).counts.foundational = 4
-#guard rdfsBundle.steps.size = 156
+#guard rdfsBundle.steps.size = 150
 
 /-! ## POSITIVE 2 — mixed: one replay assumption feeding a foundational row
 
@@ -220,8 +221,9 @@ private def joinIdx : Nat :=
   | none => 0
 
 -- Re-measured 2026-10-09 after the four RDF 1.2 axiomatic triples (rdf:reifies, rdfs:Proposition) joined the seed table
--- (49 and ["rdfs:9", "rdfs:1"] under the RDF 1.1 tables).
-#guard joinIdx = 53
+-- (49 and ["rdfs:9", "rdfs:1"] under the RDF 1.1 tables). 2026-10-13: 53 to 51, the two rdf:XMLLiteral seed rows
+-- left the table (https://github.com/danbri/factoidal/issues/767 gap 1).
+#guard joinIdx = 51
 #guard (rdfsBundle.steps[joinIdx]!).premises = ["rdfs:10", "rdfs:1"]
 
 /- CONTROL: the unmutated bundle is accepted. Every `false` below is

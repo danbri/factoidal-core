@@ -385,6 +385,24 @@ theorem closure_rhoDf_complete {g e : Graph} (fuel : Nat)
     (h : RhoDfEntails g e) : SimpleEntailmentSpec (RDFS.closure g fuel) e :=
   rhoDf_saturation_complete hc hf hfe (fun _ ht => RDFS.closure_extensive fuel g ht) h
 
+/-- The six-rule ρdf closure is ρdf-entailed by its input, for every
+graph and fuel (F\* `rho_df_closure_sound` needs the index hypothesis
+`rho_df_chain_wf g`). -/
+theorem closure_rhoDfEntails (g : Graph) (fuel : Nat) :
+    RhoDfEntails g (RDFS.closure g fuel) := by
+  intro i hc hsat
+  obtain ⟨a, ha⟩ := hsat
+  exact ⟨a, fun _ ht => rhoDf_derives_holds hc ha (RDFS.closure_sound fuel g ht)⟩
+
+/-- The closure decides ρdf entailment when it is closed and in the
+fragment (F\* `rho_df_closure_decides`, which also needs the chain
+hypotheses on `g`). -/
+theorem closure_rhoDf_iff {g e : Graph} (fuel : Nat)
+    (hc : RhoDfClosed (RDFS.closure g fuel))
+    (hf : RhoDfModelFragGraph (RDFS.closure g fuel)) (hfe : GraphTtFree e) :
+    RhoDfEntails g e ↔ SimpleEntailmentSpec (RDFS.closure g fuel) e :=
+  ⟨closure_rhoDf_complete fuel hc hf hfe, rhoDf_saturation_sound (closure_rhoDfEntails g fuel)⟩
+
 /-- Finding C-1 for every pair of IRIs: `x rdfs:subClassOf y` RDFS-entails
 `x rdfs:subClassOf x`, for every datatype set. (`rdfsEntails_subclassSelfLoop`
 in `RDFS/RhoDfCompleteness.lean` is the instance at two example IRIs.) -/
@@ -469,6 +487,73 @@ theorem rhoDf_frag_preservation_fails (p a : WfIri)
     obtain ⟨x, hx⟩ := h.2 rfl
     cases hx
 
+
+/-! ## Merging — F\* `RDF.Entailment.Simple.ModelTheory`, the merge lemmas
+
+RDF 1.1 Semantics §4: the merge of two graphs is their union after the
+blank nodes are made distinct. For two graphs with no shared blank node
+the merge is the union, and it is satisfied exactly when both are. -/
+
+/-- No blank node occurs in both graphs (F\* `bnode_disjoint`; its
+`graph_has_bnode g b` is `b ∈ graphBnodeIds g` here). -/
+def BnodeDisjoint (g1 g2 : Graph) : Prop :=
+  ∀ b : BNodeId, ¬ (b ∈ graphBnodeIds g1 ∧ b ∈ graphBnodeIds g2)
+
+/-- The merged assignment: `a1` on the blank nodes of `g1`, `a2` elsewhere. -/
+def mergeAssignment (i : Interp) (g1 : Graph) (a1 a2 : BnodeAssignment i.idom) :
+    BnodeAssignment i.idom :=
+  fun b => if b ∈ graphBnodeIds g1 then a1 b else a2 b
+
+theorem mergeAssignment_g1 {g1 : Graph} {a1 a2 : BnodeAssignment i.idom} {b : BNodeId}
+    (h : b ∈ graphBnodeIds g1) : mergeAssignment i g1 a1 a2 b = a1 b := by
+  simp [mergeAssignment, h]
+
+theorem mergeAssignment_g2 {g1 g2 : Graph} {a1 a2 : BnodeAssignment i.idom} {b : BNodeId}
+    (hd : BnodeDisjoint g1 g2) (h : b ∈ graphBnodeIds g2) :
+    mergeAssignment i g1 a1 a2 b = a2 b := by
+  have hn : b ∉ graphBnodeIds g1 := fun h1 => hd b ⟨h1, h⟩
+  simp [mergeAssignment, hn]
+
+theorem mem_graphBnodeIds {g : Graph} {u : Triple} {b : BNodeId} (hu : u ∈ g)
+    (hb : b ∈ tripleBnodes u) : b ∈ graphBnodeIds g :=
+  List.mem_flatMap.mpr ⟨u, hu, hb⟩
+
+/-- The union of two blank-node-disjoint graphs holds under the merged
+assignment of the two witnesses (F\* `lemma_merge_satisfies`). -/
+theorem merge_holdsAll {g1 g2 : Graph} {a1 a2 : BnodeAssignment i.idom}
+    (hd : BnodeDisjoint g1 g2) (h1 : HoldsAll i a1 g1) (h2 : HoldsAll i a2 g2) :
+    HoldsAll i (mergeAssignment i g1 a1 a2) (g1 ++ g2) := by
+  intro u hu
+  rcases List.mem_append.mp hu with hu | hu
+  · refine (tripleHolds_agree i (t := u) ?_).mp (h1 u hu)
+    intro b hb
+    exact (mergeAssignment_g1 (mem_graphBnodeIds hu hb)).symm
+  · refine (tripleHolds_agree i (t := u) ?_).mp (h2 u hu)
+    intro b hb
+    exact (mergeAssignment_g2 hd (mem_graphBnodeIds hu hb)).symm
+
+/-- **Merging.** The union of two blank-node-disjoint graphs is satisfied
+by an interpretation exactly when both graphs are. -/
+theorem merge_satisfies_iff {g1 g2 : Graph} (hd : BnodeDisjoint g1 g2) :
+    Satisfies i (g1 ++ g2) ↔ Satisfies i g1 ∧ Satisfies i g2 := by
+  constructor
+  · rintro ⟨a, ha⟩
+    exact ⟨⟨a, fun u hu => ha u (List.mem_append_left _ hu)⟩,
+           ⟨a, fun u hu => ha u (List.mem_append_right _ hu)⟩⟩
+  · rintro ⟨⟨a1, h1⟩, ⟨a2, h2⟩⟩
+    exact ⟨_, merge_holdsAll hd h1 h2⟩
+
+theorem merge_entails_component {g1 g2 : Graph} (hd : BnodeDisjoint g1 g2)
+    (h : Satisfies i (g1 ++ g2)) : Satisfies i g1 ∧ Satisfies i g2 :=
+  (merge_satisfies_iff hd).mp h
+
+/-- The pair `{g1, g2}` entails `e` in an interpretation exactly when the
+merge does. -/
+theorem merge_entails_iff {g1 g2 e : Graph} (hd : BnodeDisjoint g1 g2) :
+    (Satisfies i g1 ∧ Satisfies i g2 → Satisfies i e) ↔
+      (Satisfies i (g1 ++ g2) → Satisfies i e) := by
+  rw [merge_satisfies_iff hd]
+
 /-! ## Build-time checks -/
 
 section Checks
@@ -511,8 +596,17 @@ at most. -/
 #print axioms rhoDf_saturation_complete
 #print axioms rhoDf_saturation_iff
 #print axioms closure_rhoDf_complete
+#print axioms closure_rhoDfEntails
+#print axioms closure_rhoDf_iff
 #print axioms rdfsEntails_subclassSelfLoop_iri
 #print axioms isRhoDfFrag_iff
 #print axioms rhoDf_frag_preservation_fails
+#print axioms mergeAssignment_g1
+#print axioms mergeAssignment_g2
+#print axioms mem_graphBnodeIds
+#print axioms merge_holdsAll
+#print axioms merge_satisfies_iff
+#print axioms merge_entails_component
+#print axioms merge_entails_iff
 
 end L4Factoidal.RDF
