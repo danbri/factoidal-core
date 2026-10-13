@@ -1449,3 +1449,7 @@ L4Factoidal_SPARQL_selectPostFailure  # (b) nesting of sub-SELECTs in one query 
 L4Factoidal_OWL_Refute_ceSubHashesInto  # (b) class-expression nesting of one TBox axiom or initial label (lazyOccurrences); operand lists are tail calls
 L4Factoidal_OWL_Refute_ceListSubHashesInto  # (b) as ceSubHashesInto: the operands of one intersection or union are a self tail call (loop); one frame per nesting level
 RefuteProfile_searchP  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 the profiler's copy of Refute.search (also listed there): one frame per expansion step on one search path, at most --budget (default 20000); 2 to 19 on the real ontologies measured
+# --- Added 2026-10-13: modules newly imported from the library root by the
+# unbuilt-module gate (tools/lean-unbuilt-modules.py, anti-pattern 35); the
+# audit reads only built IR, so it saw them for the first time ---
+L4Factoidal_RDF_GraphPatterns_matchSegs  # (b) one level per segment of one URI template (RFC 6570 level 1, a few segments); the IRI's characters are consumed by takeWhile/dropWhile, not by recursion
