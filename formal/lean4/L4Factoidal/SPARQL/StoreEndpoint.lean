@@ -419,15 +419,40 @@ def serviceDescriptionOutcome (req : HTTP.Request) (serviceIri : String) : Outco
 private def optionsOutcome (allow : String) : Outcome :=
   { response := { status := 204, headers := [("allow", allow)] } }
 
+/-- The dataset prefix of a query path that ends in `/sparql`: `/ds` for
+`/ds/sparql`, empty otherwise. With a non-empty prefix the endpoint also
+answers the Apache Jena Fuseki service names `PREFIX/query`,
+`PREFIX/update` (both as the Protocol endpoint) and `PREFIX/get` (Graph
+Store reads only). -/
+def datasetPrefix (queryPath : String) : String :=
+  if queryPath.endsWith "/sparql" && queryPath.length > 7 then
+    String.ofList (queryPath.toList.take (queryPath.length - 7))
+  else ""
+
+#guard datasetPrefix "/ds/sparql" == "/ds"
+#guard datasetPrefix "/sparql" == ""
+#guard datasetPrefix "/q" == ""
+
 /-- One request against the served view. -/
 def handle (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request) : Outcome :=
   let authority := match req.header? "host" with
     | some h => if h.isEmpty then cfg.authority else h
     | none => cfg.authority
   let isGsp := req.path == cfg.gspPath || req.path.startsWith (cfg.gspPath ++ "/")
+  let dsPrefix := datasetPrefix cfg.queryPath
   let isProtocol := req.path == cfg.queryPath || req.path == cfg.queryPath ++ "/" ||
-    HTTP.isProtocolPath req.path
-  if isGsp then
+    HTTP.isProtocolPath req.path ||
+    (!dsPrefix.isEmpty && (req.path == dsPrefix ++ "/query" || req.path == dsPrefix ++ "/update"))
+  let isGet := !dsPrefix.isEmpty && req.path == dsPrefix ++ "/get"
+  if isGet then
+    if req.method == "OPTIONS" then optionsOutcome "GET, HEAD, OPTIONS"
+    else if req.method == "GET" || req.method == "HEAD" then
+      gspOutcome cfg.scope cfg.gspPath authority view { req with path := cfg.gspPath }
+    else
+      -- RFC 9110 §15.5.6: 405 carries Allow.
+      { response := { (textResponse 405 s!"{req.path} is read-only; write through {cfg.gspPath}") with
+          headers := [("allow", "GET, HEAD, OPTIONS"), ("content-type", "text/plain; charset=utf-8")] } }
+  else if isGsp then
     if req.method == "OPTIONS" then optionsOutcome "GET, HEAD, PUT, POST, DELETE, OPTIONS"
     else gspOutcome cfg.scope cfg.gspPath authority view req
   else if isProtocol then

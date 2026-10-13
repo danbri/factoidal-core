@@ -289,6 +289,12 @@ options:
   serve: `factoidal serve - a SPARQL 1.1 endpoint over an activated store
 
 usage: factoidal serve STORE [--port N] [--host ADDRESS] [options]
+       factoidal serve --file DATA /DATASET [--port N] [options]
+
+The second form matches fuseki-server --file DATA /DATASET: DATA is packed
+into a temporary collection (layout ibk5 unless --layout is given), served
+at /DATASET/sparql (also /DATASET/query and /DATASET/update) and
+/DATASET/data (also /DATASET/get, read only). Updates are lost on exit.
 
 Serves the activated generation of STORE, with its delta log, over HTTP:
 
@@ -303,6 +309,8 @@ options:
   --host ADDRESS     the address to bind (default 127.0.0.1)
   --query-path PATH  the query and update endpoint (default /sparql)
   --gsp-path PATH    the Graph Store endpoint (default /data)
+  --file DATA        pack and serve an RDF file (see the second form)
+  --layout LAYOUT    with --file: ibk3, ibk4 or ibk5 (default ibk5)
   --no-worker        serve on this thread instead of a worker thread with a
                      raised call stack (large collections need the worker)
   --quiet            print the origin only
@@ -452,7 +460,7 @@ const VALUE_OPTIONS = {
   activate: new Set([]),
   update: new Set(['update', 'file']),
   compact: new Set([]),
-  serve: new Set(['port', 'host', 'query-path', 'gsp-path']),
+  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout']),
   'lws-serve': new Set(['port', 'host', 'base']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret'])
@@ -1068,8 +1076,33 @@ function untilInterrupted (running, quiet) {
 }
 
 async function commandServe (positional, options) {
-  if (positional.length !== 1) throw new UsageError('serve needs one STORE')
   const quiet = options.quiet === true
+  // The Apache Jena Fuseki form: `serve --file DATA /ds`. The file is
+  // packed into a new collection in a temporary directory (ibk5 unless
+  // --layout says otherwise, so every graph accepts writes), activated, and
+  // served at /ds/sparql and /ds/data; /ds/query, /ds/update and /ds/get
+  // are answered too (StoreEndpoint.datasetPrefix). Updates go to that
+  // temporary collection and are lost when the process ends, as with
+  // fuseki-server --file. docs/fuseki-replacement.md.
+  if (typeof options.file === 'string') {
+    if (positional.length !== 1 || !positional[0].startsWith('/')) {
+      throw new UsageError('serve --file DATA needs one dataset name, such as /ds')
+    }
+    const dsName = positional[0].replace(/\/+$/, '')
+    const { mkdtempSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = mkdtempSync(join(tmpdir(), 'factoidal-serve-'))
+    const packOptions = { quiet: true, layout: typeof options.layout === 'string' ? options.layout : 'ibk5' }
+    let rc = await commandPack([options.file, join(root, 'gen-1')], packOptions)
+    if (rc !== 0) return rc
+    rc = await commandActivate([root, 'gen-1'], { quiet: true })
+    if (rc !== 0) return rc
+    if (!quiet) err(`serve: packed ${options.file} into ${root} (temporary; updates are lost on exit)`)
+    positional = [root]
+    options = { ...options, 'query-path': `${dsName}/sparql`, 'gsp-path': `${dsName}/data` }
+  }
+  if (positional.length !== 1) throw new UsageError('serve needs one STORE')
   const { listen, listenOnWorker, ServeHostError } = await import('./serve.mjs')
   const serveOptions = {
     port: servePort(options, 3030),

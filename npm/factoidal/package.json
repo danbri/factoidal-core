@@ -147,6 +147,7 @@
     "sample-store.mjs",
     "sample-store.d.ts",
     "sample-store/",
+    "docs/",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",

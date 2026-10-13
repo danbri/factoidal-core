@@ -44,10 +44,12 @@ All functions return a Promise. Datasets are `Dataset` values or
 `npx factoidal <command>`:
 
 - `pack INPUT STORE/gen-N`, `activate STORE gen-N`: build and activate a store from an RDF file
-- `query STORE QUERY`, `update STORE UPDATE`, `inspect STORE`, `compact STORE GEN`
-- `serve STORE --port N`: SPARQL 1.1 Protocol at `/sparql`, Graph Store Protocol at `/data`, Service Description. W3C protocol tests against this server: 50 pass, 0 fail (out of 50) [P]
+- `query STORE QUERY`, `inspect STORE`; `update` and `compact` exit 3 (https://github.com/danbri/factoidal/issues/641); updates work through `serve`
+- `serve --file DATA /ds` (the `fuseki-server --file` form) or `serve STORE --port N`: SPARQL 1.1 Protocol at `/sparql`, Graph Store Protocol at `/data`, Service Description. W3C protocol tests against this server: 50 pass, 0 fail (out of 50) [P]
 - `lws-serve DIR`, `solid-serve DIR`, `solid-client OP URL`: Linked Web Storage 1.0 and Solid Protocol
 - `version`, `sample-store`
+
+Replacing Apache Jena Fuseki: [docs/fuseki-replacement.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/docs/fuseki-replacement.md).
 
 ## Specifications covered, with test scores
 
@@ -122,6 +124,8 @@ speed record of 2026-10-13.
   https://github.com/danbri/factoidal/issues/826 (open).
 - JSON-LD Framing: 63 of 92 tests fail. SHACL 1.2 Core: 30 of 133 fail.
   RDF 1.2 Semantics: 7 of 47 fail [B].
+- `factoidal update` and `factoidal compact` exit 3: https://github.com/danbri/factoidal/issues/641 (open).
+- As a Fuseki replacement: no administration API, one dataset per process, no authentication, no TDB2: https://github.com/danbri/factoidal/issues/831 to https://github.com/danbri/factoidal/issues/834 (open).
 - Node's default stack can raise a `RangeError` in the wasm on some
   row-at-a-time queries over large results; `node --stack-size=4000` or Deno
   clears it (`skills/npm-release/SKILL.md`, trap 11).

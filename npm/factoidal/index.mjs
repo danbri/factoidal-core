@@ -172,5 +172,5 @@ export const normalizeNQuads = pure.normalizeNQuads;
 export async function serveStore(root, options = {}) {
   const { listen } = await import('./bin/serve.mjs');
   const s = await listen(root, { ...options, engine: await loadEngine() });
-  return { url: `${s.origin}/sparql`, port: s.port, close: () => s.close() };
+  return { url: `${s.origin}${options.queryPath ?? "/sparql"}`, port: s.port, close: () => s.close() };
 }

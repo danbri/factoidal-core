@@ -110,3 +110,16 @@ so the server and the native IBK3 reader answer from the same data.
   has no advisory lock (https://github.com/danbri/factoidal/issues/644).
 - The retained-bytes cap of the store handle (128 MiB of artifact bytes)
   bounds the collection a server can open.
+
+## Update 2026-10-13: Fuseki endpoint names
+
+Owner, 2026-10-13, verbatim: "Document how to make dropin replacement for
+fuseki". `StoreEndpoint.handle` now answers the Apache Jena Fuseki service
+names beside a query path that ends in `/sparql`
+(`StoreEndpoint.datasetPrefix`): `PREFIX/query` and `PREFIX/update` route to
+the Protocol endpoint, and `PREFIX/get` routes GET and HEAD to the Graph
+Store with 405 for writes. `factoidal serve --file DATA /ds` packs DATA into
+a temporary ibk5 collection and serves it at `/ds/...`. Live W3C run after
+the change: 50 pass, 0 fail (out of 50). Mapping, tested endpoints and the
+open gaps (issues 829 to 834 of danbri/factoidal):
+`npm/factoidal/docs/fuseki-replacement.md`.

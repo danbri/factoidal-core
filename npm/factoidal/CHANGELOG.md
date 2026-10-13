@@ -13,8 +13,14 @@
   out). Tests: `test/pure-and-serve.test.mjs`.
 - New `serveStore(root, {port, host})`: the `factoidal serve` SPARQL 1.1
   Protocol server as a function, `{url, port, close()}`. Node only.
+- `factoidal serve --file DATA /ds`, the `fuseki-server --file` form, and
+  the Fuseki service names `/ds/query`, `/ds/update` and `/ds/get` beside
+  `/ds/sparql` (decided in `StoreEndpoint.lean`). Record and gaps:
+  `docs/fuseki-replacement.md`; tests `test/fuseki-compat.test.mjs`. W3C live
+  protocol run: 50 pass, 0 fail (out of 50).
 - The wasm is rebuilt from `main`; the package carries the Lean 4 engine only.
-  Package suite: 426 pass, 0 fail (out of 426).
+  Package suite: 432 pass, 0 fail (out of 432); 4 of them are expected
+  failures naming issues 829, 830 and 831.
 - Includes the entries listed under "Unreleased" below.
 
 ## Unreleased (included in 0.10.0)
