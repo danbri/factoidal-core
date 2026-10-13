@@ -2000,3 +2000,29 @@ not help when bash read its next block while the file was edited.
 2. When it happens anyway: stop the run (the shell and its children), keep
    the logs of the jobs that finished before the loop started again, and run
    the truncated job alone with `--only JOB` and the same `--logdir`.
+
+## Hazard #42 — a fixed fixture path shared by parallel test runs (2026-10-13)
+
+### Symptom
+
+`tests/stack/run.sh --canary` on the main checkout failed 3 cases
+(sbm11-perm, sbm11-query, sbm11-delta) with "no such file or directory" and
+"rm: cannot remove ... Directory not empty", while the same cases passed in
+the same run under the 512 KB canary route. Run again alone, the suite gave
+71 pass, 0 fail (out of 71).
+
+### Root cause
+
+The stack suite writes its fixtures to `${TMPDIR:-/tmp}/factoidal-stack-fixtures`
+unless `STACK_FIXTURES` is set. A worktree agent ran the same suite at the
+same time; each run deleted and rewrote files the other was reading.
+
+### The rules
+
+- When more than one checkout runs on the machine (worktree agents, the main
+  checkout), run the stack suite with `STACK_FIXTURES` set to a directory of
+  that checkout or its scratch area.
+- A failure that names a missing file under a shared `/tmp` path is first a
+  collision suspect: run the suite again alone before reading it as a defect.
+- Every new suite that writes fixtures takes its directory from an environment
+  variable and defaults to a per-run directory (`mktemp -d`), not a fixed path.
