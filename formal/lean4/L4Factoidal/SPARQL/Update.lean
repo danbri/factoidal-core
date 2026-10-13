@@ -282,6 +282,34 @@ def DatasetIx.addNamed (i : WfIri) (t : Triple) :
     if n == .iri i then (n, s.add t) :: rest
     else (n, s) :: DatasetIx.addNamed i t rest
 
+/-- `addNamed` as a loop: the graphs passed so far are kept newest first in
+`acc`, so the stack does not grow with the number of named graphs. -/
+def DatasetIx.addNamedGo (i : WfIri) (t : Triple) :
+    List (Subject × GraphSlot) → List (Subject × GraphSlot) → List (Subject × GraphSlot)
+  | acc, [] => acc.reverseAux [(.iri i, (GraphSlot.plain []).add t)]
+  | acc, (n, s) :: rest =>
+    if n == .iri i then acc.reverseAux ((n, s.add t) :: rest)
+    else DatasetIx.addNamedGo i t ((n, s) :: acc) rest
+
+theorem DatasetIx.addNamedGo_eq (i : WfIri) (t : Triple) (acc l : List (Subject × GraphSlot)) :
+    DatasetIx.addNamedGo i t acc l = acc.reverse ++ DatasetIx.addNamed i t l := by
+  induction l generalizing acc with
+  | nil => simp [DatasetIx.addNamedGo, DatasetIx.addNamed, List.reverseAux_eq]
+  | cons hd rest ih =>
+    obtain ⟨n, s⟩ := hd
+    by_cases h : (n == Subject.iri i) = true
+    · simp [DatasetIx.addNamedGo, DatasetIx.addNamed, h, List.reverseAux_eq]
+    · simp [DatasetIx.addNamedGo, DatasetIx.addNamed, h, ih]
+
+/-- What runs in place of `addNamed`. -/
+def DatasetIx.addNamedFast (i : WfIri) (t : Triple) (l : List (Subject × GraphSlot)) :
+    List (Subject × GraphSlot) :=
+  DatasetIx.addNamedGo i t [] l
+
+@[csimp] theorem DatasetIx.addNamed_eq_fast : @DatasetIx.addNamed = @DatasetIx.addNamedFast := by
+  funext i t l
+  simp [DatasetIx.addNamedFast, DatasetIx.addNamedGo_eq]
+
 theorem DatasetIx.addNamed_toGraph (i : WfIri) (t : Triple) (l : List (Subject × GraphSlot))
     (d : Graph) :
     (DatasetIx.addNamed i t l).map DatasetIx.namedToGraph =
