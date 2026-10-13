@@ -1565,7 +1565,609 @@ theorem detectClashI_closureI (g : Graph) (fuel : Nat) :
     detectClashI (closureI (Index.ofGraph g) fuel) = inconsistent g fuel :=
   detectClashI_eq (Index.Wf.closure fuel (Index.Wf.ofGraph g))
 
-/-! ## Section 10 — the indexed loop is what the compiler emits
+/-! ## Section 11 — semi-naive rounds, list-equal to the naive rounds
+
+The naive round (`stepI`) evaluates every row at every driving triple of
+the round's input `S`. When `S` is itself the output of a naive round over
+`P` (so `S = P ++ D`, where `D`, the delta, is what that round appended),
+a row evaluated at a driving triple `d ∈ P` can only produce a triple
+outside `S` through an instance that reads a triple of `D`: an instance
+whose premises all lie in `P` was already concluded by the round over `P`,
+and that round put every conclusion into `S`.
+
+`stepConclusionsSN` therefore evaluates, at each driving triple `d ∈ P`,
+only the DELTA TERM of each row (`RowSpec.delta`), and every row in full
+at each `d ∈ D`:
+
+* a row that reads nothing but `d` (`RowSpec.indep`: eq-ref, eq-sym,
+  scm-cls, ...) contributes nothing at `d ∈ P`;
+* a row whose premises other than `d` come from ONE lookup, or from a
+  scan of the graph, or from one membership test (`RowSpec.additive`:
+  cax-sco, scm-sco, eq-rep-s/p/o, prp-dom, ...) is evaluated at `d ∈ P`
+  over the index of `D` alone — the delta term `{d} ⋈ D`;
+* every other row (`RowSpec.full`: two or more lookups, collection
+  walks) is evaluated at `d ∈ P` over the whole of `S`, as the naive
+  round does.
+
+The emitted list keeps the naive round's order: the driving triples in
+graph order and, at each, the rows in `conclusionsListS` order. It differs
+from the naive round's list only by triples that are already in `S`.
+`addAll S` drops exactly those (`addAll_filter_of_subset`), so the
+semi-naive round returns the SAME LIST as the naive round
+(`stepConclusionsSN_addAll`), and the semi-naive loop returns the same
+list as `closure` at every fuel (`indexedClosureSN_eq`). Soundness, the
+fuel dichotomy, completeness at a saturated graph and every other theorem
+about `closure` hold for it unchanged.
+
+Each row's delta term carries one proof obligation, `RowSpec.Ok`: on a
+graph `P ++ D`, the delta term and the full row agree on every triple the
+full row over `P` does not already conclude. -/
+
+/-- A row together with the term the semi-naive round evaluates at a
+driving triple of the previous round's input. `delta sS sD d` reads the
+store of the whole input (`sS`) and the store of the delta (`sD`). -/
+structure RowSpec where
+  f     : Store → Triple → List Triple
+  delta : Store → Store → Triple → List Triple
+
+/-- The obligation of a delta term: on `P ++ D`, once the triples the row
+concludes from `P` alone are filtered out, the delta term and the full row
+are the same list. -/
+def RowSpec.Ok (r : RowSpec) : Prop :=
+  ∀ (P D : Graph) (d : Triple) (q : Triple → Bool),
+    (∀ t ∈ r.f (Store.ofGraph P) d, q t = false) →
+    (r.f (Store.ofGraph (P ++ D)) d).filter q =
+      (r.delta (Store.ofGraph (P ++ D)) (Store.ofGraph D) d).filter q
+
+/-- A row that reads only its driving triple: nothing at an old one. -/
+def RowSpec.indep (f : Store → Triple → List Triple) : RowSpec :=
+  { f := f, delta := fun _ _ _ => [] }
+
+/-- A row additive over `P ++ D`: at an old driving triple, the row over
+the delta's store. -/
+def RowSpec.additive (f : Store → Triple → List Triple) : RowSpec :=
+  { f := f, delta := fun _ sD d => f sD d }
+
+/-- A row evaluated in full at every driving triple, as the naive round
+does. -/
+def RowSpec.full (f : Store → Triple → List Triple) : RowSpec :=
+  { f := f, delta := fun sS _ d => f sS d }
+
+theorem RowSpec.indep_ok {f : Store → Triple → List Triple}
+    (h : ∀ s s' d, f s d = f s' d) : (RowSpec.indep f).Ok := by
+  intro P D d q hq
+  simp only [RowSpec.indep, List.filter_nil]
+  rw [h (Store.ofGraph (P ++ D)) (Store.ofGraph P) d]
+  exact List.filter_eq_nil_iff.mpr (fun t ht => by simp [hq t ht])
+
+theorem RowSpec.additive_ok {f : Store → Triple → List Triple}
+    (h : ∀ P D d, f (Store.ofGraph (P ++ D)) d =
+      f (Store.ofGraph P) d ++ f (Store.ofGraph D) d) :
+    (RowSpec.additive f).Ok := by
+  intro P D d q hq
+  simp only [RowSpec.additive]
+  rw [h P D d, List.filter_append,
+    List.filter_eq_nil_iff.mpr (fun t ht => by simp [hq t ht]), List.nil_append]
+
+theorem RowSpec.full_ok (f : Store → Triple → List Triple) : (RowSpec.full f).Ok := by
+  intro P D d q _
+  rfl
+
+/-! ### The lookups of `P ++ D` -/
+
+theorem withPred_append (P D : Graph) (p : WfIri) :
+    RL.withPred (P ++ D) p = RL.withPred P p ++ RL.withPred D p := by
+  simp [RL.withPred, List.filter_append]
+
+theorem withSubj_append (P D : Graph) (s : Subject) :
+    RL.withSubj (P ++ D) s = RL.withSubj P s ++ RL.withSubj D s := by
+  simp [RL.withSubj, List.filter_append]
+
+theorem withObj_append (P D : Graph) (o : Term) :
+    RL.withObj (P ++ D) o = RL.withObj P o ++ RL.withObj D o := by
+  simp [RL.withObj, List.filter_append]
+
+theorem withSubjPred_append (P D : Graph) (s : Subject) (p : WfIri) :
+    RL.withSubjPred (P ++ D) s p = RL.withSubjPred P s p ++ RL.withSubjPred D s p := by
+  simp [RL.withSubjPred, List.filter_append]
+
+theorem withPredObj_append (P D : Graph) (p : WfIri) (o : Term) :
+    RL.withPredObj (P ++ D) p o = RL.withPredObj P p o ++ RL.withPredObj D p o := by
+  simp [RL.withPredObj, List.filter_append]
+
+theorem memB_append (P D : Graph) (t : Triple) :
+    RL.memB (P ++ D) t = (RL.memB P t || RL.memB D t) := by
+  simp [RL.memB, List.any_append]
+
+theorem iriIndividuals_append (P D : Graph) :
+    iriIndividuals (P ++ D) = iriIndividuals P ++ iriIndividuals D := by
+  simp [iriIndividuals, List.flatMap_append]
+
+/-- A zero-or-one element list distributes a `flatMap` over `++`. -/
+theorem flatMap_append_of_length_le_one {α β : Type} {l : List α}
+    (hl : l.length ≤ 1) (f g : α → List β) :
+    l.flatMap (fun x => f x ++ g x) = l.flatMap f ++ l.flatMap g := by
+  match l, hl with
+  | [], _ => rfl
+  | [_], _ => simp
+
+theorem asSubject_length (t : Term) : (asSubject t).length ≤ 1 := by
+  unfold asSubject; split <;> simp
+
+theorem asIri_length (t : Term) : (asIri t).length ≤ 1 := by
+  unfold asIri; split <;> simp
+
+theorem subjIri_length (s : Subject) : (subjIri s).length ≤ 1 := by
+  unfold subjIri; split <;> simp
+
+theorem asSubject_flatMap_append {β : Type} (t : Term) (f g : Subject → List β) :
+    (asSubject t).flatMap (fun x => f x ++ g x) =
+      (asSubject t).flatMap f ++ (asSubject t).flatMap g :=
+  flatMap_append_of_length_le_one (asSubject_length t) f g
+
+theorem asIri_flatMap_append {β : Type} (t : Term) (f g : WfIri → List β) :
+    (asIri t).flatMap (fun x => f x ++ g x) = (asIri t).flatMap f ++ (asIri t).flatMap g :=
+  flatMap_append_of_length_le_one (asIri_length t) f g
+
+theorem subjIri_flatMap_append {β : Type} (s : Subject) (f g : WfIri → List β) :
+    (subjIri s).flatMap (fun x => f x ++ g x) = (subjIri s).flatMap f ++ (subjIri s).flatMap g :=
+  flatMap_append_of_length_le_one (subjIri_length s) f g
+
+theorem ite_append_nil {β : Type} {c : Prop} [Decidable c] (X Y : List β) :
+    (if c then X ++ Y else []) = (if c then X else []) ++ (if c then Y else []) := by
+  split <;> simp
+
+/-- The additivity proof of a row with one lookup: unfold the row, split
+every lookup of `P ++ D`, and distribute. -/
+macro "additive_row" : tactic => `(tactic| (
+  intro P D d
+  simp only [Store.ofGraph, withPred_append, withSubj_append, withObj_append,
+    withSubjPred_append, withPredObj_append, iriIndividuals_append,
+    List.map_append, List.flatMap_append, asSubject_flatMap_append,
+    asIri_flatMap_append, subjIri_flatMap_append, ite_append_nil]))
+
+theorem eqTransForS_add (P D : Graph) (d : Triple) : eqTransForS (Store.ofGraph (P ++ D)) d =
+    eqTransForS (Store.ofGraph P) d ++ eqTransForS (Store.ofGraph D) d := by
+  revert P D d; unfold eqTransForS; additive_row
+theorem eqRepSForS_add (P D : Graph) (d : Triple) : eqRepSForS (Store.ofGraph (P ++ D)) d =
+    eqRepSForS (Store.ofGraph P) d ++ eqRepSForS (Store.ofGraph D) d := by
+  revert P D d; unfold eqRepSForS; additive_row
+theorem eqRepPForS_add (P D : Graph) (d : Triple) : eqRepPForS (Store.ofGraph (P ++ D)) d =
+    eqRepPForS (Store.ofGraph P) d ++ eqRepPForS (Store.ofGraph D) d := by
+  revert P D d; unfold eqRepPForS; additive_row
+theorem eqRepOForS_add (P D : Graph) (d : Triple) : eqRepOForS (Store.ofGraph (P ++ D)) d =
+    eqRepOForS (Store.ofGraph P) d ++ eqRepOForS (Store.ofGraph D) d := by
+  revert P D d; unfold eqRepOForS; additive_row
+
+theorem prpDomForS_add (P D : Graph) (d : Triple) : prpDomForS (Store.ofGraph (P ++ D)) d =
+    prpDomForS (Store.ofGraph P) d ++ prpDomForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpDomForS; additive_row
+theorem prpRngForS_add (P D : Graph) (d : Triple) : prpRngForS (Store.ofGraph (P ++ D)) d =
+    prpRngForS (Store.ofGraph P) d ++ prpRngForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpRngForS; additive_row
+theorem prpSympForS_add (P D : Graph) (d : Triple) : prpSympForS (Store.ofGraph (P ++ D)) d =
+    prpSympForS (Store.ofGraph P) d ++ prpSympForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpSympForS; additive_row
+theorem prpSpo1ForS_add (P D : Graph) (d : Triple) : prpSpo1ForS (Store.ofGraph (P ++ D)) d =
+    prpSpo1ForS (Store.ofGraph P) d ++ prpSpo1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpSpo1ForS; additive_row
+theorem prpEqp1ForS_add (P D : Graph) (d : Triple) : prpEqp1ForS (Store.ofGraph (P ++ D)) d =
+    prpEqp1ForS (Store.ofGraph P) d ++ prpEqp1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpEqp1ForS; additive_row
+theorem prpEqp2ForS_add (P D : Graph) (d : Triple) : prpEqp2ForS (Store.ofGraph (P ++ D)) d =
+    prpEqp2ForS (Store.ofGraph P) d ++ prpEqp2ForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpEqp2ForS; additive_row
+theorem prpInv1ForS_add (P D : Graph) (d : Triple) : prpInv1ForS (Store.ofGraph (P ++ D)) d =
+    prpInv1ForS (Store.ofGraph P) d ++ prpInv1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpInv1ForS; additive_row
+theorem prpInv2ForS_add (P D : Graph) (d : Triple) : prpInv2ForS (Store.ofGraph (P ++ D)) d =
+    prpInv2ForS (Store.ofGraph P) d ++ prpInv2ForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpInv2ForS; additive_row
+theorem caxScoForS_add (P D : Graph) (d : Triple) : caxScoForS (Store.ofGraph (P ++ D)) d =
+    caxScoForS (Store.ofGraph P) d ++ caxScoForS (Store.ofGraph D) d := by
+  revert P D d; unfold caxScoForS; additive_row
+theorem caxEqc1ForS_add (P D : Graph) (d : Triple) : caxEqc1ForS (Store.ofGraph (P ++ D)) d =
+    caxEqc1ForS (Store.ofGraph P) d ++ caxEqc1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold caxEqc1ForS; additive_row
+theorem caxEqc2ForS_add (P D : Graph) (d : Triple) : caxEqc2ForS (Store.ofGraph (P ++ D)) d =
+    caxEqc2ForS (Store.ofGraph P) d ++ caxEqc2ForS (Store.ofGraph D) d := by
+  revert P D d; unfold caxEqc2ForS; additive_row
+theorem scmScoForS_add (P D : Graph) (d : Triple) : scmScoForS (Store.ofGraph (P ++ D)) d =
+    scmScoForS (Store.ofGraph P) d ++ scmScoForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmScoForS; additive_row
+theorem scmSpoForS_add (P D : Graph) (d : Triple) : scmSpoForS (Store.ofGraph (P ++ D)) d =
+    scmSpoForS (Store.ofGraph P) d ++ scmSpoForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmSpoForS; additive_row
+theorem scmDom1ForS_add (P D : Graph) (d : Triple) : scmDom1ForS (Store.ofGraph (P ++ D)) d =
+    scmDom1ForS (Store.ofGraph P) d ++ scmDom1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmDom1ForS; additive_row
+theorem scmDom2ForS_add (P D : Graph) (d : Triple) : scmDom2ForS (Store.ofGraph (P ++ D)) d =
+    scmDom2ForS (Store.ofGraph P) d ++ scmDom2ForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmDom2ForS; additive_row
+theorem scmRng1ForS_add (P D : Graph) (d : Triple) : scmRng1ForS (Store.ofGraph (P ++ D)) d =
+    scmRng1ForS (Store.ofGraph P) d ++ scmRng1ForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmRng1ForS; additive_row
+theorem scmRng2ForS_add (P D : Graph) (d : Triple) : scmRng2ForS (Store.ofGraph (P ++ D)) d =
+    scmRng2ForS (Store.ofGraph P) d ++ scmRng2ForS (Store.ofGraph D) d := by
+  revert P D d; unfold scmRng2ForS; additive_row
+theorem prpRflForS_add (P D : Graph) (d : Triple) : prpRflForS (Store.ofGraph (P ++ D)) d =
+    prpRflForS (Store.ofGraph P) d ++ prpRflForS (Store.ofGraph D) d := by
+  revert P D d; unfold prpRflForS; additive_row
+theorem dtRangeIntersectForS_add (P D : Graph) (d : Triple) : dtRangeIntersectForS (Store.ofGraph (P ++ D)) d =
+    dtRangeIntersectForS (Store.ofGraph P) d ++ dtRangeIntersectForS (Store.ofGraph D) d := by
+  revert P D d; unfold dtRangeIntersectForS; additive_row
+theorem inverseOfDomRngFlipForS_add (P D : Graph) (d : Triple) : inverseOfDomRngFlipForS (Store.ofGraph (P ++ D)) d =
+    inverseOfDomRngFlipForS (Store.ofGraph P) d ++ inverseOfDomRngFlipForS (Store.ofGraph D) d := by
+  revert P D d; unfold inverseOfDomRngFlipForS; additive_row
+
+/-- The 74 rows of `conclusionsListS`, in its order, each with the term the
+semi-naive round evaluates at a driving triple of the previous round's
+input. -/
+def rowTable : List RowSpec := [
+    RowSpec.indep eqRefSForS,
+    RowSpec.indep eqRefPForS,
+    RowSpec.indep eqRefOForS,
+    RowSpec.indep eqSymForS,
+    RowSpec.additive eqTransForS,
+    RowSpec.additive eqRepSForS,
+    RowSpec.additive eqRepPForS,
+    RowSpec.additive eqRepOForS,
+    RowSpec.additive prpDomForS,
+    RowSpec.additive prpRngForS,
+    RowSpec.full prpFpForS,
+    RowSpec.full prpIfpForS,
+    RowSpec.additive prpSympForS,
+    RowSpec.full prpTrpForS,
+    RowSpec.additive prpSpo1ForS,
+    RowSpec.full prpSpo2ForS,
+    RowSpec.additive prpEqp1ForS,
+    RowSpec.additive prpEqp2ForS,
+    RowSpec.additive prpInv1ForS,
+    RowSpec.additive prpInv2ForS,
+    RowSpec.full invFpIfpForS,
+    RowSpec.full invIfpFpForS,
+    RowSpec.full invFpIfpRevForS,
+    RowSpec.full invIfpFpRevForS,
+    RowSpec.full prpKeyForS,
+    RowSpec.full clsInt1ForS,
+    RowSpec.full clsInt2ForS,
+    RowSpec.full clsUniForS,
+    RowSpec.full clsSvf1ForS,
+    RowSpec.full clsSvf2ForS,
+    RowSpec.full clsAvfForS,
+    RowSpec.full clsHv1ForS,
+    RowSpec.full clsHv2ForS,
+    RowSpec.full clsHs1ForS,
+    RowSpec.full clsHs2ForS,
+    RowSpec.full clsMaxc2ForS,
+    RowSpec.full clsOoForS,
+    RowSpec.additive caxScoForS,
+    RowSpec.additive caxEqc1ForS,
+    RowSpec.additive caxEqc2ForS,
+    RowSpec.indep scmClsForS,
+    RowSpec.additive scmScoForS,
+    RowSpec.indep scmEqc1ForS,
+    RowSpec.full scmEqc2ForS,
+    RowSpec.additive scmSpoForS,
+    RowSpec.indep scmEqp1ForS,
+    RowSpec.full scmEqp2ForS,
+    RowSpec.additive scmDom1ForS,
+    RowSpec.additive scmDom2ForS,
+    RowSpec.additive scmRng1ForS,
+    RowSpec.additive scmRng2ForS,
+    RowSpec.indep scmOpForS,
+    RowSpec.indep scmDpForS,
+    RowSpec.full scmSvf1ForS,
+    RowSpec.full scmSvf2ForS,
+    RowSpec.full scmAvf1ForS,
+    RowSpec.full scmAvf2ForS,
+    RowSpec.full scmHvForS,
+    RowSpec.full scmIntForS,
+    RowSpec.full scmUniForS,
+    RowSpec.indep eqDiffSymForS,
+    RowSpec.full pdwToDiffForS,
+    RowSpec.full caxDwToDiffForS,
+    RowSpec.full fpDiffToDiffForS,
+    RowSpec.full ifpDiffToDiffForS,
+    RowSpec.full chainToTransForS,
+    RowSpec.additive prpRflForS,
+    RowSpec.indep xsdAxiomsForS,
+    RowSpec.additive dtRangeIntersectForS,
+    RowSpec.indep caxDwToComplementForS,
+    RowSpec.full clsMaxqc1ToComplementForS,
+    RowSpec.indep minCard1ComprehensionForS,
+    RowSpec.full caxAdcToDwForS,
+    RowSpec.additive inverseOfDomRngFlipForS ]
+
+/-- `rowTable` lists the rows of `conclusionsListS`, in its order. -/
+theorem rowTable_f (s : Store) (d : Triple) :
+    rowTable.flatMap (fun r => r.f s d) = conclusionsFromS s d := by
+  simp only [rowTable, conclusionsFromS, conclusionsListS, List.flatMap_cons, List.flatMap_nil,
+    RowSpec.indep, RowSpec.additive, RowSpec.full, List.flatten_cons, List.flatten_nil,
+    List.append_nil]
+
+/-- Every delta term of `rowTable` meets its obligation. -/
+theorem rowTable_ok : ∀ r ∈ rowTable, r.Ok := by
+  intro r hr
+  simp only [rowTable, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.additive_ok eqTransForS_add
+  · exact RowSpec.additive_ok eqRepSForS_add
+  · exact RowSpec.additive_ok eqRepPForS_add
+  · exact RowSpec.additive_ok eqRepOForS_add
+  · exact RowSpec.additive_ok prpDomForS_add
+  · exact RowSpec.additive_ok prpRngForS_add
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok prpSympForS_add
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok prpSpo1ForS_add
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok prpEqp1ForS_add
+  · exact RowSpec.additive_ok prpEqp2ForS_add
+  · exact RowSpec.additive_ok prpInv1ForS_add
+  · exact RowSpec.additive_ok prpInv2ForS_add
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok caxScoForS_add
+  · exact RowSpec.additive_ok caxEqc1ForS_add
+  · exact RowSpec.additive_ok caxEqc2ForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.additive_ok scmScoForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok scmSpoForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok scmDom1ForS_add
+  · exact RowSpec.additive_ok scmDom2ForS_add
+  · exact RowSpec.additive_ok scmRng1ForS_add
+  · exact RowSpec.additive_ok scmRng2ForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok prpRflForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.additive_ok dtRangeIntersectForS_add
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.indep_ok (fun _ _ _ => rfl)
+  · exact RowSpec.full_ok _
+  · exact RowSpec.additive_ok inverseOfDomRngFlipForS_add
+
+
+/-! ### The round -/
+
+/-- The terms the semi-naive round evaluates at a driving triple of the
+previous round's input. -/
+def oldBlock (sS sD : Store) (d : Triple) : List Triple :=
+  rowTable.flatMap (fun r => r.delta sS sD d)
+
+/-- Everything a semi-naive round emits, before deduplication. `lo` is the
+length of the previous round's input: the first `lo` triples of `sS.graph`
+are old driving triples, the rest are the delta. -/
+def stepConclusionsSN (sS sD : Store) (lo : Nat) : List Triple :=
+  axiomTriples ++ ((sS.graph.take lo).flatMap (oldBlock sS sD) ++
+    (sS.graph.drop lo).flatMap (conclusionsFromS sS))
+
+/-- One semi-naive round over the index: the delta's own index is built
+from the triples after position `lo`. -/
+def stepSNI (i : Index) (lo : Nat) : Index :=
+  i.insertAll (stepConclusionsSN (Store.ofIndex i)
+    (Store.ofIndex (Index.ofGraph (i.toGraph.drop lo))) lo)
+
+/-- The semi-naive loop, with the naive loop's stopping rule (the size did
+not change). The first round has `lo = 0`, so every driving triple is new
+and the round is the naive round. -/
+def closureSNI (i : Index) (lo : Nat) (fuel : Nat) : Index :=
+  match fuel with
+  | 0     => i
+  | n + 1 =>
+      let i' := stepSNI i lo
+      if i'.all.size = i.all.size then i else closureSNI i' i.all.size n
+
+/-- The semi-naive closure of a graph, as a graph. -/
+def indexedClosureSN (g : Graph) (fuel : Nat) : Graph :=
+  (closureSNI (Index.ofGraph g) 0 fuel).toGraph
+
+/-! ### `addAll` drops what the graph holds -/
+
+theorem memB_addOne_of_memB {g : Graph} {t u : Triple} (h : RL.memB g u = true) :
+    RL.memB (addOne g t) u = true := by
+  unfold addOne
+  split
+  · exact h
+  · simp only [RL.memB, List.any_append, Bool.or_eq_true] at h ⊢
+    exact Or.inl h
+
+theorem memB_addAll_of_memB (ts : List Triple) :
+    ∀ {g : Graph} {u : Triple}, RL.memB g u = true → RL.memB (addAll g ts) u = true := by
+  induction ts with
+  | nil => intro g u h; exact h
+  | cons t ts ih => intro g u h; exact ih (memB_addOne_of_memB h)
+
+theorem memB_addAll_of_mem_list (ts : List Triple) :
+    ∀ {g : Graph} {u : Triple}, u ∈ ts → RL.memB (addAll g ts) u = true := by
+  induction ts with
+  | nil => intro g u h; cases h
+  | cons t ts ih =>
+    intro g u h
+    show RL.memB (addAll (addOne g t) ts) u = true
+    rcases List.mem_cons.mp h with rfl | h
+    · apply memB_addAll_of_memB
+      unfold addOne
+      split
+      · assumption
+      · simp [RL.memB]
+    · exact ih h
+
+theorem addAll_prefix (ts : List Triple) :
+    ∀ (g : Graph), ∃ x, addAll g ts = g ++ x := by
+  induction ts with
+  | nil => intro g; exact ⟨[], by simp [addAll]⟩
+  | cons t ts ih =>
+    intro g
+    obtain ⟨x, hx⟩ := ih (addOne g t)
+    unfold addOne at hx
+    split at hx
+    · exact ⟨x, by simp only [addAll, addOne]; rw [if_pos (by assumption)]; exact hx⟩
+    · exact ⟨[t] ++ x, by simp only [addAll, addOne]; rw [if_neg (by assumption)]; simp [hx]⟩
+
+/-- `addAll` over a graph that already holds every triple of `S` ignores
+the triples of `S` in its list. -/
+theorem addAll_filter_of_subset (S : Graph) (ts : List Triple) :
+    ∀ (g : Graph), (∀ u, RL.memB S u = true → RL.memB g u = true) →
+      addAll g ts = addAll g (ts.filter (fun t => !RL.memB S t)) := by
+  induction ts with
+  | nil => intro g _; rfl
+  | cons t ts ih =>
+    intro g hg
+    by_cases ht : RL.memB S t = true
+    · have hgt : RL.memB g t = true := hg t ht
+      simp only [addAll, List.filter_cons, ht, Bool.not_true, Bool.false_eq_true, if_false]
+      have : addOne g t = g := by unfold addOne; rw [if_pos hgt]
+      rw [this]
+      exact ih g hg
+    · simp only [addAll, List.filter_cons, Bool.not_eq_true] at ht ⊢
+      simp only [ht, Bool.not_false, if_true, addAll]
+      exact ih (addOne g t) (fun u hu => memB_addOne_of_memB (hg u hu))
+
+/-! ### The round is the naive round -/
+
+theorem flatMap_filter_congr {α β : Type} {l : List α} {f g : α → List β} {q : β → Bool}
+    (h : ∀ x ∈ l, (f x).filter q = (g x).filter q) :
+    (l.flatMap f).filter q = (l.flatMap g).filter q := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.flatMap_cons, List.filter_append]
+    rw [h x (List.mem_cons_self), ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+
+/-- At an old driving triple, the delta terms and the full rows agree on
+every triple outside `S`. -/
+theorem oldBlock_filter {P D : Graph} {d : Triple}
+    (hS : ∀ t ∈ conclusionsFrom P d, RL.memB (P ++ D) t = true) :
+    (oldBlock (Store.ofGraph (P ++ D)) (Store.ofGraph D) d).filter
+        (fun t => !RL.memB (P ++ D) t) =
+      (conclusionsFromS (Store.ofGraph (P ++ D)) d).filter
+        (fun t => !RL.memB (P ++ D) t) := by
+  rw [← rowTable_f]
+  unfold oldBlock
+  apply flatMap_filter_congr
+  intro r hr
+  refine (rowTable_ok r hr P D d _ ?_).symm
+  intro t ht
+  have hc : t ∈ conclusionsFrom P d := by
+    rw [← conclusionsFromS_ofGraph, ← rowTable_f]
+    exact List.mem_flatMap.mpr ⟨r, hr, ht⟩
+  simp [hS t hc]
+
+/-- **One semi-naive round is one naive round**, as a list, when the
+previous round's input `P` is a prefix of `S` and every conclusion of a
+driving triple of `P` over `P` is already in `S`. -/
+theorem addAll_stepConclusionsSN {P D : Graph} {lo : Nat} (hlo : P.length = lo)
+    (hS : ∀ d ∈ P, ∀ t ∈ conclusionsFrom P d, RL.memB (P ++ D) t = true) :
+    addAll (P ++ D) (stepConclusionsSN (Store.ofGraph (P ++ D)) (Store.ofGraph D) lo) =
+      RL.step (P ++ D) := by
+  have hself : ∀ u, RL.memB (P ++ D) u = true → RL.memB (P ++ D) u = true := fun _ h => h
+  rw [RL.step, ← stepConclusionsS_ofGraph,
+    addAll_filter_of_subset (P ++ D) _ _ hself,
+    addAll_filter_of_subset (P ++ D) (stepConclusionsS _) _ hself]
+  congr 1
+  have hg : (Store.ofGraph (P ++ D)).graph = P ++ D := rfl
+  unfold stepConclusionsSN stepConclusionsS
+  rw [hg, List.take_left' hlo, List.drop_left' hlo]
+  conv => rhs; rw [List.flatMap_append]
+  simp only [List.filter_append]
+  congr 2
+  exact flatMap_filter_congr (fun d hd => oldBlock_filter (hS d hd))
+
+/-- What a semi-naive round needs of its input `S` and its `lo`: `S` is
+the previous input `P` followed by a delta, `lo` is the length of `P`, and
+`S` holds every conclusion of a driving triple of `P` over `P`. -/
+def RoundOk (S : Graph) (lo : Nat) : Prop :=
+  ∃ P D, S = P ++ D ∧ P.length = lo ∧
+    ∀ d ∈ P, ∀ t ∈ conclusionsFrom P d, RL.memB S t = true
+
+theorem RoundOk.start (S : Graph) : RoundOk S 0 :=
+  ⟨[], S, rfl, rfl, fun _ h => by cases h⟩
+
+theorem RoundOk.next (S : Graph) : RoundOk (RL.step S) S.length := by
+  obtain ⟨x, hx⟩ := addAll_prefix (stepConclusions S) S
+  refine ⟨S, x, hx, rfl, ?_⟩
+  intro d hd t ht
+  unfold RL.step
+  apply memB_addAll_of_mem_list
+  unfold stepConclusions
+  exact List.mem_append_right _ (List.mem_flatMap.mpr ⟨d, hd, ht⟩)
+
+/-- One indexed semi-naive round pictures one list round. -/
+theorem Index.Wf.stepSN {i : Index} {S : Graph} {lo : Nat} (h : i.Wf S)
+    (hr : RoundOk S lo) : (stepSNI i lo).Wf (RL.step S) := by
+  obtain ⟨P, D, rfl, hlo, hS⟩ := hr
+  unfold stepSNI
+  have hD : i.toGraph.drop lo = D := by
+    rw [Index.toGraph, h.all, List.drop_left' hlo]
+  rw [hD, Store.ofIndex_eq h, Store.ofIndex_eq (Index.Wf.ofGraph D),
+    ← addAll_stepConclusionsSN hlo hS]
+  exact h.insertAll _
+
+/-- The semi-naive loop pictures the list loop at every fuel. -/
+theorem Index.Wf.closureSN (fuel : Nat) :
+    ∀ {i : Index} {S : Graph} {lo : Nat}, i.Wf S → RoundOk S lo →
+      (closureSNI i lo fuel).Wf (RL.closure S fuel) := by
+  induction fuel with
+  | zero => intro i S lo h _; exact h
+  | succ n ih =>
+    intro i S lo h hr
+    simp only [closureSNI, RL.closure]
+    have hs : (stepSNI i lo).all.size = (RL.step S).length := by
+      rw [← Array.length_toList, (h.stepSN hr).all]
+    have hi : i.all.size = S.length := by
+      rw [← Array.length_toList, h.all]
+    rw [hs, hi]
+    split
+    · exact h
+    · exact ih (h.stepSN hr) (RoundOk.next S)
+
+/-- **The semi-naive closure is the naive closure**, as a list, at every
+fuel. -/
+theorem indexedClosureSN_eq (g : Graph) (fuel : Nat) :
+    indexedClosureSN g fuel = RL.closure g fuel :=
+  (Index.Wf.closureSN fuel (Index.Wf.ofGraph g) (RoundOk.start g)).all
+
+/-! ## Section 10 — the semi-naive indexed loop is what the compiler emits
 
 `closure` and `closureFix` (`RLClosure.lean`) are the specification: each round
 reads its premises by scanning the graph and adds its conclusions with a list
@@ -1573,26 +2175,29 @@ scan (`memB`). Run on a chain of 80 subclass axioms, the command line spent
 83 percent of its instructions in that scan, and the time grew 18 to 20 times for
 each doubling of the chain (survey of 2026-10-10,
 `docs/designissues/2026-10-10-lean-vs-fstar-performance.md`). `indexedClosure`
-returns the same list at every fuel (`indexedClosure_eq`). The two `csimp`
-theorems below make every function compiled after this module call the indexed
-loop in place of the scanning one. The definitions of `closure` and
-`closureFix`, and every theorem stated about them, do not change.
+(naive rounds over the index) and `indexedClosureSN` (semi-naive rounds over the
+index, Section 11) return the same list at every fuel (`indexedClosure_eq`,
+`indexedClosureSN_eq`). The two `csimp` theorems below make every function
+compiled after this module call the semi-naive loop in place of the scanning
+one. Until 2026-10-13 they named the naive indexed loop
+(https://github.com/danbri/factoidal/issues/756 item 2). The definitions of
+`closure` and `closureFix`, and every theorem stated about them, do not change.
 
 `closureFix` is defined in `RLClosure.lean`, before this module, so its own
 body keeps calling `closure`. `closureFixIndexed` is the function the compiler
 substitutes for it in the modules that import this one. -/
 
-/-- `closureFix` through the indexed loop. -/
+/-- `closureFix` through the semi-naive indexed loop. -/
 def closureFixIndexed (g : Graph) : Graph :=
-  indexedClosure g (closureFuelBound g)
+  indexedClosureSN g (closureFuelBound g)
 
 theorem closureFix_eq_closureFixIndexed (g : Graph) :
     closureFix g = closureFixIndexed g :=
-  (indexedClosure_eq g (closureFuelBound g)).symm
+  (indexedClosureSN_eq g (closureFuelBound g)).symm
 
-/-- The compiler calls `indexedClosure` wherever the source says `closure`. -/
-@[csimp] theorem closure_eq_indexedClosure : @closure = @indexedClosure :=
-  funext fun g => funext fun fuel => (indexedClosure_eq g fuel).symm
+/-- The compiler calls `indexedClosureSN` wherever the source says `closure`. -/
+@[csimp] theorem closure_eq_indexedClosure : @closure = @indexedClosureSN :=
+  funext fun g => funext fun fuel => (indexedClosureSN_eq g fuel).symm
 
 /-- The compiler calls `closureFixIndexed` wherever the source says `closureFix`. -/
 @[csimp] theorem closureFix_eq_indexed : @closureFix = @closureFixIndexed :=
