@@ -31,7 +31,8 @@ theorems gate the other executions.
   (triple terms, reifiers, annotations, `VERSION`, base direction).
 - Consumers: the W3C runner (`Harness/Manifest.lean`), and every probe and
   pack tool other than the shard packer. Since 2026-10-10 the command line
-  and the WASM `parse`, `datasetOpen` and `queryDataset` Turtle path
+  (except `parse FILE`, which reads a file in chunks since 2026-10-13,
+  section 3b) and the WASM `parse`, `datasetOpen` and `queryDataset` Turtle path
   (`Wasm/Ops/Parse.lean`, `parseTextToDataset`) read Turtle with
   `parseTurtleText` (2.2), which calls `parseTurtle` for a document that
   contains `<<` and for every document the scanner walk refuses.
@@ -197,6 +198,12 @@ Modules, in data order:
    (`parseTurtleText_error`). Record:
    `2026-10-10-lean-vs-fstar-performance.md` section 10.
 
+6. `StrictFeed.turtleFeed` (2026-10-13,
+   https://github.com/danbri/factoidal/issues/813): the same walk over the
+   decoded 64 KiB chunks of a file, for the command line's strict
+   `parse FILE`; the walk's accumulator is written and emptied after each
+   chunk (`drainRun_eq`). Section 3b.
+
 ### 2.3 Proofs
 
 - `TurtleFuelTheorems.lean` (2026-09-02): the three literal loops are the
@@ -277,6 +284,7 @@ Modules, in data order:
 | 2026-09-02 | quadratic `parseTurtle` | per-token `cs.length + 1` fuel in two literal readers | constant `literalFuel` + proofs |
 | 2026-10-10 | a Turtle collection of 100,000 elements overflowed a 512 KB native stack and a browser tab's stack; the largest that ran at 512 KB had about 4,500 elements (4,531 overflowed) | `readCollectionRest` (F* `parse_collection_rest`) made one recursive call per element | `readCollectionCells`, a tail call per element, and `linkCollectionCells` at the `)`, proved equal (2.1, 2.3). 100,000 elements run at 512 KB. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before (https://github.com/danbri/factoidal/issues/678) |
 | 2026-10-10 | one Turtle object list of 25,000 objects took 10.33 s, and 100,000 gave no result in 120 s; one statement of 10,000 predicates overflowed a 512 KB native stack, a Node `--stack-size=512` stack and Node's default stack | `readObjectList` (F* `parse_object_list_rev`) built its result with `acc ++ ...`; `readPredicateObjectList` (F* `parse_predicate_object_list_rev`) made one recursive call per `;` group | `readObjectListRev`, a reversed list and a tail call per object, and `readPredicateObjectList` as one loop over the groups, proved equal to the readable forms (2.1, 2.3). 25,000 objects 0.058 s, 100,000 objects 0.403 s; 10,000 groups run at 512 KB natively and in Node under `--stack-size=512`. `tests/stack/run.sh --canary`: 41 pass, 0 fail (out of 41) before, with three expected failures, and after, with none. Outputs of `l4factoidal parse --out nquads`, strict and `--lenient`, on the 1,022 `.ttl` and `.trig` files of the W3C RDF 1.1 and 1.2 suites: 2,044 of 2,044 byte-identical to the binary before; and the 239 RDF 1.2 files again in the 1.2 mode (`--format turtle12`, `trig12`), 478 of 478 byte-identical. With `turtle` and `trig` the CLI reads the RDF 1.2 files in the 1.1 mode, where 51 of the 239 parse and annotations are refused; in the 1.2 mode 193 parse (https://github.com/danbri/factoidal/issues/754) |
+| 2026-10-13 | the strict `l4factoidal parse FILE --out nquads` peaked at 33 to 35 bytes per input byte (400,000 N-Triples: 1,186 MB; Serd 2 MB, Oxigraph 23 MB) | the whole file as one `String`, the N-Triples `List Char` of the document, the whole dataset and the whole N-Quads `String` before the first line was written | `StrictFeed.lean` (section 3b): 64 KiB chunks, each chunk's lines written and dropped; 24 to 26 MB at every size; the count keeps the set of distinct triples only. Byte identity: `tools/strict-parse-differential.sh` (3b.4); Turtle chunk equality proved (`drainRun_eq`) |
 | 2026-09-02/03 | UK Parliament pack 6,134 s | scanner reversed the whole candidate at every line end; a 134 MB, 4,211-line statement group | seven-character `head` + proof; pack 254 s |
 | open | 22.9 s user + 21.7 s system and 5.39 GB resident to parse 134 MB (measured 2026-09-03) | `List Char` representation: about 16 bytes and one allocation per character, built twice (scanner `currentRev`, then `text.toList` for the grammar) | a `String`/`ByteArray`-position lexer with its own equality proof against 2.1 |
 | 2026-10-10 | `l4factoidal query` and `parse` peak at 35 bytes of resident memory per input byte (256 MB for 6.76 MB of `gene.ttl`; F*: 28 MB) | `parseTurtle`'s whole-document `text.toList` | `parseTurtleText`: the scanner walk over the `String` (2.2, item 5). Query peak 257.7 to 192.7 MB at 80,000 paragraphs, 37.0 to 26.0 bytes per input byte. Byte identity MEASURED, not proved |
@@ -290,8 +298,8 @@ Modules, in data order:
 
 | Syntax | Reference | Other executions | Agreement |
 | --- | --- | --- | --- |
-| N-Triples | `NTriples.lean` `parseNTriples` | — | W3C suite; `NTriplesRoundTrip.lean` |
-| N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
+| N-Triples | `NTriples.lean` `parseNTriples` | `StrictFeed.lean` `LineFeed` with `tripleReader` (the command line's `parse FILE`, section 3b) | W3C suite; `NTriplesRoundTrip.lean`; `parseLinesAcc_eq_foldLines`; the chunk boundary by `tools/strict-parse-differential.sh` (3b.4) |
+| N-Quads | `NQuads.lean` `parseNQuads` | `NQuadsFast.lean` `parseNQuadsFast` (bucketed accumulator; the WASM `datasetOpen` path); `NQuadsStreaming.lean` (chunk-boundary fold), `NQuadsFold.lean` (the generic consumer the IBK4 shard packer streams through); `StrictFeed.lean` `LineFeed` with `quadReader` (the command line's `parse FILE`, section 3b; `LineFeed.run_quad11_eq_batch`) | `parseNQuadsFast_eq_parseNQuads` proved 2026-09-02 (`NQuadsFastTheorems.lean`); the streaming module carries its own chunk-boundary theorem |
 | TriG | `TriG.lean` `parseTriG` (shares the Turtle productions; the default graph is the unlabelled block) | none; an IBK4 pack over TriG still buffers the whole source, unlike the Turtle and N-Quads routes (quad-aware layout: `2026-09-02-quad-aware-block-layout.md`) | W3C suites |
 | RDF/XML | `RdfXml.lean` | — | W3C suite; `RdfXmlTheorems.lean` (blank-node label spaces disjoint by construction) |
 
@@ -505,6 +513,262 @@ lenient TriG walk, which runs that reader, is linear too: 25,000, 50,000,
 100,000 and 200,000 statements (10 per graph block, one bad in 500;
 1,681,242 to 13,822,892 bytes) took 0.72, 1.32, 2.77 and 5.43 s of CPU and
 141, 265, 513 and 987 MB peak.
+
+## 3b. The strict command line reads a file in chunks (2026-10-13)
+
+Issue: https://github.com/danbri/factoidal/issues/813 (key result of
+objective O2 of https://github.com/danbri/factoidal/issues/768). Before this
+change `l4factoidal parse FILE [--out nquads]` read the whole file into one
+`String` and gave it to `Ops.parseTextToDataset`; the state-of-the-art table
+(`2026-10-12-sota-reference.md`) measured 33 to 35 bytes of peak resident
+memory per input byte, where the streaming reader of the same binary
+(`--lenient`) held 24 MB at every size.
+
+### 3b.1 Where the memory and the time went (before)
+
+`l4query-phases FILE --parse-cli --format F --stop-after PHASE` runs the
+phases of the old `parseCmd` one at a time (`Harness/QueryPhases.lean`) and
+prints the resident set after each. Native binary of `d371f1d9`, load
+average 8 on 4 CPUs, one run per phase. Time is milliseconds since the
+process started; RSS and peak in MB.
+
+N-Triples, 100,000 triples, 8,077,780 bytes (`nt-100000.nt` of
+`tools/sota-bench.py`):
+
+| Phase | What it holds | ms | RSS after | Peak so far |
+| --- | --- | ---: | ---: | ---: |
+| start | the process | 0 | 12.6 | 12.6 |
+| read | the file as one `String` | 34 to 69 | 29.0 | 29.0 |
+| chars (alone) | the whole document as a `List Char` | 952 | 264.6 | 303.9 |
+| parse | `parseNTriples`: the `List Char` plus the graph | 605 to 644 | 264.6 | 303.9 |
+| normalize (count) | `normalizeDataset`, the set of distinct triples | 825 | 61.4 | 303.9 |
+| nquads (`--out`) | `Dataset.toCanonicalNQuads`, one 8 MB `String` | 692 | 59.2 | 304.1 |
+| output | written | 692 | 42.9 | 304.1 |
+
+Turtle, 20,000 paragraphs of `gene.ttl`, 87,468 triples, 1,706,149 bytes:
+
+| Phase | What it holds | ms | RSS after | Peak so far |
+| --- | --- | ---: | ---: | ---: |
+| start | the process | 0 | 12.5 | 12.5 |
+| read | the file as one `String` | 5 | 16.6 | 16.6 |
+| chars (alone; the Turtle path does not build it) | `List Char` | 58 | 65.9 | 74.2 |
+| parse | `parseTurtleText` (the scanner walk over the `String`): the graph | 369 to 391 | 37.4 | 37.4 |
+| normalize (count) | the set of distinct triples | 553 | 48.1 | 49.6 |
+| nquads (`--out`) | the 11.4 MB N-Quads `String` | 405 | 68.1 | 68.1 |
+| output | written | 406 | 43.6 | 68.1 |
+
+So for N-Triples (and N-Quads) the peak was the document's `List Char`:
+256 MB of 304 MB, 32 bytes per input byte, and 0.9 s of the time (most of it
+system time to fault in the pages). For Turtle the peak was the dataset and
+the output `String` together. The count added the set of distinct triples to
+the dataset.
+
+### 3b.2 The chunked execution
+
+`L4Factoidal/Syntax/StrictFeed.lean`, called by `streamStrictFile` in
+`Wasm/Cli.lean`. The file is read in 65,536-byte chunks (`forChunks`), each
+decoded by `Utf8Stream`:
+
+| Syntax | Walk | `--out nquads` | Count |
+| --- | --- | --- | --- |
+| N-Triples | `LineFeed` with `tripleReader`: the complete lines of each chunk (`splitCompleteLines`) through `foldLines`, the five branches of `parseLinesAcc` with the reader as a parameter; the partial last line and the absolute offset are carried | each chunk's triples are written (`chunkText`) and dropped | `countQuad` into a `FastDataset`: the step of `normalizeDataset` (language tags in lower case, §3.3; one entry per distinct triple, §3) |
+| N-Quads | `LineFeed` with `quadReader` | `addQuadFast` into a `FastDataset` (the accumulator of `parseNQuadsFast`), written at the end: the canonical form groups the quads by graph and keeps each quad once, so the set is needed | the same set, then `normalizeDataset` |
+| Turtle | a pre-pass (`TurtlePrepass`: the generated blank-node prefix and `hasDoubleLt` of the whole file), then the scanner walk of `parseTurtleWalk` one character at a time (`turtleFeed`) | after each chunk the walk's accumulator is written and emptied | `countQuad` per chunk |
+
+The text, the `List Char` of the document, the dataset (except where the
+output needs the set) and the output `String` are never built. What a run
+keeps between chunks: the walk's state (prefixes, base, the unfinished line or
+candidate, the offset), the UTF-8 decoder's last bytes, and the consumer's
+state.
+
+The whole-file path (`strictWhole`, which is the code before the change) is
+used when a streamed run cannot give today's answer by itself:
+
+- standard input (`-` or no file) and every other syntax (TriG, RDF/XML,
+  JSON-LD) and `--out turtle`: as before;
+- a Turtle document that contains `<<` (as in `parseTurtleText`);
+- a Turtle document the walk refuses: the file is read whole and given to
+  `Ops.parseTextToDataset`, so every Turtle error is `parseTurtle`'s, as
+  `parseTurtleText_error` states for the in-memory path. When `parseTurtle`
+  accepts a document the walk refused (a `PREFIX` directive cut at a line end,
+  2.3), the lines already written are the walk's first triples; the command
+  line checks that they are the first triples of the reference graph
+  (`StrictFeed.walkPrefix`) and writes the rest, or reports an internal error
+  (exit 1);
+- bytes that are not UTF-8: `readInput` reports them as before.
+
+The N-Triples and N-Quads errors are the line walk's own: the same reader on
+the same line, with the absolute offset. On an error the lines of the chunks
+before it are already on standard output (a streamed parse writes each chunk
+before it reads the next); the message, the offset and the exit status are
+the ones before the change.
+
+### 3b.3 Theorems
+
+All in `StrictFeed.lean` and `TurtleChunkFold.lean`; axioms `propext`,
+`Classical.choice`, `Quot.sound` at most.
+
+- `foldLines_quadReader`: `foldLines (quadReader mode)` is
+  `foldQuadLinesAcc mode`, so `LineFeed.feed_quad11` is one step of
+  `NQuadsFold.feedChunkC` and `LineFeed.run_quad11_eq_batch` holds: a chunked
+  N-Quads (RDF 1.1) run that succeeds gives the whole document's fold, from
+  `streamConsume11_eq_batch` (section 3). The N-Quads output is that fold with
+  `addQuadFast`, which is `parseNQuadsFast`.
+- `parseLinesAcc_eq_foldLines`, `parseNTriples_eq_foldLines`: the N-Triples
+  reference is `foldLines (tripleReader mode)` with a list consumer.
+- `turtleFeedChunks_eq`, `turtleFeed_eq_walkChars`, `walkChars_eq_foldl`:
+  the characters of the decoded chunks go through the walk's step in order;
+  the chunking does not enter.
+- `TurtleChunkFold.walk_drain`, `finish_drain` (from `consumeText_map`,
+  `consumeCandidates_map`, `feedChar_map`, `finish_map`, `walkChars_map`: the
+  walk passes its accumulator only to `step`, so a map that commutes with
+  `step` commutes with the walk) and `StrictFeed.drainRun_eq`: emptying the
+  accumulator after each chunk and writing what it held writes exactly the
+  triples of the walk of the concatenated chunks, in order, and fails exactly
+  when that walk fails.
+- `TurtlePrepass.feedText_chunks`: the pre-pass over chunks gives
+  `freshBnodePrefixText` and `hasDoubleLt` of the concatenation.
+- `normalizeDataset_default`, `toCanonicalNQuads_default`, `chunkText_eq`:
+  the count and the written text are the ones of the whole-file path for a
+  dataset with one default graph.
+- `isIri_eq_isIriFast` (`NTriples.lean`, `@[csimp]`): section 3b.5.
+
+Not proved, four equalities, tracked by
+https://github.com/danbri/factoidal/issues/826 with one expected failure
+each in `tests/known-defects/run.sh` (rows SF-1 to SF-4: XFAIL while no
+theorem of the name exists under `formal/lean4`, XPASS, which fails the
+suite, when one lands). SF-1, `walkAll_init_eq_parseTurtleWalk`: that
+`walkAll` (the walk `drainRun_eq` speaks of) from the
+initial state is `parseTurtleWalk`. `TurtleChunkFold.walkChars` writes out the
+fold of `parseTurtleWalk` with the same step text, but `rfl` does not close the
+equation, because the two `match` expressions elaborate to different auxiliary
+matchers; `#guard`s in `StrictFeed.lean` compare them on accepted and refused
+documents. SF-2, `LineFeed.run_triple_eq_batch`: the N-Triples chunk boundary
+(a line walk over the lines of each chunk equals the walk over the whole text,
+errors included; the N-Quads RDF 1.1 success direction is
+`streamConsume11_eq_batch`). SF-3, `LineFeed.run_quad12_eq_batch`: the N-Quads
+RDF 1.2 case. Not proved either, and inside SF-2 and SF-3 as stated in the
+issue: the N-Triples and N-Quads error at a chunk boundary. SF-4,
+`Utf8Stream.feedChunks_eq_fromUTF8`: that the Utf8Stream decoding of the
+chunks concatenates to the text `readInput` reads. The Turtle walk itself
+against `parseTurtle` is the chunk-boundary half of 2.3, also not proved. The
+check for all of these is `tools/strict-parse-differential.sh` (3b.4).
+
+### 3b.4 The differential check
+
+`tools/strict-parse-differential.sh OLD NEW` runs `parse FILE --format F
+--out nquads` and `parse FILE --format F` (the count) on every `.nt`, `.nq`
+and `.ttl` file of the W3C RDF 1.1 and 1.2 suites (RDF/XML excluded; the RDF
+1.2 files also in the RDF 1.2 mode), with and without `--base`, by the binary
+before the change (OLD, `d371f1d9`) and after it (NEW). NEW runs three times
+per case, with the built-in 65,536-byte chunks and with
+`L4_STRICT_CHUNK_BYTES=7` and `=1`, so in the small W3C files every line and
+statement boundary also falls across a chunk boundary. It then runs
+generated files of several chunks each, which put errors and directives past
+the first chunks (N-Quads over 50 graphs with repeated quads and language
+tags in two cases, and with a malformed line at line 120,000; a malformed
+Turtle statement, and a `PREFIX` directive whose IRI is on the next line,
+in the middle of 20,000 gene.ttl paragraphs and at the start; an unterminated
+N-Triples string at line 50,000). A case agrees when the exit status and
+standard error are the same and, when OLD succeeds, standard output is the
+same byte for byte.
+
+Result, 2026-10-13, OLD `d371f1d9` against the final binary of this change:
+21,012 agree, 0 differ (out of 21,012 cases: 6,992 W3C cases at each of the
+three chunk sizes, and 36 generated; OLD succeeded in 14,562 and refused in
+6,450). The W3C files are smaller than one 65,536-byte chunk, so the 7-byte and
+1-byte runs and the generated files are the ones that cross chunk
+boundaries.
+
+The largest inputs of the state-of-the-art table, compared by hand the same
+way (both outputs and the count): `nt-400000.nt`, `mixed-nt-400000.nt`,
+`gene-80000.ttl`, `ttlrich-400000.ttl`: 8 of 8 the same.
+
+### 3b.5 After: memory and time, and the speed repair
+
+`tools/sota-bench.py`, same host, median of 3 runs, load average 6 to 7 on 4
+CPUs (the parse rows) and 28 to 31 (the count rows, measured again after the
+repair of 3b.6); wall time (CPU time), peak resident set. Serd 0.32.2 and
+Oxigraph 0.5.11 from the same run as the parse rows.
+
+| Row | Before (`e3c3aa01`, SOTA record) | After | Serd | Oxigraph | After / fastest reference: time; memory above process start |
+| --- | --- | --- | --- | --- | --- |
+| N-Triples 100,000, `--out nquads` | 0.91 s (0.85 s), 306 MB | 0.50 s (0.41 s), 24.3 MB | 0.16 s (0.09 s), 1.9 MB | 0.19 s (0.13 s), 23.2 MB | 3.1; 4.8 |
+| N-Triples 400,000, `--out nquads` | 2.97 s (2.80 s), 1,186 MB | 1.95 s (1.75 s), 24.2 MB | 0.44 s (0.28 s), 1.9 MB | 0.65 s (0.50 s), 23.2 MB | 4.4; 4.7 |
+| N-Triples mixed terms 400,000 | 3.52 s (3.29 s), 1,177 MB | 2.25 s (2.05 s), 24.1 MB | 0.47 s (0.33 s), 1.9 MB | 0.74 s (0.56 s), 23.2 MB | 4.8; 4.6 |
+| Turtle gene.ttl 20,000 paragraphs (87,468 triples) | 0.54 s (0.48 s), 71 MB | 0.41 s (0.29 s), 25.6 MB | 0.12 s (0.06 s), 2.0 MB | 0.18 s (0.12 s), 23.4 MB | 3.6; 6.1 |
+| Turtle gene.ttl 80,000 paragraphs (346,100 triples) | 1.95 s (1.71 s), 243 MB | 1.44 s (1.17 s), 25.6 MB | 0.48 s (0.27 s), 2.0 MB | 0.73 s (0.46 s), 23.3 MB | 3.0; 6.1 |
+| Turtle, predicate and object lists, 457,136 triples | 3.01 s (2.82 s), 227 MB | 1.84 s (1.61 s), 25.6 MB | 0.56 s (0.32 s), 2.1 MB | 0.88 s (0.68 s), 23.4 MB | 3.3; 6.1 |
+| Count, N-Triples 400,000 | 5.13 s (5.07 s), 1,186 MB | 5.66 s (3.28 s), 226 MB (load 31) | — | — | Jena `riot --count` 4.31 s (3.68 s), 224 MB: 1.3; 1.0 (peak resident set ratio) |
+| Count, gene.ttl 80,000 paragraphs | 2.93 s (2.82 s), 163 MB | 3.98 s (2.32 s), 163 MB (load 29) | — | — | Jena 4.38 s (4.73 s), 298 MB: 0.91; 0.55 (peak resident set ratio) |
+
+Memory above process start uses the recorded starts of the SOTA record
+(Lean 19.5 MB, Serd 1.8 MB; a reference under 1 MB above its start counts as
+1 MB), the rule of `tests/perf/sota_gate.sh`. So the two rows of issue 813's
+expected failures, N-Triples 400,000 and gene.ttl 80,000, are now within 10
+times the fastest reference in time (4.4 and 3.0) and in memory above process
+start (4.7 and 6.1), and the gate's expected-failure marks are removed. The
+count holds the set: 226 MB for 400,000 distinct triples, as much as Jena.
+The streaming reader of the same binary (`--lenient`, which counts repeats)
+holds 24 MB.
+
+The time per triple. Callgrind on the streamed parse of 20,000 N-Triples
+lines found `RDF.isIri` at 27 percent of the instructions: it builds
+`s.toList` to look for one `:`. `NTriples.isIriFast` reads the string in place
+(`String.contains`), and the `@[csimp]` theorem `isIri_eq_isIriFast` makes the
+compiler call it in every parser: 1,030.5 to 774.6 million instructions for
+the 20,000 lines (-24.8 percent), 183.1 to 152.1 million for 2,000 gene.ttl
+paragraphs (-17 percent; 38 million of each are the process start). What the
+774.6 million (38,700 per triple) are spent on: `readIriRef` 49 percent
+(`iriNextStep`, one character of an IRI, 24), the chunk's `List Char`
+(`String.toList`, `lean_string_data`) 15, allocation and release about 25.
+
+### 3b.6 A cost paid during the work
+
+The first count build took 9.16 s of CPU for 400,000 N-Triples lines and
+0.97 s for 100,000. Two references kept the count's `FastDataset` shared
+while the walk updated it, so `addQuadFast` copied its hash map at the first
+quad of every 64 KiB chunk: `LineFeed.feed` read `st.pos` after the walk, and
+the command line's chunk loop named the old line state `lf` in its error
+branch, so the compiler emitted `lean_inc(lf)` before the call. After both
+repairs: 2.86 s and 0.62 s of CPU at load 17. The skill
+`lean4-performance` already named the first form (`feedChunkC`, 2026-10-12);
+it now names both.
+
+### 3b.7 Gates (2026-10-13, this change)
+
+- `l4w3c` RDF 1.1: 1041 pass, 0 fail (out of 1041) before and after; RDF
+  1.2: 1358 pass, 0 fail (out of 1358) before and after. The scoreboard rows
+  of `l4w3c-rdf11`, `l4w3c-rdf12` and `l4turtle-probe`
+  (`tools/lean-scoreboard.sh --only ...`) are identical before and after, logs
+  line for line (the probe's one failure, `test-38.ttl`, is there before and
+  after).
+- `tools/strict-parse-differential.sh`: 21,012 agree, 0 differ (out of
+  21,012) (3b.4).
+- `tests/stack/lean_scaling.sh`: 27 pass, 0 fail, 3 expected-fail (out of 30),
+  with the three new rows `parse-nt-memory`, `parse-ttl-memory` and
+  `count-nt-memory`; those rows measured through `/usr/bin/time` after the
+  harness defect of 3b.6 was found: 0.2, 0.0 and 6.2 bytes of peak resident
+  set per input byte (bounds 1, 1, 12); on the binary before, 37.1, 30.2 and
+  37.5, so they fail there.
+- `tests/stack/lenient_scaling.sh`: 16 pass, 0 fail (out of 16).
+- `tests/stack/run.sh --canary`: 87 pass, 0 fail (out of 87) with
+  `STACK_TIMEOUT=300`. With the default cap of 120 s, at load average 20 to
+  40, the `wasm manifest` case was killed at the cap once (86 pass, 1 fail
+  (out of 87)); in the rerun it took 72.6 s and `native manifest` 115.1 s.
+- `Wasm/cli-smoke.sh`: 83 pass, 0 fail (out of 83). `Wasm/native-smoke.sh`:
+  353 pass, 0 fail, 2 expected failures (out of 355).
+- `tests/perf/sota_gate.sh` (load average 14 to 41): the 36 rows of the parse
+  and count workloads pass in the full run; issue 813's two expected-failure
+  rows are plain assertions now. See the SOTA record, section 8, for the
+  other rows.
+- `tools/lean-tail-recursion-audit.py --gate`: pass, with one new allow line
+  (`StrictFeed.drainRun`, a specification of the command line's loop used by
+  `drainRun_eq` only). `tools/lean-hygiene-audit.py --build-log`: clean
+  (partial def 163, baseline 163; every `#print axioms` line `propext`,
+  `Classical.choice`, `Quot.sound` at most). Full `lake build`: exit 0
+  (1635 jobs). WebAssembly module rebuilt (`NTriples.lean` changed); `npm
+  test`: 413 pass, 0 fail, 1 skipped (out of 414).
 
 ## 4. Rules that follow
 

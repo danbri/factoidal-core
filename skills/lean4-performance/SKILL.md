@@ -62,6 +62,18 @@ Rules from that repair:
   out of an `IO.Ref` with `swap` (unique while it is updated). An `IO.Ref`
   read with `get` and written back with `set` has the same defect: the ref
   still holds the old map during the insert.
+  Paid again 2026-10-13 in two forms, by an agent that had not read this
+  bullet (https://github.com/danbri/factoidal/issues/813):
+  (1) `StrictFeed.LineFeed.feed` was written with `st.pos` after the walk,
+  as above; (2) the command line's chunk loop returned the OLD line state
+  `lf` in its error branch, so the compiler emitted `lean_inc(lf)` before
+  `LineFeed.feed` and the count's `FastDataset` was copied at the first quad
+  of every chunk: 400,000 N-Triples counted in 8.6 s of CPU against 2.9 s
+  after both repairs (take the state apart with `match st with | {..} =>`
+  before the walk; return a fresh empty state on the error branch). A
+  value named in ANY later branch of the caller is alive during the call.
+  Check the emitted C: `grep -n "lean_inc(v_x)" .lake/build/ir/<Module>.c`
+  just above the call that updates the map.
 - **When insertion order is observable, use `OMap`** (`JSONLD/OrderedMap.lean`:
   a `Std.TreeMap` plus the keys newest first). Lookup and update agree with
   `flLookup` and `flUpd` on the entries in insertion order
@@ -315,6 +327,21 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   a `csimp` twin, grep for every other call of the scanning pieces it replaces
   (here `step`, `stepConclusions`) and time each production entry that calls
   them, not only the one the twin was written for.
+
+- **A faster loop keeps the readable loop's ORDER when it drops only what
+  the deduplication drops.** The OWL 2 RL closure's output order is the
+  naive rounds' list order, and the command line prints it. The semi-naive
+  rounds (`OWL/RLClosureIndexed.lean` Section 11) evaluate, at a driving
+  triple the previous round already held, only each row's delta term; the
+  list they emit is the naive round's list with some triples removed, all
+  of them already in the round's input. `addAll` drops exactly those, so
+  `addAll_filter_of_subset` and one obligation per row (`RowSpec.Ok`: equal
+  after filtering out what the row concludes from the previous input) give
+  the same LIST at every fuel (`indexedClosureSN_eq`), and one `csimp`
+  theorem installs it. A form that found the same SET by delta joins in
+  another order would have needed a sort with its own proof, or a measured
+  order. Issue https://github.com/danbri/factoidal/issues/756 item 2;
+  `docs/designissues/2026-10-10-owl-real-ontologies.md` § 11.
 
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 

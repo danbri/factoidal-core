@@ -25,7 +25,7 @@ when one is more than 25 % slower in CPU time or larger in peak resident set,
 or gives a different answer.
 
 Reference engines are not vendored. `--install` fetches them into the
-download directory (default /tmp/sota-dl) and checks each archive against
+download directory (default /tmp/sota-dl-<checkout directory name>) and checks each archive against
 the SHA-256 below: pyoxigraph (pip, in a venv), Apache Jena (binary
 distribution), Serd (`serdi`, the Ubuntu packages, unpacked, not installed),
 HermiT (inside the owlready2 wheel) and rdf-canonize (npm). The npm package
@@ -58,7 +58,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
-DL = Path(os.environ.get("SOTA_DL", "/tmp/sota-dl"))
+# One directory per checkout (hazard #43 of skills/workflow-gotchas-debugging:
+# on 2026-10-13 one agent deleted the shared /tmp/sota-dl at the end of its
+# run while another checkout's gate read fixtures from it, and 74 of 79 rows
+# failed with exit 125). Downloads are still reused within one checkout.
+DL = Path(os.environ.get("SOTA_DL", f"/tmp/sota-dl-{ROOT.name}"))
 FIX = Path(os.environ.get("SOTA_FIXTURES", str(DL / "fixtures")))
 os.environ.setdefault("BENCH_FIXTURE_DIR", str(FIX))
 
@@ -876,12 +880,18 @@ def report(path):
 # issue. The row fails the gate when it comes within the bound (UNEXPECTED
 # PASS), so the repair cannot land without the row and the issue being updated.
 XFAIL = {
-    ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/813",
-    ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/813",
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
-    ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
-    ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/819",
 }
+# Removed 2026-10-13: ("rdfc-pairs", "8000", "lean") for
+# https://github.com/danbri/factoidal/issues/751. With the RDFC-1.0 repair of
+# that issue (OKR batch 1 KR 2.4) the row measured 0.58 s CPU (9.97 s
+# recorded), time ratio 2.9 to Oxigraph, and the gate reported UNEXPECTED PASS.
+# Removed 2026-10-13: ("owl-dl-consistent", "schema.org", "lean") for
+# https://github.com/danbri/factoidal/issues/819. On a base with the repair of
+# https://github.com/danbri/factoidal/issues/760 and the semi-naive OWL 2 RL
+# closure (issue 756 item 2) the row is within 10 times HermiT, so the gate
+# reported UNEXPECTED PASS (record:
+# docs/designissues/2026-10-10-owl-real-ontologies.md § 11).
 
 
 def over_ten(lean, ref, start_rss):

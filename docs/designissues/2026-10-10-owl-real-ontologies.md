@@ -44,6 +44,13 @@ F\* steps, `prlimit --as=6000000000` for both.
   2.27 s of CPU time, with indexes proved equal to the readable definition
   (issue 766). A part that stays quadratic in blank-node-to-blank-node
   assertions: https://github.com/danbri/factoidal/issues/812.
+- ✅ 2026-10-13 (§ 11, https://github.com/danbri/factoidal/issues/756 item 2):
+  the OWL 2 RL closure runs semi-naive rounds, proved to return the same list
+  as the naive rounds at every fuel, with the four obligations of issue 756
+  proved and fuel adequacy open. CPU time of `closure`: RO 15.9 s to 2.8 s,
+  the Cell Ontology 11.7 s to 7.4 s, QUDT 45.8 s and 1,350 MB to 22.6 s and
+  659 MB. schema.org `owl-consistent`: 2.8 s of CPU time, HermiT 2.6 s
+  (https://github.com/danbri/factoidal/issues/819).
 - ✅ Every failure above has an open issue and an expected-failure row in
   `tests/stack/owl_real_gate.sh`: 5 pass, 0 fail, 7 expected-fail (out of
   12), exit 0 (11 rows in one run at 16:07 UTC, load average 1.8; the
@@ -786,3 +793,470 @@ Branch `claude/wt-qudt-owl`; load average 4 to 27 (two other agents building).
   every committed copy agrees); `npm test` in `npm/factoidal`: 413 pass, 0
   fail, 1 skipped (out of 414; the skipped test needs the `esbuild`
   devDependency, which is not installed in the worktree).
+
+
+## 11. Semi-naive OWL 2 RL closure (2026-10-13, issue 756 item 2)
+
+Issue: https://github.com/danbri/factoidal/issues/756, item 2 (semi-naive OWL
+RL), and https://github.com/danbri/factoidal/issues/819 (schema.org
+`owl-consistent`). OKR batch 1 (https://github.com/danbri/factoidal/issues/768),
+owner's goal of 2026-10-12, verbatim: "/goal OKRs addresses successfully
+especially perf and scaling should approach SOTA". Owner, 2026-10-10,
+verbatim: "Can we extend this approach to semi-naïve OWL/RDFS evaluation
+eventually, but the proof target would change. Instead of proving that both
+implementations return identical results after every round, prove that they
+compute equivalent saturated closures". Branch `claude/wt-owlrl-seminaive`
+of `danbri/factoidal-core`, base `93ad93b9` (`main` `c8836eab` with
+`claude/wt-sota-table`).
+
+### 11.1 Result
+
+- ✅ The OWL 2 RL closure runs semi-naive rounds over the index
+  (`OWL/RLClosureIndexed.lean` Section 11). Proved: the semi-naive loop
+  returns the SAME LIST as the naive loop at every fuel
+  (`indexedClosureSN_eq`), so it takes the same rounds, holds the same set
+  after each round, and prints the triples in today's order. One `csimp`
+  theorem makes every compiled caller of `closure` and `closureFix` (the
+  `closure` verb, `owl-consistent`, `owl-entails`, the SPARQL entailment
+  regimes, the wasm ops) run it; the OWL probe's own round loop runs it too.
+- ✅ The four obligations of issue 756 for this closure
+  (`OWL/RLSemiNaiveTheorems.lean`, section 11.4). `#print axioms`:
+  `propext`, `Classical.choice`, `Quot.sound` only.
+- 🔴 Open, as before this change: fuel adequacy (that `closureFuelBound g`
+  rounds and `listFuel` are enough). Expected failure
+  `L4Factoidal.OWL.RL.closureFix_saturated` in
+  `Harness/ProofObligations.lean`. The semi-naive loop needs no run-time check:
+  it takes the naive loop's rounds by proof.
+
+### 11.2 Method
+
+`l4owl-rl-profile FILE.nt [--rows] [--sn]` (new,
+`formal/lean4/Harness/OwlRlProfile.lean`) reads one N-Triples file and runs
+the closure round by round: the naive indexed rounds (`stepConclusionsS`, then
+`Index.insertAll`, as `closureI`), or with `--sn` the semi-naive rounds
+(`stepConclusionsSN`). For each round it prints the input size, the delta (the
+triples the previous round added), the conclusions emitted before
+deduplication, the new triples, and the time of the conclusion list, of the
+insertion and (semi-naive) of the delta's index. With `--rows` it also
+evaluates each of the 74 rows on its own over every driving triple of the
+round and prints, per row and round, the conclusions emitted, how many are not
+in the round's input, and the time. Each timed value is consumed by a counter
+between the two clock reads (skills/measuring-inference §§ 9 and 11). The row
+pass is a separate evaluation; its times add up to about the round time plus
+the cost of iterating the input once per row. It holds no OWL logic.
+
+Inputs: the `merged.nt` of each ontology, written by `tools/owl-real-bench.py`
+(the Lean parser's N-Triples of the source files, RDF merge). Machine: the
+same container as § 1; 4 CPUs shared with two other agents. ⚠️ The load
+average was 8 to 50 during these runs (two other agents built wasm modules
+with many parallel jobs); every table names the load of its run, wall times
+are inflated by it, and the CPU-time columns are the better comparison.
+
+### 11.3 Before: where the naive closure spent its rounds
+
+Naive indexed closure (`closureI`, the closure before this change), one run of
+`l4owl-rl-profile` per ontology, load average 15 (QUDT 21). "Emitted" counts
+conclusions before deduplication; "New" is what the round added; "ms" is
+conclusion list plus insertion, wall clock in the process. The semi-naive
+columns are section 11.5; the round structure is the same by proof
+(`indexedClosureSN_eq`), and the script checked that input, delta and new
+agree in every round.
+
+Cell Ontology:
+
+| Round | Input | Delta | New | Emitted, naive | ms, naive | Emitted, semi-naive | ms, semi-naive |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 78,833 | 78,833 | 34,379 | 221,083 | 1,379 | 221,083 | 1,466 |
+| 2 | 113,212 | 34,379 | 21,855 | 736,445 | 2,242 | 515,802 | 2,994 |
+| 3 | 135,067 | 21,855 | 23,425 | 1,078,005 | 2,565 | 347,596 | 2,390 |
+| 4 | 158,492 | 23,425 | 4,948 | 1,411,247 | 3,792 | 340,347 | 2,057 |
+| 5 | 163,440 | 4,948 | 4 | 1,480,747 | 3,561 | 76,611 | 1,324 |
+| 6 | 163,444 | 4 | 0 | 1,480,787 | 3,387 | 7,151 | 1,330 |
+| all | | | | 6,408,314 | 16,927 | 1,508,590 | 11,561 |
+
+RO:
+
+| Round | Input | Delta | New | Emitted, naive | ms, naive | Emitted, semi-naive | ms, semi-naive |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 11,703 | 11,703 | 9,282 | 37,726 | 502 | 37,726 | 1,184 |
+| 2 | 20,985 | 9,282 | 10,124 | 143,347 | 2,664 | 105,726 | 694 |
+| 3 | 31,109 | 10,124 | 10,451 | 284,938 | 4,595 | 142,148 | 750 |
+| 4 | 41,560 | 10,451 | 1,090 | 414,224 | 4,972 | 130,181 | 1,236 |
+| 5 | 42,650 | 1,090 | 86 | 425,924 | 6,976 | 12,807 | 1,267 |
+| 6 | 42,736 | 86 | 0 | 426,688 | 4,956 | 1,871 | 1,796 |
+| all | | | | 1,732,847 | 24,664 | 430,459 | 6,928 |
+
+Wine and food:
+
+| Round | Input | Delta | New | Emitted, naive | ms, naive | Emitted, semi-naive | ms, semi-naive |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2,709 | 2,709 | 4,215 | 11,762 | 102 | 11,762 | 97 |
+| 2 | 6,924 | 4,215 | 6,468 | 67,216 | 510 | 57,211 | 395 |
+| 3 | 13,392 | 6,468 | 9,705 | 227,170 | 1,052 | 170,973 | 895 |
+| 4 | 23,097 | 9,705 | 4,816 | 516,657 | 1,687 | 324,211 | 1,475 |
+| 5 | 27,913 | 4,816 | 935 | 584,438 | 2,687 | 113,230 | 654 |
+| 6 | 28,848 | 935 | 10 | 596,150 | 3,134 | 55,408 | 706 |
+| 7 | 28,858 | 10 | 0 | 596,623 | 3,099 | 29,769 | 1,043 |
+| all | | | | 2,600,016 | 12,272 | 762,564 | 5,266 |
+
+schema.org:
+
+| Round | Input | Delta | New | Emitted, naive | ms, naive | Emitted, semi-naive | ms, semi-naive |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 17,949 | 17,949 | 8,602 | 53,025 | 125 | 53,025 | 146 |
+| 2 | 26,551 | 8,602 | 14,635 | 184,628 | 357 | 131,629 | 421 |
+| 3 | 41,186 | 14,635 | 17,636 | 332,960 | 727 | 148,766 | 755 |
+| 4 | 58,822 | 17,636 | 1,948 | 607,327 | 1,143 | 275,267 | 975 |
+| 5 | 60,770 | 1,948 | 0 | 639,942 | 1,079 | 35,833 | 276 |
+| all | | | | 1,817,882 | 3,431 | 644,520 | 2,572 |
+
+QUDT:
+
+| Round | Input | Delta | New | Emitted, naive | ms, naive | Emitted, semi-naive | ms, semi-naive |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 130,404 | 130,404 | 236,724 | 605,096 | 3,672 | 605,096 | 3,185 |
+| 2 | 367,128 | 236,724 | 173,774 | 4,805,316 | 15,277 | 4,201,235 | 15,413 |
+| 3 | 540,902 | 173,774 | 95,799 | 7,310,337 | 24,086 | 2,551,416 | 9,611 |
+| 4 | 636,701 | 95,799 | 1,719 | 10,144,628 | 32,585 | 2,885,000 | 10,112 |
+| 5 | 638,420 | 1,719 | 0 | 10,168,323 | 28,919 | 116,866 | 2,896 |
+| all | | | | 33,033,700 | 104,539 | 10,359,613 | 41,217 |
+
+Per rule family, each row evaluated on its own over every driving triple of
+every round (the profile's `--rows` pass; the row times include one pass over
+the input per row, so they add up to more than the rounds above):
+
+Cell Ontology, all rounds, each row evaluated on its own (ms):
+
+| Family | Emitted, naive | Emitted and not in the round's input, naive | ms, naive | ms, semi-naive |
+|---|---:|---:|---:|---:|
+| scm (Table 9) | 1,957,353 | 148,466 | 8,995 | 7,134 |
+| eq (Table 4) | 4,327,971 | 222,453 | 7,708 | 1,882 |
+| [ext] rows | 48 | 8 | 3,382 | 2,324 |
+| prp (Table 5) | 60,813 | 13,514 | 2,351 | 2,047 |
+| cls (Table 6) | 0 | 0 | 2,082 | 1,704 |
+| cax (Table 7) | 61,973 | 4,769 | 929 | 676 |
+
+Costliest rows, naive: scmSco 2,561 ms (1,794,141 emitted, 130,519 not in the input); eqRepP 2,284 ms (717,369 emitted, 0 not in the input); scmSvf1 1,722 ms (8,641 emitted, 1,683 not in the input); eqRepS 1,543 ms (730,016 emitted, 0 not in the input).
+Costliest rows, semi-naive: scmSvf1 2,031 ms (8,641 emitted); scmSvf2 1,320 ms (4,455 emitted); scmEqc2 841 ms (21,652 emitted); scmSco 533 ms (486,763 emitted).
+
+RO, all rounds, each row evaluated on its own (ms):
+
+| Family | Emitted, naive | Emitted and not in the round's input, naive | ms, naive | ms, semi-naive |
+|---|---:|---:|---:|---:|
+| prp (Table 5) | 37,774 | 2,932 | 18,993 | 3,510 |
+| [ext] rows | 32,858 | 3,140 | 3,942 | 2,055 |
+| scm (Table 9) | 561,928 | 53,624 | 1,516 | 792 |
+| eq (Table 4) | 1,067,481 | 38,381 | 1,400 | 311 |
+| cls (Table 6) | 120 | 24 | 1,137 | 767 |
+| cax (Table 7) | 18,224 | 1,375 | 121 | 86 |
+
+Costliest rows, naive: prpSpo2 18,629 ms (26,600 emitted, 1,580 not in the input); inverseOfDomRngFlip 2,769 ms (6,487 emitted, 183 not in the input); clsInt1 705 ms (0 emitted, 0 not in the input); chainToTrans 642 ms (0 emitted, 0 not in the input).
+Costliest rows, semi-naive: prpSpo2 3,151 ms (5,648 emitted); chainToTrans 1,150 ms (0 emitted); inverseOfDomRngFlip 449 ms (1,676 emitted); clsInt1 295 ms (0 emitted).
+
+Wine and food, all rounds, each row evaluated on its own (ms):
+
+| Family | Emitted, naive | Emitted and not in the round's input, naive | ms, naive | ms, semi-naive |
+|---|---:|---:|---:|---:|
+| cls (Table 6) | 330,021 | 39,949 | 6,917 | 3,152 |
+| [ext] rows | 71,886 | 9,539 | 2,247 | 2,199 |
+| scm (Table 9) | 484,137 | 12,053 | 967 | 800 |
+| eq (Table 4) | 803,272 | 9,270 | 874 | 141 |
+| cax (Table 7) | 793,167 | 4,520 | 524 | 99 |
+| prp (Table 5) | 117,351 | 4,336 | 304 | 159 |
+
+Costliest rows, naive: clsInt1 6,290 ms (262,016 emitted, 36,636 not in the input); ifpDiffToDiff 1,216 ms (0 emitted, 0 not in the input); fpDiffToDiff 543 ms (16,211 emitted, 1,888 not in the input); clsInt2 235 ms (3,277 emitted, 192 not in the input).
+Costliest rows, semi-naive: clsInt1 2,669 ms (113,933 emitted); ifpDiffToDiff 1,277 ms (0 emitted); fpDiffToDiff 661 ms (16,211 emitted); clsInt2 231 ms (3,277 emitted).
+
+schema.org, all rounds, each row evaluated on its own (ms):
+
+| Family | Emitted, naive | Emitted and not in the round's input, naive | ms, naive | ms, semi-naive |
+|---|---:|---:|---:|---:|
+| eq (Table 4) | 1,125,036 | 64,820 | 1,364 | 394 |
+| prp (Table 5) | 257,856 | 12,344 | 755 | 388 |
+| cax (Table 7) | 279,995 | 17,942 | 547 | 148 |
+| scm (Table 9) | 134,723 | 14,098 | 542 | 597 |
+| [ext] rows | 20,142 | 6,710 | 289 | 427 |
+| cls (Table 6) | 0 | 0 | 189 | 560 |
+
+Costliest rows, naive: eqRepP 382 ms (178,811 emitted, 0 not in the input); caxSco 292 ms (174,014 emitted, 15,239 not in the input); eqRepO 245 ms (155,023 emitted, 0 not in the input); eqRepS 240 ms (180,606 emitted, 0 not in the input).
+Costliest rows, semi-naive: clsMaxc2 342 ms (0 emitted); scmSco 76 ms (32,134 emitted); eqRepS 74 ms (60,770 emitted); eqRepO 70 ms (51,444 emitted).
+
+What the tables say:
+
+- Most naive work re-derives what the graph holds. Over all rounds the naive
+  closure emitted 6.4 million conclusions on the Cell Ontology for 84,611
+  added triples, 33.0 million on QUDT for 508,016. In the last two rounds of
+  every ontology it emitted as much as in any round and added almost nothing
+  (RO rounds 4 to 6: 1.27 million conclusions, 1,176 new triples).
+- Two rows cost time without emitting much: prp-spo2 on RO (26,600
+  conclusions, 1,580 new, three quarters of the row time) and cls-int1 on
+  wine (6.3 s). Both walk every subject of the graph for each
+  `owl:propertyChainAxiom` (172 in RO) or `owl:intersectionOf` (80 in wine)
+  in every round. A delta term over their premises alone would not remove the
+  walk; a test that the delta cannot change the row's output does (section
+  11.4).
+- eq-rep-s/p/o re-emit every triple once per round through the reflexive
+  `owl:sameAs` of its subject, predicate or object (Cell Ontology: 730,016,
+  717,369 and 542,006 conclusions, none new).
+
+### 11.4 The semi-naive form and its theorems
+
+A naive round evaluates each of the 74 rows of `conclusionsListS` at each
+driving triple `d` of its input `S`. When `S` is the output of the round over
+`P` (so `S = P ++ D`, `D` the delta that round appended), a row at `d ∈ P` can
+conclude a triple outside `S` only through an instance that reads a triple of
+`D`: an instance with every premise in `P` was concluded by the round over `P`,
+which put it into `S`. `stepConclusionsSN` evaluates every row at each
+`d ∈ D` and, at each `d ∈ P`, the row's DELTA TERM (`RowSpec.delta`):
+
+| Kind | Rows | Delta term at `d ∈ P` |
+|---|---|---|
+| reads only `d` (`RowSpec.indep`) | 13: eq-ref (3), eq-sym, scm-cls, scm-eqc1, scm-eqp1, scm-op, scm-dp, eq-diff-sym, the XSD axioms, the disjointness complement witness, the min-cardinality witness | nothing |
+| one lookup, one graph scan or one membership test (`RowSpec.additive`) | 24: eq-trans, eq-rep-s/p/o, prp-dom, prp-rng, prp-symp, prp-spo1, prp-eqp1/2, prp-inv1/2, cax-sco, cax-eqc1/2, scm-sco, scm-spo, scm-dom1/2, scm-rng1/2, prp-rfl, the datatype range intersection, the inverse domain and range flip | the row over the index of `D` alone |
+| collection rows with a test (`prpSpo2Delta`, `clsInt1Delta`) | prp-spo2, cls-int1 | nothing when `D` has no `rdf:first`/`rdf:rest` triple, the collection walk reads the same at the fuel of `P` as at the fuel of `S`, and `D` has no edge on a chain property (prp-spo2) or no typing in a member class (cls-int1); else the row in full |
+| the others (`RowSpec.full`) | 35: two or more lookups, collection walks, the six rows whose second premise is a membership test | the row in full, as the naive round |
+
+Each kind carries one obligation, `RowSpec.Ok`: on a graph `P ++ D`, after
+removing the triples the row concludes from `P` alone, the full row and the
+delta term are the same list. `rowTable_ok` proves it for all 74 rows (the
+additive rows by one tactic over the lookups of `P ++ D`; `prpSpo2_ok` and
+`clsInt1_ok` with the lemmas that the walk, the chain and the typing test read
+the same over `P ++ D` as over `P`).
+
+A fifth kind, `RowSpec.skip` (scm-svf1/2, scm-avf1/2, scm-hv: nothing when the
+delta has no triple on the row's fixed predicates), is proved
+(`RowSpec.skip_ok`) and NOT used: with it, the Cell Ontology's closure was
+slower (section 11.5).
+
+The emitted list keeps the naive round's order (driving triples in graph
+order, rows in `conclusionsListS` order) and differs from the naive round's
+list only by triples already in `S`; `addAll S` drops exactly those
+(`addAll_filter_of_subset`). So one semi-naive round is one naive round as a
+list (`addAll_stepConclusionsSN`), given the round invariant `RoundOk` (`S`
+starts with `P`, and holds every conclusion of a driving triple of `P` over
+`P`), which every naive round establishes for the next (`RoundOk.next`).
+
+At an old driving triple, only rows whose guard is the triple's predicate
+can emit (`rowTable_guard`); a hash map from guard predicate to rows
+(`dispatchMap`, proved to list exactly those rows: `dispatchMap_getD`,
+`oldBlockFast_eq`) replaces 74 guard tests by one lookup.
+
+| Theorem (`OWL/RLClosureIndexed.lean`, `OWL/RLSemiNaiveTheorems.lean`) | Statement |
+|---|---|
+| `indexedClosureSN_eq` | `indexedClosureSN g fuel = closure g fuel` (lists, every fuel; no hypothesis) |
+| `addAll_stepConclusionsSN` | one semi-naive round over `P ++ D` is `step (P ++ D)`, under `RoundOk` |
+| `rowTable_ok`, `rowTable_guard`, `oldBlockFast_eq` | the 74 delta terms, the guards, the dispatch |
+| 1. `indexedClosureSN_sound` | `t ∈ indexedClosureSN g fuel → Derives g t` (no hypothesis) |
+| 2. `stepSNI_saturated`, `stepSNI_closed` | a semi-naive round that adds nothing (empty delta) leaves `S` closed: `step S = S`, every conclusion of every row in `S` |
+| 2'. `indexedClosureSN_saturated_or_underfueled` | the result is saturated, or the loop grew the graph by one triple per unit of fuel |
+| 3. `indexedClosureSN_complete` | saturated and `ListFuelAdequate` imply `Derives g t → t ∈ indexedClosureSN g fuel` (`complete_of_saturated`: `g ⊆ S`, `S` closed imply `Derives ⊆ S`) |
+| 1 + 3. `mem_indexedClosureSN_iff` | `t ∈ C g ↔ Derives g t` under the hypotheses of 3 |
+| 4. `mem_indexedClosureSN_iff_closure`, `indexedClosureSN_eq_indexedClosure` | naive and semi-naive have the same members (and the same list) |
+
+Anti-pattern 29 check: no theorem has its conclusion among its hypotheses.
+The two hypotheses of 3 (saturation, `ListFuelAdequate`) are those of the
+naive loop's T4; they are the open fuel obligation, and
+`closure_saturated_or_underfueled` (2') says when saturation holds.
+
+Guards (`OWL/RLTests.lean`): the semi-naive loop equals the scanning loop as a
+list on 25 fixtures, three of them built so that the second round needs a
+delta term at an OLD driving triple (prp-symp at an old symmetric-property
+typing, prp-spo2 at an old chain axiom, cls-int1 at an old intersection).
+Teeth: `closureNoOld`, the same loop with no term at old driving triples,
+misses the derived triple on each of the three; and a semi-naive round emits
+fewer conclusions than the naive round on the second round of a fixture.
+
+### 11.5 After: the semi-naive rounds, and the commands beside HermiT and Jena
+
+The round tables of section 11.3 hold both closures side by side (same runs of
+the profile; the semi-naive column is the final binary). Over all rounds the
+semi-naive closure emits 0.24 (Cell Ontology), 0.25 (RO), 0.29 (wine), 0.35
+(schema.org) and 0.31 (QUDT) of the naive conclusions.
+
+The commands, base binary (`93ad93b9`, naive indexed closure) against the
+final binary of this branch, two runs each in alternation, CPU time user
+(the smaller of the two runs), peak resident set; output of `closure`
+compared with `cmp` and verdict of `owl-consistent` compared, load average
+11 to 21:
+
+| Ontology | Closure, base | Closure, semi-naive | Ratio | `owl-consistent`, base | `owl-consistent`, semi-naive | Ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| SKOS | 0.03 s, 22 MB | 0.01 s, 24 MB | — | 0.03 s, 23 MB | 0.02 s, 24 MB | — |
+| FOAF | 0.05 s, 24 MB | 0.05 s, 24 MB | — | 0.09 s, 24 MB | 0.04 s, 24 MB | — |
+| PROV-O | 0.11 s, 26 MB | 0.07 s, 26 MB | 1.6 | 0.17 s, 25 MB | 0.06 s, 26 MB | 2.8 |
+| BFO | 0.15 s, 26 MB | 0.09 s, 26 MB | 1.7 | 0.19 s, 26 MB | 0.12 s, 26 MB | 1.6 |
+| Pizza | 0.40 s, 42 MB | 0.32 s, 33 MB | 1.2 | 0.73 s, 42 MB | 0.64 s, 33 MB | 1.1 |
+| Wine and food | 6.58 s, 77 MB | 3.13 s, 55 MB | 2.1 | 17.57 s, 79 MB | 14.79 s, 56 MB | 1.2 |
+| RO | 15.89 s, 76 MB | 2.75 s, 77 MB | 5.8 | 16.40 s, 76 MB | 4.07 s, 77 MB | 4.0 |
+| schema.org | 2.58 s, 103 MB | 1.64 s, 105 MB | 1.6 | 3.52 s, 103 MB | 2.79 s, 105 MB | 1.3 |
+| Cell Ontology | 11.65 s, 446 MB | 7.44 s, 447 MB | 1.6 | 14.67 s, 446 MB | 10.24 s, 447 MB | 1.4 |
+| QUDT | 45.78 s, 1,350 MB | 22.55 s, 659 MB | 2.0 | 55.01 s, 1,351 MB | 29.97 s, 659 MB | 1.8 |
+
+Beside the reference engines of the state-of-the-art record
+(`2026-10-12-sota-reference.md`, same machine, load 2 to 6; those engines were
+not run again here): Jena 6.2.0 OWL Micro, a different rule set, closes RO in
+8.6 s wall (16.0 s CPU) and the Cell Ontology in 8.6 s (19.2 s CPU); HermiT
+1.3.8 decides the consistency of RO in 14.6 s wall (22.0 s CPU), the Cell
+Ontology in 3.4 s (6.0 s CPU), schema.org in 1.4 s (2.6 s CPU) and wine in
+2.1 s (3.7 s CPU).
+
+📊 What changed against HermiT: RO, consistency, Lean 4.1 s CPU at load 13
+against HermiT 22.0 s CPU; the Cell Ontology, Lean 10.2 s CPU at load 11
+against HermiT 6.0 s CPU (1.7 times; 2.4 times before); schema.org, Lean 2.8
+s CPU against 2.6 s CPU; wine, Lean 14.8 s CPU against 3.7 s CPU (the
+refuter's search is most of it, section 9.4). These Lean numbers are at load
+11 to 21, the reference numbers at load 2 to 6: the gap is smaller than the
+ratio shows.
+
+Before the five scm rows went back to full evaluation (section 11.4), the
+Cell Ontology's semi-naive round 3 took 2.5 s against 0.5 s without the skip
+terms (the test reversed the delta's `rdfs:subClassOf` bucket once per old
+`owl:someValuesFrom` triple); the measurement made that decision.
+
+Memory: the QUDT closure peaks at 659 MB against 1,382 MB before; wine
+at 55 MB against 78 MB. The other ontologies hold their peaks (the index and
+the output dominate).
+
+### 11.6 eq-rep: the delta stays small
+
+eq-rep-s/p/o are additive rows: at an old `owl:sameAs` driving triple they
+read only the delta's index. Over all rounds each emits about one conclusion
+per closure triple (each triple once, through the reflexive `owl:sameAs` of
+its subject, predicate or object when that triple first drives the row), where
+the naive rows emit one per closure triple per round:
+
+| Ontology | eq-rep-s, naive | eq-rep-s, semi-naive | eq-rep-p, naive | eq-rep-p, semi-naive | eq-rep-o, naive | eq-rep-o, semi-naive | Closure triples |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Cell Ontology | 730,016 | 163,444 | 717,369 | 163,444 | 542,006 | 125,840 | 163,444 |
+| RO | 176,135 | 42,736 | 174,408 | 42,736 | 148,517 | 36,653 | 42,736 |
+| Wine and food | 130,136 | 29,116 | 129,015 | 28,858 | 135,138 | 30,070 | 28,858 |
+| schema.org | 180,606 | 60,770 | 178,811 | 60,770 | 155,023 | 51,444 | 60,770 |
+| QUDT | not measured | 638,420 | not measured | 638,420 | not measured | 569,421 | 638,420 |
+
+### 11.7 schema.org `owl-consistent` (https://github.com/danbri/factoidal/issues/819)
+
+Re-measured on this base with `l4refute-profile` (the phases of
+`owl-consistent`), two runs each, load average 14, wall clock of each phase:
+
+| Phase | Base (naive closure) | This branch |
+|---|---:|---:|
+| OWL 2 RL closure | 5.62 s, 5.49 s | 3.11 s, 3.05 s |
+| TBox read (`collectAxioms`) | 0.93 s, 0.78 s | 0.91 s, 0.88 s |
+| initial state | 1.30 s, 1.13 s | 1.23 s, 1.29 s |
+| counting rung, immediate clash, TBox index | 0.14 s, 0.11 s | 0.12 s, 0.13 s |
+| search | 0.65 s, 0.60 s | 0.59 s, 0.79 s |
+| whole command, CPU time | 3.97 s, 3.73 s | 2.91 s, 2.80 s |
+
+The closure holds the time, before and after (about half of the command's wall
+time; its 60,770 triples are what the refuter reads). The 43.8 s of the issue
+was the range axioms on every node (section 9.3, issue 760): on this base the
+command takes 3.5 to 3.8 s of CPU time before this change and 2.8 to 2.9 s
+after, against HermiT's 2.6 s CPU (1.4 s wall). The expected-failure row of
+`tests/perf/sota_gate.sh` (Lean more than 10 times HermiT) reported UNEXPECTED
+PASS on this base and leaves the table.
+
+### 11.8 What is left
+
+- 🔴 Fuel adequacy, for the naive and the semi-naive loop alike (they are
+  the same list): `closureFuelBound g` rounds and `listFuel` are not proved
+  enough. Expected failure `L4Factoidal.OWL.RL.closureFix_saturated`
+  (`Harness/ProofObligations.lean`), https://github.com/danbri/factoidal/issues/756.
+- ⚠️ 35 rows are evaluated in full at old driving triples (two or more
+  lookups, collection walks, the six rows whose second premise is a
+  membership test). Their delta terms would need one proof each, of the kind
+  `prpSpo2_ok` has. The measured cost after this change (section 11.5) names
+  which of them matter: on the Cell Ontology scm-svf1/2 and the membership
+  row scm-eqc2; on wine cls-int1 (its test fails in most rounds, because
+  most rounds type an individual in a member class), ifp-diff and fp-diff.
+- ⚠️ The delta terms of prp-spo2 and cls-int1 are all-or-nothing per driving
+  triple: when the delta holds an edge on a chain property, the chain axiom
+  is evaluated in full (every subject of the graph). An instance-level term
+  in the naive order needs, for each subject, its first position in the
+  graph; the index does not keep positions.
+- ⚠️ prp-key is evaluated in full at old driving triples; no delta term over
+  list positions was written for it. None of the five ontologies has an
+  `owl:hasKey` axiom, and the row costs 6 ms (wine) to 359 ms (Cell
+  Ontology) over all semi-naive rounds of the profile.
+- ⚠️ The skip terms of scm-svf1/2, scm-avf1/2 and scm-hv (`RowSpec.skip`,
+  proved) wait for a store that answers "does the delta hold a triple with
+  predicate p" without building the list of those triples; the test that
+  builds it cost more than it saved (section 11.5).
+- ⚠️ `listFuel s.graph` (the fuel of every collection walk) is
+  `List.length` of the graph, and prp-spo2's test and the chain-to-transitive
+  row compute it once per chain axiom per round. On RO's late rounds that is
+  about 0.5 s per round (172 chain axioms, 42,736 triples), most of what is
+  left of those rows (`chainToTrans` 1,150 ms over all rounds, section 11.3).
+  A fuel field on `Store`, set once per round, removes it; not done here.
+- ⚠️ The order of the output is the naive order by proof. A semi-naive form
+  that joins from the delta (the textbook form, n terms for a rule of n
+  premises) finds the same set in another order; it would need a sort with
+  its own proof, or a measured order. This form keeps the naive order and
+  pays for it by visiting every old driving triple once per round (one hash
+  lookup each, through `dispatchMap`).
+
+### 11.9 Gates
+
+Final binary of the branch (full `lake build` after the last Lean edit: 1,637
+jobs, exit 0). Load average 11 to 50 through the gates (two other agents
+built wasm modules); timing gates were read with that in mind.
+
+- 📊 OWL scoreboard (`tools/lean-scoreboard.sh --only
+  l4owl-probe,l4rdf-semantics,l4rdfs-semi`), base binaries against the final
+  ones: 81 of 81 table rows identical (pass, fail, other and total of each
+  row); 11 of 12 logs identical with the timing fields removed, failing ids
+  included. The `rdf-based` log differs in 5 lines: the base run printed
+  `CAP ... the closure budget ran out` for four units (WebOnt-miscellaneous-001
+  and -002, consistency; -011, entailment and consistency) and the final run
+  none (`cap_hits` 4 to 0, `rule_triples` 53,515 to 53,555). That budget is a
+  wall-clock deadline of 3,000 ms per closure (`--refute-ms 3000`): the naive
+  closures of those four units ran past it, the semi-naive ones finish within
+  it. Every other line, the verdict lines included, is the same
+- 📊 rdf-mt rows: `l4rdf-semantics` 29 pass, 0 fail (out of 29) and
+  `l4rdfs-semi` 6 pass, 0 fail (out of 6), before and after, logs identical.
+- Byte comparison, base binary against final, standard output, standard
+  error and exit status of `l4factoidal closure`: the 459
+  `test:rdfXmlPremiseOntology` documents of `third_party/testing/owl/all.rdf`
+  under the four regimes (`owl-rl`, `rdfs`, `rho-df`, `rdfs-plus`): 1,836 of
+  1,836 identical (1,832 exit 0, 4 exit 1 with the same text). The `merged.nt`
+  of the ten ontologies of § 1 under `owl-rl`: 10 of 10 identical, and the
+  `owl-consistent` verdicts 10 of 10 identical (section 11.5).
+- `tests/stack/owl_real_gate.sh`: before (base binaries, load 24) 9 pass, 0
+  fail, 4 expected-fail (out of 13); after (final binary, load 15) 11 pass, 0 fail, 2 expected-fail (out of 13). The rows
+  `qudt-closure-address-space` and `qudt-consistent` (issue 759) now pass
+  under the address-space cap, because the QUDT closure peaks at 660 MB, and
+  leave the expected-failure table. Issue 759 (the Lean runtime reserves
+  1 GiB per thread stack and 1 GiB mimalloc arenas) is not repaired, so a
+  new expected-failure row keeps a failing test for it:
+  `pizza-consistent-address-space-3gb`, the Pizza consistency check (33 MB
+  resident) under a 3,000,000,000-byte address-space cap, stops with "failed
+  to create thread" (run alone: 0 pass, 0 fail, 1 expected-fail (out of 1)).
+  No row is slower: every after time is at
+  or below the before time (wall clock, before at load 24, after at load 15: pizza-consistent 2.37 s to 0.99 s, pizza-entails-american 2.68 s to 1.30 s, wine-consistent 51.01 s to 28.76 s, ro-closure 40.93 s to 7.16 s, cl-basic-closure 38.92 s to 20.20 s, cl-basic-consistent 46.79 s to 24.15 s, ro-consistent 57.67 s to 14.48 s, qudt-species 14.8 s to 9.3 s, qudt-closure 161.85 s and 1,350 MB to 64.09 s and 660 MB; the loads differ, so the CPU times of section 11.5 are the comparison).
+- `tests/stack/lean_scaling.sh`: final binary, 3 runs per point, load 12: 23 pass, 2 fail, 3 expected-fail (out of 28). The two failures are the first doubling of `owl-consistent-cl` (0.99 s to 3.16 s, 3.2; bound 3.0) and of `owlrl-closure-cl` (0.81 s to 2.45 s, 3.0). Both rows again with 5 runs per point, load 13: pass (`owl-consistent-cl` 0.85 s, 2.29 s, 5.59 s CPU, 2.7 and 2.4 per doubling; the base binary in the same run 1.45 s, 3.77 s, 8.87 s, 2.6 and 2.4). An earlier run of the whole gate on this branch (load 35, before the five scm rows went back to full evaluation) gave 25 pass, 0 fail, 3 expected-fail (out of 28). New row `owlrl-closure-cl` (the OWL
+  2 RL closure of the first 10,000, 20,000 and 40,000 lines of the sorted
+  Cell Ontology; closures of 26,953, 56,840 and 105,771 triples, 2.1 and 1.9
+  times per doubling): 0.69 s, 1.73 s and 4.25 s CPU (2.5 and 2.5 per doubling; 5 runs per point, load 13); the base binary in the same run gave 1.11 s, 2.67 s and 7.64 s (2.4 and 2.9). ⚠️ The bound is the series bound of
+  `owl-consistent-cl` (3.0 per doubling); the closure is not linear in these
+  prefixes, partly because the output is not (section 11.8).
+- `tests/perf/sota_gate.sh`: the two workloads that call the closure (`--workloads owl-rl-closure,owl-dl-consistent`), final binary, load 4 to 10: 17 pass, 0 fail (out of 17). CPU time against the recorded median: RO closure 2.79 s (recorded 11.02 s), Cell Ontology closure 7.17 s (13.17 s), wine closure 2.71 s (4.68 s), schema.org consistency 2.50 s (43.13 s), QUDT consistency 31.81 s and 659 MB (54.7 s and 1,351 MB). The other workloads (parsing, SPARQL, RDFC-1.0) do not call the changed code and were not run
+- HermiT agreement (`tools/owl-real-hermit.py` over a `tools/owl-real-bench.py
+  --no-fstar` run on the final binary): 10 of 10 consistency verdicts agree (QUDT inconsistent for both, the other nine consistent); 354 of 354 entailment pairs agree; 0 disagreements. ⚠️ The first run gave "HermiT not decided" on every pair and exit 0: the JAR path was wrong and Java could not load HermiT. The script now exits 2 when the JAR is not a file or Java cannot start HermiT
+- `Wasm/native-smoke.sh` 353 pass, 0 fail, 2 xfail (out of 355);
+  `Wasm/cli-smoke.sh` 83 pass, 0 fail, 0 xfail (out of 83).
+- `tools/lean-tail-recursion-audit.py --gate` (stale IR removed first): GATE
+  PASS. `tools/lean-hygiene-audit.py --build-log`: clean (sorry, user axiom,
+  `native_decide`, `unsafe`, `implemented_by` 0; `partial def` 163, the
+  baseline). `Harness.ProofObligations`: 0 pass, 0 fail, 2 expected-fail (out
+  of 2), the new row `L4Factoidal.OWL.RL.closureFix_saturated`.
+- wasm rebuilt (`Wasm/build-wasm.sh`), `npm test` in `npm/factoidal`: 413 pass, 0 fail, 1 skipped (out of 414). The four wasm copies agree (digest `eafe1a4f`); the wasm is not committed, and the `version.json` files and `l4factoidal.js` stay as on `main`
+
+### 11.10 Reproduce
+
+```
+(cd formal/lean4 && lake build l4owl-rl-profile l4factoidal)
+python3 tools/owl-real-bench.py --out /tmp/owl-real --no-fstar     # writes OUT/<name>/merged.nt
+formal/lean4/.lake/build/bin/l4owl-rl-profile /tmp/owl-real/ro/merged.nt            # naive rounds
+formal/lean4/.lake/build/bin/l4owl-rl-profile /tmp/owl-real/ro/merged.nt --sn       # semi-naive rounds
+formal/lean4/.lake/build/bin/l4owl-rl-profile /tmp/owl-real/ro/merged.nt --sn --rows
+tests/stack/lean_scaling.sh --only owlrl-closure-cl
+```

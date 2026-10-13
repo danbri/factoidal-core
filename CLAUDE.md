@@ -185,6 +185,14 @@ is our primary persistent rdf storage mechanism."
   without a further decision. Persistent RDF storage work goes to
   Shardborough. This replaces the 2026-08-24 "Not urgent: COTTAS" line
   below.
+- Owner, 2026-10-13, verbatim: "cottas work is suspended as unnecessary
+  unless you think needed for other goals". So the 25 F\* COTTAS theorems
+  stay class A ("intentionally abandoned") in
+  `docs/fstar-theorem-classification.tsv`
+  (https://github.com/danbri/factoidal/issues/757), and COTTAS functions are
+  not converted for other gates (the `namedGraphsAux` line of
+  https://github.com/danbri/factoidal/issues/752 stays PENDING). Reopen a
+  COTTAS item only when another goal needs it, and say which goal.
 
 Owner, 2026-10-11, verbatim: "Can we build a medium sized qlever database
 instance and work up enough Lean machinery (call it Factoidal/qlvr) to be
@@ -502,6 +510,9 @@ Lean functionality and gates land. Port functionality, not files.
   may be unavoidable". A Lean-against-C speed target is a goal: when it is
   not met, name each remaining cost and say whether Lean's semantics need it
   or an issue removes it.
+- Batch 1 KR 1.3 (TriG packs in chunks,
+  https://github.com/danbri/factoidal/issues/769): owner, 2026-10-13,
+  verbatim: "Kr 1.3 store". It belongs to the store session.
 
 ### Issue 566 — the hex layer. RULED, do not ask again.
 

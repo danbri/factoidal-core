@@ -21,7 +21,8 @@
 #
 # Needs: formal/lean4/.lake/build/bin/l4factoidal (lake build l4factoidal),
 # python3, gene.ttl and the vendored ontologies. Inputs are generated into
-# SOTA_FIXTURES (default /tmp/sota-dl/fixtures). Baselines are per host
+# SOTA_FIXTURES (default /tmp/sota-dl-<checkout directory name>/fixtures,
+# one directory per checkout: hazard #43 of skills/workflow-gotchas-debugging). Baselines are per host
 # (skills/perf-benchmarking, "Baselines are per-host"): after a container
 # moves to other hardware, re-measure the Lean rows before reading a failure
 # as a regression.

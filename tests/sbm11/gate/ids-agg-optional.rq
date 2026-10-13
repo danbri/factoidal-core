@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# MAX over an OPTIONAL variable: unbound in the groups where it is unbound
+# in every row.
+SELECT ?s (MAX(?f) AS ?m) (COUNT(?f) AS ?c) WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } } GROUP BY ?s

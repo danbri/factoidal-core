@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Refused: EXISTS in a SELECT expression reads the active graph.
+SELECT ?s (EXISTS { ?s ex:flag ?f } AS ?e) WHERE { ?s ex:age ?a }

@@ -2007,6 +2007,16 @@ not help when bash read its next block while the file was edited.
 2. When it happens anyway: stop the run (the shell and its children), keep
    the logs of the jobs that finished before the loop started again, and run
    the truncated job alone with `--only JOB` and the same `--logdir`.
+3. A gate runner that chains suites runs each suite's script for minutes:
+   before editing any file under `tests/` or `tools/`, check that no
+   process runs it (`pgrep -af tests/sbm11/run.sh`), or edit a copy.
+
+Second occurrence, 2026-10-13 (issue 805 work, branch `work805`): five lines
+were added to the header comment of `tests/sbm11/run.sh` while a gate chain
+ran it, and taken back about a minute later. The run failed in part (h) with
+`line 386: syntax error near unexpected token 'fi'` and exit 2; the suite
+was run again in full (9 minutes 21 seconds). A comment above the code is
+enough to move every later byte.
 
 ## Hazard #43 — a fixed fixture path shared by parallel test runs (2026-10-13)
 
@@ -2033,6 +2043,15 @@ same time; each run deleted and rewrote files the other was reading.
   collision suspect: run the suite again alone before reading it as a defect.
 - Every new suite that writes fixtures takes its directory from an environment
   variable and defaults to a per-run directory (`mktemp -d`), not a fixed path.
+- Delete only the directories your own run made. Never delete a shared default
+  directory at the end of a run.
+
+Second instance, the same day (batch 1 coordinator): tools/sota-bench.py and
+tests/perf/sota_gate.sh defaulted to `/tmp/sota-dl`. An agent deleted it at
+the end of its run (its task said "delete /tmp/sota-dl when done") while the
+coordinator's gate on `main` read fixtures from it: 74 of 79 gate rows failed
+with exit 125. The default is now `/tmp/sota-dl-<checkout directory name>`,
+and the agent protocol asks for a private `SOTA_DL`.
 
 ## Hazard #44 — main moves under a landing branch while its gates run (2026-10-13)
 

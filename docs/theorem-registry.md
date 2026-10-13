@@ -2954,6 +2954,26 @@ The end-to-end theorem itself is ⬜ OPEN.
 Every theorem in this section reports `propext`, `Classical.choice`,
 `Quot.sound` or a subset under `#print axioms`.
 
+## SPARQL OPTIONAL: the group's FILTERs are the LeftJoin condition (Lean 4, 2026-10-13)
+
+SPARQL 1.1 Query §18.2.2.5 makes `OPTIONAL { P FILTER(F) }` the
+`LeftJoin(G, P, F)` of §18.5, F evaluated on the merged solution
+([#815](https://github.com/danbri/factoidal/issues/815)). The parser reads an
+OPTIONAL group's pattern and its own FILTERs apart and builds `optionalGroup`.
+Module: `formal/lean4/L4Factoidal/SPARQL/OptionalFilterScope.lean`.
+
+| Theorem | Engine function | Status | Hypotheses |
+|---|---|---|---|
+| `pGroupGraphPattern_eq_parts` — the group parser is the parts parser with the FILTERs wrapped (§18.2.2.6) | `pGroupGraphPattern`, `pGroupGraphPatternParts` | ✅ PROVED (2026-10-13) | — (every fuel and token stream) |
+| `evalIn_optionalGroup_filter` — with a FILTER, the lowered pattern evaluates to `SPARQL.leftJoin Ω1 Ω2 cond`, `cond` the conjunction F on the merged row | `optionalGroup`, `QueryPattern.lowerWith`, `GraphPattern.evalIn` | ✅ PROVED (2026-10-13) | `filterConjunction? filters = some f` |
+| `evalIn_optionalGroup_nil` — with no FILTER, `LeftJoin(Ω1, Ω2, true)` | same | ✅ PROVED (2026-10-13) | — |
+| `ebvOrFalse_and`, `filterTrue_foldl_and`, `conjunction_true_iff` — the condition is true on a row exactly when every FILTER of the group is true on it | `filterConjunction?`, `Expr.evalIn`, `substituteExistentials` | ✅ PROVED (2026-10-13) | `filterConjunction? filters = some f` |
+| The parser output for a FILTER in the group, in a nested group, beside the group; the issue 815 reproduction on `tests/sbm11/gate/gate.nq` | `parseSparql`, `evalSelect`, `StoreDataset.runSelectQueryBackendDataset` | 🟡 TESTED (`#guard`s in the module) | — |
+
+Every theorem in this section reports `propext`, `Classical.choice`,
+`Quot.sound` or a subset under `#print axioms`. The F\* engine still has the
+defect (known-defects case `SPARQL-OPT-FILTER-SCOPE`).
+
 ## OWL 2 comprehension and existential witnesses (Lean 4, 2026-09-07)
 
 The PositiveEntailmentTest-only layer of `L4Factoidal/OWL/Comprehension.lean`
@@ -3004,6 +3024,27 @@ issue <https://github.com/danbri/factoidal/issues/721>. No `sorry`, no
 | `rbConclusions_entailed` — every triple the executable rules return is entailed by `g` | same | `RdfBased.rbConclusions` | ✅ PROVED | none |
 | **The RL base under `RdfBasedConditions`** — `RdfBasedConditions i → RlConditions i'` for an `i'` agreeing with `i` off the reserved helper IRIs | — | `OWL.RL` closure | 🔴 NOT ATTEMPTED | the regime drops comprehension-witness triples (`withoutCompWitness`); design record § 8, gap A |
 
+## OWL 2 RL semi-naive closure (Lean 4, 2026-10-13)
+
+`L4Factoidal/OWL/RLClosureIndexed.lean` Section 11 and
+`L4Factoidal/OWL/RLSemiNaiveTheorems.lean`. Issue
+<https://github.com/danbri/factoidal/issues/756> item 2. Design record:
+[`designissues/2026-10-10-owl-real-ontologies.md`](designissues/2026-10-10-owl-real-ontologies.md)
+§ 11. No `sorry`, no `axiom`, no `native_decide`, no new `partial`; `#print
+axioms`: `propext`, `Classical.choice`, `Quot.sound`.
+
+| Theorem | Module | Engine anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `indexedClosureSN_eq` — the semi-naive loop returns the list of `closure` at every fuel | `OWL/RLClosureIndexed.lean` | `indexedClosureSN` (`csimp` for `closure`, `closureFix`) | ✅ PROVED | none |
+| `addAll_stepConclusionsSN` — one semi-naive round is one naive round, as a list | same | `stepConclusionsSN` | ✅ PROVED | `RoundOk` (every naive round establishes it: `RoundOk.next`) |
+| `rowTable_ok`, `prpSpo2_ok`, `clsInt1_ok` — the 74 delta terms meet `RowSpec.Ok` (`RowSpec.skip_ok` is proved too; the skip terms are not in `rowTable`, record § 11.5) | same | `rowTable` | ✅ PROVED | none |
+| `rowTable_guard`, `dispatchMap_getD`, `oldBlockFast_eq` — the predicate dispatch lists exactly the rows that can emit | same | `dispatchMap` | ✅ PROVED | none |
+| `indexedClosureSN_sound` — every triple of the closure is `Derives` | `OWL/RLSemiNaiveTheorems.lean` | `indexedClosureSN` | ✅ PROVED | none |
+| `stepSNI_saturated`, `stepSNI_closed` — a round that adds nothing leaves the graph closed under every row | same | `stepSNI` | ✅ PROVED | `RoundOk` |
+| `indexedClosureSN_complete`, `mem_indexedClosureSN_iff` — `t ∈ C g ↔ Derives g t` | same | `indexedClosureSN` | ✅ PROVED | saturated, `ListFuelAdequate` (T4's hypotheses) |
+| `mem_indexedClosureSN_iff_closure`, `indexedClosureSN_eq_indexedClosure` — naive and semi-naive equal | same | — | ✅ PROVED | none |
+| `closureFix_saturated` — `closureFuelBound` rounds and `listFuel` are enough | — | `closureFix` | 🔴 OPEN | expected failure in `Harness/ProofObligations.lean` |
+
 ## OWL 2 DL refutation certificates (Lean 4, 2026-10-10)
 
 `L4Factoidal/OWL/DirectCert.lean` (checker and theorems),
@@ -3029,6 +3070,25 @@ Measured 2026-10-10 (`--dl --refute-ms 3000`, certificate-checked out of
 decided by refutation): type-inconsistency 50 of 77; type-positive-entailment
 32 of 55; type-consistency 32 of 55; syntax-dl 72 of 113. Unchecked
 rules: <https://github.com/danbri/factoidal/issues/764>.
+
+## Capability-aware planner: execution state machine (Lean 4, 2026-10-13)
+
+OKR batch 2, KR 2.4 ([#801](https://github.com/danbri/factoidal/issues/801)).
+Design record:
+[`designissues/2026-10-12-capability-aware-planner.md`](designissues/2026-10-12-capability-aware-planner.md)
+section 11. Module `formal/lean4/L4Factoidal/Planner/Exec.lean`; axiom
+audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
+`Quot.sound` only).
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `init_inv`, `next_inv`, `reachable_inv` — `Init → Inv`, `Inv ∧ Next → Inv'`, every reachable state satisfies `Inv` | ✅ PROVED (2026-10-13) | none beyond the state relation |
+| `reachable_sound` (I1) — no unmarked output row outside `Requirement.answers` over the declared graph | ✅ PROVED (2026-10-13) | `ExactSourcesSound`, the rewriting check of each family member, reachability |
+| `reachable_quota` (I2) — no call count above its call quota | ✅ PROVED (2026-10-13) | reachability |
+| `reachable_output` — a `done` output is the `Plan.run` of a family member (list equality) | ✅ PROVED (2026-10-13) | reachability |
+| `next_measure_lt`, `next_wf` — `Next` has no infinite chain | ✅ PROVED (2026-10-13) | none |
+| `stepExec_next`, `runFrom_reachable`, `runFrom_final`, `run_spec` — the driver takes `Next` steps and ends `done` or `stopped` | ✅ PROVED (2026-10-13) | `ExactSourcesSound` for the I1 part of `run_spec` |
+| Row quotas at run time; reuse of call results after a switch | ⬜ OPEN — expected-failure cases `exec-row-quota`, `exec-reuse-after-adaptation` of `l4planner-test` | — |
 
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 

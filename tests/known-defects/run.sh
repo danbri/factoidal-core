@@ -758,18 +758,21 @@ fi
 # -- a FILTER in an OPTIONAL group is evaluated on the group's row only, so a
 # variable of the left side reads as unbound. SPARQL 1.1 section 18.2.2.5
 # makes `OPTIONAL { P FILTER(F) }` LeftJoin(G, P, F), with F evaluated on the
-# merged solution (section 18.5). The Lean reference evaluator (and the F*
-# engine) evaluate LeftJoin(G, Filter(F, P), true). Data and query:
+# merged solution (section 18.5). Data and query:
 # fixtures/sparql-815-optional-filter-scope.{ttl,rq}; ex:a has age 72, so its
 # name is the OPTIONAL extension; ex:c has age 71, so it has none.
-# Probe: the Lean CLI (`l4factoidal query`), rows from sparql_rows.py.
-#   XFAIL  the rows without ?n for ex:a (the defect)
-#   XPASS  the rows of section 18.2.2.5 (?n "Alice" for ex:a): fixed; admit a
-#          group FILTER over a left-side variable on the SBM11 id path
-#          (IdQuery.flattenOptional), retire this case, close the issue
-#   ERROR  any other answer
+# The Lean engine is FIXED (2026-10-13: the parser makes the group's FILTERs
+# the LeftJoin condition, `optionalGroup`; theorems and guards in
+# formal/lean4/L4Factoidal/SPARQL/OptionalFilterScope.lean). Its answer is a
+# plain assertion: the Lean CLI must answer exactly the rows of section
+# 18.2.2.5, or the case is an ERROR. The F* engine (`factoidal query`) still
+# has the defect; this case is the F* defect:
+#   XFAIL  F* answers the rows without ?n for ex:a (the defect)
+#   XPASS  F* answers the rows of section 18.2.2.5: fixed in F*; retire this
+#          case and close the issue
+#   ERROR  the Lean CLI is wrong (a Lean regression), or any other answer
 # ---------------------------------------------------------------------
-S815_TITLE="FILTER in OPTIONAL does not see left-side variables"
+S815_TITLE="F*: FILTER in OPTIONAL does not see left-side variables"
 XSD_I="<http://www.w3.org/2001/XMLSchema#integer>"
 EXPECT815="?a=\"71\"^^${XSD_I} ?s=<http://ex.org/c>
 ?a=\"72\"^^${XSD_I} ?n=\"Alice\" ?s=<http://ex.org/a>"
@@ -781,23 +784,33 @@ else
   d="${WORKDIR}/q815"; mkdir -p "$d"
   printf '%s\n' "$EXPECT815" > "$d/expected.rows"
   printf '%s\n' "$WRONG815" > "$d/wrong.rows"
-  lrc=0
+  lrc=0; frc=0
   timeout 120 "$L4_BIN" query "${FIXTURES}/sparql-815-optional-filter-scope.ttl" --format turtle \
       --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" \
       < /dev/null > "$d/lean.json" 2> "$d/lean.err" || lrc=$?
+  timeout 120 "$BIN" query --data "${FIXTURES}/sparql-815-optional-filter-scope.ttl" \
+      --query "${FIXTURES}/sparql-815-optional-filter-scope.rq" -o json \
+      < /dev/null > "$d/fstar.json" 2> "$d/fstar.err" || frc=$?
   if [ "$lrc" -ne 0 ] \
      || ! python3 -I "$ROWS_PY" < "$d/lean.json" > "$d/lean.rows" 2> "$d/lean.perr"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
       "Lean run failed (exit ${lrc}): $(tr "\n" " " < "$d/lean.err" | cut -c1-100)"
-  elif cmp -s "$d/lean.rows" "$d/expected.rows"; then
+  elif ! cmp -s "$d/lean.rows" "$d/expected.rows"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "the Lean CLI does not answer the rows of section 18.2.2.5 (Lean regression): $(head -n 1 "$d/lean.rows" | cut -c1-100)"
+  elif [ "$frc" -ne 0 ] \
+     || ! python3 -I "$ROWS_PY" < "$d/fstar.json" > "$d/fstar.rows" 2> "$d/fstar.perr"; then
+    record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif cmp -s "$d/fstar.rows" "$d/expected.rows"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XPASS \
-      "the Lean CLI now binds ?n for ex:a -- defect appears FIXED"
-  elif cmp -s "$d/lean.rows" "$d/wrong.rows"; then
+      "F* now binds ?n for ex:a -- defect appears FIXED in F*"
+  elif cmp -s "$d/fstar.rows" "$d/wrong.rows"; then
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" XFAIL \
-      "OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a"
+      "F*: OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } binds ?n for no row; section 18.2.2.5 binds it for ex:a (the Lean CLI does)"
   else
     record SPARQL-OPT-FILTER-SCOPE 815 "$S815_TITLE" ERROR \
-      "the Lean CLI answers neither the expected nor the recorded rows: $(head -n 1 "$d/lean.rows" | cut -c1-100)"
+      "F* answers neither the expected nor the recorded rows: $(head -n 1 "$d/fstar.rows" | cut -c1-100)"
   fi
 fi
 
@@ -827,6 +840,51 @@ else
   record NX-1 777 "native SHA-256 extern has no equivalence statement" XFAIL \
     "no sha256Hacl_eq_sha256 theorem or axiom in formal/lean4 (agreement is measured only)"
 fi
+
+# ---------------------------------------------------------------------
+# SF-1 to SF-4 (https://github.com/danbri/factoidal/issues/826) -- the
+# strict chunked parse (formal/lean4/L4Factoidal/Syntax/StrictFeed.lean,
+# https://github.com/danbri/factoidal/issues/813) has three equalities with
+# the reference parsers, and one about the UTF-8 decoding under them, that
+# are measured (tools/strict-parse-differential.sh,
+# 21,012 agree, 0 differ (out of 21,012) on 2026-10-13) but not proved.
+# Like NX-1, these probes read the SOURCE: XFAIL while no theorem of the
+# name exists under formal/lean4. When one lands, the row reads XPASS:
+# retire it, update issue 826 and docs/designissues/2026-09-03-rdf-parsing-
+# strategy.md section 3b.3 in the same commit.
+#   SF-1  walkAll_init_eq_parseTurtleWalk  (the chunked Turtle walk's
+#         `walkAll` from the initial state is `parseTurtleWalk`)
+#   SF-2  LineFeed.run_triple_eq_batch     (N-Triples chunk boundary; the probe
+#         matches the leaf name run_triple_eq_batch in any namespace)
+#   SF-3  LineFeed.run_quad12_eq_batch     (N-Quads chunk boundary, RDF 1.2;
+#         leaf name run_quad12_eq_batch)
+#   SF-4  Utf8Stream.feedChunks_eq_fromUTF8 (byte chunks decode to the text
+#         String.fromUTF8? gives for their concatenation; leaf name)
+# ---------------------------------------------------------------------
+SF_SRC="${LEAN_SRC}/L4Factoidal/Syntax/StrictFeed.lean"
+sf_probe () { # ID TITLE THEOREM DRIFT-PATTERN DRIFT-WHAT
+  local id="$1" title="$2" thm="$3" drift="$4" what="$5"
+  if [ ! -f "$SF_SRC" ]; then
+    record "$id" 826 "$title" ERROR "${SF_SRC#"$ROOT"/} not found"
+  elif ! grep -qE "$drift" "$SF_SRC"; then
+    record "$id" 826 "$title" ERROR "probe drifted: ${what} is no longer defined in ${SF_SRC#"$ROOT"/}"
+  elif grep -rqE "^[[:space:]]*(@\[[^]]*\][[:space:]]*)?(private[[:space:]]+)?(theorem|lemma)[[:space:]]+([A-Za-z0-9_.]*\.)?${thm//./\\.}\b" \
+        "${LEAN_SRC}" --include='*.lean'; then
+    record "$id" 826 "$title" XPASS "a theorem named ${thm} now exists"
+  else
+    record "$id" 826 "$title" XFAIL \
+      "no ${thm} theorem in formal/lean4 (agreement is measured by tools/strict-parse-differential.sh only)"
+  fi
+}
+sf_probe SF-1 "chunked Turtle walk: walkAll = parseTurtleWalk unproved" \
+  walkAll_init_eq_parseTurtleWalk '^def walkAll ' 'walkAll'
+sf_probe SF-2 "N-Triples chunk boundary of LineFeed unproved" \
+  run_triple_eq_batch '^def LineFeed\.run ' 'LineFeed.run'
+sf_probe SF-3 "N-Quads RDF 1.2 chunk boundary of LineFeed unproved" \
+  run_quad12_eq_batch '^theorem LineFeed\.run_quad11_eq_batch ' 'LineFeed.run_quad11_eq_batch'
+SF_SRC="${LEAN_SRC}/L4Factoidal/Syntax/Utf8Stream.lean"
+sf_probe SF-4 "Utf8Stream chunk decoding = whole-file decoding unproved" \
+  feedChunks_eq_fromUTF8 '^def Utf8Stream\.feed ' 'Utf8Stream.feed'
 
 # ---------------------------------------------------------------------
 # Summary + JSON

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# CONSTRUCT: the template instantiated for each decoded solution.
+CONSTRUCT { ?o ex:knownBy ?s } WHERE { ?s ex:knows ?o }

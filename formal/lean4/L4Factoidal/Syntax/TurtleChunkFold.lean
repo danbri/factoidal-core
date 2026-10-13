@@ -213,4 +213,117 @@ theorem parseTurtleText_eq_of_walk {text : String} {base : Option String} {mode 
       rw [← h, hg]
     · rfl
 
+/-! ## Changing the accumulator (https://github.com/danbri/factoidal/issues/813)
+
+The walk never reads its accumulator: it only passes it to `step`. So a map
+`f` with `f (step1 a ts) = step2 (f a) ts` commutes with every part of the
+walk. `walk_drain` is the instance the strict command line needs: a walk whose
+accumulator already holds the triples `a` ends with the triples of the same
+walk started with no triples, followed by `a`. Emptying the accumulator after
+a chunk, writing what it held, and going on therefore writes every triple of
+the walk once, in the walk's order (`StrictFeed.lean`). -/
+
+theorem consumeText_map {α β : Type} {step1 : α → List RDF.Triple → α}
+    {step2 : β → List RDF.Triple → β} (f : α → β)
+    (hf : ∀ a ts, f (step1 a ts) = step2 (f a) ts) :
+    ∀ (fuel : Nat) (turtle : TurtleState) (acc : α) (pos : Nat) (chars : List Char),
+      consumeText step2 fuel turtle (f acc) pos chars =
+        (consumeText step1 fuel turtle acc pos chars).map (fun r => (r.1, f r.2.1, r.2.2)) := by
+  intro fuel
+  induction fuel with
+  | zero => intro turtle acc pos chars; rfl
+  | succ n ih =>
+      intro turtle acc pos chars
+      simp only [consumeText]
+      split
+      · rfl
+      · split
+        · rfl
+        · split
+          · rfl
+          · rw [← hf, ih]
+
+theorem consumeCandidates_map {α β : Type} {step1 : α → List RDF.Triple → α}
+    {step2 : β → List RDF.Triple → β} (f : α → β)
+    (hf : ∀ a ts, f (step1 a ts) = step2 (f a) ts) :
+    ∀ (texts : List String) (turtle : TurtleState) (acc : α) (pos : Nat),
+      consumeCandidates step2 turtle (f acc) pos texts =
+        (consumeCandidates step1 turtle acc pos texts).map (fun r => (r.1, f r.2.1, r.2.2)) := by
+  intro texts
+  induction texts with
+  | nil => intro turtle acc pos; rfl
+  | cons t rest ih =>
+      intro turtle acc pos
+      simp only [consumeCandidates, consumeText_map f hf]
+      cases consumeText step1 (t.toList.length + 2) turtle acc pos t.toList with
+      | error e => rfl
+      | ok r => exact ih r.1 r.2.1 r.2.2
+
+/-- The state with its accumulator mapped by `f`. -/
+abbrev TurtleChunkFoldState.mapAcc {α β : Type} (f : α → β) (s : TurtleChunkFoldState α) :
+    TurtleChunkFoldState β :=
+  { turtle := s.turtle, acc := f s.acc, pos := s.pos, scanner := s.scanner }
+
+theorem TurtleChunkFoldState.feedChar_map {α β : Type} {step1 : α → List RDF.Triple → α}
+    {step2 : β → List RDF.Triple → β} (f : α → β)
+    (hf : ∀ a ts, f (step1 a ts) = step2 (f a) ts) (s : TurtleChunkFoldState α) (c : Char) :
+    (s.mapAcc f).feedChar step2 c = (s.feedChar step1 c).map (·.mapAcc f) := by
+  cases s with
+  | mk turtle acc pos scanner =>
+    simp only [TurtleChunkFoldState.mapAcc, TurtleChunkFoldState.feedChar]
+    split
+    · rfl
+    · rw [consumeCandidates_map f hf]
+      cases consumeCandidates step1 turtle acc pos (scanner.feedChar c).drain.1 with
+      | error e => rfl
+      | ok r => rfl
+
+theorem TurtleChunkFoldState.finish_map {α β : Type} {step1 : α → List RDF.Triple → α}
+    {step2 : β → List RDF.Triple → β} (f : α → β)
+    (hf : ∀ a ts, f (step1 a ts) = step2 (f a) ts) (s : TurtleChunkFoldState α) :
+    (s.mapAcc f).finish step2 = (s.finish step1).map f := by
+  simp only [TurtleChunkFoldState.finish, consumeText_map f hf]
+  cases consumeText step1 (s.scanner.remainder.toList.length + 2) s.turtle s.acc s.pos
+      s.scanner.remainder.toList with
+  | error e => rfl
+  | ok r => rfl
+
+/-- The walk of `parseTurtleWalk` over a list of characters, from a state. -/
+def walkChars {α : Type} (step : α → List RDF.Triple → α) (cs : List Char)
+    (r : Except ParseError (TurtleChunkFoldState α)) : Except ParseError (TurtleChunkFoldState α) :=
+  cs.foldl (fun r c => match r with
+    | .error e => .error e
+    | .ok state => state.feedChar step c) r
+
+theorem walkChars_map {α β : Type} {step1 : α → List RDF.Triple → α}
+    {step2 : β → List RDF.Triple → β} (f : α → β)
+    (hf : ∀ a ts, f (step1 a ts) = step2 (f a) ts) :
+    ∀ (cs : List Char) (r : Except ParseError (TurtleChunkFoldState α)),
+      walkChars step2 cs (r.map (·.mapAcc f)) = (walkChars step1 cs r).map (·.mapAcc f) := by
+  intro cs
+  induction cs with
+  | nil => intro r; rfl
+  | cons c rest ih =>
+      intro r
+      simp only [walkChars, List.foldl_cons] at ih ⊢
+      cases r with
+      | error e => exact ih (.error e)
+      | ok s =>
+          simp only [Except.map]
+          rw [TurtleChunkFoldState.feedChar_map f hf]
+          exact ih (s.feedChar step1 c)
+
+/-- The accumulator `prependReverse` keeps: a walk started with the triples
+`a` behind its accumulator ends with them still behind it. -/
+theorem walk_drain (cs : List Char) (s : TurtleChunkFoldState (List RDF.Triple))
+    (a : List RDF.Triple) :
+    walkChars prependReverse cs (.ok (s.mapAcc (· ++ a))) =
+      (walkChars prependReverse cs (.ok s)).map (·.mapAcc (· ++ a)) :=
+  walkChars_map (· ++ a) (fun x ts => by simp [prependReverse]) cs (.ok s)
+
+/-- And at the end of the input. -/
+theorem finish_drain (s : TurtleChunkFoldState (List RDF.Triple)) (a : List RDF.Triple) :
+    (s.mapAcc (· ++ a)).finish prependReverse = (s.finish prependReverse).map (· ++ a) :=
+  TurtleChunkFoldState.finish_map (· ++ a) (fun x ts => by simp [prependReverse]) s
+
 end L4Factoidal.Syntax

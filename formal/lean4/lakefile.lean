@@ -330,6 +330,13 @@ extern_lib libl4exthost pkg := do
 -- https://github.com/danbri/factoidal/issues/760
 @[default_target] lean_exe «l4refute-profile» where root := `Harness.RefuteProfile
 
+-- Where the OWL 2 RL closure spends its rounds: per round the input size, the
+-- conclusions emitted, the new triples and the time; with --rows, per row the
+-- emitted, new and delta-driven conclusions and the time
+-- (Harness/OwlRlProfile.lean). Holds no OWL logic.
+-- https://github.com/danbri/factoidal/issues/756
+@[default_target] lean_exe «l4owl-rl-profile» where root := `Harness.OwlRlProfile
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."

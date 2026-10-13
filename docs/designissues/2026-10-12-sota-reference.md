@@ -9,6 +9,16 @@ of `danbri/factoidal-core`, base commit `e3c3aa01`.
 Owner, 2026-10-12, verbatim: "/goal OKRs addresses successfully especially perf
 and scaling should approach SOTA".
 
+Update, 2026-10-13: the rows `parse-nt`, `parse-nt-mixed`, `parse-ttl-gene`,
+`parse-ttl-rich`, `count-nt` and `count-ttl-gene` were measured again for
+Lean, Oxigraph, Serd and Jena after the repair of
+https://github.com/danbri/factoidal/issues/813 (the strict `parse` reads a file
+in chunks; branch `claude/wt-strict-parse-stream`). The parse rows were taken
+at load average 6 to 7; the Lean count rows again after a further repair, at
+load 28 to 31 (the CPU time in section 4 and the appendix is the fairer
+figure for those). The `npm` rows and the `start` rows were not measured
+again. The results file holds both measurements; the later one is the row.
+
 This record answers one question for each performance and scaling row of the
 Lean engine: on the same machine and the same input file, how many times the
 time and the peak memory of a state-of-the-art engine does the Lean engine
@@ -24,13 +34,13 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
 
 | Row | Lean | Fastest reference | Time ratio | Memory ratio | Issue |
 |---|---|---|---:|---:|---|
-| Parse N-Triples, 400,000 triples, to N-Quads | `parse --out nquads`: 2.97 s, 1,186 MB | Serd 0.53 s, 2 MB | 5.6 | 625 | https://github.com/danbri/factoidal/issues/813 |
-| the same, Lean streaming reader | `parse --lenient --out nquads`: 2.69 s, 24 MB | Serd | 5.1 | 12.5 (4.2 MB above process start) | — |
-| Parse Turtle, gene.ttl, 346,100 triples | 1.95 s, 243 MB | Serd 0.58 s, 2 MB | 3.3 | 128 | https://github.com/danbri/factoidal/issues/813 |
-| the same, Lean streaming reader | 1.84 s, 24 MB | Serd | 3.2 | 12.5 (4.3 MB above start) | — |
+| Parse N-Triples, 400,000 triples, to N-Quads | `parse --out nquads`: 1.95 s, 24 MB (2026-10-13, after the repair of https://github.com/danbri/factoidal/issues/813; before: 2.97 s, 1,186 MB) | Serd 0.44 s, 2 MB | 4.4 | 12.7 (4.7 MB above process start) | https://github.com/danbri/factoidal/issues/813 (repaired) |
+| the same, Lean streaming reader | `parse --lenient --out nquads`: 2.02 s, 24 MB | Serd | 4.6 | 12.7 (4.6 MB above process start) | — |
+| Parse Turtle, gene.ttl, 346,100 triples | 1.44 s, 26 MB (before the repair: 1.95 s, 243 MB) | Serd 0.48 s, 2 MB | 3.0 | 12.8 (6.1 MB above start) | https://github.com/danbri/factoidal/issues/813 (repaired) |
+| the same, Lean streaming reader | 1.61 s, 24 MB | Serd | 3.4 | 12.1 (4.7 MB above start) | — |
 | Parse RDF/XML, 100,000 triples | 5.33 s, 671 MB | Oxigraph 0.36 s, 23 MB | 15.0 | 29.4 | https://github.com/danbri/factoidal/issues/814, https://github.com/danbri/factoidal/issues/771 |
 | Parse RDF/XML, the Cell Ontology (9.6 MB) | 2.46 s, 479 MB | Oxigraph 0.26 s, 23 MB | 9.5 | 21.1 | as above |
-| Count statements, N-Triples 400,000 (no output) | 5.13 s, 1,186 MB; streaming 2.30 s, 24 MB | Jena `riot --count` 2.85 s, 267 MB | 1.8; streaming 0.81 | 4.4; streaming 0.09 | https://github.com/danbri/factoidal/issues/813 |
+| Count statements, N-Triples 400,000 (no output) | 5.66 s (3.28 s CPU, load 31), 226 MB (before the repair: 5.13 s, 1,186 MB); streaming 2.84 s, 24 MB (counts repeats) | Jena `riot --count` 4.31 s, 224 MB | 1.3; streaming 0.66 | 1.0; streaming 0.11 | https://github.com/danbri/factoidal/issues/813 (repaired) |
 | Count, npm package (wasm), gene.ttl 346,100 triples | 11.51 s, 4,045 MB (wasm from before the issue 744 repair) | Jena 2.29 s, 296 MB | 5.0 | 13.6 | https://github.com/danbri/factoidal/issues/744 |
 | SPARQL in memory, gene.ttl 346,100 triples, four queries (bound subject, COUNT, join, OPTIONAL+FILTER) | 3.97 to 4.77 s, 193 to 195 MB | Oxigraph 1.17 to 1.30 s, 141 MB | 3.4 to 4.1 | 1.4 | — |
 | RDFC-1.0, 100,000 quads, IRIs only | 2.24 s, 306 MB | Oxigraph 1.51 s, 189 MB | 1.5 | 1.6 | — |
@@ -46,8 +56,11 @@ is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
 
 - 📊 Parsing: the Lean streaming reader takes 2.7 to 5.1 times the time of
   Serd and Oxigraph at the largest sizes, with constant memory (24 MB, of which 19.5 MB is the Lean process
-  start). The default strict `parse` keeps the whole dataset in memory, 33 to
-  35 bytes per input byte (https://github.com/danbri/factoidal/issues/813).
+  start). The default strict `parse` kept the whole dataset in memory, 33 to
+  35 bytes per input byte; since 2026-10-13 it reads N-Triples, N-Quads and
+  Turtle in 64 KiB chunks and holds 24 to 26 MB at every size, 3.0 to 4.8
+  times Serd's time (https://github.com/danbri/factoidal/issues/813; rows of
+  2026-10-13 in section 4, binary of `claude/wt-strict-parse-stream`).
   RDF/XML is 13 to 15 times Oxigraph's time
   (https://github.com/danbri/factoidal/issues/814).
 - 📊 SPARQL over a file in memory: 3.0 to 4.3 times Oxigraph's time at every
@@ -181,52 +194,52 @@ RSS above start: each engine's peak resident set minus the peak resident set of 
 
 | Workload | Size | Reference (fastest) | Reference time, RSS | Lean variant | Lean time, RSS | Time ratio | CPU ratio | RSS ratio | RSS above start, ratio |
 |---|---:|---|---|---|---|---:|---:|---:|---:|
-| parse-nt | 100000 | serd | 0.140 s, 2 MB | lean | 0.905 s ±122%, 306 MB | 6.5 | 9.4 | 160.9 | 286.3 |
-| parse-nt | 100000 | serd | 0.140 s, 2 MB | lean-stream | 0.670 s ±5%, 24 MB | 4.8 | 6.9 | 12.5 | 4.2 |
-| parse-nt | 200000 | serd | 0.206 s, 2 MB | lean | 2.233 s ±79%, 599 MB | 10.8 | 15.5 | 315.4 | 579.8 |
-| parse-nt | 200000 | serd | 0.206 s, 2 MB | lean-stream | 1.402 s ±10%, 24 MB | 6.8 | 9.5 | 12.4 | 4.1 |
-| parse-nt | 400000 | serd | 0.530 s, 2 MB | lean | 2.973 s ±164%, 1186 MB | 5.6 | 7.8 | 624.5 | 1167.0 |
-| parse-nt | 400000 | serd | 0.530 s, 2 MB | lean-stream | 2.686 s ±17%, 24 MB | 5.1 | 6.8 | 12.5 | 4.2 |
-| parse-nt-mixed | 100000 | serd | 0.143 s, 2 MB | lean | 0.940 s ±133%, 306 MB | 6.5 | 8.8 | 160.8 | 286.1 |
-| parse-nt-mixed | 100000 | serd | 0.143 s, 2 MB | lean-stream | 0.690 s ±13%, 24 MB | 4.8 | 6.6 | 12.5 | 4.3 |
-| parse-nt-mixed | 200000 | serd | 0.288 s, 2 MB | lean | 2.940 s ±99%, 595 MB | 10.2 | 13.5 | 312.9 | 575.1 |
-| parse-nt-mixed | 200000 | serd | 0.288 s, 2 MB | lean-stream | 1.587 s ±18%, 24 MB | 5.5 | 7.0 | 12.4 | 4.1 |
-| parse-nt-mixed | 400000 | serd | 0.588 s, 2 MB | lean | 3.518 s ±139%, 1177 MB | 6.0 | 7.3 | 619.5 | 1157.6 |
-| parse-nt-mixed | 400000 | serd | 0.588 s, 2 MB | lean-stream | 2.959 s ±6%, 24 MB | 5.0 | 6.2 | 12.5 | 4.2 |
-| parse-ttl-gene | 20000 | serd | 0.154 s, 2 MB | lean | 0.539 s ±40%, 71 MB | 3.5 | 4.8 | 35.6 | 51.7 |
-| parse-ttl-gene | 20000 | serd | 0.154 s, 2 MB | lean-stream | 0.466 s ±12%, 24 MB | 3.0 | 4.1 | 11.9 | 4.3 |
-| parse-ttl-gene | 40000 | serd | 0.316 s, 2 MB | lean | 1.220 s ±52%, 122 MB | 3.9 | 5.2 | 61.0 | 102.4 |
-| parse-ttl-gene | 40000 | serd | 0.316 s, 2 MB | lean-stream | 0.882 s ±8%, 24 MB | 2.8 | 3.7 | 11.8 | 4.2 |
-| parse-ttl-gene | 80000 | serd | 0.583 s, 2 MB | lean | 1.951 s ±50%, 243 MB | 3.3 | 4.3 | 128.1 | 223.8 |
-| parse-ttl-gene | 80000 | serd | 0.583 s, 2 MB | lean-stream | 1.845 s ±1%, 24 MB | 3.2 | 4.2 | 12.5 | 4.3 |
-| parse-ttl-rich | 100000 | serd | 0.122 s, 2 MB | lean | 0.735 s ±28%, 74 MB | 6.0 | 8.6 | 33.6 | 54.5 |
-| parse-ttl-rich | 100000 | serd | 0.122 s, 2 MB | lean-stream | 0.613 s ±19%, 24 MB | 5.0 | 7.1 | 10.8 | 4.3 |
-| parse-ttl-rich | 200000 | serd | 0.268 s, 2 MB | lean | 1.209 s ±26%, 122 MB | 4.5 | 6.7 | 58.3 | 102.9 |
-| parse-ttl-rich | 200000 | serd | 0.268 s, 2 MB | lean-stream | 1.241 s ±10%, 24 MB | 4.6 | 7.2 | 11.3 | 4.3 |
-| parse-ttl-rich | 400000 | serd | 0.573 s, 2 MB | lean | 3.011 s ±17%, 227 MB | 5.3 | 6.6 | 103.1 | 207.3 |
-| parse-ttl-rich | 400000 | serd | 0.573 s, 2 MB | lean-stream | 2.405 s ±6%, 24 MB | 4.2 | 5.0 | 10.8 | 4.3 |
+| parse-nt | 100000 | serd | 0.160 s, 2 MB | lean | 0.497 s ±3%, 24 MB | 3.1 | 4.6 | 12.8 | 4.8 |
+| parse-nt | 100000 | serd | 0.160 s, 2 MB | lean-stream | 0.563 s ±15%, 24 MB | 3.5 | 5.0 | 12.6 | 4.5 |
+| parse-nt | 200000 | serd | 0.216 s, 2 MB | lean | 0.891 s ±6%, 24 MB | 4.1 | 5.6 | 12.7 | 4.6 |
+| parse-nt | 200000 | serd | 0.216 s, 2 MB | lean-stream | 1.084 s ±7%, 24 MB | 5.0 | 6.9 | 12.7 | 4.6 |
+| parse-nt | 400000 | serd | 0.439 s, 2 MB | lean | 1.952 s ±7%, 24 MB | 4.4 | 6.2 | 12.7 | 4.7 |
+| parse-nt | 400000 | serd | 0.439 s, 2 MB | lean-stream | 2.023 s ±6%, 24 MB | 4.6 | 6.6 | 12.7 | 4.6 |
+| parse-nt-mixed | 100000 | serd | 0.118 s, 2 MB | lean | 0.506 s ±13%, 24 MB | 4.3 | 5.8 | 12.7 | 4.6 |
+| parse-nt-mixed | 100000 | serd | 0.118 s, 2 MB | lean-stream | 0.565 s ±16%, 24 MB | 4.8 | 6.4 | 12.6 | 4.5 |
+| parse-nt-mixed | 200000 | serd | 0.229 s, 2 MB | lean | 1.020 s ±3%, 24 MB | 4.4 | 5.9 | 12.7 | 4.7 |
+| parse-nt-mixed | 200000 | serd | 0.229 s, 2 MB | lean-stream | 1.126 s ±10%, 24 MB | 4.9 | 6.3 | 12.7 | 4.6 |
+| parse-nt-mixed | 400000 | serd | 0.471 s, 2 MB | lean | 2.250 s ±16%, 24 MB | 4.8 | 6.2 | 12.7 | 4.6 |
+| parse-nt-mixed | 400000 | serd | 0.471 s, 2 MB | lean-stream | 2.337 s ±12%, 24 MB | 5.0 | 6.5 | 12.7 | 4.6 |
+| parse-ttl-gene | 20000 | serd | 0.115 s, 2 MB | lean | 0.412 s ±13%, 26 MB | 3.6 | 4.8 | 12.8 | 6.1 |
+| parse-ttl-gene | 20000 | serd | 0.115 s, 2 MB | lean-stream | 0.407 s ±8%, 24 MB | 3.5 | 5.5 | 12.1 | 4.7 |
+| parse-ttl-gene | 40000 | serd | 0.260 s, 2 MB | lean | 0.687 s ±8%, 26 MB | 2.6 | 3.8 | 12.8 | 6.2 |
+| parse-ttl-gene | 40000 | serd | 0.260 s, 2 MB | lean-stream | 0.751 s ±10%, 24 MB | 2.9 | 4.3 | 12.0 | 4.5 |
+| parse-ttl-gene | 80000 | serd | 0.481 s, 2 MB | lean | 1.442 s ±1%, 26 MB | 3.0 | 4.3 | 12.8 | 6.1 |
+| parse-ttl-gene | 80000 | serd | 0.481 s, 2 MB | lean-stream | 1.614 s ±14%, 24 MB | 3.4 | 5.2 | 12.1 | 4.7 |
+| parse-ttl-rich | 100000 | serd | 0.119 s, 2 MB | lean | 0.521 s ±17%, 26 MB | 4.4 | 5.1 | 12.2 | 6.2 |
+| parse-ttl-rich | 100000 | serd | 0.119 s, 2 MB | lean-stream | 0.540 s ±3%, 24 MB | 4.5 | 5.9 | 11.5 | 4.6 |
+| parse-ttl-rich | 200000 | serd | 0.247 s, 2 MB | lean | 0.881 s ±19%, 26 MB | 3.6 | 5.1 | 12.2 | 6.2 |
+| parse-ttl-rich | 200000 | serd | 0.247 s, 2 MB | lean-stream | 1.046 s ±15%, 24 MB | 4.2 | 6.1 | 11.5 | 4.7 |
+| parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean | 1.836 s ±6%, 26 MB | 3.3 | 5.0 | 12.2 | 6.1 |
+| parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean-stream | 2.060 s ±10%, 24 MB | 3.7 | 5.6 | 11.5 | 4.6 |
 | parse-rdfxml | 25000 | oxigraph | 0.115 s, 23 MB | lean | 1.472 s ±37%, 151 MB | 12.8 | 18.0 | 6.7 | 131.7 |
 | parse-rdfxml | 50000 | oxigraph | 0.191 s, 23 MB | lean | 2.695 s ±32%, 281 MB | 14.1 | 16.3 | 12.3 | 261.7 |
 | parse-rdfxml | 100000 | oxigraph | 0.356 s, 23 MB | lean | 5.331 s ±30%, 671 MB | 15.0 | 16.5 | 29.4 | 651.6 |
 | parse-rdfxml-real | 1 | oxigraph | 0.258 s, 23 MB | lean | 2.464 s ±97%, 479 MB | 9.5 | 11.9 | 21.1 | 459.6 |
-| count-nt | 100000 | jena | 1.776 s, 156 MB | lean | 0.893 s ±147%, 306 MB | 0.50 | 0.32 | 2.0 | 4.4 |
-| count-nt | 100000 | jena | 1.776 s, 156 MB | lean-stream | 0.503 s ±6%, 24 MB | 0.28 | 0.18 | 0.15 | 0.07 |
-| count-nt | 100000 | jena | 1.776 s, 156 MB | npm | 6.085 s ±22%, 889 MB | 3.4 | 2.3 | 5.7 | 11.9 |
-| count-nt | 200000 | jena | 2.532 s, 178 MB | lean | 2.357 s ±103%, 599 MB | 0.93 | 0.76 | 3.4 | 6.7 |
-| count-nt | 200000 | jena | 2.532 s, 178 MB | lean-stream | 1.118 s ±8%, 24 MB | 0.44 | 0.36 | 0.13 | 0.05 |
-| count-nt | 200000 | jena | 2.532 s, 178 MB | npm | 10.048 s ±21%, 1660 MB | 4.0 | 3.4 | 9.3 | 17.9 |
-| count-nt | 400000 | jena | 2.847 s, 267 MB | lean | 5.128 s ±55%, 1186 MB | 1.8 | 1.5 | 4.4 | 6.7 |
-| count-nt | 400000 | jena | 2.847 s, 267 MB | lean-stream | 2.296 s ±7%, 24 MB | 0.81 | 0.65 | 0.09 | 0.02 |
-| count-nt | 400000 | jena | 2.847 s, 267 MB | npm | 21.971 s ±5%, 3140 MB | 7.7 | 6.4 | 11.8 | 17.2 |
-| count-ttl-gene | 20000 | jena | 2.748 s, 201 MB | lean | 0.660 s ±52%, 57 MB | 0.24 | 0.17 | 0.29 | 0.35 |
-| count-ttl-gene | 20000 | jena | 2.748 s, 201 MB | lean-stream | 0.411 s ±9%, 24 MB | 0.15 | 0.11 | 0.12 | 0.04 |
-| count-ttl-gene | 20000 | jena | 2.748 s, 201 MB | npm | 3.676 s ±5%, 1095 MB | 1.3 | 1.0 | 5.5 | 8.9 |
-| count-ttl-gene | 40000 | jena | 2.873 s, 285 MB | lean | 1.338 s ±26%, 93 MB | 0.47 | 0.33 | 0.33 | 0.38 |
-| count-ttl-gene | 40000 | jena | 2.873 s, 285 MB | lean-stream | 0.809 s ±15%, 24 MB | 0.28 | 0.19 | 0.08 | 0.02 |
-| count-ttl-gene | 40000 | jena | 2.873 s, 285 MB | npm | 6.546 s ±4%, 2122 MB | 2.3 | 1.7 | 7.4 | 10.3 |
-| count-ttl-gene | 80000 | jena | 2.290 s, 296 MB | lean | 2.927 s ±28%, 163 MB | 1.3 | 0.54 | 0.55 | 0.70 |
-| count-ttl-gene | 80000 | jena | 2.290 s, 296 MB | lean-stream | 1.539 s ±3%, 24 MB | 0.67 | 0.27 | 0.08 | 0.02 |
-| count-ttl-gene | 80000 | jena | 2.290 s, 296 MB | npm | 11.514 s ±5%, 4045 MB | 5.0 | 2.4 | 13.6 | 19.2 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | lean | 1.326 s ±28%, 72 MB | 0.63 | 0.25 | 0.45 | 0.79 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | lean-stream | 0.615 s ±60%, 24 MB | 0.29 | 0.14 | 0.15 | 0.07 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | npm | 6.085 s ±22%, 889 MB | 2.9 | 2.1 | 5.6 | 11.7 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | lean | 3.177 s ±54%, 124 MB | 1.1 | 0.61 | 0.64 | 1.0 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | lean-stream | 0.957 s ±14%, 24 MB | 0.35 | 0.26 | 0.12 | 0.05 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | npm | 10.048 s ±21%, 1660 MB | 3.6 | 3.3 | 8.6 | 15.2 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | lean | 5.663 s ±30%, 226 MB | 1.3 | 0.89 | 1.0 | 1.6 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | lean-stream | 2.835 s ±25%, 24 MB | 0.66 | 0.57 | 0.11 | 0.03 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | npm | 21.971 s ±5%, 3140 MB | 5.1 | 6.0 | 14.0 | 22.8 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | lean | 1.018 s ±4%, 57 MB | 0.27 | 0.16 | 0.28 | 0.34 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | lean-stream | 0.421 s ±47%, 24 MB | 0.11 | 0.09 | 0.12 | 0.04 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | npm | 3.676 s ±5%, 1095 MB | 0.96 | 1.1 | 5.4 | 8.8 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | lean | 1.897 s ±24%, 92 MB | 0.38 | 0.21 | 0.37 | 0.46 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | lean-stream | 0.883 s ±35%, 24 MB | 0.17 | 0.13 | 0.10 | 0.03 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | npm | 6.546 s ±4%, 2122 MB | 1.3 | 1.3 | 8.5 | 12.7 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | lean | 3.976 s ±6%, 163 MB | 0.91 | 0.49 | 0.55 | 0.70 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | lean-stream | 1.593 s ±17%, 24 MB | 0.36 | 0.28 | 0.08 | 0.02 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | npm | 11.514 s ±5%, 4045 MB | 2.6 | 2.7 | 13.6 | 19.0 |
 | sparql-bound-subject | 20000 | oxigraph | 0.279 s, 56 MB | lean | 1.212 s ±6%, 65 MB | 4.3 | 4.5 | 1.2 | 1.4 |
 | sparql-bound-subject | 40000 | oxigraph | 0.535 s, 84 MB | lean | 2.025 s ±11%, 112 MB | 3.8 | 3.7 | 1.3 | 1.5 |
 | sparql-bound-subject | 80000 | oxigraph | 1.296 s, 141 MB | lean | 4.356 s ±25%, 193 MB | 3.4 | 3.8 | 1.4 | 1.5 |
@@ -304,33 +317,21 @@ the streaming reader).
 
 | Rows | Cause, as far as measured | Issue | Gate |
 |---|---|---|---|
-| `parse-nt`, `parse-nt-mixed` (all sizes; time 10.2 and 10.8 at 200,000), `parse-ttl-gene`, `parse-ttl-rich` (memory) | the strict `parse` keeps the whole dataset in memory, 33 to 35 bytes per input byte; the streaming reader of the same binary holds 24 MB | https://github.com/danbri/factoidal/issues/813 (new) | expected failure `parse-nt` 400,000, `parse-ttl-gene` 80,000 |
+| `parse-nt`, `parse-nt-mixed` (all sizes; time 10.2 and 10.8 at 200,000), `parse-ttl-gene`, `parse-ttl-rich` (memory), on `e3c3aa01` | the strict `parse` kept the whole dataset in memory, 33 to 35 bytes per input byte. Repaired 2026-10-13 (`StrictFeed.lean`; `docs/designissues/2026-09-03-rdf-parsing-strategy.md` section 3b): no row is over 10 now | https://github.com/danbri/factoidal/issues/813 | the expected-failure marks `parse-nt` 400,000 and `parse-ttl-gene` 80,000 are removed; the rows are plain assertions |
 | `parse-rdfxml` (all sizes), `parse-rdfxml-real` (memory) | not located; 48 to 49 bytes per input byte (the memory is https://github.com/danbri/factoidal/issues/771) | https://github.com/danbri/factoidal/issues/814 (new) | expected failure `parse-rdfxml` 100,000 |
 | `count-nt` 400,000 and `count-ttl-gene` 80,000, npm (memory) | wasm of release `build-3bf333414efd-web`, before the repair `a7bdc189` | https://github.com/danbri/factoidal/issues/744 (comment with these rows) | — (the gate runs native Lean only) |
 | `rdfc-pairs` 4,000 and 8,000 (Lean), 2,000 to 8,000 (npm; 8,000 stops with "Maximum call stack size exceeded") | Hash N-Degree Quads over a collision group, repaired on branch `claude/wt-rdfc-collide` | https://github.com/danbri/factoidal/issues/751 (comment with these rows) | expected failure `rdfc-pairs` 8,000 |
-| `owl-dl-consistent` schema.org | not located; HermiT decides the file in 1.4 s | https://github.com/danbri/factoidal/issues/819 (new) | expected failure `owl-dl-consistent` schema.org |
+| `owl-dl-consistent` schema.org | not located; HermiT decides the file in 1.4 s. 2026-10-13: located and below 10 times HermiT on a base with the repair of issue 760 and the semi-naive closure: the OWL 2 RL closure is most of the time (`2026-10-10-owl-real-ontologies.md` § 11.7) | https://github.com/danbri/factoidal/issues/819 (new) | expected failure `owl-dl-consistent` schema.org; removed 2026-10-13 (the gate reported UNEXPECTED PASS) |
 | `owl-dl-consistent` RO and the Cell Ontology: TIMEOUT at 600 s | the tableau refuter's growth; repaired on the branch of key result 3.3, merging into `main` | https://github.com/danbri/factoidal/issues/760 (comment with these rows) | — (a TIMEOUT row is not re-run by the gate; `tests/stack/owl_real_gate.sh` holds the expected failure) |
 
 The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
 
-- parse-nt 100000, lean against serd: time ratio 6.5, RSS ratio 160.9
-- parse-nt 200000, lean against serd: time ratio 10.8, RSS ratio 315.4
-- parse-nt 400000, lean against serd: time ratio 5.6, RSS ratio 624.5
-- parse-nt-mixed 100000, lean against serd: time ratio 6.5, RSS ratio 160.8
-- parse-nt-mixed 200000, lean against serd: time ratio 10.2, RSS ratio 312.9
-- parse-nt-mixed 400000, lean against serd: time ratio 6.0, RSS ratio 619.5
-- parse-ttl-gene 20000, lean against serd: time ratio 3.5, RSS ratio 35.6
-- parse-ttl-gene 40000, lean against serd: time ratio 3.9, RSS ratio 61.0
-- parse-ttl-gene 80000, lean against serd: time ratio 3.3, RSS ratio 128.1
-- parse-ttl-rich 100000, lean against serd: time ratio 6.0, RSS ratio 33.6
-- parse-ttl-rich 200000, lean against serd: time ratio 4.5, RSS ratio 58.3
-- parse-ttl-rich 400000, lean against serd: time ratio 5.3, RSS ratio 103.1
 - parse-rdfxml 25000, lean against oxigraph: time ratio 12.8, RSS ratio 6.7
 - parse-rdfxml 50000, lean against oxigraph: time ratio 14.1, RSS ratio 12.3
 - parse-rdfxml 100000, lean against oxigraph: time ratio 15.0, RSS ratio 29.4
 - parse-rdfxml-real 1, lean against oxigraph: time ratio 9.5, RSS ratio 21.1
-- count-nt 400000, npm against jena: time ratio 7.7, RSS ratio 11.8
-- count-ttl-gene 80000, npm against jena: time ratio 5.0, RSS ratio 13.6
+- count-nt 400000, npm against jena: time ratio 5.1, RSS ratio 14.0
+- count-ttl-gene 80000, npm against jena: time ratio 2.6, RSS ratio 13.6
 - rdfc-pairs 2000, npm against oxigraph: time ratio 24.8, RSS ratio 4.6
 - rdfc-pairs 4000, lean against oxigraph: time ratio 20.8, RSS ratio 0.8
 - rdfc-pairs 4000, npm against oxigraph: time ratio 40.6, RSS ratio 3.8
@@ -394,6 +395,21 @@ the same `e3c3aa01` binary, load average 2.6 to 11.5: 79 pass, 0 fail (out of
 A forced bound (`SOTA_TOLERANCE=-0.5`) failed the `parse-rdfxml-real` row with
 exit status 1, so the gate can fail.
 
+Run of 2026-10-13, 06:30 to 06:52 UTC, the binary of
+`claude/wt-strict-parse-stream` (after the repair of
+https://github.com/danbri/factoidal/issues/813), load average 14 to 16: 76
+pass, 3 fail (out of 79). The 36 rows of the parse and count workloads
+(`lean`, `lean-stream`) pass; issue 813's two rows are plain assertions now.
+The 3 failures: `parse-rdfxml` 100,000, CPU 6.68 s against a bound of 6.45 s
+(recorded at load 4; in a rerun at load 17 to 19 the row passed and
+`parse-rdfxml-real` failed by 3 percent, 3.11 s against 3.03 s; the RDF/XML
+reader is not changed by that branch except the faster `isIri`), and two
+UNEXPECTED PASSES: `rdfc-pairs` 8,000 (0.61 s, recorded 9.97 s; the repair
+of https://github.com/danbri/factoidal/issues/751 is in the base) and
+`owl-dl-consistent` schema.org (3.91 s, recorded 43.13 s;
+https://github.com/danbri/factoidal/issues/819). Those two marks and rows
+belong to their own issues and are not changed here.
+
 ## 9. Reproduce
 
 ```
@@ -416,66 +432,66 @@ rm -rf /tmp/sota-dl                                 # the downloads
 | start | 0 | jena | 1.193 s ±6% | 1.69 s | 92 MB | — | 4.11 to 4.11 |
 | start | 0 | npm | 0.409 s ±6% | 0.50 s | 122 MB | — | 4.02 to 4.11 |
 | start | 0 | hermit | 0.107 s ±8% | 0.11 s | 43 MB | — | 4.02 to 4.02 |
-| parse-nt | 100000 | lean | 0.905 s ±122% | 0.85 s | 306 MB | 100000 | 3.94 to 4.02 |
-| parse-nt | 100000 | lean-stream | 0.670 s ±5% | 0.62 s | 24 MB | 100000 | 3.94 to 3.94 |
-| parse-nt | 100000 | oxigraph | 0.173 s ±3% | 0.13 s | 23 MB | 100000 | 3.87 to 3.94 |
-| parse-nt | 100000 | serd | 0.140 s ±30% | 0.09 s | 2 MB | 100000 | 3.87 to 3.87 |
-| parse-nt | 100000 | jena | 2.756 s ±43% | 3.18 s | 160 MB | 100000 | 3.87 to 4.12 |
-| parse-nt | 200000 | lean | 2.233 s ±79% | 2.01 s | 599 MB | 200000 | 4.1 to 4.11 |
-| parse-nt | 200000 | lean-stream | 1.402 s ±10% | 1.24 s | 24 MB | 200000 | 4.09 to 4.09 |
-| parse-nt | 200000 | oxigraph | 0.339 s ±6% | 0.25 s | 23 MB | 200000 | 4.09 to 4.09 |
-| parse-nt | 200000 | serd | 0.206 s ±17% | 0.13 s | 2 MB | 200000 | 4.09 to 4.09 |
-| parse-nt | 200000 | jena | 3.464 s ±12% | 3.39 s | 176 MB | 200000 | 4.09 to 4.39 |
-| parse-nt | 400000 | lean | 2.973 s ±164% | 2.80 s | 1186 MB | 400000 | 4.44 to 4.67 |
-| parse-nt | 400000 | lean-stream | 2.686 s ±17% | 2.43 s | 24 MB | 400000 | 4.67 to 4.77 |
-| parse-nt | 400000 | oxigraph | 0.586 s ±31% | 0.45 s | 23 MB | 400000 | 4.71 to 4.89 |
-| parse-nt | 400000 | serd | 0.530 s ±25% | 0.36 s | 2 MB | 400000 | 4.89 to 4.89 |
-| parse-nt | 400000 | jena | 2.937 s ±9% | 3.92 s | 225 MB | 400000 | 4.74 to 4.89 |
-| parse-nt-mixed | 100000 | lean | 0.940 s ±133% | 0.88 s | 306 MB | 100000 | 4.47 to 4.6 |
-| parse-nt-mixed | 100000 | lean-stream | 0.690 s ±13% | 0.66 s | 24 MB | 100000 | 4.47 to 4.47 |
-| parse-nt-mixed | 100000 | oxigraph | 0.217 s ±14% | 0.18 s | 23 MB | 100000 | 4.47 to 4.47 |
-| parse-nt-mixed | 100000 | serd | 0.143 s ±22% | 0.10 s | 2 MB | 100000 | 4.43 to 4.47 |
-| parse-nt-mixed | 100000 | jena | 2.339 s ±11% | 3.92 s | 155 MB | 100000 | 4.43 to 4.48 |
-| parse-nt-mixed | 200000 | lean | 2.940 s ±99% | 2.83 s | 595 MB | 200000 | 4.25 to 4.48 |
-| parse-nt-mixed | 200000 | lean-stream | 1.587 s ±18% | 1.47 s | 24 MB | 200000 | 3.98 to 4.15 |
-| parse-nt-mixed | 200000 | oxigraph | 0.413 s ±7% | 0.33 s | 23 MB | 200000 | 3.98 to 3.98 |
-| parse-nt-mixed | 200000 | serd | 0.288 s ±50% | 0.21 s | 2 MB | 200000 | 3.98 to 4.22 |
-| parse-nt-mixed | 200000 | jena | 2.818 s ±14% | 4.17 s | 174 MB | 200000 | 4.22 to 4.44 |
-| parse-nt-mixed | 400000 | lean | 3.518 s ±139% | 3.29 s | 1177 MB | 400000 | 4.02 to 4.44 |
-| parse-nt-mixed | 400000 | lean-stream | 2.959 s ±6% | 2.81 s | 24 MB | 400000 | 3.94 to 4.02 |
-| parse-nt-mixed | 400000 | oxigraph | 0.683 s ±12% | 0.53 s | 23 MB | 400000 | 4.02 to 4.18 |
-| parse-nt-mixed | 400000 | serd | 0.588 s ±28% | 0.45 s | 2 MB | 400000 | 4.18 to 4.18 |
-| parse-nt-mixed | 400000 | jena | 2.995 s ±26% | 4.55 s | 268 MB | 400000 | 4.08 to 4.16 |
-| parse-ttl-gene | 20000 | lean | 0.539 s ±40% | 0.48 s | 71 MB | 87468 | 3.99 to 4.16 |
-| parse-ttl-gene | 20000 | lean-stream | 0.466 s ±12% | 0.41 s | 24 MB | 87468 | 3.99 to 3.99 |
-| parse-ttl-gene | 20000 | oxigraph | 0.195 s ±45% | 0.14 s | 23 MB | 87468 | 3.91 to 3.99 |
-| parse-ttl-gene | 20000 | serd | 0.154 s ±24% | 0.10 s | 2 MB | 87468 | 3.91 to 3.91 |
-| parse-ttl-gene | 20000 | jena | 2.178 s ±11% | 3.61 s | 203 MB | 87468 | 3.91 to 3.99 |
-| parse-ttl-gene | 40000 | lean | 1.220 s ±52% | 1.09 s | 122 MB | 174225 | 3.91 to 3.99 |
-| parse-ttl-gene | 40000 | lean-stream | 0.882 s ±8% | 0.78 s | 24 MB | 174225 | 3.91 to 4.08 |
-| parse-ttl-gene | 40000 | oxigraph | 0.362 s ±7% | 0.27 s | 23 MB | 174225 | 4.08 to 4.08 |
-| parse-ttl-gene | 40000 | serd | 0.316 s ±13% | 0.21 s | 2 MB | 174225 | 4.07 to 4.08 |
-| parse-ttl-gene | 40000 | jena | 2.067 s ±17% | 4.60 s | 256 MB | 174225 | 4.07 to 4.15 |
-| parse-ttl-gene | 80000 | lean | 1.951 s ±50% | 1.71 s | 243 MB | 346100 | 3.82 to 4.15 |
-| parse-ttl-gene | 80000 | lean-stream | 1.845 s ±1% | 1.69 s | 24 MB | 346100 | 3.67 to 3.82 |
-| parse-ttl-gene | 80000 | oxigraph | 0.686 s ±11% | 0.52 s | 23 MB | 346100 | 3.54 to 3.54 |
-| parse-ttl-gene | 80000 | serd | 0.583 s ±25% | 0.40 s | 2 MB | 346100 | 3.54 to 3.57 |
-| parse-ttl-gene | 80000 | jena | 4.134 s ±12% | 6.09 s | 294 MB | 346100 | 3.57 to 3.72 |
-| parse-ttl-rich | 100000 | lean | 0.735 s ±28% | 0.69 s | 74 MB | 114280 | 3.9 to 3.9 |
-| parse-ttl-rich | 100000 | lean-stream | 0.613 s ±19% | 0.57 s | 24 MB | 114280 | 3.9 to 3.9 |
-| parse-ttl-rich | 100000 | oxigraph | 0.236 s ±14% | 0.20 s | 23 MB | 114280 | 3.9 to 3.91 |
-| parse-ttl-rich | 100000 | serd | 0.122 s ±6% | 0.08 s | 2 MB | 114280 | 3.91 to 3.91 |
-| parse-ttl-rich | 100000 | jena | 2.325 s ±4% | 3.68 s | 179 MB | 114280 | 3.91 to 4.16 |
-| parse-ttl-rich | 200000 | lean | 1.209 s ±26% | 1.07 s | 122 MB | 228568 | 3.99 to 4.16 |
-| parse-ttl-rich | 200000 | lean-stream | 1.241 s ±10% | 1.15 s | 24 MB | 228568 | 3.99 to 3.99 |
-| parse-ttl-rich | 200000 | oxigraph | 0.437 s ±5% | 0.34 s | 23 MB | 228568 | 3.83 to 3.83 |
-| parse-ttl-rich | 200000 | serd | 0.268 s ±50% | 0.16 s | 2 MB | 228568 | 3.83 to 3.83 |
-| parse-ttl-rich | 200000 | jena | 3.217 s ±48% | 4.49 s | 201 MB | 228568 | 4.32 to 4.59 |
-| parse-ttl-rich | 400000 | lean | 3.011 s ±17% | 2.82 s | 227 MB | 457136 | 4.94 to 4.94 |
-| parse-ttl-rich | 400000 | lean-stream | 2.405 s ±6% | 2.17 s | 24 MB | 457136 | 4.79 to 4.89 |
-| parse-ttl-rich | 400000 | oxigraph | 0.833 s ±13% | 0.68 s | 23 MB | 457136 | 4.81 to 4.89 |
-| parse-ttl-rich | 400000 | serd | 0.573 s ±11% | 0.43 s | 2 MB | 457136 | 4.81 to 4.81 |
-| parse-ttl-rich | 400000 | jena | 3.929 s ±8% | 6.14 s | 276 MB | 457136 | 4.81 to 4.92 |
+| parse-nt | 100000 | lean | 0.497 s ±3% | 0.41 s | 24 MB | 100000 | 6.66 to 6.66 |
+| parse-nt | 100000 | lean-stream | 0.563 s ±15% | 0.45 s | 24 MB | 100000 | 6.66 to 6.69 |
+| parse-nt | 100000 | oxigraph | 0.189 s ±14% | 0.13 s | 23 MB | 100000 | 6.69 to 6.69 |
+| parse-nt | 100000 | serd | 0.160 s ±26% | 0.09 s | 2 MB | 100000 | 6.69 to 6.69 |
+| parse-nt | 100000 | jena | 2.345 s ±6% | 2.93 s | 161 MB | 100000 | 6.69 to 6.71 |
+| parse-nt | 200000 | lean | 0.891 s ±6% | 0.79 s | 24 MB | 200000 | 6.71 to 6.9 |
+| parse-nt | 200000 | lean-stream | 1.084 s ±7% | 0.97 s | 24 MB | 200000 | 6.75 to 6.9 |
+| parse-nt | 200000 | oxigraph | 0.316 s ±15% | 0.24 s | 23 MB | 200000 | 6.75 to 6.75 |
+| parse-nt | 200000 | serd | 0.216 s ±16% | 0.14 s | 2 MB | 200000 | 6.75 to 6.75 |
+| parse-nt | 200000 | jena | 2.817 s ±8% | 3.28 s | 175 MB | 200000 | 6.62 to 6.85 |
+| parse-nt | 400000 | lean | 1.952 s ±7% | 1.75 s | 24 MB | 400000 | 6.49 to 6.62 |
+| parse-nt | 400000 | lean-stream | 2.023 s ±6% | 1.84 s | 24 MB | 400000 | 6.45 to 6.49 |
+| parse-nt | 400000 | oxigraph | 0.647 s ±3% | 0.50 s | 23 MB | 400000 | 6.25 to 6.25 |
+| parse-nt | 400000 | serd | 0.439 s ±6% | 0.28 s | 2 MB | 400000 | 6.23 to 6.25 |
+| parse-nt | 400000 | jena | 3.523 s ±3% | 3.88 s | 265 MB | 400000 | 6.05 to 6.23 |
+| parse-nt-mixed | 100000 | lean | 0.506 s ±13% | 0.46 s | 24 MB | 100000 | 5.97 to 5.97 |
+| parse-nt-mixed | 100000 | lean-stream | 0.565 s ±16% | 0.51 s | 24 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | oxigraph | 0.193 s ±14% | 0.15 s | 23 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | serd | 0.118 s ±7% | 0.08 s | 2 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | jena | 2.827 s ±15% | 3.53 s | 156 MB | 100000 | 5.89 to 5.9 |
+| parse-nt-mixed | 200000 | lean | 1.020 s ±3% | 0.95 s | 24 MB | 200000 | 5.99 to 5.99 |
+| parse-nt-mixed | 200000 | lean-stream | 1.126 s ±10% | 1.01 s | 24 MB | 200000 | 5.83 to 5.83 |
+| parse-nt-mixed | 200000 | oxigraph | 0.394 s ±17% | 0.29 s | 23 MB | 200000 | 5.83 to 5.92 |
+| parse-nt-mixed | 200000 | serd | 0.229 s ±9% | 0.16 s | 2 MB | 200000 | 5.92 to 5.92 |
+| parse-nt-mixed | 200000 | jena | 3.134 s ±5% | 4.15 s | 175 MB | 200000 | 5.92 to 6.09 |
+| parse-nt-mixed | 400000 | lean | 2.250 s ±16% | 2.05 s | 24 MB | 400000 | 5.99 to 6.16 |
+| parse-nt-mixed | 400000 | lean-stream | 2.337 s ±12% | 2.14 s | 24 MB | 400000 | 5.91 to 5.92 |
+| parse-nt-mixed | 400000 | oxigraph | 0.737 s ±21% | 0.56 s | 23 MB | 400000 | 5.92 to 6.48 |
+| parse-nt-mixed | 400000 | serd | 0.471 s ±8% | 0.33 s | 2 MB | 400000 | 6.48 to 6.48 |
+| parse-nt-mixed | 400000 | jena | 4.890 s ±12% | 4.72 s | 225 MB | 400000 | 6.48 to 6.77 |
+| parse-ttl-gene | 20000 | lean | 0.412 s ±13% | 0.29 s | 26 MB | 87468 | 6.53 to 6.57 |
+| parse-ttl-gene | 20000 | lean-stream | 0.407 s ±8% | 0.33 s | 24 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | oxigraph | 0.182 s ±16% | 0.12 s | 23 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | serd | 0.115 s ±6% | 0.06 s | 2 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | jena | 2.928 s ±20% | 3.77 s | 204 MB | 87468 | 6.33 to 6.53 |
+| parse-ttl-gene | 40000 | lean | 0.687 s ±8% | 0.57 s | 26 MB | 174225 | 6.12 to 6.22 |
+| parse-ttl-gene | 40000 | lean-stream | 0.751 s ±10% | 0.64 s | 24 MB | 174225 | 6.12 to 6.12 |
+| parse-ttl-gene | 40000 | oxigraph | 0.301 s ±4% | 0.21 s | 23 MB | 174225 | 6.12 to 6.12 |
+| parse-ttl-gene | 40000 | serd | 0.260 s ±23% | 0.15 s | 2 MB | 174225 | 5.95 to 6.12 |
+| parse-ttl-gene | 40000 | jena | 5.354 s ±48% | 4.78 s | 256 MB | 174225 | 5.95 to 6.61 |
+| parse-ttl-gene | 80000 | lean | 1.442 s ±1% | 1.17 s | 26 MB | 346100 | 6.58 to 6.72 |
+| parse-ttl-gene | 80000 | lean-stream | 1.614 s ±14% | 1.41 s | 24 MB | 346100 | 6.38 to 6.58 |
+| parse-ttl-gene | 80000 | oxigraph | 0.727 s ±9% | 0.46 s | 23 MB | 346100 | 6.38 to 6.38 |
+| parse-ttl-gene | 80000 | serd | 0.481 s ±12% | 0.27 s | 2 MB | 346100 | 6.51 to 6.51 |
+| parse-ttl-gene | 80000 | jena | 6.540 s ±9% | 5.92 s | 293 MB | 346100 | 6.51 to 6.89 |
+| parse-ttl-rich | 100000 | lean | 0.521 s ±17% | 0.41 s | 26 MB | 114280 | 6.9 to 6.9 |
+| parse-ttl-rich | 100000 | lean-stream | 0.540 s ±3% | 0.47 s | 24 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | oxigraph | 0.261 s ±36% | 0.20 s | 23 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | serd | 0.119 s ±5% | 0.08 s | 2 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | jena | 2.739 s ±13% | 3.69 s | 177 MB | 114280 | 6.61 to 6.67 |
+| parse-ttl-rich | 200000 | lean | 0.881 s ±19% | 0.77 s | 26 MB | 228568 | 6.44 to 6.56 |
+| parse-ttl-rich | 200000 | lean-stream | 1.046 s ±15% | 0.91 s | 24 MB | 228568 | 6.44 to 6.44 |
+| parse-ttl-rich | 200000 | oxigraph | 0.445 s ±21% | 0.35 s | 23 MB | 228568 | 6.44 to 6.56 |
+| parse-ttl-rich | 200000 | serd | 0.247 s ±9% | 0.15 s | 2 MB | 228568 | 6.56 to 6.56 |
+| parse-ttl-rich | 200000 | jena | 4.670 s ±20% | 4.68 s | 193 MB | 228568 | 6.56 to 7.16 |
+| parse-ttl-rich | 400000 | lean | 1.836 s ±6% | 1.61 s | 26 MB | 457136 | 6.91 to 7.07 |
+| parse-ttl-rich | 400000 | lean-stream | 2.060 s ±10% | 1.80 s | 24 MB | 457136 | 6.75 to 6.91 |
+| parse-ttl-rich | 400000 | oxigraph | 0.878 s ±1% | 0.68 s | 23 MB | 457136 | 6.75 to 6.77 |
+| parse-ttl-rich | 400000 | serd | 0.564 s ±40% | 0.32 s | 2 MB | 457136 | 6.77 to 7.03 |
+| parse-ttl-rich | 400000 | jena | 4.676 s ±50% | 5.83 s | 252 MB | 457136 | 7.01 to 7.27 |
 | parse-rdfxml | 25000 | lean | 1.472 s ±37% | 1.44 s | 151 MB | 25000 | 4.7 to 4.85 |
 | parse-rdfxml | 25000 | oxigraph | 0.115 s ±5% | 0.08 s | 23 MB | 25000 | 4.56 to 4.56 |
 | parse-rdfxml | 25000 | jena | 2.090 s ±10% | 3.06 s | 130 MB | 25000 | 4.56 to 4.92 |
@@ -488,30 +504,30 @@ rm -rf /tmp/sota-dl                                 # the downloads
 | parse-rdfxml-real | 1 | lean | 2.464 s ±97% | 2.38 s | 479 MB | 78835 | 4.57 to 4.93 |
 | parse-rdfxml-real | 1 | oxigraph | 0.258 s ±11% | 0.20 s | 23 MB | 78835 | 4.57 to 4.57 |
 | parse-rdfxml-real | 1 | jena | 2.507 s ±51% | 3.88 s | 139 MB | 78835 | 4.57 to 4.96 |
-| count-nt | 100000 | lean | 0.893 s ±147% | 0.84 s | 306 MB | 100000 | 4.8 to 4.96 |
-| count-nt | 100000 | lean-stream | 0.503 s ±6% | 0.49 s | 24 MB | 100000 | 4.66 to 4.66 |
+| count-nt | 100000 | lean | 1.326 s ±28% | 0.74 s | 72 MB | 100000 | 30.41 to 30.41 |
+| count-nt | 100000 | lean-stream | 0.615 s ±60% | 0.42 s | 24 MB | 100000 | 7.07 to 7.07 |
 | count-nt | 100000 | npm | 6.085 s ±22% | 6.18 s | 889 MB | 100000 | 4.52 to 4.88 |
-| count-nt | 100000 | jena | 1.776 s ±12% | 2.66 s | 156 MB | 100000 | 4.73 to 4.75 |
-| count-nt | 200000 | lean | 2.357 s ±103% | 2.31 s | 599 MB | 200000 | 4.56 to 4.68 |
-| count-nt | 200000 | lean-stream | 1.118 s ±8% | 1.10 s | 24 MB | 200000 | 4.46 to 4.68 |
+| count-nt | 100000 | jena | 2.105 s ±26% | 2.92 s | 158 MB | 100000 | 7.31 to 7.31 |
+| count-nt | 200000 | lean | 3.177 s ±54% | 1.87 s | 124 MB | 200000 | 30.41 to 30.66 |
+| count-nt | 200000 | lean-stream | 0.957 s ±14% | 0.81 s | 24 MB | 200000 | 7.14 to 7.24 |
 | count-nt | 200000 | npm | 10.048 s ±21% | 10.26 s | 1660 MB | 200000 | 4.26 to 4.46 |
-| count-nt | 200000 | jena | 2.532 s ±8% | 3.02 s | 178 MB | 200000 | 4.47 to 4.59 |
-| count-nt | 400000 | lean | 5.128 s ±55% | 5.07 s | 1186 MB | 400000 | 4.36 to 4.59 |
-| count-nt | 400000 | lean-stream | 2.296 s ±7% | 2.25 s | 24 MB | 400000 | 4.38 to 4.41 |
+| count-nt | 200000 | jena | 2.764 s ±24% | 3.09 s | 193 MB | 200000 | 6.89 to 7.14 |
+| count-nt | 400000 | lean | 5.663 s ±30% | 3.28 s | 226 MB | 400000 | 30.5 to 30.98 |
+| count-nt | 400000 | lean-stream | 2.835 s ±25% | 2.08 s | 24 MB | 400000 | 8.07 to 8.63 |
 | count-nt | 400000 | npm | 21.971 s ±5% | 22.15 s | 3140 MB | 400000 | 4.35 to 4.55 |
-| count-nt | 400000 | jena | 2.847 s ±14% | 3.45 s | 267 MB | 400000 | 4.6 to 4.71 |
-| count-ttl-gene | 20000 | lean | 0.660 s ±52% | 0.63 s | 57 MB | 87468 | 4.58 to 4.58 |
-| count-ttl-gene | 20000 | lean-stream | 0.411 s ±9% | 0.39 s | 24 MB | 87468 | 4.53 to 4.53 |
+| count-nt | 400000 | jena | 4.310 s ±12% | 3.68 s | 224 MB | 400000 | 8.63 to 8.91 |
+| count-ttl-gene | 20000 | lean | 1.018 s ±4% | 0.56 s | 57 MB | 87468 | 29.38 to 29.58 |
+| count-ttl-gene | 20000 | lean-stream | 0.421 s ±47% | 0.32 s | 24 MB | 87468 | 9.07 to 9.31 |
 | count-ttl-gene | 20000 | npm | 3.676 s ±5% | 3.79 s | 1095 MB | 87468 | 4.53 to 4.65 |
-| count-ttl-gene | 20000 | jena | 2.748 s ±18% | 3.61 s | 201 MB | 87468 | 4.6 to 4.79 |
-| count-ttl-gene | 40000 | lean | 1.338 s ±26% | 1.27 s | 93 MB | 174225 | 4.93 to 4.93 |
-| count-ttl-gene | 40000 | lean-stream | 0.809 s ±15% | 0.75 s | 24 MB | 174225 | 4.93 to 5.02 |
+| count-ttl-gene | 20000 | jena | 3.828 s ±62% | 3.57 s | 203 MB | 87468 | 9.31 to 11.34 |
+| count-ttl-gene | 40000 | lean | 1.897 s ±24% | 1.05 s | 92 MB | 174225 | 29.19 to 29.38 |
+| count-ttl-gene | 40000 | lean-stream | 0.883 s ±35% | 0.67 s | 24 MB | 174225 | 11.53 to 11.65 |
 | count-ttl-gene | 40000 | npm | 6.546 s ±4% | 6.70 s | 2122 MB | 174225 | 4.84 to 5.08 |
-| count-ttl-gene | 40000 | jena | 2.873 s ±18% | 3.90 s | 285 MB | 174225 | 5.07 to 5.23 |
-| count-ttl-gene | 80000 | lean | 2.927 s ±28% | 2.82 s | 163 MB | 346100 | 5.47 to 5.76 |
-| count-ttl-gene | 80000 | lean-stream | 1.539 s ±3% | 1.43 s | 24 MB | 346100 | 5.94 to 6.03 |
+| count-ttl-gene | 40000 | jena | 5.049 s ±39% | 5.03 s | 250 MB | 174225 | 11.35 to 11.84 |
+| count-ttl-gene | 80000 | lean | 3.976 s ±6% | 2.32 s | 163 MB | 346100 | 28.69 to 29.19 |
+| count-ttl-gene | 80000 | lean-stream | 1.593 s ±17% | 1.34 s | 24 MB | 346100 | 10.9 to 10.9 |
 | count-ttl-gene | 80000 | npm | 11.514 s ±5% | 12.74 s | 4045 MB | 346100 | 4.82 to 5.79 |
-| count-ttl-gene | 80000 | jena | 2.290 s ±9% | 5.23 s | 296 MB | 346100 | 4.27 to 4.38 |
+| count-ttl-gene | 80000 | jena | 4.377 s ±21% | 4.73 s | 298 MB | 346100 | 10.53 to 10.75 |
 | sparql-bound-subject | 20000 | lean | 1.212 s ±6% | 1.16 s | 65 MB | 1 | 4.84 to 4.84 |
 | sparql-bound-subject | 20000 | oxigraph | 0.279 s ±27% | 0.26 s | 56 MB | 1 | 3.92 to 4.09 |
 | sparql-bound-subject | 20000 | jena | 2.370 s ±15% | 5.00 s | 353 MB | 1 | 3.92 to 3.93 |

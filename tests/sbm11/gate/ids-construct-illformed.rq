@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Ill-formed template triples are dropped: a literal subject, an unbound
+# variable. Only the third triple of the template is made.
+CONSTRUCT { ?a ex:p ?s . ?s ex:q ?nope . ?s ex:r ?a } WHERE { ?s ex:age ?a }

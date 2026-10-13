@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# OFFSET and LIMIT without ORDER BY: the first OFFSET + LIMIT solutions
+# suffice; the scan stops after them. Every solution makes the same triple,
+# so the answer does not depend on which rows come first.
+CONSTRUCT { ex:z ex:seen ex:age } WHERE { ?s ex:age ?a } OFFSET 1 LIMIT 2

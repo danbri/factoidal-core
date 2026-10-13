@@ -115,6 +115,7 @@ were already ported. All of it is v12-only: the tokenizer emits the
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
 
@@ -289,6 +290,36 @@ def ggpJoin (a b : QueryPattern) : QueryPattern :=
               | .empty => a
               | _      => .join a b
 
+/-- §18.2.2.6 "If FS is not empty ... G := Filter(X, G)": the FILTERs a
+group collected (newest first, the order `pGgpBody` gathers them) around
+the group's pattern, one `Filter` per expression. A row passes the
+nest exactly when every expression is true on it, which is the
+condition of one `Filter` over their conjunction. -/
+def wrapFilters (filters : List Expr) (g : QueryPattern) : QueryPattern :=
+  filters.foldl (fun g e => .filter e g) g
+
+/-- §18.2.2.6 "Let X := Conjunction of expressions in FS": the FILTERs a
+group collected (newest first) as one `&&` expression in source order;
+`none` when the group has no FILTER. -/
+def filterConjunction? (filters : List Expr) : Option Expr :=
+  match filters.reverse with
+  | []      => none
+  | e :: es => some (es.foldl .and e)
+
+/-- §18.2.2.5, the OPTIONAL step: "If E is of the form OPTIONAL{P}: Let
+A := Translate(P). If A is of the form Filter(F, A2): G :=
+LeftJoin(G, A2, F) else G := LeftJoin(G, A, true)". `body` is the
+pattern of the group P and `filters` are the FILTERs of P itself (not
+of a group nested in it), so `Translate(P)` is `Filter(F, body)` with
+F their conjunction exactly when `filters` is not empty. The condition
+F of the LeftJoin is evaluated on the merged solution (§18.5), so it
+reads the variables of G as well as those of P
+(https://github.com/danbri/factoidal/issues/815). -/
+def optionalGroup (acc body : QueryPattern) (filters : List Expr) : QueryPattern :=
+  match filterConjunction? filters with
+  | some f => .leftJoin acc body f
+  | none   => .leftJoin acc body (.boolLit true)
+
 /-- `ggp_add_triple`: extend the accumulator's BGP in place when it is
 one, so a triples block stays a single §18.3 BGP. -/
 def ggpAddTriple (acc : QueryPattern) (tp : TriplePattern) : QueryPattern :=
@@ -301,6 +332,103 @@ def ggpAddTriple (acc : QueryPattern) (tp : TriplePattern) : QueryPattern :=
 def ggpAddPp (acc : QueryPattern) (s : PatternSubject) (pp : PropertyPath)
     (o : PatternTerm) : QueryPattern :=
   ggpJoin acc (.propertyPath s pp o)
+
+/-! ### The triples-block accumulator
+
+The parser of a triples block (`pTriplesBlock`, `pPredObjList`,
+`pObjectListSimple`, `pObjectListPath`) adds triple patterns one by one with
+`ggpAddTriple`, which appends to the end of the BGP list, so a block of n
+triples took time in n² (https://github.com/danbri/factoidal/issues/821). Those
+functions now carry a `TriplesAcc`: a pattern and the triple patterns added to
+it since, newest first. `flushTriples` is the pattern the accumulator stands
+for: the triple patterns added with `ggpAddTriple`, oldest first. It runs as
+`flushTriplesFast`, one append for a BGP (`flushTriples_eq_fast`, `csimp`). The
+readable definitions of the four functions are after the grammar block, with
+the theorems that the parser computes them (`pTriplesBlock_eq_ref` and the
+three before it). -/
+
+/-- A pattern, then the triple patterns of the list added to it with
+`ggpAddTriple`, the last one first. -/
+abbrev TriplesAcc := QueryPattern × List TriplePattern
+
+/-- The pattern a `TriplesAcc` stands for. -/
+def flushTriples : QueryPattern → List TriplePattern → QueryPattern
+  | acc, [] => acc
+  | acc, tp :: pend => ggpAddTriple (flushTriples acc pend) tp
+
+/-- `ggpAddTriple` of each triple pattern of `tps`, first to last, with one
+append when the pattern is a BGP. -/
+def ggpAddTriples (acc : QueryPattern) (tps : List TriplePattern) : QueryPattern :=
+  match acc, tps with
+  | .bgp ts, tps => .bgp (ts ++ tps)
+  | .empty, [] => .empty
+  | .empty, tp :: tps => .bgp (tp :: tps)
+  | acc, tps => tps.foldl ggpAddTriple acc
+
+theorem foldl_ggpAddTriple_bgp (ts tps : List TriplePattern) :
+    tps.foldl ggpAddTriple (.bgp ts) = .bgp (ts ++ tps) := by
+  induction tps generalizing ts with
+  | nil => simp
+  | cons tp tps ih => simp [ggpAddTriple, ih]
+
+theorem ggpAddTriples_eq (acc : QueryPattern) (tps : List TriplePattern) :
+    ggpAddTriples acc tps = tps.foldl ggpAddTriple acc := by
+  unfold ggpAddTriples
+  split
+  · rw [foldl_ggpAddTriple_bgp]
+  · rfl
+  · simp only [List.foldl_cons, ggpAddTriple]
+    rw [foldl_ggpAddTriple_bgp]
+    rfl
+  · rfl
+
+theorem flushTriples_eq_foldl (acc : QueryPattern) (pend : List TriplePattern) :
+    flushTriples acc pend = pend.reverse.foldl ggpAddTriple acc := by
+  induction pend with
+  | nil => rfl
+  | cons tp pend ih => simp [flushTriples, ih]
+
+/-- What runs in place of `flushTriples`. -/
+def flushTriplesFast (acc : QueryPattern) (pend : List TriplePattern) : QueryPattern :=
+  ggpAddTriples acc pend.reverse
+
+@[csimp] theorem flushTriples_eq_fast : @flushTriples = @flushTriplesFast := by
+  funext acc pend
+  rw [flushTriplesFast, ggpAddTriples_eq, flushTriples_eq_foldl]
+
+theorem ggpJoin_empty_right (a : QueryPattern) : ggpJoin a .empty = a := by
+  unfold ggpJoin
+  split <;> simp_all
+
+/-- `ggpJoin` on the accumulator: the empty pattern changes nothing, so the
+pending triple patterns stay pending. -/
+def joinTriples (a : TriplesAcc) (x : QueryPattern) : TriplesAcc :=
+  match x with
+  | .empty => a
+  | _ => (ggpJoin (flushTriples a.1 a.2) x, [])
+
+theorem flushTriples_joinTriples (a : TriplesAcc) (x : QueryPattern) :
+    flushTriples (joinTriples a x).1 (joinTriples a x).2 = ggpJoin (flushTriples a.1 a.2) x := by
+  unfold joinTriples
+  split
+  · rw [ggpJoin_empty_right]
+  · rfl
+
+-- One append for a block of BGP triples; a join keeps its shape.
+private def tpA : TriplePattern := { s := .var "a", p := .var "p", o := .var "o" }
+private def tpB : TriplePattern := { s := .var "b", p := .var "p", o := .var "o" }
+#guard match flushTriples .empty [tpB, tpA] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+#guard match flushTriplesFast .empty [tpB, tpA] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+#guard match flushTriplesFast (.bgp [tpA]) [tpB] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+-- After a join each added triple pattern is joined on, as `ggpAddTriple` does.
+#guard match flushTriplesFast (.join (.bgp [tpA]) (.values [] [])) [tpB] with
+  | .join (.join (.bgp l1) (.values [] [])) (.bgp l2) => l1 == [tpA] && l2 == [tpB]
+  | _ => false
+#guard match flushTriplesFast .empty [] with
+  | .empty => true | _ => false
 
 /-- `fresh_bnode_id`: the label is derived from the character offset at
 which the current token starts. Token offsets increase along the token
@@ -401,6 +529,76 @@ def bnodesInTriple (tp : TriplePattern) : List String :=
 def bnodesInBgp : Bgp → List String
   | []        => []
   | tp :: rest => strUnion (bnodesInTriple tp) (bnodesInBgp rest)
+
+/-- `strUnion xs acc`, with the set of the members of `acc` beside it, so
+that each test of a label is a set lookup. -/
+def strUnionSet : List String → List String × Std.HashSet String →
+    List String × Std.HashSet String
+  | [], st => st
+  | x :: xs, (acc, s) =>
+    if s.contains x then strUnionSet xs (acc, s) else strUnionSet xs (x :: acc, s.insert x)
+
+theorem strMem_iff (x : String) (xs : List String) : strMem x xs = true ↔ x ∈ xs := by
+  simp [strMem, List.any_eq_true, beq_iff_eq]
+
+theorem strUnionSet_eq (xs acc : List String) (s : Std.HashSet String)
+    (h : ∀ y, s.contains y = true ↔ y ∈ acc) :
+    (strUnionSet xs (acc, s)).1 = strUnion xs acc ∧
+      ∀ y, (strUnionSet xs (acc, s)).2.contains y = true ↔ y ∈ (strUnionSet xs (acc, s)).1 := by
+  induction xs generalizing acc s with
+  | nil => exact ⟨rfl, h⟩
+  | cons x xs ih =>
+    by_cases hx : s.contains x = true
+    · have hm : strMem x acc = true := (strMem_iff x acc).mpr ((h x).mp hx)
+      simp only [strUnionSet, hx, ↓reduceIte, strUnion, strAddUnique, hm]
+      exact ih acc s h
+    · have hm : strMem x acc = false := by
+        cases hc : strMem x acc
+        · rfl
+        · exact absurd ((h x).mpr ((strMem_iff x acc).mp hc)) hx
+      simp only [strUnionSet, hx, Bool.false_eq_true, ↓reduceIte, strUnion, strAddUnique, hm]
+      apply ih
+      intro y
+      rw [Std.HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, h, List.mem_cons]
+      exact ⟨fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr,
+             fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr⟩
+
+/-- `bnodesInBgp` without a native frame per triple pattern (the fold runs
+as `List.foldrTR`, over an array) and with a set lookup per label: an INSERT
+DATA block of 40,000 triples overflowed the 512 KB canary stack in
+`bnodesInBgp`, and 16,000 triples with blank-node subjects took 2.0 s against
+0.17 s for 4,000 (https://github.com/danbri/factoidal/issues/821). The same
+list (`bnodesInBgp_eq_fast`). -/
+def bnodesInBgpFast (b : Bgp) : List String :=
+  (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1
+
+theorem bnodesInBgp_foldr (b : Bgp) :
+    (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 = bnodesInBgp b ∧
+      ∀ y, (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).2.contains y = true ↔
+        y ∈ (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 := by
+  induction b with
+  | nil => simp [bnodesInBgp]
+  | cons tp rest ih =>
+    simp only [List.foldr_cons]
+    generalize hst : List.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅) rest = st at ih ⊢
+    obtain ⟨acc, s⟩ := st
+    obtain ⟨h1, h2⟩ := ih
+    have := strUnionSet_eq (bnodesInTriple tp) acc s h2
+    refine ⟨?_, this.2⟩
+    rw [this.1]
+    simp only at h1
+    simp [bnodesInBgp, h1]
+
+@[csimp] theorem bnodesInBgp_eq_fast : @bnodesInBgp = @bnodesInBgpFast := by
+  funext b
+  exact (bnodesInBgp_foldr b).1.symm
+
+private def tpBn (b : String) : TriplePattern := { s := .bnode b, p := .var "p", o := .bnode "z" }
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] == ["b", "z", "a"]
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] != ["a", "b", "z"]
+#guard bnodesInBgpFast [tpBn "_:bnode_3"] == ["z"]
+
+#print axioms bnodesInBgp_eq_fast
 
 /-! ## Aggregate detection — `expr_has_aggregate` (F* line 1586)
 
@@ -610,6 +808,88 @@ def ggpLabeledBnodesQ : Query → List String
 
 end
 
+/-- The steps of the loop that computes `ggpLabeledBnodes`: read a pattern,
+or replace the two label lists on top of the value stack by their
+`strUnion`. -/
+inductive LabelStep where
+  | visit (p : QueryPattern)
+  | union2
+
+/-- What one step does to the value stack. -/
+def labelStepSem : LabelStep → List (List String) → List (List String)
+  | .visit p, vs => ggpLabeledBnodes p :: vs
+  | .union2, b :: a :: vs => strUnion a b :: vs
+  | .union2, vs => vs
+
+/-- `ggpLabeledBnodes` as a loop over a work list of steps and a stack of
+label lists. A two-sided pattern puts its sides and a `union2` on the front of
+the work list, so the stack does not grow with the length of a join chain: an
+INSERT DATA collection of n members is a chain of n joins, and
+`ggpLabeledBnodes` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818). The answer is the same list
+(`labelsLoop_eq`): the leaves and `strUnion` are the same functions. -/
+def labelsLoop : List LabelStep → List (List String) → List String
+  | [], vs => vs.headD []
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => labelsLoop ks (bnodesInBgp b :: vs)
+    | .propertyPath s _ o => labelsLoop ks (strUnion (bnodesInSubject s) (bnodesInTerm o) :: vs)
+    | .join a b | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      labelsLoop (.visit a :: .visit b :: .union2 :: ks) vs
+    | .filter _ q | .graph _ q | .bind _ _ q | .service _ _ q | .serviceVar _ _ q =>
+      labelsLoop (.visit q :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => labelsLoop (.visit pat :: ks) vs
+    | .values _ _ | .empty => labelsLoop ks ([] :: vs)
+  | .union2 :: ks, vs => labelsLoop ks (labelStepSem .union2 vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | .union2 => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem labelsLoop_eq (ks : List LabelStep) (vs : List (List String)) :
+    labelsLoop ks vs = (ks.foldl (fun vs k => labelStepSem k vs) vs).headD [] := by
+  fun_induction labelsLoop ks vs <;>
+    simp_all [labelStepSem, ggpLabeledBnodes, ggpLabeledBnodesQ]
+
+/-- What runs in place of `ggpLabeledBnodes`. -/
+def ggpLabeledBnodesFast (p : QueryPattern) : List String := labelsLoop [.visit p] []
+
+/-- What runs in place of `ggpLabeledBnodesQ`. -/
+def ggpLabeledBnodesQFast : Query → List String
+  | .mk _ _ pat _ _ _ _ _ => labelsLoop [.visit pat] []
+
+@[csimp] theorem ggpLabeledBnodes_eq_fast : @ggpLabeledBnodes = @ggpLabeledBnodesFast := by
+  funext p
+  simp [ggpLabeledBnodesFast, labelsLoop_eq, labelStepSem]
+
+@[csimp] theorem ggpLabeledBnodesQ_eq_fast : @ggpLabeledBnodesQ = @ggpLabeledBnodesQFast := by
+  funext q
+  cases q
+  simp [ggpLabeledBnodesQ, ggpLabeledBnodesQFast, labelsLoop_eq, labelStepSem]
+
+#print axioms ggpLabeledBnodes_eq_fast
+
+private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+
+-- The loop answers the lists of the recursive definition, in the same order
+-- (`strUnion` of the left side into the right).
+#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
+#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
+#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
+
 /-! ## Blank-node scope validation — `validate_bnode_scope_pattern`
 (F* line 4350)
 
@@ -657,6 +937,199 @@ def validateBnodeScopeQ : Query → Bool × List String
   | .mk _ _ pat _ _ _ _ _ => validateBnodeScope pat
 
 end
+
+/-! ### The scope check in one pass
+
+`validateBnodeScope` calls `preservesBgpScope` on both sides of every join,
+and each call walks the whole side, so a join chain of n patterns (the
+desugaring of a collection of n members) took time in n², and one native frame
+per join (https://github.com/danbri/factoidal/issues/824). `scopeLoop` reads
+each pattern once and carries, for each finished side, the pair
+`validateBnodeScope` answers and `preservesBgpScope`, on a value stack; the
+work list replaces the native stack. `scopeLoop_eq` proves it equal, and
+`validateBnodeScope_eq_fast` (`csimp`) makes the parser run it. -/
+
+/-- The answer for one pattern: `validateBnodeScope` and `preservesBgpScope`. -/
+abbrev ScopeVal := (Bool × List String) × Bool
+
+/-- §19.6 for `Join(l, r)`: labels may be shared when both sides preserve the
+BGP scope. -/
+def scopeJoin (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && ((l.2 && r.2) || !strOverlaps l.1.2 r.1.2), strUnion l.1.2 r.1.2),
+   l.2 && r.2)
+
+/-- §19.6 for Union, Minus, Lateral and LeftJoin: labels may not be shared. -/
+def scopeApart (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && !strOverlaps l.1.2 r.1.2, strUnion l.1.2 r.1.2), false)
+
+/-- The steps of the scope loop. -/
+inductive ScopeStep where
+  | visit (p : QueryPattern)
+  | joinScope
+  | apartScope
+  /-- GRAPH, SERVICE and a sub-SELECT: the answer of the inner pattern, which
+  does not preserve the BGP scope. -/
+  | closeScope
+
+/-- What a step that is not `visit` does to the value stack. -/
+def scopeCombine : ScopeStep → List ScopeVal → List ScopeVal
+  | .joinScope, r :: l :: vs => scopeJoin l r :: vs
+  | .apartScope, r :: l :: vs => scopeApart l r :: vs
+  | .closeScope, v :: vs => (v.1, false) :: vs
+  | _, vs => vs
+
+/-- What one step does to the value stack. -/
+def scopeStepSem : ScopeStep → List ScopeVal → List ScopeVal
+  | .visit p, vs => (validateBnodeScope p, preservesBgpScope p) :: vs
+  | k, vs => scopeCombine k vs
+
+/-- The scope check as a loop (see the section header). -/
+def scopeLoop : List ScopeStep → List ScopeVal → ScopeVal
+  | [], vs => vs.headD ((true, []), true)
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => scopeLoop ks (((true, bnodesInBgp b), true) :: vs)
+    | .propertyPath s _ o =>
+      scopeLoop ks (((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) :: vs)
+    | .values _ _ | .empty => scopeLoop ks (((true, []), true) :: vs)
+    | .filter _ q | .bind _ _ q => scopeLoop (.visit q :: ks) vs
+    | .join a b => scopeLoop (.visit a :: .visit b :: .joinScope :: ks) vs
+    | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      scopeLoop (.visit a :: .visit b :: .apartScope :: ks) vs
+    | .graph _ q | .service _ _ q | .serviceVar _ _ q =>
+      scopeLoop (.visit q :: .closeScope :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => scopeLoop (.visit pat :: .closeScope :: ks) vs
+  | .joinScope :: ks, vs => scopeLoop ks (scopeCombine .joinScope vs)
+  | .apartScope :: ks, vs => scopeLoop ks (scopeCombine .apartScope vs)
+  | .closeScope :: ks, vs => scopeLoop ks (scopeCombine .closeScope vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | _ => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem scope_join (a b : QueryPattern) :
+    (validateBnodeScope (.join a b), preservesBgpScope (.join a b)) =
+      scopeJoin (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeJoin]
+
+theorem scope_union (a b : QueryPattern) :
+    (validateBnodeScope (.union a b), preservesBgpScope (.union a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_minus (a b : QueryPattern) :
+    (validateBnodeScope (.minus a b), preservesBgpScope (.minus a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_lateral (a b : QueryPattern) :
+    (validateBnodeScope (.lateral a b), preservesBgpScope (.lateral a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_leftJoin (a b : QueryPattern) (e : Expr) :
+    (validateBnodeScope (.leftJoin a b e), preservesBgpScope (.leftJoin a b e)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_filter (e : Expr) (p : QueryPattern) :
+    (validateBnodeScope (.filter e p), preservesBgpScope (.filter e p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_bind (e : Expr) (v : VarName) (p : QueryPattern) :
+    (validateBnodeScope (.bind e v p), preservesBgpScope (.bind e v p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_graph (g : PatternTerm) (p : QueryPattern) :
+    (validateBnodeScope (.graph g p), preservesBgpScope (.graph g p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_service (i : WfIri) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.service i b p), preservesBgpScope (.service i b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_serviceVar (v : VarName) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.serviceVar v b p), preservesBgpScope (.serviceVar v b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_subSelect (f : QueryForm) (d : List DatasetClause) (pat : QueryPattern)
+    (g : Option (List GroupCondition)) (h : List Expr) (m : SolutionModifier)
+    (pv : Option (List Binding)) (base : Option String) :
+    (validateBnodeScope (.subSelect (.mk f d pat g h m pv base)),
+      preservesBgpScope (.subSelect (.mk f d pat g h m pv base))) =
+      (validateBnodeScope pat, false) := by
+  simp only [validateBnodeScope, validateBnodeScopeQ, preservesBgpScope]
+
+theorem scope_bgp (b : Bgp) :
+    (validateBnodeScope (.bgp b), preservesBgpScope (.bgp b)) = ((true, bnodesInBgp b), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_propertyPath (s : PatternSubject) (pp : PropertyPath) (o : PatternTerm) :
+    (validateBnodeScope (.propertyPath s pp o), preservesBgpScope (.propertyPath s pp o)) =
+      ((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_values (vs : List VarName) (rows : List (List (Option Term))) :
+    (validateBnodeScope (.values vs rows), preservesBgpScope (.values vs rows)) =
+      ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_empty :
+    (validateBnodeScope .empty, preservesBgpScope .empty) = ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scopeLoop_eq (ks : List ScopeStep) (vs : List ScopeVal) :
+    scopeLoop ks vs = (ks.foldl (fun vs k => scopeStepSem k vs) vs).headD ((true, []), true) := by
+  fun_induction scopeLoop ks vs <;>
+    simp_all only [List.foldl_cons, scopeStepSem, scopeCombine, scope_join, scope_union,
+      scope_minus, scope_lateral, scope_leftJoin, scope_filter, scope_bind, scope_graph,
+      scope_service, scope_serviceVar, scope_subSelect, scope_bgp, scope_propertyPath,
+      scope_values, scope_empty, List.foldl_nil]
+
+/-- What runs in place of `validateBnodeScope`. -/
+def validateBnodeScopeFast (p : QueryPattern) : Bool × List String :=
+  (scopeLoop [.visit p] []).1
+
+/-- What runs in place of `validateBnodeScopeQ`. -/
+def validateBnodeScopeQFast : Query → Bool × List String
+  | .mk _ _ pat _ _ _ _ _ => (scopeLoop [.visit pat] []).1
+
+@[csimp] theorem validateBnodeScope_eq_fast : @validateBnodeScope = @validateBnodeScopeFast := by
+  funext p
+  simp [validateBnodeScopeFast, scopeLoop_eq, scopeStepSem]
+
+@[csimp] theorem validateBnodeScopeQ_eq_fast : @validateBnodeScopeQ = @validateBnodeScopeQFast := by
+  funext q
+  cases q
+  simp [validateBnodeScopeQ, validateBnodeScopeQFast, scopeLoop_eq, scopeStepSem]
+
+#print axioms validateBnodeScope_eq_fast
+
+private def scA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def scB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+
+-- §19.6: a join of two BGP-preserving sides may share a label; a union may
+-- not; a join with a GRAPH side may not.
+#guard (scopeLoop [.visit (.join scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.union scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scA))] []).1.1
+#guard (scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).2
+#guard (scopeLoop [.visit (.join (.filter (.boolLit true) scA) scA)] []).2
 
 /-- `validate_bnode_scope_top`. -/
 def validateBnodeScopeTop (q : Query) : Bool := (validateBnodeScopeQ q).1
@@ -1505,34 +1978,64 @@ def pGroupGraphPattern (fuel : Nat) (st : PState) (ts : TStream) : Except ParseE
       .ok (.subSelect q, ts3)
     | .rbrace => .ok (.empty, advTok ts1)
     | _ => do
-      let (g, ts2) ← pGgpBody f st .empty [] false ts1
+      let ((g, filters), ts2) ← pGgpBody f st .empty [] false ts1
       let (_, ts3) ← expectTok .rbrace ts2
-      .ok (g, ts3)
+      .ok (wrapFilters filters g, ts3)
+
+/-- [53] GroupGraphPattern, with the group's pattern and its OWN FILTERs
+(§18.2.2.6 FS, newest first) returned apart instead of wrapped
+(`pGroupGraphPattern` is this with `wrapFilters` applied:
+`pGroupGraphPattern_eq_parts`). The OPTIONAL arm of `pGgpBody` needs
+them apart, because §18.2.2.5 makes them the LeftJoin condition. A
+SubSelect and the empty group have no FILTER of their own; a FILTER of
+a group nested in this one is inside the pattern. -/
+def pGroupGraphPatternParts (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 => do
+    let (_, ts1) ← expectTok .lbrace ts
+    match peekTok ts1 with
+    | .select => do
+      let (q, ts2) ← pSelectQuery f st none ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok ((.subSelect q, []), ts3)
+    | .rbrace => .ok ((.empty, []), advTok ts1)
+    | _ => do
+      let (parts, ts2) ← pGgpBody f st .empty [] false ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok (parts, ts3)
 
 /-- [54] GroupGraphPatternSub: triples blocks interleaved with
 [56] GraphPatternNotTriples elements. FILTERs are COLLECTED and
-wrapped around the whole group at the end, per §18.2.4 — a filter
-scopes over its entire group, not over what precedes it.
+returned beside the group's pattern (newest first); the caller wraps
+them around the whole group (`wrapFilters`, §18.2.2.6: a filter scopes
+over its entire group, not over what precedes it), or, for an
+OPTIONAL group, makes them the LeftJoin condition (§18.2.2.5,
+`optionalGroup`).
 
 `crossScope` tracks whether a nested group has already been seen, so a
 following triples block's blank-node labels are checked against the
 accumulated ones (§19.6). -/
 def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
-    (filters : List Expr) (crossScope : Bool) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (filters : List Expr) (crossScope : Bool) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
   match fuel with
-  | 0     => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+  | 0     => .ok ((acc, filters), ts)
   | f + 1 =>
     let tok := peekTok ts
     if startsTriples tok then do
-      let (tri, ts1) ← pTriplesBlock f st .empty ts
+      let (tri, ts1) ← pTriplesBlock f st (.empty, []) ts
       if crossScope && strOverlaps (ggpLabeledBnodes acc) (ggpLabeledBnodes tri) then
         pErr "blank node label reused across nested group scope" ts
       else pGgpBody f st (ggpJoin acc tri) filters false ts1
     else
       match tok with
       | .optional => do
-        let (g, ts1) ← pGroupGraphPattern f st (advTok ts)
-        let acc' : QueryPattern := .leftJoin acc g (.boolLit true)
+        -- §18.2.2.5: the group's own FILTERs are the LeftJoin
+        -- condition, evaluated on the merged solution (issue 815).
+        let ((g, gFilters), ts1) ← pGroupGraphPatternParts f st (advTok ts)
+        let acc' : QueryPattern := optionalGroup acc g gFilters
         let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
         pGgpBody f st acc' filters true ts2
       | .minusKw => do
@@ -1609,7 +2112,7 @@ def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
           let acc' : QueryPattern := match acc with | .empty => g | _ => .join acc g
           let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
           pGgpBody f st acc' filters true ts2
-      | _ => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+      | _ => .ok ((acc, filters), ts)
 
 /-- [67] GroupOrUnionGraphPattern ::= GroupGraphPattern
 ( 'UNION' GroupGraphPattern )* — right-associated, as in the F*. -/
@@ -2024,10 +2527,10 @@ def pObjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty), advTok ts1)
        | _ =>
-         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) .empty ts1
+         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) (.empty, []) ts1
              match expectTok .rbracket ts2 with
              | .error _     => pErr "expected ']' after blank node property list" ts2
-             | .ok (_, ts3) => .ok ((.bnode bid, extras), ts3)))
+             | .ok (_, ts3) => .ok ((.bnode bid, flushTriples extras.1 extras.2), ts3)))
     | .lparen => pCollectionCells f st (advTok ts) []
     | .ttOpen => pTripleTermPattern f st (advTok ts)
     | .ttBareOpen => do
@@ -2147,12 +2650,12 @@ def pAnnotations (fuel : Nat) (st : PState) (baseS : PatternSubject)
         | none   =>
           let r : PatternSubject := .bnode (freshBnodeId ts)
           (r, QueryPattern.bgp [{ s := r, p := .iri rdfReifiesIri, o := tt }])
-      let (blk, ts2) ← pPredObjList f st rsubj .empty ts1
+      let (blk, ts2) ← pPredObjList f st rsubj (.empty, []) ts1
       match expectTok .annotClose ts2 with
       | .error _     => pErr "expected '|}' to close annotation block" ts2
       | .ok (_, ts3) => do
         let (rest, ts4) ← pAnnotations f st baseS baseP baseO none ts3
-        .ok (ggpJoin (ggpJoin pre blk) rest, ts4)
+        .ok (ggpJoin (ggpJoin pre (flushTriples blk.1 blk.2)) rest, ts4)
     | _ => .ok (.empty, ts)
 
 /-- [102] Collection ::= '(' GraphNode+ ')', read by a loop: each element
@@ -2346,22 +2849,23 @@ argument list into an `rdf:first` / `rdf:rest` chain — port of the F\*
 `parse_object_list_simple`'s `is_fulltext_query` arm. Like the F\* arm, it
 reads exactly one object: no `,` list and no annotation follow it. -/
 def pObjectListSimple (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (pred : PatternTerm) (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (pred : PatternTerm) (acc : TriplesAcc) (ts : TStream) :
+    Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
   | f + 1 =>
     if isFulltextPredicate pred then do
       let (args, ts1) ← pFulltextObject f st ts
-      .ok (ggpAddTriple acc { s := subj, p := pred, o := .literal args }, ts1)
+      .ok ((acc.1, { s := subj, p := pred, o := .literal args } :: acc.2), ts1)
     else do
     let (obj, ts1) ← pObjectWithExtras f st ts
-    let acc1 := ggpAddTriple acc { s := subj, p := pred, o := obj.1 }
-    let acc2 := ggpJoin acc1 obj.2
+    let acc1 : TriplesAcc := (acc.1, { s := subj, p := pred, o := obj.1 } :: acc.2)
+    let acc2 := joinTriples acc1 obj.2
     -- SPARQL 1.2: this object may be followed by an annotation
     -- sequence (`~ reifier` and/or `{| … |}`) reifying THIS triple.
     -- Only on the simple-verb path, never pObjectListPath.
     let (ann, ts2) ← pAnnotations f st subj pred obj.1 none ts1
-    let acc3 := ggpJoin acc2 ann
+    let acc3 := joinTriples acc2 ann
     match peekTok ts2 with
     | .comma => pObjectListSimple f st subj pred acc3 (advTok ts2)
     | _      => .ok (acc3, ts2)
@@ -2415,13 +2919,14 @@ def pFulltextObject (fuel : Nat) (st : PState) (ts : TStream) :
 
 /-- [86] ObjectListPath for a property-path predicate. -/
 def pObjectListPath (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (pp : PropertyPath) (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (pp : PropertyPath) (acc : TriplesAcc) (ts : TStream) :
+    Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
   | f + 1 => do
     let (obj, ts1) ← pObjectWithExtras f st ts
-    let acc1 := ggpAddPp acc subj pp obj.1
-    let acc2 := ggpJoin acc1 obj.2
+    let acc1 : TriplesAcc := (ggpAddPp (flushTriples acc.1 acc.2) subj pp obj.1, [])
+    let acc2 := joinTriples acc1 obj.2
     match peekTok ts1 with
     | .comma => pObjectListPath f st subj pp acc2 (advTok ts1)
     | _      => .ok (acc2, ts1)
@@ -2429,7 +2934,7 @@ def pObjectListPath (fuel : Nat) (st : PState) (subj : PatternSubject)
 /-- [83] PropertyListPathNotEmpty ::= Verb ObjectList
 ( ';' ( Verb ObjectList )? )*. -/
 def pPredObjList (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (acc : TriplesAcc) (ts : TStream) : Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
   | f + 1 => do
@@ -2470,10 +2975,10 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty, false), advTok ts1)
        | _ =>
-         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) .empty ts1
+         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) (.empty, []) ts1
              match expectTok .rbracket ts2 with
              | .error _     => pErr "expected ']' after blank node property list" ts2
-             | .ok (_, ts3) => .ok ((.bnode bid, extras, true), ts3)))
+             | .ok (_, ts3) => .ok ((.bnode bid, flushTriples extras.1 extras.2, true), ts3)))
     | .lparen => do
       let (pt, ts1) ← pCollectionCells f st (advTok ts) []
       match patternTermToSubject pt.1 with
@@ -2495,19 +3000,19 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
 /-- [55] TriplesBlock ::= TriplesSameSubjectPath ( '.' TriplesBlock? )?.
 A term token immediately after a completed statement, with no `.`, is
 the rejection the F* words "expected dot between triples". -/
-def pTriplesBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream) :
+def pTriplesBlock (fuel : Nat) (st : PState) (acc : TriplesAcc) (ts : TStream) :
     Except ParseError (QueryPattern × TStream) :=
   match fuel with
-  | 0     => .ok (acc, ts)
+  | 0     => .ok (flushTriples acc.1 acc.2, ts)
   | f + 1 =>
     match pSubjectWithExtras f st ts with
     | .error e =>
-      (match acc with
+      (match flushTriples acc.1 acc.2 with
        | .empty => .error e
-       | _      => .ok (acc, ts))
+       | p      => .ok (p, ts))
     | .ok ((subj, subjExtras, predObjOptional), ts1) =>
-      let acc0 := ggpJoin acc subjExtras
-      let r : Except ParseError (QueryPattern × TStream) :=
+      let acc0 := joinTriples acc subjExtras
+      let r : Except ParseError (TriplesAcc × TStream) :=
         match pPredObjList f st subj acc0 ts1 with
         | .ok res  => .ok res
         | .error e => if predObjOptional then .ok (acc0, ts1) else .error e
@@ -2518,10 +3023,10 @@ def pTriplesBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream)
         | .dot =>
           let ts3 := advTok ts2
           if startsTriples (peekTok ts3) then pTriplesBlock f st acc1 ts3
-          else .ok (acc1, ts3)
+          else .ok (flushTriples acc1.1 acc1.2, ts3)
         | t =>
           if startsTriples t then pErr "expected dot between triples" ts2
-          else .ok (acc1, ts2)
+          else .ok (flushTriples acc1.1 acc1.2, ts2)
 
 -- ### Query forms — [1]-[27]
 

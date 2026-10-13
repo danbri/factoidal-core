@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# SUM over a group with a non-numeric value ("abc") is an error, so ?s is
+# unbound; MIN, MAX and COUNT are defined.
+SELECT (SUM(?a) AS ?s) (MIN(?a) AS ?lo) (MAX(?a) AS ?hi) (COUNT(?a) AS ?c) WHERE { ?x ex:age ?a }

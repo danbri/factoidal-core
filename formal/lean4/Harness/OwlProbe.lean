@@ -121,14 +121,16 @@ parser's message — that is a finding about the parser, not a skip.
 
 ## Budget and engine
 
-The closure is the library's INDEXED engine `OWL.RL.stepI`
-(`RLClosureIndexed.lean`), iterated here round by round in `IO` (same
+The closure is the library's indexed SEMI-NAIVE engine `OWL.RL.stepSNI`
+(`RLClosureIndexed.lean` Section 11; until 2026-10-13 the naive indexed
+round `OWL.RL.stepI`), iterated here round by round in `IO` (same
 stopping rule as `OWL.RL.closure`: stop when the size does not change)
 so that a wall-clock deadline can be checked inside a round. The
-indexed engine computes the same list as the specification-level
-`OWL.RL.closure` at every fuel (`RLClosureIndexed.indexedClosure_eq`,
+semi-naive engine computes the same list as the specification-level
+`OWL.RL.closure` at every fuel (`RLClosureIndexed.indexedClosureSN_eq`,
 a proved list equality), so the scores below are scores of the
-specification engine; the index only changes the wall clock. The F*
+specification engine; the index and the delta terms only change the
+wall clock. The F*
 runner uses fuel 100 and a per-test SIGALRM cap; this probe uses fuel
 100 and `--cap-ms` (default 30000) per closure. Every cap hit is
 counted in the diagnostics line and scores as a FAIL for any
@@ -627,13 +629,25 @@ structure ClosureResult where
 clock can be read INSIDE a round (a cap that only fires between rounds
 is not a cap). When the deadline has not passed the result is exactly
 `i.insertAll (stepConclusionsS (Store.ofIndex i))`, i.e. `stepI i`;
-`none` means the deadline passed mid-round. -/
-def stepIO (i : Index) (deadlineMs : Nat) : IO (Option Index) := do
+`none` means the deadline passed mid-round.
+
+Since 2026-10-13 the rounds are the library's SEMI-NAIVE rounds
+(`OWL.RL.stepSNI`, `RLClosureIndexed.lean` Section 11): a driving triple
+that the previous round's input already held is evaluated through the delta
+terms (`oldBlockFast`), the others through every row. `lo` is the length of
+the previous round's input (0 in the first round, which is then the naive
+round). The list this builds is `stepConclusionsSN`, and
+`indexedClosureSN_eq` proves that the semi-naive loop returns the list of
+`OWL.RL.closure` at every fuel (https://github.com/danbri/factoidal/issues/756
+item 2). -/
+def stepIO (i : Index) (lo : Nat) (deadlineMs : Nat) : IO (Option Index) := do
   let s := Store.ofIndex i
+  let sD := Store.ofIndex (if lo = 0 then Index.empty else Index.ofGraph (i.toGraph.drop lo))
   let mut acc : Array Triple := #[]
   let mut n := 0
   for d in s.graph do
-    acc := acc ++ (conclusionsFromS s d).toArray
+    let out := if n < lo then oldBlockFast s sD lo d else conclusionsFromS s d
+    acc := acc ++ out.toArray
     n := n + 1
     if n % 32 == 0 then
       if (← IO.monoMsNow) > deadlineMs then return none
@@ -644,15 +658,17 @@ did not change), one `stepIO` per loop iteration. Fuel exhausted
 without saturation counts as a cap hit too. -/
 def closureIO (g : Graph) (fuel : Nat) (deadlineMs : Nat) : IO ClosureResult := do
   let mut cur := Index.ofGraph g
+  let mut lo := 0
   let mut rounds := 0
   for _ in [0:fuel] do
-    match ← stepIO cur deadlineMs with
+    match ← stepIO cur lo deadlineMs with
     | none =>
       return { graph := cur.toGraph, index := cur, rounds := rounds, capped := true }
     | some i' =>
       rounds := rounds + 1
       if i'.all.size = cur.all.size then
         return { graph := cur.toGraph, index := cur, rounds := rounds, capped := false }
+      lo := cur.all.size
       cur := i'
   return { graph := cur.toGraph, index := cur, rounds := rounds, capped := true }
 

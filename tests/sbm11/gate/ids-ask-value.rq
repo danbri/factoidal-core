@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ASK: one decoded row decides it (no modifier: the scan stops at the first row).
+ASK { ?s ex:age 72 }

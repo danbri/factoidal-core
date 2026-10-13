@@ -83,6 +83,7 @@ import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Exists
 import L4Factoidal.SPARQL.QueryTheorems
 import L4Factoidal.SPARQL.QueryTests
+import L4Factoidal.SPARQL.OptionalFilterScope
 import L4Factoidal.SPARQL.ConstructLabelTests
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.Diagnostics
@@ -119,6 +120,7 @@ import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.TurtleLenient
 import L4Factoidal.Syntax.TurtleLenientTheorems
 import L4Factoidal.Syntax.LenientFeed
+import L4Factoidal.Syntax.StrictFeed
 import L4Factoidal.Syntax.TurtleTests
 import L4Factoidal.Syntax.TurtleStreamStateTheorems
 import L4Factoidal.Syntax.TurtleTheorems
@@ -166,6 +168,7 @@ import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.OWL.RLSemantics
 import L4Factoidal.OWL.RLHerbrand
 import L4Factoidal.OWL.RLTheorems
+import L4Factoidal.OWL.RLSemiNaiveTheorems
 import L4Factoidal.OWL.RLTests
 import L4Factoidal.OWL.Semantics
 import L4Factoidal.OWL.RdfBased.Spec
@@ -243,6 +246,7 @@ import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.ParserTests
 import L4Factoidal.SPARQL.DescribeTests
 import L4Factoidal.SPARQL.ParserTheorems
+import L4Factoidal.SPARQL.TriplesBlockRef
 import L4Factoidal.SPARQL.Update
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta
@@ -367,6 +371,7 @@ import L4Factoidal.Storage.Sbm11.BlockTheorems
 import L4Factoidal.Storage.Sbm11.Manifest
 import L4Factoidal.Storage.Sbm11.ManifestTheorems
 import L4Factoidal.Storage.Sbm11.PrmAt
+import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.OptJoin
@@ -376,8 +381,10 @@ import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
+import L4Factoidal.Storage.Sbm11.IdPostTheorems
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
+import L4Factoidal.Storage.Sbm11.PrmRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameLocalTheorems
@@ -738,6 +745,8 @@ import L4Factoidal.Planner.Kinds.JsonTerms
 import L4Factoidal.Planner.Kinds.Rest
 import L4Factoidal.Planner.Kinds.Mcp
 import L4Factoidal.Planner.Kinds.Tests
+import L4Factoidal.Planner.Exec
+import L4Factoidal.Planner.ExecTests
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.OWL.ComprehensionTheorems
 import L4Factoidal.RDF.GraphPatterns
