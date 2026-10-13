@@ -274,6 +274,21 @@ def cachePage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
   if lim > 0 then
     c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
 
+/-- Put page `pg` in a task view's own cache (issue 799, stage 1b): emptied
+    first when it holds `SBM11_TASK_PAGES` pages (default 1,024), and never
+    more than `SBM11_PAGES`. A task's cache holds copies of pages that
+    `taskPages` also holds. Olympics q19 at 4 threads, 7 runs per process
+    (2026-10-13): 2,048 pages per task, 74 ms and 156 MB peak RSS; 1,024, 54
+    ms and 125 MB; 256, 84 ms and 106 MB (36 MB at 1 thread, 47 MB at 4
+    threads with no page cache at all). A block of 4,096 rows can need more
+    pages than a small cache holds, and its prefetched pages then empty it. -/
+def cacheTaskPage (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+    (ks : ByteArray × Array Nat) : IO Unit := do
+  let all := ((← IO.getEnv "SBM11_PAGES").bind String.toNat?).getD 2048
+  let lim := min all (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 1024)
+  if lim > 0 then
+    c.modify fun m => (if m.size ≥ lim then {} else m).insert pg ks
+
 /-- A copy of a page made by the calling thread. A page in `taskPages` is
     reachable from every task, so taking and releasing a reference to it is an
     atomic operation on one cache line from every thread that renders with it;
@@ -330,7 +345,7 @@ def Session.sharedPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) :
         p.resolve (.error (toString e))
         throw e
   let ks := copyPage ks
-  cachePage ss.pages pg ks
+  cacheTaskPage ss.pages pg ks
   return ks
 
 /-- A task view under `none` (issue 799, stage 1b): the dictionary pages of
@@ -396,10 +411,10 @@ def Session.prefetch (ss : Session) (t : L4Factoidal.Qlvr.Table) (n : Nat) : IO 
     | none => p.resolve (.error (match failure with | some e => toString e | none => "not loaded"))
     k := k + 1
   if let some e := failure then throw e
-  for (pg, ks) in got ++ loaded do cachePage ss.pages pg (copyPage ks)
+  for (pg, ks) in got ++ loaded do cacheTaskPage ss.pages pg (copyPage ks)
   for (pg, p) in waits do
     match ← IO.wait p.result? with
-    | some (.ok ks) => cachePage ss.pages pg (copyPage ks)
+    | some (.ok ks) => cacheTaskPage ss.pages pg (copyPage ks)
     | some (.error e) => throw (IO.userError e)
     | none => throw (IO.userError s!"GDV1 page {pg}: the task that loaded it stopped")
 
