@@ -703,21 +703,21 @@ theorem derivesFull_holds {Dset : DatatypeSet} {i : Interp}
 
 /-- The seeded axiom set holds in every interpretation meeting the
 conditions, under every assignment — provided the harvested `rdf:_n`
-slice really is a slice of the family (`IsRdfMemberIri`), AND
-`rdf:XMLLiteral` is recognised (`hxml`). The second hypothesis exists
-because the closure's seed table `RDFS.rdfsAxiomaticTriplesFixed`
-carries two `rdf:XMLLiteral` rows that RDF 1.1 Semantics §9.3 does NOT
-list as RDFS axiomatic triples (the specification's note after the
-table: "RDF-D interpretations MAY fail to recognize these datatypes"),
-so the native `RdfsAxiomatic` predicate rightly excludes them; the two
-rows are true exactly when `rdf:XMLLiteral ∈ D` (via `CondDatatypes`
-and `CondDatatypeSubclassLiteral`). -/
+slice really is a slice of the family (`IsRdfMemberIri`).
+
+Until 2026-10-13 this theorem also needed `rdf:XMLLiteral ∈ D`: the
+closure's seed table `RDFS.rdfsAxiomaticTriplesFixed` carried two
+`rdf:XMLLiteral` rows that RDF 1.1 Semantics §9 does NOT list as RDFS
+axiomatic triples (§8: "RDF-D interpretations MAY fail to recognize
+these datatypes"). The rows left the table
+(https://github.com/danbri/factoidal/issues/767 gap 1), every fixed row
+is now a row of the specification's table, and the hypothesis is gone.
+When `rdf:XMLLiteral ∈ D`, the two triples still come out of the
+closure, by rdfs1 (`datatypeAxioms D`) and rdfs13. -/
 theorem axiomaticTriples_hold {i : Interp} (a : BnodeAssignment i.idom)
     (D cmps : List WfIri) (hcmps : ∀ c ∈ cmps, IsRdfMemberIri c)
     (hrdfax : CondRdfAxioms i) (hrdfsax : CondRdfsAxioms i)
-    (hdt : CondDatatypes (fun x => x ∈ D) i)
-    (hdsl : CondDatatypeSubclassLiteral i)
-    (hxml : rdfXMLLiteral ∈ D) :
+    (hdt : CondDatatypes (fun x => x ∈ D) i) :
     ∀ u ∈ RDFS.axiomaticTriples D cmps, TripleHolds i a u := by
   intro u hu
   unfold RDFS.axiomaticTriples RDFS.rdfsAxiomaticTriples at hu
@@ -736,16 +736,10 @@ theorem axiomaticTriples_hold {i : Interp} (a : BnodeAssignment i.idom)
       exact hrdfax a _ (Or.inr ⟨c, hcmps c hc, rfl⟩)
   · rcases List.mem_append.mp h23 with h2 | h3
     · rcases List.mem_append.mp h2 with hfx | hcont
-      · have hcases := of_decide_eq_true (List.all_eq_true.mp (by decide :
+      · have hmem := of_decide_eq_true (List.all_eq_true.mp (by decide :
           RDFS.rdfsAxiomaticTriplesFixed.all
-            (fun x => decide (x ∈ RDF.rdfsAxiomaticTriples ∨
-              x = RDFS.iriTriple rdfXMLLiteral RDFS.rdfType RDFS.rdfsDatatype ∨
-              x = RDFS.iriTriple rdfXMLLiteral RDFS.rdfsSubClassOf
-                    RDFS.rdfsLiteral)) = true) u hfx)
-        rcases hcases with hmem | rfl | rfl
-        · exact hrdfsax a u (Or.inl hmem)
-        · exact hdt rdfXMLLiteral hxml
-        · exact hdsl _ (hdt rdfXMLLiteral hxml)
+            (fun x => decide (x ∈ RDF.rdfsAxiomaticTriples)) = true) u hfx)
+        exact hrdfsax a u (Or.inl hmem)
       · obtain ⟨c, hc, hin⟩ := List.mem_flatMap.mp hcont
         simp only [RDFS.iriTriple, List.mem_cons, List.not_mem_nil,
                    or_false] at hin
@@ -767,14 +761,11 @@ namespace L4Factoidal.Unified
 each triple of `RDFS.fullClosure D cmps g` is entailed by `g`'s
 translation under the RDFS schema for `D` — provided the harvested
 `rdf:_n` slice is genuine (`IsRdfMemberIri`; the engine's own harvest
-satisfies this by construction) and `rdf:XMLLiteral ∈ D` (`hxml`: the
-closure seeds two `rdf:XMLLiteral` rows that are axiomatic in the seed
-table but NOT in RDF 1.1 Semantics §9.3, and they are true in every
-§9 interpretation exactly when `rdf:XMLLiteral` is recognised — see
+satisfies this by construction). For every `D`: since 2026-10-13 there
+is no `rdf:XMLLiteral ∈ D` hypothesis (issue 767 gap 1; see
 `RDF.axiomaticTriples_hold`). -/
 theorem unified_rdfs_closure_sound (D cmps : List RDF.WfIri)
-    (hcmps : ∀ c ∈ cmps, RDF.IsRdfMemberIri c)
-    (hxml : RDF.rdfXMLLiteral ∈ D) (g : RDF.Graph)
+    (hcmps : ∀ c ∈ cmps, RDF.IsRdfMemberIri c) (g : RDF.Graph)
     {t : RDF.Triple} (ht : t ∈ RDFS.fullClosure D cmps g) :
     EntailsSchema condTrue (rdfsSchema (fun x => x ∈ D))
       [rdfToTheory g] (rdfToTheory [t]) := by
@@ -786,7 +777,7 @@ theorem unified_rdfs_closure_sound (D cmps : List RDF.WfIri)
   refine RDF.derivesFull_holds hc ?_ ha (RDFS.fullClosure_sound D cmps g ht)
   exact RDF.axiomaticTriples_hold a D cmps hcmps hc.1.2
     (fun a' t' ht' => hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2 a' t' ht')
-    hc.2.2.2.1 hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1 hxml
+    hc.2.2.2.1
 
 /-! ## Finding C-1 at the unified level, positive half
 
@@ -1364,19 +1355,29 @@ theorem rdfsDSchema_entails_not_everything_nil (Dset : RDF.DatatypeSet) :
 
 section Checks
 
-/- The two `rdf:XMLLiteral` seed rows are in the closure's fixed table
-but NOT in the specification's RDFS axiomatic table — the mismatch
-that forces the `rdf:XMLLiteral ∈ D` hypothesis on
-`unified_rdfs_closure_sound` (see `RDF.axiomaticTriples_hold`). -/
+/- Issue 767 gap 1 (2026-10-13). The two `rdf:XMLLiteral` rows are in
+neither the closure's fixed table nor the specification's RDFS
+axiomatic table, so `unified_rdfs_closure_sound` holds for every `D`.
+The closure emits the two triples exactly when `rdf:XMLLiteral ∈ D`
+(rdfs1, then rdfs13), and not when D is the minimal
+`{rdf:langString, xsd:string}`. -/
 
-#guard decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfType
+#guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfType
     RDFS.rdfsDatatype ∈ RDFS.rdfsAxiomaticTriplesFixed)
-#guard decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfsSubClassOf
+#guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfsSubClassOf
     RDFS.rdfsLiteral ∈ RDFS.rdfsAxiomaticTriplesFixed)
 #guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfType
     RDFS.rdfsDatatype ∈ RDF.rdfsAxiomaticTriples)
 #guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfsSubClassOf
     RDFS.rdfsLiteral ∈ RDF.rdfsAxiomaticTriples)
+#guard decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfType RDFS.rdfsDatatype
+    ∈ RDFS.fullClosure [RDF.rdfLangString, RDF.xsdString, RDF.rdfXMLLiteral] [] [])
+#guard decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfsSubClassOf RDFS.rdfsLiteral
+    ∈ RDFS.fullClosure [RDF.rdfLangString, RDF.xsdString, RDF.rdfXMLLiteral] [] [])
+#guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfType RDFS.rdfsDatatype
+    ∈ RDFS.fullClosure [RDF.rdfLangString, RDF.xsdString] [] [])
+#guard !decide (RDFS.iriTriple RDF.rdfXMLLiteral RDFS.rdfsSubClassOf RDFS.rdfsLiteral
+    ∈ RDFS.fullClosure [RDF.rdfLangString, RDF.xsdString] [] [])
 
 /- The executable detector agrees with the model-theoretic clash
 verdicts: the range-clash demo is detected, and a clash-free graph is
