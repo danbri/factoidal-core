@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-10-13)
+
+- The README is a short summary: what the package is, a usage example, the
+  JavaScript API and command list, the specifications covered with test
+  scores and their sources, and measured strengths and gaps. The previous
+  README is `API.md` in the repository (not in the tarball).
+- New pure functions over engine ops that had no JavaScript function:
+  `aeadSeal`, `aeadOpen` (ChaCha20-Poly1305, RFC 8439), `hpkeSeal`,
+  `hpkeOpen` (RFC 9180 base mode), `proofCheck`, `proofInspect` (FPP0 proof
+  bundles), `canonicalizeNQuads` and `normalizeNQuads` (N-Quads text in, text
+  out). Tests: `test/pure-and-serve.test.mjs`.
+- New `serveStore(root, {port, host})`: the `factoidal serve` SPARQL 1.1
+  Protocol server as a function, `{url, port, close()}`. Node only.
+- The wasm is rebuilt from `main`; the package carries the Lean 4 engine only.
+  Package suite: 426 pass, 0 fail (out of 426).
+- Includes the entries listed under "Unreleased" below.
+
+## Unreleased (included in 0.10.0)
 
 - **The durable update log in the browser, on the Lean engine**
   ([issue 728](https://github.com/danbri/factoidal/issues/728); hub post 18).

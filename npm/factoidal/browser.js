@@ -165,3 +165,15 @@ export const dataFactory = api.dataFactory;
 export const version = api.version;
 export const engine = api.engine;
 export default api;
+
+// Pure functions over engine ops added in 0.10.0 (lib/pure.mjs).
+import { buildPure } from './lib/pure.mjs';
+const pure = buildPure(loadEngine);
+export const aeadSeal = pure.aeadSeal;
+export const aeadOpen = pure.aeadOpen;
+export const hpkeSeal = pure.hpkeSeal;
+export const hpkeOpen = pure.hpkeOpen;
+export const proofCheck = pure.proofCheck;
+export const proofInspect = pure.proofInspect;
+export const canonicalizeNQuads = pure.canonicalizeNQuads;
+export const normalizeNQuads = pure.normalizeNQuads;

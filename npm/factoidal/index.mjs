@@ -148,3 +148,29 @@ export const engine = api.engine;
 export { sampleStorePath, sampleStoreFacts } from './sample-store.mjs';
 
 export default api;
+
+// Pure functions over engine ops added in 0.10.0 (lib/pure.mjs).
+import { buildPure } from './lib/pure.mjs';
+const pure = buildPure(loadEngine);
+export const aeadSeal = pure.aeadSeal;
+export const aeadOpen = pure.aeadOpen;
+export const hpkeSeal = pure.hpkeSeal;
+export const hpkeOpen = pure.hpkeOpen;
+export const proofCheck = pure.proofCheck;
+export const proofInspect = pure.proofInspect;
+export const canonicalizeNQuads = pure.canonicalizeNQuads;
+export const normalizeNQuads = pure.normalizeNQuads;
+
+/**
+ * Serve an activated store (a collection root that holds CURRENT) over the
+ * SPARQL 1.1 Protocol, the Graph Store Protocol and the Service
+ * Description: the same server as `factoidal serve STORE`. Node only.
+ * @param {string} root
+ * @param {{port?: number, host?: string}} [options] port 0 (default) picks one
+ * @returns {Promise<{url: string, port: number, close: () => Promise<void>}>}
+ */
+export async function serveStore(root, options = {}) {
+  const { listen } = await import('./bin/serve.mjs');
+  const s = await listen(root, { ...options, engine: await loadEngine() });
+  return { url: `${s.origin}/sparql`, port: s.port, close: () => s.close() };
+}

@@ -154,3 +154,22 @@ export const engine = api.engine;
 export { sampleStorePath, sampleStoreFacts } from './sample-store.mjs';
 
 export default api;
+
+// Pure functions over engine ops added in 0.10.0 (lib/pure.mjs).
+import { buildPure } from './lib/pure.mjs';
+const pure = buildPure(loadEngine);
+export const aeadSeal = pure.aeadSeal;
+export const aeadOpen = pure.aeadOpen;
+export const hpkeSeal = pure.hpkeSeal;
+export const hpkeOpen = pure.hpkeOpen;
+export const proofCheck = pure.proofCheck;
+export const proofInspect = pure.proofInspect;
+export const canonicalizeNQuads = pure.canonicalizeNQuads;
+export const normalizeNQuads = pure.normalizeNQuads;
+
+/** As index.mjs serveStore. The server loads the full engine (the store ops are not in the core module). */
+export async function serveStore(root, options = {}) {
+  const { listen } = await import('./bin/serve.mjs');
+  const s = await listen(root, options);
+  return { url: `${s.origin}/sparql`, port: s.port, close: () => s.close() };
+}

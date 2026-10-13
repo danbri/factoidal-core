@@ -57,7 +57,7 @@ test('fn-surface parity: hub.njk binds Factoidal to the package browser entry an
 });
 
 test('fn-surface parity: browser.js exports every name the Node entry exports, except the Node-only store path', () => {
-  const nodeOnly = new Set(['sampleStorePath', 'sampleStoreFacts', 'loadEngine']);
+  const nodeOnly = new Set(['sampleStorePath', 'sampleStoreFacts', 'loadEngine', 'serveStore']);
   const missing = Object.keys(nodeEntry).filter((n) => !nodeOnly.has(n) && !(n in browser));
   assert.deepEqual(missing, [], 'names index.mjs exports and browser.js does not');
 });

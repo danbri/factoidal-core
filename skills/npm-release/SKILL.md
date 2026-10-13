@@ -171,8 +171,8 @@ entry.
 
 ## How publishing works
 
-**Status 2026-10-09: no active publish workflow exists for
-`danbri/factoidal-core`.** `npm-publish.yml` and `npm-publish-lean.yml`
+**Status 2026-10-13: the publish workflow is `.github/workflows/npm-publish.yml` in `danbri/factoidal-builds`** (`gh workflow run npm-publish.yml --repo danbri/factoidal-builds -f core_ref=<sha> -f dist_tag=latest -f confirm=<version>`). It publishes from the `web` release of a core commit and needs the owner's Trusted Publisher entry on npmjs.com to name `factoidal-builds`. The history below is the 2026-10-09 state: no active publish workflow existed for
+`danbri/factoidal-core`. `npm-publish.yml` and `npm-publish-lean.yml`
 moved to `factoidal-builds/legacy-workflows/` in `danbri/factoidal-builds`,
 where they are inactive (not under `.github/workflows/`). Porting them
 needs an owner step on npmjs.com: the Trusted Publisher entry must name
@@ -239,11 +239,11 @@ bundles or the Lean wasm need those files installed first
 
 | Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) |
 | --- | --- | --- |
-| package suite | `cd npm/factoidal && npm test` | 403 pass, 0 fail, 0 skipped (out of 403) on `claude/wt-npm-lean-45` after its merge with core-split (issue 713 stages 4 and 5 added `test/core-entry.test.mjs` 23, `test/dataset-scaling.test.js` 2, `test/large-inputs.test.mjs` 4); before: 372 pass, 0 fail, 0 skipped (out of 372), after the issue-716 merge (371 pass, 0 fail (out of 371) at the stage 3 merge). 4 of the 372 are expected-failure cases, each naming its open issue: 717 (1, `SERVICE` without `SILENT`), 691 (1, unused `@prefix xsd:`), 676 (2, PRECIS); the 2 cases of 716 (`{lenient:true}`) are assertions since that merge. A function the wasm does not serve FAILS; no test skips on a capability probe. (0.8.0: 340 pass, 0 fail, 2 skipped (out of 342), on the F\* bundles) |
+| package suite | `cd npm/factoidal && npm test` | 426 pass, 0 fail, 0 skipped (out of 426), 2026-10-13, 0.10.0 (adds `test/pure-and-serve.test.mjs` 7). Earlier: 403 pass, 0 fail, 0 skipped (out of 403) on `claude/wt-npm-lean-45` after its merge with core-split (issue 713 stages 4 and 5 added `test/core-entry.test.mjs` 23, `test/dataset-scaling.test.js` 2, `test/large-inputs.test.mjs` 4); before: 372 pass, 0 fail, 0 skipped (out of 372), after the issue-716 merge (371 pass, 0 fail (out of 371) at the stage 3 merge). 4 of the 372 are expected-failure cases, each naming its open issue: 717 (1, `SERVICE` without `SILENT`), 691 (1, unused `@prefix xsd:`), 676 (2, PRECIS); the 2 cases of 716 (`{lenient:true}`) are assertions since that merge. A function the wasm does not serve FAILS; no test skips on a capability probe. (0.8.0: 340 pass, 0 fail, 2 skipped (out of 342), on the F\* bundles) |
 | store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node |
 | the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node |
 | LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
-| tarball | `cd npm/factoidal && npm pack --dry-run` | the `files` list above: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
+| tarball | `cd npm/factoidal && npm pack --dry-run` | 0.10.0: 174 files, 3,787,140 bytes packed, 19.2 MB unpacked (the full wasm grew to 11.2 MB; the core wasm is 6.1 MB). 0.9.0: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
 | Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
 | browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` over `fetch`; a second page runs `core-browser.js` (parse, SELECT, `canonicalize`, `shaclValidate`; `xpathEval` and `openStore` refused naming `@factoidal/core`); per page one `instantiateStreaming` call and only that entry's wasm served, as `application/wasm` |

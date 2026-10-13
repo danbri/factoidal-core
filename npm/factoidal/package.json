@@ -1,6 +1,6 @@
 {
   "name": "@factoidal/core",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Factoidal: a linked information system with graph data and the Web at its heart - RDF parsing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 query and update, RDFC-1.0 canonicalization, RDFS/OWL reasoning, SHACL and ShEx validation and a persisted store, for Node and the browser. One engine: the Lean 4 library L4Factoidal compiled to WebAssembly.",
   "keywords": [
     "sparql",
