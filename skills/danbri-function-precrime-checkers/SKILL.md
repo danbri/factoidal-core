@@ -873,7 +873,9 @@ Rules from this repair:
    `sparql-collection` still overflows in the wasm canary route (Node,
    `--stack-size=512`): the next frame per member is `ggpLabeledBnodes`, the
    INSERT DATA blank node label check (gdb: native runs at 128 KB, overflows at
-   64 KB). The case stays an expected failure in that route under issue 818.
+   64 KB). The case stayed an expected failure in that route under issue 818
+   until `ggpLabeledBnodes` became a loop (section "The last three scaling
+   expected failures of KR 2.5" below).
 
 | `l4factoidal`, one run per point | before | after |
 |---|---|---|
@@ -1003,9 +1005,7 @@ is made once per merge, not once per batch: a log of one triple per record
 would otherwise remake it for every record. An add entry is
 `DatasetIx.insertQuad`; any other entry is `applyEntry` on the dataset the
 index holds. `applyBatches_eq_fast` (`csimp`), so `merge` runs it and the
-theorems of `BrowserLogTheorems.lean` hold for it. The store's own replay
-(`StoreEndpoint.applyDeltaEntries`) is the same fold and was not changed in
-this repair.
+theorems of `BrowserLogTheorems.lean` hold for it.
 
 | `deltaLogMerge`, records of one triple (CPU, min of 3) | 8,000 | 16,000 | 32,000 |
 |---|---:|---:|---:|
