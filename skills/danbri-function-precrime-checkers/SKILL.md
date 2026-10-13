@@ -989,8 +989,8 @@ Four costs, each found after the one before it was repaired:
 
 | `l4factoidal update`, empty dataset | before | after |
 |---|---:|---:|
-| INSERT DATA, 2,000 / 8,000 triples (row `sparql-update-insert`, min of 3) | 0.139 / 1.920 s | 0.035 / 0.109 s |
-| INSERT DATA, 4,000 / 16,000 triples with blank-node subjects (one run) | 0.17 / 2.00 s | 0.08 / 0.30 s |
+| INSERT DATA, 2,000 / 8,000 triples (row `sparql-update-insert`, min of 3) | 0.139 / 1.920 s | 0.032 / 0.105 s |
+| INSERT DATA, 4,000 / 16,000 triples with blank-node subjects (before: one run; after: row `sparql-update-insert-bnodes`, min of 3) | 0.17 / 2.00 s | 0.049 / 0.257 s |
 | INSERT DATA, one collection of 10,001 / 40,000 members (one run) | 6.02 / 132 s | 0.34 / 1.08 s |
 
 The blank-node shape has its own row, `sparql-update-insert-bnodes`: the
@@ -1010,7 +1010,7 @@ theorems of `BrowserLogTheorems.lean` hold for it.
 | `deltaLogMerge`, records of one triple (CPU, min of 3) | 8,000 | 16,000 | 32,000 |
 |---|---:|---:|---:|
 | before | 1.33 s | 4.53 s | 17.23 s |
-| after | 0.43 s | 0.78 s | 1.60 s |
+| after | 0.36 s | 0.81 s | 1.80 s |
 
 ### The §19.6 scope check and the labeled blank nodes (https://github.com/danbri/factoidal/issues/824, https://github.com/danbri/factoidal/issues/818)
 
@@ -1028,7 +1028,7 @@ pattern to visit plus one, summed.
 | `l4factoidal query`, one collection of n members (min of 3) | 10,000 | 40,000 |
 |---|---:|---:|
 | before | 0.440 s | 9.053 s |
-| after | 0.052 s | 0.162 s |
+| after | 0.061 s | 0.164 s |
 
 INSERT DATA with one collection of 8,000 members: native overflowed at
 64 KB in `ggpLabeledBnodes`; it now runs at 64 KB.
