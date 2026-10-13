@@ -1333,6 +1333,15 @@ private def rangeAx (c : ClassExpr) : ClassExpr × ClassExpr := (.named owlThing
 -- `owl:topObjectProperty` is never applied this way: `∀top.C` puts `C` on the node itself.
 #guard (TBoxIndex.buildLazy [(.named owlThing, .allOf owlTopObjectProperty (.named exC))] {}).top.length == 1
 
+/-! The equalities behind the repairs of https://github.com/danbri/factoidal/issues/760
+rest on the standard axioms only (`tools/lean-hygiene-audit.py`, check 7). -/
+#print axioms L4Factoidal.OWL.CountingOracle.classSizeUnsat_eq_ref
+#print axioms datatypeRangeClash_eq_ref
+#print axioms closureMap_getD
+#print axioms inverseMap_getD
+#print axioms subsOf_initState
+#print axioms inversesOfSt_initState
+
 /-! ## Qualified cardinality over a data range (`owl:onDataRange`)
 
 OWL 2 Mapping to RDF Graphs, Table 1: `DataMaxCardinality(n DPE DR)`
