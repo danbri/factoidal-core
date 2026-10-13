@@ -426,10 +426,14 @@ def ans_verdict(o):
 
 class Workload:
     def __init__(self, wid, group, desc, sizes, make, engines, cmd, answer, unit="triples",
-                 compare=True, note=""):
+                 compare=True, note="", accept=None):
         self.wid, self.group, self.desc, self.sizes = wid, group, desc, sizes
         self.make, self.engines, self.cmd, self.answer = make, engines, cmd, answer
         self.unit, self.compare, self.note = unit, compare, note
+        # accept(output) -> True: a non-zero exit status that is an answer (the
+        # Lean owl-consistent exits 1 for false and unknown; HermiT exits 1 with
+        # InconsistentOntologyException)
+        self.accept = accept
 
 
 W: dict[str, Workload] = {}
@@ -515,7 +519,8 @@ add(Workload("owl-rl-closure", "owl-rl",
 add(Workload("owl-dl-consistent", "owl-dl",
              "OWL 2 DL consistency of a real ontology", OWL_SET, owl_input,
              ["lean", "hermit"], lambda e, p, n: cmd_consistent(e, p),
-             lambda e, o: ans_verdict(o), unit="ontology"))
+             lambda e, o: ans_verdict(o), unit="ontology",
+             accept=lambda o: ans_verdict(o) in ("true", "false", "unknown")))
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +549,7 @@ def parse_time_v(path):
     return r
 
 
-def run_once(cmd, env, cap, tfile):
+def run_once(cmd, env, cap, tfile, accept=None):
     o = {"lines": 0, "bytes": 0, "first": "", "second": ""}
     h = hashlib.sha256()
     err = []
@@ -607,7 +612,7 @@ def run_once(cmd, env, cap, tfile):
     exit_code = tv.get("exit", proc.returncode)
     if exit_code == 137 or tv.get("signal") == 9 or wall >= cap:
         status = "TIMEOUT"
-    elif exit_code != 0:
+    elif exit_code != 0 and not (accept and accept(o)):
         status = f"exit{exit_code}"
     else:
         status = "ok"
@@ -623,13 +628,13 @@ def wait_for_load(limit, max_wait):
     return round(time.time() - t0, 1)
 
 
-def measure(cmd, env, runs, cap, tdir, load_limit, load_wait, extra_on_spread):
+def measure(cmd, env, runs, cap, tdir, load_limit, load_wait, extra_on_spread, accept=None):
     rs = []
     waited = wait_for_load(load_limit, load_wait)
     i = 0
     while True:
         load = os.getloadavg()[0]
-        r = run_once(cmd, env, cap, tdir / "time-v.txt")
+        r = run_once(cmd, env, cap, tdir / "time-v.txt", accept)
         r["load1"] = round(load, 2)
         rs.append(r)
         i += 1
@@ -705,7 +710,7 @@ def run(args):
                     continue
                 print(f"[{w.wid} {n} {e}] load {os.getloadavg()[0]:.2f} ...", flush=True)
                 rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
-                                 args.load_wait, not args.no_rerun)
+                                 args.load_wait, not args.no_rerun, w.accept)
                 ans = w.answer(e, o) if rec["status"] == "ok" else None
                 answers[e] = ans
                 if e in ("lean", "lean-stream"):
@@ -923,7 +928,7 @@ def check(args):
         xf = None
         for attempt in (1, 2):  # a failing row is measured once more before it fails
             rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
-                             args.load_wait, True)
+                             args.load_wait, True, w.accept)
             ans = w.answer(r["engine"], o) if rec["status"] == "ok" else None
             problems = []
             if rec["status"] != "ok":
