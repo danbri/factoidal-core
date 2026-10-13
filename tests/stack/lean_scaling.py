@@ -106,6 +106,12 @@ repaired (docs/designissues/2026-10-10-lean-vs-fstar-performance.md):
                    quad. After the triples accumulator (`pTriplesBlock_eq_ref`)
                    and the graph index (`insertQuads_eq_fast`): 0.053 s and
                    0.182 s
+  sparql-update-insert-bnodes  the same with a blank-node subject in each
+                   triple, 4,000 and 16,000 triples: the INSERT DATA blank node
+                   label checks (§19.6) scanned a list of labels per label
+                   (0.17 s and 2.00 s, 2026-10-13); after
+                   `bnodesInBgp_eq_fast` and `bnodeLabelsUnique_eq_fast` (a set
+                   of labels) 0.08 s and 0.30 s
   shacl-person     SHACL Core validation (l4shacl, a one-entry manifest) of n
                    ex:Person nodes against 4 property shapes
                    (https://github.com/danbri/factoidal/issues/723; 0.31 s to
@@ -301,6 +307,11 @@ def sparql_insert_data(n: int) -> str:
         f'  <{EX}s{i}> <{EX}p> "value {i}" .\n' for i in range(n))
 
 
+def sparql_insert_data_bnodes(n: int) -> str:
+    return "INSERT DATA {\n%s}\n" % "".join(
+        f'  _:b{i} <{EX}p> "value {i}" .\n' for i in range(n))
+
+
 OWL = "http://www.w3.org/2002/07/owl#"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
@@ -463,6 +474,11 @@ ROWS = {
     "sparql-update-insert": (
         2000,
         lambda n: fixture(f"sparql-insert-data-{n}.ru", lambda: sparql_insert_data(n)),
+        lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
+                   "--update", str(p), "--format", "nquads"]),
+    "sparql-update-insert-bnodes": (
+        4000,
+        lambda n: fixture(f"sparql-insert-data-bnodes-{n}.ru", lambda: sparql_insert_data_bnodes(n)),
         lambda p: [str(BIN), "update", str(fixture("empty.nq", lambda: "")),
                    "--update", str(p), "--format", "nquads"]),
     "owl-species": (

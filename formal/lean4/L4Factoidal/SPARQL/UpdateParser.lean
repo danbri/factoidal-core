@@ -409,6 +409,110 @@ def bnodeLabelsUniqueAcrossDataOps (seen : List String) : List UpdateOp → Bool
       if strOverlaps labels seen then false
       else bnodeLabelsUniqueAcrossDataOps (strUnion labels seen) rest
 
+/-! The check above keeps the labels seen in a list: `strUnion` and
+`strOverlaps` scan it once per label, so one INSERT DATA block with n
+blank-node labels took time in n² (16,000 triples with blank-node subjects:
+1.37 s, against 0.09 s for 4,000; https://github.com/danbri/factoidal/issues/821).
+`bnodeLabelsUniqueSet` keeps them in a set. The verdict depends on the list
+only through membership, so it is the same (`bnodeLabelsUnique_eq_fast`). -/
+
+theorem mem_strAddUnique (x y : String) (ys : List String) :
+    y ∈ strAddUnique x ys ↔ y = x ∨ y ∈ ys := by
+  unfold strAddUnique
+  by_cases h : strMem x ys = true
+  · rw [if_pos h]
+    have hx := (strMem_iff x ys).mp h
+    constructor
+    · exact Or.inr
+    · rintro (rfl | hy)
+      · exact hx
+      · exact hy
+  · rw [if_neg h]
+    simp
+
+theorem mem_strUnion (xs ys : List String) (y : String) :
+    y ∈ strUnion xs ys ↔ y ∈ xs ∨ y ∈ ys := by
+  induction xs generalizing ys with
+  | nil => simp [strUnion]
+  | cons x xs ih =>
+    simp only [strUnion, ih, mem_strAddUnique, List.mem_cons]
+    constructor
+    · rintro (h | h | h)
+      · exact Or.inl (Or.inr h)
+      · exact Or.inl (Or.inl h)
+      · exact Or.inr h
+    · rintro ((h | h) | h)
+      · exact Or.inr (Or.inl h)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+
+theorem strOverlaps_eq_any (xs ys : List String) :
+    strOverlaps xs ys = xs.any (fun x => strMem x ys) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [strOverlaps, ih]
+
+/-- Insert every label of the list into the set. -/
+def insertLabels (s : Std.HashSet String) (xs : List String) : Std.HashSet String :=
+  xs.foldl (fun acc x => acc.insert x) s
+
+theorem contains_insertLabels (s : Std.HashSet String) (xs : List String) (y : String) :
+    (insertLabels s xs).contains y = true ↔ y ∈ xs ∨ s.contains y = true := by
+  induction xs generalizing s with
+  | nil => simp [insertLabels]
+  | cons x xs ih =>
+    simp only [insertLabels, List.foldl_cons] at ih ⊢
+    rw [ih, Std.HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, List.mem_cons]
+    constructor
+    · rintro (h | h | h)
+      · exact Or.inl (Or.inr h)
+      · exact Or.inl (Or.inl h.symm)
+      · exact Or.inr h
+    · rintro ((h | h) | h)
+      · exact Or.inr (Or.inl h.symm)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+
+/-- `bnodeLabelsUniqueAcrossDataOps` with the labels seen in a set. -/
+def bnodeLabelsUniqueSet (seen : Std.HashSet String) : List UpdateOp → Bool
+  | []        => true
+  | op :: rest =>
+      let labels := labeledBnodesInDataOp op
+      if labels.any (fun x => seen.contains x) then false
+      else bnodeLabelsUniqueSet (insertLabels seen labels) rest
+
+theorem bnodeLabelsUniqueSet_eq (ops : List UpdateOp) (seen : List String)
+    (s : Std.HashSet String) (h : ∀ y, s.contains y = true ↔ y ∈ seen) :
+    bnodeLabelsUniqueSet s ops = bnodeLabelsUniqueAcrossDataOps seen ops := by
+  induction ops generalizing seen s with
+  | nil => rfl
+  | cons op rest ih =>
+    simp only [bnodeLabelsUniqueSet, bnodeLabelsUniqueAcrossDataOps, strOverlaps_eq_any]
+    have hf : (fun x => s.contains x) = (fun x => strMem x seen) := by
+      funext x
+      apply Bool.eq_iff_iff.mpr
+      rw [h, strMem_iff]
+    rw [hf]
+    split
+    · rfl
+    · apply ih
+      intro y
+      rw [contains_insertLabels, h, mem_strUnion]
+
+/-- What runs in place of `bnodeLabelsUniqueAcrossDataOps`. -/
+def bnodeLabelsUniqueFast (seen : List String) (ops : List UpdateOp) : Bool :=
+  bnodeLabelsUniqueSet (insertLabels ∅ seen) ops
+
+@[csimp] theorem bnodeLabelsUnique_eq_fast :
+    @bnodeLabelsUniqueAcrossDataOps = @bnodeLabelsUniqueFast := by
+  funext seen ops
+  rw [bnodeLabelsUniqueFast, bnodeLabelsUniqueSet_eq ops seen]
+  intro y
+  rw [contains_insertLabels]
+  simp
+
+#print axioms bnodeLabelsUnique_eq_fast
+
 /-! ## Entry points -/
 
 /-- Parse a SPARQL 1.1 Update request. `base` is the BASE in scope

@@ -115,6 +115,7 @@ were already ported. All of it is v12-only: the tokenizer emits the
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
 
@@ -498,6 +499,76 @@ def bnodesInTriple (tp : TriplePattern) : List String :=
 def bnodesInBgp : Bgp → List String
   | []        => []
   | tp :: rest => strUnion (bnodesInTriple tp) (bnodesInBgp rest)
+
+/-- `strUnion xs acc`, with the set of the members of `acc` beside it, so
+that each test of a label is a set lookup. -/
+def strUnionSet : List String → List String × Std.HashSet String →
+    List String × Std.HashSet String
+  | [], st => st
+  | x :: xs, (acc, s) =>
+    if s.contains x then strUnionSet xs (acc, s) else strUnionSet xs (x :: acc, s.insert x)
+
+theorem strMem_iff (x : String) (xs : List String) : strMem x xs = true ↔ x ∈ xs := by
+  simp [strMem, List.any_eq_true, beq_iff_eq]
+
+theorem strUnionSet_eq (xs acc : List String) (s : Std.HashSet String)
+    (h : ∀ y, s.contains y = true ↔ y ∈ acc) :
+    (strUnionSet xs (acc, s)).1 = strUnion xs acc ∧
+      ∀ y, (strUnionSet xs (acc, s)).2.contains y = true ↔ y ∈ (strUnionSet xs (acc, s)).1 := by
+  induction xs generalizing acc s with
+  | nil => exact ⟨rfl, h⟩
+  | cons x xs ih =>
+    by_cases hx : s.contains x = true
+    · have hm : strMem x acc = true := (strMem_iff x acc).mpr ((h x).mp hx)
+      simp only [strUnionSet, hx, ↓reduceIte, strUnion, strAddUnique, hm]
+      exact ih acc s h
+    · have hm : strMem x acc = false := by
+        cases hc : strMem x acc
+        · rfl
+        · exact absurd ((h x).mpr ((strMem_iff x acc).mp hc)) hx
+      simp only [strUnionSet, hx, Bool.false_eq_true, ↓reduceIte, strUnion, strAddUnique, hm]
+      apply ih
+      intro y
+      rw [Std.HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, h, List.mem_cons]
+      exact ⟨fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr,
+             fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr⟩
+
+/-- `bnodesInBgp` without a native frame per triple pattern (the fold runs
+as `List.foldrTR`, over an array) and with a set lookup per label: an INSERT
+DATA block of 40,000 triples overflowed the 512 KB canary stack in
+`bnodesInBgp`, and 16,000 triples with blank-node subjects took 2.0 s against
+0.17 s for 4,000 (https://github.com/danbri/factoidal/issues/821). The same
+list (`bnodesInBgp_eq_fast`). -/
+def bnodesInBgpFast (b : Bgp) : List String :=
+  (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1
+
+theorem bnodesInBgp_foldr (b : Bgp) :
+    (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 = bnodesInBgp b ∧
+      ∀ y, (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).2.contains y = true ↔
+        y ∈ (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 := by
+  induction b with
+  | nil => simp [bnodesInBgp]
+  | cons tp rest ih =>
+    simp only [List.foldr_cons]
+    generalize hst : List.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅) rest = st at ih ⊢
+    obtain ⟨acc, s⟩ := st
+    obtain ⟨h1, h2⟩ := ih
+    have := strUnionSet_eq (bnodesInTriple tp) acc s h2
+    refine ⟨?_, this.2⟩
+    rw [this.1]
+    simp only at h1
+    simp [bnodesInBgp, h1]
+
+@[csimp] theorem bnodesInBgp_eq_fast : @bnodesInBgp = @bnodesInBgpFast := by
+  funext b
+  exact (bnodesInBgp_foldr b).1.symm
+
+private def tpBn (b : String) : TriplePattern := { s := .bnode b, p := .var "p", o := .bnode "z" }
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] == ["b", "z", "a"]
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] != ["a", "b", "z"]
+#guard bnodesInBgpFast [tpBn "_:bnode_3"] == ["z"]
+
+#print axioms bnodesInBgp_eq_fast
 
 /-! ## Aggregate detection — `expr_has_aggregate` (F* line 1586)
 
