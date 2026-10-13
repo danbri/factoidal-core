@@ -80,9 +80,10 @@ ROWS: dict[str, tuple] = {
 # Rows that run under a resident-set watchdog (tools/owl-real-bench.py
 # --rss-cap-mb) of this many MB in place of the address-space cap. An
 # address-space cap stops a Lean executable far below its resident need
-# (https://github.com/danbri/factoidal/issues/759, row qudt-consistent and row
-# qudt-closure-address-space), so a row that measures resident memory must not
-# use one.
+# (https://github.com/danbri/factoidal/issues/759; rows qudt-consistent and
+# qudt-closure-address-space failed for that reason until the QUDT closure
+# fell to 660 MB on 2026-10-13), so a row that measures resident memory must
+# not use one.
 ROW_RSS_CAP_MB: dict[str, int] = {
     "qudt-closure": 6000,
 }
@@ -120,12 +121,13 @@ XFAIL: dict[str, str] = {
     # The Lean RDF/XML parser gives an xml:lang to the next sibling property
     # element, so two literals collapse into existing ones (11,703 triples).
     "ro-parse": "https://github.com/danbri/factoidal/issues/329",
-    # The same closure under the address-space cap: mimalloc's 1 GiB arena
-    # reservations exhaust it at about 1.2 GB resident.
-    "qudt-closure-address-space": "https://github.com/danbri/factoidal/issues/759",
-    # Fits in 1.4 GB resident, but mimalloc's 1 GiB arena reservations exhaust
-    # the 6,000,000,000-byte address-space cap first.
-    "qudt-consistent": "https://github.com/danbri/factoidal/issues/759",
+    # qudt-closure-address-space and qudt-consistent left this table on
+    # 2026-10-13: with the semi-naive OWL 2 RL closure
+    # (https://github.com/danbri/factoidal/issues/756 item 2) the QUDT
+    # closure peaks at 660 MB resident (1,352 MB before), under the about
+    # 1.2 GB at which mimalloc's arena reservations exhaust the address-space
+    # cap (https://github.com/danbri/factoidal/issues/759, which this does not
+    # repair: a closure above about 1.2 GB still stops under the cap).
     # The F* OWL RL closure of 2,709 triples did not finish in 300 s.
     "wine-closure-fstar": "https://github.com/danbri/factoidal/issues/765",
     # 479 MB for 9,557,097 bytes of RDF/XML (52.6 bytes per byte).
