@@ -38,8 +38,8 @@ Owner, 2026-10-09, verbatim:
 > implementation"
 > "/goal complete performant suite all in lean4"
 
-- **`danbri/factoidal-core`** (this repository, branch `main`; until the
-  owner renames it, the branch is `claude/core-split`): the
+- **`danbri/factoidal-core`** (this repository, branch `main`; it was
+  `claude/core-split` until the owner's rename of 2026-10-11): the
   source. `formal/fstar` and `formal/lean4` with their git history
   (rewritten from `danbri/factoidal` to `formal/` paths only), plus tests,
   tools, skills, docs sources and npm sources. No compiled artifacts.
@@ -130,6 +130,16 @@ Lean files from the `factoidal` monorepo (about 2026-09-07 content) onto a
 changed Lean files, 18 were older than the mainline copies. The landing
 took one more agent session (re-applied on `claude/core-split`, commits
 `4bfa8b49`, `69e92e14`, `19a32098`).
+
+Second cost, 2026-10-10 to 2026-10-13: the batch 1 coordinator kept landing
+on `claude/core-split` after `main` became the mainline, because the
+layout note above still read "until the owner renames it, the branch is
+`claude/core-split`" in that checkout and it never fetched `main`. The two
+lines diverged by 82 and 87 commits; another session merged them
+(`a7e9adee`) and both sides had written the same `escapeString` fast form.
+Rule: before every push, `git fetch origin main` and check that
+`origin/main` is an ancestor of what you push
+(`git merge-base --is-ancestor origin/main HEAD`); push to `main` only.
 
 ## Shardborough is a persistent store for very large data (owner, 2026-10-11)
 
