@@ -158,7 +158,9 @@ What still keeps F\* in the build:
 - SERVICE follow-ups: https://github.com/danbri/factoidal/issues/735 (the
   Lean engine has both since 2026-10-12: a failed call inside `EXISTS` fails
   the query; an outer `SILENT` covers a failed nested call).
-- The browser durable log: https://github.com/danbri/factoidal/issues/728.
+- The browser durable log: https://github.com/danbri/factoidal/issues/728
+  (the Lean engine has it since 2026-10-13: `L4Factoidal/Storage/BrowserLog.lean`,
+  `2026-10-10-npm-lean-only.md` section 11).
 - Geo functions and `text:query`: https://github.com/danbri/factoidal/issues/727
   (the Lean engine has them since 2026-10-10:
   `2026-10-10-lean-geo-distance-fulltext.md`).

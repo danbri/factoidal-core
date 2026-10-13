@@ -386,8 +386,9 @@ Kind 2, functions only F\* had:
   `docs/designissues/2026-10-10-lean-geo-distance-fulltext.md`).
 - post18 (the browser durable update log): opened as
   https://github.com/danbri/factoidal/issues/728; the three lifecycle cells
-  and the browser.js exports are expected failures naming it, and a note in
-  the post says steps 2-4 answer `{available: false}` on the Lean engine.
+  and the browser.js exports were expected failures naming it until
+  2026-10-13, when the Lean package gained the log (section 11); the cases
+  are now assertions.
 
 Kind 3, cells that needed an F\* build: posts 06, 07, 09, 10, 13, 23, 25,
 45, 48 and 49 call the typed functions (`shexValidate`, `jsonldToRdf`,
