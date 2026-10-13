@@ -16,6 +16,7 @@ delta overlay (inserts, deletes, a cleared graph).
 `ScanFoldTheorems.scanFoldM_tuples` is the theorem about the new form.
 -/
 import L4Factoidal.Storage.Sbm11.IdQuery
+import L4Factoidal.Storage.Sbm11.PrmRange
 
 namespace L4Factoidal.Storage.Sbm11.ScanFoldTests
 
@@ -76,8 +77,10 @@ def overlayChunkMOld {m : Type → Type} [Monad m] (st : Store m) (spec : ScanSp
     on. With `fill = false` a column that is constant over a chunk is left
     empty and given in `consts` (the aggregate path counts it so). -/
 def scanFoldMOld {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
-    (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) : ExceptT String m (σ × ScanStats) := do
-  let metas ← st.metas spec.perm
+    (init : σ) (f : σ → Chunk → ExceptT String m (σ × Bool)) (metas : Array BlockMeta) :
+    ExceptT String m (σ × ScanStats) := do
+  -- the old form took the whole PRM1 array from the store (`st.metas`,
+  -- before issue 805); it is given here
   let mut acc := init
   let mut stats : ScanStats := { blocksTotal := metas.size }
   let sortVar := match spec.outCols[0]? with
@@ -233,7 +236,8 @@ def sample : Array BlockMeta × ByteArray :=
   buildGo (cutGo [3, 5, 1, 9, 12, 4, 2, 7, 10, 3] sampleRows []) 6 #[] ⟨(prbHeader 2).toArray⟩
 
 def memStore (ov : PermOverlay) : Store Id where
-  metas _ := pure sample.1
+  blockCount _ := pure sample.1.size
+  blocksForRange _ key := L4Factoidal.Storage.Sbm11.PrmRange.rangeM (L4Factoidal.Storage.Sbm11.PrmRange.arrayReader sample.1) key
   prb _ off len := pure (sample.2.extract off (off + len))
   idOf _ := pure none
   keyOf _ := pure .empty
@@ -264,8 +268,8 @@ def runNew (ov : PermOverlay) (spec : ScanSpec) (fill : Bool) (stopAt : Nat) :
 
 def runOld (ov : PermOverlay) (spec : ScanSpec) (fill : Bool) (stopAt : Nat) :
     Except String (List ChunkKey × List Nat) :=
-  match (OldForms.scanFoldMOld (memStore ov) spec fill #[] fun acc ch =>
-      pure (acc.push (chunkKey ch), acc.size + 1 < stopAt)).run with
+  match (OldForms.scanFoldMOld (memStore ov) spec fill #[] (fun acc ch =>
+      pure (acc.push (chunkKey ch), acc.size + 1 < stopAt)) sample.1).run with
   | .ok (acc, st) => .ok (acc.toList, statsKey st)
   | .error e => .error e
 

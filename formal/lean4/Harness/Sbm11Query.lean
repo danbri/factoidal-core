@@ -60,6 +60,7 @@ import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.ParallelScan
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.PrmAt
+import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.ShardManifest
@@ -90,12 +91,27 @@ inductive TaskPage where
   | ready (ks : ByteArray × Array Nat)
   | loading (p : IO.Promise (Except String (ByteArray × Array Nat)))
 
+/-- A permutation opened by a query session. Its PRM1 file is never read
+    whole (https://github.com/danbri/factoidal/issues/805): the open reads
+    the 22-byte header (`PrmRange.openM`), and each key range is found by
+    `PrmRange.rangeM` over positioned reads (`prmRead`): two binary searches
+    that read one 92-byte entry per probe, then one read of the entries of
+    the selected blocks. Under `Verify.merkle` every such read goes through
+    the PRM1 file's verified chunk cache (`prmLeaves`, `prmCache`). -/
 structure LoadedPerm where
   prbPath : String
   prbRef : Ref
   leaves : List L4Factoidal.Storage.BlockMerkle.Digest
   cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
-  metas : Array BlockMeta
+  prmPath : String
+  prmRef : Ref
+  prmLeaves : List L4Factoidal.Storage.BlockMerkle.Digest
+  prmCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
+  /-- the block count of the PRM1 header -/
+  count : Nat
+  /-- the answers of `rangeM` for the keys asked so far (the generation does
+      not change while it is open); at most 256 keys, emptied when full -/
+  ranges : IO.Ref (Std.HashMap (Array UInt64) (Array BlockMeta))
 
 /-- An open generation: the manifest, the dictionary's Merkle leaves and
     header; each permutation is opened on its first use (its PRM1 read, length
@@ -107,6 +123,9 @@ structure Session where
   pages : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))
   /-- bytes of PRB1 blocks read (the frames a plan reads) -/
   frameBytes : IO.Ref Nat
+  /-- bytes of PRM1 entries and headers asked for (issue 805; under
+      `merkle` the verified chunks fetched for them are in `fetchedBytes`) -/
+  prmBytes : IO.Ref Nat
   lookups : IO.Ref Nat
   /-- Under `Verify.merkle`: GDX1, read whole on the first dictionary access
       (102 KB on olympics: 12 bytes per page), its length and SHA-256 checked
@@ -180,9 +199,22 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
   return { g := { g0 with dictHdr }, termCount := dictHdr.termCount,
            perms := ← IO.mkRef #[none, none, none, none],
-           pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, lookups := ← IO.mkRef 0,
+           pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
+           lookups := ← IO.mkRef 0,
            gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {},
            lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {} }
+
+/-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
+    `pread` of exactly the bytes, under `merkle` through the file's verified
+    chunk cache (one read at a time: the cache is shared, issue 799). -/
+def Session.prmReadAt (ss : Session) (path : String) (ref : Ref)
+    (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
+    (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (off len : Nat) : ExceptT String IO ByteArray :=
+  ExceptT.lift do
+    ss.prmBytes.modify (· + len)
+    match ss.g.verify with
+    | .merkle => ss.lock.atomically (verifiedRead ss.g path ref leaves cache off len)
+    | .none => verifiedRead ss.g path ref leaves cache off len
 
 def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
   match (← ss.perms.get)[p]? with
@@ -194,13 +226,17 @@ def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
     let prbA ← artifact m s!"PRB1-{nm}"
     let prmPath := s!"{ss.g.dir}/{prmA.file}"
     let prbPath := s!"{ss.g.dir}/{prbA.file}"
-    let prmBytes ← readPrm ss.g.verify ss.g.fileBytes prmPath prmA
-    let some (perm, ms) := PrmAt.decodePrmAt prmBytes
-      | throw (IO.userError s!"{prmPath}: does not decode as PRM1")
-    if perm != p then throw (IO.userError s!"{prmPath}: permutation code {perm}, expected {p}")
+    -- PRM1: the header only (issue 805); the leaves of its Merkle tree under
+    -- `merkle`, so that each positioned read is checked by its chunks
+    let prmLeaves ← loadLeaves ss.g.verify ss.g.fileBytes prmPath prmA.merkle
+    let prmCache ← newChunkCache ss.g.verify prmA.merkle
+    let count ← match ← (PrmRange.openM (ss.prmReadAt prmPath prmA.merkle prmLeaves prmCache) prmA.bytes p).run with
+      | .ok n => pure n
+      | .error e => throw (IO.userError s!"{prmPath}: {e}")
     let leaves ← loadLeaves ss.g.verify ss.g.fileBytes prbPath prbA.merkle
     let cache ← newChunkCache ss.g.verify prbA.merkle
-    let lp : LoadedPerm := { prbPath, prbRef := prbA.merkle, leaves, cache, metas := ms }
+    let lp : LoadedPerm := { prbPath, prbRef := prbA.merkle, leaves, cache, prmPath, prmRef := prmA.merkle,
+                             prmLeaves, prmCache, count, ranges := ← IO.mkRef {} }
     ss.perms.modify (·.set! p (some lp))
     return lp
   | none => throw (IO.userError s!"no permutation {p}")
@@ -490,6 +526,21 @@ def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
 def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
   ok "lower bound" (← (DictRange.lowerBoundM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
 
+/-- The PRM1 entries of the blocks of permutation `p` that may hold a row
+    with the key prefix (`Store.blocksForRange`): `PrmRange.rangeM` over
+    `PrmRange.bytesReader` of the permutation's positioned reads, the code of
+    `PrmRangeTheorems.rangeM_bytes`; an answer is kept for the next query
+    with the same key. -/
+def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) := do
+  let lp ← ss.perm p
+  if let some r := (← lp.ranges.get).get? key then return r
+  let read := ss.prmReadAt lp.prmPath lp.prmRef lp.prmLeaves lp.prmCache
+  let r ← match ← (PrmRange.rangeM (PrmRange.bytesReader read lp.count) key).run with
+    | .ok r => pure r
+    | .error e => throw (IO.userError s!"{lp.prmPath}: {e}")
+  lp.ranges.modify fun m => (if m.size ≥ 256 then {} else m).insert key r
+  return r
+
 def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   let lp ← ss.perm p
   ss.frameBytes.modify (· + len)
@@ -513,6 +564,7 @@ def Session.view (ss : Session) : IO Session := do
   let g' : Gen := { ss.g with readBytes := ← IO.mkRef 0, fetchedBytes := ← IO.mkRef 0,
                               fileBytes := ← IO.mkRef 0 }
   return { ss with g := g', perms := ← IO.mkRef (← ss.perms.get), frameBytes := ← IO.mkRef 0,
+                   prmBytes := ← IO.mkRef 0,
                    lookups := ← IO.mkRef 0, pages := ← IO.mkRef {}, inTask := true }
 
 /-- The view with a page cache made by the calling thread (call it in the
@@ -527,6 +579,7 @@ def Session.local (v : Session) : IO Session := do
 /-- Add the counters of a finished task view to the session. -/
 def Session.absorb (ss v : Session) : IO Unit := do
   ss.frameBytes.modify (· + (← v.frameBytes.get))
+  ss.prmBytes.modify (· + (← v.prmBytes.get))
   ss.lookups.modify (· + (← v.lookups.get))
   ss.g.readBytes.modify (· + (← v.g.readBytes.get))
   ss.g.fetchedBytes.modify (· + (← v.g.fetchedBytes.get))
@@ -535,7 +588,8 @@ def Session.absorb (ss v : Session) : IO Unit := do
 def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
 def Session.store (ss : Session) : IdQuery.Store IO :=
-  { metas := fun p => liftIO do pure (← ss.perm p).metas
+  { blockCount := fun p => liftIO do pure (← ss.perm p).count
+    blocksForRange := fun p key => liftIO (ss.rangeFor p key)
     prb := fun p off len => liftIO (ss.prb p off len)
     idOf := fun t => liftIO (ss.idOf t)
     keyOf := fun x => liftIO (ss.keyOf x)
@@ -557,16 +611,18 @@ def Session.store (ss : Session) : IdQuery.Store IO :=
 def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minRows : Nat := 8192) :
     ExceptT String IO (L4Factoidal.Qlvr.Table × IdQuery.ScanStats) := do
   let st := ss.store
-  let metas ← st.metas spec.perm
+  -- the selected blocks' PRM1 entries (issue 805); a chunk is a list of
+  -- positions in that array
+  let metas ← st.blocksForRange spec.perm spec.key
   let ox := IdQuery.ovCtx (st.ovl spec.perm) spec.key
   -- stage 1b: at most `IdQuery.rangeCount` ranges; fewer than 2: one thread
-  let n := IdQuery.rangeCount threads minRows (IdQuery.estimate metas spec.key)
+  let n := IdQuery.rangeCount threads minRows (IdQuery.selRows metas)
   if threads ≤ 1 || ox.on || n < 2 then return ← IdQuery.scanTableM st spec
   let sortVar := IdQuery.sortVarOf spec
-  let sel := (IdQuery.blocksFor metas spec.key).toList
+  let sel := List.range metas.size
   let c := (sel.length + n - 1) / n
   let chunks := L4Factoidal.Storage.Sbm11.ParallelScan.chunksOf c sel
-  let cap := 8 * IdQuery.estimate metas spec.key
+  let cap := 8 * IdQuery.selRows metas
   let init : L4Factoidal.Qlvr.Table :=
     { vars := spec.outVars, cols := spec.outVars.map fun _ => ByteArray.emptyWithCapacity cap,
       rows := 0, sortVar }
@@ -596,7 +652,7 @@ def scanTableParM (ss : Session) (spec : IdQuery.ScanSpec) (threads : Nat) (minR
       | .error e => throw (IO.userError e))
     tasks := tasks.push (t, v)
   let mut out := init
-  let mut stats : IdQuery.ScanStats := { blocksTotal := metas.size }
+  let mut stats : IdQuery.ScanStats := { blocksTotal := ← st.blockCount spec.perm }
   let mut failure : Option String := none
   for (t, v) in tasks do
     match ← IO.wait t with
@@ -833,6 +889,34 @@ private def stripDatasetClauses (query : Query) : Query :=
   .mk query.form [] query.pattern query.groupBy query.having query.modifier
       query.postValues query.base
 
+/-- Write a graph (CONSTRUCT, DESCRIBE) as N-Triples lines; returns the
+    number of triples. -/
+def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
+  let mut n := 0
+  for tr in graph do
+    match nquadLine (match tr.s with | .iri i => .iri i | .bnode b => .bnode b) (.iri tr.p) tr.o none with
+    | .ok l =>
+      emit (l ++ "\n").toUTF8
+      n := n + 1
+    | .error e => throw (IO.userError e)
+  return n
+
+/-- The query's environment for expressions (NOW read once, BASE, the
+    GeoSPARQL extension functions), without a dataset: the id path's
+    post-processing and residual FILTERs (issue 823) read no EXISTS. The
+    reference fallback adds its dataset (`runReference`). -/
+def queryEnv (q : Query) : IO EvalEnv := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  return { clockEnv with ext := L4Factoidal.Geo.extFns, base := q.base }
+
+/-- Write the answer of a post-processed id plan (issue 823) as
+    `runReference` writes the reference evaluator's answer of the same form. -/
+def emitPost (ans : IdQuery.PostAnswer) (emit : ByteArray → IO Unit) : IO Unit := do
+  match ans with
+  | .solutions vars rows => emit (QueryResult.bindings vars rows).toSrjFast.toUTF8
+  | .boolean b => emit (QueryResult.boolean b).toSrjFast.toUTF8
+  | .graph g => discard <| emitGraph g emit
+
 /-- The reference evaluator over the selected dataset (the evaluation of
     `Harness/QuadQuery.lean`'s `finish`). -/
 def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray → IO Unit) :
@@ -872,13 +956,7 @@ def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray 
     let graph := match q.form with
       | .construct _ => evalConstruct env applied stripped
       | _ => evalDescribe env applied stripped
-    let mut n := 0
-    for tr in graph do
-      match nquadLine (match tr.s with | .iri i => .iri i | .bnode b => .bnode b) (.iri tr.p) tr.o none with
-      | .ok l =>
-        emit (l ++ "\n").toUTF8
-        n := n + 1
-      | .error e => throw (IO.userError e)
+    let n ← emitGraph graph emit
     return (n, line)
 
 /-! ## Running a query -/
@@ -905,7 +983,18 @@ def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceRefer
   | .ok plan =>
     let minRows ← minRangeRows
     let par := if threads ≤ 1 then none else some (ss.par threads minRows)
-    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par).run with
+    let env ← queryEnv q
+    match plan.post with
+    | some ps =>
+      -- issue 823: the WHERE clause on ids, the reference post-processing on
+      -- the decoded solutions
+      match ← (IdQuery.runPostM (ss.storeWith threads sip minRows) plan ps env).run with
+      | .ok (ans, st) =>
+        emitPost ans emit
+        return { rows := st.rows, path := "path=ids", plan := st.plan }
+      | .error e => throw (IO.userError s!"id query failed: {e}")
+    | none =>
+    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
     | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
     | .error e => throw (IO.userError s!"id query failed: {e}")
 
@@ -1003,6 +1092,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let (v, why) ← chooseVerify dir o.verify
   let ss ← openOverlaid v dir
   let t1 ← IO.monoNanosNow
+  let openBytes ← ss.g.fileBytes.get
   let stdout ← IO.getStdout
   let runs := max o.repeatN 1
   let mut execs : Array Nat := #[]
@@ -1012,6 +1102,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
     -- the opened permutations, the verified chunk caches and the
     -- dictionary page cache persist from run to run, as in an open store
     ss.frameBytes.set 0
+    ss.prmBytes.set 0
     ss.g.fetchedBytes.set 0
     let a ← IO.monoNanosNow
     let r ← runOne ss q (if final then fun s => stdout.write s else fun _ => pure ()) o.reference o.referenceRender
@@ -1033,7 +1124,7 @@ def runQuery (dir : String) (o : Opts) : IO UInt32 := do
   let fetched ← ss.g.fetchedBytes.get
   if runs > 1 then
     IO.eprintln s!"repeat: {runs} runs in one process; execution ms median {msText (median execs)} min {msText (execs.foldl min (execs.getD 0 0))} max {msText (execs.foldl max 0)}"
-  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
+  IO.eprintln s!"sbm11-query: {r.path}; rows {r.rows}; verify={v.name}; {ss.deltaText}; constants looked up {← ss.lookups.get}; block bytes read {fb}; PRM1 bytes read {← ss.prmBytes.get}; range bytes fetched {fetched}; file bytes read {← ss.g.fileBytes.get}; open file bytes {openBytes}; open {msText (t1 - t0)} ms; execution {msText (t2 - t1)} ms; total {msText (t2 - t0)} ms; peak RSS (VmHWM): {← vmHWM}"
   return 0
 
 /-- One query per line of stdin; one line of SPARQL JSON per query. -/
@@ -1067,12 +1158,39 @@ def runServe (dir : String) (verify? : Option Verify) : IO UInt32 := do
       failures := failures + 1
   return (if failures == 0 then 0 else 1)
 
-/-- `PrmAt.decodePrmAt` against `Block.decodePrm` on every PRM1 file. -/
+/-- The keys of the range check of `prm-check`: the empty key; for about 48
+    blocks spread over the file (the first two, the last two, and every
+    `n / 44`-th), the prefixes of length 1, 2 and 3 of the first and the last
+    row, and the first column of the first row plus and minus one. -/
+def rangeCheckKeys (ms : Array BlockMeta) : Array (Array UInt64) := Id.run do
+  let n := ms.size
+  let mut idx : Array Nat := #[0, 1, n - 1, n - 2]
+  for i in [0:44] do idx := idx.push (i * n / 44)
+  let mut keys : Array (Array UInt64) := #[#[]]
+  for i in idx do
+    if i < n then
+      let b := ms[i]!
+      for r in [b.first, b.last] do
+        keys := keys.push #[r.c0.toUInt64]
+        keys := keys.push #[r.c0.toUInt64, r.c1.toUInt64]
+        keys := keys.push #[r.c0.toUInt64, r.c1.toUInt64, r.c2.toUInt64]
+      keys := keys.push #[(b.first.c0 + 1).toUInt64]
+      if b.first.c0 > 0 then keys := keys.push #[(b.first.c0 - 1).toUInt64]
+  return keys
+
+/-- `PrmAt.decodePrmAt` against `Block.decodePrm` on every PRM1 file; then
+    the range search of issue 805 (`PrmRange.rangeM`) against decoding the
+    whole file and selecting (`IdQuery.metasFor`), for the keys of
+    `rangeCheckKeys`: over the file's bytes in memory (the reader of
+    `PrmRangeTheorems.rangeM_bytes`), and through a query session's
+    positioned reads under `--verify none` and `--verify merkle`. -/
 def runPrmCheck (dir0 : String) : IO UInt32 := do
   let dir := (← Harness.GenerationPointer.resolveStoreDirectory dir0).toString
   let mbytes ← IO.FS.readBinFile s!"{dir}/{manifestName}"
   let some m := decodeManifest mbytes.data.toList
     | throw (IO.userError "manifest does not decode")
+  let ssNone ← openSession .none dir
+  let ssMerkle ← openSession .merkle dir
   let mut bad := 0
   for p in [0:4] do
     let a ← artifact m s!"PRM1-{(permNamesArr[p]!).toUpper}"
@@ -1080,8 +1198,24 @@ def runPrmCheck (dir0 : String) : IO UInt32 := do
     let fast := (PrmAt.decodePrmAt bytes).map fun (q, ms) => (q, ms.toList)
     let spec := decodePrm bytes.data.toList
     let same := fast == spec
-    IO.println s!"prm-check {permNamesArr[p]!}: entries {(spec.map (·.2.length)).getD 0}; equal {same}"
-    if !same || spec.isNone then bad := bad + 1
+    -- the range search against the whole file, selected
+    let mut keysChecked := 0
+    let mut rangeBad := 0
+    let mut selected := 0
+    match PrmAt.decodePrmAt bytes with
+    | none => rangeBad := rangeBad + 1
+    | some (_, ms) =>
+      let read : Nat → Nat → ExceptT String Id ByteArray := fun off len => pure (bytes.extract off (off + len))
+      for key in rangeCheckKeys ms do
+        let want := IdQuery.metasFor ms key
+        let pure' := Id.run (do let n ← PrmRange.openM read bytes.size p; PrmRange.rangeM (PrmRange.bytesReader read n) key).run
+        let viaNone ← ssNone.rangeFor p key
+        let viaMerkle ← ssMerkle.rangeFor p key
+        keysChecked := keysChecked + 1
+        selected := selected + want.size
+        if pure'.toOption != some want || viaNone != want || viaMerkle != want then rangeBad := rangeBad + 1
+    IO.println s!"prm-check {permNamesArr[p]!}: entries {(spec.map (·.2.length)).getD 0}; equal {same}; range search: {keysChecked} keys, {selected} entries selected, {rangeBad} different"
+    if !same || spec.isNone || rangeBad > 0 then bad := bad + 1
   return (if bad == 0 then 0 else 1)
 
 /-- `FrameWords.decodeWords` against `decodeColumnAt` on every frame of
@@ -1092,10 +1226,13 @@ def runFrameCheck (dir : String) : IO UInt32 := do
   let mut bad := 0
   for p in [0:4] do
     let lp ← ss.perm p
-    let size := lp.metas.foldl (fun a m => max a (m.offset + m.size)) 0
+    -- every frame: the whole PRM1 file (the query path never reads it whole)
+    let some (_, metas) := PrmAt.decodePrmAt (← IO.FS.readBinFile lp.prmPath)
+      | throw (IO.userError s!"{lp.prmPath}: does not decode as PRM1")
+    let size := metas.foldl (fun a m => max a (m.offset + m.size)) 0
     let bytes ← IO.FS.readBinFile lp.prbPath
     if bytes.size < size then throw (IO.userError s!"{lp.prbPath}: shorter than its blocks")
-    for m in lp.metas do
+    for m in metas do
       let lens := #[m.len0, m.len1, m.len2, m.len3]
       let mut off := m.offset
       for c in [0:4] do

@@ -1,10 +1,10 @@
 # Capability-aware, cost-based planner for data access, computation and service interaction
 
-2026-10-12. Status: direction set by the owner. KR 2.1, 2.2 and 2.3 landed (sections 8, 9, 10).
+2026-10-12. Status: direction set by the owner. KR 2.1, 2.2, 2.3 and 2.4 landed (sections 8, 9, 10, 11).
 
 Tracking:
 - Epic: https://github.com/danbri/factoidal/issues/800
-- OKR batch 2, proposed and waiting for approval: https://github.com/danbri/factoidal/issues/801
+- OKR batch 2, approved by the owner 2026-10-12: https://github.com/danbri/factoidal/issues/801
 - Related: https://github.com/danbri/factoidal/issues/799 (parallel block scans on SBM11, then PushIR)
 
 ## 1. Owner direction (2026-10-12, verbatim)
@@ -182,6 +182,10 @@ imported into Shardborough before the planner can use it.
   `#print axioms` must show only `propext`, `Classical.choice`,
   `Quot.sound`); its dependencies (z3, cvc5, uv) in CI and in the wasm build,
   where it is a proof-time dependency only.
+  Evaluated 2026-10-13 (section 11): Veil needs Lean v4.32.0, and its SMT
+  goals rest on `sorryAx` unless `veil.smt.trust` is set to `false`; it
+  is not added, and the choice is put to the owner. The KR 2.4 state
+  machine is in plain Lean.
 - **Approximate operations:** an LLM result carries an approximation marker
   through the plan. An answer that depends on it is marked, and a theorem
   about exact answers does not apply to it.
@@ -474,7 +478,7 @@ https://github.com/danbri/factoidal/issues/801. It is counted in the
 | `wide-relation-unnamed-output` | `Rewriting.check` admits no fresh variable, so a relation with a column that the requirement does not use gives no plan | the first plan for `?x name ?n` over the (person, name, department) table gives the reference answers |
 | `indirect-binder-inclusion-dependency` | Inclusion dependencies (PDQ constraints) are not modelled, so an access that covers no pattern and only binds an input for a later access is not admitted. This is also the case for answer completeness (section 8, first item): the sources are complete and no plan gives every answer | the first plan for `?x name ?n` over a lookup by subject and a complete scan of members gives the reference answers |
 | `quota-in-admission` | Costs and quotas are not used for admission; no theorem about cost | no plan in the family exceeds a call quota |
-| `runtime-quota-adaptation` | Adaptation: no execution state machine; quotas are not enforced at run time | the run of the first plan stays within each call quota and gives the reference answers |
+| `runtime-quota-adaptation` | Adaptation: no execution state machine; quotas are not enforced at run time. Flipped to an assertion by KR 2.4 (section 11): the driver's run stays within each call quota and gives the reference answers | the run of the first plan stays within each call quota and gives the reference answers |
 | `named-graph-requirement` | Named graphs: the declared dataset has a default graph only | `ofQuery?` accepts `GRAPH <g> { ... }` |
 | `rowfilter-from-expr` | `RowFilter` from a SPARQL `Expr` | `ofQuery?` accepts a FILTER |
 
@@ -600,3 +604,145 @@ Other limits, with no case yet: the cost models are fixed numbers or
 proxies, not measurements; `perCall` of an SBM11 keyed scan does not come
 from the block metadata; the test generation has the default graph only
 (`named-graph-requirement` in section 9 covers requirements with GRAPH).
+
+## 11. KR 2.4: execution state machine
+
+Landed 2026-10-13 for OKR batch 2, KR 2.4
+(https://github.com/danbri/factoidal/issues/801). Modules
+`formal/lean4/L4Factoidal/Planner/Exec.lean` (the state machine, its
+invariants, termination and the driver) and `Planner/ExecTests.lean`
+(`#guard` cases and the axiom audit). Test cases in
+`Harness/PlannerTest.lean`, run by `lake exe l4planner-test`. The KR asked
+first for an evaluation of Veil as the framework (section 4); the state
+machine is in plain Lean, so the KR does not wait on that decision.
+
+### Veil evaluation
+
+Checked 2026-10-13 against Veil `main` at commit `529eb3bd` (2026-10-12),
+cloned with `git clone --depth 1 https://github.com/verse-lab/veil.git`,
+and its pinned dependencies `lean-smt` (branch
+`v4.32.0-veil-no-mathlib`, commit `922af463`) and `lean-cvc5` (commit
+`a3ffc29a`). The clones and the cvc5 release probe below worked through
+this container's proxy.
+
+| Check | Evidence | Result |
+|---|---|---|
+| Toolchain | Veil's `lean-toolchain` is `leanprover/lean4:v4.32.0`; this tree's is `v4.33.1`. Every dependency in Veil's `lakefile.lean` is pinned for v4.32.0: `batteries` and `aesop` at tag `v4.32.0`, `lean-smt` at `v4.32.0-veil-no-mathlib`, `Loom` at `v4.32.0-for-veil`, plus `ProofWidgets4`, `VerifiedHAMT`, and inherited `Qq`, `lean-auto`, `lean-cvc5`. `git ls-remote --heads --tags`: no v4.33 branch or tag in `verse-lab/veil`, `verse-lab/lean-smt` or `verse-lab/loom` (only `v4.32.0-veil*` and `v4.32.0-for-veil*`); `batteries` and `aesop` have `v4.33.0`. Lake builds every package of the workspace with the root package's toolchain. | Fails. A Lake dependency on Veil needs this tree on v4.32.0, or a port of Veil, Loom and lean-smt to v4.33.1. A trial build of Veil under v4.33.1 was not run: it fetches and builds Veil and its nine dependencies, several GB on a disk shared by other sessions (4.4 GB free). |
+| Proofs from SMT | `register_option veil.smt.trust` has `defValue := true` (`Veil/Base.lean:144`). With trust, lean-smt closes the goal with `mv.admit (synthetic := false)` (`Smt/Tactic/Smt.lean:246-251`), which is `sorryAx`; Veil counts such goals as `proofHasSorry` and warns "Trusting SMT solver for N goals" (`Veil/Frontend/DSL/Module/Elaborators/Verification.lean:160-166`). With `set_option veil.smt.trust false`, cvc5 produces a proof and lean-smt reconstructs a Lean term that the kernel checks, with three exceptions: a proof step with no reconstructor becomes a new goal (`addTrust`, `Smt/Reconstruct.lean:200`; `replaceMainGoal mvs`, `Smt/Tactic/Smt.lean:445`); the reconstruction lemma `geq_tighten` for rationals contains a `sorry` (`Smt/Reconstruct/Rat/Rewrites.lean:58-59`), so a proof that uses it depends on `sorryAx`; and `native := true` adds `Lean.ofReduceBool` (`Smt/Reconstruct/Builtin.lean:294`; Veil does not set it). Veil's check of a theory against its assumptions defaults to `first \| decide \| native_decide` (`Veil/Frontend/DSL/Module/Elaborators/Core.lean:623`). | Fails by default. With `veil.smt.trust false` a theorem can pass this tree's rule (`#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only), but only `#print axioms` on each theorem shows it; no goal was run here. |
+| Dependencies | Veil 1.0 (tag `v1.0.0`, Lean v4.15.0; the CAV 2025 version) needed a `z3` binary, a `cvc5` binary and the Python packages `z3-solver`, `multiprocess`, `sexpdata` (its `README.md`, items 3-5). Current `main` needs no z3, no Python and no uv: `lean-cvc5` downloads static cvc5 1.3.2 libraries at build time from `https://github.com/abdoo8080/cvc5/releases/download/cvc5-1.3.2/cvc5-Linux-x86_64-static.zip` (its `lakefile.lean:21-75`; `curl -I -L` gives HTTP 200 here) and needs `clang`, `lld`, `libc++` (Veil `README.md`, "Build"); the `Veil` library target needs Node.js and npm (`needs := #[widgetJsAll]`, which runs `npm clean-install` and `npm run build`). | CI (danbri/factoidal-builds, GitHub-hosted runners with clang and Node) can install these, with network access to GitHub release assets. This tree has no Lake dependency today (`lake-manifest.json`: `"packages": []`). The wasm build compiles the modules its roots import; a Veil-based module would have to be in a separate Lake library that no wasm or executable root imports. |
+| Network | `git clone` of the three repositories and the `curl -I` probe succeeded. | No block. |
+
+Decision: Veil is not added to `lakefile.lean`. Two of the three checks
+fail. The decision is for the owner. Options: (a) keep the planner's
+state machines in plain Lean, as this landing does; (b) a separate
+proof-only Lake project on v4.32.0, outside the library and the wasm
+build, for Veil's model checking and SMT runs over a copy of the state
+machine, with no theorem record entry unless `veil.smt.trust false` and
+`#print axioms` pass; (c) wait for a Veil release on v4.33.
+
+### State, actions, Next
+
+TLA+ form: `Init`, one predicate per action on a pair of states, and
+`Next`, the disjunction of the eight actions.
+
+| Part | Lean | Content |
+|---|---|---|
+| State | `Exec.State` | current plan (a `Rewriting` of the family), the alternatives not yet tried, the step index, `pending` (rows of the plan prefix that still need a call of the current access), `next` (rows the access gave so far), the call phase (`idle`, `waiting`, `failed`), retries of the current call, `calls` (call count per catalog index), the output, the status (`running`, `done`, `stopped`), the number of switches. Rows carry the approximation marker of `Plan.exec`. |
+| Init | `Init fam` | the first plan of the family, the others as alternatives, the empty solution mapping pending, no calls. |
+| Call | `Call` | call the current access for the head pending row: only when every required input is bound in the row (`Access.inputs?` gives a value) and the source's call quota is not exhausted (`quotaOk`); the call is counted. |
+| Receive | `Receive` | the call answers with the source implementation's tuples; the rows they give, exactly as `Plan.exec` gives them for the access, are added to `next`. |
+| Fail | `Fail` | the call fails (environment action). |
+| Retry | `Retry` | call again after a failure: at most `Config.maxRetries` times for one row, and only within the quota; counted. |
+| Advance | `Advance` | no pending row is left: the next access runs over `next`. |
+| Adapt | `Adapt` | choose any alternative of the family and start it from the empty mapping; the call counts are kept. |
+| Finish | `Finish` | after the last access: the requirement's filters and projection (`finalRows`); status `done`. |
+| Stop | `Stop` | status `stopped`, no output. |
+
+`Adapt` and `Stop` are enabled in every running state: the invariants hold
+for any choice inside the family. The driver `stepExec` chooses one
+enabled action: it calls when it can, takes the fault schedule
+(`faults i n`: call `n` of source `i` fails) for the environment, retries
+within the bound, and switches to the first alternative, or stops, only
+when the current call cannot be made (an input unbound, the quota used
+up, the retries used up).
+
+### Theorems (`Exec.lean`)
+
+| Theorem | Statement | Status |
+|---|---|---|
+| `init_inv`, `next_inv`, `reachable_inv` | `Init → Inv`; `Inv ∧ Next → Inv'`; every state of a trace from `Init` by `Next` satisfies `Inv` (induction on traces, `Reachable`). | Proved. |
+| `reachable_sound` (I1) | Under `ExactSourcesSound` and the rewriting check of each family member, every unmarked output row of a reachable state is, as a partial function, an answer of the requirement over the declared graph. From `rewriting_sound`. | Proved. |
+| `reachable_quota` (I2) | In a reachable state, no source's call count exceeds its call quota. | Proved. |
+| `reachable_output` | When the status is `done`, the output IS the run (`Plan.run`, as a list) of the current plan, and that plan is a member of the family. The machine loses no answer of the plan it finishes with, and adaptation stays inside the family. | Proved. |
+| `reachable_unmarked_of_allExact` | With only exact sources, no output row is marked. | Proved. |
+| `next_measure_lt`, `next_wf` | Every action decreases the measure (status, alternatives left, accesses left, pending rows, retries left, phase) in the lexicographic order, so `Next` has no infinite chain. | Proved. |
+| `stepExec_next`, `runFrom_reachable`, `runFrom_final` | Each driver step is a `Next` step; the driver's states are reachable; the driver ends with `done` or `stopped`. `runFrom` is defined by well-founded recursion on the measure and compiles to a loop (`goto _start` in the emitted C). | Proved. |
+| `run_spec` | For `run` over the family of `search`: the status is `done` or `stopped`, I2, I1, and a `done` output is the run of a member of `search`'s result. | Proved. |
+
+The inductive invariant `Inv`: the plan and the alternatives are members
+of the family; `Frontier` (the rows of the plan prefix before the
+current access are the processed rows `P` followed by `pending`, and
+`next` is what the access gave for `P`; after the last access, `pending`
+is the whole run of the access chain); the output is the plan's run when
+`done` and empty otherwise; I2; `retries ≤ maxRetries`; a call in flight
+has every required input bound (`InflightOk`).
+
+Check against anti-pattern 29: the hypotheses of `reachable_sound` are
+the soundness of each exact source against its declared extension, the
+Boolean rewriting check of each family member (`family_check` discharges
+it from `search_check`), and reachability from `Init` by `Next`. None
+mentions the output or `Requirement.answers`. `next_inv` takes `Inv` of
+the earlier state, which is the induction step; `init_inv` is its base.
+
+`#print axioms` for the thirteen theorems of `Planner/ExecTests.lean`:
+`propext`, `Classical.choice`, `Quot.sound` only. No `sorry`, no
+`native_decide`, no `partial`, no user `axiom`, no `import Std`, no raised
+heartbeats. `lake build` of the module: 1.7 s.
+
+### Tests
+
+`#guard` (`Planner/ExecTests.lean`, over the catalog of
+`Planner/Tests.lean`): the run gives the reference answers with 1 call of
+the scan and 2 of the lookup; with a call quota of 1 it stops after 1
+call with no output; a failed first call is retried (3 calls) and the
+answers are the reference; with no retry allowed the failure stops the
+run; approximate rows are marked.
+
+`lake exe l4planner-test`, cases of KR 2.4:
+
+| Case | Catalog | Checks |
+|---|---|---|
+| `exec-quota-stops` | scan, lookup with call quota 1 | the static first plan exceeds the quota; the run stops, 1 call of the lookup, no output |
+| `runtime-quota-adaptation` | scan, lookup with call quota 1, name scan | the run switches plan and gives the reference answers within every quota (the KR 2.2 expected failure, now an assertion) |
+| `exec-failure-adaptation` | scan, lookup whose every call fails, name scan | 2 calls of the lookup (call and retry), 1 switch, reference answers |
+| `exec-retry-succeeds` | scan, lookup; call 1 fails | no switch, 4 calls of the lookup, reference answers |
+| `exec-retry-bound-stops` | scan, lookup; call 1 fails; `maxRetries := 0` | stopped, no output |
+| `exec-approximate-marked` | scan, LLM-like age source | every output row marked |
+| `exec-exact-before-approximate` | scan, LLM-like and exact age sources | reference answers, unmarked |
+| `exec-not-answerable` | object lookup only | no plan family, no run |
+| `exec-equals-plan-run` | the 18 answerable KR 2.2 cases whose first plan is within the quotas | the output equals the first plan's `Plan.run` rows (same list), no switch |
+
+Each case also checks that every call count is within its quota.
+
+Result 2026-10-13: planner: 67 pass, 0 fail, 17 expected-fail (out of
+84). KR 2.2 part: 25 pass, 0 fail, 6 expected-fail (out of 31); KR 2.3
+part unchanged: 33 pass, 0 fail, 9 expected-fail (out of 42); KR 2.4
+part: 9 pass, 0 fail, 2 expected-fail (out of 11).
+
+### Open, with expected-failure cases
+
+Each is an `xfail` in `Harness/PlannerTest.lean` that names
+https://github.com/danbri/factoidal/issues/801; an XPASS makes the run
+exit 1.
+
+| xfail case | Open item | What the case asserts |
+|---|---|---|
+| `exec-row-quota` | `CostModel.rowQuota` is not enforced at run time | a scan with a row quota of 1 that answers 3 rows gives at most 1 row, or the run stops |
+| `exec-reuse-after-adaptation` | After a switch the new plan makes again the calls whose answers are known (no cache of call results) | in the `runtime-quota-adaptation` run the scan is called once |
+| `quota-in-admission` (section 9) | Quotas are not used for admission, so the first plan can be one that the run must leave | no plan in the family exceeds a call quota |
+| `sbm11-io-at-call-time` (section 10) | Capability implementations are pure functions; calls through IO are not modelled | `Plan.exec` reads SBM11 bytes during the run |
+
+Other limits, with no case yet: the driver takes the alternatives in
+family order, without measurements (the runtime planner of section 3 is
+batch 3); there is no fairness condition and no temporal property beyond
+termination (the assume-guarantee composition of skill rule 10).

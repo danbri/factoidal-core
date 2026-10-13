@@ -371,6 +371,7 @@ import L4Factoidal.Storage.Sbm11.BlockTheorems
 import L4Factoidal.Storage.Sbm11.Manifest
 import L4Factoidal.Storage.Sbm11.ManifestTheorems
 import L4Factoidal.Storage.Sbm11.PrmAt
+import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.FrameWords
 import L4Factoidal.Storage.Sbm11.OptJoin
@@ -380,8 +381,10 @@ import L4Factoidal.Storage.Sbm11.Sip
 import L4Factoidal.Storage.Sbm11.SipTheorems
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdQueryTests
+import L4Factoidal.Storage.Sbm11.IdPostTheorems
 import L4Factoidal.Storage.Sbm11.ScanTheorems
 import L4Factoidal.Storage.Sbm11.PrmAtTheorems
+import L4Factoidal.Storage.Sbm11.PrmRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameWordsTheorems
 import L4Factoidal.Storage.Sbm11.FrameRangeTheorems
 import L4Factoidal.Storage.Sbm11.FrameLocalTheorems
@@ -742,6 +745,8 @@ import L4Factoidal.Planner.Kinds.JsonTerms
 import L4Factoidal.Planner.Kinds.Rest
 import L4Factoidal.Planner.Kinds.Mcp
 import L4Factoidal.Planner.Kinds.Tests
+import L4Factoidal.Planner.Exec
+import L4Factoidal.Planner.ExecTests
 import L4Factoidal.TailRecursionTwins
 import L4Factoidal.OWL.ComprehensionTheorems
 import L4Factoidal.RDF.GraphPatterns

@@ -1314,6 +1314,73 @@ def DenOk (spec : ScanSpec) (fill : Bool) (den : Chunk → List (List Nat)) : Pr
     (constOutOf spec b (blockPlan spec b)) (needOf spec (blockPlan spec b) (constOutOf spec b (blockPlan spec b)))
     bytes starts = .ok ch → den ch = tuples ch
 
+/-! ## The loop over the selected entries (issue 805)
+
+`scanFoldM` asks the store for the PRM1 entries of the selected blocks
+(`Store.blocksForRange`) and loops over their positions `0 .. sel.size - 1`.
+When the store answers `metasFor metas key` (`PrmRangeTheorems.rangeM_array`,
+`rangeM_bytes`), that loop is the loop over the block numbers
+`blocksFor metas key` with the entries read from `metas`. -/
+
+/-- A loop over the positions of `idx` whose body reads position `j` as
+    `idx[j]!` is the loop over `idx`. -/
+theorem forIn_range_idx {m : Type → Type} [Monad m] [LawfulMonad m] {β : Type}
+    (h : Nat → β → m (ForInStep β)) :
+    ∀ (idx : List Nat) (g : Nat → β → m (ForInStep β)), (∀ j, j < idx.length → g j = h idx[j]!) →
+      ∀ (s : β), forIn (List.range idx.length) s g = forIn idx s h := by
+  intro idx
+  induction idx with
+  | nil => intro g _ s; rfl
+  | cons a t ih =>
+    intro g hg s
+    rw [List.length_cons, List.range_succ_eq_map, List.forIn_cons, List.forIn_cons,
+      hg 0 (by simp), List.getElem!_cons_zero]
+    congr 1
+    funext r
+    cases r with
+    | done b => rfl
+    | yield b =>
+      show forIn (List.map Nat.succ (List.range t.length)) b g = forIn t b h
+      rw [List.forIn_map]
+      exact ih (fun j => g (Nat.succ j))
+        (fun j hj => by rw [hg (j + 1) (by simp; omega), List.getElem!_cons_succ]) b
+
+/-- A loop body that reads its array only at the position it is given runs
+    the same over `metasFor metas key` (by position) as over `metas` (by the
+    block numbers of `blocksFor metas key`). -/
+theorem forIn_metasFor_of {m : Type → Type} [Monad m] [LawfulMonad m] {β : Type}
+    (body : Array BlockMeta → Nat → β → m (ForInStep β))
+    (hbody : ∀ (a a' : Array BlockMeta) (i i' : Nat), a[i]! = a'[i']! → body a i = body a' i')
+    (metas : Array BlockMeta) (key : Array UInt64) (s : β) :
+    forIn (List.range (metasFor metas key).size) s (body (metasFor metas key)) =
+      forIn (blocksFor metas key).toList s (body metas) := by
+  have hsz : (metasFor metas key).size = (blocksFor metas key).toList.length := by simp [metasFor]
+  rw [hsz]
+  apply forIn_range_idx
+  intro j hj
+  apply hbody
+  have hj' : j < (blocksFor metas key).size := by simpa using hj
+  simp [metasFor, getElem!_pos, hj']
+
+/-- `scanBlockM` reads its array only at the position it is given. -/
+theorem scanBlockM_congr {m : Type → Type} [Monad m] {σ : Type} (st : Store m) (spec : ScanSpec) (fill : Bool)
+    (f : σ → Chunk → ExceptT String m (σ × Bool)) (sortVar : Option String) (ox : OvCtx)
+    (a a' : Array BlockMeta) (i i' : Nat) (h : a[i]! = a'[i']!) :
+    scanBlockM st spec fill f a sortVar ox i = scanBlockM st spec fill f a' sortVar ox i' := by
+  funext s
+  unfold scanBlockM
+  rw [h]
+
+/-- The loop of `scanFoldM` over the entries `metasFor metas key` is the loop
+    over the blocks `blocksFor metas key`. -/
+theorem forIn_metasFor {m : Type → Type} [Monad m] [LawfulMonad m] {σ : Type} (st : Store m)
+    (spec : ScanSpec) (fill : Bool) (f : σ → Chunk → ExceptT String m (σ × Bool)) (sortVar : Option String)
+    (ox : OvCtx) (metas : Array BlockMeta) (key : Array UInt64) (s : ScanState σ) :
+    forIn (List.range (metasFor metas key).size) s (scanBlockM st spec fill f (metasFor metas key) sortVar ox) =
+      forIn (blocksFor metas key).toList s (scanBlockM st spec fill f metas sortVar ox) :=
+  forIn_metasFor_of (fun a i => scanBlockM st spec fill f a sortVar ox i)
+    (fun a a' i i' h => scanBlockM_congr st spec fill f sortVar ox a a' i i' h) metas key s
+
 /-- One block of a scan with no overlay over an in-memory store: the scan
     goes on, with the block's tuples appended. -/
 theorem scanBlockM_step (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
@@ -1377,7 +1444,8 @@ theorem forIn_blocks (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fi
 theorem scanFoldM_den (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
     (den : Chunk → List (List Nat)) (hden : DenOk spec fill den)
     (prb : ByteArray) (ms : List BlockMeta)
-    (hmetas : st.metas spec.perm = pure ms.toArray)
+    (hrange : st.blocksForRange spec.perm spec.key = pure (metasFor ms.toArray spec.key))
+    (hcount : st.blockCount spec.perm = pure ms.length)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
     (hovl : (st.ovl spec.perm).isEmpty = true)
     (hadm : prmAdmitted spec.perm ms = true)
@@ -1408,16 +1476,16 @@ theorem scanFoldM_den (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (f
     · omega
     · omega
   unfold scanFoldM
-  rw [hmetas, pure_bind]
+  rw [hrange, pure_bind, hcount, pure_bind]
   obtain ⟨s', hfor, hacc, hstop⟩ := forIn_blocks st spec hspec fill den hden prb ms hprb hfits hblocks
     (match spec.outCols[0]? with
       | some c => if c == spec.key.size then spec.outVars[0]? else none
       | none => none) _ hon
     (blocksFor ms.toArray spec.key).toList hLk
-    { acc := [], stats := { blocksTotal := ms.toArray.size }, insPos := 0, stopped := false }
+    { acc := [], stats := { blocksTotal := ms.length }, insPos := 0, stopped := false }
   refine ⟨s'.stats, ?_⟩
   simp only []
-  rw [← Array.forIn_toList]
+  rw [forIn_metasFor]
   erw [hfor]
   rw [pure_bind]
   simp only [hon, Bool.false_and, Bool.false_eq_true, if_false]
@@ -1465,27 +1533,29 @@ theorem scanFoldM_den (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (f
     (`decodeBlockAt`). -/
 theorem scanFoldM_tuples (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec) (fill : Bool)
     (prb : ByteArray) (ms : List BlockMeta)
-    (hmetas : st.metas spec.perm = pure ms.toArray)
+    (hrange : st.blocksForRange spec.perm spec.key = pure (metasFor ms.toArray spec.key))
+    (hcount : st.blockCount spec.perm = pure ms.length)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
     (hovl : (st.ovl spec.perm).isEmpty = true)
     (hadm : prmAdmitted spec.perm ms = true)
     (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols) :
     ∃ stats, scanFoldM st spec fill [] (collectWith tuples) =
       pure (((ms.flatMap (blockRows prb)).filter (keep spec)).map (proj spec), stats) :=
-  scanFoldM_den st spec hspec fill tuples (fun _ _ _ _ _ _ => rfl) prb ms hmetas hprb hovl hadm hblocks
+  scanFoldM_den st spec hspec fill tuples (fun _ _ _ _ _ _ => rfl) prb ms hrange hcount hprb hovl hadm hblocks
 
 /-- **L4e, columns.** With `fill = true` (the BGP and join path) the columns
     of the chunks alone hold the same tuples. -/
 theorem scanFoldM_columns (st : Store Id) (spec : ScanSpec) (hspec : SpecOk spec)
     (prb : ByteArray) (ms : List BlockMeta)
-    (hmetas : st.metas spec.perm = pure ms.toArray)
+    (hrange : st.blocksForRange spec.perm spec.key = pure (metasFor ms.toArray spec.key))
+    (hcount : st.blockCount spec.perm = pure ms.length)
     (hprb : ∀ off len, st.prb spec.perm off len = pure (prb.extract off (off + len)))
     (hovl : (st.ovl spec.perm).isEmpty = true)
     (hadm : prmAdmitted spec.perm ms = true)
     (hblocks : ∀ b ∈ ms, ∃ cols, decodeBlockAt prb b b.offset = .ok cols) :
     ∃ stats, scanFoldM st spec true [] (collectWith colTuples) =
       pure (((ms.flatMap (blockRows prb)).filter (keep spec)).map (proj spec), stats) := by
-  apply scanFoldM_den st spec hspec true colTuples _ prb ms hmetas hprb hovl hadm hblocks
+  apply scanFoldM_den st spec hspec true colTuples _ prb ms hrange hcount hprb hovl hadm hblocks
   intro sortVar b bytes starts ch hch
   obtain ⟨cs, n, rfl⟩ := blockChunk_ok b bytes starts ch sortVar hch
   exact chunkOfCols_colTuples spec sortVar _ _ (by simp [constOutOf]) cs n
