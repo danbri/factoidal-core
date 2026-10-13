@@ -167,8 +167,12 @@ def shortest_digits(a, single):
     Float.toString choose the shortest such digits (JDK-4511638); Python's
     repr does the same for doubles."""
     r = repr(a)
+    if not single and len(Decimal(r).normalize().as_tuple().digits) == 1:
+        # Java considers decimals of at least two digits: the closest one.
+        r = f"{a:.1e}"
     if single:
-        for prec in range(1, 10):
+        r = f"{a:.1e}"
+        for prec in range(2, 10):
             r = f"{a:.{prec - 1}e}"
             if struct.unpack("<f", struct.pack("<f", float(r)))[0] == a:
                 break

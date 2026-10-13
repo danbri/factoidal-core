@@ -70,8 +70,15 @@ generation (`factoidal compact` and `factoidal update` exit 3:
 https://github.com/danbri/factoidal/issues/641); the native
 `l4block-shard-compact` of the source tree does it. Updates through the
 server work.
-TDB2 databases cannot be read: export them with `tdb2.tdbdump` and pack the
-N-Quads (https://github.com/danbri/factoidal/issues/834).
+TDB2 databases: the native Lean CLI reads them in place
+(`l4factoidal tdb2-dump DB`, `l4factoidal query DB --format tdb2 ...`; output
+equal to `tdb2.tdbdump` on the tested databases, record
+`docs/designissues/2026-10-13-tdb2-format.md`). The npm `factoidal serve` has
+no `--tdb2` option yet: export with `tdb2.tdbdump` and pack the N-Quads
+(https://github.com/danbri/factoidal/issues/834, xfail in
+`test/fuseki-compat.test.mjs`). Note that TDB2 itself changes the lexical form
+of numeric, boolean and date literals (`"0"^^xsd:boolean` reads back as
+`"false"`), so a dump is not always the data that was loaded.
 
 ## Not supported
 

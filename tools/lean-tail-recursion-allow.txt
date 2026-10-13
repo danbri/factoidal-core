@@ -1447,3 +1447,4 @@ L4Factoidal_Syntax_RdfXml_serializeNodeTF  # (b) element nesting of the rdf:pars
 L4Factoidal_Syntax_RdfXml_serializeNodesTLoop  # (b) element nesting, as serializeNodeTF; the siblings of one element are a goto _start in the emitted C (csimp serializeNodesT_eq_fast)
 L4Factoidal_Syntax_RdfXml_litNeed  # (s) the fuel the fuelled serializeNode needs to write a node completely; read by the theorems serialize_fuel_eq and serializeLiteralContent_eq_fuel only, no function of the emitted C outside RdfXml.c calls it (checked 2026-10-13)
 L4Factoidal_Syntax_RdfXml_litNeeds  # (s) as litNeed, for a child list
+L4Factoidal_Tdb2_readStruct  # (c) one call per Thrift struct nesting level, bounded by its depth argument (4); the per-field loop is a for loop (issue 834)

@@ -835,3 +835,15 @@ Format registry rows (wire version 11):
    index path silently fell back to the scan. `l4block-literal-gate` reads
    `literalIndexes` from the `storeOpen` envelope and fails when the handle
    opened with sidecars retained fewer literal indexes than blocks.
+
+## Cross-backend differential gate and Jena TDB2 reader (2026-10-13)
+
+- `tests/stack/backend_diff.py`: every SELECT/ASK W3C SPARQL 1.1
+  QueryEvaluationTest through the Lean reference, a Shardborough store,
+  Jena TDB2 and Jena in-memory, compared by result equivalence; expected
+  disagreements with issues in `tests/stack/backend_diff/expected.tsv`.
+  Needs Jena (`SOTA_DL`), about 20 minutes.
+- `l4factoidal tdb2-dump DB` and `--format tdb2`: read a Jena TDB2 database
+  in place; `tests/tdb2/run.sh` compares with `tdb2.tdbdump`.
+- Record: `docs/designissues/2026-10-13-tdb2-format.md`
+  (https://github.com/danbri/factoidal/issues/834).
