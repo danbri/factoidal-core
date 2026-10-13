@@ -226,7 +226,7 @@ issue and its expected-failure row in `tests/stack/owl_real_gate.py`
 | Lean `parse --format rdfxml`, GO basic 2026-08-05 (118,080,840 bytes; fetched at run time, not vendored) | under `prlimit --as`: `std::bad_alloc` after 0.57 s. With the 6 GB resident-set watchdog: 1,283,913 triples, 52 s (32 s CPU), 4,919 MB peak, 43.7 bytes per document byte; the Cell Ontology: 52.6. F\* `count`: 33.6 s, 831 MB | https://github.com/danbri/factoidal/issues/771 | `cl-basic-parse-memory` (15 bytes per byte) |
 | Lean species check (`l4owl-species`), QUDT | finished, but 253 s CPU (323 s wall); prefixes: 32,000 lines 0.91 s, 65,000 lines 31.2 s | https://github.com/danbri/factoidal/issues/766 | `qudt-species` (60 s bound) |
 | F\* `entail --regime OWL-RL` on wine and food (2,709 triples), RO, schema.org, the Cell Ontology and QUDT | TIMEOUT at 300 s on all five; Lean on the first four: 5.8 s, 8.0 s, 4.6 s, 26.7 s | https://github.com/danbri/factoidal/issues/765 | `wine-closure-fstar` (skipped when the F\* binary is absent) |
-| Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
+| Lean `owl-entails`, the unrelated pairs of RO and the Cell Ontology. ✅ Repaired 2026-10-12, section 9: all 40 decided, all agree with HermiT | the first unrelated pair of each: TIMEOUT at 600 s; the other 19 of each NOT_RUN. The 20 stated pairs of each: `true`, 8 to 24 s | https://github.com/danbri/factoidal/issues/760 (the same refuter cost) | `cl-basic-consistent` |
 
 QUDT under the resident-set watchdog (`--rss-cap-mb 6000`, no address-space
 cap, `--pairs 5`, Lean only; `OUT/results.jsonl` of that run):
@@ -453,6 +453,12 @@ disjoint unions whose certificate the rung still finds).
 | RO 8,000 lines | not finished in 200 s (issue 760) | 2.33 s (2.54 s), 65 MB | — | — | — |
 | RO, whole (11,703 triples) | not finished in 600 s | 9.89 s (10.2 s), 77 MB | 9.1 s | 0.57 s (3 steps) | 29.8 s, 1.6 GB |
 
+Callgrind on the repaired command over the first 20,000 lines of the Cell
+Ontology: the OWL 2 RL closure 55.3 % of the instructions
+(`stepConclusionsS` 35.1 %, `Index.insertAll` 18.3 %), the refuter 14.1 %
+(`collectAxioms` 5.9 %, `initState` 4.2 %, `search` 2.8 %), the class-size
+rung below 0.1 %, reading the N-Triples file 26.3 %.
+
 The refuter is no longer the cost on either ontology: on the whole Cell
 Ontology the search is 0.55 s of 13.3 s and on RO 0.57 s of 9.9 s. The cost
 now is the OWL 2 RL closure, which grows about 2.6 to 3.0 times per doubling
@@ -472,7 +478,47 @@ nominal clash checks are 3.9 s of it).
 
 ### 9.5 Gates
 
-(filled in at the end of the landing)
+- `tests/stack/owl_real_gate.py --only cl-basic-consistent,ro-consistent`:
+  2 pass, 0 fail, 0 expected-fail (out of 2). `cl-basic-consistent` 15.17 s
+  wall, 447 MB, `true`; its expected-failure mark is removed.
+  `ro-consistent` (new) 12.61 s wall, 77 MB, `true`. Both rows now have a
+  60 s bound. The other rows are unchanged.
+- `tests/stack/lean_scaling.py --only owl-consistent-cl` (new row): 1 pass,
+  0 fail, 0 expected-fail (out of 1). 1.320 s, 3.180 s and 8.378 s of CPU at
+  10,000, 20,000 and 40,000 lines: 2.4 and 2.6 per doubling (bound 3.0),
+  6.3 for 4x input (bound 9.0).
+- OWL DL catalogs (`tools/lean-scoreboard.sh --only l4owl-probe`, before at
+  `fb263d6f` and after, one run each, `MIMALLOC_ARENA_RESERVE=64MiB`):
+  all 77 table rows identical (pass, fail, skip/other, total), and every
+  runner log identical once the timing fields are removed: every summary
+  line, failing id, `PROVED-BY-CERTIFICATE` and `REFUTATION-PROFILE` line.
+  The certificate counts did not move: type-inconsistency 50
+  certificate-checked, 27 unchecked (out of 77 decided by refutation);
+  type-positive-entailment and type-consistency 32 and 23 (out of 55);
+  syntax-dl 72 and 41 (out of 113). DL type-inconsistency stays 126 pass,
+  1 fail, 1 skip (out of 128). One log line differs: the RDF-Based job (which
+  runs no refuter) reported a closure time cap on `WebOnt-miscellaneous-001`
+  in the run before and none in the run after; its rows are identical, and
+  the cap is the 30 s wall-clock budget of a run that shared the machine
+  with the benchmark below.
+- HermiT agreement (`tools/owl-real-hermit.py` over a new
+  `tools/owl-real-bench.py --no-fstar` run on the repaired binary): 314
+  Lean verdicts compared, 314 agree, 0 Lean `true` where HermiT says `false`,
+  0 Lean `false` where HermiT says `true`. The 40 new ones are the RO and
+  Cell Ontology pairs that were TIMEOUT or NOT_RUN on 2026-10-10. QUDT stays
+  undecided under the address-space cap
+  (https://github.com/danbri/factoidal/issues/759). Against the run of
+  2026-10-10, 322 Lean verdicts are unchanged and 42 changed, each from
+  TIMEOUT or NOT_RUN to a verdict. `owl-consistent` of schema.org went from
+  44.3 s to 4.0 s wall.
+- `tools/lean-tail-recursion-audit.py --gate` (stale IR removed first): pass,
+  with three new allow-list lines: the occurrence walk
+  `ceSubHashesInto`/`ceListSubHashesInto` (class-expression nesting) and the
+  profiler's copy of the search (one frame per expansion step).
+- `tools/lean-hygiene-audit.py --build-log`: clean (no `sorry`, axiom,
+  `native_decide`, `unsafe` or `implemented_by`; `partial def` 164, the
+  baseline). `Wasm/native-smoke.sh`: 350 pass, 0 fail (out of 350). Full
+  `lake build`: exit 0.
 
 ## 8. Reproduce
 
