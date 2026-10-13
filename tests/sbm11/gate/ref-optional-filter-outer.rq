@@ -1,4 +1,7 @@
 PREFIX ex: <http://ex.org/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 # Refused: a FILTER in the OPTIONAL reads ?a, which only the base binds.
+# The reference fallback evaluates the FILTER on the merged row (SPARQL 1.1
+# section 18.2.2.5, https://github.com/danbri/factoidal/issues/815): ?n is
+# bound for ex:a, ex:b and ex:d, not for ex:c, ex:e and ex:f.
 SELECT ?s ?a ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } }

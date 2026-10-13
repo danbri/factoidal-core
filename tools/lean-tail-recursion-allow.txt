@@ -1131,6 +1131,7 @@ L4Factoidal_SPARQL_pGroupByList  # UNTRIAGED https://github.com/danbri/factoidal
 L4Factoidal_SPARQL_pGroupConcat  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1292
 L4Factoidal_SPARQL_pGroupCondition  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2562
 L4Factoidal_SPARQL_pGroupGraphPattern  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1454
+L4Factoidal_SPARQL_pGroupGraphPatternParts  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 49, L4Factoidal/SPARQL/Parser.lean:1549; (b) for its own frame: the OPTIONAL arm of pGgpBody calls it in place of pGroupGraphPattern (issue 815), one frame per nested OPTIONAL group, the same frames as before; the cycle is pGgpBody's
 L4Factoidal_SPARQL_pHavingList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:2632
 L4Factoidal_SPARQL_pIfExpr  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:1177
 L4Factoidal_SPARQL_pInList  # UNTRIAGED https://github.com/danbri/factoidal/issues/753 length, cycle of 48, L4Factoidal/SPARQL/Parser.lean:904
