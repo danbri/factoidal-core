@@ -288,6 +288,42 @@ STEPS="answers timing report" DATASETS=dbpedia tools/bench/three-engines/run.sh
   running and starting it was refused) the QLever columns are the olympics
   oracle answers and the recorded 2026-10-11 numbers only.
 
+### Lean against state-of-the-art engines — `tools/sota-bench.py`
+
+Key result 2.7 of https://github.com/danbri/factoidal/issues/768 (issue
+https://github.com/danbri/factoidal/issues/811). Record and table:
+[`docs/designissues/2026-10-12-sota-reference.md`](../../docs/designissues/2026-10-12-sota-reference.md).
+Parse (N-Triples, Turtle, RDF/XML), statement count, in-memory SPARQL (four
+queries), RDFC-1.0 (three shapes), OWL RL closure and OWL 2 DL consistency on
+real ontologies: Lean (`lean`, the streaming reader `lean-stream`, the npm
+wasm `npm`) against Oxigraph (pyoxigraph), Serd, Apache Jena (riot, arq, OWL
+Micro), rdf-canonize and HermiT, on the same file, three runs under
+`/usr/bin/time -v` with a 600 s cap, answers compared. `--install` fetches the
+reference engines into `/tmp/sota-dl` (digests in the script); nothing is
+vendored. `tests/perf/sota_gate.sh` re-runs the Lean rows against the recorded
+JSON lines (CPU time and peak resident set, 25 %) and carries the expected
+failures of the rows over 10.
+
+Traps met while building it (2026-10-13):
+
+- **The Lean command line ends its output with an empty line.** Counting
+  `\n` gave 100,001 statements against 100,000 and every canonical N-Quads
+  hash differed from Oxigraph's. The harness counts and hashes non-empty lines.
+- **Exit status 1 can be an answer.** `l4factoidal owl-consistent` exits 1 for
+  `false` and `unknown`; HermiT exits 1 with `InconsistentOntologyException`
+  (QUDT). A harness that reads exit 1 as a failure loses the verdict.
+- **`riot --count` writes to standard error, with thousands separators**
+  (`Triples = 87,468`); a digit regex read 87.
+- **A memory ratio against Serd measures the process, not the parser.** Serd
+  holds 1.8 MB, a Lean process 19.5 MB before it reads anything. The report
+  divides the memory above each engine's own `start` row as well, and lists a
+  row only when both ratios are over 10.
+- **`pkill -f PATTERN` matches the shell that runs it** when PATTERN is in its
+  own command line: it killed the tool call (exit 144). Kill by PID.
+- **The machine's load moved from 4 to 30 within the run** (another agent
+  built the wasm module). Rows measured at load 10 to 30 were run again at
+  load 4; the CPU-time column changes far less than the wall time.
+
 ### OWL reasoning on real ontologies — `tools/owl-real-bench.py`
 
 Ten vendored ontologies (SKOS, FOAF, PROV-O, BFO, Pizza, wine and food, RO,
