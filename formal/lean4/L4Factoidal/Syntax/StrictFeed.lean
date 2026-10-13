@@ -277,6 +277,78 @@ theorem turtleFeed_eq_walkChars {α : Type} (step : α → List Triple → α)
     turtleFeed step r chunk = walkChars step chunk.toList r := by
   rw [walkChars_eq_foldl, turtleFeed, String.foldl_eq_foldl_toList]
 
+/-- The walk over the characters `cs` from `s`, finished, with its triples in
+document order: what `parseTurtleWalk` computes from its initial state. -/
+def walkAll (s : TurtleChunkFoldState (List Triple)) (cs : List Char) :
+    Except ParseError (List Triple) :=
+  match walkChars prependReverse cs (.ok s) with
+  | .error e => .error e
+  | .ok st => (st.finish prependReverse).map List.reverse
+
+/-- The chunked walk as the command line runs it (`streamStrictTurtle` in
+`Wasm/Cli.lean`): after each chunk the triples in the accumulator are
+written and the accumulator is emptied. The result lists the triples
+written, in order. -/
+def drainRun (s : TurtleChunkFoldState (List Triple)) : List String → Except ParseError (List Triple)
+  | [] => (s.finish prependReverse).map List.reverse
+  | c :: rest =>
+      match turtleFeed prependReverse (.ok s) c with
+      | .error e => .error e
+      | .ok s' => (drainRun (s'.mapAcc (fun _ => [])) rest).map (s'.acc.reverse ++ ·)
+
+theorem walkChars_error {α : Type} (step : α → List Triple → α) (e : ParseError) :
+    ∀ cs : List Char, walkChars step cs (.error e) = .error e
+  | [] => rfl
+  | _ :: cs => walkChars_error step e cs
+
+theorem walkChars_append {α : Type} (step : α → List Triple → α) (xs ys : List Char)
+    (r : Except ParseError (TurtleChunkFoldState α)) :
+    walkChars step (xs ++ ys) r = walkChars step ys (walkChars step xs r) := by
+  simp only [walkChars, List.foldl_append]
+
+/-- A walk from a state whose accumulator holds `a` writes the triples of the
+walk from the emptied state after the triples of `a`. -/
+theorem walkAll_drain (s : TurtleChunkFoldState (List Triple)) (a : List Triple)
+    (cs : List Char) :
+    walkAll (s.mapAcc (· ++ a)) cs = (walkAll s cs).map (a.reverse ++ ·) := by
+  unfold walkAll
+  rw [walk_drain]
+  cases walkChars prependReverse cs (.ok s) with
+  | error e => rfl
+  | ok st =>
+      simp only [Except.map]
+      rw [finish_drain]
+      cases st.finish prependReverse with
+      | error e => rfl
+      | ok x => simp [Except.map, List.reverse_append]
+
+/-- Emptying the accumulator after every chunk and writing what it held writes
+exactly the triples of the walk of the concatenated chunks, in order, and
+fails exactly when that walk fails, with the same error. -/
+theorem drainRun_eq (chunks : List String) :
+    ∀ (s : TurtleChunkFoldState (List Triple)), s.acc = [] →
+      drainRun s chunks = walkAll s (String.join chunks).toList := by
+  induction chunks with
+  | nil =>
+      intro s _
+      simp [drainRun, walkAll, walkChars]
+  | cons c rest ih =>
+      intro s hs
+      simp only [drainRun, String.join_cons, String.toList_append]
+      rw [turtleFeed_eq_walkChars]
+      unfold walkAll
+      rw [walkChars_append]
+      cases h : walkChars prependReverse c.toList (.ok s) with
+      | error e => simp [walkChars_error]
+      | ok s' =>
+          simp only
+          rw [ih (s'.mapAcc (fun _ => [])) rfl]
+          have hs' : s' = (s'.mapAcc (fun _ => [])).mapAcc (· ++ s'.acc) := by
+            cases s'; simp
+          conv => rhs; rw [hs']
+          rw [← walkAll_drain]
+          rfl
+
 /-- The character step of `hasDoubleLt`. -/
 def doubleLtStep (st : Nat) (c : Char) : Nat :=
   if st == 2 then 2 else if c == '<' then (if st == 1 then 2 else 1) else 0
