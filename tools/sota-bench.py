@@ -882,8 +882,13 @@ def report(path):
 XFAIL = {
     ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
     ("rdfc-pairs", "8000", "lean"): "https://github.com/danbri/factoidal/issues/751",
-    ("owl-dl-consistent", "schema.org", "lean"): "https://github.com/danbri/factoidal/issues/819",
 }
+# Removed 2026-10-13: ("owl-dl-consistent", "schema.org", "lean") for
+# https://github.com/danbri/factoidal/issues/819. On a base with the repair of
+# https://github.com/danbri/factoidal/issues/760 and the semi-naive OWL 2 RL
+# closure (issue 756 item 2) the row is within 10 times HermiT, so the gate
+# reported UNEXPECTED PASS (record:
+# docs/designissues/2026-10-10-owl-real-ontologies.md § 11).
 
 
 def over_ten(lean, ref, start_rss):

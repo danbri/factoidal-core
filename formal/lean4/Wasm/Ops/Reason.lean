@@ -34,7 +34,8 @@ import L4Factoidal.RDFS.Closure
 import L4Factoidal.RDFS.FullClosure
 import L4Factoidal.RDFS.RDFSPlus
 import L4Factoidal.OWL.RLClosure
--- The indexed OWL 2 RL closure. `OWL.RL.closureFix` is the scanning
+-- The indexed OWL 2 RL closure (semi-naive rounds since 2026-10-13, issue 756
+-- item 2). `OWL.RL.closureFix` is the scanning
 -- specification; this module's `@[csimp]` theorem `closureFix_eq_indexed`
 -- makes the compiler emit `closureFixIndexed` for every call, but only in a
 -- module where it is imported. Until 2026-10-10 this file had it through

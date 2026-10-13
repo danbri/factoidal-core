@@ -328,6 +328,21 @@ Two more costs are not in an algorithm, and one hazard follows from the repairs:
   (here `step`, `stepConclusions`) and time each production entry that calls
   them, not only the one the twin was written for.
 
+- **A faster loop keeps the readable loop's ORDER when it drops only what
+  the deduplication drops.** The OWL 2 RL closure's output order is the
+  naive rounds' list order, and the command line prints it. The semi-naive
+  rounds (`OWL/RLClosureIndexed.lean` Section 11) evaluate, at a driving
+  triple the previous round already held, only each row's delta term; the
+  list they emit is the naive round's list with some triples removed, all
+  of them already in the round's input. `addAll` drops exactly those, so
+  `addAll_filter_of_subset` and one obligation per row (`RowSpec.Ok`: equal
+  after filtering out what the row concludes from the previous input) give
+  the same LIST at every fuel (`indexedClosureSN_eq`), and one `csimp`
+  theorem installs it. A form that found the same SET by delta joins in
+  another order would have needed a sort with its own proof, or a measured
+  order. Issue https://github.com/danbri/factoidal/issues/756 item 2;
+  `docs/designissues/2026-10-10-owl-real-ontologies.md` § 11.
+
 ## Input-proportional recursion is a stack bug, and the scanner is the gate
 
 A function that recurses once per element of an input the CALLER sizes -- a

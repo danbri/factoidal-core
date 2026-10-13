@@ -522,6 +522,99 @@ private theorem closureScan_eq (fuel : Nat) : ∀ g : Graph, closureScan g fuel 
 #guard detectClashI (Index.ofGraph
   [⟨S iX, owlSameAs, O iY⟩, ⟨S iX, owlDifferentFrom, O iY⟩]) == true
 
+/-! ## The semi-naive engine computes the same list
+
+`RLClosureIndexed.indexedClosureSN_eq` proves `indexedClosureSN g fuel =
+closure g fuel` for every graph and fuel
+(https://github.com/danbri/factoidal/issues/756 item 2). These guards run
+the compiled semi-naive loop on the fixtures above and on three fixtures
+whose second round needs a delta term at an OLD driving triple, and compare
+the lists with the scanning loop.
+
+Teeth: `closureNoOld` is the semi-naive loop with the old driving triples
+dropped (only the delta drives rows). On the three fixtures below it misses
+a triple that only an old driving triple with a new premise derives, so a
+semi-naive loop without its delta terms at old driving triples fails these
+guards. -/
+
+-- prp-symp at an old `owl:SymmetricProperty` typing; the edge on `p` is
+-- new in round 2 (prp-spo1 from `q`).
+private def gSympLate : Graph :=
+  [⟨S pP, rdfType, O owlSymmetricProperty⟩, ⟨S pQ, rdfsSubPropertyOf, O pP⟩,
+   ⟨S iX, pQ, O iY⟩]
+
+-- prp-spo2 at an old chain axiom `p = q ∘ r`; the `r` edge is new in
+-- round 2 (prp-spo1 from `s`).
+private def pS : WfIri := ⟨"http://ex/s", rfl⟩
+private def gChainLate : Graph :=
+  [⟨S pP, owlPropertyChainAxiom, .bnode "c1"⟩,
+   ⟨.bnode "c1", rdfFirst, O pQ⟩, ⟨.bnode "c1", rdfRest, .bnode "c2"⟩,
+   ⟨.bnode "c2", rdfFirst, O pR⟩, ⟨.bnode "c2", rdfRest, O rdfNil⟩,
+   ⟨S iX, pQ, O iY⟩, ⟨S iY, pS, O iZ⟩, ⟨S pS, rdfsSubPropertyOf, O pR⟩]
+
+-- cls-int1 at an old intersection `D = A ⊓ B ⊓ C`; `x : C` is new in
+-- round 2 (cax-sco from `W ⊑ C`).
+private def cW : WfIri := ⟨"http://ex/W", rfl⟩
+private def gIntLate : Graph :=
+  ⟨S cD, owlIntersectionOf, .bnode "l1"⟩ ::
+  ⟨S iX, rdfType, O cA⟩ :: ⟨S iX, rdfType, O cB⟩ :: ⟨S iX, rdfType, O cW⟩ ::
+  ⟨S cW, rdfsSubClassOf, O cC⟩ :: lst3
+
+/-- The semi-naive loop with no term at an old driving triple. -/
+private def closureNoOld (i : Index) (lo : Nat) : Nat → Index
+  | 0     => i
+  | n + 1 =>
+      let s := Store.ofIndex i
+      let i' := i.insertAll (axiomTriples ++ (s.graph.drop lo).flatMap (conclusionsFromS s))
+      if i'.all.size = i.all.size then i else closureNoOld i' i.all.size n
+
+private def noOld (g : Graph) (fuel : Nat) : Graph := (closureNoOld (Index.ofGraph g) 0 fuel).toGraph
+
+#guard indexedClosureSN gEq 4 == closureScan gEq 4
+#guard indexedClosureSN gTrp 4 == closureScan gTrp 4
+#guard indexedClosureSN gSymp 3 == closureScan gSymp 3
+#guard indexedClosureSN gInv 3 == closureScan gInv 3
+#guard indexedClosureSN gFp 3 == closureScan gFp 3
+#guard indexedClosureSN gIfp 3 == closureScan gIfp 3
+#guard indexedClosureSN gDomRng 3 == closureScan gDomRng 3
+#guard indexedClosureSN gSpo 3 == closureScan gSpo 3
+#guard indexedClosureSN gEqp 3 == closureScan gEqp 3
+#guard indexedClosureSN gInt 3 == closureScan gInt 3
+#guard indexedClosureSN gUni 3 == closureScan gUni 3
+#guard indexedClosureSN gSvf 3 == closureScan gSvf 3
+#guard indexedClosureSN gAvf 3 == closureScan gAvf 3
+#guard indexedClosureSN gHv 3 == closureScan gHv 3
+#guard indexedClosureSN gSco 4 == closureScan gSco 4
+#guard indexedClosureSN gEqc 3 == closureScan gEqc 3
+#guard indexedClosureSN gCls 3 == closureScan gCls 3
+#guard indexedClosureSN gDomProp 3 == closureScan gDomProp 3
+#guard indexedClosureSN gRngProp 3 == closureScan gRngProp 3
+#guard indexedClosureSN gDw 3 == closureScan gDw 3
+#guard indexedClosureSN [] 3 == closureScan [] 3
+#guard indexedClosureSN (gSco ++ gSco) 4 == closureScan (gSco ++ gSco) 4
+#guard indexedClosureSN gSympLate 6 == closureScan gSympLate 6
+#guard indexedClosureSN gChainLate 6 == closureScan gChainLate 6
+#guard indexedClosureSN gIntLate 6 == closureScan gIntLate 6
+-- Each late fixture takes at least two rounds and derives its triple.
+#guard memB (closureScan gSympLate 6) ⟨S iY, pP, O iX⟩
+#guard !memB (closureScan gSympLate 1) ⟨S iY, pP, O iX⟩
+#guard memB (closureScan gChainLate 6) ⟨S iX, pP, O iZ⟩
+#guard !memB (closureScan gChainLate 1) ⟨S iX, pP, O iZ⟩
+#guard memB (closureScan gIntLate 6) ⟨S iX, rdfType, O cD⟩
+#guard !memB (closureScan gIntLate 1) ⟨S iX, rdfType, O cD⟩
+-- Teeth: without the terms at old driving triples, each is missed.
+#guard !memB (noOld gSympLate 6) ⟨S iY, pP, O iX⟩
+#guard !memB (noOld gChainLate 6) ⟨S iX, pP, O iZ⟩
+#guard !memB (noOld gIntLate 6) ⟨S iX, rdfType, O cD⟩
+-- The semi-naive round emits fewer conclusions than the naive round once
+-- the delta is a strict part of the input (the second round of gSco).
+#guard
+  let i1 := stepI (Index.ofGraph gSco)
+  let n0 := gSco.length
+  let sD := Store.ofIndex (Index.ofGraph (i1.toGraph.drop n0))
+  (stepConclusionsSN (Store.ofIndex i1) sD n0).length <
+    (stepConclusionsS (Store.ofIndex i1)).length
+
 /-! ## The three sound extension rows
 
 Each family asserts BOTH a graph the row fires on AND the nearest graph

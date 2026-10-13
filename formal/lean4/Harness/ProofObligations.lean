@@ -24,6 +24,7 @@ or wasm build imports it.
 -/
 import Lean
 import L4Factoidal.RDFS.SemiNaiveTheorems
+import L4Factoidal.OWL.RLSemiNaiveTheorems
 
 namespace Harness.ProofObligations
 
@@ -43,7 +44,16 @@ def obligations : List Obligation :=
         "are enough for the RDFS delta loop (L4Factoidal/RDFS/SemiNaiveTheorems.lean header)"
       issue := "https://github.com/danbri/factoidal/issues/756"
       onProof := "drop the isNaiveFixpoint check and the closureFix fallback from " ++
-        "closureSemiNaiveChecked (issue 756, item 4)" } ]
+        "closureSemiNaiveChecked (issue 756, item 4)" },
+    { name := `L4Factoidal.OWL.RL.closureFix_saturated
+      statement := "∀ g : Graph, step (closureFix g) = closureFix g ∧ " ++
+        "ListFuelAdequate (closureFix g) (listFuel (closureFix g)): closureFuelBound g " ++
+        "rounds and listFuel are enough for the OWL 2 RL loop, naive and semi-naive " ++
+        "(the same list by indexedClosureSN_eq; L4Factoidal/OWL/RLSemiNaiveTheorems.lean " ++
+        "header, L4Factoidal/OWL/RLTheorems.lean header items 2 and 3)"
+      issue := "https://github.com/danbri/factoidal/issues/756"
+      onProof := "drop the saturation and ListFuelAdequate hypotheses from " ++
+        "indexedClosureSN_complete and mem_indexedClosureSN_iff (issue 756, item 4 for OWL RL)" } ]
 
 run_cmd do
   let env ← getEnv

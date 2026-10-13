@@ -168,6 +168,7 @@ import L4Factoidal.OWL.RLClosureIndexed
 import L4Factoidal.OWL.RLSemantics
 import L4Factoidal.OWL.RLHerbrand
 import L4Factoidal.OWL.RLTheorems
+import L4Factoidal.OWL.RLSemiNaiveTheorems
 import L4Factoidal.OWL.RLTests
 import L4Factoidal.OWL.Semantics
 import L4Factoidal.OWL.RdfBased.Spec

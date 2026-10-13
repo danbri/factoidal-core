@@ -3024,6 +3024,27 @@ issue <https://github.com/danbri/factoidal/issues/721>. No `sorry`, no
 | `rbConclusions_entailed` — every triple the executable rules return is entailed by `g` | same | `RdfBased.rbConclusions` | ✅ PROVED | none |
 | **The RL base under `RdfBasedConditions`** — `RdfBasedConditions i → RlConditions i'` for an `i'` agreeing with `i` off the reserved helper IRIs | — | `OWL.RL` closure | 🔴 NOT ATTEMPTED | the regime drops comprehension-witness triples (`withoutCompWitness`); design record § 8, gap A |
 
+## OWL 2 RL semi-naive closure (Lean 4, 2026-10-13)
+
+`L4Factoidal/OWL/RLClosureIndexed.lean` Section 11 and
+`L4Factoidal/OWL/RLSemiNaiveTheorems.lean`. Issue
+<https://github.com/danbri/factoidal/issues/756> item 2. Design record:
+[`designissues/2026-10-10-owl-real-ontologies.md`](designissues/2026-10-10-owl-real-ontologies.md)
+§ 11. No `sorry`, no `axiom`, no `native_decide`, no new `partial`; `#print
+axioms`: `propext`, `Classical.choice`, `Quot.sound`.
+
+| Theorem | Module | Engine anchor | Status | Fragment / hypotheses |
+|---|---|---|---|---|
+| `indexedClosureSN_eq` — the semi-naive loop returns the list of `closure` at every fuel | `OWL/RLClosureIndexed.lean` | `indexedClosureSN` (`csimp` for `closure`, `closureFix`) | ✅ PROVED | none |
+| `addAll_stepConclusionsSN` — one semi-naive round is one naive round, as a list | same | `stepConclusionsSN` | ✅ PROVED | `RoundOk` (every naive round establishes it: `RoundOk.next`) |
+| `rowTable_ok`, `prpSpo2_ok`, `clsInt1_ok` — the 74 delta terms meet `RowSpec.Ok` (`RowSpec.skip_ok` is proved too; the skip terms are not in `rowTable`, record § 11.5) | same | `rowTable` | ✅ PROVED | none |
+| `rowTable_guard`, `dispatchMap_getD`, `oldBlockFast_eq` — the predicate dispatch lists exactly the rows that can emit | same | `dispatchMap` | ✅ PROVED | none |
+| `indexedClosureSN_sound` — every triple of the closure is `Derives` | `OWL/RLSemiNaiveTheorems.lean` | `indexedClosureSN` | ✅ PROVED | none |
+| `stepSNI_saturated`, `stepSNI_closed` — a round that adds nothing leaves the graph closed under every row | same | `stepSNI` | ✅ PROVED | `RoundOk` |
+| `indexedClosureSN_complete`, `mem_indexedClosureSN_iff` — `t ∈ C g ↔ Derives g t` | same | `indexedClosureSN` | ✅ PROVED | saturated, `ListFuelAdequate` (T4's hypotheses) |
+| `mem_indexedClosureSN_iff_closure`, `indexedClosureSN_eq_indexedClosure` — naive and semi-naive equal | same | — | ✅ PROVED | none |
+| `closureFix_saturated` — `closureFuelBound` rounds and `listFuel` are enough | — | `closureFix` | 🔴 OPEN | expected failure in `Harness/ProofObligations.lean` |
+
 ## OWL 2 DL refutation certificates (Lean 4, 2026-10-10)
 
 `L4Factoidal/OWL/DirectCert.lean` (checker and theorems),
