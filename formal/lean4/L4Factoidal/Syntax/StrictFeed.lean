@@ -523,4 +523,24 @@ private def drainedWalk (n : Nat) (s : String) : Except ParseError (List Triple)
 #guard (List.range 12).all fun i => (drainedWalk (i + 1) ttlDoc).toOption == (parseTurtle ttlDoc).toOption
 #guard (parseTurtle ttlDoc).toOption.map List.length == some 10
 
+/-! ## Axiom audit (propext, Classical.choice and Quot.sound only) -/
+
+#print axioms foldLines_quadReader
+#print axioms parseLinesAcc_eq_foldLines
+#print axioms parseNTriples_eq_foldLines
+#print axioms LineFeed.feed_quad11
+#print axioms LineFeed.run_quad11_eq_batch
+#print axioms walkChars_eq_foldl
+#print axioms turtleFeed_eq_walkChars
+#print axioms turtleFeedChunks_eq
+#print axioms walkAll_drain
+#print axioms drainRun_eq
+#print axioms TurtlePrepass.feedText_chunks
+#print axioms normalizeDataset_default
+#print axioms toCanonicalNQuads_default
+#print axioms chunkText_eq
+#print axioms L4Factoidal.Syntax.walk_drain
+#print axioms L4Factoidal.Syntax.finish_drain
+#print axioms L4Factoidal.Syntax.isIri_eq_isIriFast
+
 end L4Factoidal.Syntax.StrictFeed
