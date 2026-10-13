@@ -795,14 +795,15 @@ def report(path):
                       f"{ans if ans is not None else '—'}{mark} | "
                       f"{min(load) if load else '—'} to {max(load) if load else '—'} |")
     print("\n### Lean against the fastest reference engine\n")
-    print("Ratio = Lean / reference (time: median wall time; memory: median peak resident "
-          "set). Above 1, Lean is slower or larger.\n")
+    print("Ratio = Lean / reference (time: median wall time; CPU: median user plus system "
+          "time; memory: median peak resident set). Above 1, Lean is slower or larger. "
+          "The fastest reference is the one with the least median wall time.\n")
     print("RSS above start: each engine's peak resident set minus the peak resident set "
           "of its own process start (row `start`); a reference that holds less than 1 MB "
           "above its start counts as 1 MB.\n")
     print("| Workload | Size | Reference (fastest) | Reference time, RSS | Lean variant | "
-          "Lean time, RSS | Time ratio | RSS ratio | RSS above start, ratio |")
-    print("|---|---:|---|---|---|---|---:|---:|---:|")
+          "Lean time, RSS | Time ratio | CPU ratio | RSS ratio | RSS above start, ratio |")
+    print("|---|---:|---|---|---|---|---:|---:|---:|---:|")
     start_rss = {e: r.get("rss_mb") for e, r in by.get("start", {}).get("0", {}).items()
                  if r["status"] == "ok"}
     start_of = {"lean-stream": "lean", "jena-owl-micro": "jena"}
@@ -825,7 +826,10 @@ def report(path):
                 if lr is None:
                     continue
                 ar = None
+                crs = "—"
                 if lr["status"] == "ok":
+                    if ref.get("cpu_s"):
+                        crs = f"{lr['cpu_s'] / ref['cpu_s']:.1f}"
                     tr = lr["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else None
                     mr = lr["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else None
                     la, ra = above(le, lr.get("rss_mb")), above(ref["engine"], ref.get("rss_mb"))
@@ -842,7 +846,8 @@ def report(path):
                     flagged.append((wid, size, le, ref["engine"], None, None))
                 ars = f"{ar:.1f}" if ar is not None else "—"
                 print(f"| {wid} | {size} | {ref['engine']} | {ref['wall_s']:.3f} s, "
-                      f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {mrs} | {ars} |")
+                      f"{fmt_m(ref)} | {le} | {fmt_t(lr)}, {fmt_m(lr)} | {trs} | {crs} | {mrs} | "
+                      f"{ars} |")
     print("\n### Rows over 10 (lean variant against the fastest reference)\n")
     print("A row is listed when the time ratio is over 10, or when the RSS ratio and the "
           "RSS-above-start ratio are both over 10.\n")
@@ -852,9 +857,42 @@ def report(path):
         print(f"- {wid} {size}, {le} against {e}: time ratio {ts}, RSS ratio {ms}")
 
 
+# Expected failures of the gate: Lean rows more than 10 times the fastest
+# reference engine (time, or memory above process start), each with its open
+# issue. The row fails the gate when it comes within the bound (UNEXPECTED
+# PASS), so the repair cannot land without the row and the issue being updated.
+XFAIL = {
+    ("parse-nt", "400000", "lean"): "https://github.com/danbri/factoidal/issues/813",
+    ("parse-ttl-gene", "80000", "lean"): "https://github.com/danbri/factoidal/issues/813",
+    ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
+}
+
+
+def over_ten(lean, ref, start_rss):
+    """The report's rule: time ratio over 10, or memory ratio and memory above
+    process start ratio both over 10 (a reference under 1 MB above its start
+    counts as 1 MB)."""
+    tr = lean["wall_s"] / ref["wall_s"] if ref["wall_s"] > 0 else 0
+    mr = lean["rss_mb"] / ref["rss_mb"] if ref.get("rss_mb") else 0
+    lb = start_rss.get("lean")
+    rb = start_rss.get({"jena-owl-micro": "jena"}.get(ref["engine"], ref["engine"]))
+    ar = None
+    if lb is not None and rb is not None:
+        ar = (lean["rss_mb"] - lb) / max(ref["rss_mb"] - rb, 1.0)
+    return tr > 10 or (mr > 10 and (ar is None or ar > 10)), tr, mr
+
+
 def check(args):
     """The gate: re-run each recorded Lean row and compare."""
     rows, _ = load_rows(args.check)
+    refs = {}
+    for r in rows:
+        if r["engine"] not in LEAN_ENGINES and r["status"] == "ok":
+            k = (r["workload"], str(r["size"]))
+            if k not in refs or r["wall_s"] < refs[k]["wall_s"]:
+                refs[k] = r
+    start_rss = {r["engine"]: r["rss_mb"] for r in rows
+                 if r["workload"] == "start" and r["status"] == "ok"}
     todo = [r for r in rows if r["engine"] in ("lean", "lean-stream") and r["status"] == "ok"
             and r["workload"] in W and r["wall_s"] <= args.max_s]
     if args.workloads:
@@ -872,6 +910,7 @@ def check(args):
         path = w.make(size)
         cmd, env = w.cmd(r["engine"], path, size)
         verdict = None
+        xf = None
         for attempt in (1, 2):  # a failing row is measured once more before it fails
             rec, o = measure(cmd, env, args.runs, args.cap, tdir, args.load_limit,
                              args.load_wait, True)
@@ -890,10 +929,20 @@ def check(args):
                 if rec["rss_mb"] > rss_bound:
                     problems.append(f"rss {rec['rss_mb']:.0f} MB > {rss_bound:.0f} MB "
                                     f"(recorded {r['rss_mb']:.0f} MB)")
+            xf = XFAIL.get((r["workload"], str(r["size"]), r["engine"]))
+            ref = refs.get((r["workload"], str(r["size"])))
+            if xf and rec["status"] == "ok" and ref:
+                flagged, tr, mr = over_ten(rec, ref, start_rss)
+                if not flagged:
+                    problems.append(f"UNEXPECTED PASS of the expected failure {xf}: time ratio "
+                                    f"{tr:.1f}, memory ratio {mr:.1f} against recorded "
+                                    f"{ref['engine']}; update the row and the issue")
             verdict = problems
             if not problems:
                 break
         tag = "PASS" if not verdict else "FAIL"
+        if not verdict and xf:
+            tag = f"PASS (expected failure still present, {xf})"
         fails += bool(verdict)
         print(f"{tag} {r['workload']} {r['size']} {r['engine']}: cpu {rec.get('cpu_s')} s (recorded "
               f"{r['cpu_s']}), rss {rec.get('rss_mb')} MB (recorded {r['rss_mb']}), "
