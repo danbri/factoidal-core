@@ -659,20 +659,98 @@ def supsOf (st : RState) (p : WfIri) : List WfIri := st.supMap.getD p [p]
 /-- `inversesOf st.inv p`, read through `RState.invMap`. -/
 def inversesOfSt (st : RState) (p : WfIri) : List WfIri := st.invMap.getD p []
 
-/-- A closure table as a map. The table has one pair per property
-    (`initState` takes the properties `eraseDups`), and the first pair of
-    a key is kept, so the map holds what `find?` on the list returns. -/
-def closureMap (t : List (WfIri × List WfIri)) : Std.HashMap WfIri (List WfIri) :=
-  t.foldl (fun m (p, xs) => if m.contains p then m else m.insert p xs) {}
+/-- One pair of a closure table into the map; the first pair of a key is
+    kept. -/
+def closureMapStep (m : Std.HashMap WfIri (List WfIri)) (q : WfIri × List WfIri) :
+    Std.HashMap WfIri (List WfIri) :=
+  if m.contains q.1 then m else m.insert q.1 q.2
 
-/-- The inverse pairs as a map: for a pair `(a, b)`, `b` is appended to
-    `a`'s list and, when `b ≠ a`, `a` to `b`'s, in pair order. That is the
-    list `inversesOf inv p` returns for each `p`: its first arm takes `b`
-    when `a == p`, its second takes `a` when `b == p` and `a ≠ p`. -/
+/-- A closure table as a map. It holds what `find?` on the list returns
+    (`closureMap_getD`), which is what `subsOf` and `supsOf` read before
+    the map. -/
+def closureMap (t : List (WfIri × List WfIri)) : Std.HashMap WfIri (List WfIri) :=
+  t.foldl closureMapStep {}
+
+/-- The lookup the list table answered. -/
+def findClosure (t : List (WfIri × List WfIri)) (p : WfIri) (d : List WfIri) : List WfIri :=
+  match t.find? (fun q => q.1 == p) with
+  | some (_, xs) => xs
+  | none         => d
+
+theorem foldl_closureMapStep_getD : ∀ (t : List (WfIri × List WfIri))
+    (m : Std.HashMap WfIri (List WfIri)) (p : WfIri) (d : List WfIri),
+    (t.foldl closureMapStep m).getD p d =
+      if m.contains p then m.getD p d else findClosure t p d
+  | [], m, p, d => by
+      by_cases h : m.contains p
+      · simp [h]
+      · simp [h, findClosure]
+        exact Std.HashMap.getD_eq_fallback (by simpa using h)
+  | (q, xs) :: tl, m, p, d => by
+      rw [List.foldl_cons, foldl_closureMapStep_getD tl]
+      have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+      unfold closureMapStep findClosure
+      by_cases hq : m.contains q
+      · by_cases hqp : q = p
+        · subst hqp; simp [hq]
+        · simp [hq, e, hqp]
+      · by_cases hqp : q = p
+        · subst hqp; simp [hq]
+        · simp [hq, e, hqp, Std.HashMap.getD_insert, Std.HashMap.contains_insert]
+
+/-- `subsOf` and `supsOf` over `closureMap t` answer as the list lookup
+    `find?` on `t`. -/
+theorem closureMap_getD (t : List (WfIri × List WfIri)) (p : WfIri) (d : List WfIri) :
+    (closureMap t).getD p d = findClosure t p d := by
+  simp [closureMap, foldl_closureMapStep_getD]
+
+/-- One inverse pair into the map: `b` is appended to `a`'s list and, when
+    `b ≠ a`, `a` to `b`'s. -/
+def inverseMapStep (m : Std.HashMap WfIri (List WfIri)) (q : WfIri × WfIri) :
+    Std.HashMap WfIri (List WfIri) :=
+  let m := m.insert q.1 (m.getD q.1 [] ++ [q.2])
+  if q.2 == q.1 then m else m.insert q.2 (m.getD q.2 [] ++ [q.1])
+
+/-- The inverse pairs as a map, in pair order. It holds the list
+    `inversesOf inv p` returns for each `p` (`inverseMap_getD`). -/
 def inverseMap (inv : List (WfIri × WfIri)) : Std.HashMap WfIri (List WfIri) :=
-  inv.foldl (fun m (a, b) =>
-    let m := m.insert a (m.getD a [] ++ [b])
-    if b == a then m else m.insert b (m.getD b [] ++ [a])) {}
+  inv.foldl inverseMapStep {}
+
+theorem inverseMapStep_getD (m : Std.HashMap WfIri (List WfIri)) (a b p : WfIri) :
+    (inverseMapStep m (a, b)).getD p [] =
+      m.getD p [] ++ (if a == p then [b] else if b == p then [a] else []) := by
+  unfold inverseMapStep
+  have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+  by_cases hab : b = a
+  · subst hab
+    by_cases hp : b = p
+    · subst hp; simp
+    · simp [Std.HashMap.getD_insert, e, hp]
+  · have hba : ¬ a = b := fun h => hab h.symm
+    by_cases hap : a = p
+    · subst hap; simp [Std.HashMap.getD_insert, e, hab, hba]
+    · by_cases hbp : b = p
+      · subst hbp; simp [Std.HashMap.getD_insert, e, hab, hba]
+      · simp [Std.HashMap.getD_insert, e, hab, hba, hap, hbp]
+
+theorem foldl_inverseMapStep_getD : ∀ (inv : List (WfIri × WfIri))
+    (m : Std.HashMap WfIri (List WfIri)) (p : WfIri),
+    (inv.foldl inverseMapStep m).getD p [] = m.getD p [] ++ inversesOf inv p
+  | [], m, p => by simp [inversesOf]
+  | (a, b) :: tl, m, p => by
+      rw [List.foldl_cons, foldl_inverseMapStep_getD tl, inverseMapStep_getD]
+      simp only [inversesOf, List.filterMap_cons]
+      have e : ∀ x y : WfIri, (x.val = y.val) = (x = y) := fun x y => propext Subtype.ext_iff.symm
+      by_cases hap : a = p
+      · subst hap; simp
+      · by_cases hbp : b = p
+        · subst hbp; simp [e, hap]
+        · simp [e, hap, hbp]
+
+/-- `inversesOfSt` over `inverseMap inv` is `inversesOf inv`. -/
+theorem inverseMap_getD (inv : List (WfIri × WfIri)) (p : WfIri) :
+    (inverseMap inv).getD p [] = inversesOf inv p := by
+  simp [inverseMap, foldl_inverseMapStep_getD]
 
 /-- The `p`-successors of `i`: the graph's `q`-edges for every
     `q ⊑* p`, the inverse direction of each, and the expansion's own
@@ -3636,6 +3714,25 @@ def initState (g : Graph) : RState :=
       nodes := order'.map (fun x => RNode.ofLabels x (labelMap'.getD x [])),
       pos := (order'.foldl (fun (acc : Std.HashMap Subject Nat × Nat) x =>
         (acc.1.insert x acc.2, acc.2 + 1)) ({}, 0)).1 }
+
+/-- The maps `initState` builds answer as the list tables they replace:
+    `subsOf` and `supsOf` as `find?` on the closure tables, `inversesOfSt`
+    as `inversesOf` on the inverse pairs. No rule writes these fields after
+    `initState`. -/
+theorem subsOf_initState (g : Graph) (p : WfIri) :
+    subsOf (initState g) p = findClosure (initState g).subClosure p [p] := by
+  show (initState g).subMap.getD p [p] = _
+  rw [show (initState g).subMap = closureMap (initState g).subClosure from rfl, closureMap_getD]
+
+theorem supsOf_initState (g : Graph) (p : WfIri) :
+    supsOf (initState g) p = findClosure (initState g).supClosure p [p] := by
+  show (initState g).supMap.getD p [p] = _
+  rw [show (initState g).supMap = closureMap (initState g).supClosure from rfl, closureMap_getD]
+
+theorem inversesOfSt_initState (g : Graph) (p : WfIri) :
+    inversesOfSt (initState g) p = inversesOf (initState g).inv p := by
+  show (initState g).invMap.getD p [] = _
+  rw [show (initState g).invMap = inverseMap (initState g).inv from rfl, inverseMap_getD]
 
 /-- The class-size counting rung (`OWL/CountingOracle.lean`), the
     Lean counterpart of the F* owl-runner's `class_size_refutes`.
