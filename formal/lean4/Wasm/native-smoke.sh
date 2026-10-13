@@ -2860,6 +2860,48 @@ args "$TMP/empty-stage3.json"
 check "ops reflection lists the stage 3 ops" ops "$TMP/empty-stage3.json" \
   'set(["queryDataset12","datasetQuery12","shaclValidate","shexValidate"]) <= set(r["ops"])'
 
+# --- The durable update log of a browser host (Wasm/Ops/DeltaLog.lean) ---
+# https://github.com/danbri/factoidal/issues/728, hub post 18. The host stores
+# the hex records deltaLogEncode gives and hands them back joined by "\n";
+# Lean decodes, checks the checksums, and merges.
+DL_EVE='INSERT DATA { <http://example.org/eve> <http://xmlns.com/foaf/0.1/name> "Eve" . }'
+DL_FRANK='INSERT DATA { <http://example.org/frank> <http://xmlns.com/foaf/0.1/name> "Frank" . }'
+args "$TMP/dl-enc-eve.json" "$DL_EVE" "0" "0"
+args "$TMP/dl-enc-frank.json" "$DL_FRANK" "1" "0"
+check "deltaLogEncode INSERT DATA -> one DLB1 record" deltaLogEncode "$TMP/dl-enc-eve.json" \
+  'r["ok"] is True and r["opCount"] == 1 and r["seq"] == 0 and r["hex"].startswith("444c4231")
+   and r["bytes"] * 2 == len(r["hex"])'
+DL_REC0="$("$CLI" call deltaLogEncode "$TMP/dl-enc-eve.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hex"])')"
+DL_REC1="$("$CLI" call deltaLogEncode "$TMP/dl-enc-frank.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hex"])')"
+DL_LOG="$DL_REC0
+$DL_REC1"
+DL_CUT="${DL_LOG:0:$((${#DL_LOG} - 8))}"
+args "$TMP/dl-dec.json" "$DL_LOG"
+check "deltaLogDecode: two records, seq 0 and 1, not torn" deltaLogDecode "$TMP/dl-dec.json" \
+  'r["ok"] is True and r["batches"] == 2 and r["entries"] == 2 and r["torn"] is False
+   and r["tornBytes"] == 0 and [x["seq"] for x in r["records"]] == [0, 1]'
+args "$TMP/dl-dec-cut.json" "$DL_CUT"
+check "deltaLogDecode: last record cut by 4 bytes -> one batch, torn" deltaLogDecode "$TMP/dl-dec-cut.json" \
+  'r["ok"] is True and r["batches"] == 1 and r["torn"] is True and r["tornBytes"] == '"$(( ${#DL_REC1} / 2 - 4 ))"
+args "$TMP/dl-merge.json" "" "$DL_LOG"
+check "deltaLogMerge: Eve and Frank over an empty base" deltaLogMerge "$TMP/dl-merge.json" \
+  'r["ok"] is True and "\"Eve\"" in r["nquads"] and "\"Frank\"" in r["nquads"] and r["batches"] == 2'
+args "$TMP/dl-merge-cut.json" "" "$DL_CUT"
+check "deltaLogMerge: the torn record is not applied (Eve stays, Frank goes)" deltaLogMerge "$TMP/dl-merge-cut.json" \
+  'r["ok"] is True and "\"Eve\"" in r["nquads"] and "Frank" not in r["nquads"] and r["torn"] is True'
+args "$TMP/dl-enc-where.json" "DELETE WHERE { ?s ?p ?o }" "0" "0"
+check "deltaLogEncode DELETE WHERE -> refused, never a partial batch" deltaLogEncode "$TMP/dl-enc-where.json" \
+  'r["ok"] is False and "admits INSERT DATA" in r["error"]'
+args "$TMP/dl-dec-bad.json" "444c42zz"
+check "deltaLogDecode: text that is not hexadecimal -> error" deltaLogDecode "$TMP/dl-dec-bad.json" \
+  'r["ok"] is False and "hexadecimal" in r["error"]'
+args "$TMP/dl-merge-arity.json" ""
+check "deltaLogMerge with one argument -> arity error" deltaLogMerge "$TMP/dl-merge-arity.json" \
+  'r["ok"] is False and "expects 2 arguments" in r["error"]'
+args "$TMP/dl-empty.json"
+check "ops reflection lists the delta-log ops" ops "$TMP/dl-empty.json" \
+  'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -2944,6 +2986,10 @@ corecheck "core: a full-only op is refused naming the full engine" xpathEval "$T
 args "$TMP/core-jl.json" '{"@id":"http://e/a","http://e/p":"v"}' "jsonld" ""
 corecheck "core: JSON-LD is refused by name" parseToDatasetJson "$TMP/core-jl.json" \
   'r["ok"] is False and "not in the core engine" in r["error"]'
+corecheck "core: deltaLogMerge applies the log" deltaLogMerge "$TMP/dl-merge.json" \
+  'r["ok"] is True and "\"Eve\"" in r["nquads"] and "\"Frank\"" in r["nquads"]'
+corecheck "core: ops reflection lists the delta-log ops" ops "$TMP/empty.json" \
+  'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
 corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"] and "servedBy" not in r'
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
