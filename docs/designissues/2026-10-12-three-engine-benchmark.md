@@ -17,7 +17,8 @@ section "SBM11 against Virtuoso and QLever".
 - Load: the SBM11 pack is 6.6 times slower than the Virtuoso bulk load on the
   DBpedia slice (1,334 s against 203 s). 60 % of the pack (799 s) is phase 2,
   the merge of the term runs, which grows about with the square of the number
-  of distinct terms (section 8, item 1).
+  of distinct terms (section 8, item 1). After the repair of section 8 item 1 the pack
+  took 288 s (phase 2 26 s).
 - Warm queries (SBM11 execution in one process against one Virtuoso HTTP
   request): SBM11 is faster on scans and aggregates over large ranges
   (DBpedia d10, d13, d16, d17: 5.9 to 14 times faster than Virtuoso with its
@@ -255,6 +256,13 @@ configuration with one loader.
    on 8.9 M terms"; acceptance: phase 2 time within 2.2 times per doubling of
    terms on the n/2n/4n ladder, and a `danbri-function-precrime-checkers`
    scaling assertion.
+   Repaired (https://github.com/danbri/factoidal/issues/804, 2026-10-13): the
+   merge scanned all k run heads per record and k grows with the source; it
+   now uses a loser tree and an 8-byte-word key comparison proved equal to
+   `cmpBytes`. DBpedia slice, same source, generation byte-identical (21
+   files): phase 2 26.2 s (799.2 s), pack 288.3 s (1,334.3 s), peak RSS
+   584 MB, load 1.4 to 3.6. Cause, fix, the scaling test and the other phase
+   times: `2026-10-12-sbm11-stage3.md` section 4.1.
 2. **OPTIONAL goes to the reference fallback, which materialises the
    selected quads.** d11: 48.7 s warm, 849 MB peak RSS (all `dbo:birthPlace`
    and `dbo:deathDate` quads decoded into a dataset); Virtuoso 19 ms. This is
