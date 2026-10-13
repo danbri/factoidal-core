@@ -615,6 +615,43 @@ def FState.addOutput (st : FState) (parent : Nat) (property : Option String) (it
         let st1 := { st with arena := st.arena.push (.arr [item]) }
         st1.put parent (.obj (es.upsert p (.ref k)))
 
+/-- Replace the first value for which `hit` holds by `reference`; the list
+is unchanged when no value matches. -/
+def FState.replaceFirstMatch (hit : OVal → Bool) (reference : OVal) : List OVal → List OVal
+  | [] => []
+  | x :: rest => if hit x then reference :: rest else x :: FState.replaceFirstMatch hit reference rest
+
+/-- `replaceFirstMatch` as a loop: the values before the match go on a
+newest-first list, one tail call per value, put back in front once at the
+end (the values of one property are data; https://github.com/danbri/factoidal/issues/752). -/
+def FState.replaceFirstMatchLoop (hit : OVal → Bool) (reference : OVal) :
+    List OVal → List OVal → List OVal
+  | [], acc => acc.reverse
+  | x :: rest, acc =>
+      if hit x then acc.reverseAux (reference :: rest)
+      else FState.replaceFirstMatchLoop hit reference rest (x :: acc)
+
+theorem FState.replaceFirstMatchLoop_eq (hit : OVal → Bool) (reference : OVal) :
+    ∀ (l acc : List OVal), FState.replaceFirstMatchLoop hit reference l acc =
+      acc.reverse ++ FState.replaceFirstMatch hit reference l
+  | [], acc => by simp [FState.replaceFirstMatchLoop, FState.replaceFirstMatch]
+  | x :: rest, acc => by
+      by_cases h : hit x = true
+      · simp [FState.replaceFirstMatchLoop, FState.replaceFirstMatch, h]
+      · simp [FState.replaceFirstMatchLoop, FState.replaceFirstMatch, h,
+          FState.replaceFirstMatchLoop_eq hit reference rest]
+
+def FState.replaceFirstMatchFast (hit : OVal → Bool) (reference : OVal) (l : List OVal) :
+    List OVal :=
+  FState.replaceFirstMatchLoop hit reference l []
+
+/-- The compiler runs `replaceFirstMatchFast` wherever the source says
+`replaceFirstMatch`. -/
+@[csimp] theorem FState.replaceFirstMatch_eq_fast :
+    @FState.replaceFirstMatch = @FState.replaceFirstMatchFast := by
+  funext hit reference l
+  simp [FState.replaceFirstMatchFast, FState.replaceFirstMatchLoop_eq]
+
 /-- §4.1: replace the embedded node `id` by a node reference, drop the
 embeds that depended on it. Mirrors the legacy `@last` handling: the
 reference to a replaced property value moves to the end of its array. -/
@@ -626,11 +663,9 @@ def FState.removeEmbed (st : FState) (g id : String) : FState :=
     let st1 :=
       match st.get parent with
       | .arr xsRev =>
-        let rec replaceFirst : List OVal → List OVal
-          | [] => []
-          | x :: rest => if st.idOf x == some id then reference :: rest else x :: replaceFirst rest
         -- the items are stored newest first; "first" is the oldest match
-        st.put parent (.arr (replaceFirst xsRev.reverse).reverse)
+        st.put parent (.arr (FState.replaceFirstMatch (fun x => st.idOf x == some id)
+          reference xsRev.reverse).reverse)
       | .obj es =>
         match prop with
         | none => st

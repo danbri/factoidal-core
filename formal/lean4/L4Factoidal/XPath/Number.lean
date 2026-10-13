@@ -31,6 +31,19 @@ def pow10 : Nat → Int
   | 0     => 1
   | n + 1 => 10 * pow10 n
 
+/-- `pow10` as the core power: `Int.pow` of a non-negative base is one
+`Nat.pow` (`lean_nat_pow`, GMP), so no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Int := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Int.pow_succ, Int.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
+
 def ofInt (i : Int) : Num := .finite i 0
 def zero : Num := ofInt 0
 

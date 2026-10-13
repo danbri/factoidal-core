@@ -116,6 +116,31 @@ def natToBytesBE (n : Nat) : Bytes :=
 termination_by n
 decreasing_by omega
 
+/-- `natToBytesBE` as a loop: the low byte goes on the front of the
+accumulator, one tail call per byte, no append (a value decoded from a
+multibase string; https://github.com/danbri/factoidal/issues/752). -/
+def natToBytesBELoop (n : Nat) (acc : Bytes) : Bytes :=
+  if _h : n = 0 then acc
+  else natToBytesBELoop (n / 256) (UInt8.ofNat (n % 256) :: acc)
+termination_by n
+decreasing_by omega
+
+theorem natToBytesBELoop_eq (n : Nat) (acc : Bytes) :
+    natToBytesBELoop n acc = natToBytesBE n ++ acc := by
+  fun_induction natToBytesBELoop n acc with
+  | case1 acc => rw [natToBytesBE]; simp
+  | case2 n acc h ih =>
+      rw [ih]
+      conv => rhs; rw [natToBytesBE]
+      simp [h]
+
+def natToBytesBEFast (n : Nat) : Bytes := natToBytesBELoop n []
+
+/-- The compiler runs `natToBytesBEFast` wherever the source says
+`natToBytesBE`. -/
+@[csimp] theorem natToBytesBE_eq_fast : @natToBytesBE = @natToBytesBEFast := by
+  funext n; simp [natToBytesBEFast, natToBytesBELoop_eq]
+
 /-! ## base58btc -/
 
 /-- The Bitcoin base58 alphabet, index = digit value. Spelled out as a

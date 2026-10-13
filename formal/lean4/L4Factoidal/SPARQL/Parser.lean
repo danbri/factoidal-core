@@ -834,6 +834,24 @@ post-destructuring `f`, so the block is structurally recursive with no
 `termination_by` — the same discipline `JSON/Parser.lean` uses, and the
 Lean counterpart of the F*'s `decreases fuel`. -/
 
+/-- One cell of a SPARQL collection: the blank-node name of the cell and the
+element read for it (term and the pattern its `[ ... ]` or nested
+collection adds). -/
+abbrev CollectionCell := String × (PatternTerm × QueryPattern)
+
+/-- Build the `rdf:first` / `rdf:rest` chain of a collection from its cells,
+newest first, onto `acc` (the chain after the last cell read: `rdf:nil` and
+the empty pattern at `)`). One tail call per cell. -/
+def linkCollectionCells : List CollectionCell → (PatternTerm × QueryPattern) →
+    (PatternTerm × QueryPattern)
+  | [], acc => acc
+  | (bid, item) :: cellsRev, acc =>
+    let bsub : PatternSubject := .bnode bid
+    let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
+    let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := acc.1 }
+    linkCollectionCells cellsRev
+      (.bnode bid, ggpJoin (ggpJoin (.bgp [firstT, restT]) item.2) acc.2)
+
 mutual
 
 /-- [110] Expression ::= ConditionalOrExpression. -/
@@ -1999,7 +2017,7 @@ def pObjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
              match expectTok .rbracket ts2 with
              | .error _     => pErr "expected ']' after blank node property list" ts2
              | .ok (_, ts3) => .ok ((.bnode bid, extras), ts3)))
-    | .lparen => pCollection f st (advTok ts)
+    | .lparen => pCollectionCells f st (advTok ts) []
     | .ttOpen => pTripleTermPattern f st (advTok ts)
     | .ttBareOpen => do
       -- SPARQL 1.2 bare reified triple in object position; also the
@@ -2126,24 +2144,26 @@ def pAnnotations (fuel : Nat) (st : PState) (baseS : PatternSubject)
         .ok (ggpJoin (ggpJoin pre blk) rest, ts4)
     | _ => .ok (.empty, ts)
 
-/-- [102] Collection ::= '(' GraphNode+ ')' — desugared into an
-`rdf:first` / `rdf:rest` chain, `rdf:nil` when empty. -/
-def pCollection (fuel : Nat) (st : PState) (ts : TStream) :
+/-- [102] Collection ::= '(' GraphNode+ ')', read by a loop: each element
+is read (`pObjectWithExtras`) and pushed with its cell's blank-node name
+onto the newest-first list `cellsRev`, then the next element is read by a
+tail call; at `)` `linkCollectionCells` builds the `rdf:first` / `rdf:rest`
+chain, last cell first. The readable form `pCollection` (one recursive
+call per element) is defined after this block and proved equal
+(`pCollectionCells_eq`; https://github.com/danbri/factoidal/issues/752: an
+INSERT DATA collection is data, so its length is not bounded by the query). -/
+def pCollectionCells (fuel : Nat) (st : PState) (ts : TStream)
+    (cellsRev : List (String × (PatternTerm × QueryPattern))) :
     Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
   | f + 1 =>
     match peekTok ts with
-    | .rparen => .ok ((.iri rdfNilIri, .empty), advTok ts)
-    | _ => do
-      let (item, ts1) ← pObjectWithExtras f st ts
-      let bid  := freshBnodeId ts
-      let bsub : PatternSubject := .bnode bid
-      let (rest, ts2) ← pCollection f st ts1
-      let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
-      let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := rest.1 }
-      let triples : QueryPattern := .bgp [firstT, restT]
-      .ok ((.bnode bid, ggpJoin (ggpJoin triples item.2) rest.2), ts2)
+    | .rparen => .ok (linkCollectionCells cellsRev (.iri rdfNilIri, .empty), advTok ts)
+    | _ =>
+      match pObjectWithExtras f st ts with
+      | .error e => .error e
+      | .ok (item, ts1) => pCollectionCells f st ts1 ((freshBnodeId ts, item) :: cellsRev)
 
 /-- [78] Verb / [88] Path in predicate position. A path that turned out
 to be a single IRI is reported as a plain term, so a simple triple
@@ -2444,7 +2464,7 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
              | .error _     => pErr "expected ']' after blank node property list" ts2
              | .ok (_, ts3) => .ok ((.bnode bid, extras, true), ts3)))
     | .lparen => do
-      let (pt, ts1) ← pCollection f st (advTok ts)
+      let (pt, ts1) ← pCollectionCells f st (advTok ts) []
       match patternTermToSubject pt.1 with
       | some s => .ok ((s, pt.2, false), ts1)
       | none   => pErr "collection cannot be used as subject" ts
@@ -2969,6 +2989,62 @@ def pDescribeAfterTargets (fuel : Nat) (st : PState) (targets : List PatternTerm
       .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts3)
 
 end
+
+/-- [102] Collection ::= '(' GraphNode+ ')' — desugared into an
+`rdf:first` / `rdf:rest` chain, `rdf:nil` when empty. The readable form, one
+recursive call per element; the parser runs `pCollectionCells`, proved equal
+below. -/
+def pCollection (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 =>
+    match peekTok ts with
+    | .rparen => .ok ((.iri rdfNilIri, .empty), advTok ts)
+    | _ => do
+      let (item, ts1) ← pObjectWithExtras f st ts
+      let bid  := freshBnodeId ts
+      let bsub : PatternSubject := .bnode bid
+      let (rest, ts2) ← pCollection f st ts1
+      let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
+      let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := rest.1 }
+      let triples : QueryPattern := .bgp [firstT, restT]
+      .ok ((.bnode bid, ggpJoin (ggpJoin triples item.2) rest.2), ts2)
+
+/-- The loop reads the same elements, with the same fuel at each element, as
+the readable form, and links the cells read before (`cellsRev`) in front of
+its answer; errors and positions are the same. -/
+theorem pCollectionCells_eq : ∀ (fuel : Nat) (st : PState) (ts : TStream)
+    (cellsRev : List CollectionCell),
+    pCollectionCells fuel st ts cellsRev =
+      (pCollection fuel st ts).map (fun r => (linkCollectionCells cellsRev r.1, r.2))
+  | 0, st, ts, cellsRev => by
+      simp [pCollectionCells, pCollection, pErr, Except.map]
+  | f + 1, st, ts, cellsRev => by
+      simp only [pCollectionCells, pCollection]
+      split
+      · simp [Except.map]
+      · cases h : pObjectWithExtras f st ts with
+        | error e => simp [bind, Except.bind, Except.map]
+        | ok p =>
+          obtain ⟨item, ts1⟩ := p
+          simp only [bind, Except.bind]
+          rw [pCollectionCells_eq f st ts1]
+          cases pCollection f st ts1 with
+          | error e => simp [Except.map]
+          | ok q =>
+            obtain ⟨rest, ts2⟩ := q
+            simp [Except.map, linkCollectionCells]
+
+def pCollectionFast (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
+  pCollectionCells fuel st ts []
+
+/-- A caller of the readable form runs the loop. -/
+@[csimp] theorem pCollection_eq_fast : @pCollection = @pCollectionFast := by
+  funext fuel st ts
+  rw [pCollectionFast, pCollectionCells_eq]
+  cases pCollection fuel st ts <;> simp [Except.map, linkCollectionCells]
 
 /-! ## Top-level entry points — F* Part 7's `parse_sparql*` -/
 

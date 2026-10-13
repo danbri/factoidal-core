@@ -653,6 +653,19 @@ def pow10 : Nat → Int
   | 0 => 1
   | n + 1 => 10 * pow10 n
 
+/-- `pow10` as the core power: `Int.pow` of a non-negative base is one
+`Nat.pow` (`lean_nat_pow`, GMP), so no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Int := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Int.pow_succ, Int.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
+
 /-- Three-way integer comparison: `-1`, `0`, `1` (port of `int_compare`). -/
 def intCompare (a b : Int) : Int :=
   if a < b then -1 else if a = b then 0 else 1
@@ -877,6 +890,27 @@ keeps this port structural, so `#guard` can evaluate it. -/
 def countDigitsFuel : Nat → Nat → Nat
   | 0, _ => 1
   | _ + 1, n => if n < 10 then 1 else 1 + countDigitsFuel n (n / 10)
+
+/-- `countDigitsFuel` with the count in an accumulator, so each step is a
+tail call (the digits of a literal in the data;
+https://github.com/danbri/factoidal/issues/752). -/
+def countDigitsLoop : Nat → Nat → Nat → Nat
+  | 0, _, k => k + 1
+  | _ + 1, n, k => if n < 10 then k + 1 else countDigitsLoop n (n / 10) (k + 1)
+
+theorem countDigitsLoop_eq (f n k : Nat) :
+    countDigitsLoop f n k = k + countDigitsFuel f n := by
+  fun_induction countDigitsLoop f n k with
+  | case1 n k => simp [countDigitsFuel]
+  | case2 f n k h => rw [countDigitsFuel]; simp [h]
+  | case3 f n k h ih => rw [countDigitsFuel, ih]; simp [h]; omega
+
+def countDigitsFuelFast (f n : Nat) : Nat := countDigitsLoop f n 0
+
+/-- The compiler runs `countDigitsFuelFast` wherever the source says
+`countDigitsFuel`. -/
+@[csimp] theorem countDigitsFuel_eq_fast : @countDigitsFuel = @countDigitsFuelFast := by
+  funext f n; simp [countDigitsFuelFast, countDigitsLoop_eq]
 
 def countDigits (n : Nat) : Nat := countDigitsFuel n n
 

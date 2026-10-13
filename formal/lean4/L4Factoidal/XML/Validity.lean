@@ -654,6 +654,45 @@ where
     | [] => 0
     | c :: rest => countElements c + countList rest
 
+mutual
+/-- `validate.countElements` with the count in an accumulator: siblings are
+one tail call each (`countListAcc`), so the stack grows with the element
+NESTING of the document only (https://github.com/danbri/factoidal/issues/752). -/
+def countElementsAcc : Node → Nat → Nat
+  | .element _ _ cs, a => countListAcc cs (a + 1)
+  | .text _, a => a
+  | .comment _, a => a
+  | .cdata _, a => a
+  | .pi _ _, a => a
+def countListAcc : List Node → Nat → Nat
+  | [], a => a
+  | c :: rest, a => countListAcc rest (countElementsAcc c a)
+end
+
+mutual
+theorem countElementsAcc_eq : ∀ (n : Node) (a : Nat),
+    countElementsAcc n a = a + validate.countElements n
+  | .element _ _ cs, a => by
+      rw [countElementsAcc, countListAcc_eq cs (a + 1), validate.countElements]; omega
+  | .text _, a => by simp [countElementsAcc, validate.countElements]
+  | .comment _, a => by simp [countElementsAcc, validate.countElements]
+  | .cdata _, a => by simp [countElementsAcc, validate.countElements]
+  | .pi _ _, a => by simp [countElementsAcc, validate.countElements]
+theorem countListAcc_eq : ∀ (l : List Node) (a : Nat),
+    countListAcc l a = a + validate.countList l
+  | [], a => by simp [countListAcc, validate.countList]
+  | c :: rest, a => by
+      rw [countListAcc, countListAcc_eq rest, countElementsAcc_eq c a, validate.countList]
+      omega
+end
+
+def validateFast (d : Document) : List Violation :=
+  validateWithNotes d { elems := (List.replicate (countElementsAcc d.root 0) {}) }
+
+/-- The compiler runs `validateFast` wherever the source says `validate`. -/
+@[csimp] theorem validate_eq_fast : @validate = @validateFast := by
+  funext d; simp [validate, validateFast, countElementsAcc_eq]
+
 /-- Parse `input` (with the files `resolve` can supply) and check it:
 `error` when it is not well-formed, otherwise the violated constraints. -/
 def validateXML (resolve : Resolver) (input : String) : Except XmlError (List Violation) :=

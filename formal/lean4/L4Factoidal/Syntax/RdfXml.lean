@@ -653,6 +653,67 @@ def serializeNodes : Nat → String → List XML.Node → String
 
 end
 
+mutual
+
+/-- `serializeNode` whose child list is written by `serializeNodesLoop`. -/
+def serializeNodeF : Nat → String → Bool → XML.Node → String
+  | 0, _, _, _ => ""
+  | _ + 1, _, _, .text t    => escapeText t
+  | _ + 1, _, _, .cdata t   => escapeText t
+  | _ + 1, _, _, .comment _ => ""
+  | _ + 1, _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | fuel + 1, nsDecls, isRoot, .element tag attrs children =>
+    serializeNodesLoop fuel nsDecls children
+        ("<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">")
+      ++ "</" ++ tag ++ ">"
+
+/-- `serializeNodes` as a loop: the text so far is `acc`, each sibling is
+appended and the next one is a tail call, so the stack grows with the
+element nesting only (sibling nodes of an XMLLiteral are data;
+https://github.com/danbri/factoidal/issues/752). The fuel decreases per
+sibling exactly as in `serializeNodes`. -/
+def serializeNodesLoop : Nat → String → List XML.Node → String → String
+  | 0, _, _, acc => acc
+  | _ + 1, _, [], acc => acc
+  | fuel + 1, nsDecls, c :: rest, acc =>
+    serializeNodesLoop fuel nsDecls rest (acc ++ serializeNodeF fuel nsDecls false c)
+
+end
+
+theorem serializeLoop_eq : ∀ fuel : Nat,
+    (∀ nsDecls isRoot n, serializeNodeF fuel nsDecls isRoot n = serializeNode fuel nsDecls isRoot n) ∧
+    (∀ nsDecls l acc, serializeNodesLoop fuel nsDecls l acc = acc ++ serializeNodes fuel nsDecls l)
+  | 0 => ⟨fun _ _ _ => by simp [serializeNodeF, serializeNode],
+          fun _ _ _ => by simp [serializeNodesLoop, serializeNodes, String.append_empty]⟩
+  | fuel + 1 =>
+    have ih := serializeLoop_eq fuel
+    ⟨fun nsDecls isRoot n => by
+        cases n with
+        | element tag attrs children =>
+          simp only [serializeNodeF, serializeNode, ih.2, String.append_assoc]
+        | text t => simp [serializeNodeF, serializeNode]
+        | cdata t => simp [serializeNodeF, serializeNode]
+        | comment b => simp [serializeNodeF, serializeNode]
+        | pi t d => simp [serializeNodeF, serializeNode],
+     fun nsDecls l acc => by
+        cases l with
+        | nil => simp [serializeNodesLoop, serializeNodes, String.append_empty]
+        | cons c rest =>
+          simp only [serializeNodesLoop, serializeNodes, ih.2, ih.1, String.append_assoc]⟩
+
+def serializeNodesFast (fuel : Nat) (nsDecls : String) (l : List XML.Node) : String :=
+  serializeNodesLoop fuel nsDecls l ""
+
+/-- The compiler runs `serializeNodeF` wherever the source says
+`serializeNode` outside the readable pair. -/
+@[csimp] theorem serializeNode_eq_fast : @serializeNode = @serializeNodeF := by
+  funext fuel nsDecls isRoot n; exact ((serializeLoop_eq fuel).1 nsDecls isRoot n).symm
+
+/-- And `serializeNodesFast` wherever it says `serializeNodes`. -/
+@[csimp] theorem serializeNodes_eq_fast : @serializeNodes = @serializeNodesFast := by
+  funext fuel nsDecls l
+  simp [serializeNodesFast, (serializeLoop_eq fuel).2, String.empty_append]
+
 /-- The lexical form of the `rdf:XMLLiteral` a `[7.2.17]` property
 element denotes. -/
 def serializeLiteralContent (scope : XML.NsScope) (children : List XML.Node) : String :=
@@ -720,6 +781,23 @@ def determineSubject (st : St) (attrs : List XML.Attribute) : Subject × St :=
       | none   =>
         let (b, st1) := st.freshBnode
         (.bnode b, st1)
+
+/-- One cell of an RDF/XML collection: its blank node, the item's term, and
+the triples the item element made. -/
+abbrev CollectionCell := BNodeId × Term × List Triple
+
+/-- Build the `rdf:first`/`rdf:rest` chain of a collection from its cells,
+newest first, onto `acc` (the chain after the last cell read: `rdf:nil` and
+no triples). One tail call per cell. -/
+def linkCollectionCells : List CollectionCell → Term × List Triple → Term × List Triple
+  | [], acc => acc
+  | (cellId, itemTerm, itemTriples) :: cellsRev, (restHead, restTriples) =>
+    let cell : Subject := .bnode cellId
+    linkCollectionCells cellsRev
+      (Term.bnode cellId,
+       { s := cell, p := rdfFirstIri, o := itemTerm }
+         :: { s := cell, p := rdfRestIri, o := restHead }
+         :: (itemTriples ++ restTriples))
 
 mutual
 
@@ -847,7 +925,7 @@ def propertyEltBody : Nat → St → Subject → WfIri → Option WfIri →
     -- [7.2.19] parseTypeCollectionPropertyElt
     | some "Collection" =>
       let items := children.filter (fun c => c.elementTag.isSome)
-      let (head, ts, st1) := collectionList fuel st items
+      let (head, ts, st1) := collectionCells fuel st items []
       ⟨{ s := subj, p := pred, o := head } :: reifyAll reif annot subj pred head ++ ts, st1⟩
     -- RDF 1.2: `rdf:parseType="Triple"` — the property element holds
     -- exactly ONE `rdf:Description` making exactly ONE triple, and that
@@ -937,9 +1015,34 @@ def propertyEltBody : Nat → St → Subject → WfIri → Option WfIri →
               let obj := Term.literal (mkPlainLiteral text st.lang st.effectiveDir)
               ⟨{ s := subj, p := pred, o := obj } :: reifyAll reif annot subj pred obj, st⟩
 
+/-- `[7.2.19]`'s list construction, read by a loop: each item is read
+(`nodeElement`), its cell's blank node is allocated, and the cell (name,
+item term, item triples) goes on the newest-first list `cellsRev`; the next
+item is a tail call. When the items (or the fuel) end,
+`linkCollectionCells` builds the `rdf:first`/`rdf:rest` chain, last cell
+first. The allocation order (item, then its cell) is that of the readable
+form `collectionList`, defined after this block and proved equal
+(`collectionCells_eq`; the members of a collection are data,
+https://github.com/danbri/factoidal/issues/752). -/
+def collectionCells : Nat → St → List XML.Node → List CollectionCell →
+    Term × List Triple × St
+  | 0, st, _, cellsRev =>
+    let r := linkCollectionCells cellsRev (Term.iri rdfNilIri, [])
+    (r.1, r.2, st)
+  | _ + 1, st, [], cellsRev =>
+    let r := linkCollectionCells cellsRev (Term.iri rdfNilIri, [])
+    (r.1, r.2, st)
+  | fuel + 1, st, item :: rest, cellsRev =>
+    let nr := nodeElement fuel st item
+    let (cellId, st1) := nr.st.freshBnode
+    collectionCells fuel st1 rest ((cellId, nr.subj.toTerm, nr.triples) :: cellsRev)
+
+end
+
 /-- `[7.2.19]`'s list construction: the collection's items become an
 `rdf:first`/`rdf:rest` chain terminated by `rdf:nil`. Returns the head
-term, the triples, and the outgoing state. -/
+term, the triples, and the outgoing state. The readable form, one recursive
+call per item; the parser runs `collectionCells`, proved equal below. -/
 def collectionList : Nat → St → List XML.Node → Term × List Triple × St
   | 0, st, _ => (Term.iri rdfNilIri, [], st)
   | _ + 1, st, [] => (Term.iri rdfNilIri, [], st)
@@ -954,7 +1057,30 @@ def collectionList : Nat → St → List XML.Node → Term × List Triple × St
        :: (nr.triples ++ restTriples),
      st2)
 
-end
+/-- The loop reads the same items with the same fuel and state as the
+readable form, and links the cells read before (`cellsRev`) in front of its
+chain; the outgoing state is the same. -/
+theorem collectionCells_eq : ∀ (fuel : Nat) (st : St) (items : List XML.Node)
+    (cellsRev : List CollectionCell),
+    collectionCells fuel st items cellsRev =
+      let r := collectionList fuel st items
+      let l := linkCollectionCells cellsRev (r.1, r.2.1)
+      (l.1, l.2, r.2.2)
+  | 0, st, items, cellsRev => by simp [collectionCells, collectionList]
+  | fuel + 1, st, [], cellsRev => by simp [collectionCells, collectionList]
+  | fuel + 1, st, item :: rest, cellsRev => by
+      simp only [collectionCells, collectionList]
+      rw [collectionCells_eq fuel]
+      simp [linkCollectionCells]
+
+def collectionListFast (fuel : Nat) (st : St) (items : List XML.Node) :
+    Term × List Triple × St :=
+  collectionCells fuel st items []
+
+/-- A caller of the readable form runs the loop. -/
+@[csimp] theorem collectionList_eq_fast : @collectionList = @collectionListFast := by
+  funext fuel st items
+  simp [collectionListFast, collectionCells_eq, linkCollectionCells]
 
 /-! ## `[7.2.2] doc` and `[7.2.8] RDF` -/
 

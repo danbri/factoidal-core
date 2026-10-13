@@ -146,6 +146,23 @@ def Graph.dedup : Graph → Graph
       let r := Graph.dedup ts
       if r.mem t then r else t :: r
 
+/-- One step of `Graph.dedup`: keep `r`, or put `t` in front of it. -/
+def Graph.dedupStep (r : Graph) (t : Triple) : Graph := if r.mem t then r else t :: r
+
+/-- `Graph.dedup` as a left fold over the reversed graph: the same steps in
+the same order, one tail call per triple (https://github.com/danbri/factoidal/issues/752). -/
+def Graph.dedupFast (g : Graph) : Graph := g.reverse.foldl Graph.dedupStep []
+
+theorem Graph.dedup_eq_foldr :
+    ∀ g : Graph, Graph.dedup g = g.foldr (fun t r => Graph.dedupStep r t) []
+  | []      => rfl
+  | t :: ts => by
+      simp only [Graph.dedup, List.foldr_cons, Graph.dedup_eq_foldr ts, Graph.dedupStep]
+
+/-- The compiler runs `Graph.dedupFast` wherever the source says `Graph.dedup`. -/
+@[csimp] theorem Graph.dedup_eq_fast : @Graph.dedup = @Graph.dedupFast := by
+  funext g; rw [Graph.dedup_eq_foldr, Graph.dedupFast, List.foldl_reverse]
+
 /-! ## Triple-set equality
 
 CHOICE, stated once and used everywhere below: a graph is a `List

@@ -275,6 +275,70 @@ def walk : Nat → List Char → List (Bindings × Bindings) → List Char
               openTag ++ walk fuel remainder ((scope', rendered') :: stack)
       else c :: walk fuel rest stack
 
+/-- `walk` as a loop: the output so far is a newest-first list `acc`, each
+piece goes on its front (`List.reverseAux`), one tail call per character or
+tag, and the list is reversed once at the end (the literal text is data;
+https://github.com/danbri/factoidal/issues/752). -/
+def walkAcc : Nat → List Char → List (Bindings × Bindings) → List Char → List Char
+  | 0,        _,         _,     acc => acc.reverse
+  | _ + 1,    [],        _,     acc => acc.reverse
+  | fuel + 1, c :: rest, stack, acc =>
+      if c = '<' then
+        let (body, remainder) := splitTag rest []
+        match body with
+        | []       => walkAcc fuel remainder stack ('>' :: '<' :: acc)
+        | '/' :: _ => walkAcc fuel remainder stack.tail (('<' :: body ++ ['>']).reverseAux acc)
+        | '!' :: _ => walkAcc fuel remainder stack (('<' :: body ++ ['>']).reverseAux acc)
+        | '?' :: _ => walkAcc fuel remainder stack (('<' :: body ++ ['>']).reverseAux acc)
+        | _        =>
+            let frame := stack.head?.getD ([], [])
+            let (openTag, selfClose, scope', rendered') :=
+              canonStartTag frame.1 frame.2 body
+            let (nm, _) := takeName body []
+            if selfClose then
+              walkAcc fuel remainder stack
+                ((openTag ++ ('<' :: '/' :: nm ++ ['>'])).reverseAux acc)
+            else
+              walkAcc fuel remainder ((scope', rendered') :: stack) (openTag.reverseAux acc)
+      else walkAcc fuel rest stack (c :: acc)
+
+theorem walkAcc_eq : ∀ (fuel : Nat) (cs : List Char) (stack : List (Bindings × Bindings))
+    (acc : List Char), walkAcc fuel cs stack acc = acc.reverse ++ walk fuel cs stack
+  | 0, cs, stack, acc => by simp [walkAcc, walk]
+  | fuel + 1, [], stack, acc => by simp [walkAcc, walk]
+  | fuel + 1, c :: rest, stack, acc => by
+      simp only [walkAcc, walk]
+      by_cases hc : c = '<'
+      · simp only [hc, if_true]
+        cases splitTag rest [] with
+        | mk body remainder =>
+          simp only
+          split
+          · simp [walkAcc_eq fuel]
+          · simp [walkAcc_eq fuel]
+          · simp [walkAcc_eq fuel]
+          · simp [walkAcc_eq fuel]
+          · cases canonStartTag (stack.head?.getD ([], [])).1 (stack.head?.getD ([], [])).2 body with
+            | mk openTag r1 =>
+              cases r1 with
+              | mk selfClose r2 =>
+                cases r2 with
+                | mk scope' rendered' =>
+                  cases takeName body [] with
+                  | mk nm _ =>
+                    simp only
+                    cases selfClose
+                    · simp [walkAcc_eq fuel]
+                    · simp [walkAcc_eq fuel]
+      · simp [hc, walkAcc_eq fuel]
+
+def walkFast (fuel : Nat) (cs : List Char) (stack : List (Bindings × Bindings)) : List Char :=
+  walkAcc fuel cs stack []
+
+/-- The compiler runs `walkFast` wherever the source says `walk`. -/
+@[csimp] theorem walk_eq_fast : @walk = @walkFast := by
+  funext fuel cs stack; simp [walkFast, walkAcc_eq]
+
 def canonicalize (s : String) : List Char :=
   let cs := s.toList
   walk (cs.length + 1) cs []

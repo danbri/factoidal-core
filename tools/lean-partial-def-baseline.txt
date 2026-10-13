@@ -26,4 +26,4 @@
 # `parseClassExprFS`, `parseDataRangeFS`, `parseDataComplementOf`,
 # `parseDataValuesFrom` and `parseObjectComplementOf` total. Lowered at the
 # merge of issue 746, when lean-hygiene-audit reported the gain.
-164
+163
