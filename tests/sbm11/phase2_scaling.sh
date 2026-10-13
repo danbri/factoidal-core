@@ -7,9 +7,9 @@
 # docs/designissues/2026-10-12-sbm11-stage3.md section 4.1).
 #
 # Sources: synthetic N-Triples (tests/sbm11/gen_distinct_terms.py) of N, 2N
-# and 4N lines (N default 500,000: 666,704, 1,333,371 and 2,666,704 distinct
-# terms). Each is packed with `l4sbm11-pack SOURCE OUT --phase2-only
-# --run-terms 32768` (8,192 terms per run and worker: 124, 244 and 417 term
+# and 4N lines (N default 1,000,000: 1,333,371, 2,666,704 and 5,333,371
+# distinct terms). Each is packed with `l4sbm11-pack SOURCE OUT --phase2-only
+# --run-terms 32768` (8,192 terms per run and worker: 244, 417 and 836 term
 # runs, the order of the DBpedia slice's runs at the default run size), which
 # runs phase 1 and phase 2 and prints phase2-ms (wall) and, on Linux,
 # phase2-cpu-ms (CPU time of the one thread that runs phase 2, from
@@ -21,9 +21,10 @@
 # workers terms). A merge that scans every run head per record is quadratic.
 # A merge through a tree costs about log2 k comparisons per record, one more
 # per doubling, so its ratio per doubling is a little above 2 (2.05 to 2.15
-# measured); one run at load 1.5 to 2.5 on 4 vCPUs varied by up to 10 %
-# (other processes share the caches), so the test bounds the two doublings
-# together and prints each.
+# measured); one run at load 1 to 2.5 on 4 vCPUs varied by up to 18 %, in CPU
+# time too (other processes share the machine), and single doublings
+# measured 1.86 to 2.38, so the test bounds the two doublings together and
+# prints each. With N = 500,000 the n run took under 1 s and varied most.
 # Before the fix (2026-10-12, N = 1,000,000, default run size): 5,345, 16,988
 # and 61,654 ms (3.2 and 3.6 per doubling); record:
 # docs/designissues/2026-10-12-sbm11-stage3.md section 4.1.
@@ -33,7 +34,7 @@
 # byte-identical between the two.
 #
 # Usage: tests/sbm11/phase2_scaling.sh
-# Env:   SBM11_P2_LINES (default 500000), SBM11_P2_RUN_TERMS (default 32768),
+# Env:   SBM11_P2_LINES (default 1000000), SBM11_P2_RUN_TERMS (default 32768),
 #        SBM11_P2_FLOOR_MS (default 500), SBM11_P2_REPS (default 3),
 #        SBM11_WORK (default /home/user/qlvr-work/sbm11/phase2-scaling; removed
 #        at the end), L4_SBM11_PACK (default formal/lean4/.lake/build/bin/l4sbm11-pack),
@@ -44,7 +45,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="${L4_SBM11_PACK:-$ROOT/formal/lean4/.lake/build/bin/l4sbm11-pack}"
 REF="${SBM11_REF_PACK:-}"
-N="${SBM11_P2_LINES:-500000}"
+N="${SBM11_P2_LINES:-1000000}"
 RUNTERMS="${SBM11_P2_RUN_TERMS:-32768}"
 FLOOR="${SBM11_P2_FLOOR_MS:-500}"
 REPS="${SBM11_P2_REPS:-3}"

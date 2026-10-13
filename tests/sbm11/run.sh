@@ -69,11 +69,11 @@
 #                check with the digest comparison off (SBM11_VERIFY_DIGEST=0)
 #                and by the digest with it on; no bucket directory is left.
 #   (k) scaling  tests/sbm11/phase2_scaling.sh: packer phase 2 (the k-way
-#                merge of the term runs) on synthetic sources of 0.5, 1 and 2
-#                million lines (124 to 417 term runs; median of 3 runs each,
+#                merge of the term runs) on synthetic sources of 1, 2 and 4
+#                million lines (244 to 836 term runs; median of 3 runs each,
 #                CPU time of the merge thread); 4n at most 4.84 times n, 2.2
 #                per doubling (https://github.com/danbri/factoidal/issues/804;
-#                about 1 minute). SBM11_PHASE2_SCALING=0 leaves (k) out
+#                about 2 minutes). SBM11_PHASE2_SCALING=0 leaves (k) out
 #                (printed, not counted).
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
