@@ -1265,7 +1265,24 @@ membership); post 18's logs have a few records.
 
 ### Gates
 
-GATES_PLACEHOLDER
+Measured on branch `claude/wt-browser-deltalog` (base `main` 52182fb4),
+linux-x86_64, 2026-10-13.
+
+| Gate | Before | After |
+|---|---|---|
+| `lake build` (no target) | exit 0 | exit 0 (1634 jobs) |
+| `Wasm/native-smoke.sh` | 351 (derived: 362 less the 11 new cases) | 362 pass, 0 fail (out of 362) |
+| `Wasm/cli-smoke.sh` | not measured | 83 pass, 0 fail (out of 83) |
+| `tools/lean-tail-recursion-audit.py --gate` (stale IR removed: none) | pass, 2,361 recursive rows | pass, 2,361 rows; none from the new modules (`decodeGo`, `entriesLoop`, `logHexGo` compile to `goto _start`) |
+| `tools/lean-hygiene-audit.py --build-log` | not measured | clean (no sorry, axiom, native_decide, unsafe or implemented_by; partial def 163, baseline 164, from the base) |
+| `tests/stack/run.sh --canary 512` | 67 (derived: 77 less the 10 new cases) | 77 pass, 0 fail (out of 77): `delta-log-decode`, `delta-log-merge` (100,000 records) on the native, native 512 KB, wasm and wasm 512 KB routes, and `delta-log-count` (all 100,000 batches, not torn) on the two native routes |
+| `npm test` (npm/factoidal) | 413 pass, 0 fail, 1 skipped (out of 414), measured before `test/delta-log.test.mjs` was added | 417 pass, 0 fail, 1 skipped (out of 418) |
+| `node --test tests/hub/post18_test.mjs tests/hub/fn_surface_parity_test.mjs` | 29 cases (counted in the base files), 10 of them expected failures naming issue 728 | 31 pass, 0 fail (out of 31), no expected failure |
+| `node --test tests/hub/*_test.mjs` | 445 cases (derived: 447 less the 2 new cases), 11 expected failures | 447 pass, 0 fail (out of 447), 1 expected failure (not this issue) |
+| `tests/web-demos/browser_persistence_smoke.sh` (Chromium, IndexedDB, `page.reload()`) | could not run (needed the F\* bundle) | 18 pass, 0 fail (out of 18) |
+| `tests/web-demos/hub_post18_value_check.sh` (new; post 18 cell values in Chromium, across a reload) | none | 10 pass, 0 fail (out of 10), two runs |
+| `tests/web-demos/hub_browser_all.sh` | not run here | 54 pass, 0 fail (out of 54 posts) (run before the cell 3 edit, which adds one `await`) |
+| wasm (`Wasm/build-wasm.sh`) | | full 11,149,721 bytes, core 6,062,770 bytes; the core size table gives the modules this change adds or grows 80,223 bytes before `wasm-opt` |
 
 ## 5. Stage 2: what landed (2026-10-10)
 
