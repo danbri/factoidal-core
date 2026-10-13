@@ -880,8 +880,14 @@ def report(path):
 # issue. The row fails the gate when it comes within the bound (UNEXPECTED
 # PASS), so the repair cannot land without the row and the issue being updated.
 XFAIL = {
-    ("parse-rdfxml", "100000", "lean"): "https://github.com/danbri/factoidal/issues/814",
 }
+# Removed 2026-10-13: ("parse-rdfxml", "100000", "lean") for
+# https://github.com/danbri/factoidal/issues/814. With the RDF/XML repairs of
+# that issue and https://github.com/danbri/factoidal/issues/771 (fast forms
+# proved equal by csimp; the children of rdf:RDF walked as they are read) the
+# row measured 1.8 s CPU (5.12 s recorded) and 181 MB (671 MB recorded): time
+# ratio 5.3, memory ratio 7.9 against the recorded Oxigraph row, and the gate
+# reported UNEXPECTED PASS.
 # Removed 2026-10-13: ("rdfc-pairs", "8000", "lean") for
 # https://github.com/danbri/factoidal/issues/751. With the RDFC-1.0 repair of
 # that issue (OKR batch 1 KR 2.4) the row measured 0.58 s CPU (9.97 s
