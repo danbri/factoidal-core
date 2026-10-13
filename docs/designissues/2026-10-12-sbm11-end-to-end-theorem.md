@@ -3,7 +3,9 @@
 Date: 2026-10-12. Status: plan written; 12 lemmas proved in the first
 landing; L3b, L4d and L4e proved in the second (OKR batch 2 KR 1.5,
 https://github.com/danbri/factoidal/issues/801; sections 9 and 10); the
-end-to-end theorem open (section 2 table, section 3 obstacles). Gap issue: https://github.com/danbri/factoidal/issues/776.
+end-to-end theorem open (section 2 table, section 3 obstacles); L5g and L5g′
+(the left outer join of OPTIONAL on ids, https://github.com/danbri/factoidal/issues/775)
+proved 2026-10-13, L5g″ open. Gap issue: https://github.com/danbri/factoidal/issues/776.
 Tracking: https://github.com/danbri/factoidal/issues/787. Related work
 issues: https://github.com/danbri/factoidal/issues/792 (dictionary, item 4),
 https://github.com/danbri/factoidal/issues/793 (items 2 and 4),
@@ -99,6 +101,9 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
 | L5c | FILTER: a conjunction is applied conjunct by conjunct | proved before (stage 4) | `IdQueryTests.ebvOrFalse_evalIn_and` |
 | L5d | FILTER on ids: rule 1 (term identity) and rule 2 (STRSTARTS as a rank range) agree with `Expr.evalIn` | tested only | `IdQueryTests.lean` `#guard`s on 23 terms |
 | L5e | ORDER BY shortcuts on ids agree with `sparqlOrderValue` | tested only | `IdQueryTests.lean` `#guard`s |
+| L5g | Left outer join (OPTIONAL on ids, https://github.com/danbri/factoidal/issues/775), index part: `OptJoin.outerPairs` over the inner pairs gives `ljSpec` (each left row with the right rows it accepts, in order, or alone with `none`), also directly over the index arrays of `Qlvr.mergeGo` (join columns sorted on both sides); (a) every left row is in the output; (b) an output row is an accepted pair, or a left row that accepts no right row, and every accepted pair is in the output; (c) left row `i` occurs `max 1 c` times, `c` the right rows it accepts, and the length is the sum | **proved (2026-10-13)** | `OptJoinTheorems.outerPairs_eq`, `outerPairs_merge`, `ljSpec_left_row`, `ljSpec_mem_some`, `ljSpec_mem_none`, `ljSpec_complete`, `ljSpec_count_row`, `ljSpec_length` (with `runPairs_spec`, `outerGo_spec`) |
+| L5g′ | Left outer join, solution part over rows of ids (`IdRow`: (variable, id), unbound absent): decoding `idLeftJoin L R` is SPARQL 1.1 `leftJoin` (section 18.5) of the decoded rows with condition `true`, as a list, when `Term.eqb` of two decoded ids is id equality on the ids that occur; `idLeftJoin` is `ljSpec` with id compatibility as the candidate relation; the index arrays of `outerPairs` mapped to rows and decoded are that `leftJoin`; `LeftJoin(Ω1, Ω2, c)` is `LeftJoin(Ω1, Filter(c2, Ω2), true)` when `c` on a compatible merge is `c2` on the right row (the id path applies a group's FILTER, which reads only the group's variables, to the group's rows) | **proved (2026-10-13)** | `OptJoinTheorems.leftJoin_decode`, `idLeftJoin_eq_ljSpec`, `outerPairs_leftJoin`, `leftJoin_filter_right` |
+| L5g″ | Left outer join, table part: the `Table` `OptJoin.leftOuterJoin` builds (`gather`, `gatherOpt` over `ByteArray` columns, id 0 for an unbound variable) denotes the rows of `idLeftJoin` of the denotations of its inputs; the hash path (`OptJoin.hashPairs`, `Std.HashMap`) computes `innerSpec`; on two id tables whose shared variables are bound in every row (`IdQuery.flattenOptional`), id compatibility of two rows is equality of the shared columns | open; tested | `OptJoinTheorems` `#guard`s (9 sample joins: merge, hash with one and two shared columns, cross product, empty sides, unbound ids on the left); `tests/sbm11/run.sh` part (d), 16 `ids-optional-*` queries against the reference engine |
 | L6a | E1 from L1 to L5 | open | — |
 | L6b | E2: the fallback selection keeps every quad the query can read (the planner theorem of 2026-09-06 restated for PSO scans), and the `datasetOfQuads` bridge (that record's section 6.6 item 1) | open | — |
 | L6c | The JSON printer (`keyJsonInto`) equals `jsonOfTerm` | tested only | `tests/sbm11/run.sh` part (b), byte comparison on 21 queries |
@@ -143,6 +148,12 @@ every `G` with `denote G = norm D`" is also acceptable; a form "for every
   solutions (ids are injective, `TermIdTheorems.toId?_eq_iff`) and that
   `joinOutput`'s `gather` copies the rows of the pairs. `hashJoin` uses
   `Std.HashMap` and needs a lookup characterisation of its own.
+- **L5g″.** The same step as L5a′ and L5b, for the left outer join: a
+  denotation of a `Table` as rows of ids (columns read with `word64`, id 0
+  left out), a lemma that `gather` and `gatherOpt` copy the rows of their
+  index arrays (`copySlice` of runs, `put64`), and a lookup characterisation
+  of `Std.HashMap.alter` and `getD` for `hashPairs`. L5g and L5g′ give
+  everything from the index arrays on.
 - **L6a.** Needs everything above, plus the plan rules: the permutation
   chosen by `permFor` holds the bound positions as a prefix, and the join
   order does not change the multiset.

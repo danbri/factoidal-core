@@ -25,10 +25,13 @@
 #
 # Prints executed / matched / differed / not comparable, per path, and the
 # refusals at pack and at query. Usage: tests/sbm11/census.sh [SUITE_DIR...]
+# SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
+# compare the census of two builds.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="$ROOT/formal/lean4/.lake/build/bin"
+S11="${SBM11_BIN:-$BIN/l4sbm11}"
 suites=("$@")
 if [ ${#suites[@]} -eq 0 ]; then
   suites=("$ROOT/third_party/testing/w3c/sparql/sparql10" "$ROOT/third_party/testing/w3c/sparql/sparql11")
@@ -109,7 +112,7 @@ for t in "${order[@]}"; do
   rc=0
   timeout 120 "$BIN/l4sbm11-pack" "$input" "$st/gen" --workers 1 >"$st/pack.log" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
-    timeout 120 "$BIN/l4sbm11" activate "$st" gen >"$st/act.log" 2>&1 || rc=$?
+    timeout 120 "$S11" activate "$st" gen >"$st/act.log" 2>&1 || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     rpack=$((rpack + 1)); printf '%s\trefused-pack\t%s\n' "$t" "$(tail -1 "$st/pack.log" "$st/act.log" 2>/dev/null | tr '\n' ' ' | head -c 200)" >>"$TSV"
@@ -117,7 +120,7 @@ for t in "${order[@]}"; do
   fi
   qbase="file://$(realpath "$qfile")"
   rc=0
-  timeout 120 "$BIN/l4sbm11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" >"$st/got" 2>"$st/got.err" || rc=$?
+  timeout 120 "$S11" query "$st" --file "$qfile" --base "$qbase" --threads "${SBM11_THREADS:-1}" >"$st/got" 2>"$st/got.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     rquery=$((rquery + 1)); printf '%s\trefused-query\t%s\n' "$t" "$(tail -1 "$st/got.err" | head -c 200)" >>"$TSV"
     rm -rf "$st"; continue

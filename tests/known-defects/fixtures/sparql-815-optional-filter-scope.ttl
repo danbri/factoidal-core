@@ -1,0 +1,5 @@
+# https://github.com/danbri/factoidal/issues/815: a FILTER in an OPTIONAL
+# group that reads a variable of the left side (SPARQL 1.1 section 18.2.2.5).
+@prefix ex: <http://ex.org/> .
+ex:a ex:age 72 ; ex:name "Alice" .
+ex:c ex:age 71 ; ex:name "Carol" .

@@ -547,8 +547,8 @@ SBM11 stage 4 (2026-10-12, https://github.com/danbri/factoidal/issues/790):
 SPARQL on term ids over a generation, `l4sbm11 query GEN 'SPARQL' | --file
 Q.rq [--base IRI] [--explain] [--repeat N] [--reference-render]
 [--reference]` and `l4sbm11 serve GEN`. The id fragment (BGP, FILTER,
-one level of GRAPH, GROUP BY with COUNT, DISTINCT, ORDER BY, LIMIT/OFFSET)
-runs on ids with PRM1 block skipping and merge/hash joins; every other query
+one level of GRAPH, GROUP BY with COUNT, DISTINCT, ORDER BY, LIMIT/OFFSET,
+and since 2026-10-13 top-level OPTIONAL, below) runs on ids with PRM1 block skipping and merge/hash joins; every other query
 runs the reference evaluator over the quads the `quadEntriesForQuery` guard
 selects; stderr names the path (`path=ids` or `path=reference`). FILTER on
 ids: term identity only where `valueCompare` is term identity (IRI, string,
@@ -606,6 +606,32 @@ pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
 `cs[0]!` out of an array and storing it back keeps a second reference, and
 every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
 after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
+
+OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
+record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
+OPTIONAL { gk } }` at the top level runs on `path=ids` when the base is a
+group of the id fragment, each group is triple patterns of the default graph
+and FILTERs over the group's own variables, a variable of a group that the
+base does not bind occurs in no other group, and a FILTER beside the
+OPTIONALs reads base variables only (`IdQuery.flattenOptional`; every other
+OPTIONAL shape goes to the reference fallback). Each group's BGP is
+evaluated, its FILTERs applied to its rows, then `OptJoin.leftOuterJoin`
+(merge on a shared sort variable, else a hash index probed in left order);
+an unbound variable is id 0 in its column (`OptJoin.unbound`): the renderer
+leaves it out, ORDER BY puts it first, `COUNT(?x)` skips it
+(`IdQuery.countItems`). Theorems: `Storage/Sbm11/OptJoinTheorems.lean`
+(lemmas L5g, L5g′ of the end-to-end record; the `Table` step L5g″ is open
+and tested by `#guard`s). The right side is scanned in full: using the left
+keys to skip blocks is https://github.com/danbri/factoidal/issues/809.
+DBpedia d11 (OPTIONAL): 48.7 s warm and 849 MB on the reference fallback
+before; 17.2 ms warm and 25.6 MB on ids (2026-10-13). Gates: `tests/sbm11/run.sh` part (d), the 16
+`ids-optional-*` and 6 `ref-optional-*` queries; a change that admits more
+OPTIONAL shapes must move a `ref-optional-*` query to `ids-` only with a
+gate query that the reference semantics decide. Trap: the reference
+evaluator evaluates a FILTER in an OPTIONAL group on the group's row only
+(https://github.com/danbri/factoidal/issues/815, known-defects case
+`SPARQL-OPT-FILTER-SCOPE`); the id path refuses a group FILTER over a
+left-side variable until that is fixed, so that both paths answer the same.
 
 Activation's exact permutation check and the scan theorem (2026-10-12,
 https://github.com/danbri/factoidal/issues/776; record: sections 9 and 10 of

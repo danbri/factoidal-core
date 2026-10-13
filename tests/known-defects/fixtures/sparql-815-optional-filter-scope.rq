@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?a ?n WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n FILTER(?a = 72) } }

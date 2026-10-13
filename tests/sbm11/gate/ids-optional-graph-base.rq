@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GRAPH in the base; the OPTIONAL group reads the default graph and joins on ?o.
+SELECT ?g ?s ?o ?n WHERE { GRAPH ?g { ?s ex:knows ?o } OPTIONAL { ?o ex:name ?n } }

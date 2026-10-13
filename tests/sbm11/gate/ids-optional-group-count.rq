@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GROUP BY the optional variable: one group for unbound ?n (f), COUNT(?n) 0 there.
+SELECT ?n (COUNT(?n) AS ?c) (COUNT(*) AS ?k) WHERE { ?s ex:age ?a OPTIONAL { ?s ex:name ?n } } GROUP BY ?n
