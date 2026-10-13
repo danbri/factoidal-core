@@ -743,14 +743,11 @@ L4Factoidal_Cottas_BaseWriterPrims_leUintDecode  # (c) one fixed-width little-en
 L4Factoidal_Cottas_BaseWriterPrims_uvarintDecode  # (c) bytes of one LEB128 value; fuel-bounded
 L4Factoidal_Cottas_OnDiskStore_namedGraphsAux  # (a) PENDING https://github.com/danbri/factoidal/issues/752 COTTAS: one frame per named graph of a store
 L4Factoidal_Cottas_OnDiskStore_objectToRevmapKey  # (b) nesting depth of RDF 1.2 triple terms
-L4Factoidal_Geo_Scaled_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the fraction digits of one WKT coordinate
 L4Factoidal_Geo_Wkt_takeDigits  # (a) PENDING https://github.com/danbri/factoidal/issues/752 digits of one number in a WKT literal: one frame per digit
 L4Factoidal_JSONLD_FState_removeEmbed_replaceFirst  # (a) PENDING https://github.com/danbri/factoidal/issues/752 framing: one frame per value of one property before the match (data)
 L4Factoidal_Math_Sigmoid_ifact  # (c) k! for the Taylor term index k, bounded by the fixed term count of the working precision
 L4Factoidal_Math_Sigmoid_ipow  # (c) 2^shift for the range-reduction shift of the working precision
-L4Factoidal_Math_Sigmoid_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of the input decimal minus the working scale
 L4Factoidal_Math_Sigmoid_wpIPow  # (c) r^k for the Taylor term index k, bounded by the fixed term count
-L4Factoidal_MathML_powNat  # (a) PENDING https://github.com/danbri/factoidal/issues/752 x^n with n from a MathML <power> in the document: one frame per unit of the exponent
 L4Factoidal_OWL_QueryRewriteCore_expandCeSubject  # (b) class-expression nesting in the ontology; fuel-bounded
 L4Factoidal_OWL_QueryRewriteJoins_normaliseJoins  # (b) nesting of graph patterns in one query
 L4Factoidal_OWL_QueryRewriteNested_patternHasCeMarker  # (b) nesting of graph patterns in one query
@@ -812,7 +809,6 @@ L4Factoidal_SPARQL_GraphPattern_serviceFailure  # (b) nesting of graph patterns 
 L4Factoidal_SPARQL_DatasetRestriction_graphFree  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_DatasetRestriction_graphVarIn  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_countDigitsFuel  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
-L4Factoidal_SPARQL_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale (fraction digits) of a decimal literal or a difference of scales: one frame per digit
 L4Factoidal_SPARQL_ggpHasVar  # (b) nesting of graph patterns in one query
 L4Factoidal_SPARQL_pAnnotations  # (b) annotation blocks on one triple in the query text; fuel-bounded
 L4Factoidal_SPARQL_pCollection  # (a) PENDING https://github.com/danbri/factoidal/issues/752 one frame per element of one RDF collection in the query or update text (the SPARQL twin of issue 678; INSERT DATA can carry data)
@@ -849,9 +845,7 @@ L4Factoidal_XML_applyDeclarations  # (b) attributes of one XML element
 L4Factoidal_XML_parseChildrenW  # (b) one frame of parseElementW per ELEMENT nesting level of the document; the nesting of markup entities is on the worklist, issue 755
 L4Factoidal_XML_parseElementW  # (b) element nesting of the document, as parseChildrenW
 L4Factoidal_XML_validate_countList  # (a) PENDING https://github.com/danbri/factoidal/issues/752 children of one element during DTD validation: one frame per child (data)
-L4Factoidal_XPath_Num_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is the scale of an xs:decimal value: one frame per digit
 L4Factoidal_XSD_natDigits_go  # (a) PENDING https://github.com/danbri/factoidal/issues/752 decimal digits of one integer value (a literal in the data): one frame per digit
-L4Factoidal_XSD_pow10  # (a) PENDING https://github.com/danbri/factoidal/issues/752 10^n where n is a digit count of a literal under facet checks: one frame per digit
 L4Factoidal_XSD_pow2i  # (c) called with the constants 150 and 23 only (float facet checks)
 L4Factoidal_XSLT_parseSteps_build  # (b) steps of one XSLT match pattern (stylesheet text)
 L4Wasm_Ops_roundsToFixpoint  # (c) one frame per closure round; the cap argument bounds it (rounds, not triples)

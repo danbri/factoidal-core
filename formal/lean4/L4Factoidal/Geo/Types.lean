@@ -37,6 +37,19 @@ theorem pow10_pos : ∀ n, 0 < pow10 n
   | 0     => Nat.zero_lt_one
   | n + 1 => Nat.mul_pos (by decide) (pow10_pos n)
 
+/-- `pow10` as the core power, whose `Nat.pow` is one `lean_nat_pow` call
+(GMP): no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Nat := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Nat.pow_succ, Nat.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
+
 def ofInt (i : Int) : Scaled := ⟨i, 0⟩
 def zero : Scaled := ofInt 0
 
