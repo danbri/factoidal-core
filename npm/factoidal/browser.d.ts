@@ -8,6 +8,7 @@ export type {
   NamedNode, BlankNode, Literal, Variable, DefaultGraph, Quad, Term, DataFactory,
   DataFormat, EntailRegime, Bindings, DataInput, QueryInput, ParseOptions,
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
+  DeltaLogHandle, DeltaLogInspection,
 } from './index';
 
 export {
@@ -29,6 +30,13 @@ export {
   openStore,
   queryStore,
   listStores,
+  deltaLogOpen,
+  deltaLogAppend,
+  deltaLogReadAllHex,
+  deltaLogMerge,
+  deltaLogInspect,
+  deltaLogDestroy,
+  _deltaLogCorruptLastForTest,
   shaclValidate,
   shexValidate,
   owlClosure,

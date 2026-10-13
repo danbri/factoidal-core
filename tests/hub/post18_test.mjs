@@ -2,21 +2,20 @@
 //
 // The hub runs the Lean engine of @factoidal/core (issue 726); `fn` and
 // `Factoidal` here are npm/factoidal, the same typed API the page binds.
-// Cell 1 (parse + in-memory UPDATE) runs on it. Cells 2-4 call the
-// durable update log the F* driver had (deltaLogOpen, deltaLogAppend,
-// deltaLogReadAllHex, deltaLogMerge, deltaLogDestroy,
-// _deltaLogCorruptLastForTest); the Lean package has no such functions
-// yet, https://github.com/danbri/factoidal/issues/728, so each of those
-// cells is an expected failure that names the issue
-// (skills/test-suites/SKILL.md, "Expected failures"): it FAILS the suite
-// on an unexpected pass. The F* stub that replayed those cells over the
-// F* npm-entry ABI is gone with the F* bundle (issue 713 stage 3).
+// Cell 1 (parse + in-memory UPDATE) and cells 2-4 (the durable update log:
+// deltaLogOpen, deltaLogAppend, deltaLogReadAllHex, deltaLogMerge,
+// deltaLogDestroy, _deltaLogCorruptLastForTest) run on it. The log's bytes,
+// checksums and merge are Lean (formal/lean4/L4Factoidal/Storage/
+// BrowserLog.lean, ops deltaLogEncode/deltaLogMerge); under Node the host
+// store keeps the records in memory, in the browser in IndexedDB
+// (https://github.com/danbri/factoidal/issues/728). The real-IndexedDB
+// check is tests/web-demos/hub_browser_all.sh.
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit, xfail } from './_helpers.mjs';
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runObservableCell, pretty, resolvePreSplitCommit } from './_helpers.mjs';
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +27,6 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 
 const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
 
-const DELTA_LOG_ISSUE = 'https://github.com/danbri/factoidal/issues/728';
 const Factoidal = factoidal;
 
 const cells = extractObservableCells(POST_FILE);
@@ -147,7 +145,7 @@ test('post18: the native realisation of the five delta-log I/O assume vals exist
   assert.ok(fs.existsSync(p), 'expected the #282 delta-log I/O patch to exist');
 });
 
-xfail('post18: npm/factoidal/browser.js exports the durable update log this post\'s cells call', DELTA_LOG_ISSUE, () => {
+test('post18: npm/factoidal/browser.js exports the durable update log this post\'s cells call', () => {
   const browserJs = fs.readFileSync(
     path.join(REPO_ROOT, 'npm', 'factoidal', 'browser.js'), 'utf8');
   for (const name of [
@@ -158,23 +156,70 @@ xfail('post18: npm/factoidal/browser.js exports the durable update log this post
   }
 });
 
-xfail('post18 cell 2 (deltaLogAppend) runs on the Lean package: seq 0, opCount 1', DELTA_LOG_ISSUE, async () => {
+test('post18 cell 2 (deltaLogAppend) runs on the Lean package: seq 0, opCount 1', async () => {
   const result = await runObservableCell(cells[1], { Factoidal, fn: factoidal, pretty });
   assert.equal(result.available, true, result.note);
   assert.equal(result.seq, 0);
   assert.equal(result.opCount, 1);
 });
 
-xfail('post18 cell 3 (deltaLogMerge) runs on the Lean package', DELTA_LOG_ISSUE, async () => {
+test('post18 cell 3 (deltaLogMerge) runs on the Lean package: the log read back holds Dana', async () => {
   const result = await runObservableCell(cells[2], { Factoidal, fn: factoidal, pretty });
   assert.equal(result.available, true, result.note);
+  assert.ok(result.batchesInLog >= 1, `batchesInLog ${result.batchesInLog}`);
+  assert.equal(result.containsDana, true);
+  assert.ok(result.mergedPreview.some((line) => line.includes('"Dana"')), result.mergedPreview.join('\n'));
 });
 
-xfail('post18 cell 4 (torn write) runs on the Lean package: Eve survives, Frank is lost', DELTA_LOG_ISSUE, async () => {
+test('post18 cell 4 (torn write) runs on the Lean package: Eve survives, Frank is lost', async () => {
   const result = await runObservableCell(cells[3], { Factoidal, fn: factoidal, pretty });
   assert.equal(result.available, true, result.note);
   assert.equal(result.eveSurvivesCorruption, true);
   assert.equal(result.frankWasLostToCorruption, true);
+});
+
+test('post18: the Lean engine reports the torn record, and a fresh log after it is clean', async () => {
+  const handle = await Factoidal.deltaLogOpen('post18-test-inspect');
+  await Factoidal.deltaLogDestroy(handle);
+  await Factoidal.deltaLogOpen('post18-test-inspect');
+  const a = await Factoidal.deltaLogAppend(handle,
+    'INSERT DATA { <http://example.org/a> <http://example.org/p> "1" . }');
+  const b = await Factoidal.deltaLogAppend(handle,
+    'INSERT DATA { <http://example.org/b> <http://example.org/p> "2" . }');
+  assert.deepEqual([a.seq, b.seq], [0, 1]);
+  const hex = await Factoidal.deltaLogReadAllHex(handle);
+  const records = hex.split('\n');
+  assert.equal(records.length, 2);
+  // Each record is the engine's DLB1 frame ('DLB1' little-endian first).
+  for (const r of records) assert.match(r, /^444c4231[0-9a-f]+$/);
+  let info = await Factoidal.deltaLogInspect(handle);
+  assert.equal(info.batches, 2);
+  assert.equal(info.torn, false);
+  assert.deepEqual(info.records.map((r) => r.seq), [0, 1]);
+  assert.equal(await Factoidal._deltaLogCorruptLastForTest(handle), true);
+  info = await Factoidal.deltaLogInspect(handle);
+  assert.equal(info.batches, 1);
+  assert.equal(info.torn, true);
+  assert.equal(info.tornBytes, records[1].length / 2 - 4);
+  const merged = await Factoidal.deltaLogMerge(handle, '<http://example.org/base> <http://example.org/p> "0" .\n');
+  assert.match(merged, /"0"/);
+  assert.match(merged, /"1"/);
+  assert.doesNotMatch(merged, /"2"/);
+  await Factoidal.deltaLogDestroy(handle);
+  info = await Factoidal.deltaLogInspect(handle);
+  assert.equal(info.batches, 0);
+  assert.equal(info.torn, false);
+});
+
+test('post18: deltaLogAppend refuses an update form the log does not admit, and writes nothing', async () => {
+  const handle = await Factoidal.deltaLogOpen('post18-test-refuse');
+  await Factoidal.deltaLogDestroy(handle);
+  await assert.rejects(
+    Factoidal.deltaLogAppend(handle, 'DELETE WHERE { ?s ?p ?o }'),
+    /admits INSERT DATA/);
+  assert.equal(await Factoidal.deltaLogReadAllHex(handle), '');
+  await assert.rejects(Factoidal.deltaLogAppend({}, 'INSERT DATA {}'), TypeError);
+  await assert.rejects(Factoidal.deltaLogMerge(handle, 42), TypeError);
 });
 
 test('post18: entry_jsoo.ml exports the delta-log ABI AND the toCottas BaseWriter write path (grounds the "base-store write path reaches the browser too" section)', () => {
