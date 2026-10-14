@@ -1024,8 +1024,12 @@ section 3.4). The reader keeps the blank nodes of one document apart: a label
 that the document writes cannot equal a label that the reader mints. Turtle and
 TriG mint `anon` + (the longest run of underscores in the document + 1
 underscores) + a counter, so they need the pre-pass. RDF/XML mints `b<N>` and
-writes each `rdf:nodeID` as `n<value>`. JSON-LD mints `_jld_anon<N>` and passes
-an explicit `_:` label through (collision defect:
+writes each `rdf:nodeID` as `n<value>`. JSON-LD mints `_jld_anon` + the fewest
+underscores for which no label of the document begins with the prefix (none,
+unless a label of the document begins with `_jld_anon`) + a counter, and passes
+an explicit `_:` label through
+(`JSONLD.generated_ne_written`; until 2026-10-14 an explicit `_:_jld_anon0`
+merged with the first generated node,
 https://github.com/danbri/factoidal/issues/840).
 
 **Export (2026-10-14).** `l4sbm11 export GEN --format F [--out FILE]
@@ -1181,7 +1185,6 @@ expected failure.
 | The JSON-LD reader uses stack in proportion to the number of elements: 25,000 to 100,000 elements overflow a 512 KB stack | https://github.com/danbri/factoidal/issues/844 | `tests/known-defects/run.sh`, row `JLD-STACK` |
 | The Lean RDF/XML writer takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/845 | row `rdfxml-write` |
 | The Lean JSON-LD writer (`fromRdf` node list) takes time quadratic in the number of triples | https://github.com/danbri/factoidal/issues/712 | row `jsonld-write` |
-| JSON-LD: an explicit `_:` label can equal a generated label | https://github.com/danbri/factoidal/issues/840 | `syntax_independence.sh`, case `bnode_collide.jsonld` |
 | Turtle and TriG phase 1 runs in one worker | https://github.com/danbri/factoidal/issues/842 | rows `sbm11-pack-ttl-workers`, `sbm11-pack-trig-workers` |
 | The JSON-LD reader of the source layer takes no document loader and no processing option (18 toRdf tests) | https://github.com/danbri/factoidal/issues/848 | `w3c_roundtrip_xfail.tsv`, 18 rows |
 | No theorem relates the stream writers (`Sink.Writer`) to the batch writers | https://github.com/danbri/factoidal/issues/852 | `tests/known-defects/run.sh`, rows `SK-1`, `SK-2` |

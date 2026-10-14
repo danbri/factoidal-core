@@ -26,11 +26,11 @@
 #       byte-identity check.
 #   blank nodes of one document stay distinct: explicit labels that a
 #       generated label could equal, and anonymous nodes, in one document
-#       (bnode_collide.*): five distinct blank nodes.
-#       bnode_collide.jsonld is an expected failure: the JSON-LD reader merges
-#       the explicit `_:_jld_anon0` with the generated `_jld_anon0`
-#       (https://github.com/danbri/factoidal/issues/840). The case reads
-#       three nodes today; it turns the run red when it reads five.
+#       (bnode_collide.*): five distinct blank nodes in each of the four syntaxes
+#       that mint labels. The JSON-LD reader chooses the prefix of the labels it
+#       generates from the document (until 2026-10-14 it merged the explicit
+#       `_:_jld_anon0` with the generated `_jld_anon0`, and read three nodes,
+#       https://github.com/danbri/factoidal/issues/840).
 #   xml:lang of one property element does not reach the next
 #       (lang_scope.rdf against lang_scope.nt): the RDF/XML reader gives the
 #       quads of the N-Triples twin (XML 1.0 section 2.12; until 2026-10-14 it
@@ -203,21 +203,13 @@ echo "=== blank nodes of one document stay distinct"
 distinct_subjects() { # NAME: distinct blank node subjects in the dump
   "$BIN/l4sbm11" dump "$TMP/$1" 2>/dev/null | grep -o '^_:[^ ]*' | sort -u | wc -l
 }
-for ext in ttl trig rdf; do
+for ext in ttl trig rdf jsonld; do
   rc=0; pack "bc-$ext" "$FX/bnode_collide.$ext" || rc=$?
   if [ "$rc" != 0 ]; then record "bnode-collide $ext" 1 "exit $rc: $(tail -1 "$TMP/bc-$ext.log")"; continue; fi
   n="$(distinct_subjects "bc-$ext")"
   if [ "$n" = 5 ]; then record "bnode-collide $ext" 0 "5 distinct blank nodes"
   else record "bnode-collide $ext" 1 "$n distinct blank nodes, expected 5"; fi
 done
-rc=0; pack bc-jsonld "$FX/bnode_collide.jsonld" || rc=$?
-if [ "$rc" != 0 ]; then record "bnode-collide jsonld" 1 "pack exit $rc: $(tail -1 "$TMP/bc-jsonld.log")"
-else
-  n="$(distinct_subjects bc-jsonld)"
-  if [ "$n" = 5 ]; then xfail "bnode-collide jsonld" https://github.com/danbri/factoidal/issues/840 1 "5 distinct blank nodes"
-  elif [ "$n" = 3 ]; then xfail "bnode-collide jsonld" https://github.com/danbri/factoidal/issues/840 0 "3 distinct blank nodes where the document has 5"
-  else record "bnode-collide jsonld" 1 "$n distinct blank nodes: the probe drifted (expected 3 while the issue is open, 5 when fixed)"; fi
-fi
 
 echo "=== xml:lang of one property element does not reach the next"
 # RDF/XML and its N-Triples twin (tests/sbm11/syntax/lang_scope.*) give the same

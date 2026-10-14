@@ -875,6 +875,66 @@ else
 fi
 
 # ---------------------------------------------------------------------
+# JSONLD-BNODE-COLLIDE (https://github.com/danbri/factoidal/issues/840) -- the F*
+# JSON-LD to RDF conversion names the blank nodes it generates _jld_anon<N>
+# (Parser.JSONLD.fst, jld_fresh_bnode) and passes the blank node identifiers that the
+# document writes through unchanged, so a document that writes _:_jld_anon0 and
+# also holds a node object with no @id gets ONE node where it has two. The
+# fixture (fixtures/jsonld-840-bnode-collide.jsonld, the same file as
+# tests/sbm11/syntax/bnode_collide.jsonld) holds five nodes: three with a written
+# label (_:_jld_anon0, _:_jld_anon1, _:genid1) and two with none. The Lean
+# parser is FIXED (2026-10-14: JSONLD/ToRdf.lean generatedPrefix chooses the
+# prefix of the generated labels from the document; theorem generated_ne_written
+# in JSONLD/Theorems.lean). Its answer is a plain assertion: the Lean CLI must
+# print five quads with five distinct blank node subjects, or the case is an
+# ERROR (run with L4FACTOIDAL_BIN set to formal/lean4/.lake/build/bin/l4factoidal
+# until a release built from the fix is fetched). F* is NOT repaired (no F*
+# toolchain in the session that fixed Lean); this case records its behaviour:
+#   XFAIL  F* prints three distinct blank node subjects for the five nodes
+#   XPASS  F* prints five: fixed in F*; retire this case and close the issue
+#   ERROR  the Lean CLI is wrong, or F* prints any other number of subjects
+# ---------------------------------------------------------------------
+J840_TITLE="F* JSON-LD gives a generated blank node the label of a written one"
+J840_FIXTURE="${FIXTURES}/jsonld-840-bnode-collide.jsonld"
+# j840_subjects FILE: the number of distinct blank node subjects among the lines.
+j840_subjects () { grep -o '^_:[^ ]*' "$1" | LC_ALL=C sort -u | grep -c .; }
+if [ ! -x "$L4_BIN" ]; then
+  record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR "no l4factoidal at ${L4_BIN} (tools/fetch-builds.sh --set native)"
+else
+  d="${WORKDIR}/jsonld840"; mkdir -p "$d"
+  lrc=0; frc=0
+  timeout 60 "$L4_BIN" parse "$J840_FIXTURE" --format jsonld --out nquads \
+      < /dev/null > "$d/lean.raw" 2> "$d/lean.err" || lrc=$?
+  timeout 60 "$BIN" dump-nq "$J840_FIXTURE" \
+      < /dev/null > "$d/fstar.raw" 2> "$d/fstar.err" || frc=$?
+  sed '/^$/d' "$d/lean.raw" > "$d/lean.nq"
+  sed '/^$/d' "$d/fstar.raw" > "$d/fstar.nq"
+  lean_quads="$(grep -c . "$d/lean.nq")"
+  lean_subjects="$(j840_subjects "$d/lean.nq")"
+  fstar_quads="$(grep -c . "$d/fstar.nq")"
+  fstar_subjects="$(j840_subjects "$d/fstar.nq")"
+  if [ "$lrc" -ne 0 ] || [ "$lean_quads" != 5 ] || [ "$lean_subjects" != 5 ]; then
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
+      "the Lean CLI (exit ${lrc}) prints ${lean_quads} quads with ${lean_subjects} distinct blank node subjects, expected 5 and 5 (Lean regression, or a build from before the fix)"
+  elif [ "$frc" -ne 0 ]; then
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
+      "F* run failed (exit ${frc}): $(tr "\n" " " < "$d/fstar.err" | cut -c1-100)"
+  elif [ "$fstar_quads" != 5 ]; then
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
+      "F* prints ${fstar_quads} quads, expected 5 (the probe measured nothing): $(head -n 2 "$d/fstar.nq" | tr "\n" " " | cut -c1-120)"
+  elif [ "$fstar_subjects" = 5 ]; then
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" XPASS \
+      "F* now prints five distinct blank node subjects -- defect appears FIXED in F*"
+  elif [ "$fstar_subjects" = 3 ]; then
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" XFAIL \
+      "F* prints 3 distinct blank node subjects for 5 nodes: _:_jld_anon0 and _:_jld_anon1 each carry a written node and a generated one (the Lean CLI prints 5)"
+  else
+    record JSONLD-BNODE-COLLIDE 840 "$J840_TITLE" ERROR \
+      "F* prints ${fstar_subjects} distinct blank node subjects, neither the expected 5 nor the recorded 3"
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # NX-1 (https://github.com/danbri/factoidal/issues/777) -- the Lean native
 # crypto externs (HACL*, `@[extern]` + `opaque`) have no stated equivalence
 # to the pure Lean functions. `sha256Hacl` is opaque, so no Lean theorem can

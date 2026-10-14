@@ -763,7 +763,11 @@ record. Conventions, by test kind:
   https://github.com/danbri/factoidal/issues/725), RDFXML-LANG-SCOPE (the F\*
   RDF/XML parser gives the `xml:lang` of a property element to the next
   property elements, https://github.com/danbri/factoidal/issues/841; the Lean
-  CLI is the oracle, so run with `L4FACTOIDAL_BIN` set to a build from the fix).
+  CLI is the oracle, so run with `L4FACTOIDAL_BIN` set to a build from the fix),
+  JSONLD-BNODE-COLLIDE (the F\* JSON-LD conversion gives a generated blank node
+  the label of a written one, so a document with five nodes reads as three,
+  https://github.com/danbri/factoidal/issues/840; the Lean CLI is the oracle in
+  the same way).
   The SPARQL command-line cases read real W3C files from
   `third_party/testing/w3c` (run `git submodule update --init --depth 1
   third_party/testing/w3c` first; without it they read ERROR). They are

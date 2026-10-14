@@ -271,6 +271,90 @@ def toRdfCount (input : String) (base : Option String := none) : Option Nat :=
 #guard toRdfNq "{\"@id\":\"http://ex/g\",\"@graph\":[{\"@id\":\"http://ex/s\",\"http://ex/p\":\"v\"}]}"
        == some "<http://ex/s> <http://ex/p> \"v\" <http://ex/g> .\n"
 
+/-! ### §8.2 Blank node labels that the document writes, and the ones the conversion generates
+
+A label that a document writes (`@id`, `@type` or a graph name) is passed
+through; the conversion generates labels of its own for a node object with no
+`@id`, a list cell and a compound literal. They must not be able to be equal
+(https://github.com/danbri/factoidal/issues/840; `generated_ne_written` in
+`JSONLD/Theorems.lean` is the proof for every document). Each guard names the
+distinct blank node labels of the conversion. Before the repair the labels
+`_jld_anon0` and `_jld_anon1` that a document wrote were also the labels of the
+first and second generated node. -/
+
+/-- The distinct labels of the blank nodes that the conversion makes (subject,
+object and graph name positions). -/
+def bnodeLabels (input : String) (rdirOpt : Option String := none) : Option (List String) :=
+  (parseJsonLd Loader.none input none rdirOpt none none).toOption.map fun ds =>
+    let ts := ds.default ++ ds.named.flatMap (fun g => g.graph)
+    let subs := ts.filterMap fun t => match t.s with | .bnode b => some b | _ => none
+    let objs := ts.filterMap fun t => match t.o with | .bnode b => some b | _ => none
+    let gs := ds.named.filterMap fun g => match g.name with | .bnode b => some b | _ => none
+    (subs ++ objs ++ gs).eraseDups
+
+/-- The conversion makes blank nodes with these labels, in any order, and no
+other blank node. -/
+def hasLabels (input : String) (expected : List String)
+    (rdirOpt : Option String := none) : Bool :=
+  match bnodeLabels input rdirOpt with
+  | some l => l.length == expected.length && expected.all (fun e => l.contains e)
+  | none   => false
+
+-- `tests/sbm11/syntax/bnode_collide.jsonld`: five nodes, three with a written
+-- label and two with none. The prefix of the generated labels gets one
+-- underscore, because the written labels `_jld_anon0` and `_jld_anon1` begin
+-- with `_jld_anon`.
+#guard hasLabels ("{\"@context\":{\"ex\":\"http://example.org/\"},\"@graph\":["
+    ++ "{\"@id\":\"_:_jld_anon0\",\"ex:p\":\"a\"},{\"ex:p\":\"b\"},"
+    ++ "{\"@id\":\"_:_jld_anon1\",\"ex:p\":\"c\"},{\"ex:q\":\"d\"},"
+    ++ "{\"@id\":\"_:genid1\",\"ex:p\":\"e\"}]}")
+  ["_jld_anon0", "_jld_anon1", "_jld_anon_0", "_jld_anon_1", "genid1"]
+
+-- A document that writes no label beginning with `_jld_anon` keeps the labels
+-- it had: a two-item list makes two cells.
+#guard hasLabels "{\"@id\":\"http://ex/s\",\"http://ex/p\":{\"@list\":[\"a\",\"b\"]}}"
+  ["_jld_anon0", "_jld_anon1"]
+
+-- A written label that only resembles the generated ones changes nothing: a
+-- shorter one, and one that has another character in front of `_jld_anon`.
+#guard hasLabels ("[{\"@id\":\"_:_jld_ano\",\"http://ex/p\":[{\"@value\":\"a\"}]},"
+    ++ "{\"@id\":\"_:x_jld_anon0\",\"http://ex/p\":[{\"@value\":\"b\"}]},"
+    ++ "{\"http://ex/p\":[{\"@value\":\"c\"}]}]")
+  ["_jld_ano", "_jld_anon0", "x_jld_anon0"]
+
+-- Two underscores after `_jld_anon` in a written label: three in the prefix.
+#guard hasLabels ("[{\"@id\":\"_:_jld_anon__0\",\"http://ex/p\":[{\"@value\":\"a\"}]},"
+    ++ "{\"http://ex/p\":[{\"@value\":\"b\"}]}]")
+  ["_jld_anon__0", "_jld_anon___0"]
+
+-- A list cell (§8.4) beside a written label.
+#guard hasLabels "[{\"@id\":\"_:_jld_anon0\",\"http://ex/p\":[{\"@list\":[\"a\"]}]}]"
+  ["_jld_anon0", "_jld_anon_0"]
+
+-- A blank node in `@type`, beside a node object with no `@id`.
+#guard hasLabels ("[{\"@id\":\"http://ex/s\",\"@type\":[\"_:_jld_anon0\"],"
+    ++ "\"http://ex/q\":[{\"http://ex/r\":[{\"@value\":\"v\"}]}]}]")
+  ["_jld_anon0", "_jld_anon_0"]
+
+-- A graph name that is a written blank node identifier, beside a node object
+-- with no `@id` inside the graph.
+#guard hasLabels ("[{\"@id\":\"_:_jld_anon0\",\"@graph\":"
+    ++ "[{\"http://ex/p\":[{\"@value\":\"v\"}]}]}]")
+  ["_jld_anon0", "_jld_anon_0"]
+
+-- A compound literal (§8.6) makes a blank node of its own.
+#guard hasLabels ("[{\"@id\":\"_:_jld_anon0\",\"http://ex/p\":"
+    ++ "[{\"@value\":\"v\",\"@language\":\"en\",\"@direction\":\"rtl\"}]}]")
+  ["_jld_anon0", "_jld_anon_0"] (some "compound-literal")
+
+-- The prefix is a function of the document: `_jld_anon` when nothing in it
+-- begins a written label that way, and one more underscore than the longest
+-- run after `_jld_anon` in a written label otherwise.
+#guard (parseJson "{\"@id\":\"http://ex/s\"}").toOption.map generatedPrefix == some "_jld_anon"
+#guard (parseJson "[\"_:_jld_anon0\"]").toOption.map generatedPrefix == some "_jld_anon_"
+#guard (parseJson "[\"_:_jld_anon\", {\"_:_jld_anon___x\": 1}]").toOption.map generatedPrefix
+  == some "_jld_anon____"
+
 /-! ### §8.6 Data Round Tripping — the number decisions -/
 
 -- A bare integer stays `xsd:integer`; a fractional value promotes to

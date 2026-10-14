@@ -1448,3 +1448,7 @@ L4Factoidal_Syntax_RdfXml_litNeeds  # (s) as litNeed, for a child list
 L4Factoidal_Tdb2_readStruct  # (c) one call per Thrift struct nesting level, bounded by its depth argument (4); the per-field loop is a for loop (issue 834)
 # --- Added 2026-10-14 by the proof table of https://github.com/danbri/factoidal/issues/854 (BlockMerkle.Tree) ---
 L4Factoidal_Storage_BlockMerkle_levelsFuel  # (c) one call for each level of a Merkle tree: a level of n digests is followed by one of ceil(n/2), and the recursion stops at one digest, so the depth is ceil(log2 n) + 1 for n leaves (the fuel is only a bound). nextLevelWith, which it calls for each level, stays on the first baseline above
+# --- Added 2026-10-14 by the blank node label prefix of https://github.com/danbri/factoidal/issues/840 ---
+L4Factoidal_JSONLD_maxNeed  # (b) nesting of the JSON-LD document: the pre-pass of generatedPrefix over every key and string of the tree (cycle of 3)
+L4Factoidal_JSONLD_maxNeedItems  # (b) nesting of the JSON-LD document, as maxNeed; the siblings of one array are a goto _start in the emitted C, so the three call each other once per nesting level only
+L4Factoidal_JSONLD_maxNeedFields  # (b) nesting of the JSON-LD document, as maxNeed; the members of one object are a goto _start in the emitted C

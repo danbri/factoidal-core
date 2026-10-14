@@ -52,7 +52,11 @@ cannot know that run length, so `Reader.init` takes the prefix as an argument
 and `Prepass` computes it by one read of the document before the first chunk
 goes to the reader. RDF/XML mints `b<N>` and writes `rdf:nodeID` values as
 `n<value>`; these cannot collide. N-Triples and N-Quads mint nothing.
-JSON-LD mints `_jld_anon<N>` (`JSONLD/ToRdf.lean`).
+JSON-LD mints `_jld_anon`, the fewest underscores for which no label of the
+document begins with the prefix (none when no label begins with `_jld_anon`),
+and a counter (`JSONLD/ToRdf.lean`, `generatedPrefix`). A label the document
+writes is passed through, and `JSONLD.generated_ne_written` proves that it
+cannot equal a generated one (https://github.com/danbri/factoidal/issues/840).
 
 ## What is proved and what is measured
 

@@ -3,7 +3,8 @@
 Status: record of the design as it stands on 2026-09-03 (section 3a, the
 lenient mode, added 2026-10-10; section 3c, RDF/XML, added 2026-10-13, with
 section 3c.7, the scope of a property element, added 2026-10-14; section
-3f, the source layer, added 2026-10-14), written because the
+3f, the source layer, added 2026-10-14; section 3h, the labels of JSON-LD
+blank nodes, added 2026-10-14), written because the
 owner asked for it to live somewhere findable (2026-09-03: "this and similar
 ought to be recorded properly somewhere I can find it. Ephemeral coding logs
 aren't that place"). Update this file when a layer, an entry point or a
@@ -456,10 +457,12 @@ Concepts, section 3.4). Turtle and TriG mint a label for each `[]`, collection
 cell and property list: `anon`, then one more underscore than the longest run of
 underscores in the document, then a counter. A reader that sees one chunk does
 not know that run, so `Source.Prepass` reads the source once before the first
-chunk and `Reader.init` takes the prefix. RDF/XML and JSON-LD mint their own
-labels (`b<N>`, `_jld_anon<N>`). A test with explicit labels that equal the
-minted ones (`tests/sbm11/syntax/bnode_collide.*`) expects five distinct blank
-nodes: Turtle, TriG and RDF/XML read five. JSON-LD reads three
+chunk and `Reader.init` takes the prefix. RDF/XML mints `b<N>`. JSON-LD mints
+`_jld_anon`, then the fewest underscores for which no label of the document
+begins with the prefix, then a counter (section 3h). A test with explicit labels
+that equal the labels a reader would mint (`tests/sbm11/syntax/bnode_collide.*`)
+expects five distinct blank nodes. All four syntaxes read five. Until
+2026-10-14 JSON-LD read three
 (https://github.com/danbri/factoidal/issues/840).
 
 **Theorems** (`RDF/SourceTheorems.lean`; axioms `propext`, `Classical.choice`,
@@ -1328,6 +1331,127 @@ failure until 2026-10-14, now a pass).
 with the state of the property element) is not repaired:
 https://github.com/danbri/factoidal/issues/329 and the row `RDFXML-LANG-SCOPE` of
 `tests/known-defects/run.sh` (XFAIL). The Lean parser is the oracle of that row.
+
+### 3h. JSON-LD: the labels of generated blank nodes (2026-10-14)
+
+A blank node label is local to one document (RDF 1.1 Concepts, section 3.4).
+The conversion of JSON-LD to RDF makes a blank node for each node object that has
+no `@id`, for each cell of a list and for each compound literal. A label that the
+document writes (`@id`, `@type`, the name of a graph) goes through the conversion
+unchanged. A label that the conversion makes must never equal a label that the
+document writes.
+
+**The defect** (https://github.com/danbri/factoidal/issues/840). `freshBnode`
+made the labels `_jld_anon0`, `_jld_anon1` and so on for every document. A
+document that wrote `_:_jld_anon0` and held a node object with no `@id` got one
+blank node where it has two. `tests/sbm11/syntax/bnode_collide.jsonld` has five
+nodes and gave three blank nodes: `_jld_anon0` held the properties of the written
+node and of the first generated node, and `_jld_anon1` the same for the second.
+A document that wrote `_:_jld_anon0` and a list of one item got one blank node
+for the node and for the cell of the list. Turtle, TriG and RDF/XML read five
+blank nodes from their versions of the first document.
+
+**The choice.** Two repairs were possible.
+
+1. An issuer map, as in the Node Map Generation algorithm of the JSON-LD 1.1 API:
+   every blank node identifier of the document gets a new label from one counter.
+2. A prefix that the conversion chooses from the document, as the Turtle reader
+   does (`freshBnodePrefix`).
+
+The second was chosen. The first changes the label of every blank node that a
+document writes. The second changes a label only in a document that writes a
+label which begins with `_jld_anon`. The repository has 2,484 JSON-LD files
+(`third_party`, `tests`, `examples`, `docs` and `formal`; 2,234 of them parse).
+118 of them contain a string that begins with `_:`. One of them writes a label
+that begins with `_jld_anon`: `bnode_collide.jsonld`. The build before this change
+and the new build gave the same N-Quads text, the same stderr and the same exit
+status for `l4factoidal parse FILE --format jsonld --out nquads` on 2,483 of the
+2,484 files, and a different text for that file only. A label that an
+author writes stays in the output, and `freshBnode_injective` keeps its meaning
+for a fixed prefix.
+
+**The scheme.** `generatedPrefix root` is `_jld_anon` followed by k underscores,
+where `root` is the expanded document. k is the largest value of `anonNeed s` for
+all keys and string values `s` of `root`. `anonNeed s` is 0 when `s` does not
+begin with `_:_jld_anon`. Otherwise it is 1 plus the number of underscores that
+follow those 11 characters. A document that writes no label which begins with
+`_jld_anon` gets k = 0 and the labels `_jld_anon0`, `_jld_anon1` and so on, as
+before. A written label `_jld_anon__0` gives k = 3 and the generated labels
+`_jld_anon___0` and so on. The prefix is computed once for each document by one
+pass over the tree (`maxNeed`). The depth of its recursion is the nesting of the
+document. The three functions of the pass are in the allow list of the
+tail-recursion audit, class (b). The prefix is the field `labelPrefix` of
+`RdfAcc` and does not change during the walk. A string value that is not an `@id`
+and begins with `_:_jld_anon` also counts: it makes the prefix longer than it
+needs to be and has no other effect.
+
+**Theorems** (`JSONLD/Theorems.lean`; axioms `propext`, `Classical.choice`,
+`Quot.sound` only).
+
+- `need_le_maxNeed`: for every key and string value `s` of a tree,
+  `anonNeed s ≤ maxNeed root 0`.
+- `generated_ne_written`: let `s` be a key or a string value of `root` that is a
+  blank node identifier (`_:` and a label). The label that `stripBnodePrefix`
+  reads from `s` is not the label that `freshBnode (generatedPrefix root) n`
+  makes, for every counter value `n`.
+- `idToSubject_ne_generated` and `typeTerm_ne_generated`: the same for the labels
+  that `idToSubject` (the `@id` of a node object and of a graph) and `typeTerm`
+  (a blank node identifier in `@type`) give.
+- `freshBnode_injective`: for a fixed prefix, two counter values give two labels.
+
+`idToSubject` and `typeTerm` are the only functions of `JSONLD/ToRdf.lean` that
+read a label from the document, and `freshBnode` is the only one that makes a
+label. That is a fact about the source and not a theorem. The guards below check
+it for each way that the conversion makes a label.
+
+**Tests.** 11 build-time guards in `JSONLD/Tests.lean` (section "Blank node
+labels that the document writes"). Eight give the blank node labels of one
+document: the collide document, a list of two cells with no written label, two
+labels that only resemble the generated ones (they must not change anything),
+`_jld_anon__0`, a list cell, a blank node in `@type`, a blank node as the name of
+a graph and a compound literal. Three give `generatedPrefix` of one document.
+Six of the eight label guards fail on the converter before this change and the
+two others are controls. File level: `tests/sbm11/syntax_independence.sh`, case
+`bnode-collide jsonld` (an expected failure until 2026-10-14, now an assertion:
+five distinct blank node subjects in each of Turtle, TriG, RDF/XML and JSON-LD),
+and `npm/factoidal/test/parse-scope-and-labels.test.js` (the wasm module, two
+JSON-LD cases).
+
+**What stays open.** The F\* converter (`Parser.JSONLD.fst`, `jld_fresh_bnode`) has
+the same defect and is not repaired: row `JSONLD-BNODE-COLLIDE` of
+`tests/known-defects/run.sh` (XFAIL; the Lean CLI is the oracle) and
+https://github.com/danbri/factoidal/issues/840.
+
+**Cost.** The pass adds no measurable time or memory. The test: `l4factoidal
+parse FILE --format jsonld --out nquads` on a generated file of 60,000 node
+objects (11.9 MB, 420,000 quads), nine runs of each build in turn, on one
+machine. The median is 3.02 s before and 2.95 s after (minimum 2.70 s and
+2.46 s). The peak resident set is 293 to 299 MB for both builds. The two outputs
+are byte-identical.
+
+**Gates (2026-10-14, this change).** The counts are as labelled by each runner.
+The commit before this change is the RDF/XML scope repair of section 3c.7.
+
+- `lake build` (default targets): exit 0, 1,700 jobs, before and after.
+  `tools/lean-tail-recursion-audit.py --gate`: pass; three rows are added to the
+  allow list (1,374 to 1,377 lines). `tools/lean-unbuilt-modules.py --gate`: 781
+  modules, 0 not reached.
+- `tools/lean-scoreboard.sh`, 57 runner runs: the 182 rows are identical before
+  and after. JSON-LD toRdf 467 pass, 0 fail (out of 467); expand 385 pass, 0 fail
+  (out of 385); compact 245 pass, 0 fail, 1 other (out of 246); flatten 58 pass,
+  0 fail (out of 58); fromRdf 53 pass, 0 fail, 1 other (out of 54); html 50 pass,
+  0 fail (out of 50); framing 91 pass, 0 fail, 1 other (out of 92).
+- `tests/sbm11/syntax_independence.sh`: 97 pass, 0 fail, 1 expected-fail (out of
+  98) before; 98 pass, 0 fail, 0 expected-fail (out of 98) after.
+  `tests/sbm11/run.sh`: 2,190 pass, 0 fail, 23 expected-fail (out of 2,213)
+  before; 2,191 pass, 0 fail, 22 expected-fail (out of 2,213) after.
+- `tests/stack/run.sh --canary`: 109 pass, 0 fail (out of 109), before and after.
+- Wasm module rebuilt. `Wasm/native-smoke.sh`: 366 pass, 0 fail, 0 xfail (out
+  of 366), before and after. `npm test`: 437 pass, 0 fail, 1 skipped (out of 438)
+  before; 442 pass, 0 fail, 1 skipped (out of 443) after. `tests/hub`: 447 pass,
+  0 fail, before and after.
+- `tests/known-defects/run.sh` (Lean CLI of this build): 23 XFAIL, 0 XPASS, 0
+  ERROR before; 24 XFAIL, 0 XPASS, 0 ERROR after.
 
 ## 4. Rules that follow
 

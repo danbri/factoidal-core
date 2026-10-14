@@ -44,6 +44,16 @@ prefix, matching `RDF.Core.BNodeId`; `Syntax.NQuads` re-adds it. The
 label shape is `RDF.Canonical.mkLabel`'s, so its proved injectivity
 carries over (`JSONLD/Theorems.lean`'s `freshBnode_injective`).
 
+A label that the document writes (`@id`, `@type` or a graph name `_:label`) is
+passed through unchanged, so a generated label must not be able to equal one.
+The prefix of the generated labels is chosen from the document
+(`generatedPrefix`): `_jld_anon`, followed by the fewest underscores for which
+no label of the document begins with the prefix. A document that writes no
+label beginning with `_jld_anon` gets the labels `_jld_anon0`, `_jld_anon1`, ...
+as before. `JSONLD/Theorems.lean`'s `generated_ne_written` proves that a generated
+label is never a label that the document writes
+(https://github.com/danbri/factoidal/issues/840).
+
 A `@graph` whose `@id` is a blank node becomes a blank-node GRAPH NAME
 directly: `RDF.NamedGraph.name` is a `Subject`, so no `"_:<label>"`
 sentinel string is needed or used here.
@@ -389,13 +399,57 @@ def rdfDirectionModeOf : Option String → RdfDirectionMode
 
 /-! ## Small helpers -/
 
-/-- A fresh blank node from a threaded counter (§8.2's "generate blank
-node identifier"). The label is built by `RDF.Canonical.mkLabel`, whose
-`mkLabel_inj` already proves the shape injective in the counter — see
-`JSONLD/Theorems.lean`'s `freshBnode_injective`. The `_jld_anon` prefix
-keeps generated labels visually distinct from document-supplied `_:`
-labels. -/
-def freshBnode (ctr : Nat) : String × Nat := (Canonical.mkLabel "_jld_anon" ctr, ctr + 1)
+/-- The base of the prefix of the generated blank node labels. -/
+def anonBase : String := "_jld_anon"
+
+/-- The number of consecutive `_` at the start of a character list, added to
+`n`. A loop. -/
+def underscoreRun : List Char → Nat → Nat
+  | '_' :: rest, n => underscoreRun rest (n + 1)
+  | _, n => n
+
+/-- How many underscores the generated prefix needs after `_jld_anon` so that
+it is not the start of the label that the string `s` writes: 0 when `s` is not
+`_:` followed by a label that begins with `_jld_anon`; otherwise one more than
+the number of underscores that follow those nine characters. -/
+def anonNeed (s : String) : Nat :=
+  if s.startsWith "_:_jld_anon" then underscoreRun (s.toList.drop 11) 0 + 1 else 0
+
+mutual
+
+/-- The largest `anonNeed` over every key and every string value of a JSON tree
+and `m`. The siblings of an array or an object are a loop; the depth of the
+recursion is the nesting of the document. -/
+def maxNeed : Json → Nat → Nat
+  | .string s, m => max m (anonNeed s)
+  | .array xs, m => maxNeedItems xs m
+  | .object fs, m => maxNeedFields fs m
+  | _, m => m
+
+def maxNeedItems : List Json → Nat → Nat
+  | [], m => m
+  | x :: xs, m => maxNeedItems xs (maxNeed x m)
+
+def maxNeedFields : List (String × Json) → Nat → Nat
+  | [], m => m
+  | (k, v) :: fs, m => maxNeedFields fs (maxNeed v (max m (anonNeed k)))
+
+end
+
+/-- The prefix of the blank node labels that the conversion of `root` generates:
+`_jld_anon`, followed by the fewest underscores for which no key and no string
+value of `root` is `_:` and a label that begins with the prefix
+(`JSONLD/Theorems.lean`, `generated_ne_written`). -/
+def generatedPrefix (root : Json) : String :=
+  anonBase ++ String.ofList (List.replicate (maxNeed root 0) '_')
+
+/-- A fresh blank node from a threaded counter (§8.2's "generate blank node
+identifier"). The label is built by `RDF.Canonical.mkLabel`, whose
+`mkLabel_inj` already proves the shape injective in the counter for a fixed
+prefix — see `JSONLD/Theorems.lean`'s `freshBnode_injective`. `pfx` is the
+`generatedPrefix` of the document; it keeps generated labels apart from the
+labels that the document writes (`generated_ne_written`). -/
+def freshBnode (pfx : String) (ctr : Nat) : String × Nat := (Canonical.mkLabel pfx ctr, ctr + 1)
 
 /-- Begins with `_:`. -/
 def isBnodeLabel (s : String) : Bool := charAtD s 0 == '_' && charAtD s 1 == ':'
@@ -576,8 +630,8 @@ a FRESH BLANK NODE carrying `rdf:value` (the lexical form),
 present — `rdf:language` (LOWERCASED) as plain `xsd:string` triples,
 instead of a single literal term. -/
 def compoundLiteralTerm (lex : String) (lang : Option String) (dir : String)
-    (ctr : Nat) (acc : List Triple) : Term × List Triple × Nat :=
-  let (b, ctr1) := freshBnode ctr
+    (pfx : String) (ctr : Nat) (acc : List Triple) : Term × List Triple × Nat :=
+  let (b, ctr1) := freshBnode pfx ctr
   let bsubj : Subject := .bnode b
   let plain (s : String) : Term :=
     .literal ⟨{ lexicalForm := s, datatype := xsdString, langTag := none, direction := none }, rfl⟩
@@ -591,11 +645,11 @@ def compoundLiteralTerm (lex : String) (lang : Option String) (dir : String)
 /-- Dispatcher for a value object: intercepts the one case
 `valueObjectToTerm` cannot express and routes it to
 `compoundLiteralTerm`. Every other value object is unaffected. -/
-def valueObjectStep (rdir : RdfDirectionMode) (obj : Json) (ctr : Nat) (acc : List Triple)
-    : Option Term × List Triple × Nat :=
+def valueObjectStep (rdir : RdfDirectionMode) (obj : Json) (pfx : String) (ctr : Nat)
+    (acc : List Triple) : Option Term × List Triple × Nat :=
   match rdir, obj.getString? "@direction", obj.getString? "@type", obj.field? "@value" with
   | .compoundLiteral, some dir, none, some (.string lex) =>
-    let (t, acc1, ctr1) := compoundLiteralTerm lex (obj.getString? "@language") dir ctr acc
+    let (t, acc1, ctr1) := compoundLiteralTerm lex (obj.getString? "@language") dir pfx ctr acc
     (some t, acc1, ctr1)
   | _, _, _, _ => (valueObjectToTerm rdir obj, acc, ctr)
 
@@ -612,6 +666,9 @@ structure RdfAcc where
   acc   : List Triple
   named : List NamedGraph
   ctr   : Nat
+  /-- The prefix of the generated blank node labels (`generatedPrefix` of the
+  document); it does not change during the walk. -/
+  labelPrefix : String
 
 mutual
 
@@ -627,7 +684,7 @@ def expandValue (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
     | .object _ =>
       match v.field? "@value" with
       | some _ =>
-        let (t, acc1, ctr1) := valueObjectStep rdir v st.ctr st.acc
+        let (t, acc1, ctr1) := valueObjectStep rdir v st.labelPrefix st.ctr st.acc
         (t, { st with acc := acc1, ctr := ctr1 })
       | none =>
         match v.field? "@list" with
@@ -661,7 +718,7 @@ def expandList (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (fuel
     | [] => (.iri rdfNilIri, st)
     | item :: rest =>
       let (oterm, st1) := expandValue rdir item st fuel
-      let (cell, ctr2) := freshBnode st1.ctr
+      let (cell, ctr2) := freshBnode st1.labelPrefix st1.ctr
       let (restTerm, st2) := expandList rdir rest { st1 with ctr := ctr2 } fuel
       let cellSubj : Subject := .bnode cell
       let acc3 := { s := cellSubj, p := rdfRestIri, o := restTerm } :: st2.acc
@@ -691,7 +748,7 @@ def expandNodeR (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
         match v.field? "@id" with
         | some (.string idStr) => (idToSubject idStr, st.ctr)
         | some _ => (none, st.ctr)
-        | none => let (b, c) := freshBnode st.ctr; (some (Subject.bnode b), c)
+        | none => let (b, c) := freshBnode st.labelPrefix st.ctr; (some (Subject.bnode b), c)
       let st := { st with ctr := ctr1 }
       match subjOpt with
       | none => (none, st)
@@ -701,7 +758,7 @@ def expandNodeR (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
           let stG := expandGraphNodes rdir (jldAsArray g) { st with acc := [] } fuel
           let ng : NamedGraph := { name := graphNameOfSubject subj, graph := stG.acc.reverse }
           let st1 := expandFieldsR rdir subj fields
-                       { acc := st.acc, named := ng :: stG.named, ctr := stG.ctr } fuel
+                       { st with named := ng :: stG.named, ctr := stG.ctr } fuel
           (some subj, st1)
         | none =>
           let st1 := expandFieldsR rdir subj fields st fuel
@@ -828,16 +885,16 @@ def expandTop (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat) : 
         match v.field? "@id" with
         | some (.string idStr) => (idToSubject idStr, st.ctr)
         | some _ => (none, st.ctr)
-        | none => let (b, c) := freshBnode st.ctr; (some (Subject.bnode b), c)
+        | none => let (b, c) := freshBnode st.labelPrefix st.ctr; (some (Subject.bnode b), c)
       match subjOpt with
       | none => { st with ctr := ctr1 }
       | some gsubj =>
         let stG := expandGraphNodes rdir (jldAsArray g)
-                     { acc := [], named := st.named, ctr := ctr1 } fuel
+                     { st with acc := [], ctr := ctr1 } fuel
         -- Non-keyword members of the container node describe the
         -- graph-name resource in the DEFAULT graph.
         let stD := expandFieldsR rdir gsubj fields
-                     { acc := st.acc, named := stG.named, ctr := stG.ctr } fuel
+                     { st with named := stG.named, ctr := stG.ctr } fuel
         let ng : NamedGraph := { name := graphNameOfSubject gsubj, graph := stG.acc.reverse }
         { stD with named := ng :: stD.named }
     | none => let (_, st1) := expandNodeR rdir v st fuel; st1
@@ -858,10 +915,11 @@ RDF dataset. `none` when the top level is neither an array nor an
 object. -/
 def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
   let fuel := Json.size root + 1
+  let init : RdfAcc := { acc := [], named := [], ctr := 0, labelPrefix := generatedPrefix root }
   let finish (st : RdfAcc) : Dataset :=
     { default := st.acc.reverse, named := st.named.reverse }
   match root with
-  | .array tops => some (finish (expandTops rdir tops { acc := [], named := [], ctr := 0 } fuel))
+  | .array tops => some (finish (expandTops rdir tops init fuel))
   | .object fields =>
     let tops :=
       if onlyGraphKeysJ fields then
@@ -869,7 +927,7 @@ def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
         | some g => jldAsArray g
         | none   => [root]
       else [root]
-    some (finish (expandTops rdir tops { acc := [], named := [], ctr := 0 } fuel))
+    some (finish (expandTops rdir tops init fuel))
   | _ => none
 
 /-! ## Public API -/

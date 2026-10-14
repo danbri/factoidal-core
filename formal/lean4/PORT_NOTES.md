@@ -1337,7 +1337,11 @@ negative tests' error codes, 103 of 106 matching the manifest's
 - **Blank-node labels come from `RDF.Canonical.mkLabel`.** Rather than
   a parallel `"_jld_anon" ++ toString n`, the issuer reuses the label
   function RDFC-1.0 canonicalization already has, so `mkLabel_inj`
-  gives issuer injectivity for free (`freshBnode_injective`).
+  gives issuer injectivity for free (`freshBnode_injective`). The prefix is
+  `_jld_anon` and the fewest underscores for which no label of the document
+  begins with the prefix (`generatedPrefix`), so that a label the document
+  writes cannot equal a generated one (`generated_ne_written`,
+  https://github.com/danbri/factoidal/issues/840).
 - **The shortest-round-trip binary64 formatter is pure.** RFC 8785
   §3.2.2.3 needs, for a JSON-literal number with more than 15
   significant digits, the shortest decimal of the NEAREST double. The
