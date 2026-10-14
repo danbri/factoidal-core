@@ -7,6 +7,7 @@ import Harness.PosixRangeIO
 import Harness.NativeHasher
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.TermLocalIndexWire
 import L4Factoidal.Storage.TermLocalIndex
@@ -94,7 +95,7 @@ private def sourceIdentity? (directory : System.FilePath) : IO ByteArray := do
   let dlog := directory / "deltas.dlog"
   let delta ← try
     let bytes ← IO.FS.readBinFile dlog
-    match parseLogCheckedV1 bytes.toList with
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
     | .ok (batches, false) =>
         if validBatchHistory batches then pure bytes
         else throw <| IO.userError "source DLOG batch sequence or epoch order is invalid"

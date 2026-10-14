@@ -60,6 +60,7 @@ import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.TriG
 import L4Factoidal.JSON.Serialize
@@ -258,7 +259,7 @@ def openLog (dlog : Option ByteArray) (epoch : Option ByteArray) :
   match dlog with
   | none => pure ({ size := 0, nextSeq := 1, writeEpoch := writeEpochAfter baseEpoch }, [])
   | some bytes =>
-    match Storage.parseLogCheckedV1 bytes.toList with
+    match Storage.DeltaLogBytes.parseLogCheckedV1BA bytes with
     | .error e => throw s!"deltas.dlog: {e}"
     | .ok (_, true) =>
         throw "deltas.dlog has a torn or uncommitted suffix; recover it before serving the collection"

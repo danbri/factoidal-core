@@ -5,6 +5,7 @@ import Harness.PosixRangeIO
 import Harness.CompactedEpoch
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.SPARQL.StorePlan
 
 namespace Harness.ShardMerkleMaterialize
@@ -248,7 +249,7 @@ def readDefaultDelta? (directory : System.FilePath) : IO (Option DeltaResolved) 
   let path := directory / "deltas.dlog"
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLogCheckedV1 bytes.toList with
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
     | .ok (batches, false) =>
         if validBatchHistory batches then
           match replayBatchesSinceEpoch? baseEpoch batches with

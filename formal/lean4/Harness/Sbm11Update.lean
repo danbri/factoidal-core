@@ -473,7 +473,7 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
       let exists_ ← System.FilePath.pathExists path
       let bytes ← if exists_ then IO.FS.readBinFile path else pure ByteArray.empty
       let (logVersion, batches) ← if bytes.isEmpty then pure (none, []) else
-        match parseLogChecked bytes.toList, logHeaderVersion? bytes.toList with
+        match DeltaLogBytes.parseLogCheckedBA bytes, DeltaLogBytes.logHeaderVersionAt? bytes with
         | .ok (bs, false), some v =>
           if validBatchHistory bs then pure (some v, bs)
           else throw (IO.userError s!"{path}: DLOG batch sequence or epoch order is invalid")
@@ -495,17 +495,19 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
         return 1
       | .ok entries =>
         let t1 ← IO.monoNanosNow
+        let rssCompile ← vmHWM
         for n in ← run.notes.get do IO.eprintln s!"l4sbm11 update: {n}"
         if !entries.all entryAdmitted then
           IO.eprintln "l4sbm11 update: refused: a term of an added quad is not admitted by the SBM11 dictionary"
           return 1
         let batch : DeltaBatch := { seq := Harness.Sbm11Delta.nextSeq batches, epoch, ops := entries.toList }
-        match appendPlan? logVersion batch with
+        match DeltaLogBytes.appendPlanBA? logVersion batch with
         | none =>
           IO.eprintln "l4sbm11 update: refused: the batch exceeds the DLOG wire-format limits"
           return 1
         | some plan =>
           let t2 ← IO.monoNanosNow
+          let rssEncode ← vmHWM
           let size := UInt64.ofNat bytes.size
           -- a version 1 log gets version 2 before the first RDF 1.2 batch; a
           -- concurrent append changes the size, and the loop reads again
@@ -514,10 +516,10 @@ def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) (base : O
                 (Harness.Sbm11Delta.asBytes (writeU32LE deltaLogVersion2))
             else pure true
           if headerOk then
-            if ← Harness.PosixRangeIO.appendSyncAtSizeRaw path size (Harness.Sbm11Delta.asBytes plan.bytes) then
+            if ← Harness.PosixRangeIO.appendSyncAtSizeRaw path size plan.bytes then
               let t3 ← IO.monoNanosNow
-              let frameBytes := if bytes.isEmpty then plan.bytes.length - 8 else plan.bytes.length
-              IO.eprintln s!"sbm11-update: entries {entries.size}; generation opened {(← run.base.get).isSome}, log replayed {(← run.overlaid.get).isSome}; compile {ms t0 t1} ms; batch encode {ms t1 t2} ms; append {ms t2 t3} ms; peak RSS (VmHWM): {← vmHWM}"
+              let frameBytes := if bytes.isEmpty then plan.bytes.size - 8 else plan.bytes.size
+              IO.eprintln s!"sbm11-update: entries {entries.size}; generation opened {(← run.base.get).isSome}, log replayed {(← run.overlaid.get).isSome}; compile {ms t0 t1} ms; batch encode {ms t1 t2} ms; append {ms t2 t3} ms; peak RSS after compile {rssCompile}, after encode {rssEncode}; peak RSS (VmHWM): {← vmHWM}"
               IO.println s!"l4sbm11 update: committed path={path} seq={batch.seq} epoch={batch.epoch} ops={batch.ops.length} bytes={frameBytes} log-version={plan.version}{if plan.setVersion2 then " (set from 1)" else ""}"
               return 0
     IO.eprintln "l4sbm11 update: concurrent writers prevented a stable append after 3 tries"

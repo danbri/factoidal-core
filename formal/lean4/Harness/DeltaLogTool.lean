@@ -12,6 +12,7 @@ the recovery decision before a writer appends after it.
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import Harness.PosixRangeIO
 import Harness.GenerationPointer
 import Harness.CompactedEpoch
@@ -32,7 +33,7 @@ private def asBytes (xs : List UInt8) : ByteArray := ByteArray.mk xs.toArray
 private def readExisting (path : System.FilePath) : IO (List DeltaBatch × Nat) := do
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLogCheckedV1 bytes.toList with
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
     | .error e => throw <| IO.userError s!"DLOG: {e}"
     | .ok (batches, false) =>
         if validBatchHistory batches then pure (batches, bytes.size)
@@ -93,15 +94,17 @@ private def inspect (directory : System.FilePath) : IO UInt32 := do
   let path := logPath directory
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLog bytes.toList with
+    match DeltaLogBytes.parseLogAt bytes with
     | none => IO.eprintln "l4block-delta-log rejected: DLOG header is malformed or unsupported"; pure 1
-    | some (batches, tail) =>
-        let kind := classifyTail tail
-        let version := (logHeaderVersion? bytes.toList).getD 0
-        IO.println s!"l4block-delta-log path={path} version={version} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={tail.isEmpty} tail={kind.name}"
-        if !tail.isEmpty then
-          IO.eprintln s!"l4block-delta-log: {path}: {kind.text (bytes.size - tail.length) tail.length}"
-        pure (if tail.isEmpty then 0 else 1)
+    | some (batches, offset) =>
+        -- the bytes from `offset` are the tail after the committed batches
+        let kind := DeltaLogBytes.classifyAt bytes offset
+        let clean : Bool := decide (bytes.size ≤ offset)
+        let version := (DeltaLogBytes.logHeaderVersionAt? bytes).getD 0
+        IO.println s!"l4block-delta-log path={path} version={version} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={clean} tail={kind.name}"
+        if !clean then
+          IO.eprintln s!"l4block-delta-log: {path}: {kind.text offset (bytes.size - offset)}"
+        pure (if clean then 0 else 1)
   catch _ => IO.eprintln s!"l4block-delta-log no log at {path}"; pure 1
 
 /-! ### `--nest-check N`

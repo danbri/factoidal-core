@@ -30,6 +30,7 @@ This is a HARNESS: it does file I/O. The replay semantics is
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import Harness.PosixRangeIO
 import Harness.GenerationPointer
 import Harness.CompactedEpoch
@@ -54,7 +55,7 @@ def readBatches (dir : String) : IO (List DeltaBatch × ByteArray × Bool) := do
   let path : System.FilePath := s!"{dir}/{logName}"
   if !(← path.pathExists) then return ([], .empty, true)
   let bytes ← IO.FS.readBinFile path
-  match parseLogChecked bytes.toList with
+  match DeltaLogBytes.parseLogCheckedBA bytes with
   | .error e => throw (IO.userError s!"{path}: {e}")
   | .ok (batches, torn) =>
     if !validBatchHistory batches then

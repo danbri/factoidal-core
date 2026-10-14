@@ -414,8 +414,6 @@ XFAIL: dict[str, str] = {
     "sbm11-pack-trig-workers": "https://github.com/danbri/factoidal/issues/842",
     "sbm11-export-rdfxml-memory": "https://github.com/danbri/factoidal/issues/846",
     "sbm11-export-jsonld-memory": "https://github.com/danbri/factoidal/issues/847",
-    "sbm11-update-memory": "https://github.com/danbri/factoidal/issues/857",
-    "sbm11-open-log-memory": "https://github.com/danbri/factoidal/issues/851",
     "sbm11-replay-time": "https://github.com/danbri/factoidal/issues/858",
 }
 # A run longer than this is not repeated: the minimum of several runs only
@@ -1403,10 +1401,24 @@ def sbm11_replay_time_row(rid):
                 f"(bound {SBM11_READ_TIME_BOUND})")
 
 
-# Bounds. The unrepaired code (2026-10-14, commit e0679410) gave, on these fixtures, the numbers the
-# row prints in its XFAIL line; the bounds lie between those and what the repaired code needs.
-SBM11_UPDATE_MEMORY_BOUND = 16.0
-SBM11_OPEN_MEMORY_BOUND = 16.0
+# Bounds, with the measurements (2026-10-14, this VM). The bound lies between the number of the code
+# before the repair and the number after it, closer to the second.
+#
+# sbm11-update-memory (issue 857). Before the byte array encoder (commit e0679410): peak RSS 191, 355
+# and 759 MB for 3.1, 6.3 and 12.7 MB of log: 62.5 bytes of peak RSS per log byte. After
+# (`Storage/DeltaLogBytes.lean`): 31, 43 and 68 MB, 4.1 bytes per log byte; what is left is the
+# solutions and the entries of the request, as Lean objects (about 300 bytes for each entry of 125
+# bytes of log). The olympics update of the issue (203,264 entries, 35,919,852 bytes of log): peak
+# RSS 2,310,880 kB before.
+SBM11_UPDATE_MEMORY_BOUND = 8.0
+# sbm11-open-log-memory (issue 851). Before: 244, 480 and 1010 MB for 3.1, 6.3 and 12.7 MB of log:
+# 84.3 bytes per log byte. After the byte array reader: 35, 55 and 94 MB, 6.4 bytes per log byte;
+# the rest is the overlay (the replayed rows in four sorted orders, and the terms that are new)
+# and the entries of the log as Lean objects.
+SBM11_OPEN_MEMORY_BOUND = 12.0
+# sbm11-replay-time (issue 858). 258 to 295 microseconds for each entry before the repair of the
+# replay (25,000 entries 6.4 to 7.3 s CPU, 100,000 entries 25.7 to 29.4 s). The bound is the 1,000 ms
+# for 40,000 entries of the issue.
 SBM11_REPLAY_US_BOUND = 25.0
 
 # `l4sbm11-pack` over N-Triples text takes at most SBM11_PACK_RATIO times the CPU

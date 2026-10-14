@@ -555,6 +555,8 @@ import L4Factoidal.Storage.DeltaLogTests
 import L4Factoidal.Storage.BrowserLog
 import L4Factoidal.Storage.BrowserLogTheorems
 import L4Factoidal.Storage.DeltaLogCodecTheorems
+import L4Factoidal.Storage.DeltaLogBytes
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.Storage.BrowserLogTests
 import L4Factoidal.Storage.PageCache
 import L4Factoidal.Storage.PageCacheTests

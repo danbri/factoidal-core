@@ -50,13 +50,13 @@
 #                pattern with a variable in DELETE WHERE, the triple functions.
 #   scaling      n and 4n: the compile time of an update with a WHERE clause and a template
 #                blank node (10,000 and 40,000 solutions) and the replay time of a log (20,000
-#                and 80,000 entries) each grow by less than 8 times for 4 times the input.
+#                and 80,000 entries) each grow by less than 8 times for 4 times the input; and
+#                the memory of the batch encoder (https://github.com/danbri/factoidal/issues/857,
+#                repaired 2026-10-14: it was 64 bytes of memory for each byte of log).
 #   shortfalls   expected failures that name an open issue: an empty named graph is not
 #                stored (https://github.com/danbri/factoidal/issues/855), CLEAR NAMED
 #                with a graph named by a blank node (https://github.com/danbri/factoidal/issues/856),
-#                the memory of the batch encoder: 64 bytes for each byte of log
-#                (https://github.com/danbri/factoidal/issues/857), and the replay of a
-#                log at every open: 93 microseconds for each entry
+#                and the replay of a log at every open: 93 microseconds for each entry
 #                (https://github.com/danbri/factoidal/issues/858).
 #
 # Prints "N pass, M fail, K expected-fail (out of T)". Exit 0 when no case failed and no
@@ -295,8 +295,13 @@ if [ "$RRC" -ne 0 ]; then record shortfalls bnode-graph-reference 1 "the referen
 elif [ "$URC" -ne 0 ]; then xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 0 "the reference clears the graph named by a blank node, the store refuses: $(grep refused "$Y.upd" | head -1 | cut -c1-100)"
 else xfail shortfalls xfail-bnode-named-graph https://github.com/danbri/factoidal/issues/856 1 "the store accepts CLEAR NAMED with a graph named by a blank node"; fi
 
-# https://github.com/danbri/factoidal/issues/857: the batch of a large request is encoded as a List UInt8 (about 64 bytes
-# of memory for each byte of log); the bound is 16 bytes for each byte of log plus 64 MB
+# https://github.com/danbri/factoidal/issues/857: the batch of a large request was encoded as a List UInt8 (about 64
+# bytes of memory for each byte of log). The encoder works on a ByteArray since 2026-10-14
+# (Storage/DeltaLogBytes.lean). Two assertions on an INSERT DATA of 40,000 quads: the encoder raises the peak RSS by
+# at most 8 bytes for each byte of log (`peak RSS after compile` and `after encode` of the `sbm11-update:` line), and
+# the whole process peaks at 16 bytes for each byte of log plus 96 MiB. The second bound was 64 MiB in the issue,
+# before the repair was measured: the peak is reached while the request is parsed (139.8 MB for the 2.5 MB request; the
+# encoder adds nothing to it), and a bound of 64 MiB left 3 percent of room.
 Z="$TMP/short/batch"
 python3 -I - "$TMP/short/big.ru" <<'PY'
 import sys
@@ -310,10 +315,18 @@ new_store "$Z" "$GATE"
 store_update "$Z" "$TMP/short/big.ru"
 bbytes="$(grep -o ' bytes=[0-9]*' "$Z.upd" | head -1 | cut -d= -f2)"
 brss="$(grep -o 'peak RSS (VmHWM): [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
-if [ "$URC" -ne 0 ] || [ -z "$bbytes" ] || [ -z "$brss" ]; then record shortfalls batch-encoder-setup 1 "exit $URC, bytes '$bbytes', rss '$brss': $(tail -1 "$Z.upd" | cut -c1-120)"
-elif [ $((brss * 1024)) -gt $((16 * bbytes + 64 * 1024 * 1024)) ]; then
-  xfail shortfalls xfail-batch-encoder-memory https://github.com/danbri/factoidal/issues/857 0 "40,000 quads: batch $bbytes bytes, peak RSS $((brss * 1024 / 1048576)) MB ($((brss * 1024 / bbytes)) bytes for each byte of log; the bound is 16 plus 64 MB)"
-else xfail shortfalls xfail-batch-encoder-memory https://github.com/danbri/factoidal/issues/857 1 "40,000 quads: batch $bbytes bytes, peak RSS $((brss * 1024 / 1048576)) MB"; fi
+brc="$(grep -o 'peak RSS after compile [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
+bre="$(grep -o 'after encode [0-9]* kB' "$Z.upd" | grep -o '[0-9][0-9]*' | head -1)"
+if [ "$URC" -ne 0 ] || [ -z "$bbytes" ] || [ -z "$brss" ] || [ -z "$brc" ] || [ -z "$bre" ]; then
+  record scaling batch-encoder-setup 1 "exit $URC, bytes '$bbytes', rss '$brss', after compile '$brc', after encode '$bre': $(tail -1 "$Z.upd" | cut -c1-120)"
+else
+  inc=$(((bre - brc) * 1024))
+  if [ "$inc" -le $((8 * bbytes)) ] && [ $((brss * 1024)) -le $((16 * bbytes + 96 * 1024 * 1024)) ]; then
+    record scaling batch-encoder-memory 0 "40,000 quads: batch $bbytes bytes; the encoder raised the peak RSS by $((inc / 1024)) kB (at most 8 bytes for each byte of log); peak RSS $((brss * 1024 / 1048576)) MB ($((brss * 1024 / bbytes)) bytes for each byte of log; at most 16 plus 96 MiB)"
+  else
+    record scaling batch-encoder-memory 1 "40,000 quads: batch $bbytes bytes; the encoder raised the peak RSS by $((inc / 1024)) kB; peak RSS $((brss * 1024 / 1048576)) MB ($((brss * 1024 / bbytes)) bytes for each byte of log)"
+  fi
+fi
 
 # https://github.com/danbri/factoidal/issues/858: every open replays the log with one dictionary lookup for each term of each
 # entry; the bound is 1,000 ms for the 40,000 entries of the store above (a slower or a busier machine only makes the
