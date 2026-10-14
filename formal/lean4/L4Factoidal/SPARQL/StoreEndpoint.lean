@@ -242,7 +242,9 @@ structure LogState where
 the batches a reader replays: exactly the suffix after the compacted epoch
 (`replayBatchesSinceEpoch?`), as `l4block-id-v3-query` replays it. A torn
 suffix, a malformed header or an invalid batch order is an error: a writer
-appending after it would make the recovery decision silently. -/
+appending after it would make the recovery decision silently. A damaged frame
+or a committed frame that does not decode is an error with its own message
+(`parseLogChecked`, https://github.com/danbri/factoidal/issues/843). -/
 def openLog (dlog : Option ByteArray) (epoch : Option ByteArray) :
     Except String (LogState × List DeltaBatch) := do
   let baseEpoch ← match epoch with
@@ -254,11 +256,11 @@ def openLog (dlog : Option ByteArray) (epoch : Option ByteArray) :
   match dlog with
   | none => pure ({ size := 0, nextSeq := 1, writeEpoch := writeEpochAfter baseEpoch }, [])
   | some bytes =>
-    match Storage.parseLog bytes.toList with
-    | none => throw "deltas.dlog: the DLOG header is malformed or unsupported"
-    | some (_, _ :: _) =>
+    match Storage.parseLogChecked bytes.toList with
+    | .error e => throw s!"deltas.dlog: {e}"
+    | .ok (_, true) =>
         throw "deltas.dlog has a torn or uncommitted suffix; recover it before serving the collection"
-    | some (batches, []) =>
+    | .ok (batches, false) =>
       if !Storage.validBatchHistory batches then
         throw "deltas.dlog: the batch sequence or epoch order is invalid"
       match Storage.replayBatchesSinceEpoch? baseEpoch batches with
@@ -851,12 +853,19 @@ private def ctOf (o : Outcome) : String :=
        | _ => false)
     | none => false
   | _ => false
--- A torn suffix refuses the open.
+-- A torn suffix (the first bytes of a frame) refuses the open, and so do bytes
+-- that do not start a frame (issue 843: damaged, with its own message).
 #guard
   match openLog none none with
   | .ok (st, _) =>
     match appendBytes st [.add tA none] with
-    | some (bytes, _) => (openLog (some (bytes ++ ByteArray.mk #[1, 2, 3])) none).toOption.isNone
+    | some (bytes, _) =>
+      (match openLog (some (bytes ++ ByteArray.mk #[0x44, 0x4C, 0x42])) none with
+       | .error e => (e.splitOn "torn").length > 1
+       | .ok _ => false) &&
+      (match openLog (some (bytes ++ ByteArray.mk #[1, 2, 3])) none with
+       | .error e => (e.splitOn "damaged frame").length > 1
+       | .ok _ => false)
     | none => false
   | _ => false
 

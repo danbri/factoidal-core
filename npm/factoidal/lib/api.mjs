@@ -2519,9 +2519,12 @@ function buildApi(driver) {
 
   /**
    * Merge on read (op deltaLogMerge): the base dataset with the log's
-   * batches applied in commit order, as N-Quads. A record that does not
-   * verify (a torn write) and every record after it are not applied;
-   * deltaLogInspect() reports them.
+   * batches applied in commit order, as N-Quads. A torn final record (an
+   * append that did not complete) is not applied; deltaLogInspect() reports
+   * it. A damaged record, or a record whose checksum verifies but whose
+   * entries the engine cannot decode, makes the merge throw: the records
+   * after it would otherwise be lost without a message
+   * (https://github.com/danbri/factoidal/issues/843).
    * @param {{dbName: string}} handle
    * @param {string} baseNQuads the dataset before the log, as N-Quads
    * @returns {Promise<string>}
@@ -2540,7 +2543,9 @@ function buildApi(driver) {
   /**
    * What the log holds (op deltaLogDecode): the number of batches and
    * entries that verify, whether the log ends with a torn record and its
-   * size in bytes, and {seq, epoch, entries} for each batch.
+   * size in bytes, and {seq, epoch, entries} for each batch. Throws for a
+   * damaged record or a record whose entries the engine cannot decode
+   * (https://github.com/danbri/factoidal/issues/843).
    * @param {{dbName: string}} handle
    * @returns {Promise<{batches: number, entries: number, torn: boolean,
    *   tornBytes: number, logBytes: number,

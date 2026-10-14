@@ -32,12 +32,12 @@ private def asBytes (xs : List UInt8) : ByteArray := ByteArray.mk xs.toArray
 private def readExisting (path : System.FilePath) : IO (List DeltaBatch × Nat) := do
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLog bytes.toList with
-    | none => throw <| IO.userError "DLOG header is malformed or unsupported"
-    | some (batches, []) =>
+    match parseLogChecked bytes.toList with
+    | .error e => throw <| IO.userError s!"DLOG: {e}"
+    | .ok (batches, false) =>
         if validBatchHistory batches then pure (batches, bytes.size)
         else throw <| IO.userError "DLOG batch sequence or epoch order is invalid"
-    | some (_, _) => throw <| IO.userError "DLOG has a torn or uncommitted suffix; recover it before appending"
+    | .ok (_, true) => throw <| IO.userError "DLOG has a torn or uncommitted suffix; recover it before appending"
   catch e =>
     if (← path.pathExists) then throw e else pure ([], 0)
 
@@ -96,7 +96,10 @@ private def inspect (directory : System.FilePath) : IO UInt32 := do
     match parseLog bytes.toList with
     | none => IO.eprintln "l4block-delta-log rejected: DLOG header is malformed or unsupported"; pure 1
     | some (batches, tail) =>
-        IO.println s!"l4block-delta-log path={path} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={tail.isEmpty}"
+        let kind := classifyTail tail
+        IO.println s!"l4block-delta-log path={path} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={tail.isEmpty} tail={kind.name}"
+        if !tail.isEmpty then
+          IO.eprintln s!"l4block-delta-log: {path}: {kind.text (bytes.size - tail.length) tail.length}"
         pure (if tail.isEmpty then 0 else 1)
   catch _ => IO.eprintln s!"l4block-delta-log no log at {path}"; pure 1
 

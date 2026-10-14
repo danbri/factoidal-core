@@ -25,8 +25,16 @@ I/O.
   failed (`LogRead.rest`). The decoder does not apply any entry of a torn or
   corrupted record, and it does not read past that record: a later batch can
   depend on an earlier one, so a log is replayed as a prefix only.
-* `merge` applies the decoded batches over a base dataset, in log order, entry
-  by entry (`applyEntry`, the replay step of `SPARQL.StoreEndpoint`).
+* `LogRead.tail` says what those bytes are (`Storage.classifyTail`,
+  https://github.com/danbri/factoidal/issues/843): a torn final record (an
+  append that did not complete) is a crash artifact, and the records before it
+  are the log; a damaged record, or a record whose checksum verifies and whose
+  entries do not decode, is an error (`LogRead.error?`), because the records
+  after it would be lost without a message.
+* `mergeChecked` applies the decoded batches over a base dataset, in log
+  order, entry by entry (`applyEntry`, the replay step of
+  `SPARQL.StoreEndpoint`), or gives that error. `merge` is the same without
+  the check.
 
 The decoders are loops. `decodeGo` reads one record in each iteration and
 `entriesLoop` one entry, each with an accumulator, so the depth of the C stack
@@ -103,9 +111,22 @@ structure LogRead where
   rest : List UInt8
   deriving Repr, DecidableEq
 
-/-- The log ended with a record that did not verify (a torn write, or bytes
-that changed after the write). -/
-def LogRead.torn (r : LogRead) : Bool := !r.rest.isEmpty
+/-- What the bytes from the first record that did not verify are
+(`Storage.classifyTail`, https://github.com/danbri/factoidal/issues/843). -/
+def LogRead.tail (r : LogRead) : LogTail := classifyTail r.rest
+
+/-- The log ends with a torn final record: an append that did not complete
+(the record is cut short, or it is complete and fails its checksum). -/
+def LogRead.torn (r : LogRead) : Bool := r.tail == .torn
+
+/-- Why a reader must stop, when the bytes after the records that verified are
+not a torn final record: a damaged record (a wrong magic or version, or a
+checksum that fails in a record that is not the last one), or a record whose
+checksum verifies and whose entries do not decode. `logLength` is the byte
+length of the decoded log. -/
+def LogRead.error? (r : LogRead) (logLength : Nat) : Option String :=
+  if r.tail.recoverable then none
+  else some (r.tail.text (logLength - r.rest.length) r.rest.length)
 
 /-- The decode loop: one record in each iteration, `acc` holding the batches
 read so far, the last one first. The fuel is the byte length of the log; each
@@ -201,11 +222,20 @@ def applyBatchesFast (ds : Dataset) (bs : List DeltaBatch) : Dataset :=
 
 #print axioms applyBatches_eq_fast
 
-/-- Merge on read: decode the log and apply the batches of the records that
-verify over `base`. A torn or corrupted record, and every byte after it,
-changes nothing. -/
+/-- Apply the batches of the records that verify over `base`. A record that
+does not verify, and every byte after it, changes nothing. This does not check
+what those bytes are: a reader calls `mergeChecked`. -/
 def merge (base : Dataset) (log : List UInt8) : Dataset :=
   applyBatches base (decode log).batches
+
+/-- Merge on read, with the rule of https://github.com/danbri/factoidal/issues/843:
+the merge of the records that verify when the log is clean or ends with a torn
+final record; an error when a record is damaged or a committed record does not
+decode, because the records after it would be lost without a message. -/
+def mergeChecked (base : Dataset) (log : List UInt8) : Except String Dataset :=
+  match (decode log).error? log.length with
+  | some e => .error e
+  | none => .ok (merge base log)
 
 /-! ## Build-time checks
 
@@ -248,12 +278,37 @@ private def flipped : List UInt8 :=
   log3.set (log3.length - 8) (log3.getD (log3.length - 8) 0 + 1)
 #guard (decode flipped).batches == [b0, b1]
 #guard (decode flipped).torn
--- A wrong magic in the first record: nothing is read.
+-- A wrong magic in the first record: nothing is read, and the record is
+-- damaged, not torn (issue 843).
 #guard (decode (0 :: log3.drop 1)).batches == []
-#guard (decode (0 :: log3.drop 1)).torn
+#guard (decode (0 :: log3.drop 1)).tail == .damaged
+#guard !(decode (0 :: log3.drop 1)).torn
 
--- Bytes that are not a record at all.
+-- The start of a record (an append cut after three bytes): torn.
 #guard decode [0x44, 0x4C, 0x42] == { batches := [], rest := [0x44, 0x4C, 0x42] }
+#guard (decode [0x44, 0x4C, 0x42]).torn
+
+-- One body byte of the FIRST record changed: the checksum rejects it, and two
+-- committed records follow it, so the log is damaged (issue 843).
+private def frame0 : List UInt8 := (encodeBatch? b0).getD []
+private def damagedFirst : List UInt8 :=
+  log3.set (frame0.length - 8) (log3.getD (frame0.length - 8) 0 + 1)
+#guard (decode damagedFirst).batches == []
+#guard (decode damagedFirst).tail == .damaged
+#guard ((decode damagedFirst).error? damagedFirst.length).isSome
+#guard ((decode cut).error? cut.length).isNone
+#guard ((decode flipped).error? flipped.length).isNone
+#guard ((decode log3).error? log3.length).isNone
+
+-- A committed record whose checksum verifies and whose one entry has the
+-- unknown entry tag 9: undecodable, also when it is the last record.
+private def unknownRecord : List UInt8 :=
+  let body := writeU64LE 3 ++ writeU64LE 0 ++ writeU32LE 1 ++ frameEntry [9]
+  batchFrameStart ++ writeU32LE (UInt32.ofNat body.length) ++ body ++
+    writeU32LE (simpleChecksum body)
+#guard (decode (log3 ++ unknownRecord)).batches == [b0, b1, b2]
+#guard (decode (log3 ++ unknownRecord)).tail == .undecodable
+#guard (decode (unknownRecord ++ log3)).tail == .undecodable
 
 -- The encoder refuses a triple term rather than write a record it cannot read.
 private def withTripleTerm : DeltaBatch :=
@@ -271,5 +326,19 @@ private def base : Dataset := Dataset.empty
 -- The torn last record changes nothing: the merge is that of the first two.
 #guard merge base cut == merge base ((encodeLog? [b0, b1]).getD [])
 #guard merge base cut != merge base log3
+
+-- The checked merge (issue 843): the same answers for a clean log and for a
+-- torn final record; an error for a damaged record or an undecodable one.
+private def mergedIs (log : List UInt8) (want : Option Dataset) : Bool :=
+  match mergeChecked base log, want with
+  | .ok got, some w => got == w
+  | .error _, none => true
+  | _, _ => false
+#guard mergedIs log3 (some (merge base log3))
+#guard mergedIs cut (some (merge base ((encodeLog? [b0, b1]).getD [])))
+#guard mergedIs flipped (some (merge base ((encodeLog? [b0, b1]).getD [])))
+#guard mergedIs damagedFirst none
+#guard mergedIs (log3 ++ unknownRecord) none
+#guard mergedIs (log3 ++ unknownRecord ++ (encodeBatch? b0).getD []) none
 
 end L4Factoidal.Storage.BrowserLog

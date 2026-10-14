@@ -861,6 +861,105 @@ def parseLog (bs : List UInt8) : Option (List DeltaBatch × List UInt8) := do
   if version != deltaLogVersion then none else
   some (replayDeltaBatches (bs.drop 8))
 
+/-! ### The bytes after the committed batches
+
+https://github.com/danbri/factoidal/issues/843. `replayDeltaBatches` stops at
+the first DLB1 frame that `parseDeltaBatch` refuses, and returns the bytes from
+that frame. Until 2026-10-14 every reader treated those bytes as a torn tail.
+`l4sbm11 query`, `serve` and `compact` and the browser merge then used the
+batches before them and gave no message, so a committed batch that the reader
+could not decode was lost, with every later batch: the compaction folded only
+the batches before it, and the activation of its output removed the rest.
+
+`classifyTail` says what the bytes are. Only a crash artifact at the end of the
+log is a torn tail (`torn`):
+
+* the bytes are the start of a frame: fewer than the 12 header bytes, which
+  are the start of the fixed magic and version; or a valid header whose length
+  field asks for more bytes than are left;
+* the final frame is complete (it ends at the end of the log) and its checksum
+  is not the sum of its body.
+
+These are errors. A reader reports them and does not continue past them:
+
+* `damaged`: a wrong magic or version where a frame starts, or a frame that
+  fails its checksum and is not the final frame;
+* `undecodable`: a frame whose checksum verifies but whose body the reader
+  cannot decode (for example, an entry from a newer writer).
+
+Each reader keeps its crash-recovery behaviour for a torn tail. The SBM11
+query, serve and compaction paths and the browser merge use the batches before
+the torn frame. The IBK3 paths, `StoreEndpoint` and every writer refuse the log
+until the torn frame is removed. -/
+
+/-- What follows the committed batches of a log. -/
+inductive LogTail where
+  | clean
+  | torn
+  | damaged
+  | undecodable
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The fixed first eight bytes of every DLB1 frame: the magic and the
+    version. -/
+def batchFrameStart : List UInt8 := writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion
+
+/-- What `tail`, the bytes from the first frame that `parseDeltaBatch`
+    refused, is. `parseDeltaBatch` checks the magic, the version, the length,
+    the checksum and then decodes the body; a complete frame with a valid
+    header and a checksum that verifies was therefore refused by its body. -/
+def classifyTail (tail : List UInt8) : LogTail :=
+  match tail with
+  | [] => .clean
+  | _ :: _ =>
+    match readU32LE tail 8 with
+    | none => if (tail.take 8).isPrefixOf batchFrameStart then .torn else .damaged
+    | some len =>
+      if tail.take 8 != batchFrameStart then .damaged
+      else if tail.length < 16 + len.toNat then .torn
+      else if readU32LE (tail.drop 12) len.toNat ==
+          some (simpleChecksum ((tail.drop 12).take len.toNat)) then .undecodable
+      else if tail.length == 16 + len.toNat then .torn
+      else .damaged
+
+def LogTail.name : LogTail → String
+  | .clean => "clean"
+  | .torn => "torn"
+  | .damaged => "damaged"
+  | .undecodable => "undecodable"
+
+/-- `true` for the two kinds after which a reader may use the committed
+    batches: no bytes, and a torn final frame. -/
+def LogTail.recoverable : LogTail → Bool
+  | .clean | .torn => true
+  | .damaged | .undecodable => false
+
+/-- The text a reader gives for the bytes after the committed batches.
+    `offset` is the byte position of the first refused frame in the file and
+    `size` the number of bytes from there to the end. -/
+def LogTail.text : LogTail → Nat → Nat → String
+  | .clean, _, _ => "no bytes after the committed batches"
+  | .torn, offset, size =>
+      s!"a torn final frame of {size} bytes at byte {offset} (an append that did not complete)"
+  | .damaged, offset, size =>
+      s!"a damaged frame at byte {offset}, {size} bytes before the end of the log " ++
+      "(a wrong magic or version, or a checksum that fails in a frame that is not the final frame)"
+  | .undecodable, offset, _ =>
+      s!"a committed frame at byte {offset} whose checksum verifies but whose entries " ++
+      "this reader cannot decode"
+
+/-- `parseLog` with the rule of issue 843: the committed batches and `true`
+    when a torn final frame follows them, or the reason to stop. -/
+def parseLogChecked (bs : List UInt8) : Except String (List DeltaBatch × Bool) :=
+  match parseLog bs with
+  | none => .error "the DLOG header is malformed or unsupported"
+  | some (batches, tail) =>
+    match classifyTail tail with
+    | .clean => .ok (batches, false)
+    | .torn => .ok (batches, true)
+    | k => .error (k.text (bs.length - tail.length) tail.length ++
+        "; the log is not replayed (https://github.com/danbri/factoidal/issues/843)")
+
 /-! ### Build-time checks
 
 Every round trip is checked with a NON-EMPTY tail, so a parser that
@@ -908,5 +1007,54 @@ private def historyBatch (seq epoch : Nat) : DeltaBatch := { seq, epoch, ops := 
 #guard validBatchHistory [historyBatch 1 1, historyBatch 2 1, historyBatch 3 2]
 #guard !validBatchHistory [historyBatch 1 2, historyBatch 2 1]
 #guard !validBatchHistory [historyBatch 2 1, historyBatch 1 1]
+
+/-! The bytes after the committed batches (issue 843). A torn final frame is
+recoverable; a damaged frame and a committed frame that does not decode are
+errors, at the end of the log and in the middle. -/
+
+private def frameOfBody (body : List UInt8) : List UInt8 :=
+  batchFrameStart ++ writeU32LE (UInt32.ofNat body.length) ++ body ++
+    writeU32LE (simpleChecksum body)
+
+private def tailBatch : DeltaBatch := { seq := 1, epoch := 1, ops := [.clear none] }
+private def tailFrame : List UInt8 := (serializeDeltaBatch? tailBatch).getD []
+/-- A body with one entry of the unknown entry tag 9, in a frame whose checksum
+    verifies. -/
+private def unknownFrame : List UInt8 :=
+  frameOfBody (writeU64LE 2 ++ writeU64LE 1 ++ writeU32LE 1 ++ frameEntry [9])
+private def logOf (frames : List UInt8) : List UInt8 :=
+  writeU32LE deltaLogMagic ++ writeU32LE deltaLogVersion ++ frames
+private def checkedIs (bs : List UInt8) (want : Option (List DeltaBatch × Bool)) : Bool :=
+  match parseLogChecked bs, want with
+  | .ok got, some w => got == w
+  | .error _, none => true
+  | _, _ => false
+private def bumped (bs : List UInt8) (i : Nat) : List UInt8 := bs.set i (bs.getD i 0 + 1)
+
+#guard frameOfBody ((tailFrame.drop 12).take (tailFrame.length - 16)) == tailFrame
+#guard classifyTail [] == .clean
+#guard classifyTail (tailFrame.take 3) == .torn
+#guard classifyTail (tailFrame.take 11) == .torn
+#guard classifyTail (tailFrame.take 12) == .torn
+#guard classifyTail (tailFrame.take (tailFrame.length - 1)) == .torn
+-- The final frame is complete and fails its checksum: torn.
+#guard classifyTail (bumped tailFrame 20) == .torn
+-- The same frame with another frame after it: damaged.
+#guard classifyTail (bumped tailFrame 20 ++ tailFrame) == .damaged
+-- A wrong magic where a frame starts: damaged, also when it is short.
+#guard classifyTail ([0, 0, 0, 0] ++ tailFrame.drop 4) == .damaged
+#guard classifyTail [0, 0, 0] == .damaged
+-- A committed frame whose body does not decode, at the end and in the middle.
+#guard (parseDeltaBatch unknownFrame).isNone
+#guard classifyTail unknownFrame == .undecodable
+#guard classifyTail (unknownFrame ++ tailFrame) == .undecodable
+-- The reader decision.
+#guard checkedIs (logOf tailFrame) (some ([tailBatch], false))
+#guard checkedIs (logOf (tailFrame ++ tailFrame.take 7)) (some ([tailBatch], true))
+#guard checkedIs (logOf (tailFrame ++ bumped tailFrame 20)) (some ([tailBatch], true))
+#guard checkedIs (logOf (bumped tailFrame 20 ++ tailFrame)) none
+#guard checkedIs (logOf (tailFrame ++ unknownFrame)) none
+#guard checkedIs (logOf (tailFrame ++ unknownFrame ++ tailFrame)) none
+#guard checkedIs [0x44, 0x4C, 0x4F] none
 
 end L4Factoidal.Storage

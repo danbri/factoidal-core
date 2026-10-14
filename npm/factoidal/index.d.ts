@@ -856,9 +856,9 @@ export interface DeltaLogInspection {
   batches: number;
   /** Entries in those batches. */
   entries: number;
-  /** The log ends with a record that does not verify (a torn write). */
+  /** The log ends with a torn final record: an append that did not complete. */
   torn: boolean;
-  /** Bytes from the first record that does not verify to the end. */
+  /** Bytes of that torn record (0 when the log is not torn). */
   tornBytes: number;
   /** Bytes of the whole log. */
   logBytes: number;
@@ -884,12 +884,17 @@ export function deltaLogReadAllHex(handle: DeltaLogHandle): Promise<string>;
 
 /**
  * Merge on read (op deltaLogMerge): `baseNQuads` with the batches of the log
- * applied in commit order, as N-Quads. A torn record and every record after
- * it are not applied.
+ * applied in commit order, as N-Quads. A torn final record (an append that
+ * did not complete) is not applied. A damaged record, or a record whose
+ * entries the engine cannot decode, makes the merge reject: the records after
+ * it would otherwise be lost (https://github.com/danbri/factoidal/issues/843).
  */
 export function deltaLogMerge(handle: DeltaLogHandle, baseNQuads: string): Promise<string>;
 
-/** What the log holds, record by record (op deltaLogDecode). */
+/**
+ * What the log holds, record by record (op deltaLogDecode). Rejects for a
+ * damaged record or a record whose entries the engine cannot decode.
+ */
 export function deltaLogInspect(handle: DeltaLogHandle): Promise<DeltaLogInspection>;
 
 /** Remove the log and its records. */

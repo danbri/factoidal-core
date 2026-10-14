@@ -182,6 +182,9 @@ structure Session where
   ovCleared : Nat := 0
   ovNewTerms : Nat := 0
   replayNs : Nat := 0
+  /-- the log ended with a torn final frame (an append that did not
+      complete), left out of the replay (issue 843) -/
+  deltaTorn : Bool := false
 
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
@@ -779,7 +782,8 @@ def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option R
     ids (`idOrNew` for an addition), then `Overlay.step`. -/
 def Session.loadOverlay (ss : Session) : IO Session := do
   let t0 ← IO.monoNanosNow
-  let (batches, _, _) ← Harness.Sbm11Delta.readBatches ss.g.dir
+  let (batches, _, clean) ← Harness.Sbm11Delta.readBatches ss.g.dir
+  let ss := { ss with deltaTorn := !clean }
   if batches.isEmpty then return ss
   let mut st : L4Factoidal.Storage.Sbm11.Overlay.State := {}
   let mut ops := 0
@@ -813,7 +817,8 @@ def openOverlaid (v : Verify) (dir0 : String) : IO Session := do
   (← openSession v dir0).loadOverlay
 
 def Session.deltaText (ss : Session) : String :=
-  s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, replay ms {ms 0 ss.replayNs}"
+  s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, replay ms {ms 0 ss.replayNs}" ++
+    (if ss.deltaTorn then ", torn final frame left out (an append that did not complete)" else "")
 
 /-! ## The reference fallback -/
 

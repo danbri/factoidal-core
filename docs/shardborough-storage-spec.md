@@ -940,6 +940,19 @@ Compaction builds a fresh generation, writes its CEP1 marker, verifies it, and
 only then atomically replaces `CURRENT`. Recovery replays exactly the valid
 history suffix after CEP1.
 
+The bytes after the last DLB1 frame that verifies
+(https://github.com/danbri/factoidal/issues/843, `Storage.classifyTail`):
+only a crash artifact at the end of the log is a torn tail, that is the start
+of a frame (fewer than 12 bytes that start the fixed magic and version, or a
+header whose length field asks for more bytes than are left), or a complete
+final frame whose checksum fails. A reader may replay the batches before a
+torn tail; a writer refuses to append after one. A frame that fails its
+checksum with bytes after it, a wrong magic or version where a frame starts,
+and a frame whose checksum verifies but whose body does not decode are errors:
+every reader stops there with a message, because the batches after them would
+otherwise be lost (`parseLogChecked`; the theorems are section 7 of
+`BrowserLogTheorems.lean`).
+
 ### 6.5 Related formats, not redefined here
 
 - **COTTAS v1** is the earlier Parquet-based quad store and remains a useful

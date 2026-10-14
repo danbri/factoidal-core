@@ -417,9 +417,13 @@ const { batches, torn } = await deltaLogInspect(log);  // what the log holds
 `deltaLogAppend` admits INSERT DATA, DELETE DATA, CLEAR DEFAULT, CLEAR GRAPH,
 DROP GRAPH and CREATE GRAPH; any other form rejects and nothing is written.
 Each update is one record: the engine writes its bytes (a DLB1 frame with
-checksums) and, on merge, decodes the records in order and stops at the first
-that does not verify, so a torn last write is never applied. The page stores
-the records and reads none of their bytes.
+checksums) and, on merge, decodes the records in order. A torn last write (an
+append that did not complete) is not applied. A damaged record, or a record
+whose checksum verifies but whose entries the engine cannot decode, makes
+`deltaLogMerge` and `deltaLogInspect` reject, because the records after it
+would otherwise be lost without a message
+([issue 843](https://github.com/danbri/factoidal/issues/843)). The page
+stores the records and reads none of their bytes.
 
 ## The `factoidal` command
 

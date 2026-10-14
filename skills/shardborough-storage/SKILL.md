@@ -670,6 +670,24 @@ pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
 every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
 after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
 
+Delta log tails (2026-10-14, https://github.com/danbri/factoidal/issues/843;
+record: section 8 of the stage 5 record). Only a crash artifact at the end of
+a log is a torn tail: the final frame is cut short, or it is complete and
+fails its checksum. A frame that fails its checksum with bytes after it
+(`damaged`) and a committed frame whose checksum verifies but whose body does
+not decode (`undecodable`) are errors for every reader
+(`Storage.classifyTail`, `parseLogChecked`; browser: `LogRead.error?`,
+`mergeChecked`). Until then `l4sbm11 query`, `serve` and `compact` and the JS
+`deltaLogMerge` used the batches before such a frame with exit 0 and no
+message, and a compaction followed by activation lost it and every later
+batch. A torn final frame keeps each reader's rule: SBM11 query, serve and
+compaction use the batches before it (stderr: `torn final frame left out`);
+the IBK3 paths, `StoreEndpoint` and the writers refuse the log until it is
+removed. A new reader of the log uses `parseLogChecked`, never `parseLog` and
+its tail. Gates: `tests/delta-log/run.sh`, the `#guard`s of `DeltaLog.lean`,
+`BrowserLog.lean` and `Wasm/Ops/DeltaLog.lean`,
+`npm/factoidal/test/delta-log.test.mjs`.
+
 OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
 record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
 OPTIONAL { gk } }` at the top level runs on `path=ids` when the base is a

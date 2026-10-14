@@ -22,9 +22,15 @@ theorems.
 `logHex` is the hexadecimal text of the records, in commit order. White space
 between two bytes is ignored, so the host can join its records with "\n". Any
 other character, or a lone hexadecimal digit, is an error: the text is not a
-log transport. A record that does not verify (`torn`) is not an error: the
-decode stops there and reports its bytes (`tornBytes`), and the merge applies
-the batches before it only.
+log transport. A torn final record (an append that did not complete: the last
+record is cut short, or it is complete and fails its checksum) is not an
+error: the decode stops there and reports its bytes (`tornBytes`), and the
+merge applies the batches before it only. A damaged record (a wrong magic or
+version, or a checksum that fails in a record that is not the last one) and a
+record whose checksum verifies but whose entries do not decode are errors of
+both operations (`Storage.classifyTail`,
+https://github.com/danbri/factoidal/issues/843): the records after them would
+otherwise be lost without a message.
 
 `deltaLogEncode` admits the update forms that map one to one to delta
 entries (`SPARQL.deltaBatchForUpdate?`): INSERT DATA, DELETE DATA, CLEAR
@@ -156,6 +162,9 @@ def deltaLogDecode (logHex : String) : String :=
   | .error e => errJson s!"deltaLogDecode: {e}"
   | .ok bytes =>
     let r := decode bytes
+    match r.error? bytes.length with
+    | some e => errJson s!"deltaLogDecode: the log has {e}"
+    | none =>
     okWith (readFields r ++
       [ ("logBytes", .number (toString (bytes.length)))
       , ("records", .array (r.batches.map fun b => Json.object
@@ -173,6 +182,9 @@ def deltaLogMerge (baseNQuads logHex : String) : String :=
     | .error e => errJson s!"deltaLogMerge: {e}"
     | .ok bytes =>
       let r := decode bytes
+      match r.error? bytes.length with
+      | some e => errJson s!"deltaLogMerge: the log has {e}"
+      | none =>
       let merged := applyBatches (base.prefixBnodes "b") r.batches
       okWith ([("nquads", .string (Dataset.toCanonicalNQuads merged))] ++ readFields r)
 
@@ -213,6 +225,31 @@ private def logCut : String := logTwo.dropEnd 8 |>.toString
 #guard has (deltaLogDecode logCut) "\"batches\":1,\"entries\":1,\"torn\":true"
 #guard has (deltaLogMerge "" logCut) "Eve"
 #guard !has (deltaLogMerge "" logCut) "Frank"
+-- Issue 843. One body byte of the FIRST record changed (its checksum fails and
+-- a record follows it): both operations refuse the log, and the merge does not
+-- give Eve without Frank.
+private def bumpHex (h : String) (i : Nat) : String :=
+  let cs := h.toList
+  let c := cs.getD i '0'
+  let c' := if c == 'f' then '0' else if c == '9' then 'a' else Char.ofNat (c.toNat + 1)
+  String.ofList (cs.set i c')
+private def logDamaged : String := bumpHex recEve 50 ++ "\n" ++ recFrank
+#guard has (deltaLogDecode logDamaged) "\"ok\":false"
+#guard has (deltaLogDecode logDamaged) "damaged frame at byte 0"
+#guard has (deltaLogMerge "" logDamaged) "\"ok\":false"
+-- The same byte changed in the LAST record: torn (a crash artifact), merged.
+private def logLastBumped : String := recEve ++ "\n" ++ bumpHex recFrank 50
+#guard has (deltaLogDecode logLastBumped) "\"batches\":1,\"entries\":1,\"torn\":true"
+#guard has (deltaLogMerge "" logLastBumped) "Eve"
+-- A committed record whose checksum verifies and whose one entry has the
+-- unknown entry tag 9: refused at the end of the log and in the middle.
+private def recUnknown : String :=
+  let body := writeU64LE 2 ++ writeU64LE 0 ++ writeU32LE 1 ++ frameEntry [9]
+  hexOfBytes (ByteArray.mk (batchFrameStart ++
+    writeU32LE (UInt32.ofNat body.length) ++ body ++ writeU32LE (simpleChecksum body)).toArray)
+#guard has (deltaLogDecode (logTwo ++ "\n" ++ recUnknown)) "whose entries this reader cannot decode"
+#guard has (deltaLogMerge "" (logTwo ++ "\n" ++ recUnknown)) "\"ok\":false"
+#guard has (deltaLogMerge "" (recUnknown ++ "\n" ++ logTwo)) "\"ok\":false"
 -- DELETE DATA after INSERT DATA removes the triple again.
 private def recDelEve : String :=
   hexOf (deltaLogEncode

@@ -34,23 +34,26 @@ open L4Factoidal.Storage
 
 def logName : String := "deltas.dlog"
 
-/-- The committed batches of `dir`'s log that its base does not hold, and the
-    log's bytes (empty when there is no log). A torn suffix (a batch not
-    committed) is left out, as the DLOG reader does; a malformed header, a
-    batch order that `validBatchHistory` refuses, or epochs that are not a
-    compacted prefix and a replay suffix are errors. -/
+/-- The committed batches of `dir`'s log that its base does not hold, the
+    log's bytes (empty when there is no log), and `true` when no torn final
+    frame follows them. A torn final frame (an append that did not complete) is
+    left out (`classifyTail`, https://github.com/danbri/factoidal/issues/843).
+    A damaged frame, a committed frame that does not decode, a malformed
+    header, a batch order that `validBatchHistory` refuses, or epochs that are
+    not a compacted prefix and a replay suffix are errors: the batches after a
+    frame that this reader cannot read are not dropped without a message. -/
 def readBatches (dir : String) : IO (List DeltaBatch × ByteArray × Bool) := do
   let path : System.FilePath := s!"{dir}/{logName}"
   if !(← path.pathExists) then return ([], .empty, true)
   let bytes ← IO.FS.readBinFile path
-  match parseLog bytes.toList with
-  | none => throw (IO.userError s!"{path}: DLOG header is malformed or unsupported")
-  | some (batches, tail) =>
+  match parseLogChecked bytes.toList with
+  | .error e => throw (IO.userError s!"{path}: {e}")
+  | .ok (batches, torn) =>
     if !validBatchHistory batches then
       throw (IO.userError s!"{path}: DLOG batch sequence or epoch order is invalid")
     let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk dir)
     match replayBatchesSinceEpoch? baseEpoch batches with
-    | some replay => return (replay, bytes, tail.isEmpty)
+    | some replay => return (replay, bytes, !torn)
     | none => throw (IO.userError s!"{path}: DLOG epochs do not form a compacted-prefix/replay-suffix history")
 
 private def asBytes (xs : List UInt8) : ByteArray := ByteArray.mk xs.toArray
@@ -85,12 +88,12 @@ def appendUpdate (dir0 text : String) : IO UInt32 := do
       let exists_ ← System.FilePath.pathExists path
       let bytes ← if exists_ then IO.FS.readBinFile path else pure ByteArray.empty
       let batches ← if bytes.isEmpty then pure [] else
-        match parseLog bytes.toList with
-        | some (bs, []) =>
+        match parseLogChecked bytes.toList with
+        | .ok (bs, false) =>
           if validBatchHistory bs then pure bs
           else throw (IO.userError s!"{path}: DLOG batch sequence or epoch order is invalid")
-        | some _ => throw (IO.userError s!"{path}: DLOG has an uncommitted suffix; recover it before appending")
-        | none => throw (IO.userError s!"{path}: DLOG header is malformed or unsupported")
+        | .ok (_, true) => throw (IO.userError s!"{path}: DLOG has an uncommitted suffix; recover it before appending")
+        | .error e => throw (IO.userError s!"{path}: {e}")
       match deltaBatchForUpdate? (nextSeq batches) epoch id update with
       | none =>
         IO.eprintln "l4sbm11 update: refused: the update needs WHERE evaluation or is an unsupported graph-wide operation"

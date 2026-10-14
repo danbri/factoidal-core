@@ -94,11 +94,12 @@ private def sourceIdentity? (directory : System.FilePath) : IO ByteArray := do
   let dlog := directory / "deltas.dlog"
   let delta ← try
     let bytes ← IO.FS.readBinFile dlog
-    match parseLog bytes.toList with
-    | some (batches, []) =>
+    match parseLogChecked bytes.toList with
+    | .ok (batches, false) =>
         if validBatchHistory batches then pure bytes
         else throw <| IO.userError "source DLOG batch sequence or epoch order is invalid"
-    | _ => throw <| IO.userError "source DLOG is malformed or has an uncommitted suffix"
+    | .ok (_, true) => throw <| IO.userError "source DLOG is malformed or has an uncommitted suffix"
+    | .error e => throw <| IO.userError s!"source DLOG: {e}"
   catch e =>
     if (← dlog.pathExists) then throw e else pure ByteArray.empty
   pure <| nativeSha256 (manifest ++ delta)
