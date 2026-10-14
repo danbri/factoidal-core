@@ -1480,6 +1480,14 @@ Two costs, and the second is the larger one:
    session's commit, say so and give that SHA. Do not synthesise a commit
    that "represents" the change, and do not report a SHA that does not
    contain it.
+5. **A coordinator does not move HEAD in a checkout where an agent works.**
+   On 2026-10-14 the coordinator ran `git checkout --detach origin/main` in
+   the main checkout, to read a file at the new `main`, while an agent was
+   editing 14 files there. Git refused the checkout because the agent's
+   edits conflicted, so nothing was lost. If the edits had not conflicted,
+   the agent's tree would have moved under it in the middle of its gates.
+   To read another revision, use `git show REV:path` or `git log REV`.
+   Neither command changes the working tree.
 
 ## Hazard #33 — an annotated-but-uncited semantics default plus zero suite pressure: two engines shipped opposite unexercised behaviors, and the first proof contact blamed the wrong layer (2026-08-25)
 

@@ -70,7 +70,8 @@
 #                the fresh pack's; the compacted generation answers the same;
 #                an update after compaction is seen (epoch 2); an update with
 #                WHERE and INSERT DATA with a blank node are refused (the
-#                stage 5 limits: a change of either turns this RED).
+#                stage 5 limits, https://github.com/danbri/factoidal/issues/849 and
+#                https://github.com/danbri/factoidal/issues/850: a change of either turns this RED).
 #   (i) olympics stage 5 on the olympics generation (a copy): the batches of
 #                tests/sbm11/delta/olympics-ops.txt, the inserted row seen,
 #                the deleted row not seen; q01 to q21 and
@@ -446,11 +447,11 @@ else
   fi
   # the stage 5 limits, pinned: both must stay refused until they are implemented
   r1=0; "$BIN/l4sbm11" update "$H/col" 'DELETE WHERE { ?s <http://ex.org/name> ?n }' >"$H/r1.log" 2>&1 || r1=$?
-  if [ "$r1" -eq 1 ] && grep -q 'refused' "$H/r1.log"; then record delta refuse-where 0 "DELETE WHERE refused (stage 5 limit)"
-  else record delta refuse-where 1 "exit $r1: $(tail -1 "$H/r1.log")"; fi
+  if [ "$r1" -eq 1 ] && grep -q 'refused' "$H/r1.log"; then record delta refuse-where 0 "DELETE WHERE refused (stage 5 limit, https://github.com/danbri/factoidal/issues/849)"
+  else record delta refuse-where 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/849; exit $r1: $(tail -1 "$H/r1.log")"; fi
   r2=0; "$BIN/l4sbm11" update "$H/col" 'INSERT DATA { _:b <http://ex.org/name> "blank" }' >"$H/r2.log" 2>&1 || r2=$?
-  if [ "$r2" -eq 1 ] && grep -q 'refused' "$H/r2.log"; then record delta refuse-insert-bnode 0 "INSERT DATA with a blank node refused (stage 5 limit)"
-  else record delta refuse-insert-bnode 1 "exit $r2: $(tail -1 "$H/r2.log")"; fi
+  if [ "$r2" -eq 1 ] && grep -q 'refused' "$H/r2.log"; then record delta refuse-insert-bnode 0 "INSERT DATA with a blank node refused (stage 5 limit, https://github.com/danbri/factoidal/issues/850)"
+  else record delta refuse-insert-bnode 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/850; exit $r2: $(tail -1 "$H/r2.log")"; fi
 fi
 
 echo "=== (i) delta overlay and compaction on olympics"
@@ -837,16 +838,16 @@ else
     r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
       'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <<( _:x <http://ex.org/q> "1" )>> )>> }' \
       >"$U/r1.log" 2>&1 || r=$?
-    if [ "$r" -eq 1 ] && grep -q 'INSERT DATA with blank nodes' "$U/r1.log"; then record rdf12 refuse-insert-nested-bnode 0 "refused (stage 5 limit)"
-    else record rdf12 refuse-insert-nested-bnode 1 "exit $r: $(tail -1 "$U/r1.log")"; fi
+    if [ "$r" -eq 1 ] && grep -q 'INSERT DATA with blank nodes' "$U/r1.log"; then record rdf12 refuse-insert-nested-bnode 0 "refused (stage 5 limit, https://github.com/danbri/factoidal/issues/850)"
+    else record rdf12 refuse-insert-nested-bnode 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/850; exit $r: $(tail -1 "$U/r1.log")"; fi
     r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
       'DELETE DATA { <http://ex.org/k> <http://ex.org/says> <<( _:x <http://ex.org/q> "1" )>> }' >"$U/r2.log" 2>&1 || r=$?
     if [ "$r" -eq 1 ] && grep -q 'DELETE DATA must not contain blank nodes' "$U/r2.log"; then record rdf12 refuse-delete-nested-bnode 0 "parse error, as SPARQL 1.2 requires"
     else record rdf12 refuse-delete-nested-bnode 1 "exit $r: $(tail -1 "$U/r2.log")"; fi
     r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
       'DELETE WHERE { ?s <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> ?o )>> }' >"$U/r3.log" 2>&1 || r=$?
-    if [ "$r" -eq 1 ] && grep -q 'needs WHERE evaluation' "$U/r3.log"; then record rdf12 refuse-delete-where-triple-term 0 "parsed, refused (stage 5 limit)"
-    else record rdf12 refuse-delete-where-triple-term 1 "exit $r: $(tail -1 "$U/r3.log")"; fi
+    if [ "$r" -eq 1 ] && grep -q 'needs WHERE evaluation' "$U/r3.log"; then record rdf12 refuse-delete-where-triple-term 0 "parsed, refused (stage 5 limit, https://github.com/danbri/factoidal/issues/849)"
+    else record rdf12 refuse-delete-where-triple-term 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/849; exit $r: $(tail -1 "$U/r3.log")"; fi
     r=0; "$BIN/l4sbm11" update "$U/col" \
       'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "1" )>> }' >"$U/r4.log" 2>&1 || r=$?
     if [ "$r" -eq 1 ] && grep -q 'parse error' "$U/r4.log"; then record rdf12 refuse-triple-term-sparql11 0 "parse error without --sparql12"
