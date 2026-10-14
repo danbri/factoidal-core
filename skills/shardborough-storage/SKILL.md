@@ -556,14 +556,15 @@ parent's key) and id tag 9. The packers read N-Quads in RDF 1.2 mode;
 the id path a triple term with no variable and no blank node inside is a
 constant; one with a variable or a blank node inside goes to the reference
 fallback; the triple functions run as the reference evaluator's own
-functions on decoded terms. An update with a triple term is refused (SPARQL
-1.1 Update grammar, no triple-term form in DLOG): the open part of the issue,
-pinned in part (m). `l4sbm11 canon` reads RDF 1.2 through the source layer
-since 2026-10-14 (https://github.com/danbri/factoidal/issues/837); part (m)
+functions on decoded terms. `l4sbm11 update --sparql12` stores INSERT DATA
+and DELETE DATA with triple terms and directional literals in a DLOG of
+version 2 (below, "Delta log versions"; since 2026-10-14). `l4sbm11 canon`
+reads RDF 1.2 through the source layer since 2026-10-14 (https://github.com/danbri/factoidal/issues/837); part (m)
 asserts that `dump` and `canon` of the triple-term fixture are equal. Records: stage 2 record section 8
 (key, tag, format names, theorems), stage 4 record section 14 (each query
 path). Gates for a change there: `tests/sbm11/run.sh` part (m) (44 queries
-against `l4factoidal query --sparql12`, compaction, the pinned refusals),
+against `l4factoidal query --sparql12`, compaction, three SPARQL 1.2 updates
+with queries after each, the refusals),
 `l4sbm11-dict-pack --nest-check N`, and the `sbm11-triple-term` case of
 `tests/stack/run.sh --canary` (depth 300,000).
 
@@ -687,6 +688,22 @@ removed. A new reader of the log uses `parseLogChecked`, never `parseLog` and
 its tail. Gates: `tests/delta-log/run.sh`, the `#guard`s of `DeltaLog.lean`,
 `BrowserLog.lean` and `Wasm/Ops/DeltaLog.lean`,
 `npm/factoidal/test/delta-log.test.mjs`.
+
+Delta log versions (2026-10-14, https://github.com/danbri/factoidal/issues/792
+item 1; record: section 9 of the stage 5 record). A DLOG of header version 2
+may hold RDF 1.2 terms (triple terms nested in the object position,
+directional literals), encoded by `serializeDeltaTerm?`/`parseDeltaTerm`;
+version 1 uses the shared `serializeTerm?`/`parseTerm`, which keep refusing
+them (BLK0, IBK1, IBK2, PTD1, TLI1 are unchanged). `l4sbm11 update --sparql12`
+creates a version 2 log, or sets a version 1 log to version 2 in place, before
+the first batch with an RDF 1.2 term (`appendPlan?`); a log without one stays
+version 1, byte for byte. The SBM11 tools read both versions; the IBK3, IBK4
+and IBK5 readers refuse version 2 (`parseLogCheckedV1`); every reader refuses
+another version at the header. A new reader of a delta log uses
+`parseLogChecked` (SBM11) or `parseLogCheckedV1` (the other layouts). Gates:
+`tests/sbm11/run.sh` part (m), `tests/delta-log/run.sh` (DLOG versions), the
+`delta-log-triple-term` case of `tests/stack/run.sh --canary` (depth 300,000),
+`DeltaLogCodecTheorems.lean`.
 
 OPTIONAL on ids (2026-10-13, https://github.com/danbri/factoidal/issues/775;
 record: section 10 of the stage 4 record). `{ base OPTIONAL { g1 } ...
@@ -1064,6 +1081,18 @@ of "Rules when changing a format". Do not name the syntax in a file under
    keys only. Had the new terms kept tag 3, the older activation would have
    admitted the generation and failed only at the first query that decoded a
    triple term. Read what the older reader checks before relying on it.
+   Coordinator decision, 2026-10-14 (the update part of the same item, and
+   https://github.com/danbri/factoidal/issues/843): the delta-log codec for
+   RDF 1.2 terms did NOT keep the DLOG version, because condition (b) fails:
+   the readers of `cf55723e` replayed a log whose second batch held a tag-3
+   entry, answered with batch 1 only, exit 0, and their compaction lost batches
+   2 and 3. So rule 2 applies: a log that holds an RDF 1.2 term has header
+   version 2, which those readers refuse at the header (measured: `l4sbm11
+   query`, `serve`, `compact`, `update` and `l4block-delta-log --inspect` exit
+   1 with `DLOG header is malformed or unsupported`), and a log without one
+   stays version 1, byte for byte (`appendPlan?_v1`; `cmp` against the
+   `cf55723e` writer). The shared term codec of BLK0, IBK1, IBK2, PTD1 and
+   TLI1 was not extended; the delta log has its own.
 8. A change that moves a syntax to another reader needs a timing against the
    old route on the same bytes, not only a byte comparison. On 2026-10-14 the
    source layer gave `.nt` files to the strict N-Triples reader. Every

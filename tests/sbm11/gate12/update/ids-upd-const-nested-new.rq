@@ -1,0 +1,3 @@
+SELECT ?s WHERE {
+  ?s <http://ex.org/says> <<( <http://ex.org/u> <http://ex.org/p> <<( <http://ex.org/v> <http://ex.org/q> <<( <http://ex.org/w> <http://ex.org/r> "deeper"@de )>> )>> )>>
+}

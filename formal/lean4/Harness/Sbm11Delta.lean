@@ -13,7 +13,15 @@ holds (`replayBatchesSinceEpoch?`).
 Admitted updates: INSERT DATA, DELETE DATA, CLEAR, DROP, CREATE, as for
 `l4block-delta-log` (`deltaEntriesForOp?`). Refused: an update with a WHERE
 clause (it needs the overlaid generation's answer at write time), and
-INSERT DATA with blank nodes (a fresh blank node needs the base's labels).
+INSERT DATA with blank nodes, also inside a triple term (a fresh blank node
+needs the base's labels).
+
+`--sparql12` reads the update with the SPARQL 1.2 grammar: triple terms and
+directional literals (https://github.com/danbri/factoidal/issues/792 item 1).
+A batch that holds one needs a DLOG of version 2 (`appendPlan?`): a new log
+gets that header, and an existing version 1 log gets its header version set
+to 2 in place (four bytes, under the append lock, synced) before the batch is
+appended. A log that holds no RDF 1.2 term keeps version 1 and its bytes.
 
 This is a HARNESS: it does file I/O. The replay semantics is
 `L4Factoidal.Storage.Sbm11.Overlay` (proved: `OverlayTheorems.step_add`,
@@ -64,19 +72,19 @@ private def nextSeq (batches : List DeltaBatch) : Nat :=
 private def hasInsertBnode : List UpdateOp → Bool
   | [] => false
   | .insertData quads :: rest =>
-      (collectQuads none quads).any (fun q => q.2.hasBnode) || hasInsertBnode rest
+      (collectQuads none quads).any (fun q => tripleMentionsBnode q.2) || hasInsertBnode rest
   | _ :: rest => hasInsertBnode rest
 
 /-- Append one batch for `text` to the log of the generation `dir0` names
     (through `CURRENT` when `dir0` is a collection root). The append is
     positioned at the size read (`appendSyncAtSizeRaw`, file synced); a
     concurrent writer makes it retry, three times at most. -/
-def appendUpdate (dir0 text : String) : IO UInt32 := do
+def appendUpdate (dir0 text : String) (sparql : SparqlVersion := .v11) : IO UInt32 := do
   let dir := (← Harness.GenerationPointer.resolveStoreDirectory dir0).toString
   let baseEpoch ← Harness.CompactedEpoch.read? (System.FilePath.mk dir)
   let epoch := Harness.CompactedEpoch.nextWriteEpoch baseEpoch
   let path := s!"{dir}/{logName}"
-  match parseSparqlUpdate text with
+  match parseSparqlUpdate text none sparql with
   | .error e =>
     IO.eprintln s!"l4sbm11 update: parse error at {e.pos}: {e.msg}"
     return 1
@@ -87,26 +95,35 @@ def appendUpdate (dir0 text : String) : IO UInt32 := do
     for _ in [0:3] do
       let exists_ ← System.FilePath.pathExists path
       let bytes ← if exists_ then IO.FS.readBinFile path else pure ByteArray.empty
-      let batches ← if bytes.isEmpty then pure [] else
-        match parseLogChecked bytes.toList with
-        | .ok (bs, false) =>
-          if validBatchHistory bs then pure bs
+      let (logVersion, batches) ← if bytes.isEmpty then pure (none, []) else
+        match parseLogChecked bytes.toList, logHeaderVersion? bytes.toList with
+        | .ok (bs, false), some v =>
+          if validBatchHistory bs then pure (some v, bs)
           else throw (IO.userError s!"{path}: DLOG batch sequence or epoch order is invalid")
-        | .ok (_, true) => throw (IO.userError s!"{path}: DLOG has an uncommitted suffix; recover it before appending")
-        | .error e => throw (IO.userError s!"{path}: {e}")
+        | .ok (_, true), _ => throw (IO.userError s!"{path}: DLOG has an uncommitted suffix; recover it before appending")
+        | .error e, _ => throw (IO.userError s!"{path}: {e}")
+        | .ok _, none => throw (IO.userError s!"{path}: DLOG header is malformed or unsupported")
       match deltaBatchForUpdate? (nextSeq batches) epoch id update with
       | none =>
         IO.eprintln "l4sbm11 update: refused: the update needs WHERE evaluation or is an unsupported graph-wide operation"
         return 1
       | some batch =>
-        match serializeDeltaBatch? batch, (if bytes.isEmpty then serializeLog? [] else some []) with
-        | some frame, some initial =>
-          if ← Harness.PosixRangeIO.appendSyncAtSizeRaw path (UInt64.ofNat bytes.size) (asBytes (initial ++ frame)) then
-            IO.println s!"l4sbm11 update: committed path={path} seq={batch.seq} epoch={batch.epoch} ops={batch.ops.length} bytes={frame.length}"
-            return 0
-        | _, _ =>
+        match appendPlan? logVersion batch with
+        | none =>
           IO.eprintln "l4sbm11 update: refused: the batch exceeds the DLOG wire-format limits"
           return 1
+        | some plan =>
+          let size := UInt64.ofNat bytes.size
+          -- a version 1 log gets version 2 before the first RDF 1.2 batch; a
+          -- concurrent append changes the size, and the loop reads again
+          let headerOk ← if plan.setVersion2 then
+              Harness.PosixRangeIO.writeAtSizeSyncRaw path size 4 (asBytes (writeU32LE deltaLogVersion2))
+            else pure true
+          if headerOk then
+            if ← Harness.PosixRangeIO.appendSyncAtSizeRaw path size (asBytes plan.bytes) then
+              let frameBytes := if bytes.isEmpty then plan.bytes.length - 8 else plan.bytes.length
+              IO.println s!"l4sbm11 update: committed path={path} seq={batch.seq} epoch={batch.epoch} ops={batch.ops.length} bytes={frameBytes} log-version={plan.version}{if plan.setVersion2 then " (set from 1)" else ""}"
+              return 0
     IO.eprintln "l4sbm11 update: concurrent writers prevented a stable append after 3 tries"
     return 1
 

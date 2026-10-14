@@ -75,6 +75,45 @@ LEAN_EXPORT lean_obj_res l4_delta_log_append_sync_at_size(
   return lean_io_result_mk_ok(lean_box(ok));
 }
 
+/* In-place counterpart of the compare-and-append: overwrite `bytes` at
+ * `offset`, inside the file, only if the file still has `expected_size`
+ * bytes, under the same exclusive advisory lock, then fsync. The DLOG writer
+ * uses it to set the header version to 2 (four bytes at offset 4) before it
+ * appends the first batch that holds an RDF 1.2 term
+ * (https://github.com/danbri/factoidal/issues/792 item 1). The file size
+ * does not change, so a concurrent compare-and-append is not affected. */
+LEAN_EXPORT lean_obj_res l4_delta_log_write_at_size(
+    b_lean_obj_arg path, uint64_t expected_size, uint64_t offset,
+    b_lean_obj_arg bytes, lean_obj_arg world) {
+  (void)world;
+  int ok = 0;
+  size_t total = lean_sarray_size(bytes);
+  if (offset > (uint64_t)INT64_MAX || (uint64_t)total > expected_size ||
+      offset > expected_size - (uint64_t)total)
+    return lean_io_result_mk_ok(lean_box(0));
+  int fd = open(lean_string_cstr(path), O_WRONLY);
+  if (fd < 0) return lean_io_result_mk_ok(lean_box(0));
+  if (flock(fd, LOCK_EX) != 0) { close(fd); return lean_io_result_mk_ok(lean_box(0)); }
+  struct stat st;
+  if (fstat(fd, &st) == 0 && st.st_size >= 0 &&
+      (uint64_t)st.st_size == expected_size) {
+    size_t done = 0;
+    ok = 1;
+    while (done < total) {
+      ssize_t n = pwrite(fd, lean_sarray_cptr(bytes) + done, total - done,
+                         (off_t)offset + (off_t)done);
+      if (n > 0) { done += (size_t)n; continue; }
+      if (n < 0 && errno == EINTR) continue;
+      ok = 0;
+      break;
+    }
+    if (ok && fsync(fd) != 0) ok = 0;
+  }
+  flock(fd, LOCK_UN);
+  if (close(fd) != 0) ok = 0;
+  return lean_io_result_mk_ok(lean_box(ok));
+}
+
 /* Sync the directory entry changed by rename.  Without this second sync a
  * successful activation is atomic for concurrent readers, but can still be
  * lost after a power failure before the filesystem persists the rename. */

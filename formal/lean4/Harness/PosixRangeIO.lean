@@ -37,6 +37,14 @@ opaque preadRaw (path : @& String) (offset length : UInt64) : IO ByteArray
 opaque appendSyncAtSizeRaw (path : @& String) (expectedSize : UInt64)
   (bytes : @& ByteArray) : IO Bool
 
+/-- In-place counterpart: overwrite `bytes` at `offset` (inside the file) only
+    if the file still has exactly `expectedSize` bytes, under the same
+    exclusive advisory lock, then `fsync`. The DLOG writer sets the header
+    version to 2 with it before the first batch that holds an RDF 1.2 term. -/
+@[extern "l4_delta_log_write_at_size"]
+opaque writeAtSizeSyncRaw (path : @& String) (expectedSize offset : UInt64)
+  (bytes : @& ByteArray) : IO Bool
+
 /-- Atomically replace a small, Lean-validated control file after syncing its
     complete new contents and the parent directory entry. Readers observe
     either whole version, and a successful result survives normal crash

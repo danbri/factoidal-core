@@ -641,8 +641,8 @@ trip, single hypothesis, no fuel in the statement), `toWire_inline_iff` and
 `toWire_blob_iff` (the canonical choice), `resolve_toWire` (a term written
 by the packer's `toWire` resolves back to itself given its own bytes).
 
-The v1 codec is unchanged and remains what IBK3, PTD1, TLI1 and the DLOG
-delta log use.
+The v1 codec is unchanged and remains what IBK3, PTD1, TLI1 and a DLOG of
+version 1 use. A DLOG of version 2 uses its own term codec (section 6.4).
 
 ### 6.2 Index sidecars
 
@@ -953,6 +953,27 @@ every reader stops there with a message, because the batches after them would
 otherwise be lost (`parseLogChecked`; the theorems are section 7 of
 `BrowserLogTheorems.lean`).
 
+DLOG header versions (https://github.com/danbri/factoidal/issues/792 item 1).
+Version 1 encodes the terms of DLE1 entries with the v1 term codec of section
+6.1, which has no form for an RDF 1.2 triple term or a directional literal.
+Version 2 encodes them with `serializeDeltaTerm?` and `parseDeltaTerm`: the v1
+bytes for every term v1 admits; term tag 3 followed by the subject (term tag 0
+or 1), the predicate (term tag 0) and the object as a term, so a triple term
+nests in the object position; literal flag 2 followed by the language tag and
+a direction byte (1 `ltr`, 2 `rtl`). The DLB1 and DLE1 frames are the same in
+both versions, and every version 1 frame is a version 2 frame
+(`DeltaLogCodecTheorems.parseLog_v2_of_frames`). A writer appends a batch that
+holds an RDF 1.2 term only to a version 2 log: it creates the log with version
+2, or it sets the version field of a version 1 log to 2 in place (four bytes at
+offset 4, under the append lock, at the expected file size, synced) before the
+append. A log that holds no RDF 1.2 term keeps version 1 and its bytes. A
+reader refuses any other version at the header. The readers of IBK3, IBK4 and
+IBK5 collections refuse version 2 (`parseLogCheckedV1`); the SBM11 tools read
+both. Version 2 is a new wire version (rule 2 of the format rules of skill
+`shardborough-storage`): the readers before 2026-10-14 did not refuse an entry
+they could not decode; they stopped the replay there without a message (issue
+843).
+
 ### 6.5 Related formats, not redefined here
 
 - **COTTAS v1** is the earlier Parquet-based quad store and remains a useful
@@ -1247,6 +1268,7 @@ of the current family. Each depends only on the three standard Lean axioms.
 | PTD1 | `decode?_encode?` | [`Storage/PagedTermDictionaryTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryTheorems.lean) | none beyond `encode? terms = some bytes`: `supported` checks both term conditions |
 | IBK3 | `decode_encode?`, `denotes_decode_encode?` | [`Storage/IndexedBlockWireV3Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV3Theorems.lean) | none beyond `encode? block = some bytes`: `supported` runs the decoder's own `fromParts?` admission |
 | IBK4 | `decode_encode?`, `denotes_decode_encode?` | [`Storage/IndexedBlockWireV4Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV4Theorems.lean) | none beyond `encode? block = some bytes`: `supported` runs the graph-column bounds, the graph-set summary condition and the decoder's own `fromParts?` admission |
+| DLOG term codec, version 2 (`serializeDeltaTerm?` / `parseDeltaTerm`) and the DLE1/DLB1 codec over any term codec | `parseDeltaTerm_serializeDeltaTerm?`, `serializeDeltaTerm?_isSome_iff`; `parseDeltaBatchWith_serializeDeltaBatchWith?`, `parseLog_v2_of_frames`, `appendPlan?_v1` | [`Storage/TermCodecTheorems.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Storage/TermCodecTheorems.lean), [`Storage/DeltaLogCodecTheorems.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/Storage/DeltaLogCodecTheorems.lean) | none beyond `serializeDeltaTerm? t = some bytes`: the encoder admits exactly `termFitsU32` (2026-10-14) |
 | Term codec v2 | `parseTerm_serializeTerm?`, `resolve_toWire` | [`Storage/TermWireV2Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/TermWireV2Theorems.lean) | none beyond `serializeTerm? w = some bytes`: the encoder's admission is the decoder's |
 | PTD1 and PTD2, generic | `decode?_encode?` over `PagedFormat`, once | [`Storage/PagedTermDictionaryCoreTheorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/PagedTermDictionaryCoreTheorems.lean) | none beyond `encode? terms = some bytes`; PTD1's own definitions are proved equal to the generic ones by `rfl` and its bytes are unchanged (hub blocks byte-identical, 2026-09-05) |
 | IBK5 | `decode_encode?`, `denotes_decode_encode?`, `resolveBlock_decode_encode?` | [`Storage/IndexedBlockWireV5Theorems.lean`](https://github.com/danbri/factoidal/blob/claude/main/formal/lean4/L4Factoidal/Storage/IndexedBlockWireV5Theorems.lean) | none beyond `encode? block = some bytes` |

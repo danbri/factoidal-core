@@ -244,7 +244,9 @@ the batches a reader replays: exactly the suffix after the compacted epoch
 suffix, a malformed header or an invalid batch order is an error: a writer
 appending after it would make the recovery decision silently. A damaged frame
 or a committed frame that does not decode is an error with its own message
-(`parseLogChecked`, https://github.com/danbri/factoidal/issues/843). -/
+(`parseLogChecked`, https://github.com/danbri/factoidal/issues/843). A DLOG of
+version 2 (RDF 1.2 terms) is refused (`parseLogCheckedV1`): this server serves
+IBK3, IBK4 and IBK5 collections (https://github.com/danbri/factoidal/issues/792). -/
 def openLog (dlog : Option ByteArray) (epoch : Option ByteArray) :
     Except String (LogState × List DeltaBatch) := do
   let baseEpoch ← match epoch with
@@ -256,7 +258,7 @@ def openLog (dlog : Option ByteArray) (epoch : Option ByteArray) :
   match dlog with
   | none => pure ({ size := 0, nextSeq := 1, writeEpoch := writeEpochAfter baseEpoch }, [])
   | some bytes =>
-    match Storage.parseLogChecked bytes.toList with
+    match Storage.parseLogCheckedV1 bytes.toList with
     | .error e => throw s!"deltas.dlog: {e}"
     | .ok (_, true) =>
         throw "deltas.dlog has a torn or uncommitted suffix; recover it before serving the collection"

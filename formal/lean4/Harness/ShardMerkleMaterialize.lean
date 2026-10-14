@@ -248,7 +248,7 @@ def readDefaultDelta? (directory : System.FilePath) : IO (Option DeltaResolved) 
   let path := directory / "deltas.dlog"
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLogChecked bytes.toList with
+    match parseLogCheckedV1 bytes.toList with
     | .ok (batches, false) =>
         if validBatchHistory batches then
           match replayBatchesSinceEpoch? baseEpoch batches with

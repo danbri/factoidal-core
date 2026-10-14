@@ -1,0 +1,1 @@
+SELECT ?s ?t WHERE { ?s <http://ex.org/says> ?t } ORDER BY ?t ?s

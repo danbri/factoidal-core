@@ -2,7 +2,9 @@
 """Change the bytes of a DLOG file (deltas.dlog) the way a crash or damage
 would, for tests/delta-log/run.sh (https://github.com/danbri/factoidal/issues/843).
 
-The format is Storage/DeltaLog.lean: an eight-byte header ('DLOG', version),
+The format is Storage/DeltaLog.lean: an eight-byte header ('DLOG', version 1
+or 2; version 2 when an entry may hold an RDF 1.2 term,
+https://github.com/danbri/factoidal/issues/792 item 1),
 then DLB1 frames: magic 'DLB1', version u32 1, body length u32, body, checksum
 u32 (the sum of the body bytes modulo 2^32). A body is seq u64, epoch u64,
 entry count u32, then DLE1 entry frames of the same shape.
@@ -17,6 +19,8 @@ usage:
                                            entry tag 9
   dlog.py append-plain LOG SEQ EPOCH S P O append a frame with one INSERT DATA
                                            entry <S> <P> "O" in the default graph
+  dlog.py set-version LOG V                write V as the header version (a u32 at
+                                           byte 4); the frames are not changed
 """
 import struct
 import sys
@@ -89,6 +93,8 @@ def main():
                    + bytes([0]))
         payload = bytes([0]) + bytes([0]) + lstr(s) + lstr(p) + literal + bytes([0])
         log += batch(seq, epoch, [frame(b'DLE1', payload)])
+    elif cmd == 'set-version':
+        log[4:8] = u32(int(sys.argv[3]))
     else:
         sys.exit(f'unknown command {cmd}')
     open(path, 'wb').write(log)

@@ -23,6 +23,13 @@
 #          damaged (one body byte of batch 2 changed), undecodable at the end
 #          and in the middle: query, serve, compact and update exit non-zero
 #          and name the frame.
+#   DLOG versions (https://github.com/danbri/factoidal/issues/792 item 1): the
+#          clean SBM11 log with its header set to version 2 is read as before
+#          and takes an append; the IBK3 log with version 2 is refused by
+#          query, compact and update (`--inspect` reads it; activation reads a
+#          DLOG only as the source of a compacted generation, after the
+#          compaction that refuses it); a version 3 header is refused by every
+#          SBM11 command.
 #   IBK3   a small Turtle file packed and activated, two batches by
 #          `l4block-delta-log`, then the same copies: `--inspect` names the
 #          tail kind; the torn copy keeps the IBK3 rule (the query refuses a
@@ -214,6 +221,54 @@ else
   cp "$TMP/i-clean.dlog" "$TMP/i-unk.dlog"; $DLOG cut "$TMP/i-unk.dlog" "$(( $(stat -c %s "$TMP/i-clean.dlog") - $($DLOG frames "$TMP/i-clean.dlog" | awk 'NR==2 {print $4}') ))"
   $DLOG append-unknown "$TMP/i-unk.dlog" 2 1
   ibk3_case undecodable "$TMP/i-unk.dlog" undecodable 'cannot decode' 'cannot decode' 'cannot decode'
+fi
+
+# --------------------------------------------------------- DLOG versions
+# A DLOG of version 2 may hold RDF 1.2 terms (triple terms, directional
+# literals; https://github.com/danbri/factoidal/issues/792 item 1). Every
+# version 1 frame is a version 2 frame (`DeltaLogCodecTheorems.
+# parseLog_v2_of_frames`), so the SBM11 tools read the clean SBM11 log with its
+# header set to version 2 as before, and append to it. The readers of IBK3,
+# IBK4 and IBK5 collections refuse version 2 (`parseLogCheckedV1`). Every
+# reader refuses version 3 at the header.
+echo "=== DLOG versions"
+if [ -s "$TMP/s-clean.dlog" ]; then
+  cp "$TMP/s-clean.dlog" "$TMP/s-v2.dlog"; $DLOG set-version "$TMP/s-v2.dlog" 2
+  copy "$TMP/s-v2.dlog"
+  rc=0; "$BIN/l4sbm11" query "$TMP/s-case" "$NAMES" >"$TMP/q.srj" 2>"$TMP/q.err" || rc=$?
+  got="$(grep -o '"value":"N[0-9]"' "$TMP/q.srj" | tr -d '"' | sed 's/value://' | tr '\n' ' ')"
+  if [ "$rc" -eq 0 ] && [ "$got" = "N1 N2 N3 " ]; then record sbm11 query-version-2 0 "version 1 frames under a version 2 header; names: $got"
+  else record sbm11 query-version-2 1 "exit $rc; names: $got; $(tail -1 "$TMP/q.err")"; fi
+  rc=0; "$BIN/l4sbm11" update "$TMP/s-case" 'INSERT DATA { <http://ex.org/n4> <http://ex.org/name> "N4" }' >"$TMP/u.log" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" query "$TMP/s-case" "$NAMES" >"$TMP/q.srj" 2>"$TMP/q.err" || rc=$?; }
+  got="$(grep -o '"value":"N[0-9]"' "$TMP/q.srj" | tr -d '"' | sed 's/value://' | tr '\n' ' ')"
+  if [ "$rc" -eq 0 ] && has "$TMP/u.log" 'log-version=2' && [ "$got" = "N1 N2 N3 N4 " ]; then
+    record sbm11 update-version-2 0 "appended to the version 2 log; names: $got"
+  else record sbm11 update-version-2 1 "exit $rc; names: $got; $(tail -1 "$TMP/u.log")"; fi
+  cp "$TMP/s-clean.dlog" "$TMP/s-v3.dlog"; $DLOG set-version "$TMP/s-v3.dlog" 3
+  query_case version-3 "$TMP/s-v3.dlog" error 'malformed or unsupported'
+else
+  record sbm11 versions 1 "the SBM11 setup failed"
+fi
+if [ -s "$TMP/i-clean.dlog" ]; then
+  cp "$TMP/i-clean.dlog" "$TMP/i-v2.dlog"; $DLOG set-version "$TMP/i-v2.dlog" 2
+  icopy "$TMP/i-v2.dlog"
+  rc=0; "$BIN/l4block-delta-log" "$TMP/i-case/gen-1" --inspect >"$TMP/ii.out" 2>"$TMP/ii.err" || rc=$?
+  if [ "$rc" -eq 0 ] && has "$TMP/ii.out" 'version=2 committed-batches=2' && has "$TMP/ii.out" 'tail=clean'; then
+    record ibk3 inspect-version-2 0 "$(grep -o 'version=2 committed-batches=2.*' "$TMP/ii.out")"
+  else record ibk3 inspect-version-2 1 "exit $rc; $(cat "$TMP/ii.out" "$TMP/ii.err")"; fi
+  V2='header version 2'
+  rc=0; "$BIN/l4block-id-v3-query" "$TMP/i-case" --query "$IQ" >"$TMP/iq.out" 2>"$TMP/iq.err" || rc=$?
+  if [ "$rc" -ne 0 ] && has "$TMP/iq.err" "$V2"; then record ibk3 query-version-2 0 "refused, exit $rc"
+  else record ibk3 query-version-2 1 "exit $rc; $(tail -2 "$TMP/iq.err" | tr '\n' ' ')"; fi
+  rc=0; "$BIN/l4block-shard-compact" "$TMP/i-case/gen-1" "$TMP/i-case/gen-2" >"$TMP/ic.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && has "$TMP/ic.log" "$V2"; then record ibk3 compact-version-2 0 "refused, exit $rc"
+  else record ibk3 compact-version-2 1 "exit $rc; $(tail -1 "$TMP/ic.log")"; fi
+  rc=0; "$BIN/l4block-delta-log" "$TMP/i-case" --update 'INSERT DATA { <http://ex.org/z> <http://ex.org/name> "Z" }' >"$TMP/iu.log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] && has "$TMP/iu.log" "$V2"; then record ibk3 update-version-2 0 "refused, exit $rc"
+  else record ibk3 update-version-2 1 "exit $rc; $(tail -1 "$TMP/iu.log")"; fi
+else
+  record ibk3 versions 1 "the IBK3 setup failed"
 fi
 
 echo

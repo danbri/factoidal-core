@@ -1,0 +1,1 @@
+SELECT ?g ?s ?t WHERE { GRAPH ?g { ?s <http://ex.org/says> ?t } }

@@ -823,7 +823,7 @@ def queryCmd (args : List String) : IO UInt32 := do
         | some j => printQueryResult j (s.hasBool "--table")
 
 def updateCmd (args : List String) : IO UInt32 := do
-  match scanArgs ["--format", "--base", "--update", "--update-string"] [] args with
+  match scanArgs ["--format", "--base", "--update", "--update-string"] ["--sparql12"] args with
   | .error e => IO.eprintln s!"l4factoidal update: {e}"; pure 2
   | .ok s =>
     match ← resolveTextArg "update" "--update" "--update-string" "SPARQL-UPDATE" s with
@@ -841,7 +841,12 @@ def updateCmd (args : List String) : IO UInt32 := do
         -- instant in every operation of the request (SPARQL 1.1 §17.4.5.1,
         -- https://github.com/danbri/factoidal/issues/743).
         let now ← Ops.nowDateTime
-        match ← parseEnvelope (Ops.updateDatasetOf ds upd updateBase (some now)) with
+        -- `--sparql12`: the update is read by the SPARQL 1.2 grammar (triple
+        -- terms, directional literals); the reference of the SBM11 RDF 1.2
+        -- update gate (tests/sbm11/run.sh part (m),
+        -- https://github.com/danbri/factoidal/issues/792 item 1)
+        let version : L4Factoidal.SPARQL.SparqlVersion := if s.hasBool "--sparql12" then .v12 else .v11
+        match ← parseEnvelope (Ops.updateDatasetOf ds upd updateBase (some now) version) with
         | none => pure 1
         | some j => IO.println ((j.getString? "nquads").getD ""); pure 0
 
@@ -1068,10 +1073,12 @@ def usageLines : List String :=
   , "      file's own IRI (file:///...), and a BASE in the query comes first."
   , "      --sparql12 reads the query with the SPARQL 1.2 grammar (triple-term"
   , "      patterns, TRIPLE, SUBJECT, PREDICATE, OBJECT, isTRIPLE)."
-  , "  update [FILE] (--update FILE.ru | --update-string SPARQL-UPDATE)"
+  , "  update [FILE] (--update FILE.ru | --update-string SPARQL-UPDATE) [--sparql12]"
   , "        [--format FMT] [--base IRI]"
   , "      Apply a SPARQL Update and print the resulting N-Quads. The base"
-  , "      of the update text is chosen as for query."
+  , "      of the update text is chosen as for query. --sparql12 reads the"
+  , "      update with the SPARQL 1.2 grammar (triple terms, directional"
+  , "      literals)."
   , "  canonicalize [FILE] [--format FMT]"
   , "      RDFC-1.0 canonical N-Quads (default input format: nquads)."
   , "  closure [FILE] --regime rdfs|rho-df|rdfs-plus|owl-rl [--format FMT]"

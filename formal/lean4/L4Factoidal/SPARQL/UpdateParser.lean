@@ -128,12 +128,33 @@ def patHasVar : QueryPattern → Bool
   | .serviceVar _ _ _ => true
   | .subSelect _      => true
 
-/-- Port of `bgp_has_any_bnode`. -/
+/-- A blank node among the pattern terms, at any depth of a triple term.
+    SPARQL 1.2 Update: blank node syntax is not allowed in DELETE DATA, DELETE
+    WHERE or a DELETE template, inside a triple term too
+    (https://github.com/danbri/factoidal/issues/792 item 1; until 2026-10-14
+    only the top level was checked, so `DELETE DATA { :s :p <<( _:b :q :o )>> }`
+    was admitted). A loop over a work list: a triple term nested `n` deep costs
+    no stack frame per level. -/
+def patternTermsHaveBnode : List PatternTerm → Bool
+  | [] => false
+  | .bnode _ :: _ => true
+  | .tripleTerm s p o :: rest => patternTermsHaveBnode (s :: p :: o :: rest)
+  | .var _ :: rest => patternTermsHaveBnode rest
+  | .iri _ :: rest => patternTermsHaveBnode rest
+  | .literal _ :: rest => patternTermsHaveBnode rest
+termination_by ts => (ts.map sizeOf).sum
+decreasing_by all_goals (simp_wf; omega)
+
+/-- A blank node in a subject position, at any depth of a triple term. -/
+def patternSubjectHasBnode : PatternSubject → Bool
+  | .bnode _ => true
+  | .tripleTerm s p o => patternTermsHaveBnode [s, p, o]
+  | _ => false
+
+/-- Port of `bgp_has_any_bnode`, with triple terms (SPARQL 1.2). -/
 def bgpHasBnode (b : Bgp) : Bool :=
   b.any (fun tp =>
-    (match tp.s with | .bnode _ => true | _ => false) ||
-    (match tp.p with | .bnode _ => true | _ => false) ||
-    (match tp.o with | .bnode _ => true | _ => false))
+    patternSubjectHasBnode tp.s || patternTermsHaveBnode [tp.p, tp.o])
 
 /-- Port of `gp_has_bnode`. -/
 def patHasBnode : QueryPattern → Bool
@@ -141,9 +162,7 @@ def patHasBnode : QueryPattern → Bool
   | .empty            => false
   | .join a b         => patHasBnode a || patHasBnode b
   | .graph _ inner    => patHasBnode inner
-  | .propertyPath s _ o =>
-      (match s with | .bnode _ => true | _ => false) ||
-      (match o with | .bnode _ => true | _ => false)
+  | .propertyPath s _ o => patternSubjectHasBnode s || patternTermsHaveBnode [o]
   | .leftJoin a b _   => patHasBnode a || patHasBnode b
   | .union a b        => patHasBnode a || patHasBnode b
   | .minus a b        => patHasBnode a || patHasBnode b
@@ -601,5 +620,20 @@ private def collectionUpdate (n : Nat) : String :=
 #guard (parseSparqlUpdate (collectionUpdate 10001)).toOption.isSome
 #guard (parseSparqlUpdateAtTopFuel (collectionUpdate 10001)).toOption.isNone
 #guard (parseSparqlUpdate "INSERT DATA { ?s <http://e/p> 1 }").toOption.isNone
+
+/-! SPARQL 1.2: a blank node inside a triple term, at any depth, is blank node
+syntax in DELETE DATA, DELETE WHERE and a DELETE template, so the request is
+refused; INSERT DATA admits it. -/
+#guard (parseSparqlUpdate "DELETE DATA { <http://e/s> <http://e/p> <<( _:b <http://e/q> 1 )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate
+  "DELETE DATA { <http://e/s> <http://e/p> <<( <http://e/a> <http://e/q> <<( _:b <http://e/q> 1 )>> )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate "DELETE WHERE { ?s <http://e/p> <<( _:b <http://e/q> ?o )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate "DELETE DATA { <http://e/s> <http://e/p> <<( <http://e/a> <http://e/q> 1 )>> }"
+  none .v12).toOption.isSome
+#guard (parseSparqlUpdate "INSERT DATA { <http://e/s> <http://e/p> <<( _:b <http://e/q> 1 )>> }"
+  none .v12).toOption.isSome
 
 end L4Factoidal.SPARQL

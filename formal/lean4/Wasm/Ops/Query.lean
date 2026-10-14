@@ -235,9 +235,10 @@ WHERE clauses of the request (§17.4.5.1), the same for every operation of the
 request; `none` leaves `NOW()` an error
 (https://github.com/danbri/factoidal/issues/743). -/
 def applyUpdateText (ds : Dataset) (updateText : String)
-    (base : Option String := none) (now : Option String := none) :
+    (base : Option String := none) (now : Option String := none)
+    (version : SparqlVersion := .v11) :
     Except String Dataset :=
-  match parseSparqlUpdate updateText base with
+  match parseSparqlUpdate updateText base version with
   | .error e => .error s!"SPARQL update parse error: {fmtParseError e}"
   | .ok u =>
   match applyUpdateIn { now := now } ds u with
@@ -246,8 +247,9 @@ def applyUpdateText (ds : Dataset) (updateText : String)
 
 /-- The `updateDataset` envelope over an ALREADY-PARSED dataset. -/
 def updateParsedDataset (ds : Dataset) (updateText : String)
-    (base : Option String := none) (now : Option String := none) : String :=
-  match applyUpdateText ds updateText base now with
+    (base : Option String := none) (now : Option String := none)
+    (version : SparqlVersion := .v11) : String :=
+  match applyUpdateText ds updateText base now version with
   | .error e  => errJson e
   | .ok ds'   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds'))]
 
@@ -256,10 +258,10 @@ same reason as `queryDataset` above: the stateless pair must accept
 its own canonical N-Quads output. `now` is the value of `NOW()`
 (`applyUpdateText`); this pure form reads no clock. -/
 def updateDataset (nq updateText : String) (base : Option String := none)
-    (now : Option String := none) : String :=
+    (now : Option String := none) (version : SparqlVersion := .v11) : String :=
   match parseNQuadsFast nq .rdf12 with
   | .error e => errJson (fmtParseError e)
-  | .ok ds => updateParsedDataset ds updateText base now
+  | .ok ds => updateParsedDataset ds updateText base now version
 
 /-- `updateDataset` through the IO dispatch entry: the same envelope, with the
 clock read ONCE for the request (§17.4.5.1), so an `INSERT ... WHERE` that
@@ -287,13 +289,13 @@ theorem queryDatasetOf_eq (ds : Dataset) (sparql : String) (base : Option String
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl
 
 def updateDatasetOf (ds : Dataset) (updateText : String) (base : Option String := none)
-    (now : Option String := none) : String :=
-  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base now)
+    (now : Option String := none) (version : SparqlVersion := .v11) : String :=
+  withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base now version)
 
 theorem updateDatasetOf_eq (ds : Dataset) (updateText : String) (base : Option String)
-    (now : Option String) :
-    updateDatasetOf ds updateText base now =
-      updateDataset (Dataset.toCanonicalNQuads ds) updateText base now := by
+    (now : Option String) (version : SparqlVersion) :
+    updateDatasetOf ds updateText base now version =
+      updateDataset (Dataset.toCanonicalNQuads ds) updateText base now version := by
   unfold updateDatasetOf updateDataset
   rw [withOpsDataset_eq]
   cases parseNQuadsFast (Dataset.toCanonicalNQuads ds) .rdf12 <;> rfl

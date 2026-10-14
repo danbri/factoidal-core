@@ -683,6 +683,48 @@ if [ "$CANARY" = 1 ]; then
   fi
 fi
 
+# ------------------------- DLOG version 2: a deep triple term in an entry (issue 792 item 1)
+# `l4block-delta-log --nest-check 300000`: one DLB1 batch whose entry holds an
+# RDF 1.2 triple term nested 300,000 deep in the object position, the
+# innermost object a directional literal, through the DLOG version 2 term
+# codec: the append plan of a new log (`appendPlan?`, the encoder a loop over
+# the object chain), `parseLogChecked` (the decoder a loop with a stack of the
+# subjects and predicates) and the append plan of the decoded batch, whose
+# bytes must be the first ones. The nesting is above the wasm module's 8 MB
+# stack at 32 bytes a frame (262,144), and far above this canary's.
+# https://github.com/danbri/factoidal/issues/792
+DLOG_BIN="$LEAN_DIR/.lake/build/bin/l4block-delta-log"
+dlog_tt_case() { # dlog_tt_case <route> <prefix...>
+  local route="$1"; shift
+  local rc log
+  if [ ! -x "$DLOG_BIN" ]; then
+    record "$route" delta-log-triple-term 1 "$DLOG_BIN does not exist (lake build l4block-delta-log)"
+    return
+  fi
+  log="$(run_capped "$TIMEOUT" "$@" "$DLOG_BIN" --nest-check 300000 2>&1)"; rc=$?
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" delta-log-triple-term overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] || ! printf '%s' "$log" | grep -q 'depth=300000 .*failures=0'; then
+    score_case "$route" delta-log-triple-term error "exit $rc: $(printf '%s' "$log" | tail -1 | head -c 160)"
+  else
+    score_case "$route" delta-log-triple-term ran "$(printf '%s' "$log" | grep -o 'depth=[0-9]* log-bytes=[0-9]* version=[0-9]*' | head -1); round trip failures=0"
+  fi
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== DLOG version 2, a triple term nested 300,000 deep in an entry, native default stack"
+  dlog_tt_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== DLOG version 2, a triple term nested 300,000 deep in an entry, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    dlog_tt_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary delta-log-triple-term 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
 # ------------------------- SBM11 permutations (issue 789)
 # `l4sbm11-pack` packs the same sbm11-dict.nt (600,001 triples) with runs of
 # 20,000 terms, row runs of 20,000 rows (the external sort of phase 3 writes
