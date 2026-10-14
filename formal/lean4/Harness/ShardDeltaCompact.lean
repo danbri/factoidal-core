@@ -84,7 +84,7 @@ private def readDelta (directory : System.FilePath) : IO (List DeltaBatch × Byt
   let path := directory / "deltas.dlog"
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLogChecked bytes.toList with
+    match parseLogCheckedV1 bytes.toList with
     | .ok (batches, false) =>
         if validBatchHistory batches then pure (batches, bytes)
         else throw <| IO.userError "DLOG batch sequence or epoch order is invalid"

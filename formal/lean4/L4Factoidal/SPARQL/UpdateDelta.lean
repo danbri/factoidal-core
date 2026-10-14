@@ -23,6 +23,21 @@ namespace L4Factoidal.SPARQL
 open L4Factoidal.RDF
 open L4Factoidal.Storage
 
+/-- A blank node anywhere in the term: inside a triple term too, at any depth
+    (a loop over the object chain). `Triple.hasBnode` looks at the top level
+    only; a SPARQL 1.2 update can put a blank node inside a triple term
+    (https://github.com/danbri/factoidal/issues/792 item 1). -/
+def termMentionsBnode : Term → Bool
+  | .bnode _ => true
+  | .tripleTerm s _ o =>
+      match s with
+      | .bnode _ => true
+      | .iri _ => termMentionsBnode o
+  | _ => false
+
+def tripleMentionsBnode (t : Triple) : Bool :=
+  (match t.s with | .bnode _ => true | .iri _ => false) || termMentionsBnode t.o
+
 /-- Compile one parsed update operation for a durable log.  The caller supplies
     the request-scoped blank-node renaming function required by SPARQL 1.1
     INSERT DATA.  DELETE DATA blank nodes were already rejected by the parser
@@ -34,7 +49,7 @@ def deltaEntriesForOp? (renameBnode : BNodeId → BNodeId) : UpdateOp → Option
         DeltaEntry.add triple graph)
   | .deleteData quads =>
       let collected := collectQuads none quads
-      if collected.any (fun q => q.2.hasBnode) then none
+      if collected.any (fun q => tripleMentionsBnode q.2) then none
       else some (collected.map fun q => DeltaEntry.remove q.2 q.1)
   | .clear _ .default => some [.clear none]
   | .clear _ (.graph graph) => some [.clear (some graph)]

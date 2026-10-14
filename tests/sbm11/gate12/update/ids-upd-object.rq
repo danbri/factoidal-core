@@ -1,0 +1,1 @@
+SELECT ?s (OBJECT(?t) AS ?o) WHERE { ?s <http://ex.org/says> ?t FILTER(isTRIPLE(?t)) }

@@ -1,0 +1,1 @@
+SELECT ?s ?l WHERE { ?s <http://ex.org/label> ?l }

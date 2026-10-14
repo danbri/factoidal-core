@@ -32,7 +32,7 @@ private def asBytes (xs : List UInt8) : ByteArray := ByteArray.mk xs.toArray
 private def readExisting (path : System.FilePath) : IO (List DeltaBatch × Nat) := do
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLogChecked bytes.toList with
+    match parseLogCheckedV1 bytes.toList with
     | .error e => throw <| IO.userError s!"DLOG: {e}"
     | .ok (batches, false) =>
         if validBatchHistory batches then pure (batches, bytes.size)
@@ -97,14 +97,75 @@ private def inspect (directory : System.FilePath) : IO UInt32 := do
     | none => IO.eprintln "l4block-delta-log rejected: DLOG header is malformed or unsupported"; pure 1
     | some (batches, tail) =>
         let kind := classifyTail tail
-        IO.println s!"l4block-delta-log path={path} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={tail.isEmpty} tail={kind.name}"
+        let version := (logHeaderVersion? bytes.toList).getD 0
+        IO.println s!"l4block-delta-log path={path} version={version} committed-batches={batches.length} committed-ops={(batches.flatMap (·.ops)).length} clean-tail={tail.isEmpty} tail={kind.name}"
         if !tail.isEmpty then
           IO.eprintln s!"l4block-delta-log: {path}: {kind.text (bytes.size - tail.length) tail.length}"
         pure (if tail.isEmpty then 0 else 1)
   catch _ => IO.eprintln s!"l4block-delta-log no log at {path}"; pure 1
 
+/-! ### `--nest-check N`
+
+One DLB1 batch whose entry holds an RDF 1.2 triple term nested `N` deep in
+the object position, the innermost object a directional literal, through the
+DLOG version 2 codec (https://github.com/danbri/factoidal/issues/792 item 1):
+the append plan of a new log, `parseLogChecked`, and the append plan of the
+decoded batch again. The second bytes must be the first, the decoded depth
+`N`, and the innermost literal the one built. The checks walk the chain with
+loops; nothing compares two deep terms with the derived equality, which
+recurses. `tests/stack/run.sh` runs it 300,000 deep (above the wasm module's
+stack) under a 512 KB native stack. -/
+
+private def nestGo (s : Subject) (p : WfIri) : Nat → Term → Term
+  | 0, t => t
+  | n + 1, t => nestGo s p n (.tripleTerm s p t)
+
+private def innermostGo : Nat → Term → Nat × Term
+  | d, .tripleTerm _ _ o => innermostGo (d + 1) o
+  | d, t => (d, t)
+
+private def nestCheck (n : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let s : Subject := .iri ⟨"a:s", rfl⟩
+  let p : WfIri := ⟨"a:p", rfl⟩
+  let leaf : Term := .literal (Literal.dirLangString "deep" "ar" .rtl)
+  let g : Option Iri := some "http://example.org/g"
+  let batch : DeltaBatch := { seq := 1, epoch := 1, ops := [.add ⟨s, p, nestGo s p n leaf⟩ g] }
+  let some plan := appendPlan? none batch
+    | IO.eprintln "FAIL: the batch has no append plan"; return 1
+  let t1 ← IO.monoNanosNow
+  match parseLogChecked plan.bytes with
+  | .error e => IO.eprintln s!"FAIL: the log does not read back: {e}"; return 1
+  | .ok (batches, torn) =>
+    let t2 ← IO.monoNanosNow
+    let mut fails := 0
+    if torn then
+      fails := fails + 1; IO.eprintln "FAIL: the log reads as torn"
+    match batches with
+    | [b] =>
+      match b.ops with
+      | [.add tr g'] =>
+        let (depth, inner) := innermostGo 0 tr.o
+        if depth != n then
+          fails := fails + 1; IO.eprintln s!"FAIL: decoded depth {depth}, built {n}"
+        if inner != leaf then
+          fails := fails + 1; IO.eprintln "FAIL: the innermost literal is not \"deep\"@ar--rtl"
+        if tr.s != s || tr.p != p || g' != g then
+          fails := fails + 1; IO.eprintln "FAIL: the subject, predicate or graph differs"
+        match appendPlan? none b with
+        | some plan2 =>
+          if plan2.bytes != plan.bytes then
+            fails := fails + 1; IO.eprintln "FAIL: the decoded batch encodes to other bytes"
+        | none => fails := fails + 1; IO.eprintln "FAIL: the decoded batch has no append plan"
+      | _ => fails := fails + 1; IO.eprintln "FAIL: the decoded batch does not hold one add entry"
+    | _ => fails := fails + 1; IO.eprintln s!"FAIL: {batches.length} batches decoded, 1 written"
+    let t3 ← IO.monoNanosNow
+    IO.println s!"l4block-delta-log nest-check: depth={n} log-bytes={plan.bytes.length} version={plan.version} encode-ms={(t1 - t0) / 1000000} decode-ms={(t2 - t1) / 1000000} check-ms={(t3 - t2) / 1000000} failures={fails}"
+    pure (if fails == 0 then 0 else 1)
+
 def main (args : List String) : IO UInt32 :=
   match args with
+  | ["--nest-check", n] => nestCheck n.toNat!
   | directory :: "--update" :: updateParts =>
       if updateParts.isEmpty then do
         IO.eprintln "l4block-delta-log requires SPARQL UPDATE text after --update"
@@ -112,7 +173,7 @@ def main (args : List String) : IO UInt32 :=
       else appendUpdate (System.FilePath.mk directory) (String.intercalate " " updateParts)
   | directory :: "--inspect" :: [] => inspect (System.FilePath.mk directory)
   | _ => do
-      IO.eprintln "usage: l4block-delta-log STORE-DIR --update SPARQL-UPDATE | --inspect"
+      IO.eprintln "usage: l4block-delta-log STORE-DIR --update SPARQL-UPDATE | --inspect | --nest-check N"
       pure 2
 
 end Harness.DeltaLogTool

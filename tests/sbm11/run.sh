@@ -127,8 +127,18 @@
 #                https://github.com/danbri/factoidal/issues/837);
 #                `l4sbm11-dict-pack --check` with failures=0; after one update,
 #                `compact` byte-identical to a fresh pack of the updated
-#                quads; an update with a triple term refused (a limit, pinned:
-#                issue 792 item 1, the update part).
+#                quads. SPARQL 1.2 Update through the delta log (issue 792
+#                item 1, the update part): a plain update (DLOG version 1),
+#                then tests/sbm11/gate12/update/u1.ru to u3.ru with --sparql12
+#                (triple terms, nested, in named graphs, directional
+#                literals; the log gets version 2 in place); after each,
+#                gate12/update/*.rq on its path and by --reference, equal as
+#                multisets to `l4factoidal query --sparql12` over the state of
+#                `l4factoidal update --sparql12`, and after u3 the 44
+#                gate12/*.rq too; refusals (a blank node inside a triple term,
+#                WHERE, a triple term without --sparql12) leave the log
+#                unchanged; the compacted dump equals the reference state and
+#                the compacted generation a fresh pack of it.
 #   (n) layering  no module under formal/lean4/L4Factoidal/Storage/ imports an
 #                L4Factoidal.Syntax module or names one in its code
 #                (tests/sbm11/storage_layering.py). The store takes RDF quads from
@@ -733,17 +743,132 @@ else
     v="$(same_artifacts "$M/col/gen2" "$M/fresh")"; c=$?
     record rdf12 compact-equals-fresh-pack "$c" "$v"
   fi
-  # A limit, pinned (issue 792 item 1, the update part): an update with a
-  # triple term is refused (the update grammar is SPARQL 1.1, and the DLOG
-  # term codec has no triple-term form). When it is accepted this turns RED:
-  # make it an assertion then and update the issue.
-  r=0
-  "$BIN/l4sbm11" update "$M/col" 'INSERT DATA { <http://ex.org/z> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "new" )>> }' \
-    >"$M/upd-tt.log" 2>&1 || r=$?
-  if [ "$r" -ne 0 ]; then
-    record rdf12 xfail-update-triple-term 0 "refused, expected (https://github.com/danbri/factoidal/issues/792 item 1): $(tail -1 "$M/upd-tt.log" | head -c 100)"
+  # SPARQL 1.2 Update through the delta log (https://github.com/danbri/factoidal/issues/792
+  # item 1, the update part). A fresh generation of the fixture takes a plain
+  # update (the log is DLOG version 1), then the three requests of
+  # tests/sbm11/gate12/update/ with --sparql12: u1 inserts triple terms (one
+  # the base holds, new ones, one nested three deep, one in a named graph) and
+  # directional literals, and the log gets version 2 in place; u2 deletes
+  # triple-term quads of the base and of u1; u3 is an INSERT DATA and a DELETE
+  # DATA in one request. The reference is `l4factoidal update --sparql12` of
+  # the same requests over the source. After each request every
+  # gate12/update/*.rq query is answered by `l4sbm11 query --sparql12` on its
+  # path (ids-* on path=ids, ref-* on path=reference) and by --reference,
+  # equal as multisets to `l4factoidal query --sparql12` over the reference
+  # state; after u3 the 44 gate12/*.rq queries too. Then compaction: the dump
+  # of the compacted generation equals the reference state, and the compacted
+  # generation is byte-identical to a fresh pack of it. Until 2026-10-14 this
+  # part held the expected failure xfail-update-triple-term (refused: SPARQL
+  # 1.1 Update grammar, no triple-term form in the DLOG term codec).
+  U="$TMP/g12upd"
+  UD="$HERE/gate12/update"
+  mkdir -p "$U"
+  cp "$G12SRC" "$U/state.nq"
+  rc=0
+  "$BIN/l4sbm11-pack" "$G12SRC" "$U/col/gen" --workers 1 >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && { "$BIN/l4sbm11" activate "$U/col" gen >/dev/null 2>&1 || rc=$?; }
+  upd_step() { # upd_step <label> <update file> [--sparql12]: the store and the reference state
+    local urc=0 rrc=0
+    "$BIN/l4sbm11" update "$U/col" --file "$2" ${3:+"$3"} >"$U/$1.upd" 2>&1 || urc=$?
+    "$BIN/l4factoidal" update "$U/state.nq" --format nquads12 --update "$2" ${3:+"$3"} \
+      >"$U/$1.nq" 2>"$U/$1.referr" || rrc=$?
+    if [ "$urc" -eq 0 ] && [ "$rrc" -eq 0 ] && [ -s "$U/$1.nq" ]; then
+      cp "$U/$1.nq" "$U/state.nq"
+      record rdf12 "update-$1" 0 "$(grep -o 'seq=[0-9]* epoch=[0-9]* ops=[0-9]*' "$U/$1.upd"); $(grep -o 'log-version=.*' "$U/$1.upd")"
+    else
+      record rdf12 "update-$1" 1 "exit $urc (reference $rrc): $(tail -1 "$U/$1.upd") $(head -c 160 "$U/$1.referr")"
+    fi
+  }
+  upd_queries() { # upd_queries <label> <query files...>: each query against the reference state
+    local label="$1" rq n qb rrc qrc frc v vf p want_path
+    shift
+    for rq in "$@"; do
+      n="$(basename "$rq" .rq)"
+      qb="file://$(realpath "$rq")"
+      rrc=0
+      timeout 120 "$BIN/l4factoidal" query "$U/state.nq" --format nquads12 --sparql12 --query "$rq" \
+        >"$U/w.json" 2>/dev/null || rrc=$?
+      qrc=0
+      timeout 120 "$BIN/l4sbm11" query "$U/col" --sparql12 --file "$rq" --base "$qb" \
+        >"$U/g.json" 2>"$U/g.err" || qrc=$?
+      v="$(python3 -I "$HERE/compare_answers.py" "$U/g.json" "$U/w.json" "$rrc")"
+      p="$(grep -o 'path=[a-z]*' "$U/g.err")"
+      want_path=path=ids; case $n in ref-*) want_path=path=reference ;; esac
+      frc=0
+      timeout 120 "$BIN/l4sbm11" query "$U/col" --sparql12 --file "$rq" --base "$qb" --reference \
+        >"$U/f.json" 2>/dev/null || frc=$?
+      vf="$(python3 -I "$HERE/compare_answers.py" "$U/f.json" "$U/w.json" "$rrc")"
+      if [ "$qrc" -eq 0 ] && [ "$p" = "$want_path" ] && [ "$frc" -eq 0 ]; then
+        case "$v|$vf" in
+          equal*"|"equal*) record rdf12 "$label-$n" 0 "$p; $v; --reference equal" ;;
+          *) record rdf12 "$label-$n" 1 "$p; $v; --reference: $vf" ;;
+        esac
+      else
+        record rdf12 "$label-$n" 1 "exit $qrc, $p (want $want_path), --reference exit $frc: $(tail -1 "$U/g.err")"
+      fi
+    done
+  }
+  if [ "$rc" -ne 0 ]; then
+    record rdf12 update-setup 1 "pack or activate failed, exit $rc"
   else
-    record rdf12 xfail-update-triple-term 1 "UNEXPECTED: accepted; make this an assertion and update https://github.com/danbri/factoidal/issues/792"
+    # a plain update: the log is version 1, the bytes of the version 1 writer
+    printf '%s\n' 'INSERT DATA { <http://ex.org/z> <http://ex.org/name> "Zed" }' >"$U/u0.ru"
+    upd_step u0 "$U/u0.ru"
+    "$BIN/l4block-delta-log" "$U/col" --inspect >"$U/i0.log" 2>&1
+    if grep -q 'version=1 committed-batches=1' "$U/i0.log" && grep -q 'log-version=1' "$U/u0.upd"; then
+      record rdf12 update-log-version-1 0 "$(grep -o 'version=1 committed-batches=1' "$U/i0.log")"
+    else record rdf12 update-log-version-1 1 "$(cat "$U/i0.log" "$U/u0.upd" | tr '\n' ' ')"; fi
+    for k in 1 2 3; do
+      upd_step "u$k" "$UD/u$k.ru" --sparql12
+      if [ "$k" -eq 1 ]; then
+        # the first batch with an RDF 1.2 term sets the header version to 2
+        "$BIN/l4block-delta-log" "$U/col" --inspect >"$U/i1.log" 2>&1
+        if grep -q 'version=2 committed-batches=2' "$U/i1.log" && grep -q 'log-version=2 (set from 1)' "$U/u1.upd"; then
+          record rdf12 update-log-version-2 0 "set from 1 in place; $(grep -o 'version=2 committed-batches=2' "$U/i1.log")"
+        else record rdf12 update-log-version-2 1 "$(cat "$U/i1.log" "$U/u1.upd" | tr '\n' ' ')"; fi
+      fi
+      if [ "$k" -lt 3 ]; then upd_queries "u$k" "$UD"/*.rq
+      else upd_queries "u$k" "$UD"/*.rq "$HERE"/gate12/*.rq; fi
+    done
+    # refusals: blank nodes inside a triple term (INSERT DATA: the stage 5
+    # limit on fresh blank nodes; DELETE DATA: a SPARQL 1.2 syntax error), an
+    # update with WHERE (the stage 5 limit), and a triple term without --sparql12
+    cp "$U/col/gen/deltas.dlog" "$U/before-refusals.dlog"
+    r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
+      'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <<( _:x <http://ex.org/q> "1" )>> )>> }' \
+      >"$U/r1.log" 2>&1 || r=$?
+    if [ "$r" -eq 1 ] && grep -q 'INSERT DATA with blank nodes' "$U/r1.log"; then record rdf12 refuse-insert-nested-bnode 0 "refused (stage 5 limit)"
+    else record rdf12 refuse-insert-nested-bnode 1 "exit $r: $(tail -1 "$U/r1.log")"; fi
+    r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
+      'DELETE DATA { <http://ex.org/k> <http://ex.org/says> <<( _:x <http://ex.org/q> "1" )>> }' >"$U/r2.log" 2>&1 || r=$?
+    if [ "$r" -eq 1 ] && grep -q 'DELETE DATA must not contain blank nodes' "$U/r2.log"; then record rdf12 refuse-delete-nested-bnode 0 "parse error, as SPARQL 1.2 requires"
+    else record rdf12 refuse-delete-nested-bnode 1 "exit $r: $(tail -1 "$U/r2.log")"; fi
+    r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
+      'DELETE WHERE { ?s <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> ?o )>> }' >"$U/r3.log" 2>&1 || r=$?
+    if [ "$r" -eq 1 ] && grep -q 'needs WHERE evaluation' "$U/r3.log"; then record rdf12 refuse-delete-where-triple-term 0 "parsed, refused (stage 5 limit)"
+    else record rdf12 refuse-delete-where-triple-term 1 "exit $r: $(tail -1 "$U/r3.log")"; fi
+    r=0; "$BIN/l4sbm11" update "$U/col" \
+      'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "1" )>> }' >"$U/r4.log" 2>&1 || r=$?
+    if [ "$r" -eq 1 ] && grep -q 'parse error' "$U/r4.log"; then record rdf12 refuse-triple-term-sparql11 0 "parse error without --sparql12"
+    else record rdf12 refuse-triple-term-sparql11 1 "exit $r: $(tail -1 "$U/r4.log")"; fi
+    if cmp -s "$U/col/gen/deltas.dlog" "$U/before-refusals.dlog"; then record rdf12 refusals-leave-log 0 "the log bytes did not change"
+    else record rdf12 refusals-leave-log 1 "a refused update changed the log"; fi
+    # compaction: the dump equals the reference state; byte-identical to a fresh pack of it
+    rc=0
+    "$BIN/l4sbm11" compact "$U/col" "$U/col/gen2" >"$U/compact.log" 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] && { "$BIN/l4sbm11-pack" "$U/state.nq" "$U/fresh" --workers 1 >/dev/null 2>&1 || rc=$?; }
+    if [ "$rc" -ne 0 ]; then record rdf12 update-compact 1 "exit $rc: $(tail -1 "$U/compact.log")"
+    else
+      "$BIN/l4sbm11" dump "$U/col/gen2" 2>/dev/null | sort -u >"$U/dump.nq"
+      grep -v '^$' "$U/state.nq" | sort -u >"$U/want.nq"
+      if [ -s "$U/dump.nq" ] && cmp -s "$U/dump.nq" "$U/want.nq"; then
+        record rdf12 update-compact-dump 0 "$(wc -l <"$U/dump.nq") quads equal to the reference state"
+      else
+        record rdf12 update-compact-dump 1 "dump $(wc -l <"$U/dump.nq"), reference $(wc -l <"$U/want.nq") lines; $(diff "$U/dump.nq" "$U/want.nq" | head -3 | tr '\n' ' ')"
+      fi
+      v="$(same_artifacts "$U/col/gen2" "$U/fresh")"; c=$?
+      record rdf12 update-compact-equals-fresh-pack "$c" "$v"
+    fi
   fi
 fi
 

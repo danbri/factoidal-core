@@ -202,15 +202,21 @@ def parseCompactOpts : List String → Nat × Nat × Option Verify → Option (N
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | ["update", dir, "--file", path] =>
-    try Harness.Sbm11Delta.appendUpdate dir (← IO.FS.readFile path)
-    catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
-  | "update" :: dir :: parts =>
-    if parts.isEmpty then
-      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)"
+  | "update" :: dir :: parts0 =>
+    -- `--sparql12`: the SPARQL 1.2 grammar (triple terms, directional literals)
+    let v12 := parts0.contains "--sparql12"
+    let parts := parts0.filter (· != "--sparql12")
+    let version : L4Factoidal.SPARQL.SparqlVersion := if v12 then .v12 else .v11
+    match parts with
+    | ["--file", path] =>
+      try Harness.Sbm11Delta.appendUpdate dir (← IO.FS.readFile path) version
+      catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
+    | [] =>
+      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--sparql12]"
       return 2
-    try Harness.Sbm11Delta.appendUpdate dir (String.intercalate " " parts)
-    catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
+    | _ =>
+      try Harness.Sbm11Delta.appendUpdate dir (String.intercalate " " parts) version
+      catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
   | "compact" :: src :: out :: opts =>
     match parseCompactOpts opts (4096, 524288, none) with
     | none =>
@@ -224,7 +230,7 @@ def main (args : List String) : IO UInt32 := do
         runCompact src out b m v
       catch e => IO.eprintln s!"l4sbm11 compact: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--sparql12] | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
     return 2
 
 end Harness.Sbm11Compact

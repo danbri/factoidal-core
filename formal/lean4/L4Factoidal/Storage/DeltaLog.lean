@@ -445,14 +445,15 @@ def parseLString (bs : List UInt8) : Option (String × List UInt8) :=
 
 /-! ### Terms, subjects, triples
 
-Two limits are inherited from the F\* module rather than repaired
-here, and both are REFUSALS, never silent corruption.
+This is the version 1 term codec. It is also the term codec of the block
+formats BLK0, IBK1, IBK2, PTD1 and TLI1, and it keeps their admission: two
+limits inherited from the F\* module, both REFUSALS, never silent corruption.
+A DLOG of version 2 encodes RDF 1.2 terms with its own codec
+(`serializeDeltaTerm?`, `parseDeltaTerm`, below).
 
 **Triple terms.** `serializeTerm` emits a bare tag byte for an RDF 1.2
-triple term and `parseTerm` refuses tag 3, so a triple term written to
-a delta log cannot be read back. The F\* banner says the same and
-points at its own follow-up phase. Nothing in either tree claims a
-triple term round-trips through the log.
+triple term and `parseTerm` refuses tag 3, so a triple term cannot be read
+back from version 1 bytes. The F\* banner says the same.
 
 **Base direction.** A `rdf:dirLangString` literal serialises its
 language tag but not its direction, so the parsed literal has a tag
@@ -501,8 +502,17 @@ and the equivalence `termFitsU32b_iff`. -/
 /-- The UTF-8 byte length of the string is below the u32 field limit. -/
 def stringFitsU32b (s : String) : Bool := (bytesOfString s).length < two32
 
-/-- Every length-prefixed string in the term fits its u32 length prefix. A
-    triple term has no encoding at all, so it never fits. -/
+/-- The string of a subject fits its u32 length prefix. -/
+def subjectFitsU32b : Subject → Bool
+  | .iri i => stringFitsU32b i.val
+  | .bnode b => stringFitsU32b b
+
+/-- Every length-prefixed string in the term fits its u32 length prefix, in
+    every part of a triple term too. It is a loop over the object chain. The
+    block encoders also require `BlockWireV0.termSupported`, which refuses a
+    triple term and a directional literal, so their admission does not
+    change; the version 2 delta-log encoder admits exactly the terms this
+    accepts (`TermCodecTheorems.serializeDeltaTerm?_isSome_iff`). -/
 def termFitsU32b : Term → Bool
   | .iri i => stringFitsU32b i.val
   | .bnode b => stringFitsU32b b
@@ -511,7 +521,8 @@ def termFitsU32b : Term → Bool
         (match l.val.langTag with
          | none => true
          | some tag => stringFitsU32b tag)
-  | .tripleTerm _ _ _ => false
+  | .tripleTerm s p o =>
+      if subjectFitsU32b s && stringFitsU32b p.val then termFitsU32b o else false
 
 private def mkLiteral? (lex dt : String) (tag : Option String) : Option Term :=
   if h : isIri dt then
@@ -576,6 +587,194 @@ def parseTriple (bs : List UInt8) : Option (Triple × List UInt8) := do
     let (o, rest) ← parseTerm afterP
     some ({ s := s, p := ⟨p, h⟩, o := o }, rest)
   else none
+
+/-! ### The term codec of DLOG version 2 (RDF 1.2)
+
+https://github.com/danbri/factoidal/issues/792 item 1, the update part. The
+term codec above (version 1) refuses a triple term and a literal with a base
+direction, and the block formats that share it (BLK0, IBK1, IBK2, PTD1, TLI1)
+keep that admission. A DLOG whose header says version 2
+(`deltaLogVersion2`) encodes its entries' terms with the codec below. It is
+the version 1 codec with two additions, so a term that version 1 admits has
+the same bytes in both (`TermCodecTheorems.serializeDeltaTerm?_of_supported`):
+
+* term tag 3 carries a payload: the subject as a term (tag 0 or 1), the
+  predicate as an IRI term (tag 0) and the object as a term, so a triple term
+  in the object position nests;
+* literal flag 2: the language tag, then a direction byte (1 `ltr`, 2 `rtl`,
+  as in the SBM11 dictionary key), for an `rdf:dirLangString` literal.
+
+The encoder admits every term whose strings fit their u32 length prefixes
+(`termFitsU32b`); the decoder rebuilds every literal through `literalWf`. The
+encoder and the decoder are loops over the chain of nested triple terms
+(`serializeDeltaTermGo`, `parseDeltaTermGo`), so a deep triple term does not
+cost one stack frame per level. Round trip:
+`TermCodecTheorems.parseDeltaTerm_serializeDeltaTerm?`. -/
+
+/-- The DLOG header version of a log whose entries may hold RDF 1.2 terms. -/
+def deltaLogVersion2 : UInt32 := 2
+
+/-- The direction byte of a directional literal. -/
+def dirByte : TextDirection → UInt8
+  | .ltr => 1
+  | .rtl => 2
+
+def dirOfByte (b : UInt8) : Option TextDirection :=
+  if b == 1 then some .ltr else if b == 2 then some .rtl else none
+
+/-- A literal: the version 1 bytes, and for a directional literal the flag 2,
+    the language tag and the direction byte. A direction without a language
+    tag is not a well-formed literal (`literalWf`); it has no encoding. -/
+def serializeDeltaLiteral? (l : WfLiteral) : Option (List UInt8) := do
+  let lexical ← serializeLString? l.val.lexicalForm
+  let datatype ← serializeLString? l.val.datatype.val
+  match l.val.langTag, l.val.direction with
+  | none, none => some (termTagLiteral :: (lexical ++ datatype ++ [(0 : UInt8)]))
+  | some tag, none => do
+      let language ← serializeLString? tag
+      some (termTagLiteral :: (lexical ++ datatype ++ (1 : UInt8) :: language))
+  | some tag, some d => do
+      let language ← serializeLString? tag
+      some (termTagLiteral :: (lexical ++ datatype ++ (2 : UInt8) :: (language ++ [dirByte d])))
+  | none, some _ => none
+
+/-- A term that is not a triple term. -/
+def serializeDeltaLeaf? : Term → Option (List UInt8)
+  | .iri i => (serializeLString? i.val).map (termTagIri :: ·)
+  | .bnode b => (serializeLString? b).map (termTagBnode :: ·)
+  | .literal l => serializeDeltaLiteral? l
+  | .tripleTerm _ _ _ => none
+
+/-- Tag 3, then the subject as a term (tag 0 or 1) and the predicate as an
+    IRI term (tag 0). -/
+def serializeTriplePrefix? (s : Subject) (p : WfIri) : Option (List UInt8) := do
+  let sb ← serializeSubject? s
+  let pb ← serializeLString? p.val
+  some (termTagTripleTerm :: (sb ++ termTagIri :: pb))
+
+/-- The specification of the version 2 term encoder. The code generator runs
+    `serializeDeltaTermImpl` (`csimp` below), a loop. -/
+def serializeDeltaTerm? : Term → Option (List UInt8)
+  | .tripleTerm s p o => do
+      let pre ← serializeTriplePrefix? s p
+      let ob ← serializeDeltaTerm? o
+      some (pre ++ ob)
+  | t => serializeDeltaLeaf? t
+
+/-- The encoder as a loop over the object chain: `acc` holds the bytes written
+    so far, reversed. -/
+def serializeDeltaTermGo : Term → List UInt8 → Option (List UInt8)
+  | .tripleTerm s p o, acc =>
+      match serializeTriplePrefix? s p with
+      | none => none
+      | some pre => serializeDeltaTermGo o (pre.reverseAux acc)
+  | t, acc => (serializeDeltaLeaf? t).map (fun lb => acc.reverseAux lb)
+
+def serializeDeltaTermImpl (t : Term) : Option (List UInt8) := serializeDeltaTermGo t []
+
+theorem serializeDeltaTermGo_eq : ∀ (t : Term) (acc : List UInt8),
+    serializeDeltaTermGo t acc = (serializeDeltaTerm? t).map (acc.reverse ++ ·)
+  | .iri i, acc => by
+      simp only [serializeDeltaTermGo, serializeDeltaTerm?, List.reverseAux_eq]
+  | .bnode b, acc => by
+      simp only [serializeDeltaTermGo, serializeDeltaTerm?, List.reverseAux_eq]
+  | .literal l, acc => by
+      simp only [serializeDeltaTermGo, serializeDeltaTerm?, List.reverseAux_eq]
+  | .tripleTerm s p o, acc => by
+      simp only [serializeDeltaTermGo, serializeDeltaTerm?]
+      cases hp : serializeTriplePrefix? s p with
+      | none => simp
+      | some pre =>
+          simp only
+          rw [serializeDeltaTermGo_eq o (pre.reverseAux acc)]
+          cases ho : serializeDeltaTerm? o with
+          | none => simp
+          | some ob =>
+              simp [List.reverseAux_eq, List.reverse_append, List.append_assoc]
+
+@[csimp] theorem serializeDeltaTerm?_eq_impl :
+    @serializeDeltaTerm? = @serializeDeltaTermImpl := by
+  funext t
+  show _ = serializeDeltaTermGo t []
+  rw [serializeDeltaTermGo_eq]
+  cases serializeDeltaTerm? t <;> simp
+
+/-- The literal of a version 2 entry; `literalWf` decides. -/
+def mkDeltaLiteral? (lex dt : String) (tag : Option String)
+    (dir : Option TextDirection) : Option Term :=
+  if h : isIri dt then
+    let l : Literal := { lexicalForm := lex, datatype := ⟨dt, h⟩,
+                         langTag := tag, direction := dir }
+    if hw : literalWf l then some (.literal ⟨l, hw⟩) else none
+  else none
+
+/-- A term that is not a triple term: tag 0, 1 or 2. -/
+def parseDeltaLeaf (bs : List UInt8) : Option (Term × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == termTagIri then
+    let (i, rest) ← parseLString afterTag
+    if h : isIri i then some (.iri ⟨i, h⟩, rest) else none
+  else if tag == termTagBnode then
+    let (b, rest) ← parseLString afterTag
+    some (.bnode b, rest)
+  else if tag == termTagLiteral then
+    let (lex, afterLex) ← parseLString afterTag
+    let (dt, afterDt) ← parseLString afterLex
+    let (flag, afterFlag) ← parseU8 afterDt
+    if flag == 0 then
+      (mkDeltaLiteral? lex dt none none).map (fun t => (t, afterFlag))
+    else if flag == 1 then do
+      let (tagStr, rest) ← parseLString afterFlag
+      (mkDeltaLiteral? lex dt (some tagStr) none).map (fun t => (t, rest))
+    else if flag == 2 then do
+      let (tagStr, afterLang) ← parseLString afterFlag
+      let (d, rest) ← parseU8 afterLang
+      let dir ← dirOfByte d
+      (mkDeltaLiteral? lex dt (some tagStr) (some dir)).map (fun t => (t, rest))
+    else none
+  else none
+
+/-- The predicate of a triple term: an IRI term (tag 0). -/
+def parsePredicateTerm (bs : List UInt8) : Option (WfIri × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == termTagIri then
+    let (i, rest) ← parseLString afterTag
+    if h : isIri i then some (⟨i, h⟩, rest) else none
+  else none
+
+/-- The triple terms read so far, the innermost first, around `t`. -/
+def wrapTriples (stack : List (Subject × WfIri)) (t : Term) : Term :=
+  stack.foldl (fun acc sp => .tripleTerm sp.1 sp.2 acc) t
+
+/-- The version 2 decoder as a loop: each tag 3 pushes its subject and
+    predicate, and the first term that is not a triple term ends the chain.
+    Each step reads at least one byte, so `parseDeltaTerm`'s fuel (the byte
+    length plus one) is never the reason for a refusal of the encoder's bytes. -/
+def parseDeltaTermGo : Nat → List UInt8 → List (Subject × WfIri) → Option (Term × List UInt8)
+  | 0, _, _ => none
+  | fuel + 1, bs, stack =>
+    match bs with
+    | b :: rest =>
+      if b == termTagTripleTerm then
+        match parseSubject rest with
+        | none => none
+        | some (s, afterS) =>
+          match parsePredicateTerm afterS with
+          | none => none
+          | some (p, afterP) => parseDeltaTermGo fuel afterP ((s, p) :: stack)
+      else
+        (parseDeltaLeaf (b :: rest)).map fun r => (wrapTriples stack r.1, r.2)
+    | [] => none
+
+def parseDeltaTerm (bs : List UInt8) : Option (Term × List UInt8) :=
+  parseDeltaTermGo (bs.length + 1) bs []
+
+/-- An RDF 1.2 term: a triple term, or a literal with a base direction. An
+    entry whose object is one needs DLOG version 2. -/
+def termNeedsV2 : Term → Bool
+  | .tripleTerm _ _ _ => true
+  | .literal l => l.val.direction.isSome
+  | _ => false
 
 /-! ### Graph names
 
@@ -842,6 +1041,149 @@ def replayDeltaBatches (bs : List UInt8) : List DeltaBatch × List UInt8 :=
   let (reversed, tail) := go bs.length bs []
   (reversed.reverse, tail)
 
+/-! ### The entry codec over a term codec
+
+The DLE1/DLB1/DLOG framing does not depend on how a term is encoded. The
+functions below are the entry, batch and log codec of the definitions above
+with the term codec as a parameter; `DeltaTermCodec.v1` gives exactly the
+version 1 functions (`*With_v1`, `rfl`), and `DeltaTermCodec.v2` the codec of
+a DLOG version 2. `TermCodecTheorems` and `DeltaLogCodecTheorems` prove the
+round trips once, over every term codec that has one. -/
+
+/-- How a DLE1 entry encodes the object of a triple. -/
+structure DeltaTermCodec where
+  encode : Term → Option (List UInt8)
+  decode : List UInt8 → Option (Term × List UInt8)
+
+/-- Version 1: `serializeTerm?` and `parseTerm`. -/
+def DeltaTermCodec.v1 : DeltaTermCodec := ⟨serializeTerm?, parseTerm⟩
+/-- Version 2: `serializeDeltaTerm?` and `parseDeltaTerm`. -/
+def DeltaTermCodec.v2 : DeltaTermCodec := ⟨serializeDeltaTerm?, parseDeltaTerm⟩
+
+/-- The term codec of a DLOG header version. -/
+def DeltaTermCodec.ofVersion (v : UInt32) : Option DeltaTermCodec :=
+  if v == deltaLogVersion then some .v1
+  else if v == deltaLogVersion2 then some .v2
+  else none
+
+def serializeTripleWith? (tc : DeltaTermCodec) (t : Triple) : Option (List UInt8) := do
+  let subject ← serializeSubject? t.s
+  let predicate ← serializeLString? t.p.val
+  let object ← tc.encode t.o
+  some (subject ++ predicate ++ object)
+
+def parseTripleWith (tc : DeltaTermCodec) (bs : List UInt8) : Option (Triple × List UInt8) := do
+  let (s, afterS) ← parseSubject bs
+  let (p, afterP) ← parseLString afterS
+  if h : isIri p then do
+    let (o, rest) ← tc.decode afterP
+    some ({ s := s, p := ⟨p, h⟩, o := o }, rest)
+  else none
+
+def serializeDeltaEntryPayloadWith? (tc : DeltaTermCodec) (e : DeltaEntry) : Option (List UInt8) :=
+  match e with
+  | .add t g => do
+      let triple ← serializeTripleWith? tc t
+      let graph ← serializeGraphOpt? g
+      some (deTagAdd :: (triple ++ graph))
+  | .remove t g => do
+      let triple ← serializeTripleWith? tc t
+      let graph ← serializeGraphOpt? g
+      some (deTagRemove :: (triple ++ graph))
+  | .clear g => (serializeGraphOpt? g).map (deTagClear :: ·)
+  | .drop g => (serializeLString? g).map (deTagDrop :: ·)
+  | .create g => (serializeLString? g).map (deTagCreate :: ·)
+
+def parseDeltaEntryPayloadWith (tc : DeltaTermCodec) (bs : List UInt8) :
+    Option (DeltaEntry × List UInt8) := do
+  let (tag, afterTag) ← parseU8 bs
+  if tag == deTagAdd then do
+    let (t, afterT) ← parseTripleWith tc afterTag
+    let (g, rest)   ← parseGraphOpt afterT
+    some (.add t g, rest)
+  else if tag == deTagRemove then do
+    let (t, afterT) ← parseTripleWith tc afterTag
+    let (g, rest)   ← parseGraphOpt afterT
+    some (.remove t g, rest)
+  else if tag == deTagClear then do
+    let (g, rest) ← parseGraphOpt afterTag
+    some (.clear g, rest)
+  else if tag == deTagDrop then do
+    let (g, rest) ← parseLString afterTag
+    some (.drop g, rest)
+  else if tag == deTagCreate then do
+    let (g, rest) ← parseLString afterTag
+    some (.create g, rest)
+  else none
+
+def serializeFramedDeltaEntryWith? (tc : DeltaTermCodec) (entry : DeltaEntry) :
+    Option (List UInt8) := do
+  let payload ← serializeDeltaEntryPayloadWith? tc entry
+  frameEntry? payload
+
+def parseFramedDeltaEntryWith (tc : DeltaTermCodec) (bs : List UInt8) :
+    Option (DeltaEntry × List UInt8) := do
+  let (payload, rest) ← parseEntry bs
+  let (entry, payloadRest) ← parseDeltaEntryPayloadWith tc payload
+  if payloadRest.isEmpty then some (entry, rest) else none
+
+def serializeDeltaBatchBodyWith? (tc : DeltaTermCodec) (b : DeltaBatch) : Option (List UInt8) :=
+  if !natFitsU64 b.seq || !natFitsU64 b.epoch || b.ops.length >= two32 then none
+  else do
+    let entries ← b.ops.mapM (serializeFramedDeltaEntryWith? tc)
+    some (writeU64LE b.seq.toUInt64 ++ writeU64LE b.epoch.toUInt64 ++
+      writeU32LE (UInt32.ofNat b.ops.length) ++ entries.flatten)
+
+/-- `n` framed entries, as a loop: `acc` holds the entries read so far, the
+    last one first. -/
+def parseNFramedDeltaEntriesWith (tc : DeltaTermCodec) :
+    Nat → List UInt8 → List DeltaEntry → Option (List DeltaEntry × List UInt8)
+  | 0, bs, acc => some (acc.reverse, bs)
+  | n + 1, bs, acc =>
+    match parseFramedDeltaEntryWith tc bs with
+    | none => none
+    | some (e, rest) => parseNFramedDeltaEntriesWith tc n rest (e :: acc)
+
+def parseDeltaBatchBodyWith (tc : DeltaTermCodec) (bs : List UInt8) : Option DeltaBatch := do
+  let seq ← readU64LE bs 0
+  let epoch ← readU64LE bs 8
+  let count ← readU32LE bs 16
+  let (ops, tail) ← parseNFramedDeltaEntriesWith tc count.toNat (bs.drop 20) []
+  if tail.isEmpty then some { seq := seq.toNat, epoch := epoch.toNat, ops } else none
+
+def serializeDeltaBatchWith? (tc : DeltaTermCodec) (b : DeltaBatch) : Option (List UInt8) := do
+  let body ← serializeDeltaBatchBodyWith? tc b
+  if body.length >= two32 then none else
+  some (writeU32LE deltaBatchMagic ++ writeU32LE deltaBatchVersion ++
+    writeU32LE (UInt32.ofNat body.length) ++ body ++ writeU32LE (simpleChecksum body))
+
+def parseDeltaBatchWith (tc : DeltaTermCodec) (bs : List UInt8) :
+    Option (DeltaBatch × List UInt8) := do
+  let magic ← readU32LE bs 0
+  if magic != deltaBatchMagic then none else
+  let version ← readU32LE bs 4
+  if version != deltaBatchVersion then none else
+  let bodyLen ← readU32LE bs 8
+  let afterHeader := bs.drop 12
+  let body := afterHeader.take bodyLen.toNat
+  if body.length != bodyLen.toNat then none else
+  let checksum ← readU32LE afterHeader bodyLen.toNat
+  if checksum != simpleChecksum body then none else
+  let batch ← parseDeltaBatchBodyWith tc body
+  some (batch, (afterHeader.drop bodyLen.toNat).drop 4)
+
+def replayDeltaBatchesWith (tc : DeltaTermCodec) (bs : List UInt8) :
+    List DeltaBatch × List UInt8 :=
+  let rec go : Nat → List UInt8 → List DeltaBatch → List DeltaBatch × List UInt8
+    | 0, remaining, acc => (acc, remaining)
+    | fuel + 1, remaining, acc =>
+      if remaining.isEmpty then (acc, [])
+      else match parseDeltaBatchWith tc remaining with
+        | none => (acc, remaining)
+        | some (batch, rest) => go fuel rest (batch :: acc)
+  let (reversed, tail) := go bs.length bs []
+  (reversed.reverse, tail)
+
 /-- Total DLOG writer admission: all committed batches must be representable.
     Unlike `List.flatMap serializeDeltaBatch`, this cannot turn one rejected
     batch into a log that silently lacks an UPDATE. -/
@@ -854,12 +1196,59 @@ def serializeLog? (batches : List DeltaBatch) : Option (List UInt8) := do
 def serializeLog (batches : List DeltaBatch) : List UInt8 :=
   (serializeLog? batches).getD []
 
+/-- Read a DLOG: the header, then the batches. Version 1 entries are read with
+    the version 1 term codec, so a version 1 log that holds a tag 3 or a
+    literal flag 2 is refused at that batch (`classifyTail`: undecodable);
+    version 2 entries with `DeltaTermCodec.v2`. Any other version is refused
+    at the header, by this reader and by every reader before version 2. -/
 def parseLog (bs : List UInt8) : Option (List DeltaBatch × List UInt8) := do
   let magic ← readU32LE bs 0
   if magic != deltaLogMagic then none else
   let version ← readU32LE bs 4
-  if version != deltaLogVersion then none else
-  some (replayDeltaBatches (bs.drop 8))
+  if version == deltaLogVersion then some (replayDeltaBatches (bs.drop 8))
+  else if version == deltaLogVersion2 then some (replayDeltaBatchesWith .v2 (bs.drop 8))
+  else none
+
+/-- The header of a DLOG of `version`. -/
+def logHeader (version : UInt32) : List UInt8 :=
+  writeU32LE deltaLogMagic ++ writeU32LE version
+
+/-- The header version of a DLOG, `none` when the bytes are not a DLOG. -/
+def logHeaderVersion? (bs : List UInt8) : Option UInt32 := do
+  let magic ← readU32LE bs 0
+  if magic != deltaLogMagic then none else readU32LE bs 4
+
+/-- An entry whose object is an RDF 1.2 term needs DLOG version 2. -/
+def entryNeedsV2 : DeltaEntry → Bool
+  | .add t _ | .remove t _ => termNeedsV2 t.o
+  | _ => false
+
+/-- What a writer appends for one batch. `version` is the header version of
+    the log after the append; `setVersion2` says that an existing version 1
+    log must first get version 2 in its header (four bytes at byte 4, in
+    place, under the append lock); `bytes` are the bytes to append (the header
+    too, for a new log). -/
+structure AppendPlan where
+  version : UInt32
+  setVersion2 : Bool
+  bytes : List UInt8
+  deriving Repr, DecidableEq
+
+/-- The append plan for `batch` on a log of header version `logVersion`
+    (`none`: no log yet). A batch that holds an RDF 1.2 term needs version 2;
+    a log keeps version 1, and the version 1 bytes, until one does. `none`
+    when the batch does not fit the wire format. -/
+def appendPlan? (logVersion : Option UInt32) (batch : DeltaBatch) : Option AppendPlan :=
+  let version :=
+    if batch.ops.any entryNeedsV2 || logVersion == some deltaLogVersion2 then deltaLogVersion2
+    else deltaLogVersion
+  match DeltaTermCodec.ofVersion version with
+  | none => none
+  | some tc => do
+    let frame ← serializeDeltaBatchWith? tc batch
+    match logVersion with
+    | none => some { version, setVersion2 := false, bytes := logHeader version ++ frame }
+    | some v => some { version, setVersion2 := v != version, bytes := frame }
 
 /-! ### The bytes after the committed batches
 
@@ -960,6 +1349,30 @@ def parseLogChecked (bs : List UInt8) : Except String (List DeltaBatch × Bool) 
     | k => .error (k.text (bs.length - tail.length) tail.length ++
         "; the log is not replayed (https://github.com/danbri/factoidal/issues/843)")
 
+/-- `parseLogChecked` for the readers of IBK3, IBK4 and IBK5 collections
+    (`l4block-shard-activate`, `l4block-id-v3-query` through the Merkle
+    materialiser, `l4block-shard-compact`, the `l4block-delta-log` writer and
+    the store server, `SPARQL.StoreEndpoint`). They refuse a DLOG of version
+    2: its entries may hold RDF 1.2 terms, which their block formats do not
+    store. Only the SBM11 tools read version 2
+    (https://github.com/danbri/factoidal/issues/792 item 1). -/
+def parseLogCheckedV1 (bs : List UInt8) : Except String (List DeltaBatch × Bool) :=
+  if logHeaderVersion? bs == some deltaLogVersion2 then
+    .error ("the DLOG has header version 2 (its entries may hold RDF 1.2 terms); " ++
+      "the SBM11 tools (l4sbm11) read it, and this reader of IBK3, IBK4 and IBK5 " ++
+      "collections does not (https://github.com/danbri/factoidal/issues/792)")
+  else parseLogChecked bs
+
+#guard (match parseLogCheckedV1 (logHeader deltaLogVersion2) with
+  | .error e => e.startsWith "the DLOG has header version 2"
+  | .ok _ => false)
+#guard (match parseLogCheckedV1 (logHeader deltaLogVersion) with
+  | .ok ([], false) => true
+  | _ => false)
+#guard (match parseLogChecked (logHeader deltaLogVersion2) with
+  | .ok ([], false) => true
+  | _ => false)
+
 /-! ### Build-time checks
 
 Every round trip is checked with a NON-EMPTY tail, so a parser that
@@ -989,9 +1402,58 @@ counts BYTES, and a character count would be wrong here. -/
 #guard rtEntry (.add ⟨.iri exIri, exP, .literal (Literal.string "héllo — ☃")⟩ none)
 #guard (serializeLString "é").length == 6      -- 4 length bytes + 2 UTF-8 bytes
 
-/-! A triple term is REFUSED, not misread. -/
+/-! The version 1 codec REFUSES a triple term rather than misread it; the
+version 2 codec reads it back, nested, and a directional literal too. -/
 
 #guard (parseTerm (serializeTerm (.tripleTerm (.iri exIri) exP (.iri exIri)))).isNone
+
+private def ttNested : Term :=
+  .tripleTerm (.bnode "b0") exP
+    (.tripleTerm (.iri exIri) exP (.literal (Literal.dirLangString "salaam" "ar" .rtl)))
+private def rtTerm2 (t : Term) : Bool :=
+  match serializeDeltaTerm? t with
+  | some bs => parseDeltaTerm (bs ++ tail) == some (t, tail)
+  | none => false
+
+#guard rtTerm2 ttNested
+#guard rtTerm2 (.literal (Literal.dirLangString "hello" "en" .ltr))
+#guard rtTerm2 (.literal (Literal.langString "hi" "en"))
+#guard rtTerm2 (.iri exIri)
+-- Version 2 writes the version 1 bytes for a term that version 1 admits.
+#guard serializeDeltaTerm? (.literal (Literal.langString "hi" "en")) ==
+  serializeTerm? (.literal (Literal.langString "hi" "en"))
+-- A version 2 tag 3 with a literal in the subject position is refused, and a
+-- direction byte other than 1 and 2 is refused.
+#guard (parseDeltaTerm ([termTagTripleTerm] ++ (serializeTerm (.literal (Literal.string "s"))) ++
+  (serializeTerm (.iri exP)) ++ serializeTerm (.iri exIri))).isNone
+#guard (match serializeDeltaTerm? (.literal (Literal.dirLangString "x" "en" .ltr)) with
+  | some bs => (parseDeltaTerm (bs.set (bs.length - 1) 3)).isNone
+  | none => false)
+
+/-! The append plan: a log keeps version 1 and its bytes until a batch needs
+version 2. -/
+
+private def plainBatch : DeltaBatch :=
+  { seq := 1, epoch := 1, ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "v")⟩ none] }
+private def ttBatch : DeltaBatch :=
+  { seq := 2, epoch := 1, ops := [.add ⟨.iri exIri, exP, ttNested⟩ (some "http://example.org/g")] }
+
+#guard (appendPlan? none plainBatch).map (·.bytes) ==
+  (serializeLog? [plainBatch])
+#guard (appendPlan? (some 1) plainBatch).map (·.bytes) == serializeDeltaBatch? plainBatch
+#guard (appendPlan? (some 1) ttBatch).map (fun p => (p.version, p.setVersion2)) == some (2, true)
+#guard (appendPlan? none ttBatch).map (·.version) == some 2
+#guard (appendPlan? (some 2) plainBatch).map (fun p => (p.version, p.setVersion2)) == some (2, false)
+-- A version 2 log of both batches replays to them; a version 1 header over
+-- the same frames refuses the RDF 1.2 batch (undecodable).
+private def v2log : List UInt8 :=
+  ((appendPlan? none plainBatch).map (·.bytes)).getD [] ++
+    ((appendPlan? (some 2) ttBatch).map (·.bytes)).getD []
+#guard parseLog (logHeader 2 ++ v2log.drop 8) == some ([plainBatch, ttBatch], [])
+#guard (match parseLog (logHeader 1 ++ v2log.drop 8) with
+  | some ([b], rest) => b == plainBatch && classifyTail rest == .undecodable
+  | _ => false)
+#guard (parseLog (logHeader 3 ++ v2log.drop 8)).isNone
 
 /-! An unknown entry tag is refused. -/
 

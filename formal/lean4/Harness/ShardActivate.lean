@@ -94,7 +94,7 @@ private def sourceIdentity? (directory : System.FilePath) : IO ByteArray := do
   let dlog := directory / "deltas.dlog"
   let delta ← try
     let bytes ← IO.FS.readBinFile dlog
-    match parseLogChecked bytes.toList with
+    match parseLogCheckedV1 bytes.toList with
     | .ok (batches, false) =>
         if validBatchHistory batches then pure bytes
         else throw <| IO.userError "source DLOG batch sequence or epoch order is invalid"
