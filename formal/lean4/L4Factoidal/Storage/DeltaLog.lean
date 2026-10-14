@@ -990,6 +990,51 @@ def parseNFramedDeltaEntries : Nat → List UInt8 → Option (List DeltaEntry ×
       let (rest, tail) ← parseNFramedDeltaEntries n afterEntry
       some (entry :: rest, tail)
 
+/-- `parseNFramedDeltaEntries` as a loop: `acc` holds the entries read so far,
+    the last one first. The definition above takes one stack frame for each
+    entry, so a version 1 batch of 48,000 entries overflowed a 512 KB stack at
+    every open of the log (`tests/stack/run.sh`, case `sbm11-update-where`; a
+    DELETE/INSERT with a WHERE clause writes one batch for all its solutions).
+    The `@[csimp]` lemma below makes compiled code use the loop; the proofs keep
+    the definition above. -/
+def parseNFramedDeltaEntriesLoop : Nat → List UInt8 → List DeltaEntry →
+    Option (List DeltaEntry × List UInt8)
+  | 0, bs, acc => some (acc.reverse, bs)
+  | n + 1, bs, acc =>
+    match parseFramedDeltaEntry bs with
+    | none => none
+    | some (e, rest) => parseNFramedDeltaEntriesLoop n rest (e :: acc)
+
+theorem parseNFramedDeltaEntriesLoop_eq (n : Nat) (bs : List UInt8) (acc : List DeltaEntry) :
+    parseNFramedDeltaEntriesLoop n bs acc =
+      (parseNFramedDeltaEntries n bs).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction n generalizing bs acc with
+  | zero => simp [parseNFramedDeltaEntriesLoop, parseNFramedDeltaEntries]
+  | succ n ih =>
+      rw [parseNFramedDeltaEntriesLoop, parseNFramedDeltaEntries]
+      cases h : parseFramedDeltaEntry bs with
+      | none => simp [bind, Option.bind]
+      | some p =>
+          obtain ⟨e, rest⟩ := p
+          simp only [ih, bind, Option.bind]
+          cases parseNFramedDeltaEntries n rest with
+          | none => rfl
+          | some q => simp
+
+/-- The loop with the empty accumulator: the function the `@[csimp]` lemma names. -/
+def parseNFramedDeltaEntriesFast (n : Nat) (bs : List UInt8) : Option (List DeltaEntry × List UInt8) :=
+  parseNFramedDeltaEntriesLoop n bs []
+
+@[csimp] theorem parseNFramedDeltaEntries_eq_fast :
+    @parseNFramedDeltaEntries = @parseNFramedDeltaEntriesFast := by
+  funext n bs
+  unfold parseNFramedDeltaEntriesFast
+  rw [parseNFramedDeltaEntriesLoop_eq]
+  cases parseNFramedDeltaEntries n bs <;> simp
+
+#print axioms parseNFramedDeltaEntriesLoop_eq
+#print axioms parseNFramedDeltaEntries_eq_fast
+
 def parseDeltaBatchBody (bs : List UInt8) : Option DeltaBatch := do
   let seq ← readU64LE bs 0
   let epoch ← readU64LE bs 8

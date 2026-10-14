@@ -251,6 +251,8 @@ import L4Factoidal.SPARQL.Update
 import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.UpdateDelta
 import L4Factoidal.SPARQL.UpdateDeltaTests
+import L4Factoidal.SPARQL.UpdateStore
+import L4Factoidal.SPARQL.UpdateStoreTheorems
 import L4Factoidal.SPARQL.UpdateTests
 import L4Factoidal.SPARQL.UpdateTheorems
 import L4Factoidal.Regex.Syntax
@@ -396,6 +398,7 @@ import L4Factoidal.Storage.Sbm11.DictLookupTheorems
 import L4Factoidal.Storage.Sbm11.DictRangeTheorems
 import L4Factoidal.Storage.Sbm11.Overlay
 import L4Factoidal.Storage.Sbm11.OverlayTheorems
+import L4Factoidal.Storage.Sbm11.UpdateOverlayTheorems
 import L4Factoidal.Storage.Sbm11.ScanFoldTests
 import L4Factoidal.Storage.Sbm11.ScanFoldTheorems
 import L4Factoidal.Storage.Sbm11.SipScanTheorems

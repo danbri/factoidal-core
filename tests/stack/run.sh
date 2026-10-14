@@ -104,6 +104,9 @@ TIMEOUT="${STACK_TIMEOUT:-120}"
 # gen_cases.py reads the same variable.
 N_DELTA="${STACK_SBM11_DELTA:-4000}"
 export STACK_SBM11_DELTA="$N_DELTA"
+# sbm11-update-where solutions (gen_cases.py reads the same variable).
+N_WHERE="${STACK_SBM11_WHERE:-12000}"
+export STACK_SBM11_WHERE="$N_WHERE"
 while [ $# -gt 0 ]; do
   case "$1" in
     --route) ROUTE="$2"; shift 2 ;;
@@ -1036,6 +1039,85 @@ if [ "$CANARY" = 1 ]; then
     sbm11_delta_case canary "${CANARY_PREFIX[@]}"
   else
     record canary sbm11-delta 1 "NOT SCORED: the canary control did not pass"
+  fi
+fi
+
+# The update with a WHERE clause and a template blank node (issues 849 and 850) on
+# the same 600,001-quad generation: one DELETE/INSERT whose WHERE clause (a numeric
+# FILTER) has N_WHERE (12,000) solutions removes N_WHERE p:m quads and adds 3 *
+# N_WHERE quads (a p:m2 quad, and a p:ref and a p:of quad around a fresh blank node
+# for each solution), in one batch of 48,000 entries. The lists of that length
+# (solutions, instantiated quads, entries), the 12,000 label draws and the decoder of
+# a batch of that many entries must not take a stack frame for each element (until
+# 2026-10-14 the decoder of a version 1 batch did, and every open of the log overflowed
+# a 512 KB stack). The first query replays the log: COUNT(DISTINCT ?r) is N_WHERE only
+# when the supply drew N_WHERE labels. Then `l4sbm11 compact` folds the log, and
+# three queries count on the new generation. Each replay costs one dictionary
+# lookup for each term of each entry (https://github.com/danbri/factoidal/issues/858),
+# so the case replays the log twice only.
+sbm11_update_where_case() { # sbm11_update_where_case <route> <prefix...>
+  local route="$1"; shift
+  local src="$FIXTURES/sbm11-dict.nt" col="$FIXTURES/sbm11-where-col" rc log r q
+  local P='PREFIX p: <http://example.org/p/> '
+  if [ ! -x "$SBM11P_BIN" ] || [ ! -x "$SBM11C_BIN" ]; then
+    record "$route" sbm11-update-where 1 "l4sbm11-pack or l4sbm11 does not exist (lake build l4sbm11-pack l4sbm11)"
+    return
+  fi
+  rm -rf "$col"
+  if ! "$SBM11P_BIN" "$src" "$col/gen" --block-rows 65536 >/dev/null 2>&1 \
+      || ! "$SBM11C_BIN" activate "$col" gen >/dev/null 2>&1; then
+    record "$route" sbm11-update-where 1 "l4sbm11-pack or activate failed"
+    return
+  fi
+  log=""
+  r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" update "$col" --file "$FIXTURES/sbm11-update-where-$N_WHERE.ru" 2>&1)"; rc=$?
+  log="$log
+$(printf '%s' "$r" | head -c 300) rc=$rc"
+  if [ "$rc" -eq 0 ]; then
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$col" "${P}SELECT (COUNT(DISTINCT ?r) AS ?c) WHERE { ?s p:ref ?r }" 2>&1)"; rc=$?
+    log="$log
+overlay: $(printf '%s' "$r" | head -c 300) ... $(printf '%s' "$r" | grep -o 'sbm11-query: path=[a-z]*; rows [0-9]*') rc=$rc"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" compact "$col" "$col/gen2" 2>&1)"; rc=$?
+    log="$log
+$(printf '%s' "$r" | grep -o 'quads=[0-9]* terms=[0-9]*' | head -1) rc=$rc"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    for q in \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:m2 ?m }" \
+      "SELECT (COUNT(DISTINCT ?r) AS ?c) WHERE { ?s p:ref ?r }" \
+      "SELECT (COUNT(*) AS ?c) WHERE { ?s p:m ?m }"; do
+      r="$(run_capped "$TIMEOUT" "$@" "$SBM11C_BIN" query "$col/gen2" "$P$q" 2>&1)"; rc=$?
+      log="$log
+compacted: $(printf '%s' "$r" | head -c 300) rc=$rc"
+      [ "$rc" -ne 0 ] && break
+    done
+  fi
+  if printf '%s' "$log" | grep -q 'Stack overflow'; then
+    score_case "$route" sbm11-update-where overflow "STACK OVERFLOW (exit $rc)"
+  elif [ "$rc" -ne 0 ] \
+      || [ "$(printf '%s' "$log" | grep -c "\"value\":\"$N_WHERE\"")" -ne 3 ] \
+      || ! printf '%s' "$log" | grep -q "\"value\":\"$((150000 - N_WHERE))\"" \
+      || ! printf '%s' "$log" | grep -q 'where path=ids solutions=' ; then
+    score_case "$route" sbm11-update-where error "exit $rc: $(printf '%s' "$log" | grep -m1 'l4sbm11\|rc=[1-9]' | head -c 160)"
+  else
+    score_case "$route" sbm11-update-where ran "$N_WHERE solutions on the id path, $((4 * N_WHERE)) entries in one batch replayed and compacted, $N_WHERE fresh blank nodes (distinct on the overlay and after compaction); counts $N_WHERE and $((150000 - N_WHERE)) on the new generation"
+  fi
+  rm -rf "$col"
+}
+if [ "$ROUTE" = native ] || [ "$ROUTE" = both ]; then
+  echo
+  echo "=== SBM11 update with a WHERE clause, native default stack"
+  sbm11_update_where_case native env
+fi
+if [ "$CANARY" = 1 ]; then
+  echo
+  echo "=== SBM11 update with a WHERE clause, native under ${CANARY_VAR}=${CANARY_KB}"
+  if [ "$CONTROL_OK" = 1 ]; then
+    sbm11_update_where_case canary "${CANARY_PREFIX[@]}"
+  else
+    record canary sbm11-update-where 1 "NOT SCORED: the canary control did not pass"
   fi
 fi
 

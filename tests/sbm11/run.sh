@@ -68,10 +68,12 @@
 #                pack of the final state answers the same; `l4sbm11 compact`
 #                writes a generation whose every artifact is byte-identical to
 #                the fresh pack's; the compacted generation answers the same;
-#                an update after compaction is seen (epoch 2); an update with
-#                WHERE and INSERT DATA with a blank node are refused (the
-#                stage 5 limits, https://github.com/danbri/factoidal/issues/849 and
-#                https://github.com/danbri/factoidal/issues/850: a change of either turns this RED).
+#                an update after compaction is seen (epoch 2); then DELETE WHERE
+#                and INSERT DATA with a blank node are applied (until 2026-10-14
+#                both were refused, https://github.com/danbri/factoidal/issues/849
+#                and https://github.com/danbri/factoidal/issues/850), and the
+#                state they leave, compacted and dumped, is isomorphic to the
+#                state the reference engine computes for the same requests.
 #   (i) olympics stage 5 on the olympics generation (a copy): the batches of
 #                tests/sbm11/delta/olympics-ops.txt, the inserted row seen,
 #                the deleted row not seen; q01 to q21 and
@@ -136,8 +138,13 @@
 #                gate12/update/*.rq on its path and by --reference, equal as
 #                multisets to `l4factoidal query --sparql12` over the state of
 #                `l4factoidal update --sparql12`, and after u3 the 44
-#                gate12/*.rq too; refusals (a blank node inside a triple term,
-#                WHERE, a triple term without --sparql12) leave the log
+#                gate12/*.rq too; then two requests that were refused until
+#                2026-10-14 (https://github.com/danbri/factoidal/issues/849 and
+#                https://github.com/danbri/factoidal/issues/850), u4 (a blank node
+#                inside a nested triple term in INSERT DATA) and u5 (DELETE WHERE
+#                with a triple-term pattern that has a variable), checked the same
+#                way; refusals that stay (a blank node inside a triple term of
+#                DELETE DATA, a triple term without --sparql12) leave the log
 #                unchanged; the compacted dump equals the reference state and
 #                the compacted generation a fresh pack of it.
 #   (n) layering  no module under formal/lean4/L4Factoidal/Storage/ imports an
@@ -170,6 +177,22 @@
 #                refusals of a syntax with no graph name or no triple term; `--graph`,
 #                `--out`, `--prefix`; empty generations; a 1 MB generated dataset.
 #                Its counts are added to this run's.
+#   (r) update   tests/sbm11/update_where.sh: DELETE WHERE, DELETE/INSERT with WITH,
+#                USING and USING NAMED, template and INSERT DATA blank nodes, the graph
+#                management operations, errors, the fresh blank node rule and SPARQL 1.2,
+#                each request applied by `l4sbm11 update` and by the reference engine
+#                (`l4factoidal update`), the states compared by isomorphism and the
+#                queries on the overlay by value; three expected failures that name open
+#                issues (https://github.com/danbri/factoidal/issues/855,
+#                https://github.com/danbri/factoidal/issues/856 and
+#                https://github.com/danbri/factoidal/issues/857). Its counts are added
+#                to this run's.
+#   (s) w3c-update  tests/sbm11/w3c_update.sh: the 94 W3C SPARQL 1.1 Update evaluation
+#                tests, read from the manifests on disk, run through the store (pack the
+#                initial Graph Store, `l4sbm11 update`, `l4sbm11 compact`, `l4sbm11 dump`,
+#                compare by isomorphism) and through the in-memory reference engine. The
+#                store passes every test the reference passes. Its counts (the store's)
+#                are added to this run's, under their own line.
 #   (g) tamper   a copy of the generation with one byte changed in a block
 #                frame of spo.prb1 (manifest and sidecars kept): `scan` and
 #                `query` must be refused under merkle (and by default, the
@@ -445,13 +468,32 @@ else
       record delta update-after-compaction 0 "epoch 2 batch committed and seen"
     else record delta update-after-compaction 1 "exit $urc: $(tail -1 "$H/upd-after.log")"; fi
   fi
-  # the stage 5 limits, pinned: both must stay refused until they are implemented
-  r1=0; "$BIN/l4sbm11" update "$H/col" 'DELETE WHERE { ?s <http://ex.org/name> ?n }' >"$H/r1.log" 2>&1 || r1=$?
-  if [ "$r1" -eq 1 ] && grep -q 'refused' "$H/r1.log"; then record delta refuse-where 0 "DELETE WHERE refused (stage 5 limit, https://github.com/danbri/factoidal/issues/849)"
-  else record delta refuse-where 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/849; exit $r1: $(tail -1 "$H/r1.log")"; fi
-  r2=0; "$BIN/l4sbm11" update "$H/col" 'INSERT DATA { _:b <http://ex.org/name> "blank" }' >"$H/r2.log" 2>&1 || r2=$?
-  if [ "$r2" -eq 1 ] && grep -q 'refused' "$H/r2.log"; then record delta refuse-insert-bnode 0 "INSERT DATA with a blank node refused (stage 5 limit, https://github.com/danbri/factoidal/issues/850)"
-  else record delta refuse-insert-bnode 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/850; exit $r2: $(tail -1 "$H/r2.log")"; fi
+  # the former stage 5 limits (https://github.com/danbri/factoidal/issues/849 and
+  # https://github.com/danbri/factoidal/issues/850): DELETE WHERE and INSERT DATA with a blank node are
+  # applied, and the state they leave is the reference engine's state for the same requests
+  printf '%s\n' 'INSERT DATA { <http://ex.org/after> <http://ex.org/name> "after compaction" }' >"$H/ra1.ru"
+  printf '%s\n' 'DELETE WHERE { ?s <http://ex.org/name> ?n }' >"$H/ra2.ru"
+  printf '%s\n' 'INSERT DATA { _:b <http://ex.org/name> "blank" }' >"$H/ra3.ru"
+  rrc=0
+  "$BIN/l4factoidal" update "$H/ops/final.nq" --format nquads --update "$H/ra1.ru" >"$H/rs1.nq" 2>/dev/null || rrc=$?
+  if [ "$rrc" -eq 0 ]; then "$BIN/l4factoidal" update "$H/rs1.nq" --format nquads --update "$H/ra2.ru" >"$H/rs2.nq" 2>/dev/null || rrc=$?; fi
+  if [ "$rrc" -eq 0 ]; then "$BIN/l4factoidal" update "$H/rs2.nq" --format nquads --update "$H/ra3.ru" >"$H/rs3.nq" 2>/dev/null || rrc=$?; fi
+  r1=0; "$BIN/l4sbm11" update "$H/col" --file "$H/ra2.ru" >"$H/r1.log" 2>&1 || r1=$?
+  if [ "$r1" -eq 0 ] && [ "$rrc" -eq 0 ]; then record delta delete-where-applies 0 "DELETE WHERE applied: $(grep -o 'where path=[a-z]*' "$H/r1.log" | head -1), $(grep -o 'ops=[0-9]*' "$H/r1.log")"
+  else record delta delete-where-applies 1 "store exit $r1, reference exit $rrc: $(tail -1 "$H/r1.log")"; fi
+  r2=0; "$BIN/l4sbm11" update "$H/col" --file "$H/ra3.ru" >"$H/r2.log" 2>&1 || r2=$?
+  if [ "$r2" -eq 0 ]; then record delta insert-data-bnode-applies 0 "INSERT DATA with a blank node applied: $(grep -o 'ops=[0-9]*' "$H/r2.log")"
+  else record delta insert-data-bnode-applies 1 "exit $r2: $(tail -1 "$H/r2.log")"; fi
+  crc=0
+  "$BIN/l4sbm11" compact "$H/col" "$H/col/gen3" >"$H/compact3.log" 2>&1 || crc=$?
+  if [ "$crc" -eq 0 ] && [ "$rrc" -eq 0 ]; then
+    "$BIN/l4sbm11" dump "$H/col/gen3" >"$H/dump3.nq" 2>/dev/null
+    v="$("$BIN/l4sbm11-w3c" compare "$H/rs3.nq" "$H/dump3.nq" --expected nq --mode rdf11 2>&1)" || true
+    case "$v" in
+      pass*) record delta update-state-equals-reference 0 "$(wc -l <"$H/dump3.nq") quads, isomorphic to the reference state after the three requests" ;;
+      *) record delta update-state-equals-reference 1 "$(printf '%s' "$v" | head -1 | cut -c1-200)" ;;
+    esac
+  else record delta update-state-equals-reference 1 "compact exit $crc, reference exit $rrc"; fi
 fi
 
 echo "=== (i) delta overlay and compaction on olympics"
@@ -831,23 +873,22 @@ else
       if [ "$k" -lt 3 ]; then upd_queries "u$k" "$UD"/*.rq
       else upd_queries "u$k" "$UD"/*.rq "$HERE"/gate12/*.rq; fi
     done
-    # refusals: blank nodes inside a triple term (INSERT DATA: the stage 5
-    # limit on fresh blank nodes; DELETE DATA: a SPARQL 1.2 syntax error), an
-    # update with WHERE (the stage 5 limit), and a triple term without --sparql12
+    # the former stage 5 limits (https://github.com/danbri/factoidal/issues/849 and
+    # https://github.com/danbri/factoidal/issues/850): a blank node inside a nested triple term in INSERT DATA (u4),
+    # and DELETE WHERE with a triple-term pattern that has a variable (u5), are applied and equal the reference state
+    printf '%s\n' 'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <<( _:x <http://ex.org/q> "1" )>> )>> }' >"$U/u4.ru"
+    printf '%s\n' 'DELETE WHERE { ?s <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> ?o )>> }' >"$U/u5.ru"
+    for k in 4 5; do
+      upd_step "u$k" "$U/u$k.ru" --sparql12
+      upd_queries "u$k" "$UD"/*.rq
+    done
+    # refusals that stay: a blank node inside a triple term of DELETE DATA is a SPARQL 1.2 syntax error, and a
+    # triple term without --sparql12 is a SPARQL 1.1 parse error; neither changes the log
     cp "$U/col/gen/deltas.dlog" "$U/before-refusals.dlog"
-    r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
-      'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> <<( _:x <http://ex.org/q> "1" )>> )>> }' \
-      >"$U/r1.log" 2>&1 || r=$?
-    if [ "$r" -eq 1 ] && grep -q 'INSERT DATA with blank nodes' "$U/r1.log"; then record rdf12 refuse-insert-nested-bnode 0 "refused (stage 5 limit, https://github.com/danbri/factoidal/issues/850)"
-    else record rdf12 refuse-insert-nested-bnode 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/850; exit $r: $(tail -1 "$U/r1.log")"; fi
     r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
       'DELETE DATA { <http://ex.org/k> <http://ex.org/says> <<( _:x <http://ex.org/q> "1" )>> }' >"$U/r2.log" 2>&1 || r=$?
     if [ "$r" -eq 1 ] && grep -q 'DELETE DATA must not contain blank nodes' "$U/r2.log"; then record rdf12 refuse-delete-nested-bnode 0 "parse error, as SPARQL 1.2 requires"
     else record rdf12 refuse-delete-nested-bnode 1 "exit $r: $(tail -1 "$U/r2.log")"; fi
-    r=0; "$BIN/l4sbm11" update "$U/col" --sparql12 \
-      'DELETE WHERE { ?s <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> ?o )>> }' >"$U/r3.log" 2>&1 || r=$?
-    if [ "$r" -eq 1 ] && grep -q 'needs WHERE evaluation' "$U/r3.log"; then record rdf12 refuse-delete-where-triple-term 0 "parsed, refused (stage 5 limit, https://github.com/danbri/factoidal/issues/849)"
-    else record rdf12 refuse-delete-where-triple-term 1 "the stage 5 limit changed: make this an assertion and update https://github.com/danbri/factoidal/issues/849; exit $r: $(tail -1 "$U/r3.log")"; fi
     r=0; "$BIN/l4sbm11" update "$U/col" \
       'INSERT DATA { <http://ex.org/k> <http://ex.org/says> <<( <http://ex.org/s> <http://ex.org/p> "1" )>> }' >"$U/r4.log" 2>&1 || r=$?
     if [ "$r" -eq 1 ] && grep -q 'parse error' "$U/r4.log"; then record rdf12 refuse-triple-term-sparql11 0 "parse error without --sparql12"
@@ -915,6 +956,12 @@ add_script_counts w3c w3c_roundtrip.sh "w3c round trip"
 
 echo "=== (q) export: the store written in each syntax, packed again (issue 837 item 6)"
 add_script_counts export export_roundtrip.sh "export round trip"
+
+echo "=== (r) update with a WHERE clause, graph management and fresh blank nodes (issues 849 and 850)"
+add_script_counts update update_where.sh "update where"
+
+echo "=== (s) the W3C SPARQL 1.1 Update evaluation tests through the store (issue 849 item 3)"
+add_script_counts w3c-update w3c_update.sh "w3c update"
 
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"

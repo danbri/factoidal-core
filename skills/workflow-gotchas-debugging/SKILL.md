@@ -2026,6 +2026,15 @@ ran it, and taken back about a minute later. The run failed in part (h) with
 was run again in full (9 minutes 21 seconds). A comment above the code is
 enough to move every later byte.
 
+Third occurrence, 2026-10-14 (issues 849 and 850 work, branch
+`sbm11-update-where`): one line was added to the header comment of
+`tests/sbm11/run.sh` while the full run was in part (c), six minutes in. The
+agent had not read this hazard before starting the chain, and rule 3 above
+(`pgrep -af tests/sbm11/run.sh` before an edit) was not applied. The run was
+stopped and started again; its numbers were not used. Before a gate chain
+starts, list the files the agent still has to edit (comments, header counts,
+documents that name a count) and edit them first.
+
 ## Hazard #43 — a fixed fixture path shared by parallel test runs (2026-10-13)
 
 ### Symptom

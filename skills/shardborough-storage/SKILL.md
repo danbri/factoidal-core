@@ -675,10 +675,10 @@ PRM1 by range; `Sbm11Gen.openGen` (`scan`, `count`, `dump`, `verify`,
 `activate`) decodes every PRM1 file at open, as before.
 
 SBM11 stage 5 (2026-10-12, https://github.com/danbri/factoidal/issues/791):
-updates and compaction. `l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)`
-appends one DLB1 batch to `GEN/deltas.dlog` (format unchanged; INSERT DATA,
-DELETE DATA, CLEAR, DROP, CREATE; an update with WHERE and INSERT DATA with
-a blank node are refused). Every `query`, `serve` and `compact` open replays
+updates and compaction. `l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru)
+[--base IRI] [--sparql12]` appends one DLB1 batch to `GEN/deltas.dlog` (format
+unchanged; every operation of SPARQL 1.1 Update, see the next paragraph).
+Every `query`, `serve` and `compact` open replays
 the batches after `compacted.epoch` into an overlay over ids
 (`Sbm11Query.openOverlaid`): a term without a base id gets a tag-14 id
 (`Overlay.tagDelta`, never a base id); `IdQuery.scanFoldM` merges the
@@ -702,6 +702,54 @@ pack, compaction at most 1.2 times pack time), and the `sbm11-delta` case of
 `cs[0]!` out of an array and storing it back keeps a second reference, and
 every push copies the column (q01 over the overlay: 40 ms for 7 blocks, 8 ms
 after `IdQuery.colsOfRowsGo` took the columns as separate arguments).
+
+UPDATE with a WHERE clause and with blank nodes (2026-10-14,
+https://github.com/danbri/factoidal/issues/849 and
+https://github.com/danbri/factoidal/issues/850; record: section 10 of the stage 5
+record). `l4sbm11 update` takes every operation of SPARQL 1.1 Update: INSERT
+DATA, DELETE DATA, DELETE WHERE, DELETE/INSERT ... WHERE with WITH, USING and
+USING NAMED, CLEAR, DROP, CREATE, ADD, MOVE, COPY, and LOAD SILENT (which does
+nothing; any other LOAD is an error, as in the reference runner). The request
+is ONE log batch (section 2.2 of the Update specification). The operations run
+in order, each on the generation plus the log plus the entries of the earlier
+operations; an error in any operation writes nothing and exits 1. The WHERE
+clause runs on the evaluator of `l4sbm11 query`: the id path when
+`IdQuery.translate` accepts the pattern and the operation has no USING clause,
+otherwise the reference evaluator over the quads the planner guard selects
+(stderr: `op N: where path=ids` or `where path=reference reason=...`). The
+delete and insert templates are instantiated from the same solution sequence by
+the reference functions (`UpdateStore.modifyDeleteQuads`,
+`modifyInsertQuads`, `deleteWhereQuads`); the batch holds the removes, then the
+adds. A blank node of INSERT DATA or of an INSERT template gets a fresh label
+`sbm11u<n>`, written to the batch: one label for each INSERT DATA label in the
+request, one for each template label and solution. The counter `n` starts at
+the number of labels with that prefix in the dictionary and the log and skips
+every held label, so a label is never one the store holds
+(`UpdateStoreTheorems.chooseGo_spec`, `drawMany_spec`; `labels` group of
+`tests/sbm11/update_where.sh`). Traps: `l4sbm11 dump` and `export` read the
+BASE of a generation, so `compact` first; the store holds no empty named graph,
+so CREATE, and CLEAR of a graph, leave no trace
+(https://github.com/danbri/factoidal/issues/855); a graph named by a blank node
+cannot be named in a log entry
+(https://github.com/danbri/factoidal/issues/856); the batch encoder uses 64
+bytes of memory for each byte of log
+(https://github.com/danbri/factoidal/issues/857); every open replays the log
+with one dictionary lookup for each term, so a bulk update costs minutes at
+each open until `l4sbm11 compact` (40,000 entries: 3 s; 203,264 entries: 58 s;
+https://github.com/danbri/factoidal/issues/858). A `get` of an `IO.Ref` array
+before its `modify` copies the array at every push (the replay was quadratic
+for that reason until 2026-10-14): read and push in one `modifyGet`. The
+decoder of the entries of a version 1 batch took one stack frame for each entry
+until 2026-10-14 (`parseNFramedDeltaEntries`, now a loop named by an `@[csimp]`
+lemma): a batch of 48,000 entries overflowed a 512 KB stack at every open. Gates:
+`tests/sbm11/update_where.sh` (differential: every request against
+`l4factoidal update`, by compaction and dump, and 7 queries on the overlay;
+`scaling`: compile time for n and 4n solutions, replay time for n and 8n
+entries) and `tests/sbm11/w3c_update.sh` (the 94 W3C Update evaluation tests
+through the store and through the reference), parts (r) and (s) of
+`tests/sbm11/run.sh`; the stack case `sbm11-update-where` of
+`tests/stack/run.sh`; proofs in `SPARQL/UpdateStoreTheorems.lean` and
+`Storage/Sbm11/UpdateOverlayTheorems.lean`.
 
 Delta log tails (2026-10-14, https://github.com/danbri/factoidal/issues/843;
 record: section 8 of the stage 5 record). Only a crash artifact at the end of

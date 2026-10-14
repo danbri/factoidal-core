@@ -7,7 +7,7 @@ https://github.com/danbri/factoidal/issues/791; design record
   l4sbm11 compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]
 
 `update` appends one DLOG batch to the generation's `deltas.dlog`
-(`Sbm11Delta.appendUpdate`). Every later open replays the log into the
+(`Sbm11Update.appendUpdate`). Every later open replays the log into the
 overlay (`Sbm11Query.openOverlaid`), and every scan merges it
 (`IdQuery.scanFoldM`, `Overlay.mergeRows`).
 
@@ -43,6 +43,7 @@ This is a HARNESS: it does file I/O.
 import Harness.Sbm11Query
 import Harness.Sbm11PackLib
 import Harness.Sbm11Delta
+import Harness.Sbm11Update
 import L4Factoidal.Storage.Sbm11.Overlay
 
 namespace Harness.Sbm11Compact
@@ -203,19 +204,24 @@ def parseCompactOpts : List String → Nat × Nat × Option Verify → Option (N
 def main (args : List String) : IO UInt32 := do
   match args with
   | "update" :: dir :: parts0 =>
-    -- `--sparql12`: the SPARQL 1.2 grammar (triple terms, directional literals)
+    -- `--sparql12`: the SPARQL 1.2 grammar (triple terms, directional literals);
+    -- `--base IRI`: the BASE of the request (relative IRIs in the text)
     let v12 := parts0.contains "--sparql12"
-    let parts := parts0.filter (· != "--sparql12")
+    let parts1 := parts0.filter (· != "--sparql12")
+    let (parts, base) := match parts1.idxOf "--base" with
+      | i => if i + 1 < parts1.length then
+          (parts1.take i ++ parts1.drop (i + 2), some parts1[i + 1]!)
+        else (parts1, none)
     let version : L4Factoidal.SPARQL.SparqlVersion := if v12 then .v12 else .v11
     match parts with
     | ["--file", path] =>
-      try Harness.Sbm11Delta.appendUpdate dir (← IO.FS.readFile path) version
+      try Harness.Sbm11Update.appendUpdate dir (← IO.FS.readFile path) version base
       catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
     | [] =>
-      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--sparql12]"
+      IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12]"
       return 2
     | _ =>
-      try Harness.Sbm11Delta.appendUpdate dir (String.intercalate " " parts) version
+      try Harness.Sbm11Update.appendUpdate dir (String.intercalate " " parts) version base
       catch e => IO.eprintln s!"l4sbm11 update: {e}"; return 1
   | "compact" :: src :: out :: opts =>
     match parseCompactOpts opts (4096, 524288, none) with
@@ -230,7 +236,7 @@ def main (args : List String) : IO UInt32 := do
         runCompact src out b m v
       catch e => IO.eprintln s!"l4sbm11 compact: {e}"; return 1
   | _ =>
-    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--sparql12] | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
+    IO.eprintln "usage: l4sbm11 update GEN ('SPARQL UPDATE' | --file U.ru) [--base IRI] [--sparql12] | compact GEN OUTDIR [--block-rows B] [--sort-rows M] [--verify merkle|none]"
     return 2
 
 end Harness.Sbm11Compact

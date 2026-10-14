@@ -45,6 +45,24 @@ datasets with the isomorphism of the Lean W3C runners
       Prints `pass` when `Source.parseDocument` accepts SOURCE (the parser's
       verdict on a positive syntax test), else `fail REASON`.
 
+  l4sbm11-w3c list-update MANIFEST...
+      One row for each `mf:UpdateEvaluationTest` of a SPARQL 1.1 Update manifest,
+      in the order of the manifest. The fields, separated by a tab: suite (the
+      directory of the manifest), entry (the local name of the test node), the
+      `mf:name`, the manifest, the `ut:request` file.
+  l4sbm11-w3c prepare-update MANIFEST ENTRY OUTDIR
+      Writes `OUTDIR/input.nq` (the initial Graph Store: `ut:data` as the default
+      graph and each `ut:graphData` as the named graph its `rdfs:label` names;
+      the loader of the Lean update runner, `Harness.loadUpdateStore`) and
+      `OUTDIR/expected.nq` (the same for `mf:result`), and prints `ok`, or
+      `skip REASON` (exit 3) when a file is missing or the request has a LOAD
+      without SILENT (no document is fetched: the Lean update runner skips it
+      too), or `fail REASON` (exit 1).
+  l4sbm11-w3c run-update MANIFEST ENTRY
+      The test through the in-memory reference engine, the existing Lean update
+      runner (`Harness.runUpdateEvaluation`): `pass`, `fail REASON` (exit 1) or
+      `skip REASON` (exit 3).
+
 Comparison rules. Both datasets go through `normalizeDataset` first: a graph is a
 set of triples (RDF 1.1 Concepts section 3; the in-memory JSON-LD toRdf output of
 test #te108 lists a quad twice, the store keeps it once) and language tags are in
@@ -57,6 +75,7 @@ N-Quads of the two datasets are compared, as `Harness/JsonLdProbe.lean` does, an
 the pass says `via-canonical`.
 -/
 import Harness.Manifest
+import Harness.Run
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.RDF.Canonical
@@ -313,6 +332,73 @@ def listJsonLd (withSyntax : Bool) (manifest : String) : IO (List String) := do
                           "jsonld", "-", notes]]
   pure out
 
+/-! ## SPARQL 1.1 Update evaluation tests -/
+
+/-- The tests of an update manifest. -/
+def updateTests (manifest : String) : IO (List Harness.TestCase) := do
+  match ← Harness.loadManifest manifest with
+  | none => throw (IO.userError s!"manifest not found: {manifest} (run tools/ensure-test-env.sh)")
+  | some (.error e) => throw (IO.userError s!"{manifest}: {e}")
+  | some (.ok (tests, _)) => pure (tests.filter (·.testType == "UpdateEvaluationTest"))
+
+/-- The part of an entry node's IRI after the last `#` (or the whole text). -/
+def entryName (tc : Harness.TestCase) : String :=
+  match tc.entryId.splitOn "#" with
+  | [] => tc.entryId
+  | parts => parts.getLast!
+
+def findUpdateTest (manifest entry : String) : IO Harness.TestCase := do
+  match (← updateTests manifest).find? (entryName · == entry) with
+  | some tc => pure tc
+  | none => throw (IO.userError s!"{manifest}: no update evaluation test {entry}")
+
+def listUpdate (manifest : String) : IO (List String) := do
+  let abs := (← IO.FS.realPath manifest).toString
+  let suite := Harness.basename (Harness.dirname abs)
+  let mut out : List String := []
+  for tc in ← updateTests manifest do
+    out := out ++ [row [suite, entryName tc, tc.name, abs, tc.queryFile.getD "-"]]
+  pure out
+
+def outcomeLine : Harness.Outcome → String × UInt32
+  | .pass => ("pass", 0)
+  | .fail r => (s!"fail {r}", 1)
+  | .skip r => (s!"skip {r}", 3)
+  | .unsupported f => (s!"skip unsupported {f}", 3)
+
+def runPrepareUpdate (manifest entry outDir : String) : IO UInt32 := do
+  let tc ← findUpdateTest manifest entry
+  let some qf := tc.queryFile
+    | IO.println "skip mf:action carries no ut:request"; return 3
+  let some text ← Harness.readOpt qf
+    | IO.println s!"skip file missing: {qf}"; return 3
+  match L4Factoidal.SPARQL.parseSparqlUpdate text (some ("file://" ++ qf)) .v11 with
+  | .error e => IO.println s!"fail Update parse: {Harness.fmtParseError e}"; return 1
+  | .ok u =>
+  if u.hasNonSilentLoad then
+    IO.println "skip non-silent LOAD (no document fetch)"
+    return 3
+  let input ← match ← Harness.loadUpdateStore tc.dataFiles tc.graphData with
+    | .ok d => pure d
+    | .error o => let (l, c) := outcomeLine o; IO.println l; return c
+  let expected ← match ← Harness.loadUpdateStore tc.updateResultData tc.updateResultGraphData with
+    | .ok d => pure d
+    | .error o => let (l, c) := outcomeLine o; IO.println l; return c
+  IO.FS.createDirAll outDir
+  for (name, ds) in [("input.nq", input), ("expected.nq", expected)] do
+    match Dataset.toNQuads ds .rdf11 with
+    | .ok t => IO.FS.writeFile s!"{outDir}/{name}" t
+    | .error e => IO.println s!"fail cannot write {name}: {e}"; return 1
+  IO.println "ok"
+  pure 0
+
+def runRunUpdate (manifest entry : String) : IO UInt32 := do
+  let tc ← findUpdateTest manifest entry
+  let r ← Harness.runUpdateEvaluation tc
+  let (l, c) := outcomeLine r.outcome
+  IO.println l
+  pure c
+
 /-! ## Command line -/
 
 def usage : String :=
@@ -320,7 +406,8 @@ def usage : String :=
   "       | compare EXPECTED ACTUAL --expected nt|nq|nq-lenient --mode rdf11|rdf12\n" ++
   "       | check-parse SOURCE EXPECTED --format F --base IRI --expected nt|nq|nq-lenient --mode rdf11|rdf12\n" ++
   "       | compare-source ACTUAL SOURCE --format F --base IRI --mode rdf11|rdf12\n" ++
-  "       | parse-ok SOURCE --format F --base IRI --mode rdf11|rdf12"
+  "       | parse-ok SOURCE --format F --base IRI --mode rdf11|rdf12\n" ++
+  "       | list-update MANIFEST... | prepare-update MANIFEST ENTRY OUTDIR | run-update MANIFEST ENTRY"
 
 /-- `--flag value` pairs and positional arguments, each in the order given. A
     loop with two accumulators. -/
@@ -373,6 +460,12 @@ def main (args : List String) : IO UInt32 := do
         match pos, (flag kv "--format").bind formatOfLabel, flag kv "--base", (flag kv "--mode").bind modeOfLabel? with
         | [s], some f, some b, some m => runParseOk s f b m
         | _, _, _, _ => IO.eprintln usage; pure 2
+    | "list-update" :: rest =>
+        for m in rest do
+          for r in ← listUpdate m do IO.println r
+        pure 0
+    | ["prepare-update", m, e, d] => runPrepareUpdate m e d
+    | ["run-update", m, e] => runRunUpdate m e
     | _ => IO.eprintln usage; pure 2
   catch e =>
     IO.eprintln s!"l4sbm11-w3c: {e}"

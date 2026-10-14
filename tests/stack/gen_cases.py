@@ -415,6 +415,24 @@ if not os.path.exists(dins):
             fh.write('<http://example.org/sbm11/new%07d> <http://example.org/p/label> "new %d"@en .\n' % (i, i))
         fh.write("}\n")
 
+# ------------------- SBM11 update with a WHERE clause (issues 849 and 850)
+# One DELETE/INSERT over sbm11-dict.nt. Every subject has exactly one p:n (the
+# number of the subject) and one p:m, so the FILTER selects N_WHERE solutions.
+# Each solution removes its p:m quad and adds a p:m2 quad and, with a blank node
+# of the template, a p:ref quad and a p:of quad: N_WHERE removes and 3 * N_WHERE
+# adds in ONE batch, and N_WHERE fresh blank node labels. The WHERE clause runs
+# on ids, the templates are instantiated for N_WHERE solutions (lists of that
+# length), the labels are drawn one by one, and the batch is encoded, appended,
+# replayed at the next open and compacted.
+N_WHERE = int(os.environ.get("STACK_SBM11_WHERE", "12000"))
+dwhere = os.path.join(OUT, "sbm11-update-where-%d.ru" % N_WHERE)
+if not os.path.exists(dwhere):
+    with open(dwhere, "w") as fh:
+        fh.write("PREFIX p: <http://example.org/p/>\n"
+                 "DELETE { ?s p:m ?m }\n"
+                 "INSERT { ?s p:m2 ?m . ?s p:ref _:r . _:r p:of ?m }\n"
+                 "WHERE { ?s p:m ?m . ?s p:n ?n FILTER(?n < %d) }\n" % N_WHERE)
+
 # ------------------------------- browser update log (issue 728, post 18)
 # A log of 100,000 records for the ops deltaLogDecode and deltaLogMerge
 # (formal/lean4/Wasm/Ops/DeltaLog.lean): one DLB1 record per committed

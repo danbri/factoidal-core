@@ -185,6 +185,13 @@ structure Session where
   /-- the log ended with a torn final frame (an append that did not
       complete), left out of the replay (issue 843) -/
   deltaTorn : Bool := false
+  /-- the replayed overlay state (`ovl` is its cut per permutation); `l4sbm11
+      update` (`Harness/Sbm11Update.lean`) applies the entries of a request to
+      it, so that each operation reads the state the one before left -/
+  ovState : L4Factoidal.Storage.Sbm11.Overlay.State := {}
+  /-- the size in bytes of the log file the replay read (0: no log); a
+      positioned append of `l4sbm11 update` uses it -/
+  ovLogBytes : Nat := 0
 
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
@@ -751,8 +758,9 @@ def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := do
     let t := normalizeTerm t0
     if (termKeyBytes? t).isNone then
       throw (IO.userError s!"delta log: a term the SBM11 dictionary does not admit: {repr t}")
-    let n := (← ss.ovVocab.get).size
-    ss.ovVocab.modify (·.push t)
+    -- one step that reads the size and pushes: a `get` before the `modify` leaves a second
+    -- reference to the array, and every push then copies it (quadratic replay)
+    let n ← ss.ovVocab.modifyGet fun vocab => (vocab.size, vocab.push t)
     ss.ovIds.modify (·.insert t n)
     pure (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n)
 
@@ -777,39 +785,54 @@ def Session.quadIds? (ss : Session) (t : Triple) (g : Option Iri) : IO (Option R
   let some gid := gid | return none
   return some ⟨s.toNat, p.toNat, o.toNat, gid⟩
 
+/-- One log entry applied to an overlay state: the terms of the entry mapped to
+    ids (a term that has no id gets an overlay id, `idOrNew`), then
+    `Overlay.step`. A removed quad with a term that has no id is in no
+    generation and changes nothing. -/
+def Session.stepEntry (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State)
+    (e : L4Factoidal.Storage.DeltaEntry) : IO L4Factoidal.Storage.Sbm11.Overlay.State := do
+  match e with
+  | .add t g =>
+    let s ← ss.idOrNew t.s.toTerm
+    let p ← ss.idOrNew (.iri t.p)
+    let o ← ss.idOrNew t.o
+    let gid ← ss.graphIdOrNew g
+    return L4Factoidal.Storage.Sbm11.Overlay.step st (.add ⟨s, p, o, gid⟩)
+  | .remove t g =>
+    if let some r ← ss.quadIds? t g then
+      return L4Factoidal.Storage.Sbm11.Overlay.step st (.remove r)
+    return st
+  | .clear none => return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear 0)
+  | .clear (some g) | .drop g =>
+    if let some x ← ss.idOf (← graphTerm g) then
+      return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear x.toNat)
+    return st
+  | .create _ => return st
+
+/-- The session with the overlay state `st`: `ovl` cut from it per
+    permutation, and the counters of `deltaText` read from it. -/
+def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session := do
+  let ovl := #[0, 1, 2, 3].map (L4Factoidal.Storage.Sbm11.Overlay.forPerm st)
+  return { ss with ovl, ovState := st, ovInserts := st.ins.size, ovDeletes := st.del.size,
+                    ovCleared := st.cleared.length, ovNewTerms := (← ss.ovVocab.get).size }
+
 /-- Replay the committed batches of the generation's delta log
     (`Sbm11Delta.readBatches`) into the overlay: each entry's terms mapped to
     ids (`idOrNew` for an addition), then `Overlay.step`. -/
 def Session.loadOverlay (ss : Session) : IO Session := do
   let t0 ← IO.monoNanosNow
-  let (batches, _, clean) ← Harness.Sbm11Delta.readBatches ss.g.dir
-  let ss := { ss with deltaTorn := !clean }
+  let (batches, logBytes, clean) ← Harness.Sbm11Delta.readBatches ss.g.dir
+  let ss := { ss with deltaTorn := !clean, ovLogBytes := logBytes.size }
   if batches.isEmpty then return ss
   let mut st : L4Factoidal.Storage.Sbm11.Overlay.State := {}
   let mut ops := 0
   for b in batches do
     for e in b.ops do
       ops := ops + 1
-      match e with
-      | .add t g =>
-        let s ← ss.idOrNew t.s.toTerm
-        let p ← ss.idOrNew (.iri t.p)
-        let o ← ss.idOrNew t.o
-        let gid ← ss.graphIdOrNew g
-        st := L4Factoidal.Storage.Sbm11.Overlay.step st (.add ⟨s, p, o, gid⟩)
-      | .remove t g =>
-        if let some r ← ss.quadIds? t g then
-          st := L4Factoidal.Storage.Sbm11.Overlay.step st (.remove r)
-      | .clear none => st := L4Factoidal.Storage.Sbm11.Overlay.step st (.clear 0)
-      | .clear (some g) | .drop g =>
-        if let some x ← ss.idOf (← graphTerm g) then
-          st := L4Factoidal.Storage.Sbm11.Overlay.step st (.clear x.toNat)
-      | .create _ => pure ()
-  let ovl := #[0, 1, 2, 3].map (L4Factoidal.Storage.Sbm11.Overlay.forPerm st)
+      st ← ss.stepEntry st e
+  let ss ← ss.withOverlay st
   let t1 ← IO.monoNanosNow
-  return { ss with ovl, deltaBatches := batches.length, deltaOps := ops, ovInserts := st.ins.size,
-                    ovDeletes := st.del.size, ovCleared := st.cleared.length,
-                    ovNewTerms := (← ss.ovVocab.get).size, replayNs := t1 - t0 }
+  return { ss with deltaBatches := batches.length, deltaOps := ops, replayNs := t1 - t0 }
 
 /-- Open a generation with its delta log replayed (the session every query,
     serve and compaction uses). -/
@@ -841,7 +864,7 @@ def subjectOf (t : Term) : IO Subject :=
   | _ => throw (IO.userError "a subject or graph name that is not an IRI or a blank node")
 
 /-- The quads the planner guard selects, as the dataset they denote. -/
-def selectedDataset (ss : Session) (q : Query) : IO (Dataset × String) := do
+def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) : IO (Dataset × String) := do
   let preds := L4Factoidal.Storage.ShardManifest.queryQuadConstantPredicates? q
   let graphs := L4Factoidal.Storage.ShardManifest.queryGraphNames? q
   let mut allowed : Option (Array UInt64) := none
@@ -854,6 +877,10 @@ def selectedDataset (ss : Session) (q : Query) : IO (Dataset × String) := do
       | .defaultGraph => a := a.push 0
       | .iri v => if let some x ← ss.idOf (.iri v) then a := a.push x
       | .bnode l => if let some x ← ss.idOf (.bnode l) then a := a.push x
+    -- graphs the caller reads that the query text does not name (`WITH <g>` of
+    -- an update makes `g` the graph the default-graph patterns read)
+    for v in extraGraphs do
+      if let some x ← ss.idOf (.iri v) then a := a.push x
     allowed := some a
   let rowsRef ← IO.mkRef (#[] : Array (UInt64 × UInt64 × UInt64 × UInt64))
   -- (s, p, o, g) of each kept row
